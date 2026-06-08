@@ -883,15 +883,34 @@ bool MemEntityDefault::CheckAddressInEntity(const void *ptr, uint64_t length) co
         return false;
     }
 
+    bool inRange = false;
+    bool isDramRange = false;
     if (hbmSegment_ != nullptr && hbmSegment_->MemoryInRange(ptr, length)) {
-        return true;
+        inRange = true;
+    } else if (dramSegment_ != nullptr && dramSegment_->MemoryInRange(ptr, length)) {
+        inRange = true;
+        isDramRange = true;
+    }
+    if (!inRange) {
+        // 不在 segment 范围内但属于 device VA 范围 → 放行（ClassifyAddress 也认这个范围）
+        auto va = reinterpret_cast<uint64_t>(ptr);
+        if (va >= HYBM_DEVICE_VA_START && va < (HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE)) {
+            return true;
+        }
+        return false;
     }
 
-    if (dramSegment_ != nullptr && dramSegment_->MemoryInRange(ptr, length)) {
-        return true;
+    // DRAM(host, GVA==HVA)才需要校验地址是否已分配/已import
+    if (isDramRange) {
+        auto addr = reinterpret_cast<uint64_t>(ptr);
+        // 本地 portion 已在 allocatedMap_ 中，跳过 IsValidAddr
+        // 非本地 portion（远端未 join）需校验是否已注册
+        if (!dramSegment_->IsLocalRange(ptr, length) &&
+            !HybmVaManager::GetInstance().IsValidAddr(addr)) {
+            return false;
+        }
     }
-
-    return false;
+    return true;
 }
 
 int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept

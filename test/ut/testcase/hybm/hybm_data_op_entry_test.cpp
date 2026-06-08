@@ -292,7 +292,10 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_invalid_direction)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_infer_success)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
+    // src 在 device VA 范围 → ClassifyAddress 返回 LOCAL_DEVICE
+    // dest=0x2000 → 返回 LOCAL_HOST
+    // 方向表 [2][3] = LOCAL_DEVICE_TO_GLOBAL_HOST(2) → 有效方向
+    params.src = reinterpret_cast<void*>(HYBM_DEVICE_VA_START);
     params.dest = reinterpret_cast<void*>(0x2000);
     params.dataSize = 1024;
 
@@ -430,7 +433,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_invalid_direction)
 
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_auto_infer_success)
 {
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x3000)};
+    void* sources[2] = {reinterpret_cast<void*>(HYBM_DEVICE_VA_START),
+        reinterpret_cast<void*>(HYBM_DEVICE_VA_START + 0x2000)};
     void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
     uint64_t dataSizes[2] = {1024, 2048};
 

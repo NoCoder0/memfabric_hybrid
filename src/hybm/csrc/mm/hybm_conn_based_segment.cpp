@@ -268,6 +268,17 @@ bool HybmConnBasedSegment::MemoryInRange(const void *begin, uint64_t size) const
     return true;
 }
 
+bool HybmConnBasedSegment::IsLocalRange(const void *begin, uint64_t size) const noexcept
+{
+    if (begin < localVirtualBase_) {
+        return false;
+    }
+    if (reinterpret_cast<const uint8_t *>(begin) + size > localVirtualBase_ + options_.maxSize) {
+        return false;
+    }
+    return true;
+}
+
 void HybmConnBasedSegment::FreeMemory() noexcept
 {
     while (!slices_.empty()) {

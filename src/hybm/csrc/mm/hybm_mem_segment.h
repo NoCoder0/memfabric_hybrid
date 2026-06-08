@@ -122,6 +122,17 @@ public:
     virtual bool MemoryInRange(const void *begin, uint64_t size) const noexcept = 0;
 
     /*
+     * check whether address range belongs to the local portion of this segment
+     * @return true if within the local rank's allocated portion
+     */
+    virtual bool IsLocalRange(const void *begin, uint64_t size) const noexcept
+    {
+        (void)begin;
+        (void)size;
+        return false;
+    }
+
+    /*
      * get memory type
      */
     virtual hybm_mem_type GetMemoryType() const noexcept = 0;

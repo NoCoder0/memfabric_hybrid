@@ -208,6 +208,25 @@ inline bool operator!=(const AllocatedGvaInfo &lhs, const AllocatedGvaInfo &rhs)
 }
 
 /*
+ * Unified address query result — one shared_lock, all maps.
+ * Used by ClassifyAddress, IsValidAddr, CheckAddressInEntity.
+ */
+struct AddrQueryResult {
+    bool inAllocGva{false};          // allocatedMap_[HVM_GVA] 命中
+    bool inAllocHva{false};          // allocatedMap_[HVM_HVA] 命中
+    bool inAllocDva{false};          // allocatedMap_[HVM_DVA] 命中
+
+    hybm_mem_type memType{HYBM_MEM_TYPE_BUTT};
+    uint32_t importedRankId{INVALID_RANK_ID};
+
+    uint64_t rangeBase{0};           // 命中的 range 起始地址
+    uint64_t rangeSize{0};           // 命中的 range 大小
+
+    bool IsLocal() const { return importedRankId == INVALID_RANK_ID; }
+    bool IsImported() const { return importedRankId != INVALID_RANK_ID; }
+};
+
+/*
  * Virtual address management and maintenance.
  * Address types include DRAM and HBM. There are two kinds of ranges: AllocatedGvaInfo and ReservedGvaInfo.
  * Memory segments of the same type must not overlap.
@@ -257,6 +276,35 @@ public:
 
     AddrType ClassifyAddress(const uint64_t va);
 
+    // Unified query — one shared_lock, populates AddrQueryResult for all maps.
+    AddrQueryResult QueryAddr(const uint64_t va) const
+    {
+        AddrQueryResult result;
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (!allocatedMap_[HVM_GVA].empty()) {
+            auto it = allocatedMap_[HVM_GVA].upper_bound(va);
+            if (it != allocatedMap_[HVM_GVA].begin()) { --it; }
+            if (it->second.Contains(va, HVM_GVA)) {
+                result.inAllocGva = true;
+                result.memType = it->second.base.memType;
+                result.importedRankId = it->second.importedRankId;
+                result.rangeBase = it->second.base.va[HVM_GVA];
+                result.rangeSize = it->second.base.size;
+            }
+        }
+        if (!allocatedMap_[HVM_HVA].empty()) {
+            auto it = allocatedMap_[HVM_HVA].upper_bound(va);
+            if (it != allocatedMap_[HVM_HVA].begin()) { --it; }
+            if (it->second.Contains(va, HVM_HVA)) { result.inAllocHva = true; }
+        }
+        if (!allocatedMap_[HVM_DVA].empty()) {
+            auto it = allocatedMap_[HVM_DVA].upper_bound(va);
+            if (it != allocatedMap_[HVM_DVA].begin()) { --it; }
+            if (it->second.Contains(va, HVM_DVA)) { result.inAllocDva = true; }
+        }
+        return result;
+    }
+
 private:
     HybmVaManager() = default;
 
@@ -281,8 +329,8 @@ private:
         {HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE,
          HYBM_GLOBAL_HOST_TO_LOCAL_HOST},
         {HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, HYBM_DATA_COPY_DIRECTION_BUTT,
-         HYBM_DATA_COPY_DIRECTION_BUTT},
-        {HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, HYBM_DATA_COPY_DIRECTION_BUTT,
+         HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST},
+        {HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE,
          HYBM_DATA_COPY_DIRECTION_BUTT},
     };
 };

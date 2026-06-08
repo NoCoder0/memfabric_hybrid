@@ -193,18 +193,16 @@ std::pair<uint32_t, bool> HybmVaManager::GetRank(uint64_t gva)
 
 AddrType HybmVaManager::ClassifyAddress(const uint64_t va)
 {
-    auto gvaType = GetGvaMemType(va);
-    if (gvaType != HYBM_MEM_TYPE_BUTT) {
-        if (gvaType == HYBM_MEM_TYPE_DEVICE) {
-            return GLOBAL_DEVICE;
-        }
-        if (gvaType == HYBM_MEM_TYPE_HOST) {
-            return GLOBAL_HOST;
-        }
+    auto r = QueryAddr(va);
+    // GVA 命中 + 远端 import  → GLOBAL
+    if (r.inAllocGva && r.importedRankId != INVALID_RANK_ID) {
+        return (r.memType == HYBM_MEM_TYPE_DEVICE) ? GLOBAL_DEVICE : GLOBAL_HOST;
     }
+    // device VA 范围 → LOCAL_DEVICE
     if (va >= HYBM_DEVICE_VA_START && va < (HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE)) {
         return LOCAL_DEVICE;
     }
+
     return LOCAL_HOST;
 }
 
@@ -213,30 +211,28 @@ hybm_data_copy_direction HybmVaManager::InferCopyDirection(uint64_t srcVa, uint6
     auto src = static_cast<int>(ClassifyAddress(srcVa));
     auto dst = static_cast<int>(ClassifyAddress(dstVa));
     if (src >= 0 && src < ADDRESS_CATEGORY_BUTT && dst >= 0 && dst < ADDRESS_CATEGORY_BUTT) {
-        return COPY_DIRECTION_TABLE[src][dst];
+        auto dir = COPY_DIRECTION_TABLE[src][dst];
+        if (dir != HYBM_DATA_COPY_DIRECTION_BUTT) {
+            return dir;
+        }
+        // 方向表 BUTT 兜底：L2G 和 H2GD 已在表中，仅 LOCAL→LOCAL 需要
+        if (src == LOCAL_HOST && dst == LOCAL_HOST) {
+            // 检查哪个地址在 managed 范围内，就让它作为被检查的一方
+            if (dstVa >= HYBM_GVM_START_ADDR && dstVa < HYBM_GVM_END_ADDR) {
+                return HYBM_LOCAL_HOST_TO_GLOBAL_HOST; // g_checkMap[0]={false,true} 查 dest
+            }
+            if (srcVa >= HYBM_GVM_START_ADDR && srcVa < HYBM_GVM_END_ADDR) {
+                return HYBM_GLOBAL_HOST_TO_LOCAL_HOST; // g_checkMap[6]={true,false} 查 src
+            }
+        }
     }
     return HYBM_DATA_COPY_DIRECTION_BUTT;
 }
 
 bool HybmVaManager::IsValidAddr(uint64_t va)
 {
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-    for (uint32_t i = 0; i < HVM_BUTT; i++) {
-        if (allocatedMap_[i].empty()) {
-            BM_LOG_WARN("No allocated spaces found.");
-            continue;
-        }
-        auto it = allocatedMap_[i].upper_bound(va);
-        if (it != allocatedMap_[i].begin()) {
-            --it;
-        }
-        if (it->second.Contains(va, i)) {
-            BM_LOG_DEBUG("GetMemType: va=" << VaToStr(va) << " vaMgrType:" << i
-                                           << " memType=" << it->second.base.memType);
-            return true;
-        }
-    }
-    return false;
+    auto r = QueryAddr(va);
+    return r.inAllocGva || r.inAllocHva || r.inAllocDva;
 }
 
 ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize,

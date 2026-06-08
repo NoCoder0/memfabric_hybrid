@@ -162,6 +162,14 @@ Result HybmHostShmSegment::AllocLocalMemory(uint64_t size, std::shared_ptr<MemSl
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(sliceAddr), size);
     slices_.emplace(slice->index_, slice);
+    auto ret = HybmVaManager::GetInstance().AddVaInfo(
+        {gva, 0, reinterpret_cast<uint64_t>(sliceAddr), size, HYBM_MEM_TYPE_HOST}, options_.rankId);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("AddVaInfo failed for slice(idx:" << slice->index_ << "), ret:" << ret);
+        slices_.erase(slice->index_);
+        slice = nullptr;
+        return ret;
+    }
     BM_LOG_INFO("allocate slice(idx:" << slice->index_ << ", size:" << slice->size_ << " va:" << sliceAddr << ").");
     return BM_OK;
 }
@@ -283,6 +291,12 @@ bool HybmHostShmSegment::MemoryInRange(const void *begin, uint64_t size) const n
              reinterpret_cast<const uint8_t *>(begin) + size > globalVirtualAddress_ + totalVirtualSize_);
 }
 
+bool HybmHostShmSegment::IsLocalRange(const void *begin, uint64_t size) const noexcept
+{
+    return !(begin < localVirtualBase_ ||
+             reinterpret_cast<const uint8_t *>(begin) + size > localVirtualBase_ + options_.size);
+}
+
 void HybmHostShmSegment::FreeMemory() noexcept
 {
     (void)Unmap();
@@ -346,6 +360,7 @@ Result HybmHostShmSegment::ReleaseSliceMemory(const std::shared_ptr<MemSlice> &s
     if (pos == slices_.end() || pos->second.slice != slice) {
         return BM_INVALID_PARAM;
     }
+    HybmVaManager::GetInstance().RemoveOneVaInfo(slice->vAddress_, HVM_HVA);
     slices_.erase(pos);
     return BM_OK;
 }
@@ -500,12 +515,19 @@ Result HybmHostShmSegment::MapImportedShm(uint32_t rankId) noexcept
     }
     importedShmFds_[rankId] = fd;
     mappedRemoteRanks_.insert(rankId);
+    auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
+        {reinterpret_cast<uint64_t>(remoteBase), 0, 0, options_.size, HYBM_MEM_TYPE_HOST},
+        options_.rankId, rankId);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("AddVaInfoFromExternal failed for rank " << rankId);
+    }
     return BM_OK;
 }
 
 Result HybmHostShmSegment::RemapRemoteAsReserved(uint32_t rankId) noexcept
 {
     auto *remoteBase = globalVirtualAddress_ + options_.size * rankId;
+    HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(remoteBase));
     void *reserved =
         mmap(remoteBase, options_.size, PROT_NONE, MAP_FIXED | MAP_ANONYMOUS | MAP_NORESERVE | MAP_PRIVATE, -1, 0);
     if (reserved == MAP_FAILED || reserved != remoteBase) {
