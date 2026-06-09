@@ -95,29 +95,16 @@ private:
 
     TPipe *tpipe_{nullptr};
     GlobalTensor<ExpandXType> expandXGT_;
-    GlobalTensor<bool> xActiveMaskGM_;
     GlobalTensor<int32_t> expertIdsGM_;
     GlobalTensor<int32_t> expandIdxGM_;
     GlobalTensor<ExpandIdxType> epSendCountGM_;
-    GlobalTensor<ExpandIdxType> tpSendCountGM_;
-    GlobalTensor<ExpandIdxType> elasticInfoGM_;
     GlobalTensor<float> expertScalesGT_;
     GlobalTensor<XType> srcWinGMTensor;
     GlobalTensor<XType> XOutGT_;
-    GlobalTensor<XType> rankWindow_; // 用于存对端window的变量
-    GlobalTensor<XType> tpRankWindow_;
-    GlobalTensor<XType> rowTmpGlobal_;
-    GlobalTensor<ExpandXType> oriXGM_;
-    GlobalTensor<ExpandXType> constExpertAlpha1GM_;
-    GlobalTensor<ExpandXType> constExpertAlpha2GM_;
-    GlobalTensor<ExpandXType> constExpertVGM_;
-    GlobalTensor<uint32_t> selfDataStatusGMTensor_;
     GlobalTensor<uint64_t> remoteMetaAddrGt;
     GlobalTensor<uint64_t> localMetaAddrGt;
     GlobalTensor<uint64_t> localAllAddrGt;
 
-    GM_ADDR stateGM_;
-    GM_ADDR statusDataSpaceGm_;
     GM_ADDR shareAddrSpaceGm_;
     // shared addrs
     GM_ADDR gva_gm;
@@ -126,22 +113,11 @@ private:
     uint64_t metaSize_{0};
     uint64_t flagOffset_{0};
     uint32_t shareAddrNum{1};
-    uint64_t shareExpandXAddrs[ZBAL_MAX_RANK_SIZE];
     GM_ADDR expandXGM_;
 
-    LocalTensor<XType> winTpSendCountTensor_;
-    LocalTensor<ExpandXType> gmTpSendCountTensor_;
-    LocalTensor<XType> outTensor_;
     LocalTensor<float> tokenReuceTensor_;
     LocalTensor<float> weightedSumTensor_;
     LocalTensor<float> sumTokenTensor_;
-    LocalTensor<float> winTpSendCountFloatTensor_;
-    LocalTensor<float> gmTpSendCountFloatTensor_;
-    LocalTensor<int32_t> elasticInfoTensor_;
-    LocalTensor<bool> maskStrideTensor_;
-    LocalTensor<bool> maskGenerateTensor_;
-    LocalTensor<uint32_t> dataStateLocalTensor_;
-    LocalTensor<float> stateResetTensor_;
     LocalTensor<int32_t> globalSendCountLocal_;
     LocalTensor<uint64_t> expandXShareAddrLt_;
 
@@ -152,52 +128,26 @@ private:
     uint32_t aivNum_{0};
     uint32_t coreNum_{0};
     uint32_t epWorldSize_{0};
-    uint32_t epWorldSizeOriginal_{0};
-    uint32_t tpWorldSize_{0};
     uint32_t epRankId_{0};
-    uint32_t epRankIdOriginal_{0};
-    uint32_t tpRankId_{0};
     uint32_t aivId_{0}; // aiv id
     uint32_t sharedExpertNum_{0};
     uint32_t sharedExpertRankNum_{0}; // 共享专家卡数
     uint32_t moeExpertRankNum_{0};    // moe专家卡数，等于epWorldSize_ - sharedExpertRankNum_
     uint32_t moeExpertPerRankNum_{0}; // 每张卡部署的moe专家数
     uint32_t moeSendNum_{0};          // moeExpertPerRankNum_ * epWorldSize_
-    uint32_t zeroExpertNum_{0};
-    uint32_t copyExpertNum_{0};
-    uint32_t constExpertNum_{0};
     uint32_t moeExpertNum_{0};
-    uint32_t globalBS_{0};
-    uint32_t tpStateOffsetOnWin_{0};
     uint32_t bsKNum_{0};
-    uint32_t sendCntNum_{0};
-    uint32_t dataState_{0};
-    uint32_t stateOffset_{0};
-    uint64_t activeMaskBsCnt_{0};
-    uint64_t winDataSizeOffset_{0};
-    uint64_t winStatusOffset_{0};
-    uint64_t totalWinSize_{0};
     uint32_t selfSendCnt_{0};
-    uint32_t tpRemoteSendCnt_{0};
-    uint32_t activeMaskAlignSize_{0};
     uint32_t hExpandXTypeSize_{0};
     uint32_t hAlign32Size_{0};
     uint32_t hFloatAlign32Size_{0};
     uint32_t hFloatAlign256Size_{0};
     uint32_t hExpandXAlign32Size_{0};
-    uint32_t hAlignWinSize_{0};
-    uint32_t hAlignWinCnt_{0};
     uint32_t tokenScaleCnt_{0};
-    uint32_t scaleNumAlignSize_{0};
     uint32_t flagRcvCount_{0};
-    uint32_t axisBsAlignSize_{0};
 
     TQueBind<QuePosition::VECIN, QuePosition::VECOUT, 1> moeQueue_;
     TQue<QuePosition::VECIN, 1> moeSumQueue_;
-    TQueBind<QuePosition::VECIN, QuePosition::VECOUT, 1> gmTpSendCountQueue_;
-    TQue<QuePosition::VECIN, 1> gmTpSendCountInQueue_;
-    TQue<QuePosition::VECIN, 1> winTpSendCountInQueue_;
-    TQue<QuePosition::VECOUT, 1> xOutQueue_;
 
     TBuf<> statusBuf;
     TBuf<> waitStatusBuf;
@@ -206,57 +156,19 @@ private:
     TBuf<> recvAddrBuf_;
 
     TBuf<> sendCountBuf_;
-    TBuf<> readStateBuf_;
     TBuf<> expertScalesBuf_;
     TBuf<> expertIdsBuf_;
-    TBuf<> rowTmpFloatBuf_;
     TBuf<> sumFloatBuf_;
     TBuf<> tokenSumBuf_;
     TBuf<> weightedSumBuf_;
     TBuf<> xOutBuf_;
     TBuf<> addrBuf_;
-    TBuf<> mulBuf_;
     TBuf<> indexCountsBuf_;
-    TBuf<> winTpSendCountFloatBuf_;
-    TBuf<> gmTpSendCountFloatBuf_;
-    TBuf<> tokenBuf_;
-    TBuf<> xActMaskTBuf_;
-    TBuf<> xActMaskCastTBuf_;
-    TBuf<> tokenTargetTBuf_;
-    TBuf<> validBsIndexTBuf_;
-    TBuf<> xActMaskSumTBuf_;
-    TBuf<> stateBuf_;
-    TBuf<> stateResetBuf_;
-    TBuf<> expertMaskBuf_;
-    TBuf<> elasticInfoBuf_;
-    bool isInputTokenMaskFlag_ = false;
-    bool isInputExpertMaskFlag_ = false;
-    bool hasSharedExpertX_ = false;
-    bool hasElasticInfoFlag_ = false;
-    bool isScalingDownFlag_ = false;
     bool isShareExpertRankFlag_ = false;
-    bool enableSpecialExpert_ = false;
 
     // int8量化
-    TBuf<> xAbsBuf_;
-    TBuf<> xMaxBuf_;
-    TBuf<> xScaleMulBuf_;
 
-    LocalTensor<int8_t> castLocalTensor_;
-    LocalTensor<half> fp16CastTensor_;
-    LocalTensor<float> absFloatTensor_;
-    LocalTensor<float> reduceMaxFloatTensor_;
-    LocalTensor<XType> scaleDivTensor_;
-    LocalTensor<float> scaleDivFloatTensor_;
-    LocalTensor<float> scaleDupLocalTensor_;
-    LocalTensor<XType> sendLocalTensor_;
-    LocalTensor<half> tokenTargetTensor_;
-    LocalTensor<int32_t> validBsIndexTensor_;
-    LocalTensor<bool> expertMaskTensor_;
     LocalTensor<float> expertScalesLocal_;
-    LocalTensor<float> rowTmpFloatLocal_;
-    LocalTensor<float> mulBufLocal_;
-    LocalTensor<float> sumFloatBufLocal_;
 
     uint32_t mask_{0};
     uint32_t repeatNum_{0};
@@ -440,11 +352,8 @@ CombineLowLatency<TemplateTypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR expandX, GM_
     axisH_ = hidden;
     axisK_ = topK;
     aivNum_ = coreNum_;
-    epWorldSizeOriginal_ = comm->groupSize;
     epWorldSize_ = comm->groupSize;
-    globalBS_ = axisBS_ * epWorldSize_;
     epRankId_ = rank;
-    epRankIdOriginal_ = rank;
     // Change addrOffset Calculation
     GM_ADDR meta_addr_gm = reinterpret_cast<__gm__ uint8_t *>(comm->myAddressExchangeGva);
     addrOffset_ = (meta_addr_gm - gva_gm);
@@ -454,7 +363,6 @@ CombineLowLatency<TemplateTypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR expandX, GM_
     metaInfo_gva_gm = (GM_ADDR)(metaAddr) + addrOffset_;
 
     InitInputAndOutput(expandX, expertIds, expandIdx, epSendCount, expertScales, XOut);
-    uint32_t sharedExpertRankNum = 0;
 
     // Disable ShareExp at the moment
     sharedExpertRankNum_ = 0;
@@ -464,7 +372,7 @@ CombineLowLatency<TemplateTypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR expandX, GM_
     moeExpertPerRankNum_ = moeExpertNum_ / moeExpertRankNum_;
     bsKNum_ = axisBS_ * axisK_;
     moeSendNum_ = epWorldSize_ * moeExpertPerRankNum_;
-    if (epRankId_ < sharedExpertRankNum) {
+    if (epRankId_ < sharedExpertRankNum_) {
         isShareExpertRankFlag_ = true;
     }
 
@@ -474,8 +382,6 @@ CombineLowLatency<TemplateTypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR expandX, GM_
     hFloatAlign256Size_ = Ceil(hFloatSize, ALIGNED_LEN) * ALIGNED_LEN;
     hExpandXTypeSize_ = axisH_ * sizeof(ExpandXType);
     hExpandXAlign32Size_ = Ceil(hExpandXTypeSize_, UB_ALIGN) * UB_ALIGN;
-    hAlignWinSize_ = Ceil(hExpandXTypeSize_, WIN_ADDR_ALIGN) * WIN_ADDR_ALIGN;
-    hAlignWinCnt_ = hAlignWinSize_ / sizeof(ExpandXType);
 
     if constexpr (IsInt8Quant) {
         InitInt8Quant();

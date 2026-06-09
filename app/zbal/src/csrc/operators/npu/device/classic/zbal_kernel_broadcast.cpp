@@ -466,9 +466,6 @@ int32_t ZBALOpBroadcast(const void *sendBuff, size_t sendCount, zbal_datatype_t 
 
     uint32_t dataTypeNum = static_cast<uint32_t>(dataType);
 
-    // Prepare FFTS address
-    uint64_t fftsAddr = groupInfo.fftsConfig;
-    uint16_t rank = groupInfo.myGroupRank;
     uint16_t groupSize = groupInfo.groupSize;
     uint8_t *metaAddr = reinterpret_cast<uint8_t *>(groupInfo.myMetaGva);
     uint8_t *input = reinterpret_cast<uint8_t *>(const_cast<void *>(sendBuff));

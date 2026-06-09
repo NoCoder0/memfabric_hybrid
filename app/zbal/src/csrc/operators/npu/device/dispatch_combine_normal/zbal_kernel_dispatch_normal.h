@@ -86,8 +86,6 @@ private:
     GlobalTensor<ExpandXOutType> dstGT;
     GlobalTensor<float> dstScaleOutGT;
 
-    GlobalTensor<int32_t> dstStatusGT;
-    GlobalTensor<int32_t> waitRecvCostStatsGT;
     GlobalTensor<int32_t> balanceMatrixGT;
 
     LocalTensor<XType> xInTensor;
@@ -107,7 +105,6 @@ private:
     TBuf<> waitStatusBuf;
     TBuf<> gatherMaskOutBuf;
     TBuf<> statusSumBuf;
-    TBuf<> scalarBuf;
     TBuf<> tokenCastFloatBuf;
     TBuf<> tokenAbsFloatBuf;
     TBuf<> balanceMatrixBuf;

@@ -119,7 +119,6 @@ private:
     LocalTensor<float> rowMaxTensor_;
     LocalTensor<float> layoutFlag_;
     LocalTensor<float> statusTensor_;
-    LocalTensor<float> notifyStatusFp32Tensor_;
     LocalTensor<float> layoutStatusFp32Tensor_;
     LocalTensor<float> smoothScalesTensor_;
     LocalTensor<int32_t> dstExpIdTensor_;
@@ -136,7 +135,6 @@ private:
     TBuf<> recvAddrBuf1_;
     TBuf<> recvAddrBuf2_;
     TBuf<> expertIdsBuf_;
-    TBuf<> putOffsetBuf;
     TBuf<> expandIdsBuf_;
     TBuf<> statusBuf_;
     TBuf<> notifyBuf_;
@@ -149,8 +147,6 @@ private:
     TBuf<> subExpBuf_;
     TBuf<> layoutWaitStatusBuf_;
     TBuf<> notifyWaitStatusBuf_;
-    TBuf<> validExpertIndexBuf_;
-    TBuf<> validBsIndexTBuf_;
     TBuf<> gatherMaskTBuf_;
     TBuf<> SendCountBuf_;
     TBuf<> recvDataBuf_;
@@ -164,7 +160,6 @@ private:
     GM_ADDR dynamicScalesOutGM_; // This is an asymmetric zbal ptr now
     GM_ADDR expertTokenNumsOutGM_;
     GM_ADDR sendCountsOutGM_;
-    GM_ADDR sendTpCountOutGM_;
     GM_ADDR putOffsetGM_;
     GM_ADDR putOffsetStatusGM_;
     GM_ADDR statusDataSpaceGm_;
@@ -177,9 +172,7 @@ private:
     GM_ADDR metaInfo_gva_gm;
     uint64_t addrOffset_{0};
     // List of shared asymmetric output addresses (expandXOut_)
-    uint64_t shareExpandXOutAddrs[ZBAL_MAX_RANK_SIZE];
     // List of shared asymmetric output addresses (dynamicScalesOut_)
-    uint64_t shareDynamicScaleAddrs[ZBAL_MAX_RANK_SIZE];
     uint32_t shareAddrNum{2};
 
     // tiling侧已确保数据上限，相乘不会越界，因此统一采用uint32_t进行处理
@@ -193,9 +186,6 @@ private:
     uint32_t epWorldSize_{0};
     uint32_t epWorldSizeOriginal_{0};
     int32_t epRankId_{0};
-    int32_t epRankIdOriginal_{0};
-    uint32_t tpGatherRankId_{0}; // gather 对端ID
-    uint32_t tpRankId_{0};       // 本卡 ID
     uint32_t aivId_{0};          // aiv id
     uint32_t coreNum_{0};
     uint32_t sharedExpertNum_{0};
@@ -207,41 +197,21 @@ private:
     uint32_t moeExpertNumPerRank_{0};
     uint32_t totalExpertNum_{0};
     uint32_t hOutSize_{0};
-    uint32_t hAlignWinSize_{0};
-    uint32_t hAlignWinCnt_{0};
     uint32_t hOutAlignUbSize_{0};
-    uint32_t hOutUBAlignSize_{0};
     uint32_t hOutSizeAlign_{0};
     uint32_t clearAlign_{0};
-    uint32_t startExpertId_;
-    uint32_t endExpertId_;
-    uint32_t sendExpertNum_;
-    uint32_t totalCnt_;
-    uint32_t lastCore_{0};
-    uint32_t dataState_{0};
-    uint32_t axisBsAlignSize_{0};
     uint32_t totalUsedUB_{0};
-    uint64_t activeMaskBsCnt_{0};
-    uint64_t expertPerSizeOnWin_{0};
     uint64_t recvWinBlockNum_; // 接收Win区块数
     uint64_t sendToMoeExpTokenCnt_{0};
-    bool isTokenMaskFlag_ = false;
-    bool isExpertMaskFlag_ = false;
-    bool hasElasticInfoFlag_ = false;
-    bool isScalingDownFlag_ = false;
     bool isShareExpertRankFlag_ = false;
     float exp_flag{0};
-    uint64_t totalWinSize_{0};
     uint32_t gatherCount_{0};
     uint32_t expertTokenNumsType_{1};
-    uint32_t preCnt_{0};
     uint32_t recStatusNumPerCore_{0};
     int32_t expertIdsCnt_{0};
-    int32_t zeroComputeExpertNum_{0};
     uint32_t rscvStatusNum_{0};
     uint32_t remainderRankNum_{0};
     uint32_t startStatusIndex_{0};
-    uint32_t sendToSharedExpTokenCnt_{0};
     uint32_t maxSize_{0};
     uint32_t bufferNum_{0};
     uint32_t recvDataAlignLen_{0};
@@ -801,9 +771,6 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::SendToMoeExpert()
     PipeBarrier<PIPE_ALL>();
 
     DataCopyPadExtParams<XType> copyPadExtParams{false, 0U, 0U, 0U};
-    int32_t tokenIndex = 0;
-    int32_t topKIndex = 0;
-    uint32_t dstExpertId = 0;
 
     putOffsetAlignSize = Ceil(epWorldSize_ * moeExpertNum_ * sizeof(int32_t),
                               UB_ALIGN) *

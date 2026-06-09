@@ -56,8 +56,8 @@ public:
         len = sendCount;
         numExperts = len / sendPerGroup; // len为 num_tokens_per_expert长度，即专家数
         topkNum_ = numTopk;
-        factorHigh = factorHigh;
-        factorLow = factorLow;
+        factorHigh_ = factorHigh;
+        factorLow_ = factorLow;
         pipe_ = pipe;
 
         gva_gm = (GM_ADDR)metaAddr;
@@ -93,10 +93,8 @@ public:
         addrUint64AlignLen_ = Ceil(shareAddrNum * sizeof(uint64_t), UB_ALIGN) * UB_ALIGN;
         recvDataAlignLen_ = Ceil(numExperts * epWorldSize_ * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
         tokenPerExpertDataAlignLen_ = Ceil(numExperts * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
-        allRecvCountDataAlignLen_ = Ceil(numExperts * epWorldSize_ * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
         matrixDataAlignLen_ = Ceil(epWorldSize_ * epWorldSize_ * ZBAL_NUM2 * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
 
-        pipe_->InitBuffer(tBuf, UB_FLAG_SIZE);
         pipe_->InitBuffer(addrBuf_, addrUint64AlignLen_);
         SplitCoreCal(epWorldSize_, rankNumPerBlock, curBlockStartRankId, curBlockEndRankId);
     }
@@ -141,19 +139,13 @@ private:
     GlobalTensor<int32_t> recvCntGt;
     GlobalTensor<int32_t> balanceMatrixGt;
 
-    LocalTensor<int32_t> sendCountTensor_;
-    LocalTensor<int32_t> sendOffsetTensor;
     LocalTensor<int32_t> recvDataTensor_;
     uint32_t addrUint64AlignLen_{0};
-    uint32_t sendDataAlignLen_{0};
     uint32_t tokenPerExpertDataAlignLen_{0};
-    uint32_t allRecvCountDataAlignLen_{0};
     uint32_t recvDataAlignLen_{0};
-    uint32_t sendDataOffsetAlignLen{0};
     uint32_t matrixDataAlignLen_{0};
 
     TPipe *pipe_{nullptr};
-    TBuf<QuePosition::VECCALC> tBuf;
     TBuf<> addrBuf_;
     TBuf<> statusBuf_;
     TBuf<> waitStatusBuf_;
@@ -171,17 +163,12 @@ private:
 
     __gm__ int *tokenPerExpertDataInput;
     __gm__ T *recvDataOutput;
-    __gm__ int32_t *allRecvCountOutput_;
     GM_ADDR tokenPerExpertData_;
     GM_ADDR totalRecvTokens_;
-    GM_ADDR allRecvCount_;
-    GM_ADDR maxBs_;
     GM_ADDR recvTokensPerExpert_;
-    GM_ADDR recvData_;
 
-    GM_ADDR balanceMatrix_;
-    float factorHigh{1.2};
-    float factorLow{1.0};
+    float factorHigh_{1.2};
+    float factorLow_{1.0};
     int32_t bsPerRank[ZBAL_MAX_RANK_SIZE];       // 记录每个rank上的bs, size=epWorldSize_
     int32_t processCapacity[ZBAL_MAX_RANK_SIZE]; // 记录每个rank的剩余处理能力, size=epWorldSize_
 
@@ -411,7 +398,6 @@ private:
         LocalTensor<float> floatExpTokenSumCntLt = tmpBuf3_.Get<float>();
         LocalTensor<float> sharedTmpBuffer = tmpBuf4_.Get<float>();
 
-        int32_t maxBsNum = 0;
         int32_t totalTokens = 0;
         for (uint32_t srcRankId = 0; srcRankId < epWorldSize_; srcRankId++) {
             DataCopy(tokenPerExpertDataLt, recvDataTensor_[numExperts * srcRankId], numExperts);
@@ -424,7 +410,6 @@ private:
             SyncFunc<AscendC::HardEvent::V_S>();
 
             int32_t curRankBsNum = static_cast<int32_t>(floatExpTokenSumCntLt(0)) / topkNum_;
-            maxBsNum = curRankBsNum > maxBsNum ? curRankBsNum : maxBsNum;
             totalTokens += curRankBsNum;
             bsPerRank[srcRankId] = curRankBsNum;
             PipeBarrier<PIPE_V>();
@@ -441,9 +426,9 @@ private:
         int32_t capacity = 0;
         for (uint32_t i = 0; i < epWorldSize_; ++i) {
             if (bsPerRank[i] > avgTokens) {
-                capacity = ScalarCast<float, int32_t, RoundMode::CAST_CEIL>(avgTokens * factorHigh);
+                capacity = ScalarCast<float, int32_t, RoundMode::CAST_CEIL>(avgTokens * factorHigh_);
             } else {
-                capacity = ScalarCast<float, int32_t, RoundMode::CAST_CEIL>(avgTokens * factorLow);
+                capacity = ScalarCast<float, int32_t, RoundMode::CAST_CEIL>(avgTokens * factorLow_);
             }
             processCapacity[i] = capacity;
         }

@@ -43,7 +43,6 @@ public:
     {
         numTokens_ = numTokens;
         numRanks_ = numRanks;
-        rankId_ = rank;
         numExperts_ = numExperts;
         numTopk_ = numTopk;
         pipe_ = pipe;
@@ -66,16 +65,11 @@ public:
         topkIdx64AlignIntLen_ = Ceil(tempTokens_ * numTopk_ * sizeof(int64_t), UB_ALIGN) * UB_ALIGN;   // 64
         numTokensPerRank32AlignIntLen_ = Ceil(numRanks_ * sizeof(T), UB_ALIGN) * UB_ALIGN;             // 32
         numTokensPerExpert32AlignIntLen_ = Ceil(numExperts_ * sizeof(T), UB_ALIGN) * UB_ALIGN;         // 128
-        sendTokenIdx32AlignIntLen_ = Ceil(tempTokens_ * numExperts_ * sizeof(T), UB_ALIGN) * UB_ALIGN; // 128
-
         int64_t topkIdxOffset; // 0, 64, 128, ...
-        int64_t isTokenOffset; // 0, 8, 16, ...
         if (blockIdx_ < restNum) {
             topkIdxOffset = blockIdx_ * tempTokens_ * numTopk_ * sizeof(int64_t);
-            isTokenOffset = blockIdx_ * tempTokens_ * numRanks_ * sizeof(T);
         } else {
             topkIdxOffset = (restNum + blockIdx_ * tempTokens_) * numTopk_ * sizeof(int64_t);
-            isTokenOffset = (restNum + blockIdx_ * tempTokens_) * numRanks_ * sizeof(T);
         }
 
         topkIdxGM_.SetGlobalBuffer((__gm__ int64_t *)(topkIdx + topkIdxOffset));
@@ -207,7 +201,6 @@ private:
     TBuf<> tmpBuf_;
 
     uint32_t numTokens_{0};
-    uint32_t rankId_{0};
     uint32_t numRanks_{0};
     uint32_t numExperts_{0};
     uint32_t numTopk_{0};
@@ -217,7 +210,6 @@ private:
     uint32_t topkIdx64AlignIntLen_{0};
     uint32_t numTokensPerRank32AlignIntLen_{0};
     uint32_t numTokensPerExpert32AlignIntLen_{0};
-    uint32_t sendTokenIdx32AlignIntLen_{0};
 };
 } // namespace MoeDispatchLayout
 

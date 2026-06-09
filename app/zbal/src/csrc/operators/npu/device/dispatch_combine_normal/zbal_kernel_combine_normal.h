@@ -110,16 +110,12 @@ private:
     uint32_t h32AlignFloatLen_{0};
     uint32_t h256AlignFloatLen_{0};
     uint32_t h32AlignRecvXLen_{0};
-    uint32_t h512AlignRecvXLen_{0};
-    uint32_t sendCostStatsBufSize_{0};
     uint32_t k32AlignFloatLen_{0};
     uint32_t k32AlignLen_{0};
     uint32_t addrUint64AlignLen_{0};
 
     TPipe *tpipe_{nullptr};
     TQue<QuePosition::VECIN, 1> weightedSumQueue_;
-    TQue<QuePosition::VECOUT, 1> sendCostStatsOutQueue_;
-    TQueBind<QuePosition::VECIN, QuePosition::VECOUT, 1> localCopyQueue_;
     TBuf<> addrBuf;
     TBuf<> statusBuf;
     TBuf<> waitStatusBuf;
@@ -137,21 +133,15 @@ private:
     TBuf<> balanceMatrixBuf_;
 
     GlobalTensor<RecvXType> dstGT;
-    GlobalTensor<RecvXType> recvXGT_;
     GlobalTensor<SrcInfoType> epRecvCountGT_;
     GlobalTensor<float> topkWeightsGT_;
     GlobalTensor<int32_t> sendTokenIdxGT_;
     GlobalTensor<int32_t> topkIdxGT_;
     GlobalTensor<XType> xOutGlobal_;
-    GlobalTensor<int32_t> sendCostStatsGT_;
     GlobalTensor<int32_t> balanceMatrixGT_;
 
     GM_ADDR recvXGM_;
-    GM_ADDR localRankGM_;
     GM_ADDR XOutGM_;
-    GM_ADDR workspaceGM_;
-    GM_ADDR metaStateGvaGM_;
-    GM_ADDR dataStateGvaGM_;
     GM_ADDR topkWeightsGM_;
     GM_ADDR topkIdxGM_;
     GM_ADDR sendTokenIdxGM_;
@@ -181,7 +171,6 @@ private:
     LocalTensor<float> sumFloatBufLocal;
     LocalTensor<float> topkWeightsLocal;
     LocalTensor<int32_t> sendTokenIdxLocal;
-    LocalTensor<uint32_t> stateTensorLocal;
     LocalTensor<int32_t> allRecvCountLocal;
     LocalTensor<int32_t> topkIdxLocal;
     LocalTensor<int32_t> balanceMatrixLocal;
@@ -230,7 +219,6 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, 
     sendTokenIdxGM_ = sendTokenIdx;
     epRecvCountGM_ = epRecvCount;
 
-    recvXGT_.SetGlobalBuffer((__gm__ RecvXType *)recvX);
     epRecvCountGT_.SetGlobalBuffer((__gm__ int32_t *)epRecvCount); // 放置allReccvCount信息，num_ranks * num_experts
     topkWeightsGT_.SetGlobalBuffer((__gm__ float *)topkWeights);
     topkIdxGT_.SetGlobalBuffer((__gm__ int32_t *)topkIdx);
@@ -243,7 +231,6 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, 
     h256AlignFloatLen_ = Ceil(hFloatSize, MUL_256_ALIGN) * MUL_256_ALIGN;
     hRecvXTypeLen_ = h * sizeof(RecvXType);
     h32AlignRecvXLen_ = Ceil(hRecvXTypeLen_, UB_ALIGN) * UB_ALIGN;
-    h512AlignRecvXLen_ = Ceil(hRecvXTypeLen_, WIN_512_ALIGN) * WIN_512_ALIGN;
     k32AlignFloatLen_ = Ceil(topK * static_cast<uint32_t>(sizeof(float)), UB_ALIGN) * UB_ALIGN;
     k32AlignLen_ = Ceil(topK * static_cast<uint32_t>(sizeof(int32_t)), UB_ALIGN) * UB_ALIGN;
     addrUint64AlignLen_ = Ceil(shareAddrNum * sizeof(uint64_t), UB_ALIGN) * UB_ALIGN;
@@ -423,7 +410,6 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::ReadTokenAndWeightedSum(uint32_t token
         float scale = topkWeightsLocal.GetValue(topkId);
         int32_t remoteReadOffset = sendTokenIdxLocal(topkId);
         int32_t remoteReadBase = allRecvCountLocal(expertId * epRankSize + tarRankId);
-        uint64_t remoteReadAddr = static_cast<uint64_t>(remoteReadBase + remoteReadOffset) * hRecvXTypeLen_;
 
         int32_t dstRankId = expertId / moeExpertNumPerRank;
         auto ptr = shareRecvXAddrs[dstRankId];

@@ -52,7 +52,6 @@ public:
         uint64_t rootDataAddr = GetRootDataAddr(exchangeAddr, root);
 
         uint32_t elementsPerRank = elements;
-        uint32_t rankOffset = rank * elementsPerRank;
         uint32_t baseElementsPerCore = elementsPerRank / aivNum;
         uint32_t startInRank = 0;
         uint32_t numPerCore = 0;

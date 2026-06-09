@@ -44,7 +44,6 @@ private:
     uint64_t elements;
     uint64_t waitSymbol;
     uintptr_t exchangeAddr;
-    uintptr_t paramAddr;
     __gm__ uint64_t *inputAddr;
     __gm__ uint64_t *flagAddr;
     __gm__ uint64_t *statAddr;
@@ -104,7 +103,6 @@ ZBAL_KERNEL void ZBALAllGatherSmallKernel::Init(GM_ADDR input, GM_ADDR output, G
     this->inputAddr = reinterpret_cast<__gm__ uint64_t *>(exchangeAddr);
     this->flagAddr = this->inputAddr + inputAddrSize;
     this->statAddr = this->flagAddr + inputAddrSize;
-    this->paramAddr = comm->myParamDataGva;
     this->aivNum = AscendC::GetBlockNum(); // * AscendC::GetTaskRation()
     this->input = input;
     this->output = output;

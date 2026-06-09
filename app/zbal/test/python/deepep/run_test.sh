@@ -1,5 +1,5 @@
 #!/bin/bash
-
+set -e
 MODE=${1:-0}
 NP=${2:-8}
 
