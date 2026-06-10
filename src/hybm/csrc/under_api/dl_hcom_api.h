@@ -73,6 +73,7 @@ using contextGetMessageDataLenFunc = uint32_t (*)(Service_Context);
 using setExternalLoggerFunc = void (*)(Service_LogHandler);
 using SetUbsMode = void (*)(Service_Context service, UbsHcomServiceUbcMode ubcMode);
 using ImportUrmaSeg = int (*)(Service_Context service, uintptr_t address, uint64_t size, OneSideKey *key);
+using SetMaxSendRecvDataCntFunc = void (*)(Service_Context, uint32_t);
 
 class DlHcomApi {
 public:
@@ -232,26 +233,30 @@ public:
 
     static inline void ServiceSetCompletionQueueDepth(Hcom_Service service, uint16_t depth)
     {
-        BM_ASSERT_RET_VOID(gServiceSetCompletionQueueDepth != nullptr);
-        gServiceSetCompletionQueueDepth(service, depth);
+        if (gServiceSetCompletionQueueDepth != nullptr) {
+            gServiceSetCompletionQueueDepth(service, depth);
+        }
     }
 
     static inline void ServiceSetSendQueueSize(Hcom_Service service, uint32_t sqSize)
     {
-        BM_ASSERT_RET_VOID(gServiceSetSendQueueSize != nullptr);
-        gServiceSetSendQueueSize(service, sqSize);
+        if (gServiceSetSendQueueSize != nullptr) {
+            gServiceSetSendQueueSize(service, sqSize);
+        }
     }
 
     static inline void ServiceSetRecvQueueSize(Hcom_Service service, uint32_t rqSize)
     {
-        BM_ASSERT_RET_VOID(gServiceSetRecvQueueSize != nullptr);
-        gServiceSetRecvQueueSize(service, rqSize);
+        if (gServiceSetRecvQueueSize != nullptr) {
+            gServiceSetRecvQueueSize(service, rqSize);
+        }
     }
 
     static inline void ServiceSetQueuePrePostSize(Hcom_Service service, uint32_t prePostSize)
     {
-        BM_ASSERT_RET_VOID(gServiceSetQueuePrePostSize != nullptr);
-        gServiceSetQueuePrePostSize(service, prePostSize);
+        if (gServiceSetQueuePrePostSize != nullptr) {
+            gServiceSetQueuePrePostSize(service, prePostSize);
+        }
     }
 
     static inline void ServiceSetPollingBatchSize(Hcom_Service service, uint16_t pollSize)
@@ -440,6 +445,13 @@ public:
         return gImportUrmaSeg != nullptr;
     }
 
+    static inline void HcomSetMaxSendRecvDataCnt(Hcom_Service service, uint32_t maxSendRecvDataCount)
+    {
+        if (gSetMaxSendRecvDataCnt != nullptr) {
+            gSetMaxSendRecvDataCnt(service, maxSendRecvDataCount);
+        }
+    }
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -497,6 +509,7 @@ private:
     static setExternalLoggerFunc gSetExternalLogger;
     static SetUbsMode gSetUbsMode;
     static ImportUrmaSeg gImportUrmaSeg;
+    static SetMaxSendRecvDataCntFunc gSetMaxSendRecvDataCnt;
 };
 } // namespace mf
 } // namespace ock

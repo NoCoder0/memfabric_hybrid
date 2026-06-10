@@ -150,6 +150,8 @@ private:
 
     int PrepareThreadLocalStream();
 
+    void SetHcomServiceConfig(Hcom_Service service);
+
 private:
     hybm_data_op_type bmOptype_{};
     ReadWriteLock lock_;

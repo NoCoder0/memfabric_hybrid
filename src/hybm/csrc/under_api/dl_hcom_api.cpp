@@ -71,6 +71,7 @@ contextGetMessageDataLenFunc DlHcomApi::gContextGetMessageDataLen = nullptr;
 setExternalLoggerFunc DlHcomApi::gSetExternalLogger = nullptr;
 SetUbsMode DlHcomApi::gSetUbsMode = nullptr;
 ImportUrmaSeg DlHcomApi::gImportUrmaSeg = nullptr;
+SetMaxSendRecvDataCntFunc DlHcomApi::gSetMaxSendRecvDataCnt = nullptr;
 
 Result DlHcomApi::LoadLibrary()
 {
@@ -112,12 +113,14 @@ Result DlHcomApi::LoadLibrary()
     DL_LOAD_SYM(gServiceSetTcpSendZCopy, serviceSetTcpSendZCopyFunc, hcomHandle, "ubs_hcom_service_set_tcp_send_zcopy");
     DL_LOAD_SYM(gServiceSetDeviceIpMask, serviceSetDeviceIpMaskFunc, hcomHandle, "ubs_hcom_service_set_ipmask");
     DL_LOAD_SYM(gServiceSetDeviceIpGroup, serviceSetDeviceIpGroupFunc, hcomHandle, "ubs_hcom_service_set_ipgroup");
-    DL_LOAD_SYM(gServiceSetCompletionQueueDepth, serviceSetCompletionQueueDepthFunc, hcomHandle,
-                "ubs_hcom_service_set_cq_depth");
-    DL_LOAD_SYM(gServiceSetSendQueueSize, serviceSetSendQueueSizeFunc, hcomHandle, "ubs_hcom_service_set_sq_size");
-    DL_LOAD_SYM(gServiceSetRecvQueueSize, serviceSetRecvQueueSizeFunc, hcomHandle, "ubs_hcom_service_set_rq_size");
-    DL_LOAD_SYM(gServiceSetQueuePrePostSize, serviceSetQueuePrePostSizeFunc, hcomHandle,
-                "ubs_hcom_service_set_prepost_size");
+    DL_LOAD_SYM_OPTIONAL(gServiceSetCompletionQueueDepth, serviceSetCompletionQueueDepthFunc, hcomHandle,
+                         "ubs_hcom_service_set_cq_depth");
+    DL_LOAD_SYM_OPTIONAL(gServiceSetSendQueueSize, serviceSetSendQueueSizeFunc, hcomHandle,
+                         "ubs_hcom_service_set_sq_size");
+    DL_LOAD_SYM_OPTIONAL(gServiceSetRecvQueueSize, serviceSetRecvQueueSizeFunc, hcomHandle,
+                         "ubs_hcom_service_set_rq_size");
+    DL_LOAD_SYM_OPTIONAL(gServiceSetQueuePrePostSize, serviceSetQueuePrePostSizeFunc, hcomHandle,
+                         "ubs_hcom_service_set_prepost_size");
     DL_LOAD_SYM(gServiceSetPollingBatchSize, serviceSetPollingBatchSizeFunc, hcomHandle,
                 "ubs_hcom_service_set_polling_batchsize");
     DL_LOAD_SYM(gServiceSetEventPollingTimeOutUs, serviceSetEventPollingTimeOutUsFunc, hcomHandle,
@@ -150,6 +153,8 @@ Result DlHcomApi::LoadLibrary()
     DL_LOAD_SYM(gSetExternalLogger, setExternalLoggerFunc, hcomHandle, "ubs_hcom_set_log_handler");
     DL_LOAD_SYM_OPTIONAL(gSetUbsMode, SetUbsMode, hcomHandle, "ubs_hcom_service_set_ubcmode");
     DL_LOAD_SYM_OPTIONAL(gImportUrmaSeg, ImportUrmaSeg, hcomHandle, "ubs_hcom_reg_seg");
+    DL_LOAD_SYM_OPTIONAL(gSetMaxSendRecvDataCnt, SetMaxSendRecvDataCntFunc, hcomHandle,
+                         "ubs_hcom_service_set_max_send_recv_data_cnt");
 
     gLoaded = true;
     return BM_OK;
@@ -211,6 +216,7 @@ void DlHcomApi::CleanupLibrary()
     gSetExternalLogger = nullptr;
     gSetUbsMode = nullptr;
     gImportUrmaSeg = nullptr;
+    gSetMaxSendRecvDataCnt = nullptr;
 
     if (hcomHandle != nullptr) {
         dlclose(hcomHandle);

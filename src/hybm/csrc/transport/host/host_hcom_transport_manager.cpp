@@ -151,6 +151,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
         return ret;
     }
 
+    SetHcomServiceConfig(rpcService_);
     DlHcomApi::ServiceBind(rpcService_, localNic_.c_str(), TransportRpcHcomNewEndPoint);
     ret = DlHcomApi::ServiceStart(rpcService_);
     if (ret != 0) {
@@ -1179,4 +1180,37 @@ void HcomTransportManager::ChannelAsyncCallback(void *arg, Service_Context conte
 const TransportPrivateData HcomTransportManager::GetPrivateData() const
 {
     return TransportPrivateData{};
+}
+
+void HcomTransportManager::SetHcomServiceConfig(Hcom_Service service)
+{
+    uint16_t cqDepth = 0;
+    if (MfEnvUtil::GetUint("MF_HCOM_CQ_DEPTH", cqDepth)) {
+        BM_LOG_INFO("Set hcom cq depth: " << cqDepth);
+        DlHcomApi::ServiceSetCompletionQueueDepth(service, cqDepth);
+    }
+
+    uint32_t sqSize = 0;
+    if (MfEnvUtil::GetUint("MF_HCOM_SQ_SIZE", sqSize)) {
+        BM_LOG_INFO("Set hcom sq size: " << sqSize);
+        DlHcomApi::ServiceSetSendQueueSize(service, sqSize);
+    }
+
+    uint32_t rqSize = 0;
+    if (MfEnvUtil::GetUint("MF_HCOM_RQ_SIZE", rqSize)) {
+        BM_LOG_INFO("Set hcom rq size: " << rqSize);
+        DlHcomApi::ServiceSetRecvQueueSize(service, rqSize);
+    }
+
+    uint32_t prepostSize = 0;
+    if (MfEnvUtil::GetUint("MF_HCOM_PREPOST_SIZE", prepostSize)) {
+        BM_LOG_INFO("Set hcom prepost size: " << prepostSize);
+        DlHcomApi::ServiceSetQueuePrePostSize(service, prepostSize);
+    }
+
+    uint32_t maxSendRecvDataCnt = 0;
+    if (MfEnvUtil::GetUint("MF_HCOM_MAX_SEND_RECV_DATA_CNT", maxSendRecvDataCnt)) {
+        BM_LOG_INFO("Set hcom max send recv data cnt: " << maxSendRecvDataCnt);
+        DlHcomApi::HcomSetMaxSendRecvDataCnt(service, maxSendRecvDataCnt);
+    }
 }
