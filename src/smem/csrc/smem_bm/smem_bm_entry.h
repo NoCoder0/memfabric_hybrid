@@ -31,6 +31,25 @@ struct SmemBmEntryOptions {
     uint64_t controlOperationTimeout;
 };
 
+struct SmemBmConsistencyConfig {
+    uint64_t maxHBMSize;
+    uint64_t maxDRAMSize;
+    bool enable56BitsGva;
+
+    SmemBmConsistencyConfig() : maxHBMSize(0), maxDRAMSize(0), enable56BitsGva(false) {}
+
+    explicit SmemBmConsistencyConfig(const hybm_options &options)
+        : maxHBMSize(options.maxHBMSize), maxDRAMSize(options.maxDRAMSize), enable56BitsGva(options.enable56BitsGva)
+    {}
+
+    [[nodiscard]] std::string ToStr() const
+    {
+        std::stringstream ss;
+        ss << "maxHBMSize=" << maxHBMSize << ", maxDRAMSize=" << maxDRAMSize << "enable56BitsGva" << enable56BitsGva;
+        return ss.str();
+    }
+};
+
 class SmemBmEntry : public SmReferable {
 public:
     explicit SmemBmEntry(const SmemBmEntryOptions &options, const StorePtr &store)
@@ -82,6 +101,7 @@ public:
 private:
     bool AddrInHostGva(const void *address, uint64_t size);
     bool AddrInDeviceGva(const void *address, uint64_t size);
+    [[nodiscard]] bool CheckRankConfigConsistency(const hybm_options &options) const;
 
     smem_bm_mem_type GetHybmMemTypeFromGva(const void *addr, uint64_t size);
     Result CheckJoined() const;

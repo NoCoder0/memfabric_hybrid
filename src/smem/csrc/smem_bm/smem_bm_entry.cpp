@@ -34,6 +34,7 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     hybm_mem_slice_t slice = nullptr;
     Result ret = SM_ERROR;
 
+    SM_VALIDATE_RETURN(CheckRankConfigConsistency(options), "check rank config consistency failed", SM_INVALID_PARAM);
     SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(CreateGlobalTeam(options.rankCount, options.rankId), "create global team failed");
     SM_ASSERT_RETURN(executorService_.Start(), SM_ERROR);
     executorService_.SetThreadName("batch-copy");
@@ -758,6 +759,56 @@ bool SmemBmEntry::AddrInDeviceGva(const void *address, uint64_t size)
         return false;
     }
 
+    return true;
+}
+
+bool SmemBmEntry::CheckRankConfigConsistency(const hybm_options &options) const
+{
+    SmemBmConsistencyConfig localConfig{options};
+    const auto localConfigAddr = static_cast<const uint8_t *>(static_cast<const void *>(&localConfig));
+    const std::string key = "check_rank_config_consistency";
+
+    std::vector<uint8_t> expectData;
+    std::vector<uint8_t> existData;
+    std::vector<uint8_t> localConfData;
+    localConfData.insert(localConfData.end(), localConfigAddr, localConfigAddr + sizeof(localConfig));
+
+    auto ret = _configStore->Cas(key, expectData, localConfData, existData);
+    if (ret == SUCCESS) {
+        SM_LOG_DEBUG("first set for key: " << key << ", config: " << localConfig.ToStr());
+        return true;
+    }
+
+    if (ret != RESTORE) {
+        SM_LOG_ERROR("CAS for key: " << key << " failed: " << ret);
+        return false;
+    }
+
+    // CAS return RESTORE
+    if (existData.size() != sizeof(localConfig)) {
+        SM_LOG_ERROR("CAS for key: " << key << "Expected size of localConfig(" << sizeof(localConfig) << ") but got "
+                                     << existData.size());
+        return false;
+    }
+
+    auto existConfig = static_cast<const SmemBmConsistencyConfig *>(static_cast<const void *>(existData.data()));
+    if (existConfig->maxDRAMSize != localConfig.maxDRAMSize) {
+        SM_LOG_ERROR("exist Config maxDRAMSize:" << existConfig->maxDRAMSize << " != " << localConfig.maxDRAMSize);
+        return false;
+    }
+
+    if (existConfig->maxHBMSize != localConfig.maxHBMSize) {
+        SM_LOG_ERROR("exist Config maxHBMSize:" << existConfig->maxHBMSize << " != " << localConfig.maxHBMSize);
+        return false;
+    }
+
+    if (existConfig->enable56BitsGva != localConfig.enable56BitsGva) {
+        SM_LOG_ERROR("exist Config enable56BitsGva:" << existConfig->enable56BitsGva
+                                                     << " != " << localConfig.enable56BitsGva);
+        return false;
+    }
+
+    SM_LOG_DEBUG("compare for key: " << key << ", config: " << localConfig.ToStr() << " matches.");
     return true;
 }
 } // namespace smem

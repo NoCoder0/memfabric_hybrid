@@ -39,6 +39,9 @@
 #include "hybm_data_op.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
+namespace ock::smem {
+class SmemBmEntry;
+}
 const int32_t UT_SMEM_ID = 1;
 const char UT_IP_PORT[] = "tcp://127.0.0.1:7758";
 const char UT_IP_PORT2[] = "tcp://127.0.0.1:7958";
@@ -131,9 +134,9 @@ public:
         }
         if (exists == expect) {
             kv_[key] = value;
-            return SM_OK;
+            return SUCCESS;
         }
-        return SM_ERROR;
+        return RESTORE;
     }
 
     ock::smem::Result Watch(const std::string &,
@@ -1718,6 +1721,89 @@ TEST_F(SmemBmTest, smem_bm_extend_local_mem_param_error)
 
     smem_bm_destroy(handle);
     smem_bm_uninit(0);
+}
+
+TEST_F(SmemBmTest, CheckRankConfigConsistency_all_matches)
+{
+    auto base = SmMakeRef<FakeStoreManager>();
+    auto store = Convert<FakeStoreManager, ConfigStore>(base);
+    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
+    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
+    auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
+
+    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
+                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
+                              .enable56BitsGva = false};
+    hybm_options rankOptions1 = rankOptions0;
+
+    auto ret0 = rank0->CheckRankConfigConsistency(rankOptions0);
+    ASSERT_TRUE(ret0);
+    auto ret1 = rank1->CheckRankConfigConsistency(rankOptions1);
+    ASSERT_TRUE(ret1);
+}
+
+TEST_F(SmemBmTest, CheckRankConfigConsistency_max_hbm_size_non_matches)
+{
+    auto base = SmMakeRef<FakeStoreManager>();
+    auto store = Convert<FakeStoreManager, ConfigStore>(base);
+    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
+    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
+    auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
+
+    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
+                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
+                              .enable56BitsGva = false};
+    hybm_options rankOptions1 = rankOptions0;
+    rankOptions1.maxHBMSize /= 2U;
+
+    auto ret0 = rank0->CheckRankConfigConsistency(rankOptions0);
+    ASSERT_TRUE(ret0);
+    auto ret1 = rank1->CheckRankConfigConsistency(rankOptions1);
+    ASSERT_FALSE(ret1);
+}
+
+TEST_F(SmemBmTest, CheckRankConfigConsistency_max_dram_size_non_matches)
+{
+    auto base = SmMakeRef<FakeStoreManager>();
+    auto store = Convert<FakeStoreManager, ConfigStore>(base);
+    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
+    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
+    auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
+
+    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
+                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
+                              .enable56BitsGva = false};
+    hybm_options rankOptions1 = rankOptions0;
+    rankOptions1.maxDRAMSize /= 2U;
+
+    auto ret0 = rank0->CheckRankConfigConsistency(rankOptions0);
+    ASSERT_TRUE(ret0);
+    auto ret1 = rank1->CheckRankConfigConsistency(rankOptions1);
+    ASSERT_FALSE(ret1);
+}
+
+TEST_F(SmemBmTest, CheckRankConfigConsistency_enable_56_bits_gva_non_matches)
+{
+    auto base = SmMakeRef<FakeStoreManager>();
+    auto store = Convert<FakeStoreManager, ConfigStore>(base);
+    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
+    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
+    auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
+
+    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
+                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
+                              .enable56BitsGva = false};
+    hybm_options rankOptions1 = rankOptions0;
+    rankOptions1.enable56BitsGva = !rankOptions1.enable56BitsGva;
+
+    auto ret0 = rank0->CheckRankConfigConsistency(rankOptions0);
+    ASSERT_TRUE(ret0);
+    auto ret1 = rank1->CheckRankConfigConsistency(rankOptions1);
+    ASSERT_FALSE(ret1);
 }
 
 /*
