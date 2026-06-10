@@ -40,14 +40,14 @@ node_rank=$(get_node_idx)
 export WORLD_SIZE=$WORLD_SIZE
 export TEST_TYPE=$TEST_TYPE
 export CURRENT_DIR=$CURRENT_DIR
-export HCCL_OP_EXPANSION_MODE="AIV"
+# export HCCL_OP_EXPANSION_MODE="AIV"
 
-rm -rf golden output
+rm -rf golden output profiling.hccl* profiling.zbal*
 mkdir -p golden output
 python3 ${CURRENT_DIR}/scripts/data_gen.py $WORLD_SIZE $TEST_TYPE --case_num $CASE_NUM --case_list $CASE_LIST
 
 export CHECK_PRECISION=1
-export ENABLE_PROFILING=0
+export ENABLE_PROFILING=1
 
 if [[ $nnodes -eq 1 ]]; then
     if [[ ${ZBAL_ENABLE_PERF_TEST} = "1" ]]; then
@@ -56,7 +56,9 @@ if [[ $nnodes -eq 1 ]]; then
     torchrun --nproc-per-node $WORLD_SIZE --master-port 8778 ${CURRENT_DIR}/test_zbal_allreduce.py zbal --case_num $CASE_NUM --case_list $CASE_LIST --data_op_type $DATA_OP_TYPE
 else
     if [[ $ip_size -eq $nnodes ]]; then
-        torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8778 ${CURRENT_DIR}/test_zbal_allreduce.py hccl --case_num $CASE_NUM --case_list $CASE_LIST --data_op_type $DATA_OP_TYPE
+        if [[ ${ZBAL_ENABLE_PERF_TEST} = "1" ]]; then
+            torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8778 ${CURRENT_DIR}/test_zbal_allreduce.py hccl --case_num $CASE_NUM --case_list $CASE_LIST --data_op_type $DATA_OP_TYPE
+        fi
         torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8778 ${CURRENT_DIR}/test_zbal_allreduce.py zbal --case_num $CASE_NUM --case_list $CASE_LIST --data_op_type $DATA_OP_TYPE
     else
         echo "run ${WORLD_SIZE} ranks process but IPs size is not match"

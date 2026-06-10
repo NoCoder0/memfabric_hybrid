@@ -53,7 +53,7 @@ def test_allgather_graph(case_list, backend="zbal", use_graph=False):
 
     if backend == "zbal":
         zbal_set_logger_level(3)
-        local_mem = (world_size + 8) * 1024 * 1024 * 1024
+        local_mem = 4 * 1024 * 1024 * 1024
         if not zbal_init(world_size, device_id, local_rank, local_mem):
             logging.error(f"zbal_init failed on rank {local_rank}.")
             return

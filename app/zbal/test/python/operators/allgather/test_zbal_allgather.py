@@ -63,7 +63,7 @@ def test_allgather(case_list, dist_type, data_op_type):
 
     if dist_type == 'zbal':
         zbal_set_logger_level(3)
-        local_mem = (world_size + 8) * 1024 * 1024 * 1024
+        local_mem = 4 * 1024 * 1024 * 1024
         if not zbal_init(world_size, device_id, global_rank, local_mem, data_op_type=data_op_type):
             logging.error(f"zbal_init failed on rank {global_rank}.")
             return
@@ -89,32 +89,29 @@ def test_allgather(case_list, dist_type, data_op_type):
             l2_cache=False,
             data_simplification=False,
         )
-        if dist_type == 'zbal':
-            profiling_path = f"{current_dir}/profiling.zbal_{case_list[0]}/"
-        else:
-            profiling_path = f"{current_dir}/profiling.hccl_{case_list[0]}/"
-        prof = torch_npu.profiler.profile(
-            activities=[
-                torch_npu.profiler.ProfilerActivity.CPU,
-                torch_npu.profiler.ProfilerActivity.NPU,
-            ],
-            on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                profiling_path
-            ),
-            schedule=torch_npu.profiler.schedule(
-                wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
-            ),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=False,
-            with_flops=False,
-            with_modules=False,
-            experimental_config=experimental_config,
-        )
     try:
         for case_id, data_len in enumerate(case_list):
             prof_cnt = 0
             if enable_profiling:
+                profiling_path = f"{current_dir}/profiling.{dist_type}_{world_size}_{data_len}/"
+                prof = torch_npu.profiler.profile(
+                    activities=[
+                        torch_npu.profiler.ProfilerActivity.CPU,
+                        torch_npu.profiler.ProfilerActivity.NPU,
+                    ],
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
+                        profiling_path
+                    ),
+                    schedule=torch_npu.profiler.schedule(
+                        wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
+                    ),
+                    record_shapes=True,
+                    profile_memory=True,
+                    with_stack=False,
+                    with_flops=False,
+                    with_modules=False,
+                    experimental_config=experimental_config,
+                )
                 torch.npu.synchronize()
                 prof.start()
             golden_dir = f"allgather_{data_len}_{world_size}"
@@ -143,7 +140,7 @@ def test_allgather(case_list, dist_type, data_op_type):
                     golden_tensor = get_golden_by_assembly(
                         golden_dir, world_size, data_type, tensor_data_type, current_dir)
             for k in range(0, 20):
-                if enable_profiling and prof_cnt > 5:
+                if enable_profiling and prof_cnt >= 1:
                     prof.step()
 
                 if allgather_list:
@@ -156,7 +153,6 @@ def test_allgather(case_list, dist_type, data_op_type):
                 if dist_type == 'hccl' and k == 0:
                     tensor_output_file = f"{tensor_output_dir}/output_hccl_{global_rank}.bin"
                     torch.save(out_tensor.cpu(), tensor_output_file)
-                    break
                 elif dist_type == 'zbal':
                     if not torch.allclose(out_tensor, golden_tensor, rtol=1e-4, atol=1e-8):
                         logging.error(f"allgather {world_size=} {global_rank=} {data_len=} precision failed. ")

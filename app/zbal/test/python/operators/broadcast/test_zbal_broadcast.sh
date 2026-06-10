@@ -38,14 +38,14 @@ function get_node_idx()
 export WORLD_SIZE=$WORLD_SIZE
 export TEST_TYPE=$TEST_TYPE
 export CURRENT_DIR=$CURRENT_DIR
-export HCCL_OP_EXPANSION_MODE="AIV"
+# export HCCL_OP_EXPANSION_MODE="AIV"
 
 rm -rf golden output profiling.hccl* profiling.zbal*
 mkdir -p golden output
 python3 ${CURRENT_DIR}/scripts/data_gen.py $WORLD_SIZE $TEST_TYPE --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE
 
 export CHECK_PRECISION=1
-export ENABLE_PROFILING=0
+export ENABLE_PROFILING=1
 nnodes=$(((WORLD_SIZE + RANK_PER_NODE - 1) / RANK_PER_NODE))
 node_rank=$(get_node_idx)
 

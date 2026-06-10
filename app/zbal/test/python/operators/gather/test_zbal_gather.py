@@ -101,33 +101,33 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
             l2_cache=False,
             data_simplification=False,
         )
-        profiling_path = f"{current_dir}/profiling.{dist_type}_{case_list[0]}/"
-        prof = torch_npu.profiler.profile(
-            activities=[
-                torch_npu.profiler.ProfilerActivity.CPU,
-                torch_npu.profiler.ProfilerActivity.NPU,
-            ],
-            on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                profiling_path
-            ),
-            schedule=torch_npu.profiler.schedule(
-                wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
-            ),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=False,
-            with_flops=False,
-            with_modules=False,
-            experimental_config=experimental_config,
-        )
 
     try:
         ret = 0
-        prof_cnt = 0
-        if enable_profiling:
-            torch.npu.synchronize()
-            prof.start()
         for data_len in case_list:
+            prof_cnt = 0
+            if enable_profiling:
+                profiling_path = f"{current_dir}/profiling.{dist_type}_{world_size}_{data_len}/"
+                prof = torch_npu.profiler.profile(
+                    activities=[
+                        torch_npu.profiler.ProfilerActivity.CPU,
+                        torch_npu.profiler.ProfilerActivity.NPU,
+                    ],
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
+                        profiling_path
+                    ),
+                    schedule=torch_npu.profiler.schedule(
+                        wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
+                    ),
+                    record_shapes=True,
+                    profile_memory=True,
+                    with_stack=False,
+                    with_flops=False,
+                    with_modules=False,
+                    experimental_config=experimental_config,
+                )
+                torch.npu.synchronize()
+                prof.start()
             rows_per_rank = data_len // hidden_size
             golden_dir = f"gather_{world_size}_{rows_per_rank}_{hidden_size}"
             tensor_output_dir = f"{current_dir}/output/gather_{data_len}_{world_size}/"
@@ -140,7 +140,7 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                     golden_tensor = get_golden_by_assembly(golden_dir, world_size, data_type, tensor_data_type, \
                         current_dir, rows_per_rank, hidden_size)
             for k in range(20):
-                if enable_profiling and prof_cnt > 5:
+                if enable_profiling and prof_cnt >= 1:
                     prof.step()
                 dst = 0
 
@@ -163,7 +163,6 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                         torch.save(full_gather_result.cpu(), tensor_output_file)
                     else:
                         torch.save(torch.zeros(1), tensor_output_file)
-                    break
                 elif dist_type == 'zbal':
                     if global_rank == dst:
                         full_gather_result = torch.cat(gather_list, dim=0)

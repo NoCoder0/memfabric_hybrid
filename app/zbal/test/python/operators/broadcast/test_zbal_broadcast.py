@@ -88,40 +88,39 @@ def test_broadcast(dist_type, case_list, hidden_size, data_op_type):
         logger.info(f"init hccl group success on rank {global_rank=} {world_size=}")
 
     if enable_profiling:
-        prof_cnt = 0
         experimental_config = torch_npu.profiler._ExperimentalConfig(
             aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
             profiler_level=torch_npu.profiler.ProfilerLevel.Level2,
             l2_cache=False,
             data_simplification=False,
         )
-        profiling_path = f"{current_dir}/profiling.{dist_type}_{case_list[0]}/"
-        prof = torch_npu.profiler.profile(
-            activities=[
-                torch_npu.profiler.ProfilerActivity.CPU,
-                torch_npu.profiler.ProfilerActivity.NPU,
-            ],
-            on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                profiling_path
-            ),
-            schedule=torch_npu.profiler.schedule(
-                wait=1, warmup=1, active=10, repeat=1, skip_first=1
-            ),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=False,
-            with_flops=False,
-            with_modules=False,
-            experimental_config=experimental_config,
-        )
 
     try:
         ret = 0
-        prof_cnt = 0
-        if enable_profiling:
-            torch.npu.synchronize()
-            prof.start()
         for data_len in case_list:
+            prof_cnt = 0
+            if enable_profiling:
+                profiling_path = f"{current_dir}/profiling.{dist_type}_{world_size}_{data_len}/"
+                prof = torch_npu.profiler.profile(
+                    activities=[
+                        torch_npu.profiler.ProfilerActivity.CPU,
+                        torch_npu.profiler.ProfilerActivity.NPU,
+                    ],
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
+                        profiling_path
+                    ),
+                    schedule=torch_npu.profiler.schedule(
+                        wait=1, warmup=1, active=10, repeat=1, skip_first=1
+                    ),
+                    record_shapes=True,
+                    profile_memory=True,
+                    with_stack=False,
+                    with_flops=False,
+                    with_modules=False,
+                    experimental_config=experimental_config,
+                )
+                torch.npu.synchronize()
+                prof.start()
             root = 0
             row_num = data_len // hidden_size
             golden_dir = f"broadcast_{world_size}_{row_num}_{hidden_size}"
@@ -136,8 +135,8 @@ def test_broadcast(dist_type, case_list, hidden_size, data_op_type):
                     golden_tensor = get_golden_by_assembly(golden_dir, current_dir, world_size, data_type, \
                         tensor_data_type, root, row_num, hidden_size)
 
-            for k in range(15):
-                if enable_profiling and prof_cnt > 1:
+            for k in range(20):
+                if enable_profiling and prof_cnt >= 1:
                     prof.step()
                 data = np.fromfile(f"{current_dir}/golden/{golden_dir}/input_gm_{root}.bin", dtype=data_type)
                 tensor_input = torch.from_numpy(data).to(tensor_data_type).npu().view(row_num, hidden_size)
@@ -153,7 +152,6 @@ def test_broadcast(dist_type, case_list, hidden_size, data_op_type):
                 if dist_type == 'hccl' and k == 0:
                     tensor_output_file = f"{tensor_output_dir}/output_hccl_{data_len}_{global_rank}.bin"
                     torch.save(tensor_output.cpu(), tensor_output_file)
-                    break
                 elif dist_type == 'zbal':
                     if not torch.allclose(golden_tensor, tensor_output, rtol=1e-4, atol=1e-8):
                         logger.error(f"rank {global_rank} case {data_len} broadcast result not correct")

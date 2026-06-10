@@ -27,26 +27,39 @@ function get_node_idx()
     echo "Local-IP-Not-Match"
 }
 
-CASE_LIST=${1:-917504}
+CASE_LIST=${1:-262144}
 WORLD_SIZE=${2:-4}
 DATA_OP_TYPE=${3:-0}
+SUITE_MODE=${4:-perf}
 rank_size=${WORLD_SIZE}
 
-python3 ${CURRENT_DIR}/scripts/data_gen.py $TEST_TYPE $rank_size
+# Select Python script and data_gen args based on mode
+if [ "$SUITE_MODE" = "smoke" ]; then
+    PY_SCRIPT="test_zbal_alltoallv_smoke.py"
+    python3 ${CURRENT_DIR}/scripts/data_gen.py $TEST_TYPE $rank_size
+    CASE_ARGS=""
+else
+    PY_SCRIPT="test_zbal_alltoallv_perf.py"
+    python3 ${CURRENT_DIR}/scripts/data_gen.py $TEST_TYPE $rank_size --case_list $CASE_LIST
+    CASE_ARGS="--case_list $CASE_LIST"
+fi
 
 export ENABLE_PROFILING=1
+# export HCCL_OP_EXPANSION_MODE="AIV"
 
 nnodes=$(((rank_size + RANK_PER_NODE - 1) / RANK_PER_NODE))
 node_rank=$(get_node_idx)
 if [[ $nnodes -eq 1 ]]; then
     if [[ ${ZBAL_ENABLE_PERF_TEST} = "1" ]]; then
-        echo; echo -e "run hccl..."; torchrun --nnodes ${nnodes} --nproc-per-node $rank_size --master_port 8877 ${CURRENT_DIR}/test_zbal_alltoallv.py hccl --data_op_type $DATA_OP_TYPE
+        echo; echo -e "run hccl..."; torchrun --nnodes ${nnodes} --nproc-per-node $rank_size --master_port 8877 ${CURRENT_DIR}/${PY_SCRIPT} hccl --data_op_type $DATA_OP_TYPE $CASE_ARGS
     fi
-    echo; echo -e "run zbal..."; torchrun --nnodes ${nnodes} --nproc-per-node $rank_size --master_port 8877 ${CURRENT_DIR}/test_zbal_alltoallv.py zbal --data_op_type $DATA_OP_TYPE
+    echo; echo -e "run zbal..."; torchrun --nnodes ${nnodes} --nproc-per-node $rank_size --master_port 8877 ${CURRENT_DIR}/${PY_SCRIPT} zbal --data_op_type $DATA_OP_TYPE $CASE_ARGS
 else
     if [[ $ip_size -eq $nnodes ]]; then
-        echo; echo -e "run hccl..."; torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8877 ${CURRENT_DIR}/test_zbal_alltoallv.py hccl --data_op_type $DATA_OP_TYPE
-        echo; echo -e "run zbal..."; torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8877 ${CURRENT_DIR}/test_zbal_alltoallv.py zbal --data_op_type $DATA_OP_TYPE
+        if [[ ${ZBAL_ENABLE_PERF_TEST} = "1" ]]; then
+            echo; echo -e "run hccl..."; torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8877 ${CURRENT_DIR}/${PY_SCRIPT} hccl --data_op_type $DATA_OP_TYPE $CASE_ARGS
+        fi
+        echo; echo -e "run zbal..."; torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8877 ${CURRENT_DIR}/${PY_SCRIPT} zbal --data_op_type $DATA_OP_TYPE $CASE_ARGS
     else
         echo "run ${rank_size} ranks process but IPs size is not match"
     fi

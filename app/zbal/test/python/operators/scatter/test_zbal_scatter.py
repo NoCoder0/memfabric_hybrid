@@ -23,6 +23,10 @@ torch_npu.npu.config.allow_internal_format = True
 logger = logging.getLogger(__name__)
 
 
+def is_perf_test():
+    return os.environ.get("ZBAL_ENABLE_PERF_TEST", "0") == "1"
+
+
 def test_scatter(dist_type, case_list, hidden_size, data_op_type):
     global_rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -70,49 +74,49 @@ def test_scatter(dist_type, case_list, hidden_size, data_op_type):
         logger.info(f"init hccl group success on rank {global_rank=} {world_size=}")
 
     if enable_profiling:
-        prof_cnt = 0
         experimental_config = torch_npu.profiler._ExperimentalConfig(
             aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
             profiler_level=torch_npu.profiler.ProfilerLevel.Level2,
             l2_cache=False,
             data_simplification=False,
         )
-        profiling_path = f"{current_dir}/profiling.{dist_type}_{case_list[0]}/"
-        prof = torch_npu.profiler.profile(
-            activities=[
-                torch_npu.profiler.ProfilerActivity.CPU,
-                torch_npu.profiler.ProfilerActivity.NPU,
-            ],
-            on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                profiling_path
-            ),
-            schedule=torch_npu.profiler.schedule(
-                wait=1, warmup=1, active=10, repeat=1, skip_first=1
-            ),
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=False,
-            with_flops=False,
-            with_modules=False,
-            experimental_config=experimental_config,
-        )
 
     try:
         ret = 0
-        prof_cnt = 0
-        if enable_profiling:
-            torch.npu.synchronize()
-            prof.start()
         for data_len in case_list:
+            prof_cnt = 0
+            if enable_profiling:
+                profiling_path = f"{current_dir}/profiling.{dist_type}_{world_size}_{data_len}/"
+                prof = torch_npu.profiler.profile(
+                    activities=[
+                        torch_npu.profiler.ProfilerActivity.CPU,
+                        torch_npu.profiler.ProfilerActivity.NPU,
+                    ],
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
+                        profiling_path
+                    ),
+                    schedule=torch_npu.profiler.schedule(
+                        wait=1, warmup=1, active=10, repeat=1, skip_first=1
+                    ),
+                    record_shapes=True,
+                    profile_memory=True,
+                    with_stack=False,
+                    with_flops=False,
+                    with_modules=False,
+                    experimental_config=experimental_config,
+                )
+                torch.npu.synchronize()
+                prof.start()
             row_num = data_len // hidden_size
             golden_dir = f"scatter_{world_size}_{row_num}_{hidden_size}"
             tensor_output_dir = f"{current_dir}/output/scatter_{data_len}_{world_size}/"
             os.makedirs(tensor_output_dir, exist_ok=True)
-            if dist_type == 'zbal':
+            if dist_type == 'zbal' and is_perf_test():
                 golden_tensor = torch.load(f"{tensor_output_dir}/output_hccl_{global_rank}.bin",
                                            weights_only=False).npu()
-            for k in range(15):
-                if enable_profiling and prof_cnt > 1:
+
+            for k in range(20):
+                if enable_profiling and prof_cnt >= 1:
                     prof.step()
                 root = 0
 
@@ -132,9 +136,13 @@ def test_scatter(dist_type, case_list, hidden_size, data_op_type):
                 if dist_type == 'hccl' and k == 0:
                     tensor_output_file = f"{tensor_output_dir}/output_hccl_{global_rank}.bin"
                     torch.save(tensor_output.cpu(), tensor_output_file)
-                    break
                 elif dist_type == 'zbal':
-                    if not torch.allclose(golden_tensor, tensor_output, rtol=1e-4, atol=1e-8):
+                    if is_perf_test():
+                        golden = golden_tensor
+                    else:
+                        golden = tensor_input[global_rank].clone()
+                    torch.npu.synchronize()
+                    if not torch.allclose(golden, tensor_output, rtol=1e-4, atol=1e-8):
                         logger.error(f"rank {global_rank} case {data_len} scatter result not correct")
                         raise Exception(f"procesion error case:{data_len}")
             logger.info(f"{global_rank=} {world_size=} {data_len} {dist_type} scatter cases run successfully")
