@@ -153,7 +153,7 @@ enum HccpNotifyType {
 struct HccpSocketConnectInfo {
     void *handle;                      /**< socket handle */
     HccpIpAddr remoteIp;               /**< IP address of remote socket, [0-7] is reserved for vnic */
-    uint16_t port;                     /**< Socket listening port number */
+    uint32_t port;                     /**< Socket listening port number */
     char tag[HCCP_SOCK_CONN_TAG_SIZE]; /**< tag must ended by '\0' */
 };
 

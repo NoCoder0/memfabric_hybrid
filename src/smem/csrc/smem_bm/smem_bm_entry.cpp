@@ -376,7 +376,7 @@ Result SmemBmEntry::Update(uint32_t flags)
         return SM_OK;
     }
 
-    SM_LOG_ERROR("update timeout. rank:" << options_.rank);
+    SM_LOG_ERROR("update timeout. rank:" << options_.rank << " retryTime:" << retryTime);
     return SM_ERROR;
 }
 

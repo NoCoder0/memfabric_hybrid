@@ -63,7 +63,7 @@ protected:
         devNet.sin_port = htons(kPort8002);
         inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
         // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-        manager = std::make_unique<TestableJoinableRanksQpManager>(0, 0, K_RANK_ID_0, K_RANK_COUNT, devNet);
+        manager = std::make_unique<TestableJoinableRanksQpManager>(0, 0, K_RANK_ID_0, K_RANK_COUNT, devNet, 0);
     }
 
     void TearDown() override
@@ -206,7 +206,7 @@ TEST_F(JoinableRanksQpManagerTest, StartupClient)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
     clientManager->Startup(fakeRdma);
     std::this_thread::sleep_for(std::chrono::milliseconds(K_OUT_OF_RANGE_RANK));
     clientManager->Shutdown();
@@ -238,7 +238,7 @@ TEST_F(JoinableRanksQpManagerTest, ServerSideHandleNewClients)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(0, 0, K_RANK_ID_0, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(0, 0, K_RANK_ID_0, K_RANK_COUNT, devNet, 0);
 
     // 设置remoet 连接信息【2，3】
     std::unordered_map<uint32_t, ock::mf::transport::device::ConnectRankInfo> ranks;
@@ -318,7 +318,7 @@ TEST_F(JoinableRanksQpManagerTest, WaitSocketConnections)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<JoinableRanksQpManager>(0, 0, 0, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<JoinableRanksQpManager>(0, 0, 0, K_RANK_COUNT, devNet, 0);
 
     // 设置remoet 连接信息【1，1】
     std::unordered_map<uint32_t, ock::mf::transport::device::ConnectRankInfo> ranks;
@@ -350,7 +350,7 @@ TEST_F(JoinableRanksQpManagerTest, MakeQpConnections)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<JoinableRanksQpManager>(0, 0, 0, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<JoinableRanksQpManager>(0, 0, 0, K_RANK_COUNT, devNet, 0);
     std::set<uint32_t> newRanks = {K_RANK_ID_0, K_RANK_ID_1, K_RANK_ID_2};
 
     // 设置remoet 连接信息【1，1】
@@ -386,7 +386,7 @@ TEST_F(JoinableRanksQpManagerTest, WaitQpConnections)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
 
     clientManager->connections_.resize(K_RANK_COUNT); // 模拟已有连接状态
     clientManager->connections_[K_RANK_ID_3].qpHandle = ToVoidPtr(0x2222);
@@ -409,7 +409,7 @@ TEST_F(JoinableRanksQpManagerTest, GenerateWhiteList)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
 
     // 设置remoet 连接信息【2，3】
     std::unordered_map<uint32_t, ock::mf::transport::device::ConnectRankInfo> ranks;
@@ -436,7 +436,7 @@ TEST_F(JoinableRanksQpManagerTest, GenerateWhiteListEmpty)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
 
     // 设置remoet 连接信息【2，3】
     std::unordered_map<uint32_t, ock::mf::transport::device::ConnectRankInfo> ranks;
@@ -466,7 +466,7 @@ TEST_F(JoinableRanksQpManagerTest, CreateConnectionToServers)
     devNet.sin_port = htons(K_PORT_8000);
     inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
     // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
-    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(2, 2, 2, K_RANK_COUNT, devNet);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(2, 2, 2, K_RANK_COUNT, devNet, 0);
 
     // 设置server连接信息【0卡是server】
     std::unordered_map<uint32_t, ock::mf::transport::device::ConnectRankInfo> ranks;

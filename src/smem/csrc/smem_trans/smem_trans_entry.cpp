@@ -250,7 +250,7 @@ Result SmemTransEntry::JoinImport(std::unordered_map<uint32_t, std::string> &all
                 info.u.session.reserved = 0U;
                 WorkerIdUnion workerId{info.u.session};
                 id = workerId.workerId;
-                if (isEntity) {
+                if (isEntity && role != config_.role) {
                     int ret = hybm_import(entity_, &info.hybmInfo, 1U, nullptr, HYBM_FLAG_EXPORT_ENTITY);
                     if (ret != SM_OK) {
                         SM_LOG_ERROR("hybm import entity failed, result: " << ret << " remote_rank:" << it.first
@@ -452,7 +452,7 @@ Result SmemTransEntry::Update(uint32_t flags)
         return SM_OK;
     }
 
-    SM_LOG_ERROR("update timeout. rank:" << rankId_);
+    SM_LOG_ERROR("update timeout. rank:" << rankId_ << " retryTime:" << retryTime);
     return SM_ERROR;
 }
 

@@ -22,8 +22,8 @@ namespace device {
 constexpr int MR_INFO_ACCESS = 7;
 constexpr int WAIT_TIME_MS = 300;
 JoinableRanksQpManager::JoinableRanksQpManager(uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId,
-                                               uint32_t rankCount, sockaddr_in devNet) noexcept
-    : DeviceQpManager(deviceId, rankId, rankCount, devNet, HYBM_ROLE_PEER)
+                                               uint32_t rankCount, sockaddr_in devNet, hybm_role_type role) noexcept
+    : DeviceQpManager(deviceId, rankId, rankCount, devNet, role)
 {
     connections_.resize(rankCount);
     qpArray_.resize(rankCount, nullptr);
@@ -316,6 +316,7 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
         info.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         info.status = 0;
         bzero(info.tag, sizeof(info.tag));
+        FillHccpTag(info.tag);
         socketInfos.push_back(info);
         addr2rank.emplace(info.remoteIp.addr.s_addr, rankId);
     }
@@ -479,6 +480,7 @@ int JoinableRanksQpManager::GenerateWhiteList(const std::set<uint32_t> &newClien
         info.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         info.connLimit = rankCount_;
         bzero(info.tag, sizeof(info.tag));
+        FillHccpTag(info.tag);
         whitelist.emplace_back(info);
         connections_[rankId].socketHandle = serverSocketHandle_;
     }
@@ -535,6 +537,7 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         connectInfo.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         connectInfo.port = connections_[rankId].remoteNet.sin_port;
         bzero(connectInfo.tag, sizeof(connectInfo.tag));
+        FillHccpTag(connectInfo.tag);
         BM_LOG_INFO("add connecting server " << connectInfo);
         connectInfos.emplace_back(connectInfo);
     }
@@ -582,6 +585,9 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
         closeInfo.handle = it->second.socketHandle;
         closeInfo.fd = it->second.socketFd;
         closeInfo.linger = 0;
+        if (closeInfo.handle == nullptr) {
+            continue;
+        }
         auto ret = DlHccpApi::RaSocketBatchClose(&closeInfo, 1U);
         if (ret != 0) {
             BM_LOG_WARN("close socket from " << rankId_ << " to " << it->first << " failed: " << ret);
@@ -589,6 +595,28 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
             BM_LOG_INFO("close socket from " << rankId_ << " to " << it->first << " successful: " << ret);
         }
     }
+}
+
+void JoinableRanksQpManager::FillHccpTag(char *output)
+{
+    static constexpr const char* bmTag = "BM_TAG";
+    static constexpr const char* transTag = "TRANS_TAG";
+    static constexpr const char* undefineTag = "UNDEFINE_TAG";
+
+    const char* tag = nullptr;
+    size_t len = 0;
+
+    if (rankRole_ == HYBM_ROLE_PEER) {
+        tag = bmTag;
+        len = std::strlen(bmTag);
+    } else if (rankRole_ == HYBM_ROLE_SENDER || rankRole_ == HYBM_ROLE_RECEIVER) {
+        tag = transTag;
+        len = std::strlen(transTag);
+    } else {
+        tag = undefineTag;
+        len = std::strlen(undefineTag);
+    }
+    std::copy_n(tag, len, output);
 }
 
 } // namespace device
