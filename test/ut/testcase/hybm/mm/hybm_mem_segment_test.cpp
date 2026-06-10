@@ -927,31 +927,9 @@ TEST_F(HybmMemSegmentTest, VmmBasedSegment_GetExportSliceSize_ReturnsStructSize)
 }
 
 /**
-* VmmBasedSegment_Export_WhenShareDisabled
-*  - 当 options_.shared=false 时，Export 会直接跳过导出逻辑，返回 BM_OK。
-*/
-TEST_F(HybmMemSegmentTest, VmmBasedSegment_Export_WhenShareDisabled)
-{
-    ock::mf::MemSegmentOptions opt{};
-    opt.segType = ock::mf::HYBM_MST_DRAM;
-    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
-    opt.rankCnt = 1;
-    opt.rankId = 0;
-    opt.shared = false;
-
-    ock::mf::HybmVmmBasedSegment seg(opt, 0);
-    auto slice =
-        std::make_shared<ock::mf::MemSlice>(1, HYBM_MEM_TYPE_HOST, ock::mf::MEM_PT_TYPE_GVM, 0x5000, 0x5000, 0x1000);
-    seg.slices_.emplace(slice->index_, ock::mf::MemSliceStatus(slice, nullptr));
-
-    std::string exInfo;
-    auto ret = seg.Export(slice, exInfo);
-    EXPECT_EQ(ret, BM_OK);
-}
-
-/**
 * VmmBasedSegment_Import_WhenShareDisabled
-*  - 当 options_.shared=false 时，Import 会立即返回 BM_OK，不解析任何交换信息。
+*  - 当 options_.shared=false 时，Import 仍会尝试反序列化输入信息，
+*    无效的输入会导致反序列化失败，返回 BM_INVALID_PARAM。
 */
 TEST_F(HybmMemSegmentTest, VmmBasedSegment_Import_WhenShareDisabled)
 {
@@ -966,7 +944,7 @@ TEST_F(HybmMemSegmentTest, VmmBasedSegment_Import_WhenShareDisabled)
     std::vector<std::string> allExInfo = {"dummy-info"};
     void *addresses[1]{};
     auto ret = seg.Import(allExInfo, addresses);
-    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
     ret = seg.Mmap();
     EXPECT_EQ(ret, BM_OK);
     ret = seg.Unmap();

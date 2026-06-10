@@ -83,6 +83,10 @@ inline bool IsDramSlice(uint64_t magic)
 {
     return magic == DRAM_SLICE_EXPORT_INFO_MAGIC || magic == VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC;
 }
+inline bool IsHbmSlice(uint64_t magic)
+{
+    return magic == HBM_SLICE_EXPORT_INFO_MAGIC || magic == VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;
+}
 
 inline bool IsArmArch()
 {

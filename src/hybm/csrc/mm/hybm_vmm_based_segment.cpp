@@ -399,11 +399,6 @@ Result HybmVmmBasedSegment::Export(std::string &exInfo) noexcept
 
 Result HybmVmmBasedSegment::ExportInner(const MemSlicePtr &slice, MemShareHandle &sHandle) noexcept
 {
-    if (!options_.shared) {
-        BM_LOG_INFO("no need to share, skip export");
-        return BM_OK;
-    }
-
     auto [gvaInfo, stat] = HybmVaManager::GetInstance().FindAllocByVa(slice->vAddress_, HVM_DVA);
     if (!stat) {
         BM_LOG_ERROR("input device va(" << slice->vAddress_ << ") not match.");
@@ -457,10 +452,6 @@ Result HybmVmmBasedSegment::ExportInner(const MemSlicePtr &slice, MemShareHandle
 Result HybmVmmBasedSegment::Export(const MemSlicePtr &slice, std::string &exInfo) noexcept
 {
     BM_ASSERT_LOG_AND_RETURN(slice != nullptr, "slice is nullptr", BM_INVALID_PARAM);
-    if (!options_.shared) {
-        BM_LOG_INFO("no need to share, skip export");
-        return BM_OK;
-    }
     auto pos = slices_.find(slice->index_);
     BM_VALIDATE_RETURN(pos != slices_.end(), "input slice(idx:" << slice->index_ << ") not exist.", BM_INVALID_PARAM);
     BM_VALIDATE_RETURN(pos->second.slice == slice, "input slice(magic:" << std::hex << slice->magic_ << ") not match.",
@@ -483,10 +474,6 @@ Result HybmVmmBasedSegment::GetExportSliceSize(size_t &size) noexcept
 
 Result HybmVmmBasedSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[]) noexcept
 {
-    if (!options_.shared) {
-        BM_LOG_INFO("no need to share, skip import");
-        return BM_OK;
-    }
     LiteralExInfoTranslater<HostSdmaExportInfo> translator;
     uint64_t exportMagic = (options_.segType == HYBM_MST_DRAM) ? VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC
                                                                : VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;
@@ -509,7 +496,7 @@ Result HybmVmmBasedSegment::Import(const std::vector<std::string> &allExInfo, vo
             BM_LOG_ERROR("import info(" << i << ") magic(" << info.magic << ") invalid.");
             return BM_INVALID_PARAM;
         }
-        if (options_.segType == HYBM_MST_HBM && info.rankId != options_.rankId &&
+        if (options_.shared && options_.segType == HYBM_MST_HBM && info.rankId != options_.rankId &&
             logicDeviceId_ != static_cast<int>(info.logicDevId) &&
             CanLocalHostReaches(info.superPodId, info.serverId, info.logicDevId)) {
             ret = DlAclApi::RtEnableP2P(deviceId_, info.logicDevId, 0);
@@ -567,11 +554,6 @@ uint64_t HybmVmmBasedSegment::ReserveLva(const HostSdmaExportInfo &im)
 
 Result HybmVmmBasedSegment::Mmap() noexcept
 {
-    if (!options_.shared) {
-        BM_LOG_INFO("no need to share, skip map");
-        return BM_OK;
-    }
-
     if (imports_.empty()) {
         return BM_OK;
     }
@@ -595,11 +577,11 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             continue;
         }
 
-        if (!CanSdmaReaches(im.superPodId, im.serverId, im.logicDevId)) {
+        if (!options_.shared || !CanSdmaReaches(im.superPodId, im.serverId, im.logicDevId)) {
             // A2 device_rdma 跨机访问适配
             // AddVaInfoFromExternal 只需要记录GVA，因为device_rdma不需要访问HVM_DVA，所以才值0，
             // 防止copy的时候地址被TransformVa转换，Transport就找不到 Lkey/Rkey
-            auto memType = im.magic == HBM_SLICE_EXPORT_INFO_MAGIC ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
+            auto memType = (options_.segType == HYBM_MST_HBM) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
             auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal({im.gva, 0, 0, im.size, memType},
                                                                           options_.rankId, im.rankId);
             if (ret != BM_OK) {
