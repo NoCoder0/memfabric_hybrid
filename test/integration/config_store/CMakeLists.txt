@@ -16,9 +16,6 @@ if ("${BUILD_TEST}" STREQUAL "ON")
     )
     if (BUILD_ETCD_BACKEND)
         add_dependencies(config_store_etcd_test etcd_client)
-        set_target_properties(config_store_etcd_test PROPERTIES
-                BUILD_RPATH "${PROJECT_OUTPUT_PATH}/etcd/lib64"
-        )
     endif ()
 
     set_target_properties(config_store_etcd_test PROPERTIES OUTPUT_NAME "config_store_etcd_test")

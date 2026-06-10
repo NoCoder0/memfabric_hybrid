@@ -21,9 +21,6 @@ if ("${BUILD_TEST}" STREQUAL "ON")
     )
     if (BUILD_ETCD_BACKEND)
         add_dependencies(etcd_backend_test etcd_client)
-        set_target_properties(etcd_backend_test PROPERTIES
-                BUILD_RPATH "${PROJECT_OUTPUT_PATH}/etcd/lib64"
-        )
     endif ()
 
     set_target_properties(etcd_backend_test PROPERTIES OUTPUT_NAME "etcd_backend_test")
@@ -73,9 +70,6 @@ else ()
     )
     if (BUILD_ETCD_BACKEND)
         add_dependencies(etcd_backend_test etcd_client)
-        set_target_properties(etcd_backend_test PROPERTIES
-                BUILD_RPATH "${PROJECT_OUTPUT_PATH}/etcd/lib64"
-        )
     endif ()
 
     set_target_properties(etcd_backend_test PROPERTIES OUTPUT_NAME "etcd_backend_test")
