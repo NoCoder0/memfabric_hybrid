@@ -173,13 +173,6 @@ Result RdmaTransportManager::UnregisterMemoryRegion(uint64_t addr)
         return BM_DL_FUNCTION_FAILED;
     }
 
-    if (pos->second.address != pos->second.regAddress) {
-        ret = DlHalApi::HalHostUnregisterEx((void *)(ptrdiff_t)pos->second.address, deviceId_, HOST_MEM_MAP_DEV);
-        if (ret != 0) {
-            BM_LOG_ERROR("HalHostUnregister failed: " << ret);
-        }
-    }
-
     registerMRS_.erase(pos);
     return BM_OK;
 }
