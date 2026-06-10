@@ -28,7 +28,7 @@ namespace device {
 class JoinableRanksQpManager : public DeviceQpManager {
 public:
     JoinableRanksQpManager(uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount,
-                           sockaddr_in devNet) noexcept;
+                           sockaddr_in devNet, hybm_role_type role) noexcept;
     ~JoinableRanksQpManager() noexcept override;
 
     int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo> &ranks) noexcept override;
@@ -52,6 +52,7 @@ private:
     int GenerateWhiteList(const std::set<uint32_t> &newClients) noexcept;
     int CreateConnectionToServers(const std::set<uint32_t> &newServers) noexcept;
     void RemoveRanksProcess(const std::set<uint32_t> &ranks) noexcept;
+    void FillHccpTag(char *output);
 
 private:
     std::atomic<bool> started_{false};

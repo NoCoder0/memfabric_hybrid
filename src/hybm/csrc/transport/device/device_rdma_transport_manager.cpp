@@ -26,13 +26,12 @@
 #include "device_rdma_common.h"
 #include "device_rdma_helper.h"
 #include "fixed_ranks_qp_manager.h"
-#include "bipartite_ranks_qp_manager.h"
 #include "joinable_ranks_qp_manager.h"
 #include "hybm_gva.h"
 #include "hybm_va_manager.h"
 
 namespace {
-constexpr auto QP_READY_CHECK_TIMEOUT_BASE = std::chrono::seconds(30);
+constexpr auto QP_READY_CHECK_TIMEOUT_BASE = std::chrono::seconds(60);
 constexpr auto QP_READY_CHECK_TIMEOUT_PER_RANK = std::chrono::milliseconds(100);
 constexpr auto QP_READY_CHECK_INTERVAL = std::chrono::milliseconds(5);
 } // namespace
@@ -93,15 +92,11 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
     deviceAddr.sin_family = AF_INET;
     deviceAddr.sin_addr = deviceIp_;
     deviceAddr.sin_port = devicePort_;
-    if (role_ == HYBM_ROLE_PEER) {
-        if (options.initialType == HYBM_TYPE_AI_CORE_INITIATE) {
-            qpManager_ = std::make_shared<FixedRanksQpManager>(userId, rankId_, rankCount_, deviceAddr);
-        } else {
-            qpManager_ = std::make_shared<JoinableRanksQpManager>(userId, deviceId_, rankId_, rankCount_, deviceAddr);
-        }
+    if (options.initialType == HYBM_TYPE_AI_CORE_INITIATE) {
+        qpManager_ = std::make_shared<FixedRanksQpManager>(userId, rankId_, rankCount_, deviceAddr);
     } else {
-        qpManager_ = std::make_shared<BipartiteRanksQpManager>(userId, deviceId_, rankId_, rankCount_, deviceAddr,
-                                                               role_ == HYBM_ROLE_RECEIVER);
+        qpManager_ =
+            std::make_shared<JoinableRanksQpManager>(userId, deviceId_, rankId_, rankCount_, deviceAddr, role_);
     }
 
     deviceChipInfo_ = std::make_shared<DeviceChipInfo>(userId);

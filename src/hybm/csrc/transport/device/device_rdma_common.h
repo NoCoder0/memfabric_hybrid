@@ -227,7 +227,7 @@ inline std::string AiQpInfoToString(const AiQpRMAQueueInfo &info, uint32_t rankC
 inline std::ostream &operator<<(std::ostream &output, const HccpSocketConnectInfo &info)
 {
     output << "HccpSocketConnectInfo(socketHandle=" << info.handle << ", remoteIp=" << DescribeIPv4(info.remoteIp.addr)
-           << ", port=" << info.port << ")";
+           << ", port=" << info.port << ", tag=" << info.tag << ")";
     return output;
 }
 
