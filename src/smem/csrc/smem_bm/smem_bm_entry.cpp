@@ -36,7 +36,15 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
 
     SM_VALIDATE_RETURN(CheckRankConfigConsistency(options), "check rank config consistency failed", SM_INVALID_PARAM);
     SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(CreateGlobalTeam(options.rankCount, options.rankId), "create global team failed");
-    SM_ASSERT_RETURN(executorService_.Start(), SM_ERROR);
+    if (!executorService_.Start()) {
+        SM_LOG_ERROR("executor service start failed");
+        if (globalGroup_ != nullptr && globalGroup_->IsJoined()) {
+            (void)globalGroup_->GroupLeave();
+        }
+        globalGroup_ = nullptr;
+        executorService_.Stop();
+        return SM_ERROR;
+    }
     executorService_.SetThreadName("batch-copy");
 
     do {

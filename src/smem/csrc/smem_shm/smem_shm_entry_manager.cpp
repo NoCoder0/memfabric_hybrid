@@ -140,6 +140,10 @@ struct TransportAddressExchange {
 
 void SmemShmEntryManager::Destroy()
 {
+    std::lock_guard<std::mutex> guard(entryMutex_);
+    // Release entries not explicitly destroyed before uninit (destructor frees hybm resources).
+    ptr2EntryMap_.clear();
+    entryIdMap_.clear();
     inited_ = false;
     store_ = nullptr;
     StoreFactory::DestroyStore(storeUrl_);

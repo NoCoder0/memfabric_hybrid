@@ -60,6 +60,8 @@ Result DlApi::LoadLibrary(const std::string &libDirPath, const uint32_t gvaVersi
 
 void DlApi::CleanupLibrary()
 {
+    DlOpApi::CleanupLibrary();
+    DlRtApi::CleanupLibrary();
     DlHcclApi::CleanupLibrary();
     DlHccpApi::CleanupLibrary();
     DlAclApi::CleanupLibrary();

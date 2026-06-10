@@ -352,8 +352,8 @@ SMEM_API void smem_shm_uninit(uint32_t flags)
         return;
     }
 
-    hybm_uninit();
     SmemShmEntryManager::Instance().Destroy();
+    hybm_uninit();
     g_smemShmInited = false;
     SM_LOG_INFO("smem_shm_uninit finished");
 }

@@ -302,6 +302,8 @@ int RdmaIndirectTransportManager::InitListenerSocket(const std::string& nic)
     ret = epoll_ctl(gOutBandEpollFd_, EPOLL_CTL_ADD, gServerSocket_, &ev);
     if (ret != BM_OK) {
         BM_LOG_ERROR("RdmaIndirectTransportManager epoll_ctl add gOutBandEpollFd_ failed:" << ret);
+        close(gOutBandEpollFd_);
+        gOutBandEpollFd_ = -1;
         close(gServerSocket_);
         gServerSocket_ = -1;
         return -1;
@@ -584,11 +586,21 @@ int RdmaIndirectTransportManager::SenderSidePhrase0(const QueueMessage &res, Que
     nextReq.head.bodySize = 0;
     finished = false;
 
+    auto failPhase0 = [this, context, &finished](int err, bool pushBuffer = false, uint64_t bufAddr = 0) -> int {
+        if (pushBuffer) {
+            sendBufferQueue_.Push(bufAddr);
+        }
+        DecrementPendingCount(context->pendingContext);
+        finished = true;
+        delete context;
+        return err;
+    };
+
     uint64_t localRdmaAddr;
     if (!sendBufferQueue_.Pop(localRdmaAddr)) {
         TP_TRACE_TRACE_END(traceId, timestamp, BM_MALLOC_FAILED)
         BM_LOG_ERROR("allocate sender side local rdma buffer failed.");
-        return BM_MALLOC_FAILED;
+        return failPhase0(BM_MALLOC_FAILED);
     }
 
     uint64_t totalDataSize = 0;
@@ -610,19 +622,17 @@ int RdmaIndirectTransportManager::SenderSidePhrase0(const QueueMessage &res, Que
         TP_TRACE_END(TP_INDIRECT_SENDER_PHASE_0_W_D2D, ret);
         if (ret != BM_OK) {
             TP_TRACE_TRACE_END(traceId, timestamp, ret)
-            sendBufferQueue_.Push(localRdmaAddr);
             BM_LOG_ERROR("sender phase0 sync failed, ret: " << ret << ", remote rank:" << rtRank
                                                             << ", local_rank:" << localRankId_);
-            return ret;
+            return failPhase0(ret, true, localRdmaAddr);
         }
         TP_TRACE_BEGIN(TP_INDIRECT_SENDER_PHASE_0_W_D2R);
         ret = RdmaTransportManager::WriteRemote(rtRank, localRdmaAddr, respBody->rdmaAddress, totalDataSize);
         TP_TRACE_END(TP_INDIRECT_SENDER_PHASE_0_W_D2R, ret);
         if (ret != BM_OK) {
-            sendBufferQueue_.Push(localRdmaAddr);
             BM_LOG_ERROR("sender phase0 WriteRemote failed, rankId: " << res.head.srcRankId << ", remote rank:"
                                                                       << rtRank << ", local_rank:" << localRankId_);
-            return ret;
+            return failPhase0(ret, true, localRdmaAddr);
         }
     } else {
         TP_TRACE_BEGIN(TP_INDIRECT_SENDER_PHASE_0_R_R2D);
@@ -630,10 +640,9 @@ int RdmaIndirectTransportManager::SenderSidePhrase0(const QueueMessage &res, Que
         TP_TRACE_END(TP_INDIRECT_SENDER_PHASE_0_R_R2D, ret);
         if (ret != BM_OK) {
             TP_TRACE_TRACE_END(traceId, timestamp, ret)
-            sendBufferQueue_.Push(localRdmaAddr);
             BM_LOG_ERROR("sender phase0 ReadRemote failed, rankId: " << res.head.srcRankId << ", remote rank:" << rtRank
                                                                      << ", local_rank:" << localRankId_);
-            return ret;
+            return failPhase0(ret, true, localRdmaAddr);
         }
         uint32_t copyDir = (context->sliceList.slices[0].localMemType == LOCAL_HOST)
             ? ACL_MEMCPY_DEVICE_TO_HOST : ACL_MEMCPY_DEVICE_TO_DEVICE;
@@ -642,10 +651,9 @@ int RdmaIndirectTransportManager::SenderSidePhrase0(const QueueMessage &res, Que
         TP_TRACE_END(TP_INDIRECT_SENDER_PHASE_0_R_D2D, ret);
         if (ret != BM_OK) {
             TP_TRACE_TRACE_END(traceId, timestamp, ret)
-            sendBufferQueue_.Push(localRdmaAddr);
             BM_LOG_ERROR("sender phase0 sync failed, ret: " << ret << ", remote rank:" << rtRank
                                                             << ", local_rank:" << localRankId_);
-            return ret;
+            return failPhase0(ret, true, localRdmaAddr);
         }
     }
 
@@ -767,6 +775,18 @@ int RdmaIndirectTransportManager::ReceiveSidePhrase0(const QueueMessage &request
     TP_TRACE_TRACE_END(traceId, timestamp, BM_OK)
 
     return BM_OK;
+}
+
+void RdmaIndirectTransportManager::ClearReceiveContexts() noexcept
+{
+    std::unique_lock<std::mutex> locker{receiveContextMutex_};
+    for (auto &pair : receiveContexts_) {
+        if (pair.second != nullptr) {
+            recvBufferQueue_.Push(pair.second->localRdmaAddr);
+            delete pair.second;
+        }
+    }
+    receiveContexts_.clear();
 }
 
 int RdmaIndirectTransportManager::ReceiveSidePhrase1(const QueueMessage &request, QueueMessage &response) noexcept
@@ -962,6 +982,7 @@ Result RdmaIndirectTransportManager::CloseDevice()
     // Stop queues and close sockets
     senderSideQueue_.Stop();
     receiverSideQueue_.Stop();
+    ClearReceiveContexts();
     senderSideQueue_.CloseAllSockets();
     receiverSideQueue_.CloseAllSockets();
 

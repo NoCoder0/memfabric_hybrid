@@ -223,6 +223,7 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_ERROR,
             "create BM entity(" << id << ") failed, invalid opType " << options.bmDataOpType
                                  << " for non-cann based backend");
+        (void)manager.RemoveEntryByPtr(reinterpret_cast<uintptr_t>(entry.Get()));
         return SM_ERROR;
     }
 #endif

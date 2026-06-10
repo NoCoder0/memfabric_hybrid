@@ -130,6 +130,7 @@ private:
     int SenderSidePhrase1(const QueueMessage &res, QueueMessage &nextReq, bool &finished, void *ctx) noexcept;
     int ReceiveSidePhrase0(const QueueMessage &request, QueueMessage &response) noexcept;
     int ReceiveSidePhrase1(const QueueMessage &request, QueueMessage &response) noexcept;
+    void ClearReceiveContexts() noexcept;
     QueueMessage GenerateInitRequest(SliceList &slices) noexcept;
     int SendInitRequestForSlices(SliceList &slices) noexcept;
 

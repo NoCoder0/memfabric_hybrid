@@ -24,6 +24,7 @@
 #include "acc_tcp_link.h"
 #include "acc_tcp_link_complex_default.h"
 #include "acc_includes.h"
+#include "acc_tcp_shared_buf.h"
 #undef protected
 #define private public
 #include "acc_tcp_server.h"
@@ -1045,5 +1046,18 @@ TEST_F(AccLinksTest, ssl_shutdown_test_shutdown_fail)
     MOCKER_CPP(&OpenSslApiWrapper::SslShutdown, int (*)(SSL *)).stubs().will(returnValue(failRetVal));
     MOCKER_CPP(&OpenSslApiWrapper::SslGetError, int (*)(const SSL *, int)).stubs().will(returnValue(failRetVal));
     ASSERT_EQ(AccCommonUtil::SslShutdownHelper(ssl), ACC_ERROR);
+}
+
+TEST(AccDataBufferTest, AllocIfNeedExpandPreservesOldBufferOnSuccess)
+{
+    auto buffer = AccDataBuffer::Create(8U);
+    ASSERT_NE(buffer.Get(), nullptr);
+    std::memset(buffer->DataPtr(), 'A', 8U);
+    buffer->SetDataSize(8U);
+
+    ASSERT_TRUE(buffer->AllocIfNeed(16U));
+    EXPECT_GE(buffer->MemSize(), 16U);
+    EXPECT_NE(buffer->DataPtr(), nullptr);
+    EXPECT_EQ(buffer->DataPtr()[0], 'A');
 }
 } // namespace

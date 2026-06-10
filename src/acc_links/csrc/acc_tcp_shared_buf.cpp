@@ -46,12 +46,23 @@ bool AccDataBuffer::AllocIfNeed(uint32_t newSize) noexcept
     }
 
     if (newSize > memSize_) {
-        /* free old and malloc new one */
+        const uint32_t targetSize = std::max(memSize_, newSize);
+        if (targetSize > MAX_RECV_BODY_LEN) {
+            LOG_ERROR("Failed to alloc with size:" << targetSize
+                                                   << ", exceeds MAX_RECV_BODY_LEN:" << MAX_RECV_BODY_LEN);
+            return false;
+        }
+        auto *newBuf = new (std::nothrow) uint8_t[targetSize];
+        if (newBuf == nullptr) {
+            return false;
+        }
+        if (dataSize_ > 0) {
+            std::copy(data_, data_ + dataSize_, newBuf);
+        }
         delete[] data_;
-
-        memSize_ = std::max(memSize_, newSize);
-        data_ = new (std::nothrow) uint8_t[memSize_];
-        return data_ != nullptr;
+        data_ = newBuf;
+        memSize_ = targetSize;
+        return true;
     }
 
     return true;

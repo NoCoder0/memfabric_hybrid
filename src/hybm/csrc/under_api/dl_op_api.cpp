@@ -50,6 +50,8 @@ Result DlOpApi::LoadLibrary()
     opbaseHandle = dlopen(gOpBaseLibName, RTLD_NOW);
     if (opbaseHandle == nullptr) {
         BM_LOG_ERROR("Failed to open library error: " << dlerror());
+        dlclose(opapiHandle);
+        opapiHandle = nullptr;
         return BM_DL_FUNCTION_FAILED;
     }
 
@@ -72,6 +74,11 @@ void DlOpApi::CleanupLibrary()
     pAclnnShmemSdmaStarsQuery = nullptr;
     pAclCreateTensor = nullptr;
     pAclDestroyTensor = nullptr;
+
+    if (opbaseHandle != nullptr) {
+        dlclose(opbaseHandle);
+        opbaseHandle = nullptr;
+    }
 
     if (opapiHandle != nullptr) {
         dlclose(opapiHandle);

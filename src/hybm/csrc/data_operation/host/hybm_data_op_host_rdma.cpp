@@ -11,6 +11,7 @@
 */
 
 #include <sys/mman.h>
+#include <memory>
 #include "hybm_space_allocator.h"
 #include "hybm_ptracer.h"
 #include "dl_hybrid_api.h"
@@ -552,7 +553,7 @@ Result HostDataOpRDMA::BatchWriteLD2RH(uint32_t rmtRankId, CopyDescriptor &rmtCo
     ExtOptions tmpOptions = options;
     tmpOptions.destRankId = rmtRankId;
     size_t batchSize = rmtCopyDescriptor.counts.size();
-    uint64_t *ptr = new uint64_t[batchSize * 3];
+    std::unique_ptr<uint64_t[]> ptr(new (std::nothrow) uint64_t[batchSize * 3]);
     BM_ASSERT_LOG_AND_RETURN(ptr != nullptr, "ptr is nullptr", BM_MALLOC_FAILED);
     uint64_t batchOffset = 0;
     while (batchOffset < batchSize) {
@@ -580,9 +581,9 @@ Result HostDataOpRDMA::BatchWriteLD2RH(uint32_t rmtRankId, CopyDescriptor &rmtCo
         }
 
         size_t currentBatchSize = batchEnd - batchOffset;
-        void **tmpRdmaAddrs = reinterpret_cast<void **>(ptr);
-        void **tmplocalAddrs = reinterpret_cast<void **>(ptr + currentBatchSize);
-        uint64_t *tmpCounts = (ptr + currentBatchSize + currentBatchSize);
+        void **tmpRdmaAddrs = reinterpret_cast<void **>(ptr.get());
+        void **tmplocalAddrs = reinterpret_cast<void **>(ptr.get() + currentBatchSize);
+        uint64_t *tmpCounts = (ptr.get() + currentBatchSize + currentBatchSize);
         uint64_t offset = 0;
         for (size_t i = batchOffset; i < batchEnd; ++i) {
             tmpRdmaAddrs[i - batchOffset] = reinterpret_cast<void *>(static_cast<uint8_t *>(tmpHost) + offset);
@@ -620,7 +621,6 @@ Result HostDataOpRDMA::BatchWriteLD2RH(uint32_t rmtRankId, CopyDescriptor &rmtCo
         }
         batchOffset = batchEnd;
     }
-    delete[] ptr;
     return ret;
 }
 
@@ -635,7 +635,7 @@ Result HostDataOpRDMA::BatchReadRH2LD(uint32_t rmtRankId, CopyDescriptor &rmtCop
     ExtOptions tmpOptions = options;
     tmpOptions.srcRankId = rmtRankId;
     size_t batchSize = rmtCopyDescriptor.counts.size();
-    uint64_t *ptr = new uint64_t[batchSize * 3];
+    std::unique_ptr<uint64_t[]> ptr(new (std::nothrow) uint64_t[batchSize * 3]);
     BM_ASSERT_LOG_AND_RETURN(ptr != nullptr, "ptr is nullptr", BM_MALLOC_FAILED);
     uint64_t batchOffset = 0;
     while (batchOffset < batchSize) {
@@ -660,9 +660,9 @@ Result HostDataOpRDMA::BatchReadRH2LD(uint32_t rmtRankId, CopyDescriptor &rmtCop
             break;
         }
         size_t currentBatchSize = batchEnd - batchOffset;
-        void **tmpRdmaAddrs = reinterpret_cast<void **>(ptr);
-        void **tmplocalAddrs = reinterpret_cast<void **>(ptr + currentBatchSize);
-        uint64_t *tmpCounts = (ptr + currentBatchSize + currentBatchSize);
+        void **tmpRdmaAddrs = reinterpret_cast<void **>(ptr.get());
+        void **tmplocalAddrs = reinterpret_cast<void **>(ptr.get() + currentBatchSize);
+        uint64_t *tmpCounts = (ptr.get() + currentBatchSize + currentBatchSize);
         uint64_t offset = 0;
         for (size_t i = batchOffset; i < batchEnd; ++i) {
             tmpRdmaAddrs[i - batchOffset] = reinterpret_cast<void *>(static_cast<uint8_t *>(tmpHost) + offset);
@@ -698,7 +698,6 @@ Result HostDataOpRDMA::BatchReadRH2LD(uint32_t rmtRankId, CopyDescriptor &rmtCop
         }
         batchOffset = batchEnd;
     }
-    delete[] ptr;
     return ret;
 }
 

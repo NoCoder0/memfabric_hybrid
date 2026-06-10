@@ -63,6 +63,14 @@ static int HalHostRegisterStub(void *addr, uint64_t size, uint32_t flags, uint32
     return 0;
 }
 
+static int g_aclrtFreeHostCallCount = 0;
+static int AclrtFreeHostCountingStub(void *ptr)
+{
+    (void)ptr;
+    g_aclrtFreeHostCallCount++;
+    return 0;
+}
+
 class TransportManagerMock : public ock::mf::transport::TransportManager {
 public:
     TransportManagerMock() = default;
@@ -384,6 +392,18 @@ TEST_F(HybmDataOpDeviceRdmaTest, initialize_register_memory_failed)
     auto ret = dataOp_->Initialize();
     ASSERT_EQ(BM_MALLOC_FAILED, ret);
     ASSERT_EQ(1UL, transportManagerMock_->registerMemoryRegionCount);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, initialize_hal_host_register_fail_frees_malloc_host)
+{
+    g_aclrtFreeHostCallCount = 0;
+    MOCKER(&ock::mf::DlAclApi::AclrtMallocHost).stubs().will(invoke(AclrtMallocHostStub));
+    MOCKER(&ock::mf::DlHalApi::HalHostRegister).stubs().will(returnValue(-1));
+    MOCKER(&ock::mf::DlAclApi::AclrtFreeHost).stubs().will(invoke(AclrtFreeHostCountingStub));
+    auto ret = dataOp_->Initialize();
+    ASSERT_NE(BM_OK, ret);
+    ASSERT_EQ(1, g_aclrtFreeHostCallCount);
     dataOp_->UnInitialize();
 }
 
