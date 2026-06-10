@@ -294,6 +294,13 @@ int32_t NpuCommunicatorBase::AllGather(const void *send_buff, void *recv_buff, s
                            const_cast<CommGroupInfo &>(GetMetaInfo()));
 }
 
+int32_t NpuCommunicatorBase::Gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType,
+                                    uint16_t root, aclrtStream stream) noexcept
+{
+    return ZBALOpGather(sendBuff, recvBuff, data_count, dataType, root, stream,
+                        const_cast<CommGroupInfo &>(GetMetaInfo()));
+}
+
 int32_t NpuCommunicatorBase::AlltoAllV(const void *sendBuff, void *recvBuff, void *sendCumSum, void *recvSplitCounts,
                                        void *elements, zbal_datatype_t dataType, aclrtStream stream) noexcept
 {

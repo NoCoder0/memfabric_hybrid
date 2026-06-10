@@ -82,6 +82,12 @@ public:
         return Z_OK;
     }
 
+    int32_t Gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType, uint16_t root,
+                   aclrtStream stream) noexcept
+    {
+        return Z_OK;
+    }
+
     int32_t Barrier(aclrtStream stream) noexcept
     {
         return Z_OK;

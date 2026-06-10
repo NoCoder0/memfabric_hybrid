@@ -56,6 +56,10 @@ enum zbal_profiling_name_t : uint16_t {
 
     ZBAL_PROF_SCATTER_KERNEL_ALL,
 
+    ZBAL_PROF_GATHER_KERNEL_ALL,
+    ZBAL_PROF_GATHER_COPY,
+    ZBAL_PROF_GATHER_PREPARE_PTR,
+
     ZBAL_PROF_SEND_KERNEL_ALL,
     ZBAL_PROF_RECV_KERNEL_ALL,
 
@@ -99,6 +103,10 @@ const std::vector<std::pair<std::string, bool>> g_profName = {
     {"BR_GATHER_PART", false},
 
     {"SC_KERNEL_ALL", false},
+
+    {"GA_KERNEL_ALL", true},
+    {"GA_COPY", true},
+    {"GA_PREPARE_PTR", false},
 
     {"SEND_KERNEL_ALL",           false},
     {"RECV_KERNEL_ALL",           false},

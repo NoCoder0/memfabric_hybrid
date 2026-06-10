@@ -158,6 +158,21 @@ int32_t zbal_scatter(const void *sendBuff, void *recvBuff, uint64_t data_count, 
                      zbal_comm_t comm, aclrtStream stream);
 
 /**
+ * @brief Gather operation
+ *
+ * @param sendBuff             [in] pointer of send buffer
+ * @param recvBuff             [in] pointer of receive buffer
+ * @param data_count           [in] size of elems input buffer
+ * @param dataType             [in] data type
+ * @param root                 [in] the root rank in the operator.
+ * @param comm                 [in] commnunicator handle
+ * @param stream               [in] stream
+ * @return
+ */
+int32_t zbal_gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType, uint16_t root,
+                    zbal_comm_t comm, aclrtStream stream);
+
+/**
  * @brief barrier operation
  *
  * @param comm                 [in] commnunicator handle

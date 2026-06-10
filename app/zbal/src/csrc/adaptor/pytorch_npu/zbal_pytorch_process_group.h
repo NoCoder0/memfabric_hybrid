@@ -137,6 +137,10 @@ public:
                                              std::vector<at::Tensor> &inputTensors,
                                              const c10d::AllgatherOptions &opts = c10d::AllgatherOptions()) override;
 
+    c10::intrusive_ptr<c10d::Work> gather(std::vector<std::vector<at::Tensor>> &outputTensors,
+                                          std::vector<at::Tensor> &inputTensors,
+                                          const c10d::GatherOptions &opts = c10d::GatherOptions()) override;
+
     c10::intrusive_ptr<c10d::Work> broadcast(std::vector<at::Tensor> &tensors,
                                              const c10d::BroadcastOptions &opts = c10d::BroadcastOptions()) override;
 

@@ -224,6 +224,18 @@ ZBAL_API int32_t zbal_scatter(const void *sendBuff, void *recvBuff, uint64_t dat
     return innerComm->Scatter(sendBuff, recvBuff, data_count, dataType, root, stream);
 }
 
+ZBAL_API int32_t zbal_gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType,
+                             uint16_t root, zbal_comm_t comm, aclrtStream stream)
+{
+    ZBAL_VALIDATE_RETURN(sendBuff != nullptr, "Gather failed as send buff is nullptr", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(dataType >= 0 && dataType < ZBAL_DATA_TYPE_BUTT, "gather data type invalid.",
+                         Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(comm != nullptr, "gather failed as comm is null", Z_INVALID_PARAM);
+
+    auto innerComm = reinterpret_cast<Communicator *>(comm);
+    return innerComm->Gather(sendBuff, recvBuff, data_count, dataType, root, stream);
+}
+
 ZBAL_API int32_t zbal_send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer,
                            zbal_comm_t comm, aclrtStream stream)
 {

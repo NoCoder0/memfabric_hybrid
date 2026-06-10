@@ -154,7 +154,6 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                 else:
                     gather_list = None
                 dist.gather(tensor_input, gather_list, dst=dst)
-                dist.barrier()
                 prof_cnt += 1
                 if dist_type == 'hccl' and k == 0:
                     tensor_output_file = f"{tensor_output_dir}/output_hccl_{global_rank}.bin"

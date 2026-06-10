@@ -143,6 +143,14 @@ public:
                               aclrtStream stream) noexcept = 0;
 
     /**
+     * @brief Do Gather operation
+     *
+     * @return 0 if successful
+     */
+    virtual int32_t Gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType,
+                           uint16_t root, aclrtStream stream) noexcept = 0;
+
+    /**
      * @brief Do All2all operation
      *
      * @return 0 if successful

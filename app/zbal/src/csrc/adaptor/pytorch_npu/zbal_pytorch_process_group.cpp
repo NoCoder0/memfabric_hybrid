@@ -612,6 +612,60 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::_reduce_scatter_base(at::Tensor
         c10d::OpType::REDUCE_SCATTER);
 }
 
+c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::gather(std::vector<std::vector<at::Tensor>> &outputTensors,
+                                                        std::vector<at::Tensor> &inputTensors,
+                                                        const c10d::GatherOptions &opts)
+{
+    const bool isRoot = (myWorldRank_ == opts.rootRank);
+
+    ZBAL_CHECK_S(CheckNpuTensorsDifferentDevices(inputTensors) == 0, "check input tensor failed.");
+
+    std::vector<at::Tensor> outputFlattened;
+    uint64_t inputNumel = 0;
+    if (isRoot) {
+        ZBAL_CHECK_S(outputTensors.size() == 1,
+                     "requires a single-element output list containing a list with tensors.");
+        inputNumel = static_cast<uint64_t>(inputTensors[0].numel());
+        outputFlattened = FlattenForScatterGather(outputTensors, inputTensors, size_);
+        ZBAL_CHECK_S(CheckNpuTensorsDifferentDevices(outputFlattened) == 0, "check output tensor failed.");
+    } else {
+        outputFlattened = inputTensors;
+    }
+
+    return collective(
+        inputTensors, outputFlattened,
+        [&](at::Tensor &input, at::Tensor &output, c10_npu::NPUStream &stream, zbal_comm_t comm) {
+            RECORD_FUNCTION("ZbalGather", std::vector<c10::IValue>({input}));
+            c10_npu::NPUCachingAllocator::recordStream(output.storage().data_ptr(), stream);
+
+            const uint16_t root_rank = opts.rootRank;
+            auto zbalType = GetZbalDataType(input.scalar_type());
+            uint64_t send_numel = GetNumelForZBAL(input);
+            void *recvBuf = isRoot ? output.data_ptr() : input.data_ptr();
+            std::function<int()> call_gather = [=]() -> int {
+                return zbal_gather(input.data_ptr(), recvBuf, send_numel, zbalType, root_rank, comm,
+                                   stream.stream(false));
+            };
+            at_npu::native::OpCommand::RunOpApiV2("zbal_gather", call_gather);
+            return Z_OK;
+        },
+        [&](std::vector<c10_npu::NPUStream> &, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {},
+        [&](std::vector<c10_npu::NPUStream> &streams, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &work) {
+            // Copy the flattened output tensors to the outputs for root rank.
+            (void)work;
+            if (isRoot) {
+                c10_npu::NPUStreamGuard guard(streams[0]);
+                for (const auto j : c10::irange(static_cast<size_t>(size_))) {
+                    c10_npu::NPUCachingAllocator::recordStream(outputTensors[0][j].storage().data_ptr(), streams[0]);
+                    at::Tensor outputTensor = outputFlattened[0][j].slice(0, 0, inputNumel);
+                    at::Tensor outputTensorShape = at::reshape(outputTensor, outputTensors[0][j].sizes());
+                    outputTensors[0][j].copy_(outputTensorShape, true);
+                }
+            }
+        },
+        c10d::OpType::GATHER);
+}
+
 c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::broadcast(std::vector<at::Tensor> &tensors,
                                                            const c10d::BroadcastOptions &opts)
 {
@@ -643,10 +697,10 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::scatter(std::vector<at::Tensor>
                                                          std::vector<std::vector<at::Tensor>> &inputTensors,
                                                          const c10d::ScatterOptions &opts)
 {
-    const bool is_root = (myWorldRank_ == opts.rootRank);
+    const bool isRoot = (myWorldRank_ == opts.rootRank);
     std::vector<uint64_t> rank_data_addrs;
     void *bufferDataPtr = nullptr;
-    if (is_root) {
+    if (isRoot) {
         if (inputTensors.size() != 1) {
             ZBAL_LOG_ERROR("requires a single-element input list containing a list with tensors.");
         }

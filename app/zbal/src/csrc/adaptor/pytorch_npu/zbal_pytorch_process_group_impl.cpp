@@ -78,6 +78,17 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBALImpl::allgather(std::vector<std::
     }
 }
 
+c10::intrusive_ptr<c10d::Work> ProcessGroupZBALImpl::gather(std::vector<std::vector<at::Tensor>> &outputTensors,
+                                                            std::vector<at::Tensor> &inputTensors,
+                                                            const c10d::GatherOptions &opts)
+{
+    if (ZBAL_UNLIKELY(hcclOp_.find(__func__) != hcclOp_.end())) {
+        return hcclGroup_->gather(outputTensors, inputTensors, opts);
+    } else {
+        return zbalGroup_->gather(outputTensors, inputTensors, opts);
+    }
+}
+
 c10::intrusive_ptr<c10d::Work> ProcessGroupZBALImpl::broadcast(std::vector<at::Tensor> &tensors,
                                                                const c10d::BroadcastOptions &opts)
 {
