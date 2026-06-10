@@ -16,6 +16,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <cerrno>
+#include <sstream>
 
 #include "adapter_logger.h"
 #include "smem.h"
@@ -136,6 +137,20 @@ int32_t pytransfer_set_log_level(int level)
 int32_t pytransfer_set_conf_store_tls(bool enable, std::string &tls_info)
 {
     return smem_set_conf_store_tls(enable, tls_info.c_str(), tls_info.size());
+}
+
+std::vector<std::string> ParseMultiStoreUrl(const std::string &storeUrl)
+{
+    std::vector<std::string> urls;
+    std::istringstream stream(storeUrl);
+    std::string token;
+    while (std::getline(stream, token, ';')) {
+        if (!token.empty()) {
+            urls.push_back(token);
+        }
+    }
+    ADAPTER_LOG_INFO("parsed " << urls.size() << " store urls from: " << storeUrl);
+    return urls;
 }
 
 } // namespace adapter

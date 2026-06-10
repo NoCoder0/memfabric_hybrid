@@ -389,3 +389,21 @@ SMEM_API int32_t smem_trans_batch_quant_write(smem_trans_t handle, smem_trans_qu
     }
     return entry->BatchQuantTransfer(params, SMEMB_COPY_L2G);
 }
+
+SMEM_API int32_t smem_trans_set_peer_down_callback(smem_trans_t handle,
+                                                   smem_trans_peer_down_callback_t callback,
+                                                   void *userData)
+{
+    SM_VALIDATE_RETURN(g_smemTransInited, "smem trans not initialized yet", SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(handle != nullptr, "invalid handle, which is null", SM_INVALID_PARAM);
+
+    SmemTransEntryPtr entry;
+    auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
+    if (result != SM_OK || entry == nullptr) {
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        return result;
+    }
+
+    entry->SetPeerDownCallback(callback, userData);
+    return SM_OK;
+}

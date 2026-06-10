@@ -52,6 +52,7 @@ struct SmemGroupOption {
     SmemGroupChangeCallback joinCb;
     SmemGroupChangeCallback updateCb;
     SmemGroupChangeCallback leaveCb;
+    SmemGroupChangeCallback linkDownCb;  // TCP-level link down only
 };
 
 enum GroupEventType : int32_t {
@@ -180,6 +181,7 @@ private:
 
     StoreManagerPtr store_ = nullptr;
     SmemGroupOption option_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     int32_t groupVersion_ = 0;
     uint32_t allGatherGroupSn_ = 0;
     uint32_t barrierGroupSn_ = 0;

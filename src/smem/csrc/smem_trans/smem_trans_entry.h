@@ -115,6 +115,8 @@ public:
                              uint32_t flags);
     Result BatchQuantTransfer(smem_trans_quant_copy_param_t *params, smem_bm_copy_type opcode);
 
+    void SetPeerDownCallback(smem_trans_peer_down_callback_t callback, void *userData);
+
 private:
     Result CreateGlobalTeam(uint32_t rankId);
     Result JoinImport(std::unordered_map<uint32_t, std::string> &allInfo, bool isEntity);
@@ -122,6 +124,7 @@ private:
     Result UpdateHandle(uint32_t rk);
     Result GroupOpBarrier(int32_t input);
     Result LeaveHandle(uint32_t rk);
+    Result LinkDownHandle(uint32_t rk);  // TCP link down, invokes PeerDownCallback
     Result Join(uint32_t flags);
     Result Update(uint32_t flags);
     Result Leave(uint32_t flags);
@@ -170,6 +173,10 @@ private:
     StorePtr store_;
     SmemGroupEnginePtr globalGroup_ = nullptr;
     bool joined_{false};
+
+    // peer down callback
+    smem_trans_peer_down_callback_t peerDownCallback_ = nullptr;
+    void *peerDownUserData_ = nullptr;
 };
 
 inline const std::string &SmemTransEntry::Name() const

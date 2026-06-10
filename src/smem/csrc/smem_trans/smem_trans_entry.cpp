@@ -58,14 +58,11 @@ SmemTransEntryPtr SmemTransEntry::Create(const std::string &name, const std::str
         return nullptr;
     }
 
-    if (config.role == SMEM_TRANS_RECEIVER) {
-        // decode should call Join
-        result = transEntry->Join(0);
-        if (result != SM_OK) {
-            SM_LOG_AND_SET_LAST_ERROR("trans join failed, ret:" << result);
-            SmemTransEntryManager::Instance().RemoveEntryByPtr(reinterpret_cast<uintptr_t>(transEntry.Get()));
-            return nullptr;
-        }
+    result = transEntry->Join(0);
+    if (result != SM_OK) {
+        SM_LOG_AND_SET_LAST_ERROR("trans join failed, ret:" << result);
+        SmemTransEntryManager::Instance().RemoveEntryByPtr(reinterpret_cast<uintptr_t>(transEntry.Get()));
+        return nullptr;
     }
     return transEntry;
 }
@@ -154,8 +151,9 @@ Result SmemTransEntry::CreateGlobalTeam(uint32_t rankId)
     SmemGroupChangeCallback joinFunc = std::bind(&SmemTransEntry::JoinHandle, this, std::placeholders::_1);
     SmemGroupChangeCallback updateFunc = std::bind(&SmemTransEntry::UpdateHandle, this, std::placeholders::_1);
     SmemGroupChangeCallback leaveFunc = std::bind(&SmemTransEntry::LeaveHandle, this, std::placeholders::_1);
+    SmemGroupChangeCallback linkDownFunc = std::bind(&SmemTransEntry::LinkDownHandle, this, std::placeholders::_1);
     SmemGroupOption opt = {0U, rankId, config_.initTimeout * SECOND_TO_MILLSEC,
-                           true, joinFunc, updateFunc, leaveFunc};
+                           true, joinFunc, updateFunc, leaveFunc, linkDownFunc};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(store_, opt);
     SM_ASSERT_RETURN(group != nullptr, SM_ERROR);
 
@@ -428,6 +426,44 @@ Result SmemTransEntry::LeaveHandle(uint32_t rk)
     return SM_OK;
 }
 
+Result SmemTransEntry::LinkDownHandle(uint32_t rk)
+{
+    SM_LOG_INFO("do link down func, receive_rk: " << rk);
+
+    auto ret = hybm_remove_imported(entity_, rk, 0);
+    if (ret != 0) {
+        SM_LOG_ERROR("hybm remove imported failed in linkdown, result: " << ret);
+    }
+
+    if (peerDownCallback_ != nullptr) {
+        auto it = rankToWorkerId_.find(rk);
+        if (it != rankToWorkerId_.end()) {
+            WorkerIdUnion workerId{it->second};
+            WorkerUniqueId &w = workerId.session;
+
+            char ipBuf[INET6_ADDRSTRLEN] = {0};
+            if (w.address.type == ock::mf::IpV4) {
+                struct in_addr addr;
+                addr.s_addr = htonl(w.address.ip.ipv4.s_addr);
+                inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
+            } else if (w.address.type == ock::mf::IpV6) {
+                inet_ntop(AF_INET6, &w.address.ip.ipv6, ipBuf, sizeof(ipBuf));
+            }
+            std::string peerAddr = std::string(ipBuf) + ":" + std::to_string(w.port);
+            SM_LOG_INFO("invoking peer down callback for rank " << rk << " addr " << peerAddr);
+            peerDownCallback_(peerAddr.c_str(), peerDownUserData_);
+        }
+    }
+
+    return ret;
+}
+
+void SmemTransEntry::SetPeerDownCallback(smem_trans_peer_down_callback_t callback, void *userData)
+{
+    peerDownCallback_ = callback;
+    peerDownUserData_ = userData;
+}
+
 Result SmemTransEntry::Join(uint32_t flags)
 {
     const uint32_t groupJoinTimeoutSec =
@@ -448,7 +484,6 @@ Result SmemTransEntry::Join(uint32_t flags)
         }
         SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "join failed, ret: " << ret);
         SM_LOG_DEBUG("join success. rank: " << rankId_);
-        joined_ = true;
         return SM_OK;
     }
 }
@@ -538,16 +573,6 @@ void* SmemTransEntry::MallocDram(uint64_t size)
         hybm_free_local_memory(entity_, slice, size, 0);
         RemoveSlice(vaAddr);
         return nullptr;
-    }
-
-    if (!joined_) {
-        ret = Join(0);
-        if (ret != SM_OK) {
-            SM_LOG_ERROR("join failed, rk:" << rankId_ << " ret:" << ret);
-            hybm_free_local_memory(entity_, slice, size, 0);
-            RemoveSlice(vaAddr);
-            return nullptr;
-        }
     }
 
     std::unique_lock<std::mutex> uniqueLock{memMutex_};
@@ -664,11 +689,6 @@ Result SmemTransEntry::BatchSyncTransfer(void *localAddrs[], const std::string &
                                          const size_t dataSizes[], uint32_t batchSize, smem_bm_copy_type opcode,
                                          void *stream, uint32_t flags)
 {
-    if (!joined_) {
-        auto ret = Join(0);
-        SM_VALIDATE_RETURN(ret == SM_OK, "join failed!", SM_ERROR);
-    }
-
     SM_VALIDATE_RETURN(localAddrs != nullptr, "invalid localAddrs, which is null", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(remoteAddrs != nullptr, "invalid remoteAddrs, which is null", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(dataSizes != nullptr, "invalid dataSizes, which is null", SM_INVALID_PARAM);
@@ -719,11 +739,6 @@ Result SmemTransEntry::BatchSyncTransfer(void *localAddrs[], const std::string &
 
 Result SmemTransEntry::BatchQuantTransfer(smem_trans_quant_copy_param_t *params, smem_bm_copy_type opcode)
 {
-    if (!joined_) {
-        auto ret = Join(0);
-        SM_VALIDATE_RETURN(ret == SM_OK, "join failed!", SM_ERROR);
-    }
-
     SM_VALIDATE_RETURN(params->localAddrs != nullptr, "invalid localAddrs, which is null", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(params->remoteAddrs != nullptr, "invalid remoteAddrs, which is null", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(params->dataSizes != nullptr, "invalid dataSizes, which is null", SM_INVALID_PARAM);

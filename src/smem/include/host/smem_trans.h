@@ -248,6 +248,28 @@ int32_t smem_trans_batch_write_submit(smem_trans_t handle, const void *localAddr
 */
 int32_t smem_trans_batch_quant_write(smem_trans_t handle, smem_trans_quant_copy_param_t *params);
 
+/**
+ * @brief Callback type for peer down notification.
+ *        Called when a remote peer disconnects or its link is detected as broken.
+ *
+ * @param peerUniqueId     [in] unique id of the disconnected peer
+ * @param userData         [in] user-provided context pointer
+ */
+typedef void (*smem_trans_peer_down_callback_t)(const char *peerUniqueId, void *userData);
+
+/**
+ * @brief Register a callback to be invoked when a remote peer disconnects.
+ *        Only one callback per handle; setting a new one replaces the old.
+ *
+ * @param handle           [in] transfer object handle
+ * @param callback         [in] callback function pointer
+ * @param userData         [in] opaque user data passed to callback
+ * @return 0 if successful
+ */
+int32_t smem_trans_set_peer_down_callback(smem_trans_t handle,
+                                          smem_trans_peer_down_callback_t callback,
+                                          void *userData);
+
 #ifdef __cplusplus
 }
 #endif

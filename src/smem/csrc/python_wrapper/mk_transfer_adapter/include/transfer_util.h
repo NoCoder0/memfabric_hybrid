@@ -13,6 +13,8 @@
 #define PYTRANSFER_UITL_H
 
 #include <cstdint>
+#include <string>
+#include <vector>
 
 namespace ock {
 namespace adapter {
@@ -27,6 +29,14 @@ int32_t pytransfer_create_config_store(const char *storeUrl);
 int32_t pytransfer_set_log_level(int level);
 
 int32_t pytransfer_set_conf_store_tls(bool enable, std::string &tls_info);
+
+/**
+ * @brief Parse semicolon-separated store URL string into a vector of individual URLs.
+ *
+ * @param storeUrl  e.g. "tcp://10.0.0.1:15000;tcp://10.0.0.2:15000"
+ * @return vector of individual store URLs
+ */
+std::vector<std::string> ParseMultiStoreUrl(const std::string &storeUrl);
 
 } // namespace adapter
 } // namespace ock
