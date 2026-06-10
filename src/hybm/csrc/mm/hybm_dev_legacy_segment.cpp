@@ -377,22 +377,21 @@ Result HybmDevLegacySegment::Mmap() noexcept
             continue;
         }
 
-        if (!CanSdmaReaches(im.superPodId, im.serverId, im.logicDeviceId)) {
-            continue;
-        }
-
         BM_LOG_INFO("remote slice on rank(" << im.rankId << ") should map gva:0x" << std::hex << (void *)im.gva
                                             << "map deviceVa:0x" << (void *)im.deviceVa << ", size:" << std::dec
                                             << im.size);
-        auto ret = drv::HalGvaOpen(im.deviceVa, im.shmName, im.size, 0);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("HalGvaOpen memory failed:" << ret);
-            return -1;
+
+        if (options_.shared && CanSdmaReaches(im.superPodId, im.serverId, im.logicDeviceId)) {
+            auto ret = drv::HalGvaOpen(im.deviceVa, im.shmName, im.size, 0);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("HalGvaOpen memory failed:" << ret);
+                return -1;
+            }
         }
         mappedGvaMem_.insert(im.gva);
 
         // .host_va use info.deviceVa, because .host_va is the part of key for hybm_va_manager allocatedLookupMapByLva_
-        ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
+        int ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
             {im.gva, im.deviceVa, im.deviceVa, im.size, HYBM_MEM_TYPE_DEVICE}, options_.rankId, im.rankId);
         BM_ASSERT_RETURN(ret == BM_OK, ret);
     }
@@ -404,7 +403,9 @@ Result HybmDevLegacySegment::Unmap() noexcept
 {
     for (auto gva : mappedGvaMem_) {
         auto deviceVa = HybmVaManager::GetInstance().TransformVa(gva, HVM_GVA, HVM_DVA);
-        (void)drv::HalGvaClose(deviceVa, 0);
+        if (deviceVa > 0) {
+            (void) drv::HalGvaClose(deviceVa, 0);
+        }
         HybmVaManager::GetInstance().RemoveOneVaInfo(gva);
     }
     mappedGvaMem_.clear();
@@ -427,7 +428,9 @@ Result HybmDevLegacySegment::RemoveImported(const std::vector<uint32_t> &ranks) 
         auto st = it;
         while (it != mappedGvaMem_.end() && (*it) < gvaLocal + options_.maxSize) {
             auto deviceVa = HybmVaManager::GetInstance().TransformVa((*it), HVM_GVA, HVM_DVA);
-            (void)drv::HalGvaClose(deviceVa, 0);
+            if (deviceVa > 0) {
+                (void) drv::HalGvaClose(deviceVa, 0);
+            }
             HybmVaManager::GetInstance().RemoveOneVaInfo(deviceVa);
             it++;
         }

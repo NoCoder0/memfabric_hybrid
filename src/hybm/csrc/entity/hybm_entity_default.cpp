@@ -474,11 +474,12 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
         }
 
         char tmp[UNIFIED_EXCHANGE_SEG_INFO_SIZE];
-        desc[i].Read(reinterpret_cast<void *>(tmp), UNIFIED_EXCHANGE_SEG_INFO_SIZE);
         if (IsDramSlice(magic)) {
+            desc[i].Read(reinterpret_cast<void *>(tmp), UNIFIED_EXCHANGE_SEG_INFO_SIZE);
             dramInfos.emplace_back(tmp, UNIFIED_EXCHANGE_SEG_INFO_SIZE);
             dramIndex.emplace_back(i);
-        } else {
+        } else if (IsHbmSlice(magic)) {
+            desc[i].Read(reinterpret_cast<void *>(tmp), UNIFIED_EXCHANGE_SEG_INFO_SIZE);
             hbmInfos.emplace_back(tmp, UNIFIED_EXCHANGE_SEG_INFO_SIZE);
             hbmIndex.emplace_back(i);
         }
@@ -785,7 +786,8 @@ int32_t MemEntityDefault::CopyData(hybm_copy_params &params, hybm_data_copy_dire
 
     ret = dataOperator_->DataCopy(params, direction, options);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("failed to copy data ret:" << ret);
+        BM_LOG_ERROR("failed to copy data ret:" << ret << ", src:" << VaToStr(params.src) << ", dest:"
+                                                << VaToStr(params.dest) << ", size:" << params.dataSize);
     }
     return ret;
 }
@@ -1097,6 +1099,9 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
+    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
+        segmentOptions.shared = false;
+    }
     hbmSegment_ = MemSegment::Create(segmentOptions, id_);
     if (hbmSegment_ == nullptr) {
         BM_LOG_ERROR("Failed to create hbm segment");
