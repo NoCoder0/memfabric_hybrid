@@ -124,7 +124,10 @@ public:
         return ock::smem::SmRef<ock::smem::ConfigStore>(this);
     }
 
-    void RegisterReconnectHandler(ock::smem::ConfigStoreReconnectHandler callback) noexcept override {}
+    void RegisterReconnectHandler(ock::smem::ConfigStoreReconnectHandler callback) noexcept override
+    {
+        reconnectHandler = callback;
+    }
     ock::smem::Result ReConnectAfterBroken(int reconnectRetryTimes) noexcept override
     {
         return ock::smem::SM_OK;
@@ -165,6 +168,7 @@ public:
     std::string getCompleteKeyValue{"test_key"};
     std::string commonPrefix{"/test/"};
     std::vector<uint8_t> mockGetValue;
+    ock::smem::ConfigStoreReconnectHandler reconnectHandler{nullptr};
 
     void Reset()
     {
@@ -195,6 +199,7 @@ public:
         watchWid = 0;
         getCompleteKeyValue = "test_key";
         mockGetValue.clear();
+        reconnectHandler = nullptr;
     }
 };
 
@@ -210,7 +215,9 @@ protected:
         option_.timeoutMs = 1000ULL;
         option_.dynamic = false;
         option_.joinCb = nullptr;
+        option_.updateCb = nullptr;
         option_.leaveCb = nullptr;
+        option_.linkDownCb = nullptr;
     }
 
     void TearDown() override
@@ -276,4 +283,19 @@ TEST_F(SmemNetGroupEngineMockTest, GetStoreConnectStatusReturnsStoreStatus)
 
     // GetStoreConnectStatus delegates to store_->GetConnectStatus().
     EXPECT_TRUE(group->GetStoreConnectStatus());
+}
+
+TEST_F(SmemNetGroupEngineMockTest, ReconnectHandlerSkipsAfterGroupDestroyed)
+{
+    option_.dynamic = true;
+    mockStoreManager_->watchWid = UINT32_MAX;
+
+    {
+        auto group = ock::smem::SmemNetGroupEngine::Create(storePtr_, option_);
+        ASSERT_NE(group, nullptr);
+        ASSERT_NE(mockStoreManager_->reconnectHandler, nullptr);
+    }
+
+    EXPECT_EQ(mockStoreManager_->reconnectHandler(), ock::smem::SM_OK);
+    EXPECT_EQ(mockStoreManager_->casCount, 0);
 }

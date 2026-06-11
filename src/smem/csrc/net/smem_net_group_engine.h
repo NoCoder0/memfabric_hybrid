@@ -104,7 +104,13 @@ public:
         if (option_.dynamic) {
             groupInfo_.groupSize = 0U; // not join, size is zero
         }
-        store_->RegisterReconnectHandler(std::bind(&SmemNetGroupEngine::LinkReconnectHandler, this));
+        auto alive = alive_;
+        store_->RegisterReconnectHandler([this, alive]() -> int32_t {
+            if (!*alive) {
+                return SM_OK;
+            }
+            return LinkReconnectHandler();
+        });
     }
     ~SmemNetGroupEngine() override;
 
