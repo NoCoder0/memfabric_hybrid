@@ -43,6 +43,7 @@ SMOKE_CASE_CONFIG=(
     "allreduce:     5242880"
     "alltoallv:     524288"
     "broadcast:     524289"
+    "gather:        524288"
     "p2p:           5242880"
     "reducescatter: 5242880"
     "scatter:       5242880"
@@ -53,6 +54,7 @@ PRECISION_CASE_CONFIG=(
     "allreduce:     3,       5242880, 5242881"
     "alltoallv:     16,      5242880"
     "broadcast:     524289,  2097152, 16777216"
+    "gather:        5242880"
     "p2p:           5242880"
     "reducescatter: 5242880"
     "scatter:       5242880"
@@ -65,6 +67,7 @@ PERF_CASE_CONFIG=(
     "allreduce:     4096,    131072,  1048576, 16777216, 33554432"
     "alltoallv:     8192,    262144,  2097152, 33554432, 67108864"
     "broadcast:     8192,    262144,  2097152, 33554432, 67108864"
+    "gather:        8192,    262144,  2097152, 33554432, 67108864"
     "p2p:           8192,    262144,  2097152, 33554432, 67108864"
     "reducescatter: 4096,    131072,  1048576, 16777216, 33554432"
     "scatter:       8192,    262144,  2097152, 33554432, 67108864"
@@ -98,7 +101,7 @@ collect_perf_data() {
 }
 
 # Track test results for pass/fail report (smoke/precision modes)
-ALL_OPS=(allgather allreduce alltoallv broadcast p2p reducescatter scatter)
+ALL_OPS=(allgather allreduce alltoallv broadcast gather p2p reducescatter scatter)
 declare -A TEST_RESULTS_ALL
 
 write_combined_pass_fail_report() {
@@ -164,6 +167,7 @@ mock_test() {
         [allreduce_z]="ZBALAllReduceInner"     [allreduce_h]="hcom_allReduce__"
         [alltoallv_z]="ZBALAlltoAllVInner"     [alltoallv_h]="hcom_alltoallv__"
         [broadcast_z]="ZBALBroadcastInner"    [broadcast_h]="hcom_broad"
+        [gather_z]="ZBALBroadcastInner"        [gather_h]="hcom_broadcast__"
         [p2p_z]="ZBALSendInner"        [p2p_z2]="ZBALRecvInner"  [p2p_h]="hcom_send__"
         [reducescatter_z]="ZBALReduceScatterInner" [reducescatter_h]="hcom_reduceScatter__"
         [scatter_z]="ZBALScatterInner"        [scatter_h]="hcom_scatter"
@@ -239,6 +243,25 @@ run_cases() {
 IFS=',' read -ra WS_ARRAY <<< "${WORLD_SIZES}"
 
 echo "=== ZBAL Test: mode=${RUN_MODE} world_sizes=${WORLD_SIZES} ==="
+
+show_partial_perf() {
+    local exit_code=$?
+    # Only print on failure (non-zero exit)
+    [ $exit_code -eq 0 ] && return
+    # Print partial results from current (possibly failed) world_size
+    if [ -f "$CURRENT_DIR/test_output/results.json" ]; then
+        echo ""
+        echo "=== Partial results (current world_size, collected before failure) ==="
+        python3 "$CURRENT_DIR/perf_analyze.py" show 2>/dev/null || true
+    fi
+    # Print completed world_size results from report file
+    if [ -f "$REPORT_FILE" ] && [ -s "$REPORT_FILE" ]; then
+        echo ""
+        echo "=== Completed world_size results (from $REPORT_FILE) ==="
+        cat "$REPORT_FILE"
+    fi
+}
+trap show_partial_perf EXIT
 
 # Map data_op_type to name suffix
 if [ "$DATA_OP_TYPE" = "0" ]; then

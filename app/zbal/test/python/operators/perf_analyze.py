@@ -11,11 +11,14 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PERF_DIR = os.path.join(CURRENT_DIR, "test_output")
 DATA_FILE = os.path.join(PERF_DIR, "results.json")
 
+logger = logging.getLogger(__name__)
+
 PERF_KEYWORDS = {
     "allgather": ("ZBALAllGatherInner", "hcom_allGather__"),
     "allreduce": ("ZBALAllReduceInner", "hcom_allReduce__"),
     "alltoallv": ("ZBALAlltoAllVInner", "hcom_alltoallv__"),
     "broadcast": ("ZBALBroadcastInner", "hcom_broad"),
+    "gather": ("ZBALBroadcastInner", "hcom_broadcast__"),
     "p2p": (("ZBALSendInner", "ZBALRecvInner"), ("hcom_send__", "hcom_receive__")),
     "reducescatter": ("ZBALReduceScatterInner", "hcom_reduceScatter__"),
     "scatter": ("ZBALScatterInner", "hcom_scatter"),
@@ -159,6 +162,55 @@ def has_backend_data(data, backend):
     return False
 
 
+def cmd_show():
+    """Print collected data (for debugging partial results), does NOT delete the data file."""
+    if not os.path.exists(DATA_FILE):
+        logging.warning("No collected perf data found in %s", DATA_FILE)
+        return
+    with open(DATA_FILE, 'r') as f:
+        data = json.load(f)
+    if not data:
+        logging.warning("No collected perf data found in %s", DATA_FILE)
+        return
+
+    columns = set()
+    for op_data in data.values():
+        for backend in ("zbal", "hccl"):
+            for key in op_data.get(backend, {}):
+                if key != "_last":
+                    columns.add(int(key))
+    columns = sorted(columns)
+
+    col_labels = [format_size(c) for c in columns] if columns else ["_last"]
+    op_width = max(max(len(op) for op in data), 8)
+    col_widths = [max(len(lbl) + 1, 9) for lbl in col_labels]
+
+    out = []
+    out.append("")
+    out.append("=== Collected Perf Data (partial) ===")
+
+    header_line = " " * (op_width + 1) + "|"
+    for i, lbl in enumerate(col_labels):
+        header_line += " " + lbl.rjust(col_widths[i] - 1)
+    out.append(header_line)
+    out.append("-" * len(header_line))
+
+    for op in sorted(data):
+        op_data = data[op]
+        for backend in ("zbal", "hccl"):
+            label = op if backend == "zbal" else ""
+            cells = [label.ljust(op_width)]
+            for i, c in enumerate(columns if columns else ["_last"]):
+                val = op_data.get(backend, {}).get(str(c))
+                cell = f"{val:.2f}" if val else "-"
+                cells.append(cell.rjust(col_widths[i] - 1))
+            out.append(" " + " |".join(cells))
+        out.append("")
+
+    out.append("=" * 40)
+    logger.info("\n".join(out))
+
+
 def cmd_report(world_size=None):
     """Generate final report from accumulated data."""
     data = {}
@@ -189,6 +241,8 @@ if __name__ == "__main__":
         cmd_collect(sys.argv[2], sys.argv[3])
     elif cmd == "collect_final":
         cmd_collect_final(sys.argv[2], int(sys.argv[3]))
+    elif cmd == "show":
+        cmd_show()
     else:
         ws = sys.argv[2] if len(sys.argv) > 2 else None
         cmd_report(ws)

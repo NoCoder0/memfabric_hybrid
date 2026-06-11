@@ -33,8 +33,7 @@ def golden_generate(data_len, rank_size, hidden_size, data_type, current_dir):
     for i in range(rank_size):
         input_tensor = gen_random_data(rows_per_rank, hidden_size, dtype=data_type)
         input_tensor.tofile(f"{current_dir}/golden/{golden_dir}/input_gm_{i}.bin")
-        if i == dst:
-            output_gm[i * rows_per_rank:(i + 1) * rows_per_rank] = input_tensor
+        output_gm[i * rows_per_rank:(i + 1) * rows_per_rank] = input_tensor
 
     output_gm.tofile(f"{current_dir}/golden/{golden_dir}/golden_{dst}.bin")
 

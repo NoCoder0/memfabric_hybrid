@@ -21,10 +21,6 @@ from zbal import zbal_init, zbal_uninit, zbal_set_logger_level
 
 torch_npu.npu.config.allow_internal_format = True
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s',
-                    handlers=[logging.StreamHandler()])
-
-
 
 
 def get_golden_from_file(filepath):
@@ -86,7 +82,6 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
         else:
             logger.info(f"zbal_init success on rank {global_rank}\n")
 
-        torch.npu.set_device(device_id)
         group = dist.init_process_group("zbal", rank=global_rank, world_size=world_size)
         logger.info(f"init zbal group success on rank {global_rank=} {world_size=}")
     else:

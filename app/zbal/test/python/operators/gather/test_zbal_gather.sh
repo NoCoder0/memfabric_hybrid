@@ -6,13 +6,13 @@ CURRENT_DIR=$(
     cd $(dirname ${BASH_SOURCE:-$0})
     pwd
 )
-export ASCEND_LAUNCH_BLOCKING=1
+
 echo $CURRENT_DIR
 
-WORLD_SIZE=${2:-16}
 TEST_TYPE=bfloat16_t
 CASE_NUM=0  # if CASE_NUM is 0 will use CASE_LIST instead
 CASE_LIST=${1:-917504}
+WORLD_SIZE=${2:-16}
 DATA_OP_TYPE=${3:-0}
 H_SIZE=1
 
