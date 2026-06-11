@@ -129,6 +129,7 @@ ZResult SecondaryMemoryAllocator::Free(void *ptr) noexcept
     device::DeviceBlock *block = get_allocated_block(ptr, true);
     if (!block) {
         ZBAL_LOG_WARN("invalid device pointer: " << ptr);
+        return Z_INVALID_PTR;
     }
     device_allocator_[block->deviceId_]->free(block);
 
@@ -192,6 +193,7 @@ ZResult SecondaryMemoryAllocator::EraseStream(void *ptr, c10_npu::NPUStream stre
     device::DeviceBlock *block = get_allocated_block(ptr);
     if (!block) {
         ZBAL_LOG_ERROR("invalid device pointer: " << ptr);
+        return Z_INVALID_PTR;
     }
 
     if (block->stream_ != c10_npu::getCurrentNPUStream(block->deviceId_).stream(false)) {

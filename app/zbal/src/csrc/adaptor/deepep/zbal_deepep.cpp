@@ -438,6 +438,7 @@ Buffer::low_latency_dispatch(const at::Tensor &x, const at::Tensor &topk_idx,
 
     auto expert_ids = new_topk_idx;
     int shared_expert_rank_num = get_value_from_env("MOE_SHARED_EXPERT_RANK_NUM", 0);
+    ZBAL_CHECK_S(shared_expert_rank_num < num_ranks, "MOE_SHARED_EXPERT_RANK_NUM is invalid");
 
     auto num_tokens = static_cast<int>(new_x.size(0)), hidden = static_cast<int>(new_x.size(1));
     auto num_topk = static_cast<int>(new_topk_idx.size(1));

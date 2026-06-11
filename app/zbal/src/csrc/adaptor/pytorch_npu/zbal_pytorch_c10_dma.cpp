@@ -3648,7 +3648,7 @@ void *MallocBlock(size_t size, void *stream, int device)
     if (device == -1) {
         NPU_CHECK_ERROR_MOCK(c10_npu::GetDevice(&device));
     }
-    if ((device < 0) || (device > static_cast<int>(caching_allocator.device_allocator.size()))) {
+    if ((device < 0) || (device >= static_cast<int>(caching_allocator.device_allocator.size()))) {
         return nullptr;
     }
     AT_ASSERT(caching_allocator.device_allocator[device], PTA_ERROR_MOCK(ErrCode::NOT_FOUND));
