@@ -10,6 +10,8 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 #include "network_endpoint_util.h"
 
 #include "smem_logger.h"
@@ -206,20 +208,11 @@ bool NetworkEndpointUtil::CheckConnectivity(const std::string &ip, uint16_t port
     return PollConnectComplete(sockfd.Get(), kConnectTimeoutMs, ip, port);
 }
 
-static bool ParsePortEnv(const char *name, uint16_t &outPort) noexcept
+static bool ParsePortStr(const std::string &strValue, uint16_t &outPort) noexcept
 {
-    const char *val = std::getenv(name);
-    if (val == nullptr || *val == '\0') {
-        return false;
-    }
-
-    char *end = nullptr;
-    errno = 0;
-    const unsigned long parsed = std::strtoul(val, &end, 10);
-    // Must be all digits, and in 1~65535.
-    if (errno != 0 || end == val || *end != '\0' || parsed == 0UL || parsed > 65535UL) {
-        SM_LOG_ERROR("invalid env value, name=" << name << ", value=" << val << ", errno=" << errno
-                                                << ", errstr=" << std::strerror(errno));
+    uint32_t parsed = 0;
+    if (!mf::MfEnvUtil::GetUint(strValue, parsed) || parsed == 0UL || parsed > 65535UL) {
+        SM_LOG_ERROR("invalid port value=" << strValue);
         return false;
     }
 
@@ -235,12 +228,12 @@ bool NetworkEndpointUtil::FindAvailablePort(uint16_t &port, bool isIpv6) noexcep
     uint16_t maxPort = kDefaultMaxPort;
 
     uint16_t envStart = 0;
-    if (ParsePortEnv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START", envStart)) {
+    if (ParsePortStr(mf::env::MF_CONFIG_STORE_PORT_START, envStart)) {
         startPort = envStart;
     }
 
     uint16_t envEnd = 0;
-    if (ParsePortEnv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_END", envEnd)) {
+    if (ParsePortStr(mf::env::MF_CONFIG_STORE_PORT_END, envEnd)) {
         maxPort = envEnd;
     }
 

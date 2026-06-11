@@ -62,16 +62,13 @@ Result AccCommonUtil::SslShutdownHelper(SSL *ssl)
     return ACC_ERROR;
 }
 
-uint32_t AccCommonUtil::GetEnvValue2Uint32(const char *envName)
+uint32_t AccCommonUtil::GetEnvValue2Uint32(const std::string &strValue)
 {
-    // 0 should be illegal for this env variable
     constexpr uint32_t maxUint32Len = 35;
-    const char *tmpEnvValue = std::getenv(envName);
-    if (tmpEnvValue != nullptr && strlen(tmpEnvValue) <= maxUint32Len && IsAllDigits(tmpEnvValue)) {
+    if (!strValue.empty() && strValue.length() <= maxUint32Len && IsAllDigits(strValue)) {
         uint32_t envValue = 0;
-        std::string str(tmpEnvValue);
-        if (!ock::mf::StrUtil::String2Uint(str, envValue)) {
-            LOG_ERROR("failed to convert str : " << str << " to uint32_t");
+        if (!mf::StrUtil::String2Uint(strValue, envValue)) {
+            LOG_ERROR("failed to convert str : " << strValue << " to uint32_t");
             return 0;
         }
         return envValue;

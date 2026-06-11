@@ -19,6 +19,7 @@
 #include <sstream>
 
 #include "adapter_logger.h"
+#include "mf_env_define.h"
 #include "smem.h"
 #include "transfer_util.h"
 
@@ -106,10 +107,9 @@ uint16_t findAvailableTcpPort(int &sockfd)
 
 int32_t pytransfer_create_config_store(const char *storeUrl)
 {
-    const char *shmem_level = std::getenv("SHMEM_LOG_LEVEL");
-    const char *mf_level = std::getenv("ASCEND_MF_LOG_LEVEL");
-    if (shmem_level == nullptr && mf_level != nullptr && strlen(mf_level) == 1) {
-        unsigned char c = static_cast<unsigned char>(mf_level[0]);
+    const std::string &mfLevel = mf::env::MF_LOG_LEVEL;
+    if (mfLevel.size() == 1) {
+        unsigned char c = static_cast<unsigned char>(mfLevel[0]);
         if (std::isdigit(c)) {
             int level = c - '0';
             smem_set_log_level(level);

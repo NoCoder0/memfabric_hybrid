@@ -404,5 +404,5 @@
 
 | 环境变量                             | 含义                                  |
 |----------------------------------|-------------------------------------|
-| ACCLINK_CHECK_PERIOD_HOURS    | 证书有效期检测间隔，单位小时                      |
-| ACCLINK_CERT_CHECK_AHEAD_DAYS | 距离过期提醒天数                            |
+| MF_ACC_CHECK_PERIOD_HOURS    | 证书有效期检测间隔，单位小时                      |
+| MF_ACC_CERT_CHECK_AHEAD_DAYS | 距离过期提醒天数                            |

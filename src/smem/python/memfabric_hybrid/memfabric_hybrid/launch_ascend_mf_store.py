@@ -17,12 +17,12 @@ from _pymf_transfer import create_config_store, set_log_level
 
 
 def launch_ascend_mf_store():
-    log_level = os.getenv("ASCEND_MF_LOG_LEVEL")
+    log_level = os.getenv("MF_LOG_LEVEL")
     if log_level and log_level.isdigit():
         set_log_level(int(log_level))
-    ascend_mf_store_url = os.getenv("ASCEND_MF_STORE_URL")
+    ascend_mf_store_url = os.getenv("MF_CONFIG_STORE_URL")
     if not ascend_mf_store_url:
-        raise ValueError("env ASCEND_MF_STORE_URL not exist")
+        raise ValueError("env MF_CONFIG_STORE_URL not exist")
     ret = create_config_store(ascend_mf_store_url)
     if ret != 0:
         sys.exit(ret)

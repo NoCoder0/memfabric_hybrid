@@ -15,6 +15,7 @@
 #include "hybm_space_allocator.h"
 #include "hybm_ptracer.h"
 #include "dl_hybrid_api.h"
+#include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
@@ -36,7 +37,7 @@ Result HostDataOpRDMA::Initialize() noexcept
     if (inited_) {
         return BM_OK;
     }
-    rdmaSwapSpaceSize_ = MfEnvUtil::GetOptionalUintOrDefault("HYBM_RDMA_SWAP_SPACE_SIZE", RDMA_SWAP_SPACE_SIZE);
+    rdmaSwapSpaceSize_ = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_SWAP_SPACE_SIZE, RDMA_SWAP_SPACE_SIZE);
     if (rdmaSwapSpaceSize_ == 0) {
         inited_ = true;
         return BM_OK;

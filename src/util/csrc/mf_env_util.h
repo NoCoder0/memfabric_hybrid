@@ -12,7 +12,6 @@
 #ifndef MEMFABRIC_HYBRID_HYBM_ENV_UTIL_H
 #define MEMFABRIC_HYBRID_HYBM_ENV_UTIL_H
 
-#include <cstdlib>
 #include <string>
 
 #include "mf_str_util.h"
@@ -22,16 +21,14 @@ namespace mf {
 class MfEnvUtil {
 public:
     template<typename UIntType>
-    static bool GetUint(const char *envName, UIntType &value)
+    static bool GetUint(const std::string &strValue, UIntType &value)
     {
-        const char *raw = std::getenv(envName);
-        if (raw == nullptr) {
+        if (strValue.empty()) {
             return false;
         }
 
         UIntType parsedValue = 0;
-        std::string str(raw);
-        if (!StrUtil::String2Uint(str, parsedValue) || parsedValue == 0) {
+        if (!StrUtil::String2Uint(strValue, parsedValue) || parsedValue == 0) {
             return false;
         }
         value = parsedValue;
@@ -39,16 +36,14 @@ public:
     }
 
     template<typename UIntType>
-    static bool GetOptionalUint(const char *envName, UIntType &value)
+    static bool GetOptionalUint(const std::string &strValue, UIntType &value)
     {
-        const char *raw = std::getenv(envName);
-        if (raw == nullptr) {
+        if (strValue.empty()) {
             return false;
         }
 
         UIntType parsedValue = 0;
-        std::string str(raw);
-        if (!StrUtil::String2Uint(str, parsedValue)) {
+        if (!StrUtil::String2Uint(strValue, parsedValue)) {
             return false;
         }
         value = parsedValue;
@@ -56,20 +51,20 @@ public:
     }
 
     template<typename UIntType>
-    static UIntType GetUintOrDefault(const char *envName, UIntType defaultValue)
+    static UIntType GetUintOrDefault(const std::string &strValue, UIntType defaultValue)
     {
         UIntType value = defaultValue;
-        if (!GetUint(envName, value)) {
+        if (!GetUint(strValue, value)) {
             return defaultValue;
         }
         return value;
     }
 
     template<typename UIntType>
-    static UIntType GetOptionalUintOrDefault(const char *envName, UIntType defaultValue)
+    static UIntType GetOptionalUintOrDefault(const std::string &strValue, UIntType defaultValue)
     {
         UIntType value = defaultValue;
-        if (!GetOptionalUint(envName, value)) {
+        if (!GetOptionalUint(strValue, value)) {
             return defaultValue;
         }
         return value;

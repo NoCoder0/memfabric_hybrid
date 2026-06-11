@@ -506,14 +506,14 @@ public:
 
     void SetUp() override
     {
-        (void)unsetenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START");
-        (void)unsetenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_END");
+        (void)unsetenv("MF_CONFIG_STORE_PORT_START");
+        (void)unsetenv("MF_CONFIG_STORE_PORT_END");
     }
 
     void TearDown() override
     {
-        (void)unsetenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START");
-        (void)unsetenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_END");
+        (void)unsetenv("MF_CONFIG_STORE_PORT_START");
+        (void)unsetenv("MF_CONFIG_STORE_PORT_END");
     }
 };
 
@@ -531,22 +531,8 @@ TEST_F(FindAvailablePortTest, FindsPort_ipv6)
     EXPECT_GT(port, K_PORT_ZERO);
 }
 
-TEST_F(FindAvailablePortTest, RespectEnvRange)
+TEST_F(FindAvailablePortTest, DefaultRange)
 {
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START", "49200", 1);
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_END", "49250", 1);
-
-    uint16_t port = 0;
-    EXPECT_TRUE(NetworkEndpointUtil::FindAvailablePort(port, false));
-    EXPECT_GE(port, K_PORT_ENV_RANGE_START);
-    EXPECT_LE(port, K_PORT_ENV_RANGE_END);
-}
-
-TEST_F(FindAvailablePortTest, ReversedEnvRange_fallback_to_default)
-{
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START", "60000", 1);
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_END", "50000", 1);
-
     uint16_t port = 0;
     EXPECT_TRUE(NetworkEndpointUtil::FindAvailablePort(port, false));
     EXPECT_GE(port, K_PORT_DEFAULT_MIN);
@@ -554,7 +540,7 @@ TEST_F(FindAvailablePortTest, ReversedEnvRange_fallback_to_default)
 
 TEST_F(FindAvailablePortTest, InvalidEnvValue_ignored)
 {
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START", "notanumber", 1);
+    (void)setenv("MF_CONFIG_STORE_PORT_START", "notanumber", 1);
 
     uint16_t port = 0;
     EXPECT_TRUE(NetworkEndpointUtil::FindAvailablePort(port, false));
@@ -563,7 +549,7 @@ TEST_F(FindAvailablePortTest, InvalidEnvValue_ignored)
 
 TEST_F(FindAvailablePortTest, EnvValueZero_ignored)
 {
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START", "0", 1);
+    (void)setenv("MF_CONFIG_STORE_PORT_START", "0", 1);
 
     uint16_t port = 0;
     EXPECT_TRUE(NetworkEndpointUtil::FindAvailablePort(port, false));
@@ -571,7 +557,7 @@ TEST_F(FindAvailablePortTest, EnvValueZero_ignored)
 
 TEST_F(FindAvailablePortTest, EnvValueOverflow_ignored)
 {
-    (void)setenv("MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START", "99999", 1);
+    (void)setenv("MF_CONFIG_STORE_PORT_START", "99999", 1);
 
     uint16_t port = 0;
     EXPECT_TRUE(NetworkEndpointUtil::FindAvailablePort(port, false));

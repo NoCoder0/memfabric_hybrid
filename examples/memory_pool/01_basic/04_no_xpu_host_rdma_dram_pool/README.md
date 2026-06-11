@@ -12,7 +12,7 @@
 ## 协议与配置要点
 - `create2` 的 data_op_type 选择 HOST_RDMA 协议。
 TODO: check下面的条件。。。
-- 运行前按环境变量文档设置 HOST_RDMA 相关参数（如 `HCOM_MAX_SLICE_SIZE`、`HCOM_RECV_DATA_SIZE`、`HYBM_RDMA_SWAP_SPACE_SIZE`）。
+- 运行前按环境变量文档设置 HOST_RDMA 相关参数（如 `HCOM_MAX_SLICE_SIZE`、`HCOM_RECV_DATA_SIZE`、`MF_HYBM_RDMA_SWAP_SPACE_SIZE`）。
 - config store 可使用 `tcp://ip:port` 或 `etcd://ip:port`。
 
 ## 规模建议

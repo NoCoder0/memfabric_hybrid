@@ -232,7 +232,7 @@ private:
     }
 
 private:
-    LogLevel logLevel_ = ERROR_LEVEL;
+    LogLevel logLevel_ = WARN_LEVEL;
     ExternalLog logFunc_ = nullptr;
     AlarmLog alarmFunc_ = nullptr;
     ResumeLog resumeFunc_ = nullptr;

@@ -19,6 +19,7 @@
 #include <arpa/inet.h>
 #include "dl_hcom_api.h"
 #include "hybm_logger.h"
+#include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "host_hcom_common.h"
 #include "host_hcom_helper.h"
@@ -58,8 +59,8 @@ HcomRuntimeConfig LoadHcomRuntimeConfig()
     HcomRuntimeConfig runtimeConfig{};
     runtimeConfig.maxSliceSize = HCOM_MAX_SLICE_SIZE;
     runtimeConfig.recvDataSize = HCOM_RECV_DATA_SIZE;
-    runtimeConfig.maxSliceSize = MfEnvUtil::GetUintOrDefault("HCOM_MAX_SLICE_SIZE", HCOM_MAX_SLICE_SIZE);
-    runtimeConfig.recvDataSize = MfEnvUtil::GetUintOrDefault("HCOM_RECV_DATA_SIZE", HCOM_RECV_DATA_SIZE);
+    runtimeConfig.maxSliceSize = MfEnvUtil::GetUintOrDefault(env::HCOM_MAX_SLICE_SIZE, HCOM_MAX_SLICE_SIZE);
+    runtimeConfig.recvDataSize = MfEnvUtil::GetUintOrDefault(env::HCOM_RECV_DATA_SIZE, HCOM_RECV_DATA_SIZE);
     return runtimeConfig;
 }
 
@@ -1185,31 +1186,31 @@ const TransportPrivateData HcomTransportManager::GetPrivateData() const
 void HcomTransportManager::SetHcomServiceConfig(Hcom_Service service)
 {
     uint16_t cqDepth = 0;
-    if (MfEnvUtil::GetUint("MF_HCOM_CQ_DEPTH", cqDepth)) {
+    if (MfEnvUtil::GetUint(env::MF_HCOM_CQ_DEPTH, cqDepth)) {
         BM_LOG_INFO("Set hcom cq depth: " << cqDepth);
         DlHcomApi::ServiceSetCompletionQueueDepth(service, cqDepth);
     }
 
     uint32_t sqSize = 0;
-    if (MfEnvUtil::GetUint("MF_HCOM_SQ_SIZE", sqSize)) {
+    if (MfEnvUtil::GetUint(env::MF_HCOM_SQ_SIZE, sqSize)) {
         BM_LOG_INFO("Set hcom sq size: " << sqSize);
         DlHcomApi::ServiceSetSendQueueSize(service, sqSize);
     }
 
     uint32_t rqSize = 0;
-    if (MfEnvUtil::GetUint("MF_HCOM_RQ_SIZE", rqSize)) {
+    if (MfEnvUtil::GetUint(env::MF_HCOM_RQ_SIZE, rqSize)) {
         BM_LOG_INFO("Set hcom rq size: " << rqSize);
         DlHcomApi::ServiceSetRecvQueueSize(service, rqSize);
     }
 
     uint32_t prepostSize = 0;
-    if (MfEnvUtil::GetUint("MF_HCOM_PREPOST_SIZE", prepostSize)) {
+    if (MfEnvUtil::GetUint(env::MF_HCOM_PREPOST_SIZE, prepostSize)) {
         BM_LOG_INFO("Set hcom prepost size: " << prepostSize);
         DlHcomApi::ServiceSetQueuePrePostSize(service, prepostSize);
     }
 
     uint32_t maxSendRecvDataCnt = 0;
-    if (MfEnvUtil::GetUint("MF_HCOM_MAX_SEND_RECV_DATA_CNT", maxSendRecvDataCnt)) {
+    if (MfEnvUtil::GetUint(env::MF_HCOM_MAX_SEND_RECV_DATA_CNT, maxSendRecvDataCnt)) {
         BM_LOG_INFO("Set hcom max send recv data cnt: " << maxSendRecvDataCnt);
         DlHcomApi::HcomSetMaxSendRecvDataCnt(service, maxSendRecvDataCnt);
     }

@@ -17,6 +17,7 @@
 #include <chrono>
 #include <iostream>
 #include <pybind11/stl.h>
+#include "mf_env_define.h"
 #include "transfer_util.h"
 #include "adapter_logger.h"
 
@@ -57,10 +58,9 @@ int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, co
     }
 
      // set log level from env (SMEM OutLogger)
-    const char *shmem_level = std::getenv("SHMEM_LOG_LEVEL");
-    const char *mf_level = std::getenv("ASCEND_MF_LOG_LEVEL");
-    if (shmem_level == nullptr && mf_level != nullptr && strlen(mf_level) == 1) {
-        unsigned char c = static_cast<unsigned char>(mf_level[0]);
+    const std::string &mfLevel = ock::mf::env::MF_LOG_LEVEL;
+    if (mfLevel.size() == 1) {
+        unsigned char c = static_cast<unsigned char>(mfLevel[0]);
         if (std::isdigit(c)) {
             int level = c - '0';
             smem_set_log_level(level);
@@ -77,7 +77,7 @@ int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, co
     config_.deviceId = deviceId;
     config_.dataOpType = static_cast<smem_bm_data_op_type>(dataOpType);
     sessionId_ = uniqueId;
-    
+
     bool isStoreServer = (strcmp(storeServerRole, role) == 0);
     auto urlList = ParseMultiStoreUrl(std::string(storeUrl));
     configStoreProtocol_ = GetConfigStoreProtocol(urlList);

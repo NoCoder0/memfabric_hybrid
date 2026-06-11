@@ -28,7 +28,7 @@ class AccCommonUtil {
 public:
     static bool IsValidIPv4(const std::string &ip);
     static Result SslShutdownHelper(SSL *s);
-    static uint32_t GetEnvValue2Uint32(const char *envName);
+    static uint32_t GetEnvValue2Uint32(const std::string &strValue);
     static bool IsAllDigits(const std::string &str);
     static Result CheckTlsOptions(const AccTlsOption &tlsOption);
 };

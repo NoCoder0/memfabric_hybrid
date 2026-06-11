@@ -16,6 +16,7 @@
 #include "hybm_def.h"
 #include "hybm_big_mem.h"
 #include "hybm_data_op.h"
+#include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "smem_store_factory.h"
 #include "mf_fault_injection_point.h"
@@ -349,7 +350,7 @@ Result SmemBmEntry::Join(uint32_t flags)
 {
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
     const uint32_t groupJoinTimeoutSec =
-        mf::MfEnvUtil::GetOptionalUintOrDefault("MF_GROUP_JOIN_MAX_TIMEOUT", MF_GROUP_JOIN_DEFAULT_TIMEOUT);
+        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_JOIN_MAX_TIMEOUT, MF_GROUP_JOIN_DEFAULT_TIMEOUT);
     SM_LOG_DEBUG("group join timeout sec: " << groupJoinTimeoutSec);
     auto start_time = std::chrono::steady_clock::now();
     // Track store connection state: if the store was ever disconnected since
@@ -387,7 +388,7 @@ Result SmemBmEntry::Update(uint32_t flags)
 {
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
     const uint32_t retryTime = mf::MfEnvUtil::GetOptionalUintOrDefault(
-        "MF_SMEM_GROUP_RETRY_TIME", SMEM_GROUP_RETRY_TIME);
+        mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
     for (uint32_t i = 0; i < retryTime; i++) {
         auto ret = globalGroup_->GroupUpdate();
         if (ret == SM_INNER_BUSY) {
@@ -437,7 +438,7 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
     sliceInfos_.push_back(info);
     // 3.group update
     const uint32_t retryTime = mf::MfEnvUtil::GetOptionalUintOrDefault(
-        "MF_SMEM_GROUP_RETRY_TIME", SMEM_GROUP_RETRY_TIME);
+        mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
     for (uint32_t i = 0; i < retryTime; i++) {
         auto ret = globalGroup_->GroupUpdate();
         if (ret == SM_INNER_BUSY) {

@@ -17,6 +17,7 @@
 #include <thread>
 #include <regex>
 #include <numeric>
+#include "mf_env_define.h"
 
 #include "hybm_common_include.h"
 #include "dl_acl_api.h"
@@ -922,11 +923,11 @@ Result RdmaIndirectTransportManager::OpenDevice(const TransportOptions &options)
         ptr += AGGREGATE_SIZE_LIMIT;
     }
 
-    if (const char *socketUrl = std::getenv("MF_SOCKET_URL"); socketUrl == nullptr) {
+    if (env::MF_SOCKET_URL.empty()) {
         BM_LOG_WARN("MF_SOCKET_URL is not set, using url:" << options.nic);
         localNic_ = options.nic;
     } else {
-        localNic_ = socketUrl;
+        localNic_ = env::MF_SOCKET_URL;
     }
     ret = InitListenerSocket(localNic_);
     if (ret != BM_OK) {

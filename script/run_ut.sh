@@ -58,10 +58,10 @@ mkdir -p ${OUTPUT_PATH}
 
 set -e
 
-unset HYBM_RDMA_SWAP_SPACE_SIZE
+unset MF_HYBM_RDMA_SWAP_SPACE_SIZE
 
 echo "========= UT env =========="
-echo "HYBM_RDMA_SWAP_SPACE_SIZE=${HYBM_RDMA_SWAP_SPACE_SIZE:-<unset>}"
+echo "MF_HYBM_RDMA_SWAP_SPACE_SIZE=${MF_HYBM_RDMA_SWAP_SPACE_SIZE:-<unset>}"
 
 dos2unix "$MOCKCPP_PATH/include/mockcpp/JmpCode.h"
 dos2unix "$MOCKCPP_PATH/include/mockcpp/mockcpp.h"

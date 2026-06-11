@@ -104,7 +104,7 @@ q
 ```bash
 export HCOM_MAX_SLICE_SIZE=32768
 export HCOM_RECV_DATA_SIZE=32768
-export HYBM_RDMA_SWAP_SPACE_SIZE=32768
+export MF_HYBM_RDMA_SWAP_SPACE_SIZE=32768
 ```
 
 在多个终端执行相同命令即可；实际参与进程数按本地验证需要决定，但不要超过 `16`：
@@ -132,7 +132,7 @@ export LD_LIBRARY_PATH="$(pwd)/output/etcd/lib64:$LD_LIBRARY_PATH"
 ```bash
 export HCOM_MAX_SLICE_SIZE=32768
 export HCOM_RECV_DATA_SIZE=32768
-export HYBM_RDMA_SWAP_SPACE_SIZE=32768
+export MF_HYBM_RDMA_SWAP_SPACE_SIZE=32768
 ./cmake-build-debug-config-store/example/config_store/config_store_etcd_test etcd://127.0.0.1:2379 2 0 10003
 ```
 

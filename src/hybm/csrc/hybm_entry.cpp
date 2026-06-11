@@ -10,7 +10,6 @@
  * See the Mulan PSL v2 for more details.
 */
 
-#include <cstdlib>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -18,6 +17,7 @@
 #include "hybm.h"
 #include "hybm_ptracer.h"
 #include "hybm_common_include.h"
+#include "mf_env_define.h"
 #include "hybm_gva.h"
 #include "hybm_version.h"
 #include "hybm_stream_manager.h"
@@ -52,17 +52,17 @@ static inline Result hybm_load_library()
 {
     std::string libPath;
 #if defined(ASCEND_NPU)
-    char *path = std::getenv("ASCEND_HOME_PATH");
-    BM_VALIDATE_RETURN(path != nullptr, "Environment ASCEND_HOME_PATH is not set.", BM_ERROR);
-    libPath = std::string(path).append("/lib64");
+    const std::string &path = env::ASCEND_HOME_PATH;
+    BM_VALIDATE_RETURN(!path.empty(), "Environment ASCEND_HOME_PATH is not set.", BM_ERROR);
+    libPath = path + "/lib64";
     if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
         BM_LOG_ERROR("Environment ASCEND_HOME_PATH check failed.");
         return BM_ERROR;
     }
 #elif defined(NVIDIA_GPU)
-    char *path = std::getenv("CUDA_HOME");
-    BM_VALIDATE_RETURN(path != nullptr, "Environment CUDA_HOME is not set.", BM_ERROR);
-    libPath = std::string(path).append("/lib64");
+    const std::string &path = env::CUDA_HOME;
+    BM_VALIDATE_RETURN(!path.empty(), "Environment CUDA_HOME is not set.", BM_ERROR);
+    libPath = path + "/lib64";
     if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
         BM_LOG_ERROR("Environment CUDA_HOME check failed.");
         return BM_ERROR;

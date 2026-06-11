@@ -25,6 +25,7 @@
 #include "hybm.h"
 #include "hybm_big_mem.h"
 #include "hybm_data_op.h"
+#include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "smem_net_common.h"
 #include "smem_store_factory.h"
@@ -467,7 +468,7 @@ void SmemTransEntry::SetPeerDownCallback(smem_trans_peer_down_callback_t callbac
 Result SmemTransEntry::Join(uint32_t flags)
 {
     const uint32_t groupJoinTimeoutSec =
-        mf::MfEnvUtil::GetOptionalUintOrDefault("MF_GROUP_JOIN_MAX_TIMEOUT", MF_GROUP_JOIN_DEFAULT_TIMEOUT);
+        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_JOIN_MAX_TIMEOUT, MF_GROUP_JOIN_DEFAULT_TIMEOUT);
     SM_LOG_DEBUG("group join timeout sec: " << groupJoinTimeoutSec);
     auto start_time = std::chrono::steady_clock::now();
     while (true) {
@@ -491,7 +492,7 @@ Result SmemTransEntry::Join(uint32_t flags)
 Result SmemTransEntry::Update(uint32_t flags)
 {
     const uint32_t retryTime = mf::MfEnvUtil::GetOptionalUintOrDefault(
-        "MF_SMEM_GROUP_RETRY_TIME", SMEM_GROUP_RETRY_TIME);
+        mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
     for (uint32_t i = 0; i < retryTime; i++) {
         auto ret = globalGroup_->GroupUpdate();
         if (ret == SM_INNER_BUSY) {

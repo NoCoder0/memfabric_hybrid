@@ -11,6 +11,7 @@
 */
 #include "hybm_transport_manager.h"
 
+#include "mf_env_define.h"
 #include "hybm_logger.h"
 #include "host_hcom_transport_manager.h"
 #include "device_rdma_transport_manager.h"
@@ -44,9 +45,8 @@ std::shared_ptr<TransportManager> TransportManager::Create(TransportType type, H
 
 std::shared_ptr<TransportManager> TransportManager::Create(const HybmGvaVersion version)
 {
-    const char *tm = std::getenv("TRANSPORT_MANAGER");
-    if (tm != nullptr and std::string(tm) == "INDIRECT") {
-        BM_LOG_INFO("TRANSPORT_MANAGER==INDIRECT, using indirect device rdma transport manager");
+    if (env::MF_TRANSPORT_MANAGER == "INDIRECT") {
+        BM_LOG_INFO("MF_TRANSPORT_MANAGER==INDIRECT, using indirect device rdma transport manager");
         return std::make_shared<device::RdmaIndirectTransportManager>();
     }
 

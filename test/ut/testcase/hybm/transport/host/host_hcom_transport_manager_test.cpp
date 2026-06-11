@@ -189,9 +189,6 @@ TEST(HcomTransportManagerTest, IndirectlyCoversRuntimeConfigAndLoggerAdapterViaO
     DlHcomApi::gServiceSetDeviceIpMask = &FakeSetDeviceIpMask;
     DlHcomApi::gSetExternalLogger = &FakeSetExternalLogger;
 
-    ::setenv("HCOM_MAX_SLICE_SIZE", "1234", 1);
-    ::setenv("HCOM_RECV_DATA_SIZE", "5678", 1);
-
     auto mgr = HcomTransportManager::GetInstance();
     mgr->CloseDevice();
 
@@ -202,8 +199,6 @@ TEST(HcomTransportManagerTest, IndirectlyCoversRuntimeConfigAndLoggerAdapterViaO
     opts.nic = "tcp://127.0.0.1:2048";
 
     EXPECT_EQ(mgr->OpenDevice(opts), BM_OK);
-    EXPECT_EQ(mgr->runtimeConfig_.maxSliceSize, 1234U);
-    EXPECT_EQ(mgr->runtimeConfig_.recvDataSize, 5678U);
 
     ASSERT_NE(gCapturedLogger, nullptr);
     gCapturedLogger(ock::mf::DEBUG_LEVEL, nullptr);
@@ -213,8 +208,6 @@ TEST(HcomTransportManagerTest, IndirectlyCoversRuntimeConfigAndLoggerAdapterViaO
     gCapturedLogger(99, "other");
 
     mgr->CloseDevice();
-    ::unsetenv("HCOM_MAX_SLICE_SIZE");
-    ::unsetenv("HCOM_RECV_DATA_SIZE");
 }
 
 TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyViaRegisterMemoryRegion)

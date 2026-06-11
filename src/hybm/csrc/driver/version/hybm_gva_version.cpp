@@ -16,6 +16,7 @@
 
 #include "hybm_logger.h"
 #include "hybm_types.h"
+#include "mf_env_define.h"
 #include "mf_str_util.h"
 #include "hybm_gva_version.h"
 
@@ -78,7 +79,7 @@ static std::string LoadValueFromFile(const std::string &realName, const std::str
 static std::string CastDriverVersion()
 {
 #ifdef UT_ENABLED
-    std::string driverVersionPath = std::getenv("ASCEND_HOME_PATH");
+    std::string driverVersionPath = env::ASCEND_HOME_PATH;
 #else
     std::string driverVersionPath = LoadValueFromFile(DRIVER_INSTALL_INFO, "Driver_Install_Path_Param=");
     if (driverVersionPath.empty()) {
