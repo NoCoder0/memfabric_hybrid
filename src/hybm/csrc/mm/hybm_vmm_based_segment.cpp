@@ -202,7 +202,7 @@ Result HybmVmmBasedSegment::MallocFromHost(size_t size, uint32_t devId, drv_mem_
         ret = HalMemCreateAdapterFromHost(size, handle, prop);
     }
     if (ret != BM_OK) {
-        BM_LOG_ERROR("Try HalMemCreate failed ret:" << ret << " numa:" << prop.devid << " spend time:"
+        BM_LOG_ERROR("Try HalMemCreate failed ret:" << ret << " device:" << prop.devid << " spend time:"
                                                     << " size:" << size);
     }
     return ret;

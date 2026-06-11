@@ -233,6 +233,12 @@ int32_t rtGetLogicDevIdByUserDevId(const int32_t userDevId, int32_t *const logic
     return 0;
 }
 
+int32_t aclrtGetPhyDevIdByLogicDevId(const int32_t logicDevId, int32_t *const phyDevId)
+{
+    *phyDevId = logicDevId;
+    return 0;
+}
+
 int32_t rtStreamGetSqid(const void *stm, uint32_t *sqId)
 {
     if (sqId != nullptr) {

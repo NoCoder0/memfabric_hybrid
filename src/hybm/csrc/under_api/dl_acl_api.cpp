@@ -55,6 +55,7 @@ rtEnableP2PFunc DlAclApi::pRtEnableP2P = nullptr;
 rtDisableP2PFunc DlAclApi::pRtDisableP2P = nullptr;
 rtMemcpyAsyncFunc DlAclApi::pRtMemcpyAsync = nullptr;
 rtGetLogicDevIdByUserDevIdFunc DlAclApi::pRtGetLogicDevIdByUserDevId = nullptr;
+aclrtGetPhyDevIdByLogicDevIdFunc DlAclApi::pAclrtGetPhyDevIdByLogicDevId = nullptr;
 
 Result DlAclApi::LoadLibrary(const std::string &libDirPath)
 {
@@ -112,6 +113,8 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pRtDisableP2P, rtDisableP2PFunc, rtHandle, "rtDisableP2P");
     DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, rtHandle, "rtGetLogicDevIdByUserDevId");
     DL_LOAD_SYM(pRtMemcpyAsync, rtMemcpyAsyncFunc, rtHandle, "rtMemcpyAsyncWithoutCheckKind");
+    DL_LOAD_SYM_OPTIONAL(pAclrtGetPhyDevIdByLogicDevId, aclrtGetPhyDevIdByLogicDevIdFunc, rtHandle,
+        "aclrtGetPhyDevIdByLogicDevId");
 
     gLoaded = true;
     return BM_OK;
@@ -178,6 +181,7 @@ void DlAclApi::CleanupLibrary()
     pAclrtDestroyNotify = nullptr;
     pAclrtGetCurrentContext = nullptr;
     pAclrtSetStreamAttribute = nullptr;
+    pAclrtGetPhyDevIdByLogicDevId = nullptr;
 
     if (rtHandle != nullptr) {
         dlclose(rtHandle);

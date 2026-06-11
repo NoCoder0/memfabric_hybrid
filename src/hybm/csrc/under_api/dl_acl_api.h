@@ -81,6 +81,7 @@ using rtIpcDestroyMemoryNameFunc = int32_t (*)(const char *);
 using rtEnableP2PFunc = int32_t (*)(uint32_t, uint32_t, uint32_t);
 using rtDisableP2PFunc = int32_t (*)(uint32_t, uint32_t);
 using rtGetLogicDevIdByUserDevIdFunc = int32_t (*)(const int32_t, int32_t *const);
+using aclrtGetPhyDevIdByLogicDevIdFunc = int32_t (*)(const int32_t, int32_t *const);
 using rtIpcOpenMemoryFunc = int32_t (*)(void **, const char *);
 using rtIpcCloseMemoryFunc = int32_t (*)(const void *);
 using rtMemcpyAsyncFunc = int32_t (*)(void *, size_t, const void *, size_t, uint32_t, void *);
@@ -383,6 +384,14 @@ public:
         return pRtGetLogicDevIdByUserDevId(userDevId, logicDevId);
     }
 
+    static inline Result AclrtGetPhyDevIdByLogicDevId(const int32_t logicDevId, int32_t *const phyDevId)
+    {
+        if (pAclrtGetPhyDevIdByLogicDevId == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pAclrtGetPhyDevIdByLogicDevId(logicDevId, phyDevId);
+    }
+
     static inline Result RtMemcpyAsync(void *dst, size_t destMax, const void *src, size_t count, uint32_t kind,
                                        void *stream)
     {
@@ -433,6 +442,7 @@ private:
     static rtDisableP2PFunc pRtDisableP2P;
     static rtMemcpyAsyncFunc pRtMemcpyAsync;
     static rtGetLogicDevIdByUserDevIdFunc pRtGetLogicDevIdByUserDevId;
+    static aclrtGetPhyDevIdByLogicDevIdFunc pAclrtGetPhyDevIdByLogicDevId;
 };
 } // namespace mf
 } // namespace ock

@@ -59,6 +59,7 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
 {
     int32_t userId = -1;
     int32_t logicId = -1;
+    int32_t phyId = -1;
     std::unique_lock<std::mutex> unique_lock(mutex_);
     BM_LOG_DEBUG("begin to open device with " << options);
     auto ret = DlAclApi::AclrtGetDevice(&userId);
@@ -70,8 +71,14 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && logicId >= 0,
                              "RtGetLogicDevIdByUserDevId() return=" << ret << ", output deviceId=" << logicId,
                              BM_DL_FUNCTION_FAILED);
-
-    deviceId_ = static_cast<uint32_t>(logicId);
+    // acl接口bug，需要传userId，而不是logicId
+    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
+    if (ret != 0) {
+        BM_LOG_WARN("aclrtGetPhyDevIdByLogicDevId ret=" << ret << " use logicId=" << logicId);
+        phyId = logicId;
+    }
+    BM_LOG_INFO("aclrtGetPhyDevIdByLogicDevId: userId=" << userId << ", logicId=" << logicId << ", phyId=" << phyId);
+    deviceId_ = static_cast<uint32_t>(phyId);
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
     role_ = options.role;
