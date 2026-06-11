@@ -224,10 +224,7 @@ Result HybmVmmBasedSegment::MallocEmptySlice(MemSlicePtr &slice) noexcept
     auto memType = options_.segType == HYBM_MST_HBM ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
     slice = std::make_shared<MemSlice>(sliceCount_++, memType, MEM_PT_TYPE_GVM, gva, allocAddr, 0);
     slices_.emplace(slice->index_, MemSliceStatus(slice, nullptr));
-    if (!options_.shared) {
-        BM_LOG_INFO("no need to share, skip export");
-        return BM_OK;
-    }
+
     HostSdmaExportInfo info;
     std::string exInfo;
     info.logicDevId = logicDeviceId_;
