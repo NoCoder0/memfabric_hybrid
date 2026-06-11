@@ -433,7 +433,7 @@ private:
             processCapacity[i] = capacity;
         }
         LocalTensor<int32_t> balanceMatrixLt = matrixBuf_.Get<int32_t>();
-        Duplicate<int32_t>(balanceMatrixLt, -1, matrixDataAlignLen_);
+        Duplicate<int32_t>(balanceMatrixLt, -1, matrixDataAlignLen_ / sizeof(int32_t));
         PipeBarrier<PIPE_V>();
 
         // 每个rank先处理自己的token
