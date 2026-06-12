@@ -252,7 +252,6 @@ private:
     uint32_t rankId_{0};
     uint32_t rankCount_{0};
     uint32_t userDeviceId_{0};
-    uint32_t logicDeviceId_{0};
     uint32_t phyDeviceId_{0};
     uint32_t sdid_{0};
     uint32_t serverId_{0};

@@ -72,6 +72,7 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
                              "RtGetLogicDevIdByUserDevId() return=" << ret << ", output deviceId=" << logicId,
                              BM_DL_FUNCTION_FAILED);
 
+    // 实测需要使用userDeviceId
     ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
     if (ret != 0) {
         BM_LOG_WARN("aclrtGetPhyDevIdByLogicDevId ret=" << ret << " use logicId=" << logicId);

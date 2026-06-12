@@ -31,9 +31,10 @@ def main() -> None:
     )
     parser.add_argument(
         "--port-count",
+        "-p",
         type=int,
         default=6,
-        help="Expected number of ports in the EID entry (default: 2)",
+        help="Expected number of ports in the EID entry (default: 6)",
     )
     args = parser.parse_args()
 

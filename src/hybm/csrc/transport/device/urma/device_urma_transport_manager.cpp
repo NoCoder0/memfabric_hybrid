@@ -823,27 +823,22 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
     }
 
     int32_t userId = -1;
-    int32_t logicId = -1;
     auto ret = DlAclApi::AclrtGetDevice(&userId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && userId >= 0,
                              "AclrtGetDevice() return=" << ret << ", output deviceId=" << userId,
-                             BM_DL_FUNCTION_FAILED);
-    ret = DlAclApi::RtGetLogicDevIdByUserDevId(userId, &logicId);
-    BM_ASSERT_LOG_AND_RETURN(ret == 0 && logicId >= 0,
-                             "RtGetLogicDevIdByUserDevId() return=" << ret << ", output deviceId=" << logicId,
                              BM_DL_FUNCTION_FAILED);
 
     options_ = options;
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
     userDeviceId_ = static_cast<uint32_t>(userId);
-    logicDeviceId_ = static_cast<uint32_t>(logicId);
     int32_t phyId = 0;
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(logicId, &phyId);
+    // 实测需要使用userDeviceId
+    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0,
-                             "aclrtGetPhyDevIdByLogicDevId() return=" << ret << ", logicDeviceId=" << logicDeviceId_
-                                                                      << ", userDeviceId=" << userId,
+                             "aclrtGetPhyDevIdByLogicDevId() return=" << ret << ", userDeviceId=" << userId,
                              BM_DL_FUNCTION_FAILED);
+    BM_LOG_INFO("aclrtGetPhyDevIdByLogicDevId: userId=" << userId << ", phyId=" << phyId);
     phyDeviceId_ = static_cast<uint32_t>(phyId);
 
     // Get device location info
@@ -861,7 +856,7 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
     ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SUPER_POD_ID, &infoValue);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "RtGetDeviceInfo(INFO_TYPE_SUPER_POD_ID) return=" << ret, BM_DL_FUNCTION_FAILED);
     superPodId_ = static_cast<uint32_t>(infoValue);
-    BM_LOG_INFO("local device info: userId=" << userId << ", logicId=" << logicId << ", phyId=" << phyId
+    BM_LOG_INFO("local device info: userId=" << userId << ", phyId=" << phyId
                                              << " sdid=" << sdid_ << ", server_id=" << serverId_
                                              << ", superpod id=" << superPodId_);
 
