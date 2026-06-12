@@ -184,7 +184,7 @@ def main():
     import argparse
     parser = argparse.ArgumentParser(description="NUMA free memory intersect tool (all nodes supported)")
     parser.add_argument("-n", "--node", type=int, help="NUMA node ID (default: all)")
-    parser.add_argument("-m", "--min-mb", type=int, default=2)
+    parser.add_argument("-m", "--min-mb", type=int, default=1024)
     args = parser.parse_args()
 
     # 构造 range PFN

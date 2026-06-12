@@ -303,9 +303,6 @@ Result SmemTransEntry::JoinHandle(uint32_t rk)
     std::string localInfo;
     if (rk == rankId_) {
         localInfo = std::string((char *) &entityInfo_, sizeof(SmemTransExchangeInfo));
-        for (auto &e : registedInfo_) {
-            localInfo += std::string((char *) &e, sizeof(SmemTransExchangeInfo));
-        }
     }
     std::unordered_map<uint32_t, std::string> allInfo;
     std::vector<uint32_t> joined;
@@ -645,12 +642,9 @@ Result SmemTransEntry::RegisterLocalMemories(const std::vector<std::pair<const v
             return ret;
         }
     }
-    if (config_.role == SMEM_TRANS_RECEIVER) {
-        // decode should call Update
-        auto ret = Update(0);
-        registedInfo_.clear();
-        SM_VALIDATE_RETURN(ret == SM_OK, "update failed, rk:" << rankId_ << " ret:" << ret, ret);
-    }
+    auto ret = Update(0);
+    registedInfo_.clear();
+    SM_VALIDATE_RETURN(ret == SM_OK, "update failed, rk:" << rankId_ << " ret:" << ret, ret);
     return SM_OK;
 }
 
