@@ -37,7 +37,7 @@
 
 #ifndef ENABLE_TRACE_LOG
 #define LOG_TRACE(x)
-#elif
+#else
 #define LOG_TRACE(x) ACC_LINKS_OUT_LOG(DEBUG_LEVEL, AccLinksTrace, ARGS)
 #endif
 

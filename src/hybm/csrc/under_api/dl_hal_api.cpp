@@ -157,6 +157,8 @@ Result DlHalApi::LoadLibrary(uint32_t gvaVersion)
         return BM_OK;
     }
 
+    BM_ASSERT_LOG_AND_RETURN(gvaVersion != HYBM_GVA_UNKNOWN, "gvaVersion = " << gvaVersion, BM_NOT_INITIALIZED);
+
     halHandle = dlopen(gAscendHalLibName, RTLD_NOW | RTLD_NODELETE);
     if (halHandle == nullptr) {
         BM_LOG_ERROR(
@@ -167,10 +169,11 @@ Result DlHalApi::LoadLibrary(uint32_t gvaVersion)
         return BM_DL_FUNCTION_FAILED;
     }
 
-    BM_ASSERT_LOG_AND_RETURN(gvaVersion != HYBM_GVA_UNKNOWN, "gvaVersion = " << gvaVersion, BM_NOT_INITIALIZED);
     /* load sym */
     auto ret = LoadHybmV1V2Library(gvaVersion) | LoadHybmVmmLibrary(gvaVersion);
     if (ret != 0) {
+        dlclose(halHandle);
+        halHandle = nullptr;
         return ret;
     }
 

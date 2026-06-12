@@ -302,6 +302,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     if (ret != 0) {
         BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcService_
                                                              << " ret: " << ret);
+        DlHcomApi::ServiceDestroyMemoryRegion(rpcService_, memoryRegion);
         return BM_ERROR;
     }
 

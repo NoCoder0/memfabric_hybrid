@@ -143,7 +143,8 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
                                                rankId_);
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
-        FreeSwapMemory();
+        DlHalApi::HalHostUnregisterEx(ptr, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
+        DlAclApi::AclrtFreeHost(ptr);
         return ret;
     }
 

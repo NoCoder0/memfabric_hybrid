@@ -111,7 +111,6 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
         auto ret = ReleaseSliceMemory(slice);
         if (ret != BM_OK) {
             BM_LOG_WARN("ReleaseSliceMemory failed during unreserve, ret:" << ret << " slice:" << slice);
-            return ret;
         }
     }
     while (!registerSlices_.empty()) {
@@ -126,7 +125,6 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
         if (ret != BM_OK) {
             BM_LOG_WARN("HalMemAddressFree failed, keep reserved VA state. ret:"
                         << ret << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_) << " lva:" << lva);
-            return BM_DL_FUNCTION_FAILED;
         }
     }
     if (globalVirtualAddress_ != nullptr) {

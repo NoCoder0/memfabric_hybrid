@@ -84,6 +84,11 @@ void DlOpApi::CleanupLibrary()
         dlclose(opapiHandle);
         opapiHandle = nullptr;
     }
+    
+    if (opbaseHandle != nullptr) {
+        dlclose(opbaseHandle);
+        opbaseHandle = nullptr;
+    }
 
     gLoaded = false;
 }

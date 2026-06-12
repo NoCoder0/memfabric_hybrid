@@ -71,6 +71,31 @@ int32_t HybmStream::AllocStreamId()
     return BM_OK;
 }
 
+static int32_t InitAscend950Stack(halSqCqInputInfo &input, rtStreamInfoExMsg_t &infoEx,
+                                  void *&stackPtr, uint32_t deviceId)
+{
+    uint64_t stackSize = 72ULL * 64ULL * (RT_KIS_SIMT_WARP_STK_SIZE + RT_KIS_SIMT_DVG_WARP_STK_SIZE)
+                         + RT_STK_ALIGN_LEN;
+    // 0x700000000920400ULL = (RUNTIME_MODULE_ID=7) << 56 | MEM_DEV | MEM_PAGE_HUGE | MEM_SET_ALIGN_SIZE(9ULL)
+    uint64_t drvFlag = 0x700000000920400ULL | deviceId;
+    auto ret = DlHalApi::HalMemAlloc(&stackPtr, stackSize, drvFlag);
+    BM_VALIDATE_RETURN(ret == BM_OK, "alloc stream stack failed, ret:" << ret, BM_ERROR);
+
+    uint64_t devAlignAddr = reinterpret_cast<uint64_t>(stackPtr);
+    devAlignAddr = (devAlignAddr + RT_STK_ALIGN_LEN - 1U) / RT_STK_ALIGN_LEN * RT_STK_ALIGN_LEN;
+    infoEx.head.type = 0;
+    infoEx.body.kisSimtStkBaseAddrLow = static_cast<uint32_t>(devAlignAddr & 0xFFFFFFFFU);
+    infoEx.body.kisSimtStkBaseAddrHigh = static_cast<uint16_t>(devAlignAddr >> UINT32_BIT_NUM);
+    infoEx.body.kisSimtWarpStkSize = RT_KIS_SIMT_WARP_STK_SIZE;
+    infoEx.body.kisSimtDvgWarpStkSize = RT_KIS_SIMT_DVG_WARP_STK_SIZE;
+    infoEx.body.poolId = 0U;
+    infoEx.body.poolIdMax = 0U;
+
+    input.ext_info = reinterpret_cast<void *>(&infoEx);
+    input.ext_info_len = sizeof(rtStreamInfoExMsg_t);
+    return BM_OK;
+}
+
 int32_t HybmStream::AllocSqcq(uint32_t ssid)
 {
     halSqCqInputInfo input{};
@@ -98,30 +123,19 @@ int32_t HybmStream::AllocSqcq(uint32_t ssid)
     sinfo->tsSqType = 0U;
 
     if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
-        uint64_t stackSize = 72ULL * 64ULL * (RT_KIS_SIMT_WARP_STK_SIZE + RT_KIS_SIMT_DVG_WARP_STK_SIZE)
-                             + RT_STK_ALIGN_LEN;
-        // 0x700000000920400ULL = (RUNTIME_MODULE_ID=7) << 56 | MEM_DEV | MEM_PAGE_HUGE | MEM_SET_ALIGN_SIZE(9ULL)
-        uint64_t drvFlag = 0x700000000920400ULL | deviceId_;
-        auto ret = DlHalApi::HalMemAlloc(&stackPtr_, stackSize, drvFlag);
-        BM_VALIDATE_RETURN(ret == BM_OK, "alloc stream stack failed, ret:" << ret, BM_ERROR);
-
-        uint64_t devAlignAddr = reinterpret_cast<uint64_t>(stackPtr_);
-        devAlignAddr = (devAlignAddr + RT_STK_ALIGN_LEN - 1U) / RT_STK_ALIGN_LEN * RT_STK_ALIGN_LEN;
-        infoEx.head.type = 0;
-        infoEx.body.kisSimtStkBaseAddrLow = static_cast<uint32_t>(devAlignAddr & 0xFFFFFFFFU);
-        infoEx.body.kisSimtStkBaseAddrHigh = static_cast<uint16_t>(devAlignAddr >> UINT32_BIT_NUM);
-        infoEx.body.kisSimtWarpStkSize = RT_KIS_SIMT_WARP_STK_SIZE;
-        infoEx.body.kisSimtDvgWarpStkSize = RT_KIS_SIMT_DVG_WARP_STK_SIZE;
-        infoEx.body.poolId = 0U;
-        infoEx.body.poolIdMax = 0U;
-
-        input.ext_info = reinterpret_cast<void *>(&infoEx);
-        input.ext_info_len = sizeof(rtStreamInfoExMsg_t);
+        auto ret = InitAscend950Stack(input, infoEx, stackPtr_, deviceId_);
+        if (ret != BM_OK) {
+            return ret;
+        }
     }
 
     auto ret = DlHalApi::HalSqCqAllocate(deviceId_, &input, &output);
     if (ret != 0) {
         BM_LOG_INFO("allocate sq_cq with ts_id:" << tsId_ << " failed: " << ret);
+        if (stackPtr_ != nullptr) {
+            DlHalApi::HalMemFree(stackPtr_);
+            stackPtr_ = nullptr;
+        }
         return ret;
     }
 

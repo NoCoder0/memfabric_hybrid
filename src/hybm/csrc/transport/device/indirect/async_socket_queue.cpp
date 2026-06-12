@@ -219,6 +219,7 @@ void AsyncSocketQueue::RemoveRankIdSocket(uint32_t rankId) noexcept
     locker.unlock();
 
     epoll_ctl(readEpollFd_, EPOLL_CTL_DEL, socketFd, nullptr);
+    close(socketFd);
 }
 
 bool AsyncSocketQueue::ExistRankIdSocket(uint32_t rankId) noexcept

@@ -100,6 +100,7 @@ bool FileValidator::IsFileValid(const std::string &configFile, std::string &errM
     size_t fileSize = ock::mf::FileUtil::GetFileSize(configFile);
     if (fileSize == 0) {
         errMsg = "The input file is empty";
+        return false;
     } else if (!CheckDataSize(fileSize)) {
         errMsg = "Read input file failed, file is too large.";
         return false;

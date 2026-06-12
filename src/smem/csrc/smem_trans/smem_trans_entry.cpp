@@ -559,6 +559,7 @@ void* SmemTransEntry::MallocDram(uint64_t size)
     auto vaAddr = hybm_get_slice_va(entity_, slice);
     if (vaAddr == nullptr) {
         SM_LOG_ERROR("malloc address with size: " << size << " failed. maybe free mem is not enough");
+        hybm_free_local_memory(entity_, slice, size, 0);
         return nullptr;
     }
 
