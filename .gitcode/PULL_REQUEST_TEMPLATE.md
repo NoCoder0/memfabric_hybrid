@@ -1,32 +1,24 @@
-# Pull Request Template
+# 合入来源
 
-## Description
+- [ ] 需求
+- [ ] 问题单
+- [ ] issue
 
-<!-- Provide a clear summary of the change, the problem it solves, and the technical approach. -->
+# 问题/功能描述
 
-## Related Issues
+# 修改方案描述
 
-<!-- Replace with actual issue numbers. Example: Closes #123, Related to #456 -->
+# 是否涉及UT/ST
 
-## Type of Change
+- [ ] 是
+- [ ] 否（说明理由）
 
-- [ ] Bug fix
-- [ ] New feature
-- [ ] Performance optimization
-- [ ] Documentation update
-- [ ] Other (please describe):_______________
+# 开发自检
 
-## Testing
-
-<!-- Describe how the changes were tested. Include:
-- Unit/integration test coverage
-- Manual validation steps
-- Links to CI reports (e.g., CIDA) if available
-- Note any pending tests
--->
-
-## Checklist
-
-- [ ] I have performed a self-review of my own code.  
-- [ ] I have updated the documentation.  
-- [ ] I have added tests to prove my changes are effective.
+- [ ] 规范：未超过1k；超过1k已完成备案；反合入需要标题注明【反合】
+- [ ] 规范：已关联issue或里程碑
+- [ ] 规范：不需要UT/ST且已说明理由；需要且已包含UT/ST
+- [ ] 安全：涉及对外接口/参数/环境变量改动，并同步修改资料
+- [ ] 安全：未引入三方开源软件；引入三方开源软件并经过安全评审
+- [ ] 安全：未新增对外接口/参数；新增对外接口/参数有校验
+- [ ] 规范：未涉及资料改动；涉及资料改动并已完成修改
