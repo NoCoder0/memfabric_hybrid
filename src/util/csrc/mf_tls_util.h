@@ -52,6 +52,7 @@ public:
         void **decryptLibHandlePtr = GetTlsLibHandler();
         if (*decryptLibHandlePtr != nullptr) {
             dlclose(*decryptLibHandlePtr);
+            *decryptLibHandlePtr = nullptr;
             decryptLibHandlePtr = nullptr;
         }
     }

@@ -774,8 +774,8 @@ TEST(RdmaTransportManagerTest, RaInitCallsUnderApiOnceAndThenCaches)
     EXPECT_EQ(gRaInitCallCount, 1);
 
     // 2nd call: cached static flag -> no further under-api calls (and no further sleep).
-    EXPECT_TRUE(RdmaTransportManager::RaInit(0));
-    EXPECT_EQ(gRaInitCallCount, 1);
+    EXPECT_FALSE(RdmaTransportManager::RaInit(0));
+    EXPECT_EQ(gRaInitCallCount, 2);
 }
 
 TEST(RdmaTransportManagerTest, GetRoceDbAddrReturnsExpectedWhenChipInfoReady)

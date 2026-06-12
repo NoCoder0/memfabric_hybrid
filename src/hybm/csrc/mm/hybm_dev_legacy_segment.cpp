@@ -381,19 +381,28 @@ Result HybmDevLegacySegment::Mmap() noexcept
                                             << "map deviceVa:0x" << (void *)im.deviceVa << ", size:" << std::dec
                                             << im.size);
 
+        bool gvaOpened = false;
         if (options_.shared && CanSdmaReaches(im.superPodId, im.serverId, im.logicDeviceId)) {
             auto ret = drv::HalGvaOpen(im.deviceVa, im.shmName, im.size, 0);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("HalGvaOpen memory failed:" << ret);
                 return -1;
             }
+            gvaOpened = true;
         }
         mappedGvaMem_.insert(im.gva);
 
         // .host_va use info.deviceVa, because .host_va is the part of key for hybm_va_manager allocatedLookupMapByLva_
         int ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
             {im.gva, im.deviceVa, im.deviceVa, im.size, HYBM_MEM_TYPE_DEVICE}, options_.rankId, im.rankId);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
+        if (ret != BM_OK) {
+            if (gvaOpened) {
+                drv::HalGvaClose(im.deviceVa, 0);
+            }
+            mappedGvaMem_.erase(im.gva);
+            BM_LOG_ERROR("VaInfoFromExternal failed:" << ret);
+            return ret;
+        }
     }
     imports_.clear();
     return BM_OK;

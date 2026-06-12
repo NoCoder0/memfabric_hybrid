@@ -90,10 +90,18 @@ StoreErrorCode SmemEtcdStoreBackend::Initialize(const std::string &backendUrl, c
 
     std::string ip;
     uint16_t port = 0;
-    STORE_ASSERT_RETURN(NetworkEndpointUtil::ExtractIpAndPort(backendUrl, ip, port), StoreErrorCode::ERROR);
+    if (!NetworkEndpointUtil::ExtractIpAndPort(backendUrl, ip, port)) {
+        STORE_LOG_ERROR("Assert NetworkEndpointUtil::ExtractIpAndPort failed");
+        EtcdApi::CleanupLibrary();
+        return StoreErrorCode::ERROR;
+    }
 
     auto endPoint = NetworkEndpointUtil::BuildEndpoint("http", ip, port);
-    STORE_ASSERT_RETURN(!endPoint.empty(), StoreErrorCode::ERROR);
+    if (endPoint.empty()) {
+        STORE_LOG_ERROR("Assert endPoint is empty");
+        EtcdApi::CleanupLibrary();
+        return StoreErrorCode::ERROR;
+    }
 
     STORE_LOG_INFO("[ETCD] Initializing connection: " << endPoint);
 
@@ -102,6 +110,7 @@ StoreErrorCode SmemEtcdStoreBackend::Initialize(const std::string &backendUrl, c
     if (ret != 0) {
         STORE_LOG_ERROR("[ETCD] Failed to init etcd client, endpoints=" << endPoint << ", ret=" << ret << ", error="
                                                                         << EtcdClientV3::GetInstance().GetLastError());
+        EtcdApi::CleanupLibrary();
         return StoreErrorCode::ERROR;
     }
 

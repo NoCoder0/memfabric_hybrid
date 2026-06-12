@@ -405,6 +405,10 @@ void HostDataOpSDMA::InitG2GStreamTask(StreamTask &task, void *destVA, const voi
     if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
         return InitG2GStreamTaskV2(task, destVA, srcVA, count);
     }
+    if (count > UINT32_MAX) {
+        BM_LOG_ERROR("G2GStream count too large: " << count);
+        return;
+    }
 
     auto hStream = HybmStreamManager::GetThreadHybmStream(HybmGetInitedLogicDeviceId());
     BM_ASSERT_RET_VOID(hStream != nullptr);

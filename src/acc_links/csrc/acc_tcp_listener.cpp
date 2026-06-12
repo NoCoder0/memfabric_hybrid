@@ -77,6 +77,7 @@ Result AccTcpListener::Start() noexcept
         retry_times -= 1;
         if (retry_times == 0) {
             LOG_ERROR("Internal thread start timeout.");
+            SafeCloseFd(listenFd_);
             return ACC_ERROR;
         }
     }

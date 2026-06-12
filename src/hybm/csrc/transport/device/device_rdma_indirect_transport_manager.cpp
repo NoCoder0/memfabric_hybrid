@@ -670,6 +670,10 @@ int RdmaIndirectTransportManager::SenderSidePhrase1(const QueueMessage &res, Que
     uint64_t timestamp = 0;
     (void)nextReq;
     auto context = static_cast<SendMessageContext *>(ctx);
+    if (context->sliceList.slices.empty()) {
+        BM_LOG_ERROR("slice is empty.");
+        return BM_ERROR;
+    }
     if (context->sliceList.slices[0].type == READ) {
         TP_TRACE_TRACE_BEGIN(TP_INDIRECT_SENDER_PHASE_1_R, &timestamp)
         traceId = TP_INDIRECT_SENDER_PHASE_1_R;
@@ -691,6 +695,12 @@ int RdmaIndirectTransportManager::ReceiveSidePhrase0(const QueueMessage &request
     uint64_t localBaseAddr;
     uint64_t timestamp = 0;
     auto reqBody = request.body.data();
+    if (request.head.bodySize != request.body.size() ||
+        request.head.bodySize < sizeof(uint64_t) + sizeof(Slice)) {
+        BM_LOG_ERROR("Invalid bodysize: " << request.head.bodySize
+                     << ", actual body size: " << request.body.size());
+        return BM_ERROR;
+    }
     auto slices = static_cast<const Slice *>(static_cast<const void *>(reqBody + sizeof(uint64_t)));
     auto sliceCount = (request.head.bodySize - sizeof(uint64_t)) / sizeof(Slice);
     if (slices[0].type == READ) {

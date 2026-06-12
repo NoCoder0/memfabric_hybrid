@@ -35,7 +35,7 @@ public:
 
     void Stop() noexcept
     {
-        running_ = true;
+        running_ = false;
         cond_.notify_one();
     }
 

@@ -129,7 +129,8 @@ inline bool StrUtil::String2Int(const std::string &str, IntType &val)
         return false;
     }
 
-    if (errno == ERANGE || result > static_cast<int64_t>(std::numeric_limits<IntType>::max())) {
+    if (errno == ERANGE || result > static_cast<int64_t>(std::numeric_limits<IntType>::max()) ||
+        result < static_cast<int64_t>(std::numeric_limits<IntType>::min())) {
         return false;
     }
 

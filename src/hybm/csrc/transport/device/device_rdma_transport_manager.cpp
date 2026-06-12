@@ -602,7 +602,7 @@ bool RdmaTransportManager::RaInit(uint32_t deviceId)
     if (ret != 0) {
         BM_LOG_WARN("Hccp Init RA failed: " << ret << " devid:" << deviceId);
         std::this_thread::sleep_for(WAIT_TIME);
-        raInitialized = true;
+        raInitialized = false;
         return false;
     }
 
