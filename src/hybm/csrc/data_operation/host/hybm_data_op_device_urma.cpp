@@ -103,7 +103,11 @@ void DataOpDeviceURMA::UnInitialize() noexcept
 
 void DataOpDeviceURMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
 {
-    // DRAM需要输入host va, HBM需要输入device va, transport才能识别
+    if (UNLIKELY(src == nullptr && dst == nullptr)) {
+        return;
+    }
+    // 对于本地内存, DRAM需要输入host va, HBM需要输入device va, transport才能识别
+    // 对于远端内存, transport仅记录的gva, TransformVa输出应当为0
     uint64_t out;
     uint32_t oType = (HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST) ? HVM_HVA : HVM_DVA;
     out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, oType);
@@ -180,20 +184,8 @@ Result DataOpDeviceURMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direc
                                   const ock::mf::ExtOptions &options) noexcept
 {
     Result ret;
-    // Selective transform: only convert local-side addresses; remote side stays in GVA.
-    {
-        const bool srcLocal = (options.srcRankId == rankId_);
-        const bool dstLocal = (options.destRankId == rankId_);
-        if (srcLocal && dstLocal) {
-            TransformVa(params.src, params.dest, direction);
-        } else if (srcLocal) {
-            void *tmpDst = nullptr;
-            TransformVa(params.src, tmpDst, direction);
-        } else if (dstLocal) {
-            void *tmpSrc = nullptr;
-            TransformVa(tmpSrc, params.dest, direction);
-        }
-    }
+    // only convert local-side addresses; remote side stays in GVA.
+    TransformVa(params.src, params.dest, direction);
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST: {
             TP_TRACE_BEGIN(TP_HYBM_URMA_LH_TO_GH);
@@ -991,21 +983,9 @@ Result DataOpDeviceURMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data
                                        const ExtOptions &options) noexcept
 {
     auto ret = 0;
-    {
-        const bool srcLocal = (options.srcRankId == rankId_);
-        const bool dstLocal = (options.destRankId == rankId_);
-        for (uint32_t i = 0; i < params.batchSize; i++) {
-            if (srcLocal && dstLocal) {
-                TransformVa(params.sources[i], params.destinations[i], direction);
-            } else if (srcLocal) {
-                void *tmpDst = nullptr;
-                TransformVa(params.sources[i], tmpDst, direction);
-            } else if (dstLocal) {
-                void *tmpSrc = nullptr;
-                TransformVa(tmpSrc, params.destinations[i], direction);
-            }
-            // neither local: both addresses remain as GVA → skip TransformVa entirely.
-        }
+    for (uint32_t i = 0; i < params.batchSize; i++) {
+        // only convert local-side addresses; remote side stays in GVA.
+        TransformVa(params.sources[i], params.destinations[i], direction);
     }
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST: { // 0

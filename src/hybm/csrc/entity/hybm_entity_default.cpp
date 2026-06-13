@@ -1157,7 +1157,7 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
+    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
         segmentOptions.shared = false;
     }
     hbmSegment_ = MemSegment::Create(segmentOptions, id_);
