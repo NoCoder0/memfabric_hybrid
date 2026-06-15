@@ -18,6 +18,23 @@
 
 namespace ock {
 namespace mf {
+
+uint8_t HybmVaManager::directionLut[BIT_LUT_SIZE];
+
+void HybmVaManager::InitDirectionLut()
+{
+    for (int except = 0; except < BIT_LUT_SIZE; except++) {
+        uint8_t d = HYBM_DATA_COPY_DIRECTION_BUTT;
+        for (int i = 0; i < HYBM_DATA_COPY_DIRECTION_BUTT - 1; i++) {
+            if ((dirMask[i] & except) == dirMask[i]) {
+                d = static_cast<uint8_t>(i);
+                break;
+            }
+        }
+        directionLut[except] = d;
+    }
+}
+
 static constexpr uint64_t MB_OFFSET = 20UL;
 Result HybmVaManager::Initialize(AscendSocType socType) noexcept
 {
@@ -193,17 +210,44 @@ std::pair<uint32_t, bool> HybmVaManager::GetRank(uint64_t gva)
 
 AddrType HybmVaManager::ClassifyAddress(const uint64_t va)
 {
+    uint8_t mask = ClassifyAddressMask(va);
+    if (mask & BIT_LOCAL_HOST) { return LOCAL_HOST; }
+    if (mask & BIT_GLOBAL_HOST) { return GLOBAL_HOST; }
+    if (mask & BIT_LOCAL_DEVICE) { return LOCAL_DEVICE; }
+    if (mask & BIT_GLOBAL_DEVICE) { return GLOBAL_DEVICE; }
+    return LOCAL_HOST;
+}
+
+uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
+{
     auto r = QueryAddr(va);
-    // GVA 命中 + 远端 import  → GLOBAL
+    // 已 import → 单 GLOBAL
     if (r.inAllocGva && r.importedRankId != INVALID_RANK_ID) {
-        return (r.memType == HYBM_MEM_TYPE_DEVICE) ? GLOBAL_DEVICE : GLOBAL_HOST;
+        return (r.memType == HYBM_MEM_TYPE_DEVICE) ? BIT_GLOBAL_DEVICE : BIT_GLOBAL_HOST;
     }
-    // device VA 范围 → LOCAL_DEVICE
-    if (va >= HYBM_DEVICE_VA_START && va < (HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE)) {
-        return LOCAL_DEVICE;
+    // reservedMap_ → GVA，已在 allocatedMap_ 中才设有效位
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        if (!reservedMap_[HVM_GVA].empty()) {
+            auto it = reservedMap_[HVM_GVA].upper_bound(va);
+            if (it != reservedMap_[HVM_GVA].begin()) { --it; }
+            if (it->second.Contains(va)) {
+                if (!r.inAllocGva) {
+                    return 0; // 未 join → 无效
+                }
+                if (it->second.memType == HYBM_MEM_TYPE_DEVICE) {
+                    return BIT_LOCAL_DEVICE | BIT_GLOBAL_DEVICE;
+                } else {
+                    return BIT_LOCAL_HOST | BIT_GLOBAL_HOST;
+                }
+            }
+        }
     }
 
-    return LOCAL_HOST;
+    if (va >= HYBM_DEVICE_VA_START && va < HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE) {
+        return BIT_LOCAL_DEVICE;
+    }
+    return BIT_LOCAL_HOST;
 }
 
 hybm_data_copy_direction HybmVaManager::InferCopyDirection(uint64_t srcVa, uint64_t dstVa)
@@ -232,7 +276,7 @@ hybm_data_copy_direction HybmVaManager::InferCopyDirection(uint64_t srcVa, uint6
 bool HybmVaManager::IsValidAddr(uint64_t va)
 {
     auto r = QueryAddr(va);
-    return r.inAllocGva || r.inAllocHva || r.inAllocDva;
+    return r.inAllocGva;
 }
 
 ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize,

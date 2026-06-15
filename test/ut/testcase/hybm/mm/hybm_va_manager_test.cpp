@@ -202,10 +202,13 @@ TEST_F(HybmVaManagerTest, IsValidAddr_ValidAndInvalidAddresses_ReturnsCorrectBoo
     EXPECT_TRUE(manager.AddVaInfoFromExternal({{gva, 0, lva}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST},
                                               TEST_RANK_ZERO) == BM_OK);
 
+    // GVA 地址命中 GVA map → 有效
     EXPECT_TRUE(manager.IsValidAddr(gva));
-    EXPECT_TRUE(manager.IsValidAddr(lva));
     EXPECT_TRUE(manager.IsValidAddr(gva + TEST_OFFSET_HALF_MB));
-    EXPECT_TRUE(manager.IsValidAddr(lva + TEST_OFFSET_HALF_MB));
+
+    // HVA 地址（lva）不在 GVA map 中 → IsValidAddr 返回 false
+    EXPECT_FALSE(manager.IsValidAddr(lva));
+    EXPECT_FALSE(manager.IsValidAddr(lva + TEST_OFFSET_HALF_MB));
 
     EXPECT_FALSE(manager.IsValidAddr(gva + TEST_SIZE_SIXTEEN_MB));
     EXPECT_FALSE(manager.IsValidAddr(TEST_SIZE_ZERO));
@@ -670,13 +673,16 @@ TEST_F(HybmVaManagerTest, IsValidAddr_BoundaryValues)
     EXPECT_TRUE(manager.AddVaInfoFromExternal({{gva, 0, lva}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST},
                                               TEST_RANK_ZERO) == BM_OK);
 
+    // GVA 地址命中 GVA map → 有效
     EXPECT_TRUE(manager.IsValidAddr(gva));
-    EXPECT_TRUE(manager.IsValidAddr(lva));
     EXPECT_TRUE(manager.IsValidAddr(gva + TEST_SIZE_SIXTEEN_MB - TEST_COUNT_ONE));
-    EXPECT_TRUE(manager.IsValidAddr(lva + TEST_SIZE_SIXTEEN_MB - TEST_COUNT_ONE));
     EXPECT_FALSE(manager.IsValidAddr(gva - TEST_COUNT_ONE));
-    EXPECT_FALSE(manager.IsValidAddr(lva - TEST_COUNT_ONE));
     EXPECT_FALSE(manager.IsValidAddr(gva + TEST_SIZE_SIXTEEN_MB));
+
+    // HVA 地址不在 GVA map 中 → IsValidAddr 返回 false
+    EXPECT_FALSE(manager.IsValidAddr(lva));
+    EXPECT_FALSE(manager.IsValidAddr(lva + TEST_SIZE_SIXTEEN_MB - TEST_COUNT_ONE));
+    EXPECT_FALSE(manager.IsValidAddr(lva - TEST_COUNT_ONE));
     EXPECT_FALSE(manager.IsValidAddr(lva + TEST_SIZE_SIXTEEN_MB));
 }
 
@@ -730,12 +736,8 @@ TEST_F(HybmVaManagerTest, QueryAddr_AllocGvaLocal_ReturnsInAllocGva)
         manager.AddVaInfo({{gva, 0, 0}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST}, TEST_RANK_ZERO) == BM_OK);
     auto r = manager.QueryAddr(gva);
     EXPECT_TRUE(r.inAllocGva);
-    EXPECT_FALSE(r.inAllocHva);
-    EXPECT_FALSE(r.inAllocDva);
     EXPECT_EQ(r.memType, TEST_MEM_TYPE_HOST);
     EXPECT_EQ(r.importedRankId, INVALID_RANK_ID);
-    EXPECT_TRUE(r.IsLocal());
-    EXPECT_FALSE(r.IsImported());
 }
 
 // 测试50: QueryAddr 查询 GVA 命中的 import 地址
@@ -747,8 +749,6 @@ TEST_F(HybmVaManagerTest, QueryAddr_AllocGvaImported_ReturnsImported)
     auto r = manager.QueryAddr(gva);
     EXPECT_TRUE(r.inAllocGva);
     EXPECT_EQ(r.importedRankId, TEST_RANK_ONE);
-    EXPECT_FALSE(r.IsLocal());
-    EXPECT_TRUE(r.IsImported());
 }
 
 // 测试51: QueryAddr 查询未注册地址
@@ -757,50 +757,36 @@ TEST_F(HybmVaManagerTest, QueryAddr_NoAlloc_ReturnsAllFalse)
     uint64_t unregisteredAddr = 0x12345678;
     auto r = manager.QueryAddr(unregisteredAddr);
     EXPECT_FALSE(r.inAllocGva);
-    EXPECT_FALSE(r.inAllocHva);
-    EXPECT_FALSE(r.inAllocDva);
 }
 
-// 测试52: QueryAddr 查询 HVA 命中的地址
-TEST_F(HybmVaManagerTest, QueryAddr_AllocHva_ReturnsInAllocHva)
+// 测试52: QueryAddr 只查 GVA map，HVA 地址不命中
+TEST_F(HybmVaManagerTest, QueryAddr_AllocHva_ReturnsNoHit)
 {
     uint64_t lva = TEST_LVA_BASE;
-    // RegisterMemCommon 风格：GVA=0, HVA=lva
     EXPECT_TRUE(
         manager.AddVaInfo({{0, 0, lva}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST}, TEST_RANK_ZERO) == BM_OK);
     auto r = manager.QueryAddr(lva);
     EXPECT_FALSE(r.inAllocGva);
-    EXPECT_TRUE(r.inAllocHva);
-    EXPECT_FALSE(r.inAllocDva);
 }
 
-// 测试53: QueryAddr 查询 DVA 命中的地址
-TEST_F(HybmVaManagerTest, QueryAddr_AllocDva_ReturnsInAllocDva)
+// 测试53: QueryAddr 只查 GVA map，DVA 地址不命中
+TEST_F(HybmVaManagerTest, QueryAddr_AllocDva_ReturnsNoHit)
 {
-    uint64_t dva = TEST_LVA_BASE + 0x200000000; // 8GB+，确保不与其他 map 冲突
+    uint64_t dva = TEST_LVA_BASE + 0x200000000;
     EXPECT_TRUE(
         manager.AddVaInfo({{0, dva, 0}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_DEVICE}, TEST_RANK_ZERO) == BM_OK);
     auto r = manager.QueryAddr(dva);
-    EXPECT_TRUE(r.inAllocDva) << "GVA=" << r.inAllocGva << " HVA=" << r.inAllocHva << " DVA=" << r.inAllocDva
-                              << " size=" << r.rangeSize << " memType=" << r.memType;
-    if (!r.inAllocDva) {
-        // 检查 DVA 注册是否成功
-        EXPECT_EQ(manager.GetAllocCount(), 1);
-    }
     EXPECT_FALSE(r.inAllocGva);
-    EXPECT_FALSE(r.inAllocHva);
 }
 
-// 测试54: QueryAddr 查询 GVA+HVA 同时命中的地址（conn_based MAP_FIXED 场景）
-TEST_F(HybmVaManagerTest, QueryAddr_GvaEqualsHva_BothHit)
+// 测试54: QueryAddr GVA 命中
+TEST_F(HybmVaManagerTest, QueryAddr_GvaHit)
 {
     uint64_t gva = TEST_GVA_BASE_HOST;
     EXPECT_TRUE(
         manager.AddVaInfo({{gva, 0, gva}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST}, TEST_RANK_ZERO) == BM_OK);
     auto r = manager.QueryAddr(gva);
     EXPECT_TRUE(r.inAllocGva);
-    EXPECT_TRUE(r.inAllocHva);
-    EXPECT_FALSE(r.inAllocDva);
 }
 
 // ======================== ClassifyAddress 测试 ========================
@@ -952,4 +938,164 @@ TEST_F(HybmVaManagerTest, IsValidAddr_Registered_ReturnsTrue)
 TEST_F(HybmVaManagerTest, IsValidAddr_Unregistered_ReturnsFalse)
 {
     EXPECT_FALSE(manager.IsValidAddr(0x12345678));
+}
+
+// ======================== ClassifyAddressMask 测试 ========================
+
+// 测试70: ClassifyAddressMask 用户地址 → 仅 LOCAL_HOST
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_UserAddr_ReturnsLocalHost)
+{
+    uint64_t userAddr = 0x7f001000;
+    uint8_t mask = manager.ClassifyAddressMask(userAddr);
+    EXPECT_EQ(mask, HybmVaManager::BIT_LOCAL_HOST);
+}
+
+// 测试71: ClassifyAddressMask device VA → LOCAL_DEVICE
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_DeviceVA_ReturnsLocalDevice)
+{
+    uint64_t devAddr = HYBM_DEVICE_VA_START + 0x1000;
+    uint8_t mask = manager.ClassifyAddressMask(devAddr);
+    EXPECT_EQ(mask, HybmVaManager::BIT_LOCAL_DEVICE);
+}
+
+// 测试72: ClassifyAddressMask 预留+已分配 GVA → LOCAL|GLOBAL 双位
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_GvaAllocated_ReturnsBoth)
+{
+    uint64_t gvaBase = HYBM_GVM_START_ADDR;
+    manager.AllocReserveGva(TEST_RANK_ZERO, 0x2000000, 0x2000000, HYBM_MEM_TYPE_HOST, false);
+    uint64_t gva = gvaBase + 0x1000;
+    manager.AddVaInfo({{gva, 0, 0}, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_HOST}, TEST_RANK_ZERO);
+    uint8_t mask = manager.ClassifyAddressMask(gva);
+    EXPECT_EQ(mask, HybmVaManager::BIT_LOCAL_HOST | HybmVaManager::BIT_GLOBAL_HOST);
+}
+
+// 测试73: ClassifyAddressMask 预留但未分配 GVA → 0（未join）
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_GvaUnallocated_ReturnsZero)
+{
+    uint64_t gva = HYBM_GVM_START_ADDR + 0x1000;
+    manager.AllocReserveGva(TEST_RANK_ZERO, 0x2000000, 0x2000000, HYBM_MEM_TYPE_HOST, false);
+    uint8_t mask = manager.ClassifyAddressMask(gva);
+    EXPECT_EQ(mask, 0);
+}
+
+// 测试74: ClassifyAddressMask 远端 import GVA → 单 GLOBAL
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_RemoteImported_ReturnsGlobal)
+{
+    uint64_t gva = TEST_GVA_BASE_HOST;
+    manager.AllocReserveGva(TEST_RANK_ZERO, 0x1000000, 0x1000000, HYBM_MEM_TYPE_HOST, false);
+    manager.AddVaInfoFromExternal({gva, 0, 0, TEST_SIZE_ONE_MB, HYBM_MEM_TYPE_HOST},
+                                  TEST_RANK_ZERO, TEST_RANK_ONE);
+    uint8_t mask = manager.ClassifyAddressMask(gva);
+    EXPECT_EQ(mask, HybmVaManager::BIT_GLOBAL_HOST);
+}
+
+// ======================== LUT 方向推断测试 ========================
+
+// 测试75: directionLut LH→GH → H2GH
+TEST_F(HybmVaManagerTest, DirectionLut_LocalToGlobal_ReturnsH2GH)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_LOCAL_HOST | (HybmVaManager::BIT_GLOBAL_HOST << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_LOCAL_HOST_TO_GLOBAL_HOST);
+}
+
+// 测试76: directionLut GH→GH → GH2GH
+TEST_F(HybmVaManagerTest, DirectionLut_GlobalToGlobal_ReturnsGH2GH)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_GLOBAL_HOST | (HybmVaManager::BIT_GLOBAL_HOST << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST);
+}
+
+// 测试77: directionLut GH→LH → GH2LH
+TEST_F(HybmVaManagerTest, DirectionLut_GlobalToLocal_ReturnsGH2LH)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_GLOBAL_HOST | (HybmVaManager::BIT_LOCAL_HOST << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_GLOBAL_HOST_TO_LOCAL_HOST);
+}
+
+// 测试78: directionLut 双位 → 取最小方向值
+TEST_F(HybmVaManagerTest, DirectionLut_DualBits_ReturnsFirstMatch)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t dual = HybmVaManager::BIT_LOCAL_HOST | HybmVaManager::BIT_GLOBAL_HOST;
+    uint8_t except = dual | (dual << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_LOCAL_HOST_TO_GLOBAL_HOST); // H2GH(0) 最小
+}
+
+// 测试79: directionLut 无效组合 → BUTT
+TEST_F(HybmVaManagerTest, DirectionLut_Invalid_ReturnsBUTT)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_LOCAL_HOST | (HybmVaManager::BIT_LOCAL_HOST << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_GE(dir, HYBM_DATA_COPY_DIRECTION_AUTO);
+}
+
+// 测试80: directionLut Device→Host 方向
+TEST_F(HybmVaManagerTest, DirectionLut_LocalDeviceToGlobalHost_ReturnsD2GH)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_LOCAL_DEVICE | (HybmVaManager::BIT_GLOBAL_HOST << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST);
+}
+
+// 测试81: directionLut Device→Device
+TEST_F(HybmVaManagerTest, DirectionLut_LocalDeviceToGlobalDevice_ReturnsD2GD)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_LOCAL_DEVICE | (HybmVaManager::BIT_GLOBAL_DEVICE << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE);
+}
+
+// 测试82: directionLut GlobalHost→LocalHost
+TEST_F(HybmVaManagerTest, DirectionLut_GlobalHostToLocalHost_ReturnsGH2LH)
+{
+    HybmVaManager::InitDirectionLut();
+    uint8_t except = HybmVaManager::BIT_GLOBAL_HOST | (HybmVaManager::BIT_LOCAL_HOST << 4);
+    uint8_t dir = HybmVaManager::directionLut[except];
+    EXPECT_EQ(dir, HYBM_GLOBAL_HOST_TO_LOCAL_HOST);
+}
+
+// 测试83: ClassifyAddressMask 用户地址+device VA → 正确双位
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_MixedLocalHostAndDevice)
+{
+    uint8_t hostMask = manager.ClassifyAddressMask(0x7f001000ULL);
+    EXPECT_EQ(hostMask, HybmVaManager::BIT_LOCAL_HOST);
+
+    uint8_t devMask = manager.ClassifyAddressMask(HYBM_DEVICE_VA_START + 0x1000);
+    EXPECT_EQ(devMask, HybmVaManager::BIT_LOCAL_DEVICE);
+}
+
+// 测试84: ClassifyAddressMask HBM设备地址（DEVICE类型）
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_DeviceHbm_ReturnsBothDeviceBits)
+{
+    uint64_t base = HYBM_GVM_START_ADDR;
+    HybmVaManager::GetInstance().AllocReserveGva(0, 0x2000000, 0x2000000, HYBM_MEM_TYPE_DEVICE, false);
+    uint64_t gva = base + 0x1000;
+    BaseAllocatedGvaInfo devInfo = {gva, gva, gva, 0x100000, HYBM_MEM_TYPE_DEVICE};
+    HybmVaManager::GetInstance().AddVaInfo(devInfo, 0);
+    uint8_t mask = HybmVaManager::GetInstance().ClassifyAddressMask(gva);
+    EXPECT_EQ(mask, HybmVaManager::BIT_LOCAL_DEVICE | HybmVaManager::BIT_GLOBAL_DEVICE);
+}
+
+// 测试85: QueryAddr 三个map一致性
+TEST_F(HybmVaManagerTest, QueryAddr_ThreeMapConsistency)
+{
+    uint64_t gva = HYBM_GVM_START_ADDR + 0x10000000;
+    auto &mgr = HybmVaManager::GetInstance();
+    mgr.AllocReserveGva(0, 0x2000000, 0x2000000, HYBM_MEM_TYPE_HOST, false);
+    BaseAllocatedGvaInfo hostInfo = {gva, gva, gva, 0x100000, HYBM_MEM_TYPE_HOST};
+    mgr.AddVaInfo(hostInfo, 0);
+
+    auto r1 = mgr.QueryAddr(gva);
+    EXPECT_TRUE(r1.inAllocGva);
+    EXPECT_EQ(r1.memType, HYBM_MEM_TYPE_HOST);
 }

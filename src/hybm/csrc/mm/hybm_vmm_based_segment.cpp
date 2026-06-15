@@ -614,7 +614,7 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             return BM_ERROR;
         }
 
-        auto memType = im.magic == HBM_SLICE_EXPORT_INFO_MAGIC ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
+        auto memType = IsHbmSlice(im.magic) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
         ret = HybmVaManager::GetInstance().AddVaInfoFromExternal({im.gva, lva, 0, im.size, memType},
                                                                  options_.rankId, im.rankId);
         if (ret != BM_OK) {

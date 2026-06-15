@@ -19,16 +19,6 @@
 
 using namespace ock::mf;
 
-using hybm_check_enum = enum { OP_CHECK_IDX = 0U, OP_CHECK_SRC, OP_CHECK_DEST, OP_CHECK_BUTT };
-
-static uint32_t g_checkMap[HYBM_DATA_COPY_DIRECTION_BUTT][OP_CHECK_BUTT] = {
-    {HYBM_LOCAL_HOST_TO_GLOBAL_HOST, false, true},   {HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, false, true},
-    {HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, false, true}, {HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE, false, true},
-    {HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, true, true},   {HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE, true, true},
-    {HYBM_GLOBAL_HOST_TO_LOCAL_HOST, true, false},   {HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, true, false},
-    {HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, true, true}, {HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, true, true},
-    {HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST, true, false}, {HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE, true, false}};
-
 HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_data_copy_direction direction,
                                 void *stream, uint32_t flags)
 {
@@ -41,54 +31,26 @@ HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_
     BM_LOG_DEBUG("Src: " << VaToInfo(params->src) << ", dest: " << VaToInfo(params->dest)
                          << " flag:" << VaToStr(flags) << " direction:" << direction);
 
+    auto &vaMgr = ock::mf::HybmVaManager::GetInstance();
+    uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->src));
+    uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->dest));
+    uint8_t except = srcMask | (dstMask << 4);
+
     if (direction == HYBM_DATA_COPY_DIRECTION_AUTO) {
-        auto& vaMgr = ock::mf::HybmVaManager::GetInstance();
-        direction = vaMgr.InferCopyDirection(reinterpret_cast<uint64_t>(params->src),
-            reinterpret_cast<uint64_t>(params->dest));
-        if (direction == HYBM_DATA_COPY_DIRECTION_BUTT) {
+        direction = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
+        if (direction >= HYBM_DATA_COPY_DIRECTION_AUTO) {
             BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex <<
                 params->src << ", dest:" << params->dest);
             return BM_INVALID_PARAM;
         }
+    } else if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
+        BM_LOG_ERROR("Direction mismatch: specified=" << static_cast<int>(direction)
+                     << " src=" << params->src << " dest=" << params->dest);
+        return BM_INVALID_PARAM;
     }
 
     auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
     BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "entity is nullptr", BM_INVALID_PARAM);
-
-    bool addressValid = true;
-    if (g_checkMap[direction][OP_CHECK_DEST]) {
-        addressValid = entity->CheckAddressInEntity(params->dest, params->dataSize);
-    }
-    if (g_checkMap[direction][OP_CHECK_SRC]) {
-        addressValid = (addressValid && entity->CheckAddressInEntity(params->src, params->dataSize));
-    }
-
-    if (!addressValid) {
-        BM_LOG_ERROR("input copy address out of entity range, size: " << std::oct << params->dataSize
-                                                                       << ", direction: " << direction);
-        return BM_INVALID_PARAM;
-    }
-
-    /* 反向验证: 方向说不需要检查的那一侧不应是 GLOBAL 地址 */
-    {
-        auto &vaMgr = HybmVaManager::GetInstance();
-        if (!g_checkMap[direction][OP_CHECK_SRC]) {
-            auto srcType = vaMgr.ClassifyAddress(reinterpret_cast<uint64_t>(params->src));
-            if (srcType == GLOBAL_HOST) {
-                BM_LOG_ERROR("reverse check failed: direction " << static_cast<int>(direction) <<
-                    " expects LOCAL src, but src:" << std::hex << params->src << " is GLOBAL_HOST");
-                return BM_INVALID_PARAM;
-            }
-        }
-        if (!g_checkMap[direction][OP_CHECK_DEST]) {
-            auto dstType = vaMgr.ClassifyAddress(reinterpret_cast<uint64_t>(params->dest));
-            if (dstType == GLOBAL_HOST) {
-                BM_LOG_ERROR("reverse check failed: direction " << static_cast<int>(direction) <<
-                    " expects LOCAL dest, but dest:" << std::hex << params->dest << " is GLOBAL");
-                return BM_INVALID_PARAM;
-            }
-        }
-    }
 
     return entity->CopyData(*params, direction, stream, flags);
 }
@@ -117,58 +79,37 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
     BM_LOG_DEBUG("Src[0]: " << VaToInfo(params->sources[0]) << ", dest[0]: " << VaToInfo(params->destinations[0])
                             << " flag:" << VaToStr(flags) << " direction:" << direction);
 
+    auto entity = (MemEntity *)e;
+
+    // AUTO：用第一个元素推算方向
     if (direction == HYBM_DATA_COPY_DIRECTION_AUTO) {
         auto &vaMgr = ock::mf::HybmVaManager::GetInstance();
-        direction = vaMgr.InferCopyDirection(reinterpret_cast<uint64_t>(params->sources[0]),
-            reinterpret_cast<uint64_t>(params->destinations[0]));
-        if (UNLIKELY(direction == HYBM_DATA_COPY_DIRECTION_BUTT)) {
+        uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[0]));
+        uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->destinations[0]));
+        uint8_t except = srcMask | (dstMask << 4);
+        direction = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
+        if (direction >= HYBM_DATA_COPY_DIRECTION_AUTO) {
             BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex <<
                 params->sources[0] << ", dest=:" << std::hex << params->destinations[0]);
             return BM_INVALID_PARAM;
         }
     }
 
-    bool addressValid = true;
-    auto entity = (MemEntity *)e;
-    bool check_dst = g_checkMap[direction][OP_CHECK_DEST];
-    bool check_src = g_checkMap[direction][OP_CHECK_SRC];
     for (uint32_t i = 0; i < params->batchSize; i++) {
         if (params->sources[i] == nullptr || params->destinations[i] == nullptr) {
             BM_LOG_ERROR("input copy address is invalid, source or dest is nullptr, index:" << i);
             return BM_INVALID_PARAM;
         }
-        if (check_dst) {
-            addressValid = entity->CheckAddressInEntity(params->destinations[i], params->dataSizes[i]);
-        }
-        if (check_src) {
-            addressValid = (addressValid && entity->CheckAddressInEntity(params->sources[i], params->dataSizes[i]));
-        }
 
-        if (!addressValid) {
-            BM_LOG_ERROR("input copy address out of entity range, direction: " << direction << " size: " << std::hex
-                << params->dataSizes[i] << " src:" << params->sources[i] << " dest:" << params->destinations[i]);
+        auto &vaMgr = HybmVaManager::GetInstance();
+        uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[i]));
+        uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->destinations[i]));
+        uint8_t except = srcMask | (dstMask << 4);
+
+        if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
+            BM_LOG_ERROR("Direction mismatch at index " << i << ": direction=" << static_cast<int>(direction)
+                         << " src=" << params->sources[i] << " dest=" << params->destinations[i]);
             return BM_INVALID_PARAM;
-        }
-
-        /* 反向验证: 方向说不需要检查的那一侧不应是 GLOBAL 地址 */
-        {
-            auto &vaMgr = HybmVaManager::GetInstance();
-            if (!check_src) {
-                auto srcType = vaMgr.ClassifyAddress(reinterpret_cast<uint64_t>(params->sources[i]));
-                if (srcType == GLOBAL_HOST) {
-                    BM_LOG_ERROR("batch reverse check failed, index " << i << ": direction " << direction <<
-                        " expects LOCAL src, but src:" << std::hex << params->sources[i] << " is GLOBAL_HOST");
-                    return BM_INVALID_PARAM;
-                }
-            }
-            if (!check_dst) {
-                auto dstType = vaMgr.ClassifyAddress(reinterpret_cast<uint64_t>(params->destinations[i]));
-                if (dstType == GLOBAL_HOST) {
-                    BM_LOG_ERROR("batch reverse check failed, index " << i << ": direction " << direction <<
-                        " expects LOCAL dest, but dest:" << std::hex << params->destinations[i] << " is GLOBAL_HOST");
-                    return BM_INVALID_PARAM;
-                }
-            }
         }
     }
     return entity->BatchCopyData(*params, direction, stream, flags);

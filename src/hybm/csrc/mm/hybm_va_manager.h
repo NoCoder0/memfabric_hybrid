@@ -208,22 +208,12 @@ inline bool operator!=(const AllocatedGvaInfo &lhs, const AllocatedGvaInfo &rhs)
 }
 
 /*
- * Unified address query result — one shared_lock, all maps.
- * Used by ClassifyAddress, IsValidAddr, CheckAddressInEntity.
+ * Unified address query result — 查 GVA map，返回命中信息
  */
 struct AddrQueryResult {
-    bool inAllocGva{false};          // allocatedMap_[HVM_GVA] 命中
-    bool inAllocHva{false};          // allocatedMap_[HVM_HVA] 命中
-    bool inAllocDva{false};          // allocatedMap_[HVM_DVA] 命中
-
+    bool inAllocGva{false};
     hybm_mem_type memType{HYBM_MEM_TYPE_BUTT};
     uint32_t importedRankId{INVALID_RANK_ID};
-
-    uint64_t rangeBase{0};           // 命中的 range 起始地址
-    uint64_t rangeSize{0};           // 命中的 range 大小
-
-    bool IsLocal() const { return importedRankId == INVALID_RANK_ID; }
-    bool IsImported() const { return importedRankId != INVALID_RANK_ID; }
 };
 
 /*
@@ -243,6 +233,35 @@ public:
         return instance;
     }
     Result Initialize(AscendSocType socType) noexcept;
+
+    // 地址类型比特位定义，用于 ClassifyAddressMask
+    static constexpr uint8_t BIT_LOCAL_HOST = 1 << 0;
+    static constexpr uint8_t BIT_GLOBAL_HOST = 1 << 1;
+    static constexpr uint8_t BIT_LOCAL_DEVICE = 1 << 2;
+    static constexpr uint8_t BIT_GLOBAL_DEVICE = 1 << 3;
+    static constexpr int BIT_LUT_SIZE = 256;
+
+    // 方向掩码表：每个方向的 (src_bit | dst_bit<<4)
+    static constexpr uint8_t dirMask[HYBM_DATA_COPY_DIRECTION_BUTT] = {
+        BIT_LOCAL_HOST | (BIT_GLOBAL_HOST << 4),      // 0 H2GH
+        BIT_LOCAL_HOST | (BIT_GLOBAL_DEVICE << 4),    // 1 H2GD
+        BIT_LOCAL_DEVICE | (BIT_GLOBAL_HOST << 4),    // 2 D2GH
+        BIT_LOCAL_DEVICE | (BIT_GLOBAL_DEVICE << 4),  // 3 D2GD
+        BIT_GLOBAL_HOST | (BIT_GLOBAL_HOST << 4),     // 4 GH2GH
+        BIT_GLOBAL_HOST | (BIT_GLOBAL_DEVICE << 4),   // 5 GH2GD
+        BIT_GLOBAL_HOST | (BIT_LOCAL_HOST << 4),      // 6 GH2LH
+        BIT_GLOBAL_HOST | (BIT_LOCAL_DEVICE << 4),    // 7 GH2LD
+        BIT_GLOBAL_DEVICE | (BIT_GLOBAL_HOST << 4),   // 8 GD2GH
+        BIT_GLOBAL_DEVICE | (BIT_GLOBAL_DEVICE << 4), // 9 GD2GD
+        BIT_GLOBAL_DEVICE | (BIT_LOCAL_HOST << 4),    // 10 GD2LH
+        BIT_GLOBAL_DEVICE | (BIT_LOCAL_DEVICE << 4),  // 11 GD2LD
+        0xFF, // 12 AUTO sentinel
+    };
+
+    // 方向查表 LUT：except(8bit) → direction，hybm_init 时初始化
+    static uint8_t directionLut[BIT_LUT_SIZE];
+    static void InitDirectionLut();
+
     Result AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId);
     Result AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId, uint32_t importedRankId);
     Result AddVaInfo(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId, bool onlyGva = false);
@@ -260,6 +279,9 @@ public:
 
     hybm_data_copy_direction InferCopyDirection(uint64_t srcVa, uint64_t dstVa);
 
+    // 返回地址类型掩码（可多 bit 组合），用于 bitmask 方向校验
+    uint8_t ClassifyAddressMask(const uint64_t va);
+
     // =============ReservedGvaInfo Management==============================
     ReservedGvaInfo AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize, hybm_mem_type memType,
                                     bool enable56BitsGva = false, bool isTrans = false);
@@ -276,31 +298,21 @@ public:
 
     AddrType ClassifyAddress(const uint64_t va);
 
-    // Unified query — one shared_lock, populates AddrQueryResult for all maps.
+    // 查 GVA map：地址在 GVA 范围内 → GVA 命中
     AddrQueryResult QueryAddr(const uint64_t va) const
     {
         AddrQueryResult result;
         std::shared_lock<std::shared_mutex> lock(mutex_);
-        if (!allocatedMap_[HVM_GVA].empty()) {
-            auto it = allocatedMap_[HVM_GVA].upper_bound(va);
-            if (it != allocatedMap_[HVM_GVA].begin()) { --it; }
-            if (it->second.Contains(va, HVM_GVA)) {
-                result.inAllocGva = true;
-                result.memType = it->second.base.memType;
-                result.importedRankId = it->second.importedRankId;
-                result.rangeBase = it->second.base.va[HVM_GVA];
-                result.rangeSize = it->second.base.size;
-            }
+        if (allocatedMap_[HVM_GVA].empty()) {
+            return result;
         }
-        if (!allocatedMap_[HVM_HVA].empty()) {
-            auto it = allocatedMap_[HVM_HVA].upper_bound(va);
-            if (it != allocatedMap_[HVM_HVA].begin()) { --it; }
-            if (it->second.Contains(va, HVM_HVA)) { result.inAllocHva = true; }
-        }
-        if (!allocatedMap_[HVM_DVA].empty()) {
-            auto it = allocatedMap_[HVM_DVA].upper_bound(va);
-            if (it != allocatedMap_[HVM_DVA].begin()) { --it; }
-            if (it->second.Contains(va, HVM_DVA)) { result.inAllocDva = true; }
+        auto it = allocatedMap_[HVM_GVA].upper_bound(va);
+        if (it != allocatedMap_[HVM_GVA].begin()) { --it; }
+        if (it->second.Contains(va, HVM_GVA)) {
+            auto &info = it->second;
+            result.inAllocGva = true;
+            result.memType = info.base.memType;
+            result.importedRankId = info.importedRankId;
         }
         return result;
     }

@@ -180,24 +180,25 @@ public:
         factory.enginesFromAddress_[mockEntity.get()] = 1;  // id=1
         factory.engines_[1] = mockEntity;
 
+        HybmVaManager::InitDirectionLut();
+
         // 清除 HybmVaManager 的内部状态
         auto& vaManager = HybmVaManager::GetInstance();
         vaManager.ClearAll();
+        // 预留 GVM 地址范围
+        vaManager.AllocReserveGva(0, HYBM_GVM_MAX_POOL_SIZE, HYBM_GVM_MAX_POOL_SIZE, HYBM_MEM_TYPE_HOST, false);
 
-        // 添加一些虚拟地址信息
-        BaseAllocatedGvaInfo srcInfo;
-        srcInfo.va[HVM_GVA] = 0x1000;
-        srcInfo.size = 1024;
-        srcInfo.memType = HYBM_MEM_TYPE_HOST;
-        srcInfo.va[HVM_HVA] = 0x1000;
-        vaManager.AddVaInfoFromExternal(srcInfo, 0);
-
-        BaseAllocatedGvaInfo destInfo;
-        destInfo.va[HVM_GVA] = 0x2000;
-        destInfo.size = 1024;
-        destInfo.memType = HYBM_MEM_TYPE_HOST;
-        destInfo.va[HVM_HVA] = 0x2000;
-        vaManager.AddVaInfoFromExternal(destInfo, 0);
+        // 添加虚拟地址信息（GVM 范围内）
+        BaseAllocatedGvaInfo info;
+        uint64_t addrs[] = {HYBM_GVM_START_ADDR, HYBM_GVM_START_ADDR + 0x1000,
+                            HYBM_GVM_START_ADDR + 0x2000, HYBM_GVM_START_ADDR + 0x3000};
+        for (auto a : addrs) {
+            info.va[HVM_GVA] = a;
+            info.va[HVM_HVA] = a;
+            info.size = 4096; // 4096
+            info.memType = HYBM_MEM_TYPE_HOST;
+            vaManager.AddVaInfoFromExternal(info, 0);
+        }
     }
 
     void TearDown() override
@@ -218,8 +219,8 @@ protected:
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_success)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
@@ -231,8 +232,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_success)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_null_entity)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(nullptr, &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
@@ -249,7 +250,7 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_null_src)
 {
     hybm_copy_params params{};
     params.src = nullptr;
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
@@ -259,7 +260,7 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_null_src)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_null_dest)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
     params.dest = nullptr;
     params.dataSize = 1024;
 
@@ -270,8 +271,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_null_dest)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_zero_size)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 0;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
@@ -281,8 +282,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_zero_size)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_invalid_direction)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_BUTT, nullptr, 0);
@@ -296,7 +297,7 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_infer_success)
     // dest=0x2000 → 返回 LOCAL_HOST
     // 方向表 [2][3] = LOCAL_DEVICE_TO_GLOBAL_HOST(2) → 有效方向
     params.src = reinterpret_cast<void*>(HYBM_DEVICE_VA_START);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
@@ -304,31 +305,18 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_infer_success)
     EXPECT_TRUE(mockEntity->copyCalled);
 }
 
-TEST_F(HybmDataOpEntryTest, hybm_data_copy_address_out_of_range)
-{
-    mockEntity->addressInRange = false;
-
-    hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
-    params.dataSize = 1024;
-
-    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-}
-
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_all_directions)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
+    // GVA+GVA(src=LH|GH, dst=LH|GH) 可匹配的方向
     std::vector<hybm_data_copy_direction> directions = {
-        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,      HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,
-        HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,  HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,  HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,      HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST,
-        HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE};
+        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,
+        HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,
+        HYBM_GLOBAL_HOST_TO_LOCAL_HOST};
 
     for (auto direction : directions) {
         mockEntity->copyCalled = false;
@@ -341,8 +329,10 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_all_directions)
 
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_success)
 {
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x3000)};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
+    void* sources[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x2000)};
+    void* destinations[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
     uint64_t dataSizes[2] = {1024, 2048};
 
     hybm_batch_copy_params params{};
@@ -435,7 +425,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_auto_infer_success)
 {
     void* sources[2] = {reinterpret_cast<void*>(HYBM_DEVICE_VA_START),
         reinterpret_cast<void*>(HYBM_DEVICE_VA_START + 0x2000)};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
+    void* destinations[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
     uint64_t dataSizes[2] = {1024, 2048};
 
     hybm_batch_copy_params params{};
@@ -449,28 +440,11 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_auto_infer_success)
     EXPECT_TRUE(mockEntity->batchCopyCalled);
 }
 
-TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_address_out_of_range)
-{
-    mockEntity->addressInRange = false;
-
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x3000)};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
-    uint64_t dataSizes[2] = {1024, 2048};
-
-    hybm_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = dataSizes;
-    params.batchSize = 2;
-
-    auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-}
-
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_null_item)
 {
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), nullptr};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
+    void* sources[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR), nullptr};
+    void* destinations[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
     uint64_t dataSizes[2] = {1024, 2048};
 
     hybm_batch_copy_params params{};
@@ -499,11 +473,11 @@ TEST_F(HybmDataOpEntryTest, hybm_wait_null_entity)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_stream_parameter)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
-    void* stream = reinterpret_cast<void*>(0x5000);
+    void* stream = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x4000);
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream, 0);
     EXPECT_EQ(ret, 0);
 }
@@ -511,8 +485,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_stream_parameter)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_flags_parameter)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0xFFFFFFFF);
@@ -521,8 +495,10 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_flags_parameter)
 
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_stream_and_flags)
 {
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x3000)};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
+    void* sources[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x2000)};
+    void* destinations[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
     uint64_t dataSizes[2] = {1024, 2048};
 
     hybm_batch_copy_params params{};
@@ -531,7 +507,7 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_stream_and_flags)
     params.dataSizes = dataSizes;
     params.batchSize = 2;
 
-    void* stream = reinterpret_cast<void*>(0x5000);
+    void* stream = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x4000);
     auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream, 0xFFFFFFFF);
     EXPECT_EQ(ret, 0);
 }
@@ -543,7 +519,7 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_address_alignment)
     for (auto addr : addresses) {
         hybm_copy_params params{};
         params.src = reinterpret_cast<void*>(addr);
-        params.dest = reinterpret_cast<void*>(addr + 0x1000);
+        params.dest = reinterpret_cast<void*>(addr + HYBM_GVM_START_ADDR);
         params.dataSize = 1024;
 
         auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
@@ -554,11 +530,11 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_address_alignment)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_async_flag)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
-    void* stream = reinterpret_cast<void*>(0x5000);
+    void* stream = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x4000);
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream, ASYNC_COPY_FLAG);
     EXPECT_EQ(ret, 0);
 }
@@ -566,8 +542,8 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_async_flag)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_extend_flag)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, COPY_EXTEND_FLAG);
@@ -577,71 +553,25 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_extend_flag)
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_combined_flags)
 {
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
-    void* stream = reinterpret_cast<void*>(0x5000);
+    void* stream = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x4000);
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream,
                               ASYNC_COPY_FLAG | COPY_EXTEND_FLAG);
     EXPECT_EQ(ret, 0);
-}
-
-TEST_F(HybmDataOpEntryTest, hybm_data_copy_direction_address_check)
-{
-    hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
-    params.dataSize = 1024;
-
-    // 测试需要检查 src 的方向
-    mockEntity->addressInRange = false;
-    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-
-    // 测试需要检查 dest 的方向
-    mockEntity->addressInRange = false;
-    ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-
-    // 测试需要检查 src 和 dest 的方向
-    mockEntity->addressInRange = false;
-    ret = hybm_data_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-}
-
-TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_direction_address_check)
-{
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x3000)};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
-    uint64_t dataSizes[2] = {1024, 2048};
-
-    hybm_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = dataSizes;
-    params.batchSize = 2;
-
-    // 测试需要检查 src 的方向
-    mockEntity->addressInRange = false;
-    auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-
-    // 测试需要检查 dest 的方向
-    mockEntity->addressInRange = false;
-    ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
 TEST_F(HybmDataOpEntryTest, hybm_async_copy_with_wait)
 {
     // 执行异步复制
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void*>(0x1000);
-    params.dest = reinterpret_cast<void*>(0x2000);
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
     params.dataSize = 1024;
 
-    void* stream = reinterpret_cast<void*>(0x5000);
+    void* stream = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x4000);
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream, ASYNC_COPY_FLAG);
     EXPECT_EQ(ret, 0);
     EXPECT_TRUE(mockEntity->copyCalled);
@@ -655,8 +585,10 @@ TEST_F(HybmDataOpEntryTest, hybm_async_copy_with_wait)
 TEST_F(HybmDataOpEntryTest, hybm_batch_copy_with_wait)
 {
     // 执行批量复制
-    void* sources[2] = {reinterpret_cast<void*>(0x1000), reinterpret_cast<void*>(0x3000)};
-    void* destinations[2] = {reinterpret_cast<void*>(0x2000), reinterpret_cast<void*>(0x4000)};
+    void* sources[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x2000)};
+    void* destinations[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+        reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
     uint64_t dataSizes[2] = {1024, 2048};
 
     hybm_batch_copy_params params{};
@@ -665,7 +597,7 @@ TEST_F(HybmDataOpEntryTest, hybm_batch_copy_with_wait)
     params.dataSizes = dataSizes;
     params.batchSize = 2;
 
-    void* stream = reinterpret_cast<void*>(0x5000);
+    void* stream = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x4000);
     auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream, ASYNC_COPY_FLAG);
     EXPECT_EQ(ret, 0);
     EXPECT_TRUE(mockEntity->batchCopyCalled);
@@ -674,4 +606,81 @@ TEST_F(HybmDataOpEntryTest, hybm_batch_copy_with_wait)
     ret = hybm_wait(mockEntity.get());
     EXPECT_EQ(ret, 0);
     EXPECT_TRUE(mockEntity->waitCalled);
+}
+
+// ===== 新增加：方向校验测试 =====
+
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_direction_mismatch)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, nullptr, 0);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_with_gva)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+    EXPECT_EQ(mockEntity->copyDirection, HYBM_LOCAL_HOST_TO_GLOBAL_HOST);
+}
+
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_user_addr_fails)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(0x7f001000);
+    params.dest = reinterpret_cast<void*>(0x7f002000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+// GVA→GVA 传 GH2GH 通过
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_gva_to_gva_gh2gh)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
+    params.dataSize = 2048; // 2048
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+}
+
+// GH2LH 通过
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_global_to_local_host)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+}
+
+// 方向不匹配：GVA+GVA 传 H2GD（需要dest=GD）
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_wrong_direction_gva_to_gva)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, nullptr, 0);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+// AUTO+用户地址组合拦截
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_user_addr_combined)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(0x7f001000);
+    params.dest = reinterpret_cast<void*>(0x7f002000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
