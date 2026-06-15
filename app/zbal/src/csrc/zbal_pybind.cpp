@@ -16,6 +16,7 @@
 
 #include "zbal_pytorch_process_group_impl.h"
 #include "zbal_deepep.h"
+#include "zbal_deepep_pybind.h"
 #include "zbal_def.h"
 #include "zbal_bootstrap.h"
 #include "zbal.h"
@@ -23,7 +24,9 @@
 // for mem_allocator
 #include "zbal_mem_allocator.h"
 #include "zbal_pytorch_c10_dma.h"
+#include "zbal_pytorch_c10_dma_pybind.h"
 #include "zbal_sma.h"
+#include "zbal_sma_pybind.h"
 #include "zbal_sma_config.h"
 
 namespace py = pybind11;

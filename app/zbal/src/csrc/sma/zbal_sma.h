@@ -12,9 +12,6 @@
 #ifndef ZBAL_SMA_H
 #define ZBAL_SMA_H
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
-
 #include "zbal_sma_common.h"
 #include "zbal_sma_device.h"
 #include "zbal_sma_device_pool.h"
@@ -224,7 +221,5 @@ ZBAL_API void sma_get_heap_stats(size_t &in_used_size, size_t &total_size, int d
 }
 
 void sma_record_memory_history(std::optional<std::string> enabled, int64_t max_entries);
-
-pybind11::dict sma_dump_snapshot();
 
 #endif // ZBAL_SMA_H

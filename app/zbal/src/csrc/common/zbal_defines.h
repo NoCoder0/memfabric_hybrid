@@ -61,6 +61,8 @@ constexpr uint32_t ZBAL_CONST_4 = 4;
 constexpr uint32_t ZBAL_CONST_5 = 5;
 constexpr uint32_t ZBAL_CONST_6 = 6;
 constexpr uint32_t ZBAL_CONST_7 = 7;
+constexpr uint32_t ZBAL_CONST_20 = 20;
+constexpr uint32_t ZBAL_CONST_256 = 256;
 constexpr uint32_t ZBAL_CONST_1024 = 1024;
 
 constexpr uint32_t ZBAL_CYCLE_UNIT = 50;

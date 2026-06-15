@@ -20,9 +20,9 @@
 #include <tuple>
 #include <vector>
 #include <optional>
-#include <pybind11/pybind11.h>
 #include "aclnn/opdev/platform.h"
 
+#include "zbal_def.h"
 #include "zbal_deepep_config.h"
 #include "zbal_deep_event.h"
 
@@ -108,7 +108,5 @@ private:
 } // namespace deep_ep
 } // namespace adaptor
 } // namespace zbal
-
-void pybind11_deepep_adaptor(pybind11::module_ &m);
 
 #endif // ZBAL_DEEPEP_H_

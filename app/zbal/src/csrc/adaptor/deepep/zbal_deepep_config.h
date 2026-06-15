@@ -12,8 +12,6 @@
 #ifndef ZBAL_CONFIG_H_
 #define ZBAL_CONFIG_H_
 
-#include <pybind11/pybind11.h>
-#include <pybind11/pytypes.h>
 #include <cstdlib>
 #include <cctype>
 #include <string>

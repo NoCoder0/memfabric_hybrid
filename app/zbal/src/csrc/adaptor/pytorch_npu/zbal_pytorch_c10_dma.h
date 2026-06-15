@@ -13,8 +13,6 @@
 
 #define EXPORT_API __attribute__((visibility("default")))
 
-#include <pybind11/pybind11.h>
-#include <pybind11/stl.h>
 #include <c10/core/Allocator.h>
 #include <c10/util/Registry.h>
 #include <c10/util/SmallVector.h>
@@ -283,12 +281,12 @@ bool checkConfigExpandableSegments();
 
 bool isConfig1GPageSizeEnable();
 
+NPUAllocator& getCachingAllocator();
+
 } // namespace dma
 } // namespace c10_npu
 
 void finalize();
-
-void pybind11_allocator(pybind11::module_ &m);
 
 extern "C" {
 EXPORT_API void *dma_malloc(size_t size, int device, aclrtStream stream);
@@ -320,5 +318,3 @@ EXPORT_API void dma_get_heap_stats(size_t &in_used_size, size_t &total_size, int
 }
 
 void dma_record_memory_history(std::optional<std::string> enabled, int64_t max_entries);
-
-pybind11::dict dma_dump_snapshot();
