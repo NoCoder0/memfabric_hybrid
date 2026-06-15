@@ -131,7 +131,7 @@ uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t ou
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
     if (allocatedMap_[inputType].empty()) {
-        BM_LOG_WARN("No allocated spaces found.");
+        BM_LOG_DEBUG("No allocated spaces found.");
         return 0;
     }
     auto it = allocatedMap_[inputType].upper_bound(va);
@@ -176,7 +176,7 @@ std::pair<uint32_t, bool> HybmVaManager::GetRank(uint64_t gva)
     }
     std::shared_lock<std::shared_mutex> lock(mutex_);
     if (allocatedMap_[HVM_GVA].empty()) {
-        BM_LOG_WARN("No allocated spaces found.");
+        BM_LOG_DEBUG("No allocated spaces found.");
         return {0, false};
     }
     auto it = allocatedMap_[HVM_GVA].upper_bound(gva);
@@ -221,7 +221,7 @@ bool HybmVaManager::IsValidAddr(uint64_t va)
     std::shared_lock<std::shared_mutex> lock(mutex_);
     for (uint32_t i = 0; i < HVM_BUTT; i++) {
         if (allocatedMap_[i].empty()) {
-            BM_LOG_WARN("No allocated spaces found.");
+            BM_LOG_DEBUG("No allocated spaces found.");
             continue;
         }
         auto it = allocatedMap_[i].upper_bound(va);
@@ -405,7 +405,7 @@ void HybmVaManager::DumpAllocatedGvaInfo() const
     std::unique_lock<std::shared_mutex> lock(mutex_);
     BM_LOG_DEBUG("Total allocated spaces: " << allocatedMap_[HVM_GVA].size());
     if (allocatedMap_[HVM_GVA].empty()) {
-        BM_LOG_WARN("No allocated spaces found.");
+        BM_LOG_DEBUG("No allocated spaces found.");
         return;
     }
     int index = 1;
@@ -507,7 +507,7 @@ std::pair<AllocatedGvaInfo, bool> HybmVaManager::FindAllocByVa(uint64_t va, uint
 {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     if (allocatedMap_[type].empty()) {
-        BM_LOG_WARN("No allocated spaces found.");
+        BM_LOG_DEBUG("No allocated spaces found.");
         return {AllocatedGvaInfo{}, false};
     }
     auto it = allocatedMap_[type].upper_bound(va);
