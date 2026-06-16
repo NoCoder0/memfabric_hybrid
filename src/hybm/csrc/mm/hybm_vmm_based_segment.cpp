@@ -31,7 +31,7 @@ HybmVmmBasedSegment::~HybmVmmBasedSegment()
     if (ret != BM_OK) {
         BM_LOG_WARN("Destructor cleanup failed, ret:" << ret
                                                       << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_)
-                                                      << " lva:" << reinterpret_cast<void *>(localVirtualAddress_));
+                                                      << " va:" << reinterpret_cast<void *>(localVirtualAddress_));
     }
 }
 
@@ -103,7 +103,7 @@ Result HybmVmmBasedSegment::ReserveMemorySpace(void **address) noexcept
 Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
 {
     BM_LOG_INFO("UnReserveMemorySpace gva:" << reinterpret_cast<void *>(globalVirtualAddress_)
-                                            << ", lva:" << reinterpret_cast<void *>(localVirtualAddress_));
+                                            << ", va:" << reinterpret_cast<void *>(localVirtualAddress_));
     Unmap(); // do unmap, release all imported memory
 
     while (!slices_.empty()) {
@@ -121,10 +121,10 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
     for (auto lva : reservedLva_) {
         HybmVaManager::GetInstance().FreeReserveLva((uintptr_t)lva, HVM_DVA);
         auto ret = DlHalApi::HalMemAddressFree(lva);
-        BM_LOG_INFO("free reserved address lva:" << lva << " return:" << ret);
+        BM_LOG_INFO("free reserved address va:" << lva << " return:" << ret);
         if (ret != BM_OK) {
             BM_LOG_WARN("HalMemAddressFree failed, keep reserved VA state. ret:"
-                        << ret << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_) << " lva:" << lva);
+                        << ret << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_) << " va:" << lva);
         }
     }
     if (globalVirtualAddress_ != nullptr) {
@@ -538,8 +538,9 @@ uint64_t HybmVmmBasedSegment::ReserveLva(const HostSdmaExportInfo &im)
     uint64_t flag = MEM_RSV_TYPE_REMOTE_MAP;
     auto ret = DlHalApi::HalMemAddressReserve(&lva, im.size, 0, reinterpret_cast<void *>(reservedLva), flag);
     if (ret != 0 || lva != reinterpret_cast<void *>(reservedLva)) {
-        BM_LOG_ERROR("Failed to reserve lva local:" << options_.rankId << " remoteRank:" << im.rankId
-            << " size:" << im.size << " reservedLva:" << VaToStr(reservedLva) << " lva:" << lva << " ret:" << ret);
+        BM_LOG_ERROR("Failed to reserve va local:" << options_.rankId << " remoteRank:" << im.rankId
+                     << " size:" << im.size << " reservedVa:" << VaToStr(reservedLva) << " va:" << lva
+                     << " ret:" << ret);
         HybmVaManager::GetInstance().FreeReserveLva(reservedLva, HVM_DVA);
         return 0;
     }
@@ -588,11 +589,11 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         }
 
         uint64_t lva = ReserveLva(im);
-        BM_ASSERT_LOG_AND_RETURN(lva != 0, "lva = " << lva, BM_ERROR);
+        BM_ASSERT_LOG_AND_RETURN(lva != 0, "va = " << lva, BM_ERROR);
         BM_LOG_INFO("Try to mmap rank:" << im.rankId << " superPodId:" << im.superPodId << " serverId:" << im.serverId
                                         << " devId:" << im.logicDevId << " segType:" << options_.segType << " size:"
-                                        << im.size << " gva:" << VaToStr(im.gva) << " dva:" << VaToStr(im.deviceVa)
-                                        << " lva:" << VaToStr(lva));
+                                        << im.size << " gva:" << VaToStr(im.gva) << " dva:"
+                                        << VaToStr(im.deviceVa) << " va:" << VaToStr(lva));
         drv_mem_handle_t *handle = nullptr;
         auto ret = DlHalApi::HalMemImport(MEM_HANDLE_TYPE_FABRIC, &im.shareHandle, logicDeviceId_, &handle);
         if (ret != BM_OK) {
@@ -605,7 +606,7 @@ Result HybmVmmBasedSegment::Mmap() noexcept
 
         ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(lva), im.size, 0, handle, 0);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("HalMemMap memory failed:" << ret << " gva:" << VaToStr(im.gva) << " lva:" << VaToStr(lva)
+            BM_LOG_ERROR("HalMemMap memory failed:" << ret << " gva:" << VaToStr(im.gva) << " va:" << VaToStr(lva)
                                                     << " dva:" << VaToStr(im.deviceVa) << " size:" << im.size);
             DlHalApi::HalMemRelease(handle);
             if (options_.enable56BitsGva) {

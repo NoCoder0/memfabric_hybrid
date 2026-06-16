@@ -158,12 +158,12 @@ uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t ou
             // Calculate the corresponding GVA
             uint64_t offset = va - it->second.base.va[inputType];
             uint64_t outputVa = it->second.base.va[outputType] + offset;
-            BM_LOG_DEBUG("GetGvaByLva range mapping: input_va=" << VaToStr(va) << " -> output_va=" << VaToStr(outputVa)
+            BM_LOG_DEBUG("GetGvaByVa range mapping: input_va=" << VaToStr(va) << " -> output_va=" << VaToStr(outputVa)
                                                                 << " (offset=" << VaToStr(offset) << ")");
             return outputVa;
         }
     }
-    BM_LOG_DEBUG("TransformVa: no mapping found for lva=" << VaToStr(va));
+    BM_LOG_DEBUG("TransformVa: no mapping found for va=" << VaToStr(va));
     return 0;
 }
 
