@@ -60,6 +60,7 @@ public:
     static ZResult RtGetLogicDevIdByUserDevId(const int32_t userDevId, int32_t *const logicDevId);
     static ZResult RtGetC2cCtrlAddr(uint64_t *address, uint32_t *len);
     static ZResult AclrtGetAIVCountInCurrentThread(uint32_t *value);
+    static ZResult AclrtGetAICCountInCurrentThread(uint32_t *value);
     static ZResult AclrtHostRegister(void *hostPtr, uint64_t size, void **outDevPtr);
     static ZResult AclrtHostUnRegister(void *hostPtr);
     static ZResult AclrtSynchronizeEvent(void *event);
@@ -246,6 +247,15 @@ inline ZResult DlCannApi::AclrtGetAIVCountInCurrentThread(uint32_t *value)
     }
 
     return pAclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, value);
+}
+
+inline ZResult DlCannApi::AclrtGetAICCountInCurrentThread(uint32_t *value)
+{
+    if (UNLIKELY(pAclrtGetResInCurrentThread == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+
+    return pAclrtGetResInCurrentThread(ACL_RT_DEV_RES_CUBE_CORE, value);
 }
 
 inline ZResult DlCannApi::AclrtHostRegister(void *hostPtr, uint64_t size, void **outDevPtr)

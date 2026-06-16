@@ -57,6 +57,20 @@ if (BUILD_ZBAL_MODULE_UT)
     message(STATUS "test： unit test build is required")
 endif ()
 
+# prepare catlass for fused_moe
+include(FetchContent)
+FetchContent_Declare(
+        catlass
+        GIT_REPOSITORY https://gitcode.com/cann/catlass
+        GIT_TAG 404b4309c4e6366f2019fdba8feac376e0021836  # catlass-v1-stable
+        GIT_SHALLOW TRUE
+)
+FetchContent_Populate(catlass)
+if (NOT catlass_POPULATED)
+    FetchContent_Populate(catlass)
+endif ()
+message(STATUS "CATLASS cloned in ${catlass_SOURCE_DIR}")
+
 add_subdirectory(src/csrc)
 
 if (BUILD_ZBAL_MODULE_UT)

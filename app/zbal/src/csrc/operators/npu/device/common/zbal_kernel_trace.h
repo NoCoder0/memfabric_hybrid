@@ -16,7 +16,7 @@ See the Mulan PSL v2 for more details.
 #include <cstdint>
 #include "zbal_kernel_utils.h"
 
-namespace { // perf trace
+namespace zbal { // perf trace
 
 ZBAL_KERNEL void ZBAL_PROF_RECORD(__gm__ CommGroupInfo *comm, uint64_t record)
 {
@@ -61,10 +61,6 @@ ZBAL_KERNEL void ZBAL_PROF_STOP(__gm__ CommGroupInfo *comm, uint16_t frameId)
         ZBAL_PROF_RECORD(comm, record);
     }
 }
-
-} // namespace
-
-namespace { // debug trace
 
 ZBAL_KERNEL void ZBAL_DEBUG_RECORD(__gm__ CommGroupInfo *comm, uint64_t record)
 {
@@ -148,6 +144,6 @@ ZBAL_KERNEL void ZBAL_PROF_DUMP(__gm__ CommGroupInfo *comm, int lineNo)
     ZBAL_PROF_DUMP(comm, lineNo, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX);
 }
 
-} // namespace
+} // namespace zbal
 
 #endif

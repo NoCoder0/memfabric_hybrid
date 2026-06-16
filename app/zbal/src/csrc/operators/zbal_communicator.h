@@ -267,6 +267,26 @@ public:
                                       int64_t moeExpertNum, aclrtStream stream, int64_t flags) noexcept = 0;
 
     /**
+     * @brief Fused dispatch+GMM1+SwiGLU+GMM2+combine MoE operation (HCCL baseline).
+     *        Input tokens are quantized, dispatched via HCCL winIn, processed through
+     *        GMM1→dequant→SwiGLU→quant→GMM2→dequant, then combined back.
+     *
+     * @return 0 if successful
+     */
+    virtual int32_t FusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
+                                 const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
+                                 const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
+                                 const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *expertSmoothScales,
+                                 const zbal_tensor_info_t *shareGmm1Weight, const zbal_tensor_info_t *shareGmm1Scale,
+                                 const zbal_tensor_info_t *shareGmm2Weight, const zbal_tensor_info_t *shareGmm2Scale,
+                                 const zbal_tensor_info_t *shareSmoothScales, const zbal_tensor_info_t *xActiveMask,
+                                 const zbal_tensor_info_t *output, const zbal_tensor_info_t *shareOutput,
+                                 const zbal_tensor_info_t *expertTokenNums, const zbal_tensor_info_t *workspace,
+                                 int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
+                                 int64_t shareGmm1HLen, bool isTensorList, aclrtStream stream,
+                                 int64_t flags) noexcept = 0;
+
+    /**
      * @brief Assign group id and gathered group info
      *
      * @param id           [in] group id which contained gathered group info

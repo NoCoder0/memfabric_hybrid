@@ -422,6 +422,40 @@ ZBAL_API int32_t zbal_combine_low_latency(const zbal_tensor_info_t *expandX, con
                                         stream, flags);
 }
 
+ZBAL_API int32_t zbal_fused_deep_moe(
+    const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds, const zbal_tensor_info_t *gmm1Weight,
+    const zbal_tensor_info_t *gmm1Scale, const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
+    const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *expertSmoothScales,
+    const zbal_tensor_info_t *shareGmm1Weight, const zbal_tensor_info_t *shareGmm1Scale,
+    const zbal_tensor_info_t *shareGmm2Weight, const zbal_tensor_info_t *shareGmm2Scale,
+    const zbal_tensor_info_t *shareSmoothScales, const zbal_tensor_info_t *xActiveMask,
+    const zbal_tensor_info_t *output, const zbal_tensor_info_t *shareOutput, const zbal_tensor_info_t *expertTokenNums,
+    const zbal_tensor_info_t *workspace, int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
+    int64_t shareGmm1HLen, int64_t isTensorList, zbal_comm_t comm, aclrtStream stream, int64_t flags)
+{
+    ZBAL_VALIDATE_RETURN(x != nullptr, "FusedDeepMoe failed as x is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(expertIds != nullptr, "FusedDeepMoe failed as expertIds is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(gmm1Weight != nullptr, "FusedDeepMoe failed as gmm1Weight is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(gmm1Scale != nullptr, "FusedDeepMoe failed as gmm1Scale is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(gmm2Weight != nullptr, "FusedDeepMoe failed as gmm2Weight is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(gmm2Scale != nullptr, "FusedDeepMoe failed as gmm2Scale is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(expertScales != nullptr, "FusedDeepMoe failed as expertScales is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(output != nullptr, "FusedDeepMoe failed as output is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(expertTokenNums != nullptr, "FusedDeepMoe failed as expertTokenNums is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(workspace != nullptr, "FusedDeepMoe failed as workspace is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(moeExpertNum > 0, "FusedDeepMoe failed as moeExpertNum " << moeExpertNum << " is invalid",
+                         Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(gmm1HLen > 0, "FusedDeepMoe failed as gmm1HLen " << gmm1HLen << " is invalid",
+                         Z_INVALID_PARAM);
+
+    auto innerComm = reinterpret_cast<Communicator *>(comm);
+    return innerComm->FusedDeepMoe(x, expertIds, gmm1Weight, gmm1Scale, gmm2Weight, gmm2Scale, expertScales,
+                                   expertSmoothScales, shareGmm1Weight, shareGmm1Scale, shareGmm2Weight, shareGmm2Scale,
+                                   shareSmoothScales, xActiveMask, output, shareOutput, expertTokenNums, workspace,
+                                   moeExpertNum, quantMode, globalBs, gmm1HLen, shareGmm1HLen,
+                                   static_cast<bool>(isTensorList), stream, flags);
+}
+
 #ifdef __cplusplus
 }
 #endif

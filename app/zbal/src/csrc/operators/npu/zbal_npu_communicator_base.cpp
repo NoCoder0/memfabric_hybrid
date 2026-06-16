@@ -10,11 +10,14 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <ctime>
+#include <map>
 #include "zbal_npu_communicator_base.h"
 #include "zbal_comm_host_device_struct.h"
 #include "zbal_bootstrap_default.h"
 #include "zbal_trace_viewer_dumper.h"
 #include "zbal_npu_operators.h"
+#include "zbal_kernel_fused_deep_moe_tiling.h"
+
 #include "dl_cann_api.h"
 #include "acl/acl.h"
 
@@ -23,9 +26,9 @@ namespace operators {
 
 using namespace underapi;
 
-#define TRACE_GET_FRAME_ID(record)  (((record) & 0x3F00000000000000ULL) >> ZBAL_PROFILING_FRAME_SHIFT)
+#define TRACE_GET_FRAME_ID(record)  (((record)&0x3F00000000000000ULL) >> ZBAL_PROFILING_FRAME_SHIFT)
 #define TRACE_GET_TIMESTAMP(record) (((record) & ~(0xFFULL << ZBAL_PROFILING_FRAME_SHIFT)) / ZBAL_CYCLE_UNIT)
-#define TRACE_GET_BE(record)        (((record) & 0x4000000000000000ULL) == 0)
+#define TRACE_GET_BE(record)        (((record)&0x4000000000000000ULL) == 0)
 
 uint64_t NpuCommunicatorBase::opRunTimes_ = 0;
 
@@ -273,8 +276,7 @@ void NpuCommunicatorBase::SignalDumpTrace() noexcept
 }
 
 int32_t NpuCommunicatorBase::AllReduce(const void *send_buff, void *recv_buff, void *buffer, size_t count,
-                                       zbal_datatype_t data_type, zbal_reduce_op_t op,
-                                       aclrtStream stream) noexcept
+                                       zbal_datatype_t data_type, zbal_reduce_op_t op, aclrtStream stream) noexcept
 {
     return ZBALOpAllReduce(send_buff, recv_buff, buffer, count, data_type, stream, op,
                            const_cast<CommGroupInfo &>(GetMetaInfo()));
@@ -408,6 +410,78 @@ int32_t NpuCommunicatorBase::CombineLowLatency(const zbal_tensor_info_t *expandX
 {
     return ZBALOpCombineLowLatency(expandX, expertIds, expertIdx, epSendCounts, expertScales, xOut, moeExpertNum,
                                    stream, GetMetaInfo(), flags);
+}
+
+// ---------------------------------------------------------------------------
+// Per-operator state for fused_deep_moe.
+// ---------------------------------------------------------------------------
+struct FusedMoeTilingState : public OpTilingBase {
+    static constexpr uint32_t kMaxSlots = 512;
+
+    void *devBuf = nullptr;               // base of kMaxSlots × sizeof(TilingData) device buffer
+    std::map<int64_t, uint32_t> bsToSlot; // batch_size → slot index
+    uint32_t nextSlot = 0;                // next free slot index
+
+    ~FusedMoeTilingState() override
+    {
+        if (devBuf != nullptr) {
+            DlCannApi::AclrtFree(devBuf);
+            devBuf = nullptr;
+        }
+    }
+};
+
+int32_t NpuCommunicatorBase::FusedDeepMoe(
+    const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds, const zbal_tensor_info_t *gmm1Weight,
+    const zbal_tensor_info_t *gmm1Scale, const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
+    const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *expertSmoothScales,
+    const zbal_tensor_info_t *shareGmm1Weight, const zbal_tensor_info_t *shareGmm1Scale,
+    const zbal_tensor_info_t *shareGmm2Weight, const zbal_tensor_info_t *shareGmm2Scale,
+    const zbal_tensor_info_t *shareSmoothScales, const zbal_tensor_info_t *xActiveMask,
+    const zbal_tensor_info_t *output, const zbal_tensor_info_t *shareOutput, const zbal_tensor_info_t *expertTokenNums,
+    const zbal_tensor_info_t *workspace, int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
+    int64_t shareGmm1HLen, bool isTensorList, aclrtStream stream, int64_t flags) noexcept
+{
+    auto &tiling = opTilings_.GetOrCreate<FusedMoeTilingState>("fused_moe");
+
+    if (tiling.devBuf == nullptr) {
+        size_t totalSize =
+            static_cast<size_t>(FusedMoeTilingState::kMaxSlots) * sizeof(ZbalCam::FusedDeepMoeTilingData);
+        auto ret = DlCannApi::AclrtMalloc(&tiling.devBuf, totalSize, ACL_MEM_MALLOC_NORMAL_ONLY);
+        if (ret != 0 || tiling.devBuf == nullptr) {
+            ZBAL_LOG_ERROR("FusedDeepMoe: failed to allocate device tiling buffer ("
+                           << FusedMoeTilingState::kMaxSlots << " slots, " << totalSize << " bytes), ret=" << ret);
+            return static_cast<int32_t>(ret);
+        }
+    }
+
+    int64_t bs = static_cast<int64_t>(x->shape[0]);
+
+    /* Find or allocate a tiling slot for this batch size */
+    uint32_t slotIdx = 0;
+    bool needTilingCopy = true;
+    auto it = tiling.bsToSlot.find(bs);
+    if (it != tiling.bsToSlot.end()) {
+        slotIdx = it->second;
+        needTilingCopy = false; // tiling already cached for this bs
+    } else {
+        if (tiling.nextSlot >= FusedMoeTilingState::kMaxSlots) {
+            ZBAL_LOG_ERROR("FusedDeepMoe: out of tiling slots (max=" << FusedMoeTilingState::kMaxSlots << ")");
+            return -1;
+        }
+        slotIdx = tiling.nextSlot++;
+        tiling.bsToSlot[bs] = slotIdx;
+    }
+
+    void *slotAddr =
+        static_cast<uint8_t *>(tiling.devBuf) + static_cast<size_t>(slotIdx) * sizeof(ZbalCam::FusedDeepMoeTilingData);
+
+    int32_t result = ZBALOpFusedDeepMoe(
+        x, expertIds, gmm1Weight, gmm1Scale, gmm2Weight, gmm2Scale, expertScales, expertSmoothScales, shareGmm1Weight,
+        shareGmm1Scale, shareGmm2Weight, shareGmm2Scale, shareSmoothScales, xActiveMask, output, shareOutput,
+        expertTokenNums, workspace, moeExpertNum, quantMode, globalBs, gmm1HLen, shareGmm1HLen, isTensorList, slotAddr,
+        options_.name, stream, GetMetaInfo(), GetMetaInfo(), flags, needTilingCopy);
+    return result;
 }
 
 } // namespace operators

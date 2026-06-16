@@ -80,6 +80,15 @@ public:
                         const at::Tensor &packed_recv_count, bool zero_copy, bool async, bool return_recv_hook,
                         const std::optional<at::Tensor> &out);
 
+    std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_deep_moe(
+        const at::Tensor &x, const at::Tensor &expert_ids, const at::Tensor &gmm1_weight, const at::Tensor &gmm1_scale,
+        const at::Tensor &gmm2_weight, const at::Tensor &gmm2_scale, const at::Tensor &expert_scales,
+        int64_t moe_expert_num, int64_t gmm1_h_len, const std::optional<at::Tensor> &expert_smooth_scales,
+        const std::optional<at::Tensor> &share_gmm1_weight, const std::optional<at::Tensor> &share_gmm1_scale,
+        const std::optional<at::Tensor> &share_gmm2_weight, const std::optional<at::Tensor> &share_gmm2_scale,
+        const std::optional<at::Tensor> &share_smooth_scales, const std::optional<at::Tensor> &x_active_mask,
+        int64_t quant_mode, int64_t global_bs, int64_t share_gmm1_h_len, bool is_tensor_list);
+
 private:
     int device_id;
     int rank, rdma_rank, nvl_rank;
@@ -104,6 +113,10 @@ private:
     at::Tensor new_topk_idx;
     at::Tensor ori_x;
     at::Tensor new_scales;
+    // Cached output tensors to avoid per-call at::zeros (triggers InplaceZero, pollutes L2 cache)
+    at::Tensor cached_fdm_output_;
+    at::Tensor cached_fdm_expert_token_nums_;
+    at::Tensor cached_fdm_share_output_;
 };
 } // namespace deep_ep
 } // namespace adaptor

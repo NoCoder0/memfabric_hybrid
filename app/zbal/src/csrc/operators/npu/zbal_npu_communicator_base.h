@@ -13,6 +13,7 @@
 #define ZBAL_NPU_COMMUNICATOR_BASE_H
 
 #include "zbal_communicator.h"
+#include "zbal_comm_op_tiling.h"
 
 namespace zbal {
 namespace operators {
@@ -57,8 +58,7 @@ public:
 
     int32_t Barrier(aclrtStream stream) noexcept;
 
-    int32_t Send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer,
-                 aclrtStream stream) noexcept override;
+    int32_t Send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer, aclrtStream stream) noexcept override;
 
     int32_t Recv(const void *recvBuff, size_t recvCount, zbal_datatype_t dataType, uint32_t peer,
                  aclrtStream stream) noexcept override;
@@ -101,6 +101,18 @@ public:
                               const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                               int64_t moeExpertNum, aclrtStream stream, int64_t flags) noexcept override;
 
+    int32_t FusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
+                         const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
+                         const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
+                         const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *expertSmoothScales,
+                         const zbal_tensor_info_t *shareGmm1Weight, const zbal_tensor_info_t *shareGmm1Scale,
+                         const zbal_tensor_info_t *shareGmm2Weight, const zbal_tensor_info_t *shareGmm2Scale,
+                         const zbal_tensor_info_t *shareSmoothScales, const zbal_tensor_info_t *xActiveMask,
+                         const zbal_tensor_info_t *output, const zbal_tensor_info_t *shareOutput,
+                         const zbal_tensor_info_t *expertTokenNums, const zbal_tensor_info_t *workspace,
+                         int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
+                         int64_t shareGmm1HLen, bool isTensorList, aclrtStream stream, int64_t flags) noexcept;
+
 protected:
     ZResult SetupProfMemory();
     void DestroyProfMemory();
@@ -110,6 +122,16 @@ protected:
     void *kernelMetaH2DAreaDevice_ = nullptr;
     void *perfHostMemory_ = nullptr;
     static uint64_t opRunTimes_;
+
+    /*
+     * Generic store for per-operator device-side state (e.g. tiling buffers)
+     * whose lifetime equals this Communicator.
+     *
+     * Each operator defines its own state struct inheriting OpStateBase,
+     * and retrieves it via opTilings_.GetOrCreate<T>("key").
+     * See zbal_comm_op_state.h for rationale and usage.
+     */
+    OpTilingStore opTilings_;
 };
 
 } // namespace operators

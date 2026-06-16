@@ -82,4 +82,18 @@ int32_t ZBALOpCombineLowLatency(const zbal_tensor_info_t *expandX, const zbal_te
                                 int64_t moeExpertNum, aclrtStream stream, const CommGroupInfo &groupInfo,
                                 int64_t flags);
 
+int32_t ZBALOpFusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
+                           const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
+                           const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
+                           const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *expertSmoothScales,
+                           const zbal_tensor_info_t *shareGmm1Weight, const zbal_tensor_info_t *shareGmm1Scale,
+                           const zbal_tensor_info_t *shareGmm2Weight, const zbal_tensor_info_t *shareGmm2Scale,
+                           const zbal_tensor_info_t *shareSmoothScales, const zbal_tensor_info_t *xActiveMask,
+                           const zbal_tensor_info_t *output, const zbal_tensor_info_t *shareOutput,
+                           const zbal_tensor_info_t *expertTokenNums, const zbal_tensor_info_t *workspace,
+                           int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
+                           int64_t shareGmm1HLen, bool isTensorList, void *tilingDevBuf, const std::string &groupName,
+                           aclrtStream stream, const CommGroupInfo &epGroupInfo, const CommGroupInfo &tpGroupInfo,
+                           int64_t flags, bool needTilingCopy = true);
+
 #endif // ZBAL_NPU_OPERATORS_H

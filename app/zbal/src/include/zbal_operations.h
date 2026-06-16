@@ -311,6 +311,48 @@ int32_t zbal_combine_low_latency(const zbal_tensor_info_t *expandX, const zbal_t
                                  const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                                  int64_t moeExpertNum, zbal_comm_t comm, aclrtStream stream, int64_t flags);
 
+/**
+ * @brief Fused dispatch+GMM1+SwiGLU+GMM2+combine MoE operation.
+ *
+ * Performs: input → INT8 quant → HCCL dispatch → GMM1 → dequant → SwiGLU
+ *           → INT8 quant → GMM2 → dequant → HCCL combine → output
+ *
+ * @param x                   [in] input tokens [bs, h]
+ * @param expertIds           [in] topK expert IDs [bs, topK]
+ * @param gmm1Weight          [in] GMM1 weight tensor(s)
+ * @param gmm1Scale           [in] GMM1 weight scale tensor(s)
+ * @param gmm2Weight          [in] GMM2 weight tensor(s)
+ * @param gmm2Scale           [in] GMM2 weight scale tensor(s)
+ * @param expertScales        [in] per-token expert weights [bs, topK]
+ * @param expertSmoothScales  [in] smooth-quant scale [h] (optional, may be NULL)
+ * @param xActiveMask         [in] active-token mask [bs] (optional, may be NULL)
+ * @param output              [out] output tokens [bs, h]
+ * @param expertTokenNums     [out] token count per expert [moeExpertNumPerRank]
+ * @param workspace           [in/out] scratch buffer (see CalcFusedDeepMoeWorkspaceSize)
+ * @param moeExpertNum        [in] total number of MoE experts
+ * @param quantMode           [in] quantization mode
+ * @param globalBs            [in] global batch size (0 = epRankSize * bs)
+ * @param gmm1HLen            [in] GMM1 weight N dimension (FFN hidden size)
+ * @param shareGmm1HLen       [in] share expert GMM1 weight N dimension
+ * @param isTensorList        [in] whether weights are in TensorList format
+ * @param comm                [in] zbal communicator handle
+ * @param stream              [in] compute stream
+ * @param flags               [in] optional flags, reserved
+ * @return 0 if successful
+ */
+int32_t zbal_fused_deep_moe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
+                            const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
+                            const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
+                            const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *expertSmoothScales,
+                            const zbal_tensor_info_t *shareGmm1Weight, const zbal_tensor_info_t *shareGmm1Scale,
+                            const zbal_tensor_info_t *shareGmm2Weight, const zbal_tensor_info_t *shareGmm2Scale,
+                            const zbal_tensor_info_t *shareSmoothScales, const zbal_tensor_info_t *xActiveMask,
+                            const zbal_tensor_info_t *output, const zbal_tensor_info_t *shareOutput,
+                            const zbal_tensor_info_t *expertTokenNums, const zbal_tensor_info_t *workspace,
+                            int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
+                            int64_t shareGmm1HLen, int64_t isTensorList, zbal_comm_t comm, aclrtStream stream,
+                            int64_t flags);
+
 #ifdef __cplusplus
 }
 #endif

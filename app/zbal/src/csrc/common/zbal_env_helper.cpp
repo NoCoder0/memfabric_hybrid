@@ -18,6 +18,7 @@ bool EnvHelper::PROF_ENABLED = false;
 bool EnvHelper::OP_DEFAULT_STREAM = false;
 uint32_t EnvHelper::PROF_TRACING_MAX_COUNT = 0;
 std::string EnvHelper::PROF_DIR = "/home/";
+bool EnvHelper::OP_DEBUG_FUSED_MOE = false;
 
 void EnvHelper::Initialize() noexcept
 {
@@ -25,6 +26,7 @@ void EnvHelper::Initialize() noexcept
     PROF_TRACING_MAX_COUNT = Func::GetEnv(ENV_NAME_PROF_TRACING_COUNT, 0);
     PROF_DIR = Func::GetEnv<std::string>(ENV_NAME_PROF_DIR, "/home/");
     OP_DEFAULT_STREAM = (Func::GetEnv<uint32_t>(ENV_NAME_OP_DEFUALT_STREAM, 0) == 1);
+    OP_DEBUG_FUSED_MOE = (Func::GetEnv<uint32_t>(ENV_NAME_OP_DEBUG_FUSED_MOE, 0) == 1);
 }
 
 void EnvHelper::DumpEnv() noexcept
@@ -33,5 +35,6 @@ void EnvHelper::DumpEnv() noexcept
     ZBAL_LOG_DEBUG(ENV_NAME_PROF_TRACING_COUNT << " = " << PROF_TRACING_MAX_COUNT);
     ZBAL_LOG_DEBUG(ENV_NAME_PROF_DIR << " = " << PROF_DIR);
     ZBAL_LOG_DEBUG(ENV_NAME_OP_DEFUALT_STREAM << " = " << OP_DEFAULT_STREAM);
+    ZBAL_LOG_DEBUG(ENV_NAME_OP_DEBUG_FUSED_MOE << " = " << OP_DEBUG_FUSED_MOE);
 }
 } // namespace zbal

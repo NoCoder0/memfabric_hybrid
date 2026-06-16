@@ -22,6 +22,7 @@
 #define ENV_NAME_PROF_DIR           "ZBAL_PROF_DIR"
 #define ENV_NAME_HCCL_OP            "ZBAL_HCCL_OP"
 #define ENV_NAME_OP_DEFUALT_STREAM  "ZBAL_OP_DEFUALT_STREAM"
+#define ENV_NAME_OP_DEBUG_FUSED_MOE "ZBAL_OP_DEBUG_FUSED_MOE"
 
 namespace zbal {
 
@@ -35,6 +36,7 @@ public:
     static bool OP_DEFAULT_STREAM;          /* aiv comm with default stream */
     static uint32_t PROF_TRACING_MAX_COUNT; /* max tracing count of perf */
     static std::string PROF_DIR;            /* the dir of zbal perf */
+    static bool OP_DEBUG_FUSED_MOE;         /* whether print tiling for fused-moe ops */
 };
 } // namespace zbal
 

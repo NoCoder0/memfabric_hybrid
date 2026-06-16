@@ -23,6 +23,7 @@ extern "C" {
 #define ZBAL_MAX_RANKS      1024
 #define ZBAL_COMM_NAME_MAX  128
 #define ZBAL_MAX_IPPORT_LEN 64
+#define ZBAL_MAX_TENSOR_DIM 12
 
 typedef void *zbal_comm_t;
 
@@ -138,10 +139,11 @@ typedef struct {
  * Make sure the size of this struct is 64 bytes, which fit to one cacheline to cpu
  */
 typedef struct {
-    void *data;               /* base pointer of tensor data, default value is null */
-    zbal_datatype_t dataType; /* data type of tensor */
-    uint16_t dim;             /* dimension of the shape, default value is 0 */
-    uint16_t shape[25];       /* shape, default value is 0 */
+    void *data;                          /* base pointer of tensor data, default value is null */
+    zbal_datatype_t dataType;            /* data type of tensor */
+    uint16_t dim;                        /* dimension of the shape, default value is 0 */
+    uint32_t shape[ZBAL_MAX_TENSOR_DIM]; /* shape, default value is 0 */
+    uint16_t reserved[1];
 } zbal_tensor_info_t;
 
 typedef enum {

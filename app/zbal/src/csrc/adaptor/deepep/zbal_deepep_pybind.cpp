@@ -49,5 +49,6 @@ void pybind11_deepep_adaptor(pybind11::module_ &m)
         .def("intranode_combine", &zbal::adaptor::deep_ep::Buffer::intranode_combine)
         .def("low_latency_dispatch", &zbal::adaptor::deep_ep::Buffer::low_latency_dispatch)
         .def("low_latency_combine", &zbal::adaptor::deep_ep::Buffer::low_latency_combine)
-        .def("clean_low_latency_buffer", &zbal::adaptor::deep_ep::Buffer::clean_low_latency_buffer);
+        .def("clean_low_latency_buffer", &zbal::adaptor::deep_ep::Buffer::clean_low_latency_buffer)
+        .def("fused_deep_moe", &zbal::adaptor::deep_ep::Buffer::fused_deep_moe);
 }

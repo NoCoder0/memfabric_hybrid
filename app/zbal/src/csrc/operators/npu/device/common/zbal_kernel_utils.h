@@ -35,7 +35,8 @@ constexpr uint32_t ZBAL_TYPE_SIZE_FOUR = 4;
 constexpr uint32_t ZBAL_TYPE_SIZE_EIGHT = 8;
 
 using namespace AscendC;
-using namespace zbal;
+
+namespace zbal {
 
 inline uint32_t GetTypeSize(zbal_datatype_t type)
 {
@@ -149,5 +150,7 @@ inline uint32_t ZBALOpGetAivBlockDim(CommGroupInfo &groupInfo, size_t sendCount,
 
     return blockDim;
 }
+
+} // namespace zbal
 
 #endif // ZBAL_KERNEL_UTILS_H

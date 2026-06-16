@@ -30,6 +30,7 @@ include_directories(
         ${ZBAL_SRC_DIR}/csrc/
         ${ZBAL_SRC_DIR}/csrc/operators
         ${ZBAL_SRC_DIR}/csrc/operators/npu
+        ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe
         ${ZBAL_SRC_DIR}/csrc/common
         ${ZBAL_SRC_DIR}/csrc/sma
         ${ZBAL_SRC_DIR}/csrc/under_api/cann
@@ -82,7 +83,8 @@ target_compile_options(boostrap_objects PRIVATE -fPIC)
 # operators objects
 file(GLOB OPERATORS_SRC
         ${ZBAL_SRC_DIR}/csrc/operators/*.cpp
-        ${ZBAL_SRC_DIR}/csrc/operators/npu/*.cpp)
+        ${ZBAL_SRC_DIR}/csrc/operators/npu/*.cpp
+        ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe/*.cpp)
 message(STATUS "app/zbal: [ut] operators_objects: including npu backend")
 add_library(operators_objects OBJECT ${OPERATORS_SRC})
 target_link_libraries(operators_objects PRIVATE zbal_kernel) # link not work on object, only for compile pass

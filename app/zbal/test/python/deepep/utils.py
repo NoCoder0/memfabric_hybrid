@@ -20,13 +20,13 @@ def register_zbal(local_rank, rank, world_size, ip, port):
     from zbal import zbal_init, zbal_set_logger_level
 
     local_mem_size = 10 * 1024 * 1024 * 1024
-    local_meta_size = 1024
+    local_meta_size = 2048
     g_ip_port = f"tcp://{ip}:23350"
     zbal_set_logger_level(3)
 
     zbal_init(world_size, local_rank, rank, device_mem_size=local_mem_size,
-        comm_meta_space_size=local_meta_size,
-        ip_port=g_ip_port)
+              comm_meta_space_size=local_meta_size,
+              ip_port=g_ip_port)
     meta_addr = 0
 
     npu_tensor = torch.zeros(10, device="npu")
@@ -177,20 +177,20 @@ class SuppressStdoutStderr:
 
 
 def bench_kineto(
-    fn,
-    kernel_names: Union[str, tuple],
-    num_tests: int = 100,
-    suppress_kineto_output: bool = False,
-    trace_path: Optional[str] = None,
-    barrier_comm_profiling: bool = False,
-    num_kernels_per_period: int = 1,
+        fn,
+        kernel_names: Union[str, tuple],
+        num_tests: int = 100,
+        suppress_kineto_output: bool = False,
+        trace_path: Optional[str] = None,
+        barrier_comm_profiling: bool = False,
+        num_kernels_per_period: int = 1,
 ):
     # Profile
     suppress = SuppressStdoutStderr if suppress_kineto_output else EmptySuppress
     with suppress():
         schedule = torch_npu.profiler.schedule(wait=1, warmup=0, active=1, repeat=1)
         with torch_npu.profiler.profile(
-            activities=[torch_npu.profiler.ProfilerActivity.NPU], schedule=schedule
+                activities=[torch_npu.profiler.ProfilerActivity.NPU], schedule=schedule
         ) as prof:
             for i in range(2):
                 # NOTES: use a large kernel and a barrier to eliminate the unbalanced CPU launch overhead
@@ -260,13 +260,13 @@ def hash_tensor(t: torch.Tensor):
 
 
 def calculate_avg_stats(
-    dispatch_t,
-    num_dispatch_comm_bytes,
-    combine_t,
-    num_combine_comm_bytes,
-    rank,
-    num_ranks,
-    root_rank: 0,
+        dispatch_t,
+        num_dispatch_comm_bytes,
+        combine_t,
+        num_combine_comm_bytes,
+        rank,
+        num_ranks,
+        root_rank: 0,
 ):
     # dispatch_t / combine_t: the unit is second
     local_stats = torch.tensor(
@@ -286,10 +286,10 @@ def calculate_avg_stats(
     )
     dist.all_gather_into_tensor(gather_stats, local_stats, group=None)
     if rank == root_rank:
-        dispatch_latency = gather_stats[:, 0]   # us
-        dispatch_bytes = gather_stats[:, 1]     # bytes
-        combine_latency = gather_stats[:, 2]    # us
-        combine_bytes = gather_stats[:, 3]      # bytes
+        dispatch_latency = gather_stats[:, 0]  # us
+        dispatch_bytes = gather_stats[:, 1]  # bytes
+        combine_latency = gather_stats[:, 2]  # us
+        combine_bytes = gather_stats[:, 3]  # bytes
 
         avg_dispatch_lat = torch.mean(dispatch_latency)
         avg_dispatch_bytes = torch.mean(dispatch_bytes)
@@ -297,7 +297,7 @@ def calculate_avg_stats(
         avg_combine_bytes = torch.mean(combine_bytes)
 
         avg_dispatch_bw = avg_dispatch_bytes / avg_dispatch_lat * 1e-3  # GB/s
-        avg_combine_bw = avg_combine_bytes / avg_combine_lat * 1e-3     # GB/s
+        avg_combine_bw = avg_combine_bytes / avg_combine_lat * 1e-3  # GB/s
         logging.info(
             f"\n\nAverage Dispatch bandwidth: {avg_dispatch_bw:.2f} GB/s, avg_t={avg_dispatch_lat:.2f} us \n"
             f"Average Combine bandwidth: {avg_combine_bw:.2f} GB/s, avg_t={avg_combine_lat:.2f} us\n\n"

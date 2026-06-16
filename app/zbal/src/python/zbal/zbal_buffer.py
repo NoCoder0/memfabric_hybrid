@@ -27,14 +27,14 @@ class Buffer:
     num_sms: int = 20
 
     def __init__(
-        self,
-        group: dist.ProcessGroup,
-        num_nvl_bytes: int = 0,
-        num_rdma_bytes: int = 0,
-        low_latency_mode: bool = False,
-        num_qps_per_rank: int = 12,
-        allow_nvlink_for_low_latency_mode: bool = True,
-        allow_mnnvl: bool = False,
+            self,
+            group: dist.ProcessGroup,
+            num_nvl_bytes: int = 0,
+            num_rdma_bytes: int = 0,
+            low_latency_mode: bool = False,
+            num_qps_per_rank: int = 12,
+            allow_nvlink_for_low_latency_mode: bool = True,
+            allow_mnnvl: bool = False,
     ) -> None:
         """
         Initialize the communication buffer.
@@ -152,22 +152,22 @@ class Buffer:
 
     @staticmethod
     def get_low_latency_rdma_size_hint(
-        num_max_dispatch_tokens_per_rank: int,
-        hidden: int,
-        num_ranks: int,
-        num_experts: int,
+            num_max_dispatch_tokens_per_rank: int,
+            hidden: int,
+            num_ranks: int,
+            num_experts: int,
     ) -> int:
         return deepep_adaptor.get_low_latency_rdma_size_hint(
             num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
         )
 
     def get_dispatch_layout(
-        self,
-        topk_idx: torch.Tensor,
-        num_experts: int,
-        previous_event: Optional[EventOverlap] = None,
-        async_finish: bool = False,
-        allocate_on_comm_stream: bool = False,
+            self,
+            topk_idx: torch.Tensor,
+            num_experts: int,
+            previous_event: Optional[EventOverlap] = None,
+            async_finish: bool = False,
+            allocate_on_comm_stream: bool = False,
     ) -> Tuple[
         torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor, EventOverlap
     ]:
@@ -214,22 +214,22 @@ class Buffer:
         )
 
     def dispatch(
-        self,
-        x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-        handle: Optional[Tuple] = None,
-        num_tokens_per_rank: Optional[torch.Tensor] = None,
-        num_tokens_per_rdma_rank: Optional[torch.Tensor] = None,
-        is_token_in_rank: Optional[torch.Tensor] = None,
-        num_tokens_per_expert: Optional[torch.Tensor] = None,
-        topk_idx: Optional[torch.Tensor] = None,
-        topk_weights: Optional[torch.Tensor] = None,
-        expert_alignment: int = 1,
-        num_worst_tokens: int = 0,
-        config: Optional[Config] = None,
-        previous_event: Optional[EventOverlap] = None,
-        async_finish: bool = False,
-        allocate_on_comm_stream: bool = False,
-        dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
+            self,
+            x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+            handle: Optional[Tuple] = None,
+            num_tokens_per_rank: Optional[torch.Tensor] = None,
+            num_tokens_per_rdma_rank: Optional[torch.Tensor] = None,
+            is_token_in_rank: Optional[torch.Tensor] = None,
+            num_tokens_per_expert: Optional[torch.Tensor] = None,
+            topk_idx: Optional[torch.Tensor] = None,
+            topk_weights: Optional[torch.Tensor] = None,
+            expert_alignment: int = 1,
+            num_worst_tokens: int = 0,
+            config: Optional[Config] = None,
+            previous_event: Optional[EventOverlap] = None,
+            async_finish: bool = False,
+            allocate_on_comm_stream: bool = False,
+            dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
     ) -> Tuple[
         Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
         Optional[torch.Tensor],
@@ -302,9 +302,9 @@ class Buffer:
             )
         else:
             if not (
-                num_tokens_per_rank is not None
-                and is_token_in_rank is not None
-                and num_tokens_per_expert is not None
+                    num_tokens_per_rank is not None
+                    and is_token_in_rank is not None
+                    and num_tokens_per_expert is not None
             ):
                 raise ValueError("num_tokens_per_rank, is_token_in_rank, num_tokens_per_expert must be valid")
             (
@@ -348,16 +348,16 @@ class Buffer:
             )
 
     def combine(
-        self,
-        x: torch.Tensor,
-        handle: Tuple,
-        topk_weights: Optional[torch.Tensor] = None,
-        bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
-        config: Optional[Config] = None,
-        previous_event: Optional[EventOverlap] = None,
-        async_finish: bool = False,
-        allocate_on_comm_stream: bool = False,
-        combine_send_cost_stats: Optional[torch.Tensor] = None,
+            self,
+            x: torch.Tensor,
+            handle: Tuple,
+            topk_weights: Optional[torch.Tensor] = None,
+            bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
+            config: Optional[Config] = None,
+            previous_event: Optional[EventOverlap] = None,
+            async_finish: bool = False,
+            allocate_on_comm_stream: bool = False,
+            combine_send_cost_stats: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], EventOverlap]:
         """
         Combine (reduce) tokens (addition **without** weights) from different ranks, both intranode and internode
@@ -410,9 +410,8 @@ class Buffer:
         )
         return recv_x, recv_topk_weights, EventOverlap(event)
 
-
     def clean_low_latency_buffer(
-        self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
+            self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
     ) -> None:
         """
         As low-latency kernels require part of the buffer to be zero-initialized, so it is vital to clean the buffer
@@ -431,17 +430,17 @@ class Buffer:
         )
 
     def low_latency_dispatch(
-        self,
-        x: torch.Tensor,
-        topk_idx: torch.Tensor,
-        num_max_dispatch_tokens_per_rank: int,
-        num_experts: int,
-        cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
-        use_fp8: bool = True,
-        round_scale: bool = False,
-        use_ue8m0: bool = False,
-        async_finish: bool = False,
-        return_recv_hook: bool = False,
+            self,
+            x: torch.Tensor,
+            topk_idx: torch.Tensor,
+            num_max_dispatch_tokens_per_rank: int,
+            num_experts: int,
+            cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
+            use_fp8: bool = True,
+            round_scale: bool = False,
+            use_ue8m0: bool = False,
+            async_finish: bool = False,
+            return_recv_hook: bool = False,
     ) -> Tuple[
         Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable
     ]:
@@ -535,15 +534,15 @@ class Buffer:
         )
 
     def low_latency_combine(
-        self,
-        x: torch.Tensor,
-        topk_idx: torch.Tensor,
-        topk_weights: torch.Tensor,
-        handle: tuple,
-        zero_copy: bool = False,
-        async_finish: bool = False,
-        return_recv_hook: bool = False,
-        out: Optional[torch.Tensor] = None,
+            self,
+            x: torch.Tensor,
+            topk_idx: torch.Tensor,
+            topk_weights: torch.Tensor,
+            handle: tuple,
+            zero_copy: bool = False,
+            async_finish: bool = False,
+            return_recv_hook: bool = False,
+            out: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, EventOverlap, Callable]:
         """
         A low-latency implementation for combine.
@@ -608,3 +607,104 @@ class Buffer:
             EventOverlap(event, tensors_to_record if async_finish else None),
             hook,
         )
+
+    def fused_deep_moe(
+            self,
+            x: torch.Tensor,
+            topk_idx: torch.Tensor,
+            gmm1_permuted_weight: torch.Tensor,
+            gmm1_permuted_weight_scale: torch.Tensor,
+            gmm2_weight: torch.Tensor,
+            gmm2_weight_scale: torch.Tensor,
+            topk_weights: torch.Tensor,
+            num_experts: int,
+            shared_expert_num: int = 0,  # DEPRECATED: no longer used (ignored)
+            shared_expert_rank_num: int = 0,  # DEPRECATED: no longer used (ignored)
+            quant_mode: int = 0,
+            num_max_dispatch_tokens_per_rank: int = 0,
+            is_tensor_list: bool = False,
+            expert_smooth_scales: Optional[torch.Tensor] = None,
+            share_gmm1_weight: Optional[torch.Tensor] = None,
+            share_gmm1_scale: Optional[torch.Tensor] = None,
+            share_gmm2_weight: Optional[torch.Tensor] = None,
+            share_gmm2_scale: Optional[torch.Tensor] = None,
+            share_smooth_scales: Optional[torch.Tensor] = None,
+            x_active_mask: Optional[torch.Tensor] = None,
+            share_gmm1_h_len: int = 0,
+            fuse_mode: int = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Fused dispatch + GMM1 + SwiGLU + GMM2 + combine MoE operation (HCCL baseline).
+
+        Performs: x → INT8 quant → HCCL dispatch → GMM1 → dequant → SwiGLU →
+                  INT8 quant → GMM2 → dequant → HCCL combine → output
+
+        Arguments:
+            x: input tokens, shape [bs, h], dtype bfloat16 or float16.
+            topk_idx: top-K expert IDs, shape [bs, topK], dtype int32.
+            gmm1_permuted_weight: GMM1 weight, shape [numLocalExperts, h, gmm1_h_len] or [h, gmm1_h_len] (INT8).
+            gmm1_permuted_weight_scale: GMM1 weight scale, shape [numLocalExperts, gmm1_h_len] or [gmm1_h_len] (float).
+            gmm2_weight: GMM2 weight, shape [numLocalExperts, gmm1_h_len//2, h] or [gmm1_h_len//2, h] (INT8).
+            gmm2_weight_scale: GMM2 weight scale, shape [numLocalExperts, h] or [h] (float).
+            topk_weights: per-token expert weights, shape [bs, topK], dtype float.
+            num_experts: total number of MoE experts.
+            shared_expert_num: (DEPRECATED, ignored) number of shared experts.
+            shared_expert_rank_num: (DEPRECATED, ignored) number of ranks hosting shared experts.
+            gmm1_h_len: GMM1 weight N dimension (FFN hidden size).
+            quant_mode: quantization mode (default 1 = INT8).
+            num_max_dispatch_tokens_per_rank: global batch size across all EP ranks with per ranks (0 = cur_bs).
+            is_tensor_list: whether weights are stacked in TensorList format.
+            expert_smooth_scales: optional smooth-quant scale, shape [h].
+            share_gmm1_weight: optional shared expert GMM1 weight (INT8 NZ format).
+            share_gmm1_scale: optional shared expert GMM1 scale (float).
+            share_gmm2_weight: optional shared expert GMM2 weight (INT8 NZ format).
+            share_gmm2_scale: optional shared expert GMM2 scale (float/bf16).
+            share_smooth_scales: optional shared expert smooth-quant scale, shape [h].
+            x_active_mask: optional active-token mask, shape [bs].
+            share_gmm1_h_len: shared expert GMM1 hidden length (REQUIRED if share weights present).
+            fuse_mode: adapt deepep-ascend(currently not in use)
+
+        Returns:
+            output: combined output tokens, shape [bs, h], same dtype as x.
+            expert_token_nums: token count per local expert, shape [moeExpertNumPerRank], dtype int64.
+        """
+        # C++ pybind signature order:
+        #   x, expert_ids, gmm1_weight, gmm1_scale, gmm2_weight, gmm2_scale,
+        #   expert_scales,
+        #   expert_smooth_scales=None, share_gmm1_weight=None, share_gmm1_scale=None,
+        #   share_gmm2_weight=None, share_gmm2_scale=None, share_smooth_scales=None,
+        #   x_active_mask=None,
+        #   moe_expert_num, quant_mode, global_bs=0,
+        #   gmm1_h_len, share_gmm1_h_len=0, is_tensor_list=false
+        has_share_weights = share_gmm1_weight is not None and share_gmm1_weight.numel() > 0
+        if has_share_weights and share_gmm1_h_len <= 0:
+            print("[ZBAL WARNING] share_gmm1_weight provided but share_gmm1_h_len is not set (or <=0). "
+                  "Please pass share_gmm1_h_len with the correct value to avoid kernel errors.")
+
+        topk_idx = topk_idx.int()
+        gmm1_h_len = gmm1_permuted_weight.shape[-1]
+        global_bs = num_max_dispatch_tokens_per_rank * self.group_size
+
+        output, share_output, expert_token_nums = self.runtime.fused_deep_moe(
+            x,
+            topk_idx,
+            gmm1_permuted_weight,
+            gmm1_permuted_weight_scale,
+            gmm2_weight,
+            gmm2_weight_scale,
+            topk_weights,
+            num_experts,
+            gmm1_h_len,
+            expert_smooth_scales,
+            share_gmm1_weight,
+            share_gmm1_scale,
+            share_gmm2_weight,
+            share_gmm2_scale,
+            share_smooth_scales,
+            x_active_mask,
+            quant_mode,
+            global_bs,
+            share_gmm1_h_len,
+            is_tensor_list,
+        )
+        return output, expert_token_nums

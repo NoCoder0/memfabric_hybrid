@@ -11,7 +11,6 @@
  */
 #include <acl/acl_rt.h>
 #include "kernel_operator.h"
-#include "tiling/platform/platform_ascendc.h"
 #include "zbal_kernel_dispatch_low_latency.h"
 
 using namespace AscendC;
