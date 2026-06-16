@@ -11,16 +11,17 @@
  */
 #include <gtest/gtest.h>
 
+#include "zbal_test_constants.h"
 #include "zbal_comm_group_meta.h"
 
 using namespace zbal;
 using namespace zbal::operators;
 
-constexpr uint16_t ZBAL_TEST_NUMBER_TWO = 2;
-constexpr uint16_t ZBAL_TEST_NUMBER_FOUR = 4;
-constexpr uint16_t ZBAL_TEST_SIZE_128 = 128;
-constexpr uint16_t ZBAL_TEST_SIZE_512 = 512;
-constexpr uint16_t ZBAL_TEST_SIZE_1KB = 1024;
+constexpr uint16_t ZBAL_TEST_NUMBER_TWO = ZBAL_UT_NUM_2;
+constexpr uint16_t ZBAL_TEST_NUMBER_FOUR = ZBAL_UT_NUM_4;
+constexpr uint16_t ZBAL_TEST_SIZE_128 = ZBAL_UT_NUM_128;
+constexpr uint16_t ZBAL_TEST_SIZE_512 = ZBAL_UT_NUM_512;
+constexpr uint16_t ZBAL_TEST_SIZE_1KB = ZBAL_UT_SIZE_1KB;
 
 class TestZBALCommGroupMeta : public testing::Test {
 public:
@@ -47,7 +48,8 @@ TEST_F(TestZBALCommGroupMeta, Initialization)
     EXPECT_TRUE(result != Z_OK);
 
     /* case2: meta space is just ok */
-    stateExt.metaSizeOfDevice = ZBAL_TEST_SIZE_512 * ZBAL_TEST_SIZE_1KB * ZBAL_TEST_SIZE_128; /* 512KB * 128 */
+    stateExt.metaSizeOfDevice =
+        ZBAL_TEST_SIZE_512 * ZBAL_TEST_SIZE_1KB * ZBAL_TEST_SIZE_128; /* 512KB * ZBAL_UT_NUM_128 */
     result = arranger.Initialize(stateExt);
     EXPECT_TRUE(result == Z_OK);
 
@@ -57,7 +59,8 @@ TEST_F(TestZBALCommGroupMeta, Initialization)
     arranger.UnInitialize();
 
     /* case3: meta space is larger a little bit */
-    stateExt.metaSizeOfDevice = ZBAL_TEST_SIZE_512 * ZBAL_TEST_SIZE_1KB * ZBAL_TEST_SIZE_128 + 1; /* 512KB * 128 */
+    stateExt.metaSizeOfDevice =
+        ZBAL_TEST_SIZE_512 * ZBAL_TEST_SIZE_1KB * ZBAL_TEST_SIZE_128 + 1; /* 512KB * ZBAL_UT_NUM_128 */
     result = arranger.Initialize(stateExt);
     EXPECT_TRUE(result == Z_OK);
 }
@@ -65,7 +68,7 @@ TEST_F(TestZBALCommGroupMeta, Initialization)
 TEST_F(TestZBALCommGroupMeta, GetGroupIndex)
 {
     ZBALInitStateExt stateExt;
-    uintptr_t baseAddress = 1024;
+    uintptr_t baseAddress = ZBAL_UT_SIZE_1KB;
     stateExt.commMetaSpaceSize = ZBAL_TEST_SIZE_512;
     stateExt.commGroupCap = ZBAL_TEST_NUMBER_TWO;
     stateExt.myCommMetaDeviceGva = reinterpret_cast<void *>(baseAddress);
@@ -76,7 +79,7 @@ TEST_F(TestZBALCommGroupMeta, GetGroupIndex)
     auto result = arranger.Initialize(stateExt);
     EXPECT_TRUE(result == Z_OK);
 
-    uint32_t index = 100;
+    uint32_t index = ZBAL_UT_NUM_100;
     uintptr_t address = 0;
     uintptr_t addressParam = 0;
     uintptr_t addressExchange = 0;
@@ -94,7 +97,7 @@ TEST_F(TestZBALCommGroupMeta, GetGroupIndex)
     result = arranger.CurrentGroup(index, address, addressParam, addressExchange);
     EXPECT_TRUE(result == Z_OK);
     EXPECT_TRUE(index == 1);
-    auto metaSpaceSizeInBytes = stateExt.commMetaSpaceSize * 1024;
+    auto metaSpaceSizeInBytes = stateExt.commMetaSpaceSize * ZBAL_UT_SIZE_1KB;
     EXPECT_TRUE(address == (baseAddress + metaSpaceSizeInBytes));
     EXPECT_TRUE(addressParam == (baseAddress + metaSpaceSizeInBytes + sizeof(CommGroupInfo)));
     EXPECT_TRUE(addressExchange == (baseAddress + metaSpaceSizeInBytes + ZBAL_OPERATE_PARAM_SIZE));
@@ -108,7 +111,7 @@ TEST_F(TestZBALCommGroupMeta, GetGroupIndex)
 TEST_F(TestZBALCommGroupMeta, GetSpaceSize)
 {
     ZBALInitStateExt stateExt;
-    uintptr_t baseAddress = 1024;
+    uintptr_t baseAddress = ZBAL_UT_SIZE_1KB;
     stateExt.commMetaSpaceSize = ZBAL_TEST_SIZE_512;
     stateExt.commGroupCap = ZBAL_TEST_NUMBER_TWO;
     stateExt.myCommMetaDeviceGva = reinterpret_cast<void *>(baseAddress);

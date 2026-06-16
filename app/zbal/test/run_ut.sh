@@ -72,6 +72,11 @@ ${ZBAL_DIR}/test/build/test/ut/testcase/test_zbal "$@"
 echo "[INFO] generate coverage rate..."
 mkdir -p "$COVERAGE_PATH"
 
+if ! command -v lcov &> /dev/null; then
+    echo "[ERROR] lcov is not installed, generate coverage rate failed. Exit..."
+    exit 1
+fi
+
 EXCLUDE_DIRS=(
         "*/3rdparty/*"
         "*/doc/*"
@@ -79,22 +84,24 @@ EXCLUDE_DIRS=(
         "*/test/*"
         "*/under_api/*"
         "*/device/*"
-        "*/npu/*"
-        "*/common/*"
+        "*/common/zbal_logger.h"
+        "*/common/zbal_last_error.h"
 )
 echo "[INFO] generate coverage rate... BUILD_DIR: ${BUILD_DIR}  COVERAGE_PATH:${COVERAGE_PATH}"
 lcov -c -d "$BUILD_DIR" \
     --output-file "$COVERAGE_PATH"/coverage.info \
     --rc lcov_branch_coverage=1 \
-    --rc lcov_excl_br_line="LCOV_EXCL_BR_LINE|ZBAL_LOG*|ZBAL_ASSERT*|ZBAL_CHECK*|LOG_*|ZBAL_VALIDATE*" \
+    --rc lcov_excl_br_line="LCOV_EXCL_BR_LINE|ZBAL_LOG*|ZBAL_ASSERT*|ZBAL_CHECK*|ASCEND_LOG*|ZBAL_VALIDATE*|ZBAL_OUT_LOG*|ZBAL_OP_LOG*|ZBAL_UNLIKELY*|ZBAL_LIKELY*" \
     --rc stop_on_error=0 \
 
 lcov -e "$COVERAGE_PATH"/coverage.info "*/src/*" -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 --rc stop_on_error=0 || true
 lcov -r "$COVERAGE_PATH"/coverage.info "${EXCLUDE_DIRS[@]}" -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 --rc stop_on_error=0 || true
 genhtml -o "$COVERAGE_PATH"/result "$COVERAGE_PATH"/coverage.info --show-details --legend --rc lcov_branch_coverage=1 --rc stop_on_error=0 || true
 
-lines_rate=`lcov -r "$COVERAGE_PATH"/coverage.info -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 | grep lines | grep -Eo "[0-9\.]+%" | tr -d '%'`
-branches_rate=`lcov -r "$COVERAGE_PATH"/coverage.info -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 | grep branches | grep -Eo "[0-9\.]+%" | tr -d '%'`
+summary=$(lcov --summary "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 --rc stop_on_error=0)
+echo "$summary"
+lines_rate=$(echo "$summary" | grep lines | grep -Eo "[0-9\.]+%" | tr -d '%')
+branches_rate=$(echo "$summary" | grep branches | grep -Eo "[0-9\.]+%" | tr -d '%')
 echo "lines    coverage rate: ${lines_rate}%"
 echo "branches coverage rate: ${branches_rate}%"
 

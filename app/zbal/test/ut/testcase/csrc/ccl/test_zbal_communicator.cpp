@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 
+#include "zbal_test_constants.h"
 #define private public
 #include "zbal_communicator.h"
 #undef private
@@ -34,7 +35,7 @@ public:
         CleanupStaticState();
 
         /* for group meta */
-        uintptr_t baseAddress = 1024;
+        uintptr_t baseAddress = ZBAL_UT_SIZE_1KB;
         stateExt_.commMetaSpaceSize = ZBAL_TEST_SIZE_512;
         stateExt_.commGroupCap = ZBAL_TEST_NUMBER_FOUR;
         stateExt_.myCommMetaDeviceGva = reinterpret_cast<void *>(baseAddress);
@@ -127,7 +128,7 @@ TEST_F(TestZBALCommunicator, CreateInner_InvalidBackend)
     options.worldSize = 1;
     options.groupSize = 1;
 
-    auto result = Communicator::CreateInner(static_cast<zbal_backend_t>(999), options, false);
+    auto result = Communicator::CreateInner(static_cast<zbal_backend_t>(ZBAL_UT_NUM_999), options, false);
     EXPECT_TRUE(result == nullptr);
 }
 

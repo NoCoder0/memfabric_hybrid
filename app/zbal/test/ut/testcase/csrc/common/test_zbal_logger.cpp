@@ -10,8 +10,10 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <gtest/gtest.h>
+
 #include <string>
 
+#include "zbal_test_constants.h"
 #include "zbal_logger.h"
 
 using namespace zbal;
@@ -43,7 +45,7 @@ TEST_F(TestZBALLogger, ValidateLevelBounds)
 
     EXPECT_FALSE(OutLogger::ValidateLevel(-1));
     EXPECT_FALSE(OutLogger::ValidateLevel(BUTT_LEVEL));
-    EXPECT_FALSE(OutLogger::ValidateLevel(100));
+    EXPECT_FALSE(OutLogger::ValidateLevel(ZBAL_UT_NUM_100));
 }
 
 /*
@@ -91,14 +93,14 @@ TEST_F(TestZBALLogger, ExternalLogFunctionLifecycle)
 TEST_F(TestZBALLogger, AssertReturnMacro)
 {
     auto failCase = []() -> int {
-        ZBAL_ASSERT_RETURN(false, -100);
+        ZBAL_ASSERT_RETURN(false, -ZBAL_UT_NUM_100);
         return 0;
     };
-    EXPECT_EQ(failCase(), -100);
+    EXPECT_EQ(failCase(), -ZBAL_UT_NUM_100);
 
     auto passCase = []() -> int {
-        ZBAL_ASSERT_RETURN(true, -200);
-        return 42;
+        ZBAL_ASSERT_RETURN(true, -ZBAL_UT_NUM_200);
+        return ZBAL_UT_NUM_42;
     };
-    EXPECT_EQ(passCase(), 42);
+    EXPECT_EQ(passCase(), ZBAL_UT_NUM_42);
 }

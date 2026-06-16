@@ -11,12 +11,13 @@
  */
 #include <gtest/gtest.h>
 
+#include "zbal_test_constants.h"
 #include "zbal_trace_viewer_dumper.h"
 
 using namespace zbal;
 
-constexpr uint16_t ZBAL_TEST_NUMBER_FIVE = 5;
-constexpr uint16_t ZBAL_TEST_NUMBER_TEN = 10;
+constexpr uint16_t ZBAL_TEST_NUMBER_FIVE = ZBAL_UT_NUM_5;
+constexpr uint16_t ZBAL_TEST_NUMBER_TEN = ZBAL_UT_NUM_10;
 
 class TestZBALTraceViewerDumper : public testing::Test {
 public:

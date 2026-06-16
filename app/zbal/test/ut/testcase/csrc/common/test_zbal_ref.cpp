@@ -10,8 +10,10 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <gtest/gtest.h>
+
 #include <vector>
 
+#include "zbal_test_constants.h"
 #include "zbal_ref.h"
 
 using namespace zbal;
@@ -33,8 +35,8 @@ public:
  */
 TEST_F(TestZBALRef, ZMakeRefOwnership)
 {
-    auto ref = ZMakeRef<TestObj>(100);
-    EXPECT_EQ(ref->value, 100);
+    auto ref = ZMakeRef<TestObj>(ZBAL_UT_NUM_100);
+    EXPECT_EQ(ref->value, ZBAL_UT_NUM_100);
 }
 
 /*
@@ -42,13 +44,13 @@ TEST_F(TestZBALRef, ZMakeRefOwnership)
  */
 TEST_F(TestZBALRef, CopyConstructorSharesOwnership)
 {
-    auto ref1 = ZMakeRef<TestObj>(42);
+    auto ref1 = ZMakeRef<TestObj>(ZBAL_UT_NUM_42);
     {
         ZRef<TestObj> ref2(ref1);
         EXPECT_EQ(ref1.Get(), ref2.Get());
     }
     EXPECT_NE(ref1.Get(), nullptr);
-    EXPECT_EQ(ref1->value, 42);
+    EXPECT_EQ(ref1->value, ZBAL_UT_NUM_42);
 }
 
 /*
@@ -56,7 +58,7 @@ TEST_F(TestZBALRef, CopyConstructorSharesOwnership)
  */
 TEST_F(TestZBALRef, MoveConstructorTransfersOwnership)
 {
-    auto ref1 = ZMakeRef<TestObj>(77);
+    auto ref1 = ZMakeRef<TestObj>(ZBAL_UT_NUM_77);
     TestObj *raw = ref1.Get();
 
     ZRef<TestObj> ref2(std::move(ref1));
@@ -69,12 +71,12 @@ TEST_F(TestZBALRef, MoveConstructorTransfersOwnership)
  */
 TEST_F(TestZBALRef, MoveAssignmentReleasesOldTarget)
 {
-    auto ref1 = ZMakeRef<TestObj>(10);
-    auto ref2 = ZMakeRef<TestObj>(20);
+    auto ref1 = ZMakeRef<TestObj>(ZBAL_UT_NUM_10);
+    auto ref2 = ZMakeRef<TestObj>(ZBAL_UT_NUM_20);
 
     ref1 = std::move(ref2);
     EXPECT_EQ(ref2.Get(), nullptr);
-    EXPECT_EQ(ref1->value, 20);
+    EXPECT_EQ(ref1->value, ZBAL_UT_NUM_20);
 }
 
 /*
@@ -82,7 +84,7 @@ TEST_F(TestZBALRef, MoveAssignmentReleasesOldTarget)
  */
 TEST_F(TestZBALRef, SelfCopyAssignment)
 {
-    auto ref = ZMakeRef<TestObj>(55);
+    auto ref = ZMakeRef<TestObj>(ZBAL_UT_NUM_55);
     TestObj *raw = ref.Get();
     ref = ref;
     EXPECT_EQ(ref.Get(), raw);
@@ -103,7 +105,7 @@ TEST_F(TestZBALRef, AssignNullptr)
  */
 TEST_F(TestZBALRef, SetSamePointerNoOp)
 {
-    auto ref = ZMakeRef<TestObj>(88);
+    auto ref = ZMakeRef<TestObj>(ZBAL_UT_NUM_88);
     TestObj *raw = ref.Get();
     ref.Set(raw);
     EXPECT_EQ(ref.Get(), raw);
@@ -112,9 +114,9 @@ TEST_F(TestZBALRef, SetSamePointerNoOp)
 TEST_F(TestZBALRef, SetDifferentPointerReleasesOld)
 {
     auto ref = ZMakeRef<TestObj>(1);
-    auto *newObj = new TestObj(2);
+    auto *newObj = new TestObj(ZBAL_UT_NUM_2);
     ref.Set(newObj);
-    EXPECT_EQ(ref->value, 2);
+    EXPECT_EQ(ref->value, ZBAL_UT_NUM_2);
 }
 
 /*
@@ -126,7 +128,7 @@ TEST_F(TestZBALRef, EqualityWithNullptr)
     EXPECT_EQ(empty, nullptr);
     EXPECT_FALSE(empty != nullptr);
 
-    auto ref = ZMakeRef<TestObj>(5);
+    auto ref = ZMakeRef<TestObj>(ZBAL_UT_NUM_5);
     EXPECT_NE(ref, nullptr);
 }
 
@@ -135,11 +137,11 @@ TEST_F(TestZBALRef, EqualityWithNullptr)
  */
 TEST_F(TestZBALRef, MultipleCopiesInContainer)
 {
-    auto ref = ZMakeRef<TestObj>(99);
+    auto ref = ZMakeRef<TestObj>(ZBAL_UT_NUM_99);
     std::vector<ZRef<TestObj>> refs;
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < ZBAL_UT_NUM_100; i++) {
         refs.push_back(ref);
     }
     refs.clear();
-    EXPECT_EQ(ref->value, 99);
+    EXPECT_EQ(ref->value, ZBAL_UT_NUM_99);
 }

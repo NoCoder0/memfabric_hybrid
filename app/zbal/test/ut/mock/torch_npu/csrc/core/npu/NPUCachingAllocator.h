@@ -31,6 +31,9 @@ struct DeviceStats {
     StatArray array{};
 };
 
+// mock for c10_npu::NPUCachingAllocator::recordStream
+inline void recordStream(const c10::DataPtr&, class NPUStream) {}
+
 } // namespace NPUCachingAllocator
 } // namespace c10_npu
 

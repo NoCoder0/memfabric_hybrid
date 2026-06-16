@@ -12,12 +12,18 @@
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>
+#include <atomic>
 
 #include "dl_cann_api_def.h"
 
 constexpr int32_t RETURN_OK = 0;
 constexpr int32_t RETURN_ERROR = -1;
 constexpr uint64_t START_ADDR = 0x100000000000ULL;
+
+// Incrementing address to ensure each mock allocation returns a unique pointer
+static std::atomic<uint64_t> g_next_alloc_addr{START_ADDR};
+
+constexpr uint64_t ALLOC_SIZE_INCREMENT = 0x100000ULL; // 1MB step between mock allocations
 
 typedef enum {
     ACL_DEV_ATTR_AICPU_CORE_NUM  = 1,
@@ -78,7 +84,7 @@ int32_t aclrtMalloc(void **ptr, size_t count, uint32_t type)
     if (ptr == nullptr) {
         return RETURN_ERROR;
     }
-    *ptr = (void *)START_ADDR;
+    *ptr = reinterpret_cast<void *>(g_next_alloc_addr.fetch_add(ALLOC_SIZE_INCREMENT));
     return RETURN_OK;
 }
 
@@ -183,6 +189,19 @@ int32_t aclrtFreeHost(void *ptr)
     return 0;
 }
 
+int32_t aclrtHostRegister(void *hostPtr, uint64_t size, zbal::aclrtHostRegisterType type, void **outDevPtr)
+{
+    if (outDevPtr != nullptr) {
+        *outDevPtr = hostPtr;
+    }
+    return 0;
+}
+
+int32_t aclrtHostUnregister(void *hostPtr)
+{
+    return 0;
+}
+
 int32_t rtIpcCloseMemory(const void *ptr)
 {
     return 0;
@@ -262,4 +281,73 @@ int32_t aclrtSetCurrentContext(int32_t ctx)
 {
     return 0;
 }
+
+typedef enum {
+    ACL_MEM_MALLOC_HUGE_FIRST = 0,
+    ACL_MEM_MALLOC_HUGE_ONLY = 1,
+    ACL_MEM_MALLOC_HUGE1G_ONLY = 2
+} aclrtMemMallocPolicy;
+
+int32_t aclrtMallocAlign32(void **ptr, size_t count, aclrtMemMallocPolicy policy)
+{
+    if (ptr == nullptr) {
+        return RETURN_ERROR;
+    }
+    *ptr = reinterpret_cast<void *>(g_next_alloc_addr.fetch_add(ALLOC_SIZE_INCREMENT));
+    return RETURN_OK;
 }
+
+int32_t aclrtFreePhysical(void *handle)
+{
+    return RETURN_OK;
+}
+
+int32_t aclrtGetMemInfo(uint32_t attr, size_t *free, size_t *total)
+{
+    if (free != nullptr) {
+        *free = 16ULL * 1024 * 1024 * 1024; // 16 GiB
+    }
+    if (total != nullptr) {
+        *total = 16ULL * 1024 * 1024 * 1024;
+    }
+    return RETURN_OK;
+}
+
+int32_t aclrtMallocPhysical(void **handle, size_t size, void *prop, uint64_t flags)
+{
+    if (handle == nullptr) {
+        return RETURN_ERROR;
+    }
+    *handle = reinterpret_cast<void *>(g_next_alloc_addr.fetch_add(ALLOC_SIZE_INCREMENT));
+    return RETURN_OK;
+}
+
+int32_t aclrtMapMem(void *addr, size_t size, uint32_t flags, void *handle, size_t offset)
+{
+    return RETURN_OK;
+}
+
+int32_t aclrtUnmapMem(void *addr)
+{
+    return RETURN_OK;
+}
+
+int32_t aclrtReleaseMemAddress(void *addr)
+{
+    return RETURN_OK;
+}
+
+int32_t aclAppLog(int32_t logLevel, const char *func, const char *file, uint32_t line, const char *fmt, ...)
+{
+    return RETURN_OK;
+}
+}
+
+namespace c10_npu {
+
+bool npuSynchronizeDevice(bool check_error)
+{
+    return true;
+}
+
+} // namespace c10_npu

@@ -10,9 +10,11 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <gtest/gtest.h>
+
 #include <fstream>
 #include <cstring>
 
+#include "zbal_test_constants.h"
 #include "zbal_defines.h"
 
 #undef ALWAYS_INLINE
@@ -36,34 +38,29 @@ public:
 
     std::string testDir_;
 };
-
-/* ================================================================
- * GetEnv
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, GetEnvIntExisting)
 {
     ::setenv("ZBAL_UT_INT_VAL", "789", 1);
-    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_INT_VAL", 0), 789);
+    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_INT_VAL", 0), ZBAL_UT_NUM_789);
     ::unsetenv("ZBAL_UT_INT_VAL");
 }
 
 TEST_F(TestZBALFunctions, GetEnvIntFallback)
 {
-    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_NONEXIST_VAR", 42), 42);
+    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_NONEXIST_VAR", ZBAL_UT_NUM_42), ZBAL_UT_NUM_42);
 }
 
 TEST_F(TestZBALFunctions, GetEnvIntInvalidStringReturnsDefault)
 {
     ::setenv("ZBAL_UT_INT_INVALID", "not_a_number", 1);
-    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_INT_INVALID", 99), 99);
+    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_INT_INVALID", ZBAL_UT_NUM_99), ZBAL_UT_NUM_99);
     ::unsetenv("ZBAL_UT_INT_INVALID");
 }
 
 TEST_F(TestZBALFunctions, GetEnvIntOutOfRangeReturnsDefault)
 {
     ::setenv("ZBAL_UT_INT_OVERFLOW", "99999999999999999999", 1);
-    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_INT_OVERFLOW", 77), 77);
+    EXPECT_EQ(Func::GetEnv<uint32_t>("ZBAL_UT_INT_OVERFLOW", ZBAL_UT_NUM_77), ZBAL_UT_NUM_77);
     ::unsetenv("ZBAL_UT_INT_OVERFLOW");
 }
 
@@ -85,11 +82,6 @@ TEST_F(TestZBALFunctions, GetEnvStringEmpty)
     EXPECT_EQ(Func::GetEnv<std::string>("ZBAL_UT_STR_EMPTY", "default"), "");
     ::unsetenv("ZBAL_UT_STR_EMPTY");
 }
-
-/* ================================================================
- * Exist / Readable / Writable
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, ExistOnDirectory)
 {
     EXPECT_TRUE(Func::Exist("/tmp"));
@@ -112,11 +104,6 @@ TEST_F(TestZBALFunctions, ReadableAndWritable)
     EXPECT_TRUE(Func::ReadAndWritable("/tmp"));
     EXPECT_FALSE(Func::Readable("/tmp/zbal_noexist_abcde"));
 }
-
-/* ================================================================
- * MakeDir / MakeDirRecursive
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, MakeDirEmptyPathFails)
 {
     EXPECT_FALSE(Func::MakeDir("", 0755));
@@ -146,11 +133,6 @@ TEST_F(TestZBALFunctions, MakeDirRecursiveEmptyPathFails)
 {
     EXPECT_FALSE(Func::MakeDirRecursive("", 0755));
 }
-
-/* ================================================================
- * Remove / RemoveDirRecursive
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, RemoveSingleFile)
 {
     std::string fpath = testDir_ + "/rm_test.txt";
@@ -185,11 +167,6 @@ TEST_F(TestZBALFunctions, RemoveDirRecursiveNonExistent)
 {
     EXPECT_FALSE(Func::RemoveDirRecursive("/tmp/zbal_noexist_rmdir_12345"));
 }
-
-/* ================================================================
- * IsDir
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, IsDirDistinguishesFileFromDir)
 {
     std::string fpath = testDir_ + "/reg_file.txt";
@@ -200,26 +177,16 @@ TEST_F(TestZBALFunctions, IsDirDistinguishesFileFromDir)
     EXPECT_FALSE(Func::IsDir(fpath));
     EXPECT_TRUE(Func::IsDir(testDir_));
 }
-
-/* ================================================================
- * GetCurrentDateTime
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, GetCurrentDateTimeFormat)
 {
     auto dt = Func::GetCurrentDateTime();
-    EXPECT_EQ(dt.length(), 19);
-    EXPECT_EQ(dt[4], '_');
-    EXPECT_EQ(dt[7], '_');
-    EXPECT_EQ(dt[10], '_');
-    EXPECT_EQ(dt[13], '_');
-    EXPECT_EQ(dt[16], '_');
+    EXPECT_EQ(dt.length(), 19U);
+    EXPECT_EQ(dt[ZBAL_UT_NUM_4], '_');
+    EXPECT_EQ(dt[ZBAL_UT_NUM_7], '_');
+    EXPECT_EQ(dt[ZBAL_UT_NUM_10], '_');
+    EXPECT_EQ(dt[ZBAL_UT_NUM_13], '_');
+    EXPECT_EQ(dt[ZBAL_UT_NUM_16], '_');
 }
-
-/* ================================================================
- * GetEnvSplitByComma
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, GetEnvSplitByCommaEmpty)
 {
     EXPECT_TRUE(Func::GetEnvSplitByComma("ZBAL_UT_NOEXIST_COMMA").empty());
@@ -229,7 +196,7 @@ TEST_F(TestZBALFunctions, GetEnvSplitByCommaWithWhitespace)
 {
     ::setenv("ZBAL_UT_COMMA_WS", "  alpha  , beta , gamma ,,delta  ", 1);
     auto result = Func::GetEnvSplitByComma("ZBAL_UT_COMMA_WS");
-    EXPECT_EQ(result.size(), 4);
+    EXPECT_EQ(result.size(), ZBAL_UT_NUM_4);
     EXPECT_TRUE(result.count("alpha") > 0);
     EXPECT_TRUE(result.count("beta") > 0);
     EXPECT_TRUE(result.count("gamma") > 0);
@@ -244,11 +211,6 @@ TEST_F(TestZBALFunctions, GetEnvSplitByCommaAllWhitespace)
     EXPECT_TRUE(result.empty());
     ::unsetenv("ZBAL_UT_COMMA_WS2");
 }
-
-/* ================================================================
- * Realpath
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, RealpathValidDirectory)
 {
     std::string path = "/tmp";
@@ -273,11 +235,6 @@ TEST_F(TestZBALFunctions, RealpathNonExistent)
     std::string path = "/tmp/zbal_ut_noexist_path_xyz";
     EXPECT_FALSE(Func::Realpath(path));
 }
-
-/* ================================================================
- * LibraryRealPath
- * ================================================================ */
-
 TEST_F(TestZBALFunctions, LibraryRealPathDirNotFound)
 {
     std::string realPath;

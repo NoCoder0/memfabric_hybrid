@@ -25,6 +25,11 @@ inline int32_t GetDevice(int *device)
     return ACL_SUCCESS;
 }
 
+inline int32_t MaybeSetDevice(int /**/)
+{
+    return ACL_SUCCESS;
+}
+
 inline void npuSynchronizeDevice(bool /**/)
 {
 }

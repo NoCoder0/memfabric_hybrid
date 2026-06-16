@@ -13,6 +13,11 @@ public:
 
     int device_index() const { return device_; }
 
+    void *stream(bool = false) const
+    {
+        return reinterpret_cast<void *>(1);
+    }
+
     bool operator==(const NPUStream &other) const
     {
         return device_ == other.device_ && stream_ == other.stream_;
@@ -26,6 +31,56 @@ public:
 private:
     int device_ = 0;
     uintptr_t stream_ = 0;
+};
+
+inline NPUStream getCurrentNPUStream()
+{
+    return NPUStream(0);
+}
+
+inline NPUStream getCurrentNPUStream(int device)
+{
+    return NPUStream(device);
+}
+
+inline NPUStream getDefaultNPUStream()
+{
+    return NPUStream(0);
+}
+
+inline NPUStream getDefaultNPUStream(int device)
+{
+    return NPUStream(device);
+}
+
+inline NPUStream getNPUStreamFromPool(int device = 0)
+{
+    return NPUStream(device);
+}
+
+inline NPUStream getNPUStreamFromPool(int device, bool isHighPriority)
+{
+    (void)isHighPriority;
+    return NPUStream(device);
+}
+
+class NPUStreamGuard {
+public:
+    explicit NPUStreamGuard(NPUStream stream) : original_(getCurrentNPUStream()) {}
+    ~NPUStreamGuard() {}
+private:
+    NPUStream original_;
+};
+
+class OptionalNPUGuard {
+public:
+    OptionalNPUGuard() = default;
+    void set_index(int) {}
+};
+
+class NPUMultiStreamGuard {
+public:
+    explicit NPUMultiStreamGuard(const std::vector<NPUStream>&) {}
 };
 
 } // namespace c10_npu

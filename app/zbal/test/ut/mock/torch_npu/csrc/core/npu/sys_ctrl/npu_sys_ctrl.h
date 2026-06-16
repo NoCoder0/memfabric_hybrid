@@ -11,7 +11,10 @@ public:
         static SysCtrl instance;
         return instance;
     }
-    bool GetInitFlag() { return true; }
+    bool GetInitFlag() { return init_flag_; }
+    void SetInitFlag(bool val) { init_flag_ = val; }
+private:
+    bool init_flag_ = true;
 };
 
 } // namespace NpuSysCtrl

@@ -11,8 +11,12 @@
 */
 #include <gtest/gtest.h>
 
+#include "zbal_test_constants.h"
 #include "test_zbal_def.h"
 #include "zbal_bootstrap_types.h"
+#include "zbal_init_state.h"
+#include "zbal_bootstrap.h"
+#include "zbal_sma.h"
 
 #define private public
 #include "zbal_bootstrap_default.h"
@@ -20,15 +24,6 @@
 
 using namespace zbal;
 using namespace zbal::bootstrap;
-
-constexpr uint16_t ZBAL_TEST_DEVICE_ID = 0;
-constexpr uint16_t ZBAL_TEST_WORLD_SIZE = 4;
-constexpr uint16_t ZBAL_TEST_RANK_ID = 0;
-constexpr uint64_t ZBAL_TEST_MEM_SIZE = 256ULL * 1024 * 1024;
-constexpr uint16_t ZBAL_TEST_COMM_GROUP_CAP = 16;
-constexpr uint16_t ZBAL_TEST_COMM_META_SPACE_SIZE = 1024;
-constexpr uint32_t ZBAL_TEST_COMM_GROUP_ID = 5;
-constexpr uint32_t ZBAL_TEST_COMM_GROUP_MAX = 128;
 
 class MockMemBootstrap : public MemBootstrap {
 public:
@@ -95,7 +90,7 @@ public:
 
     ZResult initResult_ = Z_OK;
     ZResult acqResult_ = Z_OK;
-    uint32_t acqReturnId_ = 0;
+    uint32_t acqReturnId_ = ZBAL_UT_NUM_0;
     ZResult relResult_ = Z_OK;
     ZResult agResult_ = Z_OK;
     ZResult barrierResult_ = Z_OK;
@@ -104,19 +99,19 @@ public:
     bool initCalled_ = false;
     bool uninitCalled_ = false;
     bool acqCalled_ = false;
-    uint32_t acqMax_ = 0;
+    uint32_t acqMax_ = ZBAL_UT_NUM_0;
     bool relCalled_ = false;
-    uint32_t relId_ = 0;
+    uint32_t relId_ = ZBAL_UT_NUM_0;
     bool agCalled_ = false;
     std::string agKey_;
-    uint32_t agRankSize_ = 0;
-    uint32_t agRankId_ = 0;
+    uint32_t agRankSize_ = ZBAL_UT_NUM_0;
+    uint32_t agRankId_ = ZBAL_UT_NUM_0;
     bool barrierCalled_ = false;
     std::string barrierKey_;
-    uint32_t barrierRankSize_ = 0;
-    uint32_t barrierRankId_ = 0;
+    uint32_t barrierRankSize_ = ZBAL_UT_NUM_0;
+    uint32_t barrierRankId_ = ZBAL_UT_NUM_0;
     bool logCalled_ = false;
-    int logLevel_ = 0;
+    int logLevel_ = ZBAL_UT_NUM_0;
 };
 
 class TestableMemBootstrap : public MemBootstrap {
@@ -169,21 +164,21 @@ public:
     {
         bzero(&options, sizeof(zbal_bootstrap_options_t));
         options.btType = BOOT_BY_MEMFABRIC;
-        options.worldSize = ZBAL_TEST_WORLD_SIZE;
-        options.rankId = ZBAL_TEST_RANK_ID;
-        options.deviceId = ZBAL_TEST_DEVICE_ID;
-        options.deviceMemorySize = ZBAL_TEST_MEM_SIZE;
-        options.commGroupCap = ZBAL_TEST_COMM_GROUP_CAP;
-        options.commMetaSpaceSize = ZBAL_TEST_COMM_META_SPACE_SIZE;
+        options.worldSize = ZBAL_UT_NUM_4;
+        options.rankId = ZBAL_UT_NUM_0;
+        options.deviceId = ZBAL_UT_DEVICE_ID;
+        options.deviceMemorySize = ZBAL_UT_SIZE_256MB;
+        options.commGroupCap = ZBAL_UT_NUM_16;
+        options.commMetaSpaceSize = ZBAL_UT_META_SIZE;
     }
 
     void InitMemBootstrapOptions(MemBootstrapOptions &options)
     {
         options.boostrapType = MBT_MEMFABRIC;
-        options.deviceId = ZBAL_TEST_DEVICE_ID;
-        options.rankCount = ZBAL_TEST_WORLD_SIZE;
-        options.rankId = ZBAL_TEST_RANK_ID;
-        options.totalMemSize = ZBAL_TEST_MEM_SIZE;
+        options.deviceId = ZBAL_UT_DEVICE_ID;
+        options.rankCount = ZBAL_UT_NUM_4;
+        options.rankId = ZBAL_UT_NUM_0;
+        options.totalMemSize = ZBAL_UT_SIZE_256MB;
         options.ipPort = "127.0.0.1:12345";
     }
 
@@ -195,8 +190,8 @@ public:
         MemBootstrapOutput mockOutput;
         mockOutput.gvaDevice = reinterpret_cast<void *>(0x10000);
         mockOutput.myGvaDevice = reinterpret_cast<void *>(0x20000);
-        mockOutput.memorySizeDevice = ZBAL_TEST_MEM_SIZE;
-        mockOutput.memorySpaceSizeDevice = ZBAL_TEST_MEM_SIZE * ZBAL_TEST_NUMBER_TWO;
+        mockOutput.memorySizeDevice = ZBAL_UT_SIZE_256MB;
+        mockOutput.memorySpaceSizeDevice = ZBAL_UT_SIZE_256MB * ZBAL_TEST_NUMBER_TWO;
         mock->SetOutput(mockOutput);
 
         return mock;
@@ -248,7 +243,7 @@ TEST_F(TestZBALBootstrap, VerifyOptionsAllBranches)
     EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
 
     InitValidOptions(options);
-    options.worldSize = ZBAL_RANK_COUNT_MAX_LIMIT + 1;
+    options.worldSize = ZBAL_RANK_COUNT_MAX_LIMIT + ZBAL_UT_NUM_1;
     EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
 
     InitValidOptions(options);
@@ -268,8 +263,8 @@ TEST_F(TestZBALBootstrap, VerifyOptionsAllBranches)
     EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
 
     InitValidOptions(options);
-    options.commGroupCap = ZBAL_TEST_COMM_GROUP_CAP;
-    options.commMetaSpaceSize = static_cast<uint16_t>(ZBAL_TEST_MEM_SIZE / ZBAL_TEST_SIZE_1KB);
+    options.commGroupCap = ZBAL_UT_NUM_16;
+    options.commMetaSpaceSize = static_cast<uint16_t>(ZBAL_UT_SIZE_256MB / ZBAL_TEST_SIZE_1KB);
     EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
 
     InitValidOptions(options);
@@ -294,16 +289,17 @@ TEST_F(TestZBALBootstrap, DelegationWhenNotBootstrapped)
     auto bootstrap = ZMakeRef<Bootstrap>(options);
     ASSERT_TRUE(bootstrap != nullptr);
 
-    uint32_t uniqueId = 0;
+    uint32_t uniqueId = ZBAL_UT_NUM_0;
     EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_TEST_NUMBER_TEN, uniqueId) == Z_NOT_BOOTSTRAPPED);
-    EXPECT_TRUE(bootstrap->ReleaseCommGroupId(0) == Z_NOT_BOOTSTRAPPED);
+    EXPECT_TRUE(bootstrap->ReleaseCommGroupId(ZBAL_UT_NUM_0) == Z_NOT_BOOTSTRAPPED);
 
-    char sendBuf[16] = "hello";
-    char recvBuf[64] = {};
-    EXPECT_TRUE(bootstrap->SubGroupAllGather("test_key", ZBAL_TEST_NUMBER_TWO, 0, sendBuf, ZBAL_TEST_NUMBER_FIVE,
-                                             recvBuf, ZBAL_TEST_NUMBER_SIXTYFOUR) == Z_NOT_BOOTSTRAPPED);
-    EXPECT_TRUE(bootstrap->SubGroupBarrier("test_key", ZBAL_TEST_NUMBER_TWO, 0) == Z_NOT_BOOTSTRAPPED);
-    EXPECT_TRUE(bootstrap->SetLoggerLevel(0) == Z_NOT_BOOTSTRAPPED);
+    char sendBuf[ZBAL_UT_BUF_SIZE_16] = "hello";
+    char recvBuf[ZBAL_UT_NUM_64] = {};
+    EXPECT_TRUE(bootstrap->SubGroupAllGather("test_key", ZBAL_TEST_NUMBER_TWO, ZBAL_UT_NUM_0, sendBuf,
+                                             ZBAL_TEST_NUMBER_FIVE, recvBuf,
+                                             ZBAL_TEST_NUMBER_SIXTYFOUR) == Z_NOT_BOOTSTRAPPED);
+    EXPECT_TRUE(bootstrap->SubGroupBarrier("test_key", ZBAL_TEST_NUMBER_TWO, ZBAL_UT_NUM_0) == Z_NOT_BOOTSTRAPPED);
+    EXPECT_TRUE(bootstrap->SetLoggerLevel(ZBAL_UT_NUM_0) == Z_NOT_BOOTSTRAPPED);
 
     EXPECT_TRUE(bootstrap->GetOutput().deviceGva == nullptr);
 
@@ -332,30 +328,30 @@ TEST_F(TestZBALBootstrap, MemBootstrapVerifyOptionsAllBranches)
         EXPECT_TRUE(mb.VerifyOptions() == Z_OK);
     }
     {
-        options.rankCount = 0;
+        options.rankCount = ZBAL_UT_NUM_0;
         TestableMemBootstrap mb(options);
         EXPECT_TRUE(mb.VerifyOptions() == Z_INVALID_PARAM);
     }
     {
-        options.rankCount = ZBAL_TEST_WORLD_SIZE;
-        options.rankId = ZBAL_TEST_WORLD_SIZE;
+        options.rankCount = ZBAL_UT_NUM_4;
+        options.rankId = ZBAL_UT_NUM_4;
         TestableMemBootstrap mb(options);
         EXPECT_TRUE(mb.VerifyOptions() == Z_INVALID_PARAM);
     }
     {
-        options.rankId = ZBAL_TEST_RANK_ID;
+        options.rankId = ZBAL_UT_NUM_0;
         options.deviceId = ZBAL_DEVICE_COUNT_MAX_LIMIT;
         TestableMemBootstrap mb(options);
         EXPECT_TRUE(mb.VerifyOptions() == Z_INVALID_PARAM);
     }
     {
-        options.deviceId = ZBAL_TEST_DEVICE_ID;
+        options.deviceId = ZBAL_UT_DEVICE_ID;
         options.totalMemSize = ZBAL_MEMORY_SIZE_CAP;
         TestableMemBootstrap mb(options);
         EXPECT_TRUE(mb.VerifyOptions() == Z_INVALID_PARAM);
     }
     {
-        options.totalMemSize = ZBAL_TEST_MEM_SIZE;
+        options.totalMemSize = ZBAL_UT_SIZE_256MB;
         options.ipPort = "";
         TestableMemBootstrap mb(options);
         EXPECT_TRUE(mb.VerifyOptions() == Z_INVALID_PARAM);
@@ -370,13 +366,13 @@ TEST_F(TestZBALBootstrap, AcquireCommGroupIdWithMock)
     ASSERT_TRUE(bootstrap != nullptr);
 
     auto mock = CreateReadyMock();
-    mock->acqReturnId_ = ZBAL_TEST_COMM_GROUP_ID;
+    mock->acqReturnId_ = ZBAL_UT_NUM_5;
     InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
 
-    uint32_t uniqueId = 0;
-    EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_TEST_COMM_GROUP_MAX, uniqueId) == Z_OK);
-    EXPECT_TRUE(uniqueId == ZBAL_TEST_COMM_GROUP_ID);
-    EXPECT_TRUE(mock->acqMax_ == ZBAL_TEST_COMM_GROUP_MAX);
+    uint32_t uniqueId = ZBAL_UT_NUM_0;
+    EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_UT_COMM_GROUP_MAX, uniqueId) == Z_OK);
+    EXPECT_TRUE(uniqueId == ZBAL_UT_NUM_5);
+    EXPECT_TRUE(mock->acqMax_ == ZBAL_UT_COMM_GROUP_MAX);
 
     mock->acqResult_ = Z_ERROR;
     EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_TEST_NUMBER_TEN, uniqueId) == Z_ERROR);
@@ -390,12 +386,12 @@ TEST_F(TestZBALBootstrap, AcquireCommGroupIdMaxZero)
     ASSERT_TRUE(bootstrap != nullptr);
 
     auto mock = CreateReadyMock();
-    mock->acqReturnId_ = 0;
+    mock->acqReturnId_ = ZBAL_UT_NUM_0;
     InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
 
-    uint32_t uniqueId = 0;
-    EXPECT_TRUE(bootstrap->AcquireCommGroupId(0, uniqueId) == Z_OK);
-    EXPECT_TRUE(mock->acqMax_ == 0);
+    uint32_t uniqueId = ZBAL_UT_NUM_0;
+    EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_UT_NUM_0, uniqueId) == Z_OK);
+    EXPECT_TRUE(mock->acqMax_ == ZBAL_UT_NUM_0);
 }
 
 TEST_F(TestZBALBootstrap, ReleaseCommGroupIdWithMock)
@@ -408,8 +404,8 @@ TEST_F(TestZBALBootstrap, ReleaseCommGroupIdWithMock)
     auto mock = CreateReadyMock();
     InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
 
-    EXPECT_TRUE(bootstrap->ReleaseCommGroupId(ZBAL_TEST_COMM_GROUP_ID) == Z_OK);
-    EXPECT_TRUE(mock->relId_ == ZBAL_TEST_COMM_GROUP_ID);
+    EXPECT_TRUE(bootstrap->ReleaseCommGroupId(ZBAL_UT_NUM_5) == Z_OK);
+    EXPECT_TRUE(mock->relId_ == ZBAL_UT_NUM_5);
 }
 
 TEST_F(TestZBALBootstrap, SubGroupAllGatherWithMock)
@@ -422,10 +418,10 @@ TEST_F(TestZBALBootstrap, SubGroupAllGatherWithMock)
     auto mock = CreateReadyMock();
     InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
 
-    char sendBuf[16] = "hello";
-    char recvBuf[64] = {};
-    EXPECT_TRUE(bootstrap->SubGroupAllGather("test_key", ZBAL_TEST_NUMBER_TWO, 0, sendBuf, ZBAL_TEST_NUMBER_FIVE,
-                                             recvBuf, ZBAL_TEST_NUMBER_SIXTYFOUR) == Z_OK);
+    char sendBuf[ZBAL_UT_BUF_SIZE_16] = "hello";
+    char recvBuf[ZBAL_UT_NUM_64] = {};
+    EXPECT_TRUE(bootstrap->SubGroupAllGather("test_key", ZBAL_TEST_NUMBER_TWO, ZBAL_UT_NUM_0, sendBuf,
+                                             ZBAL_TEST_NUMBER_FIVE, recvBuf, ZBAL_TEST_NUMBER_SIXTYFOUR) == Z_OK);
     EXPECT_TRUE(mock->agKey_ == "test_key");
     EXPECT_TRUE(mock->agRankSize_ == ZBAL_TEST_NUMBER_TWO);
 }
@@ -440,7 +436,7 @@ TEST_F(TestZBALBootstrap, SubGroupBarrierWithMock)
     auto mock = CreateReadyMock();
     InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
 
-    EXPECT_TRUE(bootstrap->SubGroupBarrier("barrier_key", ZBAL_TEST_NUMBER_FOUR, 1) == Z_OK);
+    EXPECT_TRUE(bootstrap->SubGroupBarrier("barrier_key", ZBAL_TEST_NUMBER_FOUR, ZBAL_UT_NUM_1) == Z_OK);
     EXPECT_TRUE(mock->barrierKey_ == "barrier_key");
 }
 
@@ -471,11 +467,12 @@ TEST_F(TestZBALBootstrap, GetOutputAndFieldTranslation)
     const auto &output = bootstrap->GetOutput();
     EXPECT_TRUE(output.deviceGva == reinterpret_cast<void *>(0x10000));
     EXPECT_TRUE(output.myDeviceGva == reinterpret_cast<void *>(0x20000));
-    EXPECT_TRUE(output.createdDeviceMemorySpaceSize == ZBAL_TEST_MEM_SIZE * ZBAL_TEST_NUMBER_TWO);
-    EXPECT_TRUE(output.allocatedDeviceMemorySize == ZBAL_TEST_MEM_SIZE);
+    EXPECT_TRUE(output.createdDeviceMemorySpaceSize == ZBAL_UT_SIZE_256MB * ZBAL_TEST_NUMBER_TWO);
+    EXPECT_TRUE(output.allocatedDeviceMemorySize == ZBAL_UT_SIZE_256MB);
     EXPECT_TRUE(output.myCommMetaDeviceGva == reinterpret_cast<void *>(0x20000));
 
-    uint64_t expectedMetaSize = static_cast<uint64_t>(options.commMetaSpaceSize) * 1024 * options.commGroupCap;
+    uint64_t expectedMetaSize =
+        static_cast<uint64_t>(options.commMetaSpaceSize) * ZBAL_UT_SIZE_1KB * options.commGroupCap;
     EXPECT_TRUE(output.metaSizeOfDevice == expectedMetaSize);
 
     void *expectedSMAGva =
@@ -613,10 +610,10 @@ TEST_F(TestZBALBootstrap, CreateMemBootstrapOptionsTranslation)
     EXPECT_TRUE(bootstrap->options_.flags == 0xABCD);
     EXPECT_TRUE(bootstrap->options_.dataOperationType == 0x1234);
     EXPECT_TRUE(bootstrap->options_.btType == BOOT_BY_MEMFABRIC);
-    EXPECT_TRUE(bootstrap->options_.deviceId == ZBAL_TEST_DEVICE_ID);
-    EXPECT_TRUE(bootstrap->options_.worldSize == ZBAL_TEST_WORLD_SIZE);
-    EXPECT_TRUE(bootstrap->options_.rankId == ZBAL_TEST_RANK_ID);
-    EXPECT_TRUE(bootstrap->options_.deviceMemorySize == ZBAL_TEST_MEM_SIZE);
+    EXPECT_TRUE(bootstrap->options_.deviceId == ZBAL_UT_DEVICE_ID);
+    EXPECT_TRUE(bootstrap->options_.worldSize == ZBAL_UT_NUM_4);
+    EXPECT_TRUE(bootstrap->options_.rankId == ZBAL_UT_NUM_0);
+    EXPECT_TRUE(bootstrap->options_.deviceMemorySize == ZBAL_UT_SIZE_256MB);
 }
 
 TEST_F(TestZBALBootstrap, FullDelegationFlow)
@@ -630,14 +627,344 @@ TEST_F(TestZBALBootstrap, FullDelegationFlow)
     mock->acqReturnId_ = ZBAL_TEST_NUMBER_SIXTYFOUR;
     InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
 
-    uint32_t uniqueId = 0;
+    uint32_t uniqueId = ZBAL_UT_NUM_0;
     EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_TEST_NUMBER_ONE_HUNDRED, uniqueId) == Z_OK);
     EXPECT_TRUE(uniqueId == ZBAL_TEST_NUMBER_SIXTYFOUR);
 
     EXPECT_TRUE(bootstrap->ReleaseCommGroupId(ZBAL_TEST_NUMBER_SIXTYFOUR) == Z_OK);
-    EXPECT_TRUE(bootstrap->SubGroupBarrier("sync", ZBAL_TEST_NUMBER_TWO, 0) == Z_OK);
+    EXPECT_TRUE(bootstrap->SubGroupBarrier("sync", ZBAL_TEST_NUMBER_TWO, ZBAL_UT_NUM_0) == Z_OK);
     EXPECT_TRUE(bootstrap->SetLoggerLevel(ZBAL_TEST_NUMBER_TWO) == Z_OK);
 
     EXPECT_NO_THROW(bootstrap->UnInitialize());
     EXPECT_TRUE(mock->uninitCalled_);
+}
+
+TEST_F(TestZBALBootstrap, GetOutputWhenNotInitialized)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    const auto &output = bootstrap->GetOutput();
+    EXPECT_TRUE(output.deviceGva == nullptr);
+    EXPECT_TRUE(output.myDeviceGva == nullptr);
+    EXPECT_TRUE(output.myCommMetaDeviceGva == nullptr);
+    EXPECT_TRUE(output.mySMAGva == nullptr);
+    EXPECT_TRUE(output.allocatedDeviceMemorySize == ZBAL_UT_NUM_0);
+    EXPECT_TRUE(output.createdDeviceMemorySpaceSize == ZBAL_UT_NUM_0);
+    EXPECT_TRUE(output.metaSizeOfDevice == ZBAL_UT_NUM_0);
+    EXPECT_TRUE(output.smaSizeOfDevice == ZBAL_UT_NUM_0);
+}
+
+TEST_F(TestZBALBootstrap, GetOutputFieldConsistency)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    auto mock = CreateReadyMock();
+    InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
+
+    const auto &output = bootstrap->GetOutput();
+
+    uint64_t expectedMetaSize =
+        static_cast<uint64_t>(options.commMetaSpaceSize) * ZBAL_TEST_SIZE_1KB * options.commGroupCap;
+    EXPECT_TRUE(output.metaSizeOfDevice == expectedMetaSize);
+
+    void *expectedSMAGva =
+        reinterpret_cast<void *>(reinterpret_cast<uintptr_t>(output.myDeviceGva) + output.metaSizeOfDevice);
+    EXPECT_TRUE(output.mySMAGva == expectedSMAGva);
+
+    EXPECT_TRUE(output.smaSizeOfDevice == output.allocatedDeviceMemorySize - output.metaSizeOfDevice);
+}
+
+TEST_F(TestZBALBootstrap, InitializeWithInvalidOptions)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.deviceId = ZBAL_DEVICE_COUNT_MAX_LIMIT;
+
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    ZResult result = bootstrap->Initialize();
+    EXPECT_TRUE(result == Z_INVALID_PARAM);
+    EXPECT_FALSE(bootstrap->inited_);
+}
+
+TEST_F(TestZBALBootstrap, InitializeOptionsValidButMemBootstrapFails)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    ZResult result = bootstrap->Initialize();
+    EXPECT_NE(result, Z_OK);
+    EXPECT_FALSE(bootstrap->inited_);
+}
+
+TEST_F(TestZBALBootstrap, CreateMemBootstrapDirectCallFailsWithoutMemfabric)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    ZResult result = bootstrap->CreateMemBootstrap();
+    EXPECT_NE(result, Z_OK);
+    EXPECT_TRUE(bootstrap->memBootstrap_ == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, MemBootstrapCreateWithEmptyIpPort)
+{
+    MemBootstrapOptions options;
+    InitMemBootstrapOptions(options);
+    options.ipPort = "";
+
+    auto bootstrap = MemBootstrap::Create(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    ZResult result = bootstrap->Initialize();
+    EXPECT_NE(result, Z_OK);
+}
+
+TEST_F(TestZBALBootstrap, MemBootstrapCreateWithValidOptions)
+{
+    MemBootstrapOptions options;
+    InitMemBootstrapOptions(options);
+
+    auto bootstrap = MemBootstrap::Create(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    ZResult result = bootstrap->Initialize();
+    EXPECT_NE(result, Z_OK);
+}
+
+TEST_F(TestZBALBootstrap, DestroyWithNullMemBootstrap)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    bootstrap->inited_ = true;
+
+    EXPECT_NO_THROW(bootstrap->UnInitialize());
+    EXPECT_FALSE(bootstrap->inited_);
+}
+
+TEST_F(TestZBALBootstrap, DelegationWithNullMemBootstrap)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    bootstrap->inited_ = true;
+    bootstrap->memBootstrap_ = nullptr;
+
+    uint32_t uniqueId = ZBAL_UT_NUM_0;
+    EXPECT_TRUE(bootstrap->AcquireCommGroupId(ZBAL_UT_NUM_10, uniqueId) == Z_NOT_BOOTSTRAPPED);
+    EXPECT_TRUE(bootstrap->ReleaseCommGroupId(ZBAL_UT_NUM_0) == Z_NOT_BOOTSTRAPPED);
+    EXPECT_TRUE(bootstrap->SubGroupBarrier("key", ZBAL_UT_NUM_2, ZBAL_UT_NUM_0) == Z_NOT_BOOTSTRAPPED);
+    EXPECT_TRUE(bootstrap->SetLoggerLevel(ZBAL_UT_NUM_1) == Z_NOT_BOOTSTRAPPED);
+}
+
+TEST_F(TestZBALBootstrap, MemBootstrapVerifyOptionsBoundary)
+{
+    MemBootstrapOptions options;
+    InitMemBootstrapOptions(options);
+
+    {
+        options.rankCount = ZBAL_UT_NUM_1;
+        options.rankId = ZBAL_UT_NUM_0;
+        TestableMemBootstrap mb(options);
+        EXPECT_TRUE(mb.VerifyOptions() == Z_OK);
+    }
+    {
+        options.rankCount = ZBAL_MAX_RANK_SIZE;
+        options.rankId = ZBAL_MAX_RANK_SIZE - ZBAL_UT_NUM_1;
+        TestableMemBootstrap mb(options);
+        EXPECT_TRUE(mb.VerifyOptions() == Z_OK);
+    }
+    {
+        options.rankCount = ZBAL_UT_NUM_4;
+        options.rankId = ZBAL_UT_NUM_0;
+        options.totalMemSize = ZBAL_UT_SIZE_256MB;
+        options.deviceId = ZBAL_DEVICE_COUNT_MAX_LIMIT - ZBAL_UT_NUM_1;
+        TestableMemBootstrap mb(options);
+        EXPECT_TRUE(mb.VerifyOptions() == Z_OK);
+    }
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsTotalMetaEqualsDeviceMemory)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.deviceMemorySize =
+        static_cast<uint64_t>(options.commGroupCap) * options.commMetaSpaceSize * ZBAL_TEST_SIZE_1KB;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsMetaSpaceSizeEqualsOperateParamSize)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.commMetaSpaceSize = ZBAL_UT_NUM_64;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsMetaSpaceSizeAboveOperateParamSize)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.commMetaSpaceSize = ZBAL_UT_NUM_65;
+    options.deviceMemorySize =
+        static_cast<uint64_t>(options.commGroupCap) * options.commMetaSpaceSize * ZBAL_TEST_SIZE_1KB * ZBAL_UT_NUM_2;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsCommGroupCapAtMaxFails)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.commGroupCap = COMM_GROUP_COUNT_CAP_MAX;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsCommGroupCapBelowMaxPasses)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.commGroupCap = COMM_GROUP_COUNT_CAP_MAX - ZBAL_UT_NUM_1;
+    options.deviceMemorySize =
+        static_cast<uint64_t>(options.commGroupCap) * options.commMetaSpaceSize * ZBAL_TEST_SIZE_1KB + ZBAL_UT_NUM_1;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsDeviceMemAtCapFails)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.deviceMemorySize = ZBAL_MEMORY_SIZE_CAP;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsDeviceMemBelowCapPasses)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.deviceMemorySize = ZBAL_MEMORY_SIZE_CAP - ZBAL_UT_NUM_1;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsRankIdEqualsWorldSize)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.worldSize = ZBAL_UT_NUM_4;
+    options.rankId = ZBAL_UT_NUM_4;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsWorldSizeExceedsMaxFails)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.worldSize = ZBAL_RANK_COUNT_MAX_LIMIT + ZBAL_UT_NUM_1;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, VerifyOptionsBtTypeButtFails)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    options.btType = BOOT_BY_BUTT;
+    EXPECT_TRUE(Bootstrap::Create(options) == nullptr);
+}
+
+TEST_F(TestZBALBootstrap, InitializeFullFlowOptionsValid)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    ZResult result = bootstrap->Initialize();
+    EXPECT_NE(result, Z_OK);
+    EXPECT_FALSE(bootstrap->inited_);
+}
+
+TEST_F(TestZBALBootstrap, ZBALBootstrapApiSuccessPathViaSingleton)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    auto mock = CreateReadyMock();
+    InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
+
+    Bootstrap::gBootstrap = bootstrap;
+    ZBALInitState::Instance().Reset();
+
+    zbal_bootstrap_output_t output;
+    std::memset(&output, 0, sizeof(output));
+    int32_t result = zbal_bootstrap(&options, &output);
+
+    EXPECT_EQ(result, Z_OK);
+
+    EXPECT_TRUE(output.deviceGva == reinterpret_cast<void *>(0x10000));
+    EXPECT_TRUE(output.allocatedDeviceMemorySize == ZBAL_UT_SIZE_256MB);
+
+    auto &state = ZBALInitState::Instance();
+    EXPECT_TRUE(state.Bootstrapped());
+    EXPECT_EQ(state.ext_.btType, options.btType);
+    EXPECT_EQ(state.ext_.worldSize, options.worldSize);
+    EXPECT_EQ(state.ext_.worldRankId, options.rankId);
+    EXPECT_EQ(state.ext_.deviceId, options.deviceId);
+    EXPECT_EQ(state.ext_.commMetaSpaceSize, options.commMetaSpaceSize);
+    EXPECT_EQ(state.ext_.commGroupCap, options.commGroupCap);
+    EXPECT_EQ(state.ext_.gvaDevice, output.deviceGva);
+    EXPECT_EQ(state.ext_.mySMAGva, output.mySMAGva);
+    EXPECT_EQ(state.ext_.smaSizeOfDevice, output.smaSizeOfDevice);
+    EXPECT_EQ(state.ext_.localDeviceMemSize, output.allocatedDeviceMemorySize);
+    EXPECT_EQ(state.ext_.symmetricMemSpace, output.createdDeviceMemorySpaceSize);
+
+    Bootstrap::gBootstrap = nullptr;
+    ZBALInitState::Instance().Reset();
+}
+
+TEST_F(TestZBALBootstrap, ZBALUnbootstrapSuccessPathWithSingleton)
+{
+    zbal_bootstrap_options_t options;
+    InitValidOptions(options);
+
+    auto bootstrap = ZMakeRef<Bootstrap>(options);
+    ASSERT_TRUE(bootstrap != nullptr);
+
+    auto mock = CreateReadyMock();
+    InjectMockIntoBootstrap(bootstrap.Get(), mock.get());
+
+    Bootstrap::gBootstrap = bootstrap;
+    auto &state = ZBALInitState::Instance();
+    state.Bootstrapped(true);
+    state.SmaInitialized(false);
+
+    int32_t result = zbal_unbootstrap(ZBAL_UT_NUM_0);
+    EXPECT_EQ(result, Z_OK);
+
+    EXPECT_TRUE(Bootstrap::gBootstrap == nullptr);
+    EXPECT_TRUE(mock->uninitCalled_);
+
+    EXPECT_FALSE(state.Bootstrapped());
+    EXPECT_FALSE(state.SmaInitialized());
+
+    ZBALInitState::Instance().Reset();
 }

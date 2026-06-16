@@ -42,6 +42,12 @@ int32_t ZBALOpBroadcast(const void *buff, size_t sendCount, zbal_datatype_t data
     return 0;
 }
 
+int32_t ZBALOpGather(const void *sendBuff, void *recvBuff, size_t sendCount, zbal_datatype_t dataType, uint16_t root,
+                     aclrtStream stream, CommGroupInfo &groupInfo)
+{
+    return 0;
+}
+
 int32_t ZBALOpScatter(const void *sendBuff, void *recvBuff, size_t sendCount, zbal_datatype_t dataType, uint16_t root,
                       aclrtStream stream, CommGroupInfo &groupInfo)
 {

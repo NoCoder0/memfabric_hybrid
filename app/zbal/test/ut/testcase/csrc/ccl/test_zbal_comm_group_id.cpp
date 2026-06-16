@@ -10,12 +10,15 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <gtest/gtest.h>
+
+
 #include <sstream>
 
 #define private public
 #include "zbal_comm_group_id.h"
 #undef private
 
+#include "zbal_test_constants.h"
 #include "test_zbal_def.h"
 
 using namespace zbal;
@@ -41,14 +44,14 @@ TEST_F(TestZBALCommGroupId, DefaultConstructor)
 
 TEST_F(TestZBALCommGroupId, ParameterizedConstructor)
 {
-    AutoReleaseGroupId groupId(128, 4, 0, 0, "test_group");
+    AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "test_group");
     EXPECT_EQ(groupId.Id(), UINT16_MAX); /* not acquired yet */
     EXPECT_TRUE(groupId.GatheredGroupInfo().empty());
 }
 
 TEST_F(TestZBALCommGroupId, AcquireWithoutBootstrap)
 {
-    AutoReleaseGroupId groupId(128, 4, 0, 0, "test_group");
+    AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "test_group");
     /* Acquire should fail without bootstrap initialized */
     auto result = groupId.Acquire();
     EXPECT_NE(result, Z_OK);
@@ -56,7 +59,7 @@ TEST_F(TestZBALCommGroupId, AcquireWithoutBootstrap)
 
 TEST_F(TestZBALCommGroupId, ReleaseWithoutBootstrap)
 {
-    AutoReleaseGroupId groupId(128, 4, 0, 0, "test_group");
+    AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "test_group");
     /* Release without acquire should not crash */
     groupId.Release();
     EXPECT_EQ(groupId.Id(), static_cast<uint16_t>(-1));
@@ -64,8 +67,8 @@ TEST_F(TestZBALCommGroupId, ReleaseWithoutBootstrap)
 
 TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfo)
 {
-    AutoReleaseGroupId gid1(128, 4, 0, 0, "g1");
-    AutoReleaseGroupId gid2(128, 4, 1, 1, "g2");
+    AutoReleaseGroupId gid1(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "g1");
+    AutoReleaseGroupId gid2(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 1, 1, "g2");
 
     /* Move from gid2 to gid1 (both default, no acquired id) */
     gid1.MoveIdAndGatheredInfo(gid2);
@@ -75,7 +78,7 @@ TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfo)
 
 TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfoSelf)
 {
-    AutoReleaseGroupId gid1(128, 4, 0, 0, "g1");
+    AutoReleaseGroupId gid1(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "g1");
     /* self-move should be a no-op */
     gid1.MoveIdAndGatheredInfo(gid1);
     EXPECT_EQ(gid1.Id(), UINT16_MAX);
@@ -83,7 +86,7 @@ TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfoSelf)
 
 TEST_F(TestZBALCommGroupId, ReleaseMultipleTimes)
 {
-    AutoReleaseGroupId groupId(128, 4, 0, 0, "test");
+    AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "test");
     /* multiple releases without acquire should not crash */
     groupId.Release();
     groupId.Release();
@@ -93,14 +96,14 @@ TEST_F(TestZBALCommGroupId, ReleaseMultipleTimes)
 
 TEST_F(TestZBALCommGroupId, AcquireWithZeroGroupSize)
 {
-    AutoReleaseGroupId groupId(0, 4, 0, 0, "test");
+    AutoReleaseGroupId groupId(0, ZBAL_UT_NUM_4, 0, 0, "test");
     auto result = groupId.Acquire();
     EXPECT_NE(result, Z_OK);
 }
 
 TEST_F(TestZBALCommGroupId, AcquireWithZeroRankCount)
 {
-    AutoReleaseGroupId groupId(128, 0, 0, 0, "test");
+    AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, 0, 0, 0, "test");
     auto result = groupId.Acquire();
     EXPECT_NE(result, Z_OK);
 }
@@ -115,15 +118,15 @@ TEST_F(TestZBALCommGroupId, DefaultGroupInfo)
 TEST_F(TestZBALCommGroupId, DestructorWithValidId)
 {
     {
-        AutoReleaseGroupId groupId(128, 4, 0, 0, "test_group");
+        AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "test_group");
         groupId.uniqueGroupId_ = ZBAL_TEST_NUMBER_FOURTYTWO;
     }
 }
 
 TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfoWithExistingId)
 {
-    AutoReleaseGroupId gid1(128, 4, 0, 0, "g1");
-    AutoReleaseGroupId gid2(128, 4, 1, 1, "g2");
+    AutoReleaseGroupId gid1(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "g1");
+    AutoReleaseGroupId gid2(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 1, 1, "g2");
 
     gid1.uniqueGroupId_ = ZBAL_TEST_NUMBER_FOURTYTWO;
     gid2.uniqueGroupId_ = ZBAL_TEST_NUMBER_SIXTYFOUR;
@@ -136,8 +139,8 @@ TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfoWithExistingId)
 
 TEST_F(TestZBALCommGroupId, MoveIdAndGatheredInfoWithGatheredInfo)
 {
-    AutoReleaseGroupId gid1(128, 4, 0, 0, "g1");
-    AutoReleaseGroupId gid2(128, 4, 1, 1, "g2");
+    AutoReleaseGroupId gid1(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "g1");
+    AutoReleaseGroupId gid2(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 1, 1, "g2");
 
     CommGroupExchangeInfo info;
     info.groupId = ZBAL_TEST_NUMBER_TEN;
@@ -173,7 +176,7 @@ TEST_F(TestZBALCommGroupId, OperatorStreamOutputDefault)
 
 TEST_F(TestZBALCommGroupId, OperatorStreamOutputWithGatheredInfo)
 {
-    AutoReleaseGroupId groupId(128, 4, 0, 0, "test_group");
+    AutoReleaseGroupId groupId(ZBAL_UT_NUM_128, ZBAL_UT_NUM_4, 0, 0, "test_group");
     CommGroupExchangeInfo info;
     info.groupId = ZBAL_TEST_NUMBER_FIVE;
     info.myWorldRankId = ZBAL_TEST_NUMBER_TEN;

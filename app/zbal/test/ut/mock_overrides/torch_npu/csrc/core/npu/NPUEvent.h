@@ -3,8 +3,6 @@
 
 #include <cstdint>
 
-constexpr uint32_t ACL_EVENT_CAPTURE_STREAM_PROGRESS = 1;
-
 namespace c10_npu {
 
 class NPUEvent {
