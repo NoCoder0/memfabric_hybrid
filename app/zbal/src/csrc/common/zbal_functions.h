@@ -15,6 +15,7 @@
 #include <set>
 #include <string>
 #include <climits>
+#include <limits>
 #include <unistd.h>
 #include <sys/param.h>
 #include <cstring>
@@ -195,7 +196,11 @@ ALWAYS_INLINE T Func::GetEnv(const char *name, T defaultValue)
         if constexpr (std::is_same_v<T, float> || std::is_same_v<T, double>) {
             result = static_cast<T>(std::stod(envStr));
         } else if constexpr (std::is_integral_v<T>) {
-            result = static_cast<T>(std::stoi(envStr));
+            long long val = std::stoll(envStr);
+            if (val < std::numeric_limits<T>::min() || val > std::numeric_limits<T>::max()) {
+                throw std::out_of_range("Value out of range for type T");
+            }
+            result = static_cast<T>(val);
         } else if constexpr (std::is_same_v<T, std::string>) {
             result = envStr;
         } else {
@@ -256,7 +261,8 @@ ALWAYS_INLINE bool Func::MakeDirRecursive(const std::string &path, uint32_t mode
         return true;
     }
 
-    auto chPath = const_cast<char *>(path.c_str());
+    std::string mutablePath = path;
+    auto chPath = mutablePath.data();
     auto p = strchr(chPath + 1, '/');
     for (; p != nullptr; (p = strchr(p + 1, '/'))) {
         *p = '\0';

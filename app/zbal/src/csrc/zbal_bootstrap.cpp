@@ -39,7 +39,7 @@ ZBAL_API int32_t zbal_bootstrap(zbal_bootstrap_options_t *options, zbal_bootstra
     ZBAL_VALIDATE_RETURN(options != nullptr, "invalid param, bootstrap options should not be null", Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(output != nullptr, "invalid param, bootstrap output should not be null", Z_INVALID_PARAM);
 
-    ZBAL_LOG_INFO("options dump, " << (*options));
+    ZBAL_LOG_DEBUG("options dump, " << (*options));
 
     auto bootstrap = Bootstrap::Create(*options);
     if (bootstrap == nullptr) {
