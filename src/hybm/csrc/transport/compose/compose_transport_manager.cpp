@@ -202,7 +202,7 @@ bool ComposeTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 
 Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
 {
-    // device固定占[0, 4 * KEY_SIZE) slots， host占[4 * KEY_SIZE, 5 * KEY_SIZE) slots
+    // device固定占[0, 6 * KEY_SIZE) slots， host占[6 * KEY_SIZE, 7 * KEY_SIZE) slots
     if (deviceTransportManager_) {
         TransportMemoryKey tmp{};
         auto ret = deviceTransportManager_->QueryMemoryKey(addr, tmp);

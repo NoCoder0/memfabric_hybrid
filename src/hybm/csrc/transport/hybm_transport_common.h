@@ -78,12 +78,12 @@ static inline std::ostream &operator<<(std::ostream &output, const TransportMemo
 }
 
 struct TransportMemoryKey {
-    // Device使用前面4个KEY_SIZE slots(主要是device_urma最大)， Host使用最后1个KEY_SIZE slot
-    uint64_t keys[KEY_SIZE * 5];
+    // Device使用前面6个KEY_SIZE slots(主要是device_urma最大)， Host使用最后1个KEY_SIZE slot
+    uint64_t keys[KEY_SIZE * 7];
 
     bool operator<(const TransportMemoryKey &other) const
     {
-        return memcmp(keys, other.keys, sizeof(uint64_t) * KEY_SIZE * 5U) < 0; // compare
+        return memcmp(keys, other.keys, sizeof(uint64_t) * KEY_SIZE * 7U) < 0; // compare
     }
 };
 
@@ -104,22 +104,22 @@ inline void WriteDeviceRdmaMemoryKey(const TransportMemoryKey &input, TransportM
 
 inline void ReadHcomMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)
 {
-    std::copy_n(input.keys + 4 * KEY_SIZE, KEY_SIZE, output.keys);
+    std::copy_n(input.keys + 6UL * KEY_SIZE, KEY_SIZE, output.keys);
 }
 
 inline void WriteHcomMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)
 {
-    std::copy_n(input.keys, KEY_SIZE, output.keys + 4 * KEY_SIZE);
+    std::copy_n(input.keys, KEY_SIZE, output.keys + 6UL * KEY_SIZE);
 }
 
 inline void ReadDeviceUrmaMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)
 {
-    std::copy_n(input.keys, KEY_SIZE * 4, output.keys);
+    std::copy_n(input.keys, KEY_SIZE * 6UL, output.keys);
 }
 
 inline void WriteDeviceUrmaMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)
 {
-    std::copy_n(input.keys, KEY_SIZE * 4, output.keys);
+    std::copy_n(input.keys, KEY_SIZE * 6UL, output.keys);
 }
 
 static inline std::ostream &operator<<(std::ostream &output, const TransportMemoryKey &key)

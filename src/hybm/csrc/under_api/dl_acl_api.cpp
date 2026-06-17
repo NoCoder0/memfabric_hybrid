@@ -29,6 +29,7 @@ aclrtStreamGetIdFunc DlAclApi::pAclrtStreamGetId = nullptr;
 aclrtCreateNotifyFunc DlAclApi::pAclrtCreateNotify = nullptr;
 aclrtGetNotifyIdFunc DlAclApi::pAclrtGetNotifyId = nullptr;
 aclrtDestroyNotifyFunc DlAclApi::pAclrtDestroyNotify = nullptr;
+aclrtWaitAndResetNotifyFunc DlAclApi::pAclrtWaitAndResetNotify = nullptr;
 aclrtGetCurrentContextFunc DlAclApi::pAclrtGetCurrentContext = nullptr;
 aclrtSetStreamAttributeFunc DlAclApi::pAclrtSetStreamAttribute = nullptr;
 aclrtDestroyStreamFunc DlAclApi::pAclrtDestroyStream = nullptr;
@@ -93,6 +94,7 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtCreateNotify, aclrtCreateNotifyFunc, rtHandle, "aclrtCreateNotify");
     DL_LOAD_SYM(pAclrtGetNotifyId, aclrtGetNotifyIdFunc, rtHandle, "aclrtGetNotifyId");
     DL_LOAD_SYM(pAclrtDestroyNotify, aclrtDestroyNotifyFunc, rtHandle, "aclrtDestroyNotify");
+    DL_LOAD_SYM(pAclrtWaitAndResetNotify, aclrtWaitAndResetNotifyFunc, rtHandle, "aclrtWaitAndResetNotify");
     DL_LOAD_SYM(pAclrtGetCurrentContext, aclrtGetCurrentContextFunc, rtHandle, "aclrtGetCurrentContext");
     DL_LOAD_SYM(pAclrtSetStreamAttribute, aclrtSetStreamAttributeFunc, rtHandle, "aclrtSetStreamAttribute");
     DL_LOAD_SYM(pAclrtDestroyStream, aclrtDestroyStreamFunc, rtHandle, "aclrtDestroyStream");
@@ -124,10 +126,9 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtGetSocName, aclrtGetSocNameFunc, rtHandle, "aclrtGetSocName");
     DL_LOAD_SYM(pRtEnableP2P, rtEnableP2PFunc, rtHandle, "rtEnableP2P");
     DL_LOAD_SYM(pRtDisableP2P, rtDisableP2PFunc, rtHandle, "rtDisableP2P");
-    DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, rtHandle,
-        "rtGetLogicDevIdByUserDevId");
+    DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, rtHandle, "rtGetLogicDevIdByUserDevId");
     DL_LOAD_SYM_OPTIONAL(pAclrtGetPhyDevIdByLogicDevId, aclrtGetPhyDevIdByLogicDevIdFunc, rtHandle,
-        "aclrtGetPhyDevIdByLogicDevId");
+                         "aclrtGetPhyDevIdByLogicDevId");
     DL_LOAD_SYM(pRtMemcpyAsync, rtMemcpyAsyncFunc, rtHandle, "rtMemcpyAsyncWithoutCheckKind");
 
     gLoaded = true;
@@ -199,6 +200,7 @@ void DlAclApi::CleanupLibrary()
     pAclrtCreateNotify = nullptr;
     pAclrtGetNotifyId = nullptr;
     pAclrtDestroyNotify = nullptr;
+    pAclrtWaitAndResetNotify = nullptr;
     pAclrtGetCurrentContext = nullptr;
     pAclrtSetStreamAttribute = nullptr;
     pAclrtGetPhyDevIdByLogicDevId = nullptr;

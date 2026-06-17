@@ -1,7 +1,9 @@
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
 set(HYBM_KERNEL_PACK_SIGN_CMAKE_DIR "${CMAKE_CURRENT_LIST_DIR}")
-set(HYBM_KERNEL_PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
+if(NOT DEFINED HYBM_KERNEL_PROJECT_ROOT)
+    set(HYBM_KERNEL_PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
+endif()
 
 function(pack_targets_and_files)
     cmake_parse_arguments(ARG

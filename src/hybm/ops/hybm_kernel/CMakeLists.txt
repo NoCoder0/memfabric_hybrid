@@ -1,48 +1,107 @@
 set(CMAKE_SKIP_RPATH TRUE)
-include(${PROJECT_SOURCE_DIR}/cmake/kernel/hybm_pack_sign.cmake)
+
+# Allow standalone build: use HYBM_KERNEL_PROJECT_ROOT if defined, else fall back to PROJECT_SOURCE_DIR
+if(NOT DEFINED HYBM_KERNEL_PROJECT_ROOT)
+  set(HYBM_KERNEL_PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
+endif()
+# hybm_pack_sign.cmake not needed: pack_targets_and_files() no longer used
 
 set(HYBM_AICPU_PACKAGE_NAME cann-hybm-compat.tar.gz)
+set(AICPU_COMPILER "${ASCEND_HOME_PATH}/toolkit/toolchain/hcc/bin/aarch64-target-linux-gnu-g++")
+set(_ASCEND_INC_DIR "${ASCEND_HOME_PATH}/aarch64-linux/pkg_inc/base")
 
-add_library(cann_hybm_kernel SHARED
-        hybm_batch_transfer.cc
+# Output artifacts in build directory (not directly to install dir)
+set(AICPU_SO_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/libcann_hybm_kernel.so")
+set(AICPU_JSON_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/libcann_hybm_kernel.json")
+set(AICPU_TAR_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${HYBM_AICPU_PACKAGE_NAME}")
+
+set(AICPU_INCLUDE_DIRS
+    ${PROJECT_HYBM_SRC_BASE}/include
+    ${PROJECT_HYBM_SRC_BASE}/csrc/common
+    ${PROJECT_HYBM_SRC_BASE}/csrc/driver/version
+    ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
+    ${_ASCEND_INC_DIR}
+    ${PROJECT_UTIL_SRC_BASE}
+    ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_include_directories(cann_hybm_kernel PRIVATE
-        ${PROJECT_HYBM_SRC_BASE}/include
-        ${PROJECT_HYBM_SRC_BASE}/csrc/common
-        ${PROJECT_HYBM_SRC_BASE}/csrc/driver/version
-        ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
-        ${PROJECT_UTIL_SRC_BASE}
+message("==================hybm ai cpu ops compile====================================")
+
+# Build include flags
+set(AICPU_INC_FLAGS)
+foreach(INC_DIR ${AICPU_INCLUDE_DIRS})
+  list(APPEND AICPU_INC_FLAGS "-I${INC_DIR}")
+endforeach()
+
+if(NOT DEFINED AICPU_KERNEL_SRC)
+  set(AICPU_KERNEL_SRC
+      "${CMAKE_CURRENT_SOURCE_DIR}/hybm_batch_transfer.cc"
+      "${CMAKE_CURRENT_SOURCE_DIR}/dlog_stub.cc"
+  )
+endif()
+
+set(AICPU_LINK_FLAGS "")
+
+# ---- Generate .json from .ini ----
+add_custom_command(
+    OUTPUT ${AICPU_JSON_OUTPUT}
+    COMMAND python3 ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/parser_ini.py
+            ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.ini
+            ${AICPU_JSON_OUTPUT}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.ini
+            ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/parser_ini.py
 )
 
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libcann_hybm_kernel.json
-        COMMAND python3 ${PROJECT_SOURCE_DIR}/script/kernel/parser_ini.py
-                ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.ini
-                ${CMAKE_CURRENT_BINARY_DIR}/libcann_hybm_kernel.json
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.ini
-                ${PROJECT_SOURCE_DIR}/script/kernel/parser_ini.py
-)
-add_custom_target(hybm_aicpu_kernel_json DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libcann_hybm_kernel.json)
-add_dependencies(cann_hybm_kernel hybm_aicpu_kernel_json)
-
-pack_targets_and_files(
-        OUTPUT_TARGET pack_aicpu_hybm
-        OUTPUT ${HYBM_AICPU_PACKAGE_NAME}
-        TARGETS cann_hybm_kernel
+# ---- Cross-compile .so ----
+set(AICPU_KERNEL_DEPS
+    ${CMAKE_CURRENT_SOURCE_DIR}/hybm_batch_transfer.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel_log.h
+    ${PROJECT_HYBM_SRC_BASE}/include/hybm_def.h
 )
 
-install(TARGETS cann_hybm_kernel
-        LIBRARY DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
+add_custom_command(
+    OUTPUT ${AICPU_SO_OUTPUT}
+    COMMAND ${AICPU_COMPILER}
+        -shared -O2 -std=c++17 -fPIC
+        ${AICPU_INC_FLAGS}
+        ${AICPU_LINK_FLAGS}
+        -o ${AICPU_SO_OUTPUT}
+        ${AICPU_KERNEL_SRC}
+    DEPENDS ${AICPU_KERNEL_SRC} ${AICPU_KERNEL_DEPS}
+    COMMENT "Compiling AICPU kernel shared library with aarch64 cross-compiler"
+)
+
+# ---- Package .so into tar.gz (AICPUKernel mode) ----
+set(AICPU_TAR_ROOT "aicpu_kernels_device")
+set(AICPU_STAGING_DIR "${CMAKE_CURRENT_BINARY_DIR}/tar_staging")
+
+add_custom_command(
+    OUTPUT ${AICPU_TAR_OUTPUT}
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${AICPU_STAGING_DIR}/${AICPU_TAR_ROOT}"
+    COMMAND ${CMAKE_COMMAND} -E copy "${AICPU_SO_OUTPUT}" "${AICPU_STAGING_DIR}/${AICPU_TAR_ROOT}/"
+    COMMAND tar czf "${AICPU_TAR_OUTPUT}" -C "${AICPU_STAGING_DIR}" "${AICPU_TAR_ROOT}"
+    DEPENDS ${AICPU_SO_OUTPUT}
+    COMMENT "Packaging AICPU kernel into tar.gz (TAR_ROOT_DIR=${AICPU_TAR_ROOT})"
+)
+
+message("==================hybm ai cpu ops compile done====================================")
+
+# ---- Default target: build all artifacts ----
+add_custom_target(cann_hybm_kernel ALL DEPENDS ${AICPU_SO_OUTPUT} ${AICPU_JSON_OUTPUT} ${AICPU_TAR_OUTPUT})
+
+# ---- Install ----
+install(FILES ${AICPU_SO_OUTPUT}
+        DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
 
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/libcann_hybm_kernel.json
+install(FILES ${AICPU_JSON_OUTPUT}
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${HYBM_AICPU_PACKAGE_NAME}
+install(FILES ${AICPU_TAR_OUTPUT}
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 
-install(PROGRAMS ${PROJECT_SOURCE_DIR}/script/kernel/install.sh
+install(PROGRAMS ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/install.sh
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)

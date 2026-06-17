@@ -227,7 +227,7 @@ int32_t MockHcommChannelDestroy(const ChannelHandle *channels, uint32_t channelN
 int32_t MockHcommThreadAlloc(CommEngine engine, uint32_t threadNum, const uint32_t *notifyNumPerThread,
                              ThreadHandle *threads)
 {
-    EXPECT_EQ(engine, COMM_ENGINE_AICPU);
+    EXPECT_EQ(engine, COMM_ENGINE_AICPU_TS);
     EXPECT_EQ(threadNum, 1U);
     EXPECT_NE(notifyNumPerThread, nullptr);
     EXPECT_NE(threads, nullptr);
@@ -472,7 +472,8 @@ TEST(DeviceUrmaTransportManagerTest, ReadRemoteAsyncPropagatesKernelLoadFailure)
     const std::vector<uint64_t> localAddrs = {MOCK_LOCAL_ADDR};
     const std::vector<uint64_t> remoteAddrs = {MOCK_REMOTE_ADDR};
     const std::vector<uint64_t> sizes = {MOCK_SIZE};
-    const auto ret = manager.LaunchDeviceKernelBatch(MOCK_THREAD, false, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes);
+    const auto ret =
+        manager.LaunchDeviceKernelBatch(MOCK_THREAD, false, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes, 0);
     EXPECT_NE(ret, BM_OK);
 }
 
@@ -482,7 +483,8 @@ TEST(DeviceUrmaTransportManagerTest, WriteRemoteAsyncPropagatesKernelLoadFailure
     const std::vector<uint64_t> localAddrs = {MOCK_LOCAL_ADDR};
     const std::vector<uint64_t> remoteAddrs = {MOCK_REMOTE_ADDR};
     const std::vector<uint64_t> sizes = {MOCK_SIZE};
-    const auto ret = manager.LaunchDeviceKernelBatch(MOCK_THREAD, true, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes);
+    const auto ret =
+        manager.LaunchDeviceKernelBatch(MOCK_THREAD, true, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes, 0);
     EXPECT_NE(ret, BM_OK);
 }
 
@@ -514,7 +516,8 @@ TEST(DeviceUrmaTransportManagerTest, LaunchDeviceKernelBatchRejectsZeroChannel)
     const std::vector<uint64_t> localAddrs = {MOCK_LOCAL_ADDR};
     const std::vector<uint64_t> remoteAddrs = {MOCK_REMOTE_ADDR};
     const std::vector<uint64_t> sizes = {MOCK_SIZE};
-    EXPECT_EQ(manager.LaunchDeviceKernelBatch(MOCK_THREAD, false, 0, localAddrs, remoteAddrs, sizes), BM_NOT_CONNECTED);
+    EXPECT_EQ(manager.LaunchDeviceKernelBatch(MOCK_THREAD, false, 0, localAddrs, remoteAddrs, sizes, 0),
+              BM_NOT_CONNECTED);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LaunchDeviceKernelBatchRejectsZeroThread)
@@ -523,7 +526,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchDeviceKernelBatchRejectsZeroThread)
     const std::vector<uint64_t> localAddrs = {MOCK_LOCAL_ADDR};
     const std::vector<uint64_t> remoteAddrs = {MOCK_REMOTE_ADDR};
     const std::vector<uint64_t> sizes = {MOCK_SIZE};
-    EXPECT_EQ(manager.LaunchDeviceKernelBatch(0, false, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes),
+    EXPECT_EQ(manager.LaunchDeviceKernelBatch(0, false, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes, 0),
               BM_NOT_CONNECTED);
 }
 

@@ -94,7 +94,15 @@ Result DlApi::LoadExtendLibrary(DlApiExtendLibraryType libraryType)
     }
 
     if (libraryType == DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_URMA) {
-        return DlHcommApi::LoadLibrary();
+        auto result = DlRtApi::LoadLibrary();
+        if (result != BM_OK) {
+            return result;
+        }
+        result = DlHcommApi::LoadLibrary();
+        if (result != BM_OK) {
+            DlRtApi::CleanupLibrary();
+            return result;
+        }
     }
 
     return BM_OK;

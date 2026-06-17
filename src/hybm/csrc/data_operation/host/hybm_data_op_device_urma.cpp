@@ -81,7 +81,7 @@ Result DataOpDeviceURMA::Initialize() noexcept
     transport::TransportMemoryRegion input;
     input.addr = reinterpret_cast<uint64_t>(urmaSwapBaseAddr_);
     input.size = URMA_SWAP_SPACE_SIZE;
-    input.flags = transport::REG_MR_FLAG_ACL_DRAM;
+    input.flags = transport::REG_MR_FLAG_HBM; // 先使用hbm swap把dram/hbm池全部调通
     if (transportManager_ != nullptr) {
         ret = transportManager_->RegisterMemoryRegion(input);
         if (ret != BM_OK) {
@@ -125,26 +125,15 @@ void DataOpDeviceURMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
 Result DataOpDeviceURMA::AllocSwapMemory()
 {
     void *ptr = nullptr;
-    auto ret = DlAclApi::AclrtMallocHost(&ptr, URMA_SWAP_SPACE_SIZE);
+    auto ret = DlAclApi::AclrtMalloc(
+        &ptr, URMA_SWAP_SPACE_SIZE,
+        static_cast<aclrtMemMallocPolicy>(ACL_MEM_TYPE_HIGH_BAND_WIDTH | ACL_MEM_MALLOC_HUGE_ONLY));
     if (ret != 0) {
         BM_LOG_ERROR("Failed to AclrtMallocHost urma swap memory, size: " << URMA_SWAP_SPACE_SIZE);
         return BM_MALLOC_FAILED;
     }
-
-    void *output;
-    ret = DlHalApi::HalHostRegister(ptr, URMA_SWAP_SPACE_SIZE, HOST_MEM_MAP_DEV, HybmGetInitedLogicDeviceId(), &output);
-    if (ret != 0) {
-        BM_LOG_ERROR("Register swap mem failed, addr: " << ptr << " ret: " << ret);
-        auto ret2 = DlAclApi::AclrtFreeHost(ptr);
-        if (ret2 != 0) {
-            BM_LOG_ERROR("Failed to AclrtFreeHost swap memory, ret: " << ret2);
-        }
-        return ret;
-    }
-    ret =
-        HybmVaManager::GetInstance().AddVaInfo({0, reinterpret_cast<uint64_t>(output), reinterpret_cast<uint64_t>(ptr),
-                                                URMA_SWAP_SPACE_SIZE, HYBM_MEM_TYPE_HOST},
-                                               rankId_);
+    ret = HybmVaManager::GetInstance().AddVaInfo(
+        {0, reinterpret_cast<uint64_t>(ptr), 0, URMA_SWAP_SPACE_SIZE, HYBM_MEM_TYPE_DEVICE}, rankId_);
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
         FreeSwapMemory();
@@ -164,12 +153,11 @@ void DataOpDeviceURMA::FreeSwapMemory()
                 BM_LOG_ERROR("Failed to UnregisterMemoryRegion, ret: " << ret);
             }
         }
-        DlHalApi::HalHostUnregisterEx(urmaSwapBaseAddr_, HybmGetInitDeviceId(), HOST_MEM_MAP_DEV);
-        const auto ret = DlAclApi::AclrtFreeHost(urmaSwapBaseAddr_);
+        const auto ret = DlAclApi::AclrtFree(urmaSwapBaseAddr_);
         if (ret != 0) {
             BM_LOG_ERROR("Failed to AclrtFreeHost swap memory, ret: " << ret);
         }
-        HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(urmaSwapBaseAddr_), HVM_HVA);
+        HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(urmaSwapBaseAddr_), HVM_DVA);
         urmaSwapBaseAddr_ = nullptr;
     }
 }

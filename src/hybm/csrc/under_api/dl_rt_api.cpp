@@ -22,6 +22,7 @@ const char *DlRtApi::gRtLibName = "libruntime.so";
 
 rtStreamGetSqidFunc DlRtApi::pRtStreamGetSqid = nullptr;
 rtStreamGetCqidFunc DlRtApi::pRtStreamGetCqid = nullptr;
+rtGetDevResAddressFunc DlRtApi::pRtGetDevResAddress = nullptr;
 
 Result DlRtApi::LoadLibrary()
 {
@@ -40,6 +41,7 @@ Result DlRtApi::LoadLibrary()
     /* load sym */
     DL_LOAD_SYM(pRtStreamGetSqid, rtStreamGetSqidFunc, rtHandle, "rtStreamGetSqid");
     DL_LOAD_SYM(pRtStreamGetCqid, rtStreamGetCqidFunc, rtHandle, "rtStreamGetCqid");
+    DL_LOAD_SYM_OPTIONAL(pRtGetDevResAddress, rtGetDevResAddressFunc, rtHandle, "rtGetDevResAddress");
 
     gLoaded = true;
     return BM_OK;
@@ -54,6 +56,7 @@ void DlRtApi::CleanupLibrary()
 
     pRtStreamGetSqid = nullptr;
     pRtStreamGetCqid = nullptr;
+    pRtGetDevResAddress = nullptr;
 
     if (rtHandle != nullptr) {
         dlclose(rtHandle);

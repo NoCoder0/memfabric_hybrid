@@ -169,6 +169,11 @@ int32_t aclrtDestroyNotify(void *notify)
     return 0;
 }
 
+int32_t aclrtWaitAndResetNotify(void *notify, void *stream, uint32_t timeout)
+{
+    return 0;
+}
+
 int32_t aclrtGetCurrentContext(void **context)
 {
     return 0;

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "dl_hcomm_api.h"
+#include "dl_rt_api.h"
 #include "hybm_types.h"
 #include "hybm_transport_manager.h"
 #include "load_kernel.h"
@@ -33,7 +34,6 @@ namespace device {
 
 constexpr uint32_t URMA_EXPORT_DESC_MAGIC = 0xA5FAB001U;
 constexpr uint16_t URMA_EXPORT_DESC_VERSION = 1U;
-
 using UrmaMemTag = uint64_t;
 using HcommMemHandle = ock::mf::HcommMemHandle;
 using HcommEndpointHandle = ock::mf::EndpointHandle;
@@ -93,7 +93,6 @@ struct UrmaLocalMr {
     HcommMemHandle hcommMem{nullptr};
 };
 
-
 struct UrmaExportDesc {
     uint32_t magic{URMA_EXPORT_DESC_MAGIC};
     uint16_t version{URMA_EXPORT_DESC_VERSION};
@@ -103,6 +102,7 @@ struct UrmaExportDesc {
     uint64_t addr{0};
     uint64_t size{0};
     uint32_t hcommDescLen{0};
+    uint32_t devTransFlagDescLen{0};
 };
 
 struct UrmaEndpointEntity;
@@ -209,6 +209,12 @@ private:
         HcommThreadHandle thread{0};
         uint32_t pendingOps{0};
         std::vector<RemoteRegistration> imports{};
+        // Remote peer's notify record address (from TransportMemoryKey header during
+        // ImportRemoteMemKeysLocked). Used as remote_flag_addr in kernel launch args.
+        uint64_t remoteFlagAddr{0};
+        uint64_t remoteFlagSize{0};
+        // Raw hcommDesc bytes for the remote flag, used for HcommMemUnimport during cleanup.
+        std::vector<uint8_t> remoteFlagDescBytes{};
     };
 
     Result EnsureOpenLocked() const;
@@ -233,9 +239,8 @@ private:
     Result EnsureDeviceKernelLoadedLocked();
     aclrtFuncHandle GetDeviceKernelFunc(bool isRead) const;
     Result LaunchDeviceKernelBatch(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
-                                   const std::vector<uint64_t> &localAddrs,
-                                   const std::vector<uint64_t> &remoteAddrs,
-                                   const std::vector<uint64_t> &sizes);
+                                   const std::vector<uint64_t> &localAddrs, const std::vector<uint64_t> &remoteAddrs,
+                                   const std::vector<uint64_t> &sizes, uint64_t remoteFlagAddr);
     Result SynchronizeDeviceKernelStream();
     void ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
     Result AddBatchPendingDeviceBuffers(DeviceTransferBuffers &buffers);
@@ -249,9 +254,11 @@ private:
 
     mutable std::mutex mutex_{};
     bool opened_{false};
+    bool closing_{false};
     uint32_t rankId_{0};
     uint32_t rankCount_{0};
     uint32_t userDeviceId_{0};
+    uint32_t logicDeviceId_{0};
     uint32_t phyDeviceId_{0};
     uint32_t sdid_{0};
     uint32_t serverId_{0};
@@ -266,8 +273,21 @@ private:
     bool deviceKernelLoaded_{false};
     aclrtBinHandle deviceKernelHandle_{nullptr};
     DeviceFuncHandles deviceFuncHandles_{};
-    // NOTE: pendingBatchBuffers_ is a GLOBAL list shared by all ranks/channels.
-    //   SynchronizeDeviceKernelStream() drains ALL pending batch buffers on success.
+    void *notify_{nullptr};
+    uint32_t notifyId_{0};
+    // notify record address obtained via rtGetDevResAddress (non-ROCE path).
+    // Used as local_flag_addr / flag_size in kernel launch args.
+    // Registered with Hcomm so ReadOnThread can use it as dst buffer.
+    uint64_t notifyAddr_{0};
+    uint64_t notifyLen_{0};
+    HcommMemHandle notifyHcommHandle_{nullptr};
+    // Local flag buffer allocated via AclrtMalloc in OpenDevice, initialised to 1.
+    // Registered with Hcomm for remote peer to use as remote_flag_addr in kernel launch args.
+    // NOT inserted into localRegistrations_ and NOT exported/imported as a regular MR.
+    void *devTransFlagPtr_{nullptr};
+    uint64_t devTransFlagSize_{0};
+    HcommMemHandle devTransFlagHcommHandle_{nullptr};
+    // Separate tracking for batch kernel device buffers (variable-size, not pooled).
     std::mutex pendingBatchMutex_{};
     std::vector<DeviceTransferBuffers> pendingBatchBuffers_{};
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};

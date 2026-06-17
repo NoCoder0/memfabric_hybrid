@@ -15,11 +15,13 @@
 
 #include <mutex>
 #include "hybm_common_include.h"
+#include "dl_rt_def.h"
 
 namespace ock {
 namespace mf {
 using rtStreamGetSqidFunc = int32_t (*)(const void *, uint32_t *);
 using rtStreamGetCqidFunc = int32_t (*)(const void *, uint32_t *, uint32_t *);
+using rtGetDevResAddressFunc = int32_t (*)(rtDevResInfo *, rtDevResAddrInfo *);
 
 class DlRtApi {
 public:
@@ -42,6 +44,14 @@ public:
         return pRtStreamGetCqid(stm, cqId, logicCqId);
     }
 
+    static inline Result RtGetDevResAddress(rtDevResInfo *resInfo, rtDevResAddrInfo *addrInfo)
+    {
+        if (pRtGetDevResAddress == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pRtGetDevResAddress(resInfo, addrInfo);
+    }
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -50,6 +60,7 @@ private:
 
     static rtStreamGetSqidFunc pRtStreamGetSqid;
     static rtStreamGetCqidFunc pRtStreamGetCqid;
+    static rtGetDevResAddressFunc pRtGetDevResAddress;
 };
 } // namespace mf
 } // namespace ock
