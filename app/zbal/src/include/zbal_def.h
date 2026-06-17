@@ -20,7 +20,6 @@
 extern "C" {
 #endif
 
-#define ZBAL_MAX_RANKS      1024
 #define ZBAL_COMM_NAME_MAX  128
 #define ZBAL_MAX_IPPORT_LEN 64
 #define ZBAL_MAX_TENSOR_DIM 12
@@ -68,8 +67,9 @@ typedef enum {
 } zbal_bootstrap_type_t;
 
 typedef enum : uint32_t {
-    ZBAL_DATA_OP_MTE = 0,         /* default, MTE data operations */
-    ZBAL_DATA_OP_DEVICE_SDMA = 1, /* AIV SDMA data operations */
+    ZBAL_DATA_OP_MTE = 0,        /* AIV + MTE (memory-semantic) */
+    ZBAL_DATA_OP_AIV_SDMA = 1,   /* AIV + STARS DMA  */
+    ZBAL_DATA_OP_AICPU_SDMA = 2, /* AICPU + STARS DMA */
 } zbal_data_op_type_t;
 
 typedef struct {

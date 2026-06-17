@@ -45,7 +45,7 @@ SMEM_API smem_shm_t smem_shm_create(uint32_t id, uint32_t rankSize, uint32_t ran
     options.bmType = HYBM_TYPE_AI_CORE_INITIATE;
     options.memType = HYBM_MEM_TYPE_DEVICE;
     options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_MTE);
-    if (dataOpType & SMEMS_DATA_OP_AIV_SDMA) {
+    if (dataOpType & SMEMS_DATA_OP_SDMA) {
         auto temp = static_cast<uint32_t>(options.bmDataOpType) | HYBM_DOP_TYPE_AIV_SDMA;
         options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
     }

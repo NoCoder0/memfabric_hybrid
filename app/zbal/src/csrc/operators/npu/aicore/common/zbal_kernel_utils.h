@@ -144,7 +144,7 @@ inline uint32_t ZBALOpGetAivBlockDim(CommGroupInfo &groupInfo, size_t sendCount,
         }
     }
 
-    if (groupInfo.dataOpType == ZBAL_DATA_OP_DEVICE_SDMA && blockDim > ZBAL_SDMA_AFFECTION_BLOCK) {
+    if (groupInfo.dataOpType == ZBAL_DATA_OP_AIV_SDMA && blockDim > ZBAL_SDMA_AFFECTION_BLOCK) {
         blockDim = ZBAL_SDMA_AFFECTION_BLOCK;
     }
 

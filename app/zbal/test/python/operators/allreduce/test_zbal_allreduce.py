@@ -151,7 +151,7 @@ def test_allreduce(dist_type, case_list, data_op_type):
                             anomaly_indices = torch.where(mask)
                             logger.error(anomaly_indices)
                             logger.error(golden_tensor[anomaly_indices[0]], inout[anomaly_indices[0]])
-                        logger.error(f"[ERROR] rank {global_rank}, case {i} reducescatter result not correct\n")
+                        logger.error(f"[ERROR] rank {global_rank}, case {i} allreduce result not correct\n")
                         raise Exception(f"procesion error case:{data_len}")
 
             if enable_profiling:

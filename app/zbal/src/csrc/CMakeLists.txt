@@ -51,7 +51,7 @@ if (BUILD_ZBAL_MODULE_UT)
     include_directories(${ZBAL_BASE_DIR}/test/ut/mock)
     message(STATUS "app/zbal: [ut] skipping device kernel compilation, using stub zbal_kernel")
 else ()
-    add_subdirectory(operators/npu/device/)
+    add_subdirectory(operators/npu/)
 endif ()
 
 # we seperated those files for ut with different modules

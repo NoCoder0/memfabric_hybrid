@@ -23,6 +23,7 @@
 #define ZBAL_PROFILING_DEVICE_TRACE_OFF 16
 #define ZBAL_PROFILING_FRAME_SHIFT      56
 #define ZBAL_PROFILING_BE_SHIFT         62
+#define ZBAL_MAX_RANKS                  1024
 
 enum zbal_profiling_name_t : uint16_t {
     ZBAL_PROF_UNKNOWN = 0,
@@ -108,8 +109,8 @@ const std::vector<std::pair<std::string, bool>> g_profName = {
     {"GA_COPY", true},
     {"GA_PREPARE_PTR", false},
 
-    {"SEND_KERNEL_ALL",           false},
-    {"RECV_KERNEL_ALL",           false},
+    {"SEND_KERNEL_ALL", false},
+    {"RECV_KERNEL_ALL", false},
 
     {"EXCHANGE_ADDR", true},
     {"WAIT_FLAG", true},
@@ -147,6 +148,99 @@ struct CommGroupInfo {
     uint64_t tracePointPerCore;                            /* tracing points per core */
     uint16_t groupIndex;                                   /* index of this group, start from 0 */
     uint32_t dataOpType;                                   /* data operation type, see zbal_data_op_type_t */
+};
+
+/* Data type values — shared between host and device, matches zbal_datatype_t in zbal_def.h */
+constexpr uint32_t ZBAL_DTYPE_INT8 = 0;
+constexpr uint32_t ZBAL_DTYPE_INT16 = 1;
+constexpr uint32_t ZBAL_DTYPE_INT32 = 2;
+constexpr uint32_t ZBAL_DTYPE_INT64 = 3;
+constexpr uint32_t ZBAL_DTYPE_UINT64 = 4;
+constexpr uint32_t ZBAL_DTYPE_FP64 = 5;
+constexpr uint32_t ZBAL_DTYPE_FP16 = 6;
+constexpr uint32_t ZBAL_DTYPE_FP32 = 7;
+constexpr uint32_t ZBAL_DTYPE_BFP16 = 8;
+constexpr uint32_t ZBAL_DTYPE_UINT8 = 9;
+constexpr uint32_t ZBAL_DTYPE_UINT16 = 10;
+constexpr uint32_t ZBAL_DTYPE_UINT32 = 11;
+
+/* Unified data type size function (host + device shared) */
+inline uint32_t ZBALDataTypeSize(uint32_t dataType)
+{
+    switch (dataType) {
+        case ZBAL_DTYPE_INT8:
+        case ZBAL_DTYPE_UINT8:
+            return 1; /* 1 byte */
+        case ZBAL_DTYPE_INT16:
+        case ZBAL_DTYPE_UINT16:
+        case ZBAL_DTYPE_FP16:
+        case ZBAL_DTYPE_BFP16:
+            return 2; /* 2 bytes */
+        case ZBAL_DTYPE_INT32:
+        case ZBAL_DTYPE_UINT32:
+        case ZBAL_DTYPE_FP32:
+            return 4; /* 4 bytes */
+        case ZBAL_DTYPE_INT64:
+        case ZBAL_DTYPE_UINT64:
+        case ZBAL_DTYPE_FP64:
+            return 8; /* 8 bytes */
+        default:
+            return 1; /* fallback: 1 byte */
+    }
+}
+
+/* ================================================================
+ * AICPU workspace layout constants and shared structs (host + device)
+ * ================================================================ */
+constexpr uint32_t ZBAL_AICPU_INIT_CTX_OFFSET = 4096;
+constexpr uint32_t ZBAL_AICPU_DEBUG_BUF_OFFSET = 4352;
+constexpr uint32_t ZBAL_AICPU_DEBUG_BUF_SIZE = 4096;
+
+constexpr uint32_t ZBAL_AICPU_NUM_CORES = 4;
+constexpr uint32_t ZBAL_AICPU_CH_PER_CORE = 4;
+constexpr uint32_t ZBAL_AICPU_CORE_DATA_OFFSET = 9216;
+constexpr uint32_t ZBAL_AICPU_SQE_SIZE = 64;
+constexpr uint32_t ZBAL_AICPU_MAX_SQE_PER_CORE = 256;
+constexpr uint32_t ZBAL_AICPU_CORE_RING_BUF_SIZE =
+    ZBAL_AICPU_SQE_SIZE * ZBAL_AICPU_MAX_SQE_PER_CORE * ZBAL_AICPU_CH_PER_CORE;
+constexpr uint32_t ZBAL_AICPU_TOTAL_RING_BUF_SIZE = ZBAL_AICPU_CORE_RING_BUF_SIZE * ZBAL_AICPU_NUM_CORES;
+constexpr uint32_t ZBAL_AICPU_WORKSPACE_TOTAL_SIZE = ZBAL_AICPU_CORE_DATA_OFFSET + ZBAL_AICPU_TOTAL_RING_BUF_SIZE;
+
+/* AICPU comm type — shared between host and device */
+enum AicpuCommType : uint32_t {
+    ZBAL_CMD_INIT = 0,
+    ZBAL_CMD_ALLGATHER = 1,
+    ZBAL_CMD_SCATTER = 2,
+    ZBAL_CMD_REDUCE_SCATTER = 3,
+    ZBAL_CMD_BROADCAST = 4,
+    ZBAL_CMD_ALLREDUCE = 5,
+    ZBAL_CMD_ALLTOALLV = 6,
+    ZBAL_CMD_SEND = 7,
+    ZBAL_CMD_RECV = 8,
+    ZBAL_CMD_FINALIZE = 0xFF
+};
+
+/* Kernel param — passed via aclrtKernelArgsAppend, ACL runtime handles H2D automatically. */
+struct AicpuWorkDesc {
+    uint64_t sdmaWorkspaceGva; /* SDMA workspace GVA */
+    uint32_t commType;         /* ZBAL_CMD_ALLGATHER / SCATTER / ... */
+    uint32_t commAlg;          /* algorithm hint from host (0 = auto-select on device) */
+    uint64_t sendBuffer;       /* send buffer GVA */
+    uint64_t recvBuffer;       /* recv buffer GVA */
+    uint64_t buffer;           /* scratch buffer GVA (AllReduce temp workspace) */
+    uint64_t count;            /* data byte count */
+    uint32_t dataType;         /* zbal_datatype_t enum */
+    uint32_t root;             /* root rank (scatter/broadcast) / peer (send/recv) */
+    uint32_t reduceOp;         /* zbal_reduce_op_t (PROD=0, SUM=1, MAX=2, MIN=3) — maps to SDMA opCode */
+    uint64_t waitSymbol;       /* incrementing barrier flag — avoids cross-call stale-flag races */
+    uint64_t reserved[4];      /* per-op extension: AlltoAllV uses [0]=sendCumSum, [1]=recvSplitCounts, [2]=elements */
+};
+
+struct AicpuInitContext {
+    uint32_t rankId;
+    uint32_t rankNum;
+    uint64_t localDeviceMemSize;
+    uint64_t exchangeGva;
 };
 
 #endif // ZBAL_COMM_STRUCT_H

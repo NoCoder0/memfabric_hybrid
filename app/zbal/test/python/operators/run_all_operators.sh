@@ -15,7 +15,7 @@ Usage: bash run_all_operators.sh <world_sizes> <mode> [data_op_type] [mock]
 Arguments:
   world_sizes   Comma-separated rank sizes, e.g. "4,8,16" (default: 4)
   mode          Test mode: smoke | precision | perf (default: smoke)
-  data_op_type  Data operation type: 0=MTE, 1=SDMA (default: 0)
+  data_op_type  Data operation type: 0=MTE, 1=AIV_SDMA, 2=AICPU_SDMA (default: 0)
   mock          Set to "mock" for fast dry-run without NPU hardware (default: disabled)
 
 Examples:
@@ -32,8 +32,8 @@ RUN_MODE=${2:-smoke}
 DATA_OP_TYPE=${3:-0}
 MOCK=${4:-0}
 
-if [ "$DATA_OP_TYPE" != "0" ] && [ "$DATA_OP_TYPE" != "1" ]; then
-    echo "DATA_OP_TYPE must be 0 (MTE) or 1 (SDMA), got: $DATA_OP_TYPE"
+if [ "$DATA_OP_TYPE" != "0" ] && [ "$DATA_OP_TYPE" != "1" ] && [ "$DATA_OP_TYPE" != "2" ]; then
+    echo "DATA_OP_TYPE must be 0 (MTE) or 1 (AIV_SDMA) or 2 (AICPU_SDMA), got: $DATA_OP_TYPE"
     exit 1
 fi
 

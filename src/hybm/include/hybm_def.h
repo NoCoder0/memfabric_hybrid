@@ -60,6 +60,7 @@ typedef void *hybm_mem_slice_t;
 typedef enum {
     HYBM_TYPE_AI_CORE_INITIATE = 0, // AI core
     HYBM_TYPE_HOST_INITIATE,        // Host
+    HYBM_TYPE_AICPU_INITIATE,       // AICPU
     HYBM_TYPE_BUTT
 } hybm_type;
 

@@ -55,6 +55,8 @@ inline std::ostream &operator<<(std::ostream &os, hybm_type obj)
             return os << "AI_CORE_INITIATE";
         case HYBM_TYPE_HOST_INITIATE:
             return os << "HOST_INITIATE";
+        case HYBM_TYPE_AICPU_INITIATE:
+            return os << "AICPU_INITIATE";
         case HYBM_TYPE_BUTT:
             return os << "BUTT";
         default:

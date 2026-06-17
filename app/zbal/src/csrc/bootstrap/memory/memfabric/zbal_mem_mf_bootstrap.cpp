@@ -121,8 +121,11 @@ ZResult MemFabricBoostrap::CreateSHMSpace() noexcept
         case ZBAL_DATA_OP_MTE:
             shmDataOpType = SMEMS_DATA_OP_MTE;
             break;
-        case ZBAL_DATA_OP_DEVICE_SDMA:
-            shmDataOpType = SMEMS_DATA_OP_AIV_SDMA;
+        case ZBAL_DATA_OP_AIV_SDMA:
+            shmDataOpType = SMEMS_DATA_OP_SDMA;
+            break;
+        case ZBAL_DATA_OP_AICPU_SDMA:
+            shmDataOpType = SMEMS_DATA_OP_SDMA;
             break;
         default:
             ZBAL_LOG_AND_SET_LAST_ERROR("Unsupported data operation type: " << dataOpType);

@@ -11,9 +11,10 @@
  */
 #include "zbal_communicator.h"
 #include "zbal_comm_group_meta.h"
-#include "zbal_npu_communicator_default.h"
+#include "zbal_npu_communicator_aiv.h"
 #include "zbal_communicator_dummy.h"
 #include "zbal_comm_group_id.h"
+#include "zbal_npu_communicator_aicpu.h"
 
 namespace zbal {
 namespace operators {
@@ -200,7 +201,11 @@ CommunicatorPtr Communicator::CreateInner(zbal_backend_t backendType, const Comm
 
     switch (backendType) {
         case ZBAL_ASCEND_NPU: {
-            comm = ZMakeRef<NpuCommunicatorDefault>(options, isWorldGroup, gWorldCommunicator).Get();
+            if (options.dataOpType == ZBAL_DATA_OP_AICPU_SDMA) {
+                comm = ZMakeRef<NpuCommunicatorAICPU>(options, isWorldGroup, gWorldCommunicator).Get();
+            } else {
+                comm = ZMakeRef<NpuCommunicatorAIV>(options, isWorldGroup, gWorldCommunicator).Get();
+            }
             break;
         }
         case ZBAL_BACK_BUTT:

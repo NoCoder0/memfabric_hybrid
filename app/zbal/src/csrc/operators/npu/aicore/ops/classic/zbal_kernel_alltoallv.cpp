@@ -455,7 +455,7 @@ int32_t ZBALOpAlltoAllV(const void *sendBuff, void *recvBuff, void *sendCumSum, 
                         zbal_datatype_t dataType, aclrtStream stream, CommGroupInfo &groupInfo)
 {
     static uint32_t blockDim = 0;
-    if (groupInfo.dataOpType == ZBAL_DATA_OP_DEVICE_SDMA) {
+    if (groupInfo.dataOpType == ZBAL_DATA_OP_AIV_SDMA) {
         blockDim = ZBAL_SDMA_AFFECTION_BLOCK;
     } else if (blockDim == 0) {
         auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);

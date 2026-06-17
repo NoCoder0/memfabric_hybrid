@@ -41,6 +41,13 @@ aclrtSynchronizeEventFunc DlCannApi::pAclrtSynchronizeEvent = nullptr;
 aclrtReserveMemAddressFunc DlCannApi::pAclrtReserveMemAddress = nullptr;
 aclrtReleaseMemAddressFunc DlCannApi::pAclrtReleaseMemAddress = nullptr;
 
+aclrtCreateStreamWithConfigFunc DlCannApi::pAclrtCreateStreamWithConfig = nullptr;
+aclrtDestroyStreamFunc DlCannApi::pAclrtDestroyStream = nullptr;
+aclrtBinaryLoadFromFileFunc DlCannApi::pAclrtBinaryLoadFromFile = nullptr;
+aclrtBinaryGetFunctionFunc DlCannApi::pAclrtBinaryGetFunction = nullptr;
+aclrtBinaryUnLoadFunc DlCannApi::pAclrtBinaryUnLoad = nullptr;
+aclrtLaunchKernelWithHostArgsFunc DlCannApi::pAclrtLaunchKernelWithHostArgs = nullptr;
+
 ZResult DlCannApi::LoadLibrary(const std::string &libDirPath)
 {
     std::lock_guard<std::mutex> guard(gMutex);
@@ -83,6 +90,16 @@ ZResult DlCannApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtReserveMemAddress, aclrtReserveMemAddressFunc, gAclHandle, "aclrtReserveMemAddress");
     DL_LOAD_SYM(pAclrtReleaseMemAddress, aclrtReleaseMemAddressFunc, gAclHandle, "aclrtReleaseMemAddress");
 
+    /* Kernel launch */
+    DL_LOAD_SYM(pAclrtCreateStreamWithConfig, aclrtCreateStreamWithConfigFunc, gAclHandle,
+                "aclrtCreateStreamWithConfig");
+    DL_LOAD_SYM(pAclrtDestroyStream, aclrtDestroyStreamFunc, gAclHandle, "aclrtDestroyStream");
+    DL_LOAD_SYM(pAclrtBinaryLoadFromFile, aclrtBinaryLoadFromFileFunc, gAclHandle, "aclrtBinaryLoadFromFile");
+    DL_LOAD_SYM(pAclrtBinaryGetFunction, aclrtBinaryGetFunctionFunc, gAclHandle, "aclrtBinaryGetFunction");
+    DL_LOAD_SYM(pAclrtBinaryUnLoad, aclrtBinaryUnLoadFunc, gAclHandle, "aclrtBinaryUnLoad");
+    pAclrtLaunchKernelWithHostArgs =
+        reinterpret_cast<aclrtLaunchKernelWithHostArgsFunc>(dlsym(gAclHandle, "aclrtLaunchKernelWithHostArgs"));
+
     gLoaded = true;
 
     return Z_OK;
@@ -115,6 +132,12 @@ void DlCannApi::CleanupLibrary()
     pAclrtSynchronizeEvent = nullptr;
     pAclrtReserveMemAddress = nullptr;
     pAclrtReleaseMemAddress = nullptr;
+    pAclrtCreateStreamWithConfig = nullptr;
+    pAclrtDestroyStream = nullptr;
+    pAclrtBinaryLoadFromFile = nullptr;
+    pAclrtBinaryGetFunction = nullptr;
+    pAclrtBinaryUnLoad = nullptr;
+    pAclrtLaunchKernelWithHostArgs = nullptr;
 
     if (gAclHandle != nullptr) {
         dlclose(gAclHandle);

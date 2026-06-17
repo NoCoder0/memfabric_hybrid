@@ -14,10 +14,9 @@ See the Mulan PSL v2 for more details.
 #define ZBAL_KERNEL_DATA_OP_H
 
 #include "kernel_operator.h"
+#include "zbal_smem_meta.h"
 
 #define ZBAL_STARS_NOTIFY_ADDR_OFFSET (14 * 1024) // notify_addr offset (14KB)
-#define ZBAL_SDMA_FLAG_LENGTH         64
-#define ZBAL_MAX_AIV_PER_NPU          48
 constexpr uint32_t UB_ALIGN_SIZE_64 = 64;
 constexpr uint64_t ZBAL_DATA_CACHE_LINE_SIZE = 64;
 
@@ -340,11 +339,11 @@ ZBAL_KERNEL void zbal_sdma_post_send(__gm__ uint8_t *recv_buffer, __gm__ uint8_t
     // 1. Initialize per-core parameters, including channel count, etc.
     sdma_config_t config;
     config.queue_num = 1;
-    config.block_bytes = 8 * 1024 * 1024;   // Set to 8M for now, maybe change it later
+    config.block_bytes = 8 * 1024 * 1024; // Set to 8M for now, maybe change it later
     config.per_core_bytes = message_len;
     config.iter_num = (config.per_core_bytes + config.block_bytes - 1) / config.block_bytes;
 
-    if (config.iter_num == 0 || cur_block_idx >= (ZBAL_MAX_AIV_PER_NPU / config.queue_num)) {
+    if (config.iter_num == 0 || cur_block_idx >= (ZBAL_SDMA_MAX_CHANNELS / config.queue_num)) {
         AscendC::PipeBarrier<PIPE_ALL>();
         return;
     }
@@ -354,20 +353,20 @@ ZBAL_KERNEL void zbal_sdma_post_send(__gm__ uint8_t *recv_buffer, __gm__ uint8_t
     __gm__ stars_channel_info_t *batch_write_channel_info = batch_write_channel_base + cur_block_idx * config.queue_num;
 
     // 3. Calculate base addresses of send and receive flags
-    __gm__ uint8_t *workspace = channel_base + ZBAL_MAX_AIV_PER_NPU * sizeof(stars_channel_info_t);
+    __gm__ uint8_t *workspace = channel_base + ZBAL_SDMA_MAX_CHANNELS * sizeof(stars_channel_info_t);
     workspace_layout_t workspace_layout;
-    uint64_t per_core_workspace_size = config.queue_num * ZBAL_SDMA_FLAG_LENGTH;
-    __gm__ uint8_t *my_workspace = workspace + ZBAL_SDMA_FLAG_LENGTH + (cur_block_idx * per_core_workspace_size);
+    uint64_t per_core_workspace_size = config.queue_num * ZBAL_SDMA_CHANNEL_FLAG_SIZE;
+    __gm__ uint8_t *my_workspace = workspace + ZBAL_SDMA_CHANNEL_FLAG_SIZE + (cur_block_idx * per_core_workspace_size);
 
     workspace_layout.send_workspace = workspace;
     workspace_layout.recv_workspace = my_workspace;
-    workspace_layout.remote_recv_workspace = my_workspace + ZBAL_MAX_AIV_PER_NPU * ZBAL_SDMA_FLAG_LENGTH;
+    workspace_layout.remote_recv_workspace = my_workspace + ZBAL_SDMA_MAX_CHANNELS * ZBAL_SDMA_CHANNEL_FLAG_SIZE;
 
     // Set the send workspace address, notify remote peer to start sending data
     zbal_set_value<uint32_t>((__gm__ uint8_t *)workspace_layout.send_workspace, config.queue_num, tmp_local, sync_id);
 
     // 4. Initialize the sq_tail array
-    uint32_t sq_tail[ZBAL_MAX_AIV_PER_NPU] = {0};
+    uint32_t sq_tail[ZBAL_SDMA_MAX_CHANNELS] = {0};
     for (uint32_t queue_id = 0U; queue_id < config.queue_num; ++queue_id) {
         __gm__ stars_channel_info_t *channel_info = batch_write_channel_info + queue_id;
         // Load sq_tail field at 4-byte offset
@@ -439,7 +438,7 @@ ZBAL_KERNEL void zbal_sdma_submit_flag_sqes(__gm__ stars_channel_info_t *batch_w
 
         zbal_fill_sdma_sqe(channel_info, layout.send_workspace, // send flag buffer of current core
                            layout.remote_recv_workspace +
-                               queue_id * ZBAL_SDMA_FLAG_LENGTH, // write flag location for this channel
+                               queue_id * ZBAL_SDMA_CHANNEL_FLAG_SIZE, // write flag location for this channel
                            flag_size, sq_tail, sq_tail - channel_info->sq_head, 0);
 
         sq_tail = (sq_tail + 1) % (channel_info->sq_depth);
@@ -482,8 +481,8 @@ ZBAL_KERNEL void zbal_sdma_poll_for_completion(const workspace_layout_t &layout,
     uint32_t queue_num = 1;
     const uint32_t max_times = 1000000;
     for (uint8_t queue_id = 0; queue_id < queue_num; queue_id++) {
-        auto local_recv_workspace = layout.recv_workspace + queue_id * ZBAL_SDMA_FLAG_LENGTH;
-        auto remote_recv_workspace = layout.remote_recv_workspace + queue_id * ZBAL_SDMA_FLAG_LENGTH;
+        auto local_recv_workspace = layout.recv_workspace + queue_id * ZBAL_SDMA_CHANNEL_FLAG_SIZE;
+        auto remote_recv_workspace = layout.remote_recv_workspace + queue_id * ZBAL_SDMA_CHANNEL_FLAG_SIZE;
 
         uint32_t send_value = 0;
         uint32_t times = 0;
@@ -516,9 +515,9 @@ ZBAL_KERNEL void zbal_sdma_quiet(AscendC::LocalTensor<T> &buf, uint32_t sync_id)
         (__gm__ stars_channel_info_t *)(channel_base) + cur_block_idx * queue_num;
 
     workspace_layout_t layout;
-    layout.send_workspace = channel_base + ZBAL_MAX_AIV_PER_NPU * sizeof(stars_channel_info_t);
-    layout.recv_workspace = layout.send_workspace + ZBAL_SDMA_FLAG_LENGTH * (cur_block_idx * queue_num + 1);
-    layout.remote_recv_workspace = layout.recv_workspace + ZBAL_MAX_AIV_PER_NPU * ZBAL_SDMA_FLAG_LENGTH;
+    layout.send_workspace = channel_base + ZBAL_SDMA_MAX_CHANNELS * sizeof(stars_channel_info_t);
+    layout.recv_workspace = layout.send_workspace + ZBAL_SDMA_CHANNEL_FLAG_SIZE * (cur_block_idx * queue_num + 1);
+    layout.remote_recv_workspace = layout.recv_workspace + ZBAL_SDMA_MAX_CHANNELS * ZBAL_SDMA_CHANNEL_FLAG_SIZE;
 
     zbal_sdma_submit_flag_sqes(batch_write_channel_info, layout, ub_tensor, sync_id);
     zbal_sdma_poll_for_completion(layout, ub_tensor, sync_id);
@@ -539,9 +538,9 @@ ZBAL_KERNEL void zbal_sdma_quiet(__ubuf__ T *buf, uint32_t ub_size, uint32_t syn
         (__gm__ stars_channel_info_t *)(channel_base) + cur_block_idx * queue_num;
 
     workspace_layout_t layout;
-    layout.send_workspace = channel_base + ZBAL_MAX_AIV_PER_NPU * sizeof(stars_channel_info_t);
-    layout.recv_workspace = layout.send_workspace + ZBAL_SDMA_FLAG_LENGTH * (cur_block_idx * queue_num + 1);
-    layout.remote_recv_workspace = layout.recv_workspace + ZBAL_MAX_AIV_PER_NPU * ZBAL_SDMA_FLAG_LENGTH;
+    layout.send_workspace = channel_base + ZBAL_SDMA_MAX_CHANNELS * sizeof(stars_channel_info_t);
+    layout.recv_workspace = layout.send_workspace + ZBAL_SDMA_CHANNEL_FLAG_SIZE * (cur_block_idx * queue_num + 1);
+    layout.remote_recv_workspace = layout.recv_workspace + ZBAL_SDMA_MAX_CHANNELS * ZBAL_SDMA_CHANNEL_FLAG_SIZE;
 
     zbal_sdma_submit_flag_sqes(batch_write_channel_info, layout, ub_tensor, sync_id);
     zbal_sdma_poll_for_completion(layout, ub_tensor, sync_id);

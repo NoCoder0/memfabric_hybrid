@@ -140,7 +140,7 @@ protected:
     ZBAL_KERNEL void CpGM2GM(AscendC::GlobalTensor<T> inputTensor, AscendC::GlobalTensor<T> outputTensor,
                              uint32_t elemNum, bool atomic = false, uint32_t atomicOp = 0)
     {
-        if (dataOpType == ZBAL_DATA_OP_DEVICE_SDMA) {
+        if (dataOpType == ZBAL_DATA_OP_AIV_SDMA) {
             CpGM2GMSDMA(inputTensor, outputTensor, elemNum, atomic, atomicOp);
         } else {
             CpGM2GMMTE(inputTensor, outputTensor, elemNum, atomic, atomicOp);

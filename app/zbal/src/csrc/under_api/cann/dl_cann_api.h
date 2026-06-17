@@ -38,6 +38,15 @@ using aclrtSynchronizeEventFunc = int (*)(void *);
 using aclrtReserveMemAddressFunc = int (*)(void **, size_t, size_t, void *, uint64_t);
 using aclrtReleaseMemAddressFunc = int (*)(void *);
 
+/* Kernel launch */
+using aclrtCreateStreamWithConfigFunc = int32_t (*)(void **, int32_t, uint32_t);
+using aclrtDestroyStreamFunc = int32_t (*)(void *);
+using aclrtBinaryLoadFromFileFunc = int32_t (*)(const char *, aclrtBinaryLoadOptions *, aclrtBinHandle *);
+using aclrtBinaryGetFunctionFunc = int32_t (*)(const aclrtBinHandle, const char *, aclrtFuncHandle *);
+using aclrtBinaryUnLoadFunc = int32_t (*)(aclrtBinHandle);
+using aclrtLaunchKernelWithHostArgsFunc = int32_t (*)(aclrtFuncHandle, uint32_t, void *, aclrtLaunchKernelCfg *, void *,
+                                                      uint64_t, void *, uint64_t);
+
 class DlCannApi {
 public:
     static ZResult LoadLibrary(const std::string &libDirPath);
@@ -68,6 +77,23 @@ public:
                                           uint64_t flags);
     static ZResult AclrtReleaseMemAddress(void *virPtr);
 
+    /* Kernel launch */
+    static ZResult AclrtCreateStreamWithConfig(void **stream, int32_t priority, uint32_t flag);
+    static ZResult AclrtDestroyStream(void *stream);
+    static ZResult AclrtBinaryLoadFromFile(const char *binPath, aclrtBinaryLoadOptions *options,
+                                           aclrtBinHandle *binHandle);
+    static ZResult AclrtBinaryGetFunction(aclrtBinHandle binHandle, const char *kernelName,
+                                          aclrtFuncHandle *funcHandle);
+    static ZResult AclrtBinaryUnLoad(aclrtBinHandle binHandle);
+    static ZResult AclrtKernelArgsInit(aclrtFuncHandle funcHandle, aclrtArgsHandle *argsHandle);
+    static ZResult AclrtKernelArgsAppend(aclrtArgsHandle argsHandle, void *param, size_t paramSize,
+                                         aclrtParamHandle *paramHandle);
+    static ZResult AclrtKernelArgsFinalize(aclrtArgsHandle argsHandle);
+    static ZResult AclrtLaunchKernelWithConfig(aclrtFuncHandle funcHandle, uint32_t blockDim, void *stream,
+                                               aclrtLaunchKernelCfg *cfg, aclrtArgsHandle argsHandle, void *reserved);
+    static ZResult AclrtLaunchKernelWithHostArgs(aclrtFuncHandle funcHandle, uint32_t blockDim, void *stream,
+                                                 aclrtLaunchKernelCfg *cfg, void *hostArgs, uint64_t hostArgsSize);
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -94,6 +120,14 @@ private:
     static aclrtSynchronizeEventFunc pAclrtSynchronizeEvent;
     static aclrtReserveMemAddressFunc pAclrtReserveMemAddress;
     static aclrtReleaseMemAddressFunc pAclrtReleaseMemAddress;
+
+    /* Kernel launch pointers */
+    static aclrtCreateStreamWithConfigFunc pAclrtCreateStreamWithConfig;
+    static aclrtDestroyStreamFunc pAclrtDestroyStream;
+    static aclrtBinaryLoadFromFileFunc pAclrtBinaryLoadFromFile;
+    static aclrtBinaryGetFunctionFunc pAclrtBinaryGetFunction;
+    static aclrtBinaryUnLoadFunc pAclrtBinaryUnLoad;
+    static aclrtLaunchKernelWithHostArgsFunc pAclrtLaunchKernelWithHostArgs;
 };
 
 inline const char *DlCannApi::AclrtGetSocName()
@@ -272,8 +306,56 @@ inline ZResult DlCannApi::AclrtHostUnRegister(void *hostPtr)
     if (UNLIKELY(pAclrtHostUnregister == nullptr)) {
         return Z_DL_FUNCTION_UNLOAD;
     }
-
     return pAclrtHostUnregister(hostPtr);
+}
+
+inline ZResult DlCannApi::AclrtCreateStreamWithConfig(void **stream, int32_t priority, uint32_t flag)
+{
+    if (UNLIKELY(pAclrtCreateStreamWithConfig == nullptr))
+        return Z_DL_FUNCTION_UNLOAD;
+    return pAclrtCreateStreamWithConfig(stream, priority, flag);
+}
+
+inline ZResult DlCannApi::AclrtDestroyStream(void *stream)
+{
+    if (UNLIKELY(pAclrtDestroyStream == nullptr))
+        return Z_DL_FUNCTION_UNLOAD;
+    return pAclrtDestroyStream(stream);
+}
+
+inline ZResult DlCannApi::AclrtBinaryLoadFromFile(const char *binPath, aclrtBinaryLoadOptions *options,
+                                                  aclrtBinHandle *binHandle)
+{
+    if (pAclrtBinaryLoadFromFile == nullptr) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtBinaryLoadFromFile(binPath, options, binHandle);
+}
+
+inline ZResult DlCannApi::AclrtBinaryGetFunction(aclrtBinHandle binHandle, const char *kernelName,
+                                                 aclrtFuncHandle *funcHandle)
+{
+    if (pAclrtBinaryGetFunction == nullptr) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtBinaryGetFunction(binHandle, kernelName, funcHandle);
+}
+
+inline ZResult DlCannApi::AclrtBinaryUnLoad(aclrtBinHandle binHandle)
+{
+    if (UNLIKELY(pAclrtBinaryUnLoad == nullptr))
+        return Z_DL_FUNCTION_UNLOAD;
+    return pAclrtBinaryUnLoad(binHandle);
+}
+
+inline ZResult DlCannApi::AclrtLaunchKernelWithHostArgs(aclrtFuncHandle funcHandle, uint32_t blockDim, void *stream,
+                                                        aclrtLaunchKernelCfg *cfg, void *hostArgs,
+                                                        uint64_t hostArgsSize)
+{
+    if (pAclrtLaunchKernelWithHostArgs == nullptr) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtLaunchKernelWithHostArgs(funcHandle, blockDim, stream, cfg, hostArgs, hostArgsSize, nullptr, 0);
 }
 } // namespace underapi
 } // namespace zbal

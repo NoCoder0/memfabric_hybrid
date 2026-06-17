@@ -38,30 +38,10 @@ public:
 
     void SignalDumpTrace() noexcept override;
 
-    int32_t AllReduce(const void *send_buff, void *recv_buff, void *buffer, size_t count, zbal_datatype_t data_type,
-                      zbal_reduce_op_t op, aclrtStream stream) noexcept override;
-
-    int32_t ReduceScatter(const void *send_buff, void *recv_buff, size_t recv_count, zbal_datatype_t data_type,
-                          zbal_reduce_op_t op, aclrtStream stream) noexcept override;
-
-    int32_t AllGather(const void *send_buff, void *recv_buff, size_t send_count, zbal_datatype_t data_type,
-                      aclrtStream stream) noexcept override;
-
     int32_t Gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType, uint16_t root,
                    aclrtStream stream) noexcept override;
 
-    int32_t AlltoAllV(const void *sendBuff, void *recvBuff, void *sendCumSum, void *recvSplitCounts, void *elements,
-                      zbal_datatype_t dataType, aclrtStream stream) noexcept;
-
-    int32_t Broadcast(const void *buf, uint64_t data_count, zbal_datatype_t dataType, uint16_t root,
-                      aclrtStream stream) noexcept;
-
-    int32_t Barrier(aclrtStream stream) noexcept;
-
-    int32_t Send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer, aclrtStream stream) noexcept override;
-
-    int32_t Recv(const void *recvBuff, size_t recvCount, zbal_datatype_t dataType, uint32_t peer,
-                 aclrtStream stream) noexcept override;
+    int32_t Barrier(aclrtStream stream) noexcept override;
 
     int32_t DispatchNormalNotify(const zbal_tensor_info_t *sendTokensPerExpert, int64_t sendCount, int64_t topKNum,
                                  const zbal_tensor_info_t *recvBuff, const zbal_tensor_info_t *totalRecvTokens,

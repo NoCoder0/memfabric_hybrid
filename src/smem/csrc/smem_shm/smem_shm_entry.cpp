@@ -314,7 +314,7 @@ Result SmemShmEntry::GetReachInfo(uint32_t remoteRank, uint32_t &reachInfo) cons
     }
 
     if (reachesTypes & HYBM_DOP_TYPE_AIV_SDMA) {
-        reachInfo |= SMEMS_DATA_OP_AIV_SDMA;
+        reachInfo |= SMEMS_DATA_OP_SDMA;
     }
 
     if (reachesTypes & HYBM_DOP_TYPE_DEVICE_RDMA) {
