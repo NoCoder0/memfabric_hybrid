@@ -363,7 +363,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         {gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST}, options_.rankId);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
-        if (options_.dataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
+        if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
             DlHalApi::HalHostUnregisterEx(mapped, logicDeviceId_, HOST_MEM_MAP_DEV);
         }
         FreeAllocatedMemory(mapped, size, allocMethod);

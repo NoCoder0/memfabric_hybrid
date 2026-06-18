@@ -890,18 +890,18 @@ Result DataOpDeviceURMA::SafePut(const void *srcVA, void *destVA, uint64_t lengt
     while (remainingLength > 0) {
         uint64_t currentChunkSize = std::min(remainingLength, URMA_SWAP_SPACE_SIZE);
         auto tmpRdmaMemory = urmaSwapMemoryAllocator_->Allocate(currentChunkSize);
-        auto tmpHost = tmpRdmaMemory.Address();
-        BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "Failed to malloc temp buffer", BM_MALLOC_FAILED);
+        auto tmpSwap = tmpRdmaMemory.Address();
+        BM_ASSERT_LOG_AND_RETURN(tmpSwap != nullptr, "Failed to malloc temp buffer", BM_MALLOC_FAILED);
         const void *currentSrc = reinterpret_cast<const void *>(srcBase + offset);
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
         if (srcIsHost) {
-            ret = CopyLH2LH(currentSrc, tmpHost, currentChunkSize, options);
+            ret = CopyLH2LD(currentSrc, tmpSwap, currentChunkSize, options);
         } else {
-            ret = CopyLD2LH(currentSrc, tmpHost, currentChunkSize, options);
+            ret = CopyLD2LD(currentSrc, tmpSwap, currentChunkSize, options);
         }
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy src to tmp", ret);
-        ret = CopyURMA(tmpHost, currentDest, currentChunkSize, options);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy tmp to dest", ret);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy src to swap", ret);
+        ret = CopyURMA(tmpSwap, currentDest, currentChunkSize, options);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy swap to dest", ret);
         offset += currentChunkSize;
         remainingLength -= currentChunkSize;
     }
@@ -924,18 +924,18 @@ Result DataOpDeviceURMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
     while (remainingLength > 0) {
         uint64_t currentChunkSize = std::min(remainingLength, URMA_SWAP_SPACE_SIZE);
         auto tmpRdmaMemory = urmaSwapMemoryAllocator_->Allocate(currentChunkSize);
-        auto tmpHost = tmpRdmaMemory.Address();
-        BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "[CopyGD2LH] Failed to malloc temp buffer", BM_MALLOC_FAILED);
+        auto tmpSwap = tmpRdmaMemory.Address();
+        BM_ASSERT_LOG_AND_RETURN(tmpSwap != nullptr, "[CopyGD2LH] Failed to malloc temp buffer", BM_MALLOC_FAILED);
         const void *currentSrc = reinterpret_cast<const void *>(srcBase + offset);
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
-        ret = CopyURMA(currentSrc, tmpHost, currentChunkSize, options);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy src to tmp", ret);
+        ret = CopyURMA(currentSrc, tmpSwap, currentChunkSize, options);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy src to swap", ret);
         if (destIsHost) {
-            ret = CopyLH2LH(tmpHost, currentDest, currentChunkSize, options);
+            ret = CopyLD2LH(tmpSwap, currentDest, currentChunkSize, options);
         } else {
-            ret = CopyLH2LD(tmpHost, currentDest, currentChunkSize, options);
+            ret = CopyLD2LD(tmpSwap, currentDest, currentChunkSize, options);
         }
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy tmp to dest", ret);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy swap to dest", ret);
         offset += currentChunkSize;
         remainingLength -= currentChunkSize;
     }

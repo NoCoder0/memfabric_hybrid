@@ -599,18 +599,13 @@ aclrtFuncHandle DeviceUrmaTransportManager::GetDeviceKernelFunc(bool isRead) con
 
 void DeviceUrmaTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers)
 {
+    // Only dstList is the allocation base; srcList and lenList are internal offsets.
     if (buffers.dstList != nullptr) {
         (void)DlAclApi::AclrtFree(buffers.dstList);
-        buffers.dstList = nullptr;
     }
-    if (buffers.srcList != nullptr) {
-        (void)DlAclApi::AclrtFree(buffers.srcList);
-        buffers.srcList = nullptr;
-    }
-    if (buffers.lenList != nullptr) {
-        (void)DlAclApi::AclrtFree(buffers.lenList);
-        buffers.lenList = nullptr;
-    }
+    buffers.dstList = nullptr;
+    buffers.srcList = nullptr;
+    buffers.lenList = nullptr;
 }
 
 Result DeviceUrmaTransportManager::AddBatchPendingDeviceBuffers(DeviceTransferBuffers &buffers)
@@ -692,56 +687,34 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(HcommThreadHandle thr
     std::lock_guard<std::mutex> guard(deviceKernelMutex_);
 
     DeviceTransferBuffers buffers{};
-    // Batch buffers are variable-size; allocate fresh (not from free-list).
-    auto ret = DlAclApi::AclrtMalloc(&buffers.dstList, batchSize * sizeof(void *), 0);
+    const auto ptrBytes = batchSize * sizeof(void *);
+    const auto lenBytes = batchSize * sizeof(uint64_t);
+    const auto totalBytes = ptrBytes * 2UL + lenBytes;
+
+    // Single allocation: layout = [dst pointers][src pointers][uint64 lengths].
+    // dstList is the base; srcList and lenList are internal offsets.
+    auto ret = DlAclApi::AclrtMalloc(&buffers.dstList, totalBytes, 0);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch alloc dst list failed, ret: " << ret);
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch alloc batch buffers failed, ret: " << ret);
         return ret;
     }
-    ret = DlAclApi::AclrtMalloc(&buffers.srcList, batchSize * sizeof(void *), 0);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch alloc src list failed, ret: " << ret);
-        (void)DlAclApi::AclrtFree(buffers.dstList);
-        buffers.dstList = nullptr;
-        return ret;
-    }
-    ret = DlAclApi::AclrtMalloc(&buffers.lenList, batchSize * sizeof(uint64_t), 0);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch alloc len list failed, ret: " << ret);
-        (void)DlAclApi::AclrtFree(buffers.dstList);
-        (void)DlAclApi::AclrtFree(buffers.srcList);
-        buffers.dstList = nullptr;
-        buffers.srcList = nullptr;
-        return ret;
-    }
-    // Build host-side arrays then H2D copy
-    std::vector<void *> dstHost(batchSize);
-    std::vector<void *> srcHost(batchSize);
-    std::vector<uint64_t> lenHost(batchSize);
+    buffers.srcList = static_cast<uint8_t *>(buffers.dstList) + ptrBytes;
+    buffers.lenList = static_cast<uint8_t *>(buffers.dstList) + ptrBytes * 2UL;
+
+    // Build single contiguous host buffer, then one H2D copy
+    std::vector<uint8_t> hostBuf(totalBytes);
+    auto *dstBase = reinterpret_cast<void **>(hostBuf.data());
+    auto *srcBase = reinterpret_cast<void **>(hostBuf.data() + ptrBytes);
+    auto *lenBase = reinterpret_cast<uint64_t *>(hostBuf.data() + ptrBytes * 2UL);
     for (size_t i = 0; i < batchSize; ++i) {
-        dstHost[i] = reinterpret_cast<void *>(isRead ? localAddrs[i] : remoteAddrs[i]);
-        srcHost[i] = reinterpret_cast<void *>(isRead ? remoteAddrs[i] : localAddrs[i]);
-        lenHost[i] = sizes[i];
+        dstBase[i] = reinterpret_cast<void *>(isRead ? localAddrs[i] : remoteAddrs[i]);
+        srcBase[i] = reinterpret_cast<void *>(isRead ? remoteAddrs[i] : localAddrs[i]);
+        lenBase[i] = sizes[i];
     }
 
-    ret = DlAclApi::AclrtMemcpy(buffers.dstList, batchSize * sizeof(void *), dstHost.data(), batchSize * sizeof(void *),
-                                ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = DlAclApi::AclrtMemcpy(buffers.dstList, totalBytes, hostBuf.data(), totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch copy dst list failed, ret: " << ret);
-        ReleaseDeviceTransferBuffers(buffers);
-        return ret;
-    }
-    ret = DlAclApi::AclrtMemcpy(buffers.srcList, batchSize * sizeof(void *), srcHost.data(), batchSize * sizeof(void *),
-                                ACL_MEMCPY_HOST_TO_DEVICE);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch copy src list failed, ret: " << ret);
-        ReleaseDeviceTransferBuffers(buffers);
-        return ret;
-    }
-    ret = DlAclApi::AclrtMemcpy(buffers.lenList, batchSize * sizeof(uint64_t), lenHost.data(),
-                                batchSize * sizeof(uint64_t), ACL_MEMCPY_HOST_TO_DEVICE);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch copy len list failed, ret: " << ret);
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch copy batch buffers failed, ret: " << ret);
         ReleaseDeviceTransferBuffers(buffers);
         return ret;
     }
@@ -2000,6 +1973,8 @@ Result DeviceUrmaTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uin
         return BM_NOT_CONNECTED;
     }
     const auto translatedRemoteAddr = remote.view.addr + (rAddr - remote.addr);
+    BM_LOG_DEBUG("device_urma lAddr:" << VaToStr(lAddr) << ", rAddr=" << VaToStr(rAddr) << ", translated rAddr="
+                                      << VaToStr(translatedRemoteAddr) << ", size=" << size << ", write: " << write);
     const auto channel = state.channels.front();
     // Route single-element transfer through LaunchDeviceKernelBatch to unify notify/flag logic.
     ret = LaunchDeviceKernelBatch(state.thread, !write, channel, std::vector<uint64_t>{lAddr},
