@@ -98,6 +98,7 @@ private:
 private:
     bool inited_{false};
     uint32_t rankId_{0};
+    uint64_t rdmaSwapSpaceSize_{0};
     std::shared_ptr<transport::TransportManager> transportManager_;
     void *rdmaSwapBaseAddr_{nullptr};
     std::shared_ptr<RbtreeRangePool> rdmaSwapMemoryAllocator_;

@@ -26,9 +26,9 @@ using namespace ock::mf;
 
 namespace {
 #if defined(NO_XPU)
-constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 1024 * 1024 * 1024 * 4ULL;
+constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 1024 * 4ULL;
 #else
-constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 1024 * 1024 * 1024;
+constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 1024;
 #endif
 } // namespace
 
@@ -37,7 +37,8 @@ Result HostDataOpRDMA::Initialize() noexcept
     if (inited_) {
         return BM_OK;
     }
-    rdmaSwapSpaceSize_ = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_SWAP_SPACE_SIZE, RDMA_SWAP_SPACE_SIZE);
+    rdmaSwapSpaceSize_ =
+        MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_SWAP_SPACE_SIZE, RDMA_SWAP_SPACE_SIZE) * MB;
     if (rdmaSwapSpaceSize_ == 0) {
         inited_ = true;
         return BM_OK;

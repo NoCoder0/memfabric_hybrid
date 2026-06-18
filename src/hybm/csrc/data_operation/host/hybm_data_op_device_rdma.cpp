@@ -24,9 +24,11 @@
 #include "hybm_gva.h"
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 
 namespace {
-constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 1024 * 1024 * 128;
+constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 128;
 }
 
 namespace ock {
@@ -73,23 +75,30 @@ Result DataOpDeviceRDMA::Initialize() noexcept
     if (inited_) {
         return BM_OK;
     }
+    rdmaSwapSpaceSize_ =
+        MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_SWAP_SPACE_SIZE, RDMA_SWAP_SPACE_SIZE) * MB;
+    if (rdmaSwapSpaceSize_ == 0) {
+        BM_LOG_INFO("HYBM_RDMA_SWAP_SPACE_SIZE is 0, skip swap memory allocation");
+        inited_ = true;
+        return BM_OK;
+    }
     auto ret = AllocSwapMemory();
     if (ret != BM_OK) {
         return ret;
     }
     transport::TransportMemoryRegion input;
     input.addr = reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_);
-    input.size = RDMA_SWAP_SPACE_SIZE;
+    input.size = rdmaSwapSpaceSize_;
     input.flags = transport::REG_MR_FLAG_ACL_DRAM;
     if (transportManager_ != nullptr) {
         ret = transportManager_->RegisterMemoryRegion(input);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to register rdma swap memory, size: " << RDMA_SWAP_SPACE_SIZE);
+            BM_LOG_ERROR("Failed to register rdma swap memory, size: " << rdmaSwapSpaceSize_);
             FreeSwapMemory();
             return BM_MALLOC_FAILED;
         }
     }
-    rdmaSwapMemoryAllocator_ = std::make_shared<RbtreeRangePool>((uint8_t *)rdmaSwapBaseAddr_, RDMA_SWAP_SPACE_SIZE);
+    rdmaSwapMemoryAllocator_ = std::make_shared<RbtreeRangePool>((uint8_t *)rdmaSwapBaseAddr_, rdmaSwapSpaceSize_);
     inited_ = true;
     return BM_OK;
 }
@@ -121,14 +130,15 @@ void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
 Result DataOpDeviceRDMA::AllocSwapMemory()
 {
     void *ptr = nullptr;
-    auto ret = DlAclApi::AclrtMallocHost(&ptr, RDMA_SWAP_SPACE_SIZE);
+    auto ret = DlAclApi::AclrtMallocHost(&ptr, rdmaSwapSpaceSize_);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to AclrtMallocHost rdma swap memory, size: " << RDMA_SWAP_SPACE_SIZE);
+        BM_LOG_ERROR("Failed to AclrtMallocHost rdma swap memory, size: " << rdmaSwapSpaceSize_);
         return BM_MALLOC_FAILED;
     }
 
     void *output;
-    ret = DlHalApi::HalHostRegister(ptr, RDMA_SWAP_SPACE_SIZE, HOST_MEM_MAP_DEV, HybmGetInitedLogicDeviceId(), &output);
+    ret = DlHalApi::HalHostRegister(ptr, rdmaSwapSpaceSize_,
+                                    HOST_MEM_MAP_DEV, HybmGetInitedLogicDeviceId(), &output);
     if (ret != 0) {
         BM_LOG_ERROR("Register swap mem failed, addr: " << ptr << " ret: " << ret);
         auto ret2 = DlAclApi::AclrtFreeHost(ptr);
@@ -137,10 +147,8 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
         }
         return ret;
     }
-    ret =
-        HybmVaManager::GetInstance().AddVaInfo({0, reinterpret_cast<uint64_t>(output), reinterpret_cast<uint64_t>(ptr),
-                                                RDMA_SWAP_SPACE_SIZE, HYBM_MEM_TYPE_HOST},
-                                               rankId_);
+    ret = HybmVaManager::GetInstance().AddVaInfo({0, reinterpret_cast<uint64_t>(output),
+        reinterpret_cast<uint64_t>(ptr), rdmaSwapSpaceSize_, HYBM_MEM_TYPE_HOST}, rankId_);
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
         DlHalApi::HalHostUnregisterEx(ptr, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
@@ -893,8 +901,12 @@ Result DataOpDeviceRDMA::SafePut(const void *srcVA, void *destVA, uint64_t lengt
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;
     }
+    if (rdmaSwapSpaceSize_ == 0) {
+        BM_LOG_ERROR("HYBM_RDMA_SWAP_SPACE_SIZE is 0, unable to copy unregistered addresses, srcVa: " << srcBase);
+        return BM_ERROR;
+    }
     while (remainingLength > 0) {
-        uint64_t currentChunkSize = std::min(remainingLength, RDMA_SWAP_SPACE_SIZE);
+        uint64_t currentChunkSize = std::min(remainingLength, rdmaSwapSpaceSize_);
         auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(currentChunkSize);
         auto tmpHost = tmpRdmaMemory.Address();
         BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "Failed to malloc temp buffer", BM_MALLOC_FAILED);
@@ -927,8 +939,12 @@ Result DataOpDeviceRDMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;
     }
+    if (rdmaSwapSpaceSize_ == 0) {
+        BM_LOG_ERROR("HYBM_RDMA_SWAP_SPACE_SIZE is 0, unable to copy unregistered addresses, srcVa: " << srcBase);
+        return BM_ERROR;
+    }
     while (remainingLength > 0) {
-        uint64_t currentChunkSize = std::min(remainingLength, RDMA_SWAP_SPACE_SIZE);
+        uint64_t currentChunkSize = std::min(remainingLength, rdmaSwapSpaceSize_);
         auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(currentChunkSize);
         auto tmpHost = tmpRdmaMemory.Address();
         BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "[CopyGD2LH] Failed to malloc temp buffer", BM_MALLOC_FAILED);

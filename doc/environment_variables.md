@@ -14,7 +14,7 @@
 | `HCOM_MAX_SLICE_SIZE` | NPU: 1MB<br>其他: 1GB | HCOM传输最大切片大小（字节），控制单次传输数据分片上限。适用于HOST_RDMA/HOST_TCP/HOST_URMA传输模式。 |
 | `HCOM_RECV_DATA_SIZE` | NPU: 1MB+1KB<br>其他: 1MB+1024 | HCOM接收数据缓冲区大小（字节）。建议设置为`HCOM_MAX_SLICE_SIZE + 1024`。 |
 | `MEMFABRIC_HYBRID_EXTEND_LIB_PATH` | 无 | 扩展库路径，用于加载自定义的`libmf_hybm_copy_extend.so`库。 |
-| `MF_HYBM_RDMA_SWAP_SPACE_SIZE` | NPU: 1GB<br>其他: 4GB | RDMA交换空间大小（字节），用于Host RDMA数据传输的中转内存。 |
+| `MF_HYBM_RDMA_SWAP_SPACE_SIZE` | NPU: 1GB<br>其他: 4GB | RDMA交换空间大小（单位MB），用于host_rdma/device_rdma数据传输的中转内存。 |
 | `MF_LOG_LEVEL` | 无 | MemFabric日志级别，取值范围0-4（0:DEBUG, 1:INFO, 2:WARN, 3:ERROR, 4:OFF）。**仅Python接口下生效，bm/shm场景不生效。** |
 | `MF_CONFIG_STORE_URL` | 无（必填） | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`。 |
 | `MF_CONFIG_STORE_PORT_START` | 9000 | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。 |
@@ -58,7 +58,7 @@ export ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit
 export MF_LOG_LEVEL=1
 export HCOM_MAX_SLICE_SIZE=$((128*1024))
 export HCOM_RECV_DATA_SIZE=$((128*1024+128))
-export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128*1024*1024))
+export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128))
 ```
 
 ### GPU环境运行前设置
@@ -74,5 +74,5 @@ export MF_LOG_LEVEL=1
 export MF_LOG_LEVEL=1
 export HCOM_MAX_SLICE_SIZE=$((128*1024))
 export HCOM_RECV_DATA_SIZE=$((128*1024+128))
-export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128*1024*1024))
+export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128))
 ```

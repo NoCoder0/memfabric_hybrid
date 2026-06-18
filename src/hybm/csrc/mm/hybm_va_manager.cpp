@@ -552,7 +552,7 @@ std::pair<AllocatedGvaInfo, bool> HybmVaManager::FindAllocByVa(uint64_t va, uint
 {
     std::shared_lock<std::shared_mutex> lock(mutex_);
     if (allocatedMap_[type].empty()) {
-        BM_LOG_WARN("No allocated spaces found.");
+        BM_LOG_DEBUG("No allocated spaces found.");
         return {AllocatedGvaInfo{}, false};
     }
     auto it = allocatedMap_[type].upper_bound(va);
