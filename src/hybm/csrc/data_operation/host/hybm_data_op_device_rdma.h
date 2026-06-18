@@ -69,6 +69,11 @@ private:
     Result BatchCopyGD2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
     Result BatchCopyGD2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
 
+    Result BatchMergedWrite(hybm_batch_copy_params &swapParams, hybm_data_copy_direction direction,
+                            void **remote, const ExtOptions &options) noexcept;
+    Result BatchMergedRead(hybm_batch_copy_params &swapParams, hybm_data_copy_direction direction,
+                           void **remote, const ExtOptions &options) noexcept;
+
     Result BatchDataCopyDefault(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                 const ExtOptions &options) noexcept;
     Result BatchDataCopyLocal(hybm_batch_copy_params &params, int32_t direction, const ExtOptions &options) noexcept;
@@ -99,6 +104,7 @@ private:
     bool inited_{false};
     uint32_t rankId_{0};
     uint64_t rdmaSwapSpaceSize_{0};
+    bool forceUnregistered_{false};
     std::shared_ptr<transport::TransportManager> transportManager_;
     void *rdmaSwapBaseAddr_{nullptr};
     std::shared_ptr<RbtreeRangePool> rdmaSwapMemoryAllocator_;

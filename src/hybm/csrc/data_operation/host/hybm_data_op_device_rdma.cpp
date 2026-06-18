@@ -13,6 +13,7 @@
 
 #include <sys/mman.h>
 #include <cstdint>
+#include <vector>
 
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
@@ -73,6 +74,8 @@ Result DataOpDeviceRDMA::Initialize() noexcept
         return BM_OK;
     }
     rdmaSwapSpaceSize_ = MfEnvUtil::GetOptionalUintOrDefault("HYBM_RDMA_SWAP_SPACE_SIZE", RDMA_SWAP_SPACE_SIZE);
+    forceUnregistered_ =
+        MfEnvUtil::GetOptionalUintOrDefault("HYBM_RDMA_FORCE_UNREGISTERED", 0) != 0;
     if (rdmaSwapSpaceSize_ == 0) {
         BM_LOG_INFO("HYBM_RDMA_SWAP_SPACE_SIZE is 0, skip swap memory allocation");
         inited_ = true;
@@ -126,9 +129,9 @@ void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
 Result DataOpDeviceRDMA::AllocSwapMemory()
 {
     void *ptr = nullptr;
-    auto ret = DlAclApi::AclrtMallocHost(&ptr, rdmaSwapSpaceSize_);
+    int ret = DlHalApi::HalMemAlloc(&ptr, rdmaSwapSpaceSize_, MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_HUGE);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to AclrtMallocHost rdma swap memory, size: " << rdmaSwapSpaceSize_);
+        BM_LOG_ERROR("Failed to HalMemAlloc rdma swap memory, size: " << rdmaSwapSpaceSize_ << " ret:" << ret);
         return BM_MALLOC_FAILED;
     }
 
@@ -513,18 +516,163 @@ Result DataOpDeviceRDMA::Wait(int32_t waitId) noexcept
     return BM_OK;
 }
 
+Result DataOpDeviceRDMA::BatchMergedWrite(hybm_batch_copy_params &swapParams, hybm_data_copy_direction direction,
+                                          void **remote, const ExtOptions &options) noexcept
+{
+    int32_t ret;
+    // Batch copy local data to swap memory
+    if (HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST) {
+        ret = BatchDataCopyLocalSync(swapParams, ACL_MEMCPY_HOST_TO_HOST, options);
+    } else {
+        ret = BatchDataCopyLocalBatch(swapParams, ACL_MEMCPY_DEVICE_TO_HOST, options);
+    }
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("Failed to copy local data to swap memory: " << ret);
+        return ret;
+    }
+
+    // Batch RDMA write from swap to remote, merge contiguous remote addresses
+    Result errorCode = BM_OK;
+    size_t segStart = 0;
+    while (segStart < swapParams.batchSize) {
+        size_t segEnd = segStart + 1;
+        while (segEnd < swapParams.batchSize &&
+               reinterpret_cast<uintptr_t>(remote[segEnd]) == reinterpret_cast<uintptr_t>(remote[segEnd - 1])
+               + swapParams.dataSizes[segEnd - 1]) {
+            ++segEnd;
+        }
+        uint64_t mergedSize = 0;
+        for (size_t k = segStart; k < segEnd; ++k) {
+            mergedSize += swapParams.dataSizes[k];
+        }
+        ret = transportManager_->WriteRemoteAsync(
+                options.destRankId, reinterpret_cast<uint64_t>(swapParams.destinations[segStart]),
+                reinterpret_cast<uint64_t>(remote[segStart]), mergedSize);
+        if (ret != BM_OK) {
+            errorCode = ret;
+            BM_LOG_ERROR("Failed to write swap to remote ret: " << ret
+                << " localRankId:" << rankId_ << " remoteRankId:" << options.destRankId);
+            break;
+        }
+        segStart = segEnd;
+    }
+    ret = transportManager_->Synchronize(options.destRankId);
+    if (ret != 0) {
+        BM_LOG_ERROR("Failed to sync write remote ret: " << ret);
+        return ret;
+    }
+    return errorCode;
+}
+
+Result DataOpDeviceRDMA::BatchMergedRead(hybm_batch_copy_params &swapParams, hybm_data_copy_direction direction,
+                                          void **remote, const ExtOptions &options) noexcept
+{
+    Result errorCode = BM_OK;
+    int32_t ret;
+    size_t segStart = 0;
+    while (segStart < swapParams.batchSize) {
+        size_t segEnd = segStart + 1;
+        while (segEnd < swapParams.batchSize &&
+               reinterpret_cast<uintptr_t>(remote[segEnd]) == reinterpret_cast<uintptr_t>(remote[segEnd - 1]) +
+                                                                      swapParams.dataSizes[segEnd - 1]) {
+            ++segEnd;
+        }
+        uint64_t mergedSize = 0;
+        for (size_t k = segStart; k < segEnd; ++k) {
+            mergedSize += swapParams.dataSizes[k];
+        }
+        ret = transportManager_->ReadRemoteAsync(
+                options.srcRankId, reinterpret_cast<uint64_t>(swapParams.sources[segStart]),
+                reinterpret_cast<uint64_t>(remote[segStart]), mergedSize);
+        if (ret != BM_OK) {
+            errorCode = ret;
+            BM_LOG_ERROR("Failed to read remote to swap ret: " << ret
+                << " localRankId:" << rankId_ << " remoteRankId:" << options.srcRankId);
+            break;
+        }
+        segStart = segEnd;
+    }
+    ret = transportManager_->Synchronize(options.srcRankId);
+    if (ret != 0) {
+        BM_LOG_ERROR("Failed to sync read remote ret: " << ret);
+        return ret;
+    }
+    if (errorCode != BM_OK) {
+        return errorCode;
+    }
+
+    if (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST) {
+        ret = BatchDataCopyLocalSync(swapParams, ACL_MEMCPY_HOST_TO_HOST, options);
+    } else {
+        ret = BatchDataCopyLocalBatch(swapParams, ACL_MEMCPY_HOST_TO_DEVICE, options);
+    }
+    return BM_OK;
+}
+
 Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                               const ExtOptions &options) noexcept
 {
-    Result ret;
+    Result ret = BM_OK;
     TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_DEFAULT);
-    for (uint32_t i = 0; i < params.batchSize; i++) {
-        hybm_copy_params pm = {params.sources[i], params.destinations[i], params.dataSizes[i]};
-        ret = DataCopy(pm, direction, options);
+
+    bool isWrite = (direction <= HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE);
+    size_t batchSize = params.batchSize;
+
+    auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(rdmaSwapSpaceSize_);
+    void *tmpHost = tmpRdmaMemory.Address();
+    if (tmpHost == nullptr) {
+        BM_LOG_ERROR("Failed to malloc swap length: " << rdmaSwapSpaceSize_);
+        TP_TRACE_END(TP_HYBM_RDMA_BATCH_DEFAULT, BM_MALLOC_FAILED);
+        return BM_MALLOC_FAILED;
+    }
+
+    uint64_t batchOffset = 0;
+    while (batchOffset < batchSize) {
+        uint64_t currentBatchDataSize = 0;
+        size_t batchEnd = batchOffset;
+        while (batchEnd < batchSize && currentBatchDataSize + params.dataSizes[batchEnd] <= rdmaSwapSpaceSize_) {
+            currentBatchDataSize += params.dataSizes[batchEnd];
+            ++batchEnd;
+        }
+
+        if (currentBatchDataSize == 0) {
+            BM_LOG_ERROR("Single count exceeds RDMA_SWAP_SPACE_SIZE: " << params.dataSizes[batchOffset]
+                                                                       << " > " << rdmaSwapSpaceSize_);
+            ret = BM_INVALID_PARAM;
+            break;
+        }
+
+        size_t currentBatchSize = batchEnd - batchOffset;
+        std::vector<void *> tmpSwapAddrs(currentBatchSize);
+        std::vector<void *> tmpLocalAddrs(currentBatchSize);
+        std::vector<uint64_t> tmpCounts(currentBatchSize);
+        uint64_t offset = 0;
+        for (size_t i = batchOffset; i < batchEnd; ++i) {
+            tmpSwapAddrs[i - batchOffset] = static_cast<uint8_t *>(tmpHost) + offset;
+            tmpLocalAddrs[i - batchOffset] = (isWrite ? params.sources[i] : params.destinations[i]);
+            tmpCounts[i - batchOffset] = params.dataSizes[i];
+            offset += params.dataSizes[i];
+        }
+
+        if (isWrite) {
+            hybm_batch_copy_params swapParams = {tmpLocalAddrs.data(), tmpSwapAddrs.data(),
+                                                  tmpCounts.data(), static_cast<uint32_t>(currentBatchSize)};
+            TP_TRACE_BEGIN(TP_HYBM_RDMA_MERGE_WRITE);
+            ret = BatchMergedWrite(swapParams, direction, &params.destinations[batchOffset], options);
+            TP_TRACE_END(TP_HYBM_RDMA_MERGE_WRITE, ret);
+        } else {
+            hybm_batch_copy_params swapParams = {tmpSwapAddrs.data(), tmpLocalAddrs.data(),
+                                                  tmpCounts.data(), static_cast<uint32_t>(currentBatchSize)};
+            TP_TRACE_BEGIN(TP_HYBM_RDMA_MERGE_READ);
+            ret = BatchMergedRead(swapParams, direction, &params.sources[batchOffset], options);
+            TP_TRACE_END(TP_HYBM_RDMA_MERGE_READ, ret);
+        }
         if (ret != BM_OK) {
             break;
         }
+        batchOffset = batchEnd;
     }
+
     TP_TRACE_END(TP_HYBM_RDMA_BATCH_DEFAULT, ret);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[BatchDataCopy] Failed to copy src to dest", ret);
     return BM_OK;
@@ -663,7 +811,8 @@ void DataOpDeviceRDMA::ClassifyDataAddr(void **globalAddrs, void **localAddrs, c
                 iter->second.globalAddrs.push_back(globalAddrs[i]);
                 iter->second.counts.push_back(counts[i]);
             }
-        } else if (!transportManager_->QueryHasRegistered((uint64_t)localAddrs[i], counts[i])) {
+        } else if (forceUnregistered_ ||
+                   !transportManager_->QueryHasRegistered((uint64_t)localAddrs[i], counts[i])) {
             auto iter = notRegistered.find(globalRankId);
             if (iter == notRegistered.end()) {
                 CopyDescriptor desc{};
