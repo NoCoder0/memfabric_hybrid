@@ -41,9 +41,9 @@ HYBM_API hybm_entity_t hybm_create_entity(uint16_t id, const hybm_options *optio
 
 HYBM_API void hybm_destroy_entity(hybm_entity_t e, uint32_t flags)
 {
-    BM_ASSERT_RET_VOID(e != nullptr);
+    BM_ASSERT_RET_VOID(e != nullptr, "e is nullptr");
     auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
-    BM_ASSERT_RET_VOID(entity != nullptr);
+    BM_ASSERT_RET_VOID(entity != nullptr, "entity is nullptr");
     entity->UnInitialize();
     MemEntityFactory::Instance().RemoveEngine(e);
 }
@@ -202,8 +202,8 @@ HYBM_API int32_t hybm_set_extra_context(hybm_entity_t e, const void *context, ui
 
 HYBM_API void hybm_unmap(hybm_entity_t e, uint32_t flags)
 {
-    BM_ASSERT_RET_VOID(e != nullptr);
+    BM_ASSERT_RET_VOID(e != nullptr, "e is nullptr");
     auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
-    BM_ASSERT_RET_VOID(entity != nullptr);
+    BM_ASSERT_RET_VOID(entity != nullptr, "entity is nullptr");
     entity->Unmap();
 }

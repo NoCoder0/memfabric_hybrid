@@ -155,39 +155,45 @@ public:
     static inline void ServiceRegisterChannelBrokerHandler(Hcom_Service service, Service_ChannelHandler h,
                                                            Service_ChannelPolicy policy, uint64_t usrCtx)
     {
-        BM_ASSERT_RET_VOID(gServiceRegisterChannelBrokerHandler != nullptr);
+        BM_ASSERT_RET_VOID(gServiceRegisterChannelBrokerHandler != nullptr,
+            "gServiceRegisterChannelBrokerHandler is nullptr");
         gServiceRegisterChannelBrokerHandler(service, h, policy, usrCtx);
     }
 
     static inline void ServiceRegisterIdleHandler(Hcom_Service service, Service_IdleHandler h, uint64_t usrCtx)
     {
-        BM_ASSERT_RET_VOID(gServiceRegisterIdleHandler != nullptr);
+        BM_ASSERT_RET_VOID(gServiceRegisterIdleHandler != nullptr,
+            "gServiceRegisterIdleHandler is nullptr");
         gServiceRegisterIdleHandler(service, h, usrCtx);
     }
 
     static inline void ServiceRegisterHandler(Hcom_Service service, Service_HandlerType t, Service_RequestHandler h,
                                               uint64_t usrCtx)
     {
-        BM_ASSERT_RET_VOID(gServiceRegisterHandler != nullptr);
+        BM_ASSERT_RET_VOID(gServiceRegisterHandler != nullptr,
+            "gServiceRegisterHandler is nullptr");
         gServiceRegisterHandler(service, t, h, usrCtx);
     }
 
     static inline void ServiceAddWorkerGroup(Hcom_Service service, int8_t priority, uint16_t workerGroupId,
                                              uint32_t threadCount, const char *cpuIdsRange)
     {
-        BM_ASSERT_RET_VOID(gServiceAddWorkerGroup != nullptr);
+        BM_ASSERT_RET_VOID(gServiceAddWorkerGroup != nullptr,
+            "gServiceAddWorkerGroup is nullptr");
         gServiceAddWorkerGroup(service, priority, workerGroupId, threadCount, cpuIdsRange);
     }
 
     static inline void ServiceAddListener(Hcom_Service service, const char *url, uint16_t workerCount)
     {
-        BM_ASSERT_RET_VOID(gServiceAddListener != nullptr);
+        BM_ASSERT_RET_VOID(gServiceAddListener != nullptr,
+            "gServiceAddListener is nullptr");
         gServiceAddListener(service, url, workerCount);
     }
 
     static inline void ServiceSetConnectLBPolicy(Hcom_Service service, Service_LBPolicy lbPolicy)
     {
-        BM_ASSERT_RET_VOID(gServiceSetConnectLBPolicy != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetConnectLBPolicy != nullptr,
+            "gServiceSetConnectLBPolicy is nullptr");
         gServiceSetConnectLBPolicy(service, lbPolicy);
     }
 
@@ -195,7 +201,8 @@ public:
                                             Service_CipherSuite cipherSuite, Hcom_TlsGetCertCb certCb,
                                             Hcom_TlsGetPrivateKeyCb priKeyCb, Hcom_TlsGetCACb caCb)
     {
-        BM_ASSERT_RET_VOID(gServiceSetTlsOptions != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetTlsOptions != nullptr,
+            "gServiceSetTlsOptions is nullptr");
         gServiceSetTlsOptions(service, enableTls, version, cipherSuite, certCb, priKeyCb, caCb);
     }
 
@@ -203,31 +210,36 @@ public:
                                                Hcom_SecInfoProvider provider, Hcom_SecInfoValidator validator,
                                                uint16_t magic, uint8_t version)
     {
-        BM_ASSERT_RET_VOID(gServiceSetSecureOptions != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetSecureOptions != nullptr,
+            "gServiceSetSecureOptions is nullptr");
         gServiceSetSecureOptions(service, secType, provider, validator, magic, version);
     }
 
     static inline void ServiceSetTcpUserTimeOutSec(Hcom_Service service, uint16_t timeOutSec)
     {
-        BM_ASSERT_RET_VOID(gServiceSetTcpUserTimeOutSec != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetTcpUserTimeOutSec != nullptr,
+            "gServiceSetTcpUserTimeOutSec is nullptr");
         gServiceSetTcpUserTimeOutSec(service, timeOutSec);
     }
 
     static inline void ServiceSetTcpSendZCopy(Hcom_Service service, bool tcpSendZCopy)
     {
-        BM_ASSERT_RET_VOID(gServiceSetTcpSendZCopy != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetTcpSendZCopy != nullptr,
+            "gServiceSetTcpSendZCopy is nullptr");
         gServiceSetTcpSendZCopy(service, tcpSendZCopy);
     }
 
     static inline void ServiceSetDeviceIpMask(Hcom_Service service, const char *ipMask)
     {
-        BM_ASSERT_RET_VOID(gServiceSetDeviceIpMask != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetDeviceIpMask != nullptr,
+            "gServiceSetDeviceIpMask is nullptr");
         gServiceSetDeviceIpMask(service, ipMask);
     }
 
     static inline void ServiceSetDeviceIpGroup(Hcom_Service service, const char *ipGroup)
     {
-        BM_ASSERT_RET_VOID(gServiceSetDeviceIpGroup != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetDeviceIpGroup != nullptr,
+            "gServiceSetDeviceIpGroup is nullptr");
         gServiceSetDeviceIpGroup(service, ipGroup);
     }
 
@@ -261,38 +273,44 @@ public:
 
     static inline void ServiceSetPollingBatchSize(Hcom_Service service, uint16_t pollSize)
     {
-        BM_ASSERT_RET_VOID(gServiceSetPollingBatchSize != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetPollingBatchSize != nullptr,
+            "gServiceSetPollingBatchSize is nullptr");
         gServiceSetPollingBatchSize(service, pollSize);
     }
 
     static inline void ServiceSetEventPollingTimeOutUs(Hcom_Service service, uint16_t pollTimeout)
     {
-        BM_ASSERT_RET_VOID(gServiceSetEventPollingTimeOutUs != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetEventPollingTimeOutUs != nullptr,
+            "gServiceSetEventPollingTimeOutUs is nullptr");
         gServiceSetEventPollingTimeOutUs(service, pollTimeout);
     }
 
     static inline void ServiceSetTimeOutDetectionThreadNum(Hcom_Service service, uint32_t threadNum)
     {
-        BM_ASSERT_RET_VOID(gServiceSetTimeOutDetectionThreadNum != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetTimeOutDetectionThreadNum != nullptr,
+            "gServiceSetTimeOutDetectionThreadNum is nullptr");
         gServiceSetTimeOutDetectionThreadNum(service, threadNum);
     }
 
     static inline void ServiceSetMaxConnectionCount(Hcom_Service service, uint32_t maxConnCount)
     {
-        BM_ASSERT_RET_VOID(gServiceSetMaxConnectionCount != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetMaxConnectionCount != nullptr,
+            "gServiceSetMaxConnectionCount is nullptr");
         gServiceSetMaxConnectionCount(service, maxConnCount);
     }
 
     static inline void ServiceSetHeartBeatOptions(Hcom_Service service, uint16_t idleSec, uint16_t probeTimes,
                                                   uint16_t intervalSec)
     {
-        BM_ASSERT_RET_VOID(gServiceSetHeartBeatOptions != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetHeartBeatOptions != nullptr,
+            "gServiceSetHeartBeatOptions is nullptr");
         gServiceSetHeartBeatOptions(service, idleSec, probeTimes, intervalSec);
     }
 
     static inline void ServiceSetMultiRailOptions(Hcom_Service service, bool enable, uint32_t threshold)
     {
-        BM_ASSERT_RET_VOID(gServiceSetMultiRailOptions != nullptr);
+        BM_ASSERT_RET_VOID(gServiceSetMultiRailOptions != nullptr,
+            "gServiceSetMultiRailOptions is nullptr");
         gServiceSetMultiRailOptions(service, enable, threshold);
     }
 
@@ -356,7 +374,8 @@ public:
 
     static inline void ChannelSetChannelTimeOut(Hcom_Channel channel, int16_t oneSideTimeout, int16_t twoSideTimeout)
     {
-        BM_ASSERT_RET_VOID(gChannelSetChannelTimeOut != nullptr);
+        BM_ASSERT_RET_VOID(gChannelSetChannelTimeOut != nullptr,
+            "gChannelSetChannelTimeOut is nullptr");
         gChannelSetChannelTimeOut(channel, oneSideTimeout, twoSideTimeout);
     }
 
@@ -411,7 +430,8 @@ public:
 
     static inline void SetExternalLogger(Service_LogHandler h)
     {
-        BM_ASSERT_RET_VOID(gSetExternalLogger != nullptr);
+        BM_ASSERT_RET_VOID(gSetExternalLogger != nullptr,
+            "gSetExternalLogger is nullptr");
         gSetExternalLogger(h);
     }
 
@@ -419,7 +439,8 @@ public:
     {
 #if defined(NO_XPU)
         BM_LOG_INFO("Set ubs mode to " << ubcMode);
-        BM_ASSERT_RET_VOID(gSetUbsMode != nullptr);
+        BM_ASSERT_RET_VOID(gSetUbsMode != nullptr,
+            "gSetUbsMode is nullptr");
         gSetUbsMode(service, ubcMode);
 #endif
     }

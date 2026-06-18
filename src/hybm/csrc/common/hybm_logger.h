@@ -40,13 +40,12 @@
         }                                                         \
     } while (0)
 
-// THIS MACRO DOES NOT LOG ACTUAL VALUE, AVOID USING THIS FUNCTION.
-#define BM_ASSERT_RET_VOID(ARGS)                 \
-    do {                                         \
-        if (__builtin_expect(!(ARGS), 0) != 0) { \
-            BM_LOG_ERROR("Assert " << #ARGS);    \
-            return;                              \
-        }                                        \
+#define BM_ASSERT_RET_VOID(ARGS, MSG)                             \
+    do {                                                          \
+        if (__builtin_expect(!(ARGS), 0) != 0) {                  \
+            BM_LOG_ERROR("Assert " << #ARGS << ", " << MSG);      \
+            return;                                               \
+        }                                                         \
     } while (0)
 
 #define BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(result, msg) \
@@ -56,14 +55,6 @@
             BM_LOG_ERROR(msg);                        \
             return innerResult;                       \
         }                                             \
-    } while (0)
-
-// THIS MACRO DOES NOT LOG ACTUAL VALUE, AVOID USING THIS FUNCTION.
-#define BM_ASSERT(ARGS)                          \
-    do {                                         \
-        if (__builtin_expect(!(ARGS), 0) != 0) { \
-            BM_LOG_ERROR("Assert " << #ARGS);    \
-        }                                        \
     } while (0)
 
 #endif // MEMFABRIC_HYBRID_LOGGER_H

@@ -87,7 +87,7 @@ Result HybmConnBasedSegment::UnReserveMemorySpace() noexcept
 
 void HybmConnBasedSegment::LvaShmReservePhysicalMemory(void *mappedAddress, uint64_t size) noexcept
 {
-    BM_ASSERT_RET_VOID(mappedAddress != nullptr);
+    BM_ASSERT_RET_VOID(mappedAddress != nullptr, "mappedAddress is nullptr");
     auto *pos = static_cast<uint8_t *>(mappedAddress);
     uint64_t setLength = 0;
     while (setLength < size) {

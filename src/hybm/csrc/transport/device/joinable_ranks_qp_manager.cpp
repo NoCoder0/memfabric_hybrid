@@ -390,7 +390,7 @@ void JoinableRanksQpManager::MakeQpConnections(const std::set<uint32_t> &newRank
         if (connections_[rankId].qpHandle == nullptr) {
             void *qpHandle = nullptr;
             auto info = new (std::nothrow) UserQpInfo;
-            BM_ASSERT_RET_VOID(info != nullptr);
+            BM_ASSERT_RET_VOID(info != nullptr, "info is nullptr");
             auto ret = DlHccpApi::RaQpCreate(rdmaHandle_, 0, 4, qpHandle);
             if (ret != 0) {
                 BM_LOG_ERROR("create QP to " << rankId << " failed: " << ret);

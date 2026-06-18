@@ -411,7 +411,7 @@ void HostDataOpSDMA::InitG2GStreamTask(StreamTask &task, void *destVA, const voi
     }
 
     auto hStream = HybmStreamManager::GetThreadHybmStream(HybmGetInitedLogicDeviceId());
-    BM_ASSERT_RET_VOID(hStream != nullptr);
+    BM_ASSERT_RET_VOID(hStream != nullptr, "hStream is nullptr");
     task.type = STREAM_TASK_TYPE_SDMA;
     rtStarsMemcpyAsyncSqe_t *const sqe = &(task.sqe.memcpyAsyncSqe);
     sqe->header.type = RT_STARS_SQE_TYPE_SDMA;
@@ -465,7 +465,7 @@ void HostDataOpSDMA::InitG2GStreamTask(StreamTask &task, void *destVA, const voi
 void HostDataOpSDMA::InitG2GStreamTaskV2(StreamTask &task, void *destVA, const void *srcVA, size_t count) noexcept
 {
     auto hStream = HybmStreamManager::GetThreadHybmStream(HybmGetInitedLogicDeviceId());
-    BM_ASSERT_RET_VOID(hStream != nullptr);
+    BM_ASSERT_RET_VOID(hStream != nullptr, "hStream is nullptr");
     task.type = STREAM_TASK_TYPE_DAVID_SDMA;
     RtDavidStarsMemcpySqeT *const sqe = &(task.sqe.davidMemcpySqe);
     sqe->header.type = RT_STARS_SQE_TYPE_SDMA;
