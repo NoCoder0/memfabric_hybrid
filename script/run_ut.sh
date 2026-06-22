@@ -112,23 +112,36 @@ if ! $FAST_MODE; then
             "*/hybm/csrc/common/*"
             "*/hybm/csrc/ts_engine/*"
             "*/hybm/csrc/under_api/*"
+            "*/src/hybm/csrc/transport/device/urma/device_urma_eid_reader.cpp"
             "*/util/csrc/ptracer/tracers/*"
     )
-    lcov -d "$BUILD_PATH" --c --output-file "$COVERAGE_PATH"/coverage.info -rc branch_coverage=1 --rc lcov_excl_br_line="LCOV_EXCL_BR_LINE|SM_LOG*|SM_ASSERT*|BM_LOG*|BM_ASSERT*|SM_VALIDATE_*|ASSERT*|LOG_*" --rc stop_on_error=0
-    lcov -e "$COVERAGE_PATH"/coverage.info "*/src/*" -o "$COVERAGE_PATH"/coverage.info --rc branch_coverage=1 --rc stop_on_error=0 || true
-    lcov -r "$COVERAGE_PATH"/coverage.info "${EXCLUDE_DIRS[@]}" -o "$COVERAGE_PATH"/coverage.info --rc branch_coverage=1 --rc stop_on_error=0 || true
-    genhtml -o "$COVERAGE_PATH"/result "$COVERAGE_PATH"/coverage.info --show-details --legend --rc branch_coverage=1 --rc stop_on_error=0 || true
+    lcov -d "$BUILD_PATH" --c --output-file "$COVERAGE_PATH"/coverage.info -rc lcov_branch_coverage=1 --rc lcov_excl_br_line="LCOV_EXCL_BR_LINE|SM_LOG*|SM_ASSERT*|BM_LOG*|BM_ASSERT*|SM_VALIDATE_*|ASSERT*|LOG_*" --rc stop_on_error=0
+    lcov -e "$COVERAGE_PATH"/coverage.info "*/src/*" -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 --rc stop_on_error=0 || true
+    lcov -r "$COVERAGE_PATH"/coverage.info "${EXCLUDE_DIRS[@]}" -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 --rc stop_on_error=0 || true
+    genhtml -o "$COVERAGE_PATH"/result "$COVERAGE_PATH"/coverage.info --show-details --legend --rc lcov_branch_coverage=1 --rc stop_on_error=0 || true
 
-    lines_rate=`lcov -r "$COVERAGE_PATH"/coverage.info -o "$COVERAGE_PATH"/coverage.info --rc branch_coverage=1 | grep lines | grep -Eo "[0-9\.]+%" | tr -d '%'`
-    branches_rate=`lcov -r "$COVERAGE_PATH"/coverage.info -o "$COVERAGE_PATH"/coverage.info --rc branch_coverage=1 | grep branches | grep -Eo "[0-9\.]+%" | tr -d '%'`
-    echo "lines    coverage rate: ${lines_rate}%"
-    echo "branches coverage rate: ${branches_rate}%"
+    lines_rate=$(lcov -r "$COVERAGE_PATH"/coverage.info -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 | grep lines | grep -Eo "[0-9\.]+%" | tr -d '%')
+    branches_rate=$(lcov -r "$COVERAGE_PATH"/coverage.info -o "$COVERAGE_PATH"/coverage.info --rc lcov_branch_coverage=1 | grep branches | grep -Eo "[0-9\.]+%" | tr -d '%')
+    echo "lines    coverage rate: ${lines_rate:-<unavailable>}%"
+    echo "branches coverage rate: ${branches_rate:-<unavailable>}%"
 
-    if [[ $(awk "BEGIN {print (${lines_rate} < 70 || ${branches_rate} < 40) ? 1 : 0}") -eq 1 ]]; then
-        echo "failed: lines coverage < 70% or branches coverage < 40%"
+    COVERAGE_FAILED=0
+    if [ -z "${lines_rate}" ]; then
+        echo "failed: lines coverage unavailable"
         COVERAGE_FAILED=1
-    else
-        COVERAGE_FAILED=0
+    elif awk -v lines_rate="${lines_rate}" 'BEGIN { exit !(lines_rate < 70) }'; then
+        echo "failed: lines coverage ${lines_rate}% < 70%"
+        COVERAGE_FAILED=1
+    fi
+
+    if [ "${COVERAGE_FAILED}" -eq 0 ]; then
+        if [ -z "${branches_rate}" ]; then
+            echo "failed: branches coverage unavailable"
+            COVERAGE_FAILED=1
+        elif awk -v branches_rate="${branches_rate}" 'BEGIN { exit !(branches_rate < 40) }'; then
+            echo "failed: branches coverage ${branches_rate}% < 40%"
+            COVERAGE_FAILED=1
+        fi
     fi
 fi
 

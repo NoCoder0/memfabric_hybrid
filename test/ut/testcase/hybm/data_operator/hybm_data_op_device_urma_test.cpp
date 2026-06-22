@@ -43,12 +43,25 @@ int32_t MockAclrtMemcpyAsync(void *dst, size_t destMax, const void *src, size_t 
     return MockAclrtMemcpy(dst, destMax, src, count, kind);
 }
 
+int32_t MockAclrtMemcpyAsyncFailed(void *, size_t, const void *, size_t, uint32_t, void *)
+{
+    return BM_ERROR;
+}
+
 class TransportManagerMock : public transport::TransportManager {
 public:
     Result OpenDevice(const transport::TransportOptions &) override { return BM_OK; }
     Result CloseDevice() override { return BM_OK; }
-    Result RegisterMemoryRegion(const transport::TransportMemoryRegion &) override { return BM_OK; }
-    Result UnregisterMemoryRegion(uint64_t) override { return BM_OK; }
+    Result RegisterMemoryRegion(const transport::TransportMemoryRegion &) override
+    {
+        registerMemoryRegionCount++;
+        return registerMemoryRegionResult;
+    }
+    Result UnregisterMemoryRegion(uint64_t) override
+    {
+        unregisterMemoryRegionCount++;
+        return unregisterMemoryRegionResult;
+    }
     bool QueryHasRegistered(uint64_t, uint64_t) override
     {
         queryHasRegisteredCount++;
@@ -98,6 +111,9 @@ public:
     {
         writeRemoteBatchAsyncCount++;
         EXPECT_EQ(rankId, REMOTE_RANK);
+        if (writeRemoteBatchAsyncResult != BM_OK) {
+            return writeRemoteBatchAsyncResult;
+        }
         for (size_t i = 0; i < desc.localAddrs.size(); ++i) {
             std::memcpy(desc.globalAddrs[i], desc.localAddrs[i], desc.counts[i]);
         }
@@ -107,6 +123,9 @@ public:
     {
         readRemoteBatchAsyncCount++;
         EXPECT_EQ(rankId, REMOTE_RANK);
+        if (readRemoteBatchAsyncResult != BM_OK) {
+            return readRemoteBatchAsyncResult;
+        }
         for (size_t i = 0; i < desc.localAddrs.size(); ++i) {
             std::memcpy(desc.localAddrs[i], desc.globalAddrs[i], desc.counts[i]);
         }
@@ -115,6 +134,8 @@ public:
 
     std::string nic{"eth0"};
     bool queryHasRegisteredResult{true};
+    uint64_t registerMemoryRegionCount{0};
+    uint64_t unregisterMemoryRegionCount{0};
     uint64_t queryHasRegisteredCount{0};
     uint64_t readRemoteCount{0};
     uint64_t writeRemoteCount{0};
@@ -125,6 +146,10 @@ public:
     uint64_t synchronizeCount{0};
     Result readRemoteResult{BM_OK};
     Result writeRemoteResult{BM_OK};
+    Result registerMemoryRegionResult{BM_OK};
+    Result unregisterMemoryRegionResult{BM_OK};
+    Result readRemoteBatchAsyncResult{BM_OK};
+    Result writeRemoteBatchAsyncResult{BM_OK};
     Result synchronizeResult{BM_OK};
 };
 
@@ -191,6 +216,38 @@ int32_t MockAclrtFreeHost(void *)
 {
     return BM_OK;
 }
+
+void ExpectLocalDataCopy(DataOpDeviceURMA &dataOp, hybm_data_copy_direction direction)
+{
+    char src[16] = "local_copy";
+    char dst[16] = {};
+    hybm_copy_params params{src, dst, sizeof(src)};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp.DataCopy(params, direction, options), BM_OK);
+    EXPECT_EQ(std::memcmp(dst, src, sizeof(src)), 0);
+}
+
+void ExpectLocalBatchCopy(DataOpDeviceURMA &dataOp, hybm_data_copy_direction direction)
+{
+    char src0[8] = "aa";
+    char src1[8] = "bb";
+    char dst0[8] = {};
+    char dst1[8] = {};
+    void *sources[2] = {src0, src1};
+    void *destinations[2] = {dst0, dst1};
+    uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp.BatchDataCopy(params, direction, options), BM_OK);
+    EXPECT_EQ(std::memcmp(dst0, src0, sizeof(src0)), 0);
+    EXPECT_EQ(std::memcmp(dst1, src1, sizeof(src1)), 0);
+}
 } // namespace
 
 class HybmDataOpDeviceUrmaTest : public testing::Test {
@@ -217,12 +274,25 @@ TEST_F(HybmDataOpDeviceUrmaTest, InitializeIsIdempotentAndUnInitializeClearsStat
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
     EXPECT_TRUE(dataOp->inited_);
     void *swapBase = dataOp->urmaSwapBaseAddr_;
+    EXPECT_EQ(tm->registerMemoryRegionCount, 1U);
 
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
     EXPECT_EQ(dataOp->urmaSwapBaseAddr_, swapBase);
+    EXPECT_EQ(tm->registerMemoryRegionCount, 1U);
 
     dataOp->UnInitialize();
     EXPECT_FALSE(dataOp->inited_);
+    EXPECT_EQ(tm->unregisterMemoryRegionCount, 1U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, InitializeReturnsMallocFailedWhenSwapRegistrationFails)
+{
+    tm->registerMemoryRegionResult = BM_ERROR;
+
+    EXPECT_EQ(dataOp->Initialize(), BM_MALLOC_FAILED);
+    EXPECT_FALSE(dataOp->inited_);
+    EXPECT_EQ(dataOp->urmaSwapBaseAddr_, nullptr);
+    EXPECT_EQ(tm->registerMemoryRegionCount, 1U);
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, DataCopyLocalDirectionsUseAclMemcpy)
@@ -241,6 +311,23 @@ TEST_F(HybmDataOpDeviceUrmaTest, DataCopyLocalDirectionsUseAclMemcpy)
     EXPECT_EQ(dataOp->DataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options), BM_OK);
     EXPECT_STREQ(dst, src);
     EXPECT_EQ(dataOp->DataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options), BM_INVALID_PARAM);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, DataCopyAllLocalDirectionsSucceed)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    const hybm_data_copy_direction directions[] = {
+        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,    HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE,
+        HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,  HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,   HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,    HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE,
+        HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST,  HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,
+    };
+
+    for (auto direction : directions) {
+        ExpectLocalDataCopy(*dataOp, direction);
+    }
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, DataCopyRemoteWriteAndReadUseTransportManager)
@@ -264,6 +351,53 @@ TEST_F(HybmDataOpDeviceUrmaTest, DataCopyRemoteWriteAndReadUseTransportManager)
     EXPECT_EQ(dataOp->DataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
     EXPECT_EQ(tm->readRemoteCount, 1U);
     EXPECT_STREQ(src, dst);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, DataCopySafePutUsesSwapWhenLocalSourceIsNotRegistered)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->queryHasRegisteredResult = false;
+    char src[16] = "safe_put";
+    char dst[16] = {};
+    hybm_copy_params params{src, dst, sizeof(src)};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = REMOTE_RANK;
+
+    EXPECT_EQ(dataOp->DataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_GE(tm->queryHasRegisteredCount, 1U);
+    EXPECT_EQ(tm->writeRemoteCount, 1U);
+    EXPECT_STREQ(dst, src);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, DataCopySafeGetUsesSwapWhenLocalDestinationIsNotRegistered)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->queryHasRegisteredResult = false;
+    char src[16] = "safe_get";
+    char dst[16] = {};
+    hybm_copy_params params{src, dst, sizeof(src)};
+    ExtOptions options{};
+    options.srcRankId = REMOTE_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp->DataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options), BM_OK);
+    EXPECT_GE(tm->queryHasRegisteredCount, 1U);
+    EXPECT_EQ(tm->readRemoteCount, 1U);
+    EXPECT_STREQ(dst, src);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, DataCopyRejectsRemoteToRemoteWhenLocalRankIsAbsent)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    char src[4] = {};
+    char dst[4] = {};
+    hybm_copy_params params{src, dst, sizeof(src)};
+    ExtOptions options{};
+    options.srcRankId = 2UL;
+    options.destRankId = 3UL;
+
+    EXPECT_EQ(dataOp->DataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_INVALID_PARAM);
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, DataCopyAsyncUnsupportedAndWaitSucceeds)
@@ -315,6 +449,117 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyRegisteredWriteAndReadSynchronizes
     EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options), BM_OK);
     EXPECT_EQ(tm->readRemoteBatchAsyncCount, 1U);
     EXPECT_EQ(tm->synchronizeCount, 1U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyAllLocalDirectionsSucceed)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    const hybm_data_copy_direction directions[] = {
+        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,    HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE,
+        HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,  HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,   HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,    HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE,
+        HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST,  HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,
+    };
+
+    for (auto direction : directions) {
+        ExpectLocalBatchCopy(*dataOp, direction);
+    }
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyUsesDefaultPathWhenLocalMemoryIsNotRegistered)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->queryHasRegisteredResult = false;
+    char src0[8] = "s0";
+    char src1[8] = "s1";
+    char dst0[8] = {};
+    char dst1[8] = {};
+    void *sources[2] = {src0, src1};
+    void *destinations[2] = {dst0, dst1};
+    uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = REMOTE_RANK;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 0U);
+    EXPECT_EQ(tm->writeRemoteCount, 2U);
+    EXPECT_STREQ(dst0, src0);
+    EXPECT_STREQ(dst1, src1);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyG2GRemoteWriteAndReadUseSingleBatch)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    char src0[8] = "g0";
+    char src1[8] = "g1";
+    char dst0[8] = {};
+    char dst1[8] = {};
+    void *sources[2] = {src0, src1};
+    void *destinations[2] = {dst0, dst1};
+    uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = REMOTE_RANK;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+    EXPECT_STREQ(dst0, src0);
+    EXPECT_STREQ(dst1, src1);
+
+    tm->synchronizeCount = 0;
+    options.srcRankId = REMOTE_RANK;
+    options.destRankId = LOCAL_RANK;
+    std::memset(src0, 0, sizeof(src0));
+    std::memset(src1, 0, sizeof(src1));
+    std::strcpy(dst0, "r0");
+    std::strcpy(dst1, "r1");
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+    EXPECT_STREQ(src0, dst0);
+    EXPECT_STREQ(src1, dst1);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyPropagatesBatchAsyncFailure)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->writeRemoteBatchAsyncResult = BM_ERROR;
+    char src[8] = "fail";
+    char dst[8] = {};
+    void *sources[1] = {src};
+    void *destinations[1] = {dst};
+    uint64_t sizes[1] = {sizeof(src)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = REMOTE_RANK;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_ERROR);
+    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 0U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyLocalAsyncFailureReturnsDlFailure)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    DlAclApi::pAclrtMemcpyAsync = MockAclrtMemcpyAsyncFailed;
+    char src[8] = "async";
+    char dst[8] = {};
+    void *sources[1] = {src};
+    void *destinations[1] = {dst};
+    uint64_t sizes[1] = {sizeof(src)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1};
+    ExtOptions options{};
+    options.srcRankId = LOCAL_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE, options), BM_DL_FUNCTION_FAILED);
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyRejectsUnsupportedDirection)

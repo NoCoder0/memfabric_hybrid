@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #define private public
 #include "mf_out_logger.h"
@@ -38,16 +39,19 @@ void ResumeHandle(uint16_t code)
 
 class OutLoggerTest : public testing::Test {
 public:
-    static void SetUpTestCase()
+    void SetUp() override
     {
+        g_testCode = 0;
+        g_alarmMsg.clear();
         OutLogger::Instance().SetAlarmLogFunction(AlarmHandle, ResumeHandle, true);
     }
 
-    static void TearDownTestCase() {}
-
-    void SetUp() override {}
-
-    void TearDown() override {}
+    void TearDown() override
+    {
+        g_testCode = 0;
+        g_alarmMsg.clear();
+        OutLogger::Instance().SetAlarmLogFunction(nullptr, nullptr, true);
+    }
 };
 
 TEST_F(OutLoggerTest, SetAlarmLogFunction)
@@ -74,8 +78,16 @@ TEST_F(OutLoggerTest, Alarm)
 
     MF_RESUME_LOG(INNER_ERROR_CODE);
     EXPECT_EQ(g_testCode, 0);
-
-    MF_ALARM_LOG_LIMIT("", INNER_ERROR_CODE, msg.c_str());
-    EXPECT_EQ(g_testCode, INNER_ERROR_CODE);
 }
 
+TEST_F(OutLoggerTest, AlarmLimit)
+{
+    OutLogger::Instance().SetAlarmLogFunction(AlarmHandle, ResumeHandle, true);
+    std::string msg = "test alarm";
+
+    std::thread limitThread([&msg]() {
+        MF_ALARM_LOG_LIMIT("", INNER_ERROR_CODE, msg.c_str());
+    });
+    limitThread.join();
+    EXPECT_EQ(g_testCode, INNER_ERROR_CODE);
+}

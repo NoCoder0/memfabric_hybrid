@@ -10,15 +10,24 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
 
 #include <gtest/gtest.h>
+#include <mockcpp/mockcpp.hpp>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #define private   public
 #define protected public
+#include "device/urma/device_urma_eid_reader.h"
 #include "device/urma/device_urma_transport_manager.h"
 #include "dl_hccl_api.h"
 #include "dl_hcomm_api.h"
+#include "hybm_stream_manager.h"
 #undef private
 #undef protected
 
@@ -29,19 +38,79 @@ using ock::mf::transport::REG_MR_FLAG_DRAM;
 using ock::mf::transport::REG_MR_FLAG_HBM;
 using ock::mf::transport::TransportMemoryKey;
 using ock::mf::transport::TransportMemoryRegion;
+using ock::mf::transport::TransportOptions;
 using ock::mf::transport::TransportPrivateData;
 using ock::mf::transport::TransportRankPrepareInfo;
 
 namespace {
 const EndpointHandle MOCK_ENDPOINT = reinterpret_cast<EndpointHandle>(0xA501UL);
 const HcommMemHandle MOCK_MEM_HANDLE = reinterpret_cast<HcommMemHandle>(0xA502UL);
+const HcommMemHandle MOCK_FLAG_HANDLE = reinterpret_cast<HcommMemHandle>(0xA505UL);
+const aclrtBinHandle MOCK_BIN_HANDLE = reinterpret_cast<aclrtBinHandle>(0xA506UL);
+const aclrtFuncHandle MOCK_READ_FUNC = reinterpret_cast<aclrtFuncHandle>(0xA507UL);
+const aclrtFuncHandle MOCK_WRITE_FUNC = reinterpret_cast<aclrtFuncHandle>(0xA508UL);
+const HcommMemHandle MOCK_NOTIFY_HANDLE = reinterpret_cast<HcommMemHandle>(0xA509UL);
+void *const MOCK_NOTIFY = reinterpret_cast<void *>(0xA50AUL);
+void *const MOCK_STREAM = reinterpret_cast<void *>(0xA50BUL);
+const aclrtArgsHandle MOCK_ARGS_HANDLE = reinterpret_cast<aclrtArgsHandle>(0xA50CUL);
+const aclrtParamHandle MOCK_PARAM_HANDLE = reinterpret_cast<aclrtParamHandle>(0xA50DUL);
 constexpr ChannelHandle MOCK_CHANNEL = 0xA503UL;
 constexpr HcommThreadHandle MOCK_THREAD = 0xA504UL;
 constexpr uint64_t MOCK_LOCAL_ADDR = 0x100000UL;
 constexpr uint64_t MOCK_REMOTE_ADDR = 0x200000UL;
+constexpr uint64_t MOCK_NOTIFY_ADDR = 0x300000UL;
 constexpr uint64_t MOCK_SIZE = 0x1000UL;
 constexpr uint64_t MOCK_MEM_TAG = 7UL;
 constexpr uint32_t MOCK_HCOMM_DESC_LEN = 4U;
+constexpr uint32_t MOCK_NOTIFY_ID = 11U;
+constexpr uint32_t MOCK_NOTIFY_LEN = sizeof(int64_t);
+uint32_t g_memExportCallCount = 0;
+uint32_t g_memImportCallCount = 0;
+uint32_t g_memUnregCallCount = 0;
+uint32_t g_kernelLaunchCallCount = 0;
+
+struct TestHybmOneSideOpParam {
+    ock::mf::ThreadHandle thread;
+    ock::mf::ChannelHandle channel;
+    uint32_t listNum;
+    void **dstBufAddrList;
+    void **srcBufAddrList;
+    uint64_t *lenList;
+    uint64_t remoteFlagAddr;
+    uint64_t localFlagAddr;
+    uint32_t flagSize;
+};
+
+struct MockcppScope {
+    ~MockcppScope()
+    {
+        GlobalMockObject::reset();
+    }
+};
+
+struct EnvVarGuard {
+    explicit EnvVarGuard(const char *name) : name_(name)
+    {
+        const char *oldValue = std::getenv(name_.c_str());
+        if (oldValue != nullptr) {
+            hadOldValue_ = true;
+            oldValue_ = oldValue;
+        }
+    }
+
+    ~EnvVarGuard()
+    {
+        if (hadOldValue_) {
+            (void)setenv(name_.c_str(), oldValue_.c_str(), 1);
+        } else {
+            (void)unsetenv(name_.c_str());
+        }
+    }
+
+    std::string name_;
+    bool hadOldValue_{false};
+    std::string oldValue_{};
+};
 
 struct DlHcommApiFnGuard {
     hcommEndpointCreateFunc oldEndpointCreate{DlHcommApi::gHcommEndpointCreate};
@@ -78,6 +147,56 @@ struct DlHcommApiFnGuard {
     }
 };
 
+struct DlAclApiFnGuard {
+    aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
+    aclrtCreateNotifyFunc oldCreateNotify{DlAclApi::pAclrtCreateNotify};
+    aclrtGetNotifyIdFunc oldGetNotifyId{DlAclApi::pAclrtGetNotifyId};
+    aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
+    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
+    aclrtSynchronizeStreamFunc oldSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
+    aclrtBinaryLoadFromFileFunc oldBinaryLoadFromFile{DlAclApi::pAclrtBinaryLoadFromFile};
+    aclrtBinaryGetFunctionFunc oldBinaryGetFunction{DlAclApi::pAclrtBinaryGetFunction};
+    aclrtKernelArgsInitFunc oldKernelArgsInit{DlAclApi::pAclrtKernelArgsInit};
+    aclrtKernelArgsAppendFunc oldKernelArgsAppend{DlAclApi::pAclrtKernelArgsAppend};
+    aclrtKernelArgsFinalizeFunc oldKernelArgsFinalize{DlAclApi::pAclrtKernelArgsFinalize};
+    aclrtLaunchKernelWithConfigFunc oldLaunchKernelWithConfig{DlAclApi::pAclrtLaunchKernelWithConfig};
+    aclrtMallocFunc oldMalloc{DlAclApi::pAclrtMalloc};
+    aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
+    aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
+    rtGetDeviceInfoFunc oldRtGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
+    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDevIdByLogicDevId{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
+
+    ~DlAclApiFnGuard()
+    {
+        DlAclApi::pAclrtGetDevice = oldGetDevice;
+        DlAclApi::pAclrtCreateNotify = oldCreateNotify;
+        DlAclApi::pAclrtGetNotifyId = oldGetNotifyId;
+        DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
+        DlAclApi::pAclrtWaitAndResetNotify = oldWaitAndResetNotify;
+        DlAclApi::pAclrtSynchronizeStream = oldSynchronizeStream;
+        DlAclApi::pAclrtBinaryLoadFromFile = oldBinaryLoadFromFile;
+        DlAclApi::pAclrtBinaryGetFunction = oldBinaryGetFunction;
+        DlAclApi::pAclrtKernelArgsInit = oldKernelArgsInit;
+        DlAclApi::pAclrtKernelArgsAppend = oldKernelArgsAppend;
+        DlAclApi::pAclrtKernelArgsFinalize = oldKernelArgsFinalize;
+        DlAclApi::pAclrtLaunchKernelWithConfig = oldLaunchKernelWithConfig;
+        DlAclApi::pAclrtMalloc = oldMalloc;
+        DlAclApi::pAclrtFree = oldFree;
+        DlAclApi::pAclrtMemcpy = oldMemcpy;
+        DlAclApi::pRtGetDeviceInfo = oldRtGetDeviceInfo;
+        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDevIdByLogicDevId;
+    }
+};
+
+struct DlRtApiFnGuard {
+    rtGetDevResAddressFunc oldGetDevResAddress{DlRtApi::pRtGetDevResAddress};
+
+    ~DlRtApiFnGuard()
+    {
+        DlRtApi::pRtGetDevResAddress = oldGetDevResAddress;
+    }
+};
+
 UrmaEndpointDesc MakeEndpointDesc()
 {
     UrmaEndpointDesc desc{};
@@ -108,6 +227,21 @@ int32_t MockHcommEndpointCreate(const EndpointDesc *endpoint, EndpointHandle *en
     return BM_OK;
 }
 
+int32_t MockHcommEndpointCreateOpenDevice(const EndpointDesc *endpoint, EndpointHandle *endpointHandle)
+{
+    EXPECT_NE(endpoint, nullptr);
+    EXPECT_NE(endpointHandle, nullptr);
+    EXPECT_EQ(endpoint->protocol, COMM_PROTOCOL_UBC_CTP);
+    EXPECT_EQ(endpoint->commAddr.type, COMM_ADDR_TYPE_IP_V6);
+    EXPECT_EQ(endpoint->loc.locType, ENDPOINT_LOC_TYPE_DEVICE);
+    EXPECT_EQ(endpoint->loc.device.devPhyId, 2U);
+    EXPECT_EQ(endpoint->loc.device.superDevId, 3U);
+    EXPECT_EQ(endpoint->loc.device.serverIdx, 4U);
+    EXPECT_EQ(endpoint->loc.device.superPodIdx, 5U);
+    *endpointHandle = MOCK_ENDPOINT;
+    return BM_OK;
+}
+
 int32_t MockHcommEndpointDestroy(EndpointHandle endpoint)
 {
     EXPECT_EQ(endpoint, MOCK_ENDPOINT);
@@ -134,6 +268,12 @@ int32_t MockHcommMemUnreg(EndpointHandle endpoint, HcommMemHandle memHandle)
     return BM_OK;
 }
 
+int32_t MockHcommMemUnregCounted(EndpointHandle endpoint, HcommMemHandle memHandle)
+{
+    g_memUnregCallCount++;
+    return MockHcommMemUnreg(endpoint, memHandle);
+}
+
 int32_t MockHcommMemExport(EndpointHandle endpoint, HcommMemHandle memHandle, void **memDesc, uint32_t *memDescLen)
 {
     static uint8_t desc[] = {0xA5, 0x01, 0x02, 0x03};
@@ -144,6 +284,91 @@ int32_t MockHcommMemExport(EndpointHandle endpoint, HcommMemHandle memHandle, vo
     *memDesc = desc;
     *memDescLen = sizeof(desc);
     return BM_OK;
+}
+
+int32_t MockHcommMemExportCounted(EndpointHandle endpoint, HcommMemHandle memHandle, void **memDesc,
+                                  uint32_t *memDescLen)
+{
+    g_memExportCallCount++;
+    return MockHcommMemExport(endpoint, memHandle, memDesc, memDescLen);
+}
+
+int32_t MockHcommMemRegAny(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
+                           HcommMemHandle *memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memTag, nullptr);
+    EXPECT_NE(mem, nullptr);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_NE(mem->addr, nullptr);
+    EXPECT_GT(mem->size, 0U);
+    *memHandle = reinterpret_cast<HcommMemHandle>(reinterpret_cast<uintptr_t>(mem->addr) + 0x10U);
+    return BM_OK;
+}
+
+int32_t MockHcommMemRegFailAny(EndpointHandle, const char *, const HcommCommMem *, HcommMemHandle *)
+{
+    return BM_ERROR;
+}
+
+int32_t MockHcommMemUnregAny(EndpointHandle endpoint, HcommMemHandle memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memHandle, nullptr);
+    return BM_OK;
+}
+
+int32_t MockHcommMemRegOpenDevice(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
+                                  HcommMemHandle *memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memTag, nullptr);
+    EXPECT_NE(mem, nullptr);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_EQ(mem->type, COMM_MEM_TYPE_DEVICE);
+    if (mem->addr == reinterpret_cast<void *>(MOCK_NOTIFY_ADDR)) {
+        EXPECT_EQ(mem->size, MOCK_NOTIFY_LEN);
+        *memHandle = MOCK_NOTIFY_HANDLE;
+    } else {
+        EXPECT_EQ(mem->size, sizeof(int64_t));
+        *memHandle = MOCK_FLAG_HANDLE;
+    }
+    return BM_OK;
+}
+
+int32_t MockHcommMemUnregOpenDevice(EndpointHandle endpoint, HcommMemHandle memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_TRUE(memHandle == MOCK_NOTIFY_HANDLE || memHandle == MOCK_FLAG_HANDLE || memHandle == MOCK_MEM_HANDLE);
+    return BM_OK;
+}
+
+int32_t MockHcommMemExportAny(EndpointHandle endpoint, HcommMemHandle memHandle, void **memDesc, uint32_t *memDescLen)
+{
+    static uint8_t desc[] = {0xA5, 0x01, 0x02, 0x03};
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_NE(memDesc, nullptr);
+    EXPECT_NE(memDescLen, nullptr);
+    *memDesc = desc;
+    *memDescLen = sizeof(desc);
+    return BM_OK;
+}
+
+int32_t MockHcommMemExportSecondFails(EndpointHandle endpoint, HcommMemHandle memHandle, void **memDesc,
+                                      uint32_t *memDescLen)
+{
+    g_memExportCallCount++;
+    if (g_memExportCallCount == 1U) {
+        return MockHcommMemExportAny(endpoint, memHandle, memDesc, memDescLen);
+    }
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_NE(memDesc, nullptr);
+    EXPECT_NE(memDescLen, nullptr);
+    *memDesc = nullptr;
+    *memDescLen = 0;
+    return BM_ERROR;
 }
 
 int32_t MockHcommMemImport(EndpointHandle endpoint, const void *memDesc, uint32_t descLen, HcommCommMem *commMem)
@@ -158,12 +383,65 @@ int32_t MockHcommMemImport(EndpointHandle endpoint, const void *memDesc, uint32_
     return BM_OK;
 }
 
+int32_t MockHcommMemImportInvalidType(EndpointHandle endpoint, const void *memDesc, uint32_t descLen,
+                                      HcommCommMem *commMem)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memDesc, nullptr);
+    EXPECT_EQ(descLen, MOCK_HCOMM_DESC_LEN);
+    EXPECT_NE(commMem, nullptr);
+    commMem->type = COMM_MEM_TYPE_INVALID;
+    commMem->addr = reinterpret_cast<void *>(MOCK_REMOTE_ADDR);
+    commMem->size = MOCK_SIZE;
+    return BM_OK;
+}
+
+int32_t MockHcommMemImportFail(EndpointHandle, const void *, uint32_t, HcommCommMem *)
+{
+    return BM_ERROR;
+}
+
+int32_t MockHcommMemImportSecondFails(EndpointHandle endpoint, const void *memDesc, uint32_t descLen,
+                                      HcommCommMem *commMem)
+{
+    g_memImportCallCount++;
+    if (g_memImportCallCount == 1U) {
+        return MockHcommMemImport(endpoint, memDesc, descLen, commMem);
+    }
+    return BM_ERROR;
+}
+
+int32_t MockHcommMemImportSecondInvalidType(EndpointHandle endpoint, const void *memDesc, uint32_t descLen,
+                                            HcommCommMem *commMem)
+{
+    g_memImportCallCount++;
+    if (g_memImportCallCount == 1U) {
+        return MockHcommMemImport(endpoint, memDesc, descLen, commMem);
+    }
+    return MockHcommMemImportInvalidType(endpoint, memDesc, descLen, commMem);
+}
+
 int32_t MockHcommMemUnimport(EndpointHandle endpoint, const void *memDesc, uint32_t descLen)
 {
     EXPECT_EQ(endpoint, MOCK_ENDPOINT);
     EXPECT_NE(memDesc, nullptr);
     EXPECT_EQ(descLen, MOCK_HCOMM_DESC_LEN);
     return BM_OK;
+}
+
+std::vector<uint8_t> MakeRawExportDesc(uint64_t remoteAddr = MOCK_REMOTE_ADDR, uint64_t size = MOCK_SIZE,
+                                       uint64_t memTag = MOCK_MEM_TAG)
+{
+    UrmaExportDesc exportDesc{};
+    exportDesc.headerSize = sizeof(UrmaExportDesc);
+    exportDesc.memoryType = UrmaMemoryType::HOST_DRAM;
+    exportDesc.addr = remoteAddr;
+    exportDesc.size = size;
+    exportDesc.memTag = memTag;
+    exportDesc.hcommDescLen = MOCK_HCOMM_DESC_LEN;
+    std::vector<uint8_t> bytes(sizeof(UrmaExportDesc) + MOCK_HCOMM_DESC_LEN, 0x5A);
+    std::memcpy(bytes.data(), &exportDesc, sizeof(exportDesc));
+    return bytes;
 }
 
 int32_t MockHcommChannelCreate(EndpointHandle endpoint, CommEngine engine, HcommChannelDesc *channelDescs,
@@ -178,9 +456,23 @@ int32_t MockHcommChannelCreate(EndpointHandle endpoint, CommEngine engine, Hcomm
     EXPECT_EQ(channelDescs->header.magicWord, HCOMM_CHANNEL_MAGIC_WORD);
     EXPECT_EQ(channelDescs->header.size, sizeof(HcommChannelDesc));
     EXPECT_TRUE(channelDescs->exchangeAllMems);
-    EXPECT_EQ(channelDescs->remoteEndpoint.protocol, COMM_PROTOCOL_UBC_TP);
+    EXPECT_TRUE(channelDescs->remoteEndpoint.protocol == COMM_PROTOCOL_UBC_TP ||
+                channelDescs->remoteEndpoint.protocol == COMM_PROTOCOL_UBC_CTP);
     *channels = MOCK_CHANNEL;
     return BM_OK;
+}
+
+int32_t MockHcommChannelCreateFail(EndpointHandle, CommEngine, HcommChannelDesc *, uint32_t, ChannelHandle *)
+{
+    return BM_ERROR;
+}
+
+int32_t MockHcommChannelCreateZero(EndpointHandle endpoint, CommEngine engine, HcommChannelDesc *channelDescs,
+                                   uint32_t channelNum, ChannelHandle *channels)
+{
+    const auto ret = MockHcommChannelCreate(endpoint, engine, channelDescs, channelNum, channels);
+    *channels = 0;
+    return ret;
 }
 
 TransportPrivateData MakePrivateData(const UrmaEndpointDesc &desc)
@@ -216,6 +508,19 @@ TransportMemoryKey MakeImportKey(uint64_t remoteAddr, uint64_t size, uint64_t me
     return key;
 }
 
+TransportMemoryKey MakeImportKeyWithFlag(uint64_t remoteAddr, uint64_t size, uint64_t memTag)
+{
+    auto key = MakeImportKey(remoteAddr, size, memTag);
+    auto *payload = reinterpret_cast<uint8_t *>(&key.keys[4U]);
+    UrmaExportDesc exportDesc{};
+    std::memcpy(&exportDesc, payload, sizeof(exportDesc));
+    exportDesc.devTransFlagDescLen = MOCK_HCOMM_DESC_LEN;
+    std::memcpy(payload, &exportDesc, sizeof(exportDesc));
+    std::memset(payload + sizeof(exportDesc) + exportDesc.hcommDescLen, 0xF1, MOCK_HCOMM_DESC_LEN);
+    static_assert(sizeof(UrmaExportDesc) + MOCK_HCOMM_DESC_LEN * 2 <= sizeof(key.keys) - 4 * sizeof(uint64_t));
+    return key;
+}
+
 int32_t MockHcommChannelDestroy(const ChannelHandle *channels, uint32_t channelNum)
 {
     EXPECT_NE(channels, nullptr);
@@ -233,6 +538,11 @@ int32_t MockHcommThreadAlloc(CommEngine engine, uint32_t threadNum, const uint32
     EXPECT_NE(threads, nullptr);
     *threads = MOCK_THREAD;
     return BM_OK;
+}
+
+int32_t MockHcommThreadAllocFail(CommEngine, uint32_t, const uint32_t *, ThreadHandle *)
+{
+    return BM_ERROR;
 }
 
 int32_t MockHcommThreadFree(const ThreadHandle *threads, uint32_t threadNum)
@@ -273,6 +583,275 @@ int32_t MockHcommChannelFenceOnThread(ThreadHandle thread, ChannelHandle channel
 int32_t MockHcommEndpointCreateFail(const EndpointDesc *, EndpointHandle *)
 {
     return BM_DL_FUNCTION_FAILED;
+}
+
+void MakeDirectories(const std::string &dir)
+{
+    if (dir.empty()) {
+        return;
+    }
+    size_t pos = (dir.front() == '/') ? 1U : 0U;
+    while ((pos = dir.find('/', pos)) != std::string::npos) {
+        (void)mkdir(dir.substr(0, pos).c_str(), 0755);
+        ++pos;
+    }
+    (void)mkdir(dir.c_str(), 0755);
+}
+
+std::string PrepareKernelJson()
+{
+    const std::string base = std::string(testing::TempDir()) + "device_urma_kernel_" + std::to_string(getpid());
+    const std::string dir = base + "/opp/vendors/cust/op_impl/aicpu/config";
+    MakeDirectories(dir);
+    const std::string path = dir + "/libcann_hybm_kernel.json";
+    std::ofstream json(path);
+    json << "{}";
+    json.close();
+    (void)setenv("ASCEND_HOME_PATH", base.c_str(), 1);
+    return base;
+}
+
+ock::mf::Result MockGetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId,
+                                     std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+{
+    EXPECT_EQ(phyDeviceId, 2U);
+    EXPECT_EQ(rankId, 0U);
+    for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
+        eidData[i] = static_cast<uint8_t>(0xE0U + i);
+    }
+    return BM_OK;
+}
+
+int32_t MockAclrtGetDevice(int32_t *deviceId)
+{
+    EXPECT_NE(deviceId, nullptr);
+    *deviceId = 0;
+    return BM_OK;
+}
+
+int32_t MockAclrtGetPhyDevIdByLogicDevId(const int32_t logicDevId, int32_t *const phyDevId)
+{
+    EXPECT_EQ(logicDevId, 0);
+    EXPECT_NE(phyDevId, nullptr);
+    *phyDevId = 2UL;
+    return BM_OK;
+}
+
+int32_t MockRtGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *val)
+{
+    EXPECT_EQ(deviceId, 0U);
+    EXPECT_EQ(moduleType, 0);
+    EXPECT_NE(val, nullptr);
+    if (infoType == INFO_TYPE_SDID) {
+        *val = 3ULL;
+    } else if (infoType == INFO_TYPE_SERVER_ID) {
+        *val = 4ULL;
+    } else if (infoType == INFO_TYPE_SUPER_POD_ID) {
+        *val = 5ULL;
+    } else {
+        return BM_INVALID_PARAM;
+    }
+    return BM_OK;
+}
+
+int32_t MockAclrtCreateNotify(void **notify, uint64_t flag)
+{
+    EXPECT_NE(notify, nullptr);
+    EXPECT_EQ(flag, 1U);
+    *notify = MOCK_NOTIFY;
+    return BM_OK;
+}
+
+int32_t MockAclrtGetNotifyId(void *notify, uint32_t *notifyId)
+{
+    EXPECT_EQ(notify, MOCK_NOTIFY);
+    EXPECT_NE(notifyId, nullptr);
+    *notifyId = MOCK_NOTIFY_ID;
+    return BM_OK;
+}
+
+int32_t MockAclrtDestroyNotify(void *notify)
+{
+    EXPECT_EQ(notify, MOCK_NOTIFY);
+    return BM_OK;
+}
+
+int32_t MockRtGetDevResAddress(rtDevResInfo *resInfo, rtDevResAddrInfo *addrInfo)
+{
+    EXPECT_NE(resInfo, nullptr);
+    EXPECT_NE(addrInfo, nullptr);
+    EXPECT_EQ(resInfo->resType, RT_RES_TYPE_STARS_NOTIFY_RECORD);
+    EXPECT_EQ(resInfo->resId, MOCK_NOTIFY_ID);
+    EXPECT_NE(addrInfo->resAddress, nullptr);
+    EXPECT_NE(addrInfo->len, nullptr);
+    *addrInfo->resAddress = MOCK_NOTIFY_ADDR;
+    *addrInfo->len = MOCK_NOTIFY_LEN;
+    return BM_OK;
+}
+
+int32_t MockAclrtMallocOk(void **ptr, size_t count, uint32_t)
+{
+    EXPECT_NE(ptr, nullptr);
+    EXPECT_GT(count, 0U);
+    *ptr = std::malloc(count);
+    return (*ptr == nullptr) ? BM_ERROR : BM_OK;
+}
+
+int32_t MockAclrtFreeOk(void *ptr)
+{
+    std::free(ptr);
+    return BM_OK;
+}
+
+int32_t MockAclrtMemcpyOk(void *dst, size_t destMax, const void *src, size_t count, uint32_t)
+{
+    EXPECT_NE(dst, nullptr);
+    EXPECT_NE(src, nullptr);
+    EXPECT_LE(count, destMax);
+    std::memcpy(dst, src, count);
+    return BM_OK;
+}
+
+int32_t MockAclrtMemcpyFail(void *, size_t, const void *, size_t, uint32_t)
+{
+    return BM_ERROR;
+}
+
+int32_t MockAclrtBinaryLoadFromFile(const char *binPath, aclrtBinaryLoadOptions *options, aclrtBinHandle *binHandle)
+{
+    EXPECT_NE(binPath, nullptr);
+    EXPECT_NE(options, nullptr);
+    EXPECT_NE(binHandle, nullptr);
+    EXPECT_EQ(options->numOpt, 1U);
+    *binHandle = MOCK_BIN_HANDLE;
+    return BM_OK;
+}
+
+int32_t MockAclrtBinaryLoadFromFileFail(const char *binPath, aclrtBinaryLoadOptions *options, aclrtBinHandle *binHandle)
+{
+    EXPECT_NE(binPath, nullptr);
+    EXPECT_NE(options, nullptr);
+    EXPECT_NE(binHandle, nullptr);
+    return BM_ERROR;
+}
+
+int32_t MockAclrtBinaryGetFunction(aclrtBinHandle binHandle, const char *kernelName, aclrtFuncHandle *funcHandle)
+{
+    EXPECT_EQ(binHandle, MOCK_BIN_HANDLE);
+    EXPECT_NE(kernelName, nullptr);
+    EXPECT_NE(funcHandle, nullptr);
+    const std::string name(kernelName);
+    *funcHandle = (name == "read_kernel" || name == "HybmBatchRead") ? MOCK_READ_FUNC : MOCK_WRITE_FUNC;
+    return BM_OK;
+}
+
+int32_t MockAclrtBinaryGetFunctionFail(aclrtBinHandle, const char *, aclrtFuncHandle *)
+{
+    return BM_ERROR;
+}
+
+int32_t MockAclrtBinaryGetFunctionNull(aclrtBinHandle, const char *, aclrtFuncHandle *funcHandle)
+{
+    EXPECT_NE(funcHandle, nullptr);
+    *funcHandle = nullptr;
+    return BM_OK;
+}
+
+int32_t MockAclrtMallocFail(void **ptr, size_t count, uint32_t)
+{
+    EXPECT_NE(ptr, nullptr);
+    EXPECT_GT(count, 0U);
+    *ptr = nullptr;
+    return BM_ERROR;
+}
+
+int32_t MockAclrtKernelArgsInit(aclrtFuncHandle funcHandle, aclrtArgsHandle *argsHandle)
+{
+    EXPECT_TRUE(funcHandle == MOCK_READ_FUNC || funcHandle == MOCK_WRITE_FUNC);
+    EXPECT_NE(argsHandle, nullptr);
+    *argsHandle = MOCK_ARGS_HANDLE;
+    return BM_OK;
+}
+
+int32_t MockAclrtKernelArgsAppend(aclrtArgsHandle argsHandle, void *param, size_t paramSize,
+                                  aclrtParamHandle *paramHandle)
+{
+    EXPECT_EQ(argsHandle, MOCK_ARGS_HANDLE);
+    EXPECT_NE(param, nullptr);
+    EXPECT_EQ(paramSize, sizeof(TestHybmOneSideOpParam));
+    EXPECT_NE(paramHandle, nullptr);
+    const auto *args = static_cast<const TestHybmOneSideOpParam *>(param);
+    EXPECT_EQ(args->thread, MOCK_THREAD);
+    EXPECT_EQ(args->channel, MOCK_CHANNEL);
+    EXPECT_GT(args->listNum, 0U);
+    EXPECT_EQ(args->localFlagAddr, MOCK_NOTIFY_ADDR);
+    EXPECT_EQ(args->flagSize, MOCK_NOTIFY_LEN);
+    *paramHandle = MOCK_PARAM_HANDLE;
+    return BM_OK;
+}
+
+int32_t MockAclrtKernelArgsFinalize(aclrtArgsHandle argsHandle)
+{
+    EXPECT_EQ(argsHandle, MOCK_ARGS_HANDLE);
+    return BM_OK;
+}
+
+int32_t MockAclrtLaunchKernelWithConfig(aclrtFuncHandle funcHandle, uint32_t blockDim, void *stream,
+                                        aclrtLaunchKernelCfg *cfg, aclrtArgsHandle argsHandle, void *reserved)
+{
+    EXPECT_TRUE(funcHandle == MOCK_READ_FUNC || funcHandle == MOCK_WRITE_FUNC);
+    EXPECT_EQ(blockDim, 1U);
+    EXPECT_EQ(stream, MOCK_STREAM);
+    EXPECT_NE(cfg, nullptr);
+    EXPECT_EQ(cfg->numAttrs, 1U);
+    EXPECT_EQ(argsHandle, MOCK_ARGS_HANDLE);
+    EXPECT_EQ(reserved, nullptr);
+    g_kernelLaunchCallCount++;
+    return BM_OK;
+}
+
+int32_t MockAclrtWaitAndResetNotify(void *notify, void *stream, uint32_t timeout)
+{
+    EXPECT_EQ(notify, MOCK_NOTIFY);
+    EXPECT_EQ(stream, MOCK_STREAM);
+    EXPECT_EQ(timeout, 60U);
+    return BM_OK;
+}
+
+int32_t MockAclrtSynchronizeStream(void *stream)
+{
+    EXPECT_EQ(stream, MOCK_STREAM);
+    return BM_OK;
+}
+
+void InstallOpenDeviceMocks()
+{
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDevice;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegOpenDevice;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregOpenDevice;
+    DlAclApi::pAclrtGetDevice = MockAclrtGetDevice;
+    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = MockAclrtGetPhyDevIdByLogicDevId;
+    DlAclApi::pRtGetDeviceInfo = MockRtGetDeviceInfo;
+    DlAclApi::pAclrtCreateNotify = MockAclrtCreateNotify;
+    DlAclApi::pAclrtGetNotifyId = MockAclrtGetNotifyId;
+    DlAclApi::pAclrtDestroyNotify = MockAclrtDestroyNotify;
+    DlRtApi::pRtGetDevResAddress = MockRtGetDevResAddress;
+    DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
+    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyOk;
+    DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFile;
+    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+}
+
+void InstallKernelLaunchMocks()
+{
+    DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
+    DlAclApi::pAclrtKernelArgsAppend = MockAclrtKernelArgsAppend;
+    DlAclApi::pAclrtKernelArgsFinalize = MockAclrtKernelArgsFinalize;
+    DlAclApi::pAclrtLaunchKernelWithConfig = MockAclrtLaunchKernelWithConfig;
+    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotify;
+    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
 }
 } // namespace
 
@@ -324,7 +903,8 @@ TEST(DeviceUrmaTransportManagerTest, DeregisterLocalMemoryCallsHcommMemUnreg)
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommMemReg = MockHcommMemReg;
-    DlHcommApi::gHcommMemUnreg = MockHcommMemUnreg;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregCounted;
+    g_memUnregCallCount = 0;
 
     UrmaManagerTransport manager;
     const auto endpoint = manager.CreateEndpoint(MakeEndpointDesc());
@@ -396,6 +976,95 @@ TEST(DeviceUrmaTransportManagerTest, ImportAndUnimportMemoryWorkflow)
     EXPECT_EQ(manager.HcommMemUnimport(endpoint, exportDesc, exportDescLen), BM_OK);
 }
 
+TEST(DeviceUrmaTransportManagerTest, HcommMemRegRejectsInvalidInputsAndOverlaps)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemReg;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnreg;
+
+    UrmaManagerTransport manager;
+    const auto endpoint = manager.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(endpoint, nullptr);
+
+    HcommMemHandle memHandle = nullptr;
+    const UrmaCommMem mem{MOCK_LOCAL_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
+    EXPECT_EQ(manager.HcommMemReg(nullptr, MOCK_MEM_TAG, mem, &memHandle), BM_INVALID_PARAM);
+    EXPECT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG, mem, nullptr), BM_INVALID_PARAM);
+    EXPECT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG, {0, MOCK_SIZE, UrmaMemoryType::HOST_DRAM}, &memHandle),
+              BM_INVALID_PARAM);
+
+    EXPECT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG, mem, &memHandle), BM_OK);
+    EXPECT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG, mem, &memHandle), BM_OK);
+    EXPECT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG,
+                                  {MOCK_LOCAL_ADDR + MOCK_SIZE, MOCK_SIZE, UrmaMemoryType::HOST_DRAM}, &memHandle),
+              BM_ERROR);
+    EXPECT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG + 1,
+                                  {MOCK_LOCAL_ADDR + 1, MOCK_SIZE, UrmaMemoryType::HOST_DRAM}, &memHandle),
+              BM_ERROR);
+
+    EXPECT_EQ(manager.HcommMemUnreg(endpoint, MOCK_MEM_HANDLE), BM_OK);
+    EXPECT_EQ(manager.HcommMemUnreg(endpoint, MOCK_MEM_HANDLE), BM_OK);
+    EXPECT_GE(g_memUnregCallCount, 1U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, HcommMemExportCachesHcommDescriptor)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemReg;
+    DlHcommApi::gHcommMemExport = MockHcommMemExportCounted;
+
+    g_memExportCallCount = 0;
+    UrmaManagerTransport manager;
+    const auto endpoint = manager.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(endpoint, nullptr);
+
+    HcommMemHandle memHandle = nullptr;
+    const UrmaCommMem mem{MOCK_LOCAL_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
+    ASSERT_EQ(manager.HcommMemReg(endpoint, MOCK_MEM_TAG, mem, &memHandle), BM_OK);
+
+    const uint8_t *firstDesc = nullptr;
+    const uint8_t *secondDesc = nullptr;
+    uint32_t firstLen = 0;
+    uint32_t secondLen = 0;
+    EXPECT_EQ(manager.HcommMemExport(endpoint, memHandle, &firstDesc, &firstLen), BM_OK);
+    EXPECT_EQ(manager.HcommMemExport(endpoint, memHandle, &secondDesc, &secondLen), BM_OK);
+    EXPECT_EQ(g_memExportCallCount, 1U);
+    EXPECT_EQ(firstDesc, secondDesc);
+    EXPECT_EQ(firstLen, secondLen);
+}
+
+TEST(DeviceUrmaTransportManagerTest, HcommMemImportRejectsMalformedDescAndInvalidOutMem)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+
+    UrmaManagerTransport manager;
+    const auto endpoint = manager.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(endpoint, nullptr);
+
+    UrmaCommMem imported{};
+    const auto rawDesc = MakeRawExportDesc();
+    EXPECT_EQ(manager.HcommMemImport(nullptr, rawDesc.data(), static_cast<uint32_t>(rawDesc.size()), &imported),
+              BM_INVALID_PARAM);
+    EXPECT_EQ(manager.HcommMemImport(endpoint, nullptr, static_cast<uint32_t>(rawDesc.size()), &imported),
+              BM_INVALID_PARAM);
+    EXPECT_EQ(manager.HcommMemImport(endpoint, rawDesc.data(), sizeof(UrmaExportDesc) - 1, &imported),
+              BM_INVALID_PARAM);
+
+    DlHcommApi::gHcommMemImport = MockHcommMemImportInvalidType;
+    EXPECT_EQ(manager.HcommMemImport(endpoint, rawDesc.data(), static_cast<uint32_t>(rawDesc.size()), &imported),
+              BM_INVALID_PARAM);
+
+    DlHcommApi::gHcommMemImport = MockHcommMemImportFail;
+    EXPECT_EQ(manager.HcommMemImport(endpoint, rawDesc.data(), static_cast<uint32_t>(rawDesc.size()), &imported),
+              BM_DL_FUNCTION_FAILED);
+}
+
 TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
 {
     DlHcommApiFnGuard guard;
@@ -459,6 +1128,431 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesThreadChannelAndImportsMemKey
     ASSERT_EQ(state.imports.size(), 1U);
     EXPECT_EQ(state.imports.front().memTag, MOCK_MEM_TAG);
     EXPECT_EQ(state.imports.front().addr, MOCK_REMOTE_ADDR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseCleansUp)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0;
+    options.rankCount = 2;
+
+    EXPECT_EQ(manager.OpenDevice(options), BM_OK);
+    EXPECT_TRUE(manager.opened_);
+    EXPECT_EQ(manager.rankId_, 0U);
+    EXPECT_EQ(manager.rankCount_, 2U);
+    EXPECT_EQ(manager.phyDeviceId_, 2U);
+    EXPECT_EQ(manager.sdid_, 3U);
+    EXPECT_EQ(manager.serverId_, 4U);
+    EXPECT_EQ(manager.superPodId_, 5U);
+    EXPECT_NE(manager.localEndpoint_, nullptr);
+    EXPECT_EQ(manager.notify_, MOCK_NOTIFY);
+    EXPECT_EQ(manager.notifyId_, MOCK_NOTIFY_ID);
+    EXPECT_EQ(manager.notifyAddr_, MOCK_NOTIFY_ADDR);
+    EXPECT_EQ(manager.notifyLen_, MOCK_NOTIFY_LEN);
+    EXPECT_EQ(manager.notifyHcommHandle_, MOCK_NOTIFY_HANDLE);
+    EXPECT_NE(manager.devTransFlagPtr_, nullptr);
+    EXPECT_EQ(manager.devTransFlagSize_, sizeof(int64_t));
+    EXPECT_EQ(manager.devTransFlagHcommHandle_, MOCK_FLAG_HANDLE);
+    EXPECT_TRUE(manager.deviceKernelLoaded_);
+
+    EXPECT_EQ(manager.OpenDevice(options), BM_OK);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    EXPECT_FALSE(manager.opened_);
+    EXPECT_EQ(manager.localEndpoint_, nullptr);
+    EXPECT_EQ(manager.notify_, nullptr);
+    EXPECT_EQ(manager.notifyId_, 0U);
+    EXPECT_EQ(manager.devTransFlagPtr_, nullptr);
+    EXPECT_EQ(manager.devTransFlagHcommHandle_, nullptr);
+}
+
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceRollsBackWhenFlagMemcpyFails)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFail;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0;
+    options.rankCount = 2;
+
+    EXPECT_EQ(manager.OpenDevice(options), BM_ERROR);
+    EXPECT_FALSE(manager.opened_);
+    EXPECT_EQ(manager.localEndpoint_, nullptr);
+    EXPECT_EQ(manager.notify_, nullptr);
+    EXPECT_EQ(manager.notifyId_, 0U);
+    EXPECT_EQ(manager.notifyAddr_, 0U);
+    EXPECT_EQ(manager.notifyLen_, 0U);
+    EXPECT_EQ(manager.devTransFlagPtr_, nullptr);
+}
+
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsInvalidOptionsAndUnsupportedSoc)
+{
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 1;
+    options.rankCount = 1;
+    EXPECT_EQ(manager.OpenDevice(options), BM_INVALID_PARAM);
+
+    MockcppScope mockcpp;
+    options.rankId = 0;
+    options.rankCount = 2;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_UNKNOWN));
+    EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    InstallKernelLaunchMocks();
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
+
+    g_kernelLaunchCallCount = 0;
+    DeviceUrmaTransportManager manager;
+    TransportOptions openOptions{};
+    openOptions.rankId = 0;
+    openOptions.rankCount = 2;
+    ASSERT_EQ(manager.OpenDevice(openOptions), BM_OK);
+
+    HybmTransPrepareOptions prepareOptions{};
+    TransportRankPrepareInfo info{};
+    auto peerDesc = MakeEndpointDesc();
+    peerDesc.protocol = UrmaProtocol::UBC_CTP;
+    peerDesc.type = COMM_ADDR_TYPE_IP_V6;
+    info.privateData = MakePrivateData(peerDesc);
+    info.role = HYBM_ROLE_PEER;
+    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    prepareOptions.options.emplace(1, std::move(info));
+    ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
+
+    EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    EXPECT_EQ(manager.remoteRanks_[1].pendingOps, 1U);
+    EXPECT_EQ(manager.Synchronize(1), BM_OK);
+    EXPECT_EQ(manager.remoteRanks_[1].pendingOps, 0U);
+
+    EXPECT_EQ(manager.WriteRemote(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    EXPECT_EQ(manager.remoteRanks_[1].pendingOps, 0U);
+
+    CopyDescriptor descriptor{};
+    descriptor.localAddrs = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x40U),
+                             reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x80U)};
+    descriptor.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x40U),
+                              reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x80U)};
+    descriptor.counts = {0U, 0x20U};
+    EXPECT_EQ(manager.ReadRemoteBatchAsync(1, descriptor), BM_OK);
+    EXPECT_EQ(manager.Synchronize(1), BM_OK);
+
+    EXPECT_GE(g_kernelLaunchCallCount, 3U);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsAndRemoveRanksReusePreparedResources)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    HybmTransPrepareOptions prepareOptions{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    prepareOptions.options.emplace(1, std::move(info));
+    ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
+
+    HybmTransPrepareOptions updateOptions{};
+    TransportRankPrepareInfo updateInfo{};
+    updateInfo.privateData = MakePrivateData(MakeEndpointDesc());
+    updateInfo.role = HYBM_ROLE_PEER;
+    updateInfo.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR + MOCK_SIZE, MOCK_SIZE, MOCK_MEM_TAG + 1U)};
+    updateOptions.options.emplace(1, std::move(updateInfo));
+    EXPECT_EQ(manager.UpdateRankOptions(updateOptions), BM_OK);
+    ASSERT_EQ(manager.remoteRanks_[1].imports.size(), 2U);
+
+    EXPECT_EQ(manager.RemoveRanks({1}), BM_OK);
+    EXPECT_TRUE(manager.remoteRanks_.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareRollsBackNewResourcesWhenImportFails)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommMemImport = MockHcommMemImportFail;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    options.options.emplace(1, std::move(info));
+
+    EXPECT_EQ(manager.Prepare(options), BM_DL_FUNCTION_FAILED);
+    ASSERT_TRUE(manager.remoteRanks_.count(1) != 0);
+    EXPECT_TRUE(manager.remoteRanks_[1].channels.empty());
+    EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
+    EXPECT_TRUE(manager.remoteRanks_[1].imports.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareRejectsRankEdgesAndChangedEndpoint)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    HybmTransPrepareOptions invalidOptions{};
+    TransportRankPrepareInfo invalidInfo{};
+    invalidInfo.privateData = MakePrivateData(MakeEndpointDesc());
+    invalidOptions.options.emplace(2, std::move(invalidInfo));
+    EXPECT_EQ(manager.Prepare(invalidOptions), BM_INVALID_PARAM);
+
+    HybmTransPrepareOptions selfOptions{};
+    TransportRankPrepareInfo selfInfo{};
+    selfInfo.privateData = MakePrivateData(MakeEndpointDesc());
+    selfOptions.options.emplace(0, std::move(selfInfo));
+    EXPECT_EQ(manager.Prepare(selfOptions), BM_OK);
+
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    options.options.emplace(1, std::move(info));
+    ASSERT_EQ(manager.Prepare(options), BM_OK);
+
+    auto changedDesc = MakeEndpointDesc();
+    changedDesc.devPhyId++;
+    HybmTransPrepareOptions changedOptions{};
+    TransportRankPrepareInfo changedInfo{};
+    changedInfo.privateData = MakePrivateData(changedDesc);
+    changedOptions.options.emplace(1, std::move(changedInfo));
+    EXPECT_EQ(manager.Prepare(changedOptions), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareFailsWhenCreatingThreadOrChannel)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    options.options.emplace(1, std::move(info));
+
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAllocFail;
+    EXPECT_EQ(manager.Prepare(options), BM_ERROR);
+
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreateFail;
+    EXPECT_EQ(manager.Prepare(options), BM_DL_FUNCTION_FAILED);
+
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreateZero;
+    EXPECT_EQ(manager.Prepare(options), BM_DL_FUNCTION_FAILED);
+    EXPECT_TRUE(manager.remoteRanks_[1].channels.empty());
+    EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsFallsBackForNewRankAndChecksEdges)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 3;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    HybmTransPrepareOptions invalidOptions{};
+    TransportRankPrepareInfo invalidInfo{};
+    invalidInfo.privateData = MakePrivateData(MakeEndpointDesc());
+    invalidOptions.options.emplace(3, std::move(invalidInfo));
+    EXPECT_EQ(manager.UpdateRankOptions(invalidOptions), BM_INVALID_PARAM);
+
+    HybmTransPrepareOptions selfOptions{};
+    TransportRankPrepareInfo selfInfo{};
+    selfInfo.privateData = MakePrivateData(MakeEndpointDesc());
+    selfOptions.options.emplace(0, std::move(selfInfo));
+    EXPECT_EQ(manager.UpdateRankOptions(selfOptions), BM_OK);
+
+    HybmTransPrepareOptions fallbackOptions{};
+    TransportRankPrepareInfo fallbackInfo{};
+    fallbackInfo.privateData = MakePrivateData(MakeEndpointDesc());
+    fallbackOptions.options.emplace(2, std::move(fallbackInfo));
+    EXPECT_EQ(manager.UpdateRankOptions(fallbackOptions), BM_OK);
+    ASSERT_TRUE(manager.remoteRanks_.count(2) != 0);
+    EXPECT_EQ(manager.remoteRanks_[2].thread, MOCK_THREAD);
+    ASSERT_EQ(manager.remoteRanks_[2].channels.size(), 1U);
+    EXPECT_EQ(manager.remoteRanks_[2].channels.front(), MOCK_CHANNEL);
+
+    manager.remoteRanks_[2].channels.clear();
+    EXPECT_EQ(manager.UpdateRankOptions(fallbackOptions), BM_OK);
+    EXPECT_EQ(manager.remoteRanks_[2].thread, MOCK_THREAD);
+    ASSERT_EQ(manager.remoteRanks_[2].channels.size(), 1U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceResources)
+{
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregAny;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+    DlAclApi::pAclrtDestroyNotify = MockAclrtDestroyNotify;
+    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.notify_ = MOCK_NOTIFY;
+    manager.notifyId_ = MOCK_NOTIFY_ID;
+    manager.notifyAddr_ = MOCK_NOTIFY_ADDR;
+    manager.notifyLen_ = MOCK_NOTIFY_LEN;
+    manager.devTransFlagPtr_ = std::malloc(sizeof(int64_t));
+    ASSERT_NE(manager.devTransFlagPtr_, nullptr);
+    manager.devTransFlagSize_ = sizeof(int64_t);
+    HcommMemHandle notifyHandle = nullptr;
+    const UrmaCommMem notifyMem{MOCK_NOTIFY_ADDR, MOCK_NOTIFY_LEN, UrmaMemoryType::DEVICE_HBM};
+    ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, MOCK_NOTIFY_ADDR, notifyMem, &notifyHandle), BM_OK);
+    manager.notifyHcommHandle_ = notifyHandle;
+    HcommMemHandle flagHandle = nullptr;
+    const UrmaCommMem flagMem{reinterpret_cast<uint64_t>(manager.devTransFlagPtr_), sizeof(int64_t),
+                              UrmaMemoryType::DEVICE_HBM};
+    ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, 1, flagMem, &flagHandle), BM_OK);
+    manager.devTransFlagHcommHandle_ = flagHandle;
+
+    auto &state = manager.remoteRanks_[1];
+    state.localEndpoint = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(state.localEndpoint, nullptr);
+    state.channels = {MOCK_CHANNEL};
+    state.thread = MOCK_THREAD;
+    state.pendingOps = 1U;
+    DeviceUrmaTransportManager::RemoteRegistration remote{};
+    remote.addr = MOCK_REMOTE_ADDR;
+    remote.size = MOCK_SIZE;
+    remote.memTag = MOCK_MEM_TAG;
+    remote.descBytes = MakeRawExportDesc(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    remote.view = {MOCK_REMOTE_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
+    state.imports.push_back(remote);
+    state.remoteFlagAddr = MOCK_REMOTE_ADDR;
+    state.remoteFlagSize = MOCK_SIZE;
+    state.remoteFlagDescBytes.assign(MOCK_HCOMM_DESC_LEN, 0xF1);
+
+    HcommMemHandle localHandle = nullptr;
+    const UrmaCommMem localMem{MOCK_LOCAL_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
+    ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, MOCK_MEM_TAG, localMem, &localHandle), BM_OK);
+    HcommMemHandle peerHandle = nullptr;
+    ASSERT_EQ(manager.manager_.HcommMemReg(state.localEndpoint, MOCK_MEM_TAG + 1U, localMem, &peerHandle), BM_OK);
+
+    DeviceUrmaTransportManager::LocalRegistration local{};
+    local.mr.addr = MOCK_LOCAL_ADDR;
+    local.mr.size = MOCK_SIZE;
+    local.mr.flags = REG_MR_FLAG_DRAM;
+    local.handle = localHandle;
+    local.memTag = MOCK_LOCAL_ADDR;
+    local.refCount = 1U;
+    local.peerHandles.emplace(1, peerHandle);
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, local);
+
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    EXPECT_FALSE(manager.opened_);
+    EXPECT_TRUE(manager.remoteRanks_.empty());
+    EXPECT_TRUE(manager.localRegistrations_.empty());
+    EXPECT_EQ(manager.localEndpoint_, nullptr);
+    EXPECT_EQ(manager.notify_, nullptr);
+    EXPECT_EQ(manager.devTransFlagPtr_, nullptr);
+    EXPECT_EQ(manager.notifyHcommHandle_, nullptr);
+    EXPECT_EQ(manager.devTransFlagHcommHandle_, nullptr);
 }
 
 // ============================================================================
@@ -675,4 +1769,434 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionInvalidFlagsFails)
     mr.size = MOCK_SIZE;
     mr.flags = REG_MR_FLAG_DRAM | REG_MR_FLAG_HBM;
     EXPECT_NE(manager.RegisterMemoryRegion(mr), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionTracksRefCountAndQueryMemoryKeyExportsFlag)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregAny;
+    DlHcommApi::gHcommMemExport = MockHcommMemExportAny;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.devTransFlagHcommHandle_ = MOCK_FLAG_HANDLE;
+    manager.devTransFlagPtr_ = reinterpret_cast<void *>(0x300000UL);
+    manager.devTransFlagSize_ = sizeof(int64_t);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+    auto conflict = mr;
+    conflict.size = MOCK_SIZE + 1U;
+    EXPECT_EQ(manager.RegisterMemoryRegion(conflict), BM_ERROR);
+    ASSERT_EQ(manager.localRegistrations_.size(), 1U);
+    EXPECT_EQ(manager.localRegistrations_[MOCK_LOCAL_ADDR].refCount, 2U);
+    EXPECT_TRUE(manager.QueryHasRegistered(MOCK_LOCAL_ADDR + 0x10U, 0x20U));
+
+    TransportMemoryKey key{};
+    EXPECT_EQ(manager.QueryMemoryKey(MOCK_LOCAL_ADDR, key), BM_OK);
+    EXPECT_EQ(key.keys[0], URMA_EXPORT_DESC_MAGIC);
+    EXPECT_EQ(key.keys[1], MOCK_LOCAL_ADDR);
+    EXPECT_EQ(key.keys[2], MOCK_SIZE);
+    EXPECT_EQ(key.keys[3], MOCK_LOCAL_ADDR);
+    UrmaExportDesc exportDesc{};
+    std::memcpy(&exportDesc, reinterpret_cast<uint8_t *>(&key.keys[4U]), sizeof(exportDesc));
+    EXPECT_EQ(exportDesc.devTransFlagDescLen, MOCK_HCOMM_DESC_LEN);
+
+    EXPECT_EQ(manager.UnregisterMemoryRegion(MOCK_LOCAL_ADDR), BM_OK);
+    ASSERT_EQ(manager.localRegistrations_.size(), 1U);
+    EXPECT_EQ(manager.localRegistrations_[MOCK_LOCAL_ADDR].refCount, 1U);
+    EXPECT_EQ(manager.UnregisterMemoryRegion(MOCK_LOCAL_ADDR), BM_OK);
+    EXPECT_TRUE(manager.localRegistrations_.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionPropagatesHcommRegFailure)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegFailAny;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_DL_FUNCTION_FAILED);
+    EXPECT_TRUE(manager.localRegistrations_.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionRejectsInvalidRangesAndMissingEndpoint)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankCount_ = 2;
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_NOT_INITIALIZED);
+
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    mr.addr = 0;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_INVALID_PARAM);
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = 0;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_INVALID_PARAM);
+    mr.addr = UINT64_MAX;
+    mr.size = 2;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, QueryMemoryKeyFailsWhenFlagHandleMissing)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
+    DlHcommApi::gHcommMemExport = MockHcommMemExportAny;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    ASSERT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+
+    TransportMemoryKey key{};
+    EXPECT_EQ(manager.QueryMemoryKey(MOCK_LOCAL_ADDR, key), BM_ERROR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, QueryMemoryKeyFailsWhenFlagExportFails)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregAny;
+    DlHcommApi::gHcommMemExport = MockHcommMemExportSecondFails;
+
+    g_memExportCallCount = 0;
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.devTransFlagHcommHandle_ = MOCK_FLAG_HANDLE;
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    ASSERT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+
+    TransportMemoryKey key{};
+    EXPECT_EQ(manager.QueryMemoryKey(MOCK_LOCAL_ADDR, key), BM_DL_FUNCTION_FAILED);
+}
+
+TEST(DeviceUrmaTransportManagerTest, UpdateMemoryKeyRewritesAddressWhenProvided)
+{
+    DeviceUrmaTransportManager manager;
+    TransportMemoryKey key{};
+    manager.UpdateMemoryKey(key, reinterpret_cast<void *>(MOCK_REMOTE_ADDR));
+    EXPECT_EQ(key.keys[1], MOCK_REMOTE_ADDR);
+
+    manager.UpdateMemoryKey(key, nullptr);
+    EXPECT_EQ(key.keys[1], MOCK_REMOTE_ADDR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysImportsFlagAndSkipsDuplicateMemTag)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    auto &state = manager.remoteRanks_[1];
+    state.remoteEndpointDesc = MakeEndpointDesc();
+    auto key = MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {key}), BM_OK);
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {key}), BM_OK);
+    ASSERT_EQ(state.imports.size(), 1U);
+    EXPECT_EQ(state.imports.front().memTag, MOCK_MEM_TAG);
+    EXPECT_EQ(state.remoteFlagAddr, MOCK_REMOTE_ADDR);
+    EXPECT_EQ(state.remoteFlagSize, MOCK_SIZE);
+    EXPECT_EQ(state.remoteFlagDescBytes.size(), MOCK_HCOMM_DESC_LEN);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsBadInputsAndProtocolMismatch)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    auto &state = manager.remoteRanks_[1];
+    state.remoteEndpointDesc = MakeEndpointDesc();
+
+    auto badMagic = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    badMagic.keys[0] = 0;
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {badMagic}), BM_INVALID_PARAM);
+
+    auto zeroAddr = MakeImportKey(0, MOCK_SIZE, MOCK_MEM_TAG);
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {zeroAddr}), BM_INVALID_PARAM);
+
+    auto badPayload = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    auto *payload = reinterpret_cast<uint8_t *>(&badPayload.keys[4U]);
+    UrmaExportDesc exportDesc{};
+    std::memcpy(&exportDesc, payload, sizeof(exportDesc));
+    exportDesc.hcommDescLen = 0;
+    std::memcpy(payload, &exportDesc, sizeof(exportDesc));
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {badPayload}), BM_INVALID_PARAM);
+
+    state.remoteEndpointDesc.protocol = UrmaProtocol::ROCE;
+    auto goodKey = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {goodKey}), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsMalformedPayloadsAndFlagImportFailures)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    auto &state = manager.remoteRanks_[1];
+    state.remoteEndpointDesc = MakeEndpointDesc();
+
+    auto badDescMagic = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    auto *payload = reinterpret_cast<uint8_t *>(&badDescMagic.keys[4U]);
+    UrmaExportDesc exportDesc{};
+    std::memcpy(&exportDesc, payload, sizeof(exportDesc));
+    exportDesc.magic = 0;
+    std::memcpy(payload, &exportDesc, sizeof(exportDesc));
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {badDescMagic}), BM_INVALID_PARAM);
+
+    auto badHeaderSize = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    payload = reinterpret_cast<uint8_t *>(&badHeaderSize.keys[4U]);
+    std::memcpy(&exportDesc, payload, sizeof(exportDesc));
+    exportDesc.headerSize = sizeof(UrmaExportDesc) + 1U;
+    std::memcpy(payload, &exportDesc, sizeof(exportDesc));
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {badHeaderSize}), BM_INVALID_PARAM);
+
+    auto tooLarge = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    payload = reinterpret_cast<uint8_t *>(&tooLarge.keys[4U]);
+    std::memcpy(&exportDesc, payload, sizeof(exportDesc));
+    exportDesc.hcommDescLen = sizeof(tooLarge.keys);
+    exportDesc.devTransFlagDescLen = 1U;
+    std::memcpy(payload, &exportDesc, sizeof(exportDesc));
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {tooLarge}), BM_INVALID_PARAM);
+
+    g_memImportCallCount = 0;
+    DlHcommApi::gHcommMemImport = MockHcommMemImportSecondFails;
+    auto flagKey = MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {flagKey}), BM_DL_FUNCTION_FAILED);
+    EXPECT_TRUE(state.imports.empty());
+    EXPECT_TRUE(state.remoteFlagDescBytes.empty());
+
+    g_memImportCallCount = 0;
+    DlHcommApi::gHcommMemImport = MockHcommMemImportSecondInvalidType;
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {flagKey}), BM_INVALID_PARAM);
+    EXPECT_TRUE(state.imports.empty());
+    EXPECT_TRUE(state.remoteFlagDescBytes.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchRejectsInvalidDescriptorsAndMissingRank)
+{
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankCount_ = 2;
+
+    CopyDescriptor desc{};
+    EXPECT_EQ(manager.WriteRemoteBatchAsync(1, desc), BM_OK);
+
+    desc.localAddrs.push_back(reinterpret_cast<void *>(MOCK_LOCAL_ADDR));
+    desc.counts.push_back(MOCK_SIZE);
+    EXPECT_EQ(manager.WriteRemoteBatchAsync(1, desc), BM_INVALID_PARAM);
+
+    desc.globalAddrs.push_back(reinterpret_cast<void *>(MOCK_REMOTE_ADDR));
+    EXPECT_EQ(manager.WriteRemoteBatchAsync(1, desc), BM_NOT_CONNECTED);
+
+    auto &state = manager.remoteRanks_[1];
+    EXPECT_EQ(manager.WriteRemoteBatchAsync(1, desc), BM_NOT_CONNECTED);
+    state.channels.push_back(MOCK_CHANNEL);
+    state.thread = MOCK_THREAD;
+    EXPECT_EQ(manager.WriteRemoteBatchAsync(1, desc), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAllZeroCountsSkipsKernelLaunch)
+{
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankCount_ = 2;
+    auto &state = manager.remoteRanks_[1];
+    state.channels.push_back(MOCK_CHANNEL);
+    state.thread = MOCK_THREAD;
+
+    CopyDescriptor desc{};
+    desc.localAddrs = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR), reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x10U)};
+    desc.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR), reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x10U)};
+    desc.counts = {0U, 0U};
+    EXPECT_EQ(manager.ReadRemoteBatchAsync(1, desc), BM_OK);
+    EXPECT_EQ(state.pendingOps, 0U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RemoteIoZeroSizeAndFindRegistrationEdges)
+{
+    DeviceUrmaTransportManager manager;
+    EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, 0), BM_OK);
+
+    manager.opened_ = true;
+    manager.rankCount_ = 2;
+    EXPECT_EQ(manager.FindLocalRegistrationLocked(0, MOCK_SIZE, nullptr), BM_INVALID_PARAM);
+    EXPECT_EQ(manager.FindLocalRegistrationLocked(MOCK_LOCAL_ADDR, 0, nullptr), BM_OK);
+    EXPECT_EQ(manager.FindLocalRegistrationLocked(UINT64_MAX, 2, nullptr), BM_INVALID_PARAM);
+    EXPECT_EQ(manager.FindRemoteRegistrationLocked(2, MOCK_REMOTE_ADDR, MOCK_SIZE, nullptr), BM_INVALID_PARAM);
+    EXPECT_EQ(manager.FindRemoteRegistrationLocked(1, MOCK_REMOTE_ADDR, 0, nullptr), BM_OK);
+    EXPECT_EQ(manager.FindRemoteRegistrationLocked(1, UINT64_MAX, 2, nullptr), BM_NOT_CONNECTED);
+    manager.remoteRanks_[1] = DeviceUrmaTransportManager::RemoteRankState{};
+    EXPECT_EQ(manager.FindRemoteRegistrationLocked(1, UINT64_MAX, 2, nullptr), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, SynchronizePendingOpsWithoutChannelFails)
+{
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    auto &state = manager.remoteRanks_[1];
+    state.pendingOps = 1U;
+    EXPECT_EQ(manager.Synchronize(1), BM_NOT_CONNECTED);
+}
+
+TEST(DeviceUrmaTransportManagerTest, LaunchDeviceKernelBatchRejectsMismatchedVectorsAndMallocFailure)
+{
+    DeviceUrmaTransportManager manager;
+    const std::vector<uint64_t> localAddrs = {MOCK_LOCAL_ADDR};
+    const std::vector<uint64_t> remoteAddrs = {MOCK_REMOTE_ADDR, MOCK_REMOTE_ADDR + 8};
+    const std::vector<uint64_t> sizes = {MOCK_SIZE};
+    EXPECT_EQ(manager.LaunchDeviceKernelBatch(MOCK_THREAD, false, MOCK_CHANNEL, localAddrs, remoteAddrs, sizes, 0),
+              BM_INVALID_PARAM);
+
+    DlAclApiFnGuard guard;
+    DlAclApi::pAclrtMalloc = MockAclrtMallocFail;
+    manager.deviceKernelLoaded_ = true;
+    manager.deviceFuncHandles_.batchRead = MOCK_READ_FUNC;
+    manager.deviceFuncHandles_.batchWrite = MOCK_WRITE_FUNC;
+    EXPECT_EQ(
+        manager.LaunchDeviceKernelBatch(MOCK_THREAD, false, MOCK_CHANNEL, localAddrs, {MOCK_REMOTE_ADDR}, sizes, 0),
+        BM_ERROR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelGetsHandlesFromPreloadedBinary)
+{
+    DlAclApiFnGuard guard;
+    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+
+    aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
+    DeviceFuncHandles handles{};
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_OK);
+    EXPECT_EQ(binHandle, MOCK_BIN_HANDLE);
+    EXPECT_EQ(handles.batchRead, MOCK_READ_FUNC);
+    EXPECT_EQ(handles.batchWrite, MOCK_WRITE_FUNC);
+}
+
+TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelUsesDefaultPathWhenBinaryAlreadyLoaded)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    (void)unsetenv("ASCEND_HOME_PATH");
+    DlAclApiFnGuard guard;
+    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+
+    aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
+    DeviceFuncHandles handles{};
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_OK);
+    EXPECT_EQ(handles.batchRead, MOCK_READ_FUNC);
+    EXPECT_EQ(handles.batchWrite, MOCK_WRITE_FUNC);
+}
+
+TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsMissingJsonAndBinaryLoadFailure)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    DlAclApiFnGuard guard;
+    const std::string missingBase =
+        std::string(testing::TempDir()) + "missing_device_urma_kernel_" + std::to_string(getpid());
+    (void)setenv("ASCEND_HOME_PATH", missingBase.c_str(), 1);
+
+    aclrtBinHandle binHandle = nullptr;
+    DeviceFuncHandles handles{};
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_FILE_NOT_ACCESS);
+
+    PrepareKernelJson();
+    DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFileFail;
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_ERROR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailure)
+{
+    DlAclApiFnGuard guard;
+    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionFail;
+
+    aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
+    DeviceFuncHandles handles{};
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_ERROR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsNullFuncAndNullReturnedHandle)
+{
+    DlAclApiFnGuard guard;
+
+    aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
+    DeviceFuncHandles handles{};
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(nullptr, "write_kernel", binHandle, handles), BM_INVALID_PARAM);
+
+    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionNull;
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_DL_FUNCTION_FAILED);
 }
