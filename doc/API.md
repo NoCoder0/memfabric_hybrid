@@ -283,7 +283,7 @@ smem_bm_t smem_bm_create2(uint32_t id, const smem_bm_create_option_t *option);
 | 参数/返回值       | 含义                                                              |
 |--------------|-----------------------------------------------------------------|
 | id           | BM id，用户自定义，BM之间取不同值                                            |
-| option       | 创建BM的配置参数                                                       |
+| option       | 创建BM的配置参数 (注：如果开启`device_urma`协议，必须打开`enable_56bits_gva`为`True`)                                                      |
 | 返回值          | 成功返回BM handle，失败返回空指针                                           |
 
 **smem_bm_create_option_t 结构体参数说明**：

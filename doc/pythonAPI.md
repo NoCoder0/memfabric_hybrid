@@ -171,7 +171,7 @@ def create2(id, local_dram_size, max_dram_size, local_hbm_size = 0, max_hbm_size
 |local_hbm_size|本地hbm内存大小|
 |max_hbm_size|本地hbm内存最大大小|
 |data_op_type|数据操作类型，参考smem_bm_data_op_type类型定义|
-|enable_56bits_gva|是否显式启用 56 位 GVA，bool 类型，默认 False。|
+|enable_56bits_gva|是否显式启用 56 位 GVA，bool 类型，默认 False。(注：如果`data_op_type`使用`device_urma`协议，必须启用`enable_56bits_gva`)|
 |flags|预留参数|
 |shm_fd|共享内存文件描述符，默认-1（不使用）|
 |返回值|BigMemory对象|
