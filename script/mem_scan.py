@@ -39,10 +39,12 @@ def get_node_blocks(node):
 
     for name in os.listdir(path):
         if name.startswith("memory"):
-            idx = int(name.replace("memory", ""))
-            start = idx * block_size // PAGE_SIZE
-            end = (idx * block_size + block_size) // PAGE_SIZE - 1
-            blocks.append((start, end))
+            idx_str = name.replace("memory", "")
+            if idx_str.isdigit():
+                idx = int(idx_str)
+                start = idx * block_size // PAGE_SIZE
+                end = (idx * block_size + block_size) // PAGE_SIZE - 1
+                blocks.append((start, end))
 
     return sorted(blocks)
 
