@@ -129,6 +129,25 @@ constexpr uint64_t TEST_INVALID_MAGIC = 0xDEADBEEF;
 
 // Test constants for NIC length
 constexpr size_t TEST_LONG_NIC_LENGTH = 64;
+
+// Test constants for CheckOptions
+constexpr int32_t TEST_DEVICE_ID_CHECK_OPT_RANK_ID = 3001;
+constexpr int32_t TEST_DEVICE_ID_CHECK_OPT_DEV_RDMA_URMA = 3002;
+constexpr int32_t TEST_DEVICE_ID_CHECK_OPT_HOST_SHM_NO_VA = 3003;
+constexpr int32_t TEST_DEVICE_ID_CHECK_OPT_HOST_SHM_DEV_MEM = 3004;
+constexpr int32_t TEST_DEVICE_ID_CHECK_OPT_HOST_SHM_CONFLICT = 3005;
+constexpr int32_t TEST_DEVICE_ID_CHECK_OPT_SHM_FD = 3006;
+constexpr int32_t TEST_DEVICE_ID_CAN_REACH_SDMA = 3100;
+constexpr int32_t TEST_DEVICE_ID_CAN_REACH_DEVICE_RDMA = 3101;
+constexpr int32_t TEST_DEVICE_ID_CAN_REACH_MULTI = 3102;
+constexpr int32_t TEST_DEVICE_ID_GET_PTR_INVALID = 3103;
+constexpr int32_t TEST_DEVICE_ID_CHECK_ADDR_VA_RANGE = 3104;
+constexpr int32_t TEST_DEVICE_ID_CHECK_ADDR_OUT_RANGE = 3105;
+constexpr int32_t TEST_DEVICE_ID_REMOVE_EMPTY_RANKS = 3106;
+constexpr int32_t TEST_DEVICE_ID_EXPORT_ENTITY_SKIP_SEGMENT = 3107;
+constexpr int32_t TEST_DEVICE_ID_EXPORT_SLICE_TRANSPORT_MGR_NULL = 3108;
+constexpr int32_t TEST_DEVICE_ID_IMPORT_TRANSPORT_FAIL = 3109;
+constexpr int32_t TEST_DEVICE_ID_IMPORT_SLICE_DESC_NULL = 3110;
 } // namespace
 
 class HybmEntityDefaultTest : public testing::Test {
@@ -987,7 +1006,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_Enable56BitsGvaAddrWithoutR
     hybm_copy_params params{};
     params.src = reinterpret_cast<void *>(ock::mf::HYBM_56BITS_GVA_START_ADDR + 0x1000);
     params.dest = reinterpret_cast<void *>(0x2222);
-    params.dataSize = 4096ULL;
+    params.dataSize = 4096ULL; // 4096
 
     auto ret = entity.CopyData(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
     EXPECT_EQ(ret, BM_OK);
@@ -1488,4 +1507,265 @@ TEST_F(HybmEntityDefaultTest, ExportExchangeInfo_TransScene_HbmSegmentNull_Retur
 
     auto ret = entity.ExportEntityExchangeInfo(writer, 0);
     EXPECT_NE(ret, BM_OK);
+}
+
+// ==================== CheckOptions 扩展测试 ====================
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_RankIdExceedsRankCount)
+{
+    hybm_options options{};
+    options.rankId = 5; // 5
+    options.rankCount = 3; // 3
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_DeviceRdmaAndUrmaConflict)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA);
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmWithZeroVaSpace)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.bmDataOpType = HYBM_DOP_TYPE_HOST_SHM;
+    options.hostVASpace = 0;
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmWithDeviceMemory)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.bmDataOpType = HYBM_DOP_TYPE_HOST_SHM;
+    options.hostVASpace = 1024; // 1024
+    options.memType = HYBM_MEM_TYPE_DEVICE;
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmConflictingOpTypes)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(
+        HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_SDMA);
+    options.hostVASpace = 1024; // 1024
+    options.memType = HYBM_MEM_TYPE_HOST;
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_ShmFlagWithInvalidFd)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.flags = HYBM_FLAG_CREATE_WITH_SHM;
+    options.dramShmFd = -1;
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckOptions_ShmFlagWithValidFd)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.flags = HYBM_FLAG_CREATE_WITH_SHM;
+    options.dramShmFd = 0;
+    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
+    EXPECT_EQ(ret, BM_OK);
+}
+
+// ==================== CanReachDataOperators 测试 ====================
+
+TEST_F(HybmEntityDefaultTest, CanReachDataOperators_WithSdmaNoSegment)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_SDMA);
+    entity.initialized_ = true;
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_SDMA;
+    // segments are null, so SdmaReaches returns false
+    auto opType = entity.CanReachDataOperators(TEST_RANK_1);
+    EXPECT_EQ(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_SDMA, 0U);
+    EXPECT_EQ(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_MTE, 0U);
+    EXPECT_EQ(opType, HYBM_DOP_TYPE_DEFAULT);
+}
+
+TEST_F(HybmEntityDefaultTest, CanReachDataOperators_WithDeviceRdma)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_DEVICE_RDMA);
+    entity.initialized_ = true;
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    auto opType = entity.CanReachDataOperators(TEST_RANK_1);
+    EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_DEVICE_RDMA, 0U);
+}
+
+TEST_F(HybmEntityDefaultTest, CanReachDataOperators_MultipleFlags)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_MULTI);
+    entity.initialized_ = true;
+    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA |
+        HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_HOST_URMA);
+    auto opType = entity.CanReachDataOperators(TEST_RANK_1);
+    EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_DEVICE_RDMA, 0U);
+    EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_HOST_RDMA, 0U);
+    EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_HOST_SHM, 0U);
+    EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_HOST_URMA, 0U);
+    // SDMA not requested, should not appear in result
+    EXPECT_EQ(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_SDMA, 0U);
+}
+
+// ==================== GetReservedMemoryPtr 测试 ====================
+
+TEST_F(HybmEntityDefaultTest, GetReservedMemoryPtr_InvalidMemType)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_GET_PTR_INVALID);
+    void *ptr = entity.GetReservedMemoryPtr(static_cast<hybm_mem_type>(0xFF));
+    EXPECT_EQ(ptr, nullptr);
+}
+
+// ==================== CheckAddressInEntity 测试 ====================
+
+TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_DeviceVaRange)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CHECK_ADDR_VA_RANGE);
+    entity.initialized_ = true;
+    // Address in device VA range but not tracked by any segment -> the VA-range
+    // fallback should still accept it.
+    void *ptr = reinterpret_cast<void *>(ock::mf::HYBM_DEVICE_VA_START + 0x1000);
+    bool result = entity.CheckAddressInEntity(ptr, 64);
+    EXPECT_TRUE(result);
+}
+
+TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_OutOfRange)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CHECK_ADDR_OUT_RANGE);
+    entity.initialized_ = true;
+    // A stack address is neither in segments nor in the device VA range.
+    int buf = 0;
+    bool result = entity.CheckAddressInEntity(&buf, sizeof(buf));
+    EXPECT_FALSE(result);
+}
+
+// ==================== RemoveImported 边界测试 ====================
+
+TEST_F(HybmEntityDefaultTest, RemoveImported_EmptyRanks)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_REMOVE_EMPTY_RANKS);
+    entity.initialized_ = true;
+    std::vector<uint32_t> emptyRanks;
+    auto ret = entity.RemoveImported(emptyRanks);
+    EXPECT_EQ(ret, BM_OK);
+}
+
+// ==================== ExportEntityExchangeInfo 边界测试 ====================
+
+TEST_F(HybmEntityDefaultTest, ExportEntityExchangeInfo_NonTransHbmNull_SkipSegment)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_EXPORT_ENTITY_SKIP_SEGMENT);
+    entity.initialized_ = true;
+    entity.options_.rankId = TEST_RANK_0;
+    entity.options_.rankCount = TEST_RANK_COUNT_1;
+    entity.options_.scene = HYBM_SCENE_DEFAULT;
+    std::strncpy(entity.options_.tag, "tag0", sizeof(entity.options_.tag) - 1);
+    entity.transportManager_ = nullptr;
+    entity.hbmSegment_ = nullptr;
+
+    hybm_exchange_info ex{};
+    bzero(&ex, sizeof(ex));
+    ock::mf::ExchangeInfoWriter writer(&ex);
+
+    auto ret = entity.ExportEntityExchangeInfo(writer, 0);
+    EXPECT_EQ(ret, BM_OK); // should skip hbm segment and return OK
+}
+
+// ==================== ExportSliceExchangeInfo 边界测试 ====================
+
+TEST_F(HybmEntityDefaultTest, ExportSliceExchangeInfo_SliceNotFoundInSegments)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_EXPORT_SLICE_TRANSPORT_MGR_NULL);
+    entity.initialized_ = true;
+    entity.options_.rankId = TEST_RANK_0;
+    entity.options_.rankCount = TEST_RANK_COUNT_1;
+    entity.options_.scene = HYBM_SCENE_DEFAULT;
+    entity.transportManager_ = nullptr;
+    // Both segments are null, so any slice lookup will fail
+    entity.hbmSegment_ = nullptr;
+    entity.dramSegment_ = nullptr;
+
+    hybm_exchange_info ex{};
+    bzero(&ex, sizeof(ex));
+    ock::mf::ExchangeInfoWriter writer(&ex);
+
+    // Passing a non-null but invalid slice should cause the export to fail
+    hybm_mem_slice_t badSlice = reinterpret_cast<hybm_mem_slice_t>(0xDEAD);
+    auto ret = entity.ExportSliceExchangeInfo(badSlice, writer, 0);
+    EXPECT_NE(ret, BM_OK);
+}
+
+// ==================== ImportSliceExchangeInfo 边界测试 ====================
+
+TEST_F(HybmEntityDefaultTest, ImportSliceExchangeInfo_DescNull_ReturnError)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_IMPORT_SLICE_DESC_NULL);
+    entity.initialized_ = true;
+    entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
+
+    // override SetThreadAclDevice to return OK
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+        .stubs()
+        .will(returnValue(static_cast<int32_t>(BM_OK)));
+
+    void *addresses[1] = {nullptr};
+    auto ret = entity.ImportSliceExchangeInfo(nullptr, 1, addresses, 0);
+    EXPECT_NE(ret, BM_OK);
+}
+
+// ==================== ImportForTransport 失败路径 ====================
+
+class FakeTransportManagerConnectFail : public FakeTransportManager {
+public:
+    ock::mf::Result ConnectWithOptions(
+        const ock::mf::transport::HybmTransPrepareOptions & /* options */) override
+    {
+        connectWithOptionsCalled++;
+        return BM_ERROR;
+    }
+};
+
+TEST_F(HybmEntityDefaultTest, ImportForTransport_ConnectWithOptionsFail)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_IMPORT_TRANSPORT_FAIL);
+    entity.initialized_ = true;
+    entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
+    entity.options_.rankId = TEST_RANK_0;
+    entity.options_.role = HYBM_ROLE_SENDER;
+    entity.tagManager_ = std::make_shared<ock::mf::HybmEntityTagInfo>();
+
+    auto fake = std::make_shared<FakeTransportManagerConnectFail>();
+    entity.transportManager_ = fake;
+
+    ock::mf::EntityExportInfo r1{};
+    r1.rankId = TEST_RANK_1;
+    r1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
+    std::strncpy(r1.nic, "nic1", sizeof(r1.nic) - 1);
+    std::strncpy(r1.tag, "tag_1", sizeof(r1.tag) - 1);
+    entity.importedRanks_[TEST_RANK_1] = r1;
+
+    auto ret = entity.ImportForTransport();
+    EXPECT_NE(ret, BM_OK);
+    EXPECT_EQ(fake->connectWithOptionsCalled, 1);
 }

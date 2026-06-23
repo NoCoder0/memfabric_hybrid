@@ -47,3 +47,34 @@ TEST_F(HybmDataOperatorTest, clean_up_test)
     ock::mf::DataOperatorPtr opPtr = std::make_shared<ock::mf::HostDataOpSDMA>();
     opPtr->ock::mf::DataOperator::CleanUp();
 }
+
+TEST_F(HybmDataOperatorTest, quant_copy_default_returns_not_supported)
+{
+    ock::mf::DataOperatorPtr opPtr = std::make_shared<ock::mf::HostDataOpSDMA>();
+    hybm_quant_copy_params param{};
+    EXPECT_EQ(opPtr->ock::mf::DataOperator::QuantCopy(param), BM_NOT_SUPPORTED);
+}
+
+TEST_F(HybmDataOperatorTest, update_gva_space_unknown_type)
+{
+    ock::mf::DataOperatorPtr opPtr = std::make_shared<ock::mf::HostDataOpSDMA>();
+    opPtr->ock::mf::DataOperator::UpdateGvaSpace(HYBM_MEM_TYPE_BUTT, 0, 0, 0);
+}
+
+TEST_F(HybmDataOperatorTest, update_gva_space_device_type)
+{
+    ock::mf::DataOperatorPtr opPtr = std::make_shared<ock::mf::HostDataOpSDMA>();
+    opPtr->ock::mf::DataOperator::UpdateGvaSpace(HYBM_MEM_TYPE_DEVICE, 0x1000, 0x100000, 2); // 2
+}
+
+TEST_F(HybmDataOperatorTest, update_gva_space_host_type)
+{
+    ock::mf::DataOperatorPtr opPtr = std::make_shared<ock::mf::HostDataOpSDMA>();
+    opPtr->ock::mf::DataOperator::UpdateGvaSpace(HYBM_MEM_TYPE_HOST, 0x2000, 0x200000, 4); // 4
+}
+
+TEST_F(HybmDataOperatorTest, update_gva_space_zero_size)
+{
+    ock::mf::DataOperatorPtr opPtr = std::make_shared<ock::mf::HostDataOpSDMA>();
+    opPtr->ock::mf::DataOperator::UpdateGvaSpace(HYBM_MEM_TYPE_DEVICE, 0x1000, 0, 2); // 2
+}

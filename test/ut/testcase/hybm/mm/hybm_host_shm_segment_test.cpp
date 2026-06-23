@@ -248,3 +248,23 @@ TEST_F(HybmHostShmSegmentTest, GetExportSliceSize_ReturnsShmExportInfoSize)
     EXPECT_EQ(segment.GetExportSliceSize(size), BM_OK);
     EXPECT_EQ(size, sizeof(ShmExportInfo));
 }
+
+TEST_F(HybmHostShmSegmentTest, UnReserveMemorySpace_NoCrash)
+{
+    HybmHostShmSegment segment(MakeOptions(), 0);
+    auto ret = segment.UnReserveMemorySpace();
+    EXPECT_EQ(ret, BM_OK);
+}
+
+TEST_F(HybmHostShmSegmentTest, MemoryInRange_NoInit_ReturnsFalse)
+{
+    HybmHostShmSegment segment(MakeOptions(), 0);
+    EXPECT_FALSE(segment.MemoryInRange(reinterpret_cast<void*>(0x1000), 0));
+}
+
+TEST_F(HybmHostShmSegmentTest, ReleaseSliceMemory_NullSlice_NoCrash)
+{
+    HybmHostShmSegment segment(MakeOptions(), 0);
+    auto ret = segment.ReleaseSliceMemory(nullptr);
+    EXPECT_NE(ret, BM_OK);
+}

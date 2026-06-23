@@ -227,3 +227,37 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_A2_HBM_CrossMachine)
     auto outHva = HybmVaManager::GetInstance().TransformVa(remote.gva, HVM_GVA, HVM_HVA); // hva == 0
     EXPECT_EQ(outHva, 0U);
 }
+
+// ReserveLva 非56bit返回im.deviceVa
+TEST_F(HybmVmmBasedSegmentTest, ReserveLva_Non56Bit_ReturnsDeviceVa)
+{
+    MemSegmentOptions opts;
+    opts.enable56BitsGva = false;
+    HybmVmmBasedSegment seg(opts, 0);
+    HostSdmaExportInfo im;
+    im.magic = VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;
+    im.deviceVa = 0x1000;
+    im.size = 4096; // 4096
+    uint64_t lva = seg.ReserveLva(im);
+    EXPECT_EQ(lva, 0x1000U);
+}
+
+// ValidateOptions HBM通过
+TEST_F(HybmVmmBasedSegmentTest, ValidateOptions_Hbm_Passes)
+{
+    MemSegmentOptions opts;
+    opts.segType = HYBM_MST_HBM;
+    opts.maxSize = GB;
+    opts.rankCnt = 2; // 2
+    opts.size = 0;
+    HybmVmmBasedSegment seg(opts, 0);
+    EXPECT_EQ(seg.ValidateOptions(), BM_OK);
+}
+
+// 空析构不崩溃
+TEST_F(HybmVmmBasedSegmentTest, Destroy_NoCrash)
+{
+    MemSegmentOptions opts;
+    opts.segType = HYBM_MST_HBM;
+    HybmVmmBasedSegment seg(opts, 0);
+}

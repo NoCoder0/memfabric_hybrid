@@ -171,3 +171,27 @@ TEST_F(SmLastErrorTest, last_error_code_independent_from_msg)
     ASSERT_EQ(std::string(SmLastError::GetAndClear(false)), "in use");
     ASSERT_EQ(SmLastError::GetAndClearCode(false), SM_RESOURCE_IN_USE);
 }
+
+TEST_F(SmLastErrorTest, last_error_set_code_only)
+{
+    SmLastError::Set(SM_INVALID_PARAM, "");
+    ASSERT_EQ(SmLastError::GetAndClearCode(false), SM_INVALID_PARAM);
+    ASSERT_TRUE(std::string(SmLastError::GetAndClear(false)).empty());
+}
+
+TEST_F(SmLastErrorTest, last_error_long_msg)
+{
+    std::string msg = "error: param=0x1234, code=0x5678";
+    SmLastError::Set(SM_RESOURCE_IN_USE, msg);
+    ASSERT_EQ(SmLastError::GetAndClearCode(false), SM_RESOURCE_IN_USE);
+    ASSERT_EQ(std::string(SmLastError::GetAndClear(false)), msg);
+}
+
+TEST_F(SmLastErrorTest, last_error_clear_get_no_code)
+{
+    SmLastError::Set("something");
+    SmLastError::GetAndClear(true);
+    SmLastError::Set("after clear");
+    ASSERT_EQ(std::string(SmLastError::GetAndClear(false)), "after clear");
+}
+

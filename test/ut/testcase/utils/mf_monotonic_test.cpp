@@ -31,3 +31,24 @@ TEST_F(MfMonotonicTest, time_test)
     ASSERT_EQ(MonotonicTime::TimeUs() != 0, true);
     ASSERT_EQ(MonotonicTime::TimeNs() != 0, true);
 }
+
+TEST_F(MfMonotonicTest, time_monotonic_increasing)
+{
+    uint64_t t1 = MonotonicTime::TimeUs();
+    uint64_t t2 = MonotonicTime::TimeUs();
+    EXPECT_GE(t2, t1);
+}
+
+TEST_F(MfMonotonicTest, time_ns_greater_than_us)
+{
+    uint64_t us = MonotonicTime::TimeUs();
+    uint64_t ns = MonotonicTime::TimeNs();
+    EXPECT_GE(ns, us);
+}
+
+TEST_F(MfMonotonicTest, mono_perf_trace_no_crash)
+{
+    MonoPerfTrace trace;
+    trace.RecordStart();
+    trace.RecordEnd();
+}

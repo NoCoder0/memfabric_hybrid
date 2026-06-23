@@ -78,6 +78,45 @@ TEST_F(MFNumUtilTest, GetReserveChunkSizetTest)
     EXPECT_EQ(ret, 100ULL * GB);
     ret = HybmDevLegacySegment::GetReserveChunkSize(0 * GB, 4ULL * GB);
     EXPECT_EQ(ret, 0 * GB);
-    ret = HybmDevLegacySegment::GetReserveChunkSize(200ULL * GB, 2ULL * GB);
+        ret = HybmDevLegacySegment::GetReserveChunkSize(200ULL * GB, 2ULL * GB);
     EXPECT_EQ(ret, 100ULL * GB);
 }
+
+TEST_F(MFNumUtilTest, IsOverflowCheck_AddNoOverflow)
+{
+    uint64_t max = UINT64_MAX;
+    EXPECT_FALSE(NumUtil::IsOverflowCheck(uint64_t(100), uint64_t(200), max, '+')); // 100 200
+    EXPECT_FALSE(NumUtil::IsOverflowCheck(uint64_t(0), max, max, '+'));
+}
+
+TEST_F(MFNumUtilTest, IsOverflowCheck_AddOverflow)
+{
+    uint64_t max = UINT64_MAX;
+    EXPECT_TRUE(NumUtil::IsOverflowCheck(max, uint64_t(1), max, '+'));
+    EXPECT_TRUE(NumUtil::IsOverflowCheck(max, max, max, '+'));
+}
+
+TEST_F(MFNumUtilTest, IsOverflowCheck_MulNoOverflow)
+{
+    uint64_t max = UINT64_MAX;
+    EXPECT_FALSE(NumUtil::IsOverflowCheck(uint64_t(2), uint64_t(3), max, '*')); // 2 3
+    EXPECT_FALSE(NumUtil::IsOverflowCheck(uint64_t(0), max, max, '*'));
+}
+
+TEST_F(MFNumUtilTest, IsOverflowCheck_MulOverflow)
+{
+    uint64_t max = UINT64_MAX;
+    EXPECT_TRUE(NumUtil::IsOverflowCheck(max, uint64_t(2), max, '*')); // 2
+}
+
+TEST_F(MFNumUtilTest, IsOverflowCheck_InvalidOp)
+{
+    uint64_t max = UINT64_MAX;
+    EXPECT_TRUE(NumUtil::IsOverflowCheck(uint64_t(1), uint64_t(1), max, '-'));
+}
+
+TEST_F(MFNumUtilTest, IsOverflowCheck_SignedType)
+{
+    EXPECT_FALSE(NumUtil::IsOverflowCheck(int32_t(100), int32_t(200), int32_t(INT32_MAX), '+')); // 100 200
+}
+

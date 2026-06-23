@@ -25,7 +25,7 @@ protected:
     {
         tagInfo_ = std::make_unique<HybmEntityTagInfo>();
         hybm_options opt{};
-        opt.rankCount = 8;
+        opt.rankCount = 8; // 8
         EXPECT_EQ(tagInfo_->TagInfoInit(opt), BM_OK);
     }
 
@@ -49,7 +49,7 @@ TEST_F(HybmEntityTagInfoTest, TagInfoInit)
     std::string tagOpStr = "tag0:DEVICE_SDMA:tag1";
     memset(opt.tagOpInfo, 0, sizeof(opt.tagOpInfo));
     memcpy(opt.tagOpInfo, tagOpStr.c_str(), tagOpStr.size());
-    opt.rankCount = 4;
+    opt.rankCount = 4; // 4
     EXPECT_EQ(tagInfo_->TagInfoInit(opt), BM_OK);
 }
 
@@ -332,22 +332,7 @@ TEST_F(HybmEntityTagInfoTest, GetAllOpType)
 }
 
 // ========================
-// Test Case 26: GetOpTypeStr - Static method
-// ========================
-TEST_F(HybmEntityTagInfoTest, GetOpTypeStr_StaticMethod)
-{
-    std::string str1 = HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_SDMA);
-    EXPECT_FALSE(str1.empty());
-
-    std::string str2 = HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_RDMA);
-    EXPECT_FALSE(str2.empty());
-
-    std::string str3 = HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEFAULT);
-    EXPECT_FALSE(str3.empty());
-}
-
-// ========================
-// Test Case 27: AddRankTag - Valid characters (underscore, numbers)
+// Test Case 26: AddRankTag - Valid characters (underscore, numbers)
 // ========================
 TEST_F(HybmEntityTagInfoTest, AddRankTag_ValidChars_UnderscoreAndNumbers)
 {
@@ -383,6 +368,76 @@ TEST_F(HybmEntityTagInfoTest, ComplexScenario_MultipleRanksAndTagOps)
     EXPECT_EQ(tagInfo_->GetRank2RankOpType(0, 1), HYBM_DOP_TYPE_HOST_RDMA);
     EXPECT_EQ(tagInfo_->GetRank2RankOpType(1, 2), HYBM_DOP_TYPE_SDMA);
     EXPECT_EQ(tagInfo_->GetRank2RankOpType(2, 0), HYBM_DOP_TYPE_HOST_TCP);
+}
+
+// ========================
+// Test Case 30: GetOpTypeStr - All known op types
+// ========================
+TEST_F(HybmEntityTagInfoTest, GetOpTypeStr_AllKnownOpTypes)
+{
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_SDMA), "DEVICE_SDMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_RDMA), "DEVICE_RDMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_URMA), "DEVICE_URMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_RDMA), "HOST_RDMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_TCP), "HOST_TCP");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_URMA), "HOST_URMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_SHM), "HOST_SHM");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_MTE), "DEVICE_MTE");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_AIV_SDMA), "AIV_SDMA");
+}
+
+// ========================
+// Test Case 31: GetOpTypeStr - Unknown op type returns "OP_TYPE_BUTT"
+// ========================
+TEST_F(HybmEntityTagInfoTest, GetOpTypeStr_UnknownOpType)
+{
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(static_cast<hybm_data_op_type>(0xFF)), "OP_TYPE_BUTT");
+}
+
+// ========================
+// Test Case 32: GetTag2TagOpType - Flipped key (tag2:tag1 matches tag1:tag2)
+// ========================
+TEST_F(HybmEntityTagInfoTest, GetTag2TagOpType_FlippedKey)
+{
+    EXPECT_EQ(tagInfo_->AddTagOpInfo("alpha:DEVICE_RDMA:beta"), BM_OK);
+    // Original key direction
+    EXPECT_EQ(tagInfo_->GetTag2TagOpType("alpha", "beta"), HYBM_DOP_TYPE_DEVICE_RDMA);
+    // Flipped key direction should also match
+    EXPECT_EQ(tagInfo_->GetTag2TagOpType("beta", "alpha"), HYBM_DOP_TYPE_DEVICE_RDMA);
+}
+
+// ========================
+// Test Case 33: GetRank2RankOpType - rank not found
+// ========================
+TEST_F(HybmEntityTagInfoTest, GetRank2RankOpType_RankNotFound)
+{
+    EXPECT_EQ(tagInfo_->AddRankTag(0, "rank0"), BM_OK);
+    EXPECT_EQ(tagInfo_->AddRankTag(1, "rank1"), BM_OK);
+    EXPECT_EQ(tagInfo_->AddTagOpInfo("rank0:DEVICE_SDMA:rank1"), BM_OK);
+    // rank1 not found
+    EXPECT_EQ(tagInfo_->GetRank2RankOpType(999, 1), HYBM_DOP_TYPE_DEFAULT); // 999
+    // rank2 not found
+    EXPECT_EQ(tagInfo_->GetRank2RankOpType(0, 999), HYBM_DOP_TYPE_DEFAULT); // 999
+}
+
+TEST_F(HybmEntityTagInfoTest, AddRankTag_EmptyTag_ReturnsOk)
+{
+    EXPECT_EQ(tagInfo_->AddRankTag(3, ""), BM_OK); // 3
+}
+
+TEST_F(HybmEntityTagInfoTest, TagInfoInit_EmptyTag_DefaultsToDefault)
+{
+    hybm_options opt{};
+    opt.rankCount = 4; // 4
+    auto info = std::make_unique<HybmEntityTagInfo>();
+    EXPECT_EQ(info->TagInfoInit(opt), BM_OK);
+}
+
+TEST_F(HybmEntityTagInfoTest, AddRankTag_MultipleThenRemove)
+{
+    EXPECT_EQ(tagInfo_->AddRankTag(5, "alpha"), BM_OK); // 5
+    EXPECT_EQ(tagInfo_->AddRankTag(6, "beta"), BM_OK); // 6
+    EXPECT_EQ(tagInfo_->RemoveRankTag(5, "alpha"), BM_OK); // 5
 }
 
 } // namespace mf

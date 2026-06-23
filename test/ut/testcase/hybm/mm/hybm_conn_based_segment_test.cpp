@@ -485,3 +485,38 @@ TEST_F(HybmConnBasedSegmentTest, GetExportSliceSize_ReturnsHostExportInfoSize)
     EXPECT_EQ(segment.GetExportSliceSize(size), BM_OK);
     EXPECT_EQ(size, sizeof(HostExportInfo));
 }
+
+TEST_F(HybmConnBasedSegmentTest, UnReserveMemorySpace_NoInit_NoCrash)
+{
+    HybmConnBasedSegment seg(MakeOptions(), 0);
+    auto ret = seg.UnReserveMemorySpace();
+    EXPECT_EQ(ret, BM_OK);
+}
+
+TEST_F(HybmConnBasedSegmentTest, CheckSdmaReaches_Default_ReturnsFalse)
+{
+    HybmConnBasedSegment seg(MakeOptions(), 0);
+    EXPECT_FALSE(seg.CheckSdmaReaches(0));
+}
+
+TEST_F(HybmConnBasedSegmentTest, MemoryInRange_NullAddr_ReturnsFalse)
+{
+    HybmConnBasedSegment seg(MakeOptions(), 0);
+    EXPECT_FALSE(seg.MemoryInRange(nullptr, 1));
+}
+
+TEST_F(HybmConnBasedSegmentTest, Export_Empty_ReturnsOk)
+{
+    HybmConnBasedSegment seg(MakeOptions(), 0);
+    std::string info;
+    EXPECT_EQ(seg.Export(info), BM_OK);
+}
+
+TEST_F(HybmConnBasedSegmentTest, Export_NullSlice_ReturnsInvalidParam)
+{
+    HybmConnBasedSegment seg(MakeOptions(), 0);
+    MemSlicePtr nullSlice;
+    std::string info;
+    auto ret = seg.Export(nullSlice, info);
+    EXPECT_NE(ret, BM_OK);
+}

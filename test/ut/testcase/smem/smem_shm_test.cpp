@@ -724,3 +724,154 @@ TEST_F(SmemShmTest, smem_shm_entry_get_reach_info_paths)
     ret = entry.GetReachInfo(0, reachInfo);
     EXPECT_EQ(ret, SM_ERROR);
 }
+
+// === Cover invalid handle paths in smem_shm API functions ===
+// These tests initialize shm then pass fake handles to trigger GetEntryByPtr failure
+
+TEST_F(SmemShmTest, smem_shm_control_barrier_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    // Pass non-null handle that won't be found by GetEntryByPtr
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_control_barrier(fakeHandle);
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_subgroup_barrier_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_subgroup_barrier(fakeHandle, "key", 2, 0); // 2
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_subgroup_allgather_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    char buf[8] = {};
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_subgroup_allgather(fakeHandle, "key", 2, 0, buf, sizeof(buf), buf, sizeof(buf)); // 2
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_topology_can_reach_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    uint32_t reachInfo;
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_topology_can_reach(fakeHandle, 0, &reachInfo);
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_atomic_alloc_value_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    int32_t val;
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_atomic_alloc_value(fakeHandle, 100, &val); // 100
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_atomic_release_value_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_atomic_release_value(fakeHandle, 0);
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_register_exit_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    ret = smem_shm_register_exit(fakeHandle, nullptr);
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_shm_uninit(0);
+}
+
+TEST_F(SmemShmTest, smem_shm_global_exit_invalid_handle)
+{
+    smem_shm_config_t config;
+    auto ret = smem_shm_config_init(&config);
+    EXPECT_EQ(ret, 0);
+
+    MOCKER_CPP(&SmemShmEntryManager::Initialize, int32_t (*)(const char *, uint32_t,
+        uint32_t, uint16_t, smem_shm_config_t *)).stubs().will(returnValue(0));
+    ret = smem_shm_init(UT_IP_PORT, 1, 0, 0, &config);
+    EXPECT_EQ(ret, 0);
+
+    void *fakeHandle = reinterpret_cast<void *>(0xDEAD);
+    smem_shm_global_exit(fakeHandle, 0);
+    // Just verify no crash; function returns void
+
+    smem_shm_uninit(0);
+}

@@ -52,3 +52,25 @@ TEST(HybmTransportManagerTest, GetQpInfo_DefaultImpl_ReturnNull)
     EXPECT_EQ(mgr->GetQpInfo(), nullptr);
 }
 
+TEST(HybmTransportManagerTest, Create_SDMA_ReturnNotNull)
+{
+    HybmEntityTagInfoPtr tagMgr = std::make_shared<HybmEntityTagInfo>();
+    auto mgr = TransportManager::Create(ock::mf::transport::TT_SDMA, tagMgr);
+    EXPECT_NE(mgr, nullptr);
+}
+
+TEST(HybmTransportManagerTest, Create_HCCP_WithTag_ReturnNotNull)
+{
+    HybmEntityTagInfoPtr tagMgr = std::make_shared<HybmEntityTagInfo>();
+    tagMgr->TagInfoInit(hybm_options{});
+    auto mgr = TransportManager::Create(ock::mf::transport::TT_HCCP, tagMgr);
+    EXPECT_NE(mgr, nullptr);
+}
+
+TEST(HybmTransportManagerTest, Create_HCOM_ReturnNotNull)
+{
+    HybmEntityTagInfoPtr tagMgr = std::make_shared<HybmEntityTagInfo>();
+    auto mgr = TransportManager::Create(ock::mf::transport::TT_HCOM, tagMgr);
+    EXPECT_NE(mgr, nullptr);
+}
+

@@ -641,6 +641,116 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_user_addr_fails)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
+// 批量拷贝+flags+stream
+TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_with_flags)
+{
+    void* srcs[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR),
+                     reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x2000)};
+    void* dsts[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+                     reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
+    uint64_t sizes[2] = {4096, 8192};
+    hybm_batch_copy_params p{};
+    p.sources = srcs;
+    p.destinations = dsts;
+    p.dataSizes = sizes;
+    p.batchSize = 2; // 2
+    void* stream = reinterpret_cast<void*>(0x6000);
+    auto ret = hybm_data_batch_copy(mockEntity.get(), &p, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, stream, ASYNC_COPY_FLAG);
+    EXPECT_EQ(ret, 0);
+}
+
+// 批量拷贝 AUTO
+TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_auto_gva_pairs)
+{
+    void* srcs[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR),
+                     reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x2000)};
+    void* dsts[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+                     reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
+    uint64_t sizes[2] = {1024, 2048};
+    hybm_batch_copy_params p{};
+    p.sources = srcs;
+    p.destinations = dsts;
+    p.dataSizes = sizes;
+    p.batchSize = 2; // 2
+    auto ret = hybm_data_batch_copy(mockEntity.get(), &p, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+}
+
+// 批量拷贝方向不匹配
+TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_direction_mismatch)
+{
+    void* srcs[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR),
+                     reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x2000)};
+    void* dsts[2] = {reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000),
+                     reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x3000)};
+    uint64_t sizes[2] = {1024, 2048};
+    hybm_batch_copy_params p{};
+    p.sources = srcs;
+    p.destinations = dsts;
+    p.dataSizes = sizes;
+    p.batchSize = 2; // 2
+    // H2GD 需要 dest=GD，但 dest 是 (LH|GH) → 不匹配
+    auto ret = hybm_data_batch_copy(mockEntity.get(), &p, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, nullptr, 0);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+// D2GH 方向通过（LOCAL_DEVICE → GLOBAL_HOST）
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_device_to_global_host)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_DEVICE_VA_START + 0x1000);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+}
+
+// GH2LD 方向通过（GLOBAL_HOST → LOCAL_DEVICE）
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_global_host_to_local_device)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dest = reinterpret_cast<void*>(HYBM_DEVICE_VA_START + 0x1000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+}
+
+// D2GH 方向通过（LOCAL_DEVICE → GLOBAL_HOST）
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_device_to_global_host2)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_DEVICE_VA_START);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR + 0x1000);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+}
+
+// AUTO + 混合类型（LOCAL_DEVICE src + GVA dest）
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_device_to_gva)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(HYBM_DEVICE_VA_START);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+    EXPECT_EQ(mockEntity->copyDirection, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST);
+}
+
+// AUTO + 单个用户地址（src=用户, dest=GVA → 应成功）
+TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_user_to_gva_passes)
+{
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void*>(0x7f001000);
+    params.dest = reinterpret_cast<void*>(HYBM_GVM_START_ADDR);
+    params.dataSize = 1024;
+    auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
+    EXPECT_EQ(ret, 0);
+    EXPECT_EQ(mockEntity->copyDirection, HYBM_LOCAL_HOST_TO_GLOBAL_HOST);
+}
+
 // GVA→GVA 传 GH2GH 通过
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_gva_to_gva_gh2gh)
 {
