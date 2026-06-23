@@ -51,9 +51,6 @@
 const uint64_t GVA_SIZE = 1024ULL * 1024 * 1024;
 constexpr uint32_t MAX_UINT32 = 0xFFFFFFFF;
 constexpr uint32_t SEP_HALF_WIDTH = 50;
-constexpr uint32_t RUN_TRANS_PERF_WITH_DRAM_AND_HBM = 2;
-constexpr uint32_t RUN_TRANS_PERF_WITH_DRAM_ONLY = 1;
-constexpr uint32_t RUN_TRANS_PERF_WITH_HBM_ONLY = 0;
 constexpr uint32_t TRANS_PERF_CONCURRENCY = 2;
 
 const static std::map<std::string, uint64_t> RATE_UNIT_MP = {{"GB", 1000ull * 1000ull * 1000ull},
@@ -92,7 +89,7 @@ static inline void init_warmup_data(char *&warmup_data, size_t length)
 }
 
 
-int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int rank_id, int use_malloc,
+int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int rank_id,
                         int num_threads = 1)
 {
     char *warmup_data = nullptr;
@@ -103,18 +100,8 @@ int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int ra
     const uint32_t KB_SIZE = 1024;
 
     // malloc device mem
-    if (use_malloc) {
-        dev_addr = smem_trans_malloc(trans_handle, GVA_SIZE);
-        if (dev_addr == nullptr || dev_addr == nullptr) {
-            std::cout << "malloc dram failed" << std::endl;
-            return -1;
-        } else {
-            std::cout << "malloc dram success, dev_addr:" << dev_addr << std::endl;
-        }
-    } else {
-        aclError aclret = aclrtMalloc(&dev_addr, GVA_SIZE, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_GOTO_ERR(aclret != ACL_ERROR_NONE, "failed to allocate device memory, ret:" << aclret, out);
-    }
+    aclError aclret = aclrtMalloc(&dev_addr, GVA_SIZE, ACL_MEM_MALLOC_HUGE_FIRST);
+    CHECK_GOTO_ERR(aclret != ACL_ERROR_NONE, "failed to allocate device memory, ret:" << aclret, out);
 
     std::cout << "[" << rank_id << "]" << " malloc dev mem " << dev_addr << std::endl;
     /* gather peer addr */
@@ -125,7 +112,7 @@ int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int ra
     ret = smem_shm_control_barrier(shm_handle);
     CHECK_GOTO_ERR(ret, "barrier failed, ret:" << ret << " rank:" << rank_id, out);
 
-    if (rank_id == 1 && !use_malloc) {
+    if (rank_id == 1) {
         ret = smem_trans_register_mem(trans_handle, dev_addr, GVA_SIZE, 0);
         CHECK_GOTO_ERR(ret, "failed to register device memory, ret:" << ret, out);
     }
@@ -148,11 +135,7 @@ int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int ra
         CHECK_GOTO_ERR(!warmup_data, "warmup data malloc failed", out);
         std::cout << "Warmup Start" << std::endl;
         init_warmup_data(warmup_data, GVA_SIZE);
-        if (!use_malloc) {
-            aclrtMemcpy(dev_addr, GVA_SIZE, warmup_data, GVA_SIZE, ACL_MEMCPY_HOST_TO_DEVICE);
-        } else {
-            memcpy(dev_addr, warmup_data, GVA_SIZE);
-        }
+        aclrtMemcpy(dev_addr, GVA_SIZE, warmup_data, GVA_SIZE, ACL_MEMCPY_HOST_TO_DEVICE);
 
         // warmup
         ret = smem_trans_write(trans_handle, dev_addr, dstSessionId.c_str(), dst_dev_addr, base_block_size, 0);
@@ -160,7 +143,7 @@ int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int ra
         std::cout << "Warmup End" << std::endl;
         CHECK_GOTO_ERR(ret, "barrier failed, ret:" << ret << " rank:" << rank_id, out);
 
-        auto test_title = use_malloc ? "Dram Trans Test Start" : "HBM Trans Test Start";
+        auto test_title = "HBM Trans Test Start";
         std::string separator(SEP_HALF_WIDTH, '=');
         std::cout << separator << test_title << separator << std::endl;
 
@@ -267,22 +250,13 @@ out:
         free(warmup_data);
     }
     if (dev_addr) {
-        if (use_malloc) {
-            ret = smem_trans_free(trans_handle, dev_addr);
-            if (ret != 0) {
-                std::cout << "free dram failed, dev_addr:" << dev_addr << std::endl;
-            } else {
-                std::cout << "free dram success, dev_addr:" << dev_addr << std::endl;
-            }
-        } else {
-            aclrtFree(dev_addr);
-        }
+        aclrtFree(dev_addr);
     }
     return ret;
 }
 
 
-int32_t trans_test(int rank_id, int rank_size, int device_id, int use_sdma, std::string &ip_port, int memType)
+int32_t trans_test(int rank_id, int rank_size, int device_id, int use_sdma, std::string &ip_port)
 {
     void *shm_gva = nullptr;
     smem_trans_config_t config;
@@ -337,12 +311,7 @@ int32_t trans_test(int rank_id, int rank_size, int device_id, int use_sdma, std:
 
     ret = smem_shm_control_barrier(shm_handle);
     CHECK_GOTO_ERR(ret, "barrier failed, ret:" << ret << " rank:" << rank_id, err4);
-    if (memType == RUN_TRANS_PERF_WITH_DRAM_AND_HBM) {
-        trans_perf_test(trans_handle, shm_handle, rank_id, RUN_TRANS_PERF_WITH_HBM_ONLY, TRANS_PERF_CONCURRENCY);
-        trans_perf_test(trans_handle, shm_handle, rank_id, RUN_TRANS_PERF_WITH_DRAM_ONLY, TRANS_PERF_CONCURRENCY);
-    } else {
-        trans_perf_test(trans_handle, shm_handle, rank_id, memType, TRANS_PERF_CONCURRENCY);
-    }
+    trans_perf_test(trans_handle, shm_handle, rank_id, TRANS_PERF_CONCURRENCY);
 
 err4:
     smem_shm_destroy(shm_handle, 0);
@@ -356,8 +325,8 @@ err1:
 }
 
 /*
- * transfer_perf {rank_size} {rank_id} {deviceID} {use_sdma} tcp://{Ip}:{port} {memType}
- * transfer_perf 2 0 2 1 tcp://127.0.0.1:12050 2
+ * transfer_perf {rank_size} {rank_id} {deviceID} {use_sdma} tcp://{Ip}:{port}
+ * transfer_perf 2 0 2 1 tcp://127.0.0.1:12050
  */
 
 int32_t main(int32_t argc, char *argv[])
@@ -367,10 +336,8 @@ int32_t main(int32_t argc, char *argv[])
     int device_id = atoi(argv[3]);
     int use_sdma = atoi(argv[4]);
     std::string ipPort = argv[5];
-    int memType = atoi(argv[6]);
     std::cout << "[TEST] input rank_size: " << rank_size << " rank_id:" << rank_id << " device_id: " << device_id <<
-        " use_sdma: " << use_sdma << " store_ip: " << ipPort <<
-        " memType(0:hbm 1:dram 2:hbm + dram):" << memType << std::endl;
+        " use_sdma: " << use_sdma << " store_ip: " << ipPort << std::endl;
 
     const size_t RANK_ID_SIZE = 2;
     if (rank_size != RANK_ID_SIZE) {
@@ -387,7 +354,7 @@ int32_t main(int32_t argc, char *argv[])
     auto ret = smem_init(0);
     CHECK_GOTO_ERR(ret, "smem init failed, ret:" << ret << " rank:" << rank_id, err1);
 
-    (void)trans_test(rank_id, rank_size, device_id, use_sdma, ipPort, memType);
+    (void)trans_test(rank_id, rank_size, device_id, use_sdma, ipPort);
 
     smem_uninit();
 err1:

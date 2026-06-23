@@ -36,8 +36,7 @@
 
 namespace ock {
 namespace smem {
-// reserve 128GB dram va for malloc per rank, refine to configurable later
-constexpr uint64_t TRANS_RESERVE_DRAM_VA_SIZE = 1024ULL * 1024 * 1024 * 128;
+// reserve 128GB hbm va for malloc per rank, refine to configurable later
 constexpr uint64_t TRANS_RESERVE_HBM_VA_SIZE = 1024ULL * 1024 * 1024 * 128; // 128G
 
 SmemTransEntryPtr SmemTransEntry::Create(const std::string &name, const std::string &storeUrl,
@@ -124,13 +123,6 @@ int32_t SmemTransEntry::Initialize()
 
 void SmemTransEntry::UnInitialize()
 {
-    {
-        std::lock_guard<std::mutex> lock(addrMapMutex_);
-        for (auto &e : addrToSliceMap_) {
-            hybm_free_local_memory(entity_, e.second, 1U, 0);
-        }
-        addrToSliceMap_.clear();
-    }
     {
         mf::WriteGuard locker(remoteSliceRwMutex_);
         rankUpdateIdx_.clear();
@@ -513,97 +505,6 @@ Result SmemTransEntry::Leave(uint32_t flags)
     return SM_OK;
 }
 
-void SmemTransEntry::StoreSlice(hybm_mem_slice_t slice, void *vaAddr)
-{
-    std::lock_guard<std::mutex> lock(addrMapMutex_);
-    addrToSliceMap_[vaAddr] = slice;
-}
-
-hybm_mem_slice_t SmemTransEntry::RemoveSlice(void *addr)
-{
-    if (addr == nullptr) {
-        SM_LOG_ERROR("failed to remove slice, addr is null");
-        return nullptr;
-    }
-
-    hybm_mem_slice_t slice = nullptr;
-    {
-        std::lock_guard<std::mutex> lock(addrMapMutex_);
-        auto it = addrToSliceMap_.find(addr);
-        if (it == addrToSliceMap_.end()) {
-            return nullptr;
-        }
-        slice = it->second;
-        addrToSliceMap_.erase(it);
-    }
-
-    return slice;
-}
-
-void* SmemTransEntry::MallocDram(uint64_t size)
-{
-    SM_VALIDATE_RETURN((config_.flags & SMEM_TRANS_CONFIG_SUPPORT_DRAM_FLAG), "not set support dram", nullptr);
-    SM_VALIDATE_RETURN((size != 0), "malloc failed, invalid size 0.", nullptr);
-    if (size > TRANS_RESERVE_DRAM_VA_SIZE) {
-        SM_LOG_ERROR("malloc failed, invalid size:" << size << ", should be less than or equal "
-                                                    << TRANS_RESERVE_DRAM_VA_SIZE);
-        return nullptr;
-    }
-
-    auto slice = hybm_alloc_local_memory(entity_, HYBM_MEM_TYPE_HOST, size, 0);
-    if (slice == nullptr) {
-        SM_LOG_ERROR("malloc address with size: " << size << " failed. maybe free mem is not enough");
-        return nullptr;
-    }
-
-    auto vaAddr = hybm_get_slice_va(entity_, slice);
-    if (vaAddr == nullptr) {
-        SM_LOG_ERROR("malloc address with size: " << size << " failed. maybe free mem is not enough");
-        hybm_free_local_memory(entity_, slice, size, 0);
-        return nullptr;
-    }
-
-    StoreSlice(slice, vaAddr);
-
-    SmemTransExchangeInfo info;
-    auto ret = hybm_export(entity_, slice, 0, &info.hybmInfo);
-    if (ret != 0) {
-        SM_LOG_ERROR("export slice for register address with size: " << size << " failed:" << ret);
-        hybm_free_local_memory(entity_, slice, size, 0);
-        RemoveSlice(vaAddr);
-        return nullptr;
-    }
-
-    std::unique_lock<std::mutex> uniqueLock{memMutex_};
-    info.u.address = LocalMapAddress(vaAddr, size);
-    registedInfo_.emplace_back(info);
-
-    ret = Update(0);
-    registedInfo_.clear();
-
-    if (ret != 0) {
-        SM_LOG_ERROR("update failed, rk:" << rankId_ << " addr:" << vaAddr << " ret:" << ret);
-        hybm_free_local_memory(entity_, slice, size, 0);
-        RemoveSlice(vaAddr);
-        return nullptr;
-    }
-    return vaAddr;
-}
-
-Result SmemTransEntry::FreeDram(void *address)
-{
-    SM_VALIDATE_RETURN((config_.flags & SMEM_TRANS_CONFIG_SUPPORT_DRAM_FLAG), "not set support dram", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN((address != nullptr), "invalid address pointer.", SM_INVALID_PARAM);
-
-    auto slice = RemoveSlice(address);
-    if (slice == nullptr) {
-        SM_LOG_ERROR("failed to free, invalid address:" << address);
-        return SM_ERROR;
-    }
-
-    return hybm_free_local_memory(entity_, slice, 0, 0);
-}
-
 Result SmemTransEntry::RegisterLocalMemory(const void *address, uint64_t size, uint32_t flags)
 {
     std::vector<std::pair<const void *, size_t>> regMemories;
@@ -938,12 +839,6 @@ hybm_options SmemTransEntry::GenerateHybmOptions()
     options.devId = config_.deviceId;
     options.deviceVASpace = 0;
     options.maxHBMSize = TRANS_RESERVE_HBM_VA_SIZE;
-    if (config_.flags & SMEM_TRANS_CONFIG_SUPPORT_DRAM_FLAG) {
-        SM_LOG_INFO("smem_trans set to support dram malloc. rankId:" << rankId_);
-        options.memType = static_cast<hybm_mem_type>(HYBM_MEM_TYPE_DEVICE | HYBM_MEM_TYPE_HOST);
-        options.hostVASpace = TRANS_RESERVE_DRAM_VA_SIZE;
-        options.maxDRAMSize = TRANS_RESERVE_DRAM_VA_SIZE;
-    }
     options.scene = HYBM_SCENE_TRANS;
     options.role = config_.role == SMEM_TRANS_SENDER ? HYBM_ROLE_SENDER : HYBM_ROLE_RECEIVER;
     options.dramShmFd = -1;

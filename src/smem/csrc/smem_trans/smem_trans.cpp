@@ -125,48 +125,6 @@ SMEM_API int32_t smem_trans_register_mem(smem_trans_t handle, void *address, siz
     return SM_OK;
 }
 
-SMEM_API void* smem_trans_malloc(smem_trans_t handle, size_t capacity)
-{
-    SM_VALIDATE_RETURN(g_smemTransInited, "smem trans not initialized yet", nullptr);
-    SM_VALIDATE_RETURN(handle != nullptr, "invalid handle, which is null", nullptr);
-    SM_VALIDATE_RETURN(capacity != 0, "invalid capacity, which is 0", nullptr);
-
-    /* get entry by ptr */
-    SmemTransEntryPtr entry;
-    auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
-    if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
-        return nullptr;
-    }
-
-    /* alloc memory to entry */
-    return entry->MallocDram(capacity);
-}
-
-SMEM_API int32_t smem_trans_free(smem_trans_t handle, void *address)
-{
-    SM_VALIDATE_RETURN(g_smemTransInited, "smem trans not initialized yet", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(handle != nullptr, "invalid handle, which is null", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(address != nullptr, "invalid address, which is null", SM_INVALID_PARAM);
-
-    /* get entry by ptr */
-    SmemTransEntryPtr entry;
-    auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
-    if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
-        return result;
-    }
-
-    /* alloc memory to entry */
-    result = entry->FreeDram(address);
-    if (result != SM_OK) {
-        SM_LOG_AND_SET_LAST_ERROR("free local mem failed, result: " << result);
-        return result;
-    }
-
-    return SM_OK;
-}
-
 SMEM_API int32_t smem_trans_batch_register_mem(smem_trans_t handle, void *addresses[], size_t capacities[],
                                                uint32_t count, uint32_t flags)
 {

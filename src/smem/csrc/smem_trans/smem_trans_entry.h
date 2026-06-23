@@ -104,8 +104,6 @@ public:
     Result Initialize();
     void UnInitialize();
 
-    void*  MallocDram(uint64_t size);
-    Result FreeDram(void *address);
     Result RegisterLocalMemory(const void *address, uint64_t size, uint32_t flags);
     Result RegisterLocalMemories(const std::vector<std::pair<const void *, size_t>> &regMemories, uint32_t flags);
     Result SyncTransfer(void *localAddr, const std::string &remoteUniqueId, void *remoteAddr, size_t dataSize,
@@ -141,8 +139,6 @@ private:
     std::vector<std::pair<const void *, size_t>> CombineMemories(std::vector<std::pair<const void *, size_t>> &input);
     Result RegisterOneMemory(const void *address, uint64_t size, uint32_t flags);
     hybm_options GenerateHybmOptions();
-    void StoreSlice(hybm_mem_slice_t slice, void *vaAddr);
-    hybm_mem_slice_t RemoveSlice(void *addr);
     Result TransformAddr(Local2GlobalMap &maps, std::vector<void *> &addr, void *remoteAddrs[],
                          const size_t dataSizes[], uint32_t size);
 
@@ -165,10 +161,8 @@ private:
     std::unordered_map<WorkerId, Local2GlobalMap, WorkerIdHash> remoteSlices_;
     std::unordered_map<uint32_t, WorkerId> rankToWorkerId_;
     std::map<std::string, WorkerId> nameToWorkerId_; /* To accelerate name parsed */
-    std::unordered_map<void *, hybm_mem_slice_t> addrToSliceMap_; // dram slice info
     std::unordered_map<uint32_t, uint32_t> rankUpdateIdx_;
     std::unordered_map<uint32_t, smem_trans_role_t> ranksRole_;
-    mutable std::mutex addrMapMutex_;
 
     StorePtr store_;
     SmemGroupEnginePtr globalGroup_ = nullptr;

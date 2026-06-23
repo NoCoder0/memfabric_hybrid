@@ -20,7 +20,6 @@ extern "C" {
 #endif
 
 #define SMEM_TRANS_RANK_COUNT_MAX               (512U)
-#define SMEM_TRANS_CONFIG_SUPPORT_DRAM_FLAG     (1U)
 
 typedef void *smem_trans_t;
 
