@@ -18,7 +18,13 @@
 
 ## 二、 获取 run 包
 
-Run 包是项目 `build_aicpu_kernel_run` 构建目标的产物。执行项目构建流程（如 `bash script/build_and_pack_run.sh --build_aicpu_kernel_run ON`）后，产物位于：
+Run 包由算子独立构建脚本生成：
+
+```bash
+bash script/kernel/build_ops_run.sh
+```
+
+构建成功后，产物位于：
 
 ```
 ./output/memfabric_hybrid_aicpu_kernel.run
