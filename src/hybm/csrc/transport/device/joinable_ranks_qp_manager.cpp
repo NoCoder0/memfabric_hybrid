@@ -66,8 +66,10 @@ int JoinableRanksQpManager::RemoveRanks(const std::unordered_set<uint32_t> &rank
     for (auto rank : ranks) {
         if (rank < rankId_) {
             removedServerRanks_.emplace(rank);
+            newServers_.erase(rank);
         } else {
             removedClientRanks_.emplace(rank);
+            newClients_.erase(rank);
         }
     }
     uniqueLock.unlock();

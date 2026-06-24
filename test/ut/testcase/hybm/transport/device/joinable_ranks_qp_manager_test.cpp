@@ -106,8 +106,6 @@ TEST_F(JoinableRanksQpManagerTest, SetRemoteRankInfo)
     EXPECT_EQ(ret, BM_OK);
 }
 
-// SetRemoteRankInfoOutOfRange 已被上面覆盖，可省略
-
 // 测试 RemoveRanks 正常、空参数、越界分支
 TEST_F(JoinableRanksQpManagerTest, RemoveRanks)
 {
@@ -122,6 +120,166 @@ TEST_F(JoinableRanksQpManagerTest, RemoveRanks)
     std::unordered_set<uint32_t> outOfRange{K_OUT_OF_RANGE_RANK};
     ret = manager->RemoveRanks(outOfRange);
     EXPECT_EQ(ret, BM_OK);
+}
+
+// 测试 RemoveRanks 会清理 newClients_ / newServers_ 中待处理的 rank
+// 场景: SetRemoteRankInfo 将 rank 加入 newClients_ 后, 上层在 WaitQpConnections 完成前调用 RemoveRanks
+// 如果 newClients_ 没有被清理, 后续 ServerSideRunLoop 会再次尝试连接已删除的 rank 并报 "no ip address"
+TEST_F(JoinableRanksQpManagerTest, RemoveRanksClearsNewClients)
+{
+    sockaddr_in devNet{};
+    devNet.sin_family = AF_INET;
+    devNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
+
+    // 设置远程 rank 2,3 的连接信息 → newClients_ = {2, 3}
+    std::unordered_map<uint32_t, ConnectRankInfo> ranks;
+    sockaddr_in net{};
+    net.sin_family = AF_INET;
+    net.sin_port = htons(K_PORT_8001);
+    inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
+    ock::mf::transport::TransportMemoryKey mk{};
+    ranks.emplace(K_RANK_ID_2, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_3, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    clientManager->SetRemoteRankInfo(ranks);
+    EXPECT_TRUE(clientManager->newClients_.count(K_RANK_ID_2));
+    EXPECT_TRUE(clientManager->newClients_.count(K_RANK_ID_3));
+
+    // 模拟 WaitQpConnections 尚未执行, 上层已调用 RemoveRanks
+    std::unordered_set<uint32_t> toRemove{K_RANK_ID_2};
+    clientManager->RemoveRanks(toRemove);
+
+    // 验证 newClients_ 中的 rank 2 已被清理, rank 3 仍然保留
+    EXPECT_FALSE(clientManager->newClients_.count(K_RANK_ID_2));
+    EXPECT_TRUE(clientManager->newClients_.count(K_RANK_ID_3));
+}
+
+TEST_F(JoinableRanksQpManagerTest, ScenarioRegression_NoIpAddressAfterLeave)
+{
+    sockaddr_in devNet{};
+    devNet.sin_family = AF_INET;
+    devNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
+    auto mgr = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
+
+    sockaddr_in net{};
+    net.sin_family = AF_INET;
+    net.sin_port = htons(K_PORT_8001);
+    inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
+    ock::mf::transport::TransportMemoryKey mk{};
+
+    // Phase 1: 新 rank 2 加入 → newClients_ = {2}, connections_[2] 有有效 IP
+    mgr->SetRemoteRankInfo({{K_RANK_ID_2, ConnectRankInfo(HYBM_ROLE_PEER, net, mk)}});
+    ASSERT_TRUE(mgr->newClients_.count(K_RANK_ID_2));
+    ASSERT_NE(mgr->connections_[K_RANK_ID_2].remoteNet.sin_addr.s_addr, 0U);
+
+    // Phase 2: 模拟管线在 GenerateWhiteList 失败 → 提前 return
+    //         (UT 环境 RaSocketWhiteListAdd 调用会失败)
+    //         WaitQpConnections 没走到 → rank 2 残留在 newClients_
+    mgr->ServerSideHandleNewClients({K_RANK_ID_2});
+    ASSERT_TRUE(mgr->newClients_.count(K_RANK_ID_2));  // 残留确认
+
+    // Phase 3: 模拟上层触发 leave → RemoveRanks({2})
+    //   (修复前): 不清理 newClients_ → mgr->newClients_ 仍有 2
+    //   (修复后): 清理 newClients_   → mgr->newClients_ 已清 2
+    mgr->RemoveRanks({K_RANK_ID_2});
+
+    // Phase 4: 模拟 RemoveRanksProcess 清空 connections_[2] (IP 被清零)
+    std::memset(&mgr->connections_[K_RANK_ID_2], 0, sizeof(ConnectionChannel));
+    ASSERT_EQ(mgr->connections_[K_RANK_ID_2].remoteNet.sin_addr.s_addr, 0U);
+
+    // Phase 5: ★ 模拟下一轮 ServerSideRunLoop 的拷贝行为
+    //   修复前: snapshot = {2}  → 非空 → 走 GenerateWhiteList({2})
+    //           connections_[2].remoteNet.s_addr = 0 → 打印 "rankId: 2, no ip address."
+    //   修复后: snapshot = {}   → 空 → 不会走 GenerateWhiteList → 无错误
+    auto snapshot = mgr->newClients_;
+
+    // 如果 snapshot 非空, 显式调用 GenerateWhiteList 展示 "no ip address" 错误
+    if (!snapshot.empty()) {
+        // 仅在修复前会进入此分支: 触发实际的 "no ip address" 错误
+        int ret = mgr->GenerateWhiteList(snapshot);
+        EXPECT_EQ(ret, BM_ERROR)
+            << "修复前: newClients_ 残留 rank " << *snapshot.begin()
+            << ", GenerateWhiteList 返回 BM_ERROR, 日志应出现 'no ip address'.";
+    }
+
+    // ★★ 核心断言: snapshot 应为空 (修复前: 残留 → 断言失败; 修复后: 已清 → 断言通过)
+    EXPECT_TRUE(snapshot.empty())
+        << "修复前: newClients_ 残留 rank "
+        << (snapshot.empty() ? -1 : static_cast<int>(*snapshot.begin()))
+        << ", 下一轮循环必调 GenerateWhiteList 并报 'no ip address'";
+}
+
+// 模拟完整异常场景: ServerSideHandleNewClients 管线未到达 WaitQpConnections 就提前返回
+// (因 GenerateWhiteList 调用 HW API 失败), 随后 RemoveRanks 被调用.
+// 验证修复: RemoveRanks 能清理 newClients_ 中残留的 rank, 不再报 "no ip address"
+TEST_F(JoinableRanksQpManagerTest, RemoveRanksAfterPipelineFailure)
+{
+    // rank 1 作为 server, 接待 client rank 2, 3
+    sockaddr_in devNet{};
+    devNet.sin_family = AF_INET;
+    devNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
+    auto serverManager = std::make_unique<TestableJoinableRanksQpManager>(1, 1, 1, K_RANK_COUNT, devNet, 0);
+
+    // 设置 remote rank 2, 3 的 IP 信息 → newClients_ = {2, 3}
+    std::unordered_map<uint32_t, ConnectRankInfo> ranks;
+    sockaddr_in net{};
+    net.sin_family = AF_INET;
+    net.sin_port = htons(K_PORT_8001);
+    inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
+    ock::mf::transport::TransportMemoryKey mk{};
+    ranks.emplace(K_RANK_ID_2, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_3, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    serverManager->SetRemoteRankInfo(ranks);
+
+    // Step 1: ServerSideHandleNewClients 执行管线
+    //   GenerateWhiteList → UT 环境 RaSocketWhiteListAdd 失败 → return ERROR
+    //   WaitSocketConnections / WaitQpConnections 没有走到，因此 rank 2, 3 残留在 newClients_ 中
+    serverManager->ServerSideHandleNewClients({K_RANK_ID_2, K_RANK_ID_3});
+    EXPECT_TRUE(serverManager->newClients_.count(K_RANK_ID_2));
+    EXPECT_TRUE(serverManager->newClients_.count(K_RANK_ID_3));
+
+    // Step 2: 模拟上层触发 rank 2 leave → RemoveRanks
+    serverManager->RemoveRanks({K_RANK_ID_2});
+
+    // Step 3: ★ 验证 newClients_ 中的 rank 2 被清理, rank 3 保留
+    //   (修复前: rank 2 残留 → 下一轮循环报 "no ip address")
+    //   (修复后: rank 2 被 RemoveRanks 同步删除)
+    EXPECT_FALSE(serverManager->newClients_.count(K_RANK_ID_2));
+    EXPECT_TRUE(serverManager->newClients_.count(K_RANK_ID_3));
+}
+
+// 测试 RemoveRanks 会清理 newServers_ 中待处理的 server rank
+TEST_F(JoinableRanksQpManagerTest, RemoveRanksClearsNewServers)
+{
+    sockaddr_in devNet{};
+    devNet.sin_family = AF_INET;
+    devNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
+    // rank 2 作为 client, 连接 server (rank 0, 1)
+    auto clientManager = std::make_unique<TestableJoinableRanksQpManager>(2, 2, 2, K_RANK_COUNT, devNet, 0);
+
+    std::unordered_map<uint32_t, ConnectRankInfo> ranks;
+    sockaddr_in net{};
+    net.sin_family = AF_INET;
+    net.sin_port = htons(K_PORT_8001);
+    inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
+    ock::mf::transport::TransportMemoryKey mk{};
+    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_1, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    clientManager->SetRemoteRankInfo(ranks);
+    EXPECT_TRUE(clientManager->newServers_.count(0));
+    EXPECT_TRUE(clientManager->newServers_.count(K_RANK_ID_1));
+
+    // 移除 server rank 0
+    std::unordered_set<uint32_t> toRemove{0};
+    clientManager->RemoveRanks(toRemove);
+
+    // 验证 newServers_ 中的 rank 0 已被清理, rank 1 仍然保留
+    EXPECT_FALSE(clientManager->newServers_.count(0));
+    EXPECT_TRUE(clientManager->newServers_.count(K_RANK_ID_1));
 }
 
 // 测试 Startup 和 Shutdown，空参数、重复调用分支
