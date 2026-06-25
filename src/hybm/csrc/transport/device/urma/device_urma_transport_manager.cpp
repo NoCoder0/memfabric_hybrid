@@ -1245,10 +1245,6 @@ Result DeviceUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryReg
         BM_LOG_ERROR("device_urma RegisterMemoryRegion: mr.addr or mr.size is 0");
         return BM_INVALID_PARAM;
     }
-    if (!IsSupportedMemoryFlags(mr.flags)) {
-        BM_LOG_ERROR("device_urma RegisterMemoryRegion: unsupported memory flags: " << mr.flags);
-        return BM_INVALID_PARAM;
-    }
     const UrmaCommMem mem = ToUrmaMem(mr);
     if (!IsValidMem(mem)) {
         BM_LOG_ERROR("device_urma RegisterMemoryRegion: invalid memory");
@@ -1276,8 +1272,20 @@ Result DeviceUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryReg
     registration.memTag = mr.addr;
     registration.refCount = 1;
 
+    UrmaCommMem regMem = mem;
+    if (mr.flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) {
+        uint64_t dva = HybmVaManager::GetInstance().TransformVa(mr.addr, HVM_HVA, HVM_DVA);
+        if (dva != 0) {
+            registration.deviceVa = dva;
+            regMem.addr = dva;
+        } else {
+            BM_LOG_WARN("device_urma RegisterMemoryRegion: DRAM addr " << VaToStr(mr.addr)
+                                                                       << " has no DVA mapping, using HVA");
+        }
+    }
+
     HcommMemHandle hcommHandle = nullptr;
-    ret = manager_.HcommMemReg(localEndpoint_, registration.memTag, mem, &hcommHandle);
+    ret = manager_.HcommMemReg(localEndpoint_, registration.memTag, regMem, &hcommHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma HcommMemReg failed, addr: " << VaToStr(mr.addr) << " size: " << mr.size
                                                               << " ret: " << ret);
@@ -1973,11 +1981,16 @@ Result DeviceUrmaTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uin
         return BM_NOT_CONNECTED;
     }
     const auto translatedRemoteAddr = remote.view.addr + (rAddr - remote.addr);
-    BM_LOG_DEBUG("device_urma lAddr:" << VaToStr(lAddr) << ", rAddr=" << VaToStr(rAddr) << ", translated rAddr="
-                                      << VaToStr(translatedRemoteAddr) << ", size=" << size << ", write: " << write);
+    LocalRegistration localReg{};
+    uint64_t localDva = lAddr;
+    if (FindLocalRegistrationLocked(lAddr, size, &localReg) == BM_OK && localReg.deviceVa != 0) {
+        localDva = localReg.deviceVa + (lAddr - localReg.mr.addr);
+    }
+    BM_LOG_DEBUG("device_urma lAddr:" << VaToStr(lAddr) << ", localDva:" << VaToStr(localDva) << ", rAddr="
+                << VaToStr(rAddr) << ", translated rAddr=" << VaToStr(translatedRemoteAddr) << ", size="
+                << size << ", write: " << write);
     const auto channel = state.channels.front();
-    // Route single-element transfer through LaunchDeviceKernelBatch to unify notify/flag logic.
-    ret = LaunchDeviceKernelBatch(state.thread, !write, channel, std::vector<uint64_t>{lAddr},
+    ret = LaunchDeviceKernelBatch(state.thread, !write, channel, std::vector<uint64_t>{localDva},
                                   std::vector<uint64_t>{translatedRemoteAddr}, std::vector<uint64_t>{size},
                                   state.remoteFlagAddr);
     if (ret != BM_OK) {
@@ -2070,7 +2083,12 @@ Result DeviceUrmaTransportManager::RemoteIoBatch(uint32_t rankId, const CopyDesc
             return ret;
         }
         const auto translatedRemoteAddr = remote.view.addr + (rAddr - remote.addr);
-        localVec.push_back(lAddr);
+        uint64_t localDva = lAddr;
+        LocalRegistration localReg{};
+        if (FindLocalRegistrationLocked(lAddr, size, &localReg) == BM_OK && localReg.deviceVa != 0) {
+            localDva = localReg.deviceVa + (lAddr - localReg.mr.addr);
+        }
+        localVec.push_back(localDva);
         remoteVec.push_back(translatedRemoteAddr);
         sizeVec.push_back(size);
     }

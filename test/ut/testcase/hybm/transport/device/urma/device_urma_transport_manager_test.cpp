@@ -28,6 +28,7 @@
 #include "dl_hccl_api.h"
 #include "dl_hcomm_api.h"
 #include "hybm_stream_manager.h"
+#include "hybm_va_manager.h"
 #undef private
 #undef protected
 
@@ -2199,4 +2200,213 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsNullFuncAndNullRetur
 
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionNull;
     EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_DL_FUNCTION_FAILED);
+}
+
+// ============================================================================
+// DeviceUrmaTransportManager tests — DRAM DVA conversion in RegisterMemoryRegion
+// ============================================================================
+
+constexpr uint64_t MOCK_DRAM_HVA = 0xFFF000001000ULL;
+constexpr uint64_t MOCK_DRAM_DVA = 0x124000000000ULL;
+constexpr uint64_t MOCK_DRAM_SIZE = 0x100000ULL;
+
+struct VaManagerGuard {
+    ~VaManagerGuard()
+    {
+        HybmVaManager::GetInstance().ClearAll();
+    }
+};
+
+int32_t MockHcommMemRegVerifyDva(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
+                                 HcommMemHandle *memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memTag, nullptr);
+    EXPECT_NE(mem, nullptr);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_EQ(mem->addr, reinterpret_cast<void *>(MOCK_DRAM_DVA));
+    EXPECT_EQ(mem->size, MOCK_DRAM_SIZE);
+    EXPECT_EQ(mem->type, COMM_MEM_TYPE_HOST);
+    *memHandle = MOCK_MEM_HANDLE;
+    return BM_OK;
+}
+
+int32_t MockHcommMemRegVerifyHva(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
+                                 HcommMemHandle *memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memTag, nullptr);
+    EXPECT_NE(mem, nullptr);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_EQ(mem->addr, reinterpret_cast<void *>(MOCK_DRAM_HVA));
+    EXPECT_EQ(mem->size, MOCK_DRAM_SIZE);
+    EXPECT_EQ(mem->type, COMM_MEM_TYPE_HOST);
+    *memHandle = MOCK_MEM_HANDLE;
+    return BM_OK;
+}
+
+int32_t MockHcommMemRegVerifyHbm(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
+                                 HcommMemHandle *memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    EXPECT_NE(memTag, nullptr);
+    EXPECT_NE(mem, nullptr);
+    EXPECT_NE(memHandle, nullptr);
+    EXPECT_EQ(mem->type, COMM_MEM_TYPE_DEVICE);
+    *memHandle = MOCK_MEM_HANDLE;
+    return BM_OK;
+}
+
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionDramUsesDvaWhenMappingExists)
+{
+    VaManagerGuard vaGuard;
+    DlHcommApiFnGuard hcommGuard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegVerifyDva;
+
+    auto &vaManager = HybmVaManager::GetInstance();
+    vaManager.ClearAll();
+    vaManager.Initialize(AscendSocType::ASCEND_910B);
+    BaseAllocatedGvaInfo baseInfo{};
+    baseInfo.va[HVM_GVA] = 0;
+    baseInfo.va[HVM_DVA] = MOCK_DRAM_DVA;
+    baseInfo.va[HVM_HVA] = MOCK_DRAM_HVA;
+    baseInfo.size = MOCK_DRAM_SIZE;
+    baseInfo.memType = HYBM_MEM_TYPE_HOST;
+    ASSERT_EQ(vaManager.AddVaInfoFromExternal(baseInfo, 0), BM_OK);
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2UL;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_DRAM_HVA;
+    mr.size = MOCK_DRAM_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+
+    ASSERT_EQ(manager.localRegistrations_.size(), 1U);
+    const auto &reg = manager.localRegistrations_[MOCK_DRAM_HVA];
+    EXPECT_EQ(reg.mr.addr, MOCK_DRAM_HVA);
+    EXPECT_EQ(reg.deviceVa, MOCK_DRAM_DVA);
+    EXPECT_EQ(reg.handle, MOCK_MEM_HANDLE);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionDramFallsBackToHvaWhenNoDvaMapping)
+{
+    VaManagerGuard vaGuard;
+    DlHcommApiFnGuard hcommGuard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegVerifyHva;
+
+    auto &vaManager = HybmVaManager::GetInstance();
+    vaManager.ClearAll();
+    vaManager.Initialize(AscendSocType::ASCEND_910B);
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2UL;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_DRAM_HVA;
+    mr.size = MOCK_DRAM_SIZE;
+    mr.flags = REG_MR_FLAG_DRAM;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+
+    ASSERT_EQ(manager.localRegistrations_.size(), 1U);
+    const auto &reg = manager.localRegistrations_[MOCK_DRAM_HVA];
+    EXPECT_EQ(reg.mr.addr, MOCK_DRAM_HVA);
+    EXPECT_EQ(reg.deviceVa, 0U);
+    EXPECT_EQ(reg.handle, MOCK_MEM_HANDLE);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionHbmSkipsDvaConversion)
+{
+    VaManagerGuard vaGuard;
+    DlHcommApiFnGuard hcommGuard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegVerifyHbm;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2UL;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_HBM;
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+
+    ASSERT_EQ(manager.localRegistrations_.size(), 1U);
+    const auto &reg = manager.localRegistrations_[MOCK_LOCAL_ADDR];
+    EXPECT_EQ(reg.mr.addr, MOCK_LOCAL_ADDR);
+    EXPECT_EQ(reg.deviceVa, 0U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
+{
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    InstallKernelLaunchMocks();
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
+
+    g_kernelLaunchCallCount = 0;
+    DeviceUrmaTransportManager manager;
+    TransportOptions openOptions{};
+    openOptions.rankId = 0;
+    openOptions.rankCount = 2UL;
+    ASSERT_EQ(manager.OpenDevice(openOptions), BM_OK);
+
+    HybmTransPrepareOptions prepareOptions{};
+    TransportRankPrepareInfo info{};
+    auto peerDesc = MakeEndpointDesc();
+    peerDesc.protocol = UrmaProtocol::UBC_CTP;
+    peerDesc.type = COMM_ADDR_TYPE_IP_V6;
+    info.privateData = MakePrivateData(peerDesc);
+    info.role = HYBM_ROLE_PEER;
+    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    prepareOptions.options.emplace(1UL, std::move(info));
+    ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
+
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = MOCK_SIZE;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.handle = MOCK_MEM_HANDLE;
+    localReg.memTag = MOCK_LOCAL_ADDR;
+    localReg.refCount = 1U;
+    localReg.deviceVa = MOCK_DRAM_DVA;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
+    g_kernelLaunchCallCount = 0;
+    EXPECT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
+    EXPECT_GE(g_kernelLaunchCallCount, 1U);
+
+    manager.localRegistrations_.clear();
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }

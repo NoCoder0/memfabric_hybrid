@@ -184,6 +184,7 @@ private:
         HcommMemHandle handle{nullptr};
         UrmaMemTag memTag{0};
         uint32_t refCount{0};
+        uint64_t deviceVa{0};
         std::unordered_map<uint32_t, HcommMemHandle> peerHandles{};
     };
 
