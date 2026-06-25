@@ -60,8 +60,8 @@ static int HalMemAllocStub(void **ptr, uint64_t size, uint64_t flag)
     return 0;
 }
 
-// 模拟 AclrtFreeHost 函数的实现
-static int AclrtFreeHostStub(void *ptr)
+// 模拟 HalMemFree 函数的实现
+static int HalMemFreeStub(void *ptr)
 {
     (void)ptr;
     return 0;
@@ -329,8 +329,8 @@ public:
         // 模拟 DlHalApi::HalMemAlloc 方法
         MOCKER(&ock::mf::DlHalApi::HalMemAlloc).stubs().will(invoke(HalMemAllocStub));
 
-        // 模拟 DlAclApi::AclrtFreeHost 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtFreeHost).stubs().will(invoke(AclrtFreeHostStub));
+        // 模拟 DlHalApi::HalMemFree 方法
+        MOCKER(&ock::mf::DlHalApi::HalMemFree).stubs().will(invoke(HalMemFreeStub));
 
         // 模拟 DlAclApi::AclrtMemcpy 方法
         MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(0));
@@ -740,6 +740,35 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
 
     ret = dataOp_->BatchDataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options);
     ASSERT_EQ(BM_ERROR, ret);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_unregister_paths)
+{
+    InitMockEnv();
+    auto ret = dataOp_->Initialize();
+    ASSERT_EQ(BM_OK, ret);
+
+    uint64_t hostGvaStart = 10000000ULL;
+    uint64_t deviceGvaStart = 20000000ULL;
+    uint64_t spaceSize = 40960ULL;
+    uint64_t rankCount = 4ULL;
+    dataOp_->UpdateGvaSpace(HYBM_MEM_TYPE_HOST, hostGvaStart, spaceSize, rankCount);
+    dataOp_->UpdateGvaSpace(HYBM_MEM_TYPE_DEVICE, deviceGvaStart, spaceSize, rankCount);
+
+    uint64_t localHostAddr = hostGvaStart;
+    uint64_t remoteHostAddr1 = hostGvaStart + spaceSize;
+    uint64_t remoteHostAddr2 = hostGvaStart + spaceSize * 2;
+    void *srcLH[2] = {reinterpret_cast<void *>(localHostAddr), reinterpret_cast<void *>(localHostAddr)};
+    void *srcGH[2] = {reinterpret_cast<void *>(remoteHostAddr1), reinterpret_cast<void *>(remoteHostAddr2)};
+    void *dstLH[2] = {reinterpret_cast<void *>(localHostAddr), reinterpret_cast<void *>(localHostAddr)};
+    void *dstGH[2] = {reinterpret_cast<void *>(remoteHostAddr1), reinterpret_cast<void *>(remoteHostAddr2)};
+    uint64_t dataSizes[2] = {1024, 2048};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 2UL;
+    params.dataSizes = dataSizes;
 
     // 测试已注册远程地址走注册路径
     transportManagerMock_->queryHasRegisteredResult = true;

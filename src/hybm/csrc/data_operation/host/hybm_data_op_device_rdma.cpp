@@ -163,10 +163,10 @@ void DataOpDeviceRDMA::FreeSwapMemory()
                 BM_LOG_ERROR("Failed to UnregisterMemoryRegion, ret: " << ret);
             }
         }
-        DlHalApi::HalHostUnregisterEx(rdmaSwapBaseAddr_, HybmGetInitDeviceId(), HOST_MEM_MAP_DEV);
-        const auto ret = DlAclApi::AclrtFreeHost(rdmaSwapBaseAddr_);
+        DlHalApi::HalHostUnregisterEx(rdmaSwapBaseAddr_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
+        const auto ret = DlHalApi::HalMemFree(rdmaSwapBaseAddr_);
         if (ret != 0) {
-            BM_LOG_ERROR("Failed to AclrtFreeHost swap memory, ret: " << ret);
+            BM_LOG_ERROR("Failed to HalMemFree swap memory, ret: " << ret);
         }
         HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_), HVM_HVA);
         rdmaSwapBaseAddr_ = nullptr;
