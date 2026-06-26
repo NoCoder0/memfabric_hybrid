@@ -447,8 +447,6 @@ class TransferEngine:
     def batch_transfer_async_write_submit(dest_session: str, buffers, peer_buffers, lengths, stream, flags = 0) -> int:
     def batch_transfer_async_read_submit(dest_session: str, buffers, peer_buffers, lengths, stream, flags = 0) -> int:
     def batch_transfer_write_with_quant(dest_session: str, buffers, peer_buffers, lengths, scale_buffers, offset_buffers, unit_num, input_type = 0, stream = 0, flags = 0) -> int:
-    def trans_malloc(capacity) -> int:
-    def trans_free(buffer_addr) -> int:
     def destroy() -> None:
     def unInitialize() -> None:
 ```
@@ -523,11 +521,6 @@ class TransferEngine:
 |batch_transfer_write_with_quant参数input_type|输入数据类型，默认0|
 |batch_transfer_write_with_quant参数stream|需要提交到的acl.rt.stream，默认0|
 |batch_transfer_write_with_quant参数flags|标记位，默认0|
-|trans_malloc方法|在TRANS引擎中分配内存|
-|trans_malloc参数capacity|分配内存大小|
-|trans_free方法|释放TRANS引擎分配的内存|
-|trans_free参数buffer_addr|待释放的内存地址|
-
 #### TransDataOpType枚举类
 ```python
 class TransDataOpType(Enum):

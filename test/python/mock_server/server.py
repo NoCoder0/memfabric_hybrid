@@ -24,8 +24,6 @@ import traceback
 from functools import wraps
 from typing import Callable, Dict, List, Any, Tuple
 from ctypes import CDLL
-
-import ctypes
 import torch
 import torch_npu
 import acl
@@ -447,14 +445,6 @@ class MfTest(TestServer):
             CliCommand("delete_trans_handle", "delete a delete_trans_handle handle, delete_bm_handle [handle_id]",
                        self.delete_trans_handle),
             CliCommand("close", "release the bound UDS socket file", self.close),
-            CliCommand("transfer_engine_malloc",
-                       " transfer engine handle malloc, "
-                       "transfer_engine_malloc [handle_id] [capacity]",
-                       self.transfer_engine_malloc),
-            CliCommand("transfer_engine_free",
-                       " transfer engine handle malloc, "
-                       "transfer_engine_free [handle_id] [ buffer_addr]",
-                       self.transfer_engine_free),
             CliCommand("malloc_tensor",
                        " bm register 4k malloc_tensor, "
                        "malloc_tensor [layer_num] [mini_block_size] [device]",
@@ -976,60 +966,6 @@ class MfTest(TestServer):
         capacities = list(map(int, capacities_str.split(",")))
         ret_value = engine.batch_register_memory(buffers, capacities)
         self.cli_print(f"register batch memory for transfer engine result is:{ret_value}")
-
-    def transfer_create_tensor(self, handle_id: int, capacity: int, is_src: bool,
-                               dtype=torch.uint8, fill_value: int = None):
-        engine = self._transfer_engine_dic[handle_id]
-        ret_addr = engine.trans_malloc(capacity)
-        buffer = (ctypes.c_char * capacity).from_address(ret_addr)
-        tensor = torch.frombuffer(buffer, dtype=dtype)
-        tensor._buffer_ref = buffer
-        tensor._malloc_addr = ret_addr   # 保存地址
-        if fill_value is not None:
-            tensor[:] = fill_value
-        return tensor
-
-    @result_handler
-    def transfer_engine_malloc(self, handle_id: int, is_src: bool):
-        capacity = 4 * 1024 * 1024
-        if is_src:
-            # 分配并填充 1
-            big_buffer = self.transfer_create_tensor(handle_id, capacity, is_src,
-                                                     dtype=torch.uint8, fill_value=1)
-        else:
-            # 分配并填充 0
-            big_buffer = self.transfer_create_tensor(handle_id, capacity, is_src,
-                                                     dtype=torch.uint8, fill_value=0)
-        # 接下来与之前的代码完全一致
-        buffer = big_buffer[0:1 * 1024 * 1024].reshape(1024, 1024)
-        buffer_bytes = buffer.element_size() * buffer.numel()
-
-        batch_buffers = [
-            big_buffer[2 * 1024 * 1024:3 * 1024 * 1024].reshape(1024, 1024),
-            big_buffer[3 * 1024 * 1024:4 * 1024 * 1024].reshape(1024, 1024)
-        ]
-        batch_bytes = [b.element_size() * b.numel() for b in batch_buffers]
-
-        transfer_data = TransferEngineData(
-            buffer=buffer,
-            buffer_bytes=buffer_bytes,
-            batch_buffers=batch_buffers,
-            batch_bytes=batch_bytes
-        )
-        transfer_data_id = id(transfer_data)
-        self._transfer_engine_data_dic[transfer_data_id] = transfer_data
-        buffer_addrs = [b.data_ptr() for b in transfer_data.batch_buffers]
-        self.cli_print(f"transfer engine data id:{transfer_data_id}")
-        self.cli_print(f"generate transfer engine data buffer addr is:{buffer.data_ptr()}")
-        self.cli_print(f"generate transfer engine data buffer bytes is:{buffer_bytes}")
-        self.cli_print(f"generate transfer engine data batch buffer addr is:{buffer_addrs[0]},{buffer_addrs[1]}")
-        self.cli_print(f"generate transfer engine data batch buffer bytes is:{batch_bytes[0]},{batch_bytes[1]}")
-
-    @result_handler
-    def transfer_engine_free(self, handle_id: int, buffer_addr: int):
-        engine = self._transfer_engine_dic[handle_id]
-        ret_value = engine.trans_free(buffer_addr)
-        self.cli_print(f"free dram addr is:{ret_value}")
 
     @result_handler
     def transfer_engine_batch_transfer_sync_write(self, handle_id: int, dest_session: str, buffers_str: str,
