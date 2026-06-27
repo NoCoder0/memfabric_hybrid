@@ -23,110 +23,13 @@
 
 #include "dl_hcomm_api.h"
 #include "dl_rt_api.h"
-#include "hybm_types.h"
+#include "hcomm_transport_manager.h"
 #include "hybm_transport_manager.h"
-#include "load_kernel.h"
 
 namespace ock {
 namespace mf {
 namespace transport {
 namespace device {
-
-constexpr uint32_t URMA_EXPORT_DESC_MAGIC = 0xA5FAB001U;
-constexpr uint16_t URMA_EXPORT_DESC_VERSION = 1U;
-using UrmaMemTag = uint64_t;
-using HcommMemHandle = ock::mf::HcommMemHandle;
-using HcommEndpointHandle = ock::mf::EndpointHandle;
-using HcommChannelHandle = ock::mf::ChannelHandle;
-using HcommThreadHandle = ock::mf::ThreadHandle;
-
-enum UrmaProtocol {
-    RESERVED = -1, /* 保留协议类型 */
-    HCCS = 0,      /* HCCS协议 */
-    ROCE = 1,      /* RDMA over Converged Ethernet */
-    PCIE = 2,      /* PCIe协议 */
-    SIO = 3,       /* SIO协议 */
-    UBC_CTP = 4,   /* 华为统一总线UBC_CTP */
-    UBC_TP = 5,    /* 华为统一总线UBC_TP */
-    UB_MEM = 6,    /* UB_MEM协议 */
-    UBOE = 7,      /* UBoE协议 */
-};
-
-enum UrmaMemoryType : uint16_t {
-    HOST_DRAM = 0,
-    DEVICE_HBM = 1,
-    INVALID_BUTT = 2,
-};
-
-inline std::ostream &operator<<(std::ostream &os, UrmaMemoryType obj)
-{
-    switch (obj) {
-        case HOST_DRAM:
-            return os << "DRAM";
-        case DEVICE_HBM:
-            return os << "DEVICE";
-        case INVALID_BUTT:
-            return os << "BUTT";
-        default:
-            return os << "UNKNOWN(" << static_cast<uint16_t>(obj) << ")";
-    }
-}
-
-struct UrmaEndpointDesc {
-    uint32_t devPhyId{0};
-    uint32_t superDevId{0};
-    uint32_t serverIdx{0};
-    uint32_t superPodIdx{0};
-    UrmaProtocol protocol{UrmaProtocol::RESERVED};
-    CommAddrType type{COMM_ADDR_TYPE_RESERVED};
-    uint8_t raws[36]{}; // CommAddr.raws
-};
-
-struct UrmaCommMem {
-    uint64_t addr{0};
-    uint64_t size{0};
-    UrmaMemoryType type{UrmaMemoryType::INVALID_BUTT};
-};
-
-struct UrmaLocalMr {
-    UrmaCommMem mem{};
-    HcommMemHandle hcommMem{nullptr};
-};
-
-struct UrmaExportDesc {
-    uint32_t magic{URMA_EXPORT_DESC_MAGIC};
-    uint16_t version{URMA_EXPORT_DESC_VERSION};
-    uint16_t headerSize{0};
-    UrmaMemoryType memoryType{UrmaMemoryType::INVALID_BUTT};
-    UrmaMemTag memTag{0};
-    uint64_t addr{0};
-    uint64_t size{0};
-    uint32_t hcommDescLen{0};
-    uint32_t devTransFlagDescLen{0};
-};
-
-struct UrmaEndpointEntity;
-using UrmaEndpointHandle = std::shared_ptr<UrmaEndpointEntity>;
-
-class UrmaManagerTransport final {
-public:
-    UrmaManagerTransport() = default;
-
-    UrmaEndpointHandle CreateEndpoint(const UrmaEndpointDesc &desc) const;
-
-    Result HcommMemReg(const UrmaEndpointHandle &endpoint, UrmaMemTag memTag, const UrmaCommMem &mem,
-                       HcommMemHandle *memHandle);
-
-    Result HcommMemUnreg(const UrmaEndpointHandle &endpoint, HcommMemHandle memHandle);
-
-    Result HcommMemExport(const UrmaEndpointHandle &endpoint, HcommMemHandle memHandle, const uint8_t **memDesc,
-                          uint32_t *memDescLen);
-
-    Result HcommMemImport(const UrmaEndpointHandle &endpoint, const uint8_t *memDesc, uint32_t descLen,
-                          UrmaCommMem *commMem);
-
-    Result HcommMemUnimport(const UrmaEndpointHandle &endpoint, const uint8_t *memDesc, uint32_t descLen);
-};
 
 class DeviceUrmaTransportManager final : public transport::TransportManager {
 public:
@@ -134,10 +37,12 @@ public:
 
     ~DeviceUrmaTransportManager() override;
 
+    // Initialization/open/close lifecycle
     Result OpenDevice(const TransportOptions &options) override;
 
     Result CloseDevice() override;
 
+    // Local/remote registration and key export/import
     Result RegisterMemoryRegion(const TransportMemoryRegion &mr) override;
 
     Result UnregisterMemoryRegion(uint64_t addr) override;
@@ -148,6 +53,7 @@ public:
 
     void UpdateMemoryKey(TransportMemoryKey &key, void *addr) override;
 
+    // Prepare/rank/connection/private data
     Result Prepare(const HybmTransPrepareOptions &options) override;
 
     Result RemoveRanks(const std::vector<uint32_t> &removedRanks) override;
@@ -164,6 +70,7 @@ public:
 
     const TransportPrivateData GetPrivateData() const override;
 
+    // Data transfer/copy
     Result ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
 
     Result WriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
@@ -172,11 +79,12 @@ public:
 
     Result WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
 
-    Result Synchronize(uint32_t rankId) override;
-
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
+
+    // Sync stream
+    Result Synchronize(uint32_t rankId) override;
 
 private:
     struct LocalRegistration {
@@ -203,9 +111,9 @@ private:
         UrmaEndpointDesc remoteEndpointDesc{};
         bool hasEndpointDesc{false};
         // 本 rank 侧用于与该 peer 通信的 channel 描述符
-        std::vector<HcommChannelDesc> channelDescs{};
+        HcommChannelDesc channelDesc{};
         // 本 rank 侧用于与该 peer 通信的 channel handle
-        std::vector<HcommChannelHandle> channels{};
+        HcommChannelHandle channel{0};
         // 本 rank 侧用于与该 peer 通信的 thread
         HcommThreadHandle thread{0};
         uint32_t pendingOps{0};
@@ -218,44 +126,56 @@ private:
         std::vector<uint8_t> remoteFlagDescBytes{};
     };
 
-    Result EnsureOpenLocked() const;
     struct RemoteMemKey {
         uint64_t addr;
         uint64_t size;
     };
 
-    Result EnsurePeerThreadLocked(RemoteRankState &state);
-    Result EnsureLocalChannelsForPeerLocked(RemoteRankState &state);
-
-    Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
-                                     const std::vector<TransportMemoryKey> &memKeys);
-
-    Result RemoveRankLocked(uint32_t rankId);
     // Device kernel launch helpers (moved from removed HcomUrmaTransportAdapter)
     struct DeviceTransferBuffers {
         void *dstList{nullptr};
         void *srcList{nullptr};
         void *lenList{nullptr};
     };
+
+    // Initialization/open/close helpers and lifecycle
+    Result InitLocalDeviceInfoLocked(const TransportOptions &options);
+    Result InitDeviceKernelNotifyLocked();
+    Result InitDeviceTransferFlagLocked();
+    void RollbackOpenDeviceLocked();
     Result EnsureDeviceKernelLoadedLocked();
+    static Result DestroyRankChannelsAndThread(RemoteRankState &state);
+    Result UnimportPeerImportsAndFlag(RemoteRankState &state, uint32_t peerRank);
+    Result UnregisterPeerHandlesAndDestroyEndpoint(RemoteRankState &state, uint32_t peerRank);
+    Result CleanupPeerRankState(RemoteRankState &state, uint32_t peerRank);
+    Result CleanupLocalRegistrationsLocked();
+
+    // Local/remote registration and key export/import
+    Result FindLocalRegistrationLocked(uint64_t addr, uint64_t size, LocalRegistration *registration) const;
+    Result FindRemoteRegistrationLocked(uint32_t rankId, uint64_t addr, uint64_t size,
+                                        RemoteRegistration *registration) const;
+    Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
+                                     const std::vector<TransportMemoryKey> &memKeys);
+
+    // Prepare/rank/connection/private data
+    Result RemoveRankLocked(uint32_t rankId);
+
+    // Data transfer/copy
+    Result RemoteIo(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size, bool write);
+    Result RemoteIoBatch(uint32_t rankId, const CopyDescriptor &descriptor, bool write);
+
+    // Device kernel launch/buffer helpers and sync stream
     aclrtFuncHandle GetDeviceKernelFunc(bool isRead) const;
+    void ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
+    Result AddBatchPendingDeviceBuffers(DeviceTransferBuffers &buffers);
+    void FreeBatchPendingDeviceBuffers();
     Result LaunchDeviceKernelBatch(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
                                    const std::vector<uint64_t> &localAddrs, const std::vector<uint64_t> &remoteAddrs,
                                    const std::vector<uint64_t> &sizes, uint64_t remoteFlagAddr);
     Result SynchronizeDeviceKernelStream();
-    void ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
-    Result AddBatchPendingDeviceBuffers(DeviceTransferBuffers &buffers);
-    void FreeBatchPendingDeviceBuffers();
-
-    Result RemoteIo(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size, bool write);
-    Result RemoteIoBatch(uint32_t rankId, const CopyDescriptor &descriptor, bool write);
-    Result FindLocalRegistrationLocked(uint64_t addr, uint64_t size, LocalRegistration *registration) const;
-    Result FindRemoteRegistrationLocked(uint32_t rankId, uint64_t addr, uint64_t size,
-                                        RemoteRegistration *registration) const;
 
     mutable std::mutex mutex_{};
     bool opened_{false};
-    bool closing_{false};
     uint32_t rankId_{0};
     uint32_t rankCount_{0};
     uint32_t userDeviceId_{0};
@@ -265,7 +185,7 @@ private:
     uint32_t serverId_{0};
     uint32_t superPodId_{0};
     TransportOptions options_{};
-    UrmaManagerTransport manager_;
+    HcommTransportManager manager_;
     UrmaEndpointHandle localEndpoint_{nullptr};
     UrmaEndpointDesc localEndpointDesc_{};
     std::map<uint64_t, LocalRegistration> localRegistrations_{};
