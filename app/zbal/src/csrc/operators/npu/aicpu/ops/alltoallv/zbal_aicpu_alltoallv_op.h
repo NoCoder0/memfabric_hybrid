@@ -32,9 +32,12 @@
  * If sendCumSum (param0) is 0, falls back to equal-split (count/rankNum per peer).
  */
 /* AlltoAllV exchange sub-slot indices within each rank's STRIDE-wide entry */
-constexpr uint32_t A2AV_EXCH_SLOT_SENDBUF = 0; /* sendBuffer GVA */
-constexpr uint32_t A2AV_EXCH_SLOT_OFFSET = 1;  /* sendOffset for target rank */
-constexpr uint32_t A2AV_EXCH_SLOT_COUNT = 2;   /* sendCount for target rank (bytes) */
+constexpr uint32_t A2AV_EXCH_SLOT_SENDBUF = 0;   /* sendBuffer GVA */
+constexpr uint32_t A2AV_EXCH_SLOT_OFFSET = 1;    /* sendOffset for target rank */
+constexpr uint32_t A2AV_EXCH_SLOT_COUNT = 2;     /* sendCount for target rank (bytes) */
+constexpr uint32_t A2AV_EXCH_NUM_DATA_SLOTS = 3; /* data slots per rank in exchange area */
+constexpr uint32_t A2AV_SCRATCH_FLAG_SLOT = 3;   /* flag sentinel slot in scratch block */
+constexpr uint32_t A2AV_SCRATCH_SLOTS_PER_DST = A2AV_SCRATCH_FLAG_SLOT + 1;
 
 class AlltoAllVOp {
 public:
@@ -55,7 +58,12 @@ public:
         }
 
         for (uint32_t src = 0; src < rankNum; src++) {
-            /* Read per-peer info from local exchange area */
+            /* Invalidate exchange area cache lines: data written by remote SDMA */
+            for (uint32_t slot = 0; slot < A2AV_EXCH_NUM_DATA_SLOTS; slot++) {
+                uintptr_t exAddr = reinterpret_cast<uintptr_t>(op.exchangeGva) +
+                                   src * ZBAL_AICPU_EXCHANGE_STRIDE * sizeof(uint64_t) + slot * sizeof(uint64_t);
+                AicpuCacheInvalidate(exAddr);
+            }
             uint64_t srcBufGva = ReadExchSlot(op.exchangeGva, src, A2AV_EXCH_SLOT_SENDBUF);
             uint64_t srcOffset = ReadExchSlot(op.exchangeGva, src, A2AV_EXCH_SLOT_OFFSET);
             uint64_t srcCount = ReadExchSlot(op.exchangeGva, src, A2AV_EXCH_SLOT_COUNT);
@@ -63,7 +71,6 @@ public:
                 continue;
             }
 
-            /* Multi-core parallel slice within this peer's data */
             uint64_t myOff;
             uint64_t myLen;
             AicpuParallelSlice(srcCount, op.coreId, op.numCores, myOff, myLen);
@@ -71,7 +78,7 @@ public:
                 continue;
             }
 
-            /* Compute output offset: sum of all recvCounts for ranks < src */
+            /* Output offset = sum of recvCounts for ranks < src */
             uint64_t outputOff = ComputeOutputOffset(op.exchangeGva, src, rankNum);
 
             uint32_t sid = src % op.numChPerCore;
@@ -105,6 +112,82 @@ private:
         return offset;
     }
 
+    static int EnqueuePeerExchangeSqes(SqeLocalRingBuffer &eb, volatile uint64_t *ds, uint64_t baseOff,
+                                       uint64_t flagDst, volatile stars_channel_info_t *channel)
+    {
+        /* slot 0: sendBuf GVA */
+        if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&ds[A2AV_EXCH_SLOT_SENDBUF]), baseOff,
+                                      sizeof(uint64_t), channel) != 0) {
+            return BUILD_ERROR;
+        }
+        /* slot 1: sendOffset for dst in my buffer */
+        if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&ds[A2AV_EXCH_SLOT_OFFSET]),
+                                      baseOff + sizeof(uint64_t), sizeof(uint64_t), channel) != 0) {
+            return BUILD_ERROR;
+        }
+        /* slot 2: sendCount for dst (bytes) */
+        if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&ds[A2AV_EXCH_SLOT_COUNT]),
+                                      baseOff + A2AV_EXCH_SLOT_COUNT * sizeof(uint64_t), sizeof(uint64_t),
+                                      channel) != 0) {
+            return BUILD_ERROR;
+        }
+        /* flag slot: exchange-complete sentinel (waitSymbol) */
+        if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&ds[A2AV_SCRATCH_FLAG_SLOT]), flagDst,
+                                      sizeof(uint64_t), channel) != 0) {
+            return BUILD_ERROR;
+        }
+        return 0;
+    }
+
+    /* Fill the per-dstRank scratch block `ds` with (sendBuf, offset, count, flag).
+     * cumSum values are in ELEMENTS — converted to BYTES. When cumSum is null, falls back to
+     * equal-split (count / rankNum per peer). elemArr (reserved[2]) supplies the total for the
+     * last rank. */
+    static void FillPeerScratch(volatile uint64_t *ds, uint32_t dstRank, uint32_t rankNum, uint64_t sendBuf,
+                                const uint64_t *cumSum, uint32_t elemSize, uint64_t count, uint64_t waitSymbol,
+                                const volatile uint64_t *elemArr)
+    {
+        ds[A2AV_EXCH_SLOT_SENDBUF] = sendBuf;
+        if (cumSum != nullptr) {
+            uint64_t curOff = cumSum[dstRank * ZBAL_AICPU_EXCHANGE_STRIDE];
+            uint64_t nextOff;
+            if (dstRank + 1 < rankNum) {
+                nextOff = cumSum[(dstRank + 1) * ZBAL_AICPU_EXCHANGE_STRIDE];
+            } else {
+                /* Last rank: total from elements array (reserved[2]) */
+                nextOff = (elemArr != nullptr) ? elemArr[0] : curOff;
+            }
+            ds[A2AV_EXCH_SLOT_OFFSET] = curOff * elemSize;
+            ds[A2AV_EXCH_SLOT_COUNT] = (nextOff - curOff) * elemSize;
+        } else {
+            ds[A2AV_EXCH_SLOT_OFFSET] = 0;
+            ds[A2AV_EXCH_SLOT_COUNT] = count / rankNum;
+        }
+        ds[A2AV_SCRATCH_FLAG_SLOT] = waitSymbol;
+    }
+
+    /* Submit all enqueued SQEs and wait for local completion + all peers to publish.
+     * Core 0 additionally polls the cross-device flag area. */
+    static int SyncExchangeCompletion(SqeLocalRingBuffer &eb, const ExchangeContext &ctx, uint32_t myCore,
+                                      uint32_t numCores, uint32_t rankNum, uint64_t flagAreaOff, uint64_t waitSymbol)
+    {
+        uint32_t fid = AicpuWorkspace::FlagIdx(myCore, ctx.numChPerCore, 0);
+        int dbr = AicpuLaunchTaskMc(&eb, ctx.channels[0], ctx.workspace, myCore, 1, 0, fid);
+        if (dbr == 0 && CompletionFlag(ctx.workspace, fid).Wait() < 0) {
+            dbr = ERR_WAIT_TIMEOUT;
+        }
+
+        if (myCore == 0 && dbr == 0) {
+            volatile uint64_t *flagBase =
+                reinterpret_cast<volatile uint64_t *>(ctx.aicpuCtx->exchangeGva + flagAreaOff);
+            if (BarrierAllRanks(flagBase, rankNum, waitSymbol, true) != 0) {
+                dbr = ERR_WAIT_TIMEOUT;
+            }
+        }
+        AicpuCoreBarrier(ctx.workspace, numCores);
+        return (dbr < 0) ? ERR_WAIT_TIMEOUT : 0;
+    }
+
     /* AlltoAllV-specific exchange: write sendBuf + offset + count + flag to all peers */
     static int AlltoAllVExchange(const ExchangeContext &ctx)
     {
@@ -130,21 +213,21 @@ private:
             return 0;
         }
 
-        /* Per-core scratch and ring buffer */
         const uint32_t ringBufSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
         volatile uint8_t *myBuf = AicpuWorkspace::CoreRingBuf(ctx.workspace, myCore);
 
-        /* scratch area: 4 × uint64_t at end of ring buffer
-         * [0] = sendBuf GVA, [1] = offset for dst, [2] = count for dst, [3] = flag sentinel */
-        constexpr uint32_t scratchSlots = 4;
+        /* Scratch area at end of ring buffer: per-dstRank block of A2AV_SCRATCH_SLOTS_PER_DST
+         * uint64_t slots. SQEs hold source ADDRESSES (not inline data), so each dst needs its
+         * own block — otherwise the loop overwrites scratch before SDMA executes. */
+        constexpr uint32_t slotsPerDst = A2AV_SCRATCH_SLOTS_PER_DST;
+        const uint32_t scratchSlots = slotsPerDst * ranksPerCore;
         volatile uint64_t *scratch =
             reinterpret_cast<volatile uint64_t *>(myBuf + ringBufSize - scratchSlots * sizeof(uint64_t));
 
         SqeLocalRingBuffer eb;
         eb.Init(const_cast<uint8_t *>(myBuf));
 
-        /* Read cumSum from local device memory (reserved[0] = sendCumSum GVA).
-         * cumSum values are in ELEMENTS (same as AIV). Convert to BYTES for SDMA. */
+        /* cumSum (reserved[0]) is in ELEMENTS — convert to BYTES for SDMA. */
         const uint64_t *cumSum = reinterpret_cast<const uint64_t *>(ctx.desc->reserved[0]);
         const uint32_t elemSize = ZBALDataTypeSize(ctx.desc->dataType);
 
@@ -157,74 +240,23 @@ private:
             int64_t delta = static_cast<int64_t>(dstRank) - static_cast<int64_t>(myRank);
             int64_t devOff = delta * static_cast<int64_t>(initCtx->localDeviceMemSize);
 
-            /* Prepare scratch values for this dst.
-             * cumSum is stored with ZBAL_AICPU_EXCHANGE_STRIDE spacing (matching exchange area).
-             * Values are in ELEMENTS — convert to BYTES for SDMA. */
-            scratch[0] = ctx.desc->sendBuffer;
-            if (cumSum != nullptr) {
-                uint64_t curOff = cumSum[dstRank * ZBAL_AICPU_EXCHANGE_STRIDE];
-                uint64_t nextOff;
-                if (dstRank + 1 < rankNum) {
-                    nextOff = cumSum[(dstRank + 1) * ZBAL_AICPU_EXCHANGE_STRIDE];
-                } else {
-                    /* Last rank: total from elements array (reserved[2]) */
-                    volatile uint64_t *elemArr = reinterpret_cast<volatile uint64_t *>(ctx.desc->reserved[2]);
-                    nextOff = (elemArr != nullptr) ? elemArr[0] : curOff;
-                }
-                scratch[A2AV_EXCH_SLOT_OFFSET] = curOff * elemSize;
-                scratch[A2AV_EXCH_SLOT_COUNT] = (nextOff - curOff) * elemSize;
-            } else {
-                scratch[A2AV_EXCH_SLOT_OFFSET] = 0;
-                scratch[A2AV_EXCH_SLOT_COUNT] = ctx.desc->count / rankNum;
-            }
-            scratch[3] = 0x1U; /* non-zero flag sentinel */
+            uint32_t dstIdx = dstRank - startRank;
+            volatile uint64_t *ds = scratch + dstIdx * slotsPerDst;
 
-            /* Write 3 data slots + flag to dst's exchange area at myRank position */
+            FillPeerScratch(ds, dstRank, rankNum, ctx.desc->sendBuffer, cumSum, elemSize, ctx.desc->count,
+                            ctx.desc->waitSymbol, reinterpret_cast<const volatile uint64_t *>(ctx.desc->reserved[2]));
+            AicpuCacheFlush(reinterpret_cast<uintptr_t>(&ds[A2AV_EXCH_SLOT_SENDBUF]));
+
             uint64_t baseOff =
                 initCtx->exchangeGva + static_cast<uint64_t>(devOff) + static_cast<uint64_t>(myRank) * strideBytes;
-
-            /* slot 0: sendBuf GVA */
-            if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&scratch[0]), baseOff, sizeof(uint64_t),
-                                          ctx.channels[0]) != 0) {
-                return BUILD_ERROR;
-            }
-            /* slot 1: offset for dst in my buffer */
-            if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&scratch[1]), baseOff + sizeof(uint64_t),
-                                          sizeof(uint64_t), ctx.channels[0]) != 0) {
-                return BUILD_ERROR;
-            }
-            /* slot 2: count for dst */
-            if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&scratch[A2AV_EXCH_SLOT_COUNT]),
-                                          baseOff + A2AV_EXCH_SLOT_COUNT * sizeof(uint64_t), sizeof(uint64_t),
-                                          ctx.channels[0]) != 0) {
-                return BUILD_ERROR;
-            }
-            /* flag */
             uint64_t flagDst = initCtx->exchangeGva + static_cast<uint64_t>(devOff) + flagAreaOff +
                                static_cast<uint64_t>(myRank) * strideBytes;
-            if (AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(&scratch[3]), flagDst, sizeof(uint64_t),
-                                          ctx.channels[0]) != 0) {
+            if (EnqueuePeerExchangeSqes(eb, ds, baseOff, flagDst, ctx.channels[0]) != 0) {
                 return BUILD_ERROR;
             }
         }
 
-        /* Submit + wait */
-        uint32_t fid = AicpuWorkspace::FlagIdx(myCore, ctx.numChPerCore, 0);
-        int dbr = AicpuLaunchTaskMc(&eb, ctx.channels[0], ctx.workspace, myCore, 1, 0, fid);
-        if (dbr == 0 && CompletionFlag(ctx.workspace, fid).Wait() < 0) {
-            dbr = ERR_WAIT_TIMEOUT;
-        }
-
-        /* Cross-device sync: poll flag area */
-        if (myCore == 0 && dbr == 0) {
-            volatile uint64_t *flagBase =
-                reinterpret_cast<volatile uint64_t *>(ctx.aicpuCtx->exchangeGva + flagAreaOff);
-            if (BarrierAllRanks(flagBase, rankNum, 0, false) != 0) {
-                dbr = ERR_WAIT_TIMEOUT;
-            }
-        }
-        AicpuCoreBarrier(ctx.workspace, numCores);
-        return (dbr < 0) ? ERR_WAIT_TIMEOUT : 0;
+        return SyncExchangeCompletion(eb, ctx, myCore, numCores, rankNum, flagAreaOff, ctx.desc->waitSymbol);
     }
 };
 #endif
