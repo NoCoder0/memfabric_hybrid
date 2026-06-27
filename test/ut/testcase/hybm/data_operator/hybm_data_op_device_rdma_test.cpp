@@ -12,12 +12,14 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include <sys/mman.h>
+#include <cstdlib>
 
 #include "hybm_data_op_device_rdma.h"
 #include "hybm_transport_manager.h"
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
 #include "hybm_functions.h"
+#include "hybm_gva.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
@@ -43,9 +45,10 @@ static void CleanupMockAddresses()
     }
 }
 
-// 模拟 AclrtMallocHost 函数的实现
-static int AclrtMallocHostStub(void **ptr, size_t size)
+// 模拟 HalMemAlloc 函数的实现
+static int HalMemAllocStub(void **ptr, uint64_t size, uint64_t flag)
 {
+    (void)flag;
     if (ptr == nullptr || size == 0) {
         return -1;
     }
@@ -63,11 +66,11 @@ static int HalHostRegisterStub(void *addr, uint64_t size, uint32_t flags, uint32
     return 0;
 }
 
-static int g_aclrtFreeHostCallCount = 0;
-static int AclrtFreeHostCountingStub(void *ptr)
+static int g_halMemFreeCallCount = 0;
+static int HalMemFreeCountingStub(void *ptr)
 {
     (void)ptr;
-    g_aclrtFreeHostCallCount++;
+    g_halMemFreeCallCount++;
     return 0;
 }
 
@@ -324,11 +327,11 @@ public:
 
     void InitMockEnv()
     {
-        // 模拟 DlAclApi::AclrtMallocHost 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMallocHost).stubs().will(invoke(AclrtMallocHostStub));
+        // 模拟 DlHalApi::HalMemAlloc 方法
+        MOCKER(&ock::mf::DlHalApi::HalMemAlloc).stubs().will(invoke(HalMemAllocStub));
 
-        // 模拟 DlAclApi::AclrtFreeHost 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtFreeHost).stubs().will(returnValue(0));
+        // 模拟 DlHalApi::HalMemFree 方法
+        MOCKER(&ock::mf::DlHalApi::HalMemFree).stubs().will(invoke(HalMemFreeCountingStub));
 
         // 模拟 DlAclApi::AclrtMemcpy 方法
         MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(0));
@@ -397,14 +400,15 @@ TEST_F(HybmDataOpDeviceRdmaTest, initialize_register_memory_failed)
 
 TEST_F(HybmDataOpDeviceRdmaTest, initialize_hal_host_register_fail_frees_malloc_host)
 {
-    g_aclrtFreeHostCallCount = 0;
-    MOCKER(&ock::mf::DlAclApi::AclrtMallocHost).stubs().will(invoke(AclrtMallocHostStub));
+    g_halMemFreeCallCount = 0;
+    MOCKER(&ock::mf::DlHalApi::HalMemAlloc).stubs().will(invoke(HalMemAllocStub));
     MOCKER(&ock::mf::DlHalApi::HalHostRegister).stubs().will(returnValue(-1));
-    MOCKER(&ock::mf::DlAclApi::AclrtFreeHost).stubs().will(invoke(AclrtFreeHostCountingStub));
+    MOCKER(&ock::mf::DlHalApi::HalMemFree).stubs().will(invoke(HalMemFreeCountingStub));
     auto ret = dataOp_->Initialize();
     ASSERT_NE(BM_OK, ret);
-    ASSERT_EQ(1, g_aclrtFreeHostCallCount);
+    ASSERT_EQ(1, g_halMemFreeCallCount);
     dataOp_->UnInitialize();
+
 }
 
 TEST_F(HybmDataOpDeviceRdmaTest, uninitialize)
@@ -750,5 +754,107 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
     ret = dataOp_->BatchDataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options);
     ASSERT_EQ(BM_ERROR, ret);
 
+    // 测试已注册远程地址走注册路径
+    transportManagerMock_->queryHasRegisteredResult = true;
+    transportManagerMock_->queryHasRegisteredCount = 0;
+    transportManagerMock_->writeRemoteAsyncCount = 0;
+    transportManagerMock_->readRemoteAsyncCount = 0;
+
+    ock::mf::ExtOptions remoteOptions{};
+    remoteOptions.srcRankId = rankId_;
+    remoteOptions.destRankId = rankId_ + 1;
+
+    params.sources = srcLH;
+    params.destinations = dstGH;
+    ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, remoteOptions);
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(2UL, transportManagerMock_->queryHasRegisteredCount);
+    ASSERT_EQ(2UL, transportManagerMock_->writeRemoteAsyncCount);
+
+    transportManagerMock_->queryHasRegisteredCount = 0;
+    transportManagerMock_->readRemoteAsyncCount = 0;
+    remoteOptions.srcRankId = rankId_ + 1;
+    remoteOptions.destRankId = rankId_;
+    params.sources = srcGH;
+    params.destinations = dstLH;
+    ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, remoteOptions);
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(2UL, transportManagerMock_->queryHasRegisteredCount);
+    ASSERT_EQ(2UL, transportManagerMock_->readRemoteAsyncCount);
+
     dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_force_unregistered)
+{
+    ASSERT_EQ(0, setenv("MF_HYBM_RDMA_FORCE_UNREGISTERED", "1", 1));
+
+    InitMockEnv();
+
+    // 关键：重新创建对象，保证后面第一次 Initialize 就读到 env=1
+    dataOp_ = std::make_shared<ock::mf::DataOpDeviceRDMA>(rankId_, transportManagerMock_);
+
+    auto ret = dataOp_->Initialize();
+    ASSERT_EQ(BM_OK, ret);
+
+    uint64_t hostGvaStart = 10000000ULL;
+    uint64_t spaceSize = 40960ULL;
+    uint64_t rankCount = 4ULL;
+    dataOp_->UpdateGvaSpace(HYBM_MEM_TYPE_HOST, hostGvaStart, spaceSize, rankCount);
+
+    uint64_t localHostAddr = hostGvaStart;
+    uint64_t remoteHostAddr1 = hostGvaStart + spaceSize;
+    uint64_t remoteHostAddr2 = hostGvaStart + spaceSize * 2;
+
+    void *srcLH[2] = {
+        reinterpret_cast<void *>(localHostAddr),
+        reinterpret_cast<void *>(localHostAddr)
+    };
+    void *dstGH[2] = {
+        reinterpret_cast<void *>(remoteHostAddr1),
+        reinterpret_cast<void *>(remoteHostAddr2)
+    };
+    void *srcGH[2] = {
+        reinterpret_cast<void *>(remoteHostAddr1),
+        reinterpret_cast<void *>(remoteHostAddr2)
+    };
+    void *dstLH[2] = {
+        reinterpret_cast<void *>(localHostAddr),
+        reinterpret_cast<void *>(localHostAddr)
+    };
+
+    uint64_t dataSizes[2] = {1024, 2048};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 2UL;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions remoteOptions{};
+    remoteOptions.srcRankId = rankId_;
+    remoteOptions.destRankId = rankId_ + 1;
+
+    transportManagerMock_->queryHasRegisteredResult = true;
+    transportManagerMock_->queryHasRegisteredCount = 0;
+    transportManagerMock_->writeRemoteAsyncCount = 0;
+
+    params.sources = srcLH;
+    params.destinations = dstGH;
+    ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, remoteOptions);
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(0UL, transportManagerMock_->queryHasRegisteredCount);
+
+    transportManagerMock_->queryHasRegisteredCount = 0;
+    transportManagerMock_->readRemoteAsyncCount = 0;
+
+    remoteOptions.srcRankId = rankId_ + 1;
+    remoteOptions.destRankId = rankId_;
+
+    params.sources = srcGH;
+    params.destinations = dstLH;
+    ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, remoteOptions);
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(0UL, transportManagerMock_->queryHasRegisteredCount);
+
+    dataOp_->UnInitialize();
+    ASSERT_EQ(0, unsetenv("MF_HYBM_RDMA_FORCE_UNREGISTERED"));
 }
