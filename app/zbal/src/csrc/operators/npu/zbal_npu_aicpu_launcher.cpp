@@ -16,6 +16,7 @@
 #include <unistd.h>
 
 #include "zbal_comm_host_device_struct.h"
+#include "zbal_comm_alg_selector.h"
 #include "zbal_init_state.h"
 #include "dl_cann_api.h"
 #include "zbal_npu_aicpu_launcher.h"
@@ -47,6 +48,7 @@ ZResult NpuAicpuLauncher::Init(const std::string &jsonPath, uint64_t workspaceGv
     }
 
     workspaceGva_ = workspaceGva;
+    groupSize_ = groupInfo.groupSize;
     initialized_ = true;
 
     ZBAL_LOG_INFO("AICPU dispatcher initialized, workspaceGva=0x" << std::hex << workspaceGva << ", rankId=" << std::dec
@@ -91,10 +93,18 @@ ZResult NpuAicpuLauncher::Launch(const AicpuWorkDesc &desc, void *stream)
     param.sdmaWorkspaceGva = workspaceGva_;
     param.waitSymbol = ++waitSymbol_;
 
+    /* Per-op (numCores, numChPerCore) — host decides via SelectCommAlg + GetCommOpConfig.
+     *  commAlg is written to AicpuWorkDesc; device reads desc->commAlg directly. */
+    uint32_t commAlg = SelectCommAlg(param.commType, groupSize_, param.count);
+    OpExecConfig cfg = GetCommOpConfig(param.commType, commAlg);
+    param.commAlg = commAlg;
+    param.numCores = cfg.numCores;
+    param.numChPerCore = cfg.numChPerCore;
+    uint32_t numBlocks = cfg.numCores;
+
     /* Select per-op function handle for profiling visibility */
     uint32_t commIdx = param.commType < kMaxCommType ? param.commType : 0;
     aclrtFuncHandle launchHandle = opFuncHandles_[commIdx];
-    uint32_t numBlocks = (param.commType == ZBAL_CMD_SEND || param.commType == ZBAL_CMD_RECV) ? 1U : 4U;
 
     /* V2 API: single call, passes host buffer directly (no ArgsInit/Append/Finalize) */
     int32_t aclRet =

@@ -31,17 +31,18 @@ struct BarrierState {
     volatile uint32_t generation;
 };
 
-/* The AICPU-managed workspace area */
+/* The AICPU-managed workspace area — sized for worst-case op (MAX_NUM_CORES × MAX_CH_PER_CORE).
+ *  Per-op may use fewer cores/channels; unused slots stay dormant (initialized but idle). */
 struct AicpuWorkspaceLayout {
     AicpuInitContext initCtx;
     uint8_t initCtxPad[256 - sizeof(AicpuInitContext)];
     uint8_t debugBuffer[ZBAL_AICPU_DEBUG_BUFFER_SIZE];
     BarrierState barrier;
-    volatile uint64_t atomicSqTail[ZBAL_AICPU_CH_PER_CORE];
+    volatile uint64_t atomicSqTail[ZBAL_AICPU_MAX_CH_PER_CORE];
     volatile uint32_t coreIdCounter;
     uint8_t controlPad[20];
-    FlagEntry flags[ZBAL_AICPU_NUM_CORES * ZBAL_AICPU_MAX_CH_PER_CORE];
-    uint8_t ringBuffers[ZBAL_AICPU_NUM_CORES][ZBAL_AICPU_CORE_RINGBUF_SIZE];
+    FlagEntry flags[ZBAL_AICPU_MAX_NUM_CORES * ZBAL_AICPU_MAX_CH_PER_CORE];
+    uint8_t ringBuffers[ZBAL_AICPU_MAX_NUM_CORES][ZBAL_AICPU_CORE_RINGBUF_SIZE];
 };
 
 /* Get pointer to the AICPU area within workspace */

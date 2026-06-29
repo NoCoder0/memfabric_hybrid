@@ -42,9 +42,16 @@ extern "C" uint32_t ZBALAicpuDispatcherEntry(void *args)
         return 1;
     }
 
-    /* P2P ops use 1 core (numBlocks=1), others use 4 cores */
-    const uint32_t numCores =
-        (workDesc->commType == ZBAL_CMD_SEND || workDesc->commType == ZBAL_CMD_RECV) ? 1U : ZBAL_AICPU_NUM_CORES;
+    /* Per-op runtime config from host (host filled via GetCommOpConfig). */
+    uint32_t numCores = workDesc->numCores;
+    uint32_t numChPerCore = workDesc->numChPerCore;
+    /* Defensive clamps — must stay within compile-time workspace bounds. */
+    if (numCores == 0 || numCores > ZBAL_AICPU_MAX_NUM_CORES) {
+        numCores = ZBAL_AICPU_MAX_NUM_CORES;
+    }
+    if (numChPerCore == 0 || numChPerCore > ZBAL_AICPU_MAX_CH_PER_CORE) {
+        numChPerCore = ZBAL_AICPU_MAX_CH_PER_CORE;
+    }
 
     /* CoreId: atomic counter with modulo */
     uint32_t coreId = 0;
@@ -65,13 +72,12 @@ extern "C" uint32_t ZBALAicpuDispatcherEntry(void *args)
         return 1;
     }
 
-    /* Multi-channel per core from SMEM */
-    constexpr uint32_t numChPerCore = ZBAL_AICPU_CH_PER_CORE;
-    volatile stars_channel_info_t *channels[numChPerCore];
+    /* Multi-channel per core from SMEM — array sized to MAX, kernel uses first numChPerCore slots. */
+    volatile stars_channel_info_t *channels[ZBAL_AICPU_MAX_CH_PER_CORE];
     Channel::GetChannels(channels, coreId, numChPerCore);
 
-    SqeLocalRingBuffer ringBufs[numChPerCore];
-    AicpuCoreRingbufsInit(ringBufs, workspace, coreId);
+    SqeLocalRingBuffer ringBufs[ZBAL_AICPU_MAX_CH_PER_CORE];
+    AicpuCoreRingbufsInit(ringBufs, workspace, coreId); /* initializes all MAX channels */
 
     AicpuInitContext ctx;
     InitContext(ctx, workspace);
@@ -88,11 +94,35 @@ extern "C" uint32_t ZBALAicpuDispatcherEntry(void *args)
 }
 
 /* Per-op entry points for profiling visibility — same implementation, distinct kernel names */
-extern "C" uint32_t ZBALAicpuAllGather(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuAllReduce(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuReduceScatter(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuBroadcast(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuScatter(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuAlltoAllV(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuSend(void *args) { return ZBALAicpuDispatcherEntry(args); }
-extern "C" uint32_t ZBALAicpuRecv(void *args) { return ZBALAicpuDispatcherEntry(args); }
+extern "C" uint32_t ZBALAicpuAllGather(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuAllReduce(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuReduceScatter(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuBroadcast(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuScatter(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuAlltoAllV(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuSend(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}
+extern "C" uint32_t ZBALAicpuRecv(void *args)
+{
+    return ZBALAicpuDispatcherEntry(args);
+}

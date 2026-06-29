@@ -23,7 +23,7 @@
 class AicpuDispatcher {
 public:
     /* Max bytes per SQE */
-    static constexpr uint32_t kMaxSqeBytes = 8U * 1024U * 1024U;
+    static constexpr uint32_t kMaxSqeBytes = 32U * 1024U * 1024U;
 
     static int CopyData(SqeLocalRingBuffer *ringBufs, uint32_t streamId, uint64_t src, uint64_t dst, uint32_t len,
                         volatile stars_channel_info_t *channel, uint8_t opCode = 0)

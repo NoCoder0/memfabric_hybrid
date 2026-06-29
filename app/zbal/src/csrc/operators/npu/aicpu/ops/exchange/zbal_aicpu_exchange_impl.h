@@ -1,14 +1,14 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
- * ZBAL is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2.
- * You may obtain a copy of Mulan PSL v2 at:
- *          http://license.coscl.org.cn/MulanPSL2
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
- * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
- * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
- * See the Mulan PSL v2 for more details.
- */
+* Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
+* ZBAL is licensed under Mulan PSL v2.
+* You can use this software according to the terms and conditions of the Mulan PSL v2.
+* You may obtain a copy of Mulan PSL v2 at:
+*          http://license.coscl.org.cn/MulanPSL2
+* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+* See the Mulan PSL v2 for more details.
+*/
 
 #ifndef ZBAL_AICPU_EXCHANGE_IMPL_H
 #define ZBAL_AICPU_EXCHANGE_IMPL_H
@@ -25,8 +25,8 @@
 #include "executor/zbal_aicpu_thread.h"
 
 /* ================================================================
- * NullExchange — no-op for single-rank, Init, Finalize
- * ================================================================ */
+* NullExchange — no-op for single-rank, Init, Finalize
+* ================================================================ */
 class NullExchange {
 public:
     static const char *Name()
@@ -41,17 +41,17 @@ public:
 };
 
 /* ================================================================
- * FullMeshExchange — all-to-all SDMA write of sendBuf GVA
- *
- * Mirrors AIV ExchangeAddrKernelSmall::ExchangeInputAddrFlag():
- *   1. ranksPerCore = ceil(rankNum / numCores), each core handles subset
- *   2. Per-core scratch (ringBuf end) + ring buffer (ringBuf start), no overlap
- *   3. Each core builds SDMA SQEs for its assigned dstRanks
- *   4. Each core submits via its own channel[0], waits its own flag
- *   5. AicpuCoreBarrier synchronizes all cores
- *
- * Debug: each core logs: chan/fid/sqeCnt → traces per-core independently.
- * ================================================================ */
+* FullMeshExchange — all-to-all SDMA write of sendBuf GVA
+*
+* Mirrors AIV ExchangeAddrKernelSmall::ExchangeInputAddrFlag():
+*   1. ranksPerCore = ceil(rankNum / numCores), each core handles subset
+*   2. Per-core scratch (ringBuf end) + ring buffer (ringBuf start), no overlap
+*   3. Each core builds SDMA SQEs for its assigned dstRanks
+*   4. Each core submits via its own channel[0], waits its own flag
+*   5. AicpuCoreBarrier synchronizes all cores
+*
+* Debug: each core logs: chan/fid/sqeCnt → traces per-core independently.
+* ================================================================ */
 class FullMeshExchange {
 public:
     static const char *Name()
@@ -93,7 +93,7 @@ public:
         const uint32_t ringBufSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
         volatile uint8_t *myBuf = AicpuWorkspace::CoreRingBuf(ctx.workspace, myCore);
         /* scratch area: 2 × uint64_t at end of ring buffer
-         * [0] = sendBuf GVA, [1] = flag sentinel */
+        * [0] = sendBuf GVA, [1] = flag sentinel */
         constexpr uint32_t scratchSlots = 2;
         volatile uint64_t *scratch =
             reinterpret_cast<volatile uint64_t *>(myBuf + ringBufSize - scratchSlots * sizeof(uint64_t));
@@ -120,7 +120,6 @@ public:
                 return BUILD_ERROR;
             }
         }
-        AICPU_DBG(TAG_ALGO_ALLGATHER, eb.sqeCnt, (endRank - startRank));
 
         /* ── Step 4: submit + local wait ── */
         uint32_t fid = AicpuWorkspace::FlagIdx(myCore, ctx.numChPerCore, 0);
@@ -141,15 +140,15 @@ public:
 };
 
 /* ================================================================
- * AllReduceExchange — publish sendBuf (slot 0) + buffer (slot 1) GVA
- *
- * AllReduce uses ReduceScatter + AllGather decomposition:
- *   RS phase reads peers' sendBuf (slot 0) — never modified → in-place safe
- *   AG phase reads peers' buffer  (slot 1) — stable after RS barrier
- *
- * Both GVAs are published in a single full-mesh exchange. The 8-slot
- * per-rank stride provides room for both data slots plus flags.
- * ================================================================ */
+* AllReduceExchange — publish sendBuf (slot 0) + buffer (slot 1) GVA
+*
+* AllReduce uses ReduceScatter + AllGather decomposition:
+*   RS phase reads peers' sendBuf (slot 0) — never modified → in-place safe
+*   AG phase reads peers' buffer  (slot 1) — stable after RS barrier
+*
+* Both GVAs are published in a single full-mesh exchange. The 8-slot
+* per-rank stride provides room for both data slots plus flags.
+* ================================================================ */
 /* AllReduceExchange scratch slot indices */
 constexpr uint32_t AR_SCRATCH_SENDBUF = 0; /* sendBuf GVA (for RS phase) */
 constexpr uint32_t AR_SCRATCH_BUFFER = 1;  /* buffer GVA (for AG phase) */
@@ -248,10 +247,10 @@ public:
 };
 
 /* ================================================================
- * RingExchange — neighbor-only exchange (multi-core)
- *
- * Core 0 → prev, Core 1 → next, other cores barrier-only.
- * ================================================================ */
+* RingExchange — neighbor-only exchange (multi-core)
+*
+* Core 0 → prev, Core 1 → next, other cores barrier-only.
+* ================================================================ */
 class RingExchange {
 public:
     static const char *Name()
@@ -284,14 +283,17 @@ public:
         uint32_t ringBufSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
         volatile uint8_t *myBuf = AicpuWorkspace::CoreRingBuf(ctx.workspace, myCore);
         /* scratch area: 2 × uint64_t at end of ring buffer
-         * [0] = sendBuf GVA, [1] = flag sentinel */
+        * [0] = recvBuf GVA (for ring forwarding: peers read from this buffer)
+        * [1] = flag sentinel */
         constexpr uint32_t scratchSlots = 2;
         volatile uint64_t *scratch =
             reinterpret_cast<volatile uint64_t *>(myBuf + ringBufSize - scratchSlots * sizeof(uint64_t));
-        scratch[0] = ctx.desc->sendBuffer;
+        scratch[0] = ctx.desc->recvBuffer;
         scratch[1] = ctx.desc->waitSymbol; /* incrementing flag — avoids stale match */
         uint64_t dataSrcGva = reinterpret_cast<uint64_t>(&scratch[0]);
         uint64_t flagSrcGva = reinterpret_cast<uint64_t>(&scratch[1]);
+        /* Flush scratch so SDMA can read the correct recvBuf GVA + waitSymbol */
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[0]));
 
         SqeLocalRingBuffer eb;
         eb.Init(const_cast<uint8_t *>(myBuf));

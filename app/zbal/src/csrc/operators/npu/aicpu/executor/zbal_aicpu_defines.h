@@ -32,15 +32,13 @@ constexpr uint32_t ZBAL_SDMA_RANK_LOCAL = 0xFFFFFFFF;
 constexpr uint32_t ZBAL_AICPU_DEBUG_BUFFER_OFFSET = ZBAL_AICPU_DEBUG_BUF_OFFSET;
 constexpr uint32_t ZBAL_AICPU_DEBUG_BUFFER_SIZE = ZBAL_AICPU_DEBUG_BUF_SIZE;
 constexpr uint32_t ZBAL_AICPU_CORE_RINGBUF_SIZE = ZBAL_AICPU_CORE_RING_BUF_SIZE;
+constexpr uint32_t ZBAL_AICPU_PER_CH_RINGBUF_BYTES = ZBAL_AICPU_PER_CH_RINGBUF_SIZE;
 
 /* Device-only constants */
 constexpr uint32_t ZBAL_AICPU_RING_NUM = 2;
-constexpr uint32_t ZBAL_AICPU_MAX_CH_PER_CORE = 8;
 
 /* Exchange area: exch[rank * stride] = output buffer GVA per rank */
 constexpr uint32_t ZBAL_AICPU_EXCHANGE_STRIDE = 8;
-
-enum AicpuCommAlg : uint32_t { ZBAL_COMM_ALG_FULL_MESH = 0, ZBAL_COMM_ALG_DOUBLE_RING = 1, ZBAL_COMM_ALG_MAX };
 
 /* ================================================================
  * Cache / barrier utilities — centralized for readability and tuning.

@@ -1,14 +1,14 @@
 /*
- * Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
- * ZBAL is licensed under Mulan PSL v2.
- * You can use this software according to the terms and conditions of the Mulan PSL v2.
- * You may obtain a copy of Mulan PSL v2 at:
- *          http://license.coscl.org.cn/MulanPSL2
- * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
- * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
- * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
- * See the Mulan PSL v2 for more details.
- */
+* Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
+* ZBAL is licensed under Mulan PSL v2.
+* You can use this software according to the terms and conditions of the Mulan PSL v2.
+* You may obtain a copy of Mulan PSL v2 at:
+*          http://license.coscl.org.cn/MulanPSL2
+* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+* See the Mulan PSL v2 for more details.
+*/
 
 #ifndef ZBAL_AICPU_SDMA_SQE_CONTEXT_H
 #define ZBAL_AICPU_SDMA_SQE_CONTEXT_H
@@ -57,8 +57,9 @@ inline void AicpuCoreRingbufsInit(SqeLocalRingBuffer *ringBufs, volatile uint8_t
 {
     uint8_t *coreBase = const_cast<uint8_t *>(
         reinterpret_cast<const volatile uint8_t *>(AicpuWorkspace::CoreRingBuf(workspace, coreId)));
-    for (uint32_t s = 0; s < ZBAL_AICPU_CH_PER_CORE; s++) {
-        ringBufs[s].Init(coreBase + s * ZBAL_AICPU_SQE_SIZE * ZBAL_AICPU_MAX_SQE_PER_CORE);
+    /* Initialize ALL channels up to MAX — unused channels stay dormant (safe, no dangling pointers). */
+    for (uint32_t s = 0; s < ZBAL_AICPU_MAX_CH_PER_CORE; s++) {
+        ringBufs[s].Init(coreBase + s * ZBAL_AICPU_PER_CH_RINGBUF_SIZE);
     }
 }
 
@@ -96,10 +97,11 @@ inline int AicpuLaunchTask(SqeLocalRingBuffer *buf, volatile stars_channel_info_
 
     for (uint32_t i = 0; i < buf->sqeCnt; i++) {
         uint32_t hwIdx = (curTail + i) % sqDepth;
-        volatile uint8_t *dst = sqBasePtr + hwIdx * ZBAL_AICPU_SQE_SIZE;
-        const uint8_t *src = buf->localBuff + i * ZBAL_AICPU_SQE_SIZE;
-        for (uint32_t j = 0; j < ZBAL_AICPU_SQE_SIZE; j++) {
-            dst[j] = src[j];
+        volatile uint64_t *dst64 = reinterpret_cast<volatile uint64_t *>(sqBasePtr + hwIdx * ZBAL_AICPU_SQE_SIZE);
+        const uint64_t *src64 = reinterpret_cast<const uint64_t *>(buf->localBuff + i * ZBAL_AICPU_SQE_SIZE);
+        constexpr uint32_t sqeWords = ZBAL_AICPU_SQE_SIZE / sizeof(uint64_t);
+        for (uint32_t j = 0; j < sqeWords; j++) {
+            dst64[j] = src64[j];
         }
     }
 
@@ -145,11 +147,11 @@ inline int AicpuLaunchTaskMc(SqeLocalRingBuffer *buf, volatile stars_channel_inf
 }
 
 /* Free function: batch submit all streams, then parallel wait.
- * Usable from any algorithm without circular include issues. */
+* Usable from any algorithm without circular include issues. */
 inline int AicpuSubmitAndWait(SqeLocalRingBuffer *ringBufs, volatile stars_channel_info_t **channels,
                               uint32_t numChPerCore, volatile uint8_t *workspace, uint32_t coreId)
 {
-    bool submitted[ZBAL_AICPU_CH_PER_CORE];
+    bool submitted[ZBAL_AICPU_MAX_CH_PER_CORE];
     for (uint32_t s = 0; s < numChPerCore; s++) {
         submitted[s] = ringBufs[s].HasWork();
         if (!submitted[s]) {

@@ -18,42 +18,30 @@
 #include "ops/exchange/zbal_aicpu_exchange_impl.h"
 #include "ops/allgather/zbal_aicpu_allgather_fullmesh.h"
 #include "ops/allgather/zbal_aicpu_allgather_doublering.h"
+#include "ops/allgather/zbal_aicpu_allgather_mesh_doublering.h"
 
 class AllGatherOp {
 public:
     /* ================================================================
-     * Layer 1: Decision — which algorithm to use?
-     *
-     * Priority: host hint → heuristics → default
+     * Layer 1: Decision — moved to host side (SelectCommAlg).
+     * Device reads desc->commAlg directly; see zbal_comm_host_device_struct.h.
      * ================================================================ */
-    static uint32_t SelectAlgorithm(uint32_t hostCommAlg, uint32_t numCores, uint32_t rankNum, uint64_t dataSize)
-    {
-        (void)dataSize; /* reserved for data-size-based heuristics */
-
-        /* Host explicitly requested a specific algorithm → validate and use */
-        if (hostCommAlg != ZBAL_COMM_ALG_FULL_MESH) {
-            uint32_t coreNumPerRing = numCores / ZBAL_AICPU_RING_NUM;
-            if (hostCommAlg == ZBAL_COMM_ALG_DOUBLE_RING && coreNumPerRing >= 1 && rankNum > 1)
-                return ZBAL_COMM_ALG_DOUBLE_RING;
-        }
-
-        /* Default: FullMesh (DoubleRing 调通后可加 auto-select heuristic) */
-        return ZBAL_COMM_ALG_FULL_MESH;
-    }
 
     /* ================================================================
      * Layer 2: Exchange — which exchange strategy for this algorithm?
      *
-     * | commAlg                    | Exchange           |
-     * |----------------------------|--------------------|
-     * | ZBAL_COMM_ALG_FULL_MESH    | FullMeshExchange   |
-     * | ZBAL_COMM_ALG_DOUBLE_RING  | RingExchange       |
+     * | commAlg                         |    Exchange        |
+     * |---------------------------------|--------------------|
+     * | ZBAL_COMM_ALG_FULL_MESH         | FullMeshExchange   |
+     * | ZBAL_COMM_ALG_MESH_DOUBLE_RING  | FullMeshExchange   |
+     * | ZBAL_COMM_ALG_DOUBLE_RING       | RingExchange       |
      * ================================================================ */
     static int AddrExchange(uint32_t commAlg, const ExchangeContext &ctx)
     {
         switch (commAlg) {
             case ZBAL_COMM_ALG_DOUBLE_RING:
                 return RingExchange::Execute(ctx);
+            case ZBAL_COMM_ALG_MESH_DOUBLE_RING:
             case ZBAL_COMM_ALG_FULL_MESH:
             default:
                 return FullMeshExchange::Execute(ctx);
@@ -72,6 +60,9 @@ public:
             case ZBAL_COMM_ALG_DOUBLE_RING:
                 return AllGatherDoubleRing::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId,
                                                     numCores);
+            case ZBAL_COMM_ALG_MESH_DOUBLE_RING:
+                return AllGatherMeshDoubleRing::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId,
+                                                        numCores);
             case ZBAL_COMM_ALG_FULL_MESH:
             default:
                 return AllGatherFullMesh::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId,

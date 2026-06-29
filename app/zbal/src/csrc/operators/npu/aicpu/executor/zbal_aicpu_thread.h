@@ -65,10 +65,11 @@ inline int AicpuAtomicLaunchTask(uint32_t streamId, volatile stars_channel_info_
             sqe->header.task_id = static_cast<uint16_t>((hwBase + i) % sqDepth);
 
             uint32_t hwIdx = (claimedTail + i) % sqDepth;
-            volatile uint8_t *dst = sqBasePtr + hwIdx * ZBAL_AICPU_SQE_SIZE;
-            const uint8_t *src = localBuf + i * ZBAL_AICPU_SQE_SIZE;
-            for (uint32_t j = 0; j < ZBAL_AICPU_SQE_SIZE; j++) {
-                dst[j] = src[j];
+            volatile uint64_t *dst64 = reinterpret_cast<volatile uint64_t *>(sqBasePtr + hwIdx * ZBAL_AICPU_SQE_SIZE);
+            const uint64_t *src64 = reinterpret_cast<const uint64_t *>(localBuf + i * ZBAL_AICPU_SQE_SIZE);
+            constexpr uint32_t sqeWords = ZBAL_AICPU_SQE_SIZE / sizeof(uint64_t);
+            for (uint32_t j = 0; j < sqeWords; j++) {
+                dst64[j] = src64[j];
             }
         }
     }

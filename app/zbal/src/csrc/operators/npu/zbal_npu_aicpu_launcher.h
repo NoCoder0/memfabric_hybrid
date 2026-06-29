@@ -45,6 +45,7 @@ private:
     underapi::aclrtFuncHandle opFuncHandles_[kMaxCommType]{}; /* per-op handles for profiling */
     uint64_t workspaceGva_ = 0;
     uint64_t waitSymbol_ = 0; /* auto-incremented per Launch for cross-device barrier flags */
+    uint32_t groupSize_ = 0;  /* rank count in group — for SelectCommAlg heuristic */
     bool initialized_ = false;
 };
 

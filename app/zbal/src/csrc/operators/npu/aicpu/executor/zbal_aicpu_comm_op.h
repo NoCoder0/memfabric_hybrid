@@ -56,8 +56,8 @@ public:
         op.reserved[1] = desc->reserved[1];
         op.reserved[2] = desc->reserved[2];
 
-        /* Phase 0: Algorithm selection */
-        op.commAlg = SelectAlgorithm(desc->commType, desc->commAlg, numCores, ctx.rankNum, op.dataSize);
+        /* Phase 0: Algorithm — already resolved on host via SelectCommAlg. Device just reads it. */
+        op.commAlg = desc->commAlg;
 
         /* Phase 1: AICPU address exchange */
         {
@@ -82,26 +82,11 @@ public:
         return DispatchExecute(desc->commType, alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
     }
 
-    static uint32_t SelectAlgorithm(uint32_t commType, uint32_t hostCommAlg, uint32_t numCores, uint32_t rankNum,
-                                    uint64_t dataSize);
     static int DispatchExecute(uint32_t commType, AicpuAlgorithmCtx &alg, const CommOpParams &op,
                                SqeLocalRingBuffer *ringBufs, volatile stars_channel_info_t **channels,
                                uint32_t numChPerCore, volatile uint8_t *workspace, uint32_t coreId, uint32_t numCores);
     static int AddrExchange(uint32_t commType, uint32_t commAlg, const ExchangeContext &ctx);
 };
-
-/* SelectAlgorithm — resolves algorithm for given commType.
- * Delegates to Op-level SelectAlgorithm for heuristics. */
-inline uint32_t CommOpBase::SelectAlgorithm(uint32_t commType, uint32_t hostCommAlg, uint32_t numCores,
-                                            uint32_t rankNum, uint64_t dataSize)
-{
-    switch (commType) {
-        case ZBAL_CMD_ALLGATHER:
-            return AllGatherOp::SelectAlgorithm(hostCommAlg, numCores, rankNum, dataSize);
-        default:
-            return ZBAL_COMM_ALG_FULL_MESH;
-    }
-}
 
 /* DispatchExecute — delegate to algorithm's Execute (owns loop/ring logic). */
 inline int CommOpBase::DispatchExecute(uint32_t commType, AicpuAlgorithmCtx &alg, const CommOpParams &op,

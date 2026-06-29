@@ -106,9 +106,8 @@ void NpuCommunicatorAICPU::UnInitialize() noexcept
  * count is in ELEMENTS and auto-converted to bytes via dataType. */
 static int32_t LaunchAicpuOp(NpuAicpuLauncher &launcher, uint32_t commType, uint64_t sendBuf, uint64_t recvBuf,
                              uint64_t count, uint32_t dataType, uint32_t root, const char *opName,
-                             void *stream = nullptr, uint32_t commAlg = 0, uint32_t reduceOp = 0,
-                             uint64_t buffer = 0, uint64_t reserved0 = 0, uint64_t reserved1 = 0,
-                             uint64_t reserved2 = 0)
+                             void *stream = nullptr, uint32_t commAlg = 0, uint32_t reduceOp = 0, uint64_t buffer = 0,
+                             uint64_t reserved0 = 0, uint64_t reserved1 = 0, uint64_t reserved2 = 0)
 {
     AicpuWorkDesc desc{};
     desc.commType = commType;
@@ -126,8 +125,8 @@ static int32_t LaunchAicpuOp(NpuAicpuLauncher &launcher, uint32_t commType, uint
 
     ZResult zret = launcher.Launch(desc, stream);
     if (zret != Z_OK) {
-        ZBAL_LOG_ERROR(opName << " Launch failed, ret=" << static_cast<int32_t>(zret));
         (void)launcher.SyncAndDumpDebug(stream);
+        ZBAL_LOG_ERROR(opName << " Launch failed, ret=" << static_cast<int32_t>(zret));
         return 1;
     }
     return 0;
@@ -196,8 +195,8 @@ int32_t NpuCommunicatorAICPU::Recv(const void *recvBuff, size_t recvCount, zbal_
                                    aclrtStream stream) noexcept
 {
     uint64_t recvBufGva = reinterpret_cast<uint64_t>(recvBuff);
-    return LaunchAicpuOp(launcher_, ZBAL_CMD_RECV, recvBufGva, recvBufGva, recvCount,
-                         static_cast<uint32_t>(dataType), peer, "Recv", stream);
+    return LaunchAicpuOp(launcher_, ZBAL_CMD_RECV, recvBufGva, recvBufGva, recvCount, static_cast<uint32_t>(dataType),
+                         peer, "Recv", stream);
 }
 } // namespace operators
 } // namespace zbal

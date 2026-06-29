@@ -196,14 +196,27 @@ constexpr uint32_t ZBAL_AICPU_INIT_CTX_OFFSET = 4096;
 constexpr uint32_t ZBAL_AICPU_DEBUG_BUF_OFFSET = 4352;
 constexpr uint32_t ZBAL_AICPU_DEBUG_BUF_SIZE = 4096;
 
-constexpr uint32_t ZBAL_AICPU_NUM_CORES = 4;
-constexpr uint32_t ZBAL_AICPU_CH_PER_CORE = 4;
+/* ── Compile-time maximums (sized for worst-case op/algorithm) ──
+ *  These determine the static workspace layout. Per-op runtime values
+ *  (numCores / numChPerCore) flow through AicpuWorkDesc and may be smaller.
+ *
+ *  Known per-op requirements:
+ *    - AllGather doublering / mesh_doublering : 2 cores × 1 channel
+ *    - AllGather fullmesh                     : 1 core  × 8 channels
+ *    - AlltoAllV                              : 1 core  × 8 channels
+ *    - ReduceScatter                           : 1 core  × 16 channels
+ *    - AllReduce / Broadcast / Scatter         : 1 core  × 8 channels (default)
+ *    - Send / Recv                            : 1 core  × 1 channel
+ */
+constexpr uint32_t ZBAL_AICPU_MAX_NUM_CORES = 2;    /* doublering uses 2 cores */
+constexpr uint32_t ZBAL_AICPU_MAX_CH_PER_CORE = 16; /* reducescatter uses 16 channels */
+
 constexpr uint32_t ZBAL_AICPU_CORE_DATA_OFFSET = 9216;
 constexpr uint32_t ZBAL_AICPU_SQE_SIZE = 64;
-constexpr uint32_t ZBAL_AICPU_MAX_SQE_PER_CORE = 256;
-constexpr uint32_t ZBAL_AICPU_CORE_RING_BUF_SIZE =
-    ZBAL_AICPU_SQE_SIZE * ZBAL_AICPU_MAX_SQE_PER_CORE * ZBAL_AICPU_CH_PER_CORE;
-constexpr uint32_t ZBAL_AICPU_TOTAL_RING_BUF_SIZE = ZBAL_AICPU_CORE_RING_BUF_SIZE * ZBAL_AICPU_NUM_CORES;
+constexpr uint32_t ZBAL_AICPU_MAX_SQE_PER_CORE = 256; /* per channel */
+constexpr uint32_t ZBAL_AICPU_PER_CH_RINGBUF_SIZE = ZBAL_AICPU_SQE_SIZE * ZBAL_AICPU_MAX_SQE_PER_CORE;
+constexpr uint32_t ZBAL_AICPU_CORE_RING_BUF_SIZE = ZBAL_AICPU_PER_CH_RINGBUF_SIZE * ZBAL_AICPU_MAX_CH_PER_CORE;
+constexpr uint32_t ZBAL_AICPU_TOTAL_RING_BUF_SIZE = ZBAL_AICPU_CORE_RING_BUF_SIZE * ZBAL_AICPU_MAX_NUM_CORES;
 constexpr uint32_t ZBAL_AICPU_WORKSPACE_TOTAL_SIZE = ZBAL_AICPU_CORE_DATA_OFFSET + ZBAL_AICPU_TOTAL_RING_BUF_SIZE;
 
 /* AICPU comm type — shared between host and device */
@@ -220,11 +233,20 @@ enum AicpuCommType : uint32_t {
     ZBAL_CMD_FINALIZE = 0xFF
 };
 
+/* AICPU comm algorithm — shared between host and device */
+enum AicpuCommAlg : uint32_t {
+    ZBAL_COMM_ALG_DEFAULT = 0,
+    ZBAL_COMM_ALG_FULL_MESH = 1,
+    ZBAL_COMM_ALG_DOUBLE_RING = 2,
+    ZBAL_COMM_ALG_MESH_DOUBLE_RING = 3,
+    ZBAL_COMM_ALG_MAX
+};
+
 /* Kernel param — passed via aclrtKernelArgsAppend, ACL runtime handles H2D automatically. */
 struct AicpuWorkDesc {
     uint64_t sdmaWorkspaceGva; /* SDMA workspace GVA */
     uint32_t commType;         /* ZBAL_CMD_ALLGATHER / SCATTER / ... */
-    uint32_t commAlg;          /* algorithm hint from host (0 = auto-select on device) */
+    uint32_t commAlg;          /* resolved algorithm (host fills via SelectCommAlg, device reads desc->commAlg) */
     uint64_t sendBuffer;       /* send buffer GVA */
     uint64_t recvBuffer;       /* recv buffer GVA */
     uint64_t buffer;           /* scratch buffer GVA (AllReduce temp workspace) */
@@ -232,6 +254,8 @@ struct AicpuWorkDesc {
     uint32_t dataType;         /* zbal_datatype_t enum */
     uint32_t root;             /* root rank (scatter/broadcast) / peer (send/recv) */
     uint32_t reduceOp;         /* zbal_reduce_op_t (PROD=0, SUM=1, MAX=2, MIN=3) — maps to SDMA opCode */
+    uint32_t numCores;         /* runtime per-op core count (host sets via GetCommOpConfig) */
+    uint32_t numChPerCore;     /* runtime per-op channels per core (host sets via GetCommOpConfig) */
     uint64_t waitSymbol;       /* incrementing barrier flag — avoids cross-call stale-flag races */
     uint64_t reserved[4];      /* per-op extension: AlltoAllV uses [0]=sendCumSum, [1]=recvSplitCounts, [2]=elements */
 };

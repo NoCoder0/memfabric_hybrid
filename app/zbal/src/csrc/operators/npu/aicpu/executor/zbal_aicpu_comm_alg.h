@@ -52,7 +52,7 @@ struct CommOpParams {
     uint32_t root;     /* root rank (scatter/broadcast) / peer (send/recv) */
     uint32_t dataType; /* zbal_datatype_t enum */
     uint32_t reduceOp; /* zbal_reduce_op_t — maps to SDMA opCode for hardware reduce */
-    uint32_t commAlg;  /* selected algorithm (set by SelectAlgorithm in CommOpBase) */
+    uint32_t commAlg;  /* resolved algorithm (host-side via SelectCommAlg, device reads desc->commAlg) */
     uint32_t coreId;
     uint32_t numCores;
     uint32_t numChPerCore;
