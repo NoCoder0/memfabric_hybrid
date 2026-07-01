@@ -50,6 +50,11 @@ Result AccTcpLinkComplexDefault::EnqueueAndModifyEpoll(const AccMsgHeader &h, co
                                                        const AccDataBufferPtr &cbCtx)
 {
     ASSERT_RETURN(worker_ != nullptr, ACC_ERROR);
+    if (UNLIKELY(h.bodyLen > MAX_RECV_BODY_LEN)) {
+        LOG_ERROR("Send body length " << h.bodyLen << " exceeds max limit " << MAX_RECV_BODY_LEN
+                                      << ", link " << this->id_);
+        return ACC_LINK_MSG_INVALID;
+    }
     auto result = queue_->EnqueueBack(h, d, cbCtx);
     if (UNLIKELY(result != ACC_OK)) {
         LOG_WARN("Failed to enqueue message into link " << this->id_ << ", errorCode:" << result
