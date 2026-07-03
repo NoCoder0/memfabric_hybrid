@@ -14,6 +14,7 @@
 
 #include <string>
 #include <vector>
+#include <cstdint>
 
 #define ZBAL_FLAG_SIZE 8
 
