@@ -20,25 +20,23 @@ namespace zbal { // perf trace
 
 ZBAL_KERNEL void ZBAL_PROF_RECORD(__gm__ CommGroupInfo *comm, uint64_t record)
 {
-    if (AscendC::GetBlockIdx() < ZBAL_MAX_AIV_SIZE_PER_NPU) {
-        auto block = reinterpret_cast<__gm__ uint64_t *>(comm->devMemoryForProfiling);
-        uint64_t coreOffset = AscendC::GetBlockIdx() * comm->tracePointPerCore;
-        PipeBarrier<PIPE_ALL>();
-        dcciCacheline(block + coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF);
-        int64_t index = block[coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF] + 1; // get as record index
-        if (index <= ZBAL_PROFILING_DEVICE_TRACE_OFF) {                        // first record start at [2]
-            index = ZBAL_PROFILING_DEVICE_TRACE_OFF;
-        }
-        if (index >= comm->tracePointPerCore) {
-            return;
-        }
-        PipeBarrier<PIPE_ALL>();
-        block[coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF] = index;
-        dcciCacheline(block + coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF); // flush index to gm at [1]
-
-        block[coreOffset + index] = record;
-        dcciCacheline(block + coreOffset + index); // flush record to gm at [index]
+    auto block = reinterpret_cast<__gm__ uint64_t *>(comm->devMemoryForProfiling);
+    uint64_t coreOffset = AscendC::GetBlockIdx() * comm->tracePointPerCore;
+    PipeBarrier<PIPE_ALL>();
+    dcciCacheline(block + coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF);
+    int64_t index = block[coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF] + 1; // get as record index
+    if (index <= ZBAL_PROFILING_DEVICE_TRACE_OFF) {                        // first record start at [2]
+        index = ZBAL_PROFILING_DEVICE_TRACE_OFF;
     }
+    if (index >= comm->tracePointPerCore) {
+        return;
+    }
+    PipeBarrier<PIPE_ALL>();
+    block[coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF] = index;
+    dcciCacheline(block + coreOffset + ZBAL_PROFILING_DEVICE_IDX_OFF); // flush index to gm at [1]
+
+    block[coreOffset + index] = record;
+    dcciCacheline(block + coreOffset + index); // flush record to gm at [index]
 }
 
 ZBAL_KERNEL void ZBAL_PROF_START(__gm__ CommGroupInfo *comm, uint16_t frameId)

@@ -30,6 +30,7 @@ struct ZBALInitStateExt {
     uint64_t localDeviceMemSize = 0;     /* local device mem size */
     uint64_t symmetricMemSpace = 0;      /* space size, as localDeviceMemSize could be less than symmetricMemSpace */
     uint32_t dataOperationType = 0;      /* data operation type, see zbal_data_op_type_t */
+    int32_t pendingLoggerLevel = -1;     /* log level set before bootstrap; -1 means none */
 };
 
 class ZBALInitState {
@@ -105,6 +106,7 @@ ALWAYS_INLINE void ZBALInitState::Reset() noexcept
     smaInited_ = false;
     communicatorCount_ = 0;
     bzero(&ext_, sizeof(ZBALInitStateExt));
+    ext_.pendingLoggerLevel = -1;
 }
 
 } // namespace zbal

@@ -45,10 +45,14 @@ void pybind11_deepep_adaptor(pybind11::module_ &m)
         .def("get_num_rdma_ranks", &zbal::adaptor::deep_ep::Buffer::get_num_rdma_ranks)
         .def("get_rdma_rank", &zbal::adaptor::deep_ep::Buffer::get_rdma_rank)
         .def("get_dispatch_layout", &zbal::adaptor::deep_ep::Buffer::get_dispatch_layout)
+        .def("get_send_token_idx", &zbal::adaptor::deep_ep::Buffer::get_send_token_idx)
         .def("intranode_dispatch", &zbal::adaptor::deep_ep::Buffer::intranode_dispatch)
         .def("intranode_combine", &zbal::adaptor::deep_ep::Buffer::intranode_combine)
         .def("low_latency_dispatch", &zbal::adaptor::deep_ep::Buffer::low_latency_dispatch)
         .def("low_latency_combine", &zbal::adaptor::deep_ep::Buffer::low_latency_combine)
         .def("clean_low_latency_buffer", &zbal::adaptor::deep_ep::Buffer::clean_low_latency_buffer)
-        .def("fused_deep_moe", &zbal::adaptor::deep_ep::Buffer::fused_deep_moe);
+#ifdef ZBAL_ASCEND_NPU_A3
+        .def("fused_deep_moe", &zbal::adaptor::deep_ep::Buffer::fused_deep_moe)
+#endif
+        ;
 }

@@ -285,6 +285,11 @@ else
 fi
 echo "" >> "$REPORT_FILE"
 
+# Clean all profiling directories before starting
+for op in "${ALL_OPS[@]}"; do
+    rm -rf "$CURRENT_DIR/$op"/profiling.* 2>/dev/null
+done
+
 for WORLD_SIZE in "${WS_ARRAY[@]}"; do
     # Reset per-world_size state
     failed=0

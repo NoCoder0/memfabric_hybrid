@@ -17,10 +17,11 @@ file(GLOB ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS
 )
 source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/dispatch_combine_low_latency" FILES ${ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS})
 
-file(GLOB ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS
-        ${ZBAL_AICORE_DIR}/ops/fused_deep_moe/*.cpp
-)
-source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/fused_deep_moe" FILES ${ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS})
+if(ZBAL_ASCEND_NPU_A3)
+    file(GLOB ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS
+            ${ZBAL_AICORE_DIR}/ops/fused_deep_moe/*.cpp)
+    source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/fused_deep_moe" FILES ${ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS})
+endif()
 
 ascendc_library(zbal_kernel STATIC
         ${ZBAL_KERNEL_CLASSIC_SRCS}
@@ -40,13 +41,23 @@ ascendc_include_directories(zbal_kernel PRIVATE
         ${ZBAL_SRC_DIR}/csrc/operators
         ${ZBAL_SRC_DIR}/csrc/operators/npu
         ${ZBAL_SRC_DIR}/csrc/operators/npu/aicore/common
-        ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe
-        ${catlass_SOURCE_DIR}/include
 )
+if(ZBAL_ASCEND_NPU_A3)
+    ascendc_include_directories(zbal_kernel PRIVATE
+        ${catlass_SOURCE_DIR}/include
+        ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)
+endif()
 
 ascendc_compile_definitions(zbal_kernel PRIVATE
         ASCENDC_DUMP=0
 )
+
+# Forward chip type macro to AscendC device kernel compiler
+if(ZBAL_ASCEND_NPU_A3)
+    ascendc_compile_definitions(zbal_kernel PRIVATE ZBAL_ASCEND_NPU_A3)
+elseif(ZBAL_ASCEND_NPU_A5)
+    ascendc_compile_definitions(zbal_kernel PRIVATE ZBAL_ASCEND_NPU_A5)
+endif()
 
 option(BUILD_ZBAL_AICPU_KERNEL "Build AICPU persistent dispatcher kernel" ON)
 

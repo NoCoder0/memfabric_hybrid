@@ -19,6 +19,7 @@ public:
 
     ZBAL_KERNEL void Init(GM_ADDR recvBuf, GM_ADDR metaAddr, size_t recvCount, uint32_t peer)
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->recvBuf = recvBuf;
         this->peer = peer;
         this->elements = recvCount;
@@ -41,11 +42,12 @@ public:
 
         this->dataOpType = comm->dataOpType;
         ZBALBaseKernel::Init();
+#endif
     }
 
     ZBAL_KERNEL void Process()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_RECV_KERNEL_ALL);
         uint64_t waitSymbol = 1024;
         uint32_t numPerCore = elements / aivNum;

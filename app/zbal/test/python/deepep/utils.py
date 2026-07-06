@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 def register_zbal(local_rank, rank, world_size, ip, port):
     from zbal import zbal_init, zbal_set_logger_level
 
-    local_mem_size = 10 * 1024 * 1024 * 1024
+    local_mem_size = 20 * 1024 * 1024 * 1024
     local_meta_size = 2048
     g_ip_port = f"tcp://{ip}:23350"
     zbal_set_logger_level(3)

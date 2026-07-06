@@ -50,6 +50,9 @@ ZBAL_API int32_t zbal_set_logger_level(int level)
     auto bootstrap = Bootstrap::Get();
     if (bootstrap != nullptr) {
         bootstrap->SetLoggerLevel(level);
+        ZBALInitState::Instance().ext_.pendingLoggerLevel = -1;
+    } else {
+        ZBALInitState::Instance().ext_.pendingLoggerLevel = level;
     }
 
     return Z_OK;

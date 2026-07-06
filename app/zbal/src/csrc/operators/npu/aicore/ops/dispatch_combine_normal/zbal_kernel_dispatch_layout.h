@@ -30,8 +30,6 @@ ZBAL_KERNEL void SyncFunc()
     AscendC::WaitFlag<event>(eventID);
 }
 
-constexpr uint16_t MAX_BLOCK = 50U;
-
 template<typename T>
 class DispatchLayout {
 public:
@@ -41,6 +39,7 @@ public:
                           uint32_t rank, GM_ADDR numTokensPerRank, GM_ADDR numTokensPerExpert,
                           GM_ADDR sendTokenIdx, GM_ADDR blockExpertCumsum, TPipe *pipe)
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         numTokens_ = numTokens;
         numRanks_ = numRanks;
         numExperts_ = numExperts;
@@ -85,17 +84,20 @@ public:
         SyncFunc<AscendC::HardEvent::V_MTE3>();
         DataCopyExtParams expCopyParams{1U, static_cast<uint32_t>(numExperts_ * sizeof(T)), 0U, 0U, 0U};
         DataCopyPad(numTokensPerExpertGM_, zerosLt, expCopyParams);
-        DataCopyExtParams multiExpCopyParams{MAX_BLOCK, static_cast<uint32_t>(numExperts_ * sizeof(T)), 0U, 0U, 0U};
-        for (int i = 0; i < static_cast<int>(MAX_BLOCK); ++i) { // reset blockExpertCumsumGM_ 所有区域
+        DataCopyExtParams multiExpCopyParams{static_cast<uint16_t>(maxAivNum),
+            static_cast<uint32_t>(numExperts_ * sizeof(T)), 0U, 0U, 0U};
+        for (int i = 0; i < static_cast<int>(maxAivNum); ++i) { // reset blockExpertCumsumGM_ 所有区域
             DataCopyPad(blockExpertCumsumGM_[i * numExperts_], zerosLt, expCopyParams);
         }
         DataCopyExtParams rankCopyParams{1U, static_cast<uint32_t>(numRanks_ * sizeof(T)), 0U, 0U, 0U};
         DataCopyPad(numTokensPerRankGM_, zerosLt, rankCopyParams);
         SyncAll<true>();
+#endif
     }
 
     ZBAL_KERNEL void Process()
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         if (blockIdx_ >= blockNum_) {
             SyncAll<true>();
             return;
@@ -180,6 +182,7 @@ public:
         DataCopyExtParams topkCopyParams{1U, static_cast<uint32_t>(tempTokens_ * numTopk_ * sizeof(T)), 0U, 0U, 0U};
         DataCopyPad(sendTokenIdxGM_, sendTokenIdxTensor, topkCopyParams);
         PipeBarrier<PIPE_ALL>();
+#endif
     }
 
 private:

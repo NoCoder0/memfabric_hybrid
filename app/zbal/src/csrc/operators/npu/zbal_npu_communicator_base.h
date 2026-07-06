@@ -81,6 +81,7 @@ public:
                               const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                               int64_t moeExpertNum, aclrtStream stream, int64_t flags) noexcept override;
 
+#ifdef ZBAL_ASCEND_NPU_A3
     int32_t FusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
                          const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
                          const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
@@ -92,6 +93,7 @@ public:
                          const zbal_tensor_info_t *expertTokenNums, const zbal_tensor_info_t *workspace,
                          int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
                          int64_t shareGmm1HLen, bool isTensorList, aclrtStream stream, int64_t flags) noexcept;
+#endif
 
 protected:
     ZResult SetupProfMemory();
@@ -101,6 +103,7 @@ protected:
     void *kernelMetaH2DArea_ = nullptr;
     void *kernelMetaH2DAreaDevice_ = nullptr;
     void *perfHostMemory_ = nullptr;
+    uint32_t maxAivCores_ = 0;
     static uint64_t opRunTimes_;
 
     /*

@@ -54,7 +54,7 @@ def _find_python_include():
 def _get_version(version_dir):
     with open(f"{version_dir}/VERSION", "r", encoding="utf-8") as f:
         version_val = f.read().strip()
-        torch_npu_int_ver = torch_npu_version.replace('post', '').replace('.', '')
+        torch_npu_int_ver = torch_npu_version.replace('post', '').replace('dev', '').replace('.', '')
         main_ver, sub_ver, patch_ver = version_val.split(".")
         return f"{main_ver}.{sub_ver}.{torch_npu_int_ver}.post{patch_ver}"
 
@@ -63,9 +63,33 @@ def _check_env_flag(name: str, default: str = "") -> bool:
     return os.getenv(name, default).upper() in ["ON", "1", "YES", "TRUE", "Y"]
 
 
+def _get_soc_version():
+    """
+    Get the SOC_VERSION for kernel compiling via torch.npu auto-detection.
+    """
+    chip_name = torch.npu.get_device_properties(torch.device('npu')).name
+    if chip_name.startswith("Ascend910_93"):
+        res_soc_version = "ascend910_9382"
+    elif chip_name.startswith("Ascend950"):
+        res_soc_version = "ascend950pr_9599"
+    elif chip_name.startswith("Ascend910"):
+        res_soc_version = "ascend910_9382"
+        logger.warning(f"auto-detected {chip_name}, Ascend910_93* or Ascend950* are recommended.)")
+    else:
+        logger.error(f"unsupported chip '{chip_name}'. Only Ascend910* and Ascend950* are supported.")
+        raise RuntimeError(f"unsupported chip '{chip_name}'. Only Ascend910* and Ascend950* are supported.")
+    logger.info(f"auto-detected {chip_name} → SOC_VERSION={res_soc_version}")
+    return res_soc_version
+
+
 is_manylinux = _check_env_flag("IS_MANYLINUX", "FALSE")
 is_debug_mode = _check_env_flag("DEBUG_MODE", "FALSE")
 build_ut = _check_env_flag("ENABLE_ZBAL_UT", "OFF")
+
+soc_version = _get_soc_version()
+_chip_type = "A5" if soc_version.startswith("ascend950") else "A3"
+_chip_macro = f"ZBAL_ASCEND_NPU_{_chip_type}"
+
 ascend_home = Path(_find_ascend_home_dir()).resolve()
 python_include_dir = Path(_find_python_include()).resolve()
 torch_dir = Path(os.path.dirname(torch.__file__)).resolve()
@@ -86,7 +110,6 @@ include_dirs = [
     f"{zbal_root}/src/csrc/",
     f"{zbal_root}/src/csrc/operators",
     f"{zbal_root}/src/csrc/operators/npu",
-    f"{zbal_root}/src/csrc/operators/npu/host/fused_deep_moe",
     f"{zbal_root}/src/csrc/common",
     f"{zbal_root}/src/csrc/sma",
     f"{zbal_root}/src/csrc/under_api/cann",
@@ -97,6 +120,8 @@ include_dirs = [
     f"{zbal_root}/src/csrc/adaptor/pytorch_npu/",
     f"{zbal_root}/src/csrc/adaptor/deepep/",
 ]
+if _chip_type == "A3":
+    include_dirs.append(f"{zbal_root}/src/csrc/operators/npu/host/fused_deep_moe")
 
 
 library_dirs = [
@@ -148,7 +173,7 @@ extra_compile_args = ["-std=c++17", "-hno-unused-parameter", "-lno-unused-functi
                       "-isystem", f"{torch_npu_dir}/include/torch_npu/csrc/aten/",
                       "-isystem", f"{torch_npu_dir}/include/torch_npu/csrc/core/npu/",
                       ]  # "-fvisibility=hidden"
-common_macros = []
+common_macros = [(_chip_macro, "1")]
 
 
 def set_torch_version():
@@ -199,10 +224,12 @@ class CustomBuildExtension(BuildExtension):
 
         # cmake
         build_type = "Debug" if is_debug_mode and not is_manylinux else "Release"
+
         cmake_cmd = [
             "cmake",
             "..",
-            "-DSOC_VERSION=Ascend910_9382",
+            f"-DSOC_VERSION={soc_version}",
+            f"-D{_chip_macro}=1",
             f"-DBUILD_ZBAL_MODULE_UT={build_ut}",
             f"-DCMAKE_BUILD_TYPE={build_type}",
             "-DDISABLE_ADAPTOR_COMPILE=ON",

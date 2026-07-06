@@ -92,7 +92,7 @@ template<typename T>
 ZBAL_KERNEL void ZBALAllGatherSmallKernel::Init(GM_ADDR input, GM_ADDR output, GM_ADDR metaGM, uint64_t elements,
                                                 uint64_t waitSymbol)
 {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     this->comm = reinterpret_cast<__gm__ CommGroupInfo *>(metaGM);
     this->groupSize = comm->groupSize;
     this->myGroupRank = comm->myGroupRank;
@@ -266,7 +266,7 @@ ZBAL_KERNEL void ZBALAllGatherSmallKernel::InnerProcess()
 template<typename T>
 ZBAL_KERNEL void ZBALAllGatherSmallKernel::Process()
 {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     ZBAL_PROF_START(comm, ZBAL_PROF_ALLGATHER_KERNEL_ALL);
 
     ExchangeInputAddrFlag();
@@ -284,7 +284,7 @@ template<typename T>
 ZBAL_KERNEL void ZBALAllGatherBigKernel::Init(GM_ADDR input, GM_ADDR output, GM_ADDR metaGM, uint64_t elements,
                                               uint64_t waitSymbol)
 {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     this->aivNum = AscendC::GetBlockNum();
     this->coreNumPerRing = aivNum / ZBAL_AG_RING_NUM;
     this->statSizePerRank = coreNumPerRing * ZBAL_AG_SLICE_PER_CORE; // left right stat has same size
@@ -381,7 +381,7 @@ ZBAL_KERNEL void ZBALAllGatherBigKernel::WriteStat(__gm__ uint64_t *statAddr, co
 template<typename T>
 ZBAL_KERNEL void ZBALAllGatherBigKernel::Process() // ring allgather
 {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     ZBAL_PROF_START(comm, ZBAL_PROF_ALLGATHER_KERNEL_ALL);
     const int64_t aivIndex = AscendC::GetBlockIdx();
     const int64_t prevRank = (myGroupRank + groupSize - 1) % groupSize;

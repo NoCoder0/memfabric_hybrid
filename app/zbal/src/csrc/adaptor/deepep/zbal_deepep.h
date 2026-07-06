@@ -47,6 +47,8 @@ public:
 
     void clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank, int hidden, int num_experts);
 
+    at::Tensor get_send_token_idx() const;
+
     std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, std::optional<EventHandle>>
     get_dispatch_layout(const torch::Tensor &topk_idx, int num_experts, std::optional<EventHandle> &previous_event,
                         bool async, bool allocate_on_comm_stream);
@@ -80,6 +82,7 @@ public:
                         const at::Tensor &packed_recv_count, bool zero_copy, bool async, bool return_recv_hook,
                         const std::optional<at::Tensor> &out);
 
+#ifdef ZBAL_ASCEND_NPU_A3
     std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_deep_moe(
         const at::Tensor &x, const at::Tensor &expert_ids, const at::Tensor &gmm1_weight, const at::Tensor &gmm1_scale,
         const at::Tensor &gmm2_weight, const at::Tensor &gmm2_scale, const at::Tensor &expert_scales,
@@ -88,6 +91,7 @@ public:
         const std::optional<at::Tensor> &share_gmm2_weight, const std::optional<at::Tensor> &share_gmm2_scale,
         const std::optional<at::Tensor> &share_smooth_scales, const std::optional<at::Tensor> &x_active_mask,
         int64_t quant_mode, int64_t global_bs, int64_t share_gmm1_h_len, bool is_tensor_list);
+#endif
 
 private:
     int device_id;
@@ -95,6 +99,7 @@ private:
     int num_ranks, num_rdma_ranks, num_nvl_ranks;
     op::SocVersion soc_version;
     int num_max_hccs_peers;
+    int num_aiv_cores_{0};
 
     int64_t num_nvl_bytes;
     int64_t num_rdma_bytes;
@@ -113,10 +118,12 @@ private:
     at::Tensor new_topk_idx;
     at::Tensor ori_x;
     at::Tensor new_scales;
+#ifdef ZBAL_ASCEND_NPU_A3
     // Cached output tensors to avoid per-call at::zeros (triggers InplaceZero, pollutes L2 cache)
     at::Tensor cached_fdm_output_;
     at::Tensor cached_fdm_expert_token_nums_;
     at::Tensor cached_fdm_share_output_;
+#endif
 };
 } // namespace deep_ep
 } // namespace adaptor

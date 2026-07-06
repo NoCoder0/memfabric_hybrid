@@ -10,11 +10,6 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include <acl/acl_rt.h>
-#include "kernel_operator.h"
-#include "zbal_def.h"
-#include "zbal_kernel_utils.h"
-#include "zbal_kernel_trace.h"
 #include "zbal_kernel_base.h"
 
 class ZBALBarrierKernel : public ZBALBaseKernel {
@@ -23,18 +18,20 @@ public:
 
     ZBAL_KERNEL void Init(GM_ADDR metaGM, uint64_t waitSymbol)
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->comm = reinterpret_cast<__gm__ CommGroupInfo *>(metaGM);
         this->myGroupRank = comm->myGroupRank;
         this->groupSize = comm->groupSize;
         this->memSize = comm->localDeviceMemSize;
         this->worldRanks = reinterpret_cast<__gm__ uint16_t *>(comm->peerGroupRank2WorldRank);
+
+        ZBALBaseKernel::Init();
 #endif
     }
 
     ZBAL_KERNEL void Process()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_BARRIER);
 
         BarrierAll();
@@ -59,7 +56,7 @@ int32_t ZBALOpBarrier(aclrtStream stream, CommGroupInfo &groupInfo)
     if (blockDim == 0) {
         auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);
         if (ret != 0) {
-            printf("ZBALOpAlltoAllV get block dim failed, blockDim:%d\n", ret);
+            printf("ZBALOpBarrier get block dim failed, blockDim:%d\n", ret);
             return ret;
         }
     }

@@ -65,7 +65,11 @@ constexpr uint32_t ZBAL_CONST_20 = 20;
 constexpr uint32_t ZBAL_CONST_256 = 256;
 constexpr uint32_t ZBAL_CONST_1024 = 1024;
 
+#if defined(ZBAL_ASCEND_NPU_A3)
 constexpr uint32_t ZBAL_CYCLE_UNIT = 50;
+#else
+constexpr uint32_t ZBAL_CYCLE_UNIT = 1000;       // default / ZBAL_ASCEND_NPU_A5
+#endif
 constexpr uint32_t ZBAL_MAX_RANK_SIZE = 384;
 
 constexpr uint32_t ZBAL_PATH_MAX_LIMIT = 4096;

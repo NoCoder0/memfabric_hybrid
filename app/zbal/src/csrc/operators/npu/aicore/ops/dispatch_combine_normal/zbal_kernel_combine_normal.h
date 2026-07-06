@@ -183,6 +183,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, 
                                                uint32_t hidden, uint32_t topK, bool enableBalance, GM_ADDR XOut,
                                                TPipe *pipe)
 {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     tpipe_ = pipe;
     blockIdx = GetBlockIdx();
     blockNum = GetBlockNum();
@@ -240,6 +241,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, 
 
     // rank分核
     SplitCoreCal(epRankSize, rankNumPerBlock, curBlockStartRankId, curBlockEndRankId);
+#endif
 }
 
 template<TypeClass>
@@ -586,21 +588,21 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::HandleAllRankToken()
 template<TypeClass>
 ZBAL_KERNEL void CombineNormal<TypeFunc>::Process()
 {
-    if ASCEND_IS_AIV { // 全aiv处理
-        ResetMetaState();
-        PutShareAddr();
-        SetSyncFlag(FLAG); // 全卡同步，确保对称地址都放到了meta空间
-        WaitSyncFlag(FLAG);
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
+    ResetMetaState();
+    PutShareAddr();
+    SetSyncFlag(FLAG); // 全卡同步，确保对称地址都放到了meta空间
+    WaitSyncFlag(FLAG);
 
-        GetShareAddr();
-        if (!isEnableBalance_) {
-            ReadTokenFromRemote();
-        } else {
-            HandleAllRankToken();
-        }
-        SetSyncFlag(STATE); // 全卡同步，确保数据已经获取完
-        WaitSyncFlag(STATE);
+    GetShareAddr();
+    if (!isEnableBalance_) {
+        ReadTokenFromRemote();
+    } else {
+        HandleAllRankToken();
     }
+    SetSyncFlag(STATE); // 全卡同步，确保数据已经获取完
+    WaitSyncFlag(STATE);
+#endif
 }
 
 } // namespace MoeCombineNormal

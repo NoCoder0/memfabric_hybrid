@@ -422,6 +422,7 @@ ZBAL_API int32_t zbal_combine_low_latency(const zbal_tensor_info_t *expandX, con
                                         stream, flags);
 }
 
+#ifdef ZBAL_ASCEND_NPU_A3
 ZBAL_API int32_t zbal_fused_deep_moe(
     const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds, const zbal_tensor_info_t *gmm1Weight,
     const zbal_tensor_info_t *gmm1Scale, const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
@@ -455,6 +456,7 @@ ZBAL_API int32_t zbal_fused_deep_moe(
                                    moeExpertNum, quantMode, globalBs, gmm1HLen, shareGmm1HLen,
                                    static_cast<bool>(isTensorList), stream, flags);
 }
+#endif // ZBAL_ASCEND_NPU_A3
 
 #ifdef __cplusplus
 }

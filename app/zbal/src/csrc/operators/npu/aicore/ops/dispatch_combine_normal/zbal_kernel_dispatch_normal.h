@@ -168,6 +168,7 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR x, GM_
                                                 bool enableBalance, GM_ADDR expandXOut, GM_ADDR dynamicScalesOut,
                                                 TPipe *pipe)
 {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     tpipe_ = pipe;
     blockIdx = GetBlockIdx();
     blockNum = GetBlockNum();
@@ -231,6 +232,7 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR x, GM_
 
     // rank分核
     SplitCoreCal(epRankSize, rankNumPerBlock, curBlockStartRankId, curBlockEndRankId);
+#endif
 }
 
 template<TypeClass>
@@ -444,9 +446,25 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantProcess()
     LocalTensor<float> floatLocalTemp;
     floatLocalTemp = tokenCastFloatBuf.Get<float>();
 
+    // INT8 quant steps:
+    // step1: tokenF16 -> tokenF32
+    // step2: tokenF32 -> tokenF32Abs
+    // step3: tokenF32Abs -> max
+    // step4: max scale = MAX_VAL / max
+    // step5: scaled tensor = TokenF32 * scale
+    // step6: tokenF32 -> tokenInt32
+    // step7: tokenInt32 -> tokenHalf
+    // step8: tokenHalf -> tokenInt8
+
     Cast(floatLocalTemp, xInTensor, RoundMode::CAST_NONE, h);
     xInQueue.FreeTensor<XType>(xInTensor);
+#ifdef ZBAL_ASCEND_NPU_A3
     PipeBarrier<PIPE_V>();
+#elif defined(ZBAL_ASCEND_NPU_A5)
+    PipeBarrier<PIPE_ALL>();    // cleanup xInTensor lifecycle
+#else
+    PipeBarrier<PIPE_V>();
+#endif
 
     if constexpr (DynamicQuant) {
         LocalTensor<float> floatLocalAbsTemp = tokenAbsFloatBuf.Get<float>();
@@ -688,21 +706,24 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::HandleAllRankToken()
 template<TypeClass>
 ZBAL_KERNEL void DispatchNormal<TypeFunc>::Process()
 {
-    if ASCEND_IS_AIV {
-        ResetMetaState();
-        PutShareAddr();
-        SetSyncFlag(FLAG); // 全卡同步，确保对称地址都放到了meta空间
-        WaitSyncFlag(FLAG);
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
+#ifdef ZBAL_ASCEND_NPU_A5
+    AscendC::SetCtrlSpr<FLOAT_OVERFLOW_MODE_CTRL, FLOAT_OVERFLOW_MODE_CTRL>(0);
+#endif
+    ResetMetaState();
+    PutShareAddr();
+    SetSyncFlag(FLAG); // 全卡同步，确保对称地址都放到了meta空间
+    WaitSyncFlag(FLAG);
 
-        GetShareAddr();
-        if (!isEnableBalance_) {
-            InputToDstOutput();
-        } else {
-            HandleAllRankToken();
-        }
-        SetSyncFlag(STATE); // 全卡同步，确保数据已经获取完
-        WaitSyncFlag(STATE);
+    GetShareAddr();
+    if (!isEnableBalance_) {
+        InputToDstOutput();
+    } else {
+        HandleAllRankToken();
     }
+    SetSyncFlag(STATE); // 全卡同步，确保数据已经获取完
+    WaitSyncFlag(STATE);
+#endif
 }
 
 } // namespace MoeDispatchNormal

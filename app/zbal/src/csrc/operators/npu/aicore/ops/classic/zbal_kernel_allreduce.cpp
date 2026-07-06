@@ -36,6 +36,7 @@ public:
     ZBAL_KERNEL void Init(GM_ADDR x, GM_ADDR y, GM_ADDR metaAddr, GM_ADDR buf, uint32_t totalElems,
                           uint32_t atomicOp, uint64_t waitSymbol)
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->atomicOp = atomicOp;
         this->totalElems = totalElems;
         this->comm = reinterpret_cast<__gm__ CommGroupInfo *>(metaAddr);
@@ -64,6 +65,7 @@ public:
 
         this->dataOpType = comm->dataOpType;
         ZBALBaseKernel::Init();
+#endif
     }
 
     ZBAL_KERNEL void InitParallelStrategy()
@@ -105,7 +107,7 @@ public:
 
     ZBAL_KERNEL void Process()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ClearExchange(exchangeInputStart, exchangeMetaSize);
         BarrierAll();
 
@@ -120,7 +122,7 @@ public:
 private:
     ZBAL_KERNEL void ProcessElemsLtGroupSize()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_KERNEL_ALL);
         if (meta.aivNumLtGroupSize) {
             ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
@@ -173,7 +175,7 @@ private:
 
     ZBAL_KERNEL void ProcessElemsGtGroupSize()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_KERNEL_ALL);
 
         // 先做reducescatter，将reducescatter结果存入buffer区

@@ -20,6 +20,7 @@ public:
     ZBAL_KERNEL void Init(GM_ADDR input, GM_ADDR output, GM_ADDR metaGM, uint64_t elements, uint16_t root,
                           uint64_t waitSymbol)
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->aivNum = AscendC::GetBlockNum();
         this->aivIndex = AscendC::GetBlockIdx();
         this->root = root;
@@ -40,11 +41,12 @@ public:
 
         this->dataOpType = comm->dataOpType;
         ZBALBaseKernel::Init();
+#endif
     }
 
     ZBAL_KERNEL void Process()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         InitDataAddrAndFlag();
         ZBAL_PROF_START(comm, ZBAL_PROF_WAIT_FLAG);
         ZBALWaitFlag(exchangeFlag, flagMagic, root);

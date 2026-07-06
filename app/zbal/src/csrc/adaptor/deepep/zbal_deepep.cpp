@@ -19,13 +19,16 @@
 #include "zbal_operations.h"
 #include "dl_cann_api.h"
 
+#ifdef ZBAL_ASCEND_NPU_A3
 #include "zbal_kernel_fused_deep_moe_tiling.h"
+#endif
 #include "zbal_deepep.h"
 
 namespace zbal {
 namespace adaptor {
 namespace deep_ep {
 
+#ifdef ZBAL_ASCEND_NPU_A3
 // Workspace size constants (mirrors zbal_kernel_fused_deep_moe_host.cpp)
 static constexpr uint32_t kSystemNeedWorkspace = 16 * 1024 * 1024;
 static constexpr uint32_t kGmAlignSize = 512;
@@ -82,6 +85,7 @@ static size_t ComputeWorkspaceSize(int64_t bs, int64_t h, int64_t gmm1HLen, int6
                      epSendCountSize + reservedSize + quantWsSize + combineWsSize;
     return kSystemNeedWorkspace + usrSize;
 }
+#endif
 constexpr int PADDING_SIZE = 1;
 constexpr size_t COMM_NAME_LEN = 128;
 constexpr int A2_MAX_HCCS_PEERS = 8;
@@ -160,6 +164,10 @@ Buffer::Buffer(int rank, int num_ranks, int64_t num_nvl_bytes, int64_t num_rdma_
     num_nvl_ranks = num_ranks;
     rdma_rank = rank;
     nvl_rank = rank;
+    uint32_t aivCount = 0;
+    (void)DlCannApi::AclrtGetAIVCountInCurrentThread(&aivCount);
+    num_aiv_cores_ = static_cast<int>(aivCount);
+
     if (soc_version == op::SocVersion::ASCEND910B) {
         ZBAL_ASSERT_S(num_ranks < A2_MAX_HCCS_PEERS || num_ranks % A2_MAX_HCCS_PEERS == 0,
                       "num_ranks check failed:", Z_INVALID_VALUE);
@@ -206,6 +214,11 @@ void Buffer::clean_low_latency_buffer(int num_max_dispatch_tokens_per_rank, int 
     return;
 }
 
+at::Tensor Buffer::get_send_token_idx() const
+{
+    return send_token_idx;
+}
+
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, torch::Tensor, torch::Tensor, std::optional<EventHandle>>
 Buffer::get_dispatch_layout(const torch::Tensor &topk_idx, int num_experts, std::optional<EventHandle> &previous_event,
                             bool async, bool allocate_on_comm_stream)
@@ -228,7 +241,7 @@ Buffer::get_dispatch_layout(const torch::Tensor &topk_idx, int num_experts, std:
     if (is_internode_available()) {
         num_tokens_per_rdma_rank = at::empty({num_rdma_ranks}, dtype(at::kInt).device(device));
     }
-    int blocks = 50;
+    int blocks = num_aiv_cores_;
     auto block_expert_cumsum = at::empty({num_experts * blocks}, at::dtype(at::kInt).device(device));
     auto acl_stream = c10_npu::getCurrentNPUStream().stream(false);
     int64_t flags = 0;
@@ -336,10 +349,10 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
     // tensor to zbal_tensor_info_t
     auto num_tokens_per_expert_info = transfer_tensor_info(new_num_tokens_per_expert);
     auto recv_data_info = transfer_tensor_info(recv_data);
-    auto recv_tokens_per_expert_info = transfer_tensor_info(recv_tokens_per_expert);
-    auto put_offset_info = transfer_tensor_info(put_offset);
-    auto balance_matrix_info = transfer_tensor_info(balance_matrix);
-    auto total_recv_token_info = transfer_tensor_info(total_recv_token);
+    auto recv_tokens_per_expert_info = transfer_tensor_info(recv_tokens_per_expert);    // out
+    auto put_offset_info = transfer_tensor_info(put_offset);                            // out
+    auto balance_matrix_info = transfer_tensor_info(balance_matrix);                    // out
+    auto total_recv_token_info = transfer_tensor_info(total_recv_token);                // out
 
     auto x_info = transfer_tensor_info(x);
     auto expert_ids_info = transfer_tensor_info(expert_ids);
@@ -389,7 +402,7 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
     }
     // Return values
     return {expandx_out, dynamic_scales_out, recv_topk_idx, recv_topk_weights, num_recv_tokens_per_expert_list,
-            put_offset,  balance_matrix,     event};
+            put_offset, balance_matrix, event};
 }
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
@@ -655,6 +668,7 @@ Buffer::low_latency_combine(const at::Tensor &x, const at::Tensor &topk_idx, con
     return {combined_x, event, std::function<void()>([] {})};
 }
 
+#ifdef ZBAL_ASCEND_NPU_A3
 std::tuple<at::Tensor, at::Tensor, at::Tensor> Buffer::fused_deep_moe(
     const at::Tensor &x, const at::Tensor &expert_ids, const at::Tensor &gmm1_weight, const at::Tensor &gmm1_scale,
     const at::Tensor &gmm2_weight, const at::Tensor &gmm2_scale, const at::Tensor &expert_scales,
@@ -800,6 +814,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> Buffer::fused_deep_moe(
 
     return {output, share_output, expert_token_nums};
 }
+#endif // ZBAL_ASCEND_NPU_A3
 } // namespace deep_ep
 } // namespace adaptor
 } // namespace zbal

@@ -161,6 +161,9 @@ class Buffer:
             num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
         )
 
+    def get_send_token_idx(self) -> torch.Tensor:
+        return self.runtime.get_send_token_idx()
+
     def get_dispatch_layout(
             self,
             topk_idx: torch.Tensor,

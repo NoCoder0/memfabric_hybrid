@@ -21,6 +21,7 @@ constexpr int PING_PONG_SIZE = 2;
 constexpr int UB_ALIGN = 32;
 constexpr uint32_t STATE_OFFSET = 32U;
 constexpr uint32_t ADDR_OFFSET = 32U;
+constexpr int8_t FLOAT_OVERFLOW_MODE_CTRL = 60;
 
 enum MetaType : int { STATE = 0, ADDR = 1, FLAG = 2 };
 

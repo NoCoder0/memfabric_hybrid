@@ -13,6 +13,8 @@
 #ifndef ZBAL_KERNEL_BASE_H
 #define ZBAL_KERNEL_BASE_H
 
+#include <type_traits>
+
 #include <acl/acl_rt.h>
 #include "kernel_operator.h"
 #include "zbal_def.h"
@@ -29,6 +31,7 @@ public:
 
     ZBAL_KERNEL void Init()
     {
+        pipe.InitBuffer(flagBuf_, Ceil(sizeof(uint64_t), UB_ALIGN_SIZE) * UB_ALIGN_SIZE);
         pipe.InitBuffer(bindQueue, 1, UB_DMA_MAX_SIZE);
     }
 
@@ -71,7 +74,6 @@ public:
         }
 
         if (flag) {
-            // flag
             for (uint16_t rank = startRank; rank < endRank; rank++) {
                 AscendC::PipeBarrier<PIPE_ALL>();
                 auto ptr = ZbalPtr(flagAddr, rank);
@@ -90,7 +92,6 @@ public:
         }
 
         if (stat) {
-            // stat
             for (uint16_t rank = startRank; rank < endRank; rank++) {
                 AscendC::PipeBarrier<PIPE_ALL>();
                 auto ptr = ZbalPtr(statAddr, rank);
@@ -195,6 +196,7 @@ protected:
     }
 
 private:
+#ifdef ZBAL_ASCEND_NPU_A3
     template<typename T>
     ZBAL_KERNEL void SetAtomicOpMTE(uint32_t atomicOp)
     {
@@ -213,6 +215,37 @@ private:
                 break;
         }
     }
+#elif defined(ZBAL_ASCEND_NPU_A5)
+    // CANN 9+: SetAtomicAdd/Max/Min restrict T via static_assert
+    // to exactly these 6 types. Use a whitelist to avoid compile errors
+    // when CpGM2GM is instantiated with uint64_t, long, unsigned char, etc.
+    template<typename T>
+    static constexpr bool kMteAtomicSupported =
+        std::is_same_v<T, float> || std::is_same_v<T, half> ||
+        std::is_same_v<T, int16_t> || std::is_same_v<T, int32_t> ||
+        std::is_same_v<T, int8_t> || std::is_same_v<T, bfloat16_t>;
+
+    template<typename T>
+    ZBAL_KERNEL void SetAtomicOpMTE(uint32_t atomicOp)
+    {
+        if constexpr (kMteAtomicSupported<T>) {
+            switch (atomicOp) {
+                case ZBAL_REDUCE_SUM:
+                    AscendC::SetAtomicAdd<T>();
+                    break;
+                case ZBAL_REDUCE_MAX:
+                    AscendC::SetAtomicMax<T>();
+                    break;
+                case ZBAL_REDUCE_MIN:
+                    AscendC::SetAtomicMin<T>();
+                    break;
+                default:
+                    AscendC::SetAtomicNone();
+                    break;
+            }
+        }
+    }
+#endif
 
     template<typename T>
     ZBAL_KERNEL uint8_t SetAtomicOpSDMA(uint32_t atomicOp)
@@ -243,6 +276,7 @@ private:
 protected:
     AscendC::TPipe pipe;
     AscendC::TQueBind<AscendC::TPosition::VECIN, AscendC::TPosition::VECOUT, 1> bindQueue;
+    TBuf<> flagBuf_;
     uint32_t dataOpType;
     uint16_t groupSize;
     uint16_t myGroupRank;

@@ -50,6 +50,7 @@ public:
                           GM_ADDR recvData, GM_ADDR totalRecvTokens, GM_ADDR recvTokensPerExpert, GM_ADDR putOffset,
                           GM_ADDR balanceMatrix, float factorHigh, float factorLow, TPipe *pipe)
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         blockIdx_ = GetBlockIdx();
         blockNum_ = GetBlockNum();
         epRankId_ = rank;
@@ -97,10 +98,12 @@ public:
 
         pipe_->InitBuffer(addrBuf_, addrUint64AlignLen_);
         SplitCoreCal(epWorldSize_, rankNumPerBlock, curBlockStartRankId, curBlockEndRankId);
+#endif
     }
 
     ZBAL_KERNEL void Process()
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ResetMetaState();
         PutShareAddr();
         SetSyncFlag(FLAG); // 全卡同步，确保对称地址都放到了meta空间
@@ -117,6 +120,7 @@ public:
         BuildTotalRecvTokens();
         BuildRecvTokenPerExp();
         SyncAll<true>();
+#endif
     }
 
 private:

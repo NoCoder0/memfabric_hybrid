@@ -26,7 +26,13 @@ constexpr int64_t UB_PAD_COUNT = 4;
 constexpr int64_t UB_PAD4_COUNT = 8;
 constexpr int64_t UB_ALIGN_SIZE = 32;
 constexpr int64_t UB_BUFF_INTERVAL = 64;
+#if defined(ZBAL_ASCEND_NPU_A3)
 constexpr int64_t UB_DMA_MAX_SIZE = 176 * 1024;
+#elif defined(ZBAL_ASCEND_NPU_A5)
+constexpr int64_t UB_DMA_MAX_SIZE = 240 * 1024;
+#else
+constexpr int64_t UB_DMA_MAX_SIZE = 176 * 1024;
+#endif
 constexpr int64_t ZBAL_SMALL_DATA_SIZE = 256;
 constexpr uint32_t ZBAL_SDMA_AFFECTION_BLOCK = 16;
 constexpr uint32_t ZBAL_TYPE_SIZE_ONE = 1;

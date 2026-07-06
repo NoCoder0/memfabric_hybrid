@@ -82,6 +82,7 @@ int32_t ZBALOpCombineLowLatency(const zbal_tensor_info_t *expandX, const zbal_te
                                 int64_t moeExpertNum, aclrtStream stream, const CommGroupInfo &groupInfo,
                                 int64_t flags);
 
+#ifdef ZBAL_ASCEND_NPU_A3
 int32_t ZBALOpFusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
                            const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
                            const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
@@ -95,5 +96,6 @@ int32_t ZBALOpFusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t
                            int64_t shareGmm1HLen, bool isTensorList, void *tilingDevBuf, const std::string &groupName,
                            aclrtStream stream, const CommGroupInfo &epGroupInfo, const CommGroupInfo &tpGroupInfo,
                            int64_t flags, bool needTilingCopy = true);
+#endif
 
 #endif // ZBAL_NPU_OPERATORS_H

@@ -4,8 +4,8 @@ set -e
 DEBUG_MODE="OFF"
 ENABLE_ZBAL_UT="OFF"
 
-for arg in "$@"; do
-    case $arg in
+while [[ $# -gt 0 ]]; do
+    case "$1" in
         --debug)
             DEBUG_MODE="ON"
             shift
@@ -17,25 +17,21 @@ for arg in "$@"; do
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
-            echo "  --debug     Enable debug mode"
-            echo "  --ut        Enable unit tests"
-            echo "  -h, --help  Show this help message"
+            echo "  --debug       Enable debug mode"
+            echo "  --ut          Enable unit tests"
+            echo "  -h, --help    Show this help message"
             exit 1
             ;;
         *)
-            echo "Error: unknown option: $arg" 1>&2
+            echo "Error: unknown option: $1" 1>&2
             echo "Run '$0 -h' for more information."
             exit 1
             ;;
     esac
 done
 
-shift $((OPTIND -1))
-
 export DEBUG_MODE=$DEBUG_MODE
 export ENABLE_ZBAL_UT=$ENABLE_ZBAL_UT
-
-SOC_VERSION="${1:-Ascend910_9382}"
 
 if [ -n "$ASCEND_HOME_PATH" ]; then
     _ASCEND_INSTALL_PATH=$ASCEND_HOME_PATH
@@ -54,8 +50,8 @@ export ASCEND_HOME_PATH=${_ASCEND_INSTALL_PATH}
 echo "ascend path: ${ASCEND_HOME_PATH}"
 source ${ASCEND_HOME_PATH}/set_env.sh
 
-CURRENT_DIR=$(pwd)
-PROJECT_ROOT=$(dirname "$CURRENT_DIR")
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+PROJECT_ROOT=$(dirname "$SCRIPT_DIR")
 OUTPUT_DIR=${PROJECT_ROOT}/output
 rm -rf ${OUTPUT_DIR}
 mkdir -p $OUTPUT_DIR

@@ -23,7 +23,7 @@ public:
     ZBAL_KERNEL void Init(GM_ADDR input, GM_ADDR output, GM_ADDR metaGM, GM_ADDR inputCumSum, GM_ADDR outputCounts,
                           GM_ADDR elements, uint64_t waitSymbol)
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->aivNum = AscendC::GetBlockNum();
         this->comm = reinterpret_cast<__gm__ CommGroupInfo *>(metaGM);
         this->groupSize = comm->groupSize;
@@ -361,7 +361,7 @@ public:
 
     ZBAL_KERNEL void Process()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_ALLTOALL_KERNEL_ALL);
 
         Prepare();

@@ -12,11 +12,12 @@
 #include <ctime>
 #include <map>
 #include "zbal_npu_communicator_base.h"
-#include "zbal_comm_host_device_struct.h"
 #include "zbal_bootstrap_default.h"
 #include "zbal_trace_viewer_dumper.h"
 #include "zbal_npu_operators.h"
+#ifdef ZBAL_ASCEND_NPU_A3
 #include "zbal_kernel_fused_deep_moe_tiling.h"
+#endif
 
 #include "dl_cann_api.h"
 #include "acl/acl.h"
@@ -48,15 +49,21 @@ ZResult NpuCommunicatorBase::Initialize() noexcept
     (void)DlCannApi::AclrtMemset(reinterpret_cast<void *>(groupInfo_.myAddressExchangeGva),
                                  groupInfo_.sizeForExchangeAddress, 0, groupInfo_.sizeForExchangeAddress);
 
-    /* get ffts address */
-    uint32_t len = 0;
-    auto result = DlCannApi::RtGetC2cCtrlAddr(&groupInfo_.fftsConfig, &len);
-    if (result != Z_OK) {
-        ZBAL_LOG_ERROR("get c2c ctrl addr failed, result: " << result);
-        return Z_FFTS_INIT_FAILED;
+    /* get ffts address (A3 only: RtGetC2cCtrlAddr not available on A5) */
+#ifdef ZBAL_ASCEND_NPU_A3
+    {
+        uint32_t len = 0;
+        auto result = DlCannApi::RtGetC2cCtrlAddr(&groupInfo_.fftsConfig, &len);
+        if (result != Z_OK) {
+            ZBAL_LOG_ERROR("get c2c ctrl addr failed, result: " << result);
+            return Z_FFTS_INIT_FAILED;
+        }
     }
+#endif
 
-    result = SetupProfMemory();
+    (void)DlCannApi::AclrtGetAIVCountInCurrentThread(&maxAivCores_);
+
+    auto result = SetupProfMemory();
     if (result != Z_OK) {
         ZBAL_LOG_ERROR("Setup host memory for perf failed");
         return result;
@@ -162,7 +169,7 @@ ZResult NpuCommunicatorBase::SetupProfMemory()
     }
 
     /* calculate memory size required */
-    uint64_t traceMemorySize = traceCap * ZBAL_MAX_AIV_SIZE_PER_NPU * sizeof(uint64_t);
+    uint64_t traceMemorySize = traceCap * maxAivCores_ * sizeof(uint64_t);
     ZBAL_LOG_DEBUG("Perf tracing max count " << traceCap << ", memory consumption " << traceMemorySize << " bytes");
 
     /* allocate host memory */
@@ -206,7 +213,7 @@ void NpuCommunicatorBase::DestroyProfMemory()
 
     auto result = DlCannApi::AclrtHostUnRegister(perfHostMemory_);
     if (result != Z_OK) {
-        ZBAL_LOG_DEBUG("UnRegister host memory failed, result: " << result);
+        ZBAL_LOG_WARN("UnRegister host memory failed, result: " << result);
     }
 
     perfHostMemory_ = nullptr;
@@ -230,7 +237,7 @@ void NpuCommunicatorBase::DumpProfilingTrace() noexcept
     }
 
     uint64_t *hostPerf = reinterpret_cast<uint64_t *>(meta.hostMemoryForProfiling);
-    for (uint64_t i = 0; i < ZBAL_MAX_AIV_SIZE_PER_NPU; i++) {
+    for (uint64_t i = 0; i < maxAivCores_; i++) {
         uint64_t *coreBlock = hostPerf + i * meta.tracePointPerCore;
         std::string tid = "aiv " + std::to_string(i);
 
@@ -365,6 +372,7 @@ int32_t NpuCommunicatorBase::CombineLowLatency(const zbal_tensor_info_t *expandX
                                    stream, GetMetaInfo(), flags);
 }
 
+#ifdef ZBAL_ASCEND_NPU_A3
 // ---------------------------------------------------------------------------
 // Per-operator state for fused_deep_moe.
 // ---------------------------------------------------------------------------
@@ -436,6 +444,7 @@ int32_t NpuCommunicatorBase::FusedDeepMoe(
         options_.name, stream, GetMetaInfo(), GetMetaInfo(), flags, needTilingCopy);
     return result;
 }
+#endif // ZBAL_ASCEND_NPU_A3
 
 } // namespace operators
 } // namespace zbal

@@ -30,6 +30,7 @@ public:
     ZBAL_KERNEL void Init(GM_ADDR input, GM_ADDR output, GM_ADDR metaAddr, size_t elements, uint32_t reduceOp,
                           uint64_t flagMagic)
     {
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->aivNum = AscendC::GetBlockNum();
         this->aivIndex = AscendC::GetBlockIdx();
         this->input = input;
@@ -52,6 +53,7 @@ public:
 
         this->dataOpType = comm->dataOpType;
         ZBALBaseKernel::Init();
+#endif
     }
 
     ZBAL_KERNEL void InitParallelStrategy()
@@ -93,7 +95,7 @@ public:
 
     ZBAL_KERNEL void Process()
     {
-#ifdef __DAV_C220_VEC__
+#if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_REDUCESCATTER_KERNEL_ALL);
 
         // step1. 所有核先参与本地搬运

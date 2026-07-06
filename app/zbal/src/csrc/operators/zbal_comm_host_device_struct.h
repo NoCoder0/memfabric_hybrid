@@ -12,14 +12,12 @@
 #ifndef ZBAL_COMM_STRUCT_H
 #define ZBAL_COMM_STRUCT_H
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <cstdint>
 
 #define ZBAL_FLAG_SIZE 8
-
-#define ZBAL_MAX_AIV_SIZE_PER_NPU 48
-
 #define ZBAL_PROFILING_DEVICE_IDX_OFF   8
 #define ZBAL_PROFILING_DEVICE_TRACE_OFF 16
 #define ZBAL_PROFILING_FRAME_SHIFT      56
@@ -41,7 +39,10 @@ enum zbal_profiling_name_t : uint16_t {
     ZBAL_PROF_REDUCESCATTER_COPY,
 
     ZBAL_PROF_ALLTOALL_KERNEL_ALL,
+    ZBAL_PROF_ALLTOALL_LOCAL_COPY,
     ZBAL_PROF_ALLTOALL_COPY,
+    ZBAL_PROF_ALLTOALL_DATA_COPY,
+    ZBAL_PROF_ALLTOALL_GET_INPUT_INFO,
     ZBAL_PROF_ALLTOALL_PREPARE_PTR,
     ZBAL_PROF_ALLTOALL_CORE_RANGE,
     ZBAL_PROF_ALLTOALL_INIT_STAT,
@@ -89,7 +90,10 @@ const std::vector<std::pair<std::string, bool>> g_profName = {
     {"RS_COPY", false},
 
     {"A2A_KERNEL_ALL", true},
+    {"A2A_LOCAL_COPY", true},
     {"A2A_COPY", true},
+    {"A2A_DATA_COPY", true},
+    {"A2A_GET_INPUT", true},
     {"A2A_PREPARE_PTR", true},
     {"A2A_CORE_RANGE", true},
     {"A2A_INIT_STAT", true},

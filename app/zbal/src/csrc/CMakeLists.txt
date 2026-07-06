@@ -30,7 +30,6 @@ include_directories(
         ${ZBAL_SRC_DIR}/csrc/
         ${ZBAL_SRC_DIR}/csrc/operators
         ${ZBAL_SRC_DIR}/csrc/operators/npu
-        ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe
         ${ZBAL_SRC_DIR}/csrc/common
         ${ZBAL_SRC_DIR}/csrc/sma
         ${ZBAL_SRC_DIR}/csrc/under_api/cann
@@ -39,6 +38,10 @@ include_directories(
         ${ZBAL_SRC_DIR}/csrc/bootstrap/memory
         ${ZBAL_SRC_DIR}/csrc/bootstrap/memory/memfabric
 )
+
+if(ZBAL_ASCEND_NPU_A3)
+    include_directories(${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)
+endif()
 
 # python setup need disable those settings
 option(DISABLE_ADAPTOR_COMPILE "Disable the adapter module" OFF)
@@ -83,8 +86,12 @@ target_compile_options(boostrap_objects PRIVATE -fPIC)
 # operators objects
 file(GLOB OPERATORS_SRC
         ${ZBAL_SRC_DIR}/csrc/operators/*.cpp
-        ${ZBAL_SRC_DIR}/csrc/operators/npu/*.cpp
+        ${ZBAL_SRC_DIR}/csrc/operators/npu/*.cpp)
+if(ZBAL_ASCEND_NPU_A3)
+    file(GLOB FUSED_DEEP_MOE_HOST_SRCS
         ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe/*.cpp)
+    list(APPEND OPERATORS_SRC ${FUSED_DEEP_MOE_HOST_SRCS})
+endif()
 message(STATUS "app/zbal: [ut] operators_objects: including npu backend")
 add_library(operators_objects OBJECT ${OPERATORS_SRC})
 target_link_libraries(operators_objects PRIVATE zbal_kernel) # link not work on object, only for compile pass

@@ -46,12 +46,19 @@ ZBAL_API int32_t zbal_bootstrap(zbal_bootstrap_options_t *options, zbal_bootstra
         return Z_ERROR;
     }
 
+    auto &state = ZBALInitState::Instance();
+
+    /* apply pending log level that was set before bootstrap was created */
+    if (state.ext_.pendingLoggerLevel >= 0) {
+        bootstrap->SetLoggerLevel(state.ext_.pendingLoggerLevel);
+        state.ext_.pendingLoggerLevel = -1;
+    }
+
     /* get and set output */
     auto &out = bootstrap->GetOutput();
     memcpy(output, &out, sizeof(zbal_bootstrap_output_t));
 
     /* set init state */
-    auto &state = ZBALInitState::Instance();
     state.Bootstrapped(true);
     state.ext_.btType = options->btType;
     state.ext_.worldSize = options->worldSize;

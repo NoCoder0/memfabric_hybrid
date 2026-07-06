@@ -116,10 +116,9 @@ int32_t zbal_all_gather(const void *sendBuff, void *recvBuff, size_t send_count,
  *
  * @param sendBuff             [in] pointer of send buffer
  * @param recvBuff             [in] pointer of receive buffer
- * @param sendSplitCounts      [in] pointer of sender split elements array
+ * @param sendCumSum           [in] pointer of sender split elements offset cumulative sum array, first element is 0
  * @param recvSplitCounts      [in] pointer of recver split elements array
- * @param coreGroup            [in] pointer of output core split group
- * @param elements             [in] pointer of input and output total elements
+ * @param elements             [in] pointer of input and output total elements, length is 2
  * @param dataType             [in] data type
  * @param comm                 [in] commnunicator handle
  * @param stream               [in] stream
@@ -311,6 +310,7 @@ int32_t zbal_combine_low_latency(const zbal_tensor_info_t *expandX, const zbal_t
                                  const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                                  int64_t moeExpertNum, zbal_comm_t comm, aclrtStream stream, int64_t flags);
 
+#ifdef ZBAL_ASCEND_NPU_A3
 /**
  * @brief Fused dispatch+GMM1+SwiGLU+GMM2+combine MoE operation.
  *
@@ -352,6 +352,7 @@ int32_t zbal_fused_deep_moe(const zbal_tensor_info_t *x, const zbal_tensor_info_
                             int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
                             int64_t shareGmm1HLen, int64_t isTensorList, zbal_comm_t comm, aclrtStream stream,
                             int64_t flags);
+#endif // ZBAL_ASCEND_NPU_A3
 
 #ifdef __cplusplus
 }
