@@ -106,6 +106,14 @@ int32_t SmemTransEntry::Initialize()
         auto temp = static_cast<uint32_t>(options.bmDataOpType) | HYBM_DOP_TYPE_DEVICE_URMA;
         options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
     }
+    if (config_.dataOpType & SMEMB_DATA_OP_DEVICE_UBOE) {
+#if !defined(ASCEND_NPU)
+        SM_LOG_ERROR("current memfabric-hybrid binary is not built for ascend npu, can not use device_uboe optype.");
+        return SM_ERROR;
+#endif
+        auto temp = static_cast<uint32_t>(options.bmDataOpType) | HYBM_DOP_TYPE_DEVICE_UBOE;
+        options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
+    }
 
     entity_ = hybm_create_entity(entityId_, &options, 0);
     SM_VALIDATE_RETURN(entity_ != nullptr, "create new entity failed.", SM_ERROR);

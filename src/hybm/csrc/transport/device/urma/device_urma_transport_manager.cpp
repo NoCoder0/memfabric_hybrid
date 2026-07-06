@@ -169,6 +169,17 @@ Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, U
     return BM_OK;
 }
 
+UrmaProtocol GetEndpointProtocolFromOptions(uint32_t protocol)
+{
+    if (protocol & HYBM_DOP_TYPE_DEVICE_UBOE) {
+        return UrmaProtocol::UBOE;
+    }
+    if (protocol & HYBM_DOP_TYPE_DEVICE_URMA) {
+        return UrmaProtocol::UBC_CTP;
+    }
+    return UrmaProtocol::RESERVED;
+}
+
 } // namespace
 
 DeviceUrmaTransportManager::~DeviceUrmaTransportManager()
@@ -371,22 +382,46 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
         BM_LOG_ERROR("device_urma InitLocalDeviceInfoLocked failed, rank=" << options.rankId << " ret: " << ret);
         return ret;
     }
-    // Read EID via helper
-    std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
-    const auto retEid = GetDeviceUrmaEid(phyDeviceId_, rankId_, eidData);
-    if (retEid != 0) {
-        return retEid;
+    // Determine endpoint protocol from data_op_type (DEVICE_URMA -> UBC_CTP, DEVICE_UBOE -> UBOE)
+    const auto protocol = GetEndpointProtocolFromOptions(options.protocol);
+    if (protocol == UrmaProtocol::RESERVED) {
+        BM_LOG_ERROR("device_urma OpenDevice unsupported protocol bits: " << options.protocol
+                                                                          << ", rankId=" << rankId_);
+        return BM_INVALID_PARAM;
     }
+    BM_LOG_INFO("device_urma OpenDevice protocol=" << static_cast<int>(protocol) << ", rankId=" << rankId_
+                                                    << ", phyDeviceId=" << phyDeviceId_);
 
     // Build UrmaEndpointDesc and create local endpoint
     UrmaEndpointDesc localDesc{};
-    localDesc.protocol = UrmaProtocol::UBC_CTP;
-    localDesc.type = COMM_ADDR_TYPE_IP_V6;
-    std::memcpy(localDesc.raws, eidData.data(), COMM_ADDR_EID_LEN);
+    localDesc.protocol = protocol;
     localDesc.devPhyId = phyDeviceId_;
     localDesc.superDevId = sdid_;
     localDesc.serverIdx = serverId_;
     localDesc.superPodIdx = superPodId_;
+
+    if (protocol == UrmaProtocol::UBC_CTP) {
+        std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
+        const auto retEid = GetDeviceUrmaEid(phyDeviceId_, rankId_, eidData);
+        if (retEid != 0) {
+            return retEid;
+        }
+        localDesc.type = COMM_ADDR_TYPE_IP_V6;
+        std::memcpy(localDesc.raws, eidData.data(), COMM_ADDR_EID_LEN);
+    } else if (protocol == UrmaProtocol::UBOE) {
+        CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+        std::array<uint8_t, sizeof(localDesc.raws)> addrData{};
+        const auto retIp = GetDeviceUrmaIpAddr(phyDeviceId_, rankId_, addrType, addrData);
+        if (retIp != 0) {
+            return retIp;
+        }
+        localDesc.type = addrType;
+        const size_t copyLen = (addrType == COMM_ADDR_TYPE_IP_V4) ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+        std::memcpy(localDesc.raws, addrData.data(), copyLen);
+    } else {
+        BM_LOG_ERROR("device_urma unexpected protocol: " << static_cast<int>(protocol));
+        return BM_INVALID_PARAM;
+    }
     auto endpoint = manager_.CreateEndpoint(localDesc);
     if (endpoint == nullptr) {
         BM_LOG_ERROR("device_urma CreateEndpoint failed, rankId=" << rankId_);
@@ -921,8 +956,8 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
 
         const uint64_t remoteAddr = key.keys[1];
         if (remoteAddr == 0) {
-            BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked zero addr(0x" << std::hex << remoteAddr
-                                                                              << ") in key, peer: " << peerRank);
+            BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked zero addr(" << remoteAddr << ") in key, peer: "
+                                                                            << peerRank);
             rollbackNewImports();
             return BM_INVALID_PARAM;
         }
@@ -1092,6 +1127,16 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             channelDesc.remoteEndpoint = hcommRemoteEndpoint;
             channelDesc.notifyNum = HCOMM_NORMAL_NOTIFY_NUM;
             channelDesc.exchangeAllMems = true; // 填true, 不用管memHandles了, remoteEndpoint要填对
+            if (localEndpoint_->desc.protocol == UrmaProtocol::UBOE) {
+                // CRITICAL: HcommChannelDescInit sets union to 0xFF garbage values.
+                // Must zero the entire union before setting ubAttr to avoid:
+                // - queueNum=0xFFFFFFFF (4B QPs → OOM)
+                // - retryCnt=0xFFFFFFFF (impossible retries → timeout)
+                // - tc/sl=0xFF (invalid QoS → init failure)
+                std::memset(channelDesc.raws, 0, sizeof(channelDesc.raws));
+                // sqDepth合法范围[16,256]且需为2的幂，0会被CheckUbAttr拒绝；128对齐hcomm MS模式默认值
+                channelDesc.ubAttr.sqDepth = 128;
+            }
 
             // 5. Allocate one thread per peer (use temporary variable for safe rollback)
             HcommThreadHandle threadHandle = 0;

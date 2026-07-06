@@ -84,7 +84,7 @@ struct UrmaEndpointDesc {
     uint32_t superPodIdx{0};
     UrmaProtocol protocol{UrmaProtocol::RESERVED};
     CommAddrType type{COMM_ADDR_TYPE_RESERVED};
-    uint8_t raws[36]{}; // CommAddr.raws
+    uint8_t raws[URMA_ENDPOINT_RAW_LEN]{}; // CommAddr.raws
 };
 
 struct UrmaCommMem {

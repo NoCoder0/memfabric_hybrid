@@ -64,6 +64,10 @@ Result MemEntityDefault::InitTagManager()
         compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_URMA) << ":"
                        << localTag << ",";
     }
+    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) {
+        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_UBOE) << ":"
+                       << localTag << ",";
+    }
     if (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) {
         compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_SDMA) << ":" << localTag
                        << ",";
@@ -928,8 +932,14 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
     }
 
     if ((options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0 &&
-        (options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0) {
-        BM_LOG_ERROR("DEVICE_RDMA and DEVICE_URMA cannot be enabled together");
+        ((options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0 ||
+         (options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) != 0)) {
+        BM_LOG_ERROR("DEVICE_RDMA and DEVICE_URMA/DEVICE_UBOE cannot be enabled together");
+        return BM_INVALID_PARAM;
+    }
+    if ((options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0 &&
+        (options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) != 0) {
+        BM_LOG_ERROR("DEVICE_URMA and DEVICE_UBOE cannot be enabled together");
         return BM_INVALID_PARAM;
     }
 
@@ -943,7 +953,8 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
             return BM_INVALID_PARAM;
         }
         constexpr uint32_t hostShmConflictMask = HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA |
-                                                 HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_HOST_RDMA |
+                                                 HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
+                                                 HYBM_DOP_TYPE_HOST_RDMA |
                                                  HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_URMA;
         if ((options->bmDataOpType & hostShmConflictMask) != 0) {
             BM_LOG_ERROR("HOST_SHM op type does not support mixing with other data op types");
@@ -983,7 +994,7 @@ int MemEntityDefault::LoadExtendLibrary() noexcept
         }
     }
 
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
+    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         auto ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_URMA);
         if (ret != 0) {
             BM_LOG_ERROR("LoadExtendLibrary for DEVICE URMA failed: " << ret);
@@ -1157,7 +1168,7 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         segmentOptions.shared = false;
     }
     hbmSegment_ = MemSegment::Create(segmentOptions, id_);
@@ -1186,7 +1197,7 @@ Result MemEntityDefault::InitDramSegment()
     segmentOptions.flags = options_.flags;
     segmentOptions.shmFd = options_.dramShmFd;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         segmentOptions.shared = false;
     }
     dramSegment_ = MemSegment::Create(segmentOptions, id_);
@@ -1216,7 +1227,8 @@ Result MemEntityDefault::InitTransManager()
 
     auto hostTransFlags = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
     auto composeTransFlags =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA | hostTransFlags;
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA |
+        HYBM_DOP_TYPE_DEVICE_UBOE | hostTransFlags;
     if ((options_.bmDataOpType & composeTransFlags) == 0) {
         BM_LOG_DEBUG("NO RDMA/URMA Data Operator transport skip init.");
         return BM_OK;
@@ -1288,6 +1300,10 @@ hybm_data_op_type MemEntityDefault::CanReachDataOperators(uint32_t remoteRank) c
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
         supportDataOp |= HYBM_DOP_TYPE_DEVICE_URMA;
+    }
+
+    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) {
+        supportDataOp |= HYBM_DOP_TYPE_DEVICE_UBOE;
     }
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_RDMA) {

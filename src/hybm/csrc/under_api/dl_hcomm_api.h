@@ -22,9 +22,10 @@ namespace ock {
 namespace mf {
 
 static constexpr uint32_t COMM_ADDR_EID_LEN = 16U;
+static constexpr uint32_t URMA_ENDPOINT_RAW_LEN = 36UL;
 static constexpr uint32_t HCOMM_CHANNEL_MAGIC_WORD = 0x0fcf0f0fU;
 static constexpr uint32_t HCOMM_CHANNEL_VERSION_ONE = 1U;
-static constexpr uint32_t HCOMM_CHANNEL_VERSION = HCOMM_CHANNEL_VERSION_ONE;
+static constexpr uint32_t HCOMM_CHANNEL_VERSION = 2U;
 static constexpr uint32_t COMM_LINK_MAGIC_WORD = 0x0f0e0f0fU;
 static constexpr uint32_t COMM_LINK_VERSION = 1U;
 
@@ -278,11 +279,16 @@ struct HcommChannelDesc {
             uint32_t retryInterval;    ///< 重传间隔（ms）
             uint8_t tc;                ///< 流量类别（QoS)
             uint8_t sl;                ///< 服务等级（QoS)
+            uint32_t qpThreshold;      ///< 多QP场景下，每个QP最小数据量(B)
         } roceAttr;
         struct {
             uint32_t qos;              ///< HCCS QoS
         } hccsAttr;
+        struct {
+            uint32_t sqDepth;          ///< UB队列深度，0表示使用默认值
+        } ubAttr;
     };
+    uint32_t qos;                      ///< 通信域QoS，与协议解耦
 };
 
 enum HcommTransferType : int32_t {
@@ -509,6 +515,7 @@ static inline HcommResult HcommChannelDescInit(HcommChannelDesc *channelDesc, ui
         channelDesc->socket = nullptr;
         channelDesc->role = HCOMM_SOCKET_ROLE_RESERVED;
         channelDesc->port = 0;
+        channelDesc->qos = 0;
         if (EndpointDescInit(&channelDesc->remoteEndpoint, 1) != 0) {
             return hcommEInternal;
         }

@@ -45,7 +45,8 @@ public:
     enum class TransDataOpType {
         SDMA = SMEMB_DATA_OP_SDMA,
         DEVICE_RDMA = SMEMB_DATA_OP_DEVICE_RDMA,
-        DEVICE_URMA = SMEMB_DATA_OP_DEVICE_URMA
+        DEVICE_URMA = SMEMB_DATA_OP_DEVICE_URMA,
+        DEVICE_UBOE = SMEMB_DATA_OP_DEVICE_UBOE
     };
 
 public:

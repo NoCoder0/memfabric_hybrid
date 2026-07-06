@@ -26,6 +26,9 @@ namespace device {
 
 Result GetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
 
+Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+                           std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
+
 } // namespace device
 } // namespace transport
 } // namespace mf

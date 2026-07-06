@@ -31,6 +31,7 @@
 | `MF_HCOM_RQ_SIZE` | 无 | HCOM接收队列大小，设置后覆盖默认值。 |
 | `MF_HCOM_PREPOST_SIZE` | 无 | HCOM预投递大小，设置后覆盖默认值。 |
 | `MF_HCOM_MAX_SEND_RECV_DATA_CNT` | 无 | HCOM最大发送接收数据计数，设置后覆盖默认值。 |
+| `MF_DEVICE_URMA_EID_FILE` | 无（取决于协议） | 设备端URMA地址配置文件路径。文件按 `devPhyId:address` 格式配置，每行一条。协议由 `data_op_type` 决定：使用 `DEVICE_URMA` 时，address 为 16 字节 EID 的 32 位十六进制字符串；使用 `DEVICE_UBOE` 时，address 为 IPv4/IPv6 地址字符串，通过 `hccn_tool -g -ip -i <dev_id> -d bond<bond_id>` 获取。 |
 
 ## 构建时环境变量
 

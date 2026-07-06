@@ -433,7 +433,8 @@ Result HybmDevUserLegacySegment::ImportSliceInfo(const std::string &info, MemSli
                                      << ", deviceId=" << logicDeviceId_
                                      << ", sliceInfo.logicDeviceId=" << sliceInfo.logicDeviceId);
         registerAddrs_.insert(address);
-    } else if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+    } else if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA 
+                | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         address = nullptr;
     }
 

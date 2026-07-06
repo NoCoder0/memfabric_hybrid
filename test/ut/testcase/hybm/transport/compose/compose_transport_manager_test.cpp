@@ -671,6 +671,22 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportAlreadyOpened)
     EXPECT_EQ(ret, BM_ERROR);
 }
 
+// IsDeviceUrma: DEVICE_UBOE 与 DEVICE_URMA 均应返回 true，DEVICE_RDMA 返回 false。
+TEST(ComposeTransportManagerTest, IsDeviceUrmaCoversUboeAndUrma)
+{
+    auto tag = std::make_shared<FakeTagInfo>(0U);
+    ComposeTransportManager mgr(tag);
+
+    mgr.options_.protocol = HYBM_DOP_TYPE_DEVICE_UBOE;
+    EXPECT_TRUE(mgr.IsDeviceUrma());
+
+    mgr.options_.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
+    EXPECT_TRUE(mgr.IsDeviceUrma());
+
+    mgr.options_.protocol = HYBM_DOP_TYPE_DEVICE_RDMA;
+    EXPECT_FALSE(mgr.IsDeviceUrma());
+}
+
 // OpenDevice: 当 hostTransportManager_ 已经存在且 protocol 包含 HOST 时，会走 OpenHostTransport 的错误分支并返回 BM_ERROR。
 TEST(ComposeTransportManagerTest, OpenDeviceFailsWhenHostAlreadyOpened)
 {

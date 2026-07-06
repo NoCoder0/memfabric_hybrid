@@ -243,6 +243,18 @@ int32_t MockHcommEndpointCreateOpenDevice(const EndpointDesc *endpoint, Endpoint
     return BM_OK;
 }
 
+int32_t MockHcommEndpointCreateOpenDeviceUboe(const EndpointDesc *endpoint, EndpointHandle *endpointHandle)
+{
+    EXPECT_NE(endpoint, nullptr);
+    EXPECT_NE(endpointHandle, nullptr);
+    EXPECT_EQ(endpoint->protocol, COMM_PROTOCOL_UBOE);
+    EXPECT_EQ(endpoint->commAddr.type, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(endpoint->loc.locType, ENDPOINT_LOC_TYPE_DEVICE);
+    EXPECT_EQ(endpoint->loc.device.devPhyId, 2U);
+    *endpointHandle = MOCK_ENDPOINT;
+    return BM_OK;
+}
+
 int32_t MockHcommEndpointDestroy(EndpointHandle endpoint)
 {
     EXPECT_EQ(endpoint, MOCK_ENDPOINT);
@@ -625,6 +637,20 @@ ock::mf::Result MockGetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId,
     return BM_OK;
 }
 
+ock::mf::Result MockGetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+                                        std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData)
+{
+    EXPECT_EQ(phyDeviceId, 2U);
+    EXPECT_EQ(rankId, 0U);
+    addrType = COMM_ADDR_TYPE_IP_V4;
+    addrData.fill(0);
+    addrData[0] = 10U;
+    addrData[1U] = 10U;
+    addrData[2U] = 21U;
+    addrData[3U] = 2U;
+    return BM_OK;
+}
+
 int32_t MockAclrtGetDevice(int32_t *deviceId)
 {
     EXPECT_NE(deviceId, nullptr);
@@ -938,6 +964,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseClean
     TransportOptions options{};
     options.rankId = 0;
     options.rankCount = 2;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
 
     EXPECT_EQ(manager.OpenDevice(options), BM_OK);
     EXPECT_TRUE(manager.opened_);
@@ -985,6 +1012,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRollsBackWhenFlagMemcpyFails)
     TransportOptions options{};
     options.rankId = 0;
     options.rankCount = 2;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
 
     EXPECT_EQ(manager.OpenDevice(options), BM_ERROR);
     EXPECT_FALSE(manager.opened_);
@@ -1009,6 +1037,54 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsInvalidOptionsAndUnsupport
     options.rankCount = 2;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_UNKNOWN));
     EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
+}
+
+// OpenDevice: data_op_type=DEVICE_UBOE 时应派生为 UrmaProtocol::UBOE 并走 IP 地址读取路径。
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDeviceUboe;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUrmaIpAddr).stubs().will(invoke(MockGetDeviceUrmaIpAddr));
+
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0;
+    options.rankCount = 2;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_UBOE;
+    EXPECT_EQ(manager.OpenDevice(options), BM_OK);
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    EXPECT_EQ(manager.localEndpoint_->desc.protocol, UrmaProtocol::UBOE);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+// OpenDevice: protocol 不含 DEVICE_URMA/DEVICE_UBOE 位时应返回 BM_INVALID_PARAM。
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
+{
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0;
+    options.rankCount = 2;
+    options.protocol = 0; // 无 DEVICE_URMA/DEVICE_UBOE 位 -> GetEndpointProtocolFromOptions 返回 RESERVED
+    EXPECT_EQ(manager.OpenDevice(options), BM_INVALID_PARAM);
+    EXPECT_FALSE(manager.opened_);
+    EXPECT_EQ(manager.localEndpoint_, nullptr);
 }
 
 TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
@@ -1036,6 +1112,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
     TransportOptions openOptions{};
     openOptions.rankId = 0;
     openOptions.rankCount = 2;
+    openOptions.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
     ASSERT_EQ(manager.OpenDevice(openOptions), BM_OK);
 
     HybmTransPrepareOptions prepareOptions{};
@@ -2168,6 +2245,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
     TransportOptions openOptions{};
     openOptions.rankId = 0;
     openOptions.rankCount = 2UL;
+    openOptions.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
     ASSERT_EQ(manager.OpenDevice(openOptions), BM_OK);
 
     HybmTransPrepareOptions prepareOptions{};

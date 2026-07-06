@@ -351,7 +351,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         return BM_ERROR;
     }
 
-    if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+    if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
         if (ret != BM_OK) {
             BM_LOG_ERROR("register host va failed, ret:" << ret);
@@ -363,7 +363,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         {gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST}, options_.rankId);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
-        if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+        if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
             DlHalApi::HalHostUnregisterEx(mapped, logicDeviceId_, HOST_MEM_MAP_DEV);
         }
         FreeAllocatedMemory(mapped, size, allocMethod);
@@ -507,7 +507,8 @@ Result HybmConnBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
     slices_.erase(pos);
 
 #if defined(ASCEND_NPU)
-    const bool needUnregister = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) != 0U;
+    const bool needUnregister = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA
+        | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
     if (needUnregister) {
         auto unregRet = DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(slice->vAddress_),
                                                       logicDeviceId_, HOST_MEM_MAP_DEV);

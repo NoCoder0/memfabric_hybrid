@@ -378,6 +378,7 @@ TEST_F(HybmEntityTagInfoTest, GetOpTypeStr_AllKnownOpTypes)
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_SDMA), "DEVICE_SDMA");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_RDMA), "DEVICE_RDMA");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_URMA), "DEVICE_URMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_UBOE), "DEVICE_UBOE");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_RDMA), "HOST_RDMA");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_TCP), "HOST_TCP");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_URMA), "HOST_URMA");

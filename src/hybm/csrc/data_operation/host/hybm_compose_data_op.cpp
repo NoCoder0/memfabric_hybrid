@@ -50,7 +50,7 @@ Result HostComposeDataOp::Initialize() noexcept
         }
     }
 
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
+    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         devUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
         auto ret = devUrmaDataOperator_->Initialize();
         if (ret != BM_OK) {
@@ -268,6 +268,10 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
 
     if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
         dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_URMA, devUrmaDataOperator_);
+    }
+
+    if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U) {
+        dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_UBOE, devUrmaDataOperator_);
     }
 
     if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_RDMA)) != 0U) {
