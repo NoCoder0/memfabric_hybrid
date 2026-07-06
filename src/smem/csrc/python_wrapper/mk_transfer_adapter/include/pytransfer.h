@@ -13,7 +13,15 @@
 #define PYTRANSFER_H
 
 #include <pybind11/pybind11.h>
+#include <atomic>
+#include <condition_variable>
+#include <map>
 #include <mutex>
+#include <queue>
+#include <set>
+#include <string>
+#include <thread>
+#include <vector>
 #include "smem_bm_def.h"
 #include "smem_trans.h"
 
@@ -42,7 +50,7 @@ public:
     ~TransferAdapterPy();
 
     int Initialize(const char *storeUrl, const char *uniqueId, const char *role, uint32_t deviceId,
-                   TransDataOpType dataOpType);
+                   TransDataOpType dataOpType, const char *storeServerRole = "Decode");
 
     std::string GetRpcPort();
 
@@ -104,8 +112,52 @@ public:
     void UnInitialize();
 
 private:
-    smem_bm_t handle_;
-    int sockfd_;
+    // === configuration ===
+    std::string GetConfigStoreProtocol(const std::vector<std::string> &urlList);
+    std::string GetSessionPrefixFromId(const std::string &sessionId);
+
+    // === connection management ===
+    smem_trans_t GetOrCreateConnection(const std::string &sessionId);
+    void ReplayRegisteredMemories(smem_trans_t handle);
+
+    // === link down async cleanup ===
+    static void PeerDownCallback(const char *peerAddr, void *userData);
+    void OnLinkDownByPeerAddr(const std::string &peerAddr);
+    void StartLinkDownConsumer();
+    void StopLinkDownConsumer();
+
+    smem_trans_t handle_ = nullptr;   // direct handle (receiver or legacy single-store sender)
+    std::string sessionId_;           // sender session id
+    smem_trans_config_t config_{};    // transfer config
+    std::string configStoreProtocol_; // transfer config store protocol
+
+    // session_id → connection
+    struct DConnection {
+        smem_trans_t handle = nullptr;
+        bool active = false;
+    };
+    std::mutex connMutex_;
+    std::condition_variable connCv_;
+    std::set<std::string> pendingConnections_;
+    std::map<std::string, DConnection> connections_;
+
+    // registered memories for replay
+    struct RegMem {
+        uintptr_t addr;
+        size_t capacity;
+    };
+    std::mutex registeredMemsMutex_;
+    std::vector<RegMem> registeredMems_;
+
+    // link down async cleanup
+    std::queue<std::string> linkDownQueue_;
+    std::mutex linkDownQueueMutex_;
+    std::condition_variable linkDownCv_;
+    std::thread linkDownConsumerThread_;
+    std::atomic<bool> consumerRunning_{false};
+
+    // legacy socket fd
+    int sockfd_ = -1;
 };
 
 #endif // PYTRANSFER_H

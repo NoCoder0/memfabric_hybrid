@@ -48,6 +48,7 @@ const std::string SMEM_GROUP_NOTIFY_EVENT = std::string(SMEM_GROUP_INFO_SIZE, 0)
 
 SmemNetGroupEngine::~SmemNetGroupEngine()
 {
+    *alive_ = false;
     groupStoped_ = true;
     if (eventListenThread_.joinable()) {
         eventListenSignal_.PthreadSignal();
@@ -76,6 +77,25 @@ SmemGroupEnginePtr SmemNetGroupEngine::Create(const StorePtr &store, const SmemG
     SM_ASSERT_RETURN(managerPtr != nullptr, nullptr);
     SmemGroupEnginePtr group = SmMakeRef<SmemNetGroupEngine>(managerPtr, option);
     SM_ASSERT_RETURN(group != nullptr, nullptr);
+
+    if (option.linkDownCb != nullptr) {
+        auto *rawGroup = group.Get();
+        auto alive = group->alive_;
+        auto linkDownCb = option.linkDownCb;
+        auto localRank = option.rank;
+        managerPtr->RegisterClientBrokenHandler([rawGroup, alive, linkDownCb, localRank]() -> int {
+            if (!*alive || !rawGroup->IsJoined()) return 0;
+            std::vector<uint32_t> rankIds;
+            rawGroup->GetAllRanksFromBitMap(rankIds);
+            for (auto rk : rankIds) {
+                if (rk != localRank) {
+                    SM_LOG_INFO("client broken handler: invoking link down cb for rank " << rk);
+                    linkDownCb(rk);
+                }
+            }
+            return 0;
+        });
+    }
 
     if (option.dynamic) {
         SM_ASSERT_RETURN(group->StartListen() == SM_OK, nullptr);
@@ -1023,13 +1043,22 @@ int32_t SmemNetGroupEngine::JoinLeaveEventProcess()
         }
         case RECOVER_EVENT: {
             // todo: 处理server故障场景
+            break;
         }
-        case LINK_DOWN_EVENT:
+        case LINK_DOWN_EVENT: {
+            if (groupInfo_.targetRank != option_.rank && option_.linkDownCb != nullptr) {
+                ret = option_.linkDownCb(groupInfo_.targetRank);
+            }
+            if (joined_ && groupInfo_.targetRank == option_.rank) {
+                groupStoped_.store(false);
+            }
+            break;
+        }
         case LEAVE_EVENT: {
             if (groupInfo_.targetRank != option_.rank && option_.leaveCb != nullptr) {
                 ret = option_.leaveCb(groupInfo_.targetRank);
             }
-            if (joined_ && groupInfo_.targetRank == option_.rank) { // local leave, wakeup leave func and exit thread
+            if (joined_ && groupInfo_.targetRank == option_.rank) {
                 SM_LOG_INFO("leave self, rank:" << option_.rank << " event:" << groupInfo_.curEvent);
                 groupStoped_.store(false);
             }
@@ -1058,12 +1087,12 @@ int32_t SmemNetGroupEngine::JoinLeaveEventProcess()
 
 Result SmemNetGroupEngine::DoLinkDownOnce(uint32_t rankId)
 {
-    std::string old;
     if (!TestBitmapForRank(rankId)) {
         SM_LOG_DEBUG("link down rank: " << rankId << " not joined, maybe has leaved by other");
         return SM_OK;
     }
 
+    std::string old;
     SmemGroupInfo info = GenerateInfo(LINK_DOWN_EVENT, rankId, old);
     ClearBitmapForRank(info, rankId);
     SM_LOG_DEBUG("remove generate_info:" << info << " base:" << groupInfo_);

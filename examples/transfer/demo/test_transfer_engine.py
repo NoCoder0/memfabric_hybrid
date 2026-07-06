@@ -15,7 +15,7 @@ import argparse
 import time
 import torch
 import torch_npu
-from memfabric_hybrid import TransferEngine, create_config_store, set_log_level, set_conf_store_tls
+from memfabric_hybrid import TransferEngine, set_log_level, set_conf_store_tls
 
 
 def main():
@@ -90,11 +90,8 @@ def run_prefill_role(engine, args, unique_id):
         dtype=torch.float16,
         device='npu',
     )
-    # 创建配置存储
-    create_config_store(args.store_url)
-    time.sleep(3)
 
-    # 初始化引擎
+    # 初始化引擎 (store client, Decode 侧启 configStore)
     ret_value = engine.initialize(
         args.store_url,
         unique_id,

@@ -52,6 +52,7 @@ struct SmemGroupOption {
     SmemGroupChangeCallback joinCb;
     SmemGroupChangeCallback updateCb;
     SmemGroupChangeCallback leaveCb;
+    SmemGroupChangeCallback linkDownCb;  // TCP-level link down only
 };
 
 enum GroupEventType : int32_t {
@@ -103,7 +104,13 @@ public:
         if (option_.dynamic) {
             groupInfo_.groupSize = 0U; // not join, size is zero
         }
-        store_->RegisterReconnectHandler(std::bind(&SmemNetGroupEngine::LinkReconnectHandler, this));
+        auto alive = alive_;
+        store_->RegisterReconnectHandler([this, alive]() -> int32_t {
+            if (!*alive) {
+                return SM_OK;
+            }
+            return LinkReconnectHandler();
+        });
     }
     ~SmemNetGroupEngine() override;
 
@@ -176,6 +183,7 @@ private:
 
     StoreManagerPtr store_ = nullptr;
     SmemGroupOption option_;
+    std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
     int32_t groupVersion_ = 0;
     uint32_t allGatherGroupSn_ = 0;
     uint32_t barrierGroupSn_ = 0;

@@ -399,7 +399,7 @@ class MfTest(TestServer):
                        self.transfer_engine_set_log_level),
             CliCommand("transfer_engine_initialize",
                        "Initialize the transfer engine, transfer_engine_initialize "
-                       "[store_url] [session_id] [role] [device_id] [op_type]",
+                       "[store_url] [session_id] [role] [device_id] [op_type] [store_server_role]",
                        self.transfer_engine_initialize),
             CliCommand("transfer_engine_register_memory",
                        "Register memory for transfer engine, "
@@ -906,7 +906,8 @@ class MfTest(TestServer):
         self.cli_print("set log level for transfer engine successfully.")
 
     @result_handler
-    def transfer_engine_initialize(self, store_url: str, session_id: str, role: str, device_id: int, op_type: int):
+    def transfer_engine_initialize(self, store_url: str, session_id: str, role: str, device_id: int, op_type: int,
+                                   store_server_role: str):
         engine = TransferEngine()
         # 只掉接口暂时不用
         port = engine.get_rpc_port()
@@ -923,7 +924,8 @@ class MfTest(TestServer):
             session_id,
             role,
             device_id,
-            data_op_type
+            data_op_type,
+            store_server_role
         )
         if ret_value == 0:
             addr = id(engine)

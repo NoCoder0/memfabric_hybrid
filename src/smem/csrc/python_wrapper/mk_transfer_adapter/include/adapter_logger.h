@@ -29,10 +29,10 @@
 #define ADAPTER_LOG_ERROR(ARGS) MF_OUT_LOG("[ADAPTER ", ock::mf::ERROR_LEVEL, ARGS)
 
 // if ARGS is false, print error
-#define ADAPTER_ASSERT_RETURN(ARGS, RET)           \
+#define ADAPTER_ASSERT_RETURN(ARGS, msg, RET)     \
     do {                                           \
         if (__builtin_expect(!(ARGS), 0) != 0) {   \
-            ADAPTER_LOG_ERROR("Assert " << #ARGS); \
+            ADAPTER_LOG_ERROR(msg);                \
             return RET;                            \
         }                                          \
     } while (0)
