@@ -310,7 +310,7 @@ int32_t zbal_combine_low_latency(const zbal_tensor_info_t *expandX, const zbal_t
                                  const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                                  int64_t moeExpertNum, zbal_comm_t comm, aclrtStream stream, int64_t flags);
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 /**
  * @brief Fused dispatch+GMM1+SwiGLU+GMM2+combine MoE operation.
  *
@@ -352,7 +352,7 @@ int32_t zbal_fused_deep_moe(const zbal_tensor_info_t *x, const zbal_tensor_info_
                             int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
                             int64_t shareGmm1HLen, int64_t isTensorList, zbal_comm_t comm, aclrtStream stream,
                             int64_t flags);
-#endif // ZBAL_ASCEND_NPU_A3
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 
 #ifdef __cplusplus
 }

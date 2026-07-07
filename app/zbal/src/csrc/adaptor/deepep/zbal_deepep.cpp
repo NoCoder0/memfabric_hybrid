@@ -19,7 +19,7 @@
 #include "zbal_operations.h"
 #include "dl_cann_api.h"
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 #include "zbal_kernel_fused_deep_moe_tiling.h"
 #endif
 #include "zbal_deepep.h"
@@ -28,7 +28,7 @@ namespace zbal {
 namespace adaptor {
 namespace deep_ep {
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 // Workspace size constants (mirrors zbal_kernel_fused_deep_moe_host.cpp)
 static constexpr uint32_t kSystemNeedWorkspace = 16 * 1024 * 1024;
 static constexpr uint32_t kGmAlignSize = 512;
@@ -85,7 +85,7 @@ static size_t ComputeWorkspaceSize(int64_t bs, int64_t h, int64_t gmm1HLen, int6
                      epSendCountSize + reservedSize + quantWsSize + combineWsSize;
     return kSystemNeedWorkspace + usrSize;
 }
-#endif
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 constexpr int PADDING_SIZE = 1;
 constexpr size_t COMM_NAME_LEN = 128;
 constexpr int A2_MAX_HCCS_PEERS = 8;
@@ -668,7 +668,7 @@ Buffer::low_latency_combine(const at::Tensor &x, const at::Tensor &topk_idx, con
     return {combined_x, event, std::function<void()>([] {})};
 }
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 std::tuple<at::Tensor, at::Tensor, at::Tensor> Buffer::fused_deep_moe(
     const at::Tensor &x, const at::Tensor &expert_ids, const at::Tensor &gmm1_weight, const at::Tensor &gmm1_scale,
     const at::Tensor &gmm2_weight, const at::Tensor &gmm2_scale, const at::Tensor &expert_scales,
@@ -814,7 +814,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> Buffer::fused_deep_moe(
 
     return {output, share_output, expert_token_nums};
 }
-#endif // ZBAL_ASCEND_NPU_A3
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 } // namespace deep_ep
 } // namespace adaptor
 } // namespace zbal

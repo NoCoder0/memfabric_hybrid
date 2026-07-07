@@ -39,7 +39,7 @@ include_directories(
         ${ZBAL_SRC_DIR}/csrc/bootstrap/memory/memfabric
 )
 
-if(ZBAL_ASCEND_NPU_A3)
+if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
     include_directories(${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)
 endif()
 
@@ -87,7 +87,7 @@ target_compile_options(boostrap_objects PRIVATE -fPIC)
 file(GLOB OPERATORS_SRC
         ${ZBAL_SRC_DIR}/csrc/operators/*.cpp
         ${ZBAL_SRC_DIR}/csrc/operators/npu/*.cpp)
-if(ZBAL_ASCEND_NPU_A3)
+if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
     file(GLOB FUSED_DEEP_MOE_HOST_SRCS
         ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe/*.cpp)
     list(APPEND OPERATORS_SRC ${FUSED_DEEP_MOE_HOST_SRCS})

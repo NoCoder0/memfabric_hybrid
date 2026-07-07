@@ -51,7 +51,7 @@ void pybind11_deepep_adaptor(pybind11::module_ &m)
         .def("low_latency_dispatch", &zbal::adaptor::deep_ep::Buffer::low_latency_dispatch)
         .def("low_latency_combine", &zbal::adaptor::deep_ep::Buffer::low_latency_combine)
         .def("clean_low_latency_buffer", &zbal::adaptor::deep_ep::Buffer::clean_low_latency_buffer)
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
         .def("fused_deep_moe", &zbal::adaptor::deep_ep::Buffer::fused_deep_moe)
 #endif
         ;

@@ -266,7 +266,7 @@ public:
                                       const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                                       int64_t moeExpertNum, aclrtStream stream, int64_t flags) noexcept = 0;
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
     /**
      * @brief Fused dispatch+GMM1+SwiGLU+GMM2+combine MoE operation (HCCL baseline).
      *        Input tokens are quantized, dispatched via HCCL winIn, processed through
@@ -286,7 +286,7 @@ public:
                                  int64_t moeExpertNum, int64_t quantMode, int64_t globalBs, int64_t gmm1HLen,
                                  int64_t shareGmm1HLen, bool isTensorList, aclrtStream stream,
                                  int64_t flags) noexcept = 0;
-#endif
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 
     /**
      * @brief Assign group id and gathered group info

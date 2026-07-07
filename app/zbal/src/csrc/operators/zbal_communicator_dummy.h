@@ -159,7 +159,7 @@ public:
         return Z_OK;
     }
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
     int32_t FusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
                          const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
                          const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
@@ -174,7 +174,7 @@ public:
     {
         return Z_OK;
     }
-#endif
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 };
 } // namespace operators
 } // namespace zbal

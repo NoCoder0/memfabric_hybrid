@@ -15,7 +15,7 @@
 #include "zbal_bootstrap_default.h"
 #include "zbal_trace_viewer_dumper.h"
 #include "zbal_npu_operators.h"
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 #include "zbal_kernel_fused_deep_moe_tiling.h"
 #endif
 
@@ -372,7 +372,7 @@ int32_t NpuCommunicatorBase::CombineLowLatency(const zbal_tensor_info_t *expandX
                                    stream, GetMetaInfo(), flags);
 }
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 // ---------------------------------------------------------------------------
 // Per-operator state for fused_deep_moe.
 // ---------------------------------------------------------------------------
@@ -444,7 +444,7 @@ int32_t NpuCommunicatorBase::FusedDeepMoe(
         options_.name, stream, GetMetaInfo(), GetMetaInfo(), flags, needTilingCopy);
     return result;
 }
-#endif // ZBAL_ASCEND_NPU_A3
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 
 } // namespace operators
 } // namespace zbal

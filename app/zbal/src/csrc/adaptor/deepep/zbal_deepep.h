@@ -82,7 +82,7 @@ public:
                         const at::Tensor &packed_recv_count, bool zero_copy, bool async, bool return_recv_hook,
                         const std::optional<at::Tensor> &out);
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
     std::tuple<at::Tensor, at::Tensor, at::Tensor> fused_deep_moe(
         const at::Tensor &x, const at::Tensor &expert_ids, const at::Tensor &gmm1_weight, const at::Tensor &gmm1_scale,
         const at::Tensor &gmm2_weight, const at::Tensor &gmm2_scale, const at::Tensor &expert_scales,
@@ -91,7 +91,7 @@ public:
         const std::optional<at::Tensor> &share_gmm2_weight, const std::optional<at::Tensor> &share_gmm2_scale,
         const std::optional<at::Tensor> &share_smooth_scales, const std::optional<at::Tensor> &x_active_mask,
         int64_t quant_mode, int64_t global_bs, int64_t share_gmm1_h_len, bool is_tensor_list);
-#endif
+#endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
 
 private:
     int device_id;
@@ -118,7 +118,7 @@ private:
     at::Tensor new_topk_idx;
     at::Tensor ori_x;
     at::Tensor new_scales;
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
     // Cached output tensors to avoid per-call at::zeros (triggers InplaceZero, pollutes L2 cache)
     at::Tensor cached_fdm_output_;
     at::Tensor cached_fdm_expert_token_nums_;

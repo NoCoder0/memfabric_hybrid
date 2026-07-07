@@ -3,6 +3,7 @@ set -e
 
 DEBUG_MODE="OFF"
 ENABLE_ZBAL_UT="OFF"
+BUILD_FUSED_DEEP_MOE="ON"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -14,12 +15,17 @@ while [[ $# -gt 0 ]]; do
             ENABLE_ZBAL_UT="ON"
             shift
             ;;
+        --skip-fused-moe)
+            BUILD_FUSED_DEEP_MOE="OFF"
+            shift
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
-            echo "  --debug       Enable debug mode"
-            echo "  --ut          Enable unit tests"
-            echo "  -h, --help    Show this help message"
+            echo "  --debug           Enable debug mode"
+            echo "  --ut              Enable unit tests"
+            echo "  --skip-fused-moe  Skip fused_deep_moe compilation (A3 only, implies --debug)"
+            echo "  -h, --help        Show this help message"
             exit 1
             ;;
         *)
@@ -30,8 +36,14 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+if [[ "${BUILD_FUSED_DEEP_MOE}" == "OFF" && "${DEBUG_MODE}" == "OFF" ]]; then
+    echo "[build.sh] --skip-fused-moe implies --debug"
+    DEBUG_MODE="ON"
+fi
+
 export DEBUG_MODE=$DEBUG_MODE
 export ENABLE_ZBAL_UT=$ENABLE_ZBAL_UT
+export BUILD_FUSED_DEEP_MOE=$BUILD_FUSED_DEEP_MOE
 
 if [ -n "$ASCEND_HOME_PATH" ]; then
     _ASCEND_INSTALL_PATH=$ASCEND_HOME_PATH

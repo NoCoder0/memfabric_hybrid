@@ -17,7 +17,7 @@ file(GLOB ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS
 )
 source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/dispatch_combine_low_latency" FILES ${ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS})
 
-if(ZBAL_ASCEND_NPU_A3)
+if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
     file(GLOB ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS
             ${ZBAL_AICORE_DIR}/ops/fused_deep_moe/*.cpp)
     source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/fused_deep_moe" FILES ${ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS})
@@ -42,7 +42,7 @@ ascendc_include_directories(zbal_kernel PRIVATE
         ${ZBAL_SRC_DIR}/csrc/operators/npu
         ${ZBAL_SRC_DIR}/csrc/operators/npu/aicore/common
 )
-if(ZBAL_ASCEND_NPU_A3)
+if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
     ascendc_include_directories(zbal_kernel PRIVATE
         ${catlass_SOURCE_DIR}/include
         ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)

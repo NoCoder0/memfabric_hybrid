@@ -11,6 +11,7 @@ cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 project(zbal LANGUAGES CXX)
 
 option(BUILD_ZBAL_MODULE_UT "build unit test for zbal library" OFF)
+option(BUILD_FUSED_DEEP_MOE "Build fused_deep_moe operator (A3 only)" ON)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -64,8 +65,12 @@ elseif (ZBAL_ASCEND_NPU_A5)
     add_compile_definitions(ZBAL_ASCEND_NPU_A5)
 endif ()
 
-# prepare catlass for fused_moe (A3 only)
-if (ZBAL_ASCEND_NPU_A3)
+if (ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
+    add_compile_definitions(ZBAL_FUSED_DEEP_MOE_ENABLED)
+    message(STATUS "fused_deep_moe operator compilation ENABLED (BUILD_FUSED_DEEP_MOE=ON)")
+endif ()
+
+if (ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
     include(FetchContent)
     FetchContent_Declare(
             catlass

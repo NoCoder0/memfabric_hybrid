@@ -81,7 +81,7 @@ public:
                               const zbal_tensor_info_t *expertScales, const zbal_tensor_info_t *xOut,
                               int64_t moeExpertNum, aclrtStream stream, int64_t flags) noexcept override;
 
-#ifdef ZBAL_ASCEND_NPU_A3
+#if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
     int32_t FusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds,
                          const zbal_tensor_info_t *gmm1Weight, const zbal_tensor_info_t *gmm1Scale,
                          const zbal_tensor_info_t *gmm2Weight, const zbal_tensor_info_t *gmm2Scale,
