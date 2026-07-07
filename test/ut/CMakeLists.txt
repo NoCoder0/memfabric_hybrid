@@ -23,6 +23,7 @@ include_directories(
         ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
 
         ${PROJECT_UTIL_SRC_BASE}/ptracer/include
+        ${PROJECT_UTIL_SRC_BASE}/ptracer/tracers
         ${PROJECT_SMEM_SRC_BASE}/include/host
         ${PROJECT_SMEM_SRC_BASE}/csrc
         ${PROJECT_SMEM_SRC_BASE}/csrc/smem_shm

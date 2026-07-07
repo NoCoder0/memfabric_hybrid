@@ -5,6 +5,7 @@
 #define MEM_FABRIC_PTRACER_TRACEPOINT_H
 
 #include "ptracer_utils.h"
+#include "latency_recorder.h"
 
 namespace ock {
 namespace mf {
@@ -16,6 +17,18 @@ public:
         bool expectVal = false;
         if (nameValid_.compare_exchange_weak(expectVal, true)) {
             name_ = tpName;
+            if (rec_.load(std::memory_order_relaxed) == nullptr) {
+                auto *r = new (std::nothrow) LatencyRecorder(PTRACER_DUMP_INTERVAL_SEC);
+                if (r != nullptr) {
+                    LatencyRecorder *expected = nullptr;
+                    if (rec_.compare_exchange_strong(expected, r,
+                        std::memory_order_release, std::memory_order_relaxed)) {
+                        r->StartSampling();
+                    } else {
+                        delete r;
+                    }
+                }
+            }
         }
         begin_.fetch_add(1u, std::memory_order_relaxed);
     }
@@ -27,23 +40,10 @@ public:
             return;
         }
 
-        if (diff < min_) {
-            min_.store(diff, std::memory_order_relaxed);
+        auto *r = rec_.load(std::memory_order_acquire);
+        if (r != nullptr) {
+            *r << static_cast<int64_t>(diff);
         }
-
-        if (diff < previousMin_) {
-            previousMin_.store(diff, std::memory_order_relaxed);
-        }
-
-        if (diff > max_) {
-            max_.store(diff, std::memory_order_relaxed);
-        }
-
-        if (diff > previousMax_) {
-            previousMax_.store(diff, std::memory_order_relaxed);
-        }
-
-        total_.fetch_add(diff, std::memory_order_relaxed);
         goodEnd_.fetch_add(1u, std::memory_order_relaxed);
     }
 
@@ -52,9 +52,6 @@ public:
         begin_ = 0;
         goodEnd_ = 0;
         badEnd_ = 0;
-        min_ = UINT64_MAX;
-        max_ = 0;
-        total_ = 0;
     }
 
     __always_inline const std::string &GetName() const
@@ -77,21 +74,6 @@ public:
         return badEnd_.load(std::memory_order_relaxed);
     }
 
-    __always_inline uint64_t GetMin() const
-    {
-        return min_.load(std::memory_order_relaxed);
-    }
-
-    __always_inline uint64_t GetMax() const
-    {
-        return max_.load(std::memory_order_relaxed);
-    }
-
-    __always_inline uint64_t GetTotal() const
-    {
-        return total_.load(std::memory_order_relaxed);
-    }
-
     __always_inline bool Valid(const bool needTotal) const
     {
         if (needTotal) {
@@ -106,9 +88,6 @@ public:
         previousBegin_ = begin_.load(std::memory_order_relaxed);
         previousGoodEnd_ = goodEnd_.load(std::memory_order_relaxed);
         previousBadEnd_ = badEnd_.load(std::memory_order_relaxed);
-        previousTotal_ = total_.load(std::memory_order_relaxed);
-        previousMin_ = UINT64_MAX;
-        previousMax_ = 0;
     }
 
     std::string ToPeriodString()
@@ -116,11 +95,8 @@ public:
         auto beginGap = begin_.load(std::memory_order_relaxed) - previousBegin_;
         auto goodEndGap = goodEnd_.load(std::memory_order_relaxed) - previousGoodEnd_;
         auto badEndGap = badEnd_.load(std::memory_order_relaxed) - previousBadEnd_;
-        auto totalGap = total_.load(std::memory_order_relaxed) - previousTotal_;
-        auto minGap = previousMin_.load(std::memory_order_relaxed);
-        auto maxGap = previousMax_.load(std::memory_order_relaxed);
         UpdatePreviousData();
-        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, minGap, maxGap, totalGap);
+        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, rec_.load(std::memory_order_relaxed));
     }
 
     std::string ToTotalString()
@@ -128,10 +104,7 @@ public:
         auto beginGap = begin_.load(std::memory_order_relaxed);
         auto goodEndGap = goodEnd_.load(std::memory_order_relaxed);
         auto badEndGap = badEnd_.load(std::memory_order_relaxed);
-        auto totalGap = total_.load(std::memory_order_relaxed);
-        auto minGap = min_.load(std::memory_order_relaxed);
-        auto maxGap = max_.load(std::memory_order_relaxed);
-        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, minGap, maxGap, totalGap);
+        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, rec_.load(std::memory_order_relaxed));
     }
 
 private:
@@ -140,16 +113,11 @@ private:
     std::atomic_uint_fast64_t begin_{0};
     std::atomic_uint_fast64_t goodEnd_{0};
     std::atomic_uint_fast64_t badEnd_{0};
-    std::atomic_uint_fast64_t min_{UINT64_MAX};
-    std::atomic_uint_fast64_t max_{0};
-    std::atomic_uint_fast64_t total_{0};
 
     uint64_t previousBegin_{0};
     uint64_t previousGoodEnd_{0};
     uint64_t previousBadEnd_{0};
-    std::atomic_uint_fast64_t previousMin_{UINT64_MAX};
-    std::atomic_uint_fast64_t previousMax_{0};
-    uint64_t previousTotal_{0};
+    std::atomic<LatencyRecorder *> rec_{nullptr};
 };
 
 class TracepointCollection {
@@ -225,7 +193,7 @@ private:
 
         if (ret != 0) {
             for (uint16_t j = 0; j < i; ++j) {
-                delete instance[j];
+                delete[] instance[j];
             }
             delete[] instance;
             return nullptr;

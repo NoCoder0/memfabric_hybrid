@@ -16,6 +16,10 @@
 #include <string>
 #include <vector>
 
+#include "latency_recorder.h"
+
+constexpr time_t PTRACER_DUMP_INTERVAL_SEC = 10; /* dump period and rolling window, in seconds */
+
 namespace ock {
 namespace mf {
 namespace tracer {
@@ -39,8 +43,8 @@ public:
     static int32_t MakeDir(const std::string &name);
     static std::string CurrentTimeString();
     static std::string HeaderString();
-    static std::string FormatString(std::string &name, uint64_t begin, uint64_t goodEnd, uint64_t badEnd, uint64_t min,
-                                    uint64_t max, uint64_t total);
+    static std::string FormatString(std::string &name, uint64_t begin, uint64_t goodEnd, uint64_t badEnd,
+                                    LatencyRecorder *rec);
 
 private:
     static void StrSplit(const std::string &src, const std::string &sep, std::vector<std::string> &out);
@@ -140,37 +144,40 @@ inline std::string Func::CurrentTimeString()
 }
 
 inline std::string Func::FormatString(std::string &name, uint64_t begin, uint64_t goodEnd, uint64_t badEnd,
-                                      uint64_t min, uint64_t max, uint64_t total)
+                                      LatencyRecorder *rec)
 {
     auto onFly = (begin > goodEnd + badEnd) ? (begin - goodEnd - badEnd) : 0;
-    auto minTime = min == UINT64_MAX ? 0 : (static_cast<double>(min) / UNIT_STEP);
-    auto maxTime = static_cast<double>(max) / UNIT_STEP;
-    auto avgTime = goodEnd == 0 ? 0 : static_cast<double>(total) / static_cast<double>(goodEnd) / UNIT_STEP;
-    auto totalTime = static_cast<double>(total) / UNIT_STEP;
+    auto p50Time = (rec != nullptr) ? static_cast<double>(rec->P50()) / UNIT_STEP : 0.0;
+    auto p99Time = (rec != nullptr) ? static_cast<double>(rec->P99()) / UNIT_STEP : 0.0;
+    auto p999Time = (rec != nullptr) ? static_cast<double>(rec->P999()) / UNIT_STEP : 0.0;
+    auto avgTime = (rec != nullptr) ? static_cast<double>(rec->Latency()) / UNIT_STEP : 0.0;
+    auto maxTime = (rec != nullptr) ? static_cast<double>(rec->MaxLatency()) / UNIT_STEP : 0.0;
 
     std::ostringstream os;
     os.flags(std::ios::fixed);
     os.precision(NUMBER_PRECISION);
-    os << std::left << std::setw(NAME_WIDTH) << name <<
-          std::left << std::setw(DIGIT_WIDTH) << begin <<
-          std::left << std::setw(DIGIT_WIDTH) << goodEnd <<
-          std::left << std::setw(DIGIT_WIDTH) << badEnd <<
-          std::left << std::setw(DIGIT_WIDTH) << onFly <<
-          std::left << std::setw(DIGIT_WIDTH) << minTime <<
-          std::left << std::setw(DIGIT_WIDTH) << maxTime <<
-          std::left << std::setw(DIGIT_WIDTH) << avgTime <<
-          std::left << std::setw(DIGIT_WIDTH) << totalTime;
+    if (name.size() > static_cast<size_t>(NAME_WIDTH)) {
+        os << std::left << std::setw(NAME_WIDTH) << name.substr(0, NAME_WIDTH);
+    } else {
+        os << std::left << std::setw(NAME_WIDTH) << name;
+    }
+    os << std::left << std::setw(DIGIT_WIDTH) << begin << std::left << std::setw(DIGIT_WIDTH) << goodEnd <<
+        std::left << std::setw(DIGIT_WIDTH) << badEnd << std::left << std::setw(DIGIT_WIDTH) << onFly <<
+        std::left << std::setw(DIGIT_WIDTH) << p50Time << std::left << std::setw(DIGIT_WIDTH) << p99Time <<
+        std::left << std::setw(DIGIT_WIDTH) << p999Time << std::left << std::setw(DIGIT_WIDTH) << avgTime <<
+        std::left << std::setw(DIGIT_WIDTH) << maxTime;
     return os.str();
 }
 
 inline std::string Func::HeaderString()
 {
     std::stringstream ss;
-    ss << std::left << std::setw(TIME_WIDTH) << "TIME" << std::left << std::setw(NAME_WIDTH) << "NAME" <<
-          std::left << std::setw(DIGIT_WIDTH) << "BEGIN" << std::left << std::setw(DIGIT_WIDTH) << "GOOD_END" <<
-          std::left << std::setw(DIGIT_WIDTH) << "BAD_END" << std::left << std::setw(DIGIT_WIDTH) << "ON_FLY" <<
-          std::left << std::setw(DIGIT_WIDTH) << "MIN(us)" << std::left << std::setw(DIGIT_WIDTH) << "MAX(us)" <<
-          std::left << std::setw(DIGIT_WIDTH) << "AVG(us)" << std::left << std::setw(DIGIT_WIDTH) << "TOTAL(us)";
+    ss << std::left << std::setw(TIME_WIDTH) << "TIME" << std::left << std::setw(NAME_WIDTH) << "NAME" << std::left <<
+        std::setw(DIGIT_WIDTH) << "BEGIN" << std::left << std::setw(DIGIT_WIDTH) << "GOOD_END" << std::left <<
+        std::setw(DIGIT_WIDTH) << "BAD_END" << std::left << std::setw(DIGIT_WIDTH) << "ON_FLY" << std::left <<
+        std::setw(DIGIT_WIDTH) << "P50(us)" << std::left << std::setw(DIGIT_WIDTH) << "P99(us)" << std::left <<
+        std::setw(DIGIT_WIDTH) << "P999(us)" << std::left << std::setw(DIGIT_WIDTH) << "AVG(us)" << std::left <<
+        std::setw(DIGIT_WIDTH) << "MAX(us)";
     return ss.str();
 }
 

@@ -232,7 +232,7 @@ void DefaultTracer::RunInThread()
     std::unique_lock<std::mutex> lock(dumpLock_);
     while (running_) {
         /* wait for some time if no one signal the condition */
-        dumpCond_.wait_for(lock, std::chrono::seconds(DUMP_PERIOD_SECOND));
+        dumpCond_.wait_for(lock, std::chrono::seconds(PTRACER_DUMP_INTERVAL_SEC));
         /* dump tracepoints into the file */
         DumpTracepoints();
     }
