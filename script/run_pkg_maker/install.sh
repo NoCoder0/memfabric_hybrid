@@ -328,7 +328,7 @@ function try_install_extend()
     fi
 
     cd ${script_dir}/../copy_extend
-    bisheng -x asc hybm_copy_kernel.cpp -shared -g -o libmf_hybm_copy_extend.so ${cce_param}
+    bisheng -x asc hybm_copy_kernel.cpp -fPIC -shared -g -o libmf_hybm_copy_extend.so ${cce_param}
     exit_code=$?
 
     if [ $exit_code -eq 0 ]; then
@@ -337,6 +337,78 @@ function try_install_extend()
     else
         print "WARNING" "install extend lib failed, maybe cann version is old, least 8.3.RC1"
     fi
+
+    if [ ! -d "${script_dir}/../accoffload_operators" ]; then
+        print "INFO" "accoffload_operators not found, skip install accoffload extend lib."
+        return
+    fi
+
+    cd ${script_dir}/../accoffload_operators
+
+    bisheng -x asc acc_offload_sparse_copy.cpp -fPIC -shared -g -o libmf_hybm_accoffload_kernel.so ${cce_param}
+    if [ $? -ne 0 ]; then
+        print "WARNING" "bisheng compile acc_offload_sparse_copy.cpp failed."
+        rm -f libmf_hybm_accoffload_kernel.so
+        return
+    fi
+
+    python_bin=python3
+    torch_dir=$(${python_bin} -c "import torch; import os; print(os.path.dirname(torch.__file__))" 2>/dev/null)
+    torch_npu_dir=$(${python_bin} -c "import torch_npu; import os; print(os.path.dirname(torch_npu.__file__))" 2>/dev/null)
+    if [ -z "${torch_dir}" ] || [ -z "${torch_npu_dir}" ]; then
+        print "WARNING" "torch/torch_npu not found, skip accoffload extend lib."
+        rm -f libmf_hybm_accoffload_kernel.so
+        return
+    fi
+    ascend_home=${ASCEND_TOOLKIT_HOME:-/usr/local/Ascend/ascend-toolkit/latest}
+
+    abi_flag="-D_GLIBCXX_USE_CXX11_ABI=0"
+    abi_val=$(${python_bin} -c "import torch; print(int(torch._C._GLIBCXX_USE_CXX11_ABI))" 2>/dev/null)
+    if [ "${abi_val}" == "1" ]; then
+        abi_flag="-D_GLIBCXX_USE_CXX11_ABI=1"
+    fi
+
+    g++ -c -fPIC -std=c++17 -O3 -fstack-protector-strong \
+        -Wno-unused-parameter -Wno-unused-function -Wunused-value -Wcast-align \
+        -Wcast-qual -Wwrite-strings -Wsign-compare -Wextra \
+        -fvisibility-inlines-hidden -ftrapv \
+        ${abi_flag} \
+        -isystem ${ascend_home}/include \
+        -isystem ${ascend_home}/include/experiment/runtime/runtime/ \
+        -isystem ${torch_dir}/include \
+        -isystem ${torch_dir}/include/torch/csrc/api/include \
+        -isystem ${torch_dir}/include/torch/csrc/utils \
+        -isystem ${torch_dir}/include/c10/util \
+        -isystem ${torch_dir}/include/c10/core \
+        -isystem ${torch_dir}/include/ATen \
+        -isystem ${torch_dir}/include/ATen/detail \
+        -isystem ${torch_npu_dir}/include \
+        -isystem ${torch_npu_dir}/include/torch_npu/csrc/aten \
+        -isystem ${torch_npu_dir}/include/torch_npu/csrc/core/npu \
+        acc_offload_operators_launch.cpp -o acc_offload_operators_launch.o
+    if [ $? -ne 0 ]; then
+        print "WARNING" "g++ compile acc_offload_operators_launch.cpp failed, skip accoffload extend lib."
+        rm -f libmf_hybm_accoffload_kernel.so acc_offload_operators_launch.o
+        return
+    fi
+
+    g++ -shared -fPIC -o libmf_hybm_accoffload.so \
+        acc_offload_operators_launch.o \
+        -L. -lmf_hybm_accoffload_kernel \
+        -L${torch_dir}/lib -ltorch -lc10 -ltorch_python \
+        -L${torch_npu_dir}/lib -ltorch_npu \
+        -L${ascend_home}/lib64 -lopapi \
+        -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
+        -Wl,-rpath,\$ORIGIN -Wl,-rpath,${torch_dir}/lib -Wl,-rpath,${torch_npu_dir}/lib -Wl,-rpath,${ascend_home}/lib64
+    if [ $? -ne 0 ]; then
+        print "WARNING" "link libmf_hybm_accoffload.so failed, skip accoffload extend lib."
+        rm -f libmf_hybm_accoffload_kernel.so acc_offload_operators_launch.o
+        return
+    fi
+
+    \cp libmf_hybm_accoffload.so libmf_hybm_accoffload_kernel.so ${install_dir}//${pkg_arch}-${os1}/lib64
+    rm -f libmf_hybm_accoffload.so libmf_hybm_accoffload_kernel.so acc_offload_operators_launch.o
+    print "INFO" "install accoffload extend lib success"
 }
 
 function install_to_path()

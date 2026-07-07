@@ -109,6 +109,7 @@ setup(
         "memfabric_hybrid": [
             "_pymf_hybrid*.so",
             "_pymf_transfer*.so",
+            "_pymf_acc_offload*.so",
             "lib/lib*.so",
             "include/smem/host/*.h",
             "include/smem/device/*.h",

@@ -123,9 +123,13 @@ set(PROJECT_UTIL_SRC_BASE ${PROJECT_SOURCE_DIR}/src/util/csrc)
 set(PROJECT_SMEM_SRC_BASE ${PROJECT_SOURCE_DIR}/src/smem)
 set(PROJECT_SMEM_OUTPUT ${PROJECT_SOURCE_DIR}/output/smem)
 
-# set src base dir and output dir of smem
+# set src base dir and output dir of hybm
 set(PROJECT_HYBM_SRC_BASE ${PROJECT_SOURCE_DIR}/src/hybm)
 set(PROJECT_HYBM_OUTPUT ${PROJECT_SOURCE_DIR}/output/hybm)
+
+# set src base dir and output dir of acc_offload
+set(PROJECT_ACC_OFFLOAD_SRC_BASE ${PROJECT_SOURCE_DIR}/src/acc_offload)
+set(PROJECT_ACC_OFFLOAD_OUTPUT ${PROJECT_SOURCE_DIR}/output/acc_offload)
 
 # set src base dir and output dir of adapter
 set(PROJECT_ADAPTER_SRC_BASE ${PROJECT_SOURCE_DIR}/src/smem/csrc/python_wrapper/mk_transfer_adapter)

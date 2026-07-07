@@ -76,6 +76,10 @@ cp "${OUTPUT_DIR}"/smem/lib64/* ${PKG_DIR}/"${ARCH_OS}"/lib64
 cp -r "${OUTPUT_DIR}"/hybm/include/* ${PKG_DIR}/include/hybm/
 cp "${OUTPUT_DIR}"/hybm/lib64/libmf_hybm_core.so ${PKG_DIR}/"${ARCH_OS}"/lib64/
 cp -r "${PROJECT_DIR}"/src/hybm/csrc/copy_extend ${PKG_DIR}
+# accoffload extend source (AscendC kernel + torch_npu adapter), compiled at install time
+mkdir -p ${PKG_DIR}/accoffload_operators
+cp "${PROJECT_DIR}"/src/acc_offload/csrc/operators/* ${PKG_DIR}/accoffload_operators/
+cp "${PROJECT_DIR}"/src/acc_offload/csrc/launch/acc_offload_operators_launch.cpp ${PKG_DIR}/accoffload_operators/
 
 # memfabric_hybrid wheel package
 if [ "${BUILD_PYTHON}" = "ON" ]; then

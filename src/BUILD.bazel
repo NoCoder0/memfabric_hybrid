@@ -44,12 +44,21 @@ cc_library(
     includes = ["hybm/include"],
     visibility = ["//visibility:public"],
 )
+
+cc_library(
+    name = "acc_offload_headers",
+    hdrs = glob(["acc_offload/include/host/*.h"]),
+    includes = ["acc_offload/include", "acc_offload/include/host"],
+    visibility = ["//visibility:public"],
+)
+
 cc_library(
     name = "memfabric_libs",
     visibility = ["//visibility:public"],
     deps = [
         "//src/hybm/csrc:libmf_hybm_core.so",
         "//src/smem/csrc:libmf_smem.so",
+        "//src/acc_offload/csrc:libmf_acc_offload.so",
     ],
 )
 
@@ -58,6 +67,7 @@ filegroup(
     srcs = [
         "//src/hybm/csrc:libmf_hybm_core.so",
         "//src/smem/csrc:libmf_smem.so",
+        "//src/acc_offload/csrc:libmf_acc_offload.so",
     ],
     visibility = ["//visibility:public"],
 )
