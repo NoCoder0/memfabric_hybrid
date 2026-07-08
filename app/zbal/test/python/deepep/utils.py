@@ -22,7 +22,7 @@ def register_zbal(local_rank, rank, world_size, ip, port):
     local_mem_size = 20 * 1024 * 1024 * 1024
     local_meta_size = 2048
     g_ip_port = f"tcp://{ip}:23350"
-    zbal_set_logger_level(3)
+    zbal_set_logger_level(2)
 
     zbal_init(world_size, local_rank, rank, device_mem_size=local_mem_size,
               comm_meta_space_size=local_meta_size,

@@ -101,6 +101,7 @@ def test_main(
 
     # for all_reduce data sync
     dist.all_reduce(gbl_num_tokens_per_expert, group=group)
+    gbl_num_tokens_per_expert = gbl_num_tokens_per_expert.cpu()
 
     # Rank layout meta
     num_tokens_per_rank = torch.empty((num_ranks,), dtype=torch.int, device="npu")
@@ -129,7 +130,8 @@ def test_main(
         ref_is_token_in_rank,       # 2-dim, shape=(num_tokens, num_ranks), 1 if token in rank else 0
         _,
     ) = return_values
-    send_token_idx = buffer.get_send_token_idx().clone()
+    send_token_idx = buffer.get_send_token_idx().clone().cpu()
+    topk_idx_cpu = topk_idx.cpu()
     try:
         assert torch.allclose(
             ref_num_tokens_per_rank, num_tokens_per_rank
@@ -163,6 +165,9 @@ def test_main(
     topk_weights_pure_rand = torch.randn(
         (num_tokens, num_topk), dtype=torch.float32, device="npu"
     )
+
+    x_cpu = x.cpu()
+    x_pure_rand_cpu = x_pure_rand.cpu()
 
     def get_num_tokens_per_expert_list(rank: int):
         local_expert_token = gbl_num_tokens_per_expert.view(num_ranks, -1)[rank]
@@ -239,7 +244,7 @@ def test_main(
         that the kernel uses in its per-block Phase 3.
         """
         sti_cpu = send_token_idx.cpu()
-        topk_cpu = topk_idx.cpu()
+        topk_cpu = topk_idx_cpu
         expert_counter = [0] * num_experts
         for t in range(num_tokens):
             for k in range(num_topk):
@@ -352,7 +357,7 @@ def test_main(
     def test_correctness():
         for current_x in filter(lambda elem: elem is not None, (x, x_pure_rand)):
             if local_rank == 0:
-                tp = "FP8" if isinstance(current_x, tuple) else "BF16"
+                tp = "INT8" if use_quant else "BF16"
                 logger.info(f"[rank {rank}] [testing] Running with {tp}, with top-k {num_topk} ...")
             logger.info(f"[rank {rank}] begin running dispatch")
             # Test dispatch
@@ -376,10 +381,22 @@ def test_main(
                 handle,
                 event,
             ) = buffer.dispatch(**dispatch_args)
-            recv_x = (
-                # de-quant to original value to test correctness
-                per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
-            )
+            if isinstance(recv_x, tuple):
+                quant_stream = torch.npu.Stream()
+                with torch.npu.Stream(quant_stream):
+                    recv_x_int8_cpu = recv_x[0].cpu()
+                    recv_x_scales_cpu = recv_x[1].cpu()
+                    put_offset_cpu = handle[3].cpu()
+                    balance_matrix_cpu = handle[4].cpu()
+                    recv_topk_weights_cpu = handle[2].cpu()
+                quant_stream.synchronize()
+                recv_x_cpu = per_token_cast_back(recv_x_int8_cpu, recv_x_scales_cpu)
+                recv_x = recv_x_cpu.to("npu")
+            else:
+                recv_x_cpu = recv_x.cpu()
+                put_offset_cpu = handle[3].cpu()
+                balance_matrix_cpu = handle[4].cpu()
+                recv_topk_weights_cpu = handle[2].cpu()
 
             # Checks notify output
             local_expert_token_list = get_num_tokens_per_expert_list(rank)
@@ -387,11 +404,10 @@ def test_main(
 
             # Verify recv_x token count and content (deterministic input: x = ones * rank)
             if current_x is x:
-                _, _, _, put_offset, balance_matrix = handle
                 assert verify_send_token_idx(send_token_idx)
-                assert verify_recv_x(recv_x, put_offset, balance_matrix)
-                assert verify_put_offset(recv_x, put_offset, balance_matrix)
-                assert verify_balance_matrix(recv_x, put_offset, balance_matrix)
+                assert verify_recv_x(recv_x_cpu, put_offset_cpu, balance_matrix_cpu)
+                assert verify_put_offset(recv_x_cpu, put_offset_cpu, balance_matrix_cpu)
+                assert verify_balance_matrix(recv_x_cpu, put_offset_cpu, balance_matrix_cpu)
             logger.info(f"[rank {rank}] [dispatch] Test passed.")
 
             # Test combine
@@ -405,10 +421,10 @@ def test_main(
             combined_x, combined_topk_weights, event = buffer.combine(**combine_args)
 
             check_x = combined_x.cpu().float()
-            ref_x = x_pure_rand if current_x is x_pure_rand else x
+            ref_x = x_pure_rand_cpu if current_x is x_pure_rand else x_cpu
             ref_x_compute = (
-                    ref_x.cpu().float()
-                    * handle[2].cpu().masked_fill(topk_idx.cpu() == -1, 0).sum(dim=1).view(-1, 1)
+                    ref_x.float()
+                    * recv_topk_weights_cpu.masked_fill(topk_idx_cpu == -1, 0).sum(dim=1).view(-1, 1)
             )
             diff = calc_diff(check_x, ref_x_compute)
             if diff > 5e-5 or math.isnan(diff):
@@ -447,7 +463,7 @@ def test_main(
         }
         dispatch_t = bench(lambda: buffer.dispatch(**tune_dispatch_args))[0]
         logger.info(
-            f'[rank {rank}] [tuning] Dispatch ({"FP8" if isinstance(current_x, tuple) else "BF16"}) '
+            f'[rank {rank}] [tuning] Dispatch ({"INT8" if use_quant else "BF16"}) '
             f'{recv_bytes / 1e9 / dispatch_t:.2f} GB/s (HCCS), '
             f'avg_t: {dispatch_t * 1e6:.2f} us'
         )
@@ -462,9 +478,15 @@ def test_main(
             "topk_weights": topk_weights,
         }
         recv_x, _, _, _, handle, _ = buffer.dispatch(**dispatch_args)
-        recv_x = (
-            per_token_cast_back(*recv_x) if isinstance(recv_x, tuple) else recv_x
-        )
+        if isinstance(recv_x, tuple):
+            quant_stream = torch.npu.Stream()
+            with torch.npu.Stream(quant_stream):
+                recv_x_int8_cpu = recv_x[0].cpu()
+                recv_x_scales_cpu = recv_x[1].cpu()
+            quant_stream.synchronize()
+            recv_x = per_token_cast_back(recv_x_int8_cpu, recv_x_scales_cpu).to("npu")
+        else:
+            recv_x = recv_x
         # Tune combine performance
         tune_combine_args = {
             "x": recv_x,
