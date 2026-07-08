@@ -74,7 +74,7 @@ void AccTcpWorker::StopInner(bool afterFork)
     }
 }
 
-Result AccTcpWorker::AddLink(const AccTcpLinkComplexDefaultPtr &link, uint32_t events) noexcept
+Result AccTcpWorker::AddLink(const AccTcpLinkDefaultPtr &link, uint32_t events) noexcept
 {
     ASSERT_RETURN(link.Get(), ACC_INVALID_PARAM);
     ASSERT_RETURN(link->fd_ != -1, ACC_INVALID_PARAM);
@@ -95,12 +95,12 @@ Result AccTcpWorker::AddLink(const AccTcpLinkComplexDefaultPtr &link, uint32_t e
     return ACC_OK;
 }
 
-Result AccTcpWorker::RemoveLink(const AccTcpLinkComplexDefaultPtr &link) noexcept
+Result AccTcpWorker::RemoveLink(const AccTcpLinkDefaultPtr &link) noexcept
 {
     ASSERT_RETURN(link.Get(), ACC_INVALID_PARAM);
     ASSERT_RETURN(link->fd_ != -1, ACC_INVALID_PARAM);
 
-    LOG_TRACE("Try to modify link " << link->ShortName() << " in sock worker " << options_.Name());
+    LOG_TRACE("Try to remove link " << link->ShortName() << " from sock worker " << options_.Name());
 
     if (UNLIKELY(epoll_ctl(epollFD_, EPOLL_CTL_DEL, link->fd_, nullptr) != 0)) {
         LOG_ERROR("Failed to remove " << link->ShortName() << " from sock worker " << options_.Name()
@@ -163,13 +163,13 @@ void AccTcpWorker::RunInThread(std::atomic<bool> *started)
         int count = epoll_wait(epollFD_, ev, pollBatchSize, timeout);
         if (count > 0) {
             /* there are events, handle it */
-            LOG_TRACE("Got " << count << " in worker " << mName);
+            LOG_TRACE("Got " << count << " in worker " << options_.Name());
             for (uint16_t i = 0; i < static_cast<uint16_t>(count); ++i) {
                 struct epoll_event &oneEv = (ev)[i];
                 ProcessEvent(oneEv);
             }
         } else if (count == 0) {
-            LOG_TRACE("Got " << count << " in worker " << mName);
+            LOG_TRACE("Got " << count << " in worker " << options_.Name());
             continue;
         } else if (errno == EINTR) {
             LOG_TRACE("Got error no EINTR in worker " << options_.Name());
@@ -182,5 +182,124 @@ void AccTcpWorker::RunInThread(std::atomic<bool> *started)
 
     LOG_DEBUG("Worker " << options_.Name() << " progress thread exiting");
 }
+Result AccTcpWorker::ModifyLink(const AccTcpLinkDefaultPtr &link, uint32_t events) noexcept
+{
+    ASSERT_RETURN(link.Get(), ACC_INVALID_PARAM);
+
+    LOG_TRACE("Try to modify link " << link->ShortName() << " in sock worker " << options_.Name() << " with event "
+                                    << events);
+
+    struct epoll_event evNewFd{};
+    evNewFd.data.ptr = link.Get();
+    evNewFd.events = events;
+
+    if (UNLIKELY(epoll_ctl(epollFD_, EPOLL_CTL_MOD, link->fd_, &evNewFd) != 0)) {
+        LOG_ERROR("Failed to modify " << link->ShortName() << " for sock worker " << options_.Name()
+                                      << ", errno:" << errno);
+        return ACC_EPOLL_ERROR;
+    }
+
+    return ACC_OK;
+}
+
+void AccTcpWorker::ProcessBufferedRequest(AccTcpLinkDefault *link) noexcept
+{
+    if (!link->HasBufferedRequest()) {
+        return;
+    }
+    if (newRequestHandle_ == nullptr) {
+        return;
+    }
+    auto r = link->HandlePollIn();
+    if (r != ACC_LINK_MSG_READY) {
+        return;
+    }
+    AccTcpRequestContext ctx(link->header_, link->data_, link);
+    (void)newRequestHandle_(ctx);
+    (void)ModifyLink(link, EPOLLIN | EPOLLOUT | EPOLLET);
+}
+
+Result AccTcpWorker::ProcessPollIn(AccTcpLinkDefault *link) noexcept
+{
+    auto result = link->HandlePollIn();
+    if (result == ACC_LINK_MSG_READY) {
+        AccTcpRequestContext ctx(link->header_, link->data_, link);
+        if (newRequestHandle_ != nullptr) {
+            (void)newRequestHandle_(ctx);
+        }
+        (void)ModifyLink(link, EPOLLIN | EPOLLOUT | EPOLLET);
+        return ACC_OK;
+    }
+    if (result == ACC_LINK_EAGAIN) {
+        (void)ModifyLink(link, EPOLLIN | EPOLLOUT | EPOLLET);
+        return ACC_OK;
+    }
+    if (result == ACC_LINK_ERROR || result == ACC_LINK_MSG_INVALID) {
+        LOG_DEBUG("RCV broken on link " << link->id_ << ", call linkBrokenHandle_");
+        if (linkBrokenHandle_ != nullptr) {
+            (void)linkBrokenHandle_(link);
+        }
+        return ACC_OK;
+    }
+    return ACC_OK;
+}
+
+Result AccTcpWorker::ProcessPollOut(AccTcpLinkDefault *link) noexcept
+{
+    AccMsgHeader outHeader{};
+    AccDataBufferPtr cbCtx;
+    auto result = link->HandlePollOut(outHeader, cbCtx);
+    if (result == ACC_LINK_MSG_SENT) {
+        if (requestSentHandle_ != nullptr) {
+            (void)requestSentHandle_(MSG_SENT, outHeader, cbCtx);
+        }
+        (void)ModifyLink(link, EPOLLIN | EPOLLOUT | EPOLLET);
+        if (link->HasPendingCleanup()) {
+            if (linkBrokenHandle_ != nullptr) {
+                (void)linkBrokenHandle_(link);
+            }
+            return ACC_OK;
+        }
+        ProcessBufferedRequest(link);
+    } else if (result == ACC_LINK_EAGAIN) {
+        (void)ModifyLink(link, EPOLLIN | EPOLLOUT | EPOLLET);
+    } else if (result == ACC_LINK_ERROR) {
+        (void)ModifyLink(link, EPOLLWRNORM);
+    }
+    return ACC_OK;
+}
+
+Result AccTcpWorker::ProcessPollWrNorm(AccTcpLinkDefault *link) noexcept
+{
+    if (linkBrokenHandle_ != nullptr) {
+        (void)linkBrokenHandle_(link);
+    } else {
+        LOG_ERROR("LinkBrokenHandler not set in worker " << options_.Name());
+    }
+    return ACC_OK;
+}
+
+Result AccTcpWorker::ProcessEvent(struct epoll_event &event) noexcept
+{
+    auto *link = static_cast<AccTcpLinkDefault *>(event.data.ptr);
+    if (UNLIKELY(link == nullptr)) {
+        LOG_ERROR("Link is null in polled event for worker " << options_.Name());
+        return ACC_EPOLL_ERROR;
+    }
+
+    if (event.events & EPOLLIN) {
+        return ProcessPollIn(link);
+    }
+    if (event.events & EPOLLOUT) {
+        return ProcessPollOut(link);
+    }
+    if (event.events & EPOLLWRNORM) {
+        return ProcessPollWrNorm(link);
+    }
+
+    LOG_TRACE("Receive link " << link->id_ << " event " << event.events);
+    return ACC_OK;
+}
+
 } // namespace acc
 } // namespace ock

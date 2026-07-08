@@ -302,7 +302,7 @@ inline size_t FileUtil::GetFileSize(const std::string &path)
         return 0;
     }
 
-    std::string realFilePath;
+    std::string realFilePath = path;
     if (!Realpath(realFilePath)) {
         return 0;
     }

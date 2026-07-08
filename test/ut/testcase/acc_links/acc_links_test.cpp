@@ -24,12 +24,13 @@
 #include "acc_tcp_link.h"
 #include "acc_tcp_link_complex_default.h"
 #include "acc_includes.h"
-#include "acc_tcp_shared_buf.h"
 #undef protected
-#define private public
+#define protected public
+#define private   public
 #include "acc_tcp_server.h"
 #include "acc_tcp_server_default.h"
 #undef private
+#undef protected
 namespace {
 const int BUFF_SIZE = 32;
 const int LISTEN_PORT = 8100;
@@ -104,7 +105,7 @@ public:
         return 0;
     }
 
-    int32_t HandleLinkDefaultBroken(const AccTcpLinkComplexDefaultPtr &link)
+    int32_t HandleLinkDefaultBroken(const AccTcpLinkDefaultPtr &link)
     {
         for (auto it = g_rankLinkMap.begin(); it != g_rankLinkMap.end(); ++it) {
             if (it->second->Id() == link->Id()) {
@@ -387,7 +388,7 @@ TEST_F(AccLinksTest, test_worker_ValidateOptions)
     ASSERT_TRUE(ret != ACC_OK);
 
     worker->RegisterLinkBrokenHandler(nullptr);
-    auto linkBrokenMethod = [this](const AccTcpLinkComplexDefaultPtr &link) { return HandleLinkDefaultBroken(link); };
+    auto linkBrokenMethod = [this](const AccTcpLinkDefaultPtr &link) { return HandleLinkDefaultBroken(link); };
     worker->RegisterLinkBrokenHandler(linkBrokenMethod);
     worker->RegisterLinkBrokenHandler(linkBrokenMethod);
     ret = worker->Start();
@@ -411,7 +412,7 @@ TEST_F(AccLinksTest, test_worker_ValidateOptions_NoName)
     };
     worker->RegisterRequestSentHandler(hdSentMethod);
 
-    auto linkBrokenMethod = [this](const AccTcpLinkComplexDefaultPtr &link) { return HandleLinkDefaultBroken(link); };
+    auto linkBrokenMethod = [this](const AccTcpLinkDefaultPtr &link) { return HandleLinkDefaultBroken(link); };
     worker->RegisterLinkBrokenHandler(linkBrokenMethod);
 
     auto ret = worker->Start();
@@ -699,7 +700,7 @@ TEST_F(AccLinksTest, test_server_start_StartWorkers_validate_should_return_error
     opts.version = 1;
     opts.workerCount = WORKER_COUNT;
 
-    MOCKER_CPP(&AccTcpServerDefault::StartWorkers, int32_t (*)(AccTcpServerDefault *)).stubs().will(returnValue(-2));
+    MOCKER_CPP(&AccTcpServerDefault::StartWorkers, int32_t(*)(AccTcpServerDefault *)).stubs().will(returnValue(-2));
     int32_t ret = mServer->Start(opts);
     ASSERT_TRUE(ret != true);
 }
@@ -716,7 +717,7 @@ TEST_F(AccLinksTest, test_server_start_StartListener_validate_should_return_erro
     opts.magic = 0;
     opts.version = 1;
     opts.workerCount = WORKER_COUNT;
-    MOCKER_CPP(&AccTcpServerDefault::StartListener, int32_t (*)(AccTcpServerDefault *)).stubs().will(returnValue(-2));
+    MOCKER_CPP(&AccTcpServerDefault::StartListener, int32_t(*)(AccTcpServerDefault *)).stubs().will(returnValue(-2));
     int32_t ret = mServer->Start(opts);
     ASSERT_TRUE(ret != true);
 }
@@ -811,7 +812,7 @@ TEST_F(AccLinksTest, test_AccTcpLinkComplex_EnqueueAndModifyEpoll_mock_should_re
     AccDataBufferPtr buffer = AccMakeRef<AccDataBuffer>(0);
     int32_t ret = mLink->Initialize(255, 0, mWorker.Get());
     MOCKER_CPP(&AccLinkedMessageQueue::EnqueueBack,
-               int32_t (*)(const AccMsgHeader &, const AccDataBufferPtr &, const AccDataBufferPtr &))
+               int32_t(*)(const AccMsgHeader &, const AccDataBufferPtr &, const AccDataBufferPtr &))
         .stubs()
         .will(returnValue(-4));
     ret = mLink->EnqueueAndModifyEpoll(header, buffer, nullptr);
@@ -836,16 +837,16 @@ TEST_F(AccLinksTest, test_tcp_link_connect_send_fd_should_return_error)
     char buf[BUFF_SIZE];
     memset(buf, 0, BUFF_SIZE);
     uint8_t *data = reinterpret_cast<uint8_t *>(buf);
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->BlockSend(data, BUFF_SIZE);
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->BlockSend(data, BUFF_SIZE);
     ASSERT_TRUE(ret != ACC_OK);
 }
 
 TEST_F(AccLinksTest, test_tcp_link_connect_send_data_should_return_error)
 {
     int tFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->BlockSend(nullptr, BUFF_SIZE);
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->BlockSend(nullptr, BUFF_SIZE);
     ASSERT_TRUE(ret != ACC_OK);
 }
 
@@ -855,8 +856,8 @@ TEST_F(AccLinksTest, test_tcp_link_connect_send_len_should_return_error)
     memset(buf, 0, BUFF_SIZE);
     uint8_t *data = reinterpret_cast<uint8_t *>(buf);
     int tFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->BlockSend(data, 0);
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->BlockSend(data, 0);
     ASSERT_TRUE(ret != ACC_OK);
 }
 
@@ -867,8 +868,7 @@ TEST_F(AccLinksTest, test_tcp_link_connect_send_closed_peer_should_return_reconn
 
     char buf[BUFF_SIZE];
     memset(buf, 0, BUFF_SIZE);
-    AccTcpLinkDefaultPtr link =
-        AccMakeRef<AccTcpLinkDefault>(socketPair[0], "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(socketPair[0], "127.0.0.1:8100", AccTcpLinkDefault::NewId());
     ASSERT_TRUE(link != nullptr);
 
     ::shutdown(socketPair[1], SHUT_RDWR);
@@ -884,16 +884,16 @@ TEST_F(AccLinksTest, test_tcp_link_connect_receive_fd_should_return_error)
     char buf[BUFF_SIZE];
     memset(buf, 0, BUFF_SIZE);
     uint8_t *data = reinterpret_cast<uint8_t *>(buf);
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->BlockRecv(data, BUFF_SIZE);
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->BlockRecv(data, BUFF_SIZE);
     ASSERT_TRUE(ret != ACC_OK);
 }
 
 TEST_F(AccLinksTest, test_tcp_link_connect_receive_data_should_return_error)
 {
     int tFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->BlockRecv(nullptr, BUFF_SIZE);
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->BlockRecv(nullptr, BUFF_SIZE);
     ASSERT_TRUE(ret != ACC_OK);
 }
 
@@ -903,15 +903,15 @@ TEST_F(AccLinksTest, test_tcp_link_connect_receive_len_should_return_error)
     memset(buf, 0, BUFF_SIZE);
     uint8_t *data = reinterpret_cast<uint8_t *>(buf);
     int tFd = ::socket(AF_INET, SOCK_STREAM, 0);
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->BlockRecv(data, 0);
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(tFd, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->BlockRecv(data, 0);
     ASSERT_TRUE(ACC_OK != ret);
 }
 
 TEST_F(AccLinksTest, test_tcp_link_EnableNoBlocking_fd_should_return_error)
 {
-    AccTcpLinkDefaultPtr linnk = AccMakeRef<AccTcpLinkDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = linnk->EnableNoBlocking();
+    auto link = AccMakeRef<AccTcpLinkComplexDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
+    int32_t ret = link->EnableNoBlocking();
     ASSERT_TRUE(ACC_OK != ret);
 }
 

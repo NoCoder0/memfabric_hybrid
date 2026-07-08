@@ -222,6 +222,34 @@ public:
     }
 
     /**
+     * @brief Append a pre-built node to the tail, ignore the cap
+     *
+     * Used by HTTP response sending where header is enqueued front and body
+     * appended to tail, keeping on-wire order header-then-body without the
+     * orphan-node risk of two EnqueueFront calls.
+     *
+     * @param node         [in] node to be appended to tail
+     * @return 0 if successful
+     */
+    Result EnqueueBackNode(AccLinkedMessageNode *node)
+    {
+        ASSERT_RETURN(node != nullptr, ACC_INVALID_PARAM);
+        node->next = nullptr;
+
+        std::lock_guard<std::mutex> guard(mutex_);
+        /* no need to consider the cap */
+        if (headNode_ == nullptr) {
+            headNode_ = node;
+            tailNode_ = node;
+        } else {
+            tailNode_->next = node;
+            tailNode_ = node;
+        }
+        ++size_;
+        return ACC_OK;
+    }
+
+    /**
      * @brief Take away all messages in the queue
      *
      * @return Linked message node
@@ -259,8 +287,8 @@ public:
         UnInitialize();
     }
 
-    Result Initialize(uint16_t sendQueueCap, int32_t workIndex, AccTcpWorker *worker);
-    void UnInitialize();
+    Result Initialize(uint16_t sendQueueCap, int32_t workIndex, AccTcpWorker *worker) override;
+    void UnInitialize() override;
 
     Result NonBlockSend(int16_t msgType, const AccDataBufferPtr &d, const AccDataBufferPtr &cbCtx) override;
     Result NonBlockSend(int16_t msgType, uint32_t seqNo, const AccDataBufferPtr &d,
@@ -272,25 +300,17 @@ public:
                                  const AccDataBufferPtr &cbCtx) override;
 
 protected:
-    AccLinkedMessageNode *DequeueFront() noexcept;
-    Result EnqueueFront(AccLinkedMessageNode *node) noexcept;
+    Result HandlePollIn() noexcept override;
+    Result HandlePollOut(AccMsgHeader &header, AccDataBufferPtr &cbCtx) noexcept override;
 
-    AccLinkedMessageNode *TakeAwayMessages();
+    AccLinkedMessageNode *DequeueFront() noexcept override;
+    Result EnqueueFront(AccLinkedMessageNode *node) noexcept override;
 
-    ssize_t PollInRecv(void *ptr, ssize_t len) noexcept;
-    ssize_t PollOutWrite(void *ptr, ssize_t len) noexcept;
-    Result HandlePollIn() noexcept;
-    Result HandlePollOut(AccMsgHeader &header, AccDataBufferPtr &cbCtx) noexcept;
-    Result SendPostProcess(int32_t errorNumber) noexcept;
+    AccLinkedMessageNode *TakeAwayMessages() override;
 
-protected:
     AccLinkReceiveState receiveState_{};      /* state of receiving message for worker polling only */
-    AccMsgHeader header_{};                   /* header to be received for worker polling only */
-    AccDataBufferPtr data_{nullptr};          /* data being received for worker polling only */
     AccLinkedMessageQueuePtr queue_{nullptr}; /* send message queue */
     std::atomic<uint32_t> seqNo_{0};          /* seqNo */
-    uint32_t workerIndex_ = 0;                /* attached to which worker */
-    AccTcpWorker *worker_ = nullptr;
 
     friend class AccTcpWorker;
     friend class AccTcpRequestContext;
@@ -314,24 +334,6 @@ inline AccLinkedMessageNode *AccTcpLinkComplexDefault::TakeAwayMessages()
 {
     ASSERT_RETURN(queue_.Get() != nullptr, nullptr);
     return queue_->TakeAwayMessages();
-}
-
-inline ssize_t AccTcpLinkComplexDefault::PollInRecv(void *ptr, ssize_t len) noexcept
-{
-    if (LIKELY(ssl_ == nullptr)) {
-        return ::recv(fd_, ptr, len, 0);
-    } else {
-        return OpenSslApiWrapper::SslRead(ssl_, ptr, len);
-    }
-}
-
-inline ssize_t AccTcpLinkComplexDefault::PollOutWrite(void *ptr, ssize_t len) noexcept
-{
-    if (LIKELY(ssl_ == nullptr)) {
-        return SocketSendNoSignal(fd_, ptr, len);
-    } else {
-        return OpenSslApiWrapper::SslWrite(ssl_, ptr, len);
-    }
 }
 
 inline Result AccTcpLinkComplexDefault::HandlePollIn() noexcept
@@ -458,21 +460,6 @@ inline Result AccTcpLinkComplexDefault::HandlePollOut(AccMsgHeader &header, AccD
     delete oneMsg;
     oneMsg = nullptr;
     return ACC_OK;
-}
-
-inline Result AccTcpLinkComplexDefault::SendPostProcess(int32_t errorNumber) noexcept
-{
-    if (errorNumber == ECONNRESET) {
-        LOG_ERROR("Failed to send msg to peer in link " << id_ << ", reset by peer");
-        return ACC_LINK_ERROR;
-    }
-
-    if (errorNumber == EAGAIN || errorNumber == EPIPE) { /* send buff is full not send */
-        return ACC_LINK_EAGAIN;
-    }
-
-    LOG_ERROR("Failed to send msg to peer in link " << id_ << ", errno " << errorNumber);
-    return ACC_LINK_ERROR;
 }
 
 inline Result AccTcpLinkComplexDefault::NonBlockSend(int16_t msgType, const AccDataBufferPtr &d,

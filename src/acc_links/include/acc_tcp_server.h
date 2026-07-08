@@ -61,7 +61,7 @@ using AccLinkBrokenHandler = std::function<int32_t(const AccTcpLinkComplexPtr &l
  * b) workers, one worker is one thread doing event polling, callback invoking, message sending
  * c) connection manager
  */
-class ACC_API AccTcpServer : public AccReferable {
+class ACC_API AccTcpServer : public virtual AccReferable {
 public:
     /**
      * @brief Create a server

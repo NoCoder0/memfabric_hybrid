@@ -24,6 +24,9 @@
 namespace ock {
 namespace acc {
 
+struct AccLinkedMessageNode;
+class AccTcpWorker;
+
 constexpr long TIME_UNIT_INTERVAL = 1000L;
 constexpr int32_t SSL_ERROR_SSL = 1;
 constexpr int32_t SSL_ERROR_SYSCALL = 5;
@@ -311,13 +314,12 @@ public:
     Result EnableNoBlocking() const override
     {
         int32_t value = UNO_1;
-        /* set blocking, fcntl result is 0 or -1 */
         if ((value = fcntl(fd_, F_GETFL, 0)) == -1) {
             LOG_ERROR("Failed to get control value of link " << ShortName() << ", errno:" << errno);
             return ACC_LINK_OPTION_ERROR;
         }
 
-        if ((value = fcntl(fd_, F_SETFL, static_cast<uint32_t>(value) & ~O_NONBLOCK)) == -1) {
+        if ((value = fcntl(fd_, F_SETFL, static_cast<uint32_t>(value) | O_NONBLOCK)) == -1) {
             LOG_ERROR("Failed to set control value of link " << ShortName() << ", errno:" << errno);
             return ACC_LINK_OPTION_ERROR;
         }
@@ -376,8 +378,75 @@ public:
         return ACC_ERROR;
     }
 
+    virtual bool HasBufferedRequest() const
+    {
+        return false;
+    }
+
+    virtual bool HasPendingCleanup() const
+    {
+        return false;
+    }
+
+    virtual Result HandlePollIn() noexcept = 0;
+
+    virtual Result HandlePollOut(AccMsgHeader &header, AccDataBufferPtr &cbCtx) noexcept = 0;
+
+    virtual Result Initialize(uint16_t sendQueueCap, int32_t workIndex, AccTcpWorker *worker) = 0;
+    virtual void UnInitialize() = 0;
+
+    virtual AccLinkedMessageNode *TakeAwayMessages() = 0;
+    virtual Result EnqueueFront(AccLinkedMessageNode *node) = 0;
+    virtual AccLinkedMessageNode *DequeueFront() = 0;
+
+    virtual uint32_t GetWorkerIndex() const
+    {
+        return workerIndex_;
+    }
+    virtual void SetWorkerIndex(uint32_t idx)
+    {
+        workerIndex_ = idx;
+    }
+
 protected:
-    SSL *ssl_ = nullptr; /* ssl link ptr */
+    ssize_t PollInRecv(void *ptr, ssize_t len) noexcept
+    {
+        if (LIKELY(ssl_ == nullptr)) {
+            return ::recv(fd_, ptr, len, 0);
+        } else {
+            return OpenSslApiWrapper::SslRead(ssl_, ptr, len);
+        }
+    }
+
+    ssize_t PollOutWrite(void *ptr, ssize_t len) noexcept
+    {
+        if (LIKELY(ssl_ == nullptr)) {
+            return SocketSendNoSignal(fd_, ptr, len);
+        } else {
+            return OpenSslApiWrapper::SslWrite(ssl_, ptr, len);
+        }
+    }
+
+    Result SendPostProcess(int32_t errorNumber) noexcept
+    {
+        if (errorNumber == ECONNRESET) {
+            LOG_ERROR("Failed to send msg to peer in link " << id_ << ", reset by peer");
+            return ACC_LINK_ERROR;
+        }
+
+        if (errorNumber == EAGAIN || errorNumber == EPIPE) { /* send buff is full not send */
+            return ACC_LINK_EAGAIN;
+        }
+
+        LOG_ERROR("Failed to send msg to peer in link " << id_ << ", errno " << errorNumber);
+        return ACC_LINK_ERROR;
+    }
+
+    AccMsgHeader header_{};             /* header to be received / parsed for worker polling only */
+    AccDataBufferPtr data_{nullptr};    /* data being received / parsed for worker polling only */
+    SSL *ssl_ = nullptr;                /* ssl link ptr */
+    uint32_t workerIndex_ = 0;          /* attached to which worker */
+    AccTcpWorker *worker_ = nullptr;
 
     friend class AccTcpWorker;
 };

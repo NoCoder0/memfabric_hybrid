@@ -25,7 +25,8 @@
 
 namespace ock {
 namespace acc {
-constexpr uint32_t MAX_RECV_BODY_LEN = 64 * 1024 * 1024; /* max receive body len limit */
+constexpr uint32_t MAX_RECV_BODY_LEN = 64 * 1024 * 1024;        /* max receive body len limit */
+constexpr size_t HTTP_DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024; /* default max HTTP request body size */
 constexpr uint32_t UNO_1024 = 1024;
 constexpr uint32_t UNO_1000 = 1000;
 constexpr uint32_t UNO_500 = 500;
@@ -94,9 +95,9 @@ struct AccMsgHeader {
 };
 
 /**
- * @brief Options of Tcp Server, required when start a tcp server
+ * @brief Common server options shared by TCP and HTTP
  */
-struct AccTcpServerOptions {
+struct AccCommonServerOptions {
     std::string listenIp;                    /* listen ip */
     uint16_t listenPort = 9966L;             /* listen port */
     uint16_t workerCount = UNO_2;            /* number of worker threads */
@@ -109,9 +110,25 @@ struct AccTcpServerOptions {
     uint16_t keepaliveProbeInterval = UNO_2; /* tcp keepalive probe interval */
     bool reusePort = true;                   /* reuse listen port */
     bool enableListener = false;             /* start listener or not */
-    int16_t magic = 0;                       /* magic number of  */
-    int16_t version = 0;                     /* version */
     uint32_t maxWorldSize = UNO_1024;        /* max client number */
+};
+
+/**
+ * @brief Options of Tcp Server, required when start a tcp server
+ */
+struct AccTcpServerOptions : public AccCommonServerOptions {
+    int16_t magic = 0;   /* magic number */
+    int16_t version = 0; /* version */
+};
+
+/**
+ * @brief Options of HTTP server
+ *
+ * Inherits common server options from AccCommonServerOptions.
+ * maxBodySize caps the accepted HTTP request body size in bytes.
+ */
+struct AccHttpServerOptions : public AccCommonServerOptions {
+    size_t maxBodySize = HTTP_DEFAULT_MAX_BODY_SIZE; /* max HTTP request body size in bytes */
 };
 
 /**
@@ -172,10 +189,15 @@ class AccTcpServer;
 class AccTcpLink;
 class AccTcpRequestContext;
 class AccTcpLinkComplex;
+class AccHttpRequestContext;
+class AccHttpServer;
 using AccDataBufferPtr = AccRef<AccDataBuffer>;
 using AccTcpServerPtr = AccRef<AccTcpServer>;
+using AccHttpServerPtr = AccRef<AccHttpServer>;
 using AccTcpLinkPtr = AccRef<AccTcpLink>;
 using AccTcpLinkComplexPtr = AccRef<AccTcpLinkComplex>;
+using AccHttpRequestContextPtr = AccRef<AccHttpRequestContext>;
+using Result = int32_t;
 
 #define ACC_API __attribute__((visibility("default")))
 } // namespace acc

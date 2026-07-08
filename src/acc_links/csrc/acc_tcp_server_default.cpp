@@ -298,6 +298,12 @@ Result AccTcpServerDefault::StartListener()
     tmpListener->RegisterNewConnectionHandler(
         std::bind(&AccTcpServerDefault::HandleNewConnection, this, std::placeholders::_1, std::placeholders::_2));
 
+    linkFactory_ = [](int fd, const std::string &ipPort, SSL *ssl) -> AccTcpLinkDefaultPtr {
+        auto complexLink = AccMakeRef<AccTcpLinkComplexDefault>(fd, ipPort, AccTcpLinkDefault::NewId(), ssl);
+        return AccConvert<AccTcpLinkComplexDefault, AccTcpLinkDefault>(complexLink);
+    };
+    tmpListener->RegisterLinkFactory(linkFactory_);
+
     auto result = tmpListener->Start();
     if (result != ACC_OK) {
         return result;
@@ -355,7 +361,7 @@ void AccTcpServerDefault::StopAndCleanDelayCleanup(bool afterFork)
     delayCleanup_ = nullptr;
 }
 
-Result AccTcpServerDefault::HandleNewConnection(const AccConnReq &req, const AccTcpLinkComplexDefaultPtr &newLink)
+Result AccTcpServerDefault::HandleNewConnection(const AccConnReq &req, const AccTcpLinkDefaultPtr &newLink)
 {
     ASSERT_RETURN(newLink.Get() != nullptr, ACC_INVALID_PARAM);
     if (req.magic != options_.magic) {
@@ -669,19 +675,61 @@ Result AccTcpServerDefault::Handshake(int &tmpFD, const AccConnReq &connReq, con
             return ACC_ERROR;
         }
 
+        auto linkDefault = AccConvert<AccTcpLinkComplexDefault, AccTcpLinkDefault>(tmpLink);
         /* added to worker */
-        result = worker->AddLink(tmpLink, EPOLLIN | EPOLLOUT | EPOLLET);
+        result = worker->AddLink(linkDefault, EPOLLIN | EPOLLOUT | EPOLLET);
         if (UNLIKELY(result != ACC_OK)) {
             return result;
         }
 
         /* emplace map */
-        connectedLinks_.emplace(tmpLink->Id(), tmpLink);
+        connectedLinks_.emplace(tmpLink->Id(), linkDefault);
     }
 
     newLink = tmpLink.Get();
     LOG_INFO("Connect to " << ipAndPort << " successfully, with ssl " << (tlsOption_.enableTls ? "enable" : "disable"));
     return ACC_OK;
 }
+
+Result AccTcpServerDefault::HandleLinkBroken(const AccTcpLinkDefaultPtr &link)
+{
+    ASSERT_RETURN(link.Get() != nullptr, ACC_INVALID_PARAM);
+
+    auto breakByMe = link->Break();
+    if (!breakByMe) {
+        return ACC_OK;
+    }
+
+    AccLinkedMessageNode *node = link->TakeAwayMessages();
+    while (node != nullptr) {
+        auto nextNode = node->next;
+        HandleRequestSent(MSG_LINK_BROKEN, node->header, node->cbCtx);
+        delete node;
+        node = nextNode;
+    }
+
+    linkBrokenHandle_(link.Get());
+
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (!started_) {
+            return ACC_OK;
+        }
+        auto iter = connectedLinks_.find(link->Id());
+        if (iter == connectedLinks_.end()) {
+            LOG_WARN("Failed to find the link " << link->Id());
+        }
+
+        workers_[link->GetWorkerIndex()]->RemoveLink(link);
+        WorkerLinkCntUpdate(link->GetWorkerIndex());
+
+        link->SetWorkerIndex(0);
+        delayCleanup_->Enqueue(link.Get());
+        connectedLinks_.erase(link->Id());
+    }
+
+    return ACC_OK;
+}
+
 } // namespace acc
 } // namespace ock

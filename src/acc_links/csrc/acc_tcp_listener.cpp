@@ -25,13 +25,19 @@ constexpr int LISTEN_POLL_TIME = 10; // 10ms
 #endif
 Result AccTcpListener::Start() noexcept
 {
-    auto parser = mf::SocketAddressParserMgr::getInstance().GetParser(listenPort_);
     if (started_) {
         LOG_INFO("AccTcpListener at " << NameAndPort() << " already started");
         return ACC_OK;
     }
 
     VALIDATE_RETURN(connHandler_ != nullptr, "connection handler not initialized", ACC_ERROR);
+
+    auto &mgr = mf::SocketAddressParserMgr::getInstance();
+    auto parser = mgr.GetParser(listenPort_);
+    if (parser == nullptr) {
+        std::string url = "tcp://" + listenIp_ + ":" + std::to_string(listenPort_);
+        parser = mgr.CreateParser(url);
+    }
     VALIDATE_RETURN(parser != nullptr, "parser not initialized", ACC_ERROR);
 
     /* create socket */
@@ -63,6 +69,7 @@ Result AccTcpListener::Start() noexcept
         return ACC_ERROR;
     }
 
+    pollTimeoutMs_ = LISTEN_POLL_TIME;
     auto ret = StartAcceptThread();
     if (ret != ACC_OK) {
         SafeCloseFd(tmpFD);
@@ -100,11 +107,6 @@ Result AccTcpListener::StartAcceptThread() noexcept
         return ACC_ERROR;
     }
 
-    std::string thrName = "AccListener";
-    if (pthread_setname_np(acceptThread_.native_handle(), thrName.c_str()) != 0) {
-        LOG_WARN("Failed to set thread name of oob tcp server");
-    }
-
     return ACC_OK;
 }
 
@@ -130,7 +132,7 @@ void AccTcpListener::Stop(bool afterFork) noexcept
 
 void AccTcpListener::RunInThread() noexcept
 {
-    pthread_setname_np(pthread_self(), "acc_accept_poll");
+    pthread_setname_np(pthread_self(), threadName_.c_str());
     LOG_INFO("Acc listener accept thread for " << NameAndPort() << " start ...");
     threadStarted_.store(true);
 
@@ -141,7 +143,7 @@ void AccTcpListener::RunInThread() noexcept
             pollEventFd.events = POLLIN;
             pollEventFd.revents = 0;
 
-            int rc = poll(&pollEventFd, 1, LISTEN_POLL_TIME);
+            int rc = poll(&pollEventFd, 1, pollTimeoutMs_);
             if (rc < 0 && errno != EINTR) {
                 LOG_ERROR("Get poll event failed  , errno " << strerror(errno));
                 break;
@@ -206,7 +208,13 @@ void AccTcpListener::ProcessNewConnection(int fd, struct sockaddr_in addressIn) 
     }
 
     LOG_INFO("Connected from " << ipPort << " successfully, ssl " << (enableTls_ ? "enable" : "disable"));
-    auto newLink = AccMakeRef<AccTcpLinkComplexDefault>(fd, ipPort, AccTcpLinkDefault::NewId(), ssl);
+    AccTcpLinkDefaultPtr newLink;
+    if (linkFactory_) {
+        newLink = linkFactory_(fd, ipPort, ssl);
+    } else {
+        auto complexLink = AccMakeRef<AccTcpLinkComplexDefault>(fd, ipPort, AccTcpLinkDefault::NewId(), ssl);
+        newLink = AccConvert<AccTcpLinkComplexDefault, AccTcpLinkDefault>(complexLink);
+    }
     if (newLink == nullptr) {
         LOG_ERROR("Failed to create listener tcp link object, probably out of memory");
         if (ssl != nullptr) {
@@ -220,14 +228,13 @@ void AccTcpListener::ProcessNewConnection(int fd, struct sockaddr_in addressIn) 
         return;
     }
 
-    // tmpLink作为智能指针 异常分支返回时会自动析构释放资源
+    // newLink作为智能指针 异常分支返回时会自动析构释放资源
     auto result = connHandler_(req, newLink.Get());
     if (result != ACC_OK) {
         LOG_INFO("ProcessNewConnection: connHandler_ non-ok, send error resp result=" << result);
         AccConnResp resp;
         resp.result = static_cast<int16_t>(result);
         (void)::send(fd, &resp, sizeof(resp), 0);
-        SafeCloseFd(fd);
         return;
     }
 
