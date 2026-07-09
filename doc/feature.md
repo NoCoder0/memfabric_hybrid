@@ -86,3 +86,23 @@ c接口使用方式:
 2. 调用smem_shm_create接口创建实例并获得gva地址
 3. 编写算子直接访问或通过smem_shm_aicore_base_api.h的接口访问gva地址
 ```
+
+### 4) Acc Offload
+面向KV Cache卸载等场景，提供基于单卡DRAM的内存池及卡侧稀疏拷贝加速能力
+
+    * 支持从预留的DRAM内存池中分配/释放host内存（参见offload_malloc和offload_free接口）
+    * 提供卡侧批量稀疏拷贝接口，加速多个不连续地址间的数据搬移（参见offload_sparse_copy接口）
+    * Python侧提供torch友好的empty和sparse_copy封装
+    * 接口支持的语言: c, python
+
+##### 使用简介
+详情参考[offload_example](../examples/kv_offload/local_dram_offload/local_dram_offload.py)
+简单概述如下
+```
+python接口使用方式:
+1. from memfabric_hybrid import offload
+2. 构造OffloadConfig，调用offload.initialize接口初始化
+3. 调用offload.empty分配内存并获得torch.Tensor，或调用offload.malloc获得地址
+4. 调用offload.sparse_copy接口在device上执行批量稀疏拷贝
+5. 调用offload.free释放内存，调用offload.uninitialize退出
+```

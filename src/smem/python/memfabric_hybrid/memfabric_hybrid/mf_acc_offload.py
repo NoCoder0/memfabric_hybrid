@@ -32,5 +32,5 @@ def empty(sizes, dtype=None, pin_memory=False):
     return torch.frombuffer(buf, dtype=dtype).reshape(sizes)
 
 
-def sparse_copy(srcPtrs, dstPtrs, lens, size, device):
-    return sparse_copy_impl(srcPtrs.data_ptr(), dstPtrs.data_ptr(), lens.data_ptr(), size.data_ptr(), device.index)
+def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId):
+    return sparse_copy_impl(srcPtrs.data_ptr(), dstPtrs.data_ptr(), lenPtrs.data_ptr(), sizePtr.data_ptr(), deviceId.index)

@@ -798,6 +798,82 @@ int32_t smem_trans_write_submit(smem_trans_t handle, const void *localAddr, cons
 | stream       | 需要将任务提交到的aclrtStream |
 | 返回值          | 成功返回0，其他为错误码         |
 
+> 注：如下接口对外封装了相同含义的Python接口，详细信息可参考`src/acc_offload/csrc/python_wrapper/pymf_acc_offload.cpp`。
+## ACC OFFLOAD接口列表
+
+### 1. 常用类型
+#### offload_config_t
+offload初始化配置结构体
+```c
+typedef struct {
+    uint32_t deviceId;
+    uint64_t size;
+} offload_config_t;
+```
+
+|成员|含义|
+|-|-|
+|deviceId|绑定的device id|
+|size|DRAM内存大小，单位字节，内部会向上对齐到GB|
+
+### 2. 初始化/退出
+#### offload_init
+初始化offload模块，创建hybm大内存实体并加载sparse copy算子库
+```c
+int32_t offload_init(const offload_config_t &config);
+```
+
+|参数/返回值|含义|
+|-|-|
+|config|初始化参数，参考offload_config_t定义|
+|返回值|成功返回0，其他为错误码|
+
+#### offload_uninit
+退出offload模块，释放hybm大内存实体并卸载算子库
+```c
+void offload_uninit();
+```
+
+### 3. 内存分配/释放
+#### offload_malloc
+从offload内存池中分配host内存，返回地址按16字节对齐
+```c
+uint64_t offload_malloc(uint64_t size, uint64_t flags);
+```
+
+|参数/返回值|含义|
+|-|-|
+|size|分配内存大小，单位字节|
+|flags|预留参数|
+|返回值|成功返回非0地址，失败返回0|
+
+#### offload_free
+释放由offload_malloc分配的host内存
+```c
+void offload_free(uint64_t ptr, uint64_t flags);
+```
+
+|参数/返回值|含义|
+|-|-|
+|ptr|offload_malloc返回的地址|
+|flags|预留参数|
+
+### 4. 稀疏拷贝
+#### offload_sparse_copy
+批量稀疏拷贝，在device上异步执行多个不连续地址间的数据拷贝
+```c
+int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t sizePtr, uint16_t deviceId);
+```
+
+|参数/返回值|含义|
+|-|-|
+|srcPtr|源地址数组首地址指针，数组元素为uint64_t地址|
+|dstPtr|目的地址数组首地址指针，数组元素为uint64_t地址|
+|lenPtr|每个拷贝任务长度数组首地址指针，数组元素为uint32_t，单位字节|
+|sizePtr|指向上述数组中元素个数的指针|
+|deviceId|执行拷贝的device id|
+|返回值|成功返回0，其他为错误码|
+
 ## 环境变量
 |环境变量|含义|
 |-|-|

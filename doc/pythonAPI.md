@@ -445,3 +445,88 @@ class TransferOpcode(Enum):
     READ
     WRITE
 ```
+
+## ACC OFFLOAD接口
+### 1. 初始化/退出接口
+#### initialize
+初始化offload运行环境
+```python
+def initialize(config: OffloadConfig) -> int
+```
+
+|参数/返回值|含义|
+|-|-|
+|config|OffloadConfig对象，初始化配置|
+|返回值|成功返回0，其他为错误码|
+
+#### uninitialize
+退出offload运行环境
+```python
+def uninitialize() -> None
+```
+
+### 2. 内存分配/释放
+#### malloc
+从offload内存池分配host内存
+```python
+def malloc(size, flags = 0) -> int
+```
+
+|参数/返回值|含义|
+|-|-|
+|size|分配内存大小，单位字节|
+|flags|预留参数|
+|返回值|成功返回非0地址，失败返回0|
+
+#### free
+释放由malloc分配的内存
+```python
+def free(ptr, flags = 0) -> None
+```
+
+|参数/返回值|含义|
+|-|-|
+|ptr|malloc返回的地址|
+|flags|预留参数|
+
+#### empty
+从offload内存池分配内存并返回torch.Tensor
+```python
+def empty(sizes, dtype = None, pin_memory = False) -> torch.Tensor
+```
+
+|参数/返回值|含义|
+|-|-|
+|sizes|tensor形状|
+|dtype|tensor数据类型，默认torch.bfloat16|
+|pin_memory|预留参数|
+|返回值|基于offload内存的torch.Tensor|
+
+### 3. 稀疏拷贝
+#### sparse_copy
+批量稀疏拷贝（torch友好封装），在device上异步执行多个不连续地址间的数据拷贝
+```python
+def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId) -> int
+```
+
+|参数/返回值|含义|
+|-|-|
+|srcPtrs|torch.Tensor，每个元素为源地址|
+|dstPtrs|torch.Tensor，每个元素为目的地址|
+|lenPtrs|torch.Tensor，每个元素为对应拷贝的字节数|
+|sizePtr|torch.Tensor，包含一个元素表示任务数量|
+|deviceId|torch.device，执行拷贝的设备|
+|返回值|成功返回0，其他为错误码|
+
+### 4. 常用类型
+#### OffloadConfig类
+```python
+class OffloadConfig:
+    def __init__(self) -> None
+```
+
+|构造函数/属性|含义|
+|-|-|
+|构造函数|offload配置初始化|
+|device_id属性|绑定的device id|
+|size属性|DRAM内存大小，单位字节，内部会向上对齐到GB|
