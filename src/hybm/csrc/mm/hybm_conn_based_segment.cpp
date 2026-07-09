@@ -16,11 +16,15 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <algorithm>
+#include <bitset>
 #include <cstddef>
+#include <optional>
 
+#include "hybm_def.h"
 #include "hybm_logger.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_va_manager.h"
+#include "hybm_numa_util.h"
 #include "dl_hal_api.h"
 
 using namespace ock::mf;
@@ -34,6 +38,24 @@ Result HybmConnBasedSegment::ValidateOptions() noexcept
 
     if (UINT64_MAX / options_.maxSize < options_.rankCnt) {
         BM_LOG_ERROR("Validate options error rankCnt(" << options_.rankCnt << ") size(" << options_.maxSize);
+        return BM_INVALID_PARAM;
+    }
+
+    const auto policyInfo = HybmNumaUtil::GetNumaBindPolicyInfo(options_.flags, logicDeviceId_);
+    if (!policyInfo.valid) {
+        BM_LOG_ERROR("Failed to resolve NUMA affinity from flag:" << std::bitset<UINT32_WIDTH>(options_.flags)
+                                                                  << " start index:" << HYBM_BIND_NUMA_FLAG_INDEX
+                                                                  << " flag len:" << HYBM_BIND_NUMA_FLAG_LEN);
+        return BM_INVALID_PARAM;
+    }
+    if (policyInfo.policy == NumaBindPolicy::MANUAL && policyInfo.cpuGroupId < 0) {
+        BM_LOG_ERROR("Failed to resolve manual NUMA affinity from flag:" << std::bitset<UINT32_WIDTH>(options_.flags)
+                                                                         << " start index:" << HYBM_BIND_NUMA_FLAG_INDEX
+                                                                         << " flag len:" << HYBM_BIND_NUMA_FLAG_LEN);
+        return BM_INVALID_PARAM;
+    }
+    if (policyInfo.policy == NumaBindPolicy::AUTO && policyInfo.cpuGroupId < 0) {
+        BM_LOG_ERROR("Failed to resolve auto NUMA affinity from deviceId:" << logicDeviceId_);
         return BM_INVALID_PARAM;
     }
 
@@ -350,6 +372,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
                                              << " error:" << errno << ", " << SafeStrError(errno));
         return BM_ERROR;
     }
+    LvaShmReservePhysicalMemory(mapped, size);
 
     if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
@@ -369,8 +392,6 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         FreeAllocatedMemory(mapped, size, allocMethod);
         return ret;
     }
-
-    LvaShmReservePhysicalMemory(mapped, size);
     return BM_OK;
 }
 
@@ -384,6 +405,15 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
 
     // 0. A5 only support HalMemAlloc for URMA
     if (socType_ == AscendSocType::ASCEND_950) {
+        const auto policyInfo = HybmNumaUtil::GetNumaBindPolicyInfo(options_.flags, logicDeviceId_);
+        std::optional<CpuAffinityGuard> cpuGuard;
+        if (policyInfo.valid && policyInfo.cpuGroupId >= 0 && policyInfo.policy != NumaBindPolicy::OFF) {
+            BM_LOG_DEBUG("ConnBasedSegment CPU affinity policy:" << static_cast<int32_t>(policyInfo.policy)
+                                                                 << " cpuGroupId:" << policyInfo.cpuGroupId
+                                                                 << " deviceId:" << logicDeviceId_);
+            cpuGuard.emplace(policyInfo.cpuGroupId);
+        }
+
         uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_NORMAL;
         void *halAllocPtr = nullptr;
 
@@ -394,6 +424,7 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
             return MAP_FAILED;
         } else {
             allocMethod = MemAllocMethod::HAL_MEM_ALLOC;
+            BM_LOG_DEBUG("A5 HalMemAlloc CPU affinity for deviceId:" << logicDeviceId_);
             BM_LOG_INFO("Successfully allocated DRAM hugepage via halMemAlloc. "
                         "addr:"
                         << halAllocPtr << " size:" << size);

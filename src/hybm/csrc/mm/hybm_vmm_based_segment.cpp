@@ -17,7 +17,7 @@
 #include "dl_acl_api.h"
 #include "hybm_types.h"
 #include "hybm_va_manager.h"
-#include "mf_num_util.h"
+#include "hybm_numa_util.h"
 
 using namespace ock::mf;
 
@@ -141,8 +141,6 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
 Result HybmVmmBasedSegment::HalMemCreateAdapterFromHost(size_t size, drv_mem_handle_t **handle, drv_mem_prop prop)
 {
     Result ret = BM_ERROR;
-    uint32_t performance =
-        NumUtil::ExtractBits(options_.flags, HYBM_PERFORMANCE_MODE_FLAG_INDEX, HYBM_PERFORMANCE_MODE_FLAG_LEN);
     if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
         prop = {MEM_HOST_SIDE, 0, 0, MEM_HUGE_PAGE_TYPE, MEM_DDR_TYPE, 0};
         auto start = std::chrono::high_resolution_clock::now();
@@ -151,28 +149,22 @@ Result HybmVmmBasedSegment::HalMemCreateAdapterFromHost(size_t size, drv_mem_han
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         BM_LOG_INFO("Try HalMemCreate ret:" << ret << " dev:" << prop.devid << " spend time:" << duration.count()
                                             << " size:" << size);
-    } else if (performance != UINT32_MAX && performance != 0) {
-        uint32_t numaIndex = NumUtil::ExtractBits(options_.flags, HYBM_BIND_NUMA_FLAG_INDEX, HYBM_BIND_NUMA_FLAG_LEN);
-        if (numaIndex == UINT32_MAX) {
+    } else {
+        const auto bindInfo = HybmNumaUtil::GetNumaBindPolicyInfo(options_.flags);
+        if (!bindInfo.valid) {
             BM_LOG_ERROR("Failed to get numa from flag:" << (std::bitset<UINT32_WIDTH>(options_.flags))
                                                          << " start index:" << HYBM_BIND_NUMA_FLAG_INDEX
                                                          << " flag len:" << HYBM_BIND_NUMA_FLAG_LEN);
             return BM_INVALID_PARAM;
         }
-        if (numaIndex == HYBM_BIND_NUMA_AUTO_AFFINITY_FLAG) {
+        if (bindInfo.policy == NumaBindPolicy::AUTO) {
             prop.side = MEM_HOST_SIDE;
             prop.devid = 0;
+        } else if (bindInfo.policy == NumaBindPolicy::MANUAL) {
+            prop.devid = bindInfo.numaIndex;
         } else {
-            prop.devid = numaIndex;
+            prop.devid = -1;
         }
-        auto start = std::chrono::high_resolution_clock::now();
-        ret = DlHalApi::HalMemCreate(handle, size, &prop, 0);
-        auto end = std::chrono::high_resolution_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        BM_LOG_INFO("Try HalMemCreate ret:" << ret << " numa:" << prop.devid << " spend time:" << duration.count()
-                                            << " size:" << size);
-    } else {
-        prop.devid = -1;
         auto start = std::chrono::high_resolution_clock::now();
         ret = DlHalApi::HalMemCreate(handle, size, &prop, 0);
         auto end = std::chrono::high_resolution_clock::now();
