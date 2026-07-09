@@ -754,4 +754,109 @@ TEST_F(SmemBmEntryTest, DataCopyBatch_UseExternalStream)
 // ======================== DataCopyBatchConcurrent Validation Only ========================
 // (Full path not tested due to thread pool + mockcpp thread safety issues)
 
+// ======================== AllocDramMemBySlice Tests ========================
+
+static constexpr uint64_t GB32 = 32ULL * GB;
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_Exact32GB_OneSlice)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export)
+        .stubs()
+        .will(returnValue(0));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, GB32, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 1U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), 1U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_64GB_TwoSlices)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export)
+        .stubs()
+        .will(returnValue(0));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, 2ULL * GB32, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 2U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), 2U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_33GB_FullSliceAndRemainder)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export)
+        .stubs()
+        .will(returnValue(0));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, GB32 + GB, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 2U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), 2U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_LessThan32GB_OneSlice)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export)
+        .stubs()
+        .will(returnValue(0));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, TEST_DRAM_SIZE_PER_RANK, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 1U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), 1U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_AllocFail_ReturnsError)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(static_cast<hybm_mem_slice_t>(nullptr)));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, GB32, 0);
+    EXPECT_EQ(ret, SM_ERROR);
+    EXPECT_TRUE(entry_->slices_.empty());
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_ExportFail_ReturnsError)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export)
+        .stubs()
+        .will(returnValue(-1));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, TEST_DRAM_SIZE_PER_RANK, 0);
+    EXPECT_EQ(ret, SM_ERROR);
+    EXPECT_EQ(entry_->slices_.size(), 1U);
+    EXPECT_TRUE(entry_->sliceInfos_.empty());
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBySlice_96GB_ThreeSlices)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory)
+        .stubs()
+        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export)
+        .stubs()
+        .will(returnValue(0));
+    auto ret = entry_->AllocDramMemBySlice(TEST_ENTITY_PTR, 3ULL * GB32, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 3U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), 3U);
+}
+
 // ======================== Leave Validation ========================

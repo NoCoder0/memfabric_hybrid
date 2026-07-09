@@ -102,6 +102,7 @@ private:
     bool AddrInHostGva(const void *address, uint64_t size);
     bool AddrInDeviceGva(const void *address, uint64_t size);
     [[nodiscard]] bool CheckRankConfigConsistency(const hybm_options &options) const;
+    Result AllocDramMemBySlice(hybm_entity_t entity, uint64_t totalSize, uint32_t flags);
 
     smem_bm_mem_type GetHybmMemTypeFromGva(const void *addr, uint64_t size);
     Result CheckJoined() const;

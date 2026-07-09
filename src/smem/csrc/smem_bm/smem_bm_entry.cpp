@@ -25,6 +25,38 @@
 
 namespace ock {
 namespace smem {
+Result SmemBmEntry::AllocDramMemBySlice(hybm_entity_t entity, uint64_t totalSize, uint32_t flags)
+{
+    constexpr uint64_t dramSliceSize = 32ULL * 1024ULL * 1024ULL * 1024ULL;
+    SM_LOG_INFO("alloc dram mem by 32GB slice start, totalSize: " << totalSize);
+    uint64_t remaining = totalSize;
+    uint64_t allocated = 0;
+    while (remaining > 0) {
+        uint64_t sliceSize = (remaining >= dramSliceSize) ? dramSliceSize : remaining;
+        SM_LOG_INFO("alloc dram slice progress: " << allocated << "/" << totalSize <<
+            ", currentSliceSize: " << sliceSize);
+        auto memSlice = hybm_alloc_local_memory(entity, HYBM_MEM_TYPE_HOST, sliceSize, flags);
+        if (memSlice == nullptr) {
+            SM_LOG_ERROR("alloc host mem slice failed, allocated: " << allocated << " sliceSize: " << sliceSize <<
+                " totalSize: " << totalSize);
+            return SM_ERROR;
+        }
+        slices_.push_back(memSlice);
+
+        hybm_exchange_info sliceInfo{};
+        auto ret = hybm_export(entity, memSlice, flags, &sliceInfo);
+        if (ret != 0) {
+            SM_LOG_ERROR("hybm export host slice failed, allocated: " << allocated << " sliceSize: " << sliceSize
+                                                                      << " result: " << ret);
+            return SM_ERROR;
+        }
+        sliceInfos_.push_back(sliceInfo);
+        remaining -= sliceSize;
+        allocated += sliceSize;
+    }
+    SM_LOG_INFO("alloc dram mem by 32GB slice done, totalSize: " << totalSize);
+    return SM_OK;
+}
 int32_t SmemBmEntry::Initialize(const hybm_options &options)
 {
     if (inited_) {
@@ -83,22 +115,30 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
             sliceInfos_.push_back(hbmSliceInfo);
         }
 
-        hybm_exchange_info dramSliceInfo{};
         if (options.maxDRAMSize > 0) {
-            slice = hybm_alloc_local_memory(entity, HYBM_MEM_TYPE_HOST, options.hostVASpace, flags);
-            if (slice == nullptr) {
-                SM_LOG_ERROR("alloc local host mem failed, size: " << options.hostVASpace);
-                ret = SM_ERROR;
-                break;
-            }
-            slices_.push_back(slice);
+            if (options.flags & SMEM_BM_FLAG_DRAM_MAP_HOST_VA) {
+                ret = AllocDramMemBySlice(entity, options.hostVASpace, flags);
+                if (ret != SM_OK) {
+                    SM_LOG_ERROR("hybm entity alloc by slice failed, result: " << ret);
+                    break;
+                }
+            } else {
+                slice = hybm_alloc_local_memory(entity, HYBM_MEM_TYPE_HOST, options.hostVASpace, flags);
+                if (slice == nullptr) {
+                    SM_LOG_ERROR("alloc local host mem failed, size: " << options.hostVASpace);
+                    ret = SM_ERROR;
+                    break;
+                }
+                slices_.push_back(slice);
 
-            ret = hybm_export(entity, slice, flags, &dramSliceInfo);
-            if (ret != 0) {
-                SM_LOG_ERROR("hybm export host slice failed, result: " << ret);
-                break;
+                hybm_exchange_info dramSliceInfo{};
+                ret = hybm_export(entity, slice, flags, &dramSliceInfo);
+                if (ret != 0) {
+                    SM_LOG_ERROR("hybm export host slice failed, result: " << ret);
+                    break;
+                }
+                sliceInfos_.push_back(dramSliceInfo);
             }
-            sliceInfos_.push_back(dramSliceInfo);
         }
 
         bzero(&entityInfo_, sizeof(hybm_exchange_info));
