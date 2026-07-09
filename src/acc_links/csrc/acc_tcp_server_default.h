@@ -77,6 +77,7 @@ protected:
     SSL_CTX *sslCtx_ = nullptr;
     AccTlsOption tlsOption_{};
     LinkFactoryFn linkFactory_;
+    bool linkBlocking_{true};
 
 private:
     Result ValidateOptions() const;

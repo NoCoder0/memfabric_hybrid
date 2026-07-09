@@ -37,7 +37,10 @@ namespace acc {
  */
 class AccHttpServerDefault : public AccTcpServerDefault, public AccHttpServer {
 public:
-    AccHttpServerDefault() = default;
+    AccHttpServerDefault()
+    {
+        linkBlocking_ = false;
+    }
     ~AccHttpServerDefault() override = default;
 
     Result Start(const AccHttpServerOptions &opt, const AccTlsOption &tlsOption) override;

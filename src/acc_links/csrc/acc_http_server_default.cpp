@@ -160,7 +160,9 @@ Result AccHttpServerDefault::HandleNewConnection(const AccConnReq &req, const Ac
         }
     }
 
-    newLink->EnableNoBlocking();
+    if (!linkBlocking_) {
+        newLink->EnableNonBlocking();
+    }
     {
         std::lock_guard<std::mutex> guard(mutex_);
         if (!started_) {

@@ -320,7 +320,7 @@
 
 1. 启用非阻塞模式
     ```cpp
-    int32_t EnableNoBlocking() const;
+    int32_t EnableNonBlocking() const;
     ```
 
     |参数/返回值|含义|

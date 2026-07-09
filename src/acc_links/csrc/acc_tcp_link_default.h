@@ -311,7 +311,7 @@ public:
                    : ACC_OK;
     }
 
-    Result EnableNoBlocking() const override
+    Result EnableNonBlocking() const override
     {
         int32_t value = UNO_1;
         if ((value = fcntl(fd_, F_GETFL, 0)) == -1) {

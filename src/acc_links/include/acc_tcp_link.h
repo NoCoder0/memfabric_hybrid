@@ -144,7 +144,7 @@ public:
      * @brief Enable the link to non-blocking mode
      * @return 0 if successful
      */
-    virtual int32_t EnableNoBlocking() const = 0;
+    virtual int32_t EnableNonBlocking() const = 0;
 
     /**
      * @brief Close the fd

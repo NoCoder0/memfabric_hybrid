@@ -908,10 +908,10 @@ TEST_F(AccLinksTest, test_tcp_link_connect_receive_len_should_return_error)
     ASSERT_TRUE(ACC_OK != ret);
 }
 
-TEST_F(AccLinksTest, test_tcp_link_EnableNoBlocking_fd_should_return_error)
+TEST_F(AccLinksTest, test_tcp_link_EnableNonBlocking_fd_should_return_error)
 {
     auto link = AccMakeRef<AccTcpLinkComplexDefault>(-1, "127.0.0.1:8100", AccTcpLinkDefault::NewId());
-    int32_t ret = link->EnableNoBlocking();
+    int32_t ret = link->EnableNonBlocking();
     ASSERT_TRUE(ACC_OK != ret);
 }
 

@@ -398,7 +398,9 @@ Result AccTcpServerDefault::HandleNewConnection(const AccConnReq &req, const Acc
         return result;
     }
 
-    newLink->EnableNoBlocking();
+    if (!linkBlocking_) {
+        newLink->EnableNonBlocking();
+    }
     {
         /* check and add new link into map */
         std::lock_guard<std::mutex> guard(mutex_);
@@ -665,7 +667,9 @@ Result AccTcpServerDefault::Handshake(int &tmpFD, const AccConnReq &connReq, con
         return ACC_ERROR;
     }
 
-    tmpLink->EnableNoBlocking();
+    if (!linkBlocking_) {
+        tmpLink->EnableNonBlocking();
+    }
     {
         /* check and add new link into map */
         std::lock_guard<std::mutex> guard(mutex_);
