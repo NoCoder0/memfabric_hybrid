@@ -9,7 +9,7 @@ from functools import partial
 from typing import Optional
 
 import zbal
-from zbal import Buffer, Config
+from zbal import Buffer, Config, zbal_uninit
 import numpy as np
 import torch
 import torch_npu
@@ -506,6 +506,8 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     del buffer  # destroy MoE group before world group
     torch.npu.synchronize()
     dist.destroy_process_group()
+    if not zbal_uninit():
+        logger.error("zbal_uninit failed")
 
 
 def print_help():

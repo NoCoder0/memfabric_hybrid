@@ -1,8 +1,6 @@
 import argparse
 import os
-import sys
 import logging
-from pathlib import Path
 import random
 import time
 from functools import partial
@@ -11,7 +9,7 @@ import torch
 import torch.distributed as dist
 import torch_npu
 import zbal
-from zbal import Buffer, Config
+from zbal import Buffer, Config, zbal_uninit
 from utils import (
     bench,
     bench_kineto,
@@ -21,21 +19,6 @@ from utils import (
     init_dist,
     per_token_cast_back,
 )
-
-
-def redirect_io(rank, log_dir="./logs"):
-    Path(log_dir).mkdir(parents=True, exist_ok=True)
-    pid = os.getpid()
-    log_path = f"{log_dir}/rank{rank:02d}_pid{pid}.log"
-    fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-    os.dup2(fd, 1)
-    os.dup2(fd, 2)
-    os.close(fd)
-
-    sys.stdout = os.fdopen(1, "w", buffering=1)
-    sys.stderr = os.fdopen(2, "w", buffering=1)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
-    logging.info(f"[rank {rank}] logging to {log_path}")
 
 
 def test(
@@ -79,19 +62,23 @@ def test(
     topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="npu").abs()
     topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
+    x_cpu = x.cpu()
+    topk_idx_cpu = topk_idx.cpu()
+    topk_weights_cpu = topk_weights.cpu()
+
     # Check dispatch correctness
     do_check = True
     return_recv_hook = False
     hash_value, num_times = 0, 0
 
     cumulative_local_expert_recv_stats = torch.zeros((num_local_experts,), dtype=torch.int, device="npu")
-    dispatch_use_fp8 = True
 
-    logging.info(f"Rank {rank}: x shape={x.shape}, device={x.device}, \n")
-    logging.info(f"Rank {rank}: X ={x[0:][:16]}")
-    logging.info(f"Rank {rank}: topk_idx shape={topk_idx.shape}, device={topk_idx.device}, \n")
-    logging.info(f"Rank {rank}: topk_idx ={topk_idx}\n")
-    logging.info(f"Rank {rank}: topK weight = {topk_weights}\n")
+    dispatch_use_int8 = os.getenv("DEEP_LOW_LATENCY_MODE_USE_INT8_QUANT") == "1"
+
+    logging.info(f"Rank {rank}: x shape={x.shape}, device={x.device}")
+    logging.info(f"Rank {rank}: topk_idx shape={topk_idx.shape}, device={topk_idx.device}")
+    logging.info(f"Rank {rank}: topk_idx.shape = {topk_idx.shape}")
+    logging.info(f"Rank {rank}: quantization mode = {dispatch_use_int8=}")
 
     for i in range(100):
         packed_recv_x, packed_recv_count, handle, event, hook = buffer.low_latency_dispatch(
@@ -99,14 +86,22 @@ def test(
             topk_idx,
             num_tokens,
             num_experts,
-            use_fp8=dispatch_use_fp8,
+            use_fp8=dispatch_use_int8,
             round_scale=False,
             use_ue8m0=False,
             cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
             async_finish=not return_recv_hook,
             return_recv_hook=return_recv_hook,
         )
-        simulated_gemm_x = per_token_cast_back(*packed_recv_x) if dispatch_use_fp8 else packed_recv_x
+        if dispatch_use_int8:
+            quant_stream = torch.npu.Stream()
+            with torch.npu.Stream(quant_stream):
+                recv_x_int8_cpu = packed_recv_x[0].cpu()
+                recv_x_scales_cpu = packed_recv_x[1].cpu()
+            quant_stream.synchronize()
+            simulated_gemm_x = per_token_cast_back(recv_x_int8_cpu, recv_x_scales_cpu).to("npu")
+        else:
+            simulated_gemm_x = packed_recv_x
 
         out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="npu")
         combined_x, event, hook = buffer.low_latency_combine(
@@ -120,22 +115,27 @@ def test(
             out=out,
         )
 
-    logging.info(f"Rank {rank}: combined_x shape={combined_x.shape}, device={combined_x[0].device}")
-    logging.info(f"Rank {rank}: combined_x ={combined_x[:100, 0]}")
+    quant_stream = torch.npu.Stream()
+    with torch.npu.Stream(quant_stream):
+        combined_x_cpu = combined_x.cpu()
+    quant_stream.synchronize()
+
+    logging.info(f"Rank {rank}: combined_x shape={combined_x_cpu.shape}, device={combined_x_cpu[0].device}")
+    logging.info(f"Rank {rank}: combined_x ={combined_x_cpu[:100, 0]}")
 
     if do_check:
         diff = calc_diff(
-            x * topk_weights.masked_fill(topk_idx == -1, 0).sum(dim=1).view(-1, 1),
-            combined_x,
+            x_cpu * topk_weights_cpu.masked_fill(topk_idx_cpu == -1, 0).sum(dim=1).view(-1, 1),
+            combined_x_cpu,
         )
-        assert torch.isnan(combined_x).sum().item() == 0
-        if dispatch_use_fp8:
+        assert torch.isnan(combined_x_cpu).sum().item() == 0
+        if dispatch_use_int8:
             assert diff < 1e-4, f"Error: {diff=}"
         else:
             assert diff < 1e-5, f"Error: {diff=}"
-        hash_value ^= hash_tensor(combined_x)
+        hash_value ^= hash_tensor(combined_x_cpu)
 
-        logging.info(f"rank {rank} PASSED")
+        logging.info(f"[rank {rank}] PASSED")
 
     logging.info(f"Calling Bench")
 
@@ -147,7 +147,7 @@ def test(
             topk_idx,
             num_tokens,
             num_experts,
-            use_fp8=dispatch_use_fp8,
+            use_fp8=dispatch_use_int8,
             round_scale=False,
             use_ue8m0=False,
             cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
@@ -166,12 +166,17 @@ def test(
         )
 
     # Calculate bandwidth
-    num_fp8_bytes, num_bf16_bytes = (hidden + hidden // 128 * 4 + 16), hidden * 2
+    num_int8_bytes, num_bf16_bytes = (hidden + hidden // 128 * 4 + 16), hidden * 2
+    if dispatch_use_int8:
+        num_dispatch_bytes_per_sel = num_int8_bytes
+    else:
+        num_dispatch_bytes_per_sel = num_bf16_bytes
+    num_combine_bytes_per_sel = num_bf16_bytes
     num_dispatch_comm_bytes, num_combine_comm_bytes = 0, 0
     for i in range(num_tokens):
-        num_selections = (topk_idx[i] != -1).sum().item()
-        num_dispatch_comm_bytes += num_fp8_bytes * num_selections
-        num_combine_comm_bytes += num_bf16_bytes * num_selections
+        num_selections = (topk_idx_cpu[i] != -1).sum().item()
+        num_dispatch_comm_bytes += num_dispatch_bytes_per_sel * num_selections
+        num_combine_comm_bytes += num_combine_bytes_per_sel * num_selections
 
     # Dispatch + combine testing
     avg_t, min_t, max_t = bench(partial(test_func, zero_copy=False, return_recv_hook=False))
@@ -229,7 +234,11 @@ def test(
 
 
 def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
-    redirect_io(local_rank, "./logs")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        force=True,
+    )
     rank, num_ranks, group = init_dist(local_rank, num_local_ranks)
     shared_expert_rank_num = int(os.getenv("MOE_SHARED_EXPERT_RANK_NUM", 0))
     num_tokens, hidden = args.num_tokens, args.hidden
@@ -259,7 +268,11 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
 
     dist.barrier()
-    # dist.destroy_process_group()  # zbal will trigger error in finalize
+    del buffer
+    torch.npu.synchronize()
+    dist.destroy_process_group()
+    if not zbal_uninit():
+        logging.error("zbal_uninit failed")
 
 
 if __name__ == "__main__":
@@ -291,7 +304,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-experts",
         type=int,
-        default=128,
+        default=256,
         help="Number of experts (default: 256)",
     )
     parser.add_argument(
