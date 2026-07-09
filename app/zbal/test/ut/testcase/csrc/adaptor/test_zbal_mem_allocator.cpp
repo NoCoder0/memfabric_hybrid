@@ -11,11 +11,13 @@
  */
 
 #include <gtest/gtest.h>
+
+#include <algorithm>
 #include <atomic>
 #include <functional>
 
-#include "zbal_test_constants.h"
 #include "zbal_mem_allocator.h"
+#include "zbal_test_constants.h"
 
 #undef ZBAL_SMA_CONFIG_H
 #define private public
@@ -40,6 +42,8 @@ void zbal_pluggable_begin_allocate_to_pool(int device, c10_npu::MempoolId_t memp
 void zbal_pluggable_end_allocate_to_pool(int device, c10_npu::MempoolId_t mempool_id);
 void zbal_pluggable_release_pool(int device, c10_npu::MempoolId_t mempool_id);
 c10_npu::NPUCachingAllocator::DeviceStats zbal_pluggable_get_device_stats(int device);
+c10_npu::NPUCachingAllocator::DeviceStats dma_get_device_stats(int device);
+c10_npu::NPUCachingAllocator::DeviceStats sma_get_device_stats(int device);
 }
 
 namespace c10_npu {
@@ -84,6 +88,45 @@ protected:
         gGVASpaceInited = false;
     }
 };
+
+using NpuStat = c10_npu::NPUCachingAllocator::Stat;
+using NpuStatArray = c10_npu::NPUCachingAllocator::StatArray;
+using NpuDeviceStats = c10_npu::NPUCachingAllocator::DeviceStats;
+
+static void ExpectStatAggregated(const NpuStat &agg, const NpuStat &a, const NpuStat &b)
+{
+    EXPECT_EQ(agg.current, a.current + b.current);
+    EXPECT_EQ(agg.peak, a.peak + b.peak);
+    EXPECT_EQ(agg.allocated, a.allocated + b.allocated);
+    EXPECT_EQ(agg.freed, a.freed + b.freed);
+}
+
+static void ExpectStatArrayAggregated(const NpuStatArray &agg, const NpuStatArray &a, const NpuStatArray &b)
+{
+    ASSERT_EQ(agg.size(), a.size());
+    ASSERT_EQ(agg.size(), b.size());
+    for (size_t i = 0; i < agg.size(); ++i) {
+        ExpectStatAggregated(agg[i], a[i], b[i]);
+    }
+}
+
+static void ExpectDeviceStatsAggregated(const NpuDeviceStats &agg, const NpuDeviceStats &dma, const NpuDeviceStats &sma)
+{
+    ExpectStatArrayAggregated(agg.allocation, dma.allocation, sma.allocation);
+    ExpectStatArrayAggregated(agg.segment, dma.segment, sma.segment);
+    ExpectStatArrayAggregated(agg.active, dma.active, sma.active);
+    ExpectStatArrayAggregated(agg.inactive_split, dma.inactive_split, sma.inactive_split);
+    ExpectStatArrayAggregated(agg.allocated_bytes, dma.allocated_bytes, sma.allocated_bytes);
+    ExpectStatArrayAggregated(agg.reserved_bytes, dma.reserved_bytes, sma.reserved_bytes);
+    ExpectStatArrayAggregated(agg.active_bytes, dma.active_bytes, sma.active_bytes);
+    ExpectStatArrayAggregated(agg.inactive_split_bytes, dma.inactive_split_bytes, sma.inactive_split_bytes);
+    ExpectStatArrayAggregated(agg.requested_bytes, dma.requested_bytes, sma.requested_bytes);
+    EXPECT_EQ(agg.num_alloc_retries, dma.num_alloc_retries + sma.num_alloc_retries);
+    EXPECT_EQ(agg.num_ooms, dma.num_ooms + sma.num_ooms);
+    ExpectStatAggregated(agg.oversize_allocations, dma.oversize_allocations, sma.oversize_allocations);
+    ExpectStatAggregated(agg.oversize_segments, dma.oversize_segments, sma.oversize_segments);
+    EXPECT_EQ(agg.max_split_size, std::max(dma.max_split_size, sma.max_split_size));
+}
 
 TEST_F(TestMemAllocator, InitAndUninit)
 {
@@ -156,6 +199,34 @@ TEST_F(TestMemAllocator, PoolAndEmptyCache)
     zbal_pluggable_end_allocate_to_pool(0, pool_id);
     zbal_pluggable_release_pool(0, pool_id);
     zbal::sma::SMAConfig::instance().use_vmm_for_static_memory_ = false;
+}
+
+TEST_F(TestMemAllocator, MixAllocDeviceStatsAggregation)
+{
+    zbal::sma::SMAConfig::instance().use_vmm_for_static_memory_ = true;
+    zbal_pluggable_init(ZBAL_UT_NUM_8);
+    ASSERT_FALSE(gGVASpaceInited);
+
+    void *dmaPtr = zbal_pluggable_malloc(ZBAL_UT_SIZE_4KB, 0, nullptr);
+    ASSERT_NE(dmaPtr, nullptr);
+    ASSERT_TRUE(gDmaBlocks.count(dmaPtr) > 0);
+
+    zbal_allocator_options_t opts = {};
+    ASSERT_EQ(zbal_sma_init(&opts, 0), ZResultErrorCode::Z_OK);
+    ASSERT_TRUE(gGVASpaceInited);
+
+    void *smaPtr = zbal_pluggable_malloc(ZBAL_UT_SIZE_8KB, 0, nullptr);
+    ASSERT_NE(smaPtr, nullptr);
+    ASSERT_EQ(gDmaBlocks.count(smaPtr), 0u);
+
+    auto agg = zbal_pluggable_get_device_stats(0);
+    auto dma = dma_get_device_stats(0);
+    auto sma = sma_get_device_stats(0);
+    ExpectDeviceStatsAggregated(agg, dma, sma);
+
+    zbal_pluggable_free(smaPtr, ZBAL_UT_SIZE_8KB, 0, nullptr);
+    zbal_pluggable_free(dmaPtr, ZBAL_UT_SIZE_4KB, 0, nullptr);
+    RestoreSmaMode();
 }
 
 TEST_F(TestMemAllocator, GetSymmBaseAddr)
