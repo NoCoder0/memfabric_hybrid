@@ -30,21 +30,19 @@ torch_npu.npu.config.allow_internal_format = True
 
 from utils import init_dist
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
-                  num_topk, with_shared, with_smooth, share_ffn_dim):
+def generate_data(
+    rank, bs, hidden, ffn_dim, num_local_experts, num_experts, num_topk, with_shared, with_smooth, share_ffn_dim
+):
     torch.manual_seed(42 + rank)
 
     x = (torch.rand((bs, hidden), device="npu") * 10 - 5).to(torch.bfloat16)
 
-    expert_ids = torch.arange(rank * bs * num_topk,
-                              rank * bs * num_topk + bs * num_topk,
-                              dtype=torch.int32, device="npu").reshape(bs, num_topk)
+    expert_ids = torch.arange(
+        rank * bs * num_topk, rank * bs * num_topk + bs * num_topk, dtype=torch.int32, device="npu"
+    ).reshape(bs, num_topk)
     expert_ids = expert_ids % num_experts
 
     expert_scales = torch.rand((bs, num_topk), dtype=torch.float32, device="npu")
@@ -52,9 +50,9 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
     g2_dim = ffn_dim // 2
     # Base weights (pre-NZ-cast, saved for cross-framework comparison)
     g1_w_base = torch.randint(-16, 16, (num_local_experts, hidden, ffn_dim), dtype=torch.int8, device="npu")
-    g1_s_base = (torch.rand((num_local_experts, ffn_dim), dtype=torch.float32, device="npu") * 0.003 + 0.0015)
+    g1_s_base = torch.rand((num_local_experts, ffn_dim), dtype=torch.float32, device="npu") * 0.003 + 0.0015
     g2_w_base = torch.randint(-16, 16, (num_local_experts, g2_dim, hidden), dtype=torch.int8, device="npu")
-    g2_s_base = (torch.rand((num_local_experts, hidden), dtype=torch.float32, device="npu") * 0.003 + 0.0015)
+    g2_s_base = torch.rand((num_local_experts, hidden), dtype=torch.float32, device="npu") * 0.003 + 0.0015
     # NZ format for kernel
     g1_w = torch_npu.npu_format_cast(g1_w_base, 29)
     g1_s = g1_s_base.contiguous()
@@ -69,8 +67,8 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
         sg2_dim = share_ffn_dim // 2
         sh_w1_base = torch.randint(-16, 16, (hidden, share_ffn_dim), dtype=torch.int8, device="npu")
         sh_w2_base = torch.randint(-16, 16, (sg2_dim, hidden), dtype=torch.int8, device="npu")
-        sh_s1_base = (torch.rand((share_ffn_dim,), dtype=torch.float32, device="npu") * 0.003 + 0.0015)
-        sh_s2_base = (torch.rand((hidden,), dtype=torch.float32, device="npu") * 0.003 + 0.0015)
+        sh_s1_base = torch.rand((share_ffn_dim,), dtype=torch.float32, device="npu") * 0.003 + 0.0015
+        sh_s2_base = torch.rand((hidden,), dtype=torch.float32, device="npu") * 0.003 + 0.0015
         sh_w1 = torch_npu.npu_format_cast(sh_w1_base, 29)
         sh_w2 = torch_npu.npu_format_cast(sh_w2_base, 29)
         sh_s1 = sh_s1_base.contiguous()
@@ -80,10 +78,29 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
         if with_shared:
             sh_smooth = torch.rand((hidden,), dtype=torch.float32, device="npu")
 
-    return (x, expert_ids, expert_scales, g1_w, g1_s, g2_w, g2_s,
-            sh_w1, sh_s1, sh_w2, sh_s2, smooth_scales, sh_smooth,
-            g1_w_base, g1_s_base, g2_w_base, g2_s_base,
-            sh_w1_base, sh_s1_base, sh_w2_base, sh_s2_base)
+    return (
+        x,
+        expert_ids,
+        expert_scales,
+        g1_w,
+        g1_s,
+        g2_w,
+        g2_s,
+        sh_w1,
+        sh_s1,
+        sh_w2,
+        sh_s2,
+        smooth_scales,
+        sh_smooth,
+        g1_w_base,
+        g1_s_base,
+        g2_w_base,
+        g2_s_base,
+        sh_w1_base,
+        sh_s1_base,
+        sh_w2_base,
+        sh_s2_base,
+    )
 
 
 def run_perf(rank, num_ranks, args):
@@ -112,15 +129,32 @@ def run_perf(rank, num_ranks, args):
         raise ValueError("num of pe can not divided by num of ranks")
     nle = ne // num_ranks
 
-    tag = (f"bs{bs}_h{hidden}_ffn{ffn}_E{ne}_topk{tk}_R{num_ranks}_"
-           f"sh{int(ws)}_sm{int(sm)}")
+    tag = f"bs{bs}_h{hidden}_ffn{ffn}_E{ne}_topk{tk}_R{num_ranks}_sh{int(ws)}_sm{int(sm)}"
     logging.info(f"[rank {rank}] {tag}")
 
-    (x, eid, esc, g1w, g1s, g2w, g2s,
-     sh_w1, sh_s1, sh_w2, sh_s2, smooth, sh_smooth,
-     g1w_base, g1s_base, g2w_base, g2s_base,
-     sh_w1_base, sh_s1_base, sh_w2_base, sh_s2_base) = generate_data(
-        rank, bs, hidden, ffn, nle, ne, tk, ws, sm, sfn)
+    (
+        x,
+        eid,
+        esc,
+        g1w,
+        g1s,
+        g2w,
+        g2s,
+        sh_w1,
+        sh_s1,
+        sh_w2,
+        sh_s2,
+        smooth,
+        sh_smooth,
+        g1w_base,
+        g1s_base,
+        g2w_base,
+        g2s_base,
+        sh_w1_base,
+        sh_s1_base,
+        sh_w2_base,
+        sh_s2_base,
+    ) = generate_data(rank, bs, hidden, ffn, nle, ne, tk, ws, sm, sfn)
 
     # ============================================ Cross-framework save / load
     _to_cpu = lambda t: t.cpu() if t is not None else None
@@ -169,8 +203,9 @@ def run_perf(rank, num_ranks, args):
             sh_s1_base = inputs["share_gmm1_weight_scale"].to(device="npu")
             sh_w2_base = inputs["share_gmm2_weight"].to(device="npu")
             sh_s2_base = inputs["share_gmm2_weight_scale"].to(device="npu")
-            sh_smooth = inputs["share_smooth_scales"].to(device="npu") \
-                if inputs["share_smooth_scales"] is not None else None
+            sh_smooth = (
+                inputs["share_smooth_scales"].to(device="npu") if inputs["share_smooth_scales"] is not None else None
+            )
 
         # Re-apply NZ cast for loaded weights
         g1w = torch_npu.npu_format_cast(g1w_base, 29)
@@ -198,13 +233,22 @@ def run_perf(rank, num_ranks, args):
 
     def run_kernel():
         return buffer.fused_deep_moe(
-            x=x, topk_idx=eid, gmm1_permuted_weight=g1w, gmm1_permuted_weight_scale=g1s,
-            gmm2_weight=g2w, gmm2_weight_scale=g2s, topk_weights=esc,
-            num_experts=ne, quant_mode=0,
-            num_max_dispatch_tokens_per_rank=0, is_tensor_list=False,
+            x=x,
+            topk_idx=eid,
+            gmm1_permuted_weight=g1w,
+            gmm1_permuted_weight_scale=g1s,
+            gmm2_weight=g2w,
+            gmm2_weight_scale=g2s,
+            topk_weights=esc,
+            num_experts=ne,
+            quant_mode=0,
+            num_max_dispatch_tokens_per_rank=0,
+            is_tensor_list=False,
             expert_smooth_scales=smooth,
-            share_gmm1_weight=sh_w1, share_gmm1_scale=sh_s1,
-            share_gmm2_weight=sh_w2, share_gmm2_scale=sh_s2,
+            share_gmm1_weight=sh_w1,
+            share_gmm1_scale=sh_s1,
+            share_gmm2_weight=sh_w2,
+            share_gmm2_scale=sh_s2,
             share_smooth_scales=sh_smooth,
             share_gmm1_h_len=sh1_h_len,
         )
@@ -241,6 +285,7 @@ def run_perf(rank, num_ranks, args):
 
         if ref_output_loaded is not None:
             from utils import calc_diff
+
             ref_token, _ref_share, ref_counts = ref_output_loaded
             ref_token = ref_token.to(device="npu", dtype=hccl_out.dtype)
             ref_counts = ref_counts.to(device="npu", dtype=hccl_counts.dtype)
@@ -288,15 +333,16 @@ if __name__ == "__main__":
     parser.add_argument("--num-warmups", type=int, default=50)
     parser.add_argument("--num-iters", type=int, default=100)
     parser.add_argument("--redirect", action="store_true")
-    parser.add_argument("--save-data-dir", type=str, default=None,
-                        help="Save inputs and output for cross-framework comparison")
-    parser.add_argument("--load-data-dir", type=str, default=None,
-                        help="Load inputs and compare with saved reference output")
+    parser.add_argument(
+        "--save-data-dir", type=str, default=None, help="Save inputs and output for cross-framework comparison"
+    )
+    parser.add_argument(
+        "--load-data-dir", type=str, default=None, help="Load inputs and compare with saved reference output"
+    )
     args = parser.parse_args()
 
     os.environ["HCCL_BUFFSIZE"] = "2"  # DEEP_FUSE: data window unused, state window needs ~1 MB
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = "29501"
 
-    torch.multiprocessing.spawn(
-        test_loop, args=(args.num_processes, args), nprocs=args.num_processes, join=True)
+    torch.multiprocessing.spawn(test_loop, args=(args.num_processes, args), nprocs=args.num_processes, join=True)

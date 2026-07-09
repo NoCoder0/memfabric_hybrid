@@ -68,7 +68,7 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
         "int32_t": torch.int32,
         "float16_t": torch.float16,
         "float": torch.float32,
-        "bfloat16_t": torch.bfloat16
+        "bfloat16_t": torch.bfloat16,
     }
 
     tensor_data_type = torch_type_map.get(test_type, 'int')
@@ -108,9 +108,7 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                         torch_npu.profiler.ProfilerActivity.CPU,
                         torch_npu.profiler.ProfilerActivity.NPU,
                     ],
-                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                        profiling_path
-                    ),
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(profiling_path),
                     schedule=torch_npu.profiler.schedule(
                         wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
                     ),
@@ -132,20 +130,22 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                     filepath = f"{tensor_output_dir}/output_hccl_{global_rank}.bin"
                     golden_tensor = get_golden_from_file(filepath)
                 else:
-                    golden_tensor = get_golden_by_assembly(golden_dir, world_size, data_type, tensor_data_type, \
-                        current_dir, rows_per_rank, hidden_size)
+                    golden_tensor = get_golden_by_assembly(
+                        golden_dir, world_size, data_type, tensor_data_type, current_dir, rows_per_rank, hidden_size
+                    )
             for k in range(20):
                 if enable_profiling and prof_cnt >= 1:
                     prof.step()
                 dst = 0
 
                 data = np.fromfile(f"{current_dir}/golden/{golden_dir}/input_gm_{global_rank}.bin", dtype=data_type)
-                tensor_input = torch.from_numpy(data).to(
-                    tensor_data_type).npu().view(rows_per_rank, hidden_size)
+                tensor_input = torch.from_numpy(data).to(tensor_data_type).npu().view(rows_per_rank, hidden_size)
 
                 if global_rank == dst:
-                    gather_list = [torch.zeros(rows_per_rank, hidden_size, dtype=tensor_input.dtype,
-                                               device=tensor_input.device) for _ in range(world_size)]
+                    gather_list = [
+                        torch.zeros(rows_per_rank, hidden_size, dtype=tensor_input.dtype, device=tensor_input.device)
+                        for _ in range(world_size)
+                    ]
                 else:
                     gather_list = None
                 dist.gather(tensor_input, gather_list, dst=dst)
@@ -164,8 +164,9 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                             logger.error(f"rank {global_rank} case {data_len} gather result not correct")
                             raise Exception(f"procesion error case:{data_len}")
             if dist_type == "zbal":
-                logging.info(f"gather {world_size=} {global_rank=} {data_len=} {k} times compare precision "
-                             f"success {os.linesep}")
+                logging.info(
+                    f"gather {world_size=} {global_rank=} {data_len=} {k} times compare precision success {os.linesep}"
+                )
             else:
                 logging.info(f"gather {world_size=} {global_rank=} {data_len=} {k} generate success{os.linesep}")
 

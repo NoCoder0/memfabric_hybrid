@@ -621,7 +621,7 @@ TEST(ComposeTransportManagerTest, OpenAndCloseDeviceNoProtocol)
     ComposeTransportManager mgr(tag);
 
     TransportOptions opts{};
-    opts.protocol = 0;      // 不包含 HOST / DEVICE_RDMA
+    opts.protocol = 0; // 不包含 HOST / DEVICE_RDMA
     opts.rankId = 0;
     opts.rankCount = 1;
     opts.nic = "ignored";
@@ -899,22 +899,21 @@ TEST(ComposeTransportManagerTest, SynchronizePreferDevice)
     EXPECT_EQ(ret, BM_ERROR);
 }
 
-
 // OpenDevice: 当 protocol 包含 HOST_PROTOCOL 但 hostTransportManager_ 为 nullptr 时，应返回错误。
 TEST(ComposeTransportManagerTest, OpenDeviceHostTransportNullAfterOpen)
 {
     auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_HOST_TCP);
     ComposeTransportManager mgr(tag);
-    
+
     // 模拟OpenHostTransport成功但hostTransportManager_仍为nullptr的情况
     mgr.hostTransportManager_ = nullptr;
-    
+
     TransportOptions opts{};
     opts.protocol = HYBM_DOP_TYPE_HOST_TCP;
     opts.rankId = 0;
     opts.rankCount = 1;
     opts.nic = "host_nic";
-    
+
     Result ret = mgr.OpenDevice(opts);
     EXPECT_EQ(ret, BM_ERROR);
 }
@@ -924,16 +923,16 @@ TEST(ComposeTransportManagerTest, OpenDeviceDeviceTransportNullAfterOpen)
 {
     auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_DEVICE_RDMA);
     ComposeTransportManager mgr(tag);
-    
+
     // 模拟OpenDeviceTransport成功但deviceTransportManager_仍为nullptr的情况
     mgr.deviceTransportManager_ = nullptr;
-    
+
     TransportOptions opts{};
     opts.protocol = HYBM_DOP_TYPE_DEVICE_RDMA;
     opts.rankId = 0;
     opts.rankCount = 1;
     opts.nic = "device_nic";
-    
+
     Result ret = mgr.OpenDevice(opts);
     EXPECT_EQ(ret, BM_ERROR);
 }
@@ -943,16 +942,16 @@ TEST(ComposeTransportManagerTest, RegisterMemoryRegionDeviceOnly)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     auto device = std::make_shared<FakeTransportManager>();
     device->registerResult = BM_OK;
     mgr.deviceTransportManager_ = device;
     mgr.hostTransportManager_ = nullptr;
-    
+
     TransportMemoryRegion mr{};
     mr.addr = 0xA000;
     mr.size = 0x100;
-    
+
     Result ret = mgr.RegisterMemoryRegion(mr);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(device->registerCalls, 1u);
@@ -964,16 +963,16 @@ TEST(ComposeTransportManagerTest, RegisterMemoryRegionHostOnly)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     auto host = std::make_shared<FakeTransportManager>();
     host->registerResult = BM_OK;
     mgr.deviceTransportManager_ = nullptr;
     mgr.hostTransportManager_ = host;
-    
+
     TransportMemoryRegion mr{};
     mr.addr = 0xB000;
     mr.size = 0x100;
-    
+
     Result ret = mgr.RegisterMemoryRegion(mr);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(host->registerCalls, 1u);
@@ -985,17 +984,17 @@ TEST(ComposeTransportManagerTest, UnregisterMemoryRegionDeviceOnly)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     TransportMemoryRegion mr{};
     mr.addr = 0xC000;
     mr.size = 0x100;
     mgr.mrs_.emplace(mr.addr, ComposeMemoryRegion{mr.addr, mr.size, TT_COMPOSE});
-    
+
     auto device = std::make_shared<FakeTransportManager>();
     device->unregisterResult = BM_OK;
     mgr.deviceTransportManager_ = device;
     mgr.hostTransportManager_ = nullptr;
-    
+
     Result ret = mgr.UnregisterMemoryRegion(mr.addr);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(device->unregisterCalls, 1u);
@@ -1007,17 +1006,17 @@ TEST(ComposeTransportManagerTest, UnregisterMemoryRegionHostOnly)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     TransportMemoryRegion mr{};
     mr.addr = 0xD000;
     mr.size = 0x100;
     mgr.mrs_.emplace(mr.addr, ComposeMemoryRegion{mr.addr, mr.size, TT_COMPOSE});
-    
+
     auto host = std::make_shared<FakeTransportManager>();
     host->unregisterResult = BM_OK;
     mgr.deviceTransportManager_ = nullptr;
     mgr.hostTransportManager_ = host;
-    
+
     Result ret = mgr.UnregisterMemoryRegion(mr.addr);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(host->unregisterCalls, 1u);
@@ -1029,7 +1028,7 @@ TEST(ComposeTransportManagerTest, QueryHasRegisteredExactAddress)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     // QueryHasRegistered 本身委托给底层 TM 判断，这里通过 fake device TM 返回 true。
     auto device = std::make_shared<FakeTransportManager>();
     device->queryHasRegResult = true;
@@ -1043,7 +1042,7 @@ TEST(ComposeTransportManagerTest, QueryHasRegisteredSubset)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     auto device = std::make_shared<FakeTransportManager>();
     device->queryHasRegResult = true;
     mgr.deviceTransportManager_ = device;
@@ -1059,12 +1058,12 @@ TEST(ComposeTransportManagerTest, GetHostPrepareOptionsNoHostNicPrefix)
     auto tag = std::make_shared<FakeTagInfo>(hostProtocol);
     ComposeTransportManager mgr(tag);
     mgr.options_.rankId = 0;
-    
+
     HybmTransPrepareOptions inOpts{};
     TransportRankPrepareInfo info{};
     info.nic = "eth0;device#dev0;"; // 缺少host#前缀
     inOpts.options.emplace(1U, info);
-    
+
     HybmTransPrepareOptions hostOpts{};
     mgr.GetHostPrepareOptions(inOpts, hostOpts);
 
@@ -1085,12 +1084,12 @@ TEST(ComposeTransportManagerTest, GetDevicePrepareOptionsNoDeviceNicPrefix)
     auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_DEVICE_RDMA);
     ComposeTransportManager mgr(tag);
     mgr.options_.rankId = 0;
-    
+
     HybmTransPrepareOptions inOpts{};
     TransportRankPrepareInfo info{};
     info.nic = "host#eth0;roce0;"; // 缺少device#前缀
     inOpts.options.emplace(2U, info);
-    
+
     HybmTransPrepareOptions devOpts{};
     mgr.GetDevicePrepareOptions(inOpts, devOpts);
 
@@ -1111,13 +1110,13 @@ TEST(ComposeTransportManagerTest, GetHostPrepareOptionsEmptyMemKeys)
     auto tag = std::make_shared<FakeTagInfo>(hostProtocol);
     ComposeTransportManager mgr(tag);
     mgr.options_.rankId = 0;
-    
+
     HybmTransPrepareOptions inOpts{};
     TransportRankPrepareInfo info{};
     info.nic = "host#eth0;device#dev0;";
     // memKeys为空
     inOpts.options.emplace(3U, info);
-    
+
     HybmTransPrepareOptions hostOpts{};
     mgr.GetHostPrepareOptions(inOpts, hostOpts);
 
@@ -1138,13 +1137,13 @@ TEST(ComposeTransportManagerTest, GetDevicePrepareOptionsEmptyMemKeys)
     auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_DEVICE_RDMA);
     ComposeTransportManager mgr(tag);
     mgr.options_.rankId = 0;
-    
+
     HybmTransPrepareOptions inOpts{};
     TransportRankPrepareInfo info{};
     info.nic = "host#eth0;device#roce0;";
     // memKeys为空
     inOpts.options.emplace(4U, info);
-    
+
     HybmTransPrepareOptions devOpts{};
     mgr.GetDevicePrepareOptions(inOpts, devOpts);
 
@@ -1162,12 +1161,12 @@ TEST(ComposeTransportManagerTest, UpdateRankOptionsHostOnly)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     auto host = std::make_shared<FakeTransportManager>();
     host->updateRankResult = BM_OK;
     mgr.deviceTransportManager_ = nullptr;
     mgr.hostTransportManager_ = host;
-    
+
     HybmTransPrepareOptions opts{};
     Result ret = mgr.UpdateRankOptions(opts);
     EXPECT_EQ(ret, BM_OK);
@@ -1179,12 +1178,12 @@ TEST(ComposeTransportManagerTest, UpdateRankOptionsDeviceOnly)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    
+
     auto device = std::make_shared<FakeTransportManager>();
     device->updateRankResult = BM_OK;
     mgr.deviceTransportManager_ = device;
     mgr.hostTransportManager_ = nullptr;
-    
+
     HybmTransPrepareOptions opts{};
     Result ret = mgr.UpdateRankOptions(opts);
     EXPECT_EQ(ret, BM_OK);

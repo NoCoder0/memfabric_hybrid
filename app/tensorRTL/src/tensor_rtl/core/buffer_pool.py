@@ -1,6 +1,6 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
+
 
 class BufferPool:
     """
@@ -17,6 +17,6 @@ class BufferPool:
     def get(self, length_tuple, tensor_slice):
         tensor = self.send_buffer_dict.get(length_tuple, {}).get(tensor_slice, None)
         return tensor
-    
+
     def get_keys(self):
         return self.send_buffer_dict.keys()

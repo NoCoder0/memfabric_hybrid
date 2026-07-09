@@ -42,7 +42,7 @@ public:
     virtual int32_t ExportSliceExchangeInfo(hybm_mem_slice_t slice, ExchangeInfoWriter &desc,
                                             uint32_t flags) noexcept = 0;
     virtual int32_t ImportSliceExchangeInfo(const ExchangeInfoReader desc[], uint32_t count, void *addresses[],
-                                       uint32_t flags) noexcept = 0;
+                                            uint32_t flags) noexcept = 0;
     virtual int32_t ImportEntityExchangeInfo(const ExchangeInfoReader desc[], uint32_t count,
                                              uint32_t flags) noexcept = 0;
     virtual int32_t RemoveImported(const std::vector<uint32_t> &ranks) noexcept = 0;

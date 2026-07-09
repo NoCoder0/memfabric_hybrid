@@ -333,8 +333,10 @@ if __name__ == "__main__":
         ("test_graph_private_pool_lifecycle", TestSMAGraphAllocator.test_graph_private_pool_lifecycle),
         ("test_graph_replay_memory_stability", TestSMAGraphAllocator.test_graph_replay_memory_stability),
         ("test_multi_graph_independent_pools", TestSMAGraphAllocator.test_multi_graph_independent_pools),
-        ("test_graph_default_pool_untouched_during_capture",
-         TestSMAGraphAllocator.test_graph_default_pool_untouched_during_capture),
+        (
+            "test_graph_default_pool_untouched_during_capture",
+            TestSMAGraphAllocator.test_graph_default_pool_untouched_during_capture,
+        ),
         ("test_graph_capture_tensor_operation", TestSMAGraphAllocator.test_graph_capture_tensor_operation),
         ("test_graph_reset_then_empty_cache", TestSMAGraphAllocator.test_graph_reset_then_empty_cache),
         ("test_graph_memory_stats_snapshot", TestSMAGraphAllocator.test_graph_memory_stats_snapshot),

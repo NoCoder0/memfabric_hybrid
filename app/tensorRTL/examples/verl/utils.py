@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -13,27 +12,26 @@ def get_prefix_name(name):
     if re.search(r'\d+\.(.*)', name) is not None:
         prefix_name = re.search(r'\d+\.(.*)', name).group(1)
     else:
-        prefix_name = name.split('.')[-2:][0] 
+        prefix_name = name.split('.')[-2:][0]
     return prefix_name
 
 
 def generate_transfer_device_mesh(
-    train_tp_world_size, 
-    train_pp_world_size, 
-    infer_tp_world_size, 
-    infer_pp_world_size, 
-    tp_partition, 
+    train_tp_world_size,
+    train_pp_world_size,
+    infer_tp_world_size,
+    infer_pp_world_size,
+    tp_partition,
     pp_stage,
     world_size=None,
-    ):
+):
     if world_size is None:
         world_size = torch.distributed.get_world_size()
     num_ranks_in_pp = world_size // train_pp_world_size
     current_device_mesh = []
 
     if tp_partition:
-        for i in range(pp_stage * num_ranks_in_pp, (pp_stage + 1) * num_ranks_in_pp,
-                       train_tp_world_size):
+        for i in range(pp_stage * num_ranks_in_pp, (pp_stage + 1) * num_ranks_in_pp, train_tp_world_size):
             current_device_mesh.append(list(range(i, i + train_tp_world_size)))
     else:
         for i in range(pp_stage * num_ranks_in_pp, (pp_stage + 1) * num_ranks_in_pp):
@@ -54,25 +52,26 @@ def generate_transfer_device_mesh(
 
 
 def generate_transfer_ep_device_mesh(
-    num_experts, 
-    train_ep_world_size, 
-    train_etp, 
-    train_pp_world_size, 
-    infer_ep_world_size, 
-    infer_etp, 
-    infer_pp_world_size, 
+    num_experts,
+    train_ep_world_size,
+    train_etp,
+    train_pp_world_size,
+    infer_ep_world_size,
+    infer_etp,
+    infer_pp_world_size,
     pp_stage,
     world_size=None,
-    combined_tensor=False
+    combined_tensor=False,
 ):
     if world_size is None:
         world_size = torch.distributed.get_world_size()
     num_ranks_in_pp = world_size // train_pp_world_size
-    experts_per_stage = (num_experts // train_ep_world_size) if not combined_tensor else 1  # 合并之后，只有一个合并后的tensor
+    experts_per_stage = (
+        (num_experts // train_ep_world_size) if not combined_tensor else 1
+    )  # 合并之后，只有一个合并后的tensor
     current_device_mesh = []
 
-    for i in range(pp_stage * num_ranks_in_pp, (pp_stage + 1) * num_ranks_in_pp,
-                       train_etp):
+    for i in range(pp_stage * num_ranks_in_pp, (pp_stage + 1) * num_ranks_in_pp, train_etp):
         for _ in range(experts_per_stage):
             current_device_mesh.append(list(range(i, i + train_etp)))
 
@@ -80,20 +79,16 @@ def generate_transfer_ep_device_mesh(
         raise RuntimeError(f"[TensorRTL][ERROR] Not support infer pp.")
     update_device_mesh = []
 
-    infer_experts_per_stage = (num_experts // infer_ep_world_size) if not combined_tensor else 1  # 合并之后，只有一个合并后的tensor
+    infer_experts_per_stage = (
+        (num_experts // infer_ep_world_size) if not combined_tensor else 1
+    )  # 合并之后，只有一个合并后的tensor
     for i in range(0, world_size, infer_etp):
         for _ in range(infer_experts_per_stage):
             update_device_mesh.append(list(range(i, i + infer_etp)))
     return current_device_mesh, update_device_mesh
 
 
-
-def qkv_from_megatron_to_sglang(qkv_proj,
-                                num_query_groups,
-                                num_attention_heads,
-                                q_head_dim,
-                                k_head_dim,
-                                v_head_dim):
+def qkv_from_megatron_to_sglang(qkv_proj, num_query_groups, num_attention_heads, q_head_dim, k_head_dim, v_head_dim):
     # qkv在megatron侧以头的形式存在，[q1,k1,v1,q2,k2,v2,...]所以在tp变幻时不需要切分重组，但是在sglang侧以qkv的形式存在，如[q1,q2,q3,k1,k2,k3,v1,v2,v3]
     # 所以在获取qkv后需要转换成sglang格式
 
@@ -116,20 +111,28 @@ def qkv_from_megatron_to_sglang(qkv_proj,
 
 def get_expert_param_name_and_idx(name):
     expert_name = re.sub(r'\d+$', '', name)
-    expert_idx = int(name[len(expert_name):])
+    expert_idx = int(name[len(expert_name) :])
     return expert_name, expert_idx
 
 
 # 硬编码映射：NPU卡逻辑序号 -> CPU 核心范围
 DIE_TO_CPUS = {
-    0: "0-79", 1: "0-79",
-    2: "80-159", 3: "80-159",
-    4: "160-239", 5: "160-239",
-    6: "240-319", 7: "240-319",
-    8: "320-399", 9: "320-399",
-    10: "400-479", 11: "400-479",
-    12: "480-559", 13: "480-559",
-    14: "560-639", 15: "560-639",
+    0: "0-79",
+    1: "0-79",
+    2: "80-159",
+    3: "80-159",
+    4: "160-239",
+    5: "160-239",
+    6: "240-319",
+    7: "240-319",
+    8: "320-399",
+    9: "320-399",
+    10: "400-479",
+    11: "400-479",
+    12: "480-559",
+    13: "480-559",
+    14: "560-639",
+    15: "560-639",
 }
 
 

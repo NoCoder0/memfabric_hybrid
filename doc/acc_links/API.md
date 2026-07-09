@@ -250,7 +250,7 @@
     |返回值|成功返回0，失败返回错误码|
 
 1. 向对端发送数据数组
-    
+
     该函数只在启用 *ENABLE_IOV* 宏时可用
     ```cpp
     int32_t BlockSendIOV(struct iovec *iov, int32_t len, int32_t totalDataLen);
@@ -275,7 +275,7 @@
     |返回值|成功返回0，失败返回错误码|
 
 1. 接收由对端发来的数据数组
-    
+
     该函数只在启用 *ENABLE_IOV* 宏时可用
     ```cpp
     int32_t BlockRecvIOV(struct iovec *iov, int32_t len, int32_t totalDataLen);

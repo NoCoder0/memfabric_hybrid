@@ -98,8 +98,7 @@ int32_t WriteFakeValue(FakeExternalHandle &state, const std::string &key, const 
     return SMEM_STORE_BACKEND_CODE_OK;
 }
 
-int32_t ReadFakeValue(FakeExternalHandle &state, const std::string &key, void *value, uint64_t capacity,
-                      uint64_t *size)
+int32_t ReadFakeValue(FakeExternalHandle &state, const std::string &key, void *value, uint64_t capacity, uint64_t *size)
 {
     const auto iter = state.kv.find(key);
     if (iter == state.kv.end()) {
@@ -245,12 +244,10 @@ int32_t FakePrefixGet(void *handle, const smem_store_prefix_get_ctx_t *ctx, uint
 
 smem_conf_store_backend_op_t MakeFakeBackendOp()
 {
-    return {
-        FakeDistributed, FakeCreate, FakeDestroy, FakePut, FakeGet,
-        FakePrefixGet, FakeRemove, FakeLock, FakeTryLock, FakeUnlock
-    };
+    return {FakeDistributed, FakeCreate, FakeDestroy, FakePut,     FakeGet,
+            FakePrefixGet,   FakeRemove, FakeLock,    FakeTryLock, FakeUnlock};
 }
 
-}  // namespace test
-}  // namespace smem
-}  // namespace ock
+} // namespace test
+} // namespace smem
+} // namespace ock

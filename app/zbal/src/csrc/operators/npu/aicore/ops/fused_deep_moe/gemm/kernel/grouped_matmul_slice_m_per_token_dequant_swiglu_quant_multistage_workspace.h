@@ -111,7 +111,7 @@ public:
         uint32_t tileColumn;
 
         CATLASS_DEVICE
-        Params(){};
+        Params() {};
 
         CATLASS_DEVICE
         Params(__gm__ ElementInput *ptrInput_, LayoutInput const &layoutInput_,

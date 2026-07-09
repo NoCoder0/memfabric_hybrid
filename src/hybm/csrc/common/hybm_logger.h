@@ -20,32 +20,32 @@
 #define BM_LOG_ERROR(ARGS)       MF_OUT_LOG("[HYBM ", ock::mf::ERROR_LEVEL, ARGS)
 #define BM_LOG_ERROR_LIMIT(ARGS) MF_OUT_LOG_LIMIT("[HYBM ", ock::mf::ERROR_LEVEL, ARGS)
 
-#define BM_LOG_ALARM(CODE, ARGS)          MF_ALARM_LOG("[HYBM ", CODE, ARGS)
-#define BM_LOG_ALARM_LIMIT(CODE, ARGS)    MF_ALARM_LOG_LIMIT("[HYBM ", CODE, ARGS)
-#define BM_LOG_RESUME(CODE)               MF_RESUME_LOG(CODE)
+#define BM_LOG_ALARM(CODE, ARGS)       MF_ALARM_LOG("[HYBM ", CODE, ARGS)
+#define BM_LOG_ALARM_LIMIT(CODE, ARGS) MF_ALARM_LOG_LIMIT("[HYBM ", CODE, ARGS)
+#define BM_LOG_RESUME(CODE)            MF_RESUME_LOG(CODE)
 
-#define BM_VALIDATE_RETURN(ARGS, msg, RET)                     \
-    do {                                                       \
-        if (__builtin_expect(!(ARGS), 0) != 0) {               \
-            BM_LOG_ERROR("Assert " << #ARGS << ", " << msg);   \
-            return RET;                                        \
-        }                                                      \
+#define BM_VALIDATE_RETURN(ARGS, msg, RET)                   \
+    do {                                                     \
+        if (__builtin_expect(!(ARGS), 0) != 0) {             \
+            BM_LOG_ERROR("Assert " << #ARGS << ", " << msg); \
+            return RET;                                      \
+        }                                                    \
     } while (0)
 
-#define BM_ASSERT_LOG_AND_RETURN(ARGS, MSG, RESULT)               \
-    do {                                                          \
-        if (__builtin_expect(!(ARGS), 0) != 0) {                  \
-            BM_LOG_ERROR("Assert " << #ARGS << ", " << MSG);      \
-            return RESULT;                                        \
-        }                                                         \
+#define BM_ASSERT_LOG_AND_RETURN(ARGS, MSG, RESULT)          \
+    do {                                                     \
+        if (__builtin_expect(!(ARGS), 0) != 0) {             \
+            BM_LOG_ERROR("Assert " << #ARGS << ", " << MSG); \
+            return RESULT;                                   \
+        }                                                    \
     } while (0)
 
-#define BM_ASSERT_RET_VOID(ARGS, MSG)                             \
-    do {                                                          \
-        if (__builtin_expect(!(ARGS), 0) != 0) {                  \
-            BM_LOG_ERROR("Assert " << #ARGS << ", " << MSG);      \
-            return;                                               \
-        }                                                         \
+#define BM_ASSERT_RET_VOID(ARGS, MSG)                        \
+    do {                                                     \
+        if (__builtin_expect(!(ARGS), 0) != 0) {             \
+            BM_LOG_ERROR("Assert " << #ARGS << ", " << MSG); \
+            return;                                          \
+        }                                                    \
     } while (0)
 
 #define BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(result, msg) \

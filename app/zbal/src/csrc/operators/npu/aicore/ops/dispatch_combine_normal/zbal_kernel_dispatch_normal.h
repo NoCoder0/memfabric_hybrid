@@ -461,7 +461,7 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantProcess()
 #ifdef ZBAL_ASCEND_NPU_A3
     PipeBarrier<PIPE_V>();
 #elif defined(ZBAL_ASCEND_NPU_A5)
-    PipeBarrier<PIPE_ALL>();    // cleanup xInTensor lifecycle
+    PipeBarrier<PIPE_ALL>(); // cleanup xInTensor lifecycle
 #else
     PipeBarrier<PIPE_V>();
 #endif

@@ -31,9 +31,9 @@
 #define SM_LOG_WARN_LIMIT(ARGS) MF_OUT_LOG_LIMIT("[SMEM ", ock::mf::WARN_LEVEL, ARGS)
 #define SM_LOG_ERROR(ARGS)      MF_OUT_LOG("[SMEM ", ock::mf::ERROR_LEVEL, ARGS)
 
-#define SM_LOG_ALARM(CODE, ARGS)          MF_ALARM_LOG("[SMEM ", CODE, ARGS)
-#define SM_LOG_ALARM_LIMIT(CODE, ARGS)    MF_ALARM_LOG_LIMIT("[SMEM ", CODE, ARGS)
-#define SM_LOG_RESUME(CODE)               MF_RESUME_LOG(CODE)
+#define SM_LOG_ALARM(CODE, ARGS)       MF_ALARM_LOG("[SMEM ", CODE, ARGS)
+#define SM_LOG_ALARM_LIMIT(CODE, ARGS) MF_ALARM_LOG_LIMIT("[SMEM ", CODE, ARGS)
+#define SM_LOG_RESUME(CODE)            MF_RESUME_LOG(CODE)
 
 #define SM_CHECK_CONDITION_RET(condition, RET) \
     do {                                       \
@@ -58,12 +58,12 @@
         SM_LOG_ERROR(tmpStr.str());                \
     } while (0)
 
-#define SM_LOG_AND_SET_LAST_ERROR_CODE(code, msg)    \
-    do {                                             \
-        std::stringstream tmpStr;                    \
-        tmpStr << msg;                               \
+#define SM_LOG_AND_SET_LAST_ERROR_CODE(code, msg)        \
+    do {                                                 \
+        std::stringstream tmpStr;                        \
+        tmpStr << msg;                                   \
         ock::smem::SmLastError::Set(code, tmpStr.str()); \
-        SM_LOG_ERROR(tmpStr.str());                  \
+        SM_LOG_ERROR(tmpStr.str());                      \
     } while (0)
 
 #define SM_VALIDATE_RETURN(ARGS, msg, RET)       \

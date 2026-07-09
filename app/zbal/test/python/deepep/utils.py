@@ -24,9 +24,14 @@ def register_zbal(local_rank, rank, world_size, ip, port):
     g_ip_port = f"tcp://{ip}:23350"
     zbal_set_logger_level(2)
 
-    zbal_init(world_size, local_rank, rank, device_mem_size=local_mem_size,
-              comm_meta_space_size=local_meta_size,
-              ip_port=g_ip_port)
+    zbal_init(
+        world_size,
+        local_rank,
+        rank,
+        device_mem_size=local_mem_size,
+        comm_meta_space_size=local_meta_size,
+        ip_port=g_ip_port,
+    )
     meta_addr = 0
 
     npu_tensor = torch.zeros(10, device="npu")
@@ -177,20 +182,20 @@ class SuppressStdoutStderr:
 
 
 def bench_kineto(
-        fn,
-        kernel_names: Union[str, tuple],
-        num_tests: int = 100,
-        suppress_kineto_output: bool = False,
-        trace_path: Optional[str] = None,
-        barrier_comm_profiling: bool = False,
-        num_kernels_per_period: int = 1,
+    fn,
+    kernel_names: Union[str, tuple],
+    num_tests: int = 100,
+    suppress_kineto_output: bool = False,
+    trace_path: Optional[str] = None,
+    barrier_comm_profiling: bool = False,
+    num_kernels_per_period: int = 1,
 ):
     # Profile
     suppress = SuppressStdoutStderr if suppress_kineto_output else EmptySuppress
     with suppress():
         schedule = torch_npu.profiler.schedule(wait=1, warmup=0, active=1, repeat=1)
         with torch_npu.profiler.profile(
-                activities=[torch_npu.profiler.ProfilerActivity.NPU], schedule=schedule
+            activities=[torch_npu.profiler.ProfilerActivity.NPU], schedule=schedule
         ) as prof:
             for i in range(2):
                 # NOTES: use a large kernel and a barrier to eliminate the unbalanced CPU launch overhead
@@ -226,9 +231,7 @@ def bench_kineto(
         events = [event for event in profile_data if event["name"].startswith(kernel_prefix)]
         assert len(events) > 0, f"No kernel with prefix '{kernel_prefix}' found in trace"
         matched_names = set(event["name"] for event in events)
-        assert len(matched_names) == 1, (
-            f"Prefix '{kernel_prefix}' matches multiple kernels: {matched_names}"
-        )
+        assert len(matched_names) == 1, f"Prefix '{kernel_prefix}' matches multiple kernels: {matched_names}"
         events = sorted(events, key=lambda event: event["ts"])
         durations = [event["dur"] / 1e6 for event in events]
         logging.info(f"[PROF] Kernel duration {durations}")
@@ -236,10 +239,7 @@ def bench_kineto(
             assert len(durations) % num_kernels_per_period == 0
             num_kernel_patterns = len(durations) // num_kernels_per_period
             kernel_durations.append(
-                [
-                    sum(durations[j::num_kernels_per_period]) / num_kernel_patterns
-                    for j in range(num_kernels_per_period)
-                ]
+                [sum(durations[j::num_kernels_per_period]) / num_kernel_patterns for j in range(num_kernels_per_period)]
             )
         else:
             num_kernel_patterns = len(durations)
@@ -260,13 +260,13 @@ def hash_tensor(t: torch.Tensor):
 
 
 def calculate_avg_stats(
-        dispatch_t,
-        num_dispatch_comm_bytes,
-        combine_t,
-        num_combine_comm_bytes,
-        rank,
-        num_ranks,
-        root_rank: 0,
+    dispatch_t,
+    num_dispatch_comm_bytes,
+    combine_t,
+    num_combine_comm_bytes,
+    rank,
+    num_ranks,
+    root_rank: 0,
 ):
     # dispatch_t / combine_t: the unit is second
     local_stats = torch.tensor(
@@ -281,9 +281,7 @@ def calculate_avg_stats(
     )
 
     # 创建用于 all_gather 的输出张量（[num_ranks, 4]）
-    gather_stats = torch.zeros(
-        (num_ranks, 4), dtype=torch.float64, device="npu"
-    )
+    gather_stats = torch.zeros((num_ranks, 4), dtype=torch.float64, device="npu")
     dist.all_gather_into_tensor(gather_stats, local_stats, group=None)
     if rank == root_rank:
         dispatch_latency = gather_stats[:, 0]  # us

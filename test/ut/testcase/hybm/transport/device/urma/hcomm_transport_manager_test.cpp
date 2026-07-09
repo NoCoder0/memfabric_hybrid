@@ -113,8 +113,7 @@ int32_t MockHcommEndpointCreateFail(const EndpointDesc *, EndpointHandle *)
     return BM_DL_FUNCTION_FAILED;
 }
 
-int32_t MockHcommMemReg(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
-                        HcommMemHandle *memHandle)
+int32_t MockHcommMemReg(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem, HcommMemHandle *memHandle)
 {
     EXPECT_EQ(endpoint, MOCK_ENDPOINT);
     EXPECT_STREQ(memTag, "7");
@@ -198,7 +197,7 @@ int32_t MockHcommMemUnimport(EndpointHandle endpoint, const void *memDesc, uint3
 }
 
 std::vector<uint8_t> MakeRawExportDesc(uint64_t remoteAddr = MOCK_REMOTE_ADDR, uint64_t size = MOCK_SIZE,
-                                        uint64_t memTag = MOCK_MEM_TAG)
+                                       uint64_t memTag = MOCK_MEM_TAG)
 {
     UrmaExportDesc exportDesc{};
     exportDesc.headerSize = sizeof(UrmaExportDesc);

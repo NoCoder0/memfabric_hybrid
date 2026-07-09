@@ -41,7 +41,7 @@ constexpr uint32_t HOST_SHM_IMPORT_OPEN_RETRY_INTERVAL_US = 10000U;
 
 bool IsHugetlbfsMounted() noexcept
 {
-    struct statfs fsInfo{};
+    struct statfs fsInfo {};
     if (statfs(HOST_SHM_HUGEPAGE_DIR, &fsInfo) != 0) {
         BM_LOG_WARN("Failed to access hugepage dir " << HOST_SHM_HUGEPAGE_DIR << " error:" << errno << ", "
                                                      << SafeStrError(errno) << ", will fallback to /dev/shm");
@@ -497,7 +497,7 @@ Result HybmHostShmSegment::MapImportedShm(uint32_t rankId) noexcept
                      << SafeStrError(errno));
         return BM_ERROR;
     }
-    struct stat fileStat{};
+    struct stat fileStat {};
     if (fstat(fd, &fileStat) != 0 || static_cast<uint64_t>(fileStat.st_size) != options_.size) {
         BM_LOG_ERROR("Imported shm file size mismatch "
                      << shmPath << " rank:" << rankId << " expected:" << options_.size << " got:" << fileStat.st_size);
@@ -516,8 +516,7 @@ Result HybmHostShmSegment::MapImportedShm(uint32_t rankId) noexcept
     importedShmFds_[rankId] = fd;
     mappedRemoteRanks_.insert(rankId);
     auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-        {reinterpret_cast<uint64_t>(remoteBase), 0, 0, options_.size, HYBM_MEM_TYPE_HOST},
-        options_.rankId, rankId);
+        {reinterpret_cast<uint64_t>(remoteBase), 0, 0, options_.size, HYBM_MEM_TYPE_HOST}, options_.rankId, rankId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AddVaInfoFromExternal failed for rank " << rankId);
     }

@@ -222,9 +222,9 @@ Result AccHttpServerDefault::HandleHttpRequest(const AccTcpRequestContext &conte
     if (httpLink->method_ == "CONNECT") {
         LOG_ERROR("CONNECT method not supported on " << httpLink->ShortName() << ", method=" << httpLink->method_);
         httpLink->needClose_ = true;
-        httpLink->SendHttpResponse(
-            static_cast<int16_t>(AccHttpStatusCode::METHOD_NOT_ALLOWED),
-            AccHttpStatusText(AccHttpStatusCode::METHOD_NOT_ALLOWED), "text/plain", nullptr, {}, true);
+        httpLink->SendHttpResponse(static_cast<int16_t>(AccHttpStatusCode::METHOD_NOT_ALLOWED),
+                                   AccHttpStatusText(AccHttpStatusCode::METHOD_NOT_ALLOWED), "text/plain", nullptr, {},
+                                   true);
         return ACC_LINK_MSG_INVALID;
     }
 
@@ -239,13 +239,13 @@ Result AccHttpServerDefault::HandleHttpRequest(const AccTcpRequestContext &conte
         if (IsPathRegistered(httpLink->path_)) {
             LOG_ERROR("Method " << httpLink->method_ << " not allowed for path " << httpLink->path_);
             httpLink->SendHttpResponse(static_cast<int16_t>(AccHttpStatusCode::METHOD_NOT_ALLOWED),
-                                       AccHttpStatusText(AccHttpStatusCode::METHOD_NOT_ALLOWED), "text/plain",
-                                       nullptr, {}, true);
+                                       AccHttpStatusText(AccHttpStatusCode::METHOD_NOT_ALLOWED), "text/plain", nullptr,
+                                       {}, true);
         } else {
             LOG_ERROR("No handler for " << key);
             httpLink->SendHttpResponse(static_cast<int16_t>(AccHttpStatusCode::NOT_FOUND),
-                                       AccHttpStatusText(AccHttpStatusCode::NOT_FOUND), "text/plain",
-                                       nullptr, {}, true);
+                                       AccHttpStatusText(AccHttpStatusCode::NOT_FOUND), "text/plain", nullptr, {},
+                                       true);
         }
         return ACC_LINK_MSG_INVALID;
     }

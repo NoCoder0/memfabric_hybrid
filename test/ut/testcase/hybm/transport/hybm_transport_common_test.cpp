@@ -95,7 +95,7 @@ TEST_F(HybmTransportCommonTest, ReadDeviceUrmaMemoryKey_CopiesAll32KeySlots)
     TransportMemoryKey input{};
     TransportMemoryKey output{};
     for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
-        input.keys[i] = i + 500; // 500
+        input.keys[i] = i + 500;                // 500
     }
     ReadDeviceUrmaMemoryKey(input, output);
     for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
@@ -108,7 +108,7 @@ TEST_F(HybmTransportCommonTest, WriteDeviceUrmaMemoryKey_WritesAll32KeySlots)
     TransportMemoryKey input{};
     TransportMemoryKey output{};
     for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
-        input.keys[i] = i + 600; // 600
+        input.keys[i] = i + 600;                // 600
     }
     WriteDeviceUrmaMemoryKey(input, output);
     for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4

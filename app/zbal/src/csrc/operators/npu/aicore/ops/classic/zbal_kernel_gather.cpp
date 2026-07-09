@@ -172,15 +172,13 @@ private:
     F(float64_t, ZBAL_DATA_TYPE_FP64)  \
     F(bfloat16_t, ZBAL_DATA_TYPE_BFP16)
 
-#define ZBAL_GA_CASE(TYPE, ENUM_VAL)                                    \
-    case zbal_datatype_t::ENUM_VAL:                                     \
-    {                                                                   \
-        ZBALGatherKernel<TYPE> op;                                      \
-        op.Init(input, output, metaAddr, elements, root, waitSymbol);   \
-        op.Process();                                                   \
-        break;                                                          \
-    }                                                                   \
-
+#define ZBAL_GA_CASE(TYPE, ENUM_VAL)                                  \
+    case zbal_datatype_t::ENUM_VAL: {                                 \
+        ZBALGatherKernel<TYPE> op;                                    \
+        op.Init(input, output, metaAddr, elements, root, waitSymbol); \
+        op.Process();                                                 \
+        break;                                                        \
+    }
 
 extern "C" __global__ __aicore__ void ZBALGatherInner(GM_ADDR input, GM_ADDR output, size_t elements, uint32_t dataType,
                                                       GM_ADDR metaAddr, uint16_t root, uint64_t waitSymbol)

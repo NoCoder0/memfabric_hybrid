@@ -289,7 +289,7 @@ public:
     {
         ASSERT_RETURN(fd_ != -1, ACC_CONNECTION_NOT_READY);
 
-        struct timeval timeoutTV{};
+        struct timeval timeoutTV {};
         timeoutTV.tv_sec = static_cast<int64_t>(timeoutInUs) / (TIME_UNIT_INTERVAL * TIME_UNIT_INTERVAL);
         timeoutTV.tv_usec = static_cast<int64_t>(timeoutInUs) % (TIME_UNIT_INTERVAL * TIME_UNIT_INTERVAL);
 
@@ -302,7 +302,7 @@ public:
     {
         ASSERT_RETURN(fd_ != -1, ACC_CONNECTION_NOT_READY);
 
-        struct timeval timeoutTV{};
+        struct timeval timeoutTV {};
         timeoutTV.tv_sec = static_cast<int64_t>(timeoutInUs) / (TIME_UNIT_INTERVAL * TIME_UNIT_INTERVAL);
         timeoutTV.tv_usec = static_cast<int64_t>(timeoutInUs) % (TIME_UNIT_INTERVAL * TIME_UNIT_INTERVAL);
 
@@ -442,10 +442,10 @@ protected:
         return ACC_LINK_ERROR;
     }
 
-    AccMsgHeader header_{};             /* header to be received / parsed for worker polling only */
-    AccDataBufferPtr data_{nullptr};    /* data being received / parsed for worker polling only */
-    SSL *ssl_ = nullptr;                /* ssl link ptr */
-    uint32_t workerIndex_ = 0;          /* attached to which worker */
+    AccMsgHeader header_{};          /* header to be received / parsed for worker polling only */
+    AccDataBufferPtr data_{nullptr}; /* data being received / parsed for worker polling only */
+    SSL *ssl_ = nullptr;             /* ssl link ptr */
+    uint32_t workerIndex_ = 0;       /* attached to which worker */
     AccTcpWorker *worker_ = nullptr;
 
     friend class AccTcpWorker;

@@ -91,8 +91,8 @@ public:
                                     const smem_trans_config_t &config);
 
 public:
-    explicit SmemTransEntry(const smem_trans_config_t &config, std::string &name, uint32_t rank,
-                            uint32_t id, StorePtr &store)
+    explicit SmemTransEntry(const smem_trans_config_t &config, std::string &name, uint32_t rank, uint32_t id,
+                            StorePtr &store)
         : config_(config), name_(name), store_(store), entityId_(id), rankId_(rank)
     {}
 
@@ -122,7 +122,7 @@ private:
     Result UpdateHandle(uint32_t rk);
     Result GroupOpBarrier(int32_t input);
     Result LeaveHandle(uint32_t rk);
-    Result LinkDownHandle(uint32_t rk);  // TCP link down, invokes PeerDownCallback
+    Result LinkDownHandle(uint32_t rk); // TCP link down, invokes PeerDownCallback
     Result Join(uint32_t flags);
     Result Update(uint32_t flags);
     Result Leave(uint32_t flags);
@@ -143,7 +143,7 @@ private:
                          const size_t dataSizes[], uint32_t size);
 
 private:
-    hybm_entity_t entity_ = nullptr;                       /* local hybm entity */
+    hybm_entity_t entity_ = nullptr; /* local hybm entity */
 
     uint32_t rankId_ = 0;
     uint16_t entityId_ = 0;

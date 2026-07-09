@@ -315,7 +315,7 @@ Result HybmConnBasedSegment::PrepareShareMemoryFd() const noexcept
         return BM_OK;
     }
 
-    struct stat buf{};
+    struct stat buf {};
     auto ret = fstat(options_.shmFd, &buf);
     if (ret != 0) {
         BM_LOG_ERROR("share mem fd: " << options_.shmFd << " stat failed: " << errno << ":" << strerror(errno));
@@ -336,8 +336,8 @@ Result HybmConnBasedSegment::PrepareShareMemoryFd() const noexcept
     return BM_OK;
 }
 
-Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t lvOffset, uint64_t size,
-                                      uint64_t gva, MemAllocMethod &allocMethod) noexcept
+Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t lvOffset, uint64_t size, uint64_t gva,
+                                      MemAllocMethod &allocMethod) noexcept
 {
     if (size == 0) {
         return BM_OK;
@@ -359,8 +359,8 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
             return BM_ERROR;
         }
     }
-    int ret = HybmVaManager::GetInstance().AddVaInfo(
-        {gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST}, options_.rankId);
+    int ret = HybmVaManager::GetInstance().AddVaInfo({gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST},
+                                                     options_.rankId);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
         if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
@@ -374,9 +374,9 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
     return BM_OK;
 }
 
-void* HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint64_t size, MemAllocMethod &allocMethod)
+void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint64_t size, MemAllocMethod &allocMethod)
 {
-    void* mapped;
+    void *mapped;
     auto prot = PROT_READ | PROT_WRITE;
     int mmapFd = options_.shmFd < 0 ? -1 : options_.shmFd;
     int mmapFlags = options_.shmFd < 0 ? (MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE) : (MAP_FIXED | MAP_SHARED);
@@ -390,12 +390,13 @@ void* HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
         int ret = DlHalApi::HalMemAlloc(&halAllocPtr, size, allocFlag);
         if (ret != 0 || halAllocPtr == nullptr) {
             BM_LOG_ERROR("halMemAlloc failed, ret:" << ret << " ptr:" << halAllocPtr << ". Cannot allocate " << size
-                                                   << " bytes DRAM huge page memory");
+                                                    << " bytes DRAM huge page memory");
             return MAP_FAILED;
         } else {
             allocMethod = MemAllocMethod::HAL_MEM_ALLOC;
             BM_LOG_INFO("Successfully allocated DRAM hugepage via halMemAlloc. "
-                        "addr:" << halAllocPtr << " size:" << size);
+                        "addr:"
+                        << halAllocPtr << " size:" << size);
             return halAllocPtr;
         }
     }
@@ -408,8 +409,9 @@ void* HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
         return mapped;
     }
     BM_LOG_WARN("Failed to alloc size:" << size << " with hugepage via mmap, error: " << errno << ", "
-        << SafeStrError(errno) << ". Use 'grep -i huge /proc/meminfo' to check hugepages, "
-        "and use 'echo <page_num> > /proc/sys/vm/nr_hugepages' to set hugepages.");
+                                        << SafeStrError(errno)
+                                        << ". Use 'grep -i huge /proc/meminfo' to check hugepages, "
+                                           "and use 'echo <page_num> > /proc/sys/vm/nr_hugepages' to set hugepages.");
 
     // 2. try to alloc DRAM with hugepage via halMemAlloc
     if (options_.enable56BitsGva && options_.shmFd < 0) {
@@ -431,7 +433,8 @@ void* HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
         } else {
             allocMethod = MemAllocMethod::HAL_MEM_ALLOC;
             BM_LOG_INFO("Successfully allocated DRAM hugepage via halMemAlloc. "
-                        "addr:" << halAllocPtr << " size:" << size);
+                        "addr:"
+                        << halAllocPtr << " size:" << size);
             return halAllocPtr;
         }
     }
@@ -507,14 +510,15 @@ Result HybmConnBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
     slices_.erase(pos);
 
 #if defined(ASCEND_NPU)
-    const bool needUnregister = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA
-        | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
+    const bool needUnregister =
+        (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) !=
+        0U;
     if (needUnregister) {
-        auto unregRet = DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(slice->vAddress_),
-                                                      logicDeviceId_, HOST_MEM_MAP_DEV);
+        auto unregRet =
+            DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(slice->vAddress_), logicDeviceId_, HOST_MEM_MAP_DEV);
         if (unregRet != 0) {
-            BM_LOG_ERROR("HalHostUnregisterEx failed, idx:" << slice->index_
-                         << " ret:" << unregRet << "; teardown continues");
+            BM_LOG_ERROR("HalHostUnregisterEx failed, idx:" << slice->index_ << " ret:" << unregRet
+                                                            << "; teardown continues");
         }
     }
 #endif

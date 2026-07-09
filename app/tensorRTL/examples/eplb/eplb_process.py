@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
 
@@ -31,17 +30,13 @@ class EplbProcess:
         self._server_args.device = "cpu"
 
     def launch_process(self):
-        proc = Process(
-            target=self._worker_process, args=(self.planner_q, self.block_q), daemon=True
-        )
+        proc = Process(target=self._worker_process, args=(self.planner_q, self.block_q), daemon=True)
         proc.start()
         return proc
 
     def _do_algorithm(self):
         logical_count = self.shared_dict["moe_load"]
-        return ExpertLocationMetadata.init_by_eplb(
-            self._server_args, self._model_config, logical_count, self.rank
-        )
+        return ExpertLocationMetadata.init_by_eplb(self._server_args, self._model_config, logical_count, self.rank)
 
     def _worker_process(self, planner_q, block_q):
         while True:
@@ -52,9 +47,7 @@ class EplbProcess:
                 _wait_and_put(block_q, update_info)
 
             except Exception as e:
-                logger.warning(
-                    f"[EPLB process] Exiting due to error:{e}", exc_info=True
-                )
+                logger.warning(f"[EPLB process] Exiting due to error:{e}", exc_info=True)
                 break
 
 

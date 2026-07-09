@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -12,11 +11,10 @@ class ModelAdatpor(ABC):
         self.build_i2t_param_name_mapping()
         self.build_tp_partition_dict(tp_partition_dict)
 
-
     @abstractmethod
     def build_param_name_mapping(self, param_name_mapping):
         pass
-        
+
     @abstractmethod
     def build_tp_partition_dict(self, tp_partition_dict):
         pass

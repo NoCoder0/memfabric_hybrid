@@ -14,7 +14,7 @@
 
 namespace ock {
 namespace acc {
-AccDataBuffer::AccDataBuffer(uint32_t memSize) : memSize_{memSize}, data_{new (std::nothrow) uint8_t[memSize]} {}
+AccDataBuffer::AccDataBuffer(uint32_t memSize) : memSize_{memSize}, data_{new(std::nothrow) uint8_t[memSize]} {}
 
 AccDataBuffer::AccDataBuffer(const void *data, uint32_t size) : AccDataBuffer{size}
 {

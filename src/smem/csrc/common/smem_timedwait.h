@@ -73,7 +73,9 @@ public:
         if (!inited_) {
             return SM_NOT_INITIALIZED;
         }
-        struct timespec ts{0, 0};
+        struct timespec ts {
+            0, 0
+        };
         int32_t ret = 0;
 
         pthread_mutex_lock(&this->timeCheckerMutex_);

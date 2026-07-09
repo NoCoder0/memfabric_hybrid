@@ -574,7 +574,7 @@ int32_t HalGvaReserveMemory(uint64_t *address, size_t size, int32_t deviceId, ui
     uint64_t retVa = VirtAllocGvaMem(mgmt, va, allocSize, &heap_type, advise);
     if (retVa != va) {
         BM_LOG_ERROR("HalGvaInitMemory alloc mem failed. (flag=" << flags << " va=0x" << std::hex << va << " size=0x"
-                     << size << ")");
+                                                                 << size << ")");
         return -1;
     }
 

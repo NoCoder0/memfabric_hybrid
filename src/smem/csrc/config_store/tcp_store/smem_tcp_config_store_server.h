@@ -70,12 +70,7 @@ private:
     static std::atomic<uint64_t> idGen_;
 };
 
-enum StoreServerState : uint32_t {
-    SS_INITED,
-    SS_RECOVER,
-    SS_NORMAL,
-    SS_EXITED
-};
+enum StoreServerState : uint32_t { SS_INITED, SS_RECOVER, SS_NORMAL, SS_EXITED };
 
 class AccStoreServer : public SmReferable {
 public:
@@ -171,7 +166,7 @@ private:
     uint32_t worldSize_;
     uint32_t rankIndex_{0};
     std::unordered_set<uint32_t> aliveRankSet_;
-    std::unordered_set<uint32_t> reconnectedRankSet_; // only ranks that actually reconnected after startup
+    std::unordered_set<uint32_t> reconnectedRankSet_;    // only ranks that actually reconnected after startup
     std::unordered_map<uint32_t, uint32_t> linkRankMap_; // linkId → rankId, in-memory only, no etcd
     ConfigStoreServerBrokenHandler externalBrokenHandler_{nullptr};
     std::unordered_map<uint32_t, int64_t> heartBeatMap_;

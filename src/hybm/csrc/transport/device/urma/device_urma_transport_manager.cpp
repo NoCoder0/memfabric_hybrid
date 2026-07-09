@@ -390,7 +390,7 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
         return BM_INVALID_PARAM;
     }
     BM_LOG_INFO("device_urma OpenDevice protocol=" << static_cast<int>(protocol) << ", rankId=" << rankId_
-                                                    << ", phyDeviceId=" << phyDeviceId_);
+                                                   << ", phyDeviceId=" << phyDeviceId_);
 
     // Build UrmaEndpointDesc and create local endpoint
     UrmaEndpointDesc localDesc{};
@@ -956,8 +956,8 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
 
         const uint64_t remoteAddr = key.keys[1];
         if (remoteAddr == 0) {
-            BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked zero addr(" << remoteAddr << ") in key, peer: "
-                                                                            << peerRank);
+            BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked zero addr(" << remoteAddr
+                                                                            << ") in key, peer: " << peerRank);
             rollbackNewImports();
             return BM_INVALID_PARAM;
         }

@@ -281,7 +281,7 @@ bool checkConfigExpandableSegments();
 
 bool isConfig1GPageSizeEnable();
 
-NPUAllocator& getCachingAllocator();
+NPUAllocator &getCachingAllocator();
 
 } // namespace dma
 } // namespace c10_npu

@@ -75,8 +75,8 @@ Result SmemBmEntryManager::Initialize(const std::string &storeURL, uint32_t worl
         if (ret == SM_OK) {
             break;
         }
-        SM_LOG_ERROR("[RECOVER] Initialize attempt " << attempt << "/" << maxRetries
-            << " failed, ret=" << ret << " deviceId=" << deviceId_);
+        SM_LOG_ERROR("[RECOVER] Initialize attempt " << attempt << "/" << maxRetries << " failed, ret=" << ret
+                                                     << " deviceId=" << deviceId_);
         if (attempt < maxRetries) {
             confStore_ = nullptr;
             StoreFactory::DestroyStore(storeURL_);
@@ -135,8 +135,7 @@ int32_t SmemBmEntryManager::RacingForStoreServer()
 int32_t SmemBmEntryManager::AutoRanking()
 {
     std::vector<uint8_t> rankIdData;
-    auto ret = confStore_->GetCoreStore()->Get(AutoRankingStr, rankIdData,
-                                               SMEM_DEFAUT_WAIT_TIME * SECOND_TO_MILLSEC);
+    auto ret = confStore_->GetCoreStore()->Get(AutoRankingStr, rankIdData, SMEM_DEFAUT_WAIT_TIME * SECOND_TO_MILLSEC);
     if (ret == SM_OK && rankIdData.size() == sizeof(uint32_t)) {
         union Transfer {
             uint32_t rankId;
@@ -150,7 +149,7 @@ int32_t SmemBmEntryManager::AutoRanking()
         return SM_OK;
     }
     SM_LOG_ERROR("AutoRanking failed, deviceId: " << deviceId_ << ", ret: " << ret
-        << ", dataSize: " << rankIdData.size());
+                                                  << ", dataSize: " << rankIdData.size());
     return SM_ERROR;
 }
 

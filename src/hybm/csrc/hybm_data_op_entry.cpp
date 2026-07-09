@@ -28,8 +28,8 @@ HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_
     BM_ASSERT_LOG_AND_RETURN(params->dest != nullptr, "params->dest is nullptr", BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(params->dataSize != 0, "params->dataSize = " << params->dataSize, BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(direction < HYBM_DATA_COPY_DIRECTION_BUTT, "direction = " << direction, BM_INVALID_PARAM);
-    BM_LOG_DEBUG("Src: " << VaToInfo(params->src) << ", dest: " << VaToInfo(params->dest)
-                         << " flag:" << VaToStr(flags) << " direction:" << direction);
+    BM_LOG_DEBUG("Src: " << VaToInfo(params->src) << ", dest: " << VaToInfo(params->dest) << " flag:" << VaToStr(flags)
+                         << " direction:" << direction);
 
     auto &vaMgr = ock::mf::HybmVaManager::GetInstance();
     uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->src));
@@ -39,13 +39,13 @@ HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_
     if (direction == HYBM_DATA_COPY_DIRECTION_AUTO) {
         direction = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
         if (direction >= HYBM_DATA_COPY_DIRECTION_AUTO) {
-            BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex <<
-                params->src << ", dest:" << params->dest);
+            BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex << params->src
+                                                                     << ", dest:" << params->dest);
             return BM_INVALID_PARAM;
         }
     } else if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
-        BM_LOG_ERROR("Direction mismatch: specified=" << static_cast<int>(direction)
-                     << " src=" << params->src << " dest=" << params->dest);
+        BM_LOG_ERROR("Direction mismatch: specified=" << static_cast<int>(direction) << " src=" << params->src
+                                                      << " dest=" << params->dest);
         return BM_INVALID_PARAM;
     }
 
@@ -89,8 +89,8 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
         uint8_t except = srcMask | (dstMask << 4);
         direction = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
         if (direction >= HYBM_DATA_COPY_DIRECTION_AUTO) {
-            BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex <<
-                params->sources[0] << ", dest=:" << std::hex << params->destinations[0]);
+            BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex << params->sources[0] << ", dest=:"
+                                                                     << std::hex << params->destinations[0]);
             return BM_INVALID_PARAM;
         }
     }
@@ -107,8 +107,8 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
         uint8_t except = srcMask | (dstMask << 4);
 
         if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
-            BM_LOG_ERROR("Direction mismatch at index " << i << ": direction=" << static_cast<int>(direction)
-                         << " src=" << params->sources[i] << " dest=" << params->destinations[i]);
+            BM_LOG_ERROR("Direction mismatch at index " << i << ": direction=" << static_cast<int>(direction) << " src="
+                                                        << params->sources[i] << " dest=" << params->destinations[i]);
             return BM_INVALID_PARAM;
         }
     }

@@ -20,13 +20,9 @@ using namespace ock::smem;
 
 class SmemNetCommonTest : public ::testing::Test {
 protected:
-    void SetUp() override
-    {
-    }
+    void SetUp() override {}
 
-    void TearDown() override
-    {
-    }
+    void TearDown() override {}
 };
 
 // ======================== ExtractIpPortFromUrl Tests ========================

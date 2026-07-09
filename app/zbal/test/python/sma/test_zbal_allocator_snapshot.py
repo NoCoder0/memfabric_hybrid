@@ -30,9 +30,7 @@ def init():
 
 def train(num_iter=500, device="npu"):
     """a tiny transformer training process"""
-    model = nn.Transformer(
-        d_model=512, nhead=2, num_encoder_layers=2, num_decoder_layers=2
-    ).to(device=device)
+    model = nn.Transformer(d_model=512, nhead=2, num_encoder_layers=2, num_decoder_layers=2).to(device=device)
     x = torch.randn(size=(1, 1024, 512), device=device)
     tgt = torch.rand(size=(1, 1024, 512), device=device)
     model.train()
@@ -67,5 +65,6 @@ if __name__ == "__main__":
     new_snapshot = dump_snapshot()
     record_memory_history(None, 1)
     import pickle
+
     with open(f"snapshot.{local_rank}.pkl", 'wb') as f:
         pickle.dump(new_snapshot, f)

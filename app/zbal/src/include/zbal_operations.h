@@ -79,8 +79,8 @@ void zbal_comm_destroy_all(uint32_t flags);
  * @param stream               [in] stream
  * @return 0 if successful
  */
-int32_t zbal_all_reduce(const void *send_buff, void *recv_buff, void *buffer, size_t count,
-                        zbal_datatype_t data_type, zbal_reduce_op_t op, zbal_comm_t comm, aclrtStream stream);
+int32_t zbal_all_reduce(const void *send_buff, void *recv_buff, void *buffer, size_t count, zbal_datatype_t data_type,
+                        zbal_reduce_op_t op, zbal_comm_t comm, aclrtStream stream);
 
 /**
  * @brief Do reduce scatter operation
@@ -190,8 +190,7 @@ int32_t zbal_barrier(zbal_comm_t comm, aclrtStream stream);
  * @param stream               [in] stream
  * @return 0 if successful
  */
-int32_t zbal_send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer, zbal_comm_t comm,
-                  aclrtStream stream);
+int32_t zbal_send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer, zbal_comm_t comm, aclrtStream stream);
 
 /**
  * @brief Point to point recv operation

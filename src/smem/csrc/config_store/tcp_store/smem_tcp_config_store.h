@@ -117,8 +117,8 @@ private:
     Result LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
     Result ReceiveResponseHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
     Result SendWatchRequest(const std::vector<uint8_t> &reqBody,
-                            const std::function<void(int result, const std::vector<uint8_t> &)> &notify,
-                            uint32_t &id, const std::string &key) noexcept;
+                            const std::function<void(int result, const std::vector<uint8_t> &)> &notify, uint32_t &id,
+                            const std::string &key) noexcept;
     void HeartBeat() noexcept;
 
     inline int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,

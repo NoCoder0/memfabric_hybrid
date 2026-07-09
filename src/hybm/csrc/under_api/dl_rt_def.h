@@ -78,4 +78,4 @@ typedef struct {
 } // namespace mf
 } // namespace ock
 
-#endif  // MF_HYBM_CORE_DL_RT_DEF_H
+#endif // MF_HYBM_CORE_DL_RT_DEF_H

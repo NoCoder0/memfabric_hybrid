@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -11,6 +10,7 @@ from tensor_rtl.api.abc import BaseCommTask
 @dataclass
 class P2PCommTask(BaseCommTask):
     """Definition of a single P2P operation"""
+
     idx: int | List[int] = None
     numel: int = None
     is_send: bool | List[bool] = None
@@ -27,6 +27,7 @@ class P2PCommTask(BaseCommTask):
 @dataclass
 class MFCommTask(BaseCommTask):
     """Definition of a single memory-fabric operation"""
+
     idx: int | List[int] = None
     size: int = None  # tensor.numel() * tensor.element_size()
     is_send: bool | List[bool] = None
@@ -37,5 +38,7 @@ class MFCommTask(BaseCommTask):
     tensor_slice: tuple = None
 
     def __repr__(self) -> str:
-        return (f'{self.is_send=} {self.src_rank=} {self.dst_rank=} {self.size=} {self.gva_ptr=}'
-                f'{self.buffer.size() if isinstance(self.buffer, torch.Tensor) else "None"}')
+        return (
+            f'{self.is_send=} {self.src_rank=} {self.dst_rank=} {self.size=} {self.gva_ptr=}'
+            f'{self.buffer.size() if isinstance(self.buffer, torch.Tensor) else "None"}'
+        )

@@ -28,12 +28,11 @@ public:
 public:
     MemEntityFactory() = default;
     ~MemEntityFactory();
-    
+
     template<typename T = MemEntityDefault>
     EngineImplPtr GetOrCreateEngine(uint16_t id, uint32_t flags)
     {
-        static_assert(std::is_base_of_v<MemEntityDefault, T>,
-                      "T must derive from MemEntityDefault");
+        static_assert(std::is_base_of_v<MemEntityDefault, T>, "T must derive from MemEntityDefault");
         std::lock_guard<std::mutex> guard(enginesMutex_);
         auto iter = engines_.find(id);
         if (iter != engines_.end()) {

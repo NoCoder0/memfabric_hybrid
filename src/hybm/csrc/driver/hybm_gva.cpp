@@ -67,8 +67,8 @@ int32_t HybmLegacyInitMetaGva(void **globalMemoryBase, size_t allocSize, uint64_
         if (ret == 0 && *globalMemoryBase != nullptr) {
             (void)drv::HalGvaUnreserveMemory((uint64_t)(*globalMemoryBase));
         }
-        BM_LOG_ERROR("initialize meta memory failed: " << ret << " size:0x" << std::hex << allocSize <<
-                     " flag:0x" << flags << " ret_addr:" << *globalMemoryBase);
+        BM_LOG_ERROR("initialize meta memory failed: " << ret << " size:0x" << std::hex << allocSize << " flag:0x"
+                                                       << flags << " ret_addr:" << *globalMemoryBase);
         return BM_ERROR;
     }
 
@@ -81,8 +81,8 @@ int32_t HybmLegacyInitMetaGva(void **globalMemoryBase, size_t allocSize, uint64_
     return BM_OK;
 }
 
-int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddress,
-                          AscendSocType socType, void **allocHandle)
+int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddress, AscendSocType socType,
+                          void **allocHandle)
 {
 #if !defined(ASCEND_NPU)
     return BM_OK;
@@ -94,7 +94,7 @@ int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddre
         return BM_ERROR;
     }
     BM_LOG_INFO("Success get deviceId: " << deviceId << ", logicDeviceId: " << initedLogicDeviceId
-                << " sco:" << (int)socType << " ver:" << HybmGvaVersion());
+                                         << " sco:" << (int)socType << " ver:" << HybmGvaVersion());
     auto ret = DlAclApi::AclrtSetDevice(deviceId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("set device id to be " << deviceId << " failed: " << ret);

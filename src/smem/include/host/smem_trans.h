@@ -202,8 +202,8 @@ int32_t smem_trans_write_submit(smem_trans_t handle, const void *localAddr, cons
  * @return 0 if successful
  */
 int32_t smem_trans_batch_read_submit(smem_trans_t handle, void *localAddrs[], const char *remoteUniqueId,
-                                     const void *remoteAddrs[], size_t dataSizes[], uint32_t batchSize,
-                                     void *stream, uint32_t flags);
+                                     const void *remoteAddrs[], size_t dataSizes[], uint32_t batchSize, void *stream,
+                                     uint32_t flags);
 
 /**
  * @brief submit batch write task into stream, only support dataOpType == SMEMB_DATA_OP_SDMA now
@@ -218,9 +218,9 @@ int32_t smem_trans_batch_read_submit(smem_trans_t handle, void *localAddrs[], co
  * @param flags            [in] optional flags
  * @return 0 if successful
  */
-int32_t smem_trans_batch_write_submit(smem_trans_t handle, const void *localAddrs[],
-                                      const char *remoteUniqueId, void *remoteAddrs[], size_t dataSizes[],
-                                      uint32_t batchSize, void *stream, uint32_t flags);
+int32_t smem_trans_batch_write_submit(smem_trans_t handle, const void *localAddrs[], const char *remoteUniqueId,
+                                      void *remoteAddrs[], size_t dataSizes[], uint32_t batchSize, void *stream,
+                                      uint32_t flags);
 
 /**
  * @brief batch write data from local to remote with quantization, only support A3 & dataOpType == SMEMB_DATA_OP_SDMA
@@ -247,8 +247,7 @@ typedef void (*smem_trans_peer_down_callback_t)(const char *peerUniqueId, void *
  * @param userData         [in] opaque user data passed to callback
  * @return 0 if successful
  */
-int32_t smem_trans_set_peer_down_callback(smem_trans_t handle,
-                                          smem_trans_peer_down_callback_t callback,
+int32_t smem_trans_set_peer_down_callback(smem_trans_t handle, smem_trans_peer_down_callback_t callback,
                                           void *userData);
 
 #ifdef __cplusplus

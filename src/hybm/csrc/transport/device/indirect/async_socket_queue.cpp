@@ -196,7 +196,7 @@ void AsyncSocketQueue::AddRankIdSocket(uint32_t rankId, int socket) noexcept
     int flags = fcntl(socket, F_GETFL, 0);
     fcntl(socket, F_SETFL, flags | O_NONBLOCK);
 
-    epoll_event ev {};
+    epoll_event ev{};
     ev.events = EPOLLIN; // 可读事件
     ev.data.fd = socket;
     epoll_ctl(readEpollFd_, EPOLL_CTL_ADD, socket, &ev);
@@ -233,7 +233,7 @@ void AsyncSocketQueue::AddSocket(int socket) noexcept
     int flags = fcntl(socket, F_GETFL, 0);
     fcntl(socket, F_SETFL, flags | O_NONBLOCK);
 
-    epoll_event ev {};
+    epoll_event ev{};
     ev.events = EPOLLIN; // 可读事件
     ev.data.fd = socket;
     epoll_ctl(readEpollFd_, EPOLL_CTL_ADD, socket, &ev);
@@ -342,7 +342,7 @@ int AsyncSocketQueue::CreateEpollSocket() noexcept
     locker.unlock();
 
     for (auto fd : sockets) {
-        epoll_event ev {};
+        epoll_event ev{};
         ev.events = EPOLLIN;
         epoll_ctl(epollFd, EPOLL_CTL_ADD, fd, &ev);
     }

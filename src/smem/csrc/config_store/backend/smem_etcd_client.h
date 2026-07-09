@@ -53,9 +53,9 @@ public:
         if (client_.load(std::memory_order_acquire) != nullptr) {
             // Warn if parameters differ from initial configuration
             if (endpoints != nullptr && endpoints_ != endpoints) {
-                SM_LOG_WARN("Client already initialized with different endpoints. "
-                            << "Current: " << endpoints_ << ", Requested: " << endpoints
-                            << ". Using existing connection.");
+                SM_LOG_WARN("Client already initialized with different endpoints. " << "Current: " << endpoints_
+                                                                                    << ", Requested: " << endpoints
+                                                                                    << ". Using existing connection.");
             } else {
                 SM_LOG_INFO("Client already initialized, skipping re-initialization");
             }
@@ -149,7 +149,7 @@ public:
         int32_t ret = EtcdApi::EtcdGet(cli, key.data(), &rawBuf, &rawLen);
         if (ret != 0) {
             SM_LOG_WARN("GetValue failed: EtcdGet returned " << ret << ", key: " << key
-                                                              << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
+                                                             << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
             return -1;
         }
         // Handle empty value case (valid scenario in etcd)
@@ -176,8 +176,8 @@ public:
         int32_t ret = EtcdApi::EtcdPrefixGet(cli, ctx, flags);
         if (ret != 0) {
             SM_LOG_WARN("PrefixGet failed: EtcdGet returned " << ret << ", prefix: " << ctx->prefix
-                                                            << ", marker:" << ctx->marker
-                                                            << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
+                                                              << ", marker:" << ctx->marker
+                                                              << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
             return -1;
         }
         return 0;
@@ -271,7 +271,7 @@ private:
 
     std::atomic<EtcdClient *> client_;
     std::mutex initMutex_;
-    std::string endpoints_;  // Store initial endpoints for comparison
+    std::string endpoints_; // Store initial endpoints for comparison
 };
 
 class EtcdLockGuard {

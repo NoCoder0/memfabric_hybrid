@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 from abc import ABC
@@ -10,16 +9,18 @@ from tensor_rtl.core.buffer_pool import BufferPool
 
 
 class PTensor(ABC):
-    def __init__(self,
-                 tensor: torch.Tensor,
-                 dtype: torch.dtype,
-                 ndim: int,
-                 device_mesh: list[int],
-                 global_size: torch.Size,
-                 shard_dim: int,
-                 rank: int = None,
-                 backend: str = 'hccl',
-                 check_sanity: bool = True):
+    def __init__(
+        self,
+        tensor: torch.Tensor,
+        dtype: torch.dtype,
+        ndim: int,
+        device_mesh: list[int],
+        global_size: torch.Size,
+        shard_dim: int,
+        rank: int = None,
+        backend: str = 'hccl',
+        check_sanity: bool = True,
+    ):
         """
         Initialize a PTensor instance with validation.
 
@@ -97,17 +98,17 @@ class PTensor(ABC):
         launch_data_stack = self._build_launch_mapping(update_device_mesh)
 
         accept_ops = [
-                MFCommTask(
-                    idx=idx,
-                    size=size,
-                    is_send=False,
-                    src_rank=self.rank,
-                    dst_rank=from_rank,
-                    gva_ptr=storage_offset,
-                    buffer=tensor
-                )
-                for idx, (from_rank, tensor, size, storage_offset) in enumerate(accept_data_stack)
-            ]
+            MFCommTask(
+                idx=idx,
+                size=size,
+                is_send=False,
+                src_rank=self.rank,
+                dst_rank=from_rank,
+                gva_ptr=storage_offset,
+                buffer=tensor,
+            )
+            for idx, (from_rank, tensor, size, storage_offset) in enumerate(accept_data_stack)
+        ]
         launch_ops = []
         if self.rank in self.device_mesh:
             launch_rank_map = self._intra_bisect(self.device_mesh, update_device_mesh)
@@ -130,12 +131,11 @@ class PTensor(ABC):
                         dst_rank=to_rank,
                         gva_ptr=storage_offset,
                         buffer=bf_data,
-                        tensor_slice=tensor_slice
+                        tensor_slice=tensor_slice,
                     )
                 )
                 idx += 1
         return accept_ops + launch_ops
-
 
     def _build_p2p_comm_mapping(self, update_device_mesh: list):
         """
@@ -146,31 +146,16 @@ class PTensor(ABC):
         launch_data_stack = self._build_launch_mapping(update_device_mesh)
 
         accept_ops = [
-                P2PCommTask(
-                    idx=idx,
-                    numel=None,
-                    is_send=False,
-                    src_rank=self.rank,
-                    dst_rank=from_rank,
-                    buffer=tensor
-                )
-                for idx, (from_rank, tensor, _, _) in enumerate(accept_data_stack)
-            ]
+            P2PCommTask(idx=idx, numel=None, is_send=False, src_rank=self.rank, dst_rank=from_rank, buffer=tensor)
+            for idx, (from_rank, tensor, _, _) in enumerate(accept_data_stack)
+        ]
 
         launch_ops = [
-                P2PCommTask(
-                    idx=idx,
-                    numel=None,
-                    is_send=True,
-                    src_rank=self.rank,
-                    dst_rank=to_rank,
-                    buffer=bf_data
-                )
-                for idx, (to_rank, bf_data, _, _) in enumerate(launch_data_stack)
-            ]
+            P2PCommTask(idx=idx, numel=None, is_send=True, src_rank=self.rank, dst_rank=to_rank, buffer=bf_data)
+            for idx, (to_rank, bf_data, _, _) in enumerate(launch_data_stack)
+        ]
 
         return accept_ops + launch_ops
-
 
     def _build_accept_mapping(self, update_device_mesh):
         """create accept task mapping"""
@@ -207,15 +192,12 @@ class PTensor(ABC):
         length_device_mesh, length_update_device_mesh = len(self.device_mesh), len(update_device_mesh)
         for to_rank, tensor_slice in launch_rank_map.items():
             src_buffer = self._get_buffer_buffer_pool(
-                self.tensor, tensor_slice, 
-                length_device_mesh, 
-                length_update_device_mesh
-                )
+                self.tensor, tensor_slice, length_device_mesh, length_update_device_mesh
+            )
             size = src_buffer.numel() * src_buffer.element_size()
             launch_data_stack.append((to_rank, src_buffer, size, tensor_slice))
 
         return launch_data_stack
-
 
     def _build_accept_gva_map(self, update_device_mesh, launch_rank_map):
         """build gva mapping for mf task"""
@@ -235,18 +217,17 @@ class PTensor(ABC):
                 storage_offset += size
         return _accept_data_stack_dict
 
-
     def _get_buffer_buffer_pool(self, buffer, tensor_slice, length_device_mesh, length_update_device_mesh):
         if self.buffer_pool.get((length_device_mesh, length_update_device_mesh), tensor_slice) is None:
             if self.shard_dim == -1:
                 _register_buffer = buffer
             elif buffer.ndim == 1:
-                _register_buffer = buffer[tensor_slice[0]:tensor_slice[1]]
+                _register_buffer = buffer[tensor_slice[0] : tensor_slice[1]]
             else:
                 if self.shard_dim == 0:
-                    _register_buffer = buffer[tensor_slice[0]: tensor_slice[1], :]
+                    _register_buffer = buffer[tensor_slice[0] : tensor_slice[1], :]
                 elif self.shard_dim == 1:
-                    _register_buffer = buffer[:, tensor_slice[0]: tensor_slice[1]].contiguous()
+                    _register_buffer = buffer[:, tensor_slice[0] : tensor_slice[1]].contiguous()
             self.buffer_pool.register((length_device_mesh, length_update_device_mesh), tensor_slice, _register_buffer)
             register_buffer = self.buffer_pool.get((length_device_mesh, length_update_device_mesh), tensor_slice)
         else:
@@ -271,7 +252,6 @@ class PTensor(ABC):
             ),
         }[self.shard_dim]()
 
-
     def _get_buffer(self, buffer: torch.Tensor, tensor_slice: tuple):
         """
         Get tensor slice based on shard dimension.
@@ -286,10 +266,10 @@ class PTensor(ABC):
         if self.shard_dim == -1:
             return buffer
         if buffer.ndim == 1:
-            return buffer[tensor_slice[0]:tensor_slice[1]]
+            return buffer[tensor_slice[0] : tensor_slice[1]]
         return {
-            0: lambda: buffer[tensor_slice[0]: tensor_slice[1], :],
-            1: lambda: buffer[:, tensor_slice[0]: tensor_slice[1]],
+            0: lambda: buffer[tensor_slice[0] : tensor_slice[1], :],
+            1: lambda: buffer[:, tensor_slice[0] : tensor_slice[1]],
         }[self.shard_dim]()
 
     def _get_buffer_meta(self, local_size, tensor_slice):
@@ -322,7 +302,8 @@ class PTensor(ABC):
 
         hidden_size = self.global_size[self.shard_dim]
         global_slice = (
-            hidden_size * slice_idx // len(old_device_mesh), hidden_size * (slice_idx + 1) // len(old_device_mesh)
+            hidden_size * slice_idx // len(old_device_mesh),
+            hidden_size * (slice_idx + 1) // len(old_device_mesh),
         )
 
         peer_slices = [
@@ -346,8 +327,10 @@ class PTensor(ABC):
         if self.shard_dim != -1:
             update_len, mesh_len = len(update_device_mesh), len(self.device_mesh)
             if max(update_len, mesh_len) % min(update_len, mesh_len) != 0:
-                raise ValueError(f"PTensor requires device_mesh length ({mesh_len}) and "
-                                 f"update_device_mesh length ({update_len}) to be multiples of each other")
+                raise ValueError(
+                    f"PTensor requires device_mesh length ({mesh_len}) and "
+                    f"update_device_mesh length ({update_len}) to be multiples of each other"
+                )
 
     def _validate_device_mesh(self, device_mesh: list, mesh_name: str):
         """Validate device mesh parameters"""
@@ -366,8 +349,10 @@ class PTensor(ABC):
 
         # Check that when shard_dim is -1, device_mesh length is 1
         if self.shard_dim == -1 and len(device_mesh) != 1:
-            raise ValueError(f"PTensor shard_dim=-1 requires {mesh_name} length to be 1, "
-                             f"but got device_mesh length {len(self.device_mesh)}")
+            raise ValueError(
+                f"PTensor shard_dim=-1 requires {mesh_name} length to be 1, "
+                f"but got device_mesh length {len(self.device_mesh)}"
+            )
 
         if len(device_mesh) != len(set(device_mesh)):
             raise ValueError(f"PTensor {mesh_name} cannot contain duplicate elements")
@@ -410,11 +395,7 @@ class PTensor(ABC):
         self._validate_device_mesh(self.device_mesh, "device_mesh")
 
         # Check that all other int parameters are actually int types
-        int_params = [
-            ('ndim', self.ndim),
-            ('shard_dim', self.shard_dim),
-            ('rank', self.rank)
-        ]
+        int_params = [('ndim', self.ndim), ('shard_dim', self.shard_dim), ('rank', self.rank)]
 
         for param_name, param_value in int_params:
             if not isinstance(param_value, int):
@@ -456,7 +437,6 @@ class PTensorSet:
         for ptensor in self.ptensor_list:
             op = ptensor.get_transfer_list()
             self._op_list.extend(op)
-
 
     def get_transfer_list(self):
         """

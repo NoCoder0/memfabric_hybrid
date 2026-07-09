@@ -72,8 +72,9 @@ class TestServer:
     def _register_inner_command(self):
         self._commands = {
             "help": CliCommand("help", "show command list information", self._help),
-            "getServerCommands": CliCommand("getServerCommands", "ServerCommands, get the registered Commands",
-                                            self._get_server_commands),
+            "getServerCommands": CliCommand(
+                "getServerCommands", "ServerCommands, get the registered Commands", self._get_server_commands
+            ),
         }
 
     def register_command(self, cmds: List[CliCommand]):
@@ -237,218 +238,272 @@ class MfTest(TestServer):
 
     def _init_cmds(self):
         cmds = [
-            CliCommand("show",
-                       "Show local object directory, show",
-                       self.show),
-            CliCommand("clear_all",
-                       "Clear local object directory, clear",
-                       self.clear_all),
-            CliCommand("clear_object",
-                       "Clear specify id object directory, clear_object [id]",
-                       self.clear_object),
-            CliCommand("generate_bm_config",
-                       "Generate a bm config, generate_bm_config "
-                       "[init_timeout] [create_timeout] [operation_timeout] [start_store] [start_store_only] "
-                       "[dynamic_world_size] [unified_address_space] [rank_id] [auto_ranking] [flags]",
-                       self.generate_bm_config),
-            CliCommand("generate_bm_config_default",
-                       "Generate a bm config, generate_bm_config_default [rank_id] [auto_ranking]",
-                       self.generate_bm_config_default),
-            CliCommand("generate_tensor_addr",
-                       "Generate cpu and npu tensor, generate_tensor_addr [copy_size]",
-                       self.generate_tensor_addr),
-            CliCommand("generate_shm_config",
-                       "Generate a shm config, generate_shm_config "
-                       "[init_timeout] [create_timeout] [operation_timeout] [start_store] [flags]",
-                       self.generate_shm_config),
-            CliCommand("generate_shm_config_default",
-                       "Generate a shm config, generate_shm_config [start_store]",
-                       self.generate_shm_config_default),
-            CliCommand("mf_smem_init",
-                       "Initialize the smem running environment, mf_smem_init",
-                       self.mf_smem_init),
-            CliCommand("smem_set_log_level",
-                       "Set log print level, smem_set_log_level [level]",
-                       self.smem_set_log_level),
-            CliCommand("mf_smem_uninit",
-                       "Uninitialize the smem running environment, mf_smem_uninit",
-                       self.mf_smem_uninit),
-            CliCommand("bm_init",
-                       "Initialize smem big memory library, bm_init "
-                       "[store_url] [world_size] [device_id] [config_id]",
-                       self.bm_init),
-            CliCommand("bm_uninitialize",
-                       "uninitialize smem big memory library, bm_uninitialize [flags]",
-                       self.bm_uninitialize),
-            CliCommand("bm_rank_id",
-                       "Get the rank id assigned during initialize, bm_rank_id ",
-                       self.bm_rank_id),
-            CliCommand("bm_create",
-                       "Create a big memory object locally after initialized, bm_create "
-                       "[mem_id] [local_dram_size] [local_hbm_size] [data_op_type] [flags]",
-                       self.bm_create),
-            CliCommand("bm_create2",
-                       "Create a big memory object locally after initialized, bm_create2 "
-                       "[mem_id] [local_dram_size] [max_dram_size]  [local_hbm_size] [max_hbm_size] [data_op_type] "
-                       "[enable_56bits_gva] [flags]",
-                       self.bm_create2),
-            CliCommand("bm_destroy",
-                       "Destroy big memory by a big memory handle. bm_destroy [handle_id]",
-                       self.bm_destroy),
-            CliCommand("bm_join",
-                       "Join to global Big Memory space actively, after this, "
-                       "we operate on the global space, bm_join [handle_id] [flags]",
-                       self.bm_join),
-            CliCommand("bm_leave",
-                       "Leave the global Big Memory space actively, after this, "
-                       "we cannot operate on the global space any more, bm_leave [handle_id] [flags]",
-                       self.bm_leave),
-            CliCommand("bm_extend_local_mem",
-                       "Alloc an extend memory for rank, all alloc memory must range in reserved memory. "
-                       "bm_extend_local_mem [mem_type] [size]",
-                       self.bm_extend_local_mem),
-            CliCommand("bm_local_mem_size",
-                       "Get size of local memory that contributed to global space, "
-                       "bm_local_mem_size [handle_id] [mem_type]",
-                       self.bm_local_mem_size),
-            CliCommand("bm_peer_rank_ptr",
-                       "Get peer gva by rank id, bm_peer_rank_ptr [handle_id] [peer_rank] [mem_type]",
-                       self.bm_peer_rank_ptr),
-            CliCommand("bm_get_rank_id_by_gva",
-                       "Get rank id of gva that belongs to, bm_get_rank_id_by_gva [handle_id] [gva]",
-                       self.bm_get_rank_id_by_gva),
-            CliCommand("bm_register",
-                       "Register user mem, bm_register [handle_id] [addr] [size]",
-                       self.bm_register),
-            CliCommand("bm_unregister",
-                       "Unregister user mem, bm_unregister [handle_id] [addr]",
-                       self.bm_unregister),
-            CliCommand("bm_copy_data",
-                       "Data operation on Big Memory object, copy_data "
-                       "[handle_id] [src_ptr] [dst_ptr] [size] [copy_type] [flags]",
-                       self.bm_copy_data),
-            CliCommand("bm_copy_data_batch",
-                       "Data operation on Big Memory object, copy_data_batch "
-                       "[handle_id] [src_addrs_str] [dst_addrs_str] [sizes] [count] [copy_type] [flags]",
-                       self.bm_copy_data_batch),
-            CliCommand("bm_wait",
-                       "Wait all issued async copy(s) finish, bm_wait [handle_id]",
-                       self.bm_wait),
-            CliCommand("delete_bm_handle", "delete a bm handle, delete_bm_handle [handle_id]",
-                       self.delete_bm_handle),
-            CliCommand("shm_init",
-                       "Initialize smem shm library, shm_init "
-                       "[store_url] [world_size] [rank_id] [device_id] [config_id]",
-                       self.shm_init),
-            CliCommand("shm_uninit",
-                       "Uninitialize smem shm library, shm_uninit [flags]",
-                       self.shm_uninit),
-            CliCommand("shm_create",
-                       "Create a shm handle, shm_create "
-                       "[shm_id] [rank_size] [rank_id] [local_mem_size] [data_op_type] [flags]",
-                       self.shm_create),
-            CliCommand("delete_shm_handle", "delete a bm handle, delete_shm_handle [handle_id]",
-                       self.delete_shm_handle),
-            CliCommand("shm_destroy",
-                       "Destroy shm by a shm handle.shm_destroy [handle_id] [flags]",
-                       self.shm_destroy),
-            CliCommand("shm_set_context",
-                       "Set user extra context of shm object, shm_set_context [handle_id] [context]",
-                       self.shm_set_context),
-            CliCommand("shm_local_rank",
-                       "Get local rank of a shm object, shm_local_rank [handle_id]",
-                       self.shm_local_rank),
-            CliCommand("rank_size",
-                       "Get rank size of a shm object, rank_size [handle_id]",
-                       self.rank_size),
-            CliCommand("shm_barrier",
-                       "Do barrier on a shm object, using control network, shm_barrier [handle_id]",
-                       self.shm_barrier),
-            CliCommand("shm_all_gather",
-                       "Do all gather on a shm object, using control network, shm_all_gather [handle_id] [local_data]",
-                       self.shm_all_gather),
-            CliCommand("shm_gva",
-                       "Get global virtual address created, "
-                       "it can be passed to kernel to data operations, sh_gva [handle_id]",
-                       self.shm_gva),
-            CliCommand("generate_transfer_engine_npu_tensor",
-                       "Generate the buffer which is to transfer data between engines, "
-                       "generate_transfer_engine_npu_tensor [is_src]",
-                       self.generate_transfer_engine_npu_tensor),
-            CliCommand("generate_transfer_engine_npu_buffer_sum",
-                       "Calculate the sum of buffer, generate_transfer_engine_npu_buffer_sum "
-                       "[transfer_data_id] [is_batch]",
-                       self.generate_transfer_engine_npu_buffer_sum),
-            CliCommand("generate_transfer_engine_cpu_tensor",
-                       "Generate the buffer which is to transfer data between engines, "
-                       "generate_transfer_engine_cpu_tensor [is_src]",
-                       self.generate_transfer_engine_cpu_tensor),
-            CliCommand("generate_transfer_engine_cpu_buffer_sum",
-                       "Calculate the sum of buffer, generate_transfer_engine_cpu_buffer_sum "
-                       "[transfer_data_id] [is_batch]",
-                       self.generate_transfer_engine_cpu_buffer_sum),
-            CliCommand("transfer_engine_get_rpc_port",
-                       "Generate a random port [handle_id]",
-                       self.transfer_engine_get_rpc_port),
-            CliCommand("transfer_engine_create_config_store",
-                       "Create the config store server, transfer_engine_create_config_store [store_url]",
-                       self.transfer_engine_create_config_store),
-            CliCommand("transfer_engine_set_log_level",
-                       "Set log level for transfer engine, transfer_engine_set_log_level [level]",
-                       self.transfer_engine_set_log_level),
-            CliCommand("transfer_engine_initialize",
-                       "Initialize the transfer engine, transfer_engine_initialize "
-                       "[store_url] [session_id] [role] [device_id] [op_type] [store_server_role]",
-                       self.transfer_engine_initialize),
-            CliCommand("transfer_engine_register_memory",
-                       "Register memory for transfer engine, "
-                       "transfer_engine_register_memory [handle_id] [transfer_data_id]",
-                       self.transfer_engine_register_memory),
-            CliCommand("transfer_engine_transfer_sync_write",
-                       "Transfer data between transfer engine, transfer_engine_transfer_sync_write "
-                       "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
-                       self.transfer_engine_transfer_sync_write),
-            CliCommand("transfer_engine_transfer_sync_read",
-                       "Transfer data between transfer engine, transfer_engine_transfer_sync_read "
-                       "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
-                       self.transfer_engine_transfer_sync_read),
-            CliCommand("transfer_engine_batch_register_memory",
-                       "Register batch memory for transfer engine, "
-                       "transfer_engine_batch_register_memory [handle_id] [transfer_data_id]",
-                       self.transfer_engine_batch_register_memory),
-            CliCommand("transfer_engine_batch_transfer_sync_write",
-                       "Transfer batch data between transfer engine, transfer_engine_batch_transfer_sync_write "
-                       "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
-                       self.transfer_engine_batch_transfer_sync_write),
-            CliCommand("transfer_engine_batch_transfer_sync_read",
-                       "Transfer batch data between transfer engine, transfer_engine_batch_transfer_sync_read "
-                       "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
-                       self.transfer_engine_batch_transfer_sync_read),
-            CliCommand("transfer_engine_transfer_async_write_submit",
-                       "Transfer data between transfer engine, transfer_engine_transfer_async_write_submit "
-                       "[handle_id] [transfer_data_id] [peer_buffer_address] [destSession] [stream]",
-                       self.transfer_engine_transfer_async_write_submit),
-            CliCommand("transfer_engine_transfer_async_read_submit",
-                       "Transfer data between transfer engine, transfer_engine_transfer_async_read_submit "
-                       "[handle_id] [transfer_data_id] [peer_buffer_address] [destSession] [stream]",
-                       self.transfer_engine_transfer_async_read_submit),
-            CliCommand("transfer_engine_unregister_memory",
-                       "Destroy transfer engine handle, "
-                       "transfer_engine_unregister_memory [handle_id] [transfer_data_id]",
-                       self.transfer_engine_unregister_memory),
-            CliCommand("transfer_engine_destroy",
-                       "Destroy transfer engine handle, transfer_engine_destroy [handle_id]",
-                       self.transfer_engine_destroy),
-            CliCommand("transfer_engine_uninitialize",
-                       "Uninitialize transfer engine, transfer_engine_uninitialize [handle_id]",
-                       self.transfer_engine_uninitialize),
-            CliCommand("delete_trans_handle", "delete a delete_trans_handle handle, delete_bm_handle [handle_id]",
-                       self.delete_trans_handle),
+            CliCommand("show", "Show local object directory, show", self.show),
+            CliCommand("clear_all", "Clear local object directory, clear", self.clear_all),
+            CliCommand("clear_object", "Clear specify id object directory, clear_object [id]", self.clear_object),
+            CliCommand(
+                "generate_bm_config",
+                "Generate a bm config, generate_bm_config "
+                "[init_timeout] [create_timeout] [operation_timeout] [start_store] [start_store_only] "
+                "[dynamic_world_size] [unified_address_space] [rank_id] [auto_ranking] [flags]",
+                self.generate_bm_config,
+            ),
+            CliCommand(
+                "generate_bm_config_default",
+                "Generate a bm config, generate_bm_config_default [rank_id] [auto_ranking]",
+                self.generate_bm_config_default,
+            ),
+            CliCommand(
+                "generate_tensor_addr",
+                "Generate cpu and npu tensor, generate_tensor_addr [copy_size]",
+                self.generate_tensor_addr,
+            ),
+            CliCommand(
+                "generate_shm_config",
+                "Generate a shm config, generate_shm_config "
+                "[init_timeout] [create_timeout] [operation_timeout] [start_store] [flags]",
+                self.generate_shm_config,
+            ),
+            CliCommand(
+                "generate_shm_config_default",
+                "Generate a shm config, generate_shm_config [start_store]",
+                self.generate_shm_config_default,
+            ),
+            CliCommand("mf_smem_init", "Initialize the smem running environment, mf_smem_init", self.mf_smem_init),
+            CliCommand(
+                "smem_set_log_level", "Set log print level, smem_set_log_level [level]", self.smem_set_log_level
+            ),
+            CliCommand(
+                "mf_smem_uninit", "Uninitialize the smem running environment, mf_smem_uninit", self.mf_smem_uninit
+            ),
+            CliCommand(
+                "bm_init",
+                "Initialize smem big memory library, bm_init [store_url] [world_size] [device_id] [config_id]",
+                self.bm_init,
+            ),
+            CliCommand(
+                "bm_uninitialize", "uninitialize smem big memory library, bm_uninitialize [flags]", self.bm_uninitialize
+            ),
+            CliCommand("bm_rank_id", "Get the rank id assigned during initialize, bm_rank_id ", self.bm_rank_id),
+            CliCommand(
+                "bm_create",
+                "Create a big memory object locally after initialized, bm_create "
+                "[mem_id] [local_dram_size] [local_hbm_size] [data_op_type] [flags]",
+                self.bm_create,
+            ),
+            CliCommand(
+                "bm_create2",
+                "Create a big memory object locally after initialized, bm_create2 "
+                "[mem_id] [local_dram_size] [max_dram_size]  [local_hbm_size] [max_hbm_size] [data_op_type] "
+                "[enable_56bits_gva] [flags]",
+                self.bm_create2,
+            ),
+            CliCommand(
+                "bm_destroy", "Destroy big memory by a big memory handle. bm_destroy [handle_id]", self.bm_destroy
+            ),
+            CliCommand(
+                "bm_join",
+                "Join to global Big Memory space actively, after this, "
+                "we operate on the global space, bm_join [handle_id] [flags]",
+                self.bm_join,
+            ),
+            CliCommand(
+                "bm_leave",
+                "Leave the global Big Memory space actively, after this, "
+                "we cannot operate on the global space any more, bm_leave [handle_id] [flags]",
+                self.bm_leave,
+            ),
+            CliCommand(
+                "bm_extend_local_mem",
+                "Alloc an extend memory for rank, all alloc memory must range in reserved memory. "
+                "bm_extend_local_mem [mem_type] [size]",
+                self.bm_extend_local_mem,
+            ),
+            CliCommand(
+                "bm_local_mem_size",
+                "Get size of local memory that contributed to global space, bm_local_mem_size [handle_id] [mem_type]",
+                self.bm_local_mem_size,
+            ),
+            CliCommand(
+                "bm_peer_rank_ptr",
+                "Get peer gva by rank id, bm_peer_rank_ptr [handle_id] [peer_rank] [mem_type]",
+                self.bm_peer_rank_ptr,
+            ),
+            CliCommand(
+                "bm_get_rank_id_by_gva",
+                "Get rank id of gva that belongs to, bm_get_rank_id_by_gva [handle_id] [gva]",
+                self.bm_get_rank_id_by_gva,
+            ),
+            CliCommand("bm_register", "Register user mem, bm_register [handle_id] [addr] [size]", self.bm_register),
+            CliCommand("bm_unregister", "Unregister user mem, bm_unregister [handle_id] [addr]", self.bm_unregister),
+            CliCommand(
+                "bm_copy_data",
+                "Data operation on Big Memory object, copy_data "
+                "[handle_id] [src_ptr] [dst_ptr] [size] [copy_type] [flags]",
+                self.bm_copy_data,
+            ),
+            CliCommand(
+                "bm_copy_data_batch",
+                "Data operation on Big Memory object, copy_data_batch "
+                "[handle_id] [src_addrs_str] [dst_addrs_str] [sizes] [count] [copy_type] [flags]",
+                self.bm_copy_data_batch,
+            ),
+            CliCommand("bm_wait", "Wait all issued async copy(s) finish, bm_wait [handle_id]", self.bm_wait),
+            CliCommand("delete_bm_handle", "delete a bm handle, delete_bm_handle [handle_id]", self.delete_bm_handle),
+            CliCommand(
+                "shm_init",
+                "Initialize smem shm library, shm_init [store_url] [world_size] [rank_id] [device_id] [config_id]",
+                self.shm_init,
+            ),
+            CliCommand("shm_uninit", "Uninitialize smem shm library, shm_uninit [flags]", self.shm_uninit),
+            CliCommand(
+                "shm_create",
+                "Create a shm handle, shm_create "
+                "[shm_id] [rank_size] [rank_id] [local_mem_size] [data_op_type] [flags]",
+                self.shm_create,
+            ),
+            CliCommand(
+                "delete_shm_handle", "delete a bm handle, delete_shm_handle [handle_id]", self.delete_shm_handle
+            ),
+            CliCommand("shm_destroy", "Destroy shm by a shm handle.shm_destroy [handle_id] [flags]", self.shm_destroy),
+            CliCommand(
+                "shm_set_context",
+                "Set user extra context of shm object, shm_set_context [handle_id] [context]",
+                self.shm_set_context,
+            ),
+            CliCommand(
+                "shm_local_rank", "Get local rank of a shm object, shm_local_rank [handle_id]", self.shm_local_rank
+            ),
+            CliCommand("rank_size", "Get rank size of a shm object, rank_size [handle_id]", self.rank_size),
+            CliCommand(
+                "shm_barrier",
+                "Do barrier on a shm object, using control network, shm_barrier [handle_id]",
+                self.shm_barrier,
+            ),
+            CliCommand(
+                "shm_all_gather",
+                "Do all gather on a shm object, using control network, shm_all_gather [handle_id] [local_data]",
+                self.shm_all_gather,
+            ),
+            CliCommand(
+                "shm_gva",
+                "Get global virtual address created, it can be passed to kernel to data operations, sh_gva [handle_id]",
+                self.shm_gva,
+            ),
+            CliCommand(
+                "generate_transfer_engine_npu_tensor",
+                "Generate the buffer which is to transfer data between engines, "
+                "generate_transfer_engine_npu_tensor [is_src]",
+                self.generate_transfer_engine_npu_tensor,
+            ),
+            CliCommand(
+                "generate_transfer_engine_npu_buffer_sum",
+                "Calculate the sum of buffer, generate_transfer_engine_npu_buffer_sum [transfer_data_id] [is_batch]",
+                self.generate_transfer_engine_npu_buffer_sum,
+            ),
+            CliCommand(
+                "generate_transfer_engine_cpu_tensor",
+                "Generate the buffer which is to transfer data between engines, "
+                "generate_transfer_engine_cpu_tensor [is_src]",
+                self.generate_transfer_engine_cpu_tensor,
+            ),
+            CliCommand(
+                "generate_transfer_engine_cpu_buffer_sum",
+                "Calculate the sum of buffer, generate_transfer_engine_cpu_buffer_sum [transfer_data_id] [is_batch]",
+                self.generate_transfer_engine_cpu_buffer_sum,
+            ),
+            CliCommand(
+                "transfer_engine_get_rpc_port", "Generate a random port [handle_id]", self.transfer_engine_get_rpc_port
+            ),
+            CliCommand(
+                "transfer_engine_create_config_store",
+                "Create the config store server, transfer_engine_create_config_store [store_url]",
+                self.transfer_engine_create_config_store,
+            ),
+            CliCommand(
+                "transfer_engine_set_log_level",
+                "Set log level for transfer engine, transfer_engine_set_log_level [level]",
+                self.transfer_engine_set_log_level,
+            ),
+            CliCommand(
+                "transfer_engine_initialize",
+                "Initialize the transfer engine, transfer_engine_initialize "
+                "[store_url] [session_id] [role] [device_id] [op_type] [store_server_role]",
+                self.transfer_engine_initialize,
+            ),
+            CliCommand(
+                "transfer_engine_register_memory",
+                "Register memory for transfer engine, transfer_engine_register_memory [handle_id] [transfer_data_id]",
+                self.transfer_engine_register_memory,
+            ),
+            CliCommand(
+                "transfer_engine_transfer_sync_write",
+                "Transfer data between transfer engine, transfer_engine_transfer_sync_write "
+                "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
+                self.transfer_engine_transfer_sync_write,
+            ),
+            CliCommand(
+                "transfer_engine_transfer_sync_read",
+                "Transfer data between transfer engine, transfer_engine_transfer_sync_read "
+                "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
+                self.transfer_engine_transfer_sync_read,
+            ),
+            CliCommand(
+                "transfer_engine_batch_register_memory",
+                "Register batch memory for transfer engine, "
+                "transfer_engine_batch_register_memory [handle_id] [transfer_data_id]",
+                self.transfer_engine_batch_register_memory,
+            ),
+            CliCommand(
+                "transfer_engine_batch_transfer_sync_write",
+                "Transfer batch data between transfer engine, transfer_engine_batch_transfer_sync_write "
+                "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
+                self.transfer_engine_batch_transfer_sync_write,
+            ),
+            CliCommand(
+                "transfer_engine_batch_transfer_sync_read",
+                "Transfer batch data between transfer engine, transfer_engine_batch_transfer_sync_read "
+                "[handle_id] [transfer_data_id] [peer_buffer_addresses] [destSession]",
+                self.transfer_engine_batch_transfer_sync_read,
+            ),
+            CliCommand(
+                "transfer_engine_transfer_async_write_submit",
+                "Transfer data between transfer engine, transfer_engine_transfer_async_write_submit "
+                "[handle_id] [transfer_data_id] [peer_buffer_address] [destSession] [stream]",
+                self.transfer_engine_transfer_async_write_submit,
+            ),
+            CliCommand(
+                "transfer_engine_transfer_async_read_submit",
+                "Transfer data between transfer engine, transfer_engine_transfer_async_read_submit "
+                "[handle_id] [transfer_data_id] [peer_buffer_address] [destSession] [stream]",
+                self.transfer_engine_transfer_async_read_submit,
+            ),
+            CliCommand(
+                "transfer_engine_unregister_memory",
+                "Destroy transfer engine handle, transfer_engine_unregister_memory [handle_id] [transfer_data_id]",
+                self.transfer_engine_unregister_memory,
+            ),
+            CliCommand(
+                "transfer_engine_destroy",
+                "Destroy transfer engine handle, transfer_engine_destroy [handle_id]",
+                self.transfer_engine_destroy,
+            ),
+            CliCommand(
+                "transfer_engine_uninitialize",
+                "Uninitialize transfer engine, transfer_engine_uninitialize [handle_id]",
+                self.transfer_engine_uninitialize,
+            ),
+            CliCommand(
+                "delete_trans_handle",
+                "delete a delete_trans_handle handle, delete_bm_handle [handle_id]",
+                self.delete_trans_handle,
+            ),
             CliCommand("close", "release the bound UDS socket file", self.close),
-            CliCommand("malloc_tensor",
-                       " bm register 4k malloc_tensor, "
-                       "malloc_tensor [layer_num] [mini_block_size] [device]",
-                       self.malloc_tensor)
+            CliCommand(
+                "malloc_tensor",
+                " bm register 4k malloc_tensor, malloc_tensor [layer_num] [mini_block_size] [device]",
+                self.malloc_tensor,
+            ),
         ]
         self.register_command(cmds)
 
@@ -536,9 +591,20 @@ class MfTest(TestServer):
         return transfer_data
 
     @result_handler
-    def generate_bm_config(self, init_timeout: int, create_timeout: int, operation_timeout: int, start_store: bool,
-                           start_store_only: bool, dynamic_world_size: bool, unified_address_space: bool,
-                           auto_ranking: bool, rank_id: int, flags: int, hcom_url: str):
+    def generate_bm_config(
+        self,
+        init_timeout: int,
+        create_timeout: int,
+        operation_timeout: int,
+        start_store: bool,
+        start_store_only: bool,
+        dynamic_world_size: bool,
+        unified_address_space: bool,
+        auto_ranking: bool,
+        rank_id: int,
+        flags: int,
+        hcom_url: str,
+    ):
         config = bm.BmConfig()
         config.init_timeout = init_timeout
         config.create_timeout = create_timeout
@@ -566,8 +632,9 @@ class MfTest(TestServer):
         self.cli_print(f"generate bm config id:{config_id}")
 
     @result_handler
-    def generate_shm_config(self, init_timeout: int, create_timeout: int, operation_timeout: int, start_store: bool,
-                            flags: int):
+    def generate_shm_config(
+        self, init_timeout: int, create_timeout: int, operation_timeout: int, start_store: bool, flags: int
+    ):
         config = shm.ShmConfig()
         config.init_timeout = init_timeout
         config.create_timeout = create_timeout
@@ -621,10 +688,17 @@ class MfTest(TestServer):
 
     @result_handler
     def bm_create(self, mem_id: int, local_dram_size: int, local_hbm_size: int, data_op_type: int, flags: int):
-        handle = bm.create(id=mem_id, local_dram_size=local_dram_size,
-                           local_hbm_size=local_hbm_size, data_op_type=bm.BmDataOpType(data_op_type), flags=flags)
-        self.cli_print(f"id={mem_id}, local_dram_size={local_dram_size}, local_hbm_size={local_hbm_size}, "
-                       f"data_op_type={bm.BmDataOpType(data_op_type),} flags={flags}")
+        handle = bm.create(
+            id=mem_id,
+            local_dram_size=local_dram_size,
+            local_hbm_size=local_hbm_size,
+            data_op_type=bm.BmDataOpType(data_op_type),
+            flags=flags,
+        )
+        self.cli_print(
+            f"id={mem_id}, local_dram_size={local_dram_size}, local_hbm_size={local_hbm_size}, "
+            f"data_op_type={(bm.BmDataOpType(data_op_type),)} flags={flags}"
+        )
         if handle is not None:
             addr = id(handle)
             self._bm_handle_dic[addr] = handle
@@ -633,14 +707,31 @@ class MfTest(TestServer):
         self.cli_print(f"create a big memory object:{addr}")
 
     @result_handler
-    def bm_create2(self, mem_id: int, local_dram_size: int, max_dram_size: int, local_hbm_size: int, max_hbm_size: int,
-                   data_op_type: int, enable_56bits_gva: bool, flags: int):
-        handle = bm.create2(id=mem_id, local_dram_size=local_dram_size, max_dram_size=max_dram_size,
-                            local_hbm_size=local_hbm_size, max_hbm_size=max_hbm_size,
-                            data_op_type=bm.BmDataOpType(data_op_type), enable_56bits_gva=enable_56bits_gva,
-                            flags=flags)
-        self.cli_print(f"id={mem_id}, local_dram_size={local_dram_size}, local_hbm_size={local_hbm_size}, "
-                       f"data_op_type={bm.BmDataOpType(data_op_type),} flags={flags}")
+    def bm_create2(
+        self,
+        mem_id: int,
+        local_dram_size: int,
+        max_dram_size: int,
+        local_hbm_size: int,
+        max_hbm_size: int,
+        data_op_type: int,
+        enable_56bits_gva: bool,
+        flags: int,
+    ):
+        handle = bm.create2(
+            id=mem_id,
+            local_dram_size=local_dram_size,
+            max_dram_size=max_dram_size,
+            local_hbm_size=local_hbm_size,
+            max_hbm_size=max_hbm_size,
+            data_op_type=bm.BmDataOpType(data_op_type),
+            enable_56bits_gva=enable_56bits_gva,
+            flags=flags,
+        )
+        self.cli_print(
+            f"id={mem_id}, local_dram_size={local_dram_size}, local_hbm_size={local_hbm_size}, "
+            f"data_op_type={(bm.BmDataOpType(data_op_type),)} flags={flags}"
+        )
         if handle is not None:
             addr = id(handle)
             self._bm_handle_dic[addr] = handle
@@ -706,19 +797,34 @@ class MfTest(TestServer):
     def bm_copy_data(self, handle_id: int, src_ptr: int, dst_ptr: int, size: int, copy_type: int, flags: int):
         handle = self._bm_handle_dic[handle_id]
         self.cli_print(
-            f"src_ptr={src_ptr}, dst_ptr={hex(dst_ptr)}, size={size}, type={bm.BmCopyType(copy_type)}, flags={flags}")
+            f"src_ptr={src_ptr}, dst_ptr={hex(dst_ptr)}, size={size}, type={bm.BmCopyType(copy_type)}, flags={flags}"
+        )
         ret = handle.copy_data(src_ptr=src_ptr, dst_ptr=dst_ptr, size=size, type=bm.BmCopyType(copy_type), flags=flags)
         self.cli_print(f"bm copy_data, ret:{ret}")
 
     @result_handler
-    def bm_copy_data_batch(self, handle_id: int, src_addrs_str: int, dst_addrs_str: int, sizes_str: int,
-                           count: int, copy_type: int, flags: int):
+    def bm_copy_data_batch(
+        self,
+        handle_id: int,
+        src_addrs_str: int,
+        dst_addrs_str: int,
+        sizes_str: int,
+        count: int,
+        copy_type: int,
+        flags: int,
+    ):
         handle = self._bm_handle_dic[handle_id]
         src_addrs = list(map(int, src_addrs_str.split(",")))
         dst_addrs = list(map(int, dst_addrs_str.split(",")))
         sizes = list(map(int, sizes_str.split(",")))
-        ret = handle.copy_data_batch(src_addrs=src_addrs, dst_addrs=dst_addrs, sizes=sizes, count=count,
-                                     type=bm.BmCopyType(copy_type), flags=flags)
+        ret = handle.copy_data_batch(
+            src_addrs=src_addrs,
+            dst_addrs=dst_addrs,
+            sizes=sizes,
+            count=count,
+            type=bm.BmCopyType(copy_type),
+            flags=flags,
+        )
         self.cli_print(f"bm copy_data_batch, ret:{ret}")
 
     @result_handler
@@ -740,8 +846,9 @@ class MfTest(TestServer):
     @result_handler
     def shm_init(self, store_url: str, world_size: int, rank_id: int, device_id: int, config_id: int):
         config = self._get_config(config_id)
-        ret = shm.initialize(store_url=store_url, world_size=world_size, rank_id=rank_id, device_id=device_id,
-                             config=config)
+        ret = shm.initialize(
+            store_url=store_url, world_size=world_size, rank_id=rank_id, device_id=device_id, config=config
+        )
         self.cli_print(f"smem SHM initialize ret({ret})")
 
     @result_handler
@@ -750,8 +857,14 @@ class MfTest(TestServer):
 
     @result_handler
     def shm_create(self, shm_id: int, rank_size: int, rank_id: int, local_mem_size: int, data_op_type: int, flags: int):
-        shm_handle = shm.create(id=shm_id, rank_size=rank_size, rank_id=rank_id, local_mem_size=local_mem_size,
-                                data_op_type=shm.ShmDataOpType(data_op_type), flags=flags)
+        shm_handle = shm.create(
+            id=shm_id,
+            rank_size=rank_size,
+            rank_id=rank_id,
+            local_mem_size=local_mem_size,
+            data_op_type=shm.ShmDataOpType(data_op_type),
+            flags=flags,
+        )
         if shm_handle is not None:
             addr = id(shm_handle)
             self._shm_handle_dic[addr] = shm_handle
@@ -808,20 +921,17 @@ class MfTest(TestServer):
         else:
             big_buffer = torch.zeros((total_size_bytes,), dtype=torch.uint8, device=device)
 
-        buffer = big_buffer[0:1 * 1024 * 1024].reshape(1024, 1024)
+        buffer = big_buffer[0 : 1 * 1024 * 1024].reshape(1024, 1024)
         buffer_bytes = buffer.element_size() * buffer.numel()
 
         batch_buffers = [
-            big_buffer[2 * 1024 * 1024:3 * 1024 * 1024].reshape(1024, 1024),
-            big_buffer[3 * 1024 * 1024:4 * 1024 * 1024].reshape(1024, 1024)
+            big_buffer[2 * 1024 * 1024 : 3 * 1024 * 1024].reshape(1024, 1024),
+            big_buffer[3 * 1024 * 1024 : 4 * 1024 * 1024].reshape(1024, 1024),
         ]
         batch_bytes = [b.element_size() * b.numel() for b in batch_buffers]
 
         transfer_data = TransferEngineData(
-            buffer=buffer,
-            buffer_bytes=buffer_bytes,
-            batch_buffers=batch_buffers,
-            batch_bytes=batch_bytes
+            buffer=buffer, buffer_bytes=buffer_bytes, batch_buffers=batch_buffers, batch_bytes=batch_bytes
         )
         transfer_data_id = id(transfer_data)
         self._transfer_engine_data_dic[transfer_data_id] = transfer_data
@@ -842,20 +952,17 @@ class MfTest(TestServer):
         else:
             big_buffer = torch.zeros((total_size_bytes,), dtype=torch.uint8, device=device)
 
-        buffer = big_buffer[0:1 * 1024 * 1024].reshape(1024, 1024)
+        buffer = big_buffer[0 : 1 * 1024 * 1024].reshape(1024, 1024)
         buffer_bytes = buffer.element_size() * buffer.numel()
 
         batch_buffers = [
-            big_buffer[2 * 1024 * 1024:3 * 1024 * 1024].reshape(1024, 1024),
-            big_buffer[3 * 1024 * 1024:4 * 1024 * 1024].reshape(1024, 1024)
+            big_buffer[2 * 1024 * 1024 : 3 * 1024 * 1024].reshape(1024, 1024),
+            big_buffer[3 * 1024 * 1024 : 4 * 1024 * 1024].reshape(1024, 1024),
         ]
         batch_bytes = [b.element_size() * b.numel() for b in batch_buffers]
 
         transfer_data = TransferEngineData(
-            buffer=buffer,
-            buffer_bytes=buffer_bytes,
-            batch_buffers=batch_buffers,
-            batch_bytes=batch_bytes
+            buffer=buffer, buffer_bytes=buffer_bytes, batch_buffers=batch_buffers, batch_bytes=batch_bytes
         )
         transfer_data_id = id(transfer_data)
         self._transfer_engine_data_dic[transfer_data_id] = transfer_data
@@ -909,8 +1016,9 @@ class MfTest(TestServer):
         self.cli_print("set log level for transfer engine successfully.")
 
     @result_handler
-    def transfer_engine_initialize(self, store_url: str, session_id: str, role: str, device_id: int, op_type: int,
-                                   store_server_role: str):
+    def transfer_engine_initialize(
+        self, store_url: str, session_id: str, role: str, device_id: int, op_type: int, store_server_role: str
+    ):
         engine = TransferEngine()
         # 只掉接口暂时不用
         port = engine.get_rpc_port()
@@ -922,14 +1030,7 @@ class MfTest(TestServer):
             logging.error("Invalid optype: %d", op_type)
             return
         self.cli_print(f"TransDataOpType:{data_op_type}")
-        ret_value = engine.initialize(
-            store_url,
-            session_id,
-            role,
-            device_id,
-            data_op_type,
-            store_server_role
-        )
+        ret_value = engine.initialize(store_url, session_id, role, device_id, data_op_type, store_server_role)
         if ret_value == 0:
             addr = id(engine)
             self._transfer_engine_dic[addr] = engine
@@ -944,16 +1045,18 @@ class MfTest(TestServer):
         self.cli_print(f"register memory for transfer engine result is:{ret_value}")
 
     @result_handler
-    def transfer_engine_transfer_sync_write(self, handle_id: int, dest_session: str, buffers: int,
-                                            peer_buffer_addresses: int, length: int):
+    def transfer_engine_transfer_sync_write(
+        self, handle_id: int, dest_session: str, buffers: int, peer_buffer_addresses: int, length: int
+    ):
         engine = self._transfer_engine_dic[handle_id]
         ret_value = engine.transfer_sync_write(dest_session, buffers, peer_buffer_addresses, length)
         time.sleep(5)
         self.cli_print(f"write data for transfer engine result is:{ret_value}")
 
     @result_handler
-    def transfer_engine_transfer_sync_read(self, handle_id: int, dest_session: str, buffers: int,
-                                           peer_buffer_addresses: int, length: int):
+    def transfer_engine_transfer_sync_read(
+        self, handle_id: int, dest_session: str, buffers: int, peer_buffer_addresses: int, length: int
+    ):
         engine = self._transfer_engine_dic[handle_id]
         ret_value = engine.transfer_sync_read(dest_session, buffers, peer_buffer_addresses, length)
         time.sleep(5)
@@ -968,8 +1071,9 @@ class MfTest(TestServer):
         self.cli_print(f"register batch memory for transfer engine result is:{ret_value}")
 
     @result_handler
-    def transfer_engine_batch_transfer_sync_write(self, handle_id: int, dest_session: str, buffers_str: str,
-                                                  peer_buffer_addresses_str: str, lengths_str: str):
+    def transfer_engine_batch_transfer_sync_write(
+        self, handle_id: int, dest_session: str, buffers_str: str, peer_buffer_addresses_str: str, lengths_str: str
+    ):
         buffers = list(map(int, buffers_str.split(",")))
         peer_buffer_addresses = list(map(int, peer_buffer_addresses_str.split(",")))
         lengths = list(map(int, lengths_str.split(",")))
@@ -979,8 +1083,9 @@ class MfTest(TestServer):
         self.cli_print(f"write batch data for transfer engine result is:{ret_value}")
 
     @result_handler
-    def transfer_engine_batch_transfer_sync_read(self, handle_id: int, dest_session: str, buffers_str: str,
-                                                 peer_buffer_addresses_str: str, lengths_str: str):
+    def transfer_engine_batch_transfer_sync_read(
+        self, handle_id: int, dest_session: str, buffers_str: str, peer_buffer_addresses_str: str, lengths_str: str
+    ):
         buffers = list(map(int, buffers_str.split(",")))
         peer_buffer_addresses = list(map(int, peer_buffer_addresses_str.split(",")))
         lengths = list(map(int, lengths_str.split(",")))
@@ -990,8 +1095,9 @@ class MfTest(TestServer):
         self.cli_print(f"read batch data for transfer engine result is:{ret_value}")
 
     @result_handler
-    def transfer_engine_transfer_async_write_submit(self, handle_id: int, dest_session: str, buffers: int,
-                                                    peer_buffer_addresses: int, length: int, stream: int):
+    def transfer_engine_transfer_async_write_submit(
+        self, handle_id: int, dest_session: str, buffers: int, peer_buffer_addresses: int, length: int, stream: int
+    ):
         engine = self._transfer_engine_dic[handle_id]
         if stream != 0:
             stream = self._stream
@@ -1000,8 +1106,9 @@ class MfTest(TestServer):
         self.cli_print(f"async write data submit for transfer engine result is:{ret_value}")
 
     @result_handler
-    def transfer_engine_transfer_async_read_submit(self, handle_id: int, dest_session: str, buffers: int,
-                                                   peer_buffer_addresses: int, length: int, stream: int):
+    def transfer_engine_transfer_async_read_submit(
+        self, handle_id: int, dest_session: str, buffers: int, peer_buffer_addresses: int, length: int, stream: int
+    ):
         engine = self._transfer_engine_dic[handle_id]
         if stream != 0:
             stream = self._stream
@@ -1059,12 +1166,7 @@ class MfTest(TestServer):
 
     def malloc_npu_tensor(self, shape: Tuple[int]):
         self.set_device()
-        raw_blocks = torch.randint(
-            low=0, high=256,
-            size=shape,
-            dtype=torch.uint8,
-            device=torch.device('npu')
-        )
+        raw_blocks = torch.randint(low=0, high=256, size=shape, dtype=torch.uint8, device=torch.device('npu'))
         self.sync_stream()
         return raw_blocks
 
@@ -1074,22 +1176,24 @@ class MfTest(TestServer):
         aligned_size = total_bytes + align
 
         buffer = torch.randint(
-            low=0, high=256,
-            size=(aligned_size, ),
+            low=0,
+            high=256,
+            size=(aligned_size,),
             dtype=torch.uint8,
         )
 
         data_ptr = buffer.data_ptr()
         offset = (align - (data_ptr % align)) % align
 
-        aligned_tensor = buffer[offset:offset + total_bytes].view(shape)
+        aligned_tensor = buffer[offset : offset + total_bytes].view(shape)
         return aligned_tensor
 
 
 if __name__ == "__main__":
     if len(sys.argv) <= 1:
-        logging.error("Please input app_id and device_id when starting the process"
-                      "usage: memfabric_test.py [app_id] [device_id].")
+        logging.error(
+            "Please input app_id and device_id when starting the processusage: memfabric_test.py [app_id] [device_id]."
+        )
         sys.exit(1)
     app_id = int(sys.argv[1])
     globals_device_id = int(sys.argv[2])

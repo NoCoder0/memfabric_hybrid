@@ -228,7 +228,7 @@ inline bool FileUtil::RemoveDirRecursive(const std::string &path)
             continue;
         }
 
-        struct stat statBuf{};
+        struct stat statBuf {};
         std::string absPath = realPath + "/" + entry->d_name;
         if (!stat(absPath.c_str(), &statBuf) && S_ISDIR(statBuf.st_mode)) {
             RemoveDirRecursive(absPath);
@@ -395,7 +395,7 @@ inline constexpr size_t FileUtil::GetSafePathMax()
 
 inline bool FileUtil::CheckFileIsREG(std::string &file)
 {
-    struct stat st{};
+    struct stat st {};
     if (lstat(file.c_str(), &st) < 0) {
         return false;
     }

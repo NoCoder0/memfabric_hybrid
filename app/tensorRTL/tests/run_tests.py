@@ -84,28 +84,37 @@ def main():
 
     # 1. 运行UT测试
     logging.info("运行UT测试...")
-    pytest.main([
-        "tests/ut/",
-        "-q",
-        "--cov=tensor_rtl",
-        "--cov-branch",
-        f"--cov-report=xml:{result_dir / 'coverage.xml'}",
-        f"--junitxml={result_dir / '.report_ut.xml'}"
-    ])
+    pytest.main(
+        [
+            "tests/ut/",
+            "-q",
+            "--cov=tensor_rtl",
+            "--cov-branch",
+            f"--cov-report=xml:{result_dir / 'coverage.xml'}",
+            f"--junitxml={result_dir / '.report_ut.xml'}",
+        ]
+    )
 
     # 2. 运行ST测试
     if run_st:
         logging.info("\n运行ST测试...")
-        result = subprocess.run([
-            "/usr/bin/python", "-m", "torch.distributed.run",
-            "--nproc_per_node=8",  # GPU数量
-            "--standalone",
-            "-m", "pytest",
-            "tests/st/",
-            "-q",
-            "--no-cov",
-            f"--junitxml={result_dir / '.report_st.xml'}"
-        ], capture_output=True, text=True)
+        result = subprocess.run(
+            [
+                "/usr/bin/python",
+                "-m",
+                "torch.distributed.run",
+                "--nproc_per_node=8",  # GPU数量
+                "--standalone",
+                "-m",
+                "pytest",
+                "tests/st/",
+                "-q",
+                "--no-cov",
+                f"--junitxml={result_dir / '.report_st.xml'}",
+            ],
+            capture_output=True,
+            text=True,
+        )
 
         logging.info("Return Code:", result.returncode)
         logging.info("Stdout:", result.stdout)
@@ -116,7 +125,7 @@ def main():
     merge_junit_reports(
         ut_report_path=result_dir / ".report_ut.xml",
         st_report_path=result_dir / ".report_st.xml",
-        final_output_path=result_dir / "final.xml"  # 最终报告路径
+        final_output_path=result_dir / "final.xml",  # 最终报告路径
     )
 
     # 清理临时文件

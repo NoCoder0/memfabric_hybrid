@@ -15,7 +15,7 @@ g_type_map = {
     "int32_t": np.int32,
     "float16_t": np.float16,
     "float": np.float32,
-    "bfloat16_t": np.float16
+    "bfloat16_t": np.float16,
 }
 
 g_torch_type_map = {
@@ -23,7 +23,7 @@ g_torch_type_map = {
     "int32_t": torch.int32,
     "float16_t": torch.float16,
     "float": torch.float32,
-    "bfloat16_t": torch.bfloat16
+    "bfloat16_t": torch.bfloat16,
 }
 
 
@@ -96,12 +96,13 @@ def test_allgather_graph(case_list, backend="zbal", use_graph=False):
         capture_stream = torch.npu.Stream(device=cur_device)
         graph_list = [torch.npu.NPUGraph() for _ in case_list]
         input_buf_list = [
-            torch.rand(data_len, dtype=tensor_data_type, device=cur_device).contiguous()
-            for data_len in case_list
+            torch.rand(data_len, dtype=tensor_data_type, device=cur_device).contiguous() for data_len in case_list
         ]
 
-        output_buf_list = [torch.rand([world_size * data_len]).to(dtype=tensor_data_type).to(cur_device).contiguous()
-                           for data_len in case_list]
+        output_buf_list = [
+            torch.rand([world_size * data_len]).to(dtype=tensor_data_type).to(cur_device).contiguous()
+            for data_len in case_list
+        ]
 
         cases_len = len(case_list)
         for case_idx in range(cases_len):
@@ -165,6 +166,6 @@ if __name__ == "__main__":
     if case_num == 0:
         assert len(case_list) >= 1, "case_num is 0, using case_list but case_list is None"
     else:
-        case_list = [6 * (2 ** i) for i in range(case_num)]
+        case_list = [6 * (2**i) for i in range(case_num)]
 
     test_allgather_graph(case_list, backend=dist_type, use_graph=True)

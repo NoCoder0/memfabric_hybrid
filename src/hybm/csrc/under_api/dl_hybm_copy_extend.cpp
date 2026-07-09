@@ -80,5 +80,5 @@ void DlHybmExtendApi::CleanupLibrary()
     }
     gLoaded = false;
 }
-}
-}
+} // namespace mf
+} // namespace ock

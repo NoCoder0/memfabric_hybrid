@@ -1,15 +1,10 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
 import torch
 from examples.verl.model_adaptor.adaptor import ModelAdatpor
 from examples.verl.utils import get_prefix_name
-from examples.verl.config_interface import (
-    build_param_partition_config,
-    Engine,
-    get_moe_members
-)
+from examples.verl.config_interface import build_param_partition_config, Engine, get_moe_members
 
 
 class QwenAdaptor(ModelAdatpor):
@@ -24,7 +19,7 @@ class QwenAdaptor(ModelAdatpor):
             "final_layernorm": "norm",
             "output_layer": "lm_head",
             "self_attention.q_layernorm.weight": "self_attn.q_norm.weight",
-            "self_attention.k_layernorm.weight": "self_attn.k_norm.weight"
+            "self_attention.k_layernorm.weight": "self_attn.k_norm.weight",
         }
         self.tp_partition_dict = {
             'word_embeddings': 0,
@@ -47,22 +42,26 @@ class QwenAdaptor(ModelAdatpor):
 
     def build_param_name_mapping(self, param_name_mapping):
         if param_name_mapping is None:
-            self.param_name_mapping.update({
+            self.param_name_mapping.update(
+                {
                     "mlp.linear_fc1.weight": "mlp.gate_up_proj.weight",
                     "mlp.linear_fc1.layer_norm_weight": "post_attention_layernorm.weight",
                     "mlp.linear_fc2.weight": "mlp.down_proj.weight",
-            })
+                }
+            )
         else:
             self.param_name_mapping = param_name_mapping
 
     def build_tp_partition_dict(self, tp_partition_dict):
         if tp_partition_dict is None:
-            self.tp_partition_dict.update({
-                'mlp.linear_fc1.weight': 0,
-                'mlp.linear_fc2.weight': 1,
-                'mlp.linear_fc1.bias': 0,
-                'mlp.linear_fc2.bias': 0,
-            })
+            self.tp_partition_dict.update(
+                {
+                    'mlp.linear_fc1.weight': 0,
+                    'mlp.linear_fc2.weight': 1,
+                    'mlp.linear_fc1.bias': 0,
+                    'mlp.linear_fc2.bias': 0,
+                }
+            )
         else:
             self.tp_partition_dict = tp_partition_dict
 
@@ -86,11 +85,8 @@ class QwenAdaptor(ModelAdatpor):
                     ep_partition = True
 
                 fused, fused_size = self.get_fused_info(
-                    prefix_name, 
-                    train_tensor_world_size, 
-                    infer_tensor_world_size, 
-                    engine_type
-                    )
+                    prefix_name, train_tensor_world_size, infer_tensor_world_size, engine_type
+                )
                 partition_config = build_param_partition_config(
                     param_size=param.size(),
                     param_ndim=param.ndim,
@@ -98,18 +94,14 @@ class QwenAdaptor(ModelAdatpor):
                     ep_partition=ep_partition,
                     shard_dim=shard_dim,
                     fused=fused,
-                    fused_size=fused_size
+                    fused_size=fused_size,
                 )
                 param_config.update({prefix_name: partition_config})
 
         return param_config
 
     def build_infer_param_config(
-        self,
-        model: torch.nn.Module,
-        train_tensor_world_size,
-        infer_tensor_world_size,
-        train_param_config
+        self, model: torch.nn.Module, train_tensor_world_size, infer_tensor_world_size, train_param_config
     ):
         param_config = {}
         for name, param in model.named_parameters():
@@ -128,7 +120,7 @@ class QwenAdaptor(ModelAdatpor):
                     ep_partition=train_param_config[prefix_name].ep_partition,
                     shard_dim=train_param_config[prefix_name].shard_dim,
                     fused=train_param_config[prefix_name].fused,
-                    fused_size=fused_size
+                    fused_size=fused_size,
                 )
             else:
                 tp_partition = True
@@ -145,7 +137,7 @@ class QwenAdaptor(ModelAdatpor):
                     ep_partition=ep_partition,
                     shard_dim=shard_dim,
                     fused=False,
-                    fused_size=0
+                    fused_size=0,
                 )
             param_config[get_prefix_name(name)] = partition_config
 
@@ -175,12 +167,14 @@ class QwenMoeAdaptor(QwenAdaptor):
 
     def build_param_name_mapping(self, param_name_mapping):
         if param_name_mapping is None:
-            self.param_name_mapping.update({
-                "mlp.router.weight": "mlp.gate.weight",
-                "pre_mlp_layernorm.weight": "post_attention_layernorm.weight",
-                "mlp.experts.linear_fc1.weight": "mlp.experts.w13_weight", # train 的参数需要合并
-                "mlp.experts.linear_fc2.weight": "mlp.experts.w2_weight",
-            })
+            self.param_name_mapping.update(
+                {
+                    "mlp.router.weight": "mlp.gate.weight",
+                    "pre_mlp_layernorm.weight": "post_attention_layernorm.weight",
+                    "mlp.experts.linear_fc1.weight": "mlp.experts.w13_weight",  # train 的参数需要合并
+                    "mlp.experts.linear_fc2.weight": "mlp.experts.w2_weight",
+                }
+            )
         else:
             self.param_name_mapping = param_name_mapping
 

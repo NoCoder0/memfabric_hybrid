@@ -12,7 +12,7 @@
 #include <gtest/gtest.h>
 #include <limits>
 
-#define private public
+#define private   public
 #define protected public
 #include "host_hcom_transport_manager.h"
 #include "host_hcom_common.h"
@@ -78,16 +78,28 @@ int FakeServiceCreate(Service_Type, const char *, Service_Options, Hcom_Service 
     *service = 1;
     return 0;
 }
-int FakeServiceBind(Hcom_Service, const char *, Service_ChannelHandler) { return 0; }
-int FakeServiceStart(Hcom_Service) { return 0; }
-int FakeServiceDestroy(Hcom_Service, const char *) { return 0; }
+int FakeServiceBind(Hcom_Service, const char *, Service_ChannelHandler)
+{
+    return 0;
+}
+int FakeServiceStart(Hcom_Service)
+{
+    return 0;
+}
+int FakeServiceDestroy(Hcom_Service, const char *)
+{
+    return 0;
+}
 void FakeSetTlsOptions(Hcom_Service, bool, Service_TlsVersion, Service_CipherSuite, Hcom_TlsGetCertCb,
                        Hcom_TlsGetPrivateKeyCb, Hcom_TlsGetCACb)
 {}
 void FakeRegisterChannelBrokerHandler(Hcom_Service, Service_ChannelHandler, Service_ChannelPolicy, uint64_t) {}
 void FakeRegisterHandler(Hcom_Service, Service_HandlerType, Service_RequestHandler, uint64_t) {}
 void FakeSetDeviceIpMask(Hcom_Service, const char *) {}
-void FakeSetExternalLogger(Service_LogHandler h) { gCapturedLogger = h; }
+void FakeSetExternalLogger(Service_LogHandler h)
+{
+    gCapturedLogger = h;
+}
 
 int FakeRegisterAssignMr(Hcom_Service, uintptr_t, uint64_t, Service_MemoryRegion *mr)
 {
@@ -972,9 +984,9 @@ TEST(HcomTransportManagerTest, GetCACallBackInvalidArgs)
 TEST(HcomTransportManagerTest, GetCACallBackSuccessBasic)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    std::memset(mgr->tlsConfig_.caPath,  0, sizeof(mgr->tlsConfig_.caPath));
+    std::memset(mgr->tlsConfig_.caPath, 0, sizeof(mgr->tlsConfig_.caPath));
     std::memset(mgr->tlsConfig_.crlPath, 0, sizeof(mgr->tlsConfig_.crlPath));
-    std::strncpy(mgr->tlsConfig_.caPath,  "/tmp/ca.pem",  sizeof(mgr->tlsConfig_.caPath) - 1);
+    std::strncpy(mgr->tlsConfig_.caPath, "/tmp/ca.pem", sizeof(mgr->tlsConfig_.caPath) - 1);
     std::strncpy(mgr->tlsConfig_.crlPath, "/tmp/crl.pem", sizeof(mgr->tlsConfig_.crlPath) - 1);
 
     char *caPath = nullptr;
@@ -1227,7 +1239,7 @@ TEST(HcomTransportManagerTest, ConnectSkipSelfAndEmptyNic)
     mgr->rpcService_ = 1;
     mgr->rankCount_ = 3;
     mgr->rankId_ = 1;
-    mgr->nics_.assign(3, std::string{});          // 全部 empty
+    mgr->nics_.assign(3, std::string{});                    // 全部 empty
     mgr->channels_.assign(3, static_cast<Hcom_Channel>(0)); // 不触发真正连接
 
     Result ret = mgr->Connect();

@@ -18,7 +18,7 @@ namespace ock {
 namespace mf {
 
 const uint32_t COMM_NAME_MAX_LENGTH = 128; // group name max length
-const uint32_t UDI_MAX_LENGTH = 128; // UDI max length
+const uint32_t UDI_MAX_LENGTH = 128;       // UDI max length
 const uint32_t HCCL_COMM_CONFIG_INFO_BYTES = 24;
 const uint32_t HCCL_COMM_CONFIG_MAGIC_WORD = 0xf0f0f0f0;
 const uint32_t HCCL_COMM_CONFIG_VERSION = 10;
@@ -30,7 +30,7 @@ typedef struct HcclCommConfigDef {
     uint32_t hcclDeterministic;
     char hcclCommName[COMM_NAME_MAX_LENGTH];
     char hcclUdi[UDI_MAX_LENGTH];
-    uint32_t hcclOpExpansionMode;   // 0:默认值  1:host  2:aicpu  3:aiv
+    uint32_t hcclOpExpansionMode; // 0:默认值  1:host  2:aicpu  3:aiv
     uint32_t hcclRdmaTrafficClass;
     uint32_t hcclRdmaServiceLevel;
 
@@ -44,9 +44,9 @@ typedef struct {
     uint64_t reserved;
 } configInfo_t;
 
-using HcclComm = void*;
+using HcclComm = void *;
 
-using hcclCommInitClusterInfoFunc = int32_t (*)(const char *, uint32_t , HcclCommConfig *, HcclComm *);
+using hcclCommInitClusterInfoFunc = int32_t (*)(const char *, uint32_t, HcclCommConfig *, HcclComm *);
 using hcclCommDestroyFunc = int32_t (*)(HcclComm);
 
 class DlHcclApi {
@@ -75,8 +75,8 @@ public:
         config->hcclRdmaServiceLevel = UINT32_MAX;
     }
 
-    static inline Result HcclCommInitClusterInfoMemConfig(const char *rankTable, uint32_t rank,
-                                                          HcclCommConfig *config, HcclComm *comm)
+    static inline Result HcclCommInitClusterInfoMemConfig(const char *rankTable, uint32_t rank, HcclCommConfig *config,
+                                                          HcclComm *comm)
     {
         if (gHcclCommInitClusterInfo == nullptr) {
             return BM_UNDER_API_UNLOAD;

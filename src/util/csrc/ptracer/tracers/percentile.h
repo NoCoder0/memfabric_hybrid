@@ -63,7 +63,7 @@ inline uint32_t RoundOfExpectation(uint32_t a, uint32_t b)
 }
 
 /* Fixed-capacity reservoir sampling bucket with weighted merge downsampling. */
-template <size_t CAP>
+template<size_t CAP>
 class SampleBucket {
 public:
     SampleBucket() : numAdded_(0), numStored_(0), sorted_(false) {}
@@ -102,7 +102,7 @@ public:
     }
 
     /* Merge same-capacity bucket via weighted downsampling (global-to-global). */
-    void MergeFrom(const SampleBucket<CAP>& rhs)
+    void MergeFrom(const SampleBucket<CAP> &rhs)
     {
         if (rhs.numAdded_ == 0) {
             return;
@@ -142,7 +142,7 @@ public:
             keepRhs = rhsNumStored;
         }
         std::vector<uint32_t> rhsTmpVec(CAP);
-        uint32_t* rhsTmp = rhsTmpVec.data();
+        uint32_t *rhsTmp = rhsTmpVec.data();
         std::copy(rhs.samples_, rhs.samples_ + rhsNumStored, rhsTmp);
         for (uint32_t i = 0; i < keepRhs; ++i) {
             size_t idx = static_cast<size_t>(ThreadRand()) % (rhsNumStored - i);
@@ -158,16 +158,20 @@ public:
     }
 
     /* Merge different-capacity bucket via cross-CAP weighted downsampling (TLS-to-global). */
-    template <size_t OTHER_CAP>
-    void MergeFromDifferent(const SampleBucket<OTHER_CAP>& rhs)
+    template<size_t OTHER_CAP>
+    void MergeFromDifferent(const SampleBucket<OTHER_CAP> &rhs)
     {
-        if (rhs.NumAdded() == 0) { return; }
+        if (rhs.NumAdded() == 0) {
+            return;
+        }
         if (numAdded_ == 0) {
             uint32_t rhsNumStored = rhs.NumStored();
-            if (rhsNumStored > OTHER_CAP) { rhsNumStored = OTHER_CAP; }
+            if (rhsNumStored > OTHER_CAP) {
+                rhsNumStored = OTHER_CAP;
+            }
             size_t toCopy = std::min(static_cast<size_t>(rhsNumStored), static_cast<size_t>(CAP));
             std::vector<uint32_t> rhsTmpVec(OTHER_CAP);
-            uint32_t* rhsTmp = rhsTmpVec.data();
+            uint32_t *rhsTmp = rhsTmpVec.data();
             for (uint32_t i = 0; i < rhsNumStored; ++i) {
                 rhsTmp[i] = rhs.SampleAt(i);
             }
@@ -181,23 +185,31 @@ public:
         }
         uint32_t total = numAdded_ + rhs.NumAdded();
         uint32_t keepSelf = RoundOfExpectation(numAdded_ * CAP, total);
-        if (keepSelf > numStored_) { keepSelf = numStored_; }
+        if (keepSelf > numStored_) {
+            keepSelf = numStored_;
+        }
         while (numStored_ > keepSelf) {
             size_t pos = static_cast<size_t>(ThreadRand()) % numStored_;
             samples_[pos] = samples_[numStored_ - 1];
             --numStored_;
         }
         uint32_t keepRhs = CAP - keepSelf;
-        if (keepRhs > rhs.NumStored()) { keepRhs = rhs.NumStored(); }
+        if (keepRhs > rhs.NumStored()) {
+            keepRhs = rhs.NumStored();
+        }
         uint32_t rhsNumStored = rhs.NumStored();
-        if (rhsNumStored > OTHER_CAP) { rhsNumStored = OTHER_CAP; }
+        if (rhsNumStored > OTHER_CAP) {
+            rhsNumStored = OTHER_CAP;
+        }
         std::vector<uint32_t> rhsTmpVec(OTHER_CAP);
-        uint32_t* rhsTmp = rhsTmpVec.data();
+        uint32_t *rhsTmp = rhsTmpVec.data();
         for (uint32_t i = 0; i < rhsNumStored; ++i) {
             rhsTmp[i] = rhs.SampleAt(i);
         }
         for (uint32_t i = 0; i < keepRhs; ++i) {
-            if (i >= rhsNumStored) { break; }
+            if (i >= rhsNumStored) {
+                break;
+            }
             size_t idx = static_cast<size_t>(ThreadRand()) % (rhsNumStored - i);
             if (numStored_ < CAP) {
                 samples_[numStored_++] = rhsTmp[idx];
@@ -210,22 +222,37 @@ public:
         sorted_ = false;
     }
 
-    uint32_t NumAdded() const { return numAdded_; }
-    uint32_t NumStored() const { return numStored_; }
-    uint32_t SampleAt(size_t i) const { return samples_[i]; }
-    bool Empty() const { return numStored_ == 0; }
+    uint32_t NumAdded() const
+    {
+        return numAdded_;
+    }
+    uint32_t NumStored() const
+    {
+        return numStored_;
+    }
+    uint32_t SampleAt(size_t i) const
+    {
+        return samples_[i];
+    }
+    bool Empty() const
+    {
+        return numStored_ == 0;
+    }
     void Clear()
     {
         numAdded_ = 0;
         numStored_ = 0;
         sorted_ = false;
     }
-    bool Full() const { return numStored_ >= CAP; }
+    bool Full() const
+    {
+        return numStored_ >= CAP;
+    }
 
 private:
-    uint32_t numAdded_;   /* total samples ever added (including replaced ones) */
-    uint32_t numStored_;  /* currently stored samples (<= CAP) */
-    bool sorted_;         /* cached sorted state to avoid redundant sorting */
+    uint32_t numAdded_;     /* total samples ever added (including replaced ones) */
+    uint32_t numStored_;    /* currently stored samples (<= CAP) */
+    bool sorted_;           /* cached sorted state to avoid redundant sorting */
     uint32_t samples_[CAP]; /* fixed-capacity sample array */
 };
 
@@ -235,7 +262,7 @@ private:
  * Variants: TlsPercentile (TLS_SAMPLE_SIZE), GlobalPercentile (GLOBAL_SAMPLE_SIZE),
  * CombinedPercentile (COMBINED_SAMPLE_SIZE).
  */
-template <size_t BUCKET_CAP>
+template<size_t BUCKET_CAP>
 class PercentileSamples {
 public:
     PercentileSamples() : totalAdded_(0)
@@ -252,7 +279,7 @@ public:
         }
     }
 
-    PercentileSamples(const PercentileSamples& rhs) : totalAdded_(rhs.totalAdded_)
+    PercentileSamples(const PercentileSamples &rhs) : totalAdded_(rhs.totalAdded_)
     {
         std::fill_n(buckets_, NUM_LOG_BUCKETS, nullptr);
         for (size_t i = 0; i < NUM_LOG_BUCKETS; ++i) {
@@ -262,7 +289,7 @@ public:
         }
     }
 
-    PercentileSamples& operator=(const PercentileSamples& rhs)
+    PercentileSamples &operator=(const PercentileSamples &rhs)
     {
         if (this == &rhs) {
             return *this;
@@ -307,7 +334,7 @@ public:
     }
 
     /* MergeFromTls: merge from a TLS-capacity sampler (TLS -> global) */
-    void MergeFromTls(const PercentileSamples<TLS_SAMPLE_SIZE>& rhs)
+    void MergeFromTls(const PercentileSamples<TLS_SAMPLE_SIZE> &rhs)
     {
         totalAdded_ += rhs.TotalAdded();
         for (size_t i = 0; i < NUM_LOG_BUCKETS; ++i) {
@@ -318,7 +345,7 @@ public:
     }
 
     /* MergeFromSame: merge from a same-capacity sampler (global snapshot merge) */
-    void MergeFromSame(const PercentileSamples& rhs)
+    void MergeFromSame(const PercentileSamples &rhs)
     {
         totalAdded_ += rhs.totalAdded_;
         for (size_t i = 0; i < NUM_LOG_BUCKETS; ++i) {
@@ -329,8 +356,8 @@ public:
     }
 
     /* MergeFromAny: merge from any-capacity sampler (window query combining snapshots) */
-    template <size_t OTHER_CAP>
-    void MergeFromAny(const PercentileSamples<OTHER_CAP>& rhs)
+    template<size_t OTHER_CAP>
+    void MergeFromAny(const PercentileSamples<OTHER_CAP> &rhs)
     {
         totalAdded_ += rhs.TotalAdded();
         for (size_t i = 0; i < NUM_LOG_BUCKETS; ++i) {
@@ -359,10 +386,9 @@ public:
             if (!buckets_[i]) {
                 continue;
             }
-            SampleBucket<BUCKET_CAP>& bkt = *buckets_[i];
+            SampleBucket<BUCKET_CAP> &bkt = *buckets_[i];
             if (n <= bkt.NumAdded()) {
-                size_t rank = static_cast<size_t>(
-                    static_cast<double>(n) * bkt.NumStored() / bkt.NumAdded());
+                size_t rank = static_cast<size_t>(static_cast<double>(n) * bkt.NumStored() / bkt.NumAdded());
                 if (rank > 0) {
                     --rank;
                 }
@@ -373,9 +399,18 @@ public:
         return std::numeric_limits<uint32_t>::max();
     }
 
-    size_t TotalAdded() const { return totalAdded_; }
-    bool HasBucket(size_t i) const { return buckets_[i] != nullptr; }
-    const SampleBucket<BUCKET_CAP>& BucketAt(size_t i) const { return *buckets_[i]; }
+    size_t TotalAdded() const
+    {
+        return totalAdded_;
+    }
+    bool HasBucket(size_t i) const
+    {
+        return buckets_[i] != nullptr;
+    }
+    const SampleBucket<BUCKET_CAP> &BucketAt(size_t i) const
+    {
+        return *buckets_[i];
+    }
 
     void Clear()
     {
@@ -399,7 +434,7 @@ public:
 
 private:
     /* GetBucket: lazily create a bucket; only allocated when data falls in that range */
-    SampleBucket<BUCKET_CAP>& GetBucket(size_t idx)
+    SampleBucket<BUCKET_CAP> &GetBucket(size_t idx)
     {
         if (!buckets_[idx]) {
             buckets_[idx] = new SampleBucket<BUCKET_CAP>;
@@ -407,8 +442,8 @@ private:
         return *buckets_[idx];
     }
 
-    size_t totalAdded_;                                /* total number of samples added */
-    SampleBucket<BUCKET_CAP>* buckets_[NUM_LOG_BUCKETS]; /* log2 buckets (lazily created) */
+    size_t totalAdded_;                                  /* total number of samples added */
+    SampleBucket<BUCKET_CAP> *buckets_[NUM_LOG_BUCKETS]; /* log2 buckets (lazily created) */
 };
 
 using GlobalPercentile = PercentileSamples<GLOBAL_SAMPLE_SIZE>;

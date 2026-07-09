@@ -95,7 +95,7 @@ private:
     int32_t Execute(uint32_t deviceId, uint32_t rankId, uint32_t localRankNum, uint32_t rkSize, int32_t pipeFdWrite);
 
     int32_t BandWidthCalculation(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
-                              BwTestResult *results);
+                                 BwTestResult *results);
 
     void BatchCopyPut(smem_bm_mem_type localMemType, smem_bm_mem_type rmtMemType, uint32_t gvaRankId, smem_bm_t handle,
                       CopyType type, BwTestResult &result);

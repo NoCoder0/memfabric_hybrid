@@ -296,7 +296,7 @@ int32_t ProcessGroupZBAL::initP2pCommunicator(int peer, std::string &groupName) 
     opt.name = const_cast<char *>(groupName.c_str());
     opt.groupRankId = myWorldRank_ < peerWorldRank ? 0 : 1;
 
-    zbal_comm_t groupComm {};
+    zbal_comm_t groupComm{};
     auto ret = zbal_comm_create(&opt, &groupComm);
     if (ret != Z_OK || groupComm == nullptr) {
         ZBAL_LOG_ERROR("create comm failed, ret=" << ret << ", rank=" << myWorldRank_ << ", size=" << opt.groupSize
@@ -451,10 +451,10 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::allreduce(std::vector<at::Tenso
                 at::empty({bufferElems}, at::TensorOptions().device(input.device()).dtype(scalarType));
             void *bufferDataPtr = bufferTensor.data_ptr();
 
-            std::function<int()> call_all_reduce = [inputDataPtr, outputDataPtr, bufferDataPtr, numel,
-                                                    zbalType, zbalReduceOp, comm, stream]() -> int {
-                auto result = zbal_all_reduce(inputDataPtr, outputDataPtr, bufferDataPtr, numel, zbalType,
-                                              zbalReduceOp, comm, stream.stream(false));
+            std::function<int()> call_all_reduce = [inputDataPtr, outputDataPtr, bufferDataPtr, numel, zbalType,
+                                                    zbalReduceOp, comm, stream]() -> int {
+                auto result = zbal_all_reduce(inputDataPtr, outputDataPtr, bufferDataPtr, numel, zbalType, zbalReduceOp,
+                                              comm, stream.stream(false));
                 return result;
             };
             at_npu::native::OpCommand::RunOpApiV2("zbal_all_reduce", call_all_reduce);

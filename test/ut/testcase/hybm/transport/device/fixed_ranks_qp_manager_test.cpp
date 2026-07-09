@@ -14,7 +14,7 @@
 
 #include "hybm_types.h"
 
-#define private public
+#define private   public
 #define protected public
 #include "device/fixed_ranks_qp_manager.h"
 #include "dl_acl_api.h"
@@ -73,18 +73,18 @@ struct DlHccpApiFnGuard {
     }
 };
 
-int FakeRaSocketInitOk(HccpNetworkMode mode, HccpRdev rdev, void** socketHandle)
+int FakeRaSocketInitOk(HccpNetworkMode mode, HccpRdev rdev, void **socketHandle)
 {
     (void)mode;
     (void)rdev;
     if (socketHandle == nullptr) {
         return -1;
     }
-    *socketHandle = reinterpret_cast<void*>(0xCAFEUL);
+    *socketHandle = reinterpret_cast<void *>(0xCAFEUL);
     return 0;
 }
 
-int FakeRaSocketInitFail(HccpNetworkMode mode, HccpRdev rdev, void** socketHandle)
+int FakeRaSocketInitFail(HccpNetworkMode mode, HccpRdev rdev, void **socketHandle)
 {
     (void)mode;
     (void)rdev;
@@ -115,15 +115,15 @@ int FakeRaSocketListenStopOk(HccpSocketListenInfo infos[], uint32_t count)
     return 0;
 }
 
-int32_t FakeAclrtMallocOk(void** ptr, size_t size, uint32_t flags)
+int32_t FakeAclrtMallocOk(void **ptr, size_t size, uint32_t flags)
 {
     (void)size;
     (void)flags;
-    *ptr = reinterpret_cast<void*>(0x1234UL);
+    *ptr = reinterpret_cast<void *>(0x1234UL);
     return 0;
 }
 
-int32_t FakeAclrtMallocFail(void** ptr, size_t size, uint32_t flags)
+int32_t FakeAclrtMallocFail(void **ptr, size_t size, uint32_t flags)
 {
     (void)size;
     (void)flags;
@@ -131,13 +131,13 @@ int32_t FakeAclrtMallocFail(void** ptr, size_t size, uint32_t flags)
     return -1;
 }
 
-int FakeAclrtFreeOk(void* ptr)
+int FakeAclrtFreeOk(void *ptr)
 {
     (void)ptr;
     return 0;
 }
 
-int32_t FakeAclrtMemcpyOk(void* dst, size_t dstSize, const void* src, size_t srcSize, uint32_t kind)
+int32_t FakeAclrtMemcpyOk(void *dst, size_t dstSize, const void *src, size_t srcSize, uint32_t kind)
 {
     (void)dst;
     (void)dstSize;
@@ -167,7 +167,7 @@ int FakeRaSocketBatchConnectFail(HccpSocketConnectInfo infos[], uint32_t count)
     return -1;
 }
 
-int FakeRaSocketWhiteListAddOk(void* handle, const HccpSocketWhiteListInfo* infos, uint32_t count)
+int FakeRaSocketWhiteListAddOk(void *handle, const HccpSocketWhiteListInfo *infos, uint32_t count)
 {
     (void)handle;
     (void)infos;
@@ -175,7 +175,7 @@ int FakeRaSocketWhiteListAddOk(void* handle, const HccpSocketWhiteListInfo* info
     return 0;
 }
 
-int FakeRaSocketWhiteListAddFail(void* handle, const HccpSocketWhiteListInfo* infos, uint32_t count)
+int FakeRaSocketWhiteListAddFail(void *handle, const HccpSocketWhiteListInfo *infos, uint32_t count)
 {
     (void)handle;
     (void)infos;
@@ -183,7 +183,7 @@ int FakeRaSocketWhiteListAddFail(void* handle, const HccpSocketWhiteListInfo* in
     return -1;
 }
 
-int FakeRaGetSocketsOk(uint32_t role, HccpSocketInfo infos[], uint32_t count, uint32_t* successCount)
+int FakeRaGetSocketsOk(uint32_t role, HccpSocketInfo infos[], uint32_t count, uint32_t *successCount)
 {
     (void)role;
     if (successCount == nullptr) {
@@ -191,13 +191,13 @@ int FakeRaGetSocketsOk(uint32_t role, HccpSocketInfo infos[], uint32_t count, ui
     }
     *successCount = count;
     for (uint32_t i = 0; i < count; i++) {
-        infos[i].fd = reinterpret_cast<void*>(0x5678UL + i);
+        infos[i].fd = reinterpret_cast<void *>(0x5678UL + i);
         infos[i].status = 0;
     }
     return 0;
 }
 
-int FakeRaGetSocketsFail(uint32_t role, HccpSocketInfo infos[], uint32_t count, uint32_t* successCount)
+int FakeRaGetSocketsFail(uint32_t role, HccpSocketInfo infos[], uint32_t count, uint32_t *successCount)
 {
     (void)role;
     (void)infos;
@@ -208,18 +208,18 @@ int FakeRaGetSocketsFail(uint32_t role, HccpSocketInfo infos[], uint32_t count, 
     return -1;
 }
 
-int FakeRaQpAiCreateOk(void* rdmaHandle, const HccpQpExtAttrs* attr, HccpAiQpInfo* aiQpInfo, void** qpHandle)
+int FakeRaQpAiCreateOk(void *rdmaHandle, const HccpQpExtAttrs *attr, HccpAiQpInfo *aiQpInfo, void **qpHandle)
 {
     (void)rdmaHandle;
     (void)attr;
     if (qpHandle == nullptr || aiQpInfo == nullptr) {
         return -1;
     }
-    *qpHandle = reinterpret_cast<void*>(0x9ABCUL);
+    *qpHandle = reinterpret_cast<void *>(0x9ABCUL);
     return 0;
 }
 
-int FakeRaQpAiCreateFail(void* rdmaHandle, const HccpQpExtAttrs* attr, HccpAiQpInfo* aiQpInfo, void** qpHandle)
+int FakeRaQpAiCreateFail(void *rdmaHandle, const HccpQpExtAttrs *attr, HccpAiQpInfo *aiQpInfo, void **qpHandle)
 {
     (void)rdmaHandle;
     (void)attr;
@@ -230,47 +230,47 @@ int FakeRaQpAiCreateFail(void* rdmaHandle, const HccpQpExtAttrs* attr, HccpAiQpI
     return -1;
 }
 
-int FakeRaQpConnectAsyncOk(void* qpHandle, const void* socketFd)
+int FakeRaQpConnectAsyncOk(void *qpHandle, const void *socketFd)
 {
     (void)qpHandle;
     (void)socketFd;
     return 0;
 }
 
-int FakeRaQpConnectAsyncFail(void* qpHandle, const void* socketFd)
+int FakeRaQpConnectAsyncFail(void *qpHandle, const void *socketFd)
 {
     (void)qpHandle;
     (void)socketFd;
     return -1;
 }
 
-int FakeRaGetQpStatusReady(void* qpHandle, int* status)
+int FakeRaGetQpStatusReady(void *qpHandle, int *status)
 {
     (void)qpHandle;
     if (status == nullptr) {
         return -1;
     }
-    *status = 1;  // ready
+    *status = 1; // ready
     return 0;
 }
 
-int FakeRaGetQpStatusNotReady(void* qpHandle, int* status)
+int FakeRaGetQpStatusNotReady(void *qpHandle, int *status)
 {
     (void)qpHandle;
     if (status == nullptr) {
         return -1;
     }
-    *status = 0;  // not ready
+    *status = 0; // not ready
     return 0;
 }
 
-int FakeRaQpDestroyOk(void* qpHandle)
+int FakeRaQpDestroyOk(void *qpHandle)
 {
     (void)qpHandle;
     return 0;
 }
 
-int FakeRaQpDestroyFail(void* qpHandle)
+int FakeRaQpDestroyFail(void *qpHandle)
 {
     (void)qpHandle;
     return -1;
@@ -290,13 +290,13 @@ int FakeRaSocketBatchCloseFail(HccpSocketCloseInfo infos[], uint32_t count)
     return -1;
 }
 
-int FakeRaSocketDeinitOk(void* handle)
+int FakeRaSocketDeinitOk(void *handle)
 {
     (void)handle;
     return 0;
 }
 
-int FakeRaSocketDeinitFail(void* handle)
+int FakeRaSocketDeinitFail(void *handle)
 {
     (void)handle;
     return -1;
@@ -306,8 +306,7 @@ class FixedRanksQpManagerTest : public FixedRanksQpManager {
 public:
     FixedRanksQpManagerTest(uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet)
         : FixedRanksQpManager(deviceId, rankId, rankCount, devNet)
-    {
-    }
+    {}
 
     // Expose protected methods for testing
     using FixedRanksQpManager::ReserveQpInfoSpace;
@@ -328,7 +327,7 @@ public:
     using FixedRanksQpManager::CloseConnections;
 };
 
-}  // namespace
+} // namespace
 
 TEST(FixedRanksQpManagerTestTest, ConstructorAndDestructor)
 {
@@ -851,14 +850,14 @@ TEST(FixedRanksQpManagerTestTest, GenerateWhiteListSuccess)
     manager.currentRanksInfo_ = ranks;
 
     // Mock server socket handle
-    manager.serverSocketHandle_ = reinterpret_cast<void*>(0x1234UL);
+    manager.serverSocketHandle_ = reinterpret_cast<void *>(0x1234UL);
 
     DlHccpApiFnGuard guard;
     DlHccpApi::gRaSocketWhiteListAdd = &FakeRaSocketWhiteListAddOk;
 
     // Test success case
     EXPECT_EQ(manager.GenerateWhiteList(), BM_OK);
-    EXPECT_EQ(manager.serverConnections_.size(), 2U);  // ranks 1 and 2
+    EXPECT_EQ(manager.serverConnections_.size(), 2U); // ranks 1 and 2
 }
 
 TEST(FixedRanksQpManagerTestTest, GenerateWhiteListEmpty)
@@ -868,7 +867,7 @@ TEST(FixedRanksQpManagerTestTest, GenerateWhiteListEmpty)
     devNet.sin_port = htons(12345);
     devNet.sin_family = AF_INET;
 
-    FixedRanksQpManagerTest manager(0, 2, 3, devNet);  // rankId is 2, so no servers to connect to
+    FixedRanksQpManagerTest manager(0, 2, 3, devNet); // rankId is 2, so no servers to connect to
 
     // Prepare test data
     std::unordered_map<uint32_t, ConnectRankInfo> ranks;
@@ -927,7 +926,7 @@ TEST(FixedRanksQpManagerTestTest, GenerateWhiteListFail)
     manager.currentRanksInfo_ = ranks;
 
     // Mock server socket handle
-    manager.serverSocketHandle_ = reinterpret_cast<void*>(0x1234UL);
+    manager.serverSocketHandle_ = reinterpret_cast<void *>(0x1234UL);
 
     DlHccpApiFnGuard guard;
     DlHccpApi::gRaSocketWhiteListAdd = &FakeRaSocketWhiteListAddFail;
@@ -949,7 +948,7 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionSuccess)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
-    void* socketHandle = reinterpret_cast<void*>(0x1234UL);
+    void *socketHandle = reinterpret_cast<void *>(0x1234UL);
     connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, socketHandle));
 
     std::unordered_map<in_addr_t, uint32_t> addr2index;
@@ -958,7 +957,7 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionSuccess)
     HccpSocketInfo socketInfo{};
     socketInfo.handle = socketHandle;
     socketInfo.remoteIp.addr = ip;
-    socketInfo.fd = reinterpret_cast<void*>(0x5678UL);
+    socketInfo.fd = reinterpret_cast<void *>(0x5678UL);
 
     // Test success case
     EXPECT_EQ(manager.CheckReadyConnection(connections, addr2index, socketInfo), BM_OK);
@@ -980,7 +979,7 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionIpNotInMap)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip1{};
     inet_aton("192.168.1.1", &ip1);
-    void* socketHandle = reinterpret_cast<void*>(0x1234UL);
+    void *socketHandle = reinterpret_cast<void *>(0x1234UL);
     connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip1, socketHandle));
 
     std::unordered_map<in_addr_t, uint32_t> addr2index;
@@ -991,7 +990,7 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionIpNotInMap)
     HccpSocketInfo socketInfo{};
     socketInfo.handle = socketHandle;
     socketInfo.remoteIp.addr = ip2;
-    socketInfo.fd = reinterpret_cast<void*>(0x5678UL);
+    socketInfo.fd = reinterpret_cast<void *>(0x5678UL);
 
     // Test failure case: ip not in addr2index
     EXPECT_EQ(manager.CheckReadyConnection(connections, addr2index, socketInfo), BM_DL_FUNCTION_FAILED);
@@ -1013,12 +1012,12 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionRankNotInConnections)
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
     std::unordered_map<in_addr_t, uint32_t> addr2index;
-    addr2index[ip.s_addr] = 1;  // Map to rank 1 which is not in connections
+    addr2index[ip.s_addr] = 1; // Map to rank 1 which is not in connections
 
     HccpSocketInfo socketInfo{};
-    socketInfo.handle = reinterpret_cast<void*>(0x1234UL);
+    socketInfo.handle = reinterpret_cast<void *>(0x1234UL);
     socketInfo.remoteIp.addr = ip;
-    socketInfo.fd = reinterpret_cast<void*>(0x5678UL);
+    socketInfo.fd = reinterpret_cast<void *>(0x5678UL);
 
     // Test failure case: rank not in connections
     EXPECT_EQ(manager.CheckReadyConnection(connections, addr2index, socketInfo), BM_DL_FUNCTION_FAILED);
@@ -1037,11 +1036,11 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionSocketFdAlreadySet)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
-    void* socketHandle = reinterpret_cast<void*>(0x1234UL);
+    void *socketHandle = reinterpret_cast<void *>(0x1234UL);
     connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, socketHandle));
     auto pos = connections.find(0);
     ASSERT_NE(pos, connections.end());
-    pos->second.socketFd = reinterpret_cast<void*>(0x9ABCUL);  // Already set
+    pos->second.socketFd = reinterpret_cast<void *>(0x9ABCUL); // Already set
 
     std::unordered_map<in_addr_t, uint32_t> addr2index;
     addr2index[ip.s_addr] = 0;
@@ -1049,7 +1048,7 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionSocketFdAlreadySet)
     HccpSocketInfo socketInfo{};
     socketInfo.handle = socketHandle;
     socketInfo.remoteIp.addr = ip;
-    socketInfo.fd = reinterpret_cast<void*>(0x5678UL);
+    socketInfo.fd = reinterpret_cast<void *>(0x5678UL);
 
     // Test failure case: socketFd already set
     EXPECT_EQ(manager.CheckReadyConnection(connections, addr2index, socketInfo), BM_DL_FUNCTION_FAILED);
@@ -1068,17 +1067,17 @@ TEST(FixedRanksQpManagerTestTest, CheckReadyConnectionHandleMismatch)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
-    void* socketHandle1 = reinterpret_cast<void*>(0x1234UL);
+    void *socketHandle1 = reinterpret_cast<void *>(0x1234UL);
     connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, socketHandle1));
 
     std::unordered_map<in_addr_t, uint32_t> addr2index;
     addr2index[ip.s_addr] = 0;
 
-    void* socketHandle2 = reinterpret_cast<void*>(0x5678UL);  // Different handle
+    void *socketHandle2 = reinterpret_cast<void *>(0x5678UL); // Different handle
     HccpSocketInfo socketInfo{};
     socketInfo.handle = socketHandle2;
     socketInfo.remoteIp.addr = ip;
-    socketInfo.fd = reinterpret_cast<void*>(0x9ABCUL);
+    socketInfo.fd = reinterpret_cast<void *>(0x9ABCUL);
 
     // Test failure case: handle mismatch
     EXPECT_EQ(manager.CheckReadyConnection(connections, addr2index, socketInfo), BM_DL_FUNCTION_FAILED);
@@ -1092,7 +1091,7 @@ TEST(FixedRanksQpManagerTestTest, CreateOneQpSuccess)
     devNet.sin_family = AF_INET;
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
-    manager.rdmaHandle_ = reinterpret_cast<void*>(0x1234UL);
+    manager.rdmaHandle_ = reinterpret_cast<void *>(0x1234UL);
 
     DlHccpApiFnGuard guard;
     DlHccpApi::gRaQpAiCreate = &FakeRaQpAiCreateOk;
@@ -1115,7 +1114,7 @@ TEST(FixedRanksQpManagerTestTest, CreateOneQpFail)
     devNet.sin_family = AF_INET;
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
-    manager.rdmaHandle_ = reinterpret_cast<void*>(0x1234UL);
+    manager.rdmaHandle_ = reinterpret_cast<void *>(0x1234UL);
 
     DlHccpApiFnGuard guard;
     DlHccpApi::gRaQpAiCreate = &FakeRaQpAiCreateFail;
@@ -1146,7 +1145,7 @@ TEST(FixedRanksQpManagerTestTest, WaitConnectionsReadySuccess)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
-    void* socketHandle = reinterpret_cast<void*>(0x1234UL);
+    void *socketHandle = reinterpret_cast<void *>(0x1234UL);
     connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, socketHandle));
 
     EXPECT_EQ(manager.WaitConnectionsReady(connections), BM_OK);
@@ -1170,7 +1169,7 @@ TEST(FixedRanksQpManagerTestTest, WaitConnectionsReadyFailWhenRaGetSocketsFail)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
-    connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void*>(0x1234UL)));
+    connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void *>(0x1234UL)));
 
     EXPECT_EQ(manager.WaitConnectionsReady(connections), BM_DL_FUNCTION_FAILED);
 }
@@ -1266,19 +1265,19 @@ TEST(FixedRanksQpManagerTestTest, CloseConnections)
     std::unordered_map<uint32_t, FixedRanksQpManagerTest::AiCoreConnChannel> connections;
     in_addr ip0{};
     inet_aton("192.168.1.1", &ip0);
-    connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip0, reinterpret_cast<void*>(0x1234UL)));
+    connections.emplace(0, FixedRanksQpManagerTest::AiCoreConnChannel(ip0, reinterpret_cast<void *>(0x1234UL)));
     auto pos0 = connections.find(0);
     ASSERT_NE(pos0, connections.end());
-    pos0->second.qpHandle = reinterpret_cast<void*>(0x5678UL);
-    pos0->second.socketFd = reinterpret_cast<void*>(0x9ABCUL);
+    pos0->second.qpHandle = reinterpret_cast<void *>(0x5678UL);
+    pos0->second.socketFd = reinterpret_cast<void *>(0x9ABCUL);
 
     in_addr ip1{};
     inet_aton("192.168.1.2", &ip1);
-    connections.emplace(1, FixedRanksQpManagerTest::AiCoreConnChannel(ip1, reinterpret_cast<void*>(0xDEF0UL)));
+    connections.emplace(1, FixedRanksQpManagerTest::AiCoreConnChannel(ip1, reinterpret_cast<void *>(0xDEF0UL)));
     auto pos1 = connections.find(1);
     ASSERT_NE(pos1, connections.end());
-    pos1->second.qpHandle = reinterpret_cast<void*>(0x12345UL);
-    pos1->second.socketFd = reinterpret_cast<void*>(0x67890UL);
+    pos1->second.qpHandle = reinterpret_cast<void *>(0x12345UL);
+    pos1->second.socketFd = reinterpret_cast<void *>(0x67890UL);
 
     // Test close connections
     manager.CloseConnections(connections);
@@ -1303,12 +1302,12 @@ TEST(FixedRanksQpManagerTestTest, CloseClientConnections)
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
     manager.clientConnections_.emplace(
-        0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void*>(0x1234UL)));
+        0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void *>(0x1234UL)));
     {
         auto pos = manager.clientConnections_.find(0);
         ASSERT_NE(pos, manager.clientConnections_.end());
-        pos->second.qpHandle = reinterpret_cast<void*>(0x5678UL);
-        pos->second.socketFd = reinterpret_cast<void*>(0x9ABCUL);
+        pos->second.qpHandle = reinterpret_cast<void *>(0x5678UL);
+        pos->second.socketFd = reinterpret_cast<void *>(0x9ABCUL);
     }
 
     // Test close client connections
@@ -1334,12 +1333,12 @@ TEST(FixedRanksQpManagerTestTest, CloseServerConnections)
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
     manager.serverConnections_.emplace(
-        0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void*>(0x1234UL)));
+        0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void *>(0x1234UL)));
     {
         auto pos = manager.serverConnections_.find(0);
         ASSERT_NE(pos, manager.serverConnections_.end());
-        pos->second.qpHandle = reinterpret_cast<void*>(0x5678UL);
-        pos->second.socketFd = reinterpret_cast<void*>(0x9ABCUL);
+        pos->second.qpHandle = reinterpret_cast<void *>(0x5678UL);
+        pos->second.socketFd = reinterpret_cast<void *>(0x9ABCUL);
     }
 
     // Test close server connections
@@ -1365,21 +1364,21 @@ TEST(FixedRanksQpManagerTestTest, CloseServices)
     in_addr ip{};
     inet_aton("192.168.1.1", &ip);
     manager.clientConnections_.emplace(
-        0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void*>(0x1234UL)));
+        0, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void *>(0x1234UL)));
     {
         auto pos = manager.clientConnections_.find(0);
         ASSERT_NE(pos, manager.clientConnections_.end());
-        pos->second.qpHandle = reinterpret_cast<void*>(0x5678UL);
-        pos->second.socketFd = reinterpret_cast<void*>(0x9ABCUL);
+        pos->second.qpHandle = reinterpret_cast<void *>(0x5678UL);
+        pos->second.socketFd = reinterpret_cast<void *>(0x9ABCUL);
     }
 
     manager.serverConnections_.emplace(
-        1, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void*>(0xDEF0UL)));
+        1, FixedRanksQpManagerTest::AiCoreConnChannel(ip, reinterpret_cast<void *>(0xDEF0UL)));
     {
         auto pos = manager.serverConnections_.find(1);
         ASSERT_NE(pos, manager.serverConnections_.end());
-        pos->second.qpHandle = reinterpret_cast<void*>(0x12345UL);
-        pos->second.socketFd = reinterpret_cast<void*>(0x67890UL);
+        pos->second.qpHandle = reinterpret_cast<void *>(0x12345UL);
+        pos->second.socketFd = reinterpret_cast<void *>(0x67890UL);
     }
 
     // Test close services

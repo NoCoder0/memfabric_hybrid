@@ -47,13 +47,13 @@ def redirect_io(rank, log_dir="./logs"):
 
 # noinspection PyShadowingNames
 def test_main(
-        args: argparse.Namespace,
-        num_local_ranks: int,
-        local_rank: int,
-        num_ranks: int,
-        rank: int,
-        buffer: zbal.Buffer,
-        group: dist.ProcessGroup,
+    args: argparse.Namespace,
+    num_local_ranks: int,
+    local_rank: int,
+    num_ranks: int,
+    rank: int,
+    buffer: zbal.Buffer,
+    group: dist.ProcessGroup,
 ):
     # Settings
     num_tokens, hidden = args.num_tokens, args.hidden
@@ -75,12 +75,7 @@ def test_main(
 
     experts_per_rank = num_experts // num_ranks
     # Default: random over all experts (original behavior)
-    scores = (
-            torch.randn(
-                (num_tokens, num_experts), dtype=torch.float32, device="npu"
-            ).abs()
-            + 1
-    )
+    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="npu").abs() + 1
     # topk_idx = [[0, 1, 2, 3, 4, 5, 6, 7], [8, 9, 10, 11, 12, 13, 14, 15], ...]
     topk_idx = torch.zeros((num_tokens, num_topk), dtype=torch.int64, device='npu')
     for t in range(num_tokens):
@@ -105,18 +100,14 @@ def test_main(
 
     # Rank layout meta
     num_tokens_per_rank = torch.empty((num_ranks,), dtype=torch.int, device="npu")
-    token_idx_in_rank = torch.full(
-        (num_ranks, num_tokens), -1, dtype=torch.long, device="npu"
-    )
+    token_idx_in_rank = torch.full((num_ranks, num_tokens), -1, dtype=torch.long, device="npu")
     for i in range(num_ranks):
         num_tokens_per_rank[i] = (rank_idx == i).sum()
         token_sel = (rank_idx == i).max(dim=-1)[0]
         count = token_sel.sum().item()
         tokens = torch.sort(token_sel.to(torch.int), descending=True)[1]
         tokens[:count] = torch.sort(tokens[:count])[0]
-        token_idx_in_rank[i][tokens[:count]] = torch.arange(
-            count, dtype=torch.long, device="npu"
-        )
+        token_idx_in_rank[i][tokens[:count]] = torch.arange(count, dtype=torch.long, device="npu")
     token_idx_in_rank = token_idx_in_rank.T.contiguous().to(torch.int)
     is_token_in_rank = (token_idx_in_rank >= 0).to(torch.int)
     gbl_num_tokens_per_rank = num_tokens_per_rank.clone()
@@ -124,24 +115,20 @@ def test_main(
 
     return_values = buffer.get_dispatch_layout(topk_idx, num_experts)
     (
-        ref_num_tokens_per_rank,    # 1-dim, [token/rank, token/rank, ...]
+        ref_num_tokens_per_rank,  # 1-dim, [token/rank, token/rank, ...]
         _,
         ref_num_tokens_per_expert,  # 1-dim, [token*topk/expert, token*topk/expert, ...]
-        ref_is_token_in_rank,       # 2-dim, shape=(num_tokens, num_ranks), 1 if token in rank else 0
+        ref_is_token_in_rank,  # 2-dim, shape=(num_tokens, num_ranks), 1 if token in rank else 0
         _,
     ) = return_values
     send_token_idx = buffer.get_send_token_idx().clone().cpu()
     topk_idx_cpu = topk_idx.cpu()
     try:
-        assert torch.allclose(
-            ref_num_tokens_per_rank, num_tokens_per_rank
-        ), (
+        assert torch.allclose(ref_num_tokens_per_rank, num_tokens_per_rank), (
             f"Assertion num_tokens_per_rank failed on rank {rank}: "
             f"Expected {num_tokens_per_rank}, Actual {ref_num_tokens_per_rank}"
         )
-        assert torch.allclose(
-            ref_num_tokens_per_expert, num_tokens_per_expert
-        ), (
+        assert torch.allclose(ref_num_tokens_per_expert, num_tokens_per_expert), (
             f"Assertion num_tokens_per_expert failed on rank {rank}: "
             f"Expected {num_tokens_per_expert}, Actual {ref_num_tokens_per_expert}"
         )
@@ -156,15 +143,9 @@ def test_main(
 
     # Random data
     x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="npu") * rank
-    x_pure_rand = torch.randn(
-        (num_tokens, hidden), dtype=torch.bfloat16, device="npu"
-    )
-    topk_weights = (
-            torch.ones((num_tokens, num_topk), dtype=torch.float32, device="npu") * rank
-    )
-    topk_weights_pure_rand = torch.randn(
-        (num_tokens, num_topk), dtype=torch.float32, device="npu"
-    )
+    x_pure_rand = torch.randn((num_tokens, hidden), dtype=torch.bfloat16, device="npu")
+    topk_weights = torch.ones((num_tokens, num_topk), dtype=torch.float32, device="npu") * rank
+    topk_weights_pure_rand = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="npu")
 
     x_cpu = x.cpu()
     x_pure_rand_cpu = x_pure_rand.cpu()
@@ -196,7 +177,7 @@ def test_main(
         max_val_err, worst_row = val_errs.max().item(), val_errs.argmax().item()
         wrong_rows = (val_errs > 5e-5).sum().item()
 
-        ok = (non_uniform == 0 and wrong_rows == 0)
+        ok = non_uniform == 0 and wrong_rows == 0
         if not ok:
             logger.error(
                 f"[rank {rank}] combine: expected_val={expected_val:.1f}, "
@@ -221,7 +202,6 @@ def test_main(
             lines.append(f"[rank {rank}] send_token_idx row{t} = {sti_cpu[t].tolist()}")
         logger.warning("\n".join(lines))
 
-
     def dump_dispatch_output(recv_x, put_offset, balance_matrix):
         dump_send_token_idx(send_token_idx)
 
@@ -233,7 +213,6 @@ def test_main(
 
         logger.warning(f"[rank {rank}] put_offset = {put_offset.tolist()}")
         logger.warning(f"[rank {rank}] balance_matrix = {balance_matrix.tolist()}")
-
 
     def verify_send_token_idx(send_token_idx):
         """Verify send_token_idx: position of each (token, topk) within its expert's recv_x segment.
@@ -258,7 +237,6 @@ def test_main(
                     return False
         logger.info(f"[rank {rank}] send_token_idx check passed, expert_counter[:8]={expert_counter[:8]}")
         return True
-
 
     def verify_recv_x(recv_x, put_offset, balance_matrix):
         """Verify dispatch output recv_x for deterministic input x = ones * rank.
@@ -296,14 +274,13 @@ def test_main(
         vals = rx_float[:, 0]
         for i in range(0, vals.shape[0], entries_per_exp_src):
             expected = float((i // entries_per_exp_src) % num_ranks)
-            block = vals[i:i + entries_per_exp_src]
+            block = vals[i : i + entries_per_exp_src]
             if (block - expected).abs().max().item() >= 5e-5:
                 end = min(i + entries_per_exp_src, vals.shape[0])
                 logger.error(f"[rank {rank}] recv_x rows [{i}:{end}] expected all ≈ {expected}, got {block.tolist()}")
                 dump_dispatch_output(recv_x, put_offset, balance_matrix)
                 return False
         return True
-
 
     def verify_put_offset(recv_x, put_offset, balance_matrix):
         """Verify put_offset: per-expert cumsum prefix for determining recv_x write positions.
@@ -320,12 +297,11 @@ def test_main(
         for seg in range(num_ranks):
             start = seg * seg_len
             expected_seg = torch.arange(0, seg_len * step, step, dtype=torch.int32, device='cpu')
-            if not torch.equal(po[start:start + seg_len], expected_seg):
+            if not torch.equal(po[start : start + seg_len], expected_seg):
                 logger.error(f"[rank {rank}] put_offset segment {seg} mismatch")
                 dump_dispatch_output(recv_x, put_offset, balance_matrix)
                 return False
         return True
-
 
     def verify_balance_matrix(recv_x, put_offset, balance_matrix):
         """Verify balance_matrix: token range each rank is responsible for combining.
@@ -353,7 +329,6 @@ def test_main(
                         return False
         return True
 
-
     def test_correctness():
         for current_x in filter(lambda elem: elem is not None, (x, x_pure_rand)):
             if local_rank == 0:
@@ -368,9 +343,7 @@ def test_main(
                 "num_tokens_per_expert": ref_num_tokens_per_expert,
                 "config": config,
                 "topk_idx": topk_idx,
-                "topk_weights": (
-                    topk_weights_pure_rand if current_x is x_pure_rand else topk_weights
-                ),
+                "topk_weights": (topk_weights_pure_rand if current_x is x_pure_rand else topk_weights),
             }
 
             (
@@ -422,9 +395,8 @@ def test_main(
 
             check_x = combined_x.cpu().float()
             ref_x = x_pure_rand_cpu if current_x is x_pure_rand else x_cpu
-            ref_x_compute = (
-                    ref_x.float()
-                    * recv_topk_weights_cpu.masked_fill(topk_idx_cpu == -1, 0).sum(dim=1).view(-1, 1)
+            ref_x_compute = ref_x.float() * recv_topk_weights_cpu.masked_fill(topk_idx_cpu == -1, 0).sum(dim=1).view(
+                -1, 1
             )
             diff = calc_diff(check_x, ref_x_compute)
             if diff > 5e-5 or math.isnan(diff):
@@ -434,7 +406,6 @@ def test_main(
                     assert False, f"[rank {rank}] combine diff={diff}"
 
             logger.info(f"[rank {rank}] [Combine] Test passed")
-
 
     def test_tuning():
         config = Config(24, 8, buffer_size)
@@ -449,9 +420,7 @@ def test_main(
         combine_bf16_send_bytes = dispatch_bf16_recv_bytes
 
         # tuning dispatch
-        recv_bytes = (
-            (dispatch_bf16_recv_bytes / 2) if use_quant else dispatch_bf16_recv_bytes
-        )
+        recv_bytes = (dispatch_bf16_recv_bytes / 2) if use_quant else dispatch_bf16_recv_bytes
         tune_dispatch_args = {
             "x": current_x,
             "config": config,
@@ -603,6 +572,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     num_processes = args.num_processes
-    torch.multiprocessing.spawn(
-        test_loop, args=(num_processes, args), nprocs=num_processes
-    )
+    torch.multiprocessing.spawn(test_loop, args=(num_processes, args), nprocs=num_processes)

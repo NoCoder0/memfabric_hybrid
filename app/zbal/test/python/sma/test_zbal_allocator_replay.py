@@ -79,4 +79,3 @@ if __name__ == '__main__':
     record_memory_history(None, 1)
     with open(new_pickle_path, 'wb') as f:
         pickle.dump(new_snapshot, f)
-

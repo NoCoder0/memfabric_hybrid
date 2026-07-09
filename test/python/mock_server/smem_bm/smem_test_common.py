@@ -14,14 +14,10 @@ class TestClient:
         self._client.close()
 
     def execute(self, cmd: str, args: list = None):
-        request = {
-            "cmd": cmd,
-            "args": args if args else []
-        }
+        request = {"cmd": cmd, "args": args if args else []}
         self._send_request(json.dumps(request))
         response = self._read_response()
-        print(f"command: {cmd}\n"
-              f"response: {response}\n")
+        print(f"command: {cmd}\nresponse: {response}\n")
         return response
 
     def init_smem_bm(self):
@@ -33,14 +29,15 @@ class TestClient:
     def copy_data(self, src_ptr: int, dst_ptr: int, size: int, op_type: str, flag: int):
         return int(self.execute("copy_data", [src_ptr, dst_ptr, size, op_type, flag]))
 
-    def bm_copy_batch(self, src_addrs: list[int], dst_addrs: list[int],
-                      sizes: list[int], count: int, op_type: str, flag: int):
+    def bm_copy_batch(
+        self, src_addrs: list[int], dst_addrs: list[int], sizes: list[int], count: int, op_type: str, flag: int
+    ):
         return int(self.execute("bm_copy_batch", [src_addrs, dst_addrs, sizes, count, op_type, flag]))
 
-    def bm_copy_batch_partial_succeed(self, src_addrs: list[int], dst_addrs: list[int],
-                                      sizes: list[int], count: int, op_type: str, flag: int):
-        return int(self.execute("bm_copy_batch_partial_succeed",
-                                [src_addrs, dst_addrs, sizes, count, op_type, flag]))
+    def bm_copy_batch_partial_succeed(
+        self, src_addrs: list[int], dst_addrs: list[int], sizes: list[int], count: int, op_type: str, flag: int
+    ):
+        return int(self.execute("bm_copy_batch_partial_succeed", [src_addrs, dst_addrs, sizes, count, op_type, flag]))
 
     def get_peer_rank_gva(self, rank_id: int, pool_type: str):
         return int(self.execute("get_peer_rank_gva", [rank_id, pool_type]))

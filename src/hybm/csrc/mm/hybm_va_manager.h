@@ -67,22 +67,32 @@ inline std::ostream &operator<<(std::ostream &os, hybm_type obj)
 inline std::ostream &operator<<(std::ostream &os, hybm_scene obj)
 {
     switch (obj) {
-        case HYBM_SCENE_DEFAULT: return os << "DEFAULT";
-        case HYBM_SCENE_TRANS: return os << "TRANS";
-        case HYBM_SCENE_SHM: return os << "SHM";
-        case HYBM_SCENE_BUTT: return os << "BUTT";
-        default: return os << "UNKNOWN(" << static_cast<unsigned>(obj) << ")";
+        case HYBM_SCENE_DEFAULT:
+            return os << "DEFAULT";
+        case HYBM_SCENE_TRANS:
+            return os << "TRANS";
+        case HYBM_SCENE_SHM:
+            return os << "SHM";
+        case HYBM_SCENE_BUTT:
+            return os << "BUTT";
+        default:
+            return os << "UNKNOWN(" << static_cast<unsigned>(obj) << ")";
     }
 }
 
 inline std::ostream &operator<<(std::ostream &os, hybm_role_type obj)
 {
     switch (obj) {
-        case HYBM_ROLE_PEER: return os << "PEER";
-        case HYBM_ROLE_SENDER: return os << "SENDER";
-        case HYBM_ROLE_RECEIVER: return os << "RECEIVER";
-        case HYBM_ROLE_BUTT: return os << "BUTT";
-        default: return os << "UNKNOWN(" << static_cast<unsigned>(obj) << ")";
+        case HYBM_ROLE_PEER:
+            return os << "PEER";
+        case HYBM_ROLE_SENDER:
+            return os << "SENDER";
+        case HYBM_ROLE_RECEIVER:
+            return os << "RECEIVER";
+        case HYBM_ROLE_BUTT:
+            return os << "BUTT";
+        default:
+            return os << "UNKNOWN(" << static_cast<unsigned>(obj) << ")";
     }
 }
 
@@ -90,8 +100,8 @@ inline std::ostream &operator<<(std::ostream &os, const hybm_tls_config &obj)
 {
     os << "TlsConfig{enable: " << obj.tlsEnable;
     if (obj.tlsEnable) {
-        os << ", caPath: " << obj.caPath << ", crlPath: " << obj.crlPath
-           << ", certPath: " << obj.certPath << ", keyPath: " << obj.keyPath;
+        os << ", caPath: " << obj.caPath << ", crlPath: " << obj.crlPath << ", certPath: " << obj.certPath
+           << ", keyPath: " << obj.keyPath;
     }
     os << "}";
     return os;
@@ -101,12 +111,11 @@ inline std::ostream &operator<<(std::ostream &os, const hybm_options &obj)
 {
     os << "deviceId: " << obj.devId << ", rankId: " << obj.rankId << ", rankCount: " << obj.rankCount
        << ", maxHBMSize: " << obj.maxHBMSize << ", maxDRAMSize: " << obj.maxDRAMSize
-       << ", deviceVASpace: " << obj.deviceVASpace << ", hostVASpace: " << obj.hostVASpace
-       << ", bmType: " << obj.bmType << ", memType: " << obj.memType << ", bmDataOpType: " << obj.bmDataOpType
-       << ", scene: " << obj.scene << ", enable56BitsGva: " << obj.enable56BitsGva
-       << ", role: " << obj.role << ", flags: " << obj.flags
-       << ", dramShmFd: " << obj.dramShmFd << ", transUrl: " << obj.transUrl
-       << ", tag: " << obj.tag << ", tagOpInfo: " << obj.tagOpInfo << ", tlsOption: " << obj.tlsOption;
+       << ", deviceVASpace: " << obj.deviceVASpace << ", hostVASpace: " << obj.hostVASpace << ", bmType: " << obj.bmType
+       << ", memType: " << obj.memType << ", bmDataOpType: " << obj.bmDataOpType << ", scene: " << obj.scene
+       << ", enable56BitsGva: " << obj.enable56BitsGva << ", role: " << obj.role << ", flags: " << obj.flags
+       << ", dramShmFd: " << obj.dramShmFd << ", transUrl: " << obj.transUrl << ", tag: " << obj.tag
+       << ", tagOpInfo: " << obj.tagOpInfo << ", tlsOption: " << obj.tlsOption;
     return os;
 }
 
@@ -257,7 +266,7 @@ public:
         BIT_GLOBAL_DEVICE | (BIT_GLOBAL_DEVICE << 4), // 9 GD2GD
         BIT_GLOBAL_DEVICE | (BIT_LOCAL_HOST << 4),    // 10 GD2LH
         BIT_GLOBAL_DEVICE | (BIT_LOCAL_DEVICE << 4),  // 11 GD2LD
-        0xFF, // 12 AUTO sentinel
+        0xFF,                                         // 12 AUTO sentinel
     };
 
     // 方向查表 LUT：except(8bit) → direction，hybm_init 时初始化
@@ -309,7 +318,9 @@ public:
             return result;
         }
         auto it = allocatedMap_[HVM_GVA].upper_bound(va);
-        if (it != allocatedMap_[HVM_GVA].begin()) { --it; }
+        if (it != allocatedMap_[HVM_GVA].begin()) {
+            --it;
+        }
         if (it->second.Contains(va, HVM_GVA)) {
             auto &info = it->second;
             result.inAllocGva = true;

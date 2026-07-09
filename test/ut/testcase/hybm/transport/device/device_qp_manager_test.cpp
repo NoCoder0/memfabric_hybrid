@@ -14,7 +14,7 @@
 
 #include "hybm_types.h"
 
-#define private public
+#define private   public
 #define protected public
 #include "device/device_qp_manager.h"
 #undef private
@@ -29,29 +29,24 @@ class DeviceQpManagerTest final : public DeviceQpManager {
 public:
     DeviceQpManagerTest(uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet)
         : DeviceQpManager(deviceId, rankId, rankCount, devNet, HYBM_ROLE_PEER)
-    {
-    }
+    {}
 
-    int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo>&) noexcept override
+    int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo> &) noexcept override
     {
         return BM_OK;
     }
-    int Startup(void*) noexcept override
+    int Startup(void *) noexcept override
     {
         return BM_OK;
     }
-    void Shutdown() noexcept override
-    {
-    }
-    UserQpInfo* GetQpHandleWithRankId(uint32_t) noexcept override
+    void Shutdown() noexcept override {}
+    UserQpInfo *GetQpHandleWithRankId(uint32_t) noexcept override
     {
         return nullptr;
     }
-    void PutQpHandle(UserQpInfo*) const noexcept override
-    {
-    }
+    void PutQpHandle(UserQpInfo *) const noexcept override {}
 };
-}  // namespace
+} // namespace
 
 TEST(DeviceQpManagerTest, Ip2NetSetsFamilyAddrAndPortZero)
 {

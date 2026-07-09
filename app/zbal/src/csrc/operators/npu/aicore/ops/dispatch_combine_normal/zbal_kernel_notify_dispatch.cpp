@@ -16,26 +16,26 @@
 
 using namespace AscendC;
 
-extern "C" __global__ __aicore__
-void notify_dispatch(uint64_t fftsAddr, GM_ADDR metaAddr, GM_ADDR tokenPerExpert, int64_t sendCount, uint32_t numTopk,
-                     uint32_t rank, GM_ADDR recvData, GM_ADDR totalRecvTokens, GM_ADDR recvTokensPerExpert,
-                     GM_ADDR putOffset, GM_ADDR balanceMatrix, float factorHigh, float factorLow)
+extern "C" __global__ __aicore__ void notify_dispatch(uint64_t fftsAddr, GM_ADDR metaAddr, GM_ADDR tokenPerExpert,
+                                                      int64_t sendCount, uint32_t numTopk, uint32_t rank,
+                                                      GM_ADDR recvData, GM_ADDR totalRecvTokens,
+                                                      GM_ADDR recvTokensPerExpert, GM_ADDR putOffset,
+                                                      GM_ADDR balanceMatrix, float factorHigh, float factorLow)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
     AscendC::SetSyncBaseAddr(fftsAddr);
     AscendC::TPipe pipe;
     MoeNotifyDispatch::NotifyDispatch<int32_t> op;
-    op.Init(metaAddr, tokenPerExpert, sendCount, numTopk, rank, recvData, totalRecvTokens,
-        recvTokensPerExpert, putOffset, balanceMatrix, factorHigh, factorLow, &pipe);
+    op.Init(metaAddr, tokenPerExpert, sendCount, numTopk, rank, recvData, totalRecvTokens, recvTokensPerExpert,
+            putOffset, balanceMatrix, factorHigh, factorLow, &pipe);
     op.Process();
 }
 
-int32_t ZBALOpNotifyDispatch(const zbal_tensor_info_t *sendTokensPerExpert, int64_t sendCount,
-                             int64_t topKNum, const zbal_tensor_info_t *recvBuff,
-                             const zbal_tensor_info_t *totalRecvTokens, const zbal_tensor_info_t *recvTokensPerExpert,
-                             const zbal_tensor_info_t *pushTargetOffset, const zbal_tensor_info_t *balanceMatrix,
-                             float factorHigh, float factorLow, aclrtStream stream, const CommGroupInfo &groupInfo,
-                             int64_t flags)
+int32_t ZBALOpNotifyDispatch(const zbal_tensor_info_t *sendTokensPerExpert, int64_t sendCount, int64_t topKNum,
+                             const zbal_tensor_info_t *recvBuff, const zbal_tensor_info_t *totalRecvTokens,
+                             const zbal_tensor_info_t *recvTokensPerExpert, const zbal_tensor_info_t *pushTargetOffset,
+                             const zbal_tensor_info_t *balanceMatrix, float factorHigh, float factorLow,
+                             aclrtStream stream, const CommGroupInfo &groupInfo, int64_t flags)
 {
     uint32_t blockDim = 0;
     auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);
@@ -57,8 +57,8 @@ int32_t ZBALOpNotifyDispatch(const zbal_tensor_info_t *sendTokensPerExpert, int6
 
     // launch kernel
     notify_dispatch<<<blockDim, nullptr, stream>>>(fftsAddr, metaAddr, tokenPerExpertAddr, sendCount, numTopk, rank,
-        recvDataAddr, totalRecvTokensAddr, recvTokensPerExpertAddr, putOffsetAddr,
-        balanceMatrixAddr, factorHigh, factorLow);
+                                                   recvDataAddr, totalRecvTokensAddr, recvTokensPerExpertAddr,
+                                                   putOffsetAddr, balanceMatrixAddr, factorHigh, factorLow);
 
     return 0;
 }

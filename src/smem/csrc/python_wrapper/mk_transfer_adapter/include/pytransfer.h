@@ -79,27 +79,18 @@ public:
     int TransferAsyncWriteSubmit(const char *destUniqueId, uintptr_t buffer, uintptr_t peer_buffer_address,
                                  size_t length, uintptr_t stream, uint32_t flags);
 
-    int BatchTransferAsyncWriteSubmit(const char *destUniqueId,
-                                      std::vector<uintptr_t> buffers,
-                                      std::vector<uintptr_t> peer_buffer_addresses,
-                                      std::vector<size_t> lengths,
+    int BatchTransferAsyncWriteSubmit(const char *destUniqueId, std::vector<uintptr_t> buffers,
+                                      std::vector<uintptr_t> peer_buffer_addresses, std::vector<size_t> lengths,
                                       uintptr_t stream, uint32_t flags);
 
-    int BatchTransferAsyncReadSubmit(const char *destUniqueId,
-                                     std::vector<uintptr_t> buffers,
-                                     std::vector<uintptr_t> peer_buffer_addresses,
-                                     std::vector<size_t> lengths,
+    int BatchTransferAsyncReadSubmit(const char *destUniqueId, std::vector<uintptr_t> buffers,
+                                     std::vector<uintptr_t> peer_buffer_addresses, std::vector<size_t> lengths,
                                      uintptr_t stream, uint32_t flags);
 
-    int BatchTransferWriteWithQuant(const char *destUniqueId,
-                                    std::vector<uintptr_t> buffers,
-                                    std::vector<uintptr_t> peer_buffer_addresses,
-                                    std::vector<size_t> lengths,
-                                    std::vector<uintptr_t> scale_addresses,
-                                    std::vector<uintptr_t> offset_addresses,
-                                    uint32_t unit_num,
-                                    uint32_t input_type,
-                                    uintptr_t stream, uint32_t flags);
+    int BatchTransferWriteWithQuant(const char *destUniqueId, std::vector<uintptr_t> buffers,
+                                    std::vector<uintptr_t> peer_buffer_addresses, std::vector<size_t> lengths,
+                                    std::vector<uintptr_t> scale_addresses, std::vector<uintptr_t> offset_addresses,
+                                    uint32_t unit_num, uint32_t input_type, uintptr_t stream, uint32_t flags);
 
     int RegisterMemory(uintptr_t buffer_addr, size_t capacity);
 

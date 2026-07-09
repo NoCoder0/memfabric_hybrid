@@ -6,7 +6,6 @@ from zbal.zbal.deepep_adaptor import Config, EventHandle
 
 
 class EventOverlap:
-
     def __init__(
         self,
         event: Optional[EventHandle] = None,

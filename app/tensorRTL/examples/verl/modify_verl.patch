@@ -9,22 +9,22 @@ diff --git a/verl/single_controller/base/worker.py b/verl/single_controller/base
 --- a/verl/single_controller/base/worker.py	(revision d62da4950573d7a4b7ef2362337952e7ab59e78d)
 +++ b/verl/single_controller/base/worker.py	(revision 4e256af9c02d0230b5f4e562c1d5c78579723ce2)
 @@ -30,6 +30,7 @@
- 
+
  from .decorator import Dispatch, Execute, register
- 
+
 +from TensorRTL.examples.verl.utils import bind_actor_cpu
- 
+
  @dataclass
  class DistRankInfo:
 @@ -164,6 +165,9 @@
          # it is executed remotely
          import os
- 
+
 +        if os.getenv("TENSOR_RTL") == "1":
 +            bind_actor_cpu()
 +
          self._setup_env_cuda_visible_devices()
- 
+
          world_size = int(os.environ["WORLD_SIZE"])
 Index: verl/trainer/ppo/ray_trainer.py
 IDEA additional info:
@@ -48,7 +48,7 @@ diff --git a/verl/trainer/ppo/ray_trainer.py b/verl/trainer/ppo/ray_trainer.py
 @@ -1006,6 +1010,7 @@
          )
          next_step_profile = False
- 
+
 +        _reshard = True
          for epoch in range(self.config.trainer.total_epochs):
              for batch_dict in self.train_dataloader:
@@ -96,12 +96,12 @@ diff --git a/verl/utils/megatron_utils.py b/verl/utils/megatron_utils.py
 +                        if os.getenv('OFFLOAD_OPT') == '1':
 +                            buffer.param_data.cpu_data = torch.empty_like(buffer.param_data, device='cpu', pin_memory=True)
 +                            buffer.param_data.cpu_data.copy_(buffer.param_data.data)
-+                            torch.npu.current_stream().synchronize()  
++                            torch.npu.current_stream().synchronize()
 +                        else:
 +                            buffer.param_data.cpu_data = buffer.param_data.data.cpu().pin_memory()
                          buffer.param_data_size = buffer.param_data.storage().size()
                          buffer.param_data.storage().resize_(0)
- 
+
 Index: verl/workers/megatron_workers.py
 IDEA additional info:
 Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
@@ -111,7 +111,7 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 --- a/verl/workers/megatron_workers.py	(revision d62da4950573d7a4b7ef2362337952e7ab59e78d)
 +++ b/verl/workers/megatron_workers.py	(revision 4e256af9c02d0230b5f4e562c1d5c78579723ce2)
 @@ -23,6 +23,7 @@
- 
+
  import psutil
  import torch
 +import torch_npu
@@ -127,10 +127,10 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 +from verl.utils.profiler import marked_timer
  logger = logging.getLogger(__file__)
  logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
- 
+
 @@ -405,7 +407,7 @@
          model_config: HFModelConfig = omega_conf_to_dataclass(self.config.model, dataclass_type=HFModelConfig)
- 
+
          # 2. build rollout device mesh
 -        infer_tp = self.config.rollout.tensor_model_parallel_size * self.config.rollout.data_parallel_size
 +        infer_tp = self.config.rollout.tensor_model_parallel_size
@@ -140,7 +140,7 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 @@ -446,6 +448,33 @@
              loop = get_event_loop()
              loop.run_until_complete(self.trainer_mode())
- 
+
 +        self.use_tensorrtl = os.getenv("TENSOR_RTL") == "1"
 +        self.rollout_device_mesh = rollout_device_mesh
 +        self.per_tensor_generator = None
@@ -174,12 +174,12 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 @@ -565,39 +594,83 @@
          get_torch_device().empty_cache()
          log_gpu_memory_usage("After init_model finish", logger=logger)
- 
+
 -    async def rollout_mode(self):
 +    async def rollout_mode(self, timing_generate=None, _offload_param=True, _reload_param=True):
          """Context switch hybridengine to rollout mode."""
          aggressive_empty_cache(force_sync=True)
- 
+
 -        if self._is_offload_param:
 -            load_megatron_model_to_gpu(self.actor.actor_module, load_grad=False)
 -            log_gpu_memory_usage("After load actor params during rollout_mode", logger=logger)
@@ -211,7 +211,7 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 +            if self._is_offload_param and _reload_param:
 +                load_megatron_model_to_gpu(self.actor.actor_module, load_grad=False)
 +                log_gpu_memory_usage("After load actor params during rollout_mode", logger=logger)
- 
+
 -        if self.bridge is not None:
 -            per_tensor_param = self.bridge.export_weights(self.actor.actor_module)
 -        else:
@@ -250,7 +250,7 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 +                        self.tf_config,
 +                        self.layer_name_mapping,
 +                    )
- 
+
 -        set_expandable_segments(False)
 -
 -        if self.config.rollout.free_cache_engine:
@@ -271,12 +271,12 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 +            aggressive_empty_cache(force_sync=True)
 +            if self.config.rollout.free_cache_engine:
 +                await self.rollout.resume(tags=["kv_cache"])
- 
+
          # important: need to manually set the random states of each tp to be identical.
          self.torch_random_states = get_torch_device().get_rng_state()
          get_torch_device().set_rng_state(self.gen_random_states)
 +        self.cached_generate = True
- 
+
      async def trainer_mode(self):
          """Context switch hybridengine to trainer mode."""
 @@ -626,7 +699,8 @@
@@ -292,7 +292,7 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 @@ -654,7 +728,7 @@
          output = DataProto(meta_info={"metrics": metrics})
          output = output.to("cpu")
- 
+
 -        if self._is_offload_param:
 +        if self._is_offload_param and _offload_param:
              offload_megatron_model_to_cpu(self.actor_module)
@@ -310,7 +310,7 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
              "eos_token_id": self.generation_config.eos_token_id
 @@ -683,15 +760,16 @@
              offload_megatron_optimizer(self.actor_optimizer)
- 
+
          timing_generate = {}
 -        if self._is_actor:  # For rollout only, we do not switch context.
 -            loop = get_event_loop()
@@ -320,15 +320,15 @@ diff --git a/verl/workers/megatron_workers.py b/verl/workers/megatron_workers.py
 +            with marked_timer("reshard", timing_generate):
 +                loop.run_until_complete(self.rollout_mode(timing_generate, _offload_param, _reload_param))
              log_gpu_memory_usage("After switch to rollout mode", logger=logger)
- 
+
          with simple_timer("generate_sequences", timing_generate):
              output = self.rollout.generate_sequences(prompts=prompts)
- 
+
 -        if self._is_actor:
 +        if self._is_actor and _release_rollout:
              loop.run_until_complete(self.trainer_mode())
              log_gpu_memory_usage("After switch to trainer mode", logger=logger)
- 
+
 Index: verl/workers/rollout/sglang_rollout/sglang_rollout.py
 IDEA additional info:
 Subsystem: com.intellij.openapi.diff.impl.patch.CharsetEP
@@ -366,7 +366,7 @@ diff --git a/verl/workers/rollout/sglang_rollout/sglang_rollout.py b/verl/worker
  )
  from sglang.srt.weight_sync.utils import update_weights as sgl_update_weights
 +from sglang.srt.weight_sync.memory_fabric_util import (
-+    init_memory_fabric as sgl_init_memory_fabric, 
++    init_memory_fabric as sgl_init_memory_fabric,
 +    update_weights_mf as sgl_update_weights_mf
 +)
  from tensordict import TensorDict
@@ -375,16 +375,16 @@ diff --git a/verl/workers/rollout/sglang_rollout/sglang_rollout.py b/verl/worker
 @@ -88,6 +95,8 @@
  except ImportError:
      from sglang.srt.utils import get_local_ip_auto as get_ip
- 
+
 +from TensorRTL.examples.verl.utils import bind_actor_cpu
 +
  logger = logging.getLogger(__file__)
  logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
- 
+
 @@ -155,6 +164,12 @@
      async def update_weights_from_tensor(self, update_weights_request: UpdateWeightsFromTensorReqInput):
          return await self.tokenizer_manager.update_weights_from_tensor(update_weights_request, None)
- 
+
 +    async def init_memory_fabric(self, init_memory_fabric_request: InitMemoryFabricReqInput):
 +        return await self.tokenizer_manager.init_memory_fabric(init_memory_fabric_request, None)
 +
@@ -393,11 +393,11 @@ diff --git a/verl/workers/rollout/sglang_rollout/sglang_rollout.py b/verl/worker
 +
      async def flush_cache(self):
          return await self.tokenizer_manager.flush_cache()
- 
+
 @@ -358,6 +373,9 @@
          self.visible_devices_set = set(",".join(visible_devices).split(","))
          os.environ[devices_keyword] = ",".join(sorted(list(self.visible_devices_set), key=int))
- 
+
 +        if os.getenv("TENSOR_RTL") == "1":
 +            bind_actor_cpu(self._tp_rank)
 +
@@ -524,7 +524,7 @@ diff --git a/verl/workers/rollout/sglang_rollout/sglang_rollout.py b/verl/worker
 +            await read_done[pool_id].wait()
 +            await asyncio.to_thread(dist.barrier)
 +            read_done[pool_id].clear()
- 
+
 +            is_last = await asyncio.to_thread(safe_next, per_tensor_param)
 +            await asyncio.to_thread(dist.barrier)   # 在线程池中执行同步 barrier
 +            launch_read(pool_id, reset_needed)   # 1.还原之后第一轮正确，第二轮开始出错
@@ -544,9 +544,9 @@ diff --git a/verl/workers/rollout/sglang_rollout/sglang_rollout.py b/verl/worker
 +    async def flush_cache(self):
          if self.device_mesh["infer_tp"].get_local_rank() == 0:
              await self._engine.flush_cache()
- 
+
 @@ -1625,3 +1761,20 @@
- 
+
          if self.device_mesh["infer_tp"].get_local_rank() == 0:
              await self._engine.flush_cache()
 +

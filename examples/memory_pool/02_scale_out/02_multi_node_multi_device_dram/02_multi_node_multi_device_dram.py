@@ -100,15 +100,15 @@ def _run_rank1(head_node_ip: str) -> None:
         assert gva_me != 0 and gva_peer0 != 0, "peer_rank_ptr HOST"
 
         warmup = torch.zeros(COPY_BYTES // 4, dtype=torch.int32).contiguous()
-        assert (
-            handle.copy_data(warmup.data_ptr(), gva_me, COPY_BYTES, bm.BmCopyType.H2G, 0) == 0
-        ), "H2G host to global pool"
+        assert handle.copy_data(warmup.data_ptr(), gva_me, COPY_BYTES, bm.BmCopyType.H2G, 0) == 0, (
+            "H2G host to global pool"
+        )
 
         exp = torch.arange(COPY_BYTES // 4, dtype=torch.int32).contiguous()
         got = torch.empty(COPY_BYTES // 4, dtype=torch.int32)
-        assert (
-            handle.copy_data(gva_peer0, got.data_ptr(), COPY_BYTES, bm.BmCopyType.G2H, 0) == 0
-        ), "G2H global pool to host"
+        assert handle.copy_data(gva_peer0, got.data_ptr(), COPY_BYTES, bm.BmCopyType.G2H, 0) == 0, (
+            "G2H global pool to host"
+        )
         assert torch.equal(got, exp), "data mismatch"
 
         print("[rank 1] G2H verify OK; leaving", flush=True)

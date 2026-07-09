@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 import unittest
@@ -24,7 +23,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(16, 4),  # (4*4, 4) = (16, 4)
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     logging.info("[PTensor][VALIDATION] Valid parameters test passed")
                 except Exception as e:
@@ -44,7 +43,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -65,7 +64,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -86,7 +85,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=5,  # Invalid: greater than ndim
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -107,7 +106,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=-2,  # Invalid: negative but not -1
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -128,7 +127,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=-1,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     logging.info("[PTensor][VALIDATION] shard_dim=-1 valid test passed")
                 except Exception as e:
@@ -148,7 +147,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=5,  # Invalid: greater than world_size
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -169,7 +168,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='nccl'  # Invalid backend
+                        backend='nccl',  # Invalid backend
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -190,7 +189,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -211,7 +210,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     self.fail("Expected ValueError was not raised")
                 except ValueError as e:
@@ -232,7 +231,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(16, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     logging.info("[PTensor][VALIDATION] shape validation passed")
                 except Exception as e:
@@ -252,7 +251,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(16, 4),  # 4*4=16, 4=4
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     logging.info("[PTensor][VALIDATION] shard_dim=0 valid test passed")
                 except Exception as e:
@@ -272,7 +271,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 16),  # 4=4, 4*4=16
                         shard_dim=1,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     logging.info("[PTensor][VALIDATION] shard_dim=1 valid test passed")
                 except Exception as e:
@@ -292,7 +291,7 @@ class TestPTensor(unittest.TestCase):
                         global_size=(4, 4),
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     logging.info("[PTensor][VALIDATION] empty device_mesh test passed")
                 except Exception as e:
@@ -316,7 +315,7 @@ class TestPTensorSet(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
 
                     # Create a PTensorSet instance
@@ -343,7 +342,7 @@ class TestPTensorSet(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
 
                     # Create a PTensorSet instance with single PTensor
@@ -371,7 +370,7 @@ class TestPTensorSet(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     ptensor2 = PTensor(
                         tensor=tensor2,
@@ -381,7 +380,7 @@ class TestPTensorSet(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
 
                     # Create a PTensorSet instance with multiple PTensors
@@ -392,7 +391,7 @@ class TestPTensorSet(unittest.TestCase):
                     logging.info("[PTensorSet][VALIDATION] multiple PTensors test passed")
                 except Exception as e:
                     self.fail(f"Multiple PTensors test failed: {e}")
-                    
+
     def test_collect_tensor_ptensorset(self):
         """Test collect_tensor method with multiple PTensors in set"""
         with patch('torch.distributed.get_world_size', return_value=4):
@@ -409,7 +408,7 @@ class TestPTensorSet(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
                     ptensor2 = PTensor(
                         tensor=tensor2,
@@ -419,7 +418,7 @@ class TestPTensorSet(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='hccl'
+                        backend='hccl',
                     )
 
                     # Create a PTensorSet instance with multiple PTensors
@@ -449,7 +448,7 @@ class TestMFBackendTransferMap(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='mf'
+                        backend='mf',
                     )
 
                     # Test transfer_map method - only call public interface
@@ -477,7 +476,7 @@ class TestMFBackendTransferMap(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='mf'
+                        backend='mf',
                     )
                     ptensor2 = PTensor(
                         tensor=tensor2,
@@ -487,7 +486,7 @@ class TestMFBackendTransferMap(unittest.TestCase):
                         global_size=torch.Size([12]),  # 3 * 4 = 12
                         shard_dim=0,
                         rank=0,
-                        backend='mf'
+                        backend='mf',
                     )
 
                     # Create a PTensorSet instance with multiple PTensors using MF backend

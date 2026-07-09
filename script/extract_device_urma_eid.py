@@ -14,9 +14,7 @@ import sys
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Extract EID addresses for net_layer==1 CLOS with a given port count."
-    )
+    parser = argparse.ArgumentParser(description="Extract EID addresses for net_layer==1 CLOS with a given port count.")
     parser.add_argument(
         "--input",
         "-i",
@@ -71,8 +69,7 @@ def main() -> None:
             found_any = True
         else:
             print(
-                f"warning: device {device_id} has no EID with len(ports)=={port_count} "
-                f"in net_layer==1 CLOS",
+                f"warning: device {device_id} has no EID with len(ports)=={port_count} in net_layer==1 CLOS",
                 file=sys.stderr,
             )
 

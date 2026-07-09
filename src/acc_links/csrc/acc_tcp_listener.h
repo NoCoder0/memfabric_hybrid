@@ -61,7 +61,7 @@ protected:
     int32_t pollTimeoutMs_ = 0;
 
 private:
-    bool started_ = false;                      /* listener started or not */
+    bool started_ = false; /* listener started or not */
 };
 using AccTcpListenerPtr = AccRef<AccTcpListener>;
 

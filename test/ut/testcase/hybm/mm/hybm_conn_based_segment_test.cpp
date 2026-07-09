@@ -353,7 +353,7 @@ TEST_F(HybmConnBasedSegmentTest, PrepareShareMemoryFd_ExpandsBackingFileToReques
     options.size = HYBM_LARGE_PAGE_SIZE;
     HybmConnBasedSegment segment(options, 0);
 
-    struct stat fileStat{};
+    struct stat fileStat {};
     ASSERT_EQ(fstat(fd, &fileStat), 0);
     EXPECT_EQ(fileStat.st_size, 0);
 

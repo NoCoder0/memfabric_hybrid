@@ -30,9 +30,7 @@ inline int32_t MaybeSetDevice(int /**/)
     return ACL_SUCCESS;
 }
 
-inline void npuSynchronizeDevice(bool /**/)
-{
-}
+inline void npuSynchronizeDevice(bool /**/) {}
 
 } // namespace c10_npu
 

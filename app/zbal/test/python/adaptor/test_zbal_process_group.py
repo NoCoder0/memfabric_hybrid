@@ -56,8 +56,10 @@ def test_init_zbal_pg():
         sub_group_name = backend.get_zbal_comm_name()
         dist.destroy_process_group(sub_group)
         del sub_group
-    logger.info(f"init zbal group success on rank {local_rank=} {world_size=} \
-        {global_group_name=} {global_group_name2=} {sub_group_name=}")
+    logger.info(
+        f"init zbal group success on rank {local_rank=} {world_size=} \
+        {global_group_name=} {global_group_name2=} {sub_group_name=}"
+    )
 
     sleep_time = random.uniform(0, 4)
     time.sleep(sleep_time)

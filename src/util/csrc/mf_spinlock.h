@@ -27,7 +27,7 @@ public:
     {
         while (flag_.exchange(true, std::memory_order_acquire)) {
             while (flag_.load(std::memory_order_relaxed)) {
-                std::this_thread::yield();  // 让出CPU时间片
+                std::this_thread::yield(); // 让出CPU时间片
             }
         }
     }

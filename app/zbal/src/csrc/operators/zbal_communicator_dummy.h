@@ -93,8 +93,7 @@ public:
         return Z_OK;
     }
 
-    int32_t Send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer,
-                 aclrtStream stream) noexcept
+    int32_t Send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer, aclrtStream stream) noexcept
     {
         return Z_OK;
     }

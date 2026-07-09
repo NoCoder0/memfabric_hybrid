@@ -47,13 +47,14 @@ Result HostDataOpRDMA::Initialize() noexcept
         mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_HUGETLB, -1, 0);
     if (rdmaSwapBaseAddr_ == MAP_FAILED) {
         BM_LOG_WARN("Failed to alloc with huge page, size:" << rdmaSwapSpaceSize_ << " error:" << errno << ", "
-                     << SafeStrError(errno) << ". fallback to mmap with regular pagesize");
+                                                            << SafeStrError(errno)
+                                                            << ". fallback to mmap with regular pagesize");
         rdmaSwapBaseAddr_ =
             mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
     }
     if (rdmaSwapBaseAddr_ == MAP_FAILED) {
         BM_LOG_ERROR("Failed to alloc with size:" << rdmaSwapSpaceSize_ << " error:" << errno << ", "
-                                             << SafeStrError(errno));
+                                                  << SafeStrError(errno));
         rdmaSwapSpaceSize_ = 0;
         return BM_ERROR;
     }
@@ -267,8 +268,8 @@ Result HostDataOpRDMA::CopyGva2Gva(const void *srcVA, void *destVA, uint64_t len
     return BM_INVALID_PARAM;
 }
 
-Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA,
-    void *destVA, uint64_t length, const ExtOptions &options, bool isLocalHost)
+Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options,
+                                        bool isLocalHost)
 {
     Result ret = 0;
     uintptr_t srcBase = reinterpret_cast<uintptr_t>(srcVA);
@@ -283,8 +284,8 @@ Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA,
         return ret;
     }
     if (rdmaSwapSpaceSize_ == 0) {
-        BM_LOG_ERROR("Swap space is disabled and memory not registered, srcVa: "
-                     << srcBase << " destVa: " << destBase << " length: " << length);
+        BM_LOG_ERROR("Swap space is disabled and memory not registered, srcVa: " << srcBase << " destVa: " << destBase
+                                                                                 << " length: " << length);
         return BM_ERROR;
     }
     while (remainingLength > 0) {
@@ -337,8 +338,8 @@ Result ock::mf::HostDataOpRDMA::SafeGet(const void *srcVA, void *destVA, uint64_
         return ret;
     }
     if (rdmaSwapSpaceSize_ == 0) {
-        BM_LOG_ERROR("Swap space is disabled and memory not registered, srcVa: "
-                     << srcBase << " destVa: " << destBase << " length: " << length);
+        BM_LOG_ERROR("Swap space is disabled and memory not registered, srcVa: " << srcBase << " destVa: " << destBase
+                                                                                 << " length: " << length);
         return BM_ERROR;
     }
     while (remainingLength > 0) {
@@ -865,7 +866,7 @@ Result HostDataOpRDMA::BatchReadRH2LH(CopyDescriptor &rmtCopyDescriptor, const E
 }
 
 Result HostDataOpRDMA::InnerBatchWriteLH2RH(const CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options,
-    uint64_t batchOffset, size_t batchEnd, void *tmpRdmaAddrs[]) const
+                                            uint64_t batchOffset, size_t batchEnd, void *tmpRdmaAddrs[]) const
 {
     Result ret;
 
@@ -996,7 +997,6 @@ Result HostDataOpRDMA::BatchCopyLH2GH(void **gvaAddrs, void **hostAddrs, const u
     return BM_OK;
 }
 
-
 Result HostDataOpRDMA::BatchCopyGH2LH(void **hostAddrs, void **gvaAddrs, const uint64_t *counts, uint32_t batchSize,
                                       const ExtOptions &options) noexcept
 {
@@ -1066,12 +1066,12 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
     if (ret == 0) {
         for (auto i = 0U; i < bigIoDes.counts.size(); i++) {
             if (isPut) {
-                ret = transportManager_->WriteRemoteAsync(options.destRankId,
-                    reinterpret_cast<uint64_t>(bigIoDes.localAddrs[i]),
+                ret = transportManager_->WriteRemoteAsync(
+                    options.destRankId, reinterpret_cast<uint64_t>(bigIoDes.localAddrs[i]),
                     reinterpret_cast<uint64_t>(bigIoDes.globalAddrs[i]), bigIoDes.counts[i]);
             } else {
-                ret = transportManager_->ReadRemoteAsync(options.srcRankId,
-                    reinterpret_cast<uint64_t>(bigIoDes.globalAddrs[i]),
+                ret = transportManager_->ReadRemoteAsync(
+                    options.srcRankId, reinterpret_cast<uint64_t>(bigIoDes.globalAddrs[i]),
                     reinterpret_cast<uint64_t>(bigIoDes.localAddrs[i]), bigIoDes.counts[i]);
             }
             if (ret != 0) {

@@ -320,9 +320,9 @@ TEST_F(HybmEntityTagInfoTest, GetAllOpType)
 {
     hybm_options opt{};
     std::string tagOpInfo = "tag1:DEVICE_SDMA:tag2,tag2:DEVICE_RDMA:tag3,tag3:HOST_RDMA:tag1";
-    memcpy(opt.tagOpInfo, tagOpInfo.c_str(), tagOpInfo.size()+1);
-    opt.bmDataOpType = static_cast<hybm_data_op_type>(
-        HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA);
+    memcpy(opt.tagOpInfo, tagOpInfo.c_str(), tagOpInfo.size() + 1);
+    opt.bmDataOpType =
+        static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA);
     auto ret = tagInfo_->TagInfoInit(opt);
     EXPECT_EQ(ret, BM_OK);
     uint32_t allOpType = tagInfo_->GetAllOpType();
@@ -436,8 +436,8 @@ TEST_F(HybmEntityTagInfoTest, TagInfoInit_EmptyTag_DefaultsToDefault)
 
 TEST_F(HybmEntityTagInfoTest, AddRankTag_MultipleThenRemove)
 {
-    EXPECT_EQ(tagInfo_->AddRankTag(5, "alpha"), BM_OK); // 5
-    EXPECT_EQ(tagInfo_->AddRankTag(6, "beta"), BM_OK); // 6
+    EXPECT_EQ(tagInfo_->AddRankTag(5, "alpha"), BM_OK);    // 5
+    EXPECT_EQ(tagInfo_->AddRankTag(6, "beta"), BM_OK);     // 6
     EXPECT_EQ(tagInfo_->RemoveRankTag(5, "alpha"), BM_OK); // 5
 }
 

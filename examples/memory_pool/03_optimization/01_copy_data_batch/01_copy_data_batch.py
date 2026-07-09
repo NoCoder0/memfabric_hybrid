@@ -4,8 +4,8 @@ import torch
 import memfabric_hybrid as mf
 from memfabric_hybrid import bm
 
-LOCAL_DRAM_SIZE = 4 << 30 # 4GB
-BLOCK_SIZE = 4 << 20 # 4MB block
+LOCAL_DRAM_SIZE = 4 << 30  # 4GB
+BLOCK_SIZE = 4 << 20  # 4MB block
 BATCH_SIZES = (32, 128, 256)
 STORE_URL = "tcp://127.0.0.1:8570"
 WORLD_SIZE = 1
@@ -48,19 +48,19 @@ def main():
             batch_bytes = batch_size * BLOCK_SIZE
             num_loops = LOCAL_DRAM_SIZE // batch_bytes
             total_bytes = num_loops * batch_bytes
-            
+
             h2g_total_time = 0
             g2h_total_time = 0
-            
+
             for _ in range(num_loops):
                 src_addrs = [src.data_ptr() for _ in range(batch_size)]
                 dst_addrs = [host_gva + i * BLOCK_SIZE for i in range(batch_size)]
                 sizes = [BLOCK_SIZE] * batch_size
 
                 start_time = time.time()
-                assert handle.copy_data_batch(
-                    src_addrs, dst_addrs, sizes, batch_size, bm.BmCopyType.H2G, 0
-                ) == 0, "copy_data_batch H2G failed"
+                assert handle.copy_data_batch(src_addrs, dst_addrs, sizes, batch_size, bm.BmCopyType.H2G, 0) == 0, (
+                    "copy_data_batch H2G failed"
+                )
                 h2g_total_time += time.time() - start_time
 
                 src_addrs = [host_gva + i * BLOCK_SIZE for i in range(batch_size)]
@@ -68,40 +68,42 @@ def main():
                 sizes = [BLOCK_SIZE] * batch_size
 
                 start_time = time.time()
-                assert handle.copy_data_batch(
-                    src_addrs, dst_addrs, sizes, batch_size, bm.BmCopyType.G2H, 0
-                ) == 0, "copy_data_batch G2H failed"
+                assert handle.copy_data_batch(src_addrs, dst_addrs, sizes, batch_size, bm.BmCopyType.G2H, 0) == 0, (
+                    "copy_data_batch G2H failed"
+                )
                 g2h_total_time += time.time() - start_time
                 assert torch.equal(dst, src), "bm check ok"
 
-            batch_results.append({
-                'batch_size': batch_size,
-                'total_bytes': total_bytes,
-                'h2g_time': h2g_total_time,
-                'g2h_time': g2h_total_time
-            })
+            batch_results.append(
+                {
+                    'batch_size': batch_size,
+                    'total_bytes': total_bytes,
+                    'h2g_time': h2g_total_time,
+                    'g2h_time': g2h_total_time,
+                }
+            )
 
         # Print H2G results
         for result in batch_results:
             batch_size = result['batch_size']
             total_bytes = result['total_bytes']
             h2g_time_ms = int(result['h2g_time'] * 1000)
-            total_gb = total_bytes // (1024 ** 3)
+            total_gb = total_bytes // (1024**3)
             h2g_throughput = int(total_bytes / (result['h2g_time'] * 1024 * 1024 * 1024))
             print(
-                f"H2G  Batch size: {batch_size}, Total size: {total_gb} GB, "  
+                f"H2G  Batch size: {batch_size}, Total size: {total_gb} GB, "
                 f"      Time: {h2g_time_ms}ms, Throughput: {h2g_throughput} GB/s"
             )
-        
+
         # Print G2H results
         for result in batch_results:
             batch_size = result['batch_size']
             total_bytes = result['total_bytes']
             g2h_time_ms = int(result['g2h_time'] * 1000)
-            total_gb = total_bytes // (1024 ** 3)
+            total_gb = total_bytes // (1024**3)
             g2h_throughput = int(total_bytes / (result['g2h_time'] * 1024 * 1024 * 1024))
             print(
-                f"G2H  Batch size: {batch_size}, Total size: {total_gb} GB, "  
+                f"G2H  Batch size: {batch_size}, Total size: {total_gb} GB, "
                 f"      Time: {g2h_time_ms}ms, Throughput: {g2h_throughput} GB/s"
             )
 

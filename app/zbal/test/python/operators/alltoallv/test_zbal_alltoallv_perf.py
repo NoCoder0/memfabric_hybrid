@@ -9,8 +9,7 @@ import torch
 import torch.distributed as dist
 import torch_npu
 import numpy as np
-from test_zbal_alltoallv_base import (TYPE_MAP, TORCH_TYPE_MAP, REPEAT_TIMES, HIDDEN_SIZE,
-                   init_group, cleanup)
+from test_zbal_alltoallv_base import TYPE_MAP, TORCH_TYPE_MAP, REPEAT_TIMES, HIDDEN_SIZE, init_group, cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +17,7 @@ logger = logging.getLogger(__name__)
 def test_alltoallv(dist_type, data_op_type, case_list):
     if not case_list:
         return
-    group, global_rank = init_group(dist_type, int(os.environ["WORLD_SIZE"] or 2),
-                                    data_op_type)
+    group, global_rank = init_group(dist_type, int(os.environ["WORLD_SIZE"] or 2), data_op_type)
     test_type = os.environ.get("TEST_TYPE", "int")
     current_dir = os.environ.get("CURRENT_DIR", ".")
     data_type = TYPE_MAP.get(test_type, 'int')
@@ -31,7 +29,9 @@ def test_alltoallv(dist_type, data_op_type, case_list):
         prof_cfg = torch_npu.profiler._ExperimentalConfig(
             aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
             profiler_level=torch_npu.profiler.ProfilerLevel.Level2,
-            l2_cache=False, data_simplification=False)
+            l2_cache=False,
+            data_simplification=False,
+        )
 
     try:
         for case in case_list:
@@ -46,24 +46,27 @@ def test_alltoallv(dist_type, data_op_type, case_list):
 
             if enable_profiling:
                 prof = torch_npu.profiler.profile(
-                    activities=[torch_npu.profiler.ProfilerActivity.CPU,
-                                torch_npu.profiler.ProfilerActivity.NPU],
+                    activities=[torch_npu.profiler.ProfilerActivity.CPU, torch_npu.profiler.ProfilerActivity.NPU],
                     on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                        f"{current_dir}/profiling.{dist_type}_{world_size}_{case}/"),
-                    schedule=torch_npu.profiler.schedule(
-                        wait=1, warmup=1, active=30, repeat=1, skip_first=4),
-                    record_shapes=True, profile_memory=True,
-                    with_stack=False, with_flops=False, with_modules=False,
-                    experimental_config=prof_cfg)
+                        f"{current_dir}/profiling.{dist_type}_{world_size}_{case}/"
+                    ),
+                    schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=30, repeat=1, skip_first=4),
+                    record_shapes=True,
+                    profile_memory=True,
+                    with_stack=False,
+                    with_flops=False,
+                    with_modules=False,
+                    experimental_config=prof_cfg,
+                )
                 torch.npu.synchronize()
                 prof.start()
 
             data = np.fromfile(
                 f"{current_dir}/golden/alltoallv_{case}_{world_size}_{global_rank}/input_gm_{global_rank}.bin",
-                dtype=data_type)
+                dtype=data_type,
+            )
             tensor_input = torch.from_numpy(data).to(tensor_dtype).npu().view(rows, HIDDEN_SIZE)
-            tensor_output = torch.zeros(rows, HIDDEN_SIZE, dtype=tensor_input.dtype,
-                                        device=tensor_input.device)
+            tensor_output = torch.zeros(rows, HIDDEN_SIZE, dtype=tensor_input.dtype, device=tensor_input.device)
             cur_split = [base_split] * world_size
 
             for j in range(REPEAT_TIMES):

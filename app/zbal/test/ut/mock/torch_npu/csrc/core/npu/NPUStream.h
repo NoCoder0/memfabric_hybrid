@@ -11,7 +11,10 @@ public:
     NPUStream() = default;
     explicit NPUStream(int device) : device_(device) {}
 
-    int device_index() const { return device_; }
+    int device_index() const
+    {
+        return device_;
+    }
 
     void *stream(bool = false) const
     {
@@ -68,6 +71,7 @@ class NPUStreamGuard {
 public:
     explicit NPUStreamGuard(NPUStream stream) : original_(getCurrentNPUStream()) {}
     ~NPUStreamGuard() {}
+
 private:
     NPUStream original_;
 };
@@ -80,13 +84,13 @@ public:
 
 class NPUMultiStreamGuard {
 public:
-    explicit NPUMultiStreamGuard(const std::vector<NPUStream>&) {}
+    explicit NPUMultiStreamGuard(const std::vector<NPUStream> &) {}
 };
 
 } // namespace c10_npu
 
 namespace std {
-template <>
+template<>
 struct hash<c10_npu::NPUStream> {
     size_t operator()(const c10_npu::NPUStream &s) const noexcept
     {

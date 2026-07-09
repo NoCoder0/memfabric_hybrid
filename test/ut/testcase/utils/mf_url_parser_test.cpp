@@ -20,7 +20,7 @@ using ock::mf::NetValidator;
 namespace {
 constexpr uint16_t TEST_PORT_MAX = 65535;
 constexpr uint16_t TEST_PORT_MIN = 1024;
-}
+} // namespace
 
 class MFUrlParserTest : public testing::Test {
 public:

@@ -17,7 +17,7 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
      ExpertDistributionRecorder,
      get_global_expert_distribution_recorder,
 @@ -372,21 +373,41 @@
- 
+
          torch.get_device_module(self.device).empty_cache()
          # Expert parallelism
 -        if self.server_args.enable_eplb and (not self.is_draft_worker):
@@ -34,7 +34,7 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
 +            if self.server_args.enable_eplb and (not self.is_draft_worker):
 +                if self.server_args.enable_async_eplb:
 +                    from sglang.srt.eplb.async_eplb_manager import AsyncEPLBManager
- 
+
 -                self.eplb_manager = AsyncEPLBManager(self)
 -            else:
 -                self.eplb_manager = EPLBManager(self)
@@ -47,11 +47,11 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
 +                self.eplb_manager = None
 +
          self.expert_location_updater = ExpertLocationUpdater()
- 
+
          # Load the model
          self.sampler = Sampler()
          self.load_model()
- 
+
 +        if self.use_tensor_rtl:
 +            for i, layer in enumerate(self.model.model.layers):
 +                if i == 0:
@@ -69,7 +69,7 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
 @@ -2061,11 +2082,31 @@
                  split_forward_count,
              )
- 
+
 -        if self.eplb_manager is not None:
 -            self.eplb_manager.on_forward_pass_end()
 +        if self.use_tensor_rtl:
@@ -78,9 +78,9 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
 +        else:
 +            if self.eplb_manager is not None:
 +                self.eplb_manager.on_forward_pass_end()
- 
+
          return output
- 
+
 +    def _eplb_planner_hook(self):
 +        def hook(module, input, output):
 +            if self.experts_transform_manager.get_state() >= EplbState.PLANNER and self.experts_transform_manager.get_state() < EplbState.FINAL:

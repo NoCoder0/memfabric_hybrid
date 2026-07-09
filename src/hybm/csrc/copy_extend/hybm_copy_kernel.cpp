@@ -14,44 +14,44 @@
 
 #define HYBM_AICORE_KERNEL __attribute__((always_inline)) __aicore__ __inline__
 const uint32_t COPY_BUF_SIZE = 64 * 1024; // 最大支持192KB
-const uint32_t SINGLE_COPY_SLICE = 64; // cache length
+const uint32_t SINGLE_COPY_SLICE = 64;    // cache length
 
 using namespace AscendC;
 
-template <AscendC::HardEvent event>
+template<AscendC::HardEvent event>
 HYBM_AICORE_KERNEL void hybm_sync(int32_t eventId)
 {
     AscendC::SetFlag<event>(eventId);
     AscendC::WaitFlag<event>(eventId);
 }
 
-HYBM_AICORE_KERNEL void copy_ub2gm(__gm__ uint8_t* dst, __ubuf__ uint8_t* src, uint32_t size)
+HYBM_AICORE_KERNEL void copy_ub2gm(__gm__ uint8_t *dst, __ubuf__ uint8_t *src, uint32_t size)
 {
     AscendC::LocalTensor<uint8_t> ubTensor;
     AscendC::GlobalTensor<uint8_t> gmTensor;
     AscendC::DataCopyExtParams dataCopyParams(1, size, 0, 0, 0);
     ubTensor.address_.logicPos = static_cast<uint8_t>(AscendC::TPosition::VECIN);
     ubTensor.address_.bufferAddr = reinterpret_cast<uint64_t>(src);
-    gmTensor.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t*>(dst));
+    gmTensor.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(dst));
 
     AscendC::DataCopyPad(gmTensor, ubTensor, dataCopyParams);
 }
 
-HYBM_AICORE_KERNEL void copy_gm2ub(__ubuf__ uint8_t* dst, __gm__ uint8_t* src, uint32_t size)
+HYBM_AICORE_KERNEL void copy_gm2ub(__ubuf__ uint8_t *dst, __gm__ uint8_t *src, uint32_t size)
 {
     AscendC::LocalTensor<uint8_t> ubTensor;
     AscendC::GlobalTensor<uint8_t> gmTensor;
     AscendC::DataCopyExtParams dataCopyParams(1, size, 0, 0, 0);
     ubTensor.address_.logicPos = static_cast<uint8_t>(AscendC::TPosition::VECIN);
     ubTensor.address_.bufferAddr = reinterpret_cast<uint64_t>(dst);
-    gmTensor.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t*>(src));
+    gmTensor.SetGlobalBuffer(reinterpret_cast<__gm__ uint8_t *>(src));
 
     AscendC::DataCopyPadExtParams<uint8_t> padParams;
     AscendC::DataCopyPad(ubTensor, gmTensor, dataCopyParams, padParams);
 }
 
-HYBM_AICORE_KERNEL void copy_gm2gm(__gm__ uint8_t *dst, __gm__ uint8_t *src, __ubuf__ uint8_t *buf,
-                                   uint32_t ub_size, uint32_t elem_size)
+HYBM_AICORE_KERNEL void copy_gm2gm(__gm__ uint8_t *dst, __gm__ uint8_t *src, __ubuf__ uint8_t *buf, uint32_t ub_size,
+                                   uint32_t elem_size)
 {
     uint64_t repeat_times = elem_size / ub_size;
     uint64_t repeat_elem = ub_size;
@@ -96,8 +96,8 @@ HYBM_AICORE_KERNEL void dcci_cacheline(__gm__ uint8_t *addr)
 
     // Important: add hint to avoid dcci being optimized by compiler
     __asm__ __volatile__("");
-    AscendC::DataCacheCleanAndInvalid<uint8_t, AscendC::CacheLine::SINGLE_CACHE_LINE,
-                                      AscendC::DcciDst::CACHELINE_OUT>(global);
+    AscendC::DataCacheCleanAndInvalid<uint8_t, AscendC::CacheLine::SINGLE_CACHE_LINE, AscendC::DcciDst::CACHELINE_OUT>(
+        global);
     __asm__ __volatile__("");
 }
 
@@ -138,19 +138,19 @@ extern "C" void hybm_batch_copy_extend(void *param, uint32_t count, void *mask, 
 HYBM_AICORE_KERNEL void hybm_reduce_max(__ubuf__ float *buf, uint32_t count)
 {
     using PrimType = PrimT<float>;
-    uint64_t repsFp32 = count >> 6;        // 6 is count / elemPerRefFp32
-    uint64_t offsetsFp32 = repsFp32 << 6;  // 6 is repsFp32 * elemPerRefFp32
-    uint64_t remsFp32 = count & 0x3f;      // 0x3f 63, count % elemPerRefFp32
-    const uint64_t elemPerRefFp32 = 64UL;  // 256 bit / sizeof(float)
+    uint64_t repsFp32 = count >> 6;       // 6 is count / elemPerRefFp32
+    uint64_t offsetsFp32 = repsFp32 << 6; // 6 is repsFp32 * elemPerRefFp32
+    uint64_t remsFp32 = count & 0x3f;     // 0x3f 63, count % elemPerRefFp32
+    const uint64_t elemPerRefFp32 = 64UL; // 256 bit / sizeof(float)
     if (likely(repsFp32 > 1)) {
         // 8 is rep stride
-        MaxImpl<PrimType, true>((__ubuf__ PrimType*)buf, (__ubuf__ PrimType*)(buf + elemPerRefFp32),
-                                (__ubuf__ PrimType*)buf, elemPerRefFp32, repsFp32 - 1, {1, 1, 1, 0, 8, 0});
+        MaxImpl<PrimType, true>((__ubuf__ PrimType *)buf, (__ubuf__ PrimType *)(buf + elemPerRefFp32),
+                                (__ubuf__ PrimType *)buf, elemPerRefFp32, repsFp32 - 1, {1, 1, 1, 0, 8, 0});
         PipeBarrier<PIPE_V>();
     }
     if (unlikely(remsFp32 > 0) && unlikely(offsetsFp32 > 0)) {
-        MaxImpl<PrimType, true>((__ubuf__ PrimType*)buf, (__ubuf__ PrimType*)(buf + offsetsFp32),
-                                (__ubuf__ PrimType*)buf, remsFp32, 1, {1, 1, 1, 0, 8, 0});
+        MaxImpl<PrimType, true>((__ubuf__ PrimType *)buf, (__ubuf__ PrimType *)(buf + offsetsFp32),
+                                (__ubuf__ PrimType *)buf, remsFp32, 1, {1, 1, 1, 0, 8, 0});
         PipeBarrier<PIPE_V>();
     }
     uint32_t mask = (repsFp32 > 0) ? elemPerRefFp32 : count;
@@ -159,7 +159,7 @@ HYBM_AICORE_KERNEL void hybm_reduce_max(__ubuf__ float *buf, uint32_t count)
 }
 
 // bf16/half-->int8
-template <typename T>
+template<typename T>
 HYBM_AICORE_KERNEL void hybm_quant_process(GM_ADDR dst, GM_ADDR src, __ubuf__ uint8_t *buf, uint32_t num,
                                            __gm__ float *scale, __gm__ float *offset)
 {
@@ -178,7 +178,7 @@ HYBM_AICORE_KERNEL void hybm_quant_process(GM_ADDR dst, GM_ADDR src, __ubuf__ ui
     hybm_sync<AscendC::HardEvent::V_S>(EVENT_ID0);
     dynamicScale = float(127.0) / (((__ubuf__ float *)buf2)[0] + 1e-12f);
     hybm_sync<AscendC::HardEvent::S_V>(EVENT_ID0);
-    MulsImpl<float, true>((__ubuf__ float*)buf, (__ubuf__ float*)buf, dynamicScale, num);
+    MulsImpl<float, true>((__ubuf__ float *)buf, (__ubuf__ float *)buf, dynamicScale, num);
     PipeBarrier<PIPE_V>();
 
     CastImpl((__ubuf__ int32_t *)buf2, (__ubuf__ float *)buf, RoundMode::CAST_RINT, num); // float-->int32

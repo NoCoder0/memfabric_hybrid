@@ -83,8 +83,8 @@ struct aclrtBinaryLoadOptions {
 };
 
 typedef enum aclrtLaunchKernelAttrId {
-    ACL_RT_LAUNCH_KERNEL_ATTR_SCHEM_MODE = 1,      // 调度模式
-    ACL_RT_LAUNCH_KERNEL_ATTR_DYN_UBUF_SIZE = 2,   // 用于指定SIMT算子执行时需要的VECTOR CORE内部UB buffer的大小
+    ACL_RT_LAUNCH_KERNEL_ATTR_SCHEM_MODE = 1, // 调度模式
+    ACL_RT_LAUNCH_KERNEL_ATTR_DYN_UBUF_SIZE = 2, // 用于指定SIMT算子执行时需要的VECTOR CORE内部UB buffer的大小
     ACL_RT_LAUNCH_KERNEL_ATTR_ENGINE_TYPE = 3,     // 算子执行引擎
     ACL_RT_LAUNCH_KERNEL_ATTR_BLOCKDIM_OFFSET,     // numBlocks偏移量
     ACL_RT_LAUNCH_KERNEL_ATTR_BLOCK_TASK_PREFETCH, // 任务下发时，是否阻止硬件预取本任务的信息
@@ -129,8 +129,8 @@ typedef enum aclrtMemMallocPolicy {
     ACL_MEM_MALLOC_NORMAL_ONLY_P2P,
     ACL_MEM_MALLOC_HUGE1G_ONLY,
     ACL_MEM_MALLOC_HUGE1G_ONLY_P2P,
-    ACL_MEM_TYPE_LOW_BAND_WIDTH   = 0x0100U,
-    ACL_MEM_TYPE_HIGH_BAND_WIDTH  = 0x1000U,
+    ACL_MEM_TYPE_LOW_BAND_WIDTH = 0x0100U,
+    ACL_MEM_TYPE_HIGH_BAND_WIDTH = 0x1000U,
     ACL_MEM_ACCESS_USER_SPACE_READONLY = 0x100000U,
 } aclrtMemMallocPolicy;
 

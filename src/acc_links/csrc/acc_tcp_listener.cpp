@@ -154,7 +154,7 @@ void AccTcpListener::RunInThread() noexcept
                 continue;
             }
 
-            struct sockaddr_in addressIn{};
+            struct sockaddr_in addressIn {};
             socklen_t len = sizeof(addressIn);
             auto fd = ::accept(listenFd_, reinterpret_cast<struct sockaddr *>(&addressIn), &len);
             if (fd < 0) {

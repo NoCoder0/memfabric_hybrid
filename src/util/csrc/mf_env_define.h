@@ -28,8 +28,9 @@ static std::string GetEnvStr(const char *name, const char *deprecatedName = null
     }
     if (deprecatedName != nullptr) {
         if (const char *depVal = std::getenv(deprecatedName); depVal != nullptr) {
-            MF_OUT_LOG("[MF ", WARN_LEVEL, "Environment variable '" << deprecatedName
-                      << "' is deprecated, please use '" << name << "' instead.");
+            MF_OUT_LOG("[MF ", WARN_LEVEL,
+                       "Environment variable '" << deprecatedName << "' is deprecated, please use '" << name
+                                                << "' instead.");
             return std::string(depVal);
         }
     }
@@ -51,7 +52,8 @@ inline const std::string MF_HCOM_PREPOST_SIZE = GetEnvStr("MF_HCOM_PREPOST_SIZE"
 inline const std::string MF_HCOM_MAX_SEND_RECV_DATA_CNT = GetEnvStr("MF_HCOM_MAX_SEND_RECV_DATA_CNT");
 inline const std::string MF_HYBM_RDMA_SWAP_SPACE_SIZE =
     GetEnvStr("MF_HYBM_RDMA_SWAP_SPACE_SIZE", "HYBM_RDMA_SWAP_SPACE_SIZE");
-inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED = GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED");
+inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =
+    GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED");
 inline const std::string MF_LOG_LEVEL = GetEnvStr("MF_LOG_LEVEL", "ASCEND_MF_LOG_LEVEL");
 inline const std::string MF_SOCKET_URL = GetEnvStr("MF_SOCKET_URL");
 inline const std::string MF_TRANSPORT_MANAGER = GetEnvStr("MF_TRANSPORT_MANAGER", "TRANSPORT_MANAGER");

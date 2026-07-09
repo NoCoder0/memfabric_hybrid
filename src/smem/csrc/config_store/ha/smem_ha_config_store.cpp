@@ -54,8 +54,8 @@ HaConfigStore::HaConfigStore(StoreBackendPtr backend, TcpConfigStorePtr clientDe
       clientDelegate_(std::move(clientDelegate))
 {
     (void)instanceId;
-    SM_LOG_DEBUG("HaConfigStore constructing, endpoints: "
-                 << endpoints << ", worldSize: " << worldSize << ", backendLockName: " << backendLockName_);
+    SM_LOG_DEBUG("HaConfigStore constructing, endpoints: " << endpoints << ", worldSize: " << worldSize
+                                                           << ", backendLockName: " << backendLockName_);
 }
 
 void HaConfigStore::Uninitialize() noexcept
@@ -336,8 +336,8 @@ void HaConfigStore::StartServer() noexcept
     }
 
     // Create and configure server, skip recover if is the first leader
-    serverDelegate_ = SmMakeRef<AccStoreServer>(leaderBindIp_, leaderBindPort_, recoveredWorldSize, backend_,
-                                                isFirstLeader_);
+    serverDelegate_ =
+        SmMakeRef<AccStoreServer>(leaderBindIp_, leaderBindPort_, recoveredWorldSize, backend_, isFirstLeader_);
     SM_ASSERT_RET_VOID(serverDelegate_ != nullptr);
     SM_LOG_DEBUG("AccStoreServer created, ip: " << leaderBindIp_ << ", port: " << leaderBindPort_
                                                 << ", worldSize: " << recoveredWorldSize);

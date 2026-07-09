@@ -46,7 +46,7 @@ class IniParser(object):
         self.custom_flag = False
         self.warn_print = False
         self.warning_ops = defaultdict(list)
-        
+
     @staticmethod
     def _is_io_section(op_sec):
         """Check if op_sec is an input/output section name."""
@@ -56,7 +56,7 @@ class IniParser(object):
             or (op_sec.startswith("dynamic_input") and op_sec[13:].isdigit())
             or (op_sec.startswith("dynamic_output") and op_sec[14:].isdigit())
         )
-        
+
     def load_ini_info(self, ini_files):
         """
         Load config info from ini files, store in class struct: self.aicpu_ops_info
@@ -79,30 +79,22 @@ class IniParser(object):
             # option in op is configuration for op, eg. opInfo.engine=DNN_VM_AICPU
             for opt in cfg.options(op):
                 if len(opt.split(".")) != 2:
-                    logging.warning(
-                        '## Parse op [%s] setting: "%s", not recognized!', op, opt
-                    )
+                    logging.warning('## Parse op [%s] setting: "%s", not recognized!', op, opt)
                     continue
                 # one opt_sec will include serval info, eg. opInfo: {"engine": xxx, "flagAsync": xxx, ...}
                 opt_sec, opt_subsec = opt.split(".")
                 if opt_sec not in self.aicpu_ops_info.get(op):
                     self.aicpu_ops_info.get(op)[opt_sec] = {opt_subsec: cfg[op][opt]}
                 else:
-                    self.aicpu_ops_info.get(op)[opt_sec].update(
-                        {opt_subsec: cfg[op][opt]}
-                    )
+                    self.aicpu_ops_info.get(op)[opt_sec].update({opt_subsec: cfg[op][opt]})
 
     def check_custom_op_info(self, op_name, op_info):
         """
         Check aicpu_cust_kernel.ini op definition
         """
-        missing_keys = [
-            k for k in self.required_custom_op_info_keys if k not in op_info
-        ]
+        missing_keys = [k for k in self.required_custom_op_info_keys if k not in op_info]
         if len(missing_keys) > 0:
-            logging.error(
-                "op: " + op_name + " opInfo missing: " + ",".join(missing_keys)
-            )
+            logging.error("op: " + op_name + " opInfo missing: " + ",".join(missing_keys))
             raise KeyError("bad key value")
 
     def check_op_info(self, op_name, op_info):
@@ -114,9 +106,7 @@ class IniParser(object):
         """
         missing_keys = [k for k in self.required_op_info_keys if k not in op_info]
         if len(missing_keys) > 0:
-            logging.error(
-                "op: " + op_name + " opInfo missing: " + ",".join(missing_keys)
-            )
+            logging.error("op: " + op_name + " opInfo missing: " + ",".join(missing_keys))
             raise KeyError("bad key value")
 
         if op_info["opKernelLib"] == "CUSTAICPUKernel":
@@ -140,9 +130,7 @@ class IniParser(object):
         Check ini op info setting correct or enough
         If custom op found and self.custom_flag not set, will remove these op out from aicpu_ops_info
         """
-        logging.info(
-            "\n==============check valid for aicpu ops info start=============="
-        )
+        logging.info("\n==============check valid for aicpu ops info start==============")
         for op_name, op_info in self.aicpu_ops_info.items():
             op_info_flag = False
             op_io_flag = False
@@ -162,9 +150,7 @@ class IniParser(object):
 
         self._remove_custom_ops_if_needed()
         self._log_missing_section_warnings()
-        logging.info(
-            "==============check valid for aicpu ops info end================\n"
-        )
+        logging.info("==============check valid for aicpu ops info end================\n")
 
     def write(self, json_file_path):
         """
@@ -174,9 +160,7 @@ class IniParser(object):
         def _write(info, file):
             with open(file, "w") as f:
                 # Only the owner and group have rights
-                os.chmod(
-                    file, stat.S_IWGRP + stat.S_IWUSR + stat.S_IRGRP + stat.S_IRUSR
-                )
+                os.chmod(file, stat.S_IWGRP + stat.S_IWUSR + stat.S_IRGRP + stat.S_IRUSR)
                 json.dump(info, f, sort_keys=True, indent=4, separators=(",", ":"))
 
         json_file_real_path = os.path.realpath(json_file_path)
@@ -189,9 +173,7 @@ class IniParser(object):
 
         if not self.custom_flag:
             file_path, file_name = os.path.split(json_file_real_path)
-            custom_file_path = os.path.join(
-                file_path, "%s_custom%s" % os.path.splitext(file_name)
-            )
+            custom_file_path = os.path.join(file_path, "%s_custom%s" % os.path.splitext(file_name))
             _write(self.custom_ops_info, custom_file_path)
             logging.info(
                 ">>>> Found %s custom AICPU ops, write into: %s",
@@ -252,8 +234,7 @@ class IniParser(object):
     def _validate_unknown_section(self, op_name, op_sec):
         """验证未知部分"""
         logging.error(
-            "Only opInfo, input[0-9], output[0-9] can be used as a key, "
-            "but op %s has the key %s",
+            "Only opInfo, input[0-9], output[0-9] can be used as a key, but op %s has the key %s",
             op_name,
             op_sec,
         )
@@ -295,8 +276,8 @@ class IniParser(object):
         if not self.custom_flag:
             for op_name in self.custom_ops_info:
                 del self.aicpu_ops_info[op_name]
-                
-                
+
+
 def main():
     """A Parser function for ini file."""
     parser = argparse.ArgumentParser(
@@ -305,9 +286,7 @@ def main():
         description="Parser ini info and check tool",
         add_help=True,
     )
-    parser.add_argument(
-        "-c", "--custom", action="store_true", help="Custom op compiled in"
-    )
+    parser.add_argument("-c", "--custom", action="store_true", help="Custom op compiled in")
     parser.add_argument("FILES", nargs="*", help=argparse.SUPPRESS)
     args = parser.parse_args()
     outfile_path = "tf_kernel.json"

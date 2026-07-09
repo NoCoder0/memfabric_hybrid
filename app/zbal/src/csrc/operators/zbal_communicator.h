@@ -123,8 +123,8 @@ public:
      *
      * @return 0 if successful
      */
-    virtual int32_t AllReduce(const void *send_buff, void *recv_buff, void *buffer, size_t count, zbal_datatype_t data_type,
-                              zbal_reduce_op_t op, aclrtStream stream) noexcept = 0;
+    virtual int32_t AllReduce(const void *send_buff, void *recv_buff, void *buffer, size_t count,
+                              zbal_datatype_t data_type, zbal_reduce_op_t op, aclrtStream stream) noexcept = 0;
 
     /**
      * @brief Do ReduceScatter operation

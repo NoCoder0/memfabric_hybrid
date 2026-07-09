@@ -49,10 +49,13 @@ def child_init(device_id: int, rank_id: int, world_size: int, url: str, nic: str
 
 def copy_data(bm_handle, rank_id: int, world_size: int, offset: int = 0):
     local_host_ptr = bm_handle.peer_rank_ptr(peer_rank=rank_id, mem_type=bm.BmMemType.HOST) + offset
-    remote_host_ptr = bm_handle.peer_rank_ptr(peer_rank=((rank_id + 1) % world_size),
-                                              mem_type=bm.BmMemType.HOST) + offset
-    logging.info(f'==================== get local:{rank_id} GVA:0x{local_host_ptr:X} '
-                 f'remote:{((rank_id + 1) % world_size)} GVA:0x{remote_host_ptr:X}')
+    remote_host_ptr = (
+        bm_handle.peer_rank_ptr(peer_rank=((rank_id + 1) % world_size), mem_type=bm.BmMemType.HOST) + offset
+    )
+    logging.info(
+        f'==================== get local:{rank_id} GVA:0x{local_host_ptr:X} '
+        f'remote:{((rank_id + 1) % world_size)} GVA:0x{remote_host_ptr:X}'
+    )
 
     local_host_ptrs = []
     remote_host_ptrs = []
@@ -73,19 +76,22 @@ def copy_data(bm_handle, rank_id: int, world_size: int, offset: int = 0):
         addr_offset += size
 
     # H2RG
-    result = bm_handle.copy_data_batch(src_addrs=src_ptrs, dst_addrs=remote_host_ptrs, sizes=sizes, count=count,
-                                       type=bm.BmCopyType.H2G, flags=0)
+    result = bm_handle.copy_data_batch(
+        src_addrs=src_ptrs, dst_addrs=remote_host_ptrs, sizes=sizes, count=count, type=bm.BmCopyType.H2G, flags=0
+    )
     assert result == 0, f"copy_data_batch H2RG failed: {result=}"
     # RG2G
-    result = bm_handle.copy_data_batch(src_addrs=remote_host_ptrs, dst_addrs=local_host_ptrs, sizes=sizes, count=count,
-                                       type=bm.BmCopyType.G2G, flags=0)
+    result = bm_handle.copy_data_batch(
+        src_addrs=remote_host_ptrs, dst_addrs=local_host_ptrs, sizes=sizes, count=count, type=bm.BmCopyType.G2G, flags=0
+    )
     assert result == 0, f"copy_data_batch RG2G failed: {result=}"
 
     # G2H
     dst_tensor = torch.empty([count, 1024], dtype=torch.int32)
     dst_ptrs = [dst_tensor[i].data_ptr() for i in range(count)]
-    result = bm_handle.copy_data_batch(src_addrs=local_host_ptrs, dst_addrs=dst_ptrs, sizes=sizes, count=count,
-                                       type=bm.BmCopyType.G2H, flags=0)
+    result = bm_handle.copy_data_batch(
+        src_addrs=local_host_ptrs, dst_addrs=dst_ptrs, sizes=sizes, count=count, type=bm.BmCopyType.G2H, flags=0
+    )
     assert result == 0, f"copy_data_batch H2RG failed: {result=}"
     logging.info("copy_data_batch success")
     if not torch.equal(src_tensor, dst_tensor):
@@ -94,18 +100,35 @@ def copy_data(bm_handle, rank_id: int, world_size: int, offset: int = 0):
     logging.info('==================== finished for copy data')
 
 
-def child_process(protocol: str, rank_id: int, device_id: int, local_ranks: int, world_size: int, url: str, nic,
-                  auto_ranking: bool, enable_56bits_gva: bool,
-                  barriers: List[multiprocessing.Barrier]):
-    ret = child_init(device_id=device_id, rank_id=rank_id, world_size=world_size, url=url, nic=nic,
-                     auto_ranking=auto_ranking)
+def child_process(
+    protocol: str,
+    rank_id: int,
+    device_id: int,
+    local_ranks: int,
+    world_size: int,
+    url: str,
+    nic,
+    auto_ranking: bool,
+    enable_56bits_gva: bool,
+    barriers: List[multiprocessing.Barrier],
+):
+    ret = child_init(
+        device_id=device_id, rank_id=rank_id, world_size=world_size, url=url, nic=nic, auto_ranking=auto_ranking
+    )
     if ret != 0:
         logging.error(f'child process rank: {rank_id}, world_size: {world_size} initialize failed: {ret}')
         return
 
     bm_protocol = get_bm_protocol(protocol)
-    bm_handle = bm.create2(id=0, local_dram_size=GVA_SIZE, max_dram_size=MAX_GVA_SIZE, local_hbm_size=0, max_hbm_size=0,
-                           data_op_type=bm_protocol, enable_56bits_gva=enable_56bits_gva)
+    bm_handle = bm.create2(
+        id=0,
+        local_dram_size=GVA_SIZE,
+        max_dram_size=MAX_GVA_SIZE,
+        local_hbm_size=0,
+        max_hbm_size=0,
+        data_op_type=bm_protocol,
+        enable_56bits_gva=enable_56bits_gva,
+    )
     bm_handle.join()
     logging.info('==================== waiting at bm create')
     barriers[0].wait()
@@ -159,7 +182,7 @@ def str_to_bool(v):
 """
 cd example/bm/BmPython
 
-1. device_rdma: 
+1. device_rdma:
 python3 02_extend_local_mem.py \
         --world_size 8 \
         --local_ranks 8 \
@@ -167,7 +190,7 @@ python3 02_extend_local_mem.py \
         --protocol device_rdma \
         --url tcp://127.0.0.1:7432 \
 
-2. device_sdma: 
+2. device_sdma:
 python3 02_extend_local_mem.py \
         --world_size 8 \
         --local_ranks 8 \
@@ -179,47 +202,78 @@ python3 02_extend_local_mem.py \
 
 def main_process():
     parser = argparse.ArgumentParser(description='Example for BigMemory in SMEM.')
-    parser.add_argument('--protocol', type=str, help='Protocol for memfaric (default: device_rdma).',
-                        choices=['device_rdma', 'device_sdma', 'host_rdma', 'host_urma', 'host_tcp'],
-                        default='device_sdma', required=False)
-    parser.add_argument('--world_size', type=int,
-                        help='Number of devices used by the entire cluster.', required=False, default=8)
-    parser.add_argument('--local_ranks', type=int, help='Number of devices used on the local node.',
-                        required=False, default=8)
-    parser.add_argument('--rank_start', type=int, required=False, default=0,
-                        help='Start value of the rank ID of the node. The value range of the rank ID of the node is'
-                             ' [RANK_START, RANK_START + LOCAL_RANK_SIZE).')
-    parser.add_argument('--url', type=str,
-                        help='Listening IP address and port number of the configStore server, for example,'
-                             ' tcp://<ip>:<port>.',
-                        required=False, default='tcp://127.0.0.1:8570')
-    parser.add_argument('--nic', type=str,
-                        help='device port nic',
-                        required=False,
-                        default='127.0.0.1')
-    parser.add_argument('--auto_ranking', type=str_to_bool,
-                        help='If autorank is enabled, the BM automatically generates a global rank ID, which does '
-                             'not need to be specified. The default value is false.',
-                        default=False)
-    parser.add_argument('--enable_56bits_gva', type=str_to_bool,
-                        help='Explicitly enable 56-bit GVA. Must be true when '
-                             '(max_dram + max_hbm) * world_size > 32TB; memfabric_hybrid does not auto-enable it. '
-                             '(default: false)',
-                        default=False)
+    parser.add_argument(
+        '--protocol',
+        type=str,
+        help='Protocol for memfaric (default: device_rdma).',
+        choices=['device_rdma', 'device_sdma', 'host_rdma', 'host_urma', 'host_tcp'],
+        default='device_sdma',
+        required=False,
+    )
+    parser.add_argument(
+        '--world_size', type=int, help='Number of devices used by the entire cluster.', required=False, default=8
+    )
+    parser.add_argument(
+        '--local_ranks', type=int, help='Number of devices used on the local node.', required=False, default=8
+    )
+    parser.add_argument(
+        '--rank_start',
+        type=int,
+        required=False,
+        default=0,
+        help='Start value of the rank ID of the node. The value range of the rank ID of the node is'
+        ' [RANK_START, RANK_START + LOCAL_RANK_SIZE).',
+    )
+    parser.add_argument(
+        '--url',
+        type=str,
+        help='Listening IP address and port number of the configStore server, for example, tcp://<ip>:<port>.',
+        required=False,
+        default='tcp://127.0.0.1:8570',
+    )
+    parser.add_argument('--nic', type=str, help='device port nic', required=False, default='127.0.0.1')
+    parser.add_argument(
+        '--auto_ranking',
+        type=str_to_bool,
+        help='If autorank is enabled, the BM automatically generates a global rank ID, which does '
+        'not need to be specified. The default value is false.',
+        default=False,
+    )
+    parser.add_argument(
+        '--enable_56bits_gva',
+        type=str_to_bool,
+        help='Explicitly enable 56-bit GVA. Must be true when '
+        '(max_dram + max_hbm) * world_size > 32TB; memfabric_hybrid does not auto-enable it. '
+        '(default: false)',
+        default=False,
+    )
 
     args = parser.parse_args()
     logging.info(
         f'example for BM, protocol:{args.protocol}, world_size:{args.world_size}, local_ranks:{args.local_ranks}, '
         f'rank_start:{args.rank_start}, url={args.url}, auto_ranking={args.auto_ranking}, '
-        f'enable_56bits_gva={args.enable_56bits_gva}')
+        f'enable_56bits_gva={args.enable_56bits_gva}'
+    )
 
     barriers = [multiprocessing.Barrier(args.local_ranks) for i in range(7)]
 
     children = []
     for i in range(0, args.local_ranks):
-        p = multiprocessing.Process(target=child_process,
-                                    args=(args.protocol, i, i + args.rank_start, args.local_ranks, args.world_size,
-                                          args.url, args.nic, args.auto_ranking, args.enable_56bits_gva, barriers))
+        p = multiprocessing.Process(
+            target=child_process,
+            args=(
+                args.protocol,
+                i,
+                i + args.rank_start,
+                args.local_ranks,
+                args.world_size,
+                args.url,
+                args.nic,
+                args.auto_ranking,
+                args.enable_56bits_gva,
+                barriers,
+            ),
+        )
         p.start()
         children.append(p)
 
@@ -230,7 +284,8 @@ def main_process():
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.DEBUG,
-                        format='%(process)d - %(asctime)s - %(levelname)s - %(message)s - %(lineno)d')
+    logging.basicConfig(
+        level=logging.DEBUG, format='%(process)d - %(asctime)s - %(levelname)s - %(message)s - %(lineno)d'
+    )
     set_log_level(1)  # info
     main_process()

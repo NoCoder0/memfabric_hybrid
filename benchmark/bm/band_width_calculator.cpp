@@ -38,7 +38,7 @@ static inline uint64_t TimeNs()
     __asm__ volatile("mrs %0, cntvct_el0" : "=r"(timeValue));
     return timeValue * 1000ULL / TICK_PER_US;
 #else
-    struct timespec ts{};
+    struct timespec ts {};
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1000000000UL + static_cast<uint64_t>(ts.tv_nsec);
 #endif
@@ -451,8 +451,8 @@ int32_t BandWidthCalculator::Execute(uint32_t deviceId, uint32_t rankId, uint32_
         testResults[i].devId = deviceId;
         testResults[i].rankId = rankId;
     }
-    ret = BandWidthCalculation(barrier, handle, rankId,
-                               GenRmtRankId(rankId, localRankNum, cmdParam_.worldRankSize), testResults);
+    ret = BandWidthCalculation(barrier, handle, rankId, GenRmtRankId(rankId, localRankNum, cmdParam_.worldRankSize),
+                               testResults);
     if (ret == 0) {
         SendResult(testResults, pipeFdWrite);
     }
@@ -465,16 +465,9 @@ int32_t BandWidthCalculator::BandWidthCalculation(BarrierUtil *barrier, smem_bm_
                                                   uint32_t remoteRankId, BwTestResult *results)
 {
     static const OptFunc OPT_FUNC_MAP[DIRECTION_TYPE_NUM_MAX] = {
-        &BandWidthCalculator::H2D,
-        &BandWidthCalculator::D2H,
-        &BandWidthCalculator::H2RD,
-        &BandWidthCalculator::H2RH,
-        &BandWidthCalculator::D2RD,
-        &BandWidthCalculator::D2RH,
-        &BandWidthCalculator::RH2D,
-        &BandWidthCalculator::RH2H,
-        &BandWidthCalculator::RD2D,
-        &BandWidthCalculator::RD2H,
+        &BandWidthCalculator::H2D,  &BandWidthCalculator::D2H,  &BandWidthCalculator::H2RD, &BandWidthCalculator::H2RH,
+        &BandWidthCalculator::D2RD, &BandWidthCalculator::D2RH, &BandWidthCalculator::RH2D, &BandWidthCalculator::RH2H,
+        &BandWidthCalculator::RD2D, &BandWidthCalculator::RD2H,
     };
     if (static_cast<int32_t>(cmdParam_.type) > DIRECTION_TYPE_NUM_MAX || static_cast<int32_t>(cmdParam_.type) < 0) {
         LOG_ERROR("copy type error" << static_cast<int32_t>(cmdParam_.type));
@@ -600,8 +593,8 @@ void BandWidthCalculator::BatchCopyGet(smem_bm_mem_type localMemType, smem_bm_me
     LOG_INFO(direction << " finished. rank: " << gvaRankId << ", flag:" << result.flag);
 }
 
-void BandWidthCalculator::H2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                              uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::H2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                              BwTestResult *results)
 {
     if (cmdParam_.opType == SMEMB_DATA_OP_HOST_RDMA) {
         LOG_WARN("H2D(LH2GD) not support in HOST_RDMA mode");
@@ -614,8 +607,8 @@ void BandWidthCalculator::H2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t r
     CHECK_RET_VOID(ret, "barrier failed after H2D, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::D2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                              uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::D2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                              BwTestResult *results)
 {
     BatchCopyPut(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_HOST, rankId, handle, CopyType::DEVICE_TO_HOST,
                  results[static_cast<int32_t>(CopyType::DEVICE_TO_HOST)]);
@@ -623,33 +616,31 @@ void BandWidthCalculator::D2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t r
     CHECK_RET_VOID(ret, "barrier failed after D2H, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::H2RD(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::H2RD(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
     if (cmdParam_.opType == SMEMB_DATA_OP_HOST_RDMA) {
         LOG_WARN("H2RD(LH2GD) not support in HOST_RDMA mode");
         barrier->Barrier();
         return;
     }
-    BatchCopyPut(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_DEVICE, remoteRankId, handle,
-                 CopyType::HOST_TO_REMOTE_DEVICE,
+    BatchCopyPut(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_DEVICE, remoteRankId, handle, CopyType::HOST_TO_REMOTE_DEVICE,
                  results[static_cast<int32_t>(CopyType::HOST_TO_REMOTE_DEVICE)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after H2RD, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::H2RH(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::H2RH(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
-    BatchCopyPut(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_HOST, remoteRankId, handle,
-                 CopyType::HOST_TO_REMOTE_HOST,
+    BatchCopyPut(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_HOST, remoteRankId, handle, CopyType::HOST_TO_REMOTE_HOST,
                  results[static_cast<int32_t>(CopyType::HOST_TO_REMOTE_HOST)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after H2RH, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::D2RD(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::D2RD(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
     if (cmdParam_.opType == SMEMB_DATA_OP_HOST_RDMA) {
         LOG_WARN("D2RD(LD2GD) not support in HOST_RDMA mode");
@@ -657,44 +648,40 @@ void BandWidthCalculator::D2RD(BarrierUtil *barrier, smem_bm_t handle, uint32_t 
         return;
     }
     BatchCopyPut(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_DEVICE, remoteRankId, handle,
-                 CopyType::DEVICE_TO_REMOTE_DEVICE,
-                 results[static_cast<int32_t>(CopyType::DEVICE_TO_REMOTE_DEVICE)]);
+                 CopyType::DEVICE_TO_REMOTE_DEVICE, results[static_cast<int32_t>(CopyType::DEVICE_TO_REMOTE_DEVICE)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after D2RD, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::D2RH(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::D2RH(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
-    BatchCopyPut(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_HOST, remoteRankId, handle,
-                 CopyType::DEVICE_TO_REMOTE_HOST,
+    BatchCopyPut(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_HOST, remoteRankId, handle, CopyType::DEVICE_TO_REMOTE_HOST,
                  results[static_cast<int32_t>(CopyType::DEVICE_TO_REMOTE_HOST)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after D2RH, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::RH2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::RH2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
-    BatchCopyGet(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_HOST, remoteRankId, handle,
-                 CopyType::REMOTE_HOST_TO_DEVICE,
+    BatchCopyGet(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_HOST, remoteRankId, handle, CopyType::REMOTE_HOST_TO_DEVICE,
                  results[static_cast<int32_t>(CopyType::REMOTE_HOST_TO_DEVICE)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after RH2D, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::RH2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::RH2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
-    BatchCopyGet(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_HOST, remoteRankId, handle,
-                 CopyType::REMOTE_HOST_TO_HOST,
+    BatchCopyGet(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_HOST, remoteRankId, handle, CopyType::REMOTE_HOST_TO_HOST,
                  results[static_cast<int32_t>(CopyType::REMOTE_HOST_TO_HOST)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after RH2H, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::RD2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::RD2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
     if (cmdParam_.opType == SMEMB_DATA_OP_HOST_RDMA) {
         LOG_WARN("RD2D(GD2LD) not support in HOST_RDMA mode");
@@ -702,22 +689,20 @@ void BandWidthCalculator::RD2D(BarrierUtil *barrier, smem_bm_t handle, uint32_t 
         return;
     }
     BatchCopyGet(SMEM_MEM_TYPE_LOCAL_DEVICE, SMEM_MEM_TYPE_DEVICE, remoteRankId, handle,
-                 CopyType::REMOTE_DEVICE_TO_DEVICE,
-                 results[static_cast<int32_t>(CopyType::REMOTE_DEVICE_TO_DEVICE)]);
+                 CopyType::REMOTE_DEVICE_TO_DEVICE, results[static_cast<int32_t>(CopyType::REMOTE_DEVICE_TO_DEVICE)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after RD2D, ret:" << ret << " rank:" << rankId);
 }
 
-void BandWidthCalculator::RD2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId,
-                               uint32_t remoteRankId, BwTestResult *results)
+void BandWidthCalculator::RD2H(BarrierUtil *barrier, smem_bm_t handle, uint32_t rankId, uint32_t remoteRankId,
+                               BwTestResult *results)
 {
     if (cmdParam_.opType == SMEMB_DATA_OP_HOST_RDMA) {
         LOG_WARN("RD2H(GD2LH) not support in HOST_RDMA mode");
         barrier->Barrier();
         return;
     }
-    BatchCopyGet(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_DEVICE, remoteRankId, handle,
-                 CopyType::REMOTE_DEVICE_TO_HOST,
+    BatchCopyGet(SMEM_MEM_TYPE_LOCAL_HOST, SMEM_MEM_TYPE_DEVICE, remoteRankId, handle, CopyType::REMOTE_DEVICE_TO_HOST,
                  results[static_cast<int32_t>(CopyType::REMOTE_DEVICE_TO_HOST)]);
     auto ret = barrier->Barrier();
     CHECK_RET_VOID(ret, "barrier failed after RD2H, ret:" << ret << " rank:" << rankId);

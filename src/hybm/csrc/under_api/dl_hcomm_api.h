@@ -137,13 +137,13 @@ enum CommAddrType : int32_t {
  * @note 支持CommAddrType的扩展，地址最大长度36字节
  */
 struct CommAddr {
-    CommAddrType type;                   ///< 通信地址类别
+    CommAddrType type; ///< 通信地址类别
     union {
-        uint8_t raws[36];                ///< 通用数据
-        struct in_addr addr;             ///< IPv4地址结构
-        struct in6_addr addr6;           ///< IPv6地址结构
-        uint32_t id;                     ///< 标识
-        uint8_t eid[COMM_ADDR_EID_LEN];  ///< EID地址类型
+        uint8_t raws[36];               ///< 通用数据
+        struct in_addr addr;            ///< IPv4地址结构
+        struct in6_addr addr6;          ///< IPv6地址结构
+        uint32_t id;                    ///< 标识
+        uint8_t eid[COMM_ADDR_EID_LEN]; ///< EID地址类型
     };
 };
 
@@ -161,17 +161,17 @@ enum EndpointLocType : int32_t {
  * @note 支持EndpointLocType的扩展，最大60字节内容
  */
 struct EndpointLoc {
-    EndpointLocType locType;           ///< Endpoint的位置类别
+    EndpointLocType locType; ///< Endpoint的位置类别
     union {
-        uint8_t raws[60];              ///< 通用数据
+        uint8_t raws[60]; ///< 通用数据
         struct {
-            uint32_t devPhyId;         ///< 设备物理Id
-            uint32_t superDevId;       ///< 超节点deviceId
-            uint32_t serverIdx;        ///< Server的索引
-            uint32_t superPodIdx;      ///< 超节点位置索引
-        } device;                      ///< 当locType为DEVICE时使用
+            uint32_t devPhyId;    ///< 设备物理Id
+            uint32_t superDevId;  ///< 超节点deviceId
+            uint32_t serverIdx;   ///< Server的索引
+            uint32_t superPodIdx; ///< 超节点位置索引
+        } device;                 ///< 当locType为DEVICE时使用
         struct {
-            uint32_t id;               ///< 普通Id，当locType为HOST等时可能使用
+            uint32_t id; ///< 普通Id，当locType为HOST等时可能使用
         } host;
     };
 };
@@ -180,11 +180,11 @@ struct EndpointLoc {
  * @brief 通信设备端点描述结构体
  */
 struct EndpointDesc {
-    CommProtocol protocol;             ///< 通信协议
-    CommAddr commAddr;                 ///< 通信地址
-    EndpointLoc loc;                   ///< Endpoint的位置信息
+    CommProtocol protocol; ///< 通信协议
+    CommAddr commAddr;     ///< 通信地址
+    EndpointLoc loc;       ///< Endpoint的位置信息
     union {
-        uint8_t raws[52];              ///< 通用数据
+        uint8_t raws[52]; ///< 通用数据
     };
 };
 
@@ -224,10 +224,10 @@ struct HcommCommMem {
  * @brief 兼容Abi字段结构体
  */
 struct HcommAbiHeader {
-    uint32_t version{0};     ///< ABI版本号
-    uint32_t magicWord{0};   ///< 魔数
-    uint32_t size{0};        ///< 结构体大小
-    uint32_t reserved{0};    ///< 保留字段
+    uint32_t version{0};   ///< ABI版本号
+    uint32_t magicWord{0}; ///< 魔数
+    uint32_t size{0};      ///< 结构体大小
+    uint32_t reserved{0};  ///< 保留字段
 };
 
 using CommAbiHeader = HcommAbiHeader;
@@ -262,33 +262,33 @@ enum HcommSocketRole : int32_t {
  * @note 结构体末尾扩展需要自增版本号，并补充兼容处理逻辑。
  */
 struct HcommChannelDesc {
-    HcommAbiHeader header;             ///< ABI头部，包含版本等信息
-    EndpointDesc remoteEndpoint;       ///< 远端网络设备端侧描述
-    uint32_t notifyNum;                ///< channel上使用的通知消息数量
-    bool exchangeAllMems;              ///< true表示无需显式传入memHandles
-    HcommMemHandle *memHandles;        ///< 注册到通信域的待交换内存句柄
-    uint32_t memHandleNum;             ///< 待交换内存句柄数量
-    HcommSocket socket;                ///< 预创建socket句柄
-    HcommSocketRole role;              ///< 本端角色(SERVER或CLIENT)
-    uint16_t port;                     ///< 监听端口或目标端口
+    HcommAbiHeader header;       ///< ABI头部，包含版本等信息
+    EndpointDesc remoteEndpoint; ///< 远端网络设备端侧描述
+    uint32_t notifyNum;          ///< channel上使用的通知消息数量
+    bool exchangeAllMems;        ///< true表示无需显式传入memHandles
+    HcommMemHandle *memHandles;  ///< 注册到通信域的待交换内存句柄
+    uint32_t memHandleNum;       ///< 待交换内存句柄数量
+    HcommSocket socket;          ///< 预创建socket句柄
+    HcommSocketRole role;        ///< 本端角色(SERVER或CLIENT)
+    uint16_t port;               ///< 监听端口或目标端口
     union {
-        uint8_t raws[128];             ///< 通用缓存
+        uint8_t raws[128]; ///< 通用缓存
         struct {
-            uint32_t queueNum;         ///< QP数量
-            uint32_t retryCnt;         ///< 最大重传次数
-            uint32_t retryInterval;    ///< 重传间隔（ms）
-            uint8_t tc;                ///< 流量类别（QoS)
-            uint8_t sl;                ///< 服务等级（QoS)
-            uint32_t qpThreshold;      ///< 多QP场景下，每个QP最小数据量(B)
+            uint32_t queueNum;      ///< QP数量
+            uint32_t retryCnt;      ///< 最大重传次数
+            uint32_t retryInterval; ///< 重传间隔（ms）
+            uint8_t tc;             ///< 流量类别（QoS)
+            uint8_t sl;             ///< 服务等级（QoS)
+            uint32_t qpThreshold;   ///< 多QP场景下，每个QP最小数据量(B)
         } roceAttr;
         struct {
-            uint32_t qos;              ///< HCCS QoS
+            uint32_t qos; ///< HCCS QoS
         } hccsAttr;
         struct {
-            uint32_t sqDepth;          ///< UB队列深度，0表示使用默认值
+            uint32_t sqDepth; ///< UB队列深度，0表示使用默认值
         } ubAttr;
     };
-    uint32_t qos;                      ///< 通信域QoS，与协议解耦
+    uint32_t qos; ///< 通信域QoS，与协议解耦
 };
 
 enum HcommTransferType : int32_t {
@@ -461,8 +461,8 @@ static inline HcommResult EndpointDescInit(EndpointDesc *endpoint, uint32_t num)
  */
 static inline HcommResult CommLinkInit(CommLink *commLink, uint32_t linkNum)
 {
-    const HcommResult hcommEPointer = static_cast<HcommResult>(2);   // 对齐HCCL_E_PTR
-    const HcommResult hcommEInternal = static_cast<HcommResult>(4);   // 对齐HCCL_E_INTERNAL
+    const HcommResult hcommEPointer = static_cast<HcommResult>(2);  // 对齐HCCL_E_PTR
+    const HcommResult hcommEInternal = static_cast<HcommResult>(4); // 对齐HCCL_E_INTERNAL
 
     for (uint32_t idx = 0; idx < linkNum; ++idx) {
         if (commLink == nullptr) {
@@ -495,8 +495,8 @@ static inline HcommResult CommLinkInit(CommLink *commLink, uint32_t linkNum)
  */
 static inline HcommResult HcommChannelDescInit(HcommChannelDesc *channelDesc, uint32_t descNum)
 {
-    const HcommResult hcommEPointer = static_cast<HcommResult>(2);   // 对齐HCCL_E_PTR
-    const HcommResult hcommEInternal = static_cast<HcommResult>(4);   // 对齐HCCL_E_INTERNAL
+    const HcommResult hcommEPointer = static_cast<HcommResult>(2);  // 对齐HCCL_E_PTR
+    const HcommResult hcommEInternal = static_cast<HcommResult>(4); // 对齐HCCL_E_INTERNAL
 
     for (uint32_t idx = 0; idx < descNum; ++idx) {
         if (channelDesc == nullptr) {
@@ -716,7 +716,7 @@ public:
     }
 
     static inline int32_t HcommChannelUpdateMemInfo(HcommMemHandle *memHandles, uint32_t memHandleNum,
-                                                     ChannelHandle channel)
+                                                    ChannelHandle channel)
     {
         if (gHcommChannelUpdateMemInfo == nullptr) {
             return BM_UNDER_API_UNLOAD;

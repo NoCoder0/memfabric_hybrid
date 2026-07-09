@@ -13,7 +13,7 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 
-#define private public
+#define private   public
 #define protected public
 #include "hybm_dev_legacy_segment.h"
 #include "hybm_dev_user_legacy_segment.h"
@@ -26,12 +26,8 @@ using namespace ock::mf;
 
 class HybmDevSegmentTest : public testing::Test {
 public:
-    static void SetUpTestCase()
-    {
-    }
-    static void TearDownTestCase()
-    {
-    }
+    static void SetUpTestCase() {}
+    static void TearDownTestCase() {}
 
     void SetUp() override
     {
@@ -121,14 +117,8 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ReleaseSliceMemory_NotExist1
     auto validateRet = segment.ValidateOptions();
     EXPECT_EQ(validateRet, BM_OK);
 
-    auto unregisteredSlice = std::make_shared<ock::mf::MemSlice>(
-        99999,
-        HYBM_MEM_TYPE_DEVICE,
-        ock::mf::MEM_PT_TYPE_SVM,
-        0x10000000ULL,
-        0x20000000ULL,
-        4096ULL
-    );
+    auto unregisteredSlice = std::make_shared<ock::mf::MemSlice>(99999, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
+                                                                 0x10000000ULL, 0x20000000ULL, 4096ULL);
 
     auto ret = segment.ReleaseSliceMemory(unregisteredSlice);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
@@ -144,14 +134,8 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ReleaseSliceMemory_NotExist2
     ock::mf::HybmDevUserLegacySegment segment(options, 200);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
-    auto slice = std::make_shared<ock::mf::MemSlice>(
-        0xFFFF,
-        HYBM_MEM_TYPE_DEVICE,
-        ock::mf::MEM_PT_TYPE_SVM,
-        0x10000000ULL,
-        0x20000000ULL,
-        4096ULL
-    );
+    auto slice = std::make_shared<ock::mf::MemSlice>(0xFFFF, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
+                                                     0x10000000ULL, 0x20000000ULL, 4096ULL);
 
     auto ret = segment.ReleaseSliceMemory(slice);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
@@ -168,12 +152,12 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RollbackIpcMemory)
     auto validateRet = segment.ValidateOptions();
     EXPECT_EQ(validateRet, BM_OK);
 
-    void* addrs1[3] = {nullptr, nullptr, nullptr};
+    void *addrs1[3] = {nullptr, nullptr, nullptr};
     segment.RollbackIpcMemory(addrs1, 3);
 
-    void* dummy1 = reinterpret_cast<void*>(0x1000);
-    void* dummy2 = reinterpret_cast<void*>(0x2000);
-    void* addrs2[4] = {dummy1, nullptr, dummy2, nullptr};
+    void *dummy1 = reinterpret_cast<void *>(0x1000);
+    void *dummy2 = reinterpret_cast<void *>(0x2000);
+    void *addrs2[4] = {dummy1, nullptr, dummy2, nullptr};
     segment.RollbackIpcMemory(addrs2, 4);
 
     segment.RollbackIpcMemory(nullptr, 0);
@@ -192,7 +176,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_Empty)
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::vector<std::string> emptyInfos;
-    void* addrs[1] = {nullptr};
+    void *addrs[1] = {nullptr};
 
     auto ret = segment.Import(emptyInfos, addrs);
     EXPECT_EQ(ret, BM_OK);
@@ -217,9 +201,9 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_ValidSliceMagic)
     strncpy(exportInfo.name, "test", sizeof(exportInfo.name) - 1);
     exportInfo.name[sizeof(exportInfo.name) - 1] = '\0';
 
-    std::string infoStr(reinterpret_cast<const char*>(&exportInfo), sizeof(exportInfo));
+    std::string infoStr(reinterpret_cast<const char *>(&exportInfo), sizeof(exportInfo));
     std::vector<std::string> allExInfo = {infoStr};
-    void* addresses[1] = {nullptr};
+    void *addresses[1] = {nullptr};
 
     auto ret = segment.Import(allExInfo, addresses);
 
@@ -237,10 +221,10 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_InvalidMagic)
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::string badInfo(16, 'X');
-    *reinterpret_cast<uint64_t*>(badInfo.data()) = 0xBADBADBADBADULL;
+    *reinterpret_cast<uint64_t *>(badInfo.data()) = 0xBADBADBADBADULL;
 
     std::vector<std::string> infos = {badInfo};
-    void* addrs[1] = {nullptr};
+    void *addrs[1] = {nullptr};
 
     auto ret = segment.Import(infos, addrs);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
@@ -257,7 +241,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_AddressesNull)
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::string badInfo(16, 'X');
-    *reinterpret_cast<uint64_t*>(badInfo.data()) = 0xBADBADBADBADULL;
+    *reinterpret_cast<uint64_t *>(badInfo.data()) = 0xBADBADBADBADULL;
 
     std::vector<std::string> infos = {badInfo};
 
@@ -313,22 +297,15 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_SingleSliceN
     const uint64_t vAddress = 0x20000000ULL;
     const std::string sliceName = "slice_5_100";
 
-    auto remoteSlice = std::make_shared<ock::mf::MemSlice>(
-        sliceIndex,
-        HYBM_MEM_TYPE_DEVICE,
-        ock::mf::MEM_PT_TYPE_SVM,
-        gva,
-        vAddress,
-        4096ULL
-    );
+    auto remoteSlice = std::make_shared<ock::mf::MemSlice>(sliceIndex, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
+                                                           gva, vAddress, 4096ULL);
 
     segment.rankToRemoteSlices_[rankId].assign({remoteSlice});
 
-    void* addrKey = reinterpret_cast<void*>(static_cast<uintptr_t>(vAddress));
+    void *addrKey = reinterpret_cast<void *>(static_cast<uintptr_t>(vAddress));
     segment.registerAddrs_.insert(addrKey);
 
-    segment.remoteSlices_[static_cast<uint16_t>(sliceIndex)] =
-        ock::mf::RegisterSlice(remoteSlice, sliceName);
+    segment.remoteSlices_[static_cast<uint16_t>(sliceIndex)] = ock::mf::RegisterSlice(remoteSlice, sliceName);
 
     ock::mf::UserHbmExportSliceInfo exportInfo{};
     exportInfo.magic = ock::mf::HBM_SLICE_EXPORT_INFO_MAGIC;
@@ -420,7 +397,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_InvalidLogi
     deviceInfo.sdid = 123;
     deviceInfo.pid = 456;
 
-    std::string info(reinterpret_cast<const char*>(&deviceInfo), sizeof(deviceInfo));
+    std::string info(reinterpret_cast<const char *>(&deviceInfo), sizeof(deviceInfo));
     auto ret = segment.ImportDeviceInfo(info);
     EXPECT_EQ(ret, BM_ERROR);
 }
@@ -448,12 +425,12 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_SuccessNoP2
     deviceInfo.sdid = 123;
     deviceInfo.pid = 456;
 
-    std::string info(reinterpret_cast<const char*>(&deviceInfo), sizeof(deviceInfo));
+    std::string info(reinterpret_cast<const char *>(&deviceInfo), sizeof(deviceInfo));
     auto ret = segment.ImportDeviceInfo(info);
     EXPECT_EQ(ret, BM_OK);
 
     EXPECT_TRUE(segment.importedDeviceInfo_.count(10) > 0);
-    const auto& stored = segment.importedDeviceInfo_.at(10);
+    const auto &stored = segment.importedDeviceInfo_.at(10);
     EXPECT_EQ(stored.logicDeviceId, localDeviceId);
     EXPECT_EQ(stored.rankId, 10U);
 }
@@ -493,7 +470,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_InvalidLogic
     sliceInfo.size = 4096;
     strncpy(sliceInfo.name, "test_slice", sizeof(sliceInfo.name) - 1);
 
-    std::string info(reinterpret_cast<const char*>(&sliceInfo), sizeof(sliceInfo));
+    std::string info(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     ock::mf::MemSlicePtr remoteSlice;
     auto ret = segment.ImportSliceInfo(info, remoteSlice);
     EXPECT_EQ(ret, BM_ERROR);
@@ -518,7 +495,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_SuccessNoHar
     sliceInfo.size = 4096;
     strncpy(sliceInfo.name, "slice_10_5", sizeof(sliceInfo.name) - 1);
 
-    std::string info(reinterpret_cast<const char*>(&sliceInfo), sizeof(sliceInfo));
+    std::string info(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     ock::mf::MemSlicePtr remoteSlice;
     auto ret = segment.ImportSliceInfo(info, remoteSlice);
     EXPECT_EQ(ret, BM_OK);
@@ -540,7 +517,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_SuccessNoHar
     EXPECT_EQ(segment.remoteSlices_.at(0).slice, remoteSlice);
 
     EXPECT_EQ(segment.importedSliceInfo_.count("slice_10_5"), 1U);
-    const auto& stored = segment.importedSliceInfo_.at("slice_10_5");
+    const auto &stored = segment.importedSliceInfo_.at("slice_10_5");
     EXPECT_EQ(stored.gvaOffset, sliceInfo.gvaOffset);
     EXPECT_EQ(stored.rankId, 10U);
 }

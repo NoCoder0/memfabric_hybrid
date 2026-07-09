@@ -36,8 +36,8 @@ public:
     ZBAL_KERNEL DispatchLayout() {};
 
     ZBAL_KERNEL void Init(GM_ADDR topkIdx, uint32_t numTokens, uint32_t numExperts, uint32_t numTopk, uint32_t numRanks,
-                          uint32_t rank, GM_ADDR numTokensPerRank, GM_ADDR numTokensPerExpert,
-                          GM_ADDR sendTokenIdx, GM_ADDR blockExpertCumsum, TPipe *pipe)
+                          uint32_t rank, GM_ADDR numTokensPerRank, GM_ADDR numTokensPerExpert, GM_ADDR sendTokenIdx,
+                          GM_ADDR blockExpertCumsum, TPipe *pipe)
     {
 #if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         numTokens_ = numTokens;
@@ -60,11 +60,11 @@ public:
         if (blockIdx_ < restNum) {
             tempTokens_++;
         }
-        topkIdx32AlignIntLen_ = Ceil(tempTokens_ * numTopk_ * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;   // 32
-        topkIdx64AlignIntLen_ = Ceil(tempTokens_ * numTopk_ * sizeof(int64_t), UB_ALIGN) * UB_ALIGN;   // 64
-        numTokensPerRank32AlignIntLen_ = Ceil(numRanks_ * sizeof(T), UB_ALIGN) * UB_ALIGN;             // 32
-        numTokensPerExpert32AlignIntLen_ = Ceil(numExperts_ * sizeof(T), UB_ALIGN) * UB_ALIGN;         // 128
-        int64_t topkIdxOffset; // 0, 64, 128, ...
+        topkIdx32AlignIntLen_ = Ceil(tempTokens_ * numTopk_ * sizeof(int32_t), UB_ALIGN) * UB_ALIGN; // 32
+        topkIdx64AlignIntLen_ = Ceil(tempTokens_ * numTopk_ * sizeof(int64_t), UB_ALIGN) * UB_ALIGN; // 64
+        numTokensPerRank32AlignIntLen_ = Ceil(numRanks_ * sizeof(T), UB_ALIGN) * UB_ALIGN;           // 32
+        numTokensPerExpert32AlignIntLen_ = Ceil(numExperts_ * sizeof(T), UB_ALIGN) * UB_ALIGN;       // 128
+        int64_t topkIdxOffset;                                                                       // 0, 64, 128, ...
         if (blockIdx_ < restNum) {
             topkIdxOffset = blockIdx_ * tempTokens_ * numTopk_ * sizeof(int64_t);
         } else {
@@ -85,7 +85,7 @@ public:
         DataCopyExtParams expCopyParams{1U, static_cast<uint32_t>(numExperts_ * sizeof(T)), 0U, 0U, 0U};
         DataCopyPad(numTokensPerExpertGM_, zerosLt, expCopyParams);
         DataCopyExtParams multiExpCopyParams{static_cast<uint16_t>(maxAivNum),
-            static_cast<uint32_t>(numExperts_ * sizeof(T)), 0U, 0U, 0U};
+                                             static_cast<uint32_t>(numExperts_ * sizeof(T)), 0U, 0U, 0U};
         for (int i = 0; i < static_cast<int>(maxAivNum); ++i) { // reset blockExpertCumsumGM_ 所有区域
             DataCopyPad(blockExpertCumsumGM_[i * numExperts_], zerosLt, expCopyParams);
         }

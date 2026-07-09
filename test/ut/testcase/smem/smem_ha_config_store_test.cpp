@@ -694,9 +694,7 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerGetStatusChecksBackend)
     EXPECT_TRUE(server.GetStatus());
 
     // getHook returns something else → GetStatus returns false after retries.
-    fb->getHook = [](const std::string &, std::vector<uint8_t> &) {
-        return StoreErrorCode::NOT_EXIST;
-    };
+    fb->getHook = [](const std::string &, std::vector<uint8_t> &) { return StoreErrorCode::NOT_EXIST; };
     EXPECT_FALSE(server.GetStatus());
 }
 
@@ -810,9 +808,7 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerRecoverAliveRankIdsHandlesEmptyAndMi
     EXPECT_TRUE(recovered.empty()) << "empty backend string yields empty result";
 
     // Missing key in backend → recover returns empty set.
-    fb->getHook = [](const std::string &, std::vector<uint8_t> &) {
-        return StoreErrorCode::NOT_EXIST;
-    };
+    fb->getHook = [](const std::string &, std::vector<uint8_t> &) { return StoreErrorCode::NOT_EXIST; };
     recovered = {99};
     EXPECT_EQ(StoreErrorCode::SUCCESS, server.RecoverAliveRankIds(recovered));
     EXPECT_TRUE(recovered.empty()) << "missing key yields empty result";

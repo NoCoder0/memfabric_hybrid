@@ -3641,7 +3641,7 @@ public:
 
 DirectMemoryAllocator caching_allocator;
 
-NPUAllocator& getCachingAllocator()
+NPUAllocator &getCachingAllocator()
 {
     return caching_allocator;
 }

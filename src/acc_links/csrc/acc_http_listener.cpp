@@ -61,8 +61,8 @@ void AccHttpListener::ProcessNewConnection(int fd, struct sockaddr_in addressIn)
         newLink = AccConvert<AccHttpLinkDefault, AccTcpLinkDefault>(AccMakeRef<AccHttpLinkDefault>(fd, ipPort, ssl));
     }
     if (newLink == nullptr) {
-        LOG_ERROR("Failed to create listener http link object, probably out of memory, fd=" << fd <<
-            ", ipPort=" << ipPort);
+        LOG_ERROR("Failed to create listener http link object, probably out of memory, fd=" << fd
+                                                                                            << ", ipPort=" << ipPort);
         if (ssl != nullptr) {
             if (AccCommonUtil::SslShutdownHelper(ssl) != ACC_OK) {
                 LOG_ERROR("shut down ssl failed!");

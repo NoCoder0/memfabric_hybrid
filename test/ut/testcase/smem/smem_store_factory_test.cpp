@@ -175,11 +175,15 @@ void ResetFakeExternalBackend()
 
 TEST_F(SmemStoreFactoryTest, create_store_success)
 {
-    MOCKER_CPP(&ock::smem::SmemLocalMemoryBackend::Initialize,
-        int32_t (*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &,
-        const std::string &)).stubs().will(returnValue(0));
+    MOCKER_CPP(
+        &ock::smem::SmemLocalMemoryBackend::Initialize,
+        int32_t(*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &, const std::string &))
+        .stubs()
+        .will(returnValue(0));
     MOCKER_CPP(&ock::smem::TcpConfigStore::Startup,
-        int32_t (*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int)).stubs().will(returnValue(0));
+               int32_t(*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int))
+        .stubs()
+        .will(returnValue(0));
     std::string ip = "127.0.0.1";
     uint16_t port = 16888;
     auto tcpStore = ock::smem::StoreFactory::CreateStore(ip, port, ConfigStoreModel::CSM_BOTH, 1, 0);
@@ -192,12 +196,16 @@ TEST_F(SmemStoreFactoryTest, create_store_success)
 TEST_F(SmemStoreFactoryTest, create_store_failed)
 {
     int32_t targetErr = -2009;
-    MOCKER_CPP(&ock::smem::SmemLocalMemoryBackend::Initialize,
-        int32_t (*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &,
-        const std::string &)).stubs().will(returnValue(0));
+    MOCKER_CPP(
+        &ock::smem::SmemLocalMemoryBackend::Initialize,
+        int32_t(*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &, const std::string &))
+        .stubs()
+        .will(returnValue(0));
     MOCKER_CPP(&ock::smem::TcpConfigStore::Startup,
-        int32_t (*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int))
-        .stubs().will(returnValue(targetErr)).then(returnValue(-1));
+               int32_t(*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int))
+        .stubs()
+        .will(returnValue(targetErr))
+        .then(returnValue(-1));
     std::string ip = "127.0.0.1";
     uint16_t port = 16888;
     auto tcpStore = ock::smem::StoreFactory::CreateStore(ip, port, ConfigStoreModel::CSM_BOTH, 1, 0);
@@ -209,12 +217,16 @@ TEST_F(SmemStoreFactoryTest, create_store_failed)
 TEST_F(SmemStoreFactoryTest, create_store_by_url_tcp_failed)
 {
     int32_t targetErr = -2009;
-    MOCKER_CPP(&ock::smem::SmemLocalMemoryBackend::Initialize,
-        int32_t (*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &,
-        const std::string &)).stubs().will(returnValue(0));
+    MOCKER_CPP(
+        &ock::smem::SmemLocalMemoryBackend::Initialize,
+        int32_t(*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &, const std::string &))
+        .stubs()
+        .will(returnValue(0));
     MOCKER_CPP(&ock::smem::TcpConfigStore::Startup,
-        int32_t (*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int))
-        .stubs().will(returnValue(targetErr)).then(returnValue(-1));
+               int32_t(*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int))
+        .stubs()
+        .will(returnValue(targetErr))
+        .then(returnValue(-1));
     std::string url = "tcp://127.0.0.1:16888";
     auto tcpStore = ock::smem::StoreFactory::CreateStoreByUrl(url, ock::smem::ConfigStoreModel::CSM_BOTH, 1, 0);
     ASSERT_EQ(true, (tcpStore == nullptr));
@@ -224,11 +236,15 @@ TEST_F(SmemStoreFactoryTest, create_store_by_url_tcp_failed)
 
 TEST_F(SmemStoreFactoryTest, destroy_all_store)
 {
-    MOCKER_CPP(&ock::smem::SmemLocalMemoryBackend::Initialize,
-        int32_t (*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &,
-        const std::string &)).stubs().will(returnValue(0));
+    MOCKER_CPP(
+        &ock::smem::SmemLocalMemoryBackend::Initialize,
+        int32_t(*)(ock::smem::SmemLocalMemoryBackend *, const std::string &, const std::string &, const std::string &))
+        .stubs()
+        .will(returnValue(0));
     MOCKER_CPP(&ock::smem::TcpConfigStore::Startup,
-        int32_t (*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int)).stubs().will(returnValue(0));
+               int32_t(*)(ock::smem::TcpConfigStore *, const smem_tls_config &, int))
+        .stubs()
+        .will(returnValue(0));
     std::string ip = "127.0.0.1";
     uint16_t port = 17888;
     auto tcpStore = ock::smem::StoreFactory::CreateStore(ip, port, ConfigStoreModel::CSM_BOTH, 1, 0);

@@ -10,9 +10,7 @@ from zbal import switch_to_allocator, init_shmem, record_memory_history, dump_sn
 
 def train(num_iter=500, device="npu"):
     """a tiny transformer training process"""
-    model = nn.Transformer(
-        d_model=512, nhead=2, num_encoder_layers=2, num_decoder_layers=2
-    ).to(device=device)
+    model = nn.Transformer(d_model=512, nhead=2, num_encoder_layers=2, num_decoder_layers=2).to(device=device)
     x = torch.randn(size=(1, 1024, 512), device=device)
     tgt = torch.rand(size=(1, 1024, 512), device=device)
     model.train()
@@ -76,24 +74,27 @@ def subprocess_capture_snapshot(device_id, local_mem_size, meta_size, conn):
 
 if __name__ == '__main__':
     device_id = 0
-    local_mem_size = 10 * (1024 ** 3)
-    meta_size = 1024 ** 3
+    local_mem_size = 10 * (1024**3)
+    meta_size = 1024**3
     parent_conn, child_conn = multiprocessing.Pipe()
 
-    p = multiprocessing.Process(target=subprocess_capture_snapshot,
-                                args=(device_id, local_mem_size, meta_size, child_conn))
+    p = multiprocessing.Process(
+        target=subprocess_capture_snapshot, args=(device_id, local_mem_size, meta_size, child_conn)
+    )
     p.start()
     captured_snapshot = parent_conn.recv()
     p.join()
 
     ori_snapshot = captured_snapshot
     from snapshot_utils import replay_snapshot
+
     replayed_snapshot = replay_snapshot(ori_snapshot, device_id, local_mem_size - meta_size)
 
     ori_device_traces = ori_snapshot['device_traces'][device_id]
     replayed_device_traces = replayed_snapshot['device_traces'][0]
 
     from snapshot_utils import MemoryAllocatorSimulator
+
     ori_simulator = MemoryAllocatorSimulator(gva_size=local_mem_size - meta_size)
     replayed_simulator = MemoryAllocatorSimulator(gva_size=local_mem_size - meta_size)
 
@@ -106,7 +107,7 @@ if __name__ == '__main__':
 
     free_blocks = ori_simulator.get_free_blocks()
     free_block_sizes = [block.size for block in free_blocks]
-    print(f'free blocks total size: {sum(free_block_sizes) / (1024 ** 2)} MB')
+    print(f'free blocks total size: {sum(free_block_sizes) / (1024**2)} MB')
 
     free_spaces = ori_simulator.get_free_space()
-    print(f'free space total size: {sum(free_spaces) / (1024 ** 2)} MB')
+    print(f'free space total size: {sum(free_spaces) / (1024**2)} MB')

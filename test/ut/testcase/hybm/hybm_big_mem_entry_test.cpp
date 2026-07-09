@@ -22,12 +22,8 @@
 
 class HybmBigMemEntryTest : public testing::Test {
 public:
-    static void SetUpTestCase()
-    {
-    }
-    static void TearDownTestCase()
-    {
-    }
+    static void SetUpTestCase() {}
+    static void TearDownTestCase() {}
 
     void SetUp() override
     {
@@ -43,15 +39,11 @@ public:
 
 class MemEntityStub : public ock::mf::MemEntityDefault {
 public:
-    explicit MemEntityStub(int32_t id) noexcept : MemEntityDefault(id)
-    {
-    }
-    ~MemEntityStub() override
-    {
-    }
+    explicit MemEntityStub(int32_t id) noexcept : MemEntityDefault(id) {}
+    ~MemEntityStub() override {}
 
     // 覆盖所有纯虚接口，避免真正触发底层依赖
-    int32_t Initialize(const hybm_options* /* options */) noexcept override
+    int32_t Initialize(const hybm_options * /* options */) noexcept override
     {
         initCalled = true;
         return initRet;
@@ -74,14 +66,14 @@ public:
         return unreserveRet;
     }
 
-    void* GetReservedMemoryPtr(hybm_mem_type memType) noexcept override
+    void *GetReservedMemoryPtr(hybm_mem_type memType) noexcept override
     {
         lastMemType = memType;
         return reservedPtr;
     }
 
     int32_t AllocLocalMemory(uint64_t size, hybm_mem_type mType, uint32_t flags,
-                             hybm_mem_slice_t& slice) noexcept override
+                             hybm_mem_slice_t &slice) noexcept override
     {
         allocCalled = true;
         allocSize = size;
@@ -91,8 +83,8 @@ public:
         return allocRet;
     }
 
-    int32_t RegisterLocalMemory(const void* ptr, uint64_t size, uint32_t flags,
-                                hybm_mem_slice_t& slice) noexcept override
+    int32_t RegisterLocalMemory(const void *ptr, uint64_t size, uint32_t flags,
+                                hybm_mem_slice_t &slice) noexcept override
     {
         regCalled = true;
         regPtr = ptr;
@@ -110,14 +102,14 @@ public:
         return freeRet;
     }
 
-    int32_t ExportEntityExchangeInfo(ock::mf::ExchangeInfoWriter& /* desc */, uint32_t flags) noexcept override
+    int32_t ExportEntityExchangeInfo(ock::mf::ExchangeInfoWriter & /* desc */, uint32_t flags) noexcept override
     {
         exportEntityCalled = true;
         exportFlags = flags;
         return exportEntityRet;
     }
 
-    int32_t ExportSliceExchangeInfo(hybm_mem_slice_t slice, ock::mf::ExchangeInfoWriter& /* desc */,
+    int32_t ExportSliceExchangeInfo(hybm_mem_slice_t slice, ock::mf::ExchangeInfoWriter & /* desc */,
                                     uint32_t flags) noexcept override
     {
         exportSliceCalled = true;
@@ -126,7 +118,7 @@ public:
         return exportSliceRet;
     }
 
-    int32_t ImportSliceExchangeInfo(const ock::mf::ExchangeInfoReader desc[], uint32_t count, void* addresses[],
+    int32_t ImportSliceExchangeInfo(const ock::mf::ExchangeInfoReader desc[], uint32_t count, void *addresses[],
                                     uint32_t flags) noexcept override
     {
         importCalled = true;
@@ -147,14 +139,14 @@ public:
         return importEntityRet;
     }
 
-    int32_t RemoveImported(const std::vector<uint32_t>& ranks) noexcept override
+    int32_t RemoveImported(const std::vector<uint32_t> &ranks) noexcept override
     {
         removeImportedCalled = true;
         removedRanks = ranks;
         return removeImportedRet;
     }
 
-    int32_t SetExtraContext(const void* context, uint32_t size) noexcept override
+    int32_t SetExtraContext(const void *context, uint32_t size) noexcept override
     {
         extraCtxCalled = true;
         extraCtxPtr = context;
@@ -185,21 +177,21 @@ public:
         return reachTypes;
     }
 
-    bool CheckAddressInEntity(const void* ptr, uint64_t length) const noexcept override
+    bool CheckAddressInEntity(const void *ptr, uint64_t length) const noexcept override
     {
         (void)ptr;
         (void)length;
         return checkAddrResult;
     }
 
-    int32_t CopyData(hybm_copy_params& /* params */, hybm_data_copy_direction /* direction */, void* /* stream */,
+    int32_t CopyData(hybm_copy_params & /* params */, hybm_data_copy_direction /* direction */, void * /* stream */,
                      uint32_t /* flags */) noexcept override
     {
         return BM_OK;
     }
 
-    int32_t BatchCopyData(hybm_batch_copy_params& /* params */, hybm_data_copy_direction /* direction */,
-                          void* /* stream */, uint32_t /* flags */) noexcept override
+    int32_t BatchCopyData(hybm_batch_copy_params & /* params */, hybm_data_copy_direction /* direction */,
+                          void * /* stream */, uint32_t /* flags */) noexcept override
     {
         return BM_OK;
     }
@@ -221,7 +213,7 @@ public:
     bool unreserveCalled{false};
     int32_t unreserveRet{BM_OK};
 
-    void* reservedPtr{nullptr};
+    void *reservedPtr{nullptr};
     hybm_mem_type lastMemType{HYBM_MEM_TYPE_HOST};
 
     bool allocCalled{false};
@@ -232,7 +224,7 @@ public:
     int32_t allocRet{BM_OK};
 
     bool regCalled{false};
-    const void* regPtr{nullptr};
+    const void *regPtr{nullptr};
     uint64_t regSize{0};
     uint32_t regFlags{0};
     hybm_mem_slice_t regSlice{reinterpret_cast<hybm_mem_slice_t>(0x5678)};
@@ -255,14 +247,14 @@ public:
     int32_t exportSizeRet{BM_OK};
 
     bool importCalled{false};
-    const ock::mf::ExchangeInfoReader* importDesc{nullptr};
+    const ock::mf::ExchangeInfoReader *importDesc{nullptr};
     uint32_t importCount{0};
     uint32_t importFlags{0};
-    void** importAddresses{nullptr};
+    void **importAddresses{nullptr};
     int32_t importRet{BM_OK};
 
     bool importEntityCalled{false};
-    const ock::mf::ExchangeInfoReader* importEntityDesc{nullptr};
+    const ock::mf::ExchangeInfoReader *importEntityDesc{nullptr};
     uint32_t importEntityCount{0};
     uint32_t importEntityFlags{0};
     int32_t importEntityRet{BM_OK};
@@ -272,7 +264,7 @@ public:
     int32_t removeImportedRet{BM_OK};
 
     bool extraCtxCalled{false};
-    const void* extraCtxPtr{nullptr};
+    const void *extraCtxPtr{nullptr};
     uint32_t extraCtxSize{0};
     int32_t extraCtxRet{BM_OK};
 
@@ -305,7 +297,7 @@ TEST_F(HybmBigMemEntryTest, hybm_create_entity_factory_returns_null)
     // mock MemEntityFactory::GetOrCreateEngine 返回空
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(uint16_t, uint32_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, uint16_t, uint32_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, uint16_t, uint32_t);
     } u{};
     u.method = &ock::mf::MemEntityFactory::GetOrCreateEngine;
     MOCKER(u.func).stubs().will(returnValue(ock::mf::EngineImplPtr{}));
@@ -326,7 +318,7 @@ TEST_F(HybmBigMemEntryTest, hybm_create_entity_initialize_failed)
     // GetOrCreateEngine 返回 stub
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(uint16_t, uint32_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, uint16_t, uint32_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, uint16_t, uint32_t);
     } u{};
     u.method = &ock::mf::MemEntityFactory::GetOrCreateEngine;
     MOCKER(u.func).stubs().will(returnValue(std::static_pointer_cast<ock::mf::MemEntityDefault>(stub)));
@@ -334,7 +326,7 @@ TEST_F(HybmBigMemEntryTest, hybm_create_entity_initialize_failed)
     // RemoveEngine 也 stub 掉，防止真的访问 map
     union {
         bool (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        bool (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        bool (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } r{};
     r.method = &ock::mf::MemEntityFactory::RemoveEngine;
     MOCKER(r.func).stubs().will(returnValue(true));
@@ -353,7 +345,7 @@ TEST_F(HybmBigMemEntryTest, hybm_create_and_destroy_entity_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(uint16_t, uint32_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, uint16_t, uint32_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, uint16_t, uint32_t);
     } u{};
     u.method = &ock::mf::MemEntityFactory::GetOrCreateEngine;
 
@@ -361,14 +353,14 @@ TEST_F(HybmBigMemEntryTest, hybm_create_and_destroy_entity_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
     MOCKER(f.func).stubs().will(returnValue(std::static_pointer_cast<ock::mf::MemEntityDefault>(stub)));
 
     union {
         bool (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        bool (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        bool (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } r{};
     r.method = &ock::mf::MemEntityFactory::RemoveEngine;
     MOCKER(r.func).stubs().will(returnValue(true));
@@ -394,7 +386,7 @@ TEST_F(HybmBigMemEntryTest, hybm_reserve_mem_space_find_engine_null)
 {
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
     MOCKER(f.func).stubs().will(returnValue(ock::mf::EngineImplPtr{}));
@@ -411,7 +403,7 @@ TEST_F(HybmBigMemEntryTest, hybm_reserve_mem_space_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -430,7 +422,7 @@ TEST_F(HybmBigMemEntryTest, hybm_unreserve_mem_space_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -453,7 +445,7 @@ TEST_F(HybmBigMemEntryTest, hybm_get_memory_ptr_null_entity)
 TEST_F(HybmBigMemEntryTest, hybm_get_memory_ptr_success)
 {
     MemEntityStub stub(0);
-    stub.reservedPtr = reinterpret_cast<void*>(0xABC);
+    stub.reservedPtr = reinterpret_cast<void *>(0xABC);
 
     auto ptr = hybm_get_memory_ptr(reinterpret_cast<hybm_entity_t>(&stub), HYBM_MEM_TYPE_DEVICE);
     EXPECT_EQ(ptr, stub.reservedPtr);
@@ -475,7 +467,7 @@ TEST_F(HybmBigMemEntryTest, hybm_alloc_local_memory_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -497,7 +489,7 @@ TEST_F(HybmBigMemEntryTest, hybm_free_local_memory_invalid_params)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
     MOCKER(f.func).stubs().will(returnValue(ock::mf::EngineImplPtr{}));
@@ -514,7 +506,7 @@ TEST_F(HybmBigMemEntryTest, hybm_free_local_memory_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -536,7 +528,7 @@ TEST_F(HybmBigMemEntryTest, hybm_register_local_memory_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -559,7 +551,7 @@ TEST_F(HybmBigMemEntryTest, hybm_export_entity_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -579,7 +571,7 @@ TEST_F(HybmBigMemEntryTest, hybm_export_slice_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -601,14 +593,14 @@ TEST_F(HybmBigMemEntryTest, hybm_import_slices_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
     MOCKER(f.func).stubs().will(returnValue(std::static_pointer_cast<ock::mf::MemEntityDefault>(stub)));
 
     hybm_exchange_info infos[2]{};
-    void* addresses[2]{};
+    void *addresses[2]{};
     auto fakeEntity = reinterpret_cast<hybm_entity_t>(0x11);
     auto ret = hybm_import(fakeEntity, infos, 2, addresses, 0);
     EXPECT_EQ(ret, BM_OK);
@@ -623,7 +615,7 @@ TEST_F(HybmBigMemEntryTest, hybm_import_entity_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -645,7 +637,7 @@ TEST_F(HybmBigMemEntryTest, hybm_mmap_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -663,7 +655,7 @@ TEST_F(HybmBigMemEntryTest, hybm_unmap_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -683,7 +675,7 @@ TEST_F(HybmBigMemEntryTest, hybm_entity_reach_types_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -703,7 +695,7 @@ TEST_F(HybmBigMemEntryTest, hybm_remove_imported_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 
@@ -724,7 +716,7 @@ TEST_F(HybmBigMemEntryTest, hybm_set_extra_context_success)
 
     union {
         ock::mf::EngineImplPtr (ock::mf::MemEntityFactory::*method)(hybm_entity_t);
-        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory*, hybm_entity_t);
+        ock::mf::EngineImplPtr (*func)(ock::mf::MemEntityFactory *, hybm_entity_t);
     } f{};
     f.method = &ock::mf::MemEntityFactory::FindEngineByPtr;
 

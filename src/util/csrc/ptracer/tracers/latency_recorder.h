@@ -44,18 +44,12 @@ public:
      *   Creates all aggregators and window samplers. Does not start sampling yet.
      */
     explicit LatencyRecorder(time_t windowSec = DEFAULT_WINDOW_SIZE_SEC)
-        : windowSec_(windowSec),
-          avgWindow_(windowSec),
-          maxWindow_(windowSec),
-          pctWindow_(pctAgg_, windowSec),
+        : windowSec_(windowSec), avgWindow_(windowSec), maxWindow_(windowSec), pctWindow_(pctAgg_, windowSec),
           samplerStarted_(false)
-    {
-    }
+    {}
 
     /* Destructor: the shared sampler thread outlives each recorder; no explicit stop needed. */
-    ~LatencyRecorder()
-    {
-    }
+    ~LatencyRecorder() {}
 
     /* Record a latency value (us). Lock-free write path: TLS avg accumulation, TLS max
        update, TLS percentile sampling with occasional flush to global. */
@@ -65,11 +59,11 @@ public:
             return;
         }
         avgAgg_.GetTlsPtr()->Add(latencyUs);
-        int64_t* tlsMax = maxAgg_.GetTlsPtr();
+        int64_t *tlsMax = maxAgg_.GetTlsPtr();
         if (latencyUs > *tlsMax) {
             *tlsMax = latencyUs;
         }
-        TlsPercentile* tlsPct = pctAgg_.GetTlsPtr();
+        TlsPercentile *tlsPct = pctAgg_.GetTlsPtr();
         if (tlsPct->Full()) {
             pctAgg_.FlushTlsToGlobal(tlsPct);
         }
@@ -77,7 +71,7 @@ public:
     }
 
     /* operator<<: stream-style interface for recording latency values. */
-    LatencyRecorder& operator<<(int64_t latencyUs)
+    LatencyRecorder &operator<<(int64_t latencyUs)
     {
         Record(latencyUs);
         return *this;
@@ -89,7 +83,7 @@ public:
         if (samplerStarted_) {
             return;
         }
-        auto& st = SamplerThread::GetSharedInstance();
+        auto &st = SamplerThread::GetSharedInstance();
         st.AddSampler([this]() {
             AvgSample snap = avgAgg_.SnapshotAll();
             avgWindow_.TakeSnapshot(snap);
@@ -99,9 +93,7 @@ public:
             snap.maxVal = maxAgg_.SnapshotAndReset();
             maxWindow_.TakeSnapshot(snap);
         });
-        st.AddSampler([this]() {
-            pctWindow_.TakeSnapshot();
-        });
+        st.AddSampler([this]() { pctWindow_.TakeSnapshot(); });
         st.Start();
         samplerStarted_ = true;
     }
@@ -121,7 +113,7 @@ public:
     {
         auto samples = maxWindow_.GetSamplesInWindow(windowSec_);
         int64_t result = 0;
-        for (auto& s : samples) {
+        for (auto &s : samples) {
             if (s.data.maxVal > result) {
                 result = s.data.maxVal;
             }
@@ -138,7 +130,7 @@ public:
         TimedSample<AvgSample> result;
         if (avgWindow_.GetWindowDiff(&result) && result.data.count > 0 && result.timeUs > 0) {
             return static_cast<double>(result.data.count) * static_cast<double>(USEC_PER_SEC) /
-                static_cast<double>(result.timeUs);
+                   static_cast<double>(result.timeUs);
         }
         return 0.0;
     }
@@ -207,19 +199,19 @@ public:
     }
 
 private:
-    time_t windowSec_;                          /* window duration in seconds */
+    time_t windowSec_; /* window duration in seconds */
 
     /* Three TLS aggregators: avg, max, percentile */
-    TlsAvgAggregator avgAgg_;                   /* sum/count per thread, merged for average */
-    TlsMaxAggregator maxAgg_;                   /* per-thread max, merged for global max */
-    TlsPercentileAggregator pctAgg_;            /* per-thread percentile sampling */
+    TlsAvgAggregator avgAgg_;        /* sum/count per thread, merged for average */
+    TlsMaxAggregator maxAgg_;        /* per-thread max, merged for global max */
+    TlsPercentileAggregator pctAgg_; /* per-thread percentile sampling */
 
     /* Three window samplers storing timestamped snapshots */
-    WindowSampler<AvgSample> avgWindow_;        /* avg snapshot history for windowed avg/qps */
-    WindowSampler<MaxSample> maxWindow_;        /* max snapshot history for windowed max */
-    PercentileWindowSampler pctWindow_;         /* percentile snapshot history for windowed p99+ */
+    WindowSampler<AvgSample> avgWindow_; /* avg snapshot history for windowed avg/qps */
+    WindowSampler<MaxSample> maxWindow_; /* max snapshot history for windowed max */
+    PercentileWindowSampler pctWindow_;  /* percentile snapshot history for windowed p99+ */
 
-    bool samplerStarted_;                       /* flag to prevent double-start */
+    bool samplerStarted_; /* flag to prevent double-start */
 };
 
 } /* namespace mf */

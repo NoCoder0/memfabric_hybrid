@@ -204,7 +204,7 @@ void ParseCmdBw(int argc, char *argv[], BwTestParam &opts)
                 ExitWithError("missing value for " + arg);
             }
             opts.opType = ParseOpType(argv[++i]);
-        }  else if (arg == "-s" || arg == "--size") {
+        } else if (arg == "-s" || arg == "--size") {
             if (i + 1 >= argc) {
                 ExitWithError("missing value for " + arg);
             }

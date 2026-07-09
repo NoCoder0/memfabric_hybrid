@@ -37,7 +37,7 @@ Two major features:
 
 ## 🚀Quickstart
 
-- You can install ZBAL with command `pip install memfabric_zbal==[v1.1.0]` or with source code as doing following steps. 
+- You can install ZBAL with command `pip install memfabric_zbal==[v1.1.0]` or with source code as doing following steps.
 
 1. Install the dependency memfabric_hybrid package.
 

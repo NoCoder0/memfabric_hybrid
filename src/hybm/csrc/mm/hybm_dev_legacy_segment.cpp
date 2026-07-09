@@ -343,8 +343,7 @@ Result HybmDevLegacySegment::Import(const std::vector<std::string> &allExInfo, v
             continue;
         }
         for (auto &local : exportMap_) {
-            auto ret = DlAclApi::RtSetIpcMemorySuperPodPid(local.second.shmName, desInfos[i].sdid,
-                                                           &desInfos[i].pid, 1);
+            auto ret = DlAclApi::RtSetIpcMemorySuperPodPid(local.second.shmName, desInfos[i].sdid, &desInfos[i].pid, 1);
             if (ret != 0) {
                 BM_LOG_ERROR("enable white list for rank(" << desInfos[i].rankId << ") failed: " << ret
                                                            << ", local rank = " << options_.rankId
@@ -413,7 +412,7 @@ Result HybmDevLegacySegment::Unmap() noexcept
     for (auto gva : mappedGvaMem_) {
         auto deviceVa = HybmVaManager::GetInstance().TransformVa(gva, HVM_GVA, HVM_DVA);
         if (deviceVa > 0) {
-            (void) drv::HalGvaClose(deviceVa, 0);
+            (void)drv::HalGvaClose(deviceVa, 0);
         }
         HybmVaManager::GetInstance().RemoveOneVaInfo(gva);
     }
@@ -438,7 +437,7 @@ Result HybmDevLegacySegment::RemoveImported(const std::vector<uint32_t> &ranks) 
         while (it != mappedGvaMem_.end() && (*it) < gvaLocal + options_.maxSize) {
             auto deviceVa = HybmVaManager::GetInstance().TransformVa((*it), HVM_GVA, HVM_DVA);
             if (deviceVa > 0) {
-                (void) drv::HalGvaClose(deviceVa, 0);
+                (void)drv::HalGvaClose(deviceVa, 0);
             }
             HybmVaManager::GetInstance().RemoveOneVaInfo(deviceVa);
             it++;

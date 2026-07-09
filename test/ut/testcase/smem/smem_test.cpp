@@ -28,9 +28,7 @@ protected:
         SmLastError::GetAndClearCode(true);
     }
 
-    void TearDown() override
-    {
-    }
+    void TearDown() override {}
 };
 
 TEST_F(SmemTest, GetLastErrMsg_InitiallyEmpty)
@@ -54,19 +52,19 @@ TEST_F(SmemTest, GetAndClearLastErrMsg_InitiallyEmpty)
 TEST_F(SmemTest, SetLogLevel_Invalid_ReturnsError)
 {
     int32_t ret = smem_set_log_level(99); // 99
-    EXPECT_NE(ret, 0); // 0
+    EXPECT_NE(ret, 0);                    // 0
 }
 
 TEST_F(SmemTest, SetLogLevel_Valid_ReturnsOk)
 {
     int32_t ret = smem_set_log_level(0); // 0
-    EXPECT_EQ(ret, 0); // 0
+    EXPECT_EQ(ret, 0);                   // 0
 }
 
 TEST_F(SmemTest, SetConfStoreTls_ReturnsOk)
 {
     int32_t ret = smem_set_conf_store_tls(true, nullptr, 0); // 0
-    EXPECT_EQ(ret, 0); // 0
+    EXPECT_EQ(ret, 0);                                       // 0
 }
 
 TEST_F(SmemTest, SetExternLogger_NullFunc_ReturnsError)
@@ -78,7 +76,7 @@ TEST_F(SmemTest, SetExternLogger_NullFunc_ReturnsError)
 TEST_F(SmemTest, SetConfigStoreTlsKey_ReturnsOk)
 {
     int32_t ret = smem_set_config_store_tls_key(nullptr, 0, nullptr, 0, nullptr); // 0, 0
-    EXPECT_EQ(ret, 0); // 0
+    EXPECT_EQ(ret, 0);                                                            // 0
 }
 
 TEST_F(SmemTest, IsValidBackendOp_DefaultOp_ReturnsFalse)

@@ -73,8 +73,8 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
         BM_LOG_ERROR("HybmVaManager Initialize failed: " << ret);
         return nullptr;
     }
-    auto CONN_BASED_SEGMENT = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA
-                                | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_TCP;
+    auto CONN_BASED_SEGMENT =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_TCP;
     MemSegmentPtr tmpSeg;
     switch (options.segType) {
         case HYBM_MST_HBM:
@@ -125,8 +125,8 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
     } else {
         void *output = nullptr;
 #if defined(ASCEND_NPU)
-        const bool needDeviceVa = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA
-                                    | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
+        const bool needDeviceVa = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
+                                                          HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
         if (needDeviceVa) {
             ret = DlHalApi::HalHostRegister(const_cast<void *>(addr), size, HOST_MEM_MAP_DEV, logicDeviceId_, &output);
             if (ret != 0) {

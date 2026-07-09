@@ -183,4 +183,3 @@ TEST(PercentileSamplesTest, MergeFromSame_CombinesCounts)
     EXPECT_GE(p50, 10U);
     EXPECT_LE(p50, 40U);
 }
-

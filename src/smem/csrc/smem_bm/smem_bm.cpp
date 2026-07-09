@@ -128,9 +128,8 @@ SMEM_API uint32_t smem_bm_get_rank_id()
 static inline int32_t SmemBmDataOpCheck(smem_bm_data_op_type dataOpType)
 {
     constexpr uint32_t dataOpTypeMask = SMEMB_DATA_OP_SDMA | SMEMB_DATA_OP_HOST_RDMA | SMEMB_DATA_OP_HOST_URMA |
-                                        SMEMB_DATA_OP_HOST_TCP | SMEMB_DATA_OP_DEVICE_RDMA |
-                                        SMEMB_DATA_OP_DEVICE_URMA | SMEMB_DATA_OP_DEVICE_UBOE |
-                                        SMEMB_DATA_OP_HOST_SHM;
+                                        SMEMB_DATA_OP_HOST_TCP | SMEMB_DATA_OP_DEVICE_RDMA | SMEMB_DATA_OP_DEVICE_URMA |
+                                        SMEMB_DATA_OP_DEVICE_UBOE | SMEMB_DATA_OP_HOST_SHM;
     return (dataOpType & dataOpTypeMask) != 0;
 }
 
@@ -196,7 +195,7 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     const bool isHostShm = (option->dataOpType & SMEMB_DATA_OP_HOST_SHM) != 0;
     if (isHostShm && (option->localDRAMSize == 0 || option->localHBMSize != 0)) {
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-            "HOST_SHM op type only supports DRAM shared memory without HBM");
+                                       "HOST_SHM op type only supports DRAM shared memory without HBM");
         return SM_INVALID_PARAM;
     }
     constexpr uint32_t hostShmConflictMask = SMEMB_DATA_OP_SDMA | SMEMB_DATA_OP_HOST_RDMA | SMEMB_DATA_OP_HOST_URMA |
@@ -204,13 +203,12 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
                                              SMEMB_DATA_OP_DEVICE_URMA | SMEMB_DATA_OP_DEVICE_UBOE;
     if (isHostShm && (option->dataOpType & hostShmConflictMask) != 0) {
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-            "HOST_SHM op type does not support mixing with other data op types");
+                                       "HOST_SHM op type does not support mixing with other data op types");
         return SM_INVALID_PARAM;
     }
     auto ret = manager.CreateEntryById(id, entry);
     if (ret != 0 || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR_CODE(ret != 0 ? ret : SM_ERROR,
-            "create BM entity(" << id << ") failed: " << ret);
+        SM_LOG_AND_SET_LAST_ERROR_CODE(ret != 0 ? ret : SM_ERROR, "create BM entity(" << id << ") failed: " << ret);
         return ret != 0 ? ret : SM_ERROR;
     }
 
@@ -220,11 +218,10 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     options.bmDataOpType = SmemHybmHelper::TransHybmDataOpType(option->dataOpType);
 #if !defined(ASCEND_NPU)
     if ((options.bmDataOpType & HYBM_DOP_TYPE_SDMA) ||
-        (options.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
-                                 HYBM_DOP_TYPE_DEVICE_UBOE))) {
-        SM_LOG_AND_SET_LAST_ERROR_CODE(SM_ERROR,
-            "create BM entity(" << id << ") failed, invalid opType " << options.bmDataOpType
-                                 << " for non-cann based backend");
+        (options.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE))) {
+        SM_LOG_AND_SET_LAST_ERROR_CODE(SM_ERROR, "create BM entity(" << id << ") failed, invalid opType "
+                                                                     << options.bmDataOpType
+                                                                     << " for non-cann based backend");
         (void)manager.RemoveEntryByPtr(reinterpret_cast<uintptr_t>(entry.Get()));
         return SM_ERROR;
     }
@@ -244,10 +241,11 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
         (option->maxDramSize + option->maxHbmSize) * static_cast<uint64_t>(options.rankCount);
     if (!option->enable56BitsGva && totalAddrSpace > SMEM_56BITS_GVA_REQUIRED_THRESHOLD) {
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-            "total address space (" << totalAddrSpace << " B) exceeds 32TB but enable56BitsGva is false. "
-            << "Please set enable56BitsGva = true, "
-            << "maxDram=" << option->maxDramSize << ", maxHbm=" << option->maxHbmSize
-            << ", rankCount=" << options.rankCount);
+                                       "total address space ("
+                                           << totalAddrSpace << " B) exceeds 32TB but enable56BitsGva is false. "
+                                           << "Please set enable56BitsGva = true, "
+                                           << "maxDram=" << option->maxDramSize << ", maxHbm=" << option->maxHbmSize
+                                           << ", rankCount=" << options.rankCount);
         (void)manager.RemoveEntryByPtr(reinterpret_cast<uintptr_t>(entry.Get()));
         return SM_INVALID_PARAM;
     }
@@ -267,8 +265,7 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     std::copy_n(hcomTlsConfig.decrypterLibPath, SMEM_TLS_PATH_SIZE, options.tlsOption.decrypterLibPath);
 
     if (manager.GetHcomUrl().size() > 64u) {
-        SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-            "url size is " << manager.GetHcomUrl().size());
+        SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM, "url size is " << manager.GetHcomUrl().size());
         (void)manager.RemoveEntryByPtr(reinterpret_cast<uintptr_t>(entry.Get()));
         return SM_INVALID_PARAM;
     }

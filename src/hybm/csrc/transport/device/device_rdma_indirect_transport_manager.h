@@ -90,7 +90,7 @@ private:
         std::atomic<int> count{0};
         std::condition_variable cond;
         std::mutex mutex;
-        const pid_t threadId ;
+        const pid_t threadId;
         PendingRequestContext() : threadId{static_cast<pid_t>(syscall(SYS_gettid))} {}
     };
 
@@ -138,7 +138,7 @@ private:
     void AcceptLoop();             // 本端带外发送任务
     void AcceptNewConnection();
     int ConnectToRemote(const std::string &nic, uint32_t remoteRankId, uint32_t localRankId);
-    int InitListenerSocket(const std::string& nic);
+    int InitListenerSocket(const std::string &nic);
     void DecrementPendingCount(const std::shared_ptr<PendingRequestContext> &pendingContext);
     int BatchCopy(std::vector<void *> &srcAddrs, std::vector<void *> &dstAddrs, std::vector<uint64_t> &counts,
                   uint32_t direction, void *stream = nullptr);

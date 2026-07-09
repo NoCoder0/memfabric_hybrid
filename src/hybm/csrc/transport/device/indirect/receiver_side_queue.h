@@ -58,7 +58,7 @@ private:
     const uint32_t recvThreadCount_;
     const std::unordered_map<uint16_t, RecvPhProcess> phraseProcessors_;
 };
-}
+} // namespace device
 } // namespace transport
 } // namespace mf
 } // namespace ock

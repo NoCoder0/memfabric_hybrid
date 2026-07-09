@@ -120,8 +120,7 @@ SMEM_API int32_t smem_set_extern_alarm(void (*alarm)(uint16_t code, const char *
 SMEM_API int32_t smem_set_log_level(int level)
 {
     SM_VALIDATE_RETURN(ock::mf::OutLogger::ValidateLevel(level),
-                       "set log level failed, invalid param, level should be 0~4",
-                       ock::smem::SM_INVALID_PARAM);
+                       "set log level failed, invalid param, level should be 0~4", ock::smem::SM_INVALID_PARAM);
     return hybm_set_log_level(level);
 }
 

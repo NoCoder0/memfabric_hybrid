@@ -64,16 +64,16 @@ TEST_F(SmLastErrorTest, last_error_get_without_clear)
 {
     std::string str = "test1";
     SmLastError::Set(str);
-    
+
     const char *result1 = SmLastError::GetAndClear(false);
     ASSERT_EQ(std::string(result1) == str, true);
-    
+
     const char *result2 = SmLastError::GetAndClear(false);
     ASSERT_EQ(std::string(result2) == str, true);
-    
+
     const char *result3 = SmLastError::GetAndClear(true);
     ASSERT_EQ(std::string(result3) == str, true);
-    
+
     const char *result4 = SmLastError::GetAndClear(false);
     ASSERT_EQ(std::string(result4).empty(), true);
 }
@@ -82,10 +82,10 @@ TEST_F(SmLastErrorTest, last_error_get_with_clear)
 {
     std::string str = "test2";
     SmLastError::Set(str);
-    
+
     const char *result1 = SmLastError::GetAndClear(true);
     ASSERT_EQ(std::string(result1) == str, true);
-    
+
     const char *result2 = SmLastError::GetAndClear(false);
     ASSERT_EQ(std::string(result2).empty(), true);
 }
@@ -95,13 +95,13 @@ TEST_F(SmLastErrorTest, last_error_multiple_sets)
     std::string str1 = "error1";
     std::string str2 = "error2";
     std::string str3 = "error3";
-    
+
     SmLastError::Set(str1);
     ASSERT_EQ(std::string(SmLastError::GetAndClear(true)) == str1, true);
-    
+
     SmLastError::Set(str2);
     ASSERT_EQ(std::string(SmLastError::GetAndClear(true)) == str2, true);
-    
+
     SmLastError::Set(str3);
     ASSERT_EQ(std::string(SmLastError::GetAndClear(true)) == str3, true);
 }
@@ -194,4 +194,3 @@ TEST_F(SmLastErrorTest, last_error_clear_get_no_code)
     SmLastError::Set("after clear");
     ASSERT_EQ(std::string(SmLastError::GetAndClear(false)), "after clear");
 }
-

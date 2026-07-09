@@ -88,10 +88,14 @@ def parse_csv(filepath, keyword, exact_match=True):
         return None
     avg = sum(values) / len(values)
     # Debug: print count and first/last few values for verification
-    logger.info("parse_csv %s: %d rows, avg=%.2f, first=%s, last=%s",
-                keyword, len(values), avg,
-                str(values[:3]) if len(values) >= 3 else str(values),
-                str(values[-3:]) if len(values) >= 3 else str(values))
+    logger.info(
+        "parse_csv %s: %d rows, avg=%.2f, first=%s, last=%s",
+        keyword,
+        len(values),
+        avg,
+        str(values[:3]) if len(values) >= 3 else str(values),
+        str(values[-3:]) if len(values) >= 3 else str(values),
+    )
     return avg
 
 
@@ -170,15 +174,10 @@ def write_md_table(out, rows, columns, data, title, backend):
     widths = [max(len(row[i]) for row in table_rows) for i in range(ncols)]
 
     def fmt_row(row):
-        parts = [
-            row[0].ljust(widths[0]) if i == 0 else row[i].rjust(widths[i])
-            for i in range(ncols)
-        ]
+        parts = [row[0].ljust(widths[0]) if i == 0 else row[i].rjust(widths[i]) for i in range(ncols)]
         return "| " + " | ".join(parts) + " |"
 
-    sep = "|" + "|".join(
-        " " + "-" * w + " " for w in widths
-    ) + "|"
+    sep = "|" + "|".join(" " + "-" * w + " " for w in widths) + "|"
 
     out.write(f"### {title}\n\n")
     out.write(fmt_row(col_headers) + "\n")
@@ -258,8 +257,7 @@ def cmd_report(world_size=None):
             data = json.load(f)
 
     if not data:
-        logging.warning("No profiling data collected. "
-                        "Ensure ENABLE_PROFILING=1 and kernel_details.csv exist.")
+        logging.warning("No profiling data collected. Ensure ENABLE_PROFILING=1 and kernel_details.csv exist.")
     else:
         ws_suffix = f" world_size={world_size}" if world_size else ""
         ops_with_data = [op for op in ROWS if op in data]

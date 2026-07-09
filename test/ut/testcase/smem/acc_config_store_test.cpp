@@ -51,8 +51,8 @@ public:
     {
         if (g_client == nullptr || g_server == nullptr) {
             g_server = ock::smem::StoreFactory::CreateStore("0.0.0.0", g_testPort, ConfigStoreModel::CSM_BOTH, 2, 0);
-            g_client = ock::smem::StoreFactory::CreateStore("127.0.0.1", g_testPort,
-                                                            ConfigStoreModel::CSM_CLIENT, 2, 1);
+            g_client =
+                ock::smem::StoreFactory::CreateStore("127.0.0.1", g_testPort, ConfigStoreModel::CSM_CLIENT, 2, 1);
         }
     }
     void TearDown() override
@@ -267,7 +267,7 @@ TEST_F(AccConfigStoreTest, set_get_empty_key)
     std::string value = "empty_key_value";
     auto ret = g_client->Set(key, std::vector<uint8_t>(value.begin(), value.end()));
     ASSERT_EQ(StoreErrorCode::INVALID_KEY, ret);
-    
+
     std::vector<uint8_t> valueOut;
     ret = g_server->Get(key, valueOut);
     ASSERT_EQ(StoreErrorCode::INVALID_KEY, ret);
@@ -279,7 +279,7 @@ TEST_F(AccConfigStoreTest, set_get_empty_value)
     std::string value = "";
     auto ret = g_client->Set(key, std::vector<uint8_t>(value.begin(), value.end()));
     ASSERT_EQ(0, ret);
-    
+
     std::vector<uint8_t> valueOut;
     ret = g_server->Get(key, valueOut);
     ASSERT_EQ(0, ret);
@@ -292,7 +292,7 @@ TEST_F(AccConfigStoreTest, set_get_large_value)
     std::string value(64 * 1024, 'a'); // 64K
     auto ret = g_client->Set(key, std::vector<uint8_t>(value.begin(), value.end()));
     ASSERT_EQ(0, ret);
-    
+
     std::vector<uint8_t> valueOut;
     ret = g_server->Get(key, valueOut);
     ASSERT_EQ(0, ret);
@@ -306,7 +306,7 @@ TEST_F(AccConfigStoreTest, add_negative_value)
     auto ret = g_client->Add(key, -5, value);
     ASSERT_EQ(0, ret);
     ASSERT_EQ(-5L, value);
-    
+
     ret = g_server->Add(key, -3, value);
     ASSERT_EQ(0, ret);
     ASSERT_EQ(-8L, value);
@@ -345,14 +345,14 @@ TEST_F(AccConfigStoreTest, append_multiple_times)
     uint64_t size = 0;
     std::vector<std::string> values = {"a", "b", "c", "d", "e"};
     uint64_t expectedSize = 0;
-    
+
     for (const auto &val : values) {
         expectedSize += val.size();
         auto ret = g_client->Append(key, val, size);
         ASSERT_EQ(ock::smem::StoreErrorCode::SUCCESS, ret);
         ASSERT_EQ(expectedSize, size);
     }
-    
+
     std::string finalValue;
     auto ret = g_client->Get(key, finalValue, 0);
     ASSERT_EQ(ock::smem::StoreErrorCode::SUCCESS, ret);
@@ -369,12 +369,12 @@ TEST_F(AccConfigStoreTest, prefix_store_nested)
     std::string prefix2 = "/level2/";
     auto store1 = ock::smem::StoreFactory::PrefixStore(g_client, prefix1);
     auto store2 = ock::smem::StoreFactory::PrefixStore(store1, prefix2);
-    
+
     std::string key = "nested_key";
     std::string value = "nested_value";
     auto ret = g_server->Set(prefix1 + prefix2 + key, value);
     ASSERT_EQ(0, ret);
-    
+
     std::string getValue;
     ret = store2->Get(key, getValue, 0);
     ASSERT_EQ(0, ret);
@@ -385,35 +385,33 @@ TEST_F(AccConfigStoreTest, watch_multiple_keys)
 {
     std::string prefix = "/watch_multiple/";
     auto store = ock::smem::StoreFactory::PrefixStore(g_client, prefix);
-    
+
     uint32_t wid1;
     uint32_t wid2;
     std::string key1 = "key1";
     std::string key2 = "key2";
     std::string value1 = "value1";
     std::string value2 = "value2";
-    
+
     std::atomic<int> notifyCount1{0};
     std::atomic<int> notifyCount2{0};
-    
-    auto ret = store->Watch(key1, [&notifyCount1](int, const std::string &, const std::string &) {
-        notifyCount1.fetch_add(1);
-    }, wid1);
+
+    auto ret = store->Watch(
+        key1, [&notifyCount1](int, const std::string &, const std::string &) { notifyCount1.fetch_add(1); }, wid1);
     ASSERT_EQ(0, ret);
-    
-    ret = store->Watch(key2, [&notifyCount2](int, const std::string &, const std::string &) {
-        notifyCount2.fetch_add(1);
-    }, wid2);
+
+    ret = store->Watch(
+        key2, [&notifyCount2](int, const std::string &, const std::string &) { notifyCount2.fetch_add(1); }, wid2);
     ASSERT_EQ(0, ret);
-    
+
     ret = g_server->Set(prefix + key1, value1);
     ASSERT_EQ(0, ret);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
+
     ret = g_server->Set(prefix + key2, value2);
     ASSERT_EQ(0, ret);
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    
+
     EXPECT_GE(notifyCount1.load(), 1);
     EXPECT_GE(notifyCount2.load(), 1);
 }
@@ -422,7 +420,7 @@ TEST_F(AccConfigStoreTest, unwatch_invalid_id)
 {
     std::string prefix = "/unwatch_invalid/";
     auto store = ock::smem::StoreFactory::PrefixStore(g_client, prefix);
-    
+
     uint32_t invalidWid = 99999;
     auto ret = store->Unwatch(invalidWid);
     ASSERT_NE(0, ret);
@@ -432,7 +430,7 @@ TEST_F(AccConfigStoreTest, get_timeout_zero)
 {
     std::string key = "get_timeout_zero_key";
     std::vector<uint8_t> value;
-    
+
     auto ret = g_client->Get(key, value, 0);
     ASSERT_EQ(ock::smem::StoreErrorCode::NOT_EXIST, ret);
 }
@@ -443,7 +441,7 @@ TEST_F(AccConfigStoreTest, set_get_special_characters)
     std::string value = "!@#$%^&*()_+-=[]{}|;':\",./<>?";
     auto ret = g_client->Set(key, std::vector<uint8_t>(value.begin(), value.end()));
     ASSERT_EQ(0, ret);
-    
+
     std::vector<uint8_t> valueOut;
     ret = g_server->Get(key, valueOut);
     ASSERT_EQ(0, ret);
@@ -456,7 +454,7 @@ TEST_F(AccConfigStoreTest, set_get_binary_data)
     std::vector<uint8_t> value = {0x00, 0xFF, 0x80, 0x7F, 0x01, 0xFE};
     auto ret = g_client->Set(key, value);
     ASSERT_EQ(0, ret);
-    
+
     std::vector<uint8_t> valueOut;
     ret = g_server->Get(key, valueOut);
     ASSERT_EQ(0, ret);

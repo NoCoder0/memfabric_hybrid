@@ -13,12 +13,18 @@ def main():
     try:
         config = bm.BmConfig()
         # initialize the big memory pool.
-        assert bm.initialize(store_url="tcp://127.0.0.1:1234", world_size=1, device_id=0,
-                        config=config) == 0, "bm.initialize failed"
+        assert bm.initialize(store_url="tcp://127.0.0.1:1234", world_size=1, device_id=0, config=config) == 0, (
+            "bm.initialize failed"
+        )
         bm_status = True
         # register DRAM in the big memory pool.
-        bm_handle = bm.create2(id=0, local_dram_size=LOCAL_DRAM_SIZE, max_dram_size=LOCAL_DRAM_SIZE,
-                               data_op_type=bm.BmDataOpType.DEVICE_RDMA, enable_56bits_gva=False)
+        bm_handle = bm.create2(
+            id=0,
+            local_dram_size=LOCAL_DRAM_SIZE,
+            max_dram_size=LOCAL_DRAM_SIZE,
+            data_op_type=bm.BmDataOpType.DEVICE_RDMA,
+            enable_56bits_gva=False,
+        )
         # join the big memory pool.
         assert bm_handle.join() == 0, "bm_handle.join failed"
         for size, name in [(4096, "4KB"), (65536, "64KB"), (1048576, "1MB")]:
@@ -28,10 +34,18 @@ def main():
             src_tensor = torch.arange(size // 4, dtype=torch.int32).contiguous()
             dst_tensor = torch.empty([size // 4], dtype=torch.int32)
             # copy data from host to pool (H2G) and from pool to host (G2H)
-            assert bm_handle.copy_data(src_ptr=src_tensor.data_ptr(), dst_ptr=local_host_ptr,
-                                    size=size, type=bm.BmCopyType.H2G, flags=0) == 0, "copy_data H2G failed"
-            assert bm_handle.copy_data(src_ptr=local_host_ptr, dst_ptr=dst_tensor.data_ptr(),
-                                    size=size, type=bm.BmCopyType.G2H, flags=0) == 0, "copy_data G2H failed"
+            assert (
+                bm_handle.copy_data(
+                    src_ptr=src_tensor.data_ptr(), dst_ptr=local_host_ptr, size=size, type=bm.BmCopyType.H2G, flags=0
+                )
+                == 0
+            ), "copy_data H2G failed"
+            assert (
+                bm_handle.copy_data(
+                    src_ptr=local_host_ptr, dst_ptr=dst_tensor.data_ptr(), size=size, type=bm.BmCopyType.G2H, flags=0
+                )
+                == 0
+            ), "copy_data G2H failed"
             assert torch.equal(src_tensor, dst_tensor), f"Data verification FAILED for {name}"
         # leave the big memory pool.
         assert bm_handle.leave() == 0, "bm_handle.leave failed"

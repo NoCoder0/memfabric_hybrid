@@ -295,9 +295,7 @@ def copy_kind(src: BigMemoryBlock, dst: BigMemoryBlock):
     raise RuntimeError(f"invalid copy path: {src.tp} -> {dst.tp}")
 
 
-def copy_data(
-    src: BigMemoryBlock, dst: BigMemoryBlock, size: int, ctx: BigMemoryContext
-):
+def copy_data(src: BigMemoryBlock, dst: BigMemoryBlock, size: int, ctx: BigMemoryContext):
     kind = copy_kind(src, dst)
     size = min(size, src.size, dst.size)
     logging.info(f"copy {size} bytes from {src} to {dst}, {kind}")
@@ -312,9 +310,7 @@ class BigMemoryTest:
         self.end_barrier = multiprocessing.Barrier(2)
         pass
 
-    def make_mem(
-        self, tp: RankMemType, idx: int, ctx: BigMemoryContext
-    ) -> BigMemoryBlock:
+    def make_mem(self, tp: RankMemType, idx: int, ctx: BigMemoryContext) -> BigMemoryBlock:
         if tp == RankMemType(MemType.LH, RankType.LOCAL):
             tensor = create_tensor("cpu", COPY_SIZE)
             return BigMemoryBlock(tp, tensor.data_ptr(), COPY_SIZE, tensor)
@@ -363,9 +359,7 @@ class BigMemoryTest:
     def run_test(self, device_id: int):
         logging.info("test prepare start.")
         rank_id = self.test_rank_id
-        ctx = BigMemoryContext(
-            store_url=STORE_URL, device_id=device_id, rank_id=rank_id
-        )
+        ctx = BigMemoryContext(store_url=STORE_URL, device_id=device_id, rank_id=rank_id)
         ret = ctx.prepare()
         if ret != 0:
             logging.error(f"prepare failed: {ret=}")
@@ -381,19 +375,17 @@ class BigMemoryTest:
 
         try:
             for idx in range(REPEAT_TIMES):
-                iter_mark = f"[{idx+1}/{REPEAT_TIMES}]"
+                iter_mark = f"[{idx + 1}/{REPEAT_TIMES}]"
                 path_resolver = BigMemoryCopyPathResolver()
                 nodes = path_resolver.find_eulerian_path()
                 mems = self.make_mems(nodes, ctx)
                 errors = []
                 for i in range(1, len(mems)):
-                    op_mark = f"[{i}/{len(mems)-1}]"
+                    op_mark = f"[{i}/{len(mems) - 1}]"
                     src = mems[i - 1]
                     dst = mems[i]
                     size = min(src.size, dst.size)
-                    action = (
-                        f"{iter_mark} {op_mark} copy {size} bytes from {src} to {dst}"
-                    )
+                    action = f"{iter_mark} {op_mark} copy {size} bytes from {src} to {dst}"
                     logging.info(action)
                     try:
                         copy_data(mems[i - 1], mems[i], size, ctx)
@@ -408,19 +400,15 @@ class BigMemoryTest:
                 src_checksum_list.append(src_checksum)
                 dst_checksum_list.append(dst_checksum)
                 errors_list.append(errors)
-                print(
-                    f"{iter_mark} Checksum matches: {src_checksum==dst_checksum} {src_checksum} {dst_checksum}"
-                )
+                print(f"{iter_mark} Checksum matches: {src_checksum == dst_checksum} {src_checksum} {dst_checksum}")
 
             print("\nTotal Results:")
             for idx in range(REPEAT_TIMES):
-                iter_mark = f"[{idx+1}/{REPEAT_TIMES}]"
+                iter_mark = f"[{idx + 1}/{REPEAT_TIMES}]"
                 src_checksum = src_checksum_list[idx]
                 dst_checksum = dst_checksum_list[idx]
                 errors = errors_list[idx]
-                print(
-                    f"{iter_mark} Checksum matches: {src_checksum==dst_checksum} {src_checksum} {dst_checksum}"
-                )
+                print(f"{iter_mark} Checksum matches: {src_checksum == dst_checksum} {src_checksum} {dst_checksum}")
                 for error, action in errors:
                     print(f"{action} error: {error}")
 
@@ -437,9 +425,7 @@ class BigMemoryTest:
     def run_peer(self, device_id: int):
         logging.info("peer prepare start.")
         rank_id = self.peer_rank_id
-        context = BigMemoryContext(
-            store_url=STORE_URL, device_id=device_id, rank_id=rank_id
-        )
+        context = BigMemoryContext(store_url=STORE_URL, device_id=device_id, rank_id=rank_id)
         ret = context.prepare()
         if ret != 0:
             logging.error(f"prepare failed: {ret=}")
@@ -463,12 +449,8 @@ def main_process():
     test = BigMemoryTest()
 
     children = [
-        multiprocessing.Process(
-            name="Test-Process", target=test.run_test, args=(DEVICES[0],)
-        ),
-        multiprocessing.Process(
-            name="Peer-Process", target=test.run_peer, args=(DEVICES[1],)
-        ),
+        multiprocessing.Process(name="Test-Process", target=test.run_test, args=(DEVICES[0],)),
+        multiprocessing.Process(name="Peer-Process", target=test.run_peer, args=(DEVICES[1],)),
     ]
 
     [child.start() for child in children]
@@ -500,9 +482,7 @@ if __name__ == "__main__":
         choices=["bypass", "stop"],
         default="bypass",
     )
-    parser.add_argument(
-        "--repeat", help="specify test repeat times", type=int, default=1
-    )
+    parser.add_argument("--repeat", help="specify test repeat times", type=int, default=1)
     args = parser.parse_args()
     DEVICES = args.devices
     ERROR_ACTION = args.error

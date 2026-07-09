@@ -86,8 +86,8 @@ Result HybmVmmBasedSegment::ReserveMemorySpace(void **address) noexcept
     globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
 
     uint64_t flag = MEM_RSV_TYPE_REMOTE_MAP;
-    auto ret = DlHalApi::HalMemAddressReserve(&base, totalLvaSize, 0,
-                                              reinterpret_cast<void *>(gvaInfo.va[HVM_DVA]), flag);
+    auto ret =
+        DlHalApi::HalMemAddressReserve(&base, totalLvaSize, 0, reinterpret_cast<void *>(gvaInfo.va[HVM_DVA]), flag);
     if (ret != 0 || base != reinterpret_cast<void *>(gvaInfo.va[HVM_DVA])) {
         BM_LOG_ERROR("prepare virtual memory size(" << totalVirtualSize_ << ") failed. ret: " << ret);
         return BM_MALLOC_FAILED;
@@ -539,8 +539,8 @@ uint64_t HybmVmmBasedSegment::ReserveLva(const HostSdmaExportInfo &im)
     auto ret = DlHalApi::HalMemAddressReserve(&lva, im.size, 0, reinterpret_cast<void *>(reservedLva), flag);
     if (ret != 0 || lva != reinterpret_cast<void *>(reservedLva)) {
         BM_LOG_ERROR("Failed to reserve va local:" << options_.rankId << " remoteRank:" << im.rankId
-                     << " size:" << im.size << " reservedVa:" << VaToStr(reservedLva) << " va:" << lva
-                     << " ret:" << ret);
+                                                   << " size:" << im.size << " reservedVa:" << VaToStr(reservedLva)
+                                                   << " va:" << lva << " ret:" << ret);
         HybmVaManager::GetInstance().FreeReserveLva(reservedLva, HVM_DVA);
         return 0;
     }
@@ -591,9 +591,9 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         uint64_t lva = ReserveLva(im);
         BM_ASSERT_LOG_AND_RETURN(lva != 0, "va = " << lva, BM_ERROR);
         BM_LOG_INFO("Try to mmap rank:" << im.rankId << " superPodId:" << im.superPodId << " serverId:" << im.serverId
-                                        << " devId:" << im.logicDevId << " segType:" << options_.segType << " size:"
-                                        << im.size << " gva:" << VaToStr(im.gva) << " dva:"
-                                        << VaToStr(im.deviceVa) << " va:" << VaToStr(lva));
+                                        << " devId:" << im.logicDevId << " segType:" << options_.segType
+                                        << " size:" << im.size << " gva:" << VaToStr(im.gva)
+                                        << " dva:" << VaToStr(im.deviceVa) << " va:" << VaToStr(lva));
         drv_mem_handle_t *handle = nullptr;
         auto ret = DlHalApi::HalMemImport(MEM_HANDLE_TYPE_FABRIC, &im.shareHandle, logicDeviceId_, &handle);
         if (ret != BM_OK) {
@@ -616,8 +616,8 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         }
 
         auto memType = IsHbmSlice(im.magic) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-        ret = HybmVaManager::GetInstance().AddVaInfoFromExternal({im.gva, lva, 0, im.size, memType},
-                                                                 options_.rankId, im.rankId);
+        ret = HybmVaManager::GetInstance().AddVaInfoFromExternal({im.gva, lva, 0, im.size, memType}, options_.rankId,
+                                                                 im.rankId);
         if (ret != BM_OK) {
             DlHalApi::HalMemUnmap(reinterpret_cast<void *>(lva));
             DlHalApi::HalMemRelease(handle);

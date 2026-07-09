@@ -23,8 +23,6 @@ torch_npu.npu.config.allow_internal_format = True
 logger = logging.getLogger(__name__)
 
 
-
-
 def get_golden_from_file(filepath):
     """load pre-computed HCCL golden tensor from disk"""
     return torch.load(filepath, weights_only=False).npu()
@@ -66,7 +64,7 @@ def test_broadcast(dist_type, case_list, hidden_size, data_op_type):
         "int32_t": torch.int32,
         "float16_t": torch.float16,
         "float": torch.float32,
-        "bfloat16_t": torch.bfloat16
+        "bfloat16_t": torch.bfloat16,
     }
 
     tensor_data_type = torch_type_map.get(test_type, 'int')
@@ -106,12 +104,8 @@ def test_broadcast(dist_type, case_list, hidden_size, data_op_type):
                         torch_npu.profiler.ProfilerActivity.CPU,
                         torch_npu.profiler.ProfilerActivity.NPU,
                     ],
-                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                        profiling_path
-                    ),
-                    schedule=torch_npu.profiler.schedule(
-                        wait=1, warmup=1, active=10, repeat=1, skip_first=1
-                    ),
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(profiling_path),
+                    schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=10, repeat=1, skip_first=1),
                     record_shapes=True,
                     profile_memory=True,
                     with_stack=False,
@@ -132,8 +126,9 @@ def test_broadcast(dist_type, case_list, hidden_size, data_op_type):
                     filepath = f"{tensor_output_dir}/output_hccl_{data_len}_{global_rank}.bin"
                     golden_tensor = get_golden_from_file(filepath)
                 else:
-                    golden_tensor = get_golden_by_assembly(golden_dir, current_dir, world_size, data_type, \
-                        tensor_data_type, root, row_num, hidden_size)
+                    golden_tensor = get_golden_by_assembly(
+                        golden_dir, current_dir, world_size, data_type, tensor_data_type, root, row_num, hidden_size
+                    )
 
             for k in range(20):
                 if enable_profiling and prof_cnt >= 1:

@@ -5,7 +5,7 @@ from memfabric_hybrid import bm
 import time
 
 LOCAL_DRAM_SIZE = 4 << 30  # 4GB
-BLOCK_SIZE = 4 << 20       # 4MB
+BLOCK_SIZE = 4 << 20  # 4MB
 BATCH_SIZES = (16, 128, 512)
 STORE_URL = "tcp://127.0.0.1:8570"
 WORLD_SIZE = 1
@@ -13,7 +13,7 @@ DEVICE_ID = 0
 
 
 def main():
-    mf.set_log_level(3) # 1: info, 3:error
+    mf.set_log_level(3)  # 1: info, 3:error
     assert mf.initialize() == 0, "mf.initialize failed"
     bm_inited = False
 
@@ -58,10 +58,7 @@ def main():
                 dst_addrs = [host_gva + base_offset + i * BLOCK_SIZE for i in range(batch_size)]
                 sizes = [BLOCK_SIZE] * batch_size
 
-                ret = handle.copy_data_batch(
-                    src_addrs, dst_addrs, sizes, batch_size,
-                    bm.BmCopyType.H2G, 0
-                )
+                ret = handle.copy_data_batch(src_addrs, dst_addrs, sizes, batch_size, bm.BmCopyType.H2G, 0)
                 assert ret == 0, f"H2G failed at batch={batch_size}, ret={ret}"
             h2g_time = time.time() - h2g_start
 
@@ -73,10 +70,7 @@ def main():
                 dst_addrs = [dst.data_ptr()] * batch_size
                 sizes = [BLOCK_SIZE] * batch_size
 
-                ret = handle.copy_data_batch(
-                    src_addrs, dst_addrs, sizes, batch_size,
-                    bm.BmCopyType.G2H, 0
-                )
+                ret = handle.copy_data_batch(src_addrs, dst_addrs, sizes, batch_size, bm.BmCopyType.G2H, 0)
                 assert ret == 0, f"G2H failed at batch={batch_size}, ret={ret}"
             g2h_time = time.time() - g2h_start
 

@@ -17,7 +17,7 @@
 #include <vector>
 #include <cstdint>
 
-#define ZBAL_FLAG_SIZE 8
+#define ZBAL_FLAG_SIZE                  8
 #define ZBAL_PROFILING_DEVICE_IDX_OFF   8
 #define ZBAL_PROFILING_DEVICE_TRACE_OFF 16
 #define ZBAL_PROFILING_FRAME_SHIFT      56
@@ -76,53 +76,37 @@ enum zbal_profiling_name_t : uint16_t {
 };
 
 const std::vector<std::pair<std::string, bool>> g_profName = {
-    {"UNKNOWN", false},
-    {"LINE_NO", true},
+    {"UNKNOWN", false},         {"LINE_NO", true},
     {"BARRIER", false},
 
-    {"AG_KERNEL_ALL", true},
-    {"AG_COPY", true},
-    {"AG_LOCAL_COPY", true},
-    {"AG_PREPARE_PTR", false},
+    {"AG_KERNEL_ALL", true},    {"AG_COPY", true},
+    {"AG_LOCAL_COPY", true},    {"AG_PREPARE_PTR", false},
 
-    {"RS_KERNEL_ALL", false},
-    {"RS_LOCAL_COPY", false},
+    {"RS_KERNEL_ALL", false},   {"RS_LOCAL_COPY", false},
     {"RS_COPY", false},
 
-    {"A2A_KERNEL_ALL", true},
-    {"A2A_LOCAL_COPY", true},
-    {"A2A_COPY", true},
-    {"A2A_DATA_COPY", true},
-    {"A2A_GET_INPUT", true},
-    {"A2A_PREPARE_PTR", true},
-    {"A2A_CORE_RANGE", true},
-    {"A2A_INIT_STAT", true},
-    {"A2A_ATOMIC_INC", true},
-    {"A2A_WAIT_LOCAL_STAT", true},
+    {"A2A_KERNEL_ALL", true},   {"A2A_LOCAL_COPY", true},
+    {"A2A_COPY", true},         {"A2A_DATA_COPY", true},
+    {"A2A_GET_INPUT", true},    {"A2A_PREPARE_PTR", true},
+    {"A2A_CORE_RANGE", true},   {"A2A_INIT_STAT", true},
+    {"A2A_ATOMIC_INC", true},   {"A2A_WAIT_LOCAL_STAT", true},
 
-    {"AR_KERNEL_ALL", false},
-    {"AR_REDUCE", false},
+    {"AR_KERNEL_ALL", false},   {"AR_REDUCE", false},
     {"AR_GATHER", false},
 
-    {"BR_KERNEL_ALL", false},
-    {"BR_SCATER_PART", false},
+    {"BR_KERNEL_ALL", false},   {"BR_SCATER_PART", false},
     {"BR_GATHER_PART", false},
 
     {"SC_KERNEL_ALL", false},
 
-    {"GA_KERNEL_ALL", true},
-    {"GA_COPY", true},
+    {"GA_KERNEL_ALL", true},    {"GA_COPY", true},
     {"GA_PREPARE_PTR", false},
 
-    {"SEND_KERNEL_ALL", false},
-    {"RECV_KERNEL_ALL", false},
+    {"SEND_KERNEL_ALL", false}, {"RECV_KERNEL_ALL", false},
 
-    {"EXCHANGE_ADDR", true},
-    {"WAIT_FLAG", true},
-    {"WRITE_STAT", true},
-    {"WAIT_STAT", true},
-    {"GM_2_UB", false},
-    {"UB_2_GM", false},
+    {"EXCHANGE_ADDR", true},    {"WAIT_FLAG", true},
+    {"WRITE_STAT", true},       {"WAIT_STAT", true},
+    {"GM_2_UB", false},         {"UB_2_GM", false},
 };
 
 struct RankCoreMapping {

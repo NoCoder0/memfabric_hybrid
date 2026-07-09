@@ -183,8 +183,9 @@ class TestServer:
     def _register_inner_command(self):
         self._commands = {
             "help": CliCommand("help", "show command list information", self._help, 0),
-            "getServerCommands": CliCommand("getServerCommands", "getServerCommands, get the registered Commands",
-                                            self._get_server_commands, 0),
+            "getServerCommands": CliCommand(
+                "getServerCommands", "getServerCommands, get the registered Commands", self._get_server_commands, 0
+            ),
         }
 
     def _cli_end_line(self):
@@ -271,9 +272,9 @@ def size_to_bytes(size_str: str) -> int:
     units = {
         'B': 1,
         'KB': 1024,
-        'MB': 1024 ** 2,
-        'GB': 1024 ** 3,
-        'TB': 1024 ** 4,
+        'MB': 1024**2,
+        'GB': 1024**3,
+        'TB': 1024**4,
     }
     size_str = size_str.strip().upper()
     match = re.match(r'^(\d+)([KMGTP]?B?)$', size_str)
@@ -312,6 +313,7 @@ class MmcTest(TestServer):
 
     def set_device(self):
         import acl
+
         acl.init()
         ret = acl.rt.set_device(self._device_id)
         if ret != 0:
@@ -329,10 +331,7 @@ class MmcTest(TestServer):
         if device == 'npu':
             self.set_device()
         raw_blocks = torch.randint(
-            low=0, high=256,
-            size=(layer_num, mini_block_size),
-            dtype=torch.uint8,
-            device=torch.device(device)
+            low=0, high=256, size=(layer_num, mini_block_size), dtype=torch.uint8, device=torch.device(device)
         )
         if device == 'npu':
             self.sync_stream()
@@ -340,6 +339,7 @@ class MmcTest(TestServer):
 
     def read_client_conf(self) -> SmemBmClientConfig:
         import os
+
         conf_path = os.getenv('MMC_LOCAL_CONFIG_PATH')
         if conf_path is None:
             raise FileNotFoundError(f"配置文件未找到：{conf_path}")
@@ -350,7 +350,7 @@ class MmcTest(TestServer):
             protocol=config.get('ock.mmc.local_service.protocol'),
             dram_size=size_to_bytes(config.get('ock.mmc.local_service.dram.size', '0')),
             hbm_size=size_to_bytes(config.get('ock.mmc.local_service.hbm.size', '0')),
-            nic=str(config.get('ock.mmc.local_service.hcom_url'))
+            nic=str(config.get('ock.mmc.local_service.hcom_url')),
         )
         return smem_config
 
@@ -388,18 +388,22 @@ class MmcTest(TestServer):
         else:
             op_type = bm.BmDataOpType.DEVICE_RDMA
             config.flags = 2
-        ret = bm.initialize(store_url=client_config.config_store_url,
-                            world_size=client_config.world_size,
-                            device_id=self._device_id,
-                            config=config)
+        ret = bm.initialize(
+            store_url=client_config.config_store_url,
+            world_size=client_config.world_size,
+            device_id=self._device_id,
+            config=config,
+        )
         if ret != 0:
             raise RuntimeError(f"Failed to init bm")
         try:
             # create
-            self._bm_handle = bm.create(id=0,
-                                        local_dram_size=client_config.dram_size,
-                                        local_hbm_size=client_config.hbm_size,
-                                        data_op_type=op_type)
+            self._bm_handle = bm.create(
+                id=0,
+                local_dram_size=client_config.dram_size,
+                local_hbm_size=client_config.hbm_size,
+                data_op_type=op_type,
+            )
             # join
             self._bm_handle.join()
         except Exception as e:
@@ -433,8 +437,9 @@ class MmcTest(TestServer):
         self.cli_return(ret)
 
     @result_handler
-    def copy_data_batch(self, src_addrs: list[int], dst_addrs: list[int],
-                        sizes: list[int], count: int, op_type_str: str, flag: int):
+    def copy_data_batch(
+        self, src_addrs: list[int], dst_addrs: list[int], sizes: list[int], count: int, op_type_str: str, flag: int
+    ):
         if op_type_str == 'H2G':
             op_type = bm.BmCopyType.H2G
         elif op_type_str == 'L2G':
@@ -451,8 +456,9 @@ class MmcTest(TestServer):
         self.cli_return(ret)
 
     @result_handler
-    def copy_data_batch_partial_succeed(self, src_addrs: list[int], dst_addrs: list[int],
-                                        sizes: list[int], count: int, op_type_str: str, flag: int):
+    def copy_data_batch_partial_succeed(
+        self, src_addrs: list[int], dst_addrs: list[int], sizes: list[int], count: int, op_type_str: str, flag: int
+    ):
         if op_type_str == 'H2G':
             op_type = bm.BmCopyType.H2G
         elif op_type_str == 'L2G':
@@ -520,8 +526,12 @@ class MmcTest(TestServer):
             CliCommand("init_smem_bm", "initialize smem bm", self.init_smem_bm, 0),
             CliCommand("close_smem_bm", "destruct smem bm", self.close_smem_bm, 0),
             CliCommand("bm_copy_batch", "bm_copy_batch", self.copy_data_batch, 6),
-            CliCommand("bm_copy_batch_partial_succeed", "bm_copy_batch_partial_succeed",
-                       self.copy_data_batch_partial_succeed, 6),
+            CliCommand(
+                "bm_copy_batch_partial_succeed",
+                "bm_copy_batch_partial_succeed",
+                self.copy_data_batch_partial_succeed,
+                6,
+            ),
             CliCommand("get_peer_rank_gva", "get gva by rank id and pool type", self.get_peer_rank_gva, 2),
             CliCommand("alloc_local_memory", "get local memory by size and memory type", self.alloc_local_memory, 2),
             CliCommand("free_local_memory", "free local memory by ptr", self.free_local_memory, 1),

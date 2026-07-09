@@ -27,19 +27,19 @@ TEST(SmemHybmHelperTest, TransHybmDataOpTypeMapsDeviceUboe)
 TEST(SmemHybmHelperTest, TransHybmDataOpTypeMapsAllDeviceTypes)
 {
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_URMA)) &
-                HYBM_DOP_TYPE_DEVICE_URMA) != 0U);
+                 HYBM_DOP_TYPE_DEVICE_URMA) != 0U);
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_UBOE)) &
-                HYBM_DOP_TYPE_DEVICE_UBOE) != 0U);
+                 HYBM_DOP_TYPE_DEVICE_UBOE) != 0U);
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_RDMA)) &
-                HYBM_DOP_TYPE_DEVICE_RDMA) != 0U);
+                 HYBM_DOP_TYPE_DEVICE_RDMA) != 0U);
 }
 
 TEST(SmemHybmHelperTest, TransHybmDataOpTypeMapsHostTypes)
 {
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_HOST_URMA)) &
-                HYBM_DOP_TYPE_HOST_URMA) != 0U);
+                 HYBM_DOP_TYPE_HOST_URMA) != 0U);
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_HOST_TCP)) &
-                HYBM_DOP_TYPE_HOST_TCP) != 0U);
+                 HYBM_DOP_TYPE_HOST_TCP) != 0U);
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_HOST_SHM)) &
-                HYBM_DOP_TYPE_HOST_SHM) != 0U);
+                 HYBM_DOP_TYPE_HOST_SHM) != 0U);
 }

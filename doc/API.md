@@ -109,7 +109,7 @@ int32_t smem_set_conf_store_tls(bool enable, const char *tls_info, const uint32_
 |enable|whether to enable tls（当前为预留接口，功能尚未实现）|
 |tls_info|the format describle in memfabric SECURITYNOTE.md, if disabled tls_info won't be use|
 |tls_info_len|length of tls_info, if disabled tls_info_len won't be use|
-|返回值|成功返回0，其他为错误码|	
+|返回值|成功返回0，其他为错误码|
 
 #### smem_set_config_store_tls_key
 设置私钥、口令和解密的函数，在开启Tls时，需要调用该接口。
@@ -344,7 +344,7 @@ int32_t smem_bm_extend_local_mem(smem_bm_t handle, smem_bm_mem_type_t memType, u
 
 | 参数/返回值          | 含义                            |
 |-----------------|-------------------------------|
-| handle          | 待扩展内存 handle                  |    
+| handle          | 待扩展内存 handle                  |
 | memType         | 内存类型，支持 SMEM_MEM_TYPE_DEVICE、SMEM_MEM_TYPE_HOST |
 | size | 当前rank扩展内存的大小                 |
 | 返回值             | 成功返回0，否则返回错误码                 |
@@ -355,7 +355,7 @@ int32_t smem_bm_extend_local_mem(smem_bm_t handle, smem_bm_mem_type_t memType, u
 #### smem_bm_copy
 拷贝数据对象
 ```c
-int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params,  
+int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params,
     smem_bm_copy_type_t t, uint32_t flags);
 ```
 
@@ -506,7 +506,7 @@ int32_t smem_shm_config_init(smem_shm_config_t *config);
 #### smem_shm_init
 SHM初始化
 ```c
-int32_t smem_shm_init(const char *configStoreIpPort, uint32_t worldSize, uint32_t rankId, 
+int32_t smem_shm_init(const char *configStoreIpPort, uint32_t worldSize, uint32_t rankId,
     uint16_t deviceId, smem_shm_config_t *config);
 ```
 
@@ -622,7 +622,7 @@ int32_t smem_shm_control_barrier(smem_shm_t handle);
 #### smem_shm_control_allgather
 在SHM对象执行allgather
 ```c
-int32_t smem_shm_control_allgather(smem_shm_t handle, const char *sendBuf, uint32_t sendSize, 
+int32_t smem_shm_control_allgather(smem_shm_t handle, const char *sendBuf, uint32_t sendSize,
     char *recvBuf, uint32_t recvSize);
 ```
 
@@ -819,7 +819,7 @@ int32_t smem_trans_batch_read(smem_trans_t handle, void *localAddrs[], const cha
 |dataSizes[]|批量传输数据大小列表，单位字节|
 |batchSize|批量读操作的任务数|
 | flags          | 标记位                |
-|返回值|成功返回0，其他为错误码|	
+|返回值|成功返回0，其他为错误码|
 
 #### smem_trans_write
 同步写接口

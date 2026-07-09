@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -38,7 +37,7 @@ def build_param_partition_config(
     tp_partition: bool = False,
     pp_partition: bool = True,
     ep_partition: bool = False,
-    shard_dim: int = -1
+    shard_dim: int = -1,
 ):
     return ParamPartitonConfig(
         shape=param_size,
@@ -48,7 +47,7 @@ def build_param_partition_config(
         ep_partition=ep_partition,
         shard_dim=shard_dim,
         fused=fused,
-        fused_size=fused_size
+        fused_size=fused_size,
     )
 
 

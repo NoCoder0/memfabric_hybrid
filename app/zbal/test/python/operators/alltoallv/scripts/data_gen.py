@@ -49,6 +49,7 @@ def golden_generate_from_splits(case_index, shapes, data_type, current_dir):
 
 def gen_golden_data():
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument('test_type', type=str)
     parser.add_argument('rank_size', type=int)
@@ -56,8 +57,11 @@ def gen_golden_data():
     args = parser.parse_args()
 
     type_map = {
-        "int": np.int32, "int32_t": np.int32, "float16_t": np.float16,
-        "float": np.float32, "bfloat16_t": bfloat16
+        "int": np.int32,
+        "int32_t": np.int32,
+        "float16_t": np.float16,
+        "float": np.float32,
+        "bfloat16_t": bfloat16,
     }
     current_dir = os.getenv("CURRENT_DIR", ".")
     data_type = type_map.get(args.test_type, 'int')

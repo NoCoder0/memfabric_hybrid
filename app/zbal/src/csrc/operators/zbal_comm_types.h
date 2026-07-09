@@ -49,8 +49,8 @@ struct CommGroupOptions {
         os << "CommGroupOptions [name: " << options.name << ", worldSize: " << options.worldSize
            << ", groupSize: " << options.groupSize << ", myWorldRank: " << options.myWorldRank
            << ", myGroupRank: " << options.myGroupRank << ", dataOpType: " << options.dataOpType
-           << ", gva: " << options.gva << ", metaSize: " << options.metaSize
-           << ", myMetaGva: " << std::hex << options.myMetaGva << ", myParamDataGva: " << options.myParamDataGva
+           << ", gva: " << options.gva << ", metaSize: " << options.metaSize << ", myMetaGva: " << std::hex
+           << options.myMetaGva << ", myParamDataGva: " << options.myParamDataGva
            << ", myAddressExchangeGva: " << options.myAddressExchangeGva << std::dec
            << ", sizeForCommGroupInfo: " << options.sizeForCommGroupInfo << ", sizeForParam: " << options.sizeForParam
            << ", sizeForExchangeAddress: " << options.sizeForExchangeAddress << ", deviceId: " << options.deviceId

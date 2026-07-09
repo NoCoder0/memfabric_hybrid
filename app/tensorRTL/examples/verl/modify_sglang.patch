@@ -13,13 +13,13 @@ diff --git a/python/sglang/srt/managers/io_struct.py b/python/sglang/srt/manager
  from sglang.srt.sampling.sampling_params import SamplingParams
  from sglang.srt.utils import ImageData
 +from sglang.srt.weight_sync.memory_fabric_dataclass import LayerMeta, QkvInfo, ExpertInfo
- 
+
  # Handle serialization of Image for pydantic
  if TYPE_CHECKING:
 @@ -1455,6 +1456,40 @@
      server_args: Dict[str, Any]
- 
- 
+
+
 +@dataclass
 +class InitMemoryFabricReqInput(BaseReq):
 +    dp_size: int
@@ -83,7 +83,7 @@ diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/manager
 +                (UpdateWeightMFReqInput, self.update_weights_mf_request),
              ]
          )
- 
+
 @@ -1321,7 +1326,15 @@
              output = self._request_dispatcher(recv_req)
              if output is not None:
@@ -101,7 +101,7 @@ diff --git a/python/sglang/srt/managers/scheduler.py b/python/sglang/srt/manager
                      if self.recv_from_rpc is not None:
                          self.recv_from_rpc.send_pyobj(output)
 @@ -2327,7 +2340,7 @@
- 
+
      def launch_batch_sample_if_needed(
          self, batch_result: GenerationBatchResult
 -    ) -> Union[GenerationBatchResult]:
@@ -126,12 +126,12 @@ diff --git a/python/sglang/srt/managers/scheduler_update_weights_mixin.py b/pyth
 +    UpdateWeightMFReqInput,
 +    UpdateWeightMFReqOutput,
  )
- 
+
  if TYPE_CHECKING:
 @@ -100,6 +104,24 @@
          torch.distributed.barrier(group=self.tp_cpu_group)
          return UpdateWeightsFromTensorReqOutput(success, message)
- 
+
 +    def init_memory_fabric_request(self, recv_req: InitMemoryFabricReqInput):
 +        """Update the online model parameter from tensors."""
 +        print(f"sglang init_memory_fabric Scheduler")
@@ -182,9 +182,9 @@ diff --git a/python/sglang/srt/managers/tokenizer_communicator_mixin.py b/python
 +        self.update_weights_mf_communicator = _Communicator(
 +            self.send_to_scheduler, server_args.dp_size
 +        )
- 
+
          self._result_dispatcher += self._get_communicator_dispatcher()
- 
+
 @@ -249,6 +259,14 @@
                      self.update_weights_from_tensor_communicator.handle_recv,
                  ),
@@ -242,7 +242,7 @@ diff --git a/python/sglang/srt/managers/tokenizer_communicator_mixin.py b/python
 +        )
 +        async with lock_context:
 +            results = (await self.update_weights_mf_communicator(obj))
- 
+
          success, message = _Communicator.merge_results(results)
          if success and obj.weight_version is not None:
 Index: python/sglang/srt/managers/tp_worker.py
@@ -265,7 +265,7 @@ diff --git a/python/sglang/srt/managers/tp_worker.py b/python/sglang/srt/manager
 @@ -181,6 +183,18 @@
          result = self.model_runner.unload_lora_adapter(recv_req.to_ref())
          return result
- 
+
 +    def init_memory_fabric(self, recv_req: InitMemoryFabricReqInput):
 +        return self.model_runner.init_memory_fabric(recv_req.dp_size, recv_req.dp_rank)
 +
@@ -299,16 +299,16 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
  from dataclasses import dataclass
  from typing import Callable, List, Optional, Tuple, Union
 +from functools import partial
- 
+
  import torch
 +import torch_npu
  import torch.distributed as dist
  from torch import nn
- 
+
 @@ -176,6 +180,15 @@
      FlattenedTensorMetadata,
  )
- 
+
 +from sglang.srt.weight_sync.memory_fabric_dataclass import LayerMeta, QkvInfo, ExpertInfo
 +from TensorRTL.examples.verl.utils import (
 +    generate_transfer_device_mesh,
@@ -326,13 +326,13 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
          self._model_update_group = {}
          self._weights_send_group = {}
 +        self.ptensorset_dict = {}
- 
+
      def init_mindspore_runner(self):
          # Init the mindspore runner
 @@ -1353,6 +1367,553 @@
              raise NotImplementedError(f"Unknown load_format={load_format}")
          return True, "Success"
- 
+
 +    def init_memory_fabric(self, dp_size, dp_rank):
 +        from TensorRTL.tensor_rtl.core.backend_config import MfBmConfig
 +        from TensorRTL.tensor_rtl.core.executor import MemoryFabricExecutor
@@ -464,7 +464,7 @@ diff --git a/python/sglang/srt/model_executor/model_runner.py b/python/sglang/sr
 +        infer_tp_size: int,
 +        infer_pp_size: int,
 +        infer_dp_size: int,
-+    ):  
++    ):
 +        bucket_op = {}
 +        bucket_ptensor_set = {}
 +        allocate_memory_ptensor_set = {}
@@ -1039,7 +1039,7 @@ diff --git a/python/sglang/srt/weight_sync/utils.py b/python/sglang/srt/weight_s
 @@ -1,4 +1,5 @@
  from typing import Optional
 +import asyncio
- 
+
  import torch
  import torch.distributed as dist
 @@ -17,6 +18,8 @@
@@ -1059,11 +1059,11 @@ diff --git a/python/sglang/srt/weight_sync/utils.py b/python/sglang/srt/weight_s
 -        return await engine.update_weights_from_tensor(update_weights_request)
 +        if not pipeline_overlap:
 +            return await engine.update_weights_from_tensor(update_weights_request)
- 
+
 +        if update_weights_from_tensor_pending is not None:
 +            await update_weights_from_tensor_pending
 +        update_weights_from_tensor_pending = asyncio.create_task(engine.update_weights_from_tensor(update_weights_request))
 +        return update_weights_from_tensor_pending
- 
+
  def _preprocess_tensor_for_update_weights(tensor: torch.Tensor):
      """

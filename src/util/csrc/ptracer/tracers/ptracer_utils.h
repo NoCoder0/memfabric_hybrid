@@ -85,7 +85,7 @@ inline uint64_t Monotonic::TimeNs()
     __asm__ volatile("mrs %0, cntvct_el0" : "=r"(timeValue));
     return timeValue * 1000ULL / TICK_PER_US;
 #else
-    struct timespec ts{};
+    struct timespec ts {};
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<uint64_t>(ts.tv_sec) * 1000000000UL + static_cast<uint64_t>(ts.tv_nsec);
 #endif
@@ -161,23 +161,23 @@ inline std::string Func::FormatString(std::string &name, uint64_t begin, uint64_
     } else {
         os << std::left << std::setw(NAME_WIDTH) << name;
     }
-    os << std::left << std::setw(DIGIT_WIDTH) << begin << std::left << std::setw(DIGIT_WIDTH) << goodEnd <<
-        std::left << std::setw(DIGIT_WIDTH) << badEnd << std::left << std::setw(DIGIT_WIDTH) << onFly <<
-        std::left << std::setw(DIGIT_WIDTH) << p50Time << std::left << std::setw(DIGIT_WIDTH) << p99Time <<
-        std::left << std::setw(DIGIT_WIDTH) << p999Time << std::left << std::setw(DIGIT_WIDTH) << avgTime <<
-        std::left << std::setw(DIGIT_WIDTH) << maxTime;
+    os << std::left << std::setw(DIGIT_WIDTH) << begin << std::left << std::setw(DIGIT_WIDTH) << goodEnd << std::left
+       << std::setw(DIGIT_WIDTH) << badEnd << std::left << std::setw(DIGIT_WIDTH) << onFly << std::left
+       << std::setw(DIGIT_WIDTH) << p50Time << std::left << std::setw(DIGIT_WIDTH) << p99Time << std::left
+       << std::setw(DIGIT_WIDTH) << p999Time << std::left << std::setw(DIGIT_WIDTH) << avgTime << std::left
+       << std::setw(DIGIT_WIDTH) << maxTime;
     return os.str();
 }
 
 inline std::string Func::HeaderString()
 {
     std::stringstream ss;
-    ss << std::left << std::setw(TIME_WIDTH) << "TIME" << std::left << std::setw(NAME_WIDTH) << "NAME" << std::left <<
-        std::setw(DIGIT_WIDTH) << "BEGIN" << std::left << std::setw(DIGIT_WIDTH) << "GOOD_END" << std::left <<
-        std::setw(DIGIT_WIDTH) << "BAD_END" << std::left << std::setw(DIGIT_WIDTH) << "ON_FLY" << std::left <<
-        std::setw(DIGIT_WIDTH) << "P50(us)" << std::left << std::setw(DIGIT_WIDTH) << "P99(us)" << std::left <<
-        std::setw(DIGIT_WIDTH) << "P999(us)" << std::left << std::setw(DIGIT_WIDTH) << "AVG(us)" << std::left <<
-        std::setw(DIGIT_WIDTH) << "MAX(us)";
+    ss << std::left << std::setw(TIME_WIDTH) << "TIME" << std::left << std::setw(NAME_WIDTH) << "NAME" << std::left
+       << std::setw(DIGIT_WIDTH) << "BEGIN" << std::left << std::setw(DIGIT_WIDTH) << "GOOD_END" << std::left
+       << std::setw(DIGIT_WIDTH) << "BAD_END" << std::left << std::setw(DIGIT_WIDTH) << "ON_FLY" << std::left
+       << std::setw(DIGIT_WIDTH) << "P50(us)" << std::left << std::setw(DIGIT_WIDTH) << "P99(us)" << std::left
+       << std::setw(DIGIT_WIDTH) << "P999(us)" << std::left << std::setw(DIGIT_WIDTH) << "AVG(us)" << std::left
+       << std::setw(DIGIT_WIDTH) << "MAX(us)";
     return ss.str();
 }
 

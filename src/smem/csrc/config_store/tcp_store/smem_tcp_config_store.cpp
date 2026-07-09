@@ -71,8 +71,8 @@ private:
 
 class ClientWatchContext : public ClientCommonContext {
 public:
-    explicit ClientWatchContext(std::function<void(int, const std::vector<uint8_t> &)> nfy,
-                                bool oneTime = true, std::string key = {}) noexcept
+    explicit ClientWatchContext(std::function<void(int, const std::vector<uint8_t> &)> nfy, bool oneTime = true,
+                                std::string key = {}) noexcept
         : notify_{std::move(nfy)}, onlyOneTime_{oneTime}, key_{std::move(key)}
     {}
 
@@ -598,11 +598,8 @@ TcpConfigStore::Watch(const std::string &key,
 
     auto packedRequest = SmemMessagePacker::Pack(request);
     auto ret = SendWatchRequest(
-        packedRequest,
-        [key, notify](int res, const std::vector<uint8_t> &value) {
-            notify(res, key, value);
-        },
-        wid, key);
+        packedRequest, [key, notify](int res, const std::vector<uint8_t> &value) { notify(res, key, value); }, wid,
+        key);
     if (ret != SM_OK) {
         STORE_LOG_ERROR_LIMIT("send get for key: " << key << ", get null response");
         return ret;

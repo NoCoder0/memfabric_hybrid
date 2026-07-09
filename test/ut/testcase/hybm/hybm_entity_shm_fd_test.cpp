@@ -55,7 +55,7 @@ public:
 
     static void SetUpTestSuite()
     {
-        struct statfs fsBuf{};
+        struct statfs fsBuf {};
         auto ret = statfs("/dev/shm", &fsBuf);
         ASSERT_EQ(0, ret) << "statfs for /dev/shm failed: " << errno << ":" << strerror(errno);
 

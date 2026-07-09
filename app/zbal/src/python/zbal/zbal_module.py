@@ -16,17 +16,19 @@ ZBAL_ENABLE_GRAPH = int(os.environ.get("ZBAL_ENABLE_GRAPH", 0)) == 1
 __version__ = zbal_version()
 
 
-def zbal_init(world_size: int,
-              device_id: int,
-              rank_id: int,
-              device_mem_size: int,
-              bootstrap_type: ZBALBootstrapType = ZBALBootstrapType.BOOT_BY_MEMFABRIC,
-              start_config_server: bool = False,
-              data_op_type: int = 0,
-              comm_meta_space_size: int = 1024,
-              comm_group_cap: int = 64,
-              flags: int = 0,
-              ip_port: str = ""):
+def zbal_init(
+    world_size: int,
+    device_id: int,
+    rank_id: int,
+    device_mem_size: int,
+    bootstrap_type: ZBALBootstrapType = ZBALBootstrapType.BOOT_BY_MEMFABRIC,
+    start_config_server: bool = False,
+    data_op_type: int = 0,
+    comm_meta_space_size: int = 1024,
+    comm_group_cap: int = 64,
+    flags: int = 0,
+    ip_port: str = "",
+):
     '''
     Initialize zbal library
 
@@ -52,6 +54,7 @@ def zbal_init(world_size: int,
     if mem_fabric_lib_path is None:
         # try to import memfabric from python package
         import memfabric_hybrid as mf
+
         mem_fabric_lib_path = mf.get_lib_path()
         if mem_fabric_lib_path is not None:
             os.environ["MEMFABRIC_HYBRID_LIBRARY_PATH"] = mem_fabric_lib_path
@@ -119,8 +122,7 @@ def zbal_uninit(flags: int = 0):
 
 
 def switch_to_allocator():
-    new_alloc = torch_npu.npu.memory.NPUPluggableAllocator(ZBAL_LIB,
-                                                           "zbal_pluggable_malloc", "zbal_pluggable_free")
+    new_alloc = torch_npu.npu.memory.NPUPluggableAllocator(ZBAL_LIB, "zbal_pluggable_malloc", "zbal_pluggable_free")
     # Swap the current allocator
     torch_npu.npu.memory.change_current_allocator(new_alloc)
     zbal_allocator = ctypes.CDLL(ZBAL_LIB)
@@ -138,10 +140,12 @@ def switch_to_allocator():
     new_alloc.allocator().set_get_device_stats_fn(get_device_stats_fn)
 
     if ZBAL_ENABLE_GRAPH:
-        begin_allocate_to_pool_fn = ctypes.cast(getattr(zbal_allocator, "zbal_pluggable_begin_allocate_to_pool"),
-                                                ctypes.c_void_p).value
-        end_allocate_to_pool_fn = ctypes.cast(getattr(zbal_allocator, "zbal_pluggable_end_allocate_to_pool"),
-                                              ctypes.c_void_p).value
+        begin_allocate_to_pool_fn = ctypes.cast(
+            getattr(zbal_allocator, "zbal_pluggable_begin_allocate_to_pool"), ctypes.c_void_p
+        ).value
+        end_allocate_to_pool_fn = ctypes.cast(
+            getattr(zbal_allocator, "zbal_pluggable_end_allocate_to_pool"), ctypes.c_void_p
+        ).value
         release_pool_fn = ctypes.cast(getattr(zbal_allocator, "zbal_pluggable_release_pool"), ctypes.c_void_p).value
 
         new_alloc.allocator().set_begin_allocate_to_pool(begin_allocate_to_pool_fn)

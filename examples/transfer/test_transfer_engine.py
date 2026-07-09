@@ -21,14 +21,20 @@ from memfabric_hybrid import TransferEngine, set_log_level, set_conf_store_tls
 def main():
     # 解析命令行参数
     parser = argparse.ArgumentParser(description='Transfer Engine with role selection')
-    parser.add_argument('--role', type=str, required=True, choices=['Decode', 'Prefill'],
-                        help='Role of this instance: Decode or Prefill')
+    parser.add_argument(
+        '--role',
+        type=str,
+        required=True,
+        choices=['Decode', 'Prefill'],
+        help='Role of this instance: Decode or Prefill',
+    )
     parser.add_argument('--src-unique-id', type=str, help='Source unique ID')
     parser.add_argument('--store-url', type=str, required=True, help='URL for the store (e.g., tcp://xx.xx.xx.xx:xxxx)')
     parser.add_argument('--npu-id', type=int, default=0, help='NPU device ID')
     parser.add_argument('--dst-unique-id', type=str, help='Destination unique ID')
-    parser.add_argument('--log-level', type=int, default=0, choices=[0, 1, 2, 3],
-                        help='Log level: 0 debug, 1 info, 2 warn, 3 error')
+    parser.add_argument(
+        '--log-level', type=int, default=0, choices=[0, 1, 2, 3], help='Log level: 0 debug, 1 info, 2 warn, 3 error'
+    )
 
     args = parser.parse_args()
     torch.npu.set_device(device=args.npu_id)
@@ -69,8 +75,8 @@ def run_decode_role(engine, args, unique_id):
     )
     total_bytes = total_buffer.element_size() * total_buffer.numel()
 
-    engine.register_memory(total_buffer.data_ptr(), total_bytes) \
-        # 等待并注册内存
+    engine.register_memory(total_buffer.data_ptr(), total_bytes)
+    # 等待并注册内存
     time.sleep(5)
     print(f'register address={hex(total_buffer.data_ptr())}')
     print("register success.")

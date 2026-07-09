@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define SMEM_TRANS_RANK_COUNT_MAX               (512U)
+#define SMEM_TRANS_RANK_COUNT_MAX (512U)
 
 typedef void *smem_trans_t;
 
@@ -50,13 +50,13 @@ typedef struct {
     void **localAddrs;
     void **remoteAddrs;
     size_t *dataSizes;
-    float **scale;                  /* quant scale which is address of the remote uniqueId */
-    float **offset;                 /* quant offset which is address of the remote uniqueId */
+    float **scale;  /* quant scale which is address of the remote uniqueId */
+    float **offset; /* quant offset which is address of the remote uniqueId */
     uint32_t batchSize;
-    uint32_t unitNum;               /* pretoken tensor size */
-    void *stream;                   /* if stream != null, submit task on this stream async */
-    uint32_t inputType;             /* inputType = 0, input type is bfloat16; inputType = 1, input type is float16 */
-    uint32_t flags;                 /* unused */
+    uint32_t unitNum;   /* pretoken tensor size */
+    void *stream;       /* if stream != null, submit task on this stream async */
+    uint32_t inputType; /* inputType = 0, input type is bfloat16; inputType = 1, input type is float16 */
+    uint32_t flags;     /* unused */
 } smem_trans_quant_copy_param_t;
 
 #ifdef __cplusplus

@@ -32,7 +32,7 @@ constexpr int TEST_STARTUP_WAIT_MS = 100;
 constexpr int TEST_STARTUP_FAIL_WAIT_MS = 200;
 constexpr uint64_t TEST_INVALID_RANK_REQUEST_ID = 2000UL;
 constexpr uint64_t TEST_NOT_STARTED_REQUEST_ID = 6000UL;
-}
+} // namespace
 
 class MockThreadContext : public ThreadContext {
 public:
@@ -55,8 +55,7 @@ public:
 class SenderSideQueueTest : public testing::Test {
 public:
     SenderSideQueueTest()
-        : senderQueue_{TEST_DEFAULT_THREAD_COUNT, CreateProcessors()},
-          context_(std::make_shared<MockThreadContext>()),
+        : senderQueue_{TEST_DEFAULT_THREAD_COUNT, CreateProcessors()}, context_(std::make_shared<MockThreadContext>()),
           counter_(new std::atomic<uint64_t>(0))
     {}
 
@@ -69,12 +68,12 @@ public:
     void SetUp() override
     {
         counter_->store(0UL);
-        
+
         auto ret = socketpair(AF_UNIX, SOCK_STREAM, 0, fds_);
         ASSERT_EQ(0, ret) << "socketpair failed: " << errno << ": " << strerror(errno);
-        
+
         ASSERT_TRUE(senderQueue_.Start(context_));
-        
+
         senderQueue_.AddRankIdSocket(TEST_RANK_ID, fds_[0]);
     }
 
@@ -92,43 +91,41 @@ protected:
     std::unordered_map<uint16_t, SendPhProcess> CreateProcessors()
     {
         std::unordered_map<uint16_t, SendPhProcess> processors;
-        
-        processors.emplace(0, [this](const QueueMessage &res, QueueMessage &nextReq,
-                                     bool &finished, void *ctx) -> int {
-            auto counter = static_cast<std::atomic<uint64_t>*>(ctx);
+
+        processors.emplace(0, [this](const QueueMessage &res, QueueMessage &nextReq, bool &finished, void *ctx) -> int {
+            auto counter = static_cast<std::atomic<uint64_t> *>(ctx);
             if (counter) {
                 counter->fetch_add(1UL);
             }
-            
+
             finished = false;
             nextReq.head = res.head;
             nextReq.head.request = 1U;
             nextReq.head.opCode = 1;
             nextReq.body.resize(TEST_NEXT_REQ_BODY_SIZE);
-            
+
             return 0;
         });
-        
-        processors.emplace(1, [this](const QueueMessage &res, QueueMessage &nextReq,
-                                     bool &finished, void *ctx) -> int {
-            auto counter = static_cast<std::atomic<uint64_t>*>(ctx);
+
+        processors.emplace(1, [this](const QueueMessage &res, QueueMessage &nextReq, bool &finished, void *ctx) -> int {
+            auto counter = static_cast<std::atomic<uint64_t> *>(ctx);
             if (counter) {
                 counter->fetch_add(1UL);
             }
-            
+
             finished = true;
             lastResponse_ = res;
-            
+
             return 0;
         });
-        
+
         return processors;
     }
 
 protected:
     SenderSideQueue senderQueue_;
     std::shared_ptr<MockThreadContext> context_;
-    std::atomic<uint64_t>* counter_;
+    std::atomic<uint64_t> *counter_;
     QueueMessage lastResponse_;
     int fds_[2] = {-1, -1};
 };
@@ -142,10 +139,10 @@ TEST_F(SenderSideQueueTest, Construction)
 TEST_F(SenderSideQueueTest, StartAndStop)
 {
     SenderSideQueue testQueue{TEST_DEFAULT_THREAD_COUNT, {}};
-    
+
     EXPECT_TRUE(testQueue.Start());
     EXPECT_TRUE(testQueue.Start());
-    
+
     testQueue.Stop();
     testQueue.Stop();
 }
@@ -154,13 +151,13 @@ TEST_F(SenderSideQueueTest, StartWithThreadContext)
 {
     auto ctx = std::make_shared<MockThreadContext>();
     SenderSideQueue testQueue{TEST_SINGLE_THREAD_COUNT, {}};
-    
+
     EXPECT_TRUE(testQueue.Start(ctx));
-    
+
     std::this_thread::sleep_for(std::chrono::milliseconds(TEST_STARTUP_WAIT_MS));
-    
+
     EXPECT_TRUE(ctx->startupCalled_);
-    
+
     testQueue.Stop();
     EXPECT_TRUE(ctx->shutdownCalled_);
 }
@@ -169,15 +166,15 @@ TEST_F(SenderSideQueueTest, StartWithFailingThreadContext)
 {
     auto ctx = std::make_shared<MockThreadContext>();
     ctx->startupRet_ = -1;
-    
+
     SenderSideQueue testQueue{TEST_SINGLE_THREAD_COUNT, {}};
     EXPECT_TRUE(testQueue.Start(ctx));
-    
+
     std::this_thread::sleep_for(std::chrono::milliseconds(TEST_STARTUP_FAIL_WAIT_MS));
-    
+
     EXPECT_TRUE(ctx->startupCalled_);
     EXPECT_TRUE(ctx->shutdownCalled_);
-    
+
     testQueue.Stop();
 }
 
@@ -191,7 +188,7 @@ TEST_F(SenderSideQueueTest, RemoveRankIdSocket)
 {
     senderQueue_.RemoveRankIdSocket(TEST_RANK_ID);
     EXPECT_FALSE(senderQueue_.ExistRankIdSocket(TEST_RANK_ID));
-    
+
     senderQueue_.RemoveRankIdSocket(TEST_INVALID_RANK_ID);
 }
 
@@ -210,16 +207,16 @@ TEST_F(SenderSideQueueTest, BeginRequestInvalidRank)
     request.head.dstRankId = TEST_INVALID_RANK_ID;
     request.head.opCode = 0;
     request.head.bodySize = 0;
-    
+
     int ret = senderQueue_.BeginRequest(std::move(request), counter_);
     EXPECT_EQ(-1, ret);
 }
 
 TEST_F(SenderSideQueueTest, DestructorStopsQueue)
 {
-    auto* testQueue = new SenderSideQueue{TEST_SINGLE_THREAD_COUNT, {}};
+    auto *testQueue = new SenderSideQueue{TEST_SINGLE_THREAD_COUNT, {}};
     ASSERT_TRUE(testQueue->Start());
-    
+
     delete testQueue;
     SUCCEED();
 }
@@ -227,11 +224,11 @@ TEST_F(SenderSideQueueTest, DestructorStopsQueue)
 TEST_F(SenderSideQueueTest, BeginRequestNotStarted)
 {
     SenderSideQueue testQueue{TEST_SINGLE_THREAD_COUNT, {}};
-    
+
     QueueMessage request;
     request.head.requestId = TEST_NOT_STARTED_REQUEST_ID;
     request.head.dstRankId = TEST_RANK_ID;
-    
+
     int ret = testQueue.BeginRequest(std::move(request), nullptr);
     EXPECT_EQ(-1, ret);
 }

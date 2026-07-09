@@ -387,8 +387,8 @@ Result SmemBmEntry::Join(uint32_t flags)
 Result SmemBmEntry::Update(uint32_t flags)
 {
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    const uint32_t retryTime = mf::MfEnvUtil::GetOptionalUintOrDefault(
-        mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
+    const uint32_t retryTime =
+        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
     for (uint32_t i = 0; i < retryTime; i++) {
         auto ret = globalGroup_->GroupUpdate();
         if (ret == SM_INNER_BUSY) {
@@ -437,8 +437,8 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
     slices_.push_back(slice);
     sliceInfos_.push_back(info);
     // 3.group update
-    const uint32_t retryTime = mf::MfEnvUtil::GetOptionalUintOrDefault(
-        mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
+    const uint32_t retryTime =
+        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
     for (uint32_t i = 0; i < retryTime; i++) {
         auto ret = globalGroup_->GroupUpdate();
         if (ret == SM_INNER_BUSY) {
@@ -726,8 +726,9 @@ Result SmemBmEntry::CreateGlobalTeam(uint32_t rankSize, uint32_t rankId)
     SmemGroupChangeCallback joinFunc = std::bind(&SmemBmEntry::JoinHandle, this, std::placeholders::_1);
     SmemGroupChangeCallback updateFunc = std::bind(&SmemBmEntry::UpdateHandle, this, std::placeholders::_1);
     SmemGroupChangeCallback leaveFunc = std::bind(&SmemBmEntry::LeaveHandle, this, std::placeholders::_1);
-    SmemGroupOption opt = {rankSize,   rankId,   options_.controlOperationTimeout * SECOND_TO_MILLSEC, true, joinFunc,
-                           updateFunc, leaveFunc, nullptr};
+    SmemGroupOption opt = {rankSize,  rankId,   options_.controlOperationTimeout * SECOND_TO_MILLSEC,
+                           true,      joinFunc, updateFunc,
+                           leaveFunc, nullptr};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(_configStore, opt);
     SM_ASSERT_RETURN(group != nullptr, SM_ERROR);
 

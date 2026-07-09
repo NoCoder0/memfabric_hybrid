@@ -15,16 +15,14 @@
 namespace zbal {
 namespace operators {
 
-int32_t NpuCommunicatorAIV::AllGather(const void *sendBuff, void *recvBuff, size_t sendCount,
-                                      zbal_datatype_t dataType, aclrtStream stream) noexcept
+int32_t NpuCommunicatorAIV::AllGather(const void *sendBuff, void *recvBuff, size_t sendCount, zbal_datatype_t dataType,
+                                      aclrtStream stream) noexcept
 {
-    return ZBALOpAllGather(sendBuff, recvBuff, sendCount, dataType, stream,
-                           const_cast<CommGroupInfo &>(GetMetaInfo()));
+    return ZBALOpAllGather(sendBuff, recvBuff, sendCount, dataType, stream, const_cast<CommGroupInfo &>(GetMetaInfo()));
 }
 
 int32_t NpuCommunicatorAIV::AllReduce(const void *sendBuff, void *recvBuff, void *buffer, size_t count,
-                                      zbal_datatype_t dataType, zbal_reduce_op_t reduceOp,
-                                      aclrtStream stream) noexcept
+                                      zbal_datatype_t dataType, zbal_reduce_op_t reduceOp, aclrtStream stream) noexcept
 {
     return ZBALOpAllReduce(sendBuff, recvBuff, buffer, count, dataType, stream, reduceOp,
                            const_cast<CommGroupInfo &>(GetMetaInfo()));

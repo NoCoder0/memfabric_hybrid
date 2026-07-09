@@ -299,8 +299,8 @@ void DeviceSMACachingAllocator::garbage_collect_cached_blocks(const std::shared_
                 freeable_block_count--;        // One less block that can be freed
                 release_block(block, ctx);
 
-                ZBAL_LOG_DEBUG("SMACachingAllocator gc: free = " << block->size_ <<
-                               " allocated = " << total_allocated_memory_);
+                ZBAL_LOG_DEBUG("SMACachingAllocator gc: free = " << block->size_
+                                                                 << " allocated = " << total_allocated_memory_);
             }
         }
     }
@@ -768,8 +768,8 @@ void DeviceSMACachingAllocator::free(DeviceBlock *block, uint8_t allocator_type)
         free_block(block, context, allocator_type);
     }
 
-    ZBAL_LOG_INFO("SMA CachingAllocator free: free = " << orig_block_size <<
-                  ", allocated = " << total_allocated_memory_);
+    ZBAL_LOG_INFO("SMA CachingAllocator free: free = " << orig_block_size
+                                                       << ", allocated = " << total_allocated_memory_);
 }
 
 void DeviceSMACachingAllocator::recordStream(DeviceBlock *block, c10_npu::NPUStream stream)

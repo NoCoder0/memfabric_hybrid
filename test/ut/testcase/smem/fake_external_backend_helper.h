@@ -126,8 +126,8 @@ int32_t FakeUnlock(void *handle, const char *name, uint32_t flags);
 
 smem_conf_store_backend_op_t MakeFakeBackendOp();
 
-}  // namespace test
-}  // namespace smem
-}  // namespace ock
+} // namespace test
+} // namespace smem
+} // namespace ock
 
-#endif  // TEST_UT_TESTCASE_SMEM_FAKE_EXTERNAL_BACKEND_HELPER_H_
+#endif // TEST_UT_TESTCASE_SMEM_FAKE_EXTERNAL_BACKEND_HELPER_H_

@@ -74,8 +74,8 @@ private:
     __gm__ uint64_t *exchangeAck;
 };
 
-extern "C" __global__ __aicore__ void ZBALSendInner(GM_ADDR sendBuf, uint32_t dataTypeNum,
-                                                    GM_ADDR metaAddr, uint32_t peer)
+extern "C" __global__ __aicore__ void ZBALSendInner(GM_ADDR sendBuf, uint32_t dataTypeNum, GM_ADDR metaAddr,
+                                                    uint32_t peer)
 {
     KERNEL_TASK_TYPE_DEFAULT(KERNEL_TYPE_MIX_AIV_1_0);
 

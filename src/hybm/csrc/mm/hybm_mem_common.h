@@ -58,8 +58,8 @@ struct MemSegmentOptions {
     bool shared = true;
     uint64_t size = 0;
     uint64_t maxSize = 0;
-    uint32_t rankId = 0;               // must start from 0 and increase continuously
-    uint32_t rankCnt = 0;              // total rank count
+    uint32_t rankId = 0;  // must start from 0 and increase continuously
+    uint32_t rankCnt = 0; // total rank count
     uint32_t flags = 0;
     int shmFd = -1;
     bool enable56BitsGva = false;

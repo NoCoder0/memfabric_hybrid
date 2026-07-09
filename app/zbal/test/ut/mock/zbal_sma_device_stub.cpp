@@ -40,8 +40,7 @@ void DeviceSMACachingAllocator::free(DeviceBlock *block, uint8_t allocator_type)
     (void)allocator_type;
 }
 
-void DeviceSMACachingAllocator::free_block(DeviceBlock *block,
-                                           const std::shared_ptr<c10::GatheredContext> &context,
+void DeviceSMACachingAllocator::free_block(DeviceBlock *block, const std::shared_ptr<c10::GatheredContext> &context,
                                            uint8_t allocator_type)
 {
     (void)block;
@@ -59,13 +58,9 @@ DeviceStats DeviceSMACachingAllocator::getStats()
     return DeviceStats{};
 }
 
-void DeviceSMACachingAllocator::resetAccumulatedStats()
-{
-}
+void DeviceSMACachingAllocator::resetAccumulatedStats() {}
 
-void DeviceSMACachingAllocator::resetPeakStats()
-{
-}
+void DeviceSMACachingAllocator::resetPeakStats() {}
 
 void DeviceSMACachingAllocator::emptyCache(int device, bool check_error)
 {
@@ -85,13 +80,9 @@ void DeviceSMACachingAllocator::eraseStream(DeviceBlock *block, c10_npu::NPUStre
     (void)stream;
 }
 
-void DeviceSMACachingAllocator::markAllBlockUnsafe()
-{
-}
+void DeviceSMACachingAllocator::markAllBlockUnsafe() {}
 
-void DeviceSMACachingAllocator::releaseAndFreeEvents()
-{
-}
+void DeviceSMACachingAllocator::releaseAndFreeEvents() {}
 
 void DeviceSMACachingAllocator::beginAllocateToPool(c10_npu::MempoolId_t mempool_id,
                                                     std::function<bool(aclrtStream)> filter)
@@ -124,7 +115,8 @@ void DeviceSMACachingAllocator::attachSnapShotObserver(TraceObserver trace_ob_fu
 void *DeviceSMACachingAllocator::getBaseAllocation(DeviceBlock *block, size_t *outSize)
 {
     (void)block;
-    if (outSize) *outSize = 0;
+    if (outSize)
+        *outSize = 0;
     return nullptr;
 }
 
@@ -135,8 +127,10 @@ void DeviceSMACachingAllocator::setMemoryFraction(double fraction)
 
 void DeviceSMACachingAllocator::cacheInfo(size_t *total, size_t *largest)
 {
-    if (total) *total = 0;
-    if (largest) *largest = 0;
+    if (total)
+        *total = 0;
+    if (largest)
+        *largest = 0;
 }
 
 } // namespace device

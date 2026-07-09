@@ -85,9 +85,7 @@ TEST_F(OutLoggerTest, AlarmLimit)
     OutLogger::Instance().SetAlarmLogFunction(AlarmHandle, ResumeHandle, true);
     std::string msg = "test alarm";
 
-    std::thread limitThread([&msg]() {
-        MF_ALARM_LOG_LIMIT("", INNER_ERROR_CODE, msg.c_str());
-    });
+    std::thread limitThread([&msg]() { MF_ALARM_LOG_LIMIT("", INNER_ERROR_CODE, msg.c_str()); });
     limitThread.join();
     EXPECT_EQ(g_testCode, INNER_ERROR_CODE);
 }

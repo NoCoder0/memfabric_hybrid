@@ -11,69 +11,100 @@
 
 set -euo pipefail
 
-# 配置参数
-TARGET_BRANCH=${TARGET_BRANCH:-develop}
+show_help()
+{
+    echo "Usage: $0"
+    echo ""
+    echo "Run repository pre-commit hooks on all files."
+    echo ""
+    echo "Important: this script is intended for repository-wide formatting/checking."
+    echo "Formatting must not change code logic. If hooks modify files, review the"
+    echo "diff carefully and keep only formatting-equivalent changes."
+}
 
-# 脚本标题
-echo "================================================"
-echo "          Pre-Commit CI 增量检查"
-echo "================================================"
+install_pre_commit_if_needed()
+{
+    if command -v pre-commit >/dev/null 2>&1; then
+        return 0
+    fi
 
-# 输出目标分支信息
-echo "[INFO] 目标分支: ${TARGET_BRANCH}"
+    echo "[INFO] pre-commit command not found, installing with python3 -m pip --user"
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "[ERROR] python3 command not found, please install pre-commit manually"
+        exit 127
+    fi
 
-# 配置Git中文文件名支持
-echo "[INFO] 配置 Git 中文文件名支持"
-git config core.quotePath false
+    python3 -m pip install --user pre-commit
+    export PATH="${HOME}/.local/bin:${PATH}"
 
-# 拉取远程目标分支
-echo -e "\n[INFO] 拉取远程分支"
-echo "[COMMAND] git fetch origin ${TARGET_BRANCH}"
-git fetch origin "${TARGET_BRANCH}"
+    if ! command -v pre-commit >/dev/null 2>&1; then
+        echo "[ERROR] pre-commit still not found after installation"
+        exit 127
+    fi
+}
 
-# 获取变更文件列表
-echo -e "\n[INFO] 获取变更文件列表"
-echo "[COMMAND] git diff --name-only --diff-filter=ACMR origin/${TARGET_BRANCH} HEAD"
-FILES_ARR=($(git diff --name-only --diff-filter=ACMR origin/${TARGET_BRANCH} HEAD | sort -u))
+run_pre_commit_all_files()
+{
+    echo -e "\n[INFO] 开始 pre-commit 全量检查/格式化"
+    echo "[COMMAND] pre-commit run --all-files --show-diff-on-failure"
 
-# 无变更文件直接退出
-if [ ${#FILES_ARR[@]} -eq 0 ]; then
-  echo "[INFO] 无变更文件，检查通过"
-  exit 0
-fi
+    set +e
+    pre-commit run --all-files --show-diff-on-failure
+    local code=$?
+    set -e
 
-# 输出变更文件信息
-echo -e "\n[INFO] 变更文件数量: ${#FILES_ARR[@]}"
-echo "[INFO] 变更文件列表:"
-for f in "${FILES_ARR[@]}"; do echo "  $f"; done
+    return "${code}"
+}
 
-# 安装pre-commit工具
-echo -e "\n[INFO] 安装 pre-commit"
-echo "[COMMAND] pip install pre-commit"
-pip install pre-commit
+print_result()
+{
+    local code=$1
 
-# 执行pre-commit检查
-echo -e "\n[INFO] 开始 pre-commit 检查"
-echo "[COMMAND] pre-commit run --files ${FILES_ARR[*]}"
-set +e
-pre-commit run --files "${FILES_ARR[@]}"
-CODE=$?
-set -e
+    echo -e "\n================================================================"
+    if [ "${code}" -eq 0 ]; then
+        echo "[INFO] pre-commit 全量检查全部通过"
+    else
+        echo "[ERROR] pre-commit 全量检查失败或自动修改了文件"
+        echo "[INFO] 如果 hook 自动修改了文件，请务必执行以下检查后再提交："
+        echo ""
+        echo "1. 查看改动"
+        echo "git diff --stat"
+        echo "git diff"
+        echo ""
+        echo "2. 确认所有改动都只是格式化等价变更，不改变代码逻辑"
+        echo ""
+        echo "3. 修复后重新执行"
+        echo "$0"
+    fi
+    echo "================================================================"
+}
 
-# 输出检查结果
-echo -e "\n================================================================"
-if [ ${CODE} -eq 0 ]; then
-  echo "[INFO] pre-commit 检查全部通过"
-else
-  echo "[ERROR] pre-commit 检查失败"
-  echo "[INFO] 请在本地执行以下命令修复后重新提交:"
-  echo ""
-  echo "1. 安装/初始化环境"
-  echo "pip install pre-commit && pre-commit install --install-hooks"
-  echo ""
-  echo "2. 检查并修复变更文件"
-  echo "pre-commit run --files ${FILES_ARR[*]}"
-fi
-echo "================================================================"
+main()
+{
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+        show_help
+        exit 0
+    fi
 
-exit ${CODE}
+    if [[ $# -ne 0 ]]; then
+        echo "[ERROR] unsupported arguments: $*"
+        show_help
+        exit 2
+    fi
+
+    echo "================================================"
+    echo "          Pre-Commit 全量检查/格式化"
+    echo "================================================"
+    echo "[INFO] 模式: 全量，不按 MR/PR 变更文件做增量过滤"
+
+    git config core.quotePath false
+    install_pre_commit_if_needed
+
+    local code=0
+    run_pre_commit_all_files || code=$?
+    print_result "${code}"
+
+    exit "${code}"
+}
+
+main "$@"

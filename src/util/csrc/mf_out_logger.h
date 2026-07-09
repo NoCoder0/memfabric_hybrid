@@ -181,12 +181,12 @@ public:
             return;
         }
 
-        struct timeval tv{};
+        struct timeval tv {};
         char strTime[24];
 
         gettimeofday(&tv, nullptr);
         time_t timeStamp = tv.tv_sec;
-        struct tm localTime{};
+        struct tm localTime {};
         auto result = localtime_r(&timeStamp, &localTime);
         if (result == nullptr) {
             return;
@@ -277,16 +277,16 @@ private:
         ock::mf::OutLogger::Instance().Alarm(static_cast<uint16_t>(CODE), oss.str()); \
     } while (0)
 
-#define MF_ALARM_LOG_LIMIT(TAG, CODE, ARGS)                                           \
-    do {                                                                              \
-        std::ostringstream oss;                                                       \
-        oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
-        ock::mf::OutLogger::Instance().AlarmLimit(static_cast<uint16_t>(CODE), oss.str());  \
+#define MF_ALARM_LOG_LIMIT(TAG, CODE, ARGS)                                                \
+    do {                                                                                   \
+        std::ostringstream oss;                                                            \
+        oss << (TAG) << MF_LOG_FORMAT << ARGS;                                             \
+        ock::mf::OutLogger::Instance().AlarmLimit(static_cast<uint16_t>(CODE), oss.str()); \
     } while (0)
 
-#define MF_RESUME_LOG(CODE)                                                           \
-    do {                                                                              \
-        ock::mf::OutLogger::Instance().Resume(static_cast<uint16_t>(CODE));           \
+#define MF_RESUME_LOG(CODE)                                                 \
+    do {                                                                    \
+        ock::mf::OutLogger::Instance().Resume(static_cast<uint16_t>(CODE)); \
     } while (0)
 
 #endif // MEMFABRIC_HYBRID_LOGGER_H

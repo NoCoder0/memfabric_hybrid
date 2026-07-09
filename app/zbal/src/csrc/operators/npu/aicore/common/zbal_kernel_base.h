@@ -221,9 +221,8 @@ private:
     // when CpGM2GM is instantiated with uint64_t, long, unsigned char, etc.
     template<typename T>
     static constexpr bool kMteAtomicSupported =
-        std::is_same_v<T, float> || std::is_same_v<T, half> ||
-        std::is_same_v<T, int16_t> || std::is_same_v<T, int32_t> ||
-        std::is_same_v<T, int8_t> || std::is_same_v<T, bfloat16_t>;
+        std::is_same_v<T, float> || std::is_same_v<T, half> || std::is_same_v<T, int16_t> ||
+        std::is_same_v<T, int32_t> || std::is_same_v<T, int8_t> || std::is_same_v<T, bfloat16_t>;
 
     template<typename T>
     ZBAL_KERNEL void SetAtomicOpMTE(uint32_t atomicOp)

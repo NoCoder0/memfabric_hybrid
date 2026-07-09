@@ -161,7 +161,7 @@ UrmaEndpointHandle HcommTransportManager::CreateEndpoint(const UrmaEndpointDesc 
 }
 
 Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, UrmaMemTag memTag, const UrmaCommMem &mem,
-                                         HcommMemHandle *memHandle)
+                                          HcommMemHandle *memHandle)
 {
     if (endpoint == nullptr || memHandle == nullptr) {
         BM_LOG_ERROR("device_urma HcommMemReg: endpoint or memHandle is null");
@@ -284,7 +284,7 @@ Result HcommTransportManager::HcommMemUnreg(const UrmaEndpointHandle &endpoint, 
 }
 
 Result HcommTransportManager::HcommMemExport(const UrmaEndpointHandle &endpoint, HcommMemHandle memHandle,
-                                            const uint8_t **memDesc, uint32_t *memDescLen)
+                                             const uint8_t **memDesc, uint32_t *memDescLen)
 {
     if (endpoint == nullptr || memDesc == nullptr || memDescLen == nullptr) {
         BM_LOG_ERROR("device_urma HcommMemExport: endpoint, memDesc, or memDescLen is null");
@@ -338,7 +338,7 @@ Result HcommTransportManager::HcommMemExport(const UrmaEndpointHandle &endpoint,
 }
 
 Result HcommTransportManager::HcommMemImport(const UrmaEndpointHandle &endpoint, const uint8_t *memDesc,
-                                            uint32_t descLen, UrmaCommMem *commMem)
+                                             uint32_t descLen, UrmaCommMem *commMem)
 {
     if (endpoint == nullptr || memDesc == nullptr || commMem == nullptr) {
         BM_LOG_ERROR("device_urma HcommMemImport: endpoint, memDesc, or commMem is null");
@@ -379,7 +379,7 @@ Result HcommTransportManager::HcommMemImport(const UrmaEndpointHandle &endpoint,
 }
 
 Result HcommTransportManager::HcommMemUnimport(const UrmaEndpointHandle &endpoint, const uint8_t *memDesc,
-                                              uint32_t descLen)
+                                               uint32_t descLen)
 {
     if (endpoint == nullptr || memDesc == nullptr) {
         BM_LOG_ERROR("device_urma HcommMemUnimport: endpoint or memDesc is null");

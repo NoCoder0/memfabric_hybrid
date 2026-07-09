@@ -52,7 +52,7 @@ def test_scatter(dist_type, case_list, hidden_size, data_op_type):
         "int32_t": torch.int32,
         "float16_t": torch.float16,
         "float": torch.float32,
-        "bfloat16_t": torch.bfloat16
+        "bfloat16_t": torch.bfloat16,
     }
 
     tensor_data_type = torch_type_map.get(test_type, 'int')
@@ -92,12 +92,8 @@ def test_scatter(dist_type, case_list, hidden_size, data_op_type):
                         torch_npu.profiler.ProfilerActivity.CPU,
                         torch_npu.profiler.ProfilerActivity.NPU,
                     ],
-                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                        profiling_path
-                    ),
-                    schedule=torch_npu.profiler.schedule(
-                        wait=1, warmup=1, active=10, repeat=1, skip_first=1
-                    ),
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(profiling_path),
+                    schedule=torch_npu.profiler.schedule(wait=1, warmup=1, active=10, repeat=1, skip_first=1),
                     record_shapes=True,
                     profile_memory=True,
                     with_stack=False,
@@ -112,8 +108,9 @@ def test_scatter(dist_type, case_list, hidden_size, data_op_type):
             tensor_output_dir = f"{current_dir}/output/scatter_{data_len}_{world_size}/"
             os.makedirs(tensor_output_dir, exist_ok=True)
             if dist_type == 'zbal' and is_perf_test():
-                golden_tensor = torch.load(f"{tensor_output_dir}/output_hccl_{global_rank}.bin",
-                                           weights_only=False).npu()
+                golden_tensor = torch.load(
+                    f"{tensor_output_dir}/output_hccl_{global_rank}.bin", weights_only=False
+                ).npu()
 
             for k in range(20):
                 if enable_profiling and prof_cnt >= 1:
@@ -121,10 +118,13 @@ def test_scatter(dist_type, case_list, hidden_size, data_op_type):
                 root = 0
 
                 data = np.fromfile(f"{current_dir}/golden/{golden_dir}/input_gm_{root}.bin", dtype=data_type)
-                tensor_input = torch.from_numpy(data).to(
-                    tensor_data_type).npu().view(world_size, row_num // world_size, hidden_size)
-                tensor_output = torch.zeros_like(
-                    tensor_input[0], dtype=tensor_input.dtype, device=tensor_input.device)
+                tensor_input = (
+                    torch.from_numpy(data)
+                    .to(tensor_data_type)
+                    .npu()
+                    .view(world_size, row_num // world_size, hidden_size)
+                )
+                tensor_output = torch.zeros_like(tensor_input[0], dtype=tensor_input.dtype, device=tensor_input.device)
 
                 if global_rank == root:
                     scatter_list = [tensor_input[i] for i in range(world_size)]

@@ -78,7 +78,7 @@ TEST_F(MFNumUtilTest, GetReserveChunkSizetTest)
     EXPECT_EQ(ret, 100ULL * GB);
     ret = HybmDevLegacySegment::GetReserveChunkSize(0 * GB, 4ULL * GB);
     EXPECT_EQ(ret, 0 * GB);
-        ret = HybmDevLegacySegment::GetReserveChunkSize(200ULL * GB, 2ULL * GB);
+    ret = HybmDevLegacySegment::GetReserveChunkSize(200ULL * GB, 2ULL * GB);
     EXPECT_EQ(ret, 100ULL * GB);
 }
 
@@ -119,4 +119,3 @@ TEST_F(MFNumUtilTest, IsOverflowCheck_SignedType)
 {
     EXPECT_FALSE(NumUtil::IsOverflowCheck(int32_t(100), int32_t(200), int32_t(INT32_MAX), '+')); // 100 200
 }
-

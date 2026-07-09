@@ -20,8 +20,8 @@
 #endif
 
 /* second level marco define 'CONCAT' to get string */
-#define STR(x)             #x
-#define STR2(x)            STR(x)
+#define STR(x)  #x
+#define STR2(x) STR(x)
 
 #ifndef GIT_LAST_COMMIT
 #define GIT_LAST_COMMIT empty
@@ -34,8 +34,8 @@
 #define ZBAL_TORCH_NPU_VERSION STR2(TORCH_NPU_VERSION)
 
 /* get cancat version string */
-#define ZBAL_LIB_VERSION STR2(ZBAL_VERSION_MAJOR) "." STR2(ZBAL_VERSION_MINOR) "." \
-                              ZBAL_TORCH_NPU_VERSION ".post" STR2(ZBAL_VERSION_FIX)
+#define ZBAL_LIB_VERSION \
+    STR2(ZBAL_VERSION_MAJOR) "." STR2(ZBAL_VERSION_MINOR) "." ZBAL_TORCH_NPU_VERSION ".post" STR2(ZBAL_VERSION_FIX)
 
 /*
  * global lib version string with build time

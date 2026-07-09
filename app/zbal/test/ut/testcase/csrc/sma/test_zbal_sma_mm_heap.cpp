@@ -180,7 +180,8 @@ TEST_F(TestSplitMemoryHeap, HiLoExhaustThenOOM)
     std::vector<void *> ptrs;
     for (int i = 0; i < ZBAL_UT_NUM_32; i++) {
         void *p = heap.alignedAllocate(1, ZBAL_UT_SIZE_2KB);
-        if (p == nullptr) break;
+        if (p == nullptr)
+            break;
         ptrs.push_back(p);
     }
     EXPECT_GT(ptrs.size(), 0u);
@@ -458,7 +459,8 @@ TEST_F(TestSplitMemoryHeap, ManyTinyAllocs)
     std::vector<void *> ptrs;
     for (int i = 0; i < ZBAL_UT_NUM_200; i++) {
         void *p = heap_->alignedAllocate(ZBAL_UT_NUM_8, ZBAL_UT_NUM_32);
-        if (p == nullptr) break;
+        if (p == nullptr)
+            break;
         ptrs.push_back(p);
     }
     EXPECT_GT(ptrs.size(), 50u);

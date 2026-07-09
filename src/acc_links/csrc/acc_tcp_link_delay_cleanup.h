@@ -22,7 +22,7 @@ namespace ock {
 namespace acc {
 struct AccTcpLinkCleanupItem {
     bool stop = false;
-    struct timeval enqueueTime{};
+    struct timeval enqueueTime {};
     AccTcpLinkPtr link;
 
     AccTcpLinkCleanupItem() = default;
@@ -144,7 +144,7 @@ inline bool AccTcpLinkDelayCleanup::CheckAndPop(uint32_t periodSecond, AccTcpLin
         return true;
     }
 
-    struct timeval currentTime{};
+    struct timeval currentTime {};
     gettimeofday(&currentTime, nullptr);
     if (currentTime.tv_sec - frontItem.enqueueTime.tv_sec >= periodSecond) {
         item = frontItem;

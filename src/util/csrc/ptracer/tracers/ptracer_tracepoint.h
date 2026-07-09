@@ -21,8 +21,8 @@ public:
                 auto *r = new (std::nothrow) LatencyRecorder(PTRACER_DUMP_INTERVAL_SEC);
                 if (r != nullptr) {
                     LatencyRecorder *expected = nullptr;
-                    if (rec_.compare_exchange_strong(expected, r,
-                        std::memory_order_release, std::memory_order_relaxed)) {
+                    if (rec_.compare_exchange_strong(expected, r, std::memory_order_release,
+                                                     std::memory_order_relaxed)) {
                         r->StartSampling();
                     } else {
                         delete r;
@@ -138,7 +138,7 @@ public:
         uint32_t moduleId = GetModuleId(tpId);
         uint32_t traceId = GetTraceId(tpId);
         if (PTRACER_UNLIKELY(moduleId >= static_cast<uint32_t>(MAX_MODULE_COUNT) ||
-                            traceId >= static_cast<uint32_t>(MAX_TRACE_ID_COUNT))) {
+                             traceId >= static_cast<uint32_t>(MAX_TRACE_ID_COUNT))) {
             return nullptr;
         }
 

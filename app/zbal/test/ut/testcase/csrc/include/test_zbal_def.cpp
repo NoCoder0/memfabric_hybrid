@@ -14,14 +14,11 @@
 #include "zbal_def.h"
 #include "test_zbal_def.h"
 
-
 class TestZBALDef : public testing::Test {
 public:
     static void SetUpTestCase() {}
 
-    static void TearDownTestCase()
-    {
-    }
+    static void TearDownTestCase() {}
 
     void SetUp() override {}
 

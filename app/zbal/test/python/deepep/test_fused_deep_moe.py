@@ -26,14 +26,22 @@ torch_npu.npu.config.allow_internal_format = True
 
 from utils import calc_diff, init_dist
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
-def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
-                  num_topk, with_shared, with_smooth, share_ffn_dim, use_balanced_idx=False):
+def generate_data(
+    rank,
+    bs,
+    hidden,
+    ffn_dim,
+    num_local_experts,
+    num_experts,
+    num_topk,
+    with_shared,
+    with_smooth,
+    share_ffn_dim,
+    use_balanced_idx=False,
+):
     """Generate test data for both fused and unfused paths.
 
     Returns both NZ-format weights (for fused kernel) and base weights
@@ -44,9 +52,9 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
     x = (torch.rand((bs, hidden), device="npu") * 10 - 5).to(torch.bfloat16)
 
     if use_balanced_idx:
-        expert_ids = torch.arange(rank * bs * num_topk,
-                                  rank * bs * num_topk + bs * num_topk,
-                                  dtype=torch.int32, device="npu").reshape(bs, num_topk)
+        expert_ids = torch.arange(
+            rank * bs * num_topk, rank * bs * num_topk + bs * num_topk, dtype=torch.int32, device="npu"
+        ).reshape(bs, num_topk)
     else:
         expert_ids = torch.randint(0, num_experts, (bs, num_topk), dtype=torch.int32, device="npu")
     expert_ids = expert_ids % num_experts
@@ -55,14 +63,10 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
 
     g2_dim = ffn_dim // 2
     # Base weights (standard format, for unfused reference)
-    g1_w_base = torch.randint(-16, 16, (num_local_experts, hidden, ffn_dim),
-                              dtype=torch.int8, device="npu")
-    g1_s_base = (torch.rand((num_local_experts, ffn_dim), dtype=torch.float32, device="npu")
-                 * 0.003 + 0.0015)
-    g2_w_base = torch.randint(-16, 16, (num_local_experts, g2_dim, hidden),
-                              dtype=torch.int8, device="npu")
-    g2_s_base = (torch.rand((num_local_experts, hidden), dtype=torch.float32, device="npu")
-                 * 0.003 + 0.0015)
+    g1_w_base = torch.randint(-16, 16, (num_local_experts, hidden, ffn_dim), dtype=torch.int8, device="npu")
+    g1_s_base = torch.rand((num_local_experts, ffn_dim), dtype=torch.float32, device="npu") * 0.003 + 0.0015
+    g2_w_base = torch.randint(-16, 16, (num_local_experts, g2_dim, hidden), dtype=torch.int8, device="npu")
+    g2_s_base = torch.rand((num_local_experts, hidden), dtype=torch.float32, device="npu") * 0.003 + 0.0015
     # NZ format for fused kernel
     g1_w = torch_npu.npu_format_cast(g1_w_base, 29)
     g1_s = g1_s_base.contiguous()
@@ -80,14 +84,10 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
 
     if with_shared:
         sg2_dim = share_ffn_dim // 2
-        sh_w1_base = torch.randint(-16, 16, (hidden, share_ffn_dim),
-                                   dtype=torch.int8, device="npu")
-        sh_w2_base = torch.randint(-16, 16, (sg2_dim, hidden),
-                                   dtype=torch.int8, device="npu")
-        sh_s1_base = (torch.rand((share_ffn_dim,), dtype=torch.float32, device="npu")
-                      * 0.003 + 0.0015)
-        sh_s2_base = (torch.rand((hidden,), dtype=torch.float32, device="npu")
-                      * 0.003 + 0.0015)
+        sh_w1_base = torch.randint(-16, 16, (hidden, share_ffn_dim), dtype=torch.int8, device="npu")
+        sh_w2_base = torch.randint(-16, 16, (sg2_dim, hidden), dtype=torch.int8, device="npu")
+        sh_s1_base = torch.rand((share_ffn_dim,), dtype=torch.float32, device="npu") * 0.003 + 0.0015
+        sh_s2_base = torch.rand((hidden,), dtype=torch.float32, device="npu") * 0.003 + 0.0015
         sh_w1 = torch_npu.npu_format_cast(sh_w1_base, 29)
         sh_w2 = torch_npu.npu_format_cast(sh_w2_base, 29)
         sh_s1 = sh_s1_base.contiguous()
@@ -97,16 +97,52 @@ def generate_data(rank, bs, hidden, ffn_dim, num_local_experts, num_experts,
         if with_shared:
             sh_smooth = torch.rand((hidden,), dtype=torch.float32, device="npu")
 
-    return (x, expert_ids, expert_scales, g1_w, g1_s, g2_w, g2_s,
-            sh_w1, sh_s1, sh_w2, sh_s2, smooth_scales, sh_smooth,
-            g1_w_base, g1_s_base, g2_w_base, g2_s_base,
-            sh_w1_base, sh_s1_base, sh_w2_base, sh_s2_base,
-            topk_idx, topk_weights)
+    return (
+        x,
+        expert_ids,
+        expert_scales,
+        g1_w,
+        g1_s,
+        g2_w,
+        g2_s,
+        sh_w1,
+        sh_s1,
+        sh_w2,
+        sh_s2,
+        smooth_scales,
+        sh_smooth,
+        g1_w_base,
+        g1_s_base,
+        g2_w_base,
+        g2_s_base,
+        sh_w1_base,
+        sh_s1_base,
+        sh_w2_base,
+        sh_s2_base,
+        topk_idx,
+        topk_weights,
+    )
 
 
-def run_fused(buffer, x, expert_ids, expert_scales, g1_w, g1_s, g2_w, g2_s,
-              num_experts, ffn_dim, smooth_scales,
-              sh_w1, sh_s1, sh_w2, sh_s2, sh_smooth, share_ffn_dim):
+def run_fused(
+    buffer,
+    x,
+    expert_ids,
+    expert_scales,
+    g1_w,
+    g1_s,
+    g2_w,
+    g2_s,
+    num_experts,
+    ffn_dim,
+    smooth_scales,
+    sh_w1,
+    sh_s1,
+    sh_w2,
+    sh_s2,
+    sh_smooth,
+    share_ffn_dim,
+):
     """Execute the fused deep_moe kernel (quant_mode=0, BF16 path).
     Workspace is allocated internally by the C++ adaptor.
     """
@@ -135,9 +171,20 @@ def run_fused(buffer, x, expert_ids, expert_scales, g1_w, g1_s, g2_w, g2_s,
     )
 
 
-def run_unfused(buffer, x, topk_idx, topk_weights,
-                g1_w_base, g1_s_base, g2_w_base, g2_s_base,
-                num_experts, num_ranks, num_max_dispatch_tokens_per_rank, use_fp8=True):
+def run_unfused(
+    buffer,
+    x,
+    topk_idx,
+    topk_weights,
+    g1_w_base,
+    g1_s_base,
+    g2_w_base,
+    g2_s_base,
+    num_experts,
+    num_ranks,
+    num_max_dispatch_tokens_per_rank,
+    use_fp8=True,
+):
     """Unfused reference with BF16 low-latency dispatch/combine.
 
     Pipeline:
@@ -183,7 +230,7 @@ def run_unfused(buffer, x, topk_idx, topk_weights,
         weight_scale=[g1_s_base],
         x_scale=recv_x_scale,
         group_list_type=group_list_type,
-        group_list=group_list
+        group_list=group_list,
     )
 
     hidden_states = torch.ops.npu.npu_grouped_matmul(
@@ -195,7 +242,7 @@ def run_unfused(buffer, x, topk_idx, topk_weights,
         group_list_type=group_list_type,
         group_type=0,
         group_list=group_list,
-        output_dtype=torch.float16
+        output_dtype=torch.float16,
     )[0]
 
     hidden_states = hidden_states.to(input_dtype)
@@ -247,34 +294,76 @@ def test_fused_moe(rank, num_ranks, args):
         num_qps_per_rank=nle,
     )
 
-    tag = (f"bs{bs}_h{hidden}_ffn{ffn}_E{ne}_topk{tk}_R{num_ranks}_"
-           f"sh{int(ws)}_sm{int(sm)}")
+    tag = f"bs{bs}_h{hidden}_ffn{ffn}_E{ne}_topk{tk}_R{num_ranks}_sh{int(ws)}_sm{int(sm)}"
     logging.info(f"[rank {rank}] Config: {tag}")
 
-    (x, expert_ids, expert_scales, g1_w, g1_s, g2_w, g2_s,
-     sh_w1, sh_s1, sh_w2, sh_s2, smooth_scales, sh_smooth,
-     g1_w_base, g1_s_base, g2_w_base, g2_s_base,
-     sh_w1_base, sh_s1_base, sh_w2_base, sh_s2_base,
-     topk_idx, topk_weights) = generate_data(
-        rank, bs, hidden, ffn, nle, ne, tk, ws, sm, sfn)
+    (
+        x,
+        expert_ids,
+        expert_scales,
+        g1_w,
+        g1_s,
+        g2_w,
+        g2_s,
+        sh_w1,
+        sh_s1,
+        sh_w2,
+        sh_s2,
+        smooth_scales,
+        sh_smooth,
+        g1_w_base,
+        g1_s_base,
+        g2_w_base,
+        g2_s_base,
+        sh_w1_base,
+        sh_s1_base,
+        sh_w2_base,
+        sh_s2_base,
+        topk_idx,
+        topk_weights,
+    ) = generate_data(rank, bs, hidden, ffn, nle, ne, tk, ws, sm, sfn)
 
     # ===== Fused path =====
     torch.npu.synchronize()
     dist.barrier()
 
     fused_out, fused_token_nums = run_fused(
-        buffer_a, x, expert_ids, expert_scales, g1_w, g1_s, g2_w, g2_s,
-        ne, ffn, smooth_scales,
-        sh_w1, sh_s1, sh_w2, sh_s2, sh_smooth, sfn)
+        buffer_a,
+        x,
+        expert_ids,
+        expert_scales,
+        g1_w,
+        g1_s,
+        g2_w,
+        g2_s,
+        ne,
+        ffn,
+        smooth_scales,
+        sh_w1,
+        sh_s1,
+        sh_w2,
+        sh_s2,
+        sh_smooth,
+        sfn,
+    )
 
     torch.npu.synchronize()
     dist.barrier()
 
     # ===== Unfused reference =====
     unfused_out, unfused_token_nums = run_unfused(
-        buffer_b, x, topk_idx, topk_weights,
-        g1_w, g1_s, g2_w_base, g2_s_base,
-        ne, num_ranks, num_max_dispatch * num_ranks)
+        buffer_b,
+        x,
+        topk_idx,
+        topk_weights,
+        g1_w,
+        g1_s,
+        g2_w_base,
+        g2_s_base,
+        ne,
+        num_ranks,
+        num_max_dispatch * num_ranks,
+    )
 
     torch.npu.synchronize()
     dist.barrier()
@@ -284,12 +373,13 @@ def test_fused_moe(rank, num_ranks, args):
     tn_match = False
     if fused_token_nums.numel() == unfused_token_nums.numel():
         tn_diff = (fused_token_nums - unfused_token_nums).abs().max().item()
-        tn_match = (tn_diff == 0)
-        logging.info(f"[rank {rank}] expert_token_nums max diff = {tn_diff} "
-                     f"({'MATCH' if tn_match else 'MISMATCH'})")
+        tn_match = tn_diff == 0
+        logging.info(f"[rank {rank}] expert_token_nums max diff = {tn_diff} ({'MATCH' if tn_match else 'MISMATCH'})")
     else:
-        logging.error(f"[rank {rank}] expert_token_nums size mismatch: "
-                      f"fused={fused_token_nums.numel()} unfused={unfused_token_nums.numel()}")
+        logging.error(
+            f"[rank {rank}] expert_token_nums size mismatch: "
+            f"fused={fused_token_nums.numel()} unfused={unfused_token_nums.numel()}"
+        )
 
     # Token-wise stats for diagnosis
     diff_marker = 0
@@ -305,8 +395,10 @@ def test_fused_moe(rank, num_ranks, args):
         diff_val = diff.item() if isinstance(diff, torch.Tensor) else diff
         if math.isnan(diff_val) or math.isinf(diff_val) or diff_val >= threshold:
             diff_marker += 1
-            logging.info(f"[rank {rank}][token {idx}] element-wise: max_abs_diff={abs_diff.max().item():.6f} "
-                         f"mean_abs_diff={abs_diff.mean().item():.6f}")
+            logging.info(
+                f"[rank {rank}][token {idx}] element-wise: max_abs_diff={abs_diff.max().item():.6f} "
+                f"mean_abs_diff={abs_diff.mean().item():.6f}"
+            )
             logging.info(f"[rank {rank}][token {idx}] calc_diff(fused, unfused) = {diff:.6f}")
 
     if diff_marker > (bs * 0.05):
@@ -325,24 +417,17 @@ def test_loop(local_rank, num_local_ranks, args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ZBAL fused_deep_moe precision test")
-    parser.add_argument("--num-processes", type=int, default=8,
-                        help="Number of NPU processes (default: 8)")
-    parser.add_argument("--num-tokens", type=int, default=64,
-                        help="Batch size / num tokens per rank (default: 64)")
-    parser.add_argument("--hidden", type=int, default=7168,
-                        help="Hidden dimension (default: 7168)")
-    parser.add_argument("--ffn-dim", type=int, default=4096,
-                        help="FFN intermediate dimension (default: 4096)")
-    parser.add_argument("--num-experts", type=int, default=64,
-                        help="Total number of experts (default: 64)")
-    parser.add_argument("--num-topk", type=int, default=8,
-                        help="Top-K experts per token (default: 8)")
-    parser.add_argument("--with-shared", action="store_true",
-                        help="Include shared expert")
-    parser.add_argument("--with-smooth", action="store_true",
-                        help="Include smooth quantization scales")
-    parser.add_argument("--share-ffn-dim", type=int, default=0,
-                        help="Shared expert FFN dim (default: same as --ffn-dim)")
+    parser.add_argument("--num-processes", type=int, default=8, help="Number of NPU processes (default: 8)")
+    parser.add_argument("--num-tokens", type=int, default=64, help="Batch size / num tokens per rank (default: 64)")
+    parser.add_argument("--hidden", type=int, default=7168, help="Hidden dimension (default: 7168)")
+    parser.add_argument("--ffn-dim", type=int, default=4096, help="FFN intermediate dimension (default: 4096)")
+    parser.add_argument("--num-experts", type=int, default=64, help="Total number of experts (default: 64)")
+    parser.add_argument("--num-topk", type=int, default=8, help="Top-K experts per token (default: 8)")
+    parser.add_argument("--with-shared", action="store_true", help="Include shared expert")
+    parser.add_argument("--with-smooth", action="store_true", help="Include smooth quantization scales")
+    parser.add_argument(
+        "--share-ffn-dim", type=int, default=0, help="Shared expert FFN dim (default: same as --ffn-dim)"
+    )
     args = parser.parse_args()
 
     if args.num_processes < 2:
@@ -353,5 +438,4 @@ if __name__ == "__main__":
     os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = "29501"
 
-    torch.multiprocessing.spawn(
-        test_loop, args=(args.num_processes, args), nprocs=args.num_processes, join=True)
+    torch.multiprocessing.spawn(test_loop, args=(args.num_processes, args), nprocs=args.num_processes, join=True)

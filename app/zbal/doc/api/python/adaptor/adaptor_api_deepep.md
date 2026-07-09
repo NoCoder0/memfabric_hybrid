@@ -176,5 +176,3 @@ Config is a data class to hold deepep configurations.
 def get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)
 # description: compatible function, empty operation, return num_max_dispatch_tokens_per_rank directly
 ```
-
-

@@ -22,8 +22,14 @@ def main():
         assert bm.initialize(STORE_URL, WORLD_SIZE, DEVICE_ID, cfg) == 0, "bm.initialize failed"
         bm_inited = True
         # register DRAM in the big memory pool.
-        handle = bm.create2(id=0, local_dram_size=0, max_dram_size=0, local_hbm_size=ONE_GIB, max_hbm_size=ONE_GIB,
-                            data_op_type=bm.BmDataOpType.SDMA)
+        handle = bm.create2(
+            id=0,
+            local_dram_size=0,
+            max_dram_size=0,
+            local_hbm_size=ONE_GIB,
+            max_hbm_size=ONE_GIB,
+            data_op_type=bm.BmDataOpType.SDMA,
+        )
         # join the big memory pool.
         assert handle.join() == 0, "join failed"
         # get the GVA of the host contribution in the pool.
@@ -34,10 +40,28 @@ def main():
         for n in COPY_BYTES:
             src = torch.arange(n // 4, dtype=torch.int32, device="npu").contiguous()
             dst = torch.empty(n // 4, dtype=torch.int32, device="npu")
-            assert handle.copy_data(src.data_ptr(), npu_gva, n, bm.BmCopyType.L2G, use_external_stream_flag,
-                                    torch.npu.current_stream().npu_stream) == 0, "copy_data L2G failed"
-            assert handle.copy_data(npu_gva, dst.data_ptr(), n, bm.BmCopyType.G2L, use_external_stream_flag,
-                                    torch.npu.current_stream().npu_stream) == 0, "copy_data G2L failed"
+            assert (
+                handle.copy_data(
+                    src.data_ptr(),
+                    npu_gva,
+                    n,
+                    bm.BmCopyType.L2G,
+                    use_external_stream_flag,
+                    torch.npu.current_stream().npu_stream,
+                )
+                == 0
+            ), "copy_data L2G failed"
+            assert (
+                handle.copy_data(
+                    npu_gva,
+                    dst.data_ptr(),
+                    n,
+                    bm.BmCopyType.G2L,
+                    use_external_stream_flag,
+                    torch.npu.current_stream().npu_stream,
+                )
+                == 0
+            ), "copy_data G2L failed"
             torch.npu.current_stream().synchronize()
             assert torch.equal(dst, src), "copy round-trip mismatch"
         # leave the big memory pool.

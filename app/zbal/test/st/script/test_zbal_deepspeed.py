@@ -70,7 +70,7 @@ def main():
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
-        universal_newlines=True
+        universal_newlines=True,
     )
 
     start_time = time.time()

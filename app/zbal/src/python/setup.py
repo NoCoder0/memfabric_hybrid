@@ -135,10 +135,12 @@ library_dirs = [
 
 
 csrc_dir = repo_root / "app" / "zbal" / "src" / "csrc"
-sources = ([f"{csrc_dir}/zbal_pybind.cpp"] + \
-           glob.glob(str(csrc_dir / "sma" / "*.cpp")) + \
-           glob.glob(str(csrc_dir / "adaptor" / "pytorch_npu" / "*.cpp")) + \
-           glob.glob(str(csrc_dir / "adaptor" / "deepep" / "*.cpp")))
+sources = (
+    [f"{csrc_dir}/zbal_pybind.cpp"]
+    + glob.glob(str(csrc_dir / "sma" / "*.cpp"))
+    + glob.glob(str(csrc_dir / "adaptor" / "pytorch_npu" / "*.cpp"))
+    + glob.glob(str(csrc_dir / "adaptor" / "deepep" / "*.cpp"))
+)
 
 
 libraries = ["torch", "torch_npu", "c10", "torch_python", "opapi", "zbal_core", "zbal_kernel"]
@@ -151,29 +153,60 @@ logger.warning(f"{library_dirs=}")
 logger.warning(f"{libraries=}")
 
 
-extra_compile_args = ["-std=c++17", "-hno-unused-parameter", "-lno-unused-function", "-Wno-unused-function",
-                      "-Wunused-value", "-Wcast-align",
-                      "-Wcast-qual", "-Winvalid-pch", "-Wwrite-strings", "-Wsign-compare", "-Wextra",
-                      "-O3", "-fvisibility-inlines-hidden", "-fstack-protector-strong",
-                      "-Wl,-z,noexecstack", "-Wl,-z,relro", "-Wl,-z,now", "-fPIE", "-fPIC",
-                      "-ftrapv",
-                      "-isystem", f"{python_include_dir}",
-                      "-isystem", f"{ascend_home}/include",
-                      "-isystem", f"{ascend_home}/include/experiment/runtime/runtime/",
-                      "-isystem", f"{torch_dir}/",
-                      "-isystem", f"{torch_dir}/include/torch/csrc/api/include/",
-                      "-isystem", f"{torch_dir}/include/torch/csrc/utils/",
-                      "-isystem", f"{torch_dir}/include/c10/util/",
-                      "-isystem", f"{torch_dir}/include/c10/core/",
-                      "-isystem", f"{torch_dir}/include/",
-                      "-isystem", f"{torch_dir}/include/ATen/",
-                      "-isystem", f"{torch_dir}/include/ATen/detail/",
-                      "-isystem", f"{torch_dir}/include/torch/csrc/distributed/",
-                      "-isystem", f"{torch_dir}/include/torch/csrc/distributed/c10d/",
-                      "-isystem", f"{torch_npu_dir}/include/",
-                      "-isystem", f"{torch_npu_dir}/include/torch_npu/csrc/aten/",
-                      "-isystem", f"{torch_npu_dir}/include/torch_npu/csrc/core/npu/",
-                      ]  # "-fvisibility=hidden"
+extra_compile_args = [
+    "-std=c++17",
+    "-hno-unused-parameter",
+    "-lno-unused-function",
+    "-Wno-unused-function",
+    "-Wunused-value",
+    "-Wcast-align",
+    "-Wcast-qual",
+    "-Winvalid-pch",
+    "-Wwrite-strings",
+    "-Wsign-compare",
+    "-Wextra",
+    "-O3",
+    "-fvisibility-inlines-hidden",
+    "-fstack-protector-strong",
+    "-Wl,-z,noexecstack",
+    "-Wl,-z,relro",
+    "-Wl,-z,now",
+    "-fPIE",
+    "-fPIC",
+    "-ftrapv",
+    "-isystem",
+    f"{python_include_dir}",
+    "-isystem",
+    f"{ascend_home}/include",
+    "-isystem",
+    f"{ascend_home}/include/experiment/runtime/runtime/",
+    "-isystem",
+    f"{torch_dir}/",
+    "-isystem",
+    f"{torch_dir}/include/torch/csrc/api/include/",
+    "-isystem",
+    f"{torch_dir}/include/torch/csrc/utils/",
+    "-isystem",
+    f"{torch_dir}/include/c10/util/",
+    "-isystem",
+    f"{torch_dir}/include/c10/core/",
+    "-isystem",
+    f"{torch_dir}/include/",
+    "-isystem",
+    f"{torch_dir}/include/ATen/",
+    "-isystem",
+    f"{torch_dir}/include/ATen/detail/",
+    "-isystem",
+    f"{torch_dir}/include/torch/csrc/distributed/",
+    "-isystem",
+    f"{torch_dir}/include/torch/csrc/distributed/c10d/",
+    "-isystem",
+    f"{torch_npu_dir}/include/",
+    "-isystem",
+    f"{torch_npu_dir}/include/torch_npu/csrc/aten/",
+    "-isystem",
+    f"{torch_npu_dir}/include/torch_npu/csrc/core/npu/",
+]  # "-fvisibility=hidden"
 common_macros = [(_chip_macro, "1")]
 
 
@@ -183,7 +216,7 @@ def set_torch_version():
         "sed",
         "-i",
         f"s/^_TORCH_NPU_VERSION_.*$/_TORCH_NPU_VERSION_ = '{torch_npu_version}'/",
-        "zbal/__init__.py"
+        "zbal/__init__.py",
     ]
     result = subprocess.run(sed_cmd, cwd=cur_dir)
     if result.returncode != 0:
@@ -194,12 +227,7 @@ def set_torch_version():
 
 def recover_torch_version():
     # recover __init__.py
-    recover_cmd = [
-        "git",
-        "checkout",
-        "--",
-        "zbal/__init__.py"
-    ]
+    recover_cmd = ["git", "checkout", "--", "zbal/__init__.py"]
     result = subprocess.run(recover_cmd, cwd=cur_dir)
     if result.returncode != 0:
         logger.warning(f"recover src code failed ret code {result.returncode}, msg {result.stderr}")
@@ -235,7 +263,7 @@ class CustomBuildExtension(BuildExtension):
             f"-DCMAKE_BUILD_TYPE={build_type}",
             "-DDISABLE_ADAPTOR_COMPILE=ON",
             "-DDISABLE_ALLOCATOR_COMPILE=ON",
-            "-DDISABLE_SHARE_COMPILE=ON"
+            "-DDISABLE_SHARE_COMPILE=ON",
         ]
         if _chip_type == "A3" and not build_fused_deep_moe:
             cmake_cmd.append("-DBUILD_FUSED_DEEP_MOE=OFF")
@@ -248,10 +276,7 @@ class CustomBuildExtension(BuildExtension):
             logger.info("python cmake exec success")
 
         # make
-        make_cmd = [
-            "make",
-            "-j16"
-        ]
+        make_cmd = ["make", "-j16"]
         result = subprocess.run(make_cmd, cwd=build_dir)
         if result.returncode != 0:
             logger.error(f"python make exec failed ret code {result.returncode}, msg {result.stderr}")
@@ -267,7 +292,6 @@ class CustomBuildExtension(BuildExtension):
             shutil.copy2(x, dst)
             logger.info(f"copy {x} to {dst}")
 
-
     def run(self):
         self.build_base_zbal()
         super().run()
@@ -279,9 +303,12 @@ class BuildWheel(bdist_wheel):
 
         exclude_libraries = [
             # torch
-            "libtorch.so", "libtorch_npu.so", "libc10.so",
-            "libtorch_python.so", "libtorch_cpu.so",
-            "libopapi.so"
+            "libtorch.so",
+            "libtorch_npu.so",
+            "libc10.so",
+            "libtorch_python.so",
+            "libtorch_cpu.so",
+            "libopapi.so",
         ]
 
         if is_manylinux:
@@ -310,8 +337,8 @@ setup(
     name="memfabric_zbal",
     version=package_version,
     description="ZBAL pronounced [zi:bəl], stands for Zero Buffer Acceleration Library. "
-                "It contains a bunch of well tuned operators for LLM inference and training, "
-                "which has two key advantages: zero intermediate buffer and blazing fast.",
+    "It contains a bunch of well tuned operators for LLM inference and training, "
+    "which has two key advantages: zero intermediate buffer and blazing fast.",
     url="https://gitcode.com/Ascend/memfabric_hybrid/app/zbal",
     author="Huawei",
     license="Mulan PSL v2",
@@ -326,15 +353,12 @@ setup(
                 *common_macros,
             ],
             extra_compile_args=extra_compile_args,
-            cxx_std=17
+            cxx_std=17,
         )
     ],
     python_requires=">=3.10",
-    packages=setuptools.find_packages(
-        include=["zbal", "zbal.*"]
-    ),
-    cmdclass={'build_ext': CustomBuildExtension,
-              'bdist_wheel': BuildWheel},
+    packages=setuptools.find_packages(include=["zbal", "zbal.*"]),
+    cmdclass={'build_ext': CustomBuildExtension, 'bdist_wheel': BuildWheel},
 )
 
 recover_torch_version()

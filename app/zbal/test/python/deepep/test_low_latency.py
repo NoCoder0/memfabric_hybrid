@@ -39,16 +39,16 @@ def redirect_io(rank, log_dir="./logs"):
 
 
 def test(
-        num_tokens: int,
-        hidden: int,
-        num_experts: int,
-        num_topk: int,
-        rank: int,
-        num_ranks: int,
-        group: dist.ProcessGroup,
-        buffer: Buffer,
-        drop_percent: float,
-        seed: int = 0,
+    num_tokens: int,
+    hidden: int,
+    num_experts: int,
+    num_topk: int,
+    rank: int,
+    num_ranks: int,
+    group: dist.ProcessGroup,
+    buffer: Buffer,
+    drop_percent: float,
+    seed: int = 0,
 ):
     torch.manual_seed(seed + rank)
     random.seed(seed + rank)
@@ -58,17 +58,10 @@ def test(
 
     # NOTES: the integers greater than 256 exceeds the BF16 precision limit
     rank_offset = 0
-    assert (
-            num_ranks - rank_offset < 257
-    ), "Too many ranks (exceeding test precision limit)"
+    assert num_ranks - rank_offset < 257, "Too many ranks (exceeding test precision limit)"
 
-    x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="npu") * (
-            rank - rank_offset
-    )
-    scores = (
-            torch.randn((num_tokens, num_experts), dtype=torch.float32, device="npu").abs()
-            + 1
-    )
+    x = torch.ones((num_tokens, hidden), dtype=torch.bfloat16, device="npu") * (rank - rank_offset)
+    scores = torch.randn((num_tokens, num_experts), dtype=torch.float32, device="npu").abs() + 1
     topk_idx = torch.topk(scores, num_topk, dim=-1, largest=True, sorted=True)[1]
 
     topk_idx = topk_idx.int()
@@ -83,9 +76,7 @@ def test(
             assert enable_neg_one == 1
         drop_mask = torch.rand_like(topk_idx, dtype=torch.float32) < drop_percent
         topk_idx = topk_idx.masked_fill(drop_mask, -1)
-    topk_weights = torch.randn(
-        (num_tokens, num_topk), dtype=torch.float32, device="npu"
-    ).abs()
+    topk_weights = torch.randn((num_tokens, num_topk), dtype=torch.float32, device="npu").abs()
     topk_weights = topk_weights / topk_weights.sum(dim=-1, keepdim=True)
 
     # Check dispatch correctness
@@ -93,37 +84,29 @@ def test(
     return_recv_hook = False
     hash_value, num_times = 0, 0
 
-    cumulative_local_expert_recv_stats = torch.zeros(
-        (num_local_experts,), dtype=torch.int, device="npu"
-    )
+    cumulative_local_expert_recv_stats = torch.zeros((num_local_experts,), dtype=torch.int, device="npu")
     dispatch_use_fp8 = True
 
     logging.info(f"Rank {rank}: x shape={x.shape}, device={x.device}, \n")
     logging.info(f"Rank {rank}: X ={x[0:][:16]}")
-    logging.info(
-        f"Rank {rank}: topk_idx shape={topk_idx.shape}, device={topk_idx.device}, \n"
-    )
+    logging.info(f"Rank {rank}: topk_idx shape={topk_idx.shape}, device={topk_idx.device}, \n")
     logging.info(f"Rank {rank}: topk_idx ={topk_idx}\n")
     logging.info(f"Rank {rank}: topK weight = {topk_weights}\n")
 
     for i in range(100):
-        packed_recv_x, packed_recv_count, handle, event, hook = (
-            buffer.low_latency_dispatch(
-                x,
-                topk_idx,
-                num_tokens,
-                num_experts,
-                use_fp8=dispatch_use_fp8,
-                round_scale=False,
-                use_ue8m0=False,
-                cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
-                async_finish=not return_recv_hook,
-                return_recv_hook=return_recv_hook,
-            )
+        packed_recv_x, packed_recv_count, handle, event, hook = buffer.low_latency_dispatch(
+            x,
+            topk_idx,
+            num_tokens,
+            num_experts,
+            use_fp8=dispatch_use_fp8,
+            round_scale=False,
+            use_ue8m0=False,
+            cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
+            async_finish=not return_recv_hook,
+            return_recv_hook=return_recv_hook,
         )
-        simulated_gemm_x = (
-            per_token_cast_back(*packed_recv_x) if dispatch_use_fp8 else packed_recv_x
-        )
+        simulated_gemm_x = per_token_cast_back(*packed_recv_x) if dispatch_use_fp8 else packed_recv_x
 
         out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="npu")
         combined_x, event, hook = buffer.low_latency_combine(
@@ -137,10 +120,7 @@ def test(
             out=out,
         )
 
-    logging.info(
-        f"Rank {rank}: combined_x shape={combined_x.shape}, "
-        f"device={combined_x[0].device}"
-    )
+    logging.info(f"Rank {rank}: combined_x shape={combined_x.shape}, device={combined_x[0].device}")
     logging.info(f"Rank {rank}: combined_x ={combined_x[:100, 0]}")
 
     if do_check:
@@ -162,19 +142,17 @@ def test(
     out = torch.empty((num_tokens, hidden), dtype=torch.bfloat16, device="npu")
 
     def test_func(zero_copy: bool, return_recv_hook: bool):
-        packed_recv_x, packed_recv_count, handle, event, hook = (
-            buffer.low_latency_dispatch(
-                x,
-                topk_idx,
-                num_tokens,
-                num_experts,
-                use_fp8=dispatch_use_fp8,
-                round_scale=False,
-                use_ue8m0=False,
-                cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
-                async_finish=not return_recv_hook,
-                return_recv_hook=return_recv_hook,
-            )
+        packed_recv_x, packed_recv_count, handle, event, hook = buffer.low_latency_dispatch(
+            x,
+            topk_idx,
+            num_tokens,
+            num_experts,
+            use_fp8=dispatch_use_fp8,
+            round_scale=False,
+            use_ue8m0=False,
+            cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
+            async_finish=not return_recv_hook,
+            return_recv_hook=return_recv_hook,
         )
         combined_x, event, hook = buffer.low_latency_combine(
             simulated_gemm_x,
@@ -196,9 +174,7 @@ def test(
         num_combine_comm_bytes += num_bf16_bytes * num_selections
 
     # Dispatch + combine testing
-    avg_t, min_t, max_t = bench(
-        partial(test_func, zero_copy=False, return_recv_hook=False)
-    )
+    avg_t, min_t, max_t = bench(partial(test_func, zero_copy=False, return_recv_hook=False))
     logging.info(
         f"[rank {rank}] Dispatch + combine bandwidth: "
         f"{(num_dispatch_comm_bytes + num_combine_comm_bytes) / 1e9 / avg_t:.2f} GB/s, "
@@ -261,9 +237,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     use_experts = num_experts if shared_expert_rank_num == 0 else (num_experts - 1)
     use_ranks = num_ranks - shared_expert_rank_num
     drop_percent = args.drop_percent
-    num_rdma_bytes = Buffer.get_low_latency_rdma_size_hint(
-        num_tokens, hidden, num_ranks, num_experts
-    )
+    num_rdma_bytes = Buffer.get_low_latency_rdma_size_hint(num_tokens, hidden, num_ranks, num_experts)
     buffer = Buffer(
         group,
         num_rdma_bytes=num_rdma_bytes,
@@ -334,6 +308,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     num_processes = args.num_processes
-    torch.multiprocessing.spawn(
-        test_loop, args=(num_processes, args), nprocs=num_processes
-    )
+    torch.multiprocessing.spawn(test_loop, args=(num_processes, args), nprocs=num_processes)

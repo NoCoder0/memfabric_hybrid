@@ -154,28 +154,24 @@ TEST_F(SmemBmEntryTest, AddrInDeviceGva_AddressAfterRange_ReturnsFalse)
 
 TEST_F(SmemBmEntryTest, GetHybmMemTypeFromGva_HostAddress_ReturnsHost)
 {
-    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(HOST_GVA_BASE), 1),
-              SMEM_MEM_TYPE_HOST);
+    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(HOST_GVA_BASE), 1), SMEM_MEM_TYPE_HOST);
 }
 
 TEST_F(SmemBmEntryTest, GetHybmMemTypeFromGva_DeviceAddress_ReturnsDevice)
 {
-    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(DEVICE_GVA_BASE), 1),
-              SMEM_MEM_TYPE_DEVICE);
+    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(DEVICE_GVA_BASE), 1), SMEM_MEM_TYPE_DEVICE);
 }
 
 TEST_F(SmemBmEntryTest, GetHybmMemTypeFromGva_UnknownAddress_ReturnsButt)
 {
-    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(0xDEAD0000), 1),
-              SMEM_MEM_TYPE_BUTT);
+    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(0xDEAD0000), 1), SMEM_MEM_TYPE_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, GetHybmMemTypeFromGva_NullHost_ReturnsButt)
 {
     entry_->hostGva_ = nullptr;
     entry_->deviceGva_ = nullptr;
-    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(HOST_GVA_BASE), 1),
-              SMEM_MEM_TYPE_BUTT);
+    EXPECT_EQ(entry_->GetHybmMemTypeFromGva(reinterpret_cast<void *>(HOST_GVA_BASE), 1), SMEM_MEM_TYPE_BUTT);
 }
 
 // ======================== GetRankIdByGva Tests ========================
@@ -209,81 +205,71 @@ TEST_F(SmemBmEntryTest, GetRankIdByGva_UnknownGva_ReturnsUint32Max)
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_H2G_DeviceToGlobalHost)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_H2G,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_H2G, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_G2L_HostToDevice)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2L,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2L, reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_G2G_GlobalToGlobal)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2G,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2G, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_L2G_DeviceToGlobalDevice)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_L2G,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_L2G, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_G2H_GlobalToLocalHost)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2H,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2H, reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_L2GH_DeviceToGlobalHost)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_L2GH,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_L2GH, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_GH2L_GlobalHostToDevice)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_GH2L,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_GH2L, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(HOST_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_GH2H_GlobalHostToLocalHost)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_GH2H,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_GH2H, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_H2GH_LocalHostToGlobalHost)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_H2GH,
-        reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
-        reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_H2GH, reinterpret_cast<void *>(HOST_GVA_BASE), 1024,
+                                               reinterpret_cast<void *>(DEVICE_GVA_BASE), 1024);
     EXPECT_NE(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 TEST_F(SmemBmEntryTest, TransToHybmDirection_UnrecognizedAddress_ReturnsButt)
 {
-    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2G,
-        reinterpret_cast<void *>(0xDEAD0000), 1024,
-        reinterpret_cast<void *>(0xBEEF0000), 1024);
+    auto direct = entry_->TransToHybmDirection(SMEMB_COPY_G2G, reinterpret_cast<void *>(0xDEAD0000), 1024,
+                                               reinterpret_cast<void *>(0xBEEF0000), 1024);
     EXPECT_EQ(direct, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
@@ -319,37 +305,35 @@ TEST_F(SmemBmEntryTest, GetDeviceGvaAddress_ReturnsDeviceGva)
 
 TEST_F(SmemBmEntryTest, DataCopy_NullSrc_ReturnsInvalidParam)
 {
-    auto ret = entry_->DataCopy(nullptr, reinterpret_cast<void *>(0x1000), 1024,
-                                SMEMB_COPY_G2G, nullptr, 0);
+    auto ret = entry_->DataCopy(nullptr, reinterpret_cast<void *>(0x1000), 1024, SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
 
 TEST_F(SmemBmEntryTest, DataCopy_NullDest_ReturnsInvalidParam)
 {
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), nullptr, 1024,
-                                SMEMB_COPY_G2G, nullptr, 0);
+    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), nullptr, 1024, SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
 
 TEST_F(SmemBmEntryTest, DataCopy_ZeroSize_ReturnsInvalidParam)
 {
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), reinterpret_cast<void *>(0x2000),
-                                0, SMEMB_COPY_G2G, nullptr, 0);
+    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), reinterpret_cast<void *>(0x2000), 0, SMEMB_COPY_G2G,
+                                nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
 
 TEST_F(SmemBmEntryTest, DataCopy_InvalidType_ReturnsInvalidParam)
 {
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), reinterpret_cast<void *>(0x2000),
-                                1024, SMEMB_COPY_BUTT, nullptr, 0);
+    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), reinterpret_cast<void *>(0x2000), 1024,
+                                SMEMB_COPY_BUTT, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
 
 TEST_F(SmemBmEntryTest, DataCopy_NotInited_ReturnsNotInitialized)
 {
     entry_->inited_ = false;
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), reinterpret_cast<void *>(0x2000),
-                                1024, SMEMB_COPY_G2G, nullptr, 0);
+    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0x1000), reinterpret_cast<void *>(0x2000), 1024,
+                                SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_NOT_INITIALIZED);
 }
 
@@ -358,7 +342,7 @@ TEST_F(SmemBmEntryTest, DataCopy_NotJoined_ReturnsNotStarted)
     entry_->inited_ = true;
     entry_->globalGroup_ = nullptr;
     auto ret = entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE),
-        reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000), 1024, SMEMB_COPY_G2G, nullptr, 0);
+                                reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000), 1024, SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_NOT_STARTED);
 }
 
@@ -646,9 +630,7 @@ TEST_F(SmemBmEntryTest, Wait_Success_ReturnsOk)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER(hybm_wait)
-        .stubs()
-        .will(returnValue(0));
+    MOCKER(hybm_wait).stubs().will(returnValue(0));
     auto ret = entry_->Wait();
     EXPECT_EQ(ret, SM_OK);
 }
@@ -657,9 +639,7 @@ TEST_F(SmemBmEntryTest, RegisterMem_Success_ReturnsOk)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER(hybm_register_local_memory)
-        .stubs()
-        .will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_register_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
     uint64_t testAddr = 0x10000;
     uint64_t testSize = 4096;
     auto ret = entry_->RegisterMem(testAddr, testSize);
@@ -671,9 +651,7 @@ TEST_F(SmemBmEntryTest, UnRegisterMem_Success_ReturnsOk)
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
     entry_->registedSlice_[0x20000] = std::make_pair(8192ULL, TEST_SLICE_PTR);
-    MOCKER(hybm_free_local_memory)
-        .stubs()
-        .will(returnValue(0));
+    MOCKER(hybm_free_local_memory).stubs().will(returnValue(0));
     auto ret = entry_->UnRegisterMem(0x20000);
     EXPECT_EQ(ret, SM_OK);
 }
@@ -683,9 +661,7 @@ TEST_F(SmemBmEntryTest, UnRegisterMem_FreeFail_ReturnsError)
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
     entry_->registedSlice_[0x20000] = std::make_pair(8192ULL, TEST_SLICE_PTR);
-    MOCKER(hybm_free_local_memory)
-        .stubs()
-        .will(returnValue(-1));
+    MOCKER(hybm_free_local_memory).stubs().will(returnValue(-1));
     auto ret = entry_->UnRegisterMem(0x20000);
     EXPECT_NE(ret, SM_OK);
 }
@@ -696,15 +672,11 @@ TEST_F(SmemBmEntryTest, DataCopy_FullPath_Success)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result (*)(const SmemBmEntry*))
-        .stubs()
-        .will(returnValue(0));
-    MOCKER(hybm_data_copy)
-        .stubs()
-        .will(returnValue(0));
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE),
-                                reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000),
-                                TEST_DATA_SIZE, SMEMB_COPY_H2GH, nullptr, 0);
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    MOCKER(hybm_data_copy).stubs().will(returnValue(0));
+    auto ret =
+        entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE), reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000),
+                         TEST_DATA_SIZE, SMEMB_COPY_H2GH, nullptr, 0);
     EXPECT_EQ(ret, SM_OK);
 }
 
@@ -712,17 +684,12 @@ TEST_F(SmemBmEntryTest, DataCopy_WithExternalStream_Success)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result (*)(const SmemBmEntry*))
-        .stubs()
-        .will(returnValue(0));
-    MOCKER(hybm_data_copy)
-        .stubs()
-        .will(returnValue(0));
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    MOCKER(hybm_data_copy).stubs().will(returnValue(0));
     void *stream = reinterpret_cast<void *>(0xDEAD);
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE),
-                                reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000),
-                                TEST_DATA_SIZE, SMEMB_COPY_H2GH, stream,
-                                SMEM_BM_FLAG_USE_EXTERNAL_STREAM);
+    auto ret =
+        entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE), reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000),
+                         TEST_DATA_SIZE, SMEMB_COPY_H2GH, stream, SMEM_BM_FLAG_USE_EXTERNAL_STREAM);
     EXPECT_EQ(ret, SM_OK);
 }
 
@@ -730,15 +697,11 @@ TEST_F(SmemBmEntryTest, DataCopy_NotConnected_ReturnsNotConnected)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result (*)(const SmemBmEntry*))
-        .stubs()
-        .will(returnValue(0));
-    MOCKER(hybm_data_copy)
-        .stubs()
-        .will(returnValue(-101)); // BM_NOT_CONNECTED -101
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE),
-                                reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000),
-                                TEST_DATA_SIZE, SMEMB_COPY_H2GH, nullptr, 0);
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    MOCKER(hybm_data_copy).stubs().will(returnValue(-101)); // BM_NOT_CONNECTED -101
+    auto ret =
+        entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE), reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000),
+                         TEST_DATA_SIZE, SMEMB_COPY_H2GH, nullptr, 0);
     EXPECT_EQ(ret, SMEM_NOT_CONNECTED);
 }
 
@@ -746,11 +709,8 @@ TEST_F(SmemBmEntryTest, DataCopy_InvalidDirection_ReturnsInvalidParam)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result (*)(const SmemBmEntry*))
-        .stubs()
-        .will(returnValue(0));
-    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0xBEEF0000),
-                                reinterpret_cast<void *>(0xDEAD0000),
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    auto ret = entry_->DataCopy(reinterpret_cast<void *>(0xBEEF0000), reinterpret_cast<void *>(0xDEAD0000),
                                 TEST_DATA_SIZE, SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
@@ -759,12 +719,8 @@ TEST_F(SmemBmEntryTest, DataCopyBatch_FullPath_Success)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result (*)(const SmemBmEntry*))
-        .stubs()
-        .will(returnValue(0));
-    MOCKER(hybm_data_batch_copy)
-        .stubs()
-        .will(returnValue(0));
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    MOCKER(hybm_data_batch_copy).stubs().will(returnValue(0));
     void *src = reinterpret_cast<void *>(HOST_GVA_BASE);
     void *dst = reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000);
     uint64_t ds = TEST_DATA_SIZE;
@@ -781,12 +737,8 @@ TEST_F(SmemBmEntryTest, DataCopyBatch_UseExternalStream)
 {
     entry_->inited_ = true;
     entry_->entity_ = TEST_ENTITY_PTR;
-    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result (*)(const SmemBmEntry*))
-        .stubs()
-        .will(returnValue(0));
-    MOCKER(hybm_data_batch_copy)
-        .stubs()
-        .will(returnValue(0));
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    MOCKER(hybm_data_batch_copy).stubs().will(returnValue(0));
     void *src = reinterpret_cast<void *>(HOST_GVA_BASE);
     void *dst = reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000);
     uint64_t ds = TEST_DATA_SIZE;

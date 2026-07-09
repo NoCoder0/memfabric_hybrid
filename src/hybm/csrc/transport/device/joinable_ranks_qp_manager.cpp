@@ -601,11 +601,11 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
 
 void JoinableRanksQpManager::FillHccpTag(char *output)
 {
-    static constexpr const char* bmTag = "BM_TAG";
-    static constexpr const char* transTag = "TRANS_TAG";
-    static constexpr const char* undefineTag = "UNDEFINE_TAG";
+    static constexpr const char *bmTag = "BM_TAG";
+    static constexpr const char *transTag = "TRANS_TAG";
+    static constexpr const char *undefineTag = "UNDEFINE_TAG";
 
-    const char* tag = nullptr;
+    const char *tag = nullptr;
     size_t len = 0;
 
     if (rankRole_ == HYBM_ROLE_PEER) {

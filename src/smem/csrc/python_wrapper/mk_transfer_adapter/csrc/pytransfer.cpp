@@ -26,14 +26,15 @@ using namespace ock::adapter;
 namespace py = pybind11;
 
 static const char *PY_TRANSFER_LIB_VERSION =
-    "library version: " STR2(PROJECT_VERSION_RAW) ", build time: " __DATE__ " " __TIME__\
-    ", commit: " STR2(GIT_LAST_COMMIT);
+    "library version: " STR2(PROJECT_VERSION_RAW) ", build time: " __DATE__ " " __TIME__
+                                                  ", commit: " STR2(GIT_LAST_COMMIT);
 constexpr uint64_t MAX_BATCH_COUNT = 1024 * 1024;
 
 // static callback invoked by SMEM layer when a remote peer disconnects
 void TransferAdapterPy::PeerDownCallback(const char *peerAddr, void *userData)
 {
-    if (userData == nullptr || peerAddr == nullptr) return;
+    if (userData == nullptr || peerAddr == nullptr)
+        return;
     auto *self = static_cast<TransferAdapterPy *>(userData);
     self->OnLinkDownByPeerAddr(std::string(peerAddr));
 }
@@ -57,7 +58,7 @@ int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, co
         return -1;
     }
 
-     // set log level from env (SMEM OutLogger)
+    // set log level from env (SMEM OutLogger)
     const std::string &mfLevel = ock::mf::env::MF_LOG_LEVEL;
     if (mfLevel.size() == 1) {
         unsigned char c = static_cast<unsigned char>(mfLevel[0]);
@@ -124,8 +125,7 @@ int TransferAdapterPy::TransferSyncWrite(const char *destUniqueId, uintptr_t buf
 
     int ret = smem_trans_write(handle, srcAddress, destUniqueId, destAddress, length, flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_write error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_write error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
@@ -157,8 +157,7 @@ int TransferAdapterPy::BatchTransferSyncWrite(const char *destUniqueId, std::vec
     int ret = smem_trans_batch_write(handle, srcAddresses.data(), destUniqueId, destAddresses.data(), dataSizes.data(),
                                      static_cast<uint32_t>(batchSize), flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_write error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_write error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
@@ -174,8 +173,7 @@ int TransferAdapterPy::TransferSyncRead(const char *destUniqueId, uintptr_t buff
 
     int ret = smem_trans_read(handle, srcAddress, destUniqueId, destAddress, length, flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_read error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_read error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
@@ -193,8 +191,7 @@ int TransferAdapterPy::TransferAsyncReadSubmit(const char *destUniqueId, uintptr
 
     int ret = smem_trans_read_submit(handle, srcAddress, destUniqueId, destAddress, length, st, flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_read_submit error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_read_submit error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
@@ -212,8 +209,7 @@ int TransferAdapterPy::TransferAsyncWriteSubmit(const char *destUniqueId, uintpt
 
     int ret = smem_trans_write_submit(handle, srcAddress, destUniqueId, destAddress, length, st, flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_write_submit error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_write_submit error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
@@ -245,101 +241,88 @@ int TransferAdapterPy::BatchTransferSyncRead(const char *destUniqueId, std::vect
     int ret = smem_trans_batch_read(handle, srcAddresses.data(), destUniqueId, destAddresses.data(), dataSizes.data(),
                                     static_cast<uint32_t>(batchSize), flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_read error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_read error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
 
-int TransferAdapterPy::BatchTransferAsyncWriteSubmit(const char *destUniqueId,
-                                                     std::vector<uintptr_t> buffers,
+int TransferAdapterPy::BatchTransferAsyncWriteSubmit(const char *destUniqueId, std::vector<uintptr_t> buffers,
                                                      std::vector<uintptr_t> peer_buffer_addresses,
-                                                     std::vector<size_t> lengths,
-                                                     uintptr_t stream, uint32_t flags)
+                                                     std::vector<size_t> lengths, uintptr_t stream, uint32_t flags)
 {
     smem_trans_t handle = GetOrCreateConnection(destUniqueId);
     ADAPTER_ASSERT_RETURN(handle != nullptr, "handle is null", -1);
 
-    if (buffers.size() != peer_buffer_addresses.size() ||
-        buffers.size() != lengths.size() || buffers.size() > UINT32_MAX) {
+    if (buffers.size() != peer_buffer_addresses.size() || buffers.size() != lengths.size() ||
+        buffers.size() > UINT32_MAX) {
         ADAPTER_LOG_ERROR("Buffers, peer_buffer_addresses and lengths is not equal or too long.");
         return -1;
     }
 
     const size_t batchSize = buffers.size();
-    std::vector<const void*> srcAddresses(batchSize);
-    std::vector<void*> destAddresses(batchSize);
+    std::vector<const void *> srcAddresses(batchSize);
+    std::vector<void *> destAddresses(batchSize);
     std::vector<size_t> dataSizes(batchSize);
-    void *st = reinterpret_cast<void*>(stream);
+    void *st = reinterpret_cast<void *>(stream);
 
     for (size_t i = 0; i < batchSize; ++i) {
-        srcAddresses[i] = reinterpret_cast<const void*>(buffers[i]);
-        destAddresses[i] = reinterpret_cast<void*>(peer_buffer_addresses[i]);
+        srcAddresses[i] = reinterpret_cast<const void *>(buffers[i]);
+        destAddresses[i] = reinterpret_cast<void *>(peer_buffer_addresses[i]);
         dataSizes[i] = lengths[i];
     }
 
-    int ret = smem_trans_batch_write_submit(
-        handle, srcAddresses.data(), destUniqueId, destAddresses.data(), dataSizes.data(),
-        static_cast<uint32_t>(batchSize), st, flags);
+    int ret = smem_trans_batch_write_submit(handle, srcAddresses.data(), destUniqueId, destAddresses.data(),
+                                            dataSizes.data(), static_cast<uint32_t>(batchSize), st, flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_write_submit error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_write_submit error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
 
-int TransferAdapterPy::BatchTransferAsyncReadSubmit(const char *destUniqueId,
-                                                    std::vector<uintptr_t> buffers,
+int TransferAdapterPy::BatchTransferAsyncReadSubmit(const char *destUniqueId, std::vector<uintptr_t> buffers,
                                                     std::vector<uintptr_t> peer_buffer_addresses,
-                                                    std::vector<size_t> lengths,
-                                                    uintptr_t stream, uint32_t flags)
+                                                    std::vector<size_t> lengths, uintptr_t stream, uint32_t flags)
 {
     smem_trans_t handle = GetOrCreateConnection(destUniqueId);
     ADAPTER_ASSERT_RETURN(handle != nullptr, "handle is null", -1);
 
-    if (buffers.size() != peer_buffer_addresses.size() ||
-        buffers.size() != lengths.size() || buffers.size() > UINT32_MAX) {
+    if (buffers.size() != peer_buffer_addresses.size() || buffers.size() != lengths.size() ||
+        buffers.size() > UINT32_MAX) {
         ADAPTER_LOG_ERROR("Buffers, peer_buffer_addresses and lengths is not equal or too long.");
         return -1;
     }
 
     const size_t batchSize = buffers.size();
-    std::vector<void*> srcAddresses(batchSize);
-    std::vector<const void*> destAddresses(batchSize);
+    std::vector<void *> srcAddresses(batchSize);
+    std::vector<const void *> destAddresses(batchSize);
     std::vector<size_t> dataSizes(batchSize);
-    void *st = reinterpret_cast<void*>(stream);
+    void *st = reinterpret_cast<void *>(stream);
 
     for (size_t i = 0; i < batchSize; ++i) {
-        srcAddresses[i] = reinterpret_cast<void*>(buffers[i]);
-        destAddresses[i] = reinterpret_cast<const void*>(peer_buffer_addresses[i]);
+        srcAddresses[i] = reinterpret_cast<void *>(buffers[i]);
+        destAddresses[i] = reinterpret_cast<const void *>(peer_buffer_addresses[i]);
         dataSizes[i] = lengths[i];
     }
 
-    int ret = smem_trans_batch_read_submit(
-        handle, srcAddresses.data(), destUniqueId, destAddresses.data(), dataSizes.data(),
-        static_cast<uint32_t>(batchSize), st, flags);
+    int ret = smem_trans_batch_read_submit(handle, srcAddresses.data(), destUniqueId, destAddresses.data(),
+                                           dataSizes.data(), static_cast<uint32_t>(batchSize), st, flags);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_read_submit error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_read_submit error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
 
-int TransferAdapterPy::BatchTransferWriteWithQuant(const char *destUniqueId,
-                                                   std::vector<uintptr_t> buffers,
+int TransferAdapterPy::BatchTransferWriteWithQuant(const char *destUniqueId, std::vector<uintptr_t> buffers,
                                                    std::vector<uintptr_t> peer_buffer_addresses,
-                                                   std::vector<size_t> lengths,
-                                                   std::vector<uintptr_t> scale_addresses,
-                                                   std::vector<uintptr_t> offset_addresses,
-                                                   uint32_t unit_num,
-                                                   uint32_t input_type,
-                                                   uintptr_t stream, uint32_t flags)
+                                                   std::vector<size_t> lengths, std::vector<uintptr_t> scale_addresses,
+                                                   std::vector<uintptr_t> offset_addresses, uint32_t unit_num,
+                                                   uint32_t input_type, uintptr_t stream, uint32_t flags)
 {
     smem_trans_t handle = GetOrCreateConnection(destUniqueId);
     ADAPTER_ASSERT_RETURN(handle != nullptr, "handle is null", -1);
 
-    if (buffers.size() != peer_buffer_addresses.size() ||
-        buffers.size() != lengths.size() || buffers.size() > UINT32_MAX) {
+    if (buffers.size() != peer_buffer_addresses.size() || buffers.size() != lengths.size() ||
+        buffers.size() > UINT32_MAX) {
         ADAPTER_LOG_ERROR("Buffers, peer_buffer_addresses and lengths is not equal or too long.");
         return -1;
     }
@@ -354,37 +337,34 @@ int TransferAdapterPy::BatchTransferWriteWithQuant(const char *destUniqueId,
     }
 
     uint32_t batchSize = buffers.size();
-    std::vector<void*> srcAddresses(batchSize);
-    std::vector<void*> destAddresses(batchSize);
+    std::vector<void *> srcAddresses(batchSize);
+    std::vector<void *> destAddresses(batchSize);
     std::vector<size_t> dataSizes(batchSize);
-    std::vector<float*> scaleAddresses(batchSize);
-    std::vector<float*> offsetAddresses(batchSize);
+    std::vector<float *> scaleAddresses(batchSize);
+    std::vector<float *> offsetAddresses(batchSize);
 
     for (uint32_t i = 0; i < batchSize; ++i) {
-        srcAddresses[i] = reinterpret_cast<void*>(buffers[i]);
-        destAddresses[i] = reinterpret_cast<void*>(peer_buffer_addresses[i]);
+        srcAddresses[i] = reinterpret_cast<void *>(buffers[i]);
+        destAddresses[i] = reinterpret_cast<void *>(peer_buffer_addresses[i]);
         dataSizes[i] = lengths[i];
-        scaleAddresses[i] = (scale_addresses.size() > 0) ? reinterpret_cast<float*>(scale_addresses[i]) : nullptr;
-        offsetAddresses[i] = (offset_addresses.size() > 0) ? reinterpret_cast<float*>(offset_addresses[i]) : nullptr;
+        scaleAddresses[i] = (scale_addresses.size() > 0) ? reinterpret_cast<float *>(scale_addresses[i]) : nullptr;
+        offsetAddresses[i] = (offset_addresses.size() > 0) ? reinterpret_cast<float *>(offset_addresses[i]) : nullptr;
     }
 
-    smem_trans_quant_copy_param_t param = {
-        destUniqueId,
-        srcAddresses.data(),
-        destAddresses.data(),
-        dataSizes.data(),
-        scaleAddresses.data(),
-        offsetAddresses.data(),
-        batchSize,
-        unit_num,
-        reinterpret_cast<void*>(stream),
-        input_type,
-        flags
-    };
+    smem_trans_quant_copy_param_t param = {destUniqueId,
+                                           srcAddresses.data(),
+                                           destAddresses.data(),
+                                           dataSizes.data(),
+                                           scaleAddresses.data(),
+                                           offsetAddresses.data(),
+                                           batchSize,
+                                           unit_num,
+                                           reinterpret_cast<void *>(stream),
+                                           input_type,
+                                           flags};
     int ret = smem_trans_batch_quant_write(handle, &param);
     if (ret != 0) {
-        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_quant_write error, ret=" << ret
-            << " dest=" << destUniqueId);
+        ADAPTER_LOG_ERROR("SMEM API smem_trans_batch_quant_write error, ret=" << ret << " dest=" << destUniqueId);
     }
     return ret;
 }
@@ -393,15 +373,17 @@ int TransferAdapterPy::RegisterMemory(uintptr_t buffer_addr, size_t capacity)
 {
     if (handle_ == nullptr) {
         for (const auto &m : registeredMems_) {
-            if (m.addr == buffer_addr && m.capacity == capacity) return 0;
+            if (m.addr == buffer_addr && m.capacity == capacity)
+                return 0;
         }
         registeredMems_.push_back({buffer_addr, capacity});
-        ADAPTER_LOG_INFO("P registered memory addr=0x" << std::hex << buffer_addr
-            << std::dec << " size=" << capacity << " (total: " << registeredMems_.size() << ")");
+        ADAPTER_LOG_INFO("P registered memory addr=0x" << std::hex << buffer_addr << std::dec << " size=" << capacity
+                                                       << " (total: " << registeredMems_.size() << ")");
 
         std::lock_guard<std::mutex> lock(connMutex_);
         for (auto &entry : connections_) {
-            if (!entry.second.active || entry.second.handle == nullptr) continue;
+            if (!entry.second.active || entry.second.handle == nullptr)
+                continue;
             char *buffer = reinterpret_cast<char *>(buffer_addr);
             int ret = smem_trans_register_mem(entry.second.handle, buffer, capacity, 0);
             if (ret != 0) {
@@ -450,15 +432,17 @@ int TransferAdapterPy::BatchRegisterMemory(std::vector<uintptr_t> buffer_addrs, 
                     break;
                 }
             }
-            if (!dup) registeredMems_.push_back({buffer_addrs[i], capacities[i]});
+            if (!dup)
+                registeredMems_.push_back({buffer_addrs[i], capacities[i]});
         }
         ADAPTER_LOG_INFO("P batch registered " << count << " memories (total: " << registeredMems_.size() << ")");
 
         std::lock_guard<std::mutex> lock(connMutex_);
         for (auto &entry : connections_) {
-            if (!entry.second.active || entry.second.handle == nullptr) continue;
-            int ret = smem_trans_batch_register_mem(entry.second.handle, registerAddrs.data(),
-                                                    capacities.data(), static_cast<uint32_t>(count), 0);
+            if (!entry.second.active || entry.second.handle == nullptr)
+                continue;
+            int ret = smem_trans_batch_register_mem(entry.second.handle, registerAddrs.data(), capacities.data(),
+                                                    static_cast<uint32_t>(count), 0);
             if (ret != 0) {
                 ADAPTER_LOG_ERROR("batch broadcast register_mem to " << entry.first << " failed, ret=" << ret);
             }
@@ -555,8 +539,7 @@ smem_trans_t TransferAdapterPy::GetOrCreateConnection(const std::string &session
     }
 
     ADAPTER_LOG_INFO("lazy connecting to D: " << sessionId << " via store: " << storeUrl);
-    smem_trans_t handle = smem_trans_create(
-        storeUrl.c_str(), sessionId_.c_str(), &config_);
+    smem_trans_t handle = smem_trans_create(storeUrl.c_str(), sessionId_.c_str(), &config_);
     if (handle == nullptr) {
         ADAPTER_LOG_ERROR("lazy smem_trans_create failed for session: " << sessionId);
         lock.lock();
@@ -580,8 +563,7 @@ smem_trans_t TransferAdapterPy::GetOrCreateConnection(const std::string &session
     connections_[sessionId] = {handle, true};
     connCv_.notify_all();
 
-    ADAPTER_LOG_INFO("lazy connected to D: " << sessionId
-        << " (total connections: " << connections_.size() << ")");
+    ADAPTER_LOG_INFO("lazy connected to D: " << sessionId << " (total connections: " << connections_.size() << ")");
     return handle;
 }
 
@@ -652,9 +634,7 @@ void TransferAdapterPy::StartLinkDownConsumer()
             std::string sessionId;
             {
                 std::unique_lock<std::mutex> lock(linkDownQueueMutex_);
-                linkDownCv_.wait(lock, [this]() {
-                    return !linkDownQueue_.empty() || !consumerRunning_;
-                });
+                linkDownCv_.wait(lock, [this]() { return !linkDownQueue_.empty() || !consumerRunning_; });
                 if (!consumerRunning_ && linkDownQueue_.empty()) {
                     break;
                 }
@@ -675,11 +655,10 @@ void TransferAdapterPy::StartLinkDownConsumer()
                     }
                     connections_.erase(it);
                     connCv_.notify_all();
-                    ADAPTER_LOG_INFO("link down cleanup done: " << sessionId
-                        << " (remaining connections: " << connections_.size() << ")");
+                    ADAPTER_LOG_INFO("link down cleanup done: " << sessionId << " (remaining connections: "
+                                                                << connections_.size() << ")");
                 } else {
-                    ADAPTER_LOG_INFO("session " << sessionId
-                        << " already removed from connections");
+                    ADAPTER_LOG_INFO("session " << sessionId << " already removed from connections");
                 }
             }
         }

@@ -29,7 +29,7 @@ g_type_map = {
     "int32_t": np.int32,
     "float16_t": np.float16,
     "float": np.float32,
-    "bfloat16_t": np.float16
+    "bfloat16_t": np.float16,
 }
 
 g_torch_type_map = {
@@ -37,9 +37,8 @@ g_torch_type_map = {
     "int32_t": torch.int32,
     "float16_t": torch.float16,
     "float": torch.float32,
-    "bfloat16_t": torch.bfloat16
+    "bfloat16_t": torch.bfloat16,
 }
-
 
 
 def get_golden_from_file(filepath):
@@ -108,9 +107,7 @@ def test_p2p(dist_type, case_list, send_rank, recv_rank, data_op_type):
                             torch_npu.profiler.ProfilerActivity.CPU,
                             torch_npu.profiler.ProfilerActivity.NPU,
                         ],
-                        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                            profiling_path
-                        ),
+                        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(profiling_path),
                         schedule=torch_npu.profiler.schedule(
                             wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
                         ),
@@ -151,8 +148,11 @@ def test_p2p(dist_type, case_list, send_rank, recv_rank, data_op_type):
                             if recv_role:
                                 tensor_output_file = f"{tensor_output_dir}/output_hccl.bin"
                                 torch.save(recv_tensor.cpu(), tensor_output_file)
-                        elif (dist_type == 'zbal' and recv_role and
-                              not torch.allclose(golden_tensor, recv_tensor, rtol=1e-4, atol=1e-8)):
+                        elif (
+                            dist_type == 'zbal'
+                            and recv_role
+                            and not torch.allclose(golden_tensor, recv_tensor, rtol=1e-4, atol=1e-8)
+                        ):
                             logger.error(golden_tensor, recv_tensor)
                             logger.error(f"[ERROR] rank {global_rank}, case {i} p2p result not correct\n")
                             raise Exception(f"procesion error case:{data_len}")
@@ -174,6 +174,7 @@ def test_p2p(dist_type, case_list, send_rank, recv_rank, data_op_type):
 
 if __name__ == "__main__":
     import argparse
+
     world_size = int(os.environ["WORLD_SIZE"] or 2)
     parser = argparse.ArgumentParser()
     parser.add_argument('dist_type', type=str, choices=["hccl", "zbal"])
@@ -195,7 +196,6 @@ if __name__ == "__main__":
     if case_num == 0:
         logger.info(f"case_list:{case_list}")
     else:
-        case_list = [8 * (2 ** i) for i in range(case_num)]
+        case_list = [8 * (2**i) for i in range(case_num)]
 
     test_p2p(dist_type, case_list, send_rank, recv_rank, data_op_type)
-

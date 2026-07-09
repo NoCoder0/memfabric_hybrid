@@ -29,9 +29,9 @@ def launch_ascend_mf_store():
 
 
 if __name__ == "__main__":
+
     def handle_exit(signum, frame):
         sys.exit(0)
-
 
     signal.signal(signal.SIGINT, handle_exit)
     signal.signal(signal.SIGTERM, handle_exit)

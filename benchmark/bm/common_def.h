@@ -19,9 +19,9 @@
 #include <sstream>
 #include <iomanip>
 
-constexpr const char* BaseFileName(const char* path)
+constexpr const char *BaseFileName(const char *path)
 {
-    const char* file = path;
+    const char *file = path;
     while (*path) {
         if (*path == '/' || *path == '\\') {
             file = path + 1;
@@ -42,20 +42,16 @@ inline std::string NowTime()
     localtime_r(&tt, &tm);
 
     std::ostringstream oss;
-    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S")
-        << '.' << std::setw(6) << std::setfill('0') << us;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S") << '.' << std::setw(6) << std::setfill('0') << us;
     return oss.str();
 }
 
-#define LOG_PREINT(level, msg)          \
-    do {                                \
-        std::ostringstream oss;         \
-        oss << NowTime() << " "         \
-                 << getpid() << " "     \
-                 << BaseFileName(__FILE__) << ":" << __LINE__ \
-                 << " [" level "] "                           \
-                 << msg;                                      \
-        std::cout << oss.str() << std::endl; \
+#define LOG_PREINT(level, msg)                                                                                     \
+    do {                                                                                                           \
+        std::ostringstream oss;                                                                                    \
+        oss << NowTime() << " " << getpid() << " " << BaseFileName(__FILE__) << ":" << __LINE__ << " [" level "] " \
+            << msg;                                                                                                \
+        std::cout << oss.str() << std::endl;                                                                       \
     } while (0)
 
 #define LOG_INFO(msg)  LOG_PREINT("INFO", msg)

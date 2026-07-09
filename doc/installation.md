@@ -86,7 +86,7 @@ bash script/build_and_pack_run.sh
 > 当 xpu_type 设置为 NPU 时，运行环境必须提前安装 NPU 固件驱动 和 CANN 工具包。
 >
 > [环境安装参考链接](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0000.html)
-> 
+>
 > [参考安装Toolkit开发套件包的第三步配置环境变量](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Ubuntu&Software=cannToolKit)
 
 

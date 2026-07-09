@@ -47,5 +47,3 @@ def replay_snapshot(snapshot, device_id=0, shmem_size=62277025792, dump_replay_s
         record_memory_history(None, 0)
         return replay_snapshot_result
     return None
-
-

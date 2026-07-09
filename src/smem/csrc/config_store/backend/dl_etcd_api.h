@@ -23,7 +23,7 @@ using EtcdNewFunc = EtcdClient *(*)(const char *endpoints, const char *username,
 
 using EtcdCloseFunc = void (*)(EtcdClient *client);
 
-using EtcdGetLastErrorFunc = char *(*)(EtcdClient * client);
+using EtcdGetLastErrorFunc = char *(*)(EtcdClient *client);
 
 using EtcdPutFunc = int (*)(EtcdClient *client, const char *key, const void *value, size_t valueLen,
                             int64_t ttlSeconds);

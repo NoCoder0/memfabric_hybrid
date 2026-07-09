@@ -269,15 +269,8 @@ if __name__ == "__main__":
     end_barrier = mp.Barrier(args.parallel + 1)
     queue = mp.Queue(maxsize=args.parallel * args.repeat)
     plist = [
-        mp.Process(
-            target=main_process, args=(args, i, begin_barrier, end_barrier, queue)
-        )
-        for i in range(args.parallel)
+        mp.Process(target=main_process, args=(args, i, begin_barrier, end_barrier, queue)) for i in range(args.parallel)
     ]
-    plist.append(
-        mp.Process(
-            target=print_result, args=(args.parallel, begin_barrier, end_barrier, queue)
-        )
-    )
+    plist.append(mp.Process(target=print_result, args=(args.parallel, begin_barrier, end_barrier, queue)))
     [p.start() for p in plist]
     [p.join() for p in plist]

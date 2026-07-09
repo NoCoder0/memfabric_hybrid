@@ -58,10 +58,7 @@ def send_query(base_url, prompt):
     服务就绪后发送实际的推理请求
     """
     query_url = f"{base_url}/generate"
-    payload = {
-        "text": prompt,
-        "sampling_params": {"temperature": 0.7, "max_new_tokens": 128}
-    }
+    payload = {"text": prompt, "sampling_params": {"temperature": 0.7, "max_new_tokens": 128}}
 
     response = requests.post(query_url, json=payload)
     return response.json()

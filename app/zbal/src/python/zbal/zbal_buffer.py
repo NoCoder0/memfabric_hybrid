@@ -27,14 +27,14 @@ class Buffer:
     num_sms: int = 20
 
     def __init__(
-            self,
-            group: dist.ProcessGroup,
-            num_nvl_bytes: int = 0,
-            num_rdma_bytes: int = 0,
-            low_latency_mode: bool = False,
-            num_qps_per_rank: int = 12,
-            allow_nvlink_for_low_latency_mode: bool = True,
-            allow_mnnvl: bool = False,
+        self,
+        group: dist.ProcessGroup,
+        num_nvl_bytes: int = 0,
+        num_rdma_bytes: int = 0,
+        low_latency_mode: bool = False,
+        num_qps_per_rank: int = 12,
+        allow_nvlink_for_low_latency_mode: bool = True,
+        allow_mnnvl: bool = False,
     ) -> None:
         """
         Initialize the communication buffer.
@@ -152,10 +152,10 @@ class Buffer:
 
     @staticmethod
     def get_low_latency_rdma_size_hint(
-            num_max_dispatch_tokens_per_rank: int,
-            hidden: int,
-            num_ranks: int,
-            num_experts: int,
+        num_max_dispatch_tokens_per_rank: int,
+        hidden: int,
+        num_ranks: int,
+        num_experts: int,
     ) -> int:
         return deepep_adaptor.get_low_latency_rdma_size_hint(
             num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts
@@ -165,15 +165,13 @@ class Buffer:
         return self.runtime.get_send_token_idx()
 
     def get_dispatch_layout(
-            self,
-            topk_idx: torch.Tensor,
-            num_experts: int,
-            previous_event: Optional[EventOverlap] = None,
-            async_finish: bool = False,
-            allocate_on_comm_stream: bool = False,
-    ) -> Tuple[
-        torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor, EventOverlap
-    ]:
+        self,
+        topk_idx: torch.Tensor,
+        num_experts: int,
+        previous_event: Optional[EventOverlap] = None,
+        async_finish: bool = False,
+        allocate_on_comm_stream: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], torch.Tensor, torch.Tensor, EventOverlap]:
         """
         Calculate the layout required for later communication.
 
@@ -217,22 +215,22 @@ class Buffer:
         )
 
     def dispatch(
-            self,
-            x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-            handle: Optional[Tuple] = None,
-            num_tokens_per_rank: Optional[torch.Tensor] = None,
-            num_tokens_per_rdma_rank: Optional[torch.Tensor] = None,
-            is_token_in_rank: Optional[torch.Tensor] = None,
-            num_tokens_per_expert: Optional[torch.Tensor] = None,
-            topk_idx: Optional[torch.Tensor] = None,
-            topk_weights: Optional[torch.Tensor] = None,
-            expert_alignment: int = 1,
-            num_worst_tokens: int = 0,
-            config: Optional[Config] = None,
-            previous_event: Optional[EventOverlap] = None,
-            async_finish: bool = False,
-            allocate_on_comm_stream: bool = False,
-            dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
+        self,
+        x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        handle: Optional[Tuple] = None,
+        num_tokens_per_rank: Optional[torch.Tensor] = None,
+        num_tokens_per_rdma_rank: Optional[torch.Tensor] = None,
+        is_token_in_rank: Optional[torch.Tensor] = None,
+        num_tokens_per_expert: Optional[torch.Tensor] = None,
+        topk_idx: Optional[torch.Tensor] = None,
+        topk_weights: Optional[torch.Tensor] = None,
+        expert_alignment: int = 1,
+        num_worst_tokens: int = 0,
+        config: Optional[Config] = None,
+        previous_event: Optional[EventOverlap] = None,
+        async_finish: bool = False,
+        allocate_on_comm_stream: bool = False,
+        dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
     ) -> Tuple[
         Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
         Optional[torch.Tensor],
@@ -300,14 +298,10 @@ class Buffer:
         use_quant = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
 
         if handle is not None:
-            raise NotImplementedError(
-                "Optional communication handle is not supported yet."
-            )
+            raise NotImplementedError("Optional communication handle is not supported yet.")
         else:
             if not (
-                    num_tokens_per_rank is not None
-                    and is_token_in_rank is not None
-                    and num_tokens_per_expert is not None
+                num_tokens_per_rank is not None and is_token_in_rank is not None and num_tokens_per_expert is not None
             ):
                 raise ValueError("num_tokens_per_rank, is_token_in_rank, num_tokens_per_expert must be valid")
             (
@@ -351,16 +345,16 @@ class Buffer:
             )
 
     def combine(
-            self,
-            x: torch.Tensor,
-            handle: Tuple,
-            topk_weights: Optional[torch.Tensor] = None,
-            bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
-            config: Optional[Config] = None,
-            previous_event: Optional[EventOverlap] = None,
-            async_finish: bool = False,
-            allocate_on_comm_stream: bool = False,
-            combine_send_cost_stats: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        handle: Tuple,
+        topk_weights: Optional[torch.Tensor] = None,
+        bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
+        config: Optional[Config] = None,
+        previous_event: Optional[EventOverlap] = None,
+        async_finish: bool = False,
+        allocate_on_comm_stream: bool = False,
+        combine_send_cost_stats: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], EventOverlap]:
         """
         Combine (reduce) tokens (addition **without** weights) from different ranks, both intranode and internode
@@ -413,9 +407,7 @@ class Buffer:
         )
         return recv_x, recv_topk_weights, EventOverlap(event)
 
-    def clean_low_latency_buffer(
-            self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int
-    ) -> None:
+    def clean_low_latency_buffer(self, num_max_dispatch_tokens_per_rank: int, hidden: int, num_experts: int) -> None:
         """
         As low-latency kernels require part of the buffer to be zero-initialized, so it is vital to clean the buffer
             if the buffer is dirty at some time.
@@ -428,25 +420,21 @@ class Buffer:
             hidden: the hidden dimension of each token.
             num_experts: the number of all experts.
         """
-        self.runtime.clean_low_latency_buffer(
-            num_max_dispatch_tokens_per_rank, hidden, num_experts
-        )
+        self.runtime.clean_low_latency_buffer(num_max_dispatch_tokens_per_rank, hidden, num_experts)
 
     def low_latency_dispatch(
-            self,
-            x: torch.Tensor,
-            topk_idx: torch.Tensor,
-            num_max_dispatch_tokens_per_rank: int,
-            num_experts: int,
-            cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
-            use_fp8: bool = True,
-            round_scale: bool = False,
-            use_ue8m0: bool = False,
-            async_finish: bool = False,
-            return_recv_hook: bool = False,
-    ) -> Tuple[
-        Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable
-    ]:
+        self,
+        x: torch.Tensor,
+        topk_idx: torch.Tensor,
+        num_max_dispatch_tokens_per_rank: int,
+        num_experts: int,
+        cumulative_local_expert_recv_stats: Optional[torch.Tensor] = None,
+        use_fp8: bool = True,
+        round_scale: bool = False,
+        use_ue8m0: bool = False,
+        async_finish: bool = False,
+        return_recv_hook: bool = False,
+    ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable]:
         """
         A low-latency implementation for dispatch.
 
@@ -537,15 +525,15 @@ class Buffer:
         )
 
     def low_latency_combine(
-            self,
-            x: torch.Tensor,
-            topk_idx: torch.Tensor,
-            topk_weights: torch.Tensor,
-            handle: tuple,
-            zero_copy: bool = False,
-            async_finish: bool = False,
-            return_recv_hook: bool = False,
-            out: Optional[torch.Tensor] = None,
+        self,
+        x: torch.Tensor,
+        topk_idx: torch.Tensor,
+        topk_weights: torch.Tensor,
+        handle: tuple,
+        zero_copy: bool = False,
+        async_finish: bool = False,
+        return_recv_hook: bool = False,
+        out: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, EventOverlap, Callable]:
         """
         A low-latency implementation for combine.
@@ -612,29 +600,29 @@ class Buffer:
         )
 
     def fused_deep_moe(
-            self,
-            x: torch.Tensor,
-            topk_idx: torch.Tensor,
-            gmm1_permuted_weight: torch.Tensor,
-            gmm1_permuted_weight_scale: torch.Tensor,
-            gmm2_weight: torch.Tensor,
-            gmm2_weight_scale: torch.Tensor,
-            topk_weights: torch.Tensor,
-            num_experts: int,
-            shared_expert_num: int = 0,  # DEPRECATED: no longer used (ignored)
-            shared_expert_rank_num: int = 0,  # DEPRECATED: no longer used (ignored)
-            quant_mode: int = 0,
-            num_max_dispatch_tokens_per_rank: int = 0,
-            is_tensor_list: bool = False,
-            expert_smooth_scales: Optional[torch.Tensor] = None,
-            share_gmm1_weight: Optional[torch.Tensor] = None,
-            share_gmm1_scale: Optional[torch.Tensor] = None,
-            share_gmm2_weight: Optional[torch.Tensor] = None,
-            share_gmm2_scale: Optional[torch.Tensor] = None,
-            share_smooth_scales: Optional[torch.Tensor] = None,
-            x_active_mask: Optional[torch.Tensor] = None,
-            share_gmm1_h_len: int = 0,
-            fuse_mode: int = 0
+        self,
+        x: torch.Tensor,
+        topk_idx: torch.Tensor,
+        gmm1_permuted_weight: torch.Tensor,
+        gmm1_permuted_weight_scale: torch.Tensor,
+        gmm2_weight: torch.Tensor,
+        gmm2_weight_scale: torch.Tensor,
+        topk_weights: torch.Tensor,
+        num_experts: int,
+        shared_expert_num: int = 0,  # DEPRECATED: no longer used (ignored)
+        shared_expert_rank_num: int = 0,  # DEPRECATED: no longer used (ignored)
+        quant_mode: int = 0,
+        num_max_dispatch_tokens_per_rank: int = 0,
+        is_tensor_list: bool = False,
+        expert_smooth_scales: Optional[torch.Tensor] = None,
+        share_gmm1_weight: Optional[torch.Tensor] = None,
+        share_gmm1_scale: Optional[torch.Tensor] = None,
+        share_gmm2_weight: Optional[torch.Tensor] = None,
+        share_gmm2_scale: Optional[torch.Tensor] = None,
+        share_smooth_scales: Optional[torch.Tensor] = None,
+        x_active_mask: Optional[torch.Tensor] = None,
+        share_gmm1_h_len: int = 0,
+        fuse_mode: int = 0,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Fused dispatch + GMM1 + SwiGLU + GMM2 + combine MoE operation (HCCL baseline).
@@ -681,8 +669,10 @@ class Buffer:
         #   gmm1_h_len, share_gmm1_h_len=0, is_tensor_list=false
         has_share_weights = share_gmm1_weight is not None and share_gmm1_weight.numel() > 0
         if has_share_weights and share_gmm1_h_len <= 0:
-            print("[ZBAL WARNING] share_gmm1_weight provided but share_gmm1_h_len is not set (or <=0). "
-                  "Please pass share_gmm1_h_len with the correct value to avoid kernel errors.")
+            print(
+                "[ZBAL WARNING] share_gmm1_weight provided but share_gmm1_h_len is not set (or <=0). "
+                "Please pass share_gmm1_h_len with the correct value to avoid kernel errors."
+            )
 
         topk_idx = topk_idx.int()
         gmm1_h_len = gmm1_permuted_weight.shape[-1]

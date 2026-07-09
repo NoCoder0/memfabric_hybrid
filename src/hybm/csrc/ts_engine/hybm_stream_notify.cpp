@@ -36,7 +36,7 @@ int32_t HybmStreamNotify::Init()
 
 int32_t HybmStreamNotify::NotifyIdAlloc(uint32_t devId, uint32_t tsId, uint32_t &notifyId)
 {
-    struct halResourceIdInputInfo resAllocInput{};
+    struct halResourceIdInputInfo resAllocInput {};
     struct halResourceIdOutputInfo resAllocOutput;
 
     resAllocInput.type = DRV_NOTIFY_ID;

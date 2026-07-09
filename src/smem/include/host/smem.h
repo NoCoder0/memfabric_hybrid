@@ -21,30 +21,30 @@
 extern "C" {
 #endif
 
-#define ASYNC_COPY_FLAG                     (1UL << (0))
-#define COPY_EXTEND_FLAG                    (1UL << (1))
-#define SMEM_BM_FLAG_USE_EXTERNAL_STREAM    (1UL << (2))
-#define SMEM_WORLD_SIZE_MAX                 1024U
-#define SMEM_INVALID_DEV_ID                 (-1)
+#define ASYNC_COPY_FLAG                  (1UL << (0))
+#define COPY_EXTEND_FLAG                 (1UL << (1))
+#define SMEM_BM_FLAG_USE_EXTERNAL_STREAM (1UL << (2))
+#define SMEM_WORLD_SIZE_MAX              1024U
+#define SMEM_INVALID_DEV_ID              (-1)
 
 /* define smem_create_config_store flag */
-#define SMEM_STORE_SKIP_RECOVER             (1UL << (0))
+#define SMEM_STORE_SKIP_RECOVER (1UL << (0))
 
 /* define error code */
-#define SMEM_OK                             (0)
-#define SMEM_ERROR                          (-1)
-#define SMEM_INVALID_PARAM                  (-2000)
-#define SMEM_MALLOC_FAILED                  (-2001)
-#define SMEM_NO_RESOURCES                   (-2002)
-#define SMEM_NOT_STARTED                    (-2003)
-#define SMEM_TIMEOUT                        (-2004)
-#define SMEM_REPEAT_INVOKE                  (-2005)
-#define SMEM_DUPLICATED                     (-2006)
-#define SMEM_NOT_EXIST                      (-2007)
-#define SMEM_NOT_INIT                       (-2008)
-#define SMEM_RES_IN_USE                     (-2009)
-#define SMEM_PARTIAL_FAILED                 (-2012)
-#define SMEM_NOT_CONNECTED                  (-2014)
+#define SMEM_OK             (0)
+#define SMEM_ERROR          (-1)
+#define SMEM_INVALID_PARAM  (-2000)
+#define SMEM_MALLOC_FAILED  (-2001)
+#define SMEM_NO_RESOURCES   (-2002)
+#define SMEM_NOT_STARTED    (-2003)
+#define SMEM_TIMEOUT        (-2004)
+#define SMEM_REPEAT_INVOKE  (-2005)
+#define SMEM_DUPLICATED     (-2006)
+#define SMEM_NOT_EXIST      (-2007)
+#define SMEM_NOT_INIT       (-2008)
+#define SMEM_RES_IN_USE     (-2009)
+#define SMEM_PARTIAL_FAILED (-2012)
+#define SMEM_NOT_CONNECTED  (-2014)
 
 /**
  * @brief Initialize the smem running environment

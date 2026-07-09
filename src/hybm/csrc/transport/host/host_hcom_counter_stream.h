@@ -95,6 +95,6 @@ inline int32_t HostHcomCounterStream::Synchronize(int32_t task)
     num_ = 0;
     return result;
 }
-}
-}
+} // namespace mf
+} // namespace ock
 #endif // MEMFABRIC_HYBRID_HCOM_WAITER_H

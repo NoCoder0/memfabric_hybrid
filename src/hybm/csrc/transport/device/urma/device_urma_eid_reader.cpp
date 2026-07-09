@@ -51,7 +51,7 @@ Result GetDeviceUrmaAddrValue(uint32_t phyDeviceId, uint32_t rankId, const char 
         const auto colonPos = line.find(':');
         if (colonPos == std::string::npos) {
             BM_LOG_ERROR("device_urma invalid EID file format (missing colon), line: " << line
-                        << ", file: " << eidFilePath);
+                                                                                       << ", file: " << eidFilePath);
             return BM_INVALID_PARAM;
         }
         std::string idStr = line.substr(0, colonPos);
@@ -59,7 +59,7 @@ Result GetDeviceUrmaAddrValue(uint32_t phyDeviceId, uint32_t rankId, const char 
         auto trimRight = idStr.find_last_not_of(" \t");
         if (trimLeft == std::string::npos) {
             BM_LOG_ERROR("device_urma invalid EID file format (empty devPhyId), line: " << line
-                        << ", file: " << eidFilePath);
+                                                                                        << ", file: " << eidFilePath);
             return BM_INVALID_PARAM;
         }
         idStr = idStr.substr(trimLeft, trimRight - trimLeft + 1);
@@ -67,14 +67,14 @@ Result GetDeviceUrmaAddrValue(uint32_t phyDeviceId, uint32_t rankId, const char 
         const auto devId = static_cast<uint32_t>(std::strtoul(idStr.c_str(), &end, 10));
         if (*end != '\0') {
             BM_LOG_ERROR("device_urma invalid EID file format (non-numeric devPhyId), line: " << line << ", file: "
-                        << eidFilePath);
+                                                                                              << eidFilePath);
             return BM_INVALID_PARAM;
         }
         std::string valueStr = line.substr(colonPos + 1);
         trimLeft = valueStr.find_first_not_of(" \t");
         if (trimLeft == std::string::npos) {
             BM_LOG_ERROR("device_urma invalid EID file format (" << missingValueDesc << "), line: " << line
-                        << ", file: " << eidFilePath);
+                                                                 << ", file: " << eidFilePath);
             return BM_INVALID_PARAM;
         }
         valueStr = valueStr.substr(trimLeft);
@@ -87,7 +87,7 @@ Result GetDeviceUrmaAddrValue(uint32_t phyDeviceId, uint32_t rankId, const char 
     const auto it = valueMap.find(phyDeviceId);
     if (it == valueMap.end()) {
         BM_LOG_ERROR("device_urma devPhyId " << phyDeviceId << " not found in EID file: " << eidFilePath
-                    << ", rankId=" << rankId);
+                                             << ", rankId=" << rankId);
         return BM_INVALID_PARAM;
     }
     addrValue = it->second;
@@ -106,7 +106,7 @@ Result GetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId, std::array<uint8_
     }
     if (hexStr.length() != COMM_ADDR_EID_LEN * 2U) {
         BM_LOG_ERROR("device_urma invalid EID hex length: " << hexStr.length() << " (expected "
-                                                             << (COMM_ADDR_EID_LEN * 2U) << "), file: " << eidFilePath);
+                                                            << (COMM_ADDR_EID_LEN * 2U) << "), file: " << eidFilePath);
         return BM_INVALID_PARAM;
     }
     std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
@@ -138,8 +138,8 @@ Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &
         addrType = COMM_ADDR_TYPE_IP_V4;
         addrData.fill(0);
         std::memcpy(addrData.data(), &ipv4Addr, sizeof(ipv4Addr));
-        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv4, devPhyId=" << phyDeviceId
-                     << " rankId=" << rankId << " ip=" << ipStr);
+        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv4, devPhyId=" << phyDeviceId << " rankId=" << rankId
+                                                                       << " ip=" << ipStr);
         return BM_OK;
     }
     struct in6_addr ipv6Addr;
@@ -147,8 +147,8 @@ Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &
         addrType = COMM_ADDR_TYPE_IP_V6;
         addrData.fill(0);
         std::memcpy(addrData.data(), &ipv6Addr, sizeof(ipv6Addr));
-        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv6, devPhyId=" << phyDeviceId
-                     << " rankId=" << rankId << " ip=" << ipStr);
+        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv6, devPhyId=" << phyDeviceId << " rankId=" << rankId
+                                                                       << " ip=" << ipStr);
         return BM_OK;
     }
     // Try to parse as 32 hex digits (IPv6 without colon separators)
@@ -169,13 +169,13 @@ Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &
             addrType = COMM_ADDR_TYPE_IP_V6;
             addrData.fill(0);
             std::memcpy(addrData.data(), raw.data(), raw.size());
-            BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv6-hex, devPhyId=" << phyDeviceId
-                         << " rankId=" << rankId << " ip=" << ipStr);
+            BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv6-hex, devPhyId=" << phyDeviceId << " rankId=" << rankId
+                                                                               << " ip=" << ipStr);
             return BM_OK;
         }
     }
-    BM_LOG_ERROR("device_urma invalid IP address format: '" << ipStr << "' for devPhyId "
-                  << phyDeviceId << ", file: " << eidFilePath);
+    BM_LOG_ERROR("device_urma invalid IP address format: '" << ipStr << "' for devPhyId " << phyDeviceId
+                                                            << ", file: " << eidFilePath);
     return BM_INVALID_PARAM;
 }
 

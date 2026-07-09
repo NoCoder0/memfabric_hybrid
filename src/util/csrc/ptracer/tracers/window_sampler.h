@@ -51,7 +51,7 @@ inline int64_t NowUs()
 }
 
 /* Data snapshot tagged with a microsecond timestamp for window queries. */
-template <typename T>
+template<typename T>
 struct TimedSample {
     T data;
     int64_t timeUs;
@@ -63,14 +63,15 @@ struct TimedSample {
  * Time-windowed snapshot store. Stores TimedSample<T> history; old entries beyond
  * (windowSize_ + PRUNE_BUFFER_SEC) are auto-pruned. T must support Diff().
  */
-template <typename T>
+template<typename T>
 class WindowSampler {
 public:
     explicit WindowSampler(time_t windowSizeSec)
-        : windowSize_(windowSizeSec > 0 ? windowSizeSec : DEFAULT_WINDOW_SIZE_SEC) {}
+        : windowSize_(windowSizeSec > 0 ? windowSizeSec : DEFAULT_WINDOW_SIZE_SEC)
+    {}
 
     /* Store a new snapshot with the current timestamp. */
-    void TakeSnapshot(const T& data)
+    void TakeSnapshot(const T &data)
     {
         TimedSample<T> snap;
         snap.data = data;
@@ -82,7 +83,7 @@ public:
 
     /* Compute latest.Diff(oldest) within windowSec; false if < MIN_SAMPLES_FOR_DIFF snapshots or
      * no sample falls within the window. */
-    bool GetWindowDiff(time_t windowSec, TimedSample<T>* result)
+    bool GetWindowDiff(time_t windowSec, TimedSample<T> *result)
     {
         std::lock_guard<std::mutex> guard(mutex_);
         if (history_.size() < MIN_SAMPLES_FOR_DIFF) {
@@ -103,8 +104,8 @@ public:
             return false;
         }
 
-        TimedSample<T>& oldest = history_[oldestIdx];
-        TimedSample<T>& latest = history_.back();
+        TimedSample<T> &oldest = history_[oldestIdx];
+        TimedSample<T> &latest = history_.back();
 
         result->data = latest.data.Diff(oldest.data);
         result->timeUs = latest.timeUs - oldest.timeUs;
@@ -112,13 +113,13 @@ public:
     }
 
     /* GetWindowDiff: use the default windowSize_ configured at construction. */
-    bool GetWindowDiff(TimedSample<T>* result)
+    bool GetWindowDiff(TimedSample<T> *result)
     {
         return GetWindowDiff(windowSize_, result);
     }
 
     /* GetLatest: return the most recent snapshot data, or false if empty. */
-    bool GetLatest(T* result)
+    bool GetLatest(T *result)
     {
         std::lock_guard<std::mutex> guard(mutex_);
         if (history_.empty()) {
@@ -134,7 +135,7 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         std::vector<TimedSample<T>> samples;
         int64_t cutoffUs = NowUs() - static_cast<int64_t>(windowSec) * USEC_PER_SEC;
-        for (auto& s : history_) {
+        for (auto &s : history_) {
             if (s.timeUs >= cutoffUs) {
                 samples.push_back(s);
             }
@@ -142,7 +143,10 @@ public:
         return samples;
     }
 
-    time_t WindowSize() const { return windowSize_; }
+    time_t WindowSize() const
+    {
+        return windowSize_;
+    }
 
 private:
     /* Remove entries older than windowSize_ + PRUNE_BUFFER_SEC. */
@@ -154,9 +158,9 @@ private:
         }
     }
 
-    time_t windowSize_;                          /* configured window duration in seconds */
-    std::deque<TimedSample<T>> history_;          /* chronological snapshot series */
-    std::mutex mutex_;                            /* protects history_ */
+    time_t windowSize_;                  /* configured window duration in seconds */
+    std::deque<TimedSample<T>> history_; /* chronological snapshot series */
+    std::mutex mutex_;                   /* protects history_ */
 };
 
 /*
@@ -165,8 +169,9 @@ private:
  */
 class PercentileWindowSampler {
 public:
-    PercentileWindowSampler(TlsPercentileAggregator& agg, time_t windowSec)
-        : agg_(agg), windowSec_(windowSec > 0 ? windowSec : DEFAULT_WINDOW_SIZE_SEC) {}
+    PercentileWindowSampler(TlsPercentileAggregator &agg, time_t windowSec)
+        : agg_(agg), windowSec_(windowSec > 0 ? windowSec : DEFAULT_WINDOW_SIZE_SEC)
+    {}
 
     /* Flush all TLS data to global, capture snapshot, and store in history. */
     void TakeSnapshot()
@@ -190,7 +195,7 @@ public:
         CombinedPercentile combined;
         int64_t cutoffUs = NowUs() - static_cast<int64_t>(windowSec_) * USEC_PER_SEC;
         std::lock_guard<std::mutex> guard(historyMutex_);
-        for (auto& snap : history_) {
+        for (auto &snap : history_) {
             if (snap.timeUs >= cutoffUs) {
                 combined.MergeFromAny(snap.data);
             }
@@ -204,7 +209,7 @@ public:
         std::lock_guard<std::mutex> guard(historyMutex_);
         std::vector<GlobalPercentile> result;
         int64_t cutoffUs = NowUs() - static_cast<int64_t>(windowSec_) * USEC_PER_SEC;
-        for (auto& s : history_) {
+        for (auto &s : history_) {
             if (s.timeUs >= cutoffUs) {
                 result.push_back(s.data);
             }
@@ -221,11 +226,11 @@ private:
         }
     }
 
-    TlsPercentileAggregator& agg_;                /* reference to the TLS percentile aggregator */
-    time_t windowSec_;                            /* window duration in seconds */
+    TlsPercentileAggregator &agg_;                      /* reference to the TLS percentile aggregator */
+    time_t windowSec_;                                  /* window duration in seconds */
     std::deque<TimedSample<GlobalPercentile>> history_; /* snapshot history */
-    std::mutex historyMutex_;                     /* protects history_ for read queries */
-    std::mutex mutex_;                            /* protects flush operation */
+    std::mutex historyMutex_;                           /* protects history_ for read queries */
+    std::mutex mutex_;                                  /* protects flush operation */
 };
 
 /*
@@ -235,10 +240,13 @@ private:
 class SamplerThread {
 public:
     SamplerThread() : running_(false), stop_(false) {}
-    ~SamplerThread() { Stop(); }
+    ~SamplerThread()
+    {
+        Stop();
+    }
 
     /* Shared singleton — all LatencyRecorders register on the same thread. */
-    static SamplerThread& GetSharedInstance()
+    static SamplerThread &GetSharedInstance()
     {
         static SamplerThread instance;
         return instance;
@@ -283,7 +291,7 @@ private:
         while (!stop_) {
             {
                 std::lock_guard<std::mutex> guard(mutex_);
-                for (auto& fn : samplers_) {
+                for (auto &fn : samplers_) {
                     fn();
                 }
             }

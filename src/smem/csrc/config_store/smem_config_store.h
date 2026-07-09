@@ -35,7 +35,7 @@ enum WatchRankType : uint32_t {
 enum ConfigStoreModel : uint16_t {
     CSM_CLIENT = 0, // only start client in one configStore
     CSM_SERVER = 1, // only start server in one configStore
-    CSM_BOTH = 2 // start client & server in one configStore
+    CSM_BOTH = 2    // start client & server in one configStore
 };
 
 const std::string AutoRankingStr = "AutoRanking#";

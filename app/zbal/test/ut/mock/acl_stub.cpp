@@ -26,7 +26,7 @@ static std::atomic<uint64_t> g_next_alloc_addr{START_ADDR};
 constexpr uint64_t ALLOC_SIZE_INCREMENT = 0x100000ULL; // 1MB step between mock allocations
 
 typedef enum {
-    ACL_DEV_ATTR_AICPU_CORE_NUM  = 1,
+    ACL_DEV_ATTR_AICPU_CORE_NUM = 1,
     ACL_DEV_ATTR_AICORE_CORE_NUM = 101,
     ACL_DEV_ATTR_CUBE_CORE_NUM = 102,
     ACL_DEV_ATTR_VECTOR_CORE_NUM = 201,

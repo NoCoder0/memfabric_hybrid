@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -23,7 +22,6 @@ class BatchP2PExecutor(Executor):
         super().__init__()
 
     def execute(self, tasks: List[P2PCommTask]):
-
         batch_comm_list = []
         rank = dist.get_rank()
 
@@ -32,13 +30,9 @@ class BatchP2PExecutor(Executor):
                 continue
 
             if task.is_send:
-                batch_comm_list.append(
-                    dist.P2POp(dist.isend, task.buffer, task.dst_rank)
-                )
+                batch_comm_list.append(dist.P2POp(dist.isend, task.buffer, task.dst_rank))
             else:
-                batch_comm_list.append(
-                    dist.P2POp(dist.irecv, task.buffer, task.dst_rank)
-                )
+                batch_comm_list.append(dist.P2POp(dist.irecv, task.buffer, task.dst_rank))
 
         handles = []
         if len(batch_comm_list) != 0:
@@ -70,7 +64,7 @@ class All2AllVExcutor(Executor):
             output_split_sizes=recv_list,
             input_split_sizes=send_list,
             group=None,
-            async_op=False
+            async_op=False,
         )
 
         return all2allv_recv_tensor, tasks
@@ -134,14 +128,13 @@ class All2AllVExcutor(Executor):
             output_split_sizes=recv_list,
             input_split_sizes=send_list,
             group=None,
-            async_op=True
+            async_op=True,
         )
 
         if len(task_list) > 0:
-            self.all2allv_send_tensor, self.all2allv_recv_tensor, self.send_list, self.recv_list =\
-                self.build_all2all_info(
-                    task_list
-                )
+            self.all2allv_send_tensor, self.all2allv_recv_tensor, self.send_list, self.recv_list = (
+                self.build_all2all_info(task_list)
+            )
             self.cur_task_list = task_list
 
         return all2allv_recv_tensor, cur_task_list
@@ -197,7 +190,7 @@ class MemoryFabricExecutor(Executor):
                 id=0,
                 local_dram_size=bm_config.local_dram_size,
                 local_hbm_size=bm_config.local_hbm_size,
-                data_op_type=bm_config.data_op_type
+                data_op_type=bm_config.data_op_type,
             )
             bm_handle.join()
             bm_config.bm_handle = bm_handle
@@ -214,13 +207,21 @@ class MemoryFabricExecutor(Executor):
         torch.npu.synchronize()
         if self.is_writer():
             ret = self.bm_handle.copy_data_batch(
-                src_addrs=src_addrs_list, dst_addrs=dst_addrs_list, sizes=size_list, count=count,
-                type=bm.BmCopyType.L2G, flags=0
+                src_addrs=src_addrs_list,
+                dst_addrs=dst_addrs_list,
+                sizes=size_list,
+                count=count,
+                type=bm.BmCopyType.L2G,
+                flags=0,
             )
         if self.is_reader():
             ret = self.bm_handle.copy_data_batch(
-                src_addrs=src_addrs_list, dst_addrs=dst_addrs_list, sizes=size_list, count=count,
-                type=bm.BmCopyType.G2L, flags=0
+                src_addrs=src_addrs_list,
+                dst_addrs=dst_addrs_list,
+                sizes=size_list,
+                count=count,
+                type=bm.BmCopyType.G2L,
+                flags=0,
             )
 
     def wait(self):

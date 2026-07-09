@@ -101,7 +101,8 @@ void TestSubGroup(smem_shm_t handle, uint32_t rankId, uint32_t rankSize)
     uint32_t localRank = (rankId >= mid) ? (rankId - mid) : rankId;
     uint64_t localVal = rankId;
     uint64_t globalBuf[32];
-    ret = smem_shm_subgroup_allgather(handle, key.c_str(), localSize, localRank, (char *)&localVal, 8, (char *)globalBuf, 8 * localSize);
+    ret = smem_shm_subgroup_allgather(handle, key.c_str(), localSize, localRank, (char *)&localVal, 8,
+                                      (char *)globalBuf, 8 * localSize);
     CHECK_ACL(ret);
     uint32_t base = (rankId >= mid) ? mid : 0;
     for (uint32_t i = 0; i < localRank; i++) {

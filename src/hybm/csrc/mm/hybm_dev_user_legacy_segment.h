@@ -51,7 +51,7 @@ struct UserHbmExportSliceInfo {
     uint32_t segmentType{SEGMENT_TYPE_USER_DEV};
     uint32_t serverId{0};
     uint64_t gvaOffset{0}; // gva offset
-    uint64_t address{0}; // lva (host_va or device_va)
+    uint64_t address{0};   // lva (host_va or device_va)
     uint64_t size{0};
     uint32_t superPodId{0};
     uint32_t rankId{0};

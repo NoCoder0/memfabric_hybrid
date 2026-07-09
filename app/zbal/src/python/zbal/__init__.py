@@ -56,7 +56,7 @@ __all__ = [
     "zbal_set_logger_level",
     "simulate_init",
     "is_mix_alloc",
-    "__version__"
+    "__version__",
 ]
 
 
@@ -75,5 +75,9 @@ def _new_process_helper(dist_backend_opts, pg_options):
     return ProcessGroupZBAL(store, group_rank, group_size, pg_options)
 
 
-torch.distributed.Backend.register_backend("zbal", lambda dist_backend_opts, pg_options:
-    _new_process_helper(dist_backend_opts, pg_options), extended_api=True, devices=["npu"])
+torch.distributed.Backend.register_backend(
+    "zbal",
+    lambda dist_backend_opts, pg_options: _new_process_helper(dist_backend_opts, pg_options),
+    extended_api=True,
+    devices=["npu"],
+)

@@ -81,9 +81,9 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   查看指令说明:
   ./bm_perf_benchmark -h
 
-  单节点运行2张卡: 
+  单节点运行2张卡:
   ./bm_perf_benchmark -bw -ot device_rdma -t all -s 2097152 -ws 2 -lrs 2 -ip tcp://127.0.0.1:8570
-  
+
   两节点运行16张卡,每节点8张(假设nodeA的ip为x.x.x.x):
   nodeA: ./bm_perf_benchmark -bw -ot device_rdma -t all -s 2097152 -ws 16 -lrs 8 -rs 0 -ip tcp://x.x.x.x:8570
   nodeB: ./bm_perf_benchmark -bw -ot device_rdma -t all -s 2097152 -ws 16 -lrs 8 -rs 8 -ip tcp://x.x.x.x:8570

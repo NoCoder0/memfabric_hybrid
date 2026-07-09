@@ -12,7 +12,7 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 
-#define private public
+#define private   public
 #define protected public
 #include "hybm_vmm_based_segment.h"
 #undef private

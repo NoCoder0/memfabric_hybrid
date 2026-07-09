@@ -29,10 +29,8 @@ g_torch_type_map = {
     "int32_t": torch.int32,
     "float16_t": torch.float16,
     "float": torch.float32,
-    "bfloat16_t": torch.bfloat16
+    "bfloat16_t": torch.bfloat16,
 }
-
-
 
 
 def get_golden_from_file(filepath):
@@ -104,9 +102,7 @@ def test_allreduce(dist_type, case_list, data_op_type):
                         torch_npu.profiler.ProfilerActivity.CPU,
                         torch_npu.profiler.ProfilerActivity.NPU,
                     ],
-                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
-                        profiling_path
-                    ),
+                    on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(profiling_path),
                     schedule=torch_npu.profiler.schedule(
                         wait=1, warmup=1, active=profiling_step, repeat=1, skip_first=1
                     ),
@@ -127,11 +123,9 @@ def test_allreduce(dist_type, case_list, data_op_type):
             os.makedirs(tensor_output_dir, exist_ok=True)
             if check_precision and dist_type == 'zbal':
                 if is_perf_test():
-                    golden_tensor = get_golden_from_file(
-                        f"{tensor_output_dir}/output_hccl_{global_rank}.bin")
+                    golden_tensor = get_golden_from_file(f"{tensor_output_dir}/output_hccl_{global_rank}.bin")
                 else:
-                    golden_tensor = get_golden_by_assembly(
-                        golden_dir, world_size, tensor_data_type, current_dir)
+                    golden_tensor = get_golden_by_assembly(golden_dir, world_size, tensor_data_type, current_dir)
 
             for k in range(0, 20):
                 if enable_profiling and prof_cnt >= 1:
@@ -186,6 +180,6 @@ if __name__ == "__main__":
     if case_num == 0:
         logger.info(f"case_list:{case_list}")
     else:
-        case_list = [6 * (2 ** i) for i in range(case_num)]
+        case_list = [6 * (2**i) for i in range(case_num)]
 
     test_allreduce(dist_type, case_list, data_op_type)

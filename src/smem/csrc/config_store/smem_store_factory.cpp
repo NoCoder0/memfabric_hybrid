@@ -158,8 +158,8 @@ StorePtr StoreFactory::CreateStore(const std::string &ip, uint16_t port, uint16_
         return nullptr;
     }
     if (ret != 0) {
-        STORE_LOG_ERROR("Startup for store(url=" << ip << ":" << port << ", model=" << model
-                                                 << ", rank=" << rankId << ") failed:" << ret);
+        STORE_LOG_ERROR("Startup for store(url=" << ip << ":" << port << ", model=" << model << ", rank=" << rankId
+                                                 << ") failed:" << ret);
         failedReason_ = ret;
         return nullptr;
     }
@@ -217,8 +217,8 @@ StorePtr StoreFactory::CreateStoreByUrl(const std::string &storeUrl, uint16_t mo
         return nullptr;
     }
     if (ret != 0) {
-        STORE_LOG_ERROR("Startup for store(url=" << ip << ":" << port << ", model=" << model
-                                                 << ", rank=" << rankId << ") failed:" << ret);
+        STORE_LOG_ERROR("Startup for store(url=" << ip << ":" << port << ", model=" << model << ", rank=" << rankId
+                                                 << ") failed:" << ret);
         failedReason_ = ret;
         return nullptr;
     }

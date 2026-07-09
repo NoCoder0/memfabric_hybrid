@@ -73,4 +73,3 @@ TEST(HybmTransportManagerTest, Create_HCOM_ReturnNotNull)
     auto mgr = TransportManager::Create(ock::mf::transport::TT_HCOM, tagMgr);
     EXPECT_NE(mgr, nullptr);
 }
-

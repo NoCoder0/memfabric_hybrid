@@ -30,7 +30,7 @@ extern "C" {
 #endif
 
 #define HYBM_KERNEL_MODULE_NAME static_cast<int32_t>(GE)
-#define HYBM_KERNEL_LOG_HEADER "[HYBM]"
+#define HYBM_KERNEL_LOG_HEADER  "[HYBM]"
 
 class HybmKernelLog {
 public:
@@ -44,28 +44,28 @@ public:
     }
 };
 
-#define HYBM_LOGE(ERROR_CODE, fmt, ...)                                                                                \
-    do {                                                                                                               \
-        dlog_error(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s: ErrorNo: %d %s" fmt, HybmKernelLog::GetTid(),            \
-                   &__FUNCTION__[0U], static_cast<int32_t>(ERROR_CODE), HYBM_KERNEL_LOG_HEADER, ##__VA_ARGS__);        \
+#define HYBM_LOGE(ERROR_CODE, fmt, ...)                                                                         \
+    do {                                                                                                        \
+        dlog_error(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s: ErrorNo: %d %s" fmt, HybmKernelLog::GetTid(),      \
+                   &__FUNCTION__[0U], static_cast<int32_t>(ERROR_CODE), HYBM_KERNEL_LOG_HEADER, ##__VA_ARGS__); \
     } while (false)
 
-#define HYBM_LOGW(fmt, ...)                                                                                            \
-    do {                                                                                                               \
-        dlog_warn(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s:" fmt, HybmKernelLog::GetTid(), &__FUNCTION__[0U],          \
-                  ##__VA_ARGS__);                                                                                      \
+#define HYBM_LOGW(fmt, ...)                                                                                   \
+    do {                                                                                                      \
+        dlog_warn(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s:" fmt, HybmKernelLog::GetTid(), &__FUNCTION__[0U], \
+                  ##__VA_ARGS__);                                                                             \
     } while (false)
 
-#define HYBM_LOGI(fmt, ...)                                                                                            \
-    do {                                                                                                               \
-        dlog_info(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s:" fmt, HybmKernelLog::GetTid(), &__FUNCTION__[0U],          \
-                  ##__VA_ARGS__);                                                                                      \
+#define HYBM_LOGI(fmt, ...)                                                                                   \
+    do {                                                                                                      \
+        dlog_info(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s:" fmt, HybmKernelLog::GetTid(), &__FUNCTION__[0U], \
+                  ##__VA_ARGS__);                                                                             \
     } while (false)
 
-#define HYBM_LOGD(fmt, ...)                                                                                            \
-    do {                                                                                                               \
-        dlog_debug(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s:" fmt, HybmKernelLog::GetTid(), &__FUNCTION__[0U],         \
-                   ##__VA_ARGS__);                                                                                     \
+#define HYBM_LOGD(fmt, ...)                                                                                    \
+    do {                                                                                                       \
+        dlog_debug(HYBM_KERNEL_MODULE_NAME, "%" PRIu64 " %s:" fmt, HybmKernelLog::GetTid(), &__FUNCTION__[0U], \
+                   ##__VA_ARGS__);                                                                             \
     } while (false)
 
 #ifdef __cplusplus

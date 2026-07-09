@@ -229,7 +229,7 @@ struct RtDavidStarsMemcpySqeT {
     uint8_t mpamns : 1;
     uint8_t pmg : 2;
     uint8_t qos : 4;
-    uint8_t d2dOffsetFlag : 1;       // use reserved filed
+    uint8_t d2dOffsetFlag : 1; // use reserved filed
 
     /* word6 */
     uint16_t srcStreamId;

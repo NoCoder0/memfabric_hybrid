@@ -97,7 +97,7 @@ public:
         LayoutD layoutD{};
 
         CATLASS_DEVICE
-        Params(){};
+        Params() {};
 
         CATLASS_DEVICE
         Params(__gm__ ElementRawScale *ptrScale_, LayoutScale const &layoutScale_,

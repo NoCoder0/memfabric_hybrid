@@ -88,9 +88,7 @@ static inline void init_warmup_data(char *&warmup_data, size_t length)
     }
 }
 
-
-int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int rank_id,
-                        int num_threads = 1)
+int32_t trans_perf_test(smem_trans_t trans_handle, smem_shm_t shm_handle, int rank_id, int num_threads = 1)
 {
     char *warmup_data = nullptr;
     int32_t ret = 0;
@@ -255,7 +253,6 @@ out:
     return ret;
 }
 
-
 int32_t trans_test(int rank_id, int rank_size, int device_id, int use_sdma, std::string &ip_port)
 {
     void *shm_gva = nullptr;
@@ -289,7 +286,7 @@ int32_t trans_test(int rank_id, int rank_size, int device_id, int use_sdma, std:
     } else {
         config.dataOpType = SMEMB_DATA_OP_DEVICE_RDMA;
     }
-    
+
     ret = smem_trans_init(&config);
     if (ret != 0) {
         std::cout << "[Failed to init smem_trans, ret=" << ret << "]" << std::endl;
@@ -336,8 +333,8 @@ int32_t main(int32_t argc, char *argv[])
     int device_id = atoi(argv[3]);
     int use_sdma = atoi(argv[4]);
     std::string ipPort = argv[5];
-    std::cout << "[TEST] input rank_size: " << rank_size << " rank_id:" << rank_id << " device_id: " << device_id <<
-        " use_sdma: " << use_sdma << " store_ip: " << ipPort << std::endl;
+    std::cout << "[TEST] input rank_size: " << rank_size << " rank_id:" << rank_id << " device_id: " << device_id
+              << " use_sdma: " << use_sdma << " store_ip: " << ipPort << std::endl;
 
     const size_t RANK_ID_SIZE = 2;
     if (rank_size != RANK_ID_SIZE) {

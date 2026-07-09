@@ -34,7 +34,7 @@ struct ComposeMemoryRegion {
 
 class ComposeTransportManager : public TransportManager {
 public:
-    explicit ComposeTransportManager(HybmEntityTagInfoPtr tag) noexcept : tagManager_{std::move(tag)}{};
+    explicit ComposeTransportManager(HybmEntityTagInfoPtr tag) noexcept : tagManager_{std::move(tag)} {};
 
     Result OpenDevice(const TransportOptions &options) override;
 
@@ -79,6 +79,7 @@ public:
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
+
 private:
     Result OpenHostTransport(const TransportOptions &options);
 

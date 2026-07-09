@@ -50,7 +50,7 @@ public:
     }
 
     static inline Result HybmBatchCopyQuant(void *param, uint32_t count, uint32_t unit, uint32_t flags, void *mask,
-                                             uint32_t concurrent, void *stream)
+                                            uint32_t concurrent, void *stream)
     {
         if (pHybmBatchCopyQuant == nullptr) {
             return BM_UNDER_API_UNLOAD;
@@ -71,6 +71,6 @@ private:
     static hybmBatchCopyExtendFunc pHybmBatchCopyExtend;
     static hybmBatchCopyQuantFunc pHybmBatchCopyQuant;
 };
-}
-}
+} // namespace mf
+} // namespace ock
 #endif // MEMFABRIC_HYBRID_DL_HYBM_COPY_EXTEND_H

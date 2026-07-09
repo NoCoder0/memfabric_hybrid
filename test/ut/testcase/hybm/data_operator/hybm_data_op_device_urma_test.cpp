@@ -50,8 +50,14 @@ int32_t MockAclrtMemcpyAsyncFailed(void *, size_t, const void *, size_t, uint32_
 
 class TransportManagerMock : public transport::TransportManager {
 public:
-    Result OpenDevice(const transport::TransportOptions &) override { return BM_OK; }
-    Result CloseDevice() override { return BM_OK; }
+    Result OpenDevice(const transport::TransportOptions &) override
+    {
+        return BM_OK;
+    }
+    Result CloseDevice() override
+    {
+        return BM_OK;
+    }
     Result RegisterMemoryRegion(const transport::TransportMemoryRegion &) override
     {
         registerMemoryRegionCount++;
@@ -67,16 +73,43 @@ public:
         queryHasRegisteredCount++;
         return queryHasRegisteredResult;
     }
-    Result QueryMemoryKey(uint64_t, transport::TransportMemoryKey &) override { return BM_OK; }
+    Result QueryMemoryKey(uint64_t, transport::TransportMemoryKey &) override
+    {
+        return BM_OK;
+    }
     void UpdateMemoryKey(transport::TransportMemoryKey &, void *) override {}
-    Result Prepare(const transport::HybmTransPrepareOptions &) override { return BM_OK; }
-    Result RemoveRanks(const std::vector<uint32_t> &) override { return BM_OK; }
-    Result Connect() override { return BM_OK; }
-    Result AsyncConnect() override { return BM_OK; }
-    Result WaitForConnected(int64_t) override { return BM_OK; }
-    Result UpdateRankOptions(const transport::HybmTransPrepareOptions &) override { return BM_OK; }
-    const std::string &GetNic() const override { return nic; }
-    const transport::TransportPrivateData GetPrivateData() const override { return {}; }
+    Result Prepare(const transport::HybmTransPrepareOptions &) override
+    {
+        return BM_OK;
+    }
+    Result RemoveRanks(const std::vector<uint32_t> &) override
+    {
+        return BM_OK;
+    }
+    Result Connect() override
+    {
+        return BM_OK;
+    }
+    Result AsyncConnect() override
+    {
+        return BM_OK;
+    }
+    Result WaitForConnected(int64_t) override
+    {
+        return BM_OK;
+    }
+    Result UpdateRankOptions(const transport::HybmTransPrepareOptions &) override
+    {
+        return BM_OK;
+    }
+    const std::string &GetNic() const override
+    {
+        return nic;
+    }
+    const transport::TransportPrivateData GetPrivateData() const override
+    {
+        return {};
+    }
     Result ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size) override
     {
         readRemoteCount++;
@@ -203,7 +236,7 @@ int32_t MockAclrtSynchronizeStream(void *)
 }
 
 int32_t MockAclrtMemcpyBatch(void **dsts, size_t *destMax, void **srcs, size_t *sizes, size_t numBatches,
-                            aclrtMemcpyBatchAttr *, size_t *, size_t, size_t *)
+                             aclrtMemcpyBatchAttr *, size_t *, size_t, size_t *)
 {
     for (size_t i = 0; i < numBatches; ++i) {
         EXPECT_GE(destMax[i], sizes[i]);
@@ -317,12 +350,10 @@ TEST_F(HybmDataOpDeviceUrmaTest, DataCopyAllLocalDirectionsSucceed)
 {
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
     const hybm_data_copy_direction directions[] = {
-        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,    HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE,
-        HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,  HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,   HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,    HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE,
-        HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST,  HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,
+        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,      HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,
+        HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,  HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,  HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,      HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST,
+        HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,
     };
 
     for (auto direction : directions) {
@@ -455,12 +486,10 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyAllLocalDirectionsSucceed)
 {
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
     const hybm_data_copy_direction directions[] = {
-        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,    HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE,
-        HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,  HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,   HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,    HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE,
-        HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE,
-        HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST,  HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,
+        HYBM_LOCAL_HOST_TO_GLOBAL_HOST,      HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST,
+        HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE,  HYBM_GLOBAL_HOST_TO_GLOBAL_HOST,  HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE,
+        HYBM_GLOBAL_HOST_TO_LOCAL_HOST,      HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST,
+        HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,
     };
 
     for (auto direction : directions) {

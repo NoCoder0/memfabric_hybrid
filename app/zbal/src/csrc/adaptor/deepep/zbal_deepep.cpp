@@ -349,10 +349,10 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
     // tensor to zbal_tensor_info_t
     auto num_tokens_per_expert_info = transfer_tensor_info(new_num_tokens_per_expert);
     auto recv_data_info = transfer_tensor_info(recv_data);
-    auto recv_tokens_per_expert_info = transfer_tensor_info(recv_tokens_per_expert);    // out
-    auto put_offset_info = transfer_tensor_info(put_offset);                            // out
-    auto balance_matrix_info = transfer_tensor_info(balance_matrix);                    // out
-    auto total_recv_token_info = transfer_tensor_info(total_recv_token);                // out
+    auto recv_tokens_per_expert_info = transfer_tensor_info(recv_tokens_per_expert); // out
+    auto put_offset_info = transfer_tensor_info(put_offset);                         // out
+    auto balance_matrix_info = transfer_tensor_info(balance_matrix);                 // out
+    auto total_recv_token_info = transfer_tensor_info(total_recv_token);             // out
 
     auto x_info = transfer_tensor_info(x);
     auto expert_ids_info = transfer_tensor_info(expert_ids);
@@ -402,7 +402,7 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
     }
     // Return values
     return {expandx_out, dynamic_scales_out, recv_topk_idx, recv_topk_weights, num_recv_tokens_per_expert_list,
-            put_offset, balance_matrix, event};
+            put_offset,  balance_matrix,     event};
 }
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>

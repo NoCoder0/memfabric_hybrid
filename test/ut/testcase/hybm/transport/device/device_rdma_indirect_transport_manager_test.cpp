@@ -19,7 +19,7 @@
 
 #include "hybm_types.h"
 
-#define private public
+#define private   public
 #define protected public
 #include "device/device_rdma_indirect_transport_manager.h"
 #include "dl_acl_api.h"
@@ -54,14 +54,14 @@ constexpr int TEST_NUM_SLICES = 5;
 constexpr int TEST_SLEEP_MS_SHORT = 50;
 constexpr int TEST_SLEEP_MS_MEDIUM = 100;
 constexpr int TEST_TIMEOUT_SECONDS = 2;
-const char* const TEST_NIC_ADDR_LOCAL = "tcp://127.0.0.1:1234";
-const char* const TEST_NIC_ADDR_REMOTE = "tcp://192.168.1.10:9000";
+const char *const TEST_NIC_ADDR_LOCAL = "tcp://127.0.0.1:1234";
+const char *const TEST_NIC_ADDR_REMOTE = "tcp://192.168.1.10:9000";
 constexpr int TEST_INITIAL_PENDING_COUNT = 3;
 constexpr uint32_t TEST_RANK_COUNT = 2U;
 constexpr uint32_t TEST_LOCAL_RANK_ID_ALT = 2U;
 constexpr int TEST_SYNC_PENDING_COUNT = 2;
 constexpr int TEST_COUNT_MINUS_TWO = -2;
-}
+} // namespace
 
 class RdmaIndirectTransportManagerTest : public testing::Test {
 protected:
@@ -118,16 +118,12 @@ TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopySingleEntryNoMerge)
 TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopyContinuousEntriesMerged)
 {
     RdmaIndirectTransportManager mgr;
-    std::vector<void *> srcAddrs = {
-        reinterpret_cast<void *>(TEST_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1),
-        reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1 + TEST_SIZE_2)
-    };
-    std::vector<void *> dstAddrs = {
-        reinterpret_cast<void *>(TEST_DST_ADDR),
-        reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1),
-        reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1 + TEST_SIZE_2)
-    };
+    std::vector<void *> srcAddrs = {reinterpret_cast<void *>(TEST_SRC_ADDR),
+                                    reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1),
+                                    reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1 + TEST_SIZE_2)};
+    std::vector<void *> dstAddrs = {reinterpret_cast<void *>(TEST_DST_ADDR),
+                                    reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1),
+                                    reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1 + TEST_SIZE_2)};
     std::vector<uint64_t> counts = {TEST_SIZE_1, TEST_SIZE_2, TEST_SIZE_3};
     RdmaIndirectTransportManager::MergeResult result;
 
@@ -140,14 +136,9 @@ TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopyContinuousEntriesMerged)
 TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopySrcNotContinuousSplit)
 {
     RdmaIndirectTransportManager mgr;
-    std::vector<void *> srcAddrs = {
-        reinterpret_cast<void *>(TEST_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_FAR_ADDR)
-    };
-    std::vector<void *> dstAddrs = {
-        reinterpret_cast<void *>(TEST_DST_ADDR),
-        reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1)
-    };
+    std::vector<void *> srcAddrs = {reinterpret_cast<void *>(TEST_SRC_ADDR), reinterpret_cast<void *>(TEST_FAR_ADDR)};
+    std::vector<void *> dstAddrs = {reinterpret_cast<void *>(TEST_DST_ADDR),
+                                    reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1)};
     std::vector<uint64_t> counts = {TEST_SIZE_1, TEST_SIZE_2};
     RdmaIndirectTransportManager::MergeResult result;
 
@@ -161,14 +152,9 @@ TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopySrcNotContinuousSplit)
 TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopyDstNotContinuousSplit)
 {
     RdmaIndirectTransportManager mgr;
-    std::vector<void *> srcAddrs = {
-        reinterpret_cast<void *>(TEST_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1)
-    };
-    std::vector<void *> dstAddrs = {
-        reinterpret_cast<void *>(TEST_DST_ADDR),
-        reinterpret_cast<void *>(TEST_FAR_ADDR)
-    };
+    std::vector<void *> srcAddrs = {reinterpret_cast<void *>(TEST_SRC_ADDR),
+                                    reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1)};
+    std::vector<void *> dstAddrs = {reinterpret_cast<void *>(TEST_DST_ADDR), reinterpret_cast<void *>(TEST_FAR_ADDR)};
     std::vector<uint64_t> counts = {TEST_SIZE_1, TEST_SIZE_2};
     RdmaIndirectTransportManager::MergeResult result;
 
@@ -183,17 +169,11 @@ TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopyPartialContinuousMerge)
 {
     RdmaIndirectTransportManager mgr;
     std::vector<void *> srcAddrs = {
-        reinterpret_cast<void *>(TEST_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1),
-        reinterpret_cast<void *>(TEST_ALT_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_ALT_SRC_ADDR + TEST_SIZE_3)
-    };
+        reinterpret_cast<void *>(TEST_SRC_ADDR), reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1),
+        reinterpret_cast<void *>(TEST_ALT_SRC_ADDR), reinterpret_cast<void *>(TEST_ALT_SRC_ADDR + TEST_SIZE_3)};
     std::vector<void *> dstAddrs = {
-        reinterpret_cast<void *>(TEST_DST_ADDR),
-        reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1),
-        reinterpret_cast<void *>(TEST_ALT_DST_ADDR),
-        reinterpret_cast<void *>(TEST_ALT_DST_ADDR + TEST_SIZE_3)
-    };
+        reinterpret_cast<void *>(TEST_DST_ADDR), reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1),
+        reinterpret_cast<void *>(TEST_ALT_DST_ADDR), reinterpret_cast<void *>(TEST_ALT_DST_ADDR + TEST_SIZE_3)};
     std::vector<uint64_t> counts = {TEST_SIZE_1, TEST_SIZE_2, TEST_SIZE_3, TEST_SIZE_1};
     RdmaIndirectTransportManager::MergeResult result;
 
@@ -418,7 +398,7 @@ TEST_F(RdmaIndirectTransportManagerTest, GenerateInitRequestBasicFields)
     EXPECT_EQ(msg.head.srcRankId, 1U);
     EXPECT_EQ(msg.head.dstRankId, TEST_DST_RANK_ID);
     EXPECT_EQ(msg.head.bodySize,
-        sizeof(slices.enqueueTime) + slices.slices.size() * sizeof(RdmaIndirectTransportManager::Slice));
+              sizeof(slices.enqueueTime) + slices.slices.size() * sizeof(RdmaIndirectTransportManager::Slice));
     EXPECT_NE(msg.head.requestId, 0ULL);
     EXPECT_EQ(msg.body.size(), msg.head.bodySize);
 }
@@ -464,7 +444,7 @@ TEST_F(RdmaIndirectTransportManagerTest, GenerateInitRequestMultipleSlices)
 
     auto msg = mgr.GenerateInitRequest(slices);
     EXPECT_EQ(msg.head.bodySize,
-        sizeof(slices.enqueueTime) + TEST_NUM_SLICES * sizeof(RdmaIndirectTransportManager::Slice));
+              sizeof(slices.enqueueTime) + TEST_NUM_SLICES * sizeof(RdmaIndirectTransportManager::Slice));
     EXPECT_EQ(msg.body.size(), msg.head.bodySize);
 }
 
@@ -542,17 +522,11 @@ TEST_F(RdmaIndirectTransportManagerTest, MergeBatchCopyAlternatingContinuousAndG
 {
     RdmaIndirectTransportManager mgr;
     std::vector<void *> srcAddrs = {
-        reinterpret_cast<void *>(TEST_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1),
-        reinterpret_cast<void *>(TEST_ALT_SRC_ADDR),
-        reinterpret_cast<void *>(TEST_ALT_SRC_ADDR + TEST_SIZE_3)
-    };
+        reinterpret_cast<void *>(TEST_SRC_ADDR), reinterpret_cast<void *>(TEST_SRC_ADDR + TEST_SIZE_1),
+        reinterpret_cast<void *>(TEST_ALT_SRC_ADDR), reinterpret_cast<void *>(TEST_ALT_SRC_ADDR + TEST_SIZE_3)};
     std::vector<void *> dstAddrs = {
-        reinterpret_cast<void *>(TEST_DST_ADDR),
-        reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1),
-        reinterpret_cast<void *>(TEST_ALT_DST_ADDR),
-        reinterpret_cast<void *>(TEST_ALT_DST_ADDR + TEST_SIZE_3)
-    };
+        reinterpret_cast<void *>(TEST_DST_ADDR), reinterpret_cast<void *>(TEST_DST_ADDR + TEST_SIZE_1),
+        reinterpret_cast<void *>(TEST_ALT_DST_ADDR), reinterpret_cast<void *>(TEST_ALT_DST_ADDR + TEST_SIZE_3)};
     std::vector<uint64_t> counts = {TEST_SIZE_1, TEST_SIZE_2, TEST_SIZE_3, TEST_SIZE_1};
     RdmaIndirectTransportManager::MergeResult result;
 

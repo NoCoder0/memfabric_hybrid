@@ -504,7 +504,7 @@ TEST_F(HybmEntityDefaultTest, Alloc_Free_LocalMemory)
     u.func = &ock::mf::MemSegment::Create;
     MOCKER(u.func).stubs().will(returnValue(segment));
 
-    MOCKER_CPP(&ock::mf::MemSegment::InitDeviceInfo, int32_t (*)(ock::mf::MemEntityDefault *, int))
+    MOCKER_CPP(&ock::mf::MemSegment::InitDeviceInfo, int32_t(*)(ock::mf::MemEntityDefault *, int))
         .stubs()
         .will(returnValue(0));
 
@@ -543,7 +543,7 @@ TEST_F(HybmEntityDefaultTest, RegisterLocalMemory)
     optionsSeg.rankCnt = TEST_RANK_COUNT_2;
     ock::mf::MemSegmentPtr segment = std::make_shared<ock::mf::HybmVmmBasedSegment>(optionsSeg, entity.id_);
 
-    MOCKER_CPP(&ock::mf::HybmVmmBasedSegment::ReserveMemorySpace, int32_t (*)(ock::mf::HybmVmmBasedSegment *, void **))
+    MOCKER_CPP(&ock::mf::HybmVmmBasedSegment::ReserveMemorySpace, int32_t(*)(ock::mf::HybmVmmBasedSegment *, void **))
         .stubs()
         .will(returnValue(0));
 
@@ -598,7 +598,7 @@ TEST_F(HybmEntityDefaultTest, ImportExchangeInfo)
     int32_t initRet = entity.Initialize(&options);
     EXPECT_EQ(initRet, BM_OK);
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(0));
 
@@ -662,7 +662,7 @@ TEST_F(HybmEntityDefaultTest, SetExtraContext_MemcpyFail_ReturnError)
     entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
 
     int ctx = TEST_CONTEXT_VALUE;
-    MOCKER_CPP(&ock::mf::DlAclApi::AclrtMemcpy, int32_t (*)(void *, size_t, const void *, size_t, int32_t))
+    MOCKER_CPP(&ock::mf::DlAclApi::AclrtMemcpy, int32_t(*)(void *, size_t, const void *, size_t, int32_t))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
 
@@ -678,7 +678,7 @@ TEST_F(HybmEntityDefaultTest, SetExtraContext_Success_ReturnOk)
     entity.options_.bmType = HYBM_TYPE_HOST_INITIATE; // UpdateHybmDeviceInfo will return OK directly
 
     int ctx = TEST_CONTEXT_VALUE;
-    MOCKER_CPP(&ock::mf::DlAclApi::AclrtMemcpy, int32_t (*)(void *, size_t, const void *, size_t, int32_t))
+    MOCKER_CPP(&ock::mf::DlAclApi::AclrtMemcpy, int32_t(*)(void *, size_t, const void *, size_t, int32_t))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -701,7 +701,7 @@ TEST_F(HybmEntityDefaultTest, RemoveImported_HbmSegmentFail_ReturnError)
 
     std::vector<uint32_t> ranks{TEST_RANK_1, TEST_RANK_2};
     MOCKER_CPP(&ock::mf::HybmVmmBasedSegment::RemoveImported,
-               int32_t (*)(ock::mf::HybmVmmBasedSegment *, const std::vector<uint32_t> &))
+               int32_t(*)(ock::mf::HybmVmmBasedSegment *, const std::vector<uint32_t> &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
 
@@ -724,7 +724,7 @@ TEST_F(HybmEntityDefaultTest, RemoveImported_DramSegmentFail_ReturnError)
 
     std::vector<uint32_t> ranks{TEST_RANK_1, TEST_RANK_2};
     MOCKER_CPP(&ock::mf::HybmVmmBasedSegment::RemoveImported,
-               int32_t (*)(ock::mf::HybmVmmBasedSegment *, const std::vector<uint32_t> &))
+               int32_t(*)(ock::mf::HybmVmmBasedSegment *, const std::vector<uint32_t> &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
 
@@ -746,7 +746,7 @@ TEST_F(HybmEntityDefaultTest, RemoveImported_CleanupAndEraseAndRemoveRanks)
     auto hbmSeg = std::make_shared<ock::mf::HybmVmmBasedSegment>(optionsHbm, entity.id_);
     entity.hbmSegment_ = hbmSeg;
     MOCKER_CPP(&ock::mf::HybmVmmBasedSegment::RemoveImported,
-               int32_t (*)(ock::mf::HybmVmmBasedSegment *, const std::vector<uint32_t> &))
+               int32_t(*)(ock::mf::HybmVmmBasedSegment *, const std::vector<uint32_t> &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -789,7 +789,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_TransScene_UsesLocateAddrAndRank)
     entity.options_.rankId = rankId;
     entity.options_.scene = HYBM_SCENE_TRANS;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -814,15 +814,15 @@ TEST_F(HybmEntityDefaultTest, CopyData_DataCopyFail_ReturnErrorCode)
     entity.options_.rankId = TEST_RANK_0;
     entity.options_.scene = HYBM_SCENE_TRANS;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
     // Use FakeDataOperator but override DataCopy via mockcpp
     auto dop = std::make_shared<FakeDataOperator>();
     entity.dataOperator_ = dop;
-    MOCKER_CPP(&FakeDataOperator::DataCopy, ock::mf::Result (*)(FakeDataOperator *, hybm_copy_params &,
-                                                                hybm_data_copy_direction, const ock::mf::ExtOptions &))
+    MOCKER_CPP(&FakeDataOperator::DataCopy, ock::mf::Result(*)(FakeDataOperator *, hybm_copy_params &,
+                                                               hybm_data_copy_direction, const ock::mf::ExtOptions &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
 
@@ -845,10 +845,10 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_UseLocalRankForAddrOutOfGvm
     entity.options_.scene = HYBM_SCENE_DEFAULT;
     entity.options_.enable56BitsGva = false;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType (*)())
+    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
@@ -876,25 +876,23 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_UseRankFromVaManagerInSocRa
     entity.options_.scene = HYBM_SCENE_DEFAULT;
     entity.options_.enable56BitsGva = false;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType (*)())
+    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
     ock::mf::HybmVaManager::GetInstance().ClearAll();
     ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().Initialize(ock::mf::AscendSocType::ASCEND_910C), BM_OK);
-    ASSERT_EQ(
-        ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
-            {{ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_1, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
-            0, TEST_RANK_11),
-        BM_OK);
-    ASSERT_EQ(
-        ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
-            {{ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_4, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
-            0, TEST_RANK_12),
-        BM_OK);
+    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
+                  {{ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_1, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
+                  0, TEST_RANK_11),
+              BM_OK);
+    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
+                  {{ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_4, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
+                  0, TEST_RANK_12),
+              BM_OK);
 
     auto dop = std::make_shared<FakeDataOperator>();
     entity.dataOperator_ = dop;
@@ -921,10 +919,10 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_A5Soc_UseRankFromVaManagerI
     entity.options_.scene = HYBM_SCENE_DEFAULT;
     entity.options_.enable56BitsGva = false;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType (*)())
+    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
 
@@ -961,10 +959,10 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_Enable56BitsGvaOutOfA5Range
     entity.options_.scene = HYBM_SCENE_DEFAULT;
     entity.options_.enable56BitsGva = true;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType (*)())
+    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
@@ -992,10 +990,10 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_Enable56BitsGvaAddrWithoutR
     entity.options_.scene = HYBM_SCENE_DEFAULT;
     entity.options_.enable56BitsGva = true;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType (*)())
+    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
@@ -1023,7 +1021,7 @@ TEST_F(HybmEntityDefaultTest, BatchCopyData_DataOperatorNull_ReturnError)
     entity.initialized_ = true;
     entity.options_.scene = HYBM_SCENE_TRANS;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -1041,7 +1039,7 @@ TEST_F(HybmEntityDefaultTest, BatchCopyData_GroupAndSuccess)
     entity.options_.rankId = TEST_RANK_0;
     entity.options_.scene = HYBM_SCENE_TRANS;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -1069,15 +1067,15 @@ TEST_F(HybmEntityDefaultTest, BatchCopyData_BatchCopyFail_ReturnErrorCode)
     entity.options_.rankId = TEST_RANK_0;
     entity.options_.scene = HYBM_SCENE_TRANS;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
     auto dop = std::make_shared<FakeDataOperator>();
     entity.dataOperator_ = dop;
     MOCKER_CPP(&FakeDataOperator::BatchDataCopy,
-               ock::mf::Result (*)(FakeDataOperator *, hybm_batch_copy_params &, hybm_data_copy_direction,
-                                   const ock::mf::ExtOptions &))
+               ock::mf::Result(*)(FakeDataOperator *, hybm_batch_copy_params &, hybm_data_copy_direction,
+                                  const ock::mf::ExtOptions &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
     void *srcs[1] = {reinterpret_cast<void *>(0x1)};
@@ -1099,7 +1097,7 @@ TEST_F(HybmEntityDefaultTest, QuantCopy_DataOperatorNull_ReturnError)
     ock::mf::MemEntityDefault entity(deviceId);
     entity.initialized_ = true;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -1114,7 +1112,7 @@ TEST_F(HybmEntityDefaultTest, QuantCopy_QuantFail_ReturnErrorCode)
     ock::mf::MemEntityDefault entity(deviceId);
     entity.initialized_ = true;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -1134,7 +1132,7 @@ TEST_F(HybmEntityDefaultTest, QuantCopy_Success_ReturnOk)
     ock::mf::MemEntityDefault entity(deviceId);
     entity.initialized_ = true;
 
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -1408,9 +1406,8 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     std::strncpy(e1.nic, "nic1", sizeof(e1.nic) - 1);
     w1.Append(e1);
 
-    ock::mf::ExchangeInfoReader readers[TEST_RANK_COUNT_2] = {
-        ock::mf::ExchangeInfoReader(&ex0), ock::mf::ExchangeInfoReader(&ex1)
-    };
+    ock::mf::ExchangeInfoReader readers[TEST_RANK_COUNT_2] = {ock::mf::ExchangeInfoReader(&ex0),
+                                                              ock::mf::ExchangeInfoReader(&ex1)};
     auto ret = entity.ImportEntityExchangeInfo(readers, TEST_RANK_COUNT_2, 0);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_0), "tag_0");
@@ -1514,7 +1511,7 @@ TEST_F(HybmEntityDefaultTest, ExportExchangeInfo_TransScene_HbmSegmentNull_Retur
 TEST_F(HybmEntityDefaultTest, CheckOptions_RankIdExceedsRankCount)
 {
     hybm_options options{};
-    options.rankId = 5; // 5
+    options.rankId = 5;    // 5
     options.rankCount = 3; // 3
     auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
@@ -1525,8 +1522,7 @@ TEST_F(HybmEntityDefaultTest, CheckOptions_DeviceRdmaAndUrmaConflict)
     hybm_options options{};
     options.rankId = 0;
     options.rankCount = 1;
-    options.bmDataOpType = static_cast<hybm_data_op_type>(
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA);
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA);
     auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
@@ -1559,8 +1555,7 @@ TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmConflictingOpTypes)
     hybm_options options{};
     options.rankId = 0;
     options.rankCount = 1;
-    options.bmDataOpType = static_cast<hybm_data_op_type>(
-        HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_SDMA);
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_SDMA);
     options.hostVASpace = 1024; // 1024
     options.memType = HYBM_MEM_TYPE_HOST;
     auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
@@ -1616,9 +1611,8 @@ TEST_F(HybmEntityDefaultTest, CanReachDataOperators_MultipleFlags)
 {
     ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_MULTI);
     entity.initialized_ = true;
-    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA |
-        HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_HOST_URMA);
+    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA |
+                                                                  HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_HOST_URMA);
     auto opType = entity.CanReachDataOperators(TEST_RANK_1);
     EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_DEVICE_RDMA, 0U);
     EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_HOST_RDMA, 0U);
@@ -1725,7 +1719,7 @@ TEST_F(HybmEntityDefaultTest, ImportSliceExchangeInfo_DescNull_ReturnError)
     entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
 
     // override SetThreadAclDevice to return OK
-    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t (*)(ock::mf::MemEntityDefault *))
+    MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -1738,8 +1732,7 @@ TEST_F(HybmEntityDefaultTest, ImportSliceExchangeInfo_DescNull_ReturnError)
 
 class FakeTransportManagerConnectFail : public FakeTransportManager {
 public:
-    ock::mf::Result ConnectWithOptions(
-        const ock::mf::transport::HybmTransPrepareOptions & /* options */) override
+    ock::mf::Result ConnectWithOptions(const ock::mf::transport::HybmTransPrepareOptions & /* options */) override
     {
         connectWithOptionsCalled++;
         return BM_ERROR;

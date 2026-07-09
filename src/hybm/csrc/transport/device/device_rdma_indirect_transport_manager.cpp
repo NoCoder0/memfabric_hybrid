@@ -28,7 +28,6 @@
 #include "hybm_va_manager.h"
 #include "mf_ipv4_validator.h"
 
-
 namespace ock {
 namespace mf {
 namespace transport {
@@ -63,8 +62,8 @@ thread_local std::shared_ptr<RdmaIndirectTransportManager::PendingRequestContext
     RdmaIndirectTransportManager::pendingRequestContext_ = nullptr;
 RdmaIndirectTransportManager::RdmaIndirectTransportManager()
     : running_(false), senderSideQueue_{8U, SenderPhraseProcessors()},
-      receiverSideQueue_{4U, ReceiverPhraseProcessors()},
-      localNetworkStorage_(nullptr), localNetworkLen_(0), localNetworkFamily_(AF_INET)
+      receiverSideQueue_{4U, ReceiverPhraseProcessors()}, localNetworkStorage_(nullptr), localNetworkLen_(0),
+      localNetworkFamily_(AF_INET)
 {
     BM_LOG_DEBUG("RdmaIndirectTransportManager created.");
 }
@@ -218,7 +217,7 @@ static std::string ModifyNicPort(const std::string &nic, uint16_t newPort)
     if (!urlParser.Initialize(nic)) {
         return "";
     }
-    
+
     std::string ip = urlParser.GetIp();
     if (urlParser.IsIpv6()) {
         return "tcp://[" + ip + "]:" + std::to_string(newPort);
@@ -227,7 +226,7 @@ static std::string ModifyNicPort(const std::string &nic, uint16_t newPort)
     }
 }
 
-int RdmaIndirectTransportManager::InitListenerSocket(const std::string& nic)
+int RdmaIndirectTransportManager::InitListenerSocket(const std::string &nic)
 {
     UrlParser urlParser;
     if (!urlParser.Initialize(nic)) {
@@ -244,12 +243,12 @@ int RdmaIndirectTransportManager::InitListenerSocket(const std::string& nic)
         BM_LOG_ERROR("parse modified nic(" << modifiedNic << ") failed using UrlParser!");
         return BM_INVALID_PARAM;
     }
-    
+
     // 使用 sockaddr_storage 来存储地址，支持 IPv4 和 IPv6
     localNetworkStorage_ = modifiedUrlParser.GetSockAddr();
     localNetworkLen_ = modifiedUrlParser.GetAddrLen();
     localNetworkFamily_ = modifiedUrlParser.GetAddressFamily();
-    
+
     gServerSocket_ = socket(localNetworkFamily_, SOCK_STREAM, 0);
     if (gServerSocket_ < 0) {
         BM_LOG_ERROR("RdmaIndirectTransportManager out-of-band socket create failed, family: " << localNetworkFamily_);
@@ -417,9 +416,9 @@ Result RdmaIndirectTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const
         }
 
         slice_list.push_back(slice);
-        BM_LOG_DEBUG("ReadRemoteBatchAsync: added slice[" << i << "], lAddr=0x" << std::hex << slice.lAddr
-            << ", rAddr=0x" << std::hex << slice.rAddr << ", size=" << slice.size
-            << ", localMemType=" << slice.localMemType);
+        BM_LOG_DEBUG("ReadRemoteBatchAsync: added slice["
+                     << i << "], lAddr=0x" << std::hex << slice.lAddr << ", rAddr=0x" << std::hex << slice.rAddr
+                     << ", size=" << slice.size << ", localMemType=" << slice.localMemType);
     }
 
     auto ret = SendInitRequestForSlices(slices);
@@ -472,9 +471,9 @@ Result RdmaIndirectTransportManager::WriteRemoteBatchAsync(uint32_t rankId, cons
         }
 
         sliceList.slices.push_back(slice);
-        BM_LOG_DEBUG("WriteRemoteBatchAsync: added slice[" << i << "], lAddr=0x" << std::hex << slice.lAddr
-            << ", rAddr=0x" << std::hex << slice.rAddr << ", size=" << slice.size
-            << ", localMemType=" << slice.localMemType);
+        BM_LOG_DEBUG("WriteRemoteBatchAsync: added slice["
+                     << i << "], lAddr=0x" << std::hex << slice.lAddr << ", rAddr=0x" << std::hex << slice.rAddr
+                     << ", size=" << slice.size << ", localMemType=" << slice.localMemType);
     }
 
     auto ret = SendInitRequestForSlices(sliceList);
@@ -502,10 +501,10 @@ QueueMessage RdmaIndirectTransportManager::GenerateInitRequest(SliceList &slices
     initRequest.head.timestamp = TP_CURRENT_TIME_NS;
     initRequest.body.resize(initRequest.head.bodySize);
     auto dest = initRequest.body.data();
-    std::copy_n(reinterpret_cast<uint8_t*>(&slices.enqueueTime), sizeof(slices.enqueueTime), dest);
+    std::copy_n(reinterpret_cast<uint8_t *>(&slices.enqueueTime), sizeof(slices.enqueueTime), dest);
     dest += sizeof(slices.enqueueTime);
     for (auto &slice : slices.slices) {
-        std::copy_n(reinterpret_cast<uint8_t*>(&slice), sizeof(Slice), dest);
+        std::copy_n(reinterpret_cast<uint8_t *>(&slice), sizeof(Slice), dest);
         dest += sizeof(Slice);
     }
     return std::move(initRequest);
@@ -616,8 +615,8 @@ int RdmaIndirectTransportManager::SenderSidePhrase0(const QueueMessage &res, Que
     }
 
     if (context->sliceList.slices[0].type == WRITE) {
-        uint32_t copyDir = (context->sliceList.slices[0].localMemType == LOCAL_HOST)
-            ? ACL_MEMCPY_HOST_TO_DEVICE : ACL_MEMCPY_DEVICE_TO_DEVICE;
+        uint32_t copyDir = (context->sliceList.slices[0].localMemType == LOCAL_HOST) ? ACL_MEMCPY_HOST_TO_DEVICE
+                                                                                     : ACL_MEMCPY_DEVICE_TO_DEVICE;
         TP_TRACE_BEGIN(TP_INDIRECT_SENDER_PHASE_0_W_D2D);
         ret = BatchCopy(scatterAddrs, gatherAddrs, counts, copyDir, stream);
         TP_TRACE_END(TP_INDIRECT_SENDER_PHASE_0_W_D2D, ret);
@@ -645,8 +644,8 @@ int RdmaIndirectTransportManager::SenderSidePhrase0(const QueueMessage &res, Que
                                                                      << ", local_rank:" << localRankId_);
             return failPhase0(ret, true, localRdmaAddr);
         }
-        uint32_t copyDir = (context->sliceList.slices[0].localMemType == LOCAL_HOST)
-            ? ACL_MEMCPY_DEVICE_TO_HOST : ACL_MEMCPY_DEVICE_TO_DEVICE;
+        uint32_t copyDir = (context->sliceList.slices[0].localMemType == LOCAL_HOST) ? ACL_MEMCPY_DEVICE_TO_HOST
+                                                                                     : ACL_MEMCPY_DEVICE_TO_DEVICE;
         TP_TRACE_BEGIN(TP_INDIRECT_SENDER_PHASE_0_R_D2D);
         ret = BatchCopy(gatherAddrs, scatterAddrs, counts, copyDir, stream);
         TP_TRACE_END(TP_INDIRECT_SENDER_PHASE_0_R_D2D, ret);
@@ -695,10 +694,8 @@ int RdmaIndirectTransportManager::ReceiveSidePhrase0(const QueueMessage &request
     uint64_t localBaseAddr;
     uint64_t timestamp = 0;
     auto reqBody = request.body.data();
-    if (request.head.bodySize != request.body.size() ||
-        request.head.bodySize < sizeof(uint64_t) + sizeof(Slice)) {
-        BM_LOG_ERROR("Invalid bodysize: " << request.head.bodySize
-                     << ", actual body size: " << request.body.size());
+    if (request.head.bodySize != request.body.size() || request.head.bodySize < sizeof(uint64_t) + sizeof(Slice)) {
+        BM_LOG_ERROR("Invalid bodysize: " << request.head.bodySize << ", actual body size: " << request.body.size());
         return BM_ERROR;
     }
     auto slices = static_cast<const Slice *>(static_cast<const void *>(reqBody + sizeof(uint64_t)));
@@ -972,13 +969,13 @@ Result RdmaIndirectTransportManager::OpenDevice(const TransportOptions &options)
 Result RdmaIndirectTransportManager::CloseDevice()
 {
     BM_LOG_INFO("RdmaIndirectTransportManager CloseDevice start");
-    
+
     // Check if already closed to make this function idempotent
     if (!running_ && gServerSocket_ < 0 && gOutBandEpollFd_ < 0 && buffer_ == nullptr) {
         BM_LOG_DEBUG("RdmaIndirectTransportManager already closed, skip");
         return RdmaTransportManager::CloseDevice();
     }
-    
+
     // Stop running flag and notify waiting threads
     if (running_) {
         running_ = false;
@@ -989,7 +986,7 @@ Result RdmaIndirectTransportManager::CloseDevice()
     if (outBandAcceptThread_.joinable()) {
         outBandAcceptThread_.join();
     }
-    
+
     // Stop queues and close sockets
     senderSideQueue_.Stop();
     receiverSideQueue_.Stop();
@@ -1008,27 +1005,27 @@ Result RdmaIndirectTransportManager::CloseDevice()
         close(gServerSocket_);
         gServerSocket_ = -1;
     }
-    
+
     // Free buffer if allocated
     if (buffer_ != nullptr) {
         RdmaTransportManager::UnregisterMemoryRegion((uint64_t)buffer_);
         DlAclApi::AclrtFree(buffer_);
         buffer_ = nullptr;
     }
-    
+
     // Clear nics vector
     nics_.clear();
-    
+
     // Clear thread resource context
     threadContext_ = nullptr;
-    
+
     // Call parent class CloseDevice to clean up RDMA resources
     auto ret = RdmaTransportManager::CloseDevice();
     if (ret != BM_OK) {
         BM_LOG_ERROR("RdmaIndirectTransportManager Failed to call parent CloseDevice, ret:" << ret);
         return ret;
     }
-    
+
     BM_LOG_INFO("RdmaIndirectTransportManager CloseDevice successful");
     return BM_OK;
 }
@@ -1151,18 +1148,18 @@ Result RdmaIndirectTransportManager::Connect()
         if (i == localRankId_) {
             continue;
         }
-        
+
         if (nics_[i].empty()) {
             BM_LOG_DEBUG("NIC info for rank " << i << " is not ready yet, skip connecting");
             continue;
         }
-        
+
         UrlParser urlParser;
         if (!urlParser.Initialize(nics_[i])) {
             BM_LOG_ERROR("parse nic(" << nics_[i] << ") failed using UrlParser!");
             continue;
         }
-        
+
         if (ConnectToRemote(nics_[i], i, localRankId_) < 0) {
             return BM_ERROR;
         }
@@ -1197,7 +1194,7 @@ Result RdmaIndirectTransportManager::UpdateRankOptions(const HybmTransPrepareOpt
         }
         info.memKeys.emplace_back(info.privateData.key);
         nics_[rankId] = info.privateData.ip;
-        
+
         if (ConnectToRemote(nics_[rankId], rankId, localRankId_) < 0) {
             return BM_ERROR;
         }
@@ -1270,9 +1267,7 @@ Result RdmaIndirectTransportManager::Synchronize(uint32_t rankId)
 
     // 等待所有请求完成
     std::unique_lock<std::mutex> lock(pendingRequestContext_->mutex);
-    pendingRequestContext_->cond.wait(lock, []() {
-        return pendingRequestContext_->count <= 0;
-    });
+    pendingRequestContext_->cond.wait(lock, []() { return pendingRequestContext_->count <= 0; });
 
     BM_LOG_DEBUG("Synchronize completed for rank " << rankId);
     return BM_OK;

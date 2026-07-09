@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -7,8 +6,9 @@ from typing import List, Tuple, Dict, Any
 import torch
 
 
-def pack_tensors(tensor_list: List[torch.Tensor],
-                 target_dtype: torch.dtype = torch.int8) -> Tuple[torch.Tensor, Dict[str, Any]]:
+def pack_tensors(
+    tensor_list: List[torch.Tensor], target_dtype: torch.dtype = torch.int8
+) -> Tuple[torch.Tensor, Dict[str, Any]]:
     """
     将任意张量列表打包为指定数据类型的单个张量
 
@@ -30,7 +30,7 @@ def pack_tensors(tensor_list: List[torch.Tensor],
         'original_dtypes': [],
         'element_counts': [],  # 每个张量在目标类型中的元素数量
         'original_element_counts': [],  # 原始张量的元素数量
-        'target_dtype': target_dtype
+        'target_dtype': target_dtype,
     }
 
     device = tensor_list[0].device
@@ -69,7 +69,7 @@ def pack_tensors(tensor_list: List[torch.Tensor],
         source_view = tensor.view(target_dtype)
 
         # 直接复制到打包张量
-        packed_tensor[current_offset:current_offset + element_count].copy_(
+        packed_tensor[current_offset : current_offset + element_count].copy_(
             source_view.flatten()[:element_count]  # source_view可能比element_count长（由于向上取整）
         )
 
@@ -78,8 +78,7 @@ def pack_tensors(tensor_list: List[torch.Tensor],
     return packed_tensor, metadata
 
 
-def unpack_tensors(packed_tensor: torch.Tensor,
-                   metadata: Dict[str, Any]) -> List[torch.Tensor]:
+def unpack_tensors(packed_tensor: torch.Tensor, metadata: Dict[str, Any]) -> List[torch.Tensor]:
     """
     从打包张量中恢复原始张量列表
 
@@ -97,10 +96,10 @@ def unpack_tensors(packed_tensor: torch.Tensor,
         metadata['original_shapes'],
         metadata['original_dtypes'],
         metadata['element_counts'],
-        metadata['original_element_counts']
+        metadata['original_element_counts'],
     ):
         # 提取数据段
-        data_slice = packed_tensor[current_offset:current_offset + element_count]
+        data_slice = packed_tensor[current_offset : current_offset + element_count]
 
         # 恢复为原始数据类型
         restored_tensor = data_slice.view(original_dtype)

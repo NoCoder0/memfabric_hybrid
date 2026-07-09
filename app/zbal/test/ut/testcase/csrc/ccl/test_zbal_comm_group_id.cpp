@@ -11,7 +11,6 @@
  */
 #include <gtest/gtest.h>
 
-
 #include <sstream>
 
 #define private public

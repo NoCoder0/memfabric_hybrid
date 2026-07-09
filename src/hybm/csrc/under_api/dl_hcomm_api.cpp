@@ -74,8 +74,7 @@ Result DlHcommApi::LoadLibrary()
     DL_LOAD_SYM(gHcommThreadFree, hcommThreadFreeFunc, hcommHandle, "HcommThreadFree");
     DL_LOAD_SYM(gHcommReadOnThread, hcommReadOnThreadFunc, hcommHandle, "HcommReadOnThread");
     DL_LOAD_SYM(gHcommWriteOnThread, hcommWriteOnThreadFunc, hcommHandle, "HcommWriteOnThread");
-    DL_LOAD_SYM(gHcommChannelFenceOnThread, hcommChannelFenceOnThreadFunc, hcommHandle,
-                "HcommChannelFenceOnThread");
+    DL_LOAD_SYM(gHcommChannelFenceOnThread, hcommChannelFenceOnThreadFunc, hcommHandle, "HcommChannelFenceOnThread");
     DL_LOAD_SYM_OPTIONAL(gHcommBatchModeStart, hcommBatchModeStartFunc, hcommHandle, "HcommBatchModeStart");
     DL_LOAD_SYM_OPTIONAL(gHcommBatchModeEnd, hcommBatchModeEndFunc, hcommHandle, "HcommBatchModeEnd");
     DL_LOAD_SYM_OPTIONAL(gHcommBatchTransferOnThread, hcommBatchTransferOnThreadFunc, hcommHandle,

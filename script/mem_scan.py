@@ -10,9 +10,9 @@ KPF_BUDDY = 10
 # ===== 地址段配置 =====
 RANGES = [
     0x29580000000,
-    0xa9580000000,
+    0xA9580000000,
     0x129580000000,
-    0x1a9580000000,
+    0x1A9580000000,
 ]
 
 RANGE_SIZE = 682 * 1024 * 1024 * 1024  # 682GB
@@ -20,11 +20,7 @@ RANGE_SIZE = 682 * 1024 * 1024 * 1024  # 682GB
 
 def get_all_nodes():
     base = "/sys/devices/system/node/"
-    return sorted([
-        int(d.replace("node", ""))
-        for d in os.listdir(base)
-        if d.startswith("node")
-    ])
+    return sorted([int(d.replace("node", "")) for d in os.listdir(base) if d.startswith("node")])
 
 
 def get_memory_block_size():
@@ -78,7 +74,6 @@ def scan_node_free_segments(node):
         prev_end = None
 
         for start_pfn, end_pfn in blocks:
-
             # 处理 NUMA 内不连续
             if prev_end is not None and start_pfn > prev_end + 1:
                 merged_start = None
@@ -133,7 +128,6 @@ def get_force_max_zoneorder():
         except Exception:
             continue
 
-
     os_info = subprocess.check_output(['uname', '-a'], text=True)
     if 'Ubuntu' in os_info:
         return 13
@@ -184,6 +178,7 @@ def run_for_node(node, min_mb, target_ranges, zone_page):
 
 def main():
     import argparse
+
     parser = argparse.ArgumentParser(description="NUMA free memory intersect tool (all nodes supported)")
     parser.add_argument("-n", "--node", type=int, help="NUMA node ID (default: all)")
     parser.add_argument("-m", "--min-mb", type=int, default=1024)
@@ -210,13 +205,13 @@ def main():
     for node in nodes:
         numa_free_mb.append(run_for_node(node, args.min_mb, target_ranges, zone_page))
 
-
     print(f"\n===== Summary =====")
     for node, free_mb in zip(nodes, numa_free_mb):
         print(f"NUMA node {node}: {free_mb:.2f} MB")
 
     total_free_mb = sum(numa_free_mb)
     print(f"PageSize: {hex(PAGE_SIZE)}, ZonePageSize: {hex(zone_page)} TotalFree: {(total_free_mb / 1024):.2f} GB")
+
 
 if __name__ == "__main__":
     main()

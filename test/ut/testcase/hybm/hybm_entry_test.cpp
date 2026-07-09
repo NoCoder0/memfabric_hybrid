@@ -28,13 +28,9 @@ using namespace ock::mf;
 
 class HybmEntryTest : public testing::Test {
 public:
-    static void SetUpTestCase()
-    {
-    }
+    static void SetUpTestCase() {}
 
-    static void TearDownTestCase()
-    {
-    }
+    static void TearDownTestCase() {}
 
     void SetUp() override
     {
@@ -51,9 +47,9 @@ protected:
     void MockHybmInitSuccess()
     {
         MOCKER_CPP(HalGvaPrecheck, int32_t(*)()).stubs().will(returnValue(0));
-        MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(0));
-        MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t*)).stubs().will(returnValue(0));
-        MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t&)).stubs().will(returnValue(0));
+        MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(0));
+        MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t *)).stubs().will(returnValue(0));
+        MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t &)).stubs().will(returnValue(0));
     }
 
     void MockHybmUninitSuccess()
@@ -82,7 +78,7 @@ TEST_F(HybmEntryTest, hybm_init_duplicate_same_device)
     auto ret1 = hybm_init(0, 0);
     EXPECT_EQ(ret1, 0);
 
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(BM_OK));
 
     auto ret2 = hybm_init(0, 0);
     EXPECT_EQ(ret2, 0);
@@ -115,8 +111,8 @@ TEST_F(HybmEntryTest, hybm_init_hal_gva_precheck_failed)
 TEST_F(HybmEntryTest, hybm_init_load_library_failed)
 {
     MOCKER_CPP(HalGvaPrecheck, int32_t(*)()).stubs().will(returnValue(0));
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(-1));
-    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t*)).stubs().will(returnValue(0));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(-1));
+    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t *)).stubs().will(returnValue(0));
     MOCKER_CPP(ptracer_uninit, void (*)()).stubs();
     MOCKER_CPP(DlApi::CleanupLibrary, void (*)()).stubs();
 
@@ -128,9 +124,9 @@ TEST_F(HybmEntryTest, hybm_init_load_library_failed)
 TEST_F(HybmEntryTest, hybm_init_hbm_gva_failed)
 {
     MOCKER_CPP(HalGvaPrecheck, int32_t(*)()).stubs().will(returnValue(0));
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(0));
-    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t*)).stubs().will(returnValue(0));
-    MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t&)).stubs().will(returnValue(-1));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t *)).stubs().will(returnValue(0));
+    MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t &)).stubs().will(returnValue(-1));
     MOCKER_CPP(ptracer_uninit, void (*)()).stubs();
     MOCKER_CPP(DlApi::CleanupLibrary, void (*)()).stubs();
 
@@ -174,7 +170,7 @@ TEST_F(HybmEntryTest, hybm_uninit_incremental)
     auto ret1 = hybm_init(0, 0);
     EXPECT_EQ(ret1, 0);
 
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(0));
 
     auto ret2 = hybm_init(0, 0);
     EXPECT_EQ(ret2, 0);
@@ -185,7 +181,7 @@ TEST_F(HybmEntryTest, hybm_uninit_incremental)
     EXPECT_FALSE(HybmHasInited());
 }
 
-void TestLogger(int level, const char* msg)
+void TestLogger(int level, const char *msg)
 {
     (void)level;
     (void)msg;
@@ -238,7 +234,7 @@ TEST_F(HybmEntryTest, hybm_get_error_string)
 TEST_F(HybmEntryTest, hybm_init_thread_safety)
 {
     MockHybmInitSuccess();
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(0));
 
     std::vector<std::thread> threads;
     std::atomic<int> successCount{0};
@@ -252,7 +248,7 @@ TEST_F(HybmEntryTest, hybm_init_thread_safety)
         });
     }
 
-    for (auto& t : threads) {
+    for (auto &t : threads) {
         t.join();
     }
 
@@ -279,7 +275,7 @@ TEST_F(HybmEntryTest, hybm_uninit_thread_safety)
         threads.emplace_back([]() { hybm_uninit(); });
     }
 
-    for (auto& t : threads) {
+    for (auto &t : threads) {
         t.join();
     }
 
@@ -312,9 +308,9 @@ TEST_F(HybmEntryTest, hybm_init_flags)
 TEST_F(HybmEntryTest, hybm_init_cleanup_on_failure)
 {
     MOCKER_CPP(HalGvaPrecheck, int32_t(*)()).stubs().will(returnValue(0));
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(0));
-    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t*)).stubs().will(returnValue(0));
-    MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t&)).stubs().will(returnValue(-1));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t *)).stubs().will(returnValue(0));
+    MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t &)).stubs().will(returnValue(-1));
     MOCKER_CPP(ptracer_uninit, void (*)()).stubs();
     MOCKER_CPP(DlApi::CleanupLibrary, void (*)()).stubs();
 
@@ -326,9 +322,9 @@ TEST_F(HybmEntryTest, hybm_init_cleanup_on_failure)
 TEST_F(HybmEntryTest, hybm_init_ptracer_failure)
 {
     MOCKER_CPP(HalGvaPrecheck, int32_t(*)()).stubs().will(returnValue(0));
-    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string&, uint32_t)).stubs().will(returnValue(0));
-    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t*)).stubs().will(returnValue(-1));
-    MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t&)).stubs().will(returnValue(0));
+    MOCKER_CPP(DlApi::LoadLibrary, ock::mf::Result(*)(const std::string &, uint32_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(ptracer_init, int32_t(*)(ptracer_config_t *)).stubs().will(returnValue(-1));
+    MOCKER_CPP(hybm_init_hbm_gva, int32_t(*)(uint16_t, uint64_t, uint64_t &)).stubs().will(returnValue(0));
 
     auto ret = hybm_init(0, 0);
     EXPECT_EQ(ret, 0);

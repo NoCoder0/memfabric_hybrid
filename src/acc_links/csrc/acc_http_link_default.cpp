@@ -591,25 +591,23 @@ Result AccHttpLinkDefault::SendHttpResponse(int16_t statusCode, const std::strin
         if (key.find('\r') != std::string::npos || key.find('\n') != std::string::npos ||
             value.find('\r') != std::string::npos || value.find('\n') != std::string::npos) {
             LOG_ERROR("Extra header key or value contains CR/LF, rejecting on " << ShortName()
-                                                                                 << ", statusCode=" << statusCode);
+                                                                                << ", statusCode=" << statusCode);
             return ACC_INVALID_PARAM;
         }
     }
 
-    bool noBodyForStatus = (statusCode < HTTP_STATUS_CODE_1XX_END) ||
-                           statusCode == HTTP_STATUS_NO_CONTENT ||
+    bool noBodyForStatus = (statusCode < HTTP_STATUS_CODE_1XX_END) || statusCode == HTTP_STATUS_NO_CONTENT ||
                            statusCode == HTTP_STATUS_NOT_MODIFIED;
-    std::string headerStr = BuildResponseHeader(statusCode, statusText, contentType,
-                                                body, extraHeaders, noBodyForStatus,
-                                                noBody);
+    std::string headerStr =
+        BuildResponseHeader(statusCode, statusText, contentType, body, extraHeaders, noBodyForStatus, noBody);
     if (headerStr.size() > static_cast<size_t>(UINT32_MAX)) {
         LOG_ERROR("Header string too large on " << ShortName() << ", headerSize=" << headerStr.size());
         return ACC_INVALID_PARAM;
     }
     auto headerBuf = AccDataBuffer::Create(headerStr.data(), static_cast<uint32_t>(headerStr.size()));
     if (headerBuf.Get() == nullptr) {
-        LOG_ERROR("Failed to allocate header buffer in SendHttpResponse on " << ShortName() <<
-            ", headerSize=" << headerStr.size());
+        LOG_ERROR("Failed to allocate header buffer in SendHttpResponse on " << ShortName()
+                                                                             << ", headerSize=" << headerStr.size());
         return ACC_MALLOC_FAIL;
     }
 
@@ -702,7 +700,7 @@ Result AccHttpLinkDefault::EnqueueResponseNodes(const AccDataBufferPtr &headerBu
     auto ret = sendingQueue_->EnqueueBackNode(headerNode);
     if (ret != ACC_OK) {
         LOG_ERROR("Failed to enqueue header node on " << ShortName() << ", result=" << ret
-                                                       << ", statusCode=" << statusCode);
+                                                      << ", statusCode=" << statusCode);
         delete headerNode;
         delete bodyNode;
         return ret;

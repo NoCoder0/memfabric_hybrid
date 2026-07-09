@@ -14,7 +14,7 @@ class Block:
 
 
 class MemoryAllocatorSimulator:
-    def __init__(self, gva_base_addr=None, gva_size=58 * (1024 ** 3)):
+    def __init__(self, gva_base_addr=None, gva_size=58 * (1024**3)):
         # 使用 SortedDict 维护地址有序性
         self.address_map = SortedDict()
         # 记录 segment 范围：{start_addr: end_addr}
@@ -157,9 +157,10 @@ class MemoryAllocatorSimulator:
         other_segments_addrs = other.segments.keys()
 
         gva_addr_diff = other.gva_base_addr - self.gva_base_addr
-        return (len(self_block_addrs) == len(other_block_addrs) and
-                all((b - a) == gva_addr_diff for a, b in zip(self_block_addrs, other_block_addrs)) and
-                len(self_segments_addrs) == len(other_segments_addrs) and
-                all((b - a) == gva_addr_diff for a, b in zip(self_segments_addrs, other_segments_addrs)) and
-                self.gva_size == other.gva_size)
-
+        return (
+            len(self_block_addrs) == len(other_block_addrs)
+            and all((b - a) == gva_addr_diff for a, b in zip(self_block_addrs, other_block_addrs))
+            and len(self_segments_addrs) == len(other_segments_addrs)
+            and all((b - a) == gva_addr_diff for a, b in zip(self_segments_addrs, other_segments_addrs))
+            and self.gva_size == other.gva_size
+        )

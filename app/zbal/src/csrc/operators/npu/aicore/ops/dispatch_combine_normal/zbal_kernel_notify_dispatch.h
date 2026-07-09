@@ -64,8 +64,8 @@ public:
         gva_gm = (GM_ADDR)metaAddr;
         comm = reinterpret_cast<__gm__ CommGroupInfo *>(metaAddr);
         memSize = comm->localDeviceMemSize;
-    myGroupRank = comm->myGroupRank;
-    groupSize = comm->groupSize;
+        myGroupRank = comm->myGroupRank;
+        groupSize = comm->groupSize;
         GM_ADDR meta_addr_gm = reinterpret_cast<__gm__ uint8_t *>(comm->myAddressExchangeGva);
         addrOffset_ = (meta_addr_gm - gva_gm);
         metaSize_ = addrOffset_ + comm->sizeForExchangeAddress;

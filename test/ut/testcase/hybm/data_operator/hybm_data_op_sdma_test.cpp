@@ -144,10 +144,12 @@ public:
         mockStream_ = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
         MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs().will(returnValue(mockStream_));
         MOCKER(&ock::mf::HybmStreamManager::DestroyAllThreadHybmStream).stubs().will(returnValue(0));
-        MOCKER_CPP(&ock::mf::HybmStream::SubmitTasks,
-            int32_t (*)(ock::mf::HybmStream *, const ock::mf::StreamTask &)).stubs().will(returnValue(0));
-        MOCKER_CPP(&ock::mf::HybmStream::Synchronize,
-            int32_t (*)(ock::mf::HybmStream *, uint32_t)).stubs().will(returnValue(0));
+        MOCKER_CPP(&ock::mf::HybmStream::SubmitTasks, int32_t(*)(ock::mf::HybmStream *, const ock::mf::StreamTask &))
+            .stubs()
+            .will(returnValue(0));
+        MOCKER_CPP(&ock::mf::HybmStream::Synchronize, int32_t(*)(ock::mf::HybmStream *, uint32_t))
+            .stubs()
+            .will(returnValue(0));
 
         // Make MemSegment::InitDeviceInfo succeed with deterministic ids, so reachability
         // checks behave consistently in UT.
@@ -288,8 +290,11 @@ TEST_F(HybmDataOpSdmaTest, data_copy_global_device_to_local_host_failed)
     MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
-    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs()
-        .will(returnValue(mockStream1)).then(returnValue(mockStream1)).then(returnValue(mockStream2));
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
+        .stubs()
+        .will(returnValue(mockStream1))
+        .then(returnValue(mockStream1))
+        .then(returnValue(mockStream2));
     InitMockEnv();
 
     auto ret = dataOp_->Initialize();
@@ -428,8 +433,11 @@ TEST_F(HybmDataOpSdmaTest, data_copy_global_host_to_local_host_failed)
     MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
-    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs()
-        .will(returnValue(mockStream1)).then(returnValue(mockStream1)).then(returnValue(mockStream2));
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
+        .stubs()
+        .will(returnValue(mockStream1))
+        .then(returnValue(mockStream1))
+        .then(returnValue(mockStream2));
     InitMockEnv();
 
     auto ret = dataOp_->Initialize();
@@ -570,8 +578,11 @@ TEST_F(HybmDataOpSdmaTest, data_copy_async_global_device_to_local_host_failed)
     MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
-    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs()
-        .will(returnValue(mockStream1)).then(returnValue(mockStream1)).then(returnValue(mockStream2));
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
+        .stubs()
+        .will(returnValue(mockStream1))
+        .then(returnValue(mockStream1))
+        .then(returnValue(mockStream2));
     InitMockEnv();
 
     auto ret = dataOp_->Initialize();
@@ -710,8 +721,11 @@ TEST_F(HybmDataOpSdmaTest, data_copy_async_global_host_to_local_host_failed)
     MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
-    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs()
-        .will(returnValue(mockStream1)).then(returnValue(mockStream1)).then(returnValue(mockStream2));
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
+        .stubs()
+        .will(returnValue(mockStream1))
+        .then(returnValue(mockStream1))
+        .then(returnValue(mockStream2));
     InitMockEnv();
 
     auto ret = dataOp_->Initialize();

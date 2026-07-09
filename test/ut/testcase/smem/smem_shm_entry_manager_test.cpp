@@ -51,8 +51,8 @@ TEST_F(SmemShmEntryManagerTest, CreateEntryById_NewId_ReturnsOkAndValidEntry)
     Result ret = mgr.CreateEntryById(1, entry); // 1
     EXPECT_EQ(ret, SM_OK);
     EXPECT_NE(entry, nullptr);
-    EXPECT_EQ(entry->Id(), 1U); // 1U
-    EXPECT_EQ(mgr.entryIdMap_.size(), 1U); // 1U
+    EXPECT_EQ(entry->Id(), 1U);              // 1U
+    EXPECT_EQ(mgr.entryIdMap_.size(), 1U);   // 1U
     EXPECT_EQ(mgr.ptr2EntryMap_.size(), 1U); // 1U
 }
 

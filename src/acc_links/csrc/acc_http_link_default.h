@@ -161,11 +161,10 @@ private:
     Result WritePayload(AccLinkedMessageNode *oneMsg);
 
     /* build the HTTP response header section string (status line + headers + CRLF) */
-    std::string BuildResponseHeader(int16_t statusCode, const std::string &statusText,
-                                    const std::string &contentType,
+    std::string BuildResponseHeader(int16_t statusCode, const std::string &statusText, const std::string &contentType,
                                     const AccDataBufferPtr &body,
-                                    const std::map<std::string, std::string> &extraHeaders,
-                                    bool noBodyForStatus, bool noBody);
+                                    const std::map<std::string, std::string> &extraHeaders, bool noBodyForStatus,
+                                    bool noBody);
     /* enqueue header and body nodes into sendingQueue_, returns ACC_OK or error */
     Result EnqueueResponseNodes(const AccDataBufferPtr &headerBuf, const AccDataBufferPtr &body, bool noBodyForStatus,
                                 bool noBody, int16_t statusCode);

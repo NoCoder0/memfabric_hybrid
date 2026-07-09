@@ -1,6 +1,6 @@
 #
 # Copyright (c) 2025 Huawei Technologies Co., Ltd.
-# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
+# This program is free software, you can redistribute it and/or modify it under the terms and conditions of
 # CANN Open Software License Agreement Version 2.0 (the "License").
 # Please refer to the License for details. You may not use this file except in compliance with the License.
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
@@ -29,7 +29,7 @@ def golden_generate(data_len, rank_size, data_type, current_dir):
 
     for i in range(rank_size):
         input_gm[i][:] = gen_random_data((data_len), dtype=data_type)
-        output_gm[i * data_len: i * data_len + data_len] = input_gm[i]
+        output_gm[i * data_len : i * data_len + data_len] = input_gm[i]
 
     for i in range(rank_size):
         input_gm[i].tofile(f"{current_dir}/golden/{golden_dir}/input_gm_{i}.bin")
@@ -39,6 +39,7 @@ def golden_generate(data_len, rank_size, data_type, current_dir):
 
 def gen_golden_data():
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument('rank_size', type=int)
     parser.add_argument('test_type', type=str)
@@ -51,7 +52,7 @@ def gen_golden_data():
         "int32_t": np.int32,
         "float16_t": np.float16,
         "float": np.float32,
-        "bfloat16_t": bfloat16
+        "bfloat16_t": bfloat16,
     }
 
     data_type = type_map.get(args.test_type, 'int')
@@ -67,7 +68,7 @@ def gen_golden_data():
             golden_generate(data_len, rank_size, data_type, current_dir)
     else:
         for i in range(case_num):
-            data_len = 6 * (2 ** i)
+            data_len = 6 * (2**i)
             golden_generate(data_len, rank_size, data_type, current_dir)
 
 

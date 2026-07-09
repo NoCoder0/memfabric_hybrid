@@ -55,7 +55,7 @@ int32_t HybmStream::AllocStreamId()
         return BM_OK;
     }
 
-    struct halResourceIdInputInfo resAllocInput{};
+    struct halResourceIdInputInfo resAllocInput {};
     struct halResourceIdOutputInfo resAllocOutput;
 
     resAllocInput.type = DRV_STREAM_ID;
@@ -71,11 +71,10 @@ int32_t HybmStream::AllocStreamId()
     return BM_OK;
 }
 
-static int32_t InitAscend950Stack(halSqCqInputInfo &input, rtStreamInfoExMsg_t &infoEx,
-                                  void *&stackPtr, uint32_t deviceId)
+static int32_t InitAscend950Stack(halSqCqInputInfo &input, rtStreamInfoExMsg_t &infoEx, void *&stackPtr,
+                                  uint32_t deviceId)
 {
-    uint64_t stackSize = 72ULL * 64ULL * (RT_KIS_SIMT_WARP_STK_SIZE + RT_KIS_SIMT_DVG_WARP_STK_SIZE)
-                         + RT_STK_ALIGN_LEN;
+    uint64_t stackSize = 72ULL * 64ULL * (RT_KIS_SIMT_WARP_STK_SIZE + RT_KIS_SIMT_DVG_WARP_STK_SIZE) + RT_STK_ALIGN_LEN;
     // 0x700000000920400ULL = (RUNTIME_MODULE_ID=7) << 56 | MEM_DEV | MEM_PAGE_HUGE | MEM_SET_ALIGN_SIZE(9ULL)
     uint64_t drvFlag = 0x700000000920400ULL | deviceId;
     auto ret = DlHalApi::HalMemAlloc(&stackPtr, stackSize, drvFlag);
@@ -218,7 +217,7 @@ void HybmStream::Destroy()
         return;
     }
 
-    struct halResourceIdInputInfo resFreeInput{};
+    struct halResourceIdInputInfo resFreeInput {};
     resFreeInput.type = DRV_STREAM_ID;
     resFreeInput.tsId = tsId_;
     resFreeInput.resourceId = streamId_;

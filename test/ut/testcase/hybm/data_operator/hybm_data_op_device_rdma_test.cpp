@@ -408,7 +408,6 @@ TEST_F(HybmDataOpDeviceRdmaTest, initialize_hal_host_register_fail_frees_malloc_
     ASSERT_NE(BM_OK, ret);
     ASSERT_EQ(1, g_halMemFreeCallCount);
     dataOp_->UnInitialize();
-
 }
 
 TEST_F(HybmDataOpDeviceRdmaTest, uninitialize)
@@ -806,22 +805,10 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_force_unregistered)
     uint64_t remoteHostAddr1 = hostGvaStart + spaceSize;
     uint64_t remoteHostAddr2 = hostGvaStart + spaceSize * 2;
 
-    void *srcLH[2] = {
-        reinterpret_cast<void *>(localHostAddr),
-        reinterpret_cast<void *>(localHostAddr)
-    };
-    void *dstGH[2] = {
-        reinterpret_cast<void *>(remoteHostAddr1),
-        reinterpret_cast<void *>(remoteHostAddr2)
-    };
-    void *srcGH[2] = {
-        reinterpret_cast<void *>(remoteHostAddr1),
-        reinterpret_cast<void *>(remoteHostAddr2)
-    };
-    void *dstLH[2] = {
-        reinterpret_cast<void *>(localHostAddr),
-        reinterpret_cast<void *>(localHostAddr)
-    };
+    void *srcLH[2] = {reinterpret_cast<void *>(localHostAddr), reinterpret_cast<void *>(localHostAddr)};
+    void *dstGH[2] = {reinterpret_cast<void *>(remoteHostAddr1), reinterpret_cast<void *>(remoteHostAddr2)};
+    void *srcGH[2] = {reinterpret_cast<void *>(remoteHostAddr1), reinterpret_cast<void *>(remoteHostAddr2)};
+    void *dstLH[2] = {reinterpret_cast<void *>(localHostAddr), reinterpret_cast<void *>(localHostAddr)};
 
     uint64_t dataSizes[2] = {1024, 2048};
 

@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
 
@@ -22,28 +21,22 @@ logger = logging.getLogger(__name__)
 
 
 class EplbState(int, enum.Enum):
-    REBALANCE = 0,
-    WAIT_WORKER = 1,
-    PLANNER = 2,
-    UPDATE = 3,
+    REBALANCE = (0,)
+    WAIT_WORKER = (1,)
+    PLANNER = (2,)
+    UPDATE = (3,)
     FINAL = 4
 
 
 class ExpertsTransformManager(EPLBManager):
     """Core Manager: Interfaces with SGLang, coordinates memory/communication/strategy modules"""
-    def __init__(
-        self,
-        model_runner: "ModelRunner",
-        async_mode: bool = False,
-        num_wait_worker_iterations: int = 40
-    ):
+
+    def __init__(self, model_runner: "ModelRunner", async_mode: bool = False, num_wait_worker_iterations: int = 40):
         super().__init__(model_runner)
 
         self.config = self._model_runner.model_config
         self._server_args = model_runner.server_args
-        self._rebalance_layers_per_chunk = (
-            self._server_args.eplb_rebalance_layers_per_chunk
-        )
+        self._rebalance_layers_per_chunk = self._server_args.eplb_rebalance_layers_per_chunk
         self.async_mode = async_mode
         self.num_wait_worker_iterations = num_wait_worker_iterations
         self.executor = All2AllVExcutor()
@@ -57,9 +50,11 @@ class ExpertsTransformManager(EPLBManager):
         self.planner_q = Queue()
         self.block_q = Queue(maxsize=1)
         self.manager = Manager()
-        self.shared_dict = self.manager.dict({
-            "moe_load": None,
-        })
+        self.shared_dict = self.manager.dict(
+            {
+                "moe_load": None,
+            }
+        )
         self.eplb = EplbProcess(
             shared_dict=self.shared_dict,
             planner_q=self.planner_q,
@@ -227,13 +222,13 @@ class ExpertsTransformManager(EPLBManager):
             metadata.logical_to_all_physical_map = metadata.logical_to_all_physical_map.to(self.device)
 
         if metadata.logical_to_all_physical_map_num_valid is not None:
-            metadata.logical_to_all_physical_map_num_valid = (
-                metadata.logical_to_all_physical_map_num_valid.to(self.device)
+            metadata.logical_to_all_physical_map_num_valid = metadata.logical_to_all_physical_map_num_valid.to(
+                self.device
             )
 
         if metadata.logical_to_rank_dispatch_physical_map is not None:
-            metadata.logical_to_rank_dispatch_physical_map = (
-                metadata.logical_to_rank_dispatch_physical_map.to(self.device)
+            metadata.logical_to_rank_dispatch_physical_map = metadata.logical_to_rank_dispatch_physical_map.to(
+                self.device
             )
         return metadata
 
@@ -246,17 +241,9 @@ class ExpertsTransformManager(EPLBManager):
                 local_experts = self.expert_dict[layer_id]
                 self.packed_expert_dict.setdefault(layer_id, [])
                 for physical_expert_id in range(self.num_local_physical_expert):
-                    expert_tensor_list = [
-                        expert[physical_expert_id]
-                        for expert in local_experts
-                    ]
-                    packed_tensor, expert_metadata = pack_tensors(
-                        expert_tensor_list,
-                        target_dtype=torch.int8
-                    )
-                    self.packed_expert_dict[layer_id].append(
-                        (packed_tensor, expert_metadata)
-                    )
+                    expert_tensor_list = [expert[physical_expert_id] for expert in local_experts]
+                    packed_tensor, expert_metadata = pack_tensors(expert_tensor_list, target_dtype=torch.int8)
+                    self.packed_expert_dict[layer_id].append((packed_tensor, expert_metadata))
 
     def _unpack_experts(self, update_layer_ids):
         """
@@ -277,9 +264,7 @@ class ExpertsTransformManager(EPLBManager):
             self.self_rank_update_info.setdefault(layer_id, [])
             tmp_expert_weights_dict.setdefault(layer_id, [])
             for old_expert_id, _ in self.self_rank_update_info[layer_id]:
-                tmp_expert_weights_dict[layer_id].append(
-                    self.packed_expert_dict[layer_id][old_expert_id][0].clone()
-                )
+                tmp_expert_weights_dict[layer_id].append(self.packed_expert_dict[layer_id][old_expert_id][0].clone())
 
         for layer_id in update_layer_ids:
             for _, update_expert_id in self.self_rank_update_info[layer_id]:
@@ -290,10 +275,7 @@ class ExpertsTransformManager(EPLBManager):
             self.self_rank_update_info[layer_id] = []
 
     def _build_eplb_comm_ops(
-        self,
-        old_expert_map: torch.Tensor,
-        update_expert_map: torch.Tensor,
-        update_layer_ids: List[int]
+        self, old_expert_map: torch.Tensor, update_expert_map: torch.Tensor, update_layer_ids: List[int]
     ):
         # build ptensor_list
         ptensor_list = []
@@ -319,20 +301,13 @@ class ExpertsTransformManager(EPLBManager):
                 # the corresponding local id of the exper
                 new_position = expert_to_new_position.get(old_globl_expert_idx)
                 if new_position is None:
-                    raise KeyError(
-                        f"[TensorRTL] ExpertID {old_globl_expert_idx} not found in expert_to_new_position"
-                    )
+                    raise KeyError(f"[TensorRTL] ExpertID {old_globl_expert_idx} not found in expert_to_new_position")
 
                 update_rank = new_position // self.num_local_physical_expert
                 update_expert_idx = new_position % self.num_local_physical_expert
 
                 tensor_ref = self._get_comm_buffer(
-                    local_experts,
-                    layer_id,
-                    expert_rank,
-                    update_rank,
-                    local_expert_idx,
-                    update_expert_idx
+                    local_experts, layer_id, expert_rank, update_rank, local_expert_idx, update_expert_idx
                 )
                 ptensor = PTensor(
                     tensor=tensor_ref,
@@ -340,7 +315,7 @@ class ExpertsTransformManager(EPLBManager):
                     device_mesh=[expert_rank],  # ETP not adapt
                     global_size=tensor_ref.shape,
                     shard_dim=-1,
-                    ndim=tensor_ref.ndim
+                    ndim=tensor_ref.ndim,
                 )
                 ptensor_list.append(ptensor)
                 update_device_meshes.append([update_rank])
@@ -351,15 +326,7 @@ class ExpertsTransformManager(EPLBManager):
 
         return ops
 
-    def _get_comm_buffer(
-        self,
-        local_experts,
-        layer_id,
-        expert_rank,
-        update_rank,
-        local_expert_idx,
-        update_expert_idx
-    ):
+    def _get_comm_buffer(self, local_experts, layer_id, expert_rank, update_rank, local_expert_idx, update_expert_idx):
         if expert_rank == self.rank:
             tensor_ref = local_experts[local_expert_idx][0]
 
@@ -376,7 +343,9 @@ class ExpertsTransformManager(EPLBManager):
 
     def _build_planner_ops(self, old_expert_map, update_expert_map, update_layer_ids: list[int]):
         ops = self._build_eplb_comm_ops(
-            old_expert_map, update_expert_map, update_layer_ids,
+            old_expert_map,
+            update_expert_map,
+            update_layer_ids,
         )
 
         self.ops_list.append(ops)
@@ -416,7 +385,7 @@ class ExpertsTransformManager(EPLBManager):
                     start_offset += buffer.numel()
                     continue
 
-                recv_buffer = all_recv_tensors[start_offset:start_offset + buffer.numel()]
+                recv_buffer = all_recv_tensors[start_offset : start_offset + buffer.numel()]
 
                 start_offset += buffer.numel()
                 buffer.data.copy_(recv_buffer)
@@ -424,20 +393,16 @@ class ExpertsTransformManager(EPLBManager):
 
 def _chunk_list(items: List, chunk_size):
     for start_index in range(0, len(items), chunk_size):
-        yield items[start_index: start_index + chunk_size]
+        yield items[start_index : start_index + chunk_size]
 
 
 experts_transform_manager = None
 
 
 def get_experts_transform_manager(
-    model_runner: "ModelRunner" = None,
-    async_mode: bool = False,
-    num_wait_worker_iterations: int = 40
+    model_runner: "ModelRunner" = None, async_mode: bool = False, num_wait_worker_iterations: int = 40
 ):
     global experts_transform_manager
     if experts_transform_manager is None:
-        experts_transform_manager = ExpertsTransformManager(
-            model_runner, async_mode, num_wait_worker_iterations
-        )
+        experts_transform_manager = ExpertsTransformManager(model_runner, async_mode, num_wait_worker_iterations)
     return experts_transform_manager

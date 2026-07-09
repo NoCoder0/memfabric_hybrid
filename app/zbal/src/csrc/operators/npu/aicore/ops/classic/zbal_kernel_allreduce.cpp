@@ -33,8 +33,8 @@ class ZBALAllReduceKernel : public ZBALBaseKernel {
 public:
     ZBAL_KERNEL ZBALAllReduceKernel() {}
 
-    ZBAL_KERNEL void Init(GM_ADDR x, GM_ADDR y, GM_ADDR metaAddr, GM_ADDR buf, uint32_t totalElems,
-                          uint32_t atomicOp, uint64_t waitSymbol)
+    ZBAL_KERNEL void Init(GM_ADDR x, GM_ADDR y, GM_ADDR metaAddr, GM_ADDR buf, uint32_t totalElems, uint32_t atomicOp,
+                          uint64_t waitSymbol)
     {
 #if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         this->atomicOp = atomicOp;

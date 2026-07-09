@@ -40,8 +40,11 @@ struct AvgSample {
         sum += val;
         ++count;
     }
-    int64_t Average() const { return count > 0 ? sum / count : 0; }
-    AvgSample Diff(const AvgSample& older) const
+    int64_t Average() const
+    {
+        return count > 0 ? sum / count : 0;
+    }
+    AvgSample Diff(const AvgSample &older) const
     {
         AvgSample r;
         r.sum = sum - older.sum;
@@ -69,23 +72,23 @@ public:
     ~TlsAvgAggregator()
     {
         std::lock_guard<std::mutex> guard(mutex_);
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             delete ptr;
         }
     }
 
     /* Return per-thread AvgSample pointer (lazy allocation on first call). */
-    AvgSample* GetTlsPtr()
+    AvgSample *GetTlsPtr()
     {
         struct Entry {
-            AvgSample* data;
-            TlsAvgAggregator* owner;
+            AvgSample *data;
+            TlsAvgAggregator *owner;
         };
         struct Registry {
-            std::unordered_map<TlsAvgAggregator*, Entry> entries;
+            std::unordered_map<TlsAvgAggregator *, Entry> entries;
             ~Registry()
             {
-                for (auto& [_, e] : entries) {
+                for (auto &[_, e] : entries) {
                     if (e.owner && e.data) {
                         e.owner->Reclaim(e.data);
                     }
@@ -97,7 +100,7 @@ public:
         if (it != registry.entries.end()) {
             return it->second.data;
         }
-        auto* data = new AvgSample();
+        auto *data = new AvgSample();
         registry.entries[this] = {data, this};
         std::lock_guard<std::mutex> guard(mutex_);
         tlsPtrs_.push_back(data);
@@ -111,7 +114,7 @@ public:
         AvgSample total;
         total.sum = globalSum_;
         total.count = globalCount_;
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             total.sum += ptr->sum;
             total.count += ptr->count;
         }
@@ -125,7 +128,7 @@ public:
         AvgSample total;
         total.sum = globalSum_;
         total.count = globalCount_;
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             total.sum += ptr->sum;
             total.count += ptr->count;
             ptr->sum = 0;
@@ -137,7 +140,7 @@ public:
     }
 
     /* Reclaim: merge a dying thread's TLS data into global residuals and free memory. */
-    void Reclaim(AvgSample* ptr)
+    void Reclaim(AvgSample *ptr)
     {
         std::lock_guard<std::mutex> guard(mutex_);
         globalSum_ += ptr->sum;
@@ -151,9 +154,9 @@ public:
 
 private:
     std::mutex mutex_;                 /* protects tlsPtrs_ and global residuals */
-    std::vector<AvgSample*> tlsPtrs_; /* all active TLS data pointers */
-    int64_t globalSum_;               /* residual sum from exited threads */
-    int64_t globalCount_;             /* residual count from exited threads */
+    std::vector<AvgSample *> tlsPtrs_; /* all active TLS data pointers */
+    int64_t globalSum_;                /* residual sum from exited threads */
+    int64_t globalCount_;              /* residual count from exited threads */
 };
 
 /* TLS max aggregator: same structure as TlsAvgAggregator, data is per-thread int64_t max. */
@@ -163,22 +166,22 @@ public:
     ~TlsMaxAggregator()
     {
         std::lock_guard<std::mutex> guard(mutex_);
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             delete ptr;
         }
     }
 
-    int64_t* GetTlsPtr()
+    int64_t *GetTlsPtr()
     {
         struct Entry {
-            int64_t* data;
-            TlsMaxAggregator* owner;
+            int64_t *data;
+            TlsMaxAggregator *owner;
         };
         struct Registry {
-            std::unordered_map<TlsMaxAggregator*, Entry> entries;
+            std::unordered_map<TlsMaxAggregator *, Entry> entries;
             ~Registry()
             {
-                for (auto& [_, e] : entries) {
+                for (auto &[_, e] : entries) {
                     if (e.owner && e.data) {
                         e.owner->Reclaim(e.data);
                     }
@@ -190,7 +193,7 @@ public:
         if (it != registry.entries.end()) {
             return it->second.data;
         }
-        auto* data = new int64_t(0);
+        auto *data = new int64_t(0);
         registry.entries[this] = {data, this};
         std::lock_guard<std::mutex> guard(mutex_);
         tlsPtrs_.push_back(data);
@@ -201,7 +204,7 @@ public:
     {
         std::lock_guard<std::mutex> guard(mutex_);
         int64_t totalMax = globalMax_;
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             if (*ptr > totalMax) {
                 totalMax = *ptr;
             }
@@ -213,7 +216,7 @@ public:
     {
         std::lock_guard<std::mutex> guard(mutex_);
         int64_t totalMax = globalMax_;
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             if (*ptr > totalMax) {
                 totalMax = *ptr;
             }
@@ -223,7 +226,7 @@ public:
         return totalMax;
     }
 
-    void Reclaim(int64_t* ptr)
+    void Reclaim(int64_t *ptr)
     {
         std::lock_guard<std::mutex> guard(mutex_);
         if (*ptr > globalMax_) {
@@ -238,8 +241,8 @@ public:
 
 private:
     std::mutex mutex_;
-    std::vector<int64_t*> tlsPtrs_;
-    int64_t globalMax_;               /* residual max from exited threads */
+    std::vector<int64_t *> tlsPtrs_;
+    int64_t globalMax_; /* residual max from exited threads */
 };
 
 /* TLS percentile aggregator: lock-free write, flush to global when TLS buckets are full. */
@@ -249,23 +252,23 @@ public:
     ~TlsPercentileAggregator()
     {
         std::lock_guard<std::mutex> guard(mutex_);
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             delete ptr;
         }
     }
 
     /* GetTlsPtr: obtain the current thread's TlsPercentile pointer. */
-    TlsPercentile* GetTlsPtr()
+    TlsPercentile *GetTlsPtr()
     {
         struct Entry {
-            TlsPercentile* data;
-            TlsPercentileAggregator* owner;
+            TlsPercentile *data;
+            TlsPercentileAggregator *owner;
         };
         struct Registry {
-            std::unordered_map<TlsPercentileAggregator*, Entry> entries;
+            std::unordered_map<TlsPercentileAggregator *, Entry> entries;
             ~Registry()
             {
-                for (auto& [_, e] : entries) {
+                for (auto &[_, e] : entries) {
                     if (e.owner && e.data) {
                         e.owner->Reclaim(e.data);
                     }
@@ -277,7 +280,7 @@ public:
         if (it != registry.entries.end()) {
             return it->second.data;
         }
-        auto* data = new TlsPercentile();
+        auto *data = new TlsPercentile();
         registry.entries[this] = {data, this};
         std::lock_guard<std::mutex> guard(mutex_);
         tlsPtrs_.push_back(data);
@@ -285,7 +288,7 @@ public:
     }
 
     /* Merge TLS percentile data into global bucket and clear TLS (write path). */
-    void FlushTlsToGlobal(TlsPercentile* tls)
+    void FlushTlsToGlobal(TlsPercentile *tls)
     {
         std::lock_guard<std::mutex> guard(mutex_);
         global_.MergeFromTls(*tls);
@@ -305,7 +308,7 @@ public:
     GlobalPercentile FlushAllToGlobal()
     {
         std::lock_guard<std::mutex> guard(mutex_);
-        for (auto* ptr : tlsPtrs_) {
+        for (auto *ptr : tlsPtrs_) {
             global_.MergeFromTls(*ptr);
             ptr->Clear();
         }
@@ -316,7 +319,7 @@ public:
     }
 
     /* Reclaim: merge a dying thread's TLS percentile data into global bucket. */
-    void Reclaim(TlsPercentile* ptr)
+    void Reclaim(TlsPercentile *ptr)
     {
         std::lock_guard<std::mutex> guard(mutex_);
         global_.MergeFromTls(*ptr);
@@ -329,8 +332,8 @@ public:
 
 private:
     std::mutex mutex_;
-    std::vector<TlsPercentile*> tlsPtrs_; /* active TLS percentile pointer list */
-    GlobalPercentile global_;               /* global merged bucket (background aggregation result) */
+    std::vector<TlsPercentile *> tlsPtrs_; /* active TLS percentile pointer list */
+    GlobalPercentile global_;              /* global merged bucket (background aggregation result) */
 };
 
 } /* namespace mf */

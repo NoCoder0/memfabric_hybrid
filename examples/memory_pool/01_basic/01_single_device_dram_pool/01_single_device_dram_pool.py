@@ -3,7 +3,7 @@ import torch
 import memfabric_hybrid as mf
 from memfabric_hybrid import bm
 
-ONE_GIB = 1 << 30 # 1 GB
+ONE_GIB = 1 << 30  # 1 GB
 COPY_BYTES = (4 * 1024, 64 * 1024, 1024 * 1024)  # 4 KB, 64 KB, 1 MB
 STORE_URL = "tcp://127.0.0.1:8570"
 WORLD_SIZE = 1

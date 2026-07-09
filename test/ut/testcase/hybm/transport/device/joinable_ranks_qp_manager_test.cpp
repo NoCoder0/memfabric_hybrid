@@ -17,7 +17,7 @@
 #include "device_rdma_common.h"
 #include "hybm_types.h"
 
-#define private public
+#define private   public
 #define protected public
 #include "joinable_ranks_qp_manager.h"
 #undef private
@@ -48,8 +48,14 @@ public:
     using JoinableRanksQpManager::JoinableRanksQpManager;
 
 public:
-    int CreateServerSocket() noexcept { return BM_OK; }
-    void *CreateLocalSocket() noexcept { return ToVoidPtr(0x1234); }
+    int CreateServerSocket() noexcept
+    {
+        return BM_OK;
+    }
+    void *CreateLocalSocket() noexcept
+    {
+        return ToVoidPtr(0x1234);
+    }
 };
 
 // 测试夹具
@@ -178,7 +184,7 @@ TEST_F(JoinableRanksQpManagerTest, ScenarioRegression_NoIpAddressAfterLeave)
     //         (UT 环境 RaSocketWhiteListAdd 调用会失败)
     //         WaitQpConnections 没走到 → rank 2 残留在 newClients_
     mgr->ServerSideHandleNewClients({K_RANK_ID_2});
-    ASSERT_TRUE(mgr->newClients_.count(K_RANK_ID_2));  // 残留确认
+    ASSERT_TRUE(mgr->newClients_.count(K_RANK_ID_2)); // 残留确认
 
     // Phase 3: 模拟上层触发 leave → RemoveRanks({2})
     //   (修复前): 不清理 newClients_ → mgr->newClients_ 仍有 2
@@ -199,16 +205,14 @@ TEST_F(JoinableRanksQpManagerTest, ScenarioRegression_NoIpAddressAfterLeave)
     if (!snapshot.empty()) {
         // 仅在修复前会进入此分支: 触发实际的 "no ip address" 错误
         int ret = mgr->GenerateWhiteList(snapshot);
-        EXPECT_EQ(ret, BM_ERROR)
-            << "修复前: newClients_ 残留 rank " << *snapshot.begin()
-            << ", GenerateWhiteList 返回 BM_ERROR, 日志应出现 'no ip address'.";
+        EXPECT_EQ(ret, BM_ERROR) << "修复前: newClients_ 残留 rank " << *snapshot.begin()
+                                 << ", GenerateWhiteList 返回 BM_ERROR, 日志应出现 'no ip address'.";
     }
 
     // ★★ 核心断言: snapshot 应为空 (修复前: 残留 → 断言失败; 修复后: 已清 → 断言通过)
-    EXPECT_TRUE(snapshot.empty())
-        << "修复前: newClients_ 残留 rank "
-        << (snapshot.empty() ? -1 : static_cast<int>(*snapshot.begin()))
-        << ", 下一轮循环必调 GenerateWhiteList 并报 'no ip address'";
+    EXPECT_TRUE(snapshot.empty()) << "修复前: newClients_ 残留 rank "
+                                  << (snapshot.empty() ? -1 : static_cast<int>(*snapshot.begin()))
+                                  << ", 下一轮循环必调 GenerateWhiteList 并报 'no ip address'";
 }
 
 // 模拟完整异常场景: ServerSideHandleNewClients 管线未到达 WaitQpConnections 就提前返回
@@ -314,7 +318,7 @@ TEST_F(JoinableRanksQpManagerTest, GetQpHandleWithRankIdEdgeCases)
 // 测试 GetQpHandleWithRankId 在超出范围时返回 nullptr
 TEST_F(JoinableRanksQpManagerTest, GetQpHandleWithRankIdOutOfRange)
 {
-    auto* qp = manager->GetQpHandleWithRankId(K_OUT_OF_RANGE_INDEX);
+    auto *qp = manager->GetQpHandleWithRankId(K_OUT_OF_RANGE_INDEX);
     EXPECT_EQ(qp, nullptr);
 }
 
@@ -358,7 +362,7 @@ TEST_F(JoinableRanksQpManagerTest, CheckQpReadyEdgeCases)
 TEST_F(JoinableRanksQpManagerTest, StartupClient)
 {
     void *fakeRdma = ToVoidPtr(0x1234);
-     // 初始化 manager【1卡】
+    // 初始化 manager【1卡】
     sockaddr_in devNet{};
     devNet.sin_family = AF_INET;
     devNet.sin_port = htons(K_PORT_8000);
@@ -381,7 +385,7 @@ TEST_F(JoinableRanksQpManagerTest, ThreadLoopExit)
 
 TEST_F(JoinableRanksQpManagerTest, StartClientSide)
 {
-    int ret  = manager->StartClientSide();
+    int ret = manager->StartClientSide();
     EXPECT_EQ(ret, BM_OK);
 }
 
@@ -427,9 +431,7 @@ TEST_F(JoinableRanksQpManagerTest, ServerSideRunLoop)
     // 添加一些新客户端以触发处理分支
     manager->newClients_ = {K_RANK_ID_1, K_RANK_ID_2};
     // 在单独线程中运行循环
-    std::thread loopThread([this]() {
-        manager->ServerSideRunLoop();
-    });
+    std::thread loopThread([this]() { manager->ServerSideRunLoop(); });
     // 等待一小段时间让循环开始
     std::this_thread::sleep_for(std::chrono::milliseconds(K_DEFAULT_SLEEP_MS));
     // 停止循环
@@ -446,11 +448,9 @@ TEST_F(JoinableRanksQpManagerTest, ClientSideRunLoop)
     // 设置运行标志
     manager->running_.store(true);
     // 添加一些新服务器以触发处理分支（假设 rankId_ = 0，服务器是较低的 ranks）
-    manager->newServers_ = {K_RANK_ID_1, K_RANK_ID_2};  // 模拟新服务器连接
+    manager->newServers_ = {K_RANK_ID_1, K_RANK_ID_2}; // 模拟新服务器连接
     // 在单独线程中运行循环
-    std::thread loopThread([this]() {
-        manager->ClientSideRunLoop();
-    });
+    std::thread loopThread([this]() { manager->ClientSideRunLoop(); });
     // 等待一小段时间让循环开始
     std::this_thread::sleep_for(std::chrono::milliseconds(K_DEFAULT_SLEEP_MS));
     // 停止循环
@@ -549,7 +549,7 @@ TEST_F(JoinableRanksQpManagerTest, WaitQpConnections)
     clientManager->connections_.resize(K_RANK_COUNT); // 模拟已有连接状态
     clientManager->connections_[K_RANK_ID_3].qpHandle = ToVoidPtr(0x2222);
     clientManager->connections_[K_RANK_ID_3].qpConnectCalled = true;
-    clientManager->connections_[K_RANK_ID_3].qpStatus = 1;  // 模拟连接完成
+    clientManager->connections_[K_RANK_ID_3].qpStatus = 1; // 模拟连接完成
 
     clientManager->connections_[K_RANK_ID_2].qpHandle = ToVoidPtr(0x1111);
     clientManager->connections_[K_RANK_ID_2].qpConnectCalled = true;

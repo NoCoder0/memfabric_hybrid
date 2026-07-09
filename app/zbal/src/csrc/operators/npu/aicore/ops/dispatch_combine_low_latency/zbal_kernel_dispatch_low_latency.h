@@ -186,7 +186,7 @@ private:
     uint32_t epWorldSize_{0};
     uint32_t epWorldSizeOriginal_{0};
     int32_t epRankId_{0};
-    uint32_t aivId_{0};          // aiv id
+    uint32_t aivId_{0}; // aiv id
     uint32_t coreNum_{0};
     uint32_t sharedExpertNum_{0};
     uint32_t sharedExpertRankNum_{0};    // 共享专家卡数

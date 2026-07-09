@@ -314,7 +314,7 @@ ALWAYS_INLINE bool Func::RemoveDirRecursive(const std::string &path)
             continue;
         }
 
-        struct stat statBuf{};
+        struct stat statBuf {};
         std::string absPath = realPath + "/" + entry->d_name;
         if (!stat(absPath.c_str(), &statBuf) && S_ISDIR(statBuf.st_mode)) {
             RemoveDirRecursive(absPath);

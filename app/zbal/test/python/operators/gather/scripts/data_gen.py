@@ -33,13 +33,14 @@ def golden_generate(data_len, rank_size, hidden_size, data_type, current_dir):
     for i in range(rank_size):
         input_tensor = gen_random_data(rows_per_rank, hidden_size, dtype=data_type)
         input_tensor.tofile(f"{current_dir}/golden/{golden_dir}/input_gm_{i}.bin")
-        output_gm[i * rows_per_rank:(i + 1) * rows_per_rank] = input_tensor
+        output_gm[i * rows_per_rank : (i + 1) * rows_per_rank] = input_tensor
 
     output_gm.tofile(f"{current_dir}/golden/{golden_dir}/golden_{dst}.bin")
 
 
 def gen_golden_data():
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument('rank_size', type=int)
     parser.add_argument('test_type', type=str)
@@ -53,7 +54,7 @@ def gen_golden_data():
         "int32_t": np.int32,
         "float16_t": np.float16,
         "float": np.float32,
-        "bfloat16_t": bfloat16
+        "bfloat16_t": bfloat16,
     }
 
     data_type = type_map.get(args.test_type, 'int')
@@ -69,7 +70,7 @@ def gen_golden_data():
             golden_generate(data_len, rank_size, hidden_size, data_type, current_dir)
     else:
         for i in range(case_num):
-            data_len = 8 * (2 ** i)
+            data_len = 8 * (2**i)
             golden_generate(data_len, rank_size, hidden_size, data_type, current_dir)
 
 

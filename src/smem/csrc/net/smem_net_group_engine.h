@@ -52,7 +52,7 @@ struct SmemGroupOption {
     SmemGroupChangeCallback joinCb;
     SmemGroupChangeCallback updateCb;
     SmemGroupChangeCallback leaveCb;
-    SmemGroupChangeCallback linkDownCb;  // TCP-level link down only
+    SmemGroupChangeCallback linkDownCb; // TCP-level link down only
 };
 
 enum GroupEventType : int32_t {
@@ -84,9 +84,8 @@ struct SmemGroupInfo {
 
     friend std::ostream &operator<<(std::ostream &os, const SmemGroupInfo &obj)
     {
-        os << "SmemGroupInfo{size:" << obj.groupSize << " event:" << obj.curEvent
-           << " target:" << obj.targetRank << " src:" << obj.submitRank << " ver:" << obj.version
-           << " mask:" << obj.joinedRanksBitmap[0] << "}";
+        os << "SmemGroupInfo{size:" << obj.groupSize << " event:" << obj.curEvent << " target:" << obj.targetRank
+           << " src:" << obj.submitRank << " ver:" << obj.version << " mask:" << obj.joinedRanksBitmap[0] << "}";
         return os;
     }
 };
@@ -143,9 +142,15 @@ public:
 
     Result StartListen();
 
-    bool IsJoined() const { return joined_.load(); }
+    bool IsJoined() const
+    {
+        return joined_.load();
+    }
 
-    bool GetStoreConnectStatus() const { return store_ != nullptr && store_->GetConnectStatus(); }
+    bool GetStoreConnectStatus() const
+    {
+        return store_ != nullptr && store_->GetConnectStatus();
+    }
 
     Result GroupJoin();
 
@@ -178,8 +183,8 @@ private:
     int32_t LinkReconnectHandler();
     uint32_t TryRemoveAllLeavedPrefixKey();
     void RankExit(int result, const std::string &key, const std::string &value);
-    void GroupOldKeyDelayClean(const std::string &prefix, const std::string &suffix,
-        uint32_t snStart, uint32_t snEnd, uint32_t delayCount = DEFAULT_STORE_KEY_DELAY_CLEAN_COUNT);
+    void GroupOldKeyDelayClean(const std::string &prefix, const std::string &suffix, uint32_t snStart, uint32_t snEnd,
+                               uint32_t delayCount = DEFAULT_STORE_KEY_DELAY_CLEAN_COUNT);
     Result StoreGetCanInterrupt(const std::string &key, std::string &value, uint64_t timeoutMs);
     void TryCleanOldEvent();
     Result DoLinkDownOnce(uint32_t rankId);

@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -11,4 +10,3 @@ def get_dtype_size(dtype: torch.dtype):
     else:
         info = torch.iinfo(dtype)
     return info.bits // 8
-

@@ -176,7 +176,7 @@ def trans_perf_test(rank_id, store_url, num_threads=1, data_op_type=None, npu_id
                             dst_session_id,
                             dev_addr,  # local address as source
                             peer_addr,  # peer address as destination
-                            block_size
+                            block_size,
                         )
                         if ret != 0:
                             next(error_counter)
@@ -211,18 +211,13 @@ def trans_perf_test(rank_id, store_url, num_threads=1, data_op_type=None, npu_id
                     src_addrs.append(l_addr)  # Source addresses
                     dst_addrs.append(r_addr)  # Destination addresses
                     sizes.append(block_size)
-                
+
                 error_counter = itertools.count()
                 threads.clear()
 
                 def bw_worker(tid):
                     for j in range(times):
-                        ret = engine.batch_transfer_sync_write(
-                            dst_session_id,
-                            src_addrs,
-                            dst_addrs,
-                            sizes
-                        )
+                        ret = engine.batch_transfer_sync_write(dst_session_id, src_addrs, dst_addrs, sizes)
                         if ret != 0:
                             next(error_counter)
                             return
@@ -247,9 +242,11 @@ def trans_perf_test(rank_id, store_url, num_threads=1, data_op_type=None, npu_id
                 total_bytes = num_threads * times * batch_size * block_size
                 throughput = calculate_rate(total_bytes, total_bw_duration)
 
-                print(f"Test completed: latency {avg_duration:.2f}us, block size {block_size // kb_size}KB, "
-                      f"total threads={num_threads}, per-thread times={times}, "
-                      f"aggregated throughput {throughput}")
+                print(
+                    f"Test completed: latency {avg_duration:.2f}us, block size {block_size // kb_size}KB, "
+                    f"total threads={num_threads}, per-thread times={times}, "
+                    f"aggregated throughput {throughput}"
+                )
 
             print(f"{separator}Test End{separator}")
 
@@ -259,6 +256,7 @@ def trans_perf_test(rank_id, store_url, num_threads=1, data_op_type=None, npu_id
     except Exception as e:
         print(f"Error in trans_perf_test: {e}")
         import traceback
+
         traceback.print_exc()
         return -1
     finally:
@@ -280,21 +278,33 @@ def main():
     """Main function."""
     parser = argparse.ArgumentParser(description='MemFabric Hybrid Transfer Performance Test')
     parser.add_argument('--rank-id', type=int, required=True, help='Current rank ID (required)')
-    parser.add_argument('--store-url', type=str, default='tcp://127.0.0.1:12050',
-                       help='Config store URL (default: tcp://127.0.0.1:12050)')
+    parser.add_argument(
+        '--store-url',
+        type=str,
+        default='tcp://127.0.0.1:12050',
+        help='Config store URL (default: tcp://127.0.0.1:12050)',
+    )
     parser.add_argument('--num-threads', type=int, default=1, help='Number of concurrent threads (default: 2)')
-    parser.add_argument('--data-op-type', type=str, choices=['sdma', 'rdma'], default='sdma',
-                       help='Data operation type: sdma or rdma (default: sdma)')
+    parser.add_argument(
+        '--data-op-type',
+        type=str,
+        choices=['sdma', 'rdma'],
+        default='sdma',
+        help='Data operation type: sdma or rdma (default: sdma)',
+    )
     parser.add_argument('--npu-id', type=int, default=0, help='NPU device ID (default: 0)')
 
     args = parser.parse_args()
 
-    print(f"[TEST] input rank_id: {args.rank_id} store_url: {args.store_url} num_threads: {args.num_threads} "
-          f"data_op_type: {args.data_op_type} npu_id: {args.npu_id}")
+    print(
+        f"[TEST] input rank_id: {args.rank_id} store_url: {args.store_url} num_threads: {args.num_threads} "
+        f"data_op_type: {args.data_op_type} npu_id: {args.npu_id}"
+    )
 
     # 设置NPU设备
     try:
         import torch_npu
+
         torch.npu.set_device(args.npu_id)
     except ImportError:
         print("torch_npu not found, please install it")
@@ -319,13 +329,7 @@ def main():
         return -1
 
     # Execute performance test
-    ret = trans_perf_test(
-        args.rank_id,
-        args.store_url,
-        args.num_threads,
-        data_op_type,
-        args.npu_id
-    )
+    ret = trans_perf_test(args.rank_id, args.store_url, args.num_threads, data_op_type, args.npu_id)
 
     return ret
 

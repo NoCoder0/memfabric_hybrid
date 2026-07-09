@@ -804,8 +804,8 @@ int32_t MemEntityDefault::CopyData(hybm_copy_params &params, hybm_data_copy_dire
 
     ret = dataOperator_->DataCopy(params, direction, options);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("failed to copy data ret:" << ret << ", src:" << VaToStr(params.src) << ", dest:"
-                                                << VaToStr(params.dest) << ", size:" << params.dataSize);
+        BM_LOG_ERROR("failed to copy data ret:" << ret << ", src:" << VaToStr(params.src)
+                                                << ", dest:" << VaToStr(params.dest) << ", size:" << params.dataSize);
     }
     return ret;
 }
@@ -911,8 +911,7 @@ bool MemEntityDefault::CheckAddressInEntity(const void *ptr, uint64_t length) co
         auto addr = reinterpret_cast<uint64_t>(ptr);
         // 本地 portion 已在 allocatedMap_ 中，跳过 IsValidAddr
         // 非本地 portion（远端未 join）需校验是否已注册
-        if (!dramSegment_->IsLocalRange(ptr, length) &&
-            !HybmVaManager::GetInstance().IsValidAddr(addr)) {
+        if (!dramSegment_->IsLocalRange(ptr, length) && !HybmVaManager::GetInstance().IsValidAddr(addr)) {
             return false;
         }
     }
@@ -952,10 +951,9 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
             BM_LOG_ERROR("HOST_SHM op type only supports DRAM shared memory without HBM");
             return BM_INVALID_PARAM;
         }
-        constexpr uint32_t hostShmConflictMask = HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA |
-                                                 HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
-                                                 HYBM_DOP_TYPE_HOST_RDMA |
-                                                 HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_URMA;
+        constexpr uint32_t hostShmConflictMask =
+            HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
+            HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_URMA;
         if ((options->bmDataOpType & hostShmConflictMask) != 0) {
             BM_LOG_ERROR("HOST_SHM op type does not support mixing with other data op types");
             return BM_INVALID_PARAM;
@@ -1226,9 +1224,8 @@ Result MemEntityDefault::InitTransManager()
     }
 
     auto hostTransFlags = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
-    auto composeTransFlags =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA |
-        HYBM_DOP_TYPE_DEVICE_UBOE | hostTransFlags;
+    auto composeTransFlags = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA |
+                             HYBM_DOP_TYPE_DEVICE_UBOE | hostTransFlags;
     if ((options_.bmDataOpType & composeTransFlags) == 0) {
         BM_LOG_DEBUG("NO RDMA/URMA Data Operator transport skip init.");
         return BM_OK;

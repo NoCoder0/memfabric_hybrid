@@ -253,9 +253,8 @@ bool CheckSameSize(const std::vector<at::Tensor> &inputTensors)
 
 bool ZbalReduceSupportDataType(at::ScalarType type)
 {
-    static std::set<at::ScalarType> supportDataTypes = {
-        at::kChar, at::kShort, at::kInt, at::kHalf, at::kFloat, at::kBFloat16
-    };
+    static std::set<at::ScalarType> supportDataTypes = {at::kChar, at::kShort, at::kInt,
+                                                        at::kHalf, at::kFloat, at::kBFloat16};
 
     return supportDataTypes.find(type) != supportDataTypes.end();
 }

@@ -1,9 +1,9 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
 
 from dataclasses import dataclass
 from typing import Union
+
 try:
     import memfabric_hybrid
     from memfabric_hybrid import bm
@@ -30,9 +30,7 @@ class MfBmConfig:
             raise TypeError(f"{self.data_op_type} not supported yet")
 
         if self.mem_type not in [bm.BmMemType.HOST, bm.BmMemType.DEVICE]:
-            raise TypeError(
-                f"name must be in [bm.BmMemType.HOST, bm.BmMemType.DEVICE], got {self.mem_type}"
-            )
+            raise TypeError(f"name must be in [bm.BmMemType.HOST, bm.BmMemType.DEVICE], got {self.mem_type}")
         if self.data_op_type not in [bm.BmDataOpType.SDMA, bm.BmDataOpType.HOST_RDMA]:
             raise TypeError(
                 f"name must be in [bm.BmDataOpType.SDMA, bm.BmDataOpType.HOST_RDMA], got {self.data_op_type}"

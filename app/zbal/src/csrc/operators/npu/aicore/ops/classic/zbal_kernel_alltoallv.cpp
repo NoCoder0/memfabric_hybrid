@@ -32,8 +32,8 @@ public:
         this->worldRanks = reinterpret_cast<__gm__ uint16_t *>(comm->peerGroupRank2WorldRank);
         this->exchangeAddr = comm->myAddressExchangeGva;
 
-        uint64_t inputAddrU64 = groupSize * ZBAL_FLAG_SIZE;                               // uint64_t elements
-        uint64_t inputAddrSize = Ceil(inputAddrU64, UB_ALIGN_SIZE) * UB_ALIGN_SIZE;       // bytes, for InitBuffer
+        uint64_t inputAddrU64 = groupSize * ZBAL_FLAG_SIZE;                         // uint64_t elements
+        uint64_t inputAddrSize = Ceil(inputAddrU64, UB_ALIGN_SIZE) * UB_ALIGN_SIZE; // bytes, for InitBuffer
         this->inputAddr = reinterpret_cast<__gm__ uint64_t *>(exchangeAddr);
         this->inputCumSumAddr = this->inputAddr + inputAddrU64;
         this->inputElementAddr = this->inputCumSumAddr + inputAddrU64;

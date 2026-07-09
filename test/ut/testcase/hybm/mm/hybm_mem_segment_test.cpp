@@ -672,7 +672,6 @@ TEST_F(HybmMemSegmentTest, HybmConnBasedSegment_MemoryInRange)
     }
 }
 
-
 TEST_F(HybmMemSegmentTest, HybmDevLegacySegment_MemoryInRange)
 {
     ock::mf::MemSegmentOptions options{};

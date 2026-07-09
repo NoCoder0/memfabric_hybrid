@@ -176,7 +176,9 @@ TEST_F(TestZBALSMA, AllocateFree)
     {
         struct rlimit oldLimit;
         getrlimit(RLIMIT_CORE, &oldLimit);
-        struct rlimit zeroLimit { ZBAL_UT_NUM_0, ZBAL_UT_NUM_0 };
+        struct rlimit zeroLimit {
+            ZBAL_UT_NUM_0, ZBAL_UT_NUM_0
+        };
         setrlimit(RLIMIT_CORE, &zeroLimit);
         void *ptr = nullptr;
         EXPECT_DEATH(alloc->Allocate(&ptr, ZBAL_UT_NUM_2, ZBAL_UT_SIZE_1KB, nullptr), "");

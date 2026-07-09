@@ -31,7 +31,7 @@ public:
     }
 
 private:
-    const static uint64_t gMagicBits = 0xFFFFFF;  // 24 bit
+    const static uint64_t gMagicBits = 0xFFFFFF; // 24 bit
 };
 
 inline uint64_t Func::MakeObjectMagic(uint64_t srcAddress)

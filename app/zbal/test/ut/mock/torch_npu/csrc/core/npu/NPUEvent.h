@@ -13,11 +13,23 @@ public:
 
     void record(const class NPUStream & /**/) {}
     void block(const class NPUStream & /**/) {}
-    bool query() { return query_result_; }
-    void set_query_result(bool val) { query_result_ = val; }
+    bool query()
+    {
+        return query_result_;
+    }
+    void set_query_result(bool val)
+    {
+        query_result_ = val;
+    }
 
-    operator void *() const { return reinterpret_cast<void *>(flag_); }
-    void *event() const { return reinterpret_cast<void *>(flag_); }
+    operator void *() const
+    {
+        return reinterpret_cast<void *>(flag_);
+    }
+    void *event() const
+    {
+        return reinterpret_cast<void *>(flag_);
+    }
 
 private:
     uint32_t flag_ = 0;

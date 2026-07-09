@@ -79,7 +79,7 @@ Result AccTcpWorker::AddLink(const AccTcpLinkDefaultPtr &link, uint32_t events) 
     ASSERT_RETURN(link.Get(), ACC_INVALID_PARAM);
     ASSERT_RETURN(link->fd_ != -1, ACC_INVALID_PARAM);
 
-    struct epoll_event evNewFd{};
+    struct epoll_event evNewFd {};
     evNewFd.data.ptr = link.Get();
     evNewFd.events = events;
 
@@ -189,7 +189,7 @@ Result AccTcpWorker::ModifyLink(const AccTcpLinkDefaultPtr &link, uint32_t event
     LOG_TRACE("Try to modify link " << link->ShortName() << " in sock worker " << options_.Name() << " with event "
                                     << events);
 
-    struct epoll_event evNewFd{};
+    struct epoll_event evNewFd {};
     evNewFd.data.ptr = link.Get();
     evNewFd.events = events;
 

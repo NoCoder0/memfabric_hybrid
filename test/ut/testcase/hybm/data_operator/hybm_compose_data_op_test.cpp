@@ -600,8 +600,7 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_non_rank0_rdma_success)
 {
     hybm_options options{};
     options.bmType = HYBM_TYPE_HOST_INITIATE;
-    options.bmDataOpType =
-        static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_DEVICE_RDMA));
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_DEVICE_RDMA));
     auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
     tag->TagInfoInit(options);
 
@@ -610,8 +609,7 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_non_rank0_rdma_success)
         uint32_t (*mocker)(ock::mf::HybmEntityTagInfo *, uint32_t, uint32_t);
     } u;
     u.getRank2RankOpType = &ock::mf::HybmEntityTagInfo::GetRank2RankOpType;
-    MOCKER(u.mocker).stubs().will(
-        returnValue(OpOr(HYBM_DOP_TYPE_DEVICE_RDMA)));
+    MOCKER(u.mocker).stubs().will(returnValue(OpOr(HYBM_DOP_TYPE_DEVICE_RDMA)));
     MOCKER(ock::mf::DataOperatorFactory::CreateSdmaDataOperator).stubs().will(invoke(CreateSdmaDataOperator));
     MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator).stubs().will(invoke(CreateDevRdmaDataOperator));
     MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));

@@ -42,11 +42,7 @@ def get_lib_path():
     return os.path.abspath(lib_path)
 
 
-from _pymf_transfer import (
-    TransferEngine,
-    TransferOpcode,
-    create_config_store
-)
+from _pymf_transfer import TransferEngine, TransferOpcode, create_config_store
 from _pymf_hybrid import (
     bm,
     shm,
@@ -57,7 +53,7 @@ from _pymf_hybrid import (
     get_last_err_msg,
     set_conf_store_tls,
     set_conf_store_tls_key,
-    get_and_clear_last_err_msg
+    get_and_clear_last_err_msg,
 )
 
 __all__ = [
@@ -73,6 +69,6 @@ __all__ = [
     'get_last_err_msg',
     'set_conf_store_tls',
     'set_conf_store_tls_key',
-    'get_and_clear_last_err_msg'
+    'get_and_clear_last_err_msg',
 ]
 __all__ += ['get_include_path', 'get_lib_path']

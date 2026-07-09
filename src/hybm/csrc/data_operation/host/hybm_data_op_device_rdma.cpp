@@ -140,8 +140,7 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
     }
 
     void *output;
-    ret = DlHalApi::HalHostRegister(ptr, rdmaSwapSpaceSize_,
-                                    HOST_MEM_MAP_DEV, HybmGetInitedLogicDeviceId(), &output);
+    ret = DlHalApi::HalHostRegister(ptr, rdmaSwapSpaceSize_, HOST_MEM_MAP_DEV, HybmGetInitedLogicDeviceId(), &output);
     if (ret != 0) {
         BM_LOG_ERROR("Register swap mem failed, addr: " << ptr << " ret: " << ret);
         auto ret2 = DlHalApi::HalMemFree(ptr);
@@ -150,8 +149,10 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
         }
         return ret;
     }
-    ret = HybmVaManager::GetInstance().AddVaInfo({0, reinterpret_cast<uint64_t>(output),
-        reinterpret_cast<uint64_t>(ptr), rdmaSwapSpaceSize_, HYBM_MEM_TYPE_HOST}, rankId_);
+    ret =
+        HybmVaManager::GetInstance().AddVaInfo({0, reinterpret_cast<uint64_t>(output), reinterpret_cast<uint64_t>(ptr),
+                                                rdmaSwapSpaceSize_, HYBM_MEM_TYPE_HOST},
+                                               rankId_);
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
         FreeSwapMemory();
@@ -277,8 +278,8 @@ Result DataOpDeviceRDMA::CopyLH2LH(const void *srcVA, void *destVA, uint64_t len
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
     auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) <<
-                     " dest=" << VaToInfo(destVA) << " length=" << length);
+        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
+                                                 << " length=" << length);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -288,8 +289,8 @@ Result DataOpDeviceRDMA::CopyLD2LD(const void *srcVA, void *destVA, uint64_t len
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
     auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_DEVICE);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) <<
-                     " dest=" << VaToInfo(destVA) << " length=" << length);
+        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
+                                                 << " length=" << length);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -300,8 +301,8 @@ Result DataOpDeviceRDMA::CopyLH2LD(const void *srcVA, void *destVA, uint64_t len
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
     auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) <<
-                     " dest=" << VaToInfo(destVA) << " length=" << length);
+        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
+                                                 << " length=" << length);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -312,8 +313,8 @@ Result DataOpDeviceRDMA::CopyLD2LH(const void *srcVA, void *destVA, uint64_t len
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
     auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) <<
-                     " dest=" << VaToInfo(destVA) << " length=" << length);
+        BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
+                                                 << " length=" << length);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -545,21 +546,21 @@ Result DataOpDeviceRDMA::BatchMergedWrite(hybm_batch_copy_params &swapParams, hy
     while (segStart < swapParams.batchSize) {
         size_t segEnd = segStart + 1;
         while (segEnd < swapParams.batchSize &&
-               reinterpret_cast<uintptr_t>(remote[segEnd]) == reinterpret_cast<uintptr_t>(remote[segEnd - 1])
-               + swapParams.dataSizes[segEnd - 1]) {
+               reinterpret_cast<uintptr_t>(remote[segEnd]) ==
+                   reinterpret_cast<uintptr_t>(remote[segEnd - 1]) + swapParams.dataSizes[segEnd - 1]) {
             ++segEnd;
         }
         uint64_t mergedSize = 0;
         for (size_t k = segStart; k < segEnd; ++k) {
             mergedSize += swapParams.dataSizes[k];
         }
-        ret = transportManager_->WriteRemoteAsync(
-                options.destRankId, reinterpret_cast<uint64_t>(swapParams.destinations[segStart]),
-                reinterpret_cast<uint64_t>(remote[segStart]), mergedSize);
+        ret = transportManager_->WriteRemoteAsync(options.destRankId,
+                                                  reinterpret_cast<uint64_t>(swapParams.destinations[segStart]),
+                                                  reinterpret_cast<uint64_t>(remote[segStart]), mergedSize);
         if (ret != BM_OK) {
             errorCode = ret;
-            BM_LOG_ERROR("Failed to write swap to remote ret: " << ret
-                << " localRankId:" << rankId_ << " remoteRankId:" << options.destRankId);
+            BM_LOG_ERROR("Failed to write swap to remote ret: " << ret << " localRankId:" << rankId_
+                                                                << " remoteRankId:" << options.destRankId);
             break;
         }
         segStart = segEnd;
@@ -573,7 +574,7 @@ Result DataOpDeviceRDMA::BatchMergedWrite(hybm_batch_copy_params &swapParams, hy
 }
 
 Result DataOpDeviceRDMA::BatchMergedRead(hybm_batch_copy_params &swapParams, hybm_data_copy_direction direction,
-                                          void **remote, const ExtOptions &options) noexcept
+                                         void **remote, const ExtOptions &options) noexcept
 {
     Result errorCode = BM_OK;
     int32_t ret;
@@ -581,21 +582,21 @@ Result DataOpDeviceRDMA::BatchMergedRead(hybm_batch_copy_params &swapParams, hyb
     while (segStart < swapParams.batchSize) {
         size_t segEnd = segStart + 1;
         while (segEnd < swapParams.batchSize &&
-               reinterpret_cast<uintptr_t>(remote[segEnd]) == reinterpret_cast<uintptr_t>(remote[segEnd - 1]) +
-                                                                      swapParams.dataSizes[segEnd - 1]) {
+               reinterpret_cast<uintptr_t>(remote[segEnd]) ==
+                   reinterpret_cast<uintptr_t>(remote[segEnd - 1]) + swapParams.dataSizes[segEnd - 1]) {
             ++segEnd;
         }
         uint64_t mergedSize = 0;
         for (size_t k = segStart; k < segEnd; ++k) {
             mergedSize += swapParams.dataSizes[k];
         }
-        ret = transportManager_->ReadRemoteAsync(
-                options.srcRankId, reinterpret_cast<uint64_t>(swapParams.sources[segStart]),
-                reinterpret_cast<uint64_t>(remote[segStart]), mergedSize);
+        ret = transportManager_->ReadRemoteAsync(options.srcRankId,
+                                                 reinterpret_cast<uint64_t>(swapParams.sources[segStart]),
+                                                 reinterpret_cast<uint64_t>(remote[segStart]), mergedSize);
         if (ret != BM_OK) {
             errorCode = ret;
-            BM_LOG_ERROR("Failed to read remote to swap ret: " << ret
-                << " localRankId:" << rankId_ << " remoteRankId:" << options.srcRankId);
+            BM_LOG_ERROR("Failed to read remote to swap ret: " << ret << " localRankId:" << rankId_
+                                                               << " remoteRankId:" << options.srcRankId);
             break;
         }
         segStart = segEnd;
@@ -649,8 +650,8 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
         }
 
         if (currentBatchDataSize == 0) {
-            BM_LOG_ERROR("Single count exceeds RDMA_SWAP_SPACE_SIZE: " << params.dataSizes[batchOffset]
-                                                                       << " > " << rdmaSwapSpaceSize_);
+            BM_LOG_ERROR("Single count exceeds RDMA_SWAP_SPACE_SIZE: " << params.dataSizes[batchOffset] << " > "
+                                                                       << rdmaSwapSpaceSize_);
             ret = BM_INVALID_PARAM;
             break;
         }
@@ -668,14 +669,14 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
         }
 
         if (isWrite) {
-            hybm_batch_copy_params swapParams = {tmpLocalAddrs.data(), tmpSwapAddrs.data(),
-                                                  tmpCounts.data(), static_cast<uint32_t>(currentBatchSize)};
+            hybm_batch_copy_params swapParams = {tmpLocalAddrs.data(), tmpSwapAddrs.data(), tmpCounts.data(),
+                                                 static_cast<uint32_t>(currentBatchSize)};
             TP_TRACE_BEGIN(TP_HYBM_RDMA_MERGE_WRITE);
             ret = BatchMergedWrite(swapParams, direction, &params.destinations[batchOffset], options);
             TP_TRACE_END(TP_HYBM_RDMA_MERGE_WRITE, ret);
         } else {
-            hybm_batch_copy_params swapParams = {tmpSwapAddrs.data(), tmpLocalAddrs.data(),
-                                                  tmpCounts.data(), static_cast<uint32_t>(currentBatchSize)};
+            hybm_batch_copy_params swapParams = {tmpSwapAddrs.data(), tmpLocalAddrs.data(), tmpCounts.data(),
+                                                 static_cast<uint32_t>(currentBatchSize)};
             TP_TRACE_BEGIN(TP_HYBM_RDMA_MERGE_READ);
             ret = BatchMergedRead(swapParams, direction, &params.sources[batchOffset], options);
             TP_TRACE_END(TP_HYBM_RDMA_MERGE_READ, ret);
@@ -824,8 +825,7 @@ void DataOpDeviceRDMA::ClassifyDataAddr(void **globalAddrs, void **localAddrs, c
                 iter->second.globalAddrs.push_back(globalAddrs[i]);
                 iter->second.counts.push_back(counts[i]);
             }
-        } else if (forceUnregistered_ ||
-                   !transportManager_->QueryHasRegistered((uint64_t)localAddrs[i], counts[i])) {
+        } else if (forceUnregistered_ || !transportManager_->QueryHasRegistered((uint64_t)localAddrs[i], counts[i])) {
             auto iter = notRegistered.find(globalRankId);
             if (iter == notRegistered.end()) {
                 CopyDescriptor desc{};

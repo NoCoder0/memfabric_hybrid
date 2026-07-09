@@ -22,14 +22,16 @@ def visualize_sim_memory(simulator: MemoryAllocatorSimulator, display_segments=F
     # 绘制已分配segments
     if display_segments:
         for start_addr, end_addr in simulator.get_all_segments():
-            ax.broken_barh([(start_addr, end_addr - start_addr)], (0.05, 0.9),
-                           facecolors='#D3D3D3', edgecolor='black', alpha=0.3)
+            ax.broken_barh(
+                [(start_addr, end_addr - start_addr)], (0.05, 0.9), facecolors='#D3D3D3', edgecolor='black', alpha=0.3
+            )
 
     # 绘制已分配blocks
     if display_blocks:
         for used_block in simulator.get_used_blocks():
-            ax.broken_barh([(used_block.addr, used_block.size)], (0.1, 0.8),
-                           facecolors='#4CAF50', edgecolor='black', alpha=0.8)
+            ax.broken_barh(
+                [(used_block.addr, used_block.size)], (0.1, 0.8), facecolors='#4CAF50', edgecolor='black', alpha=0.8
+            )
 
     # 设置坐标轴
     ax.set_xlim(simulator.gva_base_addr, simulator.gva_base_addr + simulator.gva_size)
@@ -38,11 +40,11 @@ def visualize_sim_memory(simulator: MemoryAllocatorSimulator, display_segments=F
 
     # 格式化坐标轴为 GB 或 Hex
     def format_func(value, tick_number):
-        gb_val = (value - simulator.gva_base_addr) / (1024 ** 3)
+        gb_val = (value - simulator.gva_base_addr) / (1024**3)
         return f"{gb_val:.1f}G"
 
     ax.xaxis.set_major_formatter(plt.FuncFormatter(format_func))
-    plt.title(f"Memory Layout Visualization (Total: {simulator.gva_size / (1024 ** 3)}GB)")
+    plt.title(f"Memory Layout Visualization (Total: {simulator.gva_size / (1024**3)}GB)")
     plt.xlabel("Address")
 
     # 添加图例
@@ -150,7 +152,7 @@ def visualize_file_memory(total_size_gb, start_addr, operations, display_segment
 
     # 格式化坐标轴为 GB 或 Hex
     def format_func(value, tick_number):
-        gb_val = (value - start_addr_int) / (1024 ** 3)
+        gb_val = (value - start_addr_int) / (1024**3)
         return f"{gb_val:.1f}G"
 
     ax.xaxis.set_major_formatter(plt.FuncFormatter(format_func))
@@ -158,8 +160,10 @@ def visualize_file_memory(total_size_gb, start_addr, operations, display_segment
     plt.xlabel("Address Offset from Start")
 
     # 添加图例
-    legend_elements = [Line2D([0], [0], color='#4CAF50', lw=4, label='Allocated'),
-                       Line2D([0], [0], color='#f0f0f0', lw=4, label='Unused')]
+    legend_elements = [
+        Line2D([0], [0], color='#4CAF50', lw=4, label='Allocated'),
+        Line2D([0], [0], color='#f0f0f0', lw=4, label='Unused'),
+    ]
     ax.legend(handles=legend_elements, loc='upper right')
 
     plt.tight_layout()
@@ -187,12 +191,9 @@ def visualize_file_snapshot(total_size_gb, start_addr, operations):
         next_start = sorted_segs[i + 1]['address']
         if next_start > curr_end:
             gap_size = next_start - curr_end
-            gaps.append({
-                'gap_start': curr_end,
-                'gap_end': next_start,
-                'size': gap_size,
-                'size_mb': gap_size / (1024**2)
-            })
+            gaps.append(
+                {'gap_start': curr_end, 'gap_end': next_start, 'size': gap_size, 'size_mb': gap_size / (1024**2)}
+            )
 
     # 按大小降序排列空隙列表用于返回
     sorted_gap_list = sorted(gaps, key=lambda x: x['size'], reverse=True)
@@ -213,22 +214,38 @@ def visualize_file_snapshot(total_size_gb, start_addr, operations):
     # --- 3. 循环绘制 ---
     # A. 绘制空隙 (Gaps) - 使用红色淡化区域表示“无地址”
     for gap in gaps:
-        ax.broken_barh([(gap['gap_start'], gap['size'])], (0, 1),
-                       facecolors=colors['gap'], alpha=0.4, hatch='//', edgecolor='#ff5252')
+        ax.broken_barh(
+            [(gap['gap_start'], gap['size'])],
+            (0, 1),
+            facecolors=colors['gap'],
+            alpha=0.4,
+            hatch='//',
+            edgecolor='#ff5252',
+        )
         # 在较大的空隙上标注大小
         if gap['size_mb'] > 100:
-            ax.text(gap['gap_start'] + gap['size'] / 2, 0.05, f"Gap: {gap['size_mb']:.0f}MB",
-                    ha='center', color='red', fontsize=8)
+            ax.text(
+                gap['gap_start'] + gap['size'] / 2,
+                0.05,
+                f"Gap: {gap['size_mb']:.0f}MB",
+                ha='center',
+                color='red',
+                fontsize=8,
+            )
 
     # B. 绘制 Segments 和 Blocks
     for seg in sorted_segs:
-        ax.broken_barh([(seg['address'], seg['total_size'])], (0.05, 0.9),
-                       facecolors=colors['segment'], edgecolor='black', alpha=0.3)
+        ax.broken_barh(
+            [(seg['address'], seg['total_size'])],
+            (0.05, 0.9),
+            facecolors=colors['segment'],
+            edgecolor='black',
+            alpha=0.3,
+        )
 
         for blk in seg['blocks']:
             color = colors['active'] if blk['state'] == 'active_allocated' else colors['inactive']
-            ax.broken_barh([(blk['address'], blk['size'])], (0.2, 0.6),
-                           facecolors=color, edgecolor='black', alpha=0.8)
+            ax.broken_barh([(blk['address'], blk['size'])], (0.2, 0.6), facecolors=color, edgecolor='black', alpha=0.8)
 
     # --- 4. 格式化与输出 ---
     ax.set_xlim(base_addr, base_addr + total_range_bytes)
@@ -245,17 +262,18 @@ def visualize_file_snapshot(total_size_gb, start_addr, operations):
     custom_lines = [
         Line2D([0], [0], color=colors['segment'], lw=6, alpha=0.3),
         Line2D([0], [0], color=colors['active'], lw=6),
-        Line2D([0], [0], color=colors['inactive'], lw=6)
+        Line2D([0], [0], color=colors['inactive'], lw=6),
     ]
-    ax.legend(custom_lines, ['Segment', 'Active Block', 'Inactive Block'],
-              loc='upper right', bbox_to_anchor=(1, 1.25), ncol=4)
+    ax.legend(
+        custom_lines, ['Segment', 'Active Block', 'Inactive Block'], loc='upper right', bbox_to_anchor=(1, 1.25), ncol=4
+    )
 
     plt.title(f"Memory Layout & Gaps (Base: {hex(base_addr)})", pad=30)
     plt.xlabel("Address Offset (GB)")
     plt.tight_layout()
     plt.show()
 
-    return sorted_gap_list # 返回排序后的空隙列表
+    return sorted_gap_list  # 返回排序后的空隙列表
 
 
 def parse_mem_to_profile(operations, output_file, export_segments=True, with_unfree=False):
@@ -298,21 +316,13 @@ def parse_mem_to_profile(operations, output_file, export_segments=True, with_unf
     groups = ["> 128MB (Large)", "16MB - 128MB (Medium)", "< 16MB (Small)"]
     for i, group_name in enumerate(groups):
         # 定义泳道显示名称
-        trace_events.append({
-            "name": "thread_name",
-            "ph": "M",
-            "pid": "NPU_HBM",
-            "tid": group_name,
-            "args": {"name": group_name}
-        })
+        trace_events.append(
+            {"name": "thread_name", "ph": "M", "pid": "NPU_HBM", "tid": group_name, "args": {"name": group_name}}
+        )
         # 定义泳道排序索引（让大的块显示在最上方）
-        trace_events.append({
-            "name": "thread_sort_index",
-            "ph": "M",
-            "pid": "NPU_HBM",
-            "tid": group_name,
-            "args": {"sort_index": i}
-        })
+        trace_events.append(
+            {"name": "thread_sort_index", "ph": "M", "pid": "NPU_HBM", "tid": group_name, "args": {"sort_index": i}}
+        )
 
     # --- 2. 遍历操作流 ---
     for op in operations:
@@ -327,13 +337,15 @@ def parse_mem_to_profile(operations, output_file, export_segments=True, with_unf
 
             # 更新计数器：内存增加
             total_usage += size
-            trace_events.append({
-                "name": "Memory Usage",
-                "ph": "C",
-                "ts": current_ts,
-                "pid": "NPU_HBM",
-                "args": {"Allocated_MB": total_usage / (1024 * 1024)}
-            })
+            trace_events.append(
+                {
+                    "name": "Memory Usage",
+                    "ph": "C",
+                    "ts": current_ts,
+                    "pid": "NPU_HBM",
+                    "args": {"Allocated_MB": total_usage / (1024 * 1024)},
+                }
+            )
 
         elif action == free_key:
             if addr in active_allocs:
@@ -344,47 +356,53 @@ def parse_mem_to_profile(operations, output_file, export_segments=True, with_unf
                 group_name = get_size_group(size)
 
                 # 生成矩形块事件 (X 事件)
-                trace_events.append({
-                    "name": f"Block_{size / (1024 * 1024):.2f}_MB",
-                    "ph": "X",
-                    "ts": start_ts,
-                    "dur": duration,
-                    "pid": "NPU_HBM",
-                    "tid": group_name,
-                    "args": {
-                        "address": hex(addr),
-                        "size": f"{size / (1024 * 1024):.2f} MB",
-                        "alloc_step": start_ts // step_duration
+                trace_events.append(
+                    {
+                        "name": f"Block_{size / (1024 * 1024):.2f}_MB",
+                        "ph": "X",
+                        "ts": start_ts,
+                        "dur": duration,
+                        "pid": "NPU_HBM",
+                        "tid": group_name,
+                        "args": {
+                            "address": hex(addr),
+                            "size": f"{size / (1024 * 1024):.2f} MB",
+                            "alloc_step": start_ts // step_duration,
+                        },
                     }
-                })
+                )
 
                 # 更新计数器：内存减少
                 total_usage -= size
-                trace_events.append({
-                    "name": "Memory Usage",
-                    "ph": "C",
-                    "ts": current_ts,
-                    "pid": "NPU_HBM",
-                    "args": {"Allocated_MB": total_usage / (1024 * 1024)}
-                })
+                trace_events.append(
+                    {
+                        "name": "Memory Usage",
+                        "ph": "C",
+                        "ts": current_ts,
+                        "pid": "NPU_HBM",
+                        "args": {"Allocated_MB": total_usage / (1024 * 1024)},
+                    }
+                )
 
     # --- 3. 可选：处理未释放内存 ---
     if with_unfree:
         for addr, (start_ts, size, _) in active_allocs.items():
             group_name = get_size_group(size)
-            trace_events.append({
-                "name": f"Unfreed_{size / (1024 * 1024):.2f}_MB",
-                "ph": "X",
-                "ts": start_ts,
-                "dur": current_ts - start_ts,
-                "pid": "NPU_HBM",
-                "tid": group_name,
-                "args": {
-                    "address": hex(addr),
-                    "size": f"{size / (1024 * 1024):.2f} MB",
-                    "status": "still_allocated"
+            trace_events.append(
+                {
+                    "name": f"Unfreed_{size / (1024 * 1024):.2f}_MB",
+                    "ph": "X",
+                    "ts": start_ts,
+                    "dur": current_ts - start_ts,
+                    "pid": "NPU_HBM",
+                    "tid": group_name,
+                    "args": {
+                        "address": hex(addr),
+                        "size": f"{size / (1024 * 1024):.2f} MB",
+                        "status": "still_allocated",
+                    },
                 }
-            })
+            )
 
     # --- 4. 导出 JSON ---
     with open(output_file, 'w') as f:

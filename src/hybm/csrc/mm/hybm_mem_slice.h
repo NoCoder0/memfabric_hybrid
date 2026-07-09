@@ -42,7 +42,7 @@ struct MemSlice {
     const uint64_t gva_;                /* global virtual address of memory */
     const uint64_t vAddress_;           /* local address of memory: hostVa or deviceVa */
     const uint64_t size_;
-    const MemAllocMethod allocMethod_;  /* memory allocation method: mmap or halMemAlloc */
+    const MemAllocMethod allocMethod_; /* memory allocation method: mmap or halMemAlloc */
 };
 } // namespace mf
 } // namespace ock

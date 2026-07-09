@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -18,7 +17,7 @@ from TensorRTL.examples.verl.model_adaptor.qwen_adaptor import QwenMoeAdaptor as
 from TensorRTL.examples.verl.utils import (
     generate_transfer_device_mesh,
     generate_transfer_ep_device_mesh,
-    qkv_from_megatron_to_sglang
+    qkv_from_megatron_to_sglang,
 )
 from TensorRTL.tensor_rtl.core.backend_config import MfBmConfig
 from TensorRTL.tensor_rtl.utils.utils import get_dtype_size
@@ -27,7 +26,7 @@ from memfabric_hybrid import bm
 adapter_dict = {
     "Qwen2ForCausalLM": QwenAdaptor,
     "Qwen3ForCausalLM": Qwen3Adaptor,
-    'Qwen3MoeForCausalLM': Qwen3MoeAdaptor
+    'Qwen3MoeForCausalLM': Qwen3MoeAdaptor,
 }
 
 
@@ -46,7 +45,7 @@ class VerlSglangReshardPreprocessor:
         model_adaptor_name=None,
         device_mesh=None,
         pipeline_overlap=False,
-        backend='hccl'
+        backend='hccl',
     ) -> None:
         self.pipeline_overlap = pipeline_overlap
         self.backend = backend
@@ -61,23 +60,21 @@ class VerlSglangReshardPreprocessor:
         self.model_adaptor = model_adaptor(train_config)
         train_tp = self.train_config.tensor_model_parallel_size
         infer_tp = self.device_mesh["infer_tp"].mesh.size()[0]
-        train_param_config = self.model_adaptor.build_param_config(
-            self.train_model, train_tp, infer_tp, Engine.MEGATRON
-        ) or {}
+        train_param_config = (
+            self.model_adaptor.build_param_config(self.train_model, train_tp, infer_tp, Engine.MEGATRON) or {}
+        )
         self.model_adaptor.param_config = train_param_config
 
         self.layer_list_meta = self.get_global_model_info(
-            self.model_adaptor.param_name_mapping, 
-            train_parallel_state, 
-            device_mesh
-            )
+            self.model_adaptor.param_name_mapping, train_parallel_state, device_mesh
+        )
 
         self.infer_model = self.get_infer_model()
         if infer_model is not None:
             self.infer_model = infer_model
-        infer_param_config = self.model_adaptor.build_infer_param_config(
-            self.infer_model, train_tp, infer_tp, train_param_config
-        ) or {}
+        infer_param_config = (
+            self.model_adaptor.build_infer_param_config(self.infer_model, train_tp, infer_tp, train_param_config) or {}
+        )
 
         self.self_rank = torch.distributed.get_rank()
         self.world_size = torch.distributed.get_world_size()
@@ -85,9 +82,13 @@ class VerlSglangReshardPreprocessor:
         if self.backend == "hccl":
             self.executor = BatchP2PExecutor()
         else:
-            bm_config = MfBmConfig(mem_type=bm.BmMemType.DEVICE, data_op_type=bm.BmDataOpType.SDMA,
-                                   local_dram_size=0, local_hbm_size=os.environ.get("MF_HBM_SIZE", 1024 * 1024 * 512),
-                                   rank_world_size=self.world_size * self.pool_num)
+            bm_config = MfBmConfig(
+                mem_type=bm.BmMemType.DEVICE,
+                data_op_type=bm.BmDataOpType.SDMA,
+                local_dram_size=0,
+                local_hbm_size=os.environ.get("MF_HBM_SIZE", 1024 * 1024 * 512),
+                rank_world_size=self.world_size * self.pool_num,
+            )
             self.executor = MemoryFabricExecutor(bm_config, executor_type=MemoryFabricExecutor.ExecutorType.WRITER)
         self.model_adaptor.param_config = train_param_config | infer_param_config
 
@@ -104,11 +105,12 @@ class VerlSglangReshardPreprocessor:
 
     def get_infer_model(self):
         from torch._subclasses.fake_tensor import FakeTensorMode
+
         module = torch.nn.Module()
         fake_mode = FakeTensorMode()
 
         def add_dot_param(module: torch.nn.Module, name: str, tensor):
-            if '.' not in name: 
+            if '.' not in name:
                 module.register_parameter(name, torch.nn.Parameter(tensor))
                 return
 
@@ -177,59 +179,59 @@ class VerlSglangReshardPreprocessor:
             else:
                 global_name = rewrite(name)
             meta_info.append(
-                (train_pp_rank, 
-                name, 
-                global_name, 
-                global_param_size, 
-                param.dtype, 
-                partition_config.shard_dim, 
-                param.ndim,
-                partition_config.tp_partition, 
-                partition_config.ep_partition, 
-                partition_config.fused, 
-                partition_config.fused_size
-                ))
+                (
+                    train_pp_rank,
+                    name,
+                    global_name,
+                    global_param_size,
+                    param.dtype,
+                    partition_config.shard_dim,
+                    param.ndim,
+                    partition_config.tp_partition,
+                    partition_config.ep_partition,
+                    partition_config.fused,
+                    partition_config.fused_size,
+                )
+            )
         obj_spec_output = [None] * train_pp
         torch.distributed.all_gather_object(
             object_list=obj_spec_output, obj=meta_info, group=train_parallel_state.get_pipeline_model_parallel_group()
         )
-        layer_list_meta = [
-            item 
-            for sublist in obj_spec_output 
-            for item in sublist
-            ]
+        layer_list_meta = [item for sublist in obj_spec_output for item in sublist]
         return layer_list_meta
-    
+
     def per_tensor_generator(self):
         t_model = self.train_model.state_dict()
         infer_tp = self.device_mesh["infer_tp"].mesh.size()[0]
 
         def combine_sharded_expert_weight(global_name, expert_weight):
             current_device_mesh, update_device_mesh = generate_transfer_ep_device_mesh(
-                self.train_config.num_moe_experts, 
-                self.train_config.expert_model_parallel_size, 
+                self.train_config.num_moe_experts,
+                self.train_config.expert_model_parallel_size,
                 self.train_config.expert_tensor_parallel_size,
                 self.train_config.pipeline_model_parallel_size,
                 infer_tp,
                 1,
                 1,
-                train_pp_rank
-                )
-            expert_param = expert_weight[(key_name, param_dtype, shard_dim, ndim)] 
+                train_pp_rank,
+            )
+            expert_param = expert_weight[(key_name, param_dtype, shard_dim, ndim)]
             global_name = re.sub(r'\d+$', '', global_name)
             ptensor_lists = []
             for old in current_device_mesh:
                 tensors = expert_param.pop(0) if self.self_rank in old else [None]
-                ptensor_lists.append(PTensor(tensor=tensors,
-                                    dtype=param_dtype,
-                                    ndim=ndim,
-                                    device_mesh=old,
-                                    global_size=global_param_size[0],
-                                    shard_dim=shard_dim,
-                                    rank=self.self_rank,
-                                    backend='hccl',
-                        )
+                ptensor_lists.append(
+                    PTensor(
+                        tensor=tensors,
+                        dtype=param_dtype,
+                        ndim=ndim,
+                        device_mesh=old,
+                        global_size=global_param_size[0],
+                        shard_dim=shard_dim,
+                        rank=self.self_rank,
+                        backend='hccl',
                     )
+                )
             ptensorset = PTensorSet(ptensor_lists)
             ptensorset.transfer_map(update_device_mesh)
             op_list = ptensorset.get_transfer_list()
@@ -241,16 +243,28 @@ class VerlSglangReshardPreprocessor:
 
         expert_weight = {}
         for weight_info in self.layer_list_meta:
-            train_pp_rank, name, global_name, global_param_size, param_dtype, shard_dim, ndim, \
-                    tp_partition, ep_partition, fused, fused_size = weight_info
+            (
+                train_pp_rank,
+                name,
+                global_name,
+                global_param_size,
+                param_dtype,
+                shard_dim,
+                ndim,
+                tp_partition,
+                ep_partition,
+                fused,
+                fused_size,
+            ) = weight_info
             current_device_mesh, update_device_mesh = generate_transfer_device_mesh(
                 self.train_config.tensor_model_parallel_size,
                 self.train_config.pipeline_model_parallel_size,
                 infer_tp,
                 1,
                 tp_partition,
-                train_pp_rank)
-            
+                train_pp_rank,
+            )
+
             if 'mlp.experts.w13_weight' in global_name or 'mlp.experts.w2_weight' in global_name:
                 tp_partition = False
                 if 'mlp.experts.w13_weight' in global_name:
@@ -262,15 +276,16 @@ class VerlSglangReshardPreprocessor:
                     expert_weight[(key_name, param_dtype, shard_dim, ndim)].append(train_params[0])
 
                 elif 'mlp.experts.w2_weight' in global_name:
-                    key_name = 'mlp.experts.w2_weight' 
+                    key_name = 'mlp.experts.w2_weight'
                     global_param_size, train_params = generate_global_param_size(
                         t_model, name, fused, global_param_size, shard_dim, fused_size
                     )
                     expert_weight.setdefault((key_name, param_dtype, shard_dim, ndim), [])
                     expert_weight[(key_name, param_dtype, shard_dim, ndim)].append(train_params[0])
 
-                if len(expert_weight[(key_name, param_dtype, shard_dim, ndim)]) == \
-                    (self.train_config.num_moe_experts // self.train_config.expert_model_parallel_size):
+                if len(expert_weight[(key_name, param_dtype, shard_dim, ndim)]) == (
+                    self.train_config.num_moe_experts // self.train_config.expert_model_parallel_size
+                ):
                     global_name, tensor = combine_sharded_expert_weight(global_name, expert_weight)
                     expert_weight[(key_name, param_dtype, shard_dim, ndim)] = []
 
@@ -281,49 +296,55 @@ class VerlSglangReshardPreprocessor:
                     t_model, name, fused, global_param_size, shard_dim, fused_size
                 )
                 global_name, tensor = self.ptensor_reshard(
-                    train_params, name, 
-                    global_name, 
-                    param_dtype, 
-                    shard_dim, ndim, 
-                    global_param_size, 
-                    current_device_mesh, 
-                    update_device_mesh
-                    )
+                    train_params,
+                    name,
+                    global_name,
+                    param_dtype,
+                    shard_dim,
+                    ndim,
+                    global_param_size,
+                    current_device_mesh,
+                    update_device_mesh,
+                )
             yield global_name, tensor
-   
+
     def get_sglang_reshard_info(self):
         return self.per_tensor_generator if self.backend == "hccl" else self.per_tensor_generator_mf
 
     def get_sglang_reshard_replay(self):
         return self.per_tensor_generator_mf_replay
 
-    def ptensor_reshard(self, 
-        train_params, 
-        name, 
-        global_name, 
-        param_dtype, 
-        shard_dim, 
-        ndim, 
-        global_param_size, 
-        current_device_mesh, 
-        update_device_mesh
+    def ptensor_reshard(
+        self,
+        train_params,
+        name,
+        global_name,
+        param_dtype,
+        shard_dim,
+        ndim,
+        global_param_size,
+        current_device_mesh,
+        update_device_mesh,
     ):
         tensor_list = []
 
         for idx, train_param in enumerate(train_params):
-            ptensor_list = []            
+            ptensor_list = []
             for device_mesh in current_device_mesh:
                 if self.self_rank in device_mesh and train_param is None:
                     raise RuntimeError(f'rank {self.self_rank} current rank do not have specific parameters {name}')
-                ptensor_list.append(PTensor(tensor=train_param,
-                    dtype=param_dtype,
-                    ndim=ndim,
-                    device_mesh=device_mesh,
-                    global_size=global_param_size[idx],
-                    shard_dim=shard_dim,
-                    rank=self.self_rank,
-                    backend='hccl',
-                ))
+                ptensor_list.append(
+                    PTensor(
+                        tensor=train_param,
+                        dtype=param_dtype,
+                        ndim=ndim,
+                        device_mesh=device_mesh,
+                        global_size=global_param_size[idx],
+                        shard_dim=shard_dim,
+                        rank=self.self_rank,
+                        backend='hccl',
+                    )
+                )
             ptensorset = PTensorSet(ptensor_list)
             ptensorset.transfer_map(update_device_mesh)
             op_list = ptensorset.get_transfer_list()
@@ -338,11 +359,15 @@ class VerlSglangReshardPreprocessor:
             for fused_tensor in zip(*tensor_list):
                 tensor = torch.cat(fused_tensor, shard_dim)
         else:
-            tensor = tensor_list[0][0] # id0 表示fused0， id1表示当前device的ptensor的tensor(非Moe每个device只有一个ptensor)
+            tensor = tensor_list[0][
+                0
+            ]  # id0 表示fused0， id1表示当前device的ptensor的tensor(非Moe每个device只有一个ptensor)
 
         if 'self_attn.qkv_proj' in global_name:
-            if not (self.train_config.num_query_groups >= self.train_config.tensor_model_parallel_size and \
-            self.train_config.num_query_groups >= self.device_mesh["infer_tp"].mesh.size()[0]):
+            if not (
+                self.train_config.num_query_groups >= self.train_config.tensor_model_parallel_size
+                and self.train_config.num_query_groups >= self.device_mesh["infer_tp"].mesh.size()[0]
+            ):
                 raise RuntimeError(f"[TensorRTL] heads should be divided in tp ranks.")
 
             tensor = qkv_from_megatron_to_sglang(
@@ -363,9 +388,7 @@ class VerlSglangReshardPreprocessor:
         for bucket_id in range(num_buckets):
             op_list = self.cached_bucket_op_dict.get(bucket_id, [])
             for op in op_list:
-                op.buffer = get_tensor_from_tensor_slice(
-                    params_dict[op.buffer_name], op.shard_dim, op.tensor_slice
-                )
+                op.buffer = get_tensor_from_tensor_slice(params_dict[op.buffer_name], op.shard_dim, op.tensor_slice)
             self.executor.execute(op_list)
             if bucket_id != num_buckets - 1:
                 yield
@@ -379,13 +402,25 @@ class VerlSglangReshardPreprocessor:
         param_offset_dict = self._init_param_offset_dict(infer_tp_size)
 
         for weight_info in self.layer_list_meta:
-            (train_pp_rank, name, global_name, global_param_size, param_dtype, shard_dim, ndim,
-             tp_partition, ep_partition, fused, fused_size) = weight_info
+            (
+                train_pp_rank,
+                name,
+                global_name,
+                global_param_size,
+                param_dtype,
+                shard_dim,
+                ndim,
+                tp_partition,
+                ep_partition,
+                fused,
+                fused_size,
+            ) = weight_info
 
             if 'mlp.experts.w13_weight' in global_name or 'mlp.experts.w2_weight' in global_name:
                 expert_global_name = re.sub(r'\d+$', '', global_name)
-                key_name = 'mlp.experts.w13_weight' if 'mlp.experts.w13_weight' in global_name \
-                           else 'mlp.experts.w2_weight'
+                key_name = (
+                    'mlp.experts.w13_weight' if 'mlp.experts.w13_weight' in global_name else 'mlp.experts.w2_weight'
+                )
                 global_param_size, train_params = generate_global_param_size(
                     t_model, name, fused, global_param_size, shard_dim, fused_size
                 )
@@ -393,16 +428,23 @@ class VerlSglangReshardPreprocessor:
                 self.expert_weight[(key_name, param_dtype, shard_dim, ndim)].append(train_params[0])
                 self.expert_map_dict.setdefault(train_params[0].data_ptr(), name)
 
-                if len(self.expert_weight[(key_name, param_dtype, shard_dim, ndim)]) < \
-                      (self.train_config.num_moe_experts // self.train_config.expert_model_parallel_size):
+                if len(self.expert_weight[(key_name, param_dtype, shard_dim, ndim)]) < (
+                    self.train_config.num_moe_experts // self.train_config.expert_model_parallel_size
+                ):
                     continue
 
                 current_device_mesh, update_device_mesh = self._generate_transfer_device_mesh(
                     self.train_config, infer_tp_size, train_pp_rank, tp_partition, is_ep=True
                 )
                 total_op_list, simulate_bucket_id = self._process_expert_weights(
-                    weight_info, param_offset_dict, expert_global_name, infer_tp_size,
-                    key_name, current_device_mesh, update_device_mesh, global_param_size
+                    weight_info,
+                    param_offset_dict,
+                    expert_global_name,
+                    infer_tp_size,
+                    key_name,
+                    current_device_mesh,
+                    update_device_mesh,
+                    global_param_size,
                 )
 
                 yield from self._execute_expert_weights(
@@ -417,8 +459,13 @@ class VerlSglangReshardPreprocessor:
                     self.train_config, infer_tp_size, train_pp_rank, tp_partition, is_ep=False
                 )
                 yield from self._process_regular_weights(
-                    weight_info, param_offset_dict, train_params, infer_tp_size,
-                    current_device_mesh, update_device_mesh, global_param_size
+                    weight_info,
+                    param_offset_dict,
+                    train_params,
+                    infer_tp_size,
+                    current_device_mesh,
+                    update_device_mesh,
+                    global_param_size,
                 )
 
             if len(self.cur_bucket_op) > 0:
@@ -438,15 +485,32 @@ class VerlSglangReshardPreprocessor:
         expert_offset_init = []
 
         for weight_info in self.layer_list_meta:
-            (train_pp_rank, name, global_name, global_param_size, param_dtype, shard_dim, ndim,
-            tp_partition, ep_partition, fused, fused_size) = weight_info
+            (
+                train_pp_rank,
+                name,
+                global_name,
+                global_param_size,
+                param_dtype,
+                shard_dim,
+                ndim,
+                tp_partition,
+                ep_partition,
+                fused,
+                fused_size,
+            ) = weight_info
 
             is_expert_weight = 'mlp.experts.w13_weight' in global_name or 'mlp.experts.w2_weight' in global_name
 
             if is_expert_weight:
                 bucket_id, cur_offset, param_offset_dict, max_bucket_id = self._handle_expert_offset_dict(
-                    global_name, expert_offset_init, bucket_id, cur_offset,
-                    weight_info, param_offset_dict, max_bucket_id, infer_tp_size
+                    global_name,
+                    expert_offset_init,
+                    bucket_id,
+                    cur_offset,
+                    weight_info,
+                    param_offset_dict,
+                    max_bucket_id,
+                    infer_tp_size,
                 )
             else:
                 bucket_id, cur_offset, param_offset_dict, max_bucket_id = self._handle_regular_offset_dict(
@@ -457,8 +521,15 @@ class VerlSglangReshardPreprocessor:
         return param_offset_dict
 
     def _handle_expert_offset_dict(
-        self, global_name, expert_offset_init, bucket_id, cur_offset,
-        weight_info, param_offset_dict, max_bucket_id, infer_tp_size
+        self,
+        global_name,
+        expert_offset_init,
+        bucket_id,
+        cur_offset,
+        weight_info,
+        param_offset_dict,
+        max_bucket_id,
+        infer_tp_size,
     ):
         expert_global_name = re.sub(r'\d+$', '', global_name)
         if expert_global_name in expert_offset_init:
@@ -506,7 +577,7 @@ class VerlSglangReshardPreprocessor:
                 infer_tp_size,
                 1,
                 1,
-                train_pp_rank
+                train_pp_rank,
             )
         else:
             current_device_mesh, update_device_mesh = generate_transfer_device_mesh(
@@ -515,7 +586,7 @@ class VerlSglangReshardPreprocessor:
                 infer_tp_size,
                 1,
                 tp_partition,
-                train_pp_rank
+                train_pp_rank,
             )
 
         for idx, device_mesh in enumerate(update_device_mesh):
@@ -524,7 +595,7 @@ class VerlSglangReshardPreprocessor:
         return current_device_mesh, update_device_mesh
 
     def _calculate_expert_offsets(self, global_name, expert_global_name, infer_tp_size):
-        local_expert_offset = int(global_name[len(expert_global_name):])
+        local_expert_offset = int(global_name[len(expert_global_name) :])
         infer_expert_offset = 0
 
         if self.train_config.expert_model_parallel_size > infer_tp_size:
@@ -539,11 +610,29 @@ class VerlSglangReshardPreprocessor:
         return infer_expert_offset
 
     def _process_expert_weights(
-        self, weight_info, param_offset_dict, expert_global_name, infer_tp_size,
-        key_name, current_device_mesh, update_device_mesh, global_param_size
+        self,
+        weight_info,
+        param_offset_dict,
+        expert_global_name,
+        infer_tp_size,
+        key_name,
+        current_device_mesh,
+        update_device_mesh,
+        global_param_size,
     ):
-        (train_pp_rank, name, global_name, _, param_dtype, shard_dim, ndim,
-        tp_partition, ep_partition, fused, fused_size) = weight_info
+        (
+            train_pp_rank,
+            name,
+            global_name,
+            _,
+            param_dtype,
+            shard_dim,
+            ndim,
+            tp_partition,
+            ep_partition,
+            fused,
+            fused_size,
+        ) = weight_info
 
         infer_expert_offset = self._calculate_expert_offsets(global_name, expert_global_name, infer_tp_size)
 
@@ -552,16 +641,18 @@ class VerlSglangReshardPreprocessor:
 
         for old in current_device_mesh:
             tensors = expert_param.pop(0) if torch.distributed.get_rank() in old else [None]
-            ptensor_lists.append(PTensor(
-                tensor=tensors,
-                dtype=param_dtype,
-                ndim=ndim,
-                device_mesh=old,
-                global_size=global_param_size[0],
-                shard_dim=shard_dim,
-                rank=torch.distributed.get_rank(),
-                backend='mf',
-                check_sanity=False)
+            ptensor_lists.append(
+                PTensor(
+                    tensor=tensors,
+                    dtype=param_dtype,
+                    ndim=ndim,
+                    device_mesh=old,
+                    global_size=global_param_size[0],
+                    shard_dim=shard_dim,
+                    rank=torch.distributed.get_rank(),
+                    backend='mf',
+                    check_sanity=False,
+                )
             )
         ptensorset = PTensorSet(ptensor_lists)
         ptensorset.transfer_map(update_device_mesh)
@@ -606,11 +697,28 @@ class VerlSglangReshardPreprocessor:
         return total_op_list, simulate_bucket_id
 
     def _process_regular_weights(
-        self, weight_info, param_offset_dict, train_params,
-        infer_tp_size, current_device_mesh, update_device_mesh, global_param_size
+        self,
+        weight_info,
+        param_offset_dict,
+        train_params,
+        infer_tp_size,
+        current_device_mesh,
+        update_device_mesh,
+        global_param_size,
     ):
-        (train_pp_rank, name, global_name, _, param_dtype, shard_dim, ndim,
-        tp_partition, ep_partition, fused, fused_size) = weight_info
+        (
+            train_pp_rank,
+            name,
+            global_name,
+            _,
+            param_dtype,
+            shard_dim,
+            ndim,
+            tp_partition,
+            ep_partition,
+            fused,
+            fused_size,
+        ) = weight_info
 
         if param_offset_dict[global_name][0] != self.cur_bucket_id:
             self.executor.execute(self.cur_bucket_op)
@@ -618,22 +726,22 @@ class VerlSglangReshardPreprocessor:
             yield
             self.cur_bucket_id = param_offset_dict[global_name][0]
 
-        fused_offset_list = init_fused_offset(
-            train_params, global_param_size, param_dtype, infer_tp_size, tp_partition
-        )
+        fused_offset_list = init_fused_offset(train_params, global_param_size, param_dtype, infer_tp_size, tp_partition)
         for idx, train_param in enumerate(train_params):
             ptensor_list = []
             for device_mesh in current_device_mesh:
-                ptensor_list.append(PTensor(
-                    tensor=train_param,
-                    dtype=param_dtype,
-                    ndim=ndim,
-                    device_mesh=device_mesh,
-                    global_size=global_param_size[idx],
-                    shard_dim=shard_dim,
-                    rank=torch.distributed.get_rank(),
-                    backend='mf',
-                    check_sanity=False)
+                ptensor_list.append(
+                    PTensor(
+                        tensor=train_param,
+                        dtype=param_dtype,
+                        ndim=ndim,
+                        device_mesh=device_mesh,
+                        global_size=global_param_size[idx],
+                        shard_dim=shard_dim,
+                        rank=torch.distributed.get_rank(),
+                        backend='mf',
+                        check_sanity=False,
+                    )
                 )
             ptensorset = PTensorSet(ptensor_list)
             ptensorset.transfer_map(update_device_mesh)
@@ -647,7 +755,7 @@ class VerlSglangReshardPreprocessor:
         self, op_list, fused_offset_list, idx, param_offset_dict, global_name, shard_dim, name
     ):
         for op in op_list:
-            op.gva_ptr += (fused_offset_list[idx] + param_offset_dict[global_name][1])
+            op.gva_ptr += fused_offset_list[idx] + param_offset_dict[global_name][1]
             if self.pipeline_overlap and op.is_send:
                 pool_offset = self.available_pool[self.cur_bucket_id % len(self.available_pool)]
                 op.pool_rank = op.dst_rank - pool_offset
@@ -705,12 +813,12 @@ def get_tensor_from_tensor_slice(buffer, shard_dim, tensor_slice):
     if shard_dim == -1:
         _register_buffer = buffer
     elif buffer.ndim == 1:
-        _register_buffer = buffer[tensor_slice[0]:tensor_slice[1]]
+        _register_buffer = buffer[tensor_slice[0] : tensor_slice[1]]
     else:
         if shard_dim == 0:
-            _register_buffer = buffer[tensor_slice[0]: tensor_slice[1], :]
+            _register_buffer = buffer[tensor_slice[0] : tensor_slice[1], :]
         elif shard_dim == 1:
-            _register_buffer = buffer[:, tensor_slice[0]: tensor_slice[1]].contiguous()
+            _register_buffer = buffer[:, tensor_slice[0] : tensor_slice[1]].contiguous()
     return _register_buffer
 
 
@@ -720,9 +828,9 @@ def generate_global_param_size(t_model, name, fused, global_param_size, shard_di
         train_params_ = []
         for size in fused_size:
             if shard_dim == 0:
-                train_params_.append(train_params[0][offset: offset + size, :])
+                train_params_.append(train_params[0][offset : offset + size, :])
             elif shard_dim == 1:
-                train_params_.append(train_params[0][:, offset: offset + size])
+                train_params_.append(train_params[0][:, offset : offset + size])
             offset += size
         return train_params_
 

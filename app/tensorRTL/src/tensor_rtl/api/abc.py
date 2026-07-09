@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 
@@ -35,6 +34,7 @@ class Executor(ABC):
 
 class Planner(ABC):
     """P2P通信策略容器, 需要存储通信状态如P2P流, Planner的抽象类"""
+
     def __init__(self, topology=None):
         self.topology = topology
 

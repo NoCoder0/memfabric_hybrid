@@ -159,7 +159,7 @@ uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t ou
             uint64_t offset = va - it->second.base.va[inputType];
             uint64_t outputVa = it->second.base.va[outputType] + offset;
             BM_LOG_DEBUG("GetGvaByVa range mapping: input_va=" << VaToStr(va) << " -> output_va=" << VaToStr(outputVa)
-                                                                << " (offset=" << VaToStr(offset) << ")");
+                                                               << " (offset=" << VaToStr(offset) << ")");
             return outputVa;
         }
     }
@@ -211,10 +211,18 @@ std::pair<uint32_t, bool> HybmVaManager::GetRank(uint64_t gva)
 AddrType HybmVaManager::ClassifyAddress(const uint64_t va)
 {
     uint8_t mask = ClassifyAddressMask(va);
-    if (mask & BIT_LOCAL_HOST) { return LOCAL_HOST; }
-    if (mask & BIT_GLOBAL_HOST) { return GLOBAL_HOST; }
-    if (mask & BIT_LOCAL_DEVICE) { return LOCAL_DEVICE; }
-    if (mask & BIT_GLOBAL_DEVICE) { return GLOBAL_DEVICE; }
+    if (mask & BIT_LOCAL_HOST) {
+        return LOCAL_HOST;
+    }
+    if (mask & BIT_GLOBAL_HOST) {
+        return GLOBAL_HOST;
+    }
+    if (mask & BIT_LOCAL_DEVICE) {
+        return LOCAL_DEVICE;
+    }
+    if (mask & BIT_GLOBAL_DEVICE) {
+        return GLOBAL_DEVICE;
+    }
     return LOCAL_HOST;
 }
 
@@ -230,7 +238,9 @@ uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
         std::shared_lock<std::shared_mutex> lock(mutex_);
         if (!reservedMap_[HVM_GVA].empty()) {
             auto it = reservedMap_[HVM_GVA].upper_bound(va);
-            if (it != reservedMap_[HVM_GVA].begin()) { --it; }
+            if (it != reservedMap_[HVM_GVA].begin()) {
+                --it;
+            }
             if (it->second.Contains(va)) {
                 if (!r.inAllocGva) {
                     return 0; // 未 join → 无效
@@ -285,8 +295,8 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
     ReservedGvaInfo result;
     uint32_t t = HVM_DVA; // reserve device va all
     BM_VALIDATE_RETURN(size != 0, "size must > 0.", result);
-    BM_VALIDATE_RETURN(localSize != 0 || enable56BitsGva,
-                       "local size must > 0 when 56-bit GVA is not enabled.", result);
+    BM_VALIDATE_RETURN(localSize != 0 || enable56BitsGva, "local size must > 0 when 56-bit GVA is not enabled.",
+                       result);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
     uint64_t lva = 0;
@@ -338,8 +348,8 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
     return result;
 }
 
-ReservedGvaInfo HybmVaManager::AllocReserveLva(uint32_t localRankId, uint64_t size,
-                                               uint32_t type, hybm_mem_type memType)
+ReservedGvaInfo HybmVaManager::AllocReserveLva(uint32_t localRankId, uint64_t size, uint32_t type,
+                                               hybm_mem_type memType)
 {
     ReservedGvaInfo result;
     BM_VALIDATE_RETURN(size != 0, "size must > 0.", result);

@@ -14,7 +14,7 @@
 
 #include "hybm_types.h"
 
-#define private public
+#define private   public
 #define protected public
 #include "device/device_rdma_transport_manager.h"
 #include "dl_hccp_api.h"
@@ -70,13 +70,13 @@ struct DlHccpApiFnGuard {
     }
 };
 
-int FakeRaRdevGetHandleOkNonNull(uint32_t, void** handle)
+int FakeRaRdevGetHandleOkNonNull(uint32_t, void **handle)
 {
-    *handle = reinterpret_cast<void*>(0xABCUL);
+    *handle = reinterpret_cast<void *>(0xABCUL);
     return 0;
 }
 
-int FakeRaRdevGetHandleOkNull(uint32_t, void** handle)
+int FakeRaRdevGetHandleOkNull(uint32_t, void **handle)
 {
     *handle = nullptr;
     return 0;
@@ -92,31 +92,31 @@ uint32_t FakeTsdOpenOk(uint32_t, uint32_t)
     return 0U;
 }
 
-int FakeRaGetIfNumError(const HccpRaGetIfAttr*, uint32_t* num)
+int FakeRaGetIfNumError(const HccpRaGetIfAttr *, uint32_t *num)
 {
     *num = 0;
     return -1;
 }
 
-int FakeRaGetIfNumZero(const HccpRaGetIfAttr*, uint32_t* num)
+int FakeRaGetIfNumZero(const HccpRaGetIfAttr *, uint32_t *num)
 {
     *num = 0;
     return 0;
 }
 
-int FakeRaGetIfNumTwo(const HccpRaGetIfAttr*, uint32_t* num)
+int FakeRaGetIfNumTwo(const HccpRaGetIfAttr *, uint32_t *num)
 {
     *num = 2;
     return 0;
 }
 
-int FakeRaGetIfAddrsError(const HccpRaGetIfAttr*, HccpInterfaceInfo*, uint32_t* num)
+int FakeRaGetIfAddrsError(const HccpRaGetIfAttr *, HccpInterfaceInfo *, uint32_t *num)
 {
     (void)num;
     return -2;
 }
 
-int FakeRaGetIfAddrsOkEth0(const HccpRaGetIfAttr* cfg, HccpInterfaceInfo infos[], uint32_t* num)
+int FakeRaGetIfAddrsOkEth0(const HccpRaGetIfAttr *cfg, HccpInterfaceInfo infos[], uint32_t *num)
 {
     // Fill 2 entries, include eth<phyId> with AF_INET.
     if (num == nullptr || *num < 2) {
@@ -135,25 +135,25 @@ int FakeRaGetIfAddrsOkEth0(const HccpRaGetIfAttr* cfg, HccpInterfaceInfo infos[]
     return 0;
 }
 
-int FakeRaRdevInitV2Ok(HccpRdevInitInfo, HccpRdev, void** rdmaHandle)
+int FakeRaRdevInitV2Ok(HccpRdevInitInfo, HccpRdev, void **rdmaHandle)
 {
-    *rdmaHandle = reinterpret_cast<void*>(0xEEUL);
+    *rdmaHandle = reinterpret_cast<void *>(0xEEUL);
     return 0;
 }
 
-int FakeRaRdevInitV2Fail(HccpRdevInitInfo, HccpRdev, void** rdmaHandle)
+int FakeRaRdevInitV2Fail(HccpRdevInitInfo, HccpRdev, void **rdmaHandle)
 {
     *rdmaHandle = nullptr;
     return -5;
 }
 
-int FakeRaDeregisterMrFail(const void*, void*)
+int FakeRaDeregisterMrFail(const void *, void *)
 {
     return -7;
 }
 
 static int gRaInitCallCount = 0;
-int FakeRaInitFail(const HccpRaInitConfig* cfg)
+int FakeRaInitFail(const HccpRaInitConfig *cfg)
 {
     (void)cfg;
     gRaInitCallCount++;
@@ -162,23 +162,23 @@ int FakeRaInitFail(const HccpRaInitConfig* cfg)
 
 static int gAclMallocCallCount = 0;
 static int gAclFreeCallCount = 0;
-int32_t FakeAclrtMallocOk(void** ptr, size_t size, uint32_t flags)
+int32_t FakeAclrtMallocOk(void **ptr, size_t size, uint32_t flags)
 {
     (void)size;
     (void)flags;
     gAclMallocCallCount++;
-    *ptr = reinterpret_cast<void*>(0x12340000UL);
+    *ptr = reinterpret_cast<void *>(0x12340000UL);
     return 0;
 }
 
-int FakeAclrtFreeOk(void* ptr)
+int FakeAclrtFreeOk(void *ptr)
 {
     (void)ptr;
     gAclFreeCallCount++;
     return 0;
 }
 
-int32_t FakeAclrtMemcpyOk(void* dst, size_t dstSize, const void* src, size_t srcSize, uint32_t kind)
+int32_t FakeAclrtMemcpyOk(void *dst, size_t dstSize, const void *src, size_t srcSize, uint32_t kind)
 {
     (void)dst;
     (void)dstSize;
@@ -188,7 +188,7 @@ int32_t FakeAclrtMemcpyOk(void* dst, size_t dstSize, const void* src, size_t src
     return 0;
 }
 
-int FakeRaGetNotifyBaseAddrOk(void*, uint64_t* va, uint64_t* size)
+int FakeRaGetNotifyBaseAddrOk(void *, uint64_t *va, uint64_t *size)
 {
     if (va != nullptr) {
         *va = 0x90000000ULL;
@@ -199,7 +199,7 @@ int FakeRaGetNotifyBaseAddrOk(void*, uint64_t* va, uint64_t* size)
     return 0;
 }
 
-int FakeRaGetNotifyMrInfoOk(void*, HccpMrInfo* info)
+int FakeRaGetNotifyMrInfoOk(void *, HccpMrInfo *info)
 {
     if (info == nullptr) {
         return -1;
@@ -209,7 +209,7 @@ int FakeRaGetNotifyMrInfoOk(void*, HccpMrInfo* info)
     return 0;
 }
 
-int FakeRaRegisterMROk(const void*, HccpMrInfo* info, void** mrHandle)
+int FakeRaRegisterMROk(const void *, HccpMrInfo *info, void **mrHandle)
 {
     if (info != nullptr) {
         // Fill keys so InitStreamNotifyBuf can persist them.
@@ -219,11 +219,11 @@ int FakeRaRegisterMROk(const void*, HccpMrInfo* info, void** mrHandle)
     if (mrHandle == nullptr) {
         return -1;
     }
-    *mrHandle = reinterpret_cast<void*>(0xBEEFUL);
+    *mrHandle = reinterpret_cast<void *>(0xBEEFUL);
     return 0;
 }
 
-int FakeRaRegisterMRFail(const void*, HccpMrInfo* info, void** mrHandle)
+int FakeRaRegisterMRFail(const void *, HccpMrInfo *info, void **mrHandle)
 {
     (void)info;
     if (mrHandle != nullptr) {
@@ -234,11 +234,9 @@ int FakeRaRegisterMRFail(const void*, HccpMrInfo* info, void** mrHandle)
 
 class FakeQpManager final : public DeviceQpManager {
 public:
-    FakeQpManager() : DeviceQpManager(0, 0, 1, sockaddr_in{}, HYBM_ROLE_PEER)
-    {
-    }
+    FakeQpManager() : DeviceQpManager(0, 0, 1, sockaddr_in{}, HYBM_ROLE_PEER) {}
 
-    int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo>&) noexcept override
+    int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo> &) noexcept override
     {
         return setRemoteRet;
     }
@@ -246,7 +244,7 @@ public:
     {
         return waitingReadyRet;
     }
-    int Startup(void*) noexcept override
+    int Startup(void *) noexcept override
     {
         return startupRet;
     }
@@ -254,17 +252,17 @@ public:
     {
         shutdownCalled = true;
     }
-    int RemoveRanks(const std::unordered_set<uint32_t>& ranks) noexcept override
+    int RemoveRanks(const std::unordered_set<uint32_t> &ranks) noexcept override
     {
         (void)ranks;
         removeRanksCalled = true;
         return removeRanksRet;
     }
-    const void* GetQpInfoAddress() const noexcept override
+    const void *GetQpInfoAddress() const noexcept override
     {
         return qpInfoAddress;
     }
-    UserQpInfo* GetQpHandleWithRankId(uint32_t) noexcept override
+    UserQpInfo *GetQpHandleWithRankId(uint32_t) noexcept override
     {
         if (!returnQpHandle) {
             return nullptr;
@@ -272,11 +270,11 @@ public:
         userQpInfo_.qpHandle = qpHandleValue;
         return &userQpInfo_;
     }
-    void PutQpHandle(UserQpInfo*) const noexcept override
+    void PutQpHandle(UserQpInfo *) const noexcept override
     {
         putQpCalled = true;
     }
-    bool CheckQpReady(const std::vector<uint32_t>& rankIds) const noexcept override
+    bool CheckQpReady(const std::vector<uint32_t> &rankIds) const noexcept override
     {
         (void)rankIds;
         return checkQpReadyRet;
@@ -289,10 +287,10 @@ public:
     int removeRanksRet{BM_OK};
     int waitingReadyRet{BM_OK};
     bool checkQpReadyRet{true};
-    const void* qpInfoAddress{reinterpret_cast<void*>(0x1234UL)};
+    const void *qpInfoAddress{reinterpret_cast<void *>(0x1234UL)};
     bool returnQpHandle{false};
     mutable bool putQpCalled{false};
-    void* qpHandleValue{reinterpret_cast<void*>(0x55UL)};
+    void *qpHandleValue{reinterpret_cast<void *>(0x55UL)};
 
 private:
     mutable UserQpInfo userQpInfo_{};
@@ -312,7 +310,7 @@ public:
     Result asyncConnectRet{BM_OK};
     Result waitConnectedRet{BM_OK};
 };
-}  // namespace
+} // namespace
 
 TEST(RdmaTransportManagerTest, CloseDeviceClearsStateAndShutdownsQpManager)
 {
@@ -320,7 +318,7 @@ TEST(RdmaTransportManagerTest, CloseDeviceClearsStateAndShutdownsQpManager)
     auto qp = std::make_shared<FakeQpManager>();
     mgr.qpManager_ = qp;
     mgr.started_ = true;
-    mgr.rdmaHandle_ = reinterpret_cast<void*>(0x1UL);
+    mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);
     mgr.ranksMRs_.resize(3);
     mgr.notifyRemoteInfo_.resize(3);
     mgr.deviceChipInfo_ = std::make_shared<DeviceChipInfo>(0);
@@ -339,12 +337,12 @@ TEST(RdmaTransportManagerTest, CloseDeviceClearsStateAndShutdownsQpManager)
 TEST(RdmaTransportManagerTest, RegisterMemoryRegionReturnsDlFailedWhenRaRegisterUnavailable)
 {
     RdmaTransportManager mgr;
-    mgr.rdmaHandle_ = reinterpret_cast<void*>(0x1UL);
+    mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);
 
     TransportMemoryRegion mr{};
     mr.addr = 0x1000;
     mr.size = 0x2000;
-    mr.flags = 0;  // avoid DRAM path in ConvertHccpMrInfo
+    mr.flags = 0; // avoid DRAM path in ConvertHccpMrInfo
 
     auto ret = mgr.RegisterMemoryRegion(mr);
     EXPECT_EQ(ret, BM_DL_FUNCTION_FAILED);
@@ -361,14 +359,14 @@ TEST(RdmaTransportManagerTest, UnregisterMemoryRegionNotFoundReturnsInvalidParam
 TEST(RdmaTransportManagerTest, UnregisterMemoryRegionDeregisterFailDoesNotErase)
 {
     RdmaTransportManager mgr;
-    mgr.rdmaHandle_ = reinterpret_cast<void*>(0x1UL);
+    mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);
     mgr.deviceId_ = 0;
 
     RegMemResult reg{};
     reg.regAddress = 0x2000;
-    reg.address = 0x3000;  // make it go through HalHostUnregisterEx branch after deregister; but we fail earlier
+    reg.address = 0x3000; // make it go through HalHostUnregisterEx branch after deregister; but we fail earlier
     reg.size = 0x100;
-    reg.mrHandle = reinterpret_cast<void*>(0x99UL);
+    reg.mrHandle = reinterpret_cast<void *>(0x99UL);
     mgr.registerMRS_.emplace(0x2000, reg);
 
     auto ret = mgr.UnregisterMemoryRegion(0x2000);
@@ -422,7 +420,7 @@ TEST(RdmaTransportManagerTest, PrepareRejectsInvalidOptionsEarly)
     info.nic = "tcp://127.0.0.1:1234";
     opts.options.emplace(0U, info);
     opts.options.emplace(1U, info);
-    opts.options.emplace(2U, info);  // extra
+    opts.options.emplace(2U, info); // extra
     EXPECT_EQ(mgr.Prepare(opts), BM_INVALID_PARAM);
 
     // 2) contains rankId >= rankCount_ -> BM_INVALID_PARAM
@@ -454,7 +452,7 @@ TEST(RdmaTransportManagerTest, PrepareParseNicAndQpManagerFailuresArePropagated)
     mgr.role_ = HYBM_ROLE_PEER;
     mgr.rankId_ = 0;
     mgr.rankCount_ = 1;
-    mgr.rdmaHandle_ = reinterpret_cast<void*>(0x1UL);
+    mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);
     // Prepare() 内部会写 ranksMRs_[rankId] / notifyRemoteInfo_[rankId]，测试里需要预先按 rankCount_ 初始化避免 UB
     mgr.ranksMRs_.resize(mgr.rankCount_);
     mgr.notifyRemoteInfo_.resize(mgr.rankCount_);
@@ -594,7 +592,7 @@ TEST(RdmaTransportManagerTest, WaitQpReadyNullQpManagerAndOkPath)
     qp->checkQpReadyRet = true;
     mgr.qpManager_ = qp;
     mgr.rankCount_ = 1;
-    mgr.ranksMRs_.resize(1);  // 供循环安全访问
+    mgr.ranksMRs_.resize(1); // 供循环安全访问
     EXPECT_EQ(mgr.WaitQpReady(), BM_OK);
 }
 
@@ -649,9 +647,9 @@ TEST(RdmaTransportManagerTest, GetNicAndGetQpInfo)
 
     // qpManager_ 非空：返回 qpManager_->GetQpInfoAddress()
     auto qp = std::make_shared<FakeQpManager>();
-    qp->qpInfoAddress = reinterpret_cast<void*>(0xBEEFUL);
+    qp->qpInfoAddress = reinterpret_cast<void *>(0xBEEFUL);
     mgr.qpManager_ = qp;
-    EXPECT_EQ(mgr.GetQpInfo(), reinterpret_cast<const void*>(0xBEEFUL));
+    EXPECT_EQ(mgr.GetQpInfo(), reinterpret_cast<const void *>(0xBEEFUL));
 }
 
 TEST(RdmaTransportManagerTest, ReadWriteRemoteReturnErrorWhenQpManagerMissing)
@@ -693,7 +691,7 @@ TEST(RdmaTransportManagerTest, SynchronizeRankIdNullQpManagerAndNoQpHandleAndPut
     mgr.rankCount_ = 1;
     mgr.notifyRemoteInfo_.resize(1);
     auto ret = mgr.Synchronize(0);
-    EXPECT_NE(ret, BM_OK);  // 设备侧 stream 在 UT 环境通常未初始化，会走 BM_ASSERT_RETURN 失败路径
+    EXPECT_NE(ret, BM_OK); // 设备侧 stream 在 UT 环境通常未初始化，会走 BM_ASSERT_RETURN 失败路径
     EXPECT_TRUE(qp->putQpCalled);
 }
 
@@ -756,7 +754,7 @@ TEST(RdmaTransportManagerTest, PrepareOpenDeviceCoversHandleReusePath)
     DlHccpApi::gRaRdevGetHandle = &FakeRaRdevGetHandleOkNonNull;
     DlHccpApi::gRaGetIfNum = &FakeRaGetIfNumTwo;
     DlHccpApi::gRaGetIfAddrs = &FakeRaGetIfAddrsOkEth0;
-    void* handle = nullptr;
+    void *handle = nullptr;
     in_addr ip{};
     EXPECT_TRUE(RdmaTransportManager::PrepareOpenDevice(0, 0, 1, ip, handle));
     EXPECT_NE(handle, nullptr);
@@ -821,7 +819,7 @@ TEST(RdmaTransportManagerTest, ConstructSqeNoSinkModeFillsFieldsWhenDbAddrNonZer
     rtStarsSqe_t cmd{};
     mgr.ConstructSqeNoSinkModeForRdmaDbSendTask(rsp, cmd, st);
 
-    const auto& sqe = cmd.writeValueSqe;
+    const auto &sqe = cmd.writeValueSqe;
     EXPECT_EQ(sqe.header.type, RT_STARS_SQE_TYPE_WRITE_VALUE);
     EXPECT_EQ(sqe.header.wr_cqe, st->GetWqeFlag());
     EXPECT_EQ(sqe.header.rt_stream_id, static_cast<uint16_t>(st->GetId()));
@@ -840,7 +838,7 @@ TEST(RdmaTransportManagerTest, InitStreamNotifyBufSuccessAndRegisterFailPaths)
 
     RdmaTransportManager mgr;
     mgr.rankCount_ = 2;
-    mgr.rdmaHandle_ = reinterpret_cast<void*>(0x1UL);
+    mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);
 
     DlHccpApi::gRaGetNotifyBaseAddr = &FakeRaGetNotifyBaseAddrOk;
     DlHccpApi::gRaGetNotifyMrInfo = &FakeRaGetNotifyMrInfoOk;
@@ -870,7 +868,7 @@ TEST(RdmaTransportManagerTest, InitStreamNotifyBufSuccessAndRegisterFailPaths)
     EXPECT_EQ(mgr.notifyRemoteInfo_[0].first, 0U);
     EXPECT_EQ(mgr.notifyRemoteInfo_[0].second, 0U);
     EXPECT_EQ(gAclMallocCallCount, 1);
-    EXPECT_EQ(gAclFreeCallCount, 0);  // success path does not free
+    EXPECT_EQ(gAclFreeCallCount, 0); // success path does not free
 }
 
 TEST(RdmaTransportManagerTest, SynchronizeQpHandleReturnsErrorWhenNoStream)
@@ -881,7 +879,7 @@ TEST(RdmaTransportManagerTest, SynchronizeQpHandleReturnsErrorWhenNoStream)
     mgr.notifyRemoteInfo_[0] = {0x1111ULL, 0x2222U};
 
     // In UT env, HybmStreamManager can't create a real stream without HAL; should early-return BM_ERROR.
-    EXPECT_EQ(mgr.Synchronize(reinterpret_cast<void*>(0x1UL), 0), BM_ERROR);
+    EXPECT_EQ(mgr.Synchronize(reinterpret_cast<void *>(0x1UL), 0), BM_ERROR);
 }
 
 TEST(RdmaTransportManagerTest, RaRdevInitSuccessAndCachesHandle)
@@ -891,7 +889,7 @@ TEST(RdmaTransportManagerTest, RaRdevInitSuccessAndCachesHandle)
     // 使用：PrepareOpenDevice() 最后一步。
     DlHccpApi::gRaRdevInitV2 = &FakeRaRdevInitV2Ok;
 
-    void* handle = nullptr;
+    void *handle = nullptr;
     in_addr ip{};
     inet_aton("10.0.0.2", &ip);
     EXPECT_TRUE(RdmaTransportManager::RaRdevInit(0, ip, handle));
@@ -899,7 +897,7 @@ TEST(RdmaTransportManagerTest, RaRdevInitSuccessAndCachesHandle)
 
     // 缓存分支：即使底层函数被置空，也能返回 true 并复用之前的 handle
     DlHccpApi::gRaRdevInitV2 = nullptr;
-    void* handle2 = nullptr;
+    void *handle2 = nullptr;
     EXPECT_TRUE(RdmaTransportManager::RaRdevInit(0, ip, handle2));
     EXPECT_EQ(handle2, handle);
 }
@@ -909,7 +907,7 @@ TEST(RdmaTransportManagerTest, ClearAllRegisterMRsClearsMapEvenWhenNoHandle)
     RdmaTransportManager mgr;
     // 功能：ClearAllRegisterMRs 清理 registerMRS_；若 rdmaHandle_ 为空则不尝试 deregister，直接清空。
     RegMemResult reg{};
-    reg.mrHandle = reinterpret_cast<void*>(0x1UL);
+    reg.mrHandle = reinterpret_cast<void *>(0x1UL);
     mgr.registerMRS_.emplace(0x1000, reg);
     mgr.registerMRS_.emplace(0x2000, reg);
     mgr.rdmaHandle_ = nullptr;
@@ -923,9 +921,9 @@ TEST(RdmaTransportManagerTest, ClearAllRegisterMRsDeregisterFailsButStillClears)
     RdmaTransportManager mgr;
     // 功能：即使底层 RaDeregisterMR 失败，也应继续并最终清空 map（避免重复注销/泄露）。
     DlHccpApi::gRaDeregisterMR = &FakeRaDeregisterMrFail;
-    mgr.rdmaHandle_ = reinterpret_cast<void*>(0x1UL);
+    mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);
     RegMemResult reg{};
-    reg.mrHandle = reinterpret_cast<void*>(0x2UL);
+    reg.mrHandle = reinterpret_cast<void *>(0x2UL);
     mgr.registerMRS_.emplace(0x1000, reg);
     mgr.ClearAllRegisterMRs();
     EXPECT_TRUE(mgr.registerMRS_.empty());

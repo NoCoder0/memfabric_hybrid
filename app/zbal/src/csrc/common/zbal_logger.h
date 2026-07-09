@@ -98,12 +98,12 @@ public:
             return;
         }
 
-        struct timeval tv{};
+        struct timeval tv {};
         char strTime[24];
 
         gettimeofday(&tv, nullptr);
         time_t timeStamp = tv.tv_sec;
-        struct tm localTime{};
+        struct tm localTime {};
         auto result = localtime_r(&timeStamp, &localTime);
         if (result == nullptr) {
             return;

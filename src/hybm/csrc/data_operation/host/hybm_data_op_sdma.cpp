@@ -23,7 +23,7 @@
 
 namespace ock {
 namespace mf {
-constexpr uint32_t HYBM_SINGLE_PARAM_NUM = 16 * 1024; // 16K
+constexpr uint32_t HYBM_SINGLE_PARAM_NUM = 16 * 1024;                      // 16K
 constexpr uint64_t HYBM_SINGLE_PARAM_SIZE = HYBM_SINGLE_PARAM_NUM * 3 * 8; // 384K
 constexpr uint64_t HYBM_PARAM_SPACE_CAP = 170;
 constexpr uint64_t HYBM_PARAM_SPACE_SIZE = 64 * 1024 * 1024; // HYBM_SINGLE_PARAM_SIZE * HYBM_PARAM_SPACE_CAP = 63.75M
@@ -50,7 +50,7 @@ Result HostDataOpSDMA::Initialize() noexcept
     } else {
         auto ret = DlAclApi::AclrtMallocHost(&paramSpace_, HYBM_PARAM_SPACE_SIZE);
         BM_ASSERT_LOG_AND_RETURN(ret == 0 && paramSpace_ != nullptr,
-            "ret = " << ret << ", " << "paramSpace_ is nullptr", BM_MALLOC_FAILED);
+                                 "ret = " << ret << ", " << "paramSpace_ is nullptr", BM_MALLOC_FAILED);
 
         void *output = nullptr;
         ret = DlHalApi::HalHostRegister(paramSpace_, HYBM_PARAM_SPACE_SIZE, HOST_MEM_MAP_DEV,
@@ -62,8 +62,8 @@ Result HostDataOpSDMA::Initialize() noexcept
             return BM_ERROR;
         }
 
-        auto mask = reinterpret_cast<uint64_t *>(
-            reinterpret_cast<uint64_t>(paramSpace_) + HYBM_PARAM_SPACE_META_OFFSET);
+        auto mask =
+            reinterpret_cast<uint64_t *>(reinterpret_cast<uint64_t>(paramSpace_) + HYBM_PARAM_SPACE_META_OFFSET);
         for (uint32_t i = 0; i < HYBM_PARAM_SPACE_CAP; i++) {
             __atomic_store_n(mask + i * HYBM_PARAM_META_IDX_BASE, HYBM_EXTEND_CONCURRENT, __ATOMIC_RELEASE);
         }
@@ -317,7 +317,7 @@ Result HostDataOpSDMA::DataCopyAsync(hybm_copy_params &params, hybm_data_copy_di
         BM_LOG_ERROR("Failed to copy data async ret: " << ret << " direction: " << direction);
         return ret;
     }
-    return  InnerWait(options, ret);
+    return InnerWait(options, ret);
 }
 
 void HostDataOpSDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
@@ -477,17 +477,17 @@ void HostDataOpSDMA::InitG2GStreamTaskV2(StreamTask &task, void *destVA, const v
     sqe->opcode = 0U;
 
     sqe->srcStreamId = 0x1FU; // get sid and ssid from sq, leave 0 here
-    sqe->u.strideMode0.dstStreamId =  0x1FU;
+    sqe->u.strideMode0.dstStreamId = 0x1FU;
     sqe->srcSubStreamId = 1U;
     sqe->u.strideMode0.dstSubStreamId = 1U;
     sqe->vaValid = 0U;
-    sqe->ie2  = 0U;
+    sqe->ie2 = 0U;
     sqe->sssv = 1U;
     sqe->dssv = 1U;
-    sqe->sns  = 1U;
-    sqe->dns  = 1U;
-    sqe->sro  = 0U;
-    sqe->dro  = 0U;
+    sqe->sns = 1U;
+    sqe->dns = 1U;
+    sqe->sro = 0U;
+    sqe->dro = 0U;
     sqe->mapamPartId = 0U;
     sqe->mpamns = 0U;
     sqe->stride = 0U;
@@ -582,7 +582,7 @@ Result HostDataOpSDMA::InnerWait(const ExtOptions &options, int32_t waitId) noex
     }
     if (asyncRet != 0) {
         BM_LOG_ERROR("BatchCopyG2G wait copy stream:" << options.stream << " waitId:" << waitId
-            << " failed:" << asyncRet);
+                                                      << " failed:" << asyncRet);
     }
     return asyncRet;
 }
@@ -623,8 +623,8 @@ Result HostDataOpSDMA::BatchCopyExtend(hybm_batch_copy_params &params, void *str
         }
         BM_VALIDATE_RETURN(spaceId < HYBM_PARAM_SPACE_CAP, "alloc param space failed!", BM_ERROR);
 
-        auto tmpParam = reinterpret_cast<uint64_t *>(
-            reinterpret_cast<uint64_t>(paramSpace_) + spaceId * HYBM_SINGLE_PARAM_SIZE);
+        auto tmpParam =
+            reinterpret_cast<uint64_t *>(reinterpret_cast<uint64_t>(paramSpace_) + spaceId * HYBM_SINGLE_PARAM_SIZE);
         for (uint32_t i = 0, j = 0; i < nowBatchSize; i++) {
             tmpParam[j++] = reinterpret_cast<uint64_t>(params.sources[nowBatchStart + i]);
             tmpParam[j++] = reinterpret_cast<uint64_t>(params.destinations[nowBatchStart + i]);
@@ -632,8 +632,9 @@ Result HostDataOpSDMA::BatchCopyExtend(hybm_batch_copy_params &params, void *str
         }
 
         void *remoteAddr = reinterpret_cast<void *>(reinterpret_cast<uint64_t>(tmpParam) + paramOffset_);
-        auto ret = DlHybmExtendApi::HybmBatchCopyExtend(remoteAddr, nowBatchSize,
-            reinterpret_cast<void *>(reinterpret_cast<uint64_t>(maskPtr) + paramOffset_), HYBM_EXTEND_CONCURRENT, st);
+        auto ret = DlHybmExtendApi::HybmBatchCopyExtend(
+            remoteAddr, nowBatchSize, reinterpret_cast<void *>(reinterpret_cast<uint64_t>(maskPtr) + paramOffset_),
+            HYBM_EXTEND_CONCURRENT, st);
         if (ret != 0) {
             *reinterpret_cast<uint64_t *>(maskPtr) = HYBM_EXTEND_CONCURRENT;
             BM_LOG_ERROR("call HybmBatchCopyExtend failed, ret:" << ret);
@@ -667,8 +668,8 @@ Result HostDataOpSDMA::QuantCopy(hybm_quant_copy_params &params) noexcept
         }
         BM_VALIDATE_RETURN(spaceId < HYBM_PARAM_SPACE_CAP, "alloc param space failed!", BM_ERROR);
 
-        auto tmpParam = reinterpret_cast<uint64_t *>(
-            reinterpret_cast<uint64_t>(paramSpace_) + spaceId * HYBM_SINGLE_PARAM_SIZE);
+        auto tmpParam =
+            reinterpret_cast<uint64_t *>(reinterpret_cast<uint64_t>(paramSpace_) + spaceId * HYBM_SINGLE_PARAM_SIZE);
         for (uint32_t i = 0, j = 0; i < nowBatchSize; i++) {
             TransformVa(params.sources[nowBatchStart + i], params.destinations[nowBatchStart + i],
                         HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE);
@@ -682,7 +683,8 @@ Result HostDataOpSDMA::QuantCopy(hybm_quant_copy_params &params) noexcept
         }
 
         void *remoteAddr = reinterpret_cast<void *>(reinterpret_cast<uint64_t>(tmpParam) + paramOffset_);
-        auto ret = DlHybmExtendApi::HybmBatchCopyQuant(remoteAddr, nowBatchSize, params.unitNum, params.inputType,
+        auto ret = DlHybmExtendApi::HybmBatchCopyQuant(
+            remoteAddr, nowBatchSize, params.unitNum, params.inputType,
             reinterpret_cast<void *>(reinterpret_cast<uint64_t>(maskPtr) + paramOffset_), HYBM_EXTEND_CONCURRENT, st);
         if (ret != 0) {
             *reinterpret_cast<uint64_t *>(maskPtr) = HYBM_EXTEND_CONCURRENT;
@@ -710,8 +712,8 @@ Result HostDataOpSDMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtOpt
     uint64_t len = 0U;
 
     auto asyncFunc = [&]() {
-        asyncRet = CopyG2GAsync(reinterpret_cast<void *>(dest), reinterpret_cast<void *>(src), len,
-                                options.flags, options.stream);
+        asyncRet = CopyG2GAsync(reinterpret_cast<void *>(dest), reinterpret_cast<void *>(src), len, options.flags,
+                                options.stream);
         if (asyncRet != 0) {
             BM_LOG_ERROR("BatchCopyG2G failed:" << asyncRet << " src:" << src << " dest:" << dest << " length:" << len);
             ret = asyncRet;
