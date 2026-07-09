@@ -76,6 +76,7 @@ halMemTransShareableHandleFunc DlHalApi::pHalMemTransShareableHandle = nullptr;
 halMemGetAllocationGranularityFunc DlHalApi::pHalMemGetAllocationGranularity = nullptr;
 halMemAllocFunc DlHalApi::pHalMemAlloc = nullptr;
 halMemFreeFunc DlHalApi::pHalMemFree = nullptr;
+drvMemGetAttributeFunc DlHalApi::pDrvMemGetAttribute = nullptr;
 
 Result DlHalApi::LoadHybmVmmLibrary(uint32_t gvaVersion)
 {
@@ -188,6 +189,7 @@ Result DlHalApi::LoadLibrary(uint32_t gvaVersion)
     DL_LOAD_SYM(pHalHostRegister, halHostRegisterFunc, halHandle, "halHostRegister");
     DL_LOAD_SYM(pHalHostUnregisterEx, halHostUnregisterExFunc, halHandle, "halHostUnregisterEx");
     DL_LOAD_SYM(pDrvNotifyIdAddrOffset, drvNotifyIdAddrOffsetFunc, halHandle, "drvNotifyIdAddrOffset");
+    DL_LOAD_SYM_OPTIONAL(pDrvMemGetAttribute, drvMemGetAttributeFunc, halHandle, "drvMemGetAttribute");
 
     gLoaded = true;
     return BM_OK;
@@ -244,6 +246,7 @@ void DlHalApi::CleanupHalApi()
     pHalMemGetAllocationGranularity = nullptr;
     pHalMemAlloc = nullptr;
     pHalMemFree = nullptr;
+    pDrvMemGetAttribute = nullptr;
 }
 
 void DlHalApi::CleanupLibrary()

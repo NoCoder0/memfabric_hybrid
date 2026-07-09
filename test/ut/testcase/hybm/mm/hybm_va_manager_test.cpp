@@ -14,6 +14,7 @@
 #include <atomic>
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
+#include "dl_hal_api.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
 #include "hybm_va_manager.h"
@@ -68,6 +69,7 @@ constexpr hybm_mem_type TEST_MEM_TYPE_DEVICE = HYBM_MEM_TYPE_DEVICE;
 // SoC 类型枚举
 constexpr AscendSocType TEST_SOC_910B = AscendSocType::ASCEND_910B;
 constexpr AscendSocType TEST_SOC_910 = AscendSocType::ASCEND_910C;
+constexpr AscendSocType TEST_SOC_A5 = AscendSocType::ASCEND_950;
 
 // 并发测试常量
 constexpr int TEST_THREAD_COUNT_FOUR = 4;
@@ -75,16 +77,39 @@ constexpr int TEST_THREAD_COUNT_EIGHT = 8;
 constexpr int TEST_OPERATIONS_PER_THREAD_TEN = 10;
 constexpr int TEST_OPERATIONS_PER_THREAD_FIFTY = 50;
 
+// host mock memType：非 DV_MEM_SVM_DEVICE 即视为 host
+constexpr uint32_t MOCK_HOST_ATTR_MEM_TYPE = 0x0002;
+uint32_t g_mockAttrMemType = MOCK_HOST_ATTR_MEM_TYPE;
+
+int MockDrvMemGetAttribute(DVdeviceptr vptr, DVattribute *attr)
+{
+    if (vptr == 0 || attr == nullptr) {
+        return BM_INVALID_PARAM;
+    }
+    attr->memType = g_mockAttrMemType;
+    return BM_OK;
+}
+
+int MockDrvMemGetAttributeUnload(DVdeviceptr vptr, DVattribute *attr)
+{
+    (void)vptr;
+    (void)attr;
+    return BM_UNDER_API_UNLOAD;
+}
+
 class HybmVaManagerTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
+        GlobalMockObject::reset();
         manager.ClearAll();
         manager.Initialize(TEST_SOC_910B);
     }
 
     void TearDown() override
     {
+        GlobalMockObject::verify();
+        GlobalMockObject::reset();
         manager.ClearAll();
     }
 
@@ -809,6 +834,62 @@ TEST_F(HybmVaManagerTest, ClassifyAddress_DeviceVaRange_ReturnsLocalDevice)
     uint64_t deviceAddr = HYBM_DEVICE_VA_START + 0x1000;
     // 不注册，仅测试 device VA 范围兜底
     EXPECT_EQ(manager.ClassifyAddress(deviceAddr), LOCAL_DEVICE);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddress_A5DeviceAttr_ReturnsLocalDevice)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_SVM_DEVICE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    uint64_t deviceAddr = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE + TEST_OFFSET_ONE_MB;
+
+    EXPECT_EQ(manager.ClassifyAddress(deviceAddr), LOCAL_DEVICE);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddress_A5LockDevAttr_ReturnsLocalDevice)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_LOCK_DEV;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    uint64_t deviceAddr = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE + TEST_OFFSET_ONE_MB;
+
+    EXPECT_EQ(manager.ClassifyAddress(deviceAddr), LOCAL_DEVICE);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddress_A5LockDevDvppAttr_ReturnsLocalDevice)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_LOCK_DEV_DVPP;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    uint64_t deviceAddr = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE + TEST_OFFSET_ONE_MB;
+
+    EXPECT_EQ(manager.ClassifyAddress(deviceAddr), LOCAL_DEVICE);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddress_A5HostAttr_ReturnsLocalHost)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = MOCK_HOST_ATTR_MEM_TYPE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    uint64_t hostAddr = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE + TEST_OFFSET_ONE_MB;
+
+    EXPECT_EQ(manager.ClassifyAddress(hostAddr), LOCAL_HOST);
+}
+
+// A5 drvMemGetAttribute 失败场景：mock 返回 BM_UNDER_API_UNLOAD，ClassifyAddress 兜底为 LOCAL_HOST
+TEST_F(HybmVaManagerTest, ClassifyAddress_A5AttrFail_ReturnsLocalHost)
+{
+    manager.Initialize(TEST_SOC_A5);
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttributeUnload));
+
+    uint64_t addr = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE + TEST_OFFSET_ONE_MB;
+
+    EXPECT_EQ(manager.ClassifyAddress(addr), LOCAL_HOST);
+    EXPECT_EQ(manager.InferCopyDirection(addr, addr), HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
 // 测试58: ClassifyAddress import 远端 DEVICE GVA → GLOBAL_DEVICE

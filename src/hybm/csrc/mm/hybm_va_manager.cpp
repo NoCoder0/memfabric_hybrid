@@ -9,15 +9,34 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
-#include "hybm_va_manager.h"
+
 #include <sstream>
 #include <algorithm>
 #include <cstring>
 #include <chrono>
 #include <set>
 
+#include "dl_hal_api.h"
+#include "hybm_va_manager.h"
+
 namespace ock {
 namespace mf {
+
+namespace {
+uint8_t Classify950AddressByHal(uint64_t va)
+{
+    DVattribute attr{};
+    auto ret = DlHalApi::DrvMemGetAttribute(static_cast<DVdeviceptr>(va), &attr);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("Classify950AddressByHal failed: DrvMemGetAttribute ret=" << ret << ", va=" << VaToStr(va));
+        return 0;
+    }
+    if (attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV || attr.memType == DV_MEM_LOCK_DEV_DVPP) {
+        return HybmVaManager::BIT_LOCAL_DEVICE;
+    }
+    return HybmVaManager::BIT_LOCAL_HOST;
+}
+} // namespace
 
 uint8_t HybmVaManager::directionLut[BIT_LUT_SIZE];
 
@@ -43,8 +62,8 @@ Result HybmVaManager::Initialize(AscendSocType socType) noexcept
         BM_LOG_ERROR("soc type is unknown.");
         return BM_INVALID_PARAM;
     }
-    soc_ = socType;
 #endif
+    soc_ = socType;
     return BM_OK;
 }
 
@@ -252,6 +271,10 @@ uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
                 }
             }
         }
+    }
+
+    if (soc_ == ASCEND_950) {
+        return Classify950AddressByHal(va);
     }
 
     if (va >= HYBM_DEVICE_VA_START && va < HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE) {

@@ -66,6 +66,23 @@ extern "C" {
 #define MEM_PAGE_NORMAL (0X0UL << MEM_PAGE_BIT)
 #define MEM_PAGE_HUGE   (0X1UL << MEM_PAGE_BIT)
 
+#define DV_MEM_SVM_DEVICE    0x0004
+#define DV_MEM_LOCK_DEV      0x0010
+#define DV_MEM_LOCK_DEV_DVPP 0x0020
+#define DV_MEM_RESV          8
+
+typedef uint64_t DVdeviceptr;
+typedef int32_t DVresult;
+
+struct DVattribute {
+    uint32_t memType;
+    uint32_t resv1;
+    uint32_t resv2;
+    uint32_t devId;
+    uint32_t pageSize;
+    uint32_t resv[DV_MEM_RESV];
+};
+
 typedef enum tagDrvSqCqType {
     DRV_NORMAL_TYPE = 0,
     DRV_CALLBACK_TYPE,

@@ -71,6 +71,7 @@ using halMemTransShareableHandleFunc = int (*)(drv_mem_handle_type, struct MemSh
 using halMemGetAllocationGranularityFunc = int (*)(const struct drv_mem_prop *, drv_mem_granularity_options, size_t *);
 using halMemAllocFunc = int (*)(void **, uint64_t, uint64_t);
 using halMemFreeFunc = int (*)(void *);
+using drvMemGetAttributeFunc = DVresult (*)(DVdeviceptr, struct DVattribute *);
 
 class DlHalApi {
 public:
@@ -478,6 +479,14 @@ public:
         return pHalMemFree(pp);
     }
 
+    static inline int DrvMemGetAttribute(DVdeviceptr vptr, struct DVattribute *attr)
+    {
+        if (pDrvMemGetAttribute == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pDrvMemGetAttribute(vptr, attr);
+    }
+
 private:
     static Result LoadHybmVmmLibrary(uint32_t gvaVersion);
     static Result LoadHybmV1V2Library(uint32_t gvaVersion);
@@ -540,6 +549,7 @@ private:
     static halMemGetAllocationGranularityFunc pHalMemGetAllocationGranularity;
     static halMemAllocFunc pHalMemAlloc;
     static halMemFreeFunc pHalMemFree;
+    static drvMemGetAttributeFunc pDrvMemGetAttribute;
 };
 
 } // namespace mf
