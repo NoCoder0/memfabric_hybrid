@@ -65,10 +65,10 @@ TEST(SampleBucketTest, AddAndGetAt)
     EXPECT_TRUE(bucket.Add(20U));
     EXPECT_EQ(bucket.NumStored(), 4U);
     EXPECT_TRUE(bucket.Full());
-    EXPECT_FALSE(bucket.Add(50U));
-    EXPECT_EQ(bucket.NumAdded(), 5U);
     EXPECT_EQ(bucket.GetAt(0U), 10U);
     EXPECT_EQ(bucket.GetAt(3U), 40U);
+    EXPECT_FALSE(bucket.Add(50U));
+    EXPECT_EQ(bucket.NumAdded(), 5U);
 }
 
 TEST(SampleBucketTest, Clear_ResetsState)

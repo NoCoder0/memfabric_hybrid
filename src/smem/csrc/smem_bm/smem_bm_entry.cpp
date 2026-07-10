@@ -33,12 +33,12 @@ Result SmemBmEntry::AllocDramMemBySlice(hybm_entity_t entity, uint64_t totalSize
     uint64_t allocated = 0;
     while (remaining > 0) {
         uint64_t sliceSize = (remaining >= dramSliceSize) ? dramSliceSize : remaining;
-        SM_LOG_INFO("alloc dram slice progress: " << allocated << "/" << totalSize <<
-            ", currentSliceSize: " << sliceSize);
+        SM_LOG_INFO("alloc dram slice progress: " << allocated << "/" << totalSize
+                                                  << ", currentSliceSize: " << sliceSize);
         auto memSlice = hybm_alloc_local_memory(entity, HYBM_MEM_TYPE_HOST, sliceSize, flags);
         if (memSlice == nullptr) {
-            SM_LOG_ERROR("alloc host mem slice failed, allocated: " << allocated << " sliceSize: " << sliceSize <<
-                " totalSize: " << totalSize);
+            SM_LOG_ERROR("alloc host mem slice failed, allocated: " << allocated << " sliceSize: " << sliceSize
+                                                                    << " totalSize: " << totalSize);
             return SM_ERROR;
         }
         slices_.push_back(memSlice);
