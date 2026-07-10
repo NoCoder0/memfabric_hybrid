@@ -184,13 +184,16 @@ Result HostDataOpSDMA::CopyLH2GD(void *gvaAddr, const void *hostAddr, size_t cou
     void *copyDevice;
     auto ret = DlAclApi::AclrtMalloc(&copyDevice, count, 0);
     if (ret != 0) {
-        BM_LOG_ERROR("allocate temp copy memory on local device failed: " << ret);
+        BM_LOG_ERROR("AclrtMalloc temp copy memory failed, ret: " << ret << " size: " << count << std::hex
+                                                                  << " hostAddr: " << hostAddr);
         return BM_DL_FUNCTION_FAILED;
     }
 
     ret = DlAclApi::AclrtMemcpy(copyDevice, count, hostAddr, count, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
-        BM_LOG_ERROR("copy host data to temp copy memory on local device failed: " << ret);
+        BM_LOG_ERROR("AclrtMemcpy(H2D) to temp copy memory failed, ret: " << ret << std::hex << " src: " << hostAddr
+                                                                          << " dst: " << copyDevice << std::dec
+                                                                          << " size: " << count);
         DlAclApi::AclrtFree(copyDevice);
         return BM_DL_FUNCTION_FAILED;
     }
@@ -637,7 +640,7 @@ Result HostDataOpSDMA::BatchCopyExtend(hybm_batch_copy_params &params, void *str
             HYBM_EXTEND_CONCURRENT, st);
         if (ret != 0) {
             *reinterpret_cast<uint64_t *>(maskPtr) = HYBM_EXTEND_CONCURRENT;
-            BM_LOG_ERROR("call HybmBatchCopyExtend failed, ret:" << ret);
+            BM_LOG_ERROR("HybmBatchCopyExtend failed, ret: " << ret << " nowBatchSize: " << nowBatchSize);
             return BM_ERROR;
         }
     }
@@ -814,7 +817,8 @@ Result HostDataOpSDMA::BatchCopyLH2GH(void **gvaAddrs, void **hostAddrs, const u
     for (auto i = 0U; i < batchSize; i++) {
         ret = CopyLH2GH(gvaAddrs[i], hostAddrs[i], counts[i], stream);
         if (ret != 0) {
-            BM_LOG_ERROR("copy memory on local host to GVA failed: " << ret);
+            BM_LOG_ERROR("CopyLH2GH failed, ret: " << ret << " i: " << i << std::hex << " src: " << hostAddrs[i]
+                                                   << " dst: " << gvaAddrs[i] << std::dec << " size: " << counts[i]);
             return ret;
         }
     }

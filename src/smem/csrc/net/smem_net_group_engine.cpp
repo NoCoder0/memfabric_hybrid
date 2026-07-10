@@ -72,11 +72,11 @@ SmemGroupEnginePtr SmemNetGroupEngine::Create(const StorePtr &store, const SmemG
 {
     std::string prefix = (option.dynamic ? "D_" : "S_");
     StorePtr ss = StoreFactory::PrefixStore(store, prefix);
-    SM_ASSERT_RETURN(ss != nullptr, nullptr);
+    SM_VALIDATE_RETURN(ss != nullptr, "PrefixStore failed, prefix: " << prefix, nullptr);
     StoreManagerPtr managerPtr = Convert<ConfigStore, ConfigStoreManager>(ss);
-    SM_ASSERT_RETURN(managerPtr != nullptr, nullptr);
+    SM_VALIDATE_RETURN(managerPtr != nullptr, "Convert to ConfigStoreManager failed, prefix: " << prefix, nullptr);
     SmemGroupEnginePtr group = SmMakeRef<SmemNetGroupEngine>(managerPtr, option);
-    SM_ASSERT_RETURN(group != nullptr, nullptr);
+    SM_VALIDATE_RETURN(group != nullptr, "SmemMakeRef<SmemNetGroupEngine> failed, rank: " << option.rank, nullptr);
 
     if (option.linkDownCb != nullptr) {
         auto *rawGroup = group.Get();
@@ -99,7 +99,8 @@ SmemGroupEnginePtr SmemNetGroupEngine::Create(const StorePtr &store, const SmemG
     }
 
     if (option.dynamic) {
-        SM_ASSERT_RETURN(group->StartListen() == SM_OK, nullptr);
+        auto slRet = group->StartListen();
+        SM_VALIDATE_RETURN(slRet == SM_OK, "StartListen failed, rank: " << option.rank << " ret: " << slRet, nullptr);
     }
     return group.Get();
 }
@@ -440,7 +441,9 @@ Result SmemNetGroupEngine::GroupAllGather(const char *sendBuf, uint32_t sendSize
     SM_ASSERT_RETURN(store_ != nullptr, SM_INVALID_PARAM);
     SM_ASSERT_RETURN(!option_.dynamic, SM_ERROR);
     uint32_t size = groupInfo_.groupSize;
-    SM_ASSERT_RETURN(sendSize * size == recvSize, SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(sendSize * size == recvSize,
+                       "size mismatch, sendSize: " << sendSize << " groupSize: " << size << " recvSize: " << recvSize,
+                       SM_INVALID_PARAM);
 
     std::string prefix = std::to_string(groupVersion_) + "_";
     std::string idx = prefix + std::to_string(++allGatherGroupSn_);
@@ -535,7 +538,9 @@ Result SmemNetGroupEngine::GroupAllGather(const char *key, uint32_t rankSize, ui
                        SM_INVALID_PARAM);
 
     uint32_t size = rankSize;
-    SM_ASSERT_RETURN(sendSize * size == recvSize, SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(sendSize * size == recvSize,
+                       "size mismatch, sendSize: " << sendSize << " rankSize: " << size << " recvSize: " << recvSize,
+                       SM_INVALID_PARAM);
 
     std::string userKey = std::string(key);
     uint32_t &localSn = userGroupGatherSn_[userKey];
@@ -1285,10 +1290,18 @@ bool SmemNetGroupEngine::UpdateBitmapFromRank(SmemGroupInfo &info, uint32_t rank
 Result SmemNetGroupEngine::StartListen()
 {
     SM_ASSERT_RETURN(store_ != nullptr, SM_INVALID_PARAM);
-    SM_ASSERT_RETURN(eventListenSignal_.Initialize() == SM_OK, SM_ERROR);
-    SM_ASSERT_RETURN(linkListenSignal_.Initialize() == SM_OK, SM_ERROR);
-    SM_ASSERT_RETURN(localOpSignal_.Initialize() == SM_OK, SM_ERROR);
-    SM_ASSERT_RETURN(linkOpSignal_.Initialize() == SM_OK, SM_ERROR);
+    auto elRet = eventListenSignal_.Initialize();
+    SM_VALIDATE_RETURN(elRet == SM_OK, "eventListenSignal init failed, rank: " << option_.rank << " ret: " << elRet,
+                       SM_ERROR);
+    auto llRet = linkListenSignal_.Initialize();
+    SM_VALIDATE_RETURN(llRet == SM_OK, "linkListenSignal init failed, rank: " << option_.rank << " ret: " << llRet,
+                       SM_ERROR);
+    auto loRet = localOpSignal_.Initialize();
+    SM_VALIDATE_RETURN(loRet == SM_OK, "localOpSignal init failed, rank: " << option_.rank << " ret: " << loRet,
+                       SM_ERROR);
+    auto lkoRet = linkOpSignal_.Initialize();
+    SM_VALIDATE_RETURN(lkoRet == SM_OK, "linkOpSignal init failed, rank: " << option_.rank << " ret: " << lkoRet,
+                       SM_ERROR);
 
     std::thread th1(&SmemNetGroupEngine::GroupListenEvent, this);
     while (!(listenThreadStarted_.load() & 1U)) {

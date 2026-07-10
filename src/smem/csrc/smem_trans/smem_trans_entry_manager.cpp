@@ -37,7 +37,10 @@ Result SmemTransEntryManager::CreateEntryByName(const std::string &name, const s
 
     StorePtr confStore = StoreFactory::CreateStoreByUrl(storeUrl, ConfigStoreModel::CSM_CLIENT, UINT32_MAX, -1,
                                                         static_cast<int32_t>(config.initTimeout));
-    SM_ASSERT_RETURN(confStore != nullptr, StoreFactory::GetFailedReason());
+    SM_VALIDATE_RETURN(confStore != nullptr,
+                       "CreateStoreByUrl failed, storeUrl: " << storeUrl << " initTimeout: " << config.initTimeout
+                                                             << " reason: " << StoreFactory::GetFailedReason(),
+                       StoreFactory::GetFailedReason());
     confStore = StoreFactory::PrefixStore(confStore, "TRANS_");
 
     std::vector<uint8_t> rankIdData;

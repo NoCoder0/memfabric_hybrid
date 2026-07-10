@@ -35,14 +35,20 @@ Result SmemShmEntryManager::Initialize(const char *configStoreIpPort, uint32_t w
 
     UrlExtraction option;
     std::string url(configStoreIpPort);
-    SM_ASSERT_RETURN(option.ExtractIpPortFromUrl(url) == SM_OK, SM_INVALID_PARAM);
+    auto urlRet = option.ExtractIpPortFromUrl(url);
+    SM_VALIDATE_RETURN(urlRet == SM_OK, "ExtractIpPortFromUrl failed, url: " << url << " ret: " << urlRet,
+                       SM_INVALID_PARAM);
     storeUrl_ = url;
     if (rankId == 0 && config->startConfigStoreServer) {
         store_ = StoreFactory::CreateStoreByUrl(storeUrl_, CSM_BOTH, worldSize, rankId);
     } else {
         store_ = StoreFactory::CreateStoreByUrl(storeUrl_, CSM_CLIENT, worldSize, rankId);
     }
-    SM_ASSERT_RETURN(store_ != nullptr, SM_ERROR);
+    SM_VALIDATE_RETURN(store_ != nullptr,
+                       "CreateStoreByUrl failed, storeUrl: " << storeUrl_ << " worldSize: " << worldSize
+                                                             << " rankId: " << rankId
+                                                             << " reason: " << StoreFactory::GetFailedReason(),
+                       SM_ERROR);
 
     config_ = *config;
     deviceId_ = deviceId;

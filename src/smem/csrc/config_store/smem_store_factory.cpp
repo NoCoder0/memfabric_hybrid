@@ -110,6 +110,7 @@ struct ParsedStoreUrl {
             break;
         }
         default:
+            STORE_LOG_ERROR("CreateBackend unknown backend type: " << static_cast<int>(type));
             return nullptr;
     }
     if (result == nullptr) {

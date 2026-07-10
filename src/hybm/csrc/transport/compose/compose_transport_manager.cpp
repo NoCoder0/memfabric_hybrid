@@ -437,10 +437,11 @@ Result ComposeTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint
         if (ret == BM_OK) {
             return BM_OK;
         }
-        BM_LOG_ERROR("Failed to ReadRemote by host transport ret:" << ret);
+        BM_LOG_ERROR("Failed to ReadRemote by host transport, ret: " << ret);
     }
 
-    BM_LOG_ERROR("Failed to ReadRemote.");
+    BM_LOG_ERROR("Failed to ReadRemote, rankId: " << rankId << std::hex << " lAddr: 0x" << lAddr << " rAddr: 0x"
+                                                  << rAddr << std::dec << " size: " << size);
     return BM_ERROR;
 }
 
@@ -452,7 +453,7 @@ Result ComposeTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uin
         if (ret == BM_OK) {
             return BM_OK;
         }
-        BM_LOG_ERROR("Failed to WriteRemote by device transport ret:" << ret);
+        BM_LOG_ERROR("Failed to WriteRemote by device transport, ret: " << ret);
     }
 
     if (opType & HOST_PROTOCOL) {
@@ -460,9 +461,10 @@ Result ComposeTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uin
         if (ret == BM_OK) {
             return BM_OK;
         }
-        BM_LOG_ERROR("Failed to WriteRemote by host transport ret:" << ret);
+        BM_LOG_ERROR("Failed to WriteRemote by host transport, ret: " << ret);
     }
-    BM_LOG_ERROR("Failed to WriteRemote.");
+    BM_LOG_ERROR("Failed to WriteRemote, rankId: " << rankId << std::hex << " lAddr: 0x" << lAddr << " rAddr: 0x"
+                                                   << rAddr << std::dec << " size: " << size);
     return BM_ERROR;
 }
 
@@ -567,7 +569,7 @@ Result ComposeTransportManager::Synchronize(uint32_t rankId)
         if (ret == BM_OK) {
             return BM_OK;
         }
-        BM_LOG_ERROR("Failed to ReadRemoteAsync by device transport ret:" << ret);
+        BM_LOG_ERROR("Failed to Synchronize by device transport, ret: " << ret << " rankId: " << rankId);
     }
 
     if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
@@ -575,10 +577,10 @@ Result ComposeTransportManager::Synchronize(uint32_t rankId)
         if (ret == BM_OK) {
             return BM_OK;
         }
-        BM_LOG_ERROR("Failed to ReadRemoteAsync by host transport ret:" << ret);
+        BM_LOG_ERROR("Failed to Synchronize by host transport, ret: " << ret << " rankId: " << rankId);
     }
 
-    BM_LOG_ERROR("Failed to WriteRemote.");
+    BM_LOG_ERROR("Failed to Synchronize, rankId: " << rankId);
     return BM_ERROR;
 }
 

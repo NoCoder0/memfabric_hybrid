@@ -164,7 +164,9 @@ Result HybmDevLegacySegment::AllocLocalMemory(uint64_t size, MemSlicePtr &slice)
     if (size > 0) {
         auto ret = drv::HalGvaAlloc((uint64_t)(lvaBase_ + allocatedSize_), size, 0);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("HalGvaAlloc memory failed: " << ret);
+            BM_LOG_ERROR("HalGvaAlloc failed, ret: " << ret << " addr: 0x" << std::hex
+                                                     << (uint64_t)(lvaBase_ + allocatedSize_) << " size: " << size
+                                                     << " deviceId: " << deviceId_);
             return BM_DL_FUNCTION_FAILED;
         }
     }
@@ -384,7 +386,9 @@ Result HybmDevLegacySegment::Mmap() noexcept
         if (options_.shared && CanSdmaReaches(im.superPodId, im.serverId, im.logicDeviceId)) {
             auto ret = drv::HalGvaOpen(im.deviceVa, im.shmName, im.size, 0);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("HalGvaOpen memory failed:" << ret);
+                BM_LOG_ERROR("HalGvaOpen failed, ret: " << ret << " shmName: " << im.shmName << " deviceVa: 0x"
+                                                        << std::hex << im.deviceVa << " size: " << im.size
+                                                        << " remoteRank: " << im.rankId);
                 return -1;
             }
             gvaOpened = true;

@@ -83,14 +83,15 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     do {
         entity = hybm_create_entity((Id() << 1) + 1U, &options, flags);
         if (entity == nullptr) {
-            SM_LOG_ERROR("create entity failed");
+            SM_LOG_ERROR("hybm_create_entity failed, entityId: " << ((Id() << 1) + 1U) << " rankId: " << options.rankId
+                                                                 << " flags: " << flags);
             ret = SM_ERROR;
             break;
         }
 
         ret = hybm_reserve_mem_space(entity, flags);
         if (ret != 0) {
-            SM_LOG_ERROR("reserve mem failed, result: " << ret);
+            SM_LOG_ERROR("hybm_reserve_mem_space failed, entityId: " << ((Id() << 1) + 1U) << " ret: " << ret);
             hybm_destroy_entity(entity, flags);
             ret = SM_ERROR;
             break;
@@ -367,7 +368,7 @@ Result SmemBmEntry::LeaveHandle(uint32_t rk)
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
     auto ret = hybm_remove_imported(entity_, rk, 0);
     if (ret != 0) {
-        SM_LOG_ERROR("hybm leave failed, result: " << ret);
+        SM_LOG_ERROR("hybm_remove_imported (leave) failed, remoteRank: " << rk << " ret: " << ret);
         return SM_ERROR;
     }
     InvokeEventCb(rk, SMEM_GROUP_EVENT_LEAVE);
@@ -770,7 +771,8 @@ Result SmemBmEntry::CreateGlobalTeam(uint32_t rankSize, uint32_t rankId)
                            true,      joinFunc, updateFunc,
                            leaveFunc, nullptr};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(_configStore, opt);
-    SM_ASSERT_RETURN(group != nullptr, SM_ERROR);
+    SM_VALIDATE_RETURN(group != nullptr,
+                       "SmemNetGroupEngine::Create failed, rankSize: " << rankSize << " rankId: " << rankId, SM_ERROR);
 
     globalGroup_ = group;
     return SM_OK;

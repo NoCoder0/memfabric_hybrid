@@ -112,7 +112,7 @@ SMEM_API int32_t smem_trans_register_mem(smem_trans_t handle, void *address, siz
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -145,7 +145,7 @@ SMEM_API int32_t smem_trans_batch_register_mem(smem_trans_t handle, void *addres
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -183,7 +183,7 @@ SMEM_API int32_t smem_trans_write(smem_trans_t handle, const void *local_addr, c
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -202,7 +202,7 @@ SMEM_API int32_t smem_trans_batch_write(smem_trans_t handle, const void *local_a
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -221,7 +221,7 @@ SMEM_API int32_t smem_trans_read(smem_trans_t handle, void *local_addr, const ch
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -241,7 +241,7 @@ SMEM_API int32_t smem_trans_batch_read(smem_trans_t handle, void *local_addrs[],
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -261,7 +261,7 @@ SMEM_API int32_t smem_trans_write_submit(smem_trans_t handle, const void *local_
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -281,7 +281,7 @@ SMEM_API int32_t smem_trans_read_submit(smem_trans_t handle, void *local_addr, c
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -302,7 +302,7 @@ SMEM_API int32_t smem_trans_batch_write_submit(smem_trans_t handle, const void *
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -323,7 +323,7 @@ SMEM_API int32_t smem_trans_batch_read_submit(smem_trans_t handle, void *localAd
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 
@@ -342,7 +342,7 @@ SMEM_API int32_t smem_trans_batch_quant_write(smem_trans_t handle, smem_trans_qu
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
     return entry->BatchQuantTransfer(params, SMEMB_COPY_L2G);
@@ -357,7 +357,7 @@ SMEM_API int32_t smem_trans_set_peer_down_callback(smem_trans_t handle, smem_tra
     SmemTransEntryPtr entry;
     auto result = SmemTransEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
     if (result != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed ");
+        SM_LOG_AND_SET_LAST_ERROR("get entry by handle failed, handle: " << handle << " result: " << result);
         return result;
     }
 

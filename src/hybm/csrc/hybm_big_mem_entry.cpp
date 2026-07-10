@@ -25,14 +25,14 @@ HYBM_API hybm_entity_t hybm_create_entity(uint16_t id, const hybm_options *optio
     std::shared_ptr<MemEntityDefault> entity = nullptr;
     entity = factory.GetOrCreateEngine(id, flags);
     if (entity == nullptr) {
-        BM_LOG_ERROR("create entity failed.");
+        BM_LOG_ERROR("create entity failed, id: " << id << " flags: 0x" << std::hex << flags);
         return nullptr;
     }
 
     auto ret = entity->Initialize(options);
     if (ret != 0) {
         MemEntityFactory::Instance().RemoveEngine(entity.get());
-        BM_LOG_ERROR("initialize entity failed: " << ret);
+        BM_LOG_ERROR("initialize entity failed, id: " << id << " flags: 0x" << std::hex << flags << " ret: " << ret);
         return nullptr;
     }
 

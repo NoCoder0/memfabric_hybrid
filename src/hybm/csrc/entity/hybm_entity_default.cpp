@@ -721,6 +721,7 @@ int32_t MemEntityDefault::Mmap() noexcept
     if (hbmSegment_ != nullptr && options_.scene != HYBM_SCENE_TRANS) {
         auto ret = hbmSegment_->Mmap();
         if (ret != BM_OK) {
+            BM_LOG_ERROR("hbmSegment_->Mmap() failed, ret: " << ret << " entityId: " << id_);
             return ret;
         }
     }
@@ -728,6 +729,7 @@ int32_t MemEntityDefault::Mmap() noexcept
     if (dramSegment_ != nullptr) {
         auto ret = dramSegment_->Mmap();
         if (ret != BM_OK) {
+            BM_LOG_ERROR("dramSegment_->Mmap() failed, ret: " << ret << " entityId: " << id_);
             return ret;
         }
     }
@@ -1247,7 +1249,8 @@ Result MemEntityDefault::InitTransManager()
     options.tlsOption = options_.tlsOption;
     auto ret = transportManager_->OpenDevice(options);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to open device, ret: " << ret);
+        BM_LOG_ERROR("Failed to open device, ret: " << ret << " rankId: " << options_.rankId << " protocol: "
+                                                    << options_.bmDataOpType << " nic: " << options.nic);
         transportManager_ = nullptr;
     }
     return ret;

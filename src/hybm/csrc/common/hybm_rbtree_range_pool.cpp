@@ -91,7 +91,8 @@ bool RbtreeRangePool::Release(const AllocatedElement &element) noexcept
         return false;
     }
     if (elemAddr < baseAddress || elemAddr >= baseAddress + totalSize) {
-        BM_LOG_ERROR("element address not in this range pool.");
+        BM_LOG_ERROR("element address not in this range pool, elemAddr: 0x"
+                     << std::hex << elemAddr << " base: 0x" << baseAddress << " totalSize: " << totalSize);
         return false;
     }
 

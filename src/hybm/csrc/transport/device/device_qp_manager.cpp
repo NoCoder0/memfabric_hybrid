@@ -51,7 +51,7 @@ void *DeviceQpManager::CreateLocalSocket() noexcept
     rdev.localIp.addr = deviceAddress_.sin_addr;
     auto ret = DlHccpApi::RaSocketInit(HccpNetworkMode::NETWORK_OFFLINE, rdev, socketHandle);
     if (ret != 0) {
-        BM_LOG_ERROR("initialize socket handle failed: " << ret);
+        BM_LOG_ERROR("RaSocketInit failed, ret: " << ret << " deviceId: " << deviceId_ << " rankId: " << rankId_);
         return nullptr;
     }
 
@@ -93,7 +93,8 @@ int DeviceQpManager::CreateServerSocket() noexcept
         }
     }
     if (!successListen) {
-        BM_LOG_ERROR("start to listen server socket failed.");
+        BM_LOG_ERROR("start to listen server socket failed, deviceId: " << deviceId_ << " rankId: " << rankId_
+                                                                        << " port: " << listenInfo.port);
         DlHccpApi::RaSocketDeinit(socketHandle);
         return BM_DL_FUNCTION_FAILED;
     }

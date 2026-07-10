@@ -98,7 +98,8 @@ int RdmaIndirectTransportManager::MergeBatchCopy(const std::vector<void *> &srcA
     result.mergedCounts.clear();
 
     if (srcAddrs.empty() || srcAddrs.size() != dstAddrs.size() || srcAddrs.size() != counts.size()) {
-        BM_LOG_ERROR("Invalid input");
+        BM_LOG_ERROR("Invalid input, srcAddrs.size(): " << srcAddrs.size() << " dstAddrs.size(): " << dstAddrs.size()
+                                                        << " counts.size(): " << counts.size());
         return -1;
     }
 
@@ -283,7 +284,7 @@ int RdmaIndirectTransportManager::InitListenerSocket(const std::string &nic)
     addr.sin_port = 0;                 // 0 = 让内核自动分配可用端口
     socklen_t len = sizeof(addr);
     if (getsockname(gServerSocket_, reinterpret_cast<sockaddr *>(&addr), &len) == -1) {
-        BM_LOG_ERROR("get getsockname failed!");
+        BM_LOG_ERROR("getsockname failed, fd: " << gServerSocket_ << " errno: " << errno << ": " << strerror(errno));
         close(gServerSocket_);
         return -1;
     }

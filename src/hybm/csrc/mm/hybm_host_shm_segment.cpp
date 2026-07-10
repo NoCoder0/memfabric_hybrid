@@ -182,10 +182,12 @@ Result HybmHostShmSegment::Export(std::string &exInfo) noexcept
 Result HybmHostShmSegment::Export(const std::shared_ptr<MemSlice> &slice, std::string &exInfo) noexcept
 {
     if (slice == nullptr) {
+        BM_LOG_ERROR("Export slice is nullptr");
         return BM_INVALID_PARAM;
     }
     auto pos = slices_.find(slice->index_);
     if (pos == slices_.end() || pos->second.slice != slice) {
+        BM_LOG_ERROR("Export slice not found in slices_, sliceIdx: " << slice->index_);
         return BM_INVALID_PARAM;
     }
     auto exp = exportMap_.find(slice->index_);
@@ -215,7 +217,9 @@ Result HybmHostShmSegment::Import(const std::vector<std::string> &allExInfo, voi
     LiteralExInfoTranslater<ShmExportInfo> translator;
     std::vector<ShmExportInfo> deserializedInfos{allExInfo.size()};
     for (auto i = 0U; i < allExInfo.size(); i++) {
-        if (translator.Deserialize(allExInfo[i], deserializedInfos[i]) != 0) {
+        auto desRet = translator.Deserialize(allExInfo[i], deserializedInfos[i]);
+        if (desRet != 0) {
+            BM_LOG_ERROR("Deserialize imported info failed, i: " << i << " ret: " << desRet);
             return BM_INVALID_PARAM;
         }
     }

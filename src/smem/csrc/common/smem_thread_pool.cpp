@@ -64,6 +64,7 @@ bool ExecutorService::Execute(const Runnable &runnable)
 {
     std::unique_lock<std::mutex> locker{tasksMutex_};
     if (tasks_.size() >= maxWaitingTaskNum_) {
+        SM_LOG_WARN_LIMIT("executor task queue full, size: " << tasks_.size() << " capacity: " << maxWaitingTaskNum_);
         return false;
     }
     tasks_.push(runnable);

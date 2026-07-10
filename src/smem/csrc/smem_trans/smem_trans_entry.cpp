@@ -78,7 +78,7 @@ int32_t SmemTransEntry::Initialize()
     if (!ParseTransName(name_, workerUniqueId_.address, workerUniqueId_.port, workerUniqueId_.pid)) {
         return SM_INVALID_PARAM;
     }
-    SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(CreateGlobalTeam(rankId_), "create global team failed");
+    SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(CreateGlobalTeam(rankId_), "create global team failed, rankId: " << rankId_);
 
     auto options = GenerateHybmOptions();
     options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEFAULT);
@@ -116,10 +116,11 @@ int32_t SmemTransEntry::Initialize()
     }
 
     entity_ = hybm_create_entity(entityId_, &options, 0);
-    SM_VALIDATE_RETURN(entity_ != nullptr, "create new entity failed.", SM_ERROR);
+    SM_VALIDATE_RETURN(entity_ != nullptr,
+                       "hybm_create_entity failed, entityId: " << entityId_ << " rankId: " << rankId_, SM_ERROR);
 
     auto ret = hybm_reserve_mem_space(entity_, 0);
-    SM_VALIDATE_RETURN(ret == SM_OK, "rserve mem failed.", SM_ERROR);
+    SM_VALIDATE_RETURN(ret == SM_OK, "hybm_reserve_mem_space failed, ret: " << ret, SM_ERROR);
 
     ret = hybm_export(entity_, nullptr, HYBM_FLAG_EXPORT_ENTITY, &entityInfo_.hybmInfo);
     SM_VALIDATE_RETURN(ret == SM_OK, "HybmExport device info failed: " << ret, SM_ERROR);
@@ -156,7 +157,7 @@ Result SmemTransEntry::CreateGlobalTeam(uint32_t rankId)
     SmemGroupOption opt = {0U,        rankId,      config_.initTimeout * SECOND_TO_MILLSEC, true, joinFunc, updateFunc,
                            leaveFunc, linkDownFunc};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(store_, opt);
-    SM_ASSERT_RETURN(group != nullptr, SM_ERROR);
+    SM_VALIDATE_RETURN(group != nullptr, "SmemNetGroupEngine::Create failed, rankId: " << rankId, SM_ERROR);
 
     globalGroup_ = group;
     return SM_OK;
@@ -418,7 +419,7 @@ Result SmemTransEntry::LeaveHandle(uint32_t rk)
     SM_LOG_INFO("do leave func, receive_rk: " << rk);
     auto ret = hybm_remove_imported(entity_, rk, 0);
     if (ret != 0) {
-        SM_LOG_ERROR("hybm leave failed, result: " << ret);
+        SM_LOG_ERROR("hybm_remove_imported (leave) failed, remoteRank: " << rk << " ret: " << ret);
         return SM_ERROR;
     }
     return SM_OK;
@@ -534,7 +535,7 @@ Result SmemTransEntry::RegisterLocalMemories(const std::vector<std::pair<const v
 
     for (auto it : regMemories) {
         if (it.first == nullptr || it.second == 0) {
-            SM_LOG_ERROR("input address or size is invalid.");
+            SM_LOG_ERROR("input address or size invalid, address: " << it.first << " size: " << it.second);
             return SM_INVALID_PARAM;
         }
     }
@@ -817,7 +818,7 @@ Result SmemTransEntry::RegisterOneMemory(const void *address, uint64_t size, uin
 {
     auto slice = hybm_register_local_memory(entity_, address, size, 0);
     if (slice == nullptr) {
-        SM_LOG_ERROR("register address with size: " << size << " failed!");
+        SM_LOG_ERROR("hybm_register_local_memory failed, address: " << address << " size: " << size);
         return SM_ERROR;
     }
     SM_LOG_DEBUG("register memory(address with size=" << size << ") return slice=" << slice);

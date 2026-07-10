@@ -166,7 +166,7 @@ Result RdmaTransportManager::UnregisterMemoryRegion(uint64_t addr)
     WriteGuard lockGuard(lock_);
     auto pos = registerMRS_.find(addr);
     if (pos == registerMRS_.end()) {
-        BM_LOG_ERROR("input address not register!");
+        BM_LOG_ERROR("input address not registered, addr: 0x" << std::hex << addr);
         return BM_INVALID_PARAM;
     }
 
@@ -407,7 +407,8 @@ Result RdmaTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_
 {
     auto ret = RemoteIO(rankId, lAddr, rAddr, size, false, true);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("ReadRemote() failed: " << ret);
+        BM_LOG_ERROR("ReadRemote() failed, ret: " << ret << " rankId: " << rankId << std::hex << " lAddr: 0x" << lAddr
+                                                  << " rAddr: 0x" << rAddr << std::dec << " size: " << size);
         return ret;
     }
 
@@ -445,7 +446,9 @@ Result RdmaTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     auto ret = RemoteIO(rankId, lAddr, rAddr, size, true, false);
     TP_TRACE_END(TP_HYBM_DEV_RDMA_ASYNC_WRITE, ret);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("WriteRemoteAsync() failed: " << ret);
+        BM_LOG_ERROR("WriteRemoteAsync() failed, ret: " << ret << " rankId: " << rankId << std::hex << " lAddr: 0x"
+                                                        << lAddr << " rAddr: 0x" << rAddr << std::dec
+                                                        << " size: " << size);
         return ret;
     }
     return BM_OK;
@@ -763,7 +766,9 @@ int RdmaTransportManager::RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAd
     ret = DlHccpApi::RaSendWrV2(qp->qpHandle, &wr, &rspInfo);
     TP_TRACE_END(TP_HYBM_DEV_SEND_WR, ret);
     if (ret != 0) {
-        BM_LOG_ERROR("DlHccpApi::RaSendWr(handle, &wr, &opRsp) failed: " << ret);
+        BM_LOG_ERROR("RaSendWrV2 failed, ret: " << ret << " rankId: " << rankId << std::hex << " lAddr: 0x" << lAddr
+                                                << " rAddr: 0x" << rAddr << std::dec << " size: " << size
+                                                << " write: " << write);
         qpManager_->PutQpHandle(qp);
         return ret;
     }
@@ -783,7 +788,7 @@ int RdmaTransportManager::RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAd
     if (sync) {
         ret = Synchronize(qp->qpHandle, rankId);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Synchronize failed: " << ret);
+            BM_LOG_ERROR("Synchronize failed, ret: " << ret << " rankId: " << rankId);
         }
     }
     qpManager_->PutQpHandle(qp);

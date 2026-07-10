@@ -567,7 +567,8 @@ Result DataOpDeviceRDMA::BatchMergedWrite(hybm_batch_copy_params &swapParams, hy
     }
     ret = transportManager_->Synchronize(options.destRankId);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to sync write remote ret: " << ret);
+        BM_LOG_ERROR("Failed to sync write remote, ret: " << ret << " localRankId: " << rankId_
+                                                          << " remoteRankId: " << options.destRankId);
         return ret;
     }
     return errorCode;
@@ -603,7 +604,8 @@ Result DataOpDeviceRDMA::BatchMergedRead(hybm_batch_copy_params &swapParams, hyb
     }
     ret = transportManager_->Synchronize(options.srcRankId);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to sync read remote ret: " << ret);
+        BM_LOG_ERROR("Failed to sync read remote, ret: " << ret << " localRankId: " << rankId_
+                                                         << " remoteRankId: " << options.srcRankId);
         return ret;
     }
     if (errorCode != BM_OK) {
@@ -739,7 +741,9 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalSync(hybm_batch_copy_params &params, 
         auto count = params.dataSizes[i];
         auto ret = DlAclApi::AclrtMemcpy(destAddr, count, srcAddr, count, direction);
         if (ret != 0) {
-            BM_LOG_ERROR("copy memory on local failed: " << ret << " direct:" << direction);
+            BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " direct: " << direction << std::hex
+                                                     << " src: " << srcAddr << " dst: " << destAddr << std::dec
+                                                     << " size: " << count);
             return BM_DL_FUNCTION_FAILED;
         }
     }
@@ -800,6 +804,8 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params,
     auto ret = DlAclApi::AclrtMemcpyBatch(params.destinations, sizes.data(), params.sources, sizes.data(), sizes.size(),
                                           attrs.data(), attrsIds.data(), attrs.size(), &fail_idx);
     if (ret != 0) {
+        BM_LOG_WARN("AclrtMemcpyBatch failed, ret: " << ret << " fail_idx: " << fail_idx << " direction: " << direction
+                                                     << " batchSize: " << batchNum << ", fallback to async");
         return BatchDataCopyLocalAsync(params, direction, options);
     }
     return ret;
@@ -881,7 +887,10 @@ Result DataOpDeviceRDMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
                 for (uint32_t r : asyncSubmittedRanks) {
                     transportManager_->Synchronize(r);
                 }
-                BM_LOG_ERROR("Failed to write src to dest");
+                BM_LOG_ERROR("Failed to write src to dest, ret: "
+                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << tmpOptions.destRankId
+                             << " i: " << i << std::hex << " src: " << regParams.sources[i] << " dst: "
+                             << regParams.destinations[i] << std::dec << " size: " << regParams.dataSizes[i]);
                 return ret;
             }
             asyncSubmittedRanks.insert(it.first);
@@ -940,7 +949,10 @@ Result DataOpDeviceRDMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
                 for (uint32_t r : asyncSubmittedRanks) {
                     transportManager_->Synchronize(r);
                 }
-                BM_LOG_ERROR("Failed to read src to dest");
+                BM_LOG_ERROR("Failed to read src to dest, ret: "
+                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << tmpOptions.srcRankId
+                             << " i: " << i << std::hex << " src: " << regParams.sources[i] << " dst: "
+                             << regParams.destinations[i] << std::dec << " size: " << regParams.dataSizes[i]);
                 return ret;
             }
             asyncSubmittedRanks.insert(it.first);
@@ -1021,7 +1033,10 @@ Result DataOpDeviceRDMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtO
                 for (uint32_t r : asyncWriteRanks) {
                     transportManager_->Synchronize(r);
                 }
-                BM_LOG_ERROR("Failed to write src to dest");
+                BM_LOG_ERROR("Failed to write src to dest, ret: "
+                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << options.destRankId
+                             << " i: " << i << std::hex << " src: " << params.sources[i]
+                             << " dst: " << params.destinations[i] << std::dec << " size: " << params.dataSizes[i]);
                 return ret;
             }
             asyncWriteRanks.insert(options.destRankId);
@@ -1032,7 +1047,10 @@ Result DataOpDeviceRDMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtO
                 for (uint32_t r : asyncWriteRanks) {
                     transportManager_->Synchronize(r);
                 }
-                BM_LOG_ERROR("Failed to read src to dest");
+                BM_LOG_ERROR("Failed to read src to dest, ret: "
+                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << options.srcRankId
+                             << " i: " << i << std::hex << " src: " << params.sources[i]
+                             << " dst: " << params.destinations[i] << std::dec << " size: " << params.dataSizes[i]);
                 return ret;
             }
             asyncWriteRanks.insert(options.srcRankId);

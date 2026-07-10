@@ -129,7 +129,7 @@ StoreErrorCode SmemExternalBackend::GetLocked(const std::string &key, std::vecto
 {
     try {
         if (!initialized_ || handle_ == nullptr || backendOp_.get == nullptr) {
-            STORE_LOG_ERROR("Get failed: backend not initialized");
+            STORE_LOG_ERROR("Get failed: backend not initialized, key: " << key);
             return StoreErrorCode::ERROR;
         }
 
@@ -145,6 +145,7 @@ StoreErrorCode SmemExternalBackend::GetLocked(const std::string &key, std::vecto
             }
 
             if (ret != SMEM_STORE_BACKEND_CODE_BUFEX || retryCount == MAX_GET_BUFEX_RETRIES) {
+                STORE_LOG_ERROR("Get failed, key: " << key << " ret: " << ret << " retryCount: " << retryCount);
                 return MapCommonResult(ret);
             }
 
@@ -171,7 +172,7 @@ StoreErrorCode SmemExternalBackend::PrefixGet(const std::string &key, PrefixGetM
 {
     try {
         if (!initialized_ || handle_ == nullptr || backendOp_.prefix_get == nullptr) {
-            STORE_LOG_ERROR("PrefixGet failed: backend not initialized");
+            STORE_LOG_ERROR("PrefixGet failed: backend not initialized, key: " << key);
             return StoreErrorCode::ERROR;
         }
 
@@ -184,7 +185,7 @@ StoreErrorCode SmemExternalBackend::PrefixGet(const std::string &key, PrefixGetM
         std::lock_guard<std::mutex> lock(mutex_);
         auto ret = backendOp_.prefix_get(handle_, &prefixGetCtx, 0);
         if (ret != SMEM_STORE_BACKEND_CODE_OK) {
-            STORE_LOG_ERROR("[ETCD] failed to do prefix get, ret:" << ret);
+            STORE_LOG_ERROR("[External] PrefixGet failed, key: " << key << " ret: " << ret);
             return StoreErrorCode::ERROR;
         }
         return StoreErrorCode::SUCCESS;
@@ -204,25 +205,32 @@ StoreErrorCode SmemExternalBackend::Put(const std::string &key, const std::vecto
     (void)ttlSeconds;
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_ || handle_ == nullptr || backendOp_.put == nullptr) {
-        STORE_LOG_ERROR("Put failed: backend not initialized");
+        STORE_LOG_ERROR("Put failed: backend not initialized, key: " << key);
         return StoreErrorCode::ERROR;
     }
 
     const void *data = value.empty() ? nullptr : value.data();
-    return MapCommonResult(
-        backendOp_.put(handle_, key.c_str(), data, static_cast<uint64_t>(value.size()), BACKEND_FLAGS));
+    const int32_t putRet =
+        backendOp_.put(handle_, key.c_str(), data, static_cast<uint64_t>(value.size()), BACKEND_FLAGS);
+    if (putRet != SMEM_STORE_BACKEND_CODE_OK) {
+        STORE_LOG_ERROR("Put failed, key: " << key << " valueSize: " << value.size() << " ret: " << putRet);
+    }
+    return MapCommonResult(putRet);
 }
 
 StoreErrorCode SmemExternalBackend::Delete(const std::string &key) noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_ || handle_ == nullptr || backendOp_.remove == nullptr) {
-        STORE_LOG_ERROR("Delete failed: backend not initialized");
+        STORE_LOG_ERROR("Delete failed: backend not initialized, key: " << key);
         return StoreErrorCode::ERROR;
     }
     const auto ret = backendOp_.remove(handle_, key.c_str(), BACKEND_FLAGS);
     if (ret == SMEM_STORE_BACKEND_CODE_NOENT) {
         return StoreErrorCode::SUCCESS;
+    }
+    if (ret != SMEM_STORE_BACKEND_CODE_OK) {
+        STORE_LOG_ERROR("Delete failed, key: " << key << " ret: " << ret);
     }
     return MapCommonResult(ret);
 }
@@ -232,7 +240,7 @@ StoreErrorCode SmemExternalBackend::Exist(const std::string &key) const noexcept
     try {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!initialized_ || handle_ == nullptr || backendOp_.get == nullptr) {
-            STORE_LOG_ERROR("Exist failed: backend not initialized");
+            STORE_LOG_ERROR("Exist failed: backend not initialized, key: " << key);
             return StoreErrorCode::ERROR;
         }
 
@@ -242,6 +250,9 @@ StoreErrorCode SmemExternalBackend::Exist(const std::string &key) const noexcept
             backendOp_.get(handle_, key.c_str(), buffer.data(), buffer.size(), BACKEND_FLAGS, &valueSize);
         if (ret == SMEM_STORE_BACKEND_CODE_OK || ret == SMEM_STORE_BACKEND_CODE_BUFEX) {
             return StoreErrorCode::SUCCESS;
+        }
+        if (ret != SMEM_STORE_BACKEND_CODE_NOENT) {
+            STORE_LOG_ERROR("Exist probe failed, key: " << key << " ret: " << ret);
         }
         return MapCommonResult(ret);
     } catch (const std::exception &e) {
@@ -276,22 +287,30 @@ StoreErrorCode SmemExternalBackend::AcquireDistributedLock(const std::string &na
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_ || handle_ == nullptr || backendOp_.lock == nullptr) {
-        STORE_LOG_ERROR("AcquireDistributedLock failed: backend not initialized");
+        STORE_LOG_ERROR("AcquireDistributedLock failed: backend not initialized, name: " << name);
         return StoreErrorCode::ERROR;
     }
 
-    return MapCommonResult(backendOp_.lock(handle_, name.c_str(), BACKEND_FLAGS));
+    const int32_t lockRet = backendOp_.lock(handle_, name.c_str(), BACKEND_FLAGS);
+    if (lockRet != SMEM_STORE_BACKEND_CODE_OK) {
+        STORE_LOG_ERROR("AcquireDistributedLock failed, name: " << name << " ret: " << lockRet);
+    }
+    return MapCommonResult(lockRet);
 }
 
 StoreErrorCode SmemExternalBackend::ReleaseDistributedLock(const std::string &name) noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_ || handle_ == nullptr || backendOp_.unlock == nullptr) {
-        STORE_LOG_ERROR("ReleaseDistributedLock failed: backend not initialized");
+        STORE_LOG_ERROR("ReleaseDistributedLock failed: backend not initialized, name: " << name);
         return StoreErrorCode::ERROR;
     }
 
-    return MapCommonResult(backendOp_.unlock(handle_, name.c_str(), BACKEND_FLAGS));
+    const int32_t unlockRet = backendOp_.unlock(handle_, name.c_str(), BACKEND_FLAGS);
+    if (unlockRet != SMEM_STORE_BACKEND_CODE_OK) {
+        STORE_LOG_ERROR("ReleaseDistributedLock failed, name: " << name << " ret: " << unlockRet);
+    }
+    return MapCommonResult(unlockRet);
 }
 
 StoreErrorCode SmemExternalBackend::TryAcquireDistributedLock(const std::string &name, int64_t timeoutMs) noexcept
@@ -301,11 +320,15 @@ StoreErrorCode SmemExternalBackend::TryAcquireDistributedLock(const std::string 
     }
     std::lock_guard<std::mutex> lock(mutex_);
     if (!initialized_ || handle_ == nullptr || backendOp_.try_lock == nullptr) {
-        STORE_LOG_ERROR("TryAcquireDistributedLock failed: backend not initialized");
+        STORE_LOG_ERROR("TryAcquireDistributedLock failed: backend not initialized, name: " << name);
         return StoreErrorCode::ERROR;
     }
 
-    return MapCommonResult(backendOp_.try_lock(handle_, name.c_str(), BACKEND_FLAGS));
+    const int32_t tryLockRet = backendOp_.try_lock(handle_, name.c_str(), BACKEND_FLAGS);
+    if (tryLockRet != SMEM_STORE_BACKEND_CODE_OK) {
+        STORE_LOG_ERROR("TryAcquireDistributedLock failed, name: " << name << " ret: " << tryLockRet);
+    }
+    return MapCommonResult(tryLockRet);
 }
 
 } // namespace smem

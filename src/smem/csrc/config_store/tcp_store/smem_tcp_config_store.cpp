@@ -209,7 +209,8 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
                      : ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | std::numeric_limits<uint32_t>::max());
     result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, retryMaxTimes, accClientLink_);
     if (result != 0) {
-        STORE_LOG_ERROR("connect to server failed, result: " << result);
+        STORE_LOG_ERROR("connect to server failed, ip: " << serverIp_ << " port: " << serverPort_
+                                                         << " result: " << result);
         Shutdown();
         return result;
     }
@@ -224,6 +225,8 @@ Result TcpConfigStore::ServerStart(const smem_tls_config &tlsConfig, int reconne
     std::lock_guard<std::mutex> guard(mutex_);
     accServer_ = SmMakeRef<AccStoreServer>(serverIp_, serverPort_, worldSize_, backend_, skipRecover_);
     if (accServer_ == nullptr) {
+        STORE_LOG_ERROR("create acc store server failed, ip: " << serverIp_ << " port: " << serverPort_
+                                                               << " worldSize: " << worldSize_);
         Shutdown();
         return SM_NEW_OBJECT_FAILED;
     }
@@ -262,7 +265,7 @@ void TcpConfigStore::Shutdown(bool afterFork) noexcept
 Result TcpConfigStore::PrefixGet(const std::string &key, std::unordered_map<std::string, std::string> &value) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -308,7 +311,7 @@ Result TcpConfigStore::PrefixGet(const std::string &key, std::unordered_map<std:
 Result TcpConfigStore::Set(const std::string &key, const std::vector<uint8_t> &value) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -334,7 +337,7 @@ Result TcpConfigStore::Set(const std::string &key, const std::vector<uint8_t> &v
 Result TcpConfigStore::GetReal(const std::string &key, std::vector<uint8_t> &value, int64_t timeoutMs) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -378,7 +381,7 @@ Result TcpConfigStore::GetReal(const std::string &key, std::vector<uint8_t> &val
 Result TcpConfigStore::Add(const std::string &key, int64_t increment, int64_t &value) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -415,7 +418,7 @@ Result TcpConfigStore::Add(const std::string &key, int64_t increment, int64_t &v
 Result TcpConfigStore::Remove(const std::string &key, bool printKeyNotExist) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -445,7 +448,7 @@ Result TcpConfigStore::Remove(const std::string &key, bool printKeyNotExist) noe
 Result TcpConfigStore::Append(const std::string &key, const std::vector<uint8_t> &value, uint64_t &newSize) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -469,8 +472,8 @@ Result TcpConfigStore::Append(const std::string &key, const std::vector<uint8_t>
     std::string data(reinterpret_cast<char *>(response->DataPtr()), response->DataLen());
 
     long tmpValue = 0;
-    STORE_VALIDATE_RETURN(mf::StrUtil::String2Int<long>(data, tmpValue), "convert string to long failed.",
-                          StoreErrorCode::ERROR);
+    STORE_VALIDATE_RETURN(mf::StrUtil::String2Int<long>(data, tmpValue),
+                          "convert string to long failed, data: " << data, StoreErrorCode::ERROR);
     newSize = static_cast<uint64_t>(tmpValue);
 
     return StoreErrorCode::SUCCESS;
@@ -479,7 +482,7 @@ Result TcpConfigStore::Append(const std::string &key, const std::vector<uint8_t>
 Result TcpConfigStore::Write(const std::string &key, const std::vector<uint8_t> &value, const uint32_t offset) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -539,7 +542,7 @@ Result TcpConfigStore::Cas(const std::string &key, const std::vector<uint8_t> &e
                            const std::vector<uint8_t> &value, std::vector<uint8_t> &exists) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -589,7 +592,7 @@ TcpConfigStore::Watch(const std::string &key,
                       uint32_t &wid) noexcept
 {
     if (key.empty() || key.length() > MAX_KEY_LEN_CLIENT) {
-        STORE_LOG_ERROR("key length is invalid");
+        STORE_LOG_ERROR("key length is invalid, keyLen: " << key.length() << ", maxLen: " << MAX_KEY_LEN_CLIENT);
         return StoreErrorCode::INVALID_KEY;
     }
 
@@ -629,7 +632,7 @@ Result TcpConfigStore::Watch(WatchRankType type, const std::function<void(WatchR
         },
         wid, WATCH_RANK_DOWN_KEY);
     if (ret != SM_OK) {
-        STORE_LOG_ERROR("send watch for rank down get null response");
+        STORE_LOG_ERROR("send watch for rank down failed, ret: " << ret);
         return ret;
     }
 
@@ -712,7 +715,8 @@ Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
                      : ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | std::numeric_limits<uint32_t>::max());
     auto result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, retryMaxTimes, accClientLink_);
     if (result != 0) {
-        STORE_LOG_ERROR_LIMIT("Reconnect to server failed, result.");
+        STORE_LOG_ERROR_LIMIT("Reconnect to server failed, ip: " << serverIp_ << " port: " << serverPort_
+                                                                 << " result: " << result);
         return result;
     }
     STORE_LOG_INFO("Reconnect to server successful, rankId: " << rankId_);

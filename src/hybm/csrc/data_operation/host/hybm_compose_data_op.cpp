@@ -33,7 +33,8 @@ Result HostComposeDataOp::Initialize() noexcept
         sdmaDataOperator_ = DataOperatorFactory::CreateSdmaDataOperator();
         auto ret = sdmaDataOperator_->Initialize();
         if (ret != BM_OK) {
-            BM_LOG_ERROR("SDMA data operator init failed, ret:" << ret);
+            BM_LOG_ERROR("SDMA data operator init failed, ret: " << ret << " rankId: " << options_.rankId
+                                                                 << " bmDataOpType: " << options_.bmDataOpType);
             sdmaDataOperator_ = nullptr;
             return ret;
         }

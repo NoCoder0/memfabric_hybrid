@@ -73,7 +73,7 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
 
     std::string realPath;
     if (!FileUtil::LibraryRealPath(libDirPath, std::string(gAscendAclLibName), realPath)) {
-        BM_LOG_ERROR(libDirPath << " get lib path failed");
+        BM_LOG_ERROR("get lib path failed, libDir: " << libDirPath << " libName: " << gAscendAclLibName);
         return BM_ERROR;
     }
 

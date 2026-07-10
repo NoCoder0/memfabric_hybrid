@@ -305,7 +305,8 @@ Result HybmVmmBasedSegment::AllocLocalMemory(uint64_t size, MemSlicePtr &slice) 
     }
     ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(allocAddr), size, 0, dHandle, 0);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("HalMemMap failed: " << ret);
+        BM_LOG_ERROR("HalMemMap failed, ret: " << ret << " addr: 0x" << std::hex << allocAddr << " size: " << size
+                                               << " segType: " << options_.segType);
         DlHalApi::HalMemRelease(dHandle);
         slices_.erase(slice->index_);
         return BM_DL_FUNCTION_FAILED;
@@ -398,7 +399,9 @@ Result HybmVmmBasedSegment::ExportInner(const MemSlicePtr &slice, MemShareHandle
     auto ret = DlHalApi::HalMemExport(reinterpret_cast<drv_mem_handle_t *>(pos->second.handle), MEM_HANDLE_TYPE_FABRIC,
                                       0, &info.shareHandle);
     if (ret != 0) {
-        BM_LOG_ERROR("create shm memory key failed: " << ret);
+        BM_LOG_ERROR("HalMemExport(create shm key) failed, ret: " << ret << " sliceIdx: " << slice->index_ << " va: 0x"
+                                                                  << std::hex << slice->vAddress_
+                                                                  << " size: " << slice->size_);
         return BM_DL_FUNCTION_FAILED;
     }
 

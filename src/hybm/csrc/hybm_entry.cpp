@@ -56,7 +56,7 @@ static inline Result hybm_load_library()
     BM_VALIDATE_RETURN(!path.empty(), "Environment ASCEND_HOME_PATH is not set.", BM_ERROR);
     libPath = path + "/lib64";
     if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
-        BM_LOG_ERROR("Environment ASCEND_HOME_PATH check failed.");
+        BM_LOG_ERROR("ASCEND_HOME_PATH check failed, path: " << path << " libPath: " << libPath);
         return BM_ERROR;
     }
 #elif defined(NVIDIA_GPU)
@@ -64,7 +64,7 @@ static inline Result hybm_load_library()
     BM_VALIDATE_RETURN(!path.empty(), "Environment CUDA_HOME is not set.", BM_ERROR);
     libPath = path + "/lib64";
     if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
-        BM_LOG_ERROR("Environment CUDA_HOME check failed.");
+        BM_LOG_ERROR("CUDA_HOME check failed, path: " << path << " libPath: " << libPath);
         return BM_ERROR;
     }
 #endif
@@ -106,7 +106,8 @@ HYBM_API int32_t hybm_init(uint16_t deviceId, uint64_t flags)
     if (ret != BM_OK) {
         ptracer_uninit();
         DlApi::CleanupLibrary();
-        BM_LOG_ERROR("hybm init hbm gva failed: " << ret);
+        BM_LOG_ERROR("hybm_init_hbm_gva failed, deviceId: " << deviceId << " flags: 0x" << std::hex << flags
+                                                            << " ret: " << ret);
         return BM_ERROR;
     }
 

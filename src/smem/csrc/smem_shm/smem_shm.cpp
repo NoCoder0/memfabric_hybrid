@@ -27,10 +27,12 @@ SMEM_API smem_shm_t smem_shm_create(uint32_t id, uint32_t rankSize, uint32_t ran
                        "invalid param, input size: " << rankSize << " limit: " << SMEM_WORLD_SIZE_MAX
                                                      << " input rank: " << rankId,
                        nullptr);
-    SM_VALIDATE_RETURN(!(id > SMEM_ID_MAX), "invalid id, id range is: [0, " << SMEM_ID_MAX << "]", nullptr);
+    SM_VALIDATE_RETURN(!(id > SMEM_ID_MAX), "invalid id: " << id << ", valid range: [0, " << SMEM_ID_MAX << "]",
+                       nullptr);
     SM_VALIDATE_RETURN(gva != nullptr, "invalid param, gva is NULL", nullptr);
     SM_VALIDATE_RETURN(g_smemShmInited, "smem shm not initialized yet", nullptr);
-    SM_VALIDATE_RETURN(localSize <= SMEM_LOCAL_HBM_SIZE_MAX, "localSize size exceeded", nullptr);
+    SM_VALIDATE_RETURN(localSize <= SMEM_LOCAL_HBM_SIZE_MAX,
+                       "localSize exceeded, value: " << localSize << " max: " << SMEM_LOCAL_HBM_SIZE_MAX, nullptr);
 
     std::lock_guard<std::mutex> guard(g_smemShmMutex_);
     SmemShmEntryPtr entry = nullptr;
@@ -259,6 +261,7 @@ SMEM_API int32_t smem_shm_atomic_alloc_value(smem_shm_t handle, uint32_t limit, 
     int32_t val = group->AllocNumber();
     *retVal = -1;
     if (val >= static_cast<int>(limit)) {
+        SM_LOG_ERROR("atomic alloc value exceeded limit, alloced: " << val << " limit: " << limit);
         group->ReleaseNumber(val);
         return SM_ERROR;
     } else if (val < 0) {

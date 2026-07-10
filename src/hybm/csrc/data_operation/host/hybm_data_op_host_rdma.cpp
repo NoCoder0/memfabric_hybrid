@@ -307,13 +307,18 @@ Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA, void *destVA, uint64_
                 DlHybridApi::Memcpy(tmpHost, currentChunkSize, currentSrc, currentChunkSize, ACL_MEMCPY_DEVICE_TO_HOST);
         }
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to copy device data to host ret: " << ret);
+            BM_LOG_ERROR("DlHybridApi::Memcpy(D2H) failed, ret: "
+                         << ret << " localRankId: " << rankId_ << " destRankId: " << options.destRankId << std::hex
+                         << " src: " << currentSrc << " dst: " << tmpHost << std::dec << " size: " << currentChunkSize);
             return ret;
         }
         ret = transportManager_->WriteRemote(options.destRankId, (uint64_t)tmpHost, (uint64_t)currentDest,
                                              currentChunkSize);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to copy host data to remote host memory ret: " << ret);
+            BM_LOG_ERROR("WriteRemote failed, ret: " << ret << " localRankId: " << rankId_
+                                                     << " destRankId: " << options.destRankId << std::hex
+                                                     << " lAddr: " << tmpHost << " rAddr: " << currentDest << std::dec
+                                                     << " size: " << currentChunkSize);
             return ret;
         }
         offset += currentChunkSize;
@@ -359,7 +364,10 @@ Result ock::mf::HostDataOpRDMA::SafeGet(const void *srcVA, void *destVA, uint64_
             transportManager_->ReadRemote(options.srcRankId, (uint64_t)tmpHost, (uint64_t)currentSrc, currentChunkSize);
         TP_TRACE_END(TP_HYBM_HOST_RDMA_READ_REMOTE, ret);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to copy host data to remote host memory ret: " << ret);
+            BM_LOG_ERROR("ReadRemote failed, ret: " << ret << " localRankId: " << rankId_
+                                                    << " srcRankId: " << options.srcRankId << std::hex
+                                                    << " lAddr: " << tmpHost << " rAddr: " << currentSrc << std::dec
+                                                    << " size: " << currentChunkSize);
             return ret;
         }
         if (isLocalHost) {
@@ -370,7 +378,10 @@ Result ock::mf::HostDataOpRDMA::SafeGet(const void *srcVA, void *destVA, uint64_
                                       ACL_MEMCPY_HOST_TO_DEVICE);
         }
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to copy device data to host ret: " << ret);
+            BM_LOG_ERROR("DlHybridApi::Memcpy(H2D) failed, ret: " << ret << " localRankId: " << rankId_
+                                                                  << " srcRankId: " << options.srcRankId << std::hex
+                                                                  << " src: " << tmpHost << " dst: " << currentDest
+                                                                  << std::dec << " size: " << currentChunkSize);
             return ret;
         }
         offset += currentChunkSize;
@@ -465,8 +476,9 @@ Result HostDataOpRDMA::BatchCopyLD2LH(void **hostAddrs, void **deviceAddrs, cons
         auto count = counts[i];
         ret = DlHybridApi::MemcpyAsync(destAddr, count, srcAddr, count, ACL_MEMCPY_DEVICE_TO_HOST, st);
         if (ret != 0) {
-            BM_LOG_ERROR("copy memory on local device to local host failed: " << ret << " stream:"
-                                                                              << reinterpret_cast<uintptr_t>(st));
+            BM_LOG_ERROR("MemcpyAsync(D2H) failed, ret: "
+                         << ret << " i: " << i << " stream: " << reinterpret_cast<uintptr_t>(st) << std::hex
+                         << " src: " << srcAddr << " dst: " << destAddr << std::dec << " size: " << count);
             return BM_DL_FUNCTION_FAILED;
         }
     }
@@ -755,7 +767,8 @@ Result HostDataOpRDMA::BatchCopyGH2LD(void **destinations, void **sources, const
     for (auto &it : rmtRankMap) {
         ret = BatchReadRH2LD(it.first, it.second, options);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to write local device to remote host ret: " << ret);
+            BM_LOG_ERROR("Failed to write local device to remote host, ret: " << ret << " localRankId: " << rankId_
+                                                                              << " remoteRankId: " << it.first);
             return ret;
         }
     }
@@ -769,7 +782,8 @@ Result HostDataOpRDMA::BatchCopyLH2LH(void **destAddrs, void **srcAddrs, const u
     for (uint32_t i = 0; i < batchSize; ++i) {
         ret = DlHybridApi::Memcpy(destAddrs[i], counts[i], srcAddrs[i], counts[i], ACL_MEMCPY_HOST_TO_HOST);
         if (ret != 0) {
-            BM_LOG_ERROR("Failed to copy local host to local host ret: " << ret);
+            BM_LOG_ERROR("Memcpy(H2H) failed, ret: " << ret << " i: " << i << std::hex << " src: " << srcAddrs[i]
+                                                     << " dst: " << destAddrs[i] << std::dec << " size: " << counts[i]);
             return ret;
         }
     }
@@ -887,7 +901,8 @@ Result HostDataOpRDMA::InnerBatchWriteLH2RH(const CopyDescriptor &rmtCopyDescrip
     }
     ret = transportManager_->Synchronize(options.destRankId);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to sync read remote ret: " << ret);
+        BM_LOG_ERROR("Failed to sync write remote, ret: " << ret << " localRankId: " << rankId_
+                                                          << " remoteRankId: " << options.destRankId);
         return ret;
     }
     if (errorCode != BM_OK) {

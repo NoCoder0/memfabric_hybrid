@@ -263,7 +263,7 @@ void HaConfigStore::RunElectionLoop() noexcept
         {
             DistributedLockGuard lockGuard(backend_, backendLockName_);
             if (!lockGuard.IsLocked()) {
-                SM_LOG_ERROR("Failed to acquire distributed lock, will retry");
+                SM_LOG_ERROR("Failed to acquire distributed lock, will retry, lockName: " << backendLockName_);
                 backend_->UnInitialize();
                 continue;
             }
@@ -452,7 +452,7 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexce
         SM_LOG_INFO("Reconnecting to: " << ip << ":" << port);
         Result reconnectRet = clientDelegate_->ReConnectAfterBroken(-1);
         if (reconnectRet != SM_OK) {
-            SM_LOG_ERROR("ReConnectAfterBroken failed, ret: " << reconnectRet);
+            SM_LOG_ERROR("ReConnectAfterBroken failed, ip: " << ip << " port: " << port << " ret: " << reconnectRet);
         } else {
             SM_LOG_INFO("Reconnection initiated successfully");
         }
@@ -462,7 +462,7 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexce
     SM_LOG_INFO("First time connection to: " << ip << ":" << port);
     Result clientStartRet = clientDelegate_->ClientStart(tlsConfig_);
     if (clientStartRet != SM_OK) {
-        SM_LOG_ERROR("ClientStart failed, ret: " << clientStartRet);
+        SM_LOG_ERROR("ClientStart failed, ip: " << ip << " port: " << port << " ret: " << clientStartRet);
         return clientStartRet;
     }
     SM_LOG_INFO("ClientStart succeeded");

@@ -125,7 +125,7 @@ static bool DriverVersionCheck(const std::string &ver)
 #else
     static std::string readVer = CastDriverVersion();
     if (readVer.empty()) {
-        BM_LOG_ERROR("check driver version failed, read version is empty.");
+        BM_LOG_ERROR("check driver version failed, read version is empty, baseVer: " << ver);
         return false;
     }
 

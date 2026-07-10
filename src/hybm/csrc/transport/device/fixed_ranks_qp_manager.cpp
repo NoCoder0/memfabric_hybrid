@@ -412,6 +412,7 @@ int FixedRanksQpManager::CreateQpWaitingReady(std::unordered_map<uint32_t, AiCor
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    BM_LOG_ERROR("CreateQpWaitingReady timeout, rankId: " << rankId_ << " pendingConnections: " << connections.size());
     return BM_TIMEOUT;
 }
 
@@ -429,6 +430,9 @@ int FixedRanksQpManager::CreateOneQp(AiCoreConnChannel &channel) noexcept
     attr.qp_attr.cap.max_send_wr = MAX_SEND_WR;
     attr.data_plane_flag.bs.cq_cstm = CQ_CUSTOM_FLAG;
     auto ret = DlHccpApi::RaQpAiCreate(rdmaHandle_, attr, channel.aiQpInfo, channel.qpHandle);
+    if (ret != 0) {
+        BM_LOG_ERROR("RaQpAiCreate failed, ret: " << ret << " rankId: " << rankId_);
+    }
     return ret;
 }
 

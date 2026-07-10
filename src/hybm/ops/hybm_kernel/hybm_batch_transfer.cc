@@ -89,7 +89,11 @@ uint32_t CheckParam(const HybmOneSideOpParam *param)
 {
     if (param == nullptr || param->thread == 0 || param->channel == 0 || param->list_num == 0 ||
         param->dst_buf_addr_list == nullptr || param->src_buf_addr_list == nullptr || param->len_list == nullptr) {
-        HYBM_LOGE(BM_INVALID_PARAM, "invalid HybmOneSideOpParam");
+        HYBM_LOGE(BM_INVALID_PARAM,
+                  "invalid HybmOneSideOpParam, param=%p thread=%lu channel=%lu list_num=%u dst=%p src=%p len=%p",
+                  (void *)param, param ? param->thread : 0, param ? param->channel : 0, param ? param->list_num : 0,
+                  param ? param->dst_buf_addr_list : nullptr, param ? param->src_buf_addr_list : nullptr,
+                  param ? param->len_list : nullptr);
         return BM_INVALID_PARAM;
     }
     return BM_OK;
@@ -121,8 +125,8 @@ int32_t TransferWithBatch(bool isRead, HybmOneSideOpParam *param)
                 HYBM_LOGI("HcommBatchTransferOnThread not supported, ret=%d", ret);
                 return BM_NOT_SUPPORTED;
             }
-            HYBM_LOGE(BM_ERROR, "HcommBatchTransferOnThread failed, offset=%u, batchSize=%u, ret=%d", offset, batchSize,
-                      ret);
+            HYBM_LOGE(BM_ERROR, "HcommBatchTransferOnThread failed, thread=%lu channel=%lu offset=%u batch=%u ret=%d",
+                      param->thread, param->channel, offset, batchSize, ret);
             return ret;
         }
         offset += batchSize;
@@ -173,7 +177,7 @@ uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 
     ret = static_cast<uint32_t>(BatchModeStart(kBatchTag));
     if (ret != BM_OK && !IsNotSupported(static_cast<int32_t>(ret))) {
-        HYBM_LOGE(BM_ERROR, "HcommBatchModeStart failed, ret=%u", ret);
+        HYBM_LOGE(BM_ERROR, "HcommBatchModeStart failed, batchTag=%s ret=%u", kBatchTag, ret);
         return BM_ERROR;
     }
 
@@ -185,7 +189,8 @@ uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 
     ret = static_cast<uint32_t>(ChannelFenceOnThread(param->thread, param->channel));
     if (ret != BM_OK) {
-        HYBM_LOGE(BM_ERROR, "HcommChannelFenceOnThread failed, ret=%u", ret);
+        HYBM_LOGE(BM_ERROR, "HcommChannelFenceOnThread failed, thread=%lu channel=%lu ret=%u", param->thread,
+                  param->channel, ret);
         (void)BatchModeEnd(kBatchTag);
         return BM_ERROR;
     }
@@ -195,7 +200,11 @@ uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
             param->thread, param->channel, reinterpret_cast<void *>(static_cast<uintptr_t>(param->local_flag_addr)),
             reinterpret_cast<void *>(static_cast<uintptr_t>(param->remote_flag_addr)), param->flag_size));
         if (ret != BM_OK) {
-            HYBM_LOGE(BM_ERROR, "remote flag read failed, ret=%u", ret);
+            HYBM_LOGE(BM_ERROR,
+                      "remote flag read failed, thread=%lu channel=%lu localFlag=0x%lx remoteFlag=0x%lx "
+                      "flagSize=%u ret=%u",
+                      param->thread, param->channel, param->local_flag_addr, param->remote_flag_addr, param->flag_size,
+                      ret);
             (void)BatchModeEnd(kBatchTag);
             return BM_ERROR;
         }
@@ -203,7 +212,7 @@ uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 
     ret = static_cast<uint32_t>(BatchModeEnd(kBatchTag));
     if (ret != BM_OK && !IsNotSupported(static_cast<int32_t>(ret))) {
-        HYBM_LOGE(BM_ERROR, "HcommBatchModeEnd failed, ret=%u", ret);
+        HYBM_LOGE(BM_ERROR, "HcommBatchModeEnd failed, batchTag=%s ret=%u", kBatchTag, ret);
         return BM_ERROR;
     }
     return BM_OK;

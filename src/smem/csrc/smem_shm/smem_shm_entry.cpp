@@ -79,17 +79,21 @@ static void ReleaseAfterFailed(hybm_entity_t entity, hybm_mem_slice_t slice, voi
 Result SmemShmEntry::CreateGlobalTeam(uint32_t rankSize, uint32_t rankId)
 {
     auto client = SmemShmEntryManager::Instance().GetStoreClient();
-    SM_ASSERT_RETURN(client != nullptr, SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(client != nullptr, "GetStoreClient failed (store not initialized), shmId: " << id_,
+                       SM_INVALID_PARAM);
 
     std::string prefix = "SHM_(" + std::to_string(id_) + ")_";
     StorePtr store = StoreFactory::PrefixStore(client, prefix);
-    SM_ASSERT_RETURN(store != nullptr, SM_ERROR);
+    SM_VALIDATE_RETURN(store != nullptr, "PrefixStore failed, prefix: " << prefix << " shmId: " << id_, SM_ERROR);
 
     SmemGroupOption opt = {rankSize, rankId,  extraConfig_.controlOperationTimeout * SECOND_TO_MILLSEC,
                            false,    nullptr, nullptr,
                            nullptr,  nullptr};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(store, opt);
-    SM_ASSERT_RETURN(group != nullptr, SM_ERROR);
+    SM_VALIDATE_RETURN(group != nullptr,
+                       "SmemNetGroupEngine::Create failed, shmId: " << id_ << " rankSize: " << rankSize
+                                                                    << " rankId: " << rankId,
+                       SM_ERROR);
 
     globalGroup_ = group;
     return globalGroup_->GroupBarrier(); // 保证所有rank都初始化了
@@ -149,7 +153,7 @@ int32_t SmemShmEntry::InitStepCreateEntity()
 {
     auto entity = hybm_create_entity(id_ << 1, &options_, 0);
     if (entity == nullptr) {
-        SM_LOG_ERROR("create entity failed");
+        SM_LOG_ERROR("hybm_create_entity failed, entityId: " << (id_ << 1) << " rankId: " << options_.rankId);
         return SM_ERROR;
     }
 
@@ -301,7 +305,7 @@ Result SmemShmEntry::GetReachInfo(uint32_t remoteRank, uint32_t &reachInfo) cons
     hybm_data_op_type reachesTypes;
     auto ret = hybm_entity_reach_types(entity_, remoteRank, reachesTypes, 0);
     if (ret != 0) {
-        SM_LOG_ERROR("hybm_entity_reach_types() failed: " << ret);
+        SM_LOG_ERROR("hybm_entity_reach_types failed, remoteRank: " << remoteRank << " ret: " << ret);
         return SM_ERROR;
     }
 

@@ -48,7 +48,7 @@ Result DlCudaApi::LoadLibrary(const std::string &libDirPath)
 
     std::string realPath;
     if (!FileUtil::LibraryRealPath(libDirPath, std::string("libcudart.so"), realPath)) {
-        BM_LOG_ERROR(libDirPath << " get lib path failed");
+        BM_LOG_ERROR("get lib path failed, libDir: " << libDirPath << " libName: libcudart.so");
         return BM_ERROR;
     }
 

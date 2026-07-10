@@ -34,7 +34,7 @@ Result DlRtApi::LoadLibrary()
     /* dlopen library */
     rtHandle = dlopen(gRtLibName, RTLD_NOW);
     if (rtHandle == nullptr) {
-        BM_LOG_ERROR("Failed to open library error: " << dlerror());
+        BM_LOG_ERROR("Failed to open library [" << gRtLibName << "], error: " << dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
 

@@ -50,11 +50,17 @@ static int32_t SmemBmConfigCheck(const smem_bm_config_t *config)
     SM_VALIDATE_RETURN(config->unifiedAddressSpace == true, "unifiedAddressSpace must be true", SM_INVALID_PARAM);
 
     SM_VALIDATE_RETURN(config->initTimeout != 0, "initTimeout is zero", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(config->initTimeout <= SMEM_BM_TIMEOUT_MAX, "initTimeout is too large", SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(config->initTimeout <= SMEM_BM_TIMEOUT_MAX,
+                       "initTimeout too large, value: " << config->initTimeout << " max: " << SMEM_BM_TIMEOUT_MAX,
+                       SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(config->createTimeout != 0, "createTimeout is zero", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(config->createTimeout <= SMEM_BM_TIMEOUT_MAX, "initTimeout is too large", SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(config->createTimeout <= SMEM_BM_TIMEOUT_MAX,
+                       "createTimeout too large, value: " << config->createTimeout << " max: " << SMEM_BM_TIMEOUT_MAX,
+                       SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(config->controlOperationTimeout != 0, "controlOperationTimeout is zero", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(config->controlOperationTimeout <= SMEM_BM_TIMEOUT_MAX, "controlOperationTimeout is too large",
+    SM_VALIDATE_RETURN(config->controlOperationTimeout <= SMEM_BM_TIMEOUT_MAX,
+                       "controlOperationTimeout too large, value: " << config->controlOperationTimeout
+                                                                    << " max: " << SMEM_BM_TIMEOUT_MAX,
                        SM_INVALID_PARAM);
 
     // config->rank 在SmemBmEntryManager::PrepareStore中check
@@ -65,7 +71,9 @@ SMEM_API int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t
                               const smem_bm_config_t *config)
 {
     SM_VALIDATE_RETURN(worldSize != 0, "invalid param, worldSize is 0", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(worldSize <= SMEM_WORLD_SIZE_MAX, "invalid param, worldSize is too large", SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(worldSize <= SMEM_WORLD_SIZE_MAX,
+                       "worldSize too large, value: " << worldSize << " max: " << SMEM_WORLD_SIZE_MAX,
+                       SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(storeURL != nullptr, "invalid param, storeURL is null", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(SmemBmConfigCheck(config) == 0, "config is invalid", SM_INVALID_PARAM);
 
@@ -406,7 +414,9 @@ SMEM_API void *smem_bm_ptr_by_mem_type(smem_bm_t handle, smem_bm_mem_type memTyp
     }
 
     auto &coreOption = entry->GetCoreOptions();
-    SM_VALIDATE_RETURN(peerRankId < coreOption.rankCount, "invalid param, peerRankId too large", nullptr);
+    SM_VALIDATE_RETURN(peerRankId < coreOption.rankCount,
+                       "peerRankId too large, peerRankId: " << peerRankId << " rankCount: " << coreOption.rankCount,
+                       nullptr);
 
     void *addr = nullptr;
     switch (memType) {

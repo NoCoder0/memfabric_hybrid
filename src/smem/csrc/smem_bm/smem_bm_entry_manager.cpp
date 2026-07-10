@@ -92,22 +92,35 @@ Result SmemBmEntryManager::Initialize(const std::string &storeURL, uint32_t worl
 
 int32_t SmemBmEntryManager::PrepareStore()
 {
-    SM_ASSERT_RETURN(storeUrlExtraction_.ExtractIpPortFromUrl(storeURL_) == SM_OK, SM_INVALID_PARAM);
+    auto urlRet = storeUrlExtraction_.ExtractIpPortFromUrl(storeURL_);
+    SM_VALIDATE_RETURN(urlRet == SM_OK, "ExtractIpPortFromUrl failed, storeURL: " << storeURL_ << " ret: " << urlRet,
+                       SM_INVALID_PARAM);
     StoreFactory::SetTlsInfo(config_.storeTlsConfig);
     if (!config_.autoRanking) {
-        SM_ASSERT_RETURN(config_.rankId < worldSize_, SM_INVALID_PARAM);
+        SM_VALIDATE_RETURN(config_.rankId < worldSize_,
+                           "rankId >= worldSize, rankId: " << config_.rankId << " worldSize: " << worldSize_,
+                           SM_INVALID_PARAM);
         uint16_t model = (config_.rankId == 0 && config_.startConfigStoreServer) ? CSM_BOTH : CSM_CLIENT;
         confStore_ = StoreFactory::CreateStoreByUrl(storeURL_, model, worldSize_, static_cast<int>(config_.rankId));
-        SM_ASSERT_RETURN(confStore_ != nullptr, StoreFactory::GetFailedReason());
+        SM_VALIDATE_RETURN(confStore_ != nullptr,
+                           "CreateStoreByUrl failed, storeURL: " << storeURL_ << " worldSize: " << worldSize_
+                                                                 << " rankId: " << config_.rankId
+                                                                 << " reason: " << StoreFactory::GetFailedReason(),
+                           StoreFactory::GetFailedReason());
     } else {
         if (config_.startConfigStoreServer) {
             auto ret = RacingForStoreServer();
-            SM_ASSERT_RETURN(ret == SM_OK, ret);
+            SM_VALIDATE_RETURN(ret == SM_OK, "RacingForStoreServer failed, storeURL: " << storeURL_ << " ret: " << ret,
+                               ret);
         }
 
         if (confStore_ == nullptr) {
             confStore_ = StoreFactory::CreateStoreByUrl(storeURL_, CSM_CLIENT, worldSize_);
-            SM_ASSERT_RETURN(confStore_ != nullptr, StoreFactory::GetFailedReason());
+            SM_VALIDATE_RETURN(confStore_ != nullptr,
+                               "CreateStoreByUrl(client) failed, storeURL: "
+                                   << storeURL_ << " worldSize: " << worldSize_
+                                   << " reason: " << StoreFactory::GetFailedReason(),
+                               StoreFactory::GetFailedReason());
         }
     }
     confStore_ = StoreFactory::PrefixStore(confStore_, "BM_");

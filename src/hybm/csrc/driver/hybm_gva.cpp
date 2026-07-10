@@ -53,7 +53,9 @@ int32_t HybmModernInitMetaGva(void **globalMemoryBase, size_t allocSize, void **
     }
     ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(HYBM_DEVICE_META_ADDR), allocSize, 0, *handle, 0);
     if (ret != BM_OK) {
-        BM_LOG_DEBUG("HalMemMap failed: " << ret);
+        BM_LOG_ERROR("HalMemMap failed, ret: " << ret << " addr: 0x" << std::hex << HYBM_DEVICE_META_ADDR << " size: 0x"
+                                               << allocSize << " handle: " << *handle
+                                               << " devid: " << initedLogicDeviceId);
         DlHalApi::HalMemRelease(*handle);
         return BM_ERROR;
     }
@@ -90,7 +92,8 @@ int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddre
     initedLogicDeviceId = -1;
     DlAclApi::RtGetLogicDevIdByUserDevId(deviceId, &initedLogicDeviceId);
     if (initedLogicDeviceId < 0) {
-        BM_LOG_ERROR("Failed to get logic deviceId: " << deviceId);
+        BM_LOG_ERROR("RtGetLogicDevIdByUserDevId failed, deviceId: " << deviceId
+                                                                     << " logicDeviceId: " << initedLogicDeviceId);
         return BM_ERROR;
     }
     BM_LOG_INFO("Success get deviceId: " << deviceId << ", logicDeviceId: " << initedLogicDeviceId

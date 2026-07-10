@@ -1370,6 +1370,8 @@ Result DeviceUrmaTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uin
     }
     auto &state = remoteRanks_[rankId];
     if (state.channel == 0) {
+        BM_LOG_ERROR("RemoteIo no channel connected, rankId: " << rankId << std::hex << " rAddr: 0x" << rAddr
+                                                               << std::dec << " size: " << size);
         return BM_NOT_CONNECTED;
     }
     const auto translatedRemoteAddr = remote.view.addr + (rAddr - remote.addr);

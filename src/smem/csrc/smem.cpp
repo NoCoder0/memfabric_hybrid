@@ -52,12 +52,13 @@ SMEM_API int32_t smem_create_config_store(const char *storeUrl, uint64_t flags)
     ock::smem::UrlExtraction extraction;
     auto ret = extraction.ExtractIpPortFromUrl(storeUrl);
     if (ret != 0) {
-        SM_LOG_ERROR("input store URL invalid.");
+        SM_LOG_ERROR("input store URL invalid, storeUrl: " << storeUrl << " ret: " << ret);
         return ock::smem::SM_INVALID_PARAM;
     }
     auto store = ock::smem::StoreFactory::CreateStoreByUrl(storeUrl, ock::smem::ConfigStoreModel::CSM_BOTH);
     if (store == nullptr) {
-        SM_LOG_ERROR("create store server failed with URL.");
+        SM_LOG_ERROR("create store server failed, storeUrl: " << storeUrl << " reason: "
+                                                              << ock::smem::StoreFactory::GetFailedReason());
         return ock::smem::SM_ERROR;
     }
 

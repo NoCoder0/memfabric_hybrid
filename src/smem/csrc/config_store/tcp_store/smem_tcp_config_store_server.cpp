@@ -440,6 +440,7 @@ Result AccStoreServer::AllocateAndReplyRank(const ock::acc::AccTcpRequestContext
     }
     if (scanCount > worldSize_) {
         lockGuard.unlock();
+        STORE_LOG_ERROR("no available rank, worldSize: " << worldSize_ << " scanCount: " << scanCount);
         ReplyWithMessage(context, StoreErrorCode::ERROR, "no available rank");
         return SM_ERROR;
     }
@@ -620,10 +621,11 @@ Result AccStoreServer::AddHandler(const ock::acc::AccTcpRequestContext &context,
     STORE_LOG_DEBUG("ADD REQUEST(" << context.SeqNo() << ") for key(" << key << ") value(" << valueStr << ") start.");
 
     long valueNum;
-    STORE_VALIDATE_RETURN(mf::StrUtil::String2Int<long>(valueStr, valueNum), "convert string to long failed.",
-                          SM_ERROR);
+    STORE_VALIDATE_RETURN(mf::StrUtil::String2Int<long>(valueStr, valueNum),
+                          "convert string to long failed, key: " << key << " valueStr: " << valueStr, SM_ERROR);
     if (valueStr != std::to_string(valueNum)) {
-        STORE_LOG_ERROR("request(" << context.SeqNo() << ") add for key(" << key << ") value is not a number");
+        STORE_LOG_ERROR("request(" << context.SeqNo() << ") add for key(" << key
+                                   << ") value is not a number, valueStr: " << valueStr);
         ReplyWithMessage(context, StoreErrorCode::INVALID_MESSAGE, "invalid request: value should be a number.");
         return SM_ERROR;
     }
@@ -1223,7 +1225,7 @@ StoreErrorCode AccStoreServer::PersistWorldSize(uint32_t size) noexcept
     const std::vector<uint8_t> data(str.begin(), str.end());
     auto ret = backend_->Put(KEY_WORLD_SIZE, data, EPHEMERAL_KEY_TTL_SEC);
     if (ret != SUCCESS) {
-        STORE_LOG_ERROR("Failed to persist world size: " << size);
+        STORE_LOG_ERROR("Failed to persist world size: " << size << ", ret: " << static_cast<int>(ret));
     } else {
         STORE_LOG_INFO("World size persisted: " << size);
     }
@@ -1238,7 +1240,7 @@ StoreErrorCode AccStoreServer::PersistAliveRankIds(const std::unordered_set<uint
     if (ranks.empty()) {
         auto ret = backend_->Delete(KEY_ALIVE_RANK_LIST);
         if (ret != SUCCESS) {
-            STORE_LOG_ERROR("Failed to remove alive ranks key from backend");
+            STORE_LOG_ERROR("Failed to remove alive ranks key from backend, ret: " << static_cast<int>(ret));
             return ret;
         }
         STORE_LOG_INFO("Alive ranks cleared in backend");
@@ -1255,7 +1257,7 @@ StoreErrorCode AccStoreServer::PersistAliveRankIds(const std::unordered_set<uint
     const std::vector<uint8_t> data(str.begin(), str.end());
     auto ret = backend_->Put(KEY_ALIVE_RANK_LIST, data, 0);
     if (ret != SUCCESS) {
-        STORE_LOG_ERROR("Failed to persist alive ranks, count: " << ranks.size());
+        STORE_LOG_ERROR("Failed to persist alive ranks, count: " << ranks.size() << ", ret: " << static_cast<int>(ret));
     } else {
         STORE_LOG_INFO("Alive ranks persisted, count: " << ranks.size());
     }

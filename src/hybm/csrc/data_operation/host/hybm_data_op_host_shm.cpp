@@ -114,6 +114,9 @@ Result HostDataOpHostShm::BatchCopyHostToHost(void **destAddrs, void **srcAddrs,
     for (uint32_t i = 0; i < batchSize; ++i) {
         auto ret = CopyHostToHost(destAddrs[i], srcAddrs[i], counts[i]);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("CopyHostToHost failed, ret: " << ret << " i: " << i << std::hex << " src: " << srcAddrs[i]
+                                                        << " dst: " << destAddrs[i] << std::dec
+                                                        << " size: " << counts[i] << " rankId: " << rankId_);
             return ret;
         }
     }
@@ -126,6 +129,9 @@ Result HostDataOpHostShm::BatchCopyDeviceToHost(void **destAddrs, void **srcAddr
     for (uint32_t i = 0; i < batchSize; ++i) {
         auto ret = CopyDeviceToHost(destAddrs[i], srcAddrs[i], counts[i]);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("CopyDeviceToHost failed, ret: " << ret << " i: " << i << std::hex << " src: " << srcAddrs[i]
+                                                          << " dst: " << destAddrs[i] << std::dec
+                                                          << " size: " << counts[i]);
             return ret;
         }
     }
@@ -138,6 +144,9 @@ Result HostDataOpHostShm::BatchCopyHostToDevice(void **destAddrs, void **srcAddr
     for (uint32_t i = 0; i < batchSize; ++i) {
         auto ret = CopyHostToDevice(destAddrs[i], srcAddrs[i], counts[i]);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("CopyHostToDevice failed, ret: " << ret << " i: " << i << std::hex << " src: " << srcAddrs[i]
+                                                          << " dst: " << destAddrs[i] << std::dec
+                                                          << " size: " << counts[i]);
             return ret;
         }
     }

@@ -80,7 +80,7 @@ Result HybmDevUserLegacySegment::RegisterMemory(const void *addr, uint64_t size,
 
     for (auto &it : registerSlices_) {
         if (it.second.slice->vAddress_ == reinterpret_cast<uint64_t>(addr)) {
-            BM_LOG_ERROR("this addr has registered.");
+            BM_LOG_ERROR("this addr has registered, addr: 0x" << std::hex << addr);
             return BM_ERROR;
         }
     }
@@ -88,7 +88,7 @@ Result HybmDevUserLegacySegment::RegisterMemory(const void *addr, uint64_t size,
     char name[DEVICE_SHM_NAME_SIZE + 1U]{};
     auto ret = DlAclApi::RtIpcSetMemoryName(addr, size, name, sizeof(name));
     if (ret != 0) {
-        BM_LOG_ERROR("set memory name failed: " << ret);
+        BM_LOG_ERROR("RtIpcSetMemoryName failed, ret: " << ret << " addr: 0x" << std::hex << addr << " size: " << size);
         return BM_DL_FUNCTION_FAILED;
     }
     std::unique_lock<std::mutex> uniqueLock{mutex_};

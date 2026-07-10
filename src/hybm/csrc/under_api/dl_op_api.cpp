@@ -38,7 +38,7 @@ Result DlOpApi::LoadLibrary()
     /* dlopen library */
     opapiHandle = dlopen(gOpapiLibName, RTLD_NOW);
     if (opapiHandle == nullptr) {
-        BM_LOG_ERROR("Failed to open library error: " << dlerror());
+        BM_LOG_ERROR("Failed to open library [" << gOpapiLibName << "], error: " << dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
 
@@ -49,7 +49,7 @@ Result DlOpApi::LoadLibrary()
 
     opbaseHandle = dlopen(gOpBaseLibName, RTLD_NOW);
     if (opbaseHandle == nullptr) {
-        BM_LOG_ERROR("Failed to open library error: " << dlerror());
+        BM_LOG_ERROR("Failed to open library [" << gOpBaseLibName << "], error: " << dlerror());
         dlclose(opapiHandle);
         opapiHandle = nullptr;
         return BM_DL_FUNCTION_FAILED;

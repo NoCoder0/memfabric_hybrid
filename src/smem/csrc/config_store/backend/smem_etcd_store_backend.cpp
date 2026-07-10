@@ -150,7 +150,8 @@ StoreErrorCode SmemEtcdStoreBackend::PrefixGet(const std::string &key, PrefixGet
     };
     int32_t ret = EtcdClientV3::GetInstance().PrefixGet(&prefixGetCtx, 0);
     if (ret != 0) {
-        STORE_LOG_ERROR("[ETCD] PrefixGet failed: EtcdClientV3 API failed");
+        STORE_LOG_ERROR("[ETCD] PrefixGet failed, key: " << qualifiedKey << " ret: " << ret
+                                                         << " error: " << EtcdClientV3::GetInstance().GetLastError());
         return StoreErrorCode::ERROR;
     }
     return StoreErrorCode::SUCCESS;

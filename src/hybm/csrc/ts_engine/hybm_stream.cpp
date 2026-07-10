@@ -276,7 +276,9 @@ int32_t HybmStream::SubmitTasks(const StreamTask &tasks) noexcept
 
     ret = DlHalApi::HalSqTaskSend(deviceId_, &info);
     if (ret != 0) {
-        BM_LOG_ERROR("SQ send task failed: " << ret);
+        BM_LOG_ERROR("HalSqTaskSend failed, ret: " << ret << " deviceId: " << deviceId_ << " streamId: " << streamId_
+                                                   << " sqId: " << sqId_ << " tsId: " << tsId_
+                                                   << " taskType: " << tasks.type);
         return BM_DL_FUNCTION_FAILED;
     }
 
@@ -428,7 +430,12 @@ int HybmStream::Synchronize(uint32_t task) noexcept
         usleep(1U);
     }
 
-    return (retry >= MAX_RETRY ? BM_TIMEOUT : ret);
+    if (retry >= MAX_RETRY) {
+        BM_LOG_ERROR("Synchronize timeout, streamId: " << streamId_ << " sqHead: " << sqHead_ << " sqTail: " << sqTail_
+                                                       << " task: " << task << " retry: " << retry);
+        return BM_TIMEOUT;
+    }
+    return ret;
 }
 } // namespace mf
 } // namespace ock

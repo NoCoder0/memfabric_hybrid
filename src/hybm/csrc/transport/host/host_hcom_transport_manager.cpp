@@ -356,7 +356,7 @@ Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
 {
     HcomMemoryRegion mrInfo{};
     if (GetMemoryRegionByAddr(rankId_, addr, mrInfo) != BM_OK) {
-        BM_LOG_ERROR("Failed to query memory region");
+        BM_LOG_ERROR("Failed to query memory region, addr: 0x" << std::hex << addr << " rankId: " << rankId_);
         return BM_ERROR;
     }
     RegMemoryKeyUnion hostKey{};
