@@ -98,6 +98,7 @@ echo "in make_run.sh, XPU_TYPE is $XPU_TYPE"
 cp "${BASH_PATH}"/install.sh ${PKG_DIR}/script/
 sed -i "s/<<XPU_TYPE>>/${XPU_TYPE}/g" ${PKG_DIR}/script/install.sh
 cp "${BASH_PATH}"/uninstall.sh ${PKG_DIR}/script/
+cp "${PROJECT_DIR}"/script/mem_scan.py ${PKG_DIR}/script/
 
 # generate version.info
 touch ${PKG_DIR}/version.info

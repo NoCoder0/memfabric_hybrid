@@ -50,7 +50,7 @@ Result DlHybmExtendApi::TryLoadLibrary()
     /* dlopen library */
     libHandle = dlopen(realPath.c_str(), RTLD_NOW | RTLD_NODELETE);
     if (libHandle == nullptr) {
-        BM_LOG_WARN("Failed to open library [" << realPath << "], error: " << dlerror());
+        BM_LOG_INFO("Failed to open library [" << realPath << "], " << dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
 
