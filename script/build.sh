@@ -305,6 +305,8 @@ GIT_COMMIT=`git rev-parse HEAD` || true
 
 cp "${PROJ_DIR}/output/VERSION" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/"
 rm -f "${PROJ_DIR}/output/VERSION"
+mkdir -p "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/script"
+cp -v "${PROJ_DIR}/script/mem_scan.py" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/script/"
 
 # 如果 PYTHON_HOME 不存在，则设置默认值
 if [ -z "$PYTHON_HOME" ]; then
@@ -368,5 +370,6 @@ cp "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/dist/*.whl "${PROJ_DIR}/output
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/dist
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/include
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib
+rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/script
 
 cd ${CURRENT_DIR}

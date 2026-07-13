@@ -114,6 +114,7 @@ setup(
             "include/smem/host/*.h",
             "include/smem/device/*.h",
             "include/hybm/*.h",
+            "script/*.py",
             "VERSION",
         ]
     },

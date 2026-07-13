@@ -422,6 +422,8 @@ function install_to_path()
 
     cd ${install_dir}
     cp -r ${script_dir}/../${pkg_arch}-${os1} ${install_dir}/
+    mkdir -p "${install_dir}/${pkg_arch}-${os1}/script"
+    cp "${script_dir}/mem_scan.py" "${install_dir}/${pkg_arch}-${os1}/script/"
     cp -r ${script_dir}/../include ${install_dir}/
     cp -r ${script_dir}/uninstall.sh ${install_dir}/
     cp -r ${script_dir}/../version.info ${install_dir}/
