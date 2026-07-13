@@ -19,6 +19,7 @@
 
 #include "hybm_logger.h"
 #include "dl_hcomm_api.h"
+#include "topo_reader.h"
 #include "device_urma_eid_reader.h"
 
 namespace ock {
@@ -98,29 +99,12 @@ Result GetDeviceUrmaAddrValue(uint32_t phyDeviceId, uint32_t rankId, const char 
 
 Result GetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
 {
-    std::string hexStr;
-    std::string eidFilePath;
-    Result ret = GetDeviceUrmaAddrValue(phyDeviceId, rankId, "missing hex EID", hexStr, eidFilePath);
+    RootInfo ri;
+    Result ret = TopoReader::ParseRootInfo(phyDeviceId, rankId, ri);
     if (ret != BM_OK) {
         return ret;
     }
-    if (hexStr.length() != COMM_ADDR_EID_LEN * 2U) {
-        BM_LOG_ERROR("device_urma invalid EID hex length: " << hexStr.length() << " (expected "
-                                                            << (COMM_ADDR_EID_LEN * 2U) << "), file: " << eidFilePath);
-        return BM_INVALID_PARAM;
-    }
-    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
-    for (size_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
-        auto byteStr = hexStr.substr(i * 2, 2);
-        char *endp = nullptr;
-        auto val = std::strtoul(byteStr.c_str(), &endp, 16);
-        if (*endp != '\0') {
-            BM_LOG_ERROR("device_urma invalid EID hex character at byte " << i << ", file: " << eidFilePath);
-            return BM_INVALID_PARAM;
-        }
-        eid[i] = static_cast<uint8_t>(val & 0xFF);
-    }
-    eidData = eid;
+    eidData = ri.eid;
     return BM_OK;
 }
 
