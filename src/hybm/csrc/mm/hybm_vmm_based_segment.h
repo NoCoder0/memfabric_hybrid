@@ -29,7 +29,7 @@ struct HostSdmaExportInfo {
     uint32_t serverId{0};
     uint32_t superPodId{0};
     uint32_t rankId{0};
-    uint32_t logicDevId{0};
+    uint32_t devicePhyId{0};
     uint64_t size{0};
     MemShareHandle shareHandle;
 }; // 192B

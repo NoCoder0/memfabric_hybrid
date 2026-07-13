@@ -277,7 +277,7 @@ Result HybmDevLegacySegment::Export(const MemSlicePtr &slice, std::string &exInf
     info.sdid = sdid_;
     info.serverId = serverId_;
     info.superPodId = superPodId_;
-    info.logicDeviceId = logicDeviceId_;
+    info.devicePhyId = devicePhyId_;
     info.pageTblType = MEM_PT_TYPE_SVM;
     info.memSegType = HYBM_MST_HBM;
     info.exchangeType = HYBM_INFO_EXG_IN_NODE;
@@ -324,19 +324,15 @@ Result HybmDevLegacySegment::Import(const std::vector<std::string> &allExInfo, v
     importMap_ = std::move(importMap);
 
     for (auto i = 0U; i < desInfos.size(); i++) {
-        if (CanLocalHostReaches(desInfos[i].superPodId, desInfos[i].serverId, desInfos[i].logicDeviceId) &&
-            logicDeviceId_ != static_cast<int>(desInfos[i].logicDeviceId)) { // 应当用logic id判断是否需要p2p
-            auto ret = DlAclApi::RtEnableP2P(deviceId_, desInfos[i].logicDeviceId, 0);
-            if (ret != 0) {
-                BM_LOG_ERROR("enable device access failed:" << ret << " local_device:" << deviceId_
-                                                            << " remote_device:" << (int)desInfos[i].deviceId
-                                                            << " logic_device:" << logicDeviceId_
-                                                            << " remote_logic_device:" << desInfos[i].logicDeviceId);
-                return BM_DL_FUNCTION_FAILED;
+        if (CanLocalHostReaches(desInfos[i].superPodId, desInfos[i].serverId, desInfos[i].devicePhyId) &&
+            devicePhyId_ != static_cast<int>(desInfos[i].devicePhyId)) { // 应当用logic id判断是否需要p2p
+            auto ret = EnableRemotePeerAccess(desInfos[i].devicePhyId);
+            if (ret != BM_OK) {
+                return ret;
             }
         }
 
-        if (!CanSdmaReaches(desInfos[i].superPodId, desInfos[i].serverId, desInfos[i].logicDeviceId)) {
+        if (!CanSdmaReaches(desInfos[i].superPodId, desInfos[i].serverId, desInfos[i].devicePhyId)) {
             desInfos[i].deviceVa = 0;
             continue;
         }
@@ -383,7 +379,7 @@ Result HybmDevLegacySegment::Mmap() noexcept
                                             << im.size);
 
         bool gvaOpened = false;
-        if (options_.shared && CanSdmaReaches(im.superPodId, im.serverId, im.logicDeviceId)) {
+        if (options_.shared && CanSdmaReaches(im.superPodId, im.serverId, im.devicePhyId)) {
             auto ret = drv::HalGvaOpen(im.deviceVa, im.shmName, im.size, 0);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("HalGvaOpen failed, ret: " << ret << " shmName: " << im.shmName << " deviceVa: 0x"

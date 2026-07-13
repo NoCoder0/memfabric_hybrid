@@ -35,8 +35,7 @@ struct HbmExportDeviceInfo {
     uint32_t serverId{0};
     uint32_t superPodId{0};
     uint32_t rankId{0};
-    uint16_t logicDeviceId{0};
-    uint16_t reserved{0};
+    uint32_t devicePhyId{0};
 
     // Padding to make total size UNIFIED_EXCHANGE_SEG_INFO_SIZE(192) bytes
     char padding_[UNIFIED_EXCHANGE_SEG_INFO_SIZE - 36]{};
@@ -55,7 +54,7 @@ struct UserHbmExportSliceInfo {
     uint64_t size{0};
     uint32_t superPodId{0};
     uint32_t rankId{0};
-    uint32_t logicDeviceId{0};
+    uint32_t devicePhyId{0};
     char name[DEVICE_SHM_NAME_SIZE + 1]{};
 
     // Padding to make total size 200 bytes

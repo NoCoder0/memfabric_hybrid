@@ -217,7 +217,7 @@ Result HybmVmmBasedSegment::MallocEmptySlice(MemSlicePtr &slice) noexcept
 
     HostSdmaExportInfo info;
     std::string exInfo;
-    info.logicDevId = logicDeviceId_;
+    info.devicePhyId = devicePhyId_;
     info.magic = (options_.segType == HYBM_MST_DRAM) ? VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC
                                                      : VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;
     info.version = EXPORT_INFO_VERSION;
@@ -236,7 +236,7 @@ Result HybmVmmBasedSegment::MallocEmptySlice(MemSlicePtr &slice) noexcept
     }
     BM_LOG_INFO("Success to export vmm segment info rank:"
                 << info.rankId << " superPodId:" << info.superPodId << " serverId:" << info.serverId
-                << " devId:" << info.logicDevId << " segType:" << options_.segType << " size:" << info.size);
+                << " devId:" << info.devicePhyId << " segType:" << options_.segType << " size:" << info.size);
     exportMap_[slice->index_] = exInfo;
     return BM_OK;
 }
@@ -413,7 +413,7 @@ Result HybmVmmBasedSegment::ExportInner(const MemSlicePtr &slice, MemShareHandle
     ret = DlHalApi::HalMemShareHandleSetAttribute(shareable, SHR_HANDLE_ATTR_NO_WLIST_IN_SERVER, attr);
     BM_VALIDATE_RETURN(ret == BM_OK, "HalMemShareHandleSetAttribute failed:" << ret, BM_ERROR);
 
-    info.logicDevId = logicDeviceId_;
+    info.devicePhyId = devicePhyId_;
     info.magic = (options_.segType == HYBM_MST_DRAM) ? VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC
                                                      : VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;
     info.version = EXPORT_INFO_VERSION;
@@ -433,7 +433,7 @@ Result HybmVmmBasedSegment::ExportInner(const MemSlicePtr &slice, MemShareHandle
 
     BM_LOG_INFO("Success to export vmm segment info rank:"
                 << info.rankId << " superPodId:" << info.superPodId << " serverId:" << info.serverId
-                << " devId:" << info.logicDevId << " segType:" << options_.segType << " size:" << info.size);
+                << " devId:" << info.devicePhyId << " segType:" << options_.segType << " size:" << info.size);
     exportMap_[slice->index_] = exInfo;
     sHandle = info.shareHandle;
     return BM_OK;
@@ -487,13 +487,11 @@ Result HybmVmmBasedSegment::Import(const std::vector<std::string> &allExInfo, vo
             return BM_INVALID_PARAM;
         }
         if (options_.shared && options_.segType == HYBM_MST_HBM && info.rankId != options_.rankId &&
-            logicDeviceId_ != static_cast<int>(info.logicDevId) &&
-            CanLocalHostReaches(info.superPodId, info.serverId, info.logicDevId)) {
-            ret = DlAclApi::RtEnableP2P(deviceId_, info.logicDevId, 0);
-            if (ret != 0) {
-                BM_LOG_ERROR("enable device access failed:" << ret << " local_device:" << deviceId_
-                                                            << " remote_device:" << (int)info.logicDevId);
-                return BM_DL_FUNCTION_FAILED;
+            devicePhyId_ != static_cast<int>(info.devicePhyId) &&
+            CanLocalHostReaches(info.superPodId, info.serverId, info.devicePhyId)) {
+            auto ret = EnableRemotePeerAccess(info.devicePhyId);
+            if (ret != BM_OK) {
+                return ret;
             }
         }
         if (addresses != nullptr) {
@@ -504,7 +502,7 @@ Result HybmVmmBasedSegment::Import(const std::vector<std::string> &allExInfo, vo
         }
         deserializedInfos.emplace_back(info);
         BM_LOG_INFO("Success to import rank:" << info.rankId << " superPodId:" << info.superPodId
-                                              << " serverId:" << info.serverId << " devId:" << info.logicDevId
+                                              << " serverId:" << info.serverId << " devId:" << info.devicePhyId
                                               << " segType:" << options_.segType << " size:" << info.size);
     }
 
@@ -568,7 +566,7 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             continue;
         }
 
-        if (!options_.shared || !CanSdmaReaches(im.superPodId, im.serverId, im.logicDevId)) {
+        if (!options_.shared || !CanSdmaReaches(im.superPodId, im.serverId, im.devicePhyId)) {
             // A2 device_rdma 跨机访问适配
             // AddVaInfoFromExternal 只需要记录GVA，因为device_rdma不需要访问HVM_DVA，所以才值0，
             // 防止copy的时候地址被TransformVa转换，Transport就找不到 Lkey/Rkey
@@ -586,7 +584,7 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         uint64_t lva = ReserveLva(im);
         BM_ASSERT_LOG_AND_RETURN(lva != 0, "va = " << lva, BM_ERROR);
         BM_LOG_INFO("Try to mmap rank:" << im.rankId << " superPodId:" << im.superPodId << " serverId:" << im.serverId
-                                        << " devId:" << im.logicDevId << " segType:" << options_.segType
+                                        << " devId:" << im.devicePhyId << " segType:" << options_.segType
                                         << " size:" << im.size << " gva:" << VaToStr(im.gva)
                                         << " dva:" << VaToStr(im.deviceVa) << " va:" << VaToStr(lva));
         drv_mem_handle_t *handle = nullptr;

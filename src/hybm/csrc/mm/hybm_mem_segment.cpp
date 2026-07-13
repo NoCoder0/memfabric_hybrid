@@ -33,6 +33,7 @@ constexpr uint32_t ASC910B_CONN_RANKS = 8U;
 bool MemSegment::deviceInfoReady_{false};
 int MemSegment::deviceId_{-1};
 int MemSegment::logicDeviceId_{-1};
+int MemSegment::devicePhyId_{-1};
 uint32_t MemSegment::pid_{0};
 uint32_t MemSegment::sdid_{0};
 uint32_t MemSegment::serverId_{0};
@@ -47,6 +48,7 @@ void MemSegment::ResetDeviceInfoInChild() noexcept
     MemSegment::deviceInfoReady_ = false;
     MemSegment::deviceId_ = -1;
     MemSegment::logicDeviceId_ = -1;
+    MemSegment::devicePhyId_ = -1;
     MemSegment::pid_ = 0;
     MemSegment::sdid_ = 0;
     MemSegment::serverId_ = 0;
@@ -188,6 +190,13 @@ Result MemSegment::InitDeviceInfo(int devId)
         return BM_DL_FUNCTION_FAILED;
     }
 
+    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(devId, &devicePhyId_);
+    if (ret != 0) {
+        BM_LOG_WARN("Failed to get phy deviceId by logicDevId, fallback to logicId: user="
+                    << deviceId_ << ", logic=" << logicDeviceId_ << ", ret=" << ret);
+        devicePhyId_ = logicDeviceId_;
+    }
+
     ret = DlAclApi::RtDeviceGetBareTgid(&pid_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get bare tgid failed: " << ret);
@@ -269,6 +278,27 @@ void MemSegment::FillSysBootIdInfo() noexcept
     std::stringstream ss(sysBoolId_);
     ss >> std::hex >> bootIdHead_;
     BM_LOG_DEBUG("os-boot-id: " << sysBoolId_ << ", head u32: " << std::hex << bootIdHead_);
+}
+
+Result MemSegment::EnableRemotePeerAccess(int32_t remotePhyId) noexcept
+{
+    if (remotePhyId < 0) {
+        BM_LOG_ERROR("invalid remote phy id: " << remotePhyId);
+        return BM_INVALID_PARAM;
+    }
+    if (remotePhyId == devicePhyId_) {
+        return BM_OK;
+    }
+
+    Result ret = DlAclApi::RtEnableP2P(static_cast<uint32_t>(deviceId_), static_cast<uint32_t>(remotePhyId), 0);
+    if (ret != 0) {
+        BM_LOG_ERROR("enable device access failed:" << ret << " local_user:" << deviceId_
+                                                    << " local_phy:" << devicePhyId_ << " remote_phy:" << remotePhyId);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    BM_LOG_DEBUG("enable device access success local_user:" << deviceId_ << " local_phy:" << devicePhyId_
+                                                            << " remote_phy:" << remotePhyId);
+    return BM_OK;
 }
 } // namespace mf
 } // namespace ock

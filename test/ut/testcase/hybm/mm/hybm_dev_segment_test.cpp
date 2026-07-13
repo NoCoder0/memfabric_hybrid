@@ -314,7 +314,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_SingleSliceN
     exportInfo.address = vAddress;
     exportInfo.size = 4096;
     exportInfo.rankId = rankId;
-    exportInfo.logicDeviceId = 0;
+    exportInfo.devicePhyId = 0;
     exportInfo.superPodId = 0;
     exportInfo.serverId = 0;
     strncpy(exportInfo.name, sliceName.c_str(), sizeof(exportInfo.name) - 1);
@@ -392,7 +392,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_InvalidLogi
 
     ock::mf::HbmExportDeviceInfo deviceInfo{};
     deviceInfo.magic = ock::mf::ENTITY_EXPORT_INFO_MAGIC;
-    deviceInfo.logicDeviceId = 16;
+    deviceInfo.devicePhyId = 16;
     deviceInfo.rankId = 0;
     deviceInfo.sdid = 123;
     deviceInfo.pid = 456;
@@ -414,13 +414,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_SuccessNoP2
 
     const uint32_t localDeviceId = 5;
     segment.logicDeviceId_ = localDeviceId;
+    segment.devicePhyId_ = localDeviceId;
     segment.deviceId_ = 0;
 
     ASSERT_TRUE(segment.registerSlices_.empty());
 
     ock::mf::HbmExportDeviceInfo deviceInfo{};
     deviceInfo.magic = ock::mf::ENTITY_EXPORT_INFO_MAGIC;
-    deviceInfo.logicDeviceId = localDeviceId;
+    deviceInfo.devicePhyId = localDeviceId;
     deviceInfo.rankId = 10;
     deviceInfo.sdid = 123;
     deviceInfo.pid = 456;
@@ -431,7 +432,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_SuccessNoP2
 
     EXPECT_TRUE(segment.importedDeviceInfo_.count(10) > 0);
     const auto &stored = segment.importedDeviceInfo_.at(10);
-    EXPECT_EQ(stored.logicDeviceId, localDeviceId);
+    EXPECT_EQ(stored.devicePhyId, localDeviceId);
     EXPECT_EQ(stored.rankId, 10U);
 }
 
@@ -464,7 +465,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_InvalidLogic
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     ock::mf::UserHbmExportSliceInfo sliceInfo{};
-    sliceInfo.logicDeviceId = 16; // >= MAX_DEVICE_COUNT (16) → invalid
+    sliceInfo.devicePhyId = 16; // >= MAX_DEVICE_COUNT (16) → invalid
     sliceInfo.rankId = 5;
     sliceInfo.gvaOffset = 0x10000000ULL;
     sliceInfo.size = 4096;
@@ -489,7 +490,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_SuccessNoHar
 
     // Prepare valid slice info
     ock::mf::UserHbmExportSliceInfo sliceInfo{};
-    sliceInfo.logicDeviceId = 5; // < 16, valid
+    sliceInfo.devicePhyId = 5; // < 16, valid
     sliceInfo.rankId = 10;
     sliceInfo.gvaOffset = 0x10000000ULL;
     sliceInfo.size = 4096;
