@@ -110,7 +110,7 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 ## 🔥性能表现
 
 ### 时延测试
-- 使用2个昇腾A3节点组成双机内存池，将MemFabric对接到MoonCake TE（MoonCake是业界开源的一款的分布式缓存软件, [memfabric对接mooncake代码](https://gitcode.com/openFuyao/mooncake/blob/v0.3.7-dev/doc/zh/ub_transport.md)）进行读写时延测试，模拟构造DeepSeek-R1模型KV大小的block size，即：61x128K + 61x16K = 8784KB ≈ 8.57MB，共122个离散地址，性能表现如下:
+- 使用2个昇腾A3节点组成双机内存池，将MemFabric对接到MoonCake Transfer Engine（MoonCake是业界开源的一款的分布式缓存软件, [memfabric对接mooncake代码](https://gitcode.com/openFuyao/mooncake/blob/v0.3.7-dev/doc/zh/ub_transport.md)）进行读写时延测试，模拟构造DeepSeek-R1模型KV大小的block size，即：61x128K + 61x16K = 8784KB ≈ 8.57MB，共122个离散地址，性能表现如下:
 
 ![a3-Latency-performance](./doc/source/a3_latency.png)
 
@@ -172,6 +172,8 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 请访问以下文档获取简易教程。
 
 - [编译安装](./doc/installation.md)：介绍组件编译和安装教程。
+
+- [DevContainer 快速入门](./doc/devcontainer_quickstart.md)：VS Code Remote + DevContainer 一键环境搭建 + 全量用例运行指南。
 
 - [样例执行](./examples/memory_pool/README.md)：介绍如何端到端执行样例代码，包括C++和Python样例。
 
