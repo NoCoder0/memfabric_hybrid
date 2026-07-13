@@ -20,7 +20,7 @@
 ## 预提交 / 代码风格
 
 - **安装**：`pip install pre-commit && pre-commit install --install-hooks`
-- **CI PR 检查**：`TARGET_BRANCH=develop bash script/ci-pre-commit-pr.sh`
+- **CI PR 检查**：`bash script/ci-pre-commit-pr.sh`
 - **Python**：ruff 目标 `py310`，行长度 120。配置位于 `pre-commit/pyproject.toml`。
 - **C++**：clang-format v18.1.8，基于 Google，IndentWidth=4，ColumnLimit=120，Allman 大括号。配置位于 `.clang-format`。
 
