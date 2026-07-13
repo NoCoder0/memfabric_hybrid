@@ -63,14 +63,17 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   ```bash
   ./bm_perf_benchmark -bw -ot [DATA_OP_TYPE] -t [DATA_COPY_TYPE] -cc[COPY_COUNT] -s [BLOCK_SIZE] -bs[BATCH_SIZE] -d [DEVICE_START] -ws [WORLD_SIZE] -lrs [LOCAL_RANK_SIZE] -rs [RANK_START] -ip [SERVER_IP] -rdma [RDMA_URL]
   ```
-    - DATA_OP_TYPE: 数据操作类型,参考smem_bm_data_op_type定义,可选项[sdma,device_rdma,host_rdma,host_urma,host_tcp]
+    - DATA_OP_TYPE: 数据操作类型,参考smem_bm_data_op_type定义,
+      可选项[sdma,device_rdma,device_urma,device_uboe,host_rdma,host_urma,host_tcp]
     - DATA_COPY_TYPE: 数据拷贝方式,可选项[h2d,d2h,h2rd,h2rh,d2rh,d2rd,rh2d,rh2h,rd2h,rd2d,all],当选择all时，会依次测试其余所有拷贝路径
     - WORLD_SIZE: 整个集群使用的卡数
     - LOCAL_RANK_SIZE: 在本节点使用的卡数
     - RANK_START: 本节点的rankId的起始值,本节点的rankId范围就是[RANK_START, RANK_START + LOCAL_RANK_SIZE)
     - DEVICE_START: 本节点使用的卡号的起始值,本节点的卡号范围就是[DEVICE_START, DEVICE_START + LOCAL_RANK_SIZE)
-    - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考  [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md)。
-    - RDMA_URL: ```tcp://<ip>:<port>``` 使用数据操作类型为host_rdma时需要额外指定的rdma网卡的ip和端口,其余操作类型可省略
+    - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。
+      关于 configStore 配置存储系统的说明，请参考
+      [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md)。
+    - RDMA_URL: ```tcp://<ip>:<port>``` 使用数据操作类型为host_rdma时需要额外指定的rdma网卡的ip和端口,其余操作类型可省略（-rdma参数主要用于host RDMA/hcomUrl）
     - BLOCK_SIZE: 单个拷贝数据块的大小
     - BATCH_SIZE：每次下发拷贝的block个数
     - COPY_COUNT：循环下发多少次拷贝
@@ -95,4 +98,12 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   两节点运行8张卡,每节点4张,A节点使用2-5卡,B节点使用4-7卡,使用数据操作类型为host_rdma(假设nodeA的ip为x.x.x.x,nodeA的rdma网卡ip为n.n.n.n,nodeB的rdma网卡ip为m.m.m.m):
   nodeA: ./bm_perf_benchmark -bw -ot host_rdma -t all -s 2097152 -ws 8 -lrs 4 -rs 0 -d 2 -ip tcp://x.x.x.x:8570 -rdma tcp://n.n.n.n:18888
   nodeB: ./bm_perf_benchmark -bw -ot host_rdma -t all -s 2097152 -ws 8 -lrs 4 -rs 4 -d 4 -ip tcp://x.x.x.x:8570 -rdma tcp://m.m.m.m:18888
+
+  两节点运行8张卡,每节点4张,使用数据操作类型为device_urma:
+  nodeA: ./bm_perf_benchmark -bw -ot device_urma -t all -s 2097152 -ws 8 -lrs 4 -rs 0 -d 2 -ip tcp://x.x.x.x:8570
+  nodeB: ./bm_perf_benchmark -bw -ot device_urma -t all -s 2097152 -ws 8 -lrs 4 -rs 4 -d 4 -ip tcp://x.x.x.x:8570
+
+  两节点运行8张卡,每节点4张,使用数据操作类型为device_uboe:
+  nodeA: ./bm_perf_benchmark -bw -ot device_uboe -t all -s 2097152 -ws 8 -lrs 4 -rs 0 -d 2 -ip tcp://x.x.x.x:8570
+  nodeB: ./bm_perf_benchmark -bw -ot device_uboe -t all -s 2097152 -ws 8 -lrs 4 -rs 4 -d 4 -ip tcp://x.x.x.x:8570
   ```

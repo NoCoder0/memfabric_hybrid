@@ -50,7 +50,7 @@ void PrintHelp()
                  "-h, --help                  Displays help information.\n"
                  "-bw, bandwidth              Performs a bandwidth test.\n"
                  "    -ot, --op-type          Indicates the data operation type.\n"
-                 "(sdma,device_rdma,host_rdma,host_urma,host_tcp)\n"
+                 "(sdma,device_rdma,device_urma,device_uboe,host_rdma,host_urma,host_tcp)\n"
                  "    -t,  --type             Indicates the data copy type.\n"
                  "(h2d,d2h,h2rd,h2rh,d2rh,d2rd,rh2d,rh2h,rd2h,rd2d,all).\n"
                  "    -s,  --size             Specifies block size (default 1024).\n"
@@ -117,6 +117,12 @@ smem_bm_data_op_type ParseOpType(const std::string &arg)
     if (arg == "device_rdma") {
         return SMEMB_DATA_OP_DEVICE_RDMA;
     }
+    if (arg == "device_urma") {
+        return SMEMB_DATA_OP_DEVICE_URMA;
+    }
+    if (arg == "device_uboe") {
+        return SMEMB_DATA_OP_DEVICE_UBOE;
+    }
     if (arg == "host_rdma") {
         return SMEMB_DATA_OP_HOST_RDMA;
     }
@@ -126,7 +132,9 @@ smem_bm_data_op_type ParseOpType(const std::string &arg)
     if (arg == "host_tcp") {
         return SMEMB_DATA_OP_HOST_TCP;
     }
-    ExitWithError("invalid Optype: " + arg + " (must be one of sdma/device_rdma/host_rdma/host_urma/host_tcp)");
+    ExitWithError("invalid Optype: " + arg +
+                  " (must be one of sdma/device_rdma/device_urma/"
+                  "device_uboe/host_rdma/host_urma/host_tcp)");
 }
 
 uint64_t ParseUint64(const std::string &arg, const std::string &field)

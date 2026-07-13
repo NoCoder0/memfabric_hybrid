@@ -337,6 +337,21 @@ class MmcTest(TestServer):
             self.sync_stream()
         return raw_blocks
 
+    @staticmethod
+    def _resolve_protocol_op_type(protocol: str):
+        """Map protocol string to (BmDataOpType, flags)."""
+        mapping = {
+            'host_rdma': (bm.BmDataOpType.HOST_RDMA, 0),
+            'host_urma': (bm.BmDataOpType.HOST_URMA, 0),
+            'host_tcp': (bm.BmDataOpType.HOST_TCP, 0),
+            'device_rdma': (bm.BmDataOpType.DEVICE_RDMA, 2),
+            'device_sdma': (bm.BmDataOpType.SDMA, 2),
+            'device_urma': (bm.BmDataOpType.DEVICE_URMA, 2),
+            'device_uboe': (bm.BmDataOpType.DEVICE_UBOE, 2),
+            'host_shm': (bm.BmDataOpType.HOST_SHM, 0),
+        }
+        return mapping.get(protocol, (bm.BmDataOpType.DEVICE_RDMA, 2))
+
     def read_client_conf(self) -> SmemBmClientConfig:
         import os
 
@@ -367,27 +382,7 @@ class MmcTest(TestServer):
         config.auto_ranking = False
         config.rank_id = self._rank_id
         config.set_nic(client_config.nic)  # for device port
-        if client_config.protocol == 'host_rdma':
-            op_type = bm.BmDataOpType.HOST_RDMA
-            config.flags = 0
-        elif client_config.protocol == 'host_urma':
-            op_type = bm.BmDataOpType.HOST_URMA
-            config.flags = 0
-        elif client_config.protocol == 'host_tcp':
-            op_type = bm.BmDataOpType.HOST_TCP
-            config.flags = 0
-        elif client_config.protocol == 'device_rdma':
-            op_type = bm.BmDataOpType.DEVICE_RDMA
-            config.flags = 2
-        elif client_config.protocol == 'device_sdma':
-            op_type = bm.BmDataOpType.SDMA
-            config.flags = 2
-        elif client_config.protocol == 'host_shm':
-            op_type = bm.BmDataOpType.HOST_SHM
-            config.flags = 0
-        else:
-            op_type = bm.BmDataOpType.DEVICE_RDMA
-            config.flags = 2
+        op_type, config.flags = self._resolve_protocol_op_type(client_config.protocol)
         ret = bm.initialize(
             store_url=client_config.config_store_url,
             world_size=client_config.world_size,
