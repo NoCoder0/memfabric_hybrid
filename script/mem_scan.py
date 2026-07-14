@@ -6,6 +6,10 @@ import subprocess
 
 PAGE_SIZE = os.sysconf("SC_PAGE_SIZE")
 KPF_BUDDY = 10
+ASCEND_910B = "ASCEND_910B"
+ASCEND_910C = "ASCEND_910C"
+ASCEND_950 = "ASCEND_950"
+ASCEND_UNKNOWN = "ASCEND_UNKNOWN"
 
 # ===== 地址段配置 =====
 RANGES = [
@@ -114,7 +118,7 @@ def get_force_max_zoneorder():
     kernel_ver = subprocess.check_output(['uname', '-r'], text=True).strip()
 
     # 内核配置文件路径
-    config_paths = f"/boot/config-{kernel_ver}"
+    config_paths = [f"/boot/config-{kernel_ver}"]
     for path in config_paths:
         try:
             with open(path, 'r', errors='ignore') as f:
@@ -141,6 +145,10 @@ def round_up(a, b):
 
 def round_down(a, b):
     return a // b * b
+
+
+def get_zone_page_size():
+    return PAGE_SIZE * (1 << (get_force_max_zoneorder() - 1))
 
 
 def run_for_node(node, min_mb, target_ranges, zone_page):
@@ -176,6 +184,140 @@ def run_for_node(node, min_mb, target_ranges, zone_page):
     return total_intersect_mb
 
 
+def build_target_ranges():
+    target_ranges = []
+    for base in RANGES:
+        start = addr_to_pfn(base)
+        end = addr_to_pfn(base + RANGE_SIZE - 1)
+        target_ranges.append((start, end))
+    return target_ranges
+
+
+def get_ascend_soc_type(verbose=True):
+    import acl
+
+    name = acl.get_soc_name()
+    if name is None:
+        if verbose:
+            print("acl.get_soc_name() failed.")
+        return ASCEND_UNKNOWN
+
+    if verbose:
+        print(f"get soc name: {name}")
+    if "Ascend910B" in name:
+        return ASCEND_910B
+    if "Ascend910_93" in name:
+        return ASCEND_910C
+    if "Ascend910_95" in name or "Ascend950" in name:
+        return ASCEND_950
+
+    return ASCEND_UNKNOWN
+
+
+def get_aligned_free_size_mb(free_start, free_end, min_size, zone_page):
+    start = round_up(free_start * PAGE_SIZE, zone_page)
+    end = round_down((free_end + 1) * PAGE_SIZE, zone_page)
+    size = end - start
+
+    if min_size < zone_page:
+        size = size // zone_page * min_size
+    else:
+        size = size // min_size * min_size
+    if size < min_size:
+        return None
+
+    return size >> 20
+
+
+def classic_scan_for_node(node, min_mb, zone_page):
+    print(f"\n===== NUMA node {node} =====")
+
+    total_free_mb = stat_node_free_mb(node, min_mb, zone_page)
+    print(f"Total FREE: {total_free_mb / 1024:.2f} GB")
+    return total_free_mb
+
+
+def stat_node_free_mb(node, min_mb, zone_page):
+    total_free_mb = 0
+    min_size = min_mb << 20
+
+    for free_start, free_end in scan_node_free_segments(node):
+        size_mb = get_aligned_free_size_mb(free_start, free_end, min_size, zone_page)
+        if size_mb is not None:
+            total_free_mb += size_mb
+
+    return total_free_mb
+
+
+def stat_range_node_free_mb(node, min_mb, target_ranges, zone_page):
+    total_free_mb = 0
+    min_size = min_mb << 20
+
+    for free_start, free_end in scan_node_free_segments(node):
+        for r_start, r_end in target_ranges:
+            inter = intersect(free_start, free_end, r_start, r_end)
+            if not inter:
+                continue
+
+            size_mb = get_aligned_free_size_mb(inter[0], inter[1], min_size, zone_page)
+            if size_mb is not None:
+                total_free_mb += size_mb
+
+    return total_free_mb
+
+
+def stat(node=None, min_mb=1024):
+    ascend_soc_type = get_ascend_soc_type(verbose=False)
+    zone_page = get_zone_page_size()
+    nodes = [node] if node is not None else get_all_nodes()
+    if ascend_soc_type == ASCEND_910C:
+        target_ranges = build_target_ranges()
+        total_free_mb = sum(stat_range_node_free_mb(scan_node, min_mb, target_ranges, zone_page) for scan_node in nodes)
+    else:
+        total_free_mb = sum(stat_node_free_mb(scan_node, min_mb, zone_page) for scan_node in nodes)
+    return total_free_mb / 1024
+
+
+def show(node=None, min_mb=1024):
+    ascend_soc_type = get_ascend_soc_type()
+    nodes = [node] if node is not None else get_all_nodes()
+    zone_page = get_zone_page_size()
+
+    if ascend_soc_type != ASCEND_910C:
+        print("Use PFN scan without target ranges.")
+        print(f"Get page size: {hex(PAGE_SIZE)}, zone page size: {hex(zone_page)}")
+
+        numa_free_mb = []
+        for scan_node in nodes:
+            numa_free_mb.append(classic_scan_for_node(scan_node, min_mb, zone_page))
+
+        print("\n===== Summary =====")
+        for scan_node, free_mb in zip(nodes, numa_free_mb):
+            print(f"NUMA node {scan_node}: {free_mb:.2f} MB")
+
+        total_free_mb = sum(numa_free_mb)
+        total_free_gb = total_free_mb / 1024
+        print(f"PageSize: {hex(PAGE_SIZE)}, ZonePageSize: {hex(zone_page)} TotalFree: {total_free_gb:.2f} GB")
+        return total_free_mb
+
+    target_ranges = build_target_ranges()
+    print(f"Get page size: {hex(PAGE_SIZE)}, zone page size: {hex(zone_page)}")
+    print("Scanning NUMA nodes...\n")
+
+    numa_free_mb = []
+    for scan_node in nodes:
+        numa_free_mb.append(run_for_node(scan_node, min_mb, target_ranges, zone_page))
+
+    print("\n===== Summary =====")
+    for scan_node, free_mb in zip(nodes, numa_free_mb):
+        print(f"NUMA node {scan_node}: {free_mb:.2f} MB")
+
+    total_free_mb = sum(numa_free_mb)
+    total_free_gb = total_free_mb / 1024
+    print(f"PageSize: {hex(PAGE_SIZE)}, ZonePageSize: {hex(zone_page)} TotalFree: {total_free_gb:.2f} GB")
+    return total_free_mb
+
+
 def main():
     import argparse
 
@@ -183,34 +325,7 @@ def main():
     parser.add_argument("-n", "--node", type=int, help="NUMA node ID (default: all)")
     parser.add_argument("-m", "--min-mb", type=int, default=1024)
     args = parser.parse_args()
-
-    # 构造 range PFN
-    target_ranges = []
-    for base in RANGES:
-        start = addr_to_pfn(base)
-        end = addr_to_pfn(base + RANGE_SIZE - 1)
-        target_ranges.append((start, end))
-
-    # 决定扫描哪些 node
-    if args.node is not None:
-        nodes = [args.node]
-    else:
-        nodes = get_all_nodes()
-
-    zone_page = PAGE_SIZE * (1 << (get_force_max_zoneorder() - 1))
-    print(f"Get page size: {hex(PAGE_SIZE)}, zone page size: {hex(zone_page)}")
-    print("Scanning NUMA nodes...\n")
-
-    numa_free_mb = []
-    for node in nodes:
-        numa_free_mb.append(run_for_node(node, args.min_mb, target_ranges, zone_page))
-
-    print(f"\n===== Summary =====")
-    for node, free_mb in zip(nodes, numa_free_mb):
-        print(f"NUMA node {node}: {free_mb:.2f} MB")
-
-    total_free_mb = sum(numa_free_mb)
-    print(f"PageSize: {hex(PAGE_SIZE)}, ZonePageSize: {hex(zone_page)} TotalFree: {(total_free_mb / 1024):.2f} GB")
+    show(args.node, args.min_mb)
 
 
 if __name__ == "__main__":
