@@ -124,6 +124,19 @@ SMEM_API uint32_t smem_bm_get_rank_id()
     return SmemBmEntryManager::Instance().GetRankId();
 }
 
+SMEM_API int32_t smem_bm_update_store_url(const char *storeURL)
+{
+    SM_VALIDATE_RETURN(storeURL != nullptr, "invalid param, storeURL is null", SM_INVALID_PARAM);
+
+    ReadGuard locker(g_smemBmMutex_);
+    if (!g_smemBmInited) {
+        SM_LOG_AND_SET_LAST_ERROR("smem bm not initialized yet");
+        return SM_NOT_INITIALIZED;
+    }
+
+    return SmemBmEntryManager::Instance().UpdateStoreUrl(std::string(storeURL));
+}
+
 /* return 1 means check ok */
 static inline int32_t SmemBmDataOpCheck(smem_bm_data_op_type dataOpType)
 {

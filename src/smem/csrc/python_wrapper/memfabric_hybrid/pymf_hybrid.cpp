@@ -716,6 +716,16 @@ Get the rank id, assigned during initialize.
 Returns:
     rank id if successful, UINT32_MAX is returned if failed.)");
 
+    m.def("update_store_url", [](const std::string &storeURL) {
+        return smem_bm_update_store_url(storeURL.c_str());
+    }, py::call_guard<py::gil_scoped_release>(), py::arg("store_url"), R"(
+Update the config store URL after smem_bm_init, used when MetaService restarts with a new IP.
+
+Arguments:
+    store_url(str): new configure store url, e.g. tcp://ip:port
+Returns:
+    0 if successful, negative value for error)");
+
     m.def("create", &BigMemory::Create, py::call_guard<py::gil_scoped_release>(), py::arg("id"),
           py::arg("local_dram_size"), py::arg("local_hbm_size") = 0, py::arg("data_op_type") = SMEMB_DATA_OP_SDMA,
           py::arg("flags") = 0, R"(

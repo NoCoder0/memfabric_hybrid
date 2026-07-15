@@ -172,6 +172,18 @@ void smem_bm_uninit(uint32_t flags);
 |-|-|
 |flags|预留参数|
 
+#### smem_bm_update_store_url
+更新config store URL，用于MetaService重启变更IP地址时，在smem_bm_init之后动态更新store地址
+
+```c
+int32_t smem_bm_update_store_url(const char *storeURL);
+```
+
+|参数/返回值|含义|
+|-|-|
+|storeURL|新的config store地址，格式支持 `tcp://ip:port` 等|
+|返回值|成功返回0，其他为错误码|
+
 ### 2. 创建/销毁BM
 #### smem_bm_create
 创建BM

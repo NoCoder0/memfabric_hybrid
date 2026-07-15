@@ -102,6 +102,7 @@ public:
         }
         serverIp_ = ip;
         serverPort_ = port;
+        SetConnectStatus(false);
         if (accClientLink_ != nullptr && accClientLink_->Established()) {
             accClientLink_->Close();
             accClientLink_ = nullptr;
@@ -121,12 +122,19 @@ private:
                             uint32_t &id) noexcept;
     void HeartBeat() noexcept;
 
-    inline int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
-                                     const acc::AccDataBufferPtr &cbCtx)
+    int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
+                              const acc::AccDataBufferPtr &cbCtx)
     {
+        std::lock_guard<std::mutex> guard(mutex_);
+        if (accClientLink_ == nullptr) {
+            return acc::ACC_LINK_ERROR;
+        }
         auto ret = accClientLink_->NonBlockSend(msgType, seqNo, d, cbCtx);
         if (ret == acc::ACC_LINK_ERROR) {
             ReConnectAfterBroken(1UL);
+            if (accClientLink_ == nullptr) {
+                return acc::ACC_LINK_ERROR;
+            }
             ret = accClientLink_->NonBlockSend(msgType, seqNo, d, cbCtx);
         }
         return ret;

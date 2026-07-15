@@ -221,6 +221,50 @@ Result SmemBmEntryManager::RemoveEntryByPtr(uintptr_t ptr)
     return SM_OK;
 }
 
+Result SmemBmEntryManager::UpdateStoreUrl(const std::string &storeURL)
+{
+    std::lock_guard<std::mutex> guard(entryMutex_);
+    SM_ASSERT_RETURN(inited_, SM_NOT_STARTED);
+    SM_VALIDATE_RETURN(!storeURL.empty(), "invalid param, storeURL is empty", SM_INVALID_PARAM);
+
+    if (storeURL == storeURL_) {
+        SM_LOG_INFO("store URL is the same, skip update: " << storeURL);
+        return SM_OK;
+    }
+
+    SM_LOG_INFO("update store URL from " << storeURL_ << " to " << storeURL);
+
+    // Parse new URL to extract IP and port
+    UrlExtraction newExtraction;
+    SM_ASSERT_RETURN(newExtraction.ExtractIpPortFromUrl(storeURL) == SM_OK, SM_INVALID_PARAM);
+
+    // Lazy update: only update the underlying TcpConfigStore's server IP/port via SetServerInfo,
+    // without destroying/recreating the store. SetServerInfo will close the current connection
+    // if IP/port changed, and the existing reconnection mechanism (LocalNonBlockSend -> ReConnectAfterBroken)
+    // will automatically reconnect using the new IP/port.
+    if (confStore_ == nullptr) {
+        SM_LOG_ERROR("confStore_ is null, cannot update store URL");
+        return SM_ERROR;
+    }
+
+    auto coreStore = confStore_->GetCoreStore();
+    auto tcpConfigStore = Convert<ConfigStore, TcpConfigStore>(coreStore);
+    if (tcpConfigStore == nullptr) {
+        SM_LOG_ERROR("underlying store is not TcpConfigStore, cannot update server info in-place");
+        return SM_ERROR;
+    }
+
+    tcpConfigStore->SetServerInfo(newExtraction.ip, newExtraction.port);
+    SM_LOG_INFO("updated server info to " << newExtraction.ip << ":" << newExtraction.port
+                                         << ", reconnect will use new address");
+
+    storeURL_ = storeURL;
+    storeUrlExtraction_ = newExtraction;
+
+    SM_LOG_INFO("update store URL success, new URL: " << storeURL_);
+    return SM_OK;
+}
+
 void SmemBmEntryManager::Destroy()
 {
     std::lock_guard<std::mutex> guard(entryMutex_);
