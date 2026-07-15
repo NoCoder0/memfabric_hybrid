@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <array>
+#include <string>
 
 #include "dl_hcomm_api.h"
 #include "hybm_types.h"
@@ -28,6 +29,14 @@ Result GetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId, std::array<uint8_
 
 Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
                            std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
+
+#ifdef UT_ENABLED
+// Internal seam for UT: inject mock hccn_tool path and temp /etc/hccn.conf.
+// Production wrapper calls with default paths; tests inject temp paths.
+Result GetDeviceUrmaIpAddrFromSources(const std::string &toolPath, const std::string &configPath, uint32_t phyDeviceId,
+                                      uint32_t rankId, CommAddrType &addrType,
+                                      std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
+#endif
 
 } // namespace device
 } // namespace transport

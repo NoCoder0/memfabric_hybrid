@@ -31,7 +31,6 @@
 | `MF_HCOM_RQ_SIZE` | 无 | HCOM接收队列大小，设置后覆盖默认值。 |
 | `MF_HCOM_PREPOST_SIZE` | 无 | HCOM预投递大小，设置后覆盖默认值。 |
 | `MF_HCOM_MAX_SEND_RECV_DATA_CNT` | 无 | HCOM最大发送接收数据计数，设置后覆盖默认值。 |
-| `MF_DEVICE_URMA_EID_FILE` | 无（取决于协议） | 设备端 URMA 地址文件。`DEVICE_UBOE` 读 IP 时用此变量。 |
 
 ## 构建时环境变量
 

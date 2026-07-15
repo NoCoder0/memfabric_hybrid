@@ -16,6 +16,8 @@
 #include <string>
 #include <vector>
 
+#include <dirent.h>
+
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include <sys/stat.h>
@@ -2276,4 +2278,419 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
 
     manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+// ===================== DeviceUrmaEidReader tests =====================
+// Using UT_ENABLED seam (device_urma_eid_reader.h) to inject
+// mock hccn_tool and mock /etc/hccn.conf paths deterministically.
+
+namespace {
+
+static bool RemoveDirRecursive(const std::string &path)
+{
+    DIR *dir = opendir(path.c_str());
+    if (dir == nullptr) {
+        return false;
+    }
+    bool ok = true;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        const std::string fullPath = path + "/" + entry->d_name;
+        struct stat st;
+        if (stat(fullPath.c_str(), &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                ok = RemoveDirRecursive(fullPath) && ok;
+            } else {
+                ok = (unlink(fullPath.c_str()) == 0) && ok;
+            }
+        }
+    }
+    closedir(dir);
+    ok = (rmdir(path.c_str()) == 0) && ok;
+    return ok;
+}
+
+class EidReaderTempDir {
+public:
+    EidReaderTempDir()
+    {
+        dir_ = testing::TempDir() + "eid_reader_" + std::to_string(getpid()) + "_" + std::to_string(rand());
+        created_ = (mkdir(dir_.c_str(), 0755) == 0);
+    }
+    ~EidReaderTempDir()
+    {
+        if (created_) {
+            RemoveDirRecursive(dir_);
+        }
+    }
+    const std::string &path() const
+    {
+        return dir_;
+    }
+    bool IsCreated() const
+    {
+        return created_;
+    }
+
+private:
+    std::string dir_;
+    bool created_{false};
+};
+
+void CreateMockHccnTool(const std::string &dir, uint32_t phyDeviceId, const std::string &outputLine, int exitCode = 0)
+{
+    const std::string path = dir + "/hccn_tool";
+    std::ofstream script(path);
+    ASSERT_TRUE(script.is_open()) << "Failed to create mock hccn_tool: " << path;
+    script << "#!/bin/bash\n";
+    script << "if [ \"$*\" != \"-g -ip -i " << phyDeviceId << " -d bond" << phyDeviceId << "\" ]; then\n";
+    script << "    exit 1\n";
+    script << "fi\n";
+    if (!outputLine.empty()) {
+        script << "echo '" << outputLine << "'\n";
+    }
+    script << "exit " << exitCode << "\n";
+    script.close();
+    const int rc = chmod(path.c_str(), 0755);
+    ASSERT_EQ(rc, 0) << "Failed to chmod mock hccn_tool: " << path;
+}
+
+void CreateHccnConf(const std::string &path, const std::vector<std::string> &lines)
+{
+    std::ofstream conf(path);
+    ASSERT_TRUE(conf.is_open()) << "Failed to create hccn.conf: " << path;
+    for (const auto &line : lines) {
+        conf << line << "\n";
+    }
+    conf.close();
+}
+
+} // anonymous namespace
+
+TEST(DeviceUrmaEidReaderTest, ValidToolWinsOverDifferentConfIp)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: 10.10.21.2");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.99"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 2);
+}
+
+TEST(DeviceUrmaEidReaderTest, NonZeroToolFallsBack)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: 10.10.21.2", 1);
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, MissingIpaddrFallsBack)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "other: value");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, InvalidToolIpFallsBack)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: not_an_ip");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, ValidOutputPlusNonZeroExitFallsBack)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: 10.10.21.2", 1);
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, ExactKeyArbitraryOrder)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "other: value");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_10=10.10.21.10", "address_1=10.10.21.1", "address_2=10.10.21.2"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    // Must match address_1, NOT address_10
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 1);
+}
+
+TEST(DeviceUrmaEidReaderTest, BothSourcesFail)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    // Tool not found (file does not exist at this path)
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    // Config has key for wrong device (address_2, not address_1)
+    CreateHccnConf(confPath, {"address_2=10.10.21.2"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_NE(ret, BM_OK);
+}
+
+TEST(DeviceUrmaEidReaderTest, NonexistentToolFallsBackToConfig)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    // Tool does not exist at this path -> fall back to config
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret =
+        GetDeviceUrmaIpAddrFromSources(tmp.path() + "/nonexistent_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, ConfigTrimmedExactKey)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "other: value");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"  address_1 = 10.10.21.55  "});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, ConfigIpv6Parse)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "other: value");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=2001:db8::1"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V6);
+    // 2001:0db8::1 in network byte order
+    EXPECT_EQ(addrData[0], 0x20);
+    EXPECT_EQ(addrData[1], 0x01);
+    EXPECT_EQ(addrData[2], 0x0D);
+    EXPECT_EQ(addrData[3], 0xB8);
+    EXPECT_EQ(addrData[14], 0x00);
+    EXPECT_EQ(addrData[15], 0x01);
+}
+
+TEST(DeviceUrmaEidReaderTest, ToolReturns32HexIp)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: 20010db8000000000000000000000001");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.99"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V6);
+    // 2001:0db8::1 in network byte order (32 hex: 20010db8000000000000000000000001)
+    EXPECT_EQ(addrData[0], 0x20);
+    EXPECT_EQ(addrData[1], 0x01);
+    EXPECT_EQ(addrData[2], 0x0D);
+    EXPECT_EQ(addrData[3], 0xB8);
+    EXPECT_EQ(addrData[14], 0x00);
+    EXPECT_EQ(addrData[15], 0x01);
+}
+
+TEST(DeviceUrmaEidReaderTest, InvalidSigned32CharRejected)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    // 32 chars but starts with '+' -> IsAllHex rejects it, falls back to config
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: +0010db80000000000000000000000001");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, InvalidNonhex32CharRejected)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    // 32 chars with non-hex 'Z' -> IsAllHex rejects it, falls back to config
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.55"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[3], 55);
+}
+
+TEST(DeviceUrmaEidReaderTest, InvalidToolIpAndInvalidConfigIpFails)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    // Tool returns invalid IP -> falls back to config
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: not_an_ip");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    // Config has valid key but invalid IP value -> overall failure
+    CreateHccnConf(confPath, {"address_1=bad_ip_value"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_NE(ret, BM_OK);
+}
+
+TEST(DeviceUrmaEidReaderTest, BothSourcesFailConfigMissing)
+{
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: invalid_ip_here");
+    // Config does not exist at this path
+    const std::string confPath = tmp.path() + "/nonexistent/hccn.conf";
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_NE(ret, BM_OK);
+}
+
+TEST(DeviceUrmaEidReaderTest, ShellSafeToolPath)
+{
+    const std::string baseDir = testing::TempDir() + "eid_reader_space_" + std::to_string(getpid());
+    const std::string toolDir = baseDir + "/sub dir";
+    ASSERT_EQ(mkdir(baseDir.c_str(), 0755), 0) << "mkdir base";
+    ASSERT_EQ(mkdir(toolDir.c_str(), 0755), 0) << "mkdir sub dir";
+    CreateMockHccnTool(toolDir, 1, "ipaddr: 10.10.21.2");
+
+    const std::string confPath = baseDir + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.99"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    const auto ret = GetDeviceUrmaIpAddrFromSources(toolDir + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 2); // tool wins over config
+
+    RemoveDirRecursive(baseDir);
+}
+
+TEST(DeviceUrmaEidReaderTest, LegacyEnvVarDoesNotAffectResult)
+{
+    // Legacy env var MF_DEVICE_URMA_EID_FILE is no longer read;
+    // set it to a nonsense path to verify it has no effect.
+    EnvVarGuard envGuard("MF_DEVICE_URMA_EID_FILE");
+    setenv("MF_DEVICE_URMA_EID_FILE", "/nonexistent/eid_file", 1);
+
+    EidReaderTempDir tmp;
+    ASSERT_TRUE(tmp.IsCreated()) << "Failed to create temp dir: " << tmp.path();
+    CreateMockHccnTool(tmp.path(), 1, "ipaddr: 10.10.21.2");
+    const std::string confPath = tmp.path() + "/hccn.conf";
+    CreateHccnConf(confPath, {"address_1=10.10.21.99"});
+
+    CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+    std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
+    // Internal seam does not read env var; result purely from injected paths
+    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(addrData[0], 10);
+    EXPECT_EQ(addrData[1], 10);
+    EXPECT_EQ(addrData[2], 21);
+    EXPECT_EQ(addrData[3], 2);
 }
