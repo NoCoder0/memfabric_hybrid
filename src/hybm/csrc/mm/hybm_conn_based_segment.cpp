@@ -8,24 +8,25 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
+ */
 #include "hybm_conn_based_segment.h"
 
-#include <sys/types.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
+
 #include <algorithm>
 #include <bitset>
 #include <cstddef>
 #include <optional>
 
-#include "hybm_def.h"
-#include "hybm_logger.h"
-#include "hybm_ex_info_transfer.h"
-#include "hybm_va_manager.h"
-#include "hybm_numa_util.h"
 #include "dl_hal_api.h"
+#include "hybm_def.h"
+#include "hybm_ex_info_transfer.h"
+#include "hybm_logger.h"
+#include "hybm_numa_util.h"
+#include "hybm_va_manager.h"
 
 using namespace ock::mf;
 
@@ -48,14 +49,11 @@ Result HybmConnBasedSegment::ValidateOptions() noexcept
                                                                   << " flag len:" << HYBM_BIND_NUMA_FLAG_LEN);
         return BM_INVALID_PARAM;
     }
-    if (policyInfo.policy == NumaBindPolicy::MANUAL && policyInfo.cpuGroupId < 0) {
-        BM_LOG_ERROR("Failed to resolve manual NUMA affinity from flag:" << std::bitset<UINT32_WIDTH>(options_.flags)
-                                                                         << " start index:" << HYBM_BIND_NUMA_FLAG_INDEX
-                                                                         << " flag len:" << HYBM_BIND_NUMA_FLAG_LEN);
-        return BM_INVALID_PARAM;
-    }
-    if (policyInfo.policy == NumaBindPolicy::AUTO && policyInfo.cpuGroupId < 0) {
-        BM_LOG_ERROR("Failed to resolve auto NUMA affinity from deviceId:" << logicDeviceId_);
+    if (socType_ == AscendSocType::ASCEND_950 && policyInfo.policy != NumaBindPolicy::OFF &&
+        policyInfo.socketCpus.empty()) {
+        BM_LOG_ERROR("Failed to resolve NUMA affinity CPU list, policy:" << static_cast<int32_t>(policyInfo.policy)
+                                                                         << " deviceId:" << logicDeviceId_ << " flag:"
+                                                                         << std::bitset<UINT32_WIDTH>(options_.flags));
         return BM_INVALID_PARAM;
     }
 
@@ -407,11 +405,11 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
     if (socType_ == AscendSocType::ASCEND_950) {
         const auto policyInfo = HybmNumaUtil::GetNumaBindPolicyInfo(options_.flags, logicDeviceId_);
         std::optional<CpuAffinityGuard> cpuGuard;
-        if (policyInfo.valid && policyInfo.cpuGroupId >= 0 && policyInfo.policy != NumaBindPolicy::OFF) {
+        if (policyInfo.valid && !policyInfo.socketCpus.empty() && policyInfo.policy != NumaBindPolicy::OFF) {
             BM_LOG_DEBUG("ConnBasedSegment CPU affinity policy:" << static_cast<int32_t>(policyInfo.policy)
-                                                                 << " cpuGroupId:" << policyInfo.cpuGroupId
+                                                                 << " cpuCount:" << policyInfo.socketCpus.size()
                                                                  << " deviceId:" << logicDeviceId_);
-            cpuGuard.emplace(policyInfo.cpuGroupId);
+            cpuGuard.emplace(policyInfo);
         }
 
         uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_NORMAL;

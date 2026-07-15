@@ -10,6 +10,9 @@
  * See the Mulan PSL v2 for more details.
 */
 #include <dlfcn.h>
+
+#include <array>
+#include <cstring>
 #include <mutex>
 
 #include "hybm_define.h"
@@ -21,8 +24,13 @@ namespace mf {
 bool DlHalApi::gLoaded = false;
 std::mutex DlHalApi::gMutex;
 void *DlHalApi::halHandle;
+void *DlHalApi::dcmiHandle;
 
 const char *DlHalApi::gAscendHalLibName = "libascend_hal.so";
+const char *DlHalApi::gDcmiLibName = "libdcmi.so";
+
+dcmiInitFunc DlHalApi::pDcmiInit = nullptr;
+dcmiGetAffinityCpuInfoFunc DlHalApi::pDcmiGetAffinityCpuInfo = nullptr;
 
 halSvmModuleAllocedSizeIncFunc DlHalApi::pSvmModuleAllocedSizeInc = nullptr;
 halVirtAllocMemFromBaseFunc DlHalApi::pVirtAllocMemFromBase = nullptr;
@@ -77,6 +85,57 @@ halMemGetAllocationGranularityFunc DlHalApi::pHalMemGetAllocationGranularity = n
 halMemAllocFunc DlHalApi::pHalMemAlloc = nullptr;
 halMemFreeFunc DlHalApi::pHalMemFree = nullptr;
 drvMemGetAttributeFunc DlHalApi::pDrvMemGetAttribute = nullptr;
+
+Result DlHalApi::LoadDcmiLibrary()
+{
+    dcmiHandle = dlopen(gDcmiLibName, RTLD_LAZY | RTLD_LOCAL);
+    if (dcmiHandle == nullptr) {
+        BM_LOG_ERROR("Failed to open library [" << gDcmiLibName << "], error: " << dlerror());
+        return BM_DL_FUNCTION_FAILED;
+    }
+
+    DL_LOAD_SYM(pDcmiInit, dcmiInitFunc, dcmiHandle, "dcmiv2_init");
+    DL_LOAD_SYM(pDcmiGetAffinityCpuInfo, dcmiGetAffinityCpuInfoFunc, dcmiHandle,
+                "dcmiv2_get_affinity_cpu_info_by_dev_id");
+    const int32_t ret = pDcmiInit();
+    if (ret != 0) {
+        BM_LOG_ERROR("Failed to initialize library [" << gDcmiLibName << "], ret: " << ret);
+        dlclose(dcmiHandle);
+        dcmiHandle = nullptr;
+        return ret;
+    }
+    return BM_OK;
+}
+
+Result DlHalApi::DcmiGetAffinityCpuInfo(int32_t deviceId, std::string &cpuList)
+{
+    std::lock_guard<std::mutex> guard(gMutex);
+    const Result loadRet = LoadDcmiLibrary();
+    if (loadRet != BM_OK) {
+        pDcmiInit = nullptr;
+        pDcmiGetAffinityCpuInfo = nullptr;
+        return loadRet;
+    }
+
+    constexpr size_t DCMI_CPU_LIST_BUFFER_SIZE = 4096U;
+    std::array<char, DCMI_CPU_LIST_BUFFER_SIZE> buffer{};
+    int32_t length = static_cast<int32_t>(buffer.size());
+    const int32_t ret = pDcmiGetAffinityCpuInfo(deviceId, buffer.data(), &length);
+    if (ret != 0) {
+        BM_LOG_ERROR("Failed to get DCMI affinity CPU info, deviceId: " << deviceId << ", ret: " << ret);
+    }
+
+    pDcmiInit = nullptr;
+    pDcmiGetAffinityCpuInfo = nullptr;
+    dlclose(dcmiHandle);
+    dcmiHandle = nullptr;
+    if (ret != 0) {
+        return ret;
+    }
+
+    cpuList.assign(buffer.data(), strnlen(buffer.data(), buffer.size()));
+    return BM_OK;
+}
 
 Result DlHalApi::LoadHybmVmmLibrary(uint32_t gvaVersion)
 {
@@ -233,6 +292,7 @@ void DlHalApi::CleanupHalApi()
     pHalSqCqQuery = nullptr;
     pHalHostRegister = nullptr;
     pHalHostUnregisterEx = nullptr;
+    pDrvNotifyIdAddrOffset = nullptr;
 
     pHalMemAddressReserve = nullptr;
     pHalMemAddressFree = nullptr;
@@ -244,6 +304,8 @@ void DlHalApi::CleanupHalApi()
     pHalMemExport = nullptr;
     pHalMemImport = nullptr;
     pHalMemGetAllocationGranularity = nullptr;
+    pHalMemShareHandleSetAttribute = nullptr;
+    pHalMemTransShareableHandle = nullptr;
     pHalMemAlloc = nullptr;
     pHalMemFree = nullptr;
     pDrvMemGetAttribute = nullptr;

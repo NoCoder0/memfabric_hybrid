@@ -8,14 +8,16 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
+ */
 #ifndef MEM_FABRIC_HYBRID_HYBM_NUMA_UTIL_H
 #define MEM_FABRIC_HYBRID_HYBM_NUMA_UTIL_H
+
+#include <sched.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
-#include <sched.h>
+#include <vector>
 
 #include "hybm_def.h"
 
@@ -31,8 +33,8 @@ enum class NumaBindPolicy {
 struct NumaBindPolicyInfo {
     NumaBindPolicy policy{NumaBindPolicy::OFF};
     uint32_t numaIndex{0};
-    int32_t cpuGroupId{-1};
-    bool isManual{false};
+    std::vector<int32_t> numaCpus;
+    std::vector<int32_t> socketCpus;
     bool valid{true};
 };
 
@@ -45,7 +47,7 @@ private:
 
 class CpuAffinityGuard {
 public:
-    explicit CpuAffinityGuard(int32_t cpuGroupId);
+    explicit CpuAffinityGuard(const NumaBindPolicyInfo &policyInfo);
     ~CpuAffinityGuard();
 
     CpuAffinityGuard(const CpuAffinityGuard &) = delete;

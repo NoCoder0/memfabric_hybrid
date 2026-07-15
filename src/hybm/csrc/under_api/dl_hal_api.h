@@ -14,6 +14,7 @@
 #define MF_HYBM_CORE_DL_HAL_API_H
 
 #include <mutex>
+#include <string>
 
 #include "dl_hal_api_def.h"
 #include "hybm_types.h"
@@ -72,12 +73,15 @@ using halMemGetAllocationGranularityFunc = int (*)(const struct drv_mem_prop *, 
 using halMemAllocFunc = int (*)(void **, uint64_t, uint64_t);
 using halMemFreeFunc = int (*)(void *);
 using drvMemGetAttributeFunc = DVresult (*)(DVdeviceptr, struct DVattribute *);
+using dcmiInitFunc = int32_t (*)();
+using dcmiGetAffinityCpuInfoFunc = int32_t (*)(int32_t, char *, int32_t *);
 
 class DlHalApi {
 public:
     static Result LoadLibrary(uint32_t gvaVersion);
     static void CleanupLibrary();
     static void CleanupHalApi();
+    static Result DcmiGetAffinityCpuInfo(int32_t deviceId, std::string &cpuList);
 
     static inline void HalSvmModuleAllocedSizeInc(void *type, uint32_t devid, uint32_t moduleId, uint64_t size)
     {
@@ -490,12 +494,17 @@ public:
 private:
     static Result LoadHybmVmmLibrary(uint32_t gvaVersion);
     static Result LoadHybmV1V2Library(uint32_t gvaVersion);
+    static Result LoadDcmiLibrary();
 
 private:
     static std::mutex gMutex;
     static bool gLoaded;
     static void *halHandle;
     static const char *gAscendHalLibName;
+    static void *dcmiHandle;
+    static const char *gDcmiLibName;
+    static dcmiInitFunc pDcmiInit;
+    static dcmiGetAffinityCpuInfoFunc pDcmiGetAffinityCpuInfo;
 
     static halSvmModuleAllocedSizeIncFunc pSvmModuleAllocedSizeInc;
     static halVirtAllocMemFromBaseFunc pVirtAllocMemFromBase;
