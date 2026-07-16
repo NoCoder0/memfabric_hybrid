@@ -292,6 +292,7 @@ public:
 
     // 返回地址类型掩码（可多 bit 组合），用于 bitmask 方向校验
     uint8_t ClassifyAddressMask(const uint64_t va);
+    Result GetLocalMemoryType(uint64_t va, hybm_mem_type &memType) const noexcept;
 
     // =============ReservedGvaInfo Management==============================
     ReservedGvaInfo AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize, hybm_mem_type memType,

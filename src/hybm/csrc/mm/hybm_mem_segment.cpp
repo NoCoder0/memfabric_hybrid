@@ -115,11 +115,14 @@ bool MemSegment::CheckSdmaReaches(uint32_t rankId) const noexcept
 Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePtr &slice)
 {
     uint64_t va = reinterpret_cast<uint64_t>(addr);
-    bool isHbm = (va >= HYBM_HBM_START_ADDR && va < HYBM_HBM_END_ADDR);
-    int ret;
-    if (isHbm) {
-        slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM, 0, va, size);
-        ret = HybmVaManager::GetInstance().AddVaInfo({0, va, va, size, HYBM_MEM_TYPE_DEVICE}, options_.rankId);
+    hybm_mem_type memType;
+    auto ret = HybmVaManager::GetInstance().GetLocalMemoryType(va, memType);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    if (memType == HYBM_MEM_TYPE_DEVICE) {
+        slice = std::make_shared<MemSlice>(sliceCount_++, memType, MEM_PT_TYPE_SVM, 0, va, size);
+        ret = HybmVaManager::GetInstance().AddVaInfo({0, va, va, size, memType}, options_.rankId);
         if (ret != 0) {
             BM_LOG_ERROR("add va info failed, va:" << VaToStr(va) << " ret:" << ret);
             return ret;
@@ -139,8 +142,8 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
         }
 #endif
         auto dva = reinterpret_cast<uint64_t>(output);
-        slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, 0, va, size);
-        ret = HybmVaManager::GetInstance().AddVaInfo({0, dva, va, size, HYBM_MEM_TYPE_HOST}, options_.rankId);
+        slice = std::make_shared<MemSlice>(sliceCount_++, memType, MEM_PT_TYPE_SVM, 0, va, size);
+        ret = HybmVaManager::GetInstance().AddVaInfo({0, dva, va, size, memType}, options_.rankId);
         if (ret != 0) {
             BM_LOG_ERROR("add va info failed, va:" << VaToStr(va) << " ret:" << ret);
 #if defined(ASCEND_NPU)

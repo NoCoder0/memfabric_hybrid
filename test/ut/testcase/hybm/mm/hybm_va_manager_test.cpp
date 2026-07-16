@@ -583,6 +583,33 @@ TEST_F(HybmVaManagerTest, GetMemType_BoundaryAddresses)
     EXPECT_TRUE(manager.GetGvaMemType(hostGva + TEST_SIZE_SIXTEEN_MB - TEST_COUNT_ONE) == TEST_MEM_TYPE_HOST);
 }
 
+// GetLocalMemoryType: 非 A5 SoC 上 HBM 地址返回 DEVICE，非 HBM 返回 HOST
+TEST_F(HybmVaManagerTest, GetLocalMemoryType_NonA5_HbmAndHost_ReturnsCorrectMemType)
+{
+    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+
+    const uint64_t hbmAddr = HYBM_HBM_START_ADDR;
+    EXPECT_EQ(manager.GetLocalMemoryType(hbmAddr, memType), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
+
+    const uint64_t hostAddr = TEST_LVA_BASE;
+    EXPECT_EQ(manager.GetLocalMemoryType(hostAddr, memType), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_HOST);
+}
+
+// GetLocalMemoryType: A5 SoC 上设备内存属性返回 DEVICE
+TEST_F(HybmVaManagerTest, GetLocalMemoryType_A5_DeviceAttr_ReturnsDevice)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_SVM_DEVICE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+    const uint64_t testVa = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE + TEST_OFFSET_ONE_MB;
+    EXPECT_EQ(manager.GetLocalMemoryType(testVa, memType), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
+}
+
 // 测试37: AllocReserveGva - 零大小
 TEST_F(HybmVaManagerTest, AllocReserveGva_ZeroSize)
 {

@@ -35,6 +35,11 @@ struct MemSlice {
     bool ValidateId(hybm_mem_slice_t slice) const;
     static uint64_t GetIndexFrom(hybm_mem_slice_t slice) noexcept;
 
+    hybm_mem_type GetMemoryType() const noexcept
+    {
+        return static_cast<hybm_mem_type>(memType_);
+    }
+
     const uint64_t magic_ : 24;         /* to verify hybm_mem_slice_t ptr */
     const uint64_t index_ : 32;         /* id of mem slice  */
     const uint64_t memType_ : 4;        /* device or host memory */

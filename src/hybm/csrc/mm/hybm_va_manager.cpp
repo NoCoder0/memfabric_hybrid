@@ -17,26 +17,11 @@
 #include <set>
 
 #include "dl_hal_api.h"
+#include "hybm_def.h"
 #include "hybm_va_manager.h"
 
 namespace ock {
 namespace mf {
-
-namespace {
-uint8_t Classify950AddressByHal(uint64_t va)
-{
-    DVattribute attr{};
-    auto ret = DlHalApi::DrvMemGetAttribute(static_cast<DVdeviceptr>(va), &attr);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("Classify950AddressByHal failed: DrvMemGetAttribute ret=" << ret << ", va=" << VaToStr(va));
-        return 0;
-    }
-    if (attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV || attr.memType == DV_MEM_LOCK_DEV_DVPP) {
-        return HybmVaManager::BIT_LOCAL_DEVICE;
-    }
-    return HybmVaManager::BIT_LOCAL_HOST;
-}
-} // namespace
 
 uint8_t HybmVaManager::directionLut[BIT_LUT_SIZE];
 
@@ -245,6 +230,33 @@ AddrType HybmVaManager::ClassifyAddress(const uint64_t va)
     return LOCAL_HOST;
 }
 
+Result HybmVaManager::GetLocalMemoryType(uint64_t va, hybm_mem_type &memType) const noexcept
+{
+    memType = HYBM_MEM_TYPE_BUTT;
+    if (va == 0) {
+        BM_LOG_ERROR("GetLocalMemoryType failed: va=0 is invalid");
+        return BM_INVALID_PARAM;
+    }
+
+    if (soc_ == ASCEND_950) {
+        DVattribute attr{};
+        auto ret = DlHalApi::DrvMemGetAttribute(static_cast<DVdeviceptr>(va), &attr);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("GetLocalMemoryType failed: interface=DrvMemGetAttribute ret=" << ret
+                                                                                        << ", va=" << VaToStr(va));
+            return ret;
+        }
+        memType = (attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV ||
+                   attr.memType == DV_MEM_LOCK_DEV_DVPP)
+                      ? HYBM_MEM_TYPE_DEVICE
+                      : HYBM_MEM_TYPE_HOST;
+        return BM_OK;
+    }
+
+    memType = (va >= HYBM_HBM_START_ADDR && va < HYBM_HBM_END_ADDR) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
+    return BM_OK;
+}
+
 uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
 {
     auto r = QueryAddr(va);
@@ -273,14 +285,12 @@ uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
         }
     }
 
-    if (soc_ == ASCEND_950) {
-        return Classify950AddressByHal(va);
+    hybm_mem_type memType;
+    auto ret = GetLocalMemoryType(va, memType);
+    if (ret != BM_OK) {
+        return 0; // 无效
     }
-
-    if (va >= HYBM_DEVICE_VA_START && va < HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE) {
-        return BIT_LOCAL_DEVICE;
-    }
-    return BIT_LOCAL_HOST;
+    return (memType == HYBM_MEM_TYPE_DEVICE) ? BIT_LOCAL_DEVICE : BIT_LOCAL_HOST;
 }
 
 hybm_data_copy_direction HybmVaManager::InferCopyDirection(uint64_t srcVa, uint64_t dstVa)

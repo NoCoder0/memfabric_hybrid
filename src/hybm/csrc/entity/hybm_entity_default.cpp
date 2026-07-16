@@ -246,9 +246,6 @@ int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, ui
     }
 
     auto addr = static_cast<uint64_t>(reinterpret_cast<ptrdiff_t>(ptr));
-    bool isHbm = (addr >= HYBM_HBM_START_ADDR && addr < HYBM_HBM_END_ADDR);
-    BM_LOG_INFO("Hbm: " << isHbm << std::hex << ", addrs: 0x" << addr << ", start: 0x" << HYBM_HBM_START_ADDR
-                        << ", end: 0x" << HYBM_HBM_END_ADDR);
     std::shared_ptr<MemSegment> segment = nullptr;
     // 只有trans场景才需要走hbmSegment_，bm场景优先走dramSegment_
     if (options_.scene == HYBM_SCENE_TRANS || dramSegment_ == nullptr) {
@@ -264,6 +261,9 @@ int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, ui
         BM_LOG_ERROR("segment register slice with size: " << size << " failed: " << ret);
         return ret;
     }
+
+    bool isHbm = realSlice->GetMemoryType() == HYBM_MEM_TYPE_DEVICE;
+    BM_LOG_INFO("Hbm: " << isHbm << std::hex << ", addrs: 0x" << addr);
 
     if (transportManager_ != nullptr) {
         transport::TransportMemoryRegion mr;
@@ -902,7 +902,12 @@ bool MemEntityDefault::CheckAddressInEntity(const void *ptr, uint64_t length) co
     if (!inRange) {
         // 不在 segment 范围内但属于 device VA 范围 → 放行（ClassifyAddress 也认这个范围）
         auto va = reinterpret_cast<uint64_t>(ptr);
-        if (va >= HYBM_DEVICE_VA_START && va < (HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE)) {
+        hybm_mem_type memType;
+        auto ret = HybmVaManager::GetInstance().GetLocalMemoryType(va, memType);
+        if (ret != BM_OK) {
+            return false;
+        }
+        if (memType == HYBM_MEM_TYPE_DEVICE) {
             return true;
         }
         return false;

@@ -1635,6 +1635,8 @@ TEST_F(HybmEntityDefaultTest, GetReservedMemoryPtr_InvalidMemType)
 
 TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_DeviceVaRange)
 {
+    ock::mf::HybmVaManager::GetInstance().ClearAll();
+    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().Initialize(ock::mf::AscendSocType::ASCEND_910C), BM_OK);
     ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CHECK_ADDR_VA_RANGE);
     entity.initialized_ = true;
     // Address in device VA range but not tracked by any segment -> the VA-range
@@ -1642,6 +1644,7 @@ TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_DeviceVaRange)
     void *ptr = reinterpret_cast<void *>(ock::mf::HYBM_DEVICE_VA_START + 0x1000);
     bool result = entity.CheckAddressInEntity(ptr, 64);
     EXPECT_TRUE(result);
+    ock::mf::HybmVaManager::GetInstance().ClearAll();
 }
 
 TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_OutOfRange)

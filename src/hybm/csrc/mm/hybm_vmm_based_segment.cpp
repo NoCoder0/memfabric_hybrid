@@ -365,8 +365,8 @@ Result HybmVmmBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexcep
             return BM_INVALID_PARAM;
         }
         uint64_t realAddr = registerPos->second.second;
-        bool isHbm = (realAddr >= HYBM_HBM_START_ADDR && realAddr < HYBM_HBM_END_ADDR);
-        if (!isHbm && ((options_.dataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0U)) {
+        bool isDevice = slice->GetMemoryType() == HYBM_MEM_TYPE_DEVICE;
+        if (!isDevice && ((options_.dataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0U)) {
             auto ret =
                 DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(realAddr), logicDeviceId_, HOST_MEM_MAP_DEV);
             BM_LOG_INFO("unregister slice(idx:" << slice->index_ << "), size: " << slice->size_ << " return:" << ret);

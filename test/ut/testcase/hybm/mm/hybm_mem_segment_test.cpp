@@ -707,17 +707,6 @@ TEST_F(HybmMemSegmentTest, ConnBasedSegment_GetExportSliceSize_ReturnsStructSize
     auto ret = seg.GetExportSliceSize(size);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(size, sizeof(ock::mf::HostExportInfo));
-
-    // slice 获取
-    ock::mf::MemSlicePtr slice;
-    ret = seg.RegisterMemory(nullptr, ock::mf::HYBM_LARGE_PAGE_SIZE, slice);
-    EXPECT_EQ(ret, BM_OK);
-
-    ret = seg.ReleaseSliceMemory(slice);
-    EXPECT_EQ(ret, BM_OK);
-
-    ret = seg.GetExportSliceSize(size);
-    EXPECT_EQ(ret, BM_OK);
 }
 
 // 测试 HybmConnBasedSegment ReserveMemorySpace 功能

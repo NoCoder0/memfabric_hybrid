@@ -440,6 +440,8 @@ TEST_F(HybmConnBasedSegmentTest, RemoveImported_RemovesSpecifiedRanksFromMapAndI
  */
 TEST_F(HybmConnBasedSegmentTest, RegisterMemory_AddsDeviceSliceIntoSegment)
 {
+    HybmVaManager::GetInstance().ClearAll();
+    ASSERT_EQ(HybmVaManager::GetInstance().Initialize(AscendSocType::ASCEND_910C), BM_OK);
     HybmConnBasedSegment segment(MakeOptions(), 0);
     auto *deviceAddr = reinterpret_cast<void *>(HYBM_HBM_START_ADDR + HYBM_LARGE_PAGE_SIZE);
 
@@ -460,6 +462,8 @@ TEST_F(HybmConnBasedSegmentTest, RegisterMemory_AddsDeviceSliceIntoSegment)
  */
 TEST_F(HybmConnBasedSegmentTest, ReleaseSliceMemory_RemovesRegisteredSliceAndVaInfo)
 {
+    HybmVaManager::GetInstance().ClearAll();
+    ASSERT_EQ(HybmVaManager::GetInstance().Initialize(AscendSocType::ASCEND_910C), BM_OK);
     HybmConnBasedSegment segment(MakeOptions(), 0);
     auto *deviceAddr = reinterpret_cast<void *>(HYBM_HBM_START_ADDR + HYBM_LARGE_PAGE_SIZE * 2UL);
 
