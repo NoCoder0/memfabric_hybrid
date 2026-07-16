@@ -784,6 +784,9 @@ ParseResult ParseDeviceId(const char *begin, const char *end, size_t offset, uin
 
 namespace {
 
+ParseResult ParseSingleRankAddrInternal(const char *begin, const char *end, size_t offset, CandidateInfo &out,
+                                        size_t expectedPortCount);
+
 // ---------- candidate handler for ParseRankAddrList ----------
 
 ParseResult ParseRankAddrListCandidate(const char *begin, size_t &i, CandidateInfo &cand, size_t &candidateCount,
@@ -813,7 +816,8 @@ ParseResult ParseRankAddrListCandidate(const char *begin, size_t &i, CandidateIn
 // ==============================
 
 ParseResult ParseRankAddrList(const char *begin, const char *end, size_t offset,
-                              std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid, size_t &candidateCount)
+                              std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid, size_t &candidateCount,
+                              size_t expectedPortCount)
 {
     if (!IsValidRange(begin, end)) {
         return RangeError();
@@ -846,7 +850,7 @@ ParseResult ParseRankAddrList(const char *begin, const char *end, size_t offset,
             return MakeError(i, ParserReason::BAD_VALUE);
         }
         CandidateInfo cand;
-        auto pr = ParseSingleRankAddr(begin, end, i, cand);
+        auto pr = ParseSingleRankAddrInternal(begin, end, i, cand, expectedPortCount);
         if (pr.result != BM_OK) {
             return pr;
         }
@@ -902,14 +906,14 @@ ParseResult ParseSingleLevelClose(size_t offset, size_t &i, uint8_t seenBits)
 
 ParseResult ParseSingleLevelField(const char *begin, const char *end, const KeyAndColon &kc, size_t &i,
                                   uint8_t &seenBits, std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid,
-                                  size_t &candidateCount)
+                                  size_t &candidateCount, size_t expectedPortCount)
 {
     if (kc.keyLen == 14 && std::memcmp(begin + kc.keyOff, "rank_addr_list", 14) == 0) {
         if (seenBits & 1U) {
             return MakeError(i, ParserReason::DUPLICATE_KEY);
         }
         seenBits |= 1U;
-        auto ar = ParseRankAddrList(begin, end, i, tempEid, candidateCount);
+        auto ar = ParseRankAddrList(begin, end, i, tempEid, candidateCount, expectedPortCount);
         if (ar.result != BM_OK) {
             return ar;
         }
@@ -929,7 +933,8 @@ ParseResult ParseSingleLevelField(const char *begin, const char *end, const KeyA
 // ==============================
 
 ParseResult ParseSingleLevel(const char *begin, const char *end, size_t offset,
-                             std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid, size_t &candidateCount)
+                             std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid, size_t &candidateCount,
+                             size_t expectedPortCount)
 {
     if (!IsValidRange(begin, end)) {
         return RangeError();
@@ -964,7 +969,7 @@ ParseResult ParseSingleLevel(const char *begin, const char *end, size_t offset,
             return kr;
         }
         i = kc.pos;
-        auto lr = ParseSingleLevelField(begin, end, kc, i, seenBits, tempEid, candidateCount);
+        auto lr = ParseSingleLevelField(begin, end, kc, i, seenBits, tempEid, candidateCount, expectedPortCount);
         if (lr.result != BM_OK) {
             return lr;
         }
@@ -978,7 +983,8 @@ ParseResult ParseSingleLevel(const char *begin, const char *end, size_t offset,
 // ==============================
 
 ParseResult ParseLevelList(const char *begin, const char *end, size_t offset,
-                           std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid, size_t &candidateCount)
+                           std::array<uint8_t, COMM_ADDR_EID_LEN> &tempEid, size_t &candidateCount,
+                           size_t expectedPortCount)
 {
     if (!IsValidRange(begin, end)) {
         return RangeError();
@@ -1007,7 +1013,7 @@ ParseResult ParseLevelList(const char *begin, const char *end, size_t offset,
         }
         i = sr.offset;
         expectComma = false;
-        auto lr = ParseSingleLevel(begin, end, i, tempEid, candidateCount);
+        auto lr = ParseSingleLevel(begin, end, i, tempEid, candidateCount, expectedPortCount);
         if (lr.result != BM_OK) {
             return lr;
         }
@@ -1271,9 +1277,10 @@ ParseResult ParseRootObject(const char *begin, const char *end, size_t offset, u
 struct RankAddrState {
     uint8_t seenBits = 0U;
     bool hasEidType = false;
-    bool hasSixPorts = false;
+    bool hasExpectedPorts = false;
     const char *addrStr = nullptr;
     size_t addrEndOffset = 0;
+    size_t expectedPortCount = 6U;
 };
 
 ParseResult HandleRankAddrAddrType(const char *begin, const char *end, size_t &i, RankAddrState &st)
@@ -1309,8 +1316,8 @@ ParseResult HandleRankAddrPorts(const char *begin, const char *end, size_t &i, R
     if (prr.result != BM_OK) {
         return prr;
     }
-    if (pr.count == 6) {
-        st.hasSixPorts = true;
+    if (pr.count == st.expectedPortCount) {
+        st.hasExpectedPorts = true;
     }
     i = pr.offset;
     return MakeOk(i);
@@ -1354,8 +1361,6 @@ ParseResult HandleRankAddrField(const char *begin, const char *end, const KeyAnd
     return MakeOk(i);
 }
 
-} // anonymous namespace
-
 // ---------- EID candidate evaluation for ParseSingleRankAddr ----------
 
 ParseResult ParseSingleRankAddrFinalize(const char *begin, size_t i, size_t totalLen, const RankAddrState &st,
@@ -1364,11 +1369,11 @@ ParseResult ParseSingleRankAddrFinalize(const char *begin, size_t i, size_t tota
     if (i > totalLen) {
         return MakeError(GetLen(begin, begin + totalLen), ParserReason::DEVICE_UNCLOSED);
     }
-    // six-port EID missing addr is schema error, not silent non-candidate
-    if (st.hasEidType && st.hasSixPorts && st.addrStr == nullptr) {
+    // EID entry missing addr with the expected port count is a schema error, not a silent non-candidate
+    if (st.hasEidType && st.hasExpectedPorts && st.addrStr == nullptr) {
         return MakeError(i, ParserReason::BAD_VALUE);
     }
-    if (st.hasEidType && st.hasSixPorts && st.addrStr != nullptr && st.addrEndOffset > 0) {
+    if (st.hasEidType && st.hasExpectedPorts && st.addrStr != nullptr && st.addrEndOffset > 0) {
         const size_t addrLen = st.addrEndOffset - 1U - static_cast<size_t>(st.addrStr - begin);
         if (addrLen > 0) {
             out.isCandidate = true;
@@ -1383,7 +1388,8 @@ ParseResult ParseSingleRankAddrFinalize(const char *begin, size_t i, size_t tota
 //  ParseSingleRankAddr
 // ==============================
 
-ParseResult ParseSingleRankAddr(const char *begin, const char *end, size_t offset, CandidateInfo &out)
+ParseResult ParseSingleRankAddrInternal(const char *begin, const char *end, size_t offset, CandidateInfo &out,
+                                        size_t expectedPortCount)
 {
     if (!IsValidRange(begin, end)) {
         return RangeError();
@@ -1395,6 +1401,7 @@ ParseResult ParseSingleRankAddr(const char *begin, const char *end, size_t offse
     }
     size_t i = offset + 1U;
     RankAddrState st;
+    st.expectedPortCount = expectedPortCount;
     bool expectComma = false;
     while (i < totalLen) {
         i = SkipSpaces(begin, end, i);
@@ -1427,6 +1434,13 @@ ParseResult ParseSingleRankAddr(const char *begin, const char *end, size_t offse
         expectComma = true;
     }
     return MakeError(GetLen(begin, end), ParserReason::DEVICE_UNCLOSED);
+}
+
+} // anonymous namespace
+
+ParseResult ParseSingleRankAddr(const char *begin, const char *end, size_t offset, CandidateInfo &out)
+{
+    return ParseSingleRankAddrInternal(begin, end, offset, out, 6);
 }
 
 // ---------- validation helpers for ParseRootInfoEid ----------
@@ -1464,12 +1478,8 @@ Result ParseRootInfoEidValidateCandidate(size_t candidateCount, uint32_t phyDevi
     return BM_OK;
 }
 
-// ==============================
-//  ParseRootInfoEid
-// ==============================
-
 Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId, uint32_t rankId,
-                        std::array<uint8_t, COMM_ADDR_EID_LEN> &eid)
+                        std::array<uint8_t, COMM_ADDR_EID_LEN> &eid, size_t expectedPortCount)
 {
     if (!IsValidRange(begin, end)) {
         BM_LOG_ERROR("RootInfoParser: invalid range, phyDeviceId=" << phyDeviceId << " rankId=" << rankId);
@@ -1491,7 +1501,7 @@ Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId
     std::array<uint8_t, COMM_ADDR_EID_LEN> tempEid{};
     tempEid.fill(0xFF);
     size_t candidateCount = 0;
-    auto lr = ParseLevelList(begin, end, targetLlBegin, tempEid, candidateCount);
+    auto lr = ParseLevelList(begin, end, targetLlBegin, tempEid, candidateCount, expectedPortCount);
     if (lr.result != BM_OK) {
         BM_LOG_ERROR("RootInfoParser: level_list parse failed offset="
                      << lr.offset << " reason=" << static_cast<int>(lr.reason) << " phyDeviceId=" << phyDeviceId
@@ -1504,6 +1514,12 @@ Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId
     }
     eid = tempEid;
     return BM_OK;
+}
+
+Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId, uint32_t rankId,
+                        std::array<uint8_t, COMM_ADDR_EID_LEN> &eid)
+{
+    return ParseRootInfoEid(begin, end, phyDeviceId, rankId, eid, 6);
 }
 
 } // namespace device

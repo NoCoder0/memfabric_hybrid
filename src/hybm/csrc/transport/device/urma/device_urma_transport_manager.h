@@ -140,6 +140,8 @@ private:
 
     // Initialization/open/close helpers and lifecycle
     Result InitLocalDeviceInfoLocked(const TransportOptions &options);
+    Result BuildLocalEndpointDescLocked(UrmaProtocol protocol, UrmaEndpointDesc &localDesc);
+    Result CreateEndpointAndInitResourcesLocked(const UrmaEndpointDesc &localDesc);
     Result InitDeviceKernelNotifyLocked();
     Result InitDeviceTransferFlagLocked();
     void RollbackOpenDeviceLocked();

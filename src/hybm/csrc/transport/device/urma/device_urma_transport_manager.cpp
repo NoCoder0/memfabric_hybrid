@@ -11,6 +11,8 @@
  */
 
 #include <algorithm>
+#include <arpa/inet.h>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -20,6 +22,7 @@
 #include <utility>
 #include <vector>
 #include <cassert>
+#include <string>
 
 #include "dl_acl_api.h"
 #include "dl_hcomm_api.h"
@@ -180,6 +183,36 @@ UrmaProtocol GetEndpointProtocolFromOptions(uint32_t protocol)
     return UrmaProtocol::RESERVED;
 }
 
+std::string FormatEid(const std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+{
+    constexpr char HEX_DIGITS[] = "0123456789abcdef";
+    std::string eid;
+    eid.reserve(COMM_ADDR_EID_LEN * 2U);
+    for (const auto byte : eidData) {
+        eid.push_back(HEX_DIGITS[(byte >> 4U) & 0x0FU]);
+        eid.push_back(HEX_DIGITS[byte & 0x0FU]);
+    }
+    return eid;
+}
+
+std::string FormatIpAddress(CommAddrType addrType, const uint8_t *addrData)
+{
+    int family = AF_UNSPEC;
+    if (addrType == COMM_ADDR_TYPE_IP_V4) {
+        family = AF_INET;
+    } else if (addrType == COMM_ADDR_TYPE_IP_V6) {
+        family = AF_INET6;
+    } else {
+        return "<invalid>";
+    }
+
+    char ipText[INET6_ADDRSTRLEN]{};
+    if (addrData == nullptr || inet_ntop(family, addrData, ipText, sizeof(ipText)) == nullptr) {
+        return "<invalid>";
+    }
+    return ipText;
+}
+
 } // namespace
 
 DeviceUrmaTransportManager::~DeviceUrmaTransportManager()
@@ -328,6 +361,76 @@ Result DeviceUrmaTransportManager::InitDeviceTransferFlagLocked()
     return BM_OK;
 }
 
+Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol protocol, UrmaEndpointDesc &localDesc)
+{
+    localDesc = {};
+    localDesc.protocol = protocol;
+    localDesc.devPhyId = phyDeviceId_;
+    localDesc.superDevId = sdid_;
+    localDesc.serverIdx = serverId_;
+    localDesc.superPodIdx = superPodId_;
+
+    if (protocol == UrmaProtocol::UBC_CTP) {
+        std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
+        const auto ret = GetDeviceUrmaEid(phyDeviceId_, rankId_, eidData);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        localDesc.type = COMM_ADDR_TYPE_IP_V6;
+        std::memcpy(localDesc.raws, eidData.data(), COMM_ADDR_EID_LEN);
+        BM_LOG_INFO("device_urma local endpoint address protocol=UBC_CTP phyDeviceId="
+                    << phyDeviceId_ << " rankId=" << rankId_ << " eid=" << FormatEid(eidData));
+        return BM_OK;
+    }
+    if (protocol == UrmaProtocol::UBOE) {
+        CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
+        std::array<uint8_t, sizeof(localDesc.raws)> addrData{};
+        const auto ret = GetDeviceUrmaIpAddr(phyDeviceId_, rankId_, addrType, addrData);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        localDesc.type = addrType;
+        const size_t copyLen = (addrType == COMM_ADDR_TYPE_IP_V4) ? sizeof(struct in_addr) : sizeof(struct in6_addr);
+        std::memcpy(localDesc.raws, addrData.data(), copyLen);
+        BM_LOG_INFO("device_urma local endpoint address protocol=UBOE phyDeviceId="
+                    << phyDeviceId_ << " rankId=" << rankId_ << " ip=" << FormatIpAddress(addrType, addrData.data()));
+        return BM_OK;
+    }
+    BM_LOG_ERROR("device_urma unexpected protocol=" << static_cast<int>(protocol) << " phyDeviceId=" << phyDeviceId_
+                                                    << " rankId=" << rankId_);
+    return BM_INVALID_PARAM;
+}
+
+Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const UrmaEndpointDesc &localDesc)
+{
+    auto endpoint = manager_.CreateEndpoint(localDesc);
+    if (endpoint == nullptr) {
+        BM_LOG_ERROR("device_urma CreateEndpoint failed, protocol=" << static_cast<int>(localDesc.protocol)
+                                                                    << " phyDeviceId=" << phyDeviceId_
+                                                                    << " rankId=" << rankId_);
+        return BM_MALLOC_FAILED;
+    }
+    localEndpoint_ = endpoint;
+    localEndpointDesc_ = localDesc;
+
+    auto ret = InitDeviceKernelNotifyLocked();
+    if (ret != BM_OK) {
+        RollbackOpenDeviceLocked();
+        return ret;
+    }
+    ret = InitDeviceTransferFlagLocked();
+    if (ret != BM_OK) {
+        RollbackOpenDeviceLocked();
+        return ret;
+    }
+    ret = EnsureDeviceKernelLoadedLocked();
+    if (ret != BM_OK) {
+        RollbackOpenDeviceLocked();
+        return ret;
+    }
+    return BM_OK;
+}
+
 void DeviceUrmaTransportManager::RollbackOpenDeviceLocked()
 {
     if (devTransFlagHcommHandle_ != nullptr) {
@@ -392,60 +495,13 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
     BM_LOG_INFO("device_urma OpenDevice protocol=" << static_cast<int>(protocol) << ", rankId=" << rankId_
                                                    << ", phyDeviceId=" << phyDeviceId_);
 
-    // Build UrmaEndpointDesc and create local endpoint
     UrmaEndpointDesc localDesc{};
-    localDesc.protocol = protocol;
-    localDesc.devPhyId = phyDeviceId_;
-    localDesc.superDevId = sdid_;
-    localDesc.serverIdx = serverId_;
-    localDesc.superPodIdx = superPodId_;
-
-    if (protocol == UrmaProtocol::UBC_CTP) {
-        std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
-        const auto retEid = GetDeviceUrmaEid(phyDeviceId_, rankId_, eidData);
-        if (retEid != 0) {
-            return retEid;
-        }
-        localDesc.type = COMM_ADDR_TYPE_IP_V6;
-        std::memcpy(localDesc.raws, eidData.data(), COMM_ADDR_EID_LEN);
-    } else if (protocol == UrmaProtocol::UBOE) {
-        CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
-        std::array<uint8_t, sizeof(localDesc.raws)> addrData{};
-        const auto retIp = GetDeviceUrmaIpAddr(phyDeviceId_, rankId_, addrType, addrData);
-        if (retIp != 0) {
-            return retIp;
-        }
-        localDesc.type = addrType;
-        const size_t copyLen = (addrType == COMM_ADDR_TYPE_IP_V4) ? sizeof(struct in_addr) : sizeof(struct in6_addr);
-        std::memcpy(localDesc.raws, addrData.data(), copyLen);
-    } else {
-        BM_LOG_ERROR("device_urma unexpected protocol: " << static_cast<int>(protocol));
-        return BM_INVALID_PARAM;
-    }
-    auto endpoint = manager_.CreateEndpoint(localDesc);
-    if (endpoint == nullptr) {
-        BM_LOG_ERROR("device_urma CreateEndpoint failed, rankId=" << rankId_);
-        return BM_MALLOC_FAILED;
-    }
-    localEndpoint_ = endpoint;
-    localEndpointDesc_ = localDesc;
-
-    ret = InitDeviceKernelNotifyLocked();
+    ret = BuildLocalEndpointDescLocked(protocol, localDesc);
     if (ret != BM_OK) {
-        RollbackOpenDeviceLocked();
         return ret;
     }
-
-    ret = InitDeviceTransferFlagLocked();
+    ret = CreateEndpointAndInitResourcesLocked(localDesc);
     if (ret != BM_OK) {
-        RollbackOpenDeviceLocked();
-        return ret;
-    }
-
-    // preload kernel
-    ret = EnsureDeviceKernelLoadedLocked();
-    if (ret != BM_OK) {
-        RollbackOpenDeviceLocked();
         return ret;
     }
 

@@ -92,6 +92,9 @@ ParseResult ParseSingleRankAddr(const char *begin, const char *end, size_t offse
 Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId, uint32_t rankId,
                         std::array<uint8_t, COMM_ADDR_EID_LEN> &eid);
 
+Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId, uint32_t rankId,
+                        std::array<uint8_t, COMM_ADDR_EID_LEN> &eid, size_t expectedPortCount);
+
 } // namespace device
 } // namespace transport
 } // namespace mf

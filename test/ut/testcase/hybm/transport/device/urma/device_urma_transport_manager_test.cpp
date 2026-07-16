@@ -241,6 +241,9 @@ int32_t MockHcommEndpointCreateOpenDevice(const EndpointDesc *endpoint, Endpoint
     EXPECT_EQ(endpoint->loc.device.superDevId, 3U);
     EXPECT_EQ(endpoint->loc.device.serverIdx, 4U);
     EXPECT_EQ(endpoint->loc.device.superPodIdx, 5U);
+    for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
+        EXPECT_EQ(endpoint->commAddr.raws[i], static_cast<uint8_t>(0xE0U + i));
+    }
     *endpointHandle = MOCK_ENDPOINT;
     return BM_OK;
 }
@@ -251,6 +254,10 @@ int32_t MockHcommEndpointCreateOpenDeviceUboe(const EndpointDesc *endpoint, Endp
     EXPECT_NE(endpointHandle, nullptr);
     EXPECT_EQ(endpoint->protocol, COMM_PROTOCOL_UBOE);
     EXPECT_EQ(endpoint->commAddr.type, COMM_ADDR_TYPE_IP_V4);
+    EXPECT_EQ(endpoint->commAddr.raws[0], 10U);
+    EXPECT_EQ(endpoint->commAddr.raws[1], 10U);
+    EXPECT_EQ(endpoint->commAddr.raws[2], 21U);
+    EXPECT_EQ(endpoint->commAddr.raws[3], 2U);
     EXPECT_EQ(endpoint->loc.locType, ENDPOINT_LOC_TYPE_DEVICE);
     EXPECT_EQ(endpoint->loc.device.devPhyId, 2U);
     *endpointHandle = MOCK_ENDPOINT;

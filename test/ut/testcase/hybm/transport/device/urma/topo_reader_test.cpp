@@ -2174,3 +2174,101 @@ TEST(TopoReaderTest, Reason_BadStringEnd_NoQuote)
     ParseResult pr = SkipString(json, json + 5, 0, 256);
     EXPECT_EQ(pr.reason, ParserReason::BAD_STRING_END);
 }
+
+bool WriteTempFile(const std::string &path, const std::string &content)
+{
+    std::ofstream output(path);
+    if (!output.is_open()) {
+        return false;
+    }
+    output << content;
+    return output.good();
+}
+
+std::string RootInfoWithTopo(const std::string &topoPath, const char *ports)
+{
+    return Cat({R"({"topo_file_path":")", topoPath,
+                R"(","rank_list":[{"device_id":0,"level_list":[{"rank_addr_list":[{)", R"("addr_type":"EID","ports":)",
+                ports, R"(,"addr":")", EID_HEX_OK, R"("}]}]}]})"});
+}
+
+TEST(TopoReaderTest, ParseRootInfo_Atlas850UsesEightPorts)
+{
+    const std::string topoPath = "/tmp/topo_reader_atlas850.topo";
+    const std::string rootInfoPath = "/tmp/topo_reader_atlas850.rootinfo";
+    ASSERT_TRUE(WriteTempFile(topoPath, "hardware: Atlas 850"));
+    ASSERT_TRUE(WriteTempFile(rootInfoPath, RootInfoWithTopo(topoPath, "[0,1,2,3,4,5,6,7]")));
+    RootInfo rootInfo;
+    EXPECT_EQ(TopoReader::ParseRootInfo(rootInfoPath, 0, 0, rootInfo), BM_OK);
+    EXPECT_EQ(rootInfo.eid[0], 0x01);
+    std::remove(topoPath.c_str());
+    std::remove(rootInfoPath.c_str());
+}
+
+TEST(TopoReaderTest, ParseRootInfo_Atlas950UsesSixPorts)
+{
+    const std::string topoPath = "/tmp/topo_reader_atlas950.topo";
+    const std::string rootInfoPath = "/tmp/topo_reader_atlas950.rootinfo";
+    ASSERT_TRUE(WriteTempFile(topoPath, "hardware: Atlas 950 SuperPoD"));
+    ASSERT_TRUE(WriteTempFile(rootInfoPath, RootInfoWithTopo(topoPath, "[0,1,2,3,4,5]")));
+    RootInfo rootInfo;
+    EXPECT_EQ(TopoReader::ParseRootInfo(rootInfoPath, 0, 0, rootInfo), BM_OK);
+    EXPECT_EQ(rootInfo.eid[0], 0x01);
+    std::remove(topoPath.c_str());
+    std::remove(rootInfoPath.c_str());
+}
+
+TEST(TopoReaderTest, ParseRootInfo_ModelPortMismatchPreservesEid)
+{
+    const std::string topoPath = "/tmp/topo_reader_mismatch.topo";
+    const std::string rootInfoPath = "/tmp/topo_reader_mismatch.rootinfo";
+    ASSERT_TRUE(WriteTempFile(topoPath, "Atlas 850"));
+    ASSERT_TRUE(WriteTempFile(rootInfoPath, RootInfoWithTopo(topoPath, "[0,1,2,3,4,5]")));
+    RootInfo rootInfo;
+    rootInfo.eid.fill(EID_SENTINEL);
+    EXPECT_EQ(TopoReader::ParseRootInfo(rootInfoPath, 0, 0, rootInfo), BM_INVALID_PARAM);
+    ExpectEidSentinel(rootInfo);
+    std::remove(topoPath.c_str());
+    std::remove(rootInfoPath.c_str());
+}
+
+TEST(TopoReaderTest, ParseRootInfo_TopoFileUnreadablePreservesEid)
+{
+    const std::string topoPath = "/tmp/topo_reader_missing.topo";
+    const std::string rootInfoPath = "/tmp/topo_reader_missing.rootinfo";
+    std::remove(topoPath.c_str());
+    ASSERT_TRUE(WriteTempFile(rootInfoPath, RootInfoWithTopo(topoPath, "[0,1,2,3,4,5]")));
+    RootInfo rootInfo;
+    rootInfo.eid.fill(EID_SENTINEL);
+    EXPECT_EQ(TopoReader::ParseRootInfo(rootInfoPath, 0, 0, rootInfo), BM_FILE_NOT_ACCESS);
+    ExpectEidSentinel(rootInfo);
+    std::remove(rootInfoPath.c_str());
+}
+
+TEST(TopoReaderTest, ParseRootInfo_TopoFileOversizeRejected)
+{
+    const std::string topoPath = "/tmp/topo_reader_oversize.topo";
+    const std::string rootInfoPath = "/tmp/topo_reader_oversize.rootinfo";
+    ASSERT_TRUE(WriteTempFile(topoPath, std::string(MAX_INPUT_BYTES_PLUS_1, 'x')));
+    ASSERT_TRUE(WriteTempFile(rootInfoPath, RootInfoWithTopo(topoPath, "[0,1,2,3,4,5]")));
+    RootInfo rootInfo;
+    rootInfo.eid.fill(EID_SENTINEL);
+    EXPECT_EQ(TopoReader::ParseRootInfo(rootInfoPath, 0, 0, rootInfo), BM_INVALID_PARAM);
+    ExpectEidSentinel(rootInfo);
+    std::remove(topoPath.c_str());
+    std::remove(rootInfoPath.c_str());
+}
+
+TEST(TopoReaderTest, ParseRootInfo_TopoHardwareMissingPreservesEid)
+{
+    const std::string topoPath = "/tmp/topo_reader_unknown.topo";
+    const std::string rootInfoPath = "/tmp/topo_reader_unknown.rootinfo";
+    ASSERT_TRUE(WriteTempFile(topoPath, "hardware: unknown"));
+    ASSERT_TRUE(WriteTempFile(rootInfoPath, RootInfoWithTopo(topoPath, "[0,1,2,3,4,5]")));
+    RootInfo rootInfo;
+    rootInfo.eid.fill(EID_SENTINEL);
+    EXPECT_EQ(TopoReader::ParseRootInfo(rootInfoPath, 0, 0, rootInfo), BM_INVALID_PARAM);
+    ExpectEidSentinel(rootInfo);
+    std::remove(topoPath.c_str());
+    std::remove(rootInfoPath.c_str());
+}

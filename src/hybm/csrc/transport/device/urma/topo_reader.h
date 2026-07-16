@@ -36,6 +36,9 @@ public:
 
     static Result ParseRootInfo(uint32_t phyDeviceId, uint32_t rankId, RootInfo &rootInfo);
 
+    static Result ParseRootInfo(const std::string &rootInfoPath, uint32_t phyDeviceId, uint32_t rankId,
+                                RootInfo &rootInfo);
+
     static Result ParseRootInfoFile(const std::string &path, uint32_t phyDeviceId, uint32_t rankId, RootInfo &rootInfo);
 
     static Result ParseRootInfoStream(std::istream &input, uint32_t phyDeviceId, uint32_t rankId, RootInfo &rootInfo);
