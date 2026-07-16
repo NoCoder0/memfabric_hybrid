@@ -18,7 +18,7 @@
 | `MF_HYBM_RDMA_FORCE_UNREGISTERED` | 0 | 强制RDMA跳过内存注册检查路径。设为非0值时，`BatchDataCopy`直接走未注册路径发起RDMA读写。 |
 | `MF_LOG_LEVEL` | 无 | MemFabric日志级别，取值范围0-4（0:DEBUG, 1:INFO, 2:WARN, 3:ERROR, 4:OFF）。**仅Python接口下生效，bm/shm场景不生效。** |
 | `MF_CONFIG_STORE_URL` | 无（必填） | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`。 |
-| `MF_CONFIG_STORE_PORT_START` | 9000 | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。 |
+| `MF_CONFIG_STORE_PORT_START` | 9000 | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。TransferEngine在`session_id`未指定端口（如`ip`/`ip:0`）时自动选端口亦使用此范围。 |
 | `MF_CONFIG_STORE_PORT_END` | 65535 | Config Store可用端口范围结束值。 |
 | `MF_SOCKET_URL` | 无 | 调试用的socket URL，覆盖 config store 的连接地址。 |
 | `MF_TRANSPORT_MANAGER` | 无 | 传输管理器选择，用于调试指定传输层实现。 |

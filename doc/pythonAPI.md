@@ -436,7 +436,7 @@ class ShmDataOpType(Enum):
 class TransferEngine:
     def __init__(self):
     def initialize(store_url: str, session_id: str, role: str, device_id: int, data_op_type = TransDataOpType.SDMA) -> int:
-    def get_rpc_port() -> str:
+    def get_rpc_port() -> int:
     def transfer_sync_write(dest_session: str, buffer, peer_buffer, length, flags = 0) -> int:
     def batch_transfer_sync_write(dest_session: str, buffers, peer_buffers, lengths, flags = 0) -> int:
     def transfer_async_write_submit(dest_session: str, buffer, peer_buffer, length, stream, flags = 0) -> int:
@@ -457,11 +457,11 @@ class TransferEngine:
 |-|-|
 |initialize方法|TRANS配置初始化，成功返回0，其他为错误码|
 |initialize参数store_url|config store地址，格式支持 `tcp://ip:port`、`etcd://ip:port`、`etcd://ip:port#instanceId`（etcd 多集群隔离）|
-|initialize参数session_id|该TRANS实例的唯一标识，格式ip:port|
+|initialize参数session_id|该TRANS实例的唯一标识。支持`ip:port`（指定监听端口）或`ip`/`ip:0`（由initialize自动选择可用端口，需在initialize后调用get_rpc_port获取真实端口）|
 |initialize参数role|当前进程的角色|
 |initialize参数device_id|当前设备的唯一标识|
 |initialize参数data_op_type|数据传输操作类型，默认 TransDataOpType.SDMA|
-|get_rpc_port方法|获取可用的rpc端口+pid|
+|get_rpc_port方法|返回initialize中实际监听的端口号（`int`，已去除pid后缀）。**必须在initialize成功后调用**，否则返回`0`并打印WARN。端口范围由环境变量`MF_CONFIG_STORE_PORT_START`/`MF_CONFIG_STORE_PORT_END`控制（默认`9000`~`65535`）。|
 |transfer_sync_write方法|同步写接口,成功返回0，其他为错误码|
 |transfer_sync_write参数dest_session|目的TRANS实例对应的标识|
 |transfer_sync_write参数buffer|源地址的起始地址指针|
