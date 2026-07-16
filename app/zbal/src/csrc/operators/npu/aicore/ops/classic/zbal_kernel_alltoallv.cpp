@@ -32,8 +32,8 @@ public:
         this->worldRanks = reinterpret_cast<__gm__ uint16_t *>(comm->peerGroupRank2WorldRank);
         this->exchangeAddr = comm->myAddressExchangeGva;
 
-        uint64_t inputAddrU64 = groupSize * ZBAL_FLAG_SIZE;                         // uint64_t elements
-        uint64_t inputAddrSize = Ceil(inputAddrU64, UB_ALIGN_SIZE) * UB_ALIGN_SIZE; // bytes, for InitBuffer
+        uint64_t inputAddrU64 = groupSize * ZBAL_FLAG_SIZE;
+        uint64_t inputAddrSize = Ceil(inputAddrU64 * sizeof(uint64_t), UB_ALIGN_SIZE) * UB_ALIGN_SIZE;
         this->inputAddr = reinterpret_cast<__gm__ uint64_t *>(exchangeAddr);
         this->inputCumSumAddr = this->inputAddr + inputAddrU64;
         this->inputElementAddr = this->inputCumSumAddr + inputAddrU64;
@@ -54,7 +54,6 @@ public:
 
         uint32_t int32BufSize = Ceil(sizeof(int32_t), UB_ALIGN_SIZE) * UB_ALIGN_SIZE;
         pipe.InitBuffer(atomicIncQue_, 1, int32BufSize);
-        pipe.InitBuffer(waitLocalStatBuf_, int32BufSize);
         pipe.InitBuffer(getLocalStatBuf_, int32BufSize);
 
         this->dataOpType = comm->dataOpType;
@@ -98,8 +97,14 @@ public:
 
     ZBAL_KERNEL void ReAssignmentCoreNum()
     {
-        if (groupSize <= aivNum && outputElement < groupSize) {
-            aivNum = groupSize;
+        // get min(aivNum, groupSize, outputElement) as coreNum
+        aivNum = groupSize;
+        if (outputElement < aivNum) {
+            aivNum = outputElement;
+        }
+
+        if (AscendC::GetBlockNum() < aivNum) {
+            aivNum = AscendC::GetBlockNum();
         }
     }
 
@@ -254,18 +259,10 @@ public:
     ZBAL_KERNEL void WaitLocalStat(__gm__ uint64_t *stat, uint16_t offset)
     {
         ZBAL_PROF_START(comm, ZBAL_PROF_ALLTOALL_WAIT_LOCAL_STAT);
-        __gm__ uint64_t *target = stat + offset * ZBAL_FLAG_SIZE;
-
-        AscendC::LocalTensor<int32_t> buf = waitLocalStatBuf_.Get<int32_t>();
-
-        GlobalTensor<int32_t> globalGT;
-        globalGT.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(target), ZBAL_FLAG_SIZE * sizeof(uint64_t));
-        SyncFunc<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
         int32_t base = GetLocalStat(localStatBaseAddr, offset);
         while (true) {
-            AscendC::DataCopy(buf, globalGT, UB_PAD_COUNT);
-            SyncFunc<AscendC::HardEvent::MTE2_S>(EVENT_ID0);
-            if (buf.GetValue(0) == base) {
+            int32_t cur = GetLocalStat(stat, offset);
+            if (cur == base) {
                 break;
             }
         }
@@ -368,6 +365,8 @@ public:
 
         ReAssignmentCoreNum();
 
+        AscendC::SyncAll<true>();
+
         if (AscendC::GetBlockIdx() < aivNum) {
             uint16_t commonStartRank;
             uint16_t commonEndRank;
@@ -394,7 +393,6 @@ private:
     TQue<QuePosition::VECOUT, 1> atomicIncQue_;
     TBuf<> statInitBuf_;
     TBuf<> getLocalStatBuf_;
-    TBuf<> waitLocalStatBuf_;
     uintptr_t exchangeAddr;
     __gm__ uint64_t *inputAddr;        /* exchange input addr area */
     __gm__ uint64_t *inputCumSumAddr;  /* exchange input splits cumsum area */

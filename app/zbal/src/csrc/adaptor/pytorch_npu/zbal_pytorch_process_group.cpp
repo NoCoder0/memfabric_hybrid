@@ -826,7 +826,6 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::alltoall_base(at::Tensor &outpu
     (void)opts;
     ZBAL_CHECK_S(outputTensor.dtype() == inputTensor.dtype(), "input output tensor must be same type.");
     ZBAL_CHECK_S(outputTensor.scalar_type() == inputTensor.scalar_type(), "input output tensor must be same type.");
-    ZBAL_CHECK_S(inputTensor.size(0) > 0, "input tensor shape is 0");
 
     CheckSingleTensor(outputTensor);
     CheckSingleTensor(inputTensor);
@@ -855,13 +854,24 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::alltoall_base(at::Tensor &outpu
     std::vector<int64_t> inputCumSum(size_ * ZBAL_FLAG_SIZE, 0);
     std::vector<int64_t> outputCounts(size_, 0);
     uint64_t outputSizePerRow = outputTensor.size(0) > 0 ? outputTensor.numel() / outputTensor.size(0) : 0;
-    uint64_t inputSizePerRow = inputTensor.numel() / inputTensor.size(0);
+    uint64_t inputSizePerRow = inputTensor.size(0) > 0 ? inputTensor.numel() / inputTensor.size(0) : outputSizePerRow;
     ZBAL_CHECK_S(outputSizePerRow == 0 || outputSizePerRow == inputSizePerRow, "unexpect row element in input/output");
     uint64_t prevCumSum = 0;
     for (int i = 0; i < size_; i++) {
         outputCounts[i] = outputSplits[i] * outputSizePerRow;
         inputCumSum[i * ZBAL_FLAG_SIZE] = prevCumSum;
         prevCumSum = inputSplits[i] * inputSizePerRow + prevCumSum;
+    }
+
+    at::Tensor dummyInput;
+    at::Tensor dummyOutput;
+    if (inputTensor.numel() == 0) {
+        dummyInput = torch::empty({1}, inputTensor.options());
+        inputTensor = dummyInput;
+    }
+    if (outputTensor.numel() == 0) {
+        dummyOutput = torch::empty({1}, outputTensor.options());
+        outputTensor = dummyOutput;
     }
 
     const int inoutPtrSize = 2;
@@ -877,8 +887,8 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::alltoall_base(at::Tensor &outpu
         inputTensors, outputTensors,
         [&](at::Tensor &input, at::Tensor &output, c10_npu::NPUStream &stream, zbal_comm_t comm) {
             RECORD_FUNCTION("ZbalAlltoAllV", std::vector<c10::IValue>({}));
-            auto inputPtr = input.data_ptr();
-            auto outputPtr = output.data_ptr();
+            const void *inputPtr = input.data_ptr();
+            void *outputPtr = output.data_ptr();
             auto inCumSumPtr = inCumSumTensor.data_ptr();
             auto outCountPtr = outCountTensor.data_ptr();
             auto elementPtr = elementTensor.data_ptr();
