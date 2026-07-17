@@ -18,9 +18,11 @@
 | `MEMFABRIC_HYBRID_EXTEND_LIB_PATH` | 无 | 扩展库路径，用于加载自定义的`libmf_hybm_copy_extend.so`库。 |
 | `SHMEM_LOG_LEVEL` | 无 | Transfer模块日志级别，取值范围0-4（0:DEBUG, 1:INFO, 2:WARN, 3:ERROR, 4:OFF）。**仅Python接口下生效，bm/shm场景不生效。** |
 | `ASCEND_MF_LOG_LEVEL` | 无 | MemFabric日志级别，优先级高于`SHMEM_LOG_LEVEL`。取值范围0-4。**仅Python接口下生效，bm/shm场景不生效。** |
-| `ASCEND_MF_STORE_URL` | 无（必填） | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`。 |
+| `ASCEND_MF_STORE_URL` | 无（必填） | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`，当前实际只取协议前缀。 |
 | `ACCLINK_CHECK_PERIOD_HOURS` | 24 | 控制路径SSL证书定期检查周期（小时），有效范围1-168。 |
 | `ACCLINK_CERT_CHECK_AHEAD_DAYS` | 30 | 证书提前检查天数，在证书过期前多少天开始告警，有效范围1-365。 |
+| `MF_CONFIG_STORE_PORT_START` | 9000 | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。TransferEngine在`session_id`未指定端口（如`ip`/`ip:0`）时自动选端口亦使用此范围。 |
+| `MF_CONFIG_STORE_PORT_END` | 65535 | Config Store可用端口范围结束值。 |
 
 ## 构建时环境变量
 

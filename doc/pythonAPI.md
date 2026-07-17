@@ -396,7 +396,7 @@ def create_config_store(store_url: str) -> int
 class TransferEngine:
     def __init__(self):
     def initialize(store_url: str, unique_id: str, role: str, device_id: int) -> int:
-    def get_rpc_port() -> str:
+    def get_rpc_port() -> int:
     def transfer_sync_write(destflag: str, buffer, peer_buffer_address, length) -> int:
     def batch_transfer_sync_write(destflag: str, buffers, peer_buffer_addresses, lengths) -> int:
     def transfer_async_write_submit(destflag: str, buffer, peer_buffer_address, length, stream) -> int:
@@ -412,10 +412,10 @@ class TransferEngine:
 |-|-|
 |initialize方法|TRANS配置初始化，成功返回0，其他为错误码|
 |initialize参数store_url|config store地址，格式支持 `tcp://ip:port`、`etcd://ip:port`、`etcd://ip:port#instanceId`（etcd 多集群隔离）|
-|initialize参数unique_id|该TRANS实例的唯一标识，格式ip:port|
+|initialize参数session_id|该TRANS实例的唯一标识。支持`ip:port`（指定监听端口）或`ip`/`ip:0`（由initialize自动选择可用端口，需在initialize后调用get_rpc_port获取真实端口）|
 |initialize参数role|当前进程的角色|
 |initialize参数device_id|当前设备的唯一标识|
-|get_rpc_port方法|获取可用的rpc端口+pid|
+|get_rpc_port方法|返回initialize中实际监听的端口号（`int`）。**必须在initialize成功后调用**，否则返回`0`并打印WARN。端口范围`9000`~`65535`。|
 |transfer_sync_write方法|同步写接口,成功返回0，其他为错误码|
 |transfer_sync_write参数destflag|目的TRANS实例对应的标识|
 |transfer_sync_write参数buffer|源地址的起始地址指针|
