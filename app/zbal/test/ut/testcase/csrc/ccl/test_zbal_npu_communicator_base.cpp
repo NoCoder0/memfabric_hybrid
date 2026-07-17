@@ -26,7 +26,7 @@
 #include "dl_cann_api.h"
 #include "zbal_communicator.h"
 #include "zbal_npu_communicator_base.h"
-#include "zbal_npu_communicator_default.h"
+#include "zbal_npu_communicator_aiv.h"
 
 #undef private
 #undef protected
@@ -203,16 +203,16 @@ public:
 
 TEST_F(TestZBALNpuCommunicatorBase, ConstructorAndBasicAccessors)
 {
-    NpuCommunicatorDefault world(opt_, true, nullptr);
+    NpuCommunicatorAIV world(opt_, true, nullptr);
     EXPECT_TRUE(world.IsWorldGroup());
     EXPECT_EQ(world.Name(), "npu_test");
     EXPECT_EQ(world.GroupId(), UINT16_MAX);
 
     CommunicatorPtr worldRef(&world);
-    NpuCommunicatorDefault sub(opt_, false, worldRef);
+    NpuCommunicatorAIV sub(opt_, false, worldRef);
     EXPECT_FALSE(sub.IsWorldGroup());
 
-    NpuCommunicatorDefault nonWorld(opt_, false, nullptr);
+    NpuCommunicatorAIV nonWorld(opt_, false, nullptr);
     EXPECT_FALSE(nonWorld.IsWorldGroup());
 }
 
@@ -236,7 +236,7 @@ TEST_F(TestZBALNpuCommunicatorBase, ConstructCommGroupInfo)
 
     for (auto groupIdx : {uint16_t{0}, ZBAL_UT_NUM_5, ZBAL_UT_NUM_7}) {
         opt_.groupIndex = groupIdx;
-        NpuCommunicatorDefault comm(opt_, false, nullptr);
+        NpuCommunicatorAIV comm(opt_, false, nullptr);
         comm.ConstructCommGroupInfo(opt_);
 
         const auto &m = comm.GetMetaInfo();
@@ -262,14 +262,14 @@ TEST_F(TestZBALNpuCommunicatorBase, ConstructCommGroupInfo)
 
 TEST_F(TestZBALNpuCommunicatorBase, InitializeNoBootstrap)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EXPECT_EQ(comm.Initialize(), Z_NOT_BOOTSTRAPPED);
 }
 
 TEST_F(TestZBALNpuCommunicatorBase, InitializeDoubleInitReturnsOk)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.initialized_ = true;
     EXPECT_EQ(comm.Initialize(), Z_OK);
@@ -281,7 +281,7 @@ TEST_F(TestZBALNpuCommunicatorBase, InitializeDoubleInitReturnsOk)
 
 TEST_F(TestZBALNpuCommunicatorBase, AssignGatherGroupIdNotInitialized)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     AutoReleaseGroupId groupId;
     EXPECT_EQ(comm.AssignGatherGroupId(groupId), Z_NOT_INITIALIZED);
@@ -290,7 +290,7 @@ TEST_F(TestZBALNpuCommunicatorBase, AssignGatherGroupIdNotInitialized)
 TEST_F(TestZBALNpuCommunicatorBase, AssignGatherGroupIdSuccess)
 {
     opt_.groupSize = 1;
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.initialized_ = true;
 
@@ -306,7 +306,7 @@ TEST_F(TestZBALNpuCommunicatorBase, AssignGatherGroupIdSuccess)
 TEST_F(TestZBALNpuCommunicatorBase, AssignGatherGroupIdMemcpyFails)
 {
     opt_.groupSize = 1;
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.initialized_ = true;
 
@@ -324,7 +324,7 @@ TEST_F(TestZBALNpuCommunicatorBase, AssignGatherGroupIdMemcpyFails)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryDisabled)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = false;
     EXPECT_EQ(comm.SetupProfMemory(), Z_OK);
@@ -333,7 +333,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryDisabled)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryTracingCountTooLowClamped)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_10000;
@@ -345,7 +345,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryTracingCountTooLowClamped)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryTracingCountTooHighClamped)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_999999;
@@ -356,7 +356,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryTracingCountTooHighClamped)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryValidTracingCount)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_30000;
@@ -368,7 +368,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryValidTracingCount)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryMallocHostFails)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -379,7 +379,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryMallocHostFails)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryMemsetFails)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -390,7 +390,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryMemsetFails)
 
 TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryHostRegisterFails)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -405,7 +405,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SetupProfMemoryHostRegisterFails)
 
 TEST_F(TestZBALNpuCommunicatorBase, DestroyProfMemoryWhenNull)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.perfHostMemory_ = nullptr;
     comm.DestroyProfMemory();
@@ -414,7 +414,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DestroyProfMemoryWhenNull)
 
 TEST_F(TestZBALNpuCommunicatorBase, DestroyProfMemoryWhenNonNull)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -430,7 +430,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DestroyProfMemoryWhenNonNull)
 
 TEST_F(TestZBALNpuCommunicatorBase, DumpProfilingTraceNoProfMemory)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.groupInfo_.hostMemoryForProfiling = 0;
     comm.DumpProfilingTrace();
@@ -439,7 +439,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DumpProfilingTraceNoProfMemory)
 
 TEST_F(TestZBALNpuCommunicatorBase, DumpProfilingTraceOpenFailsEmptyDir)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -455,7 +455,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DumpProfilingTraceOpenFailsEmptyDir)
 
 TEST_F(TestZBALNpuCommunicatorBase, DumpProfilingTraceEmptyMemoryLoops)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -473,7 +473,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DumpProfilingTraceEmptyMemoryLoops)
 
 TEST_F(TestZBALNpuCommunicatorBase, SignalDumpTrace)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.groupInfo_.hostMemoryForProfiling = 0;
     comm.SignalDumpTrace();
@@ -486,7 +486,7 @@ TEST_F(TestZBALNpuCommunicatorBase, SignalDumpTrace)
 
 TEST_F(TestZBALNpuCommunicatorBase, UnInitializeWhenNotInitialized)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.initialized_ = false;
     comm.UnInitialize();
@@ -495,7 +495,7 @@ TEST_F(TestZBALNpuCommunicatorBase, UnInitializeWhenNotInitialized)
 
 TEST_F(TestZBALNpuCommunicatorBase, UnInitializeWhenInitializedNoProf)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     comm.initialized_ = true;
     comm.groupInfo_.hostMemoryForProfiling = 0;
@@ -505,7 +505,7 @@ TEST_F(TestZBALNpuCommunicatorBase, UnInitializeWhenInitializedNoProf)
 
 TEST_F(TestZBALNpuCommunicatorBase, UnInitializeWhenInitializedWithProf)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EnvHelper::PROF_ENABLED = true;
     EnvHelper::PROF_TRACING_MAX_COUNT = ZBAL_UT_NUM_20480;
@@ -524,7 +524,7 @@ TEST_F(TestZBALNpuCommunicatorBase, UnInitializeWhenInitializedWithProf)
 
 TEST_F(TestZBALNpuCommunicatorBase, CollectiveOpsDelegateToStubs)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     char buf[ZBAL_UT_NUM_64] = {};
 
@@ -547,7 +547,7 @@ TEST_F(TestZBALNpuCommunicatorBase, CollectiveOpsDelegateToStubs)
 
 TEST_F(TestZBALNpuCommunicatorBase, DispatchCombineOpsDelegateToStubs)
 {
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     zbal_tensor_info_t info;
     memset(&info, 0, sizeof(info));
@@ -586,7 +586,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DispatchNormalNotifyFactorValidation)
         if (tc.factorLow) {
             ::setenv("DEEPEP_BALANCE_FACTOR_LOW", tc.factorLow, 1);
         }
-        NpuCommunicatorDefault comm(opt_, false, nullptr);
+        NpuCommunicatorAIV comm(opt_, false, nullptr);
         comm.ConstructCommGroupInfo(opt_);
         zbal_tensor_info_t info;
         memset(&info, 0, sizeof(info));
@@ -603,7 +603,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DispatchNormalNotifyFactorValidation)
     }
 
     /* boundary: nullptr tensor info */
-    NpuCommunicatorDefault comm(opt_, false, nullptr);
+    NpuCommunicatorAIV comm(opt_, false, nullptr);
     comm.ConstructCommGroupInfo(opt_);
     EXPECT_EQ(comm.DispatchNormalNotify(nullptr, 0, 1, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, 0), Z_OK);
 }
@@ -625,7 +625,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DispatchNormalRebalanceEnv)
             ::unsetenv("DEEPEP_ENABLE_REBALANCE");
         }
 
-        NpuCommunicatorDefault comm(opt_, false, nullptr);
+        NpuCommunicatorAIV comm(opt_, false, nullptr);
         comm.ConstructCommGroupInfo(opt_);
         EXPECT_EQ(comm.DispatchNormal(&info, &info, &info, &info, &info, 1, NO_QUANT, &info, &info, nullptr, 0), Z_OK)
             << "DispatchNormal env=" << (val ? val : "<unset>");
@@ -638,7 +638,7 @@ TEST_F(TestZBALNpuCommunicatorBase, DispatchNormalRebalanceEnv)
         } else {
             ::unsetenv("DEEPEP_ENABLE_REBALANCE");
         }
-        NpuCommunicatorDefault comm(opt_, false, nullptr);
+        NpuCommunicatorAIV comm(opt_, false, nullptr);
         comm.ConstructCommGroupInfo(opt_);
         EXPECT_EQ(comm.CombineNormal(&info, &info, &info, &info, &info, &info, 1, &info, nullptr, 0), Z_OK)
             << "CombineNormal env=" << (val ? val : "<unset>");

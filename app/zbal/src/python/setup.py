@@ -67,17 +67,30 @@ def _get_soc_version():
     """
     Get the SOC_VERSION for kernel compiling via torch.npu auto-detection.
     """
-    chip_name = torch.npu.get_device_properties(torch.device('npu')).name
+    default_soc_version = "ascend910_9382"
+    try:
+        chip_name = torch.npu.get_device_properties(torch.device('npu')).name
+    except Exception as e:
+        logger.warning(
+            f"failed to auto-detect NPU chip ({type(e).__name__}: {e}). "
+            f"Falling back to default SOC_VERSION='{default_soc_version}'."
+        )
+        return default_soc_version
+
     if chip_name.startswith("Ascend910_93"):
         res_soc_version = "ascend910_9382"
     elif chip_name.startswith("Ascend950"):
         res_soc_version = "ascend950pr_9599"
     elif chip_name.startswith("Ascend910"):
-        res_soc_version = "ascend910_9382"
-        logger.warning(f"auto-detected {chip_name}, Ascend910_93* or Ascend950* are recommended.)")
+        res_soc_version = default_soc_version
+        logger.warning(f"auto-detected {chip_name}, Ascend910_93* or Ascend950* are recommended.")
     else:
-        logger.error(f"unsupported chip '{chip_name}'. Only Ascend910* and Ascend950* are supported.")
-        raise RuntimeError(f"unsupported chip '{chip_name}'. Only Ascend910* and Ascend950* are supported.")
+        logger.warning(
+            f"unsupported chip '{chip_name}'. Only Ascend910* and Ascend950* are supported. "
+            f"Falling back to default SOC_VERSION='{default_soc_version}'."
+        )
+        return default_soc_version
+
     logger.info(f"auto-detected {chip_name} → SOC_VERSION={res_soc_version}")
     return res_soc_version
 
@@ -155,7 +168,7 @@ logger.warning(f"{libraries=}")
 
 extra_compile_args = [
     "-std=c++17",
-    "-hno-unused-parameter",
+    "-Wno-unused-parameter",
     "-lno-unused-function",
     "-Wno-unused-function",
     "-Wunused-value",

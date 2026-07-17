@@ -434,6 +434,7 @@ class Buffer:
         use_ue8m0: bool = False,
         async_finish: bool = False,
         return_recv_hook: bool = False,
+        topk_weights: Optional[torch.Tensor] = None,
     ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable]:
         """
         A low-latency implementation for dispatch.
@@ -457,6 +458,8 @@ class Buffer:
             return_recv_hook: return a receiving hook if set. If set, the kernel will just do the RDMA request issues,
                 but **without actually receiving the data**. You must call the received hook to
                 make sure the data's arrival. If you do not set this flag, the kernel will ensure the data's arrival.
+            topk_weights: `torch.Tensor` with `torch.float`, shaped as `[num_tokens, num_topk]`, the expert weights
+                selected. Currently, this is only used for compatible with DeepEP.
 
         Returns:
             recv_x: a tensor or tuple with received tokens for each expert.

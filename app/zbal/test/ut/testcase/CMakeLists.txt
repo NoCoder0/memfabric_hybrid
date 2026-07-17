@@ -42,6 +42,10 @@ include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../mock
 )
 
+if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
+    include_directories(${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)
+endif()
+
 file(GLOB_RECURSE ZBAL_TEST_CASE_SRCS
         ${CMAKE_CURRENT_SOURCE_DIR}/csrc/ccl/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/csrc/common/*.cpp
@@ -85,6 +89,8 @@ target_compile_options(test_zbal PRIVATE -fPIC -Wno-float-equal
 # Derive Python library path from CPYTHON_DIR (e.g. /usr/local/python3.11.14/include/python3.11 -> /usr/local/python3.11.14/lib)
 get_filename_component(PYTHON_LIB_DIR "${CPYTHON_DIR}/../.." REALPATH)
 get_filename_component(PYTHON_LIB_DIR "${PYTHON_LIB_DIR}/lib" REALPATH)
+# Derive Python library name (e.g. python3.11) from CPYTHON_DIR's last path component
+get_filename_component(PYTHON_LIB_NAME "${CPYTHON_DIR}" NAME)
 
 target_link_options(test_zbal PRIVATE -pie
     "LINKER:--disable-new-dtags"
@@ -113,7 +119,7 @@ target_link_libraries(test_zbal PUBLIC
     c10
     torch_python
     torch_npu
-    python3.11
+    ${PYTHON_LIB_NAME}
     opapi
     pthread
 )

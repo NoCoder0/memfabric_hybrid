@@ -189,7 +189,7 @@ int32_t aclrtFreeHost(void *ptr)
     return 0;
 }
 
-int32_t aclrtHostRegister(void *hostPtr, uint64_t size, zbal::aclrtHostRegisterType type, void **outDevPtr)
+int32_t aclrtHostRegister(void *hostPtr, uint64_t size, zbal::underapi::aclrtHostRegisterType type, void **outDevPtr)
 {
     if (outDevPtr != nullptr) {
         *outDevPtr = hostPtr;
@@ -234,7 +234,7 @@ int32_t rtGetC2cCtrlAddr(uint64_t *ffts_address, uint32_t *ffts_len)
     return 0;
 }
 
-int32_t aclrtGetResInCurrentThread(zbal::aclrtDevResType type, uint32_t *blockDim)
+int32_t aclrtGetResInCurrentThread(zbal::underapi::aclrtDevResType type, uint32_t *blockDim)
 {
     return 0;
 }

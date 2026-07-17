@@ -74,6 +74,12 @@ protected:
         unsetenv("PYTORCH_NPU_ALLOC_CONF");
     }
 
+    void TearDown() override
+    {
+        gGVASpaceInited = false;
+        zbal::sma::SMAConfig::instance().use_vmm_for_static_memory_ = false;
+    }
+
     void SetVmmMode()
     {
         zbal_pluggable_init(ZBAL_UT_NUM_8);
@@ -141,7 +147,6 @@ TEST_F(TestMemAllocator, InitAndUninit)
     opts.myGva = reinterpret_cast<void *>(0x2000);
     opts.size = ZBAL_UT_SIZE_4KB;
     EXPECT_EQ(zbal_sma_init(&opts, 0), ZResultErrorCode::Z_OK);
-    zbal::sma::SMAConfig::instance().use_vmm_for_static_memory_ = false;
 }
 
 TEST_F(TestMemAllocator, PluggableInitAndSimulate)
