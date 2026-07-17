@@ -442,6 +442,7 @@ class Buffer:
         use_ue8m0: bool = False,
         async_finish: bool = False,
         return_recv_hook: bool = False,
+        topk_weights: Optional[torch.Tensor] = None
     ) -> Tuple[
         Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable
     ]:

@@ -475,6 +475,7 @@ ZBAL_KERNEL void AllGatherBigKernel::Process() // ring allgather
     AscendC::LocalTensor<uint64_t> localTensor = localBuf.Get<uint64_t>();
     ClearExchangeMeta(localTensor, outputAddr, exchangeMetaSize);
     BarrierAll(comm);
+    pipe.Reset(); // free localBuf so CpGM2GM's manual tensor can reuse UB
 
     CopyLocal2Output((__gm__ T *)input, (__gm__ T *)output); // copy self input to output buffer
 

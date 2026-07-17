@@ -110,11 +110,14 @@ public:
     ZBAL_KERNEL void Process()
     {
 #ifdef __DAV_C220_VEC__
+        pipe.Reset(); // free bindQueue from Init to avoid UB overflow
         AscendC::TBuf<AscendC::TPosition::VECIN> localBuf;
         pipe.InitBuffer(localBuf, UB_DMA_MAX_SIZE);
         AscendC::LocalTensor<uint64_t> localTensor = localBuf.Get<uint64_t>();
         ClearExchangeMeta(localTensor, exchangeInputStart, exchangeMetaSize);
         BarrierAll(groupInfo);
+        pipe.Reset(); // free localBuf
+        pipe.InitBuffer(bindQueue, 1, UB_DMA_MAX_SIZE); // re-allocate bindQueue for data copy
 
         if (totalElems > groupSize) {
             ProcessElemsGtGroupSize();
@@ -196,8 +199,7 @@ private:
 
         // 恢复tensor到完整范围, 搬运数据buffer -> output
         ZBAL_PROF_START(groupInfo, ZBAL_PROF_ALLREDUCE_ALLGATHER);
-        pipe.Reset();
-        pipe.InitBuffer(bindQueue, 1, UB_DMA_MAX_SIZE);
+        pipe.Reset(); // free bindQueue; AllGatherBig has its own pipe
 
         uint32_t slice = totalElems / groupSize;
         bool regular = totalElems % groupSize == 0;
@@ -208,6 +210,7 @@ private:
             op.Init<T>(buffer, output, reinterpret_cast<GM_ADDR>(groupInfo), slice, --waitSymbol);
             op.Process<T>();
         } else {
+            pipe.InitBuffer(bindQueue, 1, UB_DMA_MAX_SIZE); // re-allocate for ProcessAg
             ProcessAg();
         }
         ZBAL_PROF_STOP(groupInfo, ZBAL_PROF_ALLREDUCE_ALLGATHER);
