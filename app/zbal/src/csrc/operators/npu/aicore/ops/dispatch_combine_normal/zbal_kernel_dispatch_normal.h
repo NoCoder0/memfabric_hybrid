@@ -136,6 +136,7 @@ private:
     uint32_t putOffsetAlignSize{0};
     uint32_t expertIdsCnt{0};
     uint32_t addrUint64AlignLen_{0};
+    uint32_t availableSize_{static_cast<uint32_t>(UB_MAX_SIZE)};
 
     TQueBind<QuePosition::VECIN, QuePosition::VECOUT, 1> xQueue;
     TQue<QuePosition::VECIN, 1> xInQueue;
@@ -230,6 +231,8 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR x, GM_
     addrUint64AlignLen_ = Ceil(shareAddrNum * sizeof(uint64_t), UB_ALIGN) * UB_ALIGN;
     tpipe_->InitBuffer(addrBuf, addrUint64AlignLen_);
 
+    availableSize_ -= (putOffsetAlignSize + addrUint64AlignLen_ + BUFFER_NUM * hOutUBAlignSize);
+
     // rank分核
     SplitCoreCal(epRankSize, rankNumPerBlock, curBlockStartRankId, curBlockEndRankId);
 #endif
@@ -244,6 +247,7 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantInit()
 
     tpipe_->InitBuffer(tokenCastFloatBuf, h * sizeof(float)); // 28K
     tpipe_->InitBuffer(tokenAbsFloatBuf, h * sizeof(float));  // 28K
+    availableSize_ -= (hAlignSize * BUFFER_NUM + hOutUBAlignSize * BUFFER_NUM + h * sizeof(float) * 2);
 }
 
 template<TypeClass>
@@ -457,14 +461,11 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantProcess()
     // step8: tokenHalf -> tokenInt8
 
     Cast(floatLocalTemp, xInTensor, RoundMode::CAST_NONE, h);
-    xInQueue.FreeTensor<XType>(xInTensor);
-#ifdef ZBAL_ASCEND_NPU_A3
-    PipeBarrier<PIPE_V>();
-#elif defined(ZBAL_ASCEND_NPU_A5)
-    PipeBarrier<PIPE_ALL>(); // cleanup xInTensor lifecycle
-#else
-    PipeBarrier<PIPE_V>();
+#ifdef ZBAL_ASCEND_NPU_A5
+    SyncFunc<AscendC::HardEvent::V_S>();
 #endif
+    PipeBarrier<PIPE_V>();
+    xInQueue.FreeTensor<XType>(xInTensor);
 
     if constexpr (DynamicQuant) {
         LocalTensor<float> floatLocalAbsTemp = tokenAbsFloatBuf.Get<float>();
@@ -519,64 +520,88 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::InputToDstOutput()
     DataCopyPad(putOffsetTensor, putOffsetGT, putOffsetParams, putOffsetCopyPadParams);
     SyncFunc<AscendC::HardEvent::MTE2_S>();
 
-    uint32_t sendTokenAlignLen = Ceil(sendTokenNum * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
+    // compute `eachRoundTokens` based on local copy to avoid compound multiplication across calls
+    uint32_t localAvail = static_cast<uint32_t>(availableSize_ * ZBAL_UB_ALLOC_RATIO);
+    // set to min if UB memory has already been run out
+    if (localAvail < 2 * UB_ALIGN) {
+        localAvail = 2 * UB_ALIGN;
+    }
+    uint32_t eachRoundTokens = localAvail / 2 / sizeof(int32_t);
+    // for short tokens, no need to batch
+    eachRoundTokens = eachRoundTokens < sendTokenNum ? eachRoundTokens : sendTokenNum;
+    uint32_t roundTimes = (sendTokenNum + eachRoundTokens - 1) / eachRoundTokens;
+    uint32_t sendTokenAlignLen = Ceil(eachRoundTokens * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
     tpipe_->InitBuffer(expertIdsBuf, sendTokenAlignLen);    // 4 * bs * k / 48
     tpipe_->InitBuffer(sendTokenIdxBuf, sendTokenAlignLen); // 4 * bs * k / 48
     expertIdsTensor = expertIdsBuf.Get<int32_t>();
     sendTokenIdxTensor = sendTokenIdxBuf.Get<int32_t>();
-    DataCopyExtParams expertIdsCntParams = {1U, static_cast<uint32_t>(sendTokenNum * sizeof(int32_t)), 0U, 0U, 0U};
-    DataCopyExtParams sendTokenIdxParams = {1U, static_cast<uint32_t>(sendTokenNum * sizeof(int32_t)), 0U, 0U, 0U};
-    DataCopyPadExtParams<int32_t> copyPadExtParams{false, 0U, 0U, 0U};
-    DataCopyPad(expertIdsTensor, expertIdsGT[startTokenId], expertIdsCntParams, copyPadExtParams);
-    DataCopyPad(sendTokenIdxTensor, sendTokenIdxGT[startTokenId], sendTokenIdxParams, copyPadExtParams);
-    SyncFunc<AscendC::HardEvent::MTE2_S>();
 
-    DataCopyExtParams xCopyParams = {1U, static_cast<uint32_t>(h * sizeof(XType)), 0U, 0U, 0U};
-    DataCopyPadExtParams<XType> tokenCopyPadExtParams{false, 0U, 0U, 0U};
-    DataCopyExtParams xOutCopyParams = {1U, static_cast<uint32_t>(h * sizeof(ExpandXOutType)), 0U, 0U, 0U};
-    DataCopyExtParams scaleCopyParams = {1U, sizeof(float), 0U, 0U, 0U};
-
-    for (int32_t tokenIndex = startTokenId; tokenIndex < endTokenId; ++tokenIndex) {
-        uint32_t dstExpertId = expertIdsTensor(tokenIndex - startTokenId);
-        if (dstExpertId < 0 || dstExpertId >= moeExpertNum) {
-            continue;
+    uint32_t processedTokens = 0;
+    for (int i = 0; i < roundTimes; ++i) {
+        uint32_t currentTokens = eachRoundTokens;
+        if (processedTokens + currentTokens > sendTokenNum) {
+            currentTokens = sendTokenNum - processedTokens;
         }
-        uint32_t dstRankId = dstExpertId / moeExpertNumPerRank;
-        // 对端output的小偏移，专家内不同rank来源内的，本卡发送给该专家的token序号
-        int32_t curExpertIdx = sendTokenIdxTensor(tokenIndex - startTokenId);
-        // 对端output的大偏移，不同专家及不同rank来源间的，本卡需要放置给该rank的token大偏移，定位到专家和来源rank
-        int32_t dstExpertOffset = putOffsetTensor(dstExpertId * epRankSize + epRankId);
+        DataCopyExtParams expertIdsCntParams = {1U, static_cast<uint32_t>(currentTokens * sizeof(int32_t)), 0U, 0U, 0U};
+        DataCopyExtParams sendTokenIdxParams = {1U, static_cast<uint32_t>(currentTokens * sizeof(int32_t)), 0U, 0U, 0U};
+        DataCopyPadExtParams<int32_t> copyPadExtParams{false, 0U, 0U, 0U};
+        DataCopyPad(expertIdsTensor, expertIdsGT[startTokenId + processedTokens], expertIdsCntParams, copyPadExtParams);
+        DataCopyPad(sendTokenIdxTensor, sendTokenIdxGT[startTokenId + processedTokens], sendTokenIdxParams,
+                    copyPadExtParams);
+        SyncFunc<AscendC::HardEvent::MTE2_S>();
 
-        auto ptr = shareExpandXOutAddrs[dstRankId];
-        dstGT.SetGlobalBuffer((__gm__ ExpandXOutType *)(ptr + hUBAlignSize * (dstExpertOffset + curExpertIdx)));
+        DataCopyExtParams xCopyParams = {1U, static_cast<uint32_t>(h * sizeof(XType)), 0U, 0U, 0U};
+        DataCopyPadExtParams<XType> tokenCopyPadExtParams{false, 0U, 0U, 0U};
+        DataCopyExtParams xOutCopyParams = {1U, static_cast<uint32_t>(h * sizeof(ExpandXOutType)), 0U, 0U, 0U};
+        DataCopyExtParams scaleCopyParams = {1U, sizeof(float), 0U, 0U, 0U};
 
-        if constexpr (DynamicQuant) {
-            auto dsPtr = shareDynamicScaleAddrs[dstRankId];
-            dstScaleOutGT.SetGlobalBuffer((__gm__ float *)(dsPtr));
+        int32_t curStartTokenId = startTokenId + processedTokens;
+        int32_t curEndTokenId = startTokenId + processedTokens + currentTokens;
+        for (int32_t tokenIndex = curStartTokenId; tokenIndex < curEndTokenId; ++tokenIndex) {
+            uint32_t dstExpertId = expertIdsTensor(tokenIndex - startTokenId - processedTokens);
+            if (dstExpertId < 0 || dstExpertId >= moeExpertNum) {
+                continue;
+            }
+            uint32_t dstRankId = dstExpertId / moeExpertNumPerRank;
+            // 对端output的小偏移，专家内不同rank来源内的，本卡发送给该专家的token序号
+            int32_t curExpertIdx = sendTokenIdxTensor(tokenIndex - startTokenId - processedTokens);
+            // 对端output的大偏移，不同专家及不同rank来源间的，本卡需要放置给该rank的token大偏移，定位到专家和来源rank
+            int32_t dstExpertOffset = putOffsetTensor(dstExpertId * epRankSize + epRankId);
 
-            xInTensor = xInQueue.AllocTensor<XType>();
-            DataCopyPad(xInTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
-            xInQueue.EnQue(xInTensor);
-            xInTensor = xInQueue.DeQue<XType>();
-            xOutTensor = xOutQueue.AllocTensor<ExpandXOutType>();
-            QuantProcess();
-            xOutQueue.EnQue(xOutTensor);
-            xOutTensor = xOutQueue.DeQue<ExpandXOutType>();
-            DataCopyPad(dstGT, xOutTensor, xOutCopyParams); // 拷贝token
+            // `recvByteOffset` use uint64_t type for very long token sequence
+            auto ptr = shareExpandXOutAddrs[dstRankId];
+            uint64_t recvByteOffset = static_cast<uint64_t>(hUBAlignSize) * (dstExpertOffset + curExpertIdx);
+            dstGT.SetGlobalBuffer((__gm__ ExpandXOutType *)(ptr + recvByteOffset));
 
-            LocalTensor<float> xOutFp32Tensor = xOutTensor.template ReinterpretCast<float>();
-            DataCopyPad(dstScaleOutGT[dstExpertOffset + curExpertIdx], xOutFp32Tensor[hUBAlignSize / sizeof(float)],
-                        scaleCopyParams);
+            if constexpr (DynamicQuant) {
+                auto dsPtr = shareDynamicScaleAddrs[dstRankId];
+                dstScaleOutGT.SetGlobalBuffer((__gm__ float *)(dsPtr));
 
-            xOutQueue.FreeTensor(xOutTensor);
-        } else {
-            xTmpTensor = xQueue.AllocTensor<ExpandXOutType>();
-            DataCopyPad(xTmpTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
-            xQueue.EnQue(xTmpTensor);
-            xTmpTensor = xQueue.DeQue<ExpandXOutType>();
-            DataCopyPad(dstGT, xTmpTensor, xOutCopyParams);
-            xQueue.FreeTensor<ExpandXOutType>(xTmpTensor);
+                xInTensor = xInQueue.AllocTensor<XType>();
+                DataCopyPad(xInTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
+                xInQueue.EnQue(xInTensor);
+                xInTensor = xInQueue.DeQue<XType>();
+                xOutTensor = xOutQueue.AllocTensor<ExpandXOutType>();
+                QuantProcess();
+                xOutQueue.EnQue(xOutTensor);
+                xOutTensor = xOutQueue.DeQue<ExpandXOutType>();
+                DataCopyPad(dstGT, xOutTensor, xOutCopyParams); // 拷贝token
+
+                LocalTensor<float> xOutFp32Tensor = xOutTensor.template ReinterpretCast<float>();
+                DataCopyPad(dstScaleOutGT[dstExpertOffset + curExpertIdx], xOutFp32Tensor[hUBAlignSize / sizeof(float)],
+                            scaleCopyParams);
+
+                xOutQueue.FreeTensor(xOutTensor);
+            } else {
+                xTmpTensor = xQueue.AllocTensor<ExpandXOutType>();
+                DataCopyPad(xTmpTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
+                xQueue.EnQue(xTmpTensor);
+                xTmpTensor = xQueue.DeQue<ExpandXOutType>();
+                DataCopyPad(dstGT, xTmpTensor, xOutCopyParams);
+                xQueue.FreeTensor<ExpandXOutType>(xTmpTensor);
+            }
         }
+        processedTokens += currentTokens;
     }
 }
 
@@ -615,65 +640,89 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::DispatchForTargetRank(uint32_t startI
     DataCopyPad(putOffsetTensor, putOffsetGT, putOffsetParams, putOffsetCopyPadParams);
     SyncFunc<AscendC::HardEvent::MTE2_S>();
 
-    uint32_t sendTokenAlignLen = Ceil(sendTokenNum * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
+    // compute `eachRoundTokens` based on local copy to avoid compound multiplication across calls
+    uint32_t localAvail = static_cast<uint32_t>(availableSize_ * ZBAL_UB_ALLOC_RATIO);
+    // set to min if UB memory has already been run out
+    if (localAvail < 2 * UB_ALIGN) {
+        localAvail = 2 * UB_ALIGN;
+    }
+    uint32_t eachRoundTokens = localAvail / 2 / sizeof(int32_t);
+    // for short tokens, no need to batch
+    eachRoundTokens = eachRoundTokens < sendTokenNum ? eachRoundTokens : sendTokenNum;
+    uint32_t roundTimes = (sendTokenNum + eachRoundTokens - 1) / eachRoundTokens;
+    uint32_t sendTokenAlignLen = Ceil(eachRoundTokens * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
     tpipe_->InitBuffer(expertIdsBuf, sendTokenAlignLen);    // 4 * bs * k / 48
     tpipe_->InitBuffer(sendTokenIdxBuf, sendTokenAlignLen); // 4 * bs * k / 48
     expertIdsTensor = expertIdsBuf.Get<int32_t>();
     sendTokenIdxTensor = sendTokenIdxBuf.Get<int32_t>();
-    DataCopyExtParams expertIdsCntParams = {1U, static_cast<uint32_t>(sendTokenNum * sizeof(int32_t)), 0U, 0U, 0U};
-    DataCopyExtParams sendTokenIdxParams = {1U, static_cast<uint32_t>(sendTokenNum * sizeof(int32_t)), 0U, 0U, 0U};
-    DataCopyPadExtParams<int32_t> copyPadExtParams{false, 0U, 0U, 0U};
-    DataCopyPad(expertIdsTensor, expertIdsGT[startTokenId], expertIdsCntParams, copyPadExtParams);
-    DataCopyPad(sendTokenIdxTensor, sendTokenIdxGT[startTokenId], sendTokenIdxParams, copyPadExtParams);
-    SyncFunc<AscendC::HardEvent::MTE2_S>();
 
-    DataCopyExtParams xCopyParams = {1U, static_cast<uint32_t>(h * sizeof(XType)), 0U, 0U, 0U};
-    DataCopyPadExtParams<XType> tokenCopyPadExtParams{false, 0U, 0U, 0U};
-    DataCopyExtParams xOutCopyParams = {1U, static_cast<uint32_t>(h * sizeof(ExpandXOutType)), 0U, 0U,
-                                        0U};                             // 只拷贝hidden_size
-    DataCopyExtParams scaleCopyParams = {1U, sizeof(float), 0U, 0U, 0U}; // 拷贝dynamicScales
-
-    for (int32_t tokenIndex = startTokenId; tokenIndex < endTokenId; ++tokenIndex) {
-        uint32_t dstExpertId = expertIdsTensor(tokenIndex - startTokenId);
-        if (dstExpertId < 0 || dstExpertId >= moeExpertNum) {
-            continue;
+    uint32_t processedTokens = 0;
+    for (int i = 0; i < roundTimes; ++i) {
+        uint32_t currentTokens = eachRoundTokens;
+        if (processedTokens + currentTokens > sendTokenNum) {
+            currentTokens = sendTokenNum - processedTokens;
         }
-        uint32_t dstRankId = dstExpertId / moeExpertNumPerRank;
-        // 对端output的小偏移，专家内不同rank来源内的，发送给该专家的token序号
-        int32_t curExpertIdx = sendTokenIdxTensor(tokenIndex - startTokenId);
-        // 对端output的大偏移，不同专家及不同rank来源间的，需要放置给该rank的token大偏移，定位到专家和来源rank
-        int32_t dstExpertOffset = putOffsetTensor(dstExpertId * epRankSize + tarRankId);
+        DataCopyExtParams expertIdsCntParams = {1U, static_cast<uint32_t>(currentTokens * sizeof(int32_t)), 0U, 0U, 0U};
+        DataCopyExtParams sendTokenIdxParams = {1U, static_cast<uint32_t>(currentTokens * sizeof(int32_t)), 0U, 0U, 0U};
+        DataCopyPadExtParams<int32_t> copyPadExtParams{false, 0U, 0U, 0U};
+        DataCopyPad(expertIdsTensor, expertIdsGT[startTokenId + processedTokens], expertIdsCntParams, copyPadExtParams);
+        DataCopyPad(sendTokenIdxTensor, sendTokenIdxGT[startTokenId + processedTokens], sendTokenIdxParams,
+                    copyPadExtParams);
+        SyncFunc<AscendC::HardEvent::MTE2_S>();
 
-        auto ptr = shareExpandXOutAddrs[dstRankId];
-        dstGT.SetGlobalBuffer((__gm__ ExpandXOutType *)(ptr + hUBAlignSize * (dstExpertOffset + curExpertIdx)));
+        DataCopyExtParams xCopyParams = {1U, static_cast<uint32_t>(h * sizeof(XType)), 0U, 0U, 0U};
+        DataCopyPadExtParams<XType> tokenCopyPadExtParams{false, 0U, 0U, 0U};
+        DataCopyExtParams xOutCopyParams = {1U, static_cast<uint32_t>(h * sizeof(ExpandXOutType)), 0U, 0U,
+                                            0U};                             // 只拷贝hidden_size
+        DataCopyExtParams scaleCopyParams = {1U, sizeof(float), 0U, 0U, 0U}; // 拷贝dynamicScales
 
-        if constexpr (DynamicQuant) {
-            auto dsPtr = shareDynamicScaleAddrs[dstRankId];
-            dstScaleOutGT.SetGlobalBuffer((__gm__ float *)(dsPtr));
+        int32_t curStartTokenId = startTokenId + processedTokens;
+        int32_t curEndTokenId = startTokenId + processedTokens + currentTokens;
+        for (int32_t tokenIndex = curStartTokenId; tokenIndex < curEndTokenId; ++tokenIndex) {
+            uint32_t dstExpertId = expertIdsTensor(tokenIndex - startTokenId - processedTokens);
+            if (dstExpertId < 0 || dstExpertId >= moeExpertNum) {
+                continue;
+            }
+            uint32_t dstRankId = dstExpertId / moeExpertNumPerRank;
+            // 对端output的小偏移，专家内不同rank来源内的，发送给该专家的token序号
+            int32_t curExpertIdx = sendTokenIdxTensor(tokenIndex - startTokenId - processedTokens);
+            // 对端output的大偏移，不同专家及不同rank来源间的，需要放置给该rank的token大偏移，定位到专家和来源rank
+            int32_t dstExpertOffset = putOffsetTensor(dstExpertId * epRankSize + tarRankId);
 
-            xInTensor = xInQueue.AllocTensor<XType>();
-            DataCopyPad(xInTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
-            xInQueue.EnQue(xInTensor);
-            xInTensor = xInQueue.DeQue<XType>();
-            xOutTensor = xOutQueue.AllocTensor<ExpandXOutType>();
-            QuantProcess();
-            xOutQueue.EnQue(xOutTensor);
-            xOutTensor = xOutQueue.DeQue<ExpandXOutType>();
-            DataCopyPad(dstGT, xOutTensor, xOutCopyParams); // 拷贝token
+            // `recvByteOffset` use uint64_t type for very long token sequence
+            auto ptr = shareExpandXOutAddrs[dstRankId];
+            uint64_t recvByteOffset = static_cast<uint64_t>(hUBAlignSize) * (dstExpertOffset + curExpertIdx);
+            dstGT.SetGlobalBuffer((__gm__ ExpandXOutType *)(ptr + recvByteOffset));
 
-            LocalTensor<float> xOutFp32Tensor = xOutTensor.template ReinterpretCast<float>();
-            DataCopyPad(dstScaleOutGT[dstExpertOffset + curExpertIdx], xOutFp32Tensor[hUBAlignSize / sizeof(float)],
-                        scaleCopyParams);
+            if constexpr (DynamicQuant) {
+                auto dsPtr = shareDynamicScaleAddrs[dstRankId];
+                dstScaleOutGT.SetGlobalBuffer((__gm__ float *)(dsPtr));
 
-            xOutQueue.FreeTensor(xOutTensor);
-        } else {
-            xTmpTensor = xQueue.AllocTensor<ExpandXOutType>();
-            DataCopyPad(xTmpTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
-            xQueue.EnQue(xTmpTensor);
-            xTmpTensor = xQueue.DeQue<ExpandXOutType>();
-            DataCopyPad(dstGT, xTmpTensor, xOutCopyParams);
-            xQueue.FreeTensor<ExpandXOutType>(xTmpTensor);
+                xInTensor = xInQueue.AllocTensor<XType>();
+                DataCopyPad(xInTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
+                xInQueue.EnQue(xInTensor);
+                xInTensor = xInQueue.DeQue<XType>();
+                xOutTensor = xOutQueue.AllocTensor<ExpandXOutType>();
+                QuantProcess();
+                xOutQueue.EnQue(xOutTensor);
+                xOutTensor = xOutQueue.DeQue<ExpandXOutType>();
+                DataCopyPad(dstGT, xOutTensor, xOutCopyParams); // 拷贝token
+
+                LocalTensor<float> xOutFp32Tensor = xOutTensor.template ReinterpretCast<float>();
+                DataCopyPad(dstScaleOutGT[dstExpertOffset + curExpertIdx], xOutFp32Tensor[hUBAlignSize / sizeof(float)],
+                            scaleCopyParams);
+
+                xOutQueue.FreeTensor(xOutTensor);
+            } else {
+                xTmpTensor = xQueue.AllocTensor<ExpandXOutType>();
+                DataCopyPad(xTmpTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
+                xQueue.EnQue(xTmpTensor);
+                xTmpTensor = xQueue.DeQue<ExpandXOutType>();
+                DataCopyPad(dstGT, xTmpTensor, xOutCopyParams);
+                xQueue.FreeTensor<ExpandXOutType>(xTmpTensor);
+            }
         }
+        processedTokens += currentTokens;
     }
 }
 
@@ -683,6 +732,7 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::HandleAllRankToken()
     uint32_t matrixAlignLen = Ceil(epRankSize * 2 * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
     tpipe_->InitBuffer(balanceMatrixBuf, matrixAlignLen);
     balanceMatrixLocal = balanceMatrixBuf.Get<int32_t>();
+    availableSize_ -= matrixAlignLen;
 
     const DataCopyPadExtParams<int32_t> copyPadParams{false, 0U, 0U, 0U};
     const DataCopyExtParams matrixParams{1U, static_cast<uint32_t>(epRankSize * 2 * sizeof(int32_t)), 0U, 0U, 0U};

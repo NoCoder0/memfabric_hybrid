@@ -335,8 +335,7 @@ int32_t NpuCommunicatorBase::DispatchNormal(const zbal_tensor_info_t *srcTokens,
                                 quantMode, destTokens, destScale, enableBalance, stream, GetMetaInfo(), flags);
 }
 
-int32_t NpuCommunicatorBase::CombineNormal(const zbal_tensor_info_t *srcTokens,
-                                           const zbal_tensor_info_t *srcTokensPerEp,
+int32_t NpuCommunicatorBase::CombineNormal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *putOffset,
                                            const zbal_tensor_info_t *topKWeight, const zbal_tensor_info_t *topkIndex,
                                            const zbal_tensor_info_t *sendTokensIndex,
                                            const zbal_tensor_info_t *balanceMatrix, uint16_t expertNum,
@@ -344,8 +343,8 @@ int32_t NpuCommunicatorBase::CombineNormal(const zbal_tensor_info_t *srcTokens,
                                            int64_t flags) noexcept
 {
     bool enableBalance = Func::GetEnv("DEEPEP_ENABLE_REBALANCE", 0) > 0;
-    return ZBALOpCombineNormal(srcTokens, srcTokensPerEp, topKWeight, topkIndex, sendTokensIndex, balanceMatrix,
-                               expertNum, destTokens, enableBalance, stream, GetMetaInfo(), flags);
+    return ZBALOpCombineNormal(srcTokens, putOffset, topKWeight, topkIndex, sendTokensIndex, balanceMatrix, expertNum,
+                               destTokens, enableBalance, stream, GetMetaInfo(), flags);
 }
 
 int32_t NpuCommunicatorBase::DispatchLowLatency(

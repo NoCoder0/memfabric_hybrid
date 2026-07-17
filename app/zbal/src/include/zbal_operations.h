@@ -277,7 +277,7 @@ int32_t zbal_dispatch_normal(const zbal_tensor_info_t *srcTokens, const zbal_ten
  * @brief Combine operation in pull mode
  *
  * @param srcTokens            [in] tensor info of tokens be dispatched
- * @param srcTokensPerEp       [in] the number of tokens received by each expert from different ranks (prefix sum form)
+ * @param putOffset            [in] the number of tokens received by each expert from different ranks (prefix sum form)
  * @param topKWeight           [in] the weights of the topK experts for each token
  * @param topkIndex            [in] topK index info of per token
  * @param sendTokensIndex      [in] send index of per token
@@ -289,7 +289,7 @@ int32_t zbal_dispatch_normal(const zbal_tensor_info_t *srcTokens, const zbal_ten
  * @param flags                [in] optional flags, reserved or extend
  * @return
  */
-int32_t zbal_combine_normal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *srcTokensPerEp,
+int32_t zbal_combine_normal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *putOffset,
                             const zbal_tensor_info_t *topKWeight, const zbal_tensor_info_t *topkIndex,
                             const zbal_tensor_info_t *sendTokensIndex, const zbal_tensor_info_t *balanceMatrix,
                             uint16_t expertNum, const zbal_tensor_info_t *destTokens, zbal_comm_t comm,

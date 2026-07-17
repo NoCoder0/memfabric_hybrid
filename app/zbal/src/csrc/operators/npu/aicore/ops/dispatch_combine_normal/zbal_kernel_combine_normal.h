@@ -44,7 +44,7 @@ template<TypeClass>
 class CombineNormal : public ZBALBaseKernel {
 public:
     ZBAL_KERNEL CombineNormal() {};
-    ZBAL_KERNEL void Init(GM_ADDR metaAddr, GM_ADDR recvX, GM_ADDR epRecvCount, GM_ADDR topkWeights, GM_ADDR topkIdx,
+    ZBAL_KERNEL void Init(GM_ADDR metaAddr, GM_ADDR recvX, GM_ADDR putOffset, GM_ADDR topkWeights, GM_ADDR topkIdx,
                           GM_ADDR sendTokenIdx, GM_ADDR balanceMatrix, uint32_t rank, uint32_t numExperts, uint32_t bs,
                           uint32_t hidden, uint32_t topK, bool enableBalance, GM_ADDR XOut, TPipe *pipe);
     ZBAL_KERNEL void Process();
@@ -128,12 +128,12 @@ private:
     TBuf<> sumFloatBuf_;
     TBuf<> weightedMulBuf_;
     TBuf<> xOutBuf_;
-    TBuf<> allRecvCountBuf_;
+    TBuf<> putOffsetBuf_;
     TBuf<> topkIdxBuf_;
     TBuf<> balanceMatrixBuf_;
 
     GlobalTensor<RecvXType> dstGT;
-    GlobalTensor<SrcInfoType> epRecvCountGT_;
+    GlobalTensor<SrcInfoType> putOffsetGT_;
     GlobalTensor<float> topkWeightsGT_;
     GlobalTensor<int32_t> sendTokenIdxGT_;
     GlobalTensor<int32_t> topkIdxGT_;
@@ -145,7 +145,7 @@ private:
     GM_ADDR topkWeightsGM_;
     GM_ADDR topkIdxGM_;
     GM_ADDR sendTokenIdxGM_;
-    GM_ADDR epRecvCountGM_;
+    GM_ADDR putOffsetGM_;
 
     GM_ADDR gva_gm;
     uint64_t metaSize_ = 0;
@@ -160,8 +160,8 @@ private:
     uint64_t shareTopkWeightsAddrs[ZBAL_MAX_RANK_SIZE];
     // List of asymmetric output addresses (sendTokenIdxGM_)
     uint64_t shareSendTokenIdxAddrs[ZBAL_MAX_RANK_SIZE];
-    // List of asymmetric output addresses (epRecvCountGM_)
-    uint64_t shareRecvCountAddrs[ZBAL_MAX_RANK_SIZE];
+    // List of asymmetric output addresses (putOffsetGM_)
+    uint64_t sharePutOffsetAddrs[ZBAL_MAX_RANK_SIZE];
     // List of asymmetric output addresses (XOutGM_)
     uint64_t shareXOutAddrs[ZBAL_MAX_RANK_SIZE];
     uint32_t shareAddrNum{6};
@@ -171,17 +171,16 @@ private:
     LocalTensor<float> sumFloatBufLocal;
     LocalTensor<float> topkWeightsLocal;
     LocalTensor<int32_t> sendTokenIdxLocal;
-    LocalTensor<int32_t> allRecvCountLocal;
+    LocalTensor<int32_t> putOffsetLocal;
     LocalTensor<int32_t> topkIdxLocal;
     LocalTensor<int32_t> balanceMatrixLocal;
 };
 
 template<TypeClass>
-ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, GM_ADDR epRecvCount,
-                                               GM_ADDR topkWeights, GM_ADDR topkIdx, GM_ADDR sendTokenIdx,
-                                               GM_ADDR balanceMatrix, uint32_t rank, uint32_t numExperts, uint32_t bs,
-                                               uint32_t hidden, uint32_t topK, bool enableBalance, GM_ADDR XOut,
-                                               TPipe *pipe)
+ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, GM_ADDR putOffset, GM_ADDR topkWeights,
+                                               GM_ADDR topkIdx, GM_ADDR sendTokenIdx, GM_ADDR balanceMatrix,
+                                               uint32_t rank, uint32_t numExperts, uint32_t bs, uint32_t hidden,
+                                               uint32_t topK, bool enableBalance, GM_ADDR XOut, TPipe *pipe)
 {
 #if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
     tpipe_ = pipe;
@@ -218,9 +217,9 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR recvX, 
     topkIdxGM_ = topkIdx;
     topkWeightsGM_ = topkWeights;
     sendTokenIdxGM_ = sendTokenIdx;
-    epRecvCountGM_ = epRecvCount;
+    putOffsetGM_ = putOffset;
 
-    epRecvCountGT_.SetGlobalBuffer((__gm__ int32_t *)epRecvCount); // 放置allReccvCount信息，num_ranks * num_experts
+    putOffsetGT_.SetGlobalBuffer((__gm__ int32_t *)putOffset); // 放置putOffset信息，num_ranks * num_experts
     topkWeightsGT_.SetGlobalBuffer((__gm__ float *)topkWeights);
     topkIdxGT_.SetGlobalBuffer((__gm__ int32_t *)topkIdx);
     sendTokenIdxGT_.SetGlobalBuffer((__gm__ int32_t *)sendTokenIdx);
@@ -284,8 +283,8 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::PutShareAddr()
     addrTensor_(2) = topkWeightsAddr;
     uint64_t sendTokenIdxAddr = reinterpret_cast<__gm__ uint64_t>(sendTokenIdxGM_);
     addrTensor_(3) = sendTokenIdxAddr;
-    uint64_t epRecvCountAddr = reinterpret_cast<__gm__ uint64_t>(epRecvCountGM_);
-    addrTensor_(4) = epRecvCountAddr;
+    uint64_t putOffsetAddr = reinterpret_cast<__gm__ uint64_t>(putOffsetGM_);
+    addrTensor_(4) = putOffsetAddr;
     uint64_t XOutAddr = reinterpret_cast<__gm__ uint64_t>(XOutGM_);
     addrTensor_(5) = XOutAddr;
     SyncFunc<AscendC::HardEvent::S_MTE3>();
@@ -318,7 +317,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::GetShareAddr()
         shareTopkIdxAddrs[i] = addrTensor_(1);
         shareTopkWeightsAddrs[i] = addrTensor_(2);
         shareSendTokenIdxAddrs[i] = addrTensor_(3);
-        shareRecvCountAddrs[i] = addrTensor_(4);
+        sharePutOffsetAddrs[i] = addrTensor_(4);
         shareXOutAddrs[i] = addrTensor_(5);
     }
 }
@@ -411,11 +410,13 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::ReadTokenAndWeightedSum(uint32_t token
         }
         float scale = topkWeightsLocal.GetValue(topkId);
         int32_t remoteReadOffset = sendTokenIdxLocal(topkId);
-        int32_t remoteReadBase = allRecvCountLocal(expertId * epRankSize + tarRankId);
+        int32_t remoteReadBase = putOffsetLocal(expertId * epRankSize + tarRankId);
 
         int32_t dstRankId = expertId / moeExpertNumPerRank;
         auto ptr = shareRecvXAddrs[dstRankId];
-        dstGT.SetGlobalBuffer((__gm__ XType *)(ptr + hRecvXTypeLen_ * (remoteReadBase + remoteReadOffset)));
+        // `recvByteOffset` use uint64_t type for very long token sequence
+        uint64_t recvByteOffset = static_cast<uint64_t>(hRecvXTypeLen_) * (remoteReadBase + remoteReadOffset);
+        dstGT.SetGlobalBuffer((__gm__ XType *)(ptr + recvByteOffset));
 
         LocalTensor<XType> tmpToken = weightedSumQueue_.AllocTensor<XType>();
         DataCopyPad(tmpToken, dstGT, xOutCopyParams, copyPadExtParams);
@@ -457,18 +458,18 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::ReadTokenFromRemote()
     tpipe_->InitBuffer(sendTokenIdxBuf_, k32AlignLen_);                   // 32b
     tpipe_->InitBuffer(topkIdxBuf_, k32AlignLen_);                        // 32b
     // moeExpertNum最大为512，tensor大小为 64*512*4=128kb
-    uint32_t recvCountAlignLen_ = Ceil(epRankSize * moeExpertNum * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
-    tpipe_->InitBuffer(allRecvCountBuf_, recvCountAlignLen_);
+    uint32_t putOffsetAlignLen_ = Ceil(epRankSize * moeExpertNum * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
+    tpipe_->InitBuffer(putOffsetBuf_, putOffsetAlignLen_);
 
     topkWeightsLocal = topkWeightsBuf_.Get<float>();
     tokenFloatLocal = tokenFloatBuf_.Get<float>();
     weightedMulBufLocal = weightedMulBuf_.Get<float>();
     sumFloatBufLocal = sumFloatBuf_.Get<float>();
     sendTokenIdxLocal = sendTokenIdxBuf_.Get<int32_t>();
-    allRecvCountLocal = allRecvCountBuf_.Get<int32_t>();
+    putOffsetLocal = putOffsetBuf_.Get<int32_t>();
     topkIdxLocal = topkIdxBuf_.Get<int32_t>();
 
-    epRecvCountGT_.SetGlobalBuffer((__gm__ int32_t *)epRecvCountGM_);
+    putOffsetGT_.SetGlobalBuffer((__gm__ int32_t *)putOffsetGM_);
     topkWeightsGT_.SetGlobalBuffer((__gm__ float *)topkWeightsGM_);
     topkIdxGT_.SetGlobalBuffer((__gm__ int32_t *)topkIdxGM_);
     sendTokenIdxGT_.SetGlobalBuffer((__gm__ int32_t *)sendTokenIdxGM_);
@@ -481,7 +482,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::ReadTokenFromRemote()
     const DataCopyExtParams countParams{1U, static_cast<uint32_t>(epRankSize * moeExpertNum * sizeof(int32_t)), 0U, 0U,
                                         0U};
     SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
-    DataCopyPad(allRecvCountLocal, epRecvCountGT_, countParams, copyPadint32Params);
+    DataCopyPad(putOffsetLocal, putOffsetGT_, countParams, copyPadint32Params);
     PipeBarrier<PIPE_V>();
     SyncFunc<AscendC::HardEvent::MTE2_S>();
 
@@ -511,7 +512,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::ReadAndWriteForTargetRank(uint32_t sta
     endTokenIndex += startId;
 
     // 以下GT都是目标rank上的
-    epRecvCountGT_.SetGlobalBuffer((__gm__ int32_t *)(shareRecvCountAddrs[tarRankId]));
+    putOffsetGT_.SetGlobalBuffer((__gm__ int32_t *)(sharePutOffsetAddrs[tarRankId]));
     topkWeightsGT_.SetGlobalBuffer((__gm__ float *)(shareTopkWeightsAddrs[tarRankId]));
     topkIdxGT_.SetGlobalBuffer((__gm__ int32_t *)(shareTopkIdxAddrs[tarRankId]));
     sendTokenIdxGT_.SetGlobalBuffer((__gm__ int32_t *)(shareSendTokenIdxAddrs[tarRankId]));
@@ -525,7 +526,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::ReadAndWriteForTargetRank(uint32_t sta
                                         0U};
 
     SyncFunc<AscendC::HardEvent::MTE3_MTE2>();
-    DataCopyPad(allRecvCountLocal, epRecvCountGT_, countParams, copyPadint32Params);
+    DataCopyPad(putOffsetLocal, putOffsetGT_, countParams, copyPadint32Params);
     PipeBarrier<PIPE_V>();
     SyncFunc<AscendC::HardEvent::MTE2_S>();
 
@@ -554,8 +555,8 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::HandleAllRankToken()
     tpipe_->InitBuffer(sendTokenIdxBuf_, k32AlignLen_);                   // 32b
     tpipe_->InitBuffer(topkIdxBuf_, k32AlignLen_);                        // 32b
     // moeExpertNum最大为512，tensor大小为 64*512*4=128kb
-    uint32_t recvCountAlignLen_ = Ceil(epRankSize * moeExpertNum * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
-    tpipe_->InitBuffer(allRecvCountBuf_, recvCountAlignLen_);
+    uint32_t putOffsetAlignLen_ = Ceil(epRankSize * moeExpertNum * sizeof(int32_t), UB_ALIGN) * UB_ALIGN;
+    tpipe_->InitBuffer(putOffsetBuf_, putOffsetAlignLen_);
 
     balanceMatrixLocal = balanceMatrixBuf_.Get<int32_t>();
     topkWeightsLocal = topkWeightsBuf_.Get<float>();
@@ -563,7 +564,7 @@ ZBAL_KERNEL void CombineNormal<TypeFunc>::HandleAllRankToken()
     weightedMulBufLocal = weightedMulBuf_.Get<float>();
     sumFloatBufLocal = sumFloatBuf_.Get<float>();
     sendTokenIdxLocal = sendTokenIdxBuf_.Get<int32_t>();
-    allRecvCountLocal = allRecvCountBuf_.Get<int32_t>();
+    putOffsetLocal = putOffsetBuf_.Get<int32_t>();
     topkIdxLocal = topkIdxBuf_.Get<int32_t>();
 
     const DataCopyPadExtParams<int32_t> copyPadParams{false, 0U, 0U, 0U};

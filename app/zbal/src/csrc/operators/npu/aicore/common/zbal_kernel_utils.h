@@ -21,16 +21,20 @@ See the Mulan PSL v2 for more details.
 
 #define ZBAL_KERNEL             __attribute__((always_inline)) __aicore__ __inline__
 #define ZBAL_CORE_BARRIER_SHIFT 2
+#define ZBAL_UB_ALLOC_RATIO     4 / 5
 
 constexpr int64_t UB_PAD_COUNT = 4;
 constexpr int64_t UB_PAD4_COUNT = 8;
 constexpr int64_t UB_ALIGN_SIZE = 32;
 constexpr int64_t UB_BUFF_INTERVAL = 64;
 #if defined(ZBAL_ASCEND_NPU_A3)
+constexpr int64_t UB_MAX_SIZE = 192 * 1024;
 constexpr int64_t UB_DMA_MAX_SIZE = 176 * 1024;
 #elif defined(ZBAL_ASCEND_NPU_A5)
+constexpr int64_t UB_MAX_SIZE = 256 * 1024;
 constexpr int64_t UB_DMA_MAX_SIZE = 240 * 1024;
 #else
+constexpr int64_t UB_MAX_SIZE = 192 * 1024;
 constexpr int64_t UB_DMA_MAX_SIZE = 176 * 1024;
 #endif
 constexpr int64_t ZBAL_SMALL_DATA_SIZE = 256;

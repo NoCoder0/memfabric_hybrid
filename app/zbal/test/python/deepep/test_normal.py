@@ -159,6 +159,31 @@ def test_main(
             local_expert_token_list = local_expert_token.tolist()
         return local_expert_token_list
 
+    MAX_DUMP_ROWS = 1024
+
+    def _skip_2d_dump(name, tensor, focus_row=None):
+        """Return True if the caller should skip its own full dump.
+
+        - 1D tensor or rows <= MAX_DUMP_ROWS: return False (caller dumps all).
+        - rows > MAX_DUMP_ROWS, focus_row given: print window [focus_row-1, focus_row+1],
+          return True.
+        - rows > MAX_DUMP_ROWS, no focus_row: skip with warning, return True.
+        """
+        if tensor.dim() < 2 or tensor.shape[0] <= MAX_DUMP_ROWS:
+            return False
+        rows = tensor.shape[0]
+        if focus_row is None:
+            logger.warning(f"[rank {rank}] skip dump {name}: {rows} rows > {MAX_DUMP_ROWS}")
+            return True
+        start = max(0, focus_row - 1)
+        end = min(rows, focus_row + 2)
+        logger.warning(
+            f"[rank {rank}] dump {name} window [{start}:{end}] around focus_row={focus_row} (total {rows} rows)"
+        )
+        for r in range(start, end):
+            logger.warning(f"[rank {rank}] {name} row{r} = {tensor[r].tolist()}")
+        return True
+
     def verify_combine_output(check_x):
         """Verify combined_x correctness for deterministic input (x = ones * rank, weights = ones * rank).
         Expected: every token row = 8 * rank^2  (uniform across hidden dims).
@@ -185,8 +210,9 @@ def test_main(
                 f"max_col_diff={max_col_diff:.4f} @ row{bad_idx}, "
                 f"max_val_err={max_val_err:.4f} @ row{worst_row}(val={vals[worst_row]:.4f})"
             )
-            for r in range(check_x.shape[0]):
-                logger.warning(f"[rank {rank}] row{r} [:32] = {check_x[r, :32].tolist()}")
+            if not _skip_2d_dump("check_x", check_x, focus_row=bad_idx):
+                for r in range(check_x.shape[0]):
+                    logger.warning(f"[rank {rank}] row{r} [:32] = {check_x[r, :32].tolist()}")
             wrong_mask = val_errs > 5e-5
             wrong_indices = wrong_mask.nonzero(as_tuple=True)[0]
             for wi in wrong_indices:
@@ -195,7 +221,9 @@ def test_main(
                 )
         return ok
 
-    def dump_send_token_idx(send_token_idx):
+    def dump_send_token_idx(send_token_idx, focus_row=None):
+        if _skip_2d_dump("send_token_idx", send_token_idx, focus_row):
+            return
         sti_cpu = send_token_idx.cpu()
         lines = []
         for t in range(sti_cpu.shape[0]):
@@ -205,11 +233,12 @@ def test_main(
     def dump_dispatch_output(recv_x, put_offset, balance_matrix):
         dump_send_token_idx(send_token_idx)
 
-        # dump recv_x
-        lines = []
-        for r in range(recv_x.shape[0]):
-            lines.append(f"[rank {rank}] recv_x row{r} [:32] = {recv_x[r, :32].tolist()}")
-        logger.warning("\n".join(lines))
+        # dump recv_x (2D, skip row-by-row if too many rows)
+        if not _skip_2d_dump("recv_x", recv_x):
+            lines = []
+            for r in range(recv_x.shape[0]):
+                lines.append(f"[rank {rank}] recv_x row{r} [:32] = {recv_x[r, :32].tolist()}")
+            logger.warning("\n".join(lines))
 
         logger.warning(f"[rank {rank}] put_offset = {put_offset.tolist()}")
         logger.warning(f"[rank {rank}] balance_matrix = {balance_matrix.tolist()}")
@@ -233,7 +262,7 @@ def test_main(
                 actual = int(sti_cpu[t, k].item())
                 if expected != actual:
                     logger.error(f"[rank {rank}] send_token_idx[{t},{k}] expected={expected} actual={actual}")
-                    dump_send_token_idx(send_token_idx)
+                    dump_send_token_idx(send_token_idx, focus_row=t)
                     return False
         logger.info(f"[rank {rank}] send_token_idx check passed, expert_counter[:8]={expert_counter[:8]}")
         return True

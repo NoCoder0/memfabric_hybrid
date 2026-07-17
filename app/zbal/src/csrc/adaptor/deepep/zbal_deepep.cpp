@@ -443,7 +443,7 @@ Buffer::intranode_combine(const torch::Tensor &x, const torch::Tensor &topk_idx,
 
     // tensor to zbal_tensor_info_t
     auto recv_x_info = transfer_tensor_info(recv_x);
-    auto ep_send_counts_info = transfer_tensor_info(put_offset);
+    auto put_offset_info = transfer_tensor_info(put_offset);
     auto expert_scales_info = transfer_tensor_info(expert_scales);
     auto expert_ids_info = transfer_tensor_info(expert_ids);
     auto send_token_idx_info = transfer_tensor_info(send_token_idx);
@@ -452,9 +452,9 @@ Buffer::intranode_combine(const torch::Tensor &x, const torch::Tensor &topk_idx,
 
     // call combine
     std::function<int()> acl_call;
-    acl_call = [this, recv_x_info, ep_send_counts_info, expert_scales_info, expert_ids_info, send_token_idx_info,
+    acl_call = [this, recv_x_info, put_offset_info, expert_scales_info, expert_ids_info, send_token_idx_info,
                 balance_matrix_info, moe_expert_number, combined_x_info, acl_stream, flags]() -> int {
-        auto api_ret = zbal_combine_normal(&recv_x_info, &ep_send_counts_info, &expert_scales_info, &expert_ids_info,
+        auto api_ret = zbal_combine_normal(&recv_x_info, &put_offset_info, &expert_scales_info, &expert_ids_info,
                                            &send_token_idx_info, &balance_matrix_info, moe_expert_number,
                                            &combined_x_info, this->comm_, acl_stream, flags);
         return api_ret;

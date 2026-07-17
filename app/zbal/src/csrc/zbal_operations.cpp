@@ -338,14 +338,14 @@ ZBAL_API int32_t zbal_dispatch_normal(const zbal_tensor_info_t *srcTokens, const
                                      quantMode, destTokens, destScale, stream, flags);
 }
 
-ZBAL_API int32_t zbal_combine_normal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *srcTokensPerEp,
+ZBAL_API int32_t zbal_combine_normal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *putOffset,
                                      const zbal_tensor_info_t *topKWeight, const zbal_tensor_info_t *topkIndex,
                                      const zbal_tensor_info_t *sendTokensIndex, const zbal_tensor_info_t *balanceMatrix,
                                      uint16_t expertNum, const zbal_tensor_info_t *destTokens, zbal_comm_t comm,
                                      aclrtStream stream, int64_t flags)
 {
     ZBAL_VALIDATE_RETURN(srcTokens != nullptr, "CombineNormal failed as srcTokens is null", Z_INVALID_PARAM);
-    ZBAL_VALIDATE_RETURN(srcTokensPerEp != nullptr, "CombineNormal failed as srcTokensPerEp is null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(putOffset != nullptr, "CombineNormal failed as putOffset is null", Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(topKWeight != nullptr, "CombineNormal failed as topKWeight is null", Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(topkIndex != nullptr, "CombineNormal failed as topkIndex is null", Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(sendTokensIndex != nullptr, "CombineNormal failed as sendTokensIndex is null",
@@ -357,7 +357,7 @@ ZBAL_API int32_t zbal_combine_normal(const zbal_tensor_info_t *srcTokens, const 
 
     /* covert inner object ptr and execute op */
     auto innerComm = reinterpret_cast<Communicator *>(comm);
-    return innerComm->CombineNormal(srcTokens, srcTokensPerEp, topKWeight, topkIndex, sendTokensIndex, balanceMatrix,
+    return innerComm->CombineNormal(srcTokens, putOffset, topKWeight, topkIndex, sendTokensIndex, balanceMatrix,
                                     expertNum, destTokens, stream, flags);
 }
 

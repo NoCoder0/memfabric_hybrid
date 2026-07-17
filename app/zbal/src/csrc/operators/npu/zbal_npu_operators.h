@@ -61,7 +61,7 @@ int32_t ZBALOpDispatchNormal(const zbal_tensor_info_t *srcTokens, const zbal_ten
                              const zbal_tensor_info_t *destTokens, const zbal_tensor_info_t *destScale,
                              bool enableBalance, aclrtStream stream, const CommGroupInfo &groupInfo, int64_t flags);
 
-int32_t ZBALOpCombineNormal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *srcTokensPerEp,
+int32_t ZBALOpCombineNormal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *putOffset,
                             const zbal_tensor_info_t *topKWeight, const zbal_tensor_info_t *topkIndex,
                             const zbal_tensor_info_t *sendTokensIndex, const zbal_tensor_info_t *balanceMatrix,
                             uint16_t expertNum, const zbal_tensor_info_t *destTokens, bool enableBalance,
