@@ -4,7 +4,7 @@
 
 **Created:** 2026-07-15
 
-**Updated:** 2026-07-16
+**Updated:** 2026-07-17
 
 **Status:** Draft
 
@@ -27,21 +27,8 @@ Batch_Copy 所属 entity 的 64 KiB extra context，并最后发布一个固定�
 AICPU 算子不接收内部通信句柄，而是通过路由根定位只读快照，按 CPU peer 对 batch 分组，
 然后调用 `HcommBatchTransferOnThread`；接口不支持时回退到 `HcommReadOnThread`。
 
-## 1.2 动机
 
-当前仓库已经具备以下基础能力：
-
-- `DeviceUrmaTransportManager::Prepare()` 为每个远端 peer 创建一个 AICPU HCOMM thread 和 channel。
-- `ImportRemoteMemKeysLocked()` 保存远端原始地址区间及 `HcommMemImport()` 返回的本地可访问视图。
-- `HybmBatchRead` 接收 Host 传入的单个 `thread/channel`，调用 HCOMM 完成批量读。
-- HYBM 已在 NPU SVM 尾部维护固定虚拟地址控制区。
-
-现有 `HybmBatchRead` 一次只面向一个已由 Host 选定的 peer，而且通信句柄属于算子入参。
-当 Batch_Copy 从图或其他卡侧流程直接发起时，Host 不应参与每次数据面的 peer 选择，也不应
-把内部 HCOMM 句柄暴露给调用者。若不增加卡侧路由能力，调用方必须拆 batch、查询 peer、取得
-句柄并逐次拉起算子，无法满足纯卡侧发起和跨 CPU peer 批处理的目标。
-
-## 1.3 目标与非目标
+## 1.2 目标与限制
 
 ### 目标
 
@@ -53,16 +40,12 @@ AICPU 算子不接收内部通信句柄，而是通过路由根定位只读快�
 - 保持现有 `HybmBatchRead`、`HybmBatchWrite` 及 Host 侧数据面接口兼容。
 - 对参数错误、路由缺失、句柄失效、HCOMM 失败和完成超时提供可定位的 ERROR 日志。
 
-### 非目标
+### 限制
 
-- 本阶段不提供 NPU HBM 到鲲鹏 DDR 的 Batch_Copy 写方向；继续使用现有 `HybmBatchWrite`。
-- 不支持非昇腾 950 NPU、非鲲鹏 CPU 或非 URMA/HCOMM 数据通路。
 - 不在算子中动态建链、注册内存或导入远端内存。
-- P0 不支持建链完成后动态增加内存区间，也不支持 peer 移除、主动断链或路由热更新。
-- P0 初始化建链和路由发布串行执行，不支持初始化流程并发。
-- 不允许把远端进程的普通本地 VA 直接当作可路由地址；源地址必须是超节点内唯一的
-  MemFabric GVA。若上游只能提供可能重叠的远端本地 VA，接口必须增加 peer/rank 信息。
-- P0 阶段不支持同一张 NPU 上多个 Batch_Copy 实例并发执行。
+- 不支持建链完成后动态增加内存区间，也不支持 peer 移除、主动断链或路由热更新。
+- 初始化建链和路由发布串行执行，不支持初始化流程并发。
+- 不支持同一张 NPU 上多个 Batch_Copy 实例并发执行。
 
 ---
 
@@ -78,32 +61,12 @@ AICPU 算子不接收内部通信句柄，而是通过路由根定位只读快�
 | 最大拓扑 | 每张 NPU 连接 16 个 CPU peer | 表容量和初始化失败回滚 |
 | 异常输入 | 越界、溢出、空指针、无路由地址 | 传输前失败，不提交任何 HCOMM 请求 |
 
-## 2.2 容量与性能指标
 
-| 指标 | P0 设计值/目标 |
-| --- | --- |
-| 本地 NPU 数量 | 超节点最多 16 张；每张 NPU 独立维护路由表 |
-| 远端 CPU peer | 每张 NPU 最多 16 个 |
-| 远端地址区间 | 每张 NPU 最多 512 个已导入 DDR 区间 |
-| 单次 batch 元素数 | 1～4096；HCOMM batch 按最多 1000 条分片提交 |
-| 路由复杂度 | 地址表排序后进行二分查找，单元素为 `O(log 512)` |
-| 控制面写入量 | 初始化成功前一次写入不超过 32 KiB，不在数据热路径执行 |
-| Host 热路径参与 | 建链后为 0；每次 Batch_Copy 不执行 Host 侧 peer 选择或地址转换 |
-| 单 peer 稳态带宽 | batch ≥128 时不低于现有 `HybmBatchRead` 基线的 95% |
-| 路由和分组开销 | batch=128、单条 4 KiB 时，不超过端到端耗时的 10% |
-
-`4096` 是 P0 的安全上限，用于限制 AICPU 堆内存和最坏查表时间。若实测需要更大 batch，
-应通过性能数据调整上限，而不是取消边界检查。
-
-## 2.3 安全、可靠性与兼容性要求
+## 2.2 安全、可靠性与兼容性要求
 
 - 源 GVA 的完整 `[src, src + len)` 必须落在一个 READY 路由区间内。
 - 目的地址必须位于本地 HBM 有效范围，且不得覆盖 HYBM meta 或任一 entity extra context。
 - 地址加法必须检查 `uint64_t` 溢出，长度为 0 的条目按 no-op 跳过。
-- 路由表必须包含 magic、ABI 版本、结构大小、状态和数量边界。
-- 路由内容先完整写入 entity extra context，写入成功后再发布固定位置的路由根；初始化返回前
-  不允许拉起 Batch_Copy，因此 P0 不需要运行期双表切换。
-- 新算子使用独立符号和配置项，旧算子 ABI 及固定元数据地址不变。
 - Batch_Copy 所属 entity 的 extra context 由内部路由表独占，公共 `hybm_set_extra_context()`
   必须拒绝覆盖该 entity 的内容。
 - 根错误必须记录 peer rank、地址、长度、channel、thread、batch index 和返回码中的相关字段。
@@ -151,39 +114,36 @@ flowchart LR
 `src_ddr_ptr_list` 中的元素定义为 MemFabric GVA，而不是鲲鹏进程本地 VA。
 GVA 必须在超节点内唯一，且与 `RemoteRegistration::addr/size` 使用同一地址空间。
 
-结合当前实现，不能假设 GVA、HCOMM 注册地址和导入后的本地视图地址相等：
+目标场景不复用“昇腾本机 Host 内存供卡侧 URMA 访问”的 DVA 注册路径。当前
+`MapSlice()` 中昇腾 950 使用 `HalMemAlloc()`，以及 `RegisterMemoryRegion()` 将 HOST_DRAM 的 HVA
+转换为 DVA，都是为本机 NPU 访问 Host 内存服务；鲲鹏 DDR 作为远端源时不需要这层转换。
 
-1. `HybmConnBasedSegment::ReserveMemorySpace()` 通过 `HybmVaManager` 分配逻辑 GVA；
-   `Mmap()` 的导入路径只登记外部 GVA 信息，没有把远端鲲鹏 DDR 映射到本地同值地址。
-2. `HybmConnBasedSegment::MapSlice()` 在昇腾 950 上先由 `HalMemAlloc()` 获得 HVA，再调用
-   `HalHostRegister()` 获得 DVA。该流程没有向 HAL 传入“DVA 必须等于 GVA”的约束。
-3. `DeviceUrmaTransportManager::RegisterMemoryRegion()` 对 HOST_DRAM 将 HVA 转换为 DVA，随后以
-   DVA 调用 `HcommMemReg()`；`QueryMemoryKey()` 又把 MemFabric GVA 作为独立字段导出。
-4. `ImportRemoteMemKeysLocked()` 从 key 中恢复 GVA，同时保存 `HcommMemImport()` 返回的 `view`；
-   当前 `RemoteIo()` 和 `RemoteIoBatch()` 都执行同样的基址加偏移转换。
+P0 对鲲鹏 DDR 源端采用 GVA 固定地址注册：
+
+1. 去除目标分支中昇腾 950 强制 `HalMemAlloc()` 的行为，鲲鹏侧使用 `mmap()` 把 DDR 映射到
+   `sliceAddr`；源端要求 `sliceAddr == GVA`，映射返回其他地址或失败时终止初始化。
+2. 该源端路径不调用 `HalHostRegister()`，也不生成 DVA。Batch_Copy 源 DDR 注册时增加内部
+   `REG_MR_FLAG_GVA_DIRECT` 标志，`HcommMemReg()` 据此直接注册 `mr.addr`，并要求 `mr.addr == GVA`；
+   未设置该标志的既有 HOST_DRAM 注册继续执行 HVA→DVA 转换。
+3. `QueryMemoryKey()` 导出的 `key.keys[1]` 与 HCOMM 实际注册地址使用同一个 GVA。
+4. NPU 侧 `ImportRemoteMemKeysLocked()` 从 key 恢复 GVA，调用 `HcommMemImport()` 后校验
+   `view.addr == remoteAddr` 且 `view.size >= remoteSize`。不相等时返回 `BM_NOT_SUPPORTED`，不发布路由。
+
+固定地址 mmap 只适用于 GVA 落在鲲鹏进程可映射 VA 范围且地址未被占用的配置。当前
+`enable56BitsGva` 路径把 GVA 与本地可访问地址分离，不能直接满足该约束；P0 应禁用该模式，或在
+后续实现前提供一段经平台验证、可由鲲鹏进程固定映射的 GVA 地址窗口。
 
 `HcommMemImport()` 的底层输出参数是 `HcommCommMem`，其中包含 `addr/size/type`。
 `HcommTransportManager::HcommMemImport()` 把 `outMem.addr` 封装为 `UrmaCommMem::addr` 返回，所以接口
-**会返回一个导入视图起始地址**。`hcommVaBegin` 是本文对该地址的字段命名，不是 HCOMM 的官方字段名，
-也没有证据表明其数值必须等于远端 GVA。
-
-因此 P0 路由区间继续同时保存：
-
-- `srcGvaBegin/srcGvaEnd`：调用者可见的鲲鹏 DDR GVA，区间为左闭右开。
-- `hcommVaBegin`：`HcommMemImport()` 返回的远端内存视图起始地址。
-
-算子按以下公式得到 HCOMM 实际源地址：
+**会返回一个导入视图起始地址**。P0 将地址相等作为建链成功的硬性条件，而不是依赖未校验的
+隐含假设。路由区间只保存调用者可见的 `srcGvaBegin/srcGvaEnd`，算子直接使用输入 GVA：
 
 ```text
-hcommSrc = hcommVaBegin + (srcGva - srcGvaBegin)
+hcommSrc = srcGva
 ```
 
-只有同时满足以下条件，后续 ABI 才能删除 `hcommVaBegin`：
-
-- HAL/HCOMM 提供按指定地址注册的正式能力，并保证鲲鹏 DDR 的注册 DVA 等于 MemFabric GVA；
-- HCOMM 明确保证 import 不重定位，且初始化时校验 `view.addr == remoteAddr`，不相等则建链失败。
-
-删除该字段仅能为 512 个 range 节省 4 KiB，收益不足以覆盖当前错误寻址风险，因此不作为 P0 优化。
+因此 `BatchCopyRangeEntry` 删除 `hcommVaBegin`。现有通用 `RemoteIo()`/`RemoteIoBatch()` 仍可保留
+`RemoteRegistration::view` 和基址加偏移逻辑，避免影响非 Batch_Copy 或非固定地址注册场景。
 
 快照构建器只收录 `RemoteRegistration::view.type == UrmaMemoryType::HOST_DRAM` 的远端区间；
 `DEVICE_HBM` 继续使用现有设备到设备数据路径，不进入 Batch_Copy DDR 路由表。
@@ -193,7 +153,7 @@ hcommSrc = hcommVaBegin + (srcGva - srcGvaBegin)
 
 ### 3.1.3 复用 entity extra context
 
-P0 不新增固定 HBM 区，复用现有每 entity 64 KiB extra context：
+复用现有每 entity 64 KiB extra context：
 
 ```text
 routeAddr = HYBM_DEVICE_USER_CONTEXT_ADDR
@@ -245,11 +205,11 @@ P0 去除 `RouteTableSelector`、seqlock 和双 slot。extra context 前 32 KiB 
 ├────────────────────────────┤
 │ Peer entries               │ 16 × 64 B
 ├────────────────────────────┤
-│ Range entries              │ 512 × 48 B
+│ Range entries              │ 512 × 40 B
 ├────────────────────────────┤
 │ Completion cells           │ 16 × 64 B
 ├────────────────────────────┤
-│ P0 reserved                │ 6016 B
+│ P0 reserved                │ 10112 B
 ├────────────────────────────┤
 │ ABI v2 reserved            │ 32768 B
 └────────────────────────────┘
@@ -291,7 +251,6 @@ struct alignas(8) BatchCopyPeerEntry {
 struct alignas(8) BatchCopyRangeEntry {
     uint64_t srcGvaBegin;
     uint64_t srcGvaEnd;
-    uint64_t hcommVaBegin;
     uint64_t memTag;
     uint32_t peerIndex;
     uint32_t flags;
@@ -305,9 +264,9 @@ P0 路由表包含以下内容：
 | --- | ---: | ---: | ---: |
 | Route header | 1 | 128 B | 128 B |
 | Peer entries | 16 | 64 B | 1024 B |
-| Range entries | 512 | 48 B | 24576 B |
+| Range entries | 512 | 40 B | 20480 B |
 | Completion cells | 16 | 64 B | 1024 B |
-| P0 预留 | - | - | 6016 B |
+| P0 预留 | - | - | 10112 B |
 | ABI v2 预留 | - | - | 32768 B |
 
 Range entries 按 `srcGvaBegin` 升序排列，发布前检查区间非空、不溢出、不重叠，并检查
@@ -337,6 +296,7 @@ sequenceDiagram
     M->>R: 交换并获取 DDR MR 描述
     M->>H: HcommMemImport
     H-->>M: view.addr/size/type
+    M->>M: 校验 view.addr == remoteAddr
     M->>M: 构建并校验 route image
     M-->>C: Prepare 成功，route image 就绪
     C-->>E: ConnectWithOptions 成功
@@ -355,10 +315,14 @@ sequenceDiagram
 
 | 当前文件/位置 | 修改内容 |
 | --- | --- |
-| `hybm_transport_common.h`，`TransportOptions` | 增加 `entityId`，用于定位所属 extra context |
+| `hybm_transport_common.h` | `TransportOptions` 增加 `entityId`；MR flags 增加 `REG_MR_FLAG_GVA_DIRECT` |
 | `hybm_entity_default.cpp`，`InitTransManager()` | 构造参数时写入 `options.entityId = id_` |
+| `hybm_conn_based_segment.cpp`，`AllocMemory()/MapSlice()` | 鲲鹏源 DDR 使用固定 GVA `mmap`，跳过 HAL 分配和 DVA 注册 |
+| `hybm_entity_default.cpp`，源 DDR 注册处 | 仅 Batch_Copy 鲲鹏源 DDR 设置 `REG_MR_FLAG_GVA_DIRECT` |
 | `device_urma_transport_manager.cpp`，`OpenDevice()` | 保存 `entityId`；计算 completion 区地址，并在 endpoint 创建后完成本地 HCOMM 注册 |
-| 同文件，`ImportRemoteMemKeysLocked()` | 保留 `remoteAddr` 和 `view.addr` 两套基址；不改为假设二者相等 |
+| 同文件，`RegisterMemoryRegion()` | GVA direct 分支直接注册 `mr.addr`；保留既有 HOST_DRAM 的 HVA→DVA 分支 |
+| 同文件，`QueryMemoryKey()` | GVA direct 分支校验并导出实际注册地址，禁止再次地址转换 |
+| 同文件，`ImportRemoteMemKeysLocked()` | Batch_Copy 源 MR 校验 `view.addr == remoteAddr`，不等则初始化失败 |
 | 同文件，`Prepare()` | 保持现有 peer 循环语义；全部 peer 创建 thread/channel、导入 MR/flag 后构建 route image |
 | `device_urma_transport_manager.{h,cpp}` | 新增 route context 构建、校验和只读获取接口 |
 | `compose_transport_manager.{h,cpp}` | 将 route context 获取请求转发给 device URMA manager |
@@ -410,8 +374,8 @@ sequenceDiagram
         loop 每个非零长度 item，提交前预校验
             O->>O: 检查地址溢出和目的 HBM 范围
             O->>T: 二分查找完整覆盖源 GVA 的 range
-            T-->>O: peerIndex, srcGvaBegin, hcommVaBegin
-            O->>O: 计算 hcommSrc 并加入 peer 分组
+            T-->>O: peerIndex, srcGvaBegin, srcGvaEnd
+            O->>O: 直接以 srcGva 作为 hcommSrc 并加入 peer 分组
         end
         alt 任一 item 预校验失败
             O->>O: 释放单实例执行权
@@ -455,7 +419,7 @@ sequenceDiagram
    - 检查源/目的地址加长度不溢出。
    - 二分查找包含完整源区间的 range entry。
    - 校验 peer READY、thread/channel 非 0。
-   - 计算 `hcommSrc`，并检查目的 HBM 地址不落入 HYBM meta 或任一 entity extra context。
+   - 直接使用 `srcGva` 作为 `hcommSrc`，并检查目的地址不落入 HYBM 控制区。
 5. 按 `peerIndex` 分组；组内保持输入顺序，peer 组按索引升序处理。
 6. 每组优先调用 `HcommBatchTransferOnThread`，每次最多提交 1000 条 READ 描述。
 7. HCOMM batch 不支持时，逐条调用 `HcommReadOnThread`；其他错误立即停止后续提交。
@@ -492,7 +456,7 @@ P0 使用每 peer completion cell 的原因是：现有实现只有一个 notify
 | 新增专用固定 64 KiB 控制区 | 与用户 context 隔离 | 需要扩展 VMM/legacy 映射和兼容测试 | P0 不采用 |
 | 单表、初始化期发布一次 | 状态机简单；符合当前无并发初始化和无动态更新约束 | 不支持运行期扩容 | P0 采用 |
 | 双 slot + selector/seqlock | 可支持运行期原子切换 | P0 无对应场景，增加状态和回滚复杂度 | 留待 ABI v2 |
-| 强制 GVA 等于 HCOMM view | range 可少一个基址字段 | 当前 HAL 注册和 HCOMM import 均无相等保证 | 不采用 |
+| 鲲鹏源 DDR 固定映射并以 GVA 注册 | 算子直接使用 GVA；range 少一个基址 | 限制 GVA 窗口；import 后必须校验地址未重定位 | P0 采用 |
 | 仅线性地址表 | 实现简单 | 512 区间 × 4096 元素最坏开销较高 | 拒绝 |
 | 排序地址表 + 二分查找 | 查找上界稳定，适合只读快照 | 发布时需要排序和重叠检查 | 采用 |
 
@@ -505,8 +469,9 @@ P0 使用每 peer completion cell 的原因是：现有实现只有一个 notify
 | `src/hybm/csrc/common/` | 增加 Host/AICPU 共享的路由根和路由表 ABI 定义 |
 | `src/hybm/include/hybm_def.h` | 新增非破坏性错误码 `BM_BUSY (-11)` |
 | `src/hybm/csrc/entity/` | 复用 extra context 拷贝、发布 route root，并阻止 owner context 被公共 API 覆盖 |
+| `src/hybm/csrc/mm/` | 鲲鹏源 DDR 使用固定 GVA mmap，并标记 GVA direct 注册模式 |
 | `src/hybm/csrc/transport/` | 透传 `entityId` 和 route context 获取接口 |
-| `src/hybm/csrc/transport/device/urma/` | 建链后构建路由表，保留 GVA/view 两套基址，注册 completion 区 |
+| `src/hybm/csrc/transport/device/urma/` | 增加 GVA direct 注册和 import 地址校验，建链后构建路由表 |
 | `src/hybm/ops/hybm_kernel/` | 新增 `HybmBatchCopy` 参数校验、查表、分组、HCOMM 读和完成汇聚 |
 | `src/hybm/ops/hybm_kernel/libcann_hybm_kernel.ini` | 注册 `HybmBatchCopy` 函数 |
 | AICPU CMake/打包 | 将新源文件和共享 ABI 头加入 `cann-hybm-compat.tar.gz` |
@@ -697,7 +662,8 @@ Batch_Copy route 已 READY 后又请求动态拓扑变更，应对该能力返�
 | 风险 | 影响 | 缓解措施 |
 | --- | --- | --- |
 | 源地址不是全局唯一 GVA | 可能路由到错误 CPU peer | 发布时拒绝重叠；确认上游地址语义；必要时改为 rank list 接口 |
-| HCOMM view 与 GVA 不同 | 直接使用 GVA 会读错地址 | 保留 `hcommVaBegin` 并做基址加偏移转换 |
+| 固定 GVA mmap 失败 | 鲲鹏源 DDR 无法按 GVA 注册 | 限制并预留可映射 GVA 窗口；初始化失败且不发布路由 |
+| HCOMM import 重定位地址 | 算子直接使用 GVA 会读错地址 | 建链时强制校验 `view.addr == remoteAddr`，不相等则拒绝启用 |
 | extra context 与用户数据冲突 | 路由或用户上下文被覆盖 | owner entity 独占；公共 set-extra-context 返回不支持 |
 | 同一 NPU 多 owner 冲突 | 固定 route root 无法选择 entity | P0 只允许一个 owner，第二个初始化失败并记录 entityId |
 | Host/AICPU ABI 不匹配 | 算子误解析句柄或地址 | root/context ABI 与 CRC 校验；Host 包和 AICPU 包版本绑定 |
@@ -725,8 +691,10 @@ run 包，并确保 Host `libmf_hybm_core.so` 与设备包的路由表 ABI 一�
   `RemoteRankState`，并在导入远端 MR 后保存原始区间与 HCOMM view，可直接生成路由表。
 - `src/hybm/csrc/common/hybm_define.h` 和 `MemEntityDefault::SetExtraContext()` 已定义每 entity
   64 KiB 固定 user context 和 H2D 写入流程，本方案复用该空间而不扩展 driver 固定映射。
-- `src/hybm/csrc/mm/hybm_conn_based_segment.cpp` 的 GVA/HVA/DVA 流程，以及
-  `RegisterMemoryRegion()`/`HcommMemImport()` 的实现均表明当前需要保留导入 view 基址转换。
+- `src/hybm/csrc/mm/hybm_conn_based_segment.cpp` 的非 56-bit 路径已经使用固定地址 `mmap()`；目标
+  分支去除强制 HAL 分配后可复用该模式，使鲲鹏源端 HVA 与 GVA 相等。
+- `RegisterMemoryRegion()` 现有 HVA→DVA 分支继续服务本机 NPU 访问 Host 内存；Batch_Copy 的鲲鹏
+  源 DDR 增加独立 GVA direct 分支，避免改变既有场景。
 - `app/zbal` 的 AICPU workspace 固定布局表明 Host/Device 共用定长结构和 offset 的模式在仓库中
   已有实践，但其 workspace 属于 ZBAL，不作为 HYBM 路由表的存储位置。
 
@@ -739,7 +707,10 @@ run 包，并确保 Host `libmf_hybm_core.so` 与设备包的路由表 ABI 一�
 
 以下问题必须在 RFC 批准前给出结论：
 
-- [ ] 上游确认 `src_ddr_ptr_list` 元素是 MemFabric GVA，而不是可能跨服务器重叠的 raw VA。
+- [ ] HCOMM 团队确认鲲鹏 DDR 以 GVA 注册后，昇腾侧 `HcommMemImport()` 返回的 `outMem.addr`
+      保持同值；无正式契约时必须通过目标硬件测试，并始终保留初始化期相等校验。
+- [ ] 确认鲲鹏进程可固定 mmap 的 GVA 窗口及预留策略；P0 不启用当前会分离 GVA/HVA 的
+      `enable56BitsGva` 模式。
 - [ ] HCOMM/CANN 团队确认昇腾 950 上 completion cell 清零、remote flag 写入和 AICPU 轮询所需的
       设备内存屏障；若不支持，改用每 peer STARS notify/event 聚合。
 - [ ] 确认 `HcommChannelFenceOnThread` 的完成边界，明确 fence 后 remote flag read 是否覆盖该
