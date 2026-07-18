@@ -769,7 +769,7 @@ Result SmemBmEntry::CreateGlobalTeam(uint32_t rankSize, uint32_t rankId)
     SmemGroupChangeCallback leaveFunc = std::bind(&SmemBmEntry::LeaveHandle, this, std::placeholders::_1);
     SmemGroupOption opt = {rankSize,  rankId,   options_.controlOperationTimeout * SECOND_TO_MILLSEC,
                            true,      joinFunc, updateFunc,
-                           leaveFunc, nullptr};
+                           leaveFunc, leaveFunc};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(_configStore, opt);
     SM_VALIDATE_RETURN(group != nullptr,
                        "SmemNetGroupEngine::Create failed, rankSize: " << rankSize << " rankId: " << rankId, SM_ERROR);

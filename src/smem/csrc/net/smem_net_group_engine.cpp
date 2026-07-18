@@ -1155,33 +1155,28 @@ wait_done:
 
 void SmemNetGroupEngine::ProcessEventItems(std::list<SmemGroupInfo> &currentEvents, bool &redoLast)
 {
-    uint32_t redoCount = 0;
     while (!currentEvents.empty()) {
         auto &info = currentEvents.front();
         bool canRemove = true;
         int32_t ret2 = SM_OK;
-        if (TryUpdateInfo(info) || redoLast || redoCount > 0) {
+        if (TryUpdateInfo(info) || redoLast) {
             ret2 = JoinLeaveEventProcess();
             canRemove = (ret2 == SM_OK);
         }
+        // remove now event if has leave event or do event success
         if (canRemove || currentLeaveCount_.load() > 0) {
-            uint32_t curEvent = info.curEvent;
-            if (curEvent == LEAVE_EVENT || curEvent == LINK_DOWN_EVENT) {
+            if (info.curEvent == LEAVE_EVENT || info.curEvent == LINK_DOWN_EVENT) {
                 currentLeaveCount_.fetch_sub(1U);
-            } else if (curEvent == STOP_EVENT) {
+            } else if (info.curEvent == STOP_EVENT) {
                 currentStopCount_.fetch_sub(1U);
+            }
+            if (ret2 == SM_OK && info.curEvent == JOIN_EVENT) {
+                bmexNeedRefresh_ = false;
             }
             currentEvents.pop_front();
             redoLast = false;
-            if (ret2 == SM_OK && curEvent == JOIN_EVENT) {
-                redoCount = 0;
-                bmexNeedRefresh_ = false;
-            }
-        } else if (ret2 == SM_INNER_BUSY && redoCount < SMEM_GROUP_RETRY_TIME) {
-            currentEvents.splice(currentEvents.end(), currentEvents, currentEvents.begin());
-            redoLast = true;
-            redoCount++;
         } else {
+            redoLast = (ret2 == SM_INNER_BUSY); // groupInfo has updated, need redo next time
             break;
         }
     }
