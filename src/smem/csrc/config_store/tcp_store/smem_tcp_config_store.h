@@ -93,6 +93,11 @@ public:
 
     void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept override;
 
+    uint32_t GetRankIdByLinkId(uint32_t linkId) const noexcept override
+    {
+        return accServer_ != nullptr ? accServer_->GetRankIdByLinkId(linkId) : UINT32_MAX;
+    }
+
     // return started
     bool SetServerInfo(const std::string &ip, uint16_t port)
     {

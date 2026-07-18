@@ -1216,6 +1216,13 @@ Result AccStoreServer::UpdateStatus(bool status) noexcept
     return ret;
 }
 
+uint32_t AccStoreServer::GetRankIdByLinkId(uint32_t linkId) const noexcept
+{
+    // 注意：调用者必须已持有 storeMutex_（CheckerThreadTask / LinkBrokenHandler 均已持锁）
+    auto it = linkRankMap_.find(linkId);
+    return it != linkRankMap_.end() ? it->second : UINT32_MAX;
+}
+
 StoreErrorCode AccStoreServer::PersistWorldSize(uint32_t size) noexcept
 {
     if (!backend_->IsDistributed()) {

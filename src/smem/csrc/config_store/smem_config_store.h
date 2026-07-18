@@ -241,6 +241,23 @@ public:
 
     virtual SmRef<ConfigStore> GetCoreStore() noexcept = 0;
 
+    /**
+     * @brief Register server broken handler
+     * @param handler      [in] handler to be invoked when server connection is broken
+     */
+    virtual void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept = 0;
+
+    /**
+     * @brief 通过 linkId 查询 rankId（仅 server 端有意义）
+     * @param linkId       [in] acc_links 层的连接 ID
+     * @return rankId，未找到返回 UINT32_MAX
+     */
+    virtual uint32_t GetRankIdByLinkId(uint32_t linkId) const noexcept
+    {
+        (void)linkId;
+        return UINT32_MAX;
+    }
+
 protected:
     virtual Result GetReal(const std::string &key, std::vector<uint8_t> &value, int64_t timeoutMs) noexcept = 0;
     static constexpr uint32_t MAX_KEY_LEN_CLIENT = 1024U;
@@ -282,12 +299,6 @@ public:
      * @param handler      [in] handler to be invoked when client connection is broken
      */
     virtual void RegisterClientBrokenHandler(const ConfigStoreClientBrokenHandler &handler) noexcept = 0;
-
-    /**
-     * @brief Register server broken handler
-     * @param handler      [in] handler to be invoked when server connection is broken
-     */
-    virtual void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept = 0;
 
     virtual void SetRankId(const int32_t &rankId) noexcept {}
 };

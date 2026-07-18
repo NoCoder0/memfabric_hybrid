@@ -86,6 +86,9 @@ public:
     bool GetStatus() noexcept;
     Result UpdateStatus(bool status) noexcept;
 
+    // 通过 linkId 查询 rankId，用于外部心跳超时回调
+    uint32_t GetRankIdByLinkId(uint32_t linkId) const noexcept;
+
 private:
     Result ReceiveMessageHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
     Result LinkConnectedHandler(const ock::acc::AccConnReq &req, const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
