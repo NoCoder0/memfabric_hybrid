@@ -378,9 +378,9 @@ SMEM_API uint64_t smem_bm_get_local_mem_size_by_mem_type(smem_bm_t handle, smem_
     }
     switch (memType) {
         case SMEM_MEM_TYPE_DEVICE:
-            return entry->GetCoreOptions().deviceVASpace;
+            return entry->GetRealHBMSize();
         case SMEM_MEM_TYPE_HOST:
-            return entry->GetCoreOptions().hostVASpace;
+            return entry->GetRealDRAMSize();
         default:
             SM_LOG_AND_SET_LAST_ERROR("input mem type is invalid, memType: " << memType);
             return 0UL;

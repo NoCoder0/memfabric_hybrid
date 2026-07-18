@@ -98,11 +98,16 @@ public:
     void *GetHostGvaAddress() const;
     void *GetDeviceGvaAddress() const;
 
+    uint64_t GetRealDRAMSize() const;
+    uint64_t GetRealHBMSize() const;
+
 private:
     bool AddrInHostGva(const void *address, uint64_t size);
     bool AddrInDeviceGva(const void *address, uint64_t size);
     [[nodiscard]] bool CheckRankConfigConsistency(const hybm_options &options) const;
     Result AllocDramMemBySlice(hybm_entity_t entity, uint64_t totalSize, uint32_t flags);
+    Result AllocDramMemBestEffort(hybm_entity_t entity, uint64_t maxSize, uint32_t flags);
+    Result AllocDramMem(hybm_entity_t entity, const hybm_options &options, uint32_t flags);
 
     smem_bm_mem_type GetHybmMemTypeFromGva(const void *addr, uint64_t size);
     Result CheckJoined() const;
@@ -132,6 +137,8 @@ private:
     hybm_exchange_info entityInfo_;
     std::vector<hybm_mem_slice_t> slices_;
     std::vector<hybm_exchange_info> sliceInfos_;
+    uint64_t realDRAMSize_ = 0;
+    uint64_t realHBMSize_ = 0;
     std::map<uint64_t, std::pair<uint64_t, hybm_mem_slice_t>> registedSlice_;
 
     std::mutex eventCbMutex_;
@@ -163,6 +170,16 @@ inline void *SmemBmEntry::GetHostGvaAddress() const
 inline void *SmemBmEntry::GetDeviceGvaAddress() const
 {
     return deviceGva_;
+}
+
+inline uint64_t SmemBmEntry::GetRealDRAMSize() const
+{
+    return realDRAMSize_;
+}
+
+inline uint64_t SmemBmEntry::GetRealHBMSize() const
+{
+    return realHBMSize_;
 }
 
 } // namespace smem

@@ -33,6 +33,8 @@ typedef void *smem_bm_t;
 #define SMEM_BM_FLAG_CREATE_WITH_SHM         (1U << 8)
 // SMEM_BM_FLAG_DRAM_MAP_HOST_VA map host virtual address space
 #define SMEM_BM_FLAG_DRAM_MAP_HOST_VA (1U << 9)
+// SMEM_BM_FLAG_DRAM_BEST_EFFORT alloc DRAM with best-effort strategy
+#define SMEM_BM_FLAG_DRAM_BEST_EFFORT (1U << 10)
 
 /**
 * @brief Smem memory type

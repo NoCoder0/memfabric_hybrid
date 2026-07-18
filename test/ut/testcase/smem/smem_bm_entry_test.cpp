@@ -22,6 +22,94 @@
 
 #include "hybm_big_mem.h"
 #include "hybm_data_op.h"
+#include "smem_config_store.h"
+
+using namespace ock::smem;
+
+namespace {
+class TestConfigStoreManager : public ConfigStoreManager {
+public:
+    void RegisterReconnectHandler(ConfigStoreReconnectHandler) noexcept override {}
+    ock::smem::Result ReConnectAfterBroken(int) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    bool GetConnectStatus() noexcept override
+    {
+        return true;
+    }
+    void SetConnectStatus(bool) noexcept override {}
+    void RegisterClientBrokenHandler(const ConfigStoreClientBrokenHandler &) noexcept override {}
+    void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &) noexcept override {}
+    ock::smem::Result Set(const std::string &, const std::vector<uint8_t> &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Add(const std::string &, int64_t, int64_t &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Remove(const std::string &, bool) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result QueryAlive(uint32_t, uint32_t &alive) noexcept override
+    {
+        alive = true;
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result PrefixGet(const std::string &, std::unordered_map<std::string, std::string> &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Append(const std::string &, const std::vector<uint8_t> &, uint64_t &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Cas(const std::string &, const std::vector<uint8_t> &, const std::vector<uint8_t> &,
+                          std::vector<uint8_t> &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Watch(const std::string &,
+                            const std::function<void(int, const std::string &, const std::vector<uint8_t> &)> &,
+                            uint32_t &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Watch(WatchRankType, const std::function<void(WatchRankType, uint32_t)> &,
+                            uint32_t &) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Unwatch(uint32_t) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    ock::smem::Result Write(const std::string &, const std::vector<uint8_t> &, uint32_t) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+    std::string GetCompleteKey(const std::string &key) noexcept override
+    {
+        return key;
+    }
+    std::string GetCommonPrefix() noexcept override
+    {
+        return "";
+    }
+    SmRef<ConfigStore> GetCoreStore() noexcept override
+    {
+        return SmRef<ConfigStore>(this);
+    }
+
+protected:
+    ock::smem::Result GetReal(const std::string &, std::vector<uint8_t> &, int64_t) noexcept override
+    {
+        return ock::smem::SM_OK;
+    }
+};
+} // namespace
 
 using namespace ock::smem;
 
@@ -831,6 +919,265 @@ TEST_F(SmemBmEntryTest, AllocDramMemBySlice_96GB_ThreeSlices)
     EXPECT_EQ(ret, SM_OK);
     EXPECT_EQ(entry_->slices_.size(), 3U);
     EXPECT_EQ(entry_->sliceInfos_.size(), 3U);
+}
+
+// ======================== GetRealDRAMSize / GetRealHBMSize Tests ========================
+
+TEST_F(SmemBmEntryTest, GetRealDRAMSize_DefaultZero)
+{
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 0U);
+}
+
+TEST_F(SmemBmEntryTest, GetRealHBMSize_DefaultZero)
+{
+    EXPECT_EQ(entry_->GetRealHBMSize(), 0U);
+}
+
+TEST_F(SmemBmEntryTest, GetRealDRAMSize_AfterSet)
+{
+    entry_->realDRAMSize_ = 4ULL * GB;
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 4ULL * GB);
+}
+
+TEST_F(SmemBmEntryTest, GetRealHBMSize_AfterSet)
+{
+    entry_->realHBMSize_ = 2ULL * GB;
+    EXPECT_EQ(entry_->GetRealHBMSize(), 2ULL * GB);
+}
+
+// ======================== AllocDramMemBestEffort Tests ========================
+
+TEST_F(SmemBmEntryTest, AllocDramMemBestEffort_SuccessOneSlice)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+    auto ret = entry_->AllocDramMemBestEffort(TEST_ENTITY_PTR, TEST_DRAM_SIZE_PER_RANK, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_GE(entry_->slices_.size(), 1U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), entry_->slices_.size());
+    EXPECT_EQ(entry_->GetRealDRAMSize(), TEST_DRAM_SIZE_PER_RANK);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBestEffort_MultipleSlices)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+    auto ret = entry_->AllocDramMemBestEffort(TEST_ENTITY_PTR, 2ULL * GB32, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 2U);
+    EXPECT_EQ(entry_->sliceInfos_.size(), 2U);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 2ULL * GB32);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBestEffort_AllocFail_RecoversGracefully)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(static_cast<hybm_mem_slice_t>(nullptr)));
+    auto ret = entry_->AllocDramMemBestEffort(TEST_ENTITY_PTR, GB32, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_TRUE(entry_->slices_.empty());
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 0U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBestEffort_ExportFail_ReturnsError)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(-1));
+    auto ret = entry_->AllocDramMemBestEffort(TEST_ENTITY_PTR, TEST_DRAM_SIZE_PER_RANK, 0);
+    EXPECT_EQ(ret, SM_ERROR);
+    EXPECT_EQ(entry_->slices_.size(), 1U);
+    EXPECT_TRUE(entry_->sliceInfos_.empty());
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 0U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBestEffort_MaxSizeZero_ReturnsOk)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(static_cast<hybm_mem_slice_t>(nullptr)));
+    auto ret = entry_->AllocDramMemBestEffort(TEST_ENTITY_PTR, 0, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_TRUE(entry_->slices_.empty());
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 0U);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMemBestEffort_NonAlignedSize_CorrectSliceCount)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+    auto ret = entry_->AllocDramMemBestEffort(TEST_ENTITY_PTR, GB32 + TEST_DRAM_SIZE_PER_RANK, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 2U);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), GB32 + TEST_DRAM_SIZE_PER_RANK);
+}
+
+// ======================== AllocDramMem Tests ========================
+
+TEST_F(SmemBmEntryTest, AllocDramMem_ZeroMaxDRAMSize_ReturnsOk)
+{
+    hybm_options opts{};
+    opts.maxDRAMSize = 0;
+    auto ret = entry_->AllocDramMem(TEST_ENTITY_PTR, opts, 0);
+    EXPECT_EQ(ret, SM_OK);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMem_BestEffortFlag_UsesBestEffort)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    hybm_options opts{};
+    opts.maxDRAMSize = TEST_DRAM_SIZE_PER_RANK;
+    opts.hostVASpace = TEST_DRAM_SIZE_PER_RANK;
+    opts.flags = SMEM_BM_FLAG_DRAM_BEST_EFFORT;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+    auto ret = entry_->AllocDramMem(TEST_ENTITY_PTR, opts, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_GE(entry_->slices_.size(), 1U);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), TEST_DRAM_SIZE_PER_RANK);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMem_DefaultPath_Success)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    hybm_options opts{};
+    opts.maxDRAMSize = TEST_DRAM_SIZE_PER_RANK;
+    opts.hostVASpace = TEST_DRAM_SIZE_PER_RANK;
+    opts.flags = 0;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+    auto ret = entry_->AllocDramMem(TEST_ENTITY_PTR, opts, 0);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->slices_.size(), 1U);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), TEST_DRAM_SIZE_PER_RANK);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMem_DefaultAllocFail_ReturnsError)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    hybm_options opts{};
+    opts.maxDRAMSize = TEST_DRAM_SIZE_PER_RANK;
+    opts.hostVASpace = TEST_DRAM_SIZE_PER_RANK;
+    opts.flags = 0;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(static_cast<hybm_mem_slice_t>(nullptr)));
+    auto ret = entry_->AllocDramMem(TEST_ENTITY_PTR, opts, 0);
+    EXPECT_EQ(ret, SM_ERROR);
+}
+
+TEST_F(SmemBmEntryTest, AllocDramMem_DefaultExportFail_ReturnsError)
+{
+    entry_->entity_ = TEST_ENTITY_PTR;
+    hybm_options opts{};
+    opts.maxDRAMSize = TEST_DRAM_SIZE_PER_RANK;
+    opts.hostVASpace = TEST_DRAM_SIZE_PER_RANK;
+    opts.flags = 0;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(-1));
+    auto ret = entry_->AllocDramMem(TEST_ENTITY_PTR, opts, 0);
+    EXPECT_EQ(ret, SM_ERROR);
+    EXPECT_EQ(entry_->slices_.size(), 1U);
+    EXPECT_TRUE(entry_->sliceInfos_.empty());
+}
+
+// ======================== ExtendLocalMem Real Size Update Tests ========================
+
+TEST_F(SmemBmEntryTest, ExtendLocalMem_UpdatesRealDRAMSize_OnSuccess)
+{
+    entry_->inited_ = true;
+    entry_->entity_ = TEST_ENTITY_PTR;
+    auto store = Convert<TestConfigStoreManager, ConfigStoreManager>(SmMakeRef<TestConfigStoreManager>());
+    SmemGroupOption opt{};
+    opt.rankSize = 1;
+    opt.rank = 0;
+    entry_->globalGroup_ = SmMakeRef<SmemNetGroupEngine>(store, opt);
+    MOCKER_CPP(&SmemNetGroupEngine::GroupUpdate, ock::smem::Result(*)(SmemNetGroupEngine *))
+        .stubs()
+        .will(returnValue(0));
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+
+    auto ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_HOST, 3ULL * MB);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 3ULL * MB);
+    EXPECT_EQ(entry_->GetRealHBMSize(), 0U);
+}
+
+TEST_F(SmemBmEntryTest, ExtendLocalMem_UpdatesRealHBMSize_OnSuccess)
+{
+    entry_->inited_ = true;
+    entry_->entity_ = TEST_ENTITY_PTR;
+    auto store = Convert<TestConfigStoreManager, ConfigStoreManager>(SmMakeRef<TestConfigStoreManager>());
+    SmemGroupOption opt{};
+    opt.rankSize = 1;
+    opt.rank = 0;
+    entry_->globalGroup_ = SmMakeRef<SmemNetGroupEngine>(store, opt);
+    MOCKER_CPP(&SmemNetGroupEngine::GroupUpdate, ock::smem::Result(*)(SmemNetGroupEngine *))
+        .stubs()
+        .will(returnValue(0));
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+
+    auto ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_DEVICE, 2ULL * MB);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 0U);
+    EXPECT_EQ(entry_->GetRealHBMSize(), 2ULL * MB);
+}
+
+TEST_F(SmemBmEntryTest, ExtendLocalMem_AccumulatesRealSize_AfterMultipleExtend)
+{
+    entry_->inited_ = true;
+    entry_->entity_ = TEST_ENTITY_PTR;
+    auto store = Convert<TestConfigStoreManager, ConfigStoreManager>(SmMakeRef<TestConfigStoreManager>());
+    SmemGroupOption opt{};
+    opt.rankSize = 1;
+    opt.rank = 0;
+    entry_->globalGroup_ = SmMakeRef<SmemNetGroupEngine>(store, opt);
+    MOCKER_CPP(&SmemNetGroupEngine::GroupUpdate, ock::smem::Result(*)(SmemNetGroupEngine *))
+        .stubs()
+        .will(returnValue(0));
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(0));
+
+    auto ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_HOST, MB);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), MB);
+
+    ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_HOST, 2ULL * MB);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 3ULL * MB);
+
+    ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_DEVICE, 4ULL * MB);
+    EXPECT_EQ(ret, SM_OK);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 3ULL * MB);
+    EXPECT_EQ(entry_->GetRealHBMSize(), 4ULL * MB);
+}
+
+TEST_F(SmemBmEntryTest, ExtendLocalMem_AllocFail_NoSizeUpdate)
+{
+    entry_->inited_ = true;
+    entry_->entity_ = TEST_ENTITY_PTR;
+    entry_->realDRAMSize_ = 5ULL * MB;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(static_cast<hybm_mem_slice_t>(nullptr)));
+
+    auto ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_HOST, MB);
+    EXPECT_EQ(ret, SM_ERROR);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 5ULL * MB);
+}
+
+TEST_F(SmemBmEntryTest, ExtendLocalMem_ExportFail_NoSizeUpdate)
+{
+    entry_->inited_ = true;
+    entry_->entity_ = TEST_ENTITY_PTR;
+    entry_->realDRAMSize_ = 3ULL * MB;
+    MOCKER(hybm_alloc_local_memory).stubs().will(returnValue(TEST_SLICE_PTR));
+    MOCKER(hybm_export).stubs().will(returnValue(-1));
+    MOCKER(hybm_free_local_memory).stubs().will(returnValue(0));
+
+    auto ret = entry_->ExtendLocalMem(SMEM_MEM_TYPE_HOST, MB);
+    EXPECT_EQ(ret, SM_ERROR);
+    EXPECT_EQ(entry_->GetRealDRAMSize(), 3ULL * MB);
 }
 
 // ======================== Leave Validation ========================
