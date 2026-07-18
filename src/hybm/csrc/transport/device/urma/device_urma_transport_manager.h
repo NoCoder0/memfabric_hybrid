@@ -105,6 +105,7 @@ private:
     };
 
     struct RemoteRankState {
+        std::mutex rankMutex{};
         // 本 rank 为了和该 peer 通信而创建的本地 endpoint，按 peer 存放在 remoteRanks_[peerRank] 里
         UrmaEndpointHandle localEndpoint{nullptr};
         UrmaEndpointDesc localEndpointDesc{};
@@ -116,7 +117,6 @@ private:
         HcommChannelHandle channel{0};
         // 本 rank 侧用于与该 peer 通信的 thread
         HcommThreadHandle thread{0};
-        uint32_t pendingOps{0};
         std::vector<RemoteRegistration> imports{};
         // Remote peer's notify record address (from TransportMemoryKey header during
         // ImportRemoteMemKeysLocked). Used as remote_flag_addr in kernel launch args.
@@ -138,11 +138,42 @@ private:
         void *lenList{nullptr};
     };
 
+    // A pending or deferred-free device transfer; owned by CompletionContext.
+    struct PendingTransfer {
+        uint32_t rankId{0};
+        DeviceTransferBuffers buffers{};
+        bool inFlight{false};
+    };
+
+    // Per-thread async completion context (manager-ownered via registry, weak TLS binding)
+    struct CompletionContext {
+        void *stream{nullptr}; // non-owning ACL stream, compared at each launch/sync
+        void *notify{nullptr};
+        uint32_t notifyId{0};
+        uint64_t notifyAddr{0};
+        uint64_t notifyLen{0};
+        HcommMemHandle notifyHcommHandle{nullptr};
+        bool initialized{false};
+        // All in-flight and deferred-free transfers; emptied by Synchronize or CloseDevice.
+        std::vector<PendingTransfer> pendingTransfers{};
+    };
+
+    // Open generation identity — unique per OpenDevice call
+    struct OpenGeneration {
+        uint64_t id{0};
+    };
+
+    // TLS binding: weak owner + weak context, does NOT own ACL/Hcomm resources
+    struct ContextBinding {
+        std::weak_ptr<OpenGeneration> owner;
+        std::weak_ptr<CompletionContext> ctx;
+    };
+
     // Initialization/open/close helpers and lifecycle
     Result InitLocalDeviceInfoLocked(const TransportOptions &options);
+    Result OpenEndpointResourcesLocked(const TransportOptions &options);
     Result BuildLocalEndpointDescLocked(UrmaProtocol protocol, UrmaEndpointDesc &localDesc);
     Result CreateEndpointAndInitResourcesLocked(const UrmaEndpointDesc &localDesc);
-    Result InitDeviceKernelNotifyLocked();
     Result InitDeviceTransferFlagLocked();
     void RollbackOpenDeviceLocked();
     Result EnsureDeviceKernelLoadedLocked();
@@ -165,16 +196,50 @@ private:
     // Data transfer/copy
     Result RemoteIo(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size, bool write);
     Result RemoteIoBatch(uint32_t rankId, const CopyDescriptor &descriptor, bool write);
+    Result StageAndLaunchTransfer(CompletionContext &ctx, RemoteRankState &state, bool isRead,
+                                  const std::vector<uint64_t> &localVec, const std::vector<uint64_t> &remoteVec,
+                                  const std::vector<uint64_t> &sizeVec, uint32_t rankId);
 
-    // Device kernel launch/buffer helpers and sync stream
+    // Resolve remote registration addresses and build batch transfer vectors
+    Result ResolveBatchIoAddressesLocked(uint32_t rankId, const CopyDescriptor &descriptor,
+                                         std::vector<uint64_t> &localVec, std::vector<uint64_t> &remoteVec,
+                                         std::vector<uint64_t> &sizeVec) const;
+
+    // TLS(Thread Local Storage) binding container access (static thread_local via function-local static)
+    static std::vector<ContextBinding> &GetTlsBindings();
+
+    // Per-thread context lifecycle: lookup via TLS binding or create new
+    CompletionContext *LookupOrCreateContextLocked();
+    Result CreateAndPublishContextLocked(CompletionContext *&ctx);
+    Result EnsureContextInitLocked(CompletionContext &ctx);
+    void RollbackContextInitLocked(CompletionContext &ctx);
+    void CleanupContextLocked(CompletionContext &ctx);
+
+    // Find current thread's context via TLS binding only (no registry scan for owner)
+    CompletionContext *FindCurrentContextLocked() const;
+
+    // Synchronize the entire completion domain of the current thread context
+    Result SynchronizeContextLocked(CompletionContext &ctx);
+
+    // CloseDevice helpers
+    void CloseDeviceCleanupResourcesLocked();
+
+    // Check if any context in registry has pending ops for a specific rank
+    bool IsAnyRegistryContextPendingForRank(uint32_t rankId) const;
+
+    // Device kernel buffer management
     aclrtFuncHandle GetDeviceKernelFunc(bool isRead) const;
-    void ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
-    Result AddBatchPendingDeviceBuffers(DeviceTransferBuffers &buffers);
-    void FreeBatchPendingDeviceBuffers();
-    Result LaunchDeviceKernelBatch(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
-                                   const std::vector<uint64_t> &localAddrs, const std::vector<uint64_t> &remoteAddrs,
-                                   const std::vector<uint64_t> &sizes, uint64_t remoteFlagAddr);
-    Result SynchronizeDeviceKernelStream();
+    static Result ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
+    static Result ReleasePendingTransfersLocked(CompletionContext &ctx);
+
+    // Device kernel launch helpers
+    Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
+                                      const std::vector<uint64_t> &localAddrs, const std::vector<uint64_t> &remoteAddrs,
+                                      const std::vector<uint64_t> &sizes, DeviceTransferBuffers &outBuffers);
+    // Device kernel launch (builds args, configures and launches)
+    Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
+                                   HcommChannelHandle channel, uint64_t remoteFlagAddr, uint64_t notifyAddr,
+                                   uint32_t notifyLen, size_t batchSize);
 
     mutable std::mutex mutex_{};
     bool opened_{false};
@@ -191,28 +256,18 @@ private:
     UrmaEndpointHandle localEndpoint_{nullptr};
     UrmaEndpointDesc localEndpointDesc_{};
     std::map<uint64_t, LocalRegistration> localRegistrations_{};
-    // Device kernel launch state (moved from removed HcomUrmaTransportAdapter)
-    std::mutex deviceKernelMutex_{};
+    // Device kernel launch state
     bool deviceKernelLoaded_{false};
     aclrtBinHandle deviceKernelHandle_{nullptr};
     DeviceFuncHandles deviceFuncHandles_{};
-    void *notify_{nullptr};
-    uint32_t notifyId_{0};
-    // notify record address obtained via rtGetDevResAddress (non-ROCE path).
-    // Used as local_flag_addr / flag_size in kernel launch args.
-    // Registered with Hcomm so ReadOnThread can use it as dst buffer.
-    uint64_t notifyAddr_{0};
-    uint64_t notifyLen_{0};
-    HcommMemHandle notifyHcommHandle_{nullptr};
     // Local flag buffer allocated via AclrtMalloc in OpenDevice, initialised to 1.
-    // Registered with Hcomm for remote peer to use as remote_flag_addr in kernel launch args.
-    // NOT inserted into localRegistrations_ and NOT exported/imported as a regular MR.
     void *devTransFlagPtr_{nullptr};
     uint64_t devTransFlagSize_{0};
     HcommMemHandle devTransFlagHcommHandle_{nullptr};
-    // Separate tracking for batch kernel device buffers (variable-size, not pooled).
-    std::mutex pendingBatchMutex_{};
-    std::vector<DeviceTransferBuffers> pendingBatchBuffers_{};
+    // Open generation identity for this manager instance
+    std::shared_ptr<OpenGeneration> owner_;
+    // Strong registry of all per-thread completion contexts
+    std::vector<std::shared_ptr<CompletionContext>> registry_{};
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};
 };
 

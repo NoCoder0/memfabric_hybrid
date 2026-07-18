@@ -257,6 +257,7 @@ Result HcommTransportManager::HcommMemUnreg(const UrmaEndpointHandle &endpoint, 
     std::lock_guard<std::mutex> guard(endpoint->mutex);
     auto entryIt = endpoint->memEntries.find(memHandle);
     if (entryIt == endpoint->memEntries.end() || entryIt->second == nullptr) {
+        BM_LOG_ERROR("device_urma HcommMemUnreg: memEntry not found, memHandle " << memHandle);
         return BM_INVALID_PARAM;
     }
 
