@@ -136,9 +136,6 @@ run_example() {
         return
     fi
 
-    trace "cd $dir"
-    cd "$dir"
-
     local timeout_cmd
     if command -v timeout &>/dev/null; then
         timeout_cmd="timeout $EXAMPLE_TIMEOUT"
@@ -146,45 +143,54 @@ run_example() {
         timeout_cmd=""
     fi
 
-    local output
+    local max_retries=3
+    local attempt=1
     local ret=0
-    if $VERBOSE; then
-        echo ""
-        sub "$cmd"
-        bash -c "$timeout_cmd $cmd" || ret=$?
-    else
-        output=$(bash -c "$timeout_cmd $cmd" 2>&1) || ret=$?
-    fi
+    local output=""
 
-    if [[ $ret -eq 0 ]]; then
-        pass "$name"
-    else
-        if [[ $ret -eq 124 ]]; then
-            fail "$name (TIMEOUT after ${EXAMPLE_TIMEOUT}s)"
+    while [[ $attempt -le $max_retries ]]; do
+        trace "cd $dir"
+        cd "$dir"
+
+        if [[ $attempt -gt 1 ]]; then
+            info "Retrying $name (attempt $attempt/$max_retries) ..."
+            sleep 15
+        fi
+
+        ret=0
+        if $VERBOSE; then
+            echo ""
+            sub "$cmd"
+            bash -c "$timeout_cmd $cmd" || ret=$?
         else
-            # Retry once on first failure (workaround for cold-start device init races)
-            info "Retrying $name ..."
-            local ret2=0
-            if $VERBOSE; then
-                bash -c "$timeout_cmd $cmd" || ret2=$?
+            output=$(bash -c "$timeout_cmd $cmd" 2>&1) || ret=$?
+        fi
+
+        if [[ $ret -eq 0 ]]; then
+            if [[ $attempt -eq 1 ]]; then
+                pass "$name"
             else
-                output=$(bash -c "$timeout_cmd $cmd" 2>&1) || ret2=$?
+                pass "$name (attempt $attempt/$max_retries)"
             fi
-            if [[ $ret2 -eq 0 ]]; then
-                pass "$name (retry)"
-                trace "cd $PROJECT_DIR"
-                cd "$PROJECT_DIR"
-                return
-            fi
-            fail "$name"
+            trace "cd $PROJECT_DIR"
+            cd "$PROJECT_DIR"
+            return
         fi
-        if ! $VERBOSE && [[ -n "${output:-}" ]]; then
-            echo -e "  \e[90m$(echo "$output" | tail -5 | sed 's/^/  | /')\e[0m"
-        fi
-        if ! $CONTINUE_ON_ERROR; then
-            echo -e "  \e[31mStopping due to error (use --continue-on-error to skip).\e[0m"
-            exit 1
-        fi
+        attempt=$((attempt + 1))
+    done
+
+    # All attempts failed
+    if [[ $ret -eq 124 ]]; then
+        fail "$name (TIMEOUT after ${EXAMPLE_TIMEOUT}s, $max_retries attempts)"
+    else
+        fail "$name ($max_retries attempts)"
+    fi
+    if ! $VERBOSE && [[ -n "${output:-}" ]]; then
+        echo -e "  \e[90m$(echo "$output" | tail -5 | sed 's/^/  | /')\e[0m"
+    fi
+    if ! $CONTINUE_ON_ERROR; then
+        echo -e "  \e[31mStopping due to error (use --continue-on-error to skip).\e[0m"
+        exit 1
     fi
     trace "cd $PROJECT_DIR"
     cd "$PROJECT_DIR"
@@ -225,13 +231,18 @@ build_run_pkg() {
     local run_pkg
     run_pkg=$(find_run_pkg)
     if [[ -z "$run_pkg" ]]; then
-        info "Run package not found, building from source (this may take a while)..."
-        if ! bash "$SCRIPT_DIR/build_and_pack_run.sh"; then
-            echo -e "  \e[31mBuild failed. Check errors above.\e[0m"
+        info "Run package not found, building from source (this may take a while)..." >&2
+        # Redirect build stdout to stderr so it is NOT captured by the caller's
+        # run_pkg=$(...) substitution. Otherwise $run_pkg would contain a
+        # multi-line string (info msg + build output + path), and the subsequent
+        # `bash "$run_pkg" --no-check` would fail with "File name too long".
+        if ! bash "$SCRIPT_DIR/build_and_pack_run.sh" 1>&2; then
+            echo -e "  \e[31mBuild failed. Check errors above.\e[0m" >&2
             return 1
         fi
         run_pkg=$(find_run_pkg)
     fi
+    # Only the .run path goes to stdout, so the caller captures just the path.
     echo "$run_pkg"
     return 0
 }
@@ -379,6 +390,11 @@ if $RUN_PYTHON; then
         DRAM_SDMA_SUPPORTED=false
     fi
 fi
+
+# ------------------------------------------------------------------------------
+#  Python examples (skipped entirely when --cpp is passed)
+# ------------------------------------------------------------------------------
+if $RUN_PYTHON; then
 
 # ------------------------------------------------------------------------------
 #  01_basic  single-device examples
@@ -533,6 +549,8 @@ if $RUN_TRANSFER; then
 else
     skip "transfer/* (use --run-transfer to enable)"
 fi
+
+fi  # end of "if $RUN_PYTHON" wrapper for all Python examples
 
 # ------------------------------------------------------------------------------
 #  hbm_share_memory  C++ examples

@@ -127,6 +127,7 @@ run_in_container() {
         -v /usr/local/Ascend/driver/version.info:/usr/local/Ascend/driver/version.info
         -v /etc/ascend_install.info:/etc/ascend_install.info
         -v /etc/hccn.conf:/etc/hccn.conf
+        -v /home:/home
         -e PYTHONUNBUFFERED=1
         -e PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
         -e PIP_TRUSTED_HOST=mirrors.aliyun.com

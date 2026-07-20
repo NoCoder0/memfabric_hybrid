@@ -48,7 +48,16 @@ echo "============================================"
 
 
 echo "[1/5] Initializing git submodules …"
-git submodule update --init --recursive test/3rdparty/
+CACHE_DIR="/home/ci/memfabric/3rdparty"
+if [ -f "test/3rdparty/googletest/CMakeLists.txt" ] && [ -f "test/3rdparty/mockcpp/CMakeLists.txt" ]; then
+    echo "  Submodules already initialized, skipping."
+elif [ -f "$CACHE_DIR/googletest/CMakeLists.txt" ] && [ -f "$CACHE_DIR/mockcpp/CMakeLists.txt" ]; then
+    echo "  Copying submodules from cache: $CACHE_DIR"
+    cp -a "$CACHE_DIR/." test/3rdparty/
+else
+    echo "  Fetching submodules from remote ..."
+    GIT_SSL_NO_VERIFY=1 git submodule update --init --recursive test/3rdparty/
+fi
 
 # ------------------------------------------------------------------
 # 2. Python development dependencies
