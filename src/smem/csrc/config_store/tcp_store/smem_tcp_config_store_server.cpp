@@ -290,7 +290,8 @@ Result AccStoreServer::LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &l
     heartBeatMap_.erase(linkId);
     if (externalBrokenHandler_ != nullptr) {
         externalBrokenHandler_(link->Id(), backend_);
-    } else if (aliveRankSet_.empty()) {
+    }
+    if (aliveRankSet_.empty()) {
         STORE_LOG_INFO("all client link broken, will clear data");
         rankIndex_ = 0;
         backend_->Clear();
