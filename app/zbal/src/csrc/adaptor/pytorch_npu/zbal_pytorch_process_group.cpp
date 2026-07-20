@@ -713,7 +713,7 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::scatter(std::vector<at::Tensor>
         at::Tensor bufferTensor =
             at::empty({addrListSize}, at::TensorOptions().device(inputTensors[0][0].device()).dtype(torch::kInt8));
         auto result = DlCannApi::AclrtMemcpy(reinterpret_cast<void *>(bufferTensor.data_ptr()), addrListSize,
-                                             rank_data_addrs.data(), addrListSize, ACL_MEMCPY_HOST_TO_DEVICE);
+                                             rank_data_addrs.data(), addrListSize, ::ACL_MEMCPY_HOST_TO_DEVICE);
         if (result != Z_OK) {
             ZBAL_LOG_ERROR("tensor addrs h2d copy failed, result: " << result);
         }

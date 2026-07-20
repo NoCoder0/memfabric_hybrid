@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "dl_cann_api.h"
 #include "zbal_sma_device.h"
 
 namespace zbal {
@@ -531,13 +532,13 @@ void DeviceSMACachingAllocator::insert_events(DeviceBlock *block)
     int pre_device = -1;
     c10_npu::GetDevice(&pre_device);
     aclrtContext compiler_ctx = aclrtContext();
-    aclError ret_ctx = aclrtGetCurrentContext(&compiler_ctx);
+    aclError ret_ctx = underapi::DlCannApi::AclrtGetCurrentContext(&compiler_ctx);
 
     auto event_pool = get_event_internal();
     event_pool->insertEvents(this, block);
 
     if (ret_ctx == ACL_SUCCESS) {
-        ZBAL_CHECK_S(aclrtSetCurrentContext(compiler_ctx) == ACL_SUCCESS, "c10_npu func failed");
+        ZBAL_CHECK_S(underapi::DlCannApi::AclrtSetCurrentContext(compiler_ctx) == ACL_SUCCESS, "c10_npu func failed");
         // Setting context will exchange device implicitly,
         // so we need to reset the cached device here to ensure consistency.
         ZBAL_CHECK_S(c10_npu::SetDevice(pre_device) == ACL_SUCCESS, "c10_npu func failed");

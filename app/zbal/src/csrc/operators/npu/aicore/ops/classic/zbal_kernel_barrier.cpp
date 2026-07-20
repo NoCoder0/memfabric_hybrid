@@ -54,7 +54,7 @@ int32_t ZBALOpBarrier(aclrtStream stream, CommGroupInfo &groupInfo)
 {
     static uint32_t blockDim = 0;
     if (blockDim == 0) {
-        auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);
+        auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
         if (ret != 0) {
             printf("ZBALOpBarrier get block dim failed, blockDim:%d\n", ret);
             return ret;

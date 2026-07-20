@@ -97,7 +97,7 @@ private:
         return GetZbalStateAddr(&zbalContext_[ctxIdx], rankId, offset);
     }
 
-    __aicore__ inline uint32_t MIN(uint32_t x, uint32_t y)
+    __aicore__ inline uint32_t ZbalMin(uint32_t x, uint32_t y)
     {
         return (x < y) ? x : y;
     }
@@ -873,7 +873,7 @@ __aicore__ inline void CamMoeDistributeDispatch<TemplateDispatchTypeFunc>::Local
     if constexpr (!IsNeedAllgater) {
         totalCnt_ = beginIdx;
     }
-    lastCore_ = MIN(totalMoeExpert, aivNum_) - 1;
+    lastCore_ = ZbalMin(totalMoeExpert, aivNum_) - 1;
     if constexpr (IsNeedAllgater) {
         DataCopyExtParams dataCopyOutParams = {1U, static_cast<uint32_t>(sendExpertNum_ * sizeof(int32_t)), 0U, 0U, 0U};
         DataCopyPad(winTpEpCntGMTensor_[startExpertId_], outCountLocal, dataCopyOutParams);

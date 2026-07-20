@@ -456,7 +456,7 @@ int32_t ZBALOpAlltoAllV(const void *sendBuff, void *recvBuff, void *sendCumSum, 
     if (groupInfo.dataOpType == ZBAL_DATA_OP_AIV_SDMA) {
         blockDim = ZBAL_SDMA_AFFECTION_BLOCK;
     } else if (blockDim == 0) {
-        auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);
+        auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
         if (ret != 0) {
             printf("ZBALOpAlltoAllV get block dim failed, blockDim:%d\n", ret);
             return ret;

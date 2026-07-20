@@ -13,7 +13,6 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
-#include <acl/acl_rt.h>
 #include "dl_cann_api.h"
 #include "zbal_def.h"
 #include "zbal_env_helper.h"
@@ -32,6 +31,7 @@ int32_t ZBALOpFusedDeepMoeLaunch(uint8_t *xAddr, uint8_t *expertIdsAddr, uint8_t
 
 using namespace ZbalCam;
 using namespace zbal;
+using namespace underapi;
 
 namespace {
 

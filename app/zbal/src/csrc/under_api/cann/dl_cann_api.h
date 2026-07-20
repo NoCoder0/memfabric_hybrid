@@ -18,7 +18,6 @@
 namespace zbal {
 namespace underapi {
 using aclrtGetSocNameFunc = const char *(*)();
-using rtGetDeviceInfoFunc = int32_t (*)(uint32_t, int32_t, int32_t, int64_t *val);
 using aclrtSetDeviceFunc = int32_t (*)(int32_t);
 using aclrtGetDeviceFunc = int32_t (*)(int32_t *);
 using aclrtSynchronizeStreamFunc = int (*)(void *);
@@ -37,6 +36,14 @@ using aclrtHostUnregisterFunc = int32_t (*)(void *);
 using aclrtSynchronizeEventFunc = int (*)(void *);
 using aclrtReserveMemAddressFunc = int (*)(void **, size_t, size_t, void *, uint64_t);
 using aclrtReleaseMemAddressFunc = int (*)(void *);
+using aclrtMallocPhysicalFunc = int32_t (*)(void **, size_t, aclrtPhysicalMemProp *, uint64_t);
+using aclrtFreePhysicalFunc = int32_t (*)(void *);
+using aclrtMapMemFunc = int32_t (*)(void *, size_t, size_t, void *, uint64_t);
+using aclrtUnmapMemFunc = int32_t (*)(void *);
+using aclrtMallocAlign32Func = int32_t (*)(void **, size_t, aclrtMemMallocPolicy);
+using aclrtGetCurrentContextFunc = int32_t (*)(aclrtContext *);
+using aclrtSetCurrentContextFunc = int32_t (*)(aclrtContext);
+using aclrtGetMemInfoFunc = int32_t (*)(aclrtMemAttr, size_t *, size_t *);
 
 /* Kernel launch */
 using aclrtCreateStreamWithConfigFunc = int32_t (*)(void **, int32_t, uint32_t);
@@ -54,7 +61,6 @@ public:
 
 public:
     static const char *AclrtGetSocName();
-    static ZResult RtGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *val);
     static ZResult AclrtSetDevice(int32_t deviceId, bool force = false);
     static ZResult AclrtGetDevice(int32_t *deviceId);
     static ZResult AclrtSynchronizeStream(void *stream);
@@ -68,6 +74,7 @@ public:
     static ZResult AclrtMemset(void *ptr, size_t maxCount, int32_t value, size_t count);
     static ZResult RtGetLogicDevIdByUserDevId(const int32_t userDevId, int32_t *const logicDevId);
     static ZResult RtGetC2cCtrlAddr(uint64_t *address, uint32_t *len);
+    static ZResult AclrtGetResInCurrentThread(aclrtDevResType type, uint32_t *value);
     static ZResult AclrtGetAIVCountInCurrentThread(uint32_t *value);
     static ZResult AclrtGetAICCountInCurrentThread(uint32_t *value);
     static ZResult AclrtHostRegister(void *hostPtr, uint64_t size, void **outDevPtr);
@@ -76,6 +83,14 @@ public:
     static ZResult AclrtReserveMemAddress(void **virPtr, size_t size, size_t alignment, void *expectPtr,
                                           uint64_t flags);
     static ZResult AclrtReleaseMemAddress(void *virPtr);
+    static ZResult AclrtMallocPhysical(void **ptr, size_t size, aclrtPhysicalMemProp *prop, uint64_t flags);
+    static ZResult AclrtFreePhysical(void *handle);
+    static ZResult AclrtMapMem(void *virPtr, size_t size, size_t offset, void *handle, uint64_t flags);
+    static ZResult AclrtUnmapMem(void *virPtr);
+    static ZResult AclrtMallocAlign32(void **ptr, size_t size, aclrtMemMallocPolicy policy);
+    static ZResult AclrtGetCurrentContext(aclrtContext *ctx);
+    static ZResult AclrtSetCurrentContext(aclrtContext ctx);
+    static ZResult AclrtGetMemInfo(aclrtMemAttr attr, size_t *freeBytes, size_t *total);
 
     /* Kernel launch */
     static ZResult AclrtCreateStreamWithConfig(void **stream, int32_t priority, uint32_t flag);
@@ -101,7 +116,6 @@ private:
     static const char *gAscendAclLibName;
 
     static aclrtGetSocNameFunc pAclrtGetSocName;
-    static rtGetDeviceInfoFunc pRtGetDeviceInfo;
     static aclrtSetDeviceFunc pAclrtSetDevice;
     static aclrtGetDeviceFunc pAclrtGetDevice;
     static aclrtSynchronizeStreamFunc pAclrtSynchronizeStream;
@@ -120,6 +134,14 @@ private:
     static aclrtSynchronizeEventFunc pAclrtSynchronizeEvent;
     static aclrtReserveMemAddressFunc pAclrtReserveMemAddress;
     static aclrtReleaseMemAddressFunc pAclrtReleaseMemAddress;
+    static aclrtMallocPhysicalFunc pAclrtMallocPhysical;
+    static aclrtFreePhysicalFunc pAclrtFreePhysical;
+    static aclrtMapMemFunc pAclrtMapMem;
+    static aclrtUnmapMemFunc pAclrtUnmapMem;
+    static aclrtMallocAlign32Func pAclrtMallocAlign32;
+    static aclrtGetCurrentContextFunc pAclrtGetCurrentContext;
+    static aclrtSetCurrentContextFunc pAclrtSetCurrentContext;
+    static aclrtGetMemInfoFunc pAclrtGetMemInfo;
 
     /* Kernel launch pointers */
     static aclrtCreateStreamWithConfigFunc pAclrtCreateStreamWithConfig;
@@ -128,6 +150,8 @@ private:
     static aclrtBinaryGetFunctionFunc pAclrtBinaryGetFunction;
     static aclrtBinaryUnLoadFunc pAclrtBinaryUnLoad;
     static aclrtLaunchKernelWithHostArgsFunc pAclrtLaunchKernelWithHostArgs;
+
+    static ZResult LoadRtSymbols();
 };
 
 inline const char *DlCannApi::AclrtGetSocName()
@@ -150,14 +174,6 @@ inline ZResult DlCannApi::AclrtSetDevice(int32_t deviceId, bool force)
     } else {
         return pAclrtSetDevice(deviceId);
     }
-}
-
-inline ZResult DlCannApi::RtGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *val)
-{
-    if (UNLIKELY(pRtGetDeviceInfo == nullptr)) {
-        return Z_DL_FUNCTION_UNLOAD;
-    }
-    return pRtGetDeviceInfo(deviceId, moduleType, infoType, val);
 }
 
 inline ZResult DlCannApi::AclrtGetDevice(int32_t *deviceId)
@@ -199,6 +215,70 @@ inline ZResult DlCannApi::AclrtReleaseMemAddress(void *virPtr)
         return Z_DL_FUNCTION_UNLOAD;
     }
     return pAclrtReleaseMemAddress(virPtr);
+}
+
+inline ZResult DlCannApi::AclrtMallocPhysical(void **ptr, size_t size, aclrtPhysicalMemProp *prop, uint64_t flags)
+{
+    if (UNLIKELY(pAclrtMallocPhysical == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtMallocPhysical(ptr, size, prop, flags);
+}
+
+inline ZResult DlCannApi::AclrtFreePhysical(void *handle)
+{
+    if (UNLIKELY(pAclrtFreePhysical == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtFreePhysical(handle);
+}
+
+inline ZResult DlCannApi::AclrtMapMem(void *virPtr, size_t size, size_t offset, void *handle, uint64_t flags)
+{
+    if (UNLIKELY(pAclrtMapMem == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtMapMem(virPtr, size, offset, handle, flags);
+}
+
+inline ZResult DlCannApi::AclrtUnmapMem(void *virPtr)
+{
+    if (UNLIKELY(pAclrtUnmapMem == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtUnmapMem(virPtr);
+}
+
+inline ZResult DlCannApi::AclrtMallocAlign32(void **ptr, size_t size, aclrtMemMallocPolicy policy)
+{
+    if (UNLIKELY(pAclrtMallocAlign32 == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtMallocAlign32(ptr, size, policy);
+}
+
+inline ZResult DlCannApi::AclrtGetCurrentContext(aclrtContext *ctx)
+{
+    if (UNLIKELY(pAclrtGetCurrentContext == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtGetCurrentContext(ctx);
+}
+
+inline ZResult DlCannApi::AclrtSetCurrentContext(aclrtContext ctx)
+{
+    if (UNLIKELY(pAclrtSetCurrentContext == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtSetCurrentContext(ctx);
+}
+
+inline ZResult DlCannApi::AclrtGetMemInfo(aclrtMemAttr attr, size_t *freeBytes, size_t *total)
+{
+    if (UNLIKELY(pAclrtGetMemInfo == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtGetMemInfo(attr, freeBytes, total);
 }
 
 inline ZResult DlCannApi::AclrtMalloc(void **ptr, size_t count, uint32_t type)
@@ -272,6 +352,14 @@ inline ZResult DlCannApi::RtGetC2cCtrlAddr(uint64_t *address, uint32_t *len)
         return Z_DL_FUNCTION_UNLOAD;
     }
     return pRtGetC2cCtrlAddr(address, len);
+}
+
+inline ZResult DlCannApi::AclrtGetResInCurrentThread(aclrtDevResType type, uint32_t *value)
+{
+    if (UNLIKELY(pAclrtGetResInCurrentThread == nullptr)) {
+        return Z_DL_FUNCTION_UNLOAD;
+    }
+    return pAclrtGetResInCurrentThread(type, value);
 }
 
 inline ZResult DlCannApi::AclrtGetAIVCountInCurrentThread(uint32_t *value)

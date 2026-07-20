@@ -10,7 +10,10 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "zbal_sma.h"
+#include "dl_cann_api.h"
 #include "zbal_sma_device_info.h"
+
+using namespace zbal::underapi;
 
 namespace zbal {
 namespace sma {

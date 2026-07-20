@@ -13,7 +13,7 @@ See the Mulan PSL v2 for more details.
 #ifndef ZBAL_KERNEL_UTILS_H
 #define ZBAL_KERNEL_UTILS_H
 
-#include <acl/acl_rt.h>
+#include "dl_cann_api.h"
 #include "zbal_def.h"
 #include "zbal_defines.h"
 #include "kernel_operator.h"
@@ -133,7 +133,7 @@ inline uint32_t ZBALOpGetAivBlockDim(CommGroupInfo &groupInfo, size_t sendCount,
 {
     static uint32_t physicalBlocks = 0;
     if (physicalBlocks == 0) {
-        auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &physicalBlocks);
+        auto ret = underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&physicalBlocks);
         if (ret != 0) {
             printf("ZBALOpAllGather get block dim failed, blockDim:%d\n", ret);
             return ret;

@@ -9,7 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
-#include <acl/acl_rt.h>
+#include "dl_cann_api.h"
 #include "kernel_operator.h"
 #include "zbal_kernel_dispatch_low_latency.h"
 
@@ -66,7 +66,7 @@ int32_t ZBALOpDispatchLowLatency(const zbal_tensor_info_t *x, const zbal_tensor_
                                  const CommGroupInfo &groupInfo, int64_t flags)
 {
     uint32_t blockDim = 0;
-    auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);
+    auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
     if (ret != 0) {
         printf("ZBALOpDispatchLowLatency failed as blockDim get failed, blockDim:%d\n", blockDim);
         return ret;

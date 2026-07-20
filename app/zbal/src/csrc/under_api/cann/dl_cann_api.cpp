@@ -21,7 +21,6 @@ void *DlCannApi::gAclHandle;
 const char *DlCannApi::gAscendAclLibName = "libascendcl.so";
 
 aclrtGetSocNameFunc DlCannApi::pAclrtGetSocName = nullptr;
-rtGetDeviceInfoFunc DlCannApi::pRtGetDeviceInfo = nullptr;
 aclrtGetDeviceFunc DlCannApi::pAclrtGetDevice = nullptr;
 aclrtSetDeviceFunc DlCannApi::pAclrtSetDevice = nullptr;
 aclrtSynchronizeStreamFunc DlCannApi::pAclrtSynchronizeStream = nullptr;
@@ -40,6 +39,14 @@ aclrtHostUnregisterFunc DlCannApi::pAclrtHostUnregister = nullptr;
 aclrtSynchronizeEventFunc DlCannApi::pAclrtSynchronizeEvent = nullptr;
 aclrtReserveMemAddressFunc DlCannApi::pAclrtReserveMemAddress = nullptr;
 aclrtReleaseMemAddressFunc DlCannApi::pAclrtReleaseMemAddress = nullptr;
+aclrtMallocPhysicalFunc DlCannApi::pAclrtMallocPhysical = nullptr;
+aclrtFreePhysicalFunc DlCannApi::pAclrtFreePhysical = nullptr;
+aclrtMapMemFunc DlCannApi::pAclrtMapMem = nullptr;
+aclrtUnmapMemFunc DlCannApi::pAclrtUnmapMem = nullptr;
+aclrtMallocAlign32Func DlCannApi::pAclrtMallocAlign32 = nullptr;
+aclrtGetCurrentContextFunc DlCannApi::pAclrtGetCurrentContext = nullptr;
+aclrtSetCurrentContextFunc DlCannApi::pAclrtSetCurrentContext = nullptr;
+aclrtGetMemInfoFunc DlCannApi::pAclrtGetMemInfo = nullptr;
 
 aclrtCreateStreamWithConfigFunc DlCannApi::pAclrtCreateStreamWithConfig = nullptr;
 aclrtDestroyStreamFunc DlCannApi::pAclrtDestroyStream = nullptr;
@@ -68,9 +75,20 @@ ZResult DlCannApi::LoadLibrary(const std::string &libDirPath)
         return Z_DL_OPEN_LIB_FAILED;
     }
 
+    ZResult ret = LoadRtSymbols();
+    if (ret != Z_OK) {
+        return ret;
+    }
+
+    gLoaded = true;
+
+    return Z_OK;
+}
+
+ZResult DlCannApi::LoadRtSymbols()
+{
     /* load sym */
     DL_LOAD_SYM(pAclrtGetSocName, aclrtGetSocNameFunc, gAclHandle, "aclrtGetSocName");
-    DL_LOAD_SYM(pRtGetDeviceInfo, rtGetDeviceInfoFunc, gAclHandle, "rtGetDeviceInfo");
     DL_LOAD_SYM(pAclrtGetDevice, aclrtGetDeviceFunc, gAclHandle, "aclrtGetDevice");
     DL_LOAD_SYM(pAclrtSetDevice, aclrtSetDeviceFunc, gAclHandle, "aclrtSetDevice");
     DL_LOAD_SYM(pAclrtSynchronizeStream, aclrtSynchronizeStreamFunc, gAclHandle, "aclrtSynchronizeStream");
@@ -81,7 +99,8 @@ ZResult DlCannApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtMemcpy, aclrtMemcpyFunc, gAclHandle, "aclrtMemcpy");
     DL_LOAD_SYM(pAclrtMemcpyAsync, aclrtMemcpyAsyncFunc, gAclHandle, "aclrtMemcpyAsync");
     DL_LOAD_SYM(pAclrtMemset, aclrtMemsetFunc, gAclHandle, "aclrtMemset");
-    DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, gAclHandle, "rtGetLogicDevIdByUserDevId");
+    DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, gAclHandle,
+                "aclrtGetLogicDevIdByUserDevId");
     DL_LOAD_SYM(pRtGetC2cCtrlAddr, rtGetC2cCtrlAddrFunc, gAclHandle, "rtGetC2cCtrlAddr");
     DL_LOAD_SYM(pAclrtGetResInCurrentThread, aclrtGetResInCurrentThreadFunc, gAclHandle, "aclrtGetResInCurrentThread");
     DL_LOAD_SYM(pAclrtHostRegister, aclrtHostRegisterFunc, gAclHandle, "aclrtHostRegister");
@@ -89,6 +108,14 @@ ZResult DlCannApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtSynchronizeEvent, aclrtSynchronizeEventFunc, gAclHandle, "aclrtSynchronizeEvent");
     DL_LOAD_SYM(pAclrtReserveMemAddress, aclrtReserveMemAddressFunc, gAclHandle, "aclrtReserveMemAddress");
     DL_LOAD_SYM(pAclrtReleaseMemAddress, aclrtReleaseMemAddressFunc, gAclHandle, "aclrtReleaseMemAddress");
+    DL_LOAD_SYM(pAclrtMallocPhysical, aclrtMallocPhysicalFunc, gAclHandle, "aclrtMallocPhysical");
+    DL_LOAD_SYM(pAclrtFreePhysical, aclrtFreePhysicalFunc, gAclHandle, "aclrtFreePhysical");
+    DL_LOAD_SYM(pAclrtMapMem, aclrtMapMemFunc, gAclHandle, "aclrtMapMem");
+    DL_LOAD_SYM(pAclrtUnmapMem, aclrtUnmapMemFunc, gAclHandle, "aclrtUnmapMem");
+    DL_LOAD_SYM(pAclrtMallocAlign32, aclrtMallocAlign32Func, gAclHandle, "aclrtMallocAlign32");
+    DL_LOAD_SYM(pAclrtGetCurrentContext, aclrtGetCurrentContextFunc, gAclHandle, "aclrtGetCurrentContext");
+    DL_LOAD_SYM(pAclrtSetCurrentContext, aclrtSetCurrentContextFunc, gAclHandle, "aclrtSetCurrentContext");
+    DL_LOAD_SYM(pAclrtGetMemInfo, aclrtGetMemInfoFunc, gAclHandle, "aclrtGetMemInfo");
 
     /* Kernel launch */
     DL_LOAD_SYM(pAclrtCreateStreamWithConfig, aclrtCreateStreamWithConfigFunc, gAclHandle,
@@ -99,8 +126,6 @@ ZResult DlCannApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtBinaryUnLoad, aclrtBinaryUnLoadFunc, gAclHandle, "aclrtBinaryUnLoad");
     pAclrtLaunchKernelWithHostArgs =
         reinterpret_cast<aclrtLaunchKernelWithHostArgsFunc>(dlsym(gAclHandle, "aclrtLaunchKernelWithHostArgs"));
-
-    gLoaded = true;
 
     return Z_OK;
 }
@@ -113,7 +138,6 @@ void DlCannApi::CleanupLibrary()
     }
 
     pAclrtGetSocName = nullptr;
-    pRtGetDeviceInfo = nullptr;
     pAclrtGetDevice = nullptr;
     pAclrtSetDevice = nullptr;
     pAclrtSynchronizeStream = nullptr;
@@ -132,6 +156,14 @@ void DlCannApi::CleanupLibrary()
     pAclrtSynchronizeEvent = nullptr;
     pAclrtReserveMemAddress = nullptr;
     pAclrtReleaseMemAddress = nullptr;
+    pAclrtMallocPhysical = nullptr;
+    pAclrtFreePhysical = nullptr;
+    pAclrtMapMem = nullptr;
+    pAclrtUnmapMem = nullptr;
+    pAclrtMallocAlign32 = nullptr;
+    pAclrtGetCurrentContext = nullptr;
+    pAclrtSetCurrentContext = nullptr;
+    pAclrtGetMemInfo = nullptr;
     pAclrtCreateStreamWithConfig = nullptr;
     pAclrtDestroyStream = nullptr;
     pAclrtBinaryLoadFromFile = nullptr;

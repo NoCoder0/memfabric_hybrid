@@ -322,7 +322,7 @@ int32_t aclrtMallocPhysical(void **handle, size_t size, void *prop, uint64_t fla
     return RETURN_OK;
 }
 
-int32_t aclrtMapMem(void *addr, size_t size, uint32_t flags, void *handle, size_t offset)
+int32_t aclrtMapMem(void *addr, size_t size, size_t offset, void *handle, uint64_t flags)
 {
     return RETURN_OK;
 }

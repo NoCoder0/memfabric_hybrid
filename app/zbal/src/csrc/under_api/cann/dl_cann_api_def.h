@@ -18,6 +18,14 @@ using aclrtBinHandle = void *;
 using aclrtFuncHandle = void *;
 using aclrtArgsHandle = void *;
 using aclrtParamHandle = void *;
+using aclrtStream = void *;
+using aclrtContext = void *;
+using aclError = int32_t;
+using aclrtMemAttr = uint32_t;
+using aclrtMemHandleType = uint32_t;
+using aclrtMemAllocationType = uint32_t;
+using aclrtMemLocationType = uint32_t;
+using aclrtDevResLimitType = uint32_t;
 
 typedef enum {
     ACL_RT_DEV_RES_CUBE_CORE = 0, /* AI Core | Cube Core */
@@ -27,6 +35,31 @@ typedef enum {
 typedef enum {
     ACL_HOST_REGISTER_MAPPED = 0U, /* accessed by NPU */
 } aclrtHostRegisterType;
+
+typedef enum aclrtMemcpyKind {
+    ACL_MEMCPY_HOST_TO_HOST,
+    ACL_MEMCPY_HOST_TO_DEVICE,
+    ACL_MEMCPY_DEVICE_TO_HOST,
+    ACL_MEMCPY_DEVICE_TO_DEVICE,
+    ACL_MEMCPY_DEFAULT,
+    ACL_MEMCPY_HOST_TO_BUF_TO_DEVICE,
+    ACL_MEMCPY_INNER_DEVICE_TO_DEVICE,
+    ACL_MEMCPY_INTER_DEVICE_TO_DEVICE,
+} aclrtMemcpyKind;
+
+typedef enum aclrtMemMallocPolicy {
+    ACL_MEM_MALLOC_HUGE_FIRST,
+    ACL_MEM_MALLOC_HUGE_ONLY,
+    ACL_MEM_MALLOC_NORMAL_ONLY,
+    ACL_MEM_MALLOC_HUGE_FIRST_P2P,
+    ACL_MEM_MALLOC_HUGE_ONLY_P2P,
+    ACL_MEM_MALLOC_NORMAL_ONLY_P2P,
+    ACL_MEM_MALLOC_HUGE1G_ONLY,
+    ACL_MEM_MALLOC_HUGE1G_ONLY_P2P,
+    ACL_MEM_TYPE_LOW_BAND_WIDTH = 0x0100,
+    ACL_MEM_TYPE_HIGH_BAND_WIDTH = 0x1000,
+    ACL_MEM_ACCESS_USER_SPACE_READONLY = 0x100000,
+} aclrtMemMallocPolicy;
 
 enum class aclrtBinaryLoadOptionType : int32_t {
     ACL_RT_BINARY_LOAD_OPT_LAZY_LOAD = 1,
@@ -49,7 +82,7 @@ struct aclrtBinaryLoadOption {
 
 struct aclrtBinaryLoadOptions {
     aclrtBinaryLoadOption *options;
-    uint32_t numOpt;
+    size_t numOpt;
 };
 
 enum class aclrtLaunchKernelAttrId : int32_t {
@@ -89,6 +122,19 @@ struct aclrtLaunchKernelCfg {
     aclrtLaunchKernelAttr *attrs;
     size_t numAttrs;
 };
+
+typedef struct aclrtMemLocation {
+    uint32_t id;
+    aclrtMemLocationType type;
+} aclrtMemLocation;
+
+typedef struct aclrtPhysicalMemProp {
+    aclrtMemHandleType handleType;
+    aclrtMemAllocationType allocationType;
+    aclrtMemAttr memAttr;
+    aclrtMemLocation location;
+    uint64_t reserve;
+} aclrtPhysicalMemProp;
 } // namespace underapi
 } // namespace zbal
 

@@ -12,15 +12,16 @@
 #ifndef ZBAL_DEEPEP_H_
 #define ZBAL_DEEPEP_H_
 
-#include <ATen/Tensor.h>
-#include <acl/acl_base.h>
-#include <acl/acl_rt.h>
-#include <torch/types.h>
-#include <torch/python.h>
+#include <optional>
 #include <tuple>
 #include <vector>
-#include <optional>
+
+#include <ATen/Tensor.h>
+#include <torch/python.h>
+#include <torch/types.h>
+
 #include "aclnn/opdev/platform.h"
+#include "dl_cann_api.h"
 
 #include "zbal_def.h"
 #include "zbal_deepep_config.h"

@@ -14,7 +14,7 @@
  * Host-side tiling and kernel launch are in zbal_kernel_fused_deep_moe_host.cpp.
  */
 
-#include <acl/acl_rt.h>
+#include "dl_cann_api.h"
 #include "kernel_operator.h"
 
 #include "zbal_kernel_fused_deep_moe_tiling.h"

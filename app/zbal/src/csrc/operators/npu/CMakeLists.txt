@@ -37,10 +37,12 @@ ascendc_include_directories(zbal_kernel PRIVATE
         ${ASCEND_HOME_PATH}/include/aclnn/opdev
         ${ASCEND_HOME_PATH}/asc/include
         ${ZBAL_SRC_DIR}/include
+        ${ZBAL_SRC_DIR}/csrc
         ${ZBAL_SRC_DIR}/csrc/common
         ${ZBAL_SRC_DIR}/csrc/operators
         ${ZBAL_SRC_DIR}/csrc/operators/npu
         ${ZBAL_SRC_DIR}/csrc/operators/npu/aicore/common
+        ${ZBAL_SRC_DIR}/csrc/under_api/cann
 )
 if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
     ascendc_include_directories(zbal_kernel PRIVATE

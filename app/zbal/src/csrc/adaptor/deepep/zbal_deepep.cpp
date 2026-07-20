@@ -705,7 +705,7 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> Buffer::fused_deep_moe(
     int64_t topk = expert_ids.size(1);
     int64_t effective_global_bs = (global_bs > 0) ? global_bs : (ep_rank_size * bs);
     uint32_t aic_num = 0;
-    auto aic_ret = aclrtGetResInCurrentThread(static_cast<aclrtDevResLimitType>(ACL_RT_DEV_RES_CUBE_CORE), &aic_num);
+    auto aic_ret = underapi::DlCannApi::AclrtGetAICCountInCurrentThread(&aic_num);
     if (aic_ret != 0 || aic_num == 0) {
         aic_num = 40; // fallback default
     }

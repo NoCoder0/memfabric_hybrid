@@ -88,7 +88,7 @@ private:
         }
     }
 
-    __aicore__ inline uint32_t MIN(uint32_t x, uint32_t y)
+    __aicore__ inline uint32_t ZbalMin(uint32_t x, uint32_t y)
     {
         return (x < y) ? x : y;
     }

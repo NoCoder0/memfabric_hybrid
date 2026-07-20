@@ -20,7 +20,6 @@
 #endif
 
 #include "dl_cann_api.h"
-#include "acl/acl.h"
 
 namespace zbal {
 namespace operators {

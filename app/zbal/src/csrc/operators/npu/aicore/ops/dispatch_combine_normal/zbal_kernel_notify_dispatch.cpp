@@ -10,8 +10,9 @@
  * See the Mulan PSL v2 for more details.
  */
 
-#include <acl/acl_rt.h>
 #include <cstdio>
+
+#include "dl_cann_api.h"
 #include "zbal_kernel_notify_dispatch.h"
 
 using namespace AscendC;
@@ -38,7 +39,7 @@ int32_t ZBALOpNotifyDispatch(const zbal_tensor_info_t *sendTokensPerExpert, int6
                              aclrtStream stream, const CommGroupInfo &groupInfo, int64_t flags)
 {
     uint32_t blockDim = 0;
-    auto ret = aclrtGetResInCurrentThread(ACL_RT_DEV_RES_VECTOR_CORE, &blockDim);
+    auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
     if (ret != 0) {
         printf("ZBALOpNotifyDispatch failed as blockDim get failed, blockDim:%d\n", blockDim);
         return ret;

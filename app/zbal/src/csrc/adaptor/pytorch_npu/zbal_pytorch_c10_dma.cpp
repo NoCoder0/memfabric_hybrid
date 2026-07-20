@@ -26,8 +26,6 @@
 #include <c10/util/irange.h>
 #include <c10/util/UniqueVoidPtr.h>
 
-#include "third_party/acl/inc/acl/acl_base.h"
-#include "third_party/acl/inc/acl/acl_rt.h"
 #include "torch_npu/csrc/core/npu/interface/AsyncTaskQueueInterface.h"
 #include "torch_npu/csrc/core/npu/NPURecovery.h"
 #include "torch_npu/csrc/core/npu/NPUGuard.h"
@@ -354,7 +352,7 @@ struct ExpandableSegment {
         if (max_handles_ == 0) {
             size_t device_free;
             size_t device_total;
-            NPU_CHECK_ERROR_MOCK(aclrtGetMemInfo(ACL_HBM_MEM, &device_free, &device_total));
+            NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtGetMemInfo(ACL_HBM_MEM, &device_free, &device_total));
             // we allocate enough address space for 1 1/8 the total memory on the NPU.
             // This allows for some cases where we have to unmap pages earlier in the
             // segment to put them at the end.
@@ -401,7 +399,7 @@ struct ExpandableSegment {
                 handles_.at(i) = Handle{handle, std::nullopt};
                 continue;
             }
-            aclrtPhysicalMemProp prop = {};
+            zbal::underapi::aclrtPhysicalMemProp prop = {};
             prop.handleType = ACL_MEM_HANDLE_TYPE_NONE;
             prop.allocationType = ACL_MEM_ALLOCATION_TYPE_PINNED;
             prop.memAttr = (segment_size_ == kExtraLargeBuffer) ? ACL_HBM_MEM_HUGE1G : ACL_HBM_MEM_HUGE;
@@ -409,12 +407,12 @@ struct ExpandableSegment {
             prop.location.id = static_cast<unsigned>(device_);
             prop.reserve = 0;
             ASCEND_LOGD("Alloc memory from physical device for block %zu", i);
-            auto status = aclrtMallocPhysical(&handle, segment_size_, &prop, 0);
+            auto status = DlCannApi::AclrtMallocPhysical(&handle, segment_size_, &prop, 0);
             if (status == ACL_ERROR_RT_MEMORY_ALLOCATION) {
                 for (auto j : c10::irange(begin, i)) {
                     auto h = handles_.at(j).value();
                     handles_.at(j) = c10::nullopt;
-                    NPU_CHECK_ERROR_MOCK(aclrtFreePhysical(h.handle));
+                    NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtFreePhysical(h.handle));
                 }
                 trimHandles();
                 return rangeFromHandles(begin, begin);
@@ -423,8 +421,8 @@ struct ExpandableSegment {
             handles_.at(i) = Handle{handle, std::nullopt};
         }
         for (auto i : c10::irange(begin, end)) {
-            NPU_CHECK_ERROR_MOCK(
-                aclrtMapMem((char *)ptr_ + i * segment_size_, segment_size_, 0, handles_.at(i).value().handle, 0));
+            NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtMapMem(static_cast<char *>(ptr_) + i * segment_size_, segment_size_, 0,
+                                                        handles_.at(i).value().handle, 0));
         }
         ASCEND_LOGD("DirectMemoryAllocator map: segment_size=%zu", segment_size_);
         return rangeFromHandles(begin, end);
@@ -467,7 +465,7 @@ struct ExpandableSegment {
 
     char *ptr() const
     {
-        return (char *)ptr_;
+        return static_cast<char *>(ptr_);
     }
 
     size_t size() const
@@ -484,7 +482,7 @@ struct ExpandableSegment {
     ~ExpandableSegment()
     {
         forEachAllocatedRange([&](size_t begin, size_t end) { unmapHandles(begin, end); });
-        NPU_CHECK_ERROR_MOCK(aclrtReleaseMemAddress(ptr_));
+        NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtReleaseMemAddress(ptr_));
         ASCEND_LOGD("DirectMemoryAllocator free by AclrtReleaseMemAddress");
     }
 
@@ -492,8 +490,8 @@ private:
     void mapAndSetAccess(size_t begin, size_t end)
     {
         for (auto i : c10::irange(begin, end)) {
-            NPU_CHECK_ERROR_MOCK(
-                aclrtMapMem((char *)ptr_ + i * segment_size_, segment_size_, 0, handles_.at(i).value().handle, 0));
+            NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtMapMem(static_cast<char *>(ptr_) + i * segment_size_, segment_size_, 0,
+                                                        handles_.at(i).value().handle, 0));
         }
         ASCEND_LOGD("DirectMemoryAllocator mapAndSetAccess: segment_size=%zu", segment_size_);
     }
@@ -520,9 +518,9 @@ private:
         for (auto i : c10::irange(begin, end)) {
             Handle h = handles_.at(i).value();
             handles_.at(i) = c10::nullopt;
-            NPU_CHECK_ERROR_MOCK(aclrtUnmapMem((char *)ptr_ + segment_size_ * i));
+            NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtUnmapMem(static_cast<char *>(ptr_) + segment_size_ * i));
             if (!pool) {
-                NPU_CHECK_ERROR_MOCK(aclrtFreePhysical(h.handle));
+                NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtFreePhysical(h.handle));
             } else {
                 pool->free_physical_handles_.push_back(h.handle);
             }
@@ -921,7 +919,7 @@ size_t CachingAllocatorConfig::parseExpandableSegments(const std::vector<std::st
             void *ptr = nullptr;
             auto status = DlCannApi::AclrtReserveMemAddress(&ptr, 512, 0, nullptr, 1);
             if (status == ACL_ERROR_NONE && ptr != nullptr) {
-                NPU_CHECK_ERROR_MOCK(aclrtReleaseMemAddress(ptr));
+                NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtReleaseMemAddress(ptr));
             } else {
                 NPU_CHECK_ERROR_MOCK(status, "aclrtReserveMemAddress");
                 m_expandable_segments = false;
@@ -1301,7 +1299,7 @@ public:
             if (params.err == zbal::Z_ERROR_ALLOC) {
                 size_t device_free;
                 size_t device_total;
-                NPU_CHECK_ERROR_MOCK(aclrtGetMemInfo(ACL_HBM_MEM, &device_free, &device_total));
+                NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtGetMemInfo(ACL_HBM_MEM, &device_free, &device_total));
 
                 std::string allowed_info;
                 if (set_fraction) {
@@ -1612,7 +1610,7 @@ public:
     {
         size_t device_free;
         size_t device_total;
-        NPU_CHECK_ERROR_MOCK(aclrtGetMemInfo(ACL_HBM_MEM, &device_free, &device_total));
+        NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtGetMemInfo(ACL_HBM_MEM, &device_free, &device_total));
         allowed_memory_maximum = static_cast<size_t>(fraction * device_total);
         set_fraction = true;
     }
@@ -2599,9 +2597,9 @@ private:
                 ptr = active_pool->allocator()->raw_alloc(size);
                 p.err = ptr ? ACL_ERROR_NONE : ACL_ERROR_RT_MEMORY_ALLOCATION;
             } else {
-                auto policy = aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST;
+                auto policy = zbal::underapi::aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST;
                 if (IsMallocPage1GMem(p.pool->is_small)) {
-                    policy = aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE1G_ONLY;
+                    policy = zbal::underapi::aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE1G_ONLY;
                 }
                 if (mem_heap_inited) {
                     p.err = zbal::adaptor::HeapAlignedAllocate(&ptr, size, mem_heap_pool_);
@@ -2609,7 +2607,7 @@ private:
                         symm_addrs.insert(ptr);
                     }
                 } else {
-                    p.err = aclrtMallocAlign32(&ptr, size, policy);
+                    p.err = DlCannApi::AclrtMallocAlign32(&ptr, size, policy);
                 }
             }
             if (p.err != ACL_ERROR_NONE) {
@@ -2747,7 +2745,7 @@ private:
             TORCH_CHECK(zbal::adaptor::HeapRelease((void *)block->ptr, mem_heap_pool_) == ACL_ERROR_NONE,
                         "mm heap free failed.");
         } else {
-            aclrtFree((void *)block->ptr);
+            DlCannApi::AclrtFree((void *)block->ptr);
         }
         total_allocated_memory -= block->size;
 
@@ -2853,7 +2851,7 @@ private:
         if (free_physical) {
             while (!pool.free_physical_handles_.empty()) {
                 aclrtDrvMemHandle handle = pool.free_physical_handles_.back();
-                NPU_CHECK_ERROR_MOCK(aclrtFreePhysical(handle));
+                NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtFreePhysical(handle));
                 pool.free_physical_handles_.pop_back();
             }
         }
@@ -2926,7 +2924,7 @@ private:
         int pre_device = -1;
         NPU_CHECK_ERROR_MOCK(c10_npu::GetDevice(&pre_device));
         aclrtContext compiler_ctx = aclrtContext();
-        aclError ret_ctx = aclrtGetCurrentContext(&compiler_ctx);
+        aclError ret_ctx = DlCannApi::AclrtGetCurrentContext(&compiler_ctx);
         // FIXME ignore setDeviceContext
 
         stream_set streams(std::move(block->stream_uses));
@@ -2942,7 +2940,7 @@ private:
             npu_events[stream].emplace_back(std::move(event), block);
         }
         if (ret_ctx == ACL_ERROR_NONE) {
-            NPU_CHECK_ERROR_MOCK(aclrtSetCurrentContext(compiler_ctx));
+            NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtSetCurrentContext(compiler_ctx));
             // Setting context will exchange device implicitly, so we need to reset the cached device here to ensure consistency.
             NPU_CHECK_ERROR_MOCK(c10_npu::SetDevice(pre_device));
         }
@@ -3043,7 +3041,7 @@ static void uncached_delete(void *ptr)
         c10_npu::npuSynchronizeDevice(false);
     }
     ASCEND_LOGD("Without DirectMemoryAllocator, free by aclrtFree.");
-    NPU_CHECK_ERROR_MOCK(aclrtFree(ptr));
+    NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtFree(ptr));
 }
 
 void local_raw_delete(void *ptr);
@@ -3401,7 +3399,7 @@ public:
         }
         int device = 0;
         NPU_CHECK_ERROR_MOCK(c10_npu::GetDevice(&device));
-        NPU_CHECK_ERROR_MOCK(aclrtSetDevice(device));
+        NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtSetDevice(device));
         void *devPtr = nullptr;
         void (*deleteFunc)(void *) = &local_raw_delete;
 
@@ -3409,8 +3407,8 @@ public:
             if (OptionsManager::CheckForceUncached) {
                 deleteFunc = &uncached_delete;
                 size_t alloc_size = size + 32;
-                NPU_CHECK_ERROR_MOCK(
-                    aclrtMallocAlign32(&devPtr, alloc_size, aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST));
+                NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtMallocAlign32(
+                    &devPtr, alloc_size, zbal::underapi::aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST));
                 ASCEND_LOGD("Without DirectMemoryAllocator, malloc by "
                             "AclrtMallocAlign32: size=%zu",
                             alloc_size);
@@ -3438,8 +3436,8 @@ public:
             if (OptionsManager::CheckForceUncached) {
                 deleteFunc = &uncached_delete;
                 size_t alloc_size = size + 32 + aligned;
-                NPU_CHECK_ERROR_MOCK(
-                    aclrtMallocAlign32(&realPtr, alloc_size, aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST));
+                NPU_CHECK_ERROR_MOCK(DlCannApi::AclrtMallocAlign32(
+                    &realPtr, alloc_size, zbal::underapi::aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST));
                 ASCEND_LOGD("Without DirectMemoryAllocator, malloc by "
                             "AclrtMallocAlign32: size=%zu",
                             alloc_size);
