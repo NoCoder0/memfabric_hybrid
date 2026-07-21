@@ -72,3 +72,8 @@ __all__ = [
     'get_and_clear_last_err_msg',
 ]
 __all__ += ['get_include_path', 'get_lib_path']
+
+# Import-time provisioning of HYBM AICPU Kernel (silent skip/install).
+from memfabric_hybrid._provision import provision  # noqa: E402
+
+provision()

@@ -11,6 +11,8 @@
  */
 
 #include <dlfcn.h>
+#include "hybm_define.h"
+#include "hybm_logger.h"
 #include "dl_hcomm_api.h"
 
 namespace ock {

@@ -13,10 +13,14 @@
 #ifndef MF_HYBM_CORE_DL_HCOMM_API_H
 #define MF_HYBM_CORE_DL_HCOMM_API_H
 
-#include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include "hybm_common_include.h"
+#include <mutex>
+#include <netinet/in.h>
+#include <ostream>
+
+#include "hybm_def.h"
+#include "hybm_types.h"
 
 namespace ock {
 namespace mf {

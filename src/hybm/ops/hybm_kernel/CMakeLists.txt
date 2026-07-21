@@ -18,10 +18,8 @@ set(AICPU_TAR_OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/${HYBM_AICPU_PACKAGE_NAME}")
 set(AICPU_INCLUDE_DIRS
     ${PROJECT_HYBM_SRC_BASE}/include
     ${PROJECT_HYBM_SRC_BASE}/csrc/common
-    ${PROJECT_HYBM_SRC_BASE}/csrc/driver/version
     ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
     ${_ASCEND_INC_DIR}
-    ${PROJECT_UTIL_SRC_BASE}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -36,20 +34,18 @@ endforeach()
 if(NOT DEFINED AICPU_KERNEL_SRC)
   set(AICPU_KERNEL_SRC
       "${CMAKE_CURRENT_SOURCE_DIR}/hybm_batch_transfer.cc"
-      "${CMAKE_CURRENT_SOURCE_DIR}/dlog_stub.cc"
   )
 endif()
 
 set(AICPU_LINK_FLAGS "")
 
-# ---- Generate .json from .ini ----
+# ---- Copy static .json ----
 add_custom_command(
     OUTPUT ${AICPU_JSON_OUTPUT}
-    COMMAND python3 ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/parser_ini.py
-            ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.ini
+    COMMAND ${CMAKE_COMMAND} -E copy
+            ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.json
             ${AICPU_JSON_OUTPUT}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.ini
-            ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/parser_ini.py
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/libcann_hybm_kernel.json
 )
 
 # ---- Cross-compile .so ----
