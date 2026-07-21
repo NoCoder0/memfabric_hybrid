@@ -38,6 +38,7 @@ public:
     UserQpInfo *GetQpHandleWithRankId(uint32_t rankId) noexcept override;
     void PutQpHandle(UserQpInfo *qp) const noexcept override;
     bool CheckQpReady(const std::vector<uint32_t> &rankIds) const noexcept override;
+    std::string GetErrorConnectionsStatus(const std::vector<uint32_t> &rankIds) const noexcept override;
 
 private:
     void CloseServices() noexcept;

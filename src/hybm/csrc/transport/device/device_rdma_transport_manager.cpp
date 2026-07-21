@@ -34,6 +34,7 @@ namespace {
 constexpr auto QP_READY_CHECK_TIMEOUT_BASE = std::chrono::seconds(60);
 constexpr auto QP_READY_CHECK_TIMEOUT_PER_RANK = std::chrono::milliseconds(100);
 constexpr auto QP_READY_CHECK_INTERVAL = std::chrono::milliseconds(5);
+constexpr uint64_t QP_READY_LOG_INTERVAL_TRIES = 200; // ≈ 1s per log (200 * 5ms)
 } // namespace
 
 namespace ock {
@@ -78,7 +79,7 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
         BM_LOG_WARN("aclrtGetPhyDevIdByLogicDevId ret=" << ret << " use logicId=" << logicId);
         phyId = logicId;
     }
-    BM_LOG_INFO("aclrtGetPhyDevIdByLogicDevId: userId=" << userId << ", logicId=" << logicId << ", phyId=" << phyId);
+    BM_LOG_DEBUG("aclrtGetPhyDevIdByLogicDevId: userId=" << userId << ", logicId=" << logicId << ", phyId=" << phyId);
     deviceId_ = static_cast<uint32_t>(phyId);
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
@@ -157,7 +158,7 @@ Result RdmaTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
 
     WriteGuard lockGuard(lock_);
     registerMRS_.emplace(mr.addr, result);
-    BM_LOG_INFO("register MR result=" << result);
+    BM_LOG_DEBUG("register MR result=" << result);
     return BM_OK;
 }
 
@@ -356,7 +357,8 @@ Result RdmaTransportManager::WaitQpReady()
         std::this_thread::sleep_for(QP_READY_CHECK_INTERVAL);
     }
     BM_LOG_ERROR("CheckQpReady timeout: " << (std::chrono::duration_cast<std::chrono::milliseconds>(timeout).count())
-                                          << "ms after " << tries << " tries.");
+                                          << "ms after " << tries << " tries, error connections status: "
+                                          << qpManager_->GetErrorConnectionsStatus(rankIds));
     return BM_TIMEOUT;
 }
 
@@ -877,8 +879,8 @@ void RdmaTransportManager::OptionsToRankMRs(const HybmTransPrepareOptions &optio
             keyUnion.commonKey = key;
             auto &devKey = keyUnion.deviceKey;
             uint64_t dva = HybmVaManager::GetInstance().TransformVa(devKey.address, HVM_GVA, HVM_DVA);
-            BM_LOG_INFO("query memory key rank:" << node << " gva:" << std::hex << keyUnion.deviceKey.address
-                                                 << " dva:" << dva << " size:" << keyUnion.deviceKey.size);
+            BM_LOG_DEBUG("query memory key rank:" << node << " gva:" << std::hex << keyUnion.deviceKey.address
+                                                  << " dva:" << dva << " size:" << keyUnion.deviceKey.size);
             if (dva != 0) {
                 devKey.address = dva;
             }

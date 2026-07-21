@@ -279,6 +279,11 @@ public:
         (void)rankIds;
         return checkQpReadyRet;
     }
+    std::string GetErrorConnectionsStatus(const std::vector<uint32_t> &rankIds) const noexcept override
+    {
+        (void)rankIds;
+        return connectionsStatus;
+    }
 
     bool shutdownCalled{false};
     bool removeRanksCalled{false};
@@ -291,6 +296,7 @@ public:
     bool returnQpHandle{false};
     mutable bool putQpCalled{false};
     void *qpHandleValue{reinterpret_cast<void *>(0x55UL)};
+    std::string connectionsStatus{"<mock-connections>"};
 
 private:
     mutable UserQpInfo userQpInfo_{};

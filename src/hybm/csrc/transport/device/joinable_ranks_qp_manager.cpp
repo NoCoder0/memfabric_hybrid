@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 #include <chrono>
+#include <sstream>
 #include "hybm_logger.h"
 #include "dl_hccp_api.h"
 #include "dl_acl_api.h"
@@ -173,6 +174,25 @@ bool JoinableRanksQpManager::CheckQpReady(const std::vector<uint32_t> &rankIds) 
         }
     }
     return true;
+}
+
+std::string JoinableRanksQpManager::GetErrorConnectionsStatus(const std::vector<uint32_t> &rankIds) const noexcept
+{
+    std::ostringstream oss;
+    for (auto rankId : rankIds) {
+        if (rankId == rankId_) {
+            continue;
+        }
+        if (rankId >= rankCount_) {
+            oss << "[ rank = " << rankId << " : is out of range ]\r\n";
+        } else {
+            oss << "[ rank = " << rankId << " : socketHandle = " << connections_[rankId].socketHandle
+                << " socketFd = " << connections_[rankId].socketFd
+                << " qpConnectCalled = " << connections_[rankId].qpConnectCalled
+                << " qpStatus = " << connections_[rankId].qpStatus << " ]\r\n";
+        }
+    }
+    return oss.str();
 }
 
 void JoinableRanksQpManager::CloseServices() noexcept
@@ -415,7 +435,7 @@ void JoinableRanksQpManager::MakeQpConnections(const std::set<uint32_t> &newRank
                 BM_LOG_ERROR("create QP from " << rankId_ << " to " << rankId << " failed: " << ret);
                 continue;
             }
-            BM_LOG_INFO("create QP success from " << rankId_ << " to " << rankId);
+            BM_LOG_DEBUG("create QP success from " << rankId_ << " to " << rankId);
             connections_[rankId].qpConnectCalled = true;
         }
     }
@@ -445,7 +465,7 @@ void JoinableRanksQpManager::WaitQpConnections(const std::set<uint32_t> &newRank
         }
 
         if (connections_[rankId].qpStatus == 1) {
-            BM_LOG_INFO("from " << rankId_ << " to " << rankId << " query qp ready.");
+            BM_LOG_DEBUG("from " << rankId_ << " to " << rankId << " query qp ready.");
             finishedRanks.emplace(rankId);
         }
     }
@@ -540,7 +560,7 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         connectInfo.port = connections_[rankId].remoteNet.sin_port;
         bzero(connectInfo.tag, sizeof(connectInfo.tag));
         FillHccpTag(connectInfo.tag);
-        BM_LOG_INFO("add connecting server " << connectInfo);
+        BM_LOG_DEBUG("add connecting server " << connectInfo);
         connectInfos.emplace_back(connectInfo);
     }
 
@@ -575,7 +595,7 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
     }
 
     for (auto it = removedConnections.begin(); it != removedConnections.end(); ++it) {
-        BM_LOG_INFO("close connection from " << rankId_ << " to " << it->first);
+        BM_LOG_DEBUG("close connection from " << rankId_ << " to " << it->first);
         if (it->second.qpHandle != nullptr) {
             WriteGuard guard(qpLock_);
             auto info = qpArray_[it->first];
@@ -594,7 +614,7 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
         if (ret != 0) {
             BM_LOG_WARN("close socket from " << rankId_ << " to " << it->first << " failed: " << ret);
         } else {
-            BM_LOG_INFO("close socket from " << rankId_ << " to " << it->first << " successful: " << ret);
+            BM_LOG_DEBUG("close socket from " << rankId_ << " to " << it->first << " successful: " << ret);
         }
     }
 }

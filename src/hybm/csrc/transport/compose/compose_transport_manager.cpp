@@ -254,8 +254,8 @@ void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOption
         auto rankId = item.first;
         uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
         if (!(opType & HOST_PROTOCOL)) {
-            BM_LOG_INFO("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
-                                       << " skip host connect");
+            BM_LOG_DEBUG("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
+                                        << " skip host connect");
             continue;
         }
         TransportRankPrepareInfo info{};
@@ -283,8 +283,8 @@ void ComposeTransportManager::GetDevicePrepareOptions(const HybmTransPrepareOpti
         auto rankId = item.first;
         uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
         if (!(opType & DEVICE_PROTOCOL)) {
-            BM_LOG_INFO("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
-                                       << " skip device connect");
+            BM_LOG_DEBUG("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
+                                        << " skip device connect");
             continue;
         }
         TransportRankPrepareInfo info{};
@@ -590,7 +590,7 @@ Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions 
     if (hostTransportManager_) {
         HybmTransPrepareOptions hostOptions{};
         GetHostPrepareOptions(options, hostOptions);
-        BM_LOG_INFO("Try to update host transport rank options: " << hostOptions);
+        BM_LOG_DEBUG("Try to update host transport rank options: " << hostOptions);
         ret = hostTransportManager_->UpdateRankOptions(hostOptions);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to prepare host ret: " << ret);
@@ -599,7 +599,7 @@ Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions 
     if (deviceTransportManager_) {
         HybmTransPrepareOptions deviceOptions{};
         GetDevicePrepareOptions(options, deviceOptions);
-        BM_LOG_INFO("Try to update device transport rank options: " << deviceOptions);
+        BM_LOG_DEBUG("Try to update device transport rank options: " << deviceOptions);
         ret = deviceTransportManager_->UpdateRankOptions(deviceOptions);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to prepare host ret: " << ret);

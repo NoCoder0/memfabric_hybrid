@@ -136,6 +136,12 @@ bool DeviceQpManager::CheckQpReady(const std::vector<uint32_t> &rankIds) const n
     return true;
 }
 
+std::string DeviceQpManager::GetErrorConnectionsStatus(const std::vector<uint32_t> &rankIds) const noexcept
+{
+    (void)rankIds;
+    return "";
+}
+
 } // namespace device
 } // namespace transport
 } // namespace mf

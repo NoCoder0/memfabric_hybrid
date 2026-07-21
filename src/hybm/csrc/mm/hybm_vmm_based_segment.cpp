@@ -29,9 +29,9 @@ HybmVmmBasedSegment::~HybmVmmBasedSegment()
 
     auto ret = UnReserveMemorySpace();
     if (ret != BM_OK) {
-        BM_LOG_WARN("Destructor cleanup failed, ret:" << ret
-                                                      << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_)
-                                                      << " va:" << reinterpret_cast<void *>(localVirtualAddress_));
+        BM_LOG_WARN("Destructor unable to cleanup, ret:" << ret
+                                                         << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_)
+                                                         << " va:" << reinterpret_cast<void *>(localVirtualAddress_));
     }
 }
 
@@ -110,7 +110,7 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
         auto slice = slices_.begin()->second.slice;
         auto ret = ReleaseSliceMemory(slice);
         if (ret != BM_OK) {
-            BM_LOG_WARN("ReleaseSliceMemory failed during unreserve, ret:" << ret << " slice:" << slice);
+            BM_LOG_WARN("Unable to ReleaseSliceMemory during unreserve, ret:" << ret << " slice:" << slice);
         }
     }
     while (!registerSlices_.empty()) {
@@ -123,7 +123,7 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
         auto ret = DlHalApi::HalMemAddressFree(lva);
         BM_LOG_INFO("free reserved address va:" << lva << " return:" << ret);
         if (ret != BM_OK) {
-            BM_LOG_WARN("HalMemAddressFree failed, keep reserved VA state. ret:"
+            BM_LOG_WARN("Unable to HalMemAddressFree, keep reserved VA state. ret:"
                         << ret << " gva:" << reinterpret_cast<void *>(globalVirtualAddress_) << " va:" << lva);
         }
     }

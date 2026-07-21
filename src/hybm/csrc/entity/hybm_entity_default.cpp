@@ -263,7 +263,7 @@ int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, ui
     }
 
     bool isHbm = realSlice->GetMemoryType() == HYBM_MEM_TYPE_DEVICE;
-    BM_LOG_INFO("Hbm: " << isHbm << std::hex << ", addrs: 0x" << addr);
+    BM_LOG_DEBUG("Hbm: " << isHbm << std::hex << ", addrs: 0x" << addr);
 
     if (transportManager_ != nullptr) {
         transport::TransportMemoryRegion mr;
@@ -367,7 +367,7 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
         std::copy_n(nic.c_str(), copyLen, exportInfo.nic);
         const auto privateData = transportManager_->GetPrivateData();
         exportInfo.transportPrivateData = privateData;
-        BM_LOG_INFO("transport get nic:" << nic << ", ip: " << privateData.ip);
+        BM_LOG_DEBUG("transport get nic:" << nic << ", ip: " << privateData.ip);
     }
     auto ret = LiteralExInfoTranslater<EntityExportInfo>{}.Serialize(exportInfo, info);
     if (ret != BM_OK) {
@@ -386,7 +386,7 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
             BM_LOG_ERROR("hbm segment is null, failed to export segment info in trans scene");
             return BM_ERROR;
         } else {
-            BM_LOG_INFO("hbm segment is null, skip export segment info");
+            BM_LOG_DEBUG("hbm segment is null, skip export segment info");
             return BM_OK;
         }
     }
@@ -461,10 +461,10 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
     }
 
     if (options_.scene != HYBM_SCENE_TRANS) {
-        BM_LOG_INFO("Success to export slice rankId:" << transportKey.rankId << " addr:" << transportKey.address
-                                                      << " key:" << transportKey.key);
+        BM_LOG_DEBUG("Success to export slice rankId:" << transportKey.rankId << " addr:" << transportKey.address
+                                                       << " key:" << transportKey.key);
     } else {
-        BM_LOG_INFO("Success to export slice rankId:" << options_.rankId << " addr:" << realSlice->vAddress_);
+        BM_LOG_DEBUG("Success to export slice rankId:" << options_.rankId << " addr:" << realSlice->vAddress_);
     }
     return BM_OK;
 }
@@ -1074,8 +1074,8 @@ int32_t MemEntityDefault::ImportForTransportPrecheck(const ExchangeInfoReader de
             std::unique_lock<std::mutex> uniqueLock{importMutex_};
             importedMemories_[transportKey.rankId].insert(transportKey.key);
         }
-        BM_LOG_INFO("Success to import slice rankId:" << transportKey.rankId << " addr:" << std::hex
-                                                      << transportKey.address);
+        BM_LOG_DEBUG("Success to import slice rankId:" << transportKey.rankId << " addr:" << std::hex
+                                                       << transportKey.address);
     }
     return BM_OK;
 }
@@ -1093,7 +1093,7 @@ int32_t MemEntityDefault::ImportForTransport() noexcept
         transOptions.options[rank.first].role = static_cast<hybm_role_type>(rank.second.role);
         transOptions.options[rank.first].nic = rank.second.nic;
         transOptions.options[rank.first].privateData = rank.second.transportPrivateData;
-        BM_LOG_INFO("ImportForTransport rankid:" << rank.first);
+        BM_LOG_DEBUG("ImportForTransport rankid:" << rank.first);
     }
     for (auto &mr : importedMemories_) {
         auto pos = transOptions.options.find(mr.first);

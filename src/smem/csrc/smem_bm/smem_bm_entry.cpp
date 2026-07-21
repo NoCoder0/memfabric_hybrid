@@ -266,8 +266,8 @@ Result SmemBmEntry::GroupOpBarrier(int32_t input)
 Result SmemBmEntry::JoinHandle(uint32_t rk)
 {
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    SM_LOG_INFO("do join func, local_rk: " << options_.rank << " receive_rk: " << rk
-                                           << ", rank size is: " << globalGroup_->GetRankSize());
+    SM_LOG_DEBUG("do join func, local_rk: " << options_.rank << " receive_rk: " << rk
+                                            << ", rank size is: " << globalGroup_->GetRankSize());
 
     uint32_t unitSize = sizeof(hybm_exchange_info);
     std::string localInfo;
@@ -344,8 +344,8 @@ join_exit:
         goto rollback_exit;
     }
 
-    SM_LOG_INFO("end join func, local_rk: " << options_.rank << " receive_rk: " << rk << " receive_info_num:"
-                                            << allInfo.size() << ", rank size is: " << globalGroup_->GetRankSize());
+    SM_LOG_DEBUG("end join func, local_rk: " << options_.rank << " receive_rk: " << rk << " receive_info_num:"
+                                             << allInfo.size() << ", rank size is: " << globalGroup_->GetRankSize());
     InvokeEventCb(rk, SMEM_GROUP_EVENT_JOIN);
     return SM_OK;
 
@@ -359,8 +359,8 @@ rollback_exit:
 Result SmemBmEntry::UpdateHandle(uint32_t rk)
 {
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    SM_LOG_INFO("do update func, local_rk: " << options_.rank << " receive_rk: " << rk
-                                             << ", rank size is: " << globalGroup_->GetRankSize());
+    SM_LOG_DEBUG("do update func, local_rk: " << options_.rank << " receive_rk: " << rk
+                                              << ", rank size is: " << globalGroup_->GetRankSize());
 
     uint32_t unitSize = sizeof(hybm_exchange_info);
     std::string xinfo;
@@ -404,14 +404,14 @@ update_exit:
         return ret;
     }
 
-    SM_LOG_INFO("end update func, local_rk: " << options_.rank << " receive_rk: " << rk
-                                              << ", rank size is: " << globalGroup_->GetRankSize());
+    SM_LOG_DEBUG("end update func, local_rk: " << options_.rank << " receive_rk: " << rk
+                                               << ", rank size is: " << globalGroup_->GetRankSize());
     return SM_OK;
 }
 
 Result SmemBmEntry::LeaveHandle(uint32_t rk)
 {
-    SM_LOG_INFO("do leave func, receive_rk: " << rk);
+    SM_LOG_DEBUG("do leave func, receive_rk: " << rk);
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
     auto ret = hybm_remove_imported(entity_, rk, 0);
     if (ret != 0) {
@@ -449,7 +449,7 @@ Result SmemBmEntry::Join(uint32_t flags)
     while (true) {
         bool connected = globalGroup_->GetStoreConnectStatus();
         if (wasDisconnected && connected && resetCount < 1) {
-            SM_LOG_INFO("store reconnected after disconnect, resetting join timer. rank: " << options_.rank);
+            SM_LOG_DEBUG("store reconnected after disconnect, resetting join timer. rank: " << options_.rank);
             start_time = std::chrono::steady_clock::now();
             ++resetCount;
         }
@@ -694,7 +694,7 @@ Result SmemBmEntry::RegisterMem(uint64_t addr, uint64_t size)
     auto slice = hybm_register_local_memory(entity_, reinterpret_cast<void *>(addr), size, 0);
     if (slice != nullptr) {
         registedSlice_.emplace(addr, std::make_pair(size, slice));
-        SM_LOG_INFO("RegisterMem ok: addr=0x" << std::hex << addr << std::dec << " size=" << size);
+        SM_LOG_DEBUG("RegisterMem ok: addr=0x" << std::hex << addr << std::dec << " size=" << size);
         return SM_OK;
     }
     SM_LOG_ERROR("RegisterMem fail: addr=0x" << std::hex << addr << std::dec << " size=" << size);
@@ -718,7 +718,7 @@ Result SmemBmEntry::UnRegisterMem(uint64_t addr)
         return SM_ERROR;
     }
     registedSlice_.erase(iter);
-    SM_LOG_INFO("UnRegisterMem ok: addr=0x" << std::hex << addr << std::dec << " size=" << sz);
+    SM_LOG_DEBUG("UnRegisterMem ok: addr=0x" << std::hex << addr << std::dec << " size=" << sz);
     return SM_OK;
 }
 

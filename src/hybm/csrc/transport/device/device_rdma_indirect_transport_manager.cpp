@@ -176,7 +176,7 @@ int RdmaIndirectTransportManager::BatchCopy(std::vector<void *> &srcAddrs1, std:
 
 void RdmaIndirectTransportManager::AcceptNewConnection()
 {
-    BM_LOG_INFO("AcceptNewConnection accept  start");
+    BM_LOG_INFO("AcceptNewConnection accept start");
     sockaddr_storage clientAddr{};
     socklen_t addrLen = sizeof(clientAddr);
     int clientFd = accept(gServerSocket_, reinterpret_cast<sockaddr *>(&clientAddr), &addrLen);
@@ -1077,12 +1077,12 @@ Result RdmaIndirectTransportManager::Prepare(const HybmTransPrepareOptions &opti
     HybmTransPrepareOptions modifiedOptions = options;
     for (auto &[rankId, info] : modifiedOptions.options) {
         info.memKeys.push_back(info.privateData.key);
-        BM_LOG_INFO("Prepare ranId: " << rankId << ", localRankId:" << localRankId_ << ", ip:" << info.privateData.ip);
+        BM_LOG_DEBUG("Prepare ranId: " << rankId << ", localRankId:" << localRankId_ << ", ip:" << info.privateData.ip);
         if (rankId == localRankId_) {
             continue;
         }
         nics_[rankId] = info.privateData.ip;
-        BM_LOG_INFO("Prepare ranId: " << rankId << ", nic: " << nics_[rankId]);
+        BM_LOG_DEBUG("Prepare ranId: " << rankId << ", nic: " << nics_[rankId]);
     }
     return RdmaTransportManager::Prepare(modifiedOptions);
 }
@@ -1164,7 +1164,7 @@ Result RdmaIndirectTransportManager::Connect()
         if (ConnectToRemote(nics_[i], i, localRankId_) < 0) {
             return BM_ERROR;
         }
-        BM_LOG_INFO("ConnectToRemote Prepare ranId: " << i << ", nic: " << nics_[i]);
+        BM_LOG_DEBUG("ConnectToRemote Prepare ranId: " << i << ", nic: " << nics_[i]);
     }
     return RdmaTransportManager::Connect();
 }
@@ -1199,7 +1199,7 @@ Result RdmaIndirectTransportManager::UpdateRankOptions(const HybmTransPrepareOpt
         if (ConnectToRemote(nics_[rankId], rankId, localRankId_) < 0) {
             return BM_ERROR;
         }
-        BM_LOG_INFO("ConnectToRemote Prepare ranId: " << rankId << ", nic: " << nics_[rankId]);
+        BM_LOG_DEBUG("ConnectToRemote Prepare ranId: " << rankId << ", nic: " << nics_[rankId]);
     }
     return RdmaTransportManager::UpdateRankOptions(modifiedOptions);
 }

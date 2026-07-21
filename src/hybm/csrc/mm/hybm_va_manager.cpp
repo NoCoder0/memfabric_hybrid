@@ -102,7 +102,7 @@ Result HybmVaManager::AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo
     AllocatedGvaInfo info(baseInfo, localRankId, importedRankId);
     const auto ret = AddVaInfo(info);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
-    BM_LOG_INFO("AddVaInfoFromExternal success: " << info);
+    BM_LOG_DEBUG("AddVaInfoFromExternal success: " << info);
     return BM_OK;
 }
 
@@ -111,7 +111,7 @@ Result HybmVaManager::AddVaInfo(const BaseAllocatedGvaInfo &baseInfo, uint32_t l
     AllocatedGvaInfo info(baseInfo, localRankId);
     const auto ret = AddVaInfo(info, onlyGva);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
-    BM_LOG_INFO("AddVaInfo success: " << info);
+    BM_LOG_DEBUG("AddVaInfo success: " << info);
     return BM_OK;
 }
 
@@ -138,7 +138,7 @@ void HybmVaManager::RemoveOneVaInfo(uint64_t va, uint32_t type)
         }
     }
     allocatedMap_[type].erase(it);
-    BM_LOG_INFO("RemoveOneGvaInfo success: gva=" << VaToStr(va) << " type=" << type);
+    BM_LOG_DEBUG("RemoveOneGvaInfo success: gva=" << VaToStr(va) << " type=" << type);
 }
 
 uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t outputType)
@@ -377,7 +377,7 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
     auto lvaResult = result;
     lvaResult.size = localSize;
     reservedMap_[t][lvaResult.va[t]] = lvaResult;
-    BM_LOG_INFO("AllocReserveGva success: " << result);
+    BM_LOG_DEBUG("AllocReserveGva success: " << result);
     return result;
 }
 
@@ -396,7 +396,7 @@ ReservedGvaInfo HybmVaManager::AllocReserveLva(uint32_t localRankId, uint64_t si
     result.memType = memType;
     result.localRankId = localRankId;
     reservedMap_[type][result.va[type]] = result;
-    BM_LOG_INFO("AllocReserveLva success: " << result);
+    BM_LOG_DEBUG("AllocReserveLva success: " << result);
     return result;
 }
 
@@ -427,7 +427,7 @@ uint64_t HybmVaManager::AllocReserveLvaInner(uint32_t localRankId, uint64_t size
         return 0;
     }
 
-    BM_LOG_INFO("AllocReserveLva success: " << VaToStr(freeAddr) << " size: " << size);
+    BM_LOG_DEBUG("AllocReserveLva success: " << VaToStr(freeAddr) << " size: " << size);
     return freeAddr;
 }
 
@@ -444,7 +444,7 @@ void HybmVaManager::FreeReserveGva(uint64_t addr)
         return;
     }
     const ReservedGvaInfo &info = it->second;
-    BM_LOG_INFO("FreeReserveGva: " << info);
+    BM_LOG_DEBUG("FreeReserveGva: " << info);
     auto type = (info.va[HVM_DVA] != 0 ? HVM_DVA : HVM_HVA);
     reservedMap_[type].erase(info.va[type]);
     reservedMap_[HVM_GVA].erase(it);
@@ -464,7 +464,7 @@ void HybmVaManager::FreeReserveLva(uint64_t addr, uint32_t type)
         return;
     }
     const ReservedGvaInfo &info = it->second;
-    BM_LOG_INFO("FreeReserveLva: " << info);
+    BM_LOG_DEBUG("FreeReserveLva: " << info);
     reservedMap_[type].erase(addr);
     BM_LOG_DEBUG("FreeReserveLva success: addr=" << VaToStr(addr));
 }

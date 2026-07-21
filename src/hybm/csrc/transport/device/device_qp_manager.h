@@ -15,6 +15,8 @@
 
 #include <netinet/in.h>
 #include <cstdint>
+#include <string>
+#include <vector>
 #include <unordered_set>
 #include <unordered_map>
 #include <atomic>
@@ -69,6 +71,7 @@ public:
     virtual UserQpInfo *GetQpHandleWithRankId(uint32_t rankId) noexcept = 0;
     virtual void PutQpHandle(UserQpInfo *qp) const noexcept = 0;
     virtual bool CheckQpReady(const std::vector<uint32_t> &rankIds) const noexcept;
+    virtual std::string GetErrorConnectionsStatus(const std::vector<uint32_t> &rankIds) const noexcept;
 
 protected:
     void *CreateLocalSocket() noexcept;
