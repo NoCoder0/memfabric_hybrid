@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 #include <cassert>
+#include <iterator>
 #include <string>
 
 #include "dl_acl_api.h"
@@ -682,13 +683,13 @@ DeviceUrmaTransportManager::CompletionContext *DeviceUrmaTransportManager::FindC
     return nullptr;
 }
 
-Result DeviceUrmaTransportManager::ReleasePendingTransfersLocked(CompletionContext &ctx)
+Result DeviceUrmaTransportManager::ReleasePendingTransfersLocked(std::vector<PendingTransfer> &pendingTransfers)
 {
     Result finalRet = BM_OK;
-    auto it = ctx.pendingTransfers.begin();
-    while (it != ctx.pendingTransfers.end()) {
+    auto it = pendingTransfers.begin();
+    while (it != pendingTransfers.end()) {
         if (it->buffers.dstList == nullptr) {
-            it = ctx.pendingTransfers.erase(it);
+            it = pendingTransfers.erase(it);
             continue;
         }
         auto ret = ReleaseDeviceTransferBuffers(it->buffers);
@@ -700,16 +701,41 @@ Result DeviceUrmaTransportManager::ReleasePendingTransfersLocked(CompletionConte
             it->inFlight = false;
             ++it;
         } else {
-            it = ctx.pendingTransfers.erase(it);
+            it = pendingTransfers.erase(it);
         }
     }
     return finalRet;
 }
 
-Result DeviceUrmaTransportManager::SynchronizeContextLocked(CompletionContext &ctx)
+void DeviceUrmaTransportManager::ExtractRankPending(std::vector<PendingTransfer> &src, uint32_t rankId,
+                                                    std::vector<PendingTransfer> &dst)
+{
+    auto it = src.begin();
+    while (it != src.end()) {
+        if (it->rankId == rankId) {
+            dst.push_back(std::move(*it));
+            it = src.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void DeviceUrmaTransportManager::RestoreRankPending(std::vector<PendingTransfer> &src,
+                                                    std::vector<PendingTransfer> &dst)
+{
+    if (src.empty()) {
+        return;
+    }
+    dst.insert(dst.end(), std::make_move_iterator(src.begin()), std::make_move_iterator(src.end()));
+    src.clear();
+}
+
+Result DeviceUrmaTransportManager::SynchronizeContextLocked(void *notify, void *stream,
+                                                            std::vector<PendingTransfer> &pendingTransfers)
 {
     bool hasInFlight = false;
-    for (const auto &pt : ctx.pendingTransfers) {
+    for (const auto &pt : pendingTransfers) {
         if (pt.inFlight) {
             hasInFlight = true;
             break;
@@ -717,20 +743,20 @@ Result DeviceUrmaTransportManager::SynchronizeContextLocked(CompletionContext &c
     }
 
     if (hasInFlight) {
-        void *stream = HybmStreamManager::GetThreadAclStream();
-        auto notifyRet = DlAclApi::AclrtWaitAndResetNotify(ctx.notify, stream, HYBM_DEVICE_KERNEL_TIMEOUT_S);
+        auto notifyRet = DlAclApi::AclrtWaitAndResetNotify(notify, stream, HYBM_DEVICE_KERNEL_TIMEOUT_S);
         if (notifyRet != BM_OK) {
-            BM_LOG_WARN("device_urma AclrtWaitAndResetNotify failed, notify: " << ctx.notifyId
-                                                                               << " ret: " << notifyRet);
+            BM_LOG_ERROR("device_urma SynchronizeContext AclrtWaitAndResetNotify failed, notify=" << notify << " ret="
+                                                                                                  << notifyRet);
+            return notifyRet;
         }
         auto syncRet = DlAclApi::AclrtSynchronizeStream(stream);
         if (syncRet != BM_OK) {
-            BM_LOG_ERROR("device_urma AclrtSynchronizeStream failed, notifyRet: " << notifyRet
-                                                                                  << " syncRet: " << syncRet);
+            BM_LOG_ERROR("device_urma SynchronizeContext AclrtSynchronizeStream failed, syncRet="
+                         << syncRet << ", notify=" << notify << ", stream=" << stream);
             return syncRet;
         }
     }
-    return ReleasePendingTransfersLocked(ctx);
+    return ReleasePendingTransfersLocked(pendingTransfers);
 }
 
 Result DeviceUrmaTransportManager::CloseDevice()
@@ -740,9 +766,10 @@ Result DeviceUrmaTransportManager::CloseDevice()
         return BM_OK;
     }
     for (const auto &ctxSp : registry_) {
-        if (!ctxSp)
+        if (!ctxSp) {
             continue;
-        (void)ReleasePendingTransfersLocked(*ctxSp);
+        }
+        (void)ReleasePendingTransfersLocked(ctxSp->pendingTransfers);
     }
 
     for (const auto &ctxSp : registry_) {
@@ -1647,8 +1674,7 @@ Result DeviceUrmaTransportManager::StageAndLaunchTransfer(CompletionContext &ctx
     }
 
     std::lock_guard<std::mutex> lock_guard(state.rankMutex);
-    ret = LaunchDeviceKernelBatch(pt.buffers, state.thread, isRead, state.channel, state.remoteFlagAddr, ctx.notifyAddr,
-                                  ctx.notifyLen, localVec.size());
+    ret = LaunchDeviceKernelBatch(pt.buffers, state.thread, isRead, state.channel, localVec.size());
     if (ret != BM_OK) {
         auto releaseRet = ReleaseDeviceTransferBuffers(pt.buffers);
         if (releaseRet != BM_OK) {
@@ -1869,8 +1895,7 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
 
 Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers,
                                                            HcommThreadHandle thread, bool isRead,
-                                                           HcommChannelHandle channel, uint64_t remoteFlagAddr,
-                                                           uint64_t notifyAddr, uint32_t notifyLen, size_t batchSize)
+                                                           HcommChannelHandle channel, size_t batchSize)
 {
     HybmOneSideOpParam args{};
     args.thread = thread;
@@ -1879,10 +1904,6 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferB
     args.dst_buf_addr_list = static_cast<void **>(buffers.dstList);
     args.src_buf_addr_list = static_cast<void **>(buffers.srcList);
     args.len_list = static_cast<uint64_t *>(buffers.lenList);
-    args.remote_flag_addr = remoteFlagAddr;
-    args.local_flag_addr = notifyAddr;
-    args.flag_size = notifyLen;
-
     aclrtArgsHandle argsHandle = nullptr;
     auto funcHandle = GetDeviceKernelFunc(isRead);
     auto ret = DlAclApi::AclrtKernelArgsInit(funcHandle, &argsHandle);
@@ -1930,6 +1951,96 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferB
     return BM_OK;
 }
 
+Result DeviceUrmaTransportManager::LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel,
+                                                            uint64_t remoteFlagAddr, uint64_t notifyAddr,
+                                                            uint32_t notifyLen)
+{
+    if (thread == 0 || channel == 0 || remoteFlagAddr == 0 || notifyAddr == 0 || notifyLen == 0) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify invalid param: thread="
+                     << thread << " channel=" << channel << " remoteFlag=0x" << std::hex << remoteFlagAddr << std::dec
+                     << " notifyAddr=0x" << std::hex << notifyAddr << std::dec << " notifyLen=" << notifyLen);
+        return BM_INVALID_PARAM;
+    }
+
+    HybmOneSideOpParam args{};
+    args.thread = thread;
+    args.channel = channel;
+    args.remote_flag_addr = remoteFlagAddr;
+    args.local_flag_addr = notifyAddr;
+    args.flag_size = notifyLen;
+
+    aclrtArgsHandle argsHandle = nullptr;
+    auto funcHandle = GetDeviceKernelFunc(true);
+    auto ret = DlAclApi::AclrtKernelArgsInit(funcHandle, &argsHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtKernelArgsInit failed, ret: " << ret);
+        return ret;
+    }
+    aclrtParamHandle paramHandle = nullptr;
+    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, &args, sizeof(args), &paramHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtKernelArgsAppend failed, ret: " << ret);
+        return ret;
+    }
+    ret = DlAclApi::AclrtKernelArgsFinalize(argsHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtKernelArgsFinalize failed, ret: " << ret);
+        return ret;
+    }
+    void *stream = HybmStreamManager::GetThreadAclStream();
+    if (stream == nullptr) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify GetThreadAclStream failed");
+        return BM_DL_FUNCTION_FAILED;
+    }
+
+    aclrtLaunchKernelAttr attr{};
+    attr.id = aclrtLaunchKernelAttrId::ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
+    attr.value.timeout = HYBM_NOTIFY_DEFAULT_WAIT_TIME_S;
+    aclrtLaunchKernelCfg cfg{};
+    cfg.attrs = &attr;
+    cfg.numAttrs = 1;
+
+    ret = DlAclApi::AclrtLaunchKernelWithConfig(funcHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
+                                                nullptr);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtLaunchKernelWithConfig failed, kernel: "
+                     << HYBM_DEVICE_FUNC_READ << " ret: " << ret);
+        return ret;
+    }
+
+    ret = DlAclApi::AclrtSynchronizeStream(stream);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtSynchronizeStream failed, ret: " << ret);
+        return ret;
+    }
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::SynchronizeRankPendingLocked(CompletionContext &ctx, RemoteRankState &state,
+                                                                uint32_t rankId, bool hasInFlight)
+{
+    std::lock_guard<std::mutex> rankLock(state.rankMutex);
+    if (hasInFlight) {
+        auto ret =
+            LaunchDeviceKernelNotify(state.thread, state.channel, state.remoteFlagAddr, ctx.notifyAddr, ctx.notifyLen);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma SynchronizeRankPending LaunchDeviceKernelNotify failed, rankId="
+                         << rankId << " ret=" << ret);
+            return ret;
+        }
+    }
+
+    std::vector<PendingTransfer> rankPending;
+    ExtractRankPending(ctx.pendingTransfers, rankId, rankPending);
+
+    auto syncRet = SynchronizeContextLocked(ctx.notify, ctx.stream, rankPending);
+    if (syncRet != BM_OK) {
+        RestoreRankPending(rankPending, ctx.pendingTransfers);
+        return syncRet;
+    }
+    return BM_OK;
+}
+
 Result DeviceUrmaTransportManager::Synchronize(uint32_t rankId)
 {
     std::lock_guard<std::mutex> guard(mutex_);
@@ -1951,16 +2062,20 @@ Result DeviceUrmaTransportManager::Synchronize(uint32_t rankId)
         return BM_OK;
     }
 
-    // Check if current context has any entry for this rank
+    // Check if current context has any entry for this rank and whether any are in-flight
     bool needSync = false;
+    bool hasInFlight = false;
     for (const auto &pt : currentCtx->pendingTransfers) {
         if (pt.rankId == targetRankId) {
             needSync = true;
-            break;
+            if (pt.inFlight) {
+                hasInFlight = true;
+                break;
+            }
         }
     }
     if (needSync) {
-        return SynchronizeContextLocked(*currentCtx);
+        return SynchronizeRankPendingLocked(*currentCtx, rankIt->second, targetRankId, hasInFlight);
     }
 
     // Current context has no pending for target rankId. If any OTHER context

@@ -218,8 +218,8 @@ private:
     // Find current thread's context via TLS binding only (no registry scan for owner)
     CompletionContext *FindCurrentContextLocked() const;
 
-    // Synchronize the entire completion domain of the current thread context
-    Result SynchronizeContextLocked(CompletionContext &ctx);
+    // Synchronize and release a specific rank's pending transfers
+    Result SynchronizeContextLocked(void *notify, void *stream, std::vector<PendingTransfer> &pendingTransfers);
 
     // CloseDevice helpers
     void CloseDeviceCleanupResourcesLocked();
@@ -230,7 +230,15 @@ private:
     // Device kernel buffer management
     aclrtFuncHandle GetDeviceKernelFunc(bool isRead) const;
     static Result ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
-    static Result ReleasePendingTransfersLocked(CompletionContext &ctx);
+    static Result ReleasePendingTransfersLocked(std::vector<PendingTransfer> &pendingTransfers);
+    // Move all entries matching rankId from src to dst
+    static void ExtractRankPending(std::vector<PendingTransfer> &src, uint32_t rankId,
+                                   std::vector<PendingTransfer> &dst);
+    // Move all entries back from src to dst (for error recovery)
+    static void RestoreRankPending(std::vector<PendingTransfer> &src, std::vector<PendingTransfer> &dst);
+    // Marker-launch + extract + sync + release for a single rank's pending
+    Result SynchronizeRankPendingLocked(CompletionContext &ctx, RemoteRankState &state, uint32_t rankId,
+                                        bool hasInFlight);
 
     // Device kernel launch helpers
     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
@@ -238,8 +246,10 @@ private:
                                       const std::vector<uint64_t> &sizes, DeviceTransferBuffers &outBuffers);
     // Device kernel launch (builds args, configures and launches)
     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
-                                   HcommChannelHandle channel, uint64_t remoteFlagAddr, uint64_t notifyAddr,
-                                   uint32_t notifyLen, size_t batchSize);
+                                   HcommChannelHandle channel, size_t batchSize);
+    // Device kernel launch for marker-only notify (no data transfer)
+    Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
+                                    uint64_t notifyAddr, uint32_t notifyLen);
 
     mutable std::mutex mutex_{};
     bool opened_{false};

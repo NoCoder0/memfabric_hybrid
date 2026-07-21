@@ -34,6 +34,13 @@ bool IsNotSupported(int32_t ret)
     return ret == BM_NOT_SUPPORTED || ret == BM_NOT_SUPPORT_FUNC || ret == BM_UNDER_API_UNLOAD;
 }
 
+bool IsMarkerOnly(const HybmOneSideOpParam *param)
+{
+    return param->list_num == 0 && param->dst_buf_addr_list == nullptr && param->src_buf_addr_list == nullptr &&
+           param->len_list == nullptr && param->remote_flag_addr != 0 && param->local_flag_addr != 0 &&
+           param->flag_size != 0;
+}
+
 int32_t BatchModeStart(const char *batchTag)
 {
     if (HcommBatchModeStart == nullptr) {
@@ -87,13 +94,26 @@ int32_t BatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHand
 
 uint32_t CheckParam(const HybmOneSideOpParam *param)
 {
-    if (param == nullptr || param->thread == 0 || param->channel == 0 || param->list_num == 0 ||
-        param->dst_buf_addr_list == nullptr || param->src_buf_addr_list == nullptr || param->len_list == nullptr) {
+    if (param == nullptr || param->thread == 0 || param->channel == 0) {
+        HYBM_LOGE(BM_INVALID_PARAM, "invalid HybmOneSideOpParam, param=%p thread=%lu channel=%lu", (void *)param,
+                  param ? param->thread : 0, param ? param->channel : 0);
+        return BM_INVALID_PARAM;
+    }
+
+    if (param->list_num == 0) {
+        if (IsMarkerOnly(param)) {
+            return BM_OK;
+        }
         HYBM_LOGE(BM_INVALID_PARAM,
-                  "invalid HybmOneSideOpParam, param=%p thread=%lu channel=%lu list_num=%u dst=%p src=%p len=%p",
-                  (void *)param, param ? param->thread : 0, param ? param->channel : 0, param ? param->list_num : 0,
-                  param ? param->dst_buf_addr_list : nullptr, param ? param->src_buf_addr_list : nullptr,
-                  param ? param->len_list : nullptr);
+                  "invalid marker-only: list_num=0 dst=%p src=%p len=%p remote=0x%lx local=0x%lx fsize=%u",
+                  param->dst_buf_addr_list, param->src_buf_addr_list, param->len_list, param->remote_flag_addr,
+                  param->local_flag_addr, param->flag_size);
+        return BM_INVALID_PARAM;
+    }
+
+    if (param->dst_buf_addr_list == nullptr || param->src_buf_addr_list == nullptr || param->len_list == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "incomplete data param: list_num=%u dst=%p src=%p len=%p", param->list_num,
+                  param->dst_buf_addr_list, param->src_buf_addr_list, param->len_list);
         return BM_INVALID_PARAM;
     }
     return BM_OK;
@@ -181,10 +201,12 @@ uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
         return BM_ERROR;
     }
 
-    ret = HybmBatchTransferTask(isRead, param);
-    if (ret != BM_OK) {
-        (void)BatchModeEnd(kBatchTag);
-        return BM_ERROR;
+    if (param->list_num > 0) {
+        ret = HybmBatchTransferTask(isRead, param);
+        if (ret != BM_OK) {
+            (void)BatchModeEnd(kBatchTag);
+            return BM_ERROR;
+        }
     }
 
     ret = static_cast<uint32_t>(ChannelFenceOnThread(param->thread, param->channel));

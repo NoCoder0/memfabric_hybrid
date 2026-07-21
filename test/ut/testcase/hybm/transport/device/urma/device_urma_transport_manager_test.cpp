@@ -821,9 +821,24 @@ int32_t MockAclrtKernelArgsAppend(aclrtArgsHandle argsHandle, void *param, size_
     const auto *args = static_cast<const TestHybmOneSideOpParam *>(param);
     EXPECT_EQ(args->thread, MOCK_THREAD);
     EXPECT_EQ(args->channel, MOCK_CHANNEL);
-    EXPECT_GT(args->listNum, 0U);
-    EXPECT_EQ(args->localFlagAddr, MOCK_NOTIFY_ADDR);
-    EXPECT_EQ(args->flagSize, MOCK_NOTIFY_LEN);
+    if (args->listNum == 0) {
+        // Marker-only / notify kernel launch: no data, flag fields valid
+        EXPECT_EQ(args->dstBufAddrList, nullptr);
+        EXPECT_EQ(args->srcBufAddrList, nullptr);
+        EXPECT_EQ(args->lenList, nullptr);
+        EXPECT_NE(args->remoteFlagAddr, 0U);
+        EXPECT_NE(args->localFlagAddr, 0U);
+        EXPECT_NE(args->flagSize, 0U);
+    } else {
+        // Data kernel launch: list pointers valid, flag fields are 0 (production
+        // LaunchDeviceKernelBatch zero-initializes HybmOneSideOpParam and does not
+        // set flag fields; LaunchDeviceKernelNotify sets them for marker-only).
+        EXPECT_NE(args->dstBufAddrList, nullptr);
+        EXPECT_NE(args->srcBufAddrList, nullptr);
+        EXPECT_NE(args->lenList, nullptr);
+        EXPECT_EQ(args->localFlagAddr, 0U);
+        EXPECT_EQ(args->flagSize, 0U);
+    }
     *paramHandle = MOCK_PARAM_HANDLE;
     return BM_OK;
 }
@@ -1131,7 +1146,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
     info.role = HYBM_ROLE_PEER;
-    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
@@ -1529,7 +1544,7 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
     info.role = HYBM_ROLE_PEER;
-    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
@@ -1582,7 +1597,7 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
         pd.type = COMM_ADDR_TYPE_IP_V6;
         pi.privateData = MakePrivateData(pd);
         pi.role = HYBM_ROLE_PEER;
-        pi.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+        pi.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
         prep.options.emplace(peer, std::move(pi));
         ASSERT_EQ(manager.Prepare(prep), BM_OK);
     }
@@ -1596,8 +1611,13 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->pendingTransfers.size(), 2U);
 
-    // Synchronize rank 1 must also clear rank 2 (same context, shared stream)
+    // Synchronize rank 1 clears only rank 1's pending; rank 2 remains
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
+    EXPECT_EQ(ctx->pendingTransfers.size(), 1U);
+    EXPECT_EQ(ctx->pendingTransfers[0].rankId, 2U);
+
+    // Synchronize rank 2 clears the remaining pending
+    EXPECT_EQ(manager.Synchronize(2), BM_OK);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
@@ -1743,7 +1763,7 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureRetainsInFligh
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
     info.role = HYBM_ROLE_PEER;
-    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
@@ -2554,7 +2574,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
     info.role = HYBM_ROLE_PEER;
-    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1UL, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
