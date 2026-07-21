@@ -198,7 +198,7 @@ Result HcomTransportManager::CloseDevice()
 
     auto ret = DlHcomApi::ServiceDestroy(service, HCOM_RPC_SERVICE_NAME);
     if (ret != 0) {
-        BM_LOG_WARN("Failed to destroy hcom service, ret: " << ret);
+        BM_LOG_WARN("Unable to destroy hcom service, ret: " << ret);
     }
 
     mf::MfTlsUtil::CloseTlsLib();
@@ -271,7 +271,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     BM_ASSERT_LOG_AND_RETURN(mr.addr != 0 && mr.size != 0, "mr.addr = " << mr.addr << ", " << "mr.size = " << mr.size,
                              BM_INVALID_PARAM);
     if ((mr.flags & transport::REG_MR_FLAG_DRAM) == 0) {
-        BM_LOG_WARN("Failed to register hcom mr, mem type flag should be dram.");
+        BM_LOG_WARN("Unable to register hcom mr, mem type flag should be dram.");
         return BM_OK;
     }
 
@@ -529,7 +529,7 @@ Result HcomTransportManager::InnerReadRemote(uint32_t rankId, uint64_t lAddr, ui
                              "size = " << size << " > " << std::numeric_limits<uint32_t>::max(), BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId];
     if (channel == 0) {
-        BM_LOG_INFO("Failed to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
     }
     Channel_OneSideRequest req;
@@ -569,7 +569,7 @@ Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, u
                              "size = " << size << " > " << std::numeric_limits<uint32_t>::max(), BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId];
     if (channel == 0) {
-        BM_LOG_INFO("Failed to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
     }
     Channel_OneSideRequest req;
@@ -620,7 +620,7 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId];
     if (channel == 0) {
-        BM_LOG_INFO("Failed to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
     }
     Channel_OneSideRequest req;
@@ -689,7 +689,7 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId];
     if (channel == 0) {
-        BM_LOG_INFO("Failed to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
     }
     Channel_OneSideRequest req;
@@ -758,7 +758,7 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId];
     if (channel == 0) {
-        BM_LOG_INFO("Failed to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
     }
 
@@ -999,7 +999,7 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId];
     if (channel == 0) {
-        BM_LOG_INFO("Failed to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
     }
     uint32_t allBatch = descriptor.counts.size();

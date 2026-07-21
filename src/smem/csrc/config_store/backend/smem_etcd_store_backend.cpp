@@ -168,8 +168,8 @@ StoreErrorCode SmemEtcdStoreBackend::Get(const std::string &key, std::vector<uin
     std::string valueStr;
     int32_t ret = EtcdClientV3::GetInstance().GetValue(qualifiedKey, valueStr);
     if (ret != 0) {
-        STORE_LOG_WARN("[ETCD] Get key failed: " << qualifiedKey
-                                                 << ", msg: " << EtcdClientV3::GetInstance().GetLastError());
+        STORE_LOG_ERROR("[ETCD] Get key failed: " << qualifiedKey
+                                                  << ", msg: " << EtcdClientV3::GetInstance().GetLastError());
         return StoreErrorCode::NOT_EXIST;
     }
 
@@ -210,8 +210,8 @@ StoreErrorCode SmemEtcdStoreBackend::Delete(const std::string &key) noexcept
     const std::string qualifiedKey = BuildClusterQualifiedName(clusterRoot_, key);
     int32_t ret = EtcdClientV3::GetInstance().DeleteKey(qualifiedKey);
     if (ret != 0) {
-        STORE_LOG_WARN("[ETCD] Delete key failed: " << qualifiedKey
-                                                    << ", error=" << EtcdClientV3::GetInstance().GetLastError());
+        STORE_LOG_ERROR("[ETCD] Delete key failed: " << qualifiedKey
+                                                     << ", error=" << EtcdClientV3::GetInstance().GetLastError());
         return StoreErrorCode::ERROR;
     }
 

@@ -572,7 +572,7 @@ void FixedRanksQpManager::CloseConnections(std::unordered_map<uint32_t, AiCoreCo
         if (it->second.qpHandle != nullptr) {
             auto ret = DlHccpApi::RaQpDestroy(it->second.qpHandle);
             if (ret != 0) {
-                BM_LOG_WARN("destroy AI QP to server: " << it->first << " failed: " << ret);
+                BM_LOG_WARN("unable to destroy AI QP to server: " << it->first << " ret: " << ret);
             }
             it->second.qpHandle = nullptr;
         }

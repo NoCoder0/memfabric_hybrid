@@ -46,7 +46,7 @@ Result HostDataOpRDMA::Initialize() noexcept
     rdmaSwapBaseAddr_ =
         mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_HUGETLB, -1, 0);
     if (rdmaSwapBaseAddr_ == MAP_FAILED) {
-        BM_LOG_WARN("Failed to alloc with huge page, size:" << rdmaSwapSpaceSize_ << " error:" << errno << ", "
+        BM_LOG_WARN("Unable to alloc with huge page, size:" << rdmaSwapSpaceSize_ << " error:" << errno << ", "
                                                             << SafeStrError(errno)
                                                             << ". fallback to mmap with regular pagesize");
         rdmaSwapBaseAddr_ =
@@ -146,7 +146,7 @@ void HostDataOpRDMA::PreRegisterLocalMr(hybm_copy_params &params, hybm_data_copy
 
     auto ret = transportManager_->RegisterMemoryRegion(mr);
     if (ret != BM_OK) {
-        BM_LOG_WARN("Failed to pre register host rdma mr, addr:" << (void *)mr.addr << " size: " << mr.size);
+        BM_LOG_WARN("Unable to pre register host rdma mr, addr:" << (void *)mr.addr << " size: " << mr.size);
     }
 }
 

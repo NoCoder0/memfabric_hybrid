@@ -63,7 +63,7 @@ Result SmemShmEntryManager::CreateEntryById(uint32_t id, SmemShmEntryPtr &entry 
     SM_ASSERT_RETURN(inited_, SM_NOT_STARTED);
     auto iter = entryIdMap_.find(id);
     if (iter != entryIdMap_.end()) {
-        SM_LOG_WARN("create shm entry failed as already exists, id: " << id);
+        SM_LOG_WARN("unable to create shm entry as already exists, id: " << id);
         return SM_DUPLICATED_OBJECT;
     }
 

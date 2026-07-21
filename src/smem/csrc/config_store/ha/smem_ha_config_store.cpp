@@ -156,7 +156,7 @@ bool HaConfigStore::IsLeaderAlive(std::string &leaderAddr) noexcept
 {
     int backendRet = backend_->Get(KEY_LEADER, leaderAddr);
     if (backendRet != SUCCESS) {
-        SM_LOG_WARN("Backend Get failed, key: " << KEY_LEADER << ", ret: " << backendRet);
+        SM_LOG_ERROR("Backend Get failed, key: " << KEY_LEADER << ", ret: " << backendRet);
         return false;
     }
 
@@ -327,7 +327,7 @@ void HaConfigStore::StartServer() noexcept
                 recovered = true;
             }
         } else {
-            SM_LOG_WARN("Failed to parse worldSize: " << worldSizeStr);
+            SM_LOG_WARN("Unable to parse worldSize: " << worldSizeStr);
         }
     }
     if (!recovered) {

@@ -173,7 +173,7 @@ Result SmemBmEntryManager::CreateEntryById(uint32_t id, SmemBmEntryPtr &entry /*
     SM_ASSERT_RETURN(inited_, SM_NOT_STARTED);
     auto iter = entryIdMap_.find(id);
     if (iter != entryIdMap_.end()) {
-        SM_LOG_WARN("create bm entry failed as already exists, id: " << id);
+        SM_LOG_WARN("unable to create bm entry as already exists, id: " << id);
         return SM_DUPLICATED_OBJECT;
     }
 

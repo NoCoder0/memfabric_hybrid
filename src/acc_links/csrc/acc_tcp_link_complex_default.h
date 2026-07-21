@@ -367,7 +367,7 @@ inline Result AccTcpLinkComplexDefault::HandlePollIn() noexcept
             /* if errno is eagain is normal, need to continue to receive */
             /* else meaning failed to read from socket, socket is error */
             if (errorNumber != EAGAIN) {
-                LOG_WARN("Link " << id_ << " receive header failed, errno " << errorNumber);
+                LOG_WARN("Link " << id_ << " receive header not successful, reason " << errorNumber);
             }
 
             return (errorNumber == EAGAIN ? ACC_LINK_EAGAIN : ACC_LINK_ERROR);
@@ -390,13 +390,13 @@ inline Result AccTcpLinkComplexDefault::HandlePollIn() noexcept
     } else {                            /* ECONNRESET is broken during io, SUCCESS is broken during idle time. */
         const auto errorNumber = errno; // avoid errno writed by log
         if (errorNumber == ECONNRESET || errorNumber == 0) {
-            LOG_INFO("Link " << id_ << " receive body failed, reset by peer, errno " << errorNumber);
+            LOG_DEBUG("Link " << id_ << " receive body failed, reset by peer, errno " << errorNumber);
             return ACC_LINK_ERROR; /* socket is closed by peer, socket is error */
         }
         /* if errno is eagain is normal, need to continue to receive */
         /* else meaning failed to read from socket,socket is error */
         if (errorNumber != EAGAIN) {
-            LOG_ERROR("Link " << id_ << " receive body failed, errno " << errorNumber);
+            LOG_WARN("Link " << id_ << " receive body not successful, reason " << errorNumber);
         }
 
         return (errorNumber == EAGAIN ? ACC_LINK_EAGAIN : ACC_LINK_ERROR);

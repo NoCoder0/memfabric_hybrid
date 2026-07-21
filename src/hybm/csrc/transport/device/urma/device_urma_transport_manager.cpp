@@ -1532,6 +1532,7 @@ Result DeviceUrmaTransportManager::AsyncConnect()
 
 Result DeviceUrmaTransportManager::WaitForConnected(int64_t timeoutNs)
 {
+    (void)timeoutNs;
     return BM_OK;
 }
 

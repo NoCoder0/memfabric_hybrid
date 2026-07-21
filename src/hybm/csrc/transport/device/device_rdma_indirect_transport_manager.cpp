@@ -1121,9 +1121,9 @@ int RdmaIndirectTransportManager::ConnectToRemote(const std::string &nic, uint32
         ret = connect(sockfd, serverAddr, addrLen);
         if (ret < 0) {
             if (i < MAX_RETRIES - 1) {
-                BM_LOG_WARN("connect attempt " << (i + 1) << " failed, localRankId: " << localRankId
-                                               << ", remoteRankId: " << remoteRankId << ", retrying in "
-                                               << RETRY_DELAY_MS << "ms, nic:" << nic);
+                BM_LOG_WARN("unable to connect attempt " << (i + 1) << " , localRankId: " << localRankId
+                                                         << ", remoteRankId: " << remoteRankId << ", retrying in "
+                                                         << RETRY_DELAY_MS << "ms, nic:" << nic);
                 std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
             }
         }

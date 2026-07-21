@@ -392,7 +392,7 @@ Result SmemNetGroupEngine::RegisterExit(const std::function<void(int)> &exit)
 {
     SM_ASSERT_RETURN(!option_.dynamic, SM_ERROR);
     if (globalExitHandler_ != nullptr) {
-        SM_LOG_WARN("the exit function is not null");
+        SM_LOG_ERROR("the exit function is not null");
         return SM_INVALID_PARAM;
     }
     SM_ASSERT_RETURN(exit != nullptr, SM_INVALID_PARAM);
@@ -404,7 +404,7 @@ Result SmemNetGroupEngine::RegisterExit(const std::function<void(int)> &exit)
                                        std::placeholders::_2, std::placeholders::_3),
                              wid);
     if (ret != SM_OK) {
-        SM_LOG_WARN("group watch failed, maybe link down, ret: " << ret);
+        SM_LOG_ERROR("group watch failed, maybe link down, ret: " << ret);
         globalExitHandler_ = nullptr;
         return ret;
     }
@@ -422,17 +422,17 @@ void SmemNetGroupEngine::RankExit(int result, const std::string &key, const std:
         try {
             long tempVal = std::stol(value);
             if (tempVal < std::numeric_limits<int>::min() || tempVal > std::numeric_limits<int>::max()) {
-                SM_LOG_WARN("value out of int range: " << tempVal << " (value='" << value << "')");
+                SM_LOG_ERROR("value out of int range: " << tempVal << " (value='" << value << "')");
                 return;
             }
             val = static_cast<int>(tempVal);
         } catch (...) {
-            SM_LOG_WARN("convert string to int failed");
+            SM_LOG_ERROR("convert string to int failed");
             return;
         }
         globalExitHandler_(val);
     } else {
-        SM_LOG_WARN("global exit failed");
+        SM_LOG_ERROR("global exit failed");
     }
 }
 
@@ -655,7 +655,7 @@ int32_t SmemNetGroupEngine::AllocNumber()
 Result SmemNetGroupEngine::ReleaseNumber(int32_t val)
 {
     if (allocedSet_.count(val) == 0) {
-        SM_LOG_WARN("key(" << val << ") is not exist!");
+        SM_LOG_ERROR("key(" << val << ") is not exist!");
         return SM_OBJECT_NOT_EXISTS;
     }
     allocedSet_.erase(val);
@@ -694,8 +694,8 @@ Result SmemNetGroupEngine::TryRemovePrefixKey(uint32_t rank)
             prefixKey_.clear();
         }
     } else {
-        SM_LOG_INFO("remove key failed, src_rank:" << option_.rank << " key:" << store_->GetCompleteKey(key)
-                                                   << " ret:" << ret);
+        SM_LOG_WARN("remove key not successful, src_rank:" << option_.rank << " key:" << store_->GetCompleteKey(key)
+                                                           << " ret:" << ret);
     }
     return ret;
 }
@@ -837,7 +837,7 @@ Result SmemNetGroupEngine::GroupGatherPrefixKey(uint32_t dstRank, std::string &u
             std::string ownKey = SMEM_EXCHANGE_INFO_KEY + std::to_string(ownRank);
             auto writeRet = store_->Set(ownKey, update);
             if (writeRet != SM_OK) {
-                SM_LOG_WARN("set own prefix_key: " << store_->GetCompleteKey(ownKey) << " failed, ret:" << writeRet);
+                SM_LOG_ERROR("set own prefix_key: " << store_->GetCompleteKey(ownKey) << " failed, ret:" << writeRet);
             }
         }
         std::string key = SMEM_EXCHANGE_INFO_KEY + std::to_string(dstRank);
@@ -885,7 +885,7 @@ uint32_t SmemNetGroupEngine::ReWatchEvent()
                                        std::placeholders::_2, std::placeholders::_3),
                              wid);
     if (ret != SM_OK || wid == UINT32_MAX) {
-        SM_LOG_WARN_LIMIT("group watch failed, ret: " << ret << ", wid: " << wid);
+        SM_LOG_ERROR("group watch failed, ret: " << ret << ", wid: " << wid);
         usleep(SMEM_GROUP_SLEEP_TIMEOUT);
         return UINT32_MAX;
     }
@@ -900,7 +900,7 @@ uint32_t SmemNetGroupEngine::ReWatchLinkDown()
         WatchRankType::WATCH_RANK_LINK_DOWN,
         [this](WatchRankType type, uint32_t downRankId) { RemoteRankLinkDownCb(downRankId); }, wid);
     if (ret != SM_OK || wid == UINT32_MAX) {
-        SM_LOG_WARN_LIMIT("group watch failed, ret: " << ret);
+        SM_LOG_ERROR("group watch failed, ret: " << ret);
         usleep(SMEM_GROUP_SLEEP_TIMEOUT);
         return UINT32_MAX;
     }
@@ -1204,7 +1204,7 @@ void SmemNetGroupEngine::GroupWatchCb(int result, const std::string &key, const 
     }
 
     if (value.length() != SMEM_GROUP_INFO_SIZE) {
-        SM_LOG_WARN("receive group info size is error!");
+        SM_LOG_WARN("received group info size is incorrect.");
         ctxRet = SM_ERROR;
     }
 

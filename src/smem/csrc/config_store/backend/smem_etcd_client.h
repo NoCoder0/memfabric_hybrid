@@ -148,8 +148,8 @@ public:
         size_t rawLen = 0;
         int32_t ret = EtcdApi::EtcdGet(cli, key.data(), &rawBuf, &rawLen);
         if (ret != 0) {
-            SM_LOG_WARN("GetValue failed: EtcdGet returned " << ret << ", key: " << key
-                                                             << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
+            SM_LOG_ERROR("GetValue failed: EtcdGet returned " << ret << ", key: " << key
+                                                              << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
             return -1;
         }
         // Handle empty value case (valid scenario in etcd)
@@ -175,9 +175,9 @@ public:
         }
         int32_t ret = EtcdApi::EtcdPrefixGet(cli, ctx, flags);
         if (ret != 0) {
-            SM_LOG_WARN("PrefixGet failed: EtcdGet returned " << ret << ", prefix: " << ctx->prefix
-                                                              << ", marker:" << ctx->marker
-                                                              << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
+            SM_LOG_ERROR("PrefixGet failed: EtcdGet returned " << ret << ", prefix: " << ctx->prefix
+                                                               << ", marker:" << ctx->marker
+                                                               << ", error: " << smem::EtcdApi::EtcdGetLastError(cli));
             return -1;
         }
         return 0;

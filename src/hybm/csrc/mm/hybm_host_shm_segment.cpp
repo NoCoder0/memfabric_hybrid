@@ -43,7 +43,7 @@ bool IsHugetlbfsMounted() noexcept
 {
     struct statfs fsInfo {};
     if (statfs(HOST_SHM_HUGEPAGE_DIR, &fsInfo) != 0) {
-        BM_LOG_WARN("Failed to access hugepage dir " << HOST_SHM_HUGEPAGE_DIR << " error:" << errno << ", "
+        BM_LOG_WARN("Unable to access hugepage dir " << HOST_SHM_HUGEPAGE_DIR << " reason:" << errno << ", "
                                                      << SafeStrError(errno) << ", will fallback to /dev/shm");
         return false;
     }
@@ -59,7 +59,7 @@ bool HasAvailableHugePages() noexcept
 {
     std::ifstream memInfoFile("/proc/meminfo");
     if (!memInfoFile.is_open()) {
-        BM_LOG_WARN("Failed to open /proc/meminfo, will fallback to /dev/shm");
+        BM_LOG_WARN("Unable to open /proc/meminfo, will fallback to /dev/shm");
         return false;
     }
 
@@ -84,7 +84,7 @@ bool HasAvailableHugePages() noexcept
         return true;
     }
 
-    BM_LOG_WARN("Failed to parse HugePages_Free from /proc/meminfo, will fallback to /dev/shm");
+    BM_LOG_WARN("Unable to parse HugePages_Free from /proc/meminfo, will fallback to /dev/shm");
     return false;
 }
 } // namespace

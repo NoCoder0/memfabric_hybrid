@@ -86,7 +86,8 @@ SMEM_API int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t
 
     auto faultInjectionPointStatus = ::ock::mf::FaultInjectionPointRegistry::Register();
     if (faultInjectionPointStatus != ::ock::mf::FaultInjectionPointStatus::OK) {
-        SM_LOG_WARN("register fault injection points failed, status: " << static_cast<int>(faultInjectionPointStatus));
+        SM_LOG_WARN(
+            "unable to register fault injection points, status: " << static_cast<int>(faultInjectionPointStatus));
     }
 
     int32_t ret = SmemBmEntryManager::Instance().Initialize(storeURL, worldSize, deviceId, *config);

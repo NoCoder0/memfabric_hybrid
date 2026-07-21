@@ -153,7 +153,7 @@ void JoinableRanksQpManager::PutQpHandle(UserQpInfo *qp) const noexcept
     if (val == 1U) { // 返回减之前的值
         auto ret = DlHccpApi::RaQpDestroy(qp->qpHandle);
         if (ret != 0) {
-            BM_LOG_WARN("close qp from " << rankId_ << " failed, ret: " << ret);
+            BM_LOG_WARN("unable to close qp from " << rankId_ << " , ret: " << ret);
         }
         delete qp;
     }
@@ -612,7 +612,7 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
         }
         auto ret = DlHccpApi::RaSocketBatchClose(&closeInfo, 1U);
         if (ret != 0) {
-            BM_LOG_WARN("close socket from " << rankId_ << " to " << it->first << " failed: " << ret);
+            BM_LOG_WARN("unable to close socket from " << rankId_ << " to " << it->first << " : " << ret);
         } else {
             BM_LOG_DEBUG("close socket from " << rankId_ << " to " << it->first << " successful: " << ret);
         }

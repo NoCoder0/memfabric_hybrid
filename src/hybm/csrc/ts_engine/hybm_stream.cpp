@@ -130,7 +130,7 @@ int32_t HybmStream::AllocSqcq(uint32_t ssid)
 
     auto ret = DlHalApi::HalSqCqAllocate(deviceId_, &input, &output);
     if (ret != 0) {
-        BM_LOG_INFO("allocate sq_cq with ts_id:" << tsId_ << " failed: " << ret);
+        BM_LOG_ERROR("allocate sq_cq failed, ts_id: " << tsId_ << ", deviceId: " << deviceId_ << ", ret: " << ret);
         if (stackPtr_ != nullptr) {
             DlHalApi::HalMemFree(stackPtr_);
             stackPtr_ = nullptr;
@@ -169,7 +169,7 @@ int32_t HybmStream::AllocLogicCq()
 
     auto ret = DlHalApi::HalSqCqAllocate(deviceId_, &input, &output);
     if (ret != 0) {
-        BM_LOG_INFO("allocate logic cq with ts_id:" << tsId_ << " failed: " << ret);
+        BM_LOG_ERROR("allocate logic cq failed, ts_id: " << tsId_ << ", deviceId: " << deviceId_ << ", ret: " << ret);
         return ret;
     }
     logicCq_ = output.cqId;
@@ -186,7 +186,7 @@ int32_t HybmStream::AllocLogicCq()
 
     ret = DlHalApi::HalResourceConfig(deviceId_, &in, &configInfo);
     if (ret != 0) {
-        BM_LOG_INFO("bind logic cq with ts_id:" << tsId_ << " failed: " << ret);
+        BM_LOG_ERROR("bind logic cq with ts_id:" << tsId_ << " failed: " << ret);
         halSqCqFreeInfo freeInfo{};
         freeInfo.type = DRV_LOGIC_TYPE;
         freeInfo.tsId = tsId_;
@@ -213,7 +213,7 @@ void HybmStream::Destroy()
 
     auto ret = DlHalApi::HalSqCqFree(deviceId_, &info);
     if (ret != 0) {
-        BM_LOG_WARN("free sq_cq failed: " << ret);
+        BM_LOG_ERROR("free sq_cq failed: " << ret);
         return;
     }
 

@@ -187,7 +187,7 @@ Result HybmVmmBasedSegment::MallocFromHost(size_t size, uint32_t devId, drv_mem_
     }
     int32_t ret = HalMemCreateAdapterFromHost(size, handle, prop);
     if (ret == HAL_OUT_OF_MEMORY_ERROR && prop.pg_type == MEM_GIANT_PAGE_TYPE) {
-        BM_LOG_INFO("Try HalMemCreate use 1GB page failed, ret:" << ret << ", than try 2MB page");
+        BM_LOG_WARN("Try HalMemCreate use 1GB page not successful, ret:" << ret << ", than try 2MB page");
         prop.pg_type = MEM_HUGE_PAGE_TYPE;
         ret = HalMemCreateAdapterFromHost(size, handle, prop);
     }

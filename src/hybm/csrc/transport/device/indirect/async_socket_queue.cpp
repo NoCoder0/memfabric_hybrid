@@ -165,7 +165,7 @@ bool AsyncSocketQueue::Start() noexcept
     }
 
     if (CreateEpollSocket() != BM_OK) {
-        BM_LOG_WARN("CreateEpollSocket failed.");
+        BM_LOG_ERROR("CreateEpollSocket failed.");
         return false;
     }
 

@@ -224,7 +224,7 @@ void SmemBmEntry::UnInitalize()
     if (globalGroup_ != nullptr && globalGroup_->IsJoined()) {
         auto ret = globalGroup_->GroupLeave();
         if (ret != SM_OK) {
-            SM_LOG_WARN("group leave failed during uninitialize, ret: " << ret);
+            SM_LOG_WARN("unable to group leave during uninitialize, ret: " << ret);
         }
     }
     // Stop the group engine listen thread before releasing the entity.

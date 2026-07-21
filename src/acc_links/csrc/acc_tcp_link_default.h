@@ -113,7 +113,7 @@ public:
                     if (errorNumber == EINTR) { /* interrupted */
                         continue;
                     }
-                    LOG_WARN("Failed to send data to " << ipPort_ << ", errno " << errorNumber);
+                    LOG_WARN("Unable to send data to " << ipPort_ << ", reason " << errorNumber);
                     if (g_errnoToReconn.count(errorNumber) > 0) {
                         return ACC_LINK_NEED_RECONN;
                     }
@@ -163,7 +163,7 @@ public:
                 return ACC_OK;
             }
             auto errorNumber = errno;
-            LOG_WARN("Failed to send data to " << ipPort_ << ", errno " << errorNumber);
+            src LOG_WARN("Unable to send data to " << ipPort_ << ", reason " << errorNumber);
             return -errorNumber;
         } else {
             for (int32_t i = 0; i < len; i++) {
@@ -194,7 +194,7 @@ public:
                     if (errorNumber == EINTR) { /* interrupted */
                         continue;
                     }
-                    LOG_WARN("Failed to read data from " << ipPort_ << ", errno " << errorNumber);
+                    LOG_WARN("Unable to read data from " << ipPort_ << ", reason " << errorNumber);
                     if (g_errnoToReconn.count(errorNumber) > 0) {
                         return ACC_LINK_NEED_RECONN;
                     }
@@ -248,7 +248,7 @@ public:
                 return ACC_OK;
             }
             auto errorNumber = errno;
-            LOG_WARN("Failed to receive data from " << ipPort_ << ", errno " << errorNumber);
+            LOG_WARN("Unable to receive data from " << ipPort_ << ", reason " << errorNumber);
             return -errorNumber;
         } else {
             for (int32_t i = 0; i < len; i++) {

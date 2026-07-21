@@ -412,9 +412,9 @@ int AccTcpSslHelper::ProcessCrlAndVerifyCert(std::vector<std::string> paths, X50
 
     auto verifyResult = OpenSslApiWrapper::X509VerifyCert(x509ctx);
     if (verifyResult != 1U) {
-        LOG_INFO("Verify failed in callback"
-                 << " error: "
-                 << OpenSslApiWrapper::X509VerifyCertErrorString(OpenSslApiWrapper::X509StoreCtxGetError(x509ctx)));
+        LOG_ERROR("Verify failed in callback"
+                  << " error: "
+                  << OpenSslApiWrapper::X509VerifyCertErrorString(OpenSslApiWrapper::X509StoreCtxGetError(x509ctx)));
         return checkFailed;
     }
 
@@ -457,7 +457,7 @@ AccResult AccTcpSslHelper::CertVerify(X509 *cert) const
         for (const auto &crlPath : tlsCrlPaths) {
             X509_CRL *crl = LoadCertRevokeListFile(crlPath.c_str());
             if (crl == nullptr) {
-                LOG_WARN("Failed to load cert revocation list: " << crlPath);
+                LOG_WARN("Unable to load cert revocation list: " << crlPath);
                 continue;
             }
 
@@ -516,7 +516,7 @@ AccResult AccTcpSslHelper::CheckCertExpiredTask()
 
         auto ret = HandleCertExpiredCheck();
         if (ret != ACC_OK) {
-            LOG_WARN("Failed to handle cert expired check");
+            LOG_WARN("Unable to handle cert expired check");
         }
     }
 }

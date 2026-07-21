@@ -123,7 +123,7 @@ void HybmVaManager::RemoveOneVaInfo(uint64_t va, uint32_t type)
     std::unique_lock<std::shared_mutex> lock(mutex_);
     auto it = allocatedMap_[type].find(va);
     if (it == allocatedMap_[type].end()) {
-        BM_LOG_WARN("RemoveOneVaInfo failed: address not found. va=" << VaToStr(va) << " type=" << type);
+        BM_LOG_WARN("Unable to RemoveOneVaInfo: address not found. va=" << VaToStr(va) << " type=" << type);
         return;
     }
     const AllocatedGvaInfo &info = it->second;
@@ -434,13 +434,13 @@ uint64_t HybmVaManager::AllocReserveLvaInner(uint32_t localRankId, uint64_t size
 void HybmVaManager::FreeReserveGva(uint64_t addr)
 {
     if (addr == 0) {
-        BM_LOG_WARN("FreeReserveGva failed: invalid addr=0");
+        BM_LOG_WARN("Unable to FreeReserveGva: invalid addr=0");
         return;
     }
     std::unique_lock<std::shared_mutex> lock(mutex_);
     auto it = reservedMap_[HVM_GVA].find(addr);
     if (it == reservedMap_[HVM_GVA].end()) {
-        BM_LOG_WARN("FreeReserveGva failed: reserved space not found at addr=" << VaToStr(addr));
+        BM_LOG_WARN("Unable to FreeReserveGva: reserved space not found at addr=" << VaToStr(addr));
         return;
     }
     const ReservedGvaInfo &info = it->second;
@@ -454,7 +454,7 @@ void HybmVaManager::FreeReserveGva(uint64_t addr)
 void HybmVaManager::FreeReserveLva(uint64_t addr, uint32_t type)
 {
     if (addr == 0 || (type != HVM_DVA && type != HVM_HVA)) {
-        BM_LOG_WARN("FreeReserveLva failed: invalid addr:" << addr << ", type:" << type);
+        BM_LOG_WARN("Unable to FreeReserveLva: invalid addr:" << addr << ", type:" << type);
         return;
     }
     std::unique_lock<std::shared_mutex> lock(mutex_);

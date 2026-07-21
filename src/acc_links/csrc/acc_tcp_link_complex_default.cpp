@@ -57,8 +57,8 @@ Result AccTcpLinkComplexDefault::EnqueueAndModifyEpoll(const AccMsgHeader &h, co
     }
     auto result = queue_->EnqueueBack(h, d, cbCtx);
     if (UNLIKELY(result != ACC_OK)) {
-        LOG_WARN("Failed to enqueue message into link " << this->id_ << ", errorCode:" << result
-                                                        << ", queue size:" << queue_->GetSize());
+        LOG_ERROR("Failed to enqueue message into link " << this->id_ << ", errorCode:" << result
+                                                         << ", queue size:" << queue_->GetSize());
         return result;
     }
 

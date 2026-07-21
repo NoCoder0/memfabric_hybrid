@@ -437,14 +437,14 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
         allocMethod = MemAllocMethod::MMAP;
         return mapped;
     }
-    BM_LOG_WARN("Failed to alloc size:" << size << " with hugepage via mmap, error: " << errno << ", "
+    BM_LOG_WARN("Unable to alloc size:" << size << " with hugepage via mmap, error: " << errno << ", "
                                         << SafeStrError(errno)
                                         << ". Use 'grep -i huge /proc/meminfo' to check hugepages, "
                                            "and use 'echo <page_num> > /proc/sys/vm/nr_hugepages' to set hugepages.");
 
     // 2. try to alloc DRAM with hugepage via halMemAlloc
     if (options_.enable56BitsGva && options_.shmFd < 0) {
-        BM_LOG_WARN("Trying halMemAlloc for DRAM hugepage allocation. " << "size:" << size);
+        BM_LOG_WARN("Trying halMemAlloc for DRAM hugepage allocation. size:" << size);
 
         // Use halMemAlloc to allocate DRAM huge page memory on host
         // Flag: MEM_HOST (host memory) | MEM_TYPE_DDR (DDR/DRAM) | MEM_PAGE_HUGE (2MB huge page)
@@ -457,8 +457,8 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
 
         int ret = DlHalApi::HalMemAlloc(&halAllocPtr, size, allocFlag);
         if (ret != 0 || halAllocPtr == nullptr) {
-            BM_LOG_WARN("halMemAlloc failed, ret:" << ret << " ptr:" << halAllocPtr << ". Cannot allocate " << size
-                                                   << " bytes DRAM huge page memory");
+            BM_LOG_WARN("halMemAlloc not successful, ret:" << ret << " ptr:" << halAllocPtr << ". Cannot allocate "
+                                                           << size << " bytes DRAM huge page memory");
         } else {
             allocMethod = MemAllocMethod::HAL_MEM_ALLOC;
             BM_LOG_INFO("Successfully allocated DRAM hugepage via halMemAlloc. "

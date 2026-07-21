@@ -747,7 +747,7 @@ int32_t MemEntityDefault::RemoveImported(const std::vector<uint32_t> &ranks) noe
     if (transportManager_ != nullptr) {
         auto ret = transportManager_->RemoveRanks(ranks);
         if (ret != BM_OK) {
-            BM_LOG_WARN("transport remove ranks failed: " << ret);
+            BM_LOG_WARN("unable to transport remove ranks : " << ret);
         }
     }
 

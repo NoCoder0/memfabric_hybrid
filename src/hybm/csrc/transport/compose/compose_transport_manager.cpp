@@ -221,7 +221,7 @@ Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey
         TransportMemoryKey tmp{};
         auto ret = hostTransportManager_->QueryMemoryKey(addr, tmp);
         if (ret != BM_OK) {
-            BM_LOG_WARN("Failed to query host transport memKey addr:" << std::hex << addr);
+            BM_LOG_WARN("Unable to query host transport memKey addr:" << std::hex << addr);
             // HCOM 无法处理HBM池，这里直接返回，兼容即开启HBM池又要走HCOM通信的场景
         }
         WriteHcomMemoryKey(tmp, key);

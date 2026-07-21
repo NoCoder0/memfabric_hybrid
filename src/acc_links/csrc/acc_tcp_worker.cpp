@@ -133,7 +133,7 @@ void AccTcpWorker::SetPropertiesForThread()
         CPU_ZERO(&(cpuSet));
         CPU_SET(options_.cpuId, &(cpuSet));
         if (pthread_setaffinity_np(pthread_self(), sizeof(cpuSet), &(cpuSet)) != 0) {
-            LOG_WARN("Failed to bind worker " << options_.Name() << " to cpu " << options_.cpuId);
+            LOG_WARN("Unable to bind worker " << options_.Name() << " to cpu " << options_.cpuId);
         }
     }
 
@@ -142,7 +142,7 @@ void AccTcpWorker::SetPropertiesForThread()
 
     if (options_.threadPriority != 0) {
         if (setpriority(PRIO_PROCESS, 0, options_.threadPriority) != 0) {
-            LOG_WARN("Failed to set thread priority of worker " << options_.Name() << ", errno:" << errno);
+            LOG_WARN("Unable to set thread priority of worker " << options_.Name() << ":" << errno);
         }
     }
 }

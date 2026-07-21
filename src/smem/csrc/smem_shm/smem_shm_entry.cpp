@@ -183,7 +183,7 @@ void SmemShmEntry::InitStepUnreserveMemory()
 {
     auto ret = hybm_unreserve_mem_space(entity_, 0);
     if (ret != 0) {
-        SM_LOG_WARN("unreserve mem space failed: " << ret);
+        SM_LOG_WARN("unable to unreserve mem space: " << ret);
     }
     gva_ = nullptr;
 }
@@ -205,7 +205,7 @@ void SmemShmEntry::InitStepFreeSlice()
     auto slice = slice_;
     auto ret = hybm_free_local_memory(entity_, slice, 0, 0);
     if (ret != 0) {
-        SM_LOG_WARN("free mem slice failed: " << ret);
+        SM_LOG_WARN("unable to free mem slice: " << ret);
     }
     slice_ = nullptr;
 }

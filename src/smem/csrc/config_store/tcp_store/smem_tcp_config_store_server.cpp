@@ -1176,8 +1176,8 @@ bool AccStoreServer::GetStatus() noexcept
         std::string status;
         auto ret = backend_->Get(KEY_LEADER_STATUS, status);
         if (ret != 0) {
-            STORE_LOG_WARN("Failed to get leader status from backend, error code: "
-                           << ret << ", attempt: " << (attempt + 1) << "/" << (retries + 1));
+            STORE_LOG_WARN("Unable to get leader status from backend, ret: " << ret << ", attempt: " << (attempt + 1)
+                                                                             << "/" << (retries + 1));
         } else if (status == "true") {
             STORE_LOG_DEBUG("Leader status: active");
             return true;
@@ -1188,7 +1188,7 @@ bool AccStoreServer::GetStatus() noexcept
             std::this_thread::sleep_for(std::chrono::seconds(retryIntervalSec));
         }
     }
-    STORE_LOG_WARN("Leader status check failed after " << (retries + 1) << " attempts");
+    STORE_LOG_ERROR("Leader status check failed after " << (retries + 1) << " attempts");
     return false;
 }
 
@@ -1281,7 +1281,7 @@ StoreErrorCode AccStoreServer::RecoverAliveRankIds(std::unordered_set<uint32_t> 
     std::string rankStr;
     auto ret = backend_->Get(KEY_ALIVE_RANK_LIST, rankStr);
     if (ret != 0) {
-        STORE_LOG_WARN("Failed to get alive ranks from backend, error code: " << ret);
+        STORE_LOG_WARN("Unable to get alive ranks from backend, ret: " << ret);
         return SUCCESS;
     }
     if (rankStr.empty()) {

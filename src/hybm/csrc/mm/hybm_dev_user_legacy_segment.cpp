@@ -295,7 +295,7 @@ void HybmDevUserLegacySegment::RemoveSliceInfo(const uint32_t rankId) noexcept
                         << ", sliceInfo.rankId=" << sliceInfo.rankId);
             auto ret = DlAclApi::RtIpcCloseMemory(address);
             if (ret != 0) {
-                BM_LOG_WARN("Failed to close memory, address="
+                BM_LOG_WARN("Unable to close memory, address="
                             << address << ", vAddress_"
                             << reinterpret_cast<void *>(static_cast<ptrdiff_t>(remoteSlice->vAddress_))
                             << ", deviceId=" << devicePhyId_ << ", sliceInfo.devicePhyId=" << sliceInfo.devicePhyId
@@ -452,7 +452,7 @@ void HybmDevUserLegacySegment::CloseMemory() noexcept
 {
     for (auto &addr : registerAddrs_) {
         if (DlAclApi::RtIpcCloseMemory(addr) != 0) {
-            BM_LOG_WARN("Failed to close memory. This may affect future memory registration.");
+            BM_LOG_WARN("Unable to close memory. This may affect future memory registration.");
         }
     }
     for (auto &it : registerSlices_) {
