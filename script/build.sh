@@ -59,12 +59,16 @@ copy_bazel_artifacts()
     cp -v "${PROJ_DIR}/bazel-bin/src/smem/csrc/libmf_smem.so" "${PROJ_DIR}/output/smem/lib64/"
     mkdir -p ${PROJ_DIR}/output/hybm/lib64/
     cp -v "${PROJ_DIR}/bazel-bin/src/hybm/csrc/libmf_hybm_core.so" "${PROJ_DIR}/output/hybm/lib64/"
+    mkdir -p ${PROJ_DIR}/output/acc_offload/lib64/
+    cp -v "${PROJ_DIR}/bazel-bin/src/acc_offload/csrc/libmf_acc_offload.so" "${PROJ_DIR}/output/acc_offload/lib64/"
     mkdir -p ${PROJ_DIR}/output/smem/include/host/
     cp -v "${PROJ_DIR}/src/smem/include/host/"*.h "${PROJ_DIR}/output/smem/include/host/"
     mkdir -p ${PROJ_DIR}/output/smem/include/device/
     cp -v "${PROJ_DIR}/src/smem/include/device/"*.h "${PROJ_DIR}/output/smem/include/device/"
     mkdir -p ${PROJ_DIR}/output/hybm/include/
     cp -v "${PROJ_DIR}/src/hybm/include/"*.h "${PROJ_DIR}/output/hybm/include/"
+    mkdir -p ${PROJ_DIR}/output/acc_offload/include/host/
+    cp -v "${PROJ_DIR}/src/acc_offload/include/host/"*.h "${PROJ_DIR}/output/acc_offload/include/host/"
 
     # copy from bazel-bin to build
     if [ "${BUILD_PYTHON}" == "ON" ]; then
@@ -72,6 +76,8 @@ copy_bazel_artifacts()
         cp -v "${PROJ_DIR}"/bazel-bin/src/smem/csrc/python_wrapper/mk_transfer_adapter/_pymf_transfer.so "${PROJ_DIR}"/build/src/smem/csrc/python_wrapper/mk_transfer_adapter/
         mkdir -p "${PROJ_DIR}"/build/src/smem/csrc/python_wrapper/memfabric_hybrid/
         cp -v "${PROJ_DIR}"/bazel-bin/src/smem/csrc/python_wrapper/memfabric_hybrid/_pymf_hybrid.so "${PROJ_DIR}"/build/src/smem/csrc/python_wrapper/memfabric_hybrid/
+        mkdir -p "${PROJ_DIR}"/build/src/acc_offload/csrc/python_wrapper/
+        cp -v "${PROJ_DIR}"/bazel-bin/src/acc_offload/csrc/python_wrapper/_pymf_acc_offload.so "${PROJ_DIR}"/build/src/acc_offload/csrc/python_wrapper/
     fi
 
     if [ "${BUILD_HCOM}" == "ON" ]; then
@@ -264,6 +270,7 @@ mkdir -p ${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib
 # --- 动态库：lib/ ---
 \cp -v "${PROJ_DIR}/output/smem/lib64/libmf_smem.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
 \cp -v "${PROJ_DIR}/output/hybm/lib64/libmf_hybm_core.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
+\cp -v "${PROJ_DIR}/output/acc_offload/lib64/libmf_acc_offload.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
 # --- 头文件：smem/include/host/ ---
 mkdir -p ${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/include/smem/host
 cp -v "${PROJ_DIR}/output/smem/include/host/"*.h "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/include/smem/host/"
@@ -338,6 +345,8 @@ do
     \cp -v "${PROJ_DIR}"/build/src/smem/csrc/python_wrapper/memfabric_hybrid/_pymf_hybrid*.so "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/
     rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/_pymf_transfer*.so
     \cp -v "${PROJ_DIR}"/build/src/smem/csrc/python_wrapper/mk_transfer_adapter/_pymf_transfer*.so "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/
+    rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/_pymf_acc_offload*.so
+    \cp -v "${PROJ_DIR}"/build/src/acc_offload/csrc/python_wrapper/_pymf_acc_offload*.so "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/
     cd "${PROJ_DIR}/src/smem/python/memfabric_hybrid"
     rm -rf build memfabric_hybrid.egg-info
     if check_contains_path "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib"; then

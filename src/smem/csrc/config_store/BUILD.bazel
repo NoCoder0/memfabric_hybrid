@@ -38,8 +38,8 @@ cc_library (
     name = "config_store_object",
     visibility = [
         "//src/smem/csrc:__pkg__",
-        "//src/smem/csrc:__pkg__",
-        "//src/smem/csrc:__pkg__",
+        "//src/acc_offload/csrc:__pkg__",
+        "//src/acc_offload/csrc/python_wrapper:__pkg__",
     ],
     srcs = CONFIG_STORE_SRCS,
     hdrs = CONFIG_STORE_HEADERS,
