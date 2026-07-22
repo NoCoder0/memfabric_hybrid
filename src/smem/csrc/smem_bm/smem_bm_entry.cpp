@@ -145,9 +145,10 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     executorService_.SetThreadName("batch-copy");
 
     do {
-        entity = hybm_create_entity((Id() << 1) + 1U, &options, flags);
+        auto entityId = Id() + HYBM_ENTITY_ID_BM_BASE;
+        entity = hybm_create_entity(entityId, &options, flags);
         if (entity == nullptr) {
-            SM_LOG_ERROR("hybm_create_entity failed, entityId: " << ((Id() << 1) + 1U) << " rankId: " << options.rankId
+            SM_LOG_ERROR("hybm_create_entity failed, entityId: " << entityId << " rankId: " << options.rankId
                                                                  << " flags: " << flags);
             ret = SM_ERROR;
             break;
@@ -155,7 +156,7 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
 
         ret = hybm_reserve_mem_space(entity, flags);
         if (ret != 0) {
-            SM_LOG_ERROR("hybm_reserve_mem_space failed, entityId: " << ((Id() << 1) + 1U) << " ret: " << ret);
+            SM_LOG_ERROR("hybm_reserve_mem_space failed, entityId: " << entityId << " ret: " << ret);
             hybm_destroy_entity(entity, flags);
             ret = SM_ERROR;
             break;

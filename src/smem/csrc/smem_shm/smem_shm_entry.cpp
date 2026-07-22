@@ -151,9 +151,10 @@ uint64_t SmemShmEntry::GetHbmMaxSize() const
 
 int32_t SmemShmEntry::InitStepCreateEntity()
 {
-    auto entity = hybm_create_entity(id_ << 1, &options_, 0);
+    auto entityId = id_ + HYBM_ENTITY_ID_SHM_BASE;
+    auto entity = hybm_create_entity(entityId, &options_, 0);
     if (entity == nullptr) {
-        SM_LOG_ERROR("hybm_create_entity failed, entityId: " << (id_ << 1) << " rankId: " << options_.rankId);
+        SM_LOG_ERROR("hybm_create_entity failed, entityId: " << entityId << " rankId: " << options_.rankId);
         return SM_ERROR;
     }
 

@@ -114,9 +114,10 @@ int32_t SmemTransEntry::Initialize()
         options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
     }
 
-    entity_ = hybm_create_entity(entityId_, &options, 0);
+    auto entityId = entityId_ + HYBM_ENTITY_ID_TRANS_BASE;
+    entity_ = hybm_create_entity(entityId, &options, 0);
     SM_VALIDATE_RETURN(entity_ != nullptr,
-                       "hybm_create_entity failed, entityId: " << entityId_ << " rankId: " << rankId_, SM_ERROR);
+                       "hybm_create_entity failed, entityId: " << entityId << " rankId: " << rankId_, SM_ERROR);
 
     auto ret = hybm_reserve_mem_space(entity_, 0);
     SM_VALIDATE_RETURN(ret == SM_OK, "hybm_reserve_mem_space failed, ret: " << ret, SM_ERROR);

@@ -53,7 +53,7 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
     hybm_options options{};
     options.bmType = HYBM_TYPE_HOST_INITIATE;
     options.memType = HYBM_MEM_TYPE_HOST;
-    options.bmDataOpType = HYBM_DOP_TYPE_SDMA;
+    options.bmDataOpType = HYBM_DOP_TYPE_MTE;
     options.rankCount = 1;
     options.rankId = 0;
     options.devId = config.deviceId;
@@ -71,7 +71,7 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
             break;
         }
 
-        entity_ = hybm_create_entity(0, &options, flags);
+        entity_ = hybm_create_entity(HYBM_ENTITY_ID_OFFLOAD_BASE, &options, flags);
         if (entity_ == nullptr) {
             OFFLOAD_LOG_ERROR("create entity failed");
             ret = OFFLOAD_ERROR;

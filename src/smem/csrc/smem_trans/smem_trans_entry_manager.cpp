@@ -62,6 +62,10 @@ Result SmemTransEntryManager::CreateEntryByName(const std::string &name, const s
         return SM_ERROR;
     }
 
+    SM_VALIDATE_RETURN(entryIdx_ < HYBM_ENTITY_ID_SEGMENT_SIZE,
+                       "invalid id: " << entryIdx_ << "valid range:  [0, " << HYBM_ENTITY_ID_SEGMENT_SIZE << ")",
+                       SM_INVALID_PARAM);
+
     /* create new trans entry */
     auto tmpEntry = SmMakeRef<SmemTransEntry>(config, name, rank, entryIdx_, confStore);
     SM_ASSERT_RETURN(tmpEntry != nullptr, SM_NEW_OBJECT_FAILED);
