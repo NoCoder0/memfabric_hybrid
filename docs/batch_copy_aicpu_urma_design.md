@@ -10,6 +10,8 @@
 
 **Related Issue/PR:** 无
 
+**Implementation Plan:** [batch_copy_aicpu_urma_staged_implementation_plan.md](batch_copy_aicpu_urma_staged_implementation_plan.md)
+
 ---
 
 # 1. 概述
@@ -373,7 +375,8 @@ struct UrmaEndpointDesc {
 
 `transport::urma` 公共模块提供 `HcommTransportManager`、endpoint/MR 描述符、序列化和范围查找工具。
 `DeviceUrmaTransportManager` 管理 ACL、AICPU thread/channel、远端 MR 导入和设备数据面；
-`HostUrmaTransportManager` 管理 Host endpoint、CPU channel、本地 DDR/flag 导出。两个 manager 独立
+`HostUrmaTransportManager` 管理 Host endpoint、CPU channel、本地 DDR/flag 导出以及 Host CPU 主动
+Read/Write/Fence 数据面。两个 manager 独立
 实现 `TransportManager` 接口并组合使用公共 HCOMM 模块。
 
 函数职责划分如下：
@@ -383,15 +386,15 @@ struct UrmaEndpointDesc {
 | `OpenDevice()`、`CloseDevice()` 及回滚函数 | 管理 Ascend 950、ACL 和 device kernel 生命周期 | 管理 Host 内存及 HCOMM endpoint/channel/MR 生命周期 |
 | 本地信息和 endpoint 构建函数 | 查询逻辑/物理卡、SDID、serverId、superPodId 和设备 EID | `InitLocalHostInfoLocked()/BuildLocalHostEndpointDescLocked()` 读取 Host NIC 并填写 `loc.host.id` |
 | transfer flag 初始化 | 使用 `AclrtMalloc/AclrtMemcpy` 创建 device flag | `InitHostTransferFlagLocked()` 分配 8 B Host flag，写入 `uint64_t{1}`，并以 `COMM_MEM_TYPE_HOST` 注册 |
-| TLS/completion context 函数 | 管理 ACL stream、device notify 和 TLS completion context | P0 被动 endpoint 不创建数据搬运上下文 |
+| TLS/completion context 函数 | 管理 ACL stream、device notify 和 TLS completion context | 不创建 ACL/TLS context；按 peer 保存 CPU channel 的 pending/fence 状态 |
 | 本地 MR 注册、查询和注销函数 | 本机 HOST_DRAM 执行 HVA→DVA，HBM 使用 device address | 固定 GVA/HVA 直接注册；共用范围查找、描述符序列化和 refCount helper |
-| 远端 MR 导入函数 | 导入鲲鹏 DDR MR/flag 并保存 HCOMM view | P0 只导出本地 DDR/flag |
-| `Prepare()` 及 channel 清理函数 | 首次调用固定 Host peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；同一 endpoint 的第二次调用复用资源并导入初始 DDR key | 首次创建 `COMM_ENGINE_CPU` channel；第二次调用校验 peer/endpoint 未变化并复用 channel |
+| 远端 MR 导入函数 | 导入鲲鹏 DDR MR/flag 并保存 HCOMM view | Host peer 验证场景导入对端 DDR MR/flag；NPU peer 场景只导出本地 DDR/flag |
+| `Prepare()` 及 channel 清理函数 | 首次调用固定 Host peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；同一 endpoint 的第二次调用复用资源并导入初始 DDR key | 首次创建 `COMM_ENGINE_CPU` channel；第二次调用校验 peer/endpoint 未变化并复用 channel，按远端 endpoint 类型决定是否导入 DDR key |
 | `UpdateRankOptions()` | Batch_Copy 路由发布后返回 `BM_NOT_SUPPORTED`；不存在 Host Batch_Copy peer 时保持现有 DEVICE_URMA 行为 | Batch_Copy 初始化完成后返回 `BM_NOT_SUPPORTED` |
 | `RemoveRanks()` | 存在 Host Batch_Copy peer 时返回 `BM_NOT_SUPPORTED`；否则保持现有 DEVICE_URMA 行为 | 存在 Batch_Copy peer 时返回 `BM_NOT_SUPPORTED` |
 | 连接和 private-data 函数 | 序列化 Device `EndpointLoc` | 序列化 Host `EndpointLoc` |
-| Remote I/O 函数 | 通过 AICPU kernel 发起 device 数据面 | 返回 `BM_NOT_SUPPORTED` |
-| H2D staging、kernel launch 和 stream 同步函数 | 管理设备侧执行资源 | 无对应资源 |
+| Remote I/O 函数 | 通过 AICPU kernel 发起 device 数据面 | 使用 `HcommReadOnThread/HcommWriteOnThread`，thread 传 0，并用 `HcommChannelFenceOnThread` 完成同步 |
+| H2D staging、kernel launch 和 stream 同步函数 | 管理设备侧执行资源 | 复用初始化阶段已注册的 Host staging MR；不加载或启动 device kernel |
 
 CPU 和 NPU 两端使用 DEVICE_URMA 协议位进入同一套 URMA 建链、peer 过滤和
 `TransportMemoryKey.keys[0, 6 * KEY_SIZE)` device key 区域。
@@ -417,8 +420,9 @@ NPU 侧使用 `COMM_ENGINE_AICPU`，鲲鹏侧使用 `COMM_ENGINE_CPU`。
 初始化行为如下：
 
 - `ASCEND_NPU` 构建加载 `DlRtApi` 和 `DlHcommApi`，并初始化 `DataOpDeviceURMA`。
-- `XPU_TYPE=NONE` 构建加载 `DlHcommApi`，`HostComposeDataOp` 作为被动 endpoint；其
-  `DataCopy()/DataCopyAsync()/BatchDataCopy()` 返回 `BM_NOT_SUPPORTED`。
+- `XPU_TYPE=NONE` 构建加载 `DlHcommApi`，`HostComposeDataOp` 为 DEVICE_URMA 复用
+  `HostDataOpRDMA`；单条和批量接口通过 `HostUrmaTransportManager` 发起 CPU 数据面，未注册 tensor 经
+  建链前已注册的 Host staging MR 搬运。
 - `DlApi::CleanupLibrary()` 统一清理已加载的 wrapper。
 
 #### 建链和发布时序
@@ -443,7 +447,7 @@ sequenceDiagram
     HM->>H: HcommEndpointCreate(HOST, UBC_CTP)
     HM->>HM: InitHostTransferFlagLocked() / flag = 1
     HM->>H: HcommMemReg(flag, HOST)
-    CE->>CE: InitDataOperator(): passive Host endpoint
+    CE->>CE: InitDataOperator(): HostDataOpRDMA for DEVICE_URMA
     CE->>HM: RegisterMemoryRegion(HOST_DRAM)
     HM->>H: HcommMemReg(GVA, HOST)
     HM->>H: HcommMemExport(DDR + Host flag)
@@ -520,8 +524,8 @@ sequenceDiagram
 | `transport/urma/urma_transport_common.{h,cpp}` | `UrmaEndpointDesc` 保存完整 `EndpointLoc`；`SerializePrivateData()/ParsePrivateDataToEndpointDesc()` 严格校验 magic、v2、payloadLen 和容量 | HCOMM 根据 endpoint 实际位置创建 Host/Device 资源 |
 | `compose_transport_manager.cpp`，`OpenDeviceTransport()/CreateUrmaTransportManager()` | DEVICE_URMA 分支按构建平台创建 Host/Device URMA manager，GPU 构建返回不支持 | manager 实现与本地硬件平台一致 |
 | `under_api/dl_api.cpp`，`LoadExtendLibrary(DL_EXT_LIB_DEVICE_URMA)` | `ASCEND_NPU` 加载 RT + HCOMM；`XPU_TYPE=NONE` 加载 HCOMM | 无卡鲲鹏只依赖 Host HCOMM 能力 |
-| `data_operation/host/hybm_compose_data_op.cpp` | `XPU_TYPE=NONE` 使用被动 endpoint 行为，DEVICE_URMA DataCopy 接口返回 `BM_NOT_SUPPORTED` | CPU peer 负责 DDR 导出和建链，数据搬运由 NPU 发起 |
-| `host/urma/host_urma_transport_manager.{h,cpp}` | 实现 Host endpoint、DDR/flag 注册导出、CPU channel 和清理 | 承载无卡鲲鹏的 URMA 控制面 |
+| `data_operation/host/hybm_compose_data_op.cpp` | `XPU_TYPE=NONE` 的 DEVICE_URMA 复用 `HostDataOpRDMA`，关闭建链后的动态 local-MR 预注册 | 支持两鲲鹏主动拷贝验证，同时保证 HCOMM CPU channel 只使用建链前注册的 staging MR |
+| `host/urma/host_urma_transport_manager.{h,cpp}` | 实现 Host endpoint、DDR/flag 注册导出、Host peer MR 导入、CPU Read/Write/Fence、channel 和清理 | 承载无卡鲲鹏的 URMA 控制面与主动数据面 |
 | `hybm_conn_based_segment.cpp`，`MapSlice()` | `ASCEND_NPU` 构建按现有条件执行 `HalHostRegister()`；无卡构建直接把固定 mmap 结果加入 VA manager，DVA 置 0 | 鲲鹏 DDR 不经过本地 device 映射，无卡节点不能依赖 HAL device 注册 |
 | `HostUrmaTransportManager::RegisterMemoryRegion()/QueryMemoryKey()` | 使用 `FindAllocByVa(mr.addr, HVM_GVA)` 校验完整区间属于本地 rank 的 Host GVA 分配记录，再直接 `HcommMemReg(mr.addr)` 并导出同一 GVA | 鲲鹏 DDR 使用 Host VA/GVA，不经过 DVA；任意 Host 指针不会进入 DEVICE_URMA 导出集合 |
 | `HcommTransportManager::HcommMemImport()` | 使用 `UrmaExportDesc.memoryType` 设置 view type，并校验 UBC 返回的 addr/size | CANN UBC import 只回填 addr/size，内存类型由 MemFabric 描述符确定 |
@@ -530,7 +534,7 @@ sequenceDiagram
 | `hybm_gva.cpp`，`hybm_init_hbm_gva()/HybmModernInitMetaGva()/HybmLegacyInitMetaGva()` | meta 物理申请和映射使用 34 MiB，起点为 `HYBM_DEVICE_CONTROL_ADDR` | 2 MiB route 区与 32 MiB HYBM 元数据区一次性映射 |
 | `src/hybm/csrc/hybm_entry.cpp`，`hybm_uninit()` | Modern 使用 `HYBM_DEVICE_CONTROL_ADDR` unmap，保留 `g_baseAddr` 释放 1 GiB VA；Legacy 按 control 起点和 34 MiB 大小 free | 映射地址、物理 handle 和 1 GiB VA reservation 是不同资源，初始化/销毁边界必须成对 |
 | `DeviceUrmaTransportManager::Prepare()/PreparePeerLocked()` | 首次无 key 调用创建 channel/thread 并固定 Host peer 集合；第二次全量 key 调用校验 endpoint 未变化、复用资源、导入初始 DDR MR/flag，最后调用 `TryPublishBatchCopyRouteLocked()` | 对齐 entity 先交换 endpoint、后导入 slice 的两阶段调用顺序，避免重复创建通信资源或提前发布不完整路由 |
-| `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 NPU peer 集合；第二次校验 peer/endpoint 未变化、复用 channel，不导入 NPU memory key | 鲲鹏在 P0 中是被动 DDR 导出端，但必须接受 entity 正常执行的第二阶段幂等 `Prepare()` |
+| `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 peer 集合；第二次校验 peer/endpoint 未变化并复用 channel；Host peer 导入 DDR key，NPU peer 不导入 HBM key | 同时支持两鲲鹏主动拷贝验证和最终鲲鹏对 NPU 的 DDR 导出，并接受 entity 的第二阶段幂等 `Prepare()` |
 | `DeviceUrmaTransportManager::RollbackInitialImportsLocked()` | 第二阶段任一 peer 导入或 route 发布失败时，按逆序释放本次调用新增的全部 import；首次阶段创建的 channel/thread 由 manager 清理流程持有 | 防止跨 peer 的部分导入残留，同时不误删前一阶段已经建好的资源 |
 | `DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked()/PublishBatchCopyRouteLocked()` | 确认固定 peer 集合中的所有 channel/thread、DDR range 和 flag 完整后，按 `userDeviceId_` 获取发布权，清 magic/completion，注册 512 B completion 区并构建、写入、发布 route | 仅含 Host peer 且初始信息完整的 manager 占用卡级路由资源，其他 Device URMA entity 不受影响 |
 | `DeviceUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | 已固定 Host Batch_Copy peer 集合时返回 `BM_NOT_SUPPORTED`；没有 Host Batch_Copy peer 时保留现有动态 rank/key 行为 | P0 不接受后续新增 MR、peer 删除或断链，同时保持普通 DEVICE_URMA 场景兼容 |
@@ -672,9 +676,9 @@ sequenceDiagram
 | `src/hybm/csrc/driver/`、`hybm_entry.cpp` | 元数据物理映射、回滚和释放使用 34 MiB 控制区边界 |
 | `src/hybm/csrc/mm/hybm_conn_based_segment.cpp` | 无卡构建的固定 GVA mmap 不执行 `HalHostRegister()` |
 | `src/hybm/csrc/under_api/` | 无卡构建的 DEVICE_URMA 初始化加载 HCOMM |
-| `src/hybm/csrc/data_operation/host/` | 无卡构建使用被动 Host endpoint 数据面语义 |
+| `src/hybm/csrc/data_operation/host/` | 无卡 DEVICE_URMA 复用 Host staging 与主动 CPU 数据面 |
 | `src/hybm/csrc/transport/` | 抽取公共 URMA/HCOMM 封装，在 `UrmaEndpointDesc` 中携带 endpoint 位置，并增加 route 和 completion 接口 |
-| `src/hybm/csrc/transport/host/urma/` | 新增无卡 Host endpoint、固定 GVA MR/flag 导出和 CPU channel |
+| `src/hybm/csrc/transport/host/urma/` | 新增无卡 Host endpoint、固定 GVA MR/flag 导出、Host peer MR 导入和 CPU Read/Write/Fence channel |
 | `src/hybm/csrc/transport/device/urma/` | 增加 import 地址校验、路由构建和 completion 注册 |
 | `src/hybm/ops/hybm_kernel/hybm_batch_copy.{h,cc}` | 新增 `HybmBatchCopy` 参数校验、查表、分组，并调用现有 `HybmBatchRead` 完成提交和完成汇聚 |
 | `src/hybm/ops/hybm_kernel/libcann_hybm_kernel.json` | 注册 `HybmBatchCopy` 函数；该 JSON 是当前 CMake 和 kernel loader 使用的配置 |
