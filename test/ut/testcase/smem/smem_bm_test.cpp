@@ -1002,6 +1002,98 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_auto_ranking)
     manager.Destroy();
 }
 
+// UpdateStoreUrl: 未初始化的情况。
+TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_not_initialized)
+{
+    auto &manager = SmemBmEntryManager::Instance();
+    ock::smem::Result ret = manager.UpdateStoreUrl("tcp://127.0.0.1:7758");
+    EXPECT_EQ(ret, SM_NOT_STARTED);
+}
+
+// UpdateStoreUrl: 空URL参数。
+TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_empty_url)
+{
+    auto &manager = SmemBmEntryManager::Instance();
+    smem_bm_config_t config;
+    smem_bm_config_init(&config);
+    std::string storeURL = "tcp://127.0.0.1:7758";
+    uint32_t worldSize = 2;
+    uint16_t deviceId = 0;
+    manager.Initialize(storeURL, worldSize, deviceId, config);
+
+    ock::smem::Result ret = manager.UpdateStoreUrl("");
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    manager.Destroy();
+}
+
+// UpdateStoreUrl: 相同URL，跳过更新。
+TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_same_url)
+{
+    auto &manager = SmemBmEntryManager::Instance();
+    smem_bm_config_t config;
+    smem_bm_config_init(&config);
+    std::string storeURL = "tcp://127.0.0.1:7758";
+    uint32_t worldSize = 2;
+    uint16_t deviceId = 0;
+    manager.Initialize(storeURL, worldSize, deviceId, config);
+
+    ock::smem::Result ret = manager.UpdateStoreUrl(storeURL);
+    EXPECT_EQ(ret, SM_OK);
+
+    manager.Destroy();
+}
+
+// UpdateStoreUrl: confStore_为空的情况。
+TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_conf_store_null)
+{
+    auto &manager = SmemBmEntryManager::Instance();
+    manager.inited_ = true;
+    manager.confStore_ = nullptr;
+    manager.storeURL_ = "tcp://127.0.0.1:7758";
+
+    ock::smem::Result ret = manager.UpdateStoreUrl("tcp://127.0.0.1:7759");
+    EXPECT_EQ(ret, SM_ERROR);
+
+    manager.inited_ = false;
+}
+
+// UpdateStoreUrl: 底层store不是TcpConfigStore的情况。
+TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_not_tcp_store)
+{
+    auto &manager = SmemBmEntryManager::Instance();
+    manager.inited_ = true;
+    manager.storeURL_ = "tcp://127.0.0.1:7758";
+
+    // 使用FakeStoreManager作为底层store，FakeStoreManager不是TcpConfigStore
+    auto child = SmMakeRef<FakeStoreManager>();
+    StoreManagerPtr storeManager = Convert<FakeStoreManager, ConfigStoreManager>(child);
+    manager.confStore_ = Convert<ConfigStoreManager, ConfigStore>(storeManager);
+
+    ock::smem::Result ret = manager.UpdateStoreUrl("tcp://127.0.0.1:7759");
+    EXPECT_EQ(ret, SM_ERROR);
+
+    manager.confStore_ = nullptr;
+    manager.inited_ = false;
+}
+
+// UpdateStoreUrl: 成功路径。
+TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_success)
+{
+    auto &manager = SmemBmEntryManager::Instance();
+    smem_bm_config_t config;
+    smem_bm_config_init(&config);
+    std::string storeURL = "tcp://127.0.0.1:7758";
+    uint32_t worldSize = 2;
+    uint16_t deviceId = 0;
+    manager.Initialize(storeURL, worldSize, deviceId, config);
+
+    ock::smem::Result ret = manager.UpdateStoreUrl("tcp://127.0.0.1:7759");
+    EXPECT_EQ(ret, SM_OK);
+
+    manager.Destroy();
+}
+
 void GenerateData(void *ptr, int32_t rank, uint32_t len = COPY_SIZE)
 {
     if (ptr == nullptr) {

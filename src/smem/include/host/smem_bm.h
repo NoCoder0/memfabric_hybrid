@@ -247,6 +247,18 @@ int32_t smem_bm_unregister_user_mem(smem_bm_t handle, uint64_t addr);
  */
 uint32_t smem_bm_get_rank_id_by_gva(smem_bm_t handle, void *gva);
 
+/**
+ * @brief Update the config store URL after smem_bm_init, used when MetaService restarts with a new IP.
+ * This function lazily updates the config store connection target without recreating the store.
+ * The new URL is set on the underlying TcpConfigStore and the existing reconnection mechanism
+ * (ReConnectAfterBroken) will automatically establish a connection using the new address.
+ * The rank ID and world size remain unchanged.
+ *
+ * @param storeURL         [in] new configure store url, e.g. tcp://ip:port
+ * @return 0 if successful, negative value for error
+ */
+int32_t smem_bm_update_store_url(const char *storeURL);
+
 #ifdef __cplusplus
 }
 #endif

@@ -43,6 +43,16 @@ public:
 
     void Destroy();
 
+    /**
+     * @brief Update the config store URL lazily, used when MetaService restarts with a new IP.
+     * This only updates the underlying TcpConfigStore's server IP/port via SetServerInfo.
+     * The actual reconnection is handled by the existing reconnection mechanism (ReConnectAfterBroken),
+     * which will use the new IP/port automatically when the connection is broken.
+     * @param storeURL        [in] new store URL
+     * @return SM_OK if successful, SM_ERROR if the underlying store is not TcpConfigStore or confStore_ is null
+     */
+    Result UpdateStoreUrl(const std::string &storeURL);
+
     inline uint32_t GetRankId() const
     {
         return config_.rankId;
