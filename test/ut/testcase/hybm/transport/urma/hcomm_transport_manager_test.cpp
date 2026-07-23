@@ -24,6 +24,7 @@
 #undef protected
 
 using namespace ock::mf;
+using namespace ock::mf::transport;
 using namespace ock::mf::transport::urma;
 
 namespace {
