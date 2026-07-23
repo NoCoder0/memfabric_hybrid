@@ -24,6 +24,7 @@
 #include "dl_hcomm_api.h"
 #include "dl_rt_api.h"
 #include "hybm_transport_manager.h"
+#include "load_kernel.h"
 #include "urma/hcomm_transport_manager.h"
 
 namespace ock {
@@ -31,6 +32,8 @@ namespace mf {
 namespace transport {
 namespace device {
 
+using urma::HcommChannelHandle;
+using urma::HcommThreadHandle;
 using urma::HcommTransportManager;
 using urma::UrmaCommMem;
 using urma::UrmaEndpointDesc;
