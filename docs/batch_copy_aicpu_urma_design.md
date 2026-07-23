@@ -172,7 +172,8 @@ UBC 的 `UbRegedMemMgr::MemoryImport()` 只回填 `outMem.addr/size`，没有写
 `ENDPOINT_LOC_TYPE_HOST` 且 `view.type == HOST_DRAM` 的区间；`DEVICE_HBM` 使用设备到设备数据路径，
 不进入 Batch_Copy DDR 路由表。
 
-同一导出 payload 尾部的 transfer flag 描述符也由 UBC 导入。`ImportRemoteMemKeysLocked()` 对
+同一导出 payload 尾部的 transfer flag 描述符也由 UBC 导入。普通 MR 与该 flag 共用现有
+`UrmaExportDesc.memoryType`，不新增 `flagMemoryType` 字段。`ImportRemoteMemKeysLocked()` 对
 `flagOutMem` 只校验 `addr != nullptr` 和 `size == sizeof(uint64_t)`，不读取 `flagOutMem.type`；校验通过后
 把导入地址和大小保存到 `RemoteRankState::remoteFlagAddr/remoteFlagSize`。
 
@@ -396,12 +397,14 @@ Read/Write/Fence 数据面。两个 manager 独立
 | Remote I/O 函数 | 通过 AICPU kernel 发起 device 数据面 | 使用 `HcommReadOnThread/HcommWriteOnThread`，thread 传 0，并用 `HcommChannelFenceOnThread` 完成同步 |
 | H2D staging、kernel launch 和 stream 同步函数 | 管理设备侧执行资源 | 复用初始化阶段已注册的 Host staging MR；不加载或启动 device kernel |
 
-CPU 和 NPU 两端使用 DEVICE_URMA 协议位进入同一套 URMA 建链、peer 过滤和
+新增 `HYBM_DOP_TYPE_HOST_DEVICE_URMA`（公共 Python 名为 `BmDataOpType.HOST_DEVICE_URMA`）。鲲鹏和
+昇腾两端使用同一 `HOST_DEVICE_URMA` 协议位进入 URMA 建链、peer 过滤和
 `TransportMemoryKey.keys[0, 6 * KEY_SIZE)` device key 区域。
-`ComposeTransportManager::OpenDeviceTransport()` 调用 `CreateUrmaTransportManager()`：`ASCEND_NPU` 构建
+`ComposeTransportManager::OpenDeviceTransport()` 调用 `CreateHostDeviceUrmaTransportManager()`：
+`ASCEND_NPU` 构建
 创建 `DeviceUrmaTransportManager`，`XPU_TYPE=NONE` 构建创建 `HostUrmaTransportManager`，
-`NVIDIA_GPU` 构建返回 `BM_NOT_SUPPORTED`。无卡 Host 支持 DEVICE_URMA/UBC_CTP，DEVICE_UBOE 由
-Device manager 处理。
+`NVIDIA_GPU` 构建返回 `BM_NOT_SUPPORTED`。既有 `HOST_URMA` 继续进入 HCOM，既有 `DEVICE_URMA` 继续
+表示 Device↔Device HCOMM，`DEVICE_UBOE` 仍由 Device manager 处理。
 
 鲲鹏部署加载 `libhcomm_cpu_ub_plugin.so`。该 plugin 注册 `COMM_PROTOCOL_UBC_TP` 和
 `COMM_PROTOCOL_UBC_CTP`，只接管 `ENDPOINT_LOC_TYPE_HOST` endpoint，并要求 channel engine 为
@@ -420,7 +423,7 @@ NPU 侧使用 `COMM_ENGINE_AICPU`，鲲鹏侧使用 `COMM_ENGINE_CPU`。
 初始化行为如下：
 
 - `ASCEND_NPU` 构建加载 `DlRtApi` 和 `DlHcommApi`，并初始化 `DataOpDeviceURMA`。
-- `XPU_TYPE=NONE` 构建加载 `DlHcommApi`，`HostComposeDataOp` 为 DEVICE_URMA 复用
+- `XPU_TYPE=NONE` 构建加载 `DlHcommApi`，`HostComposeDataOp` 为 `HOST_DEVICE_URMA` 复用现有
   `HostDataOpRDMA`；单条和批量接口通过 `HostUrmaTransportManager` 发起 CPU 数据面，未注册 tensor 经
   建链前已注册的 Host staging MR 搬运。
 - `DlApi::CleanupLibrary()` 统一清理已加载的 wrapper。
@@ -439,22 +442,22 @@ sequenceDiagram
     participant M as 固定 Batch_Copy 元数据区
 
     CE->>CE: LoadExtendLibrary(): DlHcommApi only
-    CE->>CC: InitTransManager() / OpenDeviceTransport(DEVICE_URMA)
-    CC->>CC: CreateUrmaTransportManager() [XPU_TYPE=NONE]
+    CE->>CC: InitTransManager() / OpenDeviceTransport(HOST_DEVICE_URMA)
+    CC->>CC: CreateHostDeviceUrmaTransportManager() [XPU_TYPE=NONE]
     CC->>HM: OpenDevice(options)
     HM->>HM: InitLocalHostInfoLocked()
     HM->>HM: BuildLocalHostEndpointDescLocked(rankId, nic)
     HM->>H: HcommEndpointCreate(HOST, UBC_CTP)
     HM->>HM: InitHostTransferFlagLocked() / flag = 1
     HM->>H: HcommMemReg(flag, HOST)
-    CE->>CE: InitDataOperator(): HostDataOpRDMA for DEVICE_URMA
+    CE->>CE: InitDataOperator(): HostDataOpRDMA for HOST_DEVICE_URMA
     CE->>HM: RegisterMemoryRegion(HOST_DRAM)
     HM->>H: HcommMemReg(GVA, HOST)
     HM->>H: HcommMemExport(DDR + Host flag)
 
     NE->>NE: LoadExtendLibrary(): DlRtApi + DlHcommApi
-    NE->>NC: InitTransManager() / OpenDeviceTransport(DEVICE_URMA)
-    NC->>NC: CreateUrmaTransportManager() [ASCEND_NPU]
+    NE->>NC: InitTransManager() / OpenDeviceTransport(HOST_DEVICE_URMA)
+    NC->>NC: CreateHostDeviceUrmaTransportManager() [ASCEND_NPU]
     NC->>DM: OpenDevice(options)
     DM->>DM: InitLocalDeviceInfoLocked()
     DM->>DM: BuildLocalEndpointDescLocked(UBC_CTP)
@@ -520,14 +523,16 @@ sequenceDiagram
 
 | 文件/位置 | 修改内容 | 原因 |
 | --- | --- | --- |
+| `smem_bm_def.h`、`hybm_def.h`、SMEM/TRANS 转换和 Python wrapper | 追加 `HOST_DEVICE_URMA` 公共/内部 bit，不重排既有值；同步合法值、冲突和无卡构建掩码 | 明确区分 HCOMM Host↔Device 与既有 `HOST_URMA` HCOM、`DEVICE_URMA` Device↔Device 路径，并让异构两端协商同一 bit |
+| `hybm_entity_tag_info.cpp`、`hybm_entity_default.cpp` | 增加新协议的字符串双向映射、compatible info、能力和加载掩码 | DataOpType 会参与 tag 和 rank-to-rank 协商，不能只在 Compose 本地解释 |
 | `device/urma/hcomm_transport_manager.{h,cpp}`、`device_urma_transport_manager.cpp` 顶部序列化 helper | 迁移到 `transport/urma/` 公共目录；共享 endpoint/MR 描述符、private-data v2 编解码和 HCOMM 封装 | Host/Device manager 使用同一套 wire format 和资源封装 |
 | `transport/urma/urma_transport_common.{h,cpp}` | `UrmaEndpointDesc` 保存完整 `EndpointLoc`；`SerializePrivateData()/ParsePrivateDataToEndpointDesc()` 严格校验 magic、v2、payloadLen 和容量 | HCOMM 根据 endpoint 实际位置创建 Host/Device 资源 |
-| `compose_transport_manager.cpp`，`OpenDeviceTransport()/CreateUrmaTransportManager()` | DEVICE_URMA 分支按构建平台创建 Host/Device URMA manager，GPU 构建返回不支持 | manager 实现与本地硬件平台一致 |
+| `compose_transport_manager.cpp`，`OpenDeviceTransport()/CreateHostDeviceUrmaTransportManager()` | 新增 `HOST_DEVICE_URMA` 分支并按本端平台创建 Host/Device manager；既有 `DEVICE_URMA` 分支不改语义 | manager 实现与本地平台一致，同时不改变现有 Device↔Device 行为 |
 | `under_api/dl_api.cpp`，`LoadExtendLibrary(DL_EXT_LIB_DEVICE_URMA)` | `ASCEND_NPU` 加载 RT + HCOMM；`XPU_TYPE=NONE` 加载 HCOMM | 无卡鲲鹏只依赖 Host HCOMM 能力 |
-| `data_operation/host/hybm_compose_data_op.cpp` | `XPU_TYPE=NONE` 的 DEVICE_URMA 复用 `HostDataOpRDMA`，关闭建链后的动态 local-MR 预注册 | 支持两鲲鹏主动拷贝验证，同时保证 HCOMM CPU channel 只使用建链前注册的 staging MR |
+| `data_operation/host/hybm_data_op_factory.*`、`hybm_compose_data_op.cpp` | 为 `HOST_DEVICE_URMA` 按平台创建现有 `HostDataOpRDMA` 或 `DataOpDeviceURMA`，不增加 `HostDataOpRDMA` 字段 | 支持两鲲鹏主动拷贝及最终异构流程，并避免无必要的类布局修改 |
 | `host/urma/host_urma_transport_manager.{h,cpp}` | 实现 Host endpoint、DDR/flag 注册导出、Host peer MR 导入、CPU Read/Write/Fence、channel 和清理 | 承载无卡鲲鹏的 URMA 控制面与主动数据面 |
 | `hybm_conn_based_segment.cpp`，`MapSlice()` | `ASCEND_NPU` 构建按现有条件执行 `HalHostRegister()`；无卡构建直接把固定 mmap 结果加入 VA manager，DVA 置 0 | 鲲鹏 DDR 不经过本地 device 映射，无卡节点不能依赖 HAL device 注册 |
-| `HostUrmaTransportManager::RegisterMemoryRegion()/QueryMemoryKey()` | 使用 `FindAllocByVa(mr.addr, HVM_GVA)` 校验完整区间属于本地 rank 的 Host GVA 分配记录，再直接 `HcommMemReg(mr.addr)` 并导出同一 GVA | 鲲鹏 DDR 使用 Host VA/GVA，不经过 DVA；任意 Host 指针不会进入 DEVICE_URMA 导出集合 |
+| `HostUrmaTransportManager::RegisterMemoryRegion()/QueryMemoryKey()` | 使用 `FindAllocByVa(mr.addr, HVM_GVA)` 校验完整区间属于本地 rank 的 Host GVA 分配记录，再直接 `HcommMemReg(mr.addr)` 并导出同一 GVA | 鲲鹏 DDR 使用 Host VA/GVA，不经过 DVA；任意 Host 指针不会进入 `HOST_DEVICE_URMA` 导出集合 |
 | `HcommTransportManager::HcommMemImport()` | 使用 `UrmaExportDesc.memoryType` 设置 view type，并校验 UBC 返回的 addr/size | CANN UBC import 只回填 addr/size，内存类型由 MemFabric 描述符确定 |
 | `DeviceUrmaTransportManager::ImportRemoteMemKeysLocked()` | 调用 `ValidateImportedGvaLocked(exportDesc, remoteAddr, remoteSize, view)`，校验注册地址、导出描述符、导入 view 和 HOST_DRAM 类型；导入 transfer flag 后校验 addr 和 8 B 大小 | RangeEntry 只在导入 view 与发布 GVA 一致时省略地址转换字段；UBC 不回填普通 MR 和 flag 的 `outMem.type` |
 | `src/hybm/csrc/common/hybm_define.h`、`hybm_batch_copy_route.h` | 增加 2 MiB route 区、34 MiB control 映射常量及 Host/AICPU 共享路由 ABI | 固定地址、结构大小和 offset 使用同一组编译期定义 |
@@ -672,11 +677,11 @@ sequenceDiagram
 | 模块 | 修改内容 |
 | --- | --- |
 | `src/hybm/csrc/common/` | 增加卡级 route/control 地址常量和 Host/AICPU 共享固定表定义 |
-| `src/hybm/include/hybm_def.h` | 定义错误码 `BM_BUSY (-11)` |
+| `src/hybm/include/hybm_def.h`、`src/smem/include/host/smem_bm_def.h` | 定义错误码 `BM_BUSY (-11)`；追加内部/公共 `HOST_DEVICE_URMA` bit，既有值不变 |
 | `src/hybm/csrc/driver/`、`hybm_entry.cpp` | 元数据物理映射、回滚和释放使用 34 MiB 控制区边界 |
 | `src/hybm/csrc/mm/hybm_conn_based_segment.cpp` | 无卡构建的固定 GVA mmap 不执行 `HalHostRegister()` |
-| `src/hybm/csrc/under_api/` | 无卡构建的 DEVICE_URMA 初始化加载 HCOMM |
-| `src/hybm/csrc/data_operation/host/` | 无卡 DEVICE_URMA 复用 Host staging 与主动 CPU 数据面 |
+| `src/hybm/csrc/under_api/` | 无卡构建的 `HOST_DEVICE_URMA` 初始化加载 HCOMM |
+| `src/hybm/csrc/data_operation/host/` | `HOST_DEVICE_URMA` 按本端平台复用 Host staging/主动 CPU 数据面或 Device URMA 数据面 |
 | `src/hybm/csrc/transport/` | 抽取公共 URMA/HCOMM 封装，在 `UrmaEndpointDesc` 中携带 endpoint 位置，并增加 route 和 completion 接口 |
 | `src/hybm/csrc/transport/host/urma/` | 新增无卡 Host endpoint、固定 GVA MR/flag 导出、Host peer MR 导入和 CPU Read/Write/Fence channel |
 | `src/hybm/csrc/transport/device/urma/` | 增加 import 地址校验、路由构建和 completion 注册 |
