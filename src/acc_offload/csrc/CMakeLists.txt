@@ -15,6 +15,10 @@ include_directories(
         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/allocator
         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/launch
         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators
+        ${PROJECT_SMEM_SRC_BASE}/csrc/net
+        ${PROJECT_SMEM_SRC_BASE}/csrc/common
+        ${PROJECT_SMEM_SRC_BASE}/csrc/config_store
+        ${PROJECT_SMEM_SRC_BASE}/include/host
         ${PROJECT_HYBM_SRC_BASE}/include
         ${PROJECT_UTIL_SRC_BASE}/ptracer/include
         ${PROJECT_ACCLINKS_SRC_BASE}/include
@@ -34,18 +38,18 @@ target_link_libraries(acc_offload_objects PUBLIC config_store_object)
 
 target_compile_options(acc_offload_objects PRIVATE -fPIC)
 
-add_library(acc_offload_static STATIC $<TARGET_OBJECTS:acc_offload_objects> $<TARGET_OBJECTS:config_store_object>)
+add_library(acc_offload_static STATIC $<TARGET_OBJECTS:acc_offload_objects>)
 set_target_properties(acc_offload_static PROPERTIES OUTPUT_NAME "mf_acc_offload")
-target_link_libraries(acc_offload_static PUBLIC pthread acc_tcp_net_static hybmm_static)
+target_link_libraries(acc_offload_static PUBLIC pthread smem_static hybmm_static)
 
-add_library(acc_offload_shared SHARED $<TARGET_OBJECTS:acc_offload_objects> $<TARGET_OBJECTS:config_store_object>)
+add_library(acc_offload_shared SHARED $<TARGET_OBJECTS:acc_offload_objects>)
 set_target_properties(acc_offload_shared PROPERTIES
     OUTPUT_NAME "mf_acc_offload"
     BUILD_RPATH "\$ORIGIN"
     INSTALL_RPATH "\$ORIGIN"
     INSTALL_RPATH_USE_LINK_PATH TRUE
 )
-target_link_libraries(acc_offload_shared PUBLIC pthread acc_tcp_net_static hybmm_shared)
+target_link_libraries(acc_offload_shared PUBLIC pthread smem_shared hybmm_shared)
 
 if ((BUILD_PYTHON STREQUAL "ON") AND (NOT BUILD_UT STREQUAL "ON"))
     add_subdirectory(python_wrapper)

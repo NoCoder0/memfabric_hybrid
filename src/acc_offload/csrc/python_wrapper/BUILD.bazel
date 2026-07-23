@@ -40,8 +40,6 @@ pybind_extension(
         "-ldl",
     ] + COMMON_LINKOPTS,
     deps = [
-        "//src/acc_links/csrc:acc_tcp_net_static",
-        "//src/smem/csrc/config_store:config_store_object",
         "//src/hybm/csrc:hybmm_shared",
         "//src/acc_offload/csrc:acc_offload_shared",
     ],
