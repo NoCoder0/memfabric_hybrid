@@ -53,6 +53,9 @@ typedef void *hybm_mem_slice_t;
 #define BM_NOT_SUPPORT_FUNC   (-10)
 #define BM_NOT_SUPPORTED      (-100)
 #define BM_NOT_CONNECTED      (-101)
+#ifndef BM_BUSY
+#define BM_BUSY (-11)
+#endif
 
 /**
  * @brief Determine whether the IO initiator is on the host or the device.
