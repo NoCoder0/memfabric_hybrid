@@ -1,0 +1,312 @@
+In file included from /home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/compose/compose_transport_manager.cpp:22:
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:125:9: error: 'HcommChannelHandle' does not name a type; did you mean 'ChannelHandle'?
+  125 |         HcommChannelHandle channel{0};
+      |         ^~~~~~~~~~~~~~~~~~
+      |         ChannelHandle
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:127:9: error: 'HcommThreadHandle' does not name a type; did you mean 'ThreadHandle'?
+  127 |         HcommThreadHandle thread{0};
+      |         ^~~~~~~~~~~~~~~~~
+      |         ThreadHandle
+[ 63%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/device/urma/topo_reader.cpp.o
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:239:5: error: 'aclrtFuncHandle' does not name a type
+  239 |     aclrtFuncHandle GetDeviceKernelFunc(bool isRead) const;
+      |     ^~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:252:39: error: 'HcommThreadHandle' has not been declared
+  252 |     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
+      |                                       ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:252:78: error: 'HcommChannelHandle' has not been declared
+  252 |     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
+      |                                                                              ^~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:256:74: error: 'HcommThreadHandle' has not been declared
+  256 |     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
+      |                                                                          ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:257:36: error: 'HcommChannelHandle' has not been declared
+  257 |                                    HcommChannelHandle channel, size_t batchSize);
+      |                                    ^~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:259:37: error: 'HcommThreadHandle' has not been declared
+  259 |     Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
+      |                                     ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:259:63: error: 'HcommChannelHandle' has not been declared
+  259 |     Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
+      |                                                               ^~~~~~~~~~~~~~~~~~
+[ 63%] Built target acc_tcp_net_static
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:279:5: error: 'aclrtBinHandle' does not name a type
+  279 |     aclrtBinHandle deviceKernelHandle_{nullptr};
+      |     ^~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:280:5: error: 'DeviceFuncHandles' does not name a type
+  280 |     DeviceFuncHandles deviceFuncHandles_{};
+      |     ^~~~~~~~~~~~~~~~~
+[ 64%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/host/host_hcom_helper.cpp.o
+[ 65%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/host/host_hcom_reconnector.cpp.o
+[ 66%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/host/host_hcom_transport_manager.cpp.o
+[ 66%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/hybm_transport_manager.cpp.o
+[ 67%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/urma/hcomm_transport_manager.cpp.o
+[ 67%] Built target acc_tcp_net_shared
+[ 68%] Building CXX object src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/urma/urma_transport_common.cpp.o
+make[2]: *** [src/hybm/csrc/CMakeFiles/hybmm_objects.dir/build.make:468: src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/compose/compose_transport_manager.cpp.o] Error 1
+make[2]: *** Waiting for unfinished jobs....
+In file included from /home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:35:
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:125:9: error: 'HcommChannelHandle' does not name a type; did you mean 'ChannelHandle'?
+  125 |         HcommChannelHandle channel{0};
+      |         ^~~~~~~~~~~~~~~~~~
+      |         ChannelHandle
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:127:9: error: 'HcommThreadHandle' does not name a type; did you mean 'ThreadHandle'?
+  127 |         HcommThreadHandle thread{0};
+      |         ^~~~~~~~~~~~~~~~~
+      |         ThreadHandle
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:252:39: error: 'HcommThreadHandle' has not been declared
+  252 |     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
+      |                                       ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:252:78: error: 'HcommChannelHandle' has not been declared
+  252 |     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
+      |                                                                              ^~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:256:74: error: 'HcommThreadHandle' has not been declared
+  256 |     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
+      |                                                                          ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:257:36: error: 'HcommChannelHandle' has not been declared
+  257 |                                    HcommChannelHandle channel, size_t batchSize);
+      |                                    ^~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:259:37: error: 'HcommThreadHandle' has not been declared
+  259 |     Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
+      |                                     ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:259:63: error: 'HcommChannelHandle' has not been declared
+  259 |     Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
+      |                                                               ^~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:280:5: error: 'DeviceFuncHandles' does not name a type
+  280 |     DeviceFuncHandles deviceFuncHandles_{};
+      |     ^~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::EnsureDeviceKernelLoadedLocked()':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:370:46: error: 'deviceFuncHandles_' was not declared in this scope; did you mean 'deviceKernelHandle'?
+  370 |                                              deviceFuncHandles_);
+      |                                              ^~~~~~~~~~~~~~~~~~
+      |                                              deviceKernelHandle_
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:369:16: error: 'LoadDeviceKernelAndGetHandles' was not declared in this scope
+  369 |     auto ret = LoadDeviceKernelAndGetHandles(HYBM_DEVICE_FUNC_READ, HYBM_DEVICE_FUNC_WRITE, deviceKernelHandle_,
+      |                ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In static member function 'static ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState&)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:704:15: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+  704 |     if (state.channel != 0) {
+      |               ^~~~~~~
+      |               channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:705:32: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+  705 |         auto hcommChan = state.channel;
+      |                                ^~~~~~~
+      |                                channelDesc
+In file included from /home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/common/hybm_define.h:19,
+                 from /home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/common/hybm_common_include.h:19,
+                 from /home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/under_api/dl_acl_api.h:16,
+                 from /home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:28:
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:708:87: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+  708 |             BM_LOG_ERROR("device_urma HcommChannelDestroy failed, channel: " << state.channel << " ret: " << ret);
+      |                                                                                       ^~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:708:13: note: in expansion of macro 'BM_LOG_ERROR'
+  708 |             BM_LOG_ERROR("device_urma HcommChannelDestroy failed, channel: " << state.channel << " ret: " << ret);
+      |             ^~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:711:15: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+  711 |         state.channel = 0;
+      |               ^~~~~~~
+      |               channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:714:15: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+  714 |     if (state.thread != 0) {
+      |               ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:715:34: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+  715 |         auto hcommThread = state.thread;
+      |                                  ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:718:82: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+  718 |             BM_LOG_ERROR("device_urma HcommThreadFree failed, thread: " << state.thread << " ret: " << ret);
+      |                                                                                  ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:718:13: note: in expansion of macro 'BM_LOG_ERROR'
+  718 |             BM_LOG_ERROR("device_urma HcommThreadFree failed, thread: " << state.thread << " ret: " << ret);
+      |             ^~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:721:15: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+  721 |         state.thread = 0;
+      |               ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'virtual ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::Prepare(const ock::mf::transport::HybmTransPrepareOptions&)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1287:19: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1287 |         if (state.channel != 0 && state.thread != 0) {
+      |                   ^~~~~~~
+      |                   channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1287:41: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1287 |         if (state.channel != 0 && state.thread != 0) {
+      |                                         ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1352:19: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1352 |             state.thread = threadHandle;
+      |                   ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1354:19: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1354 |             state.channel = channelHandle;
+      |                   ^~~~~~~
+      |                   channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1368:27: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1368 |                 if (state.channel != 0) {
+      |                           ^~~~~~~
+      |                           channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1369:47: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1369 |                     auto chanRollback = state.channel;
+      |                                               ^~~~~~~
+      |                                               channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1372:27: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1372 |                     state.channel = 0;
+      |                           ^~~~~~~
+      |                           channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1374:27: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1374 |                 if (state.thread != 0) {
+      |                           ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1375:49: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1375 |                     auto threadRollback = state.thread;
+      |                                                 ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1377:27: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1377 |                     state.thread = 0;
+      |                           ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1388:95: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1388 |         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
+      |                                                                                               ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1388:9: note: in expansion of macro 'BM_LOG_INFO'
+ 1388 |         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
+      |         ^~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1389:68: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1389 |                                                           << state.channel << " imports: " << state.imports.size());
+      |                                                                    ^~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1388:9: note: in expansion of macro 'BM_LOG_INFO'
+ 1388 |         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
+      |         ^~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'virtual ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::UpdateRankOptions(const ock::mf::transport::HybmTransPrepareOptions&)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1505:23: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1505 |             if (state.channel == 0 || state.thread == 0) {
+      |                       ^~~~~~~
+      |                       channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1505:45: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1505 |             if (state.channel == 0 || state.thread == 0) {
+      |                                             ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::StageAndLaunchTransfer(CompletionContext&, RemoteRankState&, bool, const std::vector<long unsigned int>&, const std::vector<long unsigned int>&, const std::vector<long unsigned int>&, uint32_t)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1574:42: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1574 |         PrepareKernelLaunchBuffers(state.thread, isRead, state.channel, localVec, remoteVec, sizeVec, pt.buffers);
+      |                                          ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1574:64: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1574 |         PrepareKernelLaunchBuffers(state.thread, isRead, state.channel, localVec, remoteVec, sizeVec, pt.buffers);
+      |                                                                ^~~~~~~
+      |                                                                channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1587:53: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1587 |     ret = LaunchDeviceKernelBatch(pt.buffers, state.thread, isRead, state.channel, localVec.size());
+      |                                                     ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1587:75: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1587 |     ret = LaunchDeviceKernelBatch(pt.buffers, state.thread, isRead, state.channel, localVec.size());
+      |                                                                           ^~~~~~~
+      |                                                                           channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::RemoteIo(uint32_t, uint64_t, uint64_t, uint64_t, bool)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1617:15: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1617 |     if (state.channel == 0 || state.thread == 0) {
+      |               ^~~~~~~
+      |               channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1617:37: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1617 |     if (state.channel == 0 || state.thread == 0) {
+      |                                     ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1618:96: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1618 |         BM_LOG_ERROR("RemoteIo no channel/thread, rankId: " << rankId << " channel: " << state.channel
+      |                                                                                                ^~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1618:9: note: in expansion of macro 'BM_LOG_ERROR'
+ 1618 |         BM_LOG_ERROR("RemoteIo no channel/thread, rankId: " << rankId << " channel: " << state.channel
+      |         ^~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1619:85: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1619 |                                                             << " thread: " << state.thread << std::hex << " rAddr: 0x"
+      |                                                                                     ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1618:9: note: in expansion of macro 'BM_LOG_ERROR'
+ 1618 |         BM_LOG_ERROR("RemoteIo no channel/thread, rankId: " << rankId << " channel: " << state.channel
+      |         ^~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::RemoteIoBatch(uint32_t, const ock::mf::CopyDescriptor&, bool)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1714:15: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1714 |     if (state.channel == 0 || state.thread == 0) {
+      |               ^~~~~~~
+      |               channelDesc
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1714:37: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1714 |     if (state.channel == 0 || state.thread == 0) {
+      |                                     ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1715:113: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1715 |         BM_LOG_ERROR("device_urma RemoteIoBatch no channel/thread, rankId: " << rankId << " channel: " << state.channel
+      |                                                                                                                 ^~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1715:9: note: in expansion of macro 'BM_LOG_ERROR'
+ 1715 |         BM_LOG_ERROR("device_urma RemoteIoBatch no channel/thread, rankId: " << rankId << " channel: " << state.channel
+      |         ^~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1716:102: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1716 |                                                                              << " thread: " << state.thread);
+      |                                                                                                      ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/util/csrc/mf_out_logger.h:259:42: note: in definition of macro 'MF_OUT_LOG'
+  259 |         oss << (TAG) << MF_LOG_FORMAT << ARGS;                                        \
+      |                                          ^~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1715:9: note: in expansion of macro 'BM_LOG_ERROR'
+ 1715 |         BM_LOG_ERROR("device_urma RemoteIoBatch no channel/thread, rankId: " << rankId << " channel: " << state.channel
+      |         ^~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'void* ock::mf::transport::device::DeviceUrmaTransportManager::GetDeviceKernelFunc(bool) const':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1748:21: error: 'deviceFuncHandles_' was not declared in this scope; did you mean 'deviceKernelHandle_'?
+ 1748 |     return isRead ? deviceFuncHandles_.batchRead : deviceFuncHandles_.batchWrite;
+      |                     ^~~~~~~~~~~~~~~~~~
+      |                     deviceKernelHandle_
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: At global scope:
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1768:8: error: no declaration matches 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(ock::mf::transport::urma::HcommThreadHandle, bool, ock::mf::transport::urma::HcommChannelHandle, const std::vector<long unsigned int>&, const std::vector<long unsigned int>&, const std::vector<long unsigned int>&, DeviceTransferBuffers&)'
+ 1768 | Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
+      |        ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:252:12: note: candidate is: 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(int, bool, int, const std::vector<long unsigned int>&, const std::vector<long unsigned int>&, const std::vector<long unsigned int>&, DeviceTransferBuffers&)'
+  252 |     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:42:7: note: 'class ock::mf::transport::device::DeviceUrmaTransportManager' defined here
+   42 | class DeviceUrmaTransportManager final : public transport::TransportManager {
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1770:83: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::DeviceTransferBuffer' is private within this context
+ 1770 |     const std::vector<uint64_t> &remoteAddrs, const std::vector<uint64_t> &sizes, DeviceTransferBuffers &outBuffers)
+      |                                                                                   ^~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:143:12: note: declared private here
+  143 |     struct DeviceTransferBuffers {
+      |            ^~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1806:8: error: no declaration matches 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers&, ock::mf::transport::urma::HcommThreadHandle, bool, ock::mf::transport::urma::HcommChannelHandle, size_t)'
+ 1806 | Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers,
+      |        ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:256:12: note: candidate is: 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers&, int, bool, int, size_t)'
+  256 |     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
+      |            ^~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:42:7: note: 'class ock::mf::transport::device::DeviceUrmaTransportManager' defined here
+   42 | class DeviceUrmaTransportManager final : public transport::TransportManager {
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1806:66: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::DeviceTransferBuffer' is private within this context
+ 1806 | Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers,
+      |                                                                  ^~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:143:12: note: declared private here
+  143 |     struct DeviceTransferBuffers {
+      |            ^~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1864:8: error: no declaration matches 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::LaunchDeviceKernelNotify(ock::mf::transport::urma::HcommThreadHandle, ock::mf::transport::urma::HcommChannelHandle, uint64_t, uint64_t, uint32_t)'
+ 1864 | Result DeviceUrmaTransportManager::LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel,
+      |        ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:259:12: note: candidate is: 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::LaunchDeviceKernelNotify(int, int, uint64_t, uint64_t, uint32_t)'
+  259 |     Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
+      |            ^~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.h:42:7: note: 'class ock::mf::transport::device::DeviceUrmaTransportManager' defined here
+   42 | class DeviceUrmaTransportManager final : public transport::TransportManager {
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp: In member function 'ock::mf::Result ock::mf::transport::device::DeviceUrmaTransportManager::SynchronizeRankPendingLocked(CompletionContext&, RemoteRankState&, uint32_t, bool)':
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1935:44: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'thread'
+ 1935 |             LaunchDeviceKernelNotify(state.thread, state.channel, state.remoteFlagAddr, ctx.notifyAddr, ctx.notifyLen);
+      |                                            ^~~~~~
+/home/yangqi/z00502111/memfabric_hybrid/src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp:1935:58: error: 'struct ock::mf::transport::device::DeviceUrmaTransportManager::RemoteRankState' has no member named 'channel'; did you mean 'channelDesc'?
+ 1935 |             LaunchDeviceKernelNotify(state.thread, state.channel, state.remoteFlagAddr, ctx.notifyAddr, ctx.notifyLen);
+      |                                                          ^~~~~~~
+      |                                                          channelDesc
+make[2]: *** [src/hybm/csrc/CMakeFiles/hybmm_objects.dir/build.make:650: src/hybm/csrc/CMakeFiles/hybmm_objects.dir/transport/device/urma/device_urma_transport_manager.cpp.o] Error 1
