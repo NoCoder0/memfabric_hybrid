@@ -822,7 +822,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_DataCopyFail_ReturnErrorCode)
     auto dop = std::make_shared<FakeDataOperator>();
     entity.dataOperator_ = dop;
     MOCKER_CPP(&FakeDataOperator::DataCopy, ock::mf::Result(*)(FakeDataOperator *, hybm_copy_params &,
-                                                               hybm_data_copy_direction, const ock::mf::ExtOptions &))
+                                                                hybm_data_copy_direction, const ock::mf::ExtOptions &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
 
@@ -1075,7 +1075,7 @@ TEST_F(HybmEntityDefaultTest, BatchCopyData_BatchCopyFail_ReturnErrorCode)
     entity.dataOperator_ = dop;
     MOCKER_CPP(&FakeDataOperator::BatchDataCopy,
                ock::mf::Result(*)(FakeDataOperator *, hybm_batch_copy_params &, hybm_data_copy_direction,
-                                  const ock::mf::ExtOptions &))
+                                   const ock::mf::ExtOptions &))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
     void *srcs[1] = {reinterpret_cast<void *>(0x1)};
@@ -1527,6 +1527,18 @@ TEST_F(HybmEntityDefaultTest, CheckOptions_DeviceRdmaAndUrmaConflict)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
+TEST_F(HybmEntityDefaultTest, CheckOptions_HostDeviceUrmaConflictsWithDeviceUrma)
+{
+    hybm_options options{};
+    options.rankId = 0;
+    options.rankCount = 1;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_URMA);
+    EXPECT_EQ(ock::mf::MemEntityDefault::CheckOptions(&options), BM_INVALID_PARAM);
+
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE);
+    EXPECT_EQ(ock::mf::MemEntityDefault::CheckOptions(&options), BM_INVALID_PARAM);
+}
+
 TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmWithZeroVaSpace)
 {
     hybm_options options{};
@@ -1605,6 +1617,15 @@ TEST_F(HybmEntityDefaultTest, CanReachDataOperators_WithDeviceRdma)
     entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
     auto opType = entity.CanReachDataOperators(TEST_RANK_1);
     EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_DEVICE_RDMA, 0U);
+}
+
+TEST_F(HybmEntityDefaultTest, CanReachDataOperators_WithHostDeviceUrma)
+{
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_DEVICE_RDMA);
+    entity.initialized_ = true;
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+    const auto opType = entity.CanReachDataOperators(TEST_RANK_1);
+    EXPECT_NE(static_cast<uint32_t>(opType) & HYBM_DOP_TYPE_HOST_DEVICE_URMA, 0U);
 }
 
 TEST_F(HybmEntityDefaultTest, CanReachDataOperators_MultipleFlags)

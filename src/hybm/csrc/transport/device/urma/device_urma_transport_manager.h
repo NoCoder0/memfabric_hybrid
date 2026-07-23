@@ -23,13 +23,21 @@
 
 #include "dl_hcomm_api.h"
 #include "dl_rt_api.h"
-#include "hcomm_transport_manager.h"
 #include "hybm_transport_manager.h"
+#include "urma/hcomm_transport_manager.h"
 
 namespace ock {
 namespace mf {
 namespace transport {
 namespace device {
+
+using urma::HcommTransportManager;
+using urma::UrmaCommMem;
+using urma::UrmaEndpointDesc;
+using urma::UrmaEndpointHandle;
+using urma::UrmaMemTag;
+using urma::UrmaMemoryType;
+using urma::UrmaProtocol;
 
 class DeviceUrmaTransportManager final : public transport::TransportManager {
 public:

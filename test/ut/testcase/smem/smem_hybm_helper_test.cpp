@@ -42,4 +42,6 @@ TEST(SmemHybmHelperTest, TransHybmDataOpTypeMapsHostTypes)
                  HYBM_DOP_TYPE_HOST_TCP) != 0U);
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_HOST_SHM)) &
                  HYBM_DOP_TYPE_HOST_SHM) != 0U);
+    EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_HOST_DEVICE_URMA)) &
+                 HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U);
 }

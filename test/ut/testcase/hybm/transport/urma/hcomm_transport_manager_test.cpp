@@ -19,12 +19,12 @@
 
 #define private   public
 #define protected public
-#include "device/urma/hcomm_transport_manager.h"
+#include "urma/hcomm_transport_manager.h"
 #undef private
 #undef protected
 
 using namespace ock::mf;
-using namespace ock::mf::transport::device;
+using namespace ock::mf::transport::urma;
 
 namespace {
 const EndpointHandle MOCK_ENDPOINT = reinterpret_cast<EndpointHandle>(0xA501UL);
@@ -75,15 +75,25 @@ struct DlHcommApiFnGuard {
 UrmaEndpointDesc MakeEndpointDesc()
 {
     UrmaEndpointDesc desc{};
-    desc.devPhyId = 2UL;
-    desc.superDevId = 2UL;
-    desc.serverIdx = 3UL;
-    desc.superPodIdx = 4UL;
     desc.protocol = UrmaProtocol::UBC_TP;
     desc.type = COMM_ADDR_TYPE_EID;
+    desc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    desc.loc.device.devPhyId = 2UL;
+    desc.loc.device.superDevId = 2UL;
+    desc.loc.device.serverIdx = 3UL;
+    desc.loc.device.superPodIdx = 4UL;
     for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
         desc.raws[i] = static_cast<uint8_t>(i + 1);
     }
+    return desc;
+}
+
+UrmaEndpointDesc MakeHostEndpointDesc()
+{
+    auto desc = MakeEndpointDesc();
+    desc.loc = {};
+    desc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
+    desc.loc.host.id = 17U;
     return desc;
 }
 
@@ -113,7 +123,8 @@ int32_t MockHcommEndpointCreateFail(const EndpointDesc *, EndpointHandle *)
     return BM_DL_FUNCTION_FAILED;
 }
 
-int32_t MockHcommMemReg(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem, HcommMemHandle *memHandle)
+int32_t MockHcommMemReg(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
+                        HcommMemHandle *memHandle)
 {
     EXPECT_EQ(endpoint, MOCK_ENDPOINT);
     EXPECT_STREQ(memTag, "7");
@@ -215,6 +226,43 @@ std::vector<uint8_t> MakeRawExportDesc(uint64_t remoteAddr = MOCK_REMOTE_ADDR, u
 // ============================================================================
 // HcommTransportManager tests
 // ============================================================================
+
+TEST(UrmaTransportCommonTest, PrivateDataV2RoundTripsDeviceAndHostLocations)
+{
+    for (const auto &expected : {MakeEndpointDesc(), MakeHostEndpointDesc()}) {
+        TransportPrivateData privateData{};
+        ASSERT_EQ(SerializeUrmaPrivateData(expected, privateData), BM_OK);
+
+        UrmaEndpointDesc actual{};
+        ASSERT_EQ(ParseUrmaPrivateData(privateData, actual), BM_OK);
+        EXPECT_EQ(std::memcmp(&actual, &expected, sizeof(expected)), 0);
+
+        const auto hcommDesc = ToHcommEndpointDesc(actual);
+        EXPECT_EQ(std::memcmp(&hcommDesc.loc, &expected.loc, sizeof(expected.loc)), 0);
+    }
+}
+
+TEST(UrmaTransportCommonTest, PrivateDataRejectsLegacyVersionAndInvalidEndpoint)
+{
+    TransportPrivateData privateData{};
+    ASSERT_EQ(SerializeUrmaPrivateData(MakeEndpointDesc(), privateData), BM_OK);
+    auto *header = reinterpret_cast<UrmaPrivateDataDesc *>(privateData.key.keys);
+    header->version = 1U;
+
+    UrmaEndpointDesc endpoint{};
+    EXPECT_EQ(ParseUrmaPrivateData(privateData, endpoint), BM_INVALID_PARAM);
+
+    auto invalidEndpoint = MakeEndpointDesc();
+    invalidEndpoint.loc.locType = ENDPOINT_LOC_TYPE_RESERVED;
+    EXPECT_EQ(SerializeUrmaPrivateData(invalidEndpoint, privateData), BM_INVALID_PARAM);
+}
+
+TEST(UrmaTransportCommonTest, WireDescriptorsFitTransportKeys)
+{
+    EXPECT_EQ(sizeof(UrmaExportDesc), 48U);
+    EXPECT_LE(sizeof(UrmaPrivateDataDesc) + sizeof(UrmaEndpointDesc), sizeof(TransportPrivateData{}.key.keys));
+    EXPECT_LE(sizeof(UrmaExportDesc), DEVICE_URMA_EXPORT_KEY_DATA_BYTES);
+}
 
 TEST(HcommTransportManagerTest, CreateEndpointCallsHcommEndpointCreate)
 {

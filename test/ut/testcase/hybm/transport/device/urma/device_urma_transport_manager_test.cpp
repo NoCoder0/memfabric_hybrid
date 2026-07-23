@@ -36,6 +36,7 @@
 
 using namespace ock::mf;
 using namespace ock::mf::transport::device;
+using namespace ock::mf::transport::urma;
 using ock::mf::transport::HybmTransPrepareOptions;
 using ock::mf::transport::REG_MR_FLAG_DRAM;
 using ock::mf::transport::REG_MR_FLAG_HBM;
@@ -203,12 +204,13 @@ struct DlRtApiFnGuard {
 UrmaEndpointDesc MakeEndpointDesc()
 {
     UrmaEndpointDesc desc{};
-    desc.devPhyId = 2UL;
-    desc.superDevId = 2UL;
-    desc.serverIdx = 3UL;
-    desc.superPodIdx = 4UL;
     desc.protocol = UrmaProtocol::UBC_TP;
     desc.type = COMM_ADDR_TYPE_EID;
+    desc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    desc.loc.device.devPhyId = 2UL;
+    desc.loc.device.superDevId = 2UL;
+    desc.loc.device.serverIdx = 3UL;
+    desc.loc.device.superPodIdx = 4UL;
     for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
         desc.raws[i] = static_cast<uint8_t>(i + 1);
     }
@@ -504,7 +506,7 @@ TransportPrivateData MakePrivateData(const UrmaEndpointDesc &desc)
         uint32_t magic;
         uint16_t version;
         uint16_t payloadLen;
-    } header{0xA5FAC003U, 1U, static_cast<uint16_t>(sizeof(UrmaEndpointDesc))};
+    } header{0xA5FAC003U, 2U, static_cast<uint16_t>(sizeof(UrmaEndpointDesc))};
     std::memcpy(data.key.keys, &header, sizeof(header));
     std::memcpy(reinterpret_cast<uint8_t *>(data.key.keys) + sizeof(header), &desc, sizeof(desc));
     return data;
@@ -938,7 +940,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
     std::memcpy(&version, raw + sizeof(magic), sizeof(version));
     std::memcpy(&payloadLen, raw + sizeof(magic) + sizeof(version), sizeof(payloadLen));
     EXPECT_EQ(magic, 0xA5FAC003U);
-    EXPECT_EQ(version, 1U);
+    EXPECT_EQ(version, 2U);
     EXPECT_EQ(payloadLen, sizeof(UrmaEndpointDesc));
     manager.opened_ = false;
 }
@@ -1279,7 +1281,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRejectsRankEdgesAndChangedEndpoint)
     ASSERT_EQ(manager.Prepare(options), BM_OK);
 
     auto changedDesc = MakeEndpointDesc();
-    changedDesc.devPhyId++;
+    changedDesc.loc.device.devPhyId++;
     HybmTransPrepareOptions changedOptions{};
     TransportRankPrepareInfo changedInfo{};
     changedInfo.privateData = MakePrivateData(changedDesc);
@@ -1871,7 +1873,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataContainsValidEndpointDesc)
 
     const auto data = manager.GetPrivateData();
     const auto *raw = reinterpret_cast<const uint8_t *>(data.key.keys);
-    // Check header (magic=0xA5FAC003, version=1, payloadLen=sizeof(UrmaEndpointDesc))
+    // Check header (magic=0xA5FAC003, version=2, payloadLen=sizeof(UrmaEndpointDesc))
     uint32_t magic = 0;
     uint16_t version = 0;
     uint16_t payloadLen = 0;
@@ -1879,16 +1881,16 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataContainsValidEndpointDesc)
     std::memcpy(&version, raw + sizeof(magic), sizeof(version));
     std::memcpy(&payloadLen, raw + sizeof(magic) + sizeof(version), sizeof(payloadLen));
     EXPECT_EQ(magic, 0xA5FAC003U);
-    EXPECT_EQ(version, 1U);
+    EXPECT_EQ(version, 2U);
     EXPECT_EQ(payloadLen, sizeof(UrmaEndpointDesc));
 
     // Check payload matches expectedDesc
     UrmaEndpointDesc decodedDesc{};
     std::memcpy(&decodedDesc, raw + sizeof(uint32_t) + sizeof(uint16_t) + sizeof(uint16_t), sizeof(UrmaEndpointDesc));
-    EXPECT_EQ(decodedDesc.devPhyId, expectedDesc.devPhyId);
-    EXPECT_EQ(decodedDesc.superDevId, expectedDesc.superDevId);
-    EXPECT_EQ(decodedDesc.serverIdx, expectedDesc.serverIdx);
-    EXPECT_EQ(decodedDesc.superPodIdx, expectedDesc.superPodIdx);
+    EXPECT_EQ(decodedDesc.loc.device.devPhyId, expectedDesc.loc.device.devPhyId);
+    EXPECT_EQ(decodedDesc.loc.device.superDevId, expectedDesc.loc.device.superDevId);
+    EXPECT_EQ(decodedDesc.loc.device.serverIdx, expectedDesc.loc.device.serverIdx);
+    EXPECT_EQ(decodedDesc.loc.device.superPodIdx, expectedDesc.loc.device.superPodIdx);
     EXPECT_EQ(decodedDesc.protocol, expectedDesc.protocol);
     EXPECT_EQ(decodedDesc.type, expectedDesc.type);
     EXPECT_EQ(std::memcmp(decodedDesc.raws, expectedDesc.raws, sizeof(decodedDesc.raws)), 0);

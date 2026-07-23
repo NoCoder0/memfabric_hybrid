@@ -18,19 +18,19 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
 #include "dl_hcomm_api.h"
-#include "dl_rt_api.h"
 #include "hybm_transport_manager.h"
 #include "hybm_types.h"
-#include "load_kernel.h"
+#include "urma_transport_common.h"
 
 namespace ock {
 namespace mf {
 namespace transport {
-namespace device {
+namespace urma {
 
 constexpr uint32_t URMA_EXPORT_DESC_MAGIC = 0xA5FAB001U;
 constexpr uint16_t URMA_EXPORT_DESC_VERSION = 1U;
@@ -44,18 +44,6 @@ using UrmaMemTag = uint64_t;
 using HcommEndpointHandle = ock::mf::EndpointHandle;
 using HcommChannelHandle = ock::mf::ChannelHandle;
 using HcommThreadHandle = ock::mf::ThreadHandle;
-
-enum UrmaProtocol {
-    RESERVED = -1, /* 保留协议类型 */
-    HCCS = 0,      /* HCCS协议 */
-    ROCE = 1,      /* RDMA over Converged Ethernet */
-    PCIE = 2,      /* PCIe协议 */
-    SIO = 3,       /* SIO协议 */
-    UBC_CTP = 4,   /* 华为统一总线UBC_CTP */
-    UBC_TP = 5,    /* 华为统一总线UBC_TP */
-    UB_MEM = 6,    /* UB_MEM协议 */
-    UBOE = 7,      /* UBoE协议 */
-};
 
 enum UrmaMemoryType : uint16_t {
     HOST_DRAM = 0,
@@ -76,16 +64,6 @@ inline std::ostream &operator<<(std::ostream &os, UrmaMemoryType obj)
             return os << "UNKNOWN(" << static_cast<uint16_t>(obj) << ")";
     }
 }
-
-struct UrmaEndpointDesc {
-    uint32_t devPhyId{0};
-    uint32_t superDevId{0};
-    uint32_t serverIdx{0};
-    uint32_t superPodIdx{0};
-    UrmaProtocol protocol{UrmaProtocol::RESERVED};
-    CommAddrType type{COMM_ADDR_TYPE_RESERVED};
-    uint8_t raws[URMA_ENDPOINT_RAW_LEN]{}; // CommAddr.raws
-};
 
 struct UrmaCommMem {
     uint64_t addr{0};
@@ -109,6 +87,10 @@ struct UrmaExportDesc {
     uint32_t hcommDescLen{0};
     uint32_t devTransFlagDescLen{0};
 };
+
+static_assert(std::is_trivially_copyable<UrmaExportDesc>::value,
+              "UrmaExportDesc must be trivially copyable for serialization");
+static_assert(sizeof(UrmaExportDesc) == 48U, "UrmaExportDesc wire ABI size changed");
 
 struct MemEntry {
     HcommMemHandle handle{INVALID_MEM_HANDLE};
@@ -162,7 +144,7 @@ public:
     Result HcommMemUnimport(const UrmaEndpointHandle &endpoint, const uint8_t *memDesc, uint32_t descLen);
 };
 
-} // namespace device
+} // namespace urma
 } // namespace transport
 } // namespace mf
 } // namespace ock

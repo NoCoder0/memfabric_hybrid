@@ -18,7 +18,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <mutex>
-#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -40,6 +39,8 @@ namespace mf {
 namespace transport {
 namespace device {
 
+using namespace urma;
+
 namespace {
 constexpr uint32_t HCOMM_NORMAL_NOTIFY_NUM = 0;
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
@@ -52,23 +53,6 @@ constexpr uint32_t ACL_MEM_MALLOC_HUGE_ONLY =
     1; // 申请大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐。 表示仅申请大页
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 27U * 68U;
-static_assert(std::is_trivially_copyable<UrmaExportDesc>::value, "UrmaExportDesc must be binary serializable");
-static_assert(std::is_trivially_copyable<UrmaEndpointDesc>::value,
-              "UrmaEndpointDesc must be trivially copyable for memcpy serialization");
-
-// Must NOT conflict with URMA_EXPORT_DESC_MAGIC (0xA5FAB001).
-constexpr uint32_t URMA_PRIVATE_DATA_MAGIC = 0xA5FAC003U;
-constexpr uint16_t URMA_PRIVATE_DATA_VERSION = 1U;
-
-struct UrmaPrivateDataDesc {
-    uint32_t magic{URMA_PRIVATE_DATA_MAGIC};
-    uint16_t version{URMA_PRIVATE_DATA_VERSION};
-    uint16_t payloadLen{0};
-};
-
-static_assert(sizeof(UrmaPrivateDataDesc) + sizeof(UrmaEndpointDesc) <= sizeof(TransportPrivateData{}.key.keys),
-              "UrmaEndpointDesc cannot fit into TransportPrivateData.key");
-
 UrmaMemoryType ToUrmaMemoryType(uint32_t flags)
 {
     if (flags & REG_MR_FLAG_HBM) {
@@ -89,49 +73,6 @@ bool IsSupportedMemoryFlags(uint32_t flags)
     return !(hasDram && hasHbm);
 }
 
-UrmaProtocol ToUrmaProtocol(CommProtocol protocol)
-{
-    if (protocol == COMM_PROTOCOL_ROCE) {
-        return UrmaProtocol::ROCE;
-    }
-    if (protocol == COMM_PROTOCOL_UBC_TP) {
-        return UrmaProtocol::UBC_TP;
-    }
-    if (protocol == COMM_PROTOCOL_UBC_CTP) {
-        return UrmaProtocol::UBC_CTP;
-    }
-    if (protocol == COMM_PROTOCOL_UBOE) {
-        return UrmaProtocol::UBOE;
-    }
-    return UrmaProtocol::RESERVED;
-}
-
-bool ToUrmaEndpointDesc(const EndpointDesc &hcommDesc, UrmaEndpointDesc &urmaDesc)
-{
-    if (hcommDesc.commAddr.type != COMM_ADDR_TYPE_EID && hcommDesc.commAddr.type != COMM_ADDR_TYPE_IP_V6 &&
-        hcommDesc.commAddr.type != COMM_ADDR_TYPE_IP_V4) {
-        BM_LOG_ERROR("device_urma topo endpoint must use EID/IP address, addr type: " << hcommDesc.commAddr.type);
-        return false;
-    }
-
-    auto protocol = ToUrmaProtocol(hcommDesc.protocol);
-    if (protocol == UrmaProtocol::RESERVED) {
-        BM_LOG_ERROR("device_urma unsupported topo endpoint protocol: " << hcommDesc.protocol);
-        return false;
-    }
-
-    UrmaEndpointDesc desc{};
-    desc.protocol = protocol;
-    desc.devPhyId = hcommDesc.loc.device.devPhyId;
-    desc.superDevId = hcommDesc.loc.device.superDevId;
-    desc.serverIdx = hcommDesc.loc.device.serverIdx;
-    desc.superPodIdx = hcommDesc.loc.device.superPodIdx;
-    desc.type = hcommDesc.commAddr.type;
-    std::memcpy(desc.raws, hcommDesc.commAddr.raws, sizeof(desc.raws));
-    urmaDesc = desc;
-    return true;
-}
-
 bool ContainsAddressRange(uint64_t outerAddr, uint64_t outerSize, uint64_t innerAddr, uint64_t innerSize)
 {
     uint64_t outerEnd = 0;
@@ -142,44 +83,12 @@ bool ContainsAddressRange(uint64_t outerAddr, uint64_t outerSize, uint64_t inner
            outerEnd >= innerEnd;
 }
 
-// Returns BM_INVALID_PARAM on magic/version/payloadLen/capacity mismatch.
-Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, UrmaEndpointDesc &outDesc)
-{
-    constexpr size_t headerSize = sizeof(UrmaPrivateDataDesc);
-    const uint8_t *raw = reinterpret_cast<const uint8_t *>(privateData.key.keys);
-
-    UrmaPrivateDataDesc header{};
-    std::memcpy(&header, raw, headerSize);
-    if (header.magic != URMA_PRIVATE_DATA_MAGIC) {
-        BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc invalid magic: 0x"
-                     << std::hex << header.magic << " expected: 0x" << URMA_PRIVATE_DATA_MAGIC);
-        return BM_INVALID_PARAM;
-    }
-    if (header.version != URMA_PRIVATE_DATA_VERSION) {
-        BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc unsupported version: "
-                     << header.version << " expected: " << URMA_PRIVATE_DATA_VERSION);
-        return BM_INVALID_PARAM;
-    }
-    if (header.payloadLen != sizeof(UrmaEndpointDesc)) {
-        BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc payloadLen mismatch: "
-                     << header.payloadLen << " expected: " << sizeof(UrmaEndpointDesc));
-        return BM_INVALID_PARAM;
-    }
-    if (headerSize + header.payloadLen > sizeof(privateData.key.keys)) {
-        BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc payload exceeds key capacity, payloadLen: "
-                     << header.payloadLen);
-        return BM_INVALID_PARAM;
-    }
-    std::memcpy(&outDesc, raw + headerSize, sizeof(UrmaEndpointDesc));
-    return BM_OK;
-}
-
 UrmaProtocol GetEndpointProtocolFromOptions(uint32_t protocol)
 {
     if (protocol & HYBM_DOP_TYPE_DEVICE_UBOE) {
         return UrmaProtocol::UBOE;
     }
-    if (protocol & HYBM_DOP_TYPE_DEVICE_URMA) {
+    if (protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_HOST_DEVICE_URMA)) {
         return UrmaProtocol::UBC_CTP;
     }
     return UrmaProtocol::RESERVED;
@@ -312,10 +221,11 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
 {
     localDesc = {};
     localDesc.protocol = protocol;
-    localDesc.devPhyId = phyDeviceId_;
-    localDesc.superDevId = sdid_;
-    localDesc.serverIdx = serverId_;
-    localDesc.superPodIdx = superPodId_;
+    localDesc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    localDesc.loc.device.devPhyId = phyDeviceId_;
+    localDesc.loc.device.superDevId = sdid_;
+    localDesc.loc.device.serverIdx = serverId_;
+    localDesc.loc.device.superPodIdx = superPodId_;
 
     if (protocol == UrmaProtocol::UBC_CTP) {
         std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
@@ -1363,7 +1273,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
         // 1. Parse peer UrmaEndpointDesc from privateData
         UrmaEndpointDesc peerDesc{};
-        auto ret = ParsePrivateDataToEndpointDesc(item.second.privateData, peerDesc);
+        auto ret = ParseUrmaPrivateData(item.second.privateData, peerDesc);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma Prepare failed to parse peer endpoint desc, peer: " << peerRank);
             return ret;
@@ -1641,13 +1551,13 @@ const TransportPrivateData DeviceUrmaTransportManager::GetPrivateData() const
     TransportPrivateData data{};
     if (localEndpoint_ == nullptr) {
         BM_LOG_ERROR("device_urma GetPrivateData called before localEndpoint_ is ready, returning empty");
-        return data; // empty data, peer's ParsePrivateDataToEndpointDesc will reject with magic mismatch
+        return data; // Empty data is rejected by ParseUrmaPrivateData on the peer.
     }
-    UrmaPrivateDataDesc header{};
-    header.payloadLen = static_cast<uint16_t>(sizeof(UrmaEndpointDesc));
-    uint8_t *raw = reinterpret_cast<uint8_t *>(data.key.keys);
-    std::memcpy(raw, &header, sizeof(UrmaPrivateDataDesc));
-    std::memcpy(raw + sizeof(UrmaPrivateDataDesc), &localEndpointDesc_, sizeof(UrmaEndpointDesc));
+    const auto ret = SerializeUrmaPrivateData(localEndpointDesc_, data);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma GetPrivateData failed to serialize endpoint, rankId: " << rankId_
+                                                                                         << ", ret: " << ret);
+    }
     return data;
 }
 
