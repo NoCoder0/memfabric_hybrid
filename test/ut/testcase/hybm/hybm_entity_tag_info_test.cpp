@@ -275,12 +275,14 @@ TEST_F(HybmEntityTagInfoTest, AddTagOpInfo_AllOpTypes)
     EXPECT_EQ(tagInfo_->AddTagOpInfo("tag3:HOST_RDMA:tag4"), BM_OK);
     EXPECT_EQ(tagInfo_->AddTagOpInfo("tag4:HOST_TCP:tag5"), BM_OK);
     EXPECT_EQ(tagInfo_->AddTagOpInfo("tag5:HOST_URMA:tag6"), BM_OK);
+    EXPECT_EQ(tagInfo_->AddTagOpInfo("tag6:HOST_DEVICE_URMA:tag7"), BM_OK);
 
     EXPECT_EQ(tagInfo_->GetTag2TagOpType("tag1", "tag2"), HYBM_DOP_TYPE_SDMA);
     EXPECT_EQ(tagInfo_->GetTag2TagOpType("tag2", "tag3"), HYBM_DOP_TYPE_DEVICE_RDMA);
     EXPECT_EQ(tagInfo_->GetTag2TagOpType("tag3", "tag4"), HYBM_DOP_TYPE_HOST_RDMA);
     EXPECT_EQ(tagInfo_->GetTag2TagOpType("tag4", "tag5"), HYBM_DOP_TYPE_HOST_TCP);
     EXPECT_EQ(tagInfo_->GetTag2TagOpType("tag5", "tag6"), HYBM_DOP_TYPE_HOST_URMA);
+    EXPECT_EQ(tagInfo_->GetTag2TagOpType("tag6", "tag7"), HYBM_DOP_TYPE_HOST_DEVICE_URMA);
 }
 
 // ========================
@@ -382,6 +384,7 @@ TEST_F(HybmEntityTagInfoTest, GetOpTypeStr_AllKnownOpTypes)
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_RDMA), "HOST_RDMA");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_TCP), "HOST_TCP");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_URMA), "HOST_URMA");
+    EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_DEVICE_URMA), "HOST_DEVICE_URMA");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_SHM), "HOST_SHM");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_MTE), "DEVICE_MTE");
     EXPECT_EQ(HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_AIV_SDMA), "AIV_SDMA");

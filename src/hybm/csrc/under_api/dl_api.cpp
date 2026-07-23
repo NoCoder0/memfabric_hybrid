@@ -94,6 +94,9 @@ Result DlApi::LoadExtendLibrary(DlApiExtendLibraryType libraryType)
     }
 
     if (libraryType == DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_URMA) {
+#if defined(NO_XPU)
+        return DlHcommApi::LoadLibrary();
+#else
         auto result = DlRtApi::LoadLibrary();
         if (result != BM_OK) {
             return result;
@@ -103,6 +106,7 @@ Result DlApi::LoadExtendLibrary(DlApiExtendLibraryType libraryType)
             DlRtApi::CleanupLibrary();
             return result;
         }
+#endif
     }
 
     return BM_OK;

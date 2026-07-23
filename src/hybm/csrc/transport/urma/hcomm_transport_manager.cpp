@@ -29,7 +29,7 @@
 namespace ock {
 namespace mf {
 namespace transport {
-namespace device {
+namespace urma {
 
 namespace {
 CommProtocol ToHcommProtocol(UrmaProtocol protocol)
@@ -114,11 +114,7 @@ EndpointDesc ToHcommEndpointDesc(const UrmaEndpointDesc &desc)
     endpoint.commAddr.type = desc.type;
     std::memcpy(endpoint.commAddr.raws, desc.raws, sizeof(endpoint.commAddr.raws));
 
-    endpoint.loc.locType = ENDPOINT_LOC_TYPE_DEVICE; // 暂时只支持DEVICE，后续RoCE再做HOST
-    endpoint.loc.device.devPhyId = desc.devPhyId;
-    endpoint.loc.device.superDevId = desc.superDevId;
-    endpoint.loc.device.serverIdx = desc.serverIdx;
-    endpoint.loc.device.superPodIdx = desc.superPodIdx;
+    endpoint.loc = desc.loc;
     return endpoint;
 }
 
@@ -179,7 +175,7 @@ Result HcomUrmaDestroyEndpoint(HcommEndpointHandle endpoint)
     }
     const auto ret = DlHcommApi::HcommEndpointDestroy(endpoint);
     if (ret != 0) {
-        BM_LOG_ERROR("device_urma HcommEndpointDestroy failed, ret: " << ret);
+        BM_LOG_ERROR("urma HcommEndpointDestroy failed, ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -193,22 +189,22 @@ UrmaEndpointHandle HcommTransportManager::CreateEndpoint(const UrmaEndpointDesc 
     EndpointHandle handle = nullptr;
     const auto ret = DlHcommApi::HcommEndpointCreate(&hcommDesc, &handle);
     if (ret != 0) {
-        BM_LOG_ERROR("device_urma HcommEndpointCreate failed, ret: " << ret);
+        BM_LOG_ERROR("urma HcommEndpointCreate failed, ret: " << ret);
         return nullptr;
     }
     endpoint->hcommEndpoint = handle;
     return endpoint;
 }
 
-Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, UrmaMemTag memTag, const UrmaCommMem &mem,
-                                          HcommMemHandle *memHandle)
+Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, UrmaMemTag memTag,
+                                          const UrmaCommMem &mem, HcommMemHandle *memHandle)
 {
     if (endpoint == nullptr || memHandle == nullptr) {
-        BM_LOG_ERROR("device_urma HcommMemReg: endpoint or memHandle is null");
+        BM_LOG_ERROR("urma HcommMemReg: endpoint or memHandle is null");
         return BM_INVALID_PARAM;
     }
     if (!IsValidMem(mem)) {
-        BM_LOG_ERROR("device_urma HcommMemReg: invalid memory");
+        BM_LOG_ERROR("urma HcommMemReg: invalid memory");
         return BM_INVALID_PARAM;
     }
 
@@ -217,7 +213,7 @@ Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, Ur
     if (tagIt != endpoint->tagIndex.end()) {
         auto entryIt = endpoint->memEntries.find(tagIt->second);
         if (entryIt == endpoint->memEntries.end()) {
-            BM_LOG_ERROR("device_urma HcommMemReg: tag index points to non-existent memEntry");
+            BM_LOG_ERROR("urma HcommMemReg: tag index points to non-existent memEntry");
             return BM_ERROR;
         }
         auto &entry = entryIt->second;
@@ -243,12 +239,12 @@ Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, Ur
     HcommMemHandle hcommHandle = nullptr;
     const auto tag = MakeMemTag(memTag);
 
-    BM_LOG_INFO("device_urma try to register mem, addr: " << VaToStr(hcommMem.addr) << " size: " << hcommMem.size
-                                                          << " memType: " << hcommMem.type);
+    BM_LOG_INFO("urma try to register mem, addr: " << VaToStr(hcommMem.addr) << " size: " << hcommMem.size
+                                                   << " memType: " << hcommMem.type);
     int ret = DlHcommApi::HcommMemReg(endpoint->hcommEndpoint, tag.c_str(), &hcommMem, &hcommHandle);
     if (ret != 0) {
-        BM_LOG_ERROR("device_urma HcommMemReg failed, addr: " << std::hex << mem.addr << " size: " << mem.size
-                                                              << " ret: " << ret);
+        BM_LOG_ERROR("urma HcommMemReg failed, addr: " << std::hex << mem.addr << " size: " << mem.size
+                                                       << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
     UrmaLocalMr localMr{};
@@ -270,7 +266,7 @@ Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, Ur
             endpoint->tagIndex.erase(memTag);
             int deregRet = DlHcommApi::HcommMemUnreg(endpoint->hcommEndpoint, localMr.hcommMem);
             if (deregRet != 0) {
-                BM_LOG_ERROR("device_urma HcommMemUnreg rollback failed, ret: " << deregRet);
+                BM_LOG_ERROR("urma HcommMemUnreg rollback failed, ret: " << deregRet);
             }
             return BM_ERROR;
         }
@@ -281,7 +277,7 @@ Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, Ur
     } catch (...) {
         int deregRet = DlHcommApi::HcommMemUnreg(endpoint->hcommEndpoint, localMr.hcommMem);
         if (deregRet != 0) {
-            BM_LOG_ERROR("device_urma HcommMemUnreg rollback failed, ret: " << deregRet);
+            BM_LOG_ERROR("urma HcommMemUnreg rollback failed, ret: " << deregRet);
         }
         return BM_MALLOC_FAILED;
     }
@@ -290,14 +286,14 @@ Result HcommTransportManager::HcommMemReg(const UrmaEndpointHandle &endpoint, Ur
 Result HcommTransportManager::HcommMemUnreg(const UrmaEndpointHandle &endpoint, HcommMemHandle memHandle)
 {
     if (endpoint == nullptr || memHandle == INVALID_MEM_HANDLE) {
-        BM_LOG_ERROR("device_urma HcommMemUnreg: endpoint is null or memHandle is invalid");
+        BM_LOG_ERROR("urma HcommMemUnreg: endpoint is null or memHandle is invalid");
         return BM_INVALID_PARAM;
     }
 
     std::lock_guard<std::mutex> guard(endpoint->mutex);
     auto entryIt = endpoint->memEntries.find(memHandle);
     if (entryIt == endpoint->memEntries.end() || entryIt->second == nullptr) {
-        BM_LOG_ERROR("device_urma HcommMemUnreg: memEntry not found, memHandle " << memHandle);
+        BM_LOG_ERROR("urma HcommMemUnreg: memEntry not found, memHandle " << memHandle);
         return BM_INVALID_PARAM;
     }
 
@@ -312,7 +308,7 @@ Result HcommTransportManager::HcommMemUnreg(const UrmaEndpointHandle &endpoint, 
 
     const auto ret = DlHcommApi::HcommMemUnreg(endpoint->hcommEndpoint, entry->mr.hcommMem);
     if (ret != 0) {
-        BM_LOG_ERROR("device_urma HcommMemUnreg failed, ret: " << ret);
+        BM_LOG_ERROR("urma HcommMemUnreg failed, ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
@@ -328,7 +324,7 @@ Result HcommTransportManager::HcommMemExport(const UrmaEndpointHandle &endpoint,
                                              const uint8_t **memDesc, uint32_t *memDescLen)
 {
     if (endpoint == nullptr || memDesc == nullptr || memDescLen == nullptr) {
-        BM_LOG_ERROR("device_urma HcommMemExport: endpoint, memDesc, or memDescLen is null");
+        BM_LOG_ERROR("urma HcommMemExport: endpoint, memDesc, or memDescLen is null");
         return BM_INVALID_PARAM;
     }
     std::lock_guard<std::mutex> guard(endpoint->mutex);
@@ -341,14 +337,13 @@ Result HcommTransportManager::HcommMemExport(const UrmaEndpointHandle &endpoint,
     if (!entry->exportCacheValid) {
         void *hcommDesc = nullptr;
         uint32_t hcommDescLen = 0;
-        BM_LOG_INFO("device_urma try to export memory addr: " << VaToStr(entry->mem.addr)
-                                                              << " size: " << entry->mem.size);
+        BM_LOG_INFO("urma try to export memory addr: " << VaToStr(entry->mem.addr) << " size: " << entry->mem.size);
         auto ret = DlHcommApi::HcommMemExport(endpoint->hcommEndpoint, entry->mr.hcommMem, &hcommDesc, &hcommDescLen);
         if (ret != BM_OK) {
             return ret;
         }
         if (hcommDesc == nullptr || hcommDescLen == 0) {
-            BM_LOG_ERROR("device_urma HcommMemExport: hcommDesc is null or hcommDescLen is 0 after HcommMemExport");
+            BM_LOG_ERROR("urma HcommMemExport: hcommDesc is null or hcommDescLen is 0 after HcommMemExport");
             return BM_ERROR;
         }
 
@@ -382,7 +377,7 @@ Result HcommTransportManager::HcommMemImport(const UrmaEndpointHandle &endpoint,
                                              uint32_t descLen, UrmaCommMem *commMem)
 {
     if (endpoint == nullptr || memDesc == nullptr || commMem == nullptr) {
-        BM_LOG_ERROR("device_urma HcommMemImport: endpoint, memDesc, or commMem is null");
+        BM_LOG_ERROR("urma HcommMemImport: endpoint, memDesc, or commMem is null");
         return BM_INVALID_PARAM;
     }
     UrmaExportDesc desc{};
@@ -397,21 +392,21 @@ Result HcommTransportManager::HcommMemImport(const UrmaEndpointHandle &endpoint,
         std::lock_guard<std::mutex> guard(endpoint->mutex);
         const auto ret = DlHcommApi::HcommMemImport(endpoint->hcommEndpoint, hcommDesc, hcommDescLen, &outMem);
         if (ret != 0) {
-            BM_LOG_ERROR("device_urma HcommMemImport failed, ret: " << ret);
+            BM_LOG_ERROR("urma HcommMemImport failed, ret: " << ret);
             return BM_DL_FUNCTION_FAILED;
         }
         if (outMem.type == COMM_MEM_TYPE_INVALID) {
-            BM_LOG_ERROR("device_urma HcommMemImport invalid outMem type (COMM_MEM_TYPE_INVALID)");
+            BM_LOG_ERROR("urma HcommMemImport invalid outMem type (COMM_MEM_TYPE_INVALID)");
             return BM_INVALID_PARAM;
         }
     }
 
-    BM_LOG_INFO("device_urma import memory returned outMem (addr=" << VaToStr(outMem.addr) << " size=" << outMem.size
-                                                                   << " type=" << outMem.type << ")");
+    BM_LOG_INFO("urma import memory returned outMem (addr=" << VaToStr(outMem.addr) << " size=" << outMem.size
+                                                            << " type=" << outMem.type << ")");
     UrmaCommMem view{reinterpret_cast<uint64_t>(outMem.addr), outMem.size,
                      outMem.type == COMM_MEM_TYPE_DEVICE ? UrmaMemoryType::DEVICE_HBM : UrmaMemoryType::HOST_DRAM};
     if (!IsValidMem(view)) {
-        BM_LOG_ERROR("device_urma HcommMemImport returned invalid view (addr="
+        BM_LOG_ERROR("urma HcommMemImport returned invalid view (addr="
                      << std::hex << view.addr << " size=" << view.size << " type=" << view.type << std::dec << ")");
         return BM_DL_FUNCTION_FAILED;
     }
@@ -423,7 +418,7 @@ Result HcommTransportManager::HcommMemUnimport(const UrmaEndpointHandle &endpoin
                                                uint32_t descLen)
 {
     if (endpoint == nullptr || memDesc == nullptr) {
-        BM_LOG_ERROR("device_urma HcommMemUnimport: endpoint or memDesc is null");
+        BM_LOG_ERROR("urma HcommMemUnimport: endpoint or memDesc is null");
         return BM_INVALID_PARAM;
     }
     UrmaExportDesc desc{};
@@ -436,13 +431,13 @@ Result HcommTransportManager::HcommMemUnimport(const UrmaEndpointHandle &endpoin
     std::lock_guard<std::mutex> guard(endpoint->mutex);
     const auto ret = DlHcommApi::HcommMemUnimport(endpoint->hcommEndpoint, hcommDesc, hcommDescLen);
     if (ret != 0) {
-        BM_LOG_ERROR("device_urma HcommMemUnimport failed, ret: " << ret);
+        BM_LOG_ERROR("urma HcommMemUnimport failed, ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
 }
 
-} // namespace device
+} // namespace urma
 } // namespace transport
 } // namespace mf
 } // namespace ock

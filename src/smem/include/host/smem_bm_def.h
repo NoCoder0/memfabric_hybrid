@@ -53,14 +53,15 @@ typedef smem_bm_mem_type smem_bm_mem_type_t; /* renamed to smem_bm_mem_type_t */
  * @brief CPU initiated data operation type, currently only support SDMA
  */
 typedef enum {
-    SMEMB_DATA_OP_SDMA = 1U << 0,        /* data operation done by device SDMA */
-    SMEMB_DATA_OP_HOST_RDMA = 1U << 1,   /* data operation done by host RDMA */
-    SMEMB_DATA_OP_HOST_TCP = 1U << 2,    /* data operation done by host TCP */
-    SMEMB_DATA_OP_DEVICE_RDMA = 1U << 3, /* data operation done by device RDMA */
-    SMEMB_DATA_OP_HOST_URMA = 1U << 4,   /* data operation done by host URMA */
-    SMEMB_DATA_OP_HOST_SHM = 1U << 5,    /* same-node host shared memory (no network transport) */
-    SMEMB_DATA_OP_DEVICE_URMA = 1U << 6, /* data operation done by device URMA */
-    SMEMB_DATA_OP_DEVICE_UBOE = 1U << 7, /* data operation done by device UBoE */
+    SMEMB_DATA_OP_SDMA = 1U << 0,             /* data operation done by device SDMA */
+    SMEMB_DATA_OP_HOST_RDMA = 1U << 1,        /* data operation done by host RDMA */
+    SMEMB_DATA_OP_HOST_TCP = 1U << 2,         /* data operation done by host TCP */
+    SMEMB_DATA_OP_DEVICE_RDMA = 1U << 3,      /* data operation done by device RDMA */
+    SMEMB_DATA_OP_HOST_URMA = 1U << 4,        /* data operation done by host URMA */
+    SMEMB_DATA_OP_HOST_SHM = 1U << 5,         /* same-node host shared memory (no network transport) */
+    SMEMB_DATA_OP_DEVICE_URMA = 1U << 6,      /* data operation done by device URMA */
+    SMEMB_DATA_OP_DEVICE_UBOE = 1U << 7,      /* data operation done by device UBoE */
+    SMEMB_DATA_OP_HOST_DEVICE_URMA = 1U << 8, /* HCOMM operation between host and host/device */
     SMEMB_DATA_OP_BUTT
 } smem_bm_data_op_type;
 typedef smem_bm_data_op_type smem_bm_data_op_type_t;

@@ -152,8 +152,10 @@ static inline int32_t SmemBmDataOpCheck(smem_bm_data_op_type dataOpType)
 {
     constexpr uint32_t dataOpTypeMask = SMEMB_DATA_OP_SDMA | SMEMB_DATA_OP_HOST_RDMA | SMEMB_DATA_OP_HOST_URMA |
                                         SMEMB_DATA_OP_HOST_TCP | SMEMB_DATA_OP_DEVICE_RDMA | SMEMB_DATA_OP_DEVICE_URMA |
-                                        SMEMB_DATA_OP_DEVICE_UBOE | SMEMB_DATA_OP_HOST_SHM;
-    return (dataOpType & dataOpTypeMask) != 0;
+                                        SMEMB_DATA_OP_DEVICE_UBOE | SMEMB_DATA_OP_HOST_SHM |
+                                        SMEMB_DATA_OP_HOST_DEVICE_URMA;
+    const auto value = static_cast<uint32_t>(dataOpType);
+    return value != 0U && (value & ~dataOpTypeMask) == 0U;
 }
 
 SMEM_API smem_bm_t smem_bm_create(uint32_t id, uint32_t memberSize, smem_bm_data_op_type dataOpType,
@@ -223,10 +225,18 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     }
     constexpr uint32_t hostShmConflictMask = SMEMB_DATA_OP_SDMA | SMEMB_DATA_OP_HOST_RDMA | SMEMB_DATA_OP_HOST_URMA |
                                              SMEMB_DATA_OP_HOST_TCP | SMEMB_DATA_OP_DEVICE_RDMA |
-                                             SMEMB_DATA_OP_DEVICE_URMA | SMEMB_DATA_OP_DEVICE_UBOE;
+                                             SMEMB_DATA_OP_DEVICE_URMA | SMEMB_DATA_OP_DEVICE_UBOE |
+                                             SMEMB_DATA_OP_HOST_DEVICE_URMA;
     if (isHostShm && (option->dataOpType & hostShmConflictMask) != 0) {
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
                                        "HOST_SHM op type does not support mixing with other data op types");
+        return SM_INVALID_PARAM;
+    }
+    constexpr uint32_t hcommConflictMask = SMEMB_DATA_OP_DEVICE_URMA | SMEMB_DATA_OP_DEVICE_UBOE;
+    if ((option->dataOpType & SMEMB_DATA_OP_HOST_DEVICE_URMA) != 0 && (option->dataOpType & hcommConflictMask) != 0) {
+        SM_LOG_AND_SET_LAST_ERROR_CODE(
+            SM_INVALID_PARAM,
+            "HOST_DEVICE_URMA cannot be enabled with DEVICE_URMA or DEVICE_UBOE, dataOpType: " << option->dataOpType);
         return SM_INVALID_PARAM;
     }
     auto ret = manager.CreateEntryById(id, entry);

@@ -113,6 +113,10 @@ int32_t SmemTransEntry::Initialize()
         auto temp = static_cast<uint32_t>(options.bmDataOpType) | HYBM_DOP_TYPE_DEVICE_UBOE;
         options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
     }
+    if (config_.dataOpType & SMEMB_DATA_OP_HOST_DEVICE_URMA) {
+        auto temp = static_cast<uint32_t>(options.bmDataOpType) | HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+        options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
+    }
 
     auto entityId = entityId_ + HYBM_ENTITY_ID_TRANS_BASE;
     entity_ = hybm_create_entity(entityId, &options, 0);
