@@ -36,6 +36,28 @@ int32_t initedDeviceId = -1;
 void *g_allocHandle = nullptr;
 
 std::mutex initMutex;
+
+void CleanupAscend950ControlMapping()
+{
+    auto ret = DlHalApi::HalMemUnmap(reinterpret_cast<void *>(HYBM_DEVICE_CONTROL_ADDR));
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemUnmap control memory failed, ret: " << ret << " addr: 0x" << std::hex
+                                                                << HYBM_DEVICE_CONTROL_ADDR << std::dec);
+    }
+    if (g_allocHandle != nullptr) {
+        ret = DlHalApi::HalMemRelease(reinterpret_cast<drv_mem_handle_t *>(g_allocHandle));
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("HalMemRelease control memory failed, ret: " << ret << " handle: " << g_allocHandle);
+        }
+        g_allocHandle = nullptr;
+    }
+    ret = DlHalApi::HalMemAddressFree(reinterpret_cast<void *>(g_baseAddr));
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemAddressFree control reservation failed, ret: " << ret << " addr: 0x" << std::hex
+                                                                           << g_baseAddr << std::dec);
+    }
+    g_baseAddr = 0ULL;
+}
 } // namespace
 
 int32_t HybmGetInitDeviceId()
@@ -131,7 +153,11 @@ HYBM_API void hybm_uninit()
 
     ptracer_uninit();
     auto socType = DlAclApi::GetAscendSocType();
-    if ((socType == AscendSocType::ASCEND_950) || (HybmGetGvaVersion() == HYBM_GVA_V4)) {
+    if (socType == AscendSocType::ASCEND_950) {
+        if (g_baseAddr != 0) {
+            CleanupAscend950ControlMapping();
+        }
+    } else if (HybmGetGvaVersion() == HYBM_GVA_V4) {
         if (g_baseAddr != 0) {
             auto ret = DlHalApi::HalMemUnmap(reinterpret_cast<void *>(g_baseAddr));
             BM_LOG_INFO("unmap meta info res: " << ret);

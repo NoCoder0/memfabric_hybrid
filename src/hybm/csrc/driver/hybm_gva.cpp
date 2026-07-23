@@ -23,6 +23,38 @@ namespace mf {
 
 namespace {
 int32_t initedLogicDeviceId = -1;
+
+void RollbackAscend950MetaGva(void **globalMemoryBase, drv_mem_handle_t **handle)
+{
+    if (handle != nullptr && *handle != nullptr) {
+        const auto ret = DlHalApi::HalMemRelease(*handle);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("HalMemRelease rollback failed, ret: " << ret << " handle: " << *handle);
+        }
+        *handle = nullptr;
+    }
+    if (globalMemoryBase != nullptr && *globalMemoryBase != nullptr) {
+        const auto ret = DlHalApi::HalMemAddressFree(*globalMemoryBase);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("HalMemAddressFree rollback failed, ret: " << ret << " addr: " << *globalMemoryBase);
+        }
+        *globalMemoryBase = nullptr;
+    }
+}
+
+bool ValidateAscend950MetaGvaParams(void **globalMemoryBase, size_t allocSize, void **allocHandle)
+{
+    const auto base = globalMemoryBase == nullptr ? nullptr : *globalMemoryBase;
+    const auto handle = allocHandle == nullptr ? nullptr : *allocHandle;
+    if (globalMemoryBase != nullptr && allocHandle != nullptr && allocSize == HYBM_DEVICE_CONTROL_SIZE &&
+        base == nullptr && handle == nullptr) {
+        return true;
+    }
+    BM_LOG_ERROR("invalid Ascend950 control mapping params, allocSize: " << allocSize
+                                                                         << " expected: " << HYBM_DEVICE_CONTROL_SIZE
+                                                                         << " base: " << base << " handle: " << handle);
+    return false;
+}
 } // namespace
 
 int32_t HybmGetInitedLogicDeviceId()
@@ -57,6 +89,50 @@ int32_t HybmModernInitMetaGva(void **globalMemoryBase, size_t allocSize, void **
                                                << allocSize << " handle: " << *handle
                                                << " devid: " << initedLogicDeviceId);
         DlHalApi::HalMemRelease(*handle);
+        return BM_ERROR;
+    }
+    return BM_OK;
+}
+
+int32_t HybmAscend950InitMetaGva(void **globalMemoryBase, size_t allocSize, void **allocHandle)
+{
+    if (!ValidateAscend950MetaGvaParams(globalMemoryBase, allocSize, allocHandle)) {
+        return BM_INVALID_PARAM;
+    }
+    auto **handle = reinterpret_cast<drv_mem_handle_t **>(allocHandle);
+    const uint64_t va = SVM_END_ADDR - GB;
+    auto ret = DlHalApi::HalMemAddressReserve(globalMemoryBase, GB, 0, reinterpret_cast<void *>(va), 0);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemAddressReserve failed, ret: " << ret << " expectedAddr: 0x" << std::hex << va
+                                                          << " actualAddr: " << *globalMemoryBase << std::dec
+                                                          << " size: " << GB);
+        *globalMemoryBase = nullptr;
+        return BM_ERROR;
+    }
+    if (reinterpret_cast<uint64_t>(*globalMemoryBase) != va) {
+        BM_LOG_ERROR("HalMemAddressReserve returned unexpected address, expectedAddr: 0x"
+                     << std::hex << va << " actualAddr: " << *globalMemoryBase << std::dec << " size: " << GB);
+        RollbackAscend950MetaGva(globalMemoryBase, handle);
+        return BM_ERROR;
+    }
+    drv_mem_prop memprop{};
+    memprop.side = MEM_DEV_SIDE;
+    memprop.devid = initedLogicDeviceId;
+    memprop.pg_type = MEM_HUGE_PAGE_TYPE;
+    memprop.mem_type = MEM_HBM_TYPE;
+    ret = DlHalApi::HalMemCreate(handle, allocSize, &memprop, 0);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemCreate failed, ret: " << ret << " size: " << allocSize
+                                                  << " logicDeviceId: " << initedLogicDeviceId);
+        RollbackAscend950MetaGva(globalMemoryBase, handle);
+        return BM_ERROR;
+    }
+    ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(HYBM_DEVICE_CONTROL_ADDR), allocSize, 0, *handle, 0);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemMap failed, ret: " << ret << " addr: 0x" << std::hex << HYBM_DEVICE_CONTROL_ADDR
+                                               << " size: 0x" << allocSize << " handle: " << *handle << std::dec
+                                               << " logicDeviceId: " << initedLogicDeviceId);
+        RollbackAscend950MetaGva(globalMemoryBase, handle);
         return BM_ERROR;
     }
     return BM_OK;
@@ -116,7 +192,9 @@ int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddre
 
     void *globalMemoryBase = nullptr;
     size_t allocSize = HYBM_DEVICE_INFO_SIZE; // 申请meta空间
-    if ((socType == AscendSocType::ASCEND_950) || (HybmGetGvaVersion() == HYBM_GVA_V4)) {
+    if (socType == AscendSocType::ASCEND_950) {
+        ret = HybmAscend950InitMetaGva(&globalMemoryBase, HYBM_DEVICE_CONTROL_SIZE, allocHandle);
+    } else if (HybmGetGvaVersion() == HYBM_GVA_V4) {
         ret = HybmModernInitMetaGva(&globalMemoryBase, allocSize, allocHandle);
     } else {
         ret = HybmLegacyInitMetaGva(&globalMemoryBase, allocSize, flags);
