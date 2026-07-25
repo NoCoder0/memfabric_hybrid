@@ -29,7 +29,7 @@ static constexpr uint32_t COMM_ADDR_EID_LEN = 16U;
 static constexpr uint32_t URMA_ENDPOINT_RAW_LEN = 36UL;
 static constexpr uint32_t HCOMM_CHANNEL_MAGIC_WORD = 0x0fcf0f0fU;
 static constexpr uint32_t HCOMM_CHANNEL_VERSION_ONE = 1U;
-static constexpr uint32_t HCOMM_CHANNEL_VERSION = 2U;
+static constexpr uint32_t HCOMM_CHANNEL_VERSION = 3U;
 static constexpr uint32_t COMM_LINK_MAGIC_WORD = 0x0f0e0f0fU;
 static constexpr uint32_t COMM_LINK_VERSION = 1U;
 
@@ -292,7 +292,8 @@ struct HcommChannelDesc {
             uint32_t sqDepth; ///< UB队列深度，0表示使用默认值
         } ubAttr;
     };
-    uint32_t qos; ///< 通信域QoS，与协议解耦
+    uint32_t qos;            ///< 通信域QoS，与协议解耦
+    const char *channelName; ///< channel业务匹配标识，两端需相同；NULL表示匿名channel
 };
 
 enum HcommTransferType : int32_t {
@@ -520,6 +521,7 @@ static inline HcommResult HcommChannelDescInit(HcommChannelDesc *channelDesc, ui
         channelDesc->role = HCOMM_SOCKET_ROLE_RESERVED;
         channelDesc->port = 0;
         channelDesc->qos = 0;
+        channelDesc->channelName = nullptr;
         if (EndpointDescInit(&channelDesc->remoteEndpoint, 1) != 0) {
             return hcommEInternal;
         }

@@ -477,6 +477,7 @@ int32_t MockHcommChannelCreate(EndpointHandle endpoint, CommEngine engine, Hcomm
     EXPECT_EQ(channelDescs->header.version, HCOMM_CHANNEL_VERSION);
     EXPECT_EQ(channelDescs->header.magicWord, HCOMM_CHANNEL_MAGIC_WORD);
     EXPECT_EQ(channelDescs->header.size, sizeof(HcommChannelDesc));
+    EXPECT_EQ(channelDescs->channelName, nullptr);
     EXPECT_TRUE(channelDescs->exchangeAllMems);
     EXPECT_TRUE(channelDescs->remoteEndpoint.protocol == COMM_PROTOCOL_UBC_TP ||
                 channelDescs->remoteEndpoint.protocol == COMM_PROTOCOL_UBC_CTP);
