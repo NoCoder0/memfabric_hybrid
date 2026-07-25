@@ -197,8 +197,8 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     } while (0);
 
     if (ret != 0) {
-        inited_ = true; // ensure UnInitalize will execute
-        UnInitalize();
+        inited_ = true; // ensure Uninitialize will execute
+        Uninitialize();
         globalGroup_ = nullptr;
         return ret;
     }
@@ -210,7 +210,7 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     return 0;
 }
 
-void SmemBmEntry::UnInitalize()
+void SmemBmEntry::Uninitialize()
 {
     executorService_.Stop();
     if (!inited_) {

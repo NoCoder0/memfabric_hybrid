@@ -32,13 +32,13 @@ SmemBmEntryManager &SmemBmEntryManager::Instance()
 
 SmemBmEntryManager::~SmemBmEntryManager()
 {
-    // 防止析构函数里面调用UnInitalize
+    // 防止析构函数里面调用Uninitialize
     for (auto &pair : ptr2EntryMap_) {
-        pair.second->UnInitalize();
+        pair.second->Uninitialize();
     }
     ptr2EntryMap_.clear();
     for (auto &map : entryIdMap_) {
-        map.second->UnInitalize();
+        map.second->Uninitialize();
     }
     entryIdMap_.clear();
 }
@@ -307,7 +307,7 @@ void SmemBmEntryManager::Destroy()
     // was not called for every handle before smem_bm_uninit().
     for (auto &pair : ptr2EntryMap_) {
         if (pair.second != nullptr) {
-            pair.second->UnInitalize();
+            pair.second->Uninitialize();
         }
     }
     ptr2EntryMap_.clear();

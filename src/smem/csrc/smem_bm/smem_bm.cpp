@@ -122,7 +122,7 @@ SMEM_API void smem_bm_uninit(uint32_t flags)
 
     // Destroy entries first (may call GroupLeave and hybm_* cleanup) before tearing
     // down the underlying hybm layer. Reversing the old order prevents use-after-free
-    // when UnInitalize() accesses entity_ or hybm resources during Destroy().
+    // when Uninitialize() accesses entity_ or hybm resources during Destroy().
     SmemBmEntryManager::Instance().Destroy();
     hybm_uninit();
     g_smemBmInited = false;
@@ -329,7 +329,7 @@ SMEM_API void smem_bm_destroy(smem_bm_t handle)
         SM_LOG_WARN("input handle is invalid, result: " << ret);
         return;
     }
-    entry->UnInitalize();
+    entry->Uninitialize();
     entry = nullptr;
     ret = SmemBmEntryManager::Instance().RemoveEntryByPtr(reinterpret_cast<uintptr_t>(handle));
     SM_ASSERT_RET_VOID(ret == SM_OK);

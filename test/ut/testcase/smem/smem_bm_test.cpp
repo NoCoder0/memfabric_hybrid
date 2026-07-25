@@ -2753,7 +2753,7 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_null_data_sizes)
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 }
 
-// === UnInitalize coverage ===
+// === Uninitialize coverage ===
 TEST_F(SmemBmTest, smem_bm_entry_uninitialize_cleans_up)
 {
     SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
@@ -2762,14 +2762,14 @@ TEST_F(SmemBmTest, smem_bm_entry_uninitialize_cleans_up)
     entry.inited_ = true;
     entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
 
-    // Add a slice so UnInitalize has something to free
+    // Add a slice so Uninitialize has something to free
     entry.slices_.push_back(reinterpret_cast<hybm_mem_slice_t>(0x5));
 
     MOCKER_CPP(&hybm_free_local_memory, int32_t(*)(hybm_entity_t, hybm_mem_slice_t, uint32_t, uint32_t))
         .stubs()
         .will(returnValue(0));
 
-    entry.UnInitalize();
+    entry.Uninitialize();
     EXPECT_FALSE(entry.inited_);
 }
 

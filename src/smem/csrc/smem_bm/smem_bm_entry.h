@@ -58,12 +58,12 @@ public:
 
     ~SmemBmEntry() override
     {
-        UnInitalize();
+        Uninitialize();
     };
 
     int32_t Initialize(const hybm_options &options);
 
-    void UnInitalize();
+    void Uninitialize();
 
     Result Join(uint32_t flags);
 
