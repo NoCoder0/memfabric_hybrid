@@ -163,7 +163,7 @@ public:
                 return ACC_OK;
             }
             auto errorNumber = errno;
-            src LOG_WARN("Unable to send data to " << ipPort_ << ", reason " << errorNumber);
+            LOG_WARN("Unable to send data to " << ipPort_ << ", reason " << errorNumber);
             return -errorNumber;
         } else {
             for (int32_t i = 0; i < len; i++) {
