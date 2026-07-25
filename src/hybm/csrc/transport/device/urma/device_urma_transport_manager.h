@@ -13,6 +13,7 @@
 #ifndef MF_HYBRID_DEVICE_URMA_TRANSPORT_MANAGER_H
 #define MF_HYBRID_DEVICE_URMA_TRANSPORT_MANAGER_H
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -26,6 +27,10 @@
 #include "hybm_transport_manager.h"
 #include "load_kernel.h"
 #include "urma/hcomm_transport_manager.h"
+
+#if defined(MF_BUILD_TEST)
+#include "batch_copy_route_publisher.h"
+#endif
 
 namespace ock {
 namespace mf {
@@ -96,6 +101,11 @@ public:
 
     // Sync stream
     Result Synchronize(uint32_t rankId) override;
+
+#if defined(MF_BUILD_TEST)
+    Result LaunchBatchCopyRouteProbeForTest(uint32_t peerIndex, uint32_t rangeIndex, uint64_t srcOffset,
+                                           uint64_t dstHbm, uint64_t length);
+#endif
 
 private:
     struct LocalRegistration {
@@ -201,6 +211,16 @@ private:
     Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
                                      const std::vector<TransportMemoryKey> &memKeys);
 
+#if defined(MF_BUILD_TEST)
+    Result TryPublishDeviceRouteProbeLocked();
+    Result BuildDeviceRouteProbeSourcesLocked(std::vector<BatchCopyRouteSource> &sources) const;
+    Result BuildDeviceRouteProbeSourceLocked(uint32_t peerRank, const RemoteRankState &state,
+                                             BatchCopyRouteSource &source) const;
+    Result ValidateDeviceRouteProbeLaunchLocked(uint32_t peerIndex, uint32_t rangeIndex, uint64_t srcOffset,
+                                                uint64_t dstHbm, uint64_t length) const;
+    Result LaunchDeviceRouteProbeKernelLocked(const void *args, size_t argsSize);
+#endif
+
     // Prepare/rank/connection/private data
     Result RemoveRankLocked(uint32_t rankId);
 
@@ -290,6 +310,9 @@ private:
     // Strong registry of all per-thread completion contexts
     std::vector<std::shared_ptr<CompletionContext>> registry_{};
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};
+#if defined(MF_BUILD_TEST)
+    std::unique_ptr<BatchCopyRoutePublisher> routePublisher_{};
+#endif
 };
 
 } // namespace device

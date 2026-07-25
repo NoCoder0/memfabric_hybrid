@@ -179,6 +179,7 @@ if (BUILD_UT STREQUAL "ON")
 endif ()
 
 if ("${BUILD_TEST}" STREQUAL "ON")
+    add_subdirectory(test/integration/hybm/batch_copy_route_probe)
     add_subdirectory(benchmark/bm)
     add_subdirectory(test/integration/config_store)
     add_subdirectory(test/integration/decrypt)

@@ -15,9 +15,10 @@
 #include <array>
 #include <atomic>
 #include <cstdio>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <mutex>
+#include <new>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -33,6 +34,10 @@
 #include "device_urma_eid_reader.h"
 #include "hybm_va_manager.h"
 #include "device_urma_transport_manager.h"
+
+#if defined(MF_BUILD_TEST)
+#include "hybm_batch_copy_probe.h"
+#endif
 
 namespace ock {
 namespace mf {
@@ -53,6 +58,21 @@ constexpr uint32_t ACL_MEM_MALLOC_HUGE_ONLY =
     1; // 申请大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐。 表示仅申请大页
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 27U * 68U;
+#if defined(MF_BUILD_TEST)
+constexpr const char *HYBM_BATCH_COPY_ROUTE_PROBE_ENV = "MF_HYBM_BATCH_COPY_ROUTE_PROBE";
+constexpr const char *HYBM_BATCH_COPY_PROBE_FUNC = "HybmBatchCopyProbe";
+
+bool IsDeviceRouteProbePublishRequested(const HybmTransPrepareOptions &options)
+{
+    const char *probeEnabled = std::getenv(HYBM_BATCH_COPY_ROUTE_PROBE_ENV);
+    if (probeEnabled == nullptr || std::strcmp(probeEnabled, "1") != 0) {
+        return false;
+    }
+    return std::any_of(options.options.begin(), options.options.end(),
+                       [](const auto &item) { return !item.second.memKeys.empty(); });
+}
+#endif
+
 UrmaMemoryType ToUrmaMemoryType(uint32_t flags)
 {
     if (flags & REG_MR_FLAG_HBM) {
@@ -675,6 +695,17 @@ Result DeviceUrmaTransportManager::CloseDevice()
     if (!opened_) {
         return BM_OK;
     }
+    Result finalRet = BM_OK;
+#if defined(MF_BUILD_TEST)
+    if (routePublisher_ != nullptr) {
+        finalRet = routePublisher_->Clear();
+        if (finalRet != BM_OK) {
+            BM_LOG_ERROR("DEVICE_ROUTE_PROBE clear failed during CloseDevice, rankId: "
+                         << rankId_ << " userDeviceId: " << userDeviceId_ << " ret: " << finalRet);
+        }
+        routePublisher_.reset();
+    }
+#endif
     for (const auto &ctxSp : registry_) {
         if (!ctxSp) {
             continue;
@@ -694,8 +725,10 @@ Result DeviceUrmaTransportManager::CloseDevice()
     registry_.clear();
     owner_.reset();
     opened_ = false;
-    BM_LOG_INFO("device_urma CloseDevice success");
-    return BM_OK;
+    if (finalRet == BM_OK) {
+        BM_LOG_INFO("device_urma CloseDevice success");
+    }
+    return finalRet;
 }
 
 Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState &state)
@@ -1252,6 +1285,199 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
     return BM_OK;
 }
 
+#if defined(MF_BUILD_TEST)
+Result DeviceUrmaTransportManager::BuildDeviceRouteProbeSourceLocked(uint32_t peerRank, const RemoteRankState &state,
+                                                                    BatchCopyRouteSource &source) const
+{
+    if (state.thread == 0 || state.channel == 0 || state.remoteFlagAddr == 0 ||
+        state.remoteFlagSize < sizeof(uint64_t) || state.remoteFlagDescBytes.empty()) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE peer resources are incomplete, rankId: "
+                     << rankId_ << " peerRank: " << peerRank << " thread: " << state.thread
+                     << " channel: " << state.channel << " flagAddr: " << VaToStr(state.remoteFlagAddr)
+                     << " flagSize: " << state.remoteFlagSize);
+        return BM_NOT_INITIALIZED;
+    }
+    source = {peerRank, state.thread, state.channel, state.remoteFlagAddr, {}};
+    for (const auto &registration : state.imports) {
+        if (registration.view.type != UrmaMemoryType::DEVICE_HBM) {
+            continue;
+        }
+        uint64_t end = 0;
+        if (!GetRangeEnd(registration.view, end)) {
+            BM_LOG_ERROR("DEVICE_ROUTE_PROBE invalid imported HBM view, rankId: "
+                         << rankId_ << " peerRank: " << peerRank << " addr: " << VaToStr(registration.view.addr)
+                         << " size: " << registration.view.size);
+            return BM_INVALID_PARAM;
+        }
+        source.ranges.push_back({registration.view.addr, end});
+    }
+    if (source.ranges.empty()) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE Device peer has no imported HBM, rankId: "
+                     << rankId_ << " peerRank: " << peerRank << " importCount: " << state.imports.size());
+        return BM_NOT_INITIALIZED;
+    }
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::BuildDeviceRouteProbeSourcesLocked(
+    std::vector<BatchCopyRouteSource> &sources) const
+{
+    sources.clear();
+    for (const auto &rankItem : remoteRanks_) {
+        const uint32_t peerRank = rankItem.first;
+        const auto &state = rankItem.second;
+        if (!state.hasEndpointDesc) {
+            BM_LOG_ERROR("DEVICE_ROUTE_PROBE endpoint is missing, rankId: " << rankId_ << " peerRank: " << peerRank);
+            return BM_NOT_INITIALIZED;
+        }
+        if (state.remoteEndpointDesc.loc.locType != ENDPOINT_LOC_TYPE_DEVICE) {
+            continue;
+        }
+        BatchCopyRouteSource source{};
+        const auto ret = BuildDeviceRouteProbeSourceLocked(peerRank, state, source);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        sources.emplace_back(std::move(source));
+    }
+    if (sources.empty()) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE has no Device peer, rankId: " << rankId_);
+        return BM_NOT_INITIALIZED;
+    }
+    std::sort(sources.begin(), sources.end(),
+              [](const auto &left, const auto &right) { return left.peerRank < right.peerRank; });
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::TryPublishDeviceRouteProbeLocked()
+{
+    if (routePublisher_ != nullptr && routePublisher_->IsPublished()) {
+        return BM_OK;
+    }
+    std::vector<BatchCopyRouteSource> sources;
+    auto ret = BuildDeviceRouteProbeSourcesLocked(sources);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    if (routePublisher_ == nullptr) {
+        routePublisher_.reset(
+            new (std::nothrow) BatchCopyRoutePublisher(userDeviceId_, localEndpoint_, manager_));
+        if (routePublisher_ == nullptr) {
+            BM_LOG_ERROR("DEVICE_ROUTE_PROBE publisher allocation failed, rankId: "
+                         << rankId_ << " userDeviceId: " << userDeviceId_);
+            return BM_MALLOC_FAILED;
+        }
+    }
+    ret = routePublisher_->Publish(sources);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    BM_LOG_INFO("DEVICE_ROUTE_PROBE published, rankId: " << rankId_ << " peerCount: " << sources.size());
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::ValidateDeviceRouteProbeLaunchLocked(uint32_t peerIndex, uint32_t rangeIndex,
+                                                                        uint64_t srcOffset, uint64_t dstHbm,
+                                                                        uint64_t length) const
+{
+    if (!opened_ || routePublisher_ == nullptr || !routePublisher_->IsPublished()) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE launch before route publication, rankId: "
+                     << rankId_ << " peerIndex: " << peerIndex << " rangeIndex: " << rangeIndex);
+        return BM_NOT_INITIALIZED;
+    }
+    if (dstHbm == 0 || length == 0) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE invalid launch buffer, rankId: "
+                     << rankId_ << " dstHbm: " << VaToStr(dstHbm) << " length: " << length);
+        return BM_INVALID_PARAM;
+    }
+    std::vector<BatchCopyRouteSource> sources;
+    auto ret = BuildDeviceRouteProbeSourcesLocked(sources);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    if (peerIndex >= sources.size() || rangeIndex >= sources[peerIndex].ranges.size()) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE invalid route index, rankId: "
+                     << rankId_ << " peerIndex: " << peerIndex << " peerCount: " << sources.size()
+                     << " rangeIndex: " << rangeIndex
+                     << " rangeCount: " << (peerIndex < sources.size() ? sources[peerIndex].ranges.size() : 0));
+        return BM_INVALID_PARAM;
+    }
+    const auto &range = sources[peerIndex].ranges[rangeIndex];
+    const uint64_t rangeSize = range.end - range.begin;
+    if (srcOffset > rangeSize || length > rangeSize - srcOffset) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE source range overflow, rankId: "
+                     << rankId_ << " peerIndex: " << peerIndex << " rangeIndex: " << rangeIndex
+                     << " srcOffset: " << srcOffset << " length: " << length << " rangeSize: " << rangeSize);
+        return BM_INVALID_PARAM;
+    }
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::LaunchDeviceRouteProbeKernelLocked(const void *args, size_t argsSize)
+{
+    aclrtFuncHandle functionHandle = nullptr;
+    auto ret = GetDeviceKernelFunctionHandle(deviceKernelHandle_, HYBM_BATCH_COPY_PROBE_FUNC, functionHandle);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    aclrtArgsHandle argsHandle = nullptr;
+    ret = DlAclApi::AclrtKernelArgsInit(functionHandle, &argsHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE AclrtKernelArgsInit failed, rankId: " << rankId_ << " ret: " << ret);
+        return ret;
+    }
+    aclrtParamHandle paramHandle = nullptr;
+    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, const_cast<void *>(args), argsSize, &paramHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE AclrtKernelArgsAppend failed, rankId: " << rankId_ << " ret: " << ret);
+        return ret;
+    }
+    ret = DlAclApi::AclrtKernelArgsFinalize(argsHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE AclrtKernelArgsFinalize failed, rankId: " << rankId_ << " ret: " << ret);
+        return ret;
+    }
+    void *stream = HybmStreamManager::GetThreadAclStream();
+    if (stream == nullptr) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE GetThreadAclStream failed, rankId: " << rankId_);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    aclrtLaunchKernelAttr attr{};
+    attr.id = aclrtLaunchKernelAttrId::ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
+    attr.value.timeout = HYBM_NOTIFY_DEFAULT_WAIT_TIME_S;
+    aclrtLaunchKernelCfg cfg{&attr, 1};
+    ret = DlAclApi::AclrtLaunchKernelWithConfig(functionHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
+                                                nullptr);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE AclrtLaunchKernelWithConfig failed, rankId: " << rankId_ << " ret: " << ret);
+        return ret;
+    }
+    ret = DlAclApi::AclrtSynchronizeStream(stream);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("DEVICE_ROUTE_PROBE AclrtSynchronizeStream failed, rankId: " << rankId_ << " ret: " << ret);
+    }
+    return ret;
+}
+
+Result DeviceUrmaTransportManager::LaunchBatchCopyRouteProbeForTest(uint32_t peerIndex, uint32_t rangeIndex,
+                                                                    uint64_t srcOffset, uint64_t dstHbm,
+                                                                    uint64_t length)
+{
+    std::lock_guard<std::mutex> guard(mutex_);
+    const auto ret = ValidateDeviceRouteProbeLaunchLocked(peerIndex, rangeIndex, srcOffset, dstHbm, length);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    HybmBatchCopyProbeParam args{};
+    args.peerIndex = peerIndex;
+    args.rangeIndex = rangeIndex;
+    args.srcOffset = srcOffset;
+    args.dstHbm = reinterpret_cast<void *>(dstHbm);
+    args.length = length;
+    return LaunchDeviceRouteProbeKernelLocked(&args, sizeof(args));
+}
+#endif
+
 Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
 {
     std::lock_guard<std::mutex> guard(mutex_);
@@ -1388,6 +1614,11 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
                                                           << state.channel << " imports: " << state.imports.size());
     }
+#if defined(MF_BUILD_TEST)
+    if (IsDeviceRouteProbePublishRequested(options)) {
+        return TryPublishDeviceRouteProbeLocked();
+    }
+#endif
     return BM_OK;
 }
 

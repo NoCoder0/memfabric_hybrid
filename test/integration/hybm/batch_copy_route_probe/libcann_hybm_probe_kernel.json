@@ -1,0 +1,23 @@
+{
+    "HybmBatchRead": {
+        "opInfo": {
+            "functionName": "HybmBatchRead",
+            "kernelSo": "libcann_hybm_probe_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
+    },
+    "HybmBatchWrite": {
+        "opInfo": {
+            "functionName": "HybmBatchWrite",
+            "kernelSo": "libcann_hybm_probe_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
+    },
+    "HybmBatchCopyProbe": {
+        "opInfo": {
+            "functionName": "HybmBatchCopyProbe",
+            "kernelSo": "libcann_hybm_probe_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
+    }
+}

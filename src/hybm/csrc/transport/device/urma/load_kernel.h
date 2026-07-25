@@ -26,6 +26,9 @@ struct DeviceFuncHandles {
     aclrtFuncHandle batchWrite{nullptr};
 };
 
+Result GetDeviceKernelFunctionHandle(aclrtBinHandle binaryHandle, const char *functionName,
+                                     aclrtFuncHandle &functionHandle);
+
 Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
                                      DeviceFuncHandles &funcHandles);
 

@@ -27,9 +27,20 @@ namespace {
 constexpr int32_t kCpuKernelMode = 0;
 constexpr const char *kKernelJsonSuffix = "/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json";
 constexpr const char *kDefaultAscendPath = "/usr/local/Ascend/cann";
+#if defined(MF_BUILD_TEST)
+constexpr const char *kProbeKernelJsonEnv = "MF_HYBM_AICPU_KERNEL_JSON";
+#endif
 
 Result GetKernelFilePath(std::string &jsonPath)
 {
+#if defined(MF_BUILD_TEST)
+    const char *probeJsonPath = std::getenv(kProbeKernelJsonEnv);
+    if (probeJsonPath != nullptr && probeJsonPath[0] != '\0') {
+        jsonPath = probeJsonPath;
+        BM_LOG_INFO("DEVICE_ROUTE_PROBE kernel json path: " << jsonPath);
+        return BM_OK;
+    }
+#endif
     const char *ascendPath = std::getenv("ASCEND_HOME_PATH");
     if (ascendPath == nullptr || ascendPath[0] == '\0') {
         ascendPath = kDefaultAscendPath;
@@ -71,24 +82,28 @@ Result LoadBinaryFromJson(const char *jsonPath, aclrtBinHandle &binHandle)
     return BM_OK;
 }
 
-Result GetFuncHandle(aclrtBinHandle binHandle, const char *funcName, aclrtFuncHandle &funcHandle)
+} // namespace
+
+Result GetDeviceKernelFunctionHandle(aclrtBinHandle binaryHandle, const char *functionName,
+                                     aclrtFuncHandle &functionHandle)
 {
-    if (binHandle == nullptr || funcName == nullptr) {
-        BM_LOG_ERROR("device_urma binHandle or funcName is null in GetFuncHandle");
+    functionHandle = nullptr;
+    if (binaryHandle == nullptr || functionName == nullptr || functionName[0] == '\0') {
+        BM_LOG_ERROR("device_urma invalid kernel function query, binaryHandle: "
+                     << binaryHandle << " functionName: " << (functionName == nullptr ? "<null>" : functionName));
         return BM_INVALID_PARAM;
     }
-    const auto ret = DlAclApi::AclrtBinaryGetFunction(binHandle, funcName, &funcHandle);
+    const auto ret = DlAclApi::AclrtBinaryGetFunction(binaryHandle, functionName, &functionHandle);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("aclrtBinaryGetFunction failed, func: " << funcName << " ret: " << ret);
+        BM_LOG_ERROR("aclrtBinaryGetFunction failed, functionName: " << functionName << " ret: " << ret);
         return ret;
     }
-    if (funcHandle == nullptr) {
-        BM_LOG_ERROR("device_urma funcHandle is null after aclrtBinaryGetFunction");
+    if (functionHandle == nullptr) {
+        BM_LOG_ERROR("aclrtBinaryGetFunction returned null handle, functionName: " << functionName);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
 }
-} // namespace
 
 Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
                                      DeviceFuncHandles &funcHandles)
@@ -105,11 +120,11 @@ Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite
             return ret;
         }
     }
-    ret = GetFuncHandle(binHandle, funcRead, funcHandles.batchRead);
+    ret = GetDeviceKernelFunctionHandle(binHandle, funcRead, funcHandles.batchRead);
     if (ret != BM_OK) {
         return ret;
     }
-    return GetFuncHandle(binHandle, funcWrite, funcHandles.batchWrite);
+    return GetDeviceKernelFunctionHandle(binHandle, funcWrite, funcHandles.batchWrite);
 }
 
 } // namespace device
