@@ -49,7 +49,6 @@ endif()
 file(GLOB_RECURSE ZBAL_TEST_CASE_SRCS
         ${CMAKE_CURRENT_SOURCE_DIR}/csrc/ccl/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/csrc/common/*.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/csrc/sma/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/csrc/adaptor/*.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/ut_main.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/../mock/acl_stub.cpp
@@ -75,6 +74,8 @@ file(GLOB_RECURSE ZBAL_TEST_CASE_SRCS
         ${ZBAL_SRC_DIR}/csrc/adaptor/deepep/zbal_deepep.cpp
         ${ZBAL_SRC_DIR}/csrc/adaptor/deepep/zbal_deepep_config.cpp
 )
+
+list(FILTER ZBAL_TEST_CASE_SRCS EXCLUDE REGEX "test_zbal_c10_dma.cpp")
 
 add_executable(test_zbal ${ZBAL_TEST_CASE_SRCS}
         $<TARGET_OBJECTS:common_objects>

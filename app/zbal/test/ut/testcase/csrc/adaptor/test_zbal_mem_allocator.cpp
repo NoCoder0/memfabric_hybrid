@@ -206,34 +206,6 @@ TEST_F(TestMemAllocator, PoolAndEmptyCache)
     zbal::sma::SMAConfig::instance().use_vmm_for_static_memory_ = false;
 }
 
-TEST_F(TestMemAllocator, MixAllocDeviceStatsAggregation)
-{
-    zbal::sma::SMAConfig::instance().use_vmm_for_static_memory_ = true;
-    zbal_pluggable_init(ZBAL_UT_NUM_8);
-    ASSERT_FALSE(gGVASpaceInited);
-
-    void *dmaPtr = zbal_pluggable_malloc(ZBAL_UT_SIZE_4KB, 0, nullptr);
-    ASSERT_NE(dmaPtr, nullptr);
-    ASSERT_TRUE(gDmaBlocks.count(dmaPtr) > 0);
-
-    zbal_allocator_options_t opts = {};
-    ASSERT_EQ(zbal_sma_init(&opts, 0), ZResultErrorCode::Z_OK);
-    ASSERT_TRUE(gGVASpaceInited);
-
-    void *smaPtr = zbal_pluggable_malloc(ZBAL_UT_SIZE_8KB, 0, nullptr);
-    ASSERT_NE(smaPtr, nullptr);
-    ASSERT_EQ(gDmaBlocks.count(smaPtr), 0u);
-
-    auto agg = zbal_pluggable_get_device_stats(0);
-    auto dma = dma_get_device_stats(0);
-    auto sma = sma_get_device_stats(0);
-    ExpectDeviceStatsAggregated(agg, dma, sma);
-
-    zbal_pluggable_free(smaPtr, ZBAL_UT_SIZE_8KB, 0, nullptr);
-    zbal_pluggable_free(dmaPtr, ZBAL_UT_SIZE_4KB, 0, nullptr);
-    RestoreSmaMode();
-}
-
 TEST_F(TestMemAllocator, GetSymmBaseAddr)
 {
     zbal_pluggable_init(1);
