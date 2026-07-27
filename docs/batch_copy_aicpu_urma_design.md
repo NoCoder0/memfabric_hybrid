@@ -4,7 +4,7 @@
 
 **Created:** 2026-07-15
 
-**Updated:** 2026-07-21
+**Updated:** 2026-07-27
 
 **Status:** Draft
 
@@ -55,7 +55,7 @@
 
 ## 2.1 核心用例
 
-| 用例 | 功能要求 | 验收重点 |
+| 用例 | 功能要求 | 目标行为与约束 |
 | --- | --- | --- |
 | 单 CPU 单地址 | 从一个鲲鹏 DDR 区间读取到一个 HBM 区间 | GVA 路由命中、单条 HCOMM 读、完成语义 |
 | 单 CPU 多地址 | 同一 peer 的多个离散 DDR 地址批量读取 | 优先使用 HCOMM batch，一次 fence |
@@ -113,9 +113,41 @@ flowchart LR
 区间。目标部署规模为 16 NPU × 16 CPU；每张 NPU 持有自己的本地
 channel/thread 句柄，卡间不共享路由表。
 
+#### 部署视图
+
+```mermaid
+flowchart LR
+    subgraph K["鲲鹏节点"]
+        subgraph KC["CPU"]
+            KMF["MemFabric 进程<br/>Host runtime"]
+        end
+        KDDR["DDR<br/>固定 GVA 内存池"]
+        KMF --> KDDR
+    end
+
+    subgraph A["昇腾节点"]
+        subgraph AC["CPU"]
+            AMF["MemFabric Device runtime<br/>嵌入业务进程"]
+        end
+        subgraph AN["NPU"]
+            OP["MemFabric HybmBatchCopy<br/>AICPU kernel"]
+            HBM["HBM"]
+            OP --> HBM
+        end
+        AMF --> OP
+    end
+
+    KMF ==>|"HCOMM/URMA 建链"| AMF
+    KDDR ==>|"NPU 主动读取 DDR 数据"| OP
+```
+
+鲲鹏节点由 CPU 上的常驻 MemFabric 进程持有固定 GVA DDR 内存池。昇腾节点的 CPU 业务进程加载
+MemFabric Device runtime，负责建链和路由发布；`HybmBatchCopy` AICPU kernel 在 NPU 上运行，并通过
+已建立的 HCOMM/URMA 通道主动读取鲲鹏 DDR。
+
 ### 3.1.2 地址语义
 
-`src_ddr_ptr_list` 中的元素定义为 MemFabric GVA，而不是鲲鹏进程本地 VA。
+`src_buf_addr_list` 中的元素定义为 MemFabric GVA，而不是源端进程本地 VA。
 GVA 必须在超节点内唯一，且与 `RemoteRegistration::addr/size` 使用同一地址空间。
 
 鲲鹏 DDR 源端采用 GVA 固定地址注册：
@@ -138,7 +170,7 @@ GVA 超出窗口、地址已被占用或固定映射失败时，初始化失败�
 
 `MemEntityDefault::ImportSliceExchangeInfo()` 保持 `ImportForSegment()` 在前、`ImportForTransport()` 在后的
 调用顺序。
-固定 GVA 资格由鲲鹏本地注册阶段完成校验，NPU 路由发布不依赖随后执行的
+固定 GVA 资格由鲲鹏本地注册时完成校验，NPU 路由发布不依赖随后执行的
 `HybmConnBasedSegment::Mmap()`。
 
 目标 UBC_TP/UBC_CTP 后端保持 HCOMM 注册地址，地址传递流程如下：
@@ -149,7 +181,7 @@ GVA 超出窗口、地址已被占用或固定映射失败时，初始化失败�
 3. `UbRegedMemMgr::MemoryImport()` 最终执行
    `outMem->addr = reinterpret_cast<void *>(remoteUbRmaBuffer->GetAddr())`。
 
-因此该后端满足：
+因此 Host UBC 后端应满足：
 
 ```text
 HcommMemImport.outMem.addr == 对端传给 HcommMemReg 的地址
@@ -157,20 +189,26 @@ HcommMemImport.outMem.addr == 对端传给 HcommMemReg 的地址
 
 鲲鹏端固定 `mmap` 到 GVA，并以该地址调用 `HcommMemReg()`，因此导入结果等于 GVA。NPU 侧执行
 `exportDesc.addr == remoteAddr == view.addr` 和 `view.size >= remoteSize` 校验，用于防止 CANN 后端变化、
-描述符损坏或注册路径误用。路由区间只保存
-调用者可见的 `srcGvaBegin/srcGvaEnd`，算子直接使用输入 GVA：
+描述符损坏或注册路径误用。该相等关系是 Host DDR 生产路径的硬门禁，不能因 route ABI 支持地址转换
+而放宽。
+
+路由区间同时保存调用者可见的 `srcGvaBegin/srcGvaEnd` 和 HCOMM 可访问的 `hcommVaBegin`。算子按偏移
+计算传输地址：
 
 ```text
-hcommSrc = srcGva
+offset = srcGva - srcGvaBegin
+hcommSrc = hcommVaBegin + offset
 ```
 
-`BatchCopyRangeEntry` 只保存 `srcGvaBegin/srcGvaEnd/peerIndex`，不保存地址转换基址。
+本方案的 Host-DDR route 必须满足 `hcommVaBegin == srcGvaBegin`。显式保存 HCOMM 基址用于固定共享 ABI
+和地址域校验，不作为 import 地址不相等时的兼容机制。`hcommVaBegin` 使用
+`BatchCopyRangeEntry` 原有 padding，结构仍为 32 B。
 
 UBC 的 `UbRegedMemMgr::MemoryImport()` 只回填 `outMem.addr/size`，没有写 `outMem.type`。
 `HcommTransportManager::HcommMemImport()` 使用 MemFabric 外层 `UrmaExportDesc.memoryType` 设置
-`view.type`，并校验 `outMem.addr/size`。路由构建器只收录远端 endpoint 为
-`ENDPOINT_LOC_TYPE_HOST` 且 `view.type == HOST_DRAM` 的区间；`DEVICE_HBM` 使用设备到设备数据路径，
-不进入 Batch_Copy DDR 路由表。
+`view.type`，并校验 `outMem.addr/size`。路由构建器只收录
+`ENDPOINT_LOC_TYPE_HOST + HOST_DRAM`，并要求导出的 GVA、descriptor addr、import view addr 和
+`hcommVaBegin` 相等；Device endpoint 和 `DEVICE_HBM` 不进入 Batch_Copy 路由表。
 
 同一导出 payload 尾部的 transfer flag 描述符也由 UBC 导入。普通 MR 与该 flag 共用现有
 `UrmaExportDesc.memoryType`，不新增 `flagMemoryType` 字段。`ImportRemoteMemKeysLocked()` 对
@@ -274,6 +312,7 @@ struct alignas(32) BatchCopyPeerEntry {
 struct alignas(32) BatchCopyRangeEntry {
     uint64_t srcGvaBegin;
     uint64_t srcGvaEnd;
+    uint64_t hcommVaBegin;
     uint16_t peerIndex;
 };
 
@@ -302,14 +341,21 @@ static_assert(BATCH_COPY_COMPLETION_OFFSET == 0x8840);
 static_assert(BATCH_COPY_CONTROL_USED_SIZE == 0x8A40);
 ```
 
-Header、PeerEntry 和 RangeEntry 中的尾部 padding 只用于 64/32 字节对齐，不定义为扩展字段。
+Header、PeerEntry 和 RangeEntry 中剩余的尾部 padding 只用于 64/32 字节对齐，不定义为扩展字段。
 `BatchCopyPeerEntry` 的 3 个有效字段占 24 B，尾部对齐填充 8 B；`BatchCopyRangeEntry` 的有效字段
-占 18 B，尾部对齐填充 14 B。`remoteFlagSize` 固定为 `sizeof(uint64_t)`，发布前校验，不写入表。
+占 26 B，尾部对齐填充 6 B。`remoteFlagSize` 固定为 `sizeof(uint64_t)`，发布前校验，不写入表。
 `BatchCopyRangeEntry` 使用左闭右开区间 `[srcGvaBegin, srcGvaEnd)`，查表要求
-`srcGvaBegin <= srcGva` 且 `srcGva + len <= srcGvaEnd`。
+`srcGvaBegin <= srcGva` 且 `srcGva + len <= srcGvaEnd`；还必须检查
+`hcommVaBegin + (srcGvaEnd - srcGvaBegin)` 不溢出。
 `peerRank` 只用于 Host 侧建链和日志，AICPU 使用
 `peerIndex` 定位通信资源，因此也不写入表。`BatchCopyRouteTable` 在发布后只读；单独定义的
 `BatchCopyCompletionArea` 是算子和 HCOMM 在运行期读写的工作区，不属于静态路由表。
+
+Flag 没有作为算子参数遗漏：`BatchCopyPeerEntry.remoteFlagAddr` 保存远端 8 B transfer flag 的
+import 地址；本地 flag 地址由
+`HYBM_BATCH_COPY_META_ADDR + BATCH_COPY_COMPLETION_OFFSET + peerIndex * sizeof(uint64_t)` 固定推导。
+`flag_size` 固定为 8 B。AICPU 从 route 和 completion 区构造 `HybmOneSideOpParam`，调用方不传
+thread、channel 或任一 flag 参数。
 
 #### 2 MiB 区域内部布局
 
@@ -339,8 +385,9 @@ HYBM_DEVICE_META_ADDR
 - `1 <= peerCount <= 64`；
 - `1 <= rangeCount <= 1024`，且 `rangeCount <= peerCount * 16`；
 - 每个 `peerIndex` 对应的 range 不超过 16 个；
-- 每个 peer 的远端 endpoint 为 `ENDPOINT_LOC_TYPE_HOST`，每个 range 的内存类型为 `HOST_DRAM`；
+- 每个 peer 必须为 `ENDPOINT_LOC_TYPE_HOST`，每个 range 必须来自 `HOST_DRAM`；
 - 每个区间非空、不溢出，所有有效区间按 GVA 升序且互不重叠；
+- 每个 range 的 `hcommVaBegin == srcGvaBegin`，且地址计算不溢出；
 - 每个有效 peer 的 `thread/channel/remoteFlagAddr` 非 0。
 
 `TryPublishBatchCopyRouteLocked()` 仅在初始 Host peer 集合中的每个 peer 都已建立 channel/thread、
@@ -389,22 +436,24 @@ Read/Write/Fence 数据面。两个 manager 独立
 | transfer flag 初始化 | 使用 `AclrtMalloc/AclrtMemcpy` 创建 device flag | `InitHostTransferFlagLocked()` 分配 8 B Host flag，写入 `uint64_t{1}`，并以 `COMM_MEM_TYPE_HOST` 注册 |
 | TLS/completion context 函数 | 管理 ACL stream、device notify 和 TLS completion context | 不创建 ACL/TLS context；按 peer 保存 CPU channel 的 pending/fence 状态 |
 | 本地 MR 注册、查询和注销函数 | 本机 HOST_DRAM 执行 HVA→DVA，HBM 使用 device address | 固定 GVA/HVA 直接注册；共用范围查找、描述符序列化和 refCount helper |
-| 远端 MR 导入函数 | 导入鲲鹏 DDR MR/flag 并保存 HCOMM view | Host peer 验证场景导入对端 DDR MR/flag；NPU peer 场景只导出本地 DDR/flag |
-| `Prepare()` 及 channel 清理函数 | 首次调用固定 Host peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；同一 endpoint 的第二次调用复用资源并导入初始 DDR key | 首次创建 `COMM_ENGINE_CPU` channel；第二次调用校验 peer/endpoint 未变化并复用 channel，按远端 endpoint 类型决定是否导入 DDR key |
+| 远端 MR 导入函数 | 导入鲲鹏 DDR MR/flag，并同时保存 exported GVA 与 HCOMM view | Host peer 场景导入对端 DDR MR/flag；NPU peer 场景只导出本地 DDR/flag |
+| `Prepare()` 及 channel 清理函数 | 首次调用固定 Host peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；携带 key 的后续调用复用资源并导入初始 DDR key | 首次创建 `COMM_ENGINE_CPU` channel；携带 key 的后续调用校验 peer/endpoint 未变化并复用 channel |
 | `UpdateRankOptions()` | Batch_Copy 路由发布后返回 `BM_NOT_SUPPORTED`；不存在 Host Batch_Copy peer 时保持现有 DEVICE_URMA 行为 | Batch_Copy 初始化完成后返回 `BM_NOT_SUPPORTED` |
 | `RemoveRanks()` | 存在 Host Batch_Copy peer 时返回 `BM_NOT_SUPPORTED`；否则保持现有 DEVICE_URMA 行为 | 存在 Batch_Copy peer 时返回 `BM_NOT_SUPPORTED` |
 | 连接和 private-data 函数 | 序列化 Device `EndpointLoc` | 序列化 Host `EndpointLoc` |
 | Remote I/O 函数 | 通过 AICPU kernel 发起 device 数据面 | 使用 `HcommReadOnThread/HcommWriteOnThread`，thread 传 0，并用 `HcommChannelFenceOnThread` 完成同步 |
-| H2D staging、kernel launch 和 stream 同步函数 | 管理设备侧执行资源 | 复用初始化阶段已注册的 Host staging MR；不加载或启动 device kernel |
+| H2D staging、kernel launch 和 stream 同步函数 | 管理设备侧执行资源 | 复用初始化时已注册的 Host staging MR；不加载或启动 device kernel |
 
 新增 `HYBM_DOP_TYPE_HOST_DEVICE_URMA`（公共 Python 名为 `BmDataOpType.HOST_DEVICE_URMA`）。鲲鹏和
 昇腾两端使用同一 `HOST_DEVICE_URMA` 协议位进入 URMA 建链、peer 过滤和
 `TransportMemoryKey.keys[0, 6 * KEY_SIZE)` device key 区域。
 `ComposeTransportManager::OpenDeviceTransport()` 调用 `CreateHostDeviceUrmaTransportManager()`：
-`ASCEND_NPU` 构建
-创建 `DeviceUrmaTransportManager`，`XPU_TYPE=NONE` 构建创建 `HostUrmaTransportManager`，
-`NVIDIA_GPU` 构建返回 `BM_NOT_SUPPORTED`。既有 `HOST_URMA` 继续进入 HCOM，既有 `DEVICE_URMA` 继续
-表示 Device↔Device HCOMM，`DEVICE_UBOE` 仍由 Device manager 处理。
+初始化时运行时明确发现 Ascend 950 device 则创建 `DeviceUrmaTransportManager`，明确无 device 且构建包含
+Host HCOMM 能力则创建 `HostUrmaTransportManager`。发现 device 但 SOC 不是 950，或 runtime/SOC 查询失败
+时返回错误，不能静默回退 Host role。`XPU_TYPE=NONE` 构建不调用 ACL 探测，直接解析为 Host role；
+`NVIDIA_GPU` 构建返回 `BM_NOT_SUPPORTED`。本地角色只解析一次，并由 transport 和 data operator 共用。
+既有 `HOST_URMA` 继续进入 HCOM，既有 `DEVICE_URMA` 继续表示 Device↔Device HCOMM，`DEVICE_UBOE`
+仍由 Device manager 处理。
 
 鲲鹏部署加载 `libhcomm_cpu_ub_plugin.so`。该 plugin 注册 `COMM_PROTOCOL_UBC_TP` 和
 `COMM_PROTOCOL_UBC_CTP`，只接管 `ENDPOINT_LOC_TYPE_HOST` endpoint，并要求 channel engine 为
@@ -422,8 +471,8 @@ NPU 侧使用 `COMM_ENGINE_AICPU`，鲲鹏侧使用 `COMM_ENGINE_CPU`。
 
 初始化行为如下：
 
-- `ASCEND_NPU` 构建加载 `DlRtApi` 和 `DlHcommApi`，并初始化 `DataOpDeviceURMA`。
-- `XPU_TYPE=NONE` 构建加载 `DlHcommApi`，`HostComposeDataOp` 为 `HOST_DEVICE_URMA` 复用现有
+- Device role 加载 `DlRtApi` 和 `DlHcommApi`，并初始化 `DataOpDeviceURMA`。
+- Host role 加载 `DlHcommApi`，`HostComposeDataOp` 为 `HOST_DEVICE_URMA` 复用现有
   `HostDataOpRDMA`；单条和批量接口通过 `HostUrmaTransportManager` 发起 CPU 数据面，未注册 tensor 经
   建链前已注册的 Host staging MR 搬运。
 - `DlApi::CleanupLibrary()` 统一清理已加载的 wrapper。
@@ -443,7 +492,7 @@ sequenceDiagram
 
     CE->>CE: LoadExtendLibrary(): DlHcommApi only
     CE->>CC: InitTransManager() / OpenDeviceTransport(HOST_DEVICE_URMA)
-    CC->>CC: CreateHostDeviceUrmaTransportManager() [XPU_TYPE=NONE]
+    CC->>CC: Resolve role = Host（明确无卡）
     CC->>HM: OpenDevice(options)
     HM->>HM: InitLocalHostInfoLocked()
     HM->>HM: BuildLocalHostEndpointDescLocked(rankId, nic)
@@ -457,7 +506,7 @@ sequenceDiagram
 
     NE->>NE: LoadExtendLibrary(): DlRtApi + DlHcommApi
     NE->>NC: InitTransManager() / OpenDeviceTransport(HOST_DEVICE_URMA)
-    NC->>NC: CreateHostDeviceUrmaTransportManager() [ASCEND_NPU]
+    NC->>NC: Resolve role = Device（发现 Ascend 950）
     NC->>DM: OpenDevice(options)
     DM->>DM: InitLocalDeviceInfoLocked()
     DM->>DM: BuildLocalEndpointDescLocked(UBC_CTP)
@@ -507,18 +556,18 @@ sequenceDiagram
     DM->>DM: BuildBatchCopyRouteTableLocked()
     DM->>M: WriteBatchCopyRouteTableLocked(magic = 0)
     DM->>M: PublishBatchCopyRouteMagicLocked()
-    DM-->>NC: 第二阶段 Prepare() 成功
+    DM-->>NC: 携带 memory key 的 Prepare() 成功
     NC-->>NE: ConnectWithOptions() 成功
     NE-->>NE: ImportSliceExchangeInfo() 成功
     NE->>NE: MemEntityDefault::Mmap() / dramSegment_->Mmap()
 ```
 
-当前 entity 流程分为两阶段。`ImportEntityExchangeInfo()` 通过 `ImportForTransportManager()` 首次调用
+当前 entity 初始化会调用 manager 两次。`ImportEntityExchangeInfo()` 通过 `ImportForTransportManager()` 首次调用
 `ComposeTransportManager::Prepare()/Connect()`，此时只有完整 peer endpoint，没有 memory key；
 `ImportSliceExchangeInfo()` 随后执行 `ImportForSegment()`、`ImportForTransportPrecheck()` 和
 `ImportForTransport()`，再由 `TransportManager::ConnectWithOptions()` 第二次调用
 `ComposeTransportManager::Prepare()`，携带初始全量 memory key。Host/Device manager 的 `Prepare()`
-必须支持相同 endpoint 的幂等复用，Device manager 只在第二阶段导入信息完整后发布路由。具体修改点和
+必须支持相同 endpoint 的幂等复用，Device manager 只在携带完整 memory key 的调用完成后发布路由。具体修改点和
 原因如下：
 
 | 文件/位置 | 修改内容 | 原因 |
@@ -527,21 +576,21 @@ sequenceDiagram
 | `hybm_entity_tag_info.cpp`、`hybm_entity_default.cpp` | 增加新协议的字符串双向映射、compatible info、能力和加载掩码 | DataOpType 会参与 tag 和 rank-to-rank 协商，不能只在 Compose 本地解释 |
 | `device/urma/hcomm_transport_manager.{h,cpp}`、`device_urma_transport_manager.cpp` 顶部序列化 helper | 迁移到 `transport/urma/` 公共目录；共享 endpoint/MR 描述符、private-data v2 编解码和 HCOMM 封装 | Host/Device manager 使用同一套 wire format 和资源封装 |
 | `transport/urma/urma_transport_common.{h,cpp}` | `UrmaEndpointDesc` 保存完整 `EndpointLoc`；`SerializePrivateData()/ParsePrivateDataToEndpointDesc()` 严格校验 magic、v2、payloadLen 和容量 | HCOMM 根据 endpoint 实际位置创建 Host/Device 资源 |
-| `compose_transport_manager.cpp`，`OpenDeviceTransport()/CreateHostDeviceUrmaTransportManager()` | 新增 `HOST_DEVICE_URMA` 分支并按本端平台创建 Host/Device manager；既有 `DEVICE_URMA` 分支不改语义 | manager 实现与本地平台一致，同时不改变现有 Device↔Device 行为 |
+| `compose_transport_manager.cpp`，`OpenDeviceTransport()/CreateHostDeviceUrmaTransportManager()` | 新增 `HOST_DEVICE_URMA` 运行时角色解析；发现 Ascend 950 创建 Device manager，明确无卡创建 Host manager，其他 SOC/探测错误失败 | 异构两端使用同一协议位，并且不把环境错误误判为 Host |
 | `under_api/dl_api.cpp`，`LoadExtendLibrary(DL_EXT_LIB_DEVICE_URMA)` | `ASCEND_NPU` 加载 RT + HCOMM；`XPU_TYPE=NONE` 加载 HCOMM | 无卡鲲鹏只依赖 Host HCOMM 能力 |
-| `data_operation/host/hybm_data_op_factory.*`、`hybm_compose_data_op.cpp` | 为 `HOST_DEVICE_URMA` 按平台创建现有 `HostDataOpRDMA` 或 `DataOpDeviceURMA`，不增加 `HostDataOpRDMA` 字段 | 支持两鲲鹏主动拷贝及最终异构流程，并避免无必要的类布局修改 |
+| `data_operation/host/hybm_data_op_factory.*`、`hybm_compose_data_op.cpp` | 为 `HOST_DEVICE_URMA` 复用本地角色创建现有 `HostDataOpRDMA` 或 `DataOpDeviceURMA`，不增加 `HostDataOpRDMA` 字段 | transport 与 data operator 角色一致，并避免无必要的类布局修改 |
 | `host/urma/host_urma_transport_manager.{h,cpp}` | 实现 Host endpoint、DDR/flag 注册导出、Host peer MR 导入、CPU Read/Write/Fence、channel 和清理 | 承载无卡鲲鹏的 URMA 控制面与主动数据面 |
 | `hybm_conn_based_segment.cpp`，`MapSlice()` | `ASCEND_NPU` 构建按现有条件执行 `HalHostRegister()`；无卡构建直接把固定 mmap 结果加入 VA manager，DVA 置 0 | 鲲鹏 DDR 不经过本地 device 映射，无卡节点不能依赖 HAL device 注册 |
 | `HostUrmaTransportManager::RegisterMemoryRegion()/QueryMemoryKey()` | 使用 `FindAllocByVa(mr.addr, HVM_GVA)` 校验完整区间属于本地 rank 的 Host GVA 分配记录，再直接 `HcommMemReg(mr.addr)` 并导出同一 GVA | 鲲鹏 DDR 使用 Host VA/GVA，不经过 DVA；任意 Host 指针不会进入 `HOST_DEVICE_URMA` 导出集合 |
 | `HcommTransportManager::HcommMemImport()` | 使用 `UrmaExportDesc.memoryType` 设置 view type，并校验 UBC 返回的 addr/size | CANN UBC import 只回填 addr/size，内存类型由 MemFabric 描述符确定 |
-| `DeviceUrmaTransportManager::ImportRemoteMemKeysLocked()` | 调用 `ValidateImportedGvaLocked(exportDesc, remoteAddr, remoteSize, view)`，校验注册地址、导出描述符、导入 view 和 HOST_DRAM 类型；导入 transfer flag 后校验 addr 和 8 B 大小 | RangeEntry 只在导入 view 与发布 GVA 一致时省略地址转换字段；UBC 不回填普通 MR 和 flag 的 `outMem.type` |
+| `DeviceUrmaTransportManager::ImportRemoteMemKeysLocked()` | 保存 exported GVA 和 import view，校验两者相等；导入 transfer flag 后校验 addr 和 8 B 大小 | Host GVA equality 是发布路由的硬门禁 |
 | `src/hybm/csrc/common/hybm_define.h`、`hybm_batch_copy_route.h` | 增加 2 MiB route 区、34 MiB control 映射常量及 Host/AICPU 共享路由 ABI | 固定地址、结构大小和 offset 使用同一组编译期定义 |
 | `hybm_gva.cpp`，`hybm_init_hbm_gva()/HybmModernInitMetaGva()/HybmLegacyInitMetaGva()` | meta 物理申请和映射使用 34 MiB，起点为 `HYBM_DEVICE_CONTROL_ADDR` | 2 MiB route 区与 32 MiB HYBM 元数据区一次性映射 |
 | `src/hybm/csrc/hybm_entry.cpp`，`hybm_uninit()` | Modern 使用 `HYBM_DEVICE_CONTROL_ADDR` unmap，保留 `g_baseAddr` 释放 1 GiB VA；Legacy 按 control 起点和 34 MiB 大小 free | 映射地址、物理 handle 和 1 GiB VA reservation 是不同资源，初始化/销毁边界必须成对 |
-| `DeviceUrmaTransportManager::Prepare()/PreparePeerLocked()` | 首次无 key 调用创建 channel/thread 并固定 Host peer 集合；第二次全量 key 调用校验 endpoint 未变化、复用资源、导入初始 DDR MR/flag，最后调用 `TryPublishBatchCopyRouteLocked()` | 对齐 entity 先交换 endpoint、后导入 slice 的两阶段调用顺序，避免重复创建通信资源或提前发布不完整路由 |
-| `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 peer 集合；第二次校验 peer/endpoint 未变化并复用 channel；Host peer 导入 DDR key，NPU peer 不导入 HBM key | 同时支持两鲲鹏主动拷贝验证和最终鲲鹏对 NPU 的 DDR 导出，并接受 entity 的第二阶段幂等 `Prepare()` |
-| `DeviceUrmaTransportManager::RollbackInitialImportsLocked()` | 第二阶段任一 peer 导入或 route 发布失败时，按逆序释放本次调用新增的全部 import；首次阶段创建的 channel/thread 由 manager 清理流程持有 | 防止跨 peer 的部分导入残留，同时不误删前一阶段已经建好的资源 |
-| `DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked()/PublishBatchCopyRouteLocked()` | 确认固定 peer 集合中的所有 channel/thread、DDR range 和 flag 完整后，按 `userDeviceId_` 获取发布权，清 magic/completion，注册 512 B completion 区并构建、写入、发布 route | 仅含 Host peer 且初始信息完整的 manager 占用卡级路由资源，其他 Device URMA entity 不受影响 |
+| `DeviceUrmaTransportManager::Prepare()/PreparePeerLocked()` | 首次无 key 调用创建 channel/thread 并固定 Host peer 集合；携带全量 key 的调用复用资源、导入初始 DDR MR 与 flag，最后调用 `TryPublishBatchCopyRouteLocked()` | 对齐 entity 先交换 endpoint、后导入 slice 的初始化顺序 |
+| `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 peer 集合；携带 key 的调用校验 peer/endpoint 未变化并复用 channel；NPU peer 不导入 HBM key | 支持 Host 主动数据面和鲲鹏对 NPU 的 DDR 导出，并接受 entity 的幂等 `Prepare()` |
+| `DeviceUrmaTransportManager::RollbackInitialImportsLocked()` | 任一 peer 导入或 route 发布失败时，按逆序释放本次调用新增的全部 import；已存在的 channel/thread 由 manager 清理流程持有 | 防止跨 peer 的部分导入残留，同时不误删已建立的资源 |
+| `DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked()/PublishBatchCopyRouteLocked()` | 仅在 Open 协议为 `HOST_DEVICE_URMA` 时，确认全部 Host peer 的 channel/thread、DDR range 和 flag 完整后发布 | 只有目标异构路径占用固定 route，其他 Device URMA entity 不受影响 |
 | `DeviceUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | 已固定 Host Batch_Copy peer 集合时返回 `BM_NOT_SUPPORTED`；没有 Host Batch_Copy peer 时保留现有动态 rank/key 行为 | P0 不接受后续新增 MR、peer 删除或断链，同时保持普通 DEVICE_URMA 场景兼容 |
 | `HostUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | Batch_Copy 初始化完成后的变更请求返回 `BM_NOT_SUPPORTED` | P0 的 Host peer 集合和 DDR 导出集合在初始化后保持不变 |
 | `DeviceUrmaTransportManager::CloseDevice()` | 先执行 `ClearBatchCopyRouteMagicLocked()`，再注销 completion 和通信资源，最后释放 owner | 防止 AICPU 读取已经释放的 HCOMM 句柄 |
@@ -550,10 +599,10 @@ sequenceDiagram
 
 初始化约束为：第一次 `ImportEntityExchangeInfo()` 一次性携带完整 peer 集合，第一次
 `ImportSliceExchangeInfo()` 一次性携带 Batch_Copy 使用的全部 DDR 区间；后续不增加 MR，不删除 peer，
-也不处理断链。发布事务边界为：第一阶段完成全部 Host peer 建链 → 第二阶段 NPU 导入并校验所有 DDR
-MR/flag → 获取每卡唯一 owner → 清零 completion area 并注册固定 completion 区 → 构建固定 route image →
+也不处理断链。发布事务边界为：完成全部 Host peer 建链 → NPU 导入并校验所有 DDR MR 与 flag →
+获取每卡唯一 owner → 清零 completion area 并注册固定 completion 区 → 构建固定 route image →
 以 magic=0 同步写入卡级元数据区 → 最后写 magic → 初始化成功。任一步失败都不得留下有效 magic，
-第二阶段失败时释放该阶段新增的全部 import。Close 前调用方保证没有在途算子，manager 先清 magic，
+导入或发布失败时释放本次调用新增的全部 import。Close 前调用方保证没有在途算子，manager 先清 magic，
 再按逆序释放 HCOMM 资源。
 
 新增和拆分函数均不超过 50 行非空非注释代码，嵌套深度不超过 4 层。
@@ -572,7 +621,7 @@ sequenceDiagram
     participant P as 鲲鹏 DDR peer
     participant D as 本地 HBM
 
-    U->>O: srcList, dstList, lenList, size
+    U->>O: list_num, dst_buf_addr_list, src_buf_addr_list, len_list
     O->>O: 校验四输入并获取单实例执行权
     alt 参数非法或已有算子在途
         O-->>U: BM_INVALID_PARAM / BM_BUSY
@@ -586,7 +635,7 @@ sequenceDiagram
             O->>O: 检查地址溢出和目的 HBM 范围
             O->>T: 二分查找完整覆盖源 GVA 的 range
             T-->>O: peerIndex, srcGvaBegin, srcGvaEnd
-            O->>O: 直接以 srcGva 作为 hcommSrc 并加入 peer 分组
+            O->>O: hcommVaBegin + GVA offset，加入 peer 分组
         end
         alt 任一 item 预校验失败
             O->>O: 释放单实例执行权
@@ -620,7 +669,7 @@ sequenceDiagram
 
 算子使用以下顺序处理一次调用：
 
-1. 校验参数结构、三组列表地址和 `size != 0`，检查按 `size` 计算列表/描述符字节数时无整数溢出，
+1. 校验参数结构、三组列表地址和 `list_num != 0`，检查按 `list_num` 计算列表/描述符字节数时无整数溢出，
    并以原子方式取得 P0 单实例执行权。
 2. 从 `HYBM_BATCH_COPY_META_ADDR` 读取 header，校验 magic、`peerCount <= 64` 和
    `rangeCount <= 1024`。
@@ -631,7 +680,7 @@ sequenceDiagram
    - 检查源/目的地址加长度不溢出。
    - 二分查找包含完整源区间的 range entry。
    - 校验 `peerIndex` 有效、thread/channel 非 0。
-   - 直接使用 `srcGva` 作为 `hcommSrc`，并检查目的地址不落入
+   - 检查 `hcommVaBegin + (srcGva - srcGvaBegin)` 不溢出，将结果作为 `hcommSrc`，并检查目的地址不落入
      `[HYBM_BATCH_COPY_META_ADDR, SVM_END_ADDR)` 控制区。
 5. 按 `peerIndex` 分组；组内保持输入顺序，peer 组按索引升序处理。
    所有条目长度均为 0 时直接返回 `BM_OK`，不调用 HCOMM。
@@ -643,6 +692,44 @@ sequenceDiagram
    读入 completion cell；其他错误立即停止后续 peer 提交。
 8. 轮询所有已使用 peer 的 completion cell，全部完成或达到 60 秒超时后返回。
 9. 释放单实例执行权。
+
+伪代码如下；正式实现必须先完成全 batch 预校验再提交第一条 HCOMM 请求，并通过 RAII 释放单实例锁：
+
+```cpp
+uint32_t HybmBatchCopy(HybmBatchCopyParam *param)
+{
+    RETURN_IF_ERROR(ValidateFourInputs(param));
+    ScopedBatchCopyGuard guard;
+    RETURN_IF_ERROR(guard.Acquire());
+
+    const auto *route =
+        reinterpret_cast<const BatchCopyRouteTable *>(HYBM_BATCH_COPY_META_ADDR);
+    RETURN_IF_ERROR(ValidatePublishedRoute(route));
+
+    Group groups[BATCH_COPY_MAX_PEER_COUNT]{};
+    RETURN_IF_ERROR(ValidateAndGroupAllItems(param, route, groups));
+    for (uint16_t peerIndex = 0; peerIndex < route->header.peerCount; ++peerIndex) {
+        if (groups[peerIndex].empty()) {
+            continue;
+        }
+        const auto &peer = route->peers[peerIndex];
+        uint64_t *localFlag = GetCompletionCell(peerIndex);
+        *localFlag = 0;
+        auto oneSide = BuildReadParam(groups[peerIndex], peer.thread, peer.channel,
+                                      peer.remoteFlagAddr, localFlag, sizeof(uint64_t));
+        RETURN_IF_ERROR(HybmBatchRead(&oneSide));
+    }
+    return WaitAllUsedCompletionCells(groups);
+}
+```
+
+`ValidateAndGroupAllItems()` 对每个源 GVA 查找完整覆盖的 range，并计算：
+
+```text
+hcommSrc = range.hcommVaBegin + (srcGva - range.srcGvaBegin)
+```
+
+算子没有 thread、channel 或 flag 入参；这些值全部来自 route 和固定 completion 区。
 
 混合 peer 使用不同 HCOMM thread，线程之间没有完成顺序保证。每 peer 独立完成后由 AICPU 汇聚，
 保证算子成功返回时所有目的 HBM 数据均可见。completion cell 的清零、DMA 可见性和轮询屏障使用
@@ -681,7 +768,7 @@ sequenceDiagram
 | `src/hybm/csrc/driver/`、`hybm_entry.cpp` | 元数据物理映射、回滚和释放使用 34 MiB 控制区边界 |
 | `src/hybm/csrc/mm/hybm_conn_based_segment.cpp` | 无卡构建的固定 GVA mmap 不执行 `HalHostRegister()` |
 | `src/hybm/csrc/under_api/` | 无卡构建的 `HOST_DEVICE_URMA` 初始化加载 HCOMM |
-| `src/hybm/csrc/data_operation/host/` | `HOST_DEVICE_URMA` 按本端平台复用 Host staging/主动 CPU 数据面或 Device URMA 数据面 |
+| `src/hybm/csrc/data_operation/host/` | `HOST_DEVICE_URMA` 复用已解析的本地角色选择 Host staging/主动 CPU 数据面或 Device URMA 数据面；Device 远端读取启动四参数 `HybmBatchCopy` |
 | `src/hybm/csrc/transport/` | 抽取公共 URMA/HCOMM 封装，在 `UrmaEndpointDesc` 中携带 endpoint 位置，并增加 route 和 completion 接口 |
 | `src/hybm/csrc/transport/host/urma/` | 新增无卡 Host endpoint、固定 GVA MR/flag 导出、Host peer MR 导入和 CPU Read/Write/Fence channel |
 | `src/hybm/csrc/transport/device/urma/` | 增加 import 地址校验、路由构建和 completion 注册 |
@@ -689,8 +776,7 @@ sequenceDiagram
 | `src/hybm/ops/hybm_kernel/libcann_hybm_kernel.json` | 注册 `HybmBatchCopy` 函数；该 JSON 是当前 CMake 和 kernel loader 使用的配置 |
 | `src/hybm/ops/CMakeLists.txt`、`src/hybm/ops/hybm_kernel/CMakeLists.txt` | 编译 `hybm_batch_copy.cc`，把共享路由 ABI 头加入编译依赖，并继续把生成的 `.so` 封装为 `cann-hybm-compat.tar.gz` |
 | `src/smem/python/memfabric_hybrid/setup.py` | 把共享路由 ABI 头加入 AICPU 源码白名单，随 NPU wheel 打包 |
-| `test/ut/testcase/hybm/` | 路由发布、查表、混合 peer、回滚和异常路径 UT |
-| `doc/installation_aicpu_kernel.md` | 增加算子名称、版本兼容和验证方法 |
+| `doc/installation_aicpu_kernel.md` | 增加算子名称、版本兼容、安装和使用方法 |
 
 ### 3.3.2 性能策略
 
@@ -699,7 +785,7 @@ sequenceDiagram
 - 地址区间排序后使用二分查找，1024 个区间最多比较 10 次；分组使用固定 64 桶，避免哈希表。
 - HCOMM batch 每组最多 1000 条，沿用现有内核限制和 fallback 行为。
 - 每个 peer 只执行一次 fence 和一次 completion read。
-- `size` 没有固定总条数上限。临时数组按 `size` 受检分配，所有长度乘法先做溢出检查；分配失败记录
+- `list_num` 没有固定总条数上限。临时数组按 `list_num` 受检分配，所有长度乘法先做溢出检查；分配失败记录
   batch size 并返回 `BM_MALLOC_FAILED`。每次 HCOMM 提交最多包含 1000 条。
 - completion 默认超时为 60 秒，与 Device URMA 数据面超时保持一致。
 
@@ -707,7 +793,7 @@ sequenceDiagram
 
 | 场景 | 返回值 | 是否可能已写入部分 HBM |
 | --- | --- | --- |
-| 空指针、`size == 0`、长度计算或地址溢出 | `BM_INVALID_PARAM` | 否 |
+| 空指针、`list_num == 0`、长度计算或地址溢出 | `BM_INVALID_PARAM` | 否 |
 | 路由表未初始化或布局非法 | `BM_NOT_INITIALIZED` / `BM_INVALID_PARAM` | 否 |
 | 地址未命中或 peer 句柄无效 | `BM_NOT_CONNECTED` | 否 |
 | 并发调用 | `BM_BUSY` | 否 |
@@ -725,8 +811,8 @@ sequenceDiagram
 区间和 HCOMM 句柄；算子提交前校验输入、目的 HBM 范围和路由命中。错误日志记录
 `userDeviceId/phyDeviceId/rankId/peerIndex`、batch index、地址/长度和 HCOMM 返回码，但不读取或打印
 业务数据。
-Host 与 AICPU 对共享结构执行 `sizeof/offsetof` 断言，UT 覆盖固定 offset、最大规格、route 构建、查找、
-发布失败和每卡 owner 冲突。
+Host 与 AICPU 对共享结构执行 `sizeof/offsetof` 断言；publisher 在运行时校验固定容量、区间顺序、
+地址边界和每卡 owner 冲突。
 
 ## 3.5 编程与调用设计
 
@@ -749,66 +835,47 @@ Host 与 AICPU 对共享结构执行 `sizeof/offsetof` 断言，UT 覆盖固定 
 
 - NPU 侧通过 `HYBM_FLAG_INIT_SHMEM_META` 完成 HYBM 初始化，并完成 URMA 建链、鲲鹏 DDR
   注册/导出和 NPU 侧导入。
-- `src_ddr_ptr_list` 的元素必须是 MemFabric GVA。
+- 鲲鹏和昇腾两端都配置 `BmDataOpType.HOST_DEVICE_URMA`；manager 由本地运行时角色决定。
+- `src_buf_addr_list` 的元素必须是 MemFabric GVA。
 - 三组列表本身必须位于 AICPU 可访问的设备内存。
 - 目的地址必须是本地 NPU HBM，并已满足 HCOMM 本地内存访问要求。
 - P0 单张 NPU 只允许一个在途 Batch_Copy。
-
-#### 验收设计
-
-构建和基础测试命令：
-
-```bash
-bash script/build_and_pack_run.sh --build_hcom ON --build_hcom_rdma ON
-bash script/build_and_pack_run.sh --xpu_type NONE --build_hcom ON --build_hcom_rdma OFF
-bash script/kernel/build_ops_run.sh
-bash script/run_ut.sh --fast UrmaTransportManager
-```
-
-前两条分别是昇腾节点和鲲鹏节点构建命令；第三条验证独立 run 包路径，只在昇腾/CANN 环境执行。
-NPU wheel 还需覆盖首次 `import memfabric_hybrid` 的自动制备路径，并确认安装后的 JSON 包含
-`HybmBatchCopy`。
-
-硬件验收矩阵至少包括：
-
-| 维度 | 取值 |
-| --- | --- |
-| 拓扑 | 1 NPU × 1 CPU、1 × 16、1 × 64（规格验证）、16 × 16（目标部署） |
-| batch size | 1、16、128、999、1000、1001，以及按硬件可用内存选取的较大 batch |
-| 单条长度 | 1 B、4 KiB、64 KiB、1 MiB、4 MiB |
-| 地址分布 | 单 MR、每 peer 16 MR、1024 MR 满表、跨 peer 混合、区间边界 |
-| HCOMM 能力 | batch 可用、batch 不支持回退单条 |
-| 异常 | URMA private-data v1/v2 不匹配、导入失败、表损坏、HCOMM 提交失败、完成超时 |
 
 ### 3.5.2 接口定义与设计
 
 #### 3.5.2.1 `HybmBatchCopy`
 
-**描述：** 从一个或多个鲲鹏 CPU peer 的 DDR GVA 批量读取到本地昇腾 950 HBM。
+**描述：** 根据固定路由表，从一个或多个鲲鹏 peer 的 DDR MemFabric GVA 批量读取到本地昇腾 950 HBM。
 
 **原型：**
 
 ```cpp
 struct HybmBatchCopyParam {
-    const void *const *srcDdrPtrList;
-    void *const *dstHbmPtrList;
-    const uint64_t *ptrLenList;
-    uint32_t size;
+    uint32_t list_num;
+    void **dst_buf_addr_list;
+    void **src_buf_addr_list;
+    uint64_t *len_list;
 };
+
+static_assert(offsetof(HybmBatchCopyParam, list_num) == 0x00);
+static_assert(offsetof(HybmBatchCopyParam, dst_buf_addr_list) == 0x08);
+static_assert(offsetof(HybmBatchCopyParam, src_buf_addr_list) == 0x10);
+static_assert(offsetof(HybmBatchCopyParam, len_list) == 0x18);
+static_assert(sizeof(HybmBatchCopyParam) == 0x20);
 
 extern "C" uint32_t HybmBatchCopy(HybmBatchCopyParam *param);
 ```
 
-结构只包含用户要求的四个输入；末尾如有编译器 padding，不定义为可写字段。
+结构只包含用户要求的四个输入；`list_num` 后的 4 B 是 64 位 ABI 对齐 padding，不定义为可写字段。
 
 **输入参数：**
 
 | 参数 | 输入/输出 | 类型 | 说明 | 范围 |
 | --- | --- | --- | --- | --- |
-| `srcDdrPtrList` | 输入 | `const void *const *` | 鲲鹏 DDR MemFabric GVA 列表 | 非空，设备可访问 |
-| `dstHbmPtrList` | 输入 | `void *const *` | 本地昇腾 HBM 地址列表 | 非空，不能指向控制区 |
-| `ptrLenList` | 输入 | `const uint64_t *` | 每组源/目的区间的字节长度 | 元素可为 0 |
-| `size` | 输入 | `uint32_t` | 三个列表的元素个数，不是字节数 | 大于 0；列表可访问且临时空间可分配；无额外固定上限 |
+| `list_num` | 输入 | `uint32_t` | 三个列表的元素个数，不是字节数 | 大于 0；列表可访问且临时空间可分配；无额外固定上限 |
+| `dst_buf_addr_list` | 输入 | `void **` | 本地昇腾 HBM 地址列表 | 非空，不能指向控制区 |
+| `src_buf_addr_list` | 输入 | `void **` | 鲲鹏 DDR MemFabric GVA 列表 | 非空，设备可访问 |
+| `len_list` | 输入 | `uint64_t *` | 每组源/目的区间的字节长度 | 非空；元素可为 0 |
 
 **返回值：**
 
@@ -836,10 +903,10 @@ extern "C" uint32_t HybmBatchCopy(HybmBatchCopyParam *param);
 
 ```cpp
 HybmBatchCopyParam param{};
-param.srcDdrPtrList = deviceSrcGvaList;
-param.dstHbmPtrList = deviceDstHbmList;
-param.ptrLenList = deviceLengthList;
-param.size = batchSize;
+param.list_num = batchSize;
+param.dst_buf_addr_list = deviceDstHbmList;
+param.src_buf_addr_list = deviceSrcGvaList;
+param.len_list = deviceLengthList;
 
 // 图执行器按 libcann_hybm_kernel.json 中的 HybmBatchCopy 注册名在业务 stream 上拉起。
 // 返回成功后，deviceDstHbmList 指向的非零长度区间均已完成写入。
@@ -860,6 +927,8 @@ Result DeviceUrmaTransportManager::ValidateImportedGvaLocked(const UrmaExportDes
                                                              uint64_t remoteAddr, uint64_t remoteSize,
                                                              const UrmaCommMem &view) const;
 Result DeviceUrmaTransportManager::ValidateImportedFlagLocked(const HcommCommMem &flagOutMem) const;
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(
+    std::vector<BatchCopyRouteSource> &sources) const;
 Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked();
 Result DeviceUrmaTransportManager::PublishBatchCopyRouteLocked();
 Result DeviceUrmaTransportManager::AcquireBatchCopyRouteOwnerLocked();
@@ -872,11 +941,12 @@ Result DeviceUrmaTransportManager::ClearBatchCopyRouteMagicLocked();
 ```
 
 这些函数是 Device manager 私有实现，不对 SMEM/HYBM 公共 API 或 entity 暴露。第一次 `Prepare()`
-固定 Host peer 集合并创建通信资源；第二次 `Prepare()` 校验同一集合、导入初始全量 DDR key，并调用
-`TryPublishBatchCopyRouteLocked()`。只有全部固定 peer 的 MR/flag 完整时，该函数才调用
+固定 peer 集合并创建通信资源；第二次 `Prepare()` 校验同一集合、导入初始全量 memory key，并调用
+`TryPublishBatchCopyRouteLocked()`。统一 builder 只接受 Host endpoint 导出的 `HOST_DRAM`，并校验
+GVA、descriptor addr 和 import view addr 相等。只有全部固定 peer 的 MR/flag 完整时，该函数才调用
 `PublishBatchCopyRouteLocked()` 获取每卡发布权、清除 magic、注册固定 completion 区并构建发布路由表。
-P0 的 `UpdateRankOptions()`、`RemoveRanks()` 不更新 Batch_Copy 路由并返回 `BM_NOT_SUPPORTED`；没有
-Host Batch_Copy peer 的 Device URMA manager 保持现有行为。最终销毁前清除 magic。下层失败处负责记录
+P0 的 `UpdateRankOptions()`、`RemoveRanks()` 不更新 Batch_Copy 路由并返回 `BM_NOT_SUPPORTED`；
+非 `HOST_DEVICE_URMA` 的 Device URMA manager 保持现有行为。最终销毁前清除 magic。下层失败处负责记录
 ERROR 日志，上层只透传已记录的根错误时不重复打印。
 
 ### 3.5.3 编程手册设计
@@ -884,7 +954,7 @@ ERROR 日志，上层只透传已记录的根错误时不重复打印。
 在现有 AICPU 安装文档和 API 文档中增加：
 
 1. 支持平台、HCOMM/RDMA 构建开关和 run 包安装。
-2. `HybmBatchCopy` 四输入语义，特别说明 `size` 为元素个数。
+2. `HybmBatchCopy` 四输入语义，特别说明 `list_num` 为元素个数。
 3. MemFabric GVA 与 raw remote VA 的区别。
 4. 建链、内存注册/导入、算子拉起和最终资源释放的完整示例。
 5. 每卡 64 peer、每 peer 16 range、总计 1024 range 的容量和单实例并发限制。
@@ -899,14 +969,14 @@ ERROR 日志，上层只透传已记录的根错误时不重复打印。
 | --- | --- | --- |
 | 源地址不是全局唯一 GVA | 可能路由到错误 CPU peer | 发布时拒绝跨 peer 重叠地址区间 |
 | 固定 GVA mmap 失败 | 鲲鹏源 DDR 无法按 GVA 注册 | 限制并预留可映射 GVA 窗口；初始化失败且不发布路由 |
-| HCOMM import 重定位地址 | 算子直接使用 GVA 会读错地址 | 建链时强制校验 `view.addr == remoteAddr`，不相等则拒绝启用 |
+| Host HCOMM import 重定位地址 | 不满足固定 GVA 契约，算子可能访问错误地址 | Host 建链时强制校验 `view.addr == remoteAddr`，不相等则拒绝发布 |
 | 目标 CANN 未提供无卡 Host UB plugin | 鲲鹏端创建 endpoint 失败 | 部署包含 Host UB plugin 的 CANN 版本，并在启动时检查能力 |
-| 元数据映射从 32 MiB 增至 34 MiB | 每张 NPU 额外占用 2 MiB HBM | 保持 2 MiB 大页对齐；同时覆盖 modern/legacy 初始化、回滚和释放 UT |
+| 元数据映射从 32 MiB 增至 34 MiB | 每张 NPU 额外占用 2 MiB HBM | 保持 2 MiB 大页对齐；modern/legacy 初始化、回滚和释放使用同一控制区边界 |
 | 同一 NPU 多 manager 发布 | 固定路由表被相互覆盖 | `BatchCopyRouteOwnerRegistry` 按 `userDeviceId_` 保证每卡单 owner |
 | Host/NPU 的 URMA private-data 版本混用 | endpoint 位置被错误解释或建链失败 | 解析端严格校验 v2，并在创建 channel 前拒绝其他版本 |
 | 新旧 Host/AICPU 包混用 | 旧 Host 只映射 32 MiB，新算子访问未映射 route 地址 | Host 包和 AICPU 包版本绑定；启动时清零并校验固定 magic |
 | 最终销毁时仍有在途算子 | use-after-free、传输失败或设备异常 | 调用方保证 quiescent；先清 route magic，再释放 HCOMM 资源 |
-| 多 peer 完成语义不明确 | 算子提前返回，目的数据未完成 | P0 使用每 peer completion cell 汇聚；硬件上验证内存屏障和超时路径 |
+| 多 peer 完成语义不明确 | 算子提前返回，目的数据未完成 | P0 使用每 peer completion cell 汇聚，并采用设备侧内存屏障和超时机制 |
 | AICPU 轮询占用核 | 长尾或断链时占用 AICPU 资源 | 60 秒超时并返回 `BM_TIMEOUT` |
 | 大 batch 的临时描述占用 AICPU 堆 | 内存不足或抖动 | 字节数溢出检查、每 1000 条分片提交、分配失败可诊断 |
 | batch 中途失败可能部分完成 | 上层误用部分数据 | 明确失败语义；成功前不对上层声明可用；提供整体重试建议 |
@@ -941,13 +1011,15 @@ ERROR 日志，上层只透传已记录的根错误时不重复打印。
 
 - [ ] 确认目标 CANN 安装包包含并启用 `libhcomm_cpu_ub_plugin.so`，启动日志显示 Host UB plugin
       已加载并注册 UBC_TP/UBC_CTP。
+- [ ] 确认 runtime device 探测接口能稳定区分“明确无卡”“发现非 950 设备”和“探测失败”，避免
+      `HOST_DEVICE_URMA` 角色误判。
 - [ ] 确认鲲鹏进程可固定 mmap 的 GVA 窗口及预留策略；P0 配置 `enable56BitsGva=false`。
 - [ ] HCOMM/CANN 团队确认昇腾 950 上 completion cell 清零、remote flag 写入和 AICPU 轮询所需的
       设备内存屏障；若不支持，改用每 peer STARS notify/event 聚合。
 - [ ] 确认 `HcommChannelFenceOnThread` 的完成边界，明确 fence 后 remote flag read 是否覆盖该
       thread 上此前所有 batch/single read。
 - [ ] 确认昇腾 950 modern 和 legacy 路径均支持从 `HYBM_DEVICE_META_ADDR - 2 MiB` 开始一次性映射
-      34 MiB，并验证初始化失败回滚和 uninit 释放边界。
+      34 MiB，且初始化失败回滚和 uninit 使用相同释放边界。
 
 ---
 

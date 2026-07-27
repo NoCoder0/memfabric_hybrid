@@ -1,7 +1,7 @@
 # Batch_Copy URMA 分阶段编码与验证计划
 
 > 状态：待评审  
-> 日期：2026-07-22
+> 日期：2026-07-25
 > 目标方案：[batch_copy_aicpu_urma_design.md](batch_copy_aicpu_urma_design.md)  
 > 本文用途：指导代码实现、分阶段硬件验证和代码评审；本文中的阶段门禁优先于一次性实现全部功能。
 
@@ -13,19 +13,31 @@
    重复实现及 wire format 差异。
 2. **阶段 1：两台鲲鹏 Host-to-Host。** 两端都使用 `HostUrmaTransportManager`，验证 Host endpoint、
    DDR 注册/导出/导入、CPU channel、主动 Read/Write、Fence 和批量回退。
-3. **阶段 2：两台昇腾 Device-to-Device 路由探针。** 使用测试专用的 Device-HBM 路由适配层，验证固定 HBM
-   元数据映射、路由发布、AICPU 查表和卡间拷贝。
-4. **阶段 3：鲲鹏到昇腾的完整流程。** 使用生产语义发布 Host DDR GVA 路由，运行最终
-   `HybmBatchCopy`。
+3. **阶段 2：两张昇腾 950 卡验证可复用主链路。** 两端都配置 `HOST_DEVICE_URMA`，运行时检测到
+   昇腾 950 后选择 `DeviceUrmaTransportManager`，由真实 manager 发布路由，并通过最终
+   `HybmBatchCopy` 四参数接口完成卡间读取。
+4. **阶段 3：鲲鹏到昇腾的完整流程。** 复用阶段 2 的 manager、publisher、路由 ABI、算子和 Python
+   调用路径，只增加 Host DDR 路由源资格校验及异构硬件验证。
 
 阶段 0 不是新增硬件阶段，而是阶段 1 开始前的编码门禁。增加它的原因是当前
 `hcomm_transport_manager`、endpoint private data 和 `HcommMemImport` 处理都位于 Device 目录并含有
 Device 假设；直接复制出一个 Host manager 会形成两套不一致协议。
 
-阶段 2 不能直接把“两张 NPU 的 HBM 互拷成功”等价为最终方案成功。Device HBM 的导入地址可能是
-HCOMM view，而最终路由键必须是鲲鹏 DDR 的 MemFabric GVA。阶段 2 因而使用仅在 `BUILD_TEST=ON` 时存在的
-适配层，把 HCOMM view 写入同一份路由 ABI，验证发布和算子执行机械链路；阶段 3 再验证
-`Host DDR GVA == HCOMM import view` 这一生产地址语义。
+阶段 2 不再实现独立的 route probe manager、probe operator 或专用建链程序。两张 NPU 使用与阶段 3
+相同的 `HOST_DEVICE_URMA` 协议、`DeviceUrmaTransportManager::Prepare()`、路由发布事务和
+`HybmBatchCopy`。测试代码只负责准备数据、调用既有 Python copy 接口和校验结果。
+
+Device HBM 的 MemFabric GVA 与 HCOMM import view 可能不同。为让阶段 2 仍可通过最终四参数接口按 GVA
+查表，`BatchCopyRangeEntry` 在保持 32 B 大小不变的前提下使用现有 padding 增加
+`hcommVaBegin`。算子执行：
+
+```text
+hcommSrc = hcommVaBegin + (srcGva - srcGvaBegin)
+```
+
+阶段 2 的 Device-HBM route 保存真实 GVA 和真实 import view；阶段 3 的 Host-DDR route 仍把
+`Host DDR GVA == HCOMM import view` 作为硬门禁，且发布时
+`hcommVaBegin == srcGvaBegin`。增加该字段不允许绕过阶段 3 的地址相等校验。
 
 阶段 1 对原目标设计有一项永久补充：`HostUrmaTransportManager` 不再只是被动 DDR 导出端，它也实现
 Host CPU 主动 `ReadRemote/WriteRemote`。最终鲲鹏到昇腾流程仍由 NPU 发起读取，Host 主动能力不会改变
@@ -41,8 +53,9 @@ Batch_Copy 的生产方向，但可用于独立验证、诊断和后续 Host-to-
 - 两台无 NPU 的鲲鹏服务器通过 HCOMM Host UB plugin 完成双向 DDR 拷贝。
 - 抽取 Host/Device 共用的 endpoint、memory descriptor、private data 和 HCOMM 资源封装。
 - 映射并发布 `HYBM_DEVICE_META_ADDR` 前方 2 MiB 卡级 Batch_Copy 元数据区。
-- 提供测试专用的简化 AICPU 路由探针，使用两台昇腾服务器验证路由表下发与查表拷贝。
-- 最终实现鲲鹏 DDR GVA 到昇腾 HBM 的 `HybmBatchCopy`。
+- 在两张昇腾 950 卡上通过 `HOST_DEVICE_URMA` 运行最终路由发布和 `HybmBatchCopy` 主链路。
+- `HybmBatchCopy` AICPU ABI 只包含 `list_num`、目的地址列表、源地址列表和长度列表。
+- 阶段 3 复用阶段 2 产物，实现鲲鹏 DDR GVA 到昇腾 HBM 的完整流程。
 
 ### 2.2 P0 约束
 
@@ -51,7 +64,8 @@ Batch_Copy 的生产方向，但可用于独立验证、诊断和后续 Host-to-
 - 初始化完成后不新增可导出的源内存区间，不处理 peer 移除、断链或热替换；数据操作层的固定 staging
   MR 必须在建 channel 前完成注册。
 - 阶段 1 每台鲲鹏只运行一个 rank；多进程共享同一 Host URMA NIC/监听端口不在本阶段验证。
-- 阶段 2 的 Device-HBM 路由只存在于测试构建，不进入生产包和 Python wheel。
+- 阶段 2 的 manager、publisher、route ABI 和 AICPU operator 都进入正常构建和 NPU wheel；仅 Python
+  验证脚本及必要断言属于测试代码。
 - 阶段 3 先验收 1 NPU × 1 CPU，再扩展到目标拓扑；不以满规格拓扑作为首轮调试环境。
 
 ## 3. 当前代码基线与关键事实
@@ -90,7 +104,7 @@ Python 暴露名为 `BmDataOpType.HOST_DEVICE_URMA`。该值不是仅在鲲鹏�
 - 阶段 3 的鲲鹏 rank 和昇腾 rank 也均配置 `HOST_DEVICE_URMA`；
 - 本端为 `XPU_TYPE=NONE` 时创建 `HostUrmaTransportManager` 和 `HostDataOpRDMA`；本端为
   `ASCEND_NPU` 时创建 `DeviceUrmaTransportManager` 和 `DataOpDeviceURMA`；
-- 阶段 2 的两个 NPU rank 仍配置既有 `DEVICE_URMA`，验证原有 Device↔Device 路径；
+- 阶段 2 的两个 NPU rank 也配置 `HOST_DEVICE_URMA`，运行时均解析为 Device 角色；
 - `HOST_URMA` 不改语义，仍进入 `HcomTransportManager`。因此 HCOMM 与 HCOM 不再依靠构建平台或
   endpoint 类型猜测，而由 DataOpType 明确区分。
 
@@ -114,7 +128,8 @@ entity tag 的字符串双向映射、Compose transport 路由和 data-operator 
 - UBC 的 `HcommMemImport()` 当前只填写 `outMem.addr/outMem.size`，不填写 `outMem.type`。MemFabric 必须从
   自己的导出描述符恢复类型，不能因 `outMem.type == COMM_MEM_TYPE_INVALID` 判定导入失败。
 - UBC import 返回的 `outMem.addr` 来自远端导出 DTO 的注册地址。阶段 1 必须把
-  `outMem.addr == exportedGva` 作为硬门禁，成功后才能保留生产路由表省略地址转换基址的设计。
+  `outMem.addr == exportedGva` 作为 Host 生产路径硬门禁。即使 route ABI 已为 Device-HBM 验证增加
+  `hcommVaBegin`，Host 路径也不允许用地址转换掩盖 equality 失败。
 
 ## 4. 总体代码结构
 
@@ -129,7 +144,7 @@ src/hybm/csrc/transport/
 │   ├── device_urma_transport_manager.h/.cpp
 │   └── batch_copy_route_publisher.h/.cpp  # 卡级路由 image 构建、发布和清理
 └── compose/
-    └── compose_transport_manager.cpp      # 按构建平台选择 Host/Device manager
+    └── compose_transport_manager.cpp      # 为 HOST_DEVICE_URMA 解析运行时 Host/Device 角色
 ```
 
 数据路径选择如下：
@@ -137,13 +152,16 @@ src/hybm/csrc/transport/
 ```mermaid
 flowchart LR
     A["BmDataOpType.HOST_DEVICE_URMA"] --> B["ComposeTransportManager"]
-    B -->|"XPU_TYPE=NONE"| C["HostUrmaTransportManager"]
-    B -->|"XPU_TYPE=NPU"| D["DeviceUrmaTransportManager"]
+    B --> C{"运行时设备探测"}
+    C -->|"发现 Ascend 950"| D["DeviceUrmaTransportManager"]
+    C -->|"明确无设备"| D2["HostUrmaTransportManager"]
+    C -->|"有设备但非 950，或探测失败"| F["BM_NOT_SUPPORTED"]
     A --> E["DataOperatorFactory::CreateHostDeviceUrmaDataOperator"]
-    E -->|"XPU_TYPE=NONE"| F["HostDataOpRDMA"]
-    E -->|"XPU_TYPE=NPU"| G["DataOpDeviceURMA"]
-    C --> H["HCOMM CPU Read/Write/Fence"]
-    D --> I["AICPU HCOMM Read/Write"]
+    E -->|"Host role"| G["HostDataOpRDMA"]
+    E -->|"Device role"| H["DataOpDeviceURMA"]
+    D --> I["路由发布 + AICPU HCOMM"]
+    D2 --> J["HCOMM CPU Read/Write/Fence"]
+    G --> J
 ```
 
 阶段 1 的 Python 用例设置 `BmDataOpType.HOST_DEVICE_URMA`，验证最终方案使用的前 672 B memory-key
@@ -501,14 +519,22 @@ Result FenceRank(RemoteRankState &state, uint32_t rankId);
 
 #### `ComposeTransportManager`
 
-为新增协议提供独立的 manager 创建函数：
+为新增协议提供独立的本地角色解析和 manager 创建函数：
 
 ```cpp
+Result ResolveHostDeviceUrmaRole(HostDeviceUrmaRole &role);
 TransManagerPtr ComposeTransportManager::CreateHostDeviceUrmaTransportManager() const;
 ```
 
-- `ASCEND_NPU` 返回 `std::make_shared<device::DeviceUrmaTransportManager>()`。
-- `NO_XPU` 返回 `std::make_shared<host::HostUrmaTransportManager>()`。
+- 初始化时只解析一次本地角色，并让 transport manager 与 data operator 复用该结果，禁止两处各自探测。
+- 运行时明确发现可用的 Ascend 950 device 时，创建
+  `std::make_shared<device::DeviceUrmaTransportManager>()`。
+- 运行时明确没有 device，且当前构建包含 Host HCOMM 能力时，创建
+  `std::make_shared<host::HostUrmaTransportManager>()`。
+- 发现 device 但 SOC 不是 Ascend 950 时返回 `BM_NOT_SUPPORTED`，不能静默退化为 Host role。
+- ACL/runtime 探测失败与“无卡”必须使用不同结果；探测错误直接返回失败，不能误判为 Host role。
+- `XPU_TYPE=NONE` 构建不调用不存在的 ACL 符号，直接解析为 Host role；NPU 构建通过已有 runtime
+  device/SOC 查询接口解析角色。
 - `DEVICE_URMA/DEVICE_UBOE` 的既有分支保持创建 `DeviceUrmaTransportManager`；无 NPU 构建收到这两个协议时
   返回 `BM_NOT_SUPPORTED` 并记录 protocol/rankId。
 - 把 `HOST_DEVICE_URMA` 加入 `DEVICE_PROTOCOL` 掩码，使它复用 `deviceTransportManager_` 和前 6 段 key；
@@ -525,8 +551,8 @@ static DataOperatorPtr CreateHostDeviceUrmaDataOperator(
     const transport::TransManagerPtr &transportManager);
 ```
 
-- `ASCEND_NPU` 返回 `DataOpDeviceURMA`。
-- `NO_XPU` 使用现有构造函数返回 `HostDataOpRDMA(rankId, transportManager)`；不增加成员字段或构造参数。
+- Device role 返回 `DataOpDeviceURMA`。
+- Host role 使用现有构造函数返回 `HostDataOpRDMA(rankId, transportManager)`；不增加成员字段或构造参数。
   URMA 的未注册 tensor 经 `Initialize()` 时已注册、且在建 channel 前存在的 swap buffer 搬运。
 - `HostComposeDataOp::Initialize()` 新增 `HOST_DEVICE_URMA` 分支调用该方法，并将返回对象放入
   `devUrmaDataOperator_`，避免改变已有优先级和路由逻辑。
@@ -647,231 +673,229 @@ bash script/run_ut.sh --fast UrmaTransportManager
 - 单条 Read、单条 Write、batch fallback、fence 和双向校验全部通过。
 - 初始化失败注入和正常 Close 后，MR、flag、channel、endpoint 均按逆序释放。
 
-## 7. 阶段 2：两昇腾服务器验证路由下发与 AICPU 查表
+## 7. 阶段 2：两张昇腾 950 验证可复用主链路
 
-### 7.1 为什么需要测试专用 Device 路由适配层
+### 7.1 阶段定位
 
-生产路由只接收 Host endpoint 导出的 `HOST_DRAM`，而两台昇腾互联只能提供 Device endpoint 和 HBM。
-阶段 2 复用生产路由布局、发布事务和 AICPU 固定地址读取，但用测试适配层把远端 HBM 的
-`HcommMemImport` view 作为源地址写入 range。该地址只在测试 operator 内消费，不对外声明为 MemFabric
-GVA。
+阶段 2 的目标不是构建一条测试旁路，而是在两张 Ascend 950 卡上提前运行阶段 3 将直接复用的主链路：
 
-适配层满足以下隔离条件：
+```text
+BmDataOpType.HOST_DEVICE_URMA
+  → 运行时解析为 Device role
+  → DeviceUrmaTransportManager
+  → 导入远端 HBM MR 和 transfer flag
+  → BatchCopyRoutePublisher 写固定 HBM 路由
+  → DataOpDeviceURMA 启动 HybmBatchCopy
+  → AICPU 只用四个业务参数查表并读取远端数据
+```
 
-- 仅在 `BUILD_TEST=ON` 时编译，运行还需显式设置 `MF_HYBM_BATCH_COPY_ROUTE_PROBE=1`。
-- 默认 RELEASE 和 wheel 中没有环境变量分支、probe publisher、probe operator 或 JSON 注册项。
-- 不修改 `BatchCopyRouteHeader/PeerEntry/RangeEntry`，不增加扩缩容或测试字段。
-- 阶段 2 的成功结论只覆盖“下发和执行链路”，不覆盖 Host GVA 地址语义。
+两卡场景与阶段 3 的差别只在路由源内存类型：阶段 2 是 Device endpoint 的 `DEVICE_HBM`，阶段 3 是
+Host endpoint 的 `HOST_DRAM`。manager 生命周期、路由发布事务、AICPU ABI、查表、分组、flag completion
+和 Python 调用路径必须完全相同。
 
-### 7.2 路由发布类接口
+已提交的 `d145af62` 保存了原 probe 方案，作为历史验证基线。重构完成后应删除
+`MF_HYBM_BATCH_COPY_ROUTE_PROBE`、`MF_HYBM_AICPU_KERNEL_JSON`、`LaunchBatchCopyRouteProbeForTest()`、
+`HybmBatchCopyProbe` 及专用 integration executable；不得让它们成为正式 T2 门禁。
 
-新增 `batch_copy_route_publisher.{h,cpp}`，把 image 构建从 manager 生命周期中拆出，便于 UT 和测试适配：
+### 7.2 `HOST_DEVICE_URMA` 的运行时角色选择
+
+`ComposeTransportManager` 在收到 `HOST_DEVICE_URMA` 时解析本地角色：
+
+1. NPU 构建且 runtime 明确发现 Ascend 950 device：创建 `DeviceUrmaTransportManager`。
+2. 无卡构建或 runtime 明确报告无 device：创建 `HostUrmaTransportManager`。
+3. 发现 device 但 SOC 不是 Ascend 950：返回 `BM_NOT_SUPPORTED`。
+4. runtime/SOC 查询失败：返回原始错误，不得当作“无卡”并回退 Host manager。
+
+角色解析结果由 transport manager 和 data operator 共用。两张卡上的 Python 配置均为
+`BmDataOpType.HOST_DEVICE_URMA`，不能用 `DEVICE_URMA` 替代，否则未验证异构场景使用的新协议选择链路。
+
+### 7.3 可同时表达 GVA 与 HCOMM view 的路由 ABI
+
+阶段 2 通过公共 Python API 获得的是远端 HBM MemFabric GVA，HCOMM 数据面需要的是 import view。
+`BatchCopyRangeEntry` 使用已有 padding 增加 `hcommVaBegin`，结构大小仍为 32 B：
+
+```cpp
+struct alignas(32) BatchCopyRangeEntry {
+    uint64_t srcGvaBegin;
+    uint64_t srcGvaEnd;
+    uint64_t hcommVaBegin;
+    uint16_t peerIndex;
+};
+```
+
+`BatchCopySourceRange` 对应改为：
 
 ```cpp
 struct BatchCopySourceRange {
-    uint64_t begin{0}; // 生产为 DDR GVA；probe 为 imported HCOMM view
-    uint64_t end{0};   // 左闭右开
-};
-
-struct BatchCopyRouteSource {
-    uint32_t peerRank{0};
-    HcommThreadHandle thread{0};
-    HcommChannelHandle channel{0};
-    uint64_t remoteFlagAddr{0};
-    std::vector<BatchCopySourceRange> ranges{};
-};
-
-class BatchCopyRoutePublisher final {
-public:
-    BatchCopyRoutePublisher(uint32_t userDeviceId,
-                            const UrmaEndpointHandle &localEndpoint,
-                            HcommTransportManager &hcommManager);
-    ~BatchCopyRoutePublisher();
-
-    Result Publish(const std::vector<BatchCopyRouteSource> &sources);
-    Result Clear();
-    bool IsPublished() const;
-
-private:
-    Result ValidateSources(const std::vector<BatchCopyRouteSource> &sources) const;
-    Result BuildRouteImage(const std::vector<BatchCopyRouteSource> &sources,
-                           BatchCopyRouteTable &table) const;
-    Result AcquireOwner();
-    void ReleaseOwner();
-    Result ClearMagic();
-    Result ClearCompletionArea();
-    Result RegisterCompletionArea();
-    Result WriteRouteImage(const BatchCopyRouteTable &table);
-    Result PublishMagic();
+    uint64_t srcGvaBegin{0};
+    uint64_t srcGvaEnd{0};
+    uint64_t hcommVaBegin{0};
 };
 ```
 
-构造参数中，`userDeviceId` 用于按逻辑卡获取唯一发布权，`localEndpoint` 用于注册固定 completion HBM，
-`hcommManager` 复用当前 Device manager 已打开的 HCOMM 注册域。publisher 保存 endpoint 的 shared handle 和
-manager 的非 owning 引用；Device manager 必须保证 publisher 先于公共 HCOMM manager 销毁。
-
-`Publish()` 固定事务顺序：校验输入 → 获取每卡 owner → 清 magic → 清 completion → 注册 completion MR →
-构建 image → 以 magic=0 写完整 image → 单独写 magic。任何步骤失败都保持 magic=0，回滚本次注册的
-completion 和 owner。
-
-`Clear()` 顺序：清 magic → 注销 completion → 释放 owner。析构函数只做兜底清理并记录错误，不依赖异常。
-
-### 7.3 地址空间和结构体
-
-阶段 2 实现现有目标设计中的固定布局：
+发布端校验两个地址域都不溢出，且 `[srcGvaBegin, srcGvaEnd)` 非空。AICPU 根据源 GVA 命中区间后计算：
 
 ```text
-低地址
-HYBM_BATCH_COPY_META_ADDR = HYBM_DEVICE_META_ADDR - 2 MiB
-┌──────────────────────────────────────────────────────────┐
-│ 0x0000  BatchCopyRouteHeader                 0x0040 B   │
-├──────────────────────────────────────────────────────────┤
-│ 0x0040  BatchCopyPeerEntry[64]               0x0800 B   │
-├──────────────────────────────────────────────────────────┤
-│ 0x0840  BatchCopyRangeEntry[1024]            0x8000 B   │
-├──────────────────────────────────────────────────────────┤
-│ 0x8840  BatchCopyCompletionArea              0x0200 B   │
-├──────────────────────────────────────────────────────────┤
-│ 0x8A40  未使用空间                           0x1F75C0 B │
-└──────────────────────────────────────────────────────────┘
-HYBM_DEVICE_META_ADDR
-┌──────────────────────────────────────────────────────────┐
-│ 原有 HYBM device metadata                    32 MiB      │
-└──────────────────────────────────────────────────────────┘
-高地址
+offset = srcGva - srcGvaBegin
+hcommSrc = hcommVaBegin + offset
 ```
 
-共享 ABI 仍为：Header 64 B、PeerEntry 32 B、RangeEntry 32 B；64 peer、每 peer 16 range、总计 1024
-range。Host 和 AICPU 编译都必须执行 `sizeof/offsetof` 静态断言。元数据映射从原 32 MiB 扩为连续 34 MiB，
-映射、初始化失败回滚和 uninit 必须使用同一个 control 起点和长度。
+- 阶段 2：`srcGvaBegin` 来自 memory key 的远端 GVA，`hcommVaBegin` 来自
+  `HcommMemImport()` 的 view。
+- 阶段 3：仍强制 `srcGvaBegin == hcommVaBegin`；该字段不能作为 Host import equality 失败时的兼容路径。
 
-### 7.4 Device manager 的 probe 接口
+Header 64 B、PeerEntry 32 B、RangeEntry 32 B、route/completion offsets 和 34 MiB 控制区布局均不变化；
+Host 和 AICPU 编译继续执行 `sizeof/offsetof` 静态断言。
 
-仅测试构建增加：
+### 7.4 路由源生成与发布触发
+
+`DeviceUrmaTransportManager` 保存本次 Open 的协议，并仅在协议包含 `HOST_DEVICE_URMA` 时启动 Batch_Copy
+路由流程。`DEVICE_URMA/DEVICE_UBOE` 保持原行为，不占用固定 route owner。
+
+第二次 `Prepare()` 导入完整 memory key 后，调用统一入口：
 
 ```cpp
-#if defined(MF_BUILD_TEST)
-Result DeviceUrmaTransportManager::TryPublishDeviceRouteProbeLocked();
-
-Result DeviceUrmaTransportManager::BuildDeviceRouteProbeSourcesLocked(
+Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked();
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(
     std::vector<BatchCopyRouteSource> &sources) const;
-
-Result DeviceUrmaTransportManager::LaunchBatchCopyRouteProbeForTest(
-    uint32_t peerIndex,
-    uint32_t rangeIndex,
-    uint64_t srcOffset,
-    uint64_t dstHbm,
-    uint64_t length);
-#endif
 ```
 
-- 只选择 location 为 Device、memory type 为 `DEVICE_HBM` 的 peer。
-- `begin = remoteRegistration.view.addr`，`end = begin + remoteRegistration.view.size`。
-- channel、thread、remote flag 使用当前 `RemoteRankState` 的真实导入结果。
-- 所有初始 peer 的 channel/thread/MR/flag 完整后才发布；缺项返回 `BM_NOT_INITIALIZED`，magic 保持 0。
-- `LaunchBatchCopyRouteProbeForTest()` 使用 manager 已加载的 AICPU binary 获取
-  `HybmBatchCopyProbe` function handle，在当前 ACL stream 上追加参数、启动并同步；参数校验由 Host helper
-  和 AICPU 各执行一次。该方法不出现在默认构建的 class ABI 中。
-- `CloseDevice()` 必须先 `routePublisher_->Clear()`，再释放 HCOMM handle。
+源生成按远端 endpoint 类型选择严格策略：
 
-为避免测试代码复制当前 `load_kernel.cpp` 的私有查找逻辑，将函数句柄查询抽成通用内部接口：
+- Device peer：只接收 `DEVICE_HBM`，使用 exported GVA 作为查表区间，import view 作为 HCOMM 基址。
+- Host peer：只接收 `HOST_DRAM`，并强制 exported GVA、descriptor addr 和 import view addr 相等。
+- 两类 peer 都必须已有非零 `thread/channel/remoteFlagAddr`、8 B flag 和 1～16 个合法 range。
+- P0 的一次 route 只允许一种 endpoint location，禁止 Host/Device peer 混合发布。
 
-```cpp
-Result GetDeviceKernelFunctionHandle(aclrtBinHandle binaryHandle,
-                                     const char *functionName,
-                                     aclrtFuncHandle &functionHandle);
-```
+所有 peer 完整后调用现有 `BatchCopyRoutePublisher::Publish()`。发布事务保持：校验输入 → 获取每卡 owner →
+清 magic → 清 completion → 注册 completion MR → 构建 image → 以 magic=0 写 image → 最后单独写 magic。
+`CloseDevice()` 先清 magic 和注销 completion，再释放 channel/thread/MR。
 
-`binaryHandle` 必须是已成功加载的 AICPU binary；`functionName` 非空；输出 handle 在调用前清零，查找失败
-记录 function name 和 ACL 返回码。现有 `LoadDeviceKernelAndGetHandles()` 和测试 launch 方法共同调用它。
+### 7.5 Flag 与四参数 AICPU ABI
 
-### 7.5 简化 AICPU 路由探针接口
+Flag 没有遗漏，也不应成为算子参数：
 
-新增测试 operator，不直接接收源地址，强制从路由表取地址：
+- `BatchCopyPeerEntry.remoteFlagAddr` 保存该 peer 的远端 8 B transfer flag import 地址。
+- 本地完成地址固定为
+  `HYBM_BATCH_COPY_META_ADDR + BATCH_COPY_COMPLETION_OFFSET + peerIndex * sizeof(uint64_t)`。
+- `flag_size` 固定为 `sizeof(uint64_t)`，发布前校验，不占用 route 字段。
+
+最终 AICPU ABI 只包含以下四项，字段名称和顺序固定：
 
 ```cpp
-struct HybmBatchCopyProbeParam {
-    uint32_t peerIndex;       // peers[] 下标，必须小于 header.peerCount
-    uint32_t rangeIndex;      // 该 peer 内的 range 序号，范围 [0, rangeCount)
-    uint64_t srcOffset;       // 相对选中 range 起点的字节偏移
-    void *dstHbm;             // 本地 HBM 目的地址
-    uint64_t length;          // 拷贝长度，必须完整落在该 range 内
+struct HybmBatchCopyParam {
+    uint32_t list_num;
+    void **dst_buf_addr_list;
+    void **src_buf_addr_list;
+    uint64_t *len_list;
 };
 
-extern "C" uint32_t HybmBatchCopyProbe(void *args);
+static_assert(offsetof(HybmBatchCopyParam, list_num) == 0x00);
+static_assert(offsetof(HybmBatchCopyParam, dst_buf_addr_list) == 0x08);
+static_assert(offsetof(HybmBatchCopyParam, src_buf_addr_list) == 0x10);
+static_assert(offsetof(HybmBatchCopyParam, len_list) == 0x18);
+static_assert(sizeof(HybmBatchCopyParam) == 0x20);
+
+extern "C" uint32_t HybmBatchCopy(HybmBatchCopyParam *param);
 ```
 
-执行步骤：
+`thread/channel/remote_flag_addr/local_flag_addr/flag_size` 全部由算子从固定路由和 completion 区推导，
+Host launcher 不得传入这些字段。`HybmBatchCopy` 注册到正常
+`libcann_hybm_kernel.json`，由正常 AICPU run 包和 NPU wheel 交付。
 
-1. 校验参数、route magic、peer/range 计数和固定 offsets。
-2. 根据 `peerIndex` 找到 peer entry，再从该 peer 的 range 子集选择 `rangeIndex`。
-3. 检查 `srcOffset + length` 无溢出且不越过 range end。
-4. 从路由表取得 `thread/channel/remoteFlagAddr` 和 range begin，计算实际源地址。
-5. 清零该 peer 的 completion cell，构造单条 `HybmOneSideOpParam`，复用 `HybmBatchRead()`。
-6. 等待 completion 或 60 秒超时，返回 `BM_OK/BM_INVALID_PARAM/BM_TIMEOUT/BM_ERROR`。
+### 7.6 AICPU 算子伪代码
 
-`srcOffset`、`length`、`dstHbm` 是探针唯一业务参数；通信句柄和源地址不能由 Host 传入，否则无法证明
-operator 确实读取了路由表。
+```cpp
+uint32_t HybmBatchCopy(HybmBatchCopyParam *param)
+{
+    RETURN_IF_ERROR(ValidateFourInputs(param));
+    RETURN_IF_ERROR(AcquirePerDeviceExecutionGuard());
 
-### 7.6 测试构建和用例
+    BatchCopyRouteTable *route =
+        reinterpret_cast<BatchCopyRouteTable *>(HYBM_BATCH_COPY_META_ADDR);
+    RETURN_IF_ERROR(ValidatePublishedRoute(route));
 
-测试构建与生产 AICPU 包完全分离：
+    Group groups[BATCH_COPY_MAX_PEER_COUNT]{};
+    for (uint32_t i = 0; i < param->list_num; ++i) {
+        if (param->len_list[i] == 0) {
+            continue;
+        }
+        RETURN_IF_ERROR(ValidateDestinationHbm(param->dst_buf_addr_list[i], param->len_list[i]));
+        const BatchCopyRangeEntry *range =
+            FindCoveringRange(route, param->src_buf_addr_list[i], param->len_list[i]);
+        RETURN_IF_NULL(range, BM_NOT_CONNECTED);
 
-- 顶层 `CMakeLists.txt` 在 `BUILD_TEST=ON` 时直接
-  `add_subdirectory(test/integration/hybm/batch_copy_route_probe)`；不复用只在 `BUILD_UT=ON` 时进入的
-  `test/CMakeLists.txt`。
-- `src/hybm/csrc/CMakeLists.txt` 在 `BUILD_TEST=ON` 时仅给 `hybmm_objects` 增加
-  `MF_BUILD_TEST` 编译定义；生产 core 不包含 probe 分支。
-- probe 目录的 `CMakeLists.txt` 构建 `batch_copy_route_probe` 集成程序，并把生产
-  `hybm_batch_transfer.cc` 与测试 `hybm_batch_copy_probe.cc` 交叉编译成独立
-  `libcann_hybm_probe_kernel.so`。
-- 测试 JSON 命名为 `libcann_hybm_probe_kernel.json`，只注册 `HybmBatchRead/HybmBatchWrite` 和
-  `HybmBatchCopyProbe`，由测试安装脚本放入独立 probe vendor 路径。
-- `load_kernel.cpp` 在 `MF_BUILD_TEST` 下允许环境变量 `MF_HYBM_AICPU_KERNEL_JSON` 指向测试 JSON；变量未设置
-  时仍使用当前生产路径。默认构建中不编译该环境变量分支。
-- probe JSON、source、installer 和可执行程序都位于 `test/integration`，不进入 `_ops`、
-  `_AICPU_WLIST` 或默认 wheel。
+        uint64_t offset =
+            reinterpret_cast<uint64_t>(param->src_buf_addr_list[i]) - range->srcGvaBegin;
+        void *hcommSrc = reinterpret_cast<void *>(range->hcommVaBegin + offset);
+        groups[range->peerIndex].Append(
+            param->dst_buf_addr_list[i], hcommSrc, param->len_list[i]);
+    }
 
-新增：
+    for (uint16_t peerIndex = 0; peerIndex < route->header.peerCount; ++peerIndex) {
+        if (groups[peerIndex].empty()) {
+            continue;
+        }
+        const BatchCopyPeerEntry &peer = route->peers[peerIndex];
+        uint64_t *localFlag = GetCompletionCell(peerIndex);
+        *localFlag = 0;
+        HybmOneSideOpParam oneSide = BuildReadParam(
+            groups[peerIndex], peer.thread, peer.channel,
+            peer.remoteFlagAddr, localFlag, sizeof(uint64_t));
+        RETURN_IF_ERROR(HybmBatchRead(&oneSide));
+    }
+    return WaitAllUsedCompletionCellsAndReleaseGuard();
+}
+```
+
+实际实现必须保证所有输入、路由命中、地址溢出和目的 HBM 范围都在第一条 HCOMM 请求前完成预校验；
+伪代码中的早退在正式代码中通过 RAII guard 释放单实例锁，并在根错误处记录关键参数。
+
+### 7.7 两卡 Python 用例
+
+新增与 `01_single_node_multi_device_dram.py` 同风格的两进程、两卡用例，例如：
 
 ```text
-test/integration/hybm/batch_copy_route_probe/
-├── CMakeLists.txt
-├── README.md
-├── batch_copy_route_probe_main.cpp
-├── hybm_batch_copy_probe.h
-├── hybm_batch_copy_probe.cc
-├── install_probe.sh
-└── libcann_hybm_probe_kernel.json
+examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/
+└── 04_single_node_multi_device_batch_copy.py
 ```
 
-两台昇腾各运行一个 rank：
+用例复用 `mf.initialize()`、`bm.initialize()`、`multiprocessing.spawn`、barrier、`create2()`、
+`peer_rank_ptr()` 和现有 copy API；唯一协议差异是：
 
-```bash
-bash script/build_and_pack_run.sh \
-    --xpu_type NPU \
-    --build_test ON \
-    --build_hcom ON \
-    --build_hcom_rdma ON
+```python
+handle = bm.create2(
+    id=0,
+    local_dram_size=0,
+    max_dram_size=0,
+    local_hbm_size=ONE_GIB,
+    max_hbm_size=ONE_GIB,
+    data_op_type=bm.BmDataOpType.HOST_DEVICE_URMA,
+)
 ```
 
-集成程序不经过 Python 或完整 entity，直接实例化 `DeviceUrmaTransportManager`，以 TCP 控制 socket 交换
-`GetPrivateData()` 和 `QueryMemoryKey()` 的结果。这样可以精确验证 manager、publisher 和 AICPU，不为测试
-增加公开 Python API。执行流程：
+该用例参考 `01_single_node_multi_device_dram.py` 的进程、barrier 和双向 pattern 校验结构，但内存类型改为
+`BmMemType.DEVICE`，确保 route source 是远端 HBM，目的地址是本地 HBM。
 
-1. 每端设置 ACL device，创建 HBM 区间并写入可预测 pattern，再调用 manager 的
-   `OpenDevice/RegisterMemoryRegion/QueryMemoryKey`。
-2. 两端交换 private data/key，依次调用无 key 和带 key 的两次 `Prepare()`，在测试开关下发布 route。
-3. 集成程序调用 `LaunchBatchCopyRouteProbeForTest(peerIndex=0, rangeIndex=0, ...)`。
-4. 比较目的 HBM 数据；再测试非零 offset、边界长度、magic=0、非法 peer/range 和超时注入。
-5. Close 后读取 route header，确认 magic 已清零，再确认 channel/thread 释放。
+`DataOpDeviceURMA` 在该协议的远端读取/batch 读取分支启动 `HybmBatchCopy`，launcher 只封送四个字段。
+测试不得直接实例化 manager、交换 private data、传入 peer/range index，或调用测试专用 launch API。
+
+执行矩阵：
+
+1. rank 0 向本地 HBM 写 pattern，rank 1 使用远端 HBM GVA 作为 `src_buf_addr_list`，读入本地 HBM。
+2. rank 1 通过 G2H 校验；随后反向执行 rank 1 → rank 0。
+3. 覆盖单条、batch、非零 offset、区间末尾、999/1000/1001 条和双向数据。
+4. 负例覆盖未知 GVA、跨 range、目的控制区、route magic 为 0、非法 list 和 completion 超时。
+5. 日志确认两端均选择 Device role、路由由第二次 `Prepare()` 自动发布，AICPU 从 route 取得
+   peer/thread/channel/flag，Close 后 magic 清零。
 
 阶段 2 通过标准：
 
-- Host 侧缓存的 route image 与 HBM 固定地址内容逐字节一致。
-- AICPU 只凭 peer/range index 完成卡间 HBM 拷贝。
-- magic 最后发布，任一注入失败均不留下有效表。
-- probe 关闭后默认构建产物、JSON 和 wheel 不包含测试符号。
+- 两端均以 `HOST_DEVICE_URMA` 走 `DeviceUrmaTransportManager`，不依赖测试环境变量。
+- HBM route image 包含真实 exported GVA、import view、channel/thread 和 remote flag。
+- 正常安装的 `HybmBatchCopy` 只凭四个输入完成两卡卡间读取和 completion。
+- `magic-last`、owner、失败回滚、Close 清理和 34 MiB 映射边界正确。
+- 生产构建、run 包和 wheel 使用同一 operator/route ABI；测试目录不提供平行实现。
 
 ## 8. 阶段 3：鲲鹏到昇腾完整流程
 
@@ -881,7 +905,7 @@ bash script/build_and_pack_run.sh \
 `HostUrmaTransportManager`，昇腾本地选择 `DeviceUrmaTransportManager`。不能让两端分别配置
 `HOST_DEVICE_URMA` 和 `DEVICE_URMA`，否则 rank-to-rank DataOpType 没有共同协议位。
 
-在 `DeviceUrmaTransportManager` 增加：
+阶段 3 复用阶段 2 已实现的统一入口：
 
 ```cpp
 Result ValidateImportedHostGvaLocked(uint32_t peerRank,
@@ -890,7 +914,7 @@ Result ValidateImportedHostGvaLocked(uint32_t peerRank,
                                      const UrmaExportDesc &exportDesc,
                                      const UrmaCommMem &view) const;
 
-Result BuildHostRouteSourcesLocked(
+Result BuildBatchCopyRouteSourcesLocked(
     std::vector<BatchCopyRouteSource> &sources) const;
 
 Result TryPublishBatchCopyRouteLocked();
@@ -900,32 +924,33 @@ Result TryPublishBatchCopyRouteLocked();
 
 - peer endpoint location 必须为 Host。
 - 普通 MR 的 `memoryType` 必须为 `HOST_DRAM`。
-- `key.keys[1] == exportDesc.addr == view.addr`，且 view size 覆盖完整导出区间。
+- `key.keys[1] == exportDesc.addr == view.addr`，且 view size 覆盖完整导出区间；发布时
+  `hcommVaBegin = srcGvaBegin`。
 - transfer flag 类型必须为 `HOST_DRAM`、长度至少 8 B、import 地址非 0。
 - 每个 peer 1～16 个非空区间；所有 peer 的 GVA 区间全局排序后不得重叠。
 
-`TryPublishBatchCopyRouteLocked()` 只在第二次 Prepare 已导入全部固定 MR 后调用。调用
-`BuildHostRouteSourcesLocked()` 后统一交给阶段 2 已验证的 `BatchCopyRoutePublisher::Publish()`，不再在 manager
-里复制写 HBM 逻辑。
+`TryPublishBatchCopyRouteLocked()` 只在第二次 Prepare 已导入全部固定 MR 后调用。统一 route source
+builder 根据 endpoint location 进入 Host 严格分支，再交给阶段 2 已验证的
+`BatchCopyRoutePublisher::Publish()`，不复制写 HBM 逻辑。
 
-### 8.2 最终 `HybmBatchCopy`
+### 8.2 复用阶段 2 的 `HybmBatchCopy`
 
-生产接口沿用目标设计：
+阶段 3 不新增或修改算子 ABI，继续使用阶段 2 已进入正常包的四参数结构：
 
 ```cpp
 struct HybmBatchCopyParam {
-    const void *const *srcDdrPtrList;
-    void *const *dstHbmPtrList;
-    const uint64_t *lengthList;
-    uint64_t size;
+    uint32_t list_num;
+    void **dst_buf_addr_list;
+    void **src_buf_addr_list;
+    uint64_t *len_list;
 };
 
-extern "C" uint32_t HybmBatchCopy(void *args);
+extern "C" uint32_t HybmBatchCopy(HybmBatchCopyParam *param);
 ```
 
-实现顺序：一次性校验全部输入 → 读取并校验固定 route → 二分查找每个源 GVA → 按 peer 分组 → 每 peer
-复用 `HybmBatchRead()` → 汇聚 completion。任一参数错误必须发生在第一条 HCOMM 请求提交之前；提交后的
-HCOMM 错误允许部分 HBM 已写入，返回失败且调用方不能使用该 batch 输出。
+阶段 3 的变化仅是 route entry 的来源从 Device HBM 切换为 Host DDR。算子仍执行：一次性校验全部输入 →
+读取固定 route → 按源 GVA 查找 → 用 `hcommVaBegin` 计算 HCOMM 地址 → 按 peer 分组 → 每 peer 复用
+`HybmBatchRead()` → 汇聚 completion。Host route 中两个基址相等，因此地址计算退化为直接使用 GVA。
 
 ### 8.3 完整建链与发布时序
 
@@ -950,12 +975,12 @@ sequenceDiagram
     S-->>DM: 全量 DDR keys（第二次 Prepare）
     DM->>DM: HcommMemImport(DDR/flag)
     DM->>DM: ValidateImportedHostGvaLocked()
-    DM->>DM: BuildHostRouteSourcesLocked()
+    DM->>DM: BuildBatchCopyRouteSourcesLocked() / Host branch
     DM->>RP: Publish(sources)
     RP->>D: clear magic/completion
     RP->>D: write route image with magic=0
     RP->>D: publish magic last
-    C->>A: src DDR GVA list, dst HBM list, len list, size
+    C->>A: list_num, dst list, src DDR GVA list, len list
     A->>D: read fixed route and group by peer
     A->>A: HybmBatchRead per peer
     A-->>C: all peer completion -> BM_OK
@@ -981,27 +1006,25 @@ sequenceDiagram
 | `src/hybm/csrc/transport/urma/` | 新增公共 endpoint/private-data/export/import 封装；接收完整 `EndpointLoc`；修正 UBC import type | Host/Device 必须共享 wire ABI，避免两套序列化和 CANN 行为判断 |
 | `src/hybm/csrc/transport/device/urma/hcomm_transport_manager.*` | 内容迁移到公共目录，Device manager 更新 namespace/include | 当前文件含通用能力但路径和日志带 Device 假设 |
 | `src/hybm/csrc/transport/host/urma/` | 新增 `HostUrmaTransportManager` 和 Host NIC 解析 helper | 提供无卡 Host endpoint、MR 导出以及主动 CPU 数据面 |
-| `src/hybm/csrc/transport/compose/compose_transport_manager.*` | 新增 `HOST_DEVICE_URMA` 分支并按本端构建平台创建 Host/Device manager；既有 `DEVICE_URMA` 分支不改语义 | 用新协议位区分 HCOMM/HCOM，同时让异构两端协商同一 bit |
-| `src/hybm/csrc/data_operation/host/hybm_data_op_factory.*` | 新增 `CreateHostDeviceUrmaDataOperator()`；无卡复用现有 `HostDataOpRDMA` 构造函数 | 避免无卡路径初始化 ACL/HBM/AICPU，且不增加无必要的类字段 |
+| `src/hybm/csrc/transport/compose/compose_transport_manager.*` | 新增 `HOST_DEVICE_URMA` 运行时角色解析；发现 Ascend 950 创建 Device manager，明确无卡创建 Host manager，其他 SOC/探测错误失败 | 两卡 T2 与异构 T3 使用同一个协议位和选择逻辑，避免把错误探测静默当作 Host |
+| `src/hybm/csrc/data_operation/host/hybm_data_op_factory.*` | 复用 Compose 已解析的本地角色创建 `DataOpDeviceURMA` 或 `HostDataOpRDMA` | transport 与 data operator 必须选择同一角色 |
 | `src/hybm/csrc/data_operation/host/hybm_compose_data_op.*` | 增加 `HOST_DEVICE_URMA` 初始化和优先级映射；既有 Device 路径保持不变 | 根据协商 bit 选择正确 data operator |
 | `src/hybm/csrc/mm/hybm_conn_based_segment.cpp`、相关 memory-type 掩码 | 无卡 `HOST_DEVICE_URMA` 固定 mmap 后直接记录 HVA/GVA、DVA=0；NPU 路径纳入原 Device 映射逻辑 | 鲲鹏 DDR 不经过本地 NPU HAL 注册，昇腾仍需 Device 地址处理 |
 | `src/hybm/csrc/mm/hybm_mem_segment.cpp`、`hybm_dev_user_legacy_segment.cpp` | 在使用 Device URMA/UBOE 判断内存共享、注册或映射方式的掩码中加入新 bit | 新协议沿用前 6 段 HCOMM key 和 Device 类内存交换语义，不能误走普通共享段路径 |
-| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp` | endpoint protocol 解析接受新 bit 并仍选择 UBC_CTP；阶段 3 只对新 bit 的 Host peer 发布路由 | 新协议在 NPU 本端复用 Device manager，但不改变阶段 2 的 Device↔Device 语义 |
+| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp` | 保存 Open 协议；仅 `HOST_DEVICE_URMA` 在第二次 Prepare 后生成 Device-HBM 或 Host-DDR route source 并发布 | T2/T3 共用真实 manager 生命周期，同时保持 `DEVICE_URMA` 既有行为 |
 | `src/hybm/csrc/under_api/dl_api.cpp` | 无卡 URMA 只加载 HCOMM | Host manager 不依赖 RT/ACL/HAL |
-| 顶层 `CMakeLists.txt` | BUILD_TEST 时单独加入 route probe integration 子目录 | 当前 `test/CMakeLists.txt` 只在 BUILD_UT 时进入，不能承载硬件集成目标 |
-| `src/hybm/csrc/CMakeLists.txt`、`src/smem/csrc/CMakeLists.txt` | 增加公共 URMA 和 Host URMA include 目录；对象源仍由现有 glob 收集；BUILD_TEST 给 core 增加 `MF_BUILD_TEST` 定义 | 迁移头文件后保证 core/smem 编译路径一致，并从二进制层隔离 probe |
+| `src/hybm/csrc/CMakeLists.txt`、`src/smem/csrc/CMakeLists.txt` | 增加公共 URMA 和 Host URMA include 目录；对象源仍由现有 glob 收集 | 迁移头文件后保证 core/smem 编译路径一致 |
 | `src/hybm/csrc/common/hybm_define.h` | 增加 34 MiB control 映射边界常量 | Host 发布者和 AICPU 使用同一固定地址 |
-| `src/hybm/csrc/common/hybm_batch_copy_route.h` | 新增固定 route ABI 和全部 size/offset 断言 | 防止 Host/AICPU 结构布局漂移 |
+| `src/hybm/csrc/common/hybm_batch_copy_route.h` | 固定 route ABI；RangeEntry 增加 `hcommVaBegin` 但保持 32 B；保留全部 size/offset 断言 | 同时表达查表 GVA 和 HCOMM import view，防止 Host/AICPU 布局漂移 |
 | `src/hybm/csrc/driver/hybm_gva.cpp`、`src/hybm/csrc/hybm_entry.cpp` | 初始化、回滚、uninit 使用 34 MiB control 映射 | 为 `HYBM_DEVICE_META_ADDR` 前 2 MiB 提供真实 HBM |
-| `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.*` | 新增纯 image 构建、owner、completion 注册和 magic-last 发布 | 生产与 probe 共用已测试的发布事务 |
-| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.*` | Host GVA 校验、生产 route source；测试构建增加 Device-HBM probe source | manager 保留连接状态，publisher 负责固定表生命周期 |
-| `src/hybm/csrc/transport/device/urma/load_kernel.*` | 抽出单 function handle 查询；测试构建允许指定 probe JSON | manager 复用已加载 binary 启动 probe，不复制 ACL loader |
-| `src/hybm/ops/hybm_kernel/hybm_batch_copy.*` | 实现最终 list 接口、查表、分组和 completion | 完成鲲鹏 DDR 到本地 HBM 的生产算子 |
-| `test/integration/hybm/batch_copy_route_probe/hybm_batch_copy_probe.*` | 测试构建实现 peer/range 索引探针 | 两 NPU 环境验证 AICPU 确实读取 route，且测试源码不随 `_ops` 进入 wheel |
-| `src/hybm/ops/hybm_kernel/CMakeLists.txt`、JSON | 阶段 3 加入生产 `HybmBatchCopy`；不引用 probe 源码或 JSON | 默认 AICPU 包只包含生产能力 |
+| `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.*` | image 构建、owner、completion 注册和 magic-last 发布；接收 GVA 与 HCOMM 双基址 range | T2/T3 共用同一发布事务 |
+| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.*` | 统一 Device-HBM/Host-DDR route source builder、协议门控和生命周期清理 | manager 保留连接状态，publisher 负责固定表生命周期 |
+| `src/hybm/csrc/transport/device/urma/load_kernel.*` | 正常加载 `HybmBatchCopy` function handle | DataOpDeviceURMA 通过生产 kernel 启动四参数算子 |
+| `src/hybm/ops/hybm_kernel/hybm_batch_copy.*` | 实现固定四参数 ABI、查表、地址转换、分组和 completion | T2 两卡与 T3 Host-to-Device 复用同一算子 |
+| `src/hybm/ops/hybm_kernel/CMakeLists.txt`、JSON | 阶段 2 即加入生产 `HybmBatchCopy` | 正常 AICPU 包和 wheel 承载被验证能力 |
 | `src/smem/python/memfabric_hybrid/setup.py` | `_AICPU_WLIST` 只加入 ops 目录之外的共享 route ABI 头；生产 operator 源随现有 `_ops` 目录整体复制 | wheel 首次 import 能构建生产算子且不携带测试源码或测试符号 |
 | `examples/memory_pool/02_scale_out/03_multi_node_host_urma_dram/` | 两鲲鹏双向 Read/Write/Batch 集成样例 | 独立验证 Host manager |
-| `test/integration/hybm/batch_copy_route_probe/` | 两昇腾 route/probe executable、独立 AICPU SO/JSON 和安装脚本 | 独立验证发布和 AICPU 查表，不覆盖生产 kernel 包 |
+| `examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/` | 参考 `01_single_node_multi_device_dram.py` 的两进程两卡 Python 用例 | 通过完整 entity、manager、publisher 和生产 AICPU 路径验收 T2 |
 | `test/ut/testcase/hybm/transport/` | 公共 URMA、Host manager、Compose 选择、路由 publisher UT | 在硬件前覆盖错误和回滚路径 |
 | `doc/installation_aicpu_kernel.md` | 增加 `HybmBatchCopy` 构建、安装和符号检查 | 保证独立 run 包与 wheel 路径一致 |
 
@@ -1018,11 +1041,11 @@ sequenceDiagram
 | T1.5 | 两鲲鹏集成样例 | T1.4 | 阶段 1 硬件标准全部通过 |
 | T2.1 | 34 MiB 映射和 route ABI | T1.5 | modern/legacy 初始化回滚 UT 通过 |
 | T2.2 | `BatchCopyRoutePublisher` 和 magic-last | T2.1 | image/owner/失败注入 UT 通过 |
-| T2.3 | BUILD_TEST Device route probe adapter | T2.2 | HBM route image 与 Host cache 一致 |
-| T2.4 | `HybmBatchCopyProbe` 与两 NPU 用例 | T2.3 | 阶段 2 硬件标准全部通过 |
-| T3.1 | Host GVA import equality 和生产 route source | T2.4 | 1 CPU × 1 NPU route 发布成功 |
-| T3.2 | 最终 `HybmBatchCopy` | T3.1 | 单 peer 全功能通过 |
-| T3.3 | 多 peer、边界和打包 | T3.2 | 阶段 3 验收矩阵通过 |
+| T2.3 | `HOST_DEVICE_URMA` 运行时角色选择；RangeEntry 增加 `hcommVaBegin`；Device manager 生成并发布 Device-HBM route | T2.2 | 两卡均选择 Device manager；HBM route 含真实 GVA/view/channel/thread/flag |
+| T2.4 | 生产 `HybmBatchCopy` 四参数 ABI、DataOpDeviceURMA launcher、正常包注册和两卡 Python 用例；移除专用 probe 路径 | T2.3 | 参考 `01_single_node_multi_device_dram.py` 的两卡数据校验及 T2 异常矩阵通过 |
+| T3.1 | Host manager、Host GVA import equality 和统一 builder 的 Host-DDR 分支 | T2.4 | 1 CPU × 1 NPU route 发布成功，两个基址相等 |
+| T3.2 | 复用 `HybmBatchCopy` 完成单/多 Host peer 异构验证 | T3.1 | 单 peer、多 peer和 1000/1001 条通过 |
+| T3.3 | 边界、异常、打包和目标拓扑 | T3.2 | 阶段 3 验收矩阵通过 |
 
 每个任务建议独立提交。T1.5 和 T2.4 的硬件测试记录应附 commit id、CANN 版本、两端 NIC、关键日志和
 数据校验结果，避免后续变更无法判断曾验证的代码版本。
@@ -1067,10 +1090,10 @@ fallback 条数、每 peer fence 次数。若 batch 逐条提交成为 Host-to-H
 
 | 风险 | 影响 | 当前处理 |
 | --- | --- | --- |
-| 鲲鹏 import view 不等于导出 GVA | 最终 route 无法直接使用 src GVA | 阶段 1 设硬门禁；失败则停止阶段 2 之后的生产实现，重新评审 RangeEntry 地址转换字段或固定注册地址能力 |
+| 鲲鹏 import view 不等于导出 GVA | 阶段 3 不满足生产地址契约 | 阶段 1/3 设硬门禁；即使 RangeEntry 已有 `hcommVaBegin`，也不得用它绕过 Host equality 失败 |
 | Host UB plugin 未随目标 CANN 安装或未加载 | Host endpoint 创建失败 | 阶段 1 前检查插件路径和 HCOMM 启动日志，不用代码 fallback 到旧 HCOM 掩盖问题 |
 | CPU HCOMM batch 不支持 | Host 批量吞吐降低 | 逐条提交、单 peer 一次 fence，正确性优先 |
-| 两 NPU probe 地址不具有 GVA 语义 | 阶段 2 结论被误用 | 测试构建隔离，文档和日志标记 `DEVICE_ROUTE_PROBE`，生产发布只接受 Host DRAM |
+| Device HBM GVA 与 import view 不同 | 只存一个基址时两卡测试无法走公开 GVA 接口 | RangeEntry 同时保存 GVA 区间和 HCOMM 基址，AICPU 做受检 offset 转换；Host route 仍要求二者相等 |
 | 34 MiB modern/legacy 映射边界不一致 | 固定 route 地址不可访问或释放错误 | T2.1 独立实现初始化/失败回滚/uninit UT，硬件先读写固定头再建链 |
 | 同一卡多个 entity 竞争固定 route | 表被覆盖 | `BatchCopyRouteOwnerRegistry` 按 `userDeviceId` 单 owner，第二个发布者返回 `BM_BUSY` |
 | Host 主动 I/O 与 Close 并发 | channel/MR use-after-free | P0 调用方保证 Close 前无在途；每 peer mutex 串行 submit/fence，Close 先 fence 再释放 |
@@ -1080,10 +1103,11 @@ fallback 条数、每 peer fence 次数。若 batch 逐条提交成为 Host-to-H
 - **阶段 0 完成：** 公共 wire ABI 合并，HCOMM import 行为与 CANN 源码一致，Device 原功能无回归。
 - **阶段 1 完成：** 两台鲲鹏都能主动读对端、写对端、执行 batch fallback，并证明固定 DDR
   `GVA == import view`。
-- **阶段 2 完成：** 两台昇腾通过测试路由探针证明固定 HBM 表发布、AICPU 查表、真实 channel/thread 使用和
-  completion 流程正确；默认产物不含 probe。
-- **阶段 3 完成：** 鲲鹏 DDR GVA 经生产 route 和 `HybmBatchCopy` 拷贝到昇腾 HBM，通过单 peer、多 peer、
-  边界、异常、打包和目标拓扑测试。
+- **阶段 2 完成：** 两张昇腾 950 均配置 `HOST_DEVICE_URMA`，通过完整 Python/entity 流程自动选择 Device
+  manager、发布真实 Device-HBM route，并由正常交付的四参数 `HybmBatchCopy` 完成查表和卡间读取；
+  不依赖 probe 环境变量、probe operator 或测试专用 manager API。
+- **阶段 3 完成：** 鲲鹏 DDR GVA 经阶段 2 同一 publisher、route ABI、operator 和调用路径拷贝到昇腾
+  HBM，通过 Host equality、单 peer、多 peer、边界、异常、打包和目标拓扑测试。
 
 任何阶段未达到完成定义时，不把后续阶段的成功作为前一阶段问题的替代证明。
 
