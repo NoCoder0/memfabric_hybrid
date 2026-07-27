@@ -364,13 +364,26 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
     }
 
     void *dva = nullptr;
-    mapped = AllocMemory(sliceAddr, lvOffset, size, allocMethod);
-    if (mapped == MAP_FAILED) {
-        BM_LOG_ERROR("Failed to alloc size:" << size << " addr:" << sliceAddr << " mapped:" << mapped
-                                             << " error:" << errno << ", " << SafeStrError(errno));
-        return BM_ERROR;
+    {
+        std::optional<CpuAffinityGuard> cpuGuard;
+        if (socType_ == AscendSocType::ASCEND_950) {
+            const auto policyInfo = HybmNumaUtil::GetNumaBindPolicyInfo(options_.flags, logicDeviceId_);
+            if (policyInfo.valid && policyInfo.policy != NumaBindPolicy::OFF && !policyInfo.socketCpus.empty()) {
+                BM_LOG_DEBUG("ConnBasedSegment CPU affinity policy:" << static_cast<int32_t>(policyInfo.policy)
+                                                                     << " socketCpus:" << policyInfo.socketCpus.size()
+                                                                     << " deviceId:" << logicDeviceId_);
+                cpuGuard.emplace(policyInfo);
+            }
+        }
+
+        mapped = AllocMemory(sliceAddr, lvOffset, size, allocMethod);
+        if (mapped == MAP_FAILED) {
+            BM_LOG_ERROR("Failed to alloc size:" << size << " addr:" << sliceAddr << " mapped:" << mapped
+                                                 << " error:" << errno << ", " << SafeStrError(errno));
+            return BM_ERROR;
+        }
+        LvaShmReservePhysicalMemory(mapped, size);
     }
-    LvaShmReservePhysicalMemory(mapped, size);
 
     if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
@@ -401,35 +414,6 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
     int mmapFlags = options_.shmFd < 0 ? (MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE) : (MAP_FIXED | MAP_SHARED);
     uint64_t mmapOffset = options_.shmFd < 0 ? 0 : lvOffset;
 
-    // 0. A5 only support HalMemAlloc for URMA
-    if (socType_ == AscendSocType::ASCEND_950) {
-        const auto policyInfo = HybmNumaUtil::GetNumaBindPolicyInfo(options_.flags, logicDeviceId_);
-        std::optional<CpuAffinityGuard> cpuGuard;
-        if (policyInfo.valid && !policyInfo.socketCpus.empty() && policyInfo.policy != NumaBindPolicy::OFF) {
-            BM_LOG_DEBUG("ConnBasedSegment CPU affinity policy:" << static_cast<int32_t>(policyInfo.policy)
-                                                                 << " cpuCount:" << policyInfo.socketCpus.size()
-                                                                 << " deviceId:" << logicDeviceId_);
-            cpuGuard.emplace(policyInfo);
-        }
-
-        uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_NORMAL;
-        void *halAllocPtr = nullptr;
-
-        int ret = DlHalApi::HalMemAlloc(&halAllocPtr, size, allocFlag);
-        if (ret != 0 || halAllocPtr == nullptr) {
-            BM_LOG_ERROR("halMemAlloc failed, ret:" << ret << " ptr:" << halAllocPtr << ". Cannot allocate " << size
-                                                    << " bytes DRAM huge page memory");
-            return MAP_FAILED;
-        } else {
-            allocMethod = MemAllocMethod::HAL_MEM_ALLOC;
-            BM_LOG_DEBUG("A5 HalMemAlloc CPU affinity for deviceId:" << logicDeviceId_);
-            BM_LOG_INFO("Successfully allocated DRAM hugepage via halMemAlloc. "
-                        "addr:"
-                        << halAllocPtr << " size:" << size);
-            return halAllocPtr;
-        }
-    }
-
     // 1. Try to alloc DRAM with hugepage via mmap
     mapped = mmap(sliceAddr, size, prot, mmapFlags | MAP_HUGETLB, mmapFd, mmapOffset);
     if (mapped == sliceAddr) {
@@ -442,26 +426,24 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
                                         << ". Use 'grep -i huge /proc/meminfo' to check hugepages, "
                                            "and use 'echo <page_num> > /proc/sys/vm/nr_hugepages' to set hugepages.");
 
-    // 2. try to alloc DRAM with hugepage via halMemAlloc
+    // 2. try to alloc DRAM via halMemAlloc
     if (options_.enable56BitsGva && options_.shmFd < 0) {
-        BM_LOG_WARN("Trying halMemAlloc for DRAM hugepage allocation. size:" << size);
+        BM_LOG_WARN("Trying halMemAlloc for DRAM allocation. " << "size:" << size);
 
-        // Use halMemAlloc to allocate DRAM huge page memory on host
-        // Flag: MEM_HOST (host memory) | MEM_TYPE_DDR (DDR/DRAM) | MEM_PAGE_HUGE (2MB huge page)
+        // Use halMemAlloc to allocate DRAM memory on host
         uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_HUGE;
         if (socType_ == AscendSocType::ASCEND_950) {
-            // For ASCEND_950, use normal page size (4KB) instead of huge page (2MB) FOR NOW!!!
             allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_NORMAL;
         }
         void *halAllocPtr = nullptr;
 
         int ret = DlHalApi::HalMemAlloc(&halAllocPtr, size, allocFlag);
         if (ret != 0 || halAllocPtr == nullptr) {
-            BM_LOG_WARN("halMemAlloc not successful, ret:" << ret << " ptr:" << halAllocPtr << ". Cannot allocate "
-                                                           << size << " bytes DRAM huge page memory");
+            BM_LOG_WARN("halMemAlloc failed, ret:" << ret << " ptr:" << halAllocPtr << ". Cannot allocate " << size
+                                                   << " bytes DRAM memory via halMemAlloc");
         } else {
             allocMethod = MemAllocMethod::HAL_MEM_ALLOC;
-            BM_LOG_INFO("Successfully allocated DRAM hugepage via halMemAlloc. "
+            BM_LOG_INFO("Successfully allocated DRAM memory via halMemAlloc. "
                         "addr:"
                         << halAllocPtr << " size:" << size);
             return halAllocPtr;

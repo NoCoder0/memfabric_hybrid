@@ -1116,10 +1116,10 @@ int32_t MemEntityDefault::ImportForTransport() noexcept
 
 Result MemEntityDefault::LocateAddrAndRank(void *&src, void *&dest, std::pair<uint32_t, uint32_t> &p2pInfo) noexcept
 {
-    auto [srcRank, srcFound] = HybmVaManager::GetInstance().GetRank(reinterpret_cast<uint64_t>(src));
+    auto [srcRank, srcFound] = HybmVaManager::GetInstance().GetRankByGva(reinterpret_cast<uint64_t>(src));
     p2pInfo.first = srcFound ? srcRank : options_.rankId;
 
-    auto [destRank, destFound] = HybmVaManager::GetInstance().GetRank(reinterpret_cast<uint64_t>(dest));
+    auto [destRank, destFound] = HybmVaManager::GetInstance().GetRankByGva(reinterpret_cast<uint64_t>(dest));
     p2pInfo.second = destFound ? destRank : options_.rankId;
 
     BM_LOG_DEBUG("LocateAddrAndRank, srcRank: " << p2pInfo.first << ", destRank: " << p2pInfo.second);

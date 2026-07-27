@@ -38,6 +38,7 @@ using namespace ock::mf;
 using namespace ock::mf::transport::device;
 using ock::mf::transport::HybmTransPrepareOptions;
 using ock::mf::transport::REG_MR_FLAG_DRAM;
+using ock::mf::transport::REG_MR_FLAG_ACL_DRAM;
 using ock::mf::transport::REG_MR_FLAG_HBM;
 using ock::mf::transport::TransportMemoryKey;
 using ock::mf::transport::TransportMemoryRegion;
@@ -916,6 +917,72 @@ void InstallKernelLaunchMocks()
     DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotify;
     DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
 }
+// Helper: bundles guards for tests that do OpenDevice+Prepare+kernel launch
+struct DeviceTestFixture {
+    EnvVarGuard envGuard;
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+
+    DeviceTestFixture() : envGuard("ASCEND_HOME_PATH") {}
+
+    void InstallAll()
+    {
+        PrepareKernelJson();
+        InstallOpenDeviceMocks();
+        InstallKernelLaunchMocks();
+        DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+        DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+        DlHcommApi::gHcommMemImport = MockHcommMemImport;
+        DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+        DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+        DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+        MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+        MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
+    }
+
+    void OpenAndPreparePeer(DeviceUrmaTransportManager &manager) const
+    {
+        TransportOptions opts;
+        opts.rankId = 0;
+        opts.rankCount = 2UL;
+        opts.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
+        ASSERT_EQ(manager.OpenDevice(opts), BM_OK);
+        HybmTransPrepareOptions prep;
+        TransportRankPrepareInfo info;
+        auto pd = MakeEndpointDesc();
+        pd.protocol = UrmaProtocol::UBC_CTP;
+        pd.type = COMM_ADDR_TYPE_IP_V6;
+        info.privateData = MakePrivateData(pd);
+        info.role = HYBM_ROLE_PEER;
+        info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+        prep.options.emplace(1, std::move(info));
+        ASSERT_EQ(manager.Prepare(prep), BM_OK);
+    }
+
+    void AddLocalReg(DeviceUrmaTransportManager &manager, uint64_t addr, uint64_t size, uint32_t flags,
+                     uint64_t dva) const
+    {
+        DeviceUrmaTransportManager::LocalRegistration reg;
+        reg.mr.addr = addr;
+        reg.mr.size = size;
+        reg.mr.flags = flags;
+        reg.handle = MOCK_MEM_HANDLE;
+        reg.memTag = addr;
+        reg.refCount = 1U;
+        reg.deviceVa = dva;
+        manager.localRegistrations_.emplace(addr, reg);
+    }
+
+    void CleanupAndClose(DeviceUrmaTransportManager &manager) const
+    {
+        manager.localRegistrations_.clear();
+        EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    }
+};
+
 } // namespace
 
 TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
@@ -1151,6 +1218,14 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
+    constexpr uint64_t kLocalDva = 0x124000000000ULL;
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = 0x2000U;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = kLocalDva;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
 
@@ -1166,6 +1241,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
 
     EXPECT_GE(g_kernelLaunchCallCount, 3U);
+    manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
@@ -1543,6 +1619,13 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = 0x2000U;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = 0;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR + 0x100U, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     ASSERT_EQ(manager.registry_.size(), 1U);
@@ -1554,6 +1637,7 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
 
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
+    manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
     manager.opened_ = false; // prevent double-close in destructor
 }
@@ -1597,6 +1681,13 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
         ASSERT_EQ(manager.Prepare(prep), BM_OK);
     }
 
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = 0x2000U;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = 0;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
     // Launch transfers on two different ranks from same thread (same context)
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(manager.ReadRemoteAsync(2, MOCK_LOCAL_ADDR + 0x100U, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
@@ -1614,6 +1705,7 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     // Synchronize rank 2 clears the remaining pending
     EXPECT_EQ(manager.Synchronize(2), BM_OK);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
+    manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
@@ -1657,12 +1749,20 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureAclrtFreeSuccessRemovesRecord)
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = MOCK_SIZE;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = 0;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
     // Launch failure with successful AclrtFree → record removed
     EXPECT_NE(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     ASSERT_EQ(manager.registry_.size(), 1U);
     auto *ctx = manager.registry_[0].get();
     ASSERT_NE(ctx, nullptr);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
+    manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
@@ -1707,6 +1807,13 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureAclrtFreeFailsRetainsDeferredR
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = MOCK_SIZE;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = 0;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
     EXPECT_NE(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     ASSERT_EQ(manager.registry_.size(), 1U);
     auto *ctx = manager.registry_[0].get();
@@ -1720,6 +1827,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureAclrtFreeFailsRetainsDeferredR
     DlAclApi::pAclrtFree = MockAclrtFreeOk;
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
+    manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
@@ -1762,6 +1870,13 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureRetainsInFligh
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = MOCK_SIZE;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = 0;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     ASSERT_EQ(manager.registry_.size(), 1U);
     auto *ctx = manager.registry_[0].get();
@@ -1778,6 +1893,7 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureRetainsInFligh
     DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
+    manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
@@ -1816,6 +1932,13 @@ TEST(DeviceUrmaTransportManagerTest, CloseRejectsInFlightAndRetriesDeferredFree)
     info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
+
+    DeviceUrmaTransportManager::LocalRegistration localReg{};
+    localReg.mr.addr = MOCK_LOCAL_ADDR;
+    localReg.mr.size = MOCK_SIZE;
+    localReg.mr.flags = REG_MR_FLAG_DRAM;
+    localReg.deviceVa = 0;
+    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
 
     // Launch a successful transfer (creates inFlight entry)
     InstallKernelLaunchMocks();
@@ -2535,7 +2658,133 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionHbmSkipsDvaConversion)
     EXPECT_EQ(reg.deviceVa, 0U);
 }
 
-TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
+// ============================================================================
+// DeviceUrmaTransportManager tests — CorrectLocalRegAddressLocked single IO
+// ============================================================================
+
+// Verify single read IO uses DVA from ACL_DRAM local registration as staged dst address.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsAclDramLocalAddrToDva)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_ACL_DRAM, MOCK_DRAM_DVA);
+
+    ASSERT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    ASSERT_EQ(manager.registry_.size(), 1U);
+    auto *ctx = manager.registry_[0].get();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
+    const auto *staged = static_cast<const uint64_t *>(ctx->pendingTransfers[0].buffers.dstList);
+    ASSERT_NE(staged, nullptr);
+    EXPECT_EQ(staged[0], MOCK_DRAM_DVA);
+    EXPECT_EQ(staged[1], MOCK_REMOTE_ADDR);
+    EXPECT_EQ(staged[2], MOCK_SIZE);
+    EXPECT_TRUE(ctx->pendingTransfers[0].inFlight);
+
+    EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
+    EXPECT_GE(g_kernelLaunchCallCount, 1U);
+    fix.CleanupAndClose(manager);
+}
+
+// DVA-corrected range overflow returns BM_INVALID_PARAM without launch.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsOnDvaRangeOverflow)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    // deviceVa near max: correctedAddr=UINT64_MAX-0x800, correctedAddr+MOCK_SIZE wraps
+    constexpr uint64_t kNearMax = ~0ULL - 0x800ULL;
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, 0x2000U, REG_MR_FLAG_DRAM, kNearMax);
+
+    EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_INVALID_PARAM);
+    EXPECT_EQ(g_kernelLaunchCallCount, 0);
+    if (!manager.registry_.empty()) {
+        auto *ctx = manager.registry_[0].get();
+        if (ctx != nullptr) {
+            EXPECT_TRUE(ctx->pendingTransfers.empty());
+        }
+    }
+    fix.CleanupAndClose(manager);
+}
+
+// Single write IO: local address (src for write) corrected to DVA.
+TEST(DeviceUrmaTransportManagerTest, WriteRemoteConvertsDramLocalAddrToDva)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, MOCK_DRAM_DVA);
+
+    ASSERT_EQ(manager.WriteRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    ASSERT_EQ(manager.registry_.size(), 1U);
+    auto *ctx = manager.registry_[0].get();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
+    const auto *staged = static_cast<const uint64_t *>(ctx->pendingTransfers[0].buffers.dstList);
+    ASSERT_NE(staged, nullptr);
+    EXPECT_EQ(staged[0], MOCK_REMOTE_ADDR);
+    EXPECT_EQ(staged[1], MOCK_DRAM_DVA);
+    EXPECT_EQ(staged[2], MOCK_SIZE);
+    EXPECT_TRUE(ctx->pendingTransfers[0].inFlight);
+    EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
+    fix.CleanupAndClose(manager);
+}
+
+// HBM local address with deviceVa==0 → keep original address unchanged.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoKeepsHbmLocalAddrUnchanged)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_HBM, 0);
+
+    ASSERT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    ASSERT_EQ(manager.registry_.size(), 1U);
+    auto *ctx = manager.registry_[0].get();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
+    const auto *staged = static_cast<const uint64_t *>(ctx->pendingTransfers[0].buffers.dstList);
+    ASSERT_NE(staged, nullptr);
+    EXPECT_EQ(staged[0], MOCK_LOCAL_ADDR);
+    EXPECT_EQ(staged[1], MOCK_REMOTE_ADDR);
+    EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
+    fix.CleanupAndClose(manager);
+}
+
+// DRAM registration with deviceVa==0 (TransformVa failed): keep original HVA.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoDramNoDvaKeepsHva)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0);
+
+    ASSERT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    ASSERT_EQ(manager.registry_.size(), 1U);
+    auto *ctx = manager.registry_[0].get();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
+    const auto *staged = static_cast<const uint64_t *>(ctx->pendingTransfers[0].buffers.dstList);
+    ASSERT_NE(staged, nullptr);
+    EXPECT_EQ(staged[0], MOCK_LOCAL_ADDR);
+    EXPECT_EQ(staged[1], MOCK_REMOTE_ADDR);
+    EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
+    fix.CleanupAndClose(manager);
+}
+
+// Unregistered local address → RemoteIo returns BM_INVALID_PARAM.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
 {
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -2543,7 +2792,6 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
-    InstallKernelLaunchMocks();
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
     DlHcommApi::gHcommMemImport = MockHcommMemImport;
@@ -2554,7 +2802,6 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
     MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
-    g_kernelLaunchCallCount = 0;
     DeviceUrmaTransportManager manager;
     TransportOptions openOptions{};
     openOptions.rankId = 0;
@@ -2573,23 +2820,133 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsDramLocalAddrToDva)
     prepareOptions.options.emplace(1UL, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
 
-    DeviceUrmaTransportManager::LocalRegistration localReg{};
-    localReg.mr.addr = MOCK_LOCAL_ADDR;
-    localReg.mr.size = MOCK_SIZE;
-    localReg.mr.flags = REG_MR_FLAG_DRAM;
-    localReg.handle = MOCK_MEM_HANDLE;
-    localReg.memTag = MOCK_LOCAL_ADDR;
-    localReg.refCount = 1U;
-    localReg.deviceVa = MOCK_DRAM_DVA;
-    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
+    // No local registration → CorrectLocalRegAddressLocked fails
+    EXPECT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_INVALID_PARAM);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
 
+// ============================================================================
+// DeviceUrmaTransportManager tests — CorrectLocalRegAddressLocked batch
+// ============================================================================
+
+// Batch with mixed DRAM+DVA and HBM local addresses: element-wise correction.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchCorrectsDramAndHbmElements)
+{
     g_kernelLaunchCallCount = 0;
-    EXPECT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+
+    constexpr uint64_t kDramLocal = MOCK_LOCAL_ADDR;
+    constexpr uint64_t kDramSize = 0x200U;
+    constexpr uint64_t kHbmLocal = MOCK_LOCAL_ADDR + 0x10000U;
+    constexpr uint64_t kHbmSize = MOCK_SIZE;
+    constexpr uint64_t kDramOffset = 0x40U;
+    constexpr uint64_t kHbmOffset = 0x80U;
+    constexpr uint64_t kExpectedDva = MOCK_DRAM_DVA + kDramOffset;
+
+    fix.AddLocalReg(manager, kDramLocal, kDramSize, REG_MR_FLAG_DRAM, MOCK_DRAM_DVA);
+    fix.AddLocalReg(manager, kHbmLocal, kHbmSize, REG_MR_FLAG_HBM, 0);
+
+    CopyDescriptor desc{};
+    desc.localAddrs = {reinterpret_cast<void *>(kDramLocal + kDramOffset),
+                       reinterpret_cast<void *>(kHbmLocal + kHbmOffset)};
+    desc.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR),
+                        reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x100U)};
+    desc.counts = {0x100U, 0x200U};
+
+    ASSERT_EQ(manager.ReadRemoteBatchAsync(1UL, desc), BM_OK);
+    ASSERT_EQ(manager.registry_.size(), 1U);
+    auto *ctx = manager.registry_[0].get();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
+    const auto *staged = static_cast<const uint64_t *>(ctx->pendingTransfers[0].buffers.dstList);
+    ASSERT_NE(staged, nullptr);
+    EXPECT_EQ(staged[0], kExpectedDva);
+    EXPECT_EQ(staged[1], kHbmLocal + kHbmOffset);
+    EXPECT_EQ(staged[2], MOCK_REMOTE_ADDR);
+    EXPECT_EQ(staged[3], MOCK_REMOTE_ADDR + 0x100U);
+    EXPECT_EQ(staged[4], 0x100U);
+    EXPECT_EQ(staged[5], 0x200U);
+    EXPECT_TRUE(ctx->pendingTransfers[0].inFlight);
     EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
     EXPECT_GE(g_kernelLaunchCallCount, 1U);
+    fix.CleanupAndClose(manager);
+}
 
-    manager.localRegistrations_.clear();
-    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+// Batch with size==0 element: skipped, no correction attempted.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchSkipsZeroSizeElement)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, MOCK_DRAM_DVA);
+
+    CopyDescriptor desc{};
+    desc.localAddrs = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR), reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x100U)};
+    desc.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR),
+                        reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x100U)};
+    desc.counts = {0U, 0x100U};
+
+    ASSERT_EQ(manager.ReadRemoteBatchAsync(1UL, desc), BM_OK);
+    ASSERT_EQ(manager.registry_.size(), 1U);
+    auto *ctx = manager.registry_[0].get();
+    ASSERT_NE(ctx, nullptr);
+    ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
+    const auto *staged = static_cast<const uint64_t *>(ctx->pendingTransfers[0].buffers.dstList);
+    ASSERT_NE(staged, nullptr);
+    EXPECT_EQ(staged[0], MOCK_DRAM_DVA + 0x100U);
+    EXPECT_EQ(staged[1], MOCK_REMOTE_ADDR + 0x100U);
+    EXPECT_EQ(staged[2], 0x100U);
+    EXPECT_EQ(manager.Synchronize(1UL), BM_OK);
+    fix.CleanupAndClose(manager);
+}
+
+// Batch with unregistered local address: error, no launch.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchFailsWhenLocalNotRegistered)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, MOCK_DRAM_DVA);
+
+    CopyDescriptor desc{};
+    desc.localAddrs = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR), reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x10000U)};
+    desc.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR),
+                        reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x100U)};
+    desc.counts = {0x100U, 0x100U};
+
+    EXPECT_EQ(manager.ReadRemoteBatchAsync(1UL, desc), BM_INVALID_PARAM);
+    EXPECT_EQ(g_kernelLaunchCallCount, 0);
+    EXPECT_TRUE(manager.registry_.empty());
+    fix.CleanupAndClose(manager);
+}
+
+// Batch with all size==0 returns BM_OK without pending/launch.
+TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAllZeroSizeReturnsOkWithoutLaunch)
+{
+    g_kernelLaunchCallCount = 0;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, 0x2000U, REG_MR_FLAG_DRAM, MOCK_DRAM_DVA);
+
+    CopyDescriptor desc;
+    desc.localAddrs = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR), reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x100U)};
+    desc.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR),
+                        reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x100U)};
+    desc.counts = {0U, 0U};
+
+    EXPECT_EQ(manager.ReadRemoteBatchAsync(1, desc), BM_OK);
+    EXPECT_EQ(g_kernelLaunchCallCount, 0);
+    EXPECT_TRUE(manager.registry_.empty());
+    fix.CleanupAndClose(manager);
 }
 
 // ===================== DeviceUrmaEidReader tests =====================

@@ -923,6 +923,40 @@ Result DeviceUrmaTransportManager::FindLocalRegistrationLocked(uint64_t addr, ui
     return BM_INVALID_PARAM;
 }
 
+Result DeviceUrmaTransportManager::CorrectLocalRegAddressLocked(uint64_t addr, uint64_t size,
+                                                                uint64_t &correctedAddr) const
+{
+    correctedAddr = addr;
+    LocalRegistration registration{};
+    auto ret = FindLocalRegistrationLocked(addr, size, &registration);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma CorrectLocalRegAddressLocked: local addr not registered, rankId: "
+                     << rankId_ << " addr: " << VaToStr(addr) << " size: " << size << " ret: " << ret);
+        return ret;
+    }
+    const bool isDram = (registration.mr.flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) != 0;
+    if (!isDram || registration.deviceVa == 0) {
+        return BM_OK;
+    }
+    const uint64_t offset = addr - registration.mr.addr;
+    const uint64_t corrected = registration.deviceVa + offset;
+    if (corrected < registration.deviceVa) {
+        BM_LOG_ERROR("device_urma CorrectLocalRegAddressLocked: addr overflow, rankId: "
+                     << rankId_ << " deviceVa: " << VaToStr(registration.deviceVa) << " offset: " << offset);
+        return BM_INVALID_PARAM;
+    }
+    // Verify full [corrected, corrected + size) range does not overflow
+    if (!ContainsAddressRange(corrected, size, corrected, size)) {
+        BM_LOG_ERROR("device_urma CorrectLocalRegAddressLocked: range overflow, rankId: "
+                     << rankId_ << " addr: " << VaToStr(addr) << " size: " << size
+                     << " mr.addr: " << VaToStr(registration.mr.addr) << " deviceVa: " << VaToStr(registration.deviceVa)
+                     << " offset: " << offset);
+        return BM_INVALID_PARAM;
+    }
+    correctedAddr = corrected;
+    return BM_OK;
+}
+
 Result DeviceUrmaTransportManager::FindRemoteRegistrationLocked(uint32_t rankId, uint64_t addr, uint64_t size,
                                                                 RemoteRegistration *registration) const
 {
@@ -1666,6 +1700,11 @@ Result DeviceUrmaTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uin
         BM_LOG_ERROR("device_urma remote address is not prepared, rank: " << rankId << " addr: " << std::hex << rAddr);
         return ret;
     }
+    uint64_t correctedLAddr = lAddr;
+    ret = CorrectLocalRegAddressLocked(lAddr, size, correctedLAddr);
+    if (ret != BM_OK) {
+        return ret;
+    }
     auto &state = remoteRanks_[rankId];
     if (state.channel == 0 || state.thread == 0) {
         BM_LOG_ERROR("RemoteIo no channel/thread, rankId: " << rankId << " channel: " << state.channel
@@ -1681,7 +1720,7 @@ Result DeviceUrmaTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uin
     const auto translatedRemoteAddr = remote.view.addr + (rAddr - remote.addr);
     const bool isRead = !write;
 
-    return StageAndLaunchTransfer(*ctx, state, isRead, {lAddr}, {translatedRemoteAddr}, {size}, rankId);
+    return StageAndLaunchTransfer(*ctx, state, isRead, {correctedLAddr}, {translatedRemoteAddr}, {size}, rankId);
 }
 
 Result DeviceUrmaTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
@@ -1722,9 +1761,12 @@ Result DeviceUrmaTransportManager::ResolveBatchIoAddressesLocked(uint32_t rankId
     const auto &counts = descriptor.counts;
     const auto batchSize = counts.size();
 
-    localVec.reserve(batchSize);
-    remoteVec.reserve(batchSize);
-    sizeVec.reserve(batchSize);
+    std::vector<uint64_t> tmpLocal;
+    std::vector<uint64_t> tmpRemote;
+    std::vector<uint64_t> tmpSize;
+    tmpLocal.reserve(batchSize);
+    tmpRemote.reserve(batchSize);
+    tmpSize.reserve(batchSize);
 
     for (uint32_t i = 0; i < batchSize; ++i) {
         const uint64_t lAddr = reinterpret_cast<uint64_t>(localAddrs[i]);
@@ -1734,18 +1776,28 @@ Result DeviceUrmaTransportManager::ResolveBatchIoAddressesLocked(uint32_t rankId
             continue;
         }
 
+        uint64_t correctedLAddr = lAddr;
+        auto ret = CorrectLocalRegAddressLocked(lAddr, size, correctedLAddr);
+        if (ret != BM_OK) {
+            BM_LOG_DEBUG("device_urma ResolveBatchIoAddressesLocked local address correction failed, rank: "
+                         << rankId << " addr: 0x" << std::hex << lAddr << " index: " << i);
+            return ret;
+        }
         RemoteRegistration remote{};
-        auto ret = FindRemoteRegistrationLocked(rankId, rAddr, size, &remote);
+        ret = FindRemoteRegistrationLocked(rankId, rAddr, size, &remote);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma ResolveBatchIoAddresses remote not prepared, rank: "
                          << rankId << " addr: 0x" << std::hex << rAddr << " index: " << i);
             return ret;
         }
         const auto translatedRemoteAddr = remote.view.addr + (rAddr - remote.addr);
-        localVec.push_back(lAddr);
-        remoteVec.push_back(translatedRemoteAddr);
-        sizeVec.push_back(size);
+        tmpLocal.push_back(correctedLAddr);
+        tmpRemote.push_back(translatedRemoteAddr);
+        tmpSize.push_back(size);
     }
+    localVec = std::move(tmpLocal);
+    remoteVec = std::move(tmpRemote);
+    sizeVec = std::move(tmpSize);
     return BM_OK;
 }
 
@@ -1776,6 +1828,9 @@ Result DeviceUrmaTransportManager::RemoteIoBatch(uint32_t rankId, const CopyDesc
     auto ret = ResolveBatchIoAddressesLocked(rankId, descriptor, localVec, remoteVec, sizeVec);
     if (ret != BM_OK) {
         return ret;
+    }
+    if (sizeVec.empty()) {
+        return BM_OK;
     }
 
     CompletionContext *ctx = LookupOrCreateContextLocked();

@@ -1298,10 +1298,10 @@ TEST_F(HybmVaManagerTest, DumpReservedGvaInfo_Empty_NoCrash)
     manager.DumpReservedGvaInfo();
 }
 
-// 测试95: GetRank 未注册地址
-TEST_F(HybmVaManagerTest, GetRank_Unregistered_ReturnsFalse)
+// 测试95: GetRankByGva 未注册地址
+TEST_F(HybmVaManagerTest, GetRankByGva_Unregistered_ReturnsFalse)
 {
-    auto [rank, found] = manager.GetRank(0xbadbad);
+    auto [rank, found] = manager.GetRankByGva(0xbadbad);
     EXPECT_FALSE(found);
     EXPECT_EQ(rank, 0U);
 }
@@ -1383,13 +1383,13 @@ TEST_F(HybmVaManagerTest, AddVaInfo_DiffMemTypes)
     EXPECT_EQ(manager.GetAllocCount(), 2U);
 }
 
-// 测试105: GetRank 注册地址
-TEST_F(HybmVaManagerTest, GetRank_Registered)
+// 测试105: GetRankByGva 注册地址
+TEST_F(HybmVaManagerTest, GetRankByGva_Registered)
 {
     uint64_t gva = HYBM_GVM_START_ADDR + 0x10000;
     manager.AllocReserveGva(0, 0x200000, 0x200000, HYBM_MEM_TYPE_HOST, false);
     manager.AddVaInfoFromExternal({gva, 0, 0, 0x10000, HYBM_MEM_TYPE_HOST}, 0, 1);
-    auto [rank, found] = manager.GetRank(gva);
+    auto [rank, found] = manager.GetRankByGva(gva);
     EXPECT_TRUE(found);
     EXPECT_EQ(rank, 1U);
 }

@@ -189,10 +189,10 @@ hybm_mem_type HybmVaManager::GetGvaMemType(uint64_t va)
     return HYBM_MEM_TYPE_BUTT;
 }
 
-std::pair<uint32_t, bool> HybmVaManager::GetRank(uint64_t gva)
+std::pair<uint32_t, bool> HybmVaManager::GetRankByGva(uint64_t gva)
 {
     if (gva == 0) {
-        BM_LOG_WARN("GetRank: va=0 is invalid");
+        BM_LOG_WARN("GetRankByGva: va=0 is invalid");
         return {0, false};
     }
     std::shared_lock<std::shared_mutex> lock(mutex_);
@@ -205,10 +205,10 @@ std::pair<uint32_t, bool> HybmVaManager::GetRank(uint64_t gva)
         --it;
     }
     if (it->second.Contains(gva, HVM_GVA)) {
-        BM_LOG_DEBUG("GetRank: va=" << VaToStr(gva) << " localRankId=" << it->second.RankId());
+        BM_LOG_DEBUG("GetRankByGva: va=" << VaToStr(gva) << " rankId=" << it->second.RankId());
         return {it->second.RankId(), true};
     }
-    BM_LOG_DEBUG("GetRank: va=" << VaToStr(gva) << " not found");
+    BM_LOG_DEBUG("GetRankByGva: va=" << VaToStr(gva) << " not found");
     return {0, false};
 }
 

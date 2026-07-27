@@ -180,6 +180,7 @@ private:
 
     // Local/remote registration and key export/import
     Result FindLocalRegistrationLocked(uint64_t addr, uint64_t size, LocalRegistration *registration) const;
+    Result CorrectLocalRegAddressLocked(uint64_t addr, uint64_t size, uint64_t &correctedAddr) const;
     Result FindRemoteRegistrationLocked(uint32_t rankId, uint64_t addr, uint64_t size,
                                         RemoteRegistration *registration) const;
     Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
