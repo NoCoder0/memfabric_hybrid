@@ -46,10 +46,6 @@ constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1U;
 constexpr uint32_t ACL_NOTIFY_FLAG_DEVICE_ONLY = 0x00000001U; // 使能该bit表示创建的Notify仅在Device上调用。
-constexpr uint32_t ACL_MEM_TYPE_HIGH_BAND_WIDTH =
-    0x1000U; // 系统内部会默认采取ACL_MEM_MALLOC_HUGE_FIRST，优先申请大页。
-constexpr uint32_t ACL_MEM_MALLOC_HUGE_ONLY =
-    1; // 申请大页内存，内存申请粒度为2M，不足2M的倍数，向上2M对齐。 表示仅申请大页
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 27U * 68U;
 static_assert(std::is_trivially_copyable<UrmaExportDesc>::value, "UrmaExportDesc must be binary serializable");
@@ -277,9 +273,7 @@ Result DeviceUrmaTransportManager::InitDeviceTransferFlagLocked()
     // so remote peers can import it and use the resulting address as remote_flag_addr.
     // NOT inserted into localRegistrations_ — not exported/imported as a regular MR.
     void *flagPtr = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(
-        &flagPtr, sizeof(int64_t),
-        static_cast<aclrtMemMallocPolicy>(ACL_MEM_TYPE_HIGH_BAND_WIDTH | ACL_MEM_MALLOC_HUGE_ONLY));
+    auto ret = DlAclApi::AclrtMalloc(&flagPtr, sizeof(int64_t), static_cast<uint32_t>(ACL_MEM_MALLOC_NORMAL_ONLY));
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtMalloc for local flag buffer failed, ret: " << ret);
         return ret;
@@ -1630,8 +1624,7 @@ Result DeviceUrmaTransportManager::StageAndLaunchTransfer(CompletionContext &ctx
     auto &pt = ctx.pendingTransfers.back();
     pt.rankId = rankId;
 
-    auto ret =
-        PrepareKernelLaunchBuffers(state.thread, isRead, state.channel, localVec, remoteVec, sizeVec, pt.buffers);
+    auto ret = PrepareKernelLaunchBuffers(isRead, localVec, remoteVec, sizeVec, pt.buffers);
     if (ret != BM_OK) {
         auto releaseRet = ReleaseDeviceTransferBuffers(pt.buffers);
         if (releaseRet != BM_OK) {
@@ -1825,9 +1818,10 @@ Result DeviceUrmaTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBu
     return BM_OK;
 }
 
-Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
-    HcommThreadHandle thread, bool isRead, HcommChannelHandle channel, const std::vector<uint64_t> &localAddrs,
-    const std::vector<uint64_t> &remoteAddrs, const std::vector<uint64_t> &sizes, DeviceTransferBuffers &outBuffers)
+Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(bool isRead, const std::vector<uint64_t> &localAddrs,
+                                                              const std::vector<uint64_t> &remoteAddrs,
+                                                              const std::vector<uint64_t> &sizes,
+                                                              DeviceTransferBuffers &outBuffers)
 {
     const auto batchSize = localAddrs.size();
     const auto ptrBytes = batchSize * sizeof(void *);

@@ -236,9 +236,9 @@ private:
                                         bool hasInFlight);
 
     // Device kernel launch helpers
-    Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
-                                      const std::vector<uint64_t> &localAddrs, const std::vector<uint64_t> &remoteAddrs,
-                                      const std::vector<uint64_t> &sizes, DeviceTransferBuffers &outBuffers);
+    Result PrepareKernelLaunchBuffers(bool isRead, const std::vector<uint64_t> &localAddrs,
+                                      const std::vector<uint64_t> &remoteAddrs, const std::vector<uint64_t> &sizes,
+                                      DeviceTransferBuffers &outBuffers);
     // Device kernel launch (builds args, configures and launches)
     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
                                    HcommChannelHandle channel, size_t batchSize);

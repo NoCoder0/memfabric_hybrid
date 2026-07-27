@@ -1472,8 +1472,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersRejectsMallocFail
     DlAclApi::pAclrtMalloc = MockAclrtMallocFail;
     DeviceUrmaTransportManager manager;
     DeviceUrmaTransportManager::DeviceTransferBuffers buffers{};
-    EXPECT_EQ(manager.PrepareKernelLaunchBuffers(MOCK_THREAD, false, MOCK_CHANNEL, {MOCK_LOCAL_ADDR},
-                                                 {MOCK_REMOTE_ADDR}, {MOCK_SIZE}, buffers),
+    EXPECT_EQ(manager.PrepareKernelLaunchBuffers(false, {MOCK_LOCAL_ADDR}, {MOCK_REMOTE_ADDR}, {MOCK_SIZE}, buffers),
               BM_ERROR);
 }
 
