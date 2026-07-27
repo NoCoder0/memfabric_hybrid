@@ -20,6 +20,7 @@ namespace ock {
 namespace mf {
 
 int32_t HybmGetInitedLogicDeviceId();
+int32_t HybmModernInitMetaGva(void **globalMemoryBase, size_t allocSize, void **allocHandle);
 int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddress, AscendSocType socType,
                           void **allocHandle);
 

@@ -51,6 +51,9 @@ typedef void *hybm_mem_slice_t;
 #define BM_UNDER_API_UNLOAD   (-8)
 #define BM_NOT_INITIALIZED    (-9)
 #define BM_NOT_SUPPORT_FUNC   (-10)
+#ifndef BM_BUSY
+#define BM_BUSY (-11)
+#endif
 #define BM_NOT_SUPPORTED      (-100)
 #define BM_NOT_CONNECTED      (-101)
 

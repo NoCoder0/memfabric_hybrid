@@ -1039,7 +1039,7 @@ sequenceDiagram
 | T1.3 | Host Read/Write/Fence 和 batch fallback | T1.2 | 单条/批量/错误中途 pending UT 通过 |
 | T1.4 | Compose、DataOperator、MapSlice、loader 的无卡接入 | T1.3 | `XPU_TYPE=NONE` 构建和 UT 通过 |
 | T1.5 | 两鲲鹏集成样例 | T1.4 | 阶段 1 硬件标准全部通过 |
-| T2.1 | 34 MiB 映射和 route ABI | T1.5 | modern/legacy 初始化回滚 UT 通过 |
+| T2.1 | modern 34 MiB 映射和 route ABI | T1.5 | modern 初始化回滚 UT 通过，legacy 32 MiB 边界保持不变 |
 | T2.2 | `BatchCopyRoutePublisher` 和 magic-last | T2.1 | image/owner/失败注入 UT 通过 |
 | T2.3 | `HOST_DEVICE_URMA` 运行时角色选择；RangeEntry 增加 `hcommVaBegin`；Device manager 生成并发布 Device-HBM route | T2.2 | 两卡均选择 Device manager；HBM route 含真实 GVA/view/channel/thread/flag |
 | T2.4 | 生产 `HybmBatchCopy` 四参数 ABI、DataOpDeviceURMA launcher、正常包注册和两卡 Python 用例；移除专用 probe 路径 | T2.3 | 参考 `01_single_node_multi_device_dram.py` 的两卡数据校验及 T2 异常矩阵通过 |
@@ -1094,7 +1094,7 @@ fallback 条数、每 peer fence 次数。若 batch 逐条提交成为 Host-to-H
 | Host UB plugin 未随目标 CANN 安装或未加载 | Host endpoint 创建失败 | 阶段 1 前检查插件路径和 HCOMM 启动日志，不用代码 fallback 到旧 HCOM 掩盖问题 |
 | CPU HCOMM batch 不支持 | Host 批量吞吐降低 | 逐条提交、单 peer 一次 fence，正确性优先 |
 | Device HBM GVA 与 import view 不同 | 只存一个基址时两卡测试无法走公开 GVA 接口 | RangeEntry 同时保存 GVA 区间和 HCOMM 基址，AICPU 做受检 offset 转换；Host route 仍要求二者相等 |
-| 34 MiB modern/legacy 映射边界不一致 | 固定 route 地址不可访问或释放错误 | T2.1 独立实现初始化/失败回滚/uninit UT，硬件先读写固定头再建链 |
+| modern 34 MiB 映射和释放边界不一致 | 固定 route 地址不可访问或释放错误 | T2.1 独立实现 modern 初始化/失败回滚/uninit UT，保持 legacy 32 MiB 路径不变，硬件先读写固定头再建链 |
 | 同一卡多个 entity 竞争固定 route | 表被覆盖 | `BatchCopyRouteOwnerRegistry` 按 `userDeviceId` 单 owner，第二个发布者返回 `BM_BUSY` |
 | Host 主动 I/O 与 Close 并发 | channel/MR use-after-free | P0 调用方保证 Close 前无在途；每 peer mutex 串行 submit/fence，Close 先 fence 再释放 |
 

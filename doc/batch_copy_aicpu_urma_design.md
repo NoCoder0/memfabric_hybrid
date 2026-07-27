@@ -255,8 +255,9 @@ Batch_Copy 元数据区 + HYBM 元数据区 = 2 MiB + 32 MiB = 34 MiB
 ```
 
 Modern 路径预留 1 GiB VA，`HalMemCreate()` 申请 34 MiB，并从 `HYBM_DEVICE_CONTROL_ADDR` 开始一次性
-`HalMemMap()`。Legacy 路径从同一地址执行 `HalGvaAlloc()`。释放路径使用
-`HYBM_DEVICE_CONTROL_ADDR/HYBM_DEVICE_CONTROL_SIZE` 解除映射并释放物理资源。
+`HalMemMap()`；释放时从 `HYBM_DEVICE_CONTROL_ADDR` unmap，并继续使用 `g_baseAddr` 释放 1 GiB VA
+reservation。Legacy 路径保持现有行为，只从 `HYBM_DEVICE_META_ADDR` 分配和释放 32 MiB，不映射
+Batch_Copy route 区。昇腾 950 的 `HOST_DEVICE_URMA` 必须走 modern 路径。
 
 每个逻辑 NPU 维护一份表。`DeviceUrmaTransportManager` 通过按 `userDeviceId_` 索引的
 `BatchCopyRouteOwnerRegistry` 获取唯一发布权；同一卡的第二个发布者返回 `BM_BUSY`。
@@ -581,8 +582,8 @@ sequenceDiagram
 | `HcommTransportManager::HcommMemImport()` | 使用 `UrmaExportDesc.memoryType` 设置 view type，并校验 UBC 返回的 addr/size | CANN UBC import 只回填 addr/size，内存类型由 MemFabric 描述符确定 |
 | `DeviceUrmaTransportManager::ImportRemoteMemKeysLocked()` | 保存 exported GVA 和 import view，校验两者相等；导入 transfer flag 后校验 addr 和 8 B 大小 | Host GVA equality 是发布路由的硬门禁 |
 | `src/hybm/csrc/common/hybm_define.h`、`hybm_batch_copy_route.h` | 增加 2 MiB route 区、34 MiB control 映射常量及 Host/AICPU 共享路由 ABI | 固定地址、结构大小和 offset 使用同一组编译期定义 |
-| `hybm_gva.cpp`，`hybm_init_hbm_gva()/HybmModernInitMetaGva()/HybmLegacyInitMetaGva()` | meta 物理申请和映射使用 34 MiB，起点为 `HYBM_DEVICE_CONTROL_ADDR` | 2 MiB route 区与 32 MiB HYBM 元数据区一次性映射 |
-| `src/hybm/csrc/hybm_entry.cpp`，`hybm_uninit()` | Modern 使用 `HYBM_DEVICE_CONTROL_ADDR` unmap，保留 `g_baseAddr` 释放 1 GiB VA；Legacy 按 control 起点和 34 MiB 大小 free | 映射地址、物理 handle 和 1 GiB VA reservation 是不同资源，初始化/销毁边界必须成对 |
+| `hybm_gva.cpp`，`hybm_init_hbm_gva()/HybmModernInitMetaGva()` | modern meta 物理申请和映射使用 34 MiB，起点为 `HYBM_DEVICE_CONTROL_ADDR`；legacy 保持现有 32 MiB 行为 | 2 MiB route 区与 32 MiB HYBM 元数据区只在 modern 路径一次性映射 |
+| `src/hybm/csrc/hybm_entry.cpp`，`hybm_uninit()` | Modern 使用 `HYBM_DEVICE_CONTROL_ADDR` unmap，保留 `g_baseAddr` 释放 1 GiB VA；Legacy 继续按 `HYBM_DEVICE_META_ADDR/HYBM_DEVICE_INFO_SIZE` free | 映射地址、物理 handle 和 1 GiB VA reservation 是不同资源，初始化/销毁边界必须成对 |
 | `DeviceUrmaTransportManager::Prepare()/PreparePeerLocked()` | 首次无 key 调用创建 channel/thread 并固定 Host peer 集合；携带全量 key 的调用复用资源、导入初始 DDR MR 与 flag，最后调用 `TryPublishBatchCopyRouteLocked()` | 对齐 entity 先交换 endpoint、后导入 slice 的初始化顺序 |
 | `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 peer 集合；携带 key 的调用校验 peer/endpoint 未变化并复用 channel；NPU peer 不导入 HBM key | 支持 Host 主动数据面和鲲鹏对 NPU 的 DDR 导出，并接受 entity 的幂等 `Prepare()` |
 | `DeviceUrmaTransportManager::RollbackInitialImportsLocked()` | 任一 peer 导入或 route 发布失败时，按逆序释放本次调用新增的全部 import；已存在的 channel/thread 由 manager 清理流程持有 | 防止跨 peer 的部分导入残留，同时不误删已建立的资源 |
@@ -967,7 +968,7 @@ ERROR 日志，上层只透传已记录的根错误时不重复打印。
 | 固定 GVA mmap 失败 | 鲲鹏源 DDR 无法按 GVA 注册 | 限制并预留可映射 GVA 窗口；初始化失败且不发布路由 |
 | Host HCOMM import 重定位地址 | 不满足固定 GVA 契约，算子可能访问错误地址 | Host 建链时强制校验 `view.addr == remoteAddr`，不相等则拒绝发布 |
 | 目标 CANN 未提供无卡 Host UB plugin | 鲲鹏端创建 endpoint 失败 | 部署包含 Host UB plugin 的 CANN 版本，并在启动时检查能力 |
-| 元数据映射从 32 MiB 增至 34 MiB | 每张 NPU 额外占用 2 MiB HBM | 保持 2 MiB 大页对齐；modern/legacy 初始化、回滚和释放使用同一控制区边界 |
+| modern 元数据映射从 32 MiB 增至 34 MiB | 每张 NPU 额外占用 2 MiB HBM | 保持 2 MiB 大页对齐；modern 初始化、回滚和释放使用同一控制区边界，legacy 保持原 32 MiB 行为 |
 | 同一 NPU 多 manager 发布 | 固定路由表被相互覆盖 | `BatchCopyRouteOwnerRegistry` 按 `userDeviceId_` 保证每卡单 owner |
 | Host/NPU 的 URMA private-data 版本混用 | endpoint 位置被错误解释或建链失败 | 解析端严格校验 v2，并在创建 channel 前拒绝其他版本 |
 | 新旧 Host/AICPU 包混用 | 旧 Host 只映射 32 MiB，新算子访问未映射 route 地址 | Host 包和 AICPU 包版本绑定；启动时清零并校验固定 magic |
@@ -1014,8 +1015,9 @@ ERROR 日志，上层只透传已记录的根错误时不重复打印。
       设备内存屏障；若不支持，改用每 peer STARS notify/event 聚合。
 - [ ] 确认 `HcommChannelFenceOnThread` 的完成边界，明确 fence 后 remote flag read 是否覆盖该
       thread 上此前所有 batch/single read。
-- [ ] 确认昇腾 950 modern 和 legacy 路径均支持从 `HYBM_DEVICE_META_ADDR - 2 MiB` 开始一次性映射
-      34 MiB，且初始化失败回滚和 uninit 使用相同释放边界。
+- [ ] 确认昇腾 950 modern 路径支持从 `HYBM_DEVICE_META_ADDR - 2 MiB` 开始一次性映射 34 MiB，
+      且初始化失败回滚和 uninit 使用相同释放边界；legacy 保持原 32 MiB 映射，不进入 Batch_Copy
+      route 发布流程。
 
 ---
 

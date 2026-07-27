@@ -22,6 +22,9 @@ extern "C" {
 typedef void *smem_bm_t;
 #define SMEM_BM_TIMEOUT_MAX UINT32_MAX /* all timeout must <= UINT32_MAX */
 #define SMEM_TLS_PATH_SIZE  256
+#ifndef BM_BUSY
+#define BM_BUSY (-11)
+#endif
 
 // SMEM_BM_BIND_NUMA_FLAG start index When SMEM_BM_PERFORMANCE_MODE_FLAG == 1, this field is used
 #define SMEM_BM_BIND_NUMA_FLAG_INDEX        0
