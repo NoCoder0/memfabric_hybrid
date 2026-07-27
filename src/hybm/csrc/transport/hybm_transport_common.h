@@ -145,7 +145,8 @@ struct TransportRankPrepareInfo {
 
 static inline std::ostream &operator<<(std::ostream &output, const TransportRankPrepareInfo &info)
 {
-    output << "PrepareInfo(nic=" << info.nic << ", role=" << info.role << ", memKeys=[";
+    output << "PrepareInfo(nic=" << info.nic << ", role=" << info.role << ", privateData=(ip=" << info.privateData.ip
+           << ", key=" << info.privateData.key << "), memKeys=[";
     for (auto &key : info.memKeys) {
         output << key << " ";
     }

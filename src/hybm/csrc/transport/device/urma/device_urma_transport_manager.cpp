@@ -788,14 +788,18 @@ Result DeviceUrmaTransportManager::CloseDevice()
     return BM_OK;
 }
 
-Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState &state)
+Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank)
 {
     Result localResult = BM_OK;
     if (state.channel != 0) {
         auto hcommChan = state.channel;
+        BM_LOG_INFO("device_urma calling HcommChannelDestroy, peerRank: " << peerRank << " channel: " << state.channel
+                                                                          << " thread: " << state.thread);
         const auto ret = DlHcommApi::HcommChannelDestroy(&hcommChan, 1);
-        if (ret != 0 && localResult == BM_OK) {
-            BM_LOG_ERROR("device_urma HcommChannelDestroy failed, channel: " << state.channel << " ret: " << ret);
+        if (ret != 0) {
+            BM_LOG_ERROR("device_urma HcommChannelDestroy failed, peerRank: "
+                         << peerRank << " channel: " << state.channel << " thread: " << state.thread
+                         << " ret: " << ret);
             localResult = BM_DL_FUNCTION_FAILED;
         }
         state.channel = 0;
@@ -803,10 +807,14 @@ Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState 
     }
     if (state.thread != 0) {
         auto hcommThread = state.thread;
+        BM_LOG_INFO("device_urma HcommThreadFree, thread: " << state.thread);
         const auto ret = DlHcommApi::HcommThreadFree(&hcommThread, 1);
-        if (ret != BM_OK && localResult == BM_OK) {
-            BM_LOG_ERROR("device_urma HcommThreadFree failed, thread: " << state.thread << " ret: " << ret);
-            localResult = ret;
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma HcommThreadFree failed, peerRank: " << peerRank << " thread: " << state.thread
+                                                                          << " ret: " << ret);
+            if (localResult == BM_OK) {
+                localResult = ret;
+            }
         }
         state.thread = 0;
     }
@@ -822,6 +830,8 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
             ++importIt;
             continue;
         }
+        BM_LOG_INFO("device_urma HcommMemUnimport, peer: " << peerRank
+                                                           << "descBytes.size: " << importIt->descBytes.size());
         const auto ret = manager_.HcommMemUnimport(localEndpoint_, importIt->descBytes.data(),
                                                    static_cast<uint32_t>(importIt->descBytes.size()));
         if (ret != BM_OK) {
@@ -839,6 +849,8 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
         }
     }
     if (!state.remoteFlagDescBytes.empty()) {
+        BM_LOG_INFO("device_urma HcommMemUnimport remoteFlagDescBytes, "
+                    << "peerRank: " << peerRank << " remoteFlagDescBytes.size: " << state.remoteFlagDescBytes.size());
         const auto ret = DlHcommApi::HcommMemUnimport(localEndpoint_->hcommEndpoint, state.remoteFlagDescBytes.data(),
                                                       static_cast<uint32_t>(state.remoteFlagDescBytes.size()));
         if (ret != 0) {
@@ -859,57 +871,17 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
     return localResult;
 }
 
-Result DeviceUrmaTransportManager::UnregisterPeerHandlesAndDestroyEndpoint(RemoteRankState &state, uint32_t peerRank)
-{
-    Result localResult = BM_OK;
-    if (state.localEndpoint == nullptr) {
-        return BM_OK;
-    }
-    for (auto &item : localRegistrations_) {
-        auto handleIt = item.second.peerHandles.find(peerRank);
-        if (handleIt == item.second.peerHandles.end()) {
-            continue;
-        }
-        const auto ret = manager_.HcommMemUnreg(state.localEndpoint, handleIt->second);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma UnregisterPeerHandlesAndDestroyEndpoint HcommMemUnreg peer "
-                         << "handle failed, rank: " << peerRank << " addr: " << std::hex << item.first
-                         << " ret: " << ret);
-            if (localResult == BM_OK) {
-                localResult = ret;
-            }
-            continue;
-        }
-        item.second.peerHandles.erase(handleIt);
-    }
-    auto ret = HcomUrmaDestroyEndpoint(state.localEndpoint->hcommEndpoint);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma UnregisterPeerHandlesAndDestroyEndpoint HcomUrmaDestroyEndpoint failed, "
-                     << "rank: " << peerRank << " ret: " << ret);
-        if (localResult == BM_OK) {
-            localResult = ret;
-        }
-    } else {
-        state.localEndpoint.reset();
-    }
-    return localResult;
-}
-
 Result DeviceUrmaTransportManager::CleanupPeerRankState(RemoteRankState &state, uint32_t peerRank)
 {
     Result localResult = BM_OK;
 
-    const auto retChan = DestroyRankChannelsAndThread(state);
+    const auto retChan = DestroyRankChannelsAndThread(state, peerRank);
     if (retChan != BM_OK && localResult == BM_OK) {
         localResult = retChan;
     }
     const auto retImports = UnimportPeerImportsAndFlag(state, peerRank);
     if (retImports != BM_OK && localResult == BM_OK) {
         localResult = retImports;
-    }
-    const auto retHelper = UnregisterPeerHandlesAndDestroyEndpoint(state, peerRank);
-    if (retHelper != BM_OK && localResult == BM_OK) {
-        localResult = retHelper;
     }
     return localResult;
 }
@@ -1076,16 +1048,6 @@ Result DeviceUrmaTransportManager::UnregisterMemoryRegion(uint64_t addr)
             finalRet = retUnreg;
         }
     }
-    // Unregister peer handles for this local registration
-    for (auto &peerEntry : item->second.peerHandles) {
-        auto retPeer = manager_.HcommMemUnreg(localEndpoint_, peerEntry.second);
-        if (retPeer != BM_OK && finalRet == BM_OK) {
-            BM_LOG_ERROR("device_urma HcommMemUnreg failed for peer handle, addr: "
-                         << std::hex << addr << " peerRank: " << peerEntry.first << " ret: " << retPeer);
-            finalRet = retPeer;
-        }
-    }
-    item->second.peerHandles.clear();
     localRegistrations_.erase(item);
     return finalRet;
 }
@@ -1419,6 +1381,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
             // 6. Create one channel per peer (temporary variable for safe rollback)
             HcommChannelHandle channelHandle = 0;
+            BM_LOG_INFO("device_urma Prepare HcommChannelCreate peerRank: " << peerRank << ", channelDesc.role: "
+                                                                            << channelDesc.role);
             ret = DlHcommApi::HcommChannelCreate(localEndpoint_->hcommEndpoint, COMM_ENGINE_AICPU, &channelDesc, 1,
                                                  &channelHandle);
             if (ret != 0) {
@@ -1485,18 +1449,18 @@ Result DeviceUrmaTransportManager::RemoveRankLocked(uint32_t rankId)
 {
     auto rankIt = remoteRanks_.find(rankId);
     if (rankIt == remoteRanks_.end()) {
+        BM_LOG_WARN("device_urma RemoveRankLocked rank not found, localRank: "
+                    << rankId_ << " peerRank: " << rankId << " remoteRanksSize: " << remoteRanks_.size());
         return BM_OK;
     }
     auto &state = rankIt->second;
-    Result finalRet = DestroyRankChannelsAndThread(state);
+    BM_LOG_INFO("device_urma RemoveRankLocked found entry, localRank: "
+                << rankId_ << " peerRank: " << rankId << " channel: " << state.channel << " thread: " << state.thread);
+    Result finalRet = DestroyRankChannelsAndThread(state, rankId);
 
     const auto retImports = UnimportPeerImportsAndFlag(state, rankId);
     if (retImports != BM_OK && finalRet == BM_OK) {
         finalRet = retImports;
-    }
-    const auto retHelper = UnregisterPeerHandlesAndDestroyEndpoint(state, rankId);
-    if (retHelper != BM_OK && finalRet == BM_OK) {
-        finalRet = retHelper;
     }
     remoteRanks_.erase(rankIt);
     return finalRet;
@@ -1520,10 +1484,13 @@ bool DeviceUrmaTransportManager::IsAnyRegistryContextPendingForRank(uint32_t ran
 Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRanks)
 {
     std::lock_guard<std::mutex> guard(mutex_);
+    BM_LOG_INFO("device_urma RemoveRanks called, localRank: " << rankId_ << " ranks: " << removedRanks.size()
+                                                              << " opened: " << opened_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
 
     // Atomic pending preflight: any target rank with pending ops → reject all
     for (auto rankId : removedRanks) {
+        BM_LOG_INFO("device_urma RemoveRanks checking IsAnyRegistryContextPendingForRank, rankId: " << rankId);
         if (IsAnyRegistryContextPendingForRank(rankId)) {
             BM_LOG_ERROR("device_urma RemoveRanks: rank " << rankId << " has pending ops, rejecting all");
             return BM_ERROR;
@@ -1532,16 +1499,19 @@ Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &remo
 
     Result finalRet = BM_OK;
     for (auto rankId : removedRanks) {
+        BM_LOG_INFO("device_urma RemoveRanks calling RemoveRankLocked, rankId: " << rankId);
         auto ret = RemoveRankLocked(rankId);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma RemoveRanks RemoveRankLocked failed, rank: " << rankId << " ret: " << ret);
+            BM_LOG_ERROR("device_urma RemoveRanks RemoveRankLocked failed, localRank: " << rankId_ << " peerRank: "
+                                                                                        << rankId << " ret: " << ret);
             if (finalRet == BM_OK) {
                 finalRet = ret;
             }
         }
     }
     if (finalRet != BM_OK) {
-        BM_LOG_ERROR("device_urma RemoveRanks cleanup failed, ret: " << finalRet);
+        BM_LOG_ERROR("device_urma RemoveRanks cleanup failed, localRank: "
+                     << rankId_ << " removedRanks: " << removedRanks.size() << " ret: " << finalRet);
     }
     return finalRet;
 }

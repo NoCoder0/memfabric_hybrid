@@ -335,6 +335,9 @@ Result ComposeTransportManager::Prepare(const HybmTransPrepareOptions &options)
 
 Result ComposeTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRanks)
 {
+    BM_LOG_INFO("compose RemoveRanks called, ranks: "
+                << removedRanks.size() << " host: " << (hostTransportManager_ != nullptr ? "non-null" : "nullptr")
+                << " device: " << (deviceTransportManager_ != nullptr ? "non-null" : "nullptr"));
     Result lastResult = BM_OK;
     if (hostTransportManager_) {
         auto ret = hostTransportManager_->RemoveRanks(removedRanks);
@@ -602,7 +605,7 @@ Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions 
         BM_LOG_DEBUG("Try to update device transport rank options: " << deviceOptions);
         ret = deviceTransportManager_->UpdateRankOptions(deviceOptions);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to prepare host ret: " << ret);
+            BM_LOG_ERROR("Failed to prepare device ret: " << ret);
         }
     }
     return ret;

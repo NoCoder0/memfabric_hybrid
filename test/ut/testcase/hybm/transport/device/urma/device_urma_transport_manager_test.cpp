@@ -1406,8 +1406,6 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     manager.registry_.push_back(ctx);
 
     auto &state = manager.remoteRanks_[1];
-    state.localEndpoint = manager.manager_.CreateEndpoint(MakeEndpointDesc());
-    ASSERT_NE(state.localEndpoint, nullptr);
     state.channel = MOCK_CHANNEL;
     state.thread = MOCK_THREAD;
     DeviceUrmaTransportManager::RemoteRegistration remote{};
@@ -1424,8 +1422,6 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     HcommMemHandle localHandle = nullptr;
     const UrmaCommMem localMem{MOCK_LOCAL_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
     ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, MOCK_MEM_TAG, localMem, &localHandle), BM_OK);
-    HcommMemHandle peerHandle = nullptr;
-    ASSERT_EQ(manager.manager_.HcommMemReg(state.localEndpoint, MOCK_MEM_TAG + 1U, localMem, &peerHandle), BM_OK);
 
     DeviceUrmaTransportManager::LocalRegistration local{};
     local.mr.addr = MOCK_LOCAL_ADDR;
@@ -1434,7 +1430,6 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     local.handle = localHandle;
     local.memTag = MOCK_LOCAL_ADDR;
     local.refCount = 1U;
-    local.peerHandles.emplace(1, peerHandle);
     manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, local);
 
     EXPECT_EQ(manager.CloseDevice(), BM_OK);

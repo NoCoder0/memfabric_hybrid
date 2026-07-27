@@ -93,7 +93,6 @@ private:
         UrmaMemTag memTag{0};
         uint32_t refCount{0};
         uint64_t deviceVa{0};
-        std::unordered_map<uint32_t, HcommMemHandle> peerHandles{};
     };
 
     struct RemoteRegistration {
@@ -106,9 +105,6 @@ private:
 
     struct RemoteRankState {
         std::mutex rankMutex{};
-        // 本 rank 为了和该 peer 通信而创建的本地 endpoint，按 peer 存放在 remoteRanks_[peerRank] 里
-        UrmaEndpointHandle localEndpoint{nullptr};
-        UrmaEndpointDesc localEndpointDesc{};
         UrmaEndpointDesc remoteEndpointDesc{};
         bool hasEndpointDesc{false};
         // 本 rank 侧用于与该 peer 通信的 channel 描述符
@@ -177,9 +173,8 @@ private:
     Result InitDeviceTransferFlagLocked();
     void RollbackOpenDeviceLocked();
     Result EnsureDeviceKernelLoadedLocked();
-    static Result DestroyRankChannelsAndThread(RemoteRankState &state);
+    static Result DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank);
     Result UnimportPeerImportsAndFlag(RemoteRankState &state, uint32_t peerRank);
-    Result UnregisterPeerHandlesAndDestroyEndpoint(RemoteRankState &state, uint32_t peerRank);
     Result CleanupPeerRankState(RemoteRankState &state, uint32_t peerRank);
     Result CleanupLocalRegistrationsLocked();
 
