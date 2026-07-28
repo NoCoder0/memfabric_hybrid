@@ -806,7 +806,13 @@ Result SmemNetGroupEngine::GroupGatherPrefixKey(uint32_t dstRank, std::string &u
         }
 
         if (retMap.size() != groupInfo_.groupSize) {
-            SM_LOG_WARN("has some rank not exist prefix key, please retry");
+            std::string rankStr;
+            for (uint32_t i = 0; i < MAX_RANK_COUNT; i++) {
+                if (TestBitmapForRank(i) && retMap.find(i) == retMap.end()) {
+                    rankStr += std::to_string(i) + ",";
+                }
+            }
+            SM_LOG_WARN("has some rank not exist prefix key, please retry. ranks:" << rankStr);
             return SM_INNER_BUSY;
         }
     } else { // get one
@@ -1087,14 +1093,12 @@ int32_t SmemNetGroupEngine::JoinLeaveEventProcess()
 
 Result SmemNetGroupEngine::DoLinkDownOnce(uint32_t rankId)
 {
-    if (!TestBitmapForRank(rankId)) {
+    std::string old;
+    SmemGroupInfo info = GenerateInfo(LINK_DOWN_EVENT, rankId, old);
+    if (!ClearBitmapForRank(info, rankId)) {
         SM_LOG_DEBUG("link down rank: " << rankId << " not joined, maybe has leaved by other");
         return SM_OK;
     }
-
-    std::string old;
-    SmemGroupInfo info = GenerateInfo(LINK_DOWN_EVENT, rankId, old);
-    ClearBitmapForRank(info, rankId);
     SM_LOG_DEBUG("remove generate_info:" << info << " base:" << groupInfo_);
     std::string val((char *)&info, SMEM_GROUP_INFO_SIZE);
     if (info.version & 1) {
@@ -1190,17 +1194,22 @@ void SmemNetGroupEngine::RemoteRankLinkDownCb(uint32_t remoteRankId)
         true);
 }
 
-void SmemNetGroupEngine::ClearBitmapForRank(SmemGroupInfo &info, uint32_t rankId)
+bool SmemNetGroupEngine::ClearBitmapForRank(SmemGroupInfo &info, uint32_t rankId)
 {
     if (rankId >= MAX_RANK_COUNT) {
         SM_LOG_ERROR("ClearBitmapForRank invalid rank id: " << rankId);
-        return;
+        return false;
     }
-    std::shared_lock<std::shared_mutex> lock{groupInfoMutex_};
+
     auto index = rankId / BITS_COUNT_IN_U64;
     auto shift = rankId % BITS_COUNT_IN_U64;
-    info.joinedRanksBitmap[index] &= ~(1UL << shift);
-    info.groupSize -= 1U;
+    if ((groupInfo_.joinedRanksBitmap[index] & (1UL << shift)) != 0UL) {
+        info.joinedRanksBitmap[index] &= ~(1UL << shift);
+        info.groupSize -= 1U;
+        return true;
+    } else {
+        return false;
+    }
 }
 
 bool SmemNetGroupEngine::TestBitmapForRank(uint32_t rankId) const
@@ -1446,7 +1455,10 @@ Result SmemNetGroupEngine::GroupLeave()
     localOpRet_ = SM_OK; // init ret
     while (retry_count++ < MAX_RETRY) {
         SmemGroupInfo info = GenerateInfo(LEAVE_EVENT, option_.rank, old);
-        ClearBitmapForRank(info, option_.rank);
+        if (!ClearBitmapForRank(info, option_.rank)) {
+            SM_LOG_WARN("current rank has leaved. rank:" << option_.rank);
+            return SM_OK;
+        }
         std::string val((char *)&info, SMEM_GROUP_INFO_SIZE);
         SM_LOG_DEBUG("leave generate_info:" << info << " base:" << groupInfo_);
         if (info.version & 1) {
@@ -1535,7 +1547,7 @@ int32_t SmemNetGroupEngine::LinkReconnectHandler()
                            "set prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret, SM_ERROR);
     }
 
-    SM_LOG_INFO("reconnect success, rank:" << option_.rank);
+    SM_LOG_INFO("reconnect success, rank:" << option_.rank << " " << info);
     return SM_OK;
 }
 

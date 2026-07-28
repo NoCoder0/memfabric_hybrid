@@ -44,7 +44,7 @@ Result HybmEntityTagInfo::AddRankTag(uint32_t rankId, const std::string &tag)
     }
     std::unique_lock lock(mutex_);
     rankTagInfo_[rankId] = tag;
-    BM_LOG_INFO("Success to add tag:" << tag << " rankId:" << rankId);
+    BM_LOG_DEBUG("Success to add tag:" << tag << " rankId:" << rankId);
     return BM_OK;
 }
 

@@ -43,7 +43,9 @@ HYBM_API void hybm_destroy_entity(hybm_entity_t e, uint32_t flags)
 {
     BM_ASSERT_RET_VOID(e != nullptr);
     auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
-    BM_ASSERT_RET_VOID(entity != nullptr);
+    if (entity == nullptr) {
+        return;
+    }
     entity->UnInitialize();
     MemEntityFactory::Instance().RemoveEngine(e);
 }
@@ -60,7 +62,9 @@ HYBM_API int32_t hybm_unreserve_mem_space(hybm_entity_t e, uint32_t flags)
 {
     BM_ASSERT_RETURN(e != nullptr, BM_INVALID_PARAM);
     auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
-    BM_ASSERT_RETURN(entity != nullptr, BM_INVALID_PARAM);
+    if (entity == nullptr) {
+        return BM_INVALID_PARAM;
+    }
     return entity->UnReserveMemorySpace();
 }
 
@@ -98,7 +102,9 @@ HYBM_API int32_t hybm_free_local_memory(hybm_entity_t e, hybm_mem_slice_t slice,
 {
     BM_ASSERT_RETURN(e != nullptr, BM_INVALID_PARAM);
     auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
-    BM_ASSERT_RETURN(entity != nullptr, BM_INVALID_PARAM);
+    if (entity == nullptr) {
+        return BM_INVALID_PARAM;
+    }
     BM_ASSERT_RETURN(slice != nullptr, BM_INVALID_PARAM);
     return entity->FreeLocalMemory(slice, flags);
 }

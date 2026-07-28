@@ -31,7 +31,7 @@ struct SmemBmEntryOptions {
 class SmemBmEntry : public SmReferable {
 public:
     explicit SmemBmEntry(const SmemBmEntryOptions &options, const StorePtr &store)
-        : options_(options), _configStore(store), executorService_{8U}, coreOptions_{}, entityInfo_{}
+        : options_(options), _configStore(store), executorService_{2U}, coreOptions_{}, entityInfo_{}
     {}
 
     ~SmemBmEntry() override

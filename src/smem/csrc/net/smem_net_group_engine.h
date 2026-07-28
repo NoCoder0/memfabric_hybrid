@@ -86,7 +86,11 @@ struct SmemGroupInfo {
     {
         os << "SmemGroupInfo{size:" << obj.groupSize << " event:" << obj.curEvent
            << " target:" << obj.targetRank << " src:" << obj.submitRank << " ver:" << obj.version
-           << " mask:" << obj.joinedRanksBitmap[0] << "}";
+           << " mask:";
+        for (uint32_t i = 0; i < RANK_BITS_U64_COUNT; i++) {
+            os << std::hex << " " << obj.joinedRanksBitmap[i];
+        }
+        os << "}";
         return os;
     }
 };
@@ -171,7 +175,7 @@ private:
     bool UpdateBitmapFromRank(SmemGroupInfo &info, uint32_t rankId);
     void GetAllRanksFromBitMap(std::vector<uint32_t> &rankIds);
     bool TestBitmapForRank(uint32_t rankId) const;
-    void ClearBitmapForRank(SmemGroupInfo &info, uint32_t rankId);
+    bool ClearBitmapForRank(SmemGroupInfo &info, uint32_t rankId);
     int32_t LinkReconnectHandler();
     uint32_t TryRemoveAllLeavedPrefixKey();
     void RankExit(int result, const std::string &key, const std::string &value);
