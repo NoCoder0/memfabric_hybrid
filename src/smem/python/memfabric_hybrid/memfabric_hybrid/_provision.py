@@ -605,7 +605,12 @@ def _install_artifacts(pkg_dir, build_dir, kernel_fd, config_fd, conf_fd, temp_d
 
     _copy_file_via_fd(kernel_fd, _TAR_FILENAME, tar_src, stat.S_IRUSR | stat.S_IRGRP, temp_dir)
     _copy_file_via_fd(config_fd, _JSON_FILENAME, json_src, stat.S_IRUSR | stat.S_IRGRP, temp_dir)
-    _update_ini_at(conf_fd, temp_dir)
+    conf_mode = stat.S_IMODE(os.fstat(conf_fd).st_mode)
+    os.fchmod(conf_fd, conf_mode | stat.S_IWUSR)
+    try:
+        _update_ini_at(conf_fd, temp_dir)
+    finally:
+        os.fchmod(conf_fd, conf_mode)
     ver = "mf version info:\nmf version: \ngit: %s\n" % wheel_git
     _install_content_at(config_fd, _VERSION_FILENAME, ver, stat.S_IRUSR | stat.S_IRGRP, temp_dir)
 
