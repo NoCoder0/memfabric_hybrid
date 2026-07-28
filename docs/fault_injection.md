@@ -30,25 +30,25 @@
 
 1. `FaultInjectionPointManager`
 
-负责故障点的生命周期管理，包括：
+    负责故障点的生命周期管理，包括：
 
-- `Init` / `Exit`
-- `Register` / `Unregister`
-- `Activate` / `Deactivate` / `DeactivateAll`
-- `Reload`
-- `Begin`
+   - `Init` / `Exit`
+   - `Register` / `Unregister`
+   - `Activate` / `Deactivate` / `DeactivateAll`
+   - `Reload`
+   - `Begin`
 
 2. `FIP_START` / `FIP_END`
 
-这是业务代码里真正使用的埋点宏。业务代码只需要把可能注入故障的位置包起来，运行时是否触发故障由 `FaultInjectionPointManager` 决定。
+    这是业务代码里真正使用的埋点宏。业务代码只需要把可能注入故障的位置包起来，运行时是否触发故障由 `FaultInjectionPointManager` 决定。
 
 3. `FaultInjectionPointRegistry`
 
-这是一个“默认故障点注册器”，用于把仓库内置故障点批量注册到 `FaultInjectionPointManager`。
+    这是一个“默认故障点注册器”，用于把仓库内置故障点批量注册到 `FaultInjectionPointManager`。
 
 4. 配置文件 + 自动重载
 
-用于在进程运行期间动态激活、更新、清除故障注入配置。
+    用于在进程运行期间动态激活、更新、清除故障注入配置。
 
 ### 2.2 当前内置故障点
 
@@ -67,14 +67,14 @@
 
 FaultInjectionPoint 功能由 `MF_ENABLE_TRACEPOINT` 控制。
 
-- 在 CMake 构建里，`DEBUG` / `Debug` / `ASAN` 会打开这个宏
-- 在 Bazel 构建里，`dbg` 模式会打开这个宏
-- 如果没有定义这个宏，`FIP_START` / `FIP_END` 会退化成普通代码块，`FaultInjectionPointManager` 也基本是 no-op
+- 在 CMake 构建里，`DEBUG` / `Debug` / `ASAN` 会打开这个宏。
+- 在 Bazel 构建里，`dbg` 模式会打开这个宏。
+- 如果没有定义这个宏，`FIP_START` / `FIP_END` 会退化成普通代码块，`FaultInjectionPointManager` 也基本是 no-op。
 
 这意味着：
 
-- Release 版本默认不会真正执行故障注入
-- 要做故障注入验证，应使用 debug/asan 构建
+- Release 版本默认不会真正执行故障注入。
+- 要做故障注入验证，应使用 debug/asan 构建。
 
 ### 3.2 初始化与退出
 
@@ -99,13 +99,13 @@ FaultInjectionPoint 功能由 `MF_ENABLE_TRACEPOINT` 控制。
 
 注册分为两类：
 
-1. 无 callback 注册
+- **无 callback 注册**
 
-只适用于 `pause` / `reset` / `abort` 这类不依赖回调函数的故障点。
+    只适用于 `pause` / `reset` / `abort` 这类不依赖回调函数的故障点。
 
-2. 带 callback 注册
+- **带 callback 注册**
 
-适用于需要修改返回值、输出参数、上下文状态的故障点。
+    适用于需要修改返回值、输出参数、上下文状态的故障点。
 
 注册时框架会记录：
 
@@ -125,15 +125,15 @@ FaultInjectionPoint 功能由 `MF_ENABLE_TRACEPOINT` 控制。
 
 故障点可以通过两种方式激活：
 
-1. 进程内 API 激活
+- **进程内 API 激活**
 
-- `FaultInjectionPointManager::Activate(name, type, timeAlive, userParam)`
+    `FaultInjectionPointManager::Activate(name, type, timeAlive, userParam)`
 
-2. 文件配置激活
+- **文件配置激活**
 
-- 写 `/tmp/mf_failpoints_<pid>.conf`
-- 如果随后调用 `FaultInjectionPointRegistry::Register()`，注册器会在内置故障点全部注册完成后检查该文件；只要文件已存在，就立刻执行一次 `Reload()`
-- 运行中的后续更新通常不需要信号；只要配置文件内容或存在状态变化，下一次进入 `FaultInjectionPointManager` 路径时就会自动 `Reload()`
+    - 写 `/tmp/mf_failpoints_<pid>.conf`
+    - 如果随后调用 `FaultInjectionPointRegistry::Register()`，注册器会在内置故障点全部注册完成后检查该文件；只要文件已存在，就立刻执行一次 `Reload()`
+    - 运行中的后续更新通常不需要信号；只要配置文件内容或存在状态变化，下一次进入 `FaultInjectionPointManager` 路径时就会自动 `Reload()`
 
 ### 3.5 命中
 
@@ -209,22 +209,22 @@ MMAP abort 1
 
 1. `callback`
 
-原样传给 callback，具体含义由 callback 自己解释。
+    原样传给 callback，具体含义由 callback 自己解释。
 
 2. `pause`
 
-把 `user_param` 当作毫秒数解析。
+    把 `user_param` 当作毫秒数解析。
 
-- 合法且大于 `0`：按指定毫秒数 sleep
-- 为空、非法或等于 `0`：回退到默认值 `10000ms`
+    - 合法且大于 `0`：按指定毫秒数 sleep
+    - 为空、非法或等于 `0`：回退到默认值 `10000ms`
 
 3. `reset`
 
-当前不读取 `user_param`。
+    当前不读取 `user_param`。
 
 4. `abort`
 
-当前不读取 `user_param`。
+    当前不读取 `user_param`。
 
 ## 5. 四种动作的语义
 
@@ -329,50 +329,50 @@ EOF
 
 通常有三种验证方式：
 
-1. 直接复现目标路径
+- **直接复现目标路径**
 
-例如再次执行会触发 `ALLOC_LOCAL_MEMORY` 或 `MMAP` 的业务操作。
+    例如再次执行会触发 `ALLOC_LOCAL_MEMORY` 或 `MMAP` 的业务操作。
 
-2. 看日志
+- **看日志**
 
-框架会输出类似日志：
+    框架会输出类似日志：
 
-- `Triggered callback fault injection point 'ALLOC_LOCAL_MEMORY'`
-- `Triggered pause fault injection point 'MMAP' ms=200`
-- `Triggered reset fault injection point 'POINT'`
-- `Triggered abort fault injection point 'POINT'`
+    - `Triggered callback fault injection point 'ALLOC_LOCAL_MEMORY'`
+    - `Triggered pause fault injection point 'MMAP' ms=200`
+    - `Triggered reset fault injection point 'POINT'`
+    - `Triggered abort fault injection point 'POINT'`
 
-3. 通过行为验证
+- **通过行为验证**
 
-例如：
+    例如：
 
-- 返回值是否变成注入值
-- 操作是否明显 sleep
-- 进程是否被 `SIGTERM` 结束
-- 进程是否 `abort`
+    - 返回值是否变成注入值
+    - 操作是否明显 sleep
+    - 进程是否被 `SIGTERM` 结束
+    - 进程是否 `abort`
 
 ### 6.6 如何取消故障
 
 有三种方式：
 
-1. 命中次数耗尽
+- 命中次数耗尽
 
-`time_alive` 减到 `0` 后会自动失活。
+    `time_alive` 减到 `0` 后会自动失活。
 
-2. 删除配置后重载
+- 删除配置后重载
 
-```bash
-rm -f /tmp/mf_failpoints_12345.conf
-```
+    ```bash
+    rm -f /tmp/mf_failpoints_12345.conf
+    ```
 
-配置文件删除后，后续下一次进入 `FaultInjectionPointManager` 路径时，`Reload()` 会清空当前文件驱动的激活状态。
+    配置文件删除后，后续下一次进入 `FaultInjectionPointManager` 路径时，`Reload()` 会清空当前文件驱动的激活状态。
 
-3. 进程内主动关闭
+- 进程内主动关闭
 
-```cpp
-FaultInjectionPointManager::Deactivate("MMAP");
-FaultInjectionPointManager::DeactivateAll();
-```
+    ```cpp
+    FaultInjectionPointManager::Deactivate("MMAP");
+    FaultInjectionPointManager::DeactivateAll();
+    ```
 
 ## 7. 如何新增故障点
 

@@ -1,49 +1,54 @@
-> 注：如下接口对外封装了相同含义的Python接口，详细信息可参考`src/smem/csrc/python_wrapper/memfabric_hybrid/pymf_hybrid.cpp`。
-
-- [C接口](#c接口)
-  - [公共接口列表](#公共接口列表)
-    - [1. 服务初始化/退出](#1-服务初始化退出)
-    - [2. 创建config store对象](#2-创建config-store对象)
-    - [3. 日志设置](#3-日志设置)
-    - [4. 安全证书设置](#4-安全证书设置)
-    - [5. 错误信息获取/清理](#5-错误信息获取清理)
-  - [BM接口列表](#bm接口列表)
-    - [1. BM初始化/退出](#1-bm初始化退出)
-    - [2. 创建/销毁BM](#2-创建销毁bm)
-    - [3.加入/退出BM](#3加入退出bm)
-    - [4.拷贝/批量拷贝数据对象](#4拷贝批量拷贝数据对象)
-    - [5.查询接口](#5查询接口)
-    - [6. 用户内存register/unregister](#6-用户内存registerunregister)
-    - [7.等待异步操作完成](#7等待异步操作完成)
-  - [SHM接口列表](#shm接口列表)
-    - [1.SHM初始化/退出](#1shm初始化退出)
-    - [2. 创建/销毁SHM](#2-创建销毁shm)
-    - [3. 查询接口](#3-查询接口)
-    - [4. 设置用户context](#4-设置用户context)
-    - [5. 在SHM对象执行barrier/allgather](#5-在shm对象执行barrierallgather)
-    - [6. rank连通检查](#6-rank连通检查)
-    - [7. 注册退出回调函数](#7-注册退出回调函数)
-    - [8. PE主动退出接口](#8-pe主动退出接口)
-  - [TRANS接口列表](#trans接口列表)
-    - [1. TRANS初始化/退出](#1-trans初始化退出)
-    - [2. 创建/销毁TRANS实例](#2-创建销毁trans实例)
-    - [3. 注册/批量注册/注销内存](#3-注册批量注册注销内存)
-    - [4. 同步读/写](#4-同步读写)
-    - [5. 异步读/写提交](#5-异步读写提交)
-  - [环境变量](#环境变量)
-
 # C接口
-安装完成 `run` 包并 `source` 安装路径下的 `set_env.sh` 后，会添加 `memfabric_hybrid` 安装路径的环境变量 `MEMFABRIC_HYBRID_HOME_PATH`
 
-使用 `memfabric_hybrid` 相关接口时，需要 `include` 相关头文件(在 `${MEMFABRIC_HYBRID_HOME_PATH}/${arch}-${os}/include/smem/host`路径下)，并且在**链接时需要添加libmf_smem.so**(在 `${MEMFABRIC_HYBRID_HOME_PATH}/${arch}-${os}/lib64` 路径下) 依赖
+- [公共接口列表](#公共接口列表)
+  - [1. 服务初始化/退出](#1-服务初始化退出)
+  - [2. 创建config store对象](#2-创建config-store对象)
+  - [3. 日志设置](#3-日志设置)
+  - [4. 安全证书设置](#4-安全证书设置)
+  - [5. 错误信息获取/清理](#5-错误信息获取清理)
+- [BM接口列表](#bm接口列表)
+  - [1. BM初始化/退出](#1-bm初始化退出)
+  - [2. 创建/销毁BM](#2-创建销毁bm)
+  - [3. 加入/退出BM](#3-加入退出bm)
+  - [4. 拷贝/批量拷贝数据对象](#4-拷贝批量拷贝数据对象)
+  - [5. 查询接口](#5-查询接口)
+  - [6. 用户内存register/unregister](#6-用户内存registerunregister)
+  - [7. 等待异步操作完成](#7-等待异步操作完成)
+- [SHM接口列表](#shm接口列表)
+  - [1. SHM初始化/退出](#1-shm初始化退出)
+  - [2. 创建/销毁SHM](#2-创建销毁shm)
+  - [3. 查询接口](#3-查询接口)
+  - [4. 设置用户context](#4-设置用户context)
+  - [5. 在SHM对象执行barrier/allgather](#5-在shm对象执行barrierallgather)
+  - [6. rank连通检查](#6-rank连通检查)
+  - [7. 注册退出回调函数](#7-注册退出回调函数)
+  - [8. PE主动退出接口](#8-pe主动退出接口)
+- [TRANS接口列表](#trans接口列表)
+  - [1. TRANS初始化/退出](#1-trans初始化退出)
+  - [2. 创建/销毁TRANS实例](#2-创建销毁trans实例)
+  - [3. 注册/批量注册/注销内存](#3-注册批量注册注销内存)
+  - [4. 同步读/写](#4-同步读写)
+  - [5. 异步读/写提交](#5-异步读写提交)
+- [ACC OFFLOAD接口列表](#acc-offload接口列表)
+- [环境变量](#环境变量)
 
-可以通过 `MEMFABRIC_HYBRID_HOME_PATH` 环境变量指定头文件和 `lib` 库依赖路径，从而完成代码构建
+安装完成 `run` 包并 `source` 安装路径下的 `set_env.sh` 后，会添加 `memfabric_hybrid` 安装路径的环境变量 `MEMFABRIC_HYBRID_HOME_PATH`。
+
+使用 `memfabric_hybrid` 相关接口时，需要 `include` 相关头文件（在 `${MEMFABRIC_HYBRID_HOME_PATH}/${arch}-${os}/include/smem/host`路径下），并且在**链接时需要添加libmf_smem.so**（在 `${MEMFABRIC_HYBRID_HOME_PATH}/${arch}-${os}/lib64` 路径下）依赖。
+
+可以通过 `MEMFABRIC_HYBRID_HOME_PATH` 环境变量指定头文件和 `lib` 库依赖路径，从而完成代码构建。
+
+> [!CAUTION] 注意
+> 如下接口对外封装了相同含义的Python接口，详细信息可参考`src/smem/csrc/python_wrapper/memfabric_hybrid/pymf_hybrid.cpp`。
 
 ## 公共接口列表
 
 ### 1. 服务初始化/退出
+
 #### smem_init
-初始化运行环境
+
+初始化运行环境。
+
 ```c
 int32_t smem_init(uint32_t flags);
 ```
@@ -53,14 +58,18 @@ int32_t smem_init(uint32_t flags);
 |flags |预留参数 |
 |返回值|成功返回0，其他为错误码 |
 
- #### smem_uninit
-退出运行环境
+#### smem_uninit
+
+退出运行环境。
+
 ```c
 void smem_uninit();
 ```
 
 ### 2. 创建config store对象
+
 #### smem_create_config_store
+
 ```c
 int32_t smem_create_config_store(const char *storeUrl, uint64_t flags);
 ```
@@ -71,10 +80,12 @@ int32_t smem_create_config_store(const char *storeUrl, uint64_t flags);
 | flags    | 创建标记位，可选标记 SMEM_STORE_SKIP_RECOVER                                                 |
 | 返回值      | 成功返回0，其他为错误码                                                                         |
 
-
 ### 3. 日志设置
+
 #### smem_set_extern_logger
-设置自定义日志函数
+
+设置自定义日志函数。
+
 ```c
 int32_t smem_set_extern_logger(void (*func)(int level, const char *msg));
 ```
@@ -87,7 +98,9 @@ int32_t smem_set_extern_logger(void (*func)(int level, const char *msg));
 |返回值|成功返回0，其他为错误码|
 
 #### smem_set_log_level
-设置日志打印级别
+
+设置日志打印级别。
+
 ```c
 int32_t smem_set_log_level(int level);
 ```
@@ -98,8 +111,11 @@ int32_t smem_set_log_level(int level);
 |返回值|成功返回0，其他为错误码|
 
 ### 4. 安全证书设置
+
 #### smem_set_conf_store_tls
-安装证书设置
+
+安装证书设置。
+
 ```c
 int32_t smem_set_conf_store_tls(bool enable, const char *tls_info, const uint32_t tls_info_len);
 ```
@@ -112,7 +128,9 @@ int32_t smem_set_conf_store_tls(bool enable, const char *tls_info, const uint32_
 |返回值|成功返回0，其他为错误码|
 
 #### smem_set_config_store_tls_key
-设置私钥、口令和解密的函数，在开启Tls时，需要调用该接口。
+
+设置私钥、口令和解密的函数，在开启TLS时，需要调用该接口。
+
 ```c
 int32_t smem_set_config_store_tls_key(
     const char *tls_pk,
@@ -122,6 +140,7 @@ int32_t smem_set_config_store_tls_key(
     const smem_decrypt_handler h
 );
 ```
+
 |参数/返回值| 含义     |
 |-|--------|
 |tls_pk| 密钥内容   |
@@ -130,9 +149,11 @@ int32_t smem_set_config_store_tls_key(
 |tls_pk_pw_len| 口令内容长度 |
 |h| 密钥解密函数 |
 |返回值| 成功返回0，其他为错误码 |
+
 ```c
 typedef int (*smem_decrypt_handler)(const char *cipherText, size_t cipherTextLen, char *plainText, size_t &plainTextLen);
 ```
+
 |参数/返回值|含义|
 |-|-|
 |cipherText|密文（加密的用来加密私钥的密码）|
@@ -142,8 +163,11 @@ typedef int (*smem_decrypt_handler)(const char *cipherText, size_t cipherTextLen
 |返回值|错误信息|
 
 ### 5. 错误信息获取/清理
+
 #### smem_get_last_err_msg
-获取最后一条错误信息
+
+获取最后一条错误信息。
+
 ```c
 const char *smem_get_last_err_msg();
 ```
@@ -153,7 +177,9 @@ const char *smem_get_last_err_msg();
 |返回值|错误信息|
 
 #### smem_get_and_clear_last_err_msg
-获取最后一条错误信息并清空所有错误信息
+
+获取最后一条错误信息并清空所有错误信息。
+
 ```c
 const char *smem_get_and_clear_last_err_msg();
 ```
@@ -200,8 +226,10 @@ Store Backend 错误码（从 `smem_def.h`）：
 ## BM接口列表
 
 ### 1. BM初始化/退出
+
 #### smem_bm_config_init
-BM配置初始化
+
+BM配置初始化。
 
 ```c
 int32_t smem_bm_config_init(smem_bm_config_t *config);
@@ -213,7 +241,8 @@ int32_t smem_bm_config_init(smem_bm_config_t *config);
 |返回值|成功返回0，其他为错误码|
 
 #### smem_bm_init
-初始化BM
+
+初始化BM。
 
 ```c
 int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t deviceId, const smem_bm_config_t *config);
@@ -228,6 +257,7 @@ int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t deviceId
 | 返回值       | 成功返回0，其他为错误码                                      |
 
 **smem_bm_config_t 结构体参数说明**：
+
 | 参数                | 含义                                                                 |
 |---------------------|--------------------------------------------------------------------|
 | initTimeout         | smem_bm_init 函数超时时间，默认120秒（最小1秒，最大SMEM_BM_TIMEOUT_MAX） |
@@ -245,7 +275,8 @@ int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t deviceId
 | storeTlsConfig      | store的TLS配置 |
 
 #### smem_bm_uninit
-BM退出
+
+BM退出。
 
 ```c
 void smem_bm_uninit(uint32_t flags);
@@ -256,7 +287,8 @@ void smem_bm_uninit(uint32_t flags);
 |flags|预留参数|
 
 #### smem_bm_update_store_url
-更新config store URL，用于MetaService重启变更IP地址时，在smem_bm_init之后动态更新store地址
+
+更新config store URL，用于MetaService重启变更IP地址时，在smem_bm_init之后动态更新store地址。
 
 ```c
 int32_t smem_bm_update_store_url(const char *storeURL);
@@ -268,8 +300,11 @@ int32_t smem_bm_update_store_url(const char *storeURL);
 |返回值|成功返回0，其他为错误码|
 
 ### 2. 创建/销毁BM
+
 #### smem_bm_create
-创建BM
+
+创建BM。
+
  ```c
 smem_bm_t smem_bm_create(uint32_t id, uint32_t memberSize,
     smem_bm_data_op_type_t dataOpType, uint64_t localDRAMSize,
@@ -287,7 +322,9 @@ smem_bm_t smem_bm_create(uint32_t id, uint32_t memberSize,
 |返回值|成功返回BM handle，失败返回空指针|
 
 #### smem_bm_create2
-创建BM
+
+创建BM。
+
  ```c
 smem_bm_t smem_bm_create2(uint32_t id, const smem_bm_create_option_t *option);
  ```
@@ -295,10 +332,11 @@ smem_bm_t smem_bm_create2(uint32_t id, const smem_bm_create_option_t *option);
 | 参数/返回值       | 含义                                                              |
 |--------------|-----------------------------------------------------------------|
 | id           | BM id，用户自定义，BM之间取不同值                                            |
-| option       | 创建BM的配置参数 (注：如果开启`device_urma`协议，必须打开`enable_56bits_gva`为`True`)                                                      |
+| option       | 创建BM的配置参数 (注：如果开启`device_urma`协议，必须打开`enable_56bits_gva`为`True`) |
 | 返回值          | 成功返回BM handle，失败返回空指针                                           |
 
 **smem_bm_create_option_t 结构体参数说明**：
+
 | 参数                | 含义                                                                 |
 |---------------------|--------------------------------------------------------------------|
 | maxDramSize         | 所有rank贡献给BM对象的最大DRAM内存大小                             |
@@ -313,7 +351,9 @@ smem_bm_t smem_bm_create2(uint32_t id, const smem_bm_create_option_t *option);
 | dramShmFd           | DRAM共享内存文件描述符                                              |
 
 #### smem_bm_destroy
-销毁BM
+
+销毁BM。
+
 ```c
 void smem_bm_destroy(smem_bm_t handle);
 ```
@@ -322,9 +362,11 @@ void smem_bm_destroy(smem_bm_t handle);
 |-|-|
 |handle|待销毁BM handle|
 
-### 3.加入/退出BM
+### 3. 加入/退出BM
+
 #### smem_bm_join
-加入BM
+
+加入BM。
 
 ```c
 int32_t smem_bm_join(smem_bm_t handle, uint32_t flags);
@@ -337,19 +379,23 @@ int32_t smem_bm_join(smem_bm_t handle, uint32_t flags);
 |返回值|成功返回0，否则返回错误码|
 
 #### smem_bm_leave
-退出BM
+
+退出BM。
+
 ```c
 int32_t smem_bm_leave(smem_bm_t handle, uint32_t flags);
 ```
+
 |参数/返回值| 含义                                                    |
 |-|-------------------------------------------------------|
 |handle| 待退出BM handle                                          |
 |flags| 预留参数 |
 |返回值| 成功返回0，否则返回错误码                                         |
 
-
 #### smem_bm_extend_local_mem
-在本地 `rank` 上动态扩增內存。待增加内存必须由 `smem_bm_create()` 创建
+
+在本地 `rank` 上动态扩增內存。待增加内存必须由 `smem_bm_create()` 创建。
+
 ```c
 int32_t smem_bm_extend_local_mem(smem_bm_t handle, smem_bm_mem_type_t memType, uint64_t size);
 ```
@@ -361,11 +407,12 @@ int32_t smem_bm_extend_local_mem(smem_bm_t handle, smem_bm_mem_type_t memType, u
 | size | 当前rank扩展内存的大小                 |
 | 返回值             | 成功返回0，否则返回错误码                 |
 
+### 4. 拷贝/批量拷贝数据对象
 
-
-### 4.拷贝/批量拷贝数据对象
 #### smem_bm_copy
-拷贝数据对象
+
+拷贝数据对象。
+
 ```c
 int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params,
     smem_bm_copy_type_t t, uint32_t flags);
@@ -376,11 +423,13 @@ int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params,
 |handle| BM handle                                                              |
 |params| 拷贝数据的相关参数                                                              |
 |t| 数据拷贝类型，L2G/G2L/G2H/H2G，L=local HBM memory，G=global space，H=Host memory |
-|flags| ASYNC_COPY_FLAG:异步执行;COPY_EXTEND_FLAG:A3超节点内使用MTE执行拷贝                                       |
+|flags| ASYNC_COPY_FLAG:异步执行;COPY_EXTEND_FLAG:A3超节点内使用MTE执行拷贝            |
 |返回值| 成功返回0，失败返回错误码                                                          |
 
 #### smem_bm_copy_batch
-批量拷贝数据对象
+
+批量拷贝数据对象。
+
 ```c
 int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params_t *params, smem_bm_copy_type_t t, uint32_t flags);
 ```
@@ -394,7 +443,9 @@ int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params_t *params, s
 |返回值|成功返回0，失败返回错误码|
 
 #### smem_bm_copy_batch_partial_succeed
-批量拷贝数据对象，批量中部分失败时，可以通过出参判断具体哪个成功哪个失败
+
+批量拷贝数据对象，批量中部分失败时，可以通过出参判断具体哪个成功哪个失败。
+
 ```c
 int32_t smem_bm_copy_batch_partial_succeed(
         smem_bm_t handle,
@@ -413,9 +464,12 @@ int32_t smem_bm_copy_batch_partial_succeed(
 |result|出参：当部分失败时，此出参会指定具体哪个成功，哪个失败|
 |返回值|成功返回0，部分失败返回SMEM_PARTIAL_FAILED(-2012)，其它失败返回对应错误码|
 
-### 5.查询接口
+### 5. 查询接口
+
 #### smem_bm_get_rank_id
-获取当前rank的id
+
+获取当前rank的id。
+
 ```c
 uint32_t smem_bm_get_rank_id(void);
 ```
@@ -425,7 +479,9 @@ uint32_t smem_bm_get_rank_id(void);
 |返回值|成功返回当前rank id，失败返回u32最大值|
 
 #### smem_bm_get_local_mem_size_by_mem_type
-获取创建BM本地贡献的空间大小
+
+获取创建BM本地贡献的空间大小。
+
 ```c
 uint64_t smem_bm_get_local_mem_size_by_mem_type(smem_bm_t handle, smem_bm_mem_type_t memType);
 ```
@@ -437,7 +493,9 @@ uint64_t smem_bm_get_local_mem_size_by_mem_type(smem_bm_t handle, smem_bm_mem_ty
 |返回值|本地贡献空间大小，单位byte|
 
 #### smem_bm_ptr_by_mem_type
-获取rank id对应在gva上的地址位置
+
+获取rank id对应在gva上的地址位置。
+
 ```c
 void *smem_bm_ptr_by_mem_type(smem_bm_t handle, smem_bm_mem_type_t memType, uint16_t peerRankId);
 ```
@@ -450,7 +508,9 @@ void *smem_bm_ptr_by_mem_type(smem_bm_t handle, smem_bm_mem_type_t memType, uint
 |返回值|rank地址对应空间位置指针|
 
 #### smem_bm_get_rank_id_by_gva
-根据全局地址获取rankId
+
+根据全局地址获取rankId。
+
 ```c
 uint32_t smem_bm_get_rank_id_by_gva(smem_bm_t handle, void *gva);
 ```
@@ -462,8 +522,11 @@ uint32_t smem_bm_get_rank_id_by_gva(smem_bm_t handle, void *gva);
 |返回值|rank id if successful, UINT32_MAX is returned if failed|
 
 ### 6. 用户内存register/unregister
+
 #### smem_bm_register_user_mem
-注册一段本地的用户内存
+
+注册一段本地的用户内存。
+
 ```c
 int32_t smem_bm_register_user_mem(smem_bm_t handle, uint64_t addr, uint64_t size);
 ```
@@ -475,11 +538,13 @@ int32_t smem_bm_register_user_mem(smem_bm_t handle, uint64_t addr, uint64_t size
 |size|注册地址的大小|
 |返回值|成功返回0，失败返回错误码|
 
-**注意：**
-device_rdma场景下注册的DRAM buffer需要保证首地址4K对齐，否则无法注册成功
+> [!CAUTION] 注意
+> device_rdma场景下注册的DRAM buffer需要保证首地址4K对齐，否则无法注册成功。
 
 #### smem_bm_unregister_user_mem
-对一段注册过的本地用户内存执行反注册
+
+对一段注册过的本地用户内存执行反注册。
+
 ```c
 int32_t smem_bm_unregister_user_mem(smem_bm_t handle, uint64_t addr);
 ```
@@ -489,9 +554,13 @@ int32_t smem_bm_unregister_user_mem(smem_bm_t handle, uint64_t addr);
 |handle|BM handle|
 |addr|注销地址的起始地址指针|
 |返回值|成功返回0，失败返回错误码|
-### 7.等待异步操作完成
+
+### 7. 等待异步操作完成
+
 #### smem_bm_wait
-等待异步操作完成
+
+等待异步操作完成。
+
 ```c
 int32_t smem_bm_wait(smem_bm_t handle);
 ```
@@ -503,9 +572,12 @@ int32_t smem_bm_wait(smem_bm_t handle);
 
 ## SHM接口列表
 
-### 1.SHM初始化/退出
+### 1. SHM初始化/退出
+
 #### smem_shm_config_init
-SHM配置初始化
+
+SHM配置初始化。
+
 ```c
 int32_t smem_shm_config_init(smem_shm_config_t *config);
 ```
@@ -516,7 +588,9 @@ int32_t smem_shm_config_init(smem_shm_config_t *config);
 |返回值|成功返回0，失败返回错误码|
 
 #### smem_shm_init
-SHM初始化
+
+SHM初始化。
+
 ```c
 int32_t smem_shm_init(const char *configStoreIpPort, uint32_t worldSize, uint32_t rankId,
     uint16_t deviceId, smem_shm_config_t *config);
@@ -532,7 +606,9 @@ int32_t smem_shm_init(const char *configStoreIpPort, uint32_t worldSize, uint32_
 |返回值|成功返回0，失败返回错误码|
 
 #### smem_shm_uninit
-SHM退出
+
+SHM退出。
+
 ```c
 void smem_shm_uninit(uint32_t flags);
 ```
@@ -542,8 +618,11 @@ void smem_shm_uninit(uint32_t flags);
 |flags|预留参数|
 
 ### 2. 创建/销毁SHM
+
 #### smem_shm_create
-创建SHM
+
+创建SHM。
+
 ```c
 smem_shm_t smem_shm_create(uint32_t id, uint32_t rankSize, uint32_t rankId, uint64_t localSize,
     smem_shm_data_op_type dataOpType, uint32_t flags, void **gva);
@@ -561,7 +640,9 @@ smem_shm_t smem_shm_create(uint32_t id, uint32_t rankSize, uint32_t rankId, uint
 |返回值|SHM对象handle|
 
 #### smem_shm_destroy
-销毁SHM
+
+销毁SHM。
+
 ```c
 int32_t smem_shm_destroy(smem_shm_t handle, uint32_t flags);
 ```
@@ -573,8 +654,11 @@ int32_t smem_shm_destroy(smem_shm_t handle, uint32_t flags);
 |返回值|成功返回0，失败返回错误码|
 
 ### 3. 查询接口
+
 #### smem_shm_query_support_data_operation
-查询支持的数据操作
+
+查询支持的数据操作。
+
 ```c
 uint32_t smem_shm_query_support_data_operation(void);
 ```
@@ -584,7 +668,9 @@ uint32_t smem_shm_query_support_data_operation(void);
 |返回值|参考smem_shm_data_op_type类型定义|
 
 #### smem_shm_get_global_rank
-获取rank id
+
+获取rank id。
+
 ```c
 uint32_t smem_shm_get_global_rank(smem_shm_t handle);
 ```
@@ -595,7 +681,9 @@ uint32_t smem_shm_get_global_rank(smem_shm_t handle);
 |返回值|在SHM里的rank id|
 
 #### smem_shm_get_global_rank_size
-获取rank数量
+
+获取rank数量。
+
 ```c
 uint32_t smem_shm_get_global_rank_size(smem_shm_t handle);
 ```
@@ -606,8 +694,11 @@ uint32_t smem_shm_get_global_rank_size(smem_shm_t handle);
 |返回值|在SHM里的rank个数|
 
 ### 4. 设置用户context
+
 #### smem_shm_set_extra_context
-设置用户context
+
+设置用户context。
+
 ```c
 int32_t smem_shm_set_extra_context(smem_shm_t handle, const void *context, uint32_t size);
 ```
@@ -619,9 +710,12 @@ int32_t smem_shm_set_extra_context(smem_shm_t handle, const void *context, uint3
 |size|用户context大小，最大64K，单位字节|
 |返回值|成功返回0，失败返回错误码|
 
-### 5.  在SHM对象执行barrier/allgather
+### 5. 在SHM对象执行barrier/allgather
+
 #### smem_shm_control_barrier
-在SHM对象执行barrier
+
+在SHM对象执行barrier。
+
 ```c
 int32_t smem_shm_control_barrier(smem_shm_t handle);
 ```
@@ -632,7 +726,9 @@ int32_t smem_shm_control_barrier(smem_shm_t handle);
 |返回值|成功返回0，失败返回错误码|
 
 #### smem_shm_control_allgather
-在SHM对象执行allgather
+
+在SHM对象执行allgather。
+
 ```c
 int32_t smem_shm_control_allgather(smem_shm_t handle, const char *sendBuf, uint32_t sendSize,
     char *recvBuf, uint32_t recvSize);
@@ -648,8 +744,11 @@ int32_t smem_shm_control_allgather(smem_shm_t handle, const char *sendBuf, uint3
 |返回值|成功返回0，失败返回错误码|
 
 ### 6. rank连通检查
+
 #### smem_shm_topology_can_reach
-rank连通检查
+
+rank连通检查。
+
 ```c
 int32_t smem_shm_topology_can_reach(smem_shm_t handle, uint32_t remoteRank, uint32_t *reachInfo);
 ```
@@ -662,9 +761,12 @@ int32_t smem_shm_topology_can_reach(smem_shm_t handle, uint32_t remoteRank, uint
 |返回值|成功返回0，失败返回错误码|
 
 ### 7. 注册退出回调函数
+
 #### smem_shm_register_exit
-注册退出回调函数
-```
+
+注册退出回调函数。
+
+```c
 int32_t smem_shm_register_exit(smem_shm_t handle, void (*exit)(int));
 ```
 
@@ -675,9 +777,12 @@ int32_t smem_shm_register_exit(smem_shm_t handle, void (*exit)(int));
 |返回值|成功返回0，失败返回错误码|
 
 ### 8. PE主动退出接口
+
 #### smem_shm_global_exit
-PE主动退出接口
-```
+
+PE主动退出接口。
+
+```c
 void smem_shm_global_exit(smem_shm_t handle, int status);
 ```
 
@@ -686,11 +791,17 @@ void smem_shm_global_exit(smem_shm_t handle, int status);
 |handle|SHM对象handle|
 |status|退出状态|
 
-> 注：如下接口对外封装了相同含义的Python接口，详细信息可参考`src/mooncake_adapter/csrc/transfer/pytransfer.cpp`。
+> [!CAUTION] 注意
+> 如下接口对外封装了相同含义的Python接口，详细信息可参考`src/smem/csrc/python_wrapper/mk_transfer_adapter/csrc/pytransfer.cpp`。
+
 ## TRANS接口列表
+
 ### 1. TRANS初始化/退出
+
 #### smem_trans_config_init
-TRANS配置初始化
+
+TRANS配置初始化。
+
 ```c
 int32_t smem_trans_config_init(smem_trans_config_t *config);
 ```
@@ -701,7 +812,9 @@ int32_t smem_trans_config_init(smem_trans_config_t *config);
 |返回值|成功返回0，其他为错误码|
 
 #### smem_trans_init
-TRANS初始化
+
+TRANS初始化。
+
 ```c
 int32_t smem_trans_init(const smem_trans_config_t *config);
 ```
@@ -712,7 +825,8 @@ int32_t smem_trans_init(const smem_trans_config_t *config);
 |返回值|成功返回0，失败返回错误码|
 
 #### smem_trans_uninit
-TRANS退出
+
+TRANS退出。
 
 ```c
 void smem_trans_uninit(uint32_t flags);
@@ -723,8 +837,10 @@ void smem_trans_uninit(uint32_t flags);
 |flags|预留参数|
 
 ### 2. 创建/销毁TRANS实例
+
 #### smem_trans_create
-创建TRANS实例
+
+创建TRANS实例。
 
 ```c
 smem_trans_t smem_trans_create(const char *storeUrl, const char *uniqueId, const smem_trans_config_t *config);
@@ -738,7 +854,8 @@ smem_trans_t smem_trans_create(const char *storeUrl, const char *uniqueId, const
 |返回值|成功返回 TRANS 实例句柄，失败返回 NULL|
 
 #### smem_trans_destroy
-销毁TRANS实例
+
+销毁TRANS实例。
 
 ```c
 void smem_trans_destroy(smem_trans_t handle, uint32_t flags);
@@ -750,8 +867,10 @@ void smem_trans_destroy(smem_trans_t handle, uint32_t flags);
 |flags|预留参数|
 
 ### 3. 注册/批量注册/注销内存
+
 #### smem_trans_register_mem
-注册内存
+
+注册内存。
 
 ```c
 int32_t smem_trans_register_mem(smem_trans_t handle, void *address, size_t capacity, uint32_t flags);
@@ -766,7 +885,8 @@ int32_t smem_trans_register_mem(smem_trans_t handle, void *address, size_t capac
 |返回值|成功返回0，其他为错误码|
 
 #### smem_trans_batch_register_mem
-批量注册内存
+
+批量注册内存。
 
 ```c
 int32_t smem_trans_batch_register_mem(smem_trans_t handle, void *addresses[], size_t capacities[], uint32_t count,
@@ -783,7 +903,8 @@ int32_t smem_trans_batch_register_mem(smem_trans_t handle, void *addresses[], si
 |返回值|成功返回0，其他为错误码|
 
 #### smem_trans_deregister_mem
-注销内存
+
+注销内存。
 
 ```c
 int32_t smem_trans_deregister_mem(smem_trans_t handle, void *address);
@@ -796,8 +917,10 @@ int32_t smem_trans_deregister_mem(smem_trans_t handle, void *address);
 |返回值|成功返回0，其他为错误码|
 
 ### 4. 同步读/写
+
 #### smem_trans_read
-同步读接口
+
+同步读接口。
 
 ```c
 int32_t smem_trans_read(smem_trans_t handle, void *localAddr, const char *remoteUniqueId,
@@ -815,6 +938,7 @@ int32_t smem_trans_read(smem_trans_t handle, void *localAddr, const char *remote
 |返回值|成功返回0，其他为错误码|
 
 #### smem_trans_batch_read
+
 批量同步读接口
 
 ```c
@@ -834,7 +958,8 @@ int32_t smem_trans_batch_read(smem_trans_t handle, void *localAddrs[], const cha
 |返回值|成功返回0，其他为错误码|
 
 #### smem_trans_write
-同步写接口
+
+同步写接口。
 
 ```c
 int32_t smem_trans_write(smem_trans_t handle, const void *localAddr, const char *remoteUniqueId,
@@ -852,7 +977,8 @@ int32_t smem_trans_write(smem_trans_t handle, const void *localAddr, const char 
 |返回值|成功返回0，其他为错误码|
 
 #### smem_trans_batch_write
-批量同步写接口
+
+批量同步写接口。
 
 ```c
 int32_t smem_trans_batch_write(smem_trans_t handle, const void *localAddrs[], const char *remoteUniqueId,
@@ -871,8 +997,10 @@ int32_t smem_trans_batch_write(smem_trans_t handle, const void *localAddrs[], co
 |返回值|成功返回0，其他为错误码|
 
 ### 5. 异步读/写提交
+
 #### smem_trans_read_submit
-异步读提交接口
+
+异步读提交接口。
 
 ```c
 int32_t smem_trans_read_submit(smem_trans_t handle, void *localAddr, const char *remoteUniqueId,
@@ -891,7 +1019,8 @@ int32_t smem_trans_read_submit(smem_trans_t handle, void *localAddr, const char 
 | 返回值            | 成功返回0，其他为错误码       |
 
 #### smem_trans_write_submit
-异步写提交接口
+
+异步写提交接口。
 
 ```c
 int32_t smem_trans_write_submit(smem_trans_t handle, const void *localAddr, const char *remoteUniqueId,
@@ -908,12 +1037,17 @@ int32_t smem_trans_write_submit(smem_trans_t handle, const void *localAddr, cons
 | stream       | 需要将任务提交到的aclrtStream |
 | 返回值          | 成功返回0，其他为错误码         |
 
-> 注：如下接口对外封装了相同含义的Python接口，详细信息可参考`src/acc_offload/csrc/python_wrapper/pymf_acc_offload.cpp`。
+> [!CAUTION] 注意
+> 如下接口对外封装了相同含义的Python接口，详细信息可参考`src/acc_offload/csrc/python_wrapper/pymf_acc_offload.cpp`。
+
 ## ACC OFFLOAD接口列表
 
 ### 1. 常用类型
+
 #### offload_scene_t
-offload内存池场景枚举
+
+offload内存池场景枚举.
+
 ```c
 typedef enum {
     OFFLOAD_SCENE_LOCAL = 0,    /* single-rank local DRAM memory pool */
@@ -927,7 +1061,9 @@ typedef enum {
 |OFFLOAD_SCENE_SHARED|多卡共享DRAM内存池，reserveSize需保证相同，allocSize支持按需传入|
 
 #### offload_config_t
-offload初始化配置结构体
+
+offload初始化配置结构体。
+
 ```c
 typedef struct {
     uint32_t deviceId;
@@ -949,8 +1085,11 @@ typedef struct {
 |scene|内存池场景，取值参考offload_scene_t，默认OFFLOAD_SCENE_LOCAL|
 
 ### 2. 初始化/退出
+
 #### offload_init
-初始化offload模块，创建hybm大内存实体并加载sparse copy算子库
+
+初始化offload模块，创建hybm大内存实体并加载sparse copy算子库。
+
 ```c
 int32_t offload_init(const offload_config_t &config);
 ```
@@ -961,14 +1100,19 @@ int32_t offload_init(const offload_config_t &config);
 |返回值|成功返回0，其他为错误码|
 
 #### offload_uninit
-退出offload模块，释放hybm大内存实体并卸载算子库
+
+退出offload模块，释放hybm大内存实体并卸载算子库。
+
 ```c
 void offload_uninit();
 ```
 
 ### 3. 内存分配/释放
+
 #### offload_malloc
-从offload内存池中分配host内存，返回地址按16字节对齐
+
+从offload内存池中分配host内存，返回地址按16字节对齐。
+
 ```c
 uint64_t offload_malloc(uint64_t size, uint64_t flags);
 ```
@@ -980,7 +1124,9 @@ uint64_t offload_malloc(uint64_t size, uint64_t flags);
 |返回值|成功返回非0地址，失败返回0|
 
 #### offload_free
-释放由offload_malloc分配的host内存
+
+释放由offload_malloc分配的host内存。
+
 ```c
 void offload_free(uint64_t ptr, uint64_t flags);
 ```
@@ -991,8 +1137,11 @@ void offload_free(uint64_t ptr, uint64_t flags);
 |flags|预留参数|
 
 ### 4. 稀疏拷贝
+
 #### offload_sparse_copy
-批量稀疏拷贝，在device上异步执行多个不连续地址间的数据拷贝
+
+批量稀疏拷贝，在device上异步执行多个不连续地址间的数据拷贝。
+
 ```c
 int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t sizePtr, uint16_t deviceId);
 ```
@@ -1007,6 +1156,7 @@ int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, u
 |返回值|成功返回0，其他为错误码|
 
 ## 环境变量
+
 |环境变量|含义|
 |-|-|
 |LD_LIBRARY_PATH|动态链接库搜索路径|

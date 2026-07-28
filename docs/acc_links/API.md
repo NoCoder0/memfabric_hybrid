@@ -1,9 +1,13 @@
-### 1. 日志接口
+# 接口参考
+
+## 1. 日志接口
+
 **对应文件：** acc_log.h
 
 **功能：** 设置自定义日志函数以及设置日志打印级别。
 
 1. 设置自定义日志函数
+
     ```cpp
     int32_t AccSetExternalLog(void (*func)(int level, const char* msg));
     ```
@@ -15,7 +19,8 @@
     |msg|日志内容|
     |返回值|成功返回0，其他为错误码|
 
-1. 设置日志打印级别
+2. 设置日志打印级别
+
     ```cpp
     int32_t AccSetLogLevel(int level);
     ```
@@ -25,13 +30,16 @@
     |level|日志级别，0-debug 1-info 2-warn 3-error|
     |返回值|成功返回0，其他为错误码|
 
-### 2. 服务端接口
+## 2. 服务端接口
+
 **对应文件：** acc_tcp_server.h
 
-#### 类：AccTcpServer
+### AccTcpServer 类
+
 **功能：** TCP服务端操作。
 
 1. 创建服务端
+
     ```cpp
     static AccTcpServerPtr Create();
     ```
@@ -40,7 +48,8 @@
     |-|-|
     |返回值|无|
 
-1. 以默认TLS选项启动服务端（内部调用 Start(opt, AccTlsOption())）
+2. 以默认TLS选项启动服务端（内部调用 Start(opt, AccTlsOption())）
+
     ```cpp
     int32_t Start(const AccTcpServerOptions &opt);
     ```
@@ -50,7 +59,8 @@
     |opt|服务端启动配置项|
     |返回值|成功返回0，失败返回错误码|
 
-1. 以自定义TLS选项启动服务端
+3. 以自定义TLS选项启动服务端
+
     ```cpp
     int32_t Start(const AccTcpServerOptions &opt, const AccTlsOption &tlsOption);
     ```
@@ -61,7 +71,8 @@
     |tlsOption|TLS配置项|
     |返回值|成功返回0，失败返回错误码|
 
-1. 停止服务端
+4. 停止服务端
+
     ```cpp
     void Stop();
     ```
@@ -70,7 +81,8 @@
     |-|-|
     |返回值|无|
 
-1. 以多进程的方式停止服务端
+5. 以多进程的方式停止服务端
+
     ```cpp
     void StopAfterFork();
     ```
@@ -79,7 +91,8 @@
     |-|-|
     |返回值|无|
 
-1. 连接其余服务端
+6. 连接其余服务端
+
     ```cpp
     int32_t ConnectToPeerServer(const std::string &peerIp, uint16_t port, const AccConnReq &req, uint32_t maxRetryTimes, AccTcpLinkComplexPtr &newLink);
     ```
@@ -93,7 +106,8 @@
     |newLink|出参, 连接成功后的链接|
     |返回值|成功返回0，失败返回错误码|
 
-1. 以最大重试30次连接其余服务端
+7. 以最大重试30次连接其余服务端
+
     ```cpp
     int32_t ConnectToPeerServer(const std::string &peerIp, uint16_t port, const AccConnReq &req, AccTcpLinkComplexPtr &newLink);
     ```
@@ -106,7 +120,8 @@
     |newLink|出参, 连接成功后的链接|
     |返回值|成功返回0，失败返回错误码|
 
-1. 注册处理新请求的事件函数
+8. 注册处理新请求的事件函数
+
     ```cpp
     void RegisterNewRequestHandler(int16_t msgType, const AccNewReqHandler &h);
     ```
@@ -117,7 +132,8 @@
     |h|处理新请求的函数|
     |返回值|无|
 
-1. 注册处理请求发送成功的事件函数
+9. 注册处理请求发送成功的事件函数
+
     ```cpp
     void RegisterRequestSentHandler(int16_t msgType, const AccReqSentHandler &h);
     ```
@@ -128,7 +144,8 @@
     |h|处理请求发送成功的函数|
     |返回值|无|
 
-1. 注册处理断链的事件函数
+10. 注册处理断链的事件函数
+
     ```cpp
     void RegisterLinkBrokenHandler(const AccLinkBrokenHandler &h);
     ```
@@ -138,7 +155,8 @@
     |h|处理断链的函数|
     |返回值|无|
 
-1. 注册处理新链接的事件函数
+11. 注册处理新链接的事件函数
+
     ```cpp
     void RegisterNewLinkHandler(const AccNewLinkHandler &h);
     ```
@@ -148,7 +166,8 @@
     |h|处理新链接的函数|
     |返回值|无|
 
-1. 注册密码解密的回调函数
+12. 注册密码解密的回调函数
+
     ```cpp
     void RegisterDecryptHandler(const AccDecryptHandler &h);
     ```
@@ -158,7 +177,8 @@
     |h|密码解密回调函数|
     |返回值|无|
 
-1. 加载安全认证功能所需的动态库
+13. 加载安全认证功能所需的动态库
+
     ```cpp
     int32_t LoadDynamicLib(const std::string &dynLibPath);
     ```
@@ -168,13 +188,16 @@
     |dynLibPath|动态库目录路径|
     |返回值|成功返回0，失败返回错误码|
 
-### 3. Link接口
+## 3. Link接口
+
 **对应文件：** acc_tcp_link.h
 
-#### 类：AccTcpLink
+### AccTcpLink 类
+
 **功能：** 客户端侧生成，提供阻塞式的数据操作。
 
 1. 设置上下文
+
     ```cpp
     void UpCtx(uint64_t context);
     ```
@@ -184,7 +207,8 @@
     |context|上下文|
     |返回值|无|
 
-1. 获取上下文
+2. 获取上下文
+
     ```cpp
     uint64_t UpCtx() const;
     ```
@@ -193,7 +217,8 @@
     |-|-|
     |返回值|上下文|
 
-1. 获取这个link的简要描述
+3. 获取这个link的简要描述
+
     ```cpp
     std::string ShortName() const;
     ```
@@ -202,7 +227,8 @@
     |-|-|
     |返回值|简要描述|
 
-1. 获取link远端的IP端口
+4. 获取link远端的IP端口
+
     ```cpp
     const std::string &GetLinkRemoteIpPort() const;
     ```
@@ -211,7 +237,8 @@
     |-|-|
     |返回值|远端的IP端口|
 
-1. 获取这个link的id
+5. 获取这个link的id
+
     ```cpp
     uint32_t Id() const;
     ```
@@ -220,7 +247,8 @@
     |-|-|
     |返回值|id|
 
-1. 获取这个link的是否已建立连接
+6. 获取这个link的是否已建立连接
+
     ```cpp
     bool Established() const;
     ```
@@ -229,7 +257,8 @@
     |-|-|
     |返回值|已建立连接返回true, 否则返回false|
 
-1. 将状态设置为未建立连接状态
+7. 将状态设置为未建立连接状态
+
     ```cpp
     bool Break();
     ```
@@ -238,7 +267,8 @@
     |-|-|
     |返回值|如果成功设置为未建立连接状态返回true, 其余情况(包括重复调用)返回false|
 
-1. 向对端发送数据
+8. 向对端发送数据
+
     ```cpp
     int32_t BlockSend(void *data, uint32_t len);
     ```
@@ -249,9 +279,10 @@
     |len|数据长度|
     |返回值|成功返回0，失败返回错误码|
 
-1. 向对端发送数据数组
+9. 向对端发送数据数组
 
-    该函数只在启用 *ENABLE_IOV* 宏时可用
+    该函数只在启用 *ENABLE_IOV* 宏时可用。
+
     ```cpp
     int32_t BlockSendIOV(struct iovec *iov, int32_t len, int32_t totalDataLen);
     ```
@@ -263,7 +294,8 @@
     |totalDataLen|总数据长度|
     |返回值|成功返回0，失败返回错误码|
 
-1. 接收由对端发来的数据
+10. 接收由对端发来的数据
+
     ```cpp
     int32_t BlockRecv(void *data, uint32_t demandLen);
     ```
@@ -274,9 +306,10 @@
     |demandLen|数据需求长度|
     |返回值|成功返回0，失败返回错误码|
 
-1. 接收由对端发来的数据数组
+11. 接收由对端发来的数据数组
 
-    该函数只在启用 *ENABLE_IOV* 宏时可用
+    该函数只在启用 *ENABLE_IOV* 宏时可用。
+
     ```cpp
     int32_t BlockRecvIOV(struct iovec *iov, int32_t len, int32_t totalDataLen);
     ```
@@ -288,7 +321,8 @@
     |totalDataLen|总数据长度|
     |返回值|成功返回0，失败返回错误码|
 
-1. 轮询检查是否有传进的数据
+12. 轮询检查是否有传进的数据
+
     ```cpp
     int32_t PollingInput(int32_t timeoutInMs) const;
     ```
@@ -298,7 +332,8 @@
     |timeoutInMs|超时时间阈值, 单位ms|
     |返回值|成功返回0，失败返回错误码|
 
-1. 设置发送消息的超时时间阈值
+13. 设置发送消息的超时时间阈值
+
     ```cpp
     int32_t SetSendTimeout(uint32_t timeoutInUs) const;
     ```
@@ -308,7 +343,8 @@
     |timeoutInUs|超时时间阈值, 单位us|
     |返回值|成功返回0，失败返回错误码|
 
-1. 设置接收消息的超时时间阈值
+14. 设置接收消息的超时时间阈值
+
     ```cpp
     int32_t SetReceiveTimeout(uint32_t timeoutInUs) const;
     ```
@@ -318,7 +354,8 @@
     |timeoutInUs|超时时间阈值, 单位us|
     |返回值|成功返回0，失败返回错误码|
 
-1. 启用非阻塞模式
+15. 启用非阻塞模式
+
     ```cpp
     int32_t EnableNonBlocking() const;
     ```
@@ -327,7 +364,8 @@
     |-|-|
     |返回值|成功返回0，失败返回错误码|
 
-1. 关闭link
+16. 关闭link
+
     ```cpp
     void Close();
     ```
@@ -336,7 +374,8 @@
     |-|-|
     |返回值|无|
 
-1. 检查是否已连接
+17. 检查是否已连接
+
     ```cpp
     bool IsConnected() const;
     ```
@@ -345,11 +384,12 @@
     |-|-|
     |返回值|已连接返回true, 其余情况返回false|
 
+### AccTcpLinkComplex 类
 
-#### 类：AccTcpLinkComplex
 **功能：** 服务端侧生成，提供非阻塞式的数据操作。
 
 1. 向对端发送数据
+
     ```cpp
     int32_t NonBlockSend(int16_t msgType, const AccDataBufferPtr &d, const AccDataBufferPtr &cbCtx);
     ```
@@ -361,7 +401,8 @@
     |cbCtx|回调函数上下文|
     |返回值|成功返回0，失败返回错误码|
 
-1. 把本次发送放入队列中向对端发送数据
+2. 把本次发送放入队列中向对端发送数据
+
     ```cpp
     int32_t NonBlockSend(int16_t msgType, uint32_t seqNo, const AccDataBufferPtr &d, const AccDataBufferPtr &cbCtx);
     ```
@@ -374,7 +415,8 @@
     |cbCtx|回调函数上下文|
     |返回值|成功返回0，失败返回错误码|
 
-1. 把本次发送放入队列中向对端发送数据并附带操作码
+3. 把本次发送放入队列中向对端发送数据并附带操作码
+
     ```cpp
     int32_t NonBlockSend(int16_t msgType, int16_t opCode, uint32_t seqNo, const AccDataBufferPtr &d, const AccDataBufferPtr &cbCtx);
     ```
@@ -388,7 +430,8 @@
     |cbCtx|回调函数上下文|
     |返回值|成功返回0，失败返回错误码|
 
-1. 把本次发送放入队列中向对端发送数据并附带消息头
+4. 把本次发送放入队列中向对端发送数据并附带消息头
+
     ```cpp
     int32_t EnqueueAndModifyEpoll(const AccMsgHeader &h, const AccDataBufferPtr &d, const AccDataBufferPtr &cbCtx) = 0;
     ```
@@ -400,7 +443,7 @@
     |cbCtx|回调函数上下文|
     |返回值|成功返回0，失败返回错误码|
 
-#### 环境变量
+## 环境变量
 
 | 环境变量                             | 含义                                  |
 |----------------------------------|-------------------------------------|

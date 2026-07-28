@@ -1,6 +1,8 @@
+# ShiftPutGet
+
 ## 目录结构介绍
 
-```
+```text
 ├── ShiftPutGet
 │   ├── shm_all_shift.cpp       // 算子kernel实现
 │   ├── CMakeLists.txt          // 编译工程文件
@@ -31,22 +33,28 @@
   ```bash
   bash build.sh -v [ENV_VERSION]
   ```
+
     - ENV_VERSION:环境类型,支持填入A2/A3/A5,默认为A3
 
   示例如下
+
   ```bash
   bash build.sh -v A3
   ```
 
 - 使用以下命令运行样例
+
   ```bash
   bash run.sh [RANK_SIZE] [SERVER_IP]
   ```
+
     - RANK_SIZE: 期望使用多少张卡，每张卡一个进程
-    - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考  [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md)。
+    - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考  [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md)。
 
   示例如下
+
   ```bash
   bash run.sh 8 tcp://127.0.0.1:8570
   ```
+
 - 如需要跨机在A3超节点内运行，可以参考run.sh内执行shm_kernels命令在多个节点内运行

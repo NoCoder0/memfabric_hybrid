@@ -1,10 +1,11 @@
 # config_store_cluster_ha
 
-> Config Store 实现分析 (引入ETCD和降级机制)
+> Config Store 实现分析（引入ETCD和降级机制）。
 
 ---
 
 ## 目录
+
 1. [概述](#概述)
 2. [架构概述](#架构概述)
 3. [第一部分：无 ETCD 模式](#第一部分无-etcd-模式)
@@ -16,10 +17,11 @@
 ## 概述
 
 configStore 是 MemFabric 的配置存储系统，用于管理集群配置（如节点数量、rank 分配等）。它支持两种模式：
-- **无 ETCD 模式**：使用简单的 TCP 服务器（适合单节点测试）。服务器会自动在 rank 0 的进程中启动，监听指定的 IP 和端口，其他 rank 作为客户端连接。
+
+- **无 ETCD 模式**：使用简单的 TCP 服务器（适合单节点测试）。服务器会自动在 rank 0 的进程中启动，侦听指定的 IP 和端口，其他 rank 作为客户端连接。
 - **ETCD 模式**：使用 ETCD 作为分布式后端（适合多节点生产环境，支持高可用性和自动故障转移）。启用步骤请参考 [`etcd_store_backend.md`](etcd_store_backend.md)。
 
-TCP 服务器通过内部的 AccTcpServer 组件启动，它监听客户端连接并处理 KV 存储操作（如 SET、GET 等）。在示例中，服务器启动是自动的，无需手动干预。在单节点和多节点场景下，都是 rank 0 自动启动服务器，其他节点连接到它。对于高可用，推荐使用 ETCD 模式。
+TCP 服务器通过内部的 AccTcpServer 组件启动，它侦听客户端连接并处理 KV 存储操作（如 SET、GET 等）。在示例中，服务器启动是自动的，无需手动干预。在单节点和多节点场景下，都是 rank 0 自动启动服务器，其他节点连接到它。对于高可用，推荐使用 ETCD 模式。
 
 ---
 
@@ -77,7 +79,7 @@ N1->>N1: PrepareStore()
 N1->>N1: localIp == storeUrl.ip ✓
 N1->>Store: CreateStore(isServer=true)
 Store->>Store: ServerStart()
-Store->>Store: 监听 9112 端口
+Store->>Store: 侦听 9112 端口
 N1->>Store: ClientStart() 连接自己
 Store-->>N1: 分配 rankId = 0
 end
@@ -127,6 +129,7 @@ Note over Store: ✅ 集群状态: aliveRankSet_ = {0}
 
 ### 1.3 节点1 (Config Store) 下线 ⚠️ 灾难性故障
 
+> [!CAUTION] 注意
 > **严重问题**: 无 ETCD 模式下，Config Store Server 是**单点故障 (SPOF)**。Server 下线后，整个集群不可用，必须人工恢复！
 
 ```mermaid
@@ -486,9 +489,9 @@ Note over N1,N3: ✅ 集群自动恢复
 
 #### 关键点
 
-- 由于 Leader 有降级机制，整个集群会停止服务
-- 这是**正确的行为**：宁可停止服务也不能出现脑裂
-- ETCD 恢复后，集群自动恢复正常
+- 由于 Leader 有降级机制，整个集群会停止服务。
+- 这是**正确的行为**：宁可停止服务也不能出现脑裂。
+- ETCD 恢复后，集群自动恢复正常。
 
 ### 3.3 Follower 与 ETCD 失联 ✅ 影响有限
 

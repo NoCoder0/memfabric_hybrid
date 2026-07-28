@@ -26,7 +26,7 @@ bash script/kernel/build_ops_run.sh
 
 构建成功后，产物位于：
 
-```
+```bash
 ./output/memfabric_hybrid_aicpu_kernel.run
 ```
 
@@ -178,57 +178,71 @@ load_as_per_soc:false
 
 ---
 
-## 六、 在 A5 环境关闭验签（不建议再生产环境关闭）
+## 六、 在 A5 环境关闭验签（不建议在生产环境关闭）
 
 在 A5 硬件环境下，安装算子 run 包前可能需要关闭包签名验证，否则安装可能失败。
 
-drv_hlt_dsmi_test 
-可以使用底软的工具：drv_hlt_dsmi_test
+可以使用底软的工具：drv_hlt_dsmi_test，**使用该工具关闭验签前，需要先打开授权**。
 
-**使用改工具关闭验签前，需要先打开授权**
+### 工具获取
 
-工具获取
-在编译出来的testcase包里，路径为test/lib/host下，drv_hlt_dsmi_test和libdrvhltdsmi.so
+在编译生成的testcase包中，进入 test/lib/host 目录，即可找到drv_hlt_dsmi_test 和 libdrvhltdsmi.so。
+
+> [!CAUTION] 注意
+> testcase要和1 2包匹配。
+
+### 验签授权配置/查询/清除
+
+- **打开授权标志** 参数: `devid 1 looptimes`
+`./drv_hlt_dsmi_test set_auth_enable_user_config 0 1 1`
+- **关闭授权标志** 参数: `devid 0 looptimes`
+`./drv_hlt_dsmi_test set_auth_enable_user_config 0 0 1`
+- **查询授权标志** 参数: `devid looptimes`
+`./drv_hlt_dsmi_test get_auth_enable_user_config 0 1`
+- **清除授权标志** 参数: `devid looptimes`
+`./drv_hlt_dsmi_test clear_auth_enable_user_config 0 1`
  
-注意：testcase要和1 2包匹配
-验签授权配置/查询/清除
-打开授权标志 参数:devid 1 looptimes
-./drv_hlt_dsmi_test set_auth_enable_user_config 0 1 1
-关闭授权标志 参数:devid 0 looptimes
-./drv_hlt_dsmi_test set_auth_enable_user_config 0 0 1
-查询授权标志 参数:devid looptimes
-./drv_hlt_dsmi_test get_auth_enable_user_config 0 1
-清除授权标志  参数: devid looptimes
-./drv_hlt_dsmi_test clear_auth_enable_user_config 0 1
+**参数说明**：第一个是dev_id，第二个是模式(0关闭，1开启)，第三个是循环次数。
  
-参数说明：第一个是dev_id ，第二个是模式(0关闭，1开启)， 第三个是循环次数
- 
-打开授权后，会开启持久化配置。就是如果没有关闭授权，不管是重启还是重新升级，都会保持之前设置的验签模式和证书内容。
-所以如果后续这个环境上一直都是要关闭验签的话 可以一直把授权打开
-验签模式配置查询
-配置验签模式
-参数:【devid】【mode】【 looptimes】
+打开授权后，会开启持久化配置。如果没有关闭授权，不管是重启还是重新升级，都会保持之前设置的验签模式和证书内容。所以如果后续该环境始终要关闭验签的话,可以一直打开授权。
+
+### 验签模式配置查询
+
+#### 配置验签模式
+
+参数:【devid】【mode】【looptimes】
+
+```bash
 ./drv_hlt_dsmi_test set_cust_falg_device_info 0 0 1
 ./drv_hlt_dsmi_test set_cust_falg_device_info 0 1 1
 ./drv_hlt_dsmi_test set_cust_falg_device_info 0 2 1
 ./drv_hlt_dsmi_test set_cust_falg_device_info 0 3 1
- 
-8卡一键配置：
+```
+
+**8卡一键配置**
+
+```bash
 for i in {0..7};do ./drv_hlt_dsmi_test set_cust_falg_device_info $i 0 1; done;
- 
-mode说明：
-0：关闭验证，不验签。
-1：华为证书，使用华为证书验签。
-2：客户证书，使用客户证书验签。
-3: 华为证书和客户证书，或的关系
-4：社区证书，使用社区证书验签。
-5：华为证书和社区户证书，或的关系
-6：社区证书和客户证书，或的关系
-7：华为证书、客户证书、社区证书，或的关系
- 
-查询验签模式
+```
+
+**mode说明**
+
+- 0：关闭验证，不验签。
+- 1：华为证书，使用华为证书验签。
+- 2：客户证书，使用客户证书验签。
+- 3: 华为证书和客户证书，或的关系。
+- 4：社区证书，使用社区证书验签。
+- 5：华为证书和社区户证书，或的关系。
+- 6：社区证书和客户证书，或的关系。
+- 7：华为证书、客户证书、社区证书，或的关系。
+
+#### 查询验签模式
+
 参数:【devid】【looptimes】
+
+```bash
 ./drv_hlt_dsmi_test get_cust_flag_device_info 0 1
+```
 
 ---
 
@@ -294,4 +308,4 @@ export ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest
 
 **现象**：安装过程中提示签名验证失败错误。
 
-**解决方法**：如果在 A5 环境上安装，请先按照 [六、在 A5 环境关闭验签](#六-在-a5-环境关闭验签) 章节的指引关闭验签后重试。
+**解决方法**：如果在 A5 环境上安装，请先按照 [六、在 A5 环境关闭验签](#六-在-a5-环境关闭验签不建议在生产环境关闭) 章节的指引关闭验签后重试。

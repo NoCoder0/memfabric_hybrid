@@ -1,6 +1,8 @@
+# AllReduce
+
 ## 目录结构介绍
 
-```
+```text
 ├── AllReduce
 │   ├── scripts
 │   │   └── gen_data.py         // 输入数据和真值数据生成脚本
@@ -33,6 +35,7 @@
   ```bash
   bash build.sh -v [SOC_VERSION]
   ```
+
     - SOC_VERSION：昇腾AI处理器型号，如果无法确定具体的[SOC_VERSION]，则在安装昇腾AI处理器的服务器执行npu-smi
       info命令进行查询，在查询到的“Name”前增加Ascend信息，例如“Name”对应取值为xxxyy，实际配置的[SOC_VERSION]
       值为Ascendxxxyy。支持以下产品型号：
@@ -42,19 +45,24 @@
         - Atlas 200/500 A2推理产品
 
   示例如下
+
   ```bash
   bash build.sh -v Ascend910B3
   ```
 
 - 使用以下命令运行样例
+
   ```bash
   bash run.sh [RANK_SIZE] [SERVER_IP]
   ```
+
     - RANK_SIZE: 期望使用多少张卡，每张卡一个进程
-    - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考  [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md)。
+    - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考  [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md)。
 
   示例如下
+
   ```bash
   bash run.sh 8 tcp://127.0.0.1:8570
   ```
+
 - 如需要跨机在A3超节点内运行，可以参考run.sh内执行shm_kernels命令在多个节点内运行

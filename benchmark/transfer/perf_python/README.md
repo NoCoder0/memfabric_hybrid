@@ -5,6 +5,7 @@
 ## 概述
 
 该脚本测试：
+
 - 不同块大小的延迟
 - 批量传输的带宽
 - 并发传输性能
@@ -12,6 +13,7 @@
 ## 前置条件
 
 运行脚本之前，请确保您具备：
+
 - 已安装MemFabric Hybrid Python包
 - 正确的硬件配置（Ascend NPU设备）
 
@@ -38,7 +40,7 @@ python transfer_performance.py --rank-id 1 --store-url tcp://127.0.0.1:12050 --n
 | 参数名              | 必选 | 说明                                                 |
 |---------------------|------|----------------------------------------------------|
 | rank-id             | 是  | 当前节点的rankId                                        |
-| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md) |
+| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md) |
 | num-threads         | 是  | 并发线程数（默认：2）                                    |
 | data-op-type        | 是  | 数据操作类型：sdma或rdma（默认：sdma）                    |
 | npu-id              | 是  | NPU设备ID（默认：0）                                    |
@@ -61,7 +63,7 @@ python transfer_performance.py --rank-id 1 --store-url tcp://127.0.0.1:12050 --n
 
 | 参数名              | 必选 | 说明                                                 |
 |---------------------|------|----------------------------------------------------|
-| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md) |
+| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md) |
 | num-threads         | 是  | 并发线程数（默认：2）                                    |
 | data-op-type        | 是  | 数据操作类型：sdma或rdma（默认：sdma）                    |
 | npu-id-0            | 是  | NPU设备ID（默认：0）                                    |
@@ -78,6 +80,7 @@ python transfer_performance.py --rank-id 1 --store-url tcp://127.0.0.1:12050 --n
 ## 输出
 
 脚本将显示：
+
 - 预热完成状态
 - 每次测试的延迟测量
 - 聚合带宽结果
@@ -87,7 +90,7 @@ python transfer_performance.py --rank-id 1 --store-url tcp://127.0.0.1:12050 --n
 
 A3 pod内SDMA传输验证，Device: 0->1 传输性能
 
-```
+```text
 ==================================================Trans Test Start==================================================
 Test completed: latency 68.03us, block size 32KB, total threads=2, per-thread times=100, aggregated throughput 14.31 GB/s
 Test completed: latency 66.97us, block size 64KB, total threads=2, per-thread times=100, aggregated throughput 30.88 GB/s
@@ -104,7 +107,7 @@ Test completed: latency 145.72us, block size 16384KB, total threads=2, per-threa
 
 A3 pod内SDMA传输验证，Device: 0->2 传输性能
 
-```
+```text
 ==================================================Trans Test Start==================================================
 Test completed: latency 68.29us, block size 32KB, total threads=2, per-thread times=100, aggregated throughput 14.58 GB/s
 Test completed: latency 69.74us, block size 64KB, total threads=2, per-thread times=100, aggregated throughput 27.82 GB/s

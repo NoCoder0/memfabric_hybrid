@@ -1,12 +1,14 @@
-### 通信矩阵
+# 安全提示
+
+## 通信矩阵
 
 |组件|tcp store|
 |----------------|--------|
 |源设备|tcp client|
-|源IP|device IP|
+|源IP地址|device IP|
 |源端口|操作系统自动分配，分配范围由操作系统的自身配置决定|
 |目的设备|tcp server|
-|目的IP|设备地址IP|
+|目的IP地址|设备地址IP|
 |目的端口（侦听）|用户指定，端口号1025~65535|
 |协议|TCP|
 |端口说明|server与client TCP协议消息接口|
@@ -17,12 +19,14 @@
 |版本|所有版本|
 |特殊场景|无|
 
-说明：
-支持通过接口 `smem_set_conf_store_tls` 配置TLS秘钥证书等，进行tls安全连接，安全选项默认关闭，建议用户开启TLS加密配置，以保证通信通信安全。
-系统启动后，建议删除本地秘钥证书等信息敏感文件。调用该接口时，传入的文件路径值本身不能包含英文分号、逗号、冒号（这些字符作为 tls_info 字符串中的字段分隔符被保留使用）。
-支持通过环境变量 `MF_ACC_CHECK_PERIOD_HOURS`和`MF_ACC_CERT_CHECK_AHEAD_DAYS` 配置证书检查周期与证书过期预警时间
+> [!NOTE] 说明
+>
+> - 支持通过接口 `smem_set_conf_store_tls` 配置TLS秘钥证书等，进行tls安全连接，安全选项默认关闭，建议用户开启TLS加密配置，以保证通信通信安全。
+> - 系统启动后，建议删除本地秘钥证书等信息敏感文件。调用该接口时，传入的文件路径值本身不能包含英文分号、逗号、冒号（这些字符作为 tls_info 字符串中的字段分隔符被保留使用）。
+> - 支持通过环境变量 `MF_ACC_CHECK_PERIOD_HOURS`和`MF_ACC_CERT_CHECK_AHEAD_DAYS` 配置证书检查周期与证书过期预警时间。
 
 配置TLS调用接口示例：
+
 ```c
 // 配置关闭tls:
 smem_set_conf_store_tls(false, nullptr, 0);
@@ -57,17 +61,16 @@ export MF_ACC_CERT_CHECK_AHEAD_DAYS=14
 | tlsCaFile | ca证书列表 | 是 |
 | packagePath | OpenSSL lib库路径 | 否 |
 
-
 | 环境变量 | 说明                                         |
 |------|-----------------------------------------------------------|
-| MF_ACC_CHECK_PERIOD_HOURS  | 指定证书检查周期（单位：小时），超出范围 [ 24, 24 * 30 ] 或不是整数，则设置默认值7 * 24   |
+| MF_ACC_CHECK_PERIOD_HOURS  | 指定证书检查周期（单位：小时），超出范围 [ 24, 24 \* 30 ] 或不是整数，则设置默认值7 \* 24   |
 | MF_ACC_CERT_CHECK_AHEAD_DAYS  | 指定证书预警时间（单位：天），超出范围 [ 7, 180 ] 或不是整数或换算成小时小于检查周期，则设置默认值30 |
 
-### 运行用户建议
+## 运行用户建议
 
 - 基于安全性考虑，建议您在执行任何命令时，不建议使用root等管理员类型账户执行，遵循权限最小化原则。
 
-### 文件权限最大值建议
+## 文件权限最大值建议
 
 - 建议用户在主机（包括宿主机）及容器中设置运行系统umask值为0027及以上，保障新增文件夹默认最高权限为750，新增文件默认最高权限为640。
 - 建议对使用当前项目已有和产生的文件、数据、目录，设置如下建议权限。
@@ -92,16 +95,16 @@ export MF_ACC_CERT_CHECK_AHEAD_DAYS=14
 | 密钥组件、私钥、证书、加密密文        | 600（rw-------）      |
 | 加解密接口、加解密脚本            |   500（r-x------）        |
 
-### 调用acc_links接口列表
+## 调用acc_links接口列表
 
-#### 日志模块
+### 日志模块
 
 | 接口功能描述                | 接口声明                                      |
 |-----------------------------|--------------------------------------------|
 | 设置自定义日志函数         | `int32_t AccSetExternalLog(void (*func)(int level, const char* msg));` |
 | 设置日志打印级别             | `int32_t AccSetLogLevel(int level);`       |
 
-#### TCP服务端模块
+### TCP服务端模块
 
 | 接口功能描述                | 接口声明                                      |
 |-----------------------------|--------------------------------------------|
@@ -116,12 +119,11 @@ export MF_ACC_CERT_CHECK_AHEAD_DAYS=14
 | 注册密码解密的函数 | `void RegisterDecryptHandler(const AccDecryptHandler &h);` |
 | 加载安全认证所需动态库          | `int32_t LoadDynamicLib(const std::string &dynLibPath);` |
 
-
-### 依赖软件声明
+## 依赖软件声明
 
 当前项目运行依赖 cann 和 Ascend HDK，安装使用及注意事项参考[CANN](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1beta1/index/index.html)和[Ascend HDK](https://support.huawei.com/enterprise/zh/undefined/ascend-hdk-pid-252764743)并选择对应版本。
 
-### 源码内公网地址
+## 源码内公网地址
 
 | 类型   | 开源代码地址      | 文件名      | 公网IP地址/公网URL地址/域名/邮箱地址                     | 用途说明            |
 |------  |-----------------|-------------|--------------------------------------------|-------------------|

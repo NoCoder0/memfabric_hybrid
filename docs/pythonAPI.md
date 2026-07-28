@@ -1,8 +1,10 @@
 # Python接口
-使用Python接口前需要安装memfabric_hybrid的whl包，有两种安装方式，可参考[安装指南](./installation.md)
-whl包安装完成后，即可在python中通过**import memfabric_hybrid**导入memfabric的python包，然后调用python接口
 
-python接口为c接口的封装，功能一致，具体介绍可以在python中使用help函数获取，参考如下
+使用Python接口前需要安装memfabric_hybrid的whl包，有两种安装方式，可参考[安装指南](./installation.md)。
+whl包安装完成后，即可在python中通过**import memfabric_hybrid**导入memfabric的python包，然后调用python接口。
+
+python接口为c接口的封装，功能一致，具体介绍可以在python中使用help函数获取，参考如下。
+
 ```python
 import memfabric_hybrid as mf  #导入memfabric_hybrid
 help(mf)   #查看memfabric_hybrid基础函数介绍
@@ -13,9 +15,13 @@ help(mf.shm)   #查看share memory接口介绍
 [TOC]
 
 ## 公共接口
+
 ### 1. 初始化/退出函数
+
 #### initialize
-初始化运行环境
+
+初始化运行环境。
+
 ```python
 def initialize(flags = 0) -> int
 ```
@@ -25,15 +31,20 @@ def initialize(flags = 0) -> int
 |flags|int类型，预留参数|
 |返回值|成功返回0，其他为错误码|
 
-退出运行环境
 #### uninitialize
+
+退出运行环境。
+
 ```python
 def uninitialize()
 ```
 
 ### 2. 创建config store对象
+
 #### create_config_store
-创建config store对象
+
+创建config store对象。
+
 ```python
 def create_config_store(store_url: str) -> int
 ```
@@ -44,8 +55,11 @@ def create_config_store(store_url: str) -> int
 |返回值|成功返回0，其他为错误码|
 
 ### 3. 日志设置
+
 #### set_log_level
-设置日志打印级别
+
+设置日志打印级别。
+
 ```python
 def set_log_level(level)
 ```
@@ -56,7 +70,9 @@ def set_log_level(level)
 |返回值|成功返回0，其他为错误码|
 
 #### set_extern_logger
-设置自定义日志函数
+
+设置自定义日志函数。
+
 ```python
 def set_extern_logger(log_fn:Callable[[int, str], None]) -> int
 ```
@@ -69,8 +85,11 @@ def set_extern_logger(log_fn:Callable[[int, str], None]) -> int
 |返回值|成功返回0，其他为错误码|
 
 ### 4. 安全证书设置
+
 #### set_conf_store_tls_key
-注册Python解密处理程序
+
+注册Python解密处理程序。
+
 ```python
 def set_conf_store_tls_key(tls_pk, tls_pk_pw, py_decrypt_func:Callable[[str], str]) -> int
 ```
@@ -83,7 +102,9 @@ def set_conf_store_tls_key(tls_pk, tls_pk_pw, py_decrypt_func:Callable[[str], st
 |返回值|成功返回0，其他为错误码|
 
 #### set_conf_store_tls
-设置配置存储的TLS信息
+
+设置配置存储的TLS信息。
+
 ```python
 def set_conf_store_tls(enable, tls_info) -> int
 ```
@@ -95,8 +116,11 @@ def set_conf_store_tls(enable, tls_info) -> int
 |返回值|成功时返回零,出错时返回非零值|
 
 ### 5. 错误信息获取/清理
+
 #### get_last_err_msg
-获取最后一条错误信息
+
+获取最后一条错误信息。
+
 ```python
 def get_last_err_msg() -> str
 ```
@@ -106,7 +130,9 @@ def get_last_err_msg() -> str
 |返回值|错误信息|
 
 #### get_and_clear_last_err_msg
-获取最后一条错误信息并清空所有错误信息
+
+获取最后一条错误信息并清空所有错误信息。
+
 ```python
 def get_and_clear_last_err_msg() -> str
 ```
@@ -116,9 +142,13 @@ def get_and_clear_last_err_msg() -> str
 |返回值|错误信息|
 
 ## BM接口
+
 ### 1. BM初始化/退出
+
 #### initialize
-初始化运行环境
+
+初始化运行环境。
+
 ```python
 def initialize(store_url, world_size, device_id, config) -> int
 ```
@@ -132,7 +162,9 @@ def initialize(store_url, world_size, device_id, config) -> int
 |返回值|成功返回0，其他为错误码|
 
 #### uninitialize
-退出运行环境
+
+退出运行环境。
+
 ```python
 def uninitialize(flags = 0) -> None
 ```
@@ -142,8 +174,11 @@ def uninitialize(flags = 0) -> None
 |flags|int类型，预留参数|
 
 ### 2. 创建BM
+
 #### create
-创建BM
+
+创建BM。
+
 ```python
 def create(id, local_dram_size, local_hbm_size = 0, data_op_type = SMEMB_DATA_OP_SDMA, flags = 0) -> BigMemory
 ```
@@ -158,7 +193,9 @@ def create(id, local_dram_size, local_hbm_size = 0, data_op_type = SMEMB_DATA_OP
 |返回值|BigMemory对象|
 
 #### create2
-创建BM（支持设置本地内存上限）
+
+创建BM（支持设置本地内存上限）。
+
 ```python
 def create2(id, local_dram_size, max_dram_size, local_hbm_size = 0, max_hbm_size = 0, data_op_type = SMEMB_DATA_OP_SDMA, enable_56bits_gva = False, flags = 0, shm_fd = -1) -> BigMemory
 ```
@@ -177,8 +214,11 @@ def create2(id, local_dram_size, max_dram_size, local_hbm_size = 0, max_hbm_size
 |返回值|BigMemory对象|
 
 ### 3. 获取当前rank的id
+
 #### bm_rank_id
-获取当前rank的id
+
+获取当前rank的id。
+
 ```python
 def bm_rank_id() -> int
 ```
@@ -188,7 +228,9 @@ def bm_rank_id() -> int
 |返回值|成功返回当前rank id，失败返回u32最大值|
 
 ### 4. 常用类型
+
 #### BmCopyType枚举类
+
 ```python
 class BmCopyType(Enum):
     L2G
@@ -216,6 +258,7 @@ class BmCopyType(Enum):
 |G2G|将数据从全局空间复制到全局空间|
 
 #### BmMemType枚举类
+
 ```python
 class BmMemType(Enum):
     LOCAL_DEVICE
@@ -228,6 +271,7 @@ class BmMemType(Enum):
 |LOCAL_HOST|本地主机侧内存|
 
 #### BmConfig类
+
 ```python
 class BmConfig:
     def __init__(self) -> None
@@ -248,6 +292,7 @@ class BmConfig:
 |flags属性|预留参数|
 
 #### BmGroupEvent枚举类
+
 ```python
 class BmGroupEvent(Enum):
     JOIN_EVENT
@@ -260,6 +305,7 @@ class BmGroupEvent(Enum):
 |LEAVE_EVENT|有节点退出BM组|
 
 #### BmDataOpType枚举类
+
 ```python
 class BmDataOpType(Enum):
     SDMA
@@ -273,6 +319,7 @@ class BmDataOpType(Enum):
 ```
 
 #### BigMemory类
+
 ```python
 class BigMemory:
     def join(flags = 0) -> int:
@@ -333,9 +380,13 @@ class BigMemory:
 | wait方法                        | 等待异步操作完成                                    |
 
 ## SHM接口
+
 ### 1. 初始化/退出接口
+
 #### initialize
-初始化运行环境
+
+初始化运行环境。
+
 ```python
 def initialize(store_url, world_size, rank_id, device_id, config) -> int
 ```
@@ -350,7 +401,9 @@ def initialize(store_url, world_size, rank_id, device_id, config) -> int
 |返回值|成功返回0，其他为错误码|
 
 #### uninitialize
-退出运行环境
+
+退出运行环境。
+
 ```python
 def uninitialize(flags = 0) -> None
 ```
@@ -360,8 +413,11 @@ def uninitialize(flags = 0) -> None
 |flags|int类型，预留参数|
 
 ### 2. 创建SHM
+
 #### create
-创建SHM
+
+创建SHM。
+
 ```python
 def create(id, rank_size, rank_id, local_mem_size, data_op_type = SMEMS_DATA_OP_MTE, flags = 0) -> ShareMemory
 ```
@@ -377,7 +433,9 @@ def create(id, rank_size, rank_id, local_mem_size, data_op_type = SMEMS_DATA_OP_
 |返回值|ShareMemory对象（失败抛RuntimeError异常）|
 
 ### 3. 常用类型
+
 #### ShmConfig类
+
 ```python
 class ShmConfig:
     def __init__(self) -> None
@@ -393,6 +451,7 @@ class ShmConfig:
 |flags|预留参数|
 
 #### ShareMemory类
+
 ```python
 class ShareMemory:
     def set_context(context) -> int:
@@ -421,6 +480,7 @@ class ShareMemory:
 |gva(只读属性)|获取全局虚拟地址|
 
 #### ShmDataOpType枚举
+
 ```python
 class ShmDataOpType(Enum):
     MTE
@@ -430,8 +490,11 @@ class ShmDataOpType(Enum):
 ```
 
 ## TRANSFER接口
+
 ### 1. 常用类型
+
 #### TransferEngine类
+
 ```python
 class TransferEngine:
     def __init__(self):
@@ -457,11 +520,11 @@ class TransferEngine:
 |-|-|
 |initialize方法|TRANS配置初始化，成功返回0，其他为错误码|
 |initialize参数store_url|config store地址，格式支持 `tcp://ip:port`、`etcd://ip:port`、`etcd://ip:port#instanceId`（etcd 多集群隔离）|
-|initialize参数session_id|该TRANS实例的唯一标识。支持`ip:port`（指定监听端口）或`ip`/`ip:0`（由initialize自动选择可用端口，需在initialize后调用get_rpc_port获取真实端口）|
+|initialize参数session_id|该TRANS实例的唯一标识。支持`ip:port`（指定侦听端口）或`ip`/`ip:0`（由initialize自动选择可用端口，需在initialize后调用get_rpc_port获取真实端口）|
 |initialize参数role|当前进程的角色|
 |initialize参数device_id|当前设备的唯一标识|
 |initialize参数data_op_type|数据传输操作类型，默认 TransDataOpType.SDMA|
-|get_rpc_port方法|返回initialize中实际监听的端口号（`int`，已去除pid后缀）。**必须在initialize成功后调用**，否则返回`0`并打印WARN。端口范围由环境变量`MF_CONFIG_STORE_PORT_START`/`MF_CONFIG_STORE_PORT_END`控制（默认`9000`~`65535`）。|
+|get_rpc_port方法|返回initialize中实际侦听的端口号（`int`，已去除pid后缀）。**必须在initialize成功后调用**，否则返回`0`并打印WARN。端口范围由环境变量`MF_CONFIG_STORE_PORT_START`/`MF_CONFIG_STORE_PORT_END`控制（默认`9000`~`65535`）。|
 |transfer_sync_write方法|同步写接口,成功返回0，其他为错误码|
 |transfer_sync_write参数dest_session|目的TRANS实例对应的标识|
 |transfer_sync_write参数buffer|源地址的起始地址指针|
@@ -523,7 +586,9 @@ class TransferEngine:
 |batch_transfer_write_with_quant参数input_type|输入数据类型，默认0|
 |batch_transfer_write_with_quant参数stream|需要提交到的acl.rt.stream，默认0|
 |batch_transfer_write_with_quant参数flags|标记位，默认0|
+
 #### TransDataOpType枚举类
+
 ```python
 class TransDataOpType(Enum):
     SDMA
@@ -533,6 +598,7 @@ class TransDataOpType(Enum):
 ```
 
 #### TransferOpcode枚举类
+
 ```python
 class TransferOpcode(Enum):
     Read
@@ -540,9 +606,13 @@ class TransferOpcode(Enum):
 ```
 
 ## ACC OFFLOAD接口
+
 ### 1. 初始化/退出接口
+
 #### initialize
-初始化offload运行环境
+
+初始化offload运行环境。
+
 ```python
 def initialize(config: OffloadConfig) -> int
 ```
@@ -553,14 +623,19 @@ def initialize(config: OffloadConfig) -> int
 |返回值|成功返回0，其他为错误码|
 
 #### uninitialize
-退出offload运行环境
+
+退出offload运行环境。
+
 ```python
 def uninitialize() -> None
 ```
 
 ### 2. 内存分配/释放
+
 #### malloc
-从offload内存池分配host内存
+
+从offload内存池分配host内存。
+
 ```python
 def malloc(size, flags = 0) -> int
 ```
@@ -572,7 +647,9 @@ def malloc(size, flags = 0) -> int
 |返回值|成功返回非0地址，失败返回0|
 
 #### free
-释放由malloc分配的内存
+
+释放由malloc分配的内存。
+
 ```python
 def free(ptr, flags = 0) -> None
 ```
@@ -583,7 +660,9 @@ def free(ptr, flags = 0) -> None
 |flags|预留参数|
 
 #### empty
-从offload内存池分配内存并返回torch.Tensor
+
+从offload内存池分配内存并返回torch.Tensor。
+
 ```python
 def empty(sizes, dtype = None, pin_memory = False) -> torch.Tensor
 ```
@@ -596,8 +675,11 @@ def empty(sizes, dtype = None, pin_memory = False) -> torch.Tensor
 |返回值|基于offload内存的torch.Tensor|
 
 ### 3. 稀疏拷贝
+
 #### sparse_copy
-批量稀疏拷贝（torch友好封装），在device上异步执行多个不连续地址间的数据拷贝
+
+批量稀疏拷贝（torch友好封装），在device上异步执行多个不连续地址间的数据拷贝。
+
 ```python
 def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId) -> int
 ```
@@ -612,8 +694,11 @@ def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId) -> int
 |返回值|成功返回0，其他为错误码|
 
 ### 4. 常用类型
+
 #### Scene枚举类
-offload内存池场景枚举，通过 `offload.Scene` 访问
+
+offload内存池场景枚举，通过 `offload.Scene` 访问。
+
 ```python
 class Scene(Enum):
     LOCAL
@@ -626,6 +711,7 @@ class Scene(Enum):
 |SHARED|多卡共享DRAM内存池|
 
 #### OffloadConfig类
+
 ```python
 class OffloadConfig:
     def __init__(self) -> None

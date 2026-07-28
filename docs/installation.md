@@ -1,8 +1,8 @@
 # 软件安装
+
 本文档介绍 MemFabric Hybrid 的安装方法，支持 **Python API** 和 **C API** 两种使用方式。请根据实际开发需求选择对应的安装路径。
 
 ---
-
 
 ## 一、 使用 Python API
 
@@ -15,20 +15,23 @@ pip install memfabric_hybrid
 ```
 
 **指定版本安装**
-如需安装特定版本，请使用 == 指定版本号：
+如需安装特定版本，请使用 == 指定版本号。
 
 ```bash
 pip install memfabric_hybrid==1.0.0
 ```
 
 ### 2. 离线安装
+
 在无网络环境中，需预先下载对应平台架构和 Python 版本的 .whl 包。
-1. **下载 whl 包：**
+
+1. **下载 whl 包**
     从 [PyPI](https://pypi.org/project/memfabric-hybrid/?spm=a2ty_o01.29997173.0.0.36c455fbq3MLaA#files) 下载对应的 `.whl` 文件。
     <!-- 文件名示例：memfabric_hybrid-1.1.0-cp311-cp311-manylinux_2_27_aarch64.whl -->
 
-2. **执行安装：**
-    将 .whl 包上传至目标环境，执行以下命令进行离线安装：
+2. **执行安装**
+    将 .whl 包上传至目标环境，执行以下命令进行离线安装。
+
     ```bash
     pip install --no-index memfabric_hybrid-*.whl
     ```
@@ -38,6 +41,7 @@ pip install memfabric_hybrid==1.0.0
 ## 二、 使用 C API
 
 ### 1. 编译环境要求
+
 | 组件 | 建议版本/要求 |
 | -- | -- |
 | **OS** | Ubuntu 22.04 LTS 或更高版本 |
@@ -46,8 +50,8 @@ pip install memfabric_hybrid==1.0.0
 | **pybind11** | 2.10.3 (仅编译 Python 绑定时需要) |
 | **Make/Ninja** | Make 4.3+ 或 Ninja 1.10.1+ |
 
-
 ### 2. 获取源码
+
 ```bash
 git clone https://gitcode.com/Ascend/memfabric_hybrid
 cd memfabric_hybrid
@@ -61,8 +65,8 @@ git clean -xdf
 git reset --hard
 ```
 
-
 ### 3. 编译构建
+
 使用封装脚本进行一键编译。脚本会自动处理依赖并生成安装包。
 
 ``` bash
@@ -81,21 +85,20 @@ bash script/build_and_pack_run.sh
 | `--build_hcom_rdma` | `ON` / `OFF` | `ON` | (仅当 `build_hcom=ON` 有效) 是否启用 RDMA 支持。<br>需先执行 `apt install libibverbs-dev`。 |
 | `--build_hcom_ub` | `ON` / `OFF` | `OFF` | (仅当 `build_hcom=ON` 有效) 是否启用 UB (URMA) 支持。<br>RDMA 和 UB 可同时开启。|
 
-
-> 重要提示：
-> 当 xpu_type 设置为 NPU 时，运行环境必须提前安装 NPU 固件驱动 和 CANN 工具包。
+> [!NOTE] 说明
 >
-> [环境安装参考链接](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0000.html)
->
-> [参考安装Toolkit开发套件包的第三步配置环境变量](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Ubuntu&Software=cannToolKit)
-
+> - 当 xpu_type 设置为 NPU 时，运行环境必须提前安装 NPU 固件驱动和 CANN 工具包。
+> - 请参考[链接](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0000.html)安装相关环境。
+> - 请参考[安装Toolkit开发套件包](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Ubuntu&Software=cannToolKit)的第三步配置环境变量。
 
 ### 4. 安装
-编译成功后，生成的安装包位于 `output/memfabric_hybrid-${version}_${os}_${arch}${xpu_suffix}.run`
+
+编译成功后，生成的安装包位于 `output/memfabric_hybrid-${version}_${os}_${arch}${xpu_suffix}.run`。
 
 > 其中 xpu_suffix 为空（NPU）/_cpu（XPU_TYPE=NONE）/_gpu（XPU_TYPE=GPU）
 
-运行以下命令默认安装至 `/usr/local/`：
+运行以下命令默认安装至 `/usr/local/`。
+
 ```bash
 bash memfabric_hybrid-*_*_*.run  # optional: --install-path=${your path}
 source /usr/local/memfabric_hybrid/set_env.sh
@@ -104,27 +107,29 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
->A2环境使用DRAM池化需要根据每台机器池化内存的大小来配置大页内存，否则初始化失败
+> [!NOTE] 说明
+> A2环境使用DRAM池化需要根据每台机器池化内存的大小来配置大页内存，否则初始化失败。
 >
->检查是否配置大页:
->```grep Huge /proc/meminfo```
+> - 检查是否配置大页。
+> `grep Huge /proc/meminfo`
 >
->配置大页内存，以配置1024个大页为例
->
->```echo 1024 > /proc/sys/vm/nr_hugepages```
-
+> - 配置大页内存，以配置1024个大页为例。
+> `echo 1024 > /proc/sys/vm/nr_hugepages`
 
 ---
 **卸载 Run 包**
+
+若为自定义路径，请替换为对应路径下的 uninstall.sh
+
 ```bash
 bash /usr/local/memfabric_hybrid/latest/uninstall.sh
-# 若为自定义路径，请替换为对应路径下的 uninstall.sh
 ```
 
 ---
+
 ## 三、 包权限说明
 
-Run 包安装后，动态库（`.so` 文件）权限默认为 `440`（属主和属组可读，其他用户无权限）。若以非安装用户运行程序，需将部署用户加入安装时指定的属组中：
+Run 包安装后，动态库（`.so` 文件）权限默认为 `440`（属主和属组可读，其他用户无权限）。若以非安装用户运行程序，需将部署用户加入安装时指定的属组中。
 
 ```bash
 # 查看 so 文件的属组

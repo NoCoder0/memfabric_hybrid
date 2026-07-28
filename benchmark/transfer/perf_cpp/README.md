@@ -10,29 +10,29 @@
 
 1. 单独编译
 
-已经安装了run包并设置了环境变量，在当前目录下执行：
+   已经安装了run包并设置了环境变量，在当前目录下执行：
 
-```shell
-  mkdir build
-  cmake . -B build
-  make -C build
-```
+    ```shell
+      mkdir build
+      cmake . -B build
+      make -C build
+    ```
 
 2. 随run包一起编译打包
 
-```bash
-bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_type NPU --build_test ON
+    ```bash
+    bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_type NPU --build_test ON
 
-bash output/memfabric_hybrid-1.0.0_linux_aarch64.run # 修改为实际编译出来的run文件
-source /usr/local/memfabric_hybrid/set_env.sh
-cd /usr/local/memfabric_hybrid/latest/aarch64-linux/test
-```
+    bash output/memfabric_hybrid-1.0.0_linux_aarch64.run # 修改为实际编译出来的run文件
+    source /usr/local/memfabric_hybrid/set_env.sh
+    cd /usr/local/memfabric_hybrid/latest/aarch64-linux/test
+    ```
 
-run包安装后`transfer_perf`在/usr/local/memfabric_hybrid/latest/aarch64-linux/test目录下。
+run包安装后，`transfer_perf`在/usr/local/memfabric_hybrid/latest/aarch64-linux/test目录下。
 
 ### 基本命令格式
 
-```
+```bash
 # transfer_perf {rankSize} {rankId} {deviceId} {useSdma} tcp://{ip}:{port}
 或者
 # transfer_perf {rankSize} {rankId} {deviceId} {useSdma} tcp://{[ipv6]}:{port}
@@ -54,14 +54,13 @@ run包安装后`transfer_perf`在/usr/local/memfabric_hybrid/latest/aarch64-linu
 | rankId             | 是  | 当前节点的rankId                                        |
 | deviceId           | 是  | 当前节点的deviceId                                      |
 | useSdma            | 是  | 1使用SDMA，0使用RDMA                                    |
-| tcp://{Ip}:{port}  | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md) |
-
+| tcp://{Ip}:{port}  | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md) |
 
 ### 运行步骤
 
 修改run.sh中的参数后，可以通过直接运行run.sh获取性能
 
-```
+```bash
 source /usr/local/memfabric_hybrid/set_env.sh
 
 bash run.sh
@@ -71,7 +70,7 @@ bash run.sh
 
 #### Device: 0->1 传输性能
 
-```
+```test
 Test completed: latency 12.5us, block size 32KB, total size 1024KB , throughput 9.70 GB/s
 Test completed: latency 12.1us, block size 64KB, total size 2048KB , throughput 19.33 GB/s
 Test completed: latency 10.2us, block size 128KB, total size 4096KB , throughput 39.98 GB/s
@@ -86,7 +85,7 @@ Test completed: latency 102.5us, block size 16384KB, total size 524288KB , throu
 
 #### Device: 0->2 传输性能
 
-```
+```text
 Test completed: latency 15.5us, block size 32KB, total size 1024KB , throughput 9.79 GB/s
 Test completed: latency 15.1us, block size 64KB, total size 2048KB , throughput 18.96 GB/s
 Test completed: latency 15.6us, block size 128KB, total size 4096KB , throughput 37.72 GB/s
