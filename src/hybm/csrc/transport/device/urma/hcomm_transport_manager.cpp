@@ -10,10 +10,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -47,7 +49,45 @@ CommProtocol ToHcommProtocol(UrmaProtocol protocol)
     }
     return COMM_PROTOCOL_RESERVED;
 }
+constexpr int32_t HCOMM_CHANNEL_READY = 0;
+constexpr int32_t HCOMM_CHANNEL_IN_PROGRESS = 1;
+constexpr int32_t HCOMM_CHANNEL_FAILED = 2;
+constexpr int32_t HCOMM_CHANNEL_TIMEOUT = 3;
 } // namespace
+
+Result HcommTransportManager::WaitForChannelReady(HcommChannelHandle channel, uint32_t peerRank) const
+{
+    constexpr auto pollInterval = std::chrono::milliseconds(1);
+
+    int32_t channelStatus = HCOMM_CHANNEL_IN_PROGRESS;
+    while (channelStatus == HCOMM_CHANNEL_IN_PROGRESS) {
+        const auto ret = DlHcommApi::HcommChannelGetStatus(&channel, 1, &channelStatus);
+        if (ret != 0) {
+            BM_LOG_ERROR("device_urma HcommChannelGetStatus API failed, channel: " << channel << " peer: " << peerRank
+                                                                                   << " ret: " << ret);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        if (channelStatus == HCOMM_CHANNEL_IN_PROGRESS) {
+            std::this_thread::sleep_for(pollInterval);
+        }
+    }
+    if (channelStatus == HCOMM_CHANNEL_READY) {
+        return BM_OK;
+    }
+    if (channelStatus == HCOMM_CHANNEL_FAILED) {
+        BM_LOG_ERROR("device_urma channel FAILED, channel: " << channel << " peer: " << peerRank
+                                                             << " status: " << channelStatus);
+        return BM_NOT_CONNECTED;
+    }
+    if (channelStatus == HCOMM_CHANNEL_TIMEOUT) {
+        BM_LOG_ERROR("device_urma channel TIMEOUT, channel: " << channel << " peer: " << peerRank
+                                                              << " status: " << channelStatus);
+        return BM_TIMEOUT;
+    }
+    BM_LOG_ERROR("device_urma channel unknown status, channel: " << channel << " peer: " << peerRank
+                                                                 << " status: " << channelStatus);
+    return BM_DL_FUNCTION_FAILED;
+}
 
 bool GetRangeEnd(const UrmaCommMem &mem, uint64_t &end)
 {

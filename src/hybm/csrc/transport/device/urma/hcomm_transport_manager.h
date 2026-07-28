@@ -160,6 +160,8 @@ public:
                           UrmaCommMem *commMem);
 
     Result HcommMemUnimport(const UrmaEndpointHandle &endpoint, const uint8_t *memDesc, uint32_t descLen);
+
+    Result WaitForChannelReady(HcommChannelHandle channel, uint32_t peerRank) const;
 };
 
 } // namespace device
