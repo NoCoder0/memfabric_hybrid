@@ -137,6 +137,7 @@ struct DlHcommApiFnGuard {
     hcommReadOnThreadFunc oldReadOnThread{DlHcommApi::gHcommReadOnThread};
     hcommWriteOnThreadFunc oldWriteOnThread{DlHcommApi::gHcommWriteOnThread};
     hcommChannelFenceOnThreadFunc oldChannelFenceOnThread{DlHcommApi::gHcommChannelFenceOnThread};
+    hcommChannelGetStatusFunc oldChannelGetStatus{DlHcommApi::gHcommChannelGetStatus};
 
     ~DlHcommApiFnGuard()
     {
@@ -154,6 +155,7 @@ struct DlHcommApiFnGuard {
         DlHcommApi::gHcommReadOnThread = oldReadOnThread;
         DlHcommApi::gHcommWriteOnThread = oldWriteOnThread;
         DlHcommApi::gHcommChannelFenceOnThread = oldChannelFenceOnThread;
+        DlHcommApi::gHcommChannelGetStatus = oldChannelGetStatus;
     }
 };
 
@@ -505,6 +507,92 @@ int32_t MockHcommChannelCreateZero(EndpointHandle endpoint, CommEngine engine, H
     const auto ret = MockHcommChannelCreate(endpoint, engine, channelDescs, channelNum, channels);
     *channels = 0;
     return ret;
+}
+
+// 计数 mock，用于验证轮询/回滚行为
+static int g_getStatusCallCount = 0;
+static int g_channelDestroyCallCount = 0;
+static int g_threadFreeCallCount = 0;
+
+int32_t MockHcommChannelGetStatusReady(const ChannelHandle *channelList, uint32_t listNum, int32_t *statusList)
+{
+    EXPECT_NE(channelList, nullptr);
+    EXPECT_EQ(listNum, 1U);
+    EXPECT_EQ(channelList[0], MOCK_CHANNEL);
+    EXPECT_NE(statusList, nullptr);
+    *statusList = 0UL; // READY
+    return BM_OK;
+}
+
+int32_t MockHcommChannelGetStatusInProgressThenReady(const ChannelHandle *channelList, uint32_t listNum,
+                                                     int32_t *statusList)
+{
+    EXPECT_NE(channelList, nullptr);
+    EXPECT_EQ(listNum, 1U);
+    EXPECT_EQ(channelList[0], MOCK_CHANNEL);
+    EXPECT_NE(statusList, nullptr);
+    g_getStatusCallCount++;
+    if (g_getStatusCallCount <= 2UL) {
+        *statusList = 1UL; // IN_PROGRESS
+    } else {
+        *statusList = 0UL; // READY
+    }
+    return BM_OK;
+}
+
+int32_t MockHcommChannelGetStatusApiFail(const ChannelHandle *channelList, uint32_t listNum, int32_t *statusList)
+{
+    EXPECT_NE(channelList, nullptr);
+    EXPECT_EQ(listNum, 1U);
+    EXPECT_EQ(channelList[0], MOCK_CHANNEL);
+    EXPECT_NE(statusList, nullptr);
+    return BM_ERROR;
+}
+
+int32_t MockHcommChannelGetStatusFailed(const ChannelHandle *channelList, uint32_t listNum, int32_t *statusList)
+{
+    EXPECT_NE(channelList, nullptr);
+    EXPECT_EQ(listNum, 1U);
+    EXPECT_EQ(channelList[0], MOCK_CHANNEL);
+    EXPECT_NE(statusList, nullptr);
+    *statusList = 2UL; // FAILED
+    return BM_OK;
+}
+
+int32_t MockHcommChannelGetStatusTimeout(const ChannelHandle *channelList, uint32_t listNum, int32_t *statusList)
+{
+    EXPECT_NE(channelList, nullptr);
+    EXPECT_EQ(listNum, 1U);
+    EXPECT_EQ(channelList[0], MOCK_CHANNEL);
+    EXPECT_NE(statusList, nullptr);
+    *statusList = 3UL; // TIMEOUT
+    return BM_OK;
+}
+
+int32_t MockHcommChannelGetStatusUnknown(const ChannelHandle *channelList, uint32_t listNum, int32_t *statusList)
+{
+    EXPECT_NE(channelList, nullptr);
+    EXPECT_EQ(listNum, 1U);
+    EXPECT_EQ(channelList[0], MOCK_CHANNEL);
+    EXPECT_NE(statusList, nullptr);
+    *statusList = 99UL; // 未知状态
+    return BM_OK;
+}
+
+// 前向声明（原 mock 定义在后）
+int32_t MockHcommChannelDestroy(const ChannelHandle *channels, uint32_t channelNum);
+int32_t MockHcommThreadFree(const ThreadHandle *threads, uint32_t threadNum);
+
+int32_t MockHcommChannelDestroyCounted(const ChannelHandle *channels, uint32_t channelNum)
+{
+    g_channelDestroyCallCount++;
+    return MockHcommChannelDestroy(channels, channelNum);
+}
+
+int32_t MockHcommThreadFreeCounted(const ThreadHandle *threads, uint32_t threadNum)
+{
+    g_threadFreeCallCount++;
+    return MockHcommThreadFree(threads, threadNum);
 }
 
 TransportPrivateData MakePrivateData(const UrmaEndpointDesc &desc)
@@ -918,6 +1006,7 @@ void InstallOpenDeviceMocks()
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommMemReg = MockHcommMemRegOpenDevice;
     DlHcommApi::gHcommMemUnreg = MockHcommMemUnregOpenDevice;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlAclApi::pAclrtGetDevice = MockAclrtGetDevice;
     DlAclApi::pAclrtGetPhyDevIdByLogicDevId = MockAclrtGetPhyDevIdByLogicDevId;
     DlAclApi::pRtGetDeviceInfo = MockRtGetDeviceInfo;
@@ -976,6 +1065,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesThreadChannelAndImportsMemKey
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlHcommApi::gHcommMemImport = MockHcommMemImport;
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
@@ -1149,6 +1239,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
     InstallKernelLaunchMocks();
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlHcommApi::gHcommMemImport = MockHcommMemImport;
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
@@ -1234,6 +1325,7 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsAndRemoveRanksReusePrepare
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlHcommApi::gHcommMemImport = MockHcommMemImport;
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
@@ -1275,6 +1367,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRollsBackNewResourcesWhenImportFails
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlHcommApi::gHcommMemImport = MockHcommMemImportFail;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
@@ -1308,6 +1401,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRejectsRankEdgesAndChangedEndpoint)
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
 
@@ -1379,6 +1473,175 @@ TEST(DeviceUrmaTransportManagerTest, PrepareFailsWhenCreatingThreadOrChannel)
     EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
 }
 
+TEST(DeviceUrmaTransportManagerTest, PreparePollsInProgressUntilReady)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusInProgressThenReady;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    g_getStatusCallCount = 0;
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    options.options.emplace(1, std::move(info));
+
+    // 无 memKeys，验证轮询行为（两次 IN_PROGRESS 后 READY），不涉及 mem import
+    EXPECT_EQ(manager.Prepare(options), BM_OK);
+    EXPECT_EQ(g_getStatusCallCount, 3UL); // 两次 IN_PROGRESS + 一次 READY
+    EXPECT_EQ(manager.remoteRanks_[1].channel, MOCK_CHANNEL);
+    EXPECT_EQ(manager.remoteRanks_[1].thread, MOCK_THREAD);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusApiFailureDestroysChannelAndThread)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusApiFail;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroyCounted;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFreeCounted;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    g_channelDestroyCallCount = 0;
+    g_threadFreeCallCount = 0;
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    options.options.emplace(1, std::move(info));
+
+    EXPECT_EQ(manager.Prepare(options), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(g_channelDestroyCallCount, 1);
+    EXPECT_EQ(g_threadFreeCallCount, 1);
+    EXPECT_EQ(manager.remoteRanks_[1].channel, 0U);
+    EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusFailedDestroysChannelAndThread)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusFailed;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroyCounted;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFreeCounted;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    g_channelDestroyCallCount = 0;
+    g_threadFreeCallCount = 0;
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    options.options.emplace(1, std::move(info));
+
+    EXPECT_EQ(manager.Prepare(options), BM_NOT_CONNECTED);
+    EXPECT_EQ(g_channelDestroyCallCount, 1);
+    EXPECT_EQ(g_threadFreeCallCount, 1);
+    EXPECT_EQ(manager.remoteRanks_[1].channel, 0U);
+    EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusTimeoutDestroysChannelAndThread)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusTimeout;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroyCounted;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFreeCounted;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    g_channelDestroyCallCount = 0;
+    g_threadFreeCallCount = 0;
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    options.options.emplace(1, std::move(info));
+
+    EXPECT_EQ(manager.Prepare(options), BM_TIMEOUT);
+    EXPECT_EQ(g_channelDestroyCallCount, 1);
+    EXPECT_EQ(g_threadFreeCallCount, 1);
+    EXPECT_EQ(manager.remoteRanks_[1].channel, 0U);
+    EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusUnknownDestroysChannelAndThread)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusUnknown;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroyCounted;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFreeCounted;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
+
+    g_channelDestroyCallCount = 0;
+    g_threadFreeCallCount = 0;
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    options.options.emplace(1, std::move(info));
+
+    EXPECT_EQ(manager.Prepare(options), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(g_channelDestroyCallCount, 1);
+    EXPECT_EQ(g_threadFreeCallCount, 1);
+    EXPECT_EQ(manager.remoteRanks_[1].channel, 0U);
+    EXPECT_EQ(manager.remoteRanks_[1].thread, 0U);
+}
+
 TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsFallsBackForNewRankAndChecksEdges)
 {
     DlHcommApiFnGuard guard;
@@ -1386,6 +1649,7 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsFallsBackForNewRankAndChec
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
     DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
 

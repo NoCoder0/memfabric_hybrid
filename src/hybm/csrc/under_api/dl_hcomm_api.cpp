@@ -45,6 +45,7 @@ hcommWriteNbiFunc DlHcommApi::gHcommWriteNbi = nullptr;
 hcommChannelFenceFunc DlHcommApi::gHcommChannelFence = nullptr;
 hcommMemGetAllMemHandlesFunc DlHcommApi::gHcommMemGetAllMemHandles = nullptr;
 hcommChannelUpdateMemInfoFunc DlHcommApi::gHcommChannelUpdateMemInfo = nullptr;
+hcommChannelGetStatusFunc DlHcommApi::gHcommChannelGetStatus = nullptr;
 
 Result DlHcommApi::LoadLibrary()
 {
@@ -88,6 +89,7 @@ Result DlHcommApi::LoadLibrary()
                          "HcommMemGetAllMemHandles");
     DL_LOAD_SYM_OPTIONAL(gHcommChannelUpdateMemInfo, hcommChannelUpdateMemInfoFunc, hcommHandle,
                          "HcommChannelUpdateMemInfo");
+    DL_LOAD_SYM(gHcommChannelGetStatus, hcommChannelGetStatusFunc, hcommHandle, "HcommChannelGetStatus");
 
     BM_LOG_INFO("LoadLibrary for DlHcommApi success");
     gLoaded = true;
@@ -123,6 +125,7 @@ void DlHcommApi::CleanupLibrary()
     gHcommChannelFence = nullptr;
     gHcommMemGetAllMemHandles = nullptr;
     gHcommChannelUpdateMemInfo = nullptr;
+    gHcommChannelGetStatus = nullptr;
 
     if (hcommHandle != nullptr) {
         dlclose(hcommHandle);

@@ -53,6 +53,7 @@ struct DlHcommApiFnGuard {
     hcommReadOnThreadFunc oldReadOnThread{DlHcommApi::gHcommReadOnThread};
     hcommWriteOnThreadFunc oldWriteOnThread{DlHcommApi::gHcommWriteOnThread};
     hcommChannelFenceOnThreadFunc oldChannelFenceOnThread{DlHcommApi::gHcommChannelFenceOnThread};
+    hcommChannelGetStatusFunc oldChannelGetStatus{DlHcommApi::gHcommChannelGetStatus};
 
     ~DlHcommApiFnGuard()
     {
@@ -70,6 +71,7 @@ struct DlHcommApiFnGuard {
         DlHcommApi::gHcommReadOnThread = oldReadOnThread;
         DlHcommApi::gHcommWriteOnThread = oldWriteOnThread;
         DlHcommApi::gHcommChannelFenceOnThread = oldChannelFenceOnThread;
+        DlHcommApi::gHcommChannelGetStatus = oldChannelGetStatus;
     }
 };
 

@@ -1470,6 +1470,24 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
             BM_LOG_INFO("device_urma Prepare created channel/thread, peer: " << peerRank << " thread: " << threadHandle
                                                                              << " channel: " << channelHandle);
+
+            // 7.5 Wait for channel ready before importing mem keys
+            ret = manager_.WaitForChannelReady(channelHandle, peerRank);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("device_urma Prepare WaitForChannelReady failed, peer: " << peerRank << " ret: " << ret);
+                auto rbRet = DlHcommApi::HcommChannelDestroy(&channelHandle, 1);
+                if (rbRet != 0) {
+                    BM_LOG_ERROR("device_urma Prepare rollback HcommChannelDestroy failed, "
+                                 << "channel: " << channelHandle << " peer: " << peerRank << " ret: " << rbRet);
+                }
+                auto trRet = DlHcommApi::HcommThreadFree(&threadHandle, 1);
+                if (trRet != 0) {
+                    BM_LOG_ERROR("device_urma Prepare rollback HcommThreadFree failed, "
+                                 << "thread: " << threadHandle << " peer: " << peerRank << " ret: " << trRet);
+                }
+                remoteRanks_.erase(peerRank);
+                return ret;
+            }
         }
 
         // 8. Import remote memory keys (always, even if channel/thread were reused)

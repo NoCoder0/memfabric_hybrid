@@ -405,6 +405,7 @@ using hcommBatchModeStartFunc = int32_t (*)(const char *);
 using hcommBatchModeEndFunc = int32_t (*)(const char *);
 using hcommBatchTransferOnThreadFunc = int32_t (*)(ThreadHandle, ChannelHandle, const HcommBatchTransferDesc *,
                                                    uint32_t);
+using hcommChannelGetStatusFunc = HcommResult (*)(const ChannelHandle *, uint32_t, int32_t *);
 
 // =============================================================================
 // NBI 函数指针类型定义 (Non-Blocking Interface for alpha RDMA)
@@ -683,6 +684,14 @@ public:
         return gHcommBatchTransferOnThread(thread, channel, transferDescs, transferDescNum);
     }
 
+    static inline int32_t HcommChannelGetStatus(const ChannelHandle *channelList, uint32_t listNum, int32_t *statusList)
+    {
+        if (gHcommChannelGetStatus == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gHcommChannelGetStatus(channelList, listNum, statusList);
+    }
+
     // -------------------------------------------------------------------------
     // NBI (Non-Blocking Interface) methods for alpha RDMA support
     // -------------------------------------------------------------------------
@@ -751,6 +760,7 @@ private:
     static hcommBatchModeStartFunc gHcommBatchModeStart;
     static hcommBatchModeEndFunc gHcommBatchModeEnd;
     static hcommBatchTransferOnThreadFunc gHcommBatchTransferOnThread;
+    static hcommChannelGetStatusFunc gHcommChannelGetStatus;
 
     // NBI function pointer members
     static hcommReadNbiFunc gHcommReadNbi;
