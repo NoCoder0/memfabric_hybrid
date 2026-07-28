@@ -16,11 +16,18 @@
 #include "hybm_transport_manager.h"
 #include "hybm_entity_tag_info.h"
 
+#include <cstdint>
 #include <mutex>
 
 namespace ock {
 namespace mf {
 namespace transport {
+
+enum class HostDeviceUrmaRole : uint8_t {
+    NONE = 0,
+    HOST,
+    DEVICE,
+};
 
 struct ComposeMemoryRegion {
     uint64_t addr = 0;
@@ -80,7 +87,13 @@ public:
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
+    HostDeviceUrmaRole GetHostDeviceUrmaRole() const noexcept;
+
 private:
+    Result ResolveHostDeviceUrmaRole(const TransportOptions &options);
+    bool UsesHostProtocol(uint32_t protocol) const noexcept;
+    bool UsesDeviceProtocol(uint32_t protocol) const noexcept;
+
     Result OpenHostTransport(const TransportOptions &options);
 
     Result OpenDeviceTransport(const TransportOptions &options);
@@ -97,6 +110,7 @@ private:
     std::map<uint64_t, ComposeMemoryRegion, std::greater<uint64_t>> mrs_;
     TransportOptions options_{};
     HybmEntityTagInfoPtr tagManager_{};
+    HostDeviceUrmaRole hostDeviceUrmaRole_{HostDeviceUrmaRole::NONE};
 };
 } // namespace transport
 } // namespace mf

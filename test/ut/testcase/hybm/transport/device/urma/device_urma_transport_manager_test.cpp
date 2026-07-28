@@ -62,12 +62,15 @@ constexpr ChannelHandle MOCK_CHANNEL = 0xA503UL;
 constexpr HcommThreadHandle MOCK_THREAD = 0xA504UL;
 constexpr uint64_t MOCK_LOCAL_ADDR = 0x100000UL;
 constexpr uint64_t MOCK_REMOTE_ADDR = 0x200000UL;
+constexpr uint64_t MOCK_HCOMM_VIEW_ADDR = 0x300000UL;
 constexpr uint64_t MOCK_NOTIFY_ADDR = 0x300000UL;
 constexpr uint64_t MOCK_SIZE = 0x1000UL;
 constexpr uint64_t MOCK_MEM_TAG = 7UL;
 constexpr uint32_t MOCK_HCOMM_DESC_LEN = 4U;
 constexpr uint32_t MOCK_NOTIFY_ID = 11U;
 constexpr uint32_t MOCK_NOTIFY_LEN = sizeof(int64_t);
+constexpr uint32_t MOCK_PEER_RANK = 1U;
+constexpr uint8_t MOCK_FLAG_DESC_BYTE = 0xF1U;
 uint32_t g_memExportCallCount = 0;
 uint32_t g_memImportCallCount = 0;
 uint32_t g_memUnregCallCount = 0;
@@ -403,7 +406,8 @@ int32_t MockHcommMemImport(EndpointHandle endpoint, const void *memDesc, uint32_
     EXPECT_NE(commMem, nullptr);
     commMem->type = COMM_MEM_TYPE_HOST;
     commMem->addr = reinterpret_cast<void *>(MOCK_REMOTE_ADDR);
-    commMem->size = MOCK_SIZE;
+    const auto *desc = static_cast<const uint8_t *>(memDesc);
+    commMem->size = desc[0] == MOCK_FLAG_DESC_BYTE ? sizeof(uint64_t) : MOCK_SIZE;
     return BM_OK;
 }
 
@@ -416,7 +420,8 @@ int32_t MockHcommMemImportInvalidType(EndpointHandle endpoint, const void *memDe
     EXPECT_NE(commMem, nullptr);
     commMem->type = COMM_MEM_TYPE_INVALID;
     commMem->addr = reinterpret_cast<void *>(MOCK_REMOTE_ADDR);
-    commMem->size = MOCK_SIZE;
+    const auto *desc = static_cast<const uint8_t *>(memDesc);
+    commMem->size = desc[0] == MOCK_FLAG_DESC_BYTE ? sizeof(uint64_t) : MOCK_SIZE;
     return BM_OK;
 }
 
@@ -2178,7 +2183,7 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysImportsFlagAndSkipsDupli
     ASSERT_EQ(state.imports.size(), 1U);
     EXPECT_EQ(state.imports.front().memTag, MOCK_MEM_TAG);
     EXPECT_EQ(state.remoteFlagAddr, MOCK_REMOTE_ADDR);
-    EXPECT_EQ(state.remoteFlagSize, MOCK_SIZE);
+    EXPECT_EQ(state.remoteFlagSize, sizeof(uint64_t));
     EXPECT_EQ(state.remoteFlagDescBytes.size(), MOCK_HCOMM_DESC_LEN);
 }
 
@@ -2272,6 +2277,66 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsMalformedPayloads
     EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {flagKey}), BM_INVALID_PARAM);
     EXPECT_TRUE(state.imports.empty());
     EXPECT_TRUE(state.remoteFlagDescBytes.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, BuildsDeviceBatchCopyRouteWithDistinctGvaAndHcommView)
+{
+    DeviceUrmaTransportManager manager;
+    manager.rankId_ = 0;
+    manager.options_.protocol = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+
+    auto &state = manager.remoteRanks_[MOCK_PEER_RANK];
+    state.hasEndpointDesc = true;
+    state.remoteEndpointDesc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    state.thread = MOCK_THREAD;
+    state.channel = MOCK_CHANNEL;
+    state.remoteFlagAddr = MOCK_NOTIFY_ADDR;
+    state.remoteFlagSize = sizeof(uint64_t);
+    state.remoteFlagDescBytes = {MOCK_FLAG_DESC_BYTE};
+
+    DeviceUrmaTransportManager::RemoteRegistration registration{};
+    registration.addr = MOCK_REMOTE_ADDR;
+    registration.size = MOCK_SIZE;
+    registration.memTag = MOCK_MEM_TAG;
+    registration.view = {MOCK_HCOMM_VIEW_ADDR, MOCK_SIZE, UrmaMemoryType::DEVICE_HBM};
+    state.imports.emplace_back(registration);
+
+    std::vector<BatchCopyRouteSource> sources;
+    ASSERT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_OK);
+    ASSERT_EQ(sources.size(), 1U);
+    EXPECT_EQ(sources[0].peerRank, MOCK_PEER_RANK);
+    EXPECT_EQ(sources[0].thread, MOCK_THREAD);
+    EXPECT_EQ(sources[0].channel, MOCK_CHANNEL);
+    EXPECT_EQ(sources[0].remoteFlagAddr, MOCK_NOTIFY_ADDR);
+    ASSERT_EQ(sources[0].ranges.size(), 1U);
+    EXPECT_EQ(sources[0].ranges[0].srcGvaBegin, MOCK_REMOTE_ADDR);
+    EXPECT_EQ(sources[0].ranges[0].srcGvaEnd, MOCK_REMOTE_ADDR + MOCK_SIZE);
+    EXPECT_EQ(sources[0].ranges[0].hcommVaBegin, MOCK_HCOMM_VIEW_ADDR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RejectsNonDeviceMemoryAndInvalidFlagForDeviceBatchCopyRoute)
+{
+    DeviceUrmaTransportManager manager;
+    manager.rankId_ = 0;
+    manager.options_.protocol = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+
+    auto &state = manager.remoteRanks_[MOCK_PEER_RANK];
+    state.hasEndpointDesc = true;
+    state.remoteEndpointDesc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    state.thread = MOCK_THREAD;
+    state.channel = MOCK_CHANNEL;
+    state.remoteFlagAddr = MOCK_NOTIFY_ADDR;
+    state.remoteFlagSize = sizeof(uint64_t);
+    state.remoteFlagDescBytes = {MOCK_FLAG_DESC_BYTE};
+    state.imports.push_back(
+        {MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG, {}, {MOCK_REMOTE_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM}});
+
+    std::vector<BatchCopyRouteSource> sources;
+    EXPECT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_INVALID_PARAM);
+
+    state.imports[0].view.type = UrmaMemoryType::DEVICE_HBM;
+    state.remoteFlagSize = sizeof(uint32_t);
+    EXPECT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_INVALID_PARAM);
 }
 
 TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchRejectsMissingRankAndChannel)

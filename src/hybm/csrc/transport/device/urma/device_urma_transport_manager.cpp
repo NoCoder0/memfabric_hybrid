@@ -23,6 +23,7 @@
 #include <vector>
 #include <cassert>
 #include <iterator>
+#include <limits>
 #include <string>
 
 #include "dl_acl_api.h"
@@ -335,8 +336,10 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
         BM_LOG_ERROR("device_urma OpenDevice: invalid rankCount or rankId");
         return BM_INVALID_PARAM;
     }
-    if (DlAclApi::GetAscendSocType() != AscendSocType::ASCEND_950) {
-        BM_LOG_ERROR("device_urma is only supported on Ascend950 soc, rank: " << options.rankId);
+    const auto socType = DlAclApi::GetAscendSocType();
+    if (socType != AscendSocType::ASCEND_950) {
+        BM_LOG_ERROR("device_urma is only supported on Ascend950 soc, rank: "
+                     << options.rankId << " socType: " << static_cast<uint32_t>(socType));
         return BM_NOT_SUPPORTED;
     }
 
@@ -674,6 +677,15 @@ Result DeviceUrmaTransportManager::CloseDevice()
     std::lock_guard<std::mutex> guard(mutex_);
     if (!opened_) {
         return BM_OK;
+    }
+    if (routePublisher_ != nullptr) {
+        const auto ret = routePublisher_->Clear();
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma CloseDevice failed to clear BatchCopy route, rank: "
+                         << rankId_ << " userDeviceId: " << userDeviceId_ << " ret: " << ret);
+            return ret;
+        }
+        routePublisher_.reset();
     }
     for (const auto &ctxSp : registry_) {
         if (!ctxSp) {
@@ -1252,6 +1264,105 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
     return BM_OK;
 }
 
+bool DeviceUrmaTransportManager::IsBatchCopyRouteEnabledLocked() const
+{
+    return (options_.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U;
+}
+
+Result DeviceUrmaTransportManager::BuildDeviceBatchCopyRouteSourceLocked(
+    uint32_t peerRank, const RemoteRankState &state, BatchCopyRouteSource &source) const
+{
+    if (!state.hasEndpointDesc || state.remoteEndpointDesc.loc.locType != ENDPOINT_LOC_TYPE_DEVICE ||
+        state.thread == 0 ||
+        state.channel == 0 || state.remoteFlagAddr == 0 || state.remoteFlagSize != sizeof(uint64_t) ||
+        state.remoteFlagDescBytes.empty()) {
+        BM_LOG_ERROR("device_urma invalid Device BatchCopy peer resources, peer: "
+                     << peerRank << " locType: " << state.remoteEndpointDesc.loc.locType
+                     << " hasEndpointDesc: " << state.hasEndpointDesc << " thread: " << state.thread
+                     << " channel: " << state.channel << " flagAddr: 0x" << std::hex << state.remoteFlagAddr
+                     << std::dec << " flagSize: " << state.remoteFlagSize
+                     << " flagDescLen: " << state.remoteFlagDescBytes.size());
+        return BM_INVALID_PARAM;
+    }
+    if (state.imports.empty() || state.imports.size() > BATCH_COPY_MAX_RANGE_PER_PEER) {
+        BM_LOG_ERROR("device_urma invalid Device BatchCopy range count, peer: " << peerRank
+                                                                                << " count: " << state.imports.size());
+        return BM_INVALID_PARAM;
+    }
+
+    source = {};
+    source.peerRank = peerRank;
+    source.thread = state.thread;
+    source.channel = state.channel;
+    source.remoteFlagAddr = state.remoteFlagAddr;
+    for (const auto &registration : state.imports) {
+        if (registration.view.type != UrmaMemoryType::DEVICE_HBM || registration.addr == 0 ||
+            registration.size == 0 || registration.view.addr == 0 || registration.view.size < registration.size ||
+            registration.addr > std::numeric_limits<uint64_t>::max() - registration.size) {
+            BM_LOG_ERROR("device_urma invalid imported Device HBM range, peer: "
+                         << peerRank << " memTag: " << registration.memTag << " srcGva: 0x" << std::hex
+                         << registration.addr << " hcommVa: 0x" << registration.view.addr << std::dec
+                         << " size: " << registration.size << " viewSize: " << registration.view.size
+                         << " type: " << registration.view.type);
+            return BM_INVALID_PARAM;
+        }
+        source.ranges.push_back(
+            {registration.addr, registration.addr + registration.size, registration.view.addr});
+    }
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(
+    std::vector<BatchCopyRouteSource> &sources) const
+{
+    if (remoteRanks_.empty() || remoteRanks_.size() > BATCH_COPY_MAX_PEER_COUNT) {
+        BM_LOG_ERROR("device_urma invalid BatchCopy peer count, rank: " << rankId_
+                                                                        << " count: " << remoteRanks_.size());
+        return BM_INVALID_PARAM;
+    }
+    sources.clear();
+    sources.reserve(remoteRanks_.size());
+    for (const auto &rankItem : remoteRanks_) {
+        BatchCopyRouteSource source{};
+        const auto ret = BuildDeviceBatchCopyRouteSourceLocked(rankItem.first, rankItem.second, source);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        sources.emplace_back(std::move(source));
+    }
+    std::sort(sources.begin(), sources.end(),
+              [](const auto &left, const auto &right) { return left.peerRank < right.peerRank; });
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked(const HybmTransPrepareOptions &options)
+{
+    if (!IsBatchCopyRouteEnabledLocked()) {
+        return BM_OK;
+    }
+    const bool hasMemKeys =
+        std::any_of(options.options.begin(), options.options.end(),
+                    [](const auto &item) { return !item.second.memKeys.empty(); });
+    if (!hasMemKeys) {
+        return BM_OK;
+    }
+    std::vector<BatchCopyRouteSource> sources;
+    auto ret = BuildBatchCopyRouteSourcesLocked(sources);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    if (routePublisher_ == nullptr) {
+        routePublisher_ = std::make_unique<BatchCopyRoutePublisher>(userDeviceId_, localEndpoint_, manager_);
+    }
+    ret = routePublisher_->Publish(sources);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma publish BatchCopy route failed, rank: " << rankId_
+                                                                          << " userDeviceId: " << userDeviceId_
+                                                                          << " ret: " << ret);
+    }
+    return ret;
+}
+
 Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
 {
     std::lock_guard<std::mutex> guard(mutex_);
@@ -1388,7 +1499,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
                                                           << state.channel << " imports: " << state.imports.size());
     }
-    return BM_OK;
+    // TODO: Publish only in UpdateRankOptions after ComposeTransportManager maintains connected_ correctly.
+    return TryPublishBatchCopyRouteLocked(options);
 }
 
 Result DeviceUrmaTransportManager::RemoveRankLocked(uint32_t rankId)
@@ -1431,6 +1543,11 @@ Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &remo
 {
     std::lock_guard<std::mutex> guard(mutex_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
+    if (routePublisher_ != nullptr && routePublisher_->IsPublished()) {
+        BM_LOG_ERROR("device_urma RemoveRanks is not supported after BatchCopy route publication, rank: "
+                     << rankId_ << " removedCount: " << removedRanks.size());
+        return BM_NOT_SUPPORTED;
+    }
 
     // Atomic pending preflight: any target rank with pending ops → reject all
     for (auto rankId : removedRanks) {
@@ -1536,7 +1653,7 @@ Result DeviceUrmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptio
         }
         BM_LOG_INFO("device_urma UpdateRankOptions success, peer: " << peerRank);
     }
-    return BM_OK;
+    return TryPublishBatchCopyRouteLocked(options);
 }
 
 const std::string &DeviceUrmaTransportManager::GetNic() const

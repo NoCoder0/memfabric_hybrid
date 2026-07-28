@@ -12,6 +12,7 @@
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
 #include "hybm_compose_data_op.h"
+#include "compose_transport_manager.h"
 
 namespace ock {
 namespace mf {
@@ -28,6 +29,19 @@ Result HostComposeDataOp::Initialize() noexcept
     if (options_.bmType == HYBM_TYPE_AI_CORE_INITIATE) {
         return BM_OK;
     }
+
+    uint32_t deviceUrmaMask = HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+#if defined(ASCEND_NPU)
+    if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U) {
+        const auto composeManager = std::dynamic_pointer_cast<transport::ComposeTransportManager>(transport_);
+        if (composeManager == nullptr ||
+            composeManager->GetHostDeviceUrmaRole() != transport::HostDeviceUrmaRole::DEVICE) {
+            BM_LOG_ERROR("HOST_DEVICE_URMA data operator role mismatch, rankId: " << options_.rankId);
+            return BM_NOT_SUPPORTED;
+        }
+        deviceUrmaMask |= HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+    }
+#endif
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) {
         sdmaDataOperator_ = DataOperatorFactory::CreateSdmaDataOperator();
@@ -51,7 +65,7 @@ Result HostComposeDataOp::Initialize() noexcept
         }
     }
 
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    if (options_.bmDataOpType & deviceUrmaMask) {
         devUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
         auto ret = devUrmaDataOperator_->Initialize();
         if (ret != BM_OK) {
@@ -274,6 +288,13 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
     if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U) {
         dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_UBOE, devUrmaDataOperator_);
     }
+
+#if defined(ASCEND_NPU)
+    if (devUrmaDataOperator_ != nullptr &&
+        (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0U) {
+        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_DEVICE_URMA, devUrmaDataOperator_);
+    }
+#endif
 
     if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_RDMA)) != 0U) {
         dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_RDMA, hostRdmaDataOperator_);

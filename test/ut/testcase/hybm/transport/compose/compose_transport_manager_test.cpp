@@ -687,7 +687,30 @@ TEST(ComposeTransportManagerTest, IsDeviceUrmaCoversUboeAndUrma)
     EXPECT_FALSE(mgr.IsDeviceUrma());
 }
 
-// OpenDevice: 当 hostTransportManager_ 已经存在且 protocol 包含 HOST 时，会走 OpenHostTransport 的错误分支并返回 BM_ERROR。
+TEST(ComposeTransportManagerTest, HostDeviceUrmaUsesResolvedDeviceRole)
+{
+    auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_HOST_DEVICE_URMA);
+    ComposeTransportManager mgr(tag);
+    mgr.hostDeviceUrmaRole_ = HostDeviceUrmaRole::DEVICE;
+    mgr.options_.protocol = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+
+    EXPECT_TRUE(mgr.UsesDeviceProtocol(HYBM_DOP_TYPE_HOST_DEVICE_URMA));
+    EXPECT_FALSE(mgr.UsesHostProtocol(HYBM_DOP_TYPE_HOST_DEVICE_URMA));
+    EXPECT_TRUE(mgr.IsDeviceUrma());
+}
+
+TEST(ComposeTransportManagerTest, HostDeviceUrmaUsesResolvedHostRole)
+{
+    auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_HOST_DEVICE_URMA);
+    ComposeTransportManager mgr(tag);
+    mgr.hostDeviceUrmaRole_ = HostDeviceUrmaRole::HOST;
+
+    EXPECT_TRUE(mgr.UsesHostProtocol(HYBM_DOP_TYPE_HOST_DEVICE_URMA));
+    EXPECT_FALSE(mgr.UsesDeviceProtocol(HYBM_DOP_TYPE_HOST_DEVICE_URMA));
+}
+
+// OpenDevice: 当 hostTransportManager_ 已经存在且 protocol 包含 HOST 时，
+// 会走 OpenHostTransport 的错误分支并返回 BM_ERROR。
 TEST(ComposeTransportManagerTest, OpenDeviceFailsWhenHostAlreadyOpened)
 {
     auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_HOST_TCP);

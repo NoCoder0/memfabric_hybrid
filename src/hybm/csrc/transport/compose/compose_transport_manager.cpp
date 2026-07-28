@@ -18,6 +18,7 @@
 #include "hybm_logger.h"
 #include "host_hcom_transport_manager.h"
 #include "device_rdma_transport_manager.h"
+#include "dl_acl_api.h"
 #include "hybm_gva_version.h"
 #include "device_urma_transport_manager.h"
 #include "mf_str_util.h"
@@ -32,6 +33,45 @@ const std::string DEVICE_TRANSPORT_TYPE = "device#";
 const uint32_t HOST_PROTOCOL = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA;
 const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
 } // namespace
+
+Result ComposeTransportManager::ResolveHostDeviceUrmaRole(const TransportOptions &options)
+{
+    hostDeviceUrmaRole_ = HostDeviceUrmaRole::NONE;
+    if ((options.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) == 0U) {
+        return BM_OK;
+    }
+#if defined(ASCEND_NPU)
+    const auto socType = DlAclApi::GetAscendSocType();
+    if (socType != AscendSocType::ASCEND_950) {
+        BM_LOG_ERROR("HOST_DEVICE_URMA requires Ascend950 when an NPU runtime is present, rankId: "
+                     << options.rankId << " socType: " << static_cast<uint32_t>(socType));
+        return BM_NOT_SUPPORTED;
+    }
+    hostDeviceUrmaRole_ = HostDeviceUrmaRole::DEVICE;
+    return BM_OK;
+#else
+    hostDeviceUrmaRole_ = HostDeviceUrmaRole::HOST;
+    BM_LOG_ERROR("HOST_DEVICE_URMA Host role requires HostUrmaTransportManager from T1, rankId: " << options.rankId);
+    return BM_NOT_SUPPORTED;
+#endif
+}
+
+HostDeviceUrmaRole ComposeTransportManager::GetHostDeviceUrmaRole() const noexcept
+{
+    return hostDeviceUrmaRole_;
+}
+
+bool ComposeTransportManager::UsesHostProtocol(uint32_t protocol) const noexcept
+{
+    return (protocol & HOST_PROTOCOL) != 0U ||
+           ((protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U && hostDeviceUrmaRole_ == HostDeviceUrmaRole::HOST);
+}
+
+bool ComposeTransportManager::UsesDeviceProtocol(uint32_t protocol) const noexcept
+{
+    return (protocol & DEVICE_PROTOCOL) != 0U ||
+           ((protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U && hostDeviceUrmaRole_ == HostDeviceUrmaRole::DEVICE);
+}
 
 Result ComposeTransportManager::OpenHostTransport(const TransportOptions &options)
 {
@@ -49,7 +89,8 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
         BM_LOG_ERROR("Failed to open device transport is opened");
         return BM_ERROR;
     }
-    if (options.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    if (options.protocol &
+        (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_DEVICE_URMA)) {
         deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
     } else {
         deviceTransportManager_ = Create(HybmGetGvaVersion());
@@ -59,14 +100,21 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
 
 bool ComposeTransportManager::IsDeviceUrma() const
 {
-    return (options_.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0;
+    if ((options_.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U) {
+        return hostDeviceUrmaRole_ == HostDeviceUrmaRole::DEVICE;
+    }
+    return (options_.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
 }
 
 Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
 {
     options_ = options;
-    Result ret = BM_ERROR;
-    if (options_.protocol & HOST_PROTOCOL) {
+    auto ret = ResolveHostDeviceUrmaRole(options);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    ret = BM_ERROR;
+    if (UsesHostProtocol(options_.protocol)) {
         ret = OpenHostTransport(options);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to open device transport nic: " << options.nic);
@@ -75,7 +123,7 @@ Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
         }
     }
 
-    if (options_.protocol & DEVICE_PROTOCOL) {
+    if (UsesDeviceProtocol(options_.protocol)) {
         ret = OpenDeviceTransport(options);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to open device transport nic: " << options.nic);
@@ -85,7 +133,7 @@ Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
     }
 
     std::stringstream ss;
-    if ((options_.protocol & HOST_PROTOCOL)) {
+    if (UsesHostProtocol(options_.protocol)) {
         if (hostTransportManager_ == nullptr) {
             BM_LOG_ERROR("Failed to open host transport nic: " << options.nic);
             CloseDevice();
@@ -93,7 +141,7 @@ Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
         }
         ss << HOST_TRANSPORT_TYPE << hostTransportManager_->GetNic() << NIC_DELIMITER;
     }
-    if (options_.protocol & DEVICE_PROTOCOL) {
+    if (UsesDeviceProtocol(options_.protocol)) {
         if (deviceTransportManager_ == nullptr) {
             BM_LOG_ERROR("Failed to open device transport nic: " << options.nic);
             CloseDevice();
@@ -253,7 +301,7 @@ void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOption
     for (const auto &item : options) {
         auto rankId = item.first;
         uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-        if (!(opType & HOST_PROTOCOL)) {
+        if (!UsesHostProtocol(opType)) {
             BM_LOG_DEBUG("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
                                         << " skip host connect");
             continue;
@@ -282,7 +330,7 @@ void ComposeTransportManager::GetDevicePrepareOptions(const HybmTransPrepareOpti
     for (const auto &item : options) {
         auto rankId = item.first;
         uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-        if (!(opType & DEVICE_PROTOCOL)) {
+        if (!UsesDeviceProtocol(opType)) {
             BM_LOG_DEBUG("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
                                         << " skip device connect");
             continue;
@@ -424,7 +472,7 @@ Result ComposeTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
     // 传输顺序 device_rdma -> host_rdma
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->ReadRemote(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -432,7 +480,7 @@ Result ComposeTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint
         BM_LOG_ERROR("Failed to ReadRemote by device transport ret:" << ret);
     }
 
-    if (opType & HOST_PROTOCOL) {
+    if (UsesHostProtocol(opType)) {
         auto ret = hostTransportManager_->ReadRemote(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -448,7 +496,7 @@ Result ComposeTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint
 Result ComposeTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->WriteRemote(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -456,7 +504,7 @@ Result ComposeTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uin
         BM_LOG_ERROR("Failed to WriteRemote by device transport, ret: " << ret);
     }
 
-    if (opType & HOST_PROTOCOL) {
+    if (UsesHostProtocol(opType)) {
         auto ret = hostTransportManager_->WriteRemote(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -471,7 +519,7 @@ Result ComposeTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uin
 Result ComposeTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->ReadRemoteAsync(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -479,7 +527,7 @@ Result ComposeTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr,
         BM_LOG_ERROR("Failed to ReadRemoteAsync by device transport ret:" << ret);
     }
 
-    if (opType & HOST_PROTOCOL) {
+    if (UsesHostProtocol(opType)) {
         auto ret = hostTransportManager_->ReadRemoteAsync(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -496,7 +544,7 @@ Result ComposeTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr,
 Result ComposeTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->ReadRemoteBatchAsync(rankId, descriptor);
         if (ret == BM_OK) {
             return BM_OK;
@@ -504,7 +552,7 @@ Result ComposeTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const Copy
         BM_LOG_ERROR("Failed to ReadRemoteBatchAsync by device transport ret:" << ret << ", remote rankId:" << rankId);
     }
 
-    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
+    if (UsesHostProtocol(opType) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->ReadRemoteBatchAsync(rankId, descriptor);
         if (ret == BM_OK) {
             return BM_OK;
@@ -519,7 +567,7 @@ Result ComposeTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const Copy
 Result ComposeTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->WriteRemoteAsync(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -527,7 +575,7 @@ Result ComposeTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr
         BM_LOG_ERROR("Failed to ReadRemoteAsync by device transport ret:" << ret);
     }
 
-    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
+    if (UsesHostProtocol(opType) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->WriteRemoteAsync(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -541,7 +589,7 @@ Result ComposeTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr
 Result ComposeTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->WriteRemoteBatchAsync(rankId, descriptor);
         if (ret == BM_OK) {
             return BM_OK;
@@ -549,7 +597,7 @@ Result ComposeTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const Cop
         BM_LOG_ERROR("Failed to WriteRemoteBatchAsync by device transport ret:" << ret);
     }
 
-    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
+    if (UsesHostProtocol(opType) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->WriteRemoteBatchAsync(rankId, descriptor);
         if (ret == BM_OK) {
             return BM_OK;
@@ -564,7 +612,7 @@ Result ComposeTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const Cop
 Result ComposeTransportManager::Synchronize(uint32_t rankId)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    if ((opType & DEVICE_PROTOCOL) && deviceTransportManager_ != nullptr) {
+    if (UsesDeviceProtocol(opType) && deviceTransportManager_ != nullptr) {
         auto ret = deviceTransportManager_->Synchronize(rankId);
         if (ret == BM_OK) {
             return BM_OK;
@@ -572,7 +620,7 @@ Result ComposeTransportManager::Synchronize(uint32_t rankId)
         BM_LOG_ERROR("Failed to Synchronize by device transport, ret: " << ret << " rankId: " << rankId);
     }
 
-    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
+    if (UsesHostProtocol(opType) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->Synchronize(rankId);
         if (ret == BM_OK) {
             return BM_OK;
