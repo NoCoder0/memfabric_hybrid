@@ -65,20 +65,26 @@ size_t getConfigSegmentSizeMb()
 } // namespace dma
 } // namespace c10_npu
 
-// ====== Test-only bridge: re-declare DlCannApi to expose pAclrtReserveMemAddress ======
+// ====== Test-only bridge: re-declare DlCannApi to expose private static function pointers ======
 // The real DlCannApi is in dl_cann_api.h (not included in this TU).
 // The static member is defined in dl_cann_api.cpp (linked into the test binary).
 namespace zbal {
 namespace underapi {
 using aclrtReserveMemAddressFunc = int (*)(void **, size_t, size_t, void *, uint64_t);
+// Use uint32_t for enum-typed params (aclrtMemMallocPolicy / aclrtMemAttr) to avoid
+// pulling in dl_cann_api_def.h; the binary representation is identical.
+using aclrtMallocAlign32Func = int32_t (*)(void **, size_t, uint32_t);
+using aclrtGetMemInfoFunc = int32_t (*)(uint32_t, size_t *, size_t *);
 class DlCannApi {
 public:
     static aclrtReserveMemAddressFunc pAclrtReserveMemAddress;
+    static aclrtMallocAlign32Func pAclrtMallocAlign32;
+    static aclrtGetMemInfoFunc pAclrtGetMemInfo;
 };
 } // namespace underapi
 } // namespace zbal
 
-// Expandable segment stub �?returns unique fake addresses
+// Expandable segment stub returns unique fake addresses
 namespace {
 static std::atomic<uint64_t> g_expseg_vaddr{0x400000000000ULL};
 
@@ -92,6 +98,22 @@ static int32_t stubReserveMemAddress(void **ptr, size_t size, size_t, void *, ui
 static void setupExpandableSegmentMock()
 {
     zbal::underapi::DlCannApi::pAclrtReserveMemAddress = stubReserveMemAddress;
+}
+
+// Install mock function pointers for dma_malloc/dma_free paths that route through
+// DlCannApi::AclrtMallocAlign32 / AclrtGetMemInfo. Without this, the function
+// pointers stay nullptr (LoadLibrary is never called in UT), alloc_block returns
+// Z_DL_FUNCTION_UNLOAD which is not handled, and params.block (nullptr) is
+// dereferenced causing a segfault.
+// The aclrtMallocAlign32/aclrtGetMemInfo symbols are declared in acl_rt.h (via
+// torch_npu headers) and defined in acl_stub.cpp — we take their address directly
+// to avoid conflicting extern "C" redeclarations.
+static void setupDmaMallocMock()
+{
+    zbal::underapi::DlCannApi::pAclrtMallocAlign32 =
+        reinterpret_cast<zbal::underapi::aclrtMallocAlign32Func>(&aclrtMallocAlign32);
+    zbal::underapi::DlCannApi::pAclrtGetMemInfo =
+        reinterpret_cast<zbal::underapi::aclrtGetMemInfoFunc>(&aclrtGetMemInfo);
 }
 // ====== End test-only bridge ======
 
@@ -141,6 +163,7 @@ protected:
     {
         unsetenv("ZBAL_CACHING_ALLOCATOR_EXPAND");
         unsetenv("ZBAL_CACHING_ALLOCATOR_1G");
+        setupDmaMallocMock();
         dma_init(ZBAL_UT_NUM_8);
     }
 
