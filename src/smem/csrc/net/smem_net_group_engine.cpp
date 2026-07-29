@@ -36,10 +36,10 @@ constexpr uint32_t SMEM_ALLOC_NUM_SIZE = SMEM_SHM_ATOMIC_NUM_LIMIT;
 constexpr uint32_t SMEM_ALLOC_NUM_BUF_LEN = (SMEM_ALLOC_NUM_SIZE + 7) / 8; // uint8_t
 constexpr uint32_t SMEM_GATHER_PREFIX_SIZE = 4U;
 constexpr int32_t SMEM_GROUP_MS_TO_US = 1000;
-constexpr int64_t SMEM_GROUP_LISTER_TIMEOUT = 10LL * 1000;              // 10s, unit: ms
-constexpr int32_t SMEM_GROUP_SLEEP_TIMEOUT = 100 * SMEM_GROUP_MS_TO_US; // 100ms, unit: us
+constexpr int64_t SMEM_GROUP_LISTER_TIMEOUT = 10LL * 1000;                               // 10s, unit: ms
+constexpr int32_t SMEM_GROUP_SLEEP_TIMEOUT = 100 * SMEM_GROUP_MS_TO_US;                  // 100ms, unit: us
 constexpr uint64_t SMEM_EVNET_KEEP_TIME = 3 * SMEM_GROUP_MS_TO_US * SMEM_GROUP_MS_TO_US; // 3s, unit: us
-constexpr uint64_t CLIENT_RECOVER_SLEEP_TIME = 6 * 1000 * 1000; // 6s, >= SERVER_RECOVER_TIME
+constexpr uint64_t CLIENT_RECOVER_SLEEP_TIME = 6 * 1000 * 1000;                          // 6s, >= SERVER_RECOVER_TIME
 
 constexpr uint32_t UINT_BIT = 8U;
 constexpr uint32_t USER_GROUP_KEY_LEN_MAX = 64;
@@ -78,13 +78,14 @@ SmemGroupEnginePtr SmemNetGroupEngine::Create(const StorePtr &store, const SmemG
     SmemGroupEnginePtr group = SmMakeRef<SmemNetGroupEngine>(managerPtr, option);
     SM_ASSERT_RETURN(group != nullptr, nullptr);
 
-    if (option.linkDownCb != nullptr) {
+    if (option.useClientBrokenHandler && option.linkDownCb != nullptr) {
         auto *rawGroup = group.Get();
         auto alive = group->alive_;
         auto linkDownCb = option.linkDownCb;
         auto localRank = option.rank;
         managerPtr->RegisterClientBrokenHandler([rawGroup, alive, linkDownCb, localRank]() -> int {
-            if (!*alive || !rawGroup->IsJoined()) return 0;
+            if (!*alive || !rawGroup->IsJoined())
+                return 0;
             std::vector<uint32_t> rankIds;
             rawGroup->GetAllRanksFromBitMap(rankIds);
             for (auto rk : rankIds) {
@@ -281,7 +282,8 @@ Result SmemNetGroupEngine::GroupBarrier(const char *key, uint32_t rankSize, uint
     SM_VALIDATE_RETURN(key != nullptr, "invalid param, key is NULL", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(strlen(key) < USER_GROUP_KEY_LEN_MAX, "key too long:" << strlen(key), SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(rankSize <= groupInfo_.groupSize,
-        "rankSize is invalid! input:" << rankSize << " option:" << groupInfo_.groupSize, SM_INVALID_PARAM);
+                       "rankSize is invalid! input:" << rankSize << " option:" << groupInfo_.groupSize,
+                       SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(rankId < rankSize, "rankId is invalid! rank:" << rankId << " size:" << rankSize,
                        SM_INVALID_PARAM);
 
@@ -527,7 +529,8 @@ Result SmemNetGroupEngine::GroupAllGather(const char *key, uint32_t rankSize, ui
     SM_VALIDATE_RETURN(key != nullptr, "invalid param, key is NULL", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(strlen(key) < USER_GROUP_KEY_LEN_MAX, "key too long:" << strlen(key), SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(rankSize <= groupInfo_.groupSize,
-        "rankSize is invalid! input:" << rankSize << " option:" << groupInfo_.groupSize, SM_INVALID_PARAM);
+                       "rankSize is invalid! input:" << rankSize << " option:" << groupInfo_.groupSize,
+                       SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(rankId < rankSize, "rankId is invalid! rank:" << rankId << " size:" << rankSize,
                        SM_INVALID_PARAM);
 
@@ -687,7 +690,7 @@ Result SmemNetGroupEngine::TryRemovePrefixKey(uint32_t rank)
         }
     } else {
         SM_LOG_INFO("remove key failed, src_rank:" << option_.rank << " key:" << store_->GetCompleteKey(key)
-                    << " ret:" << ret);
+                                                   << " ret:" << ret);
     }
     return ret;
 }
@@ -740,8 +743,8 @@ Result SmemNetGroupEngine::GroupBarrierPrefixKey(uint32_t dstRank, std::string &
 
         uint64_t retLen = 0;
         auto ret = store_->Append(key, update, retLen);
-        SM_VALIDATE_RETURN(ret == SM_OK,
-                           "append prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret, SM_ERROR);
+        SM_VALIDATE_RETURN(ret == SM_OK, "append prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret,
+                           SM_ERROR);
         prefixKey_.append(update);
         ret = store_->Set(waitKey, SMEM_GROUP_SET_STR);
         if (ret != SM_OK) {
@@ -753,8 +756,7 @@ Result SmemNetGroupEngine::GroupBarrierPrefixKey(uint32_t dstRank, std::string &
         std::string getVal;
         auto ret = StoreGetCanInterrupt(waitKey, getVal, option_.timeoutMs);
         if (ret != SM_OK) {
-            SM_LOG_AND_SET_LAST_ERROR("store get key: " << store_->GetCompleteKey(waitKey)
-                                                        << " failed, ret:" << ret);
+            SM_LOG_AND_SET_LAST_ERROR("store get key: " << store_->GetCompleteKey(waitKey) << " failed, ret:" << ret);
             return ret;
         }
 
@@ -776,15 +778,14 @@ Result SmemNetGroupEngine::GroupGatherPrefixKey(uint32_t dstRank, std::string &u
     if (dstRank == option_.rank) { // get all
         std::string key = SMEM_EXCHANGE_INFO_KEY + std::to_string(dstRank);
         auto ret = store_->Set(key, update);
-        SM_VALIDATE_RETURN(ret == SM_OK,
-                           "set prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret, SM_ERROR);
+        SM_VALIDATE_RETURN(ret == SM_OK, "set prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret,
+                           SM_ERROR);
 
         prefixKey_ = update;
         std::string completePrefix = store_->GetCompleteKey(SMEM_EXCHANGE_INFO_KEY);
         std::unordered_map<std::string, std::string> val;
         ret = store_->PrefixGet(SMEM_EXCHANGE_INFO_KEY, val);
-        SM_VALIDATE_RETURN(ret == SM_OK,
-                           "get prefix_key: " << completePrefix << " failed, ret:" << ret, SM_ERROR);
+        SM_VALIDATE_RETURN(ret == SM_OK, "get prefix_key: " << completePrefix << " failed, ret:" << ret, SM_ERROR);
         for (auto &it : val) {
             std::vector<std::string> vec = StrUtil::Split(it.first, '_');
             if (vec.empty() || it.first.compare(0, completePrefix.length(), completePrefix) != 0) {
@@ -984,7 +985,7 @@ void SmemNetGroupEngine::GroupListenLinkState()
             linkCtx_.watchId = UINT32_MAX;
             SM_LOG_ERROR("group watch failed, maybe link down, ret: " << cRet);
         } else {
-            for (auto &rank: currentEvents) {
+            for (auto &rank : currentEvents) {
                 RankLinkDownEventProcess(rank);
             }
             // maybe join event has retried, signal up listen event thread
@@ -1018,8 +1019,8 @@ int32_t SmemNetGroupEngine::JoinLeaveEventProcess()
                 } else {
                     // return BUSY if joinCb return error and has leaved or link_down
                     // must read the latest value
-                    SM_LOG_DEBUG("has leave or link_down, retry. leave:" << currentLeaveCount_.load()
-                        << " link_down:" << currentLinkDownCount_.load());
+                    SM_LOG_DEBUG("has leave or link_down, retry. leave:" << currentLeaveCount_.load() << " link_down:"
+                                                                         << currentLinkDownCount_.load());
                     ret = SM_INNER_BUSY;
                 }
             }
@@ -1040,8 +1041,8 @@ int32_t SmemNetGroupEngine::JoinLeaveEventProcess()
                 } else {
                     // return BUSY if joinCb return error and has leaved or link_down
                     // must read the latest value
-                    SM_LOG_DEBUG("has leave or link_down, retry. leave:" << currentLeaveCount_.load()
-                        << " link_down:" << currentLinkDownCount_.load());
+                    SM_LOG_DEBUG("has leave or link_down, retry. leave:" << currentLeaveCount_.load() << " link_down:"
+                                                                         << currentLinkDownCount_.load());
                     ret = SM_INNER_BUSY;
                 }
             }
@@ -1543,16 +1544,16 @@ int32_t SmemNetGroupEngine::LinkReconnectHandler()
     if (!prefixKey_.empty() && TestBitmapForRank(option_.rank)) {
         std::string key = SMEM_EXCHANGE_INFO_KEY + std::to_string(option_.rank);
         ret = store_->Set(key, prefixKey_);
-        SM_VALIDATE_RETURN(ret == SM_OK,
-                           "set prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret, SM_ERROR);
+        SM_VALIDATE_RETURN(ret == SM_OK, "set prefix_key: " << store_->GetCompleteKey(key) << " failed, ret:" << ret,
+                           SM_ERROR);
     }
 
     SM_LOG_INFO("reconnect success, rank:" << option_.rank << " " << info);
     return SM_OK;
 }
 
-void SmemNetGroupEngine::GroupOldKeyDelayClean(const std::string &prefix, const std::string &suffix,
-                                               uint32_t snStart, uint32_t snEnd, const uint32_t delayCount)
+void SmemNetGroupEngine::GroupOldKeyDelayClean(const std::string &prefix, const std::string &suffix, uint32_t snStart,
+                                               uint32_t snEnd, const uint32_t delayCount)
 {
     for (uint32_t i = snStart; i <= snEnd; i++) {
         std::string key = prefix + std::to_string(i) + suffix;

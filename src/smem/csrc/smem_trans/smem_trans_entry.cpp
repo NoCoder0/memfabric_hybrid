@@ -142,8 +142,8 @@ Result SmemTransEntry::CreateGlobalTeam(uint32_t rankId)
     SmemGroupChangeCallback updateFunc = std::bind(&SmemTransEntry::UpdateHandle, this, std::placeholders::_1);
     SmemGroupChangeCallback leaveFunc = std::bind(&SmemTransEntry::LeaveHandle, this, std::placeholders::_1);
     SmemGroupChangeCallback linkDownFunc = std::bind(&SmemTransEntry::LinkDownHandle, this, std::placeholders::_1);
-    SmemGroupOption opt = {0U, rankId, config_.initTimeout * SECOND_TO_MILLSEC,
-                           true, joinFunc, updateFunc, leaveFunc, linkDownFunc};
+    SmemGroupOption opt = {
+        0U, rankId, config_.initTimeout * SECOND_TO_MILLSEC, true, joinFunc, updateFunc, leaveFunc, linkDownFunc, true};
     SmemGroupEnginePtr group = SmemNetGroupEngine::Create(store_, opt);
     SM_ASSERT_RETURN(group != nullptr, SM_ERROR);
 
@@ -291,7 +291,7 @@ Result SmemTransEntry::JoinHandle(uint32_t rk)
 
     std::string localInfo;
     if (rk == rankId_) {
-        localInfo = std::string((char *) &entityInfo_, sizeof(SmemTransExchangeInfo));
+        localInfo = std::string((char *)&entityInfo_, sizeof(SmemTransExchangeInfo));
     }
     std::unordered_map<uint32_t, std::string> allInfo;
     std::vector<uint32_t> joined;
@@ -346,7 +346,7 @@ Result SmemTransEntry::UpdateHandle(uint32_t rk)
     std::string xinfo;
     if (rk == rankId_) {
         for (auto &e : registedInfo_) {
-            xinfo += std::string((char *) &e, sizeof(SmemTransExchangeInfo));
+            xinfo += std::string((char *)&e, sizeof(SmemTransExchangeInfo));
         }
     }
 
@@ -477,8 +477,8 @@ Result SmemTransEntry::Join(uint32_t flags)
 
 Result SmemTransEntry::Update(uint32_t flags)
 {
-    const uint32_t retryTime = mf::MfEnvUtil::GetOptionalUintOrDefault(
-        "MF_SMEM_GROUP_RETRY_TIME", SMEM_GROUP_RETRY_TIME);
+    const uint32_t retryTime =
+        mf::MfEnvUtil::GetOptionalUintOrDefault("MF_SMEM_GROUP_RETRY_TIME", SMEM_GROUP_RETRY_TIME);
     for (uint32_t i = 0; i < retryTime; i++) {
         auto ret = globalGroup_->GroupUpdate();
         if (ret == SM_INNER_BUSY) {
@@ -529,7 +529,7 @@ hybm_mem_slice_t SmemTransEntry::RemoveSlice(void *addr)
     return slice;
 }
 
-void* SmemTransEntry::MallocDram(uint64_t size)
+void *SmemTransEntry::MallocDram(uint64_t size)
 {
     SM_VALIDATE_RETURN((config_.flags & SMEM_TRANS_CONFIG_SUPPORT_DRAM_FLAG), "not set support dram", nullptr);
     SM_VALIDATE_RETURN((size != 0), "malloc failed, invalid size 0.", nullptr);
@@ -752,20 +752,18 @@ Result SmemTransEntry::BatchQuantTransfer(smem_trans_quant_copy_param_t *params,
 
     ret = TransformAddr(it->second, mappedAddress, params->remoteAddrs, params->dataSizes, params->batchSize);
     SM_ASSERT_RETURN_NOLOG(ret == SM_OK, ret);
-    ret = TransformAddr(it->second, scaleAddress, reinterpret_cast<void **>(params->scale), nullptr,
-                        params->batchSize);
+    ret = TransformAddr(it->second, scaleAddress, reinterpret_cast<void **>(params->scale), nullptr, params->batchSize);
     SM_ASSERT_RETURN_NOLOG(ret == SM_OK, ret);
-    ret = TransformAddr(it->second, offsetAddress, reinterpret_cast<void **>(params->offset), nullptr,
-                        params->batchSize);
+    ret =
+        TransformAddr(it->second, offsetAddress, reinterpret_cast<void **>(params->offset), nullptr, params->batchSize);
     SM_ASSERT_RETURN_NOLOG(ret == SM_OK, ret);
 
     uint32_t flag = ((params->stream != nullptr) ? ASYNC_COPY_FLAG : 0);
     switch (opcode) {
         case SMEMB_COPY_L2G: {
-            hybm_quant_copy_params copyParams = {params->localAddrs, mappedAddress.data(), params->dataSizes,
-                                                 scaleAddress.data(), offsetAddress.data(),
-                                                 params->batchSize, params->unitNum,
-                                                 params->stream, params->inputType, flag};
+            hybm_quant_copy_params copyParams = {
+                params->localAddrs, mappedAddress.data(), params->dataSizes, scaleAddress.data(), offsetAddress.data(),
+                params->batchSize,  params->unitNum,      params->stream,    params->inputType,   flag};
             ret = hybm_data_quant_copy(entity_, &copyParams);
         } break;
         case SMEMB_COPY_G2L:
