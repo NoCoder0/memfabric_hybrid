@@ -482,7 +482,12 @@ SMEM_API int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params *params, smem_b
     }
 
     smem_copy_params paramsCopy = {params->src, params->dest, params->dataSize, params->stream};
-    return entry->DataCopy(paramsCopy.src, paramsCopy.dest, paramsCopy.dataSize, t, paramsCopy.stream, flags);
+    SM_LOG_INFO("smem_bm_copy dispatch, handle: " << handle << " type: " << t << " src: " << paramsCopy.src
+                                                  << " dest: " << paramsCopy.dest << " size: " << paramsCopy.dataSize
+                                                  << " stream: " << paramsCopy.stream << " flags: " << flags);
+    ret = entry->DataCopy(paramsCopy.src, paramsCopy.dest, paramsCopy.dataSize, t, paramsCopy.stream, flags);
+    SM_LOG_INFO("smem_bm_copy complete, handle: " << handle << " type: " << t << " ret: " << ret);
+    return ret;
 }
 
 SMEM_API int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params *params, smem_bm_copy_type t,

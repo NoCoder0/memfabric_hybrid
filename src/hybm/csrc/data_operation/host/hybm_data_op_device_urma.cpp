@@ -395,6 +395,8 @@ Result DataOpDeviceURMA::CopyByBatchCopyRoute(const void *srcVA, void *destVA, u
         BM_LOG_ERROR("allocate single-item BatchCopy descriptor failed, rankId: " << rankId_ << " length: " << length);
         return BM_MALLOC_FAILED;
     }
+    BM_LOG_INFO("submit single-item BatchCopy route read, rankId: "
+                << rankId_ << " src: " << VaToInfo(srcVA) << " dst: " << VaToInfo(destVA) << " length: " << length);
     const auto ret = transportManager_->ReadRemoteBatchCopy(descriptor);
     if (ret != BM_OK) {
         BM_LOG_ERROR("BatchCopy route read failed, rankId: " << rankId_ << " src: " << VaToInfo(srcVA)

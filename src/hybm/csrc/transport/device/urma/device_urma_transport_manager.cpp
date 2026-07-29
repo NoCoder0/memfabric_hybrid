@@ -1877,10 +1877,22 @@ Result DeviceUrmaTransportManager::ReadRemoteBatchCopy(const CopyDescriptor &des
                                                                         << " publisher: " << routePublisher_.get());
         return BM_NOT_INITIALIZED;
     }
+    BM_LOG_INFO("device_urma BatchCopy route read begin, rank: " << rankId_ << " userDeviceId: " << userDeviceId_
+                                                                 << " batchSize: " << descriptor.counts.size());
+    if (!descriptor.localAddrs.empty() && !descriptor.globalAddrs.empty() && !descriptor.counts.empty()) {
+        BM_LOG_INFO("device_urma BatchCopy first item, rank: "
+                    << rankId_ << " localAddr: " << descriptor.localAddrs.front()
+                    << " remoteAddr: " << descriptor.globalAddrs.front() << " size: " << descriptor.counts.front());
+    }
     DeviceTransferBuffers buffers{};
     auto ret = PrepareBatchCopyLaunchBuffers(descriptor, buffers);
     if (ret == BM_OK) {
+        BM_LOG_INFO("device_urma BatchCopy launch buffers ready, rank: "
+                    << rankId_ << " dstList: " << buffers.dstList << " srcList: " << buffers.srcList
+                    << " lenList: " << buffers.lenList << " batchSize: " << descriptor.counts.size());
         ret = LaunchBatchCopyKernel(buffers, descriptor.counts.size());
+    } else {
+        BM_LOG_ERROR("device_urma prepare BatchCopy launch buffers failed, rank: " << rankId_ << " ret: " << ret);
     }
     const auto releaseRet = ReleaseDeviceTransferBuffers(buffers);
     if (releaseRet != BM_OK) {
@@ -2013,7 +2025,15 @@ Result DeviceUrmaTransportManager::LaunchBatchCopyKernel(const DeviceTransferBuf
     args.dst_buf_addr_list = static_cast<void **>(buffers.dstList);
     args.src_buf_addr_list = static_cast<void **>(buffers.srcList);
     args.len_list = static_cast<uint64_t *>(buffers.lenList);
-    return LaunchKernelWithArgs(deviceFuncHandles_.batchCopy, HYBM_DEVICE_FUNC_BATCH_COPY, &args, sizeof(args));
+    BM_LOG_INFO("device_urma launch AICPU BatchCopy kernel, rank: "
+                << rankId_ << " userDeviceId: " << userDeviceId_ << " batchSize: " << batchSize
+                << " funcHandle: " << deviceFuncHandles_.batchCopy << " dstList: " << args.dst_buf_addr_list
+                << " srcList: " << args.src_buf_addr_list << " lenList: " << args.len_list);
+    const auto ret =
+        LaunchKernelWithArgs(deviceFuncHandles_.batchCopy, HYBM_DEVICE_FUNC_BATCH_COPY, &args, sizeof(args));
+    BM_LOG_INFO("device_urma AICPU BatchCopy kernel complete, rank: " << rankId_ << " batchSize: " << batchSize
+                                                                      << " ret: " << ret);
+    return ret;
 }
 
 Result DeviceUrmaTransportManager::LaunchKernelWithArgs(aclrtFuncHandle funcHandle, const char *kernelName,
@@ -2054,15 +2074,22 @@ Result DeviceUrmaTransportManager::LaunchKernelWithArgs(aclrtFuncHandle funcHand
     aclrtLaunchKernelCfg cfg{};
     cfg.attrs = &attr;
     cfg.numAttrs = 1U;
+    BM_LOG_INFO("device_urma launch AICPU kernel, rank: "
+                << rankId_ << " kernel: " << kernelName << " funcHandle: " << funcHandle << " stream: " << stream
+                << " argsSize: " << argsSize << " timeout: " << HYBM_NOTIFY_DEFAULT_WAIT_TIME_S);
     ret = DlAclApi::AclrtLaunchKernelWithConfig(funcHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
                                                 nullptr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtLaunchKernelWithConfig failed, kernel: " << kernelName << " ret: " << ret);
         return ret;
     }
+    BM_LOG_INFO("device_urma AICPU kernel submitted, rank: " << rankId_ << " kernel: " << kernelName
+                                                             << " stream: " << stream);
     ret = DlAclApi::AclrtSynchronizeStream(stream);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtSynchronizeStream failed, kernel: " << kernelName << " ret: " << ret);
+    } else {
+        BM_LOG_INFO("device_urma AICPU kernel synchronized, rank: " << rankId_ << " kernel: " << kernelName);
     }
     return ret;
 }

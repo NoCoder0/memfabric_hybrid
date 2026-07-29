@@ -656,6 +656,8 @@ Result SmemBmEntry::DataCopy(const void *src, void *dest, uint64_t size, smem_bm
 
     hybm_copy_params copyParams = {const_cast<void *>(src), dest, size};
     auto ret = hybm_data_copy(entity_, &copyParams, direct, stream, flags);
+    SM_LOG_INFO("SmemBmEntry DataCopy complete, type: " << t << " direction: " << direct << " src: " << src
+                                                        << " dest: " << dest << " size: " << size << " ret: " << ret);
     return ret == BM_NOT_CONNECTED ? SMEM_NOT_CONNECTED : ret;
 }
 

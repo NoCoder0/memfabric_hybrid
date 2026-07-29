@@ -808,6 +808,10 @@ int32_t MemEntityDefault::CopyData(hybm_copy_params &params, hybm_data_copy_dire
     options.srcRankId = p2pInfo.first;
     options.destRankId = p2pInfo.second;
 
+    BM_LOG_INFO("CopyData dispatch, entityId: "
+                << id_ << " direction: " << direction << " srcRank: " << options.srcRankId << " destRank: "
+                << options.destRankId << " src: " << VaToStr(params.src) << " dest: " << VaToStr(params.dest)
+                << " size: " << params.dataSize << " stream: " << stream << " flags: " << flags);
     ret = dataOperator_->DataCopy(params, direction, options);
     if (ret != BM_OK) {
         BM_LOG_ERROR("failed to copy data ret:" << ret << ", src:" << VaToStr(params.src)

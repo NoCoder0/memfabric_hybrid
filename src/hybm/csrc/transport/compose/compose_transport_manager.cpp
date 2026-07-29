@@ -576,7 +576,11 @@ Result ComposeTransportManager::ReadRemoteBatchCopy(const CopyDescriptor &descri
                                                                   << " batchSize: " << descriptor.counts.size());
         return BM_NOT_SUPPORTED;
     }
-    return deviceTransportManager_->ReadRemoteBatchCopy(descriptor);
+    BM_LOG_INFO("Compose transport forwards BatchCopy route read, rankId: " << options_.rankId << " batchSize: "
+                                                                            << descriptor.counts.size());
+    const auto ret = deviceTransportManager_->ReadRemoteBatchCopy(descriptor);
+    BM_LOG_INFO("Compose transport BatchCopy route read complete, rankId: " << options_.rankId << " ret: " << ret);
+    return ret;
 }
 
 Result ComposeTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
