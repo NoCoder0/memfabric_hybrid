@@ -1204,7 +1204,7 @@ bool SmemNetGroupEngine::ClearBitmapForRank(SmemGroupInfo &info, uint32_t rankId
 
     auto index = rankId / BITS_COUNT_IN_U64;
     auto shift = rankId % BITS_COUNT_IN_U64;
-    if ((groupInfo_.joinedRanksBitmap[index] & (1UL << shift)) != 0UL) {
+    if ((info.joinedRanksBitmap[index] & (1UL << shift)) != 0UL) {
         info.joinedRanksBitmap[index] &= ~(1UL << shift);
         info.groupSize -= 1U;
         return true;
