@@ -608,7 +608,7 @@ bool RdmaTransportManager::RaInit(uint32_t deviceId)
     std::this_thread::sleep_for(WAIT_TIME); // avoid hccl init conflict
     auto ret = DlHccpApi::RaInit(initConfig);
     if (ret != 0) {
-        BM_LOG_ERROR("Hccp Init RA failed: " << ret << " devid:" << deviceId);
+        BM_LOG_WARN("Hccp Init RA not successful : " << ret << " devid:" << deviceId);
         std::this_thread::sleep_for(WAIT_TIME);
         raInitialized = false;
         return false;
