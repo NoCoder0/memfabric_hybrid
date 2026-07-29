@@ -74,13 +74,14 @@ private:
     }
 };
 
-Result CopyHostToDevice(uint64_t destination, const void *source, size_t size, const char *operation)
+Result CopyHostToDevice(uint32_t userDeviceId, uint64_t destination, const void *source, size_t size,
+                        const char *operation)
 {
     const auto ret =
         DlAclApi::AclrtMemcpy(reinterpret_cast<void *>(destination), size, source, size, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
-        BM_LOG_ERROR(operation << " failed, ret: " << ret << " dst: 0x" << std::hex << destination << std::dec
-                               << " size: " << size);
+        BM_LOG_ERROR(operation << " failed, userDeviceId: " << userDeviceId << " ret: " << ret << " dst: 0x" << std::hex
+                               << destination << std::dec << " size: " << size);
     }
     return ret;
 }
@@ -225,13 +226,14 @@ void BatchCopyRoutePublisher::ReleaseOwner()
 Result BatchCopyRoutePublisher::ClearMagic()
 {
     const uint32_t magic = 0;
-    return CopyHostToDevice(HYBM_BATCH_COPY_META_ADDR, &magic, sizeof(magic), "clear BatchCopy route magic");
+    return CopyHostToDevice(userDeviceId_, HYBM_BATCH_COPY_META_ADDR, &magic, sizeof(magic),
+                            "clear BatchCopy route magic");
 }
 
 Result BatchCopyRoutePublisher::ClearCompletionArea()
 {
     const BatchCopyCompletionArea completion{};
-    return CopyHostToDevice(BATCH_COPY_COMPLETION_ADDR, &completion, sizeof(completion),
+    return CopyHostToDevice(userDeviceId_, BATCH_COPY_COMPLETION_ADDR, &completion, sizeof(completion),
                             "clear BatchCopy completion area");
 }
 
@@ -275,36 +277,51 @@ Result BatchCopyRoutePublisher::WriteRouteImage(const BatchCopyRouteTable &table
                                                                                 << " magic: " << table.header.magic);
         return BM_INVALID_PARAM;
     }
-    return CopyHostToDevice(HYBM_BATCH_COPY_META_ADDR, &table, sizeof(table), "write BatchCopy route image");
+    return CopyHostToDevice(userDeviceId_, HYBM_BATCH_COPY_META_ADDR, &table, sizeof(table),
+                            "write BatchCopy route image");
 }
 
 Result BatchCopyRoutePublisher::PublishMagic()
 {
     const uint32_t magic = BATCH_COPY_ROUTE_MAGIC;
-    return CopyHostToDevice(HYBM_BATCH_COPY_META_ADDR, &magic, sizeof(magic), "publish BatchCopy route magic");
+    return CopyHostToDevice(userDeviceId_, HYBM_BATCH_COPY_META_ADDR, &magic, sizeof(magic),
+                            "publish BatchCopy route magic");
 }
 
 Result BatchCopyRoutePublisher::PublishRouteImage(const std::vector<BatchCopyRouteSource> &sources)
 {
     auto ret = ClearMagic();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("prepare BatchCopy route image failed while clearing magic, userDeviceId: " << userDeviceId_
+                                                                                                 << " ret: " << ret);
         return ret;
     }
     ret = ClearCompletionArea();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("prepare BatchCopy route image failed while clearing completion area, userDeviceId: "
+                     << userDeviceId_ << " ret: " << ret);
         return ret;
     }
     ret = RegisterCompletionArea();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("prepare BatchCopy route image failed while registering completion area, userDeviceId: "
+                     << userDeviceId_ << " ret: " << ret);
         return ret;
     }
     BatchCopyRouteTable table{};
     BuildRouteImage(sources, table);
     ret = WriteRouteImage(table);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("prepare BatchCopy route image failed while writing route table, userDeviceId: "
+                     << userDeviceId_ << " peerCount: " << sources.size() << " ret: " << ret);
         return ret;
     }
-    return PublishMagic();
+    ret = PublishMagic();
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("publish BatchCopy route image failed while publishing magic, userDeviceId: "
+                     << userDeviceId_ << " peerCount: " << sources.size() << " ret: " << ret);
+    }
+    return ret;
 }
 
 void BatchCopyRoutePublisher::RollbackPublish()
@@ -332,14 +349,20 @@ Result BatchCopyRoutePublisher::Publish(const std::vector<BatchCopyRouteSource> 
     }
     auto ret = ValidateSources(sources);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("publish BatchCopy route validation failed, userDeviceId: " << userDeviceId_ << " peerCount: "
+                                                                                 << sources.size() << " ret: " << ret);
         return ret;
     }
     ret = AcquireOwner();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("acquire BatchCopy route owner failed, userDeviceId: " << userDeviceId_ << " peerCount: "
+                                                                            << sources.size() << " ret: " << ret);
         return ret;
     }
     ret = PublishRouteImage(sources);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("publish BatchCopy route image failed, userDeviceId: " << userDeviceId_ << " peerCount: "
+                                                                            << sources.size() << " ret: " << ret);
         RollbackPublish();
         return ret;
     }
@@ -360,11 +383,15 @@ Result BatchCopyRoutePublisher::Clear()
     }
     auto ret = ClearMagic();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("clear BatchCopy route failed while clearing magic, userDeviceId: " << userDeviceId_
+                                                                                         << " ret: " << ret);
         return ret;
     }
     published_ = false;
     ret = UnregisterCompletionArea();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("clear BatchCopy route failed while unregistering completion area, userDeviceId: "
+                     << userDeviceId_ << " ret: " << ret);
         return ret;
     }
     ReleaseOwner();

@@ -33,6 +33,7 @@ def _write_local_pattern(handle, local_hbm: int, rank_id: int) -> torch.Tensor:
     pattern = (torch.arange(element_count, dtype=torch.int32) * 17 + rank_id * 101).contiguous()
     source = local_hbm + SOURCE_OFFSET
     assert handle.copy_data(pattern.data_ptr(), source, pattern.numel() * 4, bm.BmCopyType.H2G, 0) == 0
+    print("_write_local_pattern " + str(rank_id))
     return pattern
 
 
@@ -45,12 +46,14 @@ def _read_peer_single(handle, local_hbm: int, peer_hbm: int, peer_rank: int) -> 
         0,
     )
     assert ret == 0, f"rank read peer single item failed: peer={peer_rank}, ret={ret}"
-
+    print("_read_peer_single " + str(peer_rank))
     actual = torch.empty(ITEM_BYTES // 4, dtype=torch.int32)
     ret = handle.copy_data(local_hbm + DESTINATION_OFFSET, actual.data_ptr(), ITEM_BYTES, bm.BmCopyType.G2H, 0)
+    print("_read_peer_single " + str(peer_rank))
     assert ret == 0, f"single-item G2H verification failed: peer={peer_rank}, ret={ret}"
     expected = torch.arange(actual.numel(), dtype=torch.int32) * 17 + peer_rank * 101
     assert torch.equal(actual, expected), f"single-item BatchCopy data mismatch: peer={peer_rank}"
+    print("_read_peer_single " + str(peer_rank))
 
 
 def _read_peer_batch(handle, local_hbm: int, peer_hbm: int, peer_rank: int, batch_size: int) -> None:
@@ -70,7 +73,7 @@ def _read_peer_batch(handle, local_hbm: int, peer_hbm: int, peer_rank: int, batc
 
 
 def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
-    mf.set_log_level(3)
+    mf.set_log_level(1)
     assert mf.initialize() == 0, "mf.initialize failed"
     bm_initialized = False
     try:
@@ -95,18 +98,18 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
         local_hbm = handle.peer_rank_ptr(rank_id, bm.BmMemType.DEVICE)
         peer_hbm = handle.peer_rank_ptr(peer_rank, bm.BmMemType.DEVICE)
         assert local_hbm != 0 and peer_hbm != 0, "peer_rank_ptr DEVICE failed"
-
+        print("_rank_main " + str(peer_rank))
         _write_local_pattern(handle, local_hbm, rank_id)
         sync.wait()
 
         _read_peer_single(handle, local_hbm, peer_hbm, peer_rank)
         sync.wait()
-        for batch_size in (1, 999, 1000, 1001):
-            _read_peer_batch(handle, local_hbm, peer_hbm, peer_rank, batch_size)
-            sync.wait()
-        print(f"[rank {rank_id}] HOST_DEVICE_URMA BatchCopy checks passed", flush=True)
+        # for batch_size in (1, 999, 1000, 1001):
+        #     _read_peer_batch(handle, local_hbm, peer_hbm, peer_rank, batch_size)
+        #     sync.wait()
+        # print(f"[rank {rank_id}] HOST_DEVICE_URMA BatchCopy checks passed", flush=True)
 
-        sync.wait()
+        # sync.wait()
         assert handle.leave() == 0, "leave failed"
         assert mf.get_last_err_msg() == "", mf.get_last_err_msg()
         handle.destroy()

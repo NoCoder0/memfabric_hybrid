@@ -1327,6 +1327,8 @@ Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(std::vector<
         BatchCopyRouteSource source{};
         const auto ret = BuildDeviceBatchCopyRouteSourceLocked(rankItem.first, rankItem.second, source);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma build BatchCopy route source failed, rank: "
+                         << rankId_ << " peer: " << rankItem.first << " ret: " << ret);
             return ret;
         }
         sources.emplace_back(std::move(source));
@@ -1349,6 +1351,8 @@ Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked(const HybmTran
     std::vector<BatchCopyRouteSource> sources;
     auto ret = BuildBatchCopyRouteSourcesLocked(sources);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma build BatchCopy route sources failed, rank: " << rankId_ << " userDeviceId: "
+                                                                                << userDeviceId_ << " ret: " << ret);
         return ret;
     }
     if (routePublisher_ == nullptr) {
@@ -1961,7 +1965,7 @@ Result DeviceUrmaTransportManager::PrepareBatchCopyLaunchBuffers(const CopyDescr
     const size_t pointerBytes = batchSize * sizeof(void *);
     const size_t totalBytes = pointerBytes * 2U + batchSize * sizeof(uint64_t);
     std::vector<uint8_t> hostBuffer;
-    try {·
+    try {
         hostBuffer.resize(totalBytes);
     } catch (...) {
         BM_LOG_ERROR("device_urma allocate BatchCopy host staging failed, batchSize: " << batchSize);

@@ -1,0 +1,14 @@
+2026-07-29 19:42:09.253212 ERROR [4323-4323][HYBM hybm_entity_tag_info.cpp:58 AddOneTagOpInfo] Failed to check tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY is invalid must match tag:OP_TYPE:tag format
+2026-07-29 19:42:09.253242 ERROR [4323-4323][HYBM hybm_entity_default.cpp:103 InitTagManager] Assert tagManager_->AddTagOpInfo(compatibleInfo.str()) == BM_OK, Failed to add tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY,
+2026-07-29 19:42:09.253248 ERROR [4323-4323][HYBM hybm_entity_default.cpp:124 Initialize] Assert InitTagManager() == BM_OK, Failed to init tag manager.
+2026-07-29 19:42:09.253260 ERROR [4323-4323][HYBM hybm_big_mem_entry.cpp:35 hybm_create_entity] initialize entity failed, id: 1 flags: 0x0 ret: ffffffff
+2026-07-29 19:42:09.253273 ERROR [4323-4323][SMEM smem_bm_entry.cpp:150 Initialize] hybm_create_entity failed, entityId: 1 rankId: 0 flags: 0
+2026-07-29 19:42:09.254703 ERROR [4323-4323][SMEM smem_bm.cpp:300 smem_bm_create2_inner] entry init failed, result: -1
+2026-07-29 19:42:09.254739 ERROR [4323-4323][SMEM smem_bm.cpp:313 smem_bm_create2] smem_bm_create2 failed
+2026-07-29 19:42:09.933120 ERROR [4324-4324][HYBM hybm_entity_tag_info.cpp:58 AddOneTagOpInfo] Failed to check tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY is invalid must match tag:OP_TYPE:tag format
+2026-07-29 19:42:09.933154 ERROR [4324-4324][HYBM hybm_entity_default.cpp:103 InitTagManager] Assert tagManager_->AddTagOpInfo(compatibleInfo.str()) == BM_OK, Failed to add tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY,
+2026-07-29 19:42:09.933161 ERROR [4324-4324][HYBM hybm_entity_default.cpp:124 Initialize] Assert InitTagManager() == BM_OK, Failed to init tag manager.
+2026-07-29 19:42:09.933175 ERROR [4324-4324][HYBM hybm_big_mem_entry.cpp:35 hybm_create_entity] initialize entity failed, id: 1 flags: 0x0 ret: ffffffff
+2026-07-29 19:42:09.933190 ERROR [4324-4324][SMEM smem_bm_entry.cpp:150 Initialize] hybm_create_entity failed, entityId: 1 rankId: 1 flags: 0
+2026-07-29 19:42:09.934864 ERROR [4324-4324][SMEM smem_bm.cpp:300 smem_bm_create2_inner] entry init failed, result: -1
+2026-07-29 19:42:09.934902 ERROR [4324-4324][SMEM smem_bm.cpp:313 smem_bm_create2] smem_bm_create2 failed

@@ -394,7 +394,7 @@ public:
     static constexpr uint32_t EID_SEG_HEX_LEN = 4;
     static constexpr uint32_t MAX_TAG_LEN = 30;
     static constexpr uint32_t MIN_OP_TYPE_LEN = 8;
-    static constexpr uint32_t MAX_OP_TYPE_LEN = 12;
+    static constexpr uint32_t MAX_OP_TYPE_LEN = 20;
     static constexpr uint32_t MAX_PORT_STR_LEN = 5; // "65535"
     static constexpr uint32_t PROTOCOL_SEP_LEN = 3; // "://"
 
