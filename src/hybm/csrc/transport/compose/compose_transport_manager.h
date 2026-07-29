@@ -87,6 +87,10 @@ public:
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
+    bool SupportsBatchCopyRoute() const override;
+
+    Result ReadRemoteBatchCopy(const CopyDescriptor &descriptor) override;
+
     HostDeviceUrmaRole GetHostDeviceUrmaRole() const noexcept;
 
 private:

@@ -16,44 +16,17 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include "hybm_control_layout.h"
 #include "mf_out_logger.h"
 
 namespace ock {
 namespace mf {
 
-constexpr uint64_t KB = 1024ULL;
-constexpr uint64_t MB = KB * 1024ULL;
-constexpr uint64_t GB = MB * 1024ULL;
 constexpr uint64_t TB = GB * 1024ULL;
 
 constexpr uint32_t RANK_MAX = 1024UL;
 constexpr uint64_t SMALL_PAGE_SIZE = 4U * KB;
 
-constexpr uint64_t HYBM_LARGE_PAGE_SIZE = 2UL * 1024UL * 1024UL; // 大页的size, 2M
-constexpr uint64_t HYBM_DEVICE_VA_START = 0x100000000000UL;      // NPU上的地址空间起始: 16T
-constexpr uint64_t HYBM_DEVICE_VA_SIZE = 0x80000000000UL;        // NPU上的地址空间范围: 8T
-constexpr uint64_t SVM_END_ADDR = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE - (1UL << 30UL); // svm的结尾虚拟地址
-constexpr uint64_t HYBM_DEVICE_PRE_META_SIZE = 128UL;                                         // 128B
-constexpr uint64_t HYBM_DEVICE_GLOBAL_META_SIZE = HYBM_DEVICE_PRE_META_SIZE;                  // 128B
-constexpr uint64_t HYBM_ENTITY_NUM_MAX = 511UL;                                               // entity最大数量
-constexpr uint64_t HYBM_DEVICE_META_SIZE =
-    HYBM_DEVICE_PRE_META_SIZE * HYBM_ENTITY_NUM_MAX + HYBM_DEVICE_GLOBAL_META_SIZE; // 64K
-
-constexpr uint64_t HYBM_DEVICE_USER_CONTEXT_PRE_SIZE = 64UL * 1024UL; // 64K
-constexpr uint64_t HYBM_DEVICE_INFO_SIZE =
-    HYBM_DEVICE_USER_CONTEXT_PRE_SIZE * HYBM_ENTITY_NUM_MAX +
-    HYBM_DEVICE_META_SIZE; // 元数据+用户context,总大小32M, 对齐HYBM_LARGE_PAGE_SIZE
-constexpr uint64_t HYBM_DEVICE_META_ADDR = SVM_END_ADDR - HYBM_DEVICE_INFO_SIZE;
-constexpr uint64_t HYBM_BATCH_COPY_META_SIZE = HYBM_LARGE_PAGE_SIZE;
-constexpr uint64_t HYBM_BATCH_COPY_META_ADDR = HYBM_DEVICE_META_ADDR - HYBM_BATCH_COPY_META_SIZE;
-constexpr uint64_t HYBM_DEVICE_CONTROL_ADDR = HYBM_BATCH_COPY_META_ADDR;
-constexpr uint64_t HYBM_DEVICE_CONTROL_SIZE = HYBM_BATCH_COPY_META_SIZE + HYBM_DEVICE_INFO_SIZE;
-constexpr uint64_t HYBM_DEVICE_USER_CONTEXT_ADDR = HYBM_DEVICE_META_ADDR + HYBM_DEVICE_META_SIZE;
-static_assert(HYBM_DEVICE_INFO_SIZE == 32U * MB);
-static_assert(HYBM_DEVICE_CONTROL_SIZE == 34U * MB);
-static_assert(HYBM_DEVICE_CONTROL_ADDR % HYBM_LARGE_PAGE_SIZE == 0U);
-static_assert(HYBM_DEVICE_CONTROL_SIZE % HYBM_LARGE_PAGE_SIZE == 0U);
-static_assert(HYBM_DEVICE_CONTROL_ADDR + HYBM_DEVICE_CONTROL_SIZE == SVM_END_ADDR);
 constexpr uint32_t ACL_MEMCPY_HOST_TO_HOST = 0;
 constexpr uint32_t ACL_MEMCPY_HOST_TO_DEVICE = 1;
 constexpr uint32_t ACL_MEMCPY_DEVICE_TO_HOST = 2;

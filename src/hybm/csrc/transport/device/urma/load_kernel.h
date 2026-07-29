@@ -24,10 +24,11 @@ namespace device {
 struct DeviceFuncHandles {
     aclrtFuncHandle batchRead{nullptr};
     aclrtFuncHandle batchWrite{nullptr};
+    aclrtFuncHandle batchCopy{nullptr};
 };
 
-Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
-                                     DeviceFuncHandles &funcHandles);
+Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, const char *funcCopy,
+                                     aclrtBinHandle &binHandle, DeviceFuncHandles &funcHandles);
 
 } // namespace device
 } // namespace transport

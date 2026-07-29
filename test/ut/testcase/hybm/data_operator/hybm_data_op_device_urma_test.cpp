@@ -164,8 +164,24 @@ public:
         }
         return BM_OK;
     }
+    bool SupportsBatchCopyRoute() const override
+    {
+        return supportsBatchCopyRoute;
+    }
+    Result ReadRemoteBatchCopy(const CopyDescriptor &desc) override
+    {
+        readRemoteBatchCopyCount++;
+        if (readRemoteBatchCopyResult != BM_OK) {
+            return readRemoteBatchCopyResult;
+        }
+        for (size_t i = 0; i < desc.localAddrs.size(); ++i) {
+            std::memcpy(desc.localAddrs[i], desc.globalAddrs[i], desc.counts[i]);
+        }
+        return BM_OK;
+    }
 
     std::string nic{"eth0"};
+    bool supportsBatchCopyRoute{false};
     bool queryHasRegisteredResult{true};
     uint64_t registerMemoryRegionCount{0};
     uint64_t unregisterMemoryRegionCount{0};
@@ -175,6 +191,7 @@ public:
     uint64_t readRemoteAsyncCount{0};
     uint64_t writeRemoteAsyncCount{0};
     uint64_t readRemoteBatchAsyncCount{0};
+    uint64_t readRemoteBatchCopyCount{0};
     uint64_t writeRemoteBatchAsyncCount{0};
     uint64_t synchronizeCount{0};
     Result readRemoteResult{BM_OK};
@@ -182,6 +199,7 @@ public:
     Result registerMemoryRegionResult{BM_OK};
     Result unregisterMemoryRegionResult{BM_OK};
     Result readRemoteBatchAsyncResult{BM_OK};
+    Result readRemoteBatchCopyResult{BM_OK};
     Result writeRemoteBatchAsyncResult{BM_OK};
     Result synchronizeResult{BM_OK};
 };
@@ -384,6 +402,23 @@ TEST_F(HybmDataOpDeviceUrmaTest, DataCopyRemoteWriteAndReadUseTransportManager)
     EXPECT_STREQ(src, dst);
 }
 
+TEST_F(HybmDataOpDeviceUrmaTest, RemoteDeviceReadUsesFourParameterBatchCopyRoute)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->supportsBatchCopyRoute = true;
+    char source[16] = "route_read";
+    char destination[16] = {};
+    hybm_copy_params params{source, destination, sizeof(source)};
+    ExtOptions options{};
+    options.srcRankId = REMOTE_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp->DataCopy(params, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, options), BM_OK);
+    EXPECT_EQ(tm->readRemoteBatchCopyCount, 1U);
+    EXPECT_EQ(tm->readRemoteCount, 0U);
+    EXPECT_STREQ(destination, source);
+}
+
 TEST_F(HybmDataOpDeviceUrmaTest, DataCopySafePutUsesSwapWhenLocalSourceIsNotRegistered)
 {
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
@@ -553,6 +588,51 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyG2GRemoteWriteAndReadUseSingleBatc
     EXPECT_EQ(tm->synchronizeCount, 1U);
     EXPECT_STREQ(src0, dst0);
     EXPECT_STREQ(src1, dst1);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, RemoteDeviceBatchReadUsesOneRouteKernelLaunch)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->supportsBatchCopyRoute = true;
+    char source0[8] = "r0";
+    char source1[8] = "r1";
+    char destination0[8] = {};
+    char destination1[8] = {};
+    void *sources[2] = {source0, source1};
+    void *destinations[2] = {destination0, destination1};
+    uint64_t sizes[2] = {sizeof(source0), sizeof(source1)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    ExtOptions options{};
+    options.srcRankId = REMOTE_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, options), BM_OK);
+    EXPECT_EQ(tm->readRemoteBatchCopyCount, 1U);
+    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 0U);
+    EXPECT_EQ(tm->synchronizeCount, 0U);
+    EXPECT_STREQ(destination0, source0);
+    EXPECT_STREQ(destination1, source1);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, RemoteBatchReadToHostDoesNotUseDeviceRoute)
+{
+    EXPECT_EQ(dataOp->Initialize(), BM_OK);
+    tm->supportsBatchCopyRoute = true;
+    char source[8] = "host";
+    char destination[8] = {};
+    void *sources[1] = {source};
+    void *destinations[1] = {destination};
+    uint64_t sizes[1] = {sizeof(source)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1};
+    ExtOptions options{};
+    options.srcRankId = REMOTE_RANK;
+    options.destRankId = LOCAL_RANK;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->readRemoteBatchCopyCount, 0U);
+    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+    EXPECT_STREQ(destination, source);
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyPropagatesBatchAsyncFailure)

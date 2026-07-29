@@ -95,6 +95,10 @@ public:
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
+    bool SupportsBatchCopyRoute() const override;
+
+    Result ReadRemoteBatchCopy(const CopyDescriptor &descriptor) override;
+
     // Sync stream
     Result Synchronize(uint32_t rankId) override;
 
@@ -261,9 +265,12 @@ private:
     Result PrepareKernelLaunchBuffers(HcommThreadHandle thread, bool isRead, HcommChannelHandle channel,
                                       const std::vector<uint64_t> &localAddrs, const std::vector<uint64_t> &remoteAddrs,
                                       const std::vector<uint64_t> &sizes, DeviceTransferBuffers &outBuffers);
+    Result PrepareBatchCopyLaunchBuffers(const CopyDescriptor &descriptor, DeviceTransferBuffers &outBuffers);
     // Device kernel launch (builds args, configures and launches)
     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
                                    HcommChannelHandle channel, size_t batchSize);
+    Result LaunchBatchCopyKernel(const DeviceTransferBuffers &buffers, size_t batchSize);
+    Result LaunchKernelWithArgs(aclrtFuncHandle funcHandle, const char *kernelName, const void *args, size_t argsSize);
     // Device kernel launch for marker-only notify (no data transfer)
     Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
                                     uint64_t notifyAddr, uint32_t notifyLen);

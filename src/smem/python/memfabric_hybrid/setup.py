@@ -50,6 +50,8 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../
 
 _AICPU_WLIST = {
     "_hybm_src/include/hybm_def.h",
+    "_hybm_src/csrc/common/hybm_batch_copy_route.h",
+    "_hybm_src/csrc/common/hybm_control_layout.h",
     "_hybm_src/csrc/common/hybm_types.h",
     "_hybm_src/csrc/under_api/dl_hcomm_api.h",
 }

@@ -17,13 +17,14 @@
 5. 01_basic/05_no_xpu_host_urma_dram_pool
 6. 02_scale_out/01_single_node_multi_device_dram
 7. 02_scale_out/02_multi_node_multi_device_dram
-8. 03_optimization/01_copy_data_batch
-9. 03_optimization/02_register
-10. 03_optimization/03_device_sdma
-11. 04_features/01_enable_unified_address_space
-12. 05_observability/01_prometheus_grafana
-13. 05_observability/02_opentelemetry
-14. 05_observability/03_dashboards
+8. 02_scale_out/04_single_node_multi_device_batch_copy
+9. 03_optimization/01_copy_data_batch
+10. 03_optimization/02_register
+11. 03_optimization/03_device_sdma
+12. 04_features/01_enable_unified_address_space
+13. 05_observability/01_prometheus_grafana
+14. 05_observability/02_opentelemetry
+15. 05_observability/03_dashboards
 
 ## 统一约束
 - 所有样例仅使用内存池接口。

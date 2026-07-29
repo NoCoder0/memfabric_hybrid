@@ -28,6 +28,7 @@
 
 #include "dl_acl_api.h"
 #include "dl_hcomm_api.h"
+#include "hybm_batch_copy.h"
 #include "hybm_batch_transfer.h"
 #include "hybm_logger.h"
 #include "hybm_stream_manager.h"
@@ -46,6 +47,7 @@ namespace {
 constexpr uint32_t HCOMM_NORMAL_NOTIFY_NUM = 0;
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
+constexpr const char *HYBM_DEVICE_FUNC_BATCH_COPY = "HybmBatchCopy";
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1U;
 constexpr uint32_t ACL_NOTIFY_FLAG_DEVICE_ONLY = 0x00000001U; // 使能该bit表示创建的Notify仅在Device上调用。
 constexpr uint32_t ACL_MEM_TYPE_HIGH_BAND_WIDTH =
@@ -338,8 +340,8 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
     }
     const auto socType = DlAclApi::GetAscendSocType();
     if (socType != AscendSocType::ASCEND_950) {
-        BM_LOG_ERROR("device_urma is only supported on Ascend950 soc, rank: "
-                     << options.rankId << " socType: " << static_cast<uint32_t>(socType));
+        BM_LOG_ERROR("device_urma is only supported on Ascend950 soc, rank: " << options.rankId << " socType: "
+                                                                              << static_cast<uint32_t>(socType));
         return BM_NOT_SUPPORTED;
     }
 
@@ -369,15 +371,17 @@ Result DeviceUrmaTransportManager::EnsureDeviceKernelLoadedLocked()
         return BM_OK;
     }
 
-    auto ret = LoadDeviceKernelAndGetHandles(HYBM_DEVICE_FUNC_READ, HYBM_DEVICE_FUNC_WRITE, deviceKernelHandle_,
-                                             deviceFuncHandles_);
+    auto ret = LoadDeviceKernelAndGetHandles(HYBM_DEVICE_FUNC_READ, HYBM_DEVICE_FUNC_WRITE, HYBM_DEVICE_FUNC_BATCH_COPY,
+                                             deviceKernelHandle_, deviceFuncHandles_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma LoadDeviceKernelAndGetHandles failed, ret: " << ret);
         return ret;
     }
-    if (deviceFuncHandles_.batchRead == nullptr || deviceFuncHandles_.batchWrite == nullptr) {
+    if (deviceFuncHandles_.batchRead == nullptr || deviceFuncHandles_.batchWrite == nullptr ||
+        deviceFuncHandles_.batchCopy == nullptr) {
         BM_LOG_ERROR("device_urma invalid device kernel function handles, read: "
-                     << deviceFuncHandles_.batchRead << " write: " << deviceFuncHandles_.batchWrite);
+                     << deviceFuncHandles_.batchRead << " write: " << deviceFuncHandles_.batchWrite
+                     << " batchCopy: " << deviceFuncHandles_.batchCopy);
         return BM_DL_FUNCTION_FAILED;
     }
     deviceKernelLoaded_ = true;
@@ -1269,19 +1273,18 @@ bool DeviceUrmaTransportManager::IsBatchCopyRouteEnabledLocked() const
     return (options_.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U;
 }
 
-Result DeviceUrmaTransportManager::BuildDeviceBatchCopyRouteSourceLocked(
-    uint32_t peerRank, const RemoteRankState &state, BatchCopyRouteSource &source) const
+Result DeviceUrmaTransportManager::BuildDeviceBatchCopyRouteSourceLocked(uint32_t peerRank,
+                                                                         const RemoteRankState &state,
+                                                                         BatchCopyRouteSource &source) const
 {
     if (!state.hasEndpointDesc || state.remoteEndpointDesc.loc.locType != ENDPOINT_LOC_TYPE_DEVICE ||
-        state.thread == 0 ||
-        state.channel == 0 || state.remoteFlagAddr == 0 || state.remoteFlagSize != sizeof(uint64_t) ||
-        state.remoteFlagDescBytes.empty()) {
+        state.thread == 0 || state.channel == 0 || state.remoteFlagAddr == 0 ||
+        state.remoteFlagSize != sizeof(uint64_t) || state.remoteFlagDescBytes.empty()) {
         BM_LOG_ERROR("device_urma invalid Device BatchCopy peer resources, peer: "
                      << peerRank << " locType: " << state.remoteEndpointDesc.loc.locType
                      << " hasEndpointDesc: " << state.hasEndpointDesc << " thread: " << state.thread
-                     << " channel: " << state.channel << " flagAddr: 0x" << std::hex << state.remoteFlagAddr
-                     << std::dec << " flagSize: " << state.remoteFlagSize
-                     << " flagDescLen: " << state.remoteFlagDescBytes.size());
+                     << " channel: " << state.channel << " flagAddr: 0x" << std::hex << state.remoteFlagAddr << std::dec
+                     << " flagSize: " << state.remoteFlagSize << " flagDescLen: " << state.remoteFlagDescBytes.size());
         return BM_INVALID_PARAM;
     }
     if (state.imports.empty() || state.imports.size() > BATCH_COPY_MAX_RANGE_PER_PEER) {
@@ -1296,8 +1299,8 @@ Result DeviceUrmaTransportManager::BuildDeviceBatchCopyRouteSourceLocked(
     source.channel = state.channel;
     source.remoteFlagAddr = state.remoteFlagAddr;
     for (const auto &registration : state.imports) {
-        if (registration.view.type != UrmaMemoryType::DEVICE_HBM || registration.addr == 0 ||
-            registration.size == 0 || registration.view.addr == 0 || registration.view.size < registration.size ||
+        if (registration.view.type != UrmaMemoryType::DEVICE_HBM || registration.addr == 0 || registration.size == 0 ||
+            registration.view.addr == 0 || registration.view.size < registration.size ||
             registration.addr > std::numeric_limits<uint64_t>::max() - registration.size) {
             BM_LOG_ERROR("device_urma invalid imported Device HBM range, peer: "
                          << peerRank << " memTag: " << registration.memTag << " srcGva: 0x" << std::hex
@@ -1306,14 +1309,12 @@ Result DeviceUrmaTransportManager::BuildDeviceBatchCopyRouteSourceLocked(
                          << " type: " << registration.view.type);
             return BM_INVALID_PARAM;
         }
-        source.ranges.push_back(
-            {registration.addr, registration.addr + registration.size, registration.view.addr});
+        source.ranges.push_back({registration.addr, registration.addr + registration.size, registration.view.addr});
     }
     return BM_OK;
 }
 
-Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(
-    std::vector<BatchCopyRouteSource> &sources) const
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(std::vector<BatchCopyRouteSource> &sources) const
 {
     if (remoteRanks_.empty() || remoteRanks_.size() > BATCH_COPY_MAX_PEER_COUNT) {
         BM_LOG_ERROR("device_urma invalid BatchCopy peer count, rank: " << rankId_
@@ -1340,9 +1341,8 @@ Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked(const HybmTran
     if (!IsBatchCopyRouteEnabledLocked()) {
         return BM_OK;
     }
-    const bool hasMemKeys =
-        std::any_of(options.options.begin(), options.options.end(),
-                    [](const auto &item) { return !item.second.memKeys.empty(); });
+    const bool hasMemKeys = std::any_of(options.options.begin(), options.options.end(),
+                                        [](const auto &item) { return !item.second.memKeys.empty(); });
     if (!hasMemKeys) {
         return BM_OK;
     }
@@ -1356,9 +1356,8 @@ Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked(const HybmTran
     }
     ret = routePublisher_->Publish(sources);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma publish BatchCopy route failed, rank: " << rankId_
-                                                                          << " userDeviceId: " << userDeviceId_
-                                                                          << " ret: " << ret);
+        BM_LOG_ERROR("device_urma publish BatchCopy route failed, rank: " << rankId_ << " userDeviceId: "
+                                                                          << userDeviceId_ << " ret: " << ret);
     }
     return ret;
 }
@@ -1860,6 +1859,33 @@ Result DeviceUrmaTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const C
     return RemoteIoBatch(rankId, descriptor, false);
 }
 
+bool DeviceUrmaTransportManager::SupportsBatchCopyRoute() const
+{
+    std::lock_guard<std::mutex> guard(mutex_);
+    return IsBatchCopyRouteEnabledLocked();
+}
+
+Result DeviceUrmaTransportManager::ReadRemoteBatchCopy(const CopyDescriptor &descriptor)
+{
+    std::lock_guard<std::mutex> guard(mutex_);
+    if (!opened_ || routePublisher_ == nullptr || !routePublisher_->IsPublished()) {
+        BM_LOG_ERROR("device_urma BatchCopy route is not ready, rank: " << rankId_ << " opened: " << opened_
+                                                                        << " publisher: " << routePublisher_.get());
+        return BM_NOT_INITIALIZED;
+    }
+    DeviceTransferBuffers buffers{};
+    auto ret = PrepareBatchCopyLaunchBuffers(descriptor, buffers);
+    if (ret == BM_OK) {
+        ret = LaunchBatchCopyKernel(buffers, descriptor.counts.size());
+    }
+    const auto releaseRet = ReleaseDeviceTransferBuffers(buffers);
+    if (releaseRet != BM_OK) {
+        BM_LOG_ERROR("device_urma BatchCopy buffer release failed, rank: " << rankId_ << " ret: " << releaseRet);
+        return ret == BM_OK ? releaseRet : ret;
+    }
+    return ret;
+}
+
 aclrtFuncHandle DeviceUrmaTransportManager::GetDeviceKernelFunc(bool isRead) const
 {
     return isRead ? deviceFuncHandles_.batchRead : deviceFuncHandles_.batchWrite;
@@ -1920,6 +1946,46 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
     return BM_OK;
 }
 
+Result DeviceUrmaTransportManager::PrepareBatchCopyLaunchBuffers(const CopyDescriptor &descriptor,
+                                                                 DeviceTransferBuffers &outBuffers)
+{
+    const size_t batchSize = descriptor.counts.size();
+    if (batchSize == 0 || descriptor.localAddrs.size() != batchSize || descriptor.globalAddrs.size() != batchSize ||
+        batchSize > std::numeric_limits<uint32_t>::max() ||
+        batchSize > std::numeric_limits<size_t>::max() / (sizeof(void *) * 2U + sizeof(uint64_t))) {
+        BM_LOG_ERROR("device_urma invalid BatchCopy descriptor, localCount: "
+                     << descriptor.localAddrs.size() << " globalCount: " << descriptor.globalAddrs.size()
+                     << " lengthCount: " << batchSize);
+        return BM_INVALID_PARAM;
+    }
+    const size_t pointerBytes = batchSize * sizeof(void *);
+    const size_t totalBytes = pointerBytes * 2U + batchSize * sizeof(uint64_t);
+    std::vector<uint8_t> hostBuffer;
+    try {·
+        hostBuffer.resize(totalBytes);
+    } catch (...) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy host staging failed, batchSize: " << batchSize);
+        return BM_MALLOC_FAILED;
+    }
+    auto ret = DlAclApi::AclrtMalloc(&outBuffers.dstList, totalBytes, 0);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy device lists failed, batchSize: "
+                     << batchSize << " bytes: " << totalBytes << " ret: " << ret);
+        return ret;
+    }
+    outBuffers.srcList = static_cast<uint8_t *>(outBuffers.dstList) + pointerBytes;
+    outBuffers.lenList = static_cast<uint8_t *>(outBuffers.srcList) + pointerBytes;
+    std::memcpy(hostBuffer.data(), descriptor.localAddrs.data(), pointerBytes);
+    std::memcpy(hostBuffer.data() + pointerBytes, descriptor.globalAddrs.data(), pointerBytes);
+    std::memcpy(hostBuffer.data() + pointerBytes * 2U, descriptor.counts.data(), batchSize * sizeof(uint64_t));
+    ret =
+        DlAclApi::AclrtMemcpy(outBuffers.dstList, totalBytes, hostBuffer.data(), totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma copy BatchCopy lists to device failed, batchSize: " << batchSize << " ret: " << ret);
+    }
+    return ret;
+}
+
 Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers,
                                                            HcommThreadHandle thread, bool isRead,
                                                            HcommChannelHandle channel, size_t batchSize)
@@ -1931,51 +1997,70 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferB
     args.dst_buf_addr_list = static_cast<void **>(buffers.dstList);
     args.src_buf_addr_list = static_cast<void **>(buffers.srcList);
     args.len_list = static_cast<uint64_t *>(buffers.lenList);
-    aclrtArgsHandle argsHandle = nullptr;
     auto funcHandle = GetDeviceKernelFunc(isRead);
+    return LaunchKernelWithArgs(funcHandle, isRead ? HYBM_DEVICE_FUNC_READ : HYBM_DEVICE_FUNC_WRITE, &args,
+                                sizeof(args));
+}
+
+Result DeviceUrmaTransportManager::LaunchBatchCopyKernel(const DeviceTransferBuffers &buffers, size_t batchSize)
+{
+    HybmBatchCopyParam args{};
+    args.list_num = static_cast<uint32_t>(batchSize);
+    args.dst_buf_addr_list = static_cast<void **>(buffers.dstList);
+    args.src_buf_addr_list = static_cast<void **>(buffers.srcList);
+    args.len_list = static_cast<uint64_t *>(buffers.lenList);
+    return LaunchKernelWithArgs(deviceFuncHandles_.batchCopy, HYBM_DEVICE_FUNC_BATCH_COPY, &args, sizeof(args));
+}
+
+Result DeviceUrmaTransportManager::LaunchKernelWithArgs(aclrtFuncHandle funcHandle, const char *kernelName,
+                                                        const void *args, size_t argsSize)
+{
+    if (funcHandle == nullptr || kernelName == nullptr || args == nullptr || argsSize == 0) {
+        BM_LOG_ERROR("device_urma invalid kernel launch parameters, kernel: "
+                     << (kernelName == nullptr ? "<null>" : kernelName) << " funcHandle: " << funcHandle
+                     << " args: " << args << " argsSize: " << argsSize);
+        return BM_INVALID_PARAM;
+    }
+
+    aclrtArgsHandle argsHandle = nullptr;
     auto ret = DlAclApi::AclrtKernelArgsInit(funcHandle, &argsHandle);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsInit failed, ret: " << ret);
+        BM_LOG_ERROR("device_urma AclrtKernelArgsInit failed, kernel: " << kernelName << " ret: " << ret);
         return ret;
     }
     aclrtParamHandle paramHandle = nullptr;
-    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, &args, sizeof(args), &paramHandle);
+    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, const_cast<void *>(args), argsSize, &paramHandle);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsAppend failed, ret: " << ret);
+        BM_LOG_ERROR("device_urma AclrtKernelArgsAppend failed, kernel: " << kernelName << " ret: " << ret);
         return ret;
     }
     ret = DlAclApi::AclrtKernelArgsFinalize(argsHandle);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsFinalize failed, ret: " << ret);
+        BM_LOG_ERROR("device_urma AclrtKernelArgsFinalize failed, kernel: " << kernelName << " ret: " << ret);
         return ret;
     }
     void *stream = HybmStreamManager::GetThreadAclStream();
     if (stream == nullptr) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch GetThreadAclStream failed");
+        BM_LOG_ERROR("device_urma GetThreadAclStream failed, kernel: " << kernelName);
         return BM_DL_FUNCTION_FAILED;
     }
-
     aclrtLaunchKernelAttr attr{};
     attr.id = aclrtLaunchKernelAttrId::ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
     attr.value.timeout = HYBM_NOTIFY_DEFAULT_WAIT_TIME_S;
     aclrtLaunchKernelCfg cfg{};
     cfg.attrs = &attr;
-    cfg.numAttrs = 1;
-
+    cfg.numAttrs = 1U;
     ret = DlAclApi::AclrtLaunchKernelWithConfig(funcHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
                                                 nullptr);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtLaunchKernelWithConfig failed, kernel: "
-                     << (isRead ? HYBM_DEVICE_FUNC_READ : HYBM_DEVICE_FUNC_WRITE) << " ret: " << ret);
+        BM_LOG_ERROR("device_urma AclrtLaunchKernelWithConfig failed, kernel: " << kernelName << " ret: " << ret);
         return ret;
     }
-
     ret = DlAclApi::AclrtSynchronizeStream(stream);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma launch kernel AclrtSynchronizeStream failed, ret: " << ret);
-        return ret;
+        BM_LOG_ERROR("device_urma AclrtSynchronizeStream failed, kernel: " << kernelName << " ret: " << ret);
     }
-    return BM_OK;
+    return ret;
 }
 
 Result DeviceUrmaTransportManager::LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel,
@@ -1995,52 +2080,7 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelNotify(HcommThreadHandle th
     args.remote_flag_addr = remoteFlagAddr;
     args.local_flag_addr = notifyAddr;
     args.flag_size = notifyLen;
-
-    aclrtArgsHandle argsHandle = nullptr;
-    auto funcHandle = GetDeviceKernelFunc(true);
-    auto ret = DlAclApi::AclrtKernelArgsInit(funcHandle, &argsHandle);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtKernelArgsInit failed, ret: " << ret);
-        return ret;
-    }
-    aclrtParamHandle paramHandle = nullptr;
-    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, &args, sizeof(args), &paramHandle);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtKernelArgsAppend failed, ret: " << ret);
-        return ret;
-    }
-    ret = DlAclApi::AclrtKernelArgsFinalize(argsHandle);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtKernelArgsFinalize failed, ret: " << ret);
-        return ret;
-    }
-    void *stream = HybmStreamManager::GetThreadAclStream();
-    if (stream == nullptr) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify GetThreadAclStream failed");
-        return BM_DL_FUNCTION_FAILED;
-    }
-
-    aclrtLaunchKernelAttr attr{};
-    attr.id = aclrtLaunchKernelAttrId::ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
-    attr.value.timeout = HYBM_NOTIFY_DEFAULT_WAIT_TIME_S;
-    aclrtLaunchKernelCfg cfg{};
-    cfg.attrs = &attr;
-    cfg.numAttrs = 1;
-
-    ret = DlAclApi::AclrtLaunchKernelWithConfig(funcHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
-                                                nullptr);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtLaunchKernelWithConfig failed, kernel: "
-                     << HYBM_DEVICE_FUNC_READ << " ret: " << ret);
-        return ret;
-    }
-
-    ret = DlAclApi::AclrtSynchronizeStream(stream);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LaunchDeviceKernelNotify AclrtSynchronizeStream failed, ret: " << ret);
-        return ret;
-    }
-    return BM_OK;
+    return LaunchKernelWithArgs(GetDeviceKernelFunc(true), HYBM_DEVICE_FUNC_READ, &args, sizeof(args));
 }
 
 Result DeviceUrmaTransportManager::SynchronizeRankPendingLocked(CompletionContext &ctx, RemoteRankState &state,

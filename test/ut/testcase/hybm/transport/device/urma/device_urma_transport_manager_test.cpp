@@ -29,6 +29,7 @@
 #include "device/urma/device_urma_transport_manager.h"
 #include "dl_hccl_api.h"
 #include "dl_hcomm_api.h"
+#include "hybm_batch_copy.h"
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
 #undef private
@@ -53,6 +54,7 @@ const HcommMemHandle MOCK_FLAG_HANDLE = reinterpret_cast<HcommMemHandle>(0xA505U
 const aclrtBinHandle MOCK_BIN_HANDLE = reinterpret_cast<aclrtBinHandle>(0xA506UL);
 const aclrtFuncHandle MOCK_READ_FUNC = reinterpret_cast<aclrtFuncHandle>(0xA507UL);
 const aclrtFuncHandle MOCK_WRITE_FUNC = reinterpret_cast<aclrtFuncHandle>(0xA508UL);
+const aclrtFuncHandle MOCK_BATCH_COPY_FUNC = reinterpret_cast<aclrtFuncHandle>(0xA50EUL);
 const HcommMemHandle MOCK_NOTIFY_HANDLE = reinterpret_cast<HcommMemHandle>(0xA509UL);
 void *const MOCK_NOTIFY = reinterpret_cast<void *>(0xA50AUL);
 void *const MOCK_STREAM = reinterpret_cast<void *>(0xA50BUL);
@@ -75,6 +77,7 @@ uint32_t g_memExportCallCount = 0;
 uint32_t g_memImportCallCount = 0;
 uint32_t g_memUnregCallCount = 0;
 uint32_t g_kernelLaunchCallCount = 0;
+bool g_expectBatchCopyArgs = false;
 
 struct TestHybmOneSideOpParam {
     ock::mf::ThreadHandle thread;
@@ -786,7 +789,13 @@ int32_t MockAclrtBinaryGetFunction(aclrtBinHandle binHandle, const char *kernelN
     EXPECT_NE(kernelName, nullptr);
     EXPECT_NE(funcHandle, nullptr);
     const std::string name(kernelName);
-    *funcHandle = (name == "read_kernel" || name == "HybmBatchRead") ? MOCK_READ_FUNC : MOCK_WRITE_FUNC;
+    if (name == "read_kernel" || name == "HybmBatchRead") {
+        *funcHandle = MOCK_READ_FUNC;
+    } else if (name == "write_kernel" || name == "HybmBatchWrite") {
+        *funcHandle = MOCK_WRITE_FUNC;
+    } else {
+        *funcHandle = MOCK_BATCH_COPY_FUNC;
+    }
     return BM_OK;
 }
 
@@ -812,7 +821,7 @@ int32_t MockAclrtMallocFail(void **ptr, size_t count, uint32_t)
 
 int32_t MockAclrtKernelArgsInit(aclrtFuncHandle funcHandle, aclrtArgsHandle *argsHandle)
 {
-    EXPECT_TRUE(funcHandle == MOCK_READ_FUNC || funcHandle == MOCK_WRITE_FUNC);
+    EXPECT_TRUE(funcHandle == MOCK_READ_FUNC || funcHandle == MOCK_WRITE_FUNC || funcHandle == MOCK_BATCH_COPY_FUNC);
     EXPECT_NE(argsHandle, nullptr);
     *argsHandle = MOCK_ARGS_HANDLE;
     return BM_OK;
@@ -823,8 +832,18 @@ int32_t MockAclrtKernelArgsAppend(aclrtArgsHandle argsHandle, void *param, size_
 {
     EXPECT_EQ(argsHandle, MOCK_ARGS_HANDLE);
     EXPECT_NE(param, nullptr);
-    EXPECT_EQ(paramSize, sizeof(TestHybmOneSideOpParam));
     EXPECT_NE(paramHandle, nullptr);
+    if (g_expectBatchCopyArgs) {
+        EXPECT_EQ(paramSize, sizeof(HybmBatchCopyParam));
+        const auto *args = static_cast<const HybmBatchCopyParam *>(param);
+        EXPECT_EQ(args->list_num, 2U);
+        EXPECT_NE(args->dst_buf_addr_list, nullptr);
+        EXPECT_NE(args->src_buf_addr_list, nullptr);
+        EXPECT_NE(args->len_list, nullptr);
+        *paramHandle = MOCK_PARAM_HANDLE;
+        return BM_OK;
+    }
+    EXPECT_EQ(paramSize, sizeof(TestHybmOneSideOpParam));
     const auto *args = static_cast<const TestHybmOneSideOpParam *>(param);
     EXPECT_EQ(args->thread, MOCK_THREAD);
     EXPECT_EQ(args->channel, MOCK_CHANNEL);
@@ -859,7 +878,7 @@ int32_t MockAclrtKernelArgsFinalize(aclrtArgsHandle argsHandle)
 int32_t MockAclrtLaunchKernelWithConfig(aclrtFuncHandle funcHandle, uint32_t blockDim, void *stream,
                                         aclrtLaunchKernelCfg *cfg, aclrtArgsHandle argsHandle, void *reserved)
 {
-    EXPECT_TRUE(funcHandle == MOCK_READ_FUNC || funcHandle == MOCK_WRITE_FUNC);
+    EXPECT_TRUE(funcHandle == MOCK_READ_FUNC || funcHandle == MOCK_WRITE_FUNC || funcHandle == MOCK_BATCH_COPY_FUNC);
     EXPECT_EQ(blockDim, 1U);
     EXPECT_EQ(stream, MOCK_STREAM);
     EXPECT_NE(cfg, nullptr);
@@ -1173,6 +1192,39 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
 
     EXPECT_GE(g_kernelLaunchCallCount, 3U);
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, BatchCopyRouteLaunchUsesOnlyFourParameterAbi)
+{
+    DlAclApiFnGuard aclGuard;
+    MockcppScope mockcpp;
+    InstallKernelLaunchMocks();
+    DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
+    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyOk;
+    MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.options_.protocol = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+    manager.deviceFuncHandles_.batchCopy = MOCK_BATCH_COPY_FUNC;
+    manager.routePublisher_ = std::make_unique<BatchCopyRoutePublisher>(0U, nullptr, manager.manager_);
+    manager.routePublisher_->published_ = true;
+
+    CopyDescriptor descriptor{};
+    descriptor.localAddrs = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR),
+                             reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 0x40U)};
+    descriptor.globalAddrs = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR),
+                              reinterpret_cast<void *>(MOCK_REMOTE_ADDR + 0x40U)};
+    descriptor.counts = {0x20U, 0x20U};
+
+    g_kernelLaunchCallCount = 0;
+    g_expectBatchCopyArgs = true;
+    EXPECT_TRUE(manager.SupportsBatchCopyRoute());
+    EXPECT_EQ(manager.ReadRemoteBatchCopy(descriptor), BM_OK);
+    g_expectBatchCopyArgs = false;
+    EXPECT_EQ(g_kernelLaunchCallCount, 1U);
 }
 
 TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsAndRemoveRanksReusePreparedResources)
@@ -2392,10 +2444,11 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelGetsHandlesFromPreloadedBin
 
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_OK);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", "copy_kernel", binHandle, handles), BM_OK);
     EXPECT_EQ(binHandle, MOCK_BIN_HANDLE);
     EXPECT_EQ(handles.batchRead, MOCK_READ_FUNC);
     EXPECT_EQ(handles.batchWrite, MOCK_WRITE_FUNC);
+    EXPECT_EQ(handles.batchCopy, MOCK_BATCH_COPY_FUNC);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelUsesDefaultPathWhenBinaryAlreadyLoaded)
@@ -2407,9 +2460,10 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelUsesDefaultPathWhenBinaryAl
 
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_OK);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", "copy_kernel", binHandle, handles), BM_OK);
     EXPECT_EQ(handles.batchRead, MOCK_READ_FUNC);
     EXPECT_EQ(handles.batchWrite, MOCK_WRITE_FUNC);
+    EXPECT_EQ(handles.batchCopy, MOCK_BATCH_COPY_FUNC);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsMissingJsonAndBinaryLoadFailure)
@@ -2422,11 +2476,13 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsMissingJsonAndBinary
 
     aclrtBinHandle binHandle = nullptr;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_FILE_NOT_ACCESS);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", "copy_kernel", binHandle, handles),
+              BM_FILE_NOT_ACCESS);
 
     PrepareKernelJson();
     DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFileFail;
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_ERROR);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", "copy_kernel", binHandle, handles),
+              BM_ERROR);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailure)
@@ -2436,7 +2492,8 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailur
 
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_ERROR);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", "copy_kernel", binHandle, handles),
+              BM_ERROR);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsNullFuncAndNullReturnedHandle)
@@ -2445,10 +2502,12 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsNullFuncAndNullRetur
 
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles(nullptr, "write_kernel", binHandle, handles), BM_INVALID_PARAM);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(nullptr, "write_kernel", "copy_kernel", binHandle, handles),
+              BM_INVALID_PARAM);
 
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionNull;
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", binHandle, handles), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles("read_kernel", "write_kernel", "copy_kernel", binHandle, handles),
+              BM_DL_FUNCTION_FAILED);
 }
 
 // ============================================================================

@@ -89,8 +89,7 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
         BM_LOG_ERROR("Failed to open device transport is opened");
         return BM_ERROR;
     }
-    if (options.protocol &
-        (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_DEVICE_URMA)) {
+    if (options.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_DEVICE_URMA)) {
         deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
     } else {
         deviceTransportManager_ = Create(HybmGetGvaVersion());
@@ -562,6 +561,22 @@ Result ComposeTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const Copy
 
     BM_LOG_ERROR("Failed to ReadRemote.");
     return BM_ERROR;
+}
+
+bool ComposeTransportManager::SupportsBatchCopyRoute() const
+{
+    return hostDeviceUrmaRole_ == HostDeviceUrmaRole::DEVICE && deviceTransportManager_ != nullptr &&
+           deviceTransportManager_->SupportsBatchCopyRoute();
+}
+
+Result ComposeTransportManager::ReadRemoteBatchCopy(const CopyDescriptor &descriptor)
+{
+    if (!SupportsBatchCopyRoute()) {
+        BM_LOG_ERROR("BatchCopy route is not available, rankId: " << options_.rankId
+                                                                  << " batchSize: " << descriptor.counts.size());
+        return BM_NOT_SUPPORTED;
+    }
+    return deviceTransportManager_->ReadRemoteBatchCopy(descriptor);
 }
 
 Result ComposeTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)

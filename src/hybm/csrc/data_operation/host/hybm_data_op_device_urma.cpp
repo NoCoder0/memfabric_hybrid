@@ -378,6 +378,59 @@ Result DataOpDeviceURMA::CopyURMA(const void *srcVA, void *destVA, uint64_t leng
     return ret;
 }
 
+bool DataOpDeviceURMA::ShouldUseBatchCopyRoute(const ExtOptions &options) const noexcept
+{
+    return options.srcRankId != rankId_ && options.destRankId == rankId_ && transportManager_ != nullptr &&
+           transportManager_->SupportsBatchCopyRoute();
+}
+
+Result DataOpDeviceURMA::CopyByBatchCopyRoute(const void *srcVA, void *destVA, uint64_t length) noexcept
+{
+    CopyDescriptor descriptor{};
+    try {
+        descriptor.localAddrs.push_back(destVA);
+        descriptor.globalAddrs.push_back(const_cast<void *>(srcVA));
+        descriptor.counts.push_back(length);
+    } catch (...) {
+        BM_LOG_ERROR("allocate single-item BatchCopy descriptor failed, rankId: " << rankId_ << " length: " << length);
+        return BM_MALLOC_FAILED;
+    }
+    const auto ret = transportManager_->ReadRemoteBatchCopy(descriptor);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("BatchCopy route read failed, rankId: " << rankId_ << " src: " << VaToInfo(srcVA)
+                                                             << " dst: " << VaToInfo(destVA) << " length: " << length
+                                                             << " ret: " << ret);
+    }
+    return ret;
+}
+
+Result DataOpDeviceURMA::BatchCopyByRoute(hybm_batch_copy_params &params) noexcept
+{
+    if (params.batchSize == 0 || params.destinations == nullptr || params.sources == nullptr ||
+        params.dataSizes == nullptr) {
+        BM_LOG_ERROR("invalid route batch copy parameters, rankId: "
+                     << rankId_ << " batchSize: " << params.batchSize << " destinations: " << params.destinations
+                     << " sources: " << params.sources << " dataSizes: " << params.dataSizes);
+        return BM_INVALID_PARAM;
+    }
+
+    CopyDescriptor descriptor{};
+    try {
+        descriptor.localAddrs.assign(params.destinations, params.destinations + params.batchSize);
+        descriptor.globalAddrs.assign(params.sources, params.sources + params.batchSize);
+        descriptor.counts.assign(params.dataSizes, params.dataSizes + params.batchSize);
+    } catch (...) {
+        BM_LOG_ERROR("allocate BatchCopy descriptor failed, rankId: " << rankId_ << " batchSize: " << params.batchSize);
+        return BM_MALLOC_FAILED;
+    }
+    const auto ret = transportManager_->ReadRemoteBatchCopy(descriptor);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("batch route read failed, rankId: " << rankId_ << " batchSize: " << params.batchSize
+                                                         << " ret: " << ret);
+    }
+    return ret;
+}
+
 Result DataOpDeviceURMA::CopyGH2GH(const void *srcVA, void *destVA, uint64_t length,
                                    const ock::mf::ExtOptions &options) noexcept
 {
@@ -411,6 +464,9 @@ Result DataOpDeviceURMA::CopyGH2GD(const void *srcVA, void *destVA, uint64_t len
                                    const ock::mf::ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
+    if (ShouldUseBatchCopyRoute(options)) {
+        return CopyByBatchCopyRoute(srcVA, destVA, length);
+    }
     Result ret;
     if (options.srcRankId == rankId_ && options.destRankId == rankId_) {
         ret = CopyLH2LD(srcVA, destVA, length, options);
@@ -426,6 +482,9 @@ Result DataOpDeviceURMA::CopyGD2GD(const void *srcVA, void *destVA, uint64_t len
                                    const ock::mf::ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
+    if (ShouldUseBatchCopyRoute(options)) {
+        return CopyByBatchCopyRoute(srcVA, destVA, length);
+    }
     Result ret;
     if (options.srcRankId == rankId_ && options.destRankId == rankId_) {
         ret = CopyLD2LD(srcVA, destVA, length, options);
@@ -468,6 +527,9 @@ Result DataOpDeviceURMA::CopyGD2LH(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceURMA::CopyGH2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
+    if (ShouldUseBatchCopyRoute(options)) {
+        return CopyByBatchCopyRoute(srcVA, destVA, length);
+    }
     Result ret;
     if (options.srcRankId == rankId_) {
         ret = CopyLH2LD(srcVA, destVA, length, options);
@@ -482,6 +544,9 @@ Result DataOpDeviceURMA::CopyGH2LD(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceURMA::CopyGD2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
+    if (ShouldUseBatchCopyRoute(options)) {
+        return CopyByBatchCopyRoute(srcVA, destVA, length);
+    }
     Result ret;
     if (options.srcRankId == rankId_) {
         ret = CopyLD2LD(srcVA, destVA, length, options);
@@ -748,6 +813,9 @@ Result DataOpDeviceURMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
 Result DataOpDeviceURMA::BatchCopyRead(hybm_batch_copy_params &params, const ExtOptions &options,
                                        hybm_data_copy_direction direction) noexcept
 {
+    if (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_DEVICE && ShouldUseBatchCopyRoute(options)) {
+        return BatchCopyByRoute(params);
+    }
     auto ret = 0;
     ExtOptions tmpOptions = options;
     std::unordered_map<uint32_t, CopyDescriptor> localed{};
@@ -831,6 +899,9 @@ Result DataOpDeviceURMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtO
     const auto srcRankId = options.srcRankId;
     const auto dstRankId = options.destRankId;
     const auto batchSize = params.batchSize;
+    if (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_DEVICE && ShouldUseBatchCopyRoute(options)) {
+        return BatchCopyByRoute(params);
+    }
 
     // Separate local items from remote items, grouping all remote items into one batch.
     CopyDescriptor remoteDesc;

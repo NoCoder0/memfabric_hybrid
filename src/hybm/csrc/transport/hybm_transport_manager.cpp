@@ -99,3 +99,14 @@ Result TransportManager::Remove(const std::vector<uint32_t> &removeList)
     BM_LOG_ERROR("TransportManager is parent class, not support Remove by ranks, please use subclass");
     return BM_INVALID_PARAM;
 }
+
+bool TransportManager::SupportsBatchCopyRoute() const
+{
+    return false;
+}
+
+Result TransportManager::ReadRemoteBatchCopy(const CopyDescriptor &descriptor)
+{
+    BM_LOG_ERROR("TransportManager does not support BatchCopy route, batchSize: " << descriptor.counts.size());
+    return BM_NOT_SUPPORTED;
+}

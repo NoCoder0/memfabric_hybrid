@@ -90,8 +90,8 @@ Result GetFuncHandle(aclrtBinHandle binHandle, const char *funcName, aclrtFuncHa
 }
 } // namespace
 
-Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
-                                     DeviceFuncHandles &funcHandles)
+Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, const char *funcCopy,
+                                     aclrtBinHandle &binHandle, DeviceFuncHandles &funcHandles)
 {
     funcHandles = DeviceFuncHandles{};
     std::string jsonPath;
@@ -109,7 +109,11 @@ Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite
     if (ret != BM_OK) {
         return ret;
     }
-    return GetFuncHandle(binHandle, funcWrite, funcHandles.batchWrite);
+    ret = GetFuncHandle(binHandle, funcWrite, funcHandles.batchWrite);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    return GetFuncHandle(binHandle, funcCopy, funcHandles.batchCopy);
 }
 
 } // namespace device

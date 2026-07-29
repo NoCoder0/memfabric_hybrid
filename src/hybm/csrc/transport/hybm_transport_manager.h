@@ -124,6 +124,10 @@ public:
 
     virtual Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
 
+    virtual bool SupportsBatchCopyRoute() const;
+
+    virtual Result ReadRemoteBatchCopy(const CopyDescriptor &descriptor);
+
 protected:
     bool connected_{false};
 };

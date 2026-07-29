@@ -1,6 +1,8 @@
 # 安装 HYBM AICPU Kernel Run 包
 
-本文档介绍安装 `memfabric_hybrid_aicpu_kernel.run` 的方法。该安装包将 `cann-hybm-compat.tar.gz`、`libcann_hybm_kernel.json` 和 `cann_hybm_kernel_version` 安装到 CANN device-side OPP tree。
+本文档介绍安装 `memfabric_hybrid_aicpu_kernel.run` 的方法。该安装包将 `cann-hybm-compat.tar.gz`、
+`libcann_hybm_kernel.json` 和 `cann_hybm_kernel_version` 安装到 CANN device-side OPP tree。内核包包含
+`HybmBatchRead`、`HybmBatchWrite` 和生产 `HybmBatchCopy` 算子。
 
 ---
 
@@ -262,6 +264,24 @@ grep -A4 '^name:cann-hybm-compat.tar.gz$' ${ASCEND_HOME_PATH}/conf/ascend_packag
 
 ```bash
 ./output/memfabric_hybrid_aicpu_kernel.run --check
+```
+
+### 5. 检查 HybmBatchCopy 注册和符号
+
+确认安装后的 JSON 已注册生产算子：
+
+```bash
+grep -A6 '"HybmBatchCopy"' \
+    ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json
+```
+
+也可从已安装的 kernel archive 中解压共享库并检查导出符号：
+
+```bash
+tmp_dir=$(mktemp -d)
+tar -xzf ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/kernel/cann-hybm-compat.tar.gz -C "${tmp_dir}"
+readelf -Ws "${tmp_dir}/aicpu_kernels_device/libcann_hybm_kernel.so" | grep 'HybmBatchCopy$'
+rm -rf "${tmp_dir}"
 ```
 
 ---

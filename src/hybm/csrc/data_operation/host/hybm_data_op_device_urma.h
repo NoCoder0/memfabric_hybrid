@@ -55,6 +55,9 @@ private:
     Result CopyLH2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
     Result CopyLD2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
     Result CopyURMA(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
+    bool ShouldUseBatchCopyRoute(const ExtOptions &options) const noexcept;
+    Result CopyByBatchCopyRoute(const void *srcVA, void *destVA, uint64_t length) noexcept;
+    Result BatchCopyByRoute(hybm_batch_copy_params &params) noexcept;
 
     Result BatchCopyLH2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
     Result BatchCopyGD2LH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;

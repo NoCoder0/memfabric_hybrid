@@ -1,0 +1,53 @@
+/*
+ * Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
+ * MemFabric_Hybrid is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+#ifndef MEM_FABRIC_HYBRID_HYBM_CONTROL_LAYOUT_H
+#define MEM_FABRIC_HYBRID_HYBM_CONTROL_LAYOUT_H
+
+#include <cstdint>
+
+namespace ock {
+namespace mf {
+
+constexpr uint64_t KB = 1024ULL;
+constexpr uint64_t MB = KB * 1024ULL;
+constexpr uint64_t GB = MB * 1024ULL;
+
+constexpr uint64_t HYBM_LARGE_PAGE_SIZE = 2UL * MB;
+constexpr uint64_t HYBM_DEVICE_VA_START = 0x100000000000UL;
+constexpr uint64_t HYBM_DEVICE_VA_SIZE = 0x80000000000UL;
+constexpr uint64_t SVM_END_ADDR = HYBM_DEVICE_VA_START + HYBM_DEVICE_VA_SIZE - GB;
+constexpr uint64_t HYBM_DEVICE_PRE_META_SIZE = 128UL;
+constexpr uint64_t HYBM_DEVICE_GLOBAL_META_SIZE = HYBM_DEVICE_PRE_META_SIZE;
+constexpr uint64_t HYBM_ENTITY_NUM_MAX = 511UL;
+constexpr uint64_t HYBM_DEVICE_META_SIZE =
+    HYBM_DEVICE_PRE_META_SIZE * HYBM_ENTITY_NUM_MAX + HYBM_DEVICE_GLOBAL_META_SIZE;
+constexpr uint64_t HYBM_DEVICE_USER_CONTEXT_PRE_SIZE = 64UL * KB;
+constexpr uint64_t HYBM_DEVICE_INFO_SIZE =
+    HYBM_DEVICE_USER_CONTEXT_PRE_SIZE * HYBM_ENTITY_NUM_MAX + HYBM_DEVICE_META_SIZE;
+constexpr uint64_t HYBM_DEVICE_META_ADDR = SVM_END_ADDR - HYBM_DEVICE_INFO_SIZE;
+constexpr uint64_t HYBM_BATCH_COPY_META_SIZE = HYBM_LARGE_PAGE_SIZE;
+constexpr uint64_t HYBM_BATCH_COPY_META_ADDR = HYBM_DEVICE_META_ADDR - HYBM_BATCH_COPY_META_SIZE;
+constexpr uint64_t HYBM_DEVICE_CONTROL_ADDR = HYBM_BATCH_COPY_META_ADDR;
+constexpr uint64_t HYBM_DEVICE_CONTROL_SIZE = HYBM_BATCH_COPY_META_SIZE + HYBM_DEVICE_INFO_SIZE;
+constexpr uint64_t HYBM_DEVICE_USER_CONTEXT_ADDR = HYBM_DEVICE_META_ADDR + HYBM_DEVICE_META_SIZE;
+
+static_assert(HYBM_DEVICE_INFO_SIZE == 32U * MB);
+static_assert(HYBM_DEVICE_CONTROL_SIZE == 34U * MB);
+static_assert(HYBM_DEVICE_CONTROL_ADDR % HYBM_LARGE_PAGE_SIZE == 0U);
+static_assert(HYBM_DEVICE_CONTROL_SIZE % HYBM_LARGE_PAGE_SIZE == 0U);
+static_assert(HYBM_DEVICE_CONTROL_ADDR + HYBM_DEVICE_CONTROL_SIZE == SVM_END_ADDR);
+
+} // namespace mf
+} // namespace ock
+
+#endif // MEM_FABRIC_HYBRID_HYBM_CONTROL_LAYOUT_H
