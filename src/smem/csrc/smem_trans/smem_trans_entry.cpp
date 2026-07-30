@@ -868,7 +868,9 @@ SmemTransEntry::CombineMemories(std::vector<std::pair<const void *, size_t>> &in
     std::vector<std::pair<const void *, size_t>> result;
     auto current = input[0];
     for (auto i = 1U; i < input.size(); i++) {
-        if ((const uint8_t *)current.first + current.second >= (const uint8_t *)input[i].first) {
+        // Merge only on real overlap (end > next.start); exact adjacency (end == next.start) is NOT
+        // merged, to avoid cross-heap merging whose size exceeds a single heap's capacity and gets
+        if ((const uint8_t *)current.first + current.second > (const uint8_t *)input[i].first) {
             ptrdiff_t diff = ((const uint8_t *)input[i].first - (const uint8_t *)current.first);
             if (static_cast<size_t>(diff) > std::numeric_limits<size_t>::max() - input[i].second) {
                 result.emplace_back(current);

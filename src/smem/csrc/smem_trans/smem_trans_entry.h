@@ -117,6 +117,11 @@ public:
 
     void SetPeerDownCallback(smem_trans_peer_down_callback_t callback, void *userData);
 
+    // Pure helpers (no instance state); exposed public so unit tests can cover align/merge logic
+    static void AlignMemory(const void *&address, uint64_t &size);
+    static std::vector<std::pair<const void *, size_t>> CombineMemories(
+        std::vector<std::pair<const void *, size_t>> &input);
+
 private:
     Result CreateGlobalTeam(uint32_t rankId);
     Result JoinImport(std::unordered_map<uint32_t, std::string> &allInfo, bool isEntity);
@@ -137,8 +142,6 @@ private:
     bool ParseTransName(const std::string &name, ock::mf::net_addr_t &ip, uint16_t &port);
     void RemoveRanks(std::vector<uint32_t> &rankSet);
     Result ParseNameToUniqueId(const std::string &name, WorkerId &uniqueId);
-    void AlignMemory(const void *&address, uint64_t &size);
-    std::vector<std::pair<const void *, size_t>> CombineMemories(std::vector<std::pair<const void *, size_t>> &input);
     Result RegisterOneMemory(const void *address, uint64_t size, uint32_t flags);
     hybm_options GenerateHybmOptions();
     void StoreSlice(hybm_mem_slice_t slice, void *vaAddr);

@@ -2185,3 +2185,135 @@ TEST_F(SmemTransTest, smem_trans_register_mems_success_receiver_ipv6)
     smem_trans_destroy(handle, 0);
     smem_trans_uninit(0);
 }
+
+// ===== CombineMemories / AlignMemory unit tests =====
+
+namespace {
+constexpr uint64_t NPU_PAGE_SIZE_UT = 2ULL * 1024ULL * 1024ULL; // 2MB, matches AlignMemory
+using MemPair = std::pair<const void *, size_t>;
+
+// Verify merge result: count and each (start, size) pair
+void ExpectMerged(const std::vector<MemPair> &got, const std::vector<std::pair<uint64_t, uint64_t>> &expect)
+{
+    ASSERT_EQ(got.size(), expect.size());
+    for (size_t i = 0; i < got.size(); i++) {
+        EXPECT_EQ(reinterpret_cast<uint64_t>(got[i].first), expect[i].first) << "idx " << i;
+        EXPECT_EQ(got[i].second, expect[i].second) << "idx " << i;
+    }
+}
+} // namespace
+
+// Already 2MB-aligned address/size stays unchanged
+TEST_F(SmemTransTest, AlignMemory_aligned_unchanged)
+{
+    const void *addr = reinterpret_cast<const void *>(0x100000000ULL);
+    uint64_t size = NPU_PAGE_SIZE_UT * 10;
+    SmemTransEntry::AlignMemory(addr, size);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(addr), 0x100000000ULL);
+    EXPECT_EQ(size, NPU_PAGE_SIZE_UT * 10);
+}
+
+// Unaligned address: start rounds down, size rounds up and covers the prefix
+TEST_F(SmemTransTest, AlignMemory_unaligned_rounded)
+{
+    const void *addr = reinterpret_cast<const void *>(0x100001000ULL); // page offset 0x1000
+    uint64_t size = NPU_PAGE_SIZE_UT;                                  // spans two 2MB pages
+    SmemTransEntry::AlignMemory(addr, size);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(addr), 0x100000000ULL);
+    // diff(0x1000) + size(0x200000) = 0x201000, rounded up to 2MB = 0x400000
+    EXPECT_EQ(size, NPU_PAGE_SIZE_UT * 2);
+}
+
+// Exact adjacency (end == next.start): NOT merged -- core fix of the issue
+TEST_F(SmemTransTest, CombineMemories_adjacent_not_merged)
+{
+    std::vector<MemPair> input = {
+        {reinterpret_cast<const void *>(0x100000000ULL), NPU_PAGE_SIZE_UT * 100},
+        {reinterpret_cast<const void *>(0x100000000ULL + NPU_PAGE_SIZE_UT * 100), NPU_PAGE_SIZE_UT * 50},
+    };
+    auto got = SmemTransEntry::CombineMemories(input);
+    ExpectMerged(got, {{0x100000000ULL, NPU_PAGE_SIZE_UT * 100},
+                       {0x100000000ULL + NPU_PAGE_SIZE_UT * 100, NPU_PAGE_SIZE_UT * 50}});
+}
+
+// Real overlap (end > next.start): merged into one segment
+TEST_F(SmemTransTest, CombineMemories_overlap_merged)
+{
+    std::vector<MemPair> input = {
+        {reinterpret_cast<const void *>(0x100000000ULL), NPU_PAGE_SIZE_UT * 4}, // [0, 4MB)
+        {reinterpret_cast<const void *>(0x100000000ULL + NPU_PAGE_SIZE_UT * 2), NPU_PAGE_SIZE_UT * 4}, // [2MB, 6MB)
+    };
+    auto got = SmemTransEntry::CombineMemories(input);
+    ASSERT_EQ(got.size(), 1U);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(got[0].first), 0x100000000ULL);
+    EXPECT_EQ(got[0].second, NPU_PAGE_SIZE_UT * 6); // [0, 6MB)
+}
+
+// With a gap: NOT merged
+TEST_F(SmemTransTest, CombineMemories_disjoint_not_merged)
+{
+    std::vector<MemPair> input = {
+        {reinterpret_cast<const void *>(0x100000000ULL), NPU_PAGE_SIZE_UT * 2},
+        {reinterpret_cast<const void *>(0x100000000ULL + NPU_PAGE_SIZE_UT * 10), NPU_PAGE_SIZE_UT * 2},
+    };
+    auto got = SmemTransEntry::CombineMemories(input);
+    EXPECT_EQ(got.size(), 2U);
+}
+
+// Unsorted input: sorted internally then overlapping segments merged
+TEST_F(SmemTransTest, CombineMemories_unsorted_overlap_merged)
+{
+    std::vector<MemPair> input = {
+        {reinterpret_cast<const void *>(0x100000000ULL + NPU_PAGE_SIZE_UT * 2), NPU_PAGE_SIZE_UT * 4},
+        {reinterpret_cast<const void *>(0x100000000ULL), NPU_PAGE_SIZE_UT * 4},
+    };
+    auto got = SmemTransEntry::CombineMemories(input);
+    ASSERT_EQ(got.size(), 1U);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(got[0].first), 0x100000000ULL);
+    EXPECT_EQ(got[0].second, NPU_PAGE_SIZE_UT * 6);
+}
+
+// Single input: returned as-is
+TEST_F(SmemTransTest, CombineMemories_single_input)
+{
+    std::vector<MemPair> input = {{reinterpret_cast<const void *>(0x100000000ULL), NPU_PAGE_SIZE_UT * 3}};
+    auto got = SmemTransEntry::CombineMemories(input);
+    ASSERT_EQ(got.size(), 1U);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(got[0].first), 0x100000000ULL);
+    EXPECT_EQ(got[0].second, NPU_PAGE_SIZE_UT * 3);
+}
+
+// Regression: simulate SGLang PD K/V exactly adjacent on a 2MB boundary.
+// After alignment K_end == V_start; CombineMemories must yield two independent registrations
+// instead of merging them into one segment crossing the heap boundary.
+TEST_F(SmemTransTest, CombineMemories_pd_kv_boundary_regression)
+{
+    // K half: already 2MB-aligned
+    const uint64_t kPtr = 0x12c9c0000000ULL;
+    uint64_t kSize = 18069061632ULL; // K half size from the issue (unaligned)
+    const void *kAddr = reinterpret_cast<const void *>(kPtr);
+    SmemTransEntry::AlignMemory(kAddr, kSize);
+
+    // V half: starts right after K's aligned end
+    const uint64_t vPtr = kPtr + kSize;
+    uint64_t vSize = 2258632704ULL; // V half size from the issue
+    const void *vAddr = reinterpret_cast<const void *>(vPtr);
+    SmemTransEntry::AlignMemory(vAddr, vSize);
+
+    // Exactly adjacent after alignment
+    EXPECT_EQ(reinterpret_cast<uint64_t>(kAddr) + kSize, reinterpret_cast<uint64_t>(vAddr));
+
+    std::vector<MemPair> input = {{kAddr, kSize}, {vAddr, vSize}};
+    auto got = SmemTransEntry::CombineMemories(input);
+
+    // Expect: two independent segments; K must not cover V (merging would make size ~= 19.13GiB,
+    // exceeding K's heap ~= 17GiB)
+    ASSERT_EQ(got.size(), 2U) << "adjacent K/V must not merge, otherwise cross-heap registration fails";
+    EXPECT_EQ(reinterpret_cast<uint64_t>(got[0].first), reinterpret_cast<uint64_t>(kAddr));
+    EXPECT_EQ(got[0].second, kSize);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(got[1].first), reinterpret_cast<uint64_t>(vAddr));
+    EXPECT_EQ(got[1].second, vSize);
+    // The merged K segment must not cover V's start
+    EXPECT_LT(reinterpret_cast<uint64_t>(got[0].first) + got[0].second, reinterpret_cast<uint64_t>(got[1].first) + 1);
+}
+
