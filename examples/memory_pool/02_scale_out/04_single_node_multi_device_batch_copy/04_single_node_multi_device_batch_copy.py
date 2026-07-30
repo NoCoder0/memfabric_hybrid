@@ -73,7 +73,7 @@ def _read_peer_batch(handle, local_hbm: int, peer_hbm: int, peer_rank: int, batc
 
 
 def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
-    mf.set_log_level(1)
+    mf.set_log_level(0)
     assert mf.initialize() == 0, "mf.initialize failed"
     bm_initialized = False
     try:
