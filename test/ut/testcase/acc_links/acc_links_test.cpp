@@ -13,6 +13,7 @@
 #include <mockcpp/mockcpp.hpp>
 #include <gtest/gtest.h>
 #include <cstring>
+#include <chrono>
 #include <thread>
 #include <iostream>
 #include <string>
@@ -475,6 +476,33 @@ TEST_F(AccLinksTest, test_server_connect_to_peer_server_2_should_return_error)
     int32_t ret = mServer->ConnectToPeerServer(nextIp, nextPort, req, nextLink);
     ASSERT_EQ(ACC_ERROR, ret);
     std::cout << "finish" << std::endl;
+}
+
+// When the server is stopped (started_ == false), ConnectToPeerServer must abort
+// at the new loop-top check immediately, without retrying ::connect or sleeping
+// through maxRetryTimes. Regression guard for "fix exit problem when link is broken":
+// before the fix the retry loop would sleep ~1s per retry and block shutdown.
+TEST_F(AccLinksTest, test_server_connect_to_peer_server_aborts_fast_when_stopped)
+{
+    const std::string nextIp = "127.0.0.1";
+    uint16_t nextPort = 8101; // no listener here; without the fix each retry sleeps ~1s
+    AccConnReq req{};
+    req.rankId = 0;
+    req.magic = 0;
+    req.version = 1;
+    AccTcpLinkComplexPtr nextLink;
+    mServer->Stop();
+    usleep(10 * 1000); // 10ms: ensure the stopped flag is observed
+
+    auto t0 = std::chrono::steady_clock::now();
+    int32_t ret = mServer->ConnectToPeerServer(nextIp, nextPort, req, 10, nextLink);
+    auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - t0).count();
+
+    ASSERT_EQ(ACC_ERROR, ret);
+    EXPECT_EQ(nextLink, nullptr);
+    // Without the fix this takes ~maxRetryTimes seconds (~10s); with the fix the loop
+    // aborts at the first loop-top check before any connect/sleep, so it is near-instant.
+    ASSERT_LT(elapsedSec, 5);
 }
 
 TEST_F(AccLinksTest, test_server_start_listen_validate_should_return_error)

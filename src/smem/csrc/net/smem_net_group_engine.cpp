@@ -45,6 +45,7 @@ constexpr uint32_t UINT_BIT = 8U;
 constexpr uint32_t USER_GROUP_KEY_LEN_MAX = 64;
 constexpr uint32_t SMEM_GROUP_INFO_SIZE = sizeof(SmemGroupInfo);
 const std::string SMEM_GROUP_NOTIFY_EVENT = std::string(SMEM_GROUP_INFO_SIZE, 0);
+constexpr int MAX_CAS_CONSECUTIVE_FAIL = 10;
 
 SmemNetGroupEngine::~SmemNetGroupEngine()
 {
@@ -1500,11 +1501,35 @@ Result SmemNetGroupEngine::GroupLeave()
     SM_ASSERT_RETURN(joined_, SM_NOT_STARTED);
     SM_LOG_INFO("do leave by user, rank:" << option_.rank);
 
+    // If the config store link is already broken, skip the Cas retry loop entirely.
+    // Each Cas call would block ~1-2s inside LocalNonBlockSend→ReConnectAfterBroken,
+    // and 10 retries would add ~20s to the shutdown — far exceeding the 5s target.
+    if (!store_->GetConnectStatus()) {
+        SM_LOG_WARN("config store disconnected, skip group leave, rank:" << option_.rank);
+        joined_ = false;
+        return SM_ERROR;
+    }
+
     std::string old;
     int retry_count = 0;
     static constexpr int MAX_RETRY = 100000;
+
+    int casFailCount = 0;
+    bool configStoreUnreachable = false;
     localOpRet_ = SM_OK; // init ret
     while (retry_count++ < MAX_RETRY) {
+        if (groupStoped_.load()) {
+            SM_LOG_WARN("group stopped during leave, abort, rank:" << option_.rank);
+            joined_ = false;
+            return SM_ERROR;
+        }
+        // Check if the config store link broke during the loop (e.g. server killed mid-shutdown).
+        // Without this check, each Cas call would block ~1-2s in ReConnectAfterBroken.
+        if (!store_->GetConnectStatus()) {
+            SM_LOG_WARN("config store disconnected during leave, abort, rank:" << option_.rank);
+            configStoreUnreachable = true;
+            break;
+        }
         SmemGroupInfo info = GenerateInfo(LEAVE_EVENT, option_.rank, old);
         if (!ClearBitmapForRank(info, option_.rank)) {
             SM_LOG_WARN("current rank has leaved. rank:" << option_.rank);
@@ -1518,10 +1543,24 @@ Result SmemNetGroupEngine::GroupLeave()
                 lastSubmitVersion_.store(info.version);
                 break;
             }
+            if (ret != RESTORE && ++casFailCount >= MAX_CAS_CONSECUTIVE_FAIL) {
+                SM_LOG_WARN("group leave: " << casFailCount
+                                            << " consecutive Cas failures, config store may be unreachable, rank:"
+                                            << option_.rank);
+                configStoreUnreachable = true;
+                break;
+            }
         } else {
             TryCleanOldEvent();
         }
         usleep(SMEM_GROUP_SLEEP_TIMEOUT);
+    }
+
+    // When the config store is unreachable, skip the listener signal wait and
+    // final Cas — both would block for up to 10s with no chance of success.
+    if (configStoreUnreachable) {
+        joined_ = false;
+        return SM_ERROR;
     }
 
     SM_VALIDATE_RETURN(retry_count <= MAX_RETRY, "do leave set key timeout!", SM_ERROR);

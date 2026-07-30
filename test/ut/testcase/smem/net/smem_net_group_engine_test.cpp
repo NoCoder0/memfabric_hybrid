@@ -11,7 +11,9 @@
 */
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
+#define private public
 #include "smem_net_group_engine.h"
+#undef private
 #include "smem_store_factory.h"
 
 using namespace mockcpp;
@@ -134,9 +136,16 @@ public:
     }
     bool GetConnectStatus() noexcept override
     {
-        return true;
+        if (connectStatusTrueCount > 0) {
+            connectStatusTrueCount--;
+            return true;
+        }
+        return connectStatus;
     }
-    void SetConnectStatus(bool status) noexcept override {}
+    void SetConnectStatus(bool status) noexcept override
+    {
+        connectStatus = status;
+    }
     void RegisterClientBrokenHandler(const ock::smem::ConfigStoreClientBrokenHandler &handler) noexcept override {}
     void RegisterServerBrokenHandler(const ock::smem::ConfigStoreServerBrokenHandler &handler) noexcept override {}
 
@@ -161,6 +170,9 @@ public:
     ock::smem::Result watchResult_{ock::smem::SM_OK};
     ock::smem::Result unwatchResult_{ock::smem::SM_OK};
     ock::smem::Result writeResult_{ock::smem::SM_OK};
+
+    bool connectStatus{true};
+    size_t connectStatusTrueCount{0};
 
     int64_t addValue{0};
     uint64_t appendNewSize{0};
@@ -193,6 +205,9 @@ public:
         watchResult_ = ock::smem::SM_OK;
         unwatchResult_ = ock::smem::SM_OK;
         writeResult_ = ock::smem::SM_OK;
+
+        connectStatus = true;
+        connectStatusTrueCount = 0;
 
         addValue = 0;
         appendNewSize = 0;
@@ -297,5 +312,43 @@ TEST_F(SmemNetGroupEngineMockTest, ReconnectHandlerSkipsAfterGroupDestroyed)
     }
 
     EXPECT_EQ(mockStoreManager_->reconnectHandler(), ock::smem::SM_OK);
+    EXPECT_EQ(mockStoreManager_->casCount, 0);
+}
+
+// === Tests for "fix exit problem when link is broken" (GroupLeave abort paths) ===
+// watchWid = UINT32_MAX keeps the listener threads looping on ReWatchEvent (no Cas)
+// so casCount only reflects what GroupLeave itself submits.
+
+// Branch 1: the config store link is already broken when GroupLeave starts.
+// The Cas retry loop must be skipped entirely — no Cas call, fast SM_ERROR return.
+TEST_F(SmemNetGroupEngineMockTest, GroupLeaveReturnsErrorWhenStoreAlreadyDisconnected)
+{
+    option_.dynamic = true;
+    mockStoreManager_->watchWid = UINT32_MAX;
+    mockStoreManager_->connectStatus = false; // store already disconnected
+
+    auto group = ock::smem::SmemNetGroupEngine::Create(storePtr_, option_);
+    ASSERT_NE(group, nullptr);
+    group->joined_ = true; // simulate an already-joined dynamic group
+
+    EXPECT_EQ(group->GroupLeave(), ock::smem::SM_ERROR);
+    EXPECT_FALSE(group->joined_.load());
+    EXPECT_EQ(mockStoreManager_->casCount, 0);
+}
+
+// Branch 2: groupStoped_ is set (e.g. the destructor is racing with GroupLeave).
+// The retry loop must abort on the first iteration, before any Cas call.
+TEST_F(SmemNetGroupEngineMockTest, GroupLeaveAbortsWhenGroupStoppedDuringLoop)
+{
+    option_.dynamic = true;
+    mockStoreManager_->watchWid = UINT32_MAX;
+
+    auto group = ock::smem::SmemNetGroupEngine::Create(storePtr_, option_);
+    ASSERT_NE(group, nullptr);
+    group->joined_ = true;
+    group->groupStoped_ = true;
+
+    EXPECT_EQ(group->GroupLeave(), ock::smem::SM_ERROR);
+    EXPECT_FALSE(group->joined_.load());
     EXPECT_EQ(mockStoreManager_->casCount, 0);
 }

@@ -501,6 +501,11 @@ Result AccTcpServerDefault::ConnectToPeerServer(const std::string &peerIp, uint1
     int lastErrno = 0;
     auto [addrPtr, addrLen] = parser->GetPeerAddress(peerIp, port);
     while (timesRetried < maxRetryTimes) {
+        if (!started_.load()) {
+            LOG_INFO("server stopping, abort connect to " << ipAndPort);
+            SafeCloseFd(tmpFD);
+            return ACC_ERROR;
+        }
         LOG_INFO_LIMIT("Trying to connect to " << ipAndPort);
         errno = 0;
         if (::connect(tmpFD, addrPtr, addrLen) == 0) {
