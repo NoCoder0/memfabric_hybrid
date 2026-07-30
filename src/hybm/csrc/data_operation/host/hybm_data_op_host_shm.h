@@ -42,6 +42,8 @@ private:
     Result CopyDeviceToHost(void *destVA, const void *srcVA, uint64_t length) noexcept;
     Result CopyHostToDevice(void *destVA, const void *srcVA, uint64_t length) noexcept;
     Result BatchCopyHostToHost(void **destAddrs, void **srcAddrs, const uint64_t *counts, uint32_t batchSize) noexcept;
+    Result BatchDataCopyLocalBatch(void **destAddrs, void **srcAddrs, const uint64_t *counts, uint32_t batchSize,
+                                   int32_t direction) noexcept;
     Result BatchCopyDeviceToHost(void **destAddrs, void **srcAddrs, const uint64_t *counts,
                                  uint32_t batchSize) noexcept;
     Result BatchCopyHostToDevice(void **destAddrs, void **srcAddrs, const uint64_t *counts,

@@ -120,9 +120,36 @@ Result HostDataOpHostShm::BatchCopyHostToHost(void **destAddrs, void **srcAddrs,
     return BM_OK;
 }
 
+Result HostDataOpHostShm::BatchDataCopyLocalBatch(void **destAddrs, void **srcAddrs, const uint64_t *counts,
+                                                  uint32_t batchSize, int32_t direction) noexcept
+{
+    std::vector<aclrtMemcpyBatchAttr> attrs(batchSize);
+    std::vector<size_t> attrsIds(batchSize);
+    std::vector<size_t> sizes(batchSize);
+    size_t idx = 0;
+    auto deviceLoc = aclrtMemLocation{static_cast<uint32_t>(HybmGetInitDeviceId()),
+                                      aclrtMemLocationType::ACL_MEM_LOCATION_TYPE_DEVICE};
+    auto hostLoc = aclrtMemLocation{0, aclrtMemLocationType::ACL_MEM_LOCATION_TYPE_HOST};
+    for (size_t i = 0; i < batchSize; i++) {
+        if (direction == ACL_MEMCPY_HOST_TO_DEVICE) {
+            attrs[i] = aclrtMemcpyBatchAttr{deviceLoc, hostLoc, {}};
+        } else {
+            attrs[i] = aclrtMemcpyBatchAttr{hostLoc, deviceLoc, {}};
+        }
+        attrsIds[i] = idx++;
+        sizes[i] = counts[i];
+    }
+    size_t fail_idx = 0;
+    return  DlAclApi::AclrtMemcpyBatch(destAddrs, sizes.data(), srcAddrs, sizes.data(), sizes.size(),
+        attrs.data(), attrsIds.data(), attrs.size(), &fail_idx);
+}
+
 Result HostDataOpHostShm::BatchCopyDeviceToHost(void **destAddrs, void **srcAddrs, const uint64_t *counts,
                                                 uint32_t batchSize) noexcept
 {
+    if (BatchDataCopyLocalBatch(destAddrs, srcAddrs, counts, batchSize, ACL_MEMCPY_DEVICE_TO_HOST) == BM_OK) {
+        return BM_OK;
+    }
     for (uint32_t i = 0; i < batchSize; ++i) {
         auto ret = CopyDeviceToHost(destAddrs[i], srcAddrs[i], counts[i]);
         if (ret != BM_OK) {
@@ -135,6 +162,9 @@ Result HostDataOpHostShm::BatchCopyDeviceToHost(void **destAddrs, void **srcAddr
 Result HostDataOpHostShm::BatchCopyHostToDevice(void **destAddrs, void **srcAddrs, const uint64_t *counts,
                                                 uint32_t batchSize) noexcept
 {
+    if (BatchDataCopyLocalBatch(destAddrs, srcAddrs, counts, batchSize, ACL_MEMCPY_HOST_TO_DEVICE) == BM_OK) {
+        return BM_OK;
+    }
     for (uint32_t i = 0; i < batchSize; ++i) {
         auto ret = CopyHostToDevice(destAddrs[i], srcAddrs[i], counts[i]);
         if (ret != BM_OK) {

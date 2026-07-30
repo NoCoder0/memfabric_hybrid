@@ -316,7 +316,7 @@ Result HostDataOpSDMA::DataCopyAsync(hybm_copy_params &params, hybm_data_copy_di
         BM_LOG_ERROR("Failed to copy data async ret: " << ret << " direction: " << direction);
         return ret;
     }
-    return  InnerWait(options, ret);
+    return InnerWait(options, ret);
 }
 
 void HostDataOpSDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
