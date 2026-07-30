@@ -627,11 +627,11 @@ Result SmemTransEntry::BatchSyncTransfer(void *localAddrs[], const std::string &
     switch (opcode) {
         case SMEMB_COPY_L2G: {
             hybm_batch_copy_params copyParams = {localAddrs, mappedAddress.data(), dataSizes, batchSize};
-            ret = hybm_data_batch_copy(entity_, &copyParams, HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE, stream, flag);
+            ret = hybm_data_batch_copy(entity_, &copyParams, HYBM_DATA_COPY_DIRECTION_AUTO, stream, flag);
         } break;
         case SMEMB_COPY_G2L: {
             hybm_batch_copy_params copyParams = {mappedAddress.data(), localAddrs, dataSizes, batchSize};
-            ret = hybm_data_batch_copy(entity_, &copyParams, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE, stream, flag);
+            ret = hybm_data_batch_copy(entity_, &copyParams, HYBM_DATA_COPY_DIRECTION_AUTO, stream, flag);
         } break;
         default:
             SM_LOG_ERROR("unexpect copy type[" << opcode << "] is invalid.");

@@ -66,6 +66,51 @@ HYBM_API int32_t hybm_wait(hybm_entity_t e)
     return entity->Wait();
 }
 
+static int32_t BatchCopyByAutoGroup(MemEntity *entity, const hybm_batch_copy_params *params, void *stream,
+                                    uint32_t flags)
+{
+    auto &vaMgr = ock::mf::HybmVaManager::GetInstance();
+    std::map<hybm_data_copy_direction, std::vector<uint32_t>> groups;
+    for (uint32_t i = 0; i < params->batchSize; i++) {
+        if (params->sources[i] == nullptr || params->destinations[i] == nullptr) {
+            BM_LOG_ERROR("input copy address is invalid, source or dest is nullptr, index:" << i);
+            return BM_INVALID_PARAM;
+        }
+        uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[i]));
+        uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->destinations[i]));
+        uint8_t except = srcMask | (dstMask << 4);
+        auto dir = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
+        if (dir >= HYBM_DATA_COPY_DIRECTION_AUTO) {
+            BM_LOG_ERROR("failed to auto infer copy direction, index: "
+                         << i << ", src: " << std::hex << params->sources[i] << ", dest: " << params->destinations[i]);
+            return BM_INVALID_PARAM;
+        }
+        groups[dir].push_back(i);
+    }
+    for (auto &[dir, indices] : groups) {
+        std::vector<void *> subSrc;
+        std::vector<void *> subDst;
+        std::vector<uint64_t> subSizes;
+        subSrc.reserve(indices.size());
+        subDst.reserve(indices.size());
+        subSizes.reserve(indices.size());
+        for (auto idx : indices) {
+            subSrc.push_back(params->sources[idx]);
+            subDst.push_back(params->destinations[idx]);
+            subSizes.push_back(params->dataSizes[idx]);
+        }
+        hybm_batch_copy_params subParams = {subSrc.data(), subDst.data(), subSizes.data(),
+                                            static_cast<uint32_t>(indices.size())};
+        auto ret = entity->BatchCopyData(subParams, dir, stream, flags);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("batch copy data failed, direction: " << dir << ", batchSize: " << indices.size()
+                                                               << ", ret: " << ret);
+            return ret;
+        }
+    }
+    return BM_OK;
+}
+
 HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *params,
                                       hybm_data_copy_direction direction, void *stream, uint32_t flags)
 {
@@ -81,18 +126,8 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
 
     auto entity = (MemEntity *)e;
 
-    // AUTO：用第一个元素推算方向
     if (direction == HYBM_DATA_COPY_DIRECTION_AUTO) {
-        auto &vaMgr = ock::mf::HybmVaManager::GetInstance();
-        uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[0]));
-        uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->destinations[0]));
-        uint8_t except = srcMask | (dstMask << 4);
-        direction = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
-        if (direction >= HYBM_DATA_COPY_DIRECTION_AUTO) {
-            BM_LOG_ERROR("Failed to auto infer copy direction, src:" << std::hex << params->sources[0] << ", dest=:"
-                                                                     << std::hex << params->destinations[0]);
-            return BM_INVALID_PARAM;
-        }
+        return BatchCopyByAutoGroup(entity, params, stream, flags);
     }
 
     for (uint32_t i = 0; i < params->batchSize; i++) {

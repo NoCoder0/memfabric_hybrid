@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include <algorithm>
 #include "hybm_big_mem.h"
 #include "smem_net_common.h"
 #include "smem_store_factory.h"
@@ -21,30 +22,51 @@ namespace offload {
 using namespace ock::smem;
 
 constexpr uint64_t GB = 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t HOST_MEM_SLICE_SIZE = 32ULL * GB;
 
 static uint64_t AlignUp(uint64_t value, uint64_t align) noexcept
 {
     return (value + align - 1) & ~(align - 1);
 }
 
-static int32_t AllGatherAndImportPeers(const SmemGroupEnginePtr &group, const hybm_exchange_info &localInfo,
-                                       hybm_entity_t entity, uint32_t importFlags, uint32_t rankCount,
-                                       uint32_t selfRank)
+static int32_t AllGatherAndImportPeers(const SmemGroupEnginePtr &group,
+                                       const std::vector<hybm_exchange_info> &localInfos, hybm_entity_t entity,
+                                       uint32_t importFlags, uint32_t rankCount, uint32_t selfRank)
 {
-    std::vector<hybm_exchange_info> allInfos(rankCount);
-    auto ret = group->GroupAllGather(reinterpret_cast<const char *>(&localInfo), sizeof(hybm_exchange_info),
-                                     reinterpret_cast<char *>(allInfos.data()), sizeof(hybm_exchange_info) * rankCount);
+    uint32_t infoCount = static_cast<uint32_t>(localInfos.size());
+    std::vector<uint32_t> allCounts(rankCount, 0);
+    auto ret = group->GroupAllGather(reinterpret_cast<const char *>(&infoCount), sizeof(uint32_t),
+                                     reinterpret_cast<char *>(allCounts.data()), sizeof(uint32_t) * rankCount);
     if (ret != OFFLOAD_OK) {
         return ret;
     }
-
+    uint32_t maxCount = *std::max_element(allCounts.cbegin(), allCounts.cend());
+    if (maxCount == 0) {
+        return group->GroupBarrier();
+    }
+    std::vector<hybm_exchange_info> sendInfos(maxCount);
+    for (uint32_t i = 0; i < infoCount; i++) {
+        sendInfos[i] = localInfos[i];
+    }
+    std::vector<hybm_exchange_info> allInfos(static_cast<size_t>(rankCount) * maxCount);
+    ret = group->GroupAllGather(reinterpret_cast<const char *>(sendInfos.data()), maxCount * sizeof(hybm_exchange_info),
+                                reinterpret_cast<char *>(allInfos.data()),
+                                rankCount * maxCount * sizeof(hybm_exchange_info));
+    if (ret != OFFLOAD_OK) {
+        return ret;
+    }
     std::vector<hybm_exchange_info> peerInfos;
-    peerInfos.reserve(rankCount > 0 ? rankCount - 1 : 0);
+    peerInfos.reserve(static_cast<size_t>(rankCount > 0 ? rankCount - 1 : 0) * maxCount);
     for (uint32_t r = 0; r < rankCount; r++) {
         if (r == selfRank) {
             continue;
         }
-        peerInfos.push_back(allInfos[r]);
+        for (uint32_t i = 0; i < maxCount; i++) {
+            const auto &info = allInfos[static_cast<size_t>(r) * maxCount + i];
+            if (info.descLen > 0) {
+                peerInfos.push_back(info);
+            }
+        }
     }
     if (!peerInfos.empty()) {
         ret = hybm_import(entity, peerInfos.data(), peerInfos.size(), nullptr, importFlags);
@@ -53,6 +75,38 @@ static int32_t AllGatherAndImportPeers(const SmemGroupEnginePtr &group, const hy
         }
     }
     return group->GroupBarrier();
+}
+
+int32_t AccOffloadSharedDramEntry::AllocAndExportHostSlices()
+{
+    const uint64_t totalSize = options_.hostVASpace;
+    uint64_t remaining = totalSize;
+    do {
+        uint64_t sliceSize = (remaining >= HOST_MEM_SLICE_SIZE) ? HOST_MEM_SLICE_SIZE : remaining;
+        uint64_t allocated = totalSize - remaining;
+        OFFLOAD_LOG_INFO("alloc host slice progress: " << allocated << "/" << totalSize << ", sliceSize: " << sliceSize
+                                                       << ", rankId: " << options_.rankId);
+        auto memSlice = hybm_alloc_local_memory(entity_, HYBM_MEM_TYPE_HOST, sliceSize, 0);
+        if (memSlice == nullptr) {
+            OFFLOAD_LOG_ERROR("alloc host slice failed, allocated: " << allocated << ", sliceSize: " << sliceSize
+                                                                     << ", totalSize: " << totalSize
+                                                                     << ", rankId: " << options_.rankId);
+            return OFFLOAD_ERROR;
+        }
+        hybm_exchange_info sliceInfo{};
+        auto ret = hybm_export(entity_, memSlice, 0, &sliceInfo);
+        if (ret != OFFLOAD_OK) {
+            OFFLOAD_LOG_ERROR("export host slice failed, result: " << ret << ", sliceSize: " << sliceSize
+                                                                   << ", rankId: " << options_.rankId);
+            return ret;
+        }
+        slices_.push_back(memSlice);
+        sliceInfos_.push_back(sliceInfo);
+        remaining -= sliceSize;
+    } while (remaining > 0);
+    OFFLOAD_LOG_INFO("alloc and export host slices done, sliceCount: " << sliceInfos_.size() << ", totalSize: "
+                                                                       << totalSize << ", rankId: " << options_.rankId);
+    return OFFLOAD_OK;
 }
 
 int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
@@ -141,7 +195,7 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
         options_.hostVASpace = alignedAllocSize;
         options_.role = HYBM_ROLE_PEER;
         options_.scene = HYBM_SCENE_DEFAULT;
-        options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
+        options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA | HYBM_FLAG_UNRESTRICTED_MEM;
         options_.dramShmFd = -1;
         options_.enable56BitsGva = false;
         bzero(options_.transUrl, sizeof(options_.transUrl));
@@ -166,22 +220,14 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
             break;
         }
 
-        slice_ = hybm_alloc_local_memory(entity_, HYBM_MEM_TYPE_HOST, options_.hostVASpace, 0);
-        if (slice_ == nullptr) {
-            OFFLOAD_LOG_ERROR("alloc local host mem failed, size: " << options_.hostVASpace
-                                                                    << ", rankId: " << config.rankId);
-            ret = OFFLOAD_ERROR;
-            break;
-        }
-
-        hybm_exchange_info sliceInfo{};
-        ret = hybm_export(entity_, slice_, 0, &sliceInfo);
+        ret = AllocAndExportHostSlices();
         if (ret != OFFLOAD_OK) {
-            OFFLOAD_LOG_ERROR("export host slice failed, result: " << ret << ", rankId: " << config.rankId);
+            OFFLOAD_LOG_ERROR("alloc and export host slices failed, hostVASpace: " << options_.hostVASpace
+                                                                                   << ", rankId: " << config.rankId);
             ret = OFFLOAD_ERROR;
             break;
         }
-        ret = AllGatherAndImportPeers(group_, sliceInfo, entity_, 0, options_.rankCount, options_.rankId);
+        ret = AllGatherAndImportPeers(group_, sliceInfos_, entity_, 0, options_.rankCount, options_.rankId);
         if (ret != OFFLOAD_OK) {
             OFFLOAD_LOG_ERROR("allgather/import slice info failed, result: " << ret << ", rankId: " << config.rankId);
             ret = OFFLOAD_ERROR;
@@ -196,7 +242,8 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
             break;
         }
         if (entityInfo.descLen > 0) {
-            ret = AllGatherAndImportPeers(group_, entityInfo, entity_, HYBM_FLAG_EXPORT_ENTITY, options_.rankCount,
+            std::vector<hybm_exchange_info> entityInfos{entityInfo};
+            ret = AllGatherAndImportPeers(group_, entityInfos, entity_, HYBM_FLAG_EXPORT_ENTITY, options_.rankCount,
                                           options_.rankId);
             if (ret != OFFLOAD_OK) {
                 OFFLOAD_LOG_ERROR("allgather/import entity info failed, result: " << ret
@@ -255,10 +302,11 @@ void AccOffloadSharedDramEntry::UnInitialize()
         group_ = nullptr;
     }
     if (entity_ != nullptr) {
-        if (slice_ != nullptr) {
-            hybm_free_local_memory(entity_, slice_, 1, flags);
-            slice_ = nullptr;
+        for (auto slice : slices_) {
+            hybm_free_local_memory(entity_, slice, 1, flags);
         }
+        slices_.clear();
+        sliceInfos_.clear();
         hybm_unreserve_mem_space(entity_, flags);
         hybm_destroy_entity(entity_, flags);
         entity_ = nullptr;

@@ -61,7 +61,7 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
     options.maxDRAMSize = alignedReserveSize;
     options.hostVASpace = alignedAllocSize;
     options.scene = HYBM_SCENE_DEFAULT;
-    options.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
+    options.flags = HYBM_FLAG_DRAM_MAP_HOST_VA | HYBM_FLAG_UNRESTRICTED_MEM;
     options.dramShmFd = -1;
 
     do {

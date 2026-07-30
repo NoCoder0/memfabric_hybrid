@@ -141,7 +141,7 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
 Result HybmVmmBasedSegment::HalMemCreateAdapterFromHost(size_t size, drv_mem_handle_t **handle, drv_mem_prop prop)
 {
     Result ret = BM_ERROR;
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
+    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950 || (options_.flags & HYBM_FLAG_UNRESTRICTED_MEM)) {
         prop = {MEM_HOST_SIDE, 0, 0, MEM_HUGE_PAGE_TYPE, MEM_DDR_TYPE, 0};
         auto start = std::chrono::high_resolution_clock::now();
         ret = DlHalApi::HalMemCreate(handle, size, &prop, 0);
@@ -183,7 +183,7 @@ Result HybmVmmBasedSegment::MallocFromHost(size_t size, uint32_t devId, drv_mem_
     if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950 || // A5当前仅支持huge page
         DlHalApi::HalMemGetAllocationGranularity(&prop, MEM_ALLOC_GRANULARITY_RECOMMENDED, &granularity) != 0) {
         prop.pg_type = MEM_HUGE_PAGE_TYPE;
-        BM_LOG_WARN("Not support giant page size change use huge page, memType:" << prop.mem_type);
+        BM_LOG_INFO("Not support giant page size change use huge page, memType:" << prop.mem_type);
     }
     int32_t ret = HalMemCreateAdapterFromHost(size, handle, prop);
     if (ret == HAL_OUT_OF_MEMORY_ERROR && prop.pg_type == MEM_GIANT_PAGE_TYPE) {

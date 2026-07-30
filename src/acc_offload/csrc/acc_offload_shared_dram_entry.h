@@ -15,6 +15,7 @@
 #include <mutex>
 #include <memory>
 #include <string>
+#include <vector>
 #include "hybm_def.h"
 #include "smem_net_group_engine.h"
 #include "acc_offload.h"
@@ -48,13 +49,16 @@ public:
                        uint8_t devIdx) override;
 
 private:
+    int32_t AllocAndExportHostSlices();
+
     std::mutex mutex_;
     bool inited_ = false;
     std::string storeUrl_;
     smem::StorePtr entryStore_;
     smem::SmemGroupEnginePtr group_;
     hybm_entity_t entity_ = nullptr;
-    hybm_mem_slice_t slice_ = nullptr;
+    std::vector<hybm_mem_slice_t> slices_;
+    std::vector<hybm_exchange_info> sliceInfos_;
     void *hostGva_ = nullptr;
     hybm_options options_{};
     uint8_t *base_ = nullptr;
