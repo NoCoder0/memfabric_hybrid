@@ -274,8 +274,12 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
 
 Result AccStoreServer::LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept
 {
-    STORE_LOG_DEBUG("link broken, linkId: " << link->Id());
-    uint32_t linkId = link->Id();
+    return LinkBrokenHandler(link->Id());
+}
+
+Result AccStoreServer::LinkBrokenHandler(const uint32_t linkId) noexcept
+{
+    STORE_LOG_DEBUG("link broken, linkId: " << linkId);
     uint32_t rankId = std::numeric_limits<uint32_t>::max();
     std::unique_lock<std::mutex> lockGuard{storeMutex_};
     auto it = linkRankMap_.find(linkId);
@@ -289,7 +293,7 @@ Result AccStoreServer::LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &l
     }
     heartBeatMap_.erase(linkId);
     if (externalBrokenHandler_ != nullptr) {
-        externalBrokenHandler_(link->Id(), backend_);
+        externalBrokenHandler_(linkId, backend_);
     }
     if (aliveRankSet_.empty()) {
         STORE_LOG_INFO("all client link broken, will clear data");
@@ -316,16 +320,6 @@ Result AccStoreServer::LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &l
     }
     rankStateTaskQueue_.push(rankId);
     storeCond_.notify_all();
-    return SM_OK;
-}
-
-Result AccStoreServer::LinkBrokenHandler(const uint32_t linkId) noexcept
-{
-    STORE_LOG_INFO("inner detect link broken, linkId: " << linkId);
-    if (externalBrokenHandler_ != nullptr) {
-        externalBrokenHandler_(linkId, backend_);
-    }
-    heartBeatMap_.erase(linkId);
     return SM_OK;
 }
 
@@ -1132,9 +1126,11 @@ void AccStoreServer::CheckerThreadTask() noexcept
                 ++it;
             }
         }
+        lockerGuard.unlock();
         for (auto linkId : brokenLinks) {
-            LinkBrokenHandler(linkId); // private func
+            LinkBrokenHandler(linkId); // private func, locks storeMutex_ internally
         }
+        lockerGuard.lock();
         brokenLinks.clear();
         storeCond_.wait_for(lockerGuard, std::chrono::milliseconds(HEARTBEAT_INTERVAL),
                             [this]() { return (state_.load() == SS_EXITED); });

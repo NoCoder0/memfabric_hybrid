@@ -85,7 +85,7 @@ public:
 
     virtual void CleanUp() noexcept
     {
-        BM_LOG_INFO("DataOperator not support");
+        BM_LOG_DEBUG("DataOperator not support");
         return;
     }
 
