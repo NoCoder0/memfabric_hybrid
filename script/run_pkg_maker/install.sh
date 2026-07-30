@@ -316,6 +316,10 @@ function install_wheel_package() {
 
 function try_install_extend()
 {
+    if [ "<<XPU_TYPE>>" != "NPU" ]; then
+        print "INFO" "XPU_TYPE is not NPU, skip install extend lib."
+        return
+    fi
     bisheng_path=$(which bisheng 2>/dev/null)
     if [ -z "${bisheng_path}" ]; then
         print "WARNING" "bisheng Not Found, skip install extend lib."

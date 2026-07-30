@@ -385,7 +385,14 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         LvaShmReservePhysicalMemory(mapped, size);
     }
 
-    if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    constexpr uint32_t HAL_REG_MASK = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
+                                      HYBM_DOP_TYPE_DEVICE_UBOE;
+#if !defined(NO_XPU)
+    constexpr uint32_t HAL_REG_MASK_EXT = HAL_REG_MASK | HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+#else
+    constexpr uint32_t HAL_REG_MASK_EXT = HAL_REG_MASK;
+#endif
+    if (options_.dataOpType & HAL_REG_MASK_EXT) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
         if (ret != BM_OK) {
             BM_LOG_ERROR("register host va failed, ret:" << ret);
@@ -397,7 +404,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
                                                      options_.rankId);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
-        if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+        if (options_.dataOpType & HAL_REG_MASK_EXT) {
             DlHalApi::HalHostUnregisterEx(mapped, logicDeviceId_, HOST_MEM_MAP_DEV);
         }
         FreeAllocatedMemory(mapped, size, allocMethod);
