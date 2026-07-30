@@ -53,3 +53,18 @@ OFFLOAD_API int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64
 
     return AccOffloadEntryManager::Instance().SparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr_, deviceId);
 }
+
+OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr,
+                                            uint64_t numLocalExpertPtr, uint64_t groupListPtr,
+                                            uint64_t packedGroupListPtr, uint16_t deviceId)
+{
+    auto srcPtrs = reinterpret_cast<uint64_t *>(srcPtr);
+    auto dstPtrs = reinterpret_cast<uint64_t *>(dstPtr);
+    auto lenPtrs = reinterpret_cast<uint32_t *>(lenPtr);
+    auto numLocalExpertPtrs = reinterpret_cast<uint32_t *>(numLocalExpertPtr);
+    auto groupList = reinterpret_cast<int64_t *>(groupListPtr);
+    auto packedGroupList = reinterpret_cast<int64_t *>(packedGroupListPtr);
+
+    return AccOffloadEntryManager::Instance().GroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtrs, groupList,
+                                                            packedGroupList, deviceId);
+}

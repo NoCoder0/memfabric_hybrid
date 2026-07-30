@@ -29,6 +29,23 @@ void AccOffloadSparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtr
         return 0;
     };
 
-    at_npu::native::OpCommand::RunOpApiV2("acc_offload", callback);
+    at_npu::native::OpCommand::RunOpApiV2("acc_sparse_copy", callback);
+}
+
+void AccOffloadGroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *numLocalExpertPtr,
+                             int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx)
+{
+    c10_npu::OptionalNPUGuard npuGuard;
+    npuGuard.set_index(devIdx);
+
+    auto stream = c10_npu::getCurrentNPUStream(devIdx);
+    void *npuStream = stream.stream(false);
+
+    auto callback = [srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, packedGroupList, npuStream]() -> int {
+        OffloadOpsGroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, packedGroupList, npuStream);
+        return 0;
+    };
+
+    at_npu::native::OpCommand::RunOpApiV2("acc_group_pack_copy", callback);
 }
 }

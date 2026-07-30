@@ -23,6 +23,8 @@ const char *AccOffloadLaunchApi::gAccOffloadLibName = "libmf_hybm_accoffload.so"
 
 AccOffloadSparseCopyFunc AccOffloadLaunchApi::pAccOffloadSparseCopy = nullptr;
 
+AccOffloadGroupPackCopyFunc AccOffloadLaunchApi::pAccOffloadGroupPackCopy = nullptr;
+
 int32_t AccOffloadLaunchApi::TryLoadLibrary()
 {
     std::unique_lock<std::mutex> guard(gMutex);
@@ -55,6 +57,8 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
 
     DL_LOAD_SYM_OPTIONAL(pAccOffloadSparseCopy, AccOffloadSparseCopyFunc, libHandle, "AccOffloadSparseCopy");
 
+    DL_LOAD_SYM_OPTIONAL(pAccOffloadGroupPackCopy, AccOffloadGroupPackCopyFunc, libHandle, "AccOffloadGroupPackCopy");
+
     gLoaded = true;
     return OFFLOAD_OK;
 }
@@ -67,6 +71,8 @@ void AccOffloadLaunchApi::CleanupLibrary()
     }
 
     pAccOffloadSparseCopy = nullptr;
+
+    pAccOffloadGroupPackCopy = nullptr;
 
     if (libHandle != nullptr) {
         dlclose(libHandle);

@@ -20,6 +20,9 @@ namespace offload {
 
 using AccOffloadSparseCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *, uint32_t *, uint8_t);
 
+using AccOffloadGroupPackCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *, uint32_t *, int64_t *, int64_t *,
+                                             uint8_t);
+
 class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
@@ -36,6 +39,18 @@ public:
         return OFFLOAD_OK;
     }
 
+    static inline int32_t AccOffloadGroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
+                                                  uint32_t *numLocalExpertPtr, int64_t *groupList,
+                                                  int64_t *packedGroupList, uint8_t devIdx)
+    {
+        if (pAccOffloadGroupPackCopy == nullptr) {
+            return OFFLOAD_UNLOAD;
+        }
+
+        pAccOffloadGroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, packedGroupList, devIdx);
+        return OFFLOAD_OK;
+    }
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -43,6 +58,7 @@ private:
     static const char *gAccOffloadLibName;
 
     static AccOffloadSparseCopyFunc pAccOffloadSparseCopy;
+    static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
 };
 
 } // namespace offload

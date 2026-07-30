@@ -108,5 +108,16 @@ int32_t AccOffloadEntryManager::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs,
     return entry_->SparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr, devIdx);
 }
 
+int32_t AccOffloadEntryManager::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
+                                              uint32_t *numLocalExpertPtr, int64_t *groupList, int64_t *packedGroupList,
+                                              uint8_t devIdx)
+{
+    if (entry_ == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null, group pack copy failed");
+        return OFFLOAD_ERROR;
+    }
+    return entry_->GroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, packedGroupList, devIdx);
+}
+
 } // namespace offload
 } // namespace ock

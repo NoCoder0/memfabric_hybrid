@@ -345,9 +345,10 @@ function try_install_extend()
 
     cd ${script_dir}/../accoffload_operators
 
-    bisheng -x asc acc_offload_sparse_copy.cpp -fPIC -shared -g -o libmf_hybm_accoffload_kernel.so ${cce_param}
+    bisheng -x asc acc_offload_sparse_copy.cpp acc_offload_group_pack_copy.cpp \
+        -fPIC -shared -g -o libmf_hybm_accoffload_kernel.so ${cce_param}
     if [ $? -ne 0 ]; then
-        print "WARNING" "bisheng compile acc_offload_sparse_copy.cpp failed."
+        print "WARNING" "bisheng compile acc_offload operators kernel failed."
         rm -f libmf_hybm_accoffload_kernel.so
         return
     fi

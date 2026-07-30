@@ -83,14 +83,36 @@ void offload_free(uint64_t ptr, uint64_t flags);
  * data from srcPtrs[i] to dstPtrs[i] with length lenPtrs[i]. The copy is
  * executed asynchronously on the device stream.
  *
- * @param srcPtrs   [in] Array of source addresses.
- * @param dstPtrs   [in] Array of destination addresses.
- * @param lenPtrs   [in] Array of byte counts to copy for each pair.
- * @param sizePtr   [in] Pointer to the number of entries in the arrays above.
- * @param deviceId  [in] Device ID to perform the copy on.
+ * @param srcPtr            [in] Array of source addresses.
+ * @param dstPtr            [in] Array of destination addresses.
+ * @param lenPtr            [in] Array of byte counts to copy for each pair.
+ * @param sizePtr           [in] Pointer to the number of entries in the arrays above.
+ * @param deviceId          [in] Device ID to perform the copy on.
  * @return 0 on success, non-zero error code on failure.
  */
 int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t sizePtr, uint16_t deviceId);
+
+/**
+ * @brief Group-pack compacted copy: compact non-zero groupList entries to front.
+ *
+ * inputs / outputs / lens / groupList are ALL arrays of length N (= *numLocalExpertPtr). The kernel
+ * scans [0, N); for the j-th non-zero entry (original index i where groupList[i] != 0,
+ * j = 0..M-1), copies inputs[i] (lenPtrs[i] bytes) to outputs[j] and writes groupList[i]
+ * to packedGroupList[j]. Zero groupList entries are skipped. After the call, outputs[0..M)
+ * and packedGroupList[0..M) hold the compacted results; outputs[M..N) and the tail of
+ * packedGroupList are left untouched.
+ *
+ * @param srcPtr             [in] Base address of the uint64_t inputs[] array (length N).
+ * @param dstPtr             [in] Base address of the uint64_t outputs[] array (length N).
+ * @param lenPtr             [in] Base address of the uint32_t lenPtrs[] array (length N).
+ * @param numLocalExpertPtr           [in] Base address of a uint32_t scalar holding N (common array length).
+ * @param groupListPtr       [in] Base address of the int64_t groupList[] array (length N).
+ * @param packedGroupListPtr [in] Base address of the int64_t packedGroupList[] array (length >= M).
+ * @param deviceId           [in] Device ID to perform the copy on.
+ * @return 0 on success, non-zero error code on failure.
+ */
+int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t numLocalExpertPtr,
+                                uint64_t groupListPtr, uint64_t packedGroupListPtr, uint16_t deviceId);
 
 #ifdef __cplusplus
 }

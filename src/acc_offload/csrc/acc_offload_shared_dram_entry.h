@@ -48,6 +48,9 @@ public:
     int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
                        uint8_t devIdx) override;
 
+    int32_t GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *numLocalExpertPtr,
+                          int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx) override;
+
 private:
     int32_t AllocAndExportHostSlices();
 

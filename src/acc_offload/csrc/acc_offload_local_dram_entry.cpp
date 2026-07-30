@@ -170,5 +170,13 @@ int32_t AccOffloadLocalDramEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtr
     return AccOffloadLaunchApi::AccOffloadSparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr, devIdx);
 }
 
+int32_t AccOffloadLocalDramEntry::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
+                                                uint32_t *numLocalExpertPtr, int64_t *groupList,
+                                                int64_t *packedGroupList, uint8_t devIdx)
+{
+    return AccOffloadLaunchApi::AccOffloadGroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList,
+                                                        packedGroupList, devIdx);
+}
+
 } // namespace offload
 } // namespace ock
