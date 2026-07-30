@@ -1,14 +1,227 @@
-2026-07-29 19:42:09.253212 ERROR [4323-4323][HYBM hybm_entity_tag_info.cpp:58 AddOneTagOpInfo] Failed to check tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY is invalid must match tag:OP_TYPE:tag format
-2026-07-29 19:42:09.253242 ERROR [4323-4323][HYBM hybm_entity_default.cpp:103 InitTagManager] Assert tagManager_->AddTagOpInfo(compatibleInfo.str()) == BM_OK, Failed to add tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY,
-2026-07-29 19:42:09.253248 ERROR [4323-4323][HYBM hybm_entity_default.cpp:124 Initialize] Assert InitTagManager() == BM_OK, Failed to init tag manager.
-2026-07-29 19:42:09.253260 ERROR [4323-4323][HYBM hybm_big_mem_entry.cpp:35 hybm_create_entity] initialize entity failed, id: 1 flags: 0x0 ret: ffffffff
-2026-07-29 19:42:09.253273 ERROR [4323-4323][SMEM smem_bm_entry.cpp:150 Initialize] hybm_create_entity failed, entityId: 1 rankId: 0 flags: 0
-2026-07-29 19:42:09.254703 ERROR [4323-4323][SMEM smem_bm.cpp:300 smem_bm_create2_inner] entry init failed, result: -1
-2026-07-29 19:42:09.254739 ERROR [4323-4323][SMEM smem_bm.cpp:313 smem_bm_create2] smem_bm_create2 failed
-2026-07-29 19:42:09.933120 ERROR [4324-4324][HYBM hybm_entity_tag_info.cpp:58 AddOneTagOpInfo] Failed to check tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY is invalid must match tag:OP_TYPE:tag format
-2026-07-29 19:42:09.933154 ERROR [4324-4324][HYBM hybm_entity_default.cpp:103 InitTagManager] Assert tagManager_->AddTagOpInfo(compatibleInfo.str()) == BM_OK, Failed to add tagOpInfo:HYBM_DEFAULT_TAG_FOR_EMPTY:HOST_DEVICE_URMA:HYBM_DEFAULT_TAG_FOR_EMPTY,
-2026-07-29 19:42:09.933161 ERROR [4324-4324][HYBM hybm_entity_default.cpp:124 Initialize] Assert InitTagManager() == BM_OK, Failed to init tag manager.
-2026-07-29 19:42:09.933175 ERROR [4324-4324][HYBM hybm_big_mem_entry.cpp:35 hybm_create_entity] initialize entity failed, id: 1 flags: 0x0 ret: ffffffff
-2026-07-29 19:42:09.933190 ERROR [4324-4324][SMEM smem_bm_entry.cpp:150 Initialize] hybm_create_entity failed, entityId: 1 rankId: 1 flags: 0
-2026-07-29 19:42:09.934864 ERROR [4324-4324][SMEM smem_bm.cpp:300 smem_bm_create2_inner] entry init failed, result: -1
-2026-07-29 19:42:09.934902 ERROR [4324-4324][SMEM smem_bm.cpp:313 smem_bm_create2] smem_bm_create2 failed
+[root@localhost 04_single_node_multi_device_batch_copy]# cd /home/z00502111/memfabric_hybrid/examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy && python 04_single_node_multi_device_batch_copy.py
+2026-07-30 21:23:53.777208 INFO [191112-191112][SMEM smem.cpp:39 smem_init] smem init successfully, library version: 1.2.0, build time: Jul 30 2026 20:52:49, commit: 
+2026-07-30 21:23:53.777589 INFO [191112-191290][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
+2026-07-30 21:23:53.777764 INFO [191112-191291][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-07-30 21:23:53.777971 INFO [191112-191292][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-07-30 21:23:53.778051 INFO [191112-191112][AccLink acc_tcp_server_default.cpp:504 ConnectToPeerServer] Trying to connect to 127.0.0.1:8572
+2026-07-30 21:23:53.778169 INFO [191112-191112][AccLink acc_tcp_server_default.cpp:524 ConnectToPeerServer] Trying to connect to 127.0.0.1:8572 errno:111, retry times:0
+2026-07-30 21:23:54.454903 INFO [191111-191111][SMEM smem.cpp:39 smem_init] smem init successfully, library version: 1.2.0, build time: Jul 30 2026 20:52:49, commit: 
+2026-07-30 21:23:54.455392 INFO [191111-191293][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
+2026-07-30 21:23:54.455563 INFO [191111-191294][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-07-30 21:23:54.455692 INFO [191111-191295][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-07-30 21:23:54.455916 INFO [191111-191296][AccLink acc_tcp_listener.cpp:136 RunInThread] Acc listener accept thread for 127.0.0.1:8572 start ...
+2026-07-30 21:23:54.456123 INFO [191111-191111][SMEM smem_tcp_config_store.cpp:157 Startup] start store server success, ip:127.0.0.1:8572
+2026-07-30 21:23:54.456240 INFO [191111-191300][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
+2026-07-30 21:23:54.456433 INFO [191111-191301][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-07-30 21:23:54.456554 INFO [191111-191302][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-07-30 21:23:54.456599 INFO [191111-191111][AccLink acc_tcp_server_default.cpp:504 ConnectToPeerServer] Trying to connect to 127.0.0.1:8572
+2026-07-30 21:23:54.456764 INFO [191111-191296][AccLink acc_tcp_listener.cpp:210 ProcessNewConnection] Connected from 127.0.0.1:33074 successfully, ssl disable
+2026-07-30 21:23:54.456824 INFO [191111-191296][SMEM smem_tcp_config_store_server.cpp:241 LinkConnectedHandler] New link connected, linkId: 1, worldSize: 2, rankId: 4294967295 reconnect:0
+2026-07-30 21:23:54.456838 INFO [191111-191296][SMEM smem_tcp_config_store_server.cpp:207 CanReceiveNewLink] change server state from INITED to NORMAL
+2026-07-30 21:23:54.456914 INFO [191111-191111][AccLink acc_tcp_server_default.cpp:694 Handshake] Connect to 127.0.0.1:8572 successfully, with ssl disable
+2026-07-30 21:23:54.456987 INFO [191111-191111][SMEM smem_tcp_config_store.cpp:166 Startup] connect store success, ip:127.0.0.1:8572
+2026-07-30 21:23:54.457218 INFO [191111-191295][SMEM smem_tcp_config_store_server.cpp:456 AllocateAndReplyRank] FindOrInsertRank success, linkId: 1 rankId:0 worldSize:2
+2026-07-30 21:23:54.457379 INFO [191111-191111][SMEM smem_tcp_config_store.cpp:705 SetRankId] Set rankId: 0
+2026-07-30 21:23:54.457391 INFO [191111-191111][SMEM smem_bm_entry_manager.cpp:161 AutoRanking] Success to auto ranking rankId: 0 deviceId: 0
+2026-07-30 21:23:54.457401 INFO [191111-191111][SMEM smem_bm_entry_manager.cpp:89 Initialize] initialize store(tcp://127.0.0.1:8572) world size(2) device(0) OK.
+2026-07-30 21:23:54.457454 INFO [191111-191111][HYBM hybm_gva_version.cpp:92 CastDriverVersion] get driver verison:V100R001C10SPC001B086
+2026-07-30 21:23:54.457471 INFO [191111-191111][HYBM hybm_gva_version.cpp:199 HalGvaPrecheck] Driver version V5 found
+2026-07-30 21:23:54.457769 INFO [191111-191111][HYBM dl_hccp_api.cpp:121 LoadLibrary] LoadLibrary for DlHccpApi success
+2026-07-30 21:23:54.457783 INFO [191111-191111][HYBM dl_hccl_api.cpp:52 LoadLibrary] LoadLibrary for DlHcclApi success
+2026-07-30 21:23:54.457790 WARN [191111-191111][HYBM dl_hybm_copy_extend.cpp:35 TryLoadLibrary] Environment MEMFABRIC_HYBRID_EXTEND_LIB_PATH is not set.
+2026-07-30 21:23:54.457937 WARN [191111-191111][HYBM dl_hcom_api.cpp:84 LoadLibrary] Unable to open library [libhcom.so], libhcom.so: cannot open shared object file: No such file or directory
+2026-07-30 21:23:54.464155 INFO [191111-191111][HYBM hybm_gva.cpp:146 hybm_init_hbm_gva] Success get deviceId: 0, logicDeviceId: 6 sco:3 ver:0
+2026-07-30 21:23:54.778277 INFO [191112-191112][AccLink acc_tcp_server_default.cpp:504 ConnectToPeerServer] Trying to connect to 127.0.0.1:8572
+2026-07-30 21:23:54.778511 INFO [191111-191296][AccLink acc_tcp_listener.cpp:210 ProcessNewConnection] Connected from 127.0.0.1:33080 successfully, ssl disable
+2026-07-30 21:23:54.778592 INFO [191111-191296][SMEM smem_tcp_config_store_server.cpp:241 LinkConnectedHandler] New link connected, linkId: 2, worldSize: 2, rankId: 4294967295 reconnect:0
+2026-07-30 21:23:54.778690 INFO [191112-191112][AccLink acc_tcp_server_default.cpp:694 Handshake] Connect to 127.0.0.1:8572 successfully, with ssl disable
+2026-07-30 21:23:54.778817 INFO [191112-191112][SMEM smem_tcp_config_store.cpp:166 Startup] connect store success, ip:127.0.0.1:8572
+2026-07-30 21:23:54.779229 INFO [191111-191294][SMEM smem_tcp_config_store_server.cpp:456 AllocateAndReplyRank] FindOrInsertRank success, linkId: 2 rankId:1 worldSize:2
+2026-07-30 21:23:54.779488 INFO [191112-191112][SMEM smem_tcp_config_store.cpp:705 SetRankId] Set rankId: 1
+2026-07-30 21:23:54.779501 INFO [191112-191112][SMEM smem_bm_entry_manager.cpp:161 AutoRanking] Success to auto ranking rankId: 1 deviceId: 1
+2026-07-30 21:23:54.779508 INFO [191112-191112][SMEM smem_bm_entry_manager.cpp:89 Initialize] initialize store(tcp://127.0.0.1:8572) world size(2) device(1) OK.
+2026-07-30 21:23:54.779571 INFO [191112-191112][HYBM hybm_gva_version.cpp:92 CastDriverVersion] get driver verison:V100R001C10SPC001B086
+2026-07-30 21:23:54.779593 INFO [191112-191112][HYBM hybm_gva_version.cpp:199 HalGvaPrecheck] Driver version V5 found
+2026-07-30 21:23:54.780012 INFO [191112-191112][HYBM dl_hccp_api.cpp:121 LoadLibrary] LoadLibrary for DlHccpApi success
+2026-07-30 21:23:54.780028 INFO [191112-191112][HYBM dl_hccl_api.cpp:52 LoadLibrary] LoadLibrary for DlHcclApi success
+2026-07-30 21:23:54.780036 WARN [191112-191112][HYBM dl_hybm_copy_extend.cpp:35 TryLoadLibrary] Environment MEMFABRIC_HYBRID_EXTEND_LIB_PATH is not set.
+2026-07-30 21:23:54.780187 WARN [191112-191112][HYBM dl_hcom_api.cpp:84 LoadLibrary] Unable to open library [libhcom.so], libhcom.so: cannot open shared object file: No such file or directory
+2026-07-30 21:23:54.786226 INFO [191112-191112][HYBM hybm_gva.cpp:146 hybm_init_hbm_gva] Success get deviceId: 1, logicDeviceId: 7 sco:3 ver:0
+2026-07-30 21:23:58.188238 INFO [191112-191112][HYBM hybm_gva.cpp:154 hybm_init_hbm_gva] HybmInitialize 1
+2026-07-30 21:23:58.188291 INFO [191112-191112][HYBM hybm_gva.cpp:166 hybm_init_hbm_gva] HybmModernInitMetaGva 1
+2026-07-30 21:23:58.188297 ERROR [191112-191112][HYBM hybm_gva.cpp:66 HybmModernInitMetaGva] HybmModernInitMetaGva
+2026-07-30 21:23:58.190218 ERROR [191112-191112][HYBM hybm_gva.cpp:99 HybmModernInitMetaGva] HalMemMap, ret: 0 addr: 0x17ffbde00000 size: 0x2200000 handle: 0x29eecff0 logicDeviceId: 7
+2026-07-30 21:23:58.190232 INFO [191112-191112][HYBM hybm_entry.cpp:138 hybm_init] hybm init successfully, library version: 1.2.0, build time: Jul 30 2026 20:52:47, commit: , deviceId: 1
+2026-07-30 21:23:58.190242 INFO [191112-191112][SMEM smem_bm.cpp:110 smem_bm_init] smem_bm_init success.  config_ip: tcp://127.0.0.1:8572
+2026-07-30 21:23:58.291726 INFO [191112-191323][SMEM smem_net_group_engine.cpp:907 ReWatchLinkDown] Watch link down event successfully, wid: 3
+2026-07-30 21:23:58.391797 INFO [191112-191324][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor0 started.
+2026-07-30 21:23:58.391874 INFO [191112-191325][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor1 started.
+2026-07-30 21:23:58.391920 INFO [191112-191326][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor2 started.
+2026-07-30 21:23:58.391945 INFO [191112-191327][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor3 started.
+2026-07-30 21:23:58.391973 INFO [191112-191328][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor4 started.
+2026-07-30 21:23:58.392024 INFO [191112-191329][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor5 started.
+2026-07-30 21:23:58.392039 INFO [191112-191330][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor6 started.
+2026-07-30 21:23:58.392098 INFO [191112-191331][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor7 started.
+2026-07-30 21:23:58.392183 INFO [191112-191112][HYBM hybm_entity_tag_info.cpp:93 AddTagOpInfo] Add an empty tagOpInfo.
+2026-07-30 21:23:58.392263 WARN [191112-191112][HYBM hybm_entity_tag_info.cpp:149 GetTag2TagOpType] Not find opType from tag1:HYBM_DEFAULT_TAG_FOR_EMPTY to tag2:HYBM_DEFAULT_TAG_FOR_EMPTY
+2026-07-30 21:23:58.392285 INFO [191112-191112][HYBM hybm_entity_default.cpp:106 InitTagManager] Success to init tag manager data op type:1024
+2026-07-30 21:23:58.392862 INFO [191112-191112][HYBM dl_hcomm_api.cpp:92 LoadLibrary] LoadLibrary for DlHcommApi success
+2026-07-30 21:23:58.392873 INFO [191112-191112][HYBM hybm_entity_default.cpp:1179 InitHbmSegment] create entity global unified memory space.
+2026-07-30 21:23:58.393224 INFO [191112-191112][HYBM device_urma_transport_manager.cpp:161 InitLocalDeviceInfoLocked] aclrtGetPhyDevIdByLogicDevId: userId=1, phyId=7
+2026-07-30 21:23:58.393318 INFO [191112-191112][HYBM device_urma_transport_manager.cpp:179 InitLocalDeviceInfoLocked] local device info: userId=1, phyId=7 sdid=1835015, server_id=0, superpod id=4294967295
+2026-07-30 21:23:58.393327 INFO [191112-191112][HYBM device_urma_transport_manager.cpp:316 OpenEndpointResourcesLocked] device_urma OpenDevice protocol=4, rankId=1, phyDeviceId=7
+2026-07-30 21:23:58.393599 INFO [191112-191112][HYBM device_urma_transport_manager.cpp:241 BuildLocalEndpointDescLocked] device_urma local endpoint address protocol=UBC_CTP phyDeviceId=7 rankId=1 eid=00000000003f030000100000df00eb00
+2026-07-30 21:23:58.561469 INFO [191112-191112][HYBM hcomm_transport_manager.cpp:202 HcommMemReg] urma try to register mem, addr: 0x120000017000 size: 8 memType: DEVICE
+2026-07-30 21:23:58.562376 INFO [191112-191112][HYBM device_urma_transport_manager.cpp:217 InitDeviceTransferFlagLocked] device_urma local flag buffer allocated and registered, addr: 0x120000017000 size: 8 handle: 0x29ef0f20
+2026-07-30 21:23:58.562397 INFO [191112-191112][HYBM load_kernel.cpp:38 GetKernelFilePath] device_urma kernel json path: /home/z00502111/cann/cann-9.1.0/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json
+2026-07-30 21:23:58.562747 INFO [191112-191112][HYBM device_urma_transport_manager.cpp:363 OpenDevice] device_urma OpenDevice success, rank: 1 rankCount: 2 devPhyId: 7
+2026-07-30 21:23:58.562768 INFO [191112-191112][HYBM compose_transport_manager.cpp:152 OpenDevice] Success to open device rankId:1 protocol:1024 nic:device#;
+2026-07-30 21:23:58.563680 INFO [191112-191112][HYBM hcomm_transport_manager.cpp:202 HcommMemReg] urma try to register mem, addr: 0x12004e000000 size: 134217728 memType: DEVICE
+2026-07-30 21:23:58.563995 INFO [191112-191112][HYBM hybm_entity_default.cpp:135 Initialize] Initialize success: deviceId: 1, rankId: 1, rankCount: 2, maxHBMSize: 1073741824, maxDRAMSize: 0, deviceVASpace: 1073741824, hostVASpace: 0, bmType: HOST_INITIATE, memType: DEVICE, bmDataOpType: 1024, scene: DEFAULT, enable56BitsGva: 0, role: PEER, flags: 0, dramShmFd: -1, transUrl: tcp://127.0.0.1:10005, tag: HYBM_DEFAULT_TAG_FOR_EMPTY, tagOpInfo: , tlsOption: TlsConfig{enable: 0}
+2026-07-30 21:23:58.565924 INFO [191112-191112][HYBM hybm_data_operator.h:82 UpdateGvaSpace] update type 1, gva:0x340000000000, space:1073741824, rankCnt:2
+2026-07-30 21:23:58.567091 INFO [191112-191112][HYBM hybm_vmm_based_segment.cpp:434 ExportInner] Success to export vmm segment info rank:1 superPodId:4294967295 serverId:0 devId:7 segType:0 size:1073741824
+2026-07-30 21:23:58.567798 INFO [191112-191112][HYBM hybm_vmm_based_segment.cpp:327 AllocLocalMemory] alloc mem success, type:DEVICE addr:[va:0x340040000000,info:{gva: 0x340040000000, LD(1), deviceVa: 0x340040000000, hostVa: 0x340040000000}] size:1073741824
+2026-07-30 21:23:58.567816 INFO [191112-191112][HYBM hcomm_transport_manager.cpp:202 HcommMemReg] urma try to register mem, addr: 0x340040000000 size: 1073741824 memType: DEVICE
+2026-07-30 21:23:58.568139 INFO [191112-191112][HYBM hcomm_transport_manager.cpp:300 HcommMemExport] urma try to export memory addr: 0x340040000000 size: 1073741824
+2026-07-30 21:23:58.568512 WARN [191112-191112][SMEM smem_net_group_engine.cpp:697 TryRemovePrefixKey] remove key not successful, src_rank:1 key:BM_(0)_D_BMEX_1 ret:-404
+_rank_main 0
+2026-07-30 21:23:58.590600 INFO [191112-191112][SMEM smem_bm.cpp:486 smem_bm_copy] smem_bm_copy dispatch, handle: 0x2c1f3a30 type: 3 src: 0x2131c010000 dest: 0x340040400000 size: 256256 stream: 0 flags: 0
+2026-07-30 21:23:58.590699 INFO [191112-191112][HYBM hybm_entity_default.cpp:811 CopyData] CopyData dispatch, entityId: 1 direction: 1 srcRank: 1 destRank: 1 src: 0x2131c010000 dest: 0x340040400000 size: 256256 stream: 0 flags: 0
+2026-07-30 21:23:58.591079 INFO [191112-191112][SMEM smem_bm_entry.cpp:659 DataCopy] SmemBmEntry DataCopy complete, type: 3 direction: 1 src: 0x2131c010000 dest: 0x340040400000 size: 256256 ret: 0
+2026-07-30 21:23:58.591099 INFO [191112-191112][SMEM smem_bm.cpp:490 smem_bm_copy] smem_bm_copy complete, handle: 0x2c1f3a30 type: 3 ret: 0
+_write_local_pattern 1
+2026-07-30 21:24:14.232930 INFO [191111-191111][HYBM hybm_gva.cpp:154 hybm_init_hbm_gva] HybmInitialize 0
+2026-07-30 21:24:14.232962 INFO [191111-191111][HYBM hybm_gva.cpp:166 hybm_init_hbm_gva] HybmModernInitMetaGva 0
+2026-07-30 21:24:14.232969 ERROR [191111-191111][HYBM hybm_gva.cpp:66 HybmModernInitMetaGva] HybmModernInitMetaGva
+2026-07-30 21:24:14.235119 ERROR [191111-191111][HYBM hybm_gva.cpp:99 HybmModernInitMetaGva] HalMemMap, ret: 0 addr: 0x17ffbde00000 size: 0x2200000 handle: 0x2af42b70 logicDeviceId: 6
+2026-07-30 21:24:14.235136 INFO [191111-191111][HYBM hybm_entry.cpp:138 hybm_init] hybm init successfully, library version: 1.2.0, build time: Jul 30 2026 20:52:47, commit: , deviceId: 0
+2026-07-30 21:24:14.235174 INFO [191111-191111][SMEM smem_bm.cpp:110 smem_bm_init] smem_bm_init success.  config_ip: tcp://127.0.0.1:8572
+2026-07-30 21:24:14.336744 INFO [191111-191731][SMEM smem_net_group_engine.cpp:907 ReWatchLinkDown] Watch link down event successfully, wid: 3
+2026-07-30 21:24:14.436826 INFO [191111-191732][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor0 started.
+2026-07-30 21:24:14.436880 INFO [191111-191733][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor1 started.
+2026-07-30 21:24:14.436930 INFO [191111-191734][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor2 started.
+2026-07-30 21:24:14.436958 INFO [191111-191735][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor3 started.
+2026-07-30 21:24:14.437005 INFO [191111-191736][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor4 started.
+2026-07-30 21:24:14.437043 INFO [191111-191737][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor5 started.
+2026-07-30 21:24:14.437083 INFO [191111-191738][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor6 started.
+2026-07-30 21:24:14.437122 INFO [191111-191739][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor7 started.
+2026-07-30 21:24:14.437281 INFO [191111-191111][HYBM hybm_entity_tag_info.cpp:93 AddTagOpInfo] Add an empty tagOpInfo.
+2026-07-30 21:24:14.437370 WARN [191111-191111][HYBM hybm_entity_tag_info.cpp:149 GetTag2TagOpType] Not find opType from tag1:HYBM_DEFAULT_TAG_FOR_EMPTY to tag2:HYBM_DEFAULT_TAG_FOR_EMPTY
+2026-07-30 21:24:14.437396 INFO [191111-191111][HYBM hybm_entity_default.cpp:106 InitTagManager] Success to init tag manager data op type:1024
+2026-07-30 21:24:14.437961 INFO [191111-191111][HYBM dl_hcomm_api.cpp:92 LoadLibrary] LoadLibrary for DlHcommApi success
+2026-07-30 21:24:14.437973 INFO [191111-191111][HYBM hybm_entity_default.cpp:1179 InitHbmSegment] create entity global unified memory space.
+2026-07-30 21:24:14.439921 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:161 InitLocalDeviceInfoLocked] aclrtGetPhyDevIdByLogicDevId: userId=0, phyId=6
+2026-07-30 21:24:14.440076 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:179 InitLocalDeviceInfoLocked] local device info: userId=0, phyId=6 sdid=1572870, server_id=0, superpod id=4294967295
+2026-07-30 21:24:14.440086 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:316 OpenEndpointResourcesLocked] device_urma OpenDevice protocol=4, rankId=0, phyDeviceId=6
+2026-07-30 21:24:14.440391 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:241 BuildLocalEndpointDescLocked] device_urma local endpoint address protocol=UBC_CTP phyDeviceId=6 rankId=0 eid=00000000003f030000100000df00cb00
+2026-07-30 21:24:14.643945 INFO [191111-191111][HYBM hcomm_transport_manager.cpp:202 HcommMemReg] urma try to register mem, addr: 0x120000017000 size: 8 memType: DEVICE
+2026-07-30 21:24:14.645061 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:217 InitDeviceTransferFlagLocked] device_urma local flag buffer allocated and registered, addr: 0x120000017000 size: 8 handle: 0x2af46c00
+2026-07-30 21:24:14.645083 INFO [191111-191111][HYBM load_kernel.cpp:38 GetKernelFilePath] device_urma kernel json path: /home/z00502111/cann/cann-9.1.0/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json
+2026-07-30 21:24:14.645776 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:363 OpenDevice] device_urma OpenDevice success, rank: 0 rankCount: 2 devPhyId: 6
+2026-07-30 21:24:14.645801 INFO [191111-191111][HYBM compose_transport_manager.cpp:152 OpenDevice] Success to open device rankId:0 protocol:1024 nic:device#;
+2026-07-30 21:24:14.647161 INFO [191111-191111][HYBM hcomm_transport_manager.cpp:202 HcommMemReg] urma try to register mem, addr: 0x12004e000000 size: 134217728 memType: DEVICE
+2026-07-30 21:24:14.647605 INFO [191111-191111][HYBM hybm_entity_default.cpp:135 Initialize] Initialize success: deviceId: 0, rankId: 0, rankCount: 2, maxHBMSize: 1073741824, maxDRAMSize: 0, deviceVASpace: 1073741824, hostVASpace: 0, bmType: HOST_INITIATE, memType: DEVICE, bmDataOpType: 1024, scene: DEFAULT, enable56BitsGva: 0, role: PEER, flags: 0, dramShmFd: -1, transUrl: tcp://127.0.0.1:10005, tag: HYBM_DEFAULT_TAG_FOR_EMPTY, tagOpInfo: , tlsOption: TlsConfig{enable: 0}
+2026-07-30 21:24:14.650305 INFO [191111-191111][HYBM hybm_data_operator.h:82 UpdateGvaSpace] update type 1, gva:0x340000000000, space:1073741824, rankCnt:2
+2026-07-30 21:24:14.654998 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:434 ExportInner] Success to export vmm segment info rank:0 superPodId:4294967295 serverId:0 devId:6 segType:0 size:1073741824
+2026-07-30 21:24:14.656050 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:327 AllocLocalMemory] alloc mem success, type:DEVICE addr:[va:0x340000000000,info:{gva: 0x340000000000, LD(0), deviceVa: 0x340000000000, hostVa: 0x340000000000}] size:1073741824
+2026-07-30 21:24:14.656087 INFO [191111-191111][HYBM hcomm_transport_manager.cpp:202 HcommMemReg] urma try to register mem, addr: 0x340000000000 size: 1073741824 memType: DEVICE
+2026-07-30 21:24:14.656579 INFO [191111-191111][HYBM hcomm_transport_manager.cpp:300 HcommMemExport] urma try to export memory addr: 0x340000000000 size: 1073741824
+2026-07-30 21:24:14.657215 WARN [191111-191111][SMEM smem_net_group_engine.cpp:697 TryRemovePrefixKey] remove key not successful, src_rank:0 key:BM_(0)_D_BMEX_0 ret:-404
+2026-07-30 21:26:14.657667 ERROR [191111-191111][SMEM smem_net_group_engine.cpp:1414 GroupJoin] do join failed! signal_ret:-2004 op_ret:0
+2026-07-30 21:26:14.658403 ERROR [191111-191111][SMEM smem_bm_entry.cpp:469 Join] join failed, ret: -1
+2026-07-30 21:26:14.658800 INFO [191111-191732][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor0 finished.
+2026-07-30 21:26:14.658812 INFO [191111-191735][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor3 finished.
+2026-07-30 21:26:14.658826 INFO [191111-191737][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor5 finished.
+2026-07-30 21:26:14.658826 INFO [191111-191733][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor1 finished.
+2026-07-30 21:26:14.658859 INFO [191111-191738][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor6 finished.
+2026-07-30 21:26:14.658861 INFO [191111-191739][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor7 finished.
+2026-07-30 21:26:14.658846 INFO [191111-191734][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor2 finished.
+2026-07-30 21:26:14.658854 INFO [191111-191736][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor4 finished.
+2026-07-30 21:26:14.734014 ERROR [191112-191322][HYBM device_urma_transport_manager.cpp:1449 Prepare] device_urma Prepare HcommChannelCreate failed, peer: 0 ret: 9
+2026-07-30 21:26:14.770956 ERROR [191112-191322][HYBM compose_transport_manager.cpp:376 Prepare] Failed to prepare host ret: -6
+2026-07-30 21:26:14.770989 ERROR [191112-191322][HYBM hybm_entity_default.cpp:614 ImportForTransportManager] Failed to prepare transport connect data, ret: -6
+2026-07-30 21:26:14.770997 ERROR [191112-191322][HYBM hybm_entity_default.cpp:651 ImportEntityExchangeInfo] Assert ImportForTransportManager() == BM_OK, Failed import for transport manager
+2026-07-30 21:26:14.771013 ERROR [191112-191322][SMEM smem_bm_entry.cpp:314 JoinHandle] hybm import entity failed, result: -1 local_rank:1
+2026-07-30 21:26:14.938396 ERROR [191111-191730][HYBM device_urma_transport_manager.cpp:1449 Prepare] device_urma Prepare HcommChannelCreate failed, peer: 1 ret: 9
+2026-07-30 21:26:14.963111 ERROR [191111-191730][HYBM compose_transport_manager.cpp:376 Prepare] Failed to prepare host ret: -6
+2026-07-30 21:26:14.963164 ERROR [191111-191730][HYBM hybm_entity_default.cpp:614 ImportForTransportManager] Failed to prepare transport connect data, ret: -6
+2026-07-30 21:26:14.963178 ERROR [191111-191730][HYBM hybm_entity_default.cpp:651 ImportEntityExchangeInfo] Assert ImportForTransportManager() == BM_OK, Failed import for transport manager
+2026-07-30 21:26:14.963210 ERROR [191111-191730][SMEM smem_bm_entry.cpp:314 JoinHandle] hybm import entity failed, result: -1 local_rank:0
+2026-07-30 21:26:14.963900 WARN [191111-191730][SMEM smem_net_group_engine.cpp:123 StoreGetCanInterrupt] now event has stoped, stop get wait! key: BM_(0)_D_3_1_GW
+2026-07-30 21:26:14.963913 ERROR [191111-191730][SMEM smem_bm_entry.cpp:256 GroupOpBarrier] join barrier failed, result: -2013
+2026-07-30 21:26:14.963924 ERROR [191111-191730][SMEM smem_bm_entry.cpp:343 JoinHandle] hybm barrier after mmap failed, result: -2013
+2026-07-30 21:26:14.963929 WARN [191112-191322][SMEM smem_net_group_engine.cpp:123 StoreGetCanInterrupt] now event has stoped, stop get wait! key: BM_(0)_D_3_1_GW
+2026-07-30 21:26:14.963952 ERROR [191112-191322][SMEM smem_bm_entry.cpp:256 GroupOpBarrier] join barrier failed, result: -2013
+2026-07-30 21:26:14.963960 ERROR [191112-191322][SMEM smem_bm_entry.cpp:343 JoinHandle] hybm barrier after mmap failed, result: -2013
+2026-07-30 21:26:14.963992 INFO [191111-191730][HYBM hybm_vmm_based_segment.cpp:646 RemoveImported] no need to share, skip remove
+2026-07-30 21:26:14.964005 INFO [191111-191730][HYBM hybm_data_operator.h:88 CleanUp] DataOperator not support
+2026-07-30 21:26:14.964025 INFO [191112-191322][HYBM hybm_vmm_based_segment.cpp:646 RemoveImported] no need to share, skip remove
+2026-07-30 21:26:14.964039 INFO [191112-191322][HYBM hybm_data_operator.h:88 CleanUp] DataOperator not support
+2026-07-30 21:26:14.965567 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:352 ReleaseSliceMemory] unmap slice(idx:0), size: 1073741824 return:0
+2026-07-30 21:26:14.970386 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:355 ReleaseSliceMemory] release slice(idx:0), size: 1073741824 return:0
+2026-07-30 21:26:14.970421 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:105 UnReserveMemorySpace] UnReserveMemorySpace gva:0x340000000000, va:0x340000000000
+2026-07-30 21:26:14.970429 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:629 Unmap] no need to share, skip unmap
+2026-07-30 21:26:14.972096 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:124 UnReserveMemorySpace] free reserved address va:0x340000000000 return:0
+2026-07-30 21:26:14.973658 INFO [191111-191111][HYBM device_urma_transport_manager.cpp:713 CloseDevice] device_urma CloseDevice success
+2026-07-30 21:26:14.973679 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:629 Unmap] no need to share, skip unmap
+2026-07-30 21:26:14.973686 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:105 UnReserveMemorySpace] UnReserveMemorySpace gva:0, va:0
+2026-07-30 21:26:14.973690 INFO [191111-191111][HYBM hybm_vmm_based_segment.cpp:629 Unmap] no need to share, skip unmap
+2026-07-30 21:26:16.469158 INFO [191111-191303][SMEM smem_tcp_config_store.cpp:852 HeartBeat] TcpConfigStore heart beat thread exit.
+2026-07-30 21:26:16.972631 INFO [191111-191295][SMEM smem_tcp_config_store_server.cpp:288 LinkBrokenHandler] link broken, linkId: 1 remove rankId: 0
+2026-07-30 21:26:17.050608 INFO [191111-191111][SMEM smem_tcp_config_store_server.cpp:126 Shutdown] start to shutdown Acc Store Server
+2026-07-30 21:26:17.419352 WARN [191111-191296][AccLink acc_tcp_listener.cpp:151 RunInThread] Acc listener accept thread get stop signal, will exit...
+2026-07-30 21:26:17.419389 INFO [191111-191296][AccLink acc_tcp_listener.cpp:182 RunInThread] Working thread for AccTcpStore listener at 127.0.0.1:8572 exiting
+2026-07-30 21:26:18.037856 INFO [191111-191299][SMEM smem_tcp_config_store_server.cpp:1142 CheckerThreadTask] checker thread exit
+2026-07-30 21:26:18.038066 INFO [191111-191111][SMEM smem_tcp_config_store_server.cpp:164 Shutdown] finished shutdown Acc Store Server
+2026-07-30 21:26:18.038233 WARN [191112-191292][SMEM smem_tcp_config_store.cpp:757 LinkBrokenHandler] link broken, linkId: 0
+2026-07-30 21:26:18.038287 INFO [191112-191292][SMEM smem_tcp_config_store.cpp:765 LinkBrokenHandler] link broken, linkId: 0, call extern handler.
+2026-07-30 21:26:18.038568 ERROR [191112-191292][SMEM smem_net_group_engine.cpp:1198 GroupWatchCb] result: -602
+2026-07-30 21:26:18.038598 WARN [191112-191292][SMEM smem_net_group_engine.cpp:1207 GroupWatchCb] received group info size is incorrect.
+2026-07-30 21:26:18.038851 ERROR [191112-191322][AccLink acc_tcp_link_complex_default.h:486 NonBlockSend] Failed to send message with message type 0 as the link is broken
+2026-07-30 21:26:18.038951 INFO [191112-191322][AccLink acc_tcp_server_default.cpp:504 ConnectToPeerServer] Trying to connect to 127.0.0.1:8572
+2026-07-30 21:26:18.039060 INFO [191112-191322][AccLink acc_tcp_server_default.cpp:524 ConnectToPeerServer] Trying to connect to 127.0.0.1:8572 errno:111, retry times:0
+2026-07-30 21:26:18.060337 INFO [191111-191111][SMEM smem_bm.cpp:130 smem_bm_uninit] smem_bm_uninit finished
+Process Process-1:
+Traceback (most recent call last):
+  File "/usr/local/python3.11.10/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/local/python3.11.10/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/z00502111/memfabric_hybrid/examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/04_single_node_multi_device_batch_copy.py", line 95, in _rank_main
+    assert handle.join() == 0, "join failed"
+           ^^^^^^^^^^^^^^^^^^
+AssertionError: join failed
+2026-07-30 21:26:18.067375 ERROR [191111-191111][SMEM smem_bm.cpp:323 smem_bm_destroy] Assert g_smemBmInited
+2026-07-30 21:26:19.039200 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:20.139595 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:21.239961 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:22.340356 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:23.440770 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:24.541159 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:25.641527 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:26.741893 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:27.842224 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:28.942646 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:30.043094 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:31.143479 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:32.243884 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:33.344292 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:34.444695 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:35.545095 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:36.645521 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:37.745873 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:38.846228 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:39.946610 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:41.047030 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:42.147475 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:43.247988 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:44.348506 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:45.449021 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+2026-07-30 21:26:46.549499 ERROR [191112-191322][SMEM smem_net_group_engine.cpp:888 ReWatchEvent] group watch failed, ret: -11, wid: 0
+Traceback (most recent call last):
+  File "/home/z00502111/memfabric_hybrid/examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/04_single_node_multi_device_batch_copy.py", line 140, in <module>
+    main()
+  File "/home/z00502111/memfabric_hybrid/examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/04_single_node_multi_device_batch_copy.py", line 135, in main
+    raise RuntimeError(f"child rank failed: exit_codes={exit_codes}")
+RuntimeError: child rank failed: exit_codes=[-7, -9]
+[ERROR] 2026-07-30-21:26:47 (PID:191021, Device:-1, RankID:-1) ERR99999 UNKNOWN applicaiton exception

@@ -63,6 +63,7 @@ int32_t HybmGetInitedLogicDeviceId()
 
 int32_t HybmModernInitMetaGva(void **globalMemoryBase, size_t allocSize, void **allocHandle)
 {
+    BM_LOG_ERROR("HybmModernInitMetaGva");
     if (!ValidateMetaGvaParams(globalMemoryBase, allocSize, allocHandle)) {
         return BM_INVALID_PARAM;
     }
@@ -95,6 +96,9 @@ int32_t HybmModernInitMetaGva(void **globalMemoryBase, size_t allocSize, void **
         return BM_ERROR;
     }
     ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(HYBM_DEVICE_CONTROL_ADDR), allocSize, 0, *handle, 0);
+    BM_LOG_ERROR("HalMemMap, ret: " << ret << " addr: 0x" << std::hex << HYBM_DEVICE_CONTROL_ADDR
+                                               << " size: 0x" << allocSize << " handle: " << *handle << std::dec
+                                               << " logicDeviceId: " << initedLogicDeviceId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("HalMemMap failed, ret: " << ret << " addr: 0x" << std::hex << HYBM_DEVICE_CONTROL_ADDR
                                                << " size: 0x" << allocSize << " handle: " << *handle << std::dec
