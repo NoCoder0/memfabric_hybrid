@@ -20,6 +20,7 @@
 #include "device_rdma_transport_manager.h"
 #include "hybm_gva_version.h"
 #include "device_urma_transport_manager.h"
+#include "host_urma_transport_manager.h"
 #include "mf_str_util.h"
 
 using namespace ock::mf;
@@ -30,7 +31,8 @@ const char NIC_DELIMITER = ';';
 const std::string HOST_TRANSPORT_TYPE = "host#";
 const std::string DEVICE_TRANSPORT_TYPE = "device#";
 const uint32_t HOST_PROTOCOL = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA;
-const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
+                                HYBM_DOP_TYPE_HOST_DEVICE_URMA;
 } // namespace
 
 Result ComposeTransportManager::OpenHostTransport(const TransportOptions &options)
@@ -49,7 +51,13 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
         BM_LOG_ERROR("Failed to open device transport is opened");
         return BM_ERROR;
     }
-    if (options.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    if (options.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
+#if defined(NO_XPU)
+        deviceTransportManager_ = std::make_shared<host::HostUrmaTransportManager>();
+#else
+        deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
+#endif
+    } else if (options.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
     } else {
         deviceTransportManager_ = Create(HybmGetGvaVersion());
@@ -59,7 +67,8 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
 
 bool ComposeTransportManager::IsDeviceUrma() const
 {
-    return (options_.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0;
+    return (options_.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
+                                 HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0;
 }
 
 Result ComposeTransportManager::OpenDevice(const TransportOptions &options)

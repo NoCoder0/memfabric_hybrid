@@ -96,6 +96,9 @@ Result HybmEntityTagInfo::AddTagOpInfo(const std::string &tagOpInfo)
     // tag:opType:tag,tag:opType:tag,tag:opType:tag
     auto tagOpInfoVec = StrUtil::Split(tagOpInfo, ',');
     for (const auto &item : tagOpInfoVec) {
+        if (item.empty()) {
+            continue;
+        }
         auto ret = AddOneTagOpInfo(item);
         if (ret != BM_OK) {
             return ret;

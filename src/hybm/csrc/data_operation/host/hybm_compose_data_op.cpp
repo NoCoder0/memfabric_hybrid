@@ -63,6 +63,24 @@ Result HostComposeDataOp::Initialize() noexcept
         }
     }
 
+    if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
+#if defined(NO_XPU)
+        hostRdmaDataOperator_ = DataOperatorFactory::CreateHostRdmaDataOperator(options_.rankId, transport_);
+        auto ret = hostRdmaDataOperator_->Initialize();
+#else
+        devUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
+        auto ret = devUrmaDataOperator_->Initialize();
+#endif
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("HostDevice URMA data operator init failed, ret:" << ret);
+            sdmaDataOperator_ = nullptr;
+            devRdmaDataOperator_ = nullptr;
+            devUrmaDataOperator_ = nullptr;
+            hostRdmaDataOperator_ = nullptr;
+            return ret;
+        }
+    }
+
     if (options_.bmDataOpType & (HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP)) {
         hostRdmaDataOperator_ = DataOperatorFactory::CreateHostRdmaDataOperator(options_.rankId, transport_);
         auto ret = hostRdmaDataOperator_->Initialize();
@@ -290,6 +308,16 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
     if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_SHM)) != 0U) {
         dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_SHM, hostRdmaDataOperator_);
     }
+
+#if defined(NO_XPU)
+    if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0U) {
+        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_DEVICE_URMA, hostRdmaDataOperator_);
+    }
+#else
+    if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0U) {
+        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_DEVICE_URMA, devUrmaDataOperator_);
+    }
+#endif
 
     return dataOperators;
 }
