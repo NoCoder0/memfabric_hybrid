@@ -484,8 +484,8 @@ Result HybmConnBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
         auto unregRet = DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(slice->vAddress_),
                                                       logicDeviceId_, HOST_MEM_MAP_DEV);
         if (unregRet != 0) {
-            BM_LOG_ERROR("HalHostUnregisterEx failed, idx:" << slice->index_
-                         << " ret:" << unregRet << "; teardown continues");
+            BM_LOG_WARN("HalHostUnregisterEx not successful, idx:" << slice->index_ << " ret:" << unregRet
+                                                                   << "; teardown continues");
         }
     }
 #endif
