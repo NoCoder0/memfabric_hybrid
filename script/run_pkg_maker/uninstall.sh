@@ -52,14 +52,15 @@ function uninstall_process()
         return 0
     fi
     print "INFO" "memfabric_hybrid $(basename $1) uninstall start.."
+    mf_dir=$(cd $1/..;pwd)
     delete_latest $1
     delete_install_files $1
-    mf_dir=$(cd $1/..;pwd)
     if [ -z "$(ls $mf_dir)" ]; then
         chmod -R 700 $mf_dir
         rm -rf $mf_dir
     fi
 
+    cd ~ 2>/dev/null
     pip_path=$(which pip3 2>/dev/null)
     if [ -z "$pip_path" ]; then
         print "WARNING" "memfabric_hybrid  pip3 Not Found, skip uninstall wheel package."
