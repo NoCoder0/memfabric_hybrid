@@ -101,7 +101,7 @@ public:
     // return started
     bool SetServerInfo(const std::string &ip, uint16_t port)
     {
-        std::unique_lock<std::mutex> guard(mutex_);
+        std::unique_lock<std::recursive_mutex> guard(mutex_);
         if (serverIp_ == ip && port == serverPort_) {
             return rankId_ >= 0;
         }
@@ -130,7 +130,7 @@ private:
     int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
                               const acc::AccDataBufferPtr &cbCtx)
     {
-        std::lock_guard<std::mutex> guard(mutex_);
+        std::lock_guard<std::recursive_mutex> guard(mutex_);
         if (accClientLink_ == nullptr) {
             return acc::ACC_LINK_ERROR;
         }
@@ -154,7 +154,7 @@ private:
     std::unordered_map<uint32_t, std::shared_ptr<ClientCommonContext>> msgClientContext_;
     static std::atomic<uint32_t> reqSeqGen_;
 
-    std::mutex mutex_;
+    std::recursive_mutex mutex_;
     std::string serverIp_;
     uint16_t serverPort_;
     const uint16_t startupModel_;

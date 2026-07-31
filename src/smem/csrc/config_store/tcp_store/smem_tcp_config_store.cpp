@@ -174,7 +174,7 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
     Result result = SM_OK;
     auto retryMaxTimes = reconnectRetryTimes < 0 ? CONNECT_RETRY_MAX_TIMES : reconnectRetryTimes;
 
-    std::lock_guard<std::mutex> guard(mutex_);
+    std::lock_guard<std::recursive_mutex> guard(mutex_);
     if (accClient_ != nullptr) {
         STORE_LOG_WARN("TcpConfigStore already startup");
         return SM_OK;
@@ -222,7 +222,7 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
 Result TcpConfigStore::ServerStart(const smem_tls_config &tlsConfig, int reconnectRetryTimes) noexcept
 {
     Result result = SM_OK;
-    std::lock_guard<std::mutex> guard(mutex_);
+    std::lock_guard<std::recursive_mutex> guard(mutex_);
     accServer_ = SmMakeRef<AccStoreServer>(serverIp_, serverPort_, worldSize_, backend_, skipRecover_);
     if (accServer_ == nullptr) {
         STORE_LOG_ERROR("create acc store server failed, ip: " << serverIp_ << " port: " << serverPort_
