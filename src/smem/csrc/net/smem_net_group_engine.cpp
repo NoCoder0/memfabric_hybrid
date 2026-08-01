@@ -79,14 +79,15 @@ SmemGroupEnginePtr SmemNetGroupEngine::Create(const StorePtr &store, const SmemG
     SmemGroupEnginePtr group = SmMakeRef<SmemNetGroupEngine>(managerPtr, option);
     SM_VALIDATE_RETURN(group != nullptr, "SmemMakeRef<SmemNetGroupEngine> failed, rank: " << option.rank, nullptr);
 
-    if (option.linkDownCb != nullptr) {
+    if (option.useClientBrokenHandler && option.linkDownCb != nullptr) {
         auto *rawGroup = group.Get();
         auto alive = group->alive_;
         auto linkDownCb = option.linkDownCb;
         auto localRank = option.rank;
         managerPtr->RegisterClientBrokenHandler([rawGroup, alive, linkDownCb, localRank]() -> int {
-            if (!*alive || !rawGroup->IsJoined())
+            if (!*alive || !rawGroup->IsJoined()) {
                 return 0;
+            }
             std::vector<uint32_t> rankIds;
             rawGroup->GetAllRanksFromBitMap(rankIds);
             for (auto rk : rankIds) {
