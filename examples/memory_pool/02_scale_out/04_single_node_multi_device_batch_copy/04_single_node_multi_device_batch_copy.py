@@ -13,12 +13,13 @@
 import multiprocessing as mp
 
 import torch
+import os
 
 import memfabric_hybrid as mf
 from memfabric_hybrid import bm
 
 ONE_GIB = 1 << 30
-STORE_URL = "tcp://127.0.0.1:8572"
+STORE_URL = "tcp://127.0.0.1:8573"
 WORLD_SIZE = 2
 ITEM_BYTES = 256
 MAX_BATCH = 1001
@@ -26,6 +27,11 @@ SOURCE_OFFSET = 4 * 1024 * 1024
 DESTINATION_OFFSET = 16 * 1024 * 1024
 RANK_0, DEVICE_0 = 0, 0
 RANK_1, DEVICE_1 = 1, 1
+
+LOCA_EIDS={
+        0:"000000000045050000100000df00b605",
+        1:"000000000045050000100000df00d606"
+        }
 
 
 def _write_local_pattern(handle, local_hbm: int, rank_id: int) -> torch.Tensor:
@@ -76,11 +82,13 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
     mf.set_log_level(0)
     assert mf.initialize() == 0, "mf.initialize failed"
     bm_initialized = False
+    os.environ["USE_LOCAL_EID"]=LOCA_EIDS[device_id]
     try:
         config = bm.BmConfig()
         config.rank_id = rank_id
         config.start_store = rank_id == RANK_0
         config.set_nic("tcp://127.0.0.1:10005")
+        config.auto_ranking=False
         assert bm.initialize(STORE_URL, WORLD_SIZE, device_id, config) == 0, "bm.initialize failed"
         bm_initialized = True
 
@@ -93,6 +101,8 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
             data_op_type=bm.BmDataOpType.HOST_DEVICE_URMA,
         )
         assert handle.join() == 0, "join failed"
+        print("join success: " + str(rank_id))
+        sync.wait()
 
         peer_rank = 1 - rank_id
         local_hbm = handle.peer_rank_ptr(rank_id, bm.BmMemType.DEVICE)
