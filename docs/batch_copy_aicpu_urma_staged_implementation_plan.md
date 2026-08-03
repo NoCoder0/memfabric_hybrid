@@ -1,93 +1,157 @@
-# Batch_Copy URMA 分阶段编码与验证计划
+# sparse_copy_urma URMA 分阶段编码与验证计划
 
-> 状态：待评审  
-> 日期：2026-07-25
-> 目标方案：[batch_copy_aicpu_urma_design.md](batch_copy_aicpu_urma_design.md)  
-> 本文用途：指导代码实现、分阶段硬件验证和代码评审；本文中的阶段门禁优先于一次性实现全部功能。
+> 状态：待评审
+>
+> 日期：2026-08-03
+>
+> 目标方案：[batch_copy_aicpu_urma_design.md](batch_copy_aicpu_urma_design.md)
+>
+> 本文用途：描述 T0～T3 的整体实现、依赖、测试和硬件验收计划；当前重新实施重点为 T2。
 
-## 1. 结论与计划调整
+## 1. 总体结论与阶段划分
 
-原计划的三类硬件环境拆分是合理的，但建议实际执行时拆成四个门禁：
+### 1.1 整体阶段
 
-1. **阶段 0：公共 HCOMM/URMA 层重构和软件测试。** 不依赖硬件，先消除 Host/Device
-   重复实现及 wire format 差异。
-2. **阶段 1：两台鲲鹏 Host-to-Host。** 两端都使用 `HostUrmaTransportManager`，验证 Host endpoint、
-   DDR 注册/导出/导入、CPU channel、主动 Read/Write、Fence 和批量回退。
-3. **阶段 2：两张昇腾 950 卡验证可复用主链路。** 两端都配置 `HOST_DEVICE_URMA`，运行时检测到
-   昇腾 950 后选择 `DeviceUrmaTransportManager`，由真实 manager 发布路由，并通过最终
-   `HybmBatchCopy` 四参数接口完成卡间读取。
-4. **阶段 3：鲲鹏到昇腾的完整流程。** 复用阶段 2 的 manager、publisher、路由 ABI、算子和 Python
-   调用路径，只增加 Host DDR 路由源资格校验及异构硬件验证。
+| 阶段 | 内容 | 当前状态 |
+| --- | --- | --- |
+| T0 | `HOST_DEVICE_URMA` 协议、公共 URMA/HCOMM 层和 private-data v2 | T0.1 已完成；T0.2 已回退 |
+| T1 | Host manager、固定 GVA、Host CPU 数据面和两鲲鹏验证 | 已完成并通过测试 |
+| T2 | route/control、publisher、统一 builder、AICPU、acc_offload API 和两卡验证 | 当前重新实现 |
+| T3 | 鲲鹏 DDR→昇腾 HBM 的 Host-DDR 硬件验收 | 不新增独立生产代码 |
 
-阶段 0 不是新增硬件阶段，而是阶段 1 开始前的编码门禁。增加它的原因是当前
-`hcomm_transport_manager`、endpoint private data 和 `HcommMemImport` 处理都位于 Device 目录并含有
-Device 假设；直接复制出一个 Host manager 会形成两套不一致协议。
+T0 和 T1 虽然已经完成，仍是本计划的组成部分。其接口、资源生命周期、测试门禁和完成定义继续保留，
+用于后续评审和回归，不因当前工作聚焦 T2 而删除。
 
-阶段 2 不再实现独立的 route probe manager、probe operator 或专用建链程序。两张 NPU 使用与阶段 3
-相同的 `HOST_DEVICE_URMA` 协议、`DeviceUrmaTransportManager::Prepare()`、路由发布事务和
-`HybmBatchCopy`。测试代码只负责准备数据、调用既有 Python copy 接口和校验结果。
+### 1.2 T2/T3 调整
 
-Device HBM 的 MemFabric GVA 与 HCOMM import view 可能不同。为让阶段 2 仍可通过最终四参数接口按 GVA
-查表，`BatchCopyRangeEntry` 在保持 32 B 大小不变的前提下使用现有 padding 增加
-`hcommVaBegin`。算子执行：
+T2 一次交付 route ABI、publisher、Device-HBM/Host-DDR 统一 builder、`HybmBatchCopy`、acc_offload
+`sparse_copy_urma`、正常包和两个 Python example。T3 不增加第二套生产代码，只用 Host-DDR example
+完成鲲鹏 DDR→昇腾 HBM 的硬件验收。
+
+因此 T3 不再包含独立 launcher、transport、operator 或 route builder 任务。T3 能取消独立编码的前提是：
+T2 已经实现 Host-DDR builder，并在生产代码中强制
+`exported GVA == descriptor addr == import view addr`。该门禁不能只在 Python example 中模拟。
+
+### 1.3 调用链调整
+
+最终调用链固定为：
 
 ```text
-hcommSrc = hcommVaBegin + (srcGva - srcGvaBegin)
+MemFabric HYBM entity 初始化、URMA 建链和 route 发布
+    ↓
+业务获得远端 MemFabric GVA 和本地真实 HBM 地址
+    ↓
+mf_acc_offload.sparse_copy_urma(...)
+    ↓
+pymf_acc_offload.cpp
+    ↓
+offload_sparse_copy_urma(...)
+    ↓
+AccOffloadLaunchApi / AccOffloadSparseCopyUrma
+    ↓
+HybmBatchCopy AICPU
+    ↓
+固定 HBM route → HybmBatchRead → HCOMM/URMA
 ```
 
-阶段 2 的 Device-HBM route 保存真实 GVA 和真实 import view；阶段 3 的 Host-DDR route 仍把
-`Host DDR GVA == HCOMM import view` 作为硬门禁，且发布时
-`hcommVaBegin == srcGvaBegin`。增加该字段不允许绕过阶段 3 的地址相等校验。
+`copy_data/copy_data_batch`、`DataOpDeviceURMA`、`TransportManager::ReadRemoteBatchCopy` 和
+`ComposeTransportManager` 数据操作转发不进入这条调用链。
 
-阶段 1 对原目标设计有一项永久补充：`HostUrmaTransportManager` 不再只是被动 DDR 导出端，它也实现
-Host CPU 主动 `ReadRemote/WriteRemote`。最终鲲鹏到昇腾流程仍由 NPU 发起读取，Host 主动能力不会改变
-Batch_Copy 的生产方向，但可用于独立验证、诊断和后续 Host-to-Host 场景。
+## 2. 必须遵守的固定决策
 
-## 2. 范围和约束
+### 2.1 T2 重新实现的非目标
 
-### 2.1 本轮实现目标
+- T1 已由另一位同事完成。T2 不得擅自重构、覆盖或复制 `HostUrmaTransportManager` 的实现。
+- 不修复 `ComposeTransportManager::Connect()` 未设置 `connected_` 的既有问题。
+- 不修改任何现有 `copy_data/copy_data_batch` API、DataOperator 选择或远端拷贝流程。
+- 不创建 T2 专用 transport、route probe manager、probe operator、测试 launcher API 或平行 kernel。
+- 不为 `sparse_copy_urma` 创建第二个 HYBM entity，不让 acc_offload 接管 route owner、MR、
+  channel、thread 或 flag 生命周期。
 
-- 新增 `HOST_DEVICE_URMA` 数据操作类型，作为 HCOMM Host↔Host/Host↔Device 的共同协商协议；
-  `HOST_URMA` 继续表示原有 HCOM 路径，`DEVICE_URMA` 继续表示 Device↔Device HCOMM 路径。
-- 在 `XPU_TYPE=NONE` 构建中为 `HOST_DEVICE_URMA` 创建 `HostUrmaTransportManager`。
-- 两台无 NPU 的鲲鹏服务器通过 HCOMM Host UB plugin 完成双向 DDR 拷贝。
-- 抽取 Host/Device 共用的 endpoint、memory descriptor、private data 和 HCOMM 资源封装。
-- 映射并发布 `HYBM_DEVICE_META_ADDR` 前方 2 MiB 卡级 Batch_Copy 元数据区。
-- 在两张昇腾 950 卡上通过 `HOST_DEVICE_URMA` 运行最终路由发布和 `HybmBatchCopy` 主链路。
-- `HybmBatchCopy` AICPU ABI 只包含 `list_num`、目的地址列表、源地址列表和长度列表。
-- 阶段 3 复用阶段 2 产物，实现鲲鹏 DDR GVA 到昇腾 HBM 的完整流程。
+### 2.2 T0.2 保持回退状态
 
-### 2.2 P0 约束
+当前代码继续检查 HCOMM 返回的 `outMem.type` 和 `flagOutMem.type`。整体计划不得：
 
-- 初始化时一次性交换完整 peer 集合和每个 peer 的全部初始内存区间。
-- 每张 NPU 最多 64 个 peer，每个 peer 最多 16 个源地址区间，总区间数最多 1024。
-- 初始化完成后不新增可导出的源内存区间，不处理 peer 移除、断链或热替换；数据操作层的固定 staging
-  MR 必须在建 channel 前完成注册。
-- 阶段 1 每台鲲鹏只运行一个 rank；多进程共享同一 Host URMA NIC/监听端口不在本阶段验证。
-- 阶段 2 的 manager、publisher、route ABI 和 AICPU operator 都进入正常构建和 NPU wheel；仅 Python
-  验证脚本及必要断言属于测试代码。
-- 阶段 3 先验收 1 NPU × 1 CPU，再扩展到目标拓扑；不以满规格拓扑作为首轮调试环境。
+- 从外层 descriptor 合成或覆盖 HCOMM 返回 type；
+- 跳过普通 MR 或 transfer flag 的 type 校验；
+- 增加替代 `flagMemoryType` 字段；
+- 为旧 T0.2 预期新增 invalid-type UT。
 
-## 3. 当前代码基线与关键事实
+只有硬件验证明确证明当前 HCOMM 返回 type 不可靠，或用户后续明确要求时，才重新设计 T0.2。
 
-### 3.1 MemFabric 当前流程
+### 2.3 route 与生命周期
 
-- `ComposeTransportManager::OpenDeviceTransport()` 对 `DEVICE_URMA/DEVICE_UBOE` 固定创建
-  `DeviceUrmaTransportManager`。
-- `HostComposeDataOp::Initialize()` 对 `DEVICE_URMA/DEVICE_UBOE` 固定创建 `DataOpDeviceURMA`；该实现包含
-  ACL、HBM swap buffer 和 AICPU kernel 启动逻辑，不能在无 NPU 的鲲鹏节点使用。
-- `HostDataOpRDMA` 已经提供 Host staging buffer、GVA rank 解析和基于 `TransportManager` 的
-  Read/Write/Batch 调用，可以作为 Host URMA 的数据操作层复用。
-- `HybmConnBasedSegment::MapSlice()` 对 `DEVICE_URMA` 无条件执行 `HalHostRegister()`；无 NPU 构建必须跳过
-  HAL，并保持固定 `mmap` 得到的 HVA 与 GVA 相同。
-- `TransportMemoryKey` 的前 `6 * KEY_SIZE` slots 已用于 Device URMA 描述符，容量为 672 B；Host URMA
-  的 HCOMM 描述也应走这一路径，不能放入只占 `KEY_SIZE` slots 的旧 Host HCOM 区域。
-- entity 连接分两次调用 manager：第一次只有 endpoint private data，第二次带完整 memory keys。
-  Host/Device manager 的 `Prepare()` 都必须对同一 endpoint 幂等，并在第二次调用时导入 key。
+- modern 路径使用 2 MiB route + 原 32 MiB metadata，总 control 区为 34 MiB。
+- legacy 路径保持原 32 MiB，不映射前置 route，也不支持 `sparse_copy_urma`。
+- publisher 使用单 owner、completion 注册和 magic-last。
+- Publish 成功后重复调用只返回 `BM_OK`，不得刷新 route。
+- route 发布后不增加 BatchCopy route MR，不支持热更新、容错补路由或 peer 替换。
+- route 发布后 `RemoveRanks()` 必须拒绝，防止 route 引用已释放资源。
+- Close 前调用方保证没有在途算子；Close 先清 magic，再释放 completion、channel、thread 和 MR。
+- `TryPublishBatchCopyRouteLocked(options)` 暂时同时位于 `Prepare()` 和
+  `UpdateRankOptions()` 末尾。
+- 将来独立修复 `connected_` 后，删除 `Prepare()` 末尾的发布调用，只保留
+  `UpdateRankOptions()`。
 
-### 3.2 `HOST_DEVICE_URMA` 的协议语义
+### 2.4 AICPU 固定约束
 
-新增以下两个同义枚举值，保留所有既有枚举值不变：
+`HybmBatchCopyParam` 只能有四个业务字段：
+
+```cpp
+struct HybmBatchCopyParam {
+    uint32_t list_num;
+    void **dst_buf_addr_list;
+    void **src_buf_addr_list;
+    uint64_t *len_list;
+};
+```
+
+thread、channel、remote/local flag、completion、timeout 和 route mode 必须从固定 HBM route/control
+区读取，不得扩展为算子参数。
+
+其他固定要求：
+
+- `FindCoveringRange` 先使用顺序查找，不实现二分查找。
+- 不实现 `ScopedBatchCopyGuard`、`AcquirePerDeviceExecutionGuard` 或等价防护；调用方保证每卡只有一个
+  在途算子。
+- `InvalidateDeviceCache`、`FlushDeviceCache` 和 `DeviceMemoryBarrier` 只在 AArch64 AICPU 构建启用，
+  实现参考 `app/zbal`。
+- `ValidatePublishedRoute` 在硬件联调阶段必须无条件打印 ERROR 日志，输出完整有效 route；
+  稳定后删除或降级。
+- 目的地址只检查加法溢出和固定 control 区重叠，不使用 `HYBM_DEVICE_VA_START` 作为下界。
+  PyTorch/框架分配的真实 HBM 地址可能不在 MemFabric SVM 业务窗口。
+
+## 3. 总体依赖与提交策略
+
+```mermaid
+flowchart LR
+    A["T0.1 协议与公共 URMA"] --> B["T1.1～T1.4 Host manager 与接入"]
+    B --> C["T1.5 两鲲鹏验收"]
+    C --> D["T2.1 control 区与 route ABI"]
+    D --> E["T2.2 publisher 与 completion"]
+    E --> F["T2.3 统一 route source builder"]
+    F --> G["T2.4 生产 AICPU 算子"]
+    G --> H["T2.5 acc_offload API 与 launcher"]
+    H --> I["T2.6 CMake/run/wheel 交付"]
+    I --> J["T2.7 Device-HBM 两卡验收"]
+    J --> K["T3 Host-DDR 硬件验收"]
+```
+
+T0.2 不在依赖图中：其旧实现已经回退，当前计划保持 HCOMM 返回 type 校验，不把它作为 T1/T2 的前置
+编码任务。
+
+每项尽量独立提交。提交前必须：
+
+1. 检查 `git status --short`，保护用户已有修改。
+2. 检查与本任务相关的调用链和当前主干实现。
+3. 执行 `git diff --check`。
+4. 只在命令实际成功时记录构建或 UT 通过。
+
+## 4. T0：公共 HCOMM/URMA 层
+
+### 4.1 T0.1 协议、协商和公共描述符
+
+新增并保留以下端到端协议值，既有枚举值不重排：
 
 ```cpp
 // src/smem/include/host/smem_bm_def.h
@@ -97,516 +161,211 @@ SMEMB_DATA_OP_HOST_DEVICE_URMA = 1U << 8,
 HYBM_DOP_TYPE_HOST_DEVICE_URMA = 1U << 10,
 ```
 
-Python 暴露名为 `BmDataOpType.HOST_DEVICE_URMA`。该值不是仅在鲲鹏本地使用的 manager 开关，而是
-参与 entity tag 交换和 rank-to-rank 协商的端到端协议位：
+Python 暴露为 `BmDataOpType.HOST_DEVICE_URMA`。该 bit 参与 SMEM→HYBM 转换、合法值和冲突校验、
+entity tag、rank-to-rank compatible info、动态库加载、Compose transport 选择和 Python 枚举映射。
 
-- 阶段 1 的两个 Host rank 均配置 `HOST_DEVICE_URMA`；
-- 阶段 3 的鲲鹏 rank 和昇腾 rank 也均配置 `HOST_DEVICE_URMA`；
-- 本端为 `XPU_TYPE=NONE` 时创建 `HostUrmaTransportManager` 和 `HostDataOpRDMA`；本端为
-  `ASCEND_NPU` 时创建 `DeviceUrmaTransportManager` 和 `DataOpDeviceURMA`；
-- 阶段 2 的两个 NPU rank 也配置 `HOST_DEVICE_URMA`，运行时均解析为 Device 角色；
-- `HOST_URMA` 不改语义，仍进入 `HcomTransportManager`。因此 HCOMM 与 HCOM 不再依靠构建平台或
-  endpoint 类型猜测，而由 DataOpType 明确区分。
+协议语义：
 
-实现时同步修改 SMEM 合法值掩码、SMEM→HYBM 转换、Python 枚举、HYBM 合法值/能力掩码、动态库加载、
-entity tag 的字符串双向映射、Compose transport 路由和 data-operator 优先级映射。P0 禁止同时配置
-`HOST_DEVICE_URMA` 与 `DEVICE_URMA/DEVICE_UBOE`，避免多个 HCOMM 协议竞争同一个
-`deviceTransportManager_` 槽位；发现组合冲突时在参数校验阶段返回 `BM_INVALID_PARAM`。
+- `HOST_DEVICE_URMA` 表示 HCOMM Host↔Host 或 Host↔Device；
+- `HOST_URMA` 保持原 HCOM 语义；
+- `DEVICE_URMA` 保持 Device↔Device HCOMM 语义；
+- P0 禁止 `HOST_DEVICE_URMA` 与 `DEVICE_URMA/DEVICE_UBOE` 同时配置。
 
-### 3.3 CANN/HCOMM 源码结论
-
-- Host UB plugin `libhcomm_cpu_ub_plugin.so` 支持 `COMM_PROTOCOL_UBC_TP` 和
-  `COMM_PROTOCOL_UBC_CTP`，Host endpoint 使用 `ENDPOINT_LOC_TYPE_HOST`。
-- `EndpointLoc.host.id` 是 HCOMM endpoint 的业务标识，可直接使用 MemFabric `rankId`；CANN 内部固定的
-  `hostResourceId = 0` 是网卡资源索引，二者不是同一个字段。
-- `CpuUrmaEndpoint` 从 `EndpointDesc.commAddr` 解析 IPv4/IPv6 地址，因此 Host manager 从现有
-  `TransportOptions.nic` 解析本地 IP 即可。
-- Host CPU 数据面支持 `HcommReadOnThread()`、`HcommWriteOnThread()` 和
-  `HcommChannelFenceOnThread()`；Host 调用时 thread 参数未使用，传 0。
-- CPU 版 `HcommBatchTransferOnThread()` 当前返回不支持。Host manager 的 batch 方法必须逐条调用
-  Read/Write，并在 `Synchronize()` 中对该 peer 做一次 fence。
-- UBC 的 `HcommMemImport()` 当前只填写 `outMem.addr/outMem.size`，不填写 `outMem.type`。MemFabric 必须从
-  自己的导出描述符恢复类型，不能因 `outMem.type == COMM_MEM_TYPE_INVALID` 判定导入失败。
-- UBC import 返回的 `outMem.addr` 来自远端导出 DTO 的注册地址。阶段 1 必须把
-  `outMem.addr == exportedGva` 作为 Host 生产路径硬门禁。即使 route ABI 已为 Device-HBM 验证增加
-  `hcommVaBegin`，Host 路径也不允许用地址转换掩盖 equality 失败。
-
-## 4. 总体代码结构
-
-```text
-src/hybm/csrc/transport/
-├── urma/
-│   ├── urma_transport_common.h/.cpp       # 共用 wire ABI、序列化、地址/范围校验
-│   └── hcomm_transport_manager.h/.cpp     # 共用 endpoint/MR export/import 封装
-├── host/urma/
-│   └── host_urma_transport_manager.h/.cpp # Host endpoint、CPU channel、主动数据面
-├── device/urma/
-│   ├── device_urma_transport_manager.h/.cpp
-│   └── batch_copy_route_publisher.h/.cpp  # 卡级路由 image 构建、发布和清理
-└── compose/
-    └── compose_transport_manager.cpp      # 为 HOST_DEVICE_URMA 解析运行时 Host/Device 角色
-```
-
-数据路径选择如下：
-
-```mermaid
-flowchart LR
-    A["BmDataOpType.HOST_DEVICE_URMA"] --> B["ComposeTransportManager"]
-    B --> C{"运行时设备探测"}
-    C -->|"发现 Ascend 950"| D["DeviceUrmaTransportManager"]
-    C -->|"明确无设备"| D2["HostUrmaTransportManager"]
-    C -->|"有设备但非 950，或探测失败"| F["BM_NOT_SUPPORTED"]
-    A --> E["DataOperatorFactory::CreateHostDeviceUrmaDataOperator"]
-    E -->|"Host role"| G["HostDataOpRDMA"]
-    E -->|"Device role"| H["DataOpDeviceURMA"]
-    D --> I["路由发布 + AICPU HCOMM"]
-    D2 --> J["HCOMM CPU Read/Write/Fence"]
-    G --> J
-```
-
-阶段 1 的 Python 用例设置 `BmDataOpType.HOST_DEVICE_URMA`，验证最终方案使用的前 672 B memory-key
-wire format、private data 和 Host manager 链路；`HOST_URMA -> HCOM` 与 `DEVICE_URMA -> Device HCOMM`
-的既有语义均保持不变。
-
-## 5. 阶段 0：公共 URMA 层和软件门禁
-
-### 5.1 共用 endpoint 描述符
-
-将当前 `device/urma/hcomm_transport_manager.{h,cpp}` 的通用内容迁移到 `transport/urma/`，namespace
-调整为 `ock::mf::transport::urma`。Device/Host manager 都只依赖公共封装。
+公共 endpoint 描述符使用完整 `EndpointLoc`：
 
 ```cpp
-namespace ock::mf::transport::urma {
-
 struct UrmaEndpointDesc {
     UrmaProtocol protocol{UrmaProtocol::RESERVED};
     CommAddrType type{COMM_ADDR_TYPE_RESERVED};
     uint8_t raws[URMA_ENDPOINT_RAW_LEN]{};
     EndpointLoc loc{};
 };
-
-struct UrmaPrivateDataDesc {
-    uint32_t magic{URMA_PRIVATE_DATA_MAGIC};
-    uint16_t version{URMA_PRIVATE_DATA_VERSION}; // 本次固定为 2
-    uint16_t payloadLen{0};
-};
-
-Result SerializeUrmaPrivateData(const UrmaEndpointDesc &endpoint,
-                                TransportPrivateData &privateData);
-
-Result ParseUrmaPrivateData(const TransportPrivateData &privateData,
-                            UrmaEndpointDesc &endpoint);
-
-EndpointDesc ToHcommEndpointDesc(const UrmaEndpointDesc &endpoint);
-
-} // namespace ock::mf::transport::urma
 ```
 
-接口参数约定：
+- Host 设置 `loc.locType = ENDPOINT_LOC_TYPE_HOST` 和 `loc.host.id = rankId`。
+- Device 设置 `loc.locType = ENDPOINT_LOC_TYPE_DEVICE`，保留物理卡、super device、server 和 pod 信息。
+- private-data 版本固定为 v2，序列化前清零，解析时校验 magic、version、payloadLen 和容量。
+- Host/Device 对共享结构执行 `sizeof` 和 `std::is_trivially_copyable` 断言。
 
-- `endpoint`：完整的协议、通信地址和 HCOMM `EndpointLoc`。Host 使用
-  `loc.locType = ENDPOINT_LOC_TYPE_HOST`、`loc.host.id = rankId`；Device 把现有四个 device 标识写入
-  `loc.device`。
-- `privateData`：使用 `TransportPrivateData.key.keys` 存放 header 和 payload，序列化前整体清零。
-- 解析函数必须校验 magic、version、payload 长度、总容量、协议、地址类型和 location 类型；错误日志带
-  magic/version/length，返回 `BM_INVALID_PARAM`。
-- 两侧增加 `std::is_trivially_copyable`、`sizeof` 和容量 `static_assert`。
+### 4.2 公共 HCOMM 封装
 
-### 5.2 共用内存描述符与 import 修正
+公共模块位于：
 
-`UrmaExportDesc` 保持当前 v1 布局，不增加、删除或重命名字段。普通 MR 与同一 export payload 携带的
-transfer flag 使用相同的 `memoryType`；`devTransFlagDescLen` 已能表达 flag descriptor 长度，不需要新增
-`flagMemoryType` 或 `payloadLen`。实现时增加 `static_assert(sizeof(UrmaExportDesc) == 48)` 固定现有 ABI。
-
-```cpp
-struct UrmaExportDesc {
-    uint32_t magic{URMA_EXPORT_DESC_MAGIC};
-    uint16_t version{URMA_EXPORT_DESC_VERSION}; // 保持当前值 1
-    uint16_t headerSize{0};
-    UrmaMemoryType memoryType{UrmaMemoryType::INVALID_BUTT};
-    UrmaMemTag memTag{0};
-    uint64_t addr{0};
-    uint64_t size{0};
-    uint32_t hcommDescLen{0};
-    uint32_t devTransFlagDescLen{0};
-};
+```text
+src/hybm/csrc/transport/urma/
+├── urma_transport_common.h/.cpp
+└── hcomm_transport_manager.h/.cpp
 ```
 
-公共封装提供以下接口：
+统一封装 endpoint、MR reg/unreg、export/import/unimport 和原始 flag descriptor 的导入清理。要求：
 
-```cpp
-class HcommTransportManager final {
-public:
-    UrmaEndpointHandle CreateEndpoint(const UrmaEndpointDesc &desc) const;
-
-    Result HcommMemReg(const UrmaEndpointHandle &endpoint,
-                       UrmaMemTag memTag,
-                       const UrmaCommMem &mem,
-                       HcommMemHandle *memHandle);
-
-    Result HcommMemUnreg(const UrmaEndpointHandle &endpoint,
-                         HcommMemHandle memHandle);
-
-    Result HcommMemExport(const UrmaEndpointHandle &endpoint,
-                          HcommMemHandle memHandle,
-                          const uint8_t **memDesc,
-                          uint32_t *memDescLen);
-
-    Result HcommMemImport(const UrmaEndpointHandle &endpoint,
-                          const uint8_t *memDesc,
-                          uint32_t descLen,
-                          UrmaCommMem *commMem);
-
-    Result HcommRawMemImport(const UrmaEndpointHandle &endpoint,
-                             const uint8_t *hcommDesc,
-                             uint32_t hcommDescLen,
-                             UrmaMemoryType expectedType,
-                             UrmaCommMem *commMem);
-
-    Result HcommRawMemUnimport(const UrmaEndpointHandle &endpoint,
-                               const uint8_t *hcommDesc,
-                               uint32_t hcommDescLen);
-
-    Result HcommMemUnimport(const UrmaEndpointHandle &endpoint,
-                            const uint8_t *memDesc,
-                            uint32_t descLen);
-};
-```
-
-参数和行为要求：
-
-- `HcommMemImport()` 从外层 `UrmaExportDesc.memoryType` 设置 `commMem->type`，只使用 HCOMM
-  `outMem.addr/outMem.size`，并校验 descriptor 总长度、返回范围非空、无溢出且
-  `outMem.size >= exportDesc.size`。该方法继续接收 `header + MR descriptor`；外层 manager 根据现有
-  `devTransFlagDescLen` 定位 payload 尾部的 flag descriptor。
-- `HcommRawMemImport()` 用于 transfer flag，`expectedType` 直接使用 `UrmaExportDesc.memoryType`，不能读取
-  HCOMM 未填写的 `outMem.type`。
-- `HcommRawMemUnimport()` 只接收 flag 的原始 HCOMM descriptor，供回滚和 Close 使用。
-- import 成功后若 MemFabric 自身校验失败，必须立即调用对应 unimport 回滚。
-- `HcommMemExport()` 返回的缓存仍由 endpoint 内部 `MemEntry` 持有，调用者不能释放。
-- 公共层错误日志不再使用 `device_urma` 前缀，日志至少包含 API 名、memTag、addr、size、descLen 和 HCOMM
-  返回码中适用的部分。
-
-### 5.3 现有结构体和枚举变更审计
-
-以下表格只列现有源码类型；阶段 1 manager 内部状态和阶段 2 路由表均为新增类型，不属于现有结构体改动。
-
-| 现有类型 | 新增字段/枚举值 | 删除字段 | 必要性和兼容性结论 |
-| --- | --- | --- | --- |
-| `smem_bm_data_op_type` | `SMEMB_DATA_OP_HOST_DEVICE_URMA = 1U << 8` | 无 | 必须。为 Python/C API 提供独立 HCOMM Host↔Device 选择值，不能复用表示 HCOM 的 `HOST_URMA`。既有 bit 不重排。 |
-| `hybm_data_op_type` | `HYBM_DOP_TYPE_HOST_DEVICE_URMA = 1U << 10` | 无 | 必须。用于 HYBM tag 协商、transport 和 data operator 路由。既有 bit 不重排；`*_BUTT` 只作为边界值，不允许落盘或跨进程交换。 |
-| `UrmaEndpointDesc` | `EndpointLoc loc` | `devPhyId`、`superDevId`、`serverIdx`、`superPodIdx` | 必须。四个旧字段只能描述 Device，无法表达 Host；`EndpointLoc` 同时容纳 `host.id` 和原四个 Device 字段。保留现有 `protocol/type/raws` 名称，避免无意义重命名。private-data 版本升到 2，旧版本明确拒绝。 |
-| `UrmaPrivateDataDesc` | 无 | 无 | 不改字段和字段名，只把 `URMA_PRIVATE_DATA_VERSION` 常量从 1 升到 2，因为其 payload 中的 `UrmaEndpointDesc` 布局已经改变。 |
-| `UrmaExportDesc` | 无 | 无 | 不需要改。保留 v1、`memoryType`、`devTransFlagDescLen` 和 48 B 布局；普通 MR 与 flag 共用 `memoryType`，不新增 `flagMemoryType/payloadLen`。 |
-| `HostDataOpRDMA` | 无 | 无 | 不需要改构造函数或成员字段。现有数据搬运已经通过初始化期注册的 swap buffer 和 `TransportManager` 工作；未进入调用链的预注册 helper 不作为本方案增加状态开关的理由。 |
-| `TransportOptions`、`TransportMemoryKey` | 无 | 无 | 不需要改。DataOpType 已能选择路径；前 `6 * KEY_SIZE` 的现有 key 区足以容纳 HCOMM descriptor。 |
-| `HybmDeviceGlobalMeta`、`HybmDeviceMeta` | 无 | 无 | 不需要改。Batch_Copy 使用 `HYBM_DEVICE_META_ADDR` 前方独立 2 MiB 映射和新增 route ABI，不占用现有 meta 字段。 |
-
-实现和评审时以此表为结构布局边界。若编码中需要再修改任一现有结构体，必须先在文档补充字段级原因、
-ABI/序列化影响和“不修改为何无法实现”的说明，不得顺手改名、预留字段或加入当前流程不读取的状态。
-
-### 5.4 动态库加载
-
-修改 `DlApi::LoadExtendLibrary(DL_EXT_LIB_DEVICE_URMA)`：
-
-- `ASCEND_NPU` 构建依次加载 RT 和 HCOMM；HCOMM 失败时清理已加载的 RT。
-- `NO_XPU` 构建只加载 HCOMM，不调用 RT/ACL/HAL API。
-- 清理保持幂等，允许初始化中途失败后再次尝试。
-
-鲲鹏部署必须能从 `${ASCEND_HOME_PATH}/hcomm_plugin/libhcomm_cpu_ub_plugin.so` 加载 Host UB plugin；独立
-调试且未设置 `ASCEND_HOME_PATH` 时才使用 `HCOMM_NIC_PLUGIN_SO` 指定插件。
-
-### 5.5 阶段 0 测试门禁
-
-新增或迁移以下 UT：
-
-- Host/Device private data v2 的 `UrmaEndpointDesc` 序列化、反序列化和错误版本拒绝。
-- `ToHcommEndpointDesc()` 原样保留 Host/Device location。
-- HCOMM import 返回 `type = INVALID` 但 addr/size 正常时，按外层描述符恢复类型并成功。
-- import 返回空地址、0 长度、短于导出长度时失败并 unimport 回滚。
-- 48 B export header 与 `6 * KEY_SIZE` 容量边界。
-- `NO_XPU` 的 URMA loader 不调用 RT/ACL/HAL。
-- 公共层迁移后现有 `DeviceUrmaTransportManager` UT 全部通过，确认没有 Device 行为回归。
-
-建议提交边界：公共层迁移和 import 修正单独一个提交，暂不加入 Host manager，便于代码评审确认 wire ABI。
-
-## 6. 阶段 1：HostUrmaTransportManager 与两鲲鹏验证
-
-### 6.1 Host manager 公共接口
-
-新增 `src/hybm/csrc/transport/host/urma/host_urma_transport_manager.h`：
-
-```cpp
-namespace ock::mf::transport::host {
-
-class HostUrmaTransportManager final : public TransportManager {
-public:
-    HostUrmaTransportManager() = default;
-    ~HostUrmaTransportManager() override;
-
-    Result OpenDevice(const TransportOptions &options) override;
-    Result CloseDevice() override;
-
-    Result RegisterMemoryRegion(const TransportMemoryRegion &mr) override;
-    Result UnregisterMemoryRegion(uint64_t addr) override;
-    bool QueryHasRegistered(uint64_t addr, uint64_t size) override;
-    Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) override;
-    void UpdateMemoryKey(TransportMemoryKey &key, void *addr) override;
-
-    Result Prepare(const HybmTransPrepareOptions &options) override;
-    Result RemoveRanks(const std::vector<uint32_t> &removedRanks) override;
-    Result Connect() override;
-    Result AsyncConnect() override;
-    Result WaitForConnected(int64_t timeoutNs) override;
-    Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
-    const std::string &GetNic() const override;
-    const TransportPrivateData GetPrivateData() const override;
-
-    Result ReadRemote(uint32_t rankId,
-                      uint64_t localAddr,
-                      uint64_t remoteAddr,
-                      uint64_t size) override;
-    Result WriteRemote(uint32_t rankId,
-                       uint64_t localAddr,
-                       uint64_t remoteAddr,
-                       uint64_t size) override;
-    Result ReadRemoteAsync(uint32_t rankId,
-                           uint64_t localAddr,
-                           uint64_t remoteAddr,
-                           uint64_t size) override;
-    Result WriteRemoteAsync(uint32_t rankId,
-                            uint64_t localAddr,
-                            uint64_t remoteAddr,
-                            uint64_t size) override;
-    Result ReadRemoteBatchAsync(uint32_t rankId,
-                                const CopyDescriptor &descriptor) override;
-    Result WriteRemoteBatchAsync(uint32_t rankId,
-                                 const CopyDescriptor &descriptor) override;
-    Result Synchronize(uint32_t rankId) override;
-};
-
-} // namespace ock::mf::transport::host
-```
-
-公共方法语义：
-
-| 方法 | 输入/输出和行为 |
+| 接口 | 职责 |
 | --- | --- |
-| `OpenDevice(options)` | `rankId/rankCount` 必须有效；从 `options.nic` 解析本地 IPv4/IPv6；构造 Host endpoint，`loc.host.id = rankId`；创建并注册值为 1 的 8 B Host transfer flag。重复 Open 返回成功。 |
-| `CloseDevice()` | 调用方保证没有在途 I/O。依次 fence 未完成 peer、销毁 channel、unimport 远端 MR/flag、注销本地 MR/flag、销毁 endpoint；汇总第一个错误但继续释放后续资源。重复 Close 返回成功。 |
-| `RegisterMemoryRegion(mr)` | 只接受非空、非溢出的 Host DRAM 区间，直接以 `mr.addr` 调用 `HcommMemReg()`。固定 GVA 池区间记录 `exportedGva`；Host staging buffer 允许注册，但没有 `exportedGva`。相同区间增加引用计数，重叠但不相同的注册返回错误；已建链后首次注册新地址返回 `BM_NOT_SUPPORTED`。 |
-| `QueryMemoryKey(addr, key)` | 只允许查询具有 `exportedGva` 的池区间；导出普通 MR 和 Host transfer flag，写入前 `6 * KEY_SIZE` slots；校验 export descriptor 地址等于 GVA。staging buffer 不允许导出。 |
-| `UpdateMemoryKey(key, addr)` | 将 `key.keys[1]` 更新为 entity 交换所需的 GVA；同时要求地址仍落在导出描述符覆盖区间内。 |
-| `Prepare(options)` | 首次调用按 peer 创建 `COMM_ENGINE_CPU` channel；本地 rank 较大时为 client，否则为 server，`exchangeAllMems=true`、port=0。同一 peer 的后续调用校验 endpoint 不变并导入新增 key。Host peer 导入 HOST_DRAM MR；Device peer只建立 channel，不导入 HBM key。一次调用失败时回滚本次新建资源和新导入项。 |
-| `Connect/AsyncConnect` | HCOMM channel 在 `Prepare()` 中已经创建，方法只在所有初始 peer 已准备后设置 `connected_ = true`。 |
-| `WaitForConnected(timeoutNs)` | 当前 Prepare 为同步建链；已连接返回 `BM_OK`，否则返回 `BM_NOT_CONNECTED`。`timeoutNs` 只校验合法性，不额外睡眠。 |
-| `UpdateRankOptions(options)` | 完全重复的 endpoint/key 返回成功；初始化后新增 peer、新增导出区间或 endpoint 变化返回 `BM_NOT_SUPPORTED`。 |
-| `RemoveRanks(removedRanks)` | P0 返回 `BM_NOT_SUPPORTED`，错误日志包含本地 rank 和首个待删除 rank。 |
-| `GetNic()` | 返回 Open 时保存的 `options.nic`，供 Compose 交换。 |
-| `GetPrivateData()` | 返回 v2 Host endpoint private data；未 Open 时返回全 0 并记录错误。 |
-| `ReadRemoteAsync/WriteRemoteAsync` | 校验本地注册范围和远端导入范围；调用 `HcommReadOnThread(0, ...)` 或 `HcommWriteOnThread(0, ...)`；成功后标记该 peer 有 pending 请求。 |
-| `ReadRemote/WriteRemote` | 先调用对应 Async 方法，再调用该 peer 的 `Synchronize()`。 |
-| `ReadRemoteBatchAsync/WriteRemoteBatchAsync` | 三个 vector 长度必须相同。逐条校验后按输入顺序逐条提交；不调用 CPU 不支持的 HCOMM batch API。0 长度条目跳过。 |
-| `Synchronize(rankId)` | 无 pending 时直接成功；否则调用 `HcommChannelFenceOnThread(0, channel)`，仅在 fence 成功后清除 pending。 |
+| `CreateEndpoint` | 把公共 `UrmaEndpointDesc` 转成 HCOMM endpoint |
+| `HcommMemReg/HcommMemUnreg` | 注册和注销本地 MR |
+| `HcommMemExport` | 导出 HCOMM descriptor，并保持缓存生命周期 |
+| `HcommMemImport/HcommMemUnimport` | 导入或释放完整 MemFabric payload |
+| `HcommRawMemImport/HcommRawMemUnimport` | 导入或释放 payload 尾部 transfer flag |
 
-### 6.2 Host manager 内部状态
+- `UrmaExportDesc` 保持 v1 和 48 B 布局，不增加 `flagMemoryType` 或未使用字段。
+- 普通 MR 与 payload 尾部 transfer flag 继续使用当前 descriptor 格式。
+- descriptor 长度、地址、大小、type 和整数溢出在公共层校验。
+- import 后 MemFabric 自身校验失败时，立即 unimport 回滚。
+- 根错误日志包含 API、memTag、addr、size、descLen 和 HCOMM 返回码中适用字段。
+
+### 4.3 T0.2 回退后的正式结论
+
+T0.2 原计划曾尝试忽略 HCOMM 返回 type，并从外层 descriptor 恢复 type；该实现已经回退，不属于当前
+整体方案。正式行为为：
+
+- 普通 MR 继续检查 HCOMM 返回的 `outMem.type`；
+- transfer flag 继续检查 `flagOutMem.type`；
+- 同时校验 addr、size、descriptor type 和目标内存类型；
+- 不增加 invalid-type 成功路径或 type 合成 helper。
+
+若硬件验证失败，必须保存 CANN/HCOMM 版本、原始返回结构和日志，再单独评审 T0.2，不能在 T2/T3
+实现中临时绕过。
+
+### 4.4 动态库与构建
+
+- Ascend NPU 构建为 `HOST_DEVICE_URMA` 加载 RT 和 HCOMM；失败时按逆序清理。
+- `XPU_TYPE=NONE` 只加载 HCOMM，不调用 RT/ACL/HAL。
+- Host UB plugin 从目标 CANN 安装路径加载；独立调试时才使用显式环境变量指定。
+- 公共 URMA 源加入 HYBM/SMEM 正常 CMake 和 UT 构建，不保留 Device 目录下的重复实现。
+
+### 4.5 T0 测试和完成门禁
+
+- 新枚举的 SMEM/HYBM/Python 映射、合法值和冲突组合。
+- Host/Device private-data v2 序列化、反序列化、错误版本和短 payload。
+- `EndpointLoc` Host/Device 字段原样保留。
+- 正确/错误 HCOMM type、空地址、0 长度、短 view 和 unimport 回滚。
+- 48 B export header 和 `6 * KEY_SIZE` 容量。
+- `XPU_TYPE=NONE` loader 不调用 RT/ACL/HAL。
+- 迁移后既有 Device URMA UT 无回归。
+
+T0 完成定义：公共 wire ABI、协议协商和 HCOMM 封装统一；T0.2 保持回退后的当前校验行为。
+
+## 5. T1：HostUrmaTransportManager 与两鲲鹏验证
+
+### 5.1 Host manager 职责
+
+`HostUrmaTransportManager` 位于 `src/hybm/csrc/transport/host/urma/`，负责：
+
+- 从 `TransportOptions.nic` 构建 Host endpoint；
+- 创建和注册值为 1 的 8 B Host transfer flag；
+- 固定 GVA Host DDR 的注册、导出和 key 查询；
+- 两阶段 `Prepare()`、CPU channel 创建和幂等复用；
+- 远端 Host MR/flag 导入和严格 GVA equality 校验；
+- Host CPU 主动 Read/Write、batch fallback 和 fence；
+- 失败回滚及 Close 的逆序清理。
+
+它不依赖本地 NPU，也不加载或启动 AICPU kernel。
+
+公共方法范围保持：
+
+| 方法组 | 行为 |
+| --- | --- |
+| `OpenDevice/CloseDevice` | 初始化或释放 Host endpoint、flag、MR、channel 和 import |
+| `RegisterMemoryRegion/UnregisterMemoryRegion` | 管理本地 Host MR 和引用计数 |
+| `QueryHasRegistered/QueryMemoryKey/UpdateMemoryKey` | 查找固定 GVA 区间并导出交换 key |
+| `Prepare/Connect/WaitForConnected` | 两阶段创建 channel、导入 key 并完成同步连接 |
+| `UpdateRankOptions/RemoveRanks` | 幂等更新；P0 拒绝动态 peer/MR 和删除 |
+| `ReadRemote/WriteRemote` | Host CPU 同步单条数据面 |
+| `ReadRemoteAsync/WriteRemoteAsync` | Host CPU 异步提交并标记 pending |
+| `ReadRemoteBatchAsync/WriteRemoteBatchAsync` | 全量预校验后逐条 fallback |
+| `Synchronize` | 每 peer 执行一次 fence |
+
+### 5.2 本地和远端内存
+
+本地注册区分两类：
+
+| 类型 | HCOMM 注册 | 是否可导出 | 地址要求 |
+| --- | --- | --- | --- |
+| 固定 GVA DDR 池 | 直接注册 `mr.addr` | 是 | 完整落在本 rank Host GVA 分配记录 |
+| Host staging MR | 直接注册 HVA | 否 | 只供本地 CPU 数据面 |
+
+相同区间增加引用计数；重叠但不相同的注册失败。`QueryMemoryKey()` 只允许固定 GVA 池区间，导出普通
+MR 和 Host flag，并要求 key 地址、descriptor addr 与注册 GVA 一致。
+
+远端状态保存 endpoint、CPU channel、导入 MR、remote flag 和 pending 状态。Host MR 导入要求：
+
+```text
+key.keys[1] == export descriptor addr == HCOMM import view addr
+```
+
+view size 必须覆盖完整导出区间。失败立即回滚该 import。
+
+关键状态模型：
 
 ```cpp
 struct LocalRegistration {
-    TransportMemoryRegion mr{};       // HCOMM 实际注册的 Host 地址和长度
-    HcommMemHandle handle{nullptr};   // HcommMemReg 返回值
-    UrmaMemTag memTag{0};             // 使用注册地址作为稳定 tag
-    uint64_t exportedGva{0};          // 0 表示仅供本地 I/O，不允许 QueryMemoryKey
+    TransportMemoryRegion mr{};
+    HcommMemHandle handle{nullptr};
+    UrmaMemTag memTag{0};
+    uint64_t exportedGva{0};
     uint32_t refCount{0};
 };
 
 struct RemoteRegistration {
-    uint64_t exportedAddr{0};         // key.keys[1]，生产场景为远端 GVA
+    uint64_t exportedAddr{0};
     uint64_t size{0};
     UrmaMemTag memTag{0};
-    std::vector<uint8_t> descBytes{}; // Close 时执行 HcommMemUnimport
-    UrmaCommMem view{};                // HcommMemImport 返回的可操作视图
+    std::vector<uint8_t> descBytes{};
+    UrmaCommMem view{};
 };
 
 struct RemoteRankState {
-    std::mutex mutex{};                // 串行化同一 peer 的 submit/fence
+    std::mutex mutex{};
     UrmaEndpointDesc endpointDesc{};
-    HcommChannelDesc channelDesc{};
     HcommChannelHandle channel{0};
     std::vector<RemoteRegistration> imports{};
     uint64_t remoteFlagAddr{0};
     uint64_t remoteFlagSize{0};
-    std::vector<uint8_t> remoteFlagDescBytes{};
     bool pending{false};
 };
 ```
 
-manager 级字段包括：`mutex_`、`opened_`、`rankId_`、`rankCount_`、`options_`、公共
-`HcommTransportManager`、本地 endpoint、local registration map、`remoteRanks_`、Host transfer flag 指针和
-handle。`remoteRanks_` 建议保存 `shared_ptr<RemoteRankState>`，数据面取得状态后不必在阻塞 fence 期间持有
-manager 全局锁。
+manager 级 mutex 保护生命周期和 map；同一 peer 的 submit/fence 串行。阻塞 fence 不应长期持有 manager
+全局锁。
 
-### 6.3 关键私有函数
+### 5.3 Prepare、连接和清理
 
-```cpp
-Result ParseHostUrmaNic(const std::string &nic,
-                        CommAddrType &addressType,
-                        std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addressRaw);
+- 第一次 `Prepare()` 只有完整 endpoint 集合，为每个 peer 创建 `COMM_ENGINE_CPU` channel。
+- 第二次 `Prepare()` 携带初始全量 memory key，复用 channel 并导入 MR/flag。
+- 相同 endpoint/key 的重复调用幂等成功；新增 peer、endpoint 变化或初始化后新增导出区间失败。
+- client/server 角色继续按 rank 大小选择，`exchangeAllMems = true`。
+- `Connect/AsyncConnect` 在全部初始 peer 已准备后设置连接状态。
+- `RemoveRanks()` 在 P0 返回不支持。
+- Close 前调用方保证无在途 I/O；manager fence pending peer，再销毁 channel、unimport 远端资源、
+  unreg 本地 MR/flag 并销毁 endpoint。
 
-Result InitLocalHostInfoLocked(const TransportOptions &options);
+### 5.4 Host CPU 数据面
 
-Result BuildLocalHostEndpointDescLocked(const TransportOptions &options,
-                                        UrmaEndpointDesc &endpoint) const;
+- `ReadRemoteAsync/WriteRemoteAsync` 校验本地注册范围和远端导入范围。
+- Host thread 参数传 0，调用 `HcommReadOnThread/HcommWriteOnThread`。
+- 同一 peer 成功提交后设置 pending。
+- CPU HCOMM batch 当前不支持，batch API 在完成全量预校验后按输入顺序逐条提交。
+- `Synchronize(peer)` 对 pending peer 执行一次 `HcommChannelFenceOnThread`；成功后清 pending。
+- 同步 Read/Write 由 Async + Synchronize 组成。
+- 提交中途失败可能已有请求在途，pending 不得被错误清除。
 
-Result InitHostTransferFlagLocked();
+### 5.5 Compose、DataOperator 和无卡映射
 
-Result FindLocalRegistrationLocked(uint64_t addr,
-                                   uint64_t size,
-                                   LocalRegistration *registration) const;
+`HOST_DEVICE_URMA` 的本地角色只解析一次：
 
-Result ResolveExportedGvaLocked(const TransportMemoryRegion &mr,
-                                uint64_t &exportedGva) const;
+- Ascend 950 创建 `DeviceUrmaTransportManager`；
+- `XPU_TYPE=NONE` 或 runtime 明确无 device 时创建 `HostUrmaTransportManager`；
+- 有 device 但非 Ascend 950，或 runtime/SOC 探测失败时返回错误，不静默回退 Host。
 
-Result PreparePeerLocked(uint32_t peerRank,
-                         const TransportRankPrepareInfo &peerInfo,
-                         RemoteRankState &state);
+T1 的 Host 数据操作层复用 `HostDataOpRDMA`；Device role 保持主干既有 DataOperator。这里描述的是 T1
+已有通用数据面，不表示 T2 的 `sparse_copy_urma` 要接入 DataOperator。
 
-Result ImportRemoteMemKeysLocked(uint32_t peerRank,
-                                 const std::vector<TransportMemoryKey> &memKeys,
-                                 RemoteRankState &state);
+无卡 `MapSlice()` 使用固定 `mmap` 结果，记录 HVA=GVA、DVA=0，不调用 `HalHostRegister()`；回滚也不调用
+Host unregister。NPU 路径继续执行当前 HVA→DVA 处理。
 
-Result ValidateImportedGva(uint32_t peerRank,
-                           uint64_t exportedAddr,
-                           uint64_t exportedSize,
-                           const UrmaExportDesc &exportDesc,
-                           const UrmaCommMem &view) const;
+### 5.6 两鲲鹏集成验收
 
-Result ResolveRemoteAddressLocked(const RemoteRankState &state,
-                                  uint64_t remoteAddr,
-                                  uint64_t size,
-                                  uint64_t &hcommAddr) const;
-
-Result RemoteIo(uint32_t rankId,
-                uint64_t localAddr,
-                uint64_t remoteAddr,
-                uint64_t size,
-                bool write,
-                bool synchronize);
-
-Result RemoteIoBatch(uint32_t rankId,
-                     const CopyDescriptor &descriptor,
-                     bool write);
-
-Result FenceRank(RemoteRankState &state, uint32_t rankId);
-```
-
-参数要求：
-
-- `ParseHostUrmaNic()` 复用 `NetValidator::ParseNicUrl()` 解析现有 `tcp://IP:port` 配置；用
-  `inet_pton()` 把 IPv4/IPv6 写入输出，拒绝 wildcard、空 IP 和非 IP 地址。端口仍由现有 HCOMM channel
-  默认值管理，不写入 endpoint private data。
-- `ResolveExportedGvaLocked()` 查询 `HybmVaManager`，只有完整落在本地 rank Host GVA 分配记录内的区间才
-  返回非 0 GVA；普通 torch/staging 指针返回 `exportedGva = 0` 和 `BM_OK`。
-- `ValidateImportedGva()` 同时校验顶层 exported address、`UrmaExportDesc.addr/size/type` 和 import view。
-  对 HOST_DRAM 要求三者起始地址相等、view 长度足够；这项失败必须回滚刚完成的 import。
-- `ResolveRemoteAddressLocked()` 只查找完整覆盖 `[remoteAddr, remoteAddr + size)` 的项。阶段 1 已要求
-  view 与 GVA 相等，因此 `hcommAddr = remoteAddr`，不执行基址换算。
-- `RemoteIoBatch()` 先完成全部 vector 长度、地址溢出、本地范围和远端范围预校验，再提交第一条请求，
-  避免参数错误造成部分写入；HCOMM 提交中途失败仍可能已有部分请求在途，保留 `pending = true`。
-- 所有根错误路径按仓库规范记录 ERROR，至少带 `rankId/peerRank/localAddr/remoteAddr/size/ret` 中适用参数。
-
-### 6.4 选择 manager 和数据操作层
-
-#### `ComposeTransportManager`
-
-为新增协议提供独立的本地角色解析和 manager 创建函数：
-
-```cpp
-Result ResolveHostDeviceUrmaRole(HostDeviceUrmaRole &role);
-TransManagerPtr ComposeTransportManager::CreateHostDeviceUrmaTransportManager() const;
-```
-
-- 初始化时只解析一次本地角色，并让 transport manager 与 data operator 复用该结果，禁止两处各自探测。
-- 运行时明确发现可用的 Ascend 950 device 时，创建
-  `std::make_shared<device::DeviceUrmaTransportManager>()`。
-- 运行时明确没有 device，且当前构建包含 Host HCOMM 能力时，创建
-  `std::make_shared<host::HostUrmaTransportManager>()`。
-- 发现 device 但 SOC 不是 Ascend 950 时返回 `BM_NOT_SUPPORTED`，不能静默退化为 Host role。
-- ACL/runtime 探测失败与“无卡”必须使用不同结果；探测错误直接返回失败，不能误判为 Host role。
-- `XPU_TYPE=NONE` 构建不调用不存在的 ACL 符号，直接解析为 Host role；NPU 构建通过已有 runtime
-  device/SOC 查询接口解析角色。
-- `DEVICE_URMA/DEVICE_UBOE` 的既有分支保持创建 `DeviceUrmaTransportManager`；无 NPU 构建收到这两个协议时
-  返回 `BM_NOT_SUPPORTED` 并记录 protocol/rankId。
-- 把 `HOST_DEVICE_URMA` 加入 `DEVICE_PROTOCOL` 掩码，使它复用 `deviceTransportManager_` 和前 6 段 key；
-  这里的成员名表示现有 Compose 槽位，不表示本端一定存在 Device。
-- `QueryMemoryKey/GetDevicePrepareOptions` 继续使用已有 Device URMA 的前 6 段 key 读写函数。
-
-#### `DataOperatorFactory` 和 `HostComposeDataOp`
-
-新增与协议位同名的工厂方法：
-
-```cpp
-static DataOperatorPtr CreateHostDeviceUrmaDataOperator(
-    uint32_t rankId,
-    const transport::TransManagerPtr &transportManager);
-```
-
-- Device role 返回 `DataOpDeviceURMA`。
-- Host role 使用现有构造函数返回 `HostDataOpRDMA(rankId, transportManager)`；不增加成员字段或构造参数。
-  URMA 的未注册 tensor 经 `Initialize()` 时已注册、且在建 channel 前存在的 swap buffer 搬运。
-- `HostComposeDataOp::Initialize()` 新增 `HOST_DEVICE_URMA` 分支调用该方法，并将返回对象放入
-  `devUrmaDataOperator_`，避免改变已有优先级和路由逻辑。
-- `GetPrioritedDataOperators()` 为该指针增加 `HOST_DEVICE_URMA` 映射；既有 `DEVICE_URMA/DEVICE_UBOE`
-  仍由 Device 工厂创建，避免改变原路径。
-
-### 6.5 无 NPU 的固定 GVA 映射
-
-修改 `HybmConnBasedSegment::MapSlice()`：
-
-- `ASCEND_NPU` 的 Device RDMA/URMA/UBOE/HOST_DEVICE_URMA 路径保留 `HalHostRegister()` 和 DVA 记录。
-- `NO_XPU + HOST_DEVICE_URMA` 直接使用固定 `mmap` 返回地址；写入 VA manager 时 HVA 为 mapped、GVA 为传入
-  gva、DVA 为 0。
-- AddVaInfo 失败时，无 NPU 路径只回收 mmap，不调用 `HalHostUnregisterEx()`。
-- 增加 UT，确认 `AllocMemory()` 返回指定 GVA、HVA 与 GVA 相等、HAL mock 未被调用。
-
-### 6.6 阶段 1 建链与拷贝时序
-
-```mermaid
-sequenceDiagram
-    participant R0 as "鲲鹏 rank 0"
-    participant M0 as "HostUrmaTransportManager 0"
-    participant S as "Config Store"
-    participant M1 as "HostUrmaTransportManager 1"
-    participant R1 as "鲲鹏 rank 1"
-    participant H as "HCOMM Host UB plugin"
-
-    R0->>M0: OpenDevice(nic0), mmap/register DDR0
-    R1->>M1: OpenDevice(nic1), mmap/register DDR1
-    M0->>S: endpoint0 + DDR0 key + flag0
-    M1->>S: endpoint1 + DDR1 key + flag1
-    S-->>M0: endpoint1（第一次 Prepare）
-    S-->>M1: endpoint0（第一次 Prepare）
-    M0->>H: HcommChannelCreate(COMM_ENGINE_CPU, peer1)
-    M1->>H: HcommChannelCreate(COMM_ENGINE_CPU, peer0)
-    S-->>M0: DDR1 key（第二次 Prepare）
-    S-->>M1: DDR0 key（第二次 Prepare）
-    M0->>H: HcommMemImport(DDR1/flag1)
-    M1->>H: HcommMemImport(DDR0/flag0)
-    M0->>M0: 校验 import view == DDR1 GVA
-    M1->>M1: 校验 import view == DDR0 GVA
-    R1->>M1: ReadRemote(rank0, local, DDR0 GVA, len)
-    M1->>H: HcommReadOnThread(0, channel0, ...)
-    M1->>H: HcommChannelFenceOnThread(0, channel0)
-    H-->>R1: 数据可见
-    R0->>M0: ReadRemote(rank1, local, DDR1 GVA, len)
-    M0->>H: HcommReadOnThread(0, channel1, ...)
-    M0->>H: HcommChannelFenceOnThread(0, channel1)
-    H-->>R0: 数据可见
-```
-
-### 6.7 两鲲鹏集成用例
-
-新增：
+保留 T1 example：
 
 ```text
 examples/memory_pool/02_scale_out/03_multi_node_host_urma_dram/
@@ -614,105 +373,88 @@ examples/memory_pool/02_scale_out/03_multi_node_host_urma_dram/
 └── README.md
 ```
 
-命令行接口：
-
-```bash
-python3 03_multi_node_host_urma_dram.py \
-    --rank 0 \
-    --head-ip 192.168.10.10 \
-    --local-urma-ip 192.168.20.10
-```
-
-关键配置：
-
-```python
-cfg.rank_id = args.rank
-cfg.start_store = args.rank == 0
-cfg.set_nic(f"tcp://{args.local_urma_ip}:10005")
-
-# 限制 Host URMA staging MR，避免 NO_XPU 默认 4 GiB 注册影响首轮验证。
-os.environ.setdefault("MF_HYBM_RDMA_SWAP_SPACE_SIZE", "64")
-
-handle = bm.create2(
-    id=0,
-    local_dram_size=ONE_GIB,
-    max_dram_size=ONE_GIB,
-    data_op_type=bm.BmDataOpType.HOST_DEVICE_URMA,
-)
-```
-
-测试使用独立 TCP 控制 socket 做 READY/ACK，只用于消除样例中的 `sleep` 竞态，不承载待验证数据。流程：
-
-1. rank 0 写 pattern A 到本地 GVA，发送 `RANK0_READY`。
-2. rank 1 从 rank 0 GVA 执行 G2H，校验 pattern A。
-3. rank 1 使用 `copy_data_batch(type=G2G)` 把 rank 0 的四个小块从不同 offset 批量读入 rank 1 本地 GVA，
-   再用本地 G2H 校验；该路径必须进入 `ReadRemoteBatchAsync()`，验证逐条 HCOMM fallback 和单 fence。
-4. rank 1 从本地 tensor 向 rank 0 的远端 GVA 执行 H2G，发送 `REMOTE_WRITE_DONE`；rank 0 从本地池读回
-   并校验 pattern C。
-5. rank 1 写 pattern B 到自己的本地 GVA，发送 `RANK1_READY`；rank 0 主动读 rank 1 并校验。
-6. 两端各循环 100 次 4 MiB 读，最后 leave/destroy，确认 Close 无残留或超时。
-
-阶段 1 必测尺寸：1 B、4 KiB、4 MiB；必测地址：区间起点、非零 offset、区间末尾恰好结束；负例包括
-跨 MR 尾部、未知 rank、未注册本地地址和错误 vector 长度。吞吐数据只记录，不作为本阶段通过条件。
-
-构建和运行前置：
+两端配置 `BmDataOpType.HOST_DEVICE_URMA`，设置各自 rank、store 和 Host URMA NIC。无卡构建基线：
 
 ```bash
 bash script/build_and_pack_run.sh \
     --xpu_type NONE \
     --build_hcom ON \
     --build_hcom_rdma OFF
-
-bash script/run_ut.sh --fast UrmaTransportManager
 ```
 
-阶段 1 通过标准：
+覆盖：
 
-- 两端日志均显示 Host endpoint、`COMM_ENGINE_CPU` channel 和 `thread=0` 数据面。
-- 每个池 MR 的 `exportedGva`、export descriptor addr、import view addr 三者相等。
-- 单条 Read、单条 Write、batch fallback、fence 和双向校验全部通过。
-- 初始化失败注入和正常 Close 后，MR、flag、channel、endpoint 均按逆序释放。
+1. 两端 Host endpoint 和 CPU channel 建链。
+2. rank 0/1 双向单条 Read 和 Write。
+3. 四个离散区间的 batch fallback 和单 fence。
+4. 1 B、4 KiB、4 MiB、非零 offset 和 MR 尾部恰好结束。
+5. 跨 MR、未知 rank、未注册本地地址和错误 vector 长度。
+6. 初始化失败回滚、正常 Close 和资源无残留。
 
-## 7. 阶段 2：两张昇腾 950 验证可复用主链路
+### 5.7 T1 完成门禁
 
-### 7.1 阶段定位
+- 两端均显示 Host endpoint、`COMM_ENGINE_CPU` 和 thread=0 数据面。
+- 每个导出池 MR 满足 GVA、descriptor addr 和 import view addr 三者相等。
+- 单条 Read/Write、batch fallback、fence 和双向数据校验通过。
+- 无卡构建和相关 UT 通过。
+- MR、flag、channel 和 endpoint 在失败与 Close 时按逆序释放。
 
-阶段 2 的目标不是构建一条测试旁路，而是在两张 Ascend 950 卡上提前运行阶段 3 将直接复用的主链路：
+T1 当前已经完成。后续 T2 只消费其稳定接口；除非 Host 硬件验收暴露根因或用户明确要求，不在 T2
+重构或覆盖该实现。
 
-```text
-BmDataOpType.HOST_DEVICE_URMA
-  → 运行时解析为 Device role
-  → DeviceUrmaTransportManager
-  → 导入远端 HBM MR 和 transfer flag
-  → BatchCopyRoutePublisher 写固定 HBM 路由
-  → DataOpDeviceURMA 启动 HybmBatchCopy
-  → AICPU 只用四个业务参数查表并读取远端数据
+## 6. T2：route、AICPU 与 acc_offload 重新实现
+
+T2 当前在 `feat/aicpu-urma-design-t3` 上重新实现。旧分支
+`feat/aicpu-urma-design-t2-new` 以及提交 `b2536f20`、`f33f188b` 只作为已验证行为参考，不整体合并。
+实现前比较当前主干，保留 T0/T1 和 acc_offload 已有代码。
+
+旧 T2 的以下内容不再移植：
+
+- `DataOpDeviceURMA::ShouldUseBatchCopyRoute()`、`CopyByBatchCopyRoute()` 和 `BatchCopyByRoute()`；
+- `TransportManager::SupportsBatchCopyRoute()`、`ReadRemoteBatchCopy()` 及 Compose 转发；
+- manager 内 BatchCopy 输入列表分配、kernel launch 和 stream synchronize；
+- probe 环境变量、probe operator 和专用 integration executable。
+
+### 6.1 T2.1：modern control 区与共享 route ABI
+
+#### 6.1.1 control 区
+
+新增或确认以下常量：
+
+```cpp
+constexpr uint64_t HYBM_BATCH_COPY_META_SIZE = HYBM_LARGE_PAGE_SIZE;
+constexpr uint64_t HYBM_BATCH_COPY_META_ADDR =
+    HYBM_DEVICE_META_ADDR - HYBM_BATCH_COPY_META_SIZE;
+constexpr uint64_t HYBM_DEVICE_CONTROL_ADDR = HYBM_BATCH_COPY_META_ADDR;
+constexpr uint64_t HYBM_DEVICE_CONTROL_SIZE =
+    HYBM_BATCH_COPY_META_SIZE + HYBM_DEVICE_INFO_SIZE;
 ```
 
-两卡场景与阶段 3 的差别只在路由源内存类型：阶段 2 是 Device endpoint 的 `DEVICE_HBM`，阶段 3 是
-Host endpoint 的 `HOST_DRAM`。manager 生命周期、路由发布事务、AICPU ABI、查表、分组、flag completion
-和 Python 调用路径必须完全相同。
+实现要求：
 
-已提交的 `d145af62` 保存了原 probe 方案，作为历史验证基线。重构完成后应删除
-`MF_HYBM_BATCH_COPY_ROUTE_PROBE`、`MF_HYBM_AICPU_KERNEL_JSON`、`LaunchBatchCopyRouteProbeForTest()`、
-`HybmBatchCopyProbe` 及专用 integration executable；不得让它们成为正式 T2 门禁。
+- modern 初始化从 `HYBM_DEVICE_CONTROL_ADDR` 映射 34 MiB。
+- modern 失败回滚和 uninit 使用相同 34 MiB 边界。
+- legacy 初始化、失败回滚和 uninit 继续使用 `HYBM_DEVICE_META_ADDR` 和 32 MiB。
+- legacy 请求 `sparse_copy_urma` 能力时明确返回不支持，不能访问未映射 route。
+- 现有 entity meta 和 extra context 地址、大小、语义不变。
 
-### 7.2 `HOST_DEVICE_URMA` 的运行时角色选择
+#### 6.1.2 route ABI
 
-`ComposeTransportManager` 在收到 `HOST_DEVICE_URMA` 时解析本地角色：
+固定容量：
 
-1. NPU 构建且 runtime 明确发现 Ascend 950 device：创建 `DeviceUrmaTransportManager`。
-2. 无卡构建或 runtime 明确报告无 device：创建 `HostUrmaTransportManager`。
-3. 发现 device 但 SOC 不是 Ascend 950：返回 `BM_NOT_SUPPORTED`。
-4. runtime/SOC 查询失败：返回原始错误，不得当作“无卡”并回退 Host manager。
+| 项目 | 值 |
+| --- | ---: |
+| 最大 peer | 64 |
+| 每 peer 最大 range | 16 |
+| 最大 range 总数 | 1024 |
+| route header | 64 B |
+| peer entry | 32 B |
+| range entry | 32 B |
+| route table | `0x8840` B |
+| completion area | `0x0200` B |
+| control 实际使用 | `0x8A40` B |
 
-角色解析结果由 transport manager 和 data operator 共用。两张卡上的 Python 配置均为
-`BmDataOpType.HOST_DEVICE_URMA`，不能用 `DEVICE_URMA` 替代，否则未验证异构场景使用的新协议选择链路。
-
-### 7.3 可同时表达 GVA 与 HCOMM view 的路由 ABI
-
-阶段 2 通过公共 Python API 获得的是远端 HBM MemFabric GVA，HCOMM 数据面需要的是 import view。
-`BatchCopyRangeEntry` 使用已有 padding 增加 `hcommVaBegin`，结构大小仍为 32 B：
+`BatchCopyRangeEntry` 同时表达 GVA 和 HCOMM view：
 
 ```cpp
 struct alignas(32) BatchCopyRangeEntry {
@@ -723,416 +465,553 @@ struct alignas(32) BatchCopyRangeEntry {
 };
 ```
 
-`BatchCopySourceRange` 对应改为：
+Host 与 AICPU 编译均执行 `sizeof/offsetof`、offset 和容量 `static_assert`。
+
+#### 6.1.3 测试门禁
+
+- modern 34 MiB 初始化、失败回滚和 uninit。
+- legacy 32 MiB 边界保持不变。
+- route/peer/range/completion 的固定 offset 和容量。
+- 区间非空、溢出、跨 peer 重叠和容量超限。
+- 本阶段不增加 operator 或 probe。
+
+### 6.2 T2.2：BatchCopyRoutePublisher
+
+#### 6.2.1 职责边界
+
+`BatchCopyRoutePublisher` 只负责：
+
+- 校验 `BatchCopyRouteSource`；
+- 按 `userDeviceId` 获取单 owner；
+- 清 route magic；
+- 清零并注册固定 completion 区；
+- 构建 magic=0 的完整 image；
+- H2D 写入 image；
+- 最后单独写 magic；
+- Close/失败时清 magic、注销 completion 并释放 owner。
+
+publisher 不负责：
+
+- 创建 channel/thread；
+- 导入远端 MR 或 flag；
+- 判断 Host/Device route mode；
+- 启动 AICPU；
+- 发布后的 route 刷新。
+
+#### 6.2.2 关键行为
+
+- 第一次成功 Publish 后设置 published 状态。
+- 同一 publisher 再次 Publish 直接返回 `BM_OK`，不比较或覆盖新 sources。
+- 同一卡第二个 owner 申请失败，错误只表示 route owner 冲突，不用于算子并发防护。
+- 任一步失败后 magic 必须为 0，已创建资源按逆序回滚。
+- route table 发布后只读，completion area 是运行期工作区。
+
+#### 6.2.3 测试门禁
+
+- image 字段、排序、range 容量和 peer 索引。
+- magic-last，写 image 失败时 magic 为 0。
+- completion 清零、注册、注销和失败回滚。
+- 单 owner 冲突和 Close 后 owner 可重新获取。
+- 重复 Publish 返回 `BM_OK` 且不刷新 route。
+
+### 6.3 T2.3：统一 route source builder 与发布触发
+
+#### 6.3.1 builder 输入和模式
+
+`DeviceUrmaTransportManager` 从完整 `HybmTransPrepareOptions` 和已导入的 remote state 构建 sources。
+一次 route 只能是一种 endpoint location：
+
+| 模式 | endpoint | MR 类型 | 地址约束 |
+| --- | --- | --- | --- |
+| Device-HBM 验证 | `ENDPOINT_LOC_TYPE_DEVICE` | `DEVICE_HBM` | `srcGvaBegin` 为导出 GVA，`hcommVaBegin` 为 import view |
+| Host-DDR 生产 | `ENDPOINT_LOC_TYPE_HOST` | `HOST_DRAM` | `key.keys[1] == exportDesc.addr == view.addr` |
+
+共同校验：
+
+- 每个 peer 已有非零 thread、channel 和 remote flag address。
+- transfer flag 长度为 8 B，类型继续使用当前 HCOMM 返回 type 校验。
+- 每个 peer 有 1～16 个合法 range。
+- route 总 peer/range 不超过 64/1024。
+- GVA 区间全局排序后不重叠。
+- GVA 与 HCOMM view 的长度和 offset 计算不溢出。
+- 不允许 Host/Device peer 混合发布。
+
+Host equality 是硬门禁。`hcommVaBegin` 不能用来掩盖 Host import 地址不相等。
+
+#### 6.3.2 发布触发
+
+统一入口：
 
 ```cpp
-struct BatchCopySourceRange {
-    uint64_t srcGvaBegin{0};
-    uint64_t srcGvaEnd{0};
-    uint64_t hcommVaBegin{0};
-};
+Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked(
+    const HybmTransPrepareOptions &options);
 ```
 
-发布端校验两个地址域都不溢出，且 `[srcGvaBegin, srcGvaEnd)` 非空。AICPU 根据源 GVA 命中区间后计算：
+临时触发规则：
+
+- `Prepare(options)` 末尾尝试发布；
+- `UpdateRankOptions(options)` 末尾尝试发布；
+- publisher 已成功时重复调用只返回 `BM_OK`。
+
+T2 不修复 `connected_`。未来修复后删除 `Prepare()` 末尾调用。
+
+发布后：
+
+- 新增 route MR 请求返回 `BM_NOT_SUPPORTED`；
+- `RemoveRanks()` 返回 `BM_NOT_SUPPORTED`；
+- 不刷新、合并或局部修补 route；
+- 普通未发布 BatchCopy route 的 Device URMA 行为保持不变。
+
+#### 6.3.3 测试门禁
+
+- Device-HBM GVA 与 import view 相同和不同两种情况。
+- Host 三地址完全相等成功，任一不相等失败。
+- Host/Device 混合 peer 拒绝。
+- flag type/size/address、thread/channel 缺失。
+- 两个发布入口幂等，成功后 route 内容不变化。
+- 发布后新增 MR 和 RemoveRanks 拒绝。
+- 当前 HCOMM `outMem.type/flagOutMem.type` 校验保持不变。
+
+### 6.4 T2.4：生产 HybmBatchCopy AICPU
+
+#### 6.4.1 文件归属
+
+新建：
 
 ```text
-offset = srcGva - srcGvaBegin
-hcommSrc = hcommVaBegin + offset
+src/acc_offload/csrc/operators/aicpu/
+├── hybm_batch_copy.h
+└── hybm_batch_copy.cc
 ```
 
-- 阶段 2：`srcGvaBegin` 来自 memory key 的远端 GVA，`hcommVaBegin` 来自
-  `HcommMemImport()` 的 view。
-- 阶段 3：仍强制 `srcGvaBegin == hcommVaBegin`；该字段不能作为 Host import equality 失败时的兼容路径。
+`hybm_batch_transfer.{h,cc}` 和共享 route ABI 仍由 HYBM 提供。不得在 HYBM 与 acc_offload 下保留两份
+`hybm_batch_copy.cc`。
 
-Header 64 B、PeerEntry 32 B、RangeEntry 32 B、route/completion offsets 和 34 MiB 控制区布局均不变化；
-Host 和 AICPU 编译继续执行 `sizeof/offsetof` 静态断言。
+#### 6.4.2 执行步骤
 
-### 7.4 路由源生成与发布触发
+1. 校验四字段 ABI、三个列表指针、`list_num != 0` 和临时空间乘法溢出。
+2. 从固定地址读取 route header，校验 magic、peer/range 数量和固定布局。
+3. `ValidatePublishedRoute()` 必打印 ERROR 日志：
+   - header magic、peerCount、rangeCount；
+   - 每个有效 peer 的 index、thread、channel、remoteFlagAddr；
+   - 每个有效 range 的 index、GVA begin/end、HCOMM begin、peerIndex。
+4. 全 batch 预校验后才提交第一条 HCOMM：
+   - 0 长度条目跳过；
+   - 检查源/目的地址加法溢出；
+   - 顺序查找完整覆盖源区间的 range；
+   - 校验 peer index 和句柄；
+   - 计算 `hcommSrc = hcommVaBegin + (srcGva - srcGvaBegin)`；
+   - 目的地址不得与 `[HYBM_BATCH_COPY_META_ADDR, SVM_END_ADDR)` 重叠。
+5. 按 peer 分组，组内保持输入顺序。
+6. 每 peer 清 completion cell，构造内部 `HybmOneSideOpParam`。
+7. 复用 `HybmBatchRead()`，每 1000 条分片，batch 不支持时使用既有逐条 fallback。
+8. 每 peer fence 并读取 remote flag，最后汇聚全部 completion，超时返回 `BM_TIMEOUT`。
 
-`DeviceUrmaTransportManager` 保存本次 Open 的协议，并仅在协议包含 `HOST_DEVICE_URMA` 时启动 Batch_Copy
-路由流程。`DEVICE_URMA/DEVICE_UBOE` 保持原行为，不占用固定 route owner。
-
-第二次 `Prepare()` 导入完整 memory key 后，调用统一入口：
+目的地址校验不得要求：
 
 ```cpp
-Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked();
-Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(
-    std::vector<BatchCopyRouteSource> &sources) const;
+destination >= HYBM_DEVICE_VA_START
 ```
 
-源生成按远端 endpoint 类型选择严格策略：
+该判断会误拒绝 example 中由框架分配的真实 HBM 地址。
 
-- Device peer：只接收 `DEVICE_HBM`，使用 exported GVA 作为查表区间，import view 作为 HCOMM 基址。
-- Host peer：只接收 `HOST_DRAM`，并强制 exported GVA、descriptor addr 和 import view addr 相等。
-- 两类 peer 都必须已有非零 `thread/channel/remoteFlagAddr`、8 B flag 和 1～16 个合法 range。
-- P0 的一次 route 只允许一种 endpoint location，禁止 Host/Device peer 混合发布。
+#### 6.4.3 并发和 cache
 
-所有 peer 完整后调用现有 `BatchCopyRoutePublisher::Publish()`。发布事务保持：校验输入 → 获取每卡 owner →
-清 magic → 清 completion → 注册 completion MR → 构建 image → 以 magic=0 写 image → 最后单独写 magic。
-`CloseDevice()` 先清 magic 和注销 completion，再释放 channel/thread/MR。
+- 不增加算子 guard 或 `BM_BUSY` 并发返回。
+- 调用方保证同一 NPU 只有一个在途 `sparse_copy_urma`。
+- AArch64 使用参考 zbal 的 cache invalidate/flush 和 device memory barrier。
+- 非 AArch64 构建不执行这些 AArch64 指令，也不加入无验证的替代实现。
 
-### 7.5 Flag 与四参数 AICPU ABI
+#### 6.4.4 测试门禁
 
-Flag 没有遗漏，也不应成为算子参数：
+- ABI `sizeof/offsetof`。
+- 空指针、0 list、长度和地址溢出。
+- 顺序查找首项、中间项、末项、未命中和跨 range。
+- 真实目的 HBM 地址低于 `HYBM_DEVICE_VA_START` 时不因固定窗口下界失败。
+- 目的地址与 control 区重叠时拒绝。
+- peer 分组、输入顺序、999/1000/1001 条分片。
+- 全零长度 batch。
+- completion 成功、提交失败、fence 失败和超时。
+- 不创建只供 T2 使用的 operator probe。
 
-- `BatchCopyPeerEntry.remoteFlagAddr` 保存该 peer 的远端 8 B transfer flag import 地址。
-- 本地完成地址固定为
-  `HYBM_BATCH_COPY_META_ADDR + BATCH_COPY_COMPLETION_OFFSET + peerIndex * sizeof(uint64_t)`。
-- `flag_size` 固定为 `sizeof(uint64_t)`，发布前校验，不占用 route 字段。
+### 6.5 T2.5：acc_offload API 与 launcher
 
-最终 AICPU ABI 只包含以下四项，字段名称和顺序固定：
+#### 6.5.1 公共接口
+
+在 `src/acc_offload/include/host/acc_offload.h` 新增：
 
 ```cpp
-struct HybmBatchCopyParam {
-    uint32_t list_num;
-    void **dst_buf_addr_list;
-    void **src_buf_addr_list;
-    uint64_t *len_list;
-};
-
-static_assert(offsetof(HybmBatchCopyParam, list_num) == 0x00);
-static_assert(offsetof(HybmBatchCopyParam, dst_buf_addr_list) == 0x08);
-static_assert(offsetof(HybmBatchCopyParam, src_buf_addr_list) == 0x10);
-static_assert(offsetof(HybmBatchCopyParam, len_list) == 0x18);
-static_assert(sizeof(HybmBatchCopyParam) == 0x20);
-
-extern "C" uint32_t HybmBatchCopy(HybmBatchCopyParam *param);
+int32_t offload_sparse_copy_urma(uint64_t srcPtrs,
+                                 uint64_t dstPtrs,
+                                 uint64_t lenPtrs,
+                                 uint32_t listNum,
+                                 uint16_t deviceId);
 ```
 
-`thread/channel/remote_flag_addr/local_flag_addr/flag_size` 全部由算子从固定路由和 completion 区推导，
-Host launcher 不得传入这些字段。`HybmBatchCopy` 注册到正常
-`libcann_hybm_kernel.json`，由正常 AICPU run 包和 NPU wheel 交付。
+外部参数顺序与现有 acc_offload `sparse_copy` 一致，为 `src, dst, len`；内部构造 AICPU 参数时使用
+`list_num, dst, src, len` 固定顺序。`listNum` 是 Host scalar，不是 device scalar 指针。
 
-### 7.6 AICPU 算子伪代码
-
-```cpp
-uint32_t HybmBatchCopy(HybmBatchCopyParam *param)
-{
-    RETURN_IF_ERROR(ValidateFourInputs(param));
-    RETURN_IF_ERROR(AcquirePerDeviceExecutionGuard());
-
-    BatchCopyRouteTable *route =
-        reinterpret_cast<BatchCopyRouteTable *>(HYBM_BATCH_COPY_META_ADDR);
-    RETURN_IF_ERROR(ValidatePublishedRoute(route));
-
-    Group groups[BATCH_COPY_MAX_PEER_COUNT]{};
-    for (uint32_t i = 0; i < param->list_num; ++i) {
-        if (param->len_list[i] == 0) {
-            continue;
-        }
-        RETURN_IF_ERROR(ValidateDestinationHbm(param->dst_buf_addr_list[i], param->len_list[i]));
-        const BatchCopyRangeEntry *range =
-            FindCoveringRange(route, param->src_buf_addr_list[i], param->len_list[i]);
-        RETURN_IF_NULL(range, BM_NOT_CONNECTED);
-
-        uint64_t offset =
-            reinterpret_cast<uint64_t>(param->src_buf_addr_list[i]) - range->srcGvaBegin;
-        void *hcommSrc = reinterpret_cast<void *>(range->hcommVaBegin + offset);
-        groups[range->peerIndex].Append(
-            param->dst_buf_addr_list[i], hcommSrc, param->len_list[i]);
-    }
-
-    for (uint16_t peerIndex = 0; peerIndex < route->header.peerCount; ++peerIndex) {
-        if (groups[peerIndex].empty()) {
-            continue;
-        }
-        const BatchCopyPeerEntry &peer = route->peers[peerIndex];
-        uint64_t *localFlag = GetCompletionCell(peerIndex);
-        *localFlag = 0;
-        HybmOneSideOpParam oneSide = BuildReadParam(
-            groups[peerIndex], peer.thread, peer.channel,
-            peer.remoteFlagAddr, localFlag, sizeof(uint64_t));
-        RETURN_IF_ERROR(HybmBatchRead(&oneSide));
-    }
-    return WaitAllUsedCompletionCellsAndReleaseGuard();
-}
-```
-
-实际实现必须保证所有输入、路由命中、地址溢出和目的 HBM 范围都在第一条 HCOMM 请求前完成预校验；
-伪代码中的早退在正式代码中通过 RAII guard 释放单实例锁，并在根错误处记录关键参数。
-
-### 7.7 两卡 Python 用例
-
-新增与 `01_single_node_multi_device_dram.py` 同风格的两进程、两卡用例，例如：
-
-```text
-examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/
-└── 04_single_node_multi_device_batch_copy.py
-```
-
-用例复用 `mf.initialize()`、`bm.initialize()`、`multiprocessing.spawn`、barrier、`create2()`、
-`peer_rank_ptr()` 和现有 copy API；唯一协议差异是：
+Python 接口：
 
 ```python
-handle = bm.create2(
-    id=0,
-    local_dram_size=0,
-    max_dram_size=0,
-    local_hbm_size=ONE_GIB,
-    max_hbm_size=ONE_GIB,
-    data_op_type=bm.BmDataOpType.HOST_DEVICE_URMA,
+mf_acc_offload.sparse_copy_urma(
+    src_ptrs,
+    dst_ptrs,
+    len_ptrs,
+    list_num,
+    device,
 )
 ```
 
-该用例参考 `01_single_node_multi_device_dram.py` 的进程、barrier 和双向 pattern 校验结构，但内存类型改为
-`BmMemType.DEVICE`，确保 route source 是远端 HBM，目的地址是本地 HBM。
+三个 tensor 均位于 NPU：
 
-`DataOpDeviceURMA` 在该协议的远端读取/batch 读取分支启动 `HybmBatchCopy`，launcher 只封送四个字段。
-测试不得直接实例化 manager、交换 private data、传入 peer/range index，或调用测试专用 launch API。
+- `src_ptrs`：`torch.int64`，元素是远端 MemFabric GVA；
+- `dst_ptrs`：`torch.int64`，元素是本地 tensor 的真实 `data_ptr()`；
+- `len_ptrs`：`torch.int64`，按 `uint64_t` 字节数解释。
 
-执行矩阵：
+#### 6.5.2 launcher
 
-1. rank 0 向本地 HBM 写 pattern，rank 1 使用远端 HBM GVA 作为 `src_buf_addr_list`，读入本地 HBM。
-2. rank 1 通过 G2H 校验；随后反向执行 rank 1 → rank 0。
-3. 覆盖单条、batch、非零 offset、区间末尾、999/1000/1001 条和双向数据。
-4. 负例覆盖未知 GVA、跨 range、目的控制区、route magic 为 0、非法 list 和 completion 超时。
-5. 日志确认两端均选择 Device role、路由由第二次 `Prepare()` 自动发布，AICPU 从 route 取得
-   peer/thread/channel/flag，Close 后 magic 清零。
+修改：
 
-阶段 2 通过标准：
+- `acc_offload.cpp`：直接调用 `AccOffloadLaunchApi`，不经过 `AccOffloadEntryManager`。
+- `pymf_acc_offload.cpp`：增加 pybind 定义。
+- `mf_acc_offload.py`：把 tensor `data_ptr()`、`list_num` 和 `device.index` 传给 C API。
+- `acc_offload_launch.{h,cpp}`：加载可选 `AccOffloadSparseCopyUrma` 符号。
+- `acc_offload_operators_launch.cpp`：使用 `NPUGuard` 绑定 device，取得当前 NPU stream，按 device
+  缓存 AICPU binary/function handle，启动并同步 `HybmBatchCopy`。
 
-- 两端均以 `HOST_DEVICE_URMA` 走 `DeviceUrmaTransportManager`，不依赖测试环境变量。
-- HBM route image 包含真实 exported GVA、import view、channel/thread 和 remote flag。
-- 正常安装的 `HybmBatchCopy` 只凭四个输入完成两卡卡间读取和 completion。
-- `magic-last`、owner、失败回滚、Close 清理和 34 MiB 映射边界正确。
-- 生产构建、run 包和 wheel 使用同一 operator/route ABI；测试目录不提供平行实现。
+接口不要求 `offload.initialize()`。它只按需加载 launcher；HYBM entity 必须已经由业务完成初始化和
+建链，并在调用结束前保持存活。
 
-## 8. 阶段 3：鲲鹏到昇腾完整流程
+#### 6.5.3 错误和生命周期
 
-### 8.1 生产路由源生成
+- lazy-load、符号、device、stream、kernel handle 和公共指针错误在提交前返回。
+- kernel launch 和 stream synchronize 失败记录 device、stream、kernel 和返回码。
+- `BM_OK` 表示同步完成，目的 HBM 数据可见。
+- HCOMM 已提交后的失败可能部分写入，调用方丢弃整个 batch 输出。
+- launcher cache 按进程生命周期持有，不持有 route/channel/thread/MR。
+- 清理前调用方保证没有在途调用。
 
-鲲鹏和昇腾两端均配置 `HOST_DEVICE_URMA`，使 tag 协商结果一致；鲲鹏本地选择
-`HostUrmaTransportManager`，昇腾本地选择 `DeviceUrmaTransportManager`。不能让两端分别配置
-`HOST_DEVICE_URMA` 和 `DEVICE_URMA`，否则 rank-to-rank DataOpType 没有共同协议位。
+#### 6.5.4 测试门禁
 
-阶段 3 复用阶段 2 已实现的统一入口：
+- C API 空指针、0 list、非法 device 和 loader 未安装。
+- pybind 参数顺序与 Python wrapper 的 tensor 地址转换。
+- 不调用 `offload.initialize()` 时可独立进入 lazy launcher。
+- 现有 `sparse_copy`、`group_pack_copy` 行为不变。
+- 当前 stream 提交和同步错误透传。
 
-```cpp
-Result ValidateImportedHostGvaLocked(uint32_t peerRank,
-                                     uint64_t exportedGva,
-                                     uint64_t exportedSize,
-                                     const UrmaExportDesc &exportDesc,
-                                     const UrmaCommMem &view) const;
+### 6.6 T2.6：正常 CMake、run 包和 wheel
 
-Result BuildBatchCopyRouteSourcesLocked(
-    std::vector<BatchCopyRouteSource> &sources) const;
+#### 6.6.1 AICPU 产物
 
-Result TryPublishBatchCopyRouteLocked();
+移动后的 `hybm_batch_copy.cc` 继续编入现有：
+
+- `libcann_hybm_kernel.so`；
+- `libcann_hybm_kernel.json`；
+- `cann-hybm-compat.tar.gz`。
+
+不新增第二个 AICPU so、JSON、run 包或安装目录。
+
+#### 6.6.2 构建和收集规则
+
+需要检查并修改：
+
+| 文件 | 任务 |
+| --- | --- |
+| `src/hybm/ops/hybm_kernel/CMakeLists.txt` | 从 acc_offload 新目录编译唯一 `hybm_batch_copy.cc` |
+| `src/hybm/ops/hybm_kernel/libcann_hybm_kernel.json` | 注册内部符号 `HybmBatchCopy` |
+| `src/smem/python/memfabric_hybrid/setup.py` | 将新 AICPU 源和共享 route ABI 加入 wheel 制备白名单 |
+| `script/run_pkg_maker/make_run.sh` | 修正 `operators/*` 非递归收集，显式包含 `operators/aicpu/` |
+| `script/run_pkg_maker/install.sh` | 安装/编译阶段使用同一份新 AICPU 源 |
+| `src/acc_offload/csrc/CMakeLists.txt` | host 库包含新增 API/loader，但继续排除 AICPU 源的 host 编译 |
+| pybind CMake/Bazel 文件 | 新公共符号和 wrapper 能进入 Python 扩展 |
+
+#### 6.6.3 交付门禁
+
+- 默认 CMake 构建可找到移动后的唯一源码。
+- `libcann_hybm_kernel.json` 中只有一个 `HybmBatchCopy` 注册。
+- run 包解包后包含构建所需源码和共享 ABI 头。
+- wheel 首次 import 能制备并安装同一 kernel。
+- acc_offload 公共头、共享库和 Python wrapper 都包含 `sparse_copy_urma`。
+- 不把测试 probe 或测试源码打入产物。
+
+### 6.7 T2.7：两个 Python example
+
+#### 6.7.1 文件布局
+
+```text
+examples/kv_offload/sparse_copy_urma/
+├── 01_single_node_multi_device_urma.py
+├── 02_host_device_urma.py
+└── README.md
 ```
 
-生产筛选条件：
+两个 example 共用同一 `sparse_copy_urma` C++/AICPU 实现，不通过不同代码开关区分 T2/T3。
 
-- peer endpoint location 必须为 Host。
-- 普通 MR 的 `memoryType` 必须为 `HOST_DRAM`。
-- `key.keys[1] == exportDesc.addr == view.addr`，且 view size 覆盖完整导出区间；发布时
-  `hcommVaBegin = srcGvaBegin`。
-- transfer flag 类型必须为 `HOST_DRAM`、长度至少 8 B、import 地址非 0。
-- 每个 peer 1～16 个非空区间；所有 peer 的 GVA 区间全局排序后不得重叠。
+#### 6.7.2 两卡 Device-HBM example
 
-`TryPublishBatchCopyRouteLocked()` 只在第二次 Prepare 已导入全部固定 MR 后调用。统一 route source
-builder 根据 endpoint location 进入 Host 严格分支，再交给阶段 2 已验证的
-`BatchCopyRoutePublisher::Publish()`，不复制写 HBM 逻辑。
+`01_single_node_multi_device_urma.py` 参考
+`examples/memory_pool/02_scale_out/01_single_node_multi_device_dram/01_single_node_multi_device_dram.py` 的
+进程、barrier、建链和双向 pattern 校验结构。
 
-### 8.2 复用阶段 2 的 `HybmBatchCopy`
+流程：
 
-阶段 3 不新增或修改算子 ABI，继续使用阶段 2 已进入正常包的四参数结构：
+1. 两个进程分别绑定一张 Ascend 950。
+2. 使用现有 MemFabric API 创建 entity、交换 peer 和建立 Device URMA channel。
+3. 在源卡 HBM 写 pattern，并取得远端 MemFabric GVA。
+4. 在目的卡通过框架分配输出 tensor，取得真实 `data_ptr()`。
+5. 在目的卡构造 NPU 上的 src/dst/len 地址 tensor。
+6. 直接调用 `mf_acc_offload.sparse_copy_urma`。
+7. 校验数据，随后反向执行。
 
-```cpp
-struct HybmBatchCopyParam {
-    uint32_t list_num;
-    void **dst_buf_addr_list;
-    void **src_buf_addr_list;
-    uint64_t *len_list;
-};
+被测数据传输不得调用 `copy_data/copy_data_batch`。这些 API 只可用于与被测传输无关的现有初始化辅助，
+且不能触发 BatchCopy route launcher。
 
-extern "C" uint32_t HybmBatchCopy(HybmBatchCopyParam *param);
-```
+覆盖：
 
-阶段 3 的变化仅是 route entry 的来源从 Device HBM 切换为 Host DDR。算子仍执行：一次性校验全部输入 →
-读取固定 route → 按源 GVA 查找 → 用 `hcommVaBegin` 计算 HCOMM 地址 → 按 peer 分组 → 每 peer 复用
-`HybmBatchRead()` → 汇聚 completion。Host route 中两个基址相等，因此地址计算退化为直接使用 GVA。
+- 单条、多条、非零 offset、range 尾部恰好结束；
+- 999、1000、1001 条；
+- Device GVA 与 import view 不同；
+- 真实目的 HBM 地址不在 MemFabric SVM 业务窗口；
+- 未知 GVA、跨 range、magic=0、completion 超时。
 
-### 8.3 完整建链与发布时序
+#### 6.7.3 Host-DDR→NPU example
 
-```mermaid
-sequenceDiagram
-    participant C as "鲲鹏应用"
-    participant HM as "HostUrmaTransportManager"
-    participant S as "Config Store"
-    participant DM as "DeviceUrmaTransportManager"
-    participant RP as "BatchCopyRoutePublisher"
-    participant A as "HybmBatchCopy AICPU"
-    participant D as "昇腾 HBM"
+`02_host_device_urma.py` 参考 `examples/kv_offload` 的参数组织和 acc_offload 调用风格。
 
-    C->>HM: Open Host endpoint + register fixed DDR GVA/flag
-    HM->>S: Host endpoint private data v2
-    DM->>S: Device endpoint private data v2
-    S-->>HM: Device endpoint（第一次 Prepare）
-    S-->>DM: Host endpoint（第一次 Prepare）
-    HM->>HM: 创建 COMM_ENGINE_CPU channel
-    DM->>DM: 创建 AICPU thread/channel
-    HM->>S: DDR keys + Host flag
-    S-->>DM: 全量 DDR keys（第二次 Prepare）
-    DM->>DM: HcommMemImport(DDR/flag)
-    DM->>DM: ValidateImportedHostGvaLocked()
-    DM->>DM: BuildBatchCopyRouteSourcesLocked() / Host branch
-    DM->>RP: Publish(sources)
-    RP->>D: clear magic/completion
-    RP->>D: write route image with magic=0
-    RP->>D: publish magic last
-    C->>A: list_num, dst list, src DDR GVA list, len list
-    A->>D: read fixed route and group by peer
-    A->>A: HybmBatchRead per peer
-    A-->>C: all peer completion -> BM_OK
-```
+流程：
 
-### 8.4 硬件验收顺序
+1. 鲲鹏进程以固定 GVA 分配并注册 Host DDR，写入 pattern。
+2. 昇腾进程完成 `HOST_DEVICE_URMA` 建链和 Host MR/flag 导入。
+3. 日志确认 `key.keys[1] == exportDesc.addr == view.addr`。
+4. 昇腾侧通过框架分配目的 HBM tensor，取得真实地址。
+5. 构造 NPU src/dst/len tensor，直接调用 `sparse_copy_urma`。
+6. 校验单条、batch、边界、分片和 completion。
+7. entity 保持到调用完成，最后先销毁 route owner 所属 entity。
 
-1. **1 CPU × 1 NPU，1 MR，单条 4 KiB。** 先确认 endpoint、GVA equality、route image 和一次拷贝。
-2. **1 CPU × 1 NPU，多 MR/多条 batch。** 覆盖边界、1000/1001 条分片和单条 fallback。
-3. **2 CPU × 1 NPU。** 验证二分查找、按 peer 分组和 completion 汇聚。
-4. **多 NPU。** 每张卡独立 owner、独立 route 和并行初始化。
-5. **目标拓扑。** 最多 16 NPU、16 CPU rank；64 peer/1024 range 只做规格边界测试，不要求首轮全部使用。
+首轮验收顺序：
 
-## 9. 文件级修改清单
+1. 1 CPU × 1 NPU、1 MR、单条 4 KiB。
+2. 1 CPU × 1 NPU、多 MR 和 1000/1001 条。
+3. 多 Host peer 分组和 completion 汇聚。
+4. 多 NPU 各自独立 route owner。
+5. 目标拓扑只在前述门禁稳定后执行。
 
-| 文件或目录 | 修改内容 | 原因 |
+#### 6.7.4 example 通过标准
+
+- 建链和 route 发布由真实 manager 完成，无环境变量 probe。
+- 数据拷贝入口只有 `sparse_copy_urma`。
+- 两卡场景验证 GVA→import view 受检转换。
+- Host 场景验证三地址严格相等。
+- 目的 tensor 使用真实框架 HBM 地址。
+- Close 后 magic 清零，通信资源无残留。
+- 日志记录 commit、CANN 版本、设备/NIC、route 内容和数据校验结果。
+
+## 7. T3：只保留 Host 硬件验收
+
+T3 不再建立独立编码任务。`02_host_device_urma.py` 是 T3 的验收入口，但 T3 不是“只增加一个 Python
+文件”：Host route builder、equality 门禁、operator 和 acc_offload API 必须已经在 T2 生产代码中完成。
+
+T3 发现问题时按以下规则处理：
+
+- Host equality 失败：修复 Host 注册/import 的根因，不使用 `hcommVaBegin` 掩盖。
+- route 构建错误：修复 T2 统一 builder，不复制 Host 专用 publisher。
+- operator 错误：修复唯一 `HybmBatchCopy`，不创建 Host 变体。
+- launcher/打包错误：修复 acc_offload 正常交付链，不在 example 中直接调用私有 ACL API。
+- HCOMM type 硬件行为与当前假设冲突：记录证据并单独评审 T0.2，不在 T3 临时跳过校验。
+
+## 8. 文件级修改清单
+
+| 文件或目录 | 计划修改 | 明确不做 |
 | --- | --- | --- |
-| `src/smem/include/host/smem_bm_def.h` | 追加 `SMEMB_DATA_OP_HOST_DEVICE_URMA = 1U << 8`，不改既有值 | 向 C/Python API 暴露独立 HCOMM Host↔Device 协议 |
-| `src/hybm/include/hybm_def.h` | 追加 `HYBM_DOP_TYPE_HOST_DEVICE_URMA = 1U << 10`，不改既有值 | 为内部协商、transport 和 data operator 路由提供稳定 bit |
-| `src/smem/csrc/smem_bm/smem_hybm_helper.h`、`smem_bm.cpp` | 增加新枚举转换、合法值/冲突掩码；无 NPU backend 的拒绝掩码允许新 bit | 保证公共 API 到 HYBM 的值完整传递，并在入口拒绝冲突组合而不是拒绝合法 Host HCOMM |
-| `src/smem/csrc/smem_trans/smem_trans_entry.cpp`、两个 Python wrapper | 增加新枚举映射和 `BmDataOpType.HOST_DEVICE_URMA`；新类型不能落入现有 Device-only 编译检查 | BM 与 TRANS 入口对同一公共枚举保持一致 |
-| `src/hybm/csrc/entity/hybm_entity_tag_info.cpp`、`hybm_entity_default.cpp` | 增加新协议字符串双向映射、compatible info、能力/加载/校验掩码 | 两端必须用同一新 bit 完成 tag 和 rank-to-rank 协商 |
-| `src/hybm/csrc/transport/urma/` | 新增公共 endpoint/private-data/export/import 封装；接收完整 `EndpointLoc`；修正 UBC import type | Host/Device 必须共享 wire ABI，避免两套序列化和 CANN 行为判断 |
-| `src/hybm/csrc/transport/device/urma/hcomm_transport_manager.*` | 内容迁移到公共目录，Device manager 更新 namespace/include | 当前文件含通用能力但路径和日志带 Device 假设 |
-| `src/hybm/csrc/transport/host/urma/` | 新增 `HostUrmaTransportManager` 和 Host NIC 解析 helper | 提供无卡 Host endpoint、MR 导出以及主动 CPU 数据面 |
-| `src/hybm/csrc/transport/compose/compose_transport_manager.*` | 新增 `HOST_DEVICE_URMA` 运行时角色解析；发现 Ascend 950 创建 Device manager，明确无卡创建 Host manager，其他 SOC/探测错误失败 | 两卡 T2 与异构 T3 使用同一个协议位和选择逻辑，避免把错误探测静默当作 Host |
-| `src/hybm/csrc/data_operation/host/hybm_data_op_factory.*` | 复用 Compose 已解析的本地角色创建 `DataOpDeviceURMA` 或 `HostDataOpRDMA` | transport 与 data operator 必须选择同一角色 |
-| `src/hybm/csrc/data_operation/host/hybm_compose_data_op.*` | 增加 `HOST_DEVICE_URMA` 初始化和优先级映射；既有 Device 路径保持不变 | 根据协商 bit 选择正确 data operator |
-| `src/hybm/csrc/mm/hybm_conn_based_segment.cpp`、相关 memory-type 掩码 | 无卡 `HOST_DEVICE_URMA` 固定 mmap 后直接记录 HVA/GVA、DVA=0；NPU 路径纳入原 Device 映射逻辑 | 鲲鹏 DDR 不经过本地 NPU HAL 注册，昇腾仍需 Device 地址处理 |
-| `src/hybm/csrc/mm/hybm_mem_segment.cpp`、`hybm_dev_user_legacy_segment.cpp` | 在使用 Device URMA/UBOE 判断内存共享、注册或映射方式的掩码中加入新 bit | 新协议沿用前 6 段 HCOMM key 和 Device 类内存交换语义，不能误走普通共享段路径 |
-| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.cpp` | 保存 Open 协议；仅 `HOST_DEVICE_URMA` 在第二次 Prepare 后生成 Device-HBM 或 Host-DDR route source 并发布 | T2/T3 共用真实 manager 生命周期，同时保持 `DEVICE_URMA` 既有行为 |
-| `src/hybm/csrc/under_api/dl_api.cpp` | 无卡 URMA 只加载 HCOMM | Host manager 不依赖 RT/ACL/HAL |
-| `src/hybm/csrc/CMakeLists.txt`、`src/smem/csrc/CMakeLists.txt` | 增加公共 URMA 和 Host URMA include 目录；对象源仍由现有 glob 收集 | 迁移头文件后保证 core/smem 编译路径一致 |
-| `src/hybm/csrc/common/hybm_define.h` | 增加 34 MiB control 映射边界常量 | Host 发布者和 AICPU 使用同一固定地址 |
-| `src/hybm/csrc/common/hybm_batch_copy_route.h` | 固定 route ABI；RangeEntry 增加 `hcommVaBegin` 但保持 32 B；保留全部 size/offset 断言 | 同时表达查表 GVA 和 HCOMM import view，防止 Host/AICPU 布局漂移 |
-| `src/hybm/csrc/driver/hybm_gva.cpp`、`src/hybm/csrc/hybm_entry.cpp` | 初始化、回滚、uninit 使用 34 MiB control 映射 | 为 `HYBM_DEVICE_META_ADDR` 前 2 MiB 提供真实 HBM |
-| `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.*` | image 构建、owner、completion 注册和 magic-last 发布；接收 GVA 与 HCOMM 双基址 range | T2/T3 共用同一发布事务 |
-| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.*` | 统一 Device-HBM/Host-DDR route source builder、协议门控和生命周期清理 | manager 保留连接状态，publisher 负责固定表生命周期 |
-| `src/hybm/csrc/transport/device/urma/load_kernel.*` | 正常加载 `HybmBatchCopy` function handle | DataOpDeviceURMA 通过生产 kernel 启动四参数算子 |
-| `src/hybm/ops/hybm_kernel/hybm_batch_copy.*` | 实现固定四参数 ABI、查表、地址转换、分组和 completion | T2 两卡与 T3 Host-to-Device 复用同一算子 |
-| `src/hybm/ops/hybm_kernel/CMakeLists.txt`、JSON | 阶段 2 即加入生产 `HybmBatchCopy` | 正常 AICPU 包和 wheel 承载被验证能力 |
-| `src/smem/python/memfabric_hybrid/setup.py` | `_AICPU_WLIST` 只加入 ops 目录之外的共享 route ABI 头；生产 operator 源随现有 `_ops` 目录整体复制 | wheel 首次 import 能构建生产算子且不携带测试源码或测试符号 |
-| `examples/memory_pool/02_scale_out/03_multi_node_host_urma_dram/` | 两鲲鹏双向 Read/Write/Batch 集成样例 | 独立验证 Host manager |
-| `examples/memory_pool/02_scale_out/04_single_node_multi_device_batch_copy/` | 参考 `01_single_node_multi_device_dram.py` 的两进程两卡 Python 用例 | 通过完整 entity、manager、publisher 和生产 AICPU 路径验收 T2 |
-| `test/ut/testcase/hybm/transport/` | 公共 URMA、Host manager、Compose 选择、路由 publisher UT | 在硬件前覆盖错误和回滚路径 |
-| `doc/installation_aicpu_kernel.md` | 增加 `HybmBatchCopy` 构建、安装和符号检查 | 保证独立 run 包与 wheel 路径一致 |
+| `src/smem/include/host/smem_bm_def.h`、`src/hybm/include/hybm_def.h` | T0 保留 `HOST_DEVICE_URMA` 枚举 | 不重排既有 bit |
+| SMEM/HYBM tag、转换和 Python 枚举文件 | T0 保留新协议的端到端映射 | 不复用 `HOST_URMA` |
+| `src/hybm/csrc/transport/urma/` | T0 公共 endpoint/private-data/HCOMM 封装 | 不恢复 Device/Host 双份实现 |
+| `src/hybm/csrc/under_api/dl_api.cpp` | T0/T1 保留无卡 HCOMM loader | 不在无卡构建调用 RT/ACL/HAL |
+| `src/hybm/csrc/transport/host/urma/` | T1 Host manager、固定 GVA 和 CPU 数据面 | T2 不覆盖同事实现 |
+| `src/hybm/csrc/transport/compose/compose_transport_manager.*` | T1 保留 Host/Device 角色选择 | T2 不增加 BatchCopy 数据转发 |
+| `src/hybm/csrc/data_operation/host/` | T1 保留既有 Host/Device DataOperator | T2 不接入 BatchCopy launcher |
+| `src/hybm/csrc/mm/hybm_conn_based_segment.cpp` | T1 保留无卡固定 GVA 映射 | 不在无卡路径调用 HAL 注册 |
+| `examples/memory_pool/02_scale_out/03_multi_node_host_urma_dram/` | T1 两鲲鹏验收 | 不替代 T2/T3 example |
+| `src/hybm/csrc/common/hybm_define.h` | modern control 常量 | 不改变 entity meta/extra context ABI |
+| `src/hybm/csrc/common/hybm_batch_copy_route.h` | 固定 route ABI 和双基址 range | 不增加动态字段 |
+| `src/hybm/csrc/driver/hybm_gva.cpp`、`hybm_entry.cpp` | modern 34 MiB，legacy 32 MiB | 不把 legacy 扩为 34 MiB |
+| `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.*` | owner、completion、magic-last | 不负责建链或 launch |
+| `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.*` | 统一 builder 和发布触发 | 不增加 `ReadRemoteBatchCopy` |
+| `src/hybm/csrc/transport/host/urma/` 的 T2 增量 | 原则上无；只允许 route 必需且经审查的最小适配 | 不重构 T1 |
+| `src/acc_offload/csrc/operators/aicpu/` | 新增唯一生产算子 | 不创建 probe operator |
+| `src/acc_offload/include/host/acc_offload.h` | 公共 C API | 不改变现有 API |
+| `src/acc_offload/csrc/acc_offload.cpp` | 直接 lazy launcher | 不依赖 EntryManager 初始化 |
+| `src/acc_offload/csrc/launch/` | 新 symbol、stream、per-device handle | 不持有 HYBM route 资源 |
+| `pymf_acc_offload.cpp`、`mf_acc_offload.py` | Python API | 不改变现有 `sparse_copy` |
+| HYBM AICPU CMake/JSON | 编译并注册移动后的源码 | 不新增第二套产物 |
+| wheel/run maker | 递归收集新目录 | 不打包测试 probe |
+| `examples/kv_offload/sparse_copy_urma/` | 两个验收 example | 不实现私有传输旁路 |
+| API/Python/AICPU 文档 | 接口、生命周期和安装说明 | 不把未执行测试写成通过 |
 
-## 10. 建议的编码任务拆分
+## 9. 编码任务和完成门禁
 
 | 任务 | 内容 | 依赖 | 完成门禁 |
 | --- | --- | --- | --- |
-| T0.1 | 增加 `HOST_DEVICE_URMA` 全链路枚举/协商映射，迁移公共 URMA/HCOMM 层，private data v2 | 无 | 新 bit 双端协商 UT 和 Device URMA 现有 UT 无回归 |
-| T0.2 | 修正普通 MR 和 flag 的 import type 处理 | T0.1 | invalid outMem.type UT 通过 |
-| T1.1 | Host endpoint、flag、MR 注册/导出/清理 | T0.2 | Mock HCOMM 生命周期 UT 通过 |
-| T1.2 | Host Prepare、CPU channel、幂等第二次 Prepare、rollback | T1.1 | 两阶段 Prepare UT 通过 |
-| T1.3 | Host Read/Write/Fence 和 batch fallback | T1.2 | 单条/批量/错误中途 pending UT 通过 |
-| T1.4 | Compose、DataOperator、MapSlice、loader 的无卡接入 | T1.3 | `XPU_TYPE=NONE` 构建和 UT 通过 |
-| T1.5 | 两鲲鹏集成样例 | T1.4 | 阶段 1 硬件标准全部通过 |
-| T2.1 | 34 MiB 映射和 route ABI | T1.5 | modern/legacy 初始化回滚 UT 通过 |
-| T2.2 | `BatchCopyRoutePublisher` 和 magic-last | T2.1 | image/owner/失败注入 UT 通过 |
-| T2.3 | `HOST_DEVICE_URMA` 运行时角色选择；RangeEntry 增加 `hcommVaBegin`；Device manager 生成并发布 Device-HBM route | T2.2 | 两卡均选择 Device manager；HBM route 含真实 GVA/view/channel/thread/flag |
-| T2.4 | 生产 `HybmBatchCopy` 四参数 ABI、DataOpDeviceURMA launcher、正常包注册和两卡 Python 用例；移除专用 probe 路径 | T2.3 | 参考 `01_single_node_multi_device_dram.py` 的两卡数据校验及 T2 异常矩阵通过 |
-| T3.1 | Host manager、Host GVA import equality 和统一 builder 的 Host-DDR 分支 | T2.4 | 1 CPU × 1 NPU route 发布成功，两个基址相等 |
-| T3.2 | 复用 `HybmBatchCopy` 完成单/多 Host peer 异构验证 | T3.1 | 单 peer、多 peer和 1000/1001 条通过 |
-| T3.3 | 边界、异常、打包和目标拓扑 | T3.2 | 阶段 3 验收矩阵通过 |
+| T0.1（已完成） | 枚举/协商、公共 URMA/HCOMM、private-data v2 | 无 | wire ABI 和协议映射 UT |
+| T0.2（已回退） | 保持 HCOMM 返回 MR/flag type 校验 | T0.1 | 不保留 type 合成代码和 invalid-type 成功 UT |
+| T1.1（已完成） | Host endpoint、flag、MR 注册/导出/清理 | T0.1 | Mock HCOMM 生命周期 UT |
+| T1.2（已完成） | Host Prepare、CPU channel、幂等和 rollback | T1.1 | 两阶段 Prepare UT |
+| T1.3（已完成） | Host Read/Write/Fence 和 batch fallback | T1.2 | 单条/批量/pending UT |
+| T1.4（已完成） | Compose、DataOperator、MapSlice、loader 无卡接入 | T1.3 | 无卡构建和 UT |
+| T1.5（已完成） | 两鲲鹏集成 example 和硬件验收 | T1.4 | T1 完成标准 |
+| T2.1 | modern 34 MiB、legacy 32 MiB、route ABI | T1.5 | 映射/回滚和 ABI UT |
+| T2.2 | publisher、owner、completion、magic-last | T2.1 | image/幂等/失败注入 UT |
+| T2.3 | Device-HBM/Host-DDR 统一 builder、临时双触发 | T2.2 | 两种模式、equality、发布后拒绝 UT |
+| T2.4 | acc_offload 目录下的生产 `HybmBatchCopy` | T2.3 | 四 ABI、顺序查找、分片、completion UT |
+| T2.5 | C/Python `sparse_copy_urma` 和独立 launcher | T2.4 | 不初始化 EntryManager 的接口 UT |
+| T2.6 | CMake、JSON、run、wheel 和文档 | T2.5 | 实际构建/安装成功后才能标记完成 |
+| T2.7 | 两个 Python example；执行两卡 Device-HBM 验收 | T2.6 | 两卡数据和异常矩阵 |
+| T3-A | 执行 Host-DDR→NPU example 硬件验收 | T2.7 | equality、单/多 peer、分片和清理 |
 
-每个任务建议独立提交。T1.5 和 T2.4 的硬件测试记录应附 commit id、CANN 版本、两端 NIC、关键日志和
-数据校验结果，避免后续变更无法判断曾验证的代码版本。
+每个任务建议独立提交。禁止用 T3 硬件成功替代 T2 软件门禁，也禁止因本机环境无法构建而把测试状态
+写为成功。
 
-## 11. 测试与质量要求
+## 10. 测试与质量要求
 
-### 11.1 软件测试
+### 10.1 每次修改
+
+阶段回归范围：
+
+| 阶段 | 必须回归的测试域 |
+| --- | --- |
+| T0 | 协议枚举、private-data v2、公共 HCOMM import/unimport、Device URMA 原功能 |
+| T1 | Host manager 生命周期、两阶段 Prepare、CPU I/O、无卡 MapSlice/loader |
+| T2 | route ABI/publisher/builder、AICPU、acc_offload API、打包和两个 example |
+| T3 | Host equality、跨节点数据、completion 和清理 |
 
 ```bash
-bash script/run_ut.sh --fast UrmaTransportManager
+git status --short
+git diff --check
+```
+
+根据实际变更选择：
+
+```bash
 bash script/run_ut.sh --fast BatchCopyRoute
 bash script/run_ut.sh --fast BatchCopy
+bash script/run_ut.sh --fast AccOffload
 bash script/ci-pre-commit-pr.sh
 ```
 
-实现代码的目录组织、命名、namespace、`Result`/错误码用法、日志宏、RAII/资源回滚方式、注释语言和
-测试写法必须与所在 MemFabric 模块的现有风格保持一致；不能为了本方案引入一套平行的命名或封装风格。
-格式以仓库 `.clang-format` 和 pre-commit 配置为准，C++ 行宽不超过 120 字符。
+若过滤器名称尚不存在，先通过 `rg` 查找真实测试名，不得把计划名称直接当成已执行命令。
 
-新增函数尽量不超过 50 行，嵌套不超过 4 层。`Prepare()`、`Publish()`、`CloseDevice()` 必须按职责拆成
-helper；不能把建链、导入、路由构建和 HBM 写入堆在一个函数中。新增错误返回路径必须由根错误层记录
-ERROR 日志及真实关键参数；上层仅透传已记录错误时不重复打印。
+### 10.2 构建
 
-### 11.2 失败注入
+默认：
 
-至少覆盖：endpoint 创建失败、flag 注册失败、普通 MR 注册/导出/导入失败、第二个 peer 建链失败、
-第二个 MR 导入失败、channel 创建失败、Read/Write 提交失败、Fence 失败、completion 注册失败、HBM 写入
-失败和 magic 发布失败。每个用例检查：
+```bash
+bash script/build_and_pack_run.sh
+```
 
-- 根错误有 ERROR 日志和关键参数。
-- 本次新建资源按逆序释放，之前已经存在的幂等资源不被误删。
-- 发布失败后 route magic 为 0。
-- HCOMM 提交失败后 pending 状态不会被错误清除。
+AICPU run 包和 wheel 需要分别验证。现有 build 目录曾缺少 `CMakeFiles/rules.ninja`；遇到该情况时：
 
-### 11.3 性能观测
+1. 记录命令、退出码和缺失文件。
+2. 不声称编译、UT 或安装通过。
+3. 只在用户允许和环境具备依赖时重新生成 build。
 
-阶段 1、2 先验证正确性，不设置硬性带宽指标，但记录：单条 4 MiB 延迟、100 次平均带宽、batch 条目数、
-fallback 条数、每 peer fence 次数。若 batch 逐条提交成为 Host-to-Host 的明显瓶颈，待 CANN CPU batch API
-可用后单独优化，不能在 P0 自行拼装未公开的 HCOMM 描述符。
+### 10.3 失败注入
 
-## 12. 风险与决策点
+至少覆盖：
 
-| 风险 | 影响 | 当前处理 |
+- private-data magic/version/payload 错误和协议冲突；
+- Host endpoint、flag、MR 注册/导出/导入和 CPU channel 创建失败；
+- Host Read/Write/Fence 失败及 pending 状态；
+- route owner 冲突；
+- completion 注册/注销失败；
+- HBM image 写入和 magic 写入失败；
+- 第二个 peer 或 MR 导入失败；
+- Host equality 失败；
+- HCOMM submit、fence、remote flag read 和 timeout；
+- AICPU binary/symbol/stream/launch/synchronize 失败；
+- run/wheel 缺少移动后的源码或 ABI 头。
+
+每个根错误记录 ERROR 日志和真实关键参数，上层只透传已记录错误时不重复打印。
+
+### 10.4 代码规范
+
+- 新增函数尽量不超过 50 行非空非注释代码。
+- 嵌套深度不超过 4 层。
+- 行宽不超过 120 字符。
+- 建链、builder、publisher、launcher 和 operator helper 保持单一职责。
+- 不修改用户无关文件，不覆盖脏工作区内容。
+- 不新增只为测试暴露的生产 API。
+
+## 11. 风险与处理
+
+| 风险 | 影响 | 处理 |
 | --- | --- | --- |
-| 鲲鹏 import view 不等于导出 GVA | 阶段 3 不满足生产地址契约 | 阶段 1/3 设硬门禁；即使 RangeEntry 已有 `hcommVaBegin`，也不得用它绕过 Host equality 失败 |
-| Host UB plugin 未随目标 CANN 安装或未加载 | Host endpoint 创建失败 | 阶段 1 前检查插件路径和 HCOMM 启动日志，不用代码 fallback 到旧 HCOM 掩盖问题 |
-| CPU HCOMM batch 不支持 | Host 批量吞吐降低 | 逐条提交、单 peer 一次 fence，正确性优先 |
-| Device HBM GVA 与 import view 不同 | 只存一个基址时两卡测试无法走公开 GVA 接口 | RangeEntry 同时保存 GVA 区间和 HCOMM 基址，AICPU 做受检 offset 转换；Host route 仍要求二者相等 |
-| 34 MiB modern/legacy 映射边界不一致 | 固定 route 地址不可访问或释放错误 | T2.1 独立实现初始化/失败回滚/uninit UT，硬件先读写固定头再建链 |
-| 同一卡多个 entity 竞争固定 route | 表被覆盖 | `BatchCopyRouteOwnerRegistry` 按 `userDeviceId` 单 owner，第二个发布者返回 `BM_BUSY` |
-| Host 主动 I/O 与 Close 并发 | channel/MR use-after-free | P0 调用方保证 Close 前无在途；每 peer mutex 串行 submit/fence，Close 先 fence 再释放 |
+| Host/Device private-data 版本混用 | endpoint location 解析错误 | 严格校验 v2，创建 channel 前拒绝 |
+| Host UB plugin 缺失或未加载 | T1/T3 Host endpoint 创建失败 | 启动前检查 CANN 安装和 HCOMM 日志 |
+| 无卡路径误调用 RT/ACL/HAL | 鲲鹏初始化失败 | `XPU_TYPE=NONE` 只加载 HCOMM，MapSlice 不注册 HAL |
+| Host 固定 GVA mmap 失败 | Host MR 无法满足地址契约 | 初始化失败并拒绝导出，不回退普通 HVA |
+| 旧 T2 整体移植覆盖主干 T1/acc_offload | 回归或重复实现 | 逐任务参考提交，禁止整体合并 |
+| Host equality 失败 | Host route 访问错误地址 | 硬门禁失败，不用地址转换兼容 |
+| Device GVA 与 import view 不同 | 两卡 route 命中后访问错误 | range 保存双基址并做受检 offset |
+| framework HBM 地址不在 SVM 窗口 | 合法目的 tensor 被误拒绝 | 取消 `HYBM_DEVICE_VA_START` 下界，只保护 control 区 |
+| legacy 未映射 route | AICPU 访问未映射地址 | legacy 保持 32 MiB并明确不支持 |
+| 同卡多 publisher | route 被覆盖 | 单 owner；第二发布者失败 |
+| caller 并发调用 | completion 工作区竞争 | P0 调用方串行，不增加算子 guard |
+| 临时 ERROR route 日志过多 | 热路径日志膨胀 | 硬件稳定后删除或降级 |
+| acc_offload lazy launcher 与 entity 生命周期分离 | route 未就绪或提前释放 | magic 校验；example 保持 entity 存活 |
+| 新 AICPU 目录未被 run/wheel 收集 | 产物缺符号 | 三条交付链分别做安装验证 |
+| 当前 HCOMM type 行为变化 | import 被拒绝 | 保留 T0.2；有硬件证据后单独评审 |
+| `connected_` 既有问题 | 发布入口时序不稳定 | 临时双触发，不在本任务修复 |
 
-## 13. 阶段完成定义
+## 12. 阶段完成定义
 
-- **阶段 0 完成：** 公共 wire ABI 合并，HCOMM import 行为与 CANN 源码一致，Device 原功能无回归。
-- **阶段 1 完成：** 两台鲲鹏都能主动读对端、写对端、执行 batch fallback，并证明固定 DDR
-  `GVA == import view`。
-- **阶段 2 完成：** 两张昇腾 950 均配置 `HOST_DEVICE_URMA`，通过完整 Python/entity 流程自动选择 Device
-  manager、发布真实 Device-HBM route，并由正常交付的四参数 `HybmBatchCopy` 完成查表和卡间读取；
-  不依赖 probe 环境变量、probe operator 或测试专用 manager API。
-- **阶段 3 完成：** 鲲鹏 DDR GVA 经阶段 2 同一 publisher、route ABI、operator 和调用路径拷贝到昇腾
-  HBM，通过 Host equality、单 peer、多 peer、边界、异常、打包和目标拓扑测试。
+- **T0 完成：** `HOST_DEVICE_URMA` 完成端到端协商，Host/Device 共用 private-data v2 和公共 HCOMM
+  封装；当前 MR/flag type 校验保持不变，旧 T0.2 代码不残留。
+- **T1 完成：** 两台鲲鹏能够双向 Read/Write、batch fallback 和 fence，并证明固定 DDR
+  `GVA == descriptor addr == import view addr`；无卡资源可完整回滚和清理。
+- **T2 代码完成：** route control、publisher、两种 builder、唯一 AICPU 算子、acc_offload API 和交付链
+  均进入生产目录；`copy_data` 调用链无 BatchCopy 增量。
+- **T2 软件完成：** ABI、builder、publisher、operator、launcher 和失败注入 UT 实际通过，
+  `git diff --check` 和适用预提交检查通过。
+- **T2 硬件完成：** `01_single_node_multi_device_urma.py` 在两张 Ascend 950 上直接通过
+  `sparse_copy_urma` 完成数据校验，无 probe。
+- **T3 验收完成：** `02_host_device_urma.py` 证明 Host 三地址相等，并完成鲲鹏 DDR→NPU 的单/多 peer、
+  1000/1001 条、异常和清理验证。
 
-任何阶段未达到完成定义时，不把后续阶段的成功作为前一阶段问题的替代证明。
+任何阶段未达到完成定义时，后续阶段成功不能替代前一阶段门禁。
 
-## 14. 实现时参考源码
+## 13. 实现时参考
 
-MemFabric 关键基线：
+MemFabric：
 
-- `src/hybm/csrc/transport/hybm_transport_manager.h`
-- `src/hybm/csrc/transport/hybm_transport_common.h`
+- `AGENTS.md`
+- `docs/batch_copy_aicpu_urma_design.md`
+- `src/smem/include/host/smem_bm_def.h`
+- `src/hybm/include/hybm_def.h`
+- `src/hybm/csrc/entity/hybm_entity_tag_info.cpp`
+- `src/hybm/csrc/transport/urma/`
+- `src/hybm/csrc/transport/host/urma/host_urma_transport_manager.{h,cpp}`
 - `src/hybm/csrc/transport/compose/compose_transport_manager.cpp`
-- `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.{h,cpp}`
-- `src/hybm/csrc/transport/device/urma/hcomm_transport_manager.{h,cpp}`
 - `src/hybm/csrc/data_operation/host/hybm_data_op_host_rdma.cpp`
-- `src/hybm/csrc/data_operation/host/hybm_data_op_device_urma.cpp`
-- `src/hybm/csrc/data_operation/host/hybm_compose_data_op.cpp`
 - `src/hybm/csrc/mm/hybm_conn_based_segment.cpp`
-- `examples/memory_pool/02_scale_out/02_multi_node_multi_device_dram/02_multi_node_multi_device_dram.py`
+- `src/acc_offload/csrc/python_wrapper/pymf_acc_offload.cpp`
+- `src/acc_offload/csrc/acc_offload.cpp`
+- `src/acc_offload/csrc/launch/acc_offload_launch.{h,cpp}`
+- `src/acc_offload/csrc/launch/acc_offload_operators_launch.cpp`
+- `src/acc_offload/include/host/acc_offload.h`
+- `src/smem/python/memfabric_hybrid/memfabric_hybrid/mf_acc_offload.py`
+- `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.{h,cpp}`
+- `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.{h,cpp}`
+- `src/hybm/ops/hybm_kernel/hybm_batch_transfer.{h,cc}`
+- `src/hybm/ops/hybm_kernel/libcann_hybm_kernel.json`
+- `examples/memory_pool/02_scale_out/03_multi_node_host_urma_dram/`
+- `examples/memory_pool/02_scale_out/01_single_node_multi_device_dram/`
+- `examples/kv_offload/`
+- 提交 `b2536f20`、`f33f188b` 和旧 T2 分支的硬件验证记录。
 
-CANN/HCOMM 关键依据（相对 `C:/code/cann/hcomm`）：
+CANN/HCOMM：
 
-- `include/hcomm_res_defs.h`：`EndpointDesc/EndpointLoc/HcommChannelDesc` 定义。
-- `experimental/base_comm/nic_plugin/host_ub_plugin.cc`：Host UBC_TP/UBC_CTP plugin 注册。
-- `experimental/base_comm/endpoint/cpu_urma_endpoint.cc`：Host endpoint、IP 解析和 MR 接口。
-- `experimental/base_comm/channel/host_cpu_urma_channel.cc`：Host URMA channel 和 fence 行为。
-- `experimental/base_comm/comm_mem/urma_mem.cc`：UBC import 只写 `outMem.addr/outMem.size`。
-- `src/base_comm/primitives/api_c_adpt/cpu_primitives_c_adpt.cc`：CPU Read/Write/Fence 以及 batch 不支持行为。
-- `test/ut/framework/communicator/impl/independent_op/data_api_cpu/ut_cpu_HcommPluginChannelOps.cc`：
-  CPU plugin 数据接口预期返回值。
+- `include/hcomm_res_defs.h`
+- Host UB plugin、CPU URMA endpoint/channel 和 comm_mem 实现。
+- Ascend 950 AICPU kernel binary load、function handle 和 stream launch 接口。
+- `app/zbal` 中 AArch64 cache 和 device memory barrier 的参考实现。
