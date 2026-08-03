@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <vector>
 
+#include "hybm_batch_copy_route.h"
 #include "hybm_def.h"
 #include "hybm_kernel_log.h"
 

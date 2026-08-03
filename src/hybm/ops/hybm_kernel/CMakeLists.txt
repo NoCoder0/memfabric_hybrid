@@ -52,6 +52,7 @@ add_custom_command(
 set(AICPU_KERNEL_DEPS
     ${CMAKE_CURRENT_SOURCE_DIR}/hybm_batch_transfer.h
     ${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel_log.h
+    ${PROJECT_HYBM_SRC_BASE}/csrc/common/hybm_batch_copy_route.h
     ${PROJECT_HYBM_SRC_BASE}/include/hybm_def.h
 )
 

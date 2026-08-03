@@ -1223,6 +1223,20 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsInvalidOptionsAndUnsupport
     EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
 }
 
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsBatchCopyCapabilityOnLegacySoc)
+{
+    MockcppScope mockcpp;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
+
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0U;
+    options.rankCount = 2U;
+    options.protocol = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+
+    EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
+}
+
 // OpenDevice: data_op_type=DEVICE_UBOE 时应派生为 UrmaProtocol::UBOE 并走 IP 地址读取路径。
 TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
 {
