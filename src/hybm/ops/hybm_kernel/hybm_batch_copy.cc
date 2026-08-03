@@ -218,9 +218,11 @@ int32_t ValidateDestination(uint64_t destination, uint64_t length, uint32_t inde
         return BM_INVALID_PARAM;
     }
     const uint64_t end = destination + length;
-    if (destination < ock::mf::HYBM_DEVICE_VA_START || end > ock::mf::HYBM_BATCH_COPY_META_ADDR) {
-        HYBM_LOGE(BM_INVALID_PARAM, "BatchCopy destination is outside business HBM, index=%u dst=0x%lx end=0x%lx",
-                  index, destination, end);
+    if (destination < ock::mf::SVM_END_ADDR && end > ock::mf::HYBM_BATCH_COPY_META_ADDR) {
+        HYBM_LOGE(BM_INVALID_PARAM,
+                  "BatchCopy destination overlaps control HBM, index=%u dst=0x%lx end=0x%lx "
+                  "controlBegin=0x%lx controlEnd=0x%lx",
+                  index, destination, end, ock::mf::HYBM_BATCH_COPY_META_ADDR, ock::mf::SVM_END_ADDR);
         return BM_INVALID_PARAM;
     }
     return BM_OK;

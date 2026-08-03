@@ -1565,9 +1565,9 @@ Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &remo
     std::lock_guard<std::mutex> guard(mutex_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
     if (routePublisher_ != nullptr && routePublisher_->IsPublished()) {
-        BM_LOG_ERROR("device_urma RemoveRanks is not supported after BatchCopy route publication, rank: "
-                     << rankId_ << " removedCount: " << removedRanks.size());
-        return BM_NOT_SUPPORTED;
+        BM_LOG_WARN("device_urma RemoveRanks will not clear route entries after BatchCopy route publication, rank: "
+                    << rankId_ << " removedCount: " << removedRanks.size());
+        // Keep the published route stable and defer rank resource cleanup to CloseDevice.
     }
 
     // Atomic pending preflight: any target rank with pending ops → reject all

@@ -52,14 +52,13 @@ def _read_peer_single(handle, local_hbm: int, peer_hbm: int, peer_rank: int) -> 
         0,
     )
     assert ret == 0, f"rank read peer single item failed: peer={peer_rank}, ret={ret}"
-    print("_read_peer_single " + str(peer_rank))
     actual = torch.empty(ITEM_BYTES // 4, dtype=torch.int32)
     ret = handle.copy_data(local_hbm + DESTINATION_OFFSET, actual.data_ptr(), ITEM_BYTES, bm.BmCopyType.G2H, 0)
-    print("_read_peer_single " + str(peer_rank))
     assert ret == 0, f"single-item G2H verification failed: peer={peer_rank}, ret={ret}"
     expected = torch.arange(actual.numel(), dtype=torch.int32) * 17 + peer_rank * 101
+    print(f"peer rank: {peer_rank}, actual data is \n {actual}")
+    print(f"peer rank: {peer_rank}, expected data is \n {expected}")
     assert torch.equal(actual, expected), f"single-item BatchCopy data mismatch: peer={peer_rank}"
-    print("_read_peer_single " + str(peer_rank))
 
 
 def _read_peer_batch(handle, local_hbm: int, peer_hbm: int, peer_rank: int, batch_size: int) -> None:
@@ -79,7 +78,7 @@ def _read_peer_batch(handle, local_hbm: int, peer_hbm: int, peer_rank: int, batc
 
 
 def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
-    mf.set_log_level(0)
+    mf.set_log_level(2)
     assert mf.initialize() == 0, "mf.initialize failed"
     bm_initialized = False
     os.environ["USE_LOCAL_EID"]=LOCA_EIDS[device_id]
@@ -114,10 +113,10 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier) -> None:
 
         _read_peer_single(handle, local_hbm, peer_hbm, peer_rank)
         sync.wait()
-        # for batch_size in (1, 999, 1000, 1001):
-        #     _read_peer_batch(handle, local_hbm, peer_hbm, peer_rank, batch_size)
-        #     sync.wait()
-        # print(f"[rank {rank_id}] HOST_DEVICE_URMA BatchCopy checks passed", flush=True)
+        for batch_size in (1, 999, 1000, 1001):
+            _read_peer_batch(handle, local_hbm, peer_hbm, peer_rank, batch_size)
+            sync.wait()
+        print(f"[rank {rank_id}] HOST_DEVICE_URMA BatchCopy checks passed", flush=True)
 
         # sync.wait()
         assert handle.leave() == 0, "leave failed"
