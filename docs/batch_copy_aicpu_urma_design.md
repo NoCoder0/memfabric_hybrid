@@ -58,7 +58,7 @@ acc_offload 提供直接调用入口；两者通过固定 HBM route ABI 解耦�
 - 不支持建链完成后动态增加内存区间，也不支持 peer 移除、主动断链或路由热更新。
 - 初始化建链和路由发布串行执行，不支持初始化流程并发。
 - 由调用方保证同一张 NPU 上只有一个在途 `sparse_copy_urma`；算子内部不增加并发 guard。
-- acc_offload 不创建或销毁用于路由发布的 HYBM entity，不接管 channel、thread、MR 或 route owner。
+- acc_offload 不创建或销毁用于路由发布的 HYBM entity，不接管 channel、thread、MR 或 route 生命周期。
 - 不提供替代 transport、探测 launcher 或旁路算子；所有调用和示例均使用同一套生产路径。
 
 ---
@@ -166,7 +166,7 @@ flowchart LR
 鲲鹏节点由 CPU 上的常驻 MemFabric 进程持有固定 GVA DDR 内存池。昇腾节点的 CPU 业务进程加载
 MemFabric Device runtime，负责建链和路由发布；同一进程通过 acc_offload 的 `sparse_copy_urma` 接口
 启动 `HybmBatchCopy`。AICPU kernel 在 NPU 上运行，并通过已建立的 HCOMM/URMA 通道主动读取鲲鹏
-DDR。调用方必须保证 HYBM entity 和 route owner 在算子完成前持续存活。
+DDR。调用方必须保证负责 route 发布的 HYBM entity 在算子完成前持续存活。
 
 ### 3.1.2 地址语义
 
@@ -283,9 +283,8 @@ Modern 路径预留 1 GiB VA，`HalMemCreate()` 申请 34 MiB，并从 `HYBM_DEV
 `HYBM_DEVICE_META_ADDR/HYBM_DEVICE_INFO_SIZE` 32 MiB 分配、映射和释放语义，不映射前置 2 MiB route，
 因此不支持 `sparse_copy_urma`。该差异必须由初始化能力检查明确拒绝，不能让算子访问未映射地址。
 
-每个逻辑 NPU 维护一份表。`DeviceUrmaTransportManager` 通过按 `userDeviceId_` 索引的
-`BatchCopyRouteOwnerRegistry` 获取唯一发布权；同一卡的第二个发布者返回 `BM_BUSY`。
-该错误只表示 publisher owner 冲突，不是 AICPU 算子并发 guard。
+每个逻辑 NPU 维护一份表。路由发布由上层初始化调用链保证串行，publisher 不设置按
+`userDeviceId_` 索引的 owner registry，也不提供多发布者并发互斥或并发错误码。
 
 ### 3.1.4 路由表布局与规格
 
@@ -416,7 +415,7 @@ HYBM_DEVICE_META_ADDR
 - 每个有效 peer 的 `thread/channel/remoteFlagAddr` 非 0。
 
 `TryPublishBatchCopyRouteLocked()` 仅在初始 route peer 集合中的每个 peer 都已建立 channel/thread、
-导入至少一个符合当前 route 模式的 MR 且导入 8 B transfer flag 后发布路由。发布时获取每卡 owner，并固定注册从
+导入至少一个符合当前 route 模式的 MR 且导入 8 B transfer flag 后发布路由。发布时固定注册从
 `BATCH_COPY_COMPLETION_OFFSET` 开始的 512 B HBM 区域。构建 route image 时先清零整个
 `BatchCopyRouteTable`，header 的 `magic` 保持 0，并单独清零 `BatchCopyCompletionArea`；完成 H2D
 拷贝和 completion 注册后，最后单独写入 `BATCH_COPY_ROUTE_MAGIC`。AICPU 只在 magic 有效时读取
@@ -501,7 +500,7 @@ NPU 侧使用 `COMM_ENGINE_AICPU`，鲲鹏侧使用 `COMM_ENGINE_CPU`。
 - Device role 加载 `DlRtApi` 和 `DlHcommApi`；Host role 只加载 `DlHcommApi`。
 - `DataOpDeviceURMA`、`HostDataOpRDMA` 和 `copy_data/copy_data_batch` 初始化及调用流程保持不变，
   `sparse_copy_urma` 不进入 DataOperator 分支，也不经 Compose 转发。
-- acc_offload 在业务调用时按需加载 AICPU launcher；它不重复初始化 HYBM entity，也不取得 route owner。
+- acc_offload 在业务调用时按需加载 AICPU launcher；它不重复初始化 HYBM entity，也不管理 route 生命周期。
 - `DlApi::CleanupLibrary()` 仍统一清理 MemFabric 已加载的 wrapper；acc_offload 按自身生命周期释放 launcher。
 
 #### 建链和发布时序
@@ -623,14 +622,14 @@ entity 初始化会调用 manager 两次。`ImportEntityExchangeInfo()` 通过 `
 | `DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked()/PublishBatchCopyRouteLocked()` | 在符合条件的 Device-HBM 或 Host-DDR route peer 资源完整后发布；成功后重复调用只返回 `BM_OK` | publisher 与执行入口解耦，且不实现发布后的刷新或热更新 |
 | `DeviceUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | 完整初始 options 触发 route 发布；发布后拒绝 route 扩展和 `RemoveRanks()` | 防止 route 引用已释放资源；不实现发布后容错更新 |
 | `HostUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | Batch_Copy 初始化完成后的变更请求返回 `BM_NOT_SUPPORTED` | Host peer 集合和 DDR 导出集合在初始化后保持不变 |
-| `DeviceUrmaTransportManager::CloseDevice()` | 先执行 `ClearBatchCopyRouteMagicLocked()`，再注销 completion 和通信资源，最后释放 owner | 防止 AICPU 读取已经释放的 HCOMM 句柄 |
+| `DeviceUrmaTransportManager::CloseDevice()` | 先执行 `ClearBatchCopyRouteMagicLocked()`，再注销 completion 和通信资源 | 防止 AICPU 读取已经释放的 HCOMM 句柄 |
 | HBM 目的地址校验 | 校验地址加法溢出并拒绝与固定 control 区重叠，不要求地址大于 `HYBM_DEVICE_VA_START` | PyTorch/框架分配的真实 HBM 地址可能不在 MemFabric SVM 业务窗口，不能用该窗口误拒绝合法 tensor |
 | `src/smem/python/memfabric_hybrid/setup.py` | 制备白名单包含共享路由 ABI 头和 acc_offload 下的 AICPU 源文件 | wheel 首次 import 的交叉编译输入必须包含唯一算子源 |
 
 初始化约束为：第一次 `ImportEntityExchangeInfo()` 一次性携带完整 peer 集合，第一次
 `ImportSliceExchangeInfo()` 一次性携带 `sparse_copy_urma` 使用的全部源区间；运行期不增加 route MR，
 不删除 peer，也不处理断链。发布事务边界为：完成全部 route peer 建链 → NPU 导入并校验所有 MR 与 flag →
-获取每卡唯一 owner → 清零 completion area 并注册固定 completion 区 → 构建固定 route image →
+清零 completion area 并注册固定 completion 区 → 构建固定 route image →
 以 magic=0 同步写入卡级元数据区 → 最后写 magic → 初始化成功。任一步失败都不得留下有效 magic，
 导入或发布失败时释放本轮事务创建的全部 import。Close 前调用方保证没有在途算子，manager 先清 magic，
 再按逆序释放 HCOMM 资源。
@@ -735,7 +734,7 @@ hcommSrc = range.hcommVaBegin + (srcGva - range.srcGvaBegin)
 ### 3.1.7 并发和顺序语义
 
 - 正常部署由调用方保证同一张 NPU 只有一个在途 `sparse_copy_urma`；算子不做 guard，也不返回
-  `BM_BUSY` 作为并发防护。
+  并发错误码。
 - 同一 peer 内保持输入顺序，并在该 peer 最后执行 fence。
 - 不同 peer 之间不承诺写入先后顺序，但接口成功返回时全部完成。
 - 调用方不得提供相互重叠的目的 HBM 区间；算子不做 `O(n²)` 的重叠检测。
@@ -771,7 +770,7 @@ hcommSrc = range.hcommVaBegin + (srcGva - range.srcGvaBegin)
 | --- | --- |
 | `src/hybm/csrc/common/` | 定义共享 route ABI 和卡级 control 常量；modern 使用 34 MiB，legacy 使用 32 MiB |
 | `src/hybm/csrc/driver/`、`src/hybm/csrc/hybm_entry.cpp` | modern 管理 34 MiB control 区的映射、回滚和释放；legacy 管理 32 MiB meta 区 |
-| `src/hybm/csrc/transport/device/urma/` | 管理 publisher、magic-last、owner、completion 注册和统一 route builder；支持 Device-HBM 与 Host-DDR 两种同质 route |
+| `src/hybm/csrc/transport/device/urma/` | 管理 publisher、magic-last、completion 注册和统一 route builder；支持 Device-HBM 与 Host-DDR 两种同质 route |
 | `src/hybm/csrc/transport/host/urma/` | 管理 Host endpoint、固定 GVA MR/flag、CPU channel 和 Host URMA 建链 |
 | `src/hybm/csrc/data_operation/host/`、`src/hybm/csrc/transport/compose/` | 不承载 Batch_Copy launcher、`SupportsBatchCopyRoute`、`ReadRemoteBatchCopy` 或转发接口；`copy_data` 流程独立 |
 | `src/acc_offload/csrc/operators/aicpu/hybm_batch_copy.{h,cc}` | 实现四字段 ABI、固定 route 读取、顺序查找、peer 分组、1000 条分片和 completion 汇聚 |
@@ -819,7 +818,7 @@ hcommSrc = range.hcommVaBegin + (srcGva - range.srcGvaBegin)
 `userDeviceId/phyDeviceId/rankId/peerIndex`、batch index、地址/长度和 HCOMM 返回码，但不读取或打印
 业务数据。
 Host 与 AICPU 对共享结构执行 `sizeof/offsetof` 断言；publisher 在运行时校验固定容量、区间顺序、
-地址边界和每卡 owner 冲突。
+地址边界和 publisher 待清理状态。
 `ValidatePublishedRoute()` 仅在校验失败时记录 ERROR 日志，包含失败字段、header 计数以及相关 peer/range
 索引和地址；成功路径不以 ERROR 级别输出完整路由，避免热路径日志膨胀。日志不打印业务数据。
 
@@ -855,7 +854,7 @@ Host 与 AICPU 对共享结构执行 `sizeof/offsetof` 断言；publisher 在运
 
 #### 验收设计
 
-- 单元测试覆盖 route ABI offset/capacity、magic-last、owner、同质 route 筛选、Host equality、顺序查找、
+- 单元测试覆盖 route ABI offset/capacity、magic-last、completion 清理、同质 route 筛选、Host equality、顺序查找、
   四字段参数校验、1000 条边界、completion 汇聚和错误退出日志。
 - 两卡 NPU example 验证 Device-HBM route、真实框架 HBM 地址和 acc_offload 直接调用。
 - Host-DDR→NPU example 在目标鲲鹏/昇腾环境验证固定 GVA、HCOMM import equality 和跨节点数据正确性。
@@ -966,7 +965,7 @@ Result DeviceUrmaTransportManager::ClearBatchCopyRouteMagicLocked();
 这些函数是 Device manager 私有控制面，不向 acc_offload、SMEM/HYBM 公共 API 或 entity 暴露。统一
 builder 根据完整 options 构建一种同质 route：Device endpoint 只收录 `DEVICE_HBM`；Host endpoint 只收录
 `HOST_DRAM`，并强制 exported GVA、descriptor addr 和 import view addr 相等。资源完整后 publisher 获取
-每卡 owner、清除 magic、清零并注册 completion 区、写入 route image，最后发布 magic。发布成功后再次
+清除 magic、清零并注册 completion 区、写入 route image，最后发布 magic。发布成功后再次
 调用只返回 `BM_OK`，不刷新 route；route 发布后的额外 MR 和 `RemoveRanks()` 被拒绝，最终销毁前先清除
 magic。发布入口和资源就绪条件见 3.1.5。
 
@@ -981,7 +980,7 @@ AICPU 安装文档和 API 文档覆盖以下内容：
 5. 两卡 Device-HBM 和 Host-DDR→NPU 两个 Python example 的环境、执行和数据校验步骤。
 6. 每卡 64 peer、每 peer 16 range、总计 1024 range 的容量和调用方串行约束。
 7. 错误码、部分完成语义、超时和重试建议。
-8. user/physical device owner、peer/channel/thread 和 route 数量日志的排障方法。
+8. user/physical device、peer/channel/thread 和 route 数量日志的排障方法。
 
 ## 3.6 端到端验收场景
 
@@ -1008,7 +1007,7 @@ transport、模拟 route 或测试专用 launcher。Host-DDR 场景的
 | Host HCOMM import 重定位地址 | 不满足固定 GVA 契约，算子可能访问错误地址 | Host 建链时强制校验 `view.addr == remoteAddr`，不相等则拒绝发布 |
 | 目标 CANN 未提供无卡 Host UB plugin | 鲲鹏端创建 endpoint 失败 | 部署包含 Host UB plugin 的 CANN 版本，并在启动时检查能力 |
 | modern 元数据映射从 32 MiB 增至 34 MiB | 每张 NPU 额外占用 2 MiB HBM | 仅 modern 使用 34 MiB 成对边界；legacy 保持 32 MiB 并明确拒绝该能力 |
-| 同一 NPU 多 manager 发布 | 固定路由表被相互覆盖 | `BatchCopyRouteOwnerRegistry` 按 `userDeviceId_` 保证每卡单 owner |
+| 同一 NPU 路由发布并发调用 | 固定路由表被相互覆盖 | 上层初始化调用链保证串行；publisher 不增加 owner 或锁 |
 | Host/NPU 的 URMA private-data 版本混用 | endpoint 位置被错误解释或建链失败 | 解析端严格校验 v2，并在创建 channel 前拒绝其他版本 |
 | NPU HYBM/AICPU 包版本不匹配 | route 映射范围和算子 ABI 不一致，可能访问未映射地址 | HYBM、acc_offload 和 AICPU 包版本绑定；启动时校验固定 magic |
 | 最终销毁时仍有在途算子 | use-after-free、传输失败或设备异常 | 调用方保证 quiescent；先清 route magic，再释放 HCOMM 资源 |

@@ -65,7 +65,7 @@ HybmBatchCopy AICPU
 - 不修复 `ComposeTransportManager::Connect()` 未设置 `connected_` 的既有问题。
 - 不修改任何现有 `copy_data/copy_data_batch` API、DataOperator 选择或远端拷贝流程。
 - 不创建 T2 专用 transport、route probe manager、probe operator、测试 launcher API 或平行 kernel。
-- 不为 `sparse_copy_urma` 创建第二个 HYBM entity，不让 acc_offload 接管 route owner、MR、
+- 不为 `sparse_copy_urma` 创建第二个 HYBM entity，不让 acc_offload 接管 route、MR、
   channel、thread 或 flag 生命周期。
 
 ### 2.2 T0.2 保持回退状态
@@ -83,7 +83,7 @@ HybmBatchCopy AICPU
 
 - modern 路径使用 2 MiB route + 原 32 MiB metadata，总 control 区为 34 MiB。
 - legacy 路径保持原 32 MiB，不映射前置 route，也不支持 `sparse_copy_urma`。
-- publisher 使用单 owner、completion 注册和 magic-last。
+- publisher 使用 completion 注册和 magic-last；路由发布由上层调用链保证串行，不设置 owner。
 - Publish 成功后重复调用只返回 `BM_OK`，不得刷新 route。
 - route 发布后不增加 BatchCopy route MR，不支持热更新、容错补路由或 peer 替换。
 - route 发布后 `RemoveRanks()` 必须拒绝，防止 route 引用已释放资源。
@@ -482,13 +482,13 @@ Host 与 AICPU 编译均执行 `sizeof/offsetof`、offset 和容量 `static_asse
 `BatchCopyRoutePublisher` 只负责：
 
 - 校验 `BatchCopyRouteSource`；
-- 按 `userDeviceId` 获取单 owner；
+- 检查本实例没有待清理的发布资源；
 - 清 route magic；
 - 清零并注册固定 completion 区；
 - 构建 magic=0 的完整 image；
 - H2D 写入 image；
 - 最后单独写 magic；
-- Close/失败时清 magic、注销 completion 并释放 owner。
+- Close/失败时清 magic并注销 completion。
 
 publisher 不负责：
 
@@ -502,7 +502,7 @@ publisher 不负责：
 
 - 第一次成功 Publish 后设置 published 状态。
 - 同一 publisher 再次 Publish 直接返回 `BM_OK`，不比较或覆盖新 sources。
-- 同一卡第二个 owner 申请失败，错误只表示 route owner 冲突，不用于算子并发防护。
+- 路由发布由上层调用链保证串行，publisher 不处理同一卡多发布者并发，也不返回并发错误码。
 - 任一步失败后 magic 必须为 0，已创建资源按逆序回滚。
 - route table 发布后只读，completion area 是运行期工作区。
 
@@ -511,7 +511,7 @@ publisher 不负责：
 - image 字段、排序、range 容量和 peer 索引。
 - magic-last，写 image 失败时 magic 为 0。
 - completion 清零、注册、注销和失败回滚。
-- 单 owner 冲突和 Close 后 owner 可重新获取。
+- completion 注销失败后保留待清理状态，并允许再次 Close 重试。
 - 重复 Publish 返回 `BM_OK` 且不刷新 route。
 
 ### 6.3 T2.3：统一 route source builder 与发布触发
@@ -787,14 +787,14 @@ examples/kv_offload/sparse_copy_urma/
 4. 昇腾侧通过框架分配目的 HBM tensor，取得真实地址。
 5. 构造 NPU src/dst/len tensor，直接调用 `sparse_copy_urma`。
 6. 校验单条、batch、边界、分片和 completion。
-7. entity 保持到调用完成，最后先销毁 route owner 所属 entity。
+7. entity 保持到调用完成，最后先销毁负责 route 发布的 entity。
 
 首轮验收顺序：
 
 1. 1 CPU × 1 NPU、1 MR、单条 4 KiB。
 2. 1 CPU × 1 NPU、多 MR 和 1000/1001 条。
 3. 多 Host peer 分组和 completion 汇聚。
-4. 多 NPU 各自独立 route owner。
+4. 多 NPU 各自独立 route table。
 5. 目标拓扑只在前述门禁稳定后执行。
 
 #### 6.7.4 example 通过标准
@@ -836,7 +836,7 @@ T3 发现问题时按以下规则处理：
 | `src/hybm/csrc/common/hybm_define.h` | modern control 常量 | 不改变 entity meta/extra context ABI |
 | `src/hybm/csrc/common/hybm_batch_copy_route.h` | 固定 route ABI 和双基址 range | 不增加动态字段 |
 | `src/hybm/csrc/driver/hybm_gva.cpp`、`hybm_entry.cpp` | modern 34 MiB，legacy 32 MiB | 不把 legacy 扩为 34 MiB |
-| `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.*` | owner、completion、magic-last | 不负责建链或 launch |
+| `src/hybm/csrc/transport/device/urma/batch_copy_route_publisher.*` | completion、magic-last | 不负责建链或 launch |
 | `src/hybm/csrc/transport/device/urma/device_urma_transport_manager.*` | 统一 builder 和发布触发 | 不增加 `ReadRemoteBatchCopy` |
 | `src/hybm/csrc/transport/host/urma/` 的 T2 增量 | 原则上无；只允许 route 必需且经审查的最小适配 | 不重构 T1 |
 | `src/acc_offload/csrc/operators/aicpu/` | 新增唯一生产算子 | 不创建 probe operator |
@@ -861,7 +861,7 @@ T3 发现问题时按以下规则处理：
 | T1.4（已完成） | Compose、DataOperator、MapSlice、loader 无卡接入 | T1.3 | 无卡构建和 UT |
 | T1.5（已完成） | 两鲲鹏集成 example 和硬件验收 | T1.4 | T1 完成标准 |
 | T2.1 | modern 34 MiB、legacy 32 MiB、route ABI | T1.5 | 映射/回滚和 ABI UT |
-| T2.2 | publisher、owner、completion、magic-last | T2.1 | image/幂等/失败注入 UT |
+| T2.2 | publisher、completion、magic-last | T2.1 | image/幂等/失败注入 UT |
 | T2.3 | Device-HBM/Host-DDR 统一 builder、临时双触发 | T2.2 | 两种模式、equality、发布后拒绝 UT |
 | T2.4 | acc_offload 目录下的生产 `HybmBatchCopy` | T2.3 | 四 ABI、顺序查找、分片、completion UT |
 | T2.5 | C/Python `sparse_copy_urma` 和独立 launcher | T2.4 | 不初始化 EntryManager 的接口 UT |
@@ -922,7 +922,7 @@ AICPU run 包和 wheel 需要分别验证。现有 build 目录曾缺少 `CMakeF
 - private-data magic/version/payload 错误和协议冲突；
 - Host endpoint、flag、MR 注册/导出/导入和 CPU channel 创建失败；
 - Host Read/Write/Fence 失败及 pending 状态；
-- route owner 冲突；
+- publisher 待清理状态及 completion 清理重试；
 - completion 注册/注销失败；
 - HBM image 写入和 magic 写入失败；
 - 第二个 peer 或 MR 导入失败；
@@ -955,7 +955,7 @@ AICPU run 包和 wheel 需要分别验证。现有 build 目录曾缺少 `CMakeF
 | Device GVA 与 import view 不同 | 两卡 route 命中后访问错误 | range 保存双基址并做受检 offset |
 | framework HBM 地址不在 SVM 窗口 | 合法目的 tensor 被误拒绝 | 取消 `HYBM_DEVICE_VA_START` 下界，只保护 control 区 |
 | legacy 未映射 route | AICPU 访问未映射地址 | legacy 保持 32 MiB并明确不支持 |
-| 同卡多 publisher | route 被覆盖 | 单 owner；第二发布者失败 |
+| 路由发布并发调用 | route 被覆盖 | 上层调用链保证串行；publisher 不增加 owner 或锁 |
 | caller 并发调用 | completion 工作区竞争 | P0 调用方串行，不增加算子 guard |
 | 临时 ERROR route 日志过多 | 热路径日志膨胀 | 硬件稳定后删除或降级 |
 | acc_offload lazy launcher 与 entity 生命周期分离 | route 未就绪或提前释放 | magic 校验；example 保持 entity 存活 |
