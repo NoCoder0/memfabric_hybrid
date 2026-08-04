@@ -22,6 +22,7 @@ include_directories(
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/utils
         ${PROJECT_HYBM_SRC_BASE}/csrc/ts_engine
         ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
+        ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators/aicpu
 
         ${PROJECT_UTIL_SRC_BASE}/ptracer/include
         ${PROJECT_UTIL_SRC_BASE}/ptracer/tracers

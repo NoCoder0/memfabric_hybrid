@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include "hybm_batch_copy.h"
 #include "hybm_batch_copy_route.h"
 #include "hybm_define.h"
 
@@ -54,6 +55,15 @@ TEST(HybmBatchCopyRouteTest, AbiOffsetsAndSizesAreStable)
     EXPECT_EQ(sizeof(BatchCopyCompletionArea), 0x0200U);
     EXPECT_EQ(BATCH_COPY_COMPLETION_OFFSET, 0x8840U);
     EXPECT_EQ(BATCH_COPY_CONTROL_USED_SIZE, 0x8A40U);
+}
+
+TEST(HybmBatchCopyRouteTest, OperatorAbiContainsOnlyFourBusinessFields)
+{
+    EXPECT_EQ(offsetof(HybmBatchCopyParam, list_num), 0x00U);
+    EXPECT_EQ(offsetof(HybmBatchCopyParam, dst_buf_addr_list), 0x08U);
+    EXPECT_EQ(offsetof(HybmBatchCopyParam, src_buf_addr_list), 0x10U);
+    EXPECT_EQ(offsetof(HybmBatchCopyParam, len_list), 0x18U);
+    EXPECT_EQ(sizeof(HybmBatchCopyParam), 0x20U);
 }
 
 TEST(HybmBatchCopyRouteTest, ControlRegionPrecedesExistingDeviceMetadata)
