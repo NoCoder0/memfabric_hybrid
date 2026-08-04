@@ -85,7 +85,8 @@ HybmBatchCopy AICPU
 - legacy 路径保持原 32 MiB，不映射前置 route，也不支持 `sparse_copy_urma`。
 - publisher 使用 completion 注册和 magic-last；路由发布由上层调用链保证串行，不设置 owner。
 - Publish 成功后重复调用只返回 `BM_OK`，不得刷新 route。
-- route 发布后不增加 BatchCopy route MR，不支持热更新、容错补路由或 peer 替换。
+- route 以第一次成功 Publish 的 peer/range 集合为准，运行期不执行 route 刷新、热更新、
+  容错补路由或 peer 替换；调用方保证首次发布后不再改变建链拓扑和源区间。
 - route 发布后 `RemoveRanks()` 必须拒绝，防止 route 引用已释放资源。
 - Close 前调用方保证没有在途算子；Close 先清 magic，再释放 completion、channel、thread 和 MR。
 - `TryPublishBatchCopyRouteLocked(options)` 暂时同时位于 `Prepare()` 和
@@ -332,7 +333,8 @@ manager 级 mutex 保护生命周期和 map；同一 peer 的 submit/fence 串�
 
 - 第一次 `Prepare()` 只有完整 endpoint 集合，为每个 peer 创建 `COMM_ENGINE_CPU` channel。
 - 第二次 `Prepare()` 携带初始全量 memory key，复用 channel 并导入 MR/flag。
-- 相同 endpoint/key 的重复调用幂等成功；新增 peer、endpoint 变化或初始化后新增导出区间失败。
+- 相同 endpoint/key 的重复调用幂等成功；初始建链阶段 endpoint 变化仍失败。
+- BatchCopy route 首次发布后视为固定，调用方不再提交 route 变更。
 - client/server 角色继续按 rank 大小选择，`exchangeAllMems = true`。
 - `Connect/AsyncConnect` 在全部初始 peer 已准备后设置连接状态。
 - `RemoveRanks()` 在 P0 返回不支持。
@@ -503,6 +505,7 @@ publisher 不负责：
 - 第一次成功 Publish 后设置 published 状态。
 - 同一 publisher 再次 Publish 直接返回 `BM_OK`，不比较或覆盖新 sources。
 - 路由发布由上层调用链保证串行，publisher 不处理同一卡多发布者并发，也不返回并发错误码。
+- route 发布后不执行 route 刷新；初始 peer/range 集合由调用方保证不再变化。
 - 任一步失败后 magic 必须为 0，已创建资源按逆序回滚。
 - route table 发布后只读，completion area 是运行期工作区。
 
@@ -557,9 +560,8 @@ T2 不修复 `connected_`。未来修复后删除 `Prepare()` 末尾调用。
 
 发布后：
 
-- 新增 route MR 请求返回 `BM_NOT_SUPPORTED`；
+- route 不刷新、不合并、不局部修补，调用方不得提交新的 route peer/MR；
 - `RemoveRanks()` 返回 `BM_NOT_SUPPORTED`；
-- 不刷新、合并或局部修补 route；
 - 普通未发布 BatchCopy route 的 Device URMA 行为保持不变。
 
 #### 6.3.3 测试门禁
@@ -568,8 +570,8 @@ T2 不修复 `connected_`。未来修复后删除 `Prepare()` 末尾调用。
 - Host 三地址完全相等成功，任一不相等失败。
 - Host/Device 混合 peer 拒绝。
 - flag type/size/address、thread/channel 缺失。
-- 两个发布入口幂等，成功后 route 内容不变化。
-- 发布后新增 MR 和 RemoveRanks 拒绝。
+- 两个发布入口幂等，成功后 route 内容不变化；调用方不提交发布后的 route 变更。
+- `RemoveRanks()` 的生命周期保护保持有效。
 - 当前 HCOMM `outMem.type/flagOutMem.type` 校验保持不变。
 
 ### 6.4 T2.4：生产 HybmBatchCopy AICPU
@@ -862,7 +864,7 @@ T3 发现问题时按以下规则处理：
 | T1.5（已完成） | 两鲲鹏集成 example 和硬件验收 | T1.4 | T1 完成标准 |
 | T2.1 | modern 34 MiB、legacy 32 MiB、route ABI | T1.5 | 映射/回滚和 ABI UT |
 | T2.2 | publisher、completion、magic-last | T2.1 | image/幂等/失败注入 UT |
-| T2.3 | Device-HBM/Host-DDR 统一 builder、临时双触发 | T2.2 | 两种模式、equality、发布后拒绝 UT |
+| T2.3 | Device-HBM/Host-DDR 统一 builder、临时双触发 | T2.2 | 两种模式、equality、route 固定和重复发布幂等 UT |
 | T2.4 | acc_offload 目录下的生产 `HybmBatchCopy` | T2.3 | 四 ABI、顺序查找、分片、completion UT |
 | T2.5 | C/Python `sparse_copy_urma` 和独立 launcher | T2.4 | 不初始化 EntryManager 的接口 UT |
 | T2.6 | CMake、JSON、run、wheel 和文档 | T2.5 | 实际构建/安装成功后才能标记完成 |

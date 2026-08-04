@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "batch_copy_route_publisher.h"
 #include "dl_hcomm_api.h"
 #include "dl_rt_api.h"
 #include "hybm_transport_manager.h"
@@ -197,6 +198,18 @@ private:
     Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
                                      const std::vector<TransportMemoryKey> &memKeys);
 
+    // Batch_Copy route source construction and publication
+    bool IsBatchCopyRouteEnabledLocked() const;
+    Result ValidateBatchCopyPeerLocked(uint32_t peerRank, const RemoteRankState &state, uint32_t endpointLocType) const;
+    Result BuildBatchCopyRouteSourceLocked(uint32_t peerRank, const RemoteRankState &state, uint32_t endpointLocType,
+                                           BatchCopyRouteSource &source) const;
+    Result BuildBatchCopyRouteSourcesForPeersLocked(const std::vector<uint32_t> &peerRanks,
+                                                    std::vector<BatchCopyRouteSource> &sources) const;
+    Result BuildBatchCopyRouteSourcesLocked(const HybmTransPrepareOptions &options,
+                                            std::vector<BatchCopyRouteSource> &sources) const;
+    Result BuildBatchCopyRouteSourcesLocked(std::vector<BatchCopyRouteSource> &sources) const;
+    Result TryPublishBatchCopyRouteLocked(const HybmTransPrepareOptions &options);
+
     // Prepare/rank/connection/private data
     Result RemoveRankLocked(uint32_t rankId);
 
@@ -286,6 +299,7 @@ private:
     // Strong registry of all per-thread completion contexts
     std::vector<std::shared_ptr<CompletionContext>> registry_{};
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};
+    std::unique_ptr<BatchCopyRoutePublisher> routePublisher_{};
 };
 
 } // namespace device

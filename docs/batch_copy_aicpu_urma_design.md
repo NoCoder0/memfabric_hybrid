@@ -463,7 +463,7 @@ Read/Write/Fence 数据面。两个 manager 独立
 | 本地 MR 注册、查询和注销函数 | 本机 HOST_DRAM 执行 HVA→DVA，HBM 使用 device address | 固定 GVA/HVA 直接注册；共用范围查找、描述符序列化和 refCount helper |
 | 远端 MR 导入函数 | 导入 Device-HBM 或鲲鹏 DDR MR/flag，并同时保存 exported GVA 与 HCOMM view | Host peer 场景导入对端 DDR MR/flag；NPU peer 场景只导出本地 DDR/flag |
 | `Prepare()` 及 channel 清理函数 | 首次调用固定同质 route peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；携带 key 的后续调用复用资源并导入初始 key | 首次创建 `COMM_ENGINE_CPU` channel；携带 key 的后续调用校验 peer/endpoint 未变化并复用 channel |
-| `UpdateRankOptions()` | 完整初始 options 就绪时发布 route；发布后相同调用幂等返回，任何刷新请求均被拒绝 | Batch_Copy 初始化完成后返回 `BM_NOT_SUPPORTED` |
+| `UpdateRankOptions()` | 完整初始 options 就绪时发布 route；发布后相同调用幂等返回，route 不刷新；调用方保证不再提交 route 变更 | Batch_Copy 初始化完成后返回 `BM_NOT_SUPPORTED` |
 | `RemoveRanks()` | route 发布后返回 `BM_NOT_SUPPORTED`；否则遵循 DEVICE_URMA 行为 | 存在 Batch_Copy peer 时返回 `BM_NOT_SUPPORTED` |
 | 连接和 private-data 函数 | 序列化 Device `EndpointLoc` | 序列化 Host `EndpointLoc` |
 | Remote I/O 函数 | `copy_data`/`DataOpDeviceURMA` 行为与 `sparse_copy_urma` 相互独立 | 提供 Host CPU Read/Write/Fence 数据面 |
@@ -620,15 +620,16 @@ entity 初始化会调用 manager 两次。`ImportEntityExchangeInfo()` 通过 `
 | `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 peer 集合；携带 key 的调用校验 peer/endpoint 未变化并复用 channel；NPU peer 不导入 HBM key | 支持 Host 主动数据面和鲲鹏对 NPU 的 DDR 导出，并接受 entity 的幂等 `Prepare()` |
 | `DeviceUrmaTransportManager::RollbackInitialImportsLocked()` | 任一 peer 导入或 route 发布失败时，按逆序释放本轮事务创建的全部 import；已存在的 channel/thread 由 manager 清理流程持有 | 防止跨 peer 的部分导入残留，同时不误删已建立的资源 |
 | `DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked()/PublishBatchCopyRouteLocked()` | 在符合条件的 Device-HBM 或 Host-DDR route peer 资源完整后发布；成功后重复调用只返回 `BM_OK` | publisher 与执行入口解耦，且不实现发布后的刷新或热更新 |
-| `DeviceUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | 完整初始 options 触发 route 发布；发布后拒绝 route 扩展和 `RemoveRanks()` | 防止 route 引用已释放资源；不实现发布后容错更新 |
+| `DeviceUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | 完整初始 options 触发 route 发布；route 发布后视为固定，调用方不再提交扩展或删除请求；`RemoveRanks()` 仍受生命周期保护 | 不实现发布后 route 刷新，防止 route 引用已释放资源 |
 | `HostUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | Batch_Copy 初始化完成后的变更请求返回 `BM_NOT_SUPPORTED` | Host peer 集合和 DDR 导出集合在初始化后保持不变 |
 | `DeviceUrmaTransportManager::CloseDevice()` | 先执行 `ClearBatchCopyRouteMagicLocked()`，再注销 completion 和通信资源 | 防止 AICPU 读取已经释放的 HCOMM 句柄 |
 | HBM 目的地址校验 | 校验地址加法溢出并拒绝与固定 control 区重叠，不要求地址大于 `HYBM_DEVICE_VA_START` | PyTorch/框架分配的真实 HBM 地址可能不在 MemFabric SVM 业务窗口，不能用该窗口误拒绝合法 tensor |
 | `src/smem/python/memfabric_hybrid/setup.py` | 制备白名单包含共享路由 ABI 头和 acc_offload 下的 AICPU 源文件 | wheel 首次 import 的交叉编译输入必须包含唯一算子源 |
 
 初始化约束为：第一次 `ImportEntityExchangeInfo()` 一次性携带完整 peer 集合，第一次
-`ImportSliceExchangeInfo()` 一次性携带 `sparse_copy_urma` 使用的全部源区间；运行期不增加 route MR，
-不删除 peer，也不处理断链。发布事务边界为：完成全部 route peer 建链 → NPU 导入并校验所有 MR 与 flag →
+`ImportSliceExchangeInfo()` 一次性携带 `sparse_copy_urma` 使用的全部源区间；调用方保证运行期不增加
+route MR、不删除 peer，也不处理断链。实现不处理发布后的 route 变更，route 只在首次完整初始化时构建。
+发布事务边界为：完成全部 route peer 建链 → NPU 导入并校验所有 MR 与 flag →
 清零 completion area 并注册固定 completion 区 → 构建固定 route image →
 以 magic=0 同步写入卡级元数据区 → 最后写 magic → 初始化成功。任一步失败都不得留下有效 magic，
 导入或发布失败时释放本轮事务创建的全部 import。Close 前调用方保证没有在途算子，manager 先清 magic，
@@ -966,8 +967,8 @@ Result DeviceUrmaTransportManager::ClearBatchCopyRouteMagicLocked();
 builder 根据完整 options 构建一种同质 route：Device endpoint 只收录 `DEVICE_HBM`；Host endpoint 只收录
 `HOST_DRAM`，并强制 exported GVA、descriptor addr 和 import view addr 相等。资源完整后 publisher 获取
 清除 magic、清零并注册 completion 区、写入 route image，最后发布 magic。发布成功后再次
-调用只返回 `BM_OK`，不刷新 route；route 发布后的额外 MR 和 `RemoveRanks()` 被拒绝，最终销毁前先清除
-magic。发布入口和资源就绪条件见 3.1.5。
+调用只返回 `BM_OK`，不刷新 route；调用方保证不再提交发布后的 route 变更，`RemoveRanks()` 仍受生命周期保护，
+最终销毁前先清除 magic。发布入口和资源就绪条件见 3.1.5。
 
 ### 3.5.3 编程手册设计
 

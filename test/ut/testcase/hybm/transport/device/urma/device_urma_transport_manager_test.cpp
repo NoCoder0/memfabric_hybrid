@@ -14,6 +14,7 @@
 #include <cstring>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <dirent.h>
@@ -2668,6 +2669,92 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsMalformedPayloads
     EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {flagKey}), BM_INVALID_PARAM);
     EXPECT_TRUE(state.imports.empty());
     EXPECT_TRUE(state.remoteFlagDescBytes.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, BuildsDeviceBatchCopyRouteWithDistinctGvaAndHcommView)
+{
+    DeviceUrmaTransportManager manager;
+    manager.rankId_ = 0;
+    manager.options_.protocol = HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+
+    auto &state = manager.remoteRanks_[1];
+    state.hasEndpointDesc = true;
+    state.remoteEndpointDesc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    state.thread = MOCK_THREAD;
+    state.channel = MOCK_CHANNEL;
+    state.remoteFlagAddr = MOCK_NOTIFY_ADDR;
+    state.remoteFlagSize = sizeof(uint64_t);
+    state.remoteFlagDescBytes = {0xF1U};
+    DeviceUrmaTransportManager::RemoteRegistration registration{};
+    registration.addr = MOCK_REMOTE_ADDR;
+    registration.size = MOCK_SIZE;
+    registration.memTag = MOCK_MEM_TAG;
+    registration.view = {MOCK_NOTIFY_ADDR, MOCK_SIZE, UrmaMemoryType::DEVICE_HBM};
+    state.imports.emplace_back(registration);
+
+    std::vector<BatchCopyRouteSource> sources;
+    ASSERT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_OK);
+    ASSERT_EQ(sources.size(), 1U);
+    ASSERT_EQ(sources.front().ranges.size(), 1U);
+    EXPECT_EQ(sources.front().ranges.front().srcGvaBegin, MOCK_REMOTE_ADDR);
+    EXPECT_EQ(sources.front().ranges.front().srcGvaEnd, MOCK_REMOTE_ADDR + MOCK_SIZE);
+    EXPECT_EQ(sources.front().ranges.front().hcommVaBegin, MOCK_NOTIFY_ADDR);
+}
+
+TEST(DeviceUrmaTransportManagerTest, HostBatchCopyRouteRequiresGvaAndHcommViewEquality)
+{
+    DeviceUrmaTransportManager manager;
+    manager.rankId_ = 0;
+
+    auto &state = manager.remoteRanks_[1];
+    state.hasEndpointDesc = true;
+    state.remoteEndpointDesc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
+    state.thread = MOCK_THREAD;
+    state.channel = MOCK_CHANNEL;
+    state.remoteFlagAddr = MOCK_NOTIFY_ADDR;
+    state.remoteFlagSize = sizeof(uint64_t);
+    state.remoteFlagDescBytes = {0xF1U};
+    DeviceUrmaTransportManager::RemoteRegistration registration{};
+    registration.addr = MOCK_REMOTE_ADDR;
+    registration.size = MOCK_SIZE;
+    registration.memTag = MOCK_MEM_TAG;
+    registration.view = {MOCK_REMOTE_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
+    state.imports.emplace_back(registration);
+
+    std::vector<BatchCopyRouteSource> sources;
+    ASSERT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_OK);
+
+    state.imports.front().view.addr = MOCK_NOTIFY_ADDR;
+    EXPECT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, RejectsMixedHostAndDeviceBatchCopyRoutePeers)
+{
+    DeviceUrmaTransportManager manager;
+    manager.rankId_ = 0;
+    using EndpointLocation = decltype(MakeEndpointDesc().loc.locType);
+    for (const auto &item : std::vector<std::pair<uint32_t, EndpointLocation>>{{1U, ENDPOINT_LOC_TYPE_DEVICE},
+                                                                               {2U, ENDPOINT_LOC_TYPE_HOST}}) {
+        auto &state = manager.remoteRanks_[item.first];
+        state.hasEndpointDesc = true;
+        state.remoteEndpointDesc.loc.locType = item.second;
+        state.thread = MOCK_THREAD;
+        state.channel = MOCK_CHANNEL;
+        state.remoteFlagAddr = MOCK_NOTIFY_ADDR;
+        state.remoteFlagSize = sizeof(uint64_t);
+        state.remoteFlagDescBytes = {0xF1U};
+        DeviceUrmaTransportManager::RemoteRegistration registration{};
+        registration.addr = MOCK_REMOTE_ADDR + (item.first - 1U) * MOCK_SIZE * 2U;
+        registration.size = MOCK_SIZE;
+        registration.memTag = item.first;
+        const auto memoryType =
+            item.second == ENDPOINT_LOC_TYPE_HOST ? UrmaMemoryType::HOST_DRAM : UrmaMemoryType::DEVICE_HBM;
+        registration.view = {registration.addr, MOCK_SIZE, memoryType};
+        state.imports.emplace_back(registration);
+    }
+
+    std::vector<BatchCopyRouteSource> sources;
+    EXPECT_EQ(manager.BuildBatchCopyRouteSourcesLocked(sources), BM_INVALID_PARAM);
 }
 
 TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchRejectsMissingRankAndChannel)

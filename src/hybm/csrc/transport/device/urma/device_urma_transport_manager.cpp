@@ -120,6 +120,12 @@ std::string FormatIpAddress(CommAddrType addrType, const uint8_t *addrData)
     return ipText;
 }
 
+bool HasBatchCopyMemoryKeys(const HybmTransPrepareOptions &options)
+{
+    return std::any_of(options.options.begin(), options.options.end(),
+                       [](const auto &item) { return !item.second.memKeys.empty(); });
+}
+
 } // namespace
 
 // get TLS(Thread Local Storage) bingdings
@@ -669,6 +675,15 @@ Result DeviceUrmaTransportManager::CloseDevice()
     if (!opened_) {
         return BM_OK;
     }
+    if (routePublisher_ != nullptr) {
+        const auto ret = routePublisher_->Clear();
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma CloseDevice failed to clear BatchCopy route, rank: "
+                         << rankId_ << " userDeviceId: " << userDeviceId_ << " ret: " << ret);
+            return ret;
+        }
+        routePublisher_.reset();
+    }
     for (const auto &ctxSp : registry_) {
         if (!ctxSp) {
             continue;
@@ -1160,6 +1175,15 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         const uint64_t memTag = exportDesc.memTag;
         const uint32_t memDescLen = sizeof(UrmaExportDesc) + exportDesc.hcommDescLen;
 
+        if (state.remoteEndpointDesc.loc.locType == ENDPOINT_LOC_TYPE_HOST &&
+            (exportDesc.memoryType != UrmaMemoryType::HOST_DRAM || exportDesc.addr != remoteAddr)) {
+            BM_LOG_ERROR("device_urma Host BatchCopy import GVA mismatch, peer: "
+                         << peerRank << " memTag: " << memTag << " keyAddr: 0x" << std::hex << remoteAddr
+                         << " descAddr: 0x" << exportDesc.addr << std::dec << " descType: " << exportDesc.memoryType);
+            rollbackNewImports();
+            return BM_INVALID_PARAM;
+        }
+
         // Validate total payload fits within the key data area
         if (memDescLen + exportDesc.devTransFlagDescLen > DEVICE_URMA_EXPORT_KEY_DATA_BYTES) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked total payload exceeds key capacity, "
@@ -1195,6 +1219,17 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
                          << memTag << " peer: " << peerRank << " ret: " << ret);
             rollbackNewImports();
             return ret;
+        }
+
+        if (state.remoteEndpointDesc.loc.locType == ENDPOINT_LOC_TYPE_HOST &&
+            (view.type != UrmaMemoryType::HOST_DRAM || view.addr != remoteAddr || view.size < remoteSize)) {
+            BM_LOG_ERROR("device_urma Host BatchCopy import view mismatch, peer: "
+                         << peerRank << " memTag: " << memTag << " keyAddr: 0x" << std::hex << remoteAddr
+                         << " viewAddr: 0x" << view.addr << std::dec << " keySize: " << remoteSize
+                         << " viewSize: " << view.size << " viewType: " << view.type);
+            (void)manager_.HcommMemUnimport(localEndpoint_, raw, memDescLen);
+            rollbackNewImports();
+            return BM_INVALID_PARAM;
         }
 
         // --- 6. Build RemoteRegistration ---
@@ -1240,6 +1275,210 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
 
     state.imports.insert(state.imports.end(), newImports.begin(), newImports.end());
     return BM_OK;
+}
+
+bool DeviceUrmaTransportManager::IsBatchCopyRouteEnabledLocked() const
+{
+    return (options_.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U;
+}
+
+Result DeviceUrmaTransportManager::ValidateBatchCopyPeerLocked(uint32_t peerRank, const RemoteRankState &state,
+                                                               uint32_t endpointLocType) const
+{
+    const bool validEndpoint =
+        state.hasEndpointDesc && static_cast<uint32_t>(state.remoteEndpointDesc.loc.locType) == endpointLocType;
+    const bool validResources = state.thread != 0 && state.channel != 0 && state.remoteFlagAddr != 0 &&
+                                state.remoteFlagSize == sizeof(uint64_t) && !state.remoteFlagDescBytes.empty();
+    if (!validEndpoint || !validResources) {
+        BM_LOG_ERROR("device_urma invalid BatchCopy peer resources, peer: "
+                     << peerRank << " locType: " << state.remoteEndpointDesc.loc.locType
+                     << " expectedLocType: " << endpointLocType << " hasEndpointDesc: " << state.hasEndpointDesc
+                     << " thread: " << state.thread << " channel: " << state.channel << " flagAddr: 0x" << std::hex
+                     << state.remoteFlagAddr << std::dec << " flagSize: " << state.remoteFlagSize);
+        return BM_INVALID_PARAM;
+    }
+    if (state.imports.empty() || state.imports.size() > BATCH_COPY_MAX_RANGE_PER_PEER) {
+        BM_LOG_ERROR("device_urma invalid BatchCopy range count, peer: " << peerRank
+                                                                         << " count: " << state.imports.size());
+        return BM_INVALID_PARAM;
+    }
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourceLocked(uint32_t peerRank, const RemoteRankState &state,
+                                                                   uint32_t endpointLocType,
+                                                                   BatchCopyRouteSource &source) const
+{
+    const auto expectedType =
+        endpointLocType == ENDPOINT_LOC_TYPE_HOST ? UrmaMemoryType::HOST_DRAM : UrmaMemoryType::DEVICE_HBM;
+    auto ret = ValidateBatchCopyPeerLocked(peerRank, state, endpointLocType);
+    if (ret != BM_OK) {
+        return ret;
+    }
+
+    source = {};
+    source.peerRank = peerRank;
+    source.thread = state.thread;
+    source.channel = state.channel;
+    source.remoteFlagAddr = state.remoteFlagAddr;
+    try {
+        source.ranges.reserve(state.imports.size());
+        for (const auto &registration : state.imports) {
+            uint64_t gvaEnd = 0;
+            uint64_t hcommEnd = 0;
+            const UrmaCommMem gvaMem{registration.addr, registration.size, expectedType};
+            const UrmaCommMem hcommMem{registration.view.addr, registration.size, expectedType};
+            const bool invalid =
+                registration.view.type != expectedType || registration.view.addr == 0 ||
+                registration.view.size < registration.size || !GetRangeEnd(gvaMem, gvaEnd) ||
+                !GetRangeEnd(hcommMem, hcommEnd) ||
+                (endpointLocType == ENDPOINT_LOC_TYPE_HOST && registration.view.addr != registration.addr);
+            if (invalid) {
+                BM_LOG_ERROR("device_urma invalid BatchCopy memory range, peer: "
+                             << peerRank << " memTag: " << registration.memTag << " gva: 0x" << std::hex
+                             << registration.addr << " view: 0x" << registration.view.addr << std::dec
+                             << " size: " << registration.size << " viewSize: " << registration.view.size
+                             << " viewType: " << registration.view.type);
+                return BM_INVALID_PARAM;
+            }
+            source.ranges.push_back({registration.addr, gvaEnd, registration.view.addr});
+        }
+    } catch (...) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy route ranges failed, peer: " << peerRank << " rangeCount: "
+                                                                                  << state.imports.size());
+        return BM_MALLOC_FAILED;
+    }
+    return BM_OK;
+}
+
+Result
+DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesForPeersLocked(const std::vector<uint32_t> &peerRanks,
+                                                                     std::vector<BatchCopyRouteSource> &sources) const
+{
+    if (peerRanks.empty() || peerRanks.size() > BATCH_COPY_MAX_PEER_COUNT || peerRanks.size() != remoteRanks_.size()) {
+        BM_LOG_ERROR("device_urma invalid BatchCopy peer set, rank: " << rankId_ << " requested: " << peerRanks.size()
+                                                                      << " prepared: " << remoteRanks_.size());
+        return BM_INVALID_PARAM;
+    }
+    std::vector<uint32_t> sortedRanks = peerRanks;
+    std::sort(sortedRanks.begin(), sortedRanks.end());
+    sources.clear();
+    try {
+        sources.reserve(sortedRanks.size());
+    } catch (...) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy peer sources failed, rank: " << rankId_ << " peerCount: "
+                                                                                  << sortedRanks.size());
+        return BM_MALLOC_FAILED;
+    }
+
+    bool hasRouteLocation = false;
+    uint32_t routeLocation = 0;
+    for (const auto peerRank : sortedRanks) {
+        const auto stateIt = remoteRanks_.find(peerRank);
+        if (stateIt == remoteRanks_.end()) {
+            BM_LOG_ERROR("device_urma BatchCopy peer is not prepared, rank: " << rankId_ << " peer: " << peerRank);
+            return BM_NOT_CONNECTED;
+        }
+        const auto location = static_cast<uint32_t>(stateIt->second.remoteEndpointDesc.loc.locType);
+        if (location != ENDPOINT_LOC_TYPE_HOST && location != ENDPOINT_LOC_TYPE_DEVICE) {
+            BM_LOG_ERROR("device_urma invalid BatchCopy endpoint location, rank: " << rankId_ << " peer: " << peerRank
+                                                                                   << " locType: " << location);
+            return BM_INVALID_PARAM;
+        }
+        if (hasRouteLocation && location != routeLocation) {
+            BM_LOG_ERROR("device_urma mixed BatchCopy endpoint locations, rank: " << rankId_ << " peer: " << peerRank
+                                                                                  << " expected: " << routeLocation
+                                                                                  << " actual: " << location);
+            return BM_INVALID_PARAM;
+        }
+        routeLocation = location;
+        hasRouteLocation = true;
+        BatchCopyRouteSource source{};
+        const auto ret = BuildBatchCopyRouteSourceLocked(peerRank, stateIt->second, routeLocation, source);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma build BatchCopy route source failed, rank: " << rankId_ << " peer: " << peerRank
+                                                                                   << " ret: " << ret);
+            return ret;
+        }
+        sources.emplace_back(std::move(source));
+    }
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(const HybmTransPrepareOptions &options,
+                                                                    std::vector<BatchCopyRouteSource> &sources) const
+{
+    std::vector<uint32_t> peerRanks;
+    for (const auto &item : options.options) {
+        if (item.first == rankId_) {
+            continue;
+        }
+        peerRanks.push_back(item.first);
+    }
+    if (peerRanks.empty()) {
+        BM_LOG_ERROR("device_urma BatchCopy route has no remote peer, rank: " << rankId_);
+        return BM_INVALID_PARAM;
+    }
+    return BuildBatchCopyRouteSourcesForPeersLocked(peerRanks, sources);
+}
+
+Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourcesLocked(std::vector<BatchCopyRouteSource> &sources) const
+{
+    std::vector<uint32_t> peerRanks;
+    try {
+        peerRanks.reserve(remoteRanks_.size());
+        for (const auto &item : remoteRanks_) {
+            peerRanks.push_back(item.first);
+        }
+    } catch (...) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy peer rank list failed, rank: " << rankId_ << " peerCount: "
+                                                                                    << remoteRanks_.size());
+        return BM_MALLOC_FAILED;
+    }
+    return BuildBatchCopyRouteSourcesForPeersLocked(peerRanks, sources);
+}
+
+Result DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked(const HybmTransPrepareOptions &options)
+{
+    if (!IsBatchCopyRouteEnabledLocked()) {
+        return BM_OK;
+    }
+    if (routePublisher_ != nullptr && routePublisher_->IsPublished()) {
+        // BatchCopy route is immutable after the first successful publication.
+        return BM_OK;
+    }
+    if (!HasBatchCopyMemoryKeys(options)) {
+        return BM_OK;
+    }
+    for (const auto &item : options.options) {
+        if (item.first != rankId_ && item.second.memKeys.empty()) {
+            BM_LOG_ERROR("device_urma BatchCopy route peer memory keys are incomplete, rank: " << rankId_ << " peer: "
+                                                                                               << item.first);
+            return BM_NOT_CONNECTED;
+        }
+    }
+    std::vector<BatchCopyRouteSource> sources;
+    auto ret = BuildBatchCopyRouteSourcesLocked(options, sources);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma build BatchCopy route sources failed, rank: " << rankId_ << " userDeviceId: "
+                                                                                << userDeviceId_ << " ret: " << ret);
+        return ret;
+    }
+    try {
+        if (routePublisher_ == nullptr) {
+            routePublisher_ = std::make_unique<BatchCopyRoutePublisher>(userDeviceId_, localEndpoint_, manager_);
+        }
+    } catch (...) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy route publisher failed, rank: " << rankId_ << " userDeviceId: "
+                                                                                     << userDeviceId_);
+        return BM_MALLOC_FAILED;
+    }
+    ret = routePublisher_->Publish(sources);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma publish BatchCopy route failed, rank: " << rankId_ << " userDeviceId: "
+                                                                          << userDeviceId_ << " ret: " << ret);
+    }
+    return ret;
 }
 
 Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
@@ -1398,7 +1637,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
                                                           << state.channel << " imports: " << state.imports.size());
     }
-    return BM_OK;
+    return TryPublishBatchCopyRouteLocked(options);
 }
 
 Result DeviceUrmaTransportManager::RemoveRankLocked(uint32_t rankId)
@@ -1443,6 +1682,11 @@ Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &remo
     BM_LOG_INFO("device_urma RemoveRanks called, localRank: " << rankId_ << " ranks: " << removedRanks.size()
                                                               << " opened: " << opened_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
+    if (routePublisher_ != nullptr && routePublisher_->IsPublished()) {
+        BM_LOG_ERROR("device_urma RemoveRanks is not supported after BatchCopy route publication, rank: "
+                     << rankId_ << " removedCount: " << removedRanks.size());
+        return BM_NOT_SUPPORTED;
+    }
 
     // Atomic pending preflight: any target rank with pending ops → reject all
     for (auto rankId : removedRanks) {
@@ -1552,7 +1796,7 @@ Result DeviceUrmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptio
         }
         BM_LOG_INFO("device_urma UpdateRankOptions success, peer: " << peerRank);
     }
-    return BM_OK;
+    return TryPublishBatchCopyRouteLocked(options);
 }
 
 const std::string &DeviceUrmaTransportManager::GetNic() const
