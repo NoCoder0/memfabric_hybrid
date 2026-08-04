@@ -32,6 +32,9 @@ bash script/kernel/build_ops_run.sh
 
 也可从其他途径获取该 run 包后直接使用。
 
+`HybmBatchCopy` 与既有 `HybmBatchRead/HybmBatchWrite` 共用 `libcann_hybm_kernel.so`、JSON、run 包和安装目录。
+构建过程从 `src/acc_offload/csrc/operators/aicpu/` 使用唯一的生产源码，不会生成第二套 AICPU 产物。
+
 ---
 
 ## 三、 安装前检查

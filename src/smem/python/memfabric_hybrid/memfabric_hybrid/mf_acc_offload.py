@@ -15,6 +15,7 @@ import torch
 from _pymf_acc_offload import offload
 
 sparse_copy_impl = offload.sparse_copy
+sparse_copy_urma_impl = offload.sparse_copy_urma
 group_pack_copy_impl = offload.group_pack_copy
 
 
@@ -36,6 +37,12 @@ def empty(sizes, dtype=None, pin_memory=False):
 def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId):
     return sparse_copy_impl(
         srcPtrs.data_ptr(), dstPtrs.data_ptr(), lenPtrs.data_ptr(), sizePtr.data_ptr(), deviceId.index
+    )
+
+
+def sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, list_num, device):
+    return sparse_copy_urma_impl(
+        src_ptrs.data_ptr(), dst_ptrs.data_ptr(), len_ptrs.data_ptr(), int(list_num), device.index
     )
 
 

@@ -102,6 +102,9 @@ echo " CLEAN             = ${CLEAN}"
 echo " ASCEND_HOME_PATH  = ${ASCEND_HOME_PATH:-<not set>}"
 echo "============================================"
 
+AICPU_KERNEL_SOURCES="${OPS_SRC_DIR}/hybm_kernel/hybm_batch_transfer.cc;"
+AICPU_KERNEL_SOURCES+="${PROJECT_ROOT}/src/acc_offload/csrc/operators/aicpu/hybm_batch_copy.cc"
+
 # ---- Clean if requested ----
 if [[ ${CLEAN} -eq 1 && -d "${BUILD_DIR}" ]]; then
     echo "Cleaning build directory: ${BUILD_DIR}"
@@ -115,7 +118,9 @@ cmake_opts=(
     -DHYBM_KERNEL_PROJECT_ROOT="${PROJECT_ROOT}"
     -DTARGET_INSTALL_DIR="${OUTPUT_DIR}"
     -DPROJECT_HYBM_SRC_BASE="${PROJECT_ROOT}/src/hybm"
+    -DPROJECT_ACC_OFFLOAD_SRC_BASE="${PROJECT_ROOT}/src/acc_offload"
     -DPROJECT_UTIL_SRC_BASE="${PROJECT_ROOT}/src/util/csrc"
+    -DAICPU_KERNEL_SRC="${AICPU_KERNEL_SOURCES}"
     -DCMAKE_BUILD_TYPE="${BUILD_MODE_UPPER}"
 )
 

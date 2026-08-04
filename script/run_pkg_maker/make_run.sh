@@ -78,8 +78,33 @@ cp "${OUTPUT_DIR}"/hybm/lib64/libmf_hybm_core.so ${PKG_DIR}/"${ARCH_OS}"/lib64/
 cp -r "${PROJECT_DIR}"/src/hybm/csrc/copy_extend ${PKG_DIR}
 # accoffload extend source (AscendC kernel + torch_npu adapter), compiled at install time
 mkdir -p ${PKG_DIR}/accoffload_operators
-cp "${PROJECT_DIR}"/src/acc_offload/csrc/operators/* ${PKG_DIR}/accoffload_operators/
+cp -r "${PROJECT_DIR}"/src/acc_offload/csrc/operators/. ${PKG_DIR}/accoffload_operators/
 cp "${PROJECT_DIR}"/src/acc_offload/csrc/launch/acc_offload_operators_launch.cpp ${PKG_DIR}/accoffload_operators/
+
+# Shared AICPU source dependencies used by the HYBM kernel build and launcher compile.
+mkdir -p ${PKG_DIR}/accoffload_operators/include
+cp "${PROJECT_DIR}"/src/hybm/csrc/common/hybm_batch_copy_route.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/hybm/csrc/common/hybm_define.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/hybm/include/hybm_def.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/hybm/csrc/under_api/dl_hcomm_api.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/hybm/csrc/common/hybm_types.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/hybm/ops/hybm_kernel/hybm_batch_transfer.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/hybm/ops/hybm_kernel/hybm_kernel_log.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/acc_offload/csrc/common/acc_offload_define.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/acc_offload/csrc/common/acc_offload_logger.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/util/csrc/mf_out_logger.h \
+   ${PKG_DIR}/accoffload_operators/include/
+cp "${PROJECT_DIR}"/src/util/csrc/mf_spinlock.h \
+   ${PKG_DIR}/accoffload_operators/include/
 
 # memfabric_hybrid wheel package
 if [ "${BUILD_PYTHON}" = "ON" ]; then

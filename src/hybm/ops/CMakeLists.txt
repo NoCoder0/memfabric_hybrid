@@ -13,6 +13,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
     set(HYBM_KERNEL_PROJECT_ROOT "${_REPO_ROOT}" CACHE PATH "Repo root for hybm kernel build")
     set(PROJECT_HYBM_SRC_BASE "${_REPO_ROOT}/src/hybm" CACHE PATH "hybm src base")
+    set(PROJECT_ACC_OFFLOAD_SRC_BASE "${_REPO_ROOT}/src/acc_offload" CACHE PATH "acc_offload src base")
     set(PROJECT_UTIL_SRC_BASE "${_REPO_ROOT}/src/util/csrc" CACHE PATH "util src base")
     if(NOT TARGET_INSTALL_DIR)
         set(TARGET_INSTALL_DIR "${_REPO_ROOT}/output" CACHE PATH "Install destination")
@@ -22,6 +23,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # AICPU kernel source files for cross-compilation (standalone mode)
     set(AICPU_KERNEL_SRC
         "${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel/hybm_batch_transfer.cc"
+        "${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators/aicpu/hybm_batch_copy.cc"
         CACHE STRING "Source files for AICPU kernel cross-compilation")
 
     # Include dlog/slog config if present (added by prior changes)

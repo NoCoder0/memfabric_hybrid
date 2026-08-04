@@ -4,6 +4,12 @@ set(CMAKE_SKIP_RPATH TRUE)
 if(NOT DEFINED HYBM_KERNEL_PROJECT_ROOT)
   set(HYBM_KERNEL_PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
 endif()
+if(NOT DEFINED PROJECT_ACC_OFFLOAD_SRC_BASE)
+  set(PROJECT_ACC_OFFLOAD_SRC_BASE "${HYBM_KERNEL_PROJECT_ROOT}/src/acc_offload")
+endif()
+if(NOT DEFINED PROJECT_UTIL_SRC_BASE)
+  set(PROJECT_UTIL_SRC_BASE "${HYBM_KERNEL_PROJECT_ROOT}/src/util/csrc")
+endif()
 # hybm_pack_sign.cmake not needed: pack_targets_and_files() no longer used
 
 set(HYBM_AICPU_PACKAGE_NAME cann-hybm-compat.tar.gz)
@@ -19,6 +25,8 @@ set(AICPU_INCLUDE_DIRS
     ${PROJECT_HYBM_SRC_BASE}/include
     ${PROJECT_HYBM_SRC_BASE}/csrc/common
     ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
+    ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators/aicpu
+    ${PROJECT_UTIL_SRC_BASE}
     ${_ASCEND_INC_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
@@ -34,6 +42,7 @@ endforeach()
 if(NOT DEFINED AICPU_KERNEL_SRC)
   set(AICPU_KERNEL_SRC
       "${CMAKE_CURRENT_SOURCE_DIR}/hybm_batch_transfer.cc"
+      "${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators/aicpu/hybm_batch_copy.cc"
   )
 endif()
 
@@ -51,9 +60,13 @@ add_custom_command(
 # ---- Cross-compile .so ----
 set(AICPU_KERNEL_DEPS
     ${CMAKE_CURRENT_SOURCE_DIR}/hybm_batch_transfer.h
+    ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators/aicpu/hybm_batch_copy.h
     ${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel_log.h
     ${PROJECT_HYBM_SRC_BASE}/csrc/common/hybm_batch_copy_route.h
+    ${PROJECT_HYBM_SRC_BASE}/csrc/common/hybm_define.h
     ${PROJECT_HYBM_SRC_BASE}/include/hybm_def.h
+    ${PROJECT_UTIL_SRC_BASE}/mf_out_logger.h
+    ${PROJECT_UTIL_SRC_BASE}/mf_spinlock.h
 )
 
 add_custom_command(

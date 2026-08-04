@@ -50,21 +50,29 @@ _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../
 
 _AICPU_WLIST = {
     "_hybm_src/include/hybm_def.h",
+    "_hybm_src/csrc/common/hybm_batch_copy_route.h",
+    "_hybm_src/csrc/common/hybm_define.h",
     "_hybm_src/csrc/common/hybm_types.h",
     "_hybm_src/csrc/under_api/dl_hcomm_api.h",
+    "_acc_offload_src/csrc/operators/aicpu/hybm_batch_copy.cc",
+    "_acc_offload_src/csrc/operators/aicpu/hybm_batch_copy.h",
+    "_util_src/mf_out_logger.h",
+    "_util_src/mf_spinlock.h",
 }
 
 _WREL_SRC = [
     ("_hybm_src/include/", "src/hybm/include/"),
     ("_hybm_src/csrc/common/", "src/hybm/csrc/common/"),
     ("_hybm_src/csrc/under_api/", "src/hybm/csrc/under_api/"),
+    ("_acc_offload_src/", "src/acc_offload/"),
+    ("_util_src/", "src/util/csrc/"),
 ]
 
 
 def _copy_wlist_assets(build_lib):
     """Copy ops tree and AICPU white-list files into build_lib."""
     pkg_build = os.path.join(build_lib, "memfabric_hybrid")
-    for subdir in ("_ops", "_hybm_src"):
+    for subdir in ("_ops", "_hybm_src", "_acc_offload_src", "_util_src"):
         d = os.path.join(pkg_build, subdir)
         if os.path.isdir(d):
             shutil.rmtree(d)

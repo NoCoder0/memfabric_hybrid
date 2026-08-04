@@ -93,6 +93,19 @@ void offload_free(uint64_t ptr, uint64_t flags);
 int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t sizePtr, uint16_t deviceId);
 
 /**
+ * @brief Read remote MemFabric GVA ranges into local device memory through URMA.
+ *
+ * @param srcPtrs   [in] Device address of the source GVA array.
+ * @param dstPtrs   [in] Device address of the destination address array.
+ * @param lenPtrs   [in] Device address of the uint64_t byte-length array.
+ * @param listNum   [in] Number of entries in all three arrays.
+ * @param deviceId  [in] Device ID to perform the copy on.
+ * @return 0 on success, non-zero error code on failure.
+ */
+int32_t offload_sparse_copy_urma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtrs, uint32_t listNum,
+                                 uint16_t deviceId);
+
+/**
  * @brief Group-pack compacted copy: compact non-zero groupList entries to front.
  *
  * inputs / outputs / lens / groupList are ALL arrays of length N (= *numLocalExpertPtr). The kernel

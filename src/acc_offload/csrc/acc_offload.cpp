@@ -10,8 +10,14 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "acc_offload.h"
+
+#include <iomanip>
+#include <limits>
+
 #include "acc_offload_entry_manager.h"
 #include "acc_offload_define.h"
+#include "acc_offload_launch.h"
+#include "hybm_def.h"
 
 using namespace ock::offload;
 
@@ -52,6 +58,35 @@ OFFLOAD_API int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64
     auto sizePtr_ = reinterpret_cast<uint32_t *>(sizePtr);
 
     return AccOffloadEntryManager::Instance().SparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr_, deviceId);
+}
+
+OFFLOAD_API int32_t offload_sparse_copy_urma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtrs, uint32_t listNum,
+                                             uint16_t deviceId)
+{
+    if (srcPtrs == 0U || dstPtrs == 0U || lenPtrs == 0U || listNum == 0U ||
+        deviceId == std::numeric_limits<uint16_t>::max()) {
+        OFFLOAD_LOG_ERROR("invalid sparse_copy_urma arguments, src: 0x"
+                          << std::hex << srcPtrs << " dst: 0x" << dstPtrs << " len: 0x" << lenPtrs << std::dec
+                          << " listNum: " << listNum << " deviceId: " << deviceId);
+        return BM_INVALID_PARAM;
+    }
+
+    const auto loadRet = AccOffloadLaunchApi::TryLoadLibrary();
+    if (loadRet != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("sparse_copy_urma launcher load failed, deviceId: " << deviceId << " ret: " << loadRet);
+        return BM_DL_FUNCTION_FAILED;
+    }
+
+    const auto ret = AccOffloadLaunchApi::AccOffloadSparseCopyUrma(srcPtrs, dstPtrs, lenPtrs, listNum, deviceId);
+    if (ret == OFFLOAD_UNLOAD) {
+        OFFLOAD_LOG_ERROR("sparse_copy_urma launcher symbol is unavailable, deviceId: " << deviceId);
+        return BM_NOT_INITIALIZED;
+    }
+    if (ret != BM_OK) {
+        OFFLOAD_LOG_ERROR("sparse_copy_urma failed, deviceId: " << deviceId << " listNum: " << listNum
+                                                                << " ret: " << ret);
+    }
+    return ret;
 }
 
 OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr,

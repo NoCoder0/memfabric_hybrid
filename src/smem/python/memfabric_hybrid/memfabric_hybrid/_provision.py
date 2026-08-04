@@ -546,6 +546,8 @@ def _build_kernel(pkg_dir, build_dir, ascend_home, temp_dir, deadline):
     common = [
         "-DHYBM_KERNEL_PROJECT_ROOT=" + pkg_dir,
         "-DPROJECT_HYBM_SRC_BASE=" + hsrc,
+        "-DPROJECT_ACC_OFFLOAD_SRC_BASE=" + os.path.join(pkg_dir, "_acc_offload_src"),
+        "-DPROJECT_UTIL_SRC_BASE=" + os.path.join(pkg_dir, "_util_src"),
         "-DASCEND_HOME_PATH=" + ascend_home,
         "-DCMAKE_BUILD_TYPE=RELEASE",
     ]

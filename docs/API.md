@@ -1155,6 +1155,25 @@ int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, u
 |deviceId|执行拷贝的device id|
 |返回值|成功返回0，其他为错误码|
 
+#### offload_sparse_copy_urma
+
+使用已发布的 MemFabric route，将远端 GVA 区间读取到本地 NPU HBM。该接口不创建 HYBM entity，也不要求
+调用 `offload_init()`；调用方必须保证 HYBM entity、route 和通信资源在接口返回前保持有效。
+
+```c
+int32_t offload_sparse_copy_urma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtrs, uint32_t listNum,
+                                 uint16_t deviceId);
+```
+
+|参数|说明|
+|-|-|
+|srcPtrs|NPU 可访问的源 GVA 数组首地址，数组元素为 `uint64_t`|
+|dstPtrs|NPU 可访问的本地 HBM 地址数组首地址，数组元素为 `uint64_t`|
+|lenPtrs|NPU 可访问的长度数组首地址，数组元素为 `uint64_t` 字节数|
+|listNum|Host scalar，三个数组的有效元素个数，必须大于0|
+|deviceId|启动 AICPU 的本地 device id|
+|返回值|`BM_OK` 表示同步完成；参数、route、kernel、HCOMM 或 completion 失败返回对应错误码|
+
 ## 环境变量
 
 |环境变量|含义|

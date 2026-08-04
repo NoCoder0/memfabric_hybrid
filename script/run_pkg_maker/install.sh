@@ -390,6 +390,8 @@ function try_install_extend()
         -isystem ${torch_npu_dir}/include \
         -isystem ${torch_npu_dir}/include/torch_npu/csrc/aten \
         -isystem ${torch_npu_dir}/include/torch_npu/csrc/core/npu \
+        -I${script_dir}/../accoffload_operators/aicpu \
+        -I${script_dir}/../accoffload_operators/include \
         acc_offload_operators_launch.cpp -o acc_offload_operators_launch.o
     if [ $? -ne 0 ]; then
         print "WARNING" "g++ compile acc_offload_operators_launch.cpp failed, skip accoffload extend lib."
@@ -402,7 +404,7 @@ function try_install_extend()
         -L. -lmf_hybm_accoffload_kernel \
         -L${torch_dir}/lib -ltorch -lc10 -ltorch_python \
         -L${torch_npu_dir}/lib -ltorch_npu \
-        -L${ascend_home}/lib64 -lopapi \
+        -L${ascend_home}/lib64 -lopapi -lascendcl \
         -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now \
         -Wl,-rpath,\$ORIGIN -Wl,-rpath,${torch_dir}/lib -Wl,-rpath,${torch_npu_dir}/lib -Wl,-rpath,${ascend_home}/lib64
     if [ $? -ne 0 ]; then

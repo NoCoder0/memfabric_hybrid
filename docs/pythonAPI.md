@@ -693,6 +693,24 @@ def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId) -> int
 |deviceId|torch.device，执行拷贝的设备|
 |返回值|成功返回0，其他为错误码|
 
+#### sparse_copy_urma
+
+使用已由 MemFabric HYBM entity 发布的固定 route，将远端 GVA 区间读取到本地 NPU HBM。该接口不要求调用
+`offload.initialize()`；调用前必须由业务完成 HYBM 初始化和 URMA 建链，并保持 entity 存活到接口返回。
+
+```python
+def sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, list_num, device) -> int
+```
+
+|参数/返回值|含义|
+|-|-|
+|src_ptrs|NPU 上的 `torch.int64` tensor，元素为远端 MemFabric GVA|
+|dst_ptrs|NPU 上的 `torch.int64` tensor，元素为本地 tensor 的真实 `data_ptr()`|
+|len_ptrs|NPU 上的 `torch.int64` tensor，按 `uint64_t` 字节数解释|
+|list_num|Host scalar，三个 tensor 的有效元素个数，必须大于0|
+|device|执行拷贝的 `torch.device`|
+|返回值|同步完成返回0，其他为错误码；提交后的失败可能已写入部分目的地址|
+
 ### 4. 常用类型
 
 #### Scene枚举类

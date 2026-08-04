@@ -23,6 +23,8 @@ using AccOffloadSparseCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *, ui
 using AccOffloadGroupPackCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *, uint32_t *, int64_t *, int64_t *,
                                              uint8_t);
 
+using AccOffloadSparseCopyUrmaFunc = int32_t (*)(uint64_t, uint64_t, uint64_t, uint32_t, uint16_t);
+
 class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
@@ -51,6 +53,15 @@ public:
         return OFFLOAD_OK;
     }
 
+    static inline int32_t AccOffloadSparseCopyUrma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtrs,
+                                                   uint32_t listNum, uint16_t deviceId)
+    {
+        if (pAccOffloadSparseCopyUrma == nullptr) {
+            return OFFLOAD_UNLOAD;
+        }
+        return pAccOffloadSparseCopyUrma(srcPtrs, dstPtrs, lenPtrs, listNum, deviceId);
+    }
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -59,6 +70,7 @@ private:
 
     static AccOffloadSparseCopyFunc pAccOffloadSparseCopy;
     static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
+    static AccOffloadSparseCopyUrmaFunc pAccOffloadSparseCopyUrma;
 };
 
 } // namespace offload
