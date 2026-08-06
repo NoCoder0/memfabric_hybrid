@@ -157,6 +157,28 @@ devices_idle() {
     return 0
 }
 
+# Check that libhcom.so is loadable via dlopen (required by HOST_RDMA/URMA examples)
+hcom_available() {
+    python3 -c "import ctypes; ctypes.CDLL('libhcom.so')" 2>/dev/null
+}
+
+# Ensure libhcom.so is loadable; if not, try adding the wheel lib dir to LD_LIBRARY_PATH
+ensure_hcom_libpath() {
+    if hcom_available; then
+        return 0
+    fi
+    local wheel_lib
+    wheel_lib=$(python3 -c "import memfabric_hybrid, os; print(os.path.join(os.path.dirname(memfabric_hybrid.__file__), 'lib'))" 2>/dev/null)
+    if [[ -n "$wheel_lib" && -f "$wheel_lib/libhcom.so" ]]; then
+        export LD_LIBRARY_PATH="$wheel_lib:${LD_LIBRARY_PATH:-}"
+        if hcom_available; then
+            info "Added $wheel_lib to LD_LIBRARY_PATH for libhcom.so"
+            return 0
+        fi
+    fi
+    return 1
+}
+
 run_example() {
     local name="$1"
     local dir="$2"
@@ -465,9 +487,25 @@ else
     skip "01_basic/* (no NPU available, need >=1)"
 fi
 
-# 04/05 are README-only (manual adaptation of 01)
-skip "04_no_xpu_host_rdma_dram_pool (README-only, manual adaptation)"
-skip "05_no_xpu_host_urma_dram_pool (README-only, manual adaptation)"
+# 04/05 are no-XPU (HOST_RDMA/URMA) variants — require libhcom.so loadable via dlopen
+if ensure_hcom_libpath; then
+    for ex in \
+        "04_no_xpu_host_rdma_dram_pool" \
+        "05_no_xpu_host_urma_dram_pool"
+    do
+        d="$EXAMPLES_DIR/memory_pool/01_basic/$ex"
+        if [[ -f "$d/$ex.py" ]]; then
+            trace "about to run: $ex"
+            run_python_example "$ex" "$d"
+            trace "completed: $ex"
+        else
+            skip "$ex (no runnable script found)"
+        fi
+    done
+else
+    skip "04_no_xpu_host_rdma_dram_pool (libhcom.so not loadable; build with --build_hcom ON or set LD_LIBRARY_PATH)"
+    skip "05_no_xpu_host_urma_dram_pool (libhcom.so not loadable; build with --build_hcom ON or set LD_LIBRARY_PATH)"
+fi
 
 # ------------------------------------------------------------------------------
 #  02_scale_out  multi-device examples
@@ -529,7 +567,18 @@ fi
 # ------------------------------------------------------------------------------
 header "04_features  Feature Showcase"
 
-skip "01_enable_unified_address_space (README-only design draft)"
+# 01_enable_unified_address_space: needs devices 0,1 idle (WORLD_SIZE=2, DEVICE_0/1 hardcoded)
+ex="01_enable_unified_address_space"
+d="$EXAMPLES_DIR/memory_pool/04_features/$ex"
+if ! devices_idle 0 1; then
+    skip "$ex (need devices 0,1 idle)"
+elif [[ ! -f "$d/$ex.py" ]]; then
+    skip "$ex (no runnable script found)"
+else
+    trace "about to run: $ex"
+    run_python_example "$ex" "$d"
+    trace "completed: $ex"
+fi
 
 if [[ $NPU_IDLE -ge 1 ]]; then
     local_ranks=$NPU_IDLE
