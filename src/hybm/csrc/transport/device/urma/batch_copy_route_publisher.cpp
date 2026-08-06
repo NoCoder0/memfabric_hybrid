@@ -37,6 +37,27 @@ Result CopyHostToDevice(uint64_t destination, const void *source, size_t size, c
     }
     return ret;
 }
+
+void LogRouteTable(uint32_t userDeviceId, const BatchCopyRouteTable &table)
+{
+    BM_LOG_INFO("BatchCopy route table, userDeviceId: "
+                << userDeviceId << " magic: 0x" << std::hex << table.header.magic << std::dec
+                << " peerCount: " << table.header.peerCount << " rangeCount: " << table.header.rangeCount);
+    for (uint16_t peerIndex = 0; peerIndex < table.header.peerCount; ++peerIndex) {
+        const auto &peer = table.peers[peerIndex];
+        BM_LOG_INFO("BatchCopy route peer, userDeviceId: " << userDeviceId << " peerIndex: " << peerIndex
+                                                           << " thread: " << peer.thread << " channel: " << peer.channel
+                                                           << " remoteFlagAddr: 0x" << std::hex << peer.remoteFlagAddr
+                                                           << std::dec);
+    }
+    for (uint16_t rangeIndex = 0; rangeIndex < table.header.rangeCount; ++rangeIndex) {
+        const auto &range = table.ranges[rangeIndex];
+        BM_LOG_INFO("BatchCopy route range, userDeviceId: "
+                    << userDeviceId << " rangeIndex: " << rangeIndex << " peerIndex: " << range.peerIndex
+                    << " srcGvaBegin: 0x" << std::hex << range.srcGvaBegin << " srcGvaEnd: 0x" << range.srcGvaEnd
+                    << " hcommVaBegin: 0x" << range.hcommVaBegin << std::dec);
+    }
+}
 } // namespace
 
 BatchCopyRoutePublisher::BatchCopyRoutePublisher(uint32_t userDeviceId, const urma::UrmaEndpointHandle &localEndpoint,
@@ -238,6 +259,7 @@ Result BatchCopyRoutePublisher::PublishRouteImage(const std::vector<BatchCopyRou
     if (ret != BM_OK) {
         return ret;
     }
+    LogRouteTable(userDeviceId_, table);
     return PublishMagic();
 }
 

@@ -47,19 +47,19 @@ using BatchCopyGroups = std::array<BatchCopyGroup, ock::mf::BATCH_COPY_MAX_PEER_
 
 void InvalidateDeviceCache(uintptr_t address)
 {
-    __asm__ __volatile__("dc civac, %0" : : "r"(address) : "memory");
-    __asm__ __volatile__("dsb ish" : : : "memory");
+    __asm__ __volatile__("dc civac, %0" :: "r"(address) : "memory");
+    __asm__ __volatile__("dsb ish" ::: "memory");
 }
 
 void FlushDeviceCache(uintptr_t address)
 {
-    __asm__ __volatile__("dc cvac, %0" : : : "r"(address) : "memory");
-    __asm__ __volatile__("dsb ish" : : : "memory");
+    __asm__ __volatile__("dc cvac, %0" :: "r"(address) : "memory");
+    __asm__ __volatile__("dsb ish" :::"memory");
 }
 
 void DeviceMemoryBarrier()
 {
-    __asm__ __volatile__("dsb ish" : : : "memory");
+    __asm__ __volatile__("dsb ish" ::: "memory");
 }
 
 int32_t ValidateFourInputs(const HybmBatchCopyParam *param)
