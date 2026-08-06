@@ -39,7 +39,9 @@
         "PIP_TRUSTED_HOST": "mirrors.aliyun.com",
         "PRE_COMMIT_HOME": "/root/.cache/pre-commit",
         "PIP_SYSTEM_SITE_PACKAGES": "1",
-        "PYTHON_HOME":"/usr/local/python3.11.15"
+        "PYTHON_HOME":"/usr/local/python3.11.15",
+        "GOPROXY": "https://goproxy.cn,direct",
+        "GOTOOLCHAIN": "local"
     },
     "postCreateCommand": "bash .devcontainer/post_create.sh",
     "customizations": {

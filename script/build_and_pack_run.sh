@@ -14,6 +14,7 @@ readonly ROOT_PATH=$(dirname $(readlink -f "$0"))
 CURRENT_DIR=$(pwd)
 
 BUILD_MODE="RELEASE"
+BUILD_OPEN_ABI="OFF"
 BUILD_PYTHON="ON"
 XPU_TYPE="NPU"
 BUILD_TEST="OFF"
@@ -27,6 +28,7 @@ show_help() {
     echo "Usage: $0 [options]"
     echo "Options:"
     echo "  --build_mode <mode>         Set build mode (RELEASE/DEBUG/ASAN), default: RELEASE"
+    echo "  --build_open_abi <ON/OFF>   Enable/disable new C++ ABI (_GLIBCXX_USE_CXX11_ABI), default: OFF"
     echo "  --build_python <ON/OFF>     Enable/disable Python build, default: ON"
     echo "  --xpu_type <GPU/NPU/NONE>   Set xpu dependency(GPU:CUDA, NPU:CANN), set none without xpu, default: NPU"
     echo "  --build_test <ON/OFF>       Enable/disable build and package test utilities and examples, default: OFF"
@@ -46,6 +48,10 @@ while [[ "$#" -gt 0 ]]; do
     case "$1" in
         --build_mode)
             BUILD_MODE="$2"
+            shift 2
+            ;;
+        --build_open_abi)
+            BUILD_OPEN_ABI="$2"
             shift 2
             ;;
         --build_python)
@@ -94,6 +100,7 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 echo "BUILD_MODE: $BUILD_MODE"
+echo "BUILD_OPEN_ABI: $BUILD_OPEN_ABI"
 echo "BUILD_PYTHON: $BUILD_PYTHON"
 echo "XPU_TYPE: $XPU_TYPE"
 echo "BUILD_TEST: $BUILD_TEST"
@@ -105,7 +112,7 @@ echo "BUILD_TOOL: $BUILD_TOOL"
 
 cd ${ROOT_PATH}
 
-bash build.sh "${BUILD_MODE}" OFF OFF "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}"
+bash build.sh "${BUILD_MODE}" OFF "${BUILD_OPEN_ABI}" "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}"
 
 bash run_pkg_maker/make_run.sh "${BUILD_TEST}" "${XPU_TYPE}" "${BUILD_PYTHON}" "${BUILD_HCOM}" "${BUILD_ETCD_BACKEND}"
 

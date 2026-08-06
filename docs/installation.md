@@ -44,7 +44,7 @@ pip install memfabric_hybrid==1.0.0
 
 | 组件 | 建议版本/要求 |
 | -- | -- |
-| **OS** | Ubuntu 22.04 LTS 或更高版本 |
+| **OS** | Ubuntu 22.04 LTS 或更高版本；openEuler 24.03 LTS（aarch64）亦经验证支持 |
 | **CMake** | 3.12.x 或更高（3.20.x 及以上推荐） |
 | **GCC** | 11.4 或更高 |
 | **pybind11** | 2.10.3 (仅编译 Python 绑定时需要) |
@@ -78,6 +78,7 @@ bash script/build_and_pack_run.sh
 | 参数 | 选项 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `--build_mode` | `RELEASE` / `DEBUG` | `RELEASE` | 编译模式 |
+| `--build_open_abi` | `ON` / `OFF` | `OFF` | 是否使用新 C++ ABI（`_GLIBCXX_USE_CXX11_ABI`）。GCC 12.x / 新 libstdc++ 发行版（如 openEuler 24.03）建议设为 `ON`，详见下方说明。 |
 | `--build_python` | `ON` / `OFF` | `ON` | 是否编译 Python Wheel 包 |
 | `--xpu_type` | `NPU` / `GPU` / `NONE` | `NPU` | 目标异构设备类型：<br>- `NPU`: 适配昇腾 CANN 环境<br>- `GPU`: 适配 CUDA 环境<br>- `NONE`: 无卡纯 CPU 环境 |
 | `--build_test` | `ON` / `OFF` | `OFF` | 是否编译测试工具和样例代码。<br>**注意**：设为 `ON` 时需先执行 `git submodule update --recursive --init` 拉取第三方库。 |
@@ -90,6 +91,17 @@ bash script/build_and_pack_run.sh
 > - 当 xpu_type 设置为 NPU 时，运行环境必须提前安装 NPU 固件驱动和 CANN 工具包。
 > - 请参考[链接](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0000.html)安装相关环境。
 > - 请参考[安装Toolkit开发套件包](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Ubuntu&Software=cannToolKit)的第三步配置环境变量。
+
+<!-- -->
+
+> [!NOTE] C++ ABI 兼容性
+>
+> - 默认 `--build_open_abi OFF` 使用旧 C++ ABI（`_GLIBCXX_USE_CXX11_ABI=0`），用于与旧环境二进制兼容。
+> - 在 GCC 12.x 或较新 libstdc++ 的发行版（如 **openEuler 24.03 LTS**）上，系统库与预置依赖通常使用新 C++ ABI，沿用旧 ABI 可能导致链接/运行期符号不兼容；此时请显式指定 `--build_open_abi ON`：
+>
+> ```bash
+> bash script/build_and_pack_run.sh --build_open_abi ON
+> ```
 
 ### 4. 安装
 

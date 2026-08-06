@@ -108,6 +108,7 @@ run_in_container() {
     info "Starting container..."
 
     local inner="bash .devcontainer/post_create.sh"
+    inner+=" && source /usr/local/Ascend/ascend-toolkit/set_env.sh"
     inner+=" && bash script/run_all_examples.sh"
     inner+=" --start-store --continue-on-error"
 

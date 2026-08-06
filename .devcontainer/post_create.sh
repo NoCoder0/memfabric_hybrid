@@ -17,7 +17,7 @@
 #   2. Installs Python dev / test dependencies.
 #   3. Verifies that the build toolchain is functional.
 #   4. Runs a quick CMake configure smoke test.
-#   5. Installs Git pre-commit hooks.
+#   5. Installs Go toolchain (for gitleaks hook) and pre-commit hooks.
 #
 # VS Code's `postCreateCommand` in devcontainer.json invokes this file.
 # Git submodule initialisation is performed in step 1 below (runs once
@@ -56,7 +56,10 @@ elif [ -f "$CACHE_DIR/googletest/CMakeLists.txt" ] && [ -f "$CACHE_DIR/mockcpp/C
     cp -a "$CACHE_DIR/." test/3rdparty/
 else
     echo "  Fetching submodules from remote ..."
-    GIT_SSL_NO_VERIFY=1 git submodule update --init --recursive test/3rdparty/
+    if ! GIT_SSL_NO_VERIFY=1 git -c protocol.file.allow=always \
+        submodule update --init --recursive test/3rdparty/; then
+        echo "  ! submodule init failed for test/3rdparty — continuing; build/test may fail later if 3rdparty is missing."
+    fi
 fi
 
 # ------------------------------------------------------------------
@@ -109,14 +112,51 @@ rm -rf /tmp/build-smoke
 echo "  ✓ CMake configure passed (smoke test)."
 
 # ------------------------------------------------------------------
-# 5. Install Git pre-commit hooks
+# 5. Install Go toolchain and pre-commit hooks
 # ------------------------------------------------------------------
+# pre-commit's golang language probes https://go.dev/dl/?mode=json to infer the
+# latest Go version; that endpoint is SSL-unstable on restricted networks, so
+# the gitleaks hook install fails.  A system `go` on PATH makes pre-commit use
+# language_version "system" and skip the probe.  GOPROXY=goproxy.cn serves
+# gitleaks' deps; GOTOOLCHAIN=local blocks toolchain auto-download from go.dev.
+# Best-effort: a download failure is reported but does not abort setup.
 echo ""
-echo "[5/5] Installing pre-commit hooks …"
+echo "[5/5] Installing Go toolchain and pre-commit hooks …"
+GO_VERSION="1.26.5"
+GO_TARBALL="/tmp/go${GO_VERSION}.tar.gz"
+if command -v go >/dev/null 2>&1; then
+    echo "  - go already on PATH: $(go version 2>&1 | head -1)"
+elif [ -x /usr/local/go/bin/go ]; then
+    echo "  - go already at /usr/local/go: $(/usr/local/go/bin/go version 2>&1 | head -1)"
+else
+    ARCH="$(dpkg --print-architecture)"
+    echo "  - fetching go${GO_VERSION} linux-${ARCH} from golang.google.cn …"
+    if curl -fsSL "https://golang.google.cn/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o "${GO_TARBALL}"; then
+        tar -xzf "${GO_TARBALL}" -C /usr/local && rm -f "${GO_TARBALL}"
+        echo "  - installed: $(/usr/local/go/bin/go version 2>&1 | head -1)"
+    else
+        rm -f "${GO_TARBALL}"
+        echo "  ! go download failed — gitleaks pre-commit hook will not build (check network)."
+    fi
+fi
+if [ -x /usr/local/go/bin/go ]; then
+    ln -sf /usr/local/go/bin/go /usr/local/bin/go
+    ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+fi
+export GOPROXY="https://goproxy.cn,direct"
+export GOTOOLCHAIN="local"
+
 cd "${PROJECT_DIR}"
 if [ -f ".pre-commit-config.yaml" ]; then
     pre-commit install
     echo "  ✓ pre-commit hooks installed."
+    # Pre-warm hook environments (notably gitleaks' Go build) into the
+    # persistent pre-commit cache volume so the first commit is instant.
+    if ! pre-commit install-hooks; then
+        echo "  ! some hook envs failed to pre-warm — will build on first commit."
+    else
+        echo "  ✓ pre-commit hook environments pre-warmed."
+    fi
 else
     echo "  - .pre-commit-config.yaml not found — skipping."
 fi

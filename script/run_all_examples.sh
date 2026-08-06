@@ -113,6 +113,38 @@ skip()  { echo -e "  \e[33m[SKIP]\e[0m  $*"; SKIP=$((SKIP + 1)); }
 header(){ echo -e "\n\e[1;34m=== $* ===\e[0m"; }
 sub()   { echo -e "  \e[90m$ $*\e[0m"; }
 
+prepare_env_before_retry() {
+    local name="$1"
+    if pgrep -f "python3.*${name}\.py" &>/dev/null; then
+        info "Cleaning residual processes for: $name"
+        pkill -f "python3.*${name}\.py" 2>/dev/null || true
+        local waited=0
+        while [[ $waited -lt 10 ]] && pgrep -f "python3.*${name}\.py" &>/dev/null; do
+            sleep 1
+            waited=$((waited + 1))
+        done
+        if pgrep -f "python3.*${name}\.py" &>/dev/null; then
+            info "Residual processes still alive after 10s, sending SIGKILL"
+            pkill -9 -f "python3.*${name}\.py" 2>/dev/null || true
+            sleep 2
+        fi
+    fi
+    if command -v npu-smi &>/dev/null && [[ -n "${NPU_IDLE_IDS:-}" ]]; then
+        local expected_idle
+        expected_idle=$(echo "$NPU_IDLE_IDS" | tr ',' '\n' | wc -l)
+        local w=0
+        while [[ $w -lt 30 ]]; do
+            local cur_idle
+            cur_idle=$(npu-smi info 2>/dev/null | grep -c "No running processes found") || cur_idle=0
+            if [[ $cur_idle -ge $expected_idle ]]; then
+                break
+            fi
+            sleep 1
+            w=$((w + 1))
+        done
+    fi
+}
+
 # Check that specific device IDs are idle
 devices_idle() {
     local ids="${NPU_IDLE_IDS:-,}"
@@ -154,6 +186,7 @@ run_example() {
 
         if [[ $attempt -gt 1 ]]; then
             info "Retrying $name (attempt $attempt/$max_retries) ..."
+            prepare_env_before_retry "$name"
             sleep 15
         fi
 
