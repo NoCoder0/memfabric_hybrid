@@ -243,20 +243,24 @@ Result BatchCopyRoutePublisher::PublishRouteImage(const std::vector<BatchCopyRou
 {
     auto ret = ClearMagic();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("ClearMagic failed: " << ret);
         return ret;
     }
     ret = ClearCompletionArea();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("ClearCompletionArea failed: " << ret);
         return ret;
     }
     ret = RegisterCompletionArea();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("RegisterCompletionArea failed: " << ret);
         return ret;
     }
     BatchCopyRouteTable table{};
     BuildRouteImage(sources, table);
     ret = WriteRouteImage(table);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("WriteRouteImage failed: " << ret);
         return ret;
     }
     LogRouteTable(userDeviceId_, table);
@@ -275,6 +279,7 @@ void BatchCopyRoutePublisher::RollbackPublish()
 Result BatchCopyRoutePublisher::Publish(const std::vector<BatchCopyRouteSource> &sources)
 {
     if (published_) {
+        BM_LOG_DEBUG("already published_");
         return BM_OK;
     }
     if (localEndpoint_ == nullptr) {
@@ -288,6 +293,7 @@ Result BatchCopyRoutePublisher::Publish(const std::vector<BatchCopyRouteSource> 
     }
     auto ret = ValidateSources(sources);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("ValidateSources failed : " << ret);
         return ret;
     }
     cleanupRequired_ = true;

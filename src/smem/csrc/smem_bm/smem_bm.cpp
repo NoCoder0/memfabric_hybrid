@@ -96,11 +96,11 @@ SMEM_API int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t
         SM_LOG_AND_SET_LAST_ERROR("init bm entry manager failed, result: " << ret);
         return SM_ERROR;
     }
-
-    ret = hybm_init(deviceId, config->flags);
+    uint64_t flags = static_cast<uint64_t>(config->flags) | HYBM_FLAG_INIT_SHMEM_META;
+    ret = hybm_init(deviceId, flags);
     if (ret != 0) {
         (void)::ock::mf::FaultInjectionPointRegistry::Unregister();
-        SM_LOG_AND_SET_LAST_ERROR("init hybm failed, result: " << ret << ", flags: 0x" << std::hex << config->flags);
+        SM_LOG_AND_SET_LAST_ERROR("init hybm failed, result: " << ret << ", flags: 0x" << std::hex << flags);
         SmemBmEntryManager::Instance().Destroy();
         return SM_ERROR;
     }
