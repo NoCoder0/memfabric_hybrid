@@ -22,7 +22,15 @@ readonly TEST_3RD_PATCH_PATH="$PROJECT_FULL_PATH/test/3rdparty/patch"
 readonly MOCK_CANN_PATH="$HYBM_LIB_PATH/cann"
 readonly FINGERPRINT_FILE="$BUILD_PATH/.build_fingerprint"
 readonly BUILD_FINGERPRINT="ASAN-UT-OPEN_ABI"
-readonly MF_BUILD_JOBS="${MF_BUILD_JOBS:-32}"
+# Default to 60% of nproc (leave headroom per TTFHW constraint); user can override via env var.
+# Unset OMP_NUM_THREADS to get the real CPU count (some images set OMP_NUM_THREADS=1 which caps nproc).
+if [ -z "${MF_BUILD_JOBS:-}" ]; then
+    NPROC_COUNT=$(env -u OMP_NUM_THREADS nproc 2>/dev/null) || NPROC_COUNT=2
+    : "${NPROC_COUNT:=2}"
+    MF_BUILD_JOBS=$(( NPROC_COUNT * 60 / 100 ))
+    [ "$MF_BUILD_JOBS" -lt 1 ] && MF_BUILD_JOBS=1
+fi
+readonly MF_BUILD_JOBS="$MF_BUILD_JOBS"
 
 FAST_MODE=false
 if [[ "$1" == "--fast" ]]; then
