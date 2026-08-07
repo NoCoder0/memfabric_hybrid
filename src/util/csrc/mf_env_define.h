@@ -68,6 +68,8 @@ inline const std::string MF_ACC_CHECK_PERIOD_HOURS =
     GetEnvStr("MF_ACC_CHECK_PERIOD_HOURS", "ACCLINK_CHECK_PERIOD_HOURS");
 inline const std::string MF_ACC_CERT_CHECK_AHEAD_DAYS =
     GetEnvStr("MF_ACC_CERT_CHECK_AHEAD_DAYS", "ACCLINK_CERT_CHECK_AHEAD_DAYS");
+inline const std::string MF_DEVICE_RDMA_TC = GetEnvStr("HCCL_RDMA_TC");
+inline const std::string MF_DEVICE_RDMA_SL = GetEnvStr("HCCL_RDMA_SL");
 
 } // namespace env
 } // namespace mf
