@@ -168,8 +168,8 @@ StoreErrorCode SmemEtcdStoreBackend::Get(const std::string &key, std::vector<uin
     std::string valueStr;
     int32_t ret = EtcdClientV3::GetInstance().GetValue(qualifiedKey, valueStr);
     if (ret != 0) {
-        STORE_LOG_ERROR("[ETCD] Get key failed: " << qualifiedKey
-                                                  << ", msg: " << EtcdClientV3::GetInstance().GetLastError());
+        STORE_LOG_WARN("[ETCD] Get key failed: " << qualifiedKey
+                                                 << ", msg: " << EtcdClientV3::GetInstance().GetLastError());
         return StoreErrorCode::NOT_EXIST;
     }
 
@@ -190,8 +190,8 @@ StoreErrorCode SmemEtcdStoreBackend::Put(const std::string &key, const std::vect
     std::string valueStr(value.begin(), value.end());
     int32_t ret = EtcdClientV3::GetInstance().SetValue(qualifiedKey, valueStr, ttlSeconds);
     if (ret != 0) {
-        STORE_LOG_ERROR("[ETCD] Put key failed: " << qualifiedKey << ", size=" << value.size() << ", ttl=" << ttlSeconds
-                                                  << ", error=" << EtcdClientV3::GetInstance().GetLastError());
+        STORE_LOG_ERROR("[ETCD] Put fail: " << qualifiedKey << ", size=" << value.size() << ", ttl=" << ttlSeconds
+                                            << ", error=" << EtcdClientV3::GetInstance().GetLastError());
         return StoreErrorCode::ERROR;
     }
 

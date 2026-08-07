@@ -49,6 +49,7 @@ public:
     Result Connect() override;
     Result AsyncConnect() override;
     Result WaitForConnected(int64_t timeoutNs) override;
+    Result ConnectRank(uint32_t rankId) override;
     Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
     const std::string &GetNic() const override;
     const TransportPrivateData GetPrivateData() const override;

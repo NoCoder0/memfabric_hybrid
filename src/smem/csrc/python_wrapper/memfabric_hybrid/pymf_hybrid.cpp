@@ -137,16 +137,6 @@ public:
         return smem_bm_leave(handle_, flags);
     }
 
-    int32_t SetGroupEventHandler(const std::function<void(uint32_t, smem_bm_group_event_t)> &cb)
-    {
-        if (cb == nullptr) {
-            return SMEM_INVALID_PARAM;
-        }
-
-        eventCb_ = cb;
-        return smem_bm_set_group_event_handler(handle_, GroupChangeEventCallback, &eventCb_);
-    }
-
     uint64_t LocalMemSize(smem_bm_mem_type memType)
     {
         return smem_bm_get_local_mem_size_by_mem_type(handle_, memType);
@@ -345,23 +335,7 @@ public:
     }
 
 private:
-    static void GroupChangeEventCallback(smem_bm_t handle, uint32_t rankId, smem_bm_group_event_t event, void *ctx)
-    {
-        if (ctx == nullptr) {
-            return;
-        }
-        auto func = reinterpret_cast<std::function<void(uint32_t, smem_bm_group_event_t)> *>(ctx);
-        try {
-            (*func)(rankId, event);
-        } catch (const std::exception &e) {
-            std::cerr << "invoke python callback for event:" << event << ", rank_id:" << rankId
-                      << " exception caught:" << e.what() << std::endl;
-        }
-    }
-
-private:
     smem_bm_t handle_;
-    std::function<void(uint32_t, smem_bm_group_event_t)> eventCb_ = nullptr;
     static uint32_t worldSize_;
 };
 
@@ -558,6 +532,10 @@ void DefineBmConfig(py::module_ &m)
         .value("DEVICE", SMEM_MEM_TYPE_DEVICE, "memory type is on global DEVICE side.")
         .value("HOST", SMEM_MEM_TYPE_HOST, "memory type is on global HOST side.");
 
+    py::enum_<smem_bm_group_event_t>(m, "BmGroupEvent")
+        .value("JOIN_EVENT", SMEM_GROUP_EVENT_JOIN)
+        .value("LEAVE_EVENT", SMEM_GROUP_EVENT_LEAVE);
+
     py::enum_<smem_bm_copy_type>(m, "BmCopyType")
         .value("L2G", SMEMB_COPY_L2G, "copy data from local hbm to global space")
         .value("G2L", SMEMB_COPY_G2L, "copy data from global space to local hbm")
@@ -693,10 +671,6 @@ void DefineBmClass(py::module_ &m)
         .value("DEVICE_UBOE", SMEMB_DATA_OP_DEVICE_UBOE)
         .value("HOST_SHM", SMEMB_DATA_OP_HOST_SHM);
 
-    py::enum_<smem_bm_group_event_t>(m, "BmGroupEvent")
-        .value("JOIN_EVENT", SMEM_GROUP_EVENT_JOIN)
-        .value("LEAVE_EVENT", SMEM_GROUP_EVENT_LEAVE);
-
     // module method
     m.def("initialize", &BigMemory::Initialize, py::call_guard<py::gil_scoped_release>(), py::arg("store_url"),
           py::arg("world_size"), py::arg("device_id"), py::arg("config"), R"(
@@ -784,12 +758,6 @@ Alloc an extend memory for rank, all alloc memory must range in reserved memory.
 Arguments:
     mem_type(BmMemType): memory type, DEVICE or HOST, default is HOST
     size(int): extend memory size)")
-        .def("set_group_event_handler", &BigMemory::SetGroupEventHandler, py::call_guard<py::gil_scoped_release>(),
-             py::arg("cb"), R"(
-Set group member change(join/leave) notification function.
-
-Arguments:
-    cb(function): notification function. cb(rank_id: int, event: BmGroupEvent).)")
         .def("local_mem_size", &BigMemory::LocalMemSize, py::call_guard<py::gil_scoped_release>(),
              py::arg("mem_type") = SMEM_MEM_TYPE_DEVICE, R"(
 Get size of local memory that contributed to global space.
@@ -860,7 +828,21 @@ Returns:
     tuple: (ret_code, per_item_results)
 )")
         .def("wait", &BigMemory::Wait, py::call_guard<py::gil_scoped_release>(), R"(
-Wait all issued async copy(s) finish.)");
+Wait all issued async copy(s) finish.)")
+        .def(
+            // clang-format off
+        "set_group_event_handler",
+        [](BigMemory &self, const std::function<void(uint32_t, smem_bm_group_event_t)> &cb) {
+            (void)self;
+            (void)cb;
+            PyErr_WarnEx(PyExc_DeprecationWarning,
+                         "BigMemory.set_group_event_handler is deprecated. "
+                         "Group events are now handled by the server-driven async scheme. "
+                         "The callback will never be invoked.",
+                         1);
+        },
+            // clang-format on
+            R"(Set group event handler (DEPRECATED — no-op, callback is never invoked).)");
 }
 } // namespace
 

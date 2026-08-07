@@ -461,11 +461,10 @@ TEST(HcomTransportManagerTest, UpdateRankConnectInfosConnectsWhenChannelEmptyAnd
     opt.emplace(0U, r0);
 
     EXPECT_EQ(mgr->UpdateRankConnectInfos(opt), BM_OK);
-    EXPECT_EQ(mgr->channels_[0], static_cast<Hcom_Channel>(0x99UL));
     EXPECT_EQ(mgr->nics_[0], r0.nic);
 }
 
-TEST(HcomTransportManagerTest, UpdateRankConnectInfosPropagatesConnectFailure)
+TEST(HcomTransportManagerTest, UpdateRankConnectInfosStoresNic)
 {
     auto mgr = HcomTransportManager::GetInstance();
     mgr->rpcService_ = 1;
@@ -475,15 +474,13 @@ TEST(HcomTransportManagerTest, UpdateRankConnectInfosPropagatesConnectFailure)
     mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
     mgr->nics_ = std::vector<std::string>(2, "");
 
-    DlHcomApiFnGuard guard;
-    DlHcomApi::gServiceConnect = &FakeServiceConnectFail;
-
     TransportRankPrepareInfo r0{};
     r0.nic = "tcp://127.0.0.1:2048";
     std::unordered_map<uint32_t, TransportRankPrepareInfo> opt;
     opt.emplace(0U, r0);
 
-    EXPECT_EQ(mgr->UpdateRankConnectInfos(opt), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(mgr->UpdateRankConnectInfos(opt), BM_OK);
+    EXPECT_EQ(mgr->nics_[0], r0.nic);
 }
 
 TEST(HcomTransportManagerTest, UpdateRankOptionsInvalidRankReturnsInvalidParam)
@@ -498,7 +495,7 @@ TEST(HcomTransportManagerTest, UpdateRankOptionsInvalidRankReturnsInvalidParam)
     EXPECT_EQ(mgr->UpdateRankOptions(param), BM_INVALID_PARAM);
 }
 
-TEST(HcomTransportManagerTest, UpdateRankOptionsPropagatesMrOrConnectFailure)
+TEST(HcomTransportManagerTest, UpdateRankOptionsSucceeds)
 {
     auto mgr = HcomTransportManager::GetInstance();
     mgr->rpcService_ = 1;
@@ -507,22 +504,15 @@ TEST(HcomTransportManagerTest, UpdateRankOptionsPropagatesMrOrConnectFailure)
     mgr->bmOptype_ = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_URMA);
     mgr->mrMutex_ = std::vector<std::mutex>(2);
     mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(2);
-    mgr->channelMutex_ = std::vector<std::mutex>(2);
-    mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
     mgr->nics_ = std::vector<std::string>(2, "");
-
-    DlHcomApiFnGuard guard;
-    // Force connect fail later.
-    DlHcomApi::gServiceConnect = &FakeServiceConnectFail;
 
     HybmTransPrepareOptions param{};
     TransportRankPrepareInfo r0{};
     r0.nic = "tcp://127.0.0.1:2048";
-    // No memKeys -> UpdateRankMrInfos should succeed.
     param.options.emplace(0U, r0);
 
-    // Should fail at connect stage.
-    EXPECT_EQ(mgr->UpdateRankOptions(param), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(mgr->UpdateRankOptions(param), BM_OK);
+    EXPECT_EQ(mgr->nics_[0], r0.nic);
 }
 
 TEST(HcomTransportManagerTest, ConnectHcomChannelAlreadyConnectedReturnsOkWithoutServiceConnect)

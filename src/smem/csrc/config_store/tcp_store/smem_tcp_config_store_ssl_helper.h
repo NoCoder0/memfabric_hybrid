@@ -14,6 +14,7 @@
 #define SMEM_SMEM_TCP_CONFIG_STORE_SSL_HELPER_H
 #include "acc_def.h"
 #include "acc_tcp_server.h"
+#include "smem_bm_def.h"
 #include "smem_config_store_logger.h"
 #include "mf_tls_util.h"
 #include "smem_types.h"

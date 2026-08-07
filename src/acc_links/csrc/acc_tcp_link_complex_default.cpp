@@ -16,7 +16,7 @@ namespace ock {
 namespace acc {
 Result AccTcpLinkComplexDefault::Initialize(uint16_t sendQueueCap, int32_t workIndex, AccTcpWorker *worker)
 {
-    ASSERT_RETURN(sendQueueCap < UNO_256, ACC_INVALID_PARAM);
+    ASSERT_RETURN(sendQueueCap >= UNO_32, ACC_INVALID_PARAM);
     ASSERT_RETURN(worker != nullptr, ACC_INVALID_PARAM);
 
     queue_ = AccMakeRef<AccLinkedMessageQueue>(sendQueueCap);

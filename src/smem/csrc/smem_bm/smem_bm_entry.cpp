@@ -17,14 +17,23 @@
 #include "hybm_big_mem.h"
 #include "hybm_data_op.h"
 #include "mf_env_define.h"
+#include "hybm_ptracer.h"
 #include "mf_env_util.h"
 #include "smem_store_factory.h"
 #include "mf_fault_injection_point.h"
 #include "mf_num_util.h"
+#include "smem_tcp_config_store.h"
 #include "smem_store_factory.h"
 
 namespace ock {
 namespace smem {
+
+// Max payload carried in hybm_exchange_info.desc[1280]; keep headroom for framework metadata.
+constexpr size_t EXCHANGE_INFO_PAYLOAD_MAX = 1152;
+// LinkState wire values (keep in sync with LinkState in smem_group_manager_server.h)
+constexpr int8_t BM_LINK_IDLE = 0;
+constexpr int8_t BM_LINK_CONNECTED = 4;
+
 Result SmemBmEntry::AllocDramMemBySlice(hybm_entity_t entity, uint64_t totalSize, uint32_t flags)
 {
     constexpr uint64_t dramSliceSize = 32ULL * 1024ULL * 1024ULL * 1024ULL;
@@ -132,13 +141,9 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     Result ret = SM_ERROR;
 
     SM_VALIDATE_RETURN(CheckRankConfigConsistency(options), "check rank config consistency failed", SM_INVALID_PARAM);
-    SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(CreateGlobalTeam(options.rankCount, options.rankId), "create global team failed");
+    SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(SetupGroupManagerCallbacks(), "setup group manager callbacks failed");
     if (!executorService_.Start()) {
         SM_LOG_ERROR("executor service start failed");
-        if (globalGroup_ != nullptr && globalGroup_->IsJoined()) {
-            (void)globalGroup_->GroupLeave();
-        }
-        globalGroup_ = nullptr;
         executorService_.Stop();
         return SM_ERROR;
     }
@@ -199,7 +204,6 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
     if (ret != 0) {
         inited_ = true; // ensure Uninitialize will execute
         Uninitialize();
-        globalGroup_ = nullptr;
         return ret;
     }
 
@@ -220,16 +224,17 @@ void SmemBmEntry::Uninitialize()
         return;
     }
     // Perform a graceful group leave so that peer ranks can synchronously clean up
-    // their imported state via LeaveHandle(). This must happen before the local entity
-    // is destroyed because the leave callback on the peer side still references entity_.
-    if (globalGroup_ != nullptr && globalGroup_->IsJoined()) {
-        auto ret = globalGroup_->GroupLeave();
-        if (ret != SM_OK) {
-            SM_LOG_WARN("unable to group leave during uninitialize, ret: " << ret);
+    // their imported state. This must happen before the local entity is destroyed
+    // because the leave callback on the peer side still references entity_.
+    if (joined_) {
+        auto coreStore = _configStore->GetCoreStore();
+        auto groupMgr = dynamic_cast<SmemGroupManager *>(coreStore.Get());
+        if (groupMgr != nullptr) {
+            SM_LOG_DEBUG("SmemBmEntry::Uninitialize sending group leave, rank: " << options_.rank);
+            groupMgr->Leave();
         }
+        joined_ = false;
     }
-    // Stop the group engine listen thread before releasing the entity.
-    globalGroup_ = nullptr;
 
     uint32_t flags = 0;
     for (auto slice : slices_) {
@@ -249,260 +254,97 @@ void SmemBmEntry::Uninitialize()
     inited_ = false;
 }
 
-Result SmemBmEntry::GroupOpBarrier(int32_t input, std::string logTag)
-{
-    std::vector<std::pair<int, int>> errList;
-    int32_t ret = globalGroup_->GroupGatherResult(input, errList);
-    if (ret != SM_OK) {
-        SM_LOG_ERROR(logTag << " failed, result: " << ret);
-        return ret;
-    }
-    if (!errList.empty()) {
-        std::string tmp;
-        for (auto &p : errList) {
-            tmp += std::to_string(p.first) + ":" + std::to_string(p.second) + ",";
-        }
-        SM_LOG_WARN(logTag << " ret barrier, get remote result " << tmp);
-        return SM_ERROR;
-    }
-    return SM_OK;
-}
-
-Result SmemBmEntry::JoinHandle(uint32_t rk)
-{
-    SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    SM_LOG_INFO("do join func, local_rk: " << options_.rank << " receive_rk: " << rk
-                                           << ", rank size is: " << globalGroup_->GetRankSize());
-
-    uint32_t unitSize = sizeof(hybm_exchange_info);
-    std::string localInfo;
-    if (rk == options_.rank) {
-        localInfo = std::string((char *)&entityInfo_, sizeof(hybm_exchange_info));
-        for (auto sliceInfo : sliceInfos_) {
-            if (sliceInfo.descLen > 0) {
-                localInfo += std::string((char *)&sliceInfo, sizeof(hybm_exchange_info));
-            }
-        }
-    }
-    std::unordered_map<uint32_t, std::string> allInfo;
-    std::vector<uint32_t> joined;
-    int32_t ret = globalGroup_->GroupGatherPrefixKey(rk, localInfo, allInfo);
-    SM_VALIDATE_RETURN(ret == SM_OK, "gather prefix info failed, ret:" << ret, ret);
-    hybm_exchange_info info;
-    std::vector<hybm_exchange_info> entityInfos;
-    std::vector<hybm_exchange_info> sliceInfos;
-
-    for (auto &it : allInfo) {
-        if (it.first == options_.rank) {
-            continue;
-        }
-        if (it.second.length() % unitSize != 0) {
-            SM_LOG_ERROR("receive exchange info size is invalid!, size:" << it.second.length() << " rank:" << it.first);
-            ret = SM_INVALID_PARAM;
-            goto join_exit;
-        }
-        uint32_t num = it.second.length() / unitSize;
-        joined.push_back(it.first);
-        for (uint32_t i = 0; i < num; i++) {
-            (void)std::copy_n(it.second.c_str() + i * unitSize, unitSize, (char *)&info);
-            if (i == 0) {
-                entityInfos.push_back(info);
-            } else {
-                sliceInfos.push_back(info);
-            }
-        }
-    }
-
-    if (!entityInfos.empty()) {
-        ret = hybm_import(entity_, entityInfos.data(), entityInfos.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
-        if (ret != SM_OK) {
-            SM_LOG_ERROR("hybm import entity failed, result: " << ret << " local_rank:" << options_.rank);
-            goto join_exit;
-        }
-    }
-
-    if (!sliceInfos.empty()) {
-        ret = hybm_import(entity_, sliceInfos.data(), sliceInfos.size(), nullptr, 0);
-        if (ret != SM_OK) {
-            SM_LOG_ERROR("hybm import slice failed, result: " << ret << " local_rank:" << options_.rank);
-            goto join_exit;
-        }
-    }
-
-    ret = GroupOpBarrier(ret, "barrier before mmap");
-    if (ret != SM_OK) {
-        goto rollback_exit;
-    }
-
-    FIP_START(MMAP, &ret)
-    ret = hybm_mmap(entity_, 0);
-    FIP_END;
-    if (ret != SM_OK) {
-        SM_LOG_ERROR("hybm mmap failed, result: " << ret);
-    }
-
-join_exit:
-    ret = GroupOpBarrier(ret, "barrier after mmap");
-    if (ret != SM_OK) {
-        goto rollback_exit;
-    }
-
-    SM_LOG_DEBUG("end join func, local_rk: " << options_.rank << " receive_rk: " << rk << " receive_info_num:"
-                                             << allInfo.size() << ", rank size is: " << globalGroup_->GetRankSize());
-    InvokeEventCb(rk, SMEM_GROUP_EVENT_JOIN);
-    return SM_OK;
-
-rollback_exit:
-    for (auto &rks : joined) {
-        hybm_remove_imported(entity_, rks, 0);
-    }
-    return ret;
-}
-
-Result SmemBmEntry::UpdateHandle(uint32_t rk)
-{
-    SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    SM_LOG_INFO("do update func, local_rk: " << options_.rank << " receive_rk: " << rk
-                                             << ", rank size is: " << globalGroup_->GetRankSize());
-
-    uint32_t unitSize = sizeof(hybm_exchange_info);
-    std::string xinfo;
-    if (rk == options_.rank) {
-        xinfo = std::string((char *)&sliceInfos_.back(), sizeof(hybm_exchange_info));
-    }
-
-    int32_t ret = globalGroup_->GroupBarrierPrefixKey(rk, xinfo);
-    SM_VALIDATE_RETURN(ret == SM_OK, "barrier prefix info failed, ret:" << ret, ret);
-    if (rk != options_.rank) {
-        hybm_exchange_info info;
-        if (xinfo.length() % unitSize != 0) {
-            SM_LOG_ERROR("receive exchange info size is invalid!, size:" << xinfo.length() << " rank:" << rk);
-            ret = SM_INVALID_PARAM;
-            goto update_exit;
-        }
-        uint32_t num = xinfo.length() / unitSize;
-        for (uint32_t i = 0; i < num; i++) {
-            (void)std::copy_n(xinfo.c_str() + i * unitSize, unitSize, (char *)&info);
-            ret = hybm_import(entity_, &info, 1U, nullptr, (i == 0 ? HYBM_FLAG_EXPORT_ENTITY : 0));
-            if (ret != SM_OK) {
-                SM_LOG_ERROR("hybm import failed, result: " << ret << " remote_rank:" << rk
-                                                            << " local_rank:" << options_.rank);
-                goto update_exit;
-            }
-        }
-
-        FIP_START(MMAP, &ret)
-        ret = hybm_mmap(entity_, 0);
-        FIP_END;
-        if (ret != SM_OK) {
-            SM_LOG_ERROR("hybm mmap failed, result: " << ret);
-        }
-    }
-
-update_exit:
-    ret = GroupOpBarrier(ret, "barrier update");
-    if (ret != SM_OK) {
-        return ret;
-    }
-
-    SM_LOG_DEBUG("end update func, local_rk: " << options_.rank << " receive_rk: " << rk
-                                               << ", rank size is: " << globalGroup_->GetRankSize());
-    return SM_OK;
-}
-
-Result SmemBmEntry::LeaveHandle(uint32_t rk)
-{
-    SM_LOG_INFO("do leave func, receive_rk: " << rk);
-    if (!inited_) {
-        SM_LOG_INFO("bm not inited, skip leave");
-        return SM_NOT_INITIALIZED;
-    }
-    SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    auto ret = hybm_remove_imported(entity_, rk, 0);
-    if (ret != 0) {
-        SM_LOG_ERROR("hybm_remove_imported (leave) failed, remoteRank: " << rk << " ret: " << ret);
-        return SM_ERROR;
-    }
-    InvokeEventCb(rk, SMEM_GROUP_EVENT_LEAVE);
-    return SM_OK;
-}
-
-void SmemBmEntry::InvokeEventCb(uint32_t rankId, smem_bm_group_event_t event)
-{
-    std::unique_lock<std::mutex> locker{eventCbMutex_};
-    auto cb = eventCb_;
-    auto ctx = eventCbCtx_;
-    locker.unlock();
-
-    if (cb != nullptr) {
-        (*cb)(reinterpret_cast<void *>(this), rankId, event, ctx);
-    }
-}
-
 Result SmemBmEntry::Join(uint32_t flags)
 {
+    (void)flags;
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    const uint32_t groupJoinTimeoutSec =
-        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_JOIN_MAX_TIMEOUT, MF_GROUP_JOIN_DEFAULT_TIMEOUT);
-    SM_LOG_INFO("group join timeout sec: " << groupJoinTimeoutSec);
-    auto start_time = std::chrono::steady_clock::now();
-    // Track store connection state: if the store was ever disconnected since
-    // we started joining, restart the clock once it reconnects. Time spent
-    // with a dead leader cannot be used to complete the join.
-    bool wasDisconnected = !globalGroup_->GetStoreConnectStatus();
-    uint32_t resetCount = 0;
-    while (true) {
-        bool connected = globalGroup_->GetStoreConnectStatus();
-        if (wasDisconnected && connected && resetCount < 1) {
-            SM_LOG_DEBUG("store reconnected after disconnect, resetting join timer. rank: " << options_.rank);
-            start_time = std::chrono::steady_clock::now();
-            ++resetCount;
-        }
-        wasDisconnected = !connected;
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_JOIN_RANK);
 
-        auto now = std::chrono::steady_clock::now();
-        auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - start_time).count();
-        if (duration >= groupJoinTimeoutSec) {
-            SM_LOG_ERROR("join timeout. rank: " << options_.rank << ", elapsed: " << duration << "s");
-            return SM_ERROR;
-        }
-        auto ret = globalGroup_->GroupJoin();
-        if (ret == SM_INNER_BUSY) {
-            sleep(1U);
-            continue;
-        }
-        SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "join failed, ret: " << ret);
-        SM_LOG_INFO("join success. rank: " << options_.rank);
-        return SM_OK;
+    joinComplete_ = std::make_shared<std::promise<void>>();
+    auto coreStore = _configStore->GetCoreStore();
+    auto groupMgr = dynamic_cast<SmemGroupManager *>(coreStore.Get());
+    if (groupMgr == nullptr) {
+        SM_LOG_ERROR("SmemBmEntry::Join failed, group manager is nullptr");
+        TP_TRACE_END(TP_SMEM_GROUP_JOIN_RANK, 1);
+        return SM_ERROR;
     }
+
+    RankFullInfo info{groupMgr->GetLocalRankId()};
+    info.baseInfo.insert(info.baseInfo.end(), &entityInfo_.desc[0], &entityInfo_.desc[entityInfo_.descLen]);
+    for (auto &[data, len] : sliceInfos_) {
+        Bytes bytes(&data[0], &data[len]);
+        info.externalInfo.emplace_back(std::move(bytes));
+    }
+    if (auto joinRet = groupMgr->Join(info); joinRet != SM_OK) {
+        SM_LOG_ERROR("SmemBmEntry::Join failed, result: " << joinRet);
+        TP_TRACE_END(TP_SMEM_GROUP_JOIN_RANK, 1);
+        return SM_ERROR;
+    }
+
+    // Wait for server to promote rank to ACTIVE (all links established)
+    if (joinComplete_ == nullptr) {
+        joinComplete_ = std::make_shared<std::promise<void>>();
+    }
+    auto future = joinComplete_->get_future();
+    if (future.wait_for(std::chrono::seconds(MF_GROUP_JOIN_DEFAULT_TIMEOUT)) != std::future_status::ready) {
+        SM_LOG_ERROR("SmemBmEntry::Join timeout waiting for PROMOTE_TO_ACTIVE, rank=" << options_.rank);
+        // Clean up server-side state so the rank can retry Join cleanly
+        SM_LOG_DEBUG("SmemBmEntry::Join timeout, sending group leave for cleanup, rank: " << options_.rank);
+        groupMgr->Leave();
+        TP_TRACE_END(TP_SMEM_GROUP_JOIN_RANK, 1);
+        return SM_ERROR;
+    }
+
+    SM_LOG_DEBUG("join success. rank: " << options_.rank);
+    TP_TRACE_END(TP_SMEM_GROUP_JOIN_RANK, 0);
+    return SM_OK;
 }
 
 Result SmemBmEntry::Update(uint32_t flags)
 {
+    (void)flags;
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    const uint32_t retryTime =
-        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
-    for (uint32_t i = 0; i < retryTime; i++) {
-        auto ret = globalGroup_->GroupUpdate();
-        if (ret == SM_INNER_BUSY) {
-            sleep(1U); // sleep 1s
-            continue;
-        }
-        SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "update failed, ret: " << ret);
-        SM_LOG_INFO("update success. rank:" << options_.rank);
-        return SM_OK;
-    }
-
-    SM_LOG_ERROR("update timeout. rank:" << options_.rank << " retryTime:" << retryTime);
-    return SM_ERROR;
+    SM_LOG_WARN("SmemBmEntry::Update is deprecated — "
+                "dynamic memory extension must use ExtendLocalMem which "
+                "propagates via the server. Calling Update directly is a no-op. "
+                "rank="
+                << options_.rank);
+    return SM_OK;
 }
 
 Result SmemBmEntry::Leave(uint32_t flags)
 {
+    (void)flags;
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    auto ret = globalGroup_->GroupLeave();
-    SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "leave failed, ret: " << ret);
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_LEAVE_RANK);
 
+    auto coreStore = _configStore->GetCoreStore();
+    auto groupMgr = dynamic_cast<SmemGroupManager *>(coreStore.Get());
+    if (groupMgr == nullptr) {
+        SM_LOG_ERROR("SmemBmEntry::Leave failed, group manager is nullptr");
+        TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 1);
+        return SM_ERROR;
+    }
+
+    auto tcpStore = dynamic_cast<TcpConfigStore *>(coreStore.Get());
+    if (tcpStore == nullptr) {
+        SM_LOG_ERROR("SmemBmEntry::Leave failed, tcpStore is nullptr");
+        TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 1);
+        return SM_ERROR;
+    }
+
+    if (tcpStore->GetConnectStatus()) {
+        if (auto leaveRet = groupMgr->Leave(); leaveRet != SM_OK) {
+            SM_LOG_ERROR("rankId:" << groupMgr->GetLocalRankId() << " SmemBmEntry::Leave failed, result: " << leaveRet);
+            TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 1);
+        } else {
+            SM_LOG_INFO("rankId:" << groupMgr->GetLocalRankId() << " SmemBmEntry::Leave success.");
+            TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 0);
+        }
+    } else {
+        SM_LOG_INFO("Store not connected, skipping Leave, rank " << groupMgr->GetLocalRankId());
+        TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 0);
+    }
     return SM_OK;
 }
 
@@ -529,38 +371,39 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
     }
     slices_.push_back(slice);
     sliceInfos_.push_back(info);
-    // 3.group update
-    const uint32_t retryTime =
-        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_RETRY_TIME, SMEM_GROUP_RETRY_TIME);
-    for (uint32_t i = 0; i < retryTime; i++) {
-        auto ret = globalGroup_->GroupUpdate();
-        if (ret == SM_INNER_BUSY) {
-            sleep(1U); // sleep 1s
-            continue;
-        }
-        SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "update failed, ret: " << ret);
-        SM_LOG_INFO("update success. rank:" << options_.rank);
-        if (memType == SMEM_MEM_TYPE_DEVICE) {
-            realHBMSize_ += size;
-        } else {
-            realDRAMSize_ += size;
-        }
-        return SM_OK;
-    }
-    SM_LOG_ERROR("group update timeout. rank:" << options_.rank);
-    slices_.pop_back();
-    sliceInfos_.pop_back();
-    hybm_free_local_memory(entity_, slice, 1, 0);
-    return SM_ERROR;
-}
 
-Result SmemBmEntry::SetEventListener(smem_bm_group_event_cb cb, void *context)
-{
-    SM_ASSERT_RETURN(cb != nullptr, SM_INVALID_PARAM);
-    SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    std::unique_lock<std::mutex> locker{eventCbMutex_};
-    eventCb_ = cb;
-    eventCbCtx_ = context;
+    // Send new slice to server for propagation to all peers
+    auto coreStore = _configStore->GetCoreStore();
+    auto groupMgr = dynamic_cast<SmemGroupManager *>(coreStore.Get());
+    if (groupMgr == nullptr) {
+        SM_LOG_ERROR("ExtendLocalMem: group manager is nullptr");
+        slices_.pop_back();
+        sliceInfos_.pop_back();
+        hybm_free_local_memory(entity_, slice, 1, 0);
+        return SM_ERROR;
+    }
+
+    MultiBytes newSlices;
+    Bytes sliceBytes(&info.desc[0], &info.desc[info.descLen]);
+    newSlices.push_back(std::move(sliceBytes));
+
+    extendComplete_ = std::make_shared<std::promise<void>>();
+    if (auto ret2 = groupMgr->ExtendMemory(newSlices); ret2 != SM_OK) {
+        SM_LOG_ERROR("ExtendLocalMem: ExtendMemory failed, ret=" << ret2);
+        slices_.pop_back();
+        sliceInfos_.pop_back();
+        hybm_free_local_memory(entity_, slice, 1, 0);
+        return SM_ERROR;
+    }
+
+    // Server responds synchronously; peers receive ADD_SLICES asynchronously
+    extendComplete_->set_value();
+
+    if (memType == SMEM_MEM_TYPE_DEVICE) {
+        realHBMSize_ += size;
+    } else {
+        realDRAMSize_ += size;
+    }
     return SM_OK;
 }
 
@@ -590,8 +433,7 @@ smem_bm_mem_type SmemBmEntry::GetHybmMemTypeFromGva(const void *addr, uint64_t s
 
 Result SmemBmEntry::CheckJoined() const
 {
-    SM_VALIDATE_RETURN(globalGroup_ != nullptr && globalGroup_->IsJoined(), "not joined the net group yet",
-                       SM_NOT_STARTED);
+    SM_VALIDATE_RETURN(joined_, "not joined the net group yet", SM_NOT_STARTED);
     return SM_OK;
 }
 
@@ -819,22 +661,6 @@ Result SmemBmEntry::DataCopyBatchConcurrent(smem_batch_copy_params *params, smem
     return SM_PARTIAL_FAILED;
 }
 
-Result SmemBmEntry::CreateGlobalTeam(uint32_t rankSize, uint32_t rankId)
-{
-    SmemGroupChangeCallback joinFunc = std::bind(&SmemBmEntry::JoinHandle, this, std::placeholders::_1);
-    SmemGroupChangeCallback updateFunc = std::bind(&SmemBmEntry::UpdateHandle, this, std::placeholders::_1);
-    SmemGroupChangeCallback leaveFunc = std::bind(&SmemBmEntry::LeaveHandle, this, std::placeholders::_1);
-    SmemGroupOption opt = {rankSize,  rankId,   options_.controlOperationTimeout * SECOND_TO_MILLSEC,
-                           true,      joinFunc, updateFunc,
-                           leaveFunc, leaveFunc};
-    SmemGroupEnginePtr group = SmemNetGroupEngine::Create(_configStore, opt);
-    SM_VALIDATE_RETURN(group != nullptr,
-                       "SmemNetGroupEngine::Create failed, rankSize: " << rankSize << " rankId: " << rankId, SM_ERROR);
-
-    globalGroup_ = group;
-    return SM_OK;
-}
-
 bool SmemBmEntry::AddrInHostGva(const void *address, uint64_t size)
 {
     if (hostGva_ == nullptr) {
@@ -919,6 +745,317 @@ bool SmemBmEntry::CheckRankConfigConsistency(const hybm_options &options) const
 
     SM_LOG_DEBUG("compare for key: " << key << ", config: " << localConfig.ToStr() << " matches.");
     return true;
+}
+
+int SmemBmEntry::SetupGroupManagerCallbacks() noexcept
+{
+    // Unwrap PrefixConfigStore to get the real TcpConfigStore
+    auto coreStore = _configStore->GetCoreStore();
+    auto tcpStore = dynamic_cast<TcpConfigStore *>(coreStore.Get());
+    if (tcpStore == nullptr) {
+        SM_LOG_ERROR("SmemBmEntry::SetupGroupManagerCallbacks failed, tcp store is nullptr");
+        return SM_ERROR;
+    }
+
+    auto *asyncMgr = tcpStore->GetAsyncDispatcher();
+    if (asyncMgr == nullptr) {
+        SM_LOG_ERROR("SmemBmEntry::SetupGroupManagerCallbacks: async dispatcher is null");
+        return SM_ERROR;
+    }
+
+    if (auto ret = RegisterAsyncCallbacks(asyncMgr); ret != SMEM_OK) {
+        return ret;
+    }
+
+    auto executor = SmMakeRef<SmemGroupManagerClient>();
+    if (auto ret = RegisterExecutorCallbacks(executor.Get(), asyncMgr); ret != SMEM_OK) {
+        return ret;
+    }
+
+    auto *groupMgr = static_cast<SmemGroupManager *>(tcpStore);
+    groupMgr->SetExecutor(executor.Get());
+    SM_LOG_INFO("SmemBmEntry callbacks setup, rank " << groupMgr->GetLocalRankId());
+    return SMEM_OK;
+}
+
+int SmemBmEntry::RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept
+{
+    asyncMgr->SetWhitelistCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {
+        return OnAddToWhitelist(rankId, others, reqId);
+    });
+    asyncMgr->SetRemoveWhitelistCallback(
+        [this](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {
+            return OnRemoveFromWhitelist(rankId, others, reqId);
+        });
+    asyncMgr->SetConnectionCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) {
+        return OnEstablishConnection(rankId, peers, reqId);
+    });
+    asyncMgr->SetCloseConnectionCallback([this](uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) {
+        return OnCloseConnection(rankId, peers, reqId);
+    });
+    asyncMgr->SetLinkStateQueryCallback([this]() { return OnQueryLinkState(); });
+    asyncMgr->SetLeaveNotifyCallback([this](uint32_t leavingRankId) { return OnLeaveNotify(leavingRankId); });
+    asyncMgr->SetAddSlicesCallback([this](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
+        return OnAddSlices(extendingRankId, newSlices, reqId);
+    });
+    return SMEM_OK;
+}
+
+int SmemBmEntry::RegisterExecutorCallbacks(SmemGroupManagerClient *executor,
+                                           SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept
+{
+    executor->onAddToWhitelist_ = [asyncMgr](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {
+        std::vector<RankFullInfo> copy(others);
+        asyncMgr->EnqueueAddToWhitelist(rankId, std::move(copy), reqId);
+        return 0;
+    };
+    executor->onRemoveFromWhitelist_ = [asyncMgr](uint32_t rankId, const std::vector<RankFullInfo> &others,
+                                                  uint64_t reqId) {
+        std::vector<RankFullInfo> copy(others);
+        asyncMgr->EnqueueRemoveFromWhitelist(rankId, std::move(copy), reqId);
+        return 0;
+    };
+    executor->onEstablishConnection_ = [asyncMgr](uint32_t rankId, const std::vector<RankFullInfo> &peers,
+                                                  uint64_t reqId) {
+        std::vector<RankFullInfo> copy(peers);
+        asyncMgr->EnqueueEstablishConnection(rankId, std::move(copy), reqId);
+        return 0;
+    };
+    executor->onCloseConnection_ = [asyncMgr](uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) {
+        std::vector<uint32_t> copy(peers);
+        asyncMgr->EnqueueCloseConnection(rankId, std::move(copy), reqId);
+        return 0;
+    };
+    executor->onQueryLinkState_ = [asyncMgr]() {
+        asyncMgr->EnqueueQueryLinkState(0);
+        return std::vector<LinkStateEntry>{};
+    };
+    executor->onLeaveNotify_ = [asyncMgr](uint32_t leavingRankId) {
+        asyncMgr->EnqueueLeaveNotify(leavingRankId);
+        return 0;
+    };
+    executor->onPromoteToActive_ = [this](uint32_t rankId) {
+        joined_ = true;
+        SM_LOG_INFO("SmemBmEntry::onPromoteToActive rankId=" << rankId);
+        try {
+            joinComplete_->set_value();
+        } catch (const std::future_error &e) {
+            SM_LOG_WARN("onPromoteToActive: promise already satisfied: " << e.what());
+        }
+        return 0;
+    };
+    executor->onAddSlices_ = [asyncMgr](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
+        MultiBytes copy(newSlices);
+        asyncMgr->EnqueueAddSlices(extendingRankId, std::move(copy), reqId);
+        return 0;
+    };
+    return SMEM_OK;
+}
+
+int SmemBmEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept
+{
+    if (others.empty()) {
+        SM_LOG_ERROR("rankId: " << rankId << "OnAddToWhitelist reqId: " << reqId << " others is empty.");
+        return BM_INVALID_PARAM;
+    }
+
+    if (auto ret = ValidatePeerPayloads(rankId, others); ret != SMEM_OK) {
+        return ret;
+    }
+
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_ADD_TO_WHITELIST);
+    auto importRet = ImportPeerEntities(others);
+    TP_TRACE_END(TP_SMEM_GROUP_ADD_TO_WHITELIST, importRet == SMEM_OK ? 0 : 1);
+    if (importRet != SMEM_OK) {
+        return importRet;
+    }
+
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_EXPORT_ENTITY);
+    auto sliceRet = ImportPeerSlices(others);
+    TP_TRACE_END(TP_SMEM_GROUP_EXPORT_ENTITY, sliceRet == SMEM_OK ? 0 : 1);
+    if (sliceRet != SMEM_OK) {
+        return sliceRet;
+    }
+
+    SM_LOG_DEBUG("OnAddToWhitelist done, rank=" << rankId << " peers=" << others.size());
+    return SMEM_OK;
+}
+
+int SmemBmEntry::ValidatePeerPayloads(uint32_t rankId, const std::vector<RankFullInfo> &others) noexcept
+{
+    for (auto &info : others) {
+        if (info.baseInfo.size() > EXCHANGE_INFO_PAYLOAD_MAX) {
+            SM_LOG_ERROR("rankId: " << rankId << " other rank: " << info.rankId
+                                    << " entity too large: " << info.baseInfo.size());
+            return BM_INVALID_PARAM;
+        }
+
+        for (auto &slice : info.externalInfo) {
+            if (slice.size() > EXCHANGE_INFO_PAYLOAD_MAX) {
+                SM_LOG_ERROR("rankId: " << rankId << " other rank: " << info.rankId
+                                        << " slice too large: " << slice.size());
+                return BM_INVALID_PARAM;
+            }
+        }
+    }
+    return SMEM_OK;
+}
+
+int SmemBmEntry::ImportPeerEntities(const std::vector<RankFullInfo> &others) noexcept
+{
+    std::vector<hybm_exchange_info> entities(others.size());
+    for (auto i = 0U; i < others.size(); ++i) {
+        std::copy(others[i].baseInfo.begin(), others[i].baseInfo.end(), entities[i].desc);
+        entities[i].descLen = others[i].baseInfo.size();
+    }
+
+    if (auto ret = hybm_import(entity_, entities.data(), entities.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
+        ret != BM_OK) {
+        SM_LOG_ERROR("failed to import entity: " << ret);
+        return SMEM_ERROR;
+    }
+    return SMEM_OK;
+}
+
+int SmemBmEntry::ImportPeerSlices(const std::vector<RankFullInfo> &others) noexcept
+{
+    uint32_t totalSliceCount = 0;
+    std::for_each(others.begin(), others.end(),
+                  [&totalSliceCount](const RankFullInfo &info) { totalSliceCount += info.externalInfo.size(); });
+    if (totalSliceCount == 0) {
+        return SMEM_OK;
+    }
+    uint32_t i = 0;
+    std::vector<hybm_exchange_info> slices(totalSliceCount);
+    for (auto &info : others) {
+        for (auto &slice : info.externalInfo) {
+            std::copy(slice.begin(), slice.end(), slices[i].desc);
+            slices[i++].descLen = slice.size();
+        }
+    }
+    if (auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0); ret != BM_OK) {
+        SM_LOG_ERROR("hybm import slice failed, result: " << ret << " local_rank:" << options_.rank);
+        return SMEM_ERROR;
+    }
+    return SMEM_OK;
+}
+
+int SmemBmEntry::OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others,
+                                       uint64_t reqId) noexcept
+{
+    (void)rankId;
+    (void)reqId;
+    for (const auto &other : others) {
+        auto ret = hybm_remove_imported(entity_, other.rankId, 0);
+        if (ret != SMEM_OK) {
+            SM_LOG_WARN("SmemBmEntry::OnRemoveFromWhitelist remove rank " << other.rankId << " failed: " << ret);
+        }
+    }
+    SM_LOG_DEBUG("OnRemoveFromWhitelist done, rank=" << rankId << " peers=" << others.size());
+    return SMEM_OK;
+}
+
+int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept
+{
+    (void)rankId;
+    (void)reqId;
+    if (peers.empty()) {
+        SM_LOG_DEBUG("OnEstablishConnection rankId=" << rankId << " peers empty, skip");
+        return SMEM_OK;
+    }
+    for (auto &p : peers) {
+        if (p.externalInfo.empty())
+            continue;
+        std::vector<hybm_exchange_info> slices(p.externalInfo.size());
+        for (size_t i = 0; i < p.externalInfo.size(); ++i) {
+            std::copy(p.externalInfo[i].begin(), p.externalInfo[i].end(), slices[i].desc);
+            slices[i].descLen = p.externalInfo[i].size();
+        }
+        if (auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0); ret != BM_OK) {
+            SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << p.rankId << " ret=" << ret);
+        }
+    }
+    hybm_mmap(entity_, 0);
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_ESTABLISH_CONNECTION);
+    std::vector<uint32_t> rankIds;
+    rankIds.reserve(peers.size());
+    for (auto &p : peers)
+        rankIds.push_back(p.rankId);
+    auto ret = hybm_transport_connect(entity_, rankIds.data(), static_cast<uint32_t>(rankIds.size()), 0);
+    if (ret != SMEM_OK) {
+        SM_LOG_ERROR("OnEstablishConnection rankId=" << rankId << " hybm_transport_connect failed: " << ret);
+        TP_TRACE_END(TP_SMEM_GROUP_ESTABLISH_CONNECTION, 1);
+        return SMEM_OK;
+    }
+    TP_TRACE_END(TP_SMEM_GROUP_ESTABLISH_CONNECTION, 0);
+    SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " peers.size=" << peers.size());
+    return SMEM_OK;
+}
+
+int SmemBmEntry::OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept
+{
+    (void)rankId;
+    (void)reqId;
+    for (auto peer : peers) {
+        auto ret = hybm_unmap_rank(entity_, peer);
+        if (ret != SMEM_OK) {
+            SM_LOG_WARN("OnCloseConnection unmap rank " << peer << " failed: " << ret);
+        }
+    }
+    SM_LOG_DEBUG("OnCloseConnection rankId=" << rankId << " peers.size=" << peers.size());
+    return SMEM_OK;
+}
+
+std::vector<ock::smem::LinkStateEntry> SmemBmEntry::OnQueryLinkState() noexcept
+{
+    std::vector<ock::smem::LinkStateEntry> entries;
+    if (entity_ == nullptr) {
+        return entries;
+    }
+    for (uint32_t peerRank = 0; peerRank < options_.rankSize; ++peerRank) {
+        if (peerRank == options_.rank) {
+            continue;
+        }
+        hybm_data_op_type reachTypes = static_cast<hybm_data_op_type>(0);
+        auto ret = hybm_entity_reach_types(entity_, peerRank, reachTypes, 0);
+        LinkStateEntry entry;
+        entry.dstRankId = peerRank;
+        entry.state = (ret == 0 && reachTypes != 0) ? BM_LINK_CONNECTED : BM_LINK_IDLE;
+        entries.push_back(entry);
+    }
+    SM_LOG_DEBUG("OnQueryLinkState: " << entries.size() << " peers");
+    return entries;
+}
+
+int SmemBmEntry::OnLeaveNotify(uint32_t leavingRankId) noexcept
+{
+    (void)leavingRankId;
+    SM_LOG_DEBUG("OnLeaveNotify leavingRankId=" << leavingRankId);
+    return SMEM_OK;
+}
+
+int SmemBmEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept
+{
+    (void)reqId;
+    if (newSlices.empty()) {
+        return SM_OK;
+    }
+    constexpr size_t kInfoSize = sizeof(hybm_exchange_info);
+    std::vector<hybm_exchange_info> infos;
+    infos.reserve(newSlices.size());
+    for (const auto &slice : newSlices) {
+        hybm_exchange_info info{};
+        auto copyLen = std::min(slice.size(), kInfoSize);
+        std::copy(slice.begin(), slice.begin() + copyLen, reinterpret_cast<uint8_t *>(&info));
+        infos.push_back(info);
+    }
+    if (auto ret = hybm_import(entity_, infos.data(), infos.size(), nullptr, 0); ret != BM_OK) {
+        SM_LOG_ERROR("OnAddSlices: hybm_import failed, extendingRank=" << extendingRankId << " ret=" << ret);
+        return SM_ERROR;
+    }
+    hybm_mmap(entity_, 0);
+    SM_LOG_INFO("OnAddSlices extendingRank=" << extendingRankId << " slices=" << newSlices.size());
+    return SM_OK;
 }
 } // namespace smem
 } // namespace ock

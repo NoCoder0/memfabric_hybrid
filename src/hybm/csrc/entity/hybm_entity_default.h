@@ -81,9 +81,12 @@ public:
                           uint32_t flags) noexcept override;
     int32_t QuantCopy(hybm_quant_copy_params &params) noexcept override;
     int32_t Wait() noexcept override;
+
     bool SdmaReaches(uint32_t remoteRank) const noexcept override;
     hybm_data_op_type CanReachDataOperators(uint32_t remoteRank) const noexcept override;
     void *GetSliceVa(hybm_mem_slice_t slice);
+    int32_t ConnectTransport(const uint32_t *ranks, uint32_t count, uint32_t flags) noexcept override;
+    int32_t UnmapRank(uint32_t rankId) noexcept override;
 
 private:
     static int CheckOptions(const hybm_options *options) noexcept;
@@ -118,6 +121,7 @@ private:
     std::shared_ptr<MemSegment> dramSegment_{nullptr};
     std::shared_ptr<DataOperator> dataOperator_;
     bool transportPrepared_{false};
+    std::mutex transportMutex_;
     std::mutex importMutex_;
     transport::TransManagerPtr transportManager_;
     std::unordered_map<uint32_t, EntityExportInfo> importedRanks_;

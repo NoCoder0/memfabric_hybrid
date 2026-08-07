@@ -24,6 +24,7 @@
 #include "smem_ha_config_store.h"
 #undef protected
 #undef private
+#include "acc_tcp_link_complex_default.h"
 #include "network_endpoint_util.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
@@ -47,6 +48,10 @@ constexpr uint32_t K_RECOVERED_WORLD_SIZE = 8;
 constexpr int32_t K_FOLLOWER_RANK_ID = -1;
 constexpr int32_t K_UPDATED_RANK_ID = 9;
 constexpr int K_RECONNECT_RETRY_TIMES = 3;
+// Stale old-rank process claims the same rankId while the active link is held.
+constexpr uint32_t K_STALE_LINK_RANK_ID = 2;
+// rankId encodes world-size in the high 32 bits and rank in the low 32 bits.
+constexpr uint32_t K_RANK_ID_HIGH_SHIFT = 32;
 
 class FakeStoreBackend final : public ConfigStoreBackend {
 public:
@@ -61,6 +66,9 @@ public:
     std::string lastPutKey;
     std::vector<uint8_t> lastPutValue;
     int64_t lastPutTtl = -1;
+    std::vector<std::string> putKeys;
+    std::map<std::string, std::vector<uint8_t>> putValues;
+    std::map<std::string, int64_t> putTtls;
     std::string lastDeleteKey;
     int uninitializeCount = 0;
     bool distributed = true;
@@ -88,6 +96,9 @@ public:
         lastPutKey = key;
         lastPutValue = value;
         lastPutTtl = ttlSeconds;
+        putKeys.push_back(key);
+        putValues[key] = value;
+        putTtls[key] = ttlSeconds;
         if (putHook != nullptr) {
             return putHook(key, value, ttlSeconds);
         }
@@ -326,6 +337,8 @@ TEST_F(SmemHaConfigStoreTest, ConnectClientReconnectPathPropagatesDelegateResult
     auto client = MakeClientDelegate(0);
     HaConfigStore store(backend, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE);
 
+    // Simulate already-started state so ConnectClient takes the reconnect path
+    client->clientStarted_ = true;
     MOCKER_CPP(&TcpConfigStore::ReConnectAfterBroken, int32_t(*)(int)).stubs().will(returnValue(int32_t(0)));
 
     EXPECT_EQ(SM_OK, store.ConnectClient(K_LOOPBACK_IP, K_STORE_PORT));
@@ -418,7 +431,9 @@ TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderRegistersLeaderSuccessfully)
 
     backend->getHook = [](const std::string &, std::vector<uint8_t> &) { return StoreErrorCode::NOT_EXIST; };
 
-    MOCKER_CPP(&NetworkEndpointUtil::FindAvailablePort, bool (*)(uint16_t &, bool)).stubs().will(returnValue(true));
+    MOCKER_CPP(&NetworkEndpointUtil::FindAvailablePort, bool (*)(uint16_t &, bool, uint16_t))
+        .stubs()
+        .will(returnValue(true));
     MOCKER_CPP(&NetworkEndpointUtil::GetLocalIpWithTarget, bool (*)(const std::string &, std::string &))
         .stubs()
         .will(returnValue(true));
@@ -430,9 +445,10 @@ TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderRegistersLeaderSuccessfully)
         .stubs()
         .will(returnValue(int32_t(0)));
     EXPECT_EQ(SM_OK, store.TryBecomeLeader());
-    EXPECT_EQ(KEY_LEADER, backend->lastPutKey);
-    EXPECT_EQ(K_LEADER_ADDRESS, std::string(backend->lastPutValue.begin(), backend->lastPutValue.end()));
-    EXPECT_EQ(PUT_LEASE_TTL_SEC, backend->lastPutTtl);
+    EXPECT_NE(std::find(backend->putKeys.begin(), backend->putKeys.end(), KEY_LEADER), backend->putKeys.end());
+    EXPECT_EQ(K_LEADER_ADDRESS,
+              std::string(backend->putValues[KEY_LEADER].begin(), backend->putValues[KEY_LEADER].end()));
+    EXPECT_EQ(PUT_LEASE_TTL_SEC, backend->putTtls[KEY_LEADER]);
 }
 
 TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderDeletesLeaderOnSelfConnectFailure)
@@ -444,7 +460,9 @@ TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderDeletesLeaderOnSelfConnectFailure)
 
     backend->getHook = [](const std::string &, std::vector<uint8_t> &) { return StoreErrorCode::NOT_EXIST; };
 
-    MOCKER_CPP(&NetworkEndpointUtil::FindAvailablePort, bool (*)(uint16_t &, bool)).stubs().will(returnValue(true));
+    MOCKER_CPP(&NetworkEndpointUtil::FindAvailablePort, bool (*)(uint16_t &, bool, uint16_t))
+        .stubs()
+        .will(returnValue(true));
     MOCKER_CPP(&NetworkEndpointUtil::GetLocalIpWithTarget, bool (*)(const std::string &, std::string &))
         .stubs()
         .will(returnValue(true));
@@ -609,15 +627,22 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsToRecove
     // Initially empty reconnectedRankSet_.
     server.state_.store(SS_INITED);
 
-    // First call: INITED → RECOVER (not all reconnected).
+    // First call: INITED → RECOVERING (not all reconnected).
     EXPECT_FALSE(server.CanReceiveNewLink());
-    EXPECT_EQ(SS_RECOVER, server.state_.load());
+    EXPECT_EQ(SS_RECOVERING, server.state_.load());
 
     // Insert ranks into reconnectedRankSet_ — simulates reconnect.
     server.reconnectedRankSet_.insert(0);
     server.reconnectedRankSet_.insert(1);
 
-    // Second call: allReconnected → NORMAL.
+    // Second call: allReconnected → RECOVERED (new state machine exits to RECOVERED first).
+    EXPECT_FALSE(server.CanReceiveNewLink());
+    EXPECT_EQ(SS_RECOVERED, server.state_.load());
+
+    // Manually advance to NORMAL (as LaunchCleanupThread would do).
+    server.state_.store(SS_NORMAL);
+
+    // Third call: NORMAL → returns true.
     EXPECT_TRUE(server.CanReceiveNewLink());
     EXPECT_EQ(SS_NORMAL, server.state_.load());
 }
@@ -862,4 +887,28 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerSetAndGetStatus)
     ASSERT_EQ(SM_OK, server.UpdateStatus(true));
     EXPECT_EQ(KEY_LEADER_STATUS, fb->lastPutKey);
     EXPECT_EQ("true", std::string(fb->lastPutValue.begin(), fb->lastPutValue.end()));
+}
+
+TEST_F(SmemHaConfigStoreTest, AccStoreServerRejectReconnectHijackingActiveRank)
+{
+    auto backend = MakeBackend();
+    AccStoreServer server(K_LOOPBACK_IP, K_STORE_PORT, K_DEFAULT_WORLD_SIZE, backend, false);
+
+    // Rank 0 is already actively connected (e.g. a new client grabbed it while the old rank was down).
+    uint32_t activeRank = 0;
+    ock::acc::AccTcpLinkComplexPtr activeLink = new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", 1);
+    server.rankLinks_[activeRank] = activeLink;
+
+    // A stale old-rank process reconnects claiming the same rankId.
+    ock::acc::AccTcpLinkComplexPtr staleLink =
+        new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", K_STALE_LINK_RANK_ID);
+    ock::acc::AccConnReq req;
+    req.reconnect = 1;
+    req.rankId = (static_cast<uint64_t>(K_DEFAULT_WORLD_SIZE) << K_RANK_ID_HIGH_SHIFT) | activeRank;
+
+    EXPECT_EQ(SM_ERROR, server.LinkConnectedHandler(req, staleLink));
+    // The active link must not be hijacked.
+    auto it = server.rankLinks_.find(activeRank);
+    ASSERT_NE(server.rankLinks_.end(), it);
+    EXPECT_EQ(activeLink.Get(), it->second.Get());
 }

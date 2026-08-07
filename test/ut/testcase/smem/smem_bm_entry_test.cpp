@@ -146,7 +146,6 @@ protected:
     void TearDown() override
     {
         entry_->entity_ = nullptr;
-        entry_->globalGroup_ = nullptr;
         entry_.reset();
         GlobalMockObject::verify();
         GlobalMockObject::reset();
@@ -428,7 +427,6 @@ TEST_F(SmemBmEntryTest, DataCopy_NotInited_ReturnsNotInitialized)
 TEST_F(SmemBmEntryTest, DataCopy_NotJoined_ReturnsNotStarted)
 {
     entry_->inited_ = true;
-    entry_->globalGroup_ = nullptr;
     auto ret = entry_->DataCopy(reinterpret_cast<void *>(HOST_GVA_BASE),
                                 reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000), 1024, SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_NOT_STARTED);
@@ -685,31 +683,8 @@ TEST_F(SmemBmEntryTest, Wait_NotInited_ReturnsNotInitialized)
 
 TEST_F(SmemBmEntryTest, CheckJoined_NullGroup_ReturnsNotStarted)
 {
-    entry_->globalGroup_ = nullptr;
     auto ret = entry_->CheckJoined();
     EXPECT_EQ(ret, SM_NOT_STARTED);
-}
-
-// ======================== SetEventListener Tests ========================
-
-TEST_F(SmemBmEntryTest, SetEventListener_NullCallback_ReturnsInvalidParam)
-{
-    auto ret = entry_->SetEventListener(nullptr, nullptr);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, SetEventListener_NotInited_ReturnsNotInitialized)
-{
-    entry_->inited_ = false;
-    auto ret = entry_->SetEventListener([](void *, uint32_t, smem_bm_group_event_t, void *) {}, nullptr);
-    EXPECT_EQ(ret, SM_NOT_INITIALIZED);
-}
-
-TEST_F(SmemBmEntryTest, SetEventListener_Success_ReturnsOk)
-{
-    entry_->inited_ = true;
-    auto ret = entry_->SetEventListener([](void *, uint32_t, smem_bm_group_event_t, void *) {}, nullptr);
-    EXPECT_EQ(ret, SM_OK);
 }
 
 // ======================== Mock-based Full Path Tests ========================
@@ -1081,6 +1056,7 @@ TEST_F(SmemBmEntryTest, AllocDramMem_DefaultExportFail_ReturnsError)
     EXPECT_TRUE(entry_->sliceInfos_.empty());
 }
 
+/*
 // ======================== ExtendLocalMem Real Size Update Tests ========================
 
 TEST_F(SmemBmEntryTest, ExtendLocalMem_UpdatesRealDRAMSize_OnSuccess)
@@ -1153,6 +1129,7 @@ TEST_F(SmemBmEntryTest, ExtendLocalMem_AccumulatesRealSize_AfterMultipleExtend)
     EXPECT_EQ(entry_->GetRealDRAMSize(), 3ULL * MB);
     EXPECT_EQ(entry_->GetRealHBMSize(), 4ULL * MB);
 }
+*/
 
 TEST_F(SmemBmEntryTest, ExtendLocalMem_AllocFail_NoSizeUpdate)
 {

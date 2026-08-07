@@ -177,6 +177,24 @@ HYBM_API int32_t hybm_mmap(hybm_entity_t e, uint32_t flags)
     return entity->Mmap();
 }
 
+HYBM_API int32_t hybm_transport_connect(hybm_entity_t e, const uint32_t *ranks, uint32_t count, uint32_t flags)
+{
+    BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);
+    BM_ASSERT_LOG_AND_RETURN(ranks != nullptr, "ranks is nullptr", BM_INVALID_PARAM);
+    BM_ASSERT_LOG_AND_RETURN(count > 0, "count = " << count, BM_INVALID_PARAM);
+    auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "entity is nullptr", BM_INVALID_PARAM);
+    return entity->ConnectTransport(ranks, count, flags);
+}
+
+HYBM_API int32_t hybm_unmap_rank(hybm_entity_t e, uint32_t rankId)
+{
+    BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);
+    auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "entity is nullptr", BM_INVALID_PARAM);
+    return entity->UnmapRank(rankId);
+}
+
 HYBM_API int32_t hybm_entity_reach_types(hybm_entity_t e, uint32_t rank, hybm_data_op_type &reachTypes, uint32_t flags)
 {
     BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);

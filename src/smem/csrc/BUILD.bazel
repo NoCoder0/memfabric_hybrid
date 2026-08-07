@@ -60,6 +60,7 @@ cc_library (
         "//src:acc_links_headers",
         "//src:smem_headers",
         "//src:hybm_headers",
+        "//src/hybm/csrc:hybm_csrc_common_headers",
     ],
     alwayslink = True,
 ) # DIGEST:5ce440125e6a7b4c865afc07204f0d15

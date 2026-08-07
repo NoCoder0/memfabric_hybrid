@@ -17,6 +17,7 @@
 #include "smem_net_group_engine.h"
 #include "smem_store_factory.h"
 #include "smem_tcp_config_store.h"
+#include "smem_ha_config_store.h"
 #include "network_endpoint_util.h"
 
 #include "smem_bm_entry_manager.h"
@@ -92,35 +93,32 @@ Result SmemBmEntryManager::Initialize(const std::string &storeURL, uint32_t worl
 
 int32_t SmemBmEntryManager::PrepareStore()
 {
-    auto urlRet = storeUrlExtraction_.ExtractIpPortFromUrl(storeURL_);
-    SM_VALIDATE_RETURN(urlRet == SM_OK, "ExtractIpPortFromUrl failed, storeURL: " << storeURL_ << " ret: " << urlRet,
-                       SM_INVALID_PARAM);
+    SM_ASSERT_RETURN(storeUrlExtraction_.ExtractIpPortFromUrl(storeURL_) == SM_OK, SM_INVALID_PARAM);
     StoreFactory::SetTlsInfo(config_.storeTlsConfig);
     if (!config_.autoRanking) {
-        SM_VALIDATE_RETURN(config_.rankId < worldSize_,
-                           "rankId >= worldSize, rankId: " << config_.rankId << " worldSize: " << worldSize_,
-                           SM_INVALID_PARAM);
+        SM_ASSERT_RETURN(config_.rankId < worldSize_, SM_INVALID_PARAM);
         uint16_t model = (config_.rankId == 0 && config_.startConfigStoreServer) ? CSM_BOTH : CSM_CLIENT;
         confStore_ = StoreFactory::CreateStoreByUrl(storeURL_, model, worldSize_, static_cast<int>(config_.rankId));
-        SM_VALIDATE_RETURN(confStore_ != nullptr,
-                           "CreateStoreByUrl failed, storeURL: " << storeURL_ << " worldSize: " << worldSize_
-                                                                 << " rankId: " << config_.rankId
-                                                                 << " reason: " << StoreFactory::GetFailedReason(),
-                           StoreFactory::GetFailedReason());
+        SM_ASSERT_RETURN(confStore_ != nullptr, StoreFactory::GetFailedReason());
+        // In HA (etcd) mode CreateHaStore constructs the clientDelegate with the
+        // default rankId=-1, so its localRankId_ is UINT32_MAX until SetRankId is
+        // called. Propagate the configured rankId here so the join path (which
+        // uses the delegate's localRankId_ via EnableAsyncMode/PackJoin) sends the
+        // correct rank. TcpConfigStore already received rankId in the TCP path,
+        // so this is a no-op there.
+        auto mgr = Convert<ConfigStore, ConfigStoreManager>(confStore_);
+        if (mgr.Get() != nullptr) {
+            mgr->SetRankId(config_.rankId);
+        }
     } else {
         if (config_.startConfigStoreServer) {
             auto ret = RacingForStoreServer();
-            SM_VALIDATE_RETURN(ret == SM_OK, "RacingForStoreServer failed, storeURL: " << storeURL_ << " ret: " << ret,
-                               ret);
+            SM_ASSERT_RETURN(ret == SM_OK, ret);
         }
 
         if (confStore_ == nullptr) {
             confStore_ = StoreFactory::CreateStoreByUrl(storeURL_, CSM_CLIENT, worldSize_);
-            SM_VALIDATE_RETURN(confStore_ != nullptr,
-                               "CreateStoreByUrl(client) failed, storeURL: "
-                                   << storeURL_ << " worldSize: " << worldSize_
-                                   << " reason: " << StoreFactory::GetFailedReason(),
-                               StoreFactory::GetFailedReason());
+            SM_ASSERT_RETURN(confStore_ != nullptr, StoreFactory::GetFailedReason());
         }
     }
     confStore_ = StoreFactory::PrefixStore(confStore_, "BM_");
@@ -190,6 +188,7 @@ Result SmemBmEntryManager::CreateEntryById(uint32_t id, SmemBmEntryPtr &entry /*
 
     auto tmpEntry = SmMakeRef<SmemBmEntry>(opt, store);
     SM_ASSERT_RETURN(tmpEntry != nullptr, SM_NEW_OBJECT_FAILED);
+    tmpEntry->SetSmemFlags(config_.flags);
 
     /* add into set and map */
     entryIdMap_.emplace(id, tmpEntry);
@@ -296,6 +295,104 @@ Result SmemBmEntryManager::UpdateStoreUrl(const std::string &storeURL)
     storeUrlExtraction_ = newExtraction;
 
     SM_LOG_INFO("update store URL success, new URL: " << storeURL_);
+    return SM_OK;
+}
+
+Result SmemBmEntryManager::UpdateStoreServer(const std::string &newServerIp, uint16_t newServerPort) noexcept
+{
+    std::lock_guard<std::mutex> guard(entryMutex_);
+    if (confStore_ == nullptr) {
+        SM_LOG_ERROR("UpdateStoreServer: confStore_ is null, not initialized");
+        return SM_ERROR;
+    }
+
+    // Unwrap PrefixConfigStore → TcpConfigStore
+    auto coreStore = confStore_->GetCoreStore();
+    auto tcpStore = dynamic_cast<TcpConfigStore *>(coreStore.Get());
+    if (tcpStore == nullptr) {
+        SM_LOG_ERROR("UpdateStoreServer: failed to get TcpConfigStore from confStore_");
+        return SM_ERROR;
+    }
+
+    SM_LOG_INFO("UpdateStoreServer: switching to " << newServerIp << ":" << newServerPort);
+    bool wasStarted = tcpStore->SetServerInfo(newServerIp, newServerPort);
+    if (wasStarted) {
+        // Already started — reconnect to the new address
+        auto ret = tcpStore->ReConnectAfterBroken(-1);
+        if (ret != SM_OK) {
+            SM_LOG_ERROR("UpdateStoreServer: ReConnectAfterBroken failed, ret=" << ret);
+            return ret;
+        }
+        SM_LOG_INFO("UpdateStoreServer: reconnected to " << newServerIp << ":" << newServerPort);
+    } else {
+        SM_LOG_WARN("UpdateStoreServer: store not yet started, address updated for future ClientStart");
+    }
+
+    // Update storeURL_ to reflect the new target
+    storeUrlExtraction_.ExtractIpPortFromUrl("tcp://" + newServerIp + ":" + std::to_string(newServerPort));
+    return SM_OK;
+}
+
+Result SmemBmEntryManager::GetStoreServerInfo(std::string &ip, uint16_t *port) const noexcept
+{
+    if (confStore_ == nullptr) {
+        SM_LOG_ERROR("GetStoreServerInfo: confStore_ is null, not initialized");
+        return SM_ERROR;
+    }
+
+    auto coreStore = confStore_->GetCoreStore();
+    auto *tcpStore = dynamic_cast<TcpConfigStore *>(coreStore.Get());
+    if (tcpStore == nullptr) {
+        SM_LOG_ERROR("GetStoreServerInfo: underlying store is not TcpConfigStore");
+        return SM_ERROR;
+    }
+
+    ip = tcpStore->GetServerIp();
+    if (ip.empty()) {
+        SM_LOG_ERROR("GetStoreServerInfo: server IP is empty");
+        return SM_ERROR;
+    }
+    *port = tcpStore->GetServerPort();
+
+    SM_LOG_INFO("GetStoreServerInfo: ip=" << ip << ", port=" << *port);
+    return SM_OK;
+}
+
+Result SmemBmEntryManager::GetMetaServiceInfo(std::string &ip, uint16_t *port) const noexcept
+{
+    if (confStore_ == nullptr) {
+        SM_LOG_ERROR("GetMetaServiceInfo: confStore_ is null, not initialized");
+        return SM_ERROR;
+    }
+    auto *haStore = dynamic_cast<HaConfigStore *>(confStore_->GetCoreStore().Get());
+    if (haStore == nullptr) {
+        SM_LOG_ERROR("GetMetaServiceInfo: underlying store is not HaConfigStore");
+        return SM_ERROR;
+    }
+    auto backend = haStore->GetBackend();
+    if (backend == nullptr) {
+        SM_LOG_ERROR("GetMetaServiceInfo: backend is null");
+        return SM_ERROR;
+    }
+    std::string metaServiceAddr;
+    auto ret = backend->Get(KEY_META_SERVICE_ADDR, metaServiceAddr);
+    if (ret != StoreErrorCode::SUCCESS) {
+        SM_LOG_ERROR("GetMetaServiceInfo: backend Get failed, key: " << KEY_META_SERVICE_ADDR << ", ret: " << ret);
+        return SM_ERROR;
+    }
+    uint16_t parsedPort = 0;
+    std::string host;
+    if (!NetworkEndpointUtil::ExtractIpAndPort("tcp://" + metaServiceAddr, host, parsedPort)) {
+        SM_LOG_ERROR("GetMetaServiceInfo: invalid MetaService address: " << metaServiceAddr);
+        return SM_ERROR;
+    }
+    if (host.empty() || parsedPort == 0) {
+        SM_LOG_ERROR("GetMetaServiceInfo: MetaService address is empty, addr: " << metaServiceAddr);
+        return SM_ERROR;
+    }
+    ip = host;
+    *port = parsedPort;
+    SM_LOG_INFO("GetMetaServiceInfo: ip=" << ip << ", port=" << *port);
     return SM_OK;
 }
 

@@ -33,6 +33,7 @@ constexpr auto KEY_LEADER_STATUS = "/memfabric_hybrid/config_store/meta/leader_s
 constexpr auto KEY_ELECTION_LOCK = "/memfabric_hybrid/config_store/lock/election";
 constexpr auto KEY_WORLD_SIZE = "/memfabric_hybrid/config_store/data/world_size";
 constexpr auto KEY_ALIVE_RANK_LIST = "/memfabric_hybrid/config_store/data/alive_rank_list";
+constexpr auto KEY_META_SERVICE_ADDR = "/memcache/meta/service_addr";
 
 using PrefixGetMap = std::unordered_map<std::string, std::vector<uint8_t>>;
 

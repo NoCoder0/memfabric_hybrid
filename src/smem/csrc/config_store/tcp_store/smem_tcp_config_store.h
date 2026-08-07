@@ -20,6 +20,10 @@
 #include <functional>
 
 #include "smem_config_store.h"
+#include "smem_group_manager.h"
+#include "smem_message_packer.h"
+#include "smem_group_command_async_dispatcher.h"
+#include "smem_group_manager_client.h"
 #include "smem_tcp_config_store_server.h"
 
 namespace ock {
@@ -38,10 +42,10 @@ public:
     }
 };
 
-class TcpConfigStore : public ConfigStoreManager {
+class TcpConfigStore : public ConfigStoreManager, public SmemGroupManager {
 public:
     TcpConfigStore(StoreBackendPtr storeBackend, std::string ip, uint16_t port, uint16_t model, bool skipRecover,
-                   uint32_t worldSize = 0, int32_t rankId = -1) noexcept;
+                   uint32_t worldSize = 0, int32_t rankId = -1, SmemGroupManagerClientPtr tc = nullptr) noexcept;
     ~TcpConfigStore() noexcept override;
 
     Result Startup(const smem_tls_config &tlsConfig, int reconnectRetryTimes = -1) noexcept;
@@ -64,6 +68,15 @@ public:
     Result Unwatch(uint32_t wid) noexcept override;
     Result Write(const std::string &key, const std::vector<uint8_t> &value, const uint32_t offset) noexcept override;
     Result QueryAlive(uint32_t rank, uint32_t &alive) noexcept override;
+    int Join(const RankFullInfo &info) noexcept override;
+
+    int Leave() noexcept override;
+
+    int ExtendMemory(const MultiBytes &additionalSlices) noexcept override;
+
+    void SendControlAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept;
+    void SendControlAckBatch(ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
+                             const std::vector<int32_t> &results, uint64_t requestId) noexcept;
     std::string GetCompleteKey(const std::string &key) noexcept override
     {
         return key;
@@ -98,12 +111,27 @@ public:
         return accServer_ != nullptr ? accServer_->GetRankIdByLinkId(linkId) : UINT32_MAX;
     }
 
+    SmemGroupCommandAsyncDispatcher *GetAsyncDispatcher() const noexcept
+    {
+        return asyncDispatcher_.get();
+    }
+
+    const std::string &GetServerIp() const noexcept
+    {
+        return serverIp_;
+    }
+
+    uint16_t GetServerPort() const noexcept
+    {
+        return serverPort_;
+    }
+
     // return started
     bool SetServerInfo(const std::string &ip, uint16_t port)
     {
         std::unique_lock<std::recursive_mutex> guard(mutex_);
         if (serverIp_ == ip && port == serverPort_) {
-            return rankId_ >= 0;
+            return clientStarted_;
         }
         serverIp_ = ip;
         serverPort_ = port;
@@ -112,7 +140,7 @@ public:
             accClientLink_->Close();
             accClientLink_ = nullptr;
         }
-        return rankId_ >= 0;
+        return clientStarted_;
     }
 
 protected:
@@ -120,12 +148,23 @@ protected:
 
 private:
     std::shared_ptr<ock::acc::AccTcpRequestContext> SendMessageBlocked(const std::vector<uint8_t> &reqBody) noexcept;
+    Result SendMessageNonBlock(const std::vector<uint8_t> &reqBody) noexcept;
     Result LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
     Result ReceiveResponseHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
+    Result HandleControlMessage(SmemMessage &msg) noexcept;
+    Result HandleAddToWhitelist(SmemMessage &msg) noexcept;
+    Result HandleRemoveFromWhitelist(SmemMessage &msg) noexcept;
+    Result HandleEstablishConnection(SmemMessage &msg) noexcept;
+    Result HandleCloseConnection(SmemMessage &msg) noexcept;
+    Result HandleQueryLinkState(SmemMessage &msg) noexcept;
+    Result HandleLeaveNotify(SmemMessage &msg) noexcept;
+    Result HandlePromoteToActive(SmemMessage &msg) noexcept;
+    Result HandleAddSlices(SmemMessage &msg) noexcept;
     Result SendWatchRequest(const std::vector<uint8_t> &reqBody,
                             const std::function<void(int result, const std::vector<uint8_t> &)> &notify, uint32_t &id,
-                            const std::string &key) noexcept;
+                            const std::string &key = {}) noexcept;
     void HeartBeat() noexcept;
+    void InitAsyncDispatcher(uint32_t localRankId) noexcept;
 
     int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
                               const acc::AccDataBufferPtr &cbCtx)
@@ -162,12 +201,20 @@ private:
     int32_t rankId_;
     const uint32_t worldSize_;
     std::atomic<bool> isConnect_{false};
+    // True once ClientStart/ServerStart has initialized accClient_/accServer_.
+    // Used by SetServerInfo to tell HaConfigStore::ConnectClient whether to do a
+    // first-time ClientStart() or a ReConnectAfterBroken(). Previously this was
+    // guarded by `rankId_ >= 0`, which broke the moment a real rankId was
+    // supplied up-front (etcd HA path): first ConnectClient then wrongly took
+    // the reconnect branch and dereferenced an uninitialized accClient_.
+    bool clientStarted_{false};
     ConfigStoreReconnectHandler reconnectHandler{nullptr};
     std::mutex brokenHandlerMutex_;
     std::vector<ConfigStoreClientBrokenHandler> brokenHandler_;
     std::atomic<bool> isRunning_{false};
     std::thread heartBeatThread_;
     StoreBackendPtr backend_;
+    std::unique_ptr<SmemGroupCommandAsyncDispatcher> asyncDispatcher_;
 };
 using TcpConfigStorePtr = SmRef<TcpConfigStore>;
 } // namespace smem

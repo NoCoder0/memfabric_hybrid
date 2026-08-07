@@ -1348,7 +1348,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransportManager_PrepareConnect_FirstTime
     EXPECT_EQ(ret, BM_OK);
     EXPECT_TRUE(entity.transportPrepared_);
     EXPECT_EQ(fake->prepareCalled, 1);
-    EXPECT_EQ(fake->connectCalled, 1);
     EXPECT_EQ(fake->preparedOptions.options.size(), TEST_RANK_COUNT_2);
     EXPECT_EQ(fake->preparedOptions.options.at(TEST_RANK_0).nic, std::string("nic0"));
     EXPECT_EQ(fake->preparedOptions.options.at(TEST_RANK_1).nic, std::string("nic1"));
@@ -1415,7 +1414,7 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     EXPECT_TRUE(entity.transportPrepared_);
 }
 
-TEST_F(HybmEntityDefaultTest, ImportForTransport_ConnectWithOptions)
+TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareWithOptions)
 {
     int32_t deviceId = TEST_DEVICE_ID_TRANS_CONNECT;
     ock::mf::MemEntityDefault entity(deviceId);
@@ -1439,13 +1438,13 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_ConnectWithOptions)
     k2.keys[0] = TEST_KEY_VALUE_3;
     entity.importedMemories_[TEST_RANK_1] = std::set<ock::mf::transport::TransportMemoryKey>{k1, k2};
 
-    // importInfoEntity = true will also import tag and update device info (bmType host => no memcpy)
+    // ImportForTransport now calls Prepare (first time) or UpdateRankOptions (subsequent)
     auto ret = entity.ImportForTransport();
     EXPECT_EQ(ret, BM_OK);
-    EXPECT_EQ(fake->connectWithOptionsCalled, 1);
-    ASSERT_EQ(fake->connectWithOptions.options.count(TEST_RANK_1), 1U);
-    EXPECT_EQ(fake->connectWithOptions.options.at(TEST_RANK_1).nic, std::string("nic1"));
-    EXPECT_EQ(fake->connectWithOptions.options.at(TEST_RANK_1).memKeys.size(), TEST_RANK_COUNT_2);
+    EXPECT_EQ(fake->prepareCalled, 1);
+    ASSERT_EQ(fake->preparedOptions.options.count(TEST_RANK_1), 1U);
+    EXPECT_EQ(fake->preparedOptions.options.at(TEST_RANK_1).nic, std::string("nic1"));
+    EXPECT_EQ(fake->preparedOptions.options.at(TEST_RANK_1).memKeys.size(), TEST_RANK_COUNT_2);
 }
 
 TEST_F(HybmEntityDefaultTest, ExportExchangeInfo_WithLongNic_ReturnError)
@@ -1733,16 +1732,17 @@ TEST_F(HybmEntityDefaultTest, ImportSliceExchangeInfo_DescNull_ReturnError)
 
 // ==================== ImportForTransport 失败路径 ====================
 
-class FakeTransportManagerConnectFail : public FakeTransportManager {
+class FakeTransportManagerPrepareFail : public FakeTransportManager {
 public:
-    ock::mf::Result ConnectWithOptions(const ock::mf::transport::HybmTransPrepareOptions & /* options */) override
+    ock::mf::Result Prepare(const ock::mf::transport::HybmTransPrepareOptions &options) override
     {
-        connectWithOptionsCalled++;
+        (void)options;
+        prepareCalled++;
         return BM_ERROR;
     }
 };
 
-TEST_F(HybmEntityDefaultTest, ImportForTransport_ConnectWithOptionsFail)
+TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareFail)
 {
     ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_IMPORT_TRANSPORT_FAIL);
     entity.initialized_ = true;
@@ -1751,7 +1751,7 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_ConnectWithOptionsFail)
     entity.options_.role = HYBM_ROLE_SENDER;
     entity.tagManager_ = std::make_shared<ock::mf::HybmEntityTagInfo>();
 
-    auto fake = std::make_shared<FakeTransportManagerConnectFail>();
+    auto fake = std::make_shared<FakeTransportManagerPrepareFail>();
     entity.transportManager_ = fake;
 
     ock::mf::EntityExportInfo r1{};
@@ -1763,5 +1763,5 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_ConnectWithOptionsFail)
 
     auto ret = entity.ImportForTransport();
     EXPECT_NE(ret, BM_OK);
-    EXPECT_EQ(fake->connectWithOptionsCalled, 1);
+    EXPECT_EQ(fake->prepareCalled, 1);
 }

@@ -22,9 +22,12 @@
 #include "smem_trans.h"
 #include "dl_acl_api.h"
 #include "dl_api.h"
+#include "hybm_big_mem.h"
 #include "hybm_mem_segment.h"
+#define private public // NOLINT(google-runtime-int) test hack: expose private members
 #include "smem_trans/smem_trans_entry.h"
 #include "smem_trans/smem_trans_entry_manager.h"
+#undef private
 #include "hybm_va_manager.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
@@ -39,11 +42,22 @@ const char UNIQUE_IPV6_ID[] = "[::1]:5321";
 const uint32_t TRANS_TEST_WAIT_TIME = 1; // 1s
 constexpr size_t REGISTER_MEM_ELEM_COUNT = 10;
 constexpr int MAX_TEST_ATTEMPTS = 10;
+constexpr int TRANS_RETRY_COUNT = 120;
+constexpr int TRANS_RETRY_INTERVAL_MS = 100;
+constexpr uint64_t K_SLICE1_ADDR = 0x1000;
+constexpr uint64_t K_SLICE1_SIZE = 4096;
+constexpr uint64_t K_SLICE2_ADDR = 0x2000;
+constexpr uint64_t K_SLICE2_SIZE = 8192;
+constexpr uint32_t K_PEER_RANK_ONE = 1;
+constexpr uint32_t K_PEER_RANK_TWO = 2;
+constexpr uint32_t K_HALF_DIVISOR = 2;
 constexpr int STORE_CREATE_FAILED_EXIT_CODE = 10;
 constexpr int STREAM_COUNT_MISMATCH_EXIT_CODE = 10;
 constexpr int STORE_CREATE_RETRY_FAILED_EXIT_CODE = 11;
 const smem_trans_config_t g_trans_options = {SMEM_TRANS_SENDER, SMEM_DEFAUT_WAIT_TIME, 0, 0};
-const uint8_t MASK_MOCK_VAL = 12; // BIT_LOCAL_DEVICE | BIT_GLOBAL_DEVICE
+const uint8_t MASK_MOCK_VAL = 12;       // BIT_LOCAL_DEVICE | BIT_GLOBAL_DEVICE
+constexpr int DUMMY_MEM_VALUE = 42;     // dummy address value for deregister tests
+constexpr int TRANS_SYNC_WAIT_MS = 500; // sleep for cross-process sync
 
 class SmemTransTest : public testing::Test {
 public:
@@ -1005,14 +1019,14 @@ TEST_F(SmemTransTest, smem_trans_read_write)
             _exit(1);
         }
         void *handle = nullptr;
-        constexpr int kCreateMaxRetry = 120;
-        constexpr int kRetryIntervalMs = 100;
-        for (int retry = 0; retry < kCreateMaxRetry; ++retry) {
+        constexpr int createMaxRetry = 300;
+        constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+        for (int retry = 0; retry < createMaxRetry; ++retry) {
             handle = smem_trans_create(STORE_URL, unique_ids[rank], &trans_options);
             if (handle != nullptr) {
                 break;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+            std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
         }
         if (handle == nullptr) {
             _exit(2);
@@ -1026,13 +1040,13 @@ TEST_F(SmemTransTest, smem_trans_read_write)
         if (rank == 0) {
             // Receiver registration and session publication are asynchronous across processes.
             // Retry briefly to avoid transient "session not found" flakiness.
-            constexpr int kMaxRetry = 120;
-            for (int retry = 0; retry < kMaxRetry; ++retry) {
+            constexpr int maxRetry = 120;
+            for (int retry = 0; retry < maxRetry; ++retry) {
                 ret = smem_trans_write(handle, addrPtrs[0], unique_ids[1], addrPtrs[1], capacities, 0);
                 if (ret == SM_OK) {
                     break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
             }
             if (ret != SM_OK) {
                 _exit(4);
@@ -1053,8 +1067,8 @@ TEST_F(SmemTransTest, smem_trans_read_write)
     std::vector<smem_trans_config_t> trans_options = {sender_trans_options, recv_trans_options};
 
     bool testSuccess = false;
-    constexpr int kMaxAttempts = MAX_TEST_ATTEMPTS;
-    for (int attempt = 0; attempt < kMaxAttempts && !testSuccess; ++attempt) {
+    constexpr int maxAttempts = MAX_TEST_ATTEMPTS;
+    for (int attempt = 0; attempt < maxAttempts && !testSuccess; ++attempt) {
         pid_t pids[rankSize] = {0};
         bool allExitedZero = true;
         bool needKillOthers = false;
@@ -1071,14 +1085,14 @@ TEST_F(SmemTransTest, smem_trans_read_write)
                 smem_set_conf_store_tls(false, nullptr, 0);
                 if (i == 0) {
                     int ret = -1;
-                    constexpr int kStoreCreateMaxRetry = 120;
-                    constexpr int kRetryIntervalMs = 100;
-                    for (int retry = 0; retry < kStoreCreateMaxRetry; ++retry) {
+                    constexpr int storeCreateMaxRetry = TRANS_RETRY_COUNT;
+                    constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+                    for (int retry = 0; retry < storeCreateMaxRetry; ++retry) {
                         ret = smem_create_config_store(STORE_URL, SMEM_STORE_SKIP_RECOVER);
                         if (ret == 0) {
                             break;
                         }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
                     }
                     if (ret != 0) {
                         _exit(STORE_CREATE_FAILED_EXIT_CODE);
@@ -1141,11 +1155,21 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
         if (ret != 0) {
             _exit(1);
         }
-        constexpr int kRetryIntervalMs = 100;
+        constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
         if (rank == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
-        void *handle = smem_trans_create(STORE_URL_IPV6, unique_ids[rank], &trans_options);
+        void *handle = nullptr;
+        {
+            constexpr int createMaxRetry = 120;
+            for (int retry = 0; retry < createMaxRetry; ++retry) {
+                handle = smem_trans_create(STORE_URL_IPV6, unique_ids[rank], &trans_options);
+                if (handle != nullptr) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
+            }
+        }
         if (handle == nullptr) {
             _exit(2);
         }
@@ -1156,13 +1180,13 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
         }
 
         if (rank == 0) {
-            constexpr int kWriteMaxRetry = 120;
-            for (int retry = 0; retry < kWriteMaxRetry; ++retry) {
+            constexpr int writeMaxRetry = TRANS_RETRY_COUNT;
+            for (int retry = 0; retry < writeMaxRetry; ++retry) {
                 ret = smem_trans_write(handle, addrPtrs[0], unique_ids[1], addrPtrs[1], capacities, 0);
                 if (ret == SM_OK) {
                     break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
             }
             if (ret != SM_OK) {
                 _exit(4);
@@ -1170,7 +1194,7 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
 
             uint64_t stream_cnt = 0;
             ret = smem_trans_write_submit(handle, addrPtrs[0], unique_ids[1], addrPtrs[1], capacities,
-                                          (void *)&stream_cnt, 0);
+                                          reinterpret_cast<void *>(&stream_cnt), 0);
             if (ret != SM_OK) {
                 _exit(6);
             }
@@ -1184,7 +1208,7 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
             }
             stream_cnt = 0;
             ret = smem_trans_read_submit(handle, addrPtrs[0], unique_ids[1], addrPtrs[1], capacities,
-                                         (void *)&stream_cnt, 0);
+                                         reinterpret_cast<void *>(&stream_cnt), 0);
             if (ret != SM_OK) {
                 _exit(9);
             }
@@ -1210,8 +1234,8 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
     std::vector<smem_trans_config_t> trans_options = {sender_trans_options, recv_trans_options};
 
     bool testSuccess = false;
-    constexpr int kMaxAttempts = MAX_TEST_ATTEMPTS;
-    for (int attempt = 0; attempt < kMaxAttempts && !testSuccess; ++attempt) {
+    constexpr int maxAttempts = MAX_TEST_ATTEMPTS;
+    for (int attempt = 0; attempt < maxAttempts && !testSuccess; ++attempt) {
         pid_t pids[rankSize] = {0};
         bool allExitedZero = true;
         bool needKillOthers = false;
@@ -1228,14 +1252,14 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
                 smem_set_conf_store_tls(false, nullptr, 0);
                 if (i == 0) {
                     int ret = -1;
-                    constexpr int kStoreCreateMaxRetry = 120;
-                    constexpr int kRetryIntervalMs = 100;
-                    for (int retry = 0; retry < kStoreCreateMaxRetry; ++retry) {
+                    constexpr int storeCreateMaxRetry = TRANS_RETRY_COUNT;
+                    constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+                    for (int retry = 0; retry < storeCreateMaxRetry; ++retry) {
                         ret = smem_create_config_store(STORE_URL_IPV6, SMEM_STORE_SKIP_RECOVER);
                         if (ret == 0) {
                             break;
                         }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
                     }
                     if (ret != 0) {
                         _exit(STORE_CREATE_RETRY_FAILED_EXIT_CODE);
@@ -1299,7 +1323,18 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
         if (ret != 0) {
             _exit(1);
         }
-        auto handle = smem_trans_create(STORE_URL, unique_ids[rank], &trans_options);
+        void *handle = nullptr;
+        {
+            constexpr int createMaxRetry = TRANS_RETRY_COUNT;
+            constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+            for (int retry = 0; retry < createMaxRetry; ++retry) {
+                handle = smem_trans_create(STORE_URL, unique_ids[rank], &trans_options);
+                if (handle != nullptr) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
+            }
+        }
         if (handle == nullptr) {
             _exit(2);
         }
@@ -1311,15 +1346,15 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
 
         if (rank == 0) {
             const void *srcAddr[] = {addrPtrs[0][0]};
-            constexpr int kWriteMaxRetry = 120;
-            constexpr int kRetryIntervalMs = 100;
-            for (int retry = 0; retry < kWriteMaxRetry; ++retry) {
+            constexpr int writeMaxRetry = TRANS_RETRY_COUNT;
+            constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+            for (int retry = 0; retry < writeMaxRetry; ++retry) {
                 ret =
                     smem_trans_batch_write(handle, srcAddr, unique_ids[1], addrPtrs[1].data(), capacities.data(), 1, 0);
                 if (ret == SM_OK) {
                     break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
             }
             if (ret != SM_OK) {
                 _exit(4);
@@ -1327,7 +1362,7 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
 
             uint64_t stream_cnt = 0;
             ret = smem_trans_batch_write_submit(handle, srcAddr, unique_ids[1], addrPtrs[1].data(), capacities.data(),
-                                                1, (void *)&stream_cnt, 0);
+                                                1, reinterpret_cast<void *>(&stream_cnt), 0);
             if (ret != SM_OK) {
                 _exit(6);
             }
@@ -1335,20 +1370,20 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
                 _exit(7);
             }
 
-            for (int retry = 0; retry < kWriteMaxRetry; ++retry) {
+            for (int retry = 0; retry < writeMaxRetry; ++retry) {
                 ret =
                     smem_trans_batch_read(handle, srcAddr, unique_ids[1], addrPtrs[1].data(), capacities.data(), 1, 0);
                 if (ret == SM_OK) {
                     break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
             }
             if (ret != SM_OK) {
                 _exit(4);
             }
             stream_cnt = 0;
             ret = smem_trans_batch_read_submit(handle, srcAddr, unique_ids[1], addrPtrs[1].data(), capacities.data(), 1,
-                                               (void *)&stream_cnt, 0);
+                                               reinterpret_cast<void *>(&stream_cnt), 0);
             if (ret != SM_OK) {
                 _exit(6);
             }
@@ -1369,55 +1404,65 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
     std::vector<std::vector<void *>> addrPtrs = {sender_addrPtrs, recv_addrPtrs};
     std::vector<smem_trans_config_t> trans_options = {sender_trans_options, recv_trans_options};
 
-    pid_t pids[rankSize];
-    uint32_t maxProcess = rankSize;
     bool needKillOthers = false;
-    for (uint32_t i = 0; i < rankSize; ++i) {
-        pids[i] = fork();
-        EXPECT_NE(pids[i], -1);
-        if (pids[i] == -1) {
-            maxProcess = i;
-            needKillOthers = true;
-            break;
-        }
-        if (pids[i] == 0) {
-            smem_set_conf_store_tls(false, nullptr, 0);
-            if (i == 0) {
-                int ret = -1;
-                constexpr int kStoreCreateMaxRetry = 120;
-                constexpr int kRetryIntervalMs = 100;
-                for (int retry = 0; retry < kStoreCreateMaxRetry; ++retry) {
-                    ret = smem_create_config_store(STORE_URL, SMEM_STORE_SKIP_RECOVER);
-                    if (ret == 0) {
-                        break;
-                    }
-                    std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
-                }
-                if (ret != 0) {
-                    _exit(STORE_CREATE_RETRY_FAILED_EXIT_CODE);
-                }
+    auto createStoreWithRetry = [](const char *storeUrl) {
+        constexpr int storeCreateMaxRetry = TRANS_RETRY_COUNT;
+        constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+        for (int retry = 0; retry < storeCreateMaxRetry; ++retry) {
+            if (smem_create_config_store(storeUrl, SMEM_STORE_SKIP_RECOVER) == 0) {
+                return;
             }
-            func(i, rankSize, trans_options[i], addrPtrs, capacities, unique_ids);
-            _exit(0);
+            std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
         }
-    }
+        _exit(STORE_CREATE_RETRY_FAILED_EXIT_CODE);
+    };
+    {
+        pid_t pids[rankSize];
+        uint32_t maxProcess = rankSize;
+        for (uint32_t i = 0; i < rankSize; ++i) {
+            pids[i] = fork();
+            EXPECT_NE(pids[i], -1);
+            if (pids[i] == -1) {
+                maxProcess = i;
+                needKillOthers = true;
+                break;
+            }
+            if (pids[i] == 0) {
+                smem_set_conf_store_tls(false, nullptr, 0);
+                if (i == 0) {
+                    createStoreWithRetry(STORE_URL);
+                }
+                func(i, rankSize, trans_options[i], addrPtrs, capacities, unique_ids);
+                _exit(0);
+            }
+        }
 
-    if (needKillOthers) {
-        for (uint32_t i = 0; i < maxProcess; ++i) {
+        if (needKillOthers) {
+            for (uint32_t i = 0; i < maxProcess; ++i) {
+                int status = 0;
+                kill(pids[i], SIGKILL);
+                waitpid(pids[i], &status, 0);
+            }
+            ASSERT_NE(needKillOthers, true);
+        }
+
+        for (uint32_t i = 0; i < rankSize; ++i) {
             int status = 0;
-            kill(pids[i], SIGKILL);
             waitpid(pids[i], &status, 0);
-        }
-        ASSERT_NE(needKillOthers, true);
-    }
-
-    for (uint32_t i = 0; i < rankSize; ++i) {
-        int status = 0;
-        waitpid(pids[i], &status, 0);
-        EXPECT_EQ(WIFEXITED(status), true);
-        if (WIFEXITED(status)) {
-            EXPECT_EQ(WEXITSTATUS(status), 0);
-            if (WEXITSTATUS(status) != 0 && !needKillOthers) {
+            EXPECT_EQ(WIFEXITED(status), true);
+            if (WIFEXITED(status)) {
+                EXPECT_EQ(WEXITSTATUS(status), 0);
+                if (WEXITSTATUS(status) != 0 && !needKillOthers) {
+                    needKillOthers = true;
+                    for (uint32_t j = 0; j < rankSize; ++j) {
+                        if (i != j && pids[j] > 0) {
+                            kill(pids[j], SIGKILL);
+                            int killedStatus = 0;
+                            waitpid(pids[j], &killedStatus, 0);
+                        }
+                    }
+                }
+            } else {
                 needKillOthers = true;
                 for (uint32_t j = 0; j < rankSize; ++j) {
                     if (i != j && pids[j] > 0) {
@@ -1425,15 +1470,6 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
                         int killedStatus = 0;
                         waitpid(pids[j], &killedStatus, 0);
                     }
-                }
-            }
-        } else {
-            needKillOthers = true;
-            for (uint32_t j = 0; j < rankSize; ++j) {
-                if (i != j && pids[j] > 0) {
-                    kill(pids[j], SIGKILL);
-                    int killedStatus = 0;
-                    waitpid(pids[j], &killedStatus, 0);
                 }
             }
         }
@@ -1464,11 +1500,21 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
         if (ret != 0) {
             _exit(1);
         }
-        constexpr int kRetryIntervalMs = 100;
+        constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
         if (rank == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
-        void *handle = smem_trans_create(STORE_URL_IPV6, unique_ids[rank], &trans_options);
+        void *handle = nullptr;
+        {
+            constexpr int createMaxRetry = 120;
+            for (int retry = 0; retry < createMaxRetry; ++retry) {
+                handle = smem_trans_create(STORE_URL_IPV6, unique_ids[rank], &trans_options);
+                if (handle != nullptr) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
+            }
+        }
         if (handle == nullptr) {
             _exit(2);
         }
@@ -1480,14 +1526,14 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
 
         if (rank == 0) {
             const void *srcAddr[] = {addrPtrs[0][0]};
-            constexpr int kWriteMaxRetry = 120;
-            for (int retry = 0; retry < kWriteMaxRetry; ++retry) {
+            constexpr int writeMaxRetry = TRANS_RETRY_COUNT;
+            for (int retry = 0; retry < writeMaxRetry; ++retry) {
                 ret =
                     smem_trans_batch_write(handle, srcAddr, unique_ids[1], addrPtrs[1].data(), capacities.data(), 1, 0);
                 if (ret == SM_OK) {
                     break;
                 }
-                std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
             }
             if (ret != SM_OK) {
                 _exit(4);
@@ -1506,8 +1552,8 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
     std::vector<smem_trans_config_t> trans_options = {sender_trans_options, recv_trans_options};
 
     bool testSuccess = false;
-    constexpr int kMaxAttempts = 5;
-    for (int attempt = 0; attempt < kMaxAttempts && !testSuccess; ++attempt) {
+    constexpr int maxAttempts = 5;
+    for (int attempt = 0; attempt < maxAttempts && !testSuccess; ++attempt) {
         pid_t pids[rankSize] = {0};
         bool allExitedZero = true;
         bool needKillOthers = false;
@@ -1524,14 +1570,14 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
                 smem_set_conf_store_tls(false, nullptr, 0);
                 if (i == 0) {
                     int ret = -1;
-                    constexpr int kStoreCreateMaxRetry = 120;
-                    constexpr int kRetryIntervalMs = 100;
-                    for (int retry = 0; retry < kStoreCreateMaxRetry; ++retry) {
+                    constexpr int storeCreateMaxRetry = TRANS_RETRY_COUNT;
+                    constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
+                    for (int retry = 0; retry < storeCreateMaxRetry; ++retry) {
                         ret = smem_create_config_store(STORE_URL_IPV6, SMEM_STORE_SKIP_RECOVER);
                         if (ret == 0) {
                             break;
                         }
-                        std::this_thread::sleep_for(std::chrono::milliseconds(kRetryIntervalMs));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(retryIntervalMs));
                     }
                     if (ret != 0) {
                         _exit(STORE_CREATE_RETRY_FAILED_EXIT_CODE);
@@ -1942,4 +1988,60 @@ TEST_F(SmemTransTest, CombineMemories_pd_kv_boundary_regression)
     EXPECT_EQ(got[1].second, vSize);
     // The merged K segment must not cover V's start
     EXPECT_LT(reinterpret_cast<uint64_t>(got[0].first) + got[0].second, reinterpret_cast<uint64_t>(got[1].first) + 1);
+}
+
+/* ================================================================== */
+/*  OnEstablishConnection: register external slices (ESTABLISH path)   */
+/*  These run in-process (the ipv6 tests exercise the same code via    */
+/*  fork, but child-process coverage is not merged into the gate).     */
+/* ================================================================== */
+TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
+{
+    smem_trans_config_t config = g_trans_options; // SMEM_TRANS_SENDER
+    std::string name = "ut-entry";
+    ock::smem::StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&hybm_mmap, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&hybm_transport_connect, int32_t(*)(hybm_entity_t, const uint32_t *, uint32_t, uint32_t))
+        .stubs()
+        .will(returnValue(SMEM_OK));
+
+    // baseInfo carries the peer session; role is stored in the reserved field
+    SmemTransExchangeInfo base{};
+    base.u.session.reserved = static_cast<uint16_t>(SMEM_TRANS_RECEIVER);
+    std::vector<uint8_t> baseBytes(reinterpret_cast<uint8_t *>(&base),
+                                   reinterpret_cast<uint8_t *>(&base) + sizeof(base));
+
+    SmemTransExchangeInfo slice1{};
+    slice1.u.address = LocalMapAddress(reinterpret_cast<void *>(K_SLICE1_ADDR), K_SLICE1_SIZE);
+    std::vector<uint8_t> slice1Bytes(reinterpret_cast<uint8_t *>(&slice1),
+                                     reinterpret_cast<uint8_t *>(&slice1) + sizeof(slice1));
+    SmemTransExchangeInfo slice2{};
+    slice2.u.address = LocalMapAddress(reinterpret_cast<void *>(K_SLICE2_ADDR), K_SLICE2_SIZE);
+    std::vector<uint8_t> slice2Bytes(reinterpret_cast<uint8_t *>(&slice2),
+                                     reinterpret_cast<uint8_t *>(&slice2) + sizeof(slice2));
+
+    RankFullInfo peer;
+    peer.rankId = 1;
+    peer.baseInfo = baseBytes;
+    peer.externalInfo.push_back(slice1Bytes);
+
+    // first call: remoteSlices_ empty -> needImport -> hybm_import -> register
+    EXPECT_EQ(entry.OnEstablishConnection(1, {peer}, 0), SMEM_OK);
+
+    // identical slices again: dedup finds all addresses -> import skipped
+    EXPECT_EQ(entry.OnEstablishConnection(1, {peer}, 0), SMEM_OK);
+
+    // a new slice appears: dedup finds a missing address -> import again
+    peer.externalInfo.push_back(slice2Bytes);
+    EXPECT_EQ(entry.OnEstablishConnection(1, {peer}, 0), SMEM_OK);
+
+    // malformed baseInfo (wrong size) -> error path, still handled gracefully
+    RankFullInfo badPeer = peer;
+    badPeer.baseInfo.assign(K_SLICE2_SIZE / K_HALF_DIVISOR, 0);
+    EXPECT_EQ(entry.OnEstablishConnection(K_PEER_RANK_TWO, {badPeer}, 0), SMEM_OK);
 }

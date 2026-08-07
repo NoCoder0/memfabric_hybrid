@@ -39,8 +39,8 @@ cc_library(
 
 cc_library(
     name = "hybm_headers",
-    hdrs = glob(["hybm/include/*.h"]),
-    includes = ["hybm/include"],
+    hdrs = glob(["hybm/include/*.h"]) + glob(["hybm/csrc/common/*.h"]),
+    includes = ["hybm/include", "hybm/csrc/common"],
     visibility = ["//visibility:public"],
 )
 

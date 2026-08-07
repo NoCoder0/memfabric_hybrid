@@ -76,13 +76,18 @@ type etcdWrapper struct {
 	client  *clientv3.Client
 	timeout time.Duration
 
-	// mu protects mutable fields (lastErrC, session, mutex)
+	// mu protects mutable fields (lastErrC, session, mutex, keepAliveCancel)
 	mu sync.Mutex
 
 	// lastErrC holds the C-allocated string of the last error.
 	// Contract: Owned by Go, freed by Go before update or on close.
 	// Read-only for C callers via Etcd_GetLastError.
 	lastErrC *C.char
+
+	// keepAliveCancels tracks all active lease keepalive goroutines.
+	// Each lease gets its own independent goroutine; cancelling one
+	// does not affect others. Keyed by lease ID.
+	keepAliveCancels map[clientv3.LeaseID]context.CancelFunc
 
 	// Concurrency primitives for distributed lock
 	session *concurrency.Session
@@ -134,10 +139,16 @@ func getWrapper(ptr *C.EtcdClient) *etcdWrapper {
 
 // drainKeepAlive consumes the keepalive channel to prevent blocking.
 // It runs until the context is canceled or the channel closes.
-func drainKeepAlive(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse) {
+// When done, it removes itself from the wrapper's keepAliveCancels map.
+func drainKeepAlive(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveResponse, leaseID clientv3.LeaseID, w *etcdWrapper) {
 	if ch == nil {
 		return
 	}
+	defer func() {
+		w.mu.Lock()
+		delete(w.keepAliveCancels, leaseID)
+		w.mu.Unlock()
+	}()
 	for {
 		select {
 		case <-ctx.Done():
@@ -223,11 +234,18 @@ func Etcd_Close(client *C.EtcdClient) {
 	mutex := wrapper.mutex
 	wrapper.session = nil
 	wrapper.mutex = nil
+	keepAliveCancels := wrapper.keepAliveCancels
+	wrapper.keepAliveCancels = nil
 	cli := wrapper.client
 	wrapper.client = nil
 	wrapper.mu.Unlock()
 	if lastErr != nil {
 		C.free(unsafe.Pointer(lastErr))
+	}
+
+	// Cancel all keepalive goroutines from TTL Puts
+	for _, cancel := range keepAliveCancels {
+		cancel()
 	}
 
 	if mutex != nil {
@@ -256,6 +274,8 @@ func Etcd_GetLastError(client *C.EtcdClient) *C.char {
 
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	// NOTE: Returns interior pointer owned by the wrapper.
+	// Caller must not free it. Valid until next API call on this client.
 	return w.lastErrC
 }
 
@@ -291,11 +311,22 @@ func Etcd_Put(client *C.EtcdClient, key *C.char, value unsafe.Pointer, valueLen 
 			return -1
 		}
 
-		kaCh, kaErr := w.client.KeepAlive(context.Background(), leaseResp.ID)
+		kaCtx, kaCancel := context.WithCancel(context.Background())
+
+		// Register this keepalive independently in the map
+		w.mu.Lock()
+		if w.keepAliveCancels == nil {
+			w.keepAliveCancels = make(map[clientv3.LeaseID]context.CancelFunc)
+		}
+		w.keepAliveCancels[leaseResp.ID] = kaCancel
+		w.mu.Unlock()
+
+		kaCh, kaErr := w.client.KeepAlive(kaCtx, leaseResp.ID)
 		if kaErr != nil {
 			fmt.Fprintf(os.Stderr, "[etcd-cgo] KeepAlive failed for lease %x: %v\n", leaseResp.ID, kaErr)
+			kaCancel()
 		} else {
-			go drainKeepAlive(w.client.Ctx(), kaCh)
+			go drainKeepAlive(kaCtx, kaCh, leaseResp.ID, w)
 		}
 
 		opts = append(opts, clientv3.WithLease(leaseResp.ID))
@@ -512,6 +543,12 @@ func etcdLockInternal(client *C.EtcdClient, lockName string) C.int {
 		}
 		w.session = s
 	}
+
+	// Cancel any previous keepalive goroutines from TTL Puts
+	for _, cancel := range w.keepAliveCancels {
+		cancel()
+	}
+	w.keepAliveCancels = make(map[clientv3.LeaseID]context.CancelFunc)
 
 	mutex := concurrency.NewMutex(w.session, lockName)
 	w.mutex = mutex

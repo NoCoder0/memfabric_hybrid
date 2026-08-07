@@ -12,6 +12,7 @@
 #include "smem_ha_config_store.h"
 
 #include <unistd.h>
+#include <csignal>
 #include <fcntl.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -161,11 +162,11 @@ bool HaConfigStore::IsLeaderAlive(std::string &leaderAddr) noexcept
     }
 
     if (leaderAddr.empty()) {
-        SM_LOG_DEBUG("No leader registered in backend");
+        SM_LOG_INFO("No leader registered in backend");
         return false;
     }
 
-    SM_LOG_DEBUG("Backend leader: " << leaderAddr << ", checking connectivity");
+    SM_LOG_INFO("Backend leader: " << leaderAddr << ", checking connectivity");
 
     std::string fullUrl = "tcp://" + leaderAddr;
     std::string ip;
@@ -184,10 +185,15 @@ Result HaConfigStore::TryBecomeLeader() noexcept
 {
     constexpr size_t kTcpSchemeLen = 6;
     SM_ASSERT_RETURN(NetworkEndpointUtil::ExtractIpAndPort(endpoints_, leaderBindIp_, leaderBindPort_), SM_ERROR);
-    SM_ASSERT_RETURN(NetworkEndpointUtil::FindAvailablePort(leaderBindPort_, endpoints_.find('[') != std::string::npos),
-                     SM_ERROR);
+    bool isIpv6 = endpoints_.find('[') != std::string::npos;
+    SM_ASSERT_RETURN(NetworkEndpointUtil::FindAvailablePort(leaderBindPort_, isIpv6), SM_ERROR);
     SM_ASSERT_RETURN(NetworkEndpointUtil::GetLocalIpWithTarget(leaderBindIp_, leaderBindIp_), SM_ERROR);
     SM_LOG_INFO("Attempting to become leader, addr: " << leaderBindIp_ << ":" << leaderBindPort_);
+
+    // Select MetaService port from the same port range, excluding the port
+    // already bound by the config store leader to avoid a port collision.
+    SM_ASSERT_RETURN(NetworkEndpointUtil::FindAvailablePort(metaServiceBindPort_, isIpv6, leaderBindPort_), SM_ERROR);
+    SM_LOG_INFO("MetaService port selected: " << metaServiceBindPort_);
 
     // Start server
     StartServer();
@@ -209,6 +215,14 @@ Result HaConfigStore::TryBecomeLeader() noexcept
     }
     SM_LOG_INFO("Registered in backend: " << myAddr << ", TTL: " << PUT_LEASE_TTL_SEC << "s");
 
+    std::string metaServiceAddr = leaderBindIp_ + ":" + std::to_string(metaServiceBindPort_);
+    auto metaAddrRet = backend_->Put(KEY_META_SERVICE_ADDR, metaServiceAddr, PUT_LEASE_TTL_SEC);
+    if (metaAddrRet != 0) {
+        SM_LOG_WARN("Failed to register MetaService address in backend: " << metaServiceAddr);
+    } else {
+        SM_LOG_INFO("Registered MetaService address in backend: " << metaServiceAddr);
+    }
+
     // Connect client delegate to self
     auto clientRet = ConnectClient(leaderBindIp_, leaderBindPort_);
     if (clientRet != SM_OK) {
@@ -219,12 +233,70 @@ Result HaConfigStore::TryBecomeLeader() noexcept
     }
     SM_LOG_INFO("Self-connection established");
 
+    NotifyLeaderChange();
     return SM_OK;
+}
+
+bool HaConfigStore::HandleLeaderExists(const std::string &leaderAddr) noexcept
+{
+    isFirstLeader_ = false;
+    SM_LOG_INFO("Found alive leader: " << leaderAddr << ", becoming follower");
+    if (BecomeFollower(leaderAddr) != SM_OK) {
+        SM_LOG_ERROR("Becoming follower failed, leader: " << leaderAddr);
+        backend_->UnInitialize();
+        return false;
+    }
+    SM_LOG_INFO("Election loop exiting: became follower of " << leaderAddr);
+    return true;
+}
+
+bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAttempt) noexcept
+{
+    {
+        std::unique_lock<std::shared_mutex> lock(delegateRwLock_);
+        isLeader_.store(false, std::memory_order_release);
+    }
+    std::string leaderAddr;
+    {
+        DistributedLockGuard lockGuard(backend_, backendLockName_);
+        if (!lockGuard.IsLocked()) {
+            SM_LOG_ERROR("Failed to acquire distributed lock, will retry");
+            backend_->UnInitialize();
+            return false;
+        }
+        SM_LOG_INFO("Distributed lock acquired, double-checking leader");
+        if (IsLeaderAlive(leaderAddr)) {
+            SM_LOG_INFO("Leader appeared during lock acquisition: " << leaderAddr);
+            if (BecomeFollower(leaderAddr) != SM_OK) {
+                SM_LOG_ERROR("Becoming follower failed after lock, leader: " << leaderAddr);
+                backend_->UnInitialize();
+                return false;
+            }
+            backend_->UnInitialize();
+            SM_LOG_INFO("Election loop exiting: became follower of " << leaderAddr << " after lock");
+            becameLeader = false;
+            return true;
+        }
+        SM_LOG_INFO("Proceeding to become leader");
+        if (TryBecomeLeader() == SM_OK) {
+            SM_LOG_INFO("Became leader after " << electionAttempt << " attempts");
+            becameLeader = true;
+        } else {
+            SM_LOG_ERROR("Become leader failed, attempt=" << electionAttempt << " addr=" << leaderAddr << " released");
+            becameLeader = false;
+        }
+    }
+    if (becameLeader) {
+        return true;
+    }
+    backend_->UnInitialize();
+    return false;
 }
 
 void HaConfigStore::RunElectionLoop() noexcept
 {
     pthread_setname_np(pthread_self(), "election-loop");
+    (void)signal(SIGPIPE, SIG_IGN);
     uint32_t electionAttempt = 0;
     while (!stopFlag_.load(std::memory_order_acquire)) {
         ++electionAttempt;
@@ -240,61 +312,20 @@ void HaConfigStore::RunElectionLoop() noexcept
             continue;
         }
         std::string leaderAddr;
-        // Check if there's an alive leader
         if (IsLeaderAlive(leaderAddr)) {
-            isFirstLeader_ = false;
-            SM_LOG_INFO("Found alive leader: " << leaderAddr << ", becoming follower");
-            if (BecomeFollower(leaderAddr) != SM_OK) {
-                SM_LOG_ERROR("Becoming follower failed, leader: " << leaderAddr);
-                backend_->UnInitialize();
-                continue;
-            }
-            backend_->UnInitialize();
-            SM_LOG_INFO("Election loop exiting: became follower of " << leaderAddr);
-            return;
-        }
-        SM_LOG_INFO("No alive leader found, attempting to acquire lock");
-        {
-            std::unique_lock<std::shared_mutex> lock(delegateRwLock_);
-            isLeader_.store(false, std::memory_order_release);
-        }
-        // Attempt to acquire distributed lock
-        bool becameLeader = false;
-        {
-            DistributedLockGuard lockGuard(backend_, backendLockName_);
-            if (!lockGuard.IsLocked()) {
-                SM_LOG_ERROR("Failed to acquire distributed lock, will retry, lockName: " << backendLockName_);
-                backend_->UnInitialize();
-                continue;
-            }
-            SM_LOG_INFO("Distributed lock acquired, double-checking leader");
-            // Double-check after acquiring lock
-            if (IsLeaderAlive(leaderAddr)) {
-                SM_LOG_INFO("Leader appeared during lock acquisition: " << leaderAddr);
-                if (BecomeFollower(leaderAddr) != SM_OK) {
-                    SM_LOG_ERROR("Becoming follower failed after lock, leader: " << leaderAddr);
-                    backend_->UnInitialize();
-                    continue;
-                }
-                backend_->UnInitialize();
-                SM_LOG_INFO("Election loop exiting: became follower of " << leaderAddr << " after lock");
+            if (HandleLeaderExists(leaderAddr)) {
                 return;
             }
-            SM_LOG_INFO("Proceeding to become leader");
-            if (TryBecomeLeader() == SM_OK) {
-                SM_LOG_INFO("Became leader after " << electionAttempt << " attempts");
-                becameLeader = true;
-            } else {
-                SM_LOG_ERROR("TryBecomeLeader failed, electionAttempt: " << electionAttempt
-                                                                         << " leaderAddr: " << leaderAddr
-                                                                         << ", lock will be released automatically");
+            continue;
+        }
+        SM_LOG_INFO("No alive leader found, attempting to acquire lock");
+        bool becameLeader = false;
+        if (TryAcquireLeadership(becameLeader, electionAttempt)) {
+            if (becameLeader) {
+                break;
             }
+            return;
         }
-        if (becameLeader) {
-            // Keep long connection with backend as leader
-            break;
-        }
-        backend_->UnInitialize();
     }
     SM_LOG_INFO("Election loop exiting: stop flag set after " << electionAttempt << " attempts");
 }
@@ -341,12 +372,12 @@ void HaConfigStore::StartServer() noexcept
     serverDelegate_ =
         SmMakeRef<AccStoreServer>(leaderBindIp_, leaderBindPort_, recoveredWorldSize, backend_, isFirstLeader_);
     SM_ASSERT_RET_VOID(serverDelegate_ != nullptr);
-    SM_LOG_DEBUG("AccStoreServer created, ip: " << leaderBindIp_ << ", port: " << leaderBindPort_
-                                                << ", worldSize: " << recoveredWorldSize);
+    SM_LOG_INFO("AccStoreServer created, ip: " << leaderBindIp_ << ", port: " << leaderBindPort_
+                                               << ", worldSize: " << recoveredWorldSize);
     // Update status in backend to not-ready
     backendRet = serverDelegate_->UpdateStatus(false);
     SM_ASSERT_RET_VOID(backendRet == 0);
-    SM_LOG_DEBUG("Backend status set to not-ready");
+    SM_LOG_INFO("Backend status set to not-ready");
     // Restore metadata from backend
     SM_ASSERT_RET_VOID(serverDelegate_->RestoreFromBackend() == SM_OK);
     // Re-register cached handlers
@@ -390,6 +421,24 @@ void HaConfigStore::StopServer() noexcept
     }
     isLeader_.store(false, std::memory_order_release);
     SM_LOG_DEBUG("AccStoreServer stopped");
+    NotifyLeaderChange();
+}
+
+// ============================================================================
+// Leader change notification
+// ============================================================================
+
+void HaConfigStore::NotifyLeaderChange() noexcept
+{
+    if (!leaderChangeCallback_) {
+        return;
+    }
+    LeaderAddresses addrs;
+    addrs.isLeader = IsLeader();
+    if (addrs.isLeader) {
+        addrs.metaServiceAddr = leaderBindIp_ + ":" + std::to_string(metaServiceBindPort_);
+    }
+    leaderChangeCallback_(addrs);
 }
 
 // ============================================================================
@@ -402,6 +451,7 @@ void HaConfigStore::ReElectionThreadFunc()
         RunElectionLoop();
     }
     reElectionInProgress_.store(false, std::memory_order_release);
+    NotifyLeaderChange();
     SM_LOG_INFO("Re-election thread finished");
 }
 
@@ -454,7 +504,7 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexce
         SM_LOG_INFO("Reconnecting to: " << ip << ":" << port);
         Result reconnectRet = clientDelegate_->ReConnectAfterBroken(-1);
         if (reconnectRet != SM_OK) {
-            SM_LOG_ERROR("ReConnectAfterBroken failed, ip: " << ip << " port: " << port << " ret: " << reconnectRet);
+            SM_LOG_ERROR("ReConnectAfterBroken failed, ret: " << reconnectRet);
         } else {
             SM_LOG_INFO("Reconnection initiated successfully");
         }
@@ -464,7 +514,7 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexce
     SM_LOG_INFO("First time connection to: " << ip << ":" << port);
     Result clientStartRet = clientDelegate_->ClientStart(tlsConfig_);
     if (clientStartRet != SM_OK) {
-        SM_LOG_ERROR("ClientStart failed, ip: " << ip << " port: " << port << " ret: " << clientStartRet);
+        SM_LOG_ERROR("ClientStart failed, ret: " << clientStartRet);
         return clientStartRet;
     }
     SM_LOG_INFO("ClientStart succeeded");
@@ -496,6 +546,7 @@ Result HaConfigStore::BecomeFollower(const std::string &leaderIpPort) noexcept
     auto connectRet = ConnectClient(ip, port);
     SM_ASSERT_RETURN(connectRet == SM_OK, connectRet);
     SM_LOG_INFO("Connection initiated to leader");
+    NotifyLeaderChange();
     return SM_OK;
 }
 
@@ -512,10 +563,6 @@ void HaConfigStore::HealthCheckThreadFunc() noexcept
         std::this_thread::sleep_for(CHECK_INTERVAL);
         if (stopFlag_.load(std::memory_order_acquire)) {
             break;
-        }
-        // Only check if current node is leader
-        if (!isLeader_.load(std::memory_order_acquire)) {
-            continue;
         }
         SM_LOG_DEBUG("Performing backend connection check");
 
@@ -641,7 +688,22 @@ std::string HaConfigStore::GetCommonPrefix() noexcept
 
 StorePtr HaConfigStore::GetCoreStore() noexcept
 {
-    return this;
+    // In HA mode the join/leave path (SmemBmEntry::Join/Leave and
+    // SetupGroupManagerCallbacks) needs the underlying TcpConfigStore: it
+    // dynamic_casts the core store to both SmemGroupManager (for Join/Leave)
+    // and TcpConfigStore (for EnableAsyncMode/GetAsyncDispatcher). HaConfigStore
+    // itself is neither, so returning `this` made join always fail with
+    // "group manager is nullptr" under `etcd://`.
+    //
+    // clientDelegate_ is a single, stable TcpConfigStore created at HA
+    // construction; on leader change HaConfigStore::ConnectClient re-points the
+    // SAME object to the new leader via SetServerInfo + ReConnectAfterBroken
+    // (it is never replaced — see ConnectClient/Uninitialize). Returning it
+    // here is therefore safe for callers that cache the result (e.g.
+    // PrefixConfigStore::baseStore_): the cached pointer stays live and keeps
+    // following the elected leader across failovers.
+    SM_ASSERT_RETURN(clientDelegate_ != nullptr, nullptr);
+    return Convert<TcpConfigStore, ConfigStore>(clientDelegate_);
 }
 
 void HaConfigStore::RegisterReconnectHandler(ConfigStoreReconnectHandler callback) noexcept

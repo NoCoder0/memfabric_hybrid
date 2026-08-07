@@ -12,14 +12,16 @@
 #ifndef MEMFABRIC_HYBRID_SMEM_BM_ENTRY_H
 #define MEMFABRIC_HYBRID_SMEM_BM_ENTRY_H
 
+#include <future>
 #include <string>
 #include <unordered_map>
 
 #include "hybm_def.h"
 #include "smem_thread_pool.h"
 #include "smem_common_includes.h"
+#include "smem_group_manager.h"
 #include "smem_config_store.h"
-#include "smem_net_group_engine.h"
+#include "smem_tcp_config_store.h"
 #include "smem_bm.h"
 
 namespace ock {
@@ -73,7 +75,10 @@ public:
 
     Result ExtendLocalMem(smem_bm_mem_type memType, uint64_t size);
 
-    Result SetEventListener(smem_bm_group_event_cb cb, void *context);
+    void SetSmemFlags(uint32_t flags) noexcept
+    {
+        smemFlags_ = flags;
+    }
 
     Result DataCopy(const void *src, void *dest, uint64_t size, smem_bm_copy_type t, void *stream, uint32_t flags);
 
@@ -113,18 +118,29 @@ private:
     Result CheckJoined() const;
     hybm_data_copy_direction TransToHybmDirection(const smem_bm_copy_type &smemDirect, const void *src,
                                                   uint64_t srcSize, const void *dest, uint64_t destSize);
-    Result CreateGlobalTeam(uint32_t rankSize, uint32_t rankId);
-    Result JoinHandle(uint32_t rk);
-    Result UpdateHandle(uint32_t rk);
-    Result GroupOpBarrier(int32_t input, std::string logTag);
-    Result LeaveHandle(uint32_t rk);
-    void InvokeEventCb(uint32_t rankId, smem_bm_group_event_t event);
+    int SetupGroupManagerCallbacks() noexcept;
+    int OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
+    int OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
+    int OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept;
+    int OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept;
+    std::vector<ock::smem::LinkStateEntry> OnQueryLinkState() noexcept;
+    int OnLeaveNotify(uint32_t leavingRankId) noexcept;
+    int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
+
+    // Group-manager callback plumbing (extracted to keep SetupGroupManagerCallbacks small)
+    int RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
+    int RegisterExecutorCallbacks(SmemGroupManagerClient *executor, SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
+
+    // Validate peer payload sizes (extracted from OnAddToWhitelist)
+    int ValidatePeerPayloads(uint32_t rankId, const std::vector<RankFullInfo> &others) noexcept;
+    int ImportPeerEntities(const std::vector<RankFullInfo> &others) noexcept;
+    int ImportPeerSlices(const std::vector<RankFullInfo> &others) noexcept;
 
 private:
     /* hot used variables */
     bool inited_ = false;
+    bool joined_ = false;
     std::mutex mutex_;
-    SmemGroupEnginePtr globalGroup_ = nullptr;
     hybm_entity_t entity_ = nullptr;
     void *hostGva_ = nullptr;
     void *deviceGva_ = nullptr;
@@ -141,9 +157,9 @@ private:
     uint64_t realHBMSize_ = 0;
     std::map<uint64_t, std::pair<uint64_t, hybm_mem_slice_t>> registedSlice_;
 
-    std::mutex eventCbMutex_;
-    smem_bm_group_event_cb eventCb_ = nullptr;
-    void *eventCbCtx_ = nullptr;
+    uint32_t smemFlags_{0};
+    std::shared_ptr<std::promise<void>> joinComplete_;
+    std::shared_ptr<std::promise<void>> extendComplete_;
 };
 using SmemBmEntryPtr = SmRef<SmemBmEntry>;
 

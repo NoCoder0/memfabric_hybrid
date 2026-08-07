@@ -216,6 +216,9 @@ TEST_F(SmemStoreFactoryTest, create_store_failed)
 
 TEST_F(SmemStoreFactoryTest, create_store_by_url_tcp_failed)
 {
+    if (ShouldSkipHaStoreStartupMockOnArm()) {
+        GTEST_SKIP() << "mockcpp member-function patching is unstable on ARM";
+    }
     int32_t targetErr = -2009;
     MOCKER_CPP(
         &ock::smem::SmemLocalMemoryBackend::Initialize,

@@ -220,7 +220,7 @@ static bool ParsePortStr(const std::string &strValue, uint16_t &outPort) noexcep
     return true;
 }
 
-bool NetworkEndpointUtil::FindAvailablePort(uint16_t &port, bool isIpv6) noexcept
+bool NetworkEndpointUtil::FindAvailablePort(uint16_t &port, bool isIpv6, uint16_t excludePort) noexcept
 {
     const int af = isIpv6 ? AF_INET6 : AF_INET;
 
@@ -247,6 +247,9 @@ bool NetworkEndpointUtil::FindAvailablePort(uint16_t &port, bool isIpv6) noexcep
     }
 
     for (uint32_t testPort = startPort; testPort <= maxPort; ++testPort) {
+        if (excludePort != 0 && testPort == excludePort) {
+            continue;
+        }
         SocketGuard sockfd(socket(af, SOCK_STREAM, 0));
         if (!sockfd.IsValid()) {
             continue;
@@ -285,8 +288,8 @@ bool NetworkEndpointUtil::FindAvailablePort(uint16_t &port, bool isIpv6) noexcep
         }
     }
 
-    SM_LOG_ERROR("no available port found, isIpv6=" << isIpv6 << ", startPort=" << startPort
-                                                    << ", endPort=" << maxPort);
+    SM_LOG_ERROR("no available port found, isIpv6=" << isIpv6 << ", startPort=" << startPort << ", endPort=" << maxPort
+                                                    << ", excludePort=" << excludePort);
     return false;
 }
 

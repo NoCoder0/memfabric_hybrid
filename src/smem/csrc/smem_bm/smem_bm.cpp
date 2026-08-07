@@ -147,6 +147,47 @@ SMEM_API int32_t smem_bm_update_store_url(const char *storeURL)
     return SmemBmEntryManager::Instance().UpdateStoreUrl(std::string(storeURL));
 }
 
+SMEM_API int32_t smem_bm_update_store_server(const char *ip, uint16_t port)
+{
+    if (ip == nullptr) {
+        SM_LOG_ERROR("smem_bm_update_store_server: ip is null");
+        return SM_INVALID_PARAM;
+    }
+    return SmemBmEntryManager::Instance().UpdateStoreServer(std::string(ip), port);
+}
+
+SMEM_API int32_t smem_bm_get_store_server_info(char *ip, size_t ipLen, uint16_t *port)
+{
+    if (ip == nullptr || port == nullptr) {
+        SM_LOG_ERROR("smem_bm_get_store_server_info: null parameter");
+        return SM_INVALID_PARAM;
+    }
+    std::string ipStr;
+    auto ret = SmemBmEntryManager::Instance().GetStoreServerInfo(ipStr, port);
+    if (ret == SM_OK) {
+        size_t copyLen = std::min(ipStr.size(), ipLen > 0 ? ipLen - 1 : 0);
+        std::copy_n(ipStr.begin(), copyLen, ip);
+        ip[copyLen] = '\0';
+    }
+    return ret;
+}
+
+SMEM_API int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t *port)
+{
+    if (ip == nullptr || port == nullptr) {
+        SM_LOG_ERROR("smem_bm_get_meta_service_info: null parameter");
+        return SM_INVALID_PARAM;
+    }
+    std::string ipStr;
+    auto ret = SmemBmEntryManager::Instance().GetMetaServiceInfo(ipStr, port);
+    if (ret == SM_OK) {
+        size_t copyLen = std::min(ipStr.size(), ipLen > 0 ? ipLen - 1 : 0);
+        std::copy_n(ipStr.begin(), copyLen, ip);
+        ip[copyLen] = '\0';
+    }
+    return ret;
+}
+
 /* return 1 means check ok */
 static inline int32_t SmemBmDataOpCheck(smem_bm_data_op_type dataOpType)
 {
@@ -401,21 +442,6 @@ SMEM_API uint64_t smem_bm_get_local_mem_size_by_mem_type(smem_bm_t handle, smem_
     }
 }
 
-SMEM_API int32_t smem_bm_set_group_event_handler(smem_bm_t handle, smem_bm_group_event_cb cb, void *context)
-{
-    SM_VALIDATE_RETURN(handle != nullptr, "invalid param, handle is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(g_smemBmInited, "smem bm not initialized yet", SM_NOT_INITIALIZED);
-
-    SmemBmEntryPtr entry = nullptr;
-    auto ret = SmemBmEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
-    if (ret != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("input handle is invalid, result: " << ret);
-        return SM_INVALID_PARAM;
-    }
-
-    return entry->SetEventListener(cb, context);
-}
-
 SMEM_API void *smem_bm_ptr_by_mem_type(smem_bm_t handle, smem_bm_mem_type memType, uint16_t peerRankId)
 {
     SM_VALIDATE_RETURN(handle != nullptr, "invalid param, handle is NULL", nullptr);
@@ -638,4 +664,15 @@ int32_t smem_bm_unregister_user_mem(smem_bm_t handle, uint64_t addr)
     }
 
     return entry->UnRegisterMem(addr);
+}
+
+int32_t smem_bm_set_group_event_handler(smem_bm_t handle, smem_bm_group_event_cb cb, void *context)
+{
+    (void)handle;
+    (void)cb;
+    (void)context;
+    SM_LOG_WARN("smem_bm_set_group_event_handler is deprecated — "
+                "group events are now driven by the server-side async scheme. "
+                "This call is a no-op and the callback will never be invoked.");
+    return 0;
 }

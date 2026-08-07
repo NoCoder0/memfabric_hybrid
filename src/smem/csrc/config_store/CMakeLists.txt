@@ -1,6 +1,8 @@
 set(CONFIG_STORE_INCLUDE_DIRS
         ${PROJECT_SMEM_SRC_BASE}/csrc/common
         ${PROJECT_ACCLINKS_SRC_BASE}/include
+        ${PROJECT_HYBM_SRC_BASE}/csrc/common
+        ${PROJECT_UTIL_SRC_BASE}/ptracer/include
         ${PROJECT_SMEM_SRC_BASE}/csrc/config_store
         ${PROJECT_SMEM_SRC_BASE}/csrc/config_store/common
         ${PROJECT_SMEM_SRC_BASE}/csrc/config_store/backend

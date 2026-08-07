@@ -16,14 +16,16 @@
 #include <mutex>
 #include <unordered_map>
 #include <condition_variable>
+#include <future>
 
 #include "smem_common_includes.h"
 #include "smem_config_store.h"
+#include "smem_group_manager.h"
+#include "smem_tcp_config_store.h"
 #include "mf_net.h"
 #include "hybm_def.h"
 #include "mf_rwlock.h"
 #include "smem_trans.h"
-#include "smem_net_group_engine.h"
 #include "smem_net_common.h"
 
 namespace ock {
@@ -121,16 +123,33 @@ public:
     CombineMemories(std::vector<std::pair<const void *, size_t>> &input);
 
 private:
-    Result CreateGlobalTeam(uint32_t rankId);
-    Result JoinImport(std::unordered_map<uint32_t, std::string> &allInfo, bool isEntity);
-    Result JoinHandle(uint32_t rk);
-    Result UpdateHandle(uint32_t rk);
-    Result GroupOpBarrier(int32_t input, std::string logTag);
-    Result LeaveHandle(uint32_t rk);
-    Result LinkDownHandle(uint32_t rk); // TCP link down, invokes PeerDownCallback
     Result Join(uint32_t flags);
     Result Update(uint32_t flags);
     Result Leave(uint32_t flags);
+
+    int SetupGroupManagerCallbacks() noexcept;
+    int OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
+    int OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
+    int OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept;
+    int OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept;
+    std::vector<ock::smem::LinkStateEntry> OnQueryLinkState() noexcept;
+    int OnLeaveNotify(uint32_t leavingRankId) noexcept;
+    int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
+
+    // Group-manager callback plumbing (extracted to keep SetupGroupManagerCallbacks small)
+    int RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
+    int RegisterExecutorCallbacks(SmemGroupManagerClient *executor, SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
+
+    // Parse a peer's baseInfo/externalInfo into exchange info (shared by whitelist/establish paths)
+    bool ParseExchangeInfo(const RankFullInfo &peer, SmemTransExchangeInfo &entityInfo, smem_trans_role_t &role,
+                           WorkerId &id) noexcept;
+    int ParsePeerSlices(const RankFullInfo &peer, std::vector<SmemTransExchangeInfo> &slices,
+                        std::vector<LocalMapAddress> &local) noexcept;
+    // Per-peer import/dedup/record for the establish path (extracted from OnEstablishConnection)
+    void EstablishPeerConnection(const RankFullInfo &peer) noexcept;
+
+    // Apply one data-op flag to the hybm options (shared by the four op-type branches in Initialize)
+    bool ApplyDataOpType(hybm_options &options, uint32_t flag, hybm_data_op_type hybmFlag, const char *opName) noexcept;
 
     void AddRemoteInfo(uint32_t rk, smem_trans_role_t role, WorkerId &id, std::vector<void *> &global,
                        std::vector<LocalMapAddress> &local);
@@ -168,7 +187,9 @@ private:
     std::unordered_map<uint32_t, smem_trans_role_t> ranksRole_;
 
     StorePtr store_;
-    SmemGroupEnginePtr globalGroup_ = nullptr;
+    bool joined_ = false;
+    std::shared_ptr<std::promise<void>> joinComplete_;
+    std::shared_ptr<std::promise<void>> extendComplete_;
 
     // peer down callback
     smem_trans_peer_down_callback_t peerDownCallback_ = nullptr;

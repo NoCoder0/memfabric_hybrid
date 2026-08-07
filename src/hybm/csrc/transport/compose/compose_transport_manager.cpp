@@ -378,6 +378,26 @@ Result ComposeTransportManager::Connect()
     return BM_OK;
 }
 
+Result ComposeTransportManager::ConnectRank(uint32_t rankId)
+{
+    Result ret = BM_OK;
+    if (hostTransportManager_) {
+        ret = hostTransportManager_->ConnectRank(rankId);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to connect host rank " << rankId << " ret: " << ret);
+            return ret;
+        }
+    }
+    if (deviceTransportManager_) {
+        ret = deviceTransportManager_->ConnectRank(rankId);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to connect device rank " << rankId << " ret: " << ret);
+            return ret;
+        }
+    }
+    return BM_OK;
+}
+
 Result ComposeTransportManager::AsyncConnect()
 {
     if (hostTransportManager_) {

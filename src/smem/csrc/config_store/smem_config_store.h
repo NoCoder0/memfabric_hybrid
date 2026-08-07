@@ -47,7 +47,7 @@ using ConfigStoreServerOpHandler =
     std::function<int32_t(const uint32_t, const std::string &, std::vector<uint8_t> &, const StoreBackendPtr &)>;
 using ConfigStoreServerBrokenHandler = std::function<void(const uint32_t, StoreBackendPtr &)>;
 
-class ConfigStore : public SmReferable {
+class ConfigStore : virtual public SmReferable {
 public:
     ~ConfigStore() override = default;
 

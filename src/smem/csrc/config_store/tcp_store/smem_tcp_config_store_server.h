@@ -26,33 +26,34 @@
 #include "smem_bm_def.h"
 #include "smem_config_store.h"
 #include "smem_config_store_backend.h"
+#include "smem_group_manager_server.h"
 #include "smem_message_packer.h"
+#include "etcd_state_store.h"
 #include "smem_ref.h"
 
-namespace ock {
-namespace smem {
+namespace ock::smem {
 class StoreWaitContext {
 public:
     StoreWaitContext(int64_t tmMs, std::string key, const ock::acc::AccTcpRequestContext &reqCtx) noexcept
         : id_{idGen_.fetch_add(1UL)}, timeoutMs_{tmMs}, key_{std::move(key)}, reqCtx_{reqCtx}
     {}
 
-    uint64_t Id() const noexcept
+    [[nodiscard]] uint64_t Id() const noexcept
     {
         return id_;
     }
 
-    int64_t TimeoutMs() const noexcept
+    [[nodiscard]] int64_t TimeoutMs() const noexcept
     {
         return timeoutMs_;
     }
 
-    const std::string &Key() const noexcept
+    [[nodiscard]] const std::string &Key() const noexcept
     {
         return key_;
     }
 
-    const ock::acc::AccTcpRequestContext &ReqCtx() const noexcept
+    [[nodiscard]] const ock::acc::AccTcpRequestContext &ReqCtx() const noexcept
     {
         return reqCtx_;
     }
@@ -70,11 +71,13 @@ private:
     static std::atomic<uint64_t> idGen_;
 };
 
-enum StoreServerState : uint32_t { SS_INITED, SS_RECOVER, SS_NORMAL, SS_EXITED };
+enum StoreServerState : uint32_t { SS_INITED, SS_RECOVERING, SS_RECOVERED, SS_NORMAL, SS_EXITED };
 
 class AccStoreServer : public SmReferable {
 public:
     AccStoreServer(std::string ip, uint16_t port, uint32_t worldSize, StoreBackendPtr backend,
+                   bool skipRecover) noexcept;
+    AccStoreServer(std::string ip, uint16_t port, SmemGroupManagerServerPtr groupManager, StoreBackendPtr backend,
                    bool skipRecover) noexcept;
     ~AccStoreServer() override = default;
 
@@ -93,7 +96,7 @@ private:
     Result ReceiveMessageHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
     Result LinkConnectedHandler(const ock::acc::AccConnReq &req, const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
     Result LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
-    Result LinkBrokenHandler(const uint32_t linkId) noexcept;
+    Result LinkBrokenHandler(uint32_t linkId) noexcept;
     void GetWakeupList(const std::string &key, std::list<ock::acc::AccTcpRequestContext> &waiters,
                        std::list<ock::acc::AccTcpRequestContext> &watchers) noexcept;
 
@@ -111,6 +114,13 @@ private:
     Result WriteHandler(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
     Result HeartbeatHandler(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
     Result QueryAliveHandler(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
+    Result ControlHandler(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
+    Result HandleControlJoin(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
+    Result HandleControlExtendMemory(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
+    Result HandleControlLeave(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
+    Result HandleControlLinkStateResponse(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
+    Result HandleControlAck(const ock::acc::AccTcpRequestContext &context, SmemMessage &request,
+                            ControlOp ackOp) noexcept;
 
     std::list<ock::acc::AccTcpRequestContext> GetOutWaitersInLock(const std::unordered_set<uint64_t> &ids) noexcept;
     void WakeupWaiters(const std::list<ock::acc::AccTcpRequestContext> &waiters,
@@ -122,17 +132,22 @@ private:
     void TimerThreadTask() noexcept;
     void RankStateTask() noexcept;
     void CheckerThreadTask() noexcept;
+    void RestoreFromEtcdIfNeeded() noexcept;
     Result FindOrInsertRank(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
 
-private:
     Result AllocateAndReplyRank(const ock::acc::AccTcpRequestContext &context, SmemMessage &responseMessage,
                                 uint32_t linkId, std::unique_lock<std::mutex> &lockGuard) noexcept;
+    // Scan for a free rank index, persisting the allocation (extracted from AllocateAndReplyRank).
+    // Returns UINT32_MAX when no free rank is available or persist failed.
+    uint32_t FindFreeRankIndex(const ock::acc::AccTcpRequestContext &context, uint32_t linkId) noexcept;
     StoreErrorCode PersistWorldSize(uint32_t size) noexcept;
     StoreErrorCode PersistAliveRankIds(const std::unordered_set<uint32_t> &ranks) noexcept;
     StoreErrorCode RecoverAliveRankIds(std::unordered_set<uint32_t> &outRanks) noexcept;
     Result LaunchCleanupThread();
     void CleanupStaleRanks() noexcept;
     bool CanReceiveNewLink();
+    bool CanExitRecover(uint32_t &srcState);
+    int SendControlToRank(uint32_t targetRankId, const std::vector<uint8_t> &data) noexcept;
 
     static constexpr uint32_t MAX_KEY_LEN_SERVER = 2048U;
     static constexpr uint32_t STORE_WAIT_TIMEOUT_SEC = 5U;
@@ -152,6 +167,7 @@ private:
     ock::acc::AccTcpServerPtr accTcpServer_;
     std::unordered_map<int64_t, std::unordered_set<uint64_t>> timedWaiters_;
     std::thread timerThread_;
+    uint64_t startupTimestamp_{0};
     std::atomic<uint32_t> state_{SS_EXITED};
     bool running_{false};
     std::atomic<bool> shouldStop_{false};
@@ -174,9 +190,15 @@ private:
     ConfigStoreServerBrokenHandler externalBrokenHandler_{nullptr};
     std::unordered_map<uint32_t, int64_t> heartBeatMap_;
     std::thread checkerThread_;
+    SmemGroupManagerServerPtr groupManager_;
+    SmemGroupCommandSender sender_;
+    std::unique_ptr<EtcdStateStore> etcdStore_;
+    std::unordered_map<uint32_t, ock::acc::AccTcpLinkComplexPtr> rankLinks_;
+    std::unordered_map<uint32_t, uint32_t> linkToRankMap_;
+
+    uint32_t LookupRankIdByLink(uint32_t linkId) noexcept;
 };
 using AccStoreServerPtr = SmRef<AccStoreServer>;
-} // namespace smem
-} // namespace ock
+} // namespace ock::smem
 
 #endif // SMEM_SMEM_TCP_CONFIG_STORE_SERVER_H

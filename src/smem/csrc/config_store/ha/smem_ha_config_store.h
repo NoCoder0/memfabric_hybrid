@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "smem_bm_def.h"
 #include "smem_config_store_logger.h"
 #include "smem_config_store.h"
 #include "smem_logger.h"
@@ -97,6 +98,32 @@ public:
     void RegisterClientBrokenHandler(const ConfigStoreClientBrokenHandler &handler) noexcept override;
     void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept override;
 
+    TcpConfigStore *GetTcpStore() noexcept
+    {
+        return clientDelegate_ != nullptr ? clientDelegate_.Get() : nullptr;
+    }
+    bool IsLeader() const noexcept
+    {
+        return isLeader_.load(std::memory_order_acquire);
+    }
+
+    struct LeaderAddresses {
+        bool isLeader;
+        std::string metaServiceAddr;
+    };
+
+    using LeaderChangeCallback = std::function<void(const LeaderAddresses &)>;
+    void RegisterLeaderChangeCallback(LeaderChangeCallback cb) noexcept
+    {
+        leaderChangeCallback_ = std::move(cb);
+    }
+
+    StoreBackendPtr GetBackend() const noexcept
+    {
+        std::lock_guard<std::mutex> lock(backendMutex_);
+        return backend_;
+    }
+
 protected:
     [[nodiscard]] Result GetReal(const std::string &key, std::vector<uint8_t> &value,
                                  int64_t timeoutMs) noexcept override;
@@ -105,6 +132,8 @@ private:
     // Internal State Machine Logic
     void RandomBackoff() noexcept;
     void RunElectionLoop() noexcept;
+    bool HandleLeaderExists(const std::string &leaderAddr) noexcept;
+    bool TryAcquireLeadership(bool &becameLeader, uint32_t electionAttempt) noexcept;
     Result BecomeFollower(const std::string &leaderIpPort) noexcept;
     void StartServer() noexcept;
     void StopServer() noexcept;
@@ -119,20 +148,22 @@ private:
     void StartHealthCheckThread() noexcept;
     void TriggerReElectionAsync() noexcept;
     void ReElectionThreadFunc();
+    void NotifyLeaderChange() noexcept;
 
 private:
     // Configuration Attributes
     const std::string endpoints_;
     const uint32_t worldSize_;
     const std::string backendLockName_;
-    std::string leaderBindIp_;    // Only meaningful on leader node
-    uint16_t leaderBindPort_ = 0; // Only meaningful on leader node
+    std::string leaderBindIp_;         // Only meaningful on leader node
+    uint16_t leaderBindPort_ = 0;      // Only meaningful on leader node
+    uint16_t metaServiceBindPort_ = 0; // MetaService port, selected from port range excluding leaderBindPort_
     bool isFirstLeader_ = true;
     smem_tls_config tlsConfig_{};
 
     mutable std::shared_mutex delegateRwLock_;
     StoreBackendPtr backend_;
-    std::mutex backendMutex_;
+    mutable std::mutex backendMutex_;
     TcpConfigStorePtr clientDelegate_{nullptr};
     AccStoreServerPtr serverDelegate_{nullptr}; // Only valid on leader node
 
@@ -147,6 +178,7 @@ private:
     std::thread reElectionThread_;
 
     ConfigStoreServerBrokenHandler cachedServerBrokenHandler_{nullptr};
+    LeaderChangeCallback leaderChangeCallback_;
 
     std::atomic<bool> healthCheckRunning_{false};
     std::thread healthCheckThread_;

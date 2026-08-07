@@ -151,6 +151,10 @@ public:
     {
         return joined_.load();
     }
+    void MarkJoined()
+    {
+        joined_ = true;
+    }
 
     bool GetStoreConnectStatus() const
     {

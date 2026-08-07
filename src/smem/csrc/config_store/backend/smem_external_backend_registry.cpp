@@ -14,6 +14,7 @@
 
 #include <cstring>
 #include <mutex>
+#include <algorithm>
 
 namespace ock {
 namespace smem {
@@ -32,7 +33,7 @@ SmemExternalBackendRegistry::RegistryState &SmemExternalBackendRegistry::GetStat
 
 void SmemExternalBackendRegistry::ClearBackendOp(smem_conf_store_backend_op_t &backendOp) noexcept
 {
-    std::memset(&backendOp, 0, sizeof(backendOp));
+    std::fill_n(static_cast<uint8_t *>(static_cast<void *>(&backendOp)), sizeof(backendOp), 0);
 }
 
 void SmemExternalBackendRegistry::SetExternalBackendOp(const smem_conf_store_backend_op_t &backendOp) noexcept

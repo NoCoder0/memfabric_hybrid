@@ -74,6 +74,15 @@ public:
     virtual Result Connect() = 0;
 
     /*
+     * 单rank建链，用于OnEstablishConnection逐rank建链
+     * @return 0 if successful
+     */
+    virtual Result ConnectRank(uint32_t rankId)
+    {
+        return BM_OK;
+    }
+
+    /*
      * 异步建链
      * @return 0 if successful
      */

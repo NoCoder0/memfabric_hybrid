@@ -45,13 +45,16 @@ public:
      * @brief Find an available TCP port within configured port range.
      *
      * The search starts from kStartPort and continues until kMaxPort.
+     * The excludePort is skipped to avoid returning the same port twice
+     * (e.g. when allocating a second service port on the same node).
      *
-     * @param port     [out] Available port number if found.
-     * @param isIpv6   [in]  true to search using IPv6 socket; false for IPv4.
+     * @param port        [out] Available port number if found.
+     * @param isIpv6      [in]  true to search using IPv6 socket; false for IPv4.
+     * @param excludePort [in]  Port to skip during the search; 0 means no exclusion.
      *
      * @return true if an available port is found; otherwise false.
      */
-    [[nodiscard]] static bool FindAvailablePort(uint16_t &port, bool isIpv6) noexcept;
+    [[nodiscard]] static bool FindAvailablePort(uint16_t &port, bool isIpv6, uint16_t excludePort = 0) noexcept;
 
     /**
      * @brief Extract IP and port from a formatted endpoint string.

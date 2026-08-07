@@ -53,6 +53,22 @@ public:
      */
     Result UpdateStoreUrl(const std::string &storeURL);
 
+    /**
+     * @brief Update the config store server address and reconnect.
+     *
+     * Called when the leader has changed. Unwraps the PrefixConfigStore to reach the underlying TcpConfigStore,
+     * calls SetServerInfo + ReConnectAfterBroken to switch to the new leader.
+     *
+     * @param newServerIp    New leader's IP
+     * @param newServerPort  New leader's config store port
+     * @return SM_OK on success
+     */
+    Result UpdateStoreServer(const std::string &newServerIp, uint16_t newServerPort) noexcept;
+
+    Result GetStoreServerInfo(std::string &ip, uint16_t *port) const noexcept;
+
+    Result GetMetaServiceInfo(std::string &ip, uint16_t *port) const noexcept;
+
     inline uint32_t GetRankId() const
     {
         return config_.rankId;

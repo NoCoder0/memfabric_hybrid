@@ -205,39 +205,65 @@ StorePtr StoreFactory::CreateStoreByUrl(const std::string &storeUrl, uint16_t mo
         return nullptr;
     }
     if (backend->IsDistributed()) {
-        return CreateHaStore(backend, storeKey, parsedStoreUrl.backendUrl, worldSize, parsedStoreUrl.instanceId);
+        HaStoreOptions opts;
+        opts.backend = backend;
+        opts.storeKey = storeKey;
+        opts.storeUrl = parsedStoreUrl.backendUrl;
+        opts.worldSize = worldSize;
+        opts.instanceId = parsedStoreUrl.instanceId;
+        opts.rankId = rankId;
+        return CreateHaStore(opts);
     }
-    auto store = SmMakeRef<TcpConfigStore>(backend, ip, port, model, skipRecover, worldSize, rankId);
+    TcpStoreOptions opts;
+    opts.backend = backend;
+    opts.ip = ip;
+    opts.port = port;
+    opts.model = model;
+    opts.worldSize = worldSize;
+    opts.rankId = rankId;
+    opts.storeKey = storeKey;
+    opts.connMaxRetry = connMaxRetry;
+    opts.skipRecover = skipRecover;
+    return CreateTcpStore(opts);
+}
+
+StorePtr StoreFactory::CreateTcpStore(const TcpStoreOptions &opts) noexcept
+{
+    auto store = SmMakeRef<TcpConfigStore>(opts.backend, opts.ip, opts.port, opts.model, opts.skipRecover,
+                                           opts.worldSize, opts.rankId);
     STORE_ASSERT_RETURN(store != nullptr, nullptr);
 
-    auto ret = store->Startup(tlsOption_, connMaxRetry);
+    auto ret = store->Startup(tlsOption_, opts.connMaxRetry);
     if (ret == SM_RESOURCE_IN_USE) {
-        STORE_LOG_INFO("Startup for store(url=" << ip << ":" << port << ", model=" << model << ", rank=" << rankId
-                                                << ") address in use");
+        STORE_LOG_INFO("Startup for store(url=" << opts.ip << ":" << opts.port << ", model=" << opts.model
+                                                << ", rank=" << opts.rankId << ") address in use");
         failedReason_ = SM_RESOURCE_IN_USE;
         return nullptr;
     }
     if (ret != 0) {
-        STORE_LOG_ERROR("Startup for store(url=" << ip << ":" << port << ", model=" << model << ", rank=" << rankId
-                                                 << ") failed:" << ret);
+        STORE_LOG_ERROR("Startup for store(url=" << opts.ip << ":" << opts.port << ", model=" << opts.model
+                                                 << ", rank=" << opts.rankId << ") failed:" << ret);
         failedReason_ = ret;
         return nullptr;
     }
 
-    storesMap_.emplace(storeKey, store.Get());
-    lockGuard.unlock();
-
+    storesMap_.emplace(opts.storeKey, store.Get());
     return store.Get();
 }
 
-StorePtr StoreFactory::CreateHaStore(const StoreBackendPtr &backend, const std::string &storeKey,
-                                     const std::string &storeUrl, uint32_t worldSize,
-                                     const std::string &instanceId) noexcept
+StorePtr StoreFactory::CreateHaStore(const HaStoreOptions &opts) noexcept
 {
-    STORE_ASSERT_RETURN(backend != nullptr, nullptr);
-    auto clientDelegate = SmMakeRef<TcpConfigStore>(backend, "", 0, false, true, worldSize);
+    STORE_ASSERT_RETURN(opts.backend != nullptr, nullptr);
+    // Pass rankId so the delegate's localRankId_ is correct from the start; the
+    // delegate establishes its TCP link to the leader during Startup() below,
+    // before the caller has a chance to call SetRankId. A wrong localRankId_ at
+    // link time makes the server's link->rank map carry UINT32_MAX, so later
+    // PROMOTE_TO_ACTIVE/whitelist control messages can't be routed ("no link
+    // for rankId") and join never completes in etcd mode.
+    auto clientDelegate = SmMakeRef<TcpConfigStore>(opts.backend, "", 0, false, true, opts.worldSize, opts.rankId);
     STORE_ASSERT_RETURN(clientDelegate != nullptr, nullptr);
-    const auto store = SmMakeRef<HaConfigStore>(backend, clientDelegate, storeUrl, worldSize, instanceId);
+    const auto store =
+        SmMakeRef<HaConfigStore>(opts.backend, clientDelegate, opts.storeUrl, opts.worldSize, opts.instanceId);
     STORE_ASSERT_RETURN(store != nullptr, nullptr);
 
     const auto ret = store->Startup(tlsOption_);
@@ -247,7 +273,7 @@ StorePtr StoreFactory::CreateHaStore(const StoreBackendPtr &backend, const std::
         return nullptr;
     }
 
-    storesMap_.emplace(storeKey, store.Get());
+    storesMap_.emplace(opts.storeKey, store.Get());
     return store.Get();
 }
 

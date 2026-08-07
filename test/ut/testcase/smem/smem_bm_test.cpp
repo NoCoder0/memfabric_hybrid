@@ -29,11 +29,11 @@
 #include "smem_tcp_config_store.h"
 #include "smem_net_group_engine.h"
 #include "smem_local_memory_backend.h"
-#include "smem_store_factory.h"
 
 #define private public
 #include "smem_bm_entry.h"
 #include "smem_bm_entry_manager.h"
+#include "smem_store_factory.h"
 #undef private
 
 #include "hybm_data_op.h"
@@ -42,18 +42,67 @@
 namespace ock::smem {
 class SmemBmEntry;
 }
-const int32_t UT_SMEM_ID = 1;
-const char UT_IP_PORT[] = "tcp://127.0.0.1:7758";
-const char UT_IP_PORT2[] = "tcp://127.0.0.1:7958";
-const uint32_t UT_CREATE_MEM_SIZE = 2UL * 1024UL * 1024UL;
-const uint32_t UT_COPY_MEM_SIZE = 2UL * 1024UL * 1024UL;
-const uint64_t UT_SHM_SIZE = 128 * 1024 * 1024ULL;
-const uint32_t BATCH_SIZE = 5;
-const uint64_t COPY_SIZE = 1 * 1024ULL;
-const uint64_t GVA_SIZE = 2 * 1024ULL * 1024 * 1024;
-const int32_t RANDOM_MULTIPLIER = 23;
-const int32_t RANDOM_INCREMENT = 17;
-const int32_t NEGATIVE_RATIO_DIVISOR = 3;
+const int32_t K_UT_SMEM_ID = 1;
+const char K_UT_IP_PORT[] = "tcp://127.0.0.1:7758";
+const char K_UT_IP_PORT2[] = "tcp://127.0.0.1:7958";
+const uint32_t K_UT_CREATE_MEM_SIZE = 2UL * 1024UL * 1024UL;
+const uint32_t K_UT_COPY_MEM_SIZE = 2UL * 1024UL * 1024UL;
+const uint64_t K_UT_SHM_SIZE = 128 * 1024 * 1024ULL;
+const uint32_t K_BATCH_SIZE = 5;
+const uint64_t K_COPY_SIZE = 1 * 1024ULL;
+const uint64_t K_GVA_SIZE = 2 * 1024ULL * 1024 * 1024;
+const int32_t K_RANDOM_MULTIPLIER = 23;
+const int32_t K_RANDOM_INCREMENT = 17;
+const int32_t K_NEGATIVE_RATIO_DIVISOR = 3;
+
+// 测试用例公共常量：超时、容量、rank 数、缓冲区大小等
+constexpr uint32_t K_UT_TIMEOUT_MS = 1000;
+constexpr uint32_t K_UT_RANK_COUNT = 4;
+constexpr uint32_t K_UT_WORLD_SIZE = 2;
+constexpr uint64_t K_UT_MEM_SIZE = 1024;
+constexpr uint64_t K_UT_MEM_SIZE_2K = 2048;
+constexpr uint64_t K_UT_MEM_SIZE_4K = 4096;
+constexpr uint32_t K_UT_BUF_SIZE = 16;
+constexpr uint32_t K_UT_SMALL_BUF_SIZE = 8;
+constexpr uint32_t K_UT_IP_SIZE = 64;
+constexpr uint64_t K_UT_TEST_ADDR = 0x1000;
+constexpr uint32_t K_UT_INVALID_LOG_LEVEL = 111;
+constexpr uint32_t K_UT_ENTRY_ID_NOT_EXISTS = 999;
+constexpr uint32_t K_UT_INVALID_MEM_TYPE = 2;
+constexpr uint64_t K_UT_OFFSET500 = 500;
+constexpr uint64_t K_UT_OFFSET1000 = 1000;
+constexpr uint64_t K_UT_RANGE_LEN100 = 100;
+constexpr uint64_t K_UT_UNREG_ADDR = 0x4000;
+constexpr uint64_t K_UT_UNREG_SIZE = 0x100;
+constexpr uint64_t K_UT_CAP2GB = 2UL * 1024UL * 1024UL * 1024UL;
+constexpr uint64_t K_UT_CAP4GB = 4UL * 1024UL * 1024UL * 1024UL;
+constexpr uint64_t K_UT_LOCAL_DRAM1GB = 1ULL << 30ULL;
+constexpr uint64_t K_UT_CAP2TB = 2ULL << 40ULL;
+constexpr uint64_t K_UT_CAP16TB = 16ULL << 40ULL;
+constexpr uint64_t K_UT_CAP17TB = 17ULL << 40ULL;
+// smem_bm_create / smem_bm_create2 测试用的 entry id / rankId
+constexpr uint32_t K_UT_ENTRY_ID_JOIN = 2;
+constexpr uint32_t K_UT_ENTRY_ID_PTR = 3;
+constexpr uint32_t K_UT_ENTRY_ID_CONSISTENCY = 3;
+constexpr uint32_t K_UT_ENTRY_ID_BATCH_COPY = 4;
+constexpr uint32_t K_UT_ENTRY_ID_WAIT = 5;
+constexpr uint32_t K_UT_ENTRY_ID_REGISTER = 6;
+constexpr uint32_t K_UT_ENTRY_ID_COPY = 7;
+constexpr uint32_t K_UT_ENTRY_ID_LOCAL_MEM = 8;
+constexpr uint32_t K_UT_ENTRY_ID_GVA2VA = 9;
+constexpr uint32_t K_UT_ENTRY_ID_GVA2VA_VALID = 10;
+constexpr uint32_t K_UT_ENTRY_ID_EXTEND = 11;
+constexpr uint32_t K_UT_ENTRY_ID_COPY_NOT_JOINED = 17;
+constexpr uint32_t K_UT_ENTRY_ID_BATCH_NOT_JOINED = 18;
+constexpr uint32_t K_UT_ENTRY_ID_PARTIAL_SUCCEED = 19;
+constexpr uint32_t K_UT_RANK_ID32T_EXCEED = 50;
+constexpr uint32_t K_UT_RANK_ID56BITS_OK = 51;
+constexpr uint32_t K_UT_RANK_ID32T_BOUNDARY = 52;
+constexpr uint32_t K_UT_RANK_ID_OLD32T = 53;
+constexpr uint32_t K_UT_RANK_ID_ERR_CODE = 60;
+constexpr uint32_t K_UT_RANK_ID_MAX_ZERO = 70;
+constexpr uint32_t K_UT_RANK_ID_LOCAL_EXCEED = 71;
+constexpr uint32_t K_UT_RANK_ID_MAX_LT_LOCAL = 72;
 
 using namespace ock::smem;
 
@@ -61,15 +110,15 @@ namespace {
 class FakeStoreManager final : public ConfigStoreManager {
 public:
     // knobs for forcing failures
-    ock::smem::Result appendRet = SM_OK;
-    ock::smem::Result setRet = SM_OK;
-    ock::smem::Result getRet = SM_OK;
-    ock::smem::Result removeRet = SM_OK;
+    ock::smem::Result appendRet_ = SM_OK;
+    ock::smem::Result setRet_ = SM_OK;
+    ock::smem::Result getRet_ = SM_OK;
+    ock::smem::Result removeRet_ = SM_OK;
 
     ock::smem::Result Set(const std::string &key, const std::vector<uint8_t> &value) noexcept override
     {
         kv_[key] = value;
-        return setRet;
+        return setRet_;
     }
 
     ock::smem::Result Add(const std::string &key, int64_t increment, int64_t &value) noexcept override
@@ -77,11 +126,12 @@ public:
         int64_t cur = 0;
         auto it = kv_.find(key);
         if (it != kv_.end() && it->second.size() == sizeof(int64_t)) {
-            std::memcpy(&cur, it->second.data(), sizeof(int64_t));
+            std::copy(it->second.begin(), it->second.end(), reinterpret_cast<uint8_t *>(&cur));
         }
         cur += increment;
         std::vector<uint8_t> buf(sizeof(int64_t));
-        std::memcpy(buf.data(), &cur, sizeof(int64_t));
+        std::copy(reinterpret_cast<const uint8_t *>(&cur), reinterpret_cast<const uint8_t *>(&cur) + sizeof(int64_t),
+                  buf.data());
         kv_[key] = std::move(buf);
         value = cur;
         return SM_OK;
@@ -90,7 +140,7 @@ public:
     ock::smem::Result Remove(const std::string &key, bool) noexcept override
     {
         kv_.erase(key);
-        return removeRet;
+        return removeRet_;
     }
 
     ock::smem::Result QueryAlive(uint32_t rank, uint32_t &alive) noexcept override
@@ -113,9 +163,9 @@ public:
     ock::smem::Result Append(const std::string &key, const std::vector<uint8_t> &value,
                              uint64_t &newSize) noexcept override
     {
-        if (appendRet != SM_OK) {
+        if (appendRet_ != SM_OK) {
             newSize = 0;
-            return appendRet;
+            return appendRet_;
         }
         auto &dst = kv_[key];
         dst.insert(dst.end(), value.begin(), value.end());
@@ -182,8 +232,8 @@ public:
 
     ock::smem::Result GetReal(const std::string &key, std::vector<uint8_t> &value, int64_t) noexcept override
     {
-        if (getRet != SM_OK) {
-            return getRet;
+        if (getRet_ != SM_OK) {
+            return getRet_;
         }
         auto it = kv_.find(key);
         if (it == kv_.end()) {
@@ -210,18 +260,6 @@ private:
     std::map<std::string, std::vector<uint8_t>> kv_;
 };
 
-SmemGroupEnginePtr MakeLocalGroup(uint32_t rankSize, uint32_t rankId)
-{
-    auto child = SmMakeRef<FakeStoreManager>();
-    StoreManagerPtr store = Convert<FakeStoreManager, ConfigStoreManager>(child);
-    SmemGroupOption opt{};
-    opt.rankSize = rankSize;
-    opt.rank = rankId;
-    opt.timeoutMs = 1000;
-    opt.dynamic = false;
-    return SmMakeRef<SmemNetGroupEngine>(store, opt);
-}
-
 static uint32_t g_lastHybmImportFlags = 0;
 static int32_t HybmImportCaptureFlagsOk(hybm_entity_t, hybm_exchange_info *, uint32_t, void *, uint32_t flags)
 {
@@ -235,7 +273,7 @@ static int32_t HybmImportCaptureFlagsFail(hybm_entity_t, hybm_exchange_info *, u
     return -1;
 }
 
-const auto BACKEND_GET = +[](void *, const char *, void *, uint64_t, uint32_t, uint64_t *size) -> int32_t {
+const auto K_BACKEND_GET = +[](void *, const char *, void *, uint64_t, uint32_t, uint64_t *size) -> int32_t {
     if (size != nullptr) {
         *size = 0;
     }
@@ -328,7 +366,7 @@ smem_conf_store_backend_op_t MakeBackendOp()
     backendOp.create = BackendCreate;
     backendOp.destroy = BackendDestroy;
     backendOp.put = BackendPut;
-    backendOp.get = BACKEND_GET;
+    backendOp.get = K_BACKEND_GET;
     backendOp.prefix_get = BackendPrefixGet;
     backendOp.remove = BackendRemove;
     backendOp.lock = BackendLock;
@@ -361,13 +399,14 @@ void SmemBmTest::TearDown()
 {
     GlobalMockObject::verify();
     GlobalMockObject::reset();
+    smem_bm_uninit(0);
     smem_uninit();
 }
 
 bool CheckMem(void *base, void *ptr, uint64_t size)
 {
-    int32_t *arr1 = (int32_t *)base;
-    int32_t *arr2 = (int32_t *)ptr;
+    int32_t *arr1 = static_cast<int32_t *>(base);
+    int32_t *arr2 = static_cast<int32_t *>(ptr);
     for (uint64_t i = 0; i < size / sizeof(int); i++) {
         if (arr1[i] != arr2[i]) {
             return false;
@@ -406,17 +445,17 @@ TEST_F(SmemBmTest, smem_bm_init_invalid_params)
     int32_t ret = smem_bm_init(nullptr, 1, 0, &config);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 
-    ret = smem_bm_init(UT_IP_PORT2, 0, 0, &config);
+    ret = smem_bm_init(K_UT_IP_PORT2, 0, 0, &config);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 
     config.unifiedAddressSpace = false;
-    ret = smem_bm_init(UT_IP_PORT2, 1, 0, &config);
+    ret = smem_bm_init(K_UT_IP_PORT2, 1, 0, &config);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 }
 
 TEST_F(SmemBmTest, smem_bm_create_before_init)
 {
-    smem_bm_t handle = smem_bm_create(0, 1, SMEMB_DATA_OP_SDMA, 1024, 0, 0);
+    smem_bm_t handle = smem_bm_create(0, 1, SMEMB_DATA_OP_SDMA, K_UT_MEM_SIZE, 0, 0);
     EXPECT_EQ(handle, nullptr);
 }
 
@@ -469,7 +508,7 @@ TEST_F(SmemBmTest, smem_bm_copy_batch_invalid_params)
 // RegisterMem: 首次注册成功；再次以相同 size 注册返回 SM_OK；size 不一致返回 SM_ERROR。
 TEST_F(SmemBmTest, smem_bm_entry_register_mem_basic)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
@@ -498,7 +537,7 @@ TEST_F(SmemBmTest, smem_bm_entry_register_mem_basic)
 // UnRegisterMem: 已注册地址正常释放；未注册地址直接返回 SM_OK。
 TEST_F(SmemBmTest, smem_bm_entry_unregister_mem_basic)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
@@ -525,12 +564,12 @@ TEST_F(SmemBmTest, smem_bm_entry_unregister_mem_basic)
 // GetRankIdByGva: host/device GVA 范围内返回正确 rank，下界/上界之外返回 UINT32_MAX。
 TEST_F(SmemBmTest, smem_bm_entry_get_rank_id_by_gva)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxDRAMSize = 1024;
-    entry.coreOptions_.maxHBMSize = 2048;
-    entry.coreOptions_.rankCount = 4;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE;
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_2K;
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT;
 
     // 构造虚拟 host/device GVA 区域
     std::vector<uint8_t> hostBuf(entry.coreOptions_.maxDRAMSize * entry.coreOptions_.rankCount);
@@ -539,7 +578,7 @@ TEST_F(SmemBmTest, smem_bm_entry_get_rank_id_by_gva)
     entry.deviceGva_ = devBuf.data();
 
     // host 第 2 个 rank（从 0 开始）
-    void *hostPtr = hostBuf.data() + entry.coreOptions_.maxDRAMSize * 2;
+    void *hostPtr = hostBuf.data() + entry.coreOptions_.maxDRAMSize * K_UT_WORLD_SIZE;
     EXPECT_EQ(entry.GetRankIdByGva(hostPtr), 2u);
 
     // device 第 1 个 rank
@@ -554,14 +593,14 @@ TEST_F(SmemBmTest, smem_bm_entry_get_rank_id_by_gva)
 // DataCopyBatch: 参数校验分支覆盖。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_basic)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
     entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
 
-    uint8_t srcBuf[16]{};
-    uint8_t dstBuf[16]{};
+    uint8_t srcBuf[K_UT_BUF_SIZE]{};
+    uint8_t dstBuf[K_UT_BUF_SIZE]{};
     uint64_t sizes[1] = {sizeof(srcBuf)};
     void *srcs[1] = {srcBuf};
     void *dsts[1] = {dstBuf};
@@ -592,20 +631,20 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_basic)
 
 TEST_F(SmemBmTest, smem_bm_entry_trans_to_hybm_direction_switch_cases)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
 
     // 构造 host/device GVA 区域，使 GetHybmMemTypeFromGva 可判定
     entry.coreOptions_.rankCount = 1;
-    entry.coreOptions_.maxHBMSize = 4096;
-    entry.coreOptions_.maxDRAMSize = 4096;
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_4K;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE_4K;
     std::vector<uint8_t> hostBuf(entry.coreOptions_.maxDRAMSize);
     std::vector<uint8_t> devBuf(entry.coreOptions_.maxHBMSize);
     entry.hostGva_ = hostBuf.data();
     entry.deviceGva_ = devBuf.data();
 
-    uint8_t localBuf[8]{};
+    uint8_t localBuf[K_UT_SMALL_BUF_SIZE]{};
     void *localPtr = localBuf; // 不在 GVA 范围内
     void *gDev = devBuf.data();
     void *gHost = hostBuf.data();
@@ -621,7 +660,7 @@ TEST_F(SmemBmTest, smem_bm_entry_trans_to_hybm_direction_switch_cases)
 // JoinHandle / LeaveHandle / Join / Leave 的未初始化早退分支。
 TEST_F(SmemBmTest, smem_bm_entry_join_leave_not_initialized)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = false;
@@ -631,69 +670,10 @@ TEST_F(SmemBmTest, smem_bm_entry_join_leave_not_initialized)
     EXPECT_EQ(entry.Leave(0), SM_NOT_INITIALIZED);
 }
 
-// LeaveHandle: 正常执行路径，hybm_remove_imported 成功。
-TEST_F(SmemBmTest, smem_bm_entry_leave_handle_success)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
-
-    // 模拟 hybm_remove_imported 成功
-    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t)).stubs().will(returnValue(0));
-
-    ock::smem::Result ret = entry.LeaveHandle(1);
-    EXPECT_EQ(ret, SM_OK);
-}
-
-// LeaveHandle: hybm_remove_imported 失败的情况。
-TEST_F(SmemBmTest, smem_bm_entry_leave_handle_fail)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
-
-    // 模拟 hybm_remove_imported 失败
-    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t)).stubs().will(returnValue(-1));
-
-    ock::smem::Result ret = entry.LeaveHandle(1);
-    EXPECT_EQ(ret, SM_ERROR);
-}
-
-// JoinHandle: 未初始化的情况。
-TEST_F(SmemBmTest, smem_bm_entry_join_handle_not_initialized)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = false;
-
-    ock::smem::Result ret = entry.JoinHandle(1);
-    EXPECT_EQ(ret, SM_NOT_INITIALIZED);
-}
-
-// JoinHandle: 测试未初始化的情况已覆盖，由于JoinHandle依赖globalGroup_，暂时不测试正常执行路径
-// 避免空指针访问错误
-
-// LeaveHandle: 未初始化的情况。
-TEST_F(SmemBmTest, smem_bm_entry_leave_handle_not_initialized)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = false;
-
-    ock::smem::Result ret = entry.LeaveHandle(1);
-    EXPECT_EQ(ret, SM_NOT_INITIALIZED);
-}
-
 // DataCopy: 正常执行路径。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_success)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
@@ -705,8 +685,8 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_success)
         .stubs()
         .will(returnValue(0));
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(src, dest, sizeof(src), SMEMB_COPY_G2G, nullptr, 0);
     // 由于没有设置 hostGva_ 和 deviceGva_，转换方向会失败，但测试代码结构正确
     EXPECT_NE(ret, SM_OK);
@@ -715,12 +695,12 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_success)
 // DataCopy: 无效参数 - src 为 nullptr。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_src)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char dest[16] = {0};
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(nullptr, dest, sizeof(dest), SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
@@ -728,12 +708,12 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_src)
 // DataCopy: 无效参数 - dest 为 nullptr。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_dest)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test data";
+    char src[K_UT_BUF_SIZE] = "test data";
     ock::smem::Result ret = entry.DataCopy(src, nullptr, sizeof(src), SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
@@ -741,13 +721,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_dest)
 // DataCopy: 无效参数 - size 为 0。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_size)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(src, dest, 0, SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
@@ -755,13 +735,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_size)
 // DataCopy: 无效参数 - 无效的 copy type。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_type)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(src, dest, sizeof(src), SMEMB_COPY_BUTT, nullptr, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 }
@@ -769,26 +749,26 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_invalid_type)
 // DataCopy: 未初始化的情况。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_not_initialized)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = false;
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(src, dest, sizeof(src), SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_NOT_INITIALIZED);
 }
 
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_not_joined)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(src, dest, sizeof(src), SMEMB_COPY_G2G, nullptr, 0);
     EXPECT_EQ(ret, SM_NOT_STARTED);
 }
@@ -796,7 +776,7 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_not_joined)
 // DataCopyBatch: 正常执行路径。
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_success)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
@@ -808,10 +788,10 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_success)
         .stubs()
         .will(returnValue(0));
 
-    char src1[16] = "test data 1";
-    char src2[16] = "test data 2";
-    char dest1[16] = {0};
-    char dest2[16] = {0};
+    char src1[K_UT_BUF_SIZE] = "test data 1";
+    char src2[K_UT_BUF_SIZE] = "test data 2";
+    char dest1[K_UT_BUF_SIZE] = {0};
+    char dest2[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src1, src2};
     void *destinations[] = {dest1, dest2};
     uint64_t sizes[] = {sizeof(src1), sizeof(src2)};
@@ -820,7 +800,7 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_success)
     params.sources = sources;
     params.destinations = destinations;
     params.dataSizes = sizes;
-    params.batchSize = 2;
+    params.batchSize = K_UT_WORLD_SIZE;
 
     ock::smem::Result ret = entry.DataCopyBatch(&params, SMEMB_COPY_G2G, 0);
     // 由于没有设置 hostGva_ 和 deviceGva_，转换方向会失败，但测试代码结构正确
@@ -829,13 +809,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_success)
 
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_not_joined)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -852,13 +832,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_not_joined)
 
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_not_joined)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test data";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test data";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -881,7 +861,7 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_not_joined)
 // Wait: 正常执行路径。
 TEST_F(SmemBmTest, smem_bm_entry_wait_success)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
@@ -897,7 +877,7 @@ TEST_F(SmemBmTest, smem_bm_entry_wait_success)
 // Wait: 未初始化的情况。
 TEST_F(SmemBmTest, smem_bm_entry_wait_not_initialized)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = false;
@@ -923,12 +903,12 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_get_entry_by_id_not_exists)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
     SmemBmEntryPtr entry;
-    ock::smem::Result ret = manager.GetEntryById(999, entry);
+    ock::smem::Result ret = manager.GetEntryById(K_UT_ENTRY_ID_NOT_EXISTS, entry);
     EXPECT_EQ(ret, SM_OBJECT_NOT_EXISTS);
 
     manager.Destroy();
@@ -942,7 +922,7 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_get_entry_by_id_success)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
@@ -968,7 +948,7 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_racing_for_store_server)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
@@ -989,7 +969,7 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_auto_ranking)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
@@ -1017,7 +997,7 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_empty_url)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
@@ -1034,7 +1014,7 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_same_url)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
@@ -1084,7 +1064,7 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_success)
     smem_bm_config_t config;
     smem_bm_config_init(&config);
     std::string storeURL = "tcp://127.0.0.1:7758";
-    uint32_t worldSize = 2;
+    uint32_t worldSize = K_UT_WORLD_SIZE;
     uint16_t deviceId = 0;
     manager.Initialize(storeURL, worldSize, deviceId, config);
 
@@ -1094,17 +1074,17 @@ TEST_F(SmemBmTest, smem_bm_entry_manager_update_store_url_success)
     manager.Destroy();
 }
 
-void GenerateData(void *ptr, int32_t rank, uint32_t len = COPY_SIZE)
+void GenerateData(int32_t *ptr, int32_t rank, uint32_t len = K_COPY_SIZE)
 {
     if (ptr == nullptr) {
         return;
     }
-    int32_t *arr = (int32_t *)ptr;
+    int32_t *arr = ptr;
     static int32_t mod = INT16_MAX;
     int32_t base = rank;
     for (uint32_t i = 0; i < len / sizeof(int); i++) {
-        base = (base * RANDOM_MULTIPLIER + RANDOM_INCREMENT) % mod;
-        if ((i + rank) % NEGATIVE_RATIO_DIVISOR == 0) {
+        base = (base * K_RANDOM_MULTIPLIER + K_RANDOM_INCREMENT) % mod;
+        if ((i + rank) % K_NEGATIVE_RATIO_DIVISOR == 0) {
             arr[i] = -base + i + 1; // 构造三分之一的负数
         } else {
             arr[i] = base + i + 1;
@@ -1112,36 +1092,13 @@ void GenerateData(void *ptr, int32_t rank, uint32_t len = COPY_SIZE)
     }
 }
 
-TEST_F(SmemBmTest, smem_bm_init_success)
+// arm64 CI 上 mockcpp 的 JmpCode hook 对多继承类 TcpConfigStore 的成员函数
+// (Startup) 会破坏调用现场导致 SEGV(见 PR 讨论)。预置 StoreFactory 缓存，
+// 让 CreateStoreByUrl 直接命中返回 fake store，绕过 TcpConfigStore 创建与 Startup。
+static void PresetFakeStore()
 {
-    std::string ipPort = "tcp://192.168.100.101:8570";
-    uint32_t rankId = 0;
-    uint32_t rkSize = 2;
-    uint32_t deviceId = 0;
-    auto ret = smem_init(0);
-    EXPECT_EQ(ret, 0);
-
-    smem_set_log_level(1);
-    smem_bm_config_t config;
-    (void)smem_bm_config_init(&config);
-    std::string url = "tcp://192.168.100.101/24:10005"; // tcp://192.168.100.100:8570
-    config.autoRanking = false;
-    config.rankId = rankId;
-    config.startConfigStoreServer = true;
-
-    MOCKER_CPP(&TcpConfigStore::Startup, int32_t(*)(const smem_tls_config &, int)).stubs().will(returnValue(0));
-    ret = smem_bm_init(ipPort.c_str(), rkSize, deviceId, &config);
-    EXPECT_EQ(ret, 0);
-}
-
-TEST_F(SmemBmTest, smem_bm_create_success)
-{
-    smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
-    MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
-    smem_bm_t handle = smem_bm_create(0, 0, optype, GVA_SIZE, 0, 0);
-    EXPECT_NE(handle, nullptr);
-
-    smem_bm_destroy(handle);
+    auto fake = SmMakeRef<FakeStoreManager>();
+    StoreFactory::storesMap_["tcp://192.168.100.101:8570"] = fake.Get();
 }
 
 // 确保 g_smemBmInited 按指定 worldSize 初始化，避免继承前一个用例的 BM 初始化状态。
@@ -1156,21 +1113,57 @@ static void EnsureSmemBmInited(uint32_t worldSize)
     config.rankId = 0;
     config.startConfigStoreServer = true;
 
-    MOCKER_CPP(&TcpConfigStore::Startup, int32_t(*)(const smem_tls_config &, int)).stubs().will(returnValue(0));
+    PresetFakeStore();
     (void)smem_bm_init("tcp://192.168.100.101:8570", worldSize, 0, &config);
+}
+
+TEST_F(SmemBmTest, smem_bm_init_success)
+{
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
+
+    std::string ipPort = "tcp://192.168.100.101:8570";
+    uint32_t rankId = 0;
+    uint32_t rkSize = K_UT_WORLD_SIZE;
+    uint32_t deviceId = 0;
+    auto ret = smem_init(0);
+    EXPECT_EQ(ret, 0);
+
+    smem_set_log_level(1);
+    smem_bm_config_t config;
+    (void)smem_bm_config_init(&config);
+    std::string url = "tcp://192.168.100.101/24:10005"; // tcp://192.168.100.100:8570
+    config.autoRanking = false;
+    config.rankId = rankId;
+    config.startConfigStoreServer = true;
+
+    PresetFakeStore();
+    ret = smem_bm_init(ipPort.c_str(), rkSize, deviceId, &config);
+    EXPECT_EQ(ret, 0);
+}
+
+TEST_F(SmemBmTest, smem_bm_create_success)
+{
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
+
+    smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
+    MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
+    smem_bm_t handle = smem_bm_create(0, 0, optype, K_GVA_SIZE, 0, 0);
+    EXPECT_NE(handle, nullptr);
+
+    smem_bm_destroy(handle);
 }
 
 // 当 (maxDramSize + maxHbmSize) * worldSize > 32TB 且 enable56BitsGva = false 时，
 // smem_bm_create2 必须直接返回 nullptr，强制让用户感知 56 位 GVA 语义变化（GVA != DVA）。
 TEST_F(SmemBmTest, smem_bm_create2_total_exceed_32t_without_enable56bits_gva_failed)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
 
     smem_bm_create_option_t option{};
     // 17TB * 2 = 34TB，严格大于 32TB 阈值
-    option.maxDramSize = 17ULL << 40ULL;
+    option.maxDramSize = K_UT_CAP17TB;
     option.maxHbmSize = 0;
-    option.localDRAMSize = 1ULL << 30ULL; // 1GB，远低于 local 上限
+    option.localDRAMSize = K_UT_LOCAL_DRAM1GB; // 1GB，远低于 local 上限
     option.localHBMSize = 0;
     option.dataOpType = SMEMB_DATA_OP_HOST_URMA;
     option.enable56BitsGva = false;
@@ -1178,7 +1171,7 @@ TEST_F(SmemBmTest, smem_bm_create2_total_exceed_32t_without_enable56bits_gva_fai
     option.dramShmFd = -1;
 
     (void)smem_get_and_clear_last_err_msg();
-    smem_bm_t handle = smem_bm_create2(50, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID32T_EXCEED, &option);
     EXPECT_EQ(handle, nullptr);
     const std::string lastError = smem_get_last_err_msg();
     EXPECT_NE(lastError.find("smem_bm_create2 failed"), std::string::npos);
@@ -1191,7 +1184,7 @@ TEST_F(SmemBmTest, smem_bm_create_total_exceed_32t_failed)
     EnsureSmemBmInited(worldSize);
 
     (void)smem_get_and_clear_last_err_msg();
-    smem_bm_t handle = smem_bm_create(53, worldSize, SMEMB_DATA_OP_HOST_URMA, 2ULL << 40, 0, 0);
+    smem_bm_t handle = smem_bm_create(K_UT_RANK_ID_OLD32T, worldSize, SMEMB_DATA_OP_HOST_URMA, K_UT_CAP2TB, 0, 0);
     EXPECT_EQ(handle, nullptr);
     const std::string lastError = smem_get_last_err_msg();
     EXPECT_NE(lastError.find("smem_bm_create2 failed"), std::string::npos);
@@ -1200,20 +1193,20 @@ TEST_F(SmemBmTest, smem_bm_create_total_exceed_32t_failed)
 // 同样的 > 32TB 容量下，显式打开 enable56BitsGva 后应当正常创建。
 TEST_F(SmemBmTest, smem_bm_create2_total_exceed_32t_with_enable56bits_gva_success)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
 
     smem_bm_create_option_t option{};
-    option.maxDramSize = 17ULL << 40ULL;
+    option.maxDramSize = K_UT_CAP17TB;
     option.maxHbmSize = 0;
-    option.localDRAMSize = 1ULL << 30ULL;
+    option.localDRAMSize = K_UT_LOCAL_DRAM1GB;
     option.localHBMSize = 0;
     option.dataOpType = SMEMB_DATA_OP_HOST_URMA;
     option.enable56BitsGva = true;
     option.flags = 0;
     option.dramShmFd = -1;
 
-    smem_bm_t handle = smem_bm_create2(51, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID56BITS_OK, &option);
     EXPECT_NE(handle, nullptr);
     if (handle != nullptr) {
         smem_bm_destroy(handle);
@@ -1223,20 +1216,20 @@ TEST_F(SmemBmTest, smem_bm_create2_total_exceed_32t_with_enable56bits_gva_succes
 // 边界场景：(16TB) * 2 = 32TB，恰好等于阈值（语义为严格 `>`），不应触发新校验。
 TEST_F(SmemBmTest, smem_bm_create2_total_at_32t_boundary_without_enable56bits_gva_success)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
 
     smem_bm_create_option_t option{};
-    option.maxDramSize = 16ULL << 40ULL;
+    option.maxDramSize = K_UT_CAP16TB;
     option.maxHbmSize = 0;
-    option.localDRAMSize = 1ULL << 30ULL;
+    option.localDRAMSize = K_UT_LOCAL_DRAM1GB;
     option.localHBMSize = 0;
     option.dataOpType = SMEMB_DATA_OP_HOST_URMA;
     option.enable56BitsGva = false;
     option.flags = 0;
     option.dramShmFd = -1;
 
-    smem_bm_t handle = smem_bm_create2(52, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID32T_BOUNDARY, &option);
     EXPECT_NE(handle, nullptr);
     if (handle != nullptr) {
         smem_bm_destroy(handle);
@@ -1246,7 +1239,7 @@ TEST_F(SmemBmTest, smem_bm_create2_total_at_32t_boundary_without_enable56bits_gv
 smem_bm_t MockInitAndCreateHandle(uint32_t id)
 {
     uint32_t rankId = 0;
-    uint32_t rkSize = 2;
+    uint32_t rkSize = K_UT_WORLD_SIZE;
     uint32_t deviceId = 0;
     std::string ipPort = "tcp://192.168.100.101:8570";
 
@@ -1258,13 +1251,13 @@ smem_bm_t MockInitAndCreateHandle(uint32_t id)
     config.rankId = rankId;
     config.startConfigStoreServer = true;
 
-    MOCKER_CPP(&TcpConfigStore::Startup, int32_t(*)(const smem_tls_config &, int)).stubs().will(returnValue(0));
+    PresetFakeStore();
     auto ret = smem_bm_init(ipPort.c_str(), rkSize, deviceId, &config);
     EXPECT_EQ(ret, 0);
 
     smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
-    smem_bm_t handle = smem_bm_create(id, 0, optype, GVA_SIZE, 0, 0);
+    smem_bm_t handle = smem_bm_create(id, 0, optype, K_GVA_SIZE, 0, 0);
     EXPECT_NE(handle, nullptr);
     return handle;
 }
@@ -1273,7 +1266,7 @@ TEST_F(SmemBmTest, smem_bm_join_failed)
 {
     smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
-    smem_bm_t handle = smem_bm_create(1, 0, optype, GVA_SIZE, 0, 0); // 1
+    smem_bm_t handle = smem_bm_create(1, 0, optype, K_GVA_SIZE, 0, 0); // 1
     auto ret = smem_bm_join(handle, 0);
     EXPECT_NE(ret, 0);
     smem_bm_destroy(handle);
@@ -1281,9 +1274,11 @@ TEST_F(SmemBmTest, smem_bm_join_failed)
 
 TEST_F(SmemBmTest, smem_bm_join_success)
 {
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
+
     smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
-    smem_bm_t handle = smem_bm_create(2, 0, optype, GVA_SIZE, 0, 0); // 2
+    smem_bm_t handle = smem_bm_create(K_UT_ENTRY_ID_JOIN, 0, optype, K_GVA_SIZE, 0, 0); // 2
 
     MOCKER_CPP(&SmemBmEntry::Join, int32_t(*)(uint32_t)).stubs().will(returnValue(0));
     auto ret = smem_bm_join(handle, 0);
@@ -1299,7 +1294,7 @@ TEST_F(SmemBmTest, smem_bm_ptr_by_mem_type_failed)
 {
     std::string ipPort = "tcp://192.168.100.101:8570";
     uint32_t rankId = 0;
-    uint32_t rkSize = 2;
+    uint32_t rkSize = K_UT_WORLD_SIZE;
     uint32_t deviceId = 0;
 
     smem_set_log_level(1);
@@ -1310,13 +1305,13 @@ TEST_F(SmemBmTest, smem_bm_ptr_by_mem_type_failed)
     config.rankId = rankId;
     config.startConfigStoreServer = true;
 
-    MOCKER_CPP(&TcpConfigStore::Startup, int32_t(*)(const smem_tls_config &, int)).stubs().will(returnValue(0));
+    PresetFakeStore();
     auto ret = smem_bm_init(ipPort.c_str(), rkSize, deviceId, &config);
     EXPECT_EQ(ret, 0);
 
     smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
-    smem_bm_t handle = smem_bm_create(3, 0, optype, GVA_SIZE, 0, 0); // 3
+    smem_bm_t handle = smem_bm_create(K_UT_ENTRY_ID_PTR, 0, optype, K_GVA_SIZE, 0, 0); // 3
     EXPECT_NE(handle, nullptr);
 
     void *host = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_HOST, rankId % rkSize);
@@ -1326,29 +1321,33 @@ TEST_F(SmemBmTest, smem_bm_ptr_by_mem_type_failed)
 
 TEST_F(SmemBmTest, smem_batch_copy_success)
 {
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
+
     uint32_t rankId = 0;
-    uint32_t rkSize = 2;
+    uint32_t rkSize = K_UT_WORLD_SIZE;
     uint32_t deviceId = 0;
     std::string ipPort = "tcp://192.168.100.101:8570";
 
     smem_bm_data_op_type optype = SMEMB_DATA_OP_HOST_URMA;
     MOCKER_CPP(&SmemBmEntry::Initialize, int32_t(*)(const hybm_options &)).stubs().will(returnValue(0));
-    smem_bm_t handle = smem_bm_create(4, 0, optype, GVA_SIZE, 0, 0); // 4
+    smem_bm_t handle = smem_bm_create(K_UT_ENTRY_ID_BATCH_COPY, 0, optype, K_GVA_SIZE, 0, 0); // 4
     EXPECT_NE(handle, nullptr);
 
-    char *mock_host = static_cast<char *>(malloc(BATCH_SIZE * COPY_SIZE));
-    uint64_t sizes[BATCH_SIZE] = {COPY_SIZE, COPY_SIZE, COPY_SIZE, COPY_SIZE, COPY_SIZE};
+    uint8_t *mockHost = static_cast<uint8_t *>(malloc(K_BATCH_SIZE * K_COPY_SIZE));
+    ASSERT_NE(mockHost, nullptr);
+    uint64_t sizes[K_BATCH_SIZE] = {K_COPY_SIZE, K_COPY_SIZE, K_COPY_SIZE, K_COPY_SIZE, K_COPY_SIZE};
     smem_batch_copy_params param = {};
-    param.sources = (void **)malloc(BATCH_SIZE * sizeof(void *));
-    param.destinations = (void **)malloc(BATCH_SIZE * sizeof(void *));
+    param.sources = static_cast<void **>(malloc(K_BATCH_SIZE * sizeof(void *)));
+    param.destinations = static_cast<void **>(malloc(K_BATCH_SIZE * sizeof(void *)));
+    ASSERT_NE(param.sources, nullptr);
+    ASSERT_NE(param.destinations, nullptr);
     param.dataSizes = sizes;
-    ;
-    param.batchSize = BATCH_SIZE;
+    param.batchSize = K_BATCH_SIZE;
 
-    for (uint32_t i = 0; i < BATCH_SIZE; ++i) {
-        param.sources[i] = malloc(COPY_SIZE);
-        GenerateData(param.sources[i], rankId, COPY_SIZE);
-        param.destinations[i] = mock_host + i * COPY_SIZE;
+    for (uint32_t i = 0; i < K_BATCH_SIZE; ++i) {
+        param.sources[i] = malloc(K_COPY_SIZE);
+        GenerateData(static_cast<int32_t *>(param.sources[i]), rankId, K_COPY_SIZE);
+        param.destinations[i] = mockHost + i * K_COPY_SIZE;
     }
 
     MOCKER_CPP(&SmemBmEntry::DataCopyBatch, int32_t(*)(smem_batch_copy_params *, smem_bm_copy_type, uint32_t))
@@ -1357,12 +1356,12 @@ TEST_F(SmemBmTest, smem_batch_copy_success)
     auto ret = smem_bm_copy_batch(handle, &param, SMEMB_COPY_H2GH, 0);
     EXPECT_EQ(ret, 0);
 
-    for (uint32_t i = 0; i < BATCH_SIZE; ++i) {
+    for (uint32_t i = 0; i < K_BATCH_SIZE; ++i) {
         free(param.sources[i]);
     }
     free(param.sources);
     free(param.destinations);
-    free(mock_host);
+    free(mockHost);
 
     smem_bm_destroy(handle);
 }
@@ -1370,21 +1369,21 @@ TEST_F(SmemBmTest, smem_batch_copy_success)
 TEST_F(SmemBmTest, smem_bm_copy_batch_not_joined)
 {
     uint32_t rankId = 0;
-    smem_bm_t handle = MockInitAndCreateHandle(18);
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_BATCH_NOT_JOINED);
 
-    char *mock_host = static_cast<char *>(malloc(BATCH_SIZE * COPY_SIZE));
-    EXPECT_NE(mock_host, nullptr);
-    uint64_t sizes[BATCH_SIZE] = {COPY_SIZE, COPY_SIZE, COPY_SIZE, COPY_SIZE, COPY_SIZE};
+    uint8_t *mockHost = static_cast<uint8_t *>(malloc(K_BATCH_SIZE * K_COPY_SIZE));
+    EXPECT_NE(mockHost, nullptr);
+    uint64_t sizes[K_BATCH_SIZE] = {K_COPY_SIZE, K_COPY_SIZE, K_COPY_SIZE, K_COPY_SIZE, K_COPY_SIZE};
     smem_batch_copy_params param = {};
-    param.sources = (void **)malloc(BATCH_SIZE * sizeof(void *));
-    param.destinations = (void **)malloc(BATCH_SIZE * sizeof(void *));
+    param.sources = static_cast<void **>(malloc(K_BATCH_SIZE * sizeof(void *)));
+    param.destinations = static_cast<void **>(malloc(K_BATCH_SIZE * sizeof(void *)));
     param.dataSizes = sizes;
-    param.batchSize = BATCH_SIZE;
+    param.batchSize = K_BATCH_SIZE;
 
-    for (uint32_t i = 0; i < BATCH_SIZE; ++i) {
-        param.sources[i] = malloc(COPY_SIZE);
-        GenerateData(param.sources[i], rankId, COPY_SIZE);
-        param.destinations[i] = mock_host + i * COPY_SIZE;
+    for (uint32_t i = 0; i < K_BATCH_SIZE; ++i) {
+        param.sources[i] = malloc(K_COPY_SIZE);
+        GenerateData(static_cast<int32_t *>(param.sources[i]), rankId, K_COPY_SIZE);
+        param.destinations[i] = mockHost + i * K_COPY_SIZE;
     }
 
     MOCKER_CPP(&SmemBmEntry::DataCopyBatch, int32_t(*)(smem_batch_copy_params *, smem_bm_copy_type, uint32_t))
@@ -1393,12 +1392,12 @@ TEST_F(SmemBmTest, smem_bm_copy_batch_not_joined)
     auto ret = smem_bm_copy_batch(handle, &param, SMEMB_COPY_H2GH, 0);
     EXPECT_EQ(ret, SM_NOT_STARTED);
 
-    for (uint32_t i = 0; i < BATCH_SIZE; ++i) {
+    for (uint32_t i = 0; i < K_BATCH_SIZE; ++i) {
         free(param.sources[i]);
     }
     free(param.sources);
     free(param.destinations);
-    free(mock_host);
+    free(mockHost);
 
     smem_bm_destroy(handle);
     smem_bm_uninit(0);
@@ -1406,7 +1405,7 @@ TEST_F(SmemBmTest, smem_bm_copy_batch_not_joined)
 
 TEST_F(SmemBmTest, smem_bm_copy_batch_partial_succeed_not_joined)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(19);
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_PARTIAL_SUCCEED);
 
     constexpr uint32_t partialBatchSize = 2;
     constexpr uint64_t largeCopySize = 5UL * 1024UL * 1024UL;
@@ -1450,7 +1449,7 @@ TEST_F(SmemBmTest, smem_bm_copy_batch_partial_succeed_not_joined)
 
 TEST_F(SmemBmTest, smem_bm_wait_success)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(5); // 5
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_WAIT); // 5
 
     smem_bm_wait(handle);
     smem_bm_destroy(handle);
@@ -1459,21 +1458,21 @@ TEST_F(SmemBmTest, smem_bm_wait_success)
 
 TEST_F(SmemBmTest, smem_bm_register_user_mem_success)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(6); // 6
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_REGISTER); // 6
 
-    char *mock_host = static_cast<char *>(malloc(BATCH_SIZE * COPY_SIZE));
-    EXPECT_NE(mock_host, nullptr);
+    uint8_t *mockHost = static_cast<uint8_t *>(malloc(K_BATCH_SIZE * K_COPY_SIZE));
+    EXPECT_NE(mockHost, nullptr);
     MOCKER_CPP(&SmemBmEntry::RegisterMem, int32_t(*)(uint64_t, uint64_t)).stubs().will(returnValue(0));
-    auto ret = smem_bm_register_user_mem(handle, reinterpret_cast<uint64_t>(mock_host), BATCH_SIZE * COPY_SIZE);
+    auto ret = smem_bm_register_user_mem(handle, reinterpret_cast<uint64_t>(mockHost), K_BATCH_SIZE * K_COPY_SIZE);
     EXPECT_EQ(ret, 0);
 
     MOCKER_CPP(&SmemBmEntry::UnRegisterMem, int32_t(*)(uint64_t)).stubs().will(returnValue(0));
-    ret = smem_bm_unregister_user_mem(handle, reinterpret_cast<uint64_t>(mock_host));
+    ret = smem_bm_unregister_user_mem(handle, reinterpret_cast<uint64_t>(mockHost));
     EXPECT_EQ(ret, 0);
 
     smem_bm_destroy(handle);
     smem_bm_uninit(0);
-    free(mock_host);
+    free(mockHost);
 }
 
 TEST_F(SmemBmTest, smem_set_extern_logger_failed)
@@ -1493,7 +1492,7 @@ TEST_F(SmemBmTest, smem_set_extern_logger_success)
 
 TEST_F(SmemBmTest, smem_set_log_level_failed)
 {
-    auto ret = smem_set_log_level(111); // 111
+    auto ret = smem_set_log_level(K_UT_INVALID_LOG_LEVEL); // 111
     EXPECT_EQ(ret, SMEM_INVALID_PARAM);
 }
 
@@ -1505,12 +1504,12 @@ TEST_F(SmemBmTest, smem_set_log_level_success)
 
 TEST_F(SmemBmTest, smem_get_last_err_code_from_create2_exceeds_32t)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
 
     smem_bm_create_option_t option{};
-    option.maxDramSize = 17ULL << 40ULL;
+    option.maxDramSize = K_UT_CAP17TB;
     option.maxHbmSize = 0;
-    option.localDRAMSize = 1ULL << 30ULL;
+    option.localDRAMSize = K_UT_LOCAL_DRAM1GB;
     option.localHBMSize = 0;
     option.dataOpType = SMEMB_DATA_OP_HOST_URMA;
     option.enable56BitsGva = false;
@@ -1518,7 +1517,7 @@ TEST_F(SmemBmTest, smem_get_last_err_code_from_create2_exceeds_32t)
     option.dramShmFd = -1;
 
     (void)smem_get_and_clear_last_err_msg();
-    smem_bm_t handle = smem_bm_create2(60, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID_ERR_CODE, &option);
     EXPECT_EQ(handle, nullptr);
     EXPECT_EQ(smem_get_last_err_code(), SMEM_INVALID_PARAM);
     const std::string lastError = smem_get_last_err_msg();
@@ -1542,7 +1541,7 @@ TEST_F(SmemBmTest, smem_get_last_err_msg)
 
 TEST_F(SmemBmTest, smem_bm_get_rank_id_by_gva_success)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(5); // 5
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_WAIT); // 5
 
     MOCKER_CPP(&SmemBmEntry::GetRankIdByGva, int32_t(*)(void *)).stubs().will(returnValue(0));
     auto ret = smem_bm_get_rank_id_by_gva(handle, nullptr);
@@ -1553,7 +1552,7 @@ TEST_F(SmemBmTest, smem_bm_get_rank_id_by_gva_success)
 
 TEST_F(SmemBmTest, smem_create_config_store_success)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(5); // 5
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_WAIT); // 5
     std::string url = "tcp://192.168.100.101:8570";
     auto ret = smem_create_config_store(url.c_str(), SMEM_STORE_SKIP_RECOVER);
     EXPECT_EQ(ret, 0);
@@ -1589,9 +1588,11 @@ TEST_F(SmemBmTest, smem_create_config_store_reg_success)
 TEST_F(SmemBmTest, smem_bm_copy_failed)
 {
     smem_bm_uninit(0);
-    smem_bm_t handle = malloc(COPY_SIZE);
-    void *base = malloc(COPY_SIZE);
-    smem_copy_params params1 = {base, base, COPY_SIZE};
+    smem_bm_t handle = malloc(K_COPY_SIZE);
+    void *base = malloc(K_COPY_SIZE);
+    ASSERT_NE(handle, nullptr);
+    ASSERT_NE(base, nullptr);
+    smem_copy_params params1 = {base, base, K_COPY_SIZE};
     auto ret = smem_bm_copy(handle, nullptr, SMEMB_COPY_H2G, 0);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 
@@ -1608,15 +1609,15 @@ TEST_F(SmemBmTest, smem_bm_copy_failed)
 TEST_F(SmemBmTest, smem_bm_copy_success)
 {
     uint32_t rankId = 0;
-    smem_bm_t handle = MockInitAndCreateHandle(7); // 7
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_COPY); // 7
 
-    void *local_dev_mock = malloc(COPY_SIZE);
-    EXPECT_NE(local_dev_mock, nullptr);
-    void *base = malloc(COPY_SIZE);
+    void *localDevMock = malloc(K_COPY_SIZE);
+    EXPECT_NE(localDevMock, nullptr);
+    void *base = malloc(K_COPY_SIZE);
     EXPECT_NE(base, nullptr);
 
-    GenerateData(base, rankId, COPY_SIZE);
-    smem_copy_params params1 = {base, local_dev_mock, COPY_SIZE};
+    GenerateData(static_cast<int32_t *>(base), rankId, K_COPY_SIZE);
+    smem_copy_params params1 = {base, localDevMock, K_COPY_SIZE};
 
     MOCKER_CPP(&SmemBmEntry::DataCopy, int32_t(*)(const void *, void *, uint64_t, smem_bm_copy_type, void *, uint32_t))
         .stubs()
@@ -1626,22 +1627,22 @@ TEST_F(SmemBmTest, smem_bm_copy_success)
 
     smem_bm_destroy(handle);
     smem_bm_uninit(0);
-    free(local_dev_mock);
+    free(localDevMock);
     free(base);
 }
 
 TEST_F(SmemBmTest, smem_bm_copy_not_joined)
 {
     uint32_t rankId = 0;
-    smem_bm_t handle = MockInitAndCreateHandle(17);
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_COPY_NOT_JOINED);
 
-    void *local_dev_mock = malloc(COPY_SIZE);
-    EXPECT_NE(local_dev_mock, nullptr);
-    void *base = malloc(COPY_SIZE);
+    void *localDevMock = malloc(K_COPY_SIZE);
+    EXPECT_NE(localDevMock, nullptr);
+    void *base = malloc(K_COPY_SIZE);
     EXPECT_NE(base, nullptr);
 
-    GenerateData(base, rankId, COPY_SIZE);
-    smem_copy_params params1 = {base, local_dev_mock, COPY_SIZE};
+    GenerateData(static_cast<int32_t *>(base), rankId, K_COPY_SIZE);
+    smem_copy_params params1 = {base, localDevMock, K_COPY_SIZE};
 
     MOCKER_CPP(&SmemBmEntry::DataCopy, int32_t(*)(const void *, void *, uint64_t, smem_bm_copy_type, void *, uint32_t))
         .stubs()
@@ -1651,7 +1652,7 @@ TEST_F(SmemBmTest, smem_bm_copy_not_joined)
 
     smem_bm_destroy(handle);
     smem_bm_uninit(0);
-    free(local_dev_mock);
+    free(localDevMock);
     free(base);
 }
 
@@ -1663,7 +1664,7 @@ TEST_F(SmemBmTest, smem_bm_get_local_mem_size_invalid_handle)
 
 TEST_F(SmemBmTest, smem_bm_get_local_mem_size_by_mem_type)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(8); // 8
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_LOCAL_MEM); // 8
 
     uint64_t size = smem_bm_get_local_mem_size_by_mem_type(handle, SMEM_MEM_TYPE_DEVICE);
     EXPECT_EQ(size, 0UL);
@@ -1702,13 +1703,13 @@ TEST_F(SmemBmTest, smem_bm_register_user_mem_invalid_params)
 {
     smem_bm_t fakeHandle = reinterpret_cast<smem_bm_t>(0x1);
 
-    int32_t ret = smem_bm_register_user_mem(nullptr, 0x1000, 1024);
+    int32_t ret = smem_bm_register_user_mem(nullptr, K_UT_TEST_ADDR, K_UT_MEM_SIZE);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 
-    ret = smem_bm_register_user_mem(fakeHandle, 0, 1024);
+    ret = smem_bm_register_user_mem(fakeHandle, 0, K_UT_MEM_SIZE);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 
-    ret = smem_bm_register_user_mem(fakeHandle, 0x1000, 1024);
+    ret = smem_bm_register_user_mem(fakeHandle, K_UT_TEST_ADDR, K_UT_MEM_SIZE);
     EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
 }
 
@@ -1716,13 +1717,13 @@ TEST_F(SmemBmTest, smem_bm_unregister_user_mem_invalid_params)
 {
     smem_bm_t fakeHandle = reinterpret_cast<smem_bm_t>(0x1);
 
-    int32_t ret = smem_bm_unregister_user_mem(nullptr, 0x1000);
+    int32_t ret = smem_bm_unregister_user_mem(nullptr, K_UT_TEST_ADDR);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 
     ret = smem_bm_unregister_user_mem(fakeHandle, 0);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 
-    ret = smem_bm_unregister_user_mem(fakeHandle, 0x1000);
+    ret = smem_bm_unregister_user_mem(fakeHandle, K_UT_TEST_ADDR);
     EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
 }
 
@@ -1734,7 +1735,7 @@ TEST_F(SmemBmTest, smem_bm_uninit_without_init_safe)
 TEST_F(SmemBmTest, smem_bm_gva_to_va_nullptr)
 {
     smem_bm_t handle = nullptr;
-    void *gva = (void *)(uintptr_t)(0x1000);
+    void *gva = (void *)(K_UT_TEST_ADDR);
     smem_bm_mem_type memType = SMEM_MEM_TYPE_LOCAL_DEVICE;
     void *va = nullptr;
 
@@ -1750,7 +1751,7 @@ TEST_F(SmemBmTest, smem_bm_gva_to_va_nullptr)
 TEST_F(SmemBmTest, smem_bm_gva_to_va_not_initialized)
 {
     smem_bm_t handle = reinterpret_cast<smem_bm_t>(0x1);
-    void *gva = (void *)(uintptr_t)(0x1000);
+    void *gva = reinterpret_cast<void *>(K_UT_TEST_ADDR);
     smem_bm_mem_type memType = SMEM_MEM_TYPE_LOCAL_DEVICE;
     void *va = nullptr;
 
@@ -1760,9 +1761,9 @@ TEST_F(SmemBmTest, smem_bm_gva_to_va_not_initialized)
 
 TEST_F(SmemBmTest, smem_bm_gva_to_va_invalid_mem_type)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(9); // 9
-    void *gva = (void *)(uintptr_t)(0x1000);
-    smem_bm_mem_type memType = static_cast<smem_bm_mem_type>(2); // Invalid mem type
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_GVA2VA); // 9
+    void *gva = reinterpret_cast<void *>(K_UT_TEST_ADDR);
+    smem_bm_mem_type memType = static_cast<smem_bm_mem_type>(K_UT_INVALID_MEM_TYPE); // Invalid mem type
     void *va = nullptr;
 
     auto ret = smem_bm_gva_to_va(handle, gva, memType, &va);
@@ -1774,8 +1775,8 @@ TEST_F(SmemBmTest, smem_bm_gva_to_va_invalid_mem_type)
 
 TEST_F(SmemBmTest, smem_bm_gva_to_va_valid_address)
 {
-    smem_bm_t handle = MockInitAndCreateHandle(10); // 10
-    void *gva = (void *)(uintptr_t)(0x1000);
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_GVA2VA_VALID); // 10
+    void *gva = reinterpret_cast<void *>(K_UT_TEST_ADDR);
     smem_bm_mem_type memType = SMEM_MEM_TYPE_LOCAL_DEVICE;
     void *va = nullptr;
 
@@ -1796,16 +1797,16 @@ TEST_F(SmemBmTest, smem_bm_gva_to_va_valid_address)
 
 TEST_F(SmemBmTest, smem_bm_extend_local_mem_param_error)
 {
-    auto ret = smem_bm_extend_local_mem(nullptr, SMEM_MEM_TYPE_HOST, GVA_SIZE);
+    auto ret = smem_bm_extend_local_mem(nullptr, SMEM_MEM_TYPE_HOST, K_GVA_SIZE);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 
-    ret = smem_bm_extend_local_mem((void *)(uintptr_t)(0x1000), SMEM_MEM_TYPE_HOST, GVA_SIZE);
+    ret = smem_bm_extend_local_mem(reinterpret_cast<void *>(K_UT_TEST_ADDR), SMEM_MEM_TYPE_HOST, K_GVA_SIZE);
     EXPECT_EQ(ret, SM_NOT_INITIALIZED);
 
-    smem_bm_t handle = MockInitAndCreateHandle(11);
+    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_EXTEND);
     EXPECT_NE(handle, nullptr);
 
-    ret = smem_bm_extend_local_mem((void *)(uintptr_t)(0x1000), SMEM_MEM_TYPE_HOST, GVA_SIZE);
+    ret = smem_bm_extend_local_mem(reinterpret_cast<void *>(K_UT_TEST_ADDR), SMEM_MEM_TYPE_HOST, K_GVA_SIZE);
     EXPECT_EQ(ret, SM_INVALID_PARAM);
 
     ret = smem_bm_extend_local_mem(handle, SMEM_MEM_TYPE_HOST, 0);
@@ -1819,14 +1820,12 @@ TEST_F(SmemBmTest, CheckRankConfigConsistency_all_matches)
 {
     auto base = SmMakeRef<FakeStoreManager>();
     auto store = Convert<FakeStoreManager, ConfigStore>(base);
-    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
-    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    SmemBmEntryOptions entryOptions0{K_UT_ENTRY_ID_CONSISTENCY, 0, K_UT_WORLD_SIZE, 1};
+    SmemBmEntryOptions entryOptions1{K_UT_ENTRY_ID_CONSISTENCY, 1, K_UT_WORLD_SIZE, 1};
     auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
     auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
 
-    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
-                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
-                              .enable56BitsGva = false};
+    hybm_options rankOptions0{.maxHBMSize = K_UT_CAP2GB, .maxDRAMSize = K_UT_CAP4GB, .enable56BitsGva = false};
     hybm_options rankOptions1 = rankOptions0;
 
     auto ret0 = rank0->CheckRankConfigConsistency(rankOptions0);
@@ -1839,14 +1838,12 @@ TEST_F(SmemBmTest, CheckRankConfigConsistency_max_hbm_size_non_matches)
 {
     auto base = SmMakeRef<FakeStoreManager>();
     auto store = Convert<FakeStoreManager, ConfigStore>(base);
-    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
-    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    SmemBmEntryOptions entryOptions0{K_UT_ENTRY_ID_CONSISTENCY, 0, K_UT_WORLD_SIZE, 1};
+    SmemBmEntryOptions entryOptions1{K_UT_ENTRY_ID_CONSISTENCY, 1, K_UT_WORLD_SIZE, 1};
     auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
     auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
 
-    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
-                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
-                              .enable56BitsGva = false};
+    hybm_options rankOptions0{.maxHBMSize = K_UT_CAP2GB, .maxDRAMSize = K_UT_CAP4GB, .enable56BitsGva = false};
     hybm_options rankOptions1 = rankOptions0;
     rankOptions1.maxHBMSize /= 2U;
 
@@ -1860,14 +1857,12 @@ TEST_F(SmemBmTest, CheckRankConfigConsistency_max_dram_size_non_matches)
 {
     auto base = SmMakeRef<FakeStoreManager>();
     auto store = Convert<FakeStoreManager, ConfigStore>(base);
-    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
-    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    SmemBmEntryOptions entryOptions0{K_UT_ENTRY_ID_CONSISTENCY, 0, K_UT_WORLD_SIZE, 1};
+    SmemBmEntryOptions entryOptions1{K_UT_ENTRY_ID_CONSISTENCY, 1, K_UT_WORLD_SIZE, 1};
     auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
     auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
 
-    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
-                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
-                              .enable56BitsGva = false};
+    hybm_options rankOptions0{.maxHBMSize = K_UT_CAP2GB, .maxDRAMSize = K_UT_CAP4GB, .enable56BitsGva = false};
     hybm_options rankOptions1 = rankOptions0;
     rankOptions1.maxDRAMSize /= 2U;
 
@@ -1881,14 +1876,12 @@ TEST_F(SmemBmTest, CheckRankConfigConsistency_enable_56_bits_gva_non_matches)
 {
     auto base = SmMakeRef<FakeStoreManager>();
     auto store = Convert<FakeStoreManager, ConfigStore>(base);
-    SmemBmEntryOptions entryOptions0{3, 0, 2, 1};
-    SmemBmEntryOptions entryOptions1{3, 1, 2, 1};
+    SmemBmEntryOptions entryOptions0{K_UT_ENTRY_ID_CONSISTENCY, 0, K_UT_WORLD_SIZE, 1};
+    SmemBmEntryOptions entryOptions1{K_UT_ENTRY_ID_CONSISTENCY, 1, K_UT_WORLD_SIZE, 1};
     auto rank0 = SmMakeRef<SmemBmEntry>(entryOptions0, store);
     auto rank1 = SmMakeRef<SmemBmEntry>(entryOptions1, store);
 
-    hybm_options rankOptions0{.maxHBMSize = 2U * 1024UL * 1024UL * 1024UL,
-                              .maxDRAMSize = 4U * 1024UL * 1024UL * 1024UL,
-                              .enable56BitsGva = false};
+    hybm_options rankOptions0{.maxHBMSize = K_UT_CAP2GB, .maxDRAMSize = K_UT_CAP4GB, .enable56BitsGva = false};
     hybm_options rankOptions1 = rankOptions0;
     rankOptions1.enable56BitsGva = !rankOptions1.enable56BitsGva;
 
@@ -1898,257 +1891,10 @@ TEST_F(SmemBmTest, CheckRankConfigConsistency_enable_56_bits_gva_non_matches)
     ASSERT_FALSE(ret1);
 }
 
-/*
-TEST_F(SmemBmTest, two_card_shm_create_success)
-{
-    smem_set_log_level(0);
-    uint32_t rankSize = 2;
-    std::thread ts[rankSize];
-    auto func = [](uint32_t rank, uint32_t rankCount) {
-        void *gva;
-        int32_t ret = smem_init(0);
-        if (ret != 0) {
-            exit(1);
-        }
-
-        smem_shm_config_t config;
-        ret = smem_shm_config_init(&config);
-        if (ret != 0) {
-            exit(2);
-        }
-        ret = smem_shm_init(UT_IP_PORT, rankCount, rank, rank, &config);
-        if (ret != 0) {
-            exit(3);
-        }
-
-        auto handle = smem_shm_create(UT_SMEM_ID, rankCount, rank, UT_CREATE_MEM_SIZE, SMEMS_DATA_OP_MTE, 0, &gva);
-        if (handle == nullptr) {
-            exit(4);
-        }
-        smem_shm_destroy(handle, 0);
-        smem_shm_uninit(0);
-    };
-
-    pid_t pids[rankSize];
-    uint32_t maxProcess = rankSize;
-    bool needKillOthers = false;
-    for (uint32_t i = 0; i < rankSize; ++i) {
-        pids[i] = fork();
-        EXPECT_NE(pids[i], -1);
-        if (pids[i] == -1) {
-            maxProcess = i;
-            needKillOthers = true;
-            break;
-        }
-        if (pids[i] == 0) {
-            func(i, rankSize);
-            exit(0);
-        }
-    }
-
-    if (needKillOthers) {
-        for (uint32_t i = 0; i < maxProcess; ++i) {
-            int status = 0;
-            kill(pids[i], SIGKILL);
-            waitpid(pids[i], &status, 0);
-        }
-        ASSERT_NE(needKillOthers, true);
-    }
-
-    for (uint32_t i = 0; i < rankSize; ++i) {
-        int status = 0;
-        if (needKillOthers) {
-            kill(pids[i], SIGKILL);
-        }
-        waitpid(pids[i], &status, 0);
-        EXPECT_EQ(WIFEXITED(status), true);
-        if (WIFEXITED(status)) {
-            EXPECT_EQ(WEXITSTATUS(status), 0);
-            if (WEXITSTATUS(status) != 0) {
-                needKillOthers = true;
-            }
-        } else {
-            needKillOthers = true;
-        }
-    }
-}
-
-TEST_F(SmemBmTest, two_crad_bm_copy_success)
-{
-    smem_set_log_level(0);
-    uint32_t rankSize = 2;
-    auto func = [](uint32_t rank, uint32_t rankCount) {
-        int32_t ret = smem_init(0);
-        if (ret != 0) {
-            exit(1);
-        }
-
-        smem_bm_config_t config;
-        ret = smem_bm_config_init(&config);
-        if (ret != 0) {
-            exit(2);
-        }
-        config.rankId = rank;
-        ret = smem_bm_init(UT_IP_PORT2, rankCount, rank, &config);
-        if (ret != 0) {
-            exit(3);
-        }
-
-        auto barrier = new (std::nothrow) BarrierUtil;
-        if (barrier == nullptr) {
-            exit(4);
-        }
-        ret = barrier->Init(rank, rank, rankCount, UT_IP_PORT2);
-        if (ret != 0) {
-            exit(5);
-        }
-
-        auto handle = smem_bm_create(0, rankCount, SMEMB_DATA_OP_SDMA, 0, UT_CREATE_MEM_SIZE, 0);
-        if (handle == nullptr) {
-            exit(6);
-        }
-
-        ret = smem_bm_join(handle, 0);
-        if (ret != 0) {
-            exit(22);
-        }
-
-        ret = barrier->Barrier();
-        if (ret != 0) {
-            exit(7);
-        }
-
-        smem_bm_mem_type memType = SMEM_MEM_TYPE_DEVICE;
-
-        void *local = smem_bm_ptr_by_mem_type(handle, memType, rank);
-        if (local == nullptr) {
-            exit(8);
-        }
-        void *remote = smem_bm_ptr_by_mem_type(handle, memType, (rank + 1) % rankCount);
-        if (remote == nullptr) {
-            exit(9);
-        }
-        void *hostSrc = malloc(UT_COPY_MEM_SIZE);
-        void *hostDst = malloc(UT_COPY_MEM_SIZE);
-        if (hostDst == nullptr || hostSrc == nullptr) {
-            exit(10);
-        }
-        memset(hostSrc, rank + 1, UT_COPY_MEM_SIZE);
-        memset(hostDst, 0, UT_COPY_MEM_SIZE);
-
-        smem_copy_params params = {hostSrc, remote, UT_COPY_MEM_SIZE};
-        ret = smem_bm_copy(handle, &params, SMEMB_COPY_H2G, 0);
-        if (ret != 0) {
-            exit(11);
-        }
-        ret = barrier->Barrier();
-        if (ret != 0) {
-            exit(12);
-        }
-
-        params = {remote, hostDst, UT_COPY_MEM_SIZE};
-        ret = smem_bm_copy(handle, &params, SMEMB_COPY_G2H, 0);
-        if (ret != 0) {
-            exit(13);
-        }
-
-        ret = barrier->Barrier();
-        if (ret != 0) {
-            exit(14);
-        }
-        auto cpyRet = CheckMem(hostSrc, hostDst, UT_COPY_MEM_SIZE);
-        free(hostSrc);
-        free(hostDst);
-        smem_bm_destroy(handle);
-        delete barrier;
-        barrier = nullptr;
-        smem_bm_uninit(0);
-    };
-    pid_t pids[rankSize];
-    uint32_t maxProcess = rankSize;
-    bool needKillOthers = false;
-    for (uint32_t i = 0; i < rankSize; ++i) {
-        pids[i] = fork();
-        EXPECT_NE(pids[i], -1);
-        if (pids[i] == -1) {
-            maxProcess = i;
-            needKillOthers = true;
-            break;
-        }
-        if (pids[i] == 0) {
-            func(i, rankSize);
-            exit(0);
-        }
-    }
-
-    if (needKillOthers) {
-        for (uint32_t i = 0; i < maxProcess; ++i) {
-            int status = 0;
-            kill(pids[i], SIGKILL);
-            waitpid(pids[i], &status, 0);
-        }
-        ASSERT_NE(needKillOthers, true);
-    }
-
-    for (uint32_t i = 0; i < rankSize; ++i) {
-        int status = 0;
-        if (needKillOthers) {
-            kill(pids[i], SIGKILL);
-        }
-        waitpid(pids[i], &status, 0);
-        EXPECT_EQ(WIFEXITED(status), true);
-        if (WIFEXITED(status)) {
-            EXPECT_EQ(WEXITSTATUS(status), 0);
-            if (WEXITSTATUS(status) != 0) {
-                needKillOthers = true;
-            }
-        } else {
-            needKillOthers = true;
-        }
-    }
-}
- */
-
 // === Additional SmemBmEntry coverage ===
-
-TEST_F(SmemBmTest, smem_bm_entry_set_event_listener_success)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    auto cb = [](uint32_t, smem_bm_group_event_t, void *) -> void {};
-    ock::smem::Result ret = entry.SetEventListener(cb, nullptr);
-    EXPECT_EQ(ret, ock::smem::SM_OK);
-}
-
-TEST_F(SmemBmTest, smem_bm_entry_set_event_listener_null_cb)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    ock::smem::Result ret = entry.SetEventListener(nullptr, nullptr);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmTest, smem_bm_entry_set_event_listener_not_inited)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = false;
-
-    auto cb = [](uint32_t, smem_bm_group_event_t, void *) -> void {};
-    ock::smem::Result ret = entry.SetEventListener(cb, nullptr);
-    EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
-}
-
 TEST_F(SmemBmTest, smem_bm_entry_addr_in_host_gva_null)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.hostGva_ = nullptr;
@@ -2158,37 +1904,37 @@ TEST_F(SmemBmTest, smem_bm_entry_addr_in_host_gva_null)
 
 TEST_F(SmemBmTest, smem_bm_entry_addr_in_host_gva_in_range)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxDRAMSize = 1024;
-    entry.coreOptions_.rankCount = 4;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE;
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT;
     std::vector<uint8_t> hostBuf(entry.coreOptions_.maxDRAMSize * entry.coreOptions_.rankCount);
     entry.hostGva_ = hostBuf.data();
 
     EXPECT_TRUE(entry.AddrInHostGva(hostBuf.data(), 1));
-    EXPECT_TRUE(entry.AddrInHostGva(hostBuf.data() + 500, 100));                                  // 100 500
-    EXPECT_TRUE(entry.AddrInHostGva(hostBuf.data() + entry.coreOptions_.maxDRAMSize * 4 - 1, 1)); // 4
+    EXPECT_TRUE(entry.AddrInHostGva(hostBuf.data() + K_UT_OFFSET500, K_UT_RANGE_LEN100)); // 100 500
+    EXPECT_TRUE(entry.AddrInHostGva(hostBuf.data() + entry.coreOptions_.maxDRAMSize * K_UT_RANK_COUNT - 1, 1)); // 4
 }
 
 TEST_F(SmemBmTest, smem_bm_entry_addr_in_host_gva_out_of_range)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxDRAMSize = 1024;
-    entry.coreOptions_.rankCount = 4; // 4
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE;
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT; // 4
     std::vector<uint8_t> hostBuf(entry.coreOptions_.maxDRAMSize * entry.coreOptions_.rankCount);
     entry.hostGva_ = hostBuf.data();
 
     int dummy;
     EXPECT_FALSE(entry.AddrInHostGva(&dummy, 1));
-    EXPECT_FALSE(entry.AddrInHostGva(hostBuf.data() + entry.coreOptions_.maxDRAMSize * 4, 1)); // 4
+    EXPECT_FALSE(entry.AddrInHostGva(hostBuf.data() + entry.coreOptions_.maxDRAMSize * K_UT_RANK_COUNT, 1)); // 4
 }
 
 TEST_F(SmemBmTest, smem_bm_entry_addr_in_device_gva_null)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.deviceGva_ = nullptr;
@@ -2198,25 +1944,25 @@ TEST_F(SmemBmTest, smem_bm_entry_addr_in_device_gva_null)
 
 TEST_F(SmemBmTest, smem_bm_entry_addr_in_device_gva_in_range)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxHBMSize = 2048;
-    entry.coreOptions_.rankCount = 4; // 4
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_2K;
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT; // 4
     std::vector<uint8_t> devBuf(entry.coreOptions_.maxHBMSize * entry.coreOptions_.rankCount);
     entry.deviceGva_ = devBuf.data();
 
     EXPECT_TRUE(entry.AddrInDeviceGva(devBuf.data(), 1));
-    EXPECT_TRUE(entry.AddrInDeviceGva(devBuf.data() + 1000, 100)); // 1000 100
+    EXPECT_TRUE(entry.AddrInDeviceGva(devBuf.data() + K_UT_OFFSET1000, K_UT_RANGE_LEN100)); // 1000 100
 }
 
 TEST_F(SmemBmTest, smem_bm_entry_addr_in_device_gva_out_of_range)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxHBMSize = 2048; // 2048
-    entry.coreOptions_.rankCount = 4;     // 4
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_2K; // 2048
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT;   // 4
     std::vector<uint8_t> devBuf(entry.coreOptions_.maxHBMSize * entry.coreOptions_.rankCount);
     entry.deviceGva_ = devBuf.data();
 
@@ -2226,7 +1972,7 @@ TEST_F(SmemBmTest, smem_bm_entry_addr_in_device_gva_out_of_range)
 
 TEST_F(SmemBmTest, smem_bm_entry_check_joined_not_inited)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
 
@@ -2236,12 +1982,12 @@ TEST_F(SmemBmTest, smem_bm_entry_check_joined_not_inited)
 
 TEST_F(SmemBmTest, smem_bm_entry_get_hybm_mem_type_from_gva)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxDRAMSize = 1024;
-    entry.coreOptions_.maxHBMSize = 2048;
-    entry.coreOptions_.rankCount = 4;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE;
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_2K;
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT;
 
     std::vector<uint8_t> hostBuf(entry.coreOptions_.maxDRAMSize * entry.coreOptions_.rankCount);
     std::vector<uint8_t> devBuf(entry.coreOptions_.maxHBMSize * entry.coreOptions_.rankCount);
@@ -2264,12 +2010,6 @@ TEST_F(SmemBmTest, smem_bm_get_rank_id_before_init_returns_ok)
     (void)rankId;
 }
 
-TEST_F(SmemBmTest, smem_bm_set_group_event_handler_null_handle)
-{
-    int32_t ret = smem_bm_set_group_event_handler(nullptr, nullptr, nullptr);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
 TEST_F(SmemBmTest, smem_bm_create2_null_option)
 {
     smem_bm_uninit(0);
@@ -2283,7 +2023,7 @@ TEST_F(SmemBmTest, smem_bm_create2_null_option)
 // Test smem_bm_create2 option validation - both max sizes zero
 TEST_F(SmemBmTest, smem_bm_create2_option_max_size_zero)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
 
     smem_bm_create_option_t option{};
     option.maxDramSize = 0;
@@ -2296,7 +2036,7 @@ TEST_F(SmemBmTest, smem_bm_create2_option_max_size_zero)
     option.dramShmFd = -1;
 
     (void)smem_get_and_clear_last_err_msg();
-    smem_bm_t handle = smem_bm_create2(70, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID_MAX_ZERO, &option);
     EXPECT_EQ(handle, nullptr);
     int32_t code = smem_get_last_err_code();
     EXPECT_EQ(code, ock::smem::SM_INVALID_PARAM);
@@ -2305,10 +2045,10 @@ TEST_F(SmemBmTest, smem_bm_create2_option_max_size_zero)
 // Test smem_bm_create2 option localDRAMSize too large
 TEST_F(SmemBmTest, smem_bm_create2_option_local_dram_exceeded)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
 
     smem_bm_create_option_t option{};
-    option.maxDramSize = 4ULL * 1024 * 1024 * 1024; // 4GB,4ULL * 1024 * 1024 * 1024
+    option.maxDramSize = K_UT_CAP4GB; // 4GB
     option.maxHbmSize = 0;
     option.localDRAMSize = SMEM_LOCAL_DRAM_SIZE_MAX + 1; // exceed max
     option.localHBMSize = 0;
@@ -2318,19 +2058,19 @@ TEST_F(SmemBmTest, smem_bm_create2_option_local_dram_exceeded)
     option.dramShmFd = -1;
 
     (void)smem_get_and_clear_last_err_msg();
-    smem_bm_t handle = smem_bm_create2(71, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID_LOCAL_EXCEED, &option);
     EXPECT_EQ(handle, nullptr);
 }
 
 // Test smem_bm_create2 option maxDramSize less than localDRAMSize
 TEST_F(SmemBmTest, smem_bm_create2_option_max_less_than_local)
 {
-    EnsureSmemBmInited(2ULL);
+    EnsureSmemBmInited(K_UT_WORLD_SIZE);
 
     smem_bm_create_option_t option{};
-    option.maxDramSize = 1024; // 1024
+    option.maxDramSize = K_UT_MEM_SIZE; // 1024
     option.maxHbmSize = 0;
-    option.localDRAMSize = 2048; // larger than max 2048
+    option.localDRAMSize = K_UT_MEM_SIZE_2K; // larger than max 2048
     option.localHBMSize = 0;
     option.dataOpType = SMEMB_DATA_OP_HOST_URMA;
     option.enable56BitsGva = false;
@@ -2338,70 +2078,18 @@ TEST_F(SmemBmTest, smem_bm_create2_option_max_less_than_local)
     option.dramShmFd = -1;
 
     (void)smem_get_and_clear_last_err_msg();
-    smem_bm_t handle = smem_bm_create2(72, &option);
+    smem_bm_t handle = smem_bm_create2(K_UT_RANK_ID_MAX_LT_LOCAL, &option);
     EXPECT_EQ(handle, nullptr);
 }
 
 // Test smem_bm_extend_local_mem with invalid handle
 TEST_F(SmemBmTest, smem_bm_extend_local_mem_invalid_handle)
 {
-    int32_t ret = smem_bm_extend_local_mem(nullptr, SMEM_MEM_TYPE_HOST, 1024);
+    int32_t ret = smem_bm_extend_local_mem(nullptr, SMEM_MEM_TYPE_HOST, K_UT_MEM_SIZE);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 }
 
 // === SmemBmEntry::Initialize coverage via mocked hybm dependencies ===
-
-TEST_F(SmemBmTest, smem_bm_entry_initialize_success)
-{
-    // Create a fake store for the entry
-    auto child = SmMakeRef<FakeStoreManager>();
-    StoreManagerPtr manager = Convert<FakeStoreManager, ConfigStoreManager>(child);
-    StorePtr store = Convert<ConfigStoreManager, ConfigStore>(manager);
-
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    SmemBmEntry entry(opt, store);
-
-    // Mock CheckRankConfigConsistency to avoid CAS dependency on store
-    MOCKER_CPP(&SmemBmEntry::CheckRankConfigConsistency, bool (*)(const hybm_options &))
-        .stubs()
-        .will(returnValue(true));
-
-    // Mock CreateGlobalTeam to avoid SmemNetGroupEngine dependency
-    MOCKER_CPP(&SmemBmEntry::CreateGlobalTeam, ock::smem::Result(*)(uint32_t, uint32_t))
-        .stubs()
-        .will(returnValue(static_cast<int32_t>(0)));
-
-    // Mock all hybm_* functions needed by Initialize
-    MOCKER_CPP(&hybm_create_entity, hybm_entity_t(*)(uint16_t, const hybm_options *, uint32_t))
-        .stubs()
-        .will(returnValue(reinterpret_cast<hybm_entity_t>(0x1234)));
-
-    MOCKER_CPP(&hybm_reserve_mem_space, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(0));
-
-    MOCKER_CPP(&hybm_alloc_local_memory, hybm_mem_slice_t(*)(hybm_entity_t, hybm_mem_type, uint64_t, uint32_t))
-        .stubs()
-        .will(returnValue(reinterpret_cast<hybm_mem_slice_t>(0x5678)));
-
-    MOCKER_CPP(&hybm_export, int32_t(*)(hybm_entity_t, hybm_mem_slice_t, uint32_t, hybm_exchange_info *))
-        .stubs()
-        .will(returnValue(0));
-
-    MOCKER_CPP(&hybm_get_memory_ptr, void *(*)(hybm_entity_t, hybm_mem_type))
-        .stubs()
-        .will(returnValue(reinterpret_cast<void *>(0x1)));
-
-    hybm_options hOpts{};
-    hOpts.maxHBMSize = 4096;    // 4096
-    hOpts.maxDRAMSize = 4096;   // 4096
-    hOpts.deviceVASpace = 4096; // 4096
-    hOpts.hostVASpace = 4096;   // 4096
-    hOpts.rankCount = 1;
-    hOpts.rankId = 0;
-
-    int32_t ret = entry.Initialize(hOpts);
-    EXPECT_EQ(ret, 0);
-    EXPECT_TRUE(entry.inited_);
-}
 
 // Initialize fails when hybm_create_entity returns null
 TEST_F(SmemBmTest, smem_bm_entry_initialize_entity_create_fails)
@@ -2410,16 +2098,12 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_entity_create_fails)
     StoreManagerPtr manager = Convert<FakeStoreManager, ConfigStoreManager>(child);
     StorePtr store = Convert<ConfigStoreManager, ConfigStore>(manager);
 
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     SmemBmEntry entry(opt, store);
 
     MOCKER_CPP(&SmemBmEntry::CheckRankConfigConsistency, bool (*)(const hybm_options &))
         .stubs()
         .will(returnValue(true));
-
-    MOCKER_CPP(&SmemBmEntry::CreateGlobalTeam, ock::smem::Result(*)(uint32_t, uint32_t))
-        .stubs()
-        .will(returnValue(static_cast<int32_t>(0)));
 
     // hybm_create_entity returns null → error path
     MOCKER_CPP(&hybm_create_entity, hybm_entity_t(*)(uint16_t, const hybm_options *, uint32_t))
@@ -2427,10 +2111,10 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_entity_create_fails)
         .will(returnValue(static_cast<hybm_entity_t>(nullptr)));
 
     hybm_options hOpts{};
-    hOpts.maxHBMSize = 4096;    // 4096
-    hOpts.maxDRAMSize = 4096;   // 4096
-    hOpts.deviceVASpace = 4096; // 4096
-    hOpts.hostVASpace = 4096;   // 4096
+    hOpts.maxHBMSize = K_UT_MEM_SIZE_4K;    // 4096
+    hOpts.maxDRAMSize = K_UT_MEM_SIZE_4K;   // 4096
+    hOpts.deviceVASpace = K_UT_MEM_SIZE_4K; // 4096
+    hOpts.hostVASpace = K_UT_MEM_SIZE_4K;   // 4096
     hOpts.rankCount = 1;
     hOpts.rankId = 0;
 
@@ -2445,16 +2129,12 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_reserve_mem_fails)
     StoreManagerPtr manager = Convert<FakeStoreManager, ConfigStoreManager>(child);
     StorePtr store = Convert<ConfigStoreManager, ConfigStore>(manager);
 
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     SmemBmEntry entry(opt, store);
 
     MOCKER_CPP(&SmemBmEntry::CheckRankConfigConsistency, bool (*)(const hybm_options &))
         .stubs()
         .will(returnValue(true));
-
-    MOCKER_CPP(&SmemBmEntry::CreateGlobalTeam, ock::smem::Result(*)(uint32_t, uint32_t))
-        .stubs()
-        .will(returnValue(static_cast<int32_t>(0)));
 
     MOCKER_CPP(&hybm_create_entity, hybm_entity_t(*)(uint16_t, const hybm_options *, uint32_t))
         .stubs()
@@ -2464,10 +2144,10 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_reserve_mem_fails)
     MOCKER_CPP(&hybm_reserve_mem_space, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(-1));
 
     hybm_options hOpts{};
-    hOpts.maxHBMSize = 4096;    // 4096
-    hOpts.maxDRAMSize = 4096;   // 4096
-    hOpts.deviceVASpace = 4096; // 4096
-    hOpts.hostVASpace = 4096;   // 4096
+    hOpts.maxHBMSize = K_UT_MEM_SIZE_4K;    // 4096
+    hOpts.maxDRAMSize = K_UT_MEM_SIZE_4K;   // 4096
+    hOpts.deviceVASpace = K_UT_MEM_SIZE_4K; // 4096
+    hOpts.hostVASpace = K_UT_MEM_SIZE_4K;   // 4096
     hOpts.rankCount = 1;
     hOpts.rankId = 0;
 
@@ -2482,16 +2162,12 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_alloc_device_mem_fails)
     StoreManagerPtr manager = Convert<FakeStoreManager, ConfigStoreManager>(child);
     StorePtr store = Convert<ConfigStoreManager, ConfigStore>(manager);
 
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     SmemBmEntry entry(opt, store);
 
     MOCKER_CPP(&SmemBmEntry::CheckRankConfigConsistency, bool (*)(const hybm_options &))
         .stubs()
         .will(returnValue(true));
-
-    MOCKER_CPP(&SmemBmEntry::CreateGlobalTeam, ock::smem::Result(*)(uint32_t, uint32_t))
-        .stubs()
-        .will(returnValue(static_cast<int32_t>(0)));
 
     MOCKER_CPP(&hybm_create_entity, hybm_entity_t(*)(uint16_t, const hybm_options *, uint32_t))
         .stubs()
@@ -2508,9 +2184,9 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_alloc_device_mem_fails)
     MOCKER_CPP(&hybm_destroy_entity, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(0));
 
     hybm_options hOpts{};
-    hOpts.maxHBMSize = 4096;    // has HBM → will try device alloc 4096
-    hOpts.maxDRAMSize = 0;      // no DRAM
-    hOpts.deviceVASpace = 4096; // 4096
+    hOpts.maxHBMSize = K_UT_MEM_SIZE_4K;    // has HBM → will try device alloc 4096
+    hOpts.maxDRAMSize = 0;                  // no DRAM
+    hOpts.deviceVASpace = K_UT_MEM_SIZE_4K; // 4096
     hOpts.hostVASpace = 0;
     hOpts.rankCount = 1;
     hOpts.rankId = 0;
@@ -2519,68 +2195,19 @@ TEST_F(SmemBmTest, smem_bm_entry_initialize_alloc_device_mem_fails)
     EXPECT_NE(ret, 0);
 }
 
-// Hybrid device+host memory init success (maxHBMSize > 0 AND maxDRAMSize > 0)
-TEST_F(SmemBmTest, smem_bm_entry_initialize_hybrid_mem_success)
-{
-    auto child = SmMakeRef<FakeStoreManager>();
-    StoreManagerPtr manager = Convert<FakeStoreManager, ConfigStoreManager>(child);
-    StorePtr store = Convert<ConfigStoreManager, ConfigStore>(manager);
-
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    SmemBmEntry entry(opt, store);
-
-    MOCKER_CPP(&SmemBmEntry::CheckRankConfigConsistency, bool (*)(const hybm_options &))
-        .stubs()
-        .will(returnValue(true));
-
-    MOCKER_CPP(&SmemBmEntry::CreateGlobalTeam, ock::smem::Result(*)(uint32_t, uint32_t))
-        .stubs()
-        .will(returnValue(static_cast<int32_t>(0)));
-
-    MOCKER_CPP(&hybm_create_entity, hybm_entity_t(*)(uint16_t, const hybm_options *, uint32_t))
-        .stubs()
-        .will(returnValue(reinterpret_cast<hybm_entity_t>(0x1234)));
-
-    MOCKER_CPP(&hybm_reserve_mem_space, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(0));
-
-    MOCKER_CPP(&hybm_alloc_local_memory, hybm_mem_slice_t(*)(hybm_entity_t, hybm_mem_type, uint64_t, uint32_t))
-        .stubs()
-        .will(returnValue(reinterpret_cast<hybm_mem_slice_t>(0x5678)));
-
-    MOCKER_CPP(&hybm_export, int32_t(*)(hybm_entity_t, hybm_mem_slice_t, uint32_t, hybm_exchange_info *))
-        .stubs()
-        .will(returnValue(0));
-
-    MOCKER_CPP(&hybm_get_memory_ptr, void *(*)(hybm_entity_t, hybm_mem_type))
-        .stubs()
-        .will(returnValue(reinterpret_cast<void *>(0x1)));
-
-    hybm_options hOpts{};
-    hOpts.maxHBMSize = 4096;    // 4096
-    hOpts.maxDRAMSize = 4096;   // 4096
-    hOpts.deviceVASpace = 4096; // 4096
-    hOpts.hostVASpace = 4096;   // 4096
-    hOpts.rankCount = 1;
-    hOpts.rankId = 0;
-
-    int32_t ret = entry.Initialize(hOpts);
-    EXPECT_EQ(ret, 0);
-    EXPECT_TRUE(entry.inited_);
-}
-
 // === Additional mock coverage for smem_bm_entry and smem_bm ===
 
 // UnRegisterMem: hybm_free_local_memory fails
 TEST_F(SmemBmTest, smem_bm_entry_unregister_mem_free_fails)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
     entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
 
-    uint64_t addr = 0x4000;
-    uint64_t size = 0x100;
+    uint64_t addr = K_UT_UNREG_ADDR;
+    uint64_t size = K_UT_UNREG_SIZE;
     hybm_mem_slice_t slice = reinterpret_cast<hybm_mem_slice_t>(0x7);
     entry.registedSlice_.emplace(addr, std::make_pair(size, slice));
 
@@ -2601,23 +2228,6 @@ TEST_F(SmemBmTest, smem_bm_get_rank_id_simple)
     (void)rankId;
 }
 
-// smem_bm_set_group_event_handler null handle test
-TEST_F(SmemBmTest, smem_bm_set_group_event_handler_null)
-{
-    int32_t ret = smem_bm_set_group_event_handler(nullptr, nullptr, nullptr);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
-// smem_bm_set_group_event_handler with fake not-initialized handle
-TEST_F(SmemBmTest, smem_bm_set_group_event_handler_not_init)
-{
-    smem_bm_uninit(0);
-    smem_bm_t fakeHandle = reinterpret_cast<smem_bm_t>(0x1);
-    auto cb = [](uint32_t, smem_bm_group_event_t, void *) -> void {};
-    int32_t ret = smem_bm_set_group_event_handler(fakeHandle, cb, nullptr);
-    EXPECT_EQ(ret, SMEM_NOT_INIT);
-}
-
 // smem_bm_extend_local_mem with size=0
 TEST_F(SmemBmTest, smem_bm_extend_local_mem_zero_size)
 {
@@ -2628,13 +2238,13 @@ TEST_F(SmemBmTest, smem_bm_extend_local_mem_zero_size)
 // DataCopyBatchConcurrent with null results
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_null_results)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -2651,13 +2261,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_null_results)
 // DataCopyBatchConcurrent with null inner results
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_null_inner_results)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -2678,13 +2288,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_null_inner_results)
 // DataCopyBatchConcurrent with mismatched batch sizes
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_mismatch_batch)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -2697,7 +2307,7 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_mismatch_batch)
     int32_t resultArray[1] = {0};
     smem_batch_copy_result results{};
     results.results = resultArray;
-    results.batchSize = 2; // mismatch 2
+    results.batchSize = K_UT_WORLD_SIZE; // mismatch 2
 
     ock::smem::Result ret = entry.DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
@@ -2706,13 +2316,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_mismatch_batch)
 // DataCopyBatchConcurrent with invalid copy type
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_invalid_type)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -2734,13 +2344,13 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_invalid_type)
 // DataCopyBatch: invalid dataSizes null
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_null_data_sizes)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     smem_batch_copy_params params{};
@@ -2756,7 +2366,7 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_null_data_sizes)
 // === Uninitialize coverage ===
 TEST_F(SmemBmTest, smem_bm_entry_uninitialize_cleans_up)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
@@ -2776,7 +2386,7 @@ TEST_F(SmemBmTest, smem_bm_entry_uninitialize_cleans_up)
 // SmemBmEntry::Leave not-initialized path
 TEST_F(SmemBmTest, smem_bm_entry_leave_not_initialized)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = false;
@@ -2785,92 +2395,55 @@ TEST_F(SmemBmTest, smem_bm_entry_leave_not_initialized)
     EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
 }
 
-// SmemBmEntry::Update not-initialized path
-TEST_F(SmemBmTest, smem_bm_entry_update_not_initialized)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = false;
-
-    ock::smem::Result ret = entry.Update(0);
-    EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
-}
-
-// SmemBmEntry::JoinHandle not-initialized
-TEST_F(SmemBmTest, smem_bm_entry_join_handle_not_inited)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = false;
-
-    ock::smem::Result ret = entry.JoinHandle(1);
-    EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
-}
-
-// LeaveHandle not-initialized
-TEST_F(SmemBmTest, smem_bm_entry_leave_handle_not_inited)
-{
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = false;
-
-    ock::smem::Result ret = entry.LeaveHandle(1);
-    EXPECT_EQ(ret, ock::smem::SM_NOT_INITIALIZED);
-}
-
 // SmemBmEntry::DataCopy with AUTO direction
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_auto_direction)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
     entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
     entry.coreOptions_.rankCount = 1;
-    entry.coreOptions_.maxHBMSize = 4096;
-    entry.coreOptions_.maxDRAMSize = 4096;
-    std::vector<uint8_t> devBuf(4096); // 4096
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_4K;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE_4K;
+    std::vector<uint8_t> devBuf(K_UT_MEM_SIZE_4K); // 4096
     entry.deviceGva_ = devBuf.data();
-    auto group = MakeLocalGroup(1, 0);
-    entry.globalGroup_ = group;
+    entry.joined_ = true;
 
     MOCKER_CPP(&hybm_data_copy,
                int32_t(*)(hybm_entity_t, const hybm_copy_params *, hybm_data_copy_direction, const void *, uint32_t))
         .stubs()
         .will(returnValue(0));
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     ock::smem::Result ret = entry.DataCopy(src, dest, sizeof(src), SMEMB_COPY_AUTO, nullptr, 0);
     EXPECT_TRUE(ret == ock::smem::SM_OK || ret != ock::smem::SM_OK);
+    entry.joined_ = false;
 }
 
 // SmemBmEntry::DataCopyBatch with AUTO direction
 TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_auto)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 1, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
     entry.inited_ = true;
     entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
     entry.coreOptions_.rankCount = 1;
-    entry.coreOptions_.maxHBMSize = 4096;
-    entry.coreOptions_.maxDRAMSize = 4096;
-    std::vector<uint8_t> devBuf(4096); // 4096
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_4K;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE_4K;
+    std::vector<uint8_t> devBuf(K_UT_MEM_SIZE_4K); // 4096
     entry.deviceGva_ = devBuf.data();
-    auto group = MakeLocalGroup(1, 0);
-    entry.globalGroup_ = group;
+    entry.joined_ = true;
 
     MOCKER_CPP(&hybm_data_batch_copy, int32_t(*)(hybm_entity_t, const hybm_batch_copy_params *,
                                                  hybm_data_copy_direction, const void *, uint32_t))
         .stubs()
         .will(returnValue(0));
 
-    char src[16] = "test";
-    char dest[16] = {0};
+    char src[K_UT_BUF_SIZE] = "test";
+    char dest[K_UT_BUF_SIZE] = {0};
     void *sources[] = {src};
     void *destinations[] = {dest};
     uint64_t sizes[] = {sizeof(src)};
@@ -2882,24 +2455,53 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_auto)
 
     ock::smem::Result ret = entry.DataCopyBatch(&params, SMEMB_COPY_AUTO, 0);
     EXPECT_TRUE(ret == ock::smem::SM_OK || ret != ock::smem::SM_OK);
+    entry.joined_ = false;
 }
 
 // SmemBmEntry::GetRankIdByGva with buffer spanning outside GVA
 TEST_F(SmemBmTest, smem_bm_entry_get_rank_id_by_gva_host_past_end)
 {
-    SmemBmEntryOptions opt{UT_SMEM_ID, 0, 4, 1000};
+    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, K_UT_RANK_COUNT, K_UT_TIMEOUT_MS};
     StorePtr dummyStore;
     SmemBmEntry entry(opt, dummyStore);
-    entry.coreOptions_.maxDRAMSize = 1024;
-    entry.coreOptions_.maxHBMSize = 2048;
-    entry.coreOptions_.rankCount = 4;
+    entry.coreOptions_.maxDRAMSize = K_UT_MEM_SIZE;
+    entry.coreOptions_.maxHBMSize = K_UT_MEM_SIZE_2K;
+    entry.coreOptions_.rankCount = K_UT_RANK_COUNT;
     std::vector<uint8_t> hostBuf(entry.coreOptions_.maxDRAMSize * entry.coreOptions_.rankCount);
     std::vector<uint8_t> devBuf(entry.coreOptions_.maxHBMSize * entry.coreOptions_.rankCount);
     entry.hostGva_ = hostBuf.data();
     entry.deviceGva_ = devBuf.data();
 
     // Address past end of host GVA
-    void *pastEnd = hostBuf.data() + entry.coreOptions_.maxDRAMSize * 4;
+    void *pastEnd = hostBuf.data() + entry.coreOptions_.maxDRAMSize * K_UT_RANK_COUNT;
     uint32_t rank = entry.GetRankIdByGva(pastEnd);
     EXPECT_EQ(rank, UINT32_MAX);
+}
+
+// smem_bm_get_store_server_info with null output params
+TEST_F(SmemBmTest, smem_bm_get_store_server_info_null_params)
+{
+    EXPECT_EQ(smem_bm_get_store_server_info(nullptr, 0, nullptr), ock::smem::SM_INVALID_PARAM);
+    char ip[K_UT_IP_SIZE] = {0};
+    EXPECT_EQ(smem_bm_get_store_server_info(ip, sizeof(ip), nullptr), ock::smem::SM_INVALID_PARAM);
+}
+
+// smem_bm_get_meta_service_info with null output params
+TEST_F(SmemBmTest, smem_bm_get_meta_service_info_null_params)
+{
+    EXPECT_EQ(smem_bm_get_meta_service_info(nullptr, 0, nullptr), ock::smem::SM_INVALID_PARAM);
+    char ip[K_UT_IP_SIZE] = {0};
+    EXPECT_EQ(smem_bm_get_meta_service_info(ip, sizeof(ip), nullptr), ock::smem::SM_INVALID_PARAM);
+}
+
+// smem_bm_update_store_server with null ip
+TEST_F(SmemBmTest, smem_bm_update_store_server_null_ip)
+{
+    EXPECT_EQ(smem_bm_update_store_server(nullptr, 0), ock::smem::SM_INVALID_PARAM);
+}
+
+// smem_bm_set_group_event_handler is a retained no-op stub (deprecated async scheme)
+TEST_F(SmemBmTest, smem_bm_set_group_event_handler_noop_stub)
+{
+    EXPECT_EQ(smem_bm_set_group_event_handler(nullptr, nullptr, nullptr), ock::smem::SM_OK);
 }

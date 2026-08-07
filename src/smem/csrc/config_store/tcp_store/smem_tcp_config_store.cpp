@@ -13,6 +13,7 @@
 #include "smem_tcp_config_store.h"
 #include "smem_config_store_logger.h"
 #include "smem_message_packer.h"
+#include "smem_group_manager_client.h"
 #include "smem_tcp_config_store_ssl_helper.h"
 #include "mf_str_util.h"
 
@@ -21,6 +22,9 @@ namespace smem {
 constexpr auto CONNECT_RETRY_MAX_TIMES = 60;
 constexpr int DECIMAL_BASE = 10;
 constexpr int WORLD_SIZE_SHIFT = 32;
+constexpr uint32_t LINK_SEND_QUEUE_SIZE = 4096;
+// requestId layout: high 32 bits carry the rank id, low 32 bits carry the message sequence
+constexpr uint32_t REQUEST_ID_RANK_SHIFT = 32;
 
 class ClientWaitContext : public ClientCommonContext {
 public:
@@ -30,8 +34,12 @@ public:
 
     std::shared_ptr<ock::acc::AccTcpRequestContext> WaitFinished() noexcept override
     {
+        constexpr auto WAIT_TIMEOUT = std::chrono::seconds(600);
         std::unique_lock<std::mutex> locker{waitMutex_};
-        waitCond_.wait(locker, [this]() { return finished_; });
+        if (!waitCond_.wait_for(locker, WAIT_TIMEOUT, [this]() { return finished_; })) {
+            STORE_LOG_ERROR("ClientWaitContext::WaitFinished timeout after 600s");
+            return nullptr;
+        }
         auto copy = responseInfo_;
         locker.unlock();
 
@@ -134,15 +142,161 @@ private:
 };
 
 std::atomic<uint32_t> TcpConfigStore::reqSeqGen_{0};
+static std::atomic<uint32_t> g_clientMsgSeq{0};
+
 TcpConfigStore::TcpConfigStore(StoreBackendPtr backend, std::string ip, uint16_t port, uint16_t model, bool skipRecover,
-                               uint32_t worldSize, int32_t rankId) noexcept
-    : serverIp_{std::move(ip)}, serverPort_{port}, startupModel_{model}, skipRecover_{skipRecover}, rankId_{rankId},
-      worldSize_{worldSize}, backend_(std::move(backend))
-{}
+                               uint32_t worldSize, int32_t rankId, SmemGroupManagerClientPtr tc) noexcept
+    : SmemGroupManager(), serverIp_{std::move(ip)}, serverPort_{port}, startupModel_{model}, skipRecover_{skipRecover},
+      rankId_{rankId}, worldSize_{worldSize}, backend_(std::move(backend))
+{
+    if (tc.Get() != nullptr) {
+        SetExecutor(std::move(tc));
+    } else {
+        SetExecutor(new SmemGroupManagerClient());
+    }
+    if (rankId >= 0) {
+        SetLocalRankId(static_cast<uint32_t>(rankId));
+        InitAsyncDispatcher(static_cast<uint32_t>(rankId));
+    } else {
+        SetLocalRankId(UINT32_MAX);
+    }
+}
 
 TcpConfigStore::~TcpConfigStore() noexcept
 {
     Shutdown();
+}
+
+int TcpConfigStore::Join(const RankFullInfo &info) noexcept
+{
+    STORE_LOG_INFO("TcpConfigStore.Join: info=" << info);
+    localRankInfo_ = info;
+    SmemMessage request = SmemMessage::PackJoin(info);
+    request.requestId = (static_cast<uint64_t>(info.rankId + 1) << REQUEST_ID_RANK_SHIFT) | g_clientMsgSeq.fetch_add(1);
+    auto packedRequest = SmemMessagePacker::Pack(request);
+    auto response = SendMessageBlocked(packedRequest);
+    if (response == nullptr) {
+        STORE_LOG_ERROR("Join: send join request failed, get null response");
+        return -1;
+    }
+
+    auto responseCode = response->Header().result;
+    if (responseCode != 0) {
+        STORE_LOG_ERROR("Join: send join request failed, response code: " << responseCode);
+        return responseCode;
+    }
+
+    return 0;
+}
+
+int TcpConfigStore::ExtendMemory(const MultiBytes &additionalSlices) noexcept
+{
+    STORE_LOG_INFO("TcpConfigStore.ExtendMemory: rankId=" << localRankId_
+                                                          << " additionalSlices=" << additionalSlices.size());
+    SmemMessage request = SmemMessage::PackExtendMemory(localRankId_, additionalSlices);
+    request.requestId =
+        (static_cast<uint64_t>(localRankId_ + 1) << REQUEST_ID_RANK_SHIFT) | g_clientMsgSeq.fetch_add(1);
+    auto packedRequest = SmemMessagePacker::Pack(request);
+    auto response = SendMessageBlocked(packedRequest);
+    if (response == nullptr) {
+        STORE_LOG_ERROR("ExtendMemory: send request failed, get null response");
+        return -1;
+    }
+    auto responseCode = response->Header().result;
+    if (responseCode != 0) {
+        STORE_LOG_ERROR("ExtendMemory: request failed, response code: " << responseCode);
+        return responseCode;
+    }
+    return 0;
+}
+
+int TcpConfigStore::Leave() noexcept
+{
+    SmemMessage request = SmemMessage::PackLeave(localRankId_);
+    request.requestId =
+        (static_cast<uint64_t>(localRankId_ + 1) << REQUEST_ID_RANK_SHIFT) | g_clientMsgSeq.fetch_add(1);
+    STORE_LOG_DEBUG("Leave: sending LEAVREQ rank=" << localRankId_ << " reqId=" << request.requestId);
+    auto packedRequest = SmemMessagePacker::Pack(request);
+    auto response = SendMessageBlocked(packedRequest);
+    if (response == nullptr) {
+        STORE_LOG_ERROR("Leave: send leave request failed, get null response");
+        return -1;
+    }
+
+    auto responseCode = response->Header().result;
+    if (responseCode != 0) {
+        STORE_LOG_ERROR("Leave: send leave request failed, response code: " << responseCode);
+        return responseCode;
+    }
+    STORE_LOG_INFO("rank=" << localRankId_ << " Leave success");
+
+    return 0;
+}
+
+void TcpConfigStore::InitAsyncDispatcher(uint32_t localRankId) noexcept
+{
+    auto *groupMgr = dynamic_cast<SmemGroupManager *>(this);
+    if (groupMgr == nullptr) {
+        STORE_LOG_ERROR("InitAsyncDispatcher: failed to cast to SmemGroupManager");
+        return;
+    }
+    asyncDispatcher_ = std::make_unique<SmemGroupCommandAsyncDispatcher>(groupMgr);
+    asyncDispatcher_->SetLocalRankId(localRankId);
+    asyncDispatcher_->SetSendAckBatchFunc(
+        [this](ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
+               const std::vector<int32_t> &results,
+               uint64_t requestId) { SendControlAckBatch(ackOp, senderRankId, targetRankIds, results, requestId); });
+    if (!asyncDispatcher_->Start()) {
+        STORE_LOG_ERROR("InitAsyncDispatcher: failed to start async manager");
+        asyncDispatcher_.reset();
+    }
+}
+
+void TcpConfigStore::SendControlAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept
+{
+    static const char *ackTag[] = {"ADDWACK", "REMWACK", "ESTCACK", "CLSCACK"};
+    auto tag = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_CLOSE_CONNECTION_ACK)
+                   ? ackTag[ackOp - CONTROL_ADD_TO_WHITELIST_ACK]
+                   : "??????";
+    SmemMessage ackMsg = SmemMessage::PackAck(ackOp, senderRankId, targetRankId);
+    ackMsg.requestId = (static_cast<uint64_t>(senderRankId + 1) << REQUEST_ID_RANK_SHIFT) | g_clientMsgSeq.fetch_add(1);
+    auto packed = SmemMessagePacker::Pack(ackMsg);
+    auto buf = ock::acc::AccDataBuffer::Create(packed.data(), packed.size());
+    if (buf != nullptr && accClientLink_ != nullptr) {
+        int ackRet = LocalNonBlockSend(0, 0, buf, nullptr);
+        if (ackRet != 0) {
+            STORE_LOG_WARN("[GM][Client][Ack] rank=" << localRankId_ << " type=" << tag << " tgt=" << targetRankId
+                                                     << " fail: " << ackRet);
+        } else {
+            STORE_LOG_INFO("[GM][Client][Ack] rank=" << localRankId_ << " type=" << tag << " tgt=" << targetRankId
+                                                     << " ok");
+        }
+    }
+}
+
+void TcpConfigStore::SendControlAckBatch(ControlOp ackOp, uint32_t senderRankId,
+                                         const std::vector<uint32_t> &targetRankIds,
+                                         const std::vector<int32_t> &results, uint64_t requestId) noexcept
+{
+    static const char *typeTag[] = {"ADDWACK", "REMWACK", "ESTCACK", "CLSCACK"};
+    auto idx = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_CLOSE_CONNECTION_ACK)
+                   ? (ackOp - CONTROL_ADD_TO_WHITELIST_ACK)
+                   : -1;
+    const char *typeName = (idx >= 0) ? typeTag[idx] : "?";
+    SmemMessage ackMsg = SmemMessage::PackAckBatch(ackOp, senderRankId, targetRankIds, results);
+    ackMsg.requestId = requestId;
+    auto packed = SmemMessagePacker::Pack(ackMsg);
+    auto buf = ock::acc::AccDataBuffer::Create(packed.data(), packed.size());
+    if (buf != nullptr && accClientLink_ != nullptr) {
+        int ackRet = LocalNonBlockSend(0, 0, buf, nullptr);
+        if (ackRet != 0) {
+            STORE_LOG_WARN("[GM][Client][Ack] rank=" << localRankId_ << " type=" << typeName << " reqId=" << requestId
+                                                     << " cnt=" << targetRankIds.size() << " fail: " << ackRet);
+        } else {
+            STORE_LOG_INFO("[GM][Client][Ack] rank=" << localRankId_ << " type=" << typeName << " reqId=" << requestId
+                                                     << " cnt=" << targetRankIds.size() << " ok");
+        }
+    }
 }
 
 Result TcpConfigStore::Startup(const smem_tls_config &tlsConfig, int reconnectRetryTimes) noexcept
@@ -195,7 +349,7 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
         [this](const ock::acc::AccTcpLinkComplexPtr &link) { return LinkBrokenHandler(link); });
 
     ock::acc::AccTcpServerOptions options;
-    options.linkSendQueueSize = ock::acc::UNO_48;
+    options.linkSendQueueSize = LINK_SEND_QUEUE_SIZE;
     if ((result = accClient_->Start(options, GetAccTlsOption(tlsConfig))) != SM_OK) {
         STORE_LOG_ERROR("start acc client failed, result: " << result);
         Shutdown();
@@ -215,6 +369,7 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
         return result;
     }
     isRunning_.store(true);
+    clientStarted_ = true;
     heartBeatThread_ = std::thread{[this]() { HeartBeat(); }};
     return result;
 }
@@ -235,6 +390,7 @@ Result TcpConfigStore::ServerStart(const smem_tls_config &tlsConfig, int reconne
         Shutdown();
         return result;
     }
+    clientStarted_ = true;
     return result;
 }
 
@@ -260,6 +416,7 @@ void TcpConfigStore::Shutdown(bool afterFork) noexcept
         accServer_->Shutdown(afterFork);
         accServer_ = nullptr;
     }
+    clientStarted_ = false;
 }
 
 Result TcpConfigStore::PrefixGet(const std::string &key, std::unordered_map<std::string, std::string> &value) noexcept
@@ -355,7 +512,7 @@ Result TcpConfigStore::GetReal(const std::string &key, std::vector<uint8_t> &val
     auto responseCode = response->Header().result;
     if (responseCode != 0 && responseCode != RESTORE) {
         if (responseCode != NOT_EXIST) {
-            STORE_LOG_DEBUG("send get for key: " << key << ", resp code: " << responseCode << " timeout:" << timeoutMs);
+            STORE_LOG_WARN("send get for key: " << key << ", resp code: " << responseCode << " timeout:" << timeoutMs);
         }
         return responseCode;
     }
@@ -627,12 +784,12 @@ Result TcpConfigStore::Watch(WatchRankType type, const std::function<void(WatchR
         packedRequest,
         [notify](int res, const std::vector<uint8_t> &value) {
             if (res == SM_OK && value.size() == sizeof(uint32_t)) {
-                notify(WATCH_RANK_LINK_DOWN, *(const uint32_t *)(const void *)value.data());
+                notify(WATCH_RANK_LINK_DOWN, *static_cast<const uint32_t *>(static_cast<const void *>(value.data())));
             }
         },
         wid, WATCH_RANK_DOWN_KEY);
     if (ret != SM_OK) {
-        STORE_LOG_ERROR("send watch for rank down failed, ret: " << ret);
+        STORE_LOG_ERROR("send watch for rank down get null response");
         return ret;
     }
 
@@ -699,32 +856,57 @@ TcpConfigStore::SendMessageBlocked(const std::vector<uint8_t> &reqBody) noexcept
     return response;
 }
 
+Result TcpConfigStore::SendMessageNonBlock(const std::vector<uint8_t> &reqBody) noexcept
+{
+    STORE_ASSERT_RETURN(accClientLink_ != nullptr, SM_ERROR);
+    auto seqNo = reqSeqGen_.fetch_add(1U);
+    auto dataBuf = ock::acc::AccDataBuffer::Create(reqBody.data(), reqBody.size());
+    auto ret = LocalNonBlockSend(0, seqNo, dataBuf, nullptr);
+    return ret;
+}
+
 void TcpConfigStore::SetRankId(const int32_t &rankId) noexcept
 {
     rankId_ = rankId;
+    if (rankId >= 0) {
+        SetLocalRankId(static_cast<uint32_t>(rankId));
+        if (asyncDispatcher_ == nullptr) {
+            InitAsyncDispatcher(static_cast<uint32_t>(rankId));
+        }
+    } else {
+        SetLocalRankId(UINT32_MAX);
+    }
     STORE_LOG_INFO("Set rankId: " << rankId_);
 }
 
 Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
 {
     auto retryMaxTimes = reconnectRetryTimes < 0 ? CONNECT_RETRY_MAX_TIMES : reconnectRetryTimes;
+    constexpr int maxBackoffMs = 30000;
+    constexpr int backoffMultiplier = 2;
     ock::acc::AccConnReq connReq;
     connReq.reconnect = 1; // reconnection
     connReq.rankId =
         rankId_ >= 0 ? ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | static_cast<uint64_t>(rankId_))
                      : ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | std::numeric_limits<uint32_t>::max());
-    auto result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, retryMaxTimes, accClientLink_);
-    if (result != 0) {
-        STORE_LOG_ERROR_LIMIT("Reconnect to server failed, ip: " << serverIp_ << " port: " << serverPort_
-                                                                 << " result: " << result);
-        return result;
+    int backoff = 1000; // start at 1s
+    for (int i = 0; i < retryMaxTimes; ++i) {
+        auto result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, 1, accClientLink_);
+        if (result == 0) {
+            STORE_LOG_INFO("Reconnect to server successful, rankId: " << rankId_);
+            if (reconnectHandler) {
+                (void)reconnectHandler();
+            }
+            SetConnectStatus(true);
+            return SM_OK;
+        }
+        if (i + 1 < retryMaxTimes) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoff));
+            backoff = std::min(backoff * backoffMultiplier, maxBackoffMs);
+        }
     }
-    STORE_LOG_INFO("Reconnect to server successful, rankId: " << rankId_);
-    if (reconnectHandler) {
-        (void)reconnectHandler();
-    }
-    SetConnectStatus(true);
-    return SM_OK;
+    STORE_LOG_ERROR_LIMIT("Reconnect to server failed after " << retryMaxTimes << " attempts.");
+    return SM_ERROR;
 }
 
 bool TcpConfigStore::GetConnectStatus() noexcept
@@ -794,13 +976,26 @@ Result TcpConfigStore::ReceiveResponseHandler(const ock::acc::AccTcpRequestConte
     }
     msgCtxLocker.unlock();
 
-    if (clientContext == nullptr) {
-        STORE_LOG_WARN("receive response(" << context.SeqNo() << ") not sent request.");
+    if (clientContext != nullptr) {
+        clientContext->SetFinished(context);
+        return SM_OK;
+    }
+
+    auto data = reinterpret_cast<const uint8_t *>(context.DataPtr());
+    auto dataLen = context.DataLen();
+    if (data == nullptr || dataLen == 0) {
+        STORE_LOG_WARN("receive response(" << context.SeqNo() << ") not sent request and no data.");
         return SM_ERROR;
     }
 
-    clientContext->SetFinished(context);
-    return SM_OK;
+    SmemMessage msg;
+    auto unpackRet = SmemMessagePacker::Unpack(data, dataLen, msg);
+    if (unpackRet < 0 || msg.mt != MessageType::CONTROL) {
+        STORE_LOG_WARN("rsp(" << context.SeqNo() << ") unpack ret=" << unpackRet << " mt=" << static_cast<int>(msg.mt));
+        return SM_ERROR;
+    }
+
+    return HandleControlMessage(msg);
 }
 
 Result TcpConfigStore::SendWatchRequest(const std::vector<uint8_t> &reqBody,
@@ -820,8 +1015,7 @@ Result TcpConfigStore::SendWatchRequest(const std::vector<uint8_t> &reqBody,
         msgCtxLocker.lock();
         msgClientContext_.erase(seqNo);
         msgCtxLocker.unlock();
-        STORE_LOG_ERROR_LIMIT("send message failed, result: " << ret
-                                                              << ", Established: " << accClientLink_->Established());
+        STORE_LOG_ERROR_LIMIT("send msg failed, result: " << ret << ", Established: " << accClientLink_->Established());
         return ret;
     }
 
@@ -850,6 +1044,190 @@ void TcpConfigStore::HeartBeat() noexcept
     }
 
     STORE_LOG_INFO("TcpConfigStore heart beat thread exit.");
+}
+
+Result TcpConfigStore::HandleAddToWhitelist(SmemMessage &msg) noexcept
+{
+    uint32_t rankId = 0;
+    std::vector<RankFullInfo> others;
+    if (SmemMessage::UnpackAddToWhitelist(msg, rankId, others) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: AddToWhitelist unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        auto ret = executor_->AddToWhitelist(rankId, others, msg.requestId);
+        if (ret != 0) {
+            STORE_LOG_ERROR("HandleControlMessage: AddToWhitelist failed, rankId: " << rankId << " ret: " << ret);
+        }
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=ADDWLST src=" << rankId << " reqId="
+                                              << msg.requestId << " peers=[" << JoinRankIds(others) << "]");
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleRemoveFromWhitelist(SmemMessage &msg) noexcept
+{
+    uint32_t rankId = 0;
+    std::vector<RankBaseInfo> others;
+    if (SmemMessage::UnpackRemoveFromWhitelist(msg, rankId, others) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: RemoveFromWhitelist unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        auto ret = executor_->RemoveFromWhitelist(rankId, others, msg.requestId);
+        if (ret != 0) {
+            STORE_LOG_ERROR("HandleControlMessage: RemoveFromWhitelist failed, rankId: " << rankId << " ret: " << ret);
+        }
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=REMWLST src=" << rankId << " reqId="
+                                              << msg.requestId << " peers=[" << JoinRankIds(others) << "]");
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleEstablishConnection(SmemMessage &msg) noexcept
+{
+    uint32_t rankId = 0;
+    std::vector<RankFullInfo> others;
+    if (SmemMessage::UnpackEstablishConnection(msg, rankId, others) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: EstablishConnection unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        auto ret = executor_->EstablishConnection(rankId, others, msg.requestId);
+        if (ret != 0) {
+            STORE_LOG_ERROR("HandleControlMessage: EstablishConnection failed, rankId: " << rankId << " ret: " << ret);
+        }
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=ESTCONN src=" << rankId << " reqId="
+                                              << msg.requestId << " peers=[" << JoinRankIds(others) << "]");
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleCloseConnection(SmemMessage &msg) noexcept
+{
+    uint32_t rankId = 0;
+    std::vector<uint32_t> others;
+    if (SmemMessage::UnpackCloseConnection(msg, rankId, others) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: CloseConnection unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        auto ret = executor_->CloseConnection(rankId, others, msg.requestId);
+        if (ret != 0) {
+            STORE_LOG_ERROR("HandleControlMessage: CloseConnection failed, rankId: " << rankId << " ret: " << ret);
+        }
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=CLSCONN src=" << rankId << " reqId="
+                                              << msg.requestId << " peers=[" << JoinRankIds(others) << "]");
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleQueryLinkState(SmemMessage &msg) noexcept
+{
+    uint32_t rankId = 0;
+    if (SmemMessage::UnpackQueryLinkState(msg, rankId) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: QueryLinkState unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        executor_->QueryLinkState(rankId);
+    }
+    std::vector<LinkStateEntry> entries;
+    auto *executor = static_cast<SmemGroupManagerClient *>(executor_.Get());
+    if (executor != nullptr) {
+        entries = executor->GetLastQueryLinkStateEntries();
+    }
+    SmemMessage response = SmemMessage::PackLinkStateResponse(localRankInfo_, entries);
+    auto packedResponse = SmemMessagePacker::Pack(response);
+    STORE_LOG_INFO("[GM][Client][Send] rank=" << localRankId_ << " type=LNKSRSP reqId=" << msg.requestId
+                                              << " entries=" << entries.size());
+    auto sendRet = SendMessageNonBlock(packedResponse);
+    STORE_LOG_INFO("[GM][Client][Send] rank=" << localRankId_ << " type=LNKSRSP return=" << sendRet);
+    if (sendRet != SM_OK) {
+        STORE_LOG_ERROR("HandleControlMessage: QueryLinkState response send failed: " << sendRet);
+        return sendRet;
+    }
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandlePromoteToActive(SmemMessage &msg) noexcept
+{
+    uint32_t rankId = 0;
+    if (SmemMessage::UnpackPromoteToActive(msg, rankId) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: PromoteToActive unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        auto ret = executor_->PromoteToActive(rankId);
+        if (ret != 0) {
+            STORE_LOG_ERROR("HandleControlMessage: PromoteToActive failed, rankId: " << rankId << " ret: " << ret);
+        }
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=PROMOTE_TO_ACTIVE"
+                                              << " promotedRank=" << rankId);
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleAddSlices(SmemMessage &msg) noexcept
+{
+    uint32_t extendingRankId = 0;
+    MultiBytes newSlices;
+    if (SmemMessage::UnpackAddSlices(msg, extendingRankId, newSlices) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: AddSlices unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        executor_->AddSlices(extendingRankId, newSlices, msg.requestId);
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=ADD_SLICES"
+                                              << " extendingRank=" << extendingRankId
+                                              << " sliceCount=" << newSlices.size());
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleLeaveNotify(SmemMessage &msg) noexcept
+{
+    uint32_t leavingRankId = 0;
+    if (SmemMessage::UnpackLeaveNotify(msg, leavingRankId) < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: LeaveNotify unpack failed");
+        return SM_ERROR;
+    }
+    if (executor_ != nullptr) {
+        executor_->LeaveNotify(localRankId_, leavingRankId);
+    }
+    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=LEAV_NY" << " leavingRank=" << leavingRankId);
+    return SM_OK;
+}
+
+Result TcpConfigStore::HandleControlMessage(SmemMessage &msg) noexcept
+{
+    int8_t op = SmemMessage::GetControlOp(msg);
+    if (op < 0) {
+        STORE_LOG_ERROR("HandleControlMessage: invalid or missing ControlOp");
+        return SM_ERROR;
+    }
+
+    switch (static_cast<ControlOp>(op)) {
+        case ControlOp::CONTROL_ADD_TO_WHITELIST:
+            return HandleAddToWhitelist(msg);
+        case ControlOp::CONTROL_REMOVE_FROM_WHITELIST:
+            return HandleRemoveFromWhitelist(msg);
+        case ControlOp::CONTROL_ESTABLISH_CONNECTION:
+            return HandleEstablishConnection(msg);
+        case ControlOp::CONTROL_CLOSE_CONNECTION:
+            return HandleCloseConnection(msg);
+        case ControlOp::CONTROL_QUERY_LINK_STATE:
+            return HandleQueryLinkState(msg);
+        case ControlOp::CONTROL_LEAVE_NOTIFY:
+            return HandleLeaveNotify(msg);
+        case ControlOp::CONTROL_PROMOTE_TO_ACTIVE:
+            return HandlePromoteToActive(msg);
+        case ControlOp::CONTROL_ADD_SLICES:
+            return HandleAddSlices(msg);
+        default:
+            STORE_LOG_ERROR("HandleControlMessage: unhandled ControlOp: " << static_cast<int>(op));
+            return SM_ERROR;
+    }
 }
 
 } // namespace smem

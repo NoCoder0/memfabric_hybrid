@@ -717,7 +717,20 @@ TEST_F(AccLinksTest, test_server_start_linkBrokenHandle_validate_should_return_e
 
 TEST_F(AccLinksTest, test_server_start_StartWorkers_validate_should_return_error)
 {
-    mServer->Stop();
+    class StartWorkersFailServer : public AccTcpServerDefault {
+    public:
+        ock::acc::Result StartWorkers() override
+        {
+            return ACC_ERROR;
+        }
+    };
+    auto testServer = AccMakeRef<StartWorkersFailServer>();
+    ASSERT_NE(testServer, nullptr);
+    auto hbMethod = [this](const AccTcpRequestContext &context) { return HandleHeartBeat(context); };
+    testServer->RegisterNewRequestHandler(TEST_OP_REPLY_MSG, hbMethod);
+    auto linkBrokenMethod = [this](const AccTcpLinkComplexPtr &link) { return HandleLinkBroken(link); };
+    testServer->RegisterLinkBrokenHandler(linkBrokenMethod);
+
     AccTcpServerOptions opts;
     opts.enableListener = true;
     opts.linkSendQueueSize = LINK_SEND_QUEUE_SIZE;
@@ -728,14 +741,30 @@ TEST_F(AccLinksTest, test_server_start_StartWorkers_validate_should_return_error
     opts.version = 1;
     opts.workerCount = WORKER_COUNT;
 
-    MOCKER_CPP(&AccTcpServerDefault::StartWorkers, int32_t(*)(AccTcpServerDefault *)).stubs().will(returnValue(-2));
-    int32_t ret = mServer->Start(opts);
+    int32_t ret = testServer->Start(opts, AccTlsOption());
     ASSERT_TRUE(ret != true);
 }
 
 TEST_F(AccLinksTest, test_server_start_StartListener_validate_should_return_error)
 {
-    mServer->Stop();
+    class StartListenerFailServer : public AccTcpServerDefault {
+    public:
+        ock::acc::Result StartWorkers() override
+        {
+            return ACC_OK;
+        }
+        ock::acc::Result StartListener() override
+        {
+            return ACC_ERROR;
+        }
+    };
+    auto testServer = AccMakeRef<StartListenerFailServer>();
+    ASSERT_NE(testServer, nullptr);
+    auto hbMethod = [this](const AccTcpRequestContext &context) { return HandleHeartBeat(context); };
+    testServer->RegisterNewRequestHandler(TEST_OP_REPLY_MSG, hbMethod);
+    auto linkBrokenMethod = [this](const AccTcpLinkComplexPtr &link) { return HandleLinkBroken(link); };
+    testServer->RegisterLinkBrokenHandler(linkBrokenMethod);
+
     AccTcpServerOptions opts;
     opts.enableListener = true;
     opts.linkSendQueueSize = LINK_SEND_QUEUE_SIZE;
@@ -745,8 +774,7 @@ TEST_F(AccLinksTest, test_server_start_StartListener_validate_should_return_erro
     opts.magic = 0;
     opts.version = 1;
     opts.workerCount = WORKER_COUNT;
-    MOCKER_CPP(&AccTcpServerDefault::StartListener, int32_t(*)(AccTcpServerDefault *)).stubs().will(returnValue(-2));
-    int32_t ret = mServer->Start(opts);
+    int32_t ret = testServer->Start(opts, AccTlsOption());
     ASSERT_TRUE(ret != true);
 }
 

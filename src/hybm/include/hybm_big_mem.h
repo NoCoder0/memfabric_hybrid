@@ -139,6 +139,26 @@ int32_t hybm_import(hybm_entity_t e, const hybm_exchange_info allExInfo[], uint3
 int32_t hybm_mmap(hybm_entity_t e, uint32_t flags);
 
 /**
+ * @brief Connect transport for specific ranks
+ *
+ * @param e                [in] entity created by hybm_create_entity
+ * @param ranks            [in] array of rank ids to connect
+ * @param count            [in] count of ranks
+ * @param flags            [in] optional flags, default value 0
+ * @return 0 if successful
+ */
+int32_t hybm_transport_connect(hybm_entity_t e, const uint32_t *ranks, uint32_t count, uint32_t flags);
+
+/**
+ * @brief Unmap imported memory of a specific remote rank.
+ *
+ * @param e          [in] entity
+ * @param rankId     [in] remote rank ID to unmap
+ * @return 0 if successful
+ */
+int32_t hybm_unmap_rank(hybm_entity_t e, uint32_t rankId);
+
+/**
  * @brief Unmap the entity
  *
  * @param e                [in] entity created by hybm_create_entity

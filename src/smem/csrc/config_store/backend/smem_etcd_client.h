@@ -166,7 +166,7 @@ public:
      * @brief Get key-values by prefix and marker(range begin)
      * @return 0 on success, -1 on failure or key not found
      */
-    [[nodiscard]] int32_t PrefixGet(const smem_store_prefix_get_ctx_t *ctx, int flags) noexcept
+    [[nodiscard]] int32_t PrefixGet(const smem_store_prefix_get_ctx_t *ctx, uint32_t flags) noexcept
     {
         EtcdClient *cli = client_.load(std::memory_order_relaxed);
         if (cli == nullptr) {

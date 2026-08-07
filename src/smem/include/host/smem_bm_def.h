@@ -149,21 +149,19 @@ typedef struct {
 typedef smem_batch_copy_result smem_batch_copy_result_t; /* renamed smem_batch_copy_result_t */
 
 /**
- * @brief smem join/leave event type
+ * @brief Smem group event type — @deprecated Group events are now handled
+ *        internally by the server-driven async scheme. This enum is retained
+ *        for source compatibility only.
  */
 typedef enum {
-    SMEM_GROUP_EVENT_JOIN,  /* join event */
-    SMEM_GROUP_EVENT_LEAVE, /* leave event */
+    SMEM_GROUP_EVENT_JOIN,  /**< @deprecated */
+    SMEM_GROUP_EVENT_LEAVE, /**< @deprecated */
     SMEM_MEMBER_EVENT_BUTT
 } smem_bm_group_event_t;
 
 /**
- * @brief callback function for group member change event: join/leave,
- * @param handle           [in] Big Memory object handle created by <i>smem_bm_create</i>
- * @param rankId           [in] rank ID
- * @param event            [in] event type <i>smem_bm_group_event_t</i>
- * @param context          [in] context passed in set_group_event_handler
- * @return void
+ * @brief Smem group event callback — @deprecated No longer invoked. Use
+ *        smem_bm_set_group_event_handler() which is retained as a no-op stub.
  */
 typedef void (*smem_bm_group_event_cb)(smem_bm_t handle, uint32_t rankId, smem_bm_group_event_t event, void *context);
 

@@ -60,6 +60,47 @@ void smem_bm_uninit(uint32_t flags);
 uint32_t smem_bm_get_rank_id(void);
 
 /**
+ * @brief Update the config store server address and reconnect.
+ *
+ * Called when the MetaService leader has changed. The rank's config store
+ * client will disconnect from the old leader and connect to the new one.
+ *
+ * @param ip    New leader's IP address
+ * @param port  New leader's config store port
+ * @return 0 on success, non-zero error code on failure
+ */
+int32_t smem_bm_update_store_server(const char *ip, uint16_t port);
+
+/**
+ * @brief Get the connected config store server's IP address.
+ *
+ * Used by upper-layer applications (e.g. MemCache LocalService) to discover
+ * the MetaService leader address. If the store is an HA store, this returns
+ * the leader's IP that the client is currently connected to.
+ *
+ * @param ip         [out] buffer to receive server IP (at least 64 bytes)
+ * @param ipLen      [in] size of the ip buffer
+ * @param port       [out] server port that the client is connected to
+ * @return 0 on success, non-zero error code on failure
+ */
+int32_t smem_bm_get_store_server_info(char *ip, size_t ipLen, uint16_t *port);
+
+/**
+ * @brief Get the MetaService address registered by the current MetaService leader.
+ *
+ * Used by upper-layer applications (e.g. MemCache LocalService) to discover
+ * the MetaService endpoint in HA mode. The MetaService leader publishes its
+ * address to the config store backend, and this returns the currently
+ * registered one regardless of whether the caller is the leader itself.
+ *
+ * @param ip         [out] buffer to receive MetaService IP (at least 64 bytes)
+ * @param ipLen      [in] size of the ip buffer
+ * @param port       [out] MetaService port
+ * @return 0 on success, non-zero error code on failure
+ */
+int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t *port);
+
+/**
  * @brief Create a Big Memory object locally after initialized, this only create local memory segment and after
  * call <i>smem_bm_join</i> the local memory segment will be joined into global space. One Big Memory object is
  * a global memory space, data operation does work across different Big Memory object.
@@ -122,15 +163,6 @@ int32_t smem_bm_leave(smem_bm_t handle, uint32_t flags);
  * @return o if successful
  */
 int32_t smem_bm_extend_local_mem(smem_bm_t handle, smem_bm_mem_type_t memType, uint64_t size);
-
-/**
- * @brief Set callback function for group member change event (join/leave etc)
- * @param handle           [in] Big Memory object handle created by <i>smem_bm_create</i>
- * @param cb               [in] callback function when group member change event happens
- * @param context          [in] context which will be passed into callback function
- * @return 0 if successful
- */
-int32_t smem_bm_set_group_event_handler(smem_bm_t handle, smem_bm_group_event_cb cb, void *context);
 
 /**
  * @brief Get the size of memory allocated locally by memory type
@@ -258,6 +290,19 @@ uint32_t smem_bm_get_rank_id_by_gva(smem_bm_t handle, void *gva);
  * @return 0 if successful, negative value for error
  */
 int32_t smem_bm_update_store_url(const char *storeURL);
+
+/**
+ * @brief Set group event handler for a BigMemory object.
+ * @deprecated This API is retained as a no-op stub for binary compatibility.
+ *            Group events are now handled internally by the server-driven
+ *            async join scheme. The callback will never be invoked.
+ *
+ * @param handle  [in] BigMemory handle created by <i>smem_bm_create</i>
+ * @param cb      [in] callback for group events — NOT invoked
+ * @param context [in] user context — NOT passed
+ * @return 0
+ */
+int32_t smem_bm_set_group_event_handler(smem_bm_t handle, smem_bm_group_event_cb cb, void *context);
 
 #ifdef __cplusplus
 }

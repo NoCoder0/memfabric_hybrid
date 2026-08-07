@@ -78,9 +78,27 @@ public:
     static void SetTlsInfo(const smem_tls_config &tlsOption) noexcept;
 
 private:
-    static StorePtr CreateHaStore(const StoreBackendPtr &backend, const std::string &storeKey,
-                                  const std::string &storeUrl, uint32_t worldSize,
-                                  const std::string &instanceId) noexcept;
+    struct HaStoreOptions {
+        StoreBackendPtr backend;
+        std::string storeKey;
+        std::string storeUrl;
+        uint32_t worldSize = 0;
+        std::string instanceId;
+        int32_t rankId = -1;
+    };
+    struct TcpStoreOptions {
+        StoreBackendPtr backend;
+        std::string ip;
+        uint16_t port = 0;
+        uint16_t model = 0;
+        uint32_t worldSize = 0;
+        int32_t rankId = -1;
+        std::string storeKey;
+        int32_t connMaxRetry = 0;
+        bool skipRecover = false;
+    };
+    static StorePtr CreateHaStore(const HaStoreOptions &opts) noexcept;
+    static StorePtr CreateTcpStore(const TcpStoreOptions &opts) noexcept;
     static std::mutex storesMutex_;
     static std::unordered_map<std::string, StorePtr> storesMap_;
     static smem_tls_config tlsOption_;

@@ -472,7 +472,7 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
 int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint32_t count, void *addresses[]) noexcept
 {
     if (desc[0].LeftBytes() == 0) {
-        BM_LOG_INFO("no segment need import.");
+        BM_LOG_DEBUG("no segment need import.");
         return BM_OK;
     }
 
@@ -585,6 +585,25 @@ int32_t MemEntityDefault::ImportForTagManager()
     return BM_OK;
 }
 
+int32_t MemEntityDefault::ConnectTransport(const uint32_t *ranks, uint32_t count, uint32_t flags) noexcept
+{
+    (void)flags;
+    if (!initialized_) {
+        BM_LOG_ERROR("the object is not initialized");
+        return BM_NOT_INITIALIZED;
+    }
+    if (transportManager_ == nullptr || (options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
+        return BM_OK;
+    }
+    for (uint32_t i = 0; i < count; ++i) {
+        auto ret = transportManager_->ConnectRank(ranks[i]);
+        if (ret != BM_OK) {
+            return ret;
+        }
+    }
+    return BM_OK;
+}
+
 int32_t MemEntityDefault::ImportForTransportManager()
 {
     if (transportManager_ == nullptr || (options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
@@ -602,23 +621,21 @@ int32_t MemEntityDefault::ImportForTransportManager()
         prepareOptions.options.emplace(info.rankId, std::move(prepareInfo));
     }
 
-    if (transportPrepared_) {
-        ret = transportManager_->UpdateRankOptions(prepareOptions);
-    } else {
-        ret = transportManager_->Prepare(prepareOptions);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to prepare transport connect data, ret: " << ret);
-            return ret;
-        }
-        ret = transportManager_->Connect();
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to prepare transport connect, ret: " << ret);
-            return ret;
+    {
+        std::lock_guard<std::mutex> lock(transportMutex_);
+        if (transportPrepared_) {
+            ret = transportManager_->UpdateRankOptions(prepareOptions);
+        } else {
+            ret = transportManager_->Prepare(prepareOptions);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Failed to prepare transport connect data, ret: " << ret);
+                return ret;
+            }
+            transportPrepared_ = true;
         }
     }
 
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to Connect transport: " << ret, ret);
-    transportPrepared_ = true;
     return 0;
 }
 
@@ -734,6 +751,39 @@ int32_t MemEntityDefault::Mmap() noexcept
         }
     }
 
+    return BM_OK;
+}
+
+int32_t MemEntityDefault::UnmapRank(uint32_t rankId) noexcept
+{
+    if (!initialized_) {
+        BM_LOG_ERROR("the object is not initialized");
+        return BM_NOT_INITIALIZED;
+    }
+    if (transportManager_ != nullptr) {
+        std::vector<uint32_t> ranks = {rankId};
+        auto ret = transportManager_->RemoveRanks(ranks);
+        if (ret != BM_OK) {
+            BM_LOG_WARN("transport remove ranks failed for rank " << rankId << " ret: " << ret);
+        }
+    }
+    if (hbmSegment_ != nullptr) {
+        auto ret = hbmSegment_->RemoveImported({rankId});
+        if (ret != BM_OK) {
+            BM_LOG_WARN("hbm unmap rank " << rankId << " failed: " << ret);
+        }
+    }
+    if (dramSegment_ != nullptr) {
+        auto ret = dramSegment_->RemoveImported({rankId});
+        if (ret != BM_OK) {
+            BM_LOG_WARN("dram unmap rank " << rankId << " failed: " << ret);
+        }
+    }
+    {
+        std::unique_lock<std::mutex> lock{importMutex_};
+        importedRanks_.erase(rankId);
+        importedMemories_.erase(rankId);
+    }
     return BM_OK;
 }
 
@@ -1105,9 +1155,17 @@ int32_t MemEntityDefault::ImportForTransport() noexcept
     }
     uniqueLock.unlock();
     if (transportManager_ != nullptr) {
-        ret = transportManager_->ConnectWithOptions(transOptions);
+        {
+            std::lock_guard<std::mutex> lock(transportMutex_);
+            if (!transportPrepared_) {
+                ret = transportManager_->Prepare(transOptions);
+                transportPrepared_ = true;
+            } else {
+                ret = transportManager_->UpdateRankOptions(transOptions);
+            }
+        }
         if (ret != 0) {
-            BM_LOG_ERROR("Transport Manager ConnectWithOptions failed: " << ret);
+            BM_LOG_ERROR("ImportForTransport failed: " << ret);
             return ret;
         }
     }

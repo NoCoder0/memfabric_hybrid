@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "smem_group_manager_def.h"
 
 namespace ock {
 namespace smem {
@@ -44,6 +45,7 @@ enum MessageType : int16_t {
     WATCH_RANK_STATE,
     HEARTBEAT,
     UNWATCH,
+    CONTROL,
     INVALID_MSG
 };
 
@@ -85,8 +87,61 @@ struct SmemMessage {
 
     SmemMessage(MessageType type, std::vector<std::vector<uint8_t>> vs) noexcept : mt{type}, values{std::move(vs)} {}
 
+    static SmemMessage PackAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others) noexcept;
+    static int64_t UnpackAddToWhitelist(const SmemMessage &msg, uint32_t &rankId,
+                                        std::vector<RankFullInfo> &others) noexcept;
+
+    static SmemMessage PackRemoveFromWhitelist(uint32_t rankId, const std::vector<RankBaseInfo> &others) noexcept;
+    static int64_t UnpackRemoveFromWhitelist(const SmemMessage &msg, uint32_t &rankId,
+                                             std::vector<RankBaseInfo> &others) noexcept;
+
+    static SmemMessage PackEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &others) noexcept;
+    static int64_t UnpackEstablishConnection(const SmemMessage &msg, uint32_t &rankId,
+                                             std::vector<RankFullInfo> &others) noexcept;
+
+    static SmemMessage PackCloseConnection(uint32_t rankId, const std::vector<uint32_t> &others) noexcept;
+    static int64_t UnpackCloseConnection(const SmemMessage &msg, uint32_t &rankId,
+                                         std::vector<uint32_t> &others) noexcept;
+
+    static SmemMessage PackJoin(const RankFullInfo &info) noexcept;
+    static int64_t UnpackJoin(const SmemMessage &msg, RankFullInfo &info) noexcept;
+
+    static SmemMessage PackLeave(uint32_t rankId) noexcept;
+    static int64_t UnpackLeave(const SmemMessage &msg, uint32_t &rankId) noexcept;
+
+    static SmemMessage PackLeaveNotify(uint32_t rankId) noexcept;
+    static int64_t UnpackLeaveNotify(const SmemMessage &msg, uint32_t &rankId) noexcept;
+
+    static SmemMessage PackQueryLinkState(uint32_t rankId) noexcept;
+    static int64_t UnpackQueryLinkState(const SmemMessage &msg, uint32_t &rankId) noexcept;
+
+    static SmemMessage PackLinkStateResponse(const RankFullInfo &rankInfo,
+                                             const std::vector<LinkStateEntry> &entries) noexcept;
+    static int64_t UnpackLinkStateResponse(const SmemMessage &msg, RankFullInfo &rankInfo,
+                                           std::vector<LinkStateEntry> &entries) noexcept;
+
+    static SmemMessage PackPromoteToActive(uint32_t rankId) noexcept;
+    static int64_t UnpackPromoteToActive(const SmemMessage &msg, uint32_t &rankId) noexcept;
+
+    static SmemMessage PackExtendMemory(uint32_t rankId, const MultiBytes &additionalSlices) noexcept;
+    static int64_t UnpackExtendMemory(const SmemMessage &msg, uint32_t &rankId, MultiBytes &additionalSlices) noexcept;
+
+    static SmemMessage PackAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices) noexcept;
+    static int64_t UnpackAddSlices(const SmemMessage &msg, uint32_t &extendingRankId, MultiBytes &newSlices) noexcept;
+
+    static SmemMessage PackAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept;
+    static SmemMessage PackAckBatch(ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
+                                    const std::vector<int32_t> &results = {}) noexcept;
+    static int64_t UnpackAck(const SmemMessage &msg, ControlOp &ackOp, uint32_t &senderRankId,
+                             uint32_t &targetRankId) noexcept;
+    static int64_t UnpackAckBatch(const SmemMessage &msg, ControlOp &ackOp, uint32_t &senderRankId,
+                                  std::vector<uint32_t> &targetRankIds, std::vector<uint8_t> &results) noexcept;
+
+    static int8_t GetControlOp(const SmemMessage &msg) noexcept;
+
     MessageType mt;
     int64_t userDef{-1L};
+    uint64_t requestId = 0;
     std::vector<std::string> keys;
     std::vector<std::vector<uint8_t>> values;
 };

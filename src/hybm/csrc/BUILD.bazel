@@ -85,6 +85,23 @@ HYBM_SRCS = glob([
     "//src:util/csrc/mf_fault_injection_point_registry.cpp",
 ]
 
+# Expose hybm/csrc/common headers ("hybm_ptracer.h" etc.) as bare include
+# names for direct deps in other packages. The glob stays inside this
+# package, and strip_include_prefix strips the "common/" prefix so
+# consumers can #include the headers by their bare file names. Bazel
+# rejects `includes` paths that escape a package and (newer versions) no
+# longer propagate the `includes` attribute across packages, so smem
+# targets depend on this target directly.
+cc_library (
+    name = "hybm_csrc_common_headers",
+    hdrs = glob(["common/*.h"]),
+    strip_include_prefix = "common",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//src/util/csrc/ptracer:ptracer_src_headers",
+    ],
+)
+
 cc_library (
     name = "hybmm_objects",
     srcs = HYBM_SRCS,

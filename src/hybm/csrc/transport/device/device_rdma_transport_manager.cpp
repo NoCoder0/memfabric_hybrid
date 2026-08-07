@@ -312,6 +312,15 @@ Result RdmaTransportManager::Connect()
     return WaitQpReady();
 }
 
+Result RdmaTransportManager::ConnectRank(uint32_t rankId)
+{
+    if (rankId >= rankCount_) {
+        BM_LOG_ERROR("connect rank " << rankId << " out of range, rank count: " << rankCount_);
+        return BM_INVALID_PARAM;
+    }
+    return WaitQpReady();
+}
+
 Result RdmaTransportManager::AsyncConnect()
 {
     return BM_OK;
@@ -388,7 +397,7 @@ Result RdmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &op
 
     OptionsToRankMRs(options);
 
-    return WaitQpReady();
+    return BM_OK;
 }
 
 const std::string &RdmaTransportManager::GetNic() const

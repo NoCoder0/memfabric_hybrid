@@ -409,17 +409,114 @@ Result HcomTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
 Result HcomTransportManager::Connect()
 {
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_HCOM_CONNECT_BATCH);
+
+    // Collect ranks to connect
+    std::vector<uint32_t> targets;
     for (uint32_t i = 0; i < rankCount_; ++i) {
         if (rankId_ <= i || nics_[i].empty()) {
             continue;
         }
-        const auto ret = ConnectHcomChannel(i, nics_[i]);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect remote service, rankId" << i << " nic: " << nics_[i] << " ret: " << ret);
-            return ret;
-        }
-        BM_LOG_DEBUG("connect remote service, rankId" << i << " nic: " << nics_[i] << " ret: " << ret);
+        targets.push_back(i);
     }
+    if (targets.empty()) {
+        TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_BATCH, 0);
+        return BM_OK;
+    }
+
+    auto ret = ConnectTargets(targets);
+    TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_BATCH, ret == BM_OK ? 0 : 1);
+    return ret;
+}
+
+Result HcomTransportManager::ConnectTargets(const std::vector<uint32_t> &targets)
+{
+    // Parallel connect using fixed-size thread pool
+    constexpr size_t poolSize = 8;
+    std::atomic<int> failed{0};
+    std::mutex successMtx;
+    std::vector<uint32_t> connected;
+    std::vector<std::thread> pool;
+
+    auto worker = [this, &failed, &successMtx, &connected](uint32_t rankId, const std::string &nic) {
+        auto ret = ConnectHcomChannel(rankId, nic);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to connect rank " << rankId << " nic: " << nic << " ret: " << ret);
+            failed.fetch_add(1, std::memory_order_relaxed);
+        } else {
+            std::lock_guard<std::mutex> lock(successMtx);
+            connected.push_back(rankId);
+        }
+    };
+
+    for (size_t idx = 0; idx < targets.size(); ++idx) {
+        pool.emplace_back(worker, targets[idx], nics_[targets[idx]]);
+        if (pool.size() >= poolSize) {
+            for (auto &t : pool)
+                t.join();
+            if (failed.load() != 0) {
+                for (auto r : connected) {
+                    DisConnectHcomChannel(r, channels_[r]);
+                    std::lock_guard<std::mutex> lock(channelMutex_[r]);
+                    channels_[r] = 0;
+                }
+                return BM_ERROR;
+            }
+            pool.clear();
+            connected.clear();
+        }
+    }
+    for (auto &t : pool)
+        t.join();
+    bool ok = (failed.load() == 0);
+    if (!ok) {
+        for (auto r : connected) {
+            DisConnectHcomChannel(r, channels_[r]);
+            std::lock_guard<std::mutex> lock(channelMutex_[r]);
+            channels_[r] = 0;
+        }
+    }
+    return ok ? BM_OK : BM_ERROR;
+}
+
+static constexpr uint32_t HCOM_CHANNEL_READY_TIMEOUT_MS = 5000;
+static constexpr uint32_t HCOM_CHANNEL_POLL_INTERVAL_US = 1000;
+
+Result HcomTransportManager::WaitChannelReady(uint32_t rankId, uint32_t timeoutMs) noexcept
+{
+    auto startTime = std::chrono::steady_clock::now();
+    auto deadline = startTime + std::chrono::milliseconds(timeoutMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
+            if (channels_[rankId] != 0) {
+                return BM_OK;
+            }
+        }
+        usleep(HCOM_CHANNEL_POLL_INTERVAL_US);
+    }
+    return BM_ERROR;
+}
+
+Result HcomTransportManager::ConnectRank(uint32_t rankId)
+{
+    if (rankId >= rankCount_ || nics_[rankId].empty()) {
+        return BM_OK;
+    }
+    if (rankId_ <= rankId) {
+        // Lower rank: wait for higher rank's ServiceConnect to trigger our HCOM callback
+        return WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
+    }
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_CONNECT_RANK);
+    const auto ret = ConnectHcomChannel(rankId, nics_[rankId]);
+    if (ret != BM_OK) {
+        TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 1);
+        return ret;
+    }
+    // Active side: serviceConnect is complete, but wait for passive side to confirm too
+    auto waitRet = WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
+    if (waitRet != BM_OK) {}
+    TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 0);
     return BM_OK;
 }
 
@@ -476,15 +573,10 @@ Result HcomTransportManager::UpdateRankConnectInfos(const std::unordered_map<uin
             break;
         }
         auto it = opt.find(i);
-        if (channels_[i] == 0 && it != opt.end()) {
+        if (it != opt.end()) {
             nics_[i] = it->second.nic;
-            const auto ret = ConnectHcomChannel(i, nics_[i]);
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("Failed to connect remote service, rankId" << i << " nic: " << nics_[i]
-                                                                        << " ret: " << ret);
-                return ret;
-            }
             addRankList.emplace_back(i);
+            BM_LOG_DEBUG("UpdateRankConnectInfos: saved nics for rank " << i << " url=" << nics_[i]);
         }
     }
 
@@ -910,10 +1002,12 @@ Result HcomTransportManager::TransportRpcHcomOneSideDone(Service_Context ctx, ui
 
 Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::string &url)
 {
+    TP_TRACE_BEGIN(TP_SMEM_GROUP_HCOM_CONNECT_CH);
     {
         std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
         if (channels_[rankId] != 0) {
             BM_LOG_WARN("Stop connect to hcom service rankId: " << rankId << " url: " << url << " is connected");
+            TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 0);
             return BM_OK;
         }
     }
@@ -936,6 +1030,7 @@ Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::stri
         auto ret = DlHcomApi::ServiceConnect(rpcService_, url.c_str(), &channel, options);
         if (ret != 0) {
             BM_LOG_ERROR("Failed to connect remote service, rankId" << rankId << " url: " << url << " ret: " << ret);
+            TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 1);
             return BM_DL_FUNCTION_FAILED;
         }
     } while (0);
@@ -945,6 +1040,7 @@ Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::stri
 
     BM_LOG_DEBUG("Success to connect to hcom service rankId: " << rankId << " url: " << url
                                                                << " channel: " << (void *)channel);
+    TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 0);
     return BM_OK;
 }
 
