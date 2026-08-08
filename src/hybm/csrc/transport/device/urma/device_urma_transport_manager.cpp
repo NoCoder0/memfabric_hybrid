@@ -31,6 +31,7 @@
 #include "hybm_batch_transfer.h"
 #include "hybm_logger.h"
 #include "hybm_stream_manager.h"
+#include "mf_env_util.h"
 #include "device_urma_eid_reader.h"
 #include "hybm_va_manager.h"
 #include "device_urma_transport_manager.h"
@@ -42,12 +43,33 @@ namespace device {
 
 namespace {
 constexpr uint32_t HCOMM_NORMAL_NOTIFY_NUM = 0;
+constexpr uint32_t HCOMM_CHANNEL_QOS_DEFAULT = 4U;
+constexpr uint32_t HCOMM_CHANNEL_QOS_MAX = 7U;
+constexpr const char *HCOMM_CHANNEL_QOS_ENV = "MF_DEVICE_UB_QOS";
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1U;
 constexpr uint32_t ACL_NOTIFY_FLAG_DEVICE_ONLY = 0x00000001U; // 使能该bit表示创建的Notify仅在Device上调用。
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 27U * 68U;
+
+uint32_t GetHcommChannelQos()
+{
+    const char *rawValue = std::getenv(HCOMM_CHANNEL_QOS_ENV);
+    if (rawValue == nullptr) {
+        return HCOMM_CHANNEL_QOS_DEFAULT;
+    }
+
+    uint32_t qos = 0;
+    if (!MfEnvUtil::GetOptionalUint(std::string(rawValue), qos) || qos > HCOMM_CHANNEL_QOS_MAX) {
+        BM_LOG_WARN("device_urma environment variable " << HCOMM_CHANNEL_QOS_ENV << " has invalid value '" << rawValue
+                                                        << "', valid range [0, " << HCOMM_CHANNEL_QOS_MAX
+                                                        << "], fallback to default " << HCOMM_CHANNEL_QOS_DEFAULT);
+        return HCOMM_CHANNEL_QOS_DEFAULT;
+    }
+    return qos;
+}
+
 static_assert(std::is_trivially_copyable<UrmaExportDesc>::value, "UrmaExportDesc must be binary serializable");
 static_assert(std::is_trivially_copyable<UrmaEndpointDesc>::value,
               "UrmaEndpointDesc must be trivially copyable for memcpy serialization");
@@ -1382,17 +1404,9 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             channelDesc.role = (rankId_ > peerRank) ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER;
             channelDesc.remoteEndpoint = hcommRemoteEndpoint;
             channelDesc.notifyNum = HCOMM_NORMAL_NOTIFY_NUM;
-            channelDesc.exchangeAllMems = true; // 填true, 不用管memHandles了, remoteEndpoint要填对
-            if (localEndpoint_->desc.protocol == UrmaProtocol::UBOE) {
-                // CRITICAL: HcommChannelDescInit sets union to 0xFF garbage values.
-                // Must zero the entire union before setting ubAttr to avoid:
-                // - queueNum=0xFFFFFFFF (4B QPs → OOM)
-                // - retryCnt=0xFFFFFFFF (impossible retries → timeout)
-                // - tc/sl=0xFF (invalid QoS → init failure)
-                std::memset(channelDesc.raws, 0, sizeof(channelDesc.raws));
-                // sqDepth合法范围[16,256]且需为2的幂，0会被CheckUbAttr拒绝；128对齐hcomm MS模式默认值
-                channelDesc.ubAttr.sqDepth = 128;
-            }
+            channelDesc.exchangeAllMems = true;     // 填true, 不用管memHandles了, remoteEndpoint要填对
+            channelDesc.qos = GetHcommChannelQos(); // 0-7, 值越小优先级越高。
+            BM_LOG_INFO("device_urma Prepare channelDesc qos: " << channelDesc.qos);
 
             // 5. Allocate one thread per peer (use temporary variable for safe rollback)
             HcommThreadHandle threadHandle = 0;
