@@ -254,7 +254,8 @@ examples/kv_offload/urma_eid_query.cpp
   --no-candidates
 ```
 
-`--device-id` 明确定义为物理卡号。`env` 输出固定为：
+`--device-id` 明确定义为物理卡号。`env` 输出固定如下；其中 logical 字段是 DCMI/EID 发现逻辑号，
+不是 `ASCEND_RT_VISIBLE_DEVICES` 下的 ACL/Torch 可见索引：
 
 ```text
 MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID=0
@@ -370,10 +371,12 @@ if (options.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
 进程 A 在 Python 的 local 模式中先执行：
 
 ```python
-torch.npu.set_device(logical_device_id)
+torch.npu.set_device(runtime_device_id)
 ```
 
-再执行 `mf.initialize()`、`bm.initialize()` 和 `bm.create2()`。这一顺序借鉴参考项目
+其中 `logical_device_id` 是 EID 工具/DCMI 返回的逻辑卡号，`runtime_device_id` 是
+`ASCEND_RT_VISIBLE_DEVICES` 下 ACL/Torch 使用的可见索引；两者必须显式区分。再执行
+`mf.initialize()`、`bm.initialize()` 和 `bm.create2()`。这一顺序借鉴参考项目
 `InitializeAclBeforeEidDiscovery()` (`link_demo_common.cc:157-177`)，只为同机 Host Endpoint 提供当前 device
 context。ACL 生命周期由 torch/CANN runtime 持有，不进入 Host manager。
 
@@ -398,8 +401,8 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 #### 进程 A：DRAM provider / rank 0
 
 1. 读取工具输出，设置 `MF_HOST_URMA_EID` 和 `MF_LOCAL_DRAM_VALIDATION_ROLE=host`；
-2. 用逻辑 device id 初始化 torch NPU context；
-3. `bm.initialize(tcp://127.0.0.1:<store>, 2, logicalDeviceId, rank0Config)`，rank 0 启动 store；
+2. 用 `runtime_device_id` 初始化 torch NPU context；
+3. `bm.initialize(tcp://127.0.0.1:<store>, 2, runtimeDeviceId, rank0Config)`，rank 0 启动 store；
 4. `bm.create2(local_dram_size=POOL_BYTES, local_hbm_size=0,
    data_op_type=HOST_DEVICE_URMA, enable_56bits_gva=False)`；
 5. `join()` 后取得 rank 0 Host GVA 与 `LOCAL_HOST` VA，要求两者相等；
@@ -411,7 +414,7 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 #### 进程 B：HBM consumer / rank 1
 
 1. 设置 `USE_LOCAL_EID`，不设置临时 Host role；
-2. `torch.npu.set_device(logicalDeviceId)`；
+2. `torch.npu.set_device(runtimeDeviceId)`；
 3. `bm.initialize(... rank1Config)`；
 4. `bm.create2(local_dram_size=0, local_hbm_size=POOL_BYTES,
    data_op_type=HOST_DEVICE_URMA)` 并 `join()`；
@@ -457,7 +460,7 @@ MemFabric endpoint/private data/key 的正式交换继续走现有 config store/
 descriptor，消息只用于测试协调：
 
 ```text
-HELLO v1: role, rank, pid, physical_device_id, logical_device_id,
+HELLO v1: role, rank, pid, physical_device_id, logical_device_id, runtime_device_id,
           host_eid, device_eid, round
 SOURCE_READY v1: host_gva, pool_bytes, item_bytes, seed, checksum
 COPY_READY v1: imported_gva, import_view, hbm_gva, hbm_va, route_mode
@@ -503,7 +506,8 @@ RELEASE v1: round
 - `[src, src+len)` 必须完整落入一个 route range，所有加法先查溢出；
 - dst 不得与 `[HYBM_BATCH_COPY_META_ADDR, SVM_END_ADDR)` control 区重叠；
 - key magic/version/headerSize/descLen/type/size/flag 均继续使用现有校验；
-- Host/Device EID 都是 16 B，CLI 表示为 32 hex；工具输入物理卡号，torch/bm 使用工具输出的逻辑卡号；
+- Host/Device EID 都是 16 B，CLI 表示为 32 hex；工具输入物理卡号，EID/DCMI 使用工具输出的逻辑卡号，
+  torch/ACL/bm 使用 `ASCEND_RT_VISIBLE_DEVICES` 下的 runtime 可见索引；
 - 一个进程只注入一个本地 endpoint EID；未来多卡由每个 Device 进程独立环境生成，不能在同一进程动态切换。
 
 ### 3.3.11 资源生命周期与退出顺序
@@ -547,7 +551,8 @@ Python 使用 `try/finally` 按已创建资源的逆序退出。根错误按仓�
 
 ### 3.3.12 并发与扩展边界
 
-- 当前：1 Host rank + 1 Device rank，一卡一个在途 batch；两个进程绑定同一逻辑卡；
+- 当前：1 Host rank + 1 Device rank，一卡一个在途 batch；两个进程绑定同一物理卡和同一 runtime 可见索引，
+  EID/DCMI 逻辑卡号单独用于发现与映射校验；
 - 多 DRAM 进程：每个 Host rank 独立固定 GVA区间、Host EID/endpoint/channel；Device route 按 peer 分组；
 - 多 HBM 进程：每个 Device rank 绑定独立 device id、使用该卡 EID 和独立 route control 区；
 - 不支持多个进程同时在同一张卡发布不同 route。是否允许同卡多 Device 进程共享/覆盖固定 route 是未来设计，
@@ -602,8 +607,9 @@ bash script/build_and_pack_run.sh
 
 ```text
 --local-dram-validation
---physical-device-id N
---device-id N                 # 逻辑 device id，兼容现有参数
+--physical-device-id N        # 可选覆盖；默认读取 MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID
+--device-id N                 # 可选兼容覆盖；默认读取 MF_LOCAL_DRAM_LOGICAL_DEVICE_ID
+--runtime-device-id N         # 可选覆盖；默认由物理卡号和 ASCEND_RT_VISIBLE_DEVICES 派生
 --host-eid 32HEX
 --device-eid 32HEX
 --rounds N
@@ -612,15 +618,16 @@ bash script/build_and_pack_run.sh
 --negative none|bad-gva|cross-range|overflow-len|wrong-device
 ```
 
-`--host-eid/--device-eid` 缺省读取现有环境变量；CLI 值与环境同时存在但不一致时失败，避免静默覆盖。真实
-跨节点默认模式保持现有行为，不设置临时角色变量，也不要求 Host 初始化 ACL。
+物理/逻辑设备 ID 和 `--host-eid/--device-eid` 缺省读取 EID 工具及现有环境变量；runtime index 由
+`ASCEND_RT_VISIBLE_DEVICES` 派生。CLI 值与环境同时存在但不一致时失败，避免静默覆盖。真实跨节点默认模式
+保持现有行为，不设置临时角色变量，也不要求 Host 初始化 ACL。
 
 ### 3.5.2 预期日志
 
 ```text
 [eid] physical=0 logical=0 topology=server host_eid=<32hex> device_eid=<32hex>
 [host] validation_role=host rank=0 gva=0x... va=0x... bytes=8388608 key_exported=true
-[npu] rank=1 user_device=0 phy_device=0 host_gva=0x... import_view=0x... equality=pass
+[npu] rank=1 runtime_device=0 logical_device=0 physical_device=0 host_gva=0x... import_view=0x... equality=pass
 [npu] hbm_gva=0x... hbm_va=0x... registered_pool_bytes=8388608 route=HOST_DRAM
 [npu] sparse_copy_urma round=0 count=1001 bytes=4100096 ret=0 fence=complete
 [npu] verify expected=0x... actual=0x... first_mismatch=none result=PASS
@@ -655,11 +662,7 @@ export MF_HOST_URMA_EID
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
   --local-dram-validation \
   --rank 0 \
-  --head-ip 127.0.0.1 \
-  --physical-device-id "${MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID}" \
-  --device-id "${MF_LOCAL_DRAM_LOGICAL_DEVICE_ID}" \
-  --host-eid "${MF_HOST_URMA_EID}" \
-  --device-eid "${USE_LOCAL_EID}"
+  --head-ip 127.0.0.1
 ```
 
 终端 2，进程 B：
@@ -670,11 +673,7 @@ export USE_LOCAL_EID
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
   --local-dram-validation \
   --rank 1 \
-  --head-ip 127.0.0.1 \
-  --physical-device-id "${MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID}" \
-  --device-id "${MF_LOCAL_DRAM_LOGICAL_DEVICE_ID}" \
-  --host-eid "${MF_HOST_URMA_EID}" \
-  --device-eid "${USE_LOCAL_EID}"
+  --head-ip 127.0.0.1
 ```
 
 启动顺序为 A 后 B；A 的 `join()` 可等待 B。禁止以固定 sleep 判定 ready，使用 store join 和控制帧。
@@ -698,12 +697,14 @@ python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
 | 2 | `script/build.sh` | 接收第 13 个参数并传 `-DBUILD_LOCAL_DRAM_VALIDATION` | wrapper 最终通过该脚本执行 CMake | 否 | 参数缺省 `OFF` |
 | 3 | `hybm/csrc/CMakeLists.txt` | 给 `hybmm_objects` 增加宏 | 限定宏作用域 | 否 | 编译宏 |
 | 4 | `compose_transport_manager.cpp` | 宏内选择 Host role | NPU 构建当前只能选 Device | 否 | 编译宏 + role |
-| 5 | `02_host_device_urma.py` | 本机双进程、ACL、参数、校验 | 组织验证流程 | 否；pattern 可保留 | CLI 开关 |
-| 6 | `sparse_copy_urma/README.md` | 增加临时构建、EID 查询及启动命令 | 避免使用者遗漏宏或混淆物理/逻辑卡号 | 否 | 标记 validation-only |
+| 5 | `02_host_device_urma.py` | CLI、生产路径和进程调度 | 保持入口兼容并隔离 validation 分支 | 否；pattern 可保留 | CLI 开关 |
+| 6 | `urma_example_common.py` | 日志、控制通道、生命周期和参数解析 | 拆出公共职责，复用生产/验证路径 | 否 | 同目录私有示例模块 |
+| 7 | `urma_local_validation.py` | 本机双进程 copy、握手、校验 | 拆出 validation-only 数据面 | 否 | CLI 开关 |
+| 8 | `sparse_copy_urma/README.md` | 增加临时构建、EID 查询及启动命令 | 避免使用者遗漏宏或混淆物理/逻辑卡号 | 否 | 标记 validation-only |
 | C1 | `host_urma_transport_manager.h` | 声明条件 key 过滤 helper | 仅当 3.3.6 的 Device HBM key 问题实机出现 | 待定 | 编译宏，条件修改 |
 | C2 | `host_urma_transport_manager.cpp` | 宏内跳过本机验证不需要的 Device HBM key | 避免单向验证在无用导入处失败 | 待定 | 编译宏，条件修改 |
 
-因此，**EID 工具除外，MF 必改 6 个文件**：2 个构建脚本、1 个 CMake、1 个 C++、1 个 Python 样例和
+因此，**EID 工具除外，MF 必改 8 个文件**：2 个构建脚本、1 个 CMake、1 个 C++、3 个 Python 示例模块和
 1 个 README。Host manager 的 2 个文件只是条件项，未观察到 3.3.6 所述问题时保持零修改。无需修改
 binding、Device manager、AICPU、route/key ABI 或 `test/` 目录。
 
@@ -828,7 +829,8 @@ finally:
 
 #### `README.md`（文档）
 
-新增“真实跨节点模式”和“临时本机模式”两节；说明构建参数、宏、EID 工具输入物理卡、Python 使用逻辑卡，
+新增“真实跨节点模式”和“临时本机模式”两节；说明构建参数、宏、EID 工具输入物理卡、Python 区分 EID 逻辑卡和
+runtime 可见索引，
 并注明临时模式的删除边界。
 
 #### `examples/kv_offload/urma_eid_query.cpp`（独立临时工具）
@@ -981,7 +983,8 @@ Python local 模式和独立 EID 工具。Host key 过滤若被证明影响既�
 | Host EID | 与指定 NPU 可互联的本机 CPU/DRAM 侧 EID |
 | Device EID | 指定 NPU Device/HBM 侧 EID |
 | 物理 device id | EID 工具/DCMI 输入的卡号 |
-| 逻辑 device id | torch、ACL、`bm.initialize` 使用的 runtime id |
+| EID 逻辑 device id | DCMI/EID 发现返回的逻辑卡号，用于映射校验 |
+| runtime device id | `ASCEND_RT_VISIBLE_DEVICES` 下 torch、ACL、`bm.initialize` 使用的可见索引 |
 | validation role | 仅 NPU 构建本机模拟时让 rank 0 选择 Host manager 的临时角色 |
 | HCOMM view | `HcommMemImport()` 返回的本地可访问远端内存视图 |
 

@@ -34,7 +34,7 @@ NPU：
 
 ```bash
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
-  --rank 1 --head-ip <host-or-store-ip> --device-id 0
+  --rank 1 --head-ip <host-or-store-ip>
 ```
 
 Host 使用固定 GVA DDR 区间并通过一次初始化 `copy_data(H2G)` 写入 pattern；NPU 侧检查 Python 可见的
@@ -66,18 +66,18 @@ EID_TOOL=/tmp/mf_urma_eid_query
 . /tmp/mf-local-dram-eid.env
 ```
 
-工具的 `--device-id` 是物理卡号；Python 的 `--device-id` 是工具返回的逻辑卡号。启动顺序为 Host 后 NPU，
-两端使用相同的 store/control 地址和 EID 元数据：
+工具的 `--device-id` 是物理卡号；工具输出的 `MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID`、
+`MF_LOCAL_DRAM_LOGICAL_DEVICE_ID` 和 EID 环境变量会被 Python local 模式自动读取。`ASCEND_RT_VISIBLE_DEVICES`
+保留不变，脚本根据物理卡号自动计算 ACL/Torch 可见索引；例如 `ASCEND_RT_VISIBLE_DEVICES=5,6` 且目标物理
+卡为 5 时，runtime index 自动为 `0`。启动顺序为 Host 后 NPU，两端使用相同的 store/control 地址和 EID
+元数据：
 
 终端 1（进程 A，Host/DRAM，rank 0）：
 
 ```bash
 export MF_LOCAL_DRAM_VALIDATION_ROLE=host
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
-  --local-dram-validation --rank 0 --head-ip 127.0.0.1 \
-  --physical-device-id "${MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID}" \
-  --device-id "${MF_LOCAL_DRAM_LOGICAL_DEVICE_ID}" \
-  --host-eid "${MF_HOST_URMA_EID}" --device-eid "${USE_LOCAL_EID}"
+  --local-dram-validation --rank 0 --head-ip 127.0.0.1
 ```
 
 终端 2（进程 B，NPU/HBM，rank 1）：
@@ -85,11 +85,11 @@ python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
 ```bash
 unset MF_LOCAL_DRAM_VALIDATION_ROLE
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
-  --local-dram-validation --rank 1 --head-ip 127.0.0.1 \
-  --physical-device-id "${MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID}" \
-  --device-id "${MF_LOCAL_DRAM_LOGICAL_DEVICE_ID}" \
-  --host-eid "${MF_HOST_URMA_EID}" --device-eid "${USE_LOCAL_EID}"
+  --local-dram-validation --rank 1 --head-ip 127.0.0.1
 ```
+
+`--physical-device-id`、`--device-id`、`--runtime-device-id`、`--host-eid` 和 `--device-eid` 仍可显式传入，
+用于兼容旧命令或做一致性校验；local 模式下不再要求重复传递。
 
 Host 先初始化固定 8 MiB GVA DRAM 和连续 pattern；NPU 通过现有 entity/key/endpoint/route 流程取得 Host
 DRAM，使用本地 MemFabric HBM pool 的实际 device VA 调用 `sparse_copy_urma`，再用 `copy_data(G2H)` 回读

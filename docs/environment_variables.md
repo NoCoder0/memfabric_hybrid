@@ -34,8 +34,8 @@
 | `MF_HOST_URMA_EID` | 无 | Host URMA endpoint 的 32 个十六进制字符 EID；Host URMA 建链时由现有 Host manager 读取。 |
 | `USE_LOCAL_EID` | 无 | Device URMA endpoint 的本地 EID 覆盖值；设置后必须是 32 个十六进制字符。 |
 | `MF_LOCAL_DRAM_VALIDATION_ROLE` | 无 | **临时单机验证**变量；仅 NPU 验证构建生效。rank 0 可设为 `host`，rank 1 必须不设置；生产默认路径不读取。 |
-| `MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID` | 无 | 配套 EID 查询工具输出的物理卡号元数据；Python 临时验证可用它检查物理/逻辑卡映射。 |
-| `MF_LOCAL_DRAM_LOGICAL_DEVICE_ID` | 无 | 配套 EID 查询工具输出的逻辑卡号元数据；Python 临时验证用作 `--device-id`。 |
+| `MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID` | 无 | 配套 EID 查询工具输出的物理卡号元数据；Python 临时验证默认读取它并检查物理/逻辑卡映射。 |
+| `MF_LOCAL_DRAM_LOGICAL_DEVICE_ID` | 无 | 配套 EID 查询工具输出的 DCMI/EID 逻辑卡号元数据；Python 临时验证默认读取它，不是 ACL/Torch 可见索引。 |
 | `MF_LOCAL_DRAM_TOPOLOGY` | 无 | 配套 EID 查询工具输出的 `server`/`pod` 拓扑元数据，仅供诊断。 |
 | `MF_LOCAL_DRAM_UDMA` | 无 | 配套 EID 查询工具输出的 UDMA 名称，仅供诊断。 |
 
