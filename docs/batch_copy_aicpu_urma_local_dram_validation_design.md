@@ -58,7 +58,8 @@ DSMI/`urma_admin` 选路逻辑，以独立单文件放在 `examples/kv_offload` 
 - 本文不实施代码、不提交、不推送、不合并；
 - 不用本机验证替代真实鲲鹏+昇腾验收；
 - 不放宽 Host `key addr == export descriptor addr == import view addr` 门禁；
-- 不修改 `copy_data/copy_data_batch`、DataOperator 或 AICPU 四字段 ABI；
+- 不修改 `copy_data/copy_data_batch`、AICPU 四字段 ABI 或生产 DataOperator 行为；validation Host role 仅复用
+  Host data operator，避免初始化 Device HBM swap；
 - 不让 `HostUrmaTransportManager` 持有 ACL、device、HBM 或 AICPU 资源；
 - 不让最终 `XPU_TYPE=NONE` 路径加载或调用 ACL/RT/HAL；
 - 不把 EID 查询工具或角色覆盖代码带入最终鲲鹏+昇腾方案；
@@ -367,6 +368,12 @@ if (options.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
 `MF_HOST_URMA_EID` 已设置、协议只有允许组合，并打印 WARN：`validation-only, do not use in production`。
 非法值返回错误，不能静默回退。该 helper 不调用 ACL。宏未定义时，源代码只保留现有 `NO_XPU` 与 Device
 分支，最终鲲鹏+昇腾构建不包含角色覆盖代码。
+
+角色判定同时用于 transport、DataOperator 和 DRAM segment：Host role 选择 Host data operator，不分配或注册
+Device HBM swap，也不对 Host DRAM 执行 `HalHostRegister`。示例进程把仅用于未注册内存中转的
+`MF_HYBM_RDMA_SWAP_SPACE_SIZE` 设为 `0`；本验证的 Host pool 在传输前已注册，不依赖该 swap。Host transport
+仅接受 `REG_MR_FLAG_DRAM`，发现 HBM flag 时直接记录 rank、地址、大小和 flags 后失败，避免把 Device VA
+错误地按 Host DRAM 交给 HCOMM。
 
 进程 A 在 Python 的 local 模式中先执行：
 

@@ -46,6 +46,7 @@ public:
     }
 
 private:
+    Result InitializeHostDeviceUrmaOperator() noexcept;
     using DataOperators = std::vector<std::pair<hybm_data_op_type, DataOperatorPtr>>;
     DataOperators GetPrioritedDataOperators(const ExtOptions &options) noexcept;
     bool AllSupportSdma(const ExtOptions &options) noexcept;
@@ -58,6 +59,7 @@ private:
     DataOperatorPtr devRdmaDataOperator_;
     DataOperatorPtr devUrmaDataOperator_;
     DataOperatorPtr hostRdmaDataOperator_;
+    DataOperatorPtr hostDeviceUrmaDataOperator_;
 };
 } // namespace mf
 } // namespace ock

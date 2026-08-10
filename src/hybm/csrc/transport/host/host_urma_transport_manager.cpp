@@ -190,6 +190,12 @@ Result HostUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryRegio
         BM_LOG_ERROR("Invalid memory region, addr: " << std::hex << mr.addr << " size: " << std::dec << mr.size);
         return BM_INVALID_PARAM;
     }
+    if ((mr.flags & REG_MR_FLAG_DRAM) == 0U || (mr.flags & REG_MR_FLAG_HBM) != 0U) {
+        BM_LOG_ERROR("Host URMA only supports DRAM memory, rankId: " << rankId_ << " addr: " << std::hex << mr.addr
+                                                                     << " size: " << std::dec << mr.size << " flags: 0x"
+                                                                     << std::hex << mr.flags);
+        return BM_INVALID_PARAM;
+    }
     auto it = localRegistrations_.find(mr.addr);
     if (it != localRegistrations_.end()) {
         if (it->second.mr.size == mr.size) {

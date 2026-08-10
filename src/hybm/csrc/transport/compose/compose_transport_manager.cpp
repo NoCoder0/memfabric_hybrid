@@ -13,11 +13,10 @@
 
 #include <vector>
 #include <string>
-#include <cstdlib>
-#include <cstring>
 
 #include "hybm_def.h"
 #include "hybm_logger.h"
+#include "local_dram_validation_role.h"
 #include "host_hcom_transport_manager.h"
 #include "device_rdma_transport_manager.h"
 #include "hybm_gva_version.h"
@@ -36,34 +35,6 @@ const uint32_t HOST_PROTOCOL = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA 
 const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
                                 HYBM_DOP_TYPE_HOST_DEVICE_URMA;
 
-// Temporary local DRAM validation role; remove this block after hardware sign-off.
-#if defined(MF_LOCAL_DRAM_VALIDATION)
-enum class LocalDramValidationRole { DEVICE, HOST, INVALID };
-
-LocalDramValidationRole GetLocalDramValidationRole(const TransportOptions &options)
-{
-    const char *role = std::getenv("MF_LOCAL_DRAM_VALIDATION_ROLE");
-    if (role == nullptr) {
-        return LocalDramValidationRole::DEVICE;
-    }
-    if (std::strcmp(role, "host") != 0 || options.rankId != 0U) {
-        BM_LOG_ERROR("invalid local DRAM validation role, role=" << role << " rankId=" << options.rankId);
-        return LocalDramValidationRole::INVALID;
-    }
-    if (options.protocol != HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
-        BM_LOG_ERROR("local DRAM validation requires HOST_DEVICE_URMA only, role=" << role
-                     << " rankId=" << options.rankId << " protocol=" << options.protocol);
-        return LocalDramValidationRole::INVALID;
-    }
-    const char *hostEid = std::getenv("MF_HOST_URMA_EID");
-    if (hostEid == nullptr || hostEid[0] == '\0') {
-        BM_LOG_ERROR("local DRAM validation host role requires MF_HOST_URMA_EID, rankId=" << options.rankId);
-        return LocalDramValidationRole::INVALID;
-    }
-    BM_LOG_WARN("validation-only local DRAM host role enabled; do not use in production, rankId=" << options.rankId);
-    return LocalDramValidationRole::HOST;
-}
-#endif
 } // namespace
 
 Result ComposeTransportManager::OpenHostTransport(const TransportOptions &options)
@@ -85,12 +56,14 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
     if (options.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
 #if defined(NO_XPU)
         deviceTransportManager_ = std::make_shared<host::HostUrmaTransportManager>();
-#elif defined(MF_LOCAL_DRAM_VALIDATION)  // Temporary validation-only role selection.
-        const auto role = GetLocalDramValidationRole(options);
+#elif defined(MF_LOCAL_DRAM_VALIDATION) // Temporary validation-only role selection.
+        const auto role = GetLocalDramValidationRole(options.rankId, options.protocol);
         if (role == LocalDramValidationRole::INVALID) {
             return BM_INVALID_PARAM;
         }
         if (role == LocalDramValidationRole::HOST) {
+            BM_LOG_WARN(
+                "validation-only local DRAM host role enabled; do not use in production, rankId=" << options.rankId);
             deviceTransportManager_ = std::make_shared<host::HostUrmaTransportManager>();
         } else {
             deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();

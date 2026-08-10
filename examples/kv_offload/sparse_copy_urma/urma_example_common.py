@@ -22,7 +22,7 @@ STORE_PORT = 8574
 CTRL_PORT = 9877
 WORLD_SIZE = 2
 HOST_RANK, NPU_RANK = 0, 1
-POOL_BYTES = 1 << 30
+POOL_BYTES = 8 << 20
 ITEM_BYTES = 4 << 10
 DEFAULT_SEED = 17
 MAX_CONTROL_BYTES = 1 << 20
@@ -268,9 +268,7 @@ def _create_handle(args, bm, rank_id):
             except Exception as exc:
                 _log_error(args, "bm_create_rollback", f"handle.destroy raised: {exc}")
         try:
-            ret = bm.uninitialize(0)
-            if ret != 0:
-                _log_error(args, "bm_create_rollback", "bm.uninitialize failed", ret)
+            bm.uninitialize(0)
         except Exception as exc:
             _log_error(args, "bm_create_rollback", f"bm.uninitialize raised: {exc}")
         raise
@@ -297,9 +295,7 @@ def _cleanup(args, mf, bm, handle, joined, bm_initialized, mf_initialized):
             _log_error(args, "cleanup_destroy", f"handle.destroy raised: {exc}")
     if bm_initialized:
         try:
-            ret = bm.uninitialize(0)
-            if ret != 0:
-                _log_error(args, "cleanup_bm", "bm.uninitialize failed", ret)
+            bm.uninitialize(0)
         except Exception as exc:
             _log_error(args, "cleanup_bm", f"bm.uninitialize raised: {exc}")
     if mf_initialized:
@@ -461,9 +457,12 @@ def _configure_local_environment(args):
     if args.rank == HOST_RANK:
         if role not in (None, "host"):
             _fail(args, "validation_role", f"host rank requires role=host, got={role}")
+        swap_size = os.environ.get("MF_HYBM_RDMA_SWAP_SPACE_SIZE", "unset")
         os.environ["MF_LOCAL_DRAM_VALIDATION_ROLE"] = "host"
         os.environ["MF_HOST_URMA_EID"] = args.host_eid
-        _log_debug(args, "local_environment", "configured MF_LOCAL_DRAM_VALIDATION_ROLE=host and MF_HOST_URMA_EID")
+        os.environ["MF_HYBM_RDMA_SWAP_SPACE_SIZE"] = "0"
+        _log_debug(args, "local_environment", "configured Host role/EID and disabled unused Host RDMA swap, "
+                                               f"swap_size_before={swap_size}")
     elif role is not None:
         _fail(args, "validation_role", "device rank must not set MF_LOCAL_DRAM_VALIDATION_ROLE")
     else:

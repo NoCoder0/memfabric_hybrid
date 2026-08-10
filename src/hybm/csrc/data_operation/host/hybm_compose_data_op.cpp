@@ -12,6 +12,7 @@
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
 #include "hybm_compose_data_op.h"
+#include "local_dram_validation_role.h"
 
 namespace ock {
 namespace mf {
@@ -21,6 +22,38 @@ HostComposeDataOp::HostComposeDataOp(hybm_options options, transport::TransManag
 {}
 
 HostComposeDataOp::~HostComposeDataOp() noexcept {}
+
+Result HostComposeDataOp::InitializeHostDeviceUrmaOperator() noexcept
+{
+#if defined(NO_XPU)
+    hostDeviceUrmaDataOperator_ = DataOperatorFactory::CreateHostRdmaDataOperator(options_.rankId, transport_);
+#elif defined(MF_LOCAL_DRAM_VALIDATION)
+    const auto role = GetLocalDramValidationRole(options_.rankId, options_.bmDataOpType);
+    if (role == LocalDramValidationRole::INVALID) {
+        return BM_INVALID_PARAM;
+    }
+    if (role == LocalDramValidationRole::HOST) {
+        hostDeviceUrmaDataOperator_ = DataOperatorFactory::CreateHostRdmaDataOperator(options_.rankId, transport_);
+        BM_LOG_WARN("validation-only Host data operator enabled, rankId: " << options_.rankId);
+    } else {
+        hostDeviceUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
+    }
+#else
+    hostDeviceUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
+#endif
+    if (hostDeviceUrmaDataOperator_ == nullptr) {
+        BM_LOG_ERROR("Failed to create HostDevice URMA data operator, rankId: " << options_.rankId << " bmDataOpType: "
+                                                                                << options_.bmDataOpType);
+        return BM_ERROR;
+    }
+    auto ret = hostDeviceUrmaDataOperator_->Initialize();
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HostDevice URMA data operator init failed, ret: " << ret << " rankId: " << options_.rankId
+                                                                        << " bmDataOpType: " << options_.bmDataOpType);
+        hostDeviceUrmaDataOperator_ = nullptr;
+    }
+    return ret;
+}
 
 Result HostComposeDataOp::Initialize() noexcept
 {
@@ -64,19 +97,13 @@ Result HostComposeDataOp::Initialize() noexcept
     }
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
-#if defined(NO_XPU)
-        hostRdmaDataOperator_ = DataOperatorFactory::CreateHostRdmaDataOperator(options_.rankId, transport_);
-        auto ret = hostRdmaDataOperator_->Initialize();
-#else
-        devUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
-        auto ret = devUrmaDataOperator_->Initialize();
-#endif
+        auto ret = InitializeHostDeviceUrmaOperator();
         if (ret != BM_OK) {
-            BM_LOG_ERROR("HostDevice URMA data operator init failed, ret:" << ret);
             sdmaDataOperator_ = nullptr;
             devRdmaDataOperator_ = nullptr;
             devUrmaDataOperator_ = nullptr;
             hostRdmaDataOperator_ = nullptr;
+            hostDeviceUrmaDataOperator_ = nullptr;
             return ret;
         }
     }
@@ -112,6 +139,10 @@ Result HostComposeDataOp::Initialize() noexcept
 
 void HostComposeDataOp::UnInitialize() noexcept
 {
+    if (hostDeviceUrmaDataOperator_ != nullptr) {
+        hostDeviceUrmaDataOperator_->UnInitialize();
+        hostDeviceUrmaDataOperator_ = nullptr;
+    }
     if (hostRdmaDataOperator_ != nullptr) {
         hostRdmaDataOperator_->UnInitialize();
         hostRdmaDataOperator_ = nullptr;
@@ -309,15 +340,10 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
         dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_SHM, hostRdmaDataOperator_);
     }
 
-#if defined(NO_XPU)
-    if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_DEVICE_URMA, hostRdmaDataOperator_);
+    if (hostDeviceUrmaDataOperator_ != nullptr &&
+        (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0U) {
+        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_DEVICE_URMA, hostDeviceUrmaDataOperator_);
     }
-#else
-    if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_DEVICE_URMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_DEVICE_URMA, devUrmaDataOperator_);
-    }
-#endif
 
     return dataOperators;
 }
