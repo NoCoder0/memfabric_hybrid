@@ -1,171 +1,340 @@
 [root@localhost memfabric_hybrid]# python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py   --local-dram-validation --rank 0 --head-ip 127.0.0.1 --sizes 4096 --batch-counts 1
-[DEBUG] stage=local_options role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=physical_device_id=5 logical_device_id=5 runtime_device_id=0 visible_devices=5,6 logical_count=2 physical_device_visible_index=0 host_eid=00000000003f030000100000df080b00 device_eid=000000000000020000100000df00a100 topology=server udma=udmac0d1e3
-[DEBUG] stage=process_start role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=enter Host rank execution
-[DEBUG] stage=local_environment role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=role_before=host visible_devices=5,6 logical_count=2 physical_device_visible_index=0 host_eid=00000000003f030000100000df080b00 device_eid=000000000000020000100000df00a100
-[DEBUG] stage=local_environment role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=configured MF_LOCAL_DRAM_VALIDATION_ROLE=host and MF_HOST_URMA_EID
-[DEBUG] stage=acl_context role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=before aclrtSetDevice runtime_device_id=0 discovered_logical_device=5 physical_device=5 visible_devices=5,6 logical_count=2 physical_device_visible_index=0
+[DEBUG] stage=local_options role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=physical_device_id=5 logical_device_id=5 runtime_device_id=0 visible_devices=5,6 logical_count=2 physical_device_visible_index=0 host_eid=00000000003f030000100000df080b00 device_eid=000000000000020000100000df00a100 topology=server udma=udmac0d1e3
+[DEBUG] stage=process_start role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=enter Host rank execution
+[DEBUG] stage=local_environment role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=role_before=host visible_devices=5,6 logical_count=2 physical_device_visible_index=0 host_eid=00000000003f030000100000df080b00 device_eid=000000000000020000100000df00a100
+[DEBUG] stage=local_environment role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=configured Host role/EID and disabled unused Host RDMA swap, swap_size_before=unset
+[DEBUG] stage=acl_context role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=before aclrtSetDevice runtime_device_id=0 discovered_logical_device=5 physical_device=5 visible_devices=5,6 logical_count=2 physical_device_visible_index=0
+mki_log mkdir /home/z00502111/log/atb
+[DEBUG] stage=acl_context role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=torch_npu_device_count=2
+[DEBUG] stage=acl_context role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=aclrtSetDevice completed current_device=0
+[DEBUG] stage=runtime_log_level role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=mf_log_level=0 local_validation=True MF_LOG_LEVEL=0 ASCEND_MF_LOG_LEVEL=unset
+[DEBUG] stage=mf_initialize role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=calling mf.initialize for Host rank
+2026-08-10 22:43:01.131131 INFO [61688-61688][SMEM smem.cpp:39 smem_init] smem init successfully, library version: 1.2.0, build time: Aug 10 2026 22:18:29, commit: 72d8756815fbbc0d6365135414efad426c6731fa
+[DEBUG] stage=mf_initialize role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=Host rank mf.initialize returned ret=0
+[DEBUG] stage=bm_lifecycle role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=creating Host handle store=tcp://127.0.0.1:8574 world_size=2 local_dram_size=8388608 local_hbm_size=0 max_dram_size=8388608 max_hbm_size=1073741824
+2026-08-10 22:43:01.131607 INFO [61688-61886][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
+2026-08-10 22:43:01.131778 INFO [61688-61887][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-08-10 22:43:01.131910 INFO [61688-61888][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-08-10 22:43:01.132051 INFO [61688-61889][AccLink acc_tcp_listener.cpp:136 RunInThread] Acc listener accept thread for 127.0.0.1:8574 start ...
+2026-08-10 22:43:01.132260 DEBUG [61688-61688][SMEM smem_tcp_config_store_server.cpp:111 Startup] startup acc tcp server on port: 8574
+2026-08-10 22:43:01.132282 INFO [61688-61688][SMEM smem_tcp_config_store.cpp:157 Startup] start store server success, ip:127.0.0.1:8574
+2026-08-10 22:43:01.132381 INFO [61688-61893][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
+2026-08-10 22:43:01.132510 INFO [61688-61894][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-08-10 22:43:01.132678 INFO [61688-61895][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
+2026-08-10 22:43:01.132711 INFO [61688-61688][AccLink acc_tcp_server_default.cpp:515 ConnectToPeerServer] Trying to connect to 127.0.0.1:8574
+2026-08-10 22:43:01.132864 INFO [61688-61889][AccLink acc_tcp_listener.cpp:210 ProcessNewConnection] Connected from 127.0.0.1:40382 successfully, ssl disable
+2026-08-10 22:43:01.132922 INFO [61688-61889][SMEM smem_tcp_config_store_server.cpp:241 LinkConnectedHandler] New link connected, linkId: 1, worldSize: 2, rankId: 0 reconnect:0
+2026-08-10 22:43:01.132938 INFO [61688-61889][SMEM smem_tcp_config_store_server.cpp:207 CanReceiveNewLink] change server state from INITED to NORMAL
+2026-08-10 22:43:01.133026 INFO [61688-61688][AccLink acc_tcp_server_default.cpp:705 Handshake] Connect to 127.0.0.1:8574 successfully, with ssl disable
+2026-08-10 22:43:01.133091 INFO [61688-61688][SMEM smem_tcp_config_store.cpp:166 Startup] connect store success, ip:127.0.0.1:8574
+2026-08-10 22:43:01.133116 INFO [61688-61688][SMEM smem_bm_entry_manager.cpp:89 Initialize] initialize store(tcp://127.0.0.1:8574) world size(2) device(0) OK.
+2026-08-10 22:43:01.133170 INFO [61688-61688][HYBM hybm_gva_version.cpp:92 CastDriverVersion] get driver verison:V100R001C10SPC001B086
+2026-08-10 22:43:01.133184 DEBUG [61688-61688][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C23SPC005B219
+2026-08-10 22:43:01.133193 DEBUG [61688-61688][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C21B035
+2026-08-10 22:43:01.133199 DEBUG [61688-61688][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C19SPC109B220
+2026-08-10 22:43:01.133208 DEBUG [61688-61688][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C18B100
+2026-08-10 22:43:01.133215 DEBUG [61688-61688][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C14B999
+2026-08-10 22:43:01.133224 INFO [61688-61688][HYBM hybm_gva_version.cpp:199 HalGvaPrecheck] Driver version V5 found
+2026-08-10 22:43:01.133430 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:85 LoadLibrary] Loaded symbol RaSocketInit successfully
+2026-08-10 22:43:01.133442 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:86 LoadLibrary] Loaded symbol RaInit successfully
+2026-08-10 22:43:01.133447 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:87 LoadLibrary] Loaded symbol RaSocketDeinit successfully
+2026-08-10 22:43:01.133453 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:88 LoadLibrary] Loaded symbol RaRdevInitV2 successfully
+2026-08-10 22:43:01.133458 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:89 LoadLibrary] Loaded symbol RaRdevGetHandle successfully
+2026-08-10 22:43:01.133464 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:90 LoadLibrary] Loaded symbol RaSocketBatchConnect successfully
+2026-08-10 22:43:01.133472 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:92 LoadLibrary] Loaded symbol RaSocketBatchClose successfully
+2026-08-10 22:43:01.133477 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:94 LoadLibrary] Loaded symbol RaSocketListenStart successfully
+2026-08-10 22:43:01.133483 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:96 LoadLibrary] Loaded symbol RaSocketListenStop successfully
+2026-08-10 22:43:01.133489 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:98 LoadLibrary] Loaded symbol RaGetSockets successfully
+2026-08-10 22:43:01.133495 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:99 LoadLibrary] Loaded symbol RaGetIfnum successfully
+2026-08-10 22:43:01.133501 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:100 LoadLibrary] Loaded symbol RaGetIfaddrs successfully
+2026-08-10 22:43:01.133507 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:101 LoadLibrary] Loaded symbol RaSocketWhiteListAdd successfully
+2026-08-10 22:43:01.133513 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:103 LoadLibrary] Loaded symbol RaSocketWhiteListDel successfully
+2026-08-10 22:43:01.133518 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:105 LoadLibrary] Loaded symbol RaQpCreate successfully
+2026-08-10 22:43:01.133526 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:106 LoadLibrary] Loaded symbol RaQpCreateWithAttrs successfully
+2026-08-10 22:43:01.133532 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:108 LoadLibrary] Loaded symbol RaAiQpCreate successfully
+2026-08-10 22:43:01.133538 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:109 LoadLibrary] Loaded symbol RaQpDestroy successfully
+2026-08-10 22:43:01.133543 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:110 LoadLibrary] Loaded symbol RaGetQpStatus successfully
+2026-08-10 22:43:01.133549 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:111 LoadLibrary] Loaded symbol RaQpConnectAsync successfully
+2026-08-10 22:43:01.133555 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:112 LoadLibrary] Loaded symbol RaRegisterMr successfully
+2026-08-10 22:43:01.133561 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:113 LoadLibrary] Loaded symbol RaDeregisterMr successfully
+2026-08-10 22:43:01.133566 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:114 LoadLibrary] Loaded symbol RaSendWr successfully
+2026-08-10 22:43:01.133571 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:115 LoadLibrary] Loaded symbol RaSendWrV2 successfully
+2026-08-10 22:43:01.133576 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:116 LoadLibrary] Loaded symbol RaGetNotifyBaseAddr successfully
+2026-08-10 22:43:01.133583 DEBUG [61688-61688][HYBM dl_hccp_api.cpp:118 LoadLibrary] Loaded symbol RaGetNotifyMrInfo successfully
+2026-08-10 22:43:01.133589 INFO [61688-61688][HYBM dl_hccp_api.cpp:121 LoadLibrary] LoadLibrary for DlHccpApi success
+2026-08-10 22:43:01.133601 INFO [61688-61688][HYBM dl_hccl_api.cpp:52 LoadLibrary] LoadLibrary for DlHcclApi success
+2026-08-10 22:43:01.134905 WARN [61688-61688][HYBM dl_hcom_api.cpp:84 LoadLibrary] Unable to open library [libhcom.so], libhcom.so: cannot open shared object file: No such file or directory
+2026-08-10 22:43:01.136976 DEBUG [61688-61688][HYBM dl_acl_api.cpp:146 operator()] success get soc name: Ascend950DT_9574
+2026-08-10 22:43:01.137000 INFO [61688-61688][HYBM hybm_gva.cpp:167 hybm_init_hbm_gva] Success get deviceId: 0, logicDeviceId: 5 sco:3 ver:0
+2026-08-10 22:43:01.137016 DEBUG [61688-61688][HYBM hybm_gva.cpp:181 hybm_init_hbm_gva] restore init flag
+2026-08-10 22:43:01.139096 INFO [61688-61688][HYBM hybm_entry.cpp:116 hybm_init] hybm init successfully, library version: 1.2.0, build time: Aug 10 2026 22:18:27, commit: 72d8756815fbbc0d6365135414efad426c6731fa, deviceId: 0
+2026-08-10 22:43:01.139107 INFO [61688-61688][SMEM smem_bm.cpp:109 smem_bm_init] smem_bm_init success.  config_ip: tcp://127.0.0.1:8574
+2026-08-10 22:43:01.139223 DEBUG [61688-61688][SMEM smem_bm_entry_manager.cpp:200 CreateEntryById] create new bm entry success, id: 0
+2026-08-10 22:43:01.139446 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(0) for key(BM_(0)_check_rank_config_consistency) start, newValueStr: @ 
+2026-08-10 22:43:01.139489 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(0) for key(BM_(0)_check_rank_config_consistency) finished, ret: 0 faled:0
+2026-08-10 22:43:01.139570 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 0
+2026-08-10 22:43:01.139624 DEBUG [61688-61688][SMEM smem_bm_entry.cpp:883 CheckRankConfigConsistency] first set for key: check_rank_config_consistency, config: maxHBMSize=1073741824, maxDRAMSize=8388608enable56BitsGva0
+2026-08-10 22:43:01.139754 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:919 GroupListenEvent] GroupListenEvent start, rank:0
+2026-08-10 22:43:01.139833 DEBUG [61688-61898][SMEM smem_tcp_config_store.cpp:611 Watch] watch for key: BM_(0)_D_EVENT, id: 1
+2026-08-10 22:43:01.139845 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:894 ReWatchEvent] Watch group listen successfully, wid: 1
+2026-08-10 22:43:01.139865 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:579 WatchHandler] WATCH REQUEST(1) for key(BM_(0)_D_EVENT) start.
+2026-08-10 22:43:01.239878 DEBUG [61688-61899][SMEM smem_net_group_engine.cpp:970 GroupListenLinkState] GroupListenLinkState start, rank:0
+2026-08-10 22:43:01.239955 DEBUG [61688-61899][SMEM smem_tcp_config_store.cpp:639 Watch] send watch for rank down success, id: 2
+2026-08-10 22:43:01.239966 INFO [61688-61899][SMEM smem_net_group_engine.cpp:909 ReWatchLinkDown] Watch link down event successfully, wid: 2
+2026-08-10 22:43:01.240030 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:930 WatchRankStateHandler] WATCH REQUEST(2) for key(WATCH_RANK_DOWN_KEY) finished, linkId: 1
+2026-08-10 22:43:01.340024 INFO [61688-61900][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor0 started.
+2026-08-10 22:43:01.340077 INFO [61688-61901][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor1 started.
+2026-08-10 22:43:01.340172 DEBUG [61688-61688][HYBM hybm_entity_tag_info.cpp:47 AddRankTag] Success to add tag:HYBM_DEFAULT_TAG_FOR_EMPTY rankId:0
+2026-08-10 22:43:01.340189 INFO [61688-61688][HYBM hybm_entity_tag_info.cpp:93 AddTagOpInfo] Add an empty tagOpInfo.
+2026-08-10 22:43:01.340239 WARN [61688-61688][HYBM hybm_entity_tag_info.cpp:152 GetTag2TagOpType] Not find opType from tag1:HYBM_DEFAULT_TAG_FOR_EMPTY to tag2:HYBM_DEFAULT_TAG_FOR_EMPTY
+2026-08-10 22:43:01.340252 DEBUG [61688-61688][HYBM hybm_entity_tag_info.cpp:86 AddOneTagOpInfo] Success to update tag1:HYBM_DEFAULT_TAG_FOR_EMPTY tag2:HYBM_DEFAULT_TAG_FOR_EMPTY op:1024
+2026-08-10 22:43:01.340259 INFO [61688-61688][HYBM hybm_entity_default.cpp:106 InitTagManager] Success to init tag manager data op type:1024
+2026-08-10 22:43:01.340312 INFO [61688-61688][HYBM dl_hcomm_api.cpp:94 LoadLibrary] LoadLibrary for DlHcommApi success
+2026-08-10 22:43:01.340321 DEBUG [61688-61688][HYBM hybm_entity_default.cpp:1143 InitSegment] Initialize segment with type: BUTT
+2026-08-10 22:43:01.340325 INFO [61688-61688][HYBM hybm_entity_default.cpp:1175 InitHbmSegment] create entity global unified memory space.
+2026-08-10 22:43:01.340357 DEBUG [61688-61688][HYBM hybm_mem_segment.cpp:283 FillSysBootIdInfo] os-boot-id: 3c27d98f-ae84-4710-a712-25022732ccb7, head u32: 3c27d98f
+2026-08-10 22:43:01.340622 DEBUG [61688-61688][HYBM hybm_mem_segment.cpp:223 InitDeviceInfo] local server=0x0
+2026-08-10 22:43:01.340659 DEBUG [61688-61688][HYBM hybm_mem_segment.cpp:246 InitDeviceInfo] local sdid=0x140005, local server=0x0, spid=ffffffff
+2026-08-10 22:43:01.340700 WARN [61688-61688][HYBM compose_transport_manager.cpp:65 OpenDeviceTransport] validation-only local DRAM host role enabled; do not use in production, rankId=0
+2026-08-10 22:43:01.665480 INFO [61688-61688][HYBM hcomm_transport_manager.cpp:242 HcommMemReg] urma try to register mem, addr: 0x4d969ef0 size: 8 memType: HOST
+2026-08-10 22:43:01.680921 DEBUG [61688-61688][HYBM host_urma_transport_manager.cpp:137 InitHostTransferFlagLocked] Host transfer flag registered, rankId: 0 addr: 4d969ef0
+2026-08-10 22:43:01.680934 INFO [61688-61688][HYBM host_urma_transport_manager.cpp:96 OpenDevice] HostUrmaTransportManager opened, rankId: 0
+2026-08-10 22:43:01.680943 INFO [61688-61688][HYBM compose_transport_manager.cpp:128 OpenDevice] Success to open device rankId:0 protocol:1024 nic:device#tcp://127.0.0.1:10005;
+2026-08-10 22:43:01.680974 WARN [61688-61688][HYBM hybm_compose_data_op.cpp:37 InitializeHostDeviceUrmaOperator] validation-only Host data operator enabled, rankId: 0
+2026-08-10 22:43:01.680989 INFO [61688-61688][HYBM hybm_entity_default.cpp:135 Initialize] Initialize success: deviceId: 0, rankId: 0, rankCount: 2, maxHBMSize: 1073741824, maxDRAMSize: 8388608, deviceVASpace: 0, hostVASpace: 8388608, bmType: HOST_INITIATE, memType: BUTT, bmDataOpType: 1024, scene: DEFAULT, enable56BitsGva: 0, role: PEER, flags: 0, dramShmFd: -1, transUrl: tcp://127.0.0.1:10005, tag: HYBM_DEFAULT_TAG_FOR_EMPTY, tagOpInfo: , tlsOption: TlsConfig{enable: 0}
+2026-08-10 22:43:01.681017 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:422 AllocReserveLvaInner] AllocReserveLva, searching in HOST range 0x340000000000-0xb40000000000
+2026-08-10 22:43:01.681028 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:563 FindFreeSpace] FindFreeSpace: found 0 used ranges in target area
+2026-08-10 22:43:01.681035 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:565 FindFreeSpace] FindFreeSpace: no used ranges, using start address 0x340000000000
+2026-08-10 22:43:01.681043 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:430 AllocReserveLvaInner] AllocReserveLva success: 0x340000000000 size: 3221225472
+2026-08-10 22:43:01.681061 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:380 AllocReserveGva] AllocReserveGva success: ReservedGvaInfo{va: 0x340000000000 0x340000000000 0x340000000000, size: 0x80000000, memType: DEVICE, localRankId: 0}
+2026-08-10 22:43:01.682205 INFO [61688-61688][HYBM hybm_data_operator.h:82 UpdateGvaSpace] update type 1, gva:0x340000000000, space:1073741824, rankCnt:2
+2026-08-10 22:43:01.682221 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:422 AllocReserveLvaInner] AllocReserveLva, searching in HOST range 0x340000000000-0xb40000000000
+2026-08-10 22:43:01.682232 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:563 FindFreeSpace] FindFreeSpace: found 1 used ranges in target area
+2026-08-10 22:43:01.682241 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:585 FindFreeSpace] FindFreeSpace: current:0x3400c0000000 end:0xb40000000000 size:0x41000000
+2026-08-10 22:43:01.682246 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:587 FindFreeSpace] FindFreeSpace: found free space at end, addr=0x3400c0000000
+2026-08-10 22:43:01.682256 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:430 AllocReserveLvaInner] AllocReserveLva success: 0x3400c0000000 size: 1090519040
+2026-08-10 22:43:01.682266 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:380 AllocReserveGva] AllocReserveGva success: ReservedGvaInfo{va: 0x3400c0000000 0x3400c0000000 0x3400c0000000, size: 0x1000000, memType: HOST, localRankId: 0}
+2026-08-10 22:43:01.682278 INFO [61688-61688][HYBM hybm_data_operator.h:82 UpdateGvaSpace] update type 2, gva:0x3400c0000000, space:8388608, rankCnt:2
+2026-08-10 22:43:01.682648 WARN [61688-61688][HYBM hybm_conn_based_segment.cpp:449 AllocMemory] Unable to alloc size:8388608 with hugepage via mmap, error: 12, Cannot allocate memory. Use 'grep -i huge /proc/meminfo' to check hugepages, and use 'echo <page_num> > /proc/sys/vm/nr_hugepages' to set hugepages.
+2026-08-10 22:43:01.682662 INFO [61688-61688][HYBM hybm_conn_based_segment.cpp:481 AllocMemory] Successfully allocated 8388608 bytes DRAM 4K page via mmap. addr:0x3400c0000000
+2026-08-10 22:43:01.682691 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:114 AddVaInfo] AddVaInfo success: AllocatedGvaInfo{gva: 0x3400c0000000, size: 0x800000, localRankId: 0, importRankId: 4294967295, memType: HOST, deviceVa: 0x0, hostVa: 0x3400c0000000}
+2026-08-10 22:43:01.682714 DEBUG [61688-61688][HYBM hybm_conn_based_segment.cpp:167 AllocLocalMemory] allocate slice(idx:0, size:8388608 va:0x3400c0000000).
+2026-08-10 22:43:01.682732 INFO [61688-61688][HYBM hcomm_transport_manager.cpp:242 HcommMemReg] urma try to register mem, addr: 0x3400c0000000 size: 8388608 memType: HOST
+2026-08-10 22:43:01.684533 DEBUG [61688-61688][HYBM host_urma_transport_manager.cpp:237 RegisterMemoryRegion] Memory region registered, addr: 3400c0000000 size: 8388608 exportedGva: 3400c0000000
+2026-08-10 22:43:01.684575 DEBUG [61688-61688][HYBM hybm_ex_info_transfer.h:41 Serialize] serialize data length = 192
+2026-08-10 22:43:01.684599 INFO [61688-61688][HYBM hcomm_transport_manager.cpp:340 HcommMemExport] urma try to export memory addr: 0x3400c0000000 size: 8388608
+2026-08-10 22:43:01.684647 DEBUG [61688-61688][HYBM hybm_entity_default.cpp:468 ExportSliceExchangeInfo] Success to export slice rankId:0 addr:57177825869824 key:MemoryKey-2784669697-57177825869824-13510805961748481-0-57177825869824-57177825869824-8388608-1211180777758-57177825869824-8388608-60129542145-3977020646717652992-4051328954835023927-399014644298822706-3145728-1152921518548713472-47393472512-3747205996204785664-0-3008686026060202112-23773315072-0-3972174871340777472-1125899906862486-196608-1152921518548713472-47393472512-0-0-65536-0-0-0-0-0-0-0-0-0-0-0-0-0-11452653852403171328-2251799813705110-281474976710656-655360-3546357314664595456-10787376321143125814-206158431625-913694162681856-3105978614550528-5590814317101449216-0-3832-1558007976569281-0-0-1301714096-12884901892-913694162681856-3105978614550528-0-0-4294967296-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0-0
+2026-08-10 22:43:01.684673 DEBUG [61688-61688][HYBM hybm_entity_default.cpp:374 ExportEntityExchangeInfo] transport get nic:device#tcp://127.0.0.1:10005;, ip: 
+2026-08-10 22:43:01.684682 DEBUG [61688-61688][HYBM hybm_ex_info_transfer.h:41 Serialize] serialize data length = 1032
+2026-08-10 22:43:01.684777 DEBUG [61688-61688][SMEM smem_bm_entry.cpp:443 Join] group join timeout sec: 600
+2026-08-10 22:43:01.684914 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:687 RemoveHandler] REMOVE REQUEST(3) for key(BM_(0)_D_BMEX_0) start.
+2026-08-10 22:43:01.684985 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 3
+2026-08-10 22:43:01.685040 WARN [61688-61688][SMEM smem_net_group_engine.cpp:699 TryRemovePrefixKey] remove key not successful, src_rank:0 key:BM_(0)_D_BMEX_0 ret:-404
+2026-08-10 22:43:01.685058 DEBUG [61688-61688][SMEM smem_net_group_engine.cpp:1398 GroupJoin] join generate_info:SmemGroupInfo{size:1 event:0 target:0 src:0 ver:1 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} base:SmemGroupInfo{size:0 event:0 target:0 src:0 ver:0 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:43:01.685135 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(4) for key(BM_(0)_D_EVENT) start, newValueStr:  
+2026-08-10 22:43:01.685166 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(4) for key(BM_(0)_D_EVENT) finished, ret: 0 faled:0
+2026-08-10 22:43:01.685193 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:43:01.685233 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 4
+2026-08-10 22:43:01.685261 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 1
+2026-08-10 22:43:01.685277 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:106 SetFinished] watch end, id: 1
+2026-08-10 22:43:01.685303 DEBUG [61688-61895][SMEM smem_net_group_engine.cpp:1212 GroupWatchCb] receive group info:SmemGroupInfo{size:1 event:0 target:0 src:0 ver:1 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} current_leave:0
+2026-08-10 22:43:01.685364 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:869 TryUpdateInfo] input:SmemGroupInfo{size:1 event:0 target:0 src:0 ver:1 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} before:SmemGroupInfo{size:0 event:0 target:0 src:0 ver:0 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:43:01.685432 DEBUG [61688-61898][SMEM smem_bm_entry.cpp:270 JoinHandle] do join func, local_rk: 0 receive_rk: 0, rank size is: 1
+2026-08-10 22:43:01.685573 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:357 SetHandler] SET REQUEST(5) for key(BM_(0)_D_BMEX_0) start.
+2026-08-10 22:43:01.685615 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 5
+2026-08-10 22:43:01.685678 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:541 PrefixGetHandler] PREFIX REQUEST(6) for key(BM_(0)_D_BMEX_) start.
+2026-08-10 22:43:01.685699 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:553 PrefixGetHandler] PREFIX REQUEST(6) for key(BM_(0)_D_BMEX_) success.
+2026-08-10 22:43:01.685735 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 6
+2026-08-10 22:43:01.685867 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:717 AppendHandler] APPEND REQUEST(7) for key(BM_(0)_D_1_1_GA) start.
+2026-08-10 22:43:01.685905 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 7
+2026-08-10 22:43:01.685926 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:167 GroupGatherResult] store add key: BM_(0)_D_1_1_GA len: 4 size:1
+2026-08-10 22:43:01.685973 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:357 SetHandler] SET REQUEST(8) for key(BM_(0)_D_1_1_GW) start.
+2026-08-10 22:43:01.686008 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 8
+2026-08-10 22:43:01.686055 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(9) for key(BM_(0)_D_1_1_GW) start.
+2026-08-10 22:43:01.686064 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:488 GetHandler] GET REQUEST(9) for key(BM_(0)_D_1_1_GW) success.
+2026-08-10 22:43:01.686093 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 9
+2026-08-10 22:43:01.686147 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(10) for key(BM_(0)_D_1_1_GA) start.
+2026-08-10 22:43:01.686155 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:488 GetHandler] GET REQUEST(10) for key(BM_(0)_D_1_1_GA) success.
+2026-08-10 22:43:01.686182 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 10
+2026-08-10 22:43:01.686271 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:717 AppendHandler] APPEND REQUEST(11) for key(BM_(0)_D_1_2_GA) start.
+2026-08-10 22:43:01.686303 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 11
+2026-08-10 22:43:01.686324 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:167 GroupGatherResult] store add key: BM_(0)_D_1_2_GA len: 4 size:1
+2026-08-10 22:43:01.686368 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:357 SetHandler] SET REQUEST(12) for key(BM_(0)_D_1_2_GW) start.
+2026-08-10 22:43:01.686402 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 12
+2026-08-10 22:43:01.686451 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(13) for key(BM_(0)_D_1_2_GW) start.
+2026-08-10 22:43:01.686459 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:488 GetHandler] GET REQUEST(13) for key(BM_(0)_D_1_2_GW) success.
+2026-08-10 22:43:01.686486 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 13
+2026-08-10 22:43:01.686536 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(14) for key(BM_(0)_D_1_2_GA) start.
+2026-08-10 22:43:01.686545 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:488 GetHandler] GET REQUEST(14) for key(BM_(0)_D_1_2_GA) success.
+2026-08-10 22:43:01.686571 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 14
+2026-08-10 22:43:01.686592 DEBUG [61688-61898][SMEM smem_bm_entry.cpp:348 JoinHandle] end join func, local_rk: 0 receive_rk: 0 receive_info_num:1, rank size is: 1
+2026-08-10 22:43:01.686620 DEBUG [61688-61688][SMEM smem_net_group_engine.cpp:1424 GroupJoin] generate info:SmemGroupInfo{size:1 event:5 target:0 src:0 ver:2 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:43:01.686670 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(15) for key(BM_(0)_D_EVENT) start, newValueStr:  
+2026-08-10 22:43:01.686686 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(15) for key(BM_(0)_D_EVENT) finished, ret: 0 faled:0
+2026-08-10 22:43:01.686696 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:43:01.686723 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 15
+2026-08-10 22:43:01.686746 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 1
+2026-08-10 22:43:01.686748 DEBUG [61688-61688][SMEM smem_bm_entry.cpp:471 Join] join success. rank: 0
+2026-08-10 22:43:01.686760 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:106 SetFinished] watch end, id: 1
+2026-08-10 22:43:01.686788 DEBUG [61688-61895][SMEM smem_net_group_engine.cpp:1212 GroupWatchCb] receive group info:SmemGroupInfo{size:1 event:5 target:0 src:0 ver:2 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} current_leave:0
+2026-08-10 22:43:01.686813 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:869 TryUpdateInfo] input:SmemGroupInfo{size:1 event:5 target:0 src:0 ver:2 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} before:SmemGroupInfo{size:1 event:0 target:0 src:0 ver:1 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+[DEBUG] stage=bm_lifecycle role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=Host handle created and joined
+[DEBUG] stage=host_gva role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=peer_rank=0 host_gva=0x3400c0000000
+2026-08-10 22:43:01.686905 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:165 TransformVa] GetGvaByVa range mapping: input_va=0x3400c0000000 -> output_va=0x3400c0000000 (offset=0x0)
+[DEBUG] stage=host_gva role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=local_host_view=0x3400c0000000 equality=True
+Xshell2026-08-10 22:43:02.333911 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:598 FindAllocByVa] No allocated spaces found.
+2026-08-10 22:43:02.333949 DEBUG [61688-61688][HYBM hybm_data_op_entry.cpp:31 hybm_data_copy] Src: 0x4e17acd0, dest: [va:0x3400c0000000,info:{gva: 0x3400c0000000, LH(0), deviceVa: 0x0, hostVa: 0x3400c0000000}] flag:0x0 direction:0
+2026-08-10 22:43:02.334004 DEBUG [61688-61688][HYBM hybm_entity_default.cpp:1373 SetThreadAclDevice] Set device id to be 0 success.
+2026-08-10 22:43:02.334017 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:211 GetRankByGva] GetRankByGva: va=0x4e17acd0 not found
+2026-08-10 22:43:02.334025 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:208 GetRankByGva] GetRankByGva: va=0x3400c0000000 rankId=0
+2026-08-10 22:43:02.334032 DEBUG [61688-61688][HYBM hybm_entity_default.cpp:1137 LocateAddrAndRank] LocateAddrAndRank, srcRank: 0, destRank: 0
+2026-08-10 22:43:02.334071 DEBUG [61688-61688][HYBM hybm_compose_data_op.cpp:176 DataCopy] try data copy from rank 0 to rank 0 with data op 1024 direction:0
+2026-08-10 22:43:02.334080 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:170 TransformVa] TransformVa: no mapping found for va=0x4e17acd0
+2026-08-10 22:43:02.334086 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:165 TransformVa] GetGvaByVa range mapping: input_va=0x3400c0000000 -> output_va=0x3400c0000000 (offset=0x0)
+[DEBUG] stage=host_source role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=H2G initialized ret=0 gva=0x3400c0000000 bytes=8388608 checksum=549992306977866627
+2026-08-10 22:43:05.480265 INFO [61688-61889][AccLink acc_tcp_listener.cpp:210 ProcessNewConnection] Connected from 127.0.0.1:40384 successfully, ssl disable
+2026-08-10 22:43:05.480369 INFO [61688-61889][SMEM smem_tcp_config_store_server.cpp:241 LinkConnectedHandler] New link connected, linkId: 2, worldSize: 2, rankId: 1 reconnect:0
+2026-08-10 22:43:05.489392 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(0) for key(BM_(0)_check_rank_config_consistency) start, newValueStr: @ 
+2026-08-10 22:43:05.489422 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(0) for key(BM_(0)_check_rank_config_consistency) finished, ret: 0 faled:1
+2026-08-10 22:43:05.489953 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:579 WatchHandler] WATCH REQUEST(1) for key(BM_(0)_D_EVENT) start.
+2026-08-10 22:43:05.489985 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:593 WatchHandler] WATCH REQUEST(1) for key(BM_(0)_D_EVENT) reply.
+2026-08-10 22:43:05.590062 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:930 WatchRankStateHandler] WATCH REQUEST(2) for key(WATCH_RANK_DOWN_KEY) finished, linkId: 2
+2026-08-10 22:43:05.871632 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:687 RemoveHandler] REMOVE REQUEST(3) for key(BM_(0)_D_BMEX_1) start.
+2026-08-10 22:43:05.871920 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(4) for key(BM_(0)_D_EVENT) start, newValueStr:  
+2026-08-10 22:43:05.871955 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(4) for key(BM_(0)_D_EVENT) finished, ret: 0 faled:0
+2026-08-10 22:43:05.871987 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:43:05.871995 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:43:05.872079 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 1
+2026-08-10 22:43:05.872120 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:106 SetFinished] watch end, id: 1
+2026-08-10 22:43:05.872149 DEBUG [61688-61895][SMEM smem_net_group_engine.cpp:1212 GroupWatchCb] receive group info:SmemGroupInfo{size:2 event:0 target:1 src:1 ver:3 mask: 3 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} current_leave:0
+2026-08-10 22:43:05.872206 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:869 TryUpdateInfo] input:SmemGroupInfo{size:2 event:0 target:1 src:1 ver:3 mask: 3 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} before:SmemGroupInfo{size:1 event:5 target:0 src:0 ver:2 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:43:05.872259 DEBUG [61688-61898][SMEM smem_bm_entry.cpp:270 JoinHandle] do join func, local_rk: 0 receive_rk: 1, rank size is: 2
+2026-08-10 22:43:05.872300 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:357 SetHandler] SET REQUEST(5) for key(BM_(0)_D_BMEX_1) start.
+2026-08-10 22:43:05.872374 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(16) for key(BM_(0)_D_BMEX_1) start.
+2026-08-10 22:43:05.872401 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:488 GetHandler] GET REQUEST(16) for key(BM_(0)_D_BMEX_1) success.
+2026-08-10 22:43:05.872408 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:541 PrefixGetHandler] PREFIX REQUEST(6) for key(BM_(0)_D_BMEX_) start.
+2026-08-10 22:43:05.872433 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:553 PrefixGetHandler] PREFIX REQUEST(6) for key(BM_(0)_D_BMEX_) success.
+2026-08-10 22:43:05.872453 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 16
+2026-08-10 22:43:05.872626 DEBUG [61688-61898][HYBM hybm_entity_default.cpp:1373 SetThreadAclDevice] Set device id to be 0 success.
+2026-08-10 22:43:05.872664 DEBUG [61688-61898][HYBM hybm_entity_tag_info.cpp:47 AddRankTag] Success to add tag:HYBM_DEFAULT_TAG_FOR_EMPTY rankId:1
+[host] validation_role=host rank=0 gva=0x3400c0000000 va=0x3400c0000000 bytes=8388608 key_exported=true
 
 
 
 
 
 
-
-
-
-
-[DEBUG] stage=acl_context role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=torch_npu_device_count=2
-[DEBUG] stage=acl_context role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=aclrtSetDevice completed current_device=0
-[DEBUG] stage=runtime_log_level role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=mf_log_level=0 local_validation=True MF_LOG_LEVEL=0 ASCEND_MF_LOG_LEVEL=unset
-[DEBUG] stage=mf_initialize role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=calling mf.initialize for Host rank
-2026-08-10 20:56:09.301821 INFO [57824-57824][SMEM smem.cpp:39 smem_init] smem init successfully, library version: 1.2.0, build time: Aug 10 2026 20:43:37, commit: 01c8dbc37bd032e42644351c120c81124d5ab4ea
-[DEBUG] stage=mf_initialize role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=Host rank mf.initialize returned ret=0
-[DEBUG] stage=bm_lifecycle role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=creating Host handle store=tcp://127.0.0.1:8574 world_size=2 local_dram_size=1073741824 local_hbm_size=0
-2026-08-10 20:56:09.302251 INFO [57824-58023][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
-2026-08-10 20:56:09.302403 INFO [57824-58024][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
-2026-08-10 20:56:09.302533 INFO [57824-58025][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
-2026-08-10 20:56:09.302684 INFO [57824-58026][AccLink acc_tcp_listener.cpp:136 RunInThread] Acc listener accept thread for 127.0.0.1:8574 start ...
-2026-08-10 20:56:09.302881 DEBUG [57824-57824][SMEM smem_tcp_config_store_server.cpp:111 Startup] startup acc tcp server on port: 8574
-2026-08-10 20:56:09.302901 INFO [57824-57824][SMEM smem_tcp_config_store.cpp:157 Startup] start store server success, ip:127.0.0.1:8574
-2026-08-10 20:56:09.302995 INFO [57824-58030][AccLink acc_tcp_link_delay_cleanup.h:116 RunInThread] AccDelay cleanup thread thread started
-2026-08-10 20:56:09.303136 INFO [57824-58031][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 0, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
-2026-08-10 20:56:09.303261 INFO [57824-58032][AccLink acc_tcp_worker.cpp:154 RunInThread] Worker [name AccWrk, index 1, cpu -1, thread-priority 0, poll-timeout-ms 500] progress thread started
-2026-08-10 20:56:09.303314 INFO [57824-57824][AccLink acc_tcp_server_default.cpp:515 ConnectToPeerServer] Trying to connect to 127.0.0.1:8574
-2026-08-10 20:56:09.303466 INFO [57824-58026][AccLink acc_tcp_listener.cpp:210 ProcessNewConnection] Connected from 127.0.0.1:34150 successfully, ssl disable
-2026-08-10 20:56:09.303515 INFO [57824-58026][SMEM smem_tcp_config_store_server.cpp:241 LinkConnectedHandler] New link connected, linkId: 1, worldSize: 2, rankId: 0 reconnect:0
-2026-08-10 20:56:09.303526 INFO [57824-58026][SMEM smem_tcp_config_store_server.cpp:207 CanReceiveNewLink] change server state from INITED to NORMAL
-2026-08-10 20:56:09.303599 INFO [57824-57824][AccLink acc_tcp_server_default.cpp:705 Handshake] Connect to 127.0.0.1:8574 successfully, with ssl disable
-2026-08-10 20:56:09.303651 INFO [57824-57824][SMEM smem_tcp_config_store.cpp:166 Startup] connect store success, ip:127.0.0.1:8574
-2026-08-10 20:56:09.303670 INFO [57824-57824][SMEM smem_bm_entry_manager.cpp:89 Initialize] initialize store(tcp://127.0.0.1:8574) world size(2) device(0) OK.
-2026-08-10 20:56:09.303717 INFO [57824-57824][HYBM hybm_gva_version.cpp:92 CastDriverVersion] get driver verison:V100R001C10SPC001B086
-2026-08-10 20:56:09.303728 DEBUG [57824-57824][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C23SPC005B219
-2026-08-10 20:56:09.303736 DEBUG [57824-57824][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C21B035
-2026-08-10 20:56:09.303742 DEBUG [57824-57824][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C19SPC109B220
-2026-08-10 20:56:09.303748 DEBUG [57824-57824][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C18B100
-2026-08-10 20:56:09.303755 DEBUG [57824-57824][HYBM hybm_gva_version.cpp:149 DriverVersionCheck] Driver version mismatch, Customer is too low, read:V100R001C10SPC001B086 base:V100R001C14B999
-2026-08-10 20:56:09.303761 INFO [57824-57824][HYBM hybm_gva_version.cpp:199 HalGvaPrecheck] Driver version V5 found
-2026-08-10 20:56:09.303982 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:85 LoadLibrary] Loaded symbol RaSocketInit successfully
-2026-08-10 20:56:09.303991 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:86 LoadLibrary] Loaded symbol RaInit successfully
-2026-08-10 20:56:09.303996 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:87 LoadLibrary] Loaded symbol RaSocketDeinit successfully
-2026-08-10 20:56:09.304001 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:88 LoadLibrary] Loaded symbol RaRdevInitV2 successfully
-2026-08-10 20:56:09.304006 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:89 LoadLibrary] Loaded symbol RaRdevGetHandle successfully
-2026-08-10 20:56:09.304011 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:90 LoadLibrary] Loaded symbol RaSocketBatchConnect successfully
-2026-08-10 20:56:09.304017 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:92 LoadLibrary] Loaded symbol RaSocketBatchClose successfully
-2026-08-10 20:56:09.304022 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:94 LoadLibrary] Loaded symbol RaSocketListenStart successfully
-2026-08-10 20:56:09.304027 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:96 LoadLibrary] Loaded symbol RaSocketListenStop successfully
-2026-08-10 20:56:09.304032 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:98 LoadLibrary] Loaded symbol RaGetSockets successfully
-2026-08-10 20:56:09.304037 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:99 LoadLibrary] Loaded symbol RaGetIfnum successfully
-2026-08-10 20:56:09.304042 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:100 LoadLibrary] Loaded symbol RaGetIfaddrs successfully
-2026-08-10 20:56:09.304047 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:101 LoadLibrary] Loaded symbol RaSocketWhiteListAdd successfully
-2026-08-10 20:56:09.304052 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:103 LoadLibrary] Loaded symbol RaSocketWhiteListDel successfully
-2026-08-10 20:56:09.304057 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:105 LoadLibrary] Loaded symbol RaQpCreate successfully
-2026-08-10 20:56:09.304062 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:106 LoadLibrary] Loaded symbol RaQpCreateWithAttrs successfully
-2026-08-10 20:56:09.304067 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:108 LoadLibrary] Loaded symbol RaAiQpCreate successfully
-2026-08-10 20:56:09.304072 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:109 LoadLibrary] Loaded symbol RaQpDestroy successfully
-2026-08-10 20:56:09.304077 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:110 LoadLibrary] Loaded symbol RaGetQpStatus successfully
-2026-08-10 20:56:09.304082 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:111 LoadLibrary] Loaded symbol RaQpConnectAsync successfully
-2026-08-10 20:56:09.304087 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:112 LoadLibrary] Loaded symbol RaRegisterMr successfully
-2026-08-10 20:56:09.304092 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:113 LoadLibrary] Loaded symbol RaDeregisterMr successfully
-2026-08-10 20:56:09.304097 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:114 LoadLibrary] Loaded symbol RaSendWr successfully
-2026-08-10 20:56:09.304101 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:115 LoadLibrary] Loaded symbol RaSendWrV2 successfully
-2026-08-10 20:56:09.304106 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:116 LoadLibrary] Loaded symbol RaGetNotifyBaseAddr successfully
-2026-08-10 20:56:09.304111 DEBUG [57824-57824][HYBM dl_hccp_api.cpp:118 LoadLibrary] Loaded symbol RaGetNotifyMrInfo successfully
-2026-08-10 20:56:09.304116 INFO [57824-57824][HYBM dl_hccp_api.cpp:121 LoadLibrary] LoadLibrary for DlHccpApi success
-2026-08-10 20:56:09.304127 INFO [57824-57824][HYBM dl_hccl_api.cpp:52 LoadLibrary] LoadLibrary for DlHcclApi success
-2026-08-10 20:56:09.305388 WARN [57824-57824][HYBM dl_hcom_api.cpp:84 LoadLibrary] Unable to open library [libhcom.so], libhcom.so: cannot open shared object file: No such file or directory
-2026-08-10 20:56:09.307430 DEBUG [57824-57824][HYBM dl_acl_api.cpp:146 operator()] success get soc name: Ascend950DT_9574
-2026-08-10 20:56:09.307453 INFO [57824-57824][HYBM hybm_gva.cpp:167 hybm_init_hbm_gva] Success get deviceId: 0, logicDeviceId: 5 sco:3 ver:0
-2026-08-10 20:56:09.307467 DEBUG [57824-57824][HYBM hybm_gva.cpp:181 hybm_init_hbm_gva] restore init flag
-2026-08-10 20:56:09.309470 INFO [57824-57824][HYBM hybm_entry.cpp:116 hybm_init] hybm init successfully, library version: 1.2.0, build time: Aug 10 2026 20:43:35, commit: 01c8dbc37bd032e42644351c120c81124d5ab4ea, deviceId: 0
-2026-08-10 20:56:09.309482 INFO [57824-57824][SMEM smem_bm.cpp:109 smem_bm_init] smem_bm_init success.  config_ip: tcp://127.0.0.1:8574
-2026-08-10 20:56:09.309571 DEBUG [57824-57824][SMEM smem_bm_entry_manager.cpp:200 CreateEntryById] create new bm entry success, id: 0
-2026-08-10 20:56:09.309697 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(0) for key(BM_(0)_check_rank_config_consistency) start, newValueStr: @
-2026-08-10 20:56:09.309738 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(0) for key(BM_(0)_check_rank_config_consistency) finished, ret: 0 faled:0
-2026-08-10 20:56:09.309809 DEBUG [57824-58032][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 0
-2026-08-10 20:56:09.309861 DEBUG [57824-57824][SMEM smem_bm_entry.cpp:883 CheckRankConfigConsistency] first set for key: check_rank_config_consistency, config: maxHBMSize=0, maxDRAMSize=1073741824enable56BitsGva0
-2026-08-10 20:56:09.309991 DEBUG [57824-58035][SMEM smem_net_group_engine.cpp:919 GroupListenEvent] GroupListenEvent start, rank:0
-2026-08-10 20:56:09.310058 DEBUG [57824-58035][SMEM smem_tcp_config_store.cpp:611 Watch] watch for key: BM_(0)_D_EVENT, id: 1
-2026-08-10 20:56:09.310069 DEBUG [57824-58035][SMEM smem_net_group_engine.cpp:894 ReWatchEvent] Watch group listen successfully, wid: 1
-2026-08-10 20:56:09.310084 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:579 WatchHandler] WATCH REQUEST(1) for key(BM_(0)_D_EVENT) start.
-2026-08-10 20:56:09.410104 DEBUG [57824-58036][SMEM smem_net_group_engine.cpp:970 GroupListenLinkState] GroupListenLinkState start, rank:0
-2026-08-10 20:56:09.410176 DEBUG [57824-58036][SMEM smem_tcp_config_store.cpp:639 Watch] send watch for rank down success, id: 2
-2026-08-10 20:56:09.410188 INFO [57824-58036][SMEM smem_net_group_engine.cpp:909 ReWatchLinkDown] Watch link down event successfully, wid: 2
-2026-08-10 20:56:09.410219 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:930 WatchRankStateHandler] WATCH REQUEST(2) for key(WATCH_RANK_DOWN_KEY) finished, linkId: 1
-2026-08-10 20:56:09.510245 INFO [57824-58037][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor0 started.
-2026-08-10 20:56:09.510269 INFO [57824-58038][SMEM smem_thread_pool.cpp:128 RunInThread] thread executor1 started.
-2026-08-10 20:56:09.510327 DEBUG [57824-57824][HYBM hybm_entity_tag_info.cpp:47 AddRankTag] Success to add tag:HYBM_DEFAULT_TAG_FOR_EMPTY rankId:0
-2026-08-10 20:56:09.510340 INFO [57824-57824][HYBM hybm_entity_tag_info.cpp:93 AddTagOpInfo] Add an empty tagOpInfo.
-2026-08-10 20:56:09.510380 WARN [57824-57824][HYBM hybm_entity_tag_info.cpp:152 GetTag2TagOpType] Not find opType from tag1:HYBM_DEFAULT_TAG_FOR_EMPTY to tag2:HYBM_DEFAULT_TAG_FOR_EMPTY
-2026-08-10 20:56:09.510391 DEBUG [57824-57824][HYBM hybm_entity_tag_info.cpp:86 AddOneTagOpInfo] Success to update tag1:HYBM_DEFAULT_TAG_FOR_EMPTY tag2:HYBM_DEFAULT_TAG_FOR_EMPTY op:1024
-2026-08-10 20:56:09.510399 INFO [57824-57824][HYBM hybm_entity_default.cpp:106 InitTagManager] Success to init tag manager data op type:1024
-2026-08-10 20:56:09.510443 INFO [57824-57824][HYBM dl_hcomm_api.cpp:94 LoadLibrary] LoadLibrary for DlHcommApi success
-2026-08-10 20:56:09.510450 DEBUG [57824-57824][HYBM hybm_entity_default.cpp:1143 InitSegment] Initialize segment with type: HOST
-2026-08-10 20:56:09.510480 DEBUG [57824-57824][HYBM hybm_mem_segment.cpp:283 FillSysBootIdInfo] os-boot-id: 3c27d98f-ae84-4710-a712-25022732ccb7, head u32: 3c27d98f
-2026-08-10 20:56:09.510735 DEBUG [57824-57824][HYBM hybm_mem_segment.cpp:223 InitDeviceInfo] local server=0x0
-2026-08-10 20:56:09.510773 DEBUG [57824-57824][HYBM hybm_mem_segment.cpp:246 InitDeviceInfo] local sdid=0x140005, local server=0x0, spid=ffffffff
-2026-08-10 20:56:09.510801 WARN [57824-57824][HYBM compose_transport_manager.cpp:63 GetLocalDramValidationRole] validation-only local DRAM host role enabled; do not use in production, rankId=0
-2026-08-10 20:56:09.737487 INFO [57824-57824][HYBM hcomm_transport_manager.cpp:242 HcommMemReg] urma try to register mem, addr: 0x4f77a620 size: 8 memType: HOST
-2026-08-10 20:56:09.751598 DEBUG [57824-57824][HYBM host_urma_transport_manager.cpp:137 InitHostTransferFlagLocked] Host transfer flag registered, rankId: 0 addr: 4f77a620
-2026-08-10 20:56:09.751609 INFO [57824-57824][HYBM host_urma_transport_manager.cpp:96 OpenDevice] HostUrmaTransportManager opened, rankId: 0
-2026-08-10 20:56:09.751617 INFO [57824-57824][HYBM compose_transport_manager.cpp:155 OpenDevice] Success to open device rankId:0 protocol:1024 nic:device#tcp://127.0.0.1:10005;
-2026-08-10 20:56:09.752441 DEBUG [57824-57824][HYBM hybm_va_manager.cpp:114 AddVaInfo] AddVaInfo success: AllocatedGvaInfo{gva: 0x0, size: 0x8000000, localRankId: 0, importRankId: 4294967295, memType: DEVICE, deviceVa: 0x12004e000000, hostVa: 0x0}
-2026-08-10 20:56:09.752461 INFO [57824-57824][HYBM hcomm_transport_manager.cpp:242 HcommMemReg] urma try to register mem, addr: 0x12004e000000 size: 134217728 memType: HOST
-2026-08-10 20:56:09.805623 ERROR [57824-57824][HYBM hcomm_transport_manager.cpp:246 HcommMemReg] urma HcommMemReg failed, addr: 12004e000000 size: 8000000 ret: 2
-2026-08-10 20:56:09.805635 ERROR [57824-57824][HYBM host_urma_transport_manager.cpp:214 RegisterMemoryRegion] Failed to register memory region, addr: 12004e000000 size: 134217728 ret: -6
-2026-08-10 20:56:09.805641 ERROR [57824-57824][HYBM compose_transport_manager.cpp:188 RegisterMemoryRegion] Failed to register memory region MemoryRegion(size=0x8000000, addr=0x12004e000000, access=0x7, flags=0x2)
-2026-08-10 20:56:09.805647 ERROR [57824-57824][HYBM hybm_data_op_device_urma.cpp:88 Initialize] Failed to register urma swap memory, size: 134217728
-2026-08-10 20:56:09.805653 ERROR [57824-57824][HYBM compose_transport_manager.cpp:215 UnregisterMemoryRegion] input address not register!
-2026-08-10 20:56:09.805660 ERROR [57824-57824][HYBM hybm_data_op_device_urma.cpp:153 FreeSwapMemory] Failed to UnregisterMemoryRegion, ret: -2
-2026-08-10 20:56:09.806193 DEBUG [57824-57824][HYBM hybm_va_manager.cpp:130 RemoveOneVaInfo] Removing VaInfo: AllocatedGvaInfo{gva: 0x0, size: 0x8000000, localRankId: 0, importRankId: 4294967295, memType: DEVICE, deviceVa: 0x12004e000000, hostVa: 0x0}
-2026-08-10 20:56:09.806204 DEBUG [57824-57824][HYBM hybm_va_manager.cpp:141 RemoveOneVaInfo] RemoveOneGvaInfo success: gva=0x12004e000000 type=1
-2026-08-10 20:56:09.806209 ERROR [57824-57824][HYBM hybm_compose_data_op.cpp:75 Initialize] HostDevice URMA data operator init failed, ret:-3
-2026-08-10 20:56:09.806219 ERROR [57824-57824][HYBM hybm_entity_default.cpp:1290 InitDataOperator] Failed to init data operator ret:-3
-2026-08-10 20:56:09.806224 ERROR [57824-57824][HYBM hybm_entity_default.cpp:132 Initialize] Assert InitDataOperator() == BM_OK, Failed to init data operator.
-2026-08-10 20:56:09.806238 ERROR [57824-57824][HYBM hybm_big_mem_entry.cpp:35 hybm_create_entity] initialize entity failed, id: 64 flags: 0x0 ret: ffffffff
-2026-08-10 20:56:09.806389 INFO [57824-57824][HYBM host_urma_transport_manager.cpp:178 CloseDevice] HostUrmaTransportManager closed, rankId: 0
-2026-08-10 20:56:09.806413 ERROR [57824-57824][SMEM smem_bm_entry.cpp:151 Initialize] hybm_create_entity failed, entityId: 64 rankId: 0 flags: 0
-2026-08-10 20:56:09.806457 INFO [57824-58037][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor0 finished.
-2026-08-10 20:56:09.806461 INFO [57824-58038][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor1 finished.
-2026-08-10 20:56:09.806534 DEBUG [57824-58035][SMEM smem_net_group_engine.cpp:963 GroupListenEvent] GroupListenEvent end, rank:0
-2026-08-10 20:56:09.806595 DEBUG [57824-58036][SMEM smem_net_group_engine.cpp:1013 GroupListenLinkState] GroupListenLinkState end, rank:0
-2026-08-10 20:56:09.806691 ERROR [57824-57824][SMEM smem_bm.cpp:313 smem_bm_create2_inner] entry init failed, result: -1
-2026-08-10 20:56:09.806708 DEBUG [57824-57824][SMEM smem_bm_entry_manager.cpp:253 RemoveEntryByPtr] remove bm entry success, id: 0
-2026-08-10 20:56:09.806719 ERROR [57824-57824][SMEM smem_bm.cpp:326 smem_bm_create2] smem_bm_create2 failed
-2026-08-10 20:56:09.806780 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:954 UnwatchHandler] UNWATCH key: BM_(0)_D_EVENT for linkId: 1
-2026-08-10 20:56:09.806817 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:949 UnwatchHandler] UNWATCH rank state for linkId: 1
-[ERROR] stage=bm_create role=host rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=bm.create2 failed: create bm handle failed.
-2026-08-10 20:56:11.303780 INFO [57824-58033][SMEM smem_tcp_config_store.cpp:852 HeartBeat] TcpConfigStore heart beat thread exit.
-2026-08-10 20:56:11.305225 DEBUG [57824-58031][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:0 progress thread exiting
-2026-08-10 20:56:11.308280 DEBUG [57824-58032][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:1 progress thread exiting
-2026-08-10 20:56:11.308399 DEBUG [57824-58025][AccLink acc_tcp_link_complex_default.h:364 HandlePollIn] Link 1 receive header failed, reset by peer, errno 0
-2026-08-10 20:56:11.308415 DEBUG [57824-58025][AccLink acc_tcp_worker.cpp:238 ProcessPollIn] RCV broken on link 1, call linkBrokenHandle_
-2026-08-10 20:56:11.308435 DEBUG [57824-58025][SMEM smem_tcp_config_store_server.cpp:282 LinkBrokenHandler] link broken, linkId: 1
-2026-08-10 20:56:11.308468 INFO [57824-58025][SMEM smem_tcp_config_store_server.cpp:292 LinkBrokenHandler] link broken, linkId: 1 remove rankId: 0
-2026-08-10 20:56:11.308484 INFO [57824-58025][SMEM smem_tcp_config_store_server.cpp:299 LinkBrokenHandler] all client link broken, will clear data
-2026-08-10 20:56:11.404202 DEBUG [57824-58030][AccLink acc_tcp_link_delay_cleanup.h:131 RunInThread] AccDelay cleanup thread thread exiting
-2026-08-10 20:56:11.404342 INFO [57824-57824][SMEM smem_tcp_config_store_server.cpp:126 Shutdown] start to shutdown Acc Store Server
-2026-08-10 20:56:11.805906 WARN [57824-58026][AccLink acc_tcp_listener.cpp:151 RunInThread] Acc listener accept thread get stop signal, will exit...
-2026-08-10 20:56:11.805939 INFO [57824-58026][AccLink acc_tcp_listener.cpp:182 RunInThread] Working thread for AccTcpStore listener at 127.0.0.1:8574 exiting
-2026-08-10 20:56:12.305411 DEBUG [57824-58024][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:0 progress thread exiting
-2026-08-10 20:56:12.309407 DEBUG [57824-58025][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:1 progress thread exiting
-2026-08-10 20:56:12.404051 DEBUG [57824-58023][AccLink acc_tcp_link_delay_cleanup.h:131 RunInThread] AccDelay cleanup thread thread exiting
-2026-08-10 20:56:12.404243 INFO [57824-58029][SMEM smem_tcp_config_store_server.cpp:1138 CheckerThreadTask] checker thread exit
-2026-08-10 20:56:12.404361 INFO [57824-57824][SMEM smem_tcp_config_store_server.cpp:164 Shutdown] finished shutdown Acc Store Server
-2026-08-10 20:56:12.436856 INFO [57824-57824][SMEM smem_bm.cpp:129 smem_bm_uninit] smem_bm_uninit finished
-[ERROR] stage=bm_create_rollback role=host rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=bm.uninitialize failed
-[DEBUG] stage=cleanup role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=handle=False joined=False bm_initialized=False mf_initialized=True
-[DEBUG] stage=cleanup role=host pid=57824 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=completed
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# 
-[root@localhost memfabric_hybrid]# echo $MF_LOCAL_DRAM_LOGICAL_DEVICE_ID ^C
-[root@localhost memfabric_hybrid]# echo $MF_LOCAL_DRAM_VALIDATION_ROLE
-host
-[root@localhost memfabric_hybrid]# 
+2026-08-10 22:45:05.872537 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(7) for key(BM_(0)_D_EVENT) start, newValueStr:  
+2026-08-10 22:45:05.872610 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(7) for key(BM_(0)_D_EVENT) finished, ret: 0 faled:0
+2026-08-10 22:45:05.872652 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:45:05.872661 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:45:05.872789 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 1
+2026-08-10 22:45:05.872839 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:106 SetFinished] watch end, id: 1
+2026-08-10 22:45:05.872872 DEBUG [61688-61895][SMEM smem_net_group_engine.cpp:1212 GroupWatchCb] receive group info:SmemGroupInfo{size:1 event:6 target:1 src:1 ver:4 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} current_leave:0
+2026-08-10 22:45:05.926622 ERROR [61688-61898][HYBM host_urma_transport_manager.cpp:419 PreparePeerLocked] Failed to create channel with peer 1 ret: 9
+2026-08-10 22:45:05.926665 ERROR [61688-61898][HYBM compose_transport_manager.cpp:352 Prepare] Failed to prepare host ret: -1
+2026-08-10 22:45:05.926691 ERROR [61688-61898][HYBM hybm_entity_default.cpp:614 ImportForTransportManager] Failed to prepare transport connect data, ret: -1
+2026-08-10 22:45:05.926701 ERROR [61688-61898][HYBM hybm_entity_default.cpp:651 ImportEntityExchangeInfo] Assert ImportForTransportManager() == BM_OK, Failed import for transport manager
+2026-08-10 22:45:05.926718 ERROR [61688-61898][SMEM smem_bm_entry.cpp:315 JoinHandle] hybm import entity failed, result: -1 local_rank:0
+2026-08-10 22:45:05.926858 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:717 AppendHandler] APPEND REQUEST(17) for key(BM_(0)_D_3_1_GA) start.
+2026-08-10 22:45:05.926930 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 17
+2026-08-10 22:45:05.926965 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:167 GroupGatherResult] store add key: BM_(0)_D_3_1_GA len: 4 size:2
+2026-08-10 22:45:05.927019 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(18) for key(BM_(0)_D_3_1_GW) start.
+2026-08-10 22:45:05.927031 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:502 GetHandler] GET REQUEST(18) for key(BM_(0)_D_3_1_GW) waiting timeout=1000
+2026-08-10 22:45:05.927040 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:506 GetHandler] GET REQUEST(18) for key(BM_(0)_D_3_1_GW) waiting timeout=517141553
+2026-08-10 22:45:06.186722 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:717 AppendHandler] APPEND REQUEST(8) for key(BM_(0)_D_3_1_GA) start.
+2026-08-10 22:45:06.186985 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:357 SetHandler] SET REQUEST(9) for key(BM_(0)_D_3_1_GW) start.
+2026-08-10 22:45:06.187044 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:1001 WakeupWaiters] WAKEUP REQUEST(18).
+2026-08-10 22:45:06.187138 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 18
+2026-08-10 22:45:06.187167 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:479 GetHandler] GET REQUEST(10) for key(BM_(0)_D_3_1_GW) start.
+2026-08-10 22:45:06.187180 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:488 GetHandler] GET REQUEST(10) for key(BM_(0)_D_3_1_GW) success.
+2026-08-10 22:45:06.187203 WARN [61688-61898][SMEM smem_net_group_engine.cpp:125 StoreGetCanInterrupt] now event has stoped, stop get wait! key: BM_(0)_D_3_1_GW
+2026-08-10 22:45:06.187222 ERROR [61688-61898][SMEM smem_bm_entry.cpp:257 GroupOpBarrier] join barrier failed, result: -2013
+2026-08-10 22:45:06.187229 ERROR [61688-61898][SMEM smem_bm_entry.cpp:344 JoinHandle] hybm barrier after mmap failed, result: -2013
+2026-08-10 22:45:06.187260 INFO [61688-61898][HYBM compose_transport_manager.cpp:361 RemoveRanks] compose RemoveRanks called, ranks: 1 host: nullptr device: non-null
+2026-08-10 22:45:06.187274 INFO [61688-61898][HYBM hybm_vmm_based_segment.cpp:646 RemoveImported] no need to share, skip remove
+2026-08-10 22:45:06.187298 DEBUG [61688-61898][HYBM hybm_data_operator.h:88 CleanUp] DataOperator not support
+2026-08-10 22:45:06.187340 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:869 TryUpdateInfo] input:SmemGroupInfo{size:1 event:6 target:1 src:1 ver:4 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} before:SmemGroupInfo{size:2 event:0 target:1 src:1 ver:3 mask: 3 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:45:06.187762 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:954 UnwatchHandler] UNWATCH key: BM_(0)_D_EVENT for linkId: 2
+2026-08-10 22:45:06.187784 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:949 UnwatchHandler] UNWATCH rank state for linkId: 2
+[ERROR] stage=control_accept role=host rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=accept failed, ip=0.0.0.0 port=9877 timeout=120.0: timed out
+[DEBUG] stage=cleanup role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=handle=True joined=True bm_initialized=True mf_initialized=True
+2026-08-10 22:45:06.600309 INFO [61688-61688][SMEM smem_net_group_engine.cpp:1503 GroupLeave] do leave by user, rank:0
+2026-08-10 22:45:06.600364 DEBUG [61688-61688][SMEM smem_net_group_engine.cpp:1540 GroupLeave] leave generate_info:SmemGroupInfo{size:0 event:1 target:0 src:0 ver:5 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} base:SmemGroupInfo{size:1 event:6 target:1 src:1 ver:4 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:45:06.600608 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(19) for key(BM_(0)_D_EVENT) start, newValueStr:  
+2026-08-10 22:45:06.600655 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(19) for key(BM_(0)_D_EVENT) finished, ret: 0 faled:0
+2026-08-10 22:45:06.600688 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:45:06.600750 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 19
+2026-08-10 22:45:06.600799 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 1
+2026-08-10 22:45:06.600817 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:106 SetFinished] watch end, id: 1
+2026-08-10 22:45:06.600840 DEBUG [61688-61895][SMEM smem_net_group_engine.cpp:1212 GroupWatchCb] receive group info:SmemGroupInfo{size:0 event:1 target:0 src:0 ver:5 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} current_leave:0
+2026-08-10 22:45:06.600877 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:869 TryUpdateInfo] input:SmemGroupInfo{size:0 event:1 target:0 src:0 ver:5 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} before:SmemGroupInfo{size:1 event:6 target:1 src:1 ver:4 mask: 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:45:06.600905 INFO [61688-61898][SMEM smem_net_group_engine.cpp:1082 JoinLeaveEventProcess] leave self, rank:0 event:1
+2026-08-10 22:45:06.600931 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:687 RemoveHandler] REMOVE REQUEST(20) for key(BM_(0)_D_BMEX_0) start.
+2026-08-10 22:45:06.601004 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 20
+2026-08-10 22:45:06.601040 DEBUG [61688-61688][SMEM smem_net_group_engine.cpp:694 TryRemovePrefixKey] remove key success, src_rank:0 key:BM_(0)_D_BMEX_0
+2026-08-10 22:45:06.601070 DEBUG [61688-61688][SMEM smem_net_group_engine.cpp:1578 GroupLeave] generate info:SmemGroupInfo{size:0 event:5 target:0 src:0 ver:6 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:45:06.601151 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:849 CasHandler] CAS REQUEST(21) for key(BM_(0)_D_EVENT) start, newValueStr:  
+2026-08-10 22:45:06.601177 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:873 CasHandler] CAS REQUEST(21) for key(BM_(0)_D_EVENT) finished, ret: 0 faled:0
+2026-08-10 22:45:06.601198 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:1011 WakeupWaiters] WAKEUP REQUEST(1).
+2026-08-10 22:45:06.601236 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 21
+2026-08-10 22:45:06.601257 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:782 ReceiveResponseHandler] client received message: 1
+2026-08-10 22:45:06.601265 DEBUG [61688-61895][SMEM smem_tcp_config_store.cpp:106 SetFinished] watch end, id: 1
+2026-08-10 22:45:06.601276 DEBUG [61688-61895][SMEM smem_net_group_engine.cpp:1212 GroupWatchCb] receive group info:SmemGroupInfo{size:0 event:5 target:0 src:0 ver:6 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} current_leave:0
+2026-08-10 22:45:06.601292 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:869 TryUpdateInfo] input:SmemGroupInfo{size:0 event:5 target:0 src:0 ver:6 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0} before:SmemGroupInfo{size:0 event:1 target:0 src:0 ver:5 mask: 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0}
+2026-08-10 22:45:06.601353 INFO [61688-61901][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor1 finished.
+2026-08-10 22:45:06.601362 INFO [61688-61900][SMEM smem_thread_pool.cpp:140 RunInThread] thread executor0 finished.
+2026-08-10 22:45:06.601463 DEBUG [61688-61898][SMEM smem_net_group_engine.cpp:963 GroupListenEvent] GroupListenEvent end, rank:0
+2026-08-10 22:45:06.601531 DEBUG [61688-61899][SMEM smem_net_group_engine.cpp:1013 GroupListenLinkState] GroupListenLinkState end, rank:0
+2026-08-10 22:45:06.601681 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:954 UnwatchHandler] UNWATCH key: BM_(0)_D_EVENT for linkId: 1
+2026-08-10 22:45:06.601694 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:475 DumpReservedGvaInfo] Total reserved spaces: 2
+2026-08-10 22:45:06.601704 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:949 UnwatchHandler] UNWATCH rank state for linkId: 1
+2026-08-10 22:45:06.601725 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:484 DumpReservedGvaInfo] 1. ReservedGvaInfo{va: 0x340000000000 0x340000000000 0x340000000000, size: 0x80000000, memType: DEVICE, localRankId: 0}
+2026-08-10 22:45:06.601742 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:484 DumpReservedGvaInfo] 2. ReservedGvaInfo{va: 0x3400c0000000 0x3400c0000000 0x3400c0000000, size: 0x1000000, memType: HOST, localRankId: 0}
+2026-08-10 22:45:06.601750 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:488 DumpReservedGvaInfo] Total reserved size: 2064MB
+2026-08-10 22:45:06.601759 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:494 DumpAllocatedGvaInfo] Total allocated spaces: 1
+2026-08-10 22:45:06.601774 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:503 DumpAllocatedGvaInfo] 1. AllocatedGvaInfo{gva: 0x3400c0000000, size: 0x800000, localRankId: 0, importRankId: 4294967295, memType: HOST, deviceVa: 0x0, hostVa: 0x3400c0000000}
+2026-08-10 22:45:06.601786 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:507 DumpAllocatedGvaInfo] Total allocated size: 8MB
+2026-08-10 22:45:06.601814 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:519 DumpAllocatedGvaInfo] HOST: 1 allocations, total size: 8MB
+2026-08-10 22:45:06.602293 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:130 RemoveOneVaInfo] Removing VaInfo: AllocatedGvaInfo{gva: 0x3400c0000000, size: 0x800000, localRankId: 0, importRankId: 4294967295, memType: HOST, deviceVa: 0x0, hostVa: 0x3400c0000000}
+2026-08-10 22:45:06.602316 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:141 RemoveOneVaInfo] RemoveOneGvaInfo success: gva=0x3400c0000000 type=2
+2026-08-10 22:45:06.602341 INFO [61688-61688][HYBM hybm_vmm_based_segment.cpp:105 UnReserveMemorySpace] UnReserveMemorySpace gva:0x340000000000, va:0x340000000000
+2026-08-10 22:45:06.602352 INFO [61688-61688][HYBM hybm_vmm_based_segment.cpp:629 Unmap] no need to share, skip unmap
+2026-08-10 22:45:06.602370 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:467 FreeReserveLva] FreeReserveLva: ReservedGvaInfo{va: 0x340000000000 0x340000000000 0x340000000000, size: 0xc0000000, memType: DEVICE, localRankId: 0}
+2026-08-10 22:45:06.602383 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:469 FreeReserveLva] FreeReserveLva success: addr=0x340000000000
+2026-08-10 22:45:06.603300 INFO [61688-61688][HYBM hybm_vmm_based_segment.cpp:124 UnReserveMemorySpace] free reserved address va:0x340000000000 return:0
+2026-08-10 22:45:06.603328 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:447 FreeReserveGva] FreeReserveGva: ReservedGvaInfo{va: 0x340000000000 0x340000000000 0x340000000000, size: 0x80000000, memType: DEVICE, localRankId: 0}
+2026-08-10 22:45:06.603343 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:451 FreeReserveGva] FreeReserveGva success: addr=0x340000000000
+2026-08-10 22:45:06.603356 INFO [61688-61688][HYBM hybm_conn_based_segment.cpp:127 UnReserveMemorySpace] un-reserve memory space.
+2026-08-10 22:45:06.603597 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:447 FreeReserveGva] FreeReserveGva: ReservedGvaInfo{va: 0x3400c0000000 0x3400c0000000 0x3400c0000000, size: 0x1000000, memType: HOST, localRankId: 0}
+2026-08-10 22:45:06.603615 DEBUG [61688-61688][HYBM hybm_va_manager.cpp:451 FreeReserveGva] FreeReserveGva success: addr=0x3400c0000000
+2026-08-10 22:45:06.603807 INFO [61688-61688][HYBM host_urma_transport_manager.cpp:178 CloseDevice] HostUrmaTransportManager closed, rankId: 0
+2026-08-10 22:45:06.603830 INFO [61688-61688][HYBM hybm_vmm_based_segment.cpp:629 Unmap] no need to share, skip unmap
+2026-08-10 22:45:06.603841 INFO [61688-61688][HYBM hybm_vmm_based_segment.cpp:105 UnReserveMemorySpace] UnReserveMemorySpace gva:0, va:0
+2026-08-10 22:45:06.603849 INFO [61688-61688][HYBM hybm_vmm_based_segment.cpp:629 Unmap] no need to share, skip unmap
+2026-08-10 22:45:06.603860 INFO [61688-61688][HYBM hybm_conn_based_segment.cpp:127 UnReserveMemorySpace] un-reserve memory space.
+2026-08-10 22:45:06.603921 DEBUG [61688-61688][SMEM smem_bm_entry_manager.cpp:253 RemoveEntryByPtr] remove bm entry success, id: 0
+XshellXshell2026-08-10 22:45:07.140376 INFO [61688-61896][SMEM smem_tcp_config_store.cpp:852 HeartBeat] TcpConfigStore heart beat thread exit.
+2026-08-10 22:45:07.249214 DEBUG [61688-61894][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:0 progress thread exiting
+2026-08-10 22:45:07.602721 DEBUG [61688-61895][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:1 progress thread exiting
+2026-08-10 22:45:07.602934 DEBUG [61688-61888][AccLink acc_tcp_link_complex_default.h:364 HandlePollIn] Link 1 receive header failed, reset by peer, errno 0
+2026-08-10 22:45:07.602954 DEBUG [61688-61888][AccLink acc_tcp_worker.cpp:238 ProcessPollIn] RCV broken on link 1, call linkBrokenHandle_
+2026-08-10 22:45:07.602982 DEBUG [61688-61888][SMEM smem_tcp_config_store_server.cpp:282 LinkBrokenHandler] link broken, linkId: 1
+2026-08-10 22:45:07.603031 INFO [61688-61888][SMEM smem_tcp_config_store_server.cpp:292 LinkBrokenHandler] link broken, linkId: 1 remove rankId: 0
+2026-08-10 22:45:07.622602 DEBUG [61688-61893][AccLink acc_tcp_link_delay_cleanup.h:131 RunInThread] AccDelay cleanup thread thread exiting
+2026-08-10 22:45:07.622723 INFO [61688-61688][SMEM smem_tcp_config_store_server.cpp:126 Shutdown] start to shutdown Acc Store Server
+2026-08-10 22:45:07.689527 DEBUG [61688-61887][AccLink acc_tcp_link_complex_default.h:364 HandlePollIn] Link 2 receive header failed, reset by peer, errno 0
+2026-08-10 22:45:07.689548 DEBUG [61688-61887][AccLink acc_tcp_worker.cpp:238 ProcessPollIn] RCV broken on link 2, call linkBrokenHandle_
+2026-08-10 22:45:07.689568 DEBUG [61688-61887][SMEM smem_tcp_config_store_server.cpp:282 LinkBrokenHandler] link broken, linkId: 2
+2026-08-10 22:45:07.689598 INFO [61688-61887][SMEM smem_tcp_config_store_server.cpp:292 LinkBrokenHandler] link broken, linkId: 2 remove rankId: 1
+2026-08-10 22:45:07.689612 INFO [61688-61887][SMEM smem_tcp_config_store_server.cpp:299 LinkBrokenHandler] all client link broken, will clear data
+2026-08-10 22:45:08.116509 WARN [61688-61889][AccLink acc_tcp_listener.cpp:151 RunInThread] Acc listener accept thread get stop signal, will exit...
+2026-08-10 22:45:08.116538 INFO [61688-61889][AccLink acc_tcp_listener.cpp:182 RunInThread] Working thread for AccTcpStore listener at 127.0.0.1:8574 exiting
+2026-08-10 22:45:08.190179 DEBUG [61688-61887][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:0 progress thread exiting
+2026-08-10 22:45:08.604126 DEBUG [61688-61888][AccLink acc_tcp_worker.cpp:183 RunInThread] Worker AccWrk:1 progress thread exiting
+2026-08-10 22:45:08.702724 DEBUG [61688-61886][AccLink acc_tcp_link_delay_cleanup.h:131 RunInThread] AccDelay cleanup thread thread exiting
+2026-08-10 22:45:08.702927 INFO [61688-61892][SMEM smem_tcp_config_store_server.cpp:1138 CheckerThreadTask] checker thread exit
+2026-08-10 22:45:08.703005 INFO [61688-61688][SMEM smem_tcp_config_store_server.cpp:164 Shutdown] finished shutdown Acc Store Server
+2026-08-10 22:45:08.707710 INFO [61688-61688][SMEM smem_bm.cpp:129 smem_bm_uninit] smem_bm_uninit finished
+[DEBUG] stage=cleanup role=host pid=61688 rank=0 logical_device=5 runtime_device=0 physical_device=5 detail=completed
+Segmentation fault (core dumped)
