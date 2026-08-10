@@ -15,6 +15,7 @@ import os
 import socket
 import struct
 import sys
+import time
 
 
 STORE_PORT = 8574
@@ -25,9 +26,11 @@ POOL_BYTES = 8 << 20
 ITEM_BYTES = 4 << 10
 DEFAULT_SEED = 17
 MAX_CONTROL_BYTES = 1 << 20
+CONTROL_CONNECT_RETRY_SECONDS = 0.1
 # MemFabric uses 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR.  Keep the example at
 # the most verbose level while diagnosing the temporary local validation path.
 MF_DEBUG_LOG_LEVEL = 0
+MF_PRODUCTION_LOG_LEVEL = 1
 
 
 class ValidationError(RuntimeError):
@@ -112,10 +115,13 @@ def _load_runtime():
 
 
 def _load_configured_runtime(args):
+    local_validation = getattr(args, "local_dram_validation", False)
+    log_level = MF_DEBUG_LOG_LEVEL if local_validation else MF_PRODUCTION_LOG_LEVEL
     try:
-        os.environ["MF_LOG_LEVEL"] = str(MF_DEBUG_LOG_LEVEL)
+        if local_validation:
+            os.environ["MF_LOG_LEVEL"] = str(log_level)
         mf, bm = _load_runtime()
-        ret = mf.set_log_level(MF_DEBUG_LOG_LEVEL)
+        ret = mf.set_log_level(log_level)
     except Exception as exc:
         _fail(args, "runtime_import", f"MemFabric runtime import/configuration failed: {exc}")
     if ret != 0:
@@ -123,7 +129,8 @@ def _load_configured_runtime(args):
     _log_debug(
         args,
         "runtime_log_level",
-        f"mf_log_level={MF_DEBUG_LOG_LEVEL} (DEBUG) MF_LOG_LEVEL={os.environ.get('MF_LOG_LEVEL')} "
+        f"mf_log_level={log_level} local_validation={local_validation} "
+        f"MF_LOG_LEVEL={os.environ.get('MF_LOG_LEVEL', 'unset')} "
         f"ASCEND_MF_LOG_LEVEL={os.environ.get('ASCEND_MF_LOG_LEVEL', 'unset')}",
     )
     return mf, bm
@@ -176,24 +183,36 @@ def _recv(conn, args, stage):
 
 def _create_control_server(args):
     try:
-        return socket.create_server((args.bind_ip, args.ctrl_port))
+        server = socket.create_server((args.bind_ip, args.ctrl_port))
+        server.settimeout(args.ctrl_timeout)
+        return server
     except OSError as exc:
-        _fail(args, "control_listener", f"bind failed, ip={args.bind_ip} port={args.ctrl_port}: {exc}")
+        _fail(args, "control_listener", f"bind/setup failed, ip={args.bind_ip} port={args.ctrl_port} "
+              f"timeout={args.ctrl_timeout}: {exc}")
 
 
 def _accept_control_connection(args, server):
     try:
         return server.accept()[0]
     except OSError as exc:
-        _fail(args, "control_accept", f"accept failed, ip={args.bind_ip} port={args.ctrl_port}: {exc}")
+        _fail(args, "control_accept", f"accept failed, ip={args.bind_ip} port={args.ctrl_port} "
+              f"timeout={args.ctrl_timeout}: {exc}")
 
 
 def _connect_control(args):
-    try:
-        return socket.create_connection((args.head_ip, args.ctrl_port), timeout=args.ctrl_timeout)
-    except OSError as exc:
-        _fail(args, "control_connect", f"connect failed, ip={args.head_ip} port={args.ctrl_port} "
-              f"timeout={args.ctrl_timeout}: {exc}")
+    deadline = time.monotonic() + args.ctrl_timeout
+    attempts = 0
+    last_error = None
+    while time.monotonic() < deadline:
+        attempts += 1
+        try:
+            remaining = max(deadline - time.monotonic(), CONTROL_CONNECT_RETRY_SECONDS)
+            return socket.create_connection((args.head_ip, args.ctrl_port), timeout=remaining)
+        except OSError as exc:
+            last_error = exc
+            time.sleep(min(CONTROL_CONNECT_RETRY_SECONDS, max(0.0, deadline - time.monotonic())))
+    _fail(args, "control_connect", f"connect failed, ip={args.head_ip} port={args.ctrl_port} "
+          f"timeout={args.ctrl_timeout} attempts={attempts}: {last_error}")
 
 
 def _config(bm, rank_id, head_ip):

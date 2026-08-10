@@ -59,6 +59,12 @@ def _expected_bytes(offset, size, seed):
     return bytes(((offset + index) * 131 + seed) & 0xFF for index in range(size))
 
 
+def _checked_add(args, address, length, stage):
+    if address < 0 or length < 0 or address + length > (1 << 64) - 1:
+        _fail(args, stage, f"address addition overflow, address=0x{address:x} length={length}")
+    return address + length
+
+
 def _build_copy_inputs(args, host_gva, hbm_va, torch, count, item_bytes, offset):
     try:
         src_addresses = [host_gva + offset + index * item_bytes for index in range(count)]
@@ -200,9 +206,13 @@ def _run_local_negative(args, handle, host_gva, hbm_gva, hbm_va, torch, mf_acc_o
         dst_ptrs = torch.tensor([hbm_va], dtype=torch.int64).npu()
         len_ptrs = torch.tensor([length], dtype=torch.int64).npu()
         device = torch.device(f"npu:{target_device}")
+    except Exception as exc:
+        _fail(args, "negative_prepare", f"negative input tensor construction failed, negative={args.negative} "
+              f"source=0x{source:x} destination=0x{hbm_va:x} length={length}: {exc}")
+    try:
         ret = mf_acc_offload.sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, 1, device)
     except Exception as exc:
-        _log_info(args, f"negative={args.negative} failed as expected before completion: {exc}")
+        _log_info(args, f"negative={args.negative} failed as expected in sparse_copy_urma: {exc}")
         return {"negative": args.negative, "expected_failure": True, "hcomm_ret": "exception"}
     if ret == 0:
         _fail(args, "negative_test", f"negative={args.negative} unexpectedly succeeded", ret)
@@ -305,6 +315,9 @@ def _validate_copy_done(args, message):
     if (message.get("result") != "PASS" or message.get("hcomm_ret") != 0 or
             message.get("first_mismatch") is not None or not isinstance(message.get("cases"), list)):
         _fail(args, "control_done", f"copy result is not PASS: {message}")
+    if message.get("expected_checksum") != message.get("actual_checksum"):
+        _fail(args, "control_done", f"copy checksum mismatch: expected={message.get('expected_checksum')} "
+              f"actual={message.get('actual_checksum')}")
 
 
 def _run_local_host(args, handle, bm):

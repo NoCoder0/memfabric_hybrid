@@ -644,8 +644,9 @@ bool FindHostEid(const Options &options, int32_t logical_device_id,
                     "no CPU PG EID found for UDMA " + udma);
     }
     if (candidates.size() > 1U) {
-        Warn(options, logical_device_id, "host_eid_select",
-             "multiple CPU PG EIDs found; selecting the first candidate");
+        return Fail(options, logical_device_id, failure, "host_eid_select", 4, 0,
+                    "multiple CPU PG EIDs found for UDMA " + udma +
+                        ", candidate_count=" + std::to_string(candidates.size()));
     }
     host_eid = candidates.front();
     return true;
@@ -685,8 +686,9 @@ bool FindDeviceEid(const Options &options, int32_t logical_device_id,
                     "no Device EID matched topology=" + TopologyName(topology));
     }
     if (candidates.size() > 1U) {
-        Warn(options, logical_device_id, "device_eid_select",
-             "multiple Device EID candidates; selecting the first candidate");
+        return Fail(options, logical_device_id, failure, "device_eid_select", 4, 0,
+                    "multiple Device EID candidates for topology=" + TopologyName(topology) +
+                        ", candidate_count=" + std::to_string(candidates.size()));
     }
     device_eid = candidates.front();
     return true;
@@ -792,15 +794,29 @@ std::string JsonEscape(const std::string &value)
     return escaped;
 }
 
+std::string ShellQuote(const std::string &value)
+{
+    std::string quoted("'");
+    for (const char character : value) {
+        if (character == '\'') {
+            quoted += "'\\''";
+        } else {
+            quoted.push_back(character);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
 void PrintPair(const EidPair &pair, OutputFormat format)
 {
     if (format == OutputFormat::kEnv) {
-        std::printf("MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID=%u\n", pair.physical_device_id);
-        std::printf("MF_LOCAL_DRAM_LOGICAL_DEVICE_ID=%u\n", pair.logical_device_id);
-        std::printf("MF_LOCAL_DRAM_TOPOLOGY=%s\n", TopologyName(pair.topology).c_str());
-        std::printf("MF_LOCAL_DRAM_UDMA=%s\n", pair.udma.c_str());
-        std::printf("MF_HOST_URMA_EID=%s\n", pair.host_eid.c_str());
-        std::printf("USE_LOCAL_EID=%s\n", pair.device_eid.c_str());
+        std::printf("export MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID=%u\n", pair.physical_device_id);
+        std::printf("export MF_LOCAL_DRAM_LOGICAL_DEVICE_ID=%u\n", pair.logical_device_id);
+        std::printf("export MF_LOCAL_DRAM_TOPOLOGY=%s\n", ShellQuote(TopologyName(pair.topology)).c_str());
+        std::printf("export MF_LOCAL_DRAM_UDMA=%s\n", ShellQuote(pair.udma).c_str());
+        std::printf("export MF_HOST_URMA_EID=%s\n", ShellQuote(pair.host_eid).c_str());
+        std::printf("export USE_LOCAL_EID=%s\n", ShellQuote(pair.device_eid).c_str());
         return;
     }
     if (format == OutputFormat::kJson) {

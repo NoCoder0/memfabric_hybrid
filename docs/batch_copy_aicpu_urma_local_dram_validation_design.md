@@ -258,12 +258,12 @@ examples/kv_offload/urma_eid_query.cpp
 不是 `ASCEND_RT_VISIBLE_DEVICES` 下的 ACL/Torch 可见索引：
 
 ```text
-MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID=0
-MF_LOCAL_DRAM_LOGICAL_DEVICE_ID=0
-MF_LOCAL_DRAM_TOPOLOGY=server
-MF_LOCAL_DRAM_UDMA=udmaX
-MF_HOST_URMA_EID=0123456789abcdef0123456789abcdef
-USE_LOCAL_EID=fedcba9876543210fedcba9876543210
+export MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID=0
+export MF_LOCAL_DRAM_LOGICAL_DEVICE_ID=0
+export MF_LOCAL_DRAM_TOPOLOGY='server'
+export MF_LOCAL_DRAM_UDMA='udmaX'
+export MF_HOST_URMA_EID='0123456789abcdef0123456789abcdef'
+export USE_LOCAL_EID='fedcba9876543210fedcba9876543210'
 ```
 
 `json` 为单行 schema：
@@ -275,8 +275,8 @@ USE_LOCAL_EID=fedcba9876543210fedcba9876543210
  "device_eid":"fedcba9876543210fedcba9876543210"}
 ```
 
-`text` 使用 `[EID]` 人类可读格式。EID 必须为 32 位小写十六进制且非全 0。多个候选时保留参考实现的
-枚举与选择规则，同时输出候选数；是否允许多候选继续自动选择是审查项。
+`text` 使用 `[EID]` 人类可读格式。EID 必须为 32 位小写十六进制且非全 0。`env` 输出包含 `export` 并对
+字符串做 shell 单引号转义，可直接 source；多个候选时输出候选数并以退出码 4 失败，禁止静默选择。
 
 #### 错误与依赖
 
