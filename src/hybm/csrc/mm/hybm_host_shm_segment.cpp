@@ -96,12 +96,13 @@ HybmHostShmSegment::~HybmHostShmSegment()
 
 Result HybmHostShmSegment::ValidateOptions() noexcept
 {
-    if (options_.segType != HYBM_MST_DRAM || options_.size == 0 || (options_.size % HYBM_LARGE_PAGE_SIZE) != 0) {
-        BM_LOG_ERROR("Validate options error type(" << options_.segType << ") size(" << options_.size);
+    if (options_.segType != HYBM_MST_DRAM || options_.maxSize == 0 || (options_.maxSize % HYBM_LARGE_PAGE_SIZE) != 0) {
+        BM_LOG_ERROR("Validate options error type(" << options_.segType << ") maxSize(" << options_.maxSize << ") size("
+                                                    << options_.size);
         return BM_INVALID_PARAM;
     }
-    if (UINT64_MAX / options_.size < options_.rankCnt) {
-        BM_LOG_ERROR("Validate options error rankCnt(" << options_.rankCnt << ") size(" << options_.size);
+    if (UINT64_MAX / options_.maxSize < options_.rankCnt) {
+        BM_LOG_ERROR("Validate options error rankCnt(" << options_.rankCnt << ") maxSize(" << options_.maxSize);
         return BM_INVALID_PARAM;
     }
     return BM_OK;
@@ -112,22 +113,25 @@ Result HybmHostShmSegment::ReserveMemorySpace(void **address) noexcept
     BM_ASSERT_LOG_AND_RETURN(ValidateOptions() == BM_OK, "Failed to validate options.", BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(globalVirtualAddress_ == nullptr, "Already prepare virtual memory.", BM_NOT_INITIALIZED);
     BM_ASSERT_LOG_AND_RETURN(address != nullptr, "Invalid param, address is NULL.", BM_INVALID_PARAM);
-    uint64_t totalSize = options_.rankCnt * options_.size;
-    auto gvaInfo =
-        HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalSize, totalSize, HYBM_MEM_TYPE_HOST, false);
+    uint64_t totalSize = options_.rankCnt * options_.maxSize;
+    uint64_t localSize = options_.enable56BitsGva ? options_.maxSize : totalSize;
+    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalSize, localSize,
+                                                                HYBM_MEM_TYPE_HOST, options_.enable56BitsGva);
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "Invalid reserved gva.", BM_ERROR);
     void *startAddr = reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
-    void *mapped =
-        mmap(startAddr, totalSize, PROT_NONE, MAP_FIXED_NOREPLACE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_PRIVATE, -1, 0);
-    if (mapped == MAP_FAILED || (uint64_t)mapped != (uint64_t)startAddr) {
-        BM_LOG_ERROR("Failed to mmap size:" << totalSize << " addr:" << startAddr << " ret:" << mapped
-                                            << " error: " << errno);
-        HybmVaManager::GetInstance().FreeReserveGva(reinterpret_cast<uintptr_t>(startAddr));
-        return BM_ERROR;
+    if (!options_.enable56BitsGva) {
+        void *mapped = mmap(startAddr, totalSize, PROT_NONE,
+                            MAP_FIXED_NOREPLACE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_PRIVATE, -1, 0);
+        if (mapped == MAP_FAILED || (uint64_t)mapped != (uint64_t)startAddr) {
+            BM_LOG_ERROR("Failed to mmap size:" << totalSize << " addr:" << startAddr << " ret:" << mapped
+                                                << " error: " << errno);
+            return BM_ERROR;
+        }
     }
     globalVirtualAddress_ = (uint8_t *)startAddr;
     totalVirtualSize_ = totalSize;
-    localVirtualBase_ = globalVirtualAddress_ + options_.size * options_.rankId;
+    localVirtualBase_ = options_.enable56BitsGva ? (uint8_t *)gvaInfo.va[HVM_DVA]
+                                                 : globalVirtualAddress_ + options_.maxSize * options_.rankId;
     allocatedSize_ = 0UL;
     sliceCount_ = 0;
     auto ret = MapLocalShm();
@@ -157,8 +161,7 @@ Result HybmHostShmSegment::AllocLocalMemory(uint64_t size, std::shared_ptr<MemSl
         return BM_INVALID_PARAM;
     }
     void *sliceAddr = localVirtualBase_ + allocatedSize_;
-    auto gva = reinterpret_cast<uint64_t>(globalVirtualAddress_ + options_.size * options_.rankId + allocatedSize_);
-    allocatedSize_ += size;
+    auto gva = reinterpret_cast<uint64_t>(globalVirtualAddress_ + options_.maxSize * options_.rankId + allocatedSize_);
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(sliceAddr), size);
     slices_.emplace(slice->index_, slice);
@@ -170,6 +173,7 @@ Result HybmHostShmSegment::AllocLocalMemory(uint64_t size, std::shared_ptr<MemSl
         slice = nullptr;
         return ret;
     }
+    allocatedSize_ += size;
     BM_LOG_INFO("allocate slice(idx:" << slice->index_ << ", size:" << slice->size_ << " va:" << sliceAddr << ").");
     return BM_OK;
 }
@@ -254,7 +258,7 @@ Result HybmHostShmSegment::Mmap() noexcept
         if (im.rankId == options_.rankId) {
             continue;
         }
-        auto ret = MapImportedShm(im.rankId);
+        auto ret = MapImportedShm(im);
         if (ret != BM_OK) {
             return ret;
         }
@@ -455,7 +459,7 @@ Result HybmHostShmSegment::MapLocalShm() noexcept
     void *mapped = mmap(localVirtualBase_, options_.size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED | MAP_POPULATE,
                         localShmFd_, 0);
     if (mapped == MAP_FAILED || mapped != localVirtualBase_) {
-        BM_LOG_ERROR("Failed to mmap local shm file " << shmPath << " addr:" << localVirtualBase_
+        BM_LOG_ERROR("Failed to mmap local shm file " << shmPath << " addr:" << static_cast<void *>(localVirtualBase_)
                                                       << " size:" << options_.size << " ret:" << mapped
                                                       << " error:" << errno << " " << SafeStrError(errno));
         close(localShmFd_);
@@ -463,14 +467,29 @@ Result HybmHostShmSegment::MapLocalShm() noexcept
         (void)unlink(shmPath.c_str());
         return BM_ERROR;
     }
-    BM_LOG_INFO("MapLocalShm success: rankId=" << options_.rankId << " addr=" << localVirtualBase_
+    BM_LOG_INFO("MapLocalShm success: rankId=" << options_.rankId << " addr=" << static_cast<void *>(localVirtualBase_)
                                                << " size=" << options_.size << " useHugetlbfs=" << useHugetlbfs_
                                                << " fd=" << localShmFd_);
     return BM_OK;
 }
 
-Result HybmHostShmSegment::MapImportedShm(uint32_t rankId) noexcept
+uint64_t HybmHostShmSegment::ReserveLva(const ShmExportInfo &im) noexcept
 {
+    if (!options_.enable56BitsGva) {
+        return reinterpret_cast<uint64_t>(globalVirtualAddress_) + options_.maxSize * im.rankId + im.mappingOffset;
+    }
+    auto memType = im.magic == HBM_SLICE_EXPORT_INFO_MAGIC ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
+    const auto info = HybmVaManager::GetInstance().AllocReserveLva(options_.rankId, im.size, HVM_DVA, memType);
+    const auto reservedLva = info.va[HVM_DVA];
+    if (reservedLva == 0) {
+        BM_LOG_ERROR("AllocReserveLva failed rank:" << im.rankId << " size:" << im.size);
+    }
+    return reservedLva;
+}
+
+Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
+{
+    auto rankId = im.rankId;
     if (mappedRemoteRanks_.count(rankId) > 0) {
         return BM_OK;
     }
@@ -502,25 +521,29 @@ Result HybmHostShmSegment::MapImportedShm(uint32_t rankId) noexcept
         return BM_ERROR;
     }
     struct stat fileStat {};
-    if (fstat(fd, &fileStat) != 0 || static_cast<uint64_t>(fileStat.st_size) != options_.size) {
-        BM_LOG_ERROR("Imported shm file size mismatch "
-                     << shmPath << " rank:" << rankId << " expected:" << options_.size << " got:" << fileStat.st_size);
+    if (fstat(fd, &fileStat) != 0 || static_cast<uint64_t>(fileStat.st_size) < (im.size + im.mappingOffset)) {
+        BM_LOG_ERROR("Imported shm file size mismatch " << shmPath << " rank:" << rankId << " expected:"
+                                                        << (im.size + im.mappingOffset) << " got:" << fileStat.st_size);
         close(fd);
         return BM_ERROR;
     }
-    auto *remoteBase = globalVirtualAddress_ + options_.size * rankId;
-    void *mapped = mmap(remoteBase, options_.size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, 0);
-    if (mapped == MAP_FAILED || mapped != remoteBase) {
-        BM_LOG_ERROR("Failed to mmap imported shm file " << shmPath << " rank:" << rankId << " addr:" << remoteBase
-                                                         << " size:" << options_.size << " ret:" << mapped
-                                                         << " error:" << errno << " " << SafeStrError(errno));
+    auto remoteGva = globalVirtualAddress_ + options_.maxSize * im.rankId + im.mappingOffset;
+    auto remoteLva = reinterpret_cast<void *>(ReserveLva(im));
+    BM_ASSERT_LOG_AND_RETURN(remoteLva != nullptr, "Failed to reserve lva rank:" << im.rankId, BM_ERROR);
+    void *mapped = mmap(remoteLva, im.size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, im.mappingOffset);
+    if (mapped == MAP_FAILED || mapped != remoteLva) {
+        BM_LOG_ERROR("Failed to mmap imported shm file "
+                     << shmPath << " rank:" << rankId << " gva:" << remoteGva << " lva:" << remoteLva
+                     << " size:" << im.size << " offset:" << im.mappingOffset << " ret:" << mapped << " error:" << errno
+                     << " " << SafeStrError(errno));
         close(fd);
         return BM_ERROR;
     }
     importedShmFds_[rankId] = fd;
     mappedRemoteRanks_.insert(rankId);
     auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-        {reinterpret_cast<uint64_t>(remoteBase), 0, 0, options_.size, HYBM_MEM_TYPE_HOST}, options_.rankId, rankId);
+        {reinterpret_cast<uint64_t>(remoteGva), 0, reinterpret_cast<uint64_t>(remoteLva), im.size, HYBM_MEM_TYPE_HOST},
+        options_.rankId, rankId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AddVaInfoFromExternal failed for rank " << rankId);
     }
@@ -529,16 +552,8 @@ Result HybmHostShmSegment::MapImportedShm(uint32_t rankId) noexcept
 
 Result HybmHostShmSegment::RemapRemoteAsReserved(uint32_t rankId) noexcept
 {
-    auto *remoteBase = globalVirtualAddress_ + options_.size * rankId;
+    auto *remoteBase = globalVirtualAddress_ + options_.maxSize * rankId;
     HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(remoteBase));
-    void *reserved =
-        mmap(remoteBase, options_.size, PROT_NONE, MAP_FIXED | MAP_ANONYMOUS | MAP_NORESERVE | MAP_PRIVATE, -1, 0);
-    if (reserved == MAP_FAILED || reserved != remoteBase) {
-        BM_LOG_ERROR("Failed to remap remote rank as reserved rank:"
-                     << rankId << " addr:" << remoteBase << " size:" << options_.size << " ret:" << reserved
-                     << " error:" << errno << " " << SafeStrError(errno));
-        return BM_ERROR;
-    }
     return BM_OK;
 }
 

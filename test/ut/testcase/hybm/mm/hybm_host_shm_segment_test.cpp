@@ -78,12 +78,12 @@ TEST_F(HybmHostShmSegmentTest, ValidateOptions_CoversSuccessAndInvalidBranches)
     EXPECT_EQ(badType.ValidateOptions(), BM_INVALID_PARAM);
 
     options = MakeOptions();
-    options.size = 0;
-    HybmHostShmSegment zeroSize(options, 0);
-    EXPECT_EQ(zeroSize.ValidateOptions(), BM_INVALID_PARAM);
+    options.maxSize = 0;
+    HybmHostShmSegment zeroMaxSize(options, 0);
+    EXPECT_EQ(zeroMaxSize.ValidateOptions(), BM_INVALID_PARAM);
 
     options = MakeOptions();
-    options.size = HYBM_LARGE_PAGE_SIZE / 2UL;
+    options.maxSize = HYBM_LARGE_PAGE_SIZE / 2UL;
     HybmHostShmSegment misalignedSize(options, 0);
     EXPECT_EQ(misalignedSize.ValidateOptions(), BM_INVALID_PARAM);
 

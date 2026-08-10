@@ -71,10 +71,11 @@ private:
     std::string GetShmFilePath(uint32_t rankId) const noexcept;
     std::string GetShmFilePath(uint32_t rankId, bool useHugetlbfs) const noexcept;
     Result MapLocalShm() noexcept;
-    Result MapImportedShm(uint32_t rankId) noexcept;
+    Result MapImportedShm(const ShmExportInfo &im) noexcept;
     Result RemapRemoteAsReserved(uint32_t rankId) noexcept;
     void CloseImportedShmFds() noexcept;
     bool TryHugetlbfsAvailable() noexcept;
+    uint64_t ReserveLva(const ShmExportInfo &im) noexcept;
 
 private:
     static uint64_t sUsedOffset_;
