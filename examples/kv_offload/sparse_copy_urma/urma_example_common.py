@@ -23,6 +23,8 @@ CTRL_PORT = 9877
 WORLD_SIZE = 2
 HOST_RANK, NPU_RANK = 0, 1
 POOL_BYTES = 8 << 20
+# Ascend 950 VMM requires the per-rank HBM GVA limit to be 1 GiB aligned.
+HBM_GVA_MAX_BYTES = 1 << 30
 ITEM_BYTES = 4 << 10
 DEFAULT_SEED = 17
 MAX_CONTROL_BYTES = 1 << 20
@@ -247,7 +249,7 @@ def _create_handle(args, bm, rank_id):
                 # max_* defines a rank-independent GVA layout; only local_* is role-specific.
                 max_dram_size=POOL_BYTES,
                 local_hbm_size=0 if is_host else POOL_BYTES,
-                max_hbm_size=POOL_BYTES,
+                max_hbm_size=HBM_GVA_MAX_BYTES,
                 data_op_type=bm.BmDataOpType.HOST_DEVICE_URMA,
                 enable_56bits_gva=False,
             )

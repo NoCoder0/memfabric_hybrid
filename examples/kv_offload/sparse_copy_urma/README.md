@@ -92,7 +92,8 @@ python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
 用于兼容旧命令或做一致性校验；local 模式下不再要求重复传递。
 
 Host 先初始化固定 8 MiB GVA DRAM 和连续 pattern；两端 `create2` 均使用
-`max_dram_size=max_hbm_size=8 MiB` 保持相同的全局 GVA 布局，只有 `local_*_size` 按角色决定实际分配和导出。
+`max_dram_size=8 MiB`、`max_hbm_size=1 GiB` 保持相同的全局 GVA 布局。后者满足 Ascend 950 HBM VMM 的
+GB 对齐要求，但实际 HBM 分配仍是 `local_hbm_size=8 MiB`；只有 `local_*_size` 按角色决定实际分配和导出。
 该 pool 会在传输前注册，因此 Host validation 进程自动将未注册内存中转使用的
 `MF_HYBM_RDMA_SWAP_SPACE_SIZE` 设为 `0`。NPU 通过现有 entity/key/endpoint/route 流程取得 Host DRAM，使用
 本地 MemFabric HBM pool 的实际 device VA 调用 `sparse_copy_urma`，再用 `copy_data(G2H)` 回读验证。loopback
