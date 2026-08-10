@@ -331,7 +331,9 @@ ZBAL_KERNEL void ZBALAllGatherBigKernel::ExchangeOutputAddr(int64_t coreIndex, _
         auto flagPtr = ZbalPtr(flagAddr, statUpdateRank);
         uint64_t dataAddr = static_cast<uint64_t>(reinterpret_cast<uintptr_t>(output));
 
+        AscendC::PipeBarrier<PIPE_ALL>();
         ZBALSetFlag(dataPtr, dataAddr, myGroupRank);
+        AscendC::PipeBarrier<PIPE_ALL>();
         ZBALSetFlag(flagPtr, waitSymbol, myGroupRank);
     }
 
@@ -394,8 +396,11 @@ ZBAL_KERNEL void ZBALAllGatherBigKernel::Process() // ring allgather
     const int64_t statUpdateRank = aivIndex < coreNumPerRing ? nextRank : prevRank;
     __gm__ uint64_t *statAddr = aivIndex < coreNumPerRing ? this->readLeftStatAddr : this->readRightStatAddr;
 
-    ClearExchange(outputAddr, exchangeMetaSize);
-    BarrierAll();
+    // 仅核0执行 ClearExchange, 避免多核并发 MTE3 DMA 写同一 GM 区域导致硬件冲突(32核卡住, 16核正常)
+    if (aivIndex == 0) {
+        ClearExchange(outputAddr, exchangeMetaSize);
+    }
+    BarrierAll(true, true, waitSymbol);
 
     CopyLocal2Output((__gm__ T *)input, (__gm__ T *)output); // copy self input to output buffer
 
@@ -442,7 +447,8 @@ ZBAL_KERNEL void ZBALAllGatherBigKernel::Process() // ring allgather
             WriteStat(statAddr, statUpdateRank, sliceStatOffset); // write stat to next rank when data ready
         }
     }
-    BarrierAll();
+    // 结束 BarrierAll 须用与开头不同的 magic，避免部分核提前进入下一轮 ClearExchange
+    BarrierAll(true, true, waitSymbol - 1);
     ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLGATHER_KERNEL_ALL);
 #endif
 }

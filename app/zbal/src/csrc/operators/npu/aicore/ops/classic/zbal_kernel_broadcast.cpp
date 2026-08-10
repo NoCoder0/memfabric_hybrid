@@ -57,6 +57,7 @@ public:
         InitDataAddrAndFlag();
         ZBALWaitFlag(flagAddr, flagMagic, root);
         uint64_t rootDataAddr = ZBALGetFlag(inputAddr, root);
+        AscendC::PipeBarrier<PIPE_ALL>();
 
         int64_t startRank;
         int64_t endRank;
@@ -87,8 +88,8 @@ public:
                 numPerCore = baseElementsPerCore;
             }
 
-            inputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(rootDataAddr), numPerCore);
-            outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(output), numPerCore);
+            inputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(rootDataAddr), elementsPerRank);
+            outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(output), elementsPerRank);
 
             ZBAL_PROF_START(comm, ZBAL_PROF_BROADCAST_SCATTER);
             if (rank != root) {
@@ -96,7 +97,7 @@ public:
             }
             ZBAL_PROF_STOP(comm, ZBAL_PROF_BROADCAST_SCATTER);
         }
-        BarrierAll();
+        BarrierAll(true, true, flagMagic);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_BROADCAST_KERNEL_ALL);
 #endif
     }
@@ -225,7 +226,7 @@ public:
         pipe.Reset();
 
         ZBAL_PROF_START(comm, ZBAL_PROF_BROADCAST_ALLGATHER);
-        BarrierAll();
+        BarrierAll(true, true, flagMagic);
         if (elements * sizeof(T) <= SMALL_AG_THRESHOLD) {
             ZBALAllGatherSmallKernel op;
             op.Init<T>((GM_ADDR)(input) + rankOffset * sizeof(T), (GM_ADDR)output, (GM_ADDR)comm, elementsPerRank,

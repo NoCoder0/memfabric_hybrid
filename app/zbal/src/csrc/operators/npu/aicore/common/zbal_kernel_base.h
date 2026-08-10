@@ -44,10 +44,9 @@ public:
         return reinterpret_cast<__gm__ void *>(dstPtr);
     }
 
-    ZBAL_KERNEL void BarrierAll(bool flag = true, bool stat = true)
+    ZBAL_KERNEL void BarrierAll(bool flag = true, bool stat = true, uint64_t magic = ZBAL_CONST_1024)
     {
         AscendC::SyncAll<true>();
-        const uint64_t barrierMagic = 1024;
         int64_t aivIndex = AscendC::GetBlockIdx();
         int64_t aivNum = AscendC::GetBlockNum();
         uint16_t startRank = groupSize + 1;
@@ -77,14 +76,14 @@ public:
             for (uint16_t rank = startRank; rank < endRank; rank++) {
                 AscendC::PipeBarrier<PIPE_ALL>();
                 auto ptr = ZbalPtr(flagAddr, rank);
-                ZBALSetFlag(ptr, barrierMagic, myGroupRank);
+                ZBALSetFlag(ptr, magic, myGroupRank);
             }
             for (uint16_t rank = startRank; rank < endRank; rank++) {
                 AscendC::PipeBarrier<PIPE_ALL>();
                 uint64_t readyFlag;
                 do {
                     readyFlag = ZBALGetFlag(flagAddr, rank);
-                } while (readyFlag != barrierMagic);
+                } while (readyFlag != magic);
 
                 AscendC::PipeBarrier<PIPE_ALL>();
                 ZBALSetFlag(flagAddr, 0, rank);
@@ -95,14 +94,14 @@ public:
             for (uint16_t rank = startRank; rank < endRank; rank++) {
                 AscendC::PipeBarrier<PIPE_ALL>();
                 auto ptr = ZbalPtr(statAddr, rank);
-                ZBALSetFlag(ptr, barrierMagic, myGroupRank);
+                ZBALSetFlag(ptr, magic, myGroupRank);
             }
             for (uint16_t rank = startRank; rank < endRank; rank++) {
                 AscendC::PipeBarrier<PIPE_ALL>();
                 uint64_t readyFlag;
                 do {
                     readyFlag = ZBALGetFlag(statAddr, rank);
-                } while (readyFlag != barrierMagic);
+                } while (readyFlag != magic);
 
                 AscendC::PipeBarrier<PIPE_ALL>();
                 ZBALSetFlag(statAddr, 0, rank);

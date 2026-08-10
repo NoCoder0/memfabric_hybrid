@@ -24,6 +24,7 @@ public:
         this->groupSize = comm->groupSize;
         this->memSize = comm->localDeviceMemSize;
         this->worldRanks = reinterpret_cast<__gm__ uint16_t *>(comm->peerGroupRank2WorldRank);
+        this->flagMagic = waitSymbol;
 
         ZBALBaseKernel::Init();
 #endif
@@ -34,11 +35,14 @@ public:
 #if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ZBAL_PROF_START(comm, ZBAL_PROF_BARRIER);
 
-        BarrierAll();
+        BarrierAll(true, true, flagMagic);
 
         ZBAL_PROF_STOP(comm, ZBAL_PROF_BARRIER);
 #endif
     }
+
+private:
+    uint64_t flagMagic;
 };
 
 extern "C" __global__ __aicore__ void ZBALBarrierInner(GM_ADDR metaAddr, uint64_t waitSymbol)
@@ -52,14 +56,15 @@ extern "C" __global__ __aicore__ void ZBALBarrierInner(GM_ADDR metaAddr, uint64_
 
 int32_t ZBALOpBarrier(aclrtStream stream, CommGroupInfo &groupInfo)
 {
-    static uint32_t blockDim = 0;
-    if (blockDim == 0) {
-        auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
+    static uint32_t physicalBlocks = 0;
+    if (physicalBlocks == 0) {
+        auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&physicalBlocks);
         if (ret != 0) {
             printf("ZBALOpBarrier get block dim failed, blockDim:%d\n", ret);
             return ret;
         }
     }
+    uint32_t blockDim = (physicalBlocks > 48) ? 32 : physicalBlocks;
 
     uint8_t *metaAddr = reinterpret_cast<uint8_t *>(groupInfo.myMetaGva);
     uint64_t waitSymbol = ++groupInfo.waitSymbol;

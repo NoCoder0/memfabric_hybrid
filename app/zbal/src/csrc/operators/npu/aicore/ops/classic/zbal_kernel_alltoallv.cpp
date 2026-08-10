@@ -381,7 +381,7 @@ public:
             WaitRangeLocalStat(commonStartRank, commonEndRank);
         }
 
-        BarrierAll(false, true);
+        BarrierAll(false, true, waitSymbol);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLTOALL_KERNEL_ALL);
 #endif
     }

@@ -698,47 +698,55 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::scatter(std::vector<at::Tensor>
                                                          const c10d::ScatterOptions &opts)
 {
     const bool isRoot = (myWorldRank_ == opts.rootRank);
-    std::vector<uint64_t> rank_data_addrs;
-    void *bufferDataPtr = nullptr;
-    if (isRoot) {
-        if (inputTensors.size() != 1) {
-            ZBAL_LOG_ERROR("requires a single-element input list containing a list with tensors.");
-        }
 
-        for (auto &tensor_list : inputTensors[0]) {
-            rank_data_addrs.push_back(reinterpret_cast<uint64_t>(tensor_list.data_ptr()));
-        }
-        // Allocate device memory to hold the tensor address list
-        int64_t addrListSize = static_cast<int64_t>(rank_data_addrs.size() * sizeof(uint64_t));
-        at::Tensor bufferTensor =
-            at::empty({addrListSize}, at::TensorOptions().device(inputTensors[0][0].device()).dtype(torch::kInt8));
-        auto result = DlCannApi::AclrtMemcpy(reinterpret_cast<void *>(bufferTensor.data_ptr()), addrListSize,
-                                             rank_data_addrs.data(), addrListSize, ::ACL_MEMCPY_HOST_TO_DEVICE);
-        if (result != Z_OK) {
-            ZBAL_LOG_ERROR("tensor addrs h2d copy failed, result: " << result);
-        }
-        bufferDataPtr = bufferTensor.data_ptr();
+    ZBAL_CHECK_S(CheckNpuTensorsDifferentDevices(outputTensors) == 0, "check output tensor failed.");
+
+    // 参照 gather/reduce_scatter: 使用 FlattenForScatterGather 将 scatter_list 展平为连续 tensor。
+    // 展平后直接传 data_ptr() 给 kernel,无需 H2D 拷贝地址表,消除断图点。
+    // kernel 按 rank*elements 偏移量读取本 rank 数据,不再解引用地址表。
+    std::vector<at::Tensor> inputFlattened;
+    if (isRoot) {
+        ZBAL_CHECK_S(inputTensors.size() == 1, "requires a single-element input list containing a list with tensors.");
+        inputFlattened = FlattenForScatterGather(inputTensors, outputTensors, size_);
+        ZBAL_CHECK_S(CheckNpuTensorsDifferentDevices(inputFlattened) == 0, "check input tensor failed.");
+    } else {
+        inputFlattened = outputTensors;
     }
-    std::vector<at::Tensor> dummy_inputs = outputTensors;
 
     return collective(
-        dummy_inputs, outputTensors,
-        [&](at::Tensor &, at::Tensor &output, c10_npu::NPUStream &stream, zbal_comm_t comm) {
+        inputFlattened, outputTensors,
+        [&](at::Tensor &input, at::Tensor &output, c10_npu::NPUStream &stream, zbal_comm_t comm) -> int32_t {
             RECORD_FUNCTION("ZbalScatter", std::vector<c10::IValue>({output}));
             c10_npu::NPUCachingAllocator::recordStream(output.storage().data_ptr(), stream);
-
             const uint16_t root_rank = opts.rootRank;
             auto zbalType = GetZbalDataType(output.scalar_type());
             uint64_t recv_numel = GetNumelForZBAL(output);
+            void *inputDataPtr = input.data_ptr();
             std::function<int()> call_scatter = [=]() -> int {
-                return zbal_scatter(bufferDataPtr, output.data_ptr(), recv_numel, zbalType, root_rank, comm,
+                return zbal_scatter(inputDataPtr, output.data_ptr(), recv_numel, zbalType, root_rank, comm,
                                     stream.stream(false));
             };
             at_npu::native::OpCommand::RunOpApiV2("zbal_scatter", call_scatter);
             return Z_OK;
         },
-        [&](std::vector<c10_npu::NPUStream> &, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {},
-        [&](std::vector<c10_npu::NPUStream> &, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {},
+        [&](std::vector<c10_npu::NPUStream> &streams, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {
+            // root rank 将 scatter_list 拷贝到展平 tensor,使用 copy_ 可入图。
+            if (isRoot) {
+                c10_npu::NPUStreamGuard guard(streams[0]);
+                for (const auto j : c10::irange(inputTensors[0].size())) {
+                    c10_npu::NPUCachingAllocator::recordStream(inputTensors[0][j].storage().data_ptr(), streams[0]);
+                    inputFlattened[0][j].copy_(inputTensors[0][j], true);
+                }
+            }
+        },
+        [&](std::vector<c10_npu::NPUStream> &streams, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {
+            // scatter_list 中的 tensor 被 scatter kernel 跨 rank 读取,需 recordStream。
+            if (isRoot && !inputTensors.empty() && !inputTensors[0].empty()) {
+                for (auto &t : inputTensors[0]) {
+                    c10_npu::NPUCachingAllocator::recordStream(t.storage().data_ptr(), streams[0]);
+                }
+            }
+        },
         c10d::OpType::SCATTER);
 }
 
@@ -815,7 +823,7 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::barrier(const c10d::BarrierOpti
         },
         [&](std::vector<c10_npu::NPUStream> &, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {},
         [&](std::vector<c10_npu::NPUStream> &, c10::intrusive_ptr<ProcessGroupZBAL::WorkZBAL> &) {},
-        c10d::OpType::ALLTOALL_BASE);
+        c10d::OpType::BARRIER);
 }
 
 c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::alltoall_base(at::Tensor &outputTensor, at::Tensor &inputTensor,

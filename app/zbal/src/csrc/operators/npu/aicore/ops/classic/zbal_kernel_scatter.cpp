@@ -37,6 +37,7 @@ public:
         // |------input------|------flag------|
         this->exchangeAddr = reinterpret_cast<__gm__ uint64_t *>(comm->myAddressExchangeGva);
         this->exchangeFlag = this->exchangeAddr + this->addrOffset;
+        this->exchangeMetaSize = ZBAL_CONST_2 * addrOffset;
         this->worldRanks = reinterpret_cast<__gm__ uint16_t *>(comm->peerGroupRank2WorldRank);
 
         this->dataOpType = comm->dataOpType;
@@ -47,11 +48,15 @@ public:
     ZBAL_KERNEL void Process()
     {
 #if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
+        ClearExchange(exchangeAddr, exchangeMetaSize);
+        // 确保所有 rank 完成 ClearExchange 后再写 flag,避免远端 ClearExchange 清除本 rank 已写的 flag。
+        BarrierAll(true, true, flagMagic);
         InitDataAddrAndFlag();
         ZBAL_PROF_START(comm, ZBAL_PROF_WAIT_FLAG);
         ZBALWaitFlag(exchangeFlag, flagMagic, root);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_WAIT_FLAG);
         uint64_t rootDataAddr = GetRootDataAddr(exchangeAddr, root);
+        AscendC::PipeBarrier<PIPE_ALL>();
 
         uint32_t elementsPerRank = elements;
         uint32_t baseElementsPerCore = elementsPerRank / aivNum;
@@ -65,12 +70,16 @@ public:
             numPerCore = baseElementsPerCore;
         }
 
-        inputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(rootDataAddr), numPerCore);
-        outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(output), numPerCore);
+        // 展平模式下,rootDataAddr 指向展平 tensor 首地址,本 rank 数据在 rank*elementsPerRank 偏移处。
+        __gm__ T *rankDataPtr = reinterpret_cast<__gm__ T *>(rootDataAddr) + rank * elementsPerRank;
+        inputGm.SetGlobalBuffer(rankDataPtr, elementsPerRank);
+        outputGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(output), elementsPerRank);
 
         ZBAL_PROF_START(comm, ZBAL_PROF_SCATTER_KERNEL_ALL);
-        CpGM2GM(inputGm[startInRank], outputGm[startInRank], numPerCore);
-        BarrierAll();
+        if (numPerCore > 0) {
+            CpGM2GM(inputGm[startInRank], outputGm[startInRank], numPerCore);
+        }
+        BarrierAll(true, true, flagMagic);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_SCATTER_KERNEL_ALL);
 #endif
     }
@@ -110,13 +119,13 @@ private:
         ZBAL_PROF_STOP(comm, ZBAL_PROF_EXCHANGE_ADDR);
     }
 
+    // 展平模式: 直接返回 exchange 中 root 写入的展平 tensor 首地址,不再解引用地址表。
     ZBAL_KERNEL uint64_t GetRootDataAddr(__gm__ void *metaAddr, uint32_t coreTargetRank)
     {
         uint32_t dataAddrOffset = coreTargetRank * ZBAL_FLAG_SIZE;
         __gm__ uint64_t *dataGmAddr = (__gm__ uint64_t *)metaAddr + dataAddrOffset;
         dcciCacheline((__gm__ uint8_t *)dataGmAddr);
-        __gm__ uint64_t *realInputAddr = (__gm__ uint64_t *)(*dataGmAddr);
-        return realInputAddr[rank];
+        return *dataGmAddr;
     }
 
 private:
@@ -128,6 +137,7 @@ private:
     uint32_t rank;
     uint32_t elements;
     uint32_t addrOffset;
+    uint32_t exchangeMetaSize;
     uint64_t flagMagic;
     __gm__ void *input;
     __gm__ void *output;
@@ -230,6 +240,7 @@ int32_t ZBALOpScatter(const void *sendBuff, void *recvBuff, size_t sendCount, zb
     uint8_t *input = reinterpret_cast<uint8_t *>(const_cast<void *>(sendBuff));
     uint8_t *output = reinterpret_cast<uint8_t *>(recvBuff);
     uint64_t waitSymbol = ++groupInfo.waitSymbol;
+    groupInfo.waitSymbol++;
 
     ZBALScatterInner<<<blockDim, nullptr, stream>>>(input, output, sendCount, dataTypeNum, metaAddr, root, waitSymbol);
     return 0;

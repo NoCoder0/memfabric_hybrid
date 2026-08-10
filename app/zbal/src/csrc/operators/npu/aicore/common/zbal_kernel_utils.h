@@ -140,7 +140,8 @@ inline uint32_t ZBALOpGetAivBlockDim(CommGroupInfo &groupInfo, size_t sendCount,
         }
     }
 
-    uint32_t blockDim = physicalBlocks;
+    // A5 has >48 AIV cores (56/72), use 32 blocks; A3 has <=48, use all physical blocks
+    uint32_t blockDim = (physicalBlocks > 48) ? 32 : physicalBlocks;
     uint64_t totalSize = GetTypeSize(dataType) * sendCount;
     if (totalSize <= ZBAL_SMALL_DATA_SIZE && blockDim > groupInfo.groupSize) {
         // avoid no task block for small shape

@@ -109,7 +109,7 @@ public:
     {
 #if defined(ZBAL_ASCEND_NPU_A3) || defined(ZBAL_ASCEND_NPU_A5)
         ClearExchange(exchangeInputStart, exchangeMetaSize);
-        BarrierAll();
+        BarrierAll(true, true, waitSymbol);
 
         if (totalElems > groupSize) {
             ProcessElemsGtGroupSize();
@@ -160,7 +160,7 @@ private:
             ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
         }
 
-        BarrierAll();
+        BarrierAll(true, true, waitSymbol);
 
         ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_ALLGATHER);
         buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
@@ -168,7 +168,7 @@ private:
         CpGM2GM(buffGm, yGm, totalElems);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_ALLGATHER);
 
-        BarrierAll();
+        BarrierAll(true, true, waitSymbol);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_KERNEL_ALL);
 #endif
     }
@@ -258,7 +258,8 @@ private:
             }
         }
 
-        BarrierAll();
+        // 不复用 waitSymbol 做 BarrierAll: 与 Process 开头相同 magic 会导致 two-stage flag/stat 残留而 no-op,
+        BarrierAll(true, true, waitSymbol - 1);
     }
 
     ZBAL_KERNEL void ProcessAg()
@@ -295,7 +296,7 @@ private:
             CpGM2GM(buffGm, yGm, numPerCore);
         }
 
-        BarrierAll();
+        BarrierAll(true, true, waitSymbol);
     }
 
     ZBAL_KERNEL void InitDataAddrAndFlag(uint32_t op)

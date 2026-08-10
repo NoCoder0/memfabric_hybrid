@@ -147,7 +147,7 @@ public:
             }
         }
 
-        BarrierAll();
+        BarrierAll(true, true, flagMagic);
         ZBAL_PROF_STOP(comm, ZBAL_PROF_REDUCESCATTER_KERNEL_ALL);
 #endif
     }
