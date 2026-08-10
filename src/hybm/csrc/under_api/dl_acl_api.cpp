@@ -58,6 +58,7 @@ rtIpcSetMemoryNameFunc DlAclApi::pRtIpcSetMemoryName = nullptr;
 rtIpcOpenMemoryFunc DlAclApi::pRtIpcOpenMemory = nullptr;
 rtIpcCloseMemoryFunc DlAclApi::pRtIpcCloseMemory = nullptr;
 aclrtGetSocNameFunc DlAclApi::pAclrtGetSocName = nullptr;
+aclrtGetVersionFunc DlAclApi::pAclrtGetVersion = nullptr;
 rtEnableP2PFunc DlAclApi::pRtEnableP2P = nullptr;
 rtDisableP2PFunc DlAclApi::pRtDisableP2P = nullptr;
 rtMemcpyAsyncFunc DlAclApi::pRtMemcpyAsync = nullptr;
@@ -124,6 +125,7 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pRtIpcOpenMemory, rtIpcOpenMemoryFunc, rtHandle, "rtIpcOpenMemory");
     DL_LOAD_SYM(pRtIpcCloseMemory, rtIpcCloseMemoryFunc, rtHandle, "rtIpcCloseMemory");
     DL_LOAD_SYM(pAclrtGetSocName, aclrtGetSocNameFunc, rtHandle, "aclrtGetSocName");
+    DL_LOAD_SYM_OPTIONAL(pAclrtGetVersion, aclrtGetVersionFunc, rtHandle, "aclrtGetVersion");
     DL_LOAD_SYM(pRtEnableP2P, rtEnableP2PFunc, rtHandle, "rtEnableP2P");
     DL_LOAD_SYM(pRtDisableP2P, rtDisableP2PFunc, rtHandle, "rtDisableP2P");
     DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, rtHandle, "rtGetLogicDevIdByUserDevId");
@@ -133,6 +135,25 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
 
     gLoaded = true;
     return BM_OK;
+}
+
+int32_t DlAclApi::AclrtGetVersion(int32_t *major, int32_t *minor, int32_t *patch)
+{
+    if (pAclrtGetVersion == nullptr) {
+        return -1;
+    }
+    return pAclrtGetVersion(major, minor, patch);
+}
+
+bool DlAclApi::IsCannGE(int32_t major, int32_t minor)
+{
+    int32_t aclMajor = 0;
+    int32_t aclMinor = 0;
+    int32_t aclPatch = 0;
+    if (AclrtGetVersion(&aclMajor, &aclMinor, &aclPatch) != 0) {
+        return false;
+    }
+    return (aclMajor >= major) || (aclMajor == major && aclMinor >= minor);
 }
 
 AscendSocType DlAclApi::GetAscendSocType()
@@ -204,6 +225,7 @@ void DlAclApi::CleanupLibrary()
     pAclrtGetCurrentContext = nullptr;
     pAclrtSetStreamAttribute = nullptr;
     pAclrtGetPhyDevIdByLogicDevId = nullptr;
+    pAclrtGetVersion = nullptr;
 
     if (rtHandle != nullptr) {
         dlclose(rtHandle);

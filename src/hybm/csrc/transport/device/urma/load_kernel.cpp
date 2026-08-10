@@ -25,7 +25,7 @@ namespace transport {
 namespace device {
 namespace {
 constexpr int32_t kCpuKernelMode = 0;
-constexpr const char *kKernelJsonSuffix = "/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json";
+constexpr const char *kKernelJsonPath = "/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json";
 constexpr const char *kDefaultAscendPath = "/usr/local/Ascend/cann";
 
 Result GetKernelFilePath(std::string &jsonPath)
@@ -34,8 +34,8 @@ Result GetKernelFilePath(std::string &jsonPath)
     if (ascendPath == nullptr || ascendPath[0] == '\0') {
         ascendPath = kDefaultAscendPath;
     }
-    jsonPath = std::string(ascendPath) + kKernelJsonSuffix;
-    BM_LOG_INFO("device_urma kernel json path: " << jsonPath);
+    jsonPath = std::string(ascendPath) + kKernelJsonPath;
+    BM_LOG_INFO("kernel json path: " << jsonPath);
     return BM_OK;
 }
 
@@ -110,6 +110,23 @@ Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite
         return ret;
     }
     return GetFuncHandle(binHandle, funcWrite, funcHandles.batchWrite);
+}
+
+Result LoadDeviceKernelAndValidate(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
+                                   DeviceFuncHandles &funcHandles)
+{
+    auto ret = LoadDeviceKernelAndGetHandles(funcRead, funcWrite, binHandle, funcHandles);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("LoadDeviceKernelAndGetHandles failed, ret=" << ret);
+        return ret;
+    }
+    if (funcHandles.batchRead == nullptr || funcHandles.batchWrite == nullptr) {
+        BM_LOG_ERROR("invalid device kernel function handles after loading, read: "
+                     << funcHandles.batchRead << " write: " << funcHandles.batchWrite);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    BM_LOG_INFO("AICPU kernel loaded, write=" << funcHandles.batchWrite << " read=" << funcHandles.batchRead);
+    return BM_OK;
 }
 
 } // namespace device

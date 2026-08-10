@@ -77,13 +77,20 @@ static inline std::ostream &operator<<(std::ostream &output, const TransportMemo
     return output;
 }
 
+// Slot indices for TransportMemoryKey::keys[]
+// Device transports use slots 0-3 (4 slots), host transport uses slot 6.
+constexpr uint32_t TRANS_KEY_DEV_SLOT1 = KEY_SIZE;     // start of slot 1
+constexpr uint32_t TRANS_KEY_DEV_SLOT2 = KEY_SIZE * 2; // start of slot 2
+constexpr uint32_t TRANS_KEY_DEV_SLOT3 = KEY_SIZE * 3; // start of slot 3
+constexpr uint32_t TRANS_KEY_HOST_SLOT = KEY_SIZE * 6; // slot 6: host transport
+constexpr uint32_t TRANS_KEY_TOTAL_SLOTS = 7;          // total slots (6 device + 1 host)
+
 struct TransportMemoryKey {
-    // Device使用前面6个KEY_SIZE slots(主要是device_urma最大)， Host使用最后1个KEY_SIZE slot
-    uint64_t keys[KEY_SIZE * 7];
+    uint64_t keys[KEY_SIZE * TRANS_KEY_TOTAL_SLOTS];
 
     bool operator<(const TransportMemoryKey &other) const
     {
-        return memcmp(keys, other.keys, sizeof(uint64_t) * KEY_SIZE * 7U) < 0; // compare
+        return memcmp(keys, other.keys, sizeof(uint64_t) * KEY_SIZE * TRANS_KEY_TOTAL_SLOTS) < 0; // compare
     }
 };
 
@@ -94,12 +101,16 @@ struct TransportPrivateData {
 
 inline void ReadDeviceRdmaMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)
 {
-    std::copy_n(input.keys, KEY_SIZE, output.keys);
+    // Copy all keys including HCOMM flag descriptor data at keys[KEY_SIZE*2+4..]
+    // keys layout: [0..KEY_SIZE*2-1] = HCOMM mem descriptor
+    //              [KEY_SIZE*2+1] = addr, [KEY_SIZE*2+2] = size, [KEY_SIZE*2+3] = descLen
+    //              [KEY_SIZE*2+4] = flagDescLen, [KEY_SIZE*3..] = flagDesc data
+    std::copy_n(input.keys, KEY_SIZE * TRANS_KEY_TOTAL_SLOTS, output.keys);
 }
 
 inline void WriteDeviceRdmaMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)
 {
-    std::copy_n(input.keys, KEY_SIZE, output.keys);
+    std::copy_n(input.keys, KEY_SIZE * TRANS_KEY_TOTAL_SLOTS, output.keys);
 }
 
 inline void ReadHcomMemoryKey(const TransportMemoryKey &input, TransportMemoryKey &output)

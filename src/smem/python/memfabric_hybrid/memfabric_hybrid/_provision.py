@@ -294,29 +294,6 @@ def _check_acl_version():
         return False
 
 
-# ========== SoC detection ==========
-
-
-def _detect_soc():
-    try:
-        import acl
-    except Exception:
-        return None
-    try:
-        soc = acl.get_soc_name()
-    except Exception:
-        return None
-    if not isinstance(soc, str) or not soc:
-        return None
-    return soc
-
-
-def _is_ascend950_soc(soc_name):
-    if not isinstance(soc_name, str):
-        return False
-    return "Ascend910_95" in soc_name or "Ascend950" in soc_name
-
-
 # ========== git identity ==========
 
 
@@ -683,11 +660,8 @@ def provision():
     if skip:
         return
 
+    # ACL >= 1.17 (CANN >= 9.1) 即可走 HCOMM device_rdma 路径，不限制 SoC 型号
     if not _check_acl_version():
-        return
-
-    soc = _detect_soc()
-    if not _is_ascend950_soc(soc):
         return
 
     anchor_path, anchor = _open_anchor(ascend_home)

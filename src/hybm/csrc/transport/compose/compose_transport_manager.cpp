@@ -13,6 +13,7 @@
 
 #include <vector>
 #include <string>
+#include <cstring>
 
 #include "hybm_def.h"
 #include "hybm_logger.h"
@@ -20,6 +21,10 @@
 #include "device_rdma_transport_manager.h"
 #include "hybm_gva_version.h"
 #include "device_urma_transport_manager.h"
+#include "device_rdma_hcomm_transport_manager.h"
+#include "dl_acl_api.h"
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 #include "mf_str_util.h"
 
 using namespace ock::mf;
@@ -43,6 +48,12 @@ Result ComposeTransportManager::OpenHostTransport(const TransportOptions &option
     return hostTransportManager_->OpenDevice(options);
 }
 
+namespace {
+// HCOMM 要求 CANN >= 9.1（对应 ACL 版本 >= 1.17，AclrtGetVersion 返回 ACL 版本号）
+constexpr int32_t HCOMM_REQUIRED_MAJOR = 1;
+constexpr int32_t HCOMM_REQUIRED_MINOR = 17;
+} // namespace
+
 Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &options)
 {
     if (deviceTransportManager_ != nullptr) {
@@ -51,8 +62,23 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
     }
     if (options.protocol & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
+    } else if (options.protocol & HYBM_DOP_TYPE_DEVICE_RDMA) {
+        // HCOMM 开关（默认关闭）：关闭时无论 CANN 版本一律走 native RDMA；
+        // 打开后恢复 CANN 版本判断（>= 9.1 走 HCOMM，否则 native）。
+        // HCOMM 代码保留，待 HCOMM 支持动态 MR 更新后置 1 即可启用。
+        static const bool hcommEnabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_HCOMM, 0u) != 0u;
+        const bool useHcomm = hcommEnabled && DlAclApi::IsCannGE(HCOMM_REQUIRED_MAJOR, HCOMM_REQUIRED_MINOR);
+        BM_LOG_INFO("useHcomm=" << (useHcomm ? "true" : "false") << " (hcommEnabled=" << hcommEnabled
+                                << ", ACL >= " << HCOMM_REQUIRED_MAJOR << "." << HCOMM_REQUIRED_MINOR
+                                << " i.e. CANN >= 9.1 required)");
+        if (useHcomm) {
+            deviceTransportManager_ = std::make_shared<device::DeviceRdmaHcommTransportManager>();
+        } else {
+            BM_LOG_INFO("using native device RDMA transport");
+            deviceTransportManager_ = Create(HybmGetGvaVersion());
+        }
     } else {
-        deviceTransportManager_ = Create(HybmGetGvaVersion());
+        return BM_INVALID_PARAM;
     }
     return deviceTransportManager_->OpenDevice(options);
 }
@@ -392,6 +418,30 @@ Result ComposeTransportManager::ConnectRank(uint32_t rankId)
         ret = deviceTransportManager_->ConnectRank(rankId);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to connect device rank " << rankId << " ret: " << ret);
+            return ret;
+        }
+    }
+    return BM_OK;
+}
+
+Result ComposeTransportManager::ConnectWithOptions(const HybmTransPrepareOptions &options)
+{
+    Result ret = BM_OK;
+    if (hostTransportManager_) {
+        HybmTransPrepareOptions hostOptions{};
+        GetHostPrepareOptions(options, hostOptions);
+        ret = hostTransportManager_->ConnectWithOptions(hostOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to ConnectWithOptions host ret: " << ret);
+            return ret;
+        }
+    }
+    if (deviceTransportManager_) {
+        HybmTransPrepareOptions deviceOptions{};
+        GetDevicePrepareOptions(options, deviceOptions);
+        ret = deviceTransportManager_->ConnectWithOptions(deviceOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to ConnectWithOptions device ret: " << ret);
             return ret;
         }
     }

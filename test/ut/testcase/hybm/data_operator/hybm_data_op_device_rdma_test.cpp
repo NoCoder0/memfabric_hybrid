@@ -310,6 +310,12 @@ public:
         mockMemory = malloc(1024ULL * 1024ULL * 128ULL); // 128MB
         transportManagerMock_ = std::make_shared<TransportManagerMock>();
         dataOp_ = std::make_shared<ock::mf::DataOpDeviceRDMA>(rankId_, transportManagerMock_);
+
+        // 模拟 DlAclApi::GetAscendSocType 方法（AllocSwapMemory 的 A5 判断需要）。
+        // 必须在 SetUp 中对所有测试生效（含不调用 InitMockEnv 的测试），否则首个
+        // 未 mock 的测试会在 ACL stub 加载前调用真实 GetAscendSocType，把进程级
+        // 静态缓存污染为 ASCEND_UNKNOWN，导致后续实体类用例全部失败。
+        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910B));
     }
 
     void TearDown() override
@@ -844,4 +850,242 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_force_unregistered)
 
     dataOp_->UnInitialize();
     ASSERT_EQ(0, unsetenv("MF_HYBM_RDMA_FORCE_UNREGISTERED"));
+}
+
+// ── BatchMergedWrite/Read via BatchDataCopy (GLOBAL_HOST direction) ──
+// These exercise the private BatchMergedWrite/BatchMergedRead internally.
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_write_contiguous_remote)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    // Use LOCAL_HOST -> GLOBAL_HOST path which calls BatchMergedWrite
+    // Two entries with contiguous remote GVA → should merge into one WriteRemoteAsync
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[2] = {0xA000, 0xA000 + 1024};
+    uint64_t dataSizes[2] = {1024, 2048};
+    void *srcLH[2] = {reinterpret_cast<void *>(hostAddr), reinterpret_cast<void *>(hostAddr + 0x1000)};
+    void *dstGH[2] = {reinterpret_cast<void *>(remoteAddrs[0]), reinterpret_cast<void *>(remoteAddrs[1])};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 2; // 2
+    params.sources = srcLH;
+    params.destinations = dstGH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 0;
+    options.destRankId = 1;
+    options.flags = 0;
+
+    transportManagerMock_->writeRemoteAsyncCount = 0;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options);
+    ASSERT_EQ(BM_OK, ret);
+    // Contiguous GVA → merged into 1 call
+    ASSERT_EQ(1UL, transportManagerMock_->writeRemoteAsyncCount);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_write_noncontiguous_remote)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    // Non-contiguous → separate calls
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[2] = {0xA000, 0xC000};
+    uint64_t dataSizes[2] = {1024, 2048};
+    void *srcLH[2] = {reinterpret_cast<void *>(hostAddr), reinterpret_cast<void *>(hostAddr + 0x1000)};
+    void *dstGH[2] = {reinterpret_cast<void *>(remoteAddrs[0]), reinterpret_cast<void *>(remoteAddrs[1])};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 2; // 2
+    params.sources = srcLH;
+    params.destinations = dstGH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 0;
+    options.destRankId = 1;
+
+    transportManagerMock_->writeRemoteAsyncCount = 0;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options);
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(2UL, transportManagerMock_->writeRemoteAsyncCount);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_write_remote_fail)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[1] = {0xA000};
+    uint64_t dataSizes[1] = {1024};
+    void *srcLH[1] = {reinterpret_cast<void *>(hostAddr)};
+    void *dstGH[1] = {reinterpret_cast<void *>(remoteAddrs[0])};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 1;
+    params.sources = srcLH;
+    params.destinations = dstGH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 0;
+    options.destRankId = 1;
+
+    transportManagerMock_->writeRemoteAsyncResult = BM_ERROR;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options);
+    ASSERT_NE(BM_OK, ret);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_write_sync_fail)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[1] = {0xA000};
+    uint64_t dataSizes[1] = {1024};
+    void *srcLH[1] = {reinterpret_cast<void *>(hostAddr)};
+    void *dstGH[1] = {reinterpret_cast<void *>(remoteAddrs[0])};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 1;
+    params.sources = srcLH;
+    params.destinations = dstGH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 0;
+    options.destRankId = 1;
+
+    transportManagerMock_->synchronizeResult = BM_ERROR;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options);
+    ASSERT_NE(BM_OK, ret);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_read_contiguous_remote)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    // GLOBAL_HOST -> LOCAL_HOST path calls BatchMergedRead
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[2] = {0xA000, 0xA000 + 1024};
+    uint64_t dataSizes[2] = {1024, 2048};
+    void *srcGH[2] = {reinterpret_cast<void *>(remoteAddrs[0]), reinterpret_cast<void *>(remoteAddrs[1])};
+    void *dstLH[2] = {reinterpret_cast<void *>(hostAddr), reinterpret_cast<void *>(hostAddr + 0x1000)};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 2; // 2
+    params.sources = srcGH;
+    params.destinations = dstLH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 1;
+    options.destRankId = 0;
+
+    transportManagerMock_->readRemoteAsyncCount = 0;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options);
+    ASSERT_EQ(BM_OK, ret);
+    // Contiguous → merged
+    ASSERT_EQ(1UL, transportManagerMock_->readRemoteAsyncCount);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_read_noncontiguous_remote)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[2] = {0xA000, 0xC000};
+    uint64_t dataSizes[2] = {1024, 2048};
+    void *srcGH[2] = {reinterpret_cast<void *>(remoteAddrs[0]), reinterpret_cast<void *>(remoteAddrs[1])};
+    void *dstLH[2] = {reinterpret_cast<void *>(hostAddr), reinterpret_cast<void *>(hostAddr + 0x1000)};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 2; // 2
+    params.sources = srcGH;
+    params.destinations = dstLH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 1;
+    options.destRankId = 0;
+
+    transportManagerMock_->readRemoteAsyncCount = 0;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options);
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(2UL, transportManagerMock_->readRemoteAsyncCount);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_read_remote_fail)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[1] = {0xA000};
+    uint64_t dataSizes[1] = {1024};
+    void *srcGH[1] = {reinterpret_cast<void *>(remoteAddrs[0])};
+    void *dstLH[1] = {reinterpret_cast<void *>(hostAddr)};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 1;
+    params.sources = srcGH;
+    params.destinations = dstLH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 1;
+    options.destRankId = 0;
+
+    transportManagerMock_->readRemoteAsyncResult = BM_ERROR;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options);
+    ASSERT_NE(BM_OK, ret);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, batch_merged_read_sync_fail)
+{
+    InitMockEnv();
+    ASSERT_EQ(BM_OK, dataOp_->Initialize());
+
+    uint64_t hostAddr = 0x1000;
+    uint64_t remoteAddrs[1] = {0xA000};
+    uint64_t dataSizes[1] = {1024};
+    void *srcGH[1] = {reinterpret_cast<void *>(remoteAddrs[0])};
+    void *dstLH[1] = {reinterpret_cast<void *>(hostAddr)};
+
+    hybm_batch_copy_params params{};
+    params.batchSize = 1;
+    params.sources = srcGH;
+    params.destinations = dstLH;
+    params.dataSizes = dataSizes;
+
+    ock::mf::ExtOptions options{};
+    options.srcRankId = 1;
+    options.destRankId = 0;
+
+    transportManagerMock_->synchronizeResult = BM_ERROR;
+    auto ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options);
+    ASSERT_NE(BM_OK, ret);
+
+    dataOp_->UnInitialize();
 }

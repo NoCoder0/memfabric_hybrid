@@ -63,6 +63,7 @@ Result DlHcommApi::LoadLibrary()
             << " error: " << dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
+    BM_LOG_INFO("Successfully loaded library [" << hcommLibName << "]");
 
     DL_LOAD_SYM(gHcommEndpointCreate, hcommEndpointCreateFunc, hcommHandle, "HcommEndpointCreate");
     DL_LOAD_SYM(gHcommEndpointDestroy, hcommEndpointDestroyFunc, hcommHandle, "HcommEndpointDestroy");
@@ -73,6 +74,7 @@ Result DlHcommApi::LoadLibrary()
     DL_LOAD_SYM(gHcommMemUnimport, hcommMemUnimportFunc, hcommHandle, "HcommMemUnimport");
     DL_LOAD_SYM(gHcommChannelCreate, hcommChannelCreateFunc, hcommHandle, "HcommChannelCreate");
     DL_LOAD_SYM(gHcommChannelDestroy, hcommChannelDestroyFunc, hcommHandle, "HcommChannelDestroy");
+    DL_LOAD_SYM(gHcommChannelGetStatus, hcommChannelGetStatusFunc, hcommHandle, "HcommChannelGetStatus");
     DL_LOAD_SYM(gHcommThreadAlloc, hcommThreadAllocFunc, hcommHandle, "HcommThreadAlloc");
     DL_LOAD_SYM(gHcommThreadFree, hcommThreadFreeFunc, hcommHandle, "HcommThreadFree");
     DL_LOAD_SYM(gHcommReadOnThread, hcommReadOnThreadFunc, hcommHandle, "HcommReadOnThread");
@@ -89,7 +91,6 @@ Result DlHcommApi::LoadLibrary()
                          "HcommMemGetAllMemHandles");
     DL_LOAD_SYM_OPTIONAL(gHcommChannelUpdateMemInfo, hcommChannelUpdateMemInfoFunc, hcommHandle,
                          "HcommChannelUpdateMemInfo");
-    DL_LOAD_SYM(gHcommChannelGetStatus, hcommChannelGetStatusFunc, hcommHandle, "HcommChannelGetStatus");
 
     BM_LOG_INFO("LoadLibrary for DlHcommApi success");
     gLoaded = true;
@@ -112,6 +113,7 @@ void DlHcommApi::CleanupLibrary()
     gHcommMemUnimport = nullptr;
     gHcommChannelCreate = nullptr;
     gHcommChannelDestroy = nullptr;
+    gHcommChannelGetStatus = nullptr;
     gHcommThreadAlloc = nullptr;
     gHcommThreadFree = nullptr;
     gHcommReadOnThread = nullptr;
@@ -125,7 +127,6 @@ void DlHcommApi::CleanupLibrary()
     gHcommChannelFence = nullptr;
     gHcommMemGetAllMemHandles = nullptr;
     gHcommChannelUpdateMemInfo = nullptr;
-    gHcommChannelGetStatus = nullptr;
 
     if (hcommHandle != nullptr) {
         dlclose(hcommHandle);

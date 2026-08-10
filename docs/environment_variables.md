@@ -18,6 +18,7 @@
 | `MF_HYBM_URMA_SWAP_SPACE_SIZE` | 0 | URMA交换空间大小（单位MB），用于device_urma数据传输未注册内存的中转内存。设为0时跳过交换空间分配，未注册内存路径将直接返回错误。 |
 | `MF_HYBM_RDMA_FORCE_UNREGISTERED` | 0 | 强制RDMA跳过内存注册检查路径。设为非0值时，`BatchDataCopy`直接走未注册路径发起RDMA读写。 |
 | `MF_DEVICE_UB_QOS` | 4 | device_urma/device_uboe 的 HCOMM channel QoS，取值范围0-7，数值越小优先级越高；非法值回退为4。 |
+| `MF_HYBM_RDMA_USE_HCOMM` | 0 | HCOMM传输开关（仅 `DEVICE_RDMA` 路径生效）。<br>**默认关闭（0）**：无论CANN版本，`DEVICE_RDMA`一律走native RDMA传输（`RdmaTransportManager`），动态注册内存天然支持，无需中转。<br>**置1**：恢复CANN版本判断——CANN ≥ 9.1（ACL ≥ 1.17）时走HCOMM传输（`DeviceRdmaHcommTransportManager`），否则仍走native RDMA。<br>**限制**：A2（Ascend 910B）走HCOMM时，channel MR表为创建时快照（`AicpuTsRoceChannel` 不支持运行时 `UpdateMemInfo`），join后动态注册的内存（如vLLM KV cache）暂不支持直传，此时**必须同时设置 `MF_HYBM_RDMA_FORCE_UNREGISTERED=1` 走swap中转**。A5（Ascend 950）URMA通道支持动态MR更新，不受此限制。 |
 | `MF_LOG_LEVEL` | 无 | MemFabric日志级别，取值范围0-4（0:DEBUG, 1:INFO, 2:WARN, 3:ERROR, 4:OFF）。**仅Python接口下生效，bm/shm场景不生效。** |
 | `MF_CONFIG_STORE_URL` | 无（必填） | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`。 |
 | `MF_CONFIG_STORE_PORT_START` | 9000 | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。TransferEngine在`session_id`未指定端口（如`ip`/`ip:0`）时自动选端口亦使用此范围。 |
@@ -79,3 +80,32 @@ export HCOM_MAX_SLICE_SIZE=$((128*1024))
 export HCOM_RECV_DATA_SIZE=$((128*1024+128))
 export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128))
 ```
+
+## DEVICE_RDMA 传输路径选择（HCOMM vs native）
+
+`DEVICE_RDMA` 设备侧传输路径由 `MF_HYBM_RDMA_USE_HCOMM` 开关决定，与CANN版本共同决定实际使用哪条实现：
+
+| `MF_HYBM_RDMA_USE_HCOMM` | CANN版本 | 实际传输实现 | 动态注册内存支持 |
+|--------------------------|---------|-------------|----------------|
+| 0（默认） | 任意 | native RDMA（`RdmaTransportManager`） | ✅ 天然支持（实时查MR表），无需中转 |
+| 1 | ≥ 9.1（ACL ≥ 1.17） | HCOMM（`DeviceRdmaHcommTransportManager`） | ❌ A2需中转（见下） |
+| 1 | < 9.1 | native RDMA | ✅ 同上 |
+
+### HCOMM 路径的限制（A2 / Ascend 910B）
+
+- A2 的 HCOMM channel 类为 `AicpuTsRoceChannel`，MR表在channel创建时一次性快照冻结，且不支持运行时 `UpdateMemInfo`（基类空实现）；
+- join 后动态注册的内存（如 vLLM 动态 KV cache）不在快照中，暂不支持直传；
+- **必须同时设置**：
+
+  ```bash
+  export MF_HYBM_RDMA_USE_HCOMM=1
+  export MF_HYBM_RDMA_FORCE_UNREGISTERED=1   # 强制走swap中转兜底
+  export MF_HYBM_RDMA_SWAP_SPACE_SIZE=2048   # 中转所需的swap空间（MB）
+  ```
+
+- native RDMA 路径无此限制，无需设置中转相关变量。
+
+### A5（Ascend 950）URMA 通道
+
+- A5 的 `DEVICE_URMA` 走 `DeviceUrmaTransportManager`，channel 类为 `AicpuTsUrmaChannel`，**支持运行时动态MR更新**（完整实现 `UpdateMemInfo`）；
+- 不受 `MF_HYBM_RDMA_USE_HCOMM` 开关影响，无需中转。

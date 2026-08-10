@@ -23,13 +23,75 @@
 
 #include "dl_hcomm_api.h"
 #include "dl_rt_api.h"
-#include "hcomm_transport_manager.h"
+#include "hcomm_api_wrapper.h"
 #include "hybm_transport_manager.h"
+#include "load_kernel.h"
 
 namespace ock {
 namespace mf {
 namespace transport {
 namespace device {
+
+// ─────────────────────────────────────────────────────────────────
+// URMA-specific type definitions (migrated from hcomm_transport_manager.h)
+// ─────────────────────────────────────────────────────────────────
+constexpr uint32_t URMA_EXPORT_DESC_MAGIC = 0xA5FAB001U;
+constexpr uint16_t URMA_EXPORT_DESC_VERSION = 1U;
+constexpr uint32_t DEVICE_URMA_MAX_EXPORT_KEY_LENGTH = KEY_SIZE * 6;
+constexpr uint32_t DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS = 2;
+constexpr uint32_t DEVICE_URMA_EXPORT_KEY_DATA_BYTES =
+    (DEVICE_URMA_MAX_EXPORT_KEY_LENGTH - DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS) * sizeof(uint64_t);
+constexpr void *INVALID_MEM_HANDLE = nullptr;
+
+using UrmaMemTag = uint64_t;
+using HcommChannelHandle = ock::mf::ChannelHandle;
+using HcommThreadHandle = ock::mf::ThreadHandle;
+
+enum UrmaProtocol {
+    RESERVED = -1,
+    HCCS = 0,
+    ROCE = 1,
+    PCIE = 2,
+    SIO = 3,
+    UBC_CTP = 4,
+    UBC_TP = 5,
+    UB_MEM = 6,
+    UBOE = 7,
+};
+
+enum UrmaMemoryType : uint16_t {
+    HOST_DRAM = 0,
+    DEVICE_HBM = 1,
+    INVALID_BUTT = 2,
+};
+
+struct UrmaEndpointDesc {
+    uint32_t devPhyId{0};
+    uint32_t superDevId{0};
+    uint32_t serverIdx{0};
+    uint32_t superPodIdx{0};
+    UrmaProtocol protocol{UrmaProtocol::RESERVED};
+    CommAddrType type{COMM_ADDR_TYPE_RESERVED};
+    uint8_t raws[URMA_ENDPOINT_RAW_LEN]{};
+};
+
+struct UrmaCommMem {
+    uint64_t addr{0};
+    uint64_t size{0};
+    UrmaMemoryType type{UrmaMemoryType::INVALID_BUTT};
+};
+
+struct UrmaExportDesc {
+    uint32_t magic{URMA_EXPORT_DESC_MAGIC};
+    uint16_t version{URMA_EXPORT_DESC_VERSION};
+    uint16_t headerSize{0};
+    UrmaMemoryType memoryType{UrmaMemoryType::INVALID_BUTT};
+    UrmaMemTag memTag{0};
+    uint64_t addr{0};
+    uint64_t size{0};
+    uint32_t hcommDescLen{0};
+    uint32_t devTransFlagDescLen{0};
+};
 
 class DeviceUrmaTransportManager final : public transport::TransportManager {
 public:
@@ -258,8 +320,8 @@ private:
     uint32_t serverId_{0};
     uint32_t superPodId_{0};
     TransportOptions options_{};
-    HcommTransportManager manager_;
-    UrmaEndpointHandle localEndpoint_{nullptr};
+    HcommApiWrapper hcommApi_;
+    HcommEndpointHandle localEndpoint_{nullptr};
     UrmaEndpointDesc localEndpointDesc_{};
     std::map<uint64_t, LocalRegistration> localRegistrations_{};
     // Device kernel launch state

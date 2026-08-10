@@ -8,6 +8,7 @@ ADD_UNIT_TEST(test_memfabric
         FILES ${memfabric_src} ${TEST_SRC_PATHS}/ut_main.cpp
                 ${PROJECT_SMEM_SRC_BASE}/csrc/python_wrapper/mk_transfer_adapter/csrc/transfer_util.cpp
         INCLUDE_PATHS ${TEST_INCLUDE_PATHS} ${PROJECT_SMEM_SRC_BASE}/csrc/python_wrapper/mk_transfer_adapter/include
+                        ${PROJECT_HYBM_SRC_BASE}/ops/hybm_kernel
         LINK_LIBRARIES ${TEST_DEPEND_LIBS}
         BUILD_FLAGS -fpermissive --coverage
 )

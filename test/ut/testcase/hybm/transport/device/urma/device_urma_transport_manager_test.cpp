@@ -1100,7 +1100,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
 
     DeviceUrmaTransportManager manager;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
     manager.opened_ = true;
@@ -1136,7 +1136,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesThreadChannelAndImportsMemKey
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1273,7 +1273,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
     options.protocol = HYBM_DOP_TYPE_DEVICE_UBOE;
     EXPECT_EQ(manager.OpenDevice(options), BM_OK);
     ASSERT_NE(manager.localEndpoint_, nullptr);
-    EXPECT_EQ(manager.localEndpoint_->desc.protocol, UrmaProtocol::UBOE);
+    EXPECT_EQ(manager.localEndpointDesc_.protocol, UrmaProtocol::UBOE);
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
@@ -1384,7 +1384,7 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsAndRemoveRanksReusePrepare
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1425,7 +1425,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRollsBackNewResourcesWhenImportFails
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1458,7 +1458,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRejectsRankEdgesAndChangedEndpoint)
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1500,7 +1500,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareFailsWhenCreatingThreadOrChannel)
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1537,7 +1537,7 @@ TEST(DeviceUrmaTransportManagerTest, PreparePollsInProgressUntilReady)
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1570,7 +1570,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusApiFailureDestroysChannelAn
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1604,7 +1604,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusFailedDestroysChannelAndThr
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1638,7 +1638,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusTimeoutDestroysChannelAndTh
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1672,7 +1672,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareGetStatusUnknownDestroysChannelAndTh
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1706,7 +1706,7 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsFallsBackForNewRankAndChec
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 3;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -1753,15 +1753,16 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.devTransFlagPtr_ = std::malloc(sizeof(int64_t));
     ASSERT_NE(manager.devTransFlagPtr_, nullptr);
     manager.devTransFlagSize_ = sizeof(int64_t);
     HcommMemHandle flagHandle = nullptr;
-    const UrmaCommMem flagMem{reinterpret_cast<uint64_t>(manager.devTransFlagPtr_), sizeof(int64_t),
-                              UrmaMemoryType::DEVICE_HBM};
-    ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, 1, flagMem, &flagHandle), BM_OK);
+    HcommCommMem flagMem{COMM_MEM_TYPE_DEVICE,
+                         reinterpret_cast<void *>(reinterpret_cast<uint64_t>(manager.devTransFlagPtr_)),
+                         sizeof(int64_t)};
+    ASSERT_EQ(manager.hcommApi_.RegisterMemory(manager.localEndpoint_, 1, flagMem, flagHandle), BM_OK);
     manager.devTransFlagHcommHandle_ = flagHandle;
 
     // Set up a CompletionContext with notify to exercise CleanupContextLocked path
@@ -1771,8 +1772,9 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     ctx->notifyAddr = MOCK_NOTIFY_ADDR;
     ctx->notifyLen = MOCK_NOTIFY_LEN;
     HcommMemHandle notifyHandle = nullptr;
-    const UrmaCommMem notifyMem{MOCK_NOTIFY_ADDR, MOCK_NOTIFY_LEN, UrmaMemoryType::DEVICE_HBM};
-    ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, MOCK_NOTIFY_ADDR, notifyMem, &notifyHandle), BM_OK);
+    const HcommCommMem notifyMem{COMM_MEM_TYPE_DEVICE, reinterpret_cast<void *>(MOCK_NOTIFY_ADDR), MOCK_NOTIFY_LEN};
+    ASSERT_EQ(manager.hcommApi_.RegisterMemory(manager.localEndpoint_, MOCK_NOTIFY_ADDR, notifyMem, notifyHandle),
+              BM_OK);
     ctx->notifyHcommHandle = notifyHandle;
     manager.registry_.push_back(ctx);
 
@@ -1783,7 +1785,8 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     remote.addr = MOCK_REMOTE_ADDR;
     remote.size = MOCK_SIZE;
     remote.memTag = MOCK_MEM_TAG;
-    remote.descBytes = MakeRawExportDesc(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+    // descBytes stores only the raw hcomm descriptor (not wrapped with UrmaExportDesc)
+    remote.descBytes.assign(MOCK_HCOMM_DESC_LEN, 0xA5);
     remote.view = {MOCK_REMOTE_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
     state.imports.push_back(remote);
     state.remoteFlagAddr = MOCK_REMOTE_ADDR;
@@ -1791,8 +1794,8 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     state.remoteFlagDescBytes.assign(MOCK_HCOMM_DESC_LEN, 0xF1);
 
     HcommMemHandle localHandle = nullptr;
-    const UrmaCommMem localMem{MOCK_LOCAL_ADDR, MOCK_SIZE, UrmaMemoryType::HOST_DRAM};
-    ASSERT_EQ(manager.manager_.HcommMemReg(manager.localEndpoint_, MOCK_MEM_TAG, localMem, &localHandle), BM_OK);
+    const HcommCommMem localMem{COMM_MEM_TYPE_HOST, reinterpret_cast<void *>(MOCK_LOCAL_ADDR), MOCK_SIZE};
+    ASSERT_EQ(manager.hcommApi_.RegisterMemory(manager.localEndpoint_, MOCK_MEM_TAG, localMem, localHandle), BM_OK);
 
     DeviceUrmaTransportManager::LocalRegistration local{};
     local.mr.addr = MOCK_LOCAL_ADDR;
@@ -2276,7 +2279,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataContainsValidEndpointDesc)
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
 
     DeviceUrmaTransportManager manager;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     const auto expectedDesc = MakeEndpointDesc();
     manager.localEndpointDesc_ = expectedDesc;
@@ -2337,7 +2340,7 @@ TEST(DeviceUrmaTransportManagerTest, UnregisterMemoryRegionUnknownAddrSucceeds)
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     // UnregisterMemoryRegion for unknown addr should return BM_OK (no-op with warning)
     EXPECT_EQ(manager.UnregisterMemoryRegion(MOCK_LOCAL_ADDR), BM_OK);
@@ -2359,7 +2362,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareFailsOnBadPrivateDataMagic)
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.localEndpointDesc_ = MakeEndpointDesc();
 
@@ -2386,7 +2389,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionInvalidFlagsFails)
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     // DRAM | HBM flags simultaneously — IsSupportedMemoryFlags returns false
@@ -2412,7 +2415,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionTracksRefCountAndQueryM
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.devTransFlagHcommHandle_ = MOCK_FLAG_HANDLE;
     manager.devTransFlagPtr_ = std::malloc(sizeof(int64_t));
@@ -2464,7 +2467,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionPropagatesHcommRegFailu
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     TransportMemoryRegion mr{};
@@ -2491,7 +2494,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionRejectsInvalidRangesAnd
     mr.flags = REG_MR_FLAG_DRAM;
     EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_NOT_INITIALIZED);
 
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     mr.addr = 0;
@@ -2515,7 +2518,7 @@ TEST(DeviceUrmaTransportManagerTest, QueryMemoryKeyFailsWhenFlagHandleMissing)
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     TransportMemoryRegion mr{};
@@ -2540,7 +2543,7 @@ TEST(DeviceUrmaTransportManagerTest, QueryMemoryKeyFailsWhenFlagExportFails)
     g_memExportCallCount = 0;
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
     manager.devTransFlagHcommHandle_ = MOCK_FLAG_HANDLE;
 
@@ -2578,8 +2581,9 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysImportsFlagAndSkipsDupli
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
 
     auto &state = manager.remoteRanks_[1];
     state.remoteEndpointDesc = MakeEndpointDesc();
@@ -2604,7 +2608,7 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsBadInputsAndProto
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     auto &state = manager.remoteRanks_[1];
@@ -2642,8 +2646,9 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsMalformedPayloads
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
+    manager.localEndpointDesc_ = MakeEndpointDesc();
 
     auto &state = manager.remoteRanks_[1];
     state.remoteEndpointDesc = MakeEndpointDesc();
@@ -2876,7 +2881,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionDramUsesDvaWhenMappingE
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2UL;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     TransportMemoryRegion mr{};
@@ -2909,7 +2914,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionDramFallsBackToHvaWhenN
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2UL;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     TransportMemoryRegion mr{};
@@ -2938,7 +2943,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionHbmSkipsDvaConversion)
     manager.opened_ = true;
     manager.rankId_ = 0;
     manager.rankCount_ = 2UL;
-    manager.localEndpoint_ = manager.manager_.CreateEndpoint(MakeEndpointDesc());
+    manager.localEndpoint_ = MOCK_ENDPOINT;
     ASSERT_NE(manager.localEndpoint_, nullptr);
 
     TransportMemoryRegion mr{};

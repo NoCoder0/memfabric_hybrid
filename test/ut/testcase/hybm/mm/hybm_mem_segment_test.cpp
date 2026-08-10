@@ -20,14 +20,66 @@
 #include "hybm_conn_based_segment.h"
 #include "hybm_vmm_based_segment.h"
 #include "hybm_dev_user_legacy_segment.h"
+#include "dl_acl_api.h"
 #undef private
 #undef protected
 
 #include "hybm_va_manager.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_gva_version.h"
+#include "hybm_host_shm_segment.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
+
+namespace {
+struct MemSegmentAclFnGuard {
+    ock::mf::aclrtSetDeviceFunc oldSetDevice{ock::mf::DlAclApi::pAclrtSetDevice};
+    ock::mf::rtGetLogicDevIdByUserDevIdFunc oldGetLogicDevId{ock::mf::DlAclApi::pRtGetLogicDevIdByUserDevId};
+    ock::mf::aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{ock::mf::DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
+    ock::mf::rtDeviceGetBareTgidFunc oldGetBareTgid{ock::mf::DlAclApi::pRtDeviceGetBareTgid};
+    ock::mf::rtGetDeviceInfoFunc oldGetDeviceInfo{ock::mf::DlAclApi::pRtGetDeviceInfo};
+
+    ~MemSegmentAclFnGuard()
+    {
+        ock::mf::DlAclApi::pAclrtSetDevice = oldSetDevice;
+        ock::mf::DlAclApi::pRtGetLogicDevIdByUserDevId = oldGetLogicDevId;
+        ock::mf::DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDev;
+        ock::mf::DlAclApi::pRtDeviceGetBareTgid = oldGetBareTgid;
+        ock::mf::DlAclApi::pRtGetDeviceInfo = oldGetDeviceInfo;
+    }
+};
+
+int g_rtGetDeviceInfoCallCount = 0;
+
+struct MemSegmentStaticsGuard {
+    bool deviceInfoReady{ock::mf::MemSegment::deviceInfoReady_};
+    int deviceId{ock::mf::MemSegment::deviceId_};
+    int logicDeviceId{ock::mf::MemSegment::logicDeviceId_};
+    int devicePhyId{ock::mf::MemSegment::devicePhyId_};
+    uint32_t pid{ock::mf::MemSegment::pid_};
+    uint32_t sdid{ock::mf::MemSegment::sdid_};
+    uint32_t serverId{ock::mf::MemSegment::serverId_};
+    uint32_t superPodId{ock::mf::MemSegment::superPodId_};
+    std::string sysBoolId{ock::mf::MemSegment::sysBoolId_};
+    uint32_t bootIdHead{ock::mf::MemSegment::bootIdHead_};
+    ock::mf::AscendSocType socType{ock::mf::MemSegment::socType_};
+
+    ~MemSegmentStaticsGuard()
+    {
+        ock::mf::MemSegment::deviceInfoReady_ = deviceInfoReady;
+        ock::mf::MemSegment::deviceId_ = deviceId;
+        ock::mf::MemSegment::logicDeviceId_ = logicDeviceId;
+        ock::mf::MemSegment::devicePhyId_ = devicePhyId;
+        ock::mf::MemSegment::pid_ = pid;
+        ock::mf::MemSegment::sdid_ = sdid;
+        ock::mf::MemSegment::serverId_ = serverId;
+        ock::mf::MemSegment::superPodId_ = superPodId;
+        ock::mf::MemSegment::sysBoolId_ = sysBoolId;
+        ock::mf::MemSegment::bootIdHead_ = bootIdHead;
+        ock::mf::MemSegment::socType_ = socType;
+    }
+};
+} // namespace
 
 class HybmMemSegmentTest : public ::testing::Test {
 protected:
@@ -36,14 +88,18 @@ protected:
         GlobalMockObject::reset();
         auto ret = hybm_init(0, 0);
         EXPECT_EQ(ret, BM_OK);
+        staticsGuard = std::make_unique<MemSegmentStaticsGuard>();
     }
 
     void TearDown() override
     {
+        staticsGuard.reset();
         GlobalMockObject::verify();
         GlobalMockObject::reset();
         hybm_uninit();
     }
+
+    std::unique_ptr<MemSegmentStaticsGuard> staticsGuard;
 };
 
 // =========================
@@ -1047,4 +1103,288 @@ TEST_F(HybmMemSegmentTest, HybmDevUserLegacySegment_ReserveMemorySpace)
 
     ret = segment.AllocLocalMemory(0, slice);
     EXPECT_EQ(ret, BM_NOT_SUPPORTED);
+}
+
+// =========================
+// 7. MemSegment 静态成员 / 设备信息与工厂分支补充
+// =========================
+
+/**
+* ResetDeviceInfoInChild_ResetsStatics
+*  - 覆盖全部静态成员复位逻辑。
+*/
+TEST_F(HybmMemSegmentTest, ResetDeviceInfoInChild_ResetsStatics)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = true;
+    ock::mf::MemSegment::deviceId_ = 3;      // 3
+    ock::mf::MemSegment::logicDeviceId_ = 4; // 4
+    ock::mf::MemSegment::devicePhyId_ = 5;   // 5
+    ock::mf::MemSegment::pid_ = 6U;          // 6
+    ock::mf::MemSegment::sdid_ = 7U;         // 7
+    ock::mf::MemSegment::serverId_ = 8U;     // 8
+    ock::mf::MemSegment::superPodId_ = 9U;   // 9
+    ock::mf::MemSegment::sysBoolId_ = "test-boot";
+    ock::mf::MemSegment::bootIdHead_ = 10U; // 10
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910C;
+
+    ock::mf::MemSegment::ResetDeviceInfoInChild();
+
+    EXPECT_FALSE(ock::mf::MemSegment::deviceInfoReady_);
+    EXPECT_EQ(ock::mf::MemSegment::deviceId_, -1);
+    EXPECT_EQ(ock::mf::MemSegment::logicDeviceId_, -1);
+    EXPECT_EQ(ock::mf::MemSegment::devicePhyId_, -1);
+    EXPECT_EQ(ock::mf::MemSegment::pid_, 0U);
+    EXPECT_EQ(ock::mf::MemSegment::sdid_, 0U);
+    EXPECT_EQ(ock::mf::MemSegment::serverId_, 0U);
+    EXPECT_EQ(ock::mf::MemSegment::superPodId_, 0U);
+    EXPECT_TRUE(ock::mf::MemSegment::sysBoolId_.empty());
+    EXPECT_EQ(ock::mf::MemSegment::bootIdHead_, 0U);
+    EXPECT_EQ(ock::mf::MemSegment::socType_, ock::mf::AscendSocType::ASCEND_UNKNOWN);
+}
+
+/**
+* InitDeviceInfo_AlreadyReady_SameAndDifferentDev
+*  - deviceInfoReady_ 后：相同 devId 返回 OK，不同 devId 返回 INVALID_PARAM。
+*/
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_AlreadyReady_SameAndDifferentDev)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = true;
+    ock::mf::MemSegment::deviceId_ = 5; // 5
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(5), BM_OK);            // 5
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(6), BM_INVALID_PARAM); // 6
+}
+
+/**
+* EnableRemotePeerAccess_InvalidAndSelf
+*  - 负 phyId → INVALID_PARAM；与本地 phyId 相同 → OK。
+*/
+TEST_F(HybmMemSegmentTest, EnableRemotePeerAccess_InvalidAndSelf)
+{
+    EXPECT_EQ(ock::mf::MemSegment::EnableRemotePeerAccess(-1), BM_INVALID_PARAM);
+
+    ock::mf::MemSegment::devicePhyId_ = 7;                            // 7
+    EXPECT_EQ(ock::mf::MemSegment::EnableRemotePeerAccess(7), BM_OK); // 7
+}
+
+/**
+* CanSdmaReaches_InvalidSuperPodBranches
+*  - 本端 superPodId 未知 → false；本端有效时按 superPodId 相等判断。
+*/
+TEST_F(HybmMemSegmentTest, CanSdmaReaches_InvalidSuperPodBranches)
+{
+    ock::mf::MemSegment::serverId_ = 0x56;
+    ock::mf::MemSegment::superPodId_ = ock::mf::invalidSuperPodId;
+
+    EXPECT_FALSE(ock::mf::MemSegment::CanSdmaReaches(0x99, 0x78, 1));
+
+    ock::mf::MemSegment::superPodId_ = 0xAA;
+    EXPECT_TRUE(ock::mf::MemSegment::CanSdmaReaches(0xAA, 0x78, 1));
+    EXPECT_FALSE(ock::mf::MemSegment::CanSdmaReaches(0xBB, 0x78, 1));
+}
+
+/**
+* Create_Dram_HostShmFlag_UsesHostShmSegment
+*  - DRAM 段且 dataOpType 含 HOST_SHM → HybmHostShmSegment。
+*/
+TEST_F(HybmMemSegmentTest, Create_Dram_HostShmFlag_UsesHostShmSegment)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.rankCnt = 2; // 2
+    opt.rankId = 0;
+    opt.segType = ock::mf::HYBM_MST_DRAM;
+    opt.dataOpType = HYBM_DOP_TYPE_HOST_SHM;
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_V3));
+    MOCKER(ock::mf::MemSegment::InitDeviceInfo).stubs().will(returnValue(0));
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910B;
+
+    auto seg = ock::mf::MemSegment::Create(opt, 0);
+    ASSERT_NE(seg, nullptr);
+    auto hostSeg = std::dynamic_pointer_cast<ock::mf::HybmHostShmSegment>(seg);
+    EXPECT_NE(hostSeg, nullptr);
+}
+
+/**
+* Create_InvalidSegType_ReturnsNull
+*  - 非法 segType 走 default 分支，返回 nullptr。
+*/
+TEST_F(HybmMemSegmentTest, Create_InvalidSegType_ReturnsNull)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.rankCnt = 2; // 2
+    opt.rankId = 0;
+    opt.segType = static_cast<ock::mf::MemSegType>(0x7FFF);
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_V3));
+    MOCKER(ock::mf::MemSegment::InitDeviceInfo).stubs().will(returnValue(0));
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910B;
+
+    auto seg = ock::mf::MemSegment::Create(opt, 0);
+    EXPECT_EQ(seg, nullptr);
+}
+
+/**
+* Create_Fails_When_VaManagerInitFailed
+*  - HybmVaManager::Initialize 失败 → Create 返回 nullptr。
+*/
+TEST_F(HybmMemSegmentTest, Create_Fails_When_VaManagerInitFailed)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.rankCnt = 2;
+    opt.rankId = 0;
+    opt.segType = ock::mf::HYBM_MST_HBM;
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_V3));
+    MOCKER(ock::mf::MemSegment::InitDeviceInfo).stubs().will(returnValue(0));
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910B;
+    MOCKER_CPP(&ock::mf::HybmVaManager::Initialize,
+               ock::mf::Result(*)(ock::mf::HybmVaManager *, ock::mf::AscendSocType))
+        .stubs()
+        .will(returnValue(BM_ERROR));
+
+    auto seg = ock::mf::MemSegment::Create(opt, 0);
+    EXPECT_EQ(seg, nullptr);
+}
+
+/**
+* DevLegacySegment_RegisterMemory_ZeroVa_Fails
+*  - RegisterMemCommon：va=0 → GetLocalMemoryType 失败 → 直接返回。
+*/
+TEST_F(HybmMemSegmentTest, DevLegacySegment_RegisterMemory_ZeroVa_Fails)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.segType = ock::mf::HYBM_MST_HBM;
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+    opt.rankCnt = 1;
+    opt.rankId = 0;
+
+    ock::mf::HybmDevLegacySegment segment(opt, 0);
+    ock::mf::MemSlicePtr slice;
+    EXPECT_EQ(segment.RegisterMemory(nullptr, 0, slice), BM_INVALID_PARAM);
+}
+
+/**
+* InitDeviceInfo_AclrtSetDeviceFails
+*/
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_AclrtSetDeviceFails)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    ock::mf::DlAclApi::pAclrtSetDevice = [](int32_t) -> int32_t { return -1; };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
+}
+
+/**
+* InitDeviceInfo_RtGetLogicDevIdFails
+*/
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetLogicDevIdFails)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    ock::mf::DlAclApi::pRtGetLogicDevIdByUserDevId = [](const int32_t, int32_t *const) -> int32_t { return -1; };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
+}
+
+/**
+* InitDeviceInfo_RtDeviceGetBareTgidFails
+*/
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtDeviceGetBareTgidFails)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    ock::mf::DlAclApi::pRtDeviceGetBareTgid = [](uint32_t *) -> int32_t { return -1; };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
+}
+
+/**
+* InitDeviceInfo_RtGetDeviceInfoFails_Sdid / ServerId / SuperPodId
+*  - 分别在第一次/第二次/第三次 RtGetDeviceInfo 调用处失败。
+*/
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetDeviceInfoFails_Sdid)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    g_rtGetDeviceInfoCallCount = 0;
+    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
+        g_rtGetDeviceInfoCallCount++;
+        if (g_rtGetDeviceInfoCallCount == 1) {
+            return -1;
+        }
+        *value = 0x1000;
+        return 0;
+    };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
+}
+
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetDeviceInfoFails_ServerId)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    g_rtGetDeviceInfoCallCount = 0;
+    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
+        g_rtGetDeviceInfoCallCount++;
+        if (g_rtGetDeviceInfoCallCount == 2) { // 2
+            return -1;
+        }
+        *value = 0x1000;
+        return 0;
+    };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
+}
+
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetDeviceInfoFails_SuperPodId)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    g_rtGetDeviceInfoCallCount = 0;
+    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
+        g_rtGetDeviceInfoCallCount++;
+        if (g_rtGetDeviceInfoCallCount == 3) { // 3
+            return -1;
+        }
+        *value = 0x1000;
+        return 0;
+    };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
+}
+
+/**
+* InitDeviceInfo_SuccessWithInvalidPodServer_FallsBackToBootId
+*  - 设备信息全成功但 superPodId/serverId 均为无效值 → serverId_ 回退为 bootIdHead_。
+*/
+TEST_F(HybmMemSegmentTest, InitDeviceInfo_SuccessWithInvalidPodServer_FallsBackToBootId)
+{
+    ock::mf::MemSegment::deviceInfoReady_ = false;
+    MemSegmentAclFnGuard guard;
+    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t infoType, int64_t *value) -> int32_t {
+        if (infoType == ock::mf::INFO_TYPE_SDID) {
+            *value = 0x1234;
+            return 0;
+        }
+        if (infoType == ock::mf::INFO_TYPE_SERVER_ID) {
+            *value = ock::mf::invalidServerId;
+            return 0;
+        }
+        if (infoType == ock::mf::INFO_TYPE_SUPER_POD_ID) {
+            *value = ock::mf::invalidSuperPodId;
+            return 0;
+        }
+        return -1;
+    };
+
+    EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_OK);
+    EXPECT_EQ(ock::mf::MemSegment::sdid_, 0x1234U);
+    if (ock::mf::MemSegment::bootIdHead_ != 0) {
+        EXPECT_EQ(ock::mf::MemSegment::serverId_, ock::mf::MemSegment::bootIdHead_);
+    }
 }

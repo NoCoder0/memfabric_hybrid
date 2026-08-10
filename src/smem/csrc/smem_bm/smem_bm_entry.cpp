@@ -339,6 +339,9 @@ Result SmemBmEntry::Leave(uint32_t flags)
             TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 1);
         } else {
             SM_LOG_INFO("rankId:" << groupMgr->GetLocalRankId() << " SmemBmEntry::Leave success.");
+            // 出组成功后清 joined_，否则 Uninitialize 会基于 joined_ 再次 Leave，
+            // 导致 server 端 Checkout 找不到 rank 报 "CONTROL Leave: Checkout failed"
+            joined_ = false;
             TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 0);
         }
     } else {

@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <limits>
 #include <mutex>
 #include <type_traits>
 #include <unordered_map>
@@ -34,6 +35,7 @@
 #include "mf_env_util.h"
 #include "device_urma_eid_reader.h"
 #include "hybm_va_manager.h"
+#include "device_common.h"
 #include "device_urma_transport_manager.h"
 
 namespace ock {
@@ -100,54 +102,97 @@ UrmaCommMem ToUrmaMem(const TransportMemoryRegion &mr)
     return UrmaCommMem{mr.addr, mr.size, ToUrmaMemoryType(mr.flags)};
 }
 
+// ── Free functions migrated from deleted hcomm_transport_manager.cpp ──
+
+CommProtocol ToHcommProtocol(UrmaProtocol protocol)
+{
+    if (protocol == UrmaProtocol::ROCE) {
+        return COMM_PROTOCOL_ROCE;
+    }
+    if (protocol == UrmaProtocol::UBC_TP) {
+        return COMM_PROTOCOL_UBC_TP;
+    }
+    if (protocol == UrmaProtocol::UBC_CTP) {
+        return COMM_PROTOCOL_UBC_CTP;
+    }
+    if (protocol == UrmaProtocol::UBOE) {
+        return COMM_PROTOCOL_UBOE;
+    }
+    return COMM_PROTOCOL_RESERVED;
+}
+
+bool GetRangeEnd(const UrmaCommMem &mem, uint64_t &end)
+{
+    if (mem.addr == 0 || mem.size == 0) {
+        return false;
+    }
+    if (std::numeric_limits<uint64_t>::max() - mem.addr < mem.size) {
+        return false;
+    }
+    end = mem.addr + mem.size;
+    return true;
+}
+
+bool IsValidMem(const UrmaCommMem &mem)
+{
+    uint64_t end = 0;
+    return (mem.type == UrmaMemoryType::HOST_DRAM || mem.type == UrmaMemoryType::DEVICE_HBM) && GetRangeEnd(mem, end);
+}
+
+EndpointDesc ToHcommEndpointDesc(const UrmaEndpointDesc &desc)
+{
+    EndpointDesc endpoint{};
+    endpoint.protocol = ToHcommProtocol(desc.protocol);
+    endpoint.commAddr.type = desc.type;
+    std::memcpy(endpoint.commAddr.raws, desc.raws, sizeof(endpoint.commAddr.raws));
+    endpoint.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    endpoint.loc.device.devPhyId = desc.devPhyId;
+    endpoint.loc.device.superDevId = desc.superDevId;
+    endpoint.loc.device.serverIdx = desc.serverIdx;
+    endpoint.loc.device.superPodIdx = desc.superPodIdx;
+    return endpoint;
+}
+
+HcommCommMem ToHcommMem(const UrmaCommMem &mem)
+{
+    HcommCommMem hcommMem{};
+    hcommMem.type = COMM_MEM_TYPE_HOST;
+    if (mem.type == UrmaMemoryType::DEVICE_HBM) {
+        hcommMem.type = COMM_MEM_TYPE_DEVICE;
+    }
+    hcommMem.addr = reinterpret_cast<void *>(mem.addr);
+    hcommMem.size = mem.size;
+    return hcommMem;
+}
+
+bool SameMem(const UrmaCommMem &left, const UrmaCommMem &right)
+{
+    return left.addr == right.addr && left.size == right.size && left.type == right.type;
+}
+
+bool Overlaps(const UrmaCommMem &left, const UrmaCommMem &right)
+{
+    uint64_t leftEnd = 0;
+    uint64_t rightEnd = 0;
+    return left.type == right.type && GetRangeEnd(left, leftEnd) && GetRangeEnd(right, rightEnd) &&
+           left.addr < rightEnd && right.addr < leftEnd;
+}
+
+// Convert HcommCommMem → UrmaCommMem (for HcommApiWrapper migration)
+static UrmaCommMem ToUrmaCommMem(const HcommCommMem &mem)
+{
+    UrmaCommMem urmaMem{};
+    urmaMem.addr = reinterpret_cast<uint64_t>(mem.addr);
+    urmaMem.size = mem.size;
+    urmaMem.type = (mem.type == COMM_MEM_TYPE_DEVICE) ? UrmaMemoryType::DEVICE_HBM : UrmaMemoryType::HOST_DRAM;
+    return urmaMem;
+}
+
 bool IsSupportedMemoryFlags(uint32_t flags)
 {
     const bool hasDram = (flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) != 0;
     const bool hasHbm = (flags & REG_MR_FLAG_HBM) != 0;
     return !(hasDram && hasHbm);
-}
-
-UrmaProtocol ToUrmaProtocol(CommProtocol protocol)
-{
-    if (protocol == COMM_PROTOCOL_ROCE) {
-        return UrmaProtocol::ROCE;
-    }
-    if (protocol == COMM_PROTOCOL_UBC_TP) {
-        return UrmaProtocol::UBC_TP;
-    }
-    if (protocol == COMM_PROTOCOL_UBC_CTP) {
-        return UrmaProtocol::UBC_CTP;
-    }
-    if (protocol == COMM_PROTOCOL_UBOE) {
-        return UrmaProtocol::UBOE;
-    }
-    return UrmaProtocol::RESERVED;
-}
-
-bool ToUrmaEndpointDesc(const EndpointDesc &hcommDesc, UrmaEndpointDesc &urmaDesc)
-{
-    if (hcommDesc.commAddr.type != COMM_ADDR_TYPE_EID && hcommDesc.commAddr.type != COMM_ADDR_TYPE_IP_V6 &&
-        hcommDesc.commAddr.type != COMM_ADDR_TYPE_IP_V4) {
-        BM_LOG_ERROR("device_urma topo endpoint must use EID/IP address, addr type: " << hcommDesc.commAddr.type);
-        return false;
-    }
-
-    auto protocol = ToUrmaProtocol(hcommDesc.protocol);
-    if (protocol == UrmaProtocol::RESERVED) {
-        BM_LOG_ERROR("device_urma unsupported topo endpoint protocol: " << hcommDesc.protocol);
-        return false;
-    }
-
-    UrmaEndpointDesc desc{};
-    desc.protocol = protocol;
-    desc.devPhyId = hcommDesc.loc.device.devPhyId;
-    desc.superDevId = hcommDesc.loc.device.superDevId;
-    desc.serverIdx = hcommDesc.loc.device.serverIdx;
-    desc.superPodIdx = hcommDesc.loc.device.superPodIdx;
-    desc.type = hcommDesc.commAddr.type;
-    std::memcpy(desc.raws, hcommDesc.commAddr.raws, sizeof(desc.raws));
-    urmaDesc = desc;
-    return true;
 }
 
 bool ContainsAddressRange(uint64_t outerAddr, uint64_t outerSize, uint64_t innerAddr, uint64_t innerSize)
@@ -309,7 +354,8 @@ Result DeviceUrmaTransportManager::InitDeviceTransferFlagLocked()
     }
     const UrmaCommMem flagMem{reinterpret_cast<uint64_t>(flagPtr), sizeof(int64_t), UrmaMemoryType::DEVICE_HBM};
     HcommMemHandle flagHandle = nullptr;
-    ret = manager_.HcommMemReg(localEndpoint_, 1, flagMem, &flagHandle);
+    auto hcommFlagMem = ToHcommMem(flagMem);
+    ret = hcommApi_.RegisterMemory(localEndpoint_, 1, hcommFlagMem, flagHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma HcommMemReg for local flag buffer failed, ret: " << ret);
         (void)DlAclApi::AclrtFree(flagPtr);
@@ -366,8 +412,10 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
 
 Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const UrmaEndpointDesc &localDesc)
 {
-    auto endpoint = manager_.CreateEndpoint(localDesc);
-    if (endpoint == nullptr) {
+    auto hcommDesc = ToHcommEndpointDesc(localDesc);
+    HcommEndpointHandle endpoint = nullptr;
+    auto ret = hcommApi_.CreateEndpoint(hcommDesc, endpoint);
+    if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma CreateEndpoint failed, protocol=" << static_cast<int>(localDesc.protocol)
                                                                     << " phyDeviceId=" << phyDeviceId_
                                                                     << " rankId=" << rankId_);
@@ -376,7 +424,7 @@ Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const Ur
     localEndpoint_ = endpoint;
     localEndpointDesc_ = localDesc;
 
-    auto ret = InitDeviceTransferFlagLocked();
+    ret = InitDeviceTransferFlagLocked();
     if (ret != BM_OK) {
         RollbackOpenDeviceLocked();
         return ret;
@@ -392,7 +440,7 @@ Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const Ur
 void DeviceUrmaTransportManager::RollbackOpenDeviceLocked()
 {
     if (devTransFlagHcommHandle_ != nullptr) {
-        auto ret = manager_.HcommMemUnreg(localEndpoint_, devTransFlagHcommHandle_);
+        auto ret = hcommApi_.UnregisterMemory(localEndpoint_, devTransFlagHcommHandle_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma RollbackOpenDevice HcommMemUnreg devTransFlag failed, ret: " << ret);
         }
@@ -402,8 +450,8 @@ void DeviceUrmaTransportManager::RollbackOpenDeviceLocked()
         devTransFlagPtr_ = nullptr;
     }
     if (localEndpoint_ != nullptr) {
-        (void)HcomUrmaDestroyEndpoint(localEndpoint_->hcommEndpoint);
-        localEndpoint_.reset();
+        (void)hcommApi_.DestroyEndpoint(localEndpoint_);
+        localEndpoint_ = nullptr;
     }
     localEndpointDesc_ = UrmaEndpointDesc{};
 }
@@ -472,16 +520,10 @@ Result DeviceUrmaTransportManager::EnsureDeviceKernelLoadedLocked()
         return BM_OK;
     }
 
-    auto ret = LoadDeviceKernelAndGetHandles(HYBM_DEVICE_FUNC_READ, HYBM_DEVICE_FUNC_WRITE, deviceKernelHandle_,
-                                             deviceFuncHandles_);
+    auto ret = LoadDeviceKernelAndValidate(HYBM_DEVICE_FUNC_READ, HYBM_DEVICE_FUNC_WRITE, deviceKernelHandle_,
+                                           deviceFuncHandles_);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma LoadDeviceKernelAndGetHandles failed, ret: " << ret);
         return ret;
-    }
-    if (deviceFuncHandles_.batchRead == nullptr || deviceFuncHandles_.batchWrite == nullptr) {
-        BM_LOG_ERROR("device_urma invalid device kernel function handles, read: "
-                     << deviceFuncHandles_.batchRead << " write: " << deviceFuncHandles_.batchWrite);
-        return BM_DL_FUNCTION_FAILED;
     }
     deviceKernelLoaded_ = true;
     return BM_OK;
@@ -579,7 +621,8 @@ Result DeviceUrmaTransportManager::EnsureContextInitLocked(CompletionContext &ct
     // Step 4: Register notify record address with Hcomm
     const UrmaCommMem notifyMem{devAddr, devLen, UrmaMemoryType::DEVICE_HBM};
     HcommMemHandle notifyHandle = nullptr;
-    ret = manager_.HcommMemReg(localEndpoint_, ctx.notifyAddr, notifyMem, &notifyHandle);
+    auto hcommNotifyMem = ToHcommMem(notifyMem);
+    ret = hcommApi_.RegisterMemory(localEndpoint_, ctx.notifyAddr, hcommNotifyMem, notifyHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma EnsureContextInitLocked HcommMemReg for notify failed, ret: " << ret);
         (void)RollbackContextInitLocked(ctx);
@@ -596,7 +639,7 @@ Result DeviceUrmaTransportManager::EnsureContextInitLocked(CompletionContext &ct
 void DeviceUrmaTransportManager::RollbackContextInitLocked(CompletionContext &ctx)
 {
     if (ctx.notifyHcommHandle != nullptr) {
-        auto ret = manager_.HcommMemUnreg(localEndpoint_, ctx.notifyHcommHandle);
+        auto ret = hcommApi_.UnregisterMemory(localEndpoint_, ctx.notifyHcommHandle);
         if (ret != BM_OK) {
             BM_LOG_WARN("device_urma RollbackContextInitLocked HcommMemUnreg failed, ret: " << ret);
         }
@@ -619,7 +662,7 @@ void DeviceUrmaTransportManager::RollbackContextInitLocked(CompletionContext &ct
 void DeviceUrmaTransportManager::CleanupContextLocked(CompletionContext &ctx)
 {
     if (ctx.notifyHcommHandle != nullptr) {
-        auto ret = manager_.HcommMemUnreg(localEndpoint_, ctx.notifyHcommHandle);
+        auto ret = hcommApi_.UnregisterMemory(localEndpoint_, ctx.notifyHcommHandle);
         if (ret != BM_OK) {
             BM_LOG_WARN("device_urma CleanupContextLocked HcommMemUnreg notify failed, ret: " << ret);
         }
@@ -650,15 +693,15 @@ void DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
     (void)CleanupLocalRegistrationsLocked();
 
     if (devTransFlagHcommHandle_ != nullptr) {
-        (void)manager_.HcommMemUnreg(localEndpoint_, devTransFlagHcommHandle_);
+        (void)hcommApi_.UnregisterMemory(localEndpoint_, devTransFlagHcommHandle_);
         devTransFlagHcommHandle_ = nullptr;
     }
 
     remoteRanks_.clear();
 
     if (localEndpoint_ != nullptr) {
-        (void)HcomUrmaDestroyEndpoint(localEndpoint_->hcommEndpoint);
-        localEndpoint_.reset();
+        (void)hcommApi_.DestroyEndpoint(localEndpoint_);
+        localEndpoint_ = nullptr;
     }
     localEndpointDesc_ = UrmaEndpointDesc{};
 
@@ -750,6 +793,8 @@ void DeviceUrmaTransportManager::RestoreRankPending(std::vector<PendingTransfer>
 Result DeviceUrmaTransportManager::SynchronizeContextLocked(void *notify, void *stream,
                                                             std::vector<PendingTransfer> &pendingTransfers)
 {
+    // A5 URMA 数据一致性：有 in-flight 传输时必须等 kernel 完成通知（AclrtWaitAndResetNotify），
+    // 仅 AclrtSynchronizeStream 不等 kernel 真正完成，直传会读到未就绪数据。
     bool hasInFlight = false;
     for (const auto &pt : pendingTransfers) {
         if (pt.inFlight) {
@@ -757,7 +802,6 @@ Result DeviceUrmaTransportManager::SynchronizeContextLocked(void *notify, void *
             break;
         }
     }
-
     if (hasInFlight) {
         auto notifyRet = DlAclApi::AclrtWaitAndResetNotify(notify, stream, HYBM_DEVICE_KERNEL_TIMEOUT_S);
         if (notifyRet != BM_OK) {
@@ -846,10 +890,8 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
             ++importIt;
             continue;
         }
-        BM_LOG_INFO("device_urma HcommMemUnimport, peer: " << peerRank
-                                                           << "descBytes.size: " << importIt->descBytes.size());
-        const auto ret = manager_.HcommMemUnimport(localEndpoint_, importIt->descBytes.data(),
-                                                   static_cast<uint32_t>(importIt->descBytes.size()));
+        const auto ret = hcommApi_.UnimportMemory(localEndpoint_, importIt->descBytes.data(),
+                                                  static_cast<uint32_t>(importIt->descBytes.size()));
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma UnimportPeerImportsAndFlag HcommMemUnimport failed, "
                          << "peerRank: " << peerRank << " descBytes.size: " << importIt->descBytes.size()
@@ -865,9 +907,7 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
         }
     }
     if (!state.remoteFlagDescBytes.empty()) {
-        BM_LOG_INFO("device_urma HcommMemUnimport remoteFlagDescBytes, "
-                    << "peerRank: " << peerRank << " remoteFlagDescBytes.size: " << state.remoteFlagDescBytes.size());
-        const auto ret = DlHcommApi::HcommMemUnimport(localEndpoint_->hcommEndpoint, state.remoteFlagDescBytes.data(),
+        const auto ret = DlHcommApi::HcommMemUnimport(localEndpoint_, state.remoteFlagDescBytes.data(),
                                                       static_cast<uint32_t>(state.remoteFlagDescBytes.size()));
         if (ret != 0) {
             BM_LOG_ERROR("device_urma UnimportPeerImportsAndFlag HcommMemUnimport for flag desc failed, "
@@ -906,7 +946,7 @@ Result DeviceUrmaTransportManager::CleanupLocalRegistrationsLocked()
 {
     Result localResult = BM_OK;
     for (auto &item : localRegistrations_) {
-        const auto ret = manager_.HcommMemUnreg(localEndpoint_, item.second.handle);
+        const auto ret = hcommApi_.UnregisterMemory(localEndpoint_, item.second.handle);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma CleanupLocalRegistrationsLocked HcommMemUnreg global handle failed, "
                          << "addr: " << VaToStr(item.first) << " ret: " << ret);
@@ -1058,7 +1098,8 @@ Result DeviceUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryReg
     }
 
     HcommMemHandle hcommHandle = nullptr;
-    auto ret = manager_.HcommMemReg(localEndpoint_, registration.memTag, mem, &hcommHandle);
+    auto hcommRegMem = ToHcommMem(mem);
+    auto ret = hcommApi_.RegisterMemory(localEndpoint_, registration.memTag, hcommRegMem, hcommHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma HcommMemReg failed, addr: " << VaToStr(mr.addr) << " size: " << mr.size
                                                               << " ret: " << ret);
@@ -1069,7 +1110,7 @@ Result DeviceUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryReg
     try {
         localRegistrations_.emplace(mr.addr, registration);
     } catch (...) {
-        (void)manager_.HcommMemUnreg(localEndpoint_, hcommHandle);
+        (void)hcommApi_.UnregisterMemory(localEndpoint_, hcommHandle);
         return BM_MALLOC_FAILED;
     }
     return BM_OK;
@@ -1090,7 +1131,7 @@ Result DeviceUrmaTransportManager::UnregisterMemoryRegion(uint64_t addr)
     }
 
     Result finalRet = BM_OK;
-    auto retUnreg = manager_.HcommMemUnreg(localEndpoint_, item->second.handle);
+    auto retUnreg = hcommApi_.UnregisterMemory(localEndpoint_, item->second.handle);
     if (retUnreg != BM_OK) {
         BM_LOG_ERROR("device_urma HcommMemUnreg failed for global handle, addr: " << std::hex << addr
                                                                                   << " ret: " << retUnreg);
@@ -1130,30 +1171,33 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
         return BM_ERROR;
     }
 
-    // Export primary memory descriptor via HcommTransportManager (caches UrmaExportDesc + hcommDesc)
+    // Export primary memory descriptor via hcommApi_ (caches UrmaExportDesc + hcommDesc)
     const uint8_t *memDesc = nullptr;
     uint32_t memDescLen = 0;
-    ret = manager_.HcommMemExport(localEndpoint_, registration.handle, &memDesc, &memDescLen);
+    ret = hcommApi_.ExportMemory(localEndpoint_, registration.handle, memDesc, memDescLen);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma QueryMemoryKey HcommMemExport failed for addr: " << std::hex << addr
                                                                                    << " ret: " << ret);
         return ret;
     }
 
-    // Parse exported desc to recover hcommDesc pointer and len
+    // HcommApiWrapper::ExportMemory returns raw hcomm desc (unwrapped).
+    // Construct UrmaExportDesc directly from registration metadata.
     UrmaExportDesc exportDesc{};
-    const uint8_t *hcommDesc = nullptr;
-    uint32_t hcommDescLen = 0;
-    if (!DeserializeExportDesc(memDesc, memDescLen, exportDesc, &hcommDesc, &hcommDescLen)) {
-        BM_LOG_ERROR("device_urma QueryMemoryKey DeserializeExportDesc failed");
-        return BM_ERROR;
-    }
+    exportDesc.headerSize = sizeof(UrmaExportDesc);
+    exportDesc.memoryType =
+        (registration.mr.flags & REG_MR_FLAG_DRAM) ? UrmaMemoryType::HOST_DRAM : UrmaMemoryType::DEVICE_HBM;
+    exportDesc.memTag = registration.memTag;
+    exportDesc.addr = registration.mr.addr;
+    exportDesc.size = registration.mr.size;
+    exportDesc.hcommDescLen = memDescLen;
+    const uint8_t *hcommDesc = memDesc;
+    const uint32_t hcommDescLen = memDescLen;
 
     // Export flag descriptor via raw HCOMM API
     void *flagDescRaw = nullptr;
     uint32_t flagDescLenRaw = 0;
-    ret = DlHcommApi::HcommMemExport(localEndpoint_->hcommEndpoint, devTransFlagHcommHandle_, &flagDescRaw,
-                                     &flagDescLenRaw);
+    ret = DlHcommApi::HcommMemExport(localEndpoint_, devTransFlagHcommHandle_, &flagDescRaw, &flagDescLenRaw);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma QueryMemoryKey flag HcommMemExport failed, ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -1206,7 +1250,7 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
     bool flagImportedInThisCall = false;
     auto rollbackNewImports = [&]() {
         if (flagImportedInThisCall && !state.remoteFlagDescBytes.empty()) {
-            (void)DlHcommApi::HcommMemUnimport(localEndpoint_->hcommEndpoint, state.remoteFlagDescBytes.data(),
+            (void)DlHcommApi::HcommMemUnimport(localEndpoint_, state.remoteFlagDescBytes.data(),
                                                static_cast<uint32_t>(state.remoteFlagDescBytes.size()));
             state.remoteFlagDescBytes.clear();
             state.remoteFlagAddr = 0;
@@ -1215,8 +1259,8 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         }
         for (const auto &ni : newImports) {
             if (!ni.descBytes.empty()) {
-                (void)manager_.HcommMemUnimport(localEndpoint_, ni.descBytes.data(),
-                                                static_cast<uint32_t>(ni.descBytes.size()));
+                (void)hcommApi_.UnimportMemory(localEndpoint_, ni.descBytes.data(),
+                                               static_cast<uint32_t>(ni.descBytes.size()));
             }
         }
         newImports.clear();
@@ -1291,17 +1335,20 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         }
 
         // --- 4. Protocol compatibility check before import ---
-        if (state.remoteEndpointDesc.protocol != localEndpoint_->desc.protocol) {
+        if (state.remoteEndpointDesc.protocol != localEndpointDesc_.protocol) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked protocol mismatch, peer: "
                          << peerRank << " remote protocol: " << state.remoteEndpointDesc.protocol
-                         << " local protocol: " << localEndpoint_->desc.protocol);
+                         << " local protocol: " << localEndpointDesc_.protocol);
             rollbackNewImports();
             return BM_INVALID_PARAM;
         }
 
         // --- 5. HcommMemImport using global localEndpoint_ ---
-        UrmaCommMem view{};
-        auto ret = manager_.HcommMemImport(localEndpoint_, raw, memDescLen, &view);
+        // raw points to UrmaExportDesc + hcommDesc; pass only the hcomm descriptor
+        const uint8_t *hcommImportDesc = raw + sizeof(UrmaExportDesc);
+        const uint32_t hcommImportDescLen = exportDesc.hcommDescLen;
+        HcommCommMem hcommView{};
+        auto ret = hcommApi_.ImportMemory(localEndpoint_, hcommImportDesc, hcommImportDescLen, hcommView);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked HcommMemImport failed, memTag: "
                          << memTag << " peer: " << peerRank << " ret: " << ret);
@@ -1309,21 +1356,21 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
             return ret;
         }
 
-        // --- 6. Build RemoteRegistration ---
+        // --- 6. Build RemoteRegistration (store only hcomm desc, not UrmaExportDesc header) ---
         RemoteRegistration remote{};
         remote.addr = remoteAddr;
         remote.size = remoteSize;
         remote.memTag = memTag;
-        remote.descBytes.assign(raw, raw + memDescLen);
-        remote.view = view;
+        remote.descBytes.assign(hcommImportDesc, hcommImportDesc + hcommImportDescLen);
+        remote.view = ToUrmaCommMem(hcommView);
         newImports.emplace_back(std::move(remote));
 
         // --- 7. Import flag desc from UrmaExportDesc (if present and not yet imported for this peer) ---
         if (exportDesc.devTransFlagDescLen > 0 && !flagImportedInThisCall && state.remoteFlagAddr == 0) {
             const uint8_t *flagRaw = raw + sizeof(UrmaExportDesc) + exportDesc.hcommDescLen;
             HcommCommMem flagOutMem{};
-            const auto flagRet = DlHcommApi::HcommMemImport(localEndpoint_->hcommEndpoint, flagRaw,
-                                                            exportDesc.devTransFlagDescLen, &flagOutMem);
+            const auto flagRet =
+                DlHcommApi::HcommMemImport(localEndpoint_, flagRaw, exportDesc.devTransFlagDescLen, &flagOutMem);
             if (flagRet != 0) {
                 BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked HcommMemImport for flag failed, peer: "
                              << peerRank << " ret: " << flagRet);
@@ -1347,7 +1394,7 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
 
         BM_LOG_INFO("device_urma ImportRemoteMemKeysLocked imported mem, peer: "
                     << peerRank << " memTag: " << memTag << " addr: " << VaToStr(remoteAddr) << " size: " << remoteSize
-                    << " view: " << VaToStr(view.addr));
+                    << " view: " << VaToStr(hcommView.addr));
     }
 
     state.imports.insert(state.imports.end(), newImports.begin(), newImports.end());
@@ -1423,10 +1470,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
             // 6. Create one channel per peer (temporary variable for safe rollback)
             HcommChannelHandle channelHandle = 0;
-            BM_LOG_INFO("device_urma Prepare HcommChannelCreate peerRank: " << peerRank << ", channelDesc.role: "
-                                                                            << channelDesc.role);
-            ret = DlHcommApi::HcommChannelCreate(localEndpoint_->hcommEndpoint, COMM_ENGINE_AICPU, &channelDesc, 1,
-                                                 &channelHandle);
+            ret = DlHcommApi::HcommChannelCreate(localEndpoint_, COMM_ENGINE_AICPU, &channelDesc, 1, &channelHandle);
             if (ret != 0) {
                 BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, peer: " << peerRank << " ret: " << ret);
                 auto rollbackThread = threadHandle;
@@ -1454,7 +1498,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
                                                                              << " channel: " << channelHandle);
 
             // 7.5 Wait for channel ready before importing mem keys
-            ret = manager_.WaitForChannelReady(channelHandle, peerRank);
+            ret = HcommApiWrapper::WaitForChannelReady(channelHandle, peerRank);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("device_urma Prepare WaitForChannelReady failed, peer: " << peerRank << " ret: " << ret);
                 auto rbRet = DlHcommApi::HcommChannelDestroy(&channelHandle, 1);
@@ -1910,37 +1954,22 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(bool isRead, const
                                                               const std::vector<uint64_t> &sizes,
                                                               DeviceTransferBuffers &outBuffers)
 {
-    const auto batchSize = localAddrs.size();
-    const auto ptrBytes = batchSize * sizeof(void *);
-    const auto lenBytes = batchSize * sizeof(uint64_t);
-    const auto totalBytes = ptrBytes * 2UL + lenBytes;
+    const auto batchSize = static_cast<uint32_t>(localAddrs.size());
+    KernelLaunchConfig config{};
+    config.isRead = isRead;
+    config.batchSize = batchSize;
+    config.localAddrs = localAddrs.data();
+    config.remoteAddrs = remoteAddrs.data();
+    config.sizes = sizes.data();
 
-    // Allocate host buffer FIRST to avoid leak if vector throws after AclrtMalloc
-    std::vector<uint8_t> hostBuf;
-    hostBuf.resize(totalBytes);
-
-    auto ret = DlAclApi::AclrtMalloc(&outBuffers.dstList, totalBytes, 0);
+    void *dstListDev = nullptr;
+    auto ret = PrepareLaunchBuffer(config, dstListDev);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma PrepareKernelLaunchBuffers alloc batch buffers failed, ret: " << ret);
         return ret;
     }
-    outBuffers.srcList = static_cast<uint8_t *>(outBuffers.dstList) + ptrBytes;
-    outBuffers.lenList = static_cast<uint8_t *>(outBuffers.dstList) + ptrBytes * 2UL;
-
-    auto *dstBase = reinterpret_cast<void **>(hostBuf.data());
-    auto *srcBase = reinterpret_cast<void **>(hostBuf.data() + ptrBytes);
-    auto *lenBase = reinterpret_cast<uint64_t *>(hostBuf.data() + ptrBytes * 2UL);
-    for (size_t i = 0; i < batchSize; ++i) {
-        dstBase[i] = reinterpret_cast<void *>(isRead ? localAddrs[i] : remoteAddrs[i]);
-        srcBase[i] = reinterpret_cast<void *>(isRead ? remoteAddrs[i] : localAddrs[i]);
-        lenBase[i] = sizes[i];
-    }
-
-    ret = DlAclApi::AclrtMemcpy(outBuffers.dstList, totalBytes, hostBuf.data(), totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma PrepareKernelLaunchBuffers copy batch buffers failed, ret: " << ret);
-        return ret;
-    }
+    outBuffers.dstList = dstListDev;
+    outBuffers.srcList = static_cast<uint8_t *>(dstListDev) + batchSize * sizeof(void *);
+    outBuffers.lenList = static_cast<uint8_t *>(dstListDev) + batchSize * sizeof(void *) * 2UL;
     return BM_OK;
 }
 
@@ -2071,6 +2100,8 @@ Result DeviceUrmaTransportManager::SynchronizeRankPendingLocked(CompletionContex
                                                                 uint32_t rankId, bool hasInFlight)
 {
     std::lock_guard<std::mutex> rankLock(state.rankMutex);
+    // A5 URMA 数据一致性依赖 kernel 完成通知：有 in-flight 传输时先发 notify
+    //（LaunchDeviceKernelNotify），SynchronizeContextLocked 里再等 notify 复位。
     if (hasInFlight) {
         auto ret =
             LaunchDeviceKernelNotify(state.thread, state.channel, state.remoteFlagAddr, ctx.notifyAddr, ctx.notifyLen);

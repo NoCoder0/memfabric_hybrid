@@ -26,8 +26,20 @@ struct DeviceFuncHandles {
     aclrtFuncHandle batchWrite{nullptr};
 };
 
+// Load AICPU kernel JSON and resolve function handles.
+// @param funcRead      kernel function name for read  (e.g. "HybmBatchRead")
+// @param funcWrite     kernel function name for write (e.g. "HybmBatchWrite")
+// @param binHandle     [in/out] cached bin handle; if nullptr, loads from JSON
+// @param funcHandles   [out] resolved function handles
+// JSON path: ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json
 Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
                                      DeviceFuncHandles &funcHandles);
+
+// Load AICPU kernel and validate the resolved handles are non-null.
+// Shared by device_rdma_hcomm and device_urma transport managers.
+// @return BM_OK on success; otherwise a result code with error log.
+Result LoadDeviceKernelAndValidate(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
+                                   DeviceFuncHandles &funcHandles);
 
 } // namespace device
 } // namespace transport

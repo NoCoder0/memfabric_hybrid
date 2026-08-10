@@ -912,3 +912,24 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerRejectReconnectHijackingActiveRank)
     ASSERT_NE(server.rankLinks_.end(), it);
     EXPECT_EQ(activeLink.Get(), it->second.Get());
 }
+
+TEST_F(SmemHaConfigStoreTest, ForwardingApis_PrefixGet_Watch_QueryAlive_GetReal)
+{
+    auto backend = MakeBackend();
+    auto client = MakeClientDelegate();
+    HaConfigStore store(backend, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE);
+
+    // 直接调用真实委托（loopback 无服务端 → 快速失败），仅覆盖转发路径
+    std::unordered_map<std::string, std::string> prefixValue;
+    (void)store.PrefixGet("k", prefixValue);
+
+    uint32_t wid = 0;
+    (void)store.Watch("k", [](int, const std::string &, const std::vector<uint8_t> &) {}, wid);
+    (void)store.Watch(WATCH_RANK_LINK_DOWN, [](WatchRankType, uint32_t) {}, wid);
+
+    uint32_t alive = 0;
+    (void)store.QueryAlive(1, alive);
+
+    std::vector<uint8_t> value;
+    (void)store.GetReal("k", value, 1);
+}

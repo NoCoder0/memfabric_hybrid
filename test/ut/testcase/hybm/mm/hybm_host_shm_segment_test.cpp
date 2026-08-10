@@ -13,6 +13,12 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 
+#include <fcntl.h>
+#include <sys/file.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include <limits>
 #include <vector>
 
@@ -23,6 +29,9 @@
 #undef protected
 
 #include "hybm_ex_info_transfer.h"
+#include "hybm_va_manager.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::mf;
 
@@ -267,4 +276,315 @@ TEST_F(HybmHostShmSegmentTest, ReleaseSliceMemory_NullSlice_NoCrash)
     HybmHostShmSegment segment(MakeOptions(), 0);
     auto ret = segment.ReleaseSliceMemory(nullptr);
     EXPECT_NE(ret, BM_OK);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// 以下用例覆盖真实 POSIX 路径（/dev/shm + mmap），无需设备 mock
+// ─────────────────────────────────────────────────────────────────
+
+namespace {
+class HybmHostShmVaGuard {
+public:
+    HybmHostShmVaGuard()
+    {
+        HybmVaManager::GetInstance().ClearAll();
+        (void)HybmVaManager::GetInstance().Initialize(AscendSocType::ASCEND_910B);
+    }
+
+    ~HybmHostShmVaGuard()
+    {
+        HybmVaManager::GetInstance().ClearAll();
+    }
+};
+
+void RemoveShmFileIfExists(const std::string &path)
+{
+    (void)unlink(path.c_str());
+}
+
+void CreateShmFile(const std::string &path, uint64_t size)
+{
+    RemoveShmFileIfExists(path);
+    int fd = open(path.c_str(), O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
+    ASSERT_GE(fd, 0) << "open shm file failed: " << path;
+    ASSERT_EQ(ftruncate(fd, static_cast<off_t>(size)), 0);
+    ASSERT_EQ(close(fd), 0);
+}
+} // namespace
+
+TEST_F(HybmHostShmSegmentTest, ReserveMemorySpace_FullRealShmFlow)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    const std::string shmPath = "/dev/shm/memfabric_hybrid_" + std::to_string(options.rankId);
+    RemoveShmFileIfExists(shmPath);
+
+    HybmHostShmSegment segment(options, 0);
+    void *addr = nullptr;
+    ASSERT_EQ(segment.ReserveMemorySpace(&addr), BM_OK);
+    ASSERT_NE(addr, nullptr);
+    EXPECT_EQ(segment.globalVirtualAddress_, addr);
+    EXPECT_NE(segment.localShmFd_, -1);
+
+    struct stat st {};
+    EXPECT_EQ(stat(shmPath.c_str(), &st), 0);
+
+    // 空 imports_ 时 Mmap 直接成功
+    EXPECT_EQ(segment.Mmap(), BM_OK);
+
+    // 真实 AllocLocalMemory + AddVaInfo
+    MemSlicePtr slice;
+    ASSERT_EQ(segment.AllocLocalMemory(HYBM_LARGE_PAGE_SIZE, slice), BM_OK);
+    ASSERT_NE(slice, nullptr);
+
+    // GetMemSlice 命中与未命中（quiet 两种取值）
+    EXPECT_EQ(segment.GetMemSlice(slice->ConvertToId(), false), slice);
+    EXPECT_EQ(segment.GetMemSlice(reinterpret_cast<hybm_mem_slice_t>(0xDEADBEEF), true), nullptr);
+    EXPECT_EQ(segment.GetMemSlice(reinterpret_cast<hybm_mem_slice_t>(0xDEADBEEF), false), nullptr);
+
+    // 内存范围判定
+    EXPECT_TRUE(segment.MemoryInRange(slice->vAddress_, 1));
+    EXPECT_FALSE(segment.MemoryInRange(reinterpret_cast<void *>(0x1UL), 1));
+    EXPECT_TRUE(segment.IsLocalRange(segment.localVirtualBase_, 1));
+    EXPECT_FALSE(segment.IsLocalRange(segment.localVirtualBase_ + options.size + 1, 1));
+
+    // 清理：FreeMemory → close fd + unlink + munmap + FreeReserveGva
+    EXPECT_EQ(segment.UnReserveMemorySpace(), BM_OK);
+    EXPECT_EQ(stat(shmPath.c_str(), &st), -1);
+}
+
+TEST_F(HybmHostShmSegmentTest, MapImportedShm_WithRealPeerFiles)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    const std::string shmPath1 = "/dev/shm/memfabric_hybrid_0";
+    const std::string shmPath2 = "/dev/shm/memfabric_hybrid_2";
+    CreateShmFile(shmPath1, options.size);
+    CreateShmFile(shmPath2, options.size);
+
+    HybmHostShmSegment segment(options, 0);
+    void *addr = nullptr;
+    ASSERT_EQ(segment.ReserveMemorySpace(&addr), BM_OK);
+
+    // 通过真实 Import 填充 imports_（rank 0/2）
+    ShmExportInfo info0{};
+    info0.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    info0.rankId = 0U;
+    info0.size = options.size;
+    info0.useHugetlbfs = false;
+    ShmExportInfo info2{};
+    info2.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    info2.rankId = 2U;
+    info2.size = options.size;
+    info2.useHugetlbfs = false;
+    std::string ex0;
+    std::string ex2;
+    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(info0, ex0), BM_OK);
+    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(info2, ex2), BM_OK);
+    ASSERT_EQ(segment.Import({ex0, ex2}, nullptr), BM_OK);
+    ASSERT_EQ(segment.imports_.size(), 2U);
+
+    // Mmap 真实映射两个 peer shm
+    ASSERT_EQ(segment.Mmap(), BM_OK);
+    EXPECT_EQ(segment.mappedRemoteRanks_.count(0U), 1U);
+    EXPECT_EQ(segment.mappedRemoteRanks_.count(2U), 1U);
+    EXPECT_EQ(segment.importedShmFds_.count(0U), 1U);
+    EXPECT_EQ(segment.importedShmFds_.count(2U), 1U);
+
+    // 重复 Mmap 幂等
+    ASSERT_EQ(segment.Mmap(), BM_OK);
+
+    // 已映射 rank 直接调用 MapImportedShm → 提前返回
+    EXPECT_EQ(segment.MapImportedShm(info0), BM_OK);
+    EXPECT_EQ(segment.MapImportedShm(info2), BM_OK);
+
+    // 仅移除 rank0
+    EXPECT_EQ(segment.RemoveImported({0U}), BM_OK);
+    EXPECT_EQ(segment.mappedRemoteRanks_.count(0U), 0U);
+    EXPECT_EQ(segment.mappedRemoteRanks_.count(2U), 1U);
+
+    // 移除未映射的 rank 无副作用
+    EXPECT_EQ(segment.RemoveImported({5U}), BM_OK);
+
+    // Unmap 剩余
+    EXPECT_EQ(segment.Unmap(), BM_OK);
+    EXPECT_TRUE(segment.mappedRemoteRanks_.empty());
+    EXPECT_TRUE(segment.importedShmFds_.empty());
+
+    EXPECT_EQ(segment.UnReserveMemorySpace(), BM_OK);
+    RemoveShmFileIfExists(shmPath1);
+    RemoveShmFileIfExists(shmPath2);
+}
+
+TEST_F(HybmHostShmSegmentTest, MapLocalShm_StaleFileCleanup)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    const std::string shmPath = "/dev/shm/memfabric_hybrid_" + std::to_string(options.rankId);
+    // 预置未加锁的陈旧 shm 文件，触发 EEXIST 清理路径
+    CreateShmFile(shmPath, options.size);
+
+    HybmHostShmSegment segment(options, 0);
+    void *addr = nullptr;
+    ASSERT_EQ(segment.ReserveMemorySpace(&addr), BM_OK);
+    EXPECT_NE(segment.localShmFd_, -1);
+
+    struct stat st {};
+    EXPECT_EQ(stat(shmPath.c_str(), &st), 0);
+    EXPECT_EQ(segment.UnReserveMemorySpace(), BM_OK);
+    EXPECT_EQ(stat(shmPath.c_str(), &st), -1);
+}
+
+TEST_F(HybmHostShmSegmentTest, ExportAndGetExportSliceSize)
+{
+    HybmHostShmSegment segment(MakeOptions(), 0);
+    std::string exInfo;
+    EXPECT_EQ(segment.Export(exInfo), BM_OK);
+
+    size_t size = 0U;
+    EXPECT_EQ(segment.GetExportSliceSize(size), BM_OK);
+    EXPECT_EQ(size, sizeof(ShmExportInfo));
+}
+
+TEST_F(HybmHostShmSegmentTest, RegisterMemory_And_ReleaseValidSlice)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    HybmHostShmSegment segment(options, 0);
+
+    MemSlicePtr slice;
+    void *regAddr = reinterpret_cast<void *>(0x700000000000UL);
+    ASSERT_EQ(segment.RegisterMemory(regAddr, 4096U, slice), BM_OK);
+    ASSERT_NE(slice, nullptr);
+    EXPECT_EQ(slice->vAddress_, reinterpret_cast<uint64_t>(regAddr));
+
+    EXPECT_EQ(segment.ReleaseSliceMemory(slice), BM_OK);
+
+    // index 相同但对象不同 → 不匹配
+    auto otherSlice = std::make_shared<MemSlice>(slice->index_, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, 0U, 0U, 0U);
+    EXPECT_NE(segment.ReleaseSliceMemory(otherSlice), BM_OK);
+}
+
+TEST_F(HybmHostShmSegmentTest, GetShmFilePath_Overloads)
+{
+    HybmHostShmSegment segment(MakeOptions(), 0);
+    segment.useHugetlbfs_ = false;
+    EXPECT_EQ(segment.GetShmFilePath(7U), "/dev/shm/memfabric_hybrid_7");
+    EXPECT_EQ(segment.GetShmFilePath(7U, false), "/dev/shm/memfabric_hybrid_7");
+    EXPECT_EQ(segment.GetShmFilePath(7U, true), "/dev/hugepages/memfabric_hybrid_7");
+}
+
+TEST_F(HybmHostShmSegmentTest, TryHugetlbfsAvailable_NoCrash)
+{
+    HybmHostShmSegment segment(MakeOptions(), 0);
+    // 环境相关（本机 HugePages=0 → false），仅验证不崩溃且路径自洽
+    auto available = segment.TryHugetlbfsAvailable();
+    EXPECT_EQ(segment.GetShmFilePath(1U, available), segment.GetShmFilePath(1U, segment.useHugetlbfs_));
+}
+
+TEST_F(HybmHostShmSegmentTest, Mmap_ImportedShmErrorPaths)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    HybmHostShmSegment segment(options, 0);
+    void *addr = nullptr;
+    ASSERT_EQ(segment.ReserveMemorySpace(&addr), BM_OK);
+
+    // 自 rank 的 import 被跳过
+    ShmExportInfo self{};
+    self.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    self.rankId = options.rankId;
+    self.size = options.size;
+    self.useHugetlbfs = false;
+    segment.imports_.push_back(self);
+    ASSERT_EQ(segment.Mmap(), BM_OK);
+    EXPECT_TRUE(segment.imports_.empty());
+
+    // peer shm 文件大小不足 → 失败
+    const std::string path2 = "/dev/shm/memfabric_hybrid_2";
+    CreateShmFile(path2, options.size - 4096U);
+    ShmExportInfo badSize{};
+    badSize.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    badSize.rankId = 2U;
+    badSize.size = options.size;
+    badSize.useHugetlbfs = false;
+    segment.imports_.push_back(badSize);
+    EXPECT_NE(segment.Mmap(), BM_OK);
+
+    // shm 路径是目录 → open 返回非 ENOENT 错误 → 立即失败
+    const std::string path3 = "/dev/shm/memfabric_hybrid_3";
+    ASSERT_EQ(mkdir(path3.c_str(), 0755), 0); // 0755
+    segment.imports_.clear();
+    ShmExportInfo dirAsFile{};
+    dirAsFile.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    dirAsFile.rankId = 3U;
+    dirAsFile.size = options.size;
+    dirAsFile.useHugetlbfs = false;
+    segment.imports_.push_back(dirAsFile);
+    EXPECT_NE(segment.Mmap(), BM_OK);
+
+    // peer shm 文件不存在 → 重试后失败
+    segment.imports_.clear();
+    ShmExportInfo missing{};
+    missing.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    missing.rankId = 4U;
+    missing.size = options.size;
+    missing.useHugetlbfs = false;
+    segment.imports_.push_back(missing);
+    EXPECT_NE(segment.Mmap(), BM_OK);
+
+    RemoveShmFileIfExists(path2);
+    ASSERT_EQ(rmdir(path3.c_str()), 0);
+    EXPECT_EQ(segment.UnReserveMemorySpace(), BM_OK);
+}
+
+TEST_F(HybmHostShmSegmentTest, MapLocalShm_StaleLockHeld_ReturnsError)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    const std::string shmPath = "/dev/shm/memfabric_hybrid_" + std::to_string(options.rankId);
+    RemoveShmFileIfExists(shmPath);
+    // 模拟其他进程正持有 shm 文件锁
+    int heldFd = open(shmPath.c_str(), O_CREAT | O_EXCL | O_RDWR, S_IRUSR | S_IWUSR);
+    ASSERT_GE(heldFd, 0);
+    ASSERT_EQ(flock(heldFd, LOCK_EX), 0);
+
+    HybmHostShmSegment segment(options, 0);
+    void *addr = nullptr;
+    // MapLocalShm 失败 → ReserveMemorySpace 回滚
+    EXPECT_NE(segment.ReserveMemorySpace(&addr), BM_OK);
+    EXPECT_EQ(segment.globalVirtualAddress_, nullptr);
+    EXPECT_EQ(segment.localShmFd_, -1);
+
+    ASSERT_EQ(close(heldFd), 0);
+    RemoveShmFileIfExists(shmPath);
+}
+
+TEST_F(HybmHostShmSegmentTest, AllocLocalMemory_AddVaInfoFails_RollsBack)
+{
+    HybmHostShmVaGuard vaGuard;
+
+    auto options = MakeOptions();
+    HybmHostShmSegment segment(options, 0);
+    std::vector<uint8_t> window(options.size * options.rankCnt, 0U);
+    SetManualMemoryWindow(segment, window);
+
+    using AddVaInfoMemberFn = ock::mf::Result (HybmVaManager::*)(const BaseAllocatedGvaInfo &, uint32_t, bool);
+    auto addVaInfoPtr = static_cast<AddVaInfoMemberFn>(&HybmVaManager::AddVaInfo);
+    MOCKER_CPP(addVaInfoPtr, ock::mf::Result(*)(HybmVaManager *, const BaseAllocatedGvaInfo &, uint32_t, bool))
+        .stubs()
+        .will(returnValue(BM_ERROR));
+
+    MemSlicePtr slice;
+    EXPECT_NE(segment.AllocLocalMemory(HYBM_LARGE_PAGE_SIZE, slice), BM_OK);
+    EXPECT_EQ(slice, nullptr);
+    EXPECT_TRUE(segment.slices_.empty());
+
+    ResetManualMemoryWindow(segment);
 }

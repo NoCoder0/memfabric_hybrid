@@ -88,9 +88,14 @@ bash script/build_and_pack_run.sh
 
 > [!NOTE] 说明
 >
-> - 当 xpu_type 设置为 NPU 时，运行环境必须提前安装 NPU 固件驱动和 CANN 工具包。
-> - 请参考[链接](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0000.html)安装相关环境。
-> - 请参考[安装Toolkit开发套件包](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Ubuntu&Software=cannToolKit)的第三步配置环境变量。
+> **设备端 DEVICE_RDMA 传输（基于 HCOMM）：** 需要 CANN >= 9.1。运行时根据 CANN 版本自动选择传输层实现：
+>
+> - CANN >= 9.1 → `DeviceRdmaHcommTransportManager`（AICPU kernel + HCOMM，支持 A2/A5 RoCE 跨节点传输）
+> - CANN < 9.1  → native device RDMA（兼容旧 CANN 版本）
+>
+> [环境安装参考链接](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/softwareinst/instg/instg_0000.html)
+>
+> [参考安装Toolkit开发套件包的第三步配置环境变量](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/latest/softwareinst/instg/instg_0000.html)
 
 <!-- -->
 
@@ -119,14 +124,33 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
-> [!NOTE] 说明
-> A2环境使用DRAM池化需要根据每台机器池化内存的大小来配置大页内存，否则初始化失败。
+> **AICPU Kernel SO 部署：** `DEVICE_RDMA`（HCOMM 路径）和 `DEVICE_URMA` 均需在 NPU 上加载 AICPU kernel SO（`libcann_hybm_kernel.so`）。部署方式：
 >
-> - 检查是否配置大页。
-> `grep Huge /proc/meminfo`
+> - **import-time provisioning：** 安装 whl 包后首次 `import memfabric_hybrid` 时自动交叉编译并安装。
 >
-> - 配置大页内存，以配置1024个大页为例。
-> `echo 1024 > /proc/sys/vm/nr_hugepages`
+> 详细说明见 [安装 HYBM AICPU Kernel Run 包](installation_aicpu_kernel.md)。
+>
+> **A2 环境使用 DEVICE_RDMA：** A2（Ascend 910B3）上使用自定义 AICPU kernel 需先关闭驱动验签：
+>
+> ```bash
+> npu-smi set -t custom-op-secverify-enable -i 0 -d 1
+> npu-smi set -t custom-op-secverify-mode -i 0 -d 0
+> ```
+>
+> > 说明：A5（Ascend 950）使用 DEVICE_URMA 同样需关闭驱动验签（自定义 AICPU kernel 验签要求 A2/A5 一致）。
+> **A2 环境使用 DRAM 池化：** 需要根据每台机器池化内存的大小来配置大页内存，否则初始化失败
+>
+> 检查是否配置大页:
+>
+> ```bash
+> grep Huge /proc/meminfo
+> ```
+>
+> 配置大页内存，以配置1024个大页为例:
+>
+> ```bash
+> echo 1024 > /proc/sys/vm/nr_hugepages
+> ```
 
 ---
 **卸载 Run 包**

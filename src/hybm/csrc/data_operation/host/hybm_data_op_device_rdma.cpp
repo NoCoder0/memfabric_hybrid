@@ -133,7 +133,12 @@ void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
 Result DataOpDeviceRDMA::AllocSwapMemory()
 {
     void *ptr = nullptr;
-    int ret = DlHalApi::HalMemAlloc(&ptr, rdmaSwapSpaceSize_, MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_HUGE);
+    uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_HUGE;
+    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
+        // ASCEND_950 (A5) does not support HalMemAlloc with MEM_PAGE_HUGE, use normal page
+        allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_NORMAL;
+    }
+    int ret = DlHalApi::HalMemAlloc(&ptr, rdmaSwapSpaceSize_, allocFlag);
     if (ret != 0) {
         BM_LOG_ERROR("Failed to HalMemAlloc rdma swap memory, size: " << rdmaSwapSpaceSize_ << " ret:" << ret);
         return BM_MALLOC_FAILED;
@@ -342,6 +347,7 @@ Result DataOpDeviceRDMA::CopyLH2GD(const void *srcVA, void *destVA, uint64_t len
         ret = CopyLH2LD(srcVA, destVA, length, options);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy src to dest", ret);
     } else {
+        // dest 在对端：本地 host→本地 device（swap）→ RDMA 写到对端
         ret = SafePut(srcVA, destVA, length, options, true);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy src to dest", ret);
     }
@@ -380,8 +386,8 @@ Result DataOpDeviceRDMA::CopyRDMA(const void *srcVA, void *destVA, uint64_t leng
                                   const ock::mf::ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto src = (uint64_t)(ptrdiff_t)srcVA;
-    auto dest = (uint64_t)(ptrdiff_t)destVA;
+    auto src = reinterpret_cast<uint64_t>(srcVA);
+    auto dest = reinterpret_cast<uint64_t>(destVA);
     Result ret;
     if (options.srcRankId == rankId_) {
         ret = transportManager_->WriteRemote(options.destRankId, src, dest, length);
@@ -634,14 +640,6 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
     bool isWrite = (direction <= HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE);
     size_t batchSize = params.batchSize;
 
-    auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(rdmaSwapSpaceSize_);
-    void *tmpHost = tmpRdmaMemory.Address();
-    if (tmpHost == nullptr) {
-        BM_LOG_ERROR("Failed to malloc swap length: " << rdmaSwapSpaceSize_);
-        TP_TRACE_END(TP_HYBM_RDMA_BATCH_DEFAULT, BM_MALLOC_FAILED);
-        return BM_MALLOC_FAILED;
-    }
-
     uint64_t batchOffset = 0;
     while (batchOffset < batchSize) {
         uint64_t currentBatchDataSize = 0;
@@ -656,6 +654,17 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
                                                                        << rdmaSwapSpaceSize_);
             ret = BM_INVALID_PARAM;
             break;
+        }
+
+        // 按当前 batch 实际大小申请 swap，而不是一次性申请整个 swap 池：
+        // 整池申请在并发传输时会被第一个请求占满，其余请求 Allocate 失败（error -3）。
+        // AllocatedElement 是 RAII，出本次循环作用域自动 Release。
+        auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(currentBatchDataSize);
+        void *tmpHost = tmpRdmaMemory.Address();
+        if (tmpHost == nullptr) {
+            BM_LOG_ERROR("Failed to malloc swap length: " << currentBatchDataSize);
+            TP_TRACE_END(TP_HYBM_RDMA_BATCH_DEFAULT, BM_MALLOC_FAILED);
+            return BM_MALLOC_FAILED;
         }
 
         size_t currentBatchSize = batchEnd - batchOffset;
@@ -800,11 +809,11 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params,
         attrsIds[i] = idx++;
         sizes[i] = params.dataSizes[i];
     }
-    size_t fail_idx = 0;
+    size_t failIdx = 0;
     auto ret = DlAclApi::AclrtMemcpyBatch(params.destinations, sizes.data(), params.sources, sizes.data(), sizes.size(),
-                                          attrs.data(), attrsIds.data(), attrs.size(), &fail_idx);
+                                          attrs.data(), attrsIds.data(), attrs.size(), &failIdx);
     if (ret != 0) {
-        BM_LOG_WARN("AclrtMemcpyBatch failed, ret: " << ret << " fail_idx: " << fail_idx << " direction: " << direction
+        BM_LOG_WARN("AclrtMemcpyBatch failed, ret: " << ret << " failIdx: " << failIdx << " direction: " << direction
                                                      << " batchSize: " << batchNum << ", fallback to async");
         return BatchDataCopyLocalAsync(params, direction, options);
     }
@@ -1078,7 +1087,10 @@ Result DataOpDeviceRDMA::SafePut(const void *srcVA, void *destVA, uint64_t lengt
     uintptr_t destBase = reinterpret_cast<uintptr_t>(destVA);
     uint64_t remainingLength = length;
     uint64_t offset = 0;
-    if (transportManager_->QueryHasRegistered(srcBase, length)) {
+    // 直传需要注册内存且未被 MF_HYBM_RDMA_FORCE_UNREGISTERED 强制走中转。
+    // A2 channel MR 表是创建时快照，join 后注册的内存不在快照里，直传会 0x2a；
+    // 强制中转可绕过：先拷到 swap（channel 前注册，在快照里），swap 再走 RDMA。
+    if (!forceUnregistered_ && transportManager_->QueryHasRegistered(srcBase, length)) {
         ret = CopyRDMA(srcVA, destVA, length, options);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;
@@ -1116,7 +1128,8 @@ Result DataOpDeviceRDMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
     uintptr_t destBase = reinterpret_cast<uintptr_t>(destVA);
     uint64_t remainingLength = length;
     uint64_t offset = 0;
-    if (transportManager_->QueryHasRegistered(destBase, length)) {
+    // 同 SafePut：直传需注册内存且未被 MF_HYBM_RDMA_FORCE_UNREGISTERED 强制中转。
+    if (!forceUnregistered_ && transportManager_->QueryHasRegistered(destBase, length)) {
         ret = CopyRDMA(srcVA, destVA, length, options);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;

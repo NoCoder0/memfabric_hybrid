@@ -15,6 +15,9 @@
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
 #include "hybm_compose_data_op.h"
+#define private public
+#include "dl_acl_api.h"
+#undef private
 
 class DataOperatorMock : public ock::mf::DataOperator {
 public:
@@ -113,6 +116,7 @@ public:
     CreateDevRdmaDataOperator(uint32_t rankId, const std::shared_ptr<ock::mf::transport::TransportManager> &tm);
     static std::shared_ptr<ock::mf::DataOperator>
     CreateHostRdmaDataOperator(uint32_t rankId, const std::shared_ptr<ock::mf::transport::TransportManager> &tm);
+    static std::shared_ptr<ock::mf::DataOperator> CreateHostShmDataOperator(uint32_t rankId);
 
 protected:
     uint32_t OpOr()
@@ -131,6 +135,7 @@ protected:
     static std::shared_ptr<DataOperatorMock> sdmaDataOpMock;
     static std::shared_ptr<DataOperatorMock> devRdmaDataOpMock;
     static std::shared_ptr<DataOperatorMock> hostRdmaDataOpMock;
+    static std::shared_ptr<DataOperatorMock> hostShmDataOpMock;
 };
 
 std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::sdmaDataOpMock = std::make_shared<DataOperatorMock>("sdma");
@@ -138,12 +143,15 @@ std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::devRdmaDataOpMock =
     std::make_shared<DataOperatorMock>("dev_rdma");
 std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::hostRdmaDataOpMock =
     std::make_shared<DataOperatorMock>("host_rdma");
+std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::hostShmDataOpMock =
+    std::make_shared<DataOperatorMock>("host_shm");
 
 void HybmComposeDataOpTest::SetUp()
 {
     sdmaDataOpMock->Reset();
     devRdmaDataOpMock->Reset();
     hostRdmaDataOpMock->Reset();
+    hostShmDataOpMock->Reset();
 }
 
 void HybmComposeDataOpTest::TearDown()
@@ -152,6 +160,7 @@ void HybmComposeDataOpTest::TearDown()
     sdmaDataOpMock->Reset();
     devRdmaDataOpMock->Reset();
     hostRdmaDataOpMock->Reset();
+    hostShmDataOpMock->Reset();
 }
 
 std::shared_ptr<ock::mf::DataOperator> HybmComposeDataOpTest::CreateSdmaDataOperator()
@@ -171,6 +180,11 @@ HybmComposeDataOpTest::CreateHostRdmaDataOperator(uint32_t rankId,
                                                   const std::shared_ptr<ock::mf::transport::TransportManager> &tm)
 {
     return hostRdmaDataOpMock;
+}
+
+std::shared_ptr<ock::mf::DataOperator> HybmComposeDataOpTest::CreateHostShmDataOperator(uint32_t rankId)
+{
+    return hostShmDataOpMock;
 }
 
 TEST_F(HybmComposeDataOpTest, initialize_with_bm_type_ai_core)
@@ -356,7 +370,9 @@ TEST_F(HybmComposeDataOpTest, initialize_with_data_op_all_host_rdma_failed)
     ASSERT_EQ(1UL, hostRdmaDataOpMock->initializeCount);
 
     dataOp.UnInitialize();
+    // hostRdmaDataOperator_ is nullptr (Initialize failed → set to nullptr before return)
     ASSERT_EQ(0UL, hostRdmaDataOpMock->uninitializeCount);
+    // device DataOp 在 hostRdma Initialize 失败时已被置 nullptr（仅析构，不调用 UnInitialize）
     ASSERT_EQ(0UL, devRdmaDataOpMock->uninitializeCount);
     ASSERT_EQ(0UL, hostRdmaDataOpMock->uninitializeCount);
 }
@@ -828,9 +844,149 @@ TEST_F(HybmComposeDataOpTest, dwait_no_sdma_failed)
     ASSERT_EQ(1UL, hostRdmaDataOpMock->initializeCount);
 
     ret = dataOp.Wait(0);
-    ASSERT_NE(BM_OK, ret);
+    // Non-SDMA 路径（如 device_rdma via HCOMM）所有操作均为同步，
+    // WriteRemote 已包含 Synchronize，无需额外等待，返回 BM_OK
+    ASSERT_EQ(BM_OK, ret);
 
     dataOp.UnInitialize();
     ASSERT_EQ(1UL, devRdmaDataOpMock->uninitializeCount);
     ASSERT_EQ(1UL, hostRdmaDataOpMock->uninitializeCount);
+}
+
+TEST_F(HybmComposeDataOpTest, initialize_with_host_shm_failed)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_HOST_SHM;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostShmDataOperator).stubs().will(invoke(CreateHostShmDataOperator));
+    hostShmDataOpMock->initializeResult = BM_ERROR;
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    auto ret = dataOp.Initialize();
+    ASSERT_NE(BM_OK, ret);
+    ASSERT_EQ(1UL, hostShmDataOpMock->initializeCount);
+}
+
+TEST_F(HybmComposeDataOpTest, quant_copy_no_sdma)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_HOST_RDMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    hybm_quant_copy_params params{};
+    auto ret = dataOp.QuantCopy(params);
+    ASSERT_NE(BM_OK, ret);
+}
+
+TEST_F(HybmComposeDataOpTest, data_copy_no_operator_available)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = 0; // no operators
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    hybm_copy_params params{};
+    ock::mf::ExtOptions extOptions{};
+    extOptions.srcRankId = 0;
+    extOptions.destRankId = 1;
+    auto ret = dataOp.DataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions);
+    ASSERT_NE(BM_OK, ret);
+}
+
+TEST_F(HybmComposeDataOpTest, batch_data_copy_no_operator_available)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = 0; // no operators
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    hybm_batch_copy_params params{};
+    ock::mf::ExtOptions extOptions{};
+    extOptions.srcRankId = 0;
+    extOptions.destRankId = 1;
+    extOptions.groupMap.emplace(std::make_pair(0, 1), std::vector<uint32_t>{0});
+    uint64_t src = 0x1000;
+    uint64_t dst = 0x2000;
+    uint64_t size = 1024;
+    params.sources = reinterpret_cast<void **>(&src);
+    params.destinations = reinterpret_cast<void **>(&dst);
+    params.dataSizes = &size;
+    params.batchSize = 1;
+    auto ret = dataOp.BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions);
+    ASSERT_NE(BM_OK, ret);
+}
+
+TEST_F(HybmComposeDataOpTest, data_copy_async_no_operator_available)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = 0; // no operators
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    hybm_copy_params params{};
+    ock::mf::ExtOptions extOptions{};
+    extOptions.srcRankId = 0;
+    extOptions.destRankId = 1;
+    auto ret = dataOp.DataCopyAsync(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions);
+    ASSERT_NE(BM_OK, ret);
+}
+
+// 覆盖 devHcommDataOperator_ 分支（device DataOp 恒创建，与 CANN 版本/开关无关）
+TEST_F(HybmComposeDataOpTest, initialize_hcomm_device_then_uninit)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator).stubs().will(invoke(CreateDevRdmaDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    auto ret = dataOp.Initialize();
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(1UL, devRdmaDataOpMock->initializeCount);
+
+    dataOp.UnInitialize();
+    ASSERT_EQ(1UL, devRdmaDataOpMock->uninitializeCount);
+}
+
+// QuantCopy 无 SDMA 且已初始化 → 返回错误
+TEST_F(HybmComposeDataOpTest, quant_copy_init_no_sdma)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_HOST_RDMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    hybm_quant_copy_params params{};
+    ASSERT_NE(BM_OK, dataOp.QuantCopy(params));
 }

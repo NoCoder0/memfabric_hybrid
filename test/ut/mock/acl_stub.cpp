@@ -31,6 +31,20 @@ int32_t aclrtGetDevice(int32_t *deviceId)
     return RETURN_OK;
 }
 
+int32_t aclrtGetVersion(int32_t *major, int32_t *minor, int32_t *patch)
+{
+    if (major != nullptr) {
+        *major = 1;
+    }
+    if (minor != nullptr) {
+        *minor = 0;
+    }
+    if (patch != nullptr) {
+        *patch = 0;
+    }
+    return RETURN_OK;
+}
+
 int32_t aclrtDeviceEnablePeerAccess(int32_t peerDeviceId, uint32_t flags)
 {
     return RETURN_OK;

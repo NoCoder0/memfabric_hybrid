@@ -11,6 +11,9 @@
  */
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
+#include "dl_acl_api.h"
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 #include "hybm_compose_data_op.h"
 
 namespace ock {
@@ -40,11 +43,13 @@ Result HostComposeDataOp::Initialize() noexcept
         }
     }
 
+    // Device data operator: DEVICE_RDMA 用 DataOpDeviceRDMA（老 native RDMA 与新 HCOMM 共用，
+    // 传输无关，经 TransportManager 基类虚接口）；URMA/UBOE 走 develop 原生 DataOpDeviceURMA。
     if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
         devRdmaDataOperator_ = DataOperatorFactory::CreateDevRdmaDataOperator(options_.rankId, transport_);
         auto ret = devRdmaDataOperator_->Initialize();
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Device transport data operator init failed, ret:" << ret);
+            BM_LOG_ERROR("Device data operator init failed, ret:" << ret);
             sdmaDataOperator_ = nullptr;
             devRdmaDataOperator_ = nullptr;
             return ret;
@@ -70,7 +75,6 @@ Result HostComposeDataOp::Initialize() noexcept
             BM_LOG_ERROR("Host RDMA data operator init failed, ret:" << ret);
             sdmaDataOperator_ = nullptr;
             devRdmaDataOperator_ = nullptr;
-            devUrmaDataOperator_ = nullptr;
             hostRdmaDataOperator_ = nullptr;
             return ret;
         }
@@ -83,7 +87,6 @@ Result HostComposeDataOp::Initialize() noexcept
             BM_LOG_ERROR("Host shm data operator init failed, ret:" << ret);
             sdmaDataOperator_ = nullptr;
             devRdmaDataOperator_ = nullptr;
-            devUrmaDataOperator_ = nullptr;
             hostRdmaDataOperator_ = nullptr;
             return ret;
         }
@@ -232,12 +235,13 @@ Result HostComposeDataOp::Wait(int32_t waitId) noexcept
      * Note: Currently, only SDMA supports asynchronous operations; we only perform the wait for the SDMA Data Operator.
      * Subsequent consideration involves using the 3 bits in the wait ID to indicate which data operator is being used.
      */
-    if (sdmaDataOperator_ == nullptr) {
-        BM_LOG_ERROR("SDMA data operator not exist.");
-        return BM_ERROR;
+    if (sdmaDataOperator_ != nullptr) {
+        return sdmaDataOperator_->Wait(waitId);
     }
-
-    return sdmaDataOperator_->Wait(waitId);
+    // For non-SDMA paths (e.g. device_rdma via HCOMM), all operations are
+    // synchronous (WriteRemote includes Synchronize → AclrtSynchronizeStream).
+    // Nothing to wait for, return success.
+    return BM_OK;
 }
 
 bool HostComposeDataOp::AllSupportSdma(const ExtOptions &options) noexcept
@@ -263,16 +267,18 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
         dataOperators.emplace_back(HYBM_DOP_TYPE_SDMA, sdmaDataOperator_);
     }
 
-    if (devRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_RDMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_RDMA, devRdmaDataOperator_);
+    if (devRdmaDataOperator_ != nullptr) {
+        if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_RDMA)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_RDMA, devRdmaDataOperator_);
+        }
     }
-
-    if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_URMA, devUrmaDataOperator_);
-    }
-
-    if (devUrmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_UBOE, devUrmaDataOperator_);
+    if (devUrmaDataOperator_ != nullptr) {
+        if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_URMA, devUrmaDataOperator_);
+        }
+        if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_UBOE, devUrmaDataOperator_);
+        }
     }
 
     if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_RDMA)) != 0U) {

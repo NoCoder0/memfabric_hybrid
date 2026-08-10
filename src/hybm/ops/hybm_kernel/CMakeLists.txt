@@ -37,7 +37,7 @@ if(NOT DEFINED AICPU_KERNEL_SRC)
   )
 endif()
 
-set(AICPU_LINK_FLAGS "")
+set(AICPU_LINK_FLAGS "-ldl")
 
 # ---- Copy static .json ----
 add_custom_command(

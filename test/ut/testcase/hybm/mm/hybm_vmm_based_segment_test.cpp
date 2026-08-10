@@ -261,3 +261,80 @@ TEST_F(HybmVmmBasedSegmentTest, Destroy_NoCrash)
     opts.segType = HYBM_MST_HBM;
     HybmVmmBasedSegment seg(opts, 0);
 }
+
+// =========================
+// ValidateOptions / ReleaseSliceMemory / MemoryInRange 错误分支
+// =========================
+
+TEST_F(HybmVmmBasedSegmentTest, ValidateOptions_ErrorBranches)
+{
+    MemSegmentOptions opts;
+    opts.segType = HYBM_MST_DRAM;
+    opts.maxSize = GB;
+    opts.rankCnt = 2; // 2
+    // DRAM 段 size 需 GB 对齐 → 非法
+    opts.size = GB / 2; // 2
+    HybmVmmBasedSegment seg1(opts, 0);
+    EXPECT_EQ(seg1.ValidateOptions(), BM_INVALID_PARAM);
+
+    // maxSize 非 GB 对齐 → 非法
+    opts.size = 0;
+    opts.maxSize = HYBM_LARGE_PAGE_SIZE;
+    HybmVmmBasedSegment seg2(opts, 0);
+    EXPECT_EQ(seg2.ValidateOptions(), BM_INVALID_PARAM);
+
+    // rankCnt * maxSize 溢出 → 非法
+    opts.maxSize = GB;
+    opts.rankCnt = UINT32_MAX;
+    HybmVmmBasedSegment seg3(opts, 0);
+    EXPECT_EQ(seg3.ValidateOptions(), BM_INVALID_PARAM);
+
+    // 内存池 > 128T 且未启用 56 位 GVA → 非法
+    opts.maxSize = 64ULL * GB;
+    opts.rankCnt = 4096; // 4096
+    opts.enable56BitsGva = false;
+    HybmVmmBasedSegment seg4(opts, 0);
+    EXPECT_EQ(seg4.ValidateOptions(), BM_INVALID_PARAM);
+}
+
+TEST_F(HybmVmmBasedSegmentTest, ReleaseSliceMemory_ErrorPaths)
+{
+    MemSegmentOptions opts;
+    opts.segType = HYBM_MST_HBM;
+    opts.maxSize = GB;
+    opts.rankCnt = 1;
+    HybmVmmBasedSegment seg(opts, 0);
+
+    EXPECT_EQ(seg.ReleaseSliceMemory(nullptr), BM_INVALID_PARAM);
+
+    // slices_ 同 index 不同对象 → magic 不匹配
+    auto realSlice = std::make_shared<MemSlice>(5, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_GVM, 0x1000, 0x2000, 4096);
+    seg.slices_.emplace(realSlice->index_, MemSliceStatus(realSlice, nullptr));
+    auto fakeSlice = std::make_shared<MemSlice>(5, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_GVM, 0x1000, 0x2000, 4096);
+    EXPECT_EQ(seg.ReleaseSliceMemory(fakeSlice), BM_INVALID_PARAM);
+
+    // 不在任何容器 → not exist
+    auto unknown = std::make_shared<MemSlice>(99, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_GVM, 0x3000, 0x4000, 4096);
+    EXPECT_EQ(seg.ReleaseSliceMemory(unknown), BM_INVALID_PARAM);
+
+    // registerSlices_ 同 index 不同对象 → magic 不匹配
+    auto regSlice = std::make_shared<MemSlice>(7, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_GVM, 0x5000, 0x6000, 4096);
+    seg.registerSlices_.emplace(regSlice->index_, std::make_pair(MemSliceStatus(regSlice, nullptr), 0x7000ULL));
+    auto fakeReg = std::make_shared<MemSlice>(7, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_GVM, 0x5000, 0x6000, 4096);
+    EXPECT_EQ(seg.ReleaseSliceMemory(fakeReg), BM_INVALID_PARAM);
+}
+
+TEST_F(HybmVmmBasedSegmentTest, MemoryInRange_ErrorBranches)
+{
+    MemSegmentOptions opts;
+    opts.segType = HYBM_MST_HBM;
+    opts.maxSize = GB;
+    opts.rankCnt = 1;
+    HybmVmmBasedSegment seg(opts, 0);
+    seg.globalVirtualAddress_ = reinterpret_cast<uint8_t *>(0x20000000);
+    seg.totalVirtualSize_ = GB;
+
+    EXPECT_FALSE(seg.MemoryInRange(reinterpret_cast<void *>(0x10000000), 4096)); // 4096
+    EXPECT_FALSE(seg.MemoryInRange(reinterpret_cast<void *>(0x20000000), static_cast<uint64_t>(GB) + 1));
+    EXPECT_TRUE(seg.MemoryInRange(reinterpret_cast<void *>(0x20000000), 4096)); // 4096
+}
