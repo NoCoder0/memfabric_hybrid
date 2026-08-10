@@ -35,7 +35,7 @@ std::atomic<uint32_t> g_ctrlReqSeq{0};
 constexpr uint16_t MAX_U16_INDEX = 65535;
 constexpr uint64_t SERVER_RECOVER_TIME = 10 * 1000 * 1000; // 10s
 constexpr uint64_t RECOVER_PERIOD_TIME = 10;               // 10s
-constexpr uint32_t HEARTBEAT_TIMEOUT = 3;
+constexpr uint32_t HEARTBEAT_TIMEOUT = 30;
 constexpr int32_t EPHEMERAL_KEY_TTL_SEC = 5;
 constexpr int32_t PERSISTENT_KEY_TTL_SEC = 0;
 constexpr size_t MAX_WRITE_TOTAL_SIZE = MAX_VALUE_SIZE * 16ULL;
@@ -360,6 +360,9 @@ Result AccStoreServer::LinkBrokenHandler(const uint32_t linkId) noexcept
     STORE_LOG_DEBUG("link broken, linkId: " << linkId);
     uint32_t rankId = std::numeric_limits<uint32_t>::max();
     std::unique_lock<std::mutex> lockGuard{storeMutex_};
+    if (externalBrokenHandler_ != nullptr) {
+        externalBrokenHandler_(linkId, backend_);
+    }
     auto it = linkRankMap_.find(linkId);
     if (it != linkRankMap_.end()) {
         rankId = it->second;
@@ -371,9 +374,6 @@ Result AccStoreServer::LinkBrokenHandler(const uint32_t linkId) noexcept
         STORE_LOG_INFO("link broken, linkId: " << linkId << " remove rankId: " << rankId);
     }
     heartBeatMap_.erase(linkId);
-    if (externalBrokenHandler_ != nullptr) {
-        externalBrokenHandler_(linkId, backend_);
-    }
     if (aliveRankSet_.empty()) {
         STORE_LOG_INFO("all client link broken, will clear data");
         rankIndex_ = 0;

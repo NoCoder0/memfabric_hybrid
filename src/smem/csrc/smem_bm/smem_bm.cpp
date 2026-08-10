@@ -156,22 +156,6 @@ SMEM_API int32_t smem_bm_update_store_server(const char *ip, uint16_t port)
     return SmemBmEntryManager::Instance().UpdateStoreServer(std::string(ip), port);
 }
 
-SMEM_API int32_t smem_bm_get_store_server_info(char *ip, size_t ipLen, uint16_t *port)
-{
-    if (ip == nullptr || port == nullptr) {
-        SM_LOG_ERROR("smem_bm_get_store_server_info: null parameter");
-        return SM_INVALID_PARAM;
-    }
-    std::string ipStr;
-    auto ret = SmemBmEntryManager::Instance().GetStoreServerInfo(ipStr, port);
-    if (ret == SM_OK) {
-        size_t copyLen = std::min(ipStr.size(), ipLen > 0 ? ipLen - 1 : 0);
-        std::copy_n(ipStr.begin(), copyLen, ip);
-        ip[copyLen] = '\0';
-    }
-    return ret;
-}
-
 SMEM_API int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t *port)
 {
     if (ip == nullptr || port == nullptr) {

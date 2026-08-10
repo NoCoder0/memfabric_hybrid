@@ -345,6 +345,7 @@ Result SmemBmEntry::Leave(uint32_t flags)
         SM_LOG_INFO("Store not connected, skipping Leave, rank " << groupMgr->GetLocalRankId());
         TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 0);
     }
+    joined_ = false;
     return SM_OK;
 }
 
@@ -985,7 +986,7 @@ int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFu
     if (ret != SMEM_OK) {
         SM_LOG_ERROR("OnEstablishConnection rankId=" << rankId << " hybm_transport_connect failed: " << ret);
         TP_TRACE_END(TP_SMEM_GROUP_ESTABLISH_CONNECTION, 1);
-        return SMEM_OK;
+        return ret;
     }
     TP_TRACE_END(TP_SMEM_GROUP_ESTABLISH_CONNECTION, 0);
     SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " peers.size=" << peers.size());

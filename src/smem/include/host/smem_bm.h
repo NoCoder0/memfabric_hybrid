@@ -72,20 +72,6 @@ uint32_t smem_bm_get_rank_id(void);
 int32_t smem_bm_update_store_server(const char *ip, uint16_t port);
 
 /**
- * @brief Get the connected config store server's IP address.
- *
- * Used by upper-layer applications (e.g. MemCache LocalService) to discover
- * the MetaService leader address. If the store is an HA store, this returns
- * the leader's IP that the client is currently connected to.
- *
- * @param ip         [out] buffer to receive server IP (at least 64 bytes)
- * @param ipLen      [in] size of the ip buffer
- * @param port       [out] server port that the client is connected to
- * @return 0 on success, non-zero error code on failure
- */
-int32_t smem_bm_get_store_server_info(char *ip, size_t ipLen, uint16_t *port);
-
-/**
  * @brief Get the MetaService address registered by the current MetaService leader.
  *
  * Used by upper-layer applications (e.g. MemCache LocalService) to discover
