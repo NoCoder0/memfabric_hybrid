@@ -91,12 +91,13 @@ python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
 `--physical-device-id`、`--device-id`、`--runtime-device-id`、`--host-eid` 和 `--device-eid` 仍可显式传入，
 用于兼容旧命令或做一致性校验；local 模式下不再要求重复传递。
 
-Host 先初始化固定 8 MiB GVA DRAM 和连续 pattern；该 pool 会在传输前注册，因此 Host validation 进程自动将
-未注册内存中转使用的 `MF_HYBM_RDMA_SWAP_SPACE_SIZE` 设为 `0`。NPU 通过现有 entity/key/endpoint/route
-流程取得 Host DRAM，使用本地 MemFabric HBM pool 的实际 device VA 调用 `sparse_copy_urma`，再用
-`copy_data(G2H)` 回读验证。loopback TCP 只传版本化 JSON 元数据和结果，不传 pattern、HCOMM descriptor
-或 key。默认覆盖 1、4096、1 MiB 字节数以及 1/999/1000/1001 个 4 KiB item；可用 `--rounds`、`--sizes`、
-`--batch-counts` 调整。
+Host 先初始化固定 8 MiB GVA DRAM 和连续 pattern；两端 `create2` 均使用
+`max_dram_size=max_hbm_size=8 MiB` 保持相同的全局 GVA 布局，只有 `local_*_size` 按角色决定实际分配和导出。
+该 pool 会在传输前注册，因此 Host validation 进程自动将未注册内存中转使用的
+`MF_HYBM_RDMA_SWAP_SPACE_SIZE` 设为 `0`。NPU 通过现有 entity/key/endpoint/route 流程取得 Host DRAM，使用
+本地 MemFabric HBM pool 的实际 device VA 调用 `sparse_copy_urma`，再用 `copy_data(G2H)` 回读验证。loopback
+TCP 只传版本化 JSON 元数据和结果，不传 pattern、HCOMM descriptor 或 key。默认覆盖 1、4096、1 MiB 字节数以及
+1/999/1000/1001 个 4 KiB item；可用 `--rounds`、`--sizes`、`--batch-counts` 调整。
 
 负向检查使用 `--negative=bad-gva|cross-range|overflow-len|wrong-device`；EID、物理/逻辑卡映射、尺寸、范围
 和地址加法在可检查处先失败，HCOMM 返回值和清理错误保留 stage/rank/device/地址/长度上下文。不要为绕过

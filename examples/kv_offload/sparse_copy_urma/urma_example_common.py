@@ -244,9 +244,10 @@ def _create_handle(args, bm, rank_id):
             handle = bm.create2(
                 id=0,
                 local_dram_size=POOL_BYTES if is_host else 0,
-                max_dram_size=POOL_BYTES if is_host else 0,
+                # max_* defines a rank-independent GVA layout; only local_* is role-specific.
+                max_dram_size=POOL_BYTES,
                 local_hbm_size=0 if is_host else POOL_BYTES,
-                max_hbm_size=0 if is_host else POOL_BYTES,
+                max_hbm_size=POOL_BYTES,
                 data_op_type=bm.BmDataOpType.HOST_DEVICE_URMA,
                 enable_56bits_gva=False,
             )

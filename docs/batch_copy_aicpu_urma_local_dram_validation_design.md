@@ -405,13 +405,17 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 
 ### 3.3.5 两进程角色、参数与启动顺序
 
+`max_dram_size` 和 `max_hbm_size` 定义所有 rank 共享的 GVA 布局，两个进程必须使用相同值；
+`local_dram_size` 和 `local_hbm_size` 才决定各自实际分配和导出的 slice。该验证固定两种 max 均为
+`POOL_BYTES`，并让 Host 仅提供 DRAM、NPU 仅提供 HBM。
+
 #### 进程 A：DRAM provider / rank 0
 
 1. 读取工具输出，设置 `MF_HOST_URMA_EID` 和 `MF_LOCAL_DRAM_VALIDATION_ROLE=host`；
 2. 用 `runtime_device_id` 初始化 torch NPU context；
 3. `bm.initialize(tcp://127.0.0.1:<store>, 2, runtimeDeviceId, rank0Config)`，rank 0 启动 store；
-4. `bm.create2(local_dram_size=POOL_BYTES, local_hbm_size=0,
-   data_op_type=HOST_DEVICE_URMA, enable_56bits_gva=False)`；
+4. `bm.create2(local_dram_size=POOL_BYTES, max_dram_size=POOL_BYTES,
+   local_hbm_size=0, max_hbm_size=POOL_BYTES, data_op_type=HOST_DEVICE_URMA, enable_56bits_gva=False)`；
 5. `join()` 后取得 rank 0 Host GVA 与 `LOCAL_HOST` VA，要求两者相等；
 6. 以全池连续 `byte[i] = (i * 131 + seed) & 0xff` 初始化，调用现有 `copy_data(H2G)`；
 7. Host manager 自动注册固定 GVA、导出 MR/flag key；
@@ -423,8 +427,8 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 1. 设置 `USE_LOCAL_EID`，不设置临时 Host role；
 2. `torch.npu.set_device(runtimeDeviceId)`；
 3. `bm.initialize(... rank1Config)`；
-4. `bm.create2(local_dram_size=0, local_hbm_size=POOL_BYTES,
-   data_op_type=HOST_DEVICE_URMA)` 并 `join()`；
+4. `bm.create2(local_dram_size=0, max_dram_size=POOL_BYTES,
+   local_hbm_size=POOL_BYTES, max_hbm_size=POOL_BYTES, data_op_type=HOST_DEVICE_URMA)` 并 `join()`；
 5. 本地 HBM pool 由 entity 分配并以 `REG_MR_FLAG_HBM` 自动注册；取得本地 HBM GVA 和
    `gva_to_va(..., LOCAL_DEVICE)` 返回的实际 device VA；
 6. Device manager 导入 Host MR/flag，验证三地址相等并发布 route；

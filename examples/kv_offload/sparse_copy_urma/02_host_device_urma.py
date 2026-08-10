@@ -129,7 +129,8 @@ def _run_host(args):
             args,
             "bm_lifecycle",
             f"creating Host handle store=tcp://{args.head_ip}:{args.store_port} world_size={WORLD_SIZE} "
-            f"local_dram_size={POOL_BYTES} local_hbm_size=0",
+            f"local_dram_size={POOL_BYTES} local_hbm_size=0 "
+            f"max_dram_size={POOL_BYTES} max_hbm_size={POOL_BYTES}",
         )
         handle = _create_handle(args, bm, HOST_RANK)
         bm_initialized = True
@@ -164,7 +165,8 @@ def _run_npu(args):
             args,
             "bm_lifecycle",
             f"creating NPU handle store=tcp://{args.head_ip}:{args.store_port} world_size={WORLD_SIZE} "
-            f"local_dram_size=0 local_hbm_size={POOL_BYTES}",
+            f"local_dram_size=0 local_hbm_size={POOL_BYTES} "
+            f"max_dram_size={POOL_BYTES} max_hbm_size={POOL_BYTES}",
         )
         handle = _create_handle(args, bm, NPU_RANK)
         bm_initialized = True
