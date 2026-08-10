@@ -1,0 +1,27 @@
+[root@localhost memfabric_hybrid]# export ASCEND_RT_VISIBLE_DEVICES=5,6
+[root@localhost memfabric_hybrid]# export ASCEND_PROCESS_LOG_PATH=/home/z00502111/log/
+[root@localhost memfabric_hybrid]# export ASCEND_GLOBAL_LOG_LEVEL=0
+[root@localhost memfabric_hybrid]# . /tmp/mf-local-dram-eid.env
+[root@localhost memfabric_hybrid]# cat /tmp/mf-local-dram-eid.env 
+MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID=5
+MF_LOCAL_DRAM_LOGICAL_DEVICE_ID=5
+MF_LOCAL_DRAM_TOPOLOGY=server
+MF_LOCAL_DRAM_UDMA=udmac0d1e3
+MF_HOST_URMA_EID=00000000003f030000100000df080b00
+USE_LOCAL_EID=000000000000020000100000df00a100
+[root@localhost memfabric_hybrid]# unset MF_LOCAL_DRAM_VALIDATION_ROLE
+[root@localhost memfabric_hybrid]# python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
+>   --local-dram-validation --rank 1 --head-ip 127.0.0.1 \
+>   --physical-device-id "${MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID}" \
+>   --device-id "${MF_LOCAL_DRAM_LOGICAL_DEVICE_ID}" \
+>   --host-eid "${MF_HOST_URMA_EID}" --device-eid "${USE_LOCAL_EID}"
+[ERROR] stage=acl_context role=npu rank=1 device=5 physical_device=5 detail=failed to set local NPU device: ExchangeDevice:../torch_npu/csrc/core/npu/sys_ctrl/npu_sys_ctrl.cpp:286 NPU function error: c10_npu::SetDevice(device), error code is 107001
+[ERROR] 2026-08-10-17:27:59 (PID:55190, Device:0, RankID:-1) ERR00100 PTA call acl api failed
+[Error]: Invalid device ID.
+        Check whether the device ID is valid.
+[PID: 55190] 2026-08-10-17:27:59.563.292 Invalid_Argument(EE1003): ChgUserDevIdToDeviceId failed because value 5 for parameter userDevId is invalid. Expected value: [0, 2).
+        Solution: 1. Check the input parameter range of the function. 2. Check the function invocation relationship.
+TraceBack (most recent call last):
+        rtSetDevice execution failed, reason=device id error[FUNC:FuncErrorReason][FILE:error_message_manage.cc][LINE:65]
+        open device 5 failed, runtime result = 107001.[FUNC:ReportCallError][FILE:log_inner.cpp][LINE:148]
+

@@ -1,0 +1,14 @@
+(base) [root@localhost log]# grep -r ERROR * | grep "2026-08-10-17"
+debug/plog/plog-55085_20260810172735803.log:[ERROR] RUNTIME(55085,python3):2026-08-10-17:27:44.998.170 [runtime.cc:4313]55085 ChgUserDevIdToDeviceId:input userDevId:5 is err, userDeviceCnt:2, real deviceCnt:8 isSetVisibleDev:1 ASCEND_RT_VISIBLE_DEVICES:[5,6], available visible devices:[5,6]
+debug/plog/plog-55085_20260810172735803.log:[ERROR] RUNTIME(55085,python3):2026-08-10-17:27:44.998.179 [runtime.cc:4314]55085 ChgUserDevIdToDeviceId:ChgUserDevIdToDeviceId failed because value 5 for parameter userDevId is invalid. Expected value: [0, 2). ErrorCode=EE1003.
+debug/plog/plog-55085_20260810172735803.log:[ERROR] RUNTIME(55085,python3):2026-08-10-17:27:44.998.207 [api_error.cc:2613]55085 SetDevice:Failed to convert the user device ID 5 to driver device ID. The input visible device is 5,6.
+debug/plog/plog-55085_20260810172735803.log:[ERROR] RUNTIME(55085,python3):2026-08-10-17:27:44.998.215 [api_c_device.cc:87]55085 rtSetDevice:ErrCode=107001, desc=[device id error], InnerCode=0x7010003
+debug/plog/plog-55085_20260810172735803.log:[ERROR] RUNTIME(55085,python3):2026-08-10-17:27:44.998.218 [error_message_manage.cc:65]55085 FuncErrorReason:rtSetDevice execution failed, reason=device id error
+debug/plog/plog-55085_20260810172735803.log:[ERROR] ASCENDCL(55085,python3):2026-08-10-17:27:44.998.491 [device.cpp:59]55085 aclrtSetDeviceImpl:open device 5 failed, runtime result = 107001.
+debug/plog/plog-55190_20260810172750669.log:[ERROR] RUNTIME(55190,python3):2026-08-10-17:27:59.563.280 [runtime.cc:4313]55190 ChgUserDevIdToDeviceId:input userDevId:5 is err, userDeviceCnt:2, real deviceCnt:8 isSetVisibleDev:1 ASCEND_RT_VISIBLE_DEVICES:[5,6], available visible devices:[5,6]
+debug/plog/plog-55190_20260810172750669.log:[ERROR] RUNTIME(55190,python3):2026-08-10-17:27:59.563.288 [runtime.cc:4314]55190 ChgUserDevIdToDeviceId:ChgUserDevIdToDeviceId failed because value 5 for parameter userDevId is invalid. Expected value: [0, 2). ErrorCode=EE1003.
+debug/plog/plog-55190_20260810172750669.log:[ERROR] RUNTIME(55190,python3):2026-08-10-17:27:59.563.312 [api_error.cc:2613]55190 SetDevice:Failed to convert the user device ID 5 to driver device ID. The input visible device is 5,6.
+debug/plog/plog-55190_20260810172750669.log:[ERROR] RUNTIME(55190,python3):2026-08-10-17:27:59.563.323 [api_c_device.cc:87]55190 rtSetDevice:ErrCode=107001, desc=[device id error], InnerCode=0x7010003
+debug/plog/plog-55190_20260810172750669.log:[ERROR] RUNTIME(55190,python3):2026-08-10-17:27:59.563.326 [error_message_manage.cc:65]55190 FuncErrorReason:rtSetDevice execution failed, reason=device id error
+debug/plog/plog-55190_20260810172750669.log:[ERROR] ASCENDCL(55190,python3):2026-08-10-17:27:59.563.574 [device.cpp:59]55190 aclrtSetDeviceImpl:open device 5 failed, runtime result = 107001.
+(base) [root@localhost log]# 
