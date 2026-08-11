@@ -41,13 +41,14 @@ class CliCommand:
         self.cmd_name = cmd_name
         self.cmd_description = cmd_description
         self.func = func
-        self.args_num = self._get_user_param_count(func)
+        self.required_args_num, self.args_num = self._get_user_param_counts(func)
 
     @staticmethod
-    def _get_user_param_count(func):
+    def _get_user_param_counts(func):
         sig = inspect.signature(func)
         params = sig.parameters
-        return len(params)
+        required = sum(param.default is inspect.Parameter.empty for param in params.values())
+        return required, len(params)
 
 
 @dataclasses.dataclass
@@ -121,12 +122,14 @@ class TestServer:
         params = parts[1:]
         if cmd_str in self._commands:
             command = self._commands[cmd_str]
-            if len(params) == command.args_num:  # 允许使用默认参数
+            if command.required_args_num <= len(params) <= command.args_num:
                 parsed_params = self._parse_arguments(command.func, params)  # 转换参数
                 command.func(*parsed_params)
                 self._cli_end_line()
                 return
-            self.cli_print(f"Invalid input args num:{len(params)}, need:{command.args_num}.")
+            self.cli_print(
+                f"Invalid input args num:{len(params)}, need:{command.required_args_num}-{command.args_num}."
+            )
         else:
             self.cli_print(f"Unknown command: {cmd_str}")
         self._help()
@@ -295,7 +298,7 @@ class MfTest(TestServer):
                 "bm_create2",
                 "Create a big memory object locally after initialized, bm_create2 "
                 "[mem_id] [local_dram_size] [max_dram_size]  [local_hbm_size] [max_hbm_size] [data_op_type] "
-                "[enable_56bits_gva] [flags]",
+                "[enable_56bits_gva] [flags] [tag] [tag_op_info]",
                 self.bm_create2,
             ),
             CliCommand(
@@ -717,6 +720,8 @@ class MfTest(TestServer):
         data_op_type: int,
         enable_56bits_gva: bool,
         flags: int,
+        tag: str = "",
+        tag_op_info: str = "",
     ):
         handle = bm.create2(
             id=mem_id,
@@ -727,10 +732,12 @@ class MfTest(TestServer):
             data_op_type=bm.BmDataOpType(data_op_type),
             enable_56bits_gva=enable_56bits_gva,
             flags=flags,
+            tag=tag,
+            tag_op_info=tag_op_info,
         )
         self.cli_print(
             f"id={mem_id}, local_dram_size={local_dram_size}, local_hbm_size={local_hbm_size}, "
-            f"data_op_type={(bm.BmDataOpType(data_op_type),)} flags={flags}"
+            f"data_op_type={(bm.BmDataOpType(data_op_type),)} flags={flags} tag={tag} tag_op_info={tag_op_info}"
         )
         if handle is not None:
             addr = id(handle)

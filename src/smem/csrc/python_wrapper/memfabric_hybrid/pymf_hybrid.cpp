@@ -12,6 +12,7 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" // ignore pybind11 warning
 
+#include <algorithm>
 #include <iostream>
 #include <Python.h>
 #include <pybind11/pybind11.h>
@@ -22,9 +23,12 @@
 #include <cstddef>
 #include <mutex>
 #include <new>
+#include <stdexcept>
+#include <string>
 #include "smem.h"
 #include "smem_shm.h"
 #include "smem_bm.h"
+#include "smem_logger.h"
 #include "smem_version.h"
 
 namespace py = pybind11;
@@ -288,7 +292,7 @@ public:
 
     static BigMemory *Create2(uint32_t id, uint64_t localDRAMSize, uint64_t localMaxDRAMSize, uint64_t localHBMSize,
                               uint64_t localMaxHBMSize, smem_bm_data_op_type dataOpType, bool enable56BitsGva,
-                              uint32_t flags, int shmFd)
+                              uint32_t flags, int shmFd, const std::string &tag, const std::string &tagOpInfo)
     {
         smem_bm_create_option_t option{};
         option.maxDramSize = localMaxDRAMSize;
@@ -305,6 +309,17 @@ public:
             option.flags &= (~SMEM_BM_FLAG_CREATE_WITH_SHM);
             option.dramShmFd = -1;
         }
+        if (tag.size() >= sizeof(option.tag)) {
+            SM_LOG_ERROR("BigMemory::Create2 tag is too long, id: " << id << " tag length: " << tag.size());
+            throw std::invalid_argument("tag is too long");
+        }
+        if (tagOpInfo.size() >= sizeof(option.tagOpInfo)) {
+            SM_LOG_ERROR("BigMemory::Create2 tagOpInfo is too long, id: " << id
+                                                                          << " tagOpInfo length: " << tagOpInfo.size());
+            throw std::invalid_argument("tag_op_info must not exceed 255 characters");
+        }
+        std::copy_n(tag.c_str(), tag.size() + 1U, option.tag);
+        std::copy_n(tagOpInfo.c_str(), tagOpInfo.size() + 1U, option.tagOpInfo);
 
         auto hd = smem_bm_create2(id, &option);
         if (hd == nullptr) {
@@ -723,7 +738,8 @@ Arguments:
     m.def("create2", &BigMemory::Create2, py::call_guard<py::gil_scoped_release>(), py::arg("id"),
           py::arg("local_dram_size"), py::arg("max_dram_size"), py::arg("local_hbm_size") = 0,
           py::arg("max_hbm_size") = 0, py::arg("data_op_type") = SMEMB_DATA_OP_SDMA,
-          py::arg("enable_56bits_gva") = false, py::arg("flags") = 0, py::arg("shm_fd") = -1, R"(
+          py::arg("enable_56bits_gva") = false, py::arg("flags") = 0, py::arg("shm_fd") = -1, py::arg("tag") = "",
+          py::arg("tag_op_info") = "", R"(
 Create a big memory object locally after initialized.
 
 Arguments:
@@ -737,7 +753,10 @@ Arguments:
                                  When (max_dram_size + max_hbm_size) * world_size > 32TB,
                                  this must be true; memfabric_hybrid does not auto-enable it.
                                  Effective max usable capacity remains 128TB.
-    flags(int):                  optional flags, default 0)");
+    flags(int):                  optional flags, default 0
+    shm_fd(int):                 gva shared-memory file descriptor, default -1
+    tag(str):                    tag of the current rank, default ""
+    tag_op_info(str):            data operation routes between tags, default "")");
 
     // big memory class
     py::class_<BigMemory>(m, "BigMemory")

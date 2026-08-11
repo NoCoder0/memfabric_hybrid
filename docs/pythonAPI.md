@@ -197,7 +197,19 @@ def create(id, local_dram_size, local_hbm_size = 0, data_op_type = SMEMB_DATA_OP
 创建BM（支持设置本地内存上限）。
 
 ```python
-def create2(id, local_dram_size, max_dram_size, local_hbm_size = 0, max_hbm_size = 0, data_op_type = SMEMB_DATA_OP_SDMA, enable_56bits_gva = False, flags = 0, shm_fd = -1) -> BigMemory
+def create2(
+    id,
+    local_dram_size,
+    max_dram_size,
+    local_hbm_size=0,
+    max_hbm_size=0,
+    data_op_type=SMEMB_DATA_OP_SDMA,
+    enable_56bits_gva=False,
+    flags=0,
+    shm_fd=-1,
+    tag="",
+    tag_op_info="",
+) -> BigMemory
 ```
 
 |参数/返回值|含义|
@@ -211,6 +223,8 @@ def create2(id, local_dram_size, max_dram_size, local_hbm_size = 0, max_hbm_size
 |enable_56bits_gva|是否显式启用 56 位 GVA，bool 类型，默认 False。(注：如果`data_op_type`使用`device_urma`协议，必须启用`enable_56bits_gva`)|
 |flags|预留参数|
 |shm_fd|共享内存文件描述符，默认-1（不使用）|
+|tag|当前 rank 所属的 tag，默认空字符串并使用内部默认 tag；非空值只能包含字母、数字和下划线，长度不超过 30|
+|tag_op_info|tag 间的数据通路配置，默认空字符串；格式为 `tag1:OP_TYPE:tag2`，多条配置使用逗号分隔|
 |返回值|BigMemory对象|
 
 ### 3. 获取当前rank的id
