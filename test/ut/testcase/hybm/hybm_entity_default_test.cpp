@@ -148,6 +148,14 @@ constexpr int32_t TEST_DEVICE_ID_EXPORT_ENTITY_SKIP_SEGMENT = 3107;
 constexpr int32_t TEST_DEVICE_ID_EXPORT_SLICE_TRANSPORT_MGR_NULL = 3108;
 constexpr int32_t TEST_DEVICE_ID_IMPORT_TRANSPORT_FAIL = 3109;
 constexpr int32_t TEST_DEVICE_ID_IMPORT_SLICE_DESC_NULL = 3110;
+
+ock::mf::MemSegmentOptions g_createdSegmentOptions{};
+
+ock::mf::MemSegmentPtr CaptureSegmentOptions(const ock::mf::MemSegmentOptions &options, int entityId)
+{
+    g_createdSegmentOptions = options;
+    return std::make_shared<ock::mf::HybmVmmBasedSegment>(options, entityId);
+}
 } // namespace
 
 class HybmEntityDefaultTest : public testing::Test {
@@ -1583,7 +1591,48 @@ TEST_F(HybmEntityDefaultTest, CheckOptions_ShmFlagWithValidFd)
     EXPECT_EQ(ret, BM_OK);
 }
 
-// ==================== CanReachDataOperators 测试 ====================
+// ==================== InitSegment tests ====================
+
+TEST_F(HybmEntityDefaultTest, InitHbmSegment_SharedForMixedSdmaAndDeviceRdma)
+{
+    union {
+        ock::mf::MemSegmentPtr (*func)(const ock::mf::MemSegmentOptions &, int);
+    } create{};
+    create.func = &ock::mf::MemSegment::Create;
+    MOCKER(create.func).stubs().will(invoke(CaptureSegmentOptions));
+
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_MULTI);
+    entity.options_.maxHBMSize = TEST_PAGE_SIZE;
+    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA);
+    EXPECT_EQ(entity.InitHbmSegment(), BM_OK);
+    EXPECT_TRUE(g_createdSegmentOptions.shared);
+
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    EXPECT_EQ(entity.InitHbmSegment(), BM_OK);
+    EXPECT_FALSE(g_createdSegmentOptions.shared);
+}
+
+TEST_F(HybmEntityDefaultTest, InitDramSegment_SharedForMixedSdmaAndDeviceRdma)
+{
+    union {
+        ock::mf::MemSegmentPtr (*func)(const ock::mf::MemSegmentOptions &, int);
+    } create{};
+    create.func = &ock::mf::MemSegment::Create;
+    MOCKER(create.func).stubs().will(invoke(CaptureSegmentOptions));
+
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_MULTI);
+    entity.options_.maxDRAMSize = TEST_PAGE_SIZE;
+    entity.options_.scene = HYBM_SCENE_TRANS;
+    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA);
+    EXPECT_EQ(entity.InitDramSegment(), BM_OK);
+    EXPECT_TRUE(g_createdSegmentOptions.shared);
+
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    EXPECT_EQ(entity.InitDramSegment(), BM_OK);
+    EXPECT_FALSE(g_createdSegmentOptions.shared);
+}
+
+// ==================== CanReachDataOperators tests ====================
 
 TEST_F(HybmEntityDefaultTest, CanReachDataOperators_WithSdmaNoSegment)
 {
