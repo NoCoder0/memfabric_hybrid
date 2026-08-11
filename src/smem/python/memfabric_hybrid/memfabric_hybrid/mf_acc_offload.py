@@ -16,6 +16,7 @@ from _pymf_acc_offload import offload
 
 sparse_copy_impl = offload.sparse_copy
 sparse_copy_urma_impl = offload.sparse_copy_urma
+npu_kvcache_scatter_copy_impl = offload.npu_kvcache_scatter_copy
 group_pack_copy_impl = offload.group_pack_copy
 
 
@@ -44,6 +45,32 @@ def sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, list_num, device):
     return sparse_copy_urma_impl(
         src_ptrs.data_ptr(), dst_ptrs.data_ptr(), len_ptrs.data_ptr(), int(list_num), device.index
     )
+
+
+def npu_kvcache_scatter_copy(
+    hbm_k_rope,
+    hbm_kv_cache,
+    dram_k_rope,
+    dram_kv_cache,
+    hbm_block_table,
+    dram_block_table,
+    offload_slots,
+    src_token_ids,
+    dst_slots,
+    copy_counts,
+    ready_flag=None,
+    layer_id=0,
+):
+    del dram_k_rope, dram_kv_cache
+    ret = npu_kvcache_scatter_copy_impl(
+        hbm_k_rope.data_ptr(), hbm_kv_cache.data_ptr(), hbm_block_table.data_ptr(), dram_block_table.data_ptr(),
+        offload_slots.data_ptr(), src_token_ids.data_ptr(), dst_slots.data_ptr(), copy_counts.data_ptr(),
+        0 if ready_flag is None else ready_flag.data_ptr(), hbm_k_rope.shape[0], hbm_block_table.shape[1],
+        dram_block_table.shape[1], dram_block_table.shape[0], copy_counts.shape[0], int(layer_id),
+        hbm_k_rope.device.index,
+    )
+    if ret != 0:
+        raise RuntimeError(f"npu_kvcache_scatter_copy failed: ret={ret}")
 
 
 def group_pack_copy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, packedGroupList, deviceId):

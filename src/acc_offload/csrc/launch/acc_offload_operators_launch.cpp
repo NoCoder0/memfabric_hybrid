@@ -28,12 +28,14 @@
 #include "acc_offload_define.h"
 #include "acc_offload_operators.h"
 #include "hybm_batch_copy.h"
+#include "hybm_kvcache_scatter_copy.h"
 #include "hybm_def.h"
 
 namespace {
 constexpr char kKernelJsonSuffix[] = "/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json";
 constexpr char kDefaultAscendPath[] = "/usr/local/Ascend/cann";
 constexpr char kBatchCopyFunctionName[] = "HybmBatchCopy";
+constexpr char kKvcacheScatterCopyFunctionName[] = "HybmKvcacheScatterCopy";
 constexpr uint32_t kKernelBlockDim = 1U;
 constexpr uint16_t kKernelTimeoutSeconds = 120U;
 
@@ -44,6 +46,7 @@ struct BatchCopyKernelCache {
 
 std::mutex gBatchCopyKernelMutex;
 std::unordered_map<uint16_t, BatchCopyKernelCache> gBatchCopyKernelCache;
+std::unordered_map<uint16_t, BatchCopyKernelCache> gKvcacheScatterCopyKernelCache;
 
 std::string GetKernelJsonPath()
 {
@@ -66,7 +69,7 @@ int32_t ResolveKernelJsonPath(std::string &path)
     return BM_OK;
 }
 
-int32_t LoadBatchCopyFunction(const std::string &jsonPath, BatchCopyKernelCache &cache)
+int32_t LoadKernelFunction(const std::string &jsonPath, const char *functionName, BatchCopyKernelCache &cache)
 {
     aclrtBinaryLoadOption loadOption{};
     loadOption.type = ACL_RT_BINARY_LOAD_OPT_CPU_KERNEL_MODE;
@@ -82,20 +85,21 @@ int32_t LoadBatchCopyFunction(const std::string &jsonPath, BatchCopyKernelCache 
         return BM_DL_FUNCTION_FAILED;
     }
 
-    ret = aclrtBinaryGetFunction(cache.binary, kBatchCopyFunctionName, &cache.function);
+    ret = aclrtBinaryGetFunction(cache.binary, functionName, &cache.function);
     if (ret != ACL_SUCCESS || cache.function == nullptr) {
-        OFFLOAD_LOG_ERROR("aclrtBinaryGetFunction failed, function: " << kBatchCopyFunctionName << " ret: " << ret);
+        OFFLOAD_LOG_ERROR("aclrtBinaryGetFunction failed, function: " << functionName << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
 }
 
-int32_t GetBatchCopyFunction(uint16_t deviceId, aclrtFuncHandle &function)
+int32_t GetKernelFunction(uint16_t deviceId, const char *functionName,
+                          std::unordered_map<uint16_t, BatchCopyKernelCache> &cacheMap, aclrtFuncHandle &function)
 {
     try {
         std::lock_guard<std::mutex> guard(gBatchCopyKernelMutex);
-        const auto cached = gBatchCopyKernelCache.find(deviceId);
-        if (cached != gBatchCopyKernelCache.end()) {
+        const auto cached = cacheMap.find(deviceId);
+        if (cached != cacheMap.end()) {
             function = cached->second.function;
             return BM_OK;
         }
@@ -106,11 +110,11 @@ int32_t GetBatchCopyFunction(uint16_t deviceId, aclrtFuncHandle &function)
             return ret;
         }
         BatchCopyKernelCache cache;
-        ret = LoadBatchCopyFunction(jsonPath, cache);
+        ret = LoadKernelFunction(jsonPath, functionName, cache);
         if (ret != BM_OK) {
             return ret;
         }
-        const auto inserted = gBatchCopyKernelCache.emplace(deviceId, cache);
+        const auto inserted = cacheMap.emplace(deviceId, cache);
         if (!inserted.second) {
             function = inserted.first->second.function;
             return BM_OK;
@@ -118,16 +122,28 @@ int32_t GetBatchCopyFunction(uint16_t deviceId, aclrtFuncHandle &function)
         function = cache.function;
         return BM_OK;
     } catch (const std::bad_alloc &) {
-        OFFLOAD_LOG_ERROR("allocate AICPU kernel cache failed, deviceId: " << deviceId);
+        OFFLOAD_LOG_ERROR("allocate AICPU kernel cache failed, deviceId: " << deviceId
+                                                                           << " function: " << functionName);
         return BM_MALLOC_FAILED;
     } catch (const std::exception &exception) {
-        OFFLOAD_LOG_ERROR("load AICPU kernel raised exception, deviceId: " << deviceId
+        OFFLOAD_LOG_ERROR("load AICPU kernel raised exception, deviceId: " << deviceId << " function: " << functionName
                                                                            << " error: " << exception.what());
         return BM_DL_FUNCTION_FAILED;
     } catch (...) {
-        OFFLOAD_LOG_ERROR("load AICPU kernel raised unknown exception, deviceId: " << deviceId);
+        OFFLOAD_LOG_ERROR("load AICPU kernel raised unknown exception, deviceId: " << deviceId
+                                                                                   << " function: " << functionName);
         return BM_DL_FUNCTION_FAILED;
     }
+}
+
+int32_t GetBatchCopyFunction(uint16_t deviceId, aclrtFuncHandle &function)
+{
+    return GetKernelFunction(deviceId, kBatchCopyFunctionName, gBatchCopyKernelCache, function);
+}
+
+int32_t GetKvcacheScatterCopyFunction(uint16_t deviceId, aclrtFuncHandle &function)
+{
+    return GetKernelFunction(deviceId, kKvcacheScatterCopyFunctionName, gKvcacheScatterCopyKernelCache, function);
 }
 
 int32_t PrepareBatchCopyKernelArgs(aclrtFuncHandle function, uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtrs,
@@ -217,6 +233,82 @@ int32_t LaunchSparseCopyUrma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtr
         return BM_ERROR;
     }
 }
+
+int32_t PrepareKvcacheScatterCopyArgs(aclrtFuncHandle function, HybmKvcacheScatterCopyParam param,
+                                      aclrtArgsHandle &argsHandle)
+{
+    argsHandle = nullptr;
+    auto ret = aclrtKernelArgsInit(function, &argsHandle);
+    if (ret != ACL_SUCCESS) {
+        OFFLOAD_LOG_ERROR("aclrtKernelArgsInit failed for kvcache scatter_copy, batchSize: " << param.batchSize
+                                                                                             << " ret: " << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    aclrtParamHandle paramHandle = nullptr;
+    ret = aclrtKernelArgsAppend(argsHandle, &param, sizeof(param), &paramHandle);
+    if (ret != ACL_SUCCESS) {
+        OFFLOAD_LOG_ERROR("aclrtKernelArgsAppend failed for kvcache scatter_copy, batchSize: " << param.batchSize
+                                                                                               << " ret: " << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    ret = aclrtKernelArgsFinalize(argsHandle);
+    if (ret != ACL_SUCCESS) {
+        OFFLOAD_LOG_ERROR("aclrtKernelArgsFinalize failed for kvcache scatter_copy, batchSize: " << param.batchSize
+                                                                                                 << " ret: " << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    return BM_OK;
+}
+
+int32_t LaunchKvcacheScatterCopyKernel(aclrtFuncHandle function, aclrtStream stream,
+                                       const HybmKvcacheScatterCopyParam &param, uint16_t deviceId)
+{
+    aclrtArgsHandle argsHandle = nullptr;
+    auto ret = PrepareKvcacheScatterCopyArgs(function, param, argsHandle);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    aclrtLaunchKernelAttr attr{};
+    attr.id = ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
+    attr.value.timeout = kKernelTimeoutSeconds;
+    aclrtLaunchKernelCfg config{&attr, 1U};
+    ret = aclrtLaunchKernelWithConfig(function, kKernelBlockDim, stream, &config, argsHandle, nullptr);
+    if (ret != ACL_SUCCESS) {
+        OFFLOAD_LOG_ERROR("launch kvcache scatter_copy failed, deviceId: " << deviceId << " batchSize: "
+                                                                           << param.batchSize << " ret: " << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    ret = aclrtSynchronizeStream(stream);
+    if (ret != ACL_SUCCESS) {
+        OFFLOAD_LOG_ERROR("synchronize kvcache scatter_copy failed, deviceId: " << deviceId << " ret: " << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    return BM_OK;
+}
+
+int32_t LaunchKvcacheScatterCopy(const HybmKvcacheScatterCopyParam &param, uint16_t deviceId)
+{
+    try {
+        c10_npu::OptionalNPUGuard npuGuard;
+        npuGuard.set_index(deviceId);
+        auto stream = c10_npu::getCurrentNPUStream(deviceId);
+        aclrtStream npuStream = stream.stream(false);
+        if (npuStream == nullptr) {
+            OFFLOAD_LOG_ERROR("current NPU stream is null for kvcache scatter_copy, deviceId: " << deviceId);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        aclrtFuncHandle function = nullptr;
+        const auto ret = GetKvcacheScatterCopyFunction(deviceId, function);
+        return ret == BM_OK ? LaunchKvcacheScatterCopyKernel(function, npuStream, param, deviceId) : ret;
+    } catch (const std::exception &exception) {
+        OFFLOAD_LOG_ERROR("kvcache scatter_copy raised exception, deviceId: " << deviceId
+                                                                              << " error: " << exception.what());
+        return BM_ERROR;
+    } catch (...) {
+        OFFLOAD_LOG_ERROR("kvcache scatter_copy raised unknown exception, deviceId: " << deviceId);
+        return BM_ERROR;
+    }
+}
 } // namespace
 
 extern "C" {
@@ -263,5 +355,30 @@ int32_t AccOffloadSparseCopyUrma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t le
         return BM_INVALID_PARAM;
     }
     return LaunchSparseCopyUrma(srcPtrs, dstPtrs, lenPtrs, listNum, devIdx);
+}
+
+int32_t AccOffloadKvcacheScatterCopy(uint64_t hbmKpe, uint64_t hbmCkv, uint64_t hbmBlockTable, uint64_t dramBlockTable,
+                                     uint64_t offloadSlots, uint64_t srcTokenIds, uint64_t dstSlots,
+                                     uint64_t copyCounts, uint64_t readyFlag, uint64_t hbmBlockCount,
+                                     uint64_t hbmMaxBlocks, uint64_t dramMaxBlocks, uint64_t dramBlockTableRows,
+                                     uint64_t batchSize, int64_t layerId, uint16_t devIdx)
+{
+    HybmKvcacheScatterCopyParam param{};
+    param.hbmKpe = reinterpret_cast<void *>(hbmKpe);
+    param.hbmCkv = reinterpret_cast<void *>(hbmCkv);
+    param.hbmBlockTable = reinterpret_cast<const int32_t *>(hbmBlockTable);
+    param.dramBlockTable = reinterpret_cast<const uint64_t *>(dramBlockTable);
+    param.offloadSlots = reinterpret_cast<const int32_t *>(offloadSlots);
+    param.srcTokenIds = reinterpret_cast<const int32_t *>(srcTokenIds);
+    param.dstSlots = reinterpret_cast<const int32_t *>(dstSlots);
+    param.copyCounts = reinterpret_cast<const int32_t *>(copyCounts);
+    param.readyFlag = reinterpret_cast<int32_t *>(readyFlag);
+    param.hbmBlockCount = hbmBlockCount;
+    param.hbmMaxBlocks = hbmMaxBlocks;
+    param.dramMaxBlocks = dramMaxBlocks;
+    param.dramBlockTableRows = dramBlockTableRows;
+    param.batchSize = batchSize;
+    param.layerId = layerId;
+    return LaunchKvcacheScatterCopy(param, devIdx);
 }
 }

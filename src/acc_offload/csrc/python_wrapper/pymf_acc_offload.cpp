@@ -58,6 +58,12 @@ void DefineAccOffloadApi(py::module_ &m)
     m.def("sparse_copy_urma", &offload_sparse_copy_urma, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("listNum"), py::arg("deviceId"));
 
+    m.def("npu_kvcache_scatter_copy", &offload_kvcache_scatter_copy, py::call_guard<py::gil_scoped_release>(),
+          py::arg("hbmKpe"), py::arg("hbmCkv"), py::arg("hbmBlockTable"), py::arg("dramBlockTable"),
+          py::arg("offloadSlots"), py::arg("srcTokenIds"), py::arg("dstSlots"), py::arg("copyCounts"),
+          py::arg("readyFlag"), py::arg("hbmBlockCount"), py::arg("hbmMaxBlocks"), py::arg("dramMaxBlocks"),
+          py::arg("dramBlockTableRows"), py::arg("batchSize"), py::arg("layerId"), py::arg("deviceId"));
+
     m.def("group_pack_copy", &offload_group_pack_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("numLocalExpertPtr"), py::arg("groupList"),
           py::arg("packedGroupList"), py::arg("deviceId"));

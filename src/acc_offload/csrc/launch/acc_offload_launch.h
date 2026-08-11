@@ -25,6 +25,10 @@ using AccOffloadGroupPackCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *,
 
 using AccOffloadSparseCopyUrmaFunc = int32_t (*)(uint64_t, uint64_t, uint64_t, uint32_t, uint16_t);
 
+using AccOffloadKvcacheScatterCopyFunc = int32_t (*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                     uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t,
+                                                     uint64_t, uint64_t, int64_t, uint16_t);
+
 class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
@@ -62,6 +66,22 @@ public:
         return pAccOffloadSparseCopyUrma(srcPtrs, dstPtrs, lenPtrs, listNum, deviceId);
     }
 
+    static inline int32_t AccOffloadKvcacheScatterCopy(uint64_t hbmKpe, uint64_t hbmCkv, uint64_t hbmBlockTable,
+                                                       uint64_t dramBlockTable, uint64_t offloadSlots,
+                                                       uint64_t srcTokenIds, uint64_t dstSlots, uint64_t copyCounts,
+                                                       uint64_t readyFlag, uint64_t hbmBlockCount,
+                                                       uint64_t hbmMaxBlocks, uint64_t dramMaxBlocks,
+                                                       uint64_t dramBlockTableRows, uint64_t batchSize, int64_t layerId,
+                                                       uint16_t deviceId)
+    {
+        if (pAccOffloadKvcacheScatterCopy == nullptr) {
+            return OFFLOAD_UNLOAD;
+        }
+        return pAccOffloadKvcacheScatterCopy(hbmKpe, hbmCkv, hbmBlockTable, dramBlockTable, offloadSlots, srcTokenIds,
+                                             dstSlots, copyCounts, readyFlag, hbmBlockCount, hbmMaxBlocks,
+                                             dramMaxBlocks, dramBlockTableRows, batchSize, layerId, deviceId);
+    }
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -71,6 +91,7 @@ private:
     static AccOffloadSparseCopyFunc pAccOffloadSparseCopy;
     static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
     static AccOffloadSparseCopyUrmaFunc pAccOffloadSparseCopyUrma;
+    static AccOffloadKvcacheScatterCopyFunc pAccOffloadKvcacheScatterCopy;
 };
 
 } // namespace offload

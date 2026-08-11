@@ -89,6 +89,39 @@ OFFLOAD_API int32_t offload_sparse_copy_urma(uint64_t srcPtrs, uint64_t dstPtrs,
     return ret;
 }
 
+OFFLOAD_API int32_t offload_kvcache_scatter_copy(uint64_t hbmKpe, uint64_t hbmCkv, uint64_t hbmBlockTable,
+                                                 uint64_t dramBlockTable, uint64_t offloadSlots, uint64_t srcTokenIds,
+                                                 uint64_t dstSlots, uint64_t copyCounts, uint64_t readyFlag,
+                                                 uint64_t hbmBlockCount, uint64_t hbmMaxBlocks, uint64_t dramMaxBlocks,
+                                                 uint64_t dramBlockTableRows, uint64_t batchSize, int64_t layerId,
+                                                 uint16_t deviceId)
+{
+    if (hbmKpe == 0U || hbmCkv == 0U || hbmBlockTable == 0U || dramBlockTable == 0U || offloadSlots == 0U ||
+        srcTokenIds == 0U || dstSlots == 0U || copyCounts == 0U || hbmBlockCount == 0U || hbmMaxBlocks == 0U ||
+        dramMaxBlocks == 0U || dramBlockTableRows == 0U || batchSize == 0U || layerId < 0) {
+        OFFLOAD_LOG_ERROR("invalid kvcache scatter_copy arguments, deviceId: " << deviceId << " batchSize: "
+                                                                               << batchSize << " layerId: " << layerId);
+        return BM_INVALID_PARAM;
+    }
+    const auto loadRet = AccOffloadLaunchApi::TryLoadLibrary();
+    if (loadRet != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("kvcache scatter_copy launcher load failed, deviceId: " << deviceId << " ret: " << loadRet);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    const auto ret = AccOffloadLaunchApi::AccOffloadKvcacheScatterCopy(
+        hbmKpe, hbmCkv, hbmBlockTable, dramBlockTable, offloadSlots, srcTokenIds, dstSlots, copyCounts, readyFlag,
+        hbmBlockCount, hbmMaxBlocks, dramMaxBlocks, dramBlockTableRows, batchSize, layerId, deviceId);
+    if (ret == OFFLOAD_UNLOAD) {
+        OFFLOAD_LOG_ERROR("kvcache scatter_copy launcher symbol is unavailable, deviceId: " << deviceId);
+        return BM_NOT_INITIALIZED;
+    }
+    if (ret != BM_OK) {
+        OFFLOAD_LOG_ERROR("kvcache scatter_copy failed, deviceId: " << deviceId << " batchSize: " << batchSize
+                                                                    << " layerId: " << layerId << " ret: " << ret);
+    }
+    return ret;
+}
+
 OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr,
                                             uint64_t numLocalExpertPtr, uint64_t groupListPtr,
                                             uint64_t packedGroupListPtr, uint16_t deviceId)

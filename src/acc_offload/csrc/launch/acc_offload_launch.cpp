@@ -27,6 +27,8 @@ AccOffloadGroupPackCopyFunc AccOffloadLaunchApi::pAccOffloadGroupPackCopy = null
 
 AccOffloadSparseCopyUrmaFunc AccOffloadLaunchApi::pAccOffloadSparseCopyUrma = nullptr;
 
+AccOffloadKvcacheScatterCopyFunc AccOffloadLaunchApi::pAccOffloadKvcacheScatterCopy = nullptr;
+
 int32_t AccOffloadLaunchApi::TryLoadLibrary()
 {
     std::unique_lock<std::mutex> guard(gMutex);
@@ -64,6 +66,9 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
     DL_LOAD_SYM_OPTIONAL(pAccOffloadSparseCopyUrma, AccOffloadSparseCopyUrmaFunc, libHandle,
                          "AccOffloadSparseCopyUrma");
 
+    DL_LOAD_SYM_OPTIONAL(pAccOffloadKvcacheScatterCopy, AccOffloadKvcacheScatterCopyFunc, libHandle,
+                         "AccOffloadKvcacheScatterCopy");
+
     gLoaded = true;
     return OFFLOAD_OK;
 }
@@ -80,6 +85,8 @@ void AccOffloadLaunchApi::CleanupLibrary()
     pAccOffloadGroupPackCopy = nullptr;
 
     pAccOffloadSparseCopyUrma = nullptr;
+
+    pAccOffloadKvcacheScatterCopy = nullptr;
 
     if (libHandle != nullptr) {
         dlclose(libHandle);

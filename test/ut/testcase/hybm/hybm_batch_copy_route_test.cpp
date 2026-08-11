@@ -15,6 +15,7 @@
 #include "hybm_batch_copy.h"
 #include "hybm_batch_copy_route.h"
 #include "hybm_define.h"
+#include "hybm_kvcache_scatter_copy.h"
 
 using namespace ock::mf;
 
@@ -64,6 +65,15 @@ TEST(HybmBatchCopyRouteTest, OperatorAbiContainsOnlyFourBusinessFields)
     EXPECT_EQ(offsetof(HybmBatchCopyParam, src_buf_addr_list), 0x10U);
     EXPECT_EQ(offsetof(HybmBatchCopyParam, len_list), 0x18U);
     EXPECT_EQ(sizeof(HybmBatchCopyParam), 0x20U);
+}
+
+TEST(HybmBatchCopyRouteTest, KvcacheScatterCopyOperatorAbiIsStable)
+{
+    EXPECT_EQ(offsetof(HybmKvcacheScatterCopyParam, offloadSlots), 0x20U);
+    EXPECT_EQ(offsetof(HybmKvcacheScatterCopyParam, readyFlag), 0x40U);
+    EXPECT_EQ(offsetof(HybmKvcacheScatterCopyParam, dramBlockTableRows), 0x60U);
+    EXPECT_EQ(offsetof(HybmKvcacheScatterCopyParam, layerId), 0x70U);
+    EXPECT_EQ(sizeof(HybmKvcacheScatterCopyParam), 0x78U);
 }
 
 TEST(HybmBatchCopyRouteTest, ControlRegionPrecedesExistingDeviceMetadata)

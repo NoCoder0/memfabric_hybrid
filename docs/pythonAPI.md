@@ -711,6 +711,45 @@ def sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, list_num, device) -> int
 |device|执行拷贝的 `torch.device`|
 |返回值|同步完成返回0，其他为错误码；提交后的失败可能已写入部分目的地址|
 
+#### offload.npu_kvcache_scatter_copy
+
+根据 batch block table 将远端 KV cache token scatter 到本地 HBM。算子沿用 `sparse_copy_urma` 的 URMA route
+和同步完成语义，不要求调用 `offload.initialize()`。`dram_k_rope` 和 `dram_kv_cache` 仅保留用于接口兼容，远端地址
+由 `dram_block_table` 提供。
+
+```python
+offload.npu_kvcache_scatter_copy(
+    hbm_k_rope,
+    hbm_kv_cache,
+    dram_k_rope,
+    dram_kv_cache,
+    hbm_block_table,
+    dram_block_table,
+    offload_slots,
+    src_token_ids,
+    dst_slots,
+    copy_counts,
+    ready_flag=None,
+    layer_id=0,
+) -> None
+```
+
+|参数/返回值|含义|
+|-|-|
+|hbm_k_rope|本地 `bf16/fp16[S_BLOCKS, 128, 64]` tensor，输入/输出|
+|hbm_kv_cache|本地 `bf16/fp16[S_BLOCKS, 128, 512]` tensor，输入/输出|
+|dram_k_rope|兼容参数，`bf16/fp16[F_BLOCKS, 128, 64]`|
+|dram_kv_cache|兼容参数，`bf16/fp16[F_BLOCKS, 128, 512]`|
+|hbm_block_table|`int32[B, S_MAX_BLOCKS]`|
+|dram_block_table|`uint64[OFFLOAD_SLOTS, F_MAX_BLOCKS]`，元素为远端 block 第0层 GVA|
+|offload_slots|`int32[B]`，batch 到 `dram_block_table` 行的映射|
+|src_token_ids|`int32[B, 1, 16384]`|
+|dst_slots|`int32[B, 1, 16384]`|
+|copy_counts|`int32[B]`，每个 batch 的有效拷贝数量|
+|ready_flag|可选 `int32[1]`，值变为1后开始拷贝|
+|layer_id|待拷贝层，默认0|
+|返回值|成功返回 `None`；参数错误抛出 `TypeError`/`ValueError`，URMA 调用失败抛出 `RuntimeError`|
+
 ### 4. 常用类型
 
 #### Scene枚举类

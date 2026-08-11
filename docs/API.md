@@ -1174,6 +1174,21 @@ int32_t offload_sparse_copy_urma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t le
 |deviceId|启动 AICPU 的本地 device id|
 |返回值|`BM_OK` 表示同步完成；参数、route、kernel、HCOMM 或 completion 失败返回对应错误码|
 
+#### offload_kvcache_scatter_copy
+
+按 block table 将远端 KV cache token scatter 到本地 HBM。该接口复用 `offload_sparse_copy_urma` 的 URMA
+route 和同步完成语义；各地址均为对应 NPU tensor 的 `data_ptr()`。
+
+```c
+int32_t offload_kvcache_scatter_copy(
+    uint64_t hbmKpe, uint64_t hbmCkv, uint64_t hbmBlockTable, uint64_t dramBlockTable,
+    uint64_t offloadSlots, uint64_t srcTokenIds, uint64_t dstSlots, uint64_t copyCounts,
+    uint64_t readyFlag, uint64_t hbmBlockCount, uint64_t hbmMaxBlocks, uint64_t dramMaxBlocks,
+    uint64_t dramBlockTableRows, uint64_t batchSize, int64_t layerId, uint16_t deviceId);
+```
+
+成功返回 `BM_OK`，参数、route、kernel 或 URMA 拷贝失败时返回对应错误码。
+
 ## 环境变量
 
 |环境变量|含义|
