@@ -23,10 +23,10 @@ ptracer是否开启受编译宏ENABLE_PTRACER控制，使用build_and_pack_run.s
 以下是一次测试中ptracer输出的一个周期内的打点数据示例。
 
 ```text
-TIME                   NAME                                    BEGIN          GOOD_END       BAD_END        ON_FLY         MIN(us)        MAX(us)        AVG(us)        TOTAL(us)
-2026-01-05 14:57:03    TP_HYBM_RDMA_LH_TO_GD                   117            117            0              0              120.830        16193.220      713.658        83498.010
-2026-01-05 14:57:03    TP_MMC_LOCAL_BATCH_PUT                  30             30             0              0              124.620        16400.930      3353.871       100616.120
-2026-01-05 14:57:03    TP_ACC_SEND_ALLOC                       2              2              0              0              564.440        602.770        583.605        1167.210
+TIME                   NAME                                    BEGIN          GOOD_END       BAD_END        ON_FLY         P50(us)        P99(us)        P999(us)       AVG(us)        MAX(us)
+2026-01-05 14:57:03    TP_HYBM_RDMA_LH_TO_GD                   117            117            0              0              120.830        8127.460       15984.310      713.658        16193.220
+2026-01-05 14:57:03    TP_MMC_LOCAL_BATCH_PUT                  30             30             0              0              124.620        9218.540       16312.450      3353.871       16400.930
+2026-01-05 14:57:03    TP_ACC_SEND_ALLOC                       2              2              0              0              564.440        598.120        602.310        583.605        602.770
 ```
 
 ## 字段描述
@@ -39,7 +39,8 @@ TIME                   NAME                                    BEGIN          GO
 | GOOD_END  | 执行成功次数        |
 | BAD_END   | 执行失败次数        |
 | ON_FLY    | 执行中的数量        |
-| MIN(us)   | 最低耗时（微秒）      |
-| MAX(us)   | 最高耗时（微秒）      |
+| P50(us)   | P50 分位耗时（微秒）  |
+| P99(us)   | P99 分位耗时（微秒）  |
+| P999(us)  | P999 分位耗时（微秒） |
 | AVG(us)   | 平均耗时（微秒）      |
-| TOTAL(us) | 总计耗时（微秒）      |
+| MAX(us)   | 最高耗时（微秒）      |
