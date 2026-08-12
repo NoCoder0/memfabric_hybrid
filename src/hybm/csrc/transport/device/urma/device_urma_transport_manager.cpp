@@ -1102,6 +1102,14 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked localEndpoint_ is null, peer: " << peerRank);
         return BM_NOT_INITIALIZED;
     }
+    const auto endpointLoc = state.remoteEndpointDesc.loc.locType;
+    if (endpointLoc != ENDPOINT_LOC_TYPE_HOST && endpointLoc != ENDPOINT_LOC_TYPE_DEVICE) {
+        BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked unsupported endpoint location, peer: "
+                     << peerRank << " locType: " << endpointLoc);
+        return BM_INVALID_PARAM;
+    }
+    const bool hostPeer = endpointLoc == ENDPOINT_LOC_TYPE_HOST;
+    const auto expectedRemoteType = hostPeer ? UrmaMemoryType::HOST_DRAM : UrmaMemoryType::DEVICE_HBM;
 
     // Collect newly imported registrations in a local vector;
     // commit to state.imports only after all keys succeed.
@@ -1174,17 +1182,14 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         const uint64_t remoteSize = exportDesc.size;
         const uint64_t memTag = exportDesc.memTag;
         const uint32_t memDescLen = sizeof(UrmaExportDesc) + exportDesc.hcommDescLen;
-
-        if (state.remoteEndpointDesc.loc.locType == ENDPOINT_LOC_TYPE_HOST &&
-            (exportDesc.memoryType != UrmaMemoryType::HOST_DRAM || exportDesc.addr != remoteAddr)) {
-            BM_LOG_ERROR("device_urma Host BatchCopy import GVA mismatch, peer: "
-                         << peerRank << " memTag: " << memTag << " keyAddr: 0x" << std::hex << remoteAddr
-                         << " descAddr: 0x" << exportDesc.addr << std::dec << " descType: " << exportDesc.memoryType);
+        if (exportDesc.memoryType != expectedRemoteType || (hostPeer && exportDesc.addr != remoteAddr)) {
+            BM_LOG_ERROR("device_urma import export descriptor mismatch, peer: "
+                         << peerRank << " memTag: " << memTag << " endpointLoc: " << endpointLoc << " keyAddr: 0x"
+                         << std::hex << remoteAddr << " descAddr: 0x" << exportDesc.addr << std::dec
+                         << " descType: " << exportDesc.memoryType << " expectedType: " << expectedRemoteType);
             rollbackNewImports();
             return BM_INVALID_PARAM;
         }
-
-        // Validate total payload fits within the key data area
         if (memDescLen + exportDesc.devTransFlagDescLen > DEVICE_URMA_EXPORT_KEY_DATA_BYTES) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked total payload exceeds key capacity, "
                          << "peer: " << peerRank << " memDescLen: " << memDescLen
@@ -1221,12 +1226,13 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
             return ret;
         }
 
-        if (state.remoteEndpointDesc.loc.locType == ENDPOINT_LOC_TYPE_HOST &&
-            (view.type != UrmaMemoryType::HOST_DRAM || view.addr != remoteAddr || view.size < remoteSize)) {
-            BM_LOG_ERROR("device_urma Host BatchCopy import view mismatch, peer: "
-                         << peerRank << " memTag: " << memTag << " keyAddr: 0x" << std::hex << remoteAddr
-                         << " viewAddr: 0x" << view.addr << std::dec << " keySize: " << remoteSize
-                         << " viewSize: " << view.size << " viewType: " << view.type);
+        if (view.type != UrmaMemoryType::DEVICE_HBM || (hostPeer && view.addr != remoteAddr) ||
+            view.size < remoteSize) {
+            BM_LOG_ERROR("device_urma import local view mismatch, peer: "
+                         << peerRank << " memTag: " << memTag << " endpointLoc: " << endpointLoc << " keyAddr: 0x"
+                         << std::hex << remoteAddr << " viewAddr: 0x" << view.addr << std::dec
+                         << " keySize: " << remoteSize << " viewSize: " << view.size << " viewType: " << view.type
+                         << " expectedViewType: " << UrmaMemoryType::DEVICE_HBM);
             (void)manager_.HcommMemUnimport(localEndpoint_, raw, memDescLen);
             rollbackNewImports();
             return BM_INVALID_PARAM;
@@ -1237,6 +1243,7 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         remote.addr = remoteAddr;
         remote.size = remoteSize;
         remote.memTag = memTag;
+        remote.exportedMemoryType = exportDesc.memoryType;
         remote.descBytes.assign(raw, raw + memDescLen);
         remote.view = view;
         newImports.emplace_back(std::move(remote));
@@ -1309,8 +1316,9 @@ Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourceLocked(uint32_t peer
                                                                    uint32_t endpointLocType,
                                                                    BatchCopyRouteSource &source) const
 {
-    const auto expectedType =
+    const auto expectedRemoteType =
         endpointLocType == ENDPOINT_LOC_TYPE_HOST ? UrmaMemoryType::HOST_DRAM : UrmaMemoryType::DEVICE_HBM;
+    constexpr auto expectedLocalViewType = UrmaMemoryType::DEVICE_HBM;
     auto ret = ValidateBatchCopyPeerLocked(peerRank, state, endpointLocType);
     if (ret != BM_OK) {
         return ret;
@@ -1326,10 +1334,11 @@ Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourceLocked(uint32_t peer
         for (const auto &registration : state.imports) {
             uint64_t gvaEnd = 0;
             uint64_t hcommEnd = 0;
-            const UrmaCommMem gvaMem{registration.addr, registration.size, expectedType};
-            const UrmaCommMem hcommMem{registration.view.addr, registration.size, expectedType};
+            const UrmaCommMem gvaMem{registration.addr, registration.size, registration.exportedMemoryType};
+            const UrmaCommMem hcommMem{registration.view.addr, registration.size, registration.view.type};
             const bool invalid =
-                registration.view.type != expectedType || registration.view.addr == 0 ||
+                registration.exportedMemoryType != expectedRemoteType ||
+                registration.view.type != expectedLocalViewType || registration.view.addr == 0 ||
                 registration.view.size < registration.size || !GetRangeEnd(gvaMem, gvaEnd) ||
                 !GetRangeEnd(hcommMem, hcommEnd) ||
                 (endpointLocType == ENDPOINT_LOC_TYPE_HOST && registration.view.addr != registration.addr);
@@ -1338,7 +1347,9 @@ Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourceLocked(uint32_t peer
                              << peerRank << " memTag: " << registration.memTag << " gva: 0x" << std::hex
                              << registration.addr << " view: 0x" << registration.view.addr << std::dec
                              << " size: " << registration.size << " viewSize: " << registration.view.size
-                             << " viewType: " << registration.view.type);
+                             << " remoteType: " << registration.exportedMemoryType
+                             << " expectedRemoteType: " << expectedRemoteType << " viewType: " << registration.view.type
+                             << " expectedViewType: " << expectedLocalViewType);
                 return BM_INVALID_PARAM;
             }
             source.ranges.push_back({registration.addr, gvaEnd, registration.view.addr});

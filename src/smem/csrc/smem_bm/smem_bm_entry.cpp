@@ -94,7 +94,7 @@ Result SmemBmEntry::AllocDramMemBestEffort(hybm_entity_t entity, uint64_t totalS
 
 Result SmemBmEntry::AllocDramMem(hybm_entity_t entity, const hybm_options &options, uint32_t flags)
 {
-    if (options.maxDRAMSize == 0) {
+    if (options.hostVASpace == 0) {
         return SM_OK;
     }
     if (options.flags & SMEM_BM_FLAG_DRAM_BEST_EFFORT) {
@@ -164,7 +164,7 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
         entity_ = entity;
 
         hybm_exchange_info hbmSliceInfo{};
-        if (options.maxHBMSize > 0) {
+        if (options.deviceVASpace > 0) {
             slice = hybm_alloc_local_memory(entity, HYBM_MEM_TYPE_DEVICE, options.deviceVASpace, flags);
             if (slice == nullptr) {
                 SM_LOG_ERROR("alloc local device mem failed, size: " << options.deviceVASpace);

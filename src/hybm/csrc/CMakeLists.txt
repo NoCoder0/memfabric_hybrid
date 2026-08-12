@@ -35,6 +35,14 @@ include_directories(
 
 set(HYBM_PUBLIC_INCLUDE_DIR "${PROJECT_HYBM_SRC_BASE}/include")
 
+# Temporary validation-only option; remove with the local DRAM validation path after hardware sign-off.
+option(BUILD_LOCAL_DRAM_VALIDATION "Build temporary local DRAM validation path" OFF)
+if (BUILD_LOCAL_DRAM_VALIDATION AND NOT XPU_TYPE STREQUAL "NPU")
+    message(FATAL_ERROR
+            "BUILD_LOCAL_DRAM_VALIDATION=${BUILD_LOCAL_DRAM_VALIDATION} requires XPU_TYPE=NPU, got ${XPU_TYPE}")
+endif ()
+message(STATUS "BUILD_LOCAL_DRAM_VALIDATION = ${BUILD_LOCAL_DRAM_VALIDATION}")
+
 ## add files into src variables
 file(GLOB_RECURSE HYBMM_SRC_FILES
         ${PROJECT_HYBM_SRC_BASE}/csrc/*.cpp
@@ -49,6 +57,9 @@ list(APPEND HYBMM_SRC_FILES ${PROJECT_UTIL_SRC_BASE}/mf_fault_injection_point_re
 add_library(hybmm_objects OBJECT ${HYBMM_SRC_FILES})
 target_compile_options(hybmm_objects PRIVATE -fPIC)
 target_include_directories(hybmm_objects INTERFACE ${HYBM_PUBLIC_INCLUDE_DIR})
+if (BUILD_LOCAL_DRAM_VALIDATION)
+    target_compile_definitions(hybmm_objects PRIVATE MF_LOCAL_DRAM_VALIDATION)
+endif ()
 
 add_library(hybmm_static STATIC $<TARGET_OBJECTS:hybmm_objects> $<TARGET_OBJECTS:ptracer_object>)
 set_target_properties(hybmm_static PROPERTIES OUTPUT_NAME "mf_hybm_core")

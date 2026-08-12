@@ -25,10 +25,34 @@
 #include "hybm_def.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_logger.h"
+#include "local_dram_validation_role.h"
 #include "hybm_numa_util.h"
 #include "hybm_va_manager.h"
 
 using namespace ock::mf;
+
+namespace {
+bool NeedsHalHostRegistration(uint32_t dataOpType, uint32_t rankId)
+{
+    constexpr uint32_t halMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+    if ((dataOpType & halMask) != 0U) {
+        return true;
+    }
+#if !defined(NO_XPU)
+    if ((dataOpType & HYBM_DOP_TYPE_HOST_DEVICE_URMA) == 0U) {
+        return false;
+    }
+#if defined(MF_LOCAL_DRAM_VALIDATION)
+    return GetLocalDramValidationRole(rankId, dataOpType) != LocalDramValidationRole::HOST;
+#else
+    return true;
+#endif
+#else
+    (void)rankId;
+    return false;
+#endif
+}
+} // namespace
 
 Result HybmConnBasedSegment::ValidateOptions() noexcept
 {
@@ -385,14 +409,8 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         LvaShmReservePhysicalMemory(mapped, size);
     }
 
-    constexpr uint32_t HAL_REG_MASK = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
-                                      HYBM_DOP_TYPE_DEVICE_UBOE;
-#if !defined(NO_XPU)
-    constexpr uint32_t HAL_REG_MASK_EXT = HAL_REG_MASK | HYBM_DOP_TYPE_HOST_DEVICE_URMA;
-#else
-    constexpr uint32_t HAL_REG_MASK_EXT = HAL_REG_MASK;
-#endif
-    if (options_.dataOpType & HAL_REG_MASK_EXT) {
+    const bool needsHalRegistration = NeedsHalHostRegistration(options_.dataOpType, options_.rankId);
+    if (needsHalRegistration) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
         if (ret != BM_OK) {
             BM_LOG_ERROR("register host va failed, ret:" << ret);
@@ -404,7 +422,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
                                                      options_.rankId);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
-        if (options_.dataOpType & HAL_REG_MASK_EXT) {
+        if (needsHalRegistration) {
             DlHalApi::HalHostUnregisterEx(mapped, logicDeviceId_, HOST_MEM_MAP_DEV);
         }
         FreeAllocatedMemory(mapped, size, allocMethod);
