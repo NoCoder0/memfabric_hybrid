@@ -20,6 +20,7 @@ from urma_example_common import (
     HBM_GVA_MAX_BYTES,
     HOST_RANK,
     ITEM_BYTES,
+    MF_LOG_LEVEL_CHOICES,
     NPU_RANK,
     POOL_BYTES,
     STORE_PORT,
@@ -204,6 +205,13 @@ def _build_parser():
     parser.add_argument("--negative", choices=("none", "bad-gva", "cross-range", "overflow-len", "wrong-device"),
                         default="none")
     parser.add_argument("--ctrl-timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--log-level",
+        type=int,
+        choices=MF_LOG_LEVEL_CHOICES,
+        default=None,
+        help="Shared MemFabric/Python log level: 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=OFF",
+    )
     return parser
 
 

@@ -45,6 +45,9 @@ range 尾部和同步 completion。
 如果修改 store/control 端口，Host 和 NPU 必须同时传入相同的 `--store-port`、`--ctrl-port`；不要在 route
 发布完成后调用 `extend_local_mem`、替换 peer 或重新建链。
 
+`--log-level` 同时控制 MemFabric 和 Python 脚本日志，取值与 `mf.set_log_level()` 一致：`0=DEBUG`、`1=INFO`、
+`2=WARN`、`3=ERROR`、`4=OFF`。未指定时，local validation 默认 DEBUG，生产路径默认 INFO；两端建议传入相同值。
+
 ## 02：单机 DRAM → HBM 临时验证
 
 该模式只用于同一台机器上的 1 个 Host/DRAM 进程和 1 个 NPU/HBM 进程。先构建打开验证宏的 NPU 版本；默认

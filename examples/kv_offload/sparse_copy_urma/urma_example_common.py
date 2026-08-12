@@ -11,10 +11,10 @@
 # See the Mulan PSL v2 for more details.
 
 import json
+import logging
 import os
 import socket
 import struct
-import sys
 import time
 
 
@@ -29,10 +29,19 @@ ITEM_BYTES = 4 << 10
 DEFAULT_SEED = 17
 MAX_CONTROL_BYTES = 1 << 20
 CONTROL_CONNECT_RETRY_SECONDS = 0.1
-# MemFabric uses 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR.  Keep the example at
-# the most verbose level while diagnosing the temporary local validation path.
+# MemFabric uses 0=DEBUG, 1=INFO, 2=WARN, 3=ERROR, 4=OFF.
+MF_LOG_LEVEL_CHOICES = (0, 1, 2, 3, 4)
 MF_DEBUG_LOG_LEVEL = 0
 MF_PRODUCTION_LOG_LEVEL = 1
+PYTHON_LOG_LEVELS = {
+    0: logging.DEBUG,
+    1: logging.INFO,
+    2: logging.WARNING,
+    3: logging.ERROR,
+    4: logging.CRITICAL + 1,
+}
+PYTHON_LOGGER = logging.getLogger("sparse_copy_urma")
+PYTHON_LOGGER.propagate = False
 
 
 class ValidationError(RuntimeError):
@@ -48,35 +57,48 @@ def _runtime_device_id(args):
     return args.device_id if runtime_device_id is None else runtime_device_id
 
 
-def _log_error(args, stage, detail, ret=None):
+def _configure_python_logging(level):
+    if not PYTHON_LOGGER.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s.%(msecs)03d [%(levelname)s] %(filename)s:%(lineno)d %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        PYTHON_LOGGER.addHandler(handler)
+    PYTHON_LOGGER.setLevel(PYTHON_LOG_LEVELS[level])
+
+
+def _log_error(args, stage, detail, ret=None, stacklevel=2):
     ret_text = "" if ret is None else f" ret={ret}"
     physical = "unset" if args.physical_device_id is None else args.physical_device_id
-    print(
-        f"[ERROR] stage={stage} role={_role(args)} rank={args.rank} "
+    PYTHON_LOGGER.error(
+        f"stage={stage} role={_role(args)} pid={os.getpid()} rank={args.rank} "
         f"logical_device={args.device_id} runtime_device={_runtime_device_id(args)} "
         f"physical_device={physical}{ret_text} detail={detail}",
-        file=sys.stderr,
-        flush=True,
+        stacklevel=stacklevel,
     )
 
 
 def _fail(args, stage, detail, ret=None):
-    _log_error(args, stage, detail, ret)
+    _log_error(args, stage, detail, ret, stacklevel=3)
     raise ValidationError(detail)
 
 
 def _log_info(args, message):
-    print(f"[{_role(args)}] {message}", flush=True)
+    PYTHON_LOGGER.info(
+        f"role={_role(args)} pid={os.getpid()} rank={args.rank} detail={message}",
+        stacklevel=2,
+    )
 
 
 def _log_debug(args, stage, detail):
     physical = getattr(args, "physical_device_id", None)
     physical_text = "unset" if physical is None else physical
-    print(
-        f"[DEBUG] stage={stage} role={_role(args)} pid={os.getpid()} rank={args.rank} "
+    PYTHON_LOGGER.debug(
+        f"stage={stage} role={_role(args)} pid={os.getpid()} rank={args.rank} "
         f"logical_device={args.device_id} runtime_device={_runtime_device_id(args)} "
         f"physical_device={physical_text} detail={detail}",
-        flush=True,
+        stacklevel=2,
     )
 
 
@@ -118,10 +140,9 @@ def _load_runtime():
 
 def _load_configured_runtime(args):
     local_validation = getattr(args, "local_dram_validation", False)
-    log_level = MF_DEBUG_LOG_LEVEL if local_validation else MF_PRODUCTION_LOG_LEVEL
+    log_level = args.log_level
     try:
-        if local_validation:
-            os.environ["MF_LOG_LEVEL"] = str(log_level)
+        os.environ["MF_LOG_LEVEL"] = str(log_level)
         mf, bm = _load_runtime()
         ret = mf.set_log_level(log_level)
     except Exception as exc:
@@ -131,7 +152,7 @@ def _load_configured_runtime(args):
     _log_debug(
         args,
         "runtime_log_level",
-        f"mf_log_level={log_level} local_validation={local_validation} "
+        f"python_log_level={log_level} mf_log_level={log_level} local_validation={local_validation} "
         f"MF_LOG_LEVEL={os.environ.get('MF_LOG_LEVEL', 'unset')} "
         f"ASCEND_MF_LOG_LEVEL={os.environ.get('ASCEND_MF_LOG_LEVEL', 'unset')}",
     )
@@ -377,6 +398,9 @@ def _parse_positive_csv(args, text, name):
 
 
 def _parse_common_options(args):
+    if args.log_level is None:
+        args.log_level = MF_DEBUG_LOG_LEVEL if args.local_dram_validation else MF_PRODUCTION_LOG_LEVEL
+    _configure_python_logging(args.log_level)
     if args.device_id is not None:
         args.device_id = _parse_uint_option(args, args.device_id, "--device-id")
     elif not args.local_dram_validation:
