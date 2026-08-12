@@ -14,6 +14,7 @@
 #define MF_HYBRID_JOINABLE_RANKS_QP_MANAGER_H
 
 #include <set>
+#include <map>
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
@@ -53,6 +54,7 @@ private:
     int GenerateWhiteList(const std::set<uint32_t> &newClients) noexcept;
     int CreateConnectionToServers(const std::set<uint32_t> &newServers) noexcept;
     void RemoveRanksProcess(const std::set<uint32_t> &ranks) noexcept;
+    void DeleteWhiteList(const std::map<uint32_t, ConnectionChannel> &removedConnections) noexcept;
     void FillHccpTag(char *output);
     void TrySetQos();
 

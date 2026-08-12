@@ -642,6 +642,46 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
             BM_LOG_DEBUG("close socket from " << rankId_ << " to " << it->first << " successful: " << ret);
         }
     }
+
+    DeleteWhiteList(removedConnections);
+}
+
+void JoinableRanksQpManager::DeleteWhiteList(const std::map<uint32_t, ConnectionChannel> &removedConnections) noexcept
+{
+    if (serverSocketHandle_ == nullptr) {
+        return;
+    }
+
+    std::vector<HccpSocketWhiteListInfo> whitelist;
+    for (auto it = removedConnections.begin(); it != removedConnections.end(); ++it) {
+        // 只有 server 侧（rank > self，曾作为 newClients_ 加入白名单）需要清理白名单
+        if (it->first <= rankId_ || it->second.remoteNet.sin_addr.s_addr == 0) {
+            continue;
+        }
+        HccpSocketWhiteListInfo info{};
+        info.remoteIp.addr = it->second.remoteNet.sin_addr;
+        info.connLimit = 0;
+        bzero(info.tag, sizeof(info.tag));
+        FillHccpTag(info.tag);
+        whitelist.emplace_back(info);
+    }
+
+    if (whitelist.empty()) {
+        return;
+    }
+
+    uint32_t batchSize = 16;
+    for (size_t i = 0; i < whitelist.size(); i += batchSize) {
+        size_t currentBatchSize = (whitelist.size() - i) >= batchSize ? batchSize : (whitelist.size() - i);
+        auto batchStart = whitelist.begin() + i;
+        auto batchEnd = batchStart + currentBatchSize;
+        std::vector<HccpSocketWhiteListInfo> currentBatch(batchStart, batchEnd);
+        auto ret = DlHccpApi::RaSocketWhiteListDel(serverSocketHandle_, currentBatch.data(), currentBatch.size());
+        if (ret != 0) {
+            BM_LOG_WARN("RaSocketWhiteListDel() with size=" << currentBatch.size() << " failed: " << ret
+                                                            << " self=" << rankId_);
+        }
+    }
 }
 
 void JoinableRanksQpManager::FillHccpTag(char *output)

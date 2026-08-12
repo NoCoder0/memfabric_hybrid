@@ -774,6 +774,12 @@ int RdmaTransportManager::RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAd
 
     send_wr_rsp rspInfo{};
     TP_TRACE_BEGIN(TP_HYBM_DEV_SEND_WR);
+    {
+        // Lite QP 建链后 remMr 需经 RaGetQpStatus 触发 RaHdcLiteGetConnectedInfo 同步，
+        // 否则 RDMA READ/WRITE 找不到对端 MR 报 CQE 261(ESOCKCLOSED)。读写前强制查询一次确保同步。
+        int qpSt = -1;
+        (void)DlHccpApi::RaGetQpStatus(qp->qpHandle, qpSt);
+    }
     ret = DlHccpApi::RaSendWrV2(qp->qpHandle, &wr, &rspInfo);
     TP_TRACE_END(TP_HYBM_DEV_SEND_WR, ret);
     if (ret != 0) {
