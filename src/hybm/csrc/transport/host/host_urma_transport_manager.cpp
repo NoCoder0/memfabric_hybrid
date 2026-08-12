@@ -1,12 +1,10 @@
 #include "host_urma_transport_manager.h"
 
 #include <array>
-#include <chrono>
 #include <cstring>
 #include <cstdlib>
 #include <cctype>
 #include <sstream>
-#include <thread>
 
 #include "hybm_def.h"
 #include "hybm_logger.h"
@@ -457,11 +455,20 @@ Result HostUrmaTransportManager::PreparePeerLocked(uint32_t peerRank, const Tran
         BM_LOG_ERROR("Failed to create channel with peer " << peerRank << " ret: " << ret);
         return BM_ERROR;
     }
+    ret = manager_.WaitForChannelReady(channel, peerRank);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("Host URMA channel is not ready, rankId: " << rankId_ << " peerRank: " << peerRank
+                                                                << " channel: " << channel << " ret: " << ret);
+        const auto destroyRet = DlHcommApi::HcommChannelDestroy(&channel, URMA_CHANNEL_DESC_NUM);
+        if (destroyRet != 0) {
+            BM_LOG_ERROR("Host URMA rollback HcommChannelDestroy failed, rankId: "
+                         << rankId_ << " peerRank: " << peerRank << " channel: " << channel << " ret: " << destroyRet);
+        }
+        return ret;
+    }
     state.channelDesc = channelDesc;
     state.channel = channel;
-    // Allow channel to become ready before first data transfer
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
-    BM_LOG_INFO("Host URMA channel created with peer "
+    BM_LOG_INFO("Host URMA channel ready with peer "
                 << peerRank << " channel: " << channel
                 << " role: " << (channelDesc.role == HCOMM_SOCKET_ROLE_CLIENT ? "CLIENT" : "SERVER"));
     return BM_OK;
