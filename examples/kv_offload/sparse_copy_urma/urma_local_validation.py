@@ -356,13 +356,13 @@ def _lookup_npu_views(args, handle, bm):
               f"device_rank={NPU_RANK}: {exc}")
     if host_gva == 0 or hbm_gva == 0:
         _fail(args, "pool_lookup", f"invalid GVA host=0x{host_gva:x} hbm=0x{hbm_gva:x}")
+    # Remote Host DRAM has no local HVA mapping. The URMA transport validates its
+    # imported view and route during join; retain the validated GVA for metadata.
+    import_view = host_gva
     try:
-        import_view = handle.gva_to_va(host_gva, bm.BmMemType.LOCAL_HOST)
         hbm_va = handle.gva_to_va(hbm_gva, bm.BmMemType.LOCAL_DEVICE)
     except Exception as exc:
-        _fail(args, "pool_view", f"GVA to VA raised, host=0x{host_gva:x} hbm=0x{hbm_gva:x}: {exc}")
-    if import_view != host_gva:
-        _fail(args, "import_view", f"Host GVA/import view mismatch: gva=0x{host_gva:x} view=0x{import_view:x}")
+        _fail(args, "pool_view", f"HBM GVA to VA raised, gva=0x{hbm_gva:x}: {exc}")
     if hbm_va == 0:
         _fail(args, "hbm_view", f"HBM GVA to device VA failed: gva=0x{hbm_gva:x}")
     _log_debug(
