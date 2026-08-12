@@ -56,6 +56,8 @@ _AICPU_WLIST = {
     "_hybm_src/csrc/under_api/dl_hcomm_api.h",
     "_acc_offload_src/csrc/operators/aicpu/hybm_batch_copy.cc",
     "_acc_offload_src/csrc/operators/aicpu/hybm_batch_copy.h",
+    "_acc_offload_src/csrc/operators/aicpu/hybm_kvcache_scatter_copy.cc",
+    "_acc_offload_src/csrc/operators/aicpu/hybm_kvcache_scatter_copy.h",
     "_util_src/mf_out_logger.h",
     "_util_src/mf_spinlock.h",
 }

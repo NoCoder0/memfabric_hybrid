@@ -105,6 +105,12 @@ int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, u
 int32_t offload_sparse_copy_urma(uint64_t srcPtrs, uint64_t dstPtrs, uint64_t lenPtrs, uint32_t listNum,
                                  uint16_t deviceId);
 
+int32_t offload_kvcache_scatter_copy(uint64_t hbmKpe, uint64_t hbmCkv, uint64_t hbmBlockTable, uint64_t dramBlockTable,
+                                     uint64_t offloadSlots, uint64_t srcTokenIds, uint64_t dstSlots,
+                                     uint64_t copyCounts, uint64_t readyFlag, uint64_t hbmBlockCount,
+                                     uint64_t hbmMaxBlocks, uint64_t dramMaxBlocks, uint64_t dramBlockTableRows,
+                                     uint64_t batchSize, int64_t layerId, uint16_t deviceId);
+
 /**
  * @brief Group-pack compacted copy: compact non-zero groupList entries to front.
  *
