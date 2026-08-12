@@ -13,6 +13,8 @@
 import json
 import logging
 import os
+import re
+import shlex
 import socket
 import struct
 import time
@@ -22,6 +24,7 @@ STORE_PORT = 8574
 CTRL_PORT = 9877
 WORLD_SIZE = 2
 HOST_RANK, NPU_RANK = 0, 1
+LOCAL_VALIDATION_ROLES = ("host", "device")
 POOL_BYTES = 8 << 20
 # Ascend 950 VMM requires the per-rank HBM GVA limit to be 1 GiB aligned.
 HBM_GVA_MAX_BYTES = 1 << 30
@@ -33,6 +36,8 @@ CONTROL_CONNECT_RETRY_SECONDS = 0.1
 MF_LOG_LEVEL_CHOICES = (0, 1, 2, 3, 4)
 MF_DEBUG_LOG_LEVEL = 0
 MF_PRODUCTION_LOG_LEVEL = 1
+DEFAULT_ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "env")
+ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 PYTHON_LOG_LEVELS = {
     0: logging.DEBUG,
     1: logging.INFO,
@@ -49,6 +54,9 @@ class ValidationError(RuntimeError):
 
 
 def _role(args):
+    configured_role = getattr(args, "role", None)
+    if configured_role is not None:
+        return configured_role
     return "host" if args.rank == HOST_RANK else "npu"
 
 
@@ -91,6 +99,13 @@ def _log_info(args, message):
     )
 
 
+def _log_warning(args, message):
+    PYTHON_LOGGER.warning(
+        f"role={_role(args)} pid={os.getpid()} rank={args.rank} detail={message}",
+        stacklevel=2,
+    )
+
+
 def _log_debug(args, stage, detail):
     physical = getattr(args, "physical_device_id", None)
     physical_text = "unset" if physical is None else physical
@@ -102,13 +117,51 @@ def _log_debug(args, stage, detail):
     )
 
 
+def _parse_env_assignment(line):
+    try:
+        tokens = shlex.split(line, comments=True, posix=True)
+    except ValueError as exc:
+        raise ValueError(f"invalid quoting: {exc}") from exc
+    if not tokens:
+        return None
+    if tokens[0] == "export":
+        tokens = tokens[1:]
+    if len(tokens) != 1 or "=" not in tokens[0]:
+        raise ValueError("expected KEY=VALUE or export KEY=VALUE")
+    name, value = tokens[0].split("=", 1)
+    if not ENV_NAME_PATTERN.fullmatch(name):
+        raise ValueError(f"invalid environment variable name: {name}")
+    return name, value
+
+
+def _load_env_file(args, path):
+    resolved_path = os.path.abspath(path)
+    try:
+        with open(resolved_path, "r", encoding="utf-8") as env_file:
+            lines = tuple(env_file)
+    except OSError as exc:
+        _fail(args, "env_file", f"failed to read env file, path={resolved_path}: {exc}")
+    loaded_names = []
+    for line_number, line in enumerate(lines, 1):
+        try:
+            assignment = _parse_env_assignment(line)
+        except ValueError as exc:
+            _fail(args, "env_file", f"invalid env file line, path={resolved_path} line={line_number}: {exc}")
+        if assignment is None:
+            continue
+        name, value = assignment
+        os.environ[name] = value
+        loaded_names.append(name)
+    _log_debug(args, "env_file", f"loaded path={resolved_path} keys={','.join(loaded_names)}")
+
+
 def _control_message_summary(message):
     if not isinstance(message, dict):
         return f"value={message!r}"
     fields = (
         "type", "version", "role", "rank", "pid", "round", "physical_device_id", "logical_device_id",
         "runtime_device_id", "host_gva", "imported_gva", "import_view", "hbm_gva", "hbm_va",
-        "route_mode", "bytes", "result", "hcomm_ret", "negative", "expected_failure",
+        "route_mode", "bytes", "result", "hcomm_ret",
     )
     summary = [f"{name}={message[name]}" for name in fields if name in message]
     if isinstance(message.get("cases"), list):
@@ -157,6 +210,21 @@ def _load_configured_runtime(args):
         f"ASCEND_MF_LOG_LEVEL={os.environ.get('ASCEND_MF_LOG_LEVEL', 'unset')}",
     )
     return mf, bm
+
+
+def _resolve_log_level(args, default_level):
+    if args.log_level is not None:
+        return args.log_level
+    env_value = os.environ.get("MF_LOG_LEVEL")
+    if env_value is None:
+        return default_level
+    try:
+        level = int(env_value, 10)
+    except ValueError:
+        _fail(args, "argument_validation", f"MF_LOG_LEVEL must be an integer in 0..4: {env_value}")
+    if level not in MF_LOG_LEVEL_CHOICES:
+        _fail(args, "argument_validation", f"MF_LOG_LEVEL must be in 0..4: {level}")
+    return level
 
 
 def _read_exact(conn, size, args, stage):
@@ -398,8 +466,11 @@ def _parse_positive_csv(args, text, name):
 
 
 def _parse_common_options(args):
-    if args.log_level is None:
-        args.log_level = MF_DEBUG_LOG_LEVEL if args.local_dram_validation else MF_PRODUCTION_LOG_LEVEL
+    default_level = MF_DEBUG_LOG_LEVEL if args.local_dram_validation else MF_PRODUCTION_LOG_LEVEL
+    _configure_python_logging(args.log_level if args.log_level is not None else default_level)
+    if args.local_dram_validation or args.env_file is not None:
+        _load_env_file(args, args.env_file or DEFAULT_ENV_FILE)
+    args.log_level = _resolve_log_level(args, default_level)
     _configure_python_logging(args.log_level)
     if args.device_id is not None:
         args.device_id = _parse_uint_option(args, args.device_id, "--device-id")
@@ -474,27 +545,26 @@ def _parse_local_options(args):
 
 
 def _configure_local_environment(args):
-    role = os.environ.get("MF_LOCAL_DRAM_VALIDATION_ROLE")
+    role_before = os.environ.get("MF_LOCAL_DRAM_VALIDATION_ROLE")
     _log_debug(
         args,
         "local_environment",
-        f"role_before={role or 'unset'} visible_devices={_visible_device_summary(args.physical_device_id)} "
+        f"role_before={role_before or 'unset'} visible_devices={_visible_device_summary(args.physical_device_id)} "
         f"host_eid={args.host_eid} device_eid={args.device_eid}",
     )
-    if args.rank == HOST_RANK:
-        if role not in (None, "host"):
-            _fail(args, "validation_role", f"host rank requires role=host, got={role}")
+    if args.role == "host":
         swap_size = os.environ.get("MF_HYBM_RDMA_SWAP_SPACE_SIZE", "unset")
         os.environ["MF_LOCAL_DRAM_VALIDATION_ROLE"] = "host"
         os.environ["MF_HOST_URMA_EID"] = args.host_eid
         os.environ["MF_HYBM_RDMA_SWAP_SPACE_SIZE"] = "0"
         _log_debug(args, "local_environment", "configured Host role/EID and disabled unused Host RDMA swap, "
                                                f"swap_size_before={swap_size}")
-    elif role is not None:
-        _fail(args, "validation_role", "device rank must not set MF_LOCAL_DRAM_VALIDATION_ROLE")
-    else:
+    elif args.role == "device":
+        os.environ.pop("MF_LOCAL_DRAM_VALIDATION_ROLE", None)
         os.environ["USE_LOCAL_EID"] = args.device_eid
-        _log_debug(args, "local_environment", "configured USE_LOCAL_EID for device rank")
+        _log_debug(args, "local_environment", "configured Device role and USE_LOCAL_EID")
+    else:
+        _fail(args, "validation_role", "local validation requires --role host or --role device")
 
 
 def _set_local_device(args):

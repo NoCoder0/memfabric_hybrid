@@ -62,37 +62,42 @@ EID 查询工具是 MemFabric 示例目录下的独立临时源文件，不接�
 
 ```bash
 g++ -std=c++17 -O2 -Wall -Wextra -Werror \
-  examples/kv_offload/urma_eid_query.cpp -ldl -o /tmp/mf_urma_eid_query
+  examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp -ldl -o /tmp/mf_urma_eid_query
 
 EID_TOOL=/tmp/mf_urma_eid_query
-"${EID_TOOL}" --device-id 0 --format env --no-candidates > /tmp/mf-local-dram-eid.env
-. /tmp/mf-local-dram-eid.env
+"${EID_TOOL}" --device-id 5 --format env --no-candidates > /tmp/mf-local-dram-eid.env
+python3 examples/kv_offload/sparse_copy_urma/update_env_from_eid.py
 ```
 
 工具的 `--device-id` 是物理卡号；工具输出的 `MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID`、
-`MF_LOCAL_DRAM_LOGICAL_DEVICE_ID` 和 EID 环境变量会被 Python local 模式自动读取。`ASCEND_RT_VISIBLE_DEVICES`
-保留不变，脚本根据物理卡号自动计算 ACL/Torch 可见索引；例如 `ASCEND_RT_VISIBLE_DEVICES=5,6` 且目标物理
-卡为 5 时，runtime index 自动为 `0`。启动顺序为 Host 后 NPU，两端使用相同的 store/control 地址和 EID
-元数据：
+`MF_LOCAL_DRAM_LOGICAL_DEVICE_ID` 和 EID 环境变量由更新脚本写入本目录的 `env` 文件。该脚本保留两端公共的
+`ASCEND_RT_VISIBLE_DEVICES`、`MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 和 `MF_LOG_LEVEL`；Python 脚本启动时读取
+该文件并通过 `os.environ` 设置进程环境，不执行 shell。`MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 应指向安装包的
+`lib64` 目录；上例默认按 aarch64 Linux 安装路径填写，其他架构需修改 `env`。脚本根据物理卡号自动计算
+ACL/Torch 可见索引；例如 `ASCEND_RT_VISIBLE_DEVICES=5,6` 且目标物理卡为 5 时，runtime index 自动为 `0`。
+脚本根据显式的 `--role host|device` 设置 Host/Device 临时角色，覆盖 Host 的
+`MF_LOCAL_DRAM_VALIDATION_ROLE=host`，并清理 Device 进程中的该变量；用户无需手动设置或清理环境变量。
+`--rank` 仅表示当前协议 rank，不用于推断角色。启动顺序为 Host 后 NPU，两端使用同一个 `env` 文件和相同的
+store/control 地址：
 
 终端 1（进程 A，Host/DRAM，rank 0）：
 
 ```bash
-export MF_LOCAL_DRAM_VALIDATION_ROLE=host
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
-  --local-dram-validation --rank 0 --head-ip 127.0.0.1
+  --local-dram-validation --role host --rank 0 --head-ip 127.0.0.1
 ```
 
 终端 2（进程 B，NPU/HBM，rank 1）：
 
 ```bash
-unset MF_LOCAL_DRAM_VALIDATION_ROLE
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
-  --local-dram-validation --rank 1 --head-ip 127.0.0.1
+  --local-dram-validation --role device --rank 1 --head-ip 127.0.0.1
 ```
 
+默认读取 `examples/kv_offload/sparse_copy_urma/env`，也可通过 `--env-file <path>` 指定公共环境文件。
 `--physical-device-id`、`--device-id`、`--runtime-device-id`、`--host-eid` 和 `--device-eid` 仍可显式传入，
-用于兼容旧命令或做一致性校验；local 模式下不再要求重复传递。
+用于兼容旧命令或做一致性校验；local 模式下不再要求重复传递。`--rank`、`--role`、`--head-ip` 和其他两端
+不一致的运行参数继续通过命令行传入。
 
 Host 先初始化固定 8 MiB GVA DRAM 和连续 pattern；两端 `create2` 均使用
 `max_dram_size=8 MiB`、`max_hbm_size=1 GiB` 保持相同的全局 GVA 布局。后者满足 Ascend 950 HBM VMM 的
@@ -103,7 +108,7 @@ GB 对齐要求，但实际 HBM 分配仍是 `local_hbm_size=8 MiB`；只有 `lo
 TCP 只传版本化 JSON 元数据和结果，不传 pattern、HCOMM descriptor 或 key。默认覆盖 1、4096、1 MiB 字节数以及
 1/999/1000/1001 个 4 KiB item；可用 `--rounds`、`--sizes`、`--batch-counts` 调整。
 
-负向检查使用 `--negative=bad-gva|cross-range|overflow-len|wrong-device`；EID、物理/逻辑卡映射、尺寸、范围
-和地址加法在可检查处先失败，HCOMM 返回值和清理错误保留 stage/rank/device/地址/长度上下文。不要为绕过
+EID、物理/逻辑卡映射、尺寸、范围和地址加法在可检查处先失败，HCOMM 返回值和清理错误保留
+stage/rank/device/地址/长度上下文。不要为绕过
 生产 key/type/address 门禁而设置额外变量。验证完成后删除该临时 Python 分支、构建宏/脚本参数和配套工具，
 再以默认 `--build_local_dram_validation OFF` 重新构建。

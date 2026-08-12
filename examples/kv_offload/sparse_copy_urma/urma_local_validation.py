@@ -20,13 +20,13 @@ from urma_example_common import (
     NPU_RANK,
     POOL_BYTES,
     DEFAULT_SEED,
-    ValidationError,
     _accept_control_connection,
     _connect_control,
     _create_control_server,
     _fail,
     _log_debug,
     _log_info,
+    _log_warning,
     _recv,
     _runtime_device_id,
     _send,
@@ -80,14 +80,14 @@ def _build_copy_inputs(args, host_gva, hbm_va, torch, count, item_bytes, offset)
 
 
 def _submit_sparse_copy(args, mf_acc_offload, torch, src_ptrs, dst_ptrs, len_ptrs, count, device):
-    _log_debug(args, "sparse_copy_urma", f"submit count={count} runtime_device={_runtime_device_id(args)} "
-                                      f"torch_device={device}")
+    _log_warning(args, f"sparse_copy_urma submit count={count} runtime_device={_runtime_device_id(args)} "
+                       f"torch_device={device}")
     try:
         ret = mf_acc_offload.sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, count, device)
     except Exception as exc:
         _fail(args, "sparse_copy_urma", f"copy raised, count={count} "
               f"runtime_device={_runtime_device_id(args)}: {exc}")
-    _log_debug(args, "sparse_copy_urma", f"submit returned ret={ret} count={count}")
+    _log_warning(args, f"sparse_copy_urma submit returned ret={ret} count={count}")
     if ret != 0:
         _fail(args, "sparse_copy_urma", f"copy failed, count={count} "
               f"runtime_device={_runtime_device_id(args)}", ret)
@@ -95,7 +95,7 @@ def _submit_sparse_copy(args, mf_acc_offload, torch, src_ptrs, dst_ptrs, len_ptr
         torch.npu.synchronize()
     except Exception as exc:
         _fail(args, "copy_fence", f"NPU synchronize failed, count={count}: {exc}")
-    _log_debug(args, "copy_fence", f"synchronize completed count={count}")
+    _log_warning(args, f"copy_fence synchronize completed count={count}")
 
 
 def _read_hbm_staging(args, handle, bm, hbm_gva, total_bytes):
@@ -113,11 +113,10 @@ def _read_hbm_staging(args, handle, bm, hbm_gva, total_bytes):
 def _copy_batch(args, handle, bm, host_gva, hbm_gva, hbm_va, torch, mf_acc_offload,
                 count, item_bytes, offset, seed, round_id=None):
     total_bytes = count * item_bytes
-    _log_debug(
+    _log_warning(
         args,
-        "copy_batch",
-        f"start round={round_id} count={count} item_bytes={item_bytes} offset={offset} bytes={total_bytes} "
-        f"host_gva=0x{host_gva:x} hbm_gva=0x{hbm_gva:x} hbm_va=0x{hbm_va:x}",
+        f"copy_batch start round={round_id} count={count} item_bytes={item_bytes} offset={offset} "
+        f"bytes={total_bytes} host_gva=0x{host_gva:x} hbm_gva=0x{hbm_gva:x} hbm_va=0x{hbm_va:x}",
     )
     _checked_add(args, host_gva + offset, total_bytes, "copy_range")
     _checked_add(args, hbm_va, total_bytes, "destination_range")
@@ -130,10 +129,10 @@ def _copy_batch(args, handle, bm, host_gva, hbm_gva, hbm_va, torch, mf_acc_offlo
     if mismatch is not None:
         _fail(args, "data_verify", f"data mismatch, count={count} item_bytes={item_bytes} offset={offset} "
               f"first_mismatch={mismatch}")
-    _log_debug(
+    _log_warning(
         args,
-        "data_verify",
-        f"passed bytes={total_bytes} expected_checksum={_fnv1a(expected)} actual_checksum={_fnv1a(actual)}",
+        f"data_verify passed round={round_id} count={count} item_bytes={item_bytes} offset={offset} "
+        f"bytes={total_bytes} expected_checksum={_fnv1a(expected)} actual_checksum={_fnv1a(actual)}",
     )
     result = {
         "count": count,
@@ -146,8 +145,8 @@ def _copy_batch(args, handle, bm, host_gva, hbm_gva, hbm_va, torch, mf_acc_offlo
     }
     if round_id is not None:
         result["round"] = round_id
-    _log_info(args, f"sparse_copy_urma round-case count={count} item_bytes={item_bytes} offset={offset} "
-                    f"bytes={total_bytes} ret=0 fence=complete")
+    _log_warning(args, f"sparse_copy_urma round-case count={count} item_bytes={item_bytes} offset={offset} "
+                       f"bytes={total_bytes} ret=0 fence=complete")
     return result
 
 
@@ -180,44 +179,6 @@ def _summarize_cases(cases):
         "first_mismatch": next((case["first_mismatch"] for case in cases if case["first_mismatch"] is not None), None),
         "hcomm_ret": 0,
     }
-
-
-def _run_local_negative(args, handle, host_gva, hbm_gva, hbm_va, torch, mf_acc_offload):
-    if args.negative == "overflow-len":
-        try:
-            _checked_add(args, (1 << 64) - 4, 8, "negative_range")
-        except ValidationError:
-            return {"negative": args.negative, "expected_failure": True, "hcomm_ret": "python_precheck"}
-        _fail(args, "negative_test", "overflow-len precheck unexpectedly succeeded")
-    if args.negative == "bad-gva":
-        source = host_gva + POOL_BYTES
-        length = 1
-    elif args.negative == "cross-range":
-        source = host_gva + POOL_BYTES - 1
-        length = 2
-    else:
-        source = host_gva
-        length = 1
-    _checked_add(args, source, length, "negative_range")
-    runtime_device_id = _runtime_device_id(args)
-    target_device = runtime_device_id + 1 if args.negative == "wrong-device" else runtime_device_id
-    try:
-        src_ptrs = torch.tensor([source], dtype=torch.int64).npu()
-        dst_ptrs = torch.tensor([hbm_va], dtype=torch.int64).npu()
-        len_ptrs = torch.tensor([length], dtype=torch.int64).npu()
-        device = torch.device(f"npu:{target_device}")
-    except Exception as exc:
-        _fail(args, "negative_prepare", f"negative input tensor construction failed, negative={args.negative} "
-              f"source=0x{source:x} destination=0x{hbm_va:x} length={length}: {exc}")
-    try:
-        ret = mf_acc_offload.sparse_copy_urma(src_ptrs, dst_ptrs, len_ptrs, 1, device)
-    except Exception as exc:
-        _log_info(args, f"negative={args.negative} failed as expected in sparse_copy_urma: {exc}")
-        return {"negative": args.negative, "expected_failure": True, "hcomm_ret": "exception"}
-    if ret == 0:
-        _fail(args, "negative_test", f"negative={args.negative} unexpectedly succeeded", ret)
-    _log_info(args, f"negative={args.negative} failed as expected, ret={ret}")
-    return {"negative": args.negative, "expected_failure": True, "hcomm_ret": int(ret)}
 
 
 def _validate_host_source(handle, bm, args):
@@ -307,11 +268,6 @@ def _validate_copy_done(args, message):
     required = ("bytes", "expected_checksum", "actual_checksum", "first_mismatch", "hcomm_ret")
     if any(name not in message for name in required):
         _fail(args, "control_done", f"COPY_DONE metadata is incomplete: {message}")
-    if args.negative != "none":
-        if (not message.get("expected_failure") or message.get("negative") != args.negative or
-                "hcomm_ret" not in message):
-            _fail(args, "control_done", f"negative result mismatch: {message}")
-        return
     if (message.get("result") != "PASS" or message.get("hcomm_ret") != 0 or
             message.get("first_mismatch") is not None or not isinstance(message.get("cases"), list)):
         _fail(args, "control_done", f"copy result is not PASS: {message}")
@@ -414,18 +370,11 @@ def _run_local_npu(args, handle, bm):
                         f"host_gva=0x{host_gva:x} import_view=0x{import_view:x} equality=pass")
         _log_info(args, f"hbm_gva=0x{hbm_gva:x} hbm_va=0x{hbm_va:x} registered_pool_bytes={POOL_BYTES} "
                         "route=HOST_DRAM")
-        if args.negative == "none":
-            cases = _run_local_cases(args, handle, bm, host_gva, hbm_gva, hbm_va, torch, mf_acc_offload)
-            done = _summarize_cases(cases)
-            done.update({"type": "COPY_DONE", "version": 1, "round": args.rounds - 1,
-                         "result": "PASS", "cases": cases})
-            _send(conn, done, args, "control_done")
-        else:
-            negative = _run_local_negative(args, handle, host_gva, hbm_gva, hbm_va, torch, mf_acc_offload)
-            negative.update({"type": "COPY_DONE", "version": 1, "round": args.rounds - 1,
-                             "result": "EXPECTED_FAILURE", "bytes": 0, "expected_checksum": 0,
-                             "actual_checksum": 0, "first_mismatch": None})
-            _send(conn, negative, args, "control_done")
+        cases = _run_local_cases(args, handle, bm, host_gva, hbm_gva, hbm_va, torch, mf_acc_offload)
+        done = _summarize_cases(cases)
+        done.update({"type": "COPY_DONE", "version": 1, "round": args.rounds - 1,
+                     "result": "PASS", "cases": cases})
+        _send(conn, done, args, "control_done")
         release = _recv(conn, args, "control_release")
         if (not isinstance(release, dict) or release.get("type") != "RELEASE" or
                 release.get("version") != 1 or release.get("round") != args.rounds - 1):

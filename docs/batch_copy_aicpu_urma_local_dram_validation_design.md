@@ -169,7 +169,7 @@ DSMI/`urma_admin` 选路逻辑，以独立单文件放在 `examples/kv_offload` 
 
 参考工具入口已经存在：`host_device_urma_demo/src/eid_discovery_main.cc:71-125`，CMake target 为
 `hcomm_urma_eid_discovery` (`host_device_urma_demo/CMakeLists.txt:15-24`)。本方案不修改参考仓，而是把上述
-发现链路裁剪成 MemFabric `examples/kv_offload/urma_eid_query.cpp` 单文件，便于与样例一起临时使用。
+发现链路裁剪成 MemFabric `examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp` 单文件，便于与样例一起临时使用。
 
 ### 3.2.2 Endpoint、内存与拷贝链路
 
@@ -238,7 +238,7 @@ flowchart LR
 工具放在 MemFabric 示例目录，但不接入产品 CMake、wheel 或 run 包：
 
 ```text
-examples/kv_offload/urma_eid_query.cpp
+examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp
 ```
 
 该文件包含 CLI、DCMI/DSMI 动态加载、`urma_admin show` 解析、EID 选择和输出，不引用 MemFabric 库，也不
@@ -296,7 +296,7 @@ driver、DCMI/DSMI 与可执行的 `urma_admin show`。所需运行用户和设�
 
 ```bash
 g++ -std=c++17 -O2 -Wall -Wextra -Werror \
-  examples/kv_offload/urma_eid_query.cpp \
+  examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp \
   -ldl -o /tmp/mf_urma_eid_query
 
 /tmp/mf_urma_eid_query --device-id 0 --format env
@@ -312,9 +312,9 @@ wheel、run 包或安装目录；本机模拟结束后删除源文件和临时�
 | 进程 A / Host | `MF_HOST_URMA_EID` | `host_urma_transport_manager.cpp:44-61` | 必填，32 hex，大小写均可 |
 | 进程 B / Device | `USE_LOCAL_EID` | `device_urma_eid_reader.cpp:84-112` | 可选覆盖；设置后必须为 32 hex |
 
-工具的 `env` 输出直接生成这两个既有变量。样例只负责在 manager 首次构建 endpoint 前设置；不新增
-`MF_DEVICE_EID`、EID map 文件或 Python→C++ binding。两个变量可同时存在，因为 Host manager 只读前者，
-Device manager 只读后者。
+工具的 `env` 输出生成这两个既有变量，由 `update_env_from_eid.py` 更新到样例目录公共 `env` 文件；Python
+启动时读取该文件并通过 `os.environ` 设置，样例只负责在 manager 首次构建 endpoint 前保留它们。不新增 `MF_DEVICE_EID`、EID map
+文件或 Python→C++ binding。两个变量可同时存在，因为 Host manager 只读前者，Device manager 只读后者。
 
 最小缺口不是 EID 注入，而是同一 NPU 构建中选择 Host manager。临时能力先由构建参数开启：
 
@@ -331,13 +331,15 @@ target_compile_definitions(hybmm_objects PRIVATE MF_LOCAL_DRAM_VALIDATION)
 ```
 
 参数为 `OFF` 时，临时 C++ 分支不进入目标文件。参数为 `ON` 但平台或构建工具不符合约束时，配置阶段直接
-失败。宏内仍使用以下运行时变量区分同一套验证二进制中的两个进程角色：
+失败。宏内仍使用以下运行时变量区分同一套验证二进制中的两个进程角色；该变量由 Python local 模式根据
+显式 `--role` 自动设置，不要求用户手动维护：
 
 ```text
-MF_LOCAL_DRAM_VALIDATION_ROLE=host
+Python --role host: MF_LOCAL_DRAM_VALIDATION_ROLE=host
+Python --role device: unset MF_LOCAL_DRAM_VALIDATION_ROLE
 ```
 
-它不是 EID 机制。仅进程 A 设置；进程 B 不设置并保持 Device 默认。仅设置环境变量但没有打开构建参数，
+它不是 EID 机制。Python 脚本在 runtime 初始化前设置或清理该变量；仅设置环境变量但没有打开构建参数，
 不会启用 Host 角色覆盖。
 
 ### 3.3.4 临时角色覆盖与 ACL 边界
@@ -412,7 +414,7 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 
 #### 进程 A：DRAM provider / rank 0
 
-1. 读取工具输出，设置 `MF_HOST_URMA_EID` 和 `MF_LOCAL_DRAM_VALIDATION_ROLE=host`；
+1. 读取公共 `env` 文件，Python 根据 `--role host` 设置 `MF_HOST_URMA_EID` 和 Host 临时角色；
 2. 用 `runtime_device_id` 初始化 torch NPU context；
 3. `bm.initialize(tcp://127.0.0.1:<store>, 2, runtimeDeviceId, rank0Config)`，rank 0 启动 store；
 4. `bm.create2(local_dram_size=POOL_BYTES, max_dram_size=POOL_BYTES,
@@ -425,7 +427,7 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 
 #### 进程 B：HBM consumer / rank 1
 
-1. 设置 `USE_LOCAL_EID`，不设置临时 Host role；
+1. 读取公共 `env` 文件，Python 根据 `--role device` 设置 `USE_LOCAL_EID` 并清理 Host 临时 role；
 2. `torch.npu.set_device(runtimeDeviceId)`；
 3. `bm.initialize(... rank1Config)`；
 4. `bm.create2(local_dram_size=0, max_dram_size=POOL_BYTES,
@@ -611,6 +613,7 @@ bash script/build_and_pack_run.sh
 
 ```text
 --local-dram-validation
+--role host|device             # local validation 必填；不由 rank 推断
 --physical-device-id N        # 可选覆盖；默认读取 MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID
 --device-id N                 # 可选兼容覆盖；默认读取 MF_LOCAL_DRAM_LOGICAL_DEVICE_ID
 --runtime-device-id N         # 可选覆盖；默认由物理卡号和 ASCEND_RT_VISIBLE_DEVICES 派生
@@ -619,12 +622,12 @@ bash script/build_and_pack_run.sh
 --rounds N
 --sizes 1,4096,1048576
 --batch-counts 1,999,1000,1001
---negative none|bad-gva|cross-range|overflow-len|wrong-device
 ```
 
 物理/逻辑设备 ID 和 `--host-eid/--device-eid` 缺省读取 EID 工具及现有环境变量；runtime index 由
-`ASCEND_RT_VISIBLE_DEVICES` 派生。CLI 值与环境同时存在但不一致时失败，避免静默覆盖。真实跨节点默认模式
-保持现有行为，不设置临时角色变量，也不要求 Host 初始化 ACL。
+`ASCEND_RT_VISIBLE_DEVICES` 派生。`--role` 显式选择 Host/Device，`--rank` 仅表示当前协议 rank，不用于
+推断角色。CLI 值与环境同时存在但不一致时失败，避免静默覆盖。真实跨节点默认模式保持现有行为，不设置
+临时角色变量，也不要求 Host 初始化 ACL。
 
 ### 3.5.2 预期日志
 
@@ -650,21 +653,20 @@ bash script/build_and_pack_run.sh
 bash script/build_and_pack_run.sh --build_local_dram_validation ON
 
 g++ -std=c++17 -O2 -Wall -Wextra -Werror \
-  examples/kv_offload/urma_eid_query.cpp \
+  examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp \
   -ldl -o /tmp/mf_urma_eid_query
 
 EID_TOOL=/tmp/mf_urma_eid_query
-"${EID_TOOL}" --device-id 0 --format env --no-candidates > /tmp/mf-local-dram-eid.env
-. /tmp/mf-local-dram-eid.env
+"${EID_TOOL}" --device-id 5 --format env --no-candidates > /tmp/mf-local-dram-eid.env
+python3 examples/kv_offload/sparse_copy_urma/update_env_from_eid.py
 ```
 
 终端 1，进程 A：
 
 ```bash
-export MF_LOCAL_DRAM_VALIDATION_ROLE=host
-export MF_HOST_URMA_EID
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
   --local-dram-validation \
+  --role host \
   --rank 0 \
   --head-ip 127.0.0.1
 ```
@@ -672,10 +674,9 @@ python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
 终端 2，进程 B：
 
 ```bash
-unset MF_LOCAL_DRAM_VALIDATION_ROLE
-export USE_LOCAL_EID
 python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
   --local-dram-validation \
+  --role device \
   --rank 1 \
   --head-ip 127.0.0.1
 ```
@@ -836,7 +837,7 @@ finally:
 runtime 可见索引，
 并注明临时模式的删除边界。
 
-#### `examples/kv_offload/urma_eid_query.cpp`（独立临时工具）
+#### `examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp`（独立临时工具）
 
 单文件内拆分 `ParseArgs()`、`LoadDcmi()`、`MapPhysicalToLogical()`、`GetTopology()`、`GetUdmaName()`、
 `RunUrmaAdmin()`、`ParseUrmaEntries()`、`FindHostEid()`、`FindDeviceEid()` 和 `PrintResult()`。每个函数尽量不超过
@@ -883,23 +884,10 @@ bash script/build_and_pack_run.sh --build_local_dram_validation ON
 6. 校验 endpoint loc、EID、物理/逻辑卡、key/export/view、route peer/range、thread/channel；
 7. 每轮校验 checksum 和首 mismatch，保存双方完整日志。
 
-## 4.4 阶段 D：负向测试
+## 4.4 阶段 D：负向测试（暂不启用）
 
-| 负向项 | 注入层 | 预期 |
-| --- | --- | --- |
-| Host EID 长度/非 hex | 环境/Host manager | `BM_INVALID_PARAM`，未创建 endpoint |
-| Device EID 长度/非 hex | 环境/Device reader | `BM_INVALID_PARAM`，日志含 phy/rank |
-| 不存在的物理卡号 | EID tool | 非 0 退出，未输出部分 env |
-| 物理/逻辑卡不一致 | Python precheck + Device manager log | 启动前失败或明确 mapping mismatch |
-| 失效 key | A 导出后退出，再由 B 发起导入/读取 | HCOMM import/read 失败，记录接口与返回码 |
-| 未知 GVA | Python `--negative=bad-gva` | `BM_NOT_CONNECTED`，无 HCOMM submit |
-| 跨 range/越界长度 | Python | `BM_INVALID_PARAM/BM_NOT_CONNECTED`，无提交 |
-| 地址加法溢出 | Python 构造输入 | Python 参数检查失败，不触发算子 |
-| 全 0 长度 | Python | `BM_OK`，不调用 HCOMM |
-| wrong device | Python | route/device mismatch，明确失败 |
-
-本方案不增加 key mutator 或其他仅为负向验证服务的产品接口。若“失效 key”无法稳定到达目标导入路径，记录
-为当前样例不可注入，不扩展本次修改范围。
+当前样例先保留正向 local DRAM→HBM 验证链路，暂时删除负向输入注入、预期失败协议和对应 CLI 参数。
+后续如需恢复负向验证，应单独补充错误输入、返回码和双端协议收尾设计，并重新进行实机验证。
 
 ## 4.5 阶段 E：下一步多进程扩展
 
@@ -975,7 +963,7 @@ Host 消费 Device HBM，必须新增独立双向数据面设计。
 
 1. 只改评审批准的最小文件；
 2. 临时代码有单独 commit/清晰标记且不上主线；
-3. 构建、EID 工具、1×1 happy path 和负向验证均保留原始日志；
+3. 构建、EID 工具和 1×1 happy path 均保留原始日志；
 4. 未执行或因环境阻塞的项目明确写“未执行/阻塞”；
 5. 单机结果归档后停下，再由用户决定是否进入真实鲲鹏+昇腾验收。
 

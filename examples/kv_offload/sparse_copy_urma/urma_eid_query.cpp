@@ -4,7 +4,7 @@
  *
  * Temporary local DRAM validation helper. Remove this file after hardware sign-off.
  * Linux build:
- *   g++ -std=c++17 -O2 -Wall -Wextra -Werror examples/kv_offload/urma_eid_query.cpp \
+ *   g++ -std=c++17 -O2 -Wall -Wextra -Werror examples/kv_offload/sparse_copy_urma/urma_eid_query.cpp \
  *       -ldl -o /tmp/mf_urma_eid_query
  */
 

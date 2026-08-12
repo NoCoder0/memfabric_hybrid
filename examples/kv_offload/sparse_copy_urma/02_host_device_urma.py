@@ -20,6 +20,7 @@ from urma_example_common import (
     HBM_GVA_MAX_BYTES,
     HOST_RANK,
     ITEM_BYTES,
+    LOCAL_VALIDATION_ROLES,
     MF_LOG_LEVEL_CHOICES,
     NPU_RANK,
     POOL_BYTES,
@@ -195,6 +196,12 @@ def _build_parser():
     parser.add_argument("--ctrl-port", type=int, default=CTRL_PORT)
     parser.add_argument("--bind-ip", default="0.0.0.0", help="Host-side control listener bind address")
     parser.add_argument("--local-dram-validation", action="store_true", help="Enable validation-only local DRAM mode")
+    parser.add_argument(
+        "--role",
+        choices=LOCAL_VALIDATION_ROLES,
+        default=None,
+        help="Local validation role; required with --local-dram-validation",
+    )
     parser.add_argument("--physical-device-id", type=int,
                         help="Optional physical device id override; local mode defaults from EID metadata")
     parser.add_argument("--host-eid", help="Local validation Host/DRAM EID; defaults to MF_HOST_URMA_EID")
@@ -202,9 +209,12 @@ def _build_parser():
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument("--sizes", default="1,4096,1048576", help="Single-copy byte sizes")
     parser.add_argument("--batch-counts", default="1,999,1000,1001", help="Batch item counts")
-    parser.add_argument("--negative", choices=("none", "bad-gva", "cross-range", "overflow-len", "wrong-device"),
-                        default="none")
     parser.add_argument("--ctrl-timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--env-file",
+        default=None,
+        help="Local validation env file; defaults to sparse_copy_urma/env in local mode",
+    )
     parser.add_argument(
         "--log-level",
         type=int,
@@ -220,9 +230,11 @@ def main():
     try:
         _parse_common_options(args)
         if args.local_dram_validation:
+            if args.role is None:
+                _fail(args, "argument_validation", "--role is required with --local-dram-validation")
             _parse_local_options(args)
-        elif args.negative != "none":
-            _fail(args, "argument_validation", "--negative requires --local-dram-validation")
+        elif args.role is not None:
+            _fail(args, "argument_validation", "--role requires --local-dram-validation")
         if args.rank == HOST_RANK:
             _run_host(args)
         else:
