@@ -31,6 +31,13 @@ constexpr int32_t HCOMM_E_AGAIN = 20; // Aligned with HCCL_E_AGAIN without depen
 constexpr uint32_t HCOMM_SUBMIT_MAX_RETRIES = 3U;
 constexpr const char *ENV_HOST_URMA_EID = "MF_HOST_URMA_EID";
 
+struct ParsedRemoteMemKey {
+    uint64_t remoteAddr{0};
+    UrmaExportDesc exportDesc{};
+    const uint8_t *payload{nullptr};
+    uint32_t memDescLen{0};
+};
+
 static bool IsAllHex(const std::string &s)
 {
     for (auto ch : s) {
@@ -39,6 +46,37 @@ static bool IsAllHex(const std::string &s)
         }
     }
     return true;
+}
+
+Result ParseRemoteMemKey(const TransportMemoryKey &memKey, uint32_t peerRank, ParsedRemoteMemKey &parsed)
+{
+    if (memKey.keys[0] != urma::URMA_EXPORT_DESC_MAGIC || memKey.keys[1] == 0) {
+        BM_LOG_ERROR("Invalid remote memory key, peerRank: " << peerRank << " magic: 0x" << std::hex << memKey.keys[0]
+                                                             << " keyAddr: 0x" << memKey.keys[1]);
+        return BM_INVALID_PARAM;
+    }
+    parsed.remoteAddr = memKey.keys[1];
+    parsed.payload = reinterpret_cast<const uint8_t *>(&memKey.keys[urma::DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS]);
+    std::memcpy(&parsed.exportDesc, parsed.payload, sizeof(UrmaExportDesc));
+    const auto &desc = parsed.exportDesc;
+    const bool validType =
+        desc.memoryType == UrmaMemoryType::HOST_DRAM || desc.memoryType == UrmaMemoryType::DEVICE_HBM;
+    uint64_t exportEnd = 0;
+    const UrmaCommMem exportMem{desc.addr, desc.size, desc.memoryType};
+    const uint64_t totalDescLen = sizeof(UrmaExportDesc) + static_cast<uint64_t>(desc.hcommDescLen) +
+                                  static_cast<uint64_t>(desc.devTransFlagDescLen);
+    if (desc.magic != urma::URMA_EXPORT_DESC_MAGIC || desc.version != urma::URMA_EXPORT_DESC_VERSION ||
+        desc.headerSize != sizeof(UrmaExportDesc) || !validType || desc.addr == 0 || desc.size == 0 ||
+        desc.hcommDescLen == 0 || !urma::GetRangeEnd(exportMem, exportEnd) ||
+        totalDescLen > urma::DEVICE_URMA_EXPORT_KEY_DATA_BYTES) {
+        BM_LOG_ERROR("Invalid remote export descriptor, peerRank: "
+                     << peerRank << " keyAddr: 0x" << std::hex << parsed.remoteAddr << " descAddr: 0x" << desc.addr
+                     << std::dec << " size: " << desc.size << " memoryType: " << desc.memoryType
+                     << " hcommDescLen: " << desc.hcommDescLen << " flagDescLen: " << desc.devTransFlagDescLen);
+        return BM_INVALID_PARAM;
+    }
+    parsed.memDescLen = static_cast<uint32_t>(sizeof(UrmaExportDesc) + desc.hcommDescLen);
+    return BM_OK;
 }
 
 Result ParseHostUrmaEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eid)
@@ -390,7 +428,7 @@ Result HostUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
             }
         }
         if (!peerInfo.memKeys.empty()) {
-            auto ret = ImportRemoteMemKeysLocked(peerRank, peerInfo.memKeys, state);
+            auto ret = PreparePeerMemoryKeysLocked(peerRank, peerInfo.memKeys, state);
             if (ret != BM_OK) {
                 return ret;
             }
@@ -436,6 +474,45 @@ Result HostUrmaTransportManager::ValidateInitialPeerSetLocked(const HybmTransPre
     if (state.channel == 0) {
         BM_LOG_ERROR("Peer rank state has no channel but was previously prepared");
         return BM_ERROR;
+    }
+    return BM_OK;
+}
+
+Result HostUrmaTransportManager::PreparePeerMemoryKeysLocked(uint32_t peerRank,
+                                                             const std::vector<TransportMemoryKey> &memKeys,
+                                                             RemoteRankState &state)
+{
+    if (state.endpointDesc.loc.locType == ENDPOINT_LOC_TYPE_DEVICE) {
+        return ValidateDevicePeerMemoryKeysLocked(peerRank, memKeys);
+    }
+    if (state.endpointDesc.loc.locType == ENDPOINT_LOC_TYPE_HOST) {
+        return ImportRemoteMemKeysLocked(peerRank, memKeys, state);
+    }
+    BM_LOG_ERROR("Unsupported peer endpoint location, rankId: " << rankId_ << " peerRank: " << peerRank
+                                                                << " locType: " << state.endpointDesc.loc.locType);
+    return BM_INVALID_PARAM;
+}
+
+Result
+HostUrmaTransportManager::ValidateDevicePeerMemoryKeysLocked(uint32_t peerRank,
+                                                             const std::vector<TransportMemoryKey> &memKeys) const
+{
+    for (const auto &memKey : memKeys) {
+        ParsedRemoteMemKey parsed{};
+        const auto ret = ParseRemoteMemKey(memKey, peerRank, parsed);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        const auto &desc = parsed.exportDesc;
+        if (desc.memoryType != UrmaMemoryType::DEVICE_HBM) {
+            BM_LOG_ERROR("Device peer exported unsupported memory type, rankId: "
+                         << rankId_ << " peerRank: " << peerRank << " keyAddr: 0x" << std::hex << parsed.remoteAddr
+                         << " descAddr: 0x" << desc.addr << std::dec << " memoryType: " << desc.memoryType);
+            return BM_INVALID_PARAM;
+        }
+        BM_LOG_INFO("Host URMA skips Device HBM key, rankId: "
+                    << rankId_ << " peerRank: " << peerRank << " gva: 0x" << std::hex << parsed.remoteAddr
+                    << " hbmAddr: 0x" << desc.addr << std::dec << " size: " << desc.size << " memTag: " << desc.memTag);
     }
     return BM_OK;
 }

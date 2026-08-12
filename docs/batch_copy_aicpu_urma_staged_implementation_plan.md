@@ -68,16 +68,16 @@ HybmBatchCopy AICPU
 - 不为 `sparse_copy_urma` 创建第二个 HYBM entity，不让 acc_offload 接管 route、MR、
   channel、thread 或 flag 生命周期。
 
-### 2.2 T0.2 保持回退状态
+### 2.2 远端 descriptor 与本地 view 的固定语义
 
-当前代码继续检查 HCOMM 返回的 `outMem.type` 和 `flagOutMem.type`。整体计划不得：
+整体计划不得从外层 descriptor 合成或覆盖 HCOMM 返回 type，也不得跳过普通 MR 或 transfer flag 的地址、大小
+和 type 校验。已确认的正式语义为：
 
-- 从外层 descriptor 合成或覆盖 HCOMM 返回 type；
-- 跳过普通 MR 或 transfer flag 的 type 校验；
-- 增加替代 `flagMemoryType` 字段；
-- 为旧 T0.2 预期新增 invalid-type UT。
-
-只有硬件验证明确证明当前 HCOMM 返回 type 不可靠，或用户后续明确要求时，才重新设计 T0.2。
+- export descriptor 表示远端物理内存类型；
+- AICPU_TS 导入 Host DDR 后，HCOMM 返回的本地 view type 是 `DEVICE`；
+- Device manager 必须分别校验远端 Host DDR descriptor 和本地 Device view；
+- CPU Host-to-Host 后端不保证填写 `outMem.type`，该分支只使用已校验 descriptor 与 import 地址/大小；
+- 不增加替代 `flagMemoryType` 字段，也不为 invalid-type 增加成功路径。
 
 ### 2.3 route 与生命周期
 
@@ -214,18 +214,18 @@ src/hybm/csrc/transport/urma/
 - import 后 MemFabric 自身校验失败时，立即 unimport 回滚。
 - 根错误日志包含 API、memTag、addr、size、descLen 和 HCOMM 返回码中适用字段。
 
-### 4.3 T0.2 回退后的正式结论
+### 4.3 正式 import 校验结论
 
-T0.2 原计划曾尝试忽略 HCOMM 返回 type，并从外层 descriptor 恢复 type；该实现已经回退，不属于当前
-整体方案。正式行为为：
+当前实现不忽略 HCOMM type，也不从 descriptor 覆盖 local view type。正式行为为：
 
-- 普通 MR 继续检查 HCOMM 返回的 `outMem.type`；
-- transfer flag 继续检查 `flagOutMem.type`；
-- 同时校验 addr、size、descriptor type 和目标内存类型；
-- 不增加 invalid-type 成功路径或 type 合成 helper。
+- Device manager 对 Host DDR 校验 `descriptor.type == HOST_DRAM`、三地址相等和 `view.type == DEVICE`；
+- Device HBM 的远端 descriptor 与本地 AICPU view 都必须是 Device，但允许二者地址不同；
+- Device transfer flag 继续使用既有导入流程，并由 route 检查其 8 B 可用性；
+- Host-to-Host CPU 分支以 descriptor、地址和大小校验为准，不使用未定义的 `outMem.type`；
+- Host 对 Device endpoint 的 HBM key 完整校验后不导入，因为当前单向 BatchCopy 没有 Host 消费方。
 
-若硬件验证失败，必须保存 CANN/HCOMM 版本、原始返回结构和日志，再单独评审 T0.2，不能在 T2/T3
-实现中临时绕过。
+若硬件验证仍失败，必须保存 CANN/HCOMM 版本、原始返回结构和日志；不得通过放宽 descriptor、地址、大小或
+endpoint 位置校验来掩盖失败。
 
 ### 4.4 动态库与构建
 
@@ -572,7 +572,8 @@ T2 不修复 `connected_`。未来修复后删除 `Prepare()` 末尾调用。
 - flag type/size/address、thread/channel 缺失。
 - 两个发布入口幂等，成功后 route 内容不变化；调用方不提交发布后的 route 变更。
 - `RemoveRanks()` 的生命周期保护保持有效。
-- 当前 HCOMM `outMem.type/flagOutMem.type` 校验保持不变。
+- 覆盖远端 descriptor type 与本地 import view type 不同的 Host DDR 场景，以及 CPU Host-to-Host 未填写
+  `outMem.type` 的地址/大小门禁。
 
 ### 6.4 T2.4：生产 HybmBatchCopy AICPU
 
@@ -962,13 +963,13 @@ AICPU run 包和 wheel 需要分别验证。现有 build 目录曾缺少 `CMakeF
 | 临时 ERROR route 日志过多 | 热路径日志膨胀 | 硬件稳定后删除或降级 |
 | acc_offload lazy launcher 与 entity 生命周期分离 | route 未就绪或提前释放 | magic 校验；example 保持 entity 存活 |
 | 新 AICPU 目录未被 run/wheel 收集 | 产物缺符号 | 三条交付链分别做安装验证 |
-| 当前 HCOMM type 行为变化 | import 被拒绝 | 保留 T0.2；有硬件证据后单独评审 |
+| HCOMM local view type 与远端 descriptor type 不同 | import 被错误拒绝 | 按远端 descriptor 与本地 view 分层校验，保留地址和大小硬门禁 |
 | `connected_` 既有问题 | 发布入口时序不稳定 | 临时双触发，不在本任务修复 |
 
 ## 12. 阶段完成定义
 
 - **T0 完成：** `HOST_DEVICE_URMA` 完成端到端协商，Host/Device 共用 private-data v2 和公共 HCOMM
-  封装；当前 MR/flag type 校验保持不变，旧 T0.2 代码不残留。
+  封装；远端 descriptor 与本地 view 分层校验，旧 type 合成代码不残留。
 - **T1 完成：** 两台鲲鹏能够双向 Read/Write、batch fallback 和 fence，并证明固定 DDR
   `GVA == descriptor addr == import view addr`；无卡资源可完整回滚和清理。
 - **T2 代码完成：** route control、publisher、两种 builder、唯一 AICPU 算子、acc_offload API 和交付链

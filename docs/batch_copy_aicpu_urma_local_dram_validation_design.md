@@ -139,9 +139,9 @@ DSMI/`urma_admin` 选路逻辑，以独立单文件放在 `examples/kv_offload` 
    与临时工具选择的是同一对。
 3. 当前 Host pattern 以 4 KiB block 重复，但 NPU 预期以整个 batch 连续 `arange % 251` 生成；batch 大于
    1 时两者在第二个 block 起不一致，必须改成全池连续 pattern 或按 block 重建期望。
-4. 当前 NPU 创建本地 HBM pool，其 key 可能随 entity 交换给 Host；Host `Prepare()` 对所有非空 key 都调用
-   `ImportRemoteMemKeysLocked()`，而该函数固定按 Host DRAM 解释。原设计明确 Host 面向 Device peer 不导入
-   HBM key，当前代码没有清晰实现该过滤。
+4. NPU 创建本地 HBM pool 后，其 key 可能随 entity 交换给 Host。正式 Host URMA 现在按 peer endpoint
+   位置处理：对 Device peer 完整校验 `DEVICE_HBM` descriptor，但不导入无消费方的 HBM key；对 Host peer
+   仍按既有路径导入 Host DDR。该规则不依赖本机 validation 宏。
 5. 当前 Device endpoint 在 `UBC_CTP` 下把 EID bytes 放入 `raws`，但 `type` 设置为
    `COMM_ADDR_TYPE_IP_V6` (`device_urma_transport_manager.cpp:230-240`)；Host 侧为
    `COMM_ADDR_TYPE_EID`。这是当前实现，不在本任务中擅自改写，需由实机建链结果确认兼容性。
@@ -442,29 +442,21 @@ HCOMM，`MapSlice()` 不把 `HOST_DEVICE_URMA` 加入 HAL register mask。临时
 AICPU 写入。`src/dst/len` 控制 tensor 仍由 torch 分配。若实机证明 `sparse_copy_urma` 目的地址必须是框架
 HBM 才可用，则增加一个独立用例，不改变默认验收。
 
-### 3.3.6 Host 是否需要过滤 Device HBM key：原因与结论
+### 3.3.6 Host 对 Device HBM key 的正式方向规则
 
-提出该修改的原因来自当前调用链，而不是本机模拟本身：
+该规则来自正式的 Host-to-Device 单向 BatchCopy 协议，而不是本机模拟本身：
 
-1. `ComposeTransportManager::GetDevicePrepareOptions()` 会把 peer 的 `memKeys` 全部转成 Device URMA key，
-   交给当前 `deviceTransportManager_`；本机进程 A 通过临时角色覆盖后，该对象实际是
-   `HostUrmaTransportManager`；
-2. `HostUrmaTransportManager::Prepare()` 在 `peerInfo.memKeys` 非空时无条件调用
-   `ImportRemoteMemKeysLocked()`；
-3. 该函数把每个 key 都按 Host DRAM export descriptor 导入，并把 view 固定标记为 `HOST_DRAM`；
-4. 本方案是 Device 主动读取 Host DRAM。Host 只需导出自己的 DRAM/flag，不需要导入进程 B 的 HBM；若
-   entity 确实把进程 B 的 HBM key 发给进程 A，Host 可能在无用的导入步骤提前失败，拷贝尚未触发就退出。
+1. entity 会把 peer 的 `memKeys` 交给各自的 transport manager；
+2. Device 主动读取 Host DRAM，Host 只导出自己的 DDR/flag，不消费 Device HBM；
+3. Host manager 因此按 endpoint location 分支：Host peer 保持导入 DDR/flag，Device peer 解析并严格校验
+   key magic、descriptor、地址范围、length 和 `DEVICE_HBM` type，然后显式跳过 HBM import。
 
-但是，仅凭当前源码不能确认进程 B 的 HBM key 最终一定出现在进程 A 的 `peerInfo.memKeys` 中；同时，直接按
-Device endpoint 跳过全部 key 可能影响未来双向数据面。因此修订后的结论是：**不把 Host key 过滤列为默认
-修改项**。首轮运行先观察 `Prepare()` 收到的 key 数量、descriptor tag/type 和失败点：
+这不是“按 endpoint 位置盲跳过 key”：Device peer 的非法、非 HBM 或越界 descriptor 仍会失败。该规则已经
+进入正式 Host manager，不受 `MF_LOCAL_DRAM_VALIDATION` 宏或 role 环境变量影响；若未来增加 Host 消费
+Device HBM 的独立双向数据面，必须另行设计显式路由和导入生命周期，不能复用当前单向分支。
 
-- 未收到 Device HBM key，或现有 `Prepare()` 成功：Host manager 零修改；
-- 明确收到 Device HBM key 且因此失败：再增加仅受 `MF_LOCAL_DRAM_VALIDATION` 宏保护的过滤分支；
-- 若真实鲲鹏+昇腾场景也需要同一过滤：脱离本临时方案单独评审，确认双向语义后才可转为正式代码。
-
-这样修改的目的只是避免单向验证被无关的反向 HBM key 阻塞，不是放宽 Host DRAM 的 key magic、地址相等、
-type 或 size 校验。
+该修正不放宽 Host DDR 的 key magic、地址相等或 size 校验；它只消除 Host 对本来不消费的 Device HBM 的错误
+import。
 
 ### 3.3.7 控制面元数据
 
@@ -713,31 +705,30 @@ python3 examples/kv_offload/sparse_copy_urma/02_host_device_urma.py \
 | 6 | `urma_example_common.py` | 日志、控制通道、生命周期和参数解析 | 拆出公共职责，复用生产/验证路径 | 否 | 同目录私有示例模块 |
 | 7 | `urma_local_validation.py` | 本机双进程 copy、握手、校验 | 拆出 validation-only 数据面 | 否 | CLI 开关 |
 | 8 | `sparse_copy_urma/README.md` | 增加临时构建、EID 查询及启动命令 | 避免使用者遗漏宏或混淆物理/逻辑卡号 | 否 | 标记 validation-only |
-| C1 | `host_urma_transport_manager.h` | 声明条件 key 过滤 helper | 仅当 3.3.6 的 Device HBM key 问题实机出现 | 待定 | 编译宏，条件修改 |
-| C2 | `host_urma_transport_manager.cpp` | 宏内跳过本机验证不需要的 Device HBM key | 避免单向验证在无用导入处失败 | 待定 | 编译宏，条件修改 |
+| C1 | `host_urma_transport_manager.h` | 声明按 peer location 准备 key 的 helper | 区分 Host DDR import 与 Device HBM 校验/跳过 | 是 | 正式协议 |
+| C2 | `host_urma_transport_manager.cpp` | Device HBM descriptor 严格校验后不导入 | 修复正式单向协议的错误 import | 是 | 正式协议 |
+| C3 | `device_urma_transport_manager.{h,cpp}` | 分别保存远端 descriptor type 与本地 view type | AICPU 导入 Host DDR 的本地 view 为 Device，不能误判为远端 Host type | 是 | 正式协议 |
 
-因此，**EID 工具除外，MF 必改 8 个文件**：2 个构建脚本、1 个 CMake、1 个 C++、3 个 Python 示例模块和
-1 个 README。Host manager 的 2 个文件只是条件项，未观察到 3.3.6 所述问题时保持零修改。无需修改
-binding、Device manager、AICPU、route/key ABI 或 `test/` 目录。
+本机 validation 仍只修改其 8 个临时文件；本次另有正式 Host/Device manager 修正，以统一远端 descriptor
+与本地 view 的语义。无需修改 binding、AICPU、route/key ABI 或 `test/` 目录。
 
 ### 3.6.3 最终保留与临时代码边界
 
 | 分类 | 内容 | 处理方式 |
 | --- | --- | --- |
 | 最终真实鲲鹏+昇腾复用 | 既有 EID 环境变量、两个 manager、key/endpoint、route、AICPU 和 acc_offload | 保持现状 |
-| 可独立保留的通用修正 | Python 全池连续 pattern 修正 | 与本机模式拆分后可保留 |
+| 可独立保留的通用修正 | Python 全池连续 pattern，以及 Host 对 Device HBM 的方向处理、descriptor/local view 语义修正 | 前者与本机模式拆分后可保留，后两者已是正式协议代码 |
 | 仅单机模拟 | 构建参数、编译宏、Compose 角色覆盖、Python local 分支、EID 工具、临时 README | 验证结束后删除 |
-| 条件临时项 | Host manager 过滤 Device HBM key | 仅实机触发时实现；先置于宏内 |
 
-所有最终方案不使用的 C++ 代码必须位于 `#if defined(MF_LOCAL_DRAM_VALIDATION)` 内。Python 不参与 C++
+所有仅本机模拟使用的 C++ 代码必须位于 `#if defined(MF_LOCAL_DRAM_VALIDATION)` 内。Python 不参与 C++
 编译，因此使用 `--local-dram-validation` 隔离；其本机分支只有在宏开启的库上才可工作。EID 工具是独立源文件，
 不受产品宏控制，也不进入产品构建。验证结束后删除上述临时内容并以默认参数重新构建。
 
 ### 3.6.4 不需要修改的关键文件
 
 - `device_urma_eid_reader.cpp`：已支持 `USE_LOCAL_EID`；
-- `hcomm_transport_manager.cpp`：不绕过 import type；
-- `device_urma_transport_manager.cpp`：当前 route/import 生产门禁保持不变；
+- `hcomm_transport_manager.cpp`：保持现有 local view 有效性检查，不在本次修改范围内；
+- `device_urma_transport_manager.cpp`：本次仅修正远端 descriptor 与本地 view type 的混淆；
 - `hybm_batch_copy.*`、`hybm_batch_transfer.*`、acc_offload launcher：使用现有实现；
 - `dl_api.cpp`、`hybm_conn_based_segment.cpp` 的 `NO_XPU` 分支：禁止修改；
 - binding、wheel/run 打包文件：不增加公共接口或安装内容。
@@ -796,12 +787,12 @@ ValidationRole GetLocalDramValidationRole(const TransportOptions &options)
 `OpenDeviceTransport()` 仅在宏内解释该枚举，对 INVALID 返回 `BM_INVALID_PARAM`。宏关闭时编译器看不到
 helper、枚举、环境变量和 Host override 分支。
 
-#### `host_urma_transport_manager.{h,cpp}`（条件修改）
+#### `host_urma_transport_manager.{h,cpp}`（正式修正）
 
-默认不修改。只有实机证明 Device HBM key 导致 Host `Prepare()` 失败时，才在宏内增加私有
-`ImportPeerKeysForLocalValidationLocked()`。该 helper 只过滤已确认的 Device HBM descriptor，不按 endpoint
-位置盲目跳过全部 key；宏关闭时仍直接调用现有 `ImportRemoteMemKeysLocked()`。具体 descriptor 识别依据必须
-来自首轮日志，不能在文档中猜测字段。
+`PreparePeerMemoryKeysLocked()` 按 peer endpoint location 分支。Host peer 继续调用
+`ImportRemoteMemKeysLocked()` 导入 Host DDR/flag；Device peer 调用
+`ValidateDevicePeerMemoryKeysLocked()`，对每个 key 完整解析并只接受 `DEVICE_HBM`，随后不导入。
+这条规则不在 `MF_LOCAL_DRAM_VALIDATION` 宏内，也不读取临时 role 环境变量。
 
 #### `02_host_device_urma.py`（本机分支临时）
 
@@ -926,19 +917,19 @@ bash script/build_and_pack_run.sh --build_local_dram_validation ON
 | 风险 | 影响 | 缓解/回滚 |
 | --- | --- | --- |
 | 同机 Host Endpoint 依赖 ACL context | 与真实无卡 Host 行为不同 | 只在 Python local 模式初始化；manager/NO_XPU 不变 |
-| import view type 为 DEVICE | 当前 Host route type 门禁失败 | 保存证据，单独评审 T0.2；不临时绕过 |
+| AICPU import Host DDR 的 local view type 为 DEVICE | 若把 local view 当远端类型会错误拒绝 | Device manager 分别校验远端 descriptor 为 Host DDR、本地 view 为 Device，并保持地址/size 门禁 |
 | Host import view addr 不等于 GVA | route 不发布 | 保持 equality 硬失败，转真实环境或修 HCOMM 根因 |
 | Device endpoint addr type 与参考不同 | channel 可能失败 | 先记录当前 raw/type；是否修正另立决策 |
 | AICPU channel engine 组合不匹配 | channel/thread 创建失败 | 保存 HCOMM 版本与返回码，不能擅改生产组合 |
 | 两进程共享同一卡 HYBM meta 初始化 | 固定 HBM control 资源可能冲突 | 首轮 1×1 实测；失败则评审独立 Host helper，不硬改 meta |
-| NPU HBM key 被 Host 误导入 | Host Prepare 失败 | 经日志确认后在宏内按 descriptor 做最小过滤 |
+| NPU HBM key 被 Host 误导入 | Host Prepare 失败 | 正式按 Device endpoint 分支严格校验 descriptor 后跳过不消费的 HBM import |
 | 临时角色代码进入最终构建 | 最终二进制包含无用分支 | 构建参数缺省 OFF，C++ 使用编译宏隔离，验收后删除 |
 | EID 多候选取首个不稳定 | 建链到错误端口 | 打印全部候选并要求人工确认；可改为多候选即失败 |
 | 本机成功掩盖跨节点问题 | 真实鲲鹏仍失败 | 本机仅前置门禁，保留真实 T3 验收 |
 
-回滚最简单路径为：使用缺省 `--build_local_dram_validation OFF` 重新构建，再删除 Compose 临时角色分支、
-Python local 模式和独立 EID 工具。Host key 过滤若被证明影响既有 Host↔Device 反向数据面，则删除该条件
-修改，并重新评审真实语义。
+回滚本机验证最简单路径为：使用缺省 `--build_local_dram_validation OFF` 重新构建，再删除 Compose 临时角色
+分支、Python local 模式和独立 EID 工具。正式 Host 对 Device HBM 的方向规则不随本机验证回滚；若未来需要
+Host 消费 Device HBM，必须新增独立双向数据面设计。
 
 ---
 
@@ -961,7 +952,7 @@ Python local 模式和独立 EID 工具。Host key 过滤若被证明影响既�
 
 - [ ] 是否接受 EID 多候选时“按 DCMI/`urma_admin` 枚举顺序取首个”，还是改为多候选即失败；
 - [ ] 确认本机进程 A 可临时绑定与进程 B 相同的逻辑 NPU context；
-- [ ] 确认 Host key 过滤只在 3.3.6 所述问题实机出现后实施，不作为默认修改；
+- [x] Host 对 Device HBM key 按正式单向协议完整校验后不导入；
 - [ ] 确认默认 destination 使用 MemFabric 注册 HBM pool，torch HBM 作为补充；
 - [ ] 目标 CANN/HCOMM 上 Host DRAM import view 的实际 type、addr、size；
 - [ ] `COMM_ENGINE_AICPU` channel + `COMM_ENGINE_AICPU_TS` thread 的支持性；

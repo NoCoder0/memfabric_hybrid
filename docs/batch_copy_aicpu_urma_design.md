@@ -230,10 +230,15 @@ Host-DDR route 必须满足 `key.keys[1] == exportDesc.addr == view.addr`，因�
 但必须校验 export descriptor、导出 GVA、导入 view 的区间大小一致，并仅按受检 offset 做转换。
 `hcommVaBegin` 使用 `BatchCopyRangeEntry` 原有 padding，结构仍为 32 B。
 
-`HcommTransportManager::HcommMemImport()` 以 HCOMM 返回的内存视图为校验依据：普通 MR 检查
-`outMem.type`，transfer flag 检查 `flagOutMem.type`，并同时校验地址和大小。实现不合成 type，也不使用
-其他地址字段掩盖 descriptor 与 import view 的不一致。校验通过后，导入地址和大小保存到
-`RemoteRankState`，供统一 route builder 使用。
+远端 export descriptor 与本地 HCOMM import view 是两个不同语义：descriptor 表示远端物理内存类型，
+view 表示本端的可访问映射类型。AICPU_TS 导入 Host DDR 时，本地 view 仍为 `DEVICE_HBM`；因此 Device
+manager 对 Host peer 必须同时校验 `descriptor.type == HOST_DRAM`、
+`key.keys[1] == descriptor.addr == view.addr` 和 `view.type == DEVICE_HBM`。导入 Device HBM 时，
+descriptor 必须为 `DEVICE_HBM`，本地 view 仍必须为 `DEVICE_HBM`，但不要求其地址等于远端 HBM 地址。
+
+CPU URMA 后端当前只保证 Host-to-Host import 的地址和大小，不提供可靠的 `outMem.type`。Host manager
+在该 Host peer 分支保留既有的 descriptor、import 地址和大小门禁，不用未定义的 `outMem.type` 推断远端类型。
+本次不修改公共 `HcommTransportManager::HcommMemImport()` 或 Host peer 的既有 flag 生命周期。
 
 不同 route peer 的源地址范围发生重叠时，NPU 侧 `BuildBatchCopyRouteTableLocked()` 返回失败，不发布 magic。
 
@@ -461,8 +466,8 @@ Read/Write/Fence 数据面。两个 manager 独立
 | transfer flag 初始化 | 使用 `AclrtMalloc/AclrtMemcpy` 创建 device flag | `InitHostTransferFlagLocked()` 分配 8 B Host flag，写入 `uint64_t{1}`，并以 `COMM_MEM_TYPE_HOST` 注册 |
 | TLS/completion context 函数 | 管理 ACL stream、device notify 和 TLS completion context | 不创建 ACL/TLS context；按 peer 保存 CPU channel 的 pending/fence 状态 |
 | 本地 MR 注册、查询和注销函数 | 本机 HOST_DRAM 执行 HVA→DVA，HBM 使用 device address | 固定 GVA/HVA 直接注册；共用范围查找、描述符序列化和 refCount helper |
-| 远端 MR 导入函数 | 导入 Device-HBM 或鲲鹏 DDR MR/flag，并同时保存 exported GVA 与 HCOMM view | Host peer 场景导入对端 DDR MR/flag；NPU peer 场景只导出本地 DDR/flag |
-| `Prepare()` 及 channel 清理函数 | 首次调用固定同质 route peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；携带 key 的后续调用复用资源并导入初始 key | 首次创建 `COMM_ENGINE_CPU` channel；携带 key 的后续调用校验 peer/endpoint 未变化并复用 channel |
+| 远端 MR 导入函数 | 导入 Device-HBM 或鲲鹏 DDR MR/flag，并分别保存远端 descriptor type 与本地 HCOMM view type | Host peer 场景导入对端 DDR MR/flag；Device peer 场景完整校验 HBM key 后不导入 |
+| `Prepare()` 及 channel 清理函数 | 首次调用固定同质 route peer 集合并创建 `COMM_ENGINE_AICPU_TS` thread、`COMM_ENGINE_AICPU` channel；携带 key 的后续调用复用资源并导入初始 key | 首次创建 `COMM_ENGINE_CPU` channel；携带 key 的后续调用复用 channel 并按 peer 方向处理 key |
 | `UpdateRankOptions()` | 完整初始 options 就绪时发布 route；发布后相同调用幂等返回，route 不刷新；调用方保证不再提交 route 变更 | Batch_Copy 初始化完成后返回 `BM_NOT_SUPPORTED` |
 | `RemoveRanks()` | route 发布后返回 `BM_NOT_SUPPORTED`；否则遵循 DEVICE_URMA 行为 | 存在 Batch_Copy peer 时返回 `BM_NOT_SUPPORTED` |
 | 连接和 private-data 函数 | 序列化 Device `EndpointLoc` | 序列化 Host `EndpointLoc` |
@@ -560,6 +565,7 @@ sequenceDiagram
     CE->>CC: ImportForTransport() / ConnectWithOptions()
     CC->>HM: Prepare(相同 peer endpoints + memKeys)
     HM->>HM: ValidateInitialPeerSetLocked() / reuse CPU channels
+    HM->>HM: Validate Device-HBM descriptors / skip Device-HBM import
 
     NE->>NE: ImportSliceExchangeInfo(初始全量 DDR slice)
     NE->>NE: ImportForSegment() / ImportForTransportPrecheck()
@@ -611,13 +617,13 @@ entity 初始化会调用 manager 两次。`ImportEntityExchangeInfo()` 通过 `
 | `host/urma/host_urma_transport_manager.{h,cpp}` | 实现 Host endpoint、DDR/flag 注册导出、Host peer MR 导入、CPU Read/Write/Fence、channel 和清理 | 承载无卡鲲鹏的 URMA 控制面与主动数据面 |
 | `hybm_conn_based_segment.cpp`，`MapSlice()` | `ASCEND_NPU` 构建按现有条件执行 `HalHostRegister()`；无卡构建直接把固定 mmap 结果加入 VA manager，DVA 置 0 | 鲲鹏 DDR 不经过本地 device 映射，无卡节点不能依赖 HAL device 注册 |
 | `HostUrmaTransportManager::RegisterMemoryRegion()/QueryMemoryKey()` | 使用 `FindAllocByVa(mr.addr, HVM_GVA)` 校验完整区间属于本地 rank 的 Host GVA 分配记录，再直接 `HcommMemReg(mr.addr)` 并导出同一 GVA | 鲲鹏 DDR 使用 Host VA/GVA，不经过 DVA；任意 Host 指针不会进入 `HOST_DEVICE_URMA` 导出集合 |
-| `HcommTransportManager::HcommMemImport()` | 校验 HCOMM 返回的 `outMem.type/flagOutMem.type`、addr 和 size | HCOMM view 是本地可访问性依据，不能由上层合成 type 或跳过校验 |
-| `DeviceUrmaTransportManager::ImportRemoteMemKeysLocked()` | 保存 exported GVA 和 import view；Host-DDR 强制三地址相等，Device-HBM 校验受检 offset 转换；两种模式都校验 flag | 两种 route 共用 ABI 和 builder，同时保持 Host equality 硬门禁 |
+| `HcommTransportManager::HcommMemImport()` | 保持现有本地 view 有效性检查，本次不修改 | HCOMM view 只表示本地可访问性；CPU Host-to-Host 后端不以其未定义 type 推断远端类型 |
+| `DeviceUrmaTransportManager::ImportRemoteMemKeysLocked()` | 分别保存远端 descriptor type 和本地 import view；Host-DDR 强制 descriptor/GVA/view 三地址相等，AICPU 本地 view 必须为 Device；两种模式都校验 flag | 两种 route 共用 ABI 和 builder，同时保持 Host equality 硬门禁 |
 | `src/hybm/csrc/common/hybm_define.h`、`hybm_batch_copy_route.h` | 定义 2 MiB route 区、34 MiB control 映射常量及 Host/AICPU 共享路由 ABI | 固定地址、结构大小和 offset 使用同一组编译期定义 |
 | `hybm_gva.cpp`，`hybm_init_hbm_gva()/HybmModernInitMetaGva()` | modern meta 物理申请和映射为 34 MiB，起点为 `HYBM_DEVICE_CONTROL_ADDR`；legacy 使用 32 MiB | modern 容纳 2 MiB route，legacy ABI 和资源边界保持稳定 |
 | `src/hybm/csrc/hybm_entry.cpp`，`hybm_uninit()` | Modern 使用 34 MiB control 边界；Legacy 继续使用 32 MiB meta 边界 | 两条初始化/销毁路径分别成对，避免 legacy 释放未分配区域 |
 | `DeviceUrmaTransportManager::Prepare()/PreparePeerLocked()` | 首次无 key 调用创建 channel/thread 并固定 route peer 集合；携带全量 key 的调用复用资源并导入初始 MR 与 flag | 对齐 entity 先交换 endpoint、后导入 slice 的初始化顺序，route 由 `UpdateRankOptions()` 发布 |
-| `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel 并固定 peer 集合；携带 key 的调用校验 peer/endpoint 未变化并复用 channel；NPU peer 不导入 HBM key | 支持 Host 主动数据面和鲲鹏对 NPU 的 DDR 导出，并接受 entity 的幂等 `Prepare()` |
+| `HostUrmaTransportManager::Prepare()/ValidateInitialPeerSetLocked()` | 首次创建 CPU channel；携带 key 的调用复用 channel，Device peer 的 HBM key 完整校验后不导入 | 支持 Host 主动数据面和鲲鹏对 NPU 的 DDR 导出，并接受 entity 的幂等 `Prepare()` |
 | `DeviceUrmaTransportManager::RollbackInitialImportsLocked()` | 任一 peer 导入或 route 发布失败时，按逆序释放本轮事务创建的全部 import；已存在的 channel/thread 由 manager 清理流程持有 | 防止跨 peer 的部分导入残留，同时不误删已建立的资源 |
 | `DeviceUrmaTransportManager::TryPublishBatchCopyRouteLocked()/PublishBatchCopyRouteLocked()` | 在符合条件的 Device-HBM 或 Host-DDR route peer 资源完整后发布；成功后重复调用只返回 `BM_OK` | publisher 与执行入口解耦，且不实现发布后的刷新或热更新 |
 | `DeviceUrmaTransportManager::UpdateRankOptions()/RemoveRanks()` | 完整初始 options 触发 route 发布；route 发布后视为固定，调用方不再提交扩展或删除请求；`RemoveRanks()` 仍受生命周期保护 | 不实现发布后 route 刷新，防止 route 引用已释放资源 |
