@@ -435,7 +435,7 @@ def show(node=None, min_mb=1024, workers=None):
         return 0
     ascend_soc_type = _detect_soc(True)
     zone_page = get_zone_page_size()
-    use_ranges = ascend_soc_type == ASCEND_910C
+    use_ranges = ascend_soc_type == ASCEND_910C or ascend_soc_type == ASCEND_UNKNOWN
     target_ranges = build_target_ranges() if use_ranges else None
     workers_eff = _resolve_workers(nodes, workers)
 

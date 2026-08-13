@@ -226,25 +226,14 @@ Result HybmHostShmSegment::Import(const std::vector<std::string> &allExInfo, voi
             BM_LOG_ERROR("Deserialize imported info failed, i: " << i << " ret: " << desRet);
             return BM_INVALID_PARAM;
         }
-    }
-    std::unordered_set<uint32_t> rankIdSet;
-    std::vector<bool> uniqueRankFlags(deserializedInfos.size(), false);
-    for (auto i = 0U; i < deserializedInfos.size(); i++) {
         if (deserializedInfos[i].magic != DRAM_SLICE_EXPORT_INFO_MAGIC) {
             return BM_INVALID_PARAM;
         }
-        if (!rankIdSet.insert(deserializedInfos[i].rankId).second) {
-            BM_LOG_WARN("Duplicate rankId in import: " << deserializedInfos[i].rankId);
-            continue;
-        }
-        uniqueRankFlags[i] = true;
     }
     try {
-        for (auto i = 0U; i < deserializedInfos.size(); ++i) {
-            if (uniqueRankFlags[i]) {
-                imports_.push_back(deserializedInfos[i]);
-                importedHugetlbfsFlags_[deserializedInfos[i].rankId] = deserializedInfos[i].useHugetlbfs;
-            }
+        for (const auto &info : deserializedInfos) {
+            imports_.push_back(info);
+            importedHugetlbfsFlags_[info.rankId] = info.useHugetlbfs;
         }
     } catch (...) {
         return BM_MALLOC_FAILED;
@@ -269,15 +258,12 @@ Result HybmHostShmSegment::Mmap() noexcept
 
 Result HybmHostShmSegment::Unmap() noexcept
 {
-    auto ret = BM_OK;
-    for (auto rankId : mappedRemoteRanks_) {
-        if (RemapRemoteAsReserved(rankId) != BM_OK) {
-            ret = BM_ERROR;
-        }
+    for (auto gva : mappedGvaMem_) {
+        HybmVaManager::GetInstance().RemoveOneVaInfo(gva);
     }
+    mappedGvaMem_.clear();
     CloseImportedShmFds();
-    mappedRemoteRanks_.clear();
-    return ret;
+    return BM_OK;
 }
 
 MemSlicePtr HybmHostShmSegment::GetMemSlice(hybm_mem_slice_t slice, bool quiet) const noexcept
@@ -334,19 +320,12 @@ Result HybmHostShmSegment::RemoveImported(const std::vector<uint32_t> &ranks) no
 {
     auto ret = BM_OK;
     for (auto rankId : ranks) {
-        if (mappedRemoteRanks_.count(rankId) == 0) {
-            continue;
-        }
-        if (RemapRemoteAsReserved(rankId) != BM_OK) {
-            ret = BM_ERROR;
-            continue;
-        }
+        RemapRemoteAsReserved(rankId);
         auto fdPos = importedShmFds_.find(rankId);
         if (fdPos != importedShmFds_.end()) {
             close(fdPos->second);
             importedShmFds_.erase(fdPos);
         }
-        mappedRemoteRanks_.erase(rankId);
     }
     return ret;
 }
@@ -487,11 +466,11 @@ uint64_t HybmHostShmSegment::ReserveLva(const ShmExportInfo &im) noexcept
     return reservedLva;
 }
 
-Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
+int HybmHostShmSegment::OpenImportedShmFd(uint32_t rankId) noexcept
 {
-    auto rankId = im.rankId;
-    if (mappedRemoteRanks_.count(rankId) > 0) {
-        return BM_OK;
+    auto fdIt = importedShmFds_.find(rankId);
+    if (fdIt != importedShmFds_.end()) {
+        return fdIt->second;
     }
     bool remoteUseHugetlbfs = useHugetlbfs_;
     auto flagIt = importedHugetlbfsFlags_.find(rankId);
@@ -499,51 +478,60 @@ Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
         remoteUseHugetlbfs = flagIt->second;
     }
     auto shmPath = GetShmFilePath(rankId, remoteUseHugetlbfs);
-    int fd = -1;
     constexpr uint32_t extendedRetryTimes = 100U;
     for (uint32_t attempt = 0U; attempt < extendedRetryTimes; ++attempt) {
-        fd = open(shmPath.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
+        int fd = open(shmPath.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
         if (fd >= 0) {
-            break;
+            importedShmFds_[rankId] = fd;
+            return fd;
         }
         if (errno != ENOENT) {
             BM_LOG_ERROR("Failed to open imported shm file " << shmPath << " rank:" << rankId << " error:" << errno
                                                              << " " << SafeStrError(errno));
-            return BM_ERROR;
+            return -1;
         }
         std::this_thread::sleep_for(std::chrono::microseconds(HOST_SHM_IMPORT_OPEN_RETRY_INTERVAL_US));
     }
+    BM_LOG_ERROR("Imported shm file not ready after retry "
+                 << shmPath << " rank:" << rankId << " retries:" << extendedRetryTimes << " interval(us):"
+                 << HOST_SHM_IMPORT_OPEN_RETRY_INTERVAL_US << " last error:" << errno << " " << SafeStrError(errno));
+    return -1;
+}
+
+Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
+{
+    auto rankId = im.rankId;
+    auto remoteGva =
+        reinterpret_cast<uint64_t>(globalVirtualAddress_) + options_.maxSize * im.rankId + im.mappingOffset;
+    if (mappedGvaMem_.find(remoteGva) != mappedGvaMem_.end()) {
+        return BM_OK;
+    }
+    int fd = OpenImportedShmFd(rankId);
     if (fd < 0) {
-        BM_LOG_ERROR("Imported shm file not ready after retry "
-                     << shmPath << " rank:" << rankId << " retries:" << extendedRetryTimes
-                     << " interval(us):" << HOST_SHM_IMPORT_OPEN_RETRY_INTERVAL_US << " last error:" << errno << " "
-                     << SafeStrError(errno));
         return BM_ERROR;
     }
     struct stat fileStat {};
     if (fstat(fd, &fileStat) != 0 || static_cast<uint64_t>(fileStat.st_size) < (im.size + im.mappingOffset)) {
-        BM_LOG_ERROR("Imported shm file size mismatch " << shmPath << " rank:" << rankId << " expected:"
-                                                        << (im.size + im.mappingOffset) << " got:" << fileStat.st_size);
-        close(fd);
+        BM_LOG_ERROR("Imported shm file size mismatch rank:" << rankId << " expected:" << (im.size + im.mappingOffset)
+                                                             << " got:" << fileStat.st_size);
         return BM_ERROR;
     }
-    auto remoteGva = globalVirtualAddress_ + options_.maxSize * im.rankId + im.mappingOffset;
     auto remoteLva = reinterpret_cast<void *>(ReserveLva(im));
-    BM_ASSERT_LOG_AND_RETURN(remoteLva != nullptr, "Failed to reserve lva rank:" << im.rankId, BM_ERROR);
+    if (remoteLva == nullptr) {
+        BM_LOG_ERROR("Failed to reserve lva rank:" << im.rankId << " size:" << im.size);
+        return BM_ERROR;
+    }
     void *mapped = mmap(remoteLva, im.size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED, fd, im.mappingOffset);
     if (mapped == MAP_FAILED || mapped != remoteLva) {
-        BM_LOG_ERROR("Failed to mmap imported shm file "
-                     << shmPath << " rank:" << rankId << " gva:" << remoteGva << " lva:" << remoteLva
-                     << " size:" << im.size << " offset:" << im.mappingOffset << " ret:" << mapped << " error:" << errno
-                     << " " << SafeStrError(errno));
-        close(fd);
+        BM_LOG_ERROR("Failed to mmap imported shm rank:" << rankId << " gva:" << reinterpret_cast<void *>(remoteGva)
+                                                         << " lva:" << remoteLva << " size:" << im.size
+                                                         << " offset:" << im.mappingOffset << " ret:" << mapped
+                                                         << " error:" << errno << " " << SafeStrError(errno));
         return BM_ERROR;
     }
-    importedShmFds_[rankId] = fd;
-    mappedRemoteRanks_.insert(rankId);
+    mappedGvaMem_.insert(remoteGva);
     auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-        {reinterpret_cast<uint64_t>(remoteGva), 0, reinterpret_cast<uint64_t>(remoteLva), im.size, HYBM_MEM_TYPE_HOST},
-        options_.rankId, rankId);
+        {remoteGva, 0, reinterpret_cast<uint64_t>(remoteLva), im.size, HYBM_MEM_TYPE_HOST}, options_.rankId, rankId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AddVaInfoFromExternal failed for rank " << rankId);
     }
@@ -552,8 +540,16 @@ Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
 
 Result HybmHostShmSegment::RemapRemoteAsReserved(uint32_t rankId) noexcept
 {
-    auto *remoteBase = globalVirtualAddress_ + options_.maxSize * rankId;
-    HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(remoteBase));
+    auto gvaBase = reinterpret_cast<uint64_t>(globalVirtualAddress_) + options_.maxSize * rankId;
+    auto it = mappedGvaMem_.lower_bound(gvaBase);
+    auto st = it;
+    while (it != mappedGvaMem_.end() && *it < gvaBase + options_.maxSize) {
+        HybmVaManager::GetInstance().RemoveOneVaInfo(*it);
+        ++it;
+    }
+    if (st != it) {
+        mappedGvaMem_.erase(st, it);
+    }
     return BM_OK;
 }
 

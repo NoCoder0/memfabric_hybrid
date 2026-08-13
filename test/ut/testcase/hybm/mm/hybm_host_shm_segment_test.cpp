@@ -188,7 +188,7 @@ TEST_F(HybmHostShmSegmentTest, Import_ReturnsInvalidParamWhenMagicIsInvalid)
     EXPECT_EQ(segment.Import({exInfo}, nullptr), BM_INVALID_PARAM);
 }
 
-TEST_F(HybmHostShmSegmentTest, Import_DeduplicatesDuplicateRanksIntoImports)
+TEST_F(HybmHostShmSegmentTest, Import_KeepsAllSlicesDedupDeferredToMmap)
 {
     HybmHostShmSegment segment(MakeOptions(), 0);
 
@@ -197,34 +197,41 @@ TEST_F(HybmHostShmSegmentTest, Import_DeduplicatesDuplicateRanksIntoImports)
     first.sliceIndex = 1U;
     first.mappingOffset = 128U;
     first.size = HYBM_LARGE_PAGE_SIZE;
-    first.useHugetlbfs = false;
+    first.useHugetlbfs = true;
 
-    ShmExportInfo duplicate = first;
-    duplicate.sliceIndex = 2U;
-    duplicate.mappingOffset = 256U;
-    duplicate.useHugetlbfs = true;
+    ShmExportInfo secondSlice = first;
+    secondSlice.sliceIndex = 2U;
+    secondSlice.mappingOffset = 256U;
 
-    ShmExportInfo second{};
-    second.rankId = 2U;
-    second.sliceIndex = 3U;
-    second.mappingOffset = 512U;
-    second.size = HYBM_LARGE_PAGE_SIZE;
-    second.useHugetlbfs = true;
+    ShmExportInfo trueDuplicate = first;
+
+    ShmExportInfo third{};
+    third.rankId = 2U;
+    third.sliceIndex = 3U;
+    third.mappingOffset = 512U;
+    third.size = HYBM_LARGE_PAGE_SIZE;
+    third.useHugetlbfs = true;
 
     std::string ex1;
     std::string ex2;
     std::string ex3;
+    std::string ex4;
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(first, ex1), BM_OK);
-    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(duplicate, ex2), BM_OK);
-    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(second, ex3), BM_OK);
+    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(secondSlice, ex2), BM_OK);
+    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(trueDuplicate, ex3), BM_OK);
+    ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(third, ex4), BM_OK);
 
-    ASSERT_EQ(segment.Import({ex1, ex2, ex3}, nullptr), BM_OK);
-    ASSERT_EQ(segment.imports_.size(), 2U);
+    ASSERT_EQ(segment.Import({ex1, ex2, ex3, ex4}, nullptr), BM_OK);
+    ASSERT_EQ(segment.imports_.size(), 4U);
     EXPECT_EQ(segment.imports_[0].rankId, 0U);
     EXPECT_EQ(segment.imports_[0].sliceIndex, 1U);
-    EXPECT_EQ(segment.imports_[1].rankId, 2U);
-    EXPECT_EQ(segment.imports_[1].sliceIndex, 3U);
-    EXPECT_EQ(segment.importedHugetlbfsFlags_.at(0U), false);
+    EXPECT_EQ(segment.imports_[1].rankId, 0U);
+    EXPECT_EQ(segment.imports_[1].sliceIndex, 2U);
+    EXPECT_EQ(segment.imports_[2].rankId, 0U);
+    EXPECT_EQ(segment.imports_[2].sliceIndex, 1U);
+    EXPECT_EQ(segment.imports_[3].rankId, 2U);
+    EXPECT_EQ(segment.imports_[3].sliceIndex, 3U);
+    EXPECT_EQ(segment.importedHugetlbfsFlags_.at(0U), true);
     EXPECT_EQ(segment.importedHugetlbfsFlags_.at(2U), true);
 }
 
@@ -388,8 +395,11 @@ TEST_F(HybmHostShmSegmentTest, MapImportedShm_WithRealPeerFiles)
 
     // Mmap 真实映射两个 peer shm
     ASSERT_EQ(segment.Mmap(), BM_OK);
-    EXPECT_EQ(segment.mappedRemoteRanks_.count(0U), 1U);
-    EXPECT_EQ(segment.mappedRemoteRanks_.count(2U), 1U);
+    auto expectedGva = [&segment, &options](uint32_t rankId) -> uint64_t {
+        return reinterpret_cast<uint64_t>(segment.globalVirtualAddress_) + options.maxSize * rankId;
+    };
+    EXPECT_EQ(segment.mappedGvaMem_.count(expectedGva(0U)), 1U);
+    EXPECT_EQ(segment.mappedGvaMem_.count(expectedGva(2U)), 1U);
     EXPECT_EQ(segment.importedShmFds_.count(0U), 1U);
     EXPECT_EQ(segment.importedShmFds_.count(2U), 1U);
 
@@ -402,15 +412,15 @@ TEST_F(HybmHostShmSegmentTest, MapImportedShm_WithRealPeerFiles)
 
     // 仅移除 rank0
     EXPECT_EQ(segment.RemoveImported({0U}), BM_OK);
-    EXPECT_EQ(segment.mappedRemoteRanks_.count(0U), 0U);
-    EXPECT_EQ(segment.mappedRemoteRanks_.count(2U), 1U);
+    EXPECT_EQ(segment.mappedGvaMem_.count(expectedGva(0U)), 0U);
+    EXPECT_EQ(segment.mappedGvaMem_.count(expectedGva(2U)), 1U);
 
     // 移除未映射的 rank 无副作用
     EXPECT_EQ(segment.RemoveImported({5U}), BM_OK);
 
     // Unmap 剩余
     EXPECT_EQ(segment.Unmap(), BM_OK);
-    EXPECT_TRUE(segment.mappedRemoteRanks_.empty());
+    EXPECT_TRUE(segment.mappedGvaMem_.empty());
     EXPECT_TRUE(segment.importedShmFds_.empty());
 
     EXPECT_EQ(segment.UnReserveMemorySpace(), BM_OK);
