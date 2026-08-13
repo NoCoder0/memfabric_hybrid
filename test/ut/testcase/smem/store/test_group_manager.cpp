@@ -586,6 +586,29 @@ TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllIdleLinksPromotesToActive)
     gm_->SetLinkState(1, K_RANK_TWO, LINK_IDLE);
     gm_->SetLinkState(K_RANK_TWO, 1, LINK_IDLE);
 
+    /* DrivePendingTransitions → PromoteCheckedInRanks should NOT promote rank 1:
+     * rank 2 is already CHECKED_IN but its link is IDLE (not connected), so a
+     * synchronous join must wait until every joined peer's link is established
+     * (connected == peers). Promoting early would let the upper layer issue
+     * WRs to a peer whose QP is not ready (CQE 261). */
+    gm_->Start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
+    gm_->Stop();
+    EXPECT_EQ(gm_->GetRankState(1), RANK_CHECKED_IN);
+}
+
+TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllPeersConnectedPromotesToActive)
+{
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
+
+    /* All peers of rank 1 connected */
+    gm_->SetLinkState(1, 0, LINK_CONNECTED);
+    gm_->SetLinkState(0, 1, LINK_CONNECTED);
+    gm_->SetLinkState(1, K_RANK_TWO, LINK_CONNECTED);
+    gm_->SetLinkState(K_RANK_TWO, 1, LINK_CONNECTED);
+
     /* DrivePendingTransitions → PromoteCheckedInRanks should promote rank 1 */
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));

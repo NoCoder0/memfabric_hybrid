@@ -101,6 +101,7 @@ private:
     int ConvertHccpMrInfo(const TransportMemoryRegion &mr, HccpMrInfo &info);
     void OptionsToRankMRs(const HybmTransPrepareOptions &options);
     Result WaitQpReady();
+    int WaitQpReadyForIo(void *qpHandle, uint32_t rankId) noexcept;
     int GetRegAddress(const MemoryRegionMap &map, uint64_t inputAddr, uint64_t size, bool isLocal, uint64_t &outputAddr,
                       uint32_t &mrKey) const;
 

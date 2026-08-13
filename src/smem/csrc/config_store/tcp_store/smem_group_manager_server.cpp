@@ -612,8 +612,7 @@ bool SmemGroupManagerServer::HasEnoughConnectedLinks(uint32_t r) noexcept
     if (peers == 0) {
         return true;
     }
-    constexpr uint32_t kMinConnectedLinkRatioDenominator = 2;
-    return connected > 0 && connected * kMinConnectedLinkRatioDenominator >= peers;
+    return connected == peers;
 }
 
 void SmemGroupManagerServer::RetryIdleLinks() noexcept

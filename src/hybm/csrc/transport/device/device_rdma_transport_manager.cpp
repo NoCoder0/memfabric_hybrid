@@ -371,6 +371,29 @@ Result RdmaTransportManager::WaitQpReady()
     return BM_TIMEOUT;
 }
 
+int RdmaTransportManager::WaitQpReadyForIo(void *qpHandle, uint32_t rankId) noexcept
+{
+    // RaGetQpStatus 除查询状态外，还会触发 RaHdcLiteGetConnectedInfo 同步对端 remMr。
+    // 若 QP 尚在 CONNECTING(3)，此时下发 WR 会因对端 MR 未就绪在硬件报 CQE 261(ESOCKCLOSED)。
+    // 这里在 QP ready(1) 前轮询等待（短期即可），ready 后才允许下发 WR。
+    int qpSt = -1;
+    auto qr = DlHccpApi::RaGetQpStatus(qpHandle, qpSt);
+    if (qr != 0 || qpSt == 1) {
+        return BM_OK;
+    }
+    auto expire = std::chrono::steady_clock::now() + QP_READY_CHECK_TIMEOUT_BASE;
+    while (std::chrono::steady_clock::now() < expire) {
+        std::this_thread::sleep_for(QP_READY_CHECK_INTERVAL);
+        qr = DlHccpApi::RaGetQpStatus(qpHandle, qpSt);
+        if (qr != 0 || qpSt == 1) {
+            return BM_OK;
+        }
+    }
+    BM_LOG_ERROR("WaitQpReadyForIo timeout, rank=" << rankId_ << " to=" << rankId << " qpHandle=" << qpHandle
+                                                   << " qpStatus=" << qpSt);
+    return BM_TIMEOUT;
+}
+
 Result RdmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &options)
 {
     if (qpManager_ == nullptr) {
@@ -774,11 +797,13 @@ int RdmaTransportManager::RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAd
 
     send_wr_rsp rspInfo{};
     TP_TRACE_BEGIN(TP_HYBM_DEV_SEND_WR);
-    {
-        // Lite QP 建链后 remMr 需经 RaGetQpStatus 触发 RaHdcLiteGetConnectedInfo 同步，
-        // 否则 RDMA READ/WRITE 找不到对端 MR 报 CQE 261(ESOCKCLOSED)。读写前强制查询一次确保同步。
-        int qpSt = -1;
-        (void)DlHccpApi::RaGetQpStatus(qp->qpHandle, qpSt);
+    auto wrReadyRet = WaitQpReadyForIo(qp->qpHandle, rankId);
+    if (wrReadyRet != BM_OK) {
+        BM_LOG_ERROR("WaitQpReadyForIo before WR failed, ret: "
+                     << wrReadyRet << " rankId: " << rankId << std::hex << " lAddr: 0x" << lAddr << " rAddr: 0x"
+                     << rAddr << std::dec << " size: " << size << " write: " << write);
+        qpManager_->PutQpHandle(qp);
+        return wrReadyRet;
     }
     ret = DlHccpApi::RaSendWrV2(qp->qpHandle, &wr, &rspInfo);
     TP_TRACE_END(TP_HYBM_DEV_SEND_WR, ret);
@@ -1012,6 +1037,13 @@ int32_t RdmaTransportManager::Synchronize(void *qpHandle, uint32_t rankId)
     BM_ASSERT_LOG_AND_RETURN(hStream != nullptr, "hStream is nullptr", BM_ERROR);
     auto &remoteMr = notifyRemoteInfo_[rankId];
     BM_ASSERT_LOG_AND_RETURN(remoteMr.second != 0, "remote notify not set! rank:" << rankId, BM_ERROR);
+    {
+        auto wrReadyRet = WaitQpReadyForIo(qpHandle, rankId);
+        if (wrReadyRet != BM_OK) {
+            BM_LOG_ERROR("WaitQpReadyForIo before notify WR failed, ret: " << wrReadyRet << " rankId: " << rankId);
+            return wrReadyRet;
+        }
+    }
 
     if (notify_ == nullptr || notify_->GetStream() != hStream) {
         notify_ = std::make_shared<HybmStreamNotify>(hStream);
