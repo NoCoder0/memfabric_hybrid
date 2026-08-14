@@ -21,12 +21,26 @@ BUILD_HCOM_WITH_RDMA=${9:-ON}
 BUILD_HCOM_WITH_UB=${10:-OFF}
 BUILD_ETCD_BACKEND=${11:-OFF}
 BUILD_TOOL=${12:-cmake}
+BUILD_LOCAL_DRAM_VALIDATION=${13:-OFF}
 # 导出环境变量用于后续构建whl包
 export MF_BUILD_HCOM=${8:-OFF}
 export MF_BUILD_HCOM_WITH_RDMA=${9:-ON}
 export MF_BUILD_HCOM_WITH_UB=${10:-OFF}
 export BUILD_ETCD_BACKEND=${11:-OFF}
 export BUILD_TOOL=${12:-cmake}
+
+if [ "${BUILD_LOCAL_DRAM_VALIDATION}" != "ON" ] && [ "${BUILD_LOCAL_DRAM_VALIDATION}" != "OFF" ]; then
+  echo "Invalid BUILD_LOCAL_DRAM_VALIDATION value: ${BUILD_LOCAL_DRAM_VALIDATION}" >&2
+  exit 1
+fi
+if [ "${BUILD_LOCAL_DRAM_VALIDATION}" == "ON" ] && [ "${XPU_TYPE}" != "NPU" ]; then
+  echo "BUILD_LOCAL_DRAM_VALIDATION requires XPU_TYPE=NPU" >&2
+  exit 1
+fi
+if [ "${BUILD_LOCAL_DRAM_VALIDATION}" == "ON" ] && [ "${BUILD_TOOL}" != "cmake" ]; then
+  echo "BUILD_LOCAL_DRAM_VALIDATION requires BUILD_TOOL=cmake" >&2
+  exit 1
+fi
 
 
 readonly SCRIPT_FULL_PATH=$(dirname $(readlink -f "$0"))
@@ -176,6 +190,7 @@ if [ "${BUILD_TOOL}" == "cmake" ]; then
         -DBUILD_WITH_RDMA="${BUILD_HCOM_WITH_RDMA}" \
         -DBUILD_WITH_UB="${BUILD_HCOM_WITH_UB}" \
         -DBUILD_ETCD_BACKEND="${BUILD_ETCD_BACKEND}" \
+        -DBUILD_LOCAL_DRAM_VALIDATION="${BUILD_LOCAL_DRAM_VALIDATION}" \
         -S . \
         -B build/
     ${MAKE_CMD} install -j"${MF_BUILD_JOBS}" -C build/

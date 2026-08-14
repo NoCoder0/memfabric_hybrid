@@ -22,6 +22,7 @@ BUILD_HCOM_WITH_RDMA="ON"
 BUILD_HCOM_WITH_UB="OFF"
 BUILD_ETCD_BACKEND="OFF"
 BUILD_TOOL="cmake"
+BUILD_LOCAL_DRAM_VALIDATION="OFF"
 
 show_help() {
     echo "Usage: $0 [options]"
@@ -35,6 +36,7 @@ show_help() {
     echo "  --build_hcom_ub <ON/OFF>    Enable/disable build and package hcom with ub, default: OFF"
     echo "  --build_etcd_backend <ON/OFF> Enable/disable build and package etcd backend so, default: OFF"
     echo "  --build_tool <cmake/bazel>  Set build tool (cmake/bazel), default: cmake"
+    echo "  --build_local_dram_validation <ON/OFF> Enable temporary local DRAM validation, default: OFF"
     echo "  --help                      Show this help message"
     echo ""
     echo "Example:"
@@ -80,6 +82,10 @@ while [[ "$#" -gt 0 ]]; do
             BUILD_TOOL="$2"
             shift 2
             ;;
+        --build_local_dram_validation)
+            BUILD_LOCAL_DRAM_VALIDATION="$2"
+            shift 2
+            ;;
         --help)
             show_help
             exit 0
@@ -93,6 +99,19 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
+if [[ "${BUILD_LOCAL_DRAM_VALIDATION}" != "ON" && "${BUILD_LOCAL_DRAM_VALIDATION}" != "OFF" ]]; then
+    echo "Invalid --build_local_dram_validation value: ${BUILD_LOCAL_DRAM_VALIDATION}" >&2
+    exit 1
+fi
+if [[ "${BUILD_LOCAL_DRAM_VALIDATION}" == "ON" && "${XPU_TYPE}" != "NPU" ]]; then
+    echo "BUILD_LOCAL_DRAM_VALIDATION requires --xpu_type NPU" >&2
+    exit 1
+fi
+if [[ "${BUILD_LOCAL_DRAM_VALIDATION}" == "ON" && "${BUILD_TOOL}" != "cmake" ]]; then
+    echo "BUILD_LOCAL_DRAM_VALIDATION requires --build_tool cmake" >&2
+    exit 1
+fi
+
 echo "BUILD_MODE: $BUILD_MODE"
 echo "BUILD_PYTHON: $BUILD_PYTHON"
 echo "XPU_TYPE: $XPU_TYPE"
@@ -102,10 +121,13 @@ echo "BUILD_HCOM_RDMA: $BUILD_HCOM_WITH_RDMA"
 echo "BUILD_HCOM_WITH_UB: $BUILD_HCOM_WITH_UB"
 echo "BUILD_ETCD_BACKEND: $BUILD_ETCD_BACKEND"
 echo "BUILD_TOOL: $BUILD_TOOL"
+echo "BUILD_LOCAL_DRAM_VALIDATION: $BUILD_LOCAL_DRAM_VALIDATION"
 
 cd ${ROOT_PATH}
 
-bash build.sh "${BUILD_MODE}" OFF OFF "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}"
+bash build.sh "${BUILD_MODE}" OFF OFF "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" \
+    "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" \
+    "${BUILD_TOOL}" "${BUILD_LOCAL_DRAM_VALIDATION}"
 
 bash run_pkg_maker/make_run.sh "${BUILD_TEST}" "${XPU_TYPE}" "${BUILD_PYTHON}" "${BUILD_HCOM}" "${BUILD_ETCD_BACKEND}"
 

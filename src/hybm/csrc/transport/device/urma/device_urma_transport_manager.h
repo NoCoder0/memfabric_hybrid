@@ -111,6 +111,7 @@ private:
         uint64_t addr{0};
         uint64_t size{0};
         uint64_t memTag{0};
+        UrmaMemoryType exportedMemoryType{UrmaMemoryType::INVALID_BUTT};
         std::vector<uint8_t> descBytes{};
         UrmaCommMem view{};
     };

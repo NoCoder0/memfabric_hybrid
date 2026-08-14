@@ -16,6 +16,7 @@
 
 #include "hybm_def.h"
 #include "hybm_logger.h"
+#include "local_dram_validation_role.h"
 #include "host_hcom_transport_manager.h"
 #include "device_rdma_transport_manager.h"
 #include "hybm_gva_version.h"
@@ -33,6 +34,7 @@ const std::string DEVICE_TRANSPORT_TYPE = "device#";
 const uint32_t HOST_PROTOCOL = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA;
 const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
                                 HYBM_DOP_TYPE_HOST_DEVICE_URMA;
+
 } // namespace
 
 Result ComposeTransportManager::OpenHostTransport(const TransportOptions &options)
@@ -54,6 +56,18 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
     if (options.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) {
 #if defined(NO_XPU)
         deviceTransportManager_ = std::make_shared<host::HostUrmaTransportManager>();
+#elif defined(MF_LOCAL_DRAM_VALIDATION) // Temporary validation-only role selection.
+        const auto role = GetLocalDramValidationRole(options.rankId, options.protocol);
+        if (role == LocalDramValidationRole::INVALID) {
+            return BM_INVALID_PARAM;
+        }
+        if (role == LocalDramValidationRole::HOST) {
+            BM_LOG_WARN(
+                "validation-only local DRAM host role enabled; do not use in production, rankId=" << options.rankId);
+            deviceTransportManager_ = std::make_shared<host::HostUrmaTransportManager>();
+        } else {
+            deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
+        }
 #else
         deviceTransportManager_ = std::make_shared<device::DeviceUrmaTransportManager>();
 #endif
