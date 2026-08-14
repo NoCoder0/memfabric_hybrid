@@ -159,19 +159,18 @@ int32_t ValidateRouteRanges(const BatchCopyRouteTable *route)
 
 void LogRouteTableForDebug(const BatchCopyRouteTable *route)
 {
-    HYBM_LOGE(BM_OK, "BatchCopy route debug, magic=0x%x peerCount=%u rangeCount=%u", route->header.magic,
+    HYBM_LOGD("BatchCopy route debug, magic=0x%x peerCount=%u rangeCount=%u", route->header.magic,
               route->header.peerCount, route->header.rangeCount);
     for (uint16_t index = 0U; index < route->header.peerCount; ++index) {
         const auto &peer = route->peers[index];
         InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&peer));
-        HYBM_LOGE(BM_OK, "BatchCopy route peer, index=%u thread=%lu channel=%lu remoteFlagAddr=0x%lx", index,
-                  peer.thread, peer.channel, peer.remoteFlagAddr);
+        HYBM_LOGD("BatchCopy route peer, index=%u thread=%lu channel=%lu remoteFlagAddr=0x%lx", index, peer.thread,
+                  peer.channel, peer.remoteFlagAddr);
     }
     for (uint16_t index = 0U; index < route->header.rangeCount; ++index) {
         const auto &range = route->ranges[index];
         InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&range));
-        HYBM_LOGE(BM_OK,
-                  "BatchCopy route range, index=%u srcGvaBegin=0x%lx srcGvaEnd=0x%lx hcommVaBegin=0x%lx peerIndex=%u",
+        HYBM_LOGD("BatchCopy route range, index=%u srcGvaBegin=0x%lx srcGvaEnd=0x%lx hcommVaBegin=0x%lx peerIndex=%u",
                   index, range.srcGvaBegin, range.srcGvaEnd, range.hcommVaBegin, range.peerIndex);
     }
 }
@@ -182,7 +181,7 @@ int32_t ValidatePublishedRoute(const BatchCopyRouteTable *route)
     if (ret != BM_OK) {
         return ret;
     }
-    LogRouteTableForDebug(route);
+    //LogRouteTableForDebug(route);
     ret = ValidateRoutePeers(route);
     if (ret != BM_OK) {
         return ret;
