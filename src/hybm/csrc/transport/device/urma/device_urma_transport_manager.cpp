@@ -890,6 +890,8 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
             ++importIt;
             continue;
         }
+        BM_LOG_INFO("device_urma HcommMemUnimport, peer: " << peerRank
+                                                           << "descBytes.size: " << importIt->descBytes.size());
         const auto ret = hcommApi_.UnimportMemory(localEndpoint_, importIt->descBytes.data(),
                                                   static_cast<uint32_t>(importIt->descBytes.size()));
         if (ret != BM_OK) {
@@ -907,6 +909,8 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
         }
     }
     if (!state.remoteFlagDescBytes.empty()) {
+        BM_LOG_INFO("device_urma HcommMemUnimport remoteFlagDescBytes, "
+                    << "peerRank: " << peerRank << " remoteFlagDescBytes.size: " << state.remoteFlagDescBytes.size());
         const auto ret = DlHcommApi::HcommMemUnimport(localEndpoint_, state.remoteFlagDescBytes.data(),
                                                       static_cast<uint32_t>(state.remoteFlagDescBytes.size()));
         if (ret != 0) {
@@ -1470,6 +1474,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
             // 6. Create one channel per peer (temporary variable for safe rollback)
             HcommChannelHandle channelHandle = 0;
+            BM_LOG_INFO("device_urma Prepare HcommChannelCreate peerRank: " << peerRank << ", channelDesc.role: "
+                                                                            << channelDesc.role);
             ret = DlHcommApi::HcommChannelCreate(localEndpoint_, COMM_ENGINE_AICPU, &channelDesc, 1, &channelHandle);
             if (ret != 0) {
                 BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, peer: " << peerRank << " ret: " << ret);
