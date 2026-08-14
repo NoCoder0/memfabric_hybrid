@@ -268,6 +268,7 @@ private:
 
     static bool IsStableLinkState(LinkState st) noexcept;
     void AddActiveLink(size_t idx) noexcept;
+    void RemoveActiveLinksForRank(uint32_t rankId) noexcept;
     void DrivePendingTransitions() noexcept;
     void ResetRankState(uint32_t rankId, std::vector<uint32_t> &connectedPeers) noexcept;
 

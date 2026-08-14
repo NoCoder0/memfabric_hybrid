@@ -68,10 +68,11 @@ protected:
         gm_ = nullptr;
     }
 
-    static RankFullInfo MakeInfo(uint32_t rankId)
+    static RankFullInfo MakeInfo(uint32_t rankId, uint8_t protocol = SMEM_RANK_PROTOCOL_DEFAULT)
     {
         RankFullInfo info;
         info.rankId = rankId;
+        info.protocol = protocol;
         std::string base = "host" + std::to_string(rankId);
         info.baseInfo.assign(base.begin(), base.end());
         info.externalInfo.push_back(Bytes{static_cast<uint8_t>(rankId)});
@@ -218,10 +219,11 @@ protected:
         gm_ = nullptr;
     }
 
-    static RankFullInfo MakeInfo(uint32_t rankId)
+    static RankFullInfo MakeInfo(uint32_t rankId, uint8_t protocol = SMEM_RANK_PROTOCOL_DEFAULT)
     {
         RankFullInfo info;
         info.rankId = rankId;
+        info.protocol = protocol;
         std::string base = "host" + std::to_string(rankId);
         info.baseInfo.assign(base.begin(), base.end());
         info.externalInfo.push_back(Bytes{static_cast<uint8_t>(rankId)});
@@ -526,6 +528,37 @@ TEST_F(GmGroupManagerTest, MarkRankReconnected_NonIdleStateSkips)
     gm_->SetRankState(0, RANK_ACTIVE);
     /* CheckIn again: MarkRankReconnected sees RANK_ACTIVE → warn and return */
     EXPECT_EQ(gm_->CheckIn(MakeInfo(0)), -1);
+}
+
+TEST_F(GmGroupManagerTest, CheckIn_TransOverridesNonIdleState)
+{
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
+    /* Simulate a reconnect having promoted rank 1 to ACTIVE (stale w.r.t. a
+       fresh Trans entry) */
+    gm_->MarkRankReconnected(1);
+    EXPECT_EQ(gm_->GetRankState(1), RANK_ACTIVE);
+
+    /* A Trans JOINREQ overrides the stale ACTIVE state and re-joins cleanly */
+    EXPECT_EQ(gm_->CheckIn(MakeInfo(1, SMEM_RANK_PROTOCOL_TRANS)), 0);
+    EXPECT_EQ(gm_->GetRankState(1), RANK_CHECKED_IN);
+
+    /* BM JOINREQ on a non-idle rank stays rejected */
+    EXPECT_EQ(gm_->CheckIn(MakeInfo(0)), -1);
+}
+
+TEST_F(GmGroupManagerTest, CheckIn_TransClearsGhostLinks)
+{
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
+    /* Stale link between rank 1 and peer 0 (e.g. written by LNKSRSP after the
+       reconnect) must be cleared when the Trans entry re-joins. */
+    gm_->SetLinkState(1, 0, LINK_EXCHANGING);
+    gm_->SetLinkState(0, 1, LINK_EXCHANGING);
+    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
+
+    EXPECT_EQ(gm_->CheckIn(MakeInfo(1, SMEM_RANK_PROTOCOL_TRANS)), 0);
+    /* Re-join re-arms the links as EXCHANGING for the newly-checked-in rank */
+    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
 }
 
 TEST_F(GmGroupManagerTest, SetLink_HandleDisconnecting_DriverReenqueues)

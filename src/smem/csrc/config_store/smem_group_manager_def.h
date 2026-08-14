@@ -25,6 +25,10 @@ namespace ock::smem {
 // Opaque byte blob for serialized rank metadata (e.g. endpoint, capabilities).
 using Bytes = std::vector<uint8_t>;
 
+// RankFullInfo::protocol values — identifies which module owns a rank membership.
+constexpr uint8_t SMEM_RANK_PROTOCOL_DEFAULT = 0; // BM / unspecified
+constexpr uint8_t SMEM_RANK_PROTOCOL_TRANS = 1;   // TRANS
+
 // Collection of Bytes, used for multi-address / multi-URL scenarios.
 using MultiBytes = std::vector<Bytes>;
 
@@ -36,6 +40,10 @@ struct RankBaseInfo {
 
 struct RankFullInfo : RankBaseInfo {
     MultiBytes externalInfo;
+    // Protocol that owns this rank's membership. 0 = default/BM, 1 = TRANS.
+    // Carried in the JOINREQ body so the server can tell a Trans re-join
+    // (which always sends a fresh JOINREQ) apart from a stale/duplicate one.
+    uint8_t protocol{0};
     explicit RankFullInfo(const uint32_t id = 0) noexcept : RankBaseInfo{id} {}
 };
 

@@ -253,6 +253,7 @@ TEST(PackJoin, RoundTrip)
     info.rankId = 42;
     info.baseInfo = {0x01, 0x02, 0x03};
     info.externalInfo = {{0x10, 0x20}, {0x30}};
+    info.protocol = SMEM_RANK_PROTOCOL_TRANS;
 
     auto msg = SmemMessage::PackJoin(info);
     EXPECT_EQ(msg.mt, MessageType::CONTROL);
@@ -269,6 +270,23 @@ TEST(PackJoin, RoundTrip)
     for (size_t i = 0; i < info.externalInfo.size(); ++i) {
         EXPECT_EQ(result.externalInfo[i], info.externalInfo[i]);
     }
+    EXPECT_EQ(result.protocol, SMEM_RANK_PROTOCOL_TRANS);
+}
+
+TEST(PackJoin, MissingProtocolDefaultsToDefault)
+{
+    /* A peer that packs without the protocol tag (old format) must unpack
+       with protocol == DEFAULT so the server treats it as BM. */
+    RankFullInfo info;
+    info.rankId = 3;
+    info.baseInfo = {0xaa};
+
+    auto msg = SmemMessage::PackJoin(info);
+    RankFullInfo result;
+    auto ret = SmemMessage::UnpackJoin(msg, result);
+    EXPECT_GT(ret, 0);
+    EXPECT_EQ(result.rankId, 3u);
+    EXPECT_EQ(result.protocol, SMEM_RANK_PROTOCOL_DEFAULT);
 }
 
 TEST(PackJoin, EmptyInfo)

@@ -351,7 +351,7 @@ int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<Ran
     auto ret = hybm_transport_connect(entity_, rankIds.data(), rankIds.size(), 0);
     if (ret != SMEM_OK) {
         SM_LOG_ERROR("OnEstablishConnection rankId=" << rankId << " hybm_transport_connect failed: " << ret);
-        return SMEM_OK;
+        return ret;
     }
 
     SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " peers.size=" << peers.size());
@@ -599,6 +599,7 @@ Result SmemTransEntry::Join(uint32_t flags)
     joinComplete_ = std::make_shared<std::promise<void>>();
 
     RankFullInfo info{groupMgr->GetLocalRankId()};
+    info.protocol = SMEM_RANK_PROTOCOL_TRANS;
     info.baseInfo.insert(info.baseInfo.end(), reinterpret_cast<const uint8_t *>(&entityInfo_),
                          reinterpret_cast<const uint8_t *>(&entityInfo_) + sizeof(entityInfo_));
     for (const auto &regInfo : registedInfo_) {

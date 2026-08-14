@@ -424,6 +424,7 @@ SmemMessage SmemMessage::PackJoin(const RankFullInfo &info) noexcept
         AppendUint64(buf, ext.size());
         buf.insert(buf.end(), ext.begin(), ext.end());
     }
+    buf.push_back(info.protocol);
     msg.values.emplace_back(std::move(buf));
     return msg;
 }
@@ -451,6 +452,13 @@ int64_t SmemMessage::UnpackJoin(const SmemMessage &msg, RankFullInfo &info) noex
         if (!ReadBytes(buf, offset, info.externalInfo[j])) {
             return -1;
         }
+    }
+    // Protocol tag is an extension appended after the fixed fields; older peers
+    // omit it, in which case it defaults to 0 (BM/default).
+    if (offset < buf.size()) {
+        info.protocol = buf[offset];
+    } else {
+        info.protocol = 0;
     }
     return static_cast<int64_t>(offset);
 }

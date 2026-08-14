@@ -882,31 +882,23 @@ void TcpConfigStore::SetRankId(const int32_t &rankId) noexcept
 Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
 {
     auto retryMaxTimes = reconnectRetryTimes < 0 ? CONNECT_RETRY_MAX_TIMES : reconnectRetryTimes;
-    constexpr int maxBackoffMs = 30000;
-    constexpr int backoffMultiplier = 2;
     ock::acc::AccConnReq connReq;
     connReq.reconnect = 1; // reconnection
     connReq.rankId =
         rankId_ >= 0 ? ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | static_cast<uint64_t>(rankId_))
                      : ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | std::numeric_limits<uint32_t>::max());
-    int backoff = 1000; // start at 1s
-    for (int i = 0; i < retryMaxTimes; ++i) {
-        auto result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, 1, accClientLink_);
-        if (result == 0) {
-            STORE_LOG_INFO("Reconnect to server successful, rankId: " << rankId_);
-            if (reconnectHandler) {
-                (void)reconnectHandler();
-            }
-            SetConnectStatus(true);
-            return SM_OK;
-        }
-        if (i + 1 < retryMaxTimes) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(backoff));
-            backoff = std::min(backoff * backoffMultiplier, maxBackoffMs);
-        }
+    auto result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, retryMaxTimes, accClientLink_);
+    if (result != 0) {
+        STORE_LOG_ERROR_LIMIT("Reconnect to server failed, ip: " << serverIp_ << " port: " << serverPort_
+                                                                 << " result: " << result);
+        return result;
     }
-    STORE_LOG_ERROR_LIMIT("Reconnect to server failed after " << retryMaxTimes << " attempts.");
-    return SM_ERROR;
+    STORE_LOG_INFO("Reconnect to server successful, rankId: " << rankId_);
+    if (reconnectHandler) {
+        (void)reconnectHandler();
+    }
+    SetConnectStatus(true);
+    return SM_OK;
 }
 
 bool TcpConfigStore::GetConnectStatus() noexcept

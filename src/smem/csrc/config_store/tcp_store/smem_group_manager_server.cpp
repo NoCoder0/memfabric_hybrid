@@ -116,9 +116,24 @@ int SmemGroupManagerServer::CheckIn(const RankFullInfo &info, uint64_t reqId) no
     {
         std::unique_lock<std::mutex> lock(mutex_);
         if (states_[info.rankId] != RANK_IDLE) {
-            STORE_LOG_INFO("[GM][Server][Recv] JOINREQ state=" << static_cast<int>(states_[info.rankId]));
-            TP_TRACE_END(TP_SMEM_GROUP_SERVER_CHECKIN, 1);
-            return -1;
+            // A Trans entry always joins with a fresh JOINREQ after the store
+            // reconnects. On a freshly-started server the earlier reconnect
+            // (rec:1) may have marked this rank ACTIVE and enqueued a QUERYREQ,
+            // which is stale relative to the new entry. Reset and re-join so the
+            // new entity can come up; BM (protocol == DEFAULT) keeps rejecting a
+            // non-IDLE duplicate join.
+            if (info.protocol != SMEM_RANK_PROTOCOL_TRANS) {
+                STORE_LOG_INFO("[GM][Server][Recv] JOINREQ state=" << static_cast<int>(states_[info.rankId])
+                                                                   << " protocol=" << static_cast<int>(info.protocol));
+                TP_TRACE_END(TP_SMEM_GROUP_SERVER_CHECKIN, 1);
+                return -1;
+            }
+            STORE_LOG_INFO("[GM][Server][Recv] TRANS JOINREQ overrides state=" << static_cast<int>(states_[info.rankId])
+                                                                               << " rank=" << info.rankId);
+            std::vector<uint32_t> ghostPeers;
+            ResetRankState(info.rankId, ghostPeers);
+            aliveRanks_.erase(info.rankId);
+            RemoveActiveLinksForRank(info.rankId);
         }
 
         rankBase_[info.rankId] = info.baseInfo;
@@ -675,6 +690,28 @@ void SmemGroupManagerServer::EnqueueLinkJobs(const LinkScanJobs &jobs) noexcept
 bool SmemGroupManagerServer::IsStableLinkState(LinkState st) noexcept
 {
     return st == LINK_IDLE || st == LINK_CONNECTED;
+}
+
+void SmemGroupManagerServer::RemoveActiveLinksForRank(uint32_t rankId) noexcept
+{
+    for (uint32_t i = 0; i < maxRanks_; ++i) {
+        if (i == rankId) {
+            continue;
+        }
+        for (size_t idx : {LinkIndex(rankId, i), LinkIndex(i, rankId)}) {
+            if (!isActiveLink_[idx]) {
+                continue;
+            }
+            isActiveLink_[idx] = false;
+            for (size_t j = 0; j < activeLinks_.size(); ++j) {
+                if (activeLinks_[j] == idx) {
+                    activeLinks_[j] = activeLinks_.back();
+                    activeLinks_.pop_back();
+                    break;
+                }
+            }
+        }
+    }
 }
 
 void SmemGroupManagerServer::AddActiveLink(size_t idx) noexcept
