@@ -28,12 +28,23 @@ constexpr uint64_t kFirstHcommBegin = 0xA1000ULL;
 constexpr uint64_t kSecondHcommBegin = 0xA3000ULL;
 constexpr uint64_t kRangeStride = 0x1000ULL;
 constexpr uint64_t kRangeLength = 0x0800ULL;
+constexpr uint64_t kFirstPeerThread = 0x11U;
+constexpr uint64_t kFirstPeerChannel = 0x12U;
+constexpr uint64_t kFirstPeerFlag = 0x13U;
+constexpr uint64_t kSecondPeerThread = 0x21U;
+constexpr uint64_t kSecondPeerChannel = 0x22U;
+constexpr uint64_t kSecondPeerFlag = 0x23U;
+constexpr uint64_t kExtraLaneThread = 0x31U;
+constexpr uint64_t kExtraLaneChannel = 0x32U;
+constexpr uint64_t kExtraLaneFlag = 0x33U;
 
 BatchCopyRouteTable MakeValidRoute()
 {
     BatchCopyRouteTable table{};
     table.header.peerCount = 2U;
     table.header.rangeCount = 2U;
+    table.peers[0] = {kFirstPeerThread, kFirstPeerChannel, kFirstPeerFlag, 1U};
+    table.peers[1] = {kSecondPeerThread, kSecondPeerChannel, kSecondPeerFlag, 1U};
     table.ranges[0] = {kFirstGvaBegin, kFirstGvaEnd, kFirstHcommBegin, 0U};
     table.ranges[1] = {kSecondGvaBegin, kSecondGvaEnd, kSecondHcommBegin, 1U};
     return table;
@@ -89,6 +100,32 @@ TEST(HybmBatchCopyRouteTest, ControlRegionPrecedesExistingDeviceMetadata)
 TEST(HybmBatchCopyRouteTest, AcceptsValidNonEmptyRanges)
 {
     EXPECT_TRUE(IsBatchCopyRouteLayoutValid(MakeValidRoute()));
+}
+
+TEST(HybmBatchCopyRouteTest, AcceptsContiguousMultiLanePeer)
+{
+    auto table = MakeValidRoute();
+    table.header.peerCount = 3U;
+    table.header.rangeCount = 1U;
+    table.peers[0] = {kFirstPeerThread, kFirstPeerChannel, kFirstPeerFlag, 2U};
+    table.peers[1] = {kExtraLaneThread, kExtraLaneChannel, kExtraLaneFlag, 0U};
+    table.ranges[0] = {kFirstGvaBegin, kFirstGvaEnd, kFirstHcommBegin, 0U};
+
+    EXPECT_TRUE(IsBatchCopyRouteLayoutValid(table));
+    table.ranges[0].peerIndex = 1U;
+    EXPECT_FALSE(IsBatchCopyRouteLayoutValid(table));
+}
+
+TEST(HybmBatchCopyRouteTest, RejectsUnsupportedThreeLanePeer)
+{
+    auto table = MakeValidRoute();
+    table.header.peerCount = 3U;
+    table.header.rangeCount = 1U;
+    table.peers[0].laneCount = 3U;
+    table.peers[2] = {kExtraLaneThread, kExtraLaneChannel, kExtraLaneFlag, 0U};
+    table.ranges[0] = {kFirstGvaBegin, kFirstGvaEnd, kFirstHcommBegin, 0U};
+
+    EXPECT_FALSE(IsBatchCopyRouteLayoutValid(table));
 }
 
 TEST(HybmBatchCopyRouteTest, RejectsEmptyRange)

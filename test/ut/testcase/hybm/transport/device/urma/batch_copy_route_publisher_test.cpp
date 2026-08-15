@@ -42,8 +42,10 @@ constexpr uintptr_t kEndpointValue = 0x9501U;
 constexpr uintptr_t kCompletionHandleValue = 0x9502U;
 constexpr uint64_t kFirstThread = 0x101U;
 constexpr uint64_t kSecondThread = 0x102U;
+constexpr uint64_t kFirstExtraThread = 0x103U;
 constexpr uint64_t kFirstChannel = 0x201U;
 constexpr uint64_t kSecondChannel = 0x202U;
+constexpr uint64_t kFirstExtraChannel = 0x203U;
 constexpr uint64_t kFirstRemoteFlag = 0x301U;
 constexpr uint64_t kSecondRemoteFlag = 0x302U;
 constexpr uint64_t kLowGvaBegin = 0x1000U;
@@ -202,7 +204,9 @@ TEST(BatchCopyRoutePublisherTest, PublishesSortedImageAndMagicLast)
     EXPECT_EQ(table.header.peerCount, 2U);
     EXPECT_EQ(table.header.rangeCount, 3U);
     EXPECT_EQ(table.peers[0].thread, kFirstThread);
+    EXPECT_EQ(table.peers[0].laneCount, 1U);
     EXPECT_EQ(table.peers[1].channel, kSecondChannel);
+    EXPECT_EQ(table.peers[1].laneCount, 1U);
     EXPECT_EQ(table.ranges[0].srcGvaBegin, kLowGvaBegin);
     EXPECT_EQ(table.ranges[0].hcommVaBegin, kLowHcommBegin);
     EXPECT_EQ(table.ranges[0].peerIndex, 0U);
@@ -217,6 +221,43 @@ TEST(BatchCopyRoutePublisherTest, PublishesSortedImageAndMagicLast)
     EXPECT_FALSE(publisher.IsPublished());
     EXPECT_EQ(g_memUnregCount, 1U);
     EXPECT_EQ(ReadEventValue<uint32_t>(g_copyEvents.back()), 0U);
+}
+
+TEST(BatchCopyRoutePublisherTest, ExpandsLogicalPeerIntoContiguousLanes)
+{
+    ApiGuard guard;
+    HcommTransportManager manager;
+    BatchCopyRoutePublisher publisher(kUserDeviceId, MakeEndpoint(), manager);
+    auto sources = MakeSources();
+    sources[0].extraLanes.push_back({kFirstExtraThread, kFirstExtraChannel});
+
+    ASSERT_EQ(publisher.Publish(sources), BM_OK);
+    BatchCopyRouteTable table{};
+    ASSERT_EQ(g_copyEvents[kRouteImageCopyIndex].bytes.size(), sizeof(table));
+    std::memcpy(&table, g_copyEvents[kRouteImageCopyIndex].bytes.data(), sizeof(table));
+    EXPECT_EQ(table.header.peerCount, 3U);
+    EXPECT_EQ(table.peers[0].laneCount, 2U);
+    EXPECT_EQ(table.peers[1].thread, kFirstExtraThread);
+    EXPECT_EQ(table.peers[1].channel, kFirstExtraChannel);
+    EXPECT_EQ(table.peers[1].laneCount, 0U);
+    EXPECT_EQ(table.peers[2].laneCount, 1U);
+    EXPECT_EQ(table.ranges[1].peerIndex, 2U);
+
+    EXPECT_EQ(publisher.Clear(), BM_OK);
+}
+
+TEST(BatchCopyRoutePublisherTest, RejectsUnsupportedThreeLaneTopology)
+{
+    ApiGuard guard;
+    HcommTransportManager manager;
+    BatchCopyRoutePublisher publisher(kUserDeviceId, MakeEndpoint(), manager);
+    auto sources = MakeSources();
+    sources[0].extraLanes.push_back({kFirstExtraThread, kFirstExtraChannel});
+    sources[0].extraLanes.push_back({kSecondThread, kSecondChannel});
+
+    EXPECT_EQ(publisher.Publish(sources), BM_INVALID_PARAM);
+    EXPECT_FALSE(publisher.IsPublished());
+    EXPECT_TRUE(g_copyEvents.empty());
 }
 
 TEST(BatchCopyRoutePublisherTest, RepeatedPublishDoesNotRefreshRoute)

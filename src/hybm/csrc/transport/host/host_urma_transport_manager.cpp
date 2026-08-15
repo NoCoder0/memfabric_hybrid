@@ -7,6 +7,7 @@
 #include <sstream>
 
 #include "hybm_def.h"
+#include "hybm_batch_copy_route.h"
 #include "hybm_logger.h"
 #include "hybm_va_manager.h"
 #include "mf_env_util.h"
@@ -395,6 +396,123 @@ void HostUrmaTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *ad
     key.keys[1] = reinterpret_cast<uint64_t>(addr);
 }
 
+Result HostUrmaTransportManager::GetBatchCopyLaneCount(const UrmaEndpointDesc &peerEndpoint,
+                                                        uint16_t &laneCount) const
+{
+    laneCount = BATCH_COPY_DEFAULT_LANE_COUNT;
+    if ((options_.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) == 0U ||
+        peerEndpoint.loc.locType != ENDPOINT_LOC_TYPE_DEVICE) {
+        return BM_OK;
+    }
+    if (GetBatchCopyLaneCountFromEnv(laneCount)) {
+        return BM_OK;
+    }
+    const char *value = std::getenv(BATCH_COPY_LANES_ENV);
+    BM_LOG_ERROR("invalid BatchCopy lane configuration, rankId: "
+                 << rankId_ << " peerLocType: " << peerEndpoint.loc.locType << " env: " << BATCH_COPY_LANES_ENV
+                 << " value: " << (value == nullptr ? "<null>" : value) << " supported: 1,2,4");
+    return BM_INVALID_PARAM;
+}
+
+Result HostUrmaTransportManager::CreatePeerChannelLocked(uint32_t peerRank, const UrmaEndpointDesc &peerEndpoint,
+                                                          uint16_t laneIndex, HcommChannelDesc &channelDesc,
+                                                          ChannelHandle &channel) const
+{
+    channel = 0;
+    auto ret = HcommChannelDescInit(&channelDesc, URMA_CHANNEL_DESC_NUM);
+    if (ret != 0) {
+        BM_LOG_ERROR("failed to init channel desc, peerRank: " << peerRank << " lane: " << laneIndex << " ret: "
+                                                                << ret);
+        return BM_ERROR;
+    }
+    channelDesc.remoteEndpoint = urma::ToHcommEndpointDesc(peerEndpoint);
+    channelDesc.exchangeAllMems = true;
+    channelDesc.port = 0;
+    channelDesc.role = (rankId_ > peerRank) ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER;
+    ret = DlHcommApi::HcommChannelCreate(localEndpoint_->hcommEndpoint, COMM_ENGINE_CPU, &channelDesc, 1, &channel);
+    if (ret != 0 || channel == 0) {
+        BM_LOG_ERROR("failed to create channel, peerRank: "
+                     << peerRank << " lane: " << laneIndex << " channel: " << channel << " ret: " << ret);
+        if (channel != 0) {
+            const auto destroyRet = DlHcommApi::HcommChannelDestroy(&channel, URMA_CHANNEL_DESC_NUM);
+            if (destroyRet != 0) {
+                BM_LOG_ERROR("rollback failed channel creation, rankId: "
+                             << rankId_ << " peerRank: " << peerRank << " lane: " << laneIndex
+                             << " channel: " << channel << " ret: " << destroyRet);
+            }
+            channel = 0;
+        }
+        return BM_ERROR;
+    }
+    ret = manager_.WaitForChannelReady(channel, peerRank);
+    if (ret == BM_OK) {
+        return BM_OK;
+    }
+    BM_LOG_ERROR("Host URMA channel is not ready, rankId: "
+                 << rankId_ << " peerRank: " << peerRank << " lane: " << laneIndex << " channel: " << channel
+                 << " ret: " << ret);
+    const auto destroyRet = DlHcommApi::HcommChannelDestroy(&channel, URMA_CHANNEL_DESC_NUM);
+    if (destroyRet != 0) {
+        BM_LOG_ERROR("Host URMA rollback HcommChannelDestroy failed, rankId: "
+                     << rankId_ << " peerRank: " << peerRank << " lane: " << laneIndex << " channel: " << channel
+                     << " ret: " << destroyRet);
+    }
+    channel = 0;
+    return ret;
+}
+
+Result HostUrmaTransportManager::CreateExtraBatchCopyChannelsLocked(uint32_t peerRank, RemoteRankState &state,
+                                                                     uint16_t laneCount)
+{
+    if (laneCount == BATCH_COPY_DEFAULT_LANE_COUNT) {
+        return BM_OK;
+    }
+    try {
+        state.batchCopyExtraChannels.reserve(laneCount - BATCH_COPY_DEFAULT_LANE_COUNT);
+    } catch (...) {
+        BM_LOG_ERROR("allocate BatchCopy channels failed, rankId: " << rankId_ << " peerRank: " << peerRank
+                                                                      << " laneCount: " << laneCount);
+        return BM_MALLOC_FAILED;
+    }
+    for (uint16_t laneIndex = 1U; laneIndex < laneCount; ++laneIndex) {
+        HcommChannelDesc laneDesc{};
+        ChannelHandle laneChannel = 0;
+        const auto ret = CreatePeerChannelLocked(peerRank, state.endpointDesc, laneIndex, laneDesc, laneChannel);
+        if (ret != BM_OK) {
+            (void)DestroyExtraBatchCopyChannelsLocked(peerRank, state);
+            return ret;
+        }
+        try {
+            state.batchCopyExtraChannels.emplace_back(laneChannel);
+        } catch (...) {
+            BM_LOG_ERROR("store BatchCopy channel failed, rankId: " << rankId_ << " peerRank: " << peerRank
+                                                                     << " lane: " << laneIndex);
+            const auto destroyRet = DlHcommApi::HcommChannelDestroy(&laneChannel, 1);
+            if (destroyRet != 0) {
+                BM_LOG_ERROR("rollback BatchCopy channel failed, rankId: "
+                             << rankId_ << " peerRank: " << peerRank << " lane: " << laneIndex
+                             << " channel: " << laneChannel << " ret: " << destroyRet);
+            }
+            (void)DestroyExtraBatchCopyChannelsLocked(peerRank, state);
+            return BM_MALLOC_FAILED;
+        }
+    }
+    return BM_OK;
+}
+
+bool HostUrmaTransportManager::HasCompleteHcommChannels(const RemoteRankState &state)
+{
+    if (state.channel == 0U) {
+        return false;
+    }
+    for (const auto channel : state.batchCopyExtraChannels) {
+        if (channel == 0U) {
+            return false;
+        }
+    }
+    return true;
+}
+
 Result HostUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -404,7 +522,19 @@ Result HostUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
     }
     for (const auto &[peerRank, peerInfo] : options.options) {
         auto &state = remoteRanks_[peerRank];
-        bool isNew = (state.channel == 0);
+        const bool hasChannels = state.channel != 0U || !state.batchCopyExtraChannels.empty();
+        if (hasChannels && !HasCompleteHcommChannels(state)) {
+            BM_LOG_ERROR("Host URMA found incomplete BatchCopy lane channels, rankId: "
+                         << rankId_ << " peerRank: " << peerRank << " channel: " << state.channel
+                         << " extraLaneCount: " << state.batchCopyExtraChannels.size());
+            const auto ret = DestroyRemoteChannelLocked(peerRank, state);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Host URMA failed to clear incomplete BatchCopy lane channels, rankId: "
+                             << rankId_ << " peerRank: " << peerRank << " ret: " << ret);
+                return ret;
+            }
+        }
+        const bool isNew = state.channel == 0U;
         if (isNew) {
             UrmaEndpointDesc peerEndpoint{};
             auto ret = urma::ParseUrmaPrivateData(peerInfo.privateData, peerEndpoint);
@@ -438,49 +568,50 @@ Result HostUrmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
 Result HostUrmaTransportManager::PreparePeerLocked(uint32_t peerRank, const TransportRankPrepareInfo &peerInfo,
                                                    RemoteRankState &state)
 {
-    EndpointDesc hcommEndpoint = urma::ToHcommEndpointDesc(state.endpointDesc);
-    HcommChannelDesc channelDesc{};
-    auto ret = HcommChannelDescInit(&channelDesc, URMA_CHANNEL_DESC_NUM);
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to init channel desc for peer " << peerRank << " ret: " << ret);
-        return BM_ERROR;
-    }
-    channelDesc.remoteEndpoint = hcommEndpoint;
-    channelDesc.exchangeAllMems = true;
-    channelDesc.port = 0;
-    channelDesc.role = (rankId_ > peerRank) ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER;
-    ChannelHandle channel = 0;
-    ret = DlHcommApi::HcommChannelCreate(localEndpoint_->hcommEndpoint, COMM_ENGINE_CPU, &channelDesc, 1, &channel);
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to create channel with peer " << peerRank << " ret: " << ret);
-        return BM_ERROR;
-    }
-    ret = manager_.WaitForChannelReady(channel, peerRank);
+    (void)peerInfo;
+    uint16_t laneCount = BATCH_COPY_DEFAULT_LANE_COUNT;
+    auto ret = GetBatchCopyLaneCount(state.endpointDesc, laneCount);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("Host URMA channel is not ready, rankId: " << rankId_ << " peerRank: " << peerRank
-                                                                << " channel: " << channel << " ret: " << ret);
-        const auto destroyRet = DlHcommApi::HcommChannelDestroy(&channel, URMA_CHANNEL_DESC_NUM);
-        if (destroyRet != 0) {
-            BM_LOG_ERROR("Host URMA rollback HcommChannelDestroy failed, rankId: "
-                         << rankId_ << " peerRank: " << peerRank << " channel: " << channel << " ret: " << destroyRet);
-        }
+        return ret;
+    }
+    HcommChannelDesc channelDesc{};
+    ChannelHandle channel = 0;
+    ret = CreatePeerChannelLocked(peerRank, state.endpointDesc, 0U, channelDesc, channel);
+    if (ret != BM_OK) {
         return ret;
     }
     state.channelDesc = channelDesc;
     state.channel = channel;
+    ret = CreateExtraBatchCopyChannelsLocked(peerRank, state, laneCount);
+    if (ret != BM_OK) {
+        (void)DestroyRemoteChannelLocked(peerRank, state);
+        return ret;
+    }
     BM_LOG_INFO("Host URMA channel ready with peer "
                 << peerRank << " channel: " << channel
+                << " laneCount: " << laneCount
                 << " role: " << (channelDesc.role == HCOMM_SOCKET_ROLE_CLIENT ? "CLIENT" : "SERVER"));
     return BM_OK;
 }
 
 Result HostUrmaTransportManager::ValidateInitialPeerSetLocked(const HybmTransPrepareOptions &options,
-                                                              RemoteRankState &state)
+                                                               RemoteRankState &state)
 {
     (void)options;
     if (state.channel == 0) {
         BM_LOG_ERROR("Peer rank state has no channel but was previously prepared");
         return BM_ERROR;
+    }
+    uint16_t laneCount = BATCH_COPY_DEFAULT_LANE_COUNT;
+    const auto ret = GetBatchCopyLaneCount(state.endpointDesc, laneCount);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    if (state.batchCopyExtraChannels.size() + 1U != laneCount) {
+        BM_LOG_ERROR("BatchCopy lane configuration changed after channel creation, rankId: "
+                     << rankId_ << " currentLaneCount: " << state.batchCopyExtraChannels.size() + 1U
+                     << " requestedLaneCount: " << laneCount);
+        return BM_INVALID_PARAM;
     }
     return BM_OK;
 }
@@ -649,10 +780,35 @@ Result HostUrmaTransportManager::ResolveRemoteAddressLocked(const RemoteRankStat
     return BM_NOT_CONNECTED;
 }
 
+Result HostUrmaTransportManager::DestroyExtraBatchCopyChannelsLocked(uint32_t peerRank, RemoteRankState &state)
+{
+    Result finalRet = BM_OK;
+    for (uint16_t index = 0U; index < state.batchCopyExtraChannels.size(); ++index) {
+        auto &channel = state.batchCopyExtraChannels[index];
+        if (channel == 0) {
+            continue;
+        }
+        const auto channelHandle = channel;
+        const auto ret = DlHcommApi::HcommChannelDestroy(&channel, 1);
+        channel = 0;
+        if (ret != 0) {
+            BM_LOG_ERROR("HcommChannelDestroy failed, rankId: "
+                         << rankId_ << " peerRank: " << peerRank << " lane: " << index + 1U
+                         << " channel: " << channelHandle << " ret: " << ret);
+            if (finalRet == BM_OK) {
+                finalRet = BM_ERROR;
+            }
+        }
+    }
+    state.batchCopyExtraChannels.clear();
+    return finalRet;
+}
+
 Result HostUrmaTransportManager::DestroyRemoteChannelLocked(uint32_t peerRank, RemoteRankState &state)
 {
+    Result finalRet = DestroyExtraBatchCopyChannelsLocked(peerRank, state);
     if (state.channel == 0) {
-        return BM_OK;
+        return finalRet;
     }
     const auto channel = state.channel;
     auto ret = DlHcommApi::HcommChannelDestroy(&state.channel, 1);
@@ -660,9 +816,9 @@ Result HostUrmaTransportManager::DestroyRemoteChannelLocked(uint32_t peerRank, R
     if (ret != 0) {
         BM_LOG_ERROR("HcommChannelDestroy failed, rankId: " << rankId_ << " peerRank: " << peerRank
                                                             << " channel: " << channel << " ret: " << ret);
-        return BM_ERROR;
+        return finalRet == BM_OK ? BM_ERROR : finalRet;
     }
-    return BM_OK;
+    return finalRet;
 }
 
 Result HostUrmaTransportManager::UnimportRemoteResourcesLocked(uint32_t peerRank, RemoteRankState &state)

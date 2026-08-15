@@ -172,6 +172,22 @@ python3 examples/kv_offload/sparse_copy_urma/03_host_device_urma_performance.py 
   --head-ip 127.0.0.1
 ```
 
+### 1/2/4 lane 对比
+
+`--batch-copy-lanes` 只接受 `1`、`2` 或 `4`，默认 `1`。脚本会把该值同时传给 Host 和 Device 进程的
+`ASCEND_MF_BATCH_COPY_LANES`；每条额外 lane 使用独立的 HCOMM channel，Device 侧还使用独立的 AICPU thread。
+每次运行写入 `<profiling-dir>/lanes<lane 数>/card<物理卡号>`，可直接连续运行三组采样：
+
+```bash
+for lanes in 1 2 4; do
+  python3 examples/kv_offload/sparse_copy_urma/03_host_device_urma_performance.py \
+    --env-dir "${ENV_DIR}" \
+    --profiling-dir "${PROFILE_DIR}" \
+    --head-ip 127.0.0.1 \
+    --batch-copy-lanes "${lanes}"
+done
+```
+
 默认端口如下；端口被占用时可通过对应的 `--*-port-base` 整体平移：
 
 | 通信用途 | pair 0 | pair 1 | pair 2 | pair 3 | CLI |
@@ -194,7 +210,8 @@ barrier 对齐，后 14 次调用前分别执行 `prof.step()`，用于推进与
 脚本按照参考文件创建 `torch_npu.profiler.profile`：采集 CPU 和 NPU activity，使用 Level2、PipeUtilization，
 并设置 `wait=1`、`warmup=1`、`active=10`、`repeat=1`、`skip_first=1`；同时打开 shape 和 memory 记录，关闭
 stack、FLOPs 和 module 记录。profiler 在 20 次 copy 前启动，前 6 次 copy 后开始调用 `prof.step()`，最后一次
-copy 完成并同步 NPU 后停止。四张卡分别写入 `<profiling-dir>/card<物理卡号>`，避免 trace 文件互相覆盖；
+copy 完成并同步 NPU 后停止。四张卡分别写入
+`<profiling-dir>/lanes<lane 数>/card<物理卡号>`，避免 trace 文件互相覆盖；
 未指定 `--profiling-dir` 时默认写入本示例目录下的 `profiling`。
 
 脚本不使用 Python wall-clock 计时，也不输出自行换算的平均时延或带宽。运行完成后只打印每张卡的

@@ -32,12 +32,18 @@ struct BatchCopySourceRange {
     uint64_t hcommVaBegin{0};
 };
 
+struct BatchCopyRouteLane {
+    urma::HcommThreadHandle thread{0};
+    urma::HcommChannelHandle channel{0};
+};
+
 struct BatchCopyRouteSource {
     uint32_t peerRank{0};
     urma::HcommThreadHandle thread{0};
     urma::HcommChannelHandle channel{0};
     uint64_t remoteFlagAddr{0};
     std::vector<BatchCopySourceRange> ranges{};
+    std::vector<BatchCopyRouteLane> extraLanes{};
 };
 
 class BatchCopyRoutePublisher final {
@@ -58,6 +64,7 @@ private:
 
     Result ValidateSources(const std::vector<BatchCopyRouteSource> &sources) const;
     Result ValidatePeer(const std::vector<BatchCopyRouteSource> &sources, size_t peerIndex) const;
+    Result ValidateExtraLanes(const BatchCopyRouteSource &source, size_t peerIndex) const;
     Result CollectRanges(const BatchCopyRouteSource &source, SourceRangeArray &ranges, size_t &rangeCount) const;
     Result ValidateSortedRanges(SourceRangeArray &ranges, size_t rangeCount) const;
     void BuildRouteImage(const std::vector<BatchCopyRouteSource> &sources, BatchCopyRouteTable &table) const;

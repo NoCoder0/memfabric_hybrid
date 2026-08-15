@@ -78,6 +78,7 @@ class PairConfig:
     nic_port: int
     env_file: str
     profiling_path: str
+    batch_copy_lanes: int
     ctrl_timeout: float
 
 
@@ -112,6 +113,13 @@ def _build_parser():
     parser.add_argument("--store-port-base", type=int, default=DEFAULT_STORE_PORT)
     parser.add_argument("--ctrl-port-base", type=int, default=DEFAULT_CTRL_PORT)
     parser.add_argument("--nic-port-base", type=int, default=DEFAULT_NIC_PORT)
+    parser.add_argument(
+        "--batch-copy-lanes",
+        type=int,
+        choices=(1, 2, 4),
+        default=1,
+        help="HCOMM BatchCopy lanes per Host/Device pair",
+    )
     parser.add_argument("--ctrl-timeout", type=float, default=DEFAULT_CTRL_TIMEOUT_SECONDS)
     parser.add_argument(
         "--profiling-dir",
@@ -132,7 +140,10 @@ def _make_pair_configs(args):
             ctrl_port=args.ctrl_port_base + pair_id,
             nic_port=args.nic_port_base + pair_id,
             env_file=os.path.join(os.path.abspath(args.env_dir), f"card{card_id}.env"),
-            profiling_path=os.path.join(os.path.abspath(args.profiling_dir), f"card{card_id}"),
+            profiling_path=os.path.join(
+                os.path.abspath(args.profiling_dir), f"lanes{args.batch_copy_lanes}", f"card{card_id}"
+            ),
+            batch_copy_lanes=args.batch_copy_lanes,
             ctrl_timeout=args.ctrl_timeout,
         ))
     return tuple(configs)
@@ -172,6 +183,7 @@ def _worker_args(config, role):
         role=role,
         rounds=1,
         runtime_device_id=None,
+        batch_copy_lanes=config.batch_copy_lanes,
         sizes="1",
         store_port=config.store_port,
     )
@@ -180,6 +192,7 @@ def _worker_args(config, role):
 def _configure_worker(args):
     _configure_python_logging(args.log_level)
     _load_env_file(args, args.env_file)
+    os.environ["ASCEND_MF_BATCH_COPY_LANES"] = str(args.batch_copy_lanes)
     _parse_local_options(args)
     _configure_local_environment(args)
     _set_local_device(args)
@@ -456,6 +469,7 @@ def _build_result(args, config):
         "logical_device_id": args.device_id,
         "runtime_device_id": _runtime_device_id(args),
         "pid": os.getpid(),
+        "batch_copy_lanes": config.batch_copy_lanes,
         "profiling_path": config.profiling_path,
     }
 
@@ -525,7 +539,8 @@ def _print_results(results):
     for result in results:
         print(
             f"card={result['physical_device_id']} pair={result['pair_id']} "
-            f"profile_step_calls={PROFILE_STEP_CALLS} profiling_path={result['profiling_path']}"
+            f"batch_copy_lanes={result['batch_copy_lanes']} profile_step_calls={PROFILE_STEP_CALLS} "
+            f"profiling_path={result['profiling_path']}"
         )
     print(f"cards={len(results)} profiling_complete=true total_copy_calls={len(results) * TOTAL_CALLS}")
 
@@ -565,7 +580,8 @@ def _run(args):
         return 1
     print(
         f"cards={','.join(str(card) for card in args.cards)} payload_bytes={PAYLOAD_BYTES} list_num={LIST_NUM} "
-        f"warmup_calls={WARMUP_CALLS} profile_step_calls={PROFILE_STEP_CALLS} profiling_dir={args.profiling_dir}"
+        f"batch_copy_lanes={args.batch_copy_lanes} warmup_calls={WARMUP_CALLS} "
+        f"profile_step_calls={PROFILE_STEP_CALLS} profiling_dir={args.profiling_dir}"
     )
     mp.set_start_method("spawn", force=True)
     barrier = mp.Barrier(len(configs))

@@ -707,37 +707,72 @@ Result DeviceUrmaTransportManager::CloseDevice()
     return BM_OK;
 }
 
-Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank)
+Result DeviceUrmaTransportManager::DestroyHcommLane(BatchCopyLane &lane, uint32_t peerRank, uint16_t laneIndex)
 {
     Result localResult = BM_OK;
-    if (state.channel != 0) {
-        auto hcommChan = state.channel;
-        BM_LOG_INFO("device_urma calling HcommChannelDestroy, peerRank: " << peerRank << " channel: " << state.channel
-                                                                          << " thread: " << state.thread);
+    if (lane.channel != 0) {
+        auto hcommChan = lane.channel;
+        BM_LOG_INFO("device_urma calling HcommChannelDestroy, peerRank: "
+                    << peerRank << " lane: " << laneIndex << " channel: " << lane.channel << " thread: "
+                    << lane.thread);
         const auto ret = DlHcommApi::HcommChannelDestroy(&hcommChan, 1);
         if (ret != 0) {
-            BM_LOG_ERROR("device_urma HcommChannelDestroy failed, peerRank: "
-                         << peerRank << " channel: " << state.channel << " thread: " << state.thread
-                         << " ret: " << ret);
+            BM_LOG_ERROR("device_urma HcommChannelDestroy failed, peerRank: " << peerRank << " lane: " << laneIndex
+                                                                               << " channel: " << lane.channel
+                                                                               << " thread: " << lane.thread
+                                                                               << " ret: " << ret);
             localResult = BM_DL_FUNCTION_FAILED;
         }
-        state.channel = 0;
-        state.channelDesc = {};
+        lane.channel = 0;
+        lane.channelDesc = {};
     }
-    if (state.thread != 0) {
-        auto hcommThread = state.thread;
-        BM_LOG_INFO("device_urma HcommThreadFree, thread: " << state.thread);
+    if (lane.thread != 0) {
+        auto hcommThread = lane.thread;
+        BM_LOG_INFO("device_urma HcommThreadFree, peerRank: " << peerRank << " lane: " << laneIndex
+                                                                << " thread: " << lane.thread);
         const auto ret = DlHcommApi::HcommThreadFree(&hcommThread, 1);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma HcommThreadFree failed, peerRank: " << peerRank << " thread: " << state.thread
-                                                                          << " ret: " << ret);
+            BM_LOG_ERROR("device_urma HcommThreadFree failed, peerRank: " << peerRank << " lane: " << laneIndex
+                                                                           << " thread: " << lane.thread << " ret: "
+                                                                           << ret);
             if (localResult == BM_OK) {
                 localResult = ret;
             }
         }
-        state.thread = 0;
+        lane.thread = 0;
     }
     return localResult;
+}
+
+Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank)
+{
+    Result localResult = BM_OK;
+    for (uint16_t index = 0U; index < state.batchCopyExtraLanes.size(); ++index) {
+        const auto ret = DestroyHcommLane(state.batchCopyExtraLanes[index], peerRank, index + 1U);
+        if (ret != BM_OK && localResult == BM_OK) {
+            localResult = ret;
+        }
+    }
+    state.batchCopyExtraLanes.clear();
+    BatchCopyLane primary{state.channelDesc, state.channel, state.thread};
+    const auto ret = DestroyHcommLane(primary, peerRank, 0U);
+    state.channelDesc = primary.channelDesc;
+    state.channel = primary.channel;
+    state.thread = primary.thread;
+    return localResult == BM_OK ? ret : localResult;
+}
+
+bool DeviceUrmaTransportManager::HasCompleteHcommResources(const RemoteRankState &state)
+{
+    if (state.channel == 0U || state.thread == 0U) {
+        return false;
+    }
+    for (const auto &lane : state.batchCopyExtraLanes) {
+        if (lane.channel == 0U || lane.thread == 0U) {
+            return false;
+        }
+    }
+    return true;
 }
 
 Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &state, uint32_t peerRank)
@@ -1289,6 +1324,100 @@ bool DeviceUrmaTransportManager::IsBatchCopyRouteEnabledLocked() const
     return (options_.protocol & HYBM_DOP_TYPE_HOST_DEVICE_URMA) != 0U;
 }
 
+Result DeviceUrmaTransportManager::GetBatchCopyLaneCount(const UrmaEndpointDesc &peerDesc, uint16_t &laneCount) const
+{
+    laneCount = BATCH_COPY_DEFAULT_LANE_COUNT;
+    if (!IsBatchCopyRouteEnabledLocked() || peerDesc.loc.locType != ENDPOINT_LOC_TYPE_HOST) {
+        return BM_OK;
+    }
+    if (GetBatchCopyLaneCountFromEnv(laneCount)) {
+        return BM_OK;
+    }
+    const char *value = std::getenv(BATCH_COPY_LANES_ENV);
+    BM_LOG_ERROR("device_urma invalid BatchCopy lane configuration, rank: "
+                 << rankId_ << " peerLocType: " << peerDesc.loc.locType << " env: " << BATCH_COPY_LANES_ENV
+                 << " value: " << (value == nullptr ? "<null>" : value) << " supported: 1,2,4");
+    return BM_INVALID_PARAM;
+}
+
+Result DeviceUrmaTransportManager::CreateHcommLane(uint32_t peerRank, const UrmaEndpointDesc &peerDesc,
+                                                    uint16_t laneIndex, BatchCopyLane &lane) const
+{
+    lane = {};
+    const auto initRet = HcommChannelDescInit(&lane.channelDesc, 1);
+    if (initRet != 0) {
+        BM_LOG_ERROR("device_urma HcommChannelDescInit failed, peer: "
+                     << peerRank << " lane: " << laneIndex << " ret: " << initRet);
+        return BM_ERROR;
+    }
+    lane.channelDesc.role = (rankId_ > peerRank) ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER;
+    lane.channelDesc.remoteEndpoint = ToHcommEndpointDesc(peerDesc);
+    lane.channelDesc.notifyNum = HCOMM_NORMAL_NOTIFY_NUM;
+    lane.channelDesc.exchangeAllMems = true;
+    if (localEndpoint_->desc.protocol == UrmaProtocol::UBOE) {
+        std::memset(lane.channelDesc.raws, 0, sizeof(lane.channelDesc.raws));
+        lane.channelDesc.ubAttr.sqDepth = 128;
+    }
+    auto ret = DlHcommApi::HcommThreadAlloc(COMM_ENGINE_AICPU_TS, 1, &HCOMM_NORMAL_NOTIFY_NUM, &lane.thread);
+    if (ret != BM_OK || lane.thread == 0) {
+        BM_LOG_ERROR("device_urma HcommThreadAlloc failed, peer: "
+                     << peerRank << " lane: " << laneIndex << " ret: " << ret << " thread: " << lane.thread);
+        return ret == BM_OK ? BM_DL_FUNCTION_FAILED : ret;
+    }
+    ret = DlHcommApi::HcommChannelCreate(localEndpoint_->hcommEndpoint, COMM_ENGINE_AICPU, &lane.channelDesc, 1,
+                                         &lane.channel);
+    if (ret != BM_OK || lane.channel == 0) {
+        BM_LOG_ERROR("device_urma HcommChannelCreate failed, peer: "
+                     << peerRank << " lane: " << laneIndex << " ret: " << ret << " channel: " << lane.channel);
+        (void)DestroyHcommLane(lane, peerRank, laneIndex);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    ret = manager_.WaitForChannelReady(lane.channel, peerRank);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma WaitForChannelReady failed, peer: "
+                     << peerRank << " lane: " << laneIndex << " channel: " << lane.channel << " ret: " << ret);
+        (void)DestroyHcommLane(lane, peerRank, laneIndex);
+    }
+    return ret;
+}
+
+Result DeviceUrmaTransportManager::CreateExtraBatchCopyLanes(uint32_t peerRank, const UrmaEndpointDesc &peerDesc,
+                                                              uint16_t laneCount, RemoteRankState &state) const
+{
+    if (laneCount == BATCH_COPY_DEFAULT_LANE_COUNT) {
+        return BM_OK;
+    }
+    std::vector<BatchCopyLane> lanes;
+    try {
+        lanes.reserve(laneCount - BATCH_COPY_DEFAULT_LANE_COUNT);
+    } catch (...) {
+        BM_LOG_ERROR("device_urma allocate BatchCopy lanes failed, peer: " << peerRank << " laneCount: " << laneCount);
+        return BM_MALLOC_FAILED;
+    }
+    for (uint16_t laneIndex = 1U; laneIndex < laneCount; ++laneIndex) {
+        BatchCopyLane lane{};
+        const auto ret = CreateHcommLane(peerRank, peerDesc, laneIndex, lane);
+        if (ret != BM_OK) {
+            for (uint16_t index = 0U; index < lanes.size(); ++index) {
+                (void)DestroyHcommLane(lanes[index], peerRank, index + 1U);
+            }
+            return ret;
+        }
+        try {
+            lanes.emplace_back(std::move(lane));
+        } catch (...) {
+            BM_LOG_ERROR("device_urma store BatchCopy lane failed, peer: " << peerRank << " lane: " << laneIndex);
+            (void)DestroyHcommLane(lane, peerRank, laneIndex);
+            for (uint16_t index = 0U; index < lanes.size(); ++index) {
+                (void)DestroyHcommLane(lanes[index], peerRank, index + 1U);
+            }
+            return BM_MALLOC_FAILED;
+        }
+    }
+    state.batchCopyExtraLanes = std::move(lanes);
+    return BM_OK;
+}
+
 Result DeviceUrmaTransportManager::ValidateBatchCopyPeerLocked(uint32_t peerRank, const RemoteRankState &state,
                                                                uint32_t endpointLocType) const
 {
@@ -1330,6 +1459,10 @@ Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourceLocked(uint32_t peer
     source.channel = state.channel;
     source.remoteFlagAddr = state.remoteFlagAddr;
     try {
+        source.extraLanes.reserve(state.batchCopyExtraLanes.size());
+        for (const auto &lane : state.batchCopyExtraLanes) {
+            source.extraLanes.push_back({lane.thread, lane.channel});
+        }
         source.ranges.reserve(state.imports.size());
         for (const auto &registration : state.imports) {
             uint64_t gvaEnd = 0;
@@ -1355,8 +1488,9 @@ Result DeviceUrmaTransportManager::BuildBatchCopyRouteSourceLocked(uint32_t peer
             source.ranges.push_back({registration.addr, gvaEnd, registration.view.addr});
         }
     } catch (...) {
-        BM_LOG_ERROR("device_urma allocate BatchCopy route ranges failed, peer: " << peerRank << " rangeCount: "
-                                                                                  << state.imports.size());
+        BM_LOG_ERROR("device_urma allocate BatchCopy route source failed, peer: "
+                     << peerRank << " rangeCount: " << state.imports.size()
+                     << " laneCount: " << state.batchCopyExtraLanes.size() + 1U);
         return BM_MALLOC_FAILED;
     }
     return BM_OK;
@@ -1521,103 +1655,63 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             return ret;
         }
 
+        uint16_t laneCount = BATCH_COPY_DEFAULT_LANE_COUNT;
+        ret = GetBatchCopyLaneCount(peerDesc, laneCount);
+        if (ret != BM_OK) {
+            return ret;
+        }
         bool resourcesCreatedInThisCall = false;
+        const bool hasResources = state.channel != 0U || state.thread != 0U || !state.batchCopyExtraLanes.empty();
 
-        // 2. Idempotency: if thread and channel already exist, compare with stored remoteEndpointDesc.
-        //    If unchanged → skip resource creation; if changed → reject (no hot-replace).
-        //    Either way, fall through to mem import — do NOT continue.
-        if (state.channel != 0 && state.thread != 0) {
+        // 2. Idempotency: reject changed endpoints or lane topology; do not hot-replace resources.
+        if (HasCompleteHcommResources(state)) {
             if (std::memcmp(&state.remoteEndpointDesc, &peerDesc, sizeof(UrmaEndpointDesc)) != 0) {
                 BM_LOG_ERROR(
                     "device_urma Prepare peer endpoint desc changed but hot-replace not supported, peer: " << peerRank);
                 return BM_INVALID_PARAM;
             }
-            BM_LOG_INFO("device_urma Prepare reusing existing channel/thread for peer: " << peerRank);
-            // resourcesCreatedInThisCall remains false — do not destroy channel/thread on import failure
-        } else {
-            // 3. Convert peer UrmaEndpointDesc → HCOMM EndpointDesc for HcommChannelDesc.remoteEndpoint
-            EndpointDesc hcommRemoteEndpoint = ToHcommEndpointDesc(peerDesc);
-
-            // 4. Build a single HcommChannelDesc for this peer
-            HcommChannelDesc channelDesc{};
-            HcommChannelDescInit(&channelDesc, 1); // not in DlHcommApi namespace, direct C function
-            channelDesc.role = (rankId_ > peerRank) ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER;
-            channelDesc.remoteEndpoint = hcommRemoteEndpoint;
-            channelDesc.notifyNum = HCOMM_NORMAL_NOTIFY_NUM;
-            channelDesc.exchangeAllMems = true; // 填true, 不用管memHandles了, remoteEndpoint要填对
-            if (localEndpoint_->desc.protocol == UrmaProtocol::UBOE) {
-                // CRITICAL: HcommChannelDescInit sets union to 0xFF garbage values.
-                // Must zero the entire union before setting ubAttr to avoid:
-                // - queueNum=0xFFFFFFFF (4B QPs → OOM)
-                // - retryCnt=0xFFFFFFFF (impossible retries → timeout)
-                // - tc/sl=0xFF (invalid QoS → init failure)
-                std::memset(channelDesc.raws, 0, sizeof(channelDesc.raws));
-                // sqDepth合法范围[16,256]且需为2的幂，0会被CheckUbAttr拒绝；128对齐hcomm MS模式默认值
-                channelDesc.ubAttr.sqDepth = 128;
+            const size_t currentLaneCount = state.batchCopyExtraLanes.size() + 1U;
+            if (currentLaneCount != laneCount) {
+                BM_LOG_ERROR("device_urma Prepare lane configuration changed after resource creation, peer: "
+                             << peerRank << " currentLaneCount: " << currentLaneCount << " requestedLaneCount: "
+                             << laneCount);
+                return BM_INVALID_PARAM;
             }
-
-            // 5. Allocate one thread per peer (use temporary variable for safe rollback)
-            HcommThreadHandle threadHandle = 0;
-            ret = DlHcommApi::HcommThreadAlloc(COMM_ENGINE_AICPU_TS, 1, &HCOMM_NORMAL_NOTIFY_NUM, &threadHandle);
+            BM_LOG_INFO("device_urma Prepare reusing lane resources, peer: " << peerRank
+                                                                              << " laneCount: " << laneCount);
+        } else {
+            if (hasResources) {
+                BM_LOG_ERROR("device_urma Prepare found incomplete lane resources, peer: "
+                             << peerRank << " thread: " << state.thread << " channel: " << state.channel
+                             << " extraLaneCount: " << state.batchCopyExtraLanes.size());
+                ret = DestroyRankChannelsAndThread(state, peerRank);
+                if (ret != BM_OK) {
+                    BM_LOG_ERROR("device_urma Prepare failed to clear incomplete lane resources, peer: "
+                                 << peerRank << " ret: " << ret);
+                    return ret;
+                }
+            }
+            BatchCopyLane primaryLane{};
+            ret = CreateHcommLane(peerRank, peerDesc, 0U, primaryLane);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("device_urma Prepare HcommThreadAlloc failed, peer: "
-                             << peerRank << " engine: " << COMM_ENGINE_AICPU_TS << " ret: " << ret);
                 return ret;
             }
-            if (threadHandle == 0) {
-                BM_LOG_ERROR("device_urma Prepare HcommThreadAlloc returned invalid thread, peer: " << peerRank);
-                return BM_DL_FUNCTION_FAILED;
-            }
-
-            // 6. Create one channel per peer (temporary variable for safe rollback)
-            HcommChannelHandle channelHandle = 0;
-            BM_LOG_INFO("device_urma Prepare HcommChannelCreate peerRank: " << peerRank << ", channelDesc.role: "
-                                                                            << channelDesc.role);
-            ret = DlHcommApi::HcommChannelCreate(localEndpoint_->hcommEndpoint, COMM_ENGINE_AICPU, &channelDesc, 1,
-                                                 &channelHandle);
-            if (ret != 0) {
-                BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, peer: " << peerRank << " ret: " << ret);
-                auto rollbackThread = threadHandle;
-                // No stream sync needed: thread was just allocated, no RemoteIO launched during Prepare.
-                (void)DlHcommApi::HcommThreadFree(&rollbackThread, 1);
-                return BM_DL_FUNCTION_FAILED;
-            }
-            if (channelHandle == 0) {
-                BM_LOG_ERROR("device_urma Prepare HcommChannelCreate returned invalid channel, peer: " << peerRank);
-                auto rollbackThread = threadHandle;
-                // No stream sync needed: thread was just allocated, no RemoteIO launched during Prepare.
-                (void)DlHcommApi::HcommThreadFree(&rollbackThread, 1);
-                return BM_DL_FUNCTION_FAILED;
-            }
-
-            // 7. Persist new resources to state
             state.remoteEndpointDesc = peerDesc;
             state.hasEndpointDesc = true;
-            state.thread = threadHandle;
-            state.channelDesc = channelDesc;
-            state.channel = channelHandle;
-            resourcesCreatedInThisCall = true;
-
-            BM_LOG_INFO("device_urma Prepare created channel/thread, peer: " << peerRank << " thread: " << threadHandle
-                                                                             << " channel: " << channelHandle);
-
-            // 7.5 Wait for channel ready before importing mem keys
-            ret = manager_.WaitForChannelReady(channelHandle, peerRank);
+            state.thread = primaryLane.thread;
+            state.channelDesc = primaryLane.channelDesc;
+            state.channel = primaryLane.channel;
+            ret = CreateExtraBatchCopyLanes(peerRank, peerDesc, laneCount, state);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("device_urma Prepare WaitForChannelReady failed, peer: " << peerRank << " ret: " << ret);
-                auto rbRet = DlHcommApi::HcommChannelDestroy(&channelHandle, 1);
-                if (rbRet != 0) {
-                    BM_LOG_ERROR("device_urma Prepare rollback HcommChannelDestroy failed, "
-                                 << "channel: " << channelHandle << " peer: " << peerRank << " ret: " << rbRet);
-                }
-                auto trRet = DlHcommApi::HcommThreadFree(&threadHandle, 1);
-                if (trRet != 0) {
-                    BM_LOG_ERROR("device_urma Prepare rollback HcommThreadFree failed, "
-                                 << "thread: " << threadHandle << " peer: " << peerRank << " ret: " << trRet);
-                }
+                (void)DestroyRankChannelsAndThread(state, peerRank);
+                state.remoteEndpointDesc = UrmaEndpointDesc{};
+                state.hasEndpointDesc = false;
                 remoteRanks_.erase(peerRank);
                 return ret;
             }
+            resourcesCreatedInThisCall = true;
+            BM_LOG_INFO("device_urma Prepare created lane resources, peer: " << peerRank
+                                                                               << " laneCount: " << laneCount);
         }
 
         // 8. Import remote memory keys (always, even if channel/thread were reused)
@@ -1625,20 +1719,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma Prepare ImportRemoteMemKeysLocked failed, peer: " << peerRank);
             if (resourcesCreatedInThisCall) {
-                // Rollback the channel/thread that were just created in this call
-                BM_LOG_WARN("device_urma Prepare rolling back newly created channel/thread for peer: " << peerRank);
-                if (state.channel != 0) {
-                    auto chanRollback = state.channel;
-                    // No stream sync needed: channel was just created, no RemoteIO launched during Prepare.
-                    (void)DlHcommApi::HcommChannelDestroy(&chanRollback, 1);
-                    state.channel = 0;
-                }
-                if (state.thread != 0) {
-                    auto threadRollback = state.thread;
-                    (void)DlHcommApi::HcommThreadFree(&threadRollback, 1);
-                    state.thread = 0;
-                }
-                state.channelDesc = {};
+                BM_LOG_WARN("device_urma Prepare rolling back newly created lane resources, peer: " << peerRank);
+                (void)DestroyRankChannelsAndThread(state, peerRank);
                 state.remoteEndpointDesc = UrmaEndpointDesc{};
                 state.hasEndpointDesc = false;
             }
@@ -1648,7 +1730,9 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         }
 
         BM_LOG_INFO("device_urma Prepare success, peer: " << peerRank << " thread: " << state.thread << " channel: "
-                                                          << state.channel << " imports: " << state.imports.size());
+                                                          << state.channel << " laneCount: "
+                                                          << state.batchCopyExtraLanes.size() + 1U
+                                                          << " imports: " << state.imports.size());
     }
     return TryPublishBatchCopyRouteLocked(options);
 }

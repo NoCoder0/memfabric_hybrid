@@ -27,6 +27,9 @@ struct HybmBatchCopyTransferParam {
     uint32_t flagSize;
 };
 
-uint32_t HybmBatchCopyReadDescriptors(const HybmBatchCopyTransferParam &param);
+uint32_t HybmBatchCopyStartBatchMode();
+uint32_t HybmBatchCopySubmitDescriptors(const HybmBatchCopyTransferParam &param);
+uint32_t HybmBatchCopyFenceAndReadCompletion(const HybmBatchCopyTransferParam &param);
+uint32_t HybmBatchCopyEndBatchMode();
 
 #endif // MEM_FABRIC_HYBRID_ACC_OFFLOAD_HYBM_BATCH_COPY_TRANSFER_H

@@ -130,33 +130,31 @@ uint32_t FenceAndReadCompletion(const HybmBatchCopyTransferParam &param)
     return BM_OK;
 }
 
-void EndBatchModeAfterFailure()
-{
-    const int32_t ret = BatchModeEnd();
-    if (ret != BM_OK && !IsNotSupported(ret)) {
-        HYBM_LOGE(BM_ERROR, "BatchCopy cleanup HcommBatchModeEnd failed, batchTag=%s ret=%d", kBatchTag, ret);
-    }
-}
 } // namespace
 
-uint32_t HybmBatchCopyReadDescriptors(const HybmBatchCopyTransferParam &param)
+uint32_t HybmBatchCopyStartBatchMode()
 {
     int32_t ret = BatchModeStart();
     if (ret != BM_OK && !IsNotSupported(ret)) {
         HYBM_LOGE(BM_ERROR, "BatchCopy HcommBatchModeStart failed, batchTag=%s ret=%d", kBatchTag, ret);
         return BM_ERROR;
     }
-    uint32_t transferRet = TransferDescriptors(param);
-    if (transferRet != BM_OK) {
-        EndBatchModeAfterFailure();
-        return transferRet;
-    }
-    transferRet = FenceAndReadCompletion(param);
-    if (transferRet != BM_OK) {
-        EndBatchModeAfterFailure();
-        return transferRet;
-    }
-    ret = BatchModeEnd();
+    return BM_OK;
+}
+
+uint32_t HybmBatchCopySubmitDescriptors(const HybmBatchCopyTransferParam &param)
+{
+    return TransferDescriptors(param);
+}
+
+uint32_t HybmBatchCopyFenceAndReadCompletion(const HybmBatchCopyTransferParam &param)
+{
+    return FenceAndReadCompletion(param);
+}
+
+uint32_t HybmBatchCopyEndBatchMode()
+{
+    const int32_t ret = BatchModeEnd();
     if (ret != BM_OK && !IsNotSupported(ret)) {
         HYBM_LOGE(BM_ERROR, "BatchCopy HcommBatchModeEnd failed, batchTag=%s ret=%d", kBatchTag, ret);
         return BM_ERROR;

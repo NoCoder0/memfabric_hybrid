@@ -48,9 +48,10 @@ void LogRouteTable(uint32_t userDeviceId, const BatchCopyRouteTable &table)
     for (uint16_t peerIndex = 0; peerIndex < table.header.peerCount; ++peerIndex) {
         const auto &peer = table.peers[peerIndex];
         BM_LOG_INFO("BatchCopy route peer, userDeviceId: " << userDeviceId << " peerIndex: " << peerIndex
-                                                           << " thread: " << peer.thread << " channel: " << peer.channel
-                                                           << " remoteFlagAddr: 0x" << std::hex << peer.remoteFlagAddr
-                                                           << std::dec);
+                                                            << " thread: " << peer.thread << " channel: "
+                                                            << peer.channel
+                                                            << " remoteFlagAddr: 0x" << std::hex << peer.remoteFlagAddr
+                                                            << std::dec << " laneCount: " << peer.laneCount);
     }
     for (uint16_t rangeIndex = 0; rangeIndex < table.header.rangeCount; ++rangeIndex) {
         const auto &range = table.ranges[rangeIndex];
@@ -86,10 +87,37 @@ Result BatchCopyRoutePublisher::ValidatePeer(const std::vector<BatchCopyRouteSou
                      << std::hex << source.remoteFlagAddr << std::dec << " rangeCount: " << source.ranges.size());
         return BM_INVALID_PARAM;
     }
+    const auto laneRet = ValidateExtraLanes(source, peerIndex);
+    if (laneRet != BM_OK) {
+        return laneRet;
+    }
     for (size_t previous = 0U; previous < peerIndex; ++previous) {
         if (sources[previous].peerRank == source.peerRank) {
             BM_LOG_ERROR("duplicate BatchCopy peer rank, userDeviceId: " << userDeviceId_
                                                                          << " peerRank: " << source.peerRank);
+            return BM_INVALID_PARAM;
+        }
+    }
+    return BM_OK;
+}
+
+Result BatchCopyRoutePublisher::ValidateExtraLanes(const BatchCopyRouteSource &source, size_t peerIndex) const
+{
+    const size_t laneCount = source.extraLanes.size() + 1U;
+    if (laneCount > BATCH_COPY_MAX_LANE_COUNT ||
+        !IsBatchCopyLaneCountSupported(static_cast<uint16_t>(laneCount))) {
+        BM_LOG_ERROR("unsupported BatchCopy lane count, userDeviceId: "
+                     << userDeviceId_ << " peerRank: " << source.peerRank << " peerIndex: " << peerIndex
+                     << " laneCount: " << laneCount);
+        return BM_INVALID_PARAM;
+    }
+    for (size_t laneIndex = 0U; laneIndex < source.extraLanes.size(); ++laneIndex) {
+        const auto &lane = source.extraLanes[laneIndex];
+        if (lane.thread == 0U || lane.channel == 0U) {
+            BM_LOG_ERROR("invalid BatchCopy extra lane, userDeviceId: "
+                         << userDeviceId_ << " peerRank: " << source.peerRank << " peerIndex: " << peerIndex
+                         << " laneIndex: " << laneIndex + 1U << " thread: " << lane.thread
+                         << " channel: " << lane.channel);
             return BM_INVALID_PARAM;
         }
     }
@@ -136,7 +164,7 @@ Result BatchCopyRoutePublisher::ValidateSortedRanges(SourceRangeArray &ranges, s
 
 Result BatchCopyRoutePublisher::ValidateSources(const std::vector<BatchCopyRouteSource> &sources) const
 {
-    if (sources.empty() || sources.size() > BATCH_COPY_MAX_PEER_COUNT) {
+    if (sources.empty()) {
         BM_LOG_ERROR("invalid BatchCopy peer count: " << sources.size() << " userDeviceId: " << userDeviceId_);
         return BM_INVALID_PARAM;
     }
@@ -149,10 +177,17 @@ Result BatchCopyRoutePublisher::ValidateSources(const std::vector<BatchCopyRoute
         return BM_MALLOC_FAILED;
     }
     size_t rangeCount = 0U;
+    size_t laneCount = 0U;
     for (size_t peerIndex = 0U; peerIndex < sources.size(); ++peerIndex) {
         auto ret = ValidatePeer(sources, peerIndex);
         if (ret != BM_OK) {
             return ret;
+        }
+        laneCount += sources[peerIndex].extraLanes.size() + 1U;
+        if (laneCount > BATCH_COPY_MAX_PEER_COUNT) {
+            BM_LOG_ERROR("too many BatchCopy route lanes, userDeviceId: "
+                         << userDeviceId_ << " peerCount: " << sources.size() << " laneCount: " << laneCount);
+            return BM_INVALID_PARAM;
         }
         ret = CollectRanges(sources[peerIndex], *ranges, rangeCount);
         if (ret != BM_OK) {
@@ -163,26 +198,36 @@ Result BatchCopyRoutePublisher::ValidateSources(const std::vector<BatchCopyRoute
 }
 
 void BatchCopyRoutePublisher::BuildRouteImage(const std::vector<BatchCopyRouteSource> &sources,
-                                              BatchCopyRouteTable &table) const
+                                               BatchCopyRouteTable &table) const
 {
     std::memset(&table, 0, sizeof(table));
     size_t rangeIndex = 0U;
-    for (size_t peerIndex = 0U; peerIndex < sources.size(); ++peerIndex) {
-        const auto &source = sources[peerIndex];
+    size_t peerIndex = 0U;
+    for (const auto &source : sources) {
+        const size_t sourcePeerIndex = peerIndex;
+        const uint16_t laneCount = static_cast<uint16_t>(source.extraLanes.size() + 1U);
         table.peers[peerIndex].thread = source.thread;
         table.peers[peerIndex].channel = source.channel;
         table.peers[peerIndex].remoteFlagAddr = source.remoteFlagAddr;
+        table.peers[peerIndex].laneCount = laneCount;
+        ++peerIndex;
+        for (const auto &lane : source.extraLanes) {
+            table.peers[peerIndex].thread = lane.thread;
+            table.peers[peerIndex].channel = lane.channel;
+            table.peers[peerIndex].remoteFlagAddr = source.remoteFlagAddr;
+            ++peerIndex;
+        }
         for (const auto &range : source.ranges) {
             auto &entry = table.ranges[rangeIndex++];
             entry.srcGvaBegin = range.srcGvaBegin;
             entry.srcGvaEnd = range.srcGvaEnd;
             entry.hcommVaBegin = range.hcommVaBegin;
-            entry.peerIndex = static_cast<uint16_t>(peerIndex);
+            entry.peerIndex = static_cast<uint16_t>(sourcePeerIndex);
         }
     }
     std::sort(table.ranges, table.ranges + rangeIndex,
               [](const auto &left, const auto &right) { return left.srcGvaBegin < right.srcGvaBegin; });
-    table.header.peerCount = static_cast<uint16_t>(sources.size());
+    table.header.peerCount = static_cast<uint16_t>(peerIndex);
     table.header.rangeCount = static_cast<uint16_t>(rangeIndex);
 }
 

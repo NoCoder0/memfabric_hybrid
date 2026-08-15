@@ -80,6 +80,7 @@ private:
         UrmaEndpointDesc endpointDesc{};
         HcommChannelDesc channelDesc{};
         ChannelHandle channel{0};
+        std::vector<ChannelHandle> batchCopyExtraChannels{};
         std::vector<RemoteRegistration> imports{};
         uint64_t remoteFlagAddr{0};
         uint64_t remoteFlagSize{0};
@@ -93,6 +94,11 @@ private:
     Result FindLocalRegistrationLocked(uint64_t addr, uint64_t size, LocalRegistration *registration) const;
     Result ResolveExportedGvaLocked(const TransportMemoryRegion &mr, uint64_t &exportedGva) const;
 
+    Result GetBatchCopyLaneCount(const UrmaEndpointDesc &peerEndpoint, uint16_t &laneCount) const;
+    Result CreatePeerChannelLocked(uint32_t peerRank, const UrmaEndpointDesc &peerEndpoint, uint16_t laneIndex,
+                                   HcommChannelDesc &channelDesc, ChannelHandle &channel) const;
+    Result CreateExtraBatchCopyChannelsLocked(uint32_t peerRank, RemoteRankState &state, uint16_t laneCount);
+    static bool HasCompleteHcommChannels(const RemoteRankState &state);
     Result PreparePeerLocked(uint32_t peerRank, const TransportRankPrepareInfo &peerInfo, RemoteRankState &state);
     Result ValidateInitialPeerSetLocked(const HybmTransPrepareOptions &options, RemoteRankState &state);
     Result PreparePeerMemoryKeysLocked(uint32_t peerRank, const std::vector<TransportMemoryKey> &memKeys,
@@ -110,6 +116,7 @@ private:
                           uint64_t hcommAddr, uint64_t size, bool write);
     Result RemoteIoBatch(uint32_t rankId, const CopyDescriptor &descriptor, bool write);
     Result FenceRank(RemoteRankState &state, uint32_t rankId);
+    Result DestroyExtraBatchCopyChannelsLocked(uint32_t peerRank, RemoteRankState &state);
     Result DestroyRemoteChannelLocked(uint32_t peerRank, RemoteRankState &state);
     Result UnimportRemoteResourcesLocked(uint32_t peerRank, RemoteRankState &state);
     Result CleanupRemoteRankLocked(uint32_t peerRank, RemoteRankState &state);

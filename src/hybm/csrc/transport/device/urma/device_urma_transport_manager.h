@@ -116,6 +116,12 @@ private:
         UrmaCommMem view{};
     };
 
+    struct BatchCopyLane {
+        HcommChannelDesc channelDesc{};
+        HcommChannelHandle channel{0};
+        HcommThreadHandle thread{0};
+    };
+
     struct RemoteRankState {
         std::mutex rankMutex{};
         UrmaEndpointDesc remoteEndpointDesc{};
@@ -126,6 +132,8 @@ private:
         HcommChannelHandle channel{0};
         // 本 rank 侧用于与该 peer 通信的 thread
         HcommThreadHandle thread{0};
+        // Extra HCOMM resources used exclusively by the BatchCopy lane experiment.
+        std::vector<BatchCopyLane> batchCopyExtraLanes{};
         std::vector<RemoteRegistration> imports{};
         // Remote peer's notify record address (from TransportMemoryKey header during
         // ImportRemoteMemKeysLocked). Used as remote_flag_addr in kernel launch args.
@@ -187,6 +195,8 @@ private:
     void RollbackOpenDeviceLocked();
     Result EnsureDeviceKernelLoadedLocked();
     static Result DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank);
+    static Result DestroyHcommLane(BatchCopyLane &lane, uint32_t peerRank, uint16_t laneIndex);
+    static bool HasCompleteHcommResources(const RemoteRankState &state);
     Result UnimportPeerImportsAndFlag(RemoteRankState &state, uint32_t peerRank);
     Result CleanupPeerRankState(RemoteRankState &state, uint32_t peerRank);
     Result CleanupLocalRegistrationsLocked();
@@ -198,6 +208,11 @@ private:
                                         RemoteRegistration *registration) const;
     Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
                                      const std::vector<TransportMemoryKey> &memKeys);
+    Result GetBatchCopyLaneCount(const UrmaEndpointDesc &peerDesc, uint16_t &laneCount) const;
+    Result CreateHcommLane(uint32_t peerRank, const UrmaEndpointDesc &peerDesc, uint16_t laneIndex,
+                           BatchCopyLane &lane) const;
+    Result CreateExtraBatchCopyLanes(uint32_t peerRank, const UrmaEndpointDesc &peerDesc, uint16_t laneCount,
+                                     RemoteRankState &state) const;
 
     // Batch_Copy route source construction and publication
     bool IsBatchCopyRouteEnabledLocked() const;

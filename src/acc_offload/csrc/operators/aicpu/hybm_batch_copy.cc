@@ -35,6 +35,8 @@ constexpr auto kCompletionTimeout = std::chrono::seconds(60);
 
 struct BatchCopyGroup {
     std::vector<HcommBatchTransferDesc> descriptors;
+    uint16_t laneBegin{0};
+    uint16_t laneCount{0};
 
     bool Empty() const
     {
@@ -43,6 +45,11 @@ struct BatchCopyGroup {
 };
 
 using BatchCopyGroups = std::array<BatchCopyGroup, ock::mf::BATCH_COPY_MAX_PEER_COUNT>;
+
+struct BatchCopyTransfers {
+    std::array<HybmBatchCopyTransferParam, ock::mf::BATCH_COPY_MAX_PEER_COUNT> values{};
+    uint16_t count{0};
+};
 
 void InvalidateDeviceCache(uintptr_t address)
 {
@@ -257,6 +264,10 @@ int32_t ResolveAndAppendItem(const HybmBatchCopyParam &param, uint32_t index, co
     */
     const uint64_t hcommSource = range->hcommVaBegin + (source - range->srcGvaBegin);
     auto &group = groups[range->peerIndex];
+    if (group.Empty()) {
+        group.laneBegin = range->peerIndex;
+        group.laneCount = route->peers[range->peerIndex].laneCount;
+    }
     auto &descriptor = group.descriptors.emplace_back();
     descriptor.transType = ock::mf::HCOMM_TRANSFER_TYPE_READ;
     descriptor.transferInfo.read.len = length;
@@ -293,52 +304,103 @@ volatile uint64_t *GetCompletionCell(uint16_t peerIndex)
     return reinterpret_cast<volatile uint64_t *>(kCompletionAddress + peerIndex * sizeof(uint64_t));
 }
 
-void ClearUsedCompletionCells(const BatchCopyGroups &groups, uint16_t peerCount)
+volatile uint64_t *GetCompletionCell(const HybmBatchCopyTransferParam &transfer)
 {
-    for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
-        if (groups[peerIndex].Empty()) {
-            continue;
-        }
-        auto *cell = GetCompletionCell(peerIndex);
-        *cell = 0U;
-        FlushDeviceCache(reinterpret_cast<uintptr_t>(cell));
-    }
-    DeviceMemoryBarrier();
+    return reinterpret_cast<volatile uint64_t *>(static_cast<uintptr_t>(transfer.localFlagAddr));
 }
 
-int32_t SubmitPeerGroups(const BatchCopyRouteTable *route, BatchCopyGroups &groups)
+int32_t AppendLaneTransfers(const BatchCopyRouteTable *route, const BatchCopyGroup &group,
+                            BatchCopyTransfers &transfers)
 {
-    for (uint16_t peerIndex = 0U; peerIndex < route->header.peerCount; ++peerIndex) {
-        auto &group = groups[peerIndex];
-        if (group.Empty()) {
-            continue;
+    const uint32_t descriptorCount = static_cast<uint32_t>(group.descriptors.size());
+    const uint32_t usedLaneCount = descriptorCount < group.laneCount ? descriptorCount : group.laneCount;
+    if (usedLaneCount == 0U) {
+        HYBM_LOGE(BM_INVALID_PARAM, "invalid BatchCopy lane split, laneBegin=%u laneCount=%u descriptorCount=%u",
+                  group.laneBegin, group.laneCount, descriptorCount);
+        return BM_INVALID_PARAM;
+    }
+    const uint32_t baseCount = descriptorCount / usedLaneCount;
+    const uint32_t remainder = descriptorCount % usedLaneCount;
+    uint32_t offset = 0U;
+    for (uint16_t laneIndex = 0U; laneIndex < usedLaneCount; ++laneIndex) {
+        if (transfers.count >= transfers.values.size()) {
+            HYBM_LOGE(BM_INVALID_PARAM, "BatchCopy lane transfer capacity exceeded, laneBegin=%u laneCount=%u",
+                      group.laneBegin, group.laneCount);
+            return BM_INVALID_PARAM;
         }
+        const uint32_t count = baseCount + (laneIndex < remainder ? 1U : 0U);
+        const uint16_t peerIndex = group.laneBegin + laneIndex;
         const auto &peer = route->peers[peerIndex];
-        HybmBatchCopyTransferParam transfer{};
+        auto &transfer = transfers.values[transfers.count++];
         transfer.thread = peer.thread;
         transfer.channel = peer.channel;
-        transfer.descriptors = group.descriptors.data();
-        transfer.descriptorCount = static_cast<uint32_t>(group.descriptors.size());
+        transfer.descriptors = group.descriptors.data() + offset;
+        transfer.descriptorCount = count;
         transfer.remoteFlagAddr = peer.remoteFlagAddr;
         transfer.localFlagAddr = reinterpret_cast<uint64_t>(GetCompletionCell(peerIndex));
         transfer.flagSize = sizeof(uint64_t);
-        const auto ret = static_cast<int32_t>(HybmBatchCopyReadDescriptors(transfer));
+        offset += count;
+    }
+    return BM_OK;
+}
+
+int32_t BuildLaneTransfers(const BatchCopyRouteTable *route, const BatchCopyGroups &groups,
+                           BatchCopyTransfers &transfers)
+{
+    for (uint16_t peerIndex = 0U; peerIndex < route->header.peerCount; ++peerIndex) {
+        const auto &group = groups[peerIndex];
+        if (group.Empty()) {
+            continue;
+        }
+        const auto ret = AppendLaneTransfers(route, group, transfers);
         if (ret != BM_OK) {
-            HYBM_LOGE(ret, "HybmBatchCopyReadDescriptors failed, peerIndex=%u itemCount=%zu", peerIndex,
-                      group.descriptors.size());
             return ret;
         }
     }
     return BM_OK;
 }
 
-bool AllUsedPeersCompleted(const BatchCopyGroups &groups, uint16_t peerCount)
+void ClearUsedCompletionCells(const BatchCopyTransfers &transfers)
 {
-    for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
-        if (groups[peerIndex].Empty()) {
-            continue;
+    for (uint16_t index = 0U; index < transfers.count; ++index) {
+        auto *cell = GetCompletionCell(transfers.values[index]);
+        *cell = 0U;
+        FlushDeviceCache(reinterpret_cast<uintptr_t>(cell));
+    }
+    DeviceMemoryBarrier();
+}
+
+int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers)
+{
+    auto ret = static_cast<int32_t>(HybmBatchCopyStartBatchMode());
+    if (ret != BM_OK) {
+        return ret;
+    }
+    for (uint16_t index = 0U; index < transfers.count; ++index) {
+        ret = static_cast<int32_t>(HybmBatchCopySubmitDescriptors(transfers.values[index]));
+        if (ret != BM_OK) {
+            HYBM_LOGE(ret, "BatchCopy lane submit failed, laneIndex=%u descriptorCount=%u", index,
+                      transfers.values[index].descriptorCount);
+            (void)HybmBatchCopyEndBatchMode();
+            return ret;
         }
-        auto *cell = GetCompletionCell(peerIndex);
+    }
+    for (uint16_t index = 0U; index < transfers.count; ++index) {
+        ret = static_cast<int32_t>(HybmBatchCopyFenceAndReadCompletion(transfers.values[index]));
+        if (ret != BM_OK) {
+            HYBM_LOGE(ret, "BatchCopy lane completion submission failed, laneIndex=%u descriptorCount=%u", index,
+                      transfers.values[index].descriptorCount);
+            (void)HybmBatchCopyEndBatchMode();
+            return ret;
+        }
+    }
+    return static_cast<int32_t>(HybmBatchCopyEndBatchMode());
+}
+
+bool AllLaneCompletionsReceived(const BatchCopyTransfers &transfers)
+{
+    for (uint16_t index = 0U; index < transfers.count; ++index) {
+        auto *cell = GetCompletionCell(transfers.values[index]);
         InvalidateDeviceCache(reinterpret_cast<uintptr_t>(cell));
         if (*cell == 0U) {
             return false;
@@ -347,13 +409,13 @@ bool AllUsedPeersCompleted(const BatchCopyGroups &groups, uint16_t peerCount)
     return true;
 }
 
-int32_t WaitForPeerCompletions(const BatchCopyGroups &groups, uint16_t peerCount)
+int32_t WaitForLaneCompletions(const BatchCopyTransfers &transfers)
 {
     const auto deadline = std::chrono::steady_clock::now() + kCompletionTimeout;
     uint32_t spins = 0U;
-    while (!AllUsedPeersCompleted(groups, peerCount)) {
+    while (!AllLaneCompletionsReceived(transfers)) {
         if (std::chrono::steady_clock::now() >= deadline) {
-            HYBM_LOGE(BM_TIMEOUT, "BatchCopy completion timed out, peerCount=%u", peerCount);
+            HYBM_LOGE(BM_TIMEOUT, "BatchCopy completion timed out, laneCount=%u", transfers.count);
             return BM_TIMEOUT;
         }
         if ((++spins & 0x3FFU) == 0U) {
@@ -384,9 +446,14 @@ int32_t ExecuteBatchCopy(HybmBatchCopyParam *param)
     if (ret != BM_OK) {
         return ret;
     }
-    ClearUsedCompletionCells(groups, route->header.peerCount);
-    ret = SubmitPeerGroups(route, groups);
-    return ret == BM_OK ? WaitForPeerCompletions(groups, route->header.peerCount) : ret;
+    BatchCopyTransfers transfers{};
+    ret = BuildLaneTransfers(route, groups, transfers);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    ClearUsedCompletionCells(transfers);
+    ret = SubmitLaneTransfers(transfers);
+    return ret == BM_OK ? WaitForLaneCompletions(transfers) : ret;
 }
 } // namespace
 

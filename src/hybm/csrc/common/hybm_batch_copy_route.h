@@ -15,6 +15,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <limits>
 #include <type_traits>
 
@@ -25,6 +27,16 @@ constexpr uint32_t BATCH_COPY_ROUTE_MAGIC = 0x42435059U;
 constexpr uint16_t BATCH_COPY_MAX_PEER_COUNT = 64U;
 constexpr uint16_t BATCH_COPY_MAX_RANGE_PER_PEER = 16U;
 constexpr uint16_t BATCH_COPY_MAX_RANGE_COUNT = BATCH_COPY_MAX_PEER_COUNT * BATCH_COPY_MAX_RANGE_PER_PEER;
+constexpr char BATCH_COPY_LANES_ENV[] = "ASCEND_MF_BATCH_COPY_LANES";
+constexpr uint16_t BATCH_COPY_DEFAULT_LANE_COUNT = 1U;
+constexpr uint16_t BATCH_COPY_TWO_LANE_COUNT = 2U;
+constexpr uint16_t BATCH_COPY_MAX_LANE_COUNT = 4U;
+
+inline bool IsBatchCopyLaneCountSupported(uint16_t laneCount)
+{
+    return laneCount == BATCH_COPY_DEFAULT_LANE_COUNT || laneCount == BATCH_COPY_TWO_LANE_COUNT ||
+           laneCount == BATCH_COPY_MAX_LANE_COUNT;
+}
 
 struct alignas(64) BatchCopyRouteHeader {
     uint32_t magic{0};
@@ -36,6 +48,7 @@ struct alignas(32) BatchCopyPeerEntry {
     uint64_t thread{0};
     uint64_t channel{0};
     uint64_t remoteFlagAddr{0};
+    uint16_t laneCount{0};
 };
 
 struct alignas(32) BatchCopyRangeEntry {
@@ -64,6 +77,27 @@ inline bool IsBatchCopyRangeValid(const BatchCopyRangeEntry &range)
     return range.hcommVaBegin <= std::numeric_limits<uint64_t>::max() - length;
 }
 
+inline bool GetBatchCopyLaneCountFromEnv(uint16_t &laneCount)
+{
+    const char *value = std::getenv(BATCH_COPY_LANES_ENV);
+    laneCount = BATCH_COPY_DEFAULT_LANE_COUNT;
+    if (value == nullptr || value[0] == '\0') {
+        return true;
+    }
+    if (std::strcmp(value, "1") == 0) {
+        return true;
+    }
+    if (std::strcmp(value, "2") == 0) {
+        laneCount = BATCH_COPY_TWO_LANE_COUNT;
+        return true;
+    }
+    if (std::strcmp(value, "4") == 0) {
+        laneCount = 4U;
+        return true;
+    }
+    return false;
+}
+
 inline bool IsBatchCopyRouteLayoutValid(const BatchCopyRouteTable &table)
 {
     if (table.header.peerCount == 0U || table.header.peerCount > BATCH_COPY_MAX_PEER_COUNT ||
@@ -71,10 +105,27 @@ inline bool IsBatchCopyRouteLayoutValid(const BatchCopyRouteTable &table)
         table.header.rangeCount > table.header.peerCount * BATCH_COPY_MAX_RANGE_PER_PEER) {
         return false;
     }
+    uint16_t peerIndex = 0U;
+    while (peerIndex < table.header.peerCount) {
+        const uint16_t laneCount = table.peers[peerIndex].laneCount;
+        if (!IsBatchCopyLaneCountSupported(laneCount) ||
+            laneCount > table.header.peerCount - peerIndex) {
+            return false;
+        }
+        for (uint16_t laneIndex = 0U; laneIndex < laneCount; ++laneIndex) {
+            const auto &lane = table.peers[peerIndex + laneIndex];
+            if (lane.thread == 0U || lane.channel == 0U || lane.remoteFlagAddr == 0U) {
+                return false;
+            }
+        }
+        peerIndex += laneCount;
+    }
+
     uint16_t peerRangeCounts[BATCH_COPY_MAX_PEER_COUNT]{};
     for (uint16_t index = 0U; index < table.header.rangeCount; ++index) {
         const auto &range = table.ranges[index];
         if (!IsBatchCopyRangeValid(range) || range.peerIndex >= table.header.peerCount ||
+            table.peers[range.peerIndex].laneCount == 0U ||
             ++peerRangeCounts[range.peerIndex] > BATCH_COPY_MAX_RANGE_PER_PEER) {
             return false;
         }
@@ -110,6 +161,7 @@ static_assert(offsetof(BatchCopyRouteHeader, rangeCount) == 0x06U);
 static_assert(offsetof(BatchCopyPeerEntry, thread) == 0x00U);
 static_assert(offsetof(BatchCopyPeerEntry, channel) == 0x08U);
 static_assert(offsetof(BatchCopyPeerEntry, remoteFlagAddr) == 0x10U);
+static_assert(offsetof(BatchCopyPeerEntry, laneCount) == 0x18U);
 static_assert(offsetof(BatchCopyRangeEntry, srcGvaBegin) == 0x00U);
 static_assert(offsetof(BatchCopyRangeEntry, srcGvaEnd) == 0x08U);
 static_assert(offsetof(BatchCopyRangeEntry, hcommVaBegin) == 0x10U);
