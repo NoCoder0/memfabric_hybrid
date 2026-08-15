@@ -20,6 +20,8 @@
 #include <map>
 #include <mutex>
 #include <memory>
+#include <atomic>
+#include <vector>
 #include <unordered_map>
 #include "hybm_define.h"
 #include "hybm_stream_manager.h"
@@ -132,6 +134,7 @@ private:
     std::vector<std::pair<uint64_t, uint32_t>> notifyRemoteInfo_;
     std::shared_ptr<DeviceChipInfo> deviceChipInfo_;
     std::atomic<uint64_t> wrIdx_{0};
+    std::unique_ptr<std::atomic<bool>[]> qpReadyCache_; // per-rank QP ready cache, skip RaGetQpStatus after ready
 
     ReadWriteLock lock_;
 };

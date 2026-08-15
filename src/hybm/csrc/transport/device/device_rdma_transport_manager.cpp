@@ -83,6 +83,7 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
     deviceId_ = static_cast<uint32_t>(phyId);
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
+    qpReadyCache_.reset(new std::atomic<bool>[rankCount_]());
     role_ = options.role;
     ret = ParseDeviceNic(options.nic, devicePort_);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "parse input nic(" << options.nic << ") failed!", BM_INVALID_PARAM);
@@ -375,10 +376,16 @@ int RdmaTransportManager::WaitQpReadyForIo(void *qpHandle, uint32_t rankId) noex
 {
     // RaGetQpStatus 除查询状态外，还会触发 RaHdcLiteGetConnectedInfo 同步对端 remMr。
     // 若 QP 尚在 CONNECTING(3)，此时下发 WR 会因对端 MR 未就绪在硬件报 CQE 261(ESOCKCLOSED)。
-    // 这里在 QP ready(1) 前轮询等待（短期即可），ready 后才允许下发 WR。
+    // QP ready 状态按 rank 缓存：首次确认 ready 后跳过昂贵的查询，WR 失败时由调用方清缓存回退。
+    if (rankId < rankCount_ && qpReadyCache_[rankId].load(std::memory_order_acquire)) {
+        return BM_OK;
+    }
     int qpSt = -1;
     auto qr = DlHccpApi::RaGetQpStatus(qpHandle, qpSt);
     if (qr != 0 || qpSt == 1) {
+        if (rankId < rankCount_) {
+            qpReadyCache_[rankId].store(true, std::memory_order_release);
+        }
         return BM_OK;
     }
     auto expire = std::chrono::steady_clock::now() + QP_READY_CHECK_TIMEOUT_BASE;
@@ -386,6 +393,9 @@ int RdmaTransportManager::WaitQpReadyForIo(void *qpHandle, uint32_t rankId) noex
         std::this_thread::sleep_for(QP_READY_CHECK_INTERVAL);
         qr = DlHccpApi::RaGetQpStatus(qpHandle, qpSt);
         if (qr != 0 || qpSt == 1) {
+            if (rankId < rankCount_) {
+                qpReadyCache_[rankId].store(true, std::memory_order_release);
+            }
             return BM_OK;
         }
     }
@@ -811,6 +821,9 @@ int RdmaTransportManager::RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAd
         BM_LOG_ERROR("RaSendWrV2 failed, ret: " << ret << " rankId: " << rankId << std::hex << " lAddr: 0x" << lAddr
                                                 << " rAddr: 0x" << rAddr << std::dec << " size: " << size
                                                 << " write: " << write);
+        if (rankId < rankCount_) {
+            qpReadyCache_[rankId].store(false, std::memory_order_release);
+        }
         qpManager_->PutQpHandle(qp);
         return ret;
     }
@@ -1068,6 +1081,9 @@ int32_t RdmaTransportManager::Synchronize(void *qpHandle, uint32_t rankId)
     auto ret = DlHccpApi::RaSendWrV2(qpHandle, &wr, &rspInfo);
     if (ret != 0) {
         BM_LOG_ERROR("send notify wr failed: " << ret);
+        if (rankId < rankCount_) {
+            qpReadyCache_[rankId].store(false, std::memory_order_release);
+        }
         return ret;
     }
 
