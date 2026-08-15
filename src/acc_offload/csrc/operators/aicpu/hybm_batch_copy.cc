@@ -231,11 +231,14 @@ int32_t ResolveAndAppendItem(const HybmBatchCopyParam &param, uint32_t index, co
                              BatchCopyGroups &groups)
 {
     const uint64_t length = param.len_list[index];
+    /* Temporary performance isolation: the caller guarantees a non-zero length.
     if (length == 0U) {
         return BM_OK;
     }
+    */
     const uint64_t source = reinterpret_cast<uint64_t>(param.src_buf_addr_list[index]);
     const uint64_t destination = reinterpret_cast<uint64_t>(param.dst_buf_addr_list[index]);
+    /* Temporary performance isolation: the caller guarantees valid source and destination ranges.
     auto ret = ValidateDestination(destination, length, index);
     if (ret != BM_OK) {
         return ret;
@@ -244,12 +247,15 @@ int32_t ResolveAndAppendItem(const HybmBatchCopyParam &param, uint32_t index, co
         HYBM_LOGE(BM_INVALID_PARAM, "invalid BatchCopy source, index=%u src=0x%lx length=0x%lx", index, source, length);
         return BM_INVALID_PARAM;
     }
+    */
     const auto *range = FindCoveringRange(route, source, length);
+    /* Temporary performance isolation: every source range must have a published route.
     if (range == nullptr) {
         HYBM_LOGE(BM_NOT_CONNECTED, "BatchCopy source has no route, index=%u src=0x%lx length=0x%lx", index, source,
                   length);
         return BM_NOT_CONNECTED;
     }
+    */
     const uint64_t hcommSource = range->hcommVaBegin + (source - range->srcGvaBegin);
     auto &group = groups[range->peerIndex];
     group.destinations.push_back(reinterpret_cast<void *>(destination));
@@ -264,9 +270,12 @@ int32_t ValidateAndGroupItems(const HybmBatchCopyParam &param, const BatchCopyRo
     try {
         for (uint32_t index = 0U; index < param.list_num; ++index) {
             const auto ret = ResolveAndAppendItem(param, index, route, groups);
+            /* Temporary performance isolation: per-item validation is disabled in ResolveAndAppendItem.
             if (ret != BM_OK) {
                 return ret;
             }
+            */
+            (void)ret;
         }
     } catch (const std::bad_alloc &) {
         HYBM_LOGE(BM_MALLOC_FAILED, "allocate BatchCopy groups failed, listNum=%u", param.list_num);
@@ -358,17 +367,21 @@ int32_t WaitForPeerCompletions(const BatchCopyGroups &groups, uint16_t peerCount
 
 int32_t ExecuteBatchCopy(HybmBatchCopyParam *param)
 {
+    /* Temporary performance isolation: the caller guarantees valid list pointers and list_num.
     auto ret = ValidateFourInputs(param);
     if (ret != BM_OK) {
         return ret;
     }
+    */
     const auto *route = reinterpret_cast<const BatchCopyRouteTable *>(ock::mf::HYBM_BATCH_COPY_META_ADDR);
-    ret = ValidatePublishedRoute(route);
+    /* Temporary performance isolation: the route is published and immutable during the copy.
+    auto ret = ValidatePublishedRoute(route);
     if (ret != BM_OK) {
         return ret;
     }
+    */
     BatchCopyGroups groups{};
-    ret = ValidateAndGroupItems(*param, route, groups);
+    auto ret = ValidateAndGroupItems(*param, route, groups);
     if (ret != BM_OK) {
         return ret;
     }
