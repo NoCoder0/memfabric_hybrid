@@ -16,6 +16,7 @@ import torch_npu
 import memfabric_hybrid as mf
 from memfabric_hybrid import offload
 
+torch_npu.npu.config.allow_internal_format = True
 
 ONE_GIB = 1 << 30
 WORLD_SIZE = 4
@@ -31,6 +32,33 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier):
     mf.set_log_level(3)
     torch.npu.set_device(device_id)
 
+    experimental_config = torch_npu.profiler._ExperimentalConfig(
+        aic_metrics=torch_npu.profiler.AiCMetrics.PipeUtilization,
+        profiler_level=torch_npu.profiler.ProfilerLevel.Level2,
+        l2_cache=False,
+        data_simplification=False,
+    )
+    profiling_path = f"/home/log/memfabric-hybrid_kvoffload/profiling/"
+    prof = torch_npu.profiler.profile(
+        activities=[
+            torch_npu.profiler.ProfilerActivity.CPU,
+            torch_npu.profiler.ProfilerActivity.NPU,
+        ],
+        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
+            profiling_path
+        ),
+        schedule=torch_npu.profiler.schedule(
+            wait=1, warmup=1, active=10, repeat=1, skip_first=1
+        ),
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=False,
+        with_flops=False,
+        with_modules=False,
+        experimental_config=experimental_config,
+    )
+
+
     config = offload.OffloadConfig()
     config.device_id = device_id
     config.reserve_size = ONE_GIB
@@ -40,7 +68,7 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier):
     data = {
         'cpu': {'keys': [], 'values': [], 'key_ptrs': [], 'value_ptrs': []},
         'npu': {'keys': [], 'values': [], 'key_ptrs': [], 'value_ptrs': []},
-        'len': {'keys': [], 'values': []},
+        'len': {'keys': [], 'values': []}
     }
 
     tokens = 4 * 2048  # batch * tokens_per_req
@@ -70,8 +98,18 @@ def _rank_main(rank_id: int, device_id: int, sync: mp.Barrier):
     size_ptr = torch.tensor(size, dtype=torch.int32).npu()
     device = data['npu']['keys'][0].device
 
-    assert offload.sparse_copy(src_ptrs, dst_ptrs, len_ptrs, size_ptr, device) == 0, "offload.sparse_copy failed"
+    prof_cnt = 0
     torch.npu.synchronize()
+    prof.start()
+
+    for k in range(0, 20):
+        if prof_cnt > 5:
+            prof.step()
+        assert offload.sparse_copy(src_ptrs, dst_ptrs, len_ptrs, size_ptr, device) == 0, "offload.sparse_copy failed"
+        prof_cnt = prof_cnt + 1
+
+    torch.npu.synchronize()
+    prof.stop()
 
     dst_tensors = data['npu']['keys'] + data['npu']['values']
     for dst_tensor in dst_tensors:

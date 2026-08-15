@@ -190,7 +190,7 @@ uint32_t HybmBatchTransferTask(bool isRead, HybmOneSideOpParam *param)
 
 uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 {
-    HYBM_LOGD("HybmBatchTransfer start, isRead=%d, ", isRead);
+    //HYBM_LOGD("HybmBatchTransfer start, isRead=%d, ", isRead);
     /* Temporary performance isolation: HybmBatchCopy guarantees a complete one-sided operation parameter.
     uint32_t ret = CheckParam(param);
     if (ret != BM_OK) {
