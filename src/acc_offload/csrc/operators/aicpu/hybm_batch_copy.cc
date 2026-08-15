@@ -20,7 +20,7 @@
 #include <vector>
 
 #include "hybm_batch_copy_route.h"
-#include "hybm_batch_transfer.h"
+#include "hybm_batch_copy_transfer.h"
 #include "hybm_define.h"
 #include "hybm_def.h"
 #include "hybm_kernel_log.h"
@@ -28,18 +28,17 @@
 namespace {
 using ock::mf::BatchCopyRangeEntry;
 using ock::mf::BatchCopyRouteTable;
+using ock::mf::HcommBatchTransferDesc;
 
 constexpr uint64_t kCompletionAddress = ock::mf::HYBM_BATCH_COPY_META_ADDR + ock::mf::BATCH_COPY_COMPLETION_OFFSET;
 constexpr auto kCompletionTimeout = std::chrono::seconds(60);
 
 struct BatchCopyGroup {
-    std::vector<void *> destinations;
-    std::vector<void *> sources;
-    std::vector<uint64_t> lengths;
+    std::vector<HcommBatchTransferDesc> descriptors;
 
     bool Empty() const
     {
-        return lengths.empty();
+        return descriptors.empty();
     }
 };
 
@@ -258,9 +257,11 @@ int32_t ResolveAndAppendItem(const HybmBatchCopyParam &param, uint32_t index, co
     */
     const uint64_t hcommSource = range->hcommVaBegin + (source - range->srcGvaBegin);
     auto &group = groups[range->peerIndex];
-    group.destinations.push_back(reinterpret_cast<void *>(destination));
-    group.sources.push_back(reinterpret_cast<void *>(hcommSource));
-    group.lengths.push_back(length);
+    auto &descriptor = group.descriptors.emplace_back();
+    descriptor.transType = ock::mf::HCOMM_TRANSFER_TYPE_READ;
+    descriptor.transferInfo.read.len = length;
+    descriptor.transferInfo.read.dst = reinterpret_cast<void *>(destination);
+    descriptor.transferInfo.read.src = reinterpret_cast<void *>(hcommSource);
     return BM_OK;
 }
 
@@ -313,20 +314,18 @@ int32_t SubmitPeerGroups(const BatchCopyRouteTable *route, BatchCopyGroups &grou
             continue;
         }
         const auto &peer = route->peers[peerIndex];
-        HybmOneSideOpParam oneSide{};
-        oneSide.thread = peer.thread;
-        oneSide.channel = peer.channel;
-        oneSide.list_num = static_cast<uint32_t>(group.lengths.size());
-        oneSide.dst_buf_addr_list = group.destinations.data();
-        oneSide.src_buf_addr_list = group.sources.data();
-        oneSide.len_list = group.lengths.data();
-        oneSide.remote_flag_addr = peer.remoteFlagAddr;
-        oneSide.local_flag_addr = reinterpret_cast<uint64_t>(GetCompletionCell(peerIndex));
-        oneSide.flag_size = sizeof(uint64_t);
-        const auto ret = static_cast<int32_t>(HybmBatchRead(&oneSide));
+        HybmBatchCopyTransferParam transfer{};
+        transfer.thread = peer.thread;
+        transfer.channel = peer.channel;
+        transfer.descriptors = group.descriptors.data();
+        transfer.descriptorCount = static_cast<uint32_t>(group.descriptors.size());
+        transfer.remoteFlagAddr = peer.remoteFlagAddr;
+        transfer.localFlagAddr = reinterpret_cast<uint64_t>(GetCompletionCell(peerIndex));
+        transfer.flagSize = sizeof(uint64_t);
+        const auto ret = static_cast<int32_t>(HybmBatchCopyReadDescriptors(transfer));
         if (ret != BM_OK) {
-            HYBM_LOGE(ret, "HybmBatchRead failed for BatchCopy peer, peerIndex=%u itemCount=%zu", peerIndex,
-                      group.lengths.size());
+            HYBM_LOGE(ret, "HybmBatchCopyReadDescriptors failed, peerIndex=%u itemCount=%zu", peerIndex,
+                      group.descriptors.size());
             return ret;
         }
     }

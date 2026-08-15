@@ -190,15 +190,13 @@ uint32_t HybmBatchTransferTask(bool isRead, HybmOneSideOpParam *param)
 
 uint32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 {
-    //HYBM_LOGD("HybmBatchTransfer start, isRead=%d, ", isRead);
-    /* Temporary performance isolation: HybmBatchCopy guarantees a complete one-sided operation parameter.
+    HYBM_LOGD("HybmBatchTransfer start, isRead=%d, ", isRead);
     uint32_t ret = CheckParam(param);
     if (ret != BM_OK) {
         return ret;
     }
-    */
 
-    uint32_t ret = static_cast<uint32_t>(BatchModeStart(kBatchTag));
+    ret = static_cast<uint32_t>(BatchModeStart(kBatchTag));
     if (ret != BM_OK && !IsNotSupported(static_cast<int32_t>(ret))) {
         HYBM_LOGE(BM_ERROR, "HcommBatchModeStart failed, batchTag=%s ret=%u", kBatchTag, ret);
         return BM_ERROR;
