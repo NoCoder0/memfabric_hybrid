@@ -117,6 +117,7 @@ private:
     };
 
     struct BatchCopyLane {
+        std::string channelName{};
         HcommChannelDesc channelDesc{};
         HcommChannelHandle channel{0};
         HcommThreadHandle thread{0};

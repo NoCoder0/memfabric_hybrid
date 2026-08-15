@@ -76,11 +76,17 @@ private:
         UrmaCommMem view{};
     };
 
+    struct BatchCopyChannel {
+        std::string channelName{};
+        HcommChannelDesc channelDesc{};
+        ChannelHandle channel{0};
+    };
+
     struct RemoteRankState {
         UrmaEndpointDesc endpointDesc{};
         HcommChannelDesc channelDesc{};
         ChannelHandle channel{0};
-        std::vector<ChannelHandle> batchCopyExtraChannels{};
+        std::vector<BatchCopyChannel> batchCopyExtraChannels{};
         std::vector<RemoteRegistration> imports{};
         uint64_t remoteFlagAddr{0};
         uint64_t remoteFlagSize{0};
@@ -96,7 +102,8 @@ private:
 
     Result GetBatchCopyLaneCount(const UrmaEndpointDesc &peerEndpoint, uint16_t &laneCount) const;
     Result CreatePeerChannelLocked(uint32_t peerRank, const UrmaEndpointDesc &peerEndpoint, uint16_t laneIndex,
-                                   HcommChannelDesc &channelDesc, ChannelHandle &channel) const;
+                                   std::string &channelName, HcommChannelDesc &channelDesc,
+                                   ChannelHandle &channel) const;
     Result CreateExtraBatchCopyChannelsLocked(uint32_t peerRank, RemoteRankState &state, uint16_t laneCount);
     static bool HasCompleteHcommChannels(const RemoteRankState &state);
     Result PreparePeerLocked(uint32_t peerRank, const TransportRankPrepareInfo &peerInfo, RemoteRankState &state);

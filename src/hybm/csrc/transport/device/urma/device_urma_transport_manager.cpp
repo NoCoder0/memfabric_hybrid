@@ -49,6 +49,29 @@ constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1U;
 constexpr uint32_t ACL_NOTIFY_FLAG_DEVICE_ONLY = 0x00000001U; // 使能该bit表示创建的Notify仅在Device上调用。
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 27U * 68U;
+
+Result SetBatchCopyChannelName(uint32_t rankId, uint32_t peerRank, uint16_t laneIndex, std::string &channelName,
+                               HcommChannelDesc &channelDesc)
+{
+    channelName.clear();
+    if (laneIndex == 0U) {
+        return BM_OK;
+    }
+    try {
+        const auto lowRank = std::min(rankId, peerRank);
+        const auto highRank = std::max(rankId, peerRank);
+        channelName = "mf_hybm_batch_copy_" + std::to_string(lowRank) + "_" + std::to_string(highRank) + "_" +
+                      std::to_string(laneIndex);
+    } catch (...) {
+        BM_LOG_ERROR("device_urma build BatchCopy channel name failed, rank: " << rankId
+                                                                                 << " peer: " << peerRank
+                                                                                 << " lane: " << laneIndex);
+        return BM_MALLOC_FAILED;
+    }
+    channelDesc.channelName = channelName.c_str();
+    return BM_OK;
+}
+
 UrmaMemoryType ToUrmaMemoryType(uint32_t flags)
 {
     if (flags & REG_MR_FLAG_HBM) {
@@ -724,7 +747,6 @@ Result DeviceUrmaTransportManager::DestroyHcommLane(BatchCopyLane &lane, uint32_
             localResult = BM_DL_FUNCTION_FAILED;
         }
         lane.channel = 0;
-        lane.channelDesc = {};
     }
     if (lane.thread != 0) {
         auto hcommThread = lane.thread;
@@ -741,6 +763,8 @@ Result DeviceUrmaTransportManager::DestroyHcommLane(BatchCopyLane &lane, uint32_
         }
         lane.thread = 0;
     }
+    lane.channelDesc = {};
+    lane.channelName.clear();
     return localResult;
 }
 
@@ -754,7 +778,10 @@ Result DeviceUrmaTransportManager::DestroyRankChannelsAndThread(RemoteRankState 
         }
     }
     state.batchCopyExtraLanes.clear();
-    BatchCopyLane primary{state.channelDesc, state.channel, state.thread};
+    BatchCopyLane primary{};
+    primary.channelDesc = state.channelDesc;
+    primary.channel = state.channel;
+    primary.thread = state.thread;
     const auto ret = DestroyHcommLane(primary, peerRank, 0U);
     state.channelDesc = primary.channelDesc;
     state.channel = primary.channel;
@@ -1350,6 +1377,10 @@ Result DeviceUrmaTransportManager::CreateHcommLane(uint32_t peerRank, const Urma
                      << peerRank << " lane: " << laneIndex << " ret: " << initRet);
         return BM_ERROR;
     }
+    const auto nameRet = SetBatchCopyChannelName(rankId_, peerRank, laneIndex, lane.channelName, lane.channelDesc);
+    if (nameRet != BM_OK) {
+        return nameRet;
+    }
     lane.channelDesc.role = (rankId_ > peerRank) ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER;
     lane.channelDesc.remoteEndpoint = ToHcommEndpointDesc(peerDesc);
     lane.channelDesc.notifyNum = HCOMM_NORMAL_NOTIFY_NUM;
@@ -1368,14 +1399,18 @@ Result DeviceUrmaTransportManager::CreateHcommLane(uint32_t peerRank, const Urma
                                          &lane.channel);
     if (ret != BM_OK || lane.channel == 0) {
         BM_LOG_ERROR("device_urma HcommChannelCreate failed, peer: "
-                     << peerRank << " lane: " << laneIndex << " ret: " << ret << " channel: " << lane.channel);
+                     << peerRank << " lane: " << laneIndex << " channelName: "
+                     << (lane.channelDesc.channelName == nullptr ? "<anonymous>" : lane.channelDesc.channelName)
+                     << " ret: " << ret << " channel: " << lane.channel);
         (void)DestroyHcommLane(lane, peerRank, laneIndex);
         return BM_DL_FUNCTION_FAILED;
     }
     ret = manager_.WaitForChannelReady(lane.channel, peerRank);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma WaitForChannelReady failed, peer: "
-                     << peerRank << " lane: " << laneIndex << " channel: " << lane.channel << " ret: " << ret);
+                     << peerRank << " lane: " << laneIndex << " channelName: "
+                     << (lane.channelDesc.channelName == nullptr ? "<anonymous>" : lane.channelDesc.channelName)
+                     << " channel: " << lane.channel << " ret: " << ret);
         (void)DestroyHcommLane(lane, peerRank, laneIndex);
     }
     return ret;
@@ -1387,34 +1422,35 @@ Result DeviceUrmaTransportManager::CreateExtraBatchCopyLanes(uint32_t peerRank, 
     if (laneCount == BATCH_COPY_DEFAULT_LANE_COUNT) {
         return BM_OK;
     }
-    std::vector<BatchCopyLane> lanes;
     try {
-        lanes.reserve(laneCount - BATCH_COPY_DEFAULT_LANE_COUNT);
+        state.batchCopyExtraLanes.reserve(laneCount - BATCH_COPY_DEFAULT_LANE_COUNT);
     } catch (...) {
         BM_LOG_ERROR("device_urma allocate BatchCopy lanes failed, peer: " << peerRank << " laneCount: " << laneCount);
         return BM_MALLOC_FAILED;
     }
-    for (uint16_t laneIndex = 1U; laneIndex < laneCount; ++laneIndex) {
-        BatchCopyLane lane{};
-        const auto ret = CreateHcommLane(peerRank, peerDesc, laneIndex, lane);
-        if (ret != BM_OK) {
-            for (uint16_t index = 0U; index < lanes.size(); ++index) {
-                (void)DestroyHcommLane(lanes[index], peerRank, index + 1U);
-            }
-            return ret;
+    const auto cleanupLanes = [&state, peerRank]() {
+        for (uint16_t index = 0U; index < state.batchCopyExtraLanes.size(); ++index) {
+            (void)DeviceUrmaTransportManager::DestroyHcommLane(state.batchCopyExtraLanes[index], peerRank,
+                                                               index + 1U);
         }
+        state.batchCopyExtraLanes.clear();
+    };
+    for (uint16_t laneIndex = 1U; laneIndex < laneCount; ++laneIndex) {
         try {
-            lanes.emplace_back(std::move(lane));
+            state.batchCopyExtraLanes.emplace_back();
         } catch (...) {
             BM_LOG_ERROR("device_urma store BatchCopy lane failed, peer: " << peerRank << " lane: " << laneIndex);
-            (void)DestroyHcommLane(lane, peerRank, laneIndex);
-            for (uint16_t index = 0U; index < lanes.size(); ++index) {
-                (void)DestroyHcommLane(lanes[index], peerRank, index + 1U);
-            }
+            cleanupLanes();
             return BM_MALLOC_FAILED;
         }
+        auto &lane = state.batchCopyExtraLanes.back();
+        const auto ret = CreateHcommLane(peerRank, peerDesc, laneIndex, lane);
+        if (ret == BM_OK) {
+            continue;
+        }
+        cleanupLanes();
+        return ret;
     }
-    state.batchCopyExtraLanes = std::move(lanes);
     return BM_OK;
 }
 
