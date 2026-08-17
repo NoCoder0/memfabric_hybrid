@@ -43,6 +43,7 @@ public:
 
 private:
     ZResult AllocateAicpuResources();
+    uint64_t CalcPeerExchangeGva(uint32_t peer) const noexcept;
 
     NpuAicpuLauncher launcher_;
     void *aicpuWorkspacePtr_ = nullptr;

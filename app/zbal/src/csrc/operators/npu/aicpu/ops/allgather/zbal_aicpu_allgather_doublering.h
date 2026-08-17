@@ -127,7 +127,23 @@ public:
         /* Final wait: if Phase 1 was the last thing submitted, wait for it */
         if (DrainPhase1IfNeeded(workspace, coreId, numChPerCore, streamId, phase1Inflight) < 0)
             return ERR_WAIT_TIMEOUT;
-        return 0;
+
+        /* EndOpBarrier: ensure all ranks completed this operation before any rank's
+         * next operation starts RingExchange and overwrites slot[0] (recvBuf GVA).
+         *
+         * DOUBLE_RING is multi-phase (Phase1 + (N-1) rounds x 3 slices), and each
+         * BuildSqes call re-reads neighbor's recvBuf GVA from slot[0]. Without this
+         * barrier, a fast rank's next RingExchange overwrites the slow rank's slot[0]
+         * while it's still reading in Phase 2 -> wrong GVA -> SDMA copies from wrong
+         * address -> silent data corruption in training (mixed AllGather + AllReduce).
+         *
+         * FULL_MESH / MESH_DOUBLE_RING don't need this because they read all slot[0]
+         * values once in a single BuildSqes call and cache them in local variables.
+         *
+         * Uses flag slot[2] (slot[0]=exchange-complete). Mirrors AllReduceOp pattern.
+         * Every return path calls AicpuCoreBarrier to prevent core 1 deadlock in
+         * 2-core {2,1} configurations. */
+        return EndOpBarrier(alg, op, channels, numChPerCore, workspace, coreId, numCores);
     }
 
     static int BuildSqes(AicpuAlgorithmCtx &alg, const CommOpParams &op)
@@ -226,9 +242,18 @@ private:
                                                           scratchSlots * sizeof(uint64_t));
         c.statSrcGva = reinterpret_cast<uint64_t>(&c.scratch[0]);
         c.sliceBytes = c.myLen / ZBAL_AG_SLICE_PER_CORE;
-        /* Neighbor recvBuf GVA — published by RingExchange before Execute.
-         * Phase 1's first ComputeRingCtx triggers the cache invalidate + load;
-         * subsequent Phase 2 calls hit cache (same cache line, no extra cost). */
+        /* Neighbor recvBuf GVA — published by RingExchange via SDMA before Execute.
+         * Must invalidate the data-area cache line before reading, because:
+         *   - RingExchange writes slot[0] via SDMA (cross-device), but its cross-device
+         *     sync only invalidates the FLAG area cache line, not the DATA area.
+         *   - The exchange area is a SHARED resource reused across operations
+         *     (AllGather/AllReduce/ReduceScatter). Without invalidate, the CPU may
+         *     read a stale GVA from a previous operation → SDMA copies from wrong
+         *     address → silent data corruption (manifests as random precision errors
+         *     in training frameworks with mixed AllGather + AllReduce).
+         * Matches the invalidate-before-read pattern in AllReduceOp / FullMeshExchange. */
+        const uintptr_t dataSlotAddr = op.exchangeGva + static_cast<uint64_t>(c.readNeighborRank) * c.strideBytes;
+        AicpuCacheInvalidate(dataSlotAddr);
         c.neighborRecvBuf = PeerOutputBuf(op.exchangeGva, c.readNeighborRank);
         return c;
     }
@@ -397,6 +422,116 @@ private:
         if (flag.Wait() < 0)
             return ERR_WAIT_TIMEOUT;
         phase1Inflight = false;
+        return 0;
+    }
+
+    /* ================================================================
+    * EndOpBarrier — cross-rank barrier at operation end (flag slot[2]).
+    *
+    * Ensures all ranks finish THIS operation (BOTH cores) before any rank's
+    * NEXT operation starts RingExchange (which overwrites slot[0] recvBuf GVA).
+    *
+    * CRITICAL: AicpuCoreBarrier is called BEFORE core 0 writes any flags.
+    * DOUBLE_RING uses {2,1} config — core 0 (CW) and core 1 (CCW) run
+    * independently through the BuildSqes loop. AicpuSubmitAndWait does NOT
+    * include AicpuCoreBarrier (uses AicpuLaunchTask with numCores=1), so when
+    * the loop exits (BUILD_DONE), core 0 may have exited before core 1.
+    * Without this pre-sync, core 0 would write the completion flag while
+    * core 1 is still in its BuildSqes loop re-reading slot[0] via
+    * ComputeRingCtx → PeerOutputBuf. A peer rank seeing the flag would start
+    * its next RingExchange, overwriting slot[0] → core 1 reads wrong GVA →
+    * SDMA copies from wrong address → silent data corruption.
+    *
+    * Slot allocation: slot[0]=exchange-complete, slot[2]=EndOpBarrier.
+    * (slot[1] is unused by DOUBLE_RING; AllReduce uses it for RS->AG barrier.)
+    *
+    * Every return path calls AicpuCoreBarrier to prevent core 1 deadlock
+    * in 2-core {2,1} configurations (DOUBLE_RING uses CW core 0 / CCW core 1).
+    * ================================================================ */
+    static int EndOpBarrier(AicpuAlgorithmCtx &alg, const CommOpParams &op, volatile stars_channel_info_t **channels,
+                            uint32_t numChPerCore, volatile uint8_t *workspace, uint32_t coreId, uint32_t numCores)
+    {
+        const uint32_t rankNum = alg.ctx->rankNum;
+        if (rankNum <= 1) {
+            AicpuCoreBarrier(workspace, numCores);
+            return 0;
+        }
+
+        /* Sync BOTH cores before signaling peers: ensures core 1 (CCW ring)
+         * finished its BuildSqes loop before core 0 tells peers we're done. */
+        AicpuCoreBarrier(workspace, numCores);
+
+        const uint32_t myRank = alg.ctx->rankId;
+        const uint32_t strideBytes = ZBAL_AICPU_EXCHANGE_STRIDE * static_cast<uint32_t>(sizeof(uint64_t));
+        const uint64_t flagAreaOff = static_cast<uint64_t>(rankNum) * strideBytes;
+        const uint64_t waitSymbol = op.waitSymbol;
+        constexpr uint32_t SID = 0;
+
+        if (coreId == 0) {
+            volatile uint8_t *myBuf = AicpuWorkspace::CoreRingBuf(workspace, 0);
+            volatile uint64_t *scratch =
+                reinterpret_cast<volatile uint64_t *>(myBuf + ZBAL_AICPU_CORE_RINGBUF_SIZE - sizeof(uint64_t));
+            *scratch = waitSymbol;
+            AicpuCacheFlush(reinterpret_cast<uintptr_t>(const_cast<uint64_t *>(scratch)));
+            uint64_t sentinelSrc = reinterpret_cast<uint64_t>(scratch);
+
+            SqeLocalRingBuffer eb;
+            eb.Init(const_cast<uint8_t *>(myBuf));
+
+            for (uint32_t dstRank = 0; dstRank < rankNum; dstRank++) {
+                if (dstRank == myRank) {
+                    continue;
+                }
+                int64_t delta = static_cast<int64_t>(dstRank) - static_cast<int64_t>(myRank);
+                int64_t devOff = delta * static_cast<int64_t>(alg.ctx->localDeviceMemSize);
+                /* flag slot[2] = flagAreaOff + myRank*strideBytes + 2*sizeof(uint64_t) */
+                uint64_t flagDst = alg.ctx->exchangeGva + static_cast<uint64_t>(devOff) + flagAreaOff +
+                                   static_cast<uint64_t>(myRank) * strideBytes + 2 * sizeof(uint64_t);
+                if (AicpuDispatcher::CopyData(&eb, SID, sentinelSrc, flagDst, sizeof(uint64_t), channels[SID]) != 0) {
+                    AicpuCoreBarrier(workspace, numCores);
+                    return BUILD_ERROR;
+                }
+            }
+
+            /* Also write to self (local) */
+            volatile uint64_t *selfFlag = reinterpret_cast<volatile uint64_t *>(
+                alg.ctx->exchangeGva + flagAreaOff + static_cast<uint64_t>(myRank) * strideBytes +
+                2 * sizeof(uint64_t));
+            *selfFlag = waitSymbol;
+            AicpuCacheFlush(reinterpret_cast<uintptr_t>(const_cast<uint64_t *>(selfFlag)));
+
+            if (eb.HasWork()) {
+                uint32_t fid = AicpuWorkspace::FlagIdx(0, numChPerCore, 0);
+                if (AicpuLaunchTaskMc(&eb, channels[SID], workspace, 0, 1, 0, fid) < 0 ||
+                    CompletionFlag(workspace, fid).Wait() < 0) {
+                    AicpuCoreBarrier(workspace, numCores);
+                    return ERR_WAIT_TIMEOUT;
+                }
+            }
+
+            /* Poll for all peers' end-of-operation flags at slot[2] */
+            volatile uint64_t *flagBase = reinterpret_cast<volatile uint64_t *>(alg.ctx->exchangeGva + flagAreaOff);
+            constexpr uint32_t kEndBarrierTimeout = 6000000;
+            for (uint32_t r = 0; r < rankNum; r++) {
+                if (r == myRank) {
+                    continue;
+                }
+                volatile uint64_t *peerFlag = &flagBase[r * ZBAL_AICPU_EXCHANGE_STRIDE + 2];
+                bool ready = false;
+                for (uint32_t t = 0; t < kEndBarrierTimeout && !ready; t++) {
+                    uintptr_t fa = reinterpret_cast<uintptr_t>(const_cast<uint64_t *>(peerFlag));
+                    AicpuCacheInvalidate(fa);
+                    if (*peerFlag == waitSymbol) {
+                        ready = true;
+                    }
+                }
+                if (!ready) {
+                    AicpuCoreBarrier(workspace, numCores);
+                    return ERR_WAIT_TIMEOUT;
+                }
+            }
+        }
+        AicpuCoreBarrier(workspace, numCores);
         return 0;
     }
 };

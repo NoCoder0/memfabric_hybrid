@@ -184,19 +184,36 @@ int32_t NpuCommunicatorAICPU::AlltoAllV(const void *sendBuff, void *recvBuff, vo
                          reinterpret_cast<uint64_t>(recvSplitCounts), reinterpret_cast<uint64_t>(elements));
 }
 
+/* Calculate peer's exchange area GVA using WORLD rank difference.
+ * SMA memory is laid out by world rank: rank r's memory is at [base + r * memSize].
+ * P2P communicators may have non-adjacent world ranks (e.g., world rank 0 and 3
+ * in a 2-rank P2P group), so local rank delta != world rank delta.
+ * AIV's ZbalPtr handles this via worldRanks[] mapping; AICPU receives the
+ * pre-computed peer exchange GVA via reserved[0]. */
+uint64_t NpuCommunicatorAICPU::CalcPeerExchangeGva(uint32_t peer) const noexcept
+{
+    uint16_t myWorldRank = groupInfo_.peerGroupRank2WorldRank[groupInfo_.myGroupRank];
+    uint16_t peerWorldRank = groupInfo_.peerGroupRank2WorldRank[peer];
+    int64_t worldDelta = static_cast<int64_t>(peerWorldRank) - static_cast<int64_t>(myWorldRank);
+    return groupInfo_.myAddressExchangeGva +
+           static_cast<uint64_t>(worldDelta * static_cast<int64_t>(groupInfo_.localDeviceMemSize));
+}
+
 int32_t NpuCommunicatorAICPU::Send(const void *sendBuff, zbal_datatype_t dataType, uint32_t peer,
                                    aclrtStream stream) noexcept
 {
+    uint64_t peerExchangeGva = CalcPeerExchangeGva(peer);
     return LaunchAicpuOp(launcher_, ZBAL_CMD_SEND, reinterpret_cast<uint64_t>(sendBuff), 0, 0,
-                         static_cast<uint32_t>(dataType), peer, "Send", stream);
+                         static_cast<uint32_t>(dataType), peer, "Send", stream, 0, 0, 0, peerExchangeGva, 0, 0);
 }
 
 int32_t NpuCommunicatorAICPU::Recv(const void *recvBuff, size_t recvCount, zbal_datatype_t dataType, uint32_t peer,
                                    aclrtStream stream) noexcept
 {
     uint64_t recvBufGva = reinterpret_cast<uint64_t>(recvBuff);
+    uint64_t peerExchangeGva = CalcPeerExchangeGva(peer);
     return LaunchAicpuOp(launcher_, ZBAL_CMD_RECV, recvBufGva, recvBufGva, recvCount, static_cast<uint32_t>(dataType),
-                         peer, "Recv", stream);
+                         peer, "Recv", stream, 0, 0, 0, peerExchangeGva, 0, 0);
 }
 } // namespace operators
 } // namespace zbal

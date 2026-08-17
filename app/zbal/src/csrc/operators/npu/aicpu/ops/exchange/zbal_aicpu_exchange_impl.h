@@ -99,6 +99,15 @@ public:
             reinterpret_cast<volatile uint64_t *>(myBuf + ringBufSize - scratchSlots * sizeof(uint64_t));
         scratch[0] = ctx.desc->sendBuffer;
         scratch[1] = ctx.desc->waitSymbol; /* incrementing flag — avoids stale match */
+        /* Flush scratch so SDMA reads correct sendBuf GVA + waitSymbol values.
+         * Without flush, CPU writes stay in cache and SDMA reads stale DRAM data,
+         * causing wrong GVA to be written to exchange area. Critical for Scatter
+         * where sendBuffer (bufferTensor GVA) changes each iteration — stale value
+         * points to freed memory → non-root ranks read wrong rootBufGva → garbage
+         * myDataGva → SDMA address error (cqeStatus=0x3).
+         * Matches AllReduceExchange and RingExchange pattern. */
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[0]));
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[1]));
         uint64_t dataSrcGva = reinterpret_cast<uint64_t>(&scratch[0]);
         uint64_t flagSrcGva = reinterpret_cast<uint64_t>(&scratch[1]);
 
@@ -195,6 +204,11 @@ public:
         scratch[AR_SCRATCH_SENDBUF] = ctx.desc->sendBuffer; /* sendBuf GVA (for RS) */
         scratch[AR_SCRATCH_BUFFER] = ctx.desc->buffer;      /* buffer GVA (for AG) */
         scratch[AR_SCRATCH_FLAG] = ctx.desc->waitSymbol;    /* flag sentinel (avoids stale match) */
+        /* Flush scratch so SDMA reads correct sendBuf/buffer GVA + waitSymbol values.
+         * Matches RingExchange pattern — without flush, SDMA may read stale cache data. */
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[AR_SCRATCH_SENDBUF]));
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[AR_SCRATCH_BUFFER]));
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[AR_SCRATCH_FLAG]));
         uint64_t sendSrcGva = reinterpret_cast<uint64_t>(&scratch[AR_SCRATCH_SENDBUF]);
         uint64_t bufSrcGva = reinterpret_cast<uint64_t>(&scratch[AR_SCRATCH_BUFFER]);
         uint64_t flagSrcGva = reinterpret_cast<uint64_t>(&scratch[AR_SCRATCH_FLAG]);

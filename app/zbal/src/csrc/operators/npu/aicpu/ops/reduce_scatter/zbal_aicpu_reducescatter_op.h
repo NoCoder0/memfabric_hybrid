@@ -65,15 +65,24 @@ public:
             return ERR_WAIT_TIMEOUT;
         }
 
-        /* Step 2: SDMA hardware reduce from peers — multi-channel parallel
-         * SDMA reduce is hardware-atomic per element, safe for concurrent writes. */
+        /* Step 2: SDMA hardware reduce from peers — single-channel serial.
+         * SDMA reduce (opcode!=0) is read-modify-write, NOT atomic across channels.
+         * All peer reduces write to the SAME lDst address — concurrent RMW across
+         * channels loses updates (A reads 0, B reads 0, A writes 5, B writes 3 →
+         * result 3, lost A). Must serialize on SID=0: SDMA executes SQEs within a
+         * channel in order, ensuring correct sequential accumulation. */
         for (uint32_t r = 0; r < rankNum; r++) {
             if (r == myRank) {
                 continue;
             }
+            /* Invalidate cache before reading peer's sendBuf GVA (SDMA-written).
+             * FullMeshExchange writes slot[0] via SDMA, but its cross-device sync
+             * only invalidates the FLAG area cache line, not the DATA area. */
+            uintptr_t peerSlotAddr = reinterpret_cast<uintptr_t>(
+                &reinterpret_cast<const uint64_t *>(op.exchangeGva)[r * ZBAL_AICPU_EXCHANGE_STRIDE]);
+            AicpuCacheInvalidate(peerSlotAddr);
             uint64_t peerSrc = PeerOutputBuf(op.exchangeGva, r) + mySliceOff + coreOff;
-            uint32_t sid = r % numChPerCore;
-            if (AicpuDispatcher::CopyData(ringBufs, sid, peerSrc, lDst, (uint32_t)coreLen, channels[sid],
+            if (AicpuDispatcher::CopyData(ringBufs, SID, peerSrc, lDst, (uint32_t)coreLen, channels[SID],
                                           reduceOpCode) != 0) {
                 return BUILD_ERROR;
             }

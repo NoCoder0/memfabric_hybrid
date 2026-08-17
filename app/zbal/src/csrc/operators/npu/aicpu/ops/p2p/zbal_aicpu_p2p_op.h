@@ -51,8 +51,12 @@ public:
         const uint64_t flagOff = (uint64_t)rankNum * strideBytes;
         const uint64_t ackOff = 2ULL * (uint64_t)rankNum * strideBytes;
 
-        int64_t delta = (int64_t)peer - (int64_t)myRank;
-        uint64_t peerExch = op.exchangeGva + (uint64_t)(delta * (int64_t)alg.ctx->localDeviceMemSize);
+        /* Peer exchange GVA is pre-computed by host using WORLD rank difference.
+         * SMA memory is laid out by world rank, but P2P communicators use local
+         * ranks (0/1) — local rank delta != world rank delta when P2P ranks are
+         * not adjacent in world (e.g., world rank 0 and 3). AIV's ZbalPtr handles
+         * this via worldRanks[] mapping; AICPU receives it via reserved[0]. */
+        uint64_t peerExch = op.reserved[0];
 
         const uint32_t rbSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
         volatile uint8_t *buf = AicpuWorkspace::CoreRingBuf(workspace, 0);
@@ -61,6 +65,12 @@ public:
         /* 1. Write sendBuf GVA + sentinel → peer */
         scratch[0] = op.sendBuf;
         scratch[1] = 0x1U;
+        /* Flush scratch so SDMA reads correct sendBuf GVA + sentinel values.
+         * Without flush, CPU writes stay in cache and SDMA reads stale DRAM
+         * data → peer receives wrong sendBuf GVA → SDMA from wrong address →
+         * crash. Matches FullMeshExchange / AllReduceExchange pattern. */
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[0]));
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[1]));
         {
             SqeLocalRingBuffer eb;
             eb.Init(const_cast<uint8_t *>(buf));
@@ -136,9 +146,6 @@ public:
         /* Barrier 1: wait for flag poll (core 0 does the poll) */
         if (coreId == 0) {
             volatile uint64_t *flagBase = reinterpret_cast<volatile uint64_t *>(op.exchangeGva + flagOff);
-            /* Aggressive cache invalidation before polling — cross-chip SDMA may need extra barriers */
-            __asm__ __volatile__("isb" ::: "memory");
-            AicpuMemBarrier();
             bool ready = false;
             const uint32_t timeout = 6000000U;
             for (uint32_t t = 0; t < timeout && !ready; t++) {
@@ -158,6 +165,13 @@ public:
         /* Barrier 2: read GVA + SDMA copy */
         if (ret == 0) {
             volatile uint64_t *dataBase = reinterpret_cast<volatile uint64_t *>(op.exchangeGva);
+            /* Invalidate cache before reading sendGva: SendOp wrote this slot via
+             * cross-device SDMA. The flag polling above invalidates the FLAG cache
+             * line, but data slot is in a different cache line (offset 0 vs flagOff).
+             * Without invalidate, CPU may read stale GVA → SDMA from wrong address.
+             * Matches ScatterOp / ReduceScatterOp pattern. */
+            uintptr_t dataSlotAddr = reinterpret_cast<uintptr_t>(&dataBase[peer * ZBAL_AICPU_EXCHANGE_STRIDE]);
+            AicpuCacheInvalidate(dataSlotAddr);
             sendGva = dataBase[peer * ZBAL_AICPU_EXCHANGE_STRIDE];
 
             uint64_t myOff;
@@ -181,14 +195,17 @@ public:
                 reinterpret_cast<uintptr_t>(const_cast<uint64_t *>(&flagBase[peer * ZBAL_AICPU_EXCHANGE_STRIDE]));
             AicpuCacheFlush(fa);
 
-            int64_t delta = (int64_t)peer - (int64_t)myRank;
-            uint64_t peerExch = op.exchangeGva + (uint64_t)(delta * (int64_t)alg.ctx->localDeviceMemSize);
+            uint64_t peerExch = op.reserved[0];
             uint64_t ackDst = peerExch + ackOff + (uint64_t)myRank * strideBytes;
 
             const uint32_t rbSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
             volatile uint8_t *buf = AicpuWorkspace::CoreRingBuf(workspace, 0);
             volatile uint64_t *scratch = reinterpret_cast<volatile uint64_t *>(buf + rbSize - 8);
             *scratch = 0x1U;
+            /* Flush scratch so SDMA reads correct ACK value.
+             * Without flush, sender may not receive ACK → timeout.
+             * Matches SendOp scratch flush pattern. */
+            AicpuCacheFlush(reinterpret_cast<uintptr_t>(const_cast<uint64_t *>(scratch)));
             SqeLocalRingBuffer eb;
             eb.Init(const_cast<uint8_t *>(buf));
             AicpuDispatcher::CopyData(&eb, 0U, reinterpret_cast<uint64_t>(scratch), ackDst, sizeof(uint64_t),

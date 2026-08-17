@@ -58,7 +58,9 @@ struct CommOpParams {
     uint32_t numChPerCore;
     volatile stars_channel_info_t **channels;
     uint64_t waitSymbol;  /* incrementing barrier flag — all ops use this for cross-device sync */
-    uint64_t reserved[4]; /* per-op extension: AlltoAllV uses [0]=sendCumSum, [1]=recvSplitCounts, [2]=elements */
+    uint64_t reserved[4]; /* per-op extension (union semantics, ops never coexist in one launch):
+                           * AlltoAllV: [0]=sendCumSum, [1]=recvSplitCounts, [2]=elements
+                           * Send/Recv: [0]=peerExchangeGva */
 };
 
 /* Read peer rank's sendBuf GVA from exchange area (slot 0) */
