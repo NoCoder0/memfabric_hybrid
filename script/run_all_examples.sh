@@ -53,6 +53,11 @@ on_exit() {
             pkill -x "$proc" 2>/dev/null || true
         fi
     done
+    # Kill orphaned spawn children left by the last failed attempt
+    if pgrep -f "spawn_main" &>/dev/null; then
+        echo -e "  \e[33m[INFO]\e[0m  Cleaning up orphaned spawn children"
+        pkill -9 -f "spawn_main" 2>/dev/null || true
+    fi
 }
 trap on_exit EXIT
 trace() { DEBUG_LINE="$*"; }
@@ -115,25 +120,23 @@ sub()   { echo -e "  \e[90m$ $*\e[0m"; }
 
 prepare_env_before_retry() {
     local name="$1"
+    # Kill residual parent process (fork children inherit cmdline; spawn children do not)
     if pgrep -f "python3.*${name}\.py" &>/dev/null; then
         info "Cleaning residual processes for: $name"
-        pkill -f "python3.*${name}\.py" 2>/dev/null || true
-        local waited=0
-        while [[ $waited -lt 10 ]] && pgrep -f "python3.*${name}\.py" &>/dev/null; do
-            sleep 1
-            waited=$((waited + 1))
-        done
-        if pgrep -f "python3.*${name}\.py" &>/dev/null; then
-            info "Residual processes still alive after 10s, sending SIGKILL"
-            pkill -9 -f "python3.*${name}\.py" 2>/dev/null || true
-            sleep 2
-        fi
+        pkill -9 -f "python3.*${name}\.py" 2>/dev/null || true
+        sleep 1
+    fi
+    # Kill orphaned spawn children (cmdline contains spawn_main, not the script name)
+    if pgrep -f "spawn_main" &>/dev/null; then
+        info "Cleaning orphaned spawn children for: $name"
+        pkill -9 -f "spawn_main" 2>/dev/null || true
+        sleep 1
     fi
     if command -v npu-smi &>/dev/null && [[ -n "${NPU_IDLE_IDS:-}" ]]; then
         local expected_idle
         expected_idle=$(echo "$NPU_IDLE_IDS" | tr ',' '\n' | wc -l)
         local w=0
-        while [[ $w -lt 30 ]]; do
+        while [[ $w -lt 10 ]]; do
             local cur_idle
             cur_idle=$(npu-smi info 2>/dev/null | grep -c "No running processes found") || cur_idle=0
             if [[ $cur_idle -ge $expected_idle ]]; then
@@ -155,6 +158,20 @@ devices_idle() {
         fi
     done
     return 0
+}
+
+# Check if any of the given NPU IDs are in the unhealthy list
+# Returns 0 (true) if unhealthy, 1 (false) if all healthy
+npu_id_unhealthy() {
+    local ids="${NPU_UNHEALTHY_IDS:-}"
+    [[ -z "$ids" ]] && return 1
+    local d
+    for d in "$@"; do
+        if [[ ",$ids," == *",$d,"* ]]; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 # Check that libhcom.so is loadable via dlopen (required by HOST_RDMA/URMA examples)
@@ -192,7 +209,7 @@ run_example() {
 
     local timeout_cmd
     if command -v timeout &>/dev/null; then
-        timeout_cmd="timeout $EXAMPLE_TIMEOUT"
+        timeout_cmd="timeout --kill-after=10 $EXAMPLE_TIMEOUT"
     else
         timeout_cmd=""
     fi
@@ -209,7 +226,7 @@ run_example() {
         if [[ $attempt -gt 1 ]]; then
             info "Retrying $name (attempt $attempt/$max_retries) ..."
             prepare_env_before_retry "$name"
-            sleep 15
+            sleep 3
         fi
 
         ret=0
@@ -234,7 +251,8 @@ run_example() {
         attempt=$((attempt + 1))
     done
 
-    # All attempts failed
+    # All attempts failed — clean up orphans from the last attempt
+    prepare_env_before_retry "$name"
     if [[ $ret -eq 124 ]]; then
         fail "$name (TIMEOUT after ${EXAMPLE_TIMEOUT}s, $max_retries attempts)"
     else
@@ -394,6 +412,45 @@ detect_dram_sdma_support() {
     return 1
 }
 
+# Count active RDMA RoCE ports (device_rdma protocol requires active ports per rank)
+count_active_rdma_ports() {
+    # NPU-internal RoCE health via hccn_tool (not ibv_devinfo which checks host-side NICs)
+    if [[ -x /usr/local/Ascend/driver/tools/hccn_tool ]]; then
+        local healthy=0
+        local total
+        total=$(ls -d /dev/davinci[0-9]* 2>/dev/null | wc -l || echo 0)
+        local i
+        for ((i = 0; i < total; i++)); do
+            local status
+            status=$(/usr/local/Ascend/driver/tools/hccn_tool -i "$i" -net_health -g 2>/dev/null | grep -o "Success" || true)
+            [[ -n "$status" ]] && healthy=$((healthy + 1))
+        done
+        echo "$healthy"
+        return
+    fi
+    # Fallback: all NPUs assumed healthy (no hccn_tool available)
+    echo 0
+    return
+}
+
+# Check if all NPUs are healthy enough for collective ops.
+# npu-smi Health flag aggregates ECC, PCIe, temperature, voltage, etc.
+# If Health != OK, the NPU may fail during collective operations — skip.
+check_npu_all_healthy() {
+    if ! command -v npu-smi &>/dev/null; then
+        return 0
+    fi
+    local output
+    output=$(npu-smi info 2>/dev/null) || return 0
+    local non_ok_ids
+    non_ok_ids=$(echo "$output" | grep "910B3" | grep -v "OK" | grep -oP "^\| \K[0-9]+" || true)
+    if [[ -n "$non_ok_ids" ]]; then
+        echo "$non_ok_ids"
+        return 1
+    fi
+    return 0
+}
+
 # -- Detect environment --------------------------------------------------------
 echo -e "\e[1mMemFabric Hybrid  Run All Examples\e[0m"
 echo -e "  Project: $PROJECT_DIR"
@@ -444,6 +501,14 @@ if $RUN_PYTHON; then
         info "DRAM SDMA: NOT supported (SDMA-only examples will be skipped)"
         DRAM_SDMA_SUPPORTED=false
     fi
+    RDMA_ACTIVE_PORTS=$(count_active_rdma_ports)
+    info "RDMA: ${RDMA_ACTIVE_PORTS} healthy NPU RoCE port(s)"
+    NPU_UNHEALTHY_IDS=""
+    if ! NPU_UNHEALTHY_IDS=$(check_npu_all_healthy); then
+        info "NPU Health: WARNING - unhealthy NPU(s): ${NPU_UNHEALTHY_IDS}"
+    else
+        info "NPU Health: all OK"
+    fi
 fi
 
 # ------------------------------------------------------------------------------
@@ -457,31 +522,42 @@ if $RUN_PYTHON; then
 header "01_basic  Single-Device Memory Pool"
 
 if [[ $NPU_IDLE -ge 1 ]]; then
-    for ex in \
-        "01_single_device_dram_pool" \
-        "02_single_device_dram_configurable_pool" \
-        "03_single_device_hbm_pool"
-    do
-        d="$EXAMPLES_DIR/memory_pool/01_basic/$ex"
-        if [[ -f "$d/$ex.py" ]]; then
-            trace "about to run: $ex"
-            run_python_example "$ex" "$d"
-            trace "completed: $ex"
-        else
-            skip "$ex (no runnable script found)"
-        fi
-    done
-    # 06_single_card_external_stream relies on SDMA
-    if $DRAM_SDMA_SUPPORTED; then
-        ex="06_single_card_external_stream"
-        d="$EXAMPLES_DIR/memory_pool/01_basic/$ex"
-        if [[ -f "$d/$ex.py" ]]; then
-            trace "about to run: $ex"
-            run_python_example "$ex" "$d"
-            trace "completed: $ex"
-        fi
+    if npu_id_unhealthy 0; then
+        for ex in \
+            "01_single_device_dram_pool" \
+            "02_single_device_dram_configurable_pool" \
+            "03_single_device_hbm_pool" \
+            "06_single_card_external_stream"
+        do
+            skip "$ex (NPU 0 unhealthy: ${NPU_UNHEALTHY_IDS})"
+        done
     else
-        skip "06_single_card_external_stream (SDMA not supported on this environment)"
+        for ex in \
+            "01_single_device_dram_pool" \
+            "02_single_device_dram_configurable_pool" \
+            "03_single_device_hbm_pool"
+        do
+            d="$EXAMPLES_DIR/memory_pool/01_basic/$ex"
+            if [[ -f "$d/$ex.py" ]]; then
+                trace "about to run: $ex"
+                run_python_example "$ex" "$d"
+                trace "completed: $ex"
+            else
+                skip "$ex (no runnable script found)"
+            fi
+        done
+        # 06_single_card_external_stream relies on SDMA
+        if $DRAM_SDMA_SUPPORTED; then
+            ex="06_single_card_external_stream"
+            d="$EXAMPLES_DIR/memory_pool/01_basic/$ex"
+            if [[ -f "$d/$ex.py" ]]; then
+                trace "about to run: $ex"
+                run_python_example "$ex" "$d"
+                trace "completed: $ex"
+            fi
+        else
+            skip "06_single_card_external_stream (SDMA not supported on this environment)"
+        fi
     fi
 else
     skip "01_basic/* (no NPU available, need >=1)"
@@ -512,12 +588,14 @@ fi
 # ------------------------------------------------------------------------------
 header "02_scale_out  Multi-Device Memory Pool"
 
-if devices_idle 0 1; then
+if devices_idle 0 1 && ! npu_id_unhealthy 0 1; then
     d="$EXAMPLES_DIR/memory_pool/02_scale_out/01_single_node_multi_device_dram"
     if [[ -f "$d/01_single_node_multi_device_dram.py" ]]; then
         # Override default store URL for this example
         run_python_example "01_single_node_multi_device_dram" "$d"
     fi
+elif npu_id_unhealthy 0 1; then
+    skip "01_single_node_multi_device_dram (NPU 0,1 unhealthy: ${NPU_UNHEALTHY_IDS})"
 else
     skip "01_single_node_multi_device_dram (need device 0,1 idle, got: ${NPU_IDLE_IDS:-none})"
 fi
@@ -540,23 +618,29 @@ fi
 header "03_optimization  Performance Optimization"
 
 if [[ $NPU_IDLE -ge 1 ]]; then
-    for ex in "01_copy_data_batch" "02_register"; do
-        d="$EXAMPLES_DIR/memory_pool/03_optimization/$ex"
-        if [[ -f "$d/$ex.py" ]]; then
-            run_python_example "$ex" "$d"
-        else
-            skip "$ex (no runnable script found)"
-        fi
-    done
-    # 03_device_sdma relies on SDMA
-    if $DRAM_SDMA_SUPPORTED; then
-        ex="03_device_sdma"
-        d="$EXAMPLES_DIR/memory_pool/03_optimization/$ex"
-        if [[ -f "$d/$ex.py" ]]; then
-            run_python_example "$ex" "$d"
-        fi
+    if npu_id_unhealthy 0; then
+        for ex in "01_copy_data_batch" "02_register" "03_device_sdma"; do
+            skip "$ex (NPU 0 unhealthy: ${NPU_UNHEALTHY_IDS})"
+        done
     else
-        skip "03_device_sdma (SDMA not supported on this environment)"
+        for ex in "01_copy_data_batch" "02_register"; do
+            d="$EXAMPLES_DIR/memory_pool/03_optimization/$ex"
+            if [[ -f "$d/$ex.py" ]]; then
+                run_python_example "$ex" "$d"
+            else
+                skip "$ex (no runnable script found)"
+            fi
+        done
+        # 03_device_sdma relies on SDMA
+        if $DRAM_SDMA_SUPPORTED; then
+            ex="03_device_sdma"
+            d="$EXAMPLES_DIR/memory_pool/03_optimization/$ex"
+            if [[ -f "$d/$ex.py" ]]; then
+                run_python_example "$ex" "$d"
+            fi
+        else
+            skip "03_device_sdma (SDMA not supported on this environment)"
+        fi
     fi
 else
     skip "03_optimization/* (need >=1 NPU)"
@@ -572,6 +656,8 @@ ex="01_enable_unified_address_space"
 d="$EXAMPLES_DIR/memory_pool/04_features/$ex"
 if ! devices_idle 0 1; then
     skip "$ex (need devices 0,1 idle)"
+elif npu_id_unhealthy 0 1; then
+    skip "$ex (NPU 0,1 unhealthy: ${NPU_UNHEALTHY_IDS})"
 elif [[ ! -f "$d/$ex.py" ]]; then
     skip "$ex (no runnable script found)"
 else
@@ -586,22 +672,34 @@ if [[ $NPU_IDLE -ge 1 ]]; then
     # Defaults to device_sdma protocol; fall back to device_rdma if SDMA unsupported
     d="$EXAMPLES_DIR/memory_pool/04_features/02_extend_local_mem"
     if [[ -f "$d/02_extend_local_mem.py" ]]; then
-        em_args="--local_ranks=$local_ranks --world_size=$local_ranks"
-        if ! $DRAM_SDMA_SUPPORTED; then
-            em_args+=" --protocol device_rdma"
+        if [[ -n "$NPU_UNHEALTHY_IDS" ]]; then
+            skip "02_extend_local_mem (NPU ${NPU_UNHEALTHY_IDS} unhealthy, needs all NPUs OK)"
+        elif ! $DRAM_SDMA_SUPPORTED && [[ $RDMA_ACTIVE_PORTS -lt $local_ranks ]]; then
+            skip "02_extend_local_mem (device_rdma needs $local_ranks healthy RoCE, only ${RDMA_ACTIVE_PORTS})"
+        else
+            em_args="--local_ranks=$local_ranks --world_size=$local_ranks"
+            if ! $DRAM_SDMA_SUPPORTED; then
+                em_args+=" --protocol device_rdma"
+            fi
+            run_python_example_args "02_extend_local_mem" "$d" "$em_args"
         fi
-        run_python_example_args "02_extend_local_mem" "$d" "$em_args"
     fi
 
     # enable_56bits_gva: --local_ranks=8, --world_size=1024
     # Defaults to device_sdma protocol; fall back to device_rdma if SDMA unsupported
     d="$EXAMPLES_DIR/memory_pool/04_features/03_enable_56bits_gva"
     if [[ -f "$d/03_enable_56bits_gva.py" ]]; then
-        gva_args="--local_ranks=$local_ranks"
-        if ! $DRAM_SDMA_SUPPORTED; then
-            gva_args+=" --protocol device_rdma"
+        if [[ -n "$NPU_UNHEALTHY_IDS" ]]; then
+            skip "03_enable_56bits_gva (NPU ${NPU_UNHEALTHY_IDS} unhealthy, needs all NPUs OK)"
+        elif ! $DRAM_SDMA_SUPPORTED && [[ $RDMA_ACTIVE_PORTS -lt $local_ranks ]]; then
+            skip "03_enable_56bits_gva (device_rdma needs $local_ranks healthy RoCE, only ${RDMA_ACTIVE_PORTS})"
+        else
+            gva_args="--local_ranks=$local_ranks"
+            if ! $DRAM_SDMA_SUPPORTED; then
+                gva_args+=" --protocol device_rdma"
+            fi
+            run_python_example_args "03_enable_56bits_gva" "$d" "$gva_args"
         fi
-        run_python_example_args "03_enable_56bits_gva" "$d" "$gva_args"
     fi
 else
     skip "04_features/* (need >=1 NPU)"
@@ -677,6 +775,11 @@ if $RUN_CPP; then
         fi
         if [[ $NPU_IDLE -lt 2 ]] || ! devices_idle 0 1; then
             skip "$ex_dir run (need NPU 0,1 idle, got: ${NPU_IDLE_IDS:-none})"
+            cd "$PROJECT_DIR"
+            continue
+        fi
+        if npu_id_unhealthy 0 1; then
+            skip "$ex_dir run (NPU 0,1 unhealthy: ${NPU_UNHEALTHY_IDS})"
             cd "$PROJECT_DIR"
             continue
         fi

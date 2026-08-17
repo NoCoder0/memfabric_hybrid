@@ -2,6 +2,7 @@
 import multiprocessing
 import logging
 import argparse
+import signal
 from typing import List
 
 import torch
@@ -12,6 +13,12 @@ from memfabric_hybrid import set_log_level
 
 GVA_SIZE = 1024 * 1024 * 1024
 MAX_GVA_SIZE = GVA_SIZE * 8
+BARRIER_TIMEOUT = 15
+JOIN_TIMEOUT = 60
+
+
+def _alarm_handler(signum, frame):
+    raise TimeoutError("operation timed out")
 
 
 def get_bm_protocol(protocol):
@@ -112,60 +119,92 @@ def child_process(
     enable_56bits_gva: bool,
     barriers: List[multiprocessing.Barrier],
 ):
-    ret = child_init(
-        device_id=device_id, rank_id=rank_id, world_size=world_size, url=url, nic=nic, auto_ranking=auto_ranking
-    )
-    if ret != 0:
-        logging.error(f'child process rank: {rank_id}, world_size: {world_size} initialize failed: {ret}')
-        return
+    mf_inited = False
+    bm_inited = False
+    bm_handle = None
+    signal.signal(signal.SIGALRM, _alarm_handler)
+    try:
+        signal.alarm(JOIN_TIMEOUT)
+        ret = child_init(
+            device_id=device_id, rank_id=rank_id, world_size=world_size, url=url, nic=nic, auto_ranking=auto_ranking
+        )
+        signal.alarm(0)
+        if ret != 0:
+            raise RuntimeError(f'child_init failed, rank: {rank_id}, ret: {ret}')
 
-    bm_protocol = get_bm_protocol(protocol)
-    bm_handle = bm.create2(
-        id=0,
-        local_dram_size=GVA_SIZE,
-        max_dram_size=MAX_GVA_SIZE,
-        local_hbm_size=0,
-        max_hbm_size=0,
-        data_op_type=bm_protocol,
-        enable_56bits_gva=enable_56bits_gva,
-    )
-    bm_handle.join()
-    logging.info('==================== waiting at bm create')
-    barriers[0].wait()
-    logging.info('==================== all bm create finished')
+        mf_inited = True
+        bm_inited = True
 
-    copy_data(bm_handle, rank_id, world_size)
-    logging.info('==================== waiting at copy data')
-    barriers[1].wait()
-    logging.info('==================== all bm copy data finished')
+        # Pre-join barrier: don't enter collective join() if any rank failed init
+        logging.info('==================== waiting at pre-join')
+        barriers[0].wait()
+        logging.info('==================== all ranks initialized')
 
-    ret = bm_handle.extend_local_mem(bm.BmMemType.HOST, GVA_SIZE)
-    assert ret == 0, f"failed to alloca extend memory: {ret}"
-    logging.info('==================== waiting at alloc extend memory')
-    barriers[2].wait()
-    logging.info('==================== all bm alloc extend memory finished')
+        bm_protocol = get_bm_protocol(protocol)
+        bm_handle = bm.create2(
+            id=0,
+            local_dram_size=GVA_SIZE,
+            max_dram_size=MAX_GVA_SIZE,
+            local_hbm_size=0,
+            max_hbm_size=0,
+            data_op_type=bm_protocol,
+            enable_56bits_gva=enable_56bits_gva,
+        )
+        signal.alarm(JOIN_TIMEOUT)
+        ret = bm_handle.join()
+        signal.alarm(0)
+        if ret != 0:
+            raise RuntimeError(f'bm join failed, rank: {rank_id}, ret: {ret}')
 
-    copy_data(bm_handle, rank_id, world_size, GVA_SIZE)
-    logging.info('==================== waiting at copy data')
-    barriers[3].wait()
-    logging.info('==================== all bm copy data finished')
+        logging.info('==================== waiting at bm create')
+        barriers[1].wait()
+        logging.info('==================== all bm create finished')
 
-    ret = bm_handle.extend_local_mem(bm.BmMemType.HOST, GVA_SIZE)
-    assert ret == 0, f"failed to alloca extend memory: {ret}"
-    logging.info('==================== waiting at alloc extend memory')
-    barriers[4].wait()
-    logging.info('==================== all bm alloc extend memory finished')
+        copy_data(bm_handle, rank_id, world_size)
+        logging.info('==================== waiting at copy data')
+        barriers[2].wait()
+        logging.info('==================== all bm copy data finished')
 
-    copy_data(bm_handle, rank_id, world_size, GVA_SIZE * 2)
-    logging.info('==================== waiting at copy data')
-    barriers[5].wait()
-    logging.info('==================== all bm copy data finished')
+        ret = bm_handle.extend_local_mem(bm.BmMemType.HOST, GVA_SIZE)
+        assert ret == 0, f"failed to alloca extend memory: {ret}"
+        logging.info('==================== waiting at alloc extend memory')
+        barriers[3].wait()
+        logging.info('==================== all bm alloc extend memory finished')
 
-    del bm_handle
-    logging.info('==================== waiting at bm del')
-    barriers[6].wait()
-    logging.info('==================== all bm del finished.')
-    logging.info(f'==================== rank:{rank_id}, alloc extend memory test ok.')
+        copy_data(bm_handle, rank_id, world_size, GVA_SIZE)
+        logging.info('==================== waiting at copy data')
+        barriers[4].wait()
+        logging.info('==================== all bm copy data finished')
+
+        ret = bm_handle.extend_local_mem(bm.BmMemType.HOST, GVA_SIZE)
+        assert ret == 0, f"failed to alloca extend memory: {ret}"
+        logging.info('==================== waiting at alloc extend memory')
+        barriers[5].wait()
+        logging.info('==================== all bm alloc extend memory finished')
+
+        copy_data(bm_handle, rank_id, world_size, GVA_SIZE * 2)
+        logging.info('==================== waiting at copy data')
+        barriers[6].wait()
+        logging.info('==================== all bm copy data finished')
+
+        del bm_handle
+        bm_handle = None
+        bm_inited = False
+        logging.info('==================== waiting at bm del')
+        barriers[7].wait()
+        logging.info('==================== all bm del finished.')
+        logging.info(f'==================== rank:{rank_id}, alloc extend memory test ok.')
+    except Exception as e:
+        logging.error(f'rank:{rank_id} child process failed: {e}')
+        raise
+    finally:
+        signal.alarm(0)
+        if bm_handle is not None:
+            del bm_handle
+        if bm_inited:
+            bm.uninitialize(0)
+        if mf_inited:
+            memfabric_hybrid.uninitialize()
 
 
 def str_to_bool(v):
@@ -255,7 +294,8 @@ def main_process():
         f'enable_56bits_gva={args.enable_56bits_gva}'
     )
 
-    barriers = [multiprocessing.Barrier(args.local_ranks) for i in range(7)]
+    multiprocessing.set_start_method('spawn', force=True)
+    barriers = [multiprocessing.Barrier(args.local_ranks, timeout=BARRIER_TIMEOUT) for _ in range(8)]
 
     children = []
     for i in range(0, args.local_ranks):
@@ -279,6 +319,10 @@ def main_process():
 
     for p in children:
         p.join()
+
+    failed = [i for i, p in enumerate(children) if p.exitcode != 0]
+    if failed:
+        raise RuntimeError(f'child process failed, rank: {failed}, exitcode: {[children[i].exitcode for i in failed]}')
 
     logging.info('main process exited.')
 
