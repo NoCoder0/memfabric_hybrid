@@ -1000,10 +1000,6 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
     }
 
     if ((options->bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
-        if (options->hostVASpace == 0) {
-            BM_LOG_ERROR("HOST_SHM op type requires non-zero host VASpace");
-            return BM_INVALID_PARAM;
-        }
         if ((options->memType & HYBM_MEM_TYPE_DEVICE) != 0 || options->deviceVASpace != 0) {
             BM_LOG_ERROR("HOST_SHM op type only supports DRAM shared memory without HBM");
             return BM_INVALID_PARAM;

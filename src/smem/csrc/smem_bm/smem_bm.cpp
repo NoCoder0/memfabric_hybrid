@@ -241,7 +241,7 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
         return SM_INVALID_PARAM;
     }
     const bool isHostShm = (option->dataOpType & SMEMB_DATA_OP_HOST_SHM) != 0;
-    if (isHostShm && (option->localDRAMSize == 0 || option->localHBMSize != 0)) {
+    if (isHostShm && option->localHBMSize != 0) {
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
                                        "HOST_SHM op type only supports DRAM shared memory without HBM");
         return SM_INVALID_PARAM;

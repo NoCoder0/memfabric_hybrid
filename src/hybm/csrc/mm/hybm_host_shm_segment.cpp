@@ -244,7 +244,7 @@ Result HybmHostShmSegment::Import(const std::vector<std::string> &allExInfo, voi
 Result HybmHostShmSegment::Mmap() noexcept
 {
     for (const auto &im : imports_) {
-        if (im.rankId == options_.rankId) {
+        if (im.rankId == options_.rankId || im.size == 0) {
             continue;
         }
         auto ret = MapImportedShm(im);
@@ -377,6 +377,10 @@ std::string HybmHostShmSegment::GetShmFilePath(uint32_t rankId, bool useHugetlbf
 Result HybmHostShmSegment::MapLocalShm() noexcept
 {
     useHugetlbfs_ = TryHugetlbfsAvailable();
+    if (options_.size == 0) {
+        BM_LOG_INFO("MapLocalShm success: rankId=" << options_.rankId << " size=" << options_.size << " skip it");
+        return BM_OK;
+    }
     auto shmPath = GetShmFilePath(options_.rankId);
     BM_LOG_INFO("MapLocalShm start: rankId=" << options_.rankId << " size=" << options_.size
                                              << " useHugetlbfs=" << useHugetlbfs_ << " shmPath=" << shmPath);
@@ -532,6 +536,8 @@ Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
     mappedGvaMem_.insert(remoteGva);
     auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
         {remoteGva, 0, reinterpret_cast<uint64_t>(remoteLva), im.size, HYBM_MEM_TYPE_HOST}, options_.rankId, rankId);
+    BM_LOG_INFO("MapImportedShm: ret:" << ret << " rankId=" << im.rankId << " addr=" << remoteGva << " size=" << im.size
+                                       << " useHugetlbfs=" << im.useHugetlbfs << " fd=" << fd);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AddVaInfoFromExternal failed for rank " << rankId);
     }
