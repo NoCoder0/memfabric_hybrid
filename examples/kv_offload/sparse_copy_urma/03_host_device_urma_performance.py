@@ -43,20 +43,18 @@ from urma_example_common import (
 
 
 WORLD_SIZE = 2
-CARD_COUNT = 4
+CARD_COUNT = 8
 ONE_GIB = 1 << 30
 CONTROL_HBM_BYTES = 8 << 20
 BATCH_SIZE = 4
 TOKENS_PER_REQUEST = 2048
-TOKEN_COUNT = BATCH_SIZE * TOKENS_PER_REQUEST
-K_DIM = 512
-V_DIM = 64
-BF16_BYTES = 2
-K_BYTES = K_DIM * BF16_BYTES
-V_BYTES = V_DIM * BF16_BYTES
-TOKEN_BYTES = K_BYTES + V_BYTES
-PAYLOAD_BYTES = TOKEN_COUNT * TOKEN_BYTES
-LIST_NUM = TOKEN_COUNT * 2
+DEFAULT_TOKEN_COUNT = BATCH_SIZE * TOKENS_PER_REQUEST
+DEFAULT_K_DIM = 512
+DEFAULT_V_DIM = 64
+FP8_BYTES = 1
+FP8_PATTERN = bytes(
+    (0x00, 0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0xA0, 0xA8, 0xB0, 0xB8, 0xC0, 0xC8, 0xD0, 0xD8)
+)
 TOTAL_CALLS = 20
 WARMUP_CALLS = 6
 PROFILE_STEP_CALLS = TOTAL_CALLS - WARMUP_CALLS
@@ -66,6 +64,33 @@ DEFAULT_CTRL_PORT = 9877
 DEFAULT_NIC_PORT = 10005
 DEFAULT_CTRL_TIMEOUT_SECONDS = 600.0
 DEFAULT_PROFILING_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiling")
+
+
+@dataclass(frozen=True)
+class CopyLayout:
+    token_count: int
+    k_dim: int
+    v_dim: int
+
+    @property
+    def key_bytes(self):
+        return self.k_dim * FP8_BYTES
+
+    @property
+    def value_bytes(self):
+        return self.v_dim * FP8_BYTES
+
+    @property
+    def token_bytes(self):
+        return self.key_bytes + self.value_bytes
+
+    @property
+    def payload_bytes(self):
+        return self.token_count * self.token_bytes
+
+    @property
+    def list_num(self):
+        return self.token_count * (2 if self.v_dim else 1)
 
 
 @dataclass(frozen=True)
@@ -80,15 +105,19 @@ class PairConfig:
     profiling_path: str
     batch_copy_lanes: int
     ctrl_timeout: float
+    layout: CopyLayout
 
 
 @dataclass
 class DeviceTensors:
     keys: list
     values: list
+    key_expected: bytearray
+    value_expected: bytearray
     src_ptrs: object
     dst_ptrs: object
     len_ptrs: object
+    layout: CopyLayout
     device: object
     torch: object
     torch_npu: object
@@ -106,8 +135,9 @@ def _parse_cards(text):
 
 
 def _build_parser():
-    parser = argparse.ArgumentParser(description="Four-card Host DRAM to NPU HBM sparse_copy_urma profiling test")
-    parser.add_argument("--cards", type=_parse_cards, default=_parse_cards("0,1,2,3"))
+    parser = argparse.ArgumentParser(description="Multi-card Host DRAM to NPU HBM sparse_copy_urma profiling test")
+    parser.add_argument("--cards", type=_parse_cards, default=_parse_cards("0,1,2,3"),
+                        help="One to eight comma-separated physical device ids")
     parser.add_argument("--head-ip", default="127.0.0.1")
     parser.add_argument("--env-dir", required=True, help="Directory containing card<physical_id>.env files")
     parser.add_argument("--store-port-base", type=int, default=DEFAULT_STORE_PORT)
@@ -126,11 +156,15 @@ def _build_parser():
         default=DEFAULT_PROFILING_DIR,
         help="Root directory for per-card torch_npu profiler traces",
     )
+    parser.add_argument("--token-count", type=int, default=DEFAULT_TOKEN_COUNT, help="Tokens per copy")
+    parser.add_argument("--k-dim", type=int, default=DEFAULT_K_DIM, help="FP8 K elements per token")
+    parser.add_argument("--v-dim", type=int, default=DEFAULT_V_DIM, help="FP8 V elements per token; 0 copies keys only")
     return parser
 
 
 def _make_pair_configs(args):
     configs = []
+    layout = CopyLayout(args.token_count, args.k_dim, args.v_dim)
     for pair_id, card_id in enumerate(args.cards):
         configs.append(PairConfig(
             pair_id=pair_id,
@@ -145,11 +179,26 @@ def _make_pair_configs(args):
             ),
             batch_copy_lanes=args.batch_copy_lanes,
             ctrl_timeout=args.ctrl_timeout,
+            layout=layout,
         ))
     return tuple(configs)
 
 
 def _validate_pair_configs(args, configs):
+    layout = configs[0].layout
+    if layout.token_count <= 0 or layout.k_dim <= 0 or layout.v_dim < 0:
+        print(
+            f"[ERROR] stage=argument_validation token_count={layout.token_count} k_dim={layout.k_dim} "
+            f"v_dim={layout.v_dim} must satisfy token_count>0, k_dim>0, v_dim>=0",
+            file=sys.stderr,
+        )
+        return False
+    if layout.payload_bytes > ONE_GIB:
+        print(
+            f"[ERROR] stage=argument_validation payload_bytes={layout.payload_bytes} exceeds host_pool_bytes={ONE_GIB}",
+            file=sys.stderr,
+        )
+        return False
     if args.ctrl_timeout <= 0:
         print(f"[ERROR] stage=argument_validation ctrl_timeout={args.ctrl_timeout} must be positive", file=sys.stderr)
         return False
@@ -177,6 +226,7 @@ def _worker_args(config, role):
         head_ip=config.head_ip,
         host_eid=None,
         local_dram_validation=True,
+        layout=config.layout,
         log_level=MF_ERROR_LOG_LEVEL,
         physical_device_id=config.physical_device_id,
         rank=rank,
@@ -284,13 +334,14 @@ def _prepare_host_source(args, handle, bm, pair_id):
         _fail(args, "host_source", f"pair={pair_id} Host GVA lookup raised: {exc}")
     if host_gva == 0 or host_view != host_gva:
         _fail(args, "host_source", f"pair={pair_id} invalid Host GVA/view gva=0x{host_gva:x} view=0x{host_view:x}")
-    source = (ctypes.c_uint8 * PAYLOAD_BYTES)()
+    source = (ctypes.c_uint8 * args.layout.payload_bytes)()
+    _fill_source_pattern(source, args.layout)
     try:
-        ret = handle.copy_data(ctypes.addressof(source), host_gva, PAYLOAD_BYTES, bm.BmCopyType.H2G, 0)
+        ret = handle.copy_data(ctypes.addressof(source), host_gva, args.layout.payload_bytes, bm.BmCopyType.H2G, 0)
     except Exception as exc:
-        _fail(args, "host_source", f"pair={pair_id} H2G bytes={PAYLOAD_BYTES} raised: {exc}")
+        _fail(args, "host_source", f"pair={pair_id} H2G bytes={args.layout.payload_bytes} raised: {exc}")
     if ret != 0:
-        _fail(args, "host_source", f"pair={pair_id} H2G failed bytes={PAYLOAD_BYTES}", ret)
+        _fail(args, "host_source", f"pair={pair_id} H2G failed bytes={args.layout.payload_bytes}", ret)
     return host_gva, source
 
 
@@ -304,6 +355,35 @@ def _lookup_host_gva(args, handle, bm, pair_id):
     return host_gva
 
 
+def _component_pattern(token_index, component_bytes, component_id):
+    start = (token_index + component_id) % len(FP8_PATTERN)
+    count = (start + component_bytes + len(FP8_PATTERN) - 1) // len(FP8_PATTERN)
+    pattern = bytearray((FP8_PATTERN * count)[start:start + component_bytes])
+    encoded_id = token_index ^ (component_id * 0x9E3779B1)
+    for byte_index in range(min(component_bytes, 8)):
+        pattern[byte_index] = FP8_PATTERN[(encoded_id >> (byte_index * 4)) & 0xF]
+    return bytes(pattern)
+
+
+def _fill_source_pattern(source, layout):
+    source_addr = ctypes.addressof(source)
+    for token_index in range(layout.token_count):
+        offset = token_index * layout.token_bytes
+        key = _component_pattern(token_index, layout.key_bytes, 0)
+        ctypes.memmove(source_addr + offset, key, layout.key_bytes)
+        if layout.v_dim:
+            value = _component_pattern(token_index, layout.value_bytes, 1)
+            ctypes.memmove(source_addr + offset + layout.key_bytes, value, layout.value_bytes)
+
+
+def _expected_component_bytes(layout, component_bytes, component_id):
+    expected = bytearray(layout.token_count * component_bytes)
+    for token_index in range(layout.token_count):
+        begin = token_index * component_bytes
+        expected[begin:begin + component_bytes] = _component_pattern(token_index, component_bytes, component_id)
+    return expected
+
+
 def _prepare_device_tensors(args, host_gva, pair_id):
     try:
         import mf_acc_offload
@@ -312,30 +392,48 @@ def _prepare_device_tensors(args, host_gva, pair_id):
 
         torch_npu.npu.config.allow_internal_format = True
         device = torch.device(f"npu:{_runtime_device_id(args)}")
+        dtype = torch.float8_e4m3fn
+        layout = args.layout
         keys = []
         values = []
-        for _ in range(TOKEN_COUNT):
-            keys.append(torch.ones(K_DIM, dtype=torch.bfloat16, device=device))
-            values.append(torch.ones(V_DIM, dtype=torch.bfloat16, device=device))
-        key_sources = [host_gva + index * TOKEN_BYTES for index in range(TOKEN_COUNT)]
-        value_sources = [address + K_BYTES for address in key_sources]
+        for _ in range(layout.token_count):
+            keys.append(torch.empty(layout.k_dim, dtype=dtype, device=device))
+            if layout.v_dim:
+                values.append(torch.empty(layout.v_dim, dtype=dtype, device=device))
+        key_sources = [host_gva + index * layout.token_bytes for index in range(layout.token_count)]
+        value_sources = []
+        if layout.v_dim:
+            value_sources = [address + layout.key_bytes for address in key_sources]
         src_ptrs = torch.tensor(key_sources + value_sources, dtype=torch.int64, device=device)
         dst_ptrs = torch.tensor([tensor.data_ptr() for tensor in keys + values], dtype=torch.int64, device=device)
-        lengths = [K_BYTES] * TOKEN_COUNT + [V_BYTES] * TOKEN_COUNT
+        lengths = [layout.key_bytes] * layout.token_count
+        if layout.v_dim:
+            lengths += [layout.value_bytes] * layout.token_count
         len_ptrs = torch.tensor(lengths, dtype=torch.int64, device=device)
-        return DeviceTensors(keys, values, src_ptrs, dst_ptrs, len_ptrs, device, torch, torch_npu, mf_acc_offload)
+        key_expected = _expected_component_bytes(layout, layout.key_bytes, 0)
+        value_expected = (
+            _expected_component_bytes(layout, layout.value_bytes, 1) if layout.v_dim else bytearray()
+        )
+        return DeviceTensors(
+            keys, values, key_expected, value_expected, src_ptrs, dst_ptrs, len_ptrs, layout, device, torch, torch_npu,
+            mf_acc_offload,
+        )
     except Exception as exc:
-        _fail(args, "tensor_prepare", f"pair={pair_id} tokens={TOKEN_COUNT} list_num={LIST_NUM} raised: {exc}")
+        _fail(
+            args,
+            "tensor_prepare",
+            f"pair={pair_id} tokens={args.layout.token_count} list_num={args.layout.list_num} raised: {exc}",
+        )
 
 
 def _submit_copy(args, tensors, pair_id, stage, iteration):
     try:
         ret = tensors.mf_acc_offload.sparse_copy_urma(
-            tensors.src_ptrs, tensors.dst_ptrs, tensors.len_ptrs, LIST_NUM, tensors.device)
+            tensors.src_ptrs, tensors.dst_ptrs, tensors.len_ptrs, tensors.layout.list_num, tensors.device)
     except Exception as exc:
-        _fail(args, stage, f"pair={pair_id} iteration={iteration} list_num={LIST_NUM} raised: {exc}")
+        _fail(args, stage, f"pair={pair_id} iteration={iteration} list_num={tensors.layout.list_num} raised: {exc}")
     if ret != 0:
-        _fail(args, stage, f"pair={pair_id} iteration={iteration} list_num={LIST_NUM}", ret)
+        _fail(args, stage, f"pair={pair_id} iteration={iteration} list_num={tensors.layout.list_num}", ret)
 
 
 def _warm_up(args, tensors, pair_id):
@@ -399,16 +497,31 @@ def _stop_profiler(args, tensors, profiler, config):
         _fail(args, "profiler_stop", f"pair={config.pair_id} path={config.profiling_path} raised: {exc}")
 
 
+def _verify_component(args, components, expected, name, pair_id, tensors):
+    try:
+        actual = tensors.torch.cat(components).cpu().contiguous().view(tensors.torch.uint8).reshape(-1)
+        expected_tensor = tensors.torch.frombuffer(expected, dtype=tensors.torch.uint8)
+        mismatch = tensors.torch.nonzero(actual != expected_tensor, as_tuple=False)
+    except Exception as exc:
+        _fail(args, "data_verify", f"pair={pair_id} {name} verification raised: {exc}")
+    if mismatch.numel():
+        offset = mismatch[0].item()
+        _fail(
+            args,
+            "data_verify",
+            f"pair={pair_id} {name} mismatch byte_offset={offset} expected=0x{expected[offset]:02x} "
+            f"actual=0x{actual[offset].item():02x}",
+        )
+
+
 def _verify_destination(args, tensors, pair_id):
     try:
-        import torch
-
-        key_nonzero = torch.count_nonzero(torch.cat(tensors.keys)).item()
-        value_nonzero = torch.count_nonzero(torch.cat(tensors.values)).item()
+        tensors.torch.npu.synchronize()
+        _verify_component(args, tensors.keys, tensors.key_expected, "key", pair_id, tensors)
+        if tensors.values:
+            _verify_component(args, tensors.values, tensors.value_expected, "value", pair_id, tensors)
     except Exception as exc:
         _fail(args, "data_verify", f"pair={pair_id} destination verification raised: {exc}")
-    if key_nonzero != 0 or value_nonzero != 0:
-        _fail(args, "data_verify", f"pair={pair_id} key_nonzero={key_nonzero} value_nonzero={value_nonzero}")
 
 
 def _run_host(args, config, mf, bm, handle):
@@ -416,7 +529,12 @@ def _run_host(args, config, mf, bm, handle):
     with _create_control_server(args) as server:
         with _accept_control_connection(args, server) as conn:
             conn.settimeout(args.ctrl_timeout)
-            _send(conn, {"host_gva": host_gva, "bytes": PAYLOAD_BYTES, "list_num": LIST_NUM}, args, "source")
+            _send(
+                conn,
+                {"host_gva": host_gva, "bytes": config.layout.payload_bytes, "list_num": config.layout.list_num},
+                args,
+                "source",
+            )
             if _recv(conn, args, "ready") != "READY":
                 _fail(args, "ready", f"pair={config.pair_id} unexpected Device ready message")
             done = _recv(conn, args, "done")
@@ -450,7 +568,7 @@ def _run_device(args, config, mf, bm, handle, barrier, result_queue):
     with _connect_control(args) as conn:
         conn.settimeout(args.ctrl_timeout)
         source = _recv(conn, args, "source")
-        expected = {"host_gva": host_gva, "bytes": PAYLOAD_BYTES, "list_num": LIST_NUM}
+        expected = {"host_gva": host_gva, "bytes": config.layout.payload_bytes, "list_num": config.layout.list_num}
         if not isinstance(source, dict) or any(source.get(key) != value for key, value in expected.items()):
             _fail(args, "source", f"pair={config.pair_id} source metadata mismatch={source}")
         _run_profiled_copies(args, tensors, config, barrier, conn)
@@ -470,6 +588,9 @@ def _build_result(args, config):
         "runtime_device_id": _runtime_device_id(args),
         "pid": os.getpid(),
         "batch_copy_lanes": config.batch_copy_lanes,
+        "token_count": config.layout.token_count,
+        "k_dim": config.layout.k_dim,
+        "v_dim": config.layout.v_dim,
         "profiling_path": config.profiling_path,
     }
 
@@ -539,7 +660,8 @@ def _print_results(results):
     for result in results:
         print(
             f"card={result['physical_device_id']} pair={result['pair_id']} "
-            f"batch_copy_lanes={result['batch_copy_lanes']} profile_step_calls={PROFILE_STEP_CALLS} "
+            f"batch_copy_lanes={result['batch_copy_lanes']} token_count={result['token_count']} "
+            f"k_dim={result['k_dim']} v_dim={result['v_dim']} profile_step_calls={PROFILE_STEP_CALLS} "
             f"profiling_path={result['profiling_path']}"
         )
     print(f"cards={len(results)} profiling_complete=true total_copy_calls={len(results) * TOTAL_CALLS}")
@@ -579,7 +701,9 @@ def _run(args):
     if not _prepare_profiling_dirs(configs):
         return 1
     print(
-        f"cards={','.join(str(card) for card in args.cards)} payload_bytes={PAYLOAD_BYTES} list_num={LIST_NUM} "
+        f"cards={','.join(str(card) for card in args.cards)} token_count={configs[0].layout.token_count} "
+        f"k_dim={configs[0].layout.k_dim} v_dim={configs[0].layout.v_dim} "
+        f"payload_bytes={configs[0].layout.payload_bytes} list_num={configs[0].layout.list_num} "
         f"batch_copy_lanes={args.batch_copy_lanes} warmup_calls={WARMUP_CALLS} "
         f"profile_step_calls={PROFILE_STEP_CALLS} profiling_dir={args.profiling_dir}"
     )

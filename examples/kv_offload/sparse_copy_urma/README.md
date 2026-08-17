@@ -113,9 +113,9 @@ stage/rank/device/地址/长度上下文。不要为绕过
 生产 key/type/address 门禁而设置额外变量。验证完成后删除该临时 Python 分支、构建宏/脚本参数和配套工具，
 再以默认 `--build_local_dram_validation OFF` 重新构建。
 
-## 03：四卡 Host DRAM → NPU HBM profiling
+## 03：单卡/多卡 Host DRAM → NPU HBM profiling
 
-`03_host_device_urma_performance.py` 用本机 Host DRAM 进程模拟远端 DRAM，采集四张 NPU 卡并发调用
+`03_host_device_urma_performance.py` 用本机 Host DRAM 进程模拟远端 DRAM，采集单张或多张 NPU 卡并发调用
 `sparse_copy_urma` 的 profiling 数据。该用例沿用 02 的 local validation 建链方式，因此同样需要打开验证宏：
 
 ```bash
@@ -123,21 +123,22 @@ bash script/build_and_pack_run.sh --build_local_dram_validation ON
 ```
 
 每张卡使用一个 Host/DRAM 进程和一个 Device/HBM 进程。脚本默认测试物理卡 `0,1,2,3`，共启动 8 个进程；
-每一对进程组成独立的 `world_size=2` 通信域，Host 为 rank 0，Device 为 rank 1。四对进程分别使用独立的
-store、control 和 NIC 端口，避免 rank、route 和控制消息互相干扰。
+`--cards` 支持最少一张、最多八张卡。每一对进程组成独立的 `world_size=2` 通信域，Host 为 rank 0，Device
+为 rank 1；不同 pair 使用独立的 store、control 和 NIC 端口，避免 rank、route 和控制消息互相干扰。
 
-### 准备四卡环境文件
+### 准备环境文件
 
-创建一个独立目录，并为每张物理卡准备 `card<物理卡号>.env`。每份文件都需要包含 02 local validation 所需的
+创建一个独立目录，并为每张选中的物理卡准备 `card<物理卡号>.env`。每份文件都需要包含 02 local validation 所需的
 Host/Device EID、物理/逻辑卡映射、`MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 和 `ASCEND_RT_VISIBLE_DEVICES`。可以复制
-同目录的 `env` 作为模板，再逐卡查询 EID 并更新目标文件：
+同目录的 `env` 作为模板，再逐卡查询 EID 并更新目标文件；修改 `CARDS` 可准备单卡或最多八张卡：
 
 ```bash
 EID_TOOL=/tmp/mf_urma_eid_query
-ENV_DIR=/tmp/mf-urma-four-card-env
+ENV_DIR=/tmp/mf-urma-card-env
+CARDS="0 1 2 3"
 mkdir -p "${ENV_DIR}"
 
-for card in 0 1 2 3; do
+for card in ${CARDS}; do
   cp examples/kv_offload/sparse_copy_urma/env "${ENV_DIR}/card${card}.env"
   "${EID_TOOL}" --device-id "${card}" --format env --no-candidates > "/tmp/card${card}-eid.env"
   python3 examples/kv_offload/sparse_copy_urma/update_env_from_eid.py \
@@ -146,8 +147,8 @@ for card in 0 1 2 3; do
 done
 ```
 
-更新后检查每个文件的 `ASCEND_RT_VISIBLE_DEVICES`：它必须包含该文件名对应的物理卡。可以让四份文件都配置
-`0,1,2,3`，也可以每份只暴露对应的一张卡；脚本会根据物理卡号计算进程内的 ACL/Torch runtime device id。
+更新后检查每个文件的 `ASCEND_RT_VISIBLE_DEVICES`：它必须包含该文件名对应的物理卡。可以让所有文件都配置
+所选卡集合，也可以每份只暴露对应的一张卡；脚本会根据物理卡号计算进程内的 ACL/Torch runtime device id。
 不要让不同 `card*.env` 复用另一张卡的 EID 或物理/逻辑卡映射。
 
 ### 运行
@@ -155,18 +156,18 @@ done
 使用默认物理卡和端口时执行：
 
 ```bash
-PROFILE_DIR=/tmp/mf-urma-four-card-profiling
+PROFILE_DIR=/tmp/mf-urma-card-profiling
 python3 examples/kv_offload/sparse_copy_urma/03_host_device_urma_performance.py \
   --env-dir "${ENV_DIR}" \
   --profiling-dir "${PROFILE_DIR}" \
   --head-ip 127.0.0.1
 ```
 
-若实际物理卡不是 `0,1,2,3`，通过 `--cards` 指定，并提供相同编号的环境文件。例如：
+单卡调试可传 `--cards 0`；多卡最多传入八个物理卡号，并提供相同编号的环境文件。例如：
 
 ```bash
 python3 examples/kv_offload/sparse_copy_urma/03_host_device_urma_performance.py \
-  --cards 4,5,6,7 \
+  --cards 0,1,2,3,4,5,6,7 \
   --env-dir "${ENV_DIR}" \
   --profiling-dir "${PROFILE_DIR}" \
   --head-ip 127.0.0.1
@@ -188,21 +189,24 @@ for lanes in 1 2 4; do
 done
 ```
 
-默认端口如下；端口被占用时可通过对应的 `--*-port-base` 整体平移：
+每个 pair 的端口为对应 base 加 pair 编号；八卡时编号为 `0..7`。端口被占用时可通过对应的
+`--*-port-base` 整体平移：
 
-| 通信用途 | pair 0 | pair 1 | pair 2 | pair 3 | CLI |
-| --- | ---: | ---: | ---: | ---: | --- |
-| store | 8574 | 8575 | 8576 | 8577 | `--store-port-base` |
-| control | 9877 | 9878 | 9879 | 9880 | `--ctrl-port-base` |
-| NIC | 10005 | 10006 | 10007 | 10008 | `--nic-port-base` |
+| 通信用途 | pair `i` 端口 | CLI |
+| --- | --- | --- |
+| store | `8574 + i` | `--store-port-base` |
+| control | `9877 + i` | `--ctrl-port-base` |
+| NIC | `10005 + i` | `--nic-port-base` |
 
 ### Profiling 范围与输出
 
-数据规格与 `local_dram_offload(1).py` 一致：batch 为 4，每个 request 为 2048 tokens，共 8192 tokens；每个
-token 包含 512 个 BF16 K 元素和 64 个 BF16 V 元素。一次调用提交 16384 个 block，总传输量为 9 MiB。
-Host 固定 DRAM pool 为 1 GiB，源数据为零；Device 的 K/V tensor 初始为一，并在正式计时后检查已复制为零。
+默认数据规格为 8192 tokens；每个 token 包含 512 个 FP8 E4M3 K 元素和 64 个 FP8 E4M3 V 元素。可通过
+`--token-count`、`--k-dim` 和 `--v-dim` 调整，默认一次调用提交 16384 个 block、总传输量为 4.5 MiB。
+`--v-dim 0` 时不创建 V tensor，也不提交 V descriptor，只拷贝 Key。Host 固定 DRAM pool 为 1 GiB，源数据为
+带 token/component 标识的有限 FP8 原始字节 pattern；Device 在 profiling 结束后同步并将 K/V 拷回 CPU，逐字节
+与预期 pattern 比较，任何不匹配都会带 pair、组件、字节偏移和期望/实际值报错。
 
-每张卡总共执行 20 次 copy。前 6 次用于吸收共享库和 AICPU kernel 首次加载；四张卡完成这 6 次调用后通过
+每张卡总共执行 20 次 copy。前 6 次用于吸收共享库和 AICPU kernel 首次加载；所有选中卡完成这 6 次调用后通过
 barrier 对齐，后 14 次调用前分别执行 `prof.step()`，用于推进与参考文件相同的 profiler schedule。当前
 `sparse_copy_urma` 会在返回前同步 NPU stream，因此 profiler 能同时观察 Host API、kernel 启动、NPU timeline
 和同步点。
@@ -210,7 +214,7 @@ barrier 对齐，后 14 次调用前分别执行 `prof.step()`，用于推进与
 脚本按照参考文件创建 `torch_npu.profiler.profile`：采集 CPU 和 NPU activity，使用 Level2、PipeUtilization，
 并设置 `wait=1`、`warmup=1`、`active=10`、`repeat=1`、`skip_first=1`；同时打开 shape 和 memory 记录，关闭
 stack、FLOPs 和 module 记录。profiler 在 20 次 copy 前启动，前 6 次 copy 后开始调用 `prof.step()`，最后一次
-copy 完成并同步 NPU 后停止。四张卡分别写入
+copy 完成并同步 NPU 后停止。每张选中卡分别写入
 `<profiling-dir>/lanes<lane 数>/card<物理卡号>`，避免 trace 文件互相覆盖；
 未指定 `--profiling-dir` 时默认写入本示例目录下的 `profiling`。
 
