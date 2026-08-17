@@ -1,5 +1,8 @@
-### 1 install dir
-```
+# MemFabric Hybrid 安装包
+
+## 1 install dir
+
+``` shell
 ${INSTALL_PATH}/
           |--memfabric_hybrid
               |-- latest
@@ -17,24 +20,29 @@ ${INSTALL_PATH}/
 default ${INSTALL_PATH} is /usr/local/
 ```
 
-### 2 rule of package name
-```
+## 2 rule of package name
+
+``` shell
 memfabric_hybrid-${version}_${os}_${arch}${xpu_suffix}.run
 
 其中 xpu_suffix 为空（NPU）/_cpu（XPU_TYPE=NONE）/_gpu（XPU_TYPE=GPU）
 ```
 
-### 3 upgrade
+## 3 upgrade
+
 support offline upgrade
 
-### 4 where is the package
+## 4 where is the package
+
 built from gitee and placed on gitee for downloading
 
-### 5 check library version
+## 5 check library version
+
 user can get library version by linux 'strings' command
 
 example to get the library version using 'strings' as following:
-```
+
+``` shell
 strings libmf_smem.so | grep commit
 
 library version: 1.0.0, build time: Apr 27 2025 08:46:17, commit: 4ad27e5b4bd3353c5c20f16e8f3b6da41268d4e0

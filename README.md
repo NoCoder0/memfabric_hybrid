@@ -158,7 +158,7 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 ├── script                     # 构建脚本
 │  ├── build_and_pack_run.sh   # 编译+打包脚本
 │  ├── build.sh                # 编译脚本
-│  ├── run_ut.sh               # 编译+运行ut脚本
+│  ├── run_ut.sh               # 编译+运行ut脚本（详见 [script/run_ut.md](script/run_ut.md)）
 ├── test                       # test目录
 │  ├── 3rdparty                # 三方库
 │  ├── certs                   # 证书生成脚本

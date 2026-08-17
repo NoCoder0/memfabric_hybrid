@@ -1,3 +1,5 @@
+# AGENTS
+
 ## 构建
 
 - **默认**：`bash script/build_and_pack_run.sh` → RELEASE，Python ON，XPU_TYPE=NPU。
@@ -16,6 +18,12 @@
 - **快速（增量，无覆盖率）**：`bash script/run_ut.sh --fast`
 - **单个测试**：`bash script/run_ut.sh --fast TestName`（传递 `--gtest_filter=*TestName*`）
 - **首次运行前需初始化子模块**：`git submodule update --recursive --init`（获取 `test/3rdparty/googletest` 和 `test/3rdparty/mockcpp`）。
+
+## 已知问题（aarch64 / devcontainer）
+
+- **aarch64 上 ASAN 不可用**：`run_ut.sh` 默认 `ASAN`，但在 aarch64（含 Ubuntu 22.04）上 ASAN 与 mockcpp 钩子机制冲突（`stack-use-after-return` 误报、入口插桩 SEGV）。本地迭代改用 `MF_UT_BUILD_TYPE=DEBUG bash script/run_ut.sh`。
+
+- **AccLinksTest 端口 8100**：测试硬编码 `LISTEN_PORT=8100`（`test/ut/testcase/acc_links/acc_links_test.cpp:37`）；devcontainer 宿主机若占用 8100，该 suite 54 个用例会在 `SetUp` 集体失败（`bind` EADDRINUSE）。本地可换端口或换独立 netns。
 
 ## 预提交 / 代码风格
 
@@ -79,7 +87,7 @@
 - **NPU**：`ASCEND_HOME_PATH` 必须指向 CANN/Ascend 安装目录。
 - **GPU**：`CUDA_HOME` 必须指向 CUDA 安装目录。
 - **Python 日志级别**：`ASCEND_MF_LOG_LEVEL`（0-4）。
-- 完整环境变量列表：`doc/environment_variables.md`。
+- 完整环境变量列表：`docs/environment_variables.md`。
 
 ## 仓库模块边界
 

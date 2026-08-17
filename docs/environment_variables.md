@@ -46,6 +46,7 @@
 | `BUILD_MODE` | RELEASE | 构建模式。可选值：RELEASE、DEBUG、ASAN。 |
 | `ENABLE_PTRACER` | ON | 是否启用ptracer性能打点工具。 |
 | `XPU_TYPE` | NPU | 异构设备类型。可选值：NPU、GPU、NONE。 |
+| `MF_UT_BUILD_TYPE` | ASAN | `run_ut.sh` 的 UT 构建类型（即 `CMAKE_BUILD_TYPE`）。**aarch64 上 ASAN 不稳**（mockcpp `JmpCode` 钩子 + 假栈导致 `stack-use-after-return` 误报、函数入口栈插桩 SEGV），本地迭代建议 `MF_UT_BUILD_TYPE=DEBUG`（仍带 gcov 覆盖率门槛，sanitizer 留给 CI）。 |
 
 ## 安装脚本环境变量
 

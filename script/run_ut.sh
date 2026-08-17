@@ -21,7 +21,8 @@ readonly MOCKCPP_PATH="$PROJECT_FULL_PATH/test/3rdparty/mockcpp"
 readonly TEST_3RD_PATCH_PATH="$PROJECT_FULL_PATH/test/3rdparty/patch"
 readonly MOCK_CANN_PATH="$HYBM_LIB_PATH/cann"
 readonly FINGERPRINT_FILE="$BUILD_PATH/.build_fingerprint"
-readonly BUILD_FINGERPRINT="ASAN-UT-OPEN_ABI"
+: "${MF_UT_BUILD_TYPE:=ASAN}"
+readonly BUILD_FINGERPRINT="${MF_UT_BUILD_TYPE}-UT-OPEN_ABI"
 # Default to 60% of nproc (leave headroom per TTFHW constraint); user can override via env var.
 # Unset OMP_NUM_THREADS to get the real CPU count (some images set OMP_NUM_THREADS=1 which caps nproc).
 if [ -z "${MF_BUILD_JOBS:-}" ]; then
@@ -89,7 +90,7 @@ else
     export MAKE_CMD=make
 fi
 if ! $FAST_MODE || [ ! -f "${BUILD_PATH}/build.ninja" -a ! -f "${BUILD_PATH}/Makefile" ]; then
-    cmake -G "$GENERATOR" -DCMAKE_BUILD_TYPE=ASAN -DBUILD_UT=ON -DBUILD_OPEN_ABI=ON -S . -B ${BUILD_PATH}
+    cmake -G "$GENERATOR" -DCMAKE_BUILD_TYPE=${MF_UT_BUILD_TYPE} -DBUILD_UT=ON -DBUILD_OPEN_ABI=ON -S . -B ${BUILD_PATH}
     $FAST_MODE && echo "${BUILD_FINGERPRINT}" > "${FINGERPRINT_FILE}"
 fi
 ${MAKE_CMD} install -j"${MF_BUILD_JOBS}" -C ${BUILD_PATH}
