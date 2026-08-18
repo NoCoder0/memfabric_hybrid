@@ -4,6 +4,10 @@ file(GLOB_RECURSE memfabric_src
         ${CMAKE_CURRENT_SOURCE_DIR}/utils/*
         ${CMAKE_CURRENT_SOURCE_DIR}/acc_links/*
 )
+set_source_files_properties(
+        ${CMAKE_CURRENT_SOURCE_DIR}/hybm/local_dram_validation_role_test.cpp
+        PROPERTIES COMPILE_DEFINITIONS MF_LOCAL_DRAM_VALIDATION
+)
 ADD_UNIT_TEST(test_memfabric
         FILES ${memfabric_src} ${TEST_SRC_PATHS}/ut_main.cpp
                 ${PROJECT_SMEM_SRC_BASE}/csrc/python_wrapper/mk_transfer_adapter/csrc/transfer_util.cpp
