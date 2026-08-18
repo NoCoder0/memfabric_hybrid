@@ -74,6 +74,9 @@ struct ExchangeContext {
     uint32_t numChPerCore;
     uint32_t numCores;
     uint32_t coreId;
+
+    /* Skip BarrierAllRanks in FullMeshExchange — caller does progressive barrier */
+    bool skipCrossDeviceBarrier = false;
 };
 
 #endif /* ZBAL_AICPU_DEFINES_H */

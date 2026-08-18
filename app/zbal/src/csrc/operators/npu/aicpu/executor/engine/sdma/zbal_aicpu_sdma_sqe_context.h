@@ -123,6 +123,58 @@ inline int AicpuLaunchTask(SqeLocalRingBuffer *buf, volatile stars_channel_info_
     return 0;
 }
 
+/* Submit SQEs without flag SQE or completion wait. For pipelining: SQEs submitted
+ * now run before a later Mc-submit flag (SDMA in-order on same channel). */
+inline int AicpuLaunchTaskNoWait(SqeLocalRingBuffer *buf, volatile stars_channel_info_t *channel)
+{
+    if (channel == nullptr || buf == nullptr) {
+        return ERR_CHANNEL_INVALID;
+    }
+    if (!buf->HasWork()) {
+        return 0;
+    }
+
+    uint32_t sqDepth = channel->sq_depth;
+    uint64_t sqBase = channel->sq_base;
+    uint32_t curTail = channel->sq_tail;
+
+    if (buf->sqeCnt >= sqDepth) {
+        return ERR_CAPACITY_EXCEEDED;
+    }
+
+    for (uint32_t i = 0; i < buf->sqeCnt; i++) {
+        AicpuStarsSdmaSqe *sqe = reinterpret_cast<AicpuStarsSdmaSqe *>(buf->localBuff + i * ZBAL_AICPU_SQE_SIZE);
+        sqe->header.task_id = static_cast<uint16_t>((curTail + i) % sqDepth);
+    }
+
+    volatile uint8_t *sqBasePtr = reinterpret_cast<volatile uint8_t *>(sqBase);
+    for (uint32_t i = 0; i < buf->sqeCnt; i++) {
+        uint32_t hwIdx = (curTail + i) % sqDepth;
+        volatile uint64_t *dst64 = reinterpret_cast<volatile uint64_t *>(sqBasePtr + hwIdx * ZBAL_AICPU_SQE_SIZE);
+        const uint64_t *src64 = reinterpret_cast<const uint64_t *>(buf->localBuff + i * ZBAL_AICPU_SQE_SIZE);
+        constexpr uint32_t sqeWords = ZBAL_AICPU_SQE_SIZE / sizeof(uint64_t);
+        for (uint32_t j = 0; j < sqeWords; j++) {
+            dst64[j] = src64[j];
+        }
+    }
+
+    uintptr_t flushEnd = reinterpret_cast<uintptr_t>(sqBasePtr) + (curTail + buf->sqeCnt) * ZBAL_AICPU_SQE_SIZE;
+    uintptr_t flushAddr = reinterpret_cast<uintptr_t>(sqBasePtr) + curTail * ZBAL_AICPU_SQE_SIZE;
+    constexpr uintptr_t cacheLineSize = 64;
+    flushAddr &= ~(cacheLineSize - 1);
+    for (; flushAddr < flushEnd; flushAddr += cacheLineSize) {
+        __asm__ __volatile__("dc cvac, %0" ::"r"(flushAddr) : "memory");
+    }
+    AicpuMemBarrier();
+
+    uint32_t newTail = (curTail + buf->sqeCnt) % sqDepth;
+    AicpuSqDoorbell(channel, newTail);
+
+    buf->tailSqeIdx = 0;
+    buf->sqeCnt = 0;
+    return 0;
+}
+
 inline int AicpuLaunchTaskMc(SqeLocalRingBuffer *buf, volatile stars_channel_info_t *channel,
                              volatile uint8_t *workspace, uint32_t coreId, uint32_t numCores, uint32_t streamId,
                              uint32_t chIdx)

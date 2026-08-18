@@ -43,14 +43,8 @@ public:
 /* ================================================================
 * FullMeshExchange — all-to-all SDMA write of sendBuf GVA
 *
-* Mirrors AIV ExchangeAddrKernelSmall::ExchangeInputAddrFlag():
-*   1. ranksPerCore = ceil(rankNum / numCores), each core handles subset
-*   2. Per-core scratch (ringBuf end) + ring buffer (ringBuf start), no overlap
-*   3. Each core builds SDMA SQEs for its assigned dstRanks
-*   4. Each core submits via its own channel[0], waits its own flag
-*   5. AicpuCoreBarrier synchronizes all cores
-*
-* Debug: each core logs: chan/fid/sqeCnt → traces per-core independently.
+* Each core handles a subset of dstRanks; SQEs distributed across channels
+* (round-robin). Scratch at ringBuf end holds (sendBuf GVA, waitSymbol).
 * ================================================================ */
 class FullMeshExchange {
 public:
@@ -75,6 +69,7 @@ public:
         const uint32_t numCores = ctx.numCores;
         const uint32_t myCore = ctx.coreId;
         const uint32_t myRank = ctx.aicpuCtx->rankId;
+        const uint32_t numCh = ctx.numChPerCore;
 
         /* ── Step 1: divide ranks across cores ── */
         const uint32_t ranksPerCore = (rankNum + numCores - 1) / numCores;
@@ -89,55 +84,78 @@ public:
             return 0;
         }
 
-        /* ── Step 2: per-core scratch + ring buffer ── */
+        const uint32_t numRanksThisCore = endRank - startRank;
+
+        /* ── Step 2: scratch area at end of core's ring buffer (shared by all channels) ── */
         const uint32_t ringBufSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
         volatile uint8_t *myBuf = AicpuWorkspace::CoreRingBuf(ctx.workspace, myCore);
-        /* scratch area: 2 × uint64_t at end of ring buffer
-        * [0] = sendBuf GVA, [1] = flag sentinel */
         constexpr uint32_t scratchSlots = 2;
         volatile uint64_t *scratch =
             reinterpret_cast<volatile uint64_t *>(myBuf + ringBufSize - scratchSlots * sizeof(uint64_t));
         scratch[0] = ctx.desc->sendBuffer;
-        scratch[1] = ctx.desc->waitSymbol; /* incrementing flag — avoids stale match */
-        /* Flush scratch so SDMA reads correct sendBuf GVA + waitSymbol values.
-         * Without flush, CPU writes stay in cache and SDMA reads stale DRAM data,
-         * causing wrong GVA to be written to exchange area. Critical for Scatter
-         * where sendBuffer (bufferTensor GVA) changes each iteration — stale value
-         * points to freed memory → non-root ranks read wrong rootBufGva → garbage
-         * myDataGva → SDMA address error (cqeStatus=0x3).
-         * Matches AllReduceExchange and RingExchange pattern. */
+        scratch[1] = ctx.desc->waitSymbol;
+        /* Flush scratch — without it, SDMA reads stale DRAM (CPU writes stay in cache) */
         AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[0]));
         AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[1]));
         uint64_t dataSrcGva = reinterpret_cast<uint64_t>(&scratch[0]);
         uint64_t flagSrcGva = reinterpret_cast<uint64_t>(&scratch[1]);
 
-        SqeLocalRingBuffer eb;
-        eb.Init(const_cast<uint8_t *>(myBuf));
+        /* ── Step 3: initialize per-channel ring buffers ── */
+        SqeLocalRingBuffer chBufs[ZBAL_AICPU_MAX_CH_PER_CORE];
+        AicpuCoreRingbufsInit(chBufs, ctx.workspace, myCore);
 
-        /* ── Step 3: build data + flag SQEs ── */
+        /* ── Step 4: distribute GVA exchange SQEs across channels (round-robin) ── */
         const uint32_t strideBytes = ZBAL_AICPU_EXCHANGE_STRIDE * (uint32_t)sizeof(uint64_t);
         const uint64_t flagAreaOff = static_cast<uint64_t>(rankNum) * strideBytes;
 
-        for (uint32_t dstRank = startRank; dstRank < endRank; dstRank++) {
+        for (uint32_t i = 0; i < numRanksThisCore; i++) {
+            uint32_t ch = i % numCh; /* round-robin across channels */
+            uint32_t dstRank = startRank + i;
+
             int64_t delta = (int64_t)dstRank - (int64_t)myRank;
             int64_t devOff = delta * (int64_t)ctx.aicpuCtx->localDeviceMemSize;
             uint64_t dataDst = ctx.aicpuCtx->exchangeGva + (uint64_t)devOff + (uint64_t)myRank * strideBytes;
             uint64_t flagDst =
                 ctx.aicpuCtx->exchangeGva + (uint64_t)devOff + flagAreaOff + (uint64_t)myRank * strideBytes;
-            if (AicpuDispatcher::CopyData(&eb, 0U, dataSrcGva, dataDst, sizeof(uint64_t), ctx.channels[0]) != 0 ||
-                AicpuDispatcher::CopyData(&eb, 0U, flagSrcGva, flagDst, sizeof(uint64_t), ctx.channels[0]) != 0) {
+            if (AicpuDispatcher::CopyData(chBufs, ch, dataSrcGva, dataDst, sizeof(uint64_t), ctx.channels[ch]) != 0 ||
+                AicpuDispatcher::CopyData(chBufs, ch, flagSrcGva, flagDst, sizeof(uint64_t), ctx.channels[ch]) != 0) {
                 return BUILD_ERROR;
             }
         }
 
-        /* ── Step 4: submit + local wait ── */
-        uint32_t fid = AicpuWorkspace::FlagIdx(myCore, ctx.numChPerCore, 0);
-        int dbr = AicpuLaunchTaskMc(&eb, ctx.channels[0], ctx.workspace, myCore, 1, 0, fid);
-        if (dbr == 0 && CompletionFlag(ctx.workspace, fid).Wait() < 0) {
-            dbr = ERR_WAIT_TIMEOUT;
+        /* Step 5: Mc submit GVA exchange (with flag), then wait for GVA flags */
+        bool submitted[ZBAL_AICPU_MAX_CH_PER_CORE] = {};
+        for (uint32_t s = 0; s < numCh; s++) {
+            submitted[s] = chBufs[s].HasWork();
+            if (!submitted[s]) {
+                continue;
+            }
+            uint32_t fid = AicpuWorkspace::FlagIdx(myCore, numCh, s);
+            if (AicpuLaunchTaskMc(&chBufs[s], ctx.channels[s], ctx.workspace, myCore, 1, s, fid) < 0) {
+                submitted[s] = false;
+            }
         }
 
-        /* ── Step 5b: cross-device sync (AIV-style: poll flag area) ── */
+        /* wait for GVA exchange flags */
+        int dbr = 0;
+        for (uint32_t s = 0; s < numCh; s++) {
+            if (!submitted[s]) {
+                continue;
+            }
+            CompletionFlag flag(ctx.workspace, myCore, numCh, s);
+            if (flag.Wait() < 0) {
+                dbr = ERR_WAIT_TIMEOUT;
+            }
+        }
+
+        /* Core barrier before cross-device poll — ensures all cores' local SDMA done */
+        AicpuCoreBarrier(ctx.workspace, numCores);
+
+        /* Step 7: cross-device sync — core 0 polls all ranks' flags.
+         * skipCrossDeviceBarrier: caller does progressive barrier itself. */
+        if (ctx.skipCrossDeviceBarrier) {
+            return (dbr < 0) ? ERR_WAIT_TIMEOUT : 0;
+        }
         if (myCore == 0 && dbr == 0) {
             if (WaitCrossDeviceFullMesh(ctx.aicpuCtx->exchangeGva, flagAreaOff, rankNum, ctx.desc->waitSymbol) != 0) {
                 dbr = ERR_WAIT_TIMEOUT;

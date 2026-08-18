@@ -69,6 +69,10 @@ public:
             exCtx.numChPerCore = numChPerCore;
             exCtx.numCores = numCores;
             exCtx.coreId = coreId;
+            /* ReduceScatter FullMesh: skip BarrierAllRanks — ExecuteFullMesh does progressive barrier. */
+            if (desc->commType == ZBAL_CMD_REDUCE_SCATTER) {
+                exCtx.skipCrossDeviceBarrier = true;
+            }
             int exRet = AddrExchange(desc->commType, op.commAlg, exCtx);
             if (exRet < 0) {
                 return exRet;

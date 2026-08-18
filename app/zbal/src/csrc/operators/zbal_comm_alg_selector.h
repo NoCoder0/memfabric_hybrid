@@ -40,7 +40,7 @@ inline OpExecConfig GetCommOpConfig(uint32_t commType, uint32_t commAlg)
         case ZBAL_CMD_ALLTOALLV:
             return {1, 8};
         case ZBAL_CMD_REDUCE_SCATTER:
-            return {1, 16};
+            return {1, 8}; /* FULL_MESH: 1 core, 8 channels. All N-1 peer reduces at once. */
         case ZBAL_CMD_ALLREDUCE:
         case ZBAL_CMD_BROADCAST:
         case ZBAL_CMD_SCATTER:
@@ -79,6 +79,8 @@ inline uint32_t SelectCommAlg(uint32_t commType, uint32_t rankNum, uint64_t data
             }
             return (rankNum <= ZBAL_AICPU_ALLGATHER_FULLMESH_RANK) ? ZBAL_COMM_ALG_FULL_MESH
                                                                    : ZBAL_COMM_ALG_MESH_DOUBLE_RING;
+        case ZBAL_CMD_REDUCE_SCATTER:
+            return ZBAL_COMM_ALG_FULL_MESH;
         default:
             return ZBAL_COMM_ALG_FULL_MESH;
     }
