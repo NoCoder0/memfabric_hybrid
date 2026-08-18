@@ -212,6 +212,7 @@ StorePtr StoreFactory::CreateStoreByUrl(const std::string &storeUrl, uint16_t mo
         opts.worldSize = worldSize;
         opts.instanceId = parsedStoreUrl.instanceId;
         opts.rankId = rankId;
+        opts.model = model;
         return CreateHaStore(opts);
     }
     TcpStoreOptions opts;
@@ -263,7 +264,7 @@ StorePtr StoreFactory::CreateHaStore(const HaStoreOptions &opts) noexcept
     auto clientDelegate = SmMakeRef<TcpConfigStore>(opts.backend, "", 0, false, true, opts.worldSize, opts.rankId);
     STORE_ASSERT_RETURN(clientDelegate != nullptr, nullptr);
     const auto store =
-        SmMakeRef<HaConfigStore>(opts.backend, clientDelegate, opts.storeUrl, opts.worldSize, opts.instanceId);
+        SmMakeRef<HaConfigStore>(opts.backend, clientDelegate, opts.storeUrl, opts.worldSize, opts.model);
     STORE_ASSERT_RETURN(store != nullptr, nullptr);
 
     const auto ret = store->Startup(tlsOption_);

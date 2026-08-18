@@ -50,13 +50,14 @@ constexpr char BACKEND_LOCK_NAME[] = "backend";
 // ============================================================================
 
 HaConfigStore::HaConfigStore(StoreBackendPtr backend, TcpConfigStorePtr clientDelegate, const std::string &endpoints,
-                             uint32_t worldSize, std::string instanceId)
-    : endpoints_(endpoints), worldSize_(worldSize), backendLockName_(BACKEND_LOCK_NAME), backend_(std::move(backend)),
-      clientDelegate_(std::move(clientDelegate))
+                             uint32_t worldSize, uint16_t model)
+    : endpoints_(endpoints), worldSize_(worldSize), backendLockName_(BACKEND_LOCK_NAME), model_(model),
+      backend_(std::move(backend)), clientDelegate_(std::move(clientDelegate))
 {
-    (void)instanceId;
-    SM_LOG_DEBUG("HaConfigStore constructing, endpoints: " << endpoints << ", worldSize: " << worldSize
-                                                           << ", backendLockName: " << backendLockName_);
+    // clang-format off
+    SM_LOG_DEBUG("HaConfigStore constructing, endpoints: " << endpoints << ", worldSize: " << worldSize <<
+                 ", backendLockName: " << backendLockName_ << ", model: " << model);
+    // clang-format on
 }
 
 void HaConfigStore::Uninitialize() noexcept
@@ -122,6 +123,15 @@ Result HaConfigStore::Startup(const smem_tls_config &tlsConfig) noexcept
 
     tlsConfig_ = tlsConfig;
 
+    // CSM_CLIENT: 只读 leader 地址并作为 follower 连接，不参与选举，避免所有 rank 抢分布式锁。
+    if (model_ == CSM_CLIENT) {
+        SM_LOG_INFO("HaConfigStore in client-only model, skipping election loop, endpoints: " << endpoints_);
+        StartHealthCheckThread();
+        // 必须连接 leader，否则 clientDelegate_ 无 TCP 链路；leader 可能未选出，同步等待重试。
+        ConnectToLeaderAsFollower();
+        return SM_OK;
+    }
+
     SM_LOG_INFO("Entering election loop");
     RunElectionLoop();
     StartHealthCheckThread();
@@ -166,19 +176,11 @@ bool HaConfigStore::IsLeaderAlive(std::string &leaderAddr) noexcept
         return false;
     }
 
-    SM_LOG_INFO("Backend leader: " << leaderAddr << ", checking connectivity");
-
-    std::string fullUrl = "tcp://" + leaderAddr;
-    std::string ip;
-    uint16_t port = 0;
-    if (!NetworkEndpointUtil::ExtractIpAndPort(fullUrl, ip, port)) {
-        SM_LOG_ERROR("Invalid leader address format: " << leaderAddr);
-        return false;
-    }
-
-    bool reachable = NetworkEndpointUtil::CheckConnectivity(ip, port);
-    SM_LOG_INFO("Leader " << leaderAddr << " reachable: " << (reachable ? "true" : "false"));
-    return reachable;
+    // clang-format off
+    SM_LOG_INFO("Backend leader: " << leaderAddr <<
+                 ", liveness governed by etcd lease (key auto-deleted on lease expiry)");
+    // clang-format on
+    return true;
 }
 
 Result HaConfigStore::TryBecomeLeader() noexcept
@@ -223,6 +225,8 @@ Result HaConfigStore::TryBecomeLeader() noexcept
         SM_LOG_INFO("Registered MetaService address in backend: " << metaServiceAddr);
     }
 
+    NotifyLeaderChange();
+
     // Connect client delegate to self
     auto clientRet = ConnectClient(leaderBindIp_, leaderBindPort_);
     if (clientRet != SM_OK) {
@@ -243,7 +247,9 @@ bool HaConfigStore::HandleLeaderExists(const std::string &leaderAddr) noexcept
     SM_LOG_INFO("Found alive leader: " << leaderAddr << ", becoming follower");
     if (BecomeFollower(leaderAddr) != SM_OK) {
         SM_LOG_ERROR("Becoming follower failed, leader: " << leaderAddr);
-        backend_->UnInitialize();
+        // Keep the backend connection alive: closing the process-global etcd client
+        // here races with the health-check thread (Get on an uninitialized client),
+        // and the next election loop iteration reuses the connection directly.
         return false;
     }
     SM_LOG_INFO("Election loop exiting: became follower of " << leaderAddr);
@@ -448,7 +454,13 @@ void HaConfigStore::ReElectionThreadFunc()
 {
     SM_LOG_INFO("Re-election thread started");
     if (!stopFlag_.load(std::memory_order_acquire)) {
-        RunElectionLoop();
+        if (model_ == CSM_CLIENT) {
+            // client-only: 断链后不参与选举（避免抢分布式锁），直接重连当前 leader
+            SM_LOG_INFO("Client-only model, reconnecting to leader instead of election");
+            ConnectToLeaderAsFollower();
+        } else {
+            RunElectionLoop();
+        }
     }
     reElectionInProgress_.store(false, std::memory_order_release);
     NotifyLeaderChange();
@@ -487,7 +499,47 @@ void HaConfigStore::TriggerReElectionAsync() noexcept
 // Client Connection
 // ============================================================================
 
-Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexcept
+// CSM_CLIENT 专用：作为 follower 连接当前 leader，leader 未就绪时周期性重试。
+void HaConfigStore::ConnectToLeaderAsFollower() noexcept
+{
+    constexpr uint32_t kClientConnectRetryMs = 2000;
+    constexpr uint32_t kClientConnectMaxAttempts = 60; // 最长约 120s
+    constexpr int kClientConnectRetryTimes = 3;
+    for (uint32_t attempt = 1; attempt <= kClientConnectMaxAttempts; ++attempt) {
+        if (stopFlag_.load(std::memory_order_acquire)) {
+            SM_LOG_WARN("Stop flag set, abort client leader connect");
+            return;
+        }
+        std::string leaderAddr;
+        const bool hasLeader = backend_->Get(KEY_LEADER, leaderAddr) == SUCCESS && !leaderAddr.empty();
+        if (hasLeader) {
+            std::string ip;
+            uint16_t port = 0;
+            const bool addrOk = NetworkEndpointUtil::ExtractIpAndPort("tcp://" + leaderAddr, ip, port) && port != 0;
+            if (addrOk) {
+                const auto connectRet = ConnectClient(ip, port, kClientConnectRetryTimes);
+                if (connectRet == SM_OK) {
+                    SM_LOG_INFO("Client-only HaConfigStore connected to leader: " << leaderAddr);
+                    NotifyLeaderChange();
+                    return;
+                }
+                SM_LOG_WARN("Client-only connect to leader failed: " << leaderAddr << ", ret: " << connectRet);
+                std::this_thread::sleep_for(std::chrono::milliseconds(kClientConnectRetryMs));
+                continue;
+            }
+            SM_LOG_WARN("Invalid leader address from backend: " << leaderAddr);
+        } else {
+            SM_LOG_INFO("No leader registered yet, attempt " << attempt << "/" << kClientConnectMaxAttempts);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kClientConnectRetryMs));
+    }
+    // clang-format off
+    SM_LOG_ERROR("Client-only HaConfigStore failed to connect to leader after " << kClientConnectMaxAttempts <<
+                 " attempts");
+    // clang-format on
+}
+
+Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port, int reconnectRetryTimes) noexcept
 {
     SM_ASSERT_RETURN(clientDelegate_ != nullptr, SM_ERROR);
     SM_LOG_INFO("Target: " << ip << ":" << port);
@@ -502,7 +554,7 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexce
     // Check if already started
     if (clientDelegate_->SetServerInfo(ip, port)) {
         SM_LOG_INFO("Reconnecting to: " << ip << ":" << port);
-        Result reconnectRet = clientDelegate_->ReConnectAfterBroken(-1);
+        Result reconnectRet = clientDelegate_->ReConnectAfterBroken(reconnectRetryTimes);
         if (reconnectRet != SM_OK) {
             SM_LOG_ERROR("ReConnectAfterBroken failed, ret: " << reconnectRet);
         } else {
@@ -543,7 +595,11 @@ Result HaConfigStore::BecomeFollower(const std::string &leaderIpPort) noexcept
     }
 
     SM_LOG_INFO("Connecting to leader, ip: " << ip << ", port: " << port);
-    auto connectRet = ConnectClient(ip, port);
+    // Bound the reconnect attempts so a dead leader's lease-expiry window (PUT_LEASE_TTL_SEC)
+    // is not blocked by a long retry loop: fail fast, return to the election loop, and let
+    // the etcd lease expiry drive the next election attempt.
+    constexpr int kFollowerConnectRetryTimes = 3;
+    auto connectRet = ConnectClient(ip, port, kFollowerConnectRetryTimes);
     SM_ASSERT_RETURN(connectRet == SM_OK, connectRet);
     SM_LOG_INFO("Connection initiated to leader");
     NotifyLeaderChange();
@@ -688,22 +744,16 @@ std::string HaConfigStore::GetCommonPrefix() noexcept
 
 StorePtr HaConfigStore::GetCoreStore() noexcept
 {
-    // In HA mode the join/leave path (SmemBmEntry::Join/Leave and
-    // SetupGroupManagerCallbacks) needs the underlying TcpConfigStore: it
-    // dynamic_casts the core store to both SmemGroupManager (for Join/Leave)
-    // and TcpConfigStore (for EnableAsyncMode/GetAsyncDispatcher). HaConfigStore
-    // itself is neither, so returning `this` made join always fail with
-    // "group manager is nullptr" under `etcd://`.
-    //
-    // clientDelegate_ is a single, stable TcpConfigStore created at HA
-    // construction; on leader change HaConfigStore::ConnectClient re-points the
-    // SAME object to the new leader via SetServerInfo + ReConnectAfterBroken
-    // (it is never replaced — see ConnectClient/Uninitialize). Returning it
-    // here is therefore safe for callers that cache the result (e.g.
-    // PrefixConfigStore::baseStore_): the cached pointer stays live and keeps
-    // following the elected leader across failovers.
+    // Join/Leave 与异步接口依赖底层 TcpConfigStore（+=SmemGroupManager 能力），此处返回
+    // 稳定的 clientDelegate_；它在 leader 切换时原地重连（SetServerInfo+ReConnectAfterBroken），
+    // 缓存该指针的调用方能持续跟随新 leader。
     SM_ASSERT_RETURN(clientDelegate_ != nullptr, nullptr);
     return Convert<TcpConfigStore, ConfigStore>(clientDelegate_);
+}
+
+HaConfigStore *HaConfigStore::AsHaConfigStore() noexcept
+{
+    return this;
 }
 
 void HaConfigStore::RegisterReconnectHandler(ConfigStoreReconnectHandler callback) noexcept

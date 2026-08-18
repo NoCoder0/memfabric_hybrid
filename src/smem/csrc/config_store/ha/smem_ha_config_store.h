@@ -55,7 +55,7 @@ constexpr uint32_t HEALTH_CHECK_INTERVAL_SEC = 4;
 class HaConfigStore : public ConfigStoreManager {
 public:
     HaConfigStore(StoreBackendPtr backend, TcpConfigStorePtr clientDelegate, const std::string &endpoints,
-                  uint32_t worldSize, std::string instanceId = "");
+                  uint32_t worldSize, uint16_t model = 0);
     ~HaConfigStore() override;
 
     HaConfigStore(const HaConfigStore &) = delete;
@@ -89,6 +89,7 @@ public:
     std::string GetCompleteKey(const std::string &key) noexcept override;
     std::string GetCommonPrefix() noexcept override;
     StorePtr GetCoreStore() noexcept override;
+    HaConfigStore *AsHaConfigStore() noexcept override;
 
     // --- Connection and Lifecycle Management ---
     void RegisterReconnectHandler(ConfigStoreReconnectHandler callback) noexcept override;
@@ -116,6 +117,10 @@ public:
     void RegisterLeaderChangeCallback(LeaderChangeCallback cb) noexcept
     {
         leaderChangeCallback_ = std::move(cb);
+        // 选举在注册回调前已同步完成，若已是 leader 则补发一次当前状态。
+        if (leaderChangeCallback_ && IsLeader()) {
+            NotifyLeaderChange();
+        }
     }
 
     StoreBackendPtr GetBackend() const noexcept
@@ -135,9 +140,12 @@ private:
     bool HandleLeaderExists(const std::string &leaderAddr) noexcept;
     bool TryAcquireLeadership(bool &becameLeader, uint32_t electionAttempt) noexcept;
     Result BecomeFollower(const std::string &leaderIpPort) noexcept;
+    // CSM_CLIENT (rank/local-service) 专用：读取 backend 当前 leader 并作为
+    // follower 连接，周期性重试直到成功或 stop。
+    void ConnectToLeaderAsFollower() noexcept;
     void StartServer() noexcept;
     void StopServer() noexcept;
-    Result ConnectClient(const std::string &ip, uint16_t port) noexcept;
+    Result ConnectClient(const std::string &ip, uint16_t port, int reconnectRetryTimes = -1) noexcept;
     void HealthCheckThreadFunc() noexcept;
     void Uninitialize() noexcept;
 
@@ -155,6 +163,7 @@ private:
     const std::string endpoints_;
     const uint32_t worldSize_;
     const std::string backendLockName_;
+    const uint16_t model_ = 0;
     std::string leaderBindIp_;         // Only meaningful on leader node
     uint16_t leaderBindPort_ = 0;      // Only meaningful on leader node
     uint16_t metaServiceBindPort_ = 0; // MetaService port, selected from port range excluding leaderBindPort_

@@ -47,6 +47,8 @@ using ConfigStoreServerOpHandler =
     std::function<int32_t(const uint32_t, const std::string &, std::vector<uint8_t> &, const StoreBackendPtr &)>;
 using ConfigStoreServerBrokenHandler = std::function<void(const uint32_t, StoreBackendPtr &)>;
 
+class HaConfigStore;
+
 class ConfigStore : virtual public SmReferable {
 public:
     ~ConfigStore() override = default;
@@ -240,6 +242,14 @@ public:
     virtual std::string GetCommonPrefix() noexcept = 0;
 
     virtual SmRef<ConfigStore> GetCoreStore() noexcept = 0;
+
+    /**
+     * @brief 返回 HaConfigStore 实例（若底层是 HA 模式），否则返回 nullptr
+     */
+    virtual HaConfigStore *AsHaConfigStore() noexcept
+    {
+        return nullptr;
+    }
 
     /**
      * @brief Register server broken handler

@@ -25,6 +25,7 @@
 #undef protected
 #undef private
 #include "acc_tcp_link_complex_default.h"
+#include "mf_monotonic_time.h"
 #include "network_endpoint_util.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
@@ -40,7 +41,6 @@ constexpr char K_INVALID_LEADER_ADDRESS[] = "invalid";
 constexpr char K_INVALID_LEADER_VALUE[] = "invalid-leader";
 constexpr char K_RECOVERED_WORLD_SIZE_VALUE[] = "8";
 constexpr char K_INVALID_WORLD_SIZE_VALUE[] = "bad";
-constexpr char K_CLUSTER_ID[] = "cluster-a";
 constexpr char K_BACKEND_LOCK_NAME[] = "backend";
 constexpr uint16_t K_STORE_PORT = 19000;
 constexpr uint32_t K_DEFAULT_WORLD_SIZE = 4;
@@ -232,7 +232,7 @@ TEST_F(SmemHaConfigStoreTest, ConstructorKeepsBackendLockNameUnqualified)
 {
     auto backend = MakeBackend();
     auto client = MakeClientDelegate();
-    HaConfigStore store(backend, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE, K_CLUSTER_ID);
+    HaConfigStore store(backend, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE);
 
     EXPECT_EQ(K_BACKEND_LOCK_NAME, store.backendLockName_);
 }
@@ -259,16 +259,16 @@ TEST_F(SmemHaConfigStoreTest, IsLeaderAliveHandlesBackendResponseAndConnectivity
         outValue.assign(value.begin(), value.end());
         return StoreErrorCode::SUCCESS;
     };
-    EXPECT_FALSE(store.IsLeaderAlive(leaderAddr));
+    // Liveness is governed by the etcd lease: any non-empty KEY_LEADER value
+    // implies a live leader (the key is auto-deleted on lease expiry), so no
+    // TCP connectivity probe is performed.
+    EXPECT_TRUE(store.IsLeaderAlive(leaderAddr));
 
     backend->getHook = [](const std::string &, std::vector<uint8_t> &outValue) {
         const std::string value = K_LEADER_ADDRESS;
         outValue.assign(value.begin(), value.end());
         return StoreErrorCode::SUCCESS;
     };
-    MOCKER_CPP(&NetworkEndpointUtil::CheckConnectivity, bool (*)(const std::string &, uint16_t))
-        .stubs()
-        .will(returnValue(true));
     EXPECT_TRUE(store.IsLeaderAlive(leaderAddr));
 }
 
@@ -624,10 +624,14 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsToRecove
 
     // Set aliveRankFromBackend_ = {0,1} to simulate recovered ranks.
     server.aliveRankFromBackend_ = {0, 1};
+    // Seed startupTimestamp_ (normally set in Startup()) so the recovery window
+    // is not immediately expired in this single-threaded test.
+    server.startupTimestamp_ = ock::mf::MonotonicTime::TimeUs();
     // Initially empty reconnectedRankSet_.
     server.state_.store(SS_INITED);
 
-    // First call: INITED → RECOVERING (not all reconnected).
+    // First call: INITED → RECOVERING (not all reconnected, window not expired)
+    // → new links rejected until recovery completes.
     EXPECT_FALSE(server.CanReceiveNewLink());
     EXPECT_EQ(SS_RECOVERING, server.state_.load());
 
@@ -635,8 +639,9 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsToRecove
     server.reconnectedRankSet_.insert(0);
     server.reconnectedRankSet_.insert(1);
 
-    // Second call: allReconnected → RECOVERED (new state machine exits to RECOVERED first).
-    EXPECT_FALSE(server.CanReceiveNewLink());
+    // Second call: all reconnected → recovery completes (SS_RECOVERED),
+    // so the server accepts new links again.
+    EXPECT_TRUE(server.CanReceiveNewLink());
     EXPECT_EQ(SS_RECOVERED, server.state_.load());
 
     // Manually advance to NORMAL (as LaunchCleanupThread would do).

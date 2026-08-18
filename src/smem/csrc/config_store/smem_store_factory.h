@@ -85,6 +85,7 @@ private:
         uint32_t worldSize = 0;
         std::string instanceId;
         int32_t rankId = -1;
+        uint16_t model = 0;
     };
     struct TcpStoreOptions {
         StoreBackendPtr backend;

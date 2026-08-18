@@ -364,7 +364,7 @@ Result SmemBmEntryManager::GetMetaServiceInfo(std::string &ip, uint16_t *port) c
         SM_LOG_ERROR("GetMetaServiceInfo: confStore_ is null, not initialized");
         return SM_ERROR;
     }
-    auto *haStore = dynamic_cast<HaConfigStore *>(confStore_->GetCoreStore().Get());
+    auto *haStore = confStore_->AsHaConfigStore();
     if (haStore == nullptr) {
         SM_LOG_ERROR("GetMetaServiceInfo: underlying store is not HaConfigStore");
         return SM_ERROR;

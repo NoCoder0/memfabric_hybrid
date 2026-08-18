@@ -62,6 +62,10 @@ const (
 	// If process dies, lock is released after this duration.
 	SessionTTL = 10
 
+	// LockAcquireTimeout bounds how long a distributed lock acquisition waits.
+	// A stale lock key from a killed leader must not wedge the election loop.
+	LockAcquireTimeout = 30 * time.Second
+
 	// CleanupTimeout defines the timeout for cleanup operations during Close.
 	CleanupTimeout = 2 * time.Second
 )
@@ -191,14 +195,19 @@ func Etcd_New(endpoints *C.char, username *C.char, password *C.char, timeoutSeco
 	}
 
 	config := clientv3.Config{
-		Endpoints:			eps,
-		DialTimeout:		  dur,
-		Username:			 goUsername,
-		Password:			 goPassword,
-		PermitWithoutStream:  true,
-		DialKeepAliveTime:	10 * time.Second,
+		Endpoints:   eps,
+		DialTimeout: dur,
+		Username:    goUsername,
+		Password:    goPassword,
+		// Only send keepalive PINGs while an RPC stream is active. Sending
+		// pings on idle connections (PermitWithoutStream=true) with a short
+		// interval triggers the etcd server's keepalive enforcement policy,
+		// which responds with GOAWAY "too_many_pings" and silently drops the
+		// connection (first Get then fails with context deadline exceeded).
+		PermitWithoutStream:  false,
+		DialKeepAliveTime:    30 * time.Second,
 		DialKeepAliveTimeout: 3 * time.Second,
-		AutoSyncInterval:	 time.Minute,
+		AutoSyncInterval:     time.Minute,
 	}
 
 	cli, err := clientv3.New(config)
@@ -445,8 +454,12 @@ func Etcd_PrefixGet(client *C.EtcdClient, cCtx *C.smem_store_prefix_get_ctx_t, _
 		cKey := C.CString(string(kv.Key))
 
 		if cKey == nil || cValue == nil {
-			if cKey != nil { C.free(unsafe.Pointer(cKey)) }
-			if cValue != nil { C.free(cValue) }
+			if cKey != nil {
+				C.free(unsafe.Pointer(cKey))
+			}
+			if cValue != nil {
+				C.free(cValue)
+			}
 			w.setError(fmt.Errorf("memory allocation failed"))
 			return -1
 		}
@@ -553,7 +566,13 @@ func etcdLockInternal(client *C.EtcdClient, lockName string) C.int {
 	mutex := concurrency.NewMutex(w.session, lockName)
 	w.mutex = mutex
 	w.mu.Unlock()
-	err := mutex.Lock(context.Background())
+	// Bound the lock wait: context.Background() would block forever if a stale
+	// lock key (from a killed leader) never expires, wedging the election loop.
+	// On timeout, clean up the session so its lease keepalive stops and the lock
+	// key does not accumulate.
+	lockCtx, lockCancel := context.WithTimeout(context.Background(), LockAcquireTimeout)
+	err := mutex.Lock(lockCtx)
+	lockCancel()
 	if err != nil {
 		w.setError(err)
 

@@ -330,6 +330,7 @@ private:
     void EnqueueSend(const SendTask &task) noexcept;
     void EnqueueBatchSend(std::vector<SendTask> &&tasks) noexcept;
     void SendWorkerTask() noexcept;
+    uint64_t SendTaskKey(const SendTask &t) const noexcept;
 
     // Request-id encoding: high 32 bits = node identifier, low 32 bits = sequence number.
     static constexpr uint32_t reqIdShift = 32U;
@@ -353,6 +354,7 @@ private:
     std::mutex sendMutex_;
     std::condition_variable sendCond_;
     std::vector<SendTask> sendQueue_;
+    std::unordered_set<uint64_t> pendingSendKeys_; // dedup keys: (srcRank<<40)|(op<<32)|(linkIdx&0xffffffff)
     std::atomic<bool> running_{false};
     std::atomic<uint32_t> reqSeq_{0};
 };

@@ -21,7 +21,7 @@ namespace smem {
 class PrefixConfigStore : public ConfigStoreManager {
 public:
     PrefixConfigStore(const StorePtr &base, std::string prefix) noexcept
-        : baseStore_(Convert<ConfigStore, ConfigStoreManager>(base->GetCoreStore())),
+        : baseStore_(Convert<ConfigStore, ConfigStoreManager>(base->GetCoreStore())), haStore_(base->AsHaConfigStore()),
           keyPrefix_{base->GetCommonPrefix().append(std::move(prefix))}
     {}
 
@@ -116,6 +116,12 @@ public:
         return Convert<ConfigStoreManager, ConfigStore>(baseStore_);
     }
 
+    HaConfigStore *AsHaConfigStore() noexcept override
+    {
+        // baseStore_ 是 clientDelegate（TcpConfigStore），HA 实例在构造时缓存于 haStore_。
+        return const_cast<HaConfigStore *>(haStore_);
+    }
+
     void RegisterReconnectHandler(ConfigStoreReconnectHandler callback) noexcept override
     {
         if (baseStore_ == nullptr) {
@@ -160,6 +166,7 @@ protected:
 
 private:
     const StoreManagerPtr baseStore_;
+    const HaConfigStore *haStore_;
     const std::string keyPrefix_;
 };
 

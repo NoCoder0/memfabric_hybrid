@@ -33,7 +33,7 @@ namespace smem {
 std::atomic<uint64_t> StoreWaitContext::idGen_{1UL};
 std::atomic<uint32_t> g_ctrlReqSeq{0};
 constexpr uint16_t MAX_U16_INDEX = 65535;
-constexpr uint64_t SERVER_RECOVER_TIME = 10 * 1000 * 1000; // 10s
+constexpr uint64_t SERVER_RECOVER_TIME = 60 * 1000 * 1000; // 60s
 constexpr uint64_t RECOVER_PERIOD_TIME = 10;               // 10s
 constexpr uint32_t HEARTBEAT_TIMEOUT = 30;
 constexpr int32_t EPHEMERAL_KEY_TTL_SEC = 5;
@@ -166,7 +166,10 @@ Result AccStoreServer::Startup(const smem_tls_config &tlsConfig) noexcept
     rankStateThread_ = std::thread{[this]() { RankStateTask(); }};
     checkerThread_ = std::thread{[this]() { CheckerThreadTask(); }};
     groupManager_->Start();
+    // RestoreFromEtcdIfNeeded 内部需再次获取 storeMutex_（非递归锁），先释放避免自死锁。
+    guard.unlock();
     RestoreFromEtcdIfNeeded();
+    guard.lock();
     STORE_LOG_DEBUG("startup acc tcp server on port: " << listenPort_);
     if (!backend_->IsDistributed()) {
         return SM_OK;
@@ -261,30 +264,38 @@ Result AccStoreServer::ReceiveMessageHandler(const ock::acc::AccTcpRequestContex
 // call in storeMutex_
 bool AccStoreServer::CanReceiveNewLink()
 {
-    uint32_t srcState = state_.load();
-    uint32_t dstState = SS_NORMAL;
-    while (srcState == SS_INITED || srcState == SS_RECOVERING) {
-        if (srcState == SS_INITED) {
-            dstState = skipRecover_ ? SS_NORMAL : SS_RECOVERING;
-            if (state_.compare_exchange_strong(srcState, dstState)) {
-                STORE_LOG_INFO("change server state from INITED to " << (skipRecover_ ? "NORMAL" : "RECOVER"));
-                if (dstState == SS_NORMAL) {
-                    recoveryCond_.notify_all();
-                }
-                break;
+    uint32_t state = state_.load();
+    if (state == SS_INITED) {
+        const uint32_t dstState = skipRecover_ ? SS_NORMAL : SS_RECOVERING;
+        if (state_.compare_exchange_strong(state, dstState)) {
+            STORE_LOG_INFO("change server state from INITED to " << (skipRecover_ ? "NORMAL" : "RECOVER"));
+            if (dstState == SS_NORMAL) {
+                recoveryCond_.notify_all();
             }
         }
-        if (srcState == SS_RECOVERING && CanExitRecover(srcState)) {
-            break;
-        }
+        // CAS 成功/失败都不会保证把最新值写回 state，需重新加载再继续处理。
+        state = state_.load();
     }
-
-    return (state_.load() == SS_NORMAL);
+    if (state == SS_RECOVERING) {
+        // 无法退出恢复时保持 RECOVERING 拒绝新连接，由后续重连或超时推进状态，避免自旋。
+        CanExitRecover(state);
+        state = state_.load();
+    }
+    // SS_RECOVERED 表示恢复完成，必须接受新连接（无旧 rank 时 cleanupThread 被跳过）。
+    return (state == SS_NORMAL || state == SS_RECOVERED);
 }
 
 bool AccStoreServer::CanExitRecover(uint32_t &srcState)
 {
     uint64_t nowT = mf::MonotonicTime::TimeUs();
+    // 无旧 rank 时立即退出恢复，避免第二任 leader 停在 RECOVERING 拒绝新连接。
+    if (aliveRankFromBackend_.empty()) {
+        if (state_.compare_exchange_strong(srcState, SS_RECOVERED)) {
+            STORE_LOG_INFO("state RECOVERED (no old ranks to recover)");
+            recoveryCond_.notify_all();
+        }
+        return true;
+    }
     // Exit recovery when:
     // 1. All old ranks (aliveRankFromBackend_) have reconnected (in reconnectedRankSet_), OR
     // 2. SERVER_RECOVER_TIME (60s) timeout kicks in
@@ -307,10 +318,16 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
     uint32_t rankId = static_cast<uint32_t>(req.rankId & 0xFFFFFFFF);
     STORE_LOG_INFO("l:" << link->Id() << " ws:" << worldSize << " r:" << rankId << " rec:" << (int)req.reconnect);
     if (worldSize_ == std::numeric_limits<uint32_t>::max()) {
-        STORE_ASSERT_RETURN(PersistWorldSize(worldSize) == SUCCESS, SM_ERROR);
-        worldSize_ = worldSize;
-        STORE_LOG_INFO("Success to fix world size:" << worldSize_);
-    } else if (worldSize_ != worldSize) {
+        // UINT32_MAX 表示未指定（如 follower），保持 worldSize_ 未固定，等待携带 world size 的 rank 连接。
+        if (worldSize != std::numeric_limits<uint32_t>::max()) {
+            STORE_ASSERT_RETURN(PersistWorldSize(worldSize) == SUCCESS, SM_ERROR);
+            worldSize_ = worldSize;
+            STORE_LOG_INFO("Success to fix world size:" << worldSize_);
+        } else {
+            STORE_LOG_INFO("Connector world size unspecified, keep world size unfixed");
+        }
+    } else if (worldSize_ != worldSize && worldSize != std::numeric_limits<uint32_t>::max()) {
+        // 未指定 world size 的连接跟随已固定值，避免误拒后续 follower/rank。
         STORE_LOG_ERROR("record world size: " << worldSize_ << " receive: " << worldSize);
         return SM_INVALID_PARAM;
     }
@@ -1421,8 +1438,8 @@ Result AccStoreServer::LaunchCleanupThread()
         return SM_OK;
     }
 
-    // Launch recovery thread: 10s window for old ranks to reconnect,
-    // then cleanup orphans and set status active.
+    // Launch recovery thread: SERVER_RECOVER_TIME window for old ranks to reconnect
+    // (polled every RECOVER_PERIOD_TIME), then cleanup orphans and set status active.
     if (cleanupThread_.joinable()) {
         cleanupThread_.join();
     }
@@ -1431,8 +1448,13 @@ Result AccStoreServer::LaunchCleanupThread()
         STORE_LOG_INFO("LaunchCleanupThread recovery before wait for state...");
         {
             std::unique_lock<std::mutex> recoveryLock(recoveryMutex_);
-            recoveryCond_.wait_for(recoveryLock, std::chrono::seconds(RECOVER_PERIOD_TIME),
-                                   [this]() { return state_.load() >= SS_RECOVERED; });
+            // 恢复窗口为 SERVER_RECOVER_TIME：以 RECOVER_PERIOD_TIME 为轮询周期
+            // 循环等待，期间 rank 全部重连（CanExitRecover 置位 SS_RECOVERED）则提前退出。
+            const uint64_t recoverDeadlineT = startupTimestamp_ + SERVER_RECOVER_TIME;
+            while (state_.load() < SS_RECOVERED && mf::MonotonicTime::TimeUs() <= recoverDeadlineT) {
+                recoveryCond_.wait_for(recoveryLock, std::chrono::seconds(RECOVER_PERIOD_TIME),
+                                       [this]() { return state_.load() >= SS_RECOVERED; });
+            }
         }
         STORE_LOG_INFO("LaunchCleanupThread recovery after wait for state: " << static_cast<int>(state_.load()));
 

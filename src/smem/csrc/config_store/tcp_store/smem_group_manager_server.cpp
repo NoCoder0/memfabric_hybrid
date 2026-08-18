@@ -24,6 +24,13 @@ namespace ock::smem {
 // Each alive rank needs two ADD tasks (src->newRank and newRank->src) to build bidirectional links.
 constexpr size_t K_ADD_DIRECTIONS = 2;
 
+// SendTaskKey packs srcRank into the high bits, op into bits 32..39 and linkIdx
+// into the low 32 bits, so distinct ops on the same link (e.g. REMOVE then CLOSE
+// during teardown) are queued independently instead of being deduped together.
+constexpr uint32_t K_SEND_TASK_LINK_IDX_MASK = 0xFFFFFFFFU;
+constexpr uint32_t K_SEND_TASK_OP_SHIFT = 32U;
+constexpr uint32_t K_SEND_TASK_SRC_RANK_SHIFT = 40U;
+
 SmemGroupManagerServer::SmemGroupManagerServer(SmemGroupCommandSender sender, const uint32_t maxRanks) noexcept
     : sender_(std::move(sender)), maxRanks_(maxRanks > SMEM_RANK_MAX ? SMEM_RANK_MAX : maxRanks)
 {
@@ -480,6 +487,7 @@ void SmemGroupManagerServer::HandleLinkConnecting(LinkScanContext &ctx,
         return;
     }
     if (IsTimeout(ctx.elapsedMs)) {
+        ctx.tr.retryCount++;
         establishJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
     }
 }
@@ -1154,6 +1162,10 @@ void SmemGroupManagerServer::EnqueueSend(const SendTask &task) noexcept
     SendTask t = task;
     t.requestId = (static_cast<uint64_t>(maxRanks_ + 1) << reqIdShift) | g_ctrlReqSeq.fetch_add(1);
     std::lock_guard<std::mutex> lk(sendMutex_);
+    uint64_t key = SendTaskKey(t);
+    if (!pendingSendKeys_.insert(key).second) {
+        return;
+    }
     sendQueue_.push_back(t);
     sendCond_.notify_one();
 }
@@ -1164,12 +1176,28 @@ void SmemGroupManagerServer::EnqueueBatchSend(std::vector<SendTask> &&tasks) noe
         return;
     }
     auto base = static_cast<uint64_t>(maxRanks_ + 1) << reqIdShift;
+    std::lock_guard<std::mutex> lk(sendMutex_);
+    bool enqueued = false;
     for (auto &t : tasks) {
         t.requestId = base | g_ctrlReqSeq.fetch_add(1);
+        uint64_t key = SendTaskKey(t);
+        if (!pendingSendKeys_.insert(key).second) {
+            continue;
+        }
+        sendQueue_.push_back(t);
+        enqueued = true;
     }
-    std::lock_guard<std::mutex> lk(sendMutex_);
-    sendQueue_.insert(sendQueue_.end(), std::make_move_iterator(tasks.begin()), std::make_move_iterator(tasks.end()));
-    sendCond_.notify_one();
+    if (enqueued) {
+        sendCond_.notify_one();
+    }
+}
+
+uint64_t SmemGroupManagerServer::SendTaskKey(const SendTask &t) const noexcept
+{
+    const uint64_t srcRankFlag = static_cast<uint64_t>(t.srcRank) << K_SEND_TASK_SRC_RANK_SHIFT;
+    const uint64_t opFlag = static_cast<uint64_t>(t.op) << K_SEND_TASK_OP_SHIFT;
+    const uint64_t linkIdxLow = static_cast<uint64_t>(t.linkIdx) & K_SEND_TASK_LINK_IDX_MASK;
+    return srcRankFlag | opFlag | linkIdxLow;
 }
 
 /*
@@ -1285,6 +1313,7 @@ void SmemGroupManagerServer::SendWorkerTask() noexcept
                 continue;
             }
             batch.swap(sendQueue_);
+            pendingSendKeys_.clear();
         }
         ProcessBatch(batch);
     }
