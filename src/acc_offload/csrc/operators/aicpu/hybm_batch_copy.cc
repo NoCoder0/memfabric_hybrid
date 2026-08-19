@@ -13,6 +13,7 @@
 #include "hybm_batch_copy.h"
 
 #include <array>
+#include <cinttypes>
 #include <chrono>
 #include <limits>
 #include <new>
@@ -370,10 +371,39 @@ void ClearUsedCompletionCells(const BatchCopyTransfers &transfers)
     DeviceMemoryBarrier();
 }
 
-int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers)
+void RecordWqeBuildTime(HybmBatchCopyTiming *timing)
 {
+    if (timing != nullptr) {
+        timing->wqeBuildNs = HybmBatchCopyNowNs() - timing->wqeBuildStartNs;
+    }
+}
+
+int32_t EndBatchModeAndRecordTime(HybmBatchCopyTiming *timing)
+{
+    uint64_t launchTaskStartNs = 0U;
+    if (timing != nullptr) {
+        launchTaskStartNs = HybmBatchCopyNowNs();
+    }
+    const int32_t ret = static_cast<int32_t>(HybmBatchCopyEndBatchMode());
+    if (timing != nullptr) {
+        const uint64_t launchTaskEndNs = HybmBatchCopyNowNs();
+        timing->launchTaskNs = launchTaskEndNs - launchTaskStartNs;
+        timing->completionWaitStartNs = launchTaskEndNs;
+    }
+    return ret;
+}
+
+int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers, HybmBatchCopyTiming *timing)
+{
+    if (timing != nullptr) {
+        timing->wqeBuildStartNs = HybmBatchCopyNowNs();
+    }
     auto ret = static_cast<int32_t>(HybmBatchCopyStartBatchMode());
+    if (timing != nullptr) {
+        timing->batchModeStartNs = HybmBatchCopyNowNs() - timing->wqeBuildStartNs;
+    }
     if (ret != BM_OK) {
+        RecordWqeBuildTime(timing);
         return ret;
     }
     for (uint16_t index = 0U; index < transfers.count; ++index) {
@@ -381,7 +411,8 @@ int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers)
         if (ret != BM_OK) {
             HYBM_LOGE(ret, "BatchCopy lane submit failed, laneIndex=%u descriptorCount=%u", index,
                       transfers.values[index].descriptorCount);
-            (void)HybmBatchCopyEndBatchMode();
+            RecordWqeBuildTime(timing);
+            (void)EndBatchModeAndRecordTime(timing);
             return ret;
         }
     }
@@ -390,11 +421,13 @@ int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers)
         if (ret != BM_OK) {
             HYBM_LOGE(ret, "BatchCopy lane completion submission failed, laneIndex=%u descriptorCount=%u", index,
                       transfers.values[index].descriptorCount);
-            (void)HybmBatchCopyEndBatchMode();
+            RecordWqeBuildTime(timing);
+            (void)EndBatchModeAndRecordTime(timing);
             return ret;
         }
     }
-    return static_cast<int32_t>(HybmBatchCopyEndBatchMode());
+    RecordWqeBuildTime(timing);
+    return EndBatchModeAndRecordTime(timing);
 }
 
 bool AllLaneCompletionsReceived(const BatchCopyTransfers &transfers)
@@ -409,21 +442,67 @@ bool AllLaneCompletionsReceived(const BatchCopyTransfers &transfers)
     return true;
 }
 
-int32_t WaitForLaneCompletions(const BatchCopyTransfers &transfers)
+int32_t FinishCompletionWait(HybmBatchCopyTiming *timing, uint32_t spins, int32_t ret)
+{
+    if (timing != nullptr && timing->completionWaitStartNs != 0U) {
+        timing->completionPolls = spins;
+        timing->completionWaitNs = HybmBatchCopyNowNs() - timing->completionWaitStartNs;
+    }
+    return ret;
+}
+
+int32_t WaitForLaneCompletions(const BatchCopyTransfers &transfers, HybmBatchCopyTiming *timing)
 {
     const auto deadline = std::chrono::steady_clock::now() + kCompletionTimeout;
     uint32_t spins = 0U;
     while (!AllLaneCompletionsReceived(transfers)) {
         if (std::chrono::steady_clock::now() >= deadline) {
             HYBM_LOGE(BM_TIMEOUT, "BatchCopy completion timed out, laneCount=%u", transfers.count);
-            return BM_TIMEOUT;
+            return FinishCompletionWait(timing, spins, BM_TIMEOUT);
         }
         if ((++spins & 0x3FFU) == 0U) {
             std::this_thread::yield();
         }
     }
     DeviceMemoryBarrier();
-    return BM_OK;
+    return FinishCompletionWait(timing, spins, BM_OK);
+}
+
+int32_t FinishBatchCopy(const HybmBatchCopyTiming *timing, const HybmBatchCopyParam &param, uint16_t laneCount,
+                        int32_t ret)
+{
+    if (timing != nullptr && timing->wqeBuildStartNs != 0U) {
+        const uint64_t knownHcommNs = timing->batchModeStartNs + timing->batchTransferTotalNs + timing->fenceNs +
+                                      timing->completionReadNs;
+        const uint64_t buildOtherNs = timing->wqeBuildNs > knownHcommNs ? timing->wqeBuildNs - knownHcommNs : 0U;
+        const char *slowestBuildCall = "HcommBatchModeStart";
+        uint64_t slowestBuildCallNs = timing->batchModeStartNs;
+        if (timing->batchTransferMaxNs > slowestBuildCallNs) {
+            slowestBuildCall = "HcommBatchTransferOnThread";
+            slowestBuildCallNs = timing->batchTransferMaxNs;
+        }
+        if (timing->fenceNs > slowestBuildCallNs) {
+            slowestBuildCall = "HcommChannelFenceOnThread";
+            slowestBuildCallNs = timing->fenceNs;
+        }
+        if (timing->completionReadNs > slowestBuildCallNs) {
+            slowestBuildCall = "HcommReadOnThread";
+            slowestBuildCallNs = timing->completionReadNs;
+        }
+        // Use ERROR only to make this one-line timing diagnostic visible under the AICPU log filter.
+        HYBM_LOGE(ret,
+                  "BatchCopy timing, listNum=%u laneCount=%u buildAllWqeNs=%" PRIu64 " modeStartNs=%" PRIu64
+                  " batchXferCalls=%u batchXferTotalNs=%" PRIu64 " batchXferMaxNs=%" PRIu64
+                  " batchXferMaxOffset=%u batchXferMaxDescCount=%u fenceNs=%" PRIu64 " completionReadNs=%" PRIu64
+                  " buildOtherNs=%" PRIu64 " slowestBuildCall=%s slowestBuildCallNs=%" PRIu64
+                  " launchTaskNs=%" PRIu64 " completionWaitNs=%" PRIu64 " completionRetryCount=%u result=%d",
+                  param.list_num, laneCount, timing->wqeBuildNs, timing->batchModeStartNs, timing->batchTransferCalls,
+                  timing->batchTransferTotalNs, timing->batchTransferMaxNs, timing->batchTransferMaxOffset,
+                  timing->batchTransferMaxDescCount, timing->fenceNs, timing->completionReadNs, buildOtherNs,
+                  slowestBuildCall, slowestBuildCallNs, timing->launchTaskNs, timing->completionWaitNs,
+                  timing->completionPolls, ret);
+    }
+    return ret;
 }
 
 int32_t ExecuteBatchCopy(HybmBatchCopyParam *param)
@@ -451,9 +530,18 @@ int32_t ExecuteBatchCopy(HybmBatchCopyParam *param)
     if (ret != BM_OK) {
         return ret;
     }
+    HybmBatchCopyTiming timing{};
+    const bool isSingleLane = transfers.count == 1U;
+    HybmBatchCopyTiming *timingPtr = isSingleLane ? &timing : nullptr;
+    if (timingPtr != nullptr) {
+        transfers.values[0].timing = timingPtr;
+    }
     ClearUsedCompletionCells(transfers);
-    ret = SubmitLaneTransfers(transfers);
-    return ret == BM_OK ? WaitForLaneCompletions(transfers) : ret;
+    ret = SubmitLaneTransfers(transfers, timingPtr);
+    if (ret == BM_OK) {
+        ret = WaitForLaneCompletions(transfers, timingPtr);
+    }
+    return FinishBatchCopy(timingPtr, *param, transfers.count, ret);
 }
 } // namespace
 

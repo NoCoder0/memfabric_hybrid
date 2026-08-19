@@ -13,9 +13,34 @@
 #ifndef MEM_FABRIC_HYBRID_ACC_OFFLOAD_HYBM_BATCH_COPY_TRANSFER_H
 #define MEM_FABRIC_HYBRID_ACC_OFFLOAD_HYBM_BATCH_COPY_TRANSFER_H
 
+#include <chrono>
 #include <cstdint>
 
 #include "dl_hcomm_api.h"
+
+struct HybmBatchCopyTiming {
+    uint64_t wqeBuildStartNs{0U};
+    uint64_t wqeBuildNs{0U};
+    uint64_t batchModeStartNs{0U};
+    uint64_t batchTransferTotalNs{0U};
+    uint64_t batchTransferMaxNs{0U};
+    uint64_t fenceNs{0U};
+    uint64_t completionReadNs{0U};
+    uint64_t launchTaskNs{0U};
+    uint64_t completionWaitStartNs{0U};
+    uint64_t completionWaitNs{0U};
+    uint32_t batchTransferCalls{0U};
+    uint32_t batchTransferMaxOffset{0U};
+    uint32_t batchTransferMaxDescCount{0U};
+    uint32_t completionPolls{0U};
+};
+
+inline uint64_t HybmBatchCopyNowNs()
+{
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch())
+            .count());
+}
 
 struct HybmBatchCopyTransferParam {
     ock::mf::ThreadHandle thread;
@@ -25,6 +50,7 @@ struct HybmBatchCopyTransferParam {
     uint64_t remoteFlagAddr;
     uint64_t localFlagAddr;
     uint32_t flagSize;
+    HybmBatchCopyTiming *timing{nullptr};
 };
 
 uint32_t HybmBatchCopyStartBatchMode();

@@ -62,7 +62,22 @@ int32_t BatchTransferOnThread(const HybmBatchCopyTransferParam &param, uint32_t 
     if (HcommBatchTransferOnThread == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommBatchTransferOnThread(param.thread, param.channel, param.descriptors + offset, batchSize);
+    uint64_t startNs = 0U;
+    if (param.timing != nullptr) {
+        startNs = HybmBatchCopyNowNs();
+    }
+    const int32_t ret = HcommBatchTransferOnThread(param.thread, param.channel, param.descriptors + offset, batchSize);
+    if (param.timing != nullptr) {
+        const uint64_t elapsedNs = HybmBatchCopyNowNs() - startNs;
+        ++param.timing->batchTransferCalls;
+        param.timing->batchTransferTotalNs += elapsedNs;
+        if (elapsedNs > param.timing->batchTransferMaxNs) {
+            param.timing->batchTransferMaxNs = elapsedNs;
+            param.timing->batchTransferMaxOffset = offset;
+            param.timing->batchTransferMaxDescCount = batchSize;
+        }
+    }
+    return ret;
 }
 
 int32_t TransferWithBatch(const HybmBatchCopyTransferParam &param)
@@ -114,14 +129,28 @@ uint32_t FenceAndReadCompletion(const HybmBatchCopyTransferParam &param)
         HYBM_LOGE(BM_ERROR, "BatchCopy fence is unavailable, thread=%lu channel=%lu", param.thread, param.channel);
         return BM_ERROR;
     }
+    uint64_t fenceStartNs = 0U;
+    if (param.timing != nullptr) {
+        fenceStartNs = HybmBatchCopyNowNs();
+    }
     int32_t ret = HcommChannelFenceOnThread(param.thread, param.channel);
+    if (param.timing != nullptr) {
+        param.timing->fenceNs = HybmBatchCopyNowNs() - fenceStartNs;
+    }
     if (ret != BM_OK) {
         HYBM_LOGE(BM_ERROR, "BatchCopy fence failed, thread=%lu channel=%lu ret=%d", param.thread, param.channel, ret);
         return BM_ERROR;
     }
+    uint64_t completionReadStartNs = 0U;
+    if (param.timing != nullptr) {
+        completionReadStartNs = HybmBatchCopyNowNs();
+    }
     ret = ReadOnThread(param.thread, param.channel,
                        reinterpret_cast<void *>(static_cast<uintptr_t>(param.localFlagAddr)),
                        reinterpret_cast<void *>(static_cast<uintptr_t>(param.remoteFlagAddr)), param.flagSize);
+    if (param.timing != nullptr) {
+        param.timing->completionReadNs = HybmBatchCopyNowNs() - completionReadStartNs;
+    }
     if (ret != BM_OK) {
         HYBM_LOGE(BM_ERROR, "BatchCopy completion read failed, thread=%lu channel=%lu flagSize=%u ret=%d",
                   param.thread, param.channel, param.flagSize, ret);
