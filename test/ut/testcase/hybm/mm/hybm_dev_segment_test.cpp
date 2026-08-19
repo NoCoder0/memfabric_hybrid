@@ -525,6 +525,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_SuccessNoHar
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
     options.dataOpType = 0; // ← 关键：禁用 SDMA/RDMA
+    options.shared = false;
 
     ock::mf::HybmDevUserLegacySegment segment(options, 200);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
