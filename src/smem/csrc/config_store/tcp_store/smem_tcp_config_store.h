@@ -166,6 +166,11 @@ private:
     void HeartBeat() noexcept;
     void InitAsyncDispatcher(uint32_t localRankId) noexcept;
 
+    // 断链看门狗：无外部断链接管方（HA 选举 / 组引擎）时，由心跳线程按
+    // HEARTBEAT_INTERVAL 周期做一次有界重连，避免断链后长时间无人触发重连。
+    void TryReconnectByHeartbeat() noexcept;
+    bool HasExternalBrokenHandler() noexcept;
+
     int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
                               const acc::AccDataBufferPtr &cbCtx)
     {
@@ -212,6 +217,7 @@ private:
     std::mutex brokenHandlerMutex_;
     std::vector<ConfigStoreClientBrokenHandler> brokenHandler_;
     std::atomic<bool> isRunning_{false};
+    std::atomic<bool> reconnecting_{false};
     std::thread heartBeatThread_;
     StoreBackendPtr backend_;
     std::unique_ptr<SmemGroupCommandAsyncDispatcher> asyncDispatcher_;

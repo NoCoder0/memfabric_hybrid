@@ -361,6 +361,7 @@ SMEM_API void smem_bm_destroy(smem_bm_t handle)
     entry = nullptr;
     ret = SmemBmEntryManager::Instance().RemoveEntryByPtr(reinterpret_cast<uintptr_t>(handle));
     SM_ASSERT_RET_VOID(ret == SM_OK);
+    SM_LOG_INFO("smem_bm_destroy success, handle: " << handle);
 }
 
 SMEM_API int32_t smem_bm_join(smem_bm_t handle, uint32_t flags)

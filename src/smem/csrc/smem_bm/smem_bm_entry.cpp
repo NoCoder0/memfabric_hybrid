@@ -223,6 +223,7 @@ void SmemBmEntry::Uninitialize()
     if (entity_ == nullptr) {
         return;
     }
+    SM_LOG_INFO("SmemBmEntry::Uninitialize begin, rank: " << options_.rank);
     // Perform a graceful group leave so that peer ranks can synchronously clean up
     // their imported state. This must happen before the local entity is destroyed
     // because the leave callback on the peer side still references entity_.
@@ -252,6 +253,7 @@ void SmemBmEntry::Uninitialize()
     hybm_destroy_entity(entity_, flags);
     entity_ = nullptr;
     inited_ = false;
+    SM_LOG_INFO("SmemBmEntry::Uninitialize complete, rank: " << options_.rank);
 }
 
 Result SmemBmEntry::Join(uint32_t flags)

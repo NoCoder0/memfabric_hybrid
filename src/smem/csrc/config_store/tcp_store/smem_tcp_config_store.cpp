@@ -1031,11 +1031,36 @@ void TcpConfigStore::HeartBeat() noexcept
             if (ret != SM_OK) {
                 STORE_LOG_ERROR("send message failed, result: " << ret);
             }
+        } else {
+            TryReconnectByHeartbeat();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(HEARTBEAT_INTERVAL));
     }
 
     STORE_LOG_INFO("TcpConfigStore heart beat thread exit.");
+}
+
+void TcpConfigStore::TryReconnectByHeartbeat() noexcept
+{
+    // 有外部断链接管方（HA 选举、组引擎等注册的 broken handler）时，主动权交回上层，
+    // 避免心跳线程与上层并发重连同一个 accClient_。
+    if (HasExternalBrokenHandler()) {
+        return;
+    }
+    bool expected = false;
+    if (!reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+    // 每次 tick 只做一次有界重连尝试（acc 层 1 次 connect），失败等下一个 tick，
+    // 不会长时间阻塞心跳线程自身的保活节奏。
+    (void)ReConnectAfterBroken(1);
+    reconnecting_.store(false, std::memory_order_release);
+}
+
+bool TcpConfigStore::HasExternalBrokenHandler() noexcept
+{
+    std::lock_guard<std::mutex> guard(brokenHandlerMutex_);
+    return !brokenHandler_.empty();
 }
 
 Result TcpConfigStore::HandleAddToWhitelist(SmemMessage &msg) noexcept

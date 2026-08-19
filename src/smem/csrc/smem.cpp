@@ -98,6 +98,7 @@ SMEM_API int32_t smem_config_store_set_backend_op(const smem_conf_store_backend_
 SMEM_API void smem_uninit()
 {
     g_smemInited = false;
+    SM_LOG_INFO("smem uninit finished");
 }
 
 SMEM_API int32_t smem_set_extern_logger(void (*func)(int, const char *))

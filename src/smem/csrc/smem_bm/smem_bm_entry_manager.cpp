@@ -399,6 +399,7 @@ Result SmemBmEntryManager::GetMetaServiceInfo(std::string &ip, uint16_t *port) c
 void SmemBmEntryManager::Destroy()
 {
     std::lock_guard<std::mutex> guard(entryMutex_);
+    const size_t entryCount = ptr2EntryMap_.size();
     // Uninitialize any entries that were not explicitly destroyed by the caller.
     // This ensures graceful group leave and resource release even if smem_bm_destroy()
     // was not called for every handle before smem_bm_uninit().
@@ -412,6 +413,7 @@ void SmemBmEntryManager::Destroy()
     inited_ = false;
     confStore_ = nullptr;
     StoreFactory::DestroyStore(storeURL_);
+    SM_LOG_INFO("SmemBmEntryManager::Destroy complete, uninitialized entries: " << entryCount);
 }
 
 } // namespace smem
