@@ -18,6 +18,9 @@
 constexpr uint64_t ZBAL_AICPU_ALLGATHER_RING_THRESHOLD = 4 * 1024 * 1024; /* 4 MiB */
 constexpr uint32_t ZBAL_AICPU_ALLGATHER_FULLMESH_RANK = 4;                /* ≤ 4 ranks + small data → FULL_MESH */
 
+/* ReduceScatter: ≤ 32 MiB → FULL_MESH (low latency); > 32 MiB → DOUBLE_RING (2× bandwidth) */
+constexpr uint64_t ZBAL_AICPU_REDUCESCATTER_DOUBLE_RING_THRESHOLD = 32 * 1024 * 1024; /* 32 MiB */
+
 /* Per-op execution configuration: how many cores and channels-per-core to use.
  *  Decided on host (via GetCommOpConfig), passed to device through AicpuWorkDesc.
  *  Always ≤ (ZBAL_AICPU_MAX_NUM_CORES, ZBAL_AICPU_MAX_CH_PER_CORE). */
@@ -40,6 +43,13 @@ inline OpExecConfig GetCommOpConfig(uint32_t commType, uint32_t commAlg)
         case ZBAL_CMD_ALLTOALLV:
             return {1, 8};
         case ZBAL_CMD_REDUCE_SCATTER:
+            if (commAlg == ZBAL_COMM_ALG_DOUBLE_RING) {
+                return {2, 8}; /* 2 cores (CW+CCW), 8 channels per core.
+                                * Phase 1: data copies distributed round-robin across 8 channels;
+                                * stat SQEs on ch0 after data completes. Phase 2: ch0 only
+                                * for stat ordering safety. Multi-channel Phase 1 gives ~8x
+                                * bandwidth for the Nx ringElemCount local copies. */
+            }
             return {1, 8}; /* FULL_MESH: 1 core, 8 channels. All N-1 peer reduces at once. */
         case ZBAL_CMD_ALLREDUCE:
         case ZBAL_CMD_BROADCAST:
@@ -80,6 +90,12 @@ inline uint32_t SelectCommAlg(uint32_t commType, uint32_t rankNum, uint64_t data
             return (rankNum <= ZBAL_AICPU_ALLGATHER_FULLMESH_RANK) ? ZBAL_COMM_ALG_FULL_MESH
                                                                    : ZBAL_COMM_ALG_MESH_DOUBLE_RING;
         case ZBAL_CMD_REDUCE_SCATTER:
+            if (rankNum <= 1) {
+                return ZBAL_COMM_ALG_FULL_MESH;
+            }
+            if (dataSize > ZBAL_AICPU_REDUCESCATTER_DOUBLE_RING_THRESHOLD) {
+                return ZBAL_COMM_ALG_DOUBLE_RING;
+            }
             return ZBAL_COMM_ALG_FULL_MESH;
         default:
             return ZBAL_COMM_ALG_FULL_MESH;

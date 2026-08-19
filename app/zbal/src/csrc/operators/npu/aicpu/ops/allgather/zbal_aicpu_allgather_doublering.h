@@ -61,32 +61,7 @@ using namespace zbal;
 /* Slices per core: 3 enables ring pipelining across ranks (mirrors classic AIV) */
 constexpr uint32_t ZBAL_AG_SLICE_PER_CORE = 3;
 
-/* Poll a stat address with DC CIVAC until it matches waitVal. Returns true on match.
-* Two-phase polling:
-*   Phase A (first FAST_POLLS iters): invalidate cache every iteration + tiny backoff.
-*     Minimizes signal-detection latency — critical for ring pipeline fill, since the
-*     first stat of each round arrives while the upstream is still copying.
-*   Phase B (after): invalidate every 16 iterations + larger backoff to reduce
-*     DC CIVAC overhead once the signal is known to be delayed. */
-inline bool AicpuPollStat(volatile uint64_t *addr, uint64_t waitVal, uint32_t timeoutUs)
-{
-    constexpr uint32_t FAST_POLLS = 64;
-    constexpr int FAST_BACKOFF_ITERS = 8;
-    constexpr int SLOW_BACKOFF_ITERS = 200;
-    for (uint32_t t = 0; t < timeoutUs; t++) {
-        if (t < FAST_POLLS || (t & 0xF) == 0) {
-            uintptr_t fa = reinterpret_cast<uintptr_t>(const_cast<uint64_t *>(addr));
-            AicpuCacheInvalidate(fa);
-        } else {
-            __asm__ __volatile__("" ::: "memory"); /* compiler barrier, skip cache op */
-        }
-        if (*addr == waitVal)
-            return true;
-        int backoff = (t < FAST_POLLS) ? FAST_BACKOFF_ITERS : SLOW_BACKOFF_ITERS;
-        for (volatile int d = 0; d < backoff; d++) {}
-    }
-    return false;
-}
+/* AicpuPollStat is defined in executor/zbal_aicpu_comm_alg.h (shared with ReduceScatter DoubleRing) */
 
 class AllGatherDoubleRing {
 public:

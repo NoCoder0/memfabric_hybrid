@@ -69,8 +69,9 @@ public:
             exCtx.numChPerCore = numChPerCore;
             exCtx.numCores = numCores;
             exCtx.coreId = coreId;
-            /* ReduceScatter FullMesh: skip BarrierAllRanks — ExecuteFullMesh does progressive barrier. */
-            if (desc->commType == ZBAL_CMD_REDUCE_SCATTER) {
+            /* ReduceScatter FullMesh: skip BarrierAllRanks — ExecuteFullMesh does progressive barrier.
+             * DOUBLE_RING needs BarrierAllRanks (via RingExchange) to guarantee ring forwarding done. */
+            if (desc->commType == ZBAL_CMD_REDUCE_SCATTER && desc->commAlg != ZBAL_COMM_ALG_DOUBLE_RING) {
                 exCtx.skipCrossDeviceBarrier = true;
             }
             int exRet = AddrExchange(desc->commType, op.commAlg, exCtx);

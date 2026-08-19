@@ -47,6 +47,9 @@ private:
 
     NpuAicpuLauncher launcher_;
     void *aicpuWorkspacePtr_ = nullptr;
+    void *reduceScatterCclBuf_ = nullptr; /* lazy-allocated 256M GVA scratch for DOUBLE_RING */
+    size_t reduceScatterCclBufSize_ = 0;
+    int32_t reduceScatterCclBufDevice_ = -1;
 };
 
 } // namespace operators

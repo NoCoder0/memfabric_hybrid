@@ -314,18 +314,19 @@ public:
 
         uint32_t ringBufSize = ZBAL_AICPU_CORE_RINGBUF_SIZE;
         volatile uint8_t *myBuf = AicpuWorkspace::CoreRingBuf(ctx.workspace, myCore);
-        /* scratch area: 2 × uint64_t at end of ring buffer
-        * [0] = recvBuf GVA (for ring forwarding: peers read from this buffer)
-        * [1] = flag sentinel */
-        constexpr uint32_t scratchSlots = 2;
+        /* Scratch: [0]=recvBuf GVA, [1]=cclBuf GVA (for RS forwarding), [2]=flag */
+        constexpr uint32_t scratchSlots = 3;
         volatile uint64_t *scratch =
             reinterpret_cast<volatile uint64_t *>(myBuf + ringBufSize - scratchSlots * sizeof(uint64_t));
         scratch[0] = ctx.desc->recvBuffer;
-        scratch[1] = ctx.desc->waitSymbol; /* incrementing flag — avoids stale match */
+        scratch[1] = ctx.desc->buffer;
+        scratch[ZBAL_AICPU_IDX_2] = ctx.desc->waitSymbol;
         uint64_t dataSrcGva = reinterpret_cast<uint64_t>(&scratch[0]);
-        uint64_t flagSrcGva = reinterpret_cast<uint64_t>(&scratch[1]);
-        /* Flush scratch so SDMA can read the correct recvBuf GVA + waitSymbol */
+        uint64_t cclSrcGva = reinterpret_cast<uint64_t>(&scratch[1]);
+        uint64_t flagSrcGva = reinterpret_cast<uint64_t>(&scratch[2]);
         AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[0]));
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[1]));
+        AicpuCacheFlush(reinterpret_cast<uintptr_t>(&scratch[ZBAL_AICPU_IDX_2]));
 
         SqeLocalRingBuffer eb;
         eb.Init(const_cast<uint8_t *>(myBuf));
@@ -340,6 +341,8 @@ public:
         uint64_t dataDst = ctx.aicpuCtx->exchangeGva + (uint64_t)devOff + (uint64_t)myRank * strideBytes;
         uint64_t flagDst = ctx.aicpuCtx->exchangeGva + (uint64_t)devOff + flagAreaOff + (uint64_t)myRank * strideBytes;
         if (AicpuDispatcher::CopyData(&eb, 0U, dataSrcGva, dataDst, sizeof(uint64_t), ctx.channels[0]) != 0 ||
+            AicpuDispatcher::CopyData(&eb, 0U, cclSrcGva, dataDst + sizeof(uint64_t), sizeof(uint64_t),
+                                      ctx.channels[0]) != 0 ||
             AicpuDispatcher::CopyData(&eb, 0U, flagSrcGva, flagDst, sizeof(uint64_t), ctx.channels[0]) != 0)
             return BUILD_ERROR;
 

@@ -12,6 +12,8 @@
 #include "zbal_npu_communicator_aicpu.h"
 #include "zbal_npu_aicpu_launcher.h"
 #include "zbal_comm_host_device_struct.h"
+#include "zbal_comm_alg_selector.h"
+#include "zbal_mem_allocator.h"
 #include "dl_cann_api.h"
 #include "zbal_init_state.h"
 
@@ -99,6 +101,13 @@ void NpuCommunicatorAICPU::UnInitialize() noexcept
         aicpuWorkspacePtr_ = nullptr;
     }
 
+    if (reduceScatterCclBuf_ != nullptr) {
+        zbal_pluggable_free(reduceScatterCclBuf_, reduceScatterCclBufSize_, reduceScatterCclBufDevice_, nullptr);
+        reduceScatterCclBuf_ = nullptr;
+        reduceScatterCclBufSize_ = 0;
+        reduceScatterCclBufDevice_ = -1;
+    }
+
     NpuCommunicatorBase::UnInitialize();
 }
 
@@ -154,9 +163,36 @@ int32_t NpuCommunicatorAICPU::ReduceScatter(const void *sendBuff, void *recvBuff
                                             aclrtStream stream) noexcept
 {
     uint64_t totalCount = static_cast<uint64_t>(recvCount) * GetMetaInfo().groupSize;
+    uint64_t totalBytes = totalCount * ZBALDataTypeSize(static_cast<uint32_t>(dataType));
+
+    /* DOUBLE_RING needs a cclBuf (256M forwarding scratch), allocated lazily and
+     * freed in UnInitialize. Must use zbal_pluggable_malloc (SMA/GVA symmetric
+     * memory) — peers access cclBuf GVA via cross-device SDMA. AclrtMalloc allocates
+     * plain device memory outside GVA space → peers get invalid addresses → data
+     * corruption. Size must match ZBAL_RS_CCL_BUFFER_BYTES in doublering header. */
+    uint64_t bufferGva = 0;
+    if (totalBytes > ZBAL_AICPU_REDUCESCATTER_DOUBLE_RING_THRESHOLD) {
+        if (reduceScatterCclBuf_ == nullptr) {
+            constexpr uint64_t ZBAL_RS_CCL_BUFFER_BYTES = 256ULL * 1024ULL * 1024ULL;
+            int32_t deviceId = 0;
+            if (underapi::DlCannApi::AclrtGetDevice(&deviceId) != 0) {
+                ZBAL_LOG_ERROR("Failed to get device id for ReduceScatter cclBuf allocation");
+                return Z_ERROR;
+            }
+            reduceScatterCclBuf_ = zbal_pluggable_malloc(ZBAL_RS_CCL_BUFFER_BYTES, deviceId, stream);
+            if (reduceScatterCclBuf_ == nullptr) {
+                ZBAL_LOG_ERROR("Failed to allocate ReduceScatter cclBuf (GVA), size=" << ZBAL_RS_CCL_BUFFER_BYTES);
+                return Z_ERROR;
+            }
+            reduceScatterCclBufSize_ = ZBAL_RS_CCL_BUFFER_BYTES;
+            reduceScatterCclBufDevice_ = deviceId;
+        }
+        bufferGva = reinterpret_cast<uint64_t>(reduceScatterCclBuf_);
+    }
+
     return LaunchAicpuOp(launcher_, ZBAL_CMD_REDUCE_SCATTER, reinterpret_cast<uint64_t>(sendBuff),
                          reinterpret_cast<uint64_t>(recvBuff), totalCount, static_cast<uint32_t>(dataType), 0,
-                         "ReduceScatter", stream, 0, static_cast<uint32_t>(reduceOp));
+                         "ReduceScatter", stream, 0, static_cast<uint32_t>(reduceOp), bufferGva);
 }
 
 int32_t NpuCommunicatorAICPU::Scatter(const void *sendBuff, void *recvBuff, uint64_t dataCount,

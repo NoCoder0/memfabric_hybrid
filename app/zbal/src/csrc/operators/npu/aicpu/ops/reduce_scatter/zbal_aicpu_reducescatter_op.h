@@ -16,27 +16,44 @@
 #include "executor/zbal_aicpu_comm_alg.h"
 #include "executor/zbal_aicpu_dispatcher.h"
 #include "executor/engine/sdma/zbal_aicpu_channel.h"
+#include "ops/reduce_scatter/zbal_aicpu_reducescatter_doublering.h"
 
 /*
  * ReduceScatter: SDMA hardware reduce.
  * opCode = (dataType << 4) | reduceOp  (matches AIV SetAtomicOpSDMA).
  *
- * FULL_MESH only: 1 core, 8 channels. Batched progressive barrier —
- * self-copy (NoWait) starts immediately, then batched poll submits reduce
- * SQEs for ready peers. Slow peers don't block fast ones.
+ * Two algorithms (selected by data size):
+ *   - FULL_MESH  (≤32MB): 1 core, 8 channels. Batched progressive barrier —
+ *     self-copy (NoWait) starts immediately, then batched poll submits reduce
+ *     SQEs for ready peers. Slow peers don't block fast ones.
+ *   - DOUBLE_RING (>32MB): 2 cores (CW+CCW), 3-slice stat pipeline.
+ *     NoWait submission for slices 0/1, Mc+flag only for slice 2.
  */
 class ReduceScatterOp {
 public:
+    /* Exchange strategy by commAlg: DOUBLE_RING→RingExchange, FULL_MESH→FullMeshExchange */
     static int AddrExchange(uint32_t commAlg, const ExchangeContext &ctx)
     {
-        return FullMeshExchange::Execute(ctx);
+        switch (commAlg) {
+            case ZBAL_COMM_ALG_DOUBLE_RING:
+                return RingExchange::Execute(ctx);
+            default:
+                return FullMeshExchange::Execute(ctx);
+        }
     }
 
+    /* Execution dispatch by commAlg */
     static int Execute(AicpuAlgorithmCtx &alg, const CommOpParams &op, SqeLocalRingBuffer *ringBufs,
                        volatile stars_channel_info_t **channels, uint32_t numChPerCore, volatile uint8_t *workspace,
                        uint32_t coreId, uint32_t numCores)
     {
-        return ExecuteFullMesh(alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
+        switch (op.commAlg) {
+            case ZBAL_COMM_ALG_DOUBLE_RING:
+                return ReduceScatterDoubleRing::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId,
+                                                        numCores);
+            default:
+                return ExecuteFullMesh(alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
+        }
     }
 
 private:

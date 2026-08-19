@@ -39,6 +39,10 @@ constexpr uint32_t ZBAL_AICPU_RING_NUM = 2;
 
 /* Exchange area: exch[rank * stride] = output buffer GVA per rank */
 constexpr uint32_t ZBAL_AICPU_EXCHANGE_STRIDE = 8;
+constexpr uint32_t ZBAL_AICPU_OUTERIDX_SHIFT = 16;
+constexpr uint32_t ZBAL_AICPU_IDX_2 = 2;
+constexpr uint32_t ZBAL_AICPU_ITER_SHIFT = 2;
+constexpr uint32_t ZBAL_AICPU_RS_DATATYE_SHIFT = 4;
 
 /* ================================================================
  * Cache / barrier utilities — centralized for readability and tuning.
