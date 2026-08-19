@@ -33,7 +33,7 @@ inline LocalDramValidationRole GetLocalDramValidationRole(uint32_t rankId, uint3
     if (role == nullptr) {
         return LocalDramValidationRole::DEVICE;
     }
-    if (std::strcmp(role, "host") != 0 || rankId != 0U) {
+    if (std::strcmp(role, "host") != 0) {
         BM_LOG_ERROR("invalid local DRAM validation role, role=" << role << " rankId=" << rankId);
         return LocalDramValidationRole::INVALID;
     }

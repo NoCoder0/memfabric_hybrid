@@ -770,30 +770,33 @@ Result HostUrmaTransportManager::WaitForConnected(int64_t timeoutNs)
 
 Result HostUrmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &options)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto &[peerRank, peerInfo] : options.options) {
-        auto it = remoteRanks_.find(peerRank);
-        if (it == remoteRanks_.end()) {
-            BM_LOG_ERROR("UpdateRankOptions: peer " << peerRank << " not found");
-            return BM_NOT_SUPPORTED;
-        }
-        if (peerInfo.privateData.ip[0] != '\0') {
-            UrmaEndpointDesc newDesc{};
-            auto ret = urma::ParseUrmaPrivateData(peerInfo.privateData, newDesc);
-            if (ret != BM_OK) {
-                return ret;
+    bool needFallback = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto &[peerRank, peerInfo] : options.options) {
+            auto it = remoteRanks_.find(peerRank);
+            if (it == remoteRanks_.end()) {
+                BM_LOG_WARN("UpdateRankOptions: peer " << peerRank << " not prepared yet, fallback to Prepare");
+                needFallback = true;
+                break;
             }
-            if (std::memcmp(&it->second.endpointDesc, &newDesc, sizeof(UrmaEndpointDesc)) != 0) {
-                BM_LOG_ERROR("UpdateRankOptions: endpoint changed for peer " << peerRank);
-                return BM_NOT_SUPPORTED;
+            if (peerInfo.privateData.ip[0] != '\0') {
+                UrmaEndpointDesc newDesc{};
+                auto ret = urma::ParseUrmaPrivateData(peerInfo.privateData, newDesc);
+                if (ret != BM_OK) {
+                    return ret;
+                }
+                if (std::memcmp(&it->second.endpointDesc, &newDesc, sizeof(UrmaEndpointDesc)) != 0) {
+                    BM_LOG_ERROR("UpdateRankOptions: endpoint changed for peer " << peerRank);
+                    return BM_NOT_SUPPORTED;
+                }
             }
-        }
-        if (!peerInfo.memKeys.empty()) {
-            BM_LOG_ERROR("UpdateRankOptions: new memKeys not supported for peer " << peerRank);
-            return BM_NOT_SUPPORTED;
+            if (!peerInfo.memKeys.empty()) {
+                needFallback = true;
+            }
         }
     }
-    return BM_OK;
+    return needFallback ? Prepare(options) : BM_OK;
 }
 
 const std::string &HostUrmaTransportManager::GetNic() const

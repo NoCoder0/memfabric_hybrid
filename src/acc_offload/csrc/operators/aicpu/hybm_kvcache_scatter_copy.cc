@@ -115,11 +115,11 @@ int32_t SubmitBatch(DescriptorBatch &batch)
     }
     HybmBatchCopyParam copyParam{batch.count, batch.destinations.data(), batch.sources.data(), batch.lengths.data()};
     (void)copyParam;
-    // const auto ret = static_cast<int32_t>(HybmBatchCopy(&copyParam));
-    // if (ret != BM_OK) {
-    //     HYBM_LOGE(ret, "HybmBatchCopy failed for KvcacheScatterCopy, descriptorCount=%u ret=%d", batch.count, ret);
-    //     return ret;
-    // }
+    const auto ret = static_cast<int32_t>(HybmBatchCopy(&copyParam));
+    if (ret != BM_OK) {
+        HYBM_LOGE(ret, "HybmBatchCopy failed for KvcacheScatterCopy, descriptorCount=%u ret=%d", batch.count, ret);
+        return ret;
+    }
     batch.count = 0U;
     return BM_OK;
 }

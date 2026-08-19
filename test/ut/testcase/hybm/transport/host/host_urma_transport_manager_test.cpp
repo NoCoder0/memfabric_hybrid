@@ -22,7 +22,9 @@ using namespace ock::mf::transport::host;
 
 namespace {
 constexpr uint32_t REMOTE_RANK = 1U;
+constexpr uint32_t NEW_REMOTE_RANK = 2U;
 constexpr ChannelHandle TEST_CHANNEL = 7U;
+const EndpointHandle TEST_ENDPOINT = reinterpret_cast<EndpointHandle>(0xA501UL);
 constexpr uint64_t LOCAL_ADDR = 0x100000UL;
 constexpr uint64_t REMOTE_ADDR = 0x200000UL;
 constexpr uint64_t HCOMM_ADDR = 0x300000UL;
@@ -30,6 +32,7 @@ constexpr uint64_t TEST_SIZE = 576UL;
 constexpr int32_t HCOMM_E_AGAIN = 20;
 uint32_t g_writeCount = 0;
 uint32_t g_fenceCount = 0;
+bool g_channelCreated = false;
 
 struct HcommSubmitGuard {
     hcommWriteOnThreadFunc oldWrite{DlHcommApi::gHcommWriteOnThread};
@@ -41,6 +44,71 @@ struct HcommSubmitGuard {
         DlHcommApi::gHcommChannelFenceOnThread = oldFence;
     }
 };
+
+struct HcommPrepareGuard {
+    hcommChannelCreateFunc oldChannelCreate{DlHcommApi::gHcommChannelCreate};
+    hcommChannelGetStatusFunc oldChannelGetStatus{DlHcommApi::gHcommChannelGetStatus};
+
+    ~HcommPrepareGuard()
+    {
+        DlHcommApi::gHcommChannelCreate = oldChannelCreate;
+        DlHcommApi::gHcommChannelGetStatus = oldChannelGetStatus;
+    }
+};
+
+UrmaEndpointDesc MakeEndpointDesc()
+{
+    UrmaEndpointDesc desc{};
+    desc.protocol = UrmaProtocol::UBC_CTP;
+    desc.type = COMM_ADDR_TYPE_EID;
+    desc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
+    desc.loc.host.id = REMOTE_RANK;
+    desc.raws[0] = 1U;
+    return desc;
+}
+
+TransportPrivateData MakePrivateData(const UrmaEndpointDesc &desc)
+{
+    TransportPrivateData data{};
+    EXPECT_EQ(urma::SerializeUrmaPrivateData(desc, data), BM_OK);
+    return data;
+}
+
+TransportMemoryKey MakeDeviceMemoryKey()
+{
+    TransportMemoryKey key{};
+    key.keys[0] = urma::URMA_EXPORT_DESC_MAGIC;
+    key.keys[1] = REMOTE_ADDR;
+    urma::UrmaExportDesc exportDesc{};
+    exportDesc.headerSize = sizeof(urma::UrmaExportDesc);
+    exportDesc.memoryType = UrmaMemoryType::DEVICE_HBM;
+    exportDesc.addr = REMOTE_ADDR;
+    exportDesc.size = TEST_SIZE;
+    exportDesc.hcommDescLen = 1U;
+    auto *payload = reinterpret_cast<uint8_t *>(&key.keys[urma::DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS]);
+    std::memcpy(payload, &exportDesc, sizeof(exportDesc));
+    return key;
+}
+
+int32_t CreateChannel(EndpointHandle endpoint, CommEngine engine, HcommChannelDesc *, uint32_t count,
+                      ChannelHandle *channel)
+{
+    EXPECT_EQ(endpoint, TEST_ENDPOINT);
+    EXPECT_EQ(engine, COMM_ENGINE_CPU);
+    EXPECT_EQ(count, 1U);
+    EXPECT_NE(channel, nullptr);
+    g_channelCreated = true;
+    *channel = TEST_CHANNEL;
+    return 0;
+}
+
+int32_t ChannelReady(const ChannelHandle *channels, uint32_t count, int32_t *statuses)
+{
+    EXPECT_EQ(count, 1U);
+    EXPECT_EQ(channels[0], TEST_CHANNEL);
+    *statuses = 0;
+    return 0;
+}
 
 int32_t WriteAgainThenSuccess(ThreadHandle, ChannelHandle channel, void *dst, const void *src, uint64_t size)
 {
@@ -81,4 +149,65 @@ TEST(HostUrmaTransportManagerTest, WriteRemoteRetriesAfterQueueFull)
     EXPECT_EQ(g_writeCount, 2U);
     EXPECT_EQ(g_fenceCount, 1U);
     EXPECT_TRUE(state.pending);
+}
+
+TEST(HostUrmaTransportManagerTest, UpdateRankOptionsFallsBackToPrepareForNewPeerWithoutHoldingLock)
+{
+    HcommPrepareGuard guard;
+    DlHcommApi::gHcommChannelCreate = CreateChannel;
+    DlHcommApi::gHcommChannelGetStatus = ChannelReady;
+
+    HostUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0U;
+    manager.rankCount_ = 3U;
+    manager.localEndpoint_ = std::make_shared<urma::UrmaEndpointEntity>();
+    manager.localEndpoint_->hcommEndpoint = TEST_ENDPOINT;
+    g_channelCreated = false;
+
+    auto endpoint = MakeEndpointDesc();
+    endpoint.loc.host.id = NEW_REMOTE_RANK;
+    HybmTransPrepareOptions options{};
+    options.options[NEW_REMOTE_RANK].privateData = MakePrivateData(endpoint);
+
+    EXPECT_EQ(manager.UpdateRankOptions(options), BM_OK);
+    EXPECT_TRUE(g_channelCreated);
+    ASSERT_EQ(manager.remoteRanks_.count(NEW_REMOTE_RANK), 1U);
+    EXPECT_EQ(manager.remoteRanks_[NEW_REMOTE_RANK].channel, TEST_CHANNEL);
+
+    manager.opened_ = false;
+}
+
+TEST(HostUrmaTransportManagerTest, UpdateRankOptionsProcessesExistingDevicePeerMemoryKeysThroughPrepare)
+{
+    HostUrmaTransportManager manager;
+    auto endpoint = MakeEndpointDesc();
+    endpoint.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+    auto &state = manager.remoteRanks_[REMOTE_RANK];
+    state.endpointDesc = endpoint;
+    state.channel = TEST_CHANNEL;
+    manager.opened_ = true;
+
+    HybmTransPrepareOptions options{};
+    options.options[REMOTE_RANK].privateData = MakePrivateData(endpoint);
+    options.options[REMOTE_RANK].memKeys.emplace_back(MakeDeviceMemoryKey());
+
+    EXPECT_EQ(manager.UpdateRankOptions(options), BM_OK);
+    manager.opened_ = false;
+}
+
+TEST(HostUrmaTransportManagerTest, UpdateRankOptionsRejectsExistingPeerEndpointChange)
+{
+    HostUrmaTransportManager manager;
+    auto endpoint = MakeEndpointDesc();
+    auto &state = manager.remoteRanks_[REMOTE_RANK];
+    state.endpointDesc = endpoint;
+    state.channel = TEST_CHANNEL;
+
+    auto changedEndpoint = endpoint;
+    changedEndpoint.raws[0]++;
+    HybmTransPrepareOptions changedOptions{};
+    changedOptions.options[REMOTE_RANK].privateData = MakePrivateData(changedEndpoint);
+    changedOptions.options[REMOTE_RANK].privateData.ip[0] = '1';
+    EXPECT_EQ(manager.UpdateRankOptions(changedOptions), BM_NOT_SUPPORTED);
 }
