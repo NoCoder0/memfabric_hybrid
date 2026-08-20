@@ -170,6 +170,9 @@ private:
     // HEARTBEAT_INTERVAL 周期做一次有界重连，避免断链后长时间无人触发重连。
     void TryReconnectByHeartbeat() noexcept;
     bool HasExternalBrokenHandler() noexcept;
+    // 带去重的单次重连：send 触发与心跳看门狗共用，保证任意时刻只有一个
+    // ReConnectAfterBroken 在执行，避免并发 ConnectToPeerServer 破坏 acc 握手。
+    void ReconnectWithDedup() noexcept;
 
     int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
                               const acc::AccDataBufferPtr &cbCtx)
@@ -180,7 +183,7 @@ private:
         }
         auto ret = accClientLink_->NonBlockSend(msgType, seqNo, d, cbCtx);
         if (ret == acc::ACC_LINK_ERROR) {
-            ReConnectAfterBroken(1UL);
+            ReconnectWithDedup();
             if (accClientLink_ == nullptr) {
                 return acc::ACC_LINK_ERROR;
             }

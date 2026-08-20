@@ -369,6 +369,7 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
         return result;
     }
     isRunning_.store(true);
+    isConnect_.store(true);
     clientStarted_ = true;
     heartBeatThread_ = std::thread{[this]() { HeartBeat(); }};
     return result;
@@ -1047,12 +1048,18 @@ void TcpConfigStore::TryReconnectByHeartbeat() noexcept
     if (HasExternalBrokenHandler()) {
         return;
     }
+    ReconnectWithDedup();
+}
+
+void TcpConfigStore::ReconnectWithDedup() noexcept
+{
+    // 单飞去重：send 触发与心跳看门狗共用此入口，保证并发时只有一个
+    // ReConnectAfterBroken 在跑，避免两个 ConnectToPeerServer 同时操作 accClient_。
     bool expected = false;
     if (!reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
         return;
     }
-    // 每次 tick 只做一次有界重连尝试（acc 层 1 次 connect），失败等下一个 tick，
-    // 不会长时间阻塞心跳线程自身的保活节奏。
+    // 每次只做一次有界重连尝试（acc 层 1 次 connect），失败则等下一个触发源再试。
     (void)ReConnectAfterBroken(1);
     reconnecting_.store(false, std::memory_order_release);
 }
