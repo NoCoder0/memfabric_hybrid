@@ -53,9 +53,12 @@ public:
         const uint32_t elemSize = ZBALDataTypeSize(op.dataType);
         const bool fullReduce = (elemSize > 0 && totalBytes < (uint64_t)rankNum * elemSize);
 
-        const uint64_t slice = fullReduce ? totalBytes : totalBytes / rankNum;
-        const uint64_t elements =
-            fullReduce ? totalBytes : ((myRank != rankNum - 1) ? slice : totalBytes - (rankNum - 1) * slice);
+        /* Element-aligned slice: SDMA reduce requires elem-aligned src/dst/len.
+         * Byte division misaligns rank offsets when totalBytes is not divisible
+         * by rankNum × elemSize. Last rank takes the element remainder
+         * (matches AIV zbal_kernel_allreduce.cpp). */
+        const uint64_t slice = fullReduce ? totalBytes : (totalBytes / elemSize / rankNum) * elemSize;
+        const uint64_t elements = (fullReduce || myRank != rankNum - 1) ? slice : totalBytes - (rankNum - 1) * slice;
         /* In full reduce, every rank processes offset 0 of the data (no scatter). */
         const uint64_t rankOff = fullReduce ? 0 : (uint64_t)myRank * slice;
 

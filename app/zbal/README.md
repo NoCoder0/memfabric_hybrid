@@ -1,4 +1,4 @@
-## 🔄Latest News
+# 🔄Latest News
 
 * Open source on May 15, 2026
 
@@ -42,23 +42,22 @@ Two major features:
 1. Install the dependency memfabric_hybrid package.
 
     ```bash
+    # The version of memfabric_hybrid must be higher than v1.1.0.
     pip install memfabric_hybrid
     ```
-    The version of memfabric_hybrid must be higher than v1.1.0.
 
 2. Git clone the current repo and build wheel package.
 
     ```bash
     git clone https://gitcode.com/Ascend/memfabric_hybrid.git
-    cd memfabric_hybrid/app/zbal/src/python/
-    rm -rf build dist zbal.*   # optional
-    python3 setup.py bdist_wheel
+    cd memfabric_hybrid/app/zbal/
+    bash script/build.sh
     ```
 
 3. Install wheel package.
 
     ```bash
-    cd memfabric_hybrid/app/zbal/src/python/dist
+    cd memfabric_hybrid/app/zbal/output
     pip uninstall memfabric_zbal -y
     pip install memfabric_zbal*
     ```
