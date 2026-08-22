@@ -33,6 +33,15 @@ using ock::mf::HcommBatchTransferDesc;
 
 constexpr uint64_t kCompletionAddress = ock::mf::HYBM_BATCH_COPY_META_ADDR + ock::mf::BATCH_COPY_COMPLETION_OFFSET;
 constexpr auto kCompletionTimeout = std::chrono::seconds(60);
+// Internal HCOMM experiment: each lane submits an external channel fence followed by a completion READ.
+constexpr std::array<uint8_t, 4U> kHcommBatchExternalFenceMagic{{'M', 'F', 'E', 'X'}};
+
+void MarkExternalFenceCompletion(HcommBatchTransferDesc &descriptor)
+{
+    for (size_t index = 0U; index < kHcommBatchExternalFenceMagic.size(); ++index) {
+        descriptor.reserved[index] = kHcommBatchExternalFenceMagic[index];
+    }
+}
 
 struct BatchCopyGroup {
     std::vector<HcommBatchTransferDesc> descriptors;
@@ -54,14 +63,14 @@ struct BatchCopyTransfers {
 
 void InvalidateDeviceCache(uintptr_t address)
 {
-    __asm__ __volatile__("dc civac, %0" :: "r"(address) : "memory");
+    __asm__ __volatile__("dc civac, %0" ::"r"(address) : "memory");
     __asm__ __volatile__("dsb ish" ::: "memory");
 }
 
 void FlushDeviceCache(uintptr_t address)
 {
-    __asm__ __volatile__("dc cvac, %0" :: "r"(address) : "memory");
-    __asm__ __volatile__("dsb ish" :::"memory");
+    __asm__ __volatile__("dc cvac, %0" ::"r"(address) : "memory");
+    __asm__ __volatile__("dsb ish" ::: "memory");
 }
 
 void DeviceMemoryBarrier()
@@ -271,6 +280,7 @@ int32_t ResolveAndAppendItem(const HybmBatchCopyParam &param, uint32_t index, co
     }
     auto &descriptor = group.descriptors.emplace_back();
     descriptor.transType = ock::mf::HCOMM_TRANSFER_TYPE_READ;
+    MarkExternalFenceCompletion(descriptor);
     descriptor.transferInfo.read.len = length;
     descriptor.transferInfo.read.dst = reinterpret_cast<void *>(destination);
     descriptor.transferInfo.read.src = reinterpret_cast<void *>(hcommSource);
@@ -393,6 +403,23 @@ int32_t EndBatchModeAndRecordTime(HybmBatchCopyTiming *timing)
     return ret;
 }
 
+int32_t SubmitLaneCompletions(const BatchCopyTransfers &transfers, uint16_t count)
+{
+    int32_t firstError = BM_OK;
+    for (uint16_t index = 0U; index < count; ++index) {
+        const auto ret = static_cast<int32_t>(HybmBatchCopyFenceAndReadCompletion(transfers.values[index]));
+        if (ret == BM_OK) {
+            continue;
+        }
+        HYBM_LOGE(ret, "BatchCopy lane completion submission failed, laneIndex=%u descriptorCount=%u", index,
+                  transfers.values[index].descriptorCount);
+        if (firstError == BM_OK) {
+            firstError = ret;
+        }
+    }
+    return firstError;
+}
+
 int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers, HybmBatchCopyTiming *timing)
 {
     if (timing != nullptr) {
@@ -411,23 +438,19 @@ int32_t SubmitLaneTransfers(const BatchCopyTransfers &transfers, HybmBatchCopyTi
         if (ret != BM_OK) {
             HYBM_LOGE(ret, "BatchCopy lane submit failed, laneIndex=%u descriptorCount=%u", index,
                       transfers.values[index].descriptorCount);
+            const auto cleanupRet = SubmitLaneCompletions(transfers, index + 1U);
+            if (cleanupRet != BM_OK) {
+                HYBM_LOGE(cleanupRet, "BatchCopy partial-submit completion cleanup failed, laneCount=%u", index + 1U);
+            }
             RecordWqeBuildTime(timing);
             (void)EndBatchModeAndRecordTime(timing);
             return ret;
         }
     }
-    for (uint16_t index = 0U; index < transfers.count; ++index) {
-        ret = static_cast<int32_t>(HybmBatchCopyFenceAndReadCompletion(transfers.values[index]));
-        if (ret != BM_OK) {
-            HYBM_LOGE(ret, "BatchCopy lane completion submission failed, laneIndex=%u descriptorCount=%u", index,
-                      transfers.values[index].descriptorCount);
-            RecordWqeBuildTime(timing);
-            (void)EndBatchModeAndRecordTime(timing);
-            return ret;
-        }
-    }
+    ret = SubmitLaneCompletions(transfers, transfers.count);
     RecordWqeBuildTime(timing);
-    return EndBatchModeAndRecordTime(timing);
+    const auto endRet = EndBatchModeAndRecordTime(timing);
+    return ret == BM_OK ? endRet : ret;
 }
 
 bool AllLaneCompletionsReceived(const BatchCopyTransfers &transfers)
@@ -472,8 +495,8 @@ int32_t FinishBatchCopy(const HybmBatchCopyTiming *timing, const HybmBatchCopyPa
                         int32_t ret)
 {
     if (timing != nullptr && timing->wqeBuildStartNs != 0U) {
-        const uint64_t knownHcommNs = timing->batchModeStartNs + timing->batchTransferTotalNs + timing->fenceNs +
-                                      timing->completionReadNs;
+        const uint64_t knownHcommNs =
+            timing->batchModeStartNs + timing->batchTransferTotalNs + timing->fenceNs + timing->completionReadNs;
         const uint64_t buildOtherNs = timing->wqeBuildNs > knownHcommNs ? timing->wqeBuildNs - knownHcommNs : 0U;
         const char *slowestBuildCall = "HcommBatchModeStart";
         uint64_t slowestBuildCallNs = timing->batchModeStartNs;
@@ -494,8 +517,8 @@ int32_t FinishBatchCopy(const HybmBatchCopyTiming *timing, const HybmBatchCopyPa
                   "BatchCopy timing, listNum=%u laneCount=%u buildAllWqeNs=%" PRIu64 " modeStartNs=%" PRIu64
                   " batchXferCalls=%u batchXferTotalNs=%" PRIu64 " batchXferMaxNs=%" PRIu64
                   " batchXferMaxOffset=%u batchXferMaxDescCount=%u fenceNs=%" PRIu64 " completionReadNs=%" PRIu64
-                  " buildOtherNs=%" PRIu64 " slowestBuildCall=%s slowestBuildCallNs=%" PRIu64
-                  " launchTaskNs=%" PRIu64 " completionWaitNs=%" PRIu64 " completionRetryCount=%u result=%d",
+                  " buildOtherNs=%" PRIu64 " slowestBuildCall=%s slowestBuildCallNs=%" PRIu64 " launchTaskNs=%" PRIu64
+                  " completionWaitNs=%" PRIu64 " completionRetryCount=%u result=%d",
                   param.list_num, laneCount, timing->wqeBuildNs, timing->batchModeStartNs, timing->batchTransferCalls,
                   timing->batchTransferTotalNs, timing->batchTransferMaxNs, timing->batchTransferMaxOffset,
                   timing->batchTransferMaxDescCount, timing->fenceNs, timing->completionReadNs, buildOtherNs,
