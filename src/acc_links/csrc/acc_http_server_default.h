@@ -41,7 +41,9 @@ public:
     {
         linkBlocking_ = false;
     }
-    ~AccHttpServerDefault() override = default;
+    // 显式析构：无论 Start/Stop 走了哪条路径（含 StartListener 失败、Stop 被跳过），
+    // 都必须回收 idle 检查线程，否则 joinable 的 std::thread 析构会触发 std::terminate。
+    ~AccHttpServerDefault() noexcept override;
 
     Result Start(const AccHttpServerOptions &opt, const AccTlsOption &tlsOption) override;
 

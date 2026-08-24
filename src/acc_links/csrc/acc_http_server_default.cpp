@@ -25,6 +25,14 @@ namespace {
 constexpr uint32_t HTTP_IDLE_CHECK_INTERVAL_MS = 1000;
 } // namespace
 
+AccHttpServerDefault::~AccHttpServerDefault() noexcept
+{
+    // 兜底回收：idle 检查线程在 StartWorkers 里就被拉起，若 StartListener 失败或
+    // 上层 Stop() 因 running_ 未置位被跳过，此处仍须 join，避免析构未 join 的
+    // std::thread 触发 std::terminate。StopIdleCheck 对"从未启动"的线程是安全的。
+    StopIdleCheck();
+}
+
 Result AccHttpServerDefault::Start(const AccHttpServerOptions &opt, const AccTlsOption &tlsOption)
 {
     AccTcpServerOptions tcpOpt;
