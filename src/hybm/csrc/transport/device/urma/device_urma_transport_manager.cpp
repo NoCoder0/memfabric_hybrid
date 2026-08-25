@@ -891,7 +891,7 @@ Result DeviceUrmaTransportManager::UnimportPeerImportsAndFlag(RemoteRankState &s
             continue;
         }
         BM_LOG_INFO("device_urma HcommMemUnimport, peer: " << peerRank
-                                                           << "descBytes.size: " << importIt->descBytes.size());
+                                                           << ", descBytes.size: " << importIt->descBytes.size());
         const auto ret = hcommApi_.UnimportMemory(localEndpoint_, importIt->descBytes.data(),
                                                   static_cast<uint32_t>(importIt->descBytes.size()));
         if (ret != BM_OK) {
