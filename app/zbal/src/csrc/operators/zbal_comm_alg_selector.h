@@ -41,7 +41,7 @@ inline OpExecConfig GetCommOpConfig(uint32_t commType, uint32_t commAlg)
             }
             return {1, 8}; /* FULL_MESH default: parallelize via channels */
         case ZBAL_CMD_ALLTOALLV:
-            return {1, 8};
+            return {1, 16};
         case ZBAL_CMD_REDUCE_SCATTER:
             if (commAlg == ZBAL_COMM_ALG_DOUBLE_RING) {
                 return {2, 8}; /* 2 cores (CW+CCW), 8 channels per core.
