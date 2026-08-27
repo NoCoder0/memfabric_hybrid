@@ -536,7 +536,7 @@ TEST_F(SmemHaConfigStoreTest, WatchAndGetRealReturnErrorWhenClientMissing)
     uint32_t wid = 0;
 
     EXPECT_EQ(SM_ERROR, store.Watch("k", [](int, const std::string &, const std::vector<uint8_t> &) {}, wid));
-    EXPECT_EQ(SM_ERROR, store.Watch(WATCH_RANK_LINK_DOWN, [](WatchRankType, uint32_t) {}, wid));
+    EXPECT_EQ(SM_ERROR, store.Watch(WATCH_RANK_LINK_DOWN, [](WatchRankType, uint32_t, ock::smem::Result) {}, wid));
     EXPECT_EQ(SM_ERROR, store.GetReal("k", value, 1));
 }
 
@@ -930,7 +930,7 @@ TEST_F(SmemHaConfigStoreTest, ForwardingApis_PrefixGet_Watch_QueryAlive_GetReal)
 
     uint32_t wid = 0;
     (void)store.Watch("k", [](int, const std::string &, const std::vector<uint8_t> &) {}, wid);
-    (void)store.Watch(WATCH_RANK_LINK_DOWN, [](WatchRankType, uint32_t) {}, wid);
+    (void)store.Watch(WATCH_RANK_LINK_DOWN, [](WatchRankType, uint32_t, ock::smem::Result) {}, wid);
 
     uint32_t alive = 0;
     (void)store.QueryAlive(1, alive);

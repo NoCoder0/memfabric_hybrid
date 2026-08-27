@@ -153,8 +153,8 @@ StorePtr StoreFactory::CreateStore(const std::string &ip, uint16_t port, uint16_
 
     auto ret = store->Startup(tlsOption_, connMaxRetry);
     if (ret == SM_RESOURCE_IN_USE) {
-        STORE_LOG_INFO("Startup for store(url=" << ip << ":" << port << ", model=" << model << ", rank=" << rankId
-                                                << ") address in use");
+        STORE_LOG_TRACE("Startup for store(url=" << ip << ":" << port << ", model=" << model << ", rank=" << rankId
+                                                 << ") address in use");
         failedReason_ = SM_RESOURCE_IN_USE;
         return nullptr;
     }
@@ -236,8 +236,8 @@ StorePtr StoreFactory::CreateTcpStore(const TcpStoreOptions &opts) noexcept
 
     auto ret = store->Startup(tlsOption_, opts.connMaxRetry);
     if (ret == SM_RESOURCE_IN_USE) {
-        STORE_LOG_INFO("Startup for store(url=" << opts.ip << ":" << opts.port << ", model=" << opts.model
-                                                << ", rank=" << opts.rankId << ") address in use");
+        STORE_LOG_TRACE("Startup for store(url=" << opts.ip << ":" << opts.port << ", model=" << opts.model
+                                                 << ", rank=" << opts.rankId << ") address in use");
         failedReason_ = SM_RESOURCE_IN_USE;
         return nullptr;
     }

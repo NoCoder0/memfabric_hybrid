@@ -151,7 +151,7 @@ Result AccStoreServer::Startup(const smem_tls_config &tlsConfig) noexcept
 
     auto result = accTcpServer_->Start(options, tlsOption);
     if (result == ock::acc::ACC_LINK_ADDRESS_IN_USE) {
-        STORE_LOG_INFO("startup acc tcp server on port: " << listenPort_ << " already in use.");
+        STORE_LOG_TRACE("startup acc tcp server on port: " << listenPort_ << " already in use.");
         return SM_RESOURCE_IN_USE;
     }
     if (result != SM_OK) {
@@ -185,7 +185,7 @@ Result AccStoreServer::Startup(const smem_tls_config &tlsConfig) noexcept
 
 void AccStoreServer::Shutdown(bool afterFork) noexcept
 {
-    STORE_LOG_INFO("start to shutdown Acc Store Server");
+    STORE_LOG_TRACE("start to shutdown Acc Store Server");
     {
         if (accTcpServer_ == nullptr) {
             return;
@@ -225,7 +225,7 @@ void AccStoreServer::Shutdown(bool afterFork) noexcept
     if (cleanupThread_.joinable()) {
         cleanupThread_.join();
     }
-    STORE_LOG_INFO("finished shutdown Acc Store Server");
+    STORE_LOG_TRACE("finished shutdown Acc Store Server");
 }
 
 void AccStoreServer::RegisterBrokenLinkCHandler(const ConfigStoreServerBrokenHandler &handler) noexcept
@@ -268,7 +268,7 @@ bool AccStoreServer::CanReceiveNewLink()
     if (state == SS_INITED) {
         const uint32_t dstState = skipRecover_ ? SS_NORMAL : SS_RECOVERING;
         if (state_.compare_exchange_strong(state, dstState)) {
-            STORE_LOG_INFO("change server state from INITED to " << (skipRecover_ ? "NORMAL" : "RECOVER"));
+            STORE_LOG_TRACE("change server state from INITED to " << (skipRecover_ ? "NORMAL" : "RECOVER"));
             if (dstState == SS_NORMAL) {
                 recoveryCond_.notify_all();
             }
@@ -316,13 +316,13 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
 {
     uint32_t worldSize = static_cast<uint32_t>(req.rankId >> 32);
     uint32_t rankId = static_cast<uint32_t>(req.rankId & 0xFFFFFFFF);
-    STORE_LOG_INFO("l:" << link->Id() << " ws:" << worldSize << " r:" << rankId << " rec:" << (int)req.reconnect);
+    STORE_LOG_TRACE("l:" << link->Id() << " ws:" << worldSize << " r:" << rankId << " rec:" << (int)req.reconnect);
     if (worldSize_ == std::numeric_limits<uint32_t>::max()) {
         // UINT32_MAX 表示未指定（如 follower），保持 worldSize_ 未固定，等待携带 world size 的 rank 连接。
         if (worldSize != std::numeric_limits<uint32_t>::max()) {
             STORE_ASSERT_RETURN(PersistWorldSize(worldSize) == SUCCESS, SM_ERROR);
             worldSize_ = worldSize;
-            STORE_LOG_INFO("Success to fix world size:" << worldSize_);
+            STORE_LOG_TRACE("Success to fix world size:" << worldSize_);
         } else {
             STORE_LOG_INFO("Connector world size unspecified, keep world size unfixed");
         }
@@ -388,11 +388,11 @@ Result AccStoreServer::LinkBrokenHandler(const uint32_t linkId) noexcept
         reconnectedRankSet_.erase(rankId);
         rankLinks_.erase(rankId);
         PersistAliveRankIds(aliveRankSet_);
-        STORE_LOG_INFO("link broken, linkId: " << linkId << " remove rankId: " << rankId);
+        STORE_LOG_TRACE("link broken, linkId: " << linkId << " remove rankId: " << rankId);
     }
     heartBeatMap_.erase(linkId);
     if (aliveRankSet_.empty()) {
-        STORE_LOG_INFO("all client link broken, will clear data");
+        STORE_LOG_TRACE("all client link broken, will clear data");
         rankIndex_ = 0;
         backend_->Clear();
         waitCtx_.clear();
@@ -896,7 +896,9 @@ Result AccStoreServer::WriteHandler(const ock::acc::AccTcpRequestContext &contex
     }
 
     if (totalSize > MAX_WRITE_TOTAL_SIZE) { // Avoid remote large offset causing multi-gigabyte allocation, trigger OOM
-        STORE_LOG_ERROR("sz exceed " << totalSize << ">" << MAX_WRITE_TOTAL_SIZE << offset << "+" << realValSize);
+        STORE_LOG_ERROR("WRITE total size exceeds limit, totalSize: " << totalSize << " limit: " << MAX_WRITE_TOTAL_SIZE
+                                                                      << " offset: " << offset
+                                                                      << " realValSize: " << realValSize);
         ReplyWithMessage(context, StoreErrorCode::INVALID_MESSAGE, "write total size exceeds limit.");
         return SM_INVALID_PARAM;
     }
@@ -1231,7 +1233,7 @@ void AccStoreServer::CheckerThreadTask() noexcept
         auto curTime = mf::StrUtil::GetNowTime();
         for (auto it = heartBeatMap_.begin(); it != heartBeatMap_.end();) {
             if ((curTime - it->second) / HEARTBEAT_INTERVAL > HEARTBEAT_TIMEOUT) {
-                STORE_LOG_INFO("link(" << it->first << ") broken");
+                STORE_LOG_TRACE("link(" << it->first << ") broken");
                 brokenLinks.insert(it->first);
                 it = heartBeatMap_.erase(it);
             } else {
@@ -1247,7 +1249,7 @@ void AccStoreServer::CheckerThreadTask() noexcept
         storeCond_.wait_for(lockerGuard, std::chrono::milliseconds(HEARTBEAT_INTERVAL),
                             [this]() { return (state_.load() == SS_EXITED); });
     }
-    STORE_LOG_INFO("checker thread exit");
+    STORE_LOG_TRACE("checker thread exit");
 }
 
 Result AccStoreServer::RestoreFromBackend() noexcept
@@ -1255,7 +1257,7 @@ Result AccStoreServer::RestoreFromBackend() noexcept
     if (!backend_->IsDistributed()) {
         return SM_OK;
     }
-    STORE_LOG_INFO("Starting restore from backend...");
+    STORE_LOG_TRACE("Starting restore from backend...");
 
     if (auto ret = RecoverAliveRankIds(aliveRankFromBackend_); ret != StoreErrorCode::SUCCESS) {
         STORE_LOG_WARN("Failed to recover alive rank IDs from backend");
@@ -1313,14 +1315,14 @@ Result AccStoreServer::UpdateStatus(bool status) noexcept
         if (ret != SM_OK) {
             STORE_LOG_ERROR("Failed to set leader status to active");
         } else {
-            STORE_LOG_INFO("Leader status set to active");
+            STORE_LOG_TRACE("Leader status set to active");
         }
     } else {
         ret = backend_->Delete(KEY_LEADER_STATUS);
         if (ret != SM_OK) {
             STORE_LOG_ERROR("Failed to remove leader status");
         } else {
-            STORE_LOG_INFO("Leader status removed");
+            STORE_LOG_TRACE("Leader status removed");
         }
     }
 
@@ -1345,7 +1347,7 @@ StoreErrorCode AccStoreServer::PersistWorldSize(uint32_t size) noexcept
     if (ret != SUCCESS) {
         STORE_LOG_ERROR("Failed to persist world size: " << size);
     } else {
-        STORE_LOG_INFO("World size persisted: " << size);
+        STORE_LOG_TRACE("World size persisted: " << size);
     }
     return ret;
 }
@@ -1363,7 +1365,7 @@ StoreErrorCode AccStoreServer::PersistAliveRankIds(const std::unordered_set<uint
             STORE_LOG_ERROR("Failed to remove alive ranks key from backend");
             return ret;
         }
-        STORE_LOG_INFO("Alive ranks cleared in backend");
+        STORE_LOG_TRACE("Alive ranks cleared in backend");
         return SUCCESS;
     }
     std::vector<uint32_t> orders;
@@ -1383,7 +1385,7 @@ StoreErrorCode AccStoreServer::PersistAliveRankIds(const std::unordered_set<uint
     if (ret != SUCCESS) {
         STORE_LOG_ERROR("Failed to persist alive ranks, count: " << ranks.size() << ", ranks: " << str);
     } else {
-        STORE_LOG_INFO("Alive ranks persisted, count: " << ranks.size() << ", ranks: " << str);
+        STORE_LOG_TRACE("Alive ranks persisted, count: " << ranks.size() << ", ranks: " << str);
     }
     return ret;
 }
@@ -1401,7 +1403,7 @@ StoreErrorCode AccStoreServer::RecoverAliveRankIds(std::unordered_set<uint32_t> 
         return SUCCESS;
     }
     if (rankStr.empty()) {
-        STORE_LOG_INFO("No alive ranks found in backend");
+        STORE_LOG_TRACE("No alive ranks found in backend");
         return SUCCESS;
     }
 
@@ -1419,7 +1421,7 @@ StoreErrorCode AccStoreServer::RecoverAliveRankIds(std::unordered_set<uint32_t> 
         outRanks.insert(static_cast<uint32_t>(val));
     }
 
-    STORE_LOG_INFO("Recovered alive ranks from backend, count: " << outRanks.size() << ", ranks: " << rankStr);
+    STORE_LOG_TRACE("Recovered alive ranks from backend, count: " << outRanks.size() << ", ranks: " << rankStr);
     return SUCCESS;
 }
 
@@ -1527,7 +1529,7 @@ void AccStoreServer::CleanupStaleRanks() noexcept
     if (UpdateStatus(true) != SM_OK) {
         STORE_LOG_ERROR("backend final update status failed in cleanup thread.");
     }
-    STORE_LOG_INFO("backend final update status successful in cleanup thread.");
+    STORE_LOG_TRACE("backend final update status successful in cleanup thread.");
 }
 
 void AccStoreServer::RestoreFromEtcdIfNeeded() noexcept
