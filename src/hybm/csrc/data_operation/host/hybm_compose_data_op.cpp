@@ -176,12 +176,12 @@ Result HostComposeDataOp::BatchDataCopy(hybm_batch_copy_params &params, hybm_dat
         copyOptions.flags = options.flags;
         auto availableOps = GetPrioritedDataOperators(copyOptions);
         if (availableOps.empty()) {
-            BM_LOG_ERROR("batch data copy from rank " << options.srcRankId << " to rank " << options.destRankId
+            BM_LOG_ERROR("batch data copy from rank " << copyOptions.srcRankId << " to rank " << copyOptions.destRankId
                                                       << " no data operator available");
             return BM_INVALID_PARAM;
         }
 
-        BM_LOG_DEBUG("try batch data copy from rank " << options.srcRankId << " to rank " << options.destRankId
+        BM_LOG_DEBUG("try batch data copy from rank " << copyOptions.srcRankId << " to rank " << copyOptions.destRankId
                                                       << " with data op " << availableOps.front().first
                                                       << " direction:" << direction);
         // 暂时不做多路径拷贝失败重试,copyParams内容会被BatchDataCopy修改
