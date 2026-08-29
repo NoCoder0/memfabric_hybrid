@@ -122,6 +122,12 @@ class BuildWheel(bdist_wheel):
             )
             return
 
+        # Keep a single copy of memfabric's own libs: they are already shipped
+        # under <pkg>/lib/ and preloaded via ctypes in __init__.py. Without
+        # exclude, auditwheel copies them again into <pkg>/.libs/ and rewrites
+        # RPATHs, so both copies get loaded and destroyed -> double free.
+        exclude_libraries = ["libmf_smem.so", "libmf_hybm_core.so", "libmf_acc_offload.so"]
+
         file = glob.glob(os.path.join(self.dist_dir, "*-linux_*.whl"))[0]
         if is_manylinux:
             auditwheel_cmd = [
@@ -134,7 +140,6 @@ class BuildWheel(bdist_wheel):
                 f"manylinux_2_28_{platform.machine()}",
                 "-w",
                 self.dist_dir,
-                file,
             ]
         else:
             auditwheel_cmd = [
@@ -143,8 +148,10 @@ class BuildWheel(bdist_wheel):
                 "repair",
                 "-w",
                 self.dist_dir,
-                file,
             ]
+        for lib in exclude_libraries:
+            auditwheel_cmd.extend(["--exclude", lib])
+        auditwheel_cmd.append(file)
         subprocess.check_call(auditwheel_cmd)
         os.remove(file)
 
