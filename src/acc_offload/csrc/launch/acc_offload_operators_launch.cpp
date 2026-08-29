@@ -273,10 +273,7 @@ int32_t LaunchAggregateUrmaDemoKernel(aclrtFuncHandle function, aclrtStream stre
     if (ret != BM_OK) {
         return ret;
     }
-    aclrtLaunchKernelAttr attr{};
-    attr.id = ACL_RT_LAUNCH_KERNEL_ATTR_TIMEOUT;
-    attr.value.timeout = kKernelTimeoutSeconds;
-    aclrtLaunchKernelCfg config{&attr, 1U};
+    aclrtLaunchKernelCfg config{nullptr, 0U};
     ret = aclrtLaunchKernelWithConfig(function, kKernelBlockDim, stream, &config, argsHandle, nullptr);
     if (ret != ACL_SUCCESS) {
         OFFLOAD_LOG_ERROR("launch aggregate URMA demo failed, deviceId: " << deviceId << " ret: " << ret);
