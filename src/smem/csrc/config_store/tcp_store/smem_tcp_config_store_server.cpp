@@ -417,8 +417,26 @@ Result AccStoreServer::LinkBrokenHandler(const uint32_t linkId) noexcept
     if (groupManager_ != nullptr) {
         groupManager_->OnLinkBroken(rankId);
     }
+    // 断开需如实持久化：alive_rank_list 已更新（去掉该 rank），此处同步写回
+    // groupManager states 为 IDLE，避免新 leader 恢复时残留 ACTIVE，导致同 rankId
+    // 重启的客户端 CheckIn 被拒（无法 Join）。锁内先取快照，etcd 写放到锁外，
+    // 避免故障时同步重试写入阻塞持 storeMutex_ 的全部配置存储操作。
+    std::vector<RankState> statesSnapshot;
+    uint32_t maxRanks = 0;
+    if (etcdStore_ != nullptr && groupManager_ != nullptr) {
+        statesSnapshot = groupManager_->GetStates();
+        maxRanks = groupManager_->GetMaxRanks();
+    }
     rankStateTaskQueue_.push(rankId);
     storeCond_.notify_all();
+    lockGuard.unlock();
+    if (etcdStore_ != nullptr && !statesSnapshot.empty()) {
+        auto ret = etcdStore_->PersistStates(statesSnapshot, maxRanks);
+        if (ret != StoreErrorCode::SUCCESS) {
+            STORE_LOG_ERROR("link broken, persist states failed, rankId: " << rankId
+                                                                           << ", ret: " << static_cast<int>(ret));
+        }
+    }
     return SM_OK;
 }
 
@@ -585,6 +603,8 @@ Result AccStoreServer::GetHandler(const ock::acc::AccTcpRequestContext &context,
 
     if (key.compare(0, autoRankingStr_.size(), autoRankingStr_) == 0) {
         if (!GetStatus()) {
+            STORE_LOG_WARN("GetStatus failed for AutoRanking request, key: " << key << ", seqNo: " << context.SeqNo()
+                                                                             << ", replying leader status inactive");
             ReplyWithMessage(context, StoreErrorCode::ERROR, "leader status inactive");
             return SM_ERROR;
         }
@@ -1290,6 +1310,20 @@ bool AccStoreServer::GetStatus() noexcept
         if (ret != 0) {
             STORE_LOG_WARN("Unable to get leader status from backend, ret: " << ret << ", attempt: " << (attempt + 1)
                                                                              << "/" << (retries + 1));
+            // Self-heal: re-assert leader_status when this instance is the rightful leader
+            // (KEY_LEADER points to us) but leader_status key is missing.
+            // Only attempt once per check (attempt 0) to avoid storms.
+            if (attempt == 0) {
+                std::string leaderAddr;
+                const std::string myAddr = listenIp_ + ":" + std::to_string(listenPort_);
+                if (backend_->Get(KEY_LEADER, leaderAddr) == 0 && leaderAddr == myAddr) {
+                    STORE_LOG_WARN("KEY_LEADER still points to this instance ("
+                                   << leaderAddr << "); re-asserting leader_status=true (AutoRanking self-heal)");
+                    UpdateStatus(true);
+                } else {
+                    STORE_LOG_WARN("KEY_LEADER=" << leaderAddr << " != " << myAddr << "; skip leader_status self-heal");
+                }
+            }
         } else if (status == "true") {
             STORE_LOG_DEBUG("Leader status: active");
             return true;
@@ -1313,14 +1347,14 @@ Result AccStoreServer::UpdateStatus(bool status) noexcept
     if (status) {
         ret = backend_->Put(KEY_LEADER_STATUS, "true", EPHEMERAL_KEY_TTL_SEC);
         if (ret != SM_OK) {
-            STORE_LOG_ERROR("Failed to set leader status to active");
+            STORE_LOG_ERROR("Failed to set leader status to active, ret: " << ret);
         } else {
             STORE_LOG_TRACE("Leader status set to active");
         }
     } else {
         ret = backend_->Delete(KEY_LEADER_STATUS);
         if (ret != SM_OK) {
-            STORE_LOG_ERROR("Failed to remove leader status");
+            STORE_LOG_ERROR("Failed to remove leader status, ret: " << ret);
         } else {
             STORE_LOG_TRACE("Leader status removed");
         }
@@ -1497,8 +1531,7 @@ void AccStoreServer::CleanupStaleRanks() noexcept
     if (groupManager_ != nullptr) {
         for (uint32_t rankId : ranksToRemove) {
             STORE_LOG_INFO("Remove old rankId: " << rankId);
-            STORE_LOG_DEBUG("CleanupStaleRanks: server-initiated Checkout (no client LEAVREQ), rankId: " << rankId);
-            groupManager_->Checkout(rankId);
+            groupManager_->Checkout(rankId, 0, "cleanup-stale");
         }
     }
 
@@ -1536,6 +1569,27 @@ void AccStoreServer::RestoreFromEtcdIfNeeded() noexcept
 {
     if (etcdStore_ != nullptr && groupManager_ != nullptr) {
         etcdStore_->Recover(groupManager_.Get());
+        // 兜底：以 alive_rank_list 为权威，校正 Recover 恢复的 states 中已不在图的
+        // rank（如 etcd 抖动窗口内 states 未及时写 IDLE 而残留 CHECKED_IN/ACTIVE）。
+        // 校正后显式持久化，保证 etcd 中 states 与 alive_rank_list 一致，避免后续
+        // 分配/CheckIn 路由到已无进程的 rank。
+        std::vector<uint32_t> staleRanks;
+        for (uint32_t i = 0; i < groupManager_->GetMaxRanks(); ++i) {
+            if (aliveRankFromBackend_.count(i) == 0 && groupManager_->Checkout(i, 0, "server-reconcile") == 0) {
+                staleRanks.push_back(i);
+            }
+        }
+        if (!staleRanks.empty()) {
+            std::string rankStr;
+            for (size_t k = 0; k < staleRanks.size(); ++k) {
+                if (k > 0) {
+                    rankStr += ",";
+                }
+                rankStr += std::to_string(staleRanks[k]);
+            }
+            STORE_LOG_WARN("Recover: stale ranks not in alive_rank_list, reset to IDLE, ranks=" << rankStr);
+            (void)etcdStore_->PersistStates(groupManager_->GetStates(), groupManager_->GetMaxRanks());
+        }
         // After recovery, subscribe to state changes for ongoing persistence
         groupManager_->SetOnStateChangeCallback([this]() {
             if (etcdStore_) {

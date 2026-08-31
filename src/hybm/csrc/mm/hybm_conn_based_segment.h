@@ -12,6 +12,7 @@
 #ifndef MF_HYBRID_HYBM_CONN_BASED_SEGMENT_H
 #define MF_HYBRID_HYBM_CONN_BASED_SEGMENT_H
 
+#include <mutex>
 #include <set>
 #include "hybm_mem_segment.h"
 #include "hybm_mem_common.h"
@@ -73,6 +74,7 @@ private:
     static void FreeAllocatedMemory(void *ptr, uint64_t size, MemAllocMethod allocMethod) noexcept;
 
 private:
+    std::mutex mutex_;
     uint8_t *globalVirtualAddress_{nullptr};
     uint64_t totalVirtualSize_{0UL};
     uint8_t *localVirtualBase_{nullptr};

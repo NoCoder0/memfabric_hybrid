@@ -13,6 +13,7 @@
 #ifndef SMEM_SMEM_TCP_CONFIG_STORE_SERVER_H
 #define SMEM_SMEM_TCP_CONFIG_STORE_SERVER_H
 
+#include <atomic>
 #include <list>
 #include <chrono>
 #include <mutex>

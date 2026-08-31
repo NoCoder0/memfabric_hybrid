@@ -156,13 +156,15 @@ func drainKeepAlive(ctx context.Context, ch <-chan *clientv3.LeaseKeepAliveRespo
 	for {
 		select {
 		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "[etcd-cgo] drainKeepAlive: context done for lease %x\n", leaseID)
 			return
 		case resp, ok := <-ch:
 			if !ok {
+				fmt.Fprintf(os.Stderr, "[etcd-cgo] drainKeepAlive: channel closed for lease %x\n", leaseID)
 				return
 			}
 			if resp == nil {
-				fmt.Fprintf(os.Stderr, "[etcd-cgo] lease keepalive lost\n")
+				fmt.Fprintf(os.Stderr, "[etcd-cgo] drainKeepAlive: keepalive lost for lease %x\n", leaseID)
 			}
 		}
 	}
@@ -253,7 +255,8 @@ func Etcd_Close(client *C.EtcdClient) {
 	}
 
 	// Cancel all keepalive goroutines from TTL Puts
-	for _, cancel := range keepAliveCancels {
+	for id, cancel := range keepAliveCancels {
+		fmt.Fprintf(os.Stderr, "[etcd-cgo] Etcd_Close: cancelling keepalive for lease %x\n", id)
 		cancel()
 	}
 
@@ -332,7 +335,8 @@ func Etcd_Put(client *C.EtcdClient, key *C.char, value unsafe.Pointer, valueLen 
 
 		kaCh, kaErr := w.client.KeepAlive(kaCtx, leaseResp.ID)
 		if kaErr != nil {
-			fmt.Fprintf(os.Stderr, "[etcd-cgo] KeepAlive failed for lease %x: %v\n", leaseResp.ID, kaErr)
+			fmt.Fprintf(os.Stderr, "[etcd-cgo] KeepAlive failed for lease %x, key=%s, ttl=%d: %v\n",
+				leaseResp.ID, goKey, ttlSeconds, kaErr)
 			kaCancel()
 		} else {
 			go drainKeepAlive(kaCtx, kaCh, leaseResp.ID, w)
@@ -558,6 +562,7 @@ func etcdLockInternal(client *C.EtcdClient, lockName string) C.int {
 	}
 
 	// Cancel any previous keepalive goroutines from TTL Puts
+	fmt.Fprintf(os.Stderr, "[etcd-cgo] Etcd_Lock cancelling %d TTL-put keepalive(s)\n", len(w.keepAliveCancels))
 	for _, cancel := range w.keepAliveCancels {
 		cancel()
 	}

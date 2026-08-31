@@ -267,7 +267,6 @@ bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAt
         DistributedLockGuard lockGuard(backend_, backendLockName_);
         if (!lockGuard.IsLocked()) {
             SM_LOG_ERROR("Failed to acquire distributed lock, will retry");
-            backend_->UnInitialize();
             return false;
         }
         SM_LOG_INFO("Distributed lock acquired, double-checking leader");
@@ -275,10 +274,8 @@ bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAt
             SM_LOG_INFO("Leader appeared during lock acquisition: " << leaderAddr);
             if (BecomeFollower(leaderAddr) != SM_OK) {
                 SM_LOG_ERROR("Becoming follower failed after lock, leader: " << leaderAddr);
-                backend_->UnInitialize();
                 return false;
             }
-            backend_->UnInitialize();
             SM_LOG_INFO("Election loop exiting: became follower of " << leaderAddr << " after lock");
             becameLeader = false;
             return true;
@@ -295,7 +292,6 @@ bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAt
     if (becameLeader) {
         return true;
     }
-    backend_->UnInitialize();
     return false;
 }
 

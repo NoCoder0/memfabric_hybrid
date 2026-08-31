@@ -264,9 +264,9 @@ void SmemGroupManagerServer::ResetRankState(uint32_t rankId, std::vector<uint32_
     }
 }
 
-int SmemGroupManagerServer::Checkout(uint32_t rankId, uint64_t reqId) noexcept
+int SmemGroupManagerServer::Checkout(uint32_t rankId, uint64_t reqId, const std::string &reason) noexcept
 {
-    STORE_LOG_INFO("[GM][Server][Recv] RCV rank=" << rankId << " type=LEAVREQ reqId=" << reqId);
+    STORE_LOG_INFO("[GM][Server] rank=" << rankId << " Checkout reason=" << reason << " reqId=" << reqId);
     if (rankId >= maxRanks_) {
         return -1;
     }

@@ -148,7 +148,7 @@ public:
 
     int CheckIn(const RankFullInfo &info, uint64_t reqId = 0) noexcept;
     int ProcessExtendMemory(uint32_t rankId, const MultiBytes &additionalSlices, uint64_t reqId = 0) noexcept;
-    int Checkout(uint32_t rankId, uint64_t reqId = 0) noexcept;
+    int Checkout(uint32_t rankId, uint64_t reqId = 0, const std::string &reason = "client-leavreq") noexcept;
     int Clear(uint32_t rankId) noexcept;
 
     void SetRankState(uint32_t rankId, RankState state) noexcept;
@@ -207,8 +207,9 @@ public:
     {
         return maxRanks_;
     }
-    const std::vector<RankState> &GetStates() const noexcept
+    std::vector<RankState> GetStates() const noexcept
     {
+        std::lock_guard<std::mutex> lock(mutex_);
         return states_;
     }
     const std::vector<LinkState> &GetLinks() const noexcept

@@ -226,6 +226,7 @@ Result HybmConnBasedSegment::Import(const std::vector<std::string> &allExInfo, v
 
 Result HybmConnBasedSegment::Mmap() noexcept
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (const auto &import : imports_) {
         if (import.rankId == options_.rankId) {
             continue;
@@ -242,6 +243,7 @@ Result HybmConnBasedSegment::Mmap() noexcept
 
 Result HybmConnBasedSegment::Unmap() noexcept
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (auto gva : mappedGvaMem_) {
         HybmVaManager::GetInstance().RemoveOneVaInfo(gva);
     }
@@ -463,6 +465,7 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
 
 Result HybmConnBasedSegment::RemoveImported(const std::vector<uint32_t> &ranks) noexcept
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     for (auto &rank : ranks) {
         if (rank >= options_.rankCnt) {
             BM_LOG_ERROR("input rank is invalid! rank:" << rank << " rankSize:" << options_.rankCnt);
