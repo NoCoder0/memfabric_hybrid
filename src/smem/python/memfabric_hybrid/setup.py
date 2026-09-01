@@ -126,7 +126,12 @@ class BuildWheel(bdist_wheel):
         # under <pkg>/lib/ and preloaded via ctypes in __init__.py. Without
         # exclude, auditwheel copies them again into <pkg>/.libs/ and rewrites
         # RPATHs, so both copies get loaded and destroyed -> double free.
-        exclude_libraries = ["libmf_smem.so", "libmf_hybm_core.so", "libmf_acc_offload.so"]
+        exclude_libraries = [
+            "libmf_smem.so",
+            "libmf_hybm_core.so",
+            "libmf_acc_offload.so",
+            "libboundscheck.so",
+        ]
 
         file = glob.glob(os.path.join(self.dist_dir, "*-linux_*.whl"))[0]
         if is_manylinux:
