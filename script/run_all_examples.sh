@@ -715,6 +715,66 @@ skip "02_opentelemetry (README-only design draft)"
 skip "03_dashboards (README-only design draft)"
 
 # ------------------------------------------------------------------------------
+#  kv_offload  examples
+#  Each example runs rank_id == device_id ranks on NPU 0..world_size-1.
+#  --world_size defaults to min(NPU_IDLE, 4) for local/shared, so CI without 4
+#  free NPUs still covers them at a smaller scale.
+# ------------------------------------------------------------------------------
+header "kv_offload  KV Offload"
+
+if [[ $NPU_IDLE -ge 1 ]]; then
+    ws=$((NPU_IDLE < 4 ? NPU_IDLE : 4))
+
+    # local_dram_offload: per-rank local DRAM KV offload (no store url needed)
+    ex="local_dram_offload"
+    d="$EXAMPLES_DIR/kv_offload/$ex"
+    if [[ -f "$d/$ex.py" ]]; then
+        if npu_id_unhealthy 0; then
+            skip "$ex (NPU 0 unhealthy: ${NPU_UNHEALTHY_IDS})"
+        else
+            run_python_example_args "$ex" "$d" "--world_size=$ws"
+        fi
+    else
+        skip "$ex (no runnable script found)"
+    fi
+
+    # shared_dram_offload: shared DRAM pool KV offload (world_size power of 2, rank0 owns pool)
+    ex="shared_dram_offload"
+    d="$EXAMPLES_DIR/kv_offload/$ex"
+    if [[ -f "$d/$ex.py" ]]; then
+        if [[ $ws -lt 2 ]]; then
+            skip "$ex (shared scene needs >=2 ranks, only $ws NPU idle)"
+        elif npu_id_unhealthy 0; then
+            skip "$ex (NPU 0 unhealthy: ${NPU_UNHEALTHY_IDS})"
+        else
+            # power of 2 <= ws: 1 -> 1 (not allowed), so floor to highest power of 2
+            pw=1
+            while [[ $((pw * 2)) -le $ws ]]; do pw=$((pw * 2)); done
+            run_python_example_args "$ex" "$d" "--world_size=$pw"
+        fi
+    else
+        skip "$ex (no runnable script found)"
+    fi
+
+    # group_pack_copy_offload: H2D group pack copy bandwidth, hardcodes 4 ranks (device 0-3)
+    ex="group_pack_copy_offload"
+    d="$EXAMPLES_DIR/kv_offload/$ex"
+    if [[ -f "$d/$ex.py" ]]; then
+        if [[ $NPU_IDLE -lt 4 ]]; then
+            skip "$ex (needs 4 NPUs idle, got: ${NPU_IDLE_IDS:-none})"
+        elif npu_id_unhealthy 0 1 2 3; then
+            skip "$ex (NPU 0-3 unhealthy: ${NPU_UNHEALTHY_IDS})"
+        else
+            run_python_example "$ex" "$d"
+        fi
+    else
+        skip "$ex (no runnable script found)"
+    fi
+else
+    skip "kv_offload/* (need >=1 NPU)"
+fi
+
+# ------------------------------------------------------------------------------
 #  transfer examples
 # ------------------------------------------------------------------------------
 header "Transfer Examples"

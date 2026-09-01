@@ -135,9 +135,13 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
             break;
         }
 
-        constexpr int portBase = 8500;
-        int port = portBase + config.deviceId / config.worldSize;
-        storeUrl_ = "tcp://127.0.0.1:" + std::to_string(port);
+        if (config.storeUrl[0] != '\0') {
+            storeUrl_ = config.storeUrl;
+        } else {
+            constexpr int portBase = 8500;
+            int port = portBase + config.deviceId / config.worldSize;
+            storeUrl_ = "tcp://127.0.0.1:" + std::to_string(port);
+        }
 
         UrlExtraction extraction;
         if (extraction.ExtractIpPortFromUrl(storeUrl_) != OFFLOAD_OK) {
