@@ -106,10 +106,10 @@ Result SmemBmEntry::AllocDramMem(hybm_entity_t entity, const hybm_options &optio
     if (options.maxDRAMSize == 0) {
         return SM_OK;
     }
-    if (options.flags & SMEM_BM_FLAG_DRAM_BEST_EFFORT) {
+    if ((options.flags & SMEM_BM_FLAG_DRAM_BEST_EFFORT) && options.bmDataOpType == HYBM_DOP_TYPE_SDMA) {
         return AllocDramMemBestEffort(entity, options.hostVASpace, flags);
     }
-    if (options.flags & SMEM_BM_FLAG_DRAM_MAP_HOST_VA) {
+    if ((options.flags & SMEM_BM_FLAG_DRAM_MAP_HOST_VA) && options.bmDataOpType == HYBM_DOP_TYPE_SDMA) {
         return AllocDramMemBySlice(entity, options.hostVASpace, flags);
     }
     auto slice = hybm_alloc_local_memory(entity, HYBM_MEM_TYPE_HOST, options.hostVASpace, flags);
