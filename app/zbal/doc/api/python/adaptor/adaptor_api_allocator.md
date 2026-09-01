@@ -1,8 +1,8 @@
-## The ZBAL Allocator API
+# The ZBAL Allocator API
 
 *Note: the allocator python APIs are all under package name* ***allocator***.
 
-#### 1. record_memory_history
+## 1. record_memory_history
 
 |                         |                                                                                               |
 | ----------------------- | --------------------------------------------------------------------------------------------- |
@@ -11,8 +11,7 @@
 | arguments - enabled     | enabled string, only "all" and "state" are allowed. For compatible "state" is same with "all" |
 | arguments - max_entries | record max entry size                                                                         |
 
-
-#### 2. get_heap_stats
+## 2. get_heap_stats
 
 |                    |                                                                   |
 | ------------------ | ----------------------------------------------------------------- |
@@ -21,7 +20,7 @@
 | arguments - device | the device id                                                     |
 | return             | return (used_size, total_size), return zero if heap is not inited |
 
-#### 3. dump_snapshot
+## 3. dump_snapshot
 
 |             |                                       |
 | ----------- | ------------------------------------- |
@@ -29,8 +28,7 @@
 | description | dump the memory allocator snapshot    |
 | return      | the memory alloc result pkl dict file |
 
-
-#### 4. simulate_init
+## 4. simulate_init
 
 |                  |                                                          |
 | ---------------- | -------------------------------------------------------- |
@@ -39,7 +37,7 @@
 | arguments - size | simulate init size                                       |
 | description      | simulate_init on sma/dma heap, no actual memory allocate |
 
-#### 4. is_mix_alloc
+## 5. is_mix_alloc
 
 |             |                                               |
 | ----------- | --------------------------------------------- |

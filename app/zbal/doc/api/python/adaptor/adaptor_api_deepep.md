@@ -1,10 +1,10 @@
-## Python APIs for DeepEP
+# Python APIs for DeepEP
 
 *Note: ZBAL python deepep APIs are compatible with original deepep APIs as a means of choice rather than an addition API group.*
 
-### 1. Compatible APIs
+## 1. Compatible APIs
 
-##### 1. Config
+### 1. Config
 
 Config is a data class to hold deepep configurations.
 
@@ -18,7 +18,7 @@ Config is a data class to hold deepep configurations.
     | num_max_rdma_chunked_send_tokens | int      | not used                                           |
     | num_max_rdma_chunked_recv_tokens | int      | not used                                           |
 
-1. Member function
+2. Member function
 
     ```python
     def get_nvl_buffer_size_hint(hidden_bytes, num_ranks)
@@ -28,7 +28,7 @@ Config is a data class to hold deepep configurations.
     # rdescription: compatible function, empty operation, not used
     ```
 
-##### 2. EventHandle
+### 2. EventHandle
 
 1. Member function
 
@@ -37,7 +37,7 @@ Config is a data class to hold deepep configurations.
     # empty function
     ```
 
-##### 3. Buffer
+### 3. Buffer
 
 1. Member function
 
@@ -170,7 +170,7 @@ Config is a data class to hold deepep configurations.
     # description: compatible function, empty operation
     ```
 
-##### 4. get_low_latency_rdma_size_hint
+### 4. get_low_latency_rdma_size_hint
 
 ```python
 def get_low_latency_rdma_size_hint(num_max_dispatch_tokens_per_rank, hidden, num_ranks, num_experts)

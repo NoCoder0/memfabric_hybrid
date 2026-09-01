@@ -1,8 +1,8 @@
-## C API of bootstrap
+# C API of bootstrap
 
 [TOC]
 
-### 1 Options
+## 1 Options
 
 ### 1.1 Initialize the options struct of bootstrap
 
@@ -24,7 +24,7 @@ int32_t zbal_bootstrap_options_init(zbal_bootstrap_options_t *options)
 | options           | in     | options ptr need to be initialized |
 | return            |        | 0 if successful                    |
 
-### 2 Bootstrap and Un-bootstrap
+## 2 Bootstrap and Un-bootstrap
 
 ### 2.1 Bootstrap
 

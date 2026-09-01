@@ -4,7 +4,7 @@
 
 ## 目录说明
 
-```
+```text
 test/integration/
 ├── decrypt/              # 自定义解密库示例
 ├── etcd_backend/         # Etcd 后端测试工具

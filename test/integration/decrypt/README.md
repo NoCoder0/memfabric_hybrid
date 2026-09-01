@@ -36,10 +36,12 @@ int DecryptPassword(const char* cipherText, const size_t cipherTextLen, char* pl
 
 1. 确保已安装CMake和编译器
 2. 运行构建脚本：
+
    ```bash
    chmod +x build.sh
    ./build.sh
    ```
+
 3. 构建完成后，将在当前目录生成`libdecrypt.so`文件
 
 ## 自定义实现

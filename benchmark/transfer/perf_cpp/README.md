@@ -54,7 +54,7 @@ run包安装后，`transfer_perf`在/usr/local/memfabric_hybrid/latest/aarch64-l
 | rankId             | 是  | 当前节点的rankId                                        |
 | deviceId           | 是  | 当前节点的deviceId                                      |
 | useSdma            | 是  | 1使用SDMA，0使用RDMA                                    |
-| tcp://{Ip}:{port}  | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md) |
+| tcp://{Ip}:{port}  | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/zh/config_store_cluster_ha.md) |
 
 ### 运行步骤
 

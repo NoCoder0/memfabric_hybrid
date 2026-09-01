@@ -1,6 +1,6 @@
-## Get Started
+# Get Started
 
-### 1. Get wheel package
+## 1. Get wheel package
 
 The zbal wheel pacakge has been uploaded to pip repo, install zbal as following command.
 
@@ -11,7 +11,7 @@ pip install memfabric_zbal
 If there is a network issue on you workspace, compiling to get wheel package is also a way to it, see
 details [here](../../README.md#quickstart).
 
-### 2. Import and init
+## 2. Import and init
 
 Add initializing code as following to your project.
 
@@ -33,9 +33,9 @@ group = dist.init_process_group("zbal", rank=global_rank, world_size=world_size)
 # zbal_uninit()
 ```
 
-### 3. Other tips
+## 3. Other tips
 
-#### 3.1 For Un-support collective communicator operators
+### 3.1 For Un-support collective communicator operators
 
 Some of the collective communicator opereatos are un-supported from now, or if the operators performs bad compare to
 hccl operators in your situation, use the following way to repalce zbal operators with hccl operators. Multi operators
@@ -45,14 +45,14 @@ separated by comma.
 export ZBAL_HCCL_OP="allgather,allreduce"
 ```
 
-#### 3.2 For training
+### 3.2 For training
 
-##### 3.2.1 Integration of ZBAL into LLaMA-Factory + DeepSpeed for Fine-Tuning
+#### 3.2.1 Integration of ZBAL into LLaMA-Factory + DeepSpeed for Fine-Tuning
 
 First, we need to modify the relevant files in LLaMA-Factory and complete the ZBAL initialization.
 The file `src/llamafactory/launcher.py` needs to be modified as follows:
 
-```
+```python
 if __name__ == "__main__":
     # The following are the newly added contents:
     enable_zbal = os.getenv("ENABLE_ZBAL", "0")
@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
 Next, you need to modify the relevant DeepSpeed(version:0.18.8) reference code. Patch as below:
 
-```
+```bash
 diff --git a/accelerator/npu_accelerator.py b/accelerator/npu_accelerator.py
 index 421050d..a284493 100644
 --- a/accelerator/npu_accelerator.py
@@ -167,7 +167,7 @@ index 70282ec..090cc56 100644
              self.comm_backend_handle = HcclBackend(self.deepspeed.mpu)
 ```
 
-##### 3.2.2 Set the environment variable configuration.
+#### 3.2.2 Set the environment variable configuration
 
 When use zbal in training projects like deepspeed, add the following env to your workspace.
 
@@ -175,9 +175,9 @@ When use zbal in training projects like deepspeed, add the following env to your
 export ZBAL_OP_DEFUALT_STREAM=1
 ```
 
-#### 3.3 For inference
+### 3.3 For inference
 
-##### 3.3.1 Integration of ZBAL into SGLang for Inference
+#### 3.3.1 Integration of ZBAL into SGLang for Inference
 
 Currently, we can intergrate zbal support by apply this [patch](https://github.com/sgl-project/sglang/pull/24575).
 
@@ -239,6 +239,6 @@ python -m sglang.launch_server --model-path $MODEL_PATH \
 with
 1.2G+ memory efficiency**
 
-#### 3.4 Environment Variables
+### 3.4 Environment Variables
 
 All ZBAL using environment vriables [here](./env.md).

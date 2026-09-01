@@ -1,4 +1,4 @@
-## Performance measurement on Huawei Ascend
+# Performance measurement on Huawei Ascend
 
 | Operation types  | A2   | A3                             | A5   |
 | ---------------- | ---- | ------------------------------ | ---- |

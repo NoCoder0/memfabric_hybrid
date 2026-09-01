@@ -24,7 +24,7 @@ G2G: copy data from global memory space to global memory space
 
 ### 使用简介
 
-详情请参见 [bm_example](../benchmark/bm/README.md)，简单概述如下。
+详情请参见 [bm_example](../../benchmark/bm/README.md)，简单概述如下。
 
 **C接口使用方式**
 
@@ -50,7 +50,7 @@ G2G: copy data from global memory space to global memory space
 
 ### 使用简介
 
-详情参考[trans_example](../examples/transfer/README.md)，简单概述如下。
+详情参考[trans_example](../../examples/transfer/README.md)，简单概述如下。
 
 **C接口使用方式**
 
@@ -80,7 +80,7 @@ G2G: copy data from global memory space to global memory space
 
 ### 使用简介
 
-详情参考[shm_example](../examples/hbm_share_memory/ShiftPutGet/README.md)，简单概述如下。
+详情参考[shm_example](../../examples/hbm_share_memory/ShiftPutGet/README.md)，简单概述如下。
 
 **C接口使用方式**
 
@@ -101,7 +101,7 @@ G2G: copy data from global memory space to global memory space
 
 ### 使用简介
 
-LOCAL场景详情参考[local_dram_offload示例](../examples/kv_offload/local_dram_offload/local_dram_offload.py)，SHARED场景详情参考[shared_dram_offload示例](../examples/kv_offload/shared_dram_offload/shared_dram_offload.py)。
+LOCAL场景详情参考[local_dram_offload示例](../../examples/kv_offload/local_dram_offload/local_dram_offload.py)，SHARED场景详情参考[shared_dram_offload示例](../../examples/kv_offload/shared_dram_offload/shared_dram_offload.py)。
 简单概述如下。
 
 **Python接口使用方式**

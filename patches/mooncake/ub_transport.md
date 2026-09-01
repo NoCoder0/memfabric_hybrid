@@ -1,15 +1,19 @@
 # UB Transport
+
 UB Transport源代码路径为Mooncake/mooncake-transfer-engine/src/transport/ub_transport。
 
 ## 概述
+
 UB Transport是一个基于 [MemFabric](https://gitcode.com/Ascend/memfabric_hybrid) 的NPU数据传输库，
 得益于MemFabric强大的跨节点传输能力，支持RH2D、D2RH等OneCopy跨机跨介质数据直接访问能力。
 
 ### 软件硬件配套说明
+
 由于UB Transport以 [MemFabric](https://gitcode.com/Ascend/memfabric_hybrid) 作为池化底座，运行需要配套安装MemFabric，
-详见 [MemFabric安装部署](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/doc/installation.md)
+详见 [MemFabric安装部署](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/docs/installation.md)
 
 ### 环境变量配置
+
 UB Transport支持通过环境变量设置内部参数
 
 #### 必选配置
@@ -36,6 +40,7 @@ UB Transport支持通过环境变量设置内部参数
 | MF_HCOM_PORT  | 设置HCON 端口（默认为1025）,eg: **export MF_HCOM_PORT=1026**                                                                                                                   |
 
 ### 注意事项（必看）
+
 1.由于 memfabric 初始化时依赖config_store（memfabric内部的元数据交换服务）来进行各节点的元数据同步，所以启动时需要保证MF_STORE_URL的有效性
 需要保证 port及prot+1 端口可用（分别用于支持PD传输和内存池化功能）
 
@@ -43,7 +48,9 @@ UB Transport支持通过环境变量设置内部参数
 即如果需要使用PD传输能力，通过mooncake_transfer接口使用，内存池化功能通过mooncake_store接口使用。
 
 ### 编译说明
+
 在成功安装所有依赖后，**设置编译参数-DUSE_UB=ON**，正常编译Mooncake即可。
+
 ```cpp
 mkdir -p build
 cd build
@@ -51,7 +58,9 @@ cmake .. -DUSE_UB=ON
 make -j
 make install
 ```
+
 ### 使用说明
+
 就使用上来说，UB Transport无缝兼容原版mooncake接口，在**初始化时指定协议使用 'ub' 即可**
 
 ```python
@@ -66,7 +75,9 @@ ret = store.batch_put_from_multi_buffers(keys, addrs, sizes, True)
 # RH2D
 ret = store.batch_get_into_multi_buffers(keys, addrs, sizes, True)
 ```
+
 ### PD传输使用说明
+
 UB Transport的PD传输能力由mooncake_transfer使能，所以需要通过TransferEngine接口调用
 
 ```python

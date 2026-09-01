@@ -40,7 +40,7 @@ python transfer_performance.py --rank-id 1 --store-url tcp://127.0.0.1:12050 --n
 | 参数名              | 必选 | 说明                                                 |
 |---------------------|------|----------------------------------------------------|
 | rank-id             | 是  | 当前节点的rankId                                        |
-| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md) |
+| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/zh/config_store_cluster_ha.md) |
 | num-threads         | 是  | 并发线程数（默认：2）                                    |
 | data-op-type        | 是  | 数据操作类型：sdma或rdma（默认：sdma）                    |
 | npu-id              | 是  | NPU设备ID（默认：0）                                    |
@@ -63,7 +63,7 @@ python transfer_performance.py --rank-id 1 --store-url tcp://127.0.0.1:12050 --n
 
 | 参数名              | 必选 | 说明                                                 |
 |---------------------|------|----------------------------------------------------|
-| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/config_store_cluster_ha.md) |
+| store-url           | 是  | 配置存储服务地址，格式：`tcp://ip:port` 或者 `tcp://[ipv6]:port`。configStore的server的监听ip和端口。关于 configStore 配置存储系统的说明，请参考 [config_store_cluster_ha](../../../docs/zh/config_store_cluster_ha.md) |
 | num-threads         | 是  | 并发线程数（默认：2）                                    |
 | data-op-type        | 是  | 数据操作类型：sdma或rdma（默认：sdma）                    |
 | npu-id-0            | 是  | NPU设备ID（默认：0）                                    |

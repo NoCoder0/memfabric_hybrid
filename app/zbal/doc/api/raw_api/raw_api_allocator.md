@@ -1,8 +1,8 @@
-## The ZBAL Allocator API
+# The ZBAL Allocator API
 
 *Note: the zbal memory allocator is a implemention of pytorch pluggable allocator and satisfies the API specification.*
 
-#### 1. zbal_sma_init
+## 1. zbal_sma_init
 
 |                     |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -12,7 +12,7 @@
 | arguments - flags   | init flags, reserved                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | return              | success return 0 or else error code                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
-#### 2. zbal_sma_uninit
+## 2. zbal_sma_uninit
 
 |                   |                                       |
 | ----------------- | ------------------------------------- |
@@ -20,7 +20,7 @@
 | description       | un-initialize the allocator           |
 | arguments - flags | un-init flags, reserved               |
 
-#### 3. zbal_pluggable_init
+## 3. zbal_pluggable_init
 
 |                          |                                                             |
 | ------------------------ | ----------------------------------------------------------- |
@@ -28,7 +28,7 @@
 | description              | Initialize API of official torch pluggable memory allocator |
 | arguments - device_count | number of devices                                           |
 
-#### 4. zbal_pluggable_malloc
+## 4. zbal_pluggable_malloc
 
 |                    |                                                                                |
 | ------------------ | ------------------------------------------------------------------------------ |
@@ -38,7 +38,7 @@
 | arguments - device | device id                                                                      |
 | arguments - stream | current stream                                                                 |
 
-#### 5. zbal_pluggable_free
+## 5. zbal_pluggable_free
 
 |                    |                                                                                        |
 | ------------------ | -------------------------------------------------------------------------------------- |
@@ -49,7 +49,7 @@
 | arguments - device | device id                                                                              |
 | arguments - stream | current stream                                                                         |
 
-#### 6. zbal_pluggable_empty_cache
+## 6. zbal_pluggable_empty_cache
 
 |                         |                                                              |
 | ----------------------- | ------------------------------------------------------------ |
@@ -57,7 +57,7 @@
 | description             | Empty cache API of official torch pluggable memory allocator |
 | arguments - check_error | whether check on error allocate                              |
 
-#### 7. zbal_simulate_init
+## 7. zbal_simulate_init
 
 |                  |                                                       |
 | ---------------- | ----------------------------------------------------- |

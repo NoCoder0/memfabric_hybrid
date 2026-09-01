@@ -146,7 +146,7 @@ Prefill/Decode 分离部署的 main KV Cache 拉取（pull）传输：
 | --role | 是 | 工作角色：`Prefill` 或 `Decode` |
 | --local-ip | 否 | 本机 IPv4，默认 `127.0.0.1`；跨机须传对端可达的本机网卡 IP |
 | --prefill-ip | 否 | Prefill 机器 IPv4，默认 `127.0.0.1`；跨机须传真实 Prefill IP |
-| --npu-id | 否 | Decode 起始卡号（rank r 用 起始+r，默认 0）；手动 `--tp-rank` 时为该 rank 的卡号 |
+| --npu-id | 否 | Decode 起始卡号（rank r 用起始+r，默认 0）；手动 `--tp-rank` 时为该 rank 的卡号 |
 | --tp-size | 否 | Decode TP rank 数，默认 1 |
 | --tp-rank | 否 | Decode TP rank；缺省时一条命令拉起全部 rank 子进程 |
 | --decode-tp-size | 否 | 期望的 Decode rank 数（仅 Prefill 侧），默认 1 |

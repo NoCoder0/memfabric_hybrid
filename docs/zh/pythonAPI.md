@@ -1,9 +1,9 @@
 # Python接口
 
 使用Python接口前需要安装memfabric_hybrid的whl包，有两种安装方式，可参考[安装指南](./installation.md)。
-whl包安装完成后，即可在python中通过**import memfabric_hybrid**导入memfabric的python包，然后调用python接口。
+whl包安装完成后，即可在Python中通过**import memfabric_hybrid**导入memfabric的python包，然后调用Python接口。
 
-python接口为c接口的封装，功能一致，具体介绍可以在python中使用help函数获取，参考如下。
+Python接口为C接口的封装，功能一致，具体介绍可以在Python中使用help函数获取，参考如下。
 
 ```python
 import memfabric_hybrid as mf  #导入memfabric_hybrid
@@ -113,7 +113,7 @@ def set_conf_store_tls(enable, tls_info) -> int
 |-|-|
 |enable(boolean)|是否启用配置存储的TLS|
 |tls_info(str)|TLS配置字符串|
-|返回值|成功时返回零,出错时返回非零值|
+|返回值|成功时返回零，出错时返回非零值|
 
 ### 5. 错误信息获取/清理
 
@@ -356,41 +356,42 @@ class BigMemory:
 
 | 属性/方法                        | 含义                                              |
 |------------------------------|-------------------------------------------------|
-| join方法                       | 加入BM                                            |
+| join方法                       | 加入BM                                             |
 | join参数flags                  | 预置参数                                            |
-| leave方法                      | 退出BM                                            |
+| leave方法                      | 退出BM                                             |
 | leave参数flags                 | 预置参数                                            |
 | extend_local_mem方法        | 扩展本地内存空间                                        |
 | extend_local_mem参数memType | 内存类型，支持 SMEM_MEM_TYPE_HOST、SMEM_MEM_TYPE_DEVICE |
 | extend_local_mem参数size    | 扩展内存大小                                          |
-| local_mem_size方法             | 获取创建BM本地贡献的空间大小                                 |
-| local_mem_size参数mem_type     | 本地贡献空间的内存类型                                     |
-| local_mem_size返回值            | 本地贡献空间大小，单位byte                                 |
-| peer_rank_ptr方法              | 获取rank id对应的贡献空间在gva上的地址位置                      |
-| peer_rank_ptr参数peer_rank     | 指定的rank id                                      |
-| peer_rank_ptr参数mem_type      | 指定的rank id的贡献空间的内存类型                            |
-| gva_to_va方法                  | 将GVA地址转换为当前进程可访问的VA地址                           |
-| gva_to_va参数gva               | 待转换的GVA地址                                       |
-| gva_to_va参数mem_type          | 内存类型(BmMemType)                                 |
-| gva_to_va返回值                 | 转换后的VA地址，失败返回0                                  |
-| destroy方法                    | 销毁BM                                            |
-| register方法                   | 注册内存到BM                                         |
-| register参数addr               | 注册地址的起始地址指针                                     |
-| register参数size               | 注册地址的大小                                         |
-| unregister方法                 | 从BM中注销内存                                        |
-| unregister参数addr             | 注销地址的起始地址指针                                     |
-| copy_data方法                  | 拷贝数据对象                                          |
+| local_mem_size方法             | 获取创建BM本地贡献的空间大小                        |
+| local_mem_size参数mem_type     | 本地贡献空间的内存类型                              |
+| local_mem_size返回值            | 本地贡献空间大小，单位byte                         |
+| peer_rank_ptr方法              | 获取rank id对应的贡献空间在gva上的地址位置           |
+| peer_rank_ptr参数peer_rank     | 指定的rank id                                     |
+| peer_rank_ptr参数mem_type      | 指定的rank id的贡献空间的内存类型                   |
+| gva_to_va方法                  | 将GVA地址转换为当前进程可访问的VA地址               |
+| gva_to_va参数gva               | 待转换的GVA地址                                   |
+| gva_to_va参数mem_type          | 内存类型(BmMemType)                               |
+| gva_to_va返回值                 | 转换后的VA地址，失败返回0                         |
+| destroy方法                    | 销毁BM                                           |
+| register方法                   | 注册内存到BM                                      |
+| register参数addr               | 注册地址的起始地址指针                             |
+| register参数size               | 注册地址的大小                                    |
+| unregister方法                 | 从BM中注销内存                                   |
+| unregister参数addr             | 注销地址的起始地址指针                            |
+| copy_data方法                  | 拷贝数据对象                                     |
 | copy_data参数src_ptr(int)      | source gva of data                              |
 | copy_data参数dst_ptr(int)      | destination gva of data                         |
 | copy_data参数size(int)         | size of data to be copied                       |
 | copy_data参数type(BmCopyType)  | copy type, L2G, G2L, G2H, H2G                   |
 | copy_data参数flags(int)        | optional flags                                  |
-| set_group_event_handler方法     | 注册组事件回调函数                                   |
+| copy_data参数stream(int)        | 提交到的流对象，默认0                            |
+| set_group_event_handler方法     | 注册组事件回调函数                               |
 | set_group_event_handler参数cb   | 回调函数，签名 cb(rank_id: int, event: BmGroupEvent) |
 | get_rank_id_by_gva方法          | 根据GVA获取rank ID                                |
 | get_rank_id_by_gva参数gva       | 全局虚拟地址                                       |
-| copy_data_batch_partial_succeed方法 | 批量拷贝数据，允许部分失败                          |
-| copy_data_batch_partial_succeed参数result | 出参，记录哪些操作成功/失败                  |
+| copy_data_batch_partial_succeed方法 | 批量拷贝数据，允许部分失败                       |
+| copy_data_batch_partial_succeed参数result | 出参，记录哪些操作成功/失败                |
 | wait方法                        | 等待异步操作完成                                    |
 
 ## SHM接口
@@ -487,8 +488,8 @@ class ShareMemory:
 |all_gather方法|在内存对象上执行allgather操作|
 |all_gather参数local_data|输入的数据，bytes类型|
 |topology_can_reach方法|查询到远程排名的可达性|
-|topology_can_reach属性remote_rank|int类型，目标rankid|
-|topology_can_reach属性reach_info|int类型，可达性信息|
+|topology_can_reach参数remote_rank|int类型，目标rankid|
+|topology_can_reach参数reach_info|int类型，可达性信息|
 |local_rank(只读属性)|获取内存对象的本地排名|
 |rank_size(只读属性)|获取内存对象的秩大小|
 |gva(只读属性)|获取全局虚拟地址|
@@ -539,13 +540,13 @@ class TransferEngine:
 |initialize参数device_id|当前设备的唯一标识|
 |initialize参数data_op_type|数据传输操作类型，默认 TransDataOpType.SDMA|
 |get_rpc_port方法|返回initialize中实际侦听的端口号（`int`，已去除pid后缀）。**必须在initialize成功后调用**，否则返回`0`并打印WARN。端口范围由环境变量`MF_CONFIG_STORE_PORT_START`/`MF_CONFIG_STORE_PORT_END`控制（默认`9000`~`65535`）。|
-|transfer_sync_write方法|同步写接口,成功返回0，其他为错误码|
+|transfer_sync_write方法|同步写接口，成功返回0，其他为错误码|
 |transfer_sync_write参数dest_session|目的TRANS实例对应的标识|
 |transfer_sync_write参数buffer|源地址的起始地址指针|
 |transfer_sync_write参数peer_buffer|目的地址的起始地址指针|
 |transfer_sync_write参数length|传输数据大小|
 |transfer_sync_write参数flags|标记位，默认0|
-|transfer_async_write_submit方法|异步写任务提交接口,相比于transfer_async_write增加了入参stream,成功返回0,其他为错误码|
+|transfer_async_write_submit方法|异步写任务提交接口，相比于transfer_async_write增加了入参stream，成功返回0，其他为错误码|
 |transfer_async_write_submit参数stream|需要提交到的acl.rt.stream|
 |batch_transfer_sync_write方法|批量同步写接口，成功返回0，其他为错误码|
 |batch_transfer_sync_write参数dest_session|目的TRANS实例对应的标识|

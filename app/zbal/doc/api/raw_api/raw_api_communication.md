@@ -1,4 +1,4 @@
-## C API for communications
+# C API for communications
 
 [TOC]
 
@@ -376,11 +376,11 @@ int32_t zbal_combine_low_latency(const zbal_tensor_info_t *expandX,
 
 ## 4 AllGather
 
-#### Functionality description
+### Functionality description
 
 AllGather operation
 
-#### Function definition
+### Function definition
 
 ```c
 int32_t zbal_all_gather(const void *sendBuff,
@@ -391,7 +391,7 @@ int32_t zbal_all_gather(const void *sendBuff,
                         aclrtStream stream)
 ```
 
-#### Description of parameters and return value
+### Description of parameters and return value
 
 | Parameters/return | In/Out | Description                 |
 | ----------------- | ------ | --------------------------- |
@@ -405,11 +405,11 @@ int32_t zbal_all_gather(const void *sendBuff,
 
 ## 5 AllReduce
 
-#### Functionality description
+### Functionality description
 
 AllReduce operation
 
-#### Function definition
+### Function definition
 
 ```c
 int32_t zbal_all_reduce(const void *send_buff,
@@ -422,7 +422,7 @@ int32_t zbal_all_reduce(const void *send_buff,
                         aclrtStream stream)
 ```
 
-#### Description of parameters and return value
+### Description of parameters and return value
 
 | Parameters/return | In/Out | Description                 |
 | ----------------- | ------ | --------------------------- |
@@ -438,11 +438,11 @@ int32_t zbal_all_reduce(const void *send_buff,
 
 ## 6 ReduceScatter
 
-#### Functionality description
+### Functionality description
 
 ReduceScatter operation
 
-#### Function definition
+### Function definition
 
 ```c
 int32_t zbal_reduce_scatter(const void *sendBuff,
@@ -454,7 +454,7 @@ int32_t zbal_reduce_scatter(const void *sendBuff,
                             aclrtStream stream)
 ```
 
-#### Description of parameters and return value
+### Description of parameters and return value
 
 | Parameters/return | In/Out | Description                 |
 | ----------------- | ------ | --------------------------- |
@@ -469,11 +469,11 @@ int32_t zbal_reduce_scatter(const void *sendBuff,
 
 ## 7 Broadcast
 
-#### Functionality description
+### Functionality description
 
 Broadcast operation
 
-#### Function definition
+### Function definition
 
 ```c
 int32_t zbal_broadcast(const void *buf,
@@ -484,7 +484,7 @@ int32_t zbal_broadcast(const void *buf,
                        aclrtStream stream)
 ```
 
-#### Description of parameters and return value
+### Description of parameters and return value
 
 | Parameters/return | In/Out | Description                   |
 | ----------------- | ------ | ----------------------------- |
@@ -498,11 +498,11 @@ int32_t zbal_broadcast(const void *buf,
 
 ## 8 Scatter
 
-#### Functionality description
+### Functionality description
 
 Scatter operation
 
-#### Function definition
+### Function definition
 
 ```c
 int32_t zbal_scatter(const void *sendBuf,
@@ -514,7 +514,7 @@ int32_t zbal_scatter(const void *sendBuf,
                      aclrtStream stream)
 ```
 
-#### Description of parameters and return value
+### Description of parameters and return value
 
 | Parameters/return | In/Out | Description                   |
 | ----------------- | ------ | ----------------------------- |
@@ -529,11 +529,11 @@ int32_t zbal_scatter(const void *sendBuf,
 
 ## 9 AlltoAllv
 
-#### Functionality description
+### Functionality description
 
 Alltoall operation and allows input/output splits parameter
 
-#### Function definition
+### Function definition
 
 ```c
 int32_t zbal_all_to_all_v(const void *sendBuff,

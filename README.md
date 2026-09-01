@@ -1,4 +1,4 @@
-<h1 align="center" style="margin: 0;"><img src="docs/source/memfabric_icon.png" style="width: 50%" /></h1>
+<h1 align="center" style="margin: 0;"><img src="docs/zh/source/memfabric_icon.png" style="width: 50%" /></h1>
 <div align="center">
   <hr style="display:block; border:none; height:0; border-top:2px solid #008000; width:100%; max-width:1250px; margin:20px auto;">
   <h2 align="center">
@@ -35,7 +35,7 @@ MemFabric roadmap和版本分支策略详见：[**Roadmap**](https://gitcode.com
   - 简单的北向接口: 提供内存语义访问接口, 即xcopy with global virtual address, 向传统的memcpy概念靠近, 支持D2RH\RH2D\RH2H\D2D等
   - 南向高可扩展: 通过插件的方式支持多种DMA引擎和LD/ST及多种网络/灵衢互联(Device UB、Device RoCE、Host UB、Host RoCE等)
 
-![architecture](./docs/source/architecture.png)
+![architecture](./docs/zh/source/architecture.png)
 
 如上图所示, MemFabric主要分为四大模块: Global Memory Management、Data Operation、Transport Management、API
 
@@ -64,7 +64,7 @@ GVA的特点:
   - 所有进程的GVA的起始地址一致
   - 所有进程的GVA按线性排布且一致
 
-![unified_global_address](./docs/source/unified_global_address.png)
+![unified_global_address](./docs/zh/source/unified_global_address.png)
 
 - **跨机跨介质直接访问**
 
@@ -79,7 +79,7 @@ GVA的特点:
 
 MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
-![one_copy](./docs/source/one_copy.png)
+![one_copy](./docs/zh/source/one_copy.png)
 
 当前MemFabric池化的硬件支持情况如下：
 
@@ -116,7 +116,7 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 - 使用2个昇腾A3节点组成双机内存池，将MemFabric对接到MoonCake Transfer Engine（MoonCake是业界开源的一款的分布式缓存软件, [memfabric对接mooncake代码](https://gitcode.com/openFuyao/mooncake/blob/v0.3.7-dev/doc/zh/ub_transport.md)）进行读写时延测试，模拟构造DeepSeek-R1模型KV大小的block size，即：61x128K + 61x16K = 8784KB ≈ 8.57MB，共122个离散地址，性能表现如下:
 
-![a3-Latency-performance](./docs/source/a3_latency.png)
+![a3-Latency-performance](./docs/zh/source/a3_latency.png)
 
 ### 带宽测试(单DIE+单CPU)
 
@@ -138,7 +138,7 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 - 在昇腾A2服务器跨机数据访问性能(DRAM and HBM pooling over Device RoCE)如下:
 
-![A2-Bandwidth-performance](./docs/source/a2_bandwidth.png)
+![A2-Bandwidth-performance](./docs/zh/source/a2_bandwidth.png)
 
  👆 性能测试参考 [benchmark](./benchmark/bm/README.md)
 
@@ -176,21 +176,21 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 请访问以下文档获取简易教程。
 
-- [编译安装](./docs/installation.md)：介绍组件编译和安装教程。
+- [编译安装](./docs/zh/installation.md)：介绍组件编译和安装教程。
 
-- [DevContainer 快速入门](./docs/devcontainer_quickstart.md)：VS Code Remote + DevContainer 一键环境搭建 + 全量用例运行指南。
+- [DevContainer 快速入门](./docs/zh/devcontainer_quickstart.md)：VS Code Remote + DevContainer 一键环境搭建 + 全量用例运行指南。
 
 - [样例执行](./examples/memory_pool/README.md)：介绍如何端到端执行样例代码，包括C++和Python样例。
 
 ## 📑学习教程
 
-- [API介绍](./docs/feature.md)：MemFabric提供的多种API的简介
+- [API介绍](./docs/zh/feature.md)：MemFabric提供的多种API的简介
 
-- [C接口](./docs/API.md)：C接口介绍以及C接口对应的API列表
+- [C接口](./docs/zh/API.md)：C接口介绍以及C接口对应的API列表
 
-- [python接口](./docs/pythonAPI.md)：python接口介绍以及python接口对应的API列表
+- [python接口](./docs/zh/pythonAPI.md)：python接口介绍以及python接口对应的API列表
 
-- [ptracer](./docs/ptracer.md)：MemFabric内置性能打点工具简介
+- [ptracer](./docs/zh/ptracer.md)：MemFabric内置性能打点工具简介
 
 ## 📦软件硬件配套说明
 
@@ -214,7 +214,7 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 - LingQu Computing Network: [1.5.0版本](https://support.huawei.com/enterprise/zh/ascend-computing/lingqu-computing-network-pid-258003841/software)，A3 DRAM池化需要配套升级1520 L1，升级指导书如下：
   - [安装指南](https://support.huawei.com/enterprise/zh/ascend-computing/lingqu-computing-network-pid-258003841)
-  - [安装参考](./docs/CCLink.md)
+  - [安装参考](./docs/zh/CCLink.md)
 
 ## 📌FAQ
 
@@ -222,6 +222,10 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 ## 📝相关信息
 
-- [安全声明](./docs/SECURITYNOTE.md)
+- [安全声明](./docs/zh/SECURITYNOTE.md)
 
 - [许可证](./LICENSE)
+
+## 说明
+
+此开源项目非华为产品，仅提供有限支持。

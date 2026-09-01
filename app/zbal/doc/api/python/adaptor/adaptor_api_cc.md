@@ -1,16 +1,17 @@
-## Python API for communications
+# Python API for communications
 
 *Note: ZBAL python adaptor commmunication APIs are compatible with pytorch distributed communication APIs like allgather/allreduce and so on as a means of choice rather than an addition API group.*
 
-### 1. Compatible APIs
+## 1. Compatible APIs
 
 The following Python APIs are supported by ZBAL from now, the equivalent form of C APIs is [here](../../raw_api/raw_api_communication.md).
 
-##### 1. allgather
+### 1. allgather
 
 ```python
 torch.distributed.all_gather(tensor_list, tensor, group=None, async_op=False)
 ```
+
 Gathers tensors from the whole group in a list.
 
 | Parameters/return | In/Out | Description                                                   |
@@ -23,6 +24,7 @@ Gathers tensors from the whole group in a list.
 ```python
 torch.distributed.all_gather_into_tensor(output_tensor, input_tensor, group=None, async_op=False)
 ```
+
 Gather tensors from all ranks and put them in a single output tensor.
 
 | Parameters/return | In/Out | Description                                                   |
@@ -32,7 +34,8 @@ Gather tensors from all ranks and put them in a single output tensor.
 | group             | In     | optional, The process group to work on                        |
 | async_op          | In     | optional, Whether this op should be an async op, un-supported |
 
-#### 2. allreduce
+### 2. allreduce
+
 ```python
 torch.distributed.all_reduce(tensor, op=<RedOpType.SUM: 0>, group=None, async_op=False)
 ```
@@ -46,7 +49,8 @@ Reduces the tensor data across all machines in a way that all get the final resu
 | group             | In     | optional, The process group to work on                                                                                      |
 | async_op          | In     | optional, Whether this op should be an async op, un-supported                                                               |
 
-#### 3. alltoall
+### 3. alltoall
+
 Split input tensor and then scatter the split list to all processes in a group.
 
 ```python
@@ -62,7 +66,8 @@ torch.distributed.all_to_all_single(output, input, output_split_sizes=None, inpu
 | group              | In     | optional, The process group to work on                                                                                       |
 | async_op           | In     | optional, Whether this op should be an async op, un-supported                                                                |
 
-#### 4. barrier
+### 4. barrier
+
 Synchronize all processes.
 
 ```python
@@ -75,7 +80,8 @@ torch.distributed.barrier(group=None, async_op=False, device_ids=None)[source]
 | async_op          | In     | optional, Whether this op should be an async op, un-supported |
 | device_ids        | In     | optional, List of device/GPU ids. Only one id is expected.    |
 
-#### 5. broadcast
+### 5. broadcast
+
 Broadcasts the tensor to the whole group.
 
 ```python
@@ -90,7 +96,7 @@ torch.distributed.broadcast(tensor, src=None, group=None, async_op=False, group_
 | async_op          | In     | optional, Whether this op should be an async op, un-supported                                                 |
 | group_src         | In     | Source rank on group. Must specify one of group_src and src but not both.                                     |
 
-#### 6. reduce_scatter
+### 6. reduce_scatter
 
 Reduces, then scatters a tensor to all ranks in a group.
 
@@ -106,7 +112,7 @@ torch.distributed.reduce_scatter_tensor(output, input, op=<RedOpType.SUM: 0>, gr
 | group             | In     | optional, The process group to work on                                                                                      |
 | async_op          | In     | optional, Whether this op should be an async op, un-supported                                                               |
 
-#### 7. scatter
+### 7. scatter
 
 Scatters a list of tensors to all processes in a group.
 

@@ -10,7 +10,7 @@ fused_deep_moe 是面向 Ascend NPU 的**融合 MoE（Mixture of Experts）设�
 
 ### 1.1 融合算子链
 
-```
+```text
 Token Quantization → Dispatch (AllToAll) → GMM1 (Grouped MatMul + SwiGLU + Dynamic Quant) → GMM2 (Grouped MatMul + Dequant + Combine)
 ```
 
@@ -25,7 +25,7 @@ Token Quantization → Dispatch (AllToAll) → GMM1 (Grouped MatMul + SwiGLU + D
 
 ## 2. 文件结构
 
-```
+```text
 fused_deep_moe/
 ├── zbal_kernel_fused_deep_moe.cpp          # 入口 kernel + Host 侧 Launch 函数
 ├── zbal_kernel_fused_deep_moe.h            # 主编排类 FusedDeepMoe<...>
@@ -59,7 +59,7 @@ fused_deep_moe/
 
 ### 3.1 执行流水线
 
-```
+```text
 Input Tokens (bf16/fp16)
     │
     ├──[SHARED_EXPERT]──→ Share Expert Token Quantization (int8) ──┐
@@ -105,7 +105,7 @@ Input Tokens (bf16/fp16)
 
 ### 3.2 AIC/AIV 核间分工
 
-```
+```text
 ┌────────────────────────────────────────────────────┐
 │                    AIC (AI Core)                    │
 │  - GEMM 计算 (GMM1 + GMM2)                         │
@@ -132,7 +132,7 @@ Input Tokens (bf16/fp16)
 
 ### 4.1 入口函数
 
-**[zbal_kernel_fused_deep_moe.cpp](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/zbal_kernel_fused_deep_moe.cpp)**
+**[zbal_kernel_fused_deep_moe.cpp](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/zbal_kernel_fused_deep_moe.cpp)**
 
 - `fused_deep_moe()` — AscendC `__global__ __aicore__` kernel，根据 `exec_flag` + `src_data_type` dispatch 到正确的模板实例化
 - `ZBALOpFusedDeepMoeLaunch()` — Host 侧启动函数，调用 `aclrtLaunchKernel` 发射 kernel
@@ -141,16 +141,18 @@ Input Tokens (bf16/fp16)
 
 ### 4.2 主编排类
 
-**[zbal_kernel_fused_deep_moe.h](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/zbal_kernel_fused_deep_moe.h)**
+**[zbal_kernel_fused_deep_moe.h](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/zbal_kernel_fused_deep_moe.h)**
 
 `FusedDeepMoe<XType, W1SType, W2SType, ExpandIdxType, IsNeedReduceScatter, EXEC_FLAG>`
 
 **Init() 职责：**
+
 1. 初始化 EP/TP 两个 `ZbalCommContext`，设置 data window 和 state window 的分割比例
 2. 从 `FusedDeepMoeTilingData` 读取 tiling 参数（hidden size、bs、topK、expert 数量等）
 3. Deep Fuse 模式下 data window 全分配给 state window（因为 dispatch 使用 quant workspace，combine 使用独立 workspace）
 
 **Process() 职责：**
+
 1. **Shallow 模式**：AIV 运行 `CamMoeDistributeDispatch` → CrossCoreFlag 同步 → AIC 运行 GEMM
 2. **GMM1**：调用 `GmmDeqSwigluQuant<...>()`，执行 grouped matmul + SwiGLU + dynamic quantization
 3. **GMM2**：调用 `GmmDeq<...>()`，执行 grouped matmul + per-token dequant + combine
@@ -168,7 +170,7 @@ Input Tokens (bf16/fp16)
 
 ### 4.3 通信上下文
 
-**[zbal_kernel_fused_deep_moe_comm.h](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/zbal_kernel_fused_deep_moe_comm.h)**
+**[zbal_kernel_fused_deep_moe_comm.h](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/zbal_kernel_fused_deep_moe_comm.h)**
 
 ```cpp
 struct ZbalCommContext {
@@ -188,7 +190,7 @@ struct ZbalCommContext {
 
 ### 4.4 Tiling 配置
 
-**[zbal_kernel_fused_deep_moe_tiling.h](app/zbal/src/csrc/operators/npu/host/fused_deep_moe/zbal_kernel_fused_deep_moe_tiling.h)**
+**[zbal_kernel_fused_deep_moe_tiling.h](../src/csrc/operators/npu/host/fused_deep_moe/zbal_kernel_fused_deep_moe_tiling.h)**
 
 | 参数 | GMM1 | GMM2 |
 |------|------|------|
@@ -212,7 +214,7 @@ struct ZbalCommContext {
 
 ### 4.5 GMM1 Kernel（带 SwiGLU + 量化）
 
-**[grouped_matmul_slice_m_per_token_dequant_swiglu_quant_multistage_workspace.h](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/gemm/kernel/grouped_matmul_slice_m_per_token_dequant_swiglu_quant_multistage_workspace.h)**
+**[grouped_matmul_slice_m_per_token_dequant_swiglu_quant_multistage_workspace.h](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/gemm/kernel/grouped_matmul_slice_m_per_token_dequant_swiglu_quant_multistage_workspace.h)**
 
 **AIC 侧职责（Compute Core）：**
 
@@ -229,6 +231,7 @@ struct ZbalCommContext {
 **AIV 侧职责（Vector Core）：**
 
 分为三类功能核：
+
 - **Send Core**：运行 `SendCoreFunc()`，完成 token 量化 + 发送 token count → 跨 rank 写入 token 数据
 - **Recv Core**：运行 `RecvCoreFunc()`，等待远程 token count → 读取远程 token 数据
 - **Comp Core**：运行 `CompCoreFunc()`，执行 SwiGLU epilogue + 动态量化
@@ -242,7 +245,7 @@ struct ZbalCommContext {
 
 **SwiGLU Epilogue 实现**（BlockEpilogue）：
 
-```
+```text
 C (int32) → Cast→float
   ├─ Left Half:  Mul(PerTokenScale) → Neg → Exp → Add(1) → Div → D
   └─ Right Half: Mul(PerTokenScale) → D
@@ -253,21 +256,23 @@ C (int32) → Cast→float
 
 **动态量化 BlockQuant**：
 
-```
+```text
 Input (float) → Abs → ReduceMax → Muls(127/max) → Round → Cast→int8
                                                           └→ dequant_scale = max/127
 ```
 
 ### 4.6 GMM2 Kernel（带 Dequant + Combine）
 
-**[grouped_matmul_slice_m_per_token_dequant_multistage_workspace.h](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/gemm/kernel/grouped_matmul_slice_m_per_token_dequant_multistage_workspace.h)**
+**[grouped_matmul_slice_m_per_token_dequant_multistage_workspace.h](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/gemm/kernel/grouped_matmul_slice_m_per_token_dequant_multistage_workspace.h)**
 
 **AIC 侧：**
+
 - 与 GMM1 类似的 Grouped MatMul 流水线
 - 使用 `MmadAtlasA2PreloadAsyncWithCallbackResidentA` dispatch policy（A 矩阵驻留优化）
 - 与 AIV 通过 Soft Sync Flag 同步 GEMM workspace 的读写
 
 **AIV 侧：**
+
 - **Epilogue**：Per-Token Dequant（使用 GMM1 输出的 dequant scale）
 - **Combine**：通过 `CamMoeDistributeCombine` 完成：
   1. `PublishCombineGva()`：向其他 Rank 的 state window 发布本地 combine workspace GVA
@@ -276,16 +281,18 @@ Input (float) → Abs → ReduceMax → Muls(127/max) → Round → Cast→int8
   4. `LoadRemoteGva()`：按需加载远程 Rank 的 combine workspace GVA
 
 **SubBlock 分工**（DEEP_FUSE 模式）：
+
 - SubBlock 0：Epilogue + `AllToAllSend()`
 - SubBlock 1：Epilogue + `ReducePermute()`
 
 ### 4.7 Dispatch 模块
 
-**[zbal_moe_distribute_dispatch.h](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/raw_distributed/zbal_moe_distribute_dispatch.h)**
+**[zbal_moe_distribute_dispatch.h](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/raw_distributed/zbal_moe_distribute_dispatch.h)**
 
 `CamMoeDistributeDispatch<XType, ExpandXOutType, StaticQuant, DynamicQuant, IsSmoothScaleExist, IsNeedAllgater, EXEC_FLAG>`
 
 **核心流程：**
+
 1. **AlltoAllDispatch()**：读取 expert_ids → 统计 per-expert token count → 发送 token 到对应 Rank
 2. **SetStatus()**：将 per-expert token count 写入各远程 Rank 的 state window
 3. **WaitDispatch()**：轮询等待所有远程 Rank 的 token count 就绪
@@ -294,6 +301,7 @@ Input (float) → Abs → ReduceMax → Muls(127/max) → Round → Cast→int8
 6. **UpdataTokenNumsOut()**：汇总 per-expert token 数量
 
 **优化特性：**
+
 - **AIV Loop 优化**（`enableAivOpt_`）：当 bs ≤ 64 且 expert 数 ≤ 256 时，使用查表法加速 expert 计数
 - **双缓冲**（`BUFFER_NUM=2`）：量化流水线使用双缓冲，重叠计算与数据传输
 - **动态量化**：Abs → ReduceMax → Muls(127/max) → Round → Cast(int8)
@@ -301,11 +309,12 @@ Input (float) → Abs → ReduceMax → Muls(127/max) → Round → Cast→int8
 
 ### 4.8 Combine 模块
 
-**[zbal_moe_distribute_combine.h](app/zbal/src/csrc/operators/npu/device/fused_deep_moe/raw_distributed/zbal_moe_distribute_combine.h)**
+**[zbal_moe_distribute_combine.h](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/raw_distributed/zbal_moe_distribute_combine.h)**
 
 `CamMoeDistributeCombine<ExpandXType, W1ScaleType, W2ScaleType, ExpandIdxType, IsNeedReduceScatter, EXEC_FLAG>`
 
 **核心流程：**
+
 1. **PublishCombineGva()**：发布本地 combine workspace GVA 到其他 Rank 的 state window
 2. **SetWaitTpStatusAndDisPatch()**：TP 同步 + ExpertAlltoAllDispatchCopyAdd（按 expert 分发 + ReduceSum）
 3. **SetStatus()**：设置完成标志
@@ -313,6 +322,7 @@ Input (float) → Abs → ReduceMax → Muls(127/max) → Round → Cast→int8
 5. **LocalWindowCopy()**：Token 级 ReduceSum（`scale · x_remote`） + 写入最终输出
 
 **Combine Workspace 机制**（Deep Fuse 模式）：
+
 - 替代传统的 data window
 - 每个 remote rank 为所有 expert 写入 token 到本地 combine workspace
 - 通过 `LoadRemoteGva()` 按需加载远程 workspace 地址
@@ -334,7 +344,7 @@ Input (float) → Abs → ReduceMax → Muls(127/max) → Round → Cast→int8
 
 ## 6. 数据类型流
 
-```
+```text
 Host Input           GMM1                    GMM1 Output           GMM2                    GMM2 Output
 ┌──────────┐      ┌──────────┐            ┌──────────┐         ┌──────────┐            ┌──────────┐
 │ Token    │──→──│ Quantize │──→────────│ int8     │──→─────│ Dequant  │──→────────│ bf16/    │
@@ -362,6 +372,7 @@ Host Input           GMM1                    GMM1 Output           GMM2         
 ### 7.2 Soft Sync Flag
 
 通过 `stateWindow` 中的 GM 标记实现 AIC/AIV 间的非阻塞同步：
+
 - `EncreaseSyncFlag(addr, idx)`：标记自增（生产者通知消费者）
 - `CheckSyncFlag(addr, idx, target)`：轮询等待标记达到目标值
 
@@ -397,7 +408,7 @@ Host Input           GMM1                    GMM1 Output           GMM2         
 
 ## 9. 依赖关系
 
-```
+```text
 FusedDeepMoe
 ├── Catlass (csrc/deepep/catlass/)
 │   ├── catlass.hpp, arch/arch.hpp, layout/layout.hpp
