@@ -329,7 +329,7 @@ int32_t NpuCommunicatorBase::DispatchNormal(const zbal_tensor_info_t *srcTokens,
                                             const zbal_tensor_info_t *destScale, aclrtStream stream,
                                             int64_t flags) noexcept
 {
-    bool enableBalance = Func::GetEnv("DEEPEP_ENABLE_REBALANCE", 0) > 0;
+    bool enableBalance = Func::GetEnv("DEEPEP_ENABLE_REBALANCE", 1) > 0;
     return ZBALOpDispatchNormal(srcTokens, topkIndex, sendTokensIndex, pushTargetOffset, balanceMatrix, expertNum,
                                 quantMode, destTokens, destScale, enableBalance, stream, GetMetaInfo(), flags);
 }
@@ -341,7 +341,7 @@ int32_t NpuCommunicatorBase::CombineNormal(const zbal_tensor_info_t *srcTokens, 
                                            const zbal_tensor_info_t *destTokens, aclrtStream stream,
                                            int64_t flags) noexcept
 {
-    bool enableBalance = Func::GetEnv("DEEPEP_ENABLE_REBALANCE", 0) > 0;
+    bool enableBalance = Func::GetEnv("DEEPEP_ENABLE_REBALANCE", 1) > 0;
     return ZBALOpCombineNormal(srcTokens, putOffset, topKWeight, topkIndex, sendTokensIndex, balanceMatrix, expertNum,
                                destTokens, enableBalance, stream, GetMetaInfo(), flags);
 }

@@ -12,6 +12,9 @@
 #ifndef ZBAL_STRUCT_DUMP_HELPER_H
 #define ZBAL_STRUCT_DUMP_HELPER_H
 
+#include <cstring>
+#include <string_view>
+
 #include "zbal_common_includes.h"
 
 namespace zbal {
@@ -26,8 +29,8 @@ constexpr uint16_t COMM_GROUP_SYMBOL_SHIFT = 56;
 static inline std::ostream &operator<<(std::ostream &os, const zbal_bootstrap_options_t &options)
 {
     os << "zbal_bootstrap_options_t [flags: " << options.flags << ", bootstrap_type: " << options.btType
-       << ", ipPort: " << ((options.ipPort == nullptr) ? "" : options.ipPort) << ", worldSize: " << options.worldSize
-       << ", rankId: " << options.rankId << ", deviceId: " << options.deviceId
+       << ", ipPort: " << std::string_view(options.ipPort, strnlen(options.ipPort, sizeof(options.ipPort)))
+       << ", worldSize: " << options.worldSize << ", rankId: " << options.rankId << ", deviceId: " << options.deviceId
        << ", startConfigServer: " << options.startConfigServer << ", deviceMemorySize: " << options.deviceMemorySize
        << ", dataOperationType: " << options.dataOperationType << ", commMetaSpaceSize: " << options.commMetaSpaceSize
        << ", commGroupCap: " << options.commGroupCap << "]";

@@ -62,7 +62,7 @@ ZResult Bootstrap::VerifyOptions() noexcept
 {
     ZBAL_VALIDATE_RETURN(0 <= options_.btType && options_.btType < BOOT_BY_BUTT,
                          "invalid option, bootstrapType is invalid", Z_INVALID_PARAM);
-    ZBAL_VALIDATE_RETURN(options_.ipPort != nullptr, "invalid option, ipPort is nullptr", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(options_.ipPort[0] != '\0', "invalid option, ipPort is empty", Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(options_.worldSize <= ZBAL_RANK_COUNT_MAX_LIMIT, "invalid option, worldSize too large",
                          Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(options_.rankId < options_.worldSize, "invalid option, rankId should be less than worldSize",
