@@ -229,7 +229,7 @@ std::string ProcessGroupZBAL::ConstructCommName() noexcept
         }
     }
 
-    oss << ZBAL_BACKEND_NAME << "_" << start << ":" << end << ":" << stride << "_group_" + GetNextGroupCounter();
+    oss << ZBAL_BACKEND_NAME << "_" << start << ":" << end << ":" << stride << "_group_" << GetNextGroupCounter();
     return oss.str();
 }
 

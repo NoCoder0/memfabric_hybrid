@@ -38,6 +38,8 @@ ZBAL_API int32_t zbal_bootstrap(zbal_bootstrap_options_t *options, zbal_bootstra
 {
     ZBAL_VALIDATE_RETURN(options != nullptr, "invalid param, bootstrap options should not be null", Z_INVALID_PARAM);
     ZBAL_VALIDATE_RETURN(output != nullptr, "invalid param, bootstrap output should not be null", Z_INVALID_PARAM);
+    ZBAL_VALIDATE_RETURN(strnlen(options->ipPort, ZBAL_MAX_IPPORT_LEN) < ZBAL_MAX_IPPORT_LEN,
+                         "invalid param, ipPort is not null-terminated in 64 bytes", Z_INVALID_PARAM);
 
     ZBAL_LOG_DEBUG("options dump, " << (*options));
 
