@@ -32,6 +32,8 @@ smem_tls_config StoreFactory::tlsOption_{};
 
 namespace {
 
+std::unordered_map<std::string, StorePtr> g_forkLeakSink;
+
 constexpr char URL_FRAGMENT_DELIMITER = '#';
 constexpr char CLUSTER_ID_HYPHEN = '-';
 constexpr char CLUSTER_ID_UNDERSCORE = '_';
@@ -295,19 +297,19 @@ void StoreFactory::DestroyStore(const std::string &storeUrl) noexcept
 
 void StoreFactory::DestroyStoreAll(bool afterFork) noexcept
 {
+    if (afterFork) {
+        g_forkLeakSink.swap(storesMap_);
+        return;
+    }
     std::unordered_map<std::string, StorePtr> localStores;
     {
-        if (afterFork) {
-            localStores.swap(storesMap_);
-        } else {
-            std::unique_lock<std::mutex> lockGuard{storesMutex_};
-            localStores.swap(storesMap_);
-        }
+        std::unique_lock<std::mutex> lockGuard{storesMutex_};
+        localStores.swap(storesMap_);
     }
     for (auto &e : localStores) {
         SmRef<TcpConfigStore> tcp = Convert<ConfigStore, TcpConfigStore>(e.second);
         if (tcp != nullptr) {
-            tcp->Shutdown(afterFork);
+            tcp->Shutdown(false);
             continue;
         }
         auto ha = Convert<ConfigStore, HaConfigStore>(e.second);
