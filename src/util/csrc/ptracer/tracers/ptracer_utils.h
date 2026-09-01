@@ -44,7 +44,7 @@ public:
     static std::string CurrentTimeString();
     static std::string HeaderString();
     static std::string FormatString(std::string &name, uint64_t begin, uint64_t goodEnd, uint64_t badEnd,
-                                    LatencyRecorder *rec);
+                                    uint64_t total, LatencyRecorder *rec);
 
 private:
     static void StrSplit(const std::string &src, const std::string &sep, std::vector<std::string> &out);
@@ -144,14 +144,14 @@ inline std::string Func::CurrentTimeString()
 }
 
 inline std::string Func::FormatString(std::string &name, uint64_t begin, uint64_t goodEnd, uint64_t badEnd,
-                                      LatencyRecorder *rec)
+                                      uint64_t total, LatencyRecorder *rec)
 {
     auto onFly = (begin > goodEnd + badEnd) ? (begin - goodEnd - badEnd) : 0;
     auto p50Time = (rec != nullptr) ? static_cast<double>(rec->P50()) / UNIT_STEP : 0.0;
     auto p99Time = (rec != nullptr) ? static_cast<double>(rec->P99()) / UNIT_STEP : 0.0;
-    auto p999Time = (rec != nullptr) ? static_cast<double>(rec->P999()) / UNIT_STEP : 0.0;
     auto avgTime = (rec != nullptr) ? static_cast<double>(rec->Latency()) / UNIT_STEP : 0.0;
     auto maxTime = (rec != nullptr) ? static_cast<double>(rec->MaxLatency()) / UNIT_STEP : 0.0;
+    auto totalTime = static_cast<double>(total) / UNIT_STEP;
 
     std::ostringstream os;
     os.flags(std::ios::fixed);
@@ -164,8 +164,8 @@ inline std::string Func::FormatString(std::string &name, uint64_t begin, uint64_
     os << std::left << std::setw(DIGIT_WIDTH) << begin << std::left << std::setw(DIGIT_WIDTH) << goodEnd << std::left
        << std::setw(DIGIT_WIDTH) << badEnd << std::left << std::setw(DIGIT_WIDTH) << onFly << std::left
        << std::setw(DIGIT_WIDTH) << p50Time << std::left << std::setw(DIGIT_WIDTH) << p99Time << std::left
-       << std::setw(DIGIT_WIDTH) << p999Time << std::left << std::setw(DIGIT_WIDTH) << avgTime << std::left
-       << std::setw(DIGIT_WIDTH) << maxTime;
+       << std::setw(DIGIT_WIDTH) << avgTime << std::left << std::setw(DIGIT_WIDTH) << maxTime << std::left
+       << std::setw(DIGIT_WIDTH) << totalTime;
     return os.str();
 }
 
@@ -176,8 +176,8 @@ inline std::string Func::HeaderString()
        << std::setw(DIGIT_WIDTH) << "BEGIN" << std::left << std::setw(DIGIT_WIDTH) << "GOOD_END" << std::left
        << std::setw(DIGIT_WIDTH) << "BAD_END" << std::left << std::setw(DIGIT_WIDTH) << "ON_FLY" << std::left
        << std::setw(DIGIT_WIDTH) << "P50(us)" << std::left << std::setw(DIGIT_WIDTH) << "P99(us)" << std::left
-       << std::setw(DIGIT_WIDTH) << "P999(us)" << std::left << std::setw(DIGIT_WIDTH) << "AVG(us)" << std::left
-       << std::setw(DIGIT_WIDTH) << "MAX(us)";
+       << std::setw(DIGIT_WIDTH) << "AVG(us)" << std::left << std::setw(DIGIT_WIDTH) << "MAX(us)" << std::left
+       << std::setw(DIGIT_WIDTH) << "TOTAL(us)";
     return ss.str();
 }
 

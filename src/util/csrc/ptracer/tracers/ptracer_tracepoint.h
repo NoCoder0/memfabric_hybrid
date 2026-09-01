@@ -44,6 +44,7 @@ public:
         if (r != nullptr) {
             *r << static_cast<int64_t>(diff);
         }
+        total_.fetch_add(diff, std::memory_order_relaxed);
         goodEnd_.fetch_add(1u, std::memory_order_relaxed);
     }
 
@@ -52,6 +53,7 @@ public:
         begin_ = 0;
         goodEnd_ = 0;
         badEnd_ = 0;
+        total_ = 0;
     }
 
     __always_inline const std::string &GetName() const
@@ -88,6 +90,7 @@ public:
         previousBegin_ = begin_.load(std::memory_order_relaxed);
         previousGoodEnd_ = goodEnd_.load(std::memory_order_relaxed);
         previousBadEnd_ = badEnd_.load(std::memory_order_relaxed);
+        previousTotal_ = total_.load(std::memory_order_relaxed);
     }
 
     std::string ToPeriodString()
@@ -95,8 +98,10 @@ public:
         auto beginGap = begin_.load(std::memory_order_relaxed) - previousBegin_;
         auto goodEndGap = goodEnd_.load(std::memory_order_relaxed) - previousGoodEnd_;
         auto badEndGap = badEnd_.load(std::memory_order_relaxed) - previousBadEnd_;
+        auto totalGap = total_.load(std::memory_order_relaxed) - previousTotal_;
         UpdatePreviousData();
-        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, rec_.load(std::memory_order_relaxed));
+        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, totalGap,
+                                  rec_.load(std::memory_order_relaxed));
     }
 
     std::string ToTotalString()
@@ -104,7 +109,9 @@ public:
         auto beginGap = begin_.load(std::memory_order_relaxed);
         auto goodEndGap = goodEnd_.load(std::memory_order_relaxed);
         auto badEndGap = badEnd_.load(std::memory_order_relaxed);
-        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, rec_.load(std::memory_order_relaxed));
+        auto totalGap = total_.load(std::memory_order_relaxed);
+        return Func::FormatString(name_, beginGap, goodEndGap, badEndGap, totalGap,
+                                  rec_.load(std::memory_order_relaxed));
     }
 
 private:
@@ -113,10 +120,12 @@ private:
     std::atomic_uint_fast64_t begin_{0};
     std::atomic_uint_fast64_t goodEnd_{0};
     std::atomic_uint_fast64_t badEnd_{0};
+    std::atomic_uint_fast64_t total_{0};
 
     uint64_t previousBegin_{0};
     uint64_t previousGoodEnd_{0};
     uint64_t previousBadEnd_{0};
+    uint64_t previousTotal_{0};
     std::atomic<LatencyRecorder *> rec_{nullptr};
 };
 
