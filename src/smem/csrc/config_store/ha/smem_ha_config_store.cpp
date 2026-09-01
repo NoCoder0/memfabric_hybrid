@@ -801,6 +801,11 @@ void HaConfigStore::RegisterServerBrokenHandler(const ConfigStoreServerBrokenHan
     serverDelegate_->RegisterBrokenLinkCHandler(handler);
 }
 
+uint32_t HaConfigStore::GetRankIdByLinkId(uint32_t linkId) const noexcept
+{
+    return serverDelegate_ != nullptr ? serverDelegate_->GetRankIdByLinkId(linkId) : UINT32_MAX;
+}
+
 Result HaConfigStore::GetReal(const std::string &key, std::vector<uint8_t> &value, int64_t timeoutMs) noexcept
 {
     SM_ASSERT_RETURN(clientDelegate_ != nullptr, SM_ERROR);

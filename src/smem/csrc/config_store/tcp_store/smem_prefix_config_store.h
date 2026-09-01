@@ -157,6 +157,8 @@ public:
 
     void SetRankId(const int32_t &rankId) noexcept override;
 
+    uint32_t GetRankIdByLinkId(uint32_t linkId) const noexcept override;
+
 protected:
     Result GetReal(const std::string &key, std::vector<uint8_t> &value, int64_t timeoutMs) noexcept override
     {
@@ -173,6 +175,11 @@ private:
 inline void PrefixConfigStore::SetRankId(const int32_t &rankId) noexcept
 {
     baseStore_->SetRankId(rankId);
+}
+
+inline uint32_t PrefixConfigStore::GetRankIdByLinkId(uint32_t linkId) const noexcept
+{
+    return baseStore_ != nullptr ? baseStore_->GetRankIdByLinkId(linkId) : UINT32_MAX;
 }
 } // namespace smem
 } // namespace ock

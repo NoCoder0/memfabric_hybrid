@@ -98,6 +98,7 @@ public:
     void SetConnectStatus(bool status) noexcept override;
     void RegisterClientBrokenHandler(const ConfigStoreClientBrokenHandler &handler) noexcept override;
     void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept override;
+    uint32_t GetRankIdByLinkId(uint32_t linkId) const noexcept override;
 
     TcpConfigStore *GetTcpStore() noexcept
     {
