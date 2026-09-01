@@ -18,16 +18,26 @@ current_path = os.path.abspath(__file__)
 current_dir = os.path.dirname(current_path)
 sys.path.append(current_dir)
 libs_path = os.path.join(current_dir, 'lib')
+# Keep handles to prevent GC-triggered dlclose before process exit (avoids double-free).
+_lib_handles = []
 for lib in ["libmf_hybm_core.so", "libmf_smem.so", "libmf_acc_offload.so"]:
-    ctypes.CDLL(os.path.join(libs_path, lib), mode=ctypes.RTLD_GLOBAL)
+    _lib_handles.append(ctypes.CDLL(os.path.join(libs_path, lib), mode=ctypes.RTLD_GLOBAL))
 
 # Preload optional dlopen-ed libraries (may not be packaged depending on build options)
+# Resolve by soname first (same search order as libmf_hybm_core's internal dlopen) to
+# share a single instance, then fall back to the packaged lib; keep handles until exit.
 optional_libs = ["libboundscheck.so", "libhcom.so", "libetcd_client_v3.so"]
 for lib in optional_libs:
+    handle = None
     try:
-        ctypes.CDLL(os.path.join(libs_path, lib), mode=ctypes.RTLD_GLOBAL)
+        handle = ctypes.CDLL(lib, mode=ctypes.RTLD_GLOBAL)
     except OSError:
-        pass
+        try:
+            handle = ctypes.CDLL(os.path.join(libs_path, lib), mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            pass
+    if handle is not None:
+        _lib_handles.append(handle)
 
 
 def get_include_path():
