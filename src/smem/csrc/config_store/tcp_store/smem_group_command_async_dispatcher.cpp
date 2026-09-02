@@ -168,10 +168,7 @@ void SmemGroupCommandAsyncDispatcher::EnqueueAddSlices(uint32_t extendingRankId,
 void SmemGroupCommandAsyncDispatcher::SendAck(ControlOp ackOp, const std::vector<uint32_t> &targetRankIds,
                                               const std::vector<int32_t> &results, uint64_t reqId) noexcept
 {
-    static const char *ackTag[] = {"ADDWACK", "REMWACK", "ESTCACK", "CLSCACK"};
-    auto tag = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_CLOSE_CONNECTION_ACK)
-                   ? ackTag[ackOp - CONTROL_ADD_TO_WHITELIST_ACK]
-                   : "??????";
+    auto tag = AckTagName(ackOp);
     if (sendAckBatch_) {
         sendAckBatch_(ackOp, localRankId_, targetRankIds, results, reqId);
     } else {

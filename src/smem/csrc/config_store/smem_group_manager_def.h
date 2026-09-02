@@ -106,6 +106,8 @@ enum ControlOp : int8_t {
     CONTROL_ADD_SLICES_ACK = 16, // client → server: ack add slices
 };
 
+const char *AckTagName(ControlOp op) noexcept;
+
 struct LinkStateEntry {
     uint32_t dstRankId{0};
     int8_t state{0};

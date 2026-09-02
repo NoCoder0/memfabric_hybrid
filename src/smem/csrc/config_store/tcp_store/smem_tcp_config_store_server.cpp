@@ -1573,9 +1573,17 @@ void AccStoreServer::RestoreFromEtcdIfNeeded() noexcept
         // rank（如 etcd 抖动窗口内 states 未及时写 IDLE 而残留 CHECKED_IN/ACTIVE）。
         // 校正后显式持久化，保证 etcd 中 states 与 alive_rank_list 一致，避免后续
         // 分配/CheckIn 路由到已无进程的 rank。
+        // 只对恢复结果中非 IDLE 的 rank 做对账：fresh start 全为 IDLE 时循环不做
+        // 任何事，避免按 maxRanks（UINT32_MAX 兜底钳到 1024）全量空转并刷日志；
+        // alive_rank_list 为空时仍会清理 states 中的残留 rank，保证同 rankId
+        // 重启的客户端 CheckIn 不被非 IDLE 状态拒绝。
+        const std::vector<RankState> recoveredStates = groupManager_->GetStates();
         std::vector<uint32_t> staleRanks;
         for (uint32_t i = 0; i < groupManager_->GetMaxRanks(); ++i) {
-            if (aliveRankFromBackend_.count(i) == 0 && groupManager_->Checkout(i, 0, "server-reconcile") == 0) {
+            if (recoveredStates[i] == RANK_IDLE || aliveRankFromBackend_.count(i) != 0) {
+                continue;
+            }
+            if (groupManager_->Checkout(i, 0, "server-reconcile") == 0) {
                 staleRanks.push_back(i);
             }
         }

@@ -31,6 +31,22 @@ constexpr uint32_t K_SEND_TASK_LINK_IDX_MASK = 0xFFFFFFFFU;
 constexpr uint32_t K_SEND_TASK_OP_SHIFT = 32U;
 constexpr uint32_t K_SEND_TASK_SRC_RANK_SHIFT = 40U;
 
+const char *AckTagName(ControlOp op) noexcept
+{
+    switch (op) {
+        case CONTROL_ADD_TO_WHITELIST_ACK:
+            return "ADDWACK";
+        case CONTROL_REMOVE_FROM_WHITELIST_ACK:
+            return "REMWACK";
+        case CONTROL_ESTABLISH_CONNECTION_ACK:
+            return "ESTCACK";
+        case CONTROL_CLOSE_CONNECTION_ACK:
+            return "CLSCACK";
+        default:
+            return "UNKNOWN";
+    }
+}
+
 SmemGroupManagerServer::SmemGroupManagerServer(SmemGroupCommandSender sender, const uint32_t maxRanks) noexcept
     : sender_(std::move(sender)), maxRanks_(maxRanks > SMEM_RANK_MAX ? SMEM_RANK_MAX : maxRanks)
 {
@@ -797,10 +813,7 @@ void SmemGroupManagerServer::DrivePendingTransitions() noexcept
 void SmemGroupManagerServer::OnControlAck(ControlOp ackOp, uint32_t senderRankId,
                                           const std::map<uint32_t, int32_t> &targetRankRes, uint64_t requestId) noexcept
 {
-    static const char *ackTag[] = {"ADDWACK", "REMWACK", "ESTCACK", "CLSCACK"};
-    auto tag = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_CLOSE_CONNECTION_ACK)
-                   ? ackTag[ackOp - CONTROL_ADD_TO_WHITELIST_ACK]
-                   : "??????";
+    auto tag = AckTagName(ackOp);
     std::string ok;
     std::string nok;
     for (auto &kv : targetRankRes) {
@@ -832,6 +845,7 @@ void SmemGroupManagerServer::OnControlAck(ControlOp ackOp, uint32_t senderRankId
             linksChanged = true;
         }
     }
+    lock.unlock();
     if (linksChanged && onStateChange_) {
         onStateChange_();
     }
