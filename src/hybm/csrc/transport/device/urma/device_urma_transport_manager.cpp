@@ -139,6 +139,11 @@ bool IsValidMem(const UrmaCommMem &mem)
     return (mem.type == UrmaMemoryType::HOST_DRAM || mem.type == UrmaMemoryType::DEVICE_HBM) && GetRangeEnd(mem, end);
 }
 
+bool IsEmptyMemoryKey(const TransportMemoryKey &key)
+{
+    return std::all_of(std::begin(key.keys), std::end(key.keys), [](uint64_t value) { return value == 0; });
+}
+
 EndpointDesc ToHcommEndpointDesc(const UrmaEndpointDesc &desc)
 {
     EndpointDesc endpoint{};
@@ -1271,6 +1276,10 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
     };
 
     for (const auto &key : memKeys) {
+        if (IsEmptyMemoryKey(key)) {
+            BM_LOG_DEBUG("device_urma ImportRemoteMemKeysLocked skip empty memory key, peer: " << peerRank);
+            continue;
+        }
         // --- 1. Validate top-level magic ---
         if (key.keys[0] != URMA_EXPORT_DESC_MAGIC) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked invalid key magic 0x"
