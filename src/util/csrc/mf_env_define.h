@@ -56,6 +56,7 @@ inline const std::string MF_HYBM_URMA_SWAP_SPACE_SIZE =
     GetEnvStr("MF_HYBM_URMA_SWAP_SPACE_SIZE", "HYBM_URMA_SWAP_SPACE_SIZE");
 inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =
     GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED");
+inline const std::string MF_HYBM_ENABLE_4K_PAGE = GetEnvStr("MF_HYBM_ENABLE_4K_PAGE", "HYBM_ENABLE_4K_PAGE");
 inline const std::string MF_LOG_LEVEL = GetEnvStr("MF_LOG_LEVEL", "ASCEND_MF_LOG_LEVEL");
 inline const std::string MF_SOCKET_URL = GetEnvStr("MF_SOCKET_URL");
 inline const std::string MF_TRANSPORT_MANAGER = GetEnvStr("MF_TRANSPORT_MANAGER", "TRANSPORT_MANAGER");

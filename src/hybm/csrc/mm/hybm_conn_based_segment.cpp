@@ -28,6 +28,8 @@
 #include "hybm_numa_util.h"
 #include "hybm_va_manager.h"
 #include "mf_num_util.h"
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 
 using namespace ock::mf;
 
@@ -477,13 +479,15 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
     }
 
     // 3. try to alloc DRAM with 4k page via mmap
-    mapped = mmap(sliceAddr, size, prot, mmapFlags, mmapFd, mmapOffset);
-    if (mapped == sliceAddr) {
-        BM_LOG_INFO("Successfully allocated " << size << " bytes DRAM 4K page via mmap. addr:" << mapped);
-        allocMethod = MemAllocMethod::MMAP;
-        return mapped;
+    static const bool enable4KPage = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_ENABLE_4K_PAGE, 0u) != 0u;
+    if (enable4KPage) {
+        mapped = mmap(sliceAddr, size, prot, mmapFlags, mmapFd, mmapOffset);
+        if (mapped == sliceAddr) {
+            BM_LOG_INFO("Successfully allocated " << size << " bytes DRAM 4K page via mmap. addr:" << mapped);
+            allocMethod = MemAllocMethod::MMAP;
+            return mapped;
+        }
     }
-
     return MAP_FAILED;
 }
 
