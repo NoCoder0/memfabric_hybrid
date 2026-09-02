@@ -28,7 +28,7 @@
 #include "mf_env_util.h"
 
 namespace {
-constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 128;
+constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 0;
 }
 
 namespace ock {

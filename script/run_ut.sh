@@ -58,7 +58,7 @@ mkdir -p ${OUTPUT_PATH}
 
 set -e
 
-unset MF_HYBM_RDMA_SWAP_SPACE_SIZE
+export MF_HYBM_RDMA_SWAP_SPACE_SIZE=256
 
 echo "========= UT env =========="
 echo "MF_HYBM_RDMA_SWAP_SPACE_SIZE=${MF_HYBM_RDMA_SWAP_SPACE_SIZE:-<unset>}"
