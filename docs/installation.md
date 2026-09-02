@@ -107,6 +107,10 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
+> **AICPU Kernel SO 部署：** `DEVICE_RDMA`（HCOMM 路径）和 `DEVICE_URMA` 均需在 NPU 上加载 AICPU kernel SO。主 run 包安装时增加 `--install-ops`，或安装 wheel 后执行 `mfcli aicpu install`。
+>
+> 详细说明见 [安装 HYBM AICPU OPS](installation_aicpu_kernel.md)。
+>
 > [!NOTE] 说明
 > A2环境使用DRAM池化需要根据每台机器池化内存的大小来配置大页内存，否则初始化失败。
 >

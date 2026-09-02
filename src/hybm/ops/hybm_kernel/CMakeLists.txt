@@ -4,8 +4,6 @@ set(CMAKE_SKIP_RPATH TRUE)
 if(NOT DEFINED HYBM_KERNEL_PROJECT_ROOT)
   set(HYBM_KERNEL_PROJECT_ROOT "${PROJECT_SOURCE_DIR}")
 endif()
-# hybm_pack_sign.cmake not needed: pack_targets_and_files() no longer used
-
 set(HYBM_AICPU_PACKAGE_NAME cann-hybm-compat.tar.gz)
 set(AICPU_COMPILER "${ASCEND_HOME_PATH}/toolkit/toolchain/hcc/bin/aarch64-target-linux-gnu-g++")
 set(_ASCEND_INC_DIR "${ASCEND_HOME_PATH}/pkg_inc/base")
@@ -98,6 +96,7 @@ install(FILES ${AICPU_TAR_OUTPUT}
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 
-install(PROGRAMS ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/install.sh
+install(PROGRAMS ${HYBM_KERNEL_PROJECT_ROOT}/script/install_aicpu_kernel.sh
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
+        RENAME install.sh
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)

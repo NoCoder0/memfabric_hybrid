@@ -86,6 +86,27 @@ if [ "${BUILD_PYTHON}" = "ON" ]; then
     cp -r "${OUTPUT_DIR}"/memfabric_hybrid/wheel/*.whl ${PKG_DIR}/"${ARCH_OS}"/wheel/
 fi
 
+# Package the same signed OPS payload used by the wheel. A build without a
+# valid CANN environment intentionally has no OPS payload.
+OPS_OUTPUT_DIR="${OUTPUT_DIR}/hybm/aicpu_kernel"
+OPS_ARTIFACTS=(cann-hybm-compat.tar.gz libcann_hybm_kernel.json cann_hybm_kernel_version install.sh)
+OPS_READY=1
+for artifact in "${OPS_ARTIFACTS[@]}"; do
+    if [ ! -f "${OPS_OUTPUT_DIR}/${artifact}" ]; then
+        OPS_READY=0
+        break
+    fi
+done
+if [ "${OPS_READY}" -eq 1 ]; then
+    mkdir -p "${PKG_DIR}/ops"
+    for artifact in "${OPS_ARTIFACTS[@]}"; do
+        cp "${OPS_OUTPUT_DIR}/${artifact}" "${PKG_DIR}/ops/"
+    done
+    echo "========= package HYBM OPS payload ============"
+else
+    echo "========= package without HYBM OPS payload: CANN build was skipped ============"
+fi
+
 if [ "$BUILD_TEST" = "ON" ]; then
     mkdir -p ${PKG_DIR}/"${ARCH_OS}"/test/mock_server
     cp "${PROJECT_DIR}"/test/python/mock_server/server.py ${PKG_DIR}/"${ARCH_OS}"/test/mock_server

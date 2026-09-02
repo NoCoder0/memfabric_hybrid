@@ -12,6 +12,7 @@ install_flag=y
 uninstall_flag=n
 install_path_flag=n
 install_for_all_flag=n
+install_ops_flag=n
 nocheck=n
 script_dir=$(dirname $(readlink -f "$0"))
 version1="none"
@@ -24,6 +25,7 @@ function print_help() {
     echo "--install-path=<path>             Install to specific dir"
     echo "--uninstall                       Uninstall product"
     echo "--install-for-all                 Install for all user"
+    echo "--install-ops                     Install the packaged HYBM OPS into CANN"
     echo "--no-check                        Skip check during installation"
 }
 
@@ -100,6 +102,10 @@ function parse_script_args()
         ;;
         --install-for-all)
             install_for_all_flag=y
+            shift
+        ;;
+        --install-ops)
+            install_ops_flag=y
             shift
         ;;
         --help)
@@ -526,6 +532,28 @@ function install_process()
     generate_set_env
 }
 
+function install_ops()
+{
+    local ops_installer="${script_dir}/../ops/install.sh"
+    local ops_args=(--install)
+    if [ ! -f "${ops_installer}" ]; then
+        print "ERROR" "This run package does not contain HYBM OPS artifacts. Rebuild it in a valid CANN environment."
+        exit 1
+    fi
+    if [ "${install_for_all_flag}" == "y" ]; then
+        ops_args+=(--install-for-all)
+    fi
+    print "INFO" "install packaged HYBM OPS"
+    if ! bash "${ops_installer}" "${ops_args[@]}"; then
+        print "ERROR" "install packaged HYBM OPS failed"
+        return 1
+    fi
+    mkdir -p "${install_dir}/ops"
+    cp "${ops_installer}" "${install_dir}/ops/install.sh"
+    printf '%s\n' "${ASCEND_HOME_PATH%/}" > "${install_dir}/ops/cann_root"
+    chmod 550 "${install_dir}/ops/install.sh"
+}
+
 function main()
 {
     parse_script_args $*
@@ -544,6 +572,11 @@ function main()
         fi
 
         install_process
+        if [ "${install_ops_flag}" == "y" ]; then
+            if ! install_ops; then
+                exit 1
+            fi
+        fi
         chmod_authority
         print "INFO" "memfabric_hybrid install success"
     fi
