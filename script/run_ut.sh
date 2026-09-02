@@ -97,6 +97,7 @@ ${MAKE_CMD} install -j"${MF_BUILD_JOBS}" -C ${BUILD_PATH}
 export LD_LIBRARY_PATH=$SMEM_LIB_PATH:$HYBM_LIB_PATH:$MOCK_CANN_PATH/driver/lib64
 export ASCEND_HOME_PATH=$MOCK_CANN_PATH
 export ASAN_OPTIONS="detect_stack_use_after_return=1:allow_user_poisoning=1"
+export MF_HYBM_ENABLE_4K_PAGE=1
 
 set +e
 cd "$OUTPUT_PATH/bin/ut" && ./test_memfabric --gtest_output=xml:"$TEST_REPORT_PATH/test_detail.xml" --gtest_filter=${TEST_FILTER}
