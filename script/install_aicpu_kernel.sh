@@ -5,8 +5,9 @@ PACKAGE_NAME="cann-hybm-compat.tar.gz"
 JSON_NAME="libcann_hybm_kernel.json"
 VERSION_FILE="cann_hybm_kernel_version"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." 2>/dev/null && pwd || true)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." 2>/dev/null && pwd || true)"
 BACKUP_BASENAME=".hybm_aicpu_kernel_backup"
+MIN_CANN_VERSION="9.1.0"
 
 ACTION=""
 FORCE=0
@@ -16,13 +17,11 @@ usage() {
     cat <<'EOF'
 Usage: install.sh [OPTIONS]
 
-Install, uninstall, or inspect HYBM AICPU kernel artifacts in the CANN OPP tree.
+Install, uninstall, or inspect HYBM AICPU kernel installation paths in the CANN OPP tree.
 Installation also updates ${ASCEND_HOME_PATH}/conf/ascend_package_load.ini.
 
 Options:
   -h, --help          Show this help message
-  --list              Print the list of files in the archive
-  --check             Verify archive integrity and version dependency
   --noexec            (Handled by .run wrapper) Must be used with --extract=<path>; extract only without installing
   --extract=<path>    (Handled by .run wrapper) Extract payload to <path>
   --install           Perform installation (default when no option given)
@@ -30,7 +29,7 @@ Options:
                       users (directories 755, files 444)
     --force           (Must be used with --install) Overwrite existing installed files
   --uninstall         Remove installed files and restore backups
-  --version           Show version information
+  --info              Show install paths and the MemFabric Hybrid CANN load configuration
 EOF
 }
 
@@ -41,9 +40,8 @@ find_source_dir() {
     # Primary: run package scenario -- payload files co-located with this script
     if [[ -f "${SCRIPT_DIR}/${PACKAGE_NAME}" && -f "${SCRIPT_DIR}/${JSON_NAME}" && -f "${SCRIPT_DIR}/${VERSION_FILE}" ]]; then
         echo "${SCRIPT_DIR}"
-    # Fallback: source-tree debugging scenario -- only when SCRIPT_DIR ends with /script/kernel
-    # and PROJECT_ROOT is valid and build output exists
-    elif [[ "${SCRIPT_DIR}" == */script/kernel ]] && [[ -n "${PROJECT_ROOT:-}" ]] \
+    # Fallback: source-tree debugging scenario.
+    elif [[ -n "${PROJECT_ROOT:-}" ]] \
         && [[ -f "${PROJECT_ROOT}/output/hybm/aicpu_kernel/${PACKAGE_NAME}" \
         && -f "${PROJECT_ROOT}/output/hybm/aicpu_kernel/${JSON_NAME}" \
         && -f "${PROJECT_ROOT}/output/hybm/aicpu_kernel/${VERSION_FILE}" ]]; then
@@ -54,151 +52,91 @@ find_source_dir() {
     fi
 }
 
-# ---------------------------------------------------------------
-# Read version metadata from source/payload
-# ---------------------------------------------------------------
-read_version() {
-    local src_dir="$1"
-    local ver_file="${src_dir}/${VERSION_FILE}"
-    if [[ -f "$ver_file" ]]; then
-        cat "$ver_file"
-    else
-        echo "WARNING: ${VERSION_FILE} not found in payload" >&2
-        echo "mf version info:"
-        echo "mf version: unknown"
-        echo "git: unknown"
-    fi
-}
-
-# ---------------------------------------------------------------
-# --check : verify payload integrity
-# ---------------------------------------------------------------
-check_payload() {
-    local src_dir="$1"
-    local pkg="${src_dir}/${PACKAGE_NAME}"
-    local json="${src_dir}/${JSON_NAME}"
-    local ver="${src_dir}/${VERSION_FILE}"
-    local rc=0
-
-    echo "=== Payload integrity check ==="
-
-    # Package archive
-    if [[ ! -f "$pkg" ]]; then
-        echo "ERROR: ${PACKAGE_NAME} not found" >&2
-        rc=1
-    elif [[ ! -s "$pkg" ]]; then
-        echo "ERROR: ${PACKAGE_NAME} is empty" >&2
-        rc=1
-    else
-        local size
-        size=$(stat -c%s "$pkg" 2>/dev/null || echo "?")
-        echo "OK: ${PACKAGE_NAME} (${size} bytes)"
-        if tar -tzf "$pkg" &>/dev/null; then
-            echo "OK: ${PACKAGE_NAME} is a valid tar.gz archive"
-        else
-            echo "ERROR: ${PACKAGE_NAME} is not a valid tar.gz archive" >&2
-            rc=1
+get_cann_version() {
+    local cann_root="$1"
+    local version_file
+    local version
+    local candidates=(
+        "${cann_root}/$(uname -m)-linux/ascend_toolkit_install.info"
+        "${cann_root}/aarch64-linux/ascend_toolkit_install.info"
+        "${cann_root}/x86_64-linux/ascend_toolkit_install.info"
+        "${cann_root}/ascend_toolkit_install.info"
+        "${cann_root}/version.cfg"
+    )
+    for version_file in "${candidates[@]}"; do
+        if [[ ! -f "${version_file}" ]]; then
+            continue
         fi
-    fi
-
-    # JSON config
-    if [[ ! -f "$json" ]]; then
-        echo "ERROR: ${JSON_NAME} not found" >&2
-        rc=1
-    elif [[ ! -s "$json" ]]; then
-        echo "ERROR: ${JSON_NAME} is empty" >&2
-        rc=1
-    else
-        local size
-        size=$(stat -c%s "$json" 2>/dev/null || echo "?")
-        echo "OK: ${JSON_NAME} (${size} bytes)"
-        if command -v python3 &>/dev/null; then
-            if python3 -c "import json; json.load(open('${json}'))" 2>/dev/null; then
-                echo "OK: ${JSON_NAME} is valid JSON"
-            else
-                echo "ERROR: ${JSON_NAME} is not valid JSON" >&2
-                rc=1
-            fi
-        else
-            echo "INFO: python3 not available, skip JSON validation"
-        fi
-    fi
-
-    # Version
-    echo ""
-    if [[ -f "$ver" ]]; then
-        echo "--- Version ---"
-        cat "$ver"
-    else
-        echo "WARNING: ${VERSION_FILE} not found in payload"
-    fi
-
-    # CANN path information
-    echo ""
-    if [[ -n "${ASCEND_HOME_PATH:-}" ]]; then
-        if [[ -d "$ASCEND_HOME_PATH" ]]; then
-            echo "OK: ASCEND_HOME_PATH=${ASCEND_HOME_PATH} (exists)"
-        else
-            echo "WARNING: ASCEND_HOME_PATH=${ASCEND_HOME_PATH} does not exist"
-        fi
-        # Ini config path
-        local ini_conf_dir="${ASCEND_HOME_PATH}/conf"
-        echo "INI config path: ${ini_conf_dir}/ascend_package_load.ini"
-        if [[ -d "$ini_conf_dir" ]]; then
-            if [[ -w "$ini_conf_dir" ]]; then
-                echo "OK: ${ini_conf_dir} (exists, writable)"
-            else
-                echo "WARNING: ${ini_conf_dir} exists but is not writable"
-            fi
-        elif [[ -d "${ASCEND_HOME_PATH}" ]]; then
-            if [[ -w "${ASCEND_HOME_PATH}" ]]; then
-                echo "OK: ${ini_conf_dir} can be created (parent writable)"
-            else
-                echo "WARNING: ${ASCEND_HOME_PATH} exists but is not writable, cannot create ${ini_conf_dir}"
-            fi
-        fi
-    else
-        echo "WARNING: ASCEND_HOME_PATH is not set (required for install/uninstall)"
-    fi
-
-    return $rc
-}
-
-# ---------------------------------------------------------------
-# --list : list archive files
-# ---------------------------------------------------------------
-do_list() {
-    local src_dir="$1"
-    echo "Archive files:"
-    for f in "${PACKAGE_NAME}" "${JSON_NAME}" "${VERSION_FILE}"; do
-        if [[ -f "${src_dir}/${f}" ]]; then
-            local sz
-            sz=$(stat -c%s "${src_dir}/${f}" 2>/dev/null || echo "0")
-            printf "  %-40s %s bytes\n" "${f}" "${sz}"
+        version="$(awk -F= '
+            tolower($1) ~ /^[[:space:]]*version[[:space:]]*$/ {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+                print $2
+                exit
+            }
+        ' "${version_file}")"
+        if [[ -n "${version}" ]]; then
+            echo "${version}"
+            return 0
         fi
     done
+    return 1
+}
+
+show_info() {
+    local cann_root="$1"
+    local ini_file="${cann_root}/conf/ascend_package_load.ini"
+    local tar_file="${cann_root}/opp/vendors/cust/op_impl/aicpu/kernel/${PACKAGE_NAME}"
+    local json_file="${cann_root}/opp/vendors/cust/op_impl/aicpu/config/${JSON_NAME}"
+    local path
+
+    echo "MemFabric Hybrid OPS paths:"
+    for path in "$ini_file" "$tar_file" "$json_file"; do
+        if [[ -e "$path" ]]; then
+            echo "  [exists] $path"
+        else
+            echo "  [missing] $path"
+        fi
+    done
+
     echo ""
-    if [[ -f "${src_dir}/${PACKAGE_NAME}" ]]; then
-        echo "Contents of ${PACKAGE_NAME}:"
-        tar -tzf "${src_dir}/${PACKAGE_NAME}" | sed 's/^/  /'
+    echo "MemFabric Hybrid entry in ascend_package_load.ini:"
+    if [[ ! -f "$ini_file" ]]; then
+        echo "  not configured (${ini_file} does not exist)"
+        return 0
     fi
-    if [[ -n "${ASCEND_HOME_PATH:-}" ]]; then
-        echo ""
-        echo "Target install paths (ASCEND_HOME_PATH=${ASCEND_HOME_PATH}):"
-        echo "  ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/kernel/${PACKAGE_NAME}"
-        echo "  ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/config/${JSON_NAME}"
-        echo "  ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/config/${VERSION_FILE}"
-        echo ""
-        echo "INI config file:"
-        echo "  ${ASCEND_HOME_PATH}/conf/ascend_package_load.ini"
-        echo ""
-        echo "INI config content to write:"
-        echo "  name:${PACKAGE_NAME}"
-        echo "  install_path:2"
-        echo "  optional:true"
-        echo "  package_path:opp/vendors/cust/op_impl/aicpu/kernel"
-        echo "  load_as_per_soc:false"
+
+    local entry
+    entry="$(awk -v target="name:${PACKAGE_NAME}" '
+        {
+            line = $0
+            sub(/\r$/, "", line)
+        }
+        line == target {
+            printing = 1
+        }
+        printing && line != target && line ~ /^name:/ {
+            exit
+        }
+        printing {
+            print line
+        }
+    ' "$ini_file")"
+    if [[ -n "$entry" ]]; then
+        printf '%s\n' "$entry" | sed 's/^/  /'
+    else
+        echo "  not configured"
     fi
+}
+
+is_cann_version_supported() {
+    local version="$1"
+    if [[ ! "${version}" =~ ^[^0-9]*([0-9]+)\.([0-9]+)(\.([0-9]+))? ]]; then
+        return 1
+    fi
+    local major=$((10#${BASH_REMATCH[1]}))
+    local minor=$((10#${BASH_REMATCH[2]}))
+    local patch=$((10#${BASH_REMATCH[4]:-0}))
+    (( major > 9 || (major == 9 && minor > 1) || (major == 9 && minor == 1 && patch >= 0) ))
 }
 
 # ---------------------------------------------------------------
@@ -414,27 +352,13 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             ACTION="uninstall"; shift ;;
-        --check)
+        --info)
             if [[ -n "$ACTION" ]]; then
-                echo "Error: conflicting actions: --${ACTION} and --check" >&2
+                echo "Error: conflicting actions: --${ACTION} and --info" >&2
                 usage >&2
                 exit 1
             fi
-            ACTION="check"; shift ;;
-        --list)
-            if [[ -n "$ACTION" ]]; then
-                echo "Error: conflicting actions: --${ACTION} and --list" >&2
-                usage >&2
-                exit 1
-            fi
-            ACTION="list"; shift ;;
-        --version)
-            if [[ -n "$ACTION" ]]; then
-                echo "Error: conflicting actions: --${ACTION} and --version" >&2
-                usage >&2
-                exit 1
-            fi
-            ACTION="version"; shift ;;
+            ACTION="info"; shift ;;
         -h|--help) usage; exit 0 ;;
         --extract=*|--noexec) shift ;;  # handled by .run wrapper
         *)
@@ -468,11 +392,15 @@ if [[ $FORCE -eq 1 && "$ACTION" != "install" ]]; then
     exit 1
 fi
 
-# Locate source directory
-SOURCE_DIR="$(find_source_dir)"
-if [[ -z "$SOURCE_DIR" ]]; then
-    echo "Error: Cannot locate ${PACKAGE_NAME}, ${JSON_NAME}, and ${VERSION_FILE}. Ensure they are in the same directory as this script." >&2
-    exit 1
+# Locate payload only when installation needs to copy it. Info and uninstall
+# operate on the existing CANN tree and must remain available without payload.
+SOURCE_DIR=""
+if [[ "$ACTION" == "install" ]]; then
+    SOURCE_DIR="$(find_source_dir)"
+    if [[ -z "$SOURCE_DIR" ]]; then
+        echo "Error: Cannot locate ${PACKAGE_NAME}, ${JSON_NAME}, and ${VERSION_FILE}. Ensure they are in the same directory as this script." >&2
+        exit 1
+    fi
 fi
 
 case "$ACTION" in
@@ -490,18 +418,25 @@ case "$ACTION" in
         CONFIG_DIR="${CANN_ROOT}/opp/vendors/cust/op_impl/aicpu/config"
         BACKUP_DIR="${CANN_ROOT}/opp/vendors/cust/${BACKUP_BASENAME}"
         if [[ "$ACTION" == "install" ]]; then
+            if ! CANN_VERSION="$(get_cann_version "$CANN_ROOT")"; then
+                echo "Error: cannot detect CANN version; CANN >= ${MIN_CANN_VERSION} is required." >&2
+                exit 1
+            fi
+            if ! is_cann_version_supported "$CANN_VERSION"; then
+                echo "Error: CANN ${CANN_VERSION} is not supported; CANN >= ${MIN_CANN_VERSION} is required." >&2
+                exit 1
+            fi
+            echo "Detected supported CANN version: ${CANN_VERSION}"
             do_install "$SOURCE_DIR" "$KERNEL_DIR" "$CONFIG_DIR" "$BACKUP_DIR"
         else
             do_uninstall "$KERNEL_DIR" "$CONFIG_DIR" "$BACKUP_DIR"
         fi
         ;;
-    check)
-        check_payload "$SOURCE_DIR"
-        ;;
-    list)
-        do_list "$SOURCE_DIR"
-        ;;
-    version)
-        read_version "$SOURCE_DIR"
+    info)
+        if [[ -z "${ASCEND_HOME_PATH:-}" ]]; then
+            echo "Error: ASCEND_HOME_PATH is not set. Set it to the CANN root directory." >&2
+            exit 1
+        fi
+        show_info "${ASCEND_HOME_PATH%/}"
         ;;
 esac

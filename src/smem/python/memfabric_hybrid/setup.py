@@ -20,7 +20,6 @@ import subprocess
 import sys
 
 from setuptools import find_namespace_packages, setup
-from setuptools.command.build_py import build_py
 from setuptools.dist import Distribution
 from wheel.bdist_wheel import bdist_wheel
 
@@ -29,8 +28,9 @@ def check_env_flag(name: str, default: str = "") -> bool:
     return os.getenv(name, default).upper() in ["ON", "1", "YES", "TRUE", "Y"]
 
 
-# 消除whl压缩包的时间戳差异
-os.environ["SOURCE_DATE_EPOCH"] = "0"
+# 消除 whl 压缩包的时间戳差异。ZIP 时间戳最早支持到
+# 1980-01-01，不能使用 Unix epoch（1970-01-01）。
+os.environ["SOURCE_DATE_EPOCH"] = "315532800"
 current_version = os.getenv("MEMFABRIC_VERSION")
 if not current_version:
     print("Error: MEMFABRIC_VERSION environment variable must be set.", file=sys.stderr)
@@ -45,59 +45,6 @@ elif xpu_type == "GPU":
     current_version += "+gpu"
 
 
-_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../../.."))
-
-
-_AICPU_WLIST = {
-    "_hybm_src/include/hybm_def.h",
-    "_hybm_src/csrc/common/hybm_types.h",
-    "_hybm_src/csrc/under_api/dl_hcomm_api.h",
-}
-
-_WREL_SRC = [
-    ("_hybm_src/include/", "src/hybm/include/"),
-    ("_hybm_src/csrc/common/", "src/hybm/csrc/common/"),
-    ("_hybm_src/csrc/under_api/", "src/hybm/csrc/under_api/"),
-]
-
-
-def _copy_wlist_assets(build_lib):
-    """Copy ops tree and AICPU white-list files into build_lib."""
-    pkg_build = os.path.join(build_lib, "memfabric_hybrid")
-    for subdir in ("_ops", "_hybm_src"):
-        d = os.path.join(pkg_build, subdir)
-        if os.path.isdir(d):
-            shutil.rmtree(d)
-    # Recursively copy entire ops directory (no whitelist filtering).
-    shutil.copytree(
-        os.path.join(_PROJECT_ROOT, "src/hybm/ops"),
-        os.path.join(pkg_build, "_ops"),
-    )
-    for wl_rel in _AICPU_WLIST:
-        src_rel = None
-        for wprefix, spath in _WREL_SRC:
-            if wl_rel.startswith(wprefix):
-                inner = wl_rel[len(wprefix) :]
-                src_rel = os.path.join(spath, inner)
-                break
-        assert src_rel is not None, "unmatched white-list entry: " + wl_rel
-        dst_full = os.path.join(pkg_build, wl_rel)
-        os.makedirs(os.path.dirname(dst_full), exist_ok=True)
-        shutil.copy2(os.path.join(_PROJECT_ROOT, src_rel), dst_full)
-
-
-class _AicpuBuildPy(build_py):
-    """Custom build_py that stages AICPU white-list files into build_lib."""
-
-    def run(self):
-        super().run()
-        _copy_wlist_assets(self.build_lib)
-        pkg_build = os.path.join(self.build_lib, "memfabric_hybrid")
-        marker = os.path.join(pkg_build, ".hybm_aicpu_provision_wheel_only")
-        with open(marker, "w") as f:
-            f.write("")
-
-
 class BinaryDistribution(Distribution):
     """Distribution which always forces a binary package with platform name"""
 
@@ -107,8 +54,6 @@ class BinaryDistribution(Distribution):
 
 class BuildWheel(bdist_wheel):
     def run(self):
-        # Force build_py even if --skip-build was given, so AICPU assets
-        # are always staged and marker created in the wheel.
         if self.skip_build:
             self.run_command("build_py")
         bdist_wheel.run(self)
@@ -171,6 +116,7 @@ setup(
     author_email="",
     description="python api for memfabric hybrid",
     packages=find_namespace_packages(exclude=("tests*",)),
+    py_modules=["mfcli"],
     url="https://gitcode.com/Ascend/memfabric_hybrid",
     license="Mulan PSL v2",
     python_requires=">=3.8",
@@ -185,10 +131,15 @@ setup(
             "include/smem/device/*.h",
             "include/hybm/*.h",
             "VERSION",
+            "_aicpu/*",
+        ]
+    },
+    entry_points={
+        "console_scripts": [
+            "mfcli=mfcli:main",
         ]
     },
     cmdclass={
-        "build_py": _AicpuBuildPy,
         "bdist_wheel": BuildWheel,
     },
     distclass=BinaryDistribution,

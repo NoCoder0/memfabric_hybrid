@@ -31,6 +31,7 @@ export BUILD_TOOL=${12:-cmake}
 
 readonly SCRIPT_FULL_PATH=$(dirname $(readlink -f "$0"))
 readonly PROJECT_FULL_PATH=$(dirname "$SCRIPT_FULL_PATH")
+readonly MIN_CANN_VERSION="9.1.0"
 # Default to 60% of nproc (leave headroom per TTFHW constraint); user can override via env var.
 # Unset OMP_NUM_THREADS to get the real CPU count (some images set OMP_NUM_THREADS=1 which caps nproc).
 if [ -z "${MF_BUILD_JOBS:-}" ]; then
@@ -132,6 +133,113 @@ check_contains_path()
     done
     echo "========= not contain $check_path============"
     return 0  # not contain
+}
+
+get_cann_version()
+{
+    local cann_root="$1"
+    local version_file
+    local version
+    local candidates=(
+        "${cann_root}/$(uname -m)-linux/ascend_toolkit_install.info"
+        "${cann_root}/aarch64-linux/ascend_toolkit_install.info"
+        "${cann_root}/x86_64-linux/ascend_toolkit_install.info"
+        "${cann_root}/ascend_toolkit_install.info"
+        "${cann_root}/version.cfg"
+    )
+    for version_file in "${candidates[@]}"; do
+        if [ ! -f "${version_file}" ]; then
+            continue
+        fi
+        version="$(awk -F= '
+            tolower($1) ~ /^[[:space:]]*version[[:space:]]*$/ {
+                gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2)
+                print $2
+                exit
+            }
+        ' "${version_file}")"
+        if [ -n "${version}" ]; then
+            echo "${version}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+is_cann_version_supported()
+{
+    local version="$1"
+    if [[ ! "${version}" =~ ^[^0-9]*([0-9]+)\.([0-9]+)(\.([0-9]+))? ]]; then
+        return 1
+    fi
+    local major=$((10#${BASH_REMATCH[1]}))
+    local minor=$((10#${BASH_REMATCH[2]}))
+    local patch=$((10#${BASH_REMATCH[4]:-0}))
+    (( major > 9 || (major == 9 && minor > 1) || (major == 9 && minor == 1 && patch >= 0) ))
+}
+
+build_hybm_ops()
+{
+    local ascend_root="${ASCEND_HOME_PATH:-}"
+    local aicpu_compiler="${ascend_root}/toolkit/toolchain/hcc/bin/aarch64-target-linux-gnu-g++"
+    local ascend_include="${ascend_root}/aarch64-linux/pkg_inc/base"
+    local ops_build_dir="${PROJ_DIR}/build/hybm_ops"
+    local ops_output_dir="${PROJ_DIR}/output/hybm/aicpu_kernel"
+
+    if [ "${XPU_TYPE}" != "NPU" ]; then
+        echo "========= skip build HYBM OPS: XPU_TYPE is ${XPU_TYPE} ============"
+        return 0
+    fi
+    if [ -z "${ascend_root}" ] || [ ! -d "${ascend_root}" ]; then
+        echo "========= skip build HYBM OPS: CANN environment is unavailable ============"
+        return 0
+    fi
+    local cann_version
+    if ! cann_version="$(get_cann_version "${ascend_root}")"; then
+        echo "========= skip build HYBM OPS: cannot detect CANN version (required >= ${MIN_CANN_VERSION}) ============"
+        return 0
+    fi
+    if ! is_cann_version_supported "${cann_version}"; then
+        echo "========= skip build HYBM OPS: CANN ${cann_version} does not meet >= ${MIN_CANN_VERSION} ============"
+        return 0
+    fi
+    echo "========= detected CANN ${cann_version} ============"
+    if [ ! -x "${aicpu_compiler}" ] || [ ! -d "${ascend_include}" ]; then
+        echo "========= skip build HYBM OPS: CANN cross-compiler or headers are unavailable ============"
+        return 0
+    fi
+
+    echo "========= build HYBM OPS ============"
+    rm -rf "${ops_build_dir}"
+    cmake \
+        -S "${PROJ_DIR}/src/hybm/ops" \
+        -B "${ops_build_dir}" \
+        -DHYBM_KERNEL_PROJECT_ROOT="${PROJ_DIR}" \
+        -DTARGET_INSTALL_DIR="${PROJ_DIR}/output" \
+        -DPROJECT_HYBM_SRC_BASE="${PROJ_DIR}/src/hybm" \
+        -DPROJECT_UTIL_SRC_BASE="${PROJ_DIR}/src/util/csrc" \
+        -DASCEND_HOME_PATH="${ascend_root}" \
+        -DCMAKE_BUILD_TYPE="${BUILD_MODE}"
+    cmake --build "${ops_build_dir}" --target install --parallel "${MF_BUILD_JOBS}"
+
+    local mf_version
+    local git_commit
+    mf_version="$(tr -d '[:space:]' < "${PROJ_DIR}/VERSION")"
+    git_commit="$(git -C "${PROJ_DIR}" rev-parse HEAD 2>/dev/null || true)"
+    {
+        echo "mf version info:"
+        echo "mf version: ${mf_version}"
+        echo "git: ${git_commit}"
+    } > "${ops_output_dir}/cann_hybm_kernel_version"
+
+    for artifact in cann-hybm-compat.tar.gz libcann_hybm_kernel.json install.sh cann_hybm_kernel_version; do
+        if [ ! -f "${ops_output_dir}/${artifact}" ]; then
+            echo "Error: missing HYBM OPS artifact: ${ops_output_dir}/${artifact}" >&2
+            return 1
+        fi
+    done
+    bash "${PROJ_DIR}/script/signtool/sign.sh" "${mf_version}"
+    echo "========= build HYBM OPS done ============"
 }
 
 cd ${ROOT_PATH}/..
@@ -267,6 +375,8 @@ if [ "${BUILD_HCOM}" == "ON" ]; then
     fi
 fi
 
+build_hybm_ops
+
 if [ "${BUILD_PYTHON}" != "ON" ]; then
     echo "========= skip build python ============"
         cd ${CURRENT_DIR}
@@ -313,6 +423,29 @@ GIT_COMMIT=`git rev-parse HEAD` || true
 
 cp "${PROJ_DIR}/output/VERSION" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/"
 cp -v "${PROJ_DIR}/script/mem_scan.py" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/mem_scan.py"
+
+# Stage the prebuilt OPS payload as regular wheel package data. build.sh
+# already stages and cleans other generated wheel assets in the same way.
+WHEEL_AICPU_DIR="${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/_aicpu"
+rm -rf "${WHEEL_AICPU_DIR}"
+OPS_OUTPUT_DIR="${PROJ_DIR}/output/hybm/aicpu_kernel"
+OPS_ARTIFACTS=(cann-hybm-compat.tar.gz libcann_hybm_kernel.json cann_hybm_kernel_version install.sh)
+OPS_READY=1
+for artifact in "${OPS_ARTIFACTS[@]}"; do
+    if [ ! -f "${OPS_OUTPUT_DIR}/${artifact}" ]; then
+        OPS_READY=0
+        break
+    fi
+done
+if [ "${OPS_READY}" -eq 1 ]; then
+    mkdir -p "${WHEEL_AICPU_DIR}"
+    for artifact in "${OPS_ARTIFACTS[@]}"; do
+        cp "${OPS_OUTPUT_DIR}/${artifact}" "${WHEEL_AICPU_DIR}/"
+    done
+    echo "========= stage HYBM OPS payload for wheel ============"
+else
+    echo "========= build wheel without HYBM OPS payload: CANN build was skipped ============"
+fi
 
 # 如果 PYTHON_HOME 不存在，则设置默认值
 if [ -z "$PYTHON_HOME" ]; then
@@ -377,6 +510,7 @@ rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/dist
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/include
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/script
+rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/_aicpu
 rm -f "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/mem_scan.py
 
 cd ${CURRENT_DIR}

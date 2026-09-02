@@ -124,11 +124,9 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
-> **AICPU Kernel SO 部署：** `DEVICE_RDMA`（HCOMM 路径）和 `DEVICE_URMA` 均需在 NPU 上加载 AICPU kernel SO（`libcann_hybm_kernel.so`）。部署方式：
+> **AICPU Kernel SO 部署：** `DEVICE_RDMA`（HCOMM 路径）和 `DEVICE_URMA` 均需在 NPU 上加载 AICPU kernel SO。主 run 包安装时增加 `--install-ops`，或安装 wheel 后执行 `mfcli aicpu install`。
 >
-> - **import-time provisioning：** 安装 whl 包后首次 `import memfabric_hybrid` 时自动交叉编译并安装。
->
-> 详细说明见 [安装 HYBM AICPU Kernel Run 包](installation_aicpu_kernel.md)。
+> 详细说明见 [安装 HYBM AICPU OPS](installation_aicpu_kernel.md)。
 >
 > **A2 环境使用 DEVICE_RDMA：** A2（Ascend 910B3）上使用自定义 AICPU kernel 需先关闭驱动验签：
 >
