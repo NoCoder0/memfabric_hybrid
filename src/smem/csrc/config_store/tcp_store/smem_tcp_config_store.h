@@ -126,6 +126,7 @@ private:
                             const std::function<void(int result, const std::vector<uint8_t> &)> &notify, uint32_t &id,
                             const std::string &key) noexcept;
     void HeartBeat() noexcept;
+    Result ConnectWithRecoverRetry(const ock::acc::AccConnReq &connReq, uint32_t retryMaxTimes) noexcept;
 
     int32_t LocalNonBlockSend(int16_t msgType, uint32_t seqNo, const acc::AccDataBufferPtr &d,
                               const acc::AccDataBufferPtr &cbCtx)

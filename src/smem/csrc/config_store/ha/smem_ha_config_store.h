@@ -119,6 +119,8 @@ private:
     void StartHealthCheckThread() noexcept;
     void TriggerReElectionAsync() noexcept;
     void ReElectionThreadFunc();
+    [[nodiscard]] Result ConnectToSelfOrTolerate() noexcept;
+    [[nodiscard]] bool IsSelfConnectionHealthy() const noexcept;
 
 private:
     // Configuration Attributes

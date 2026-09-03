@@ -209,9 +209,15 @@ Result HaConfigStore::TryBecomeLeader() noexcept
     }
     SM_LOG_TRACE("Registered in backend: " << myAddr << ", TTL: " << PUT_LEASE_TTL_SEC << "s");
 
-    // Connect client delegate to self
-    auto clientRet = ConnectClient(leaderBindIp_, leaderBindPort_);
+    /*
+     * Connect client delegate to self. A transient failure may happen when the in-process
+     * net-group reconnect races with this self-connect, so tolerate it if the delegate
+     * already holds a healthy link to this local server.
+     */
+    auto clientRet = ConnectToSelfOrTolerate();
     if (clientRet != SM_OK) {
+        SM_LOG_ERROR("connect to self failed without healthy self link, ip: "
+                     << leaderBindIp_ << ", port: " << leaderBindPort_ << ", ret: " << clientRet);
         StopServer();
         (void)backend_->Delete(KEY_LEADER);
         isLeader_.store(false, std::memory_order_release);
@@ -479,6 +485,53 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port) noexce
         });
     }
     return SM_OK;
+}
+
+Result HaConfigStore::ConnectToSelfOrTolerate() noexcept
+{
+    Result clientRet = ConnectClient(leaderBindIp_, leaderBindPort_);
+    if (clientRet == SM_OK) {
+        return SM_OK;
+    }
+    SM_LOG_ERROR("connect to self failed, ip: " << leaderBindIp_ << ", port: " << leaderBindPort_
+                                                << ", ret: " << clientRet);
+    /*
+     * The self-connect can race with the in-process auto-reconnect of the net group
+     * engine after the previous leader link broke. In that case the delegate may
+     * already hold a healthy link to this local server, so tolerate instead of
+     * dropping the just-acquired leadership.
+     */
+    if (IsSelfConnectionHealthy()) {
+        SM_LOG_WARN("tolerate self connect failure, delegate already connected to self");
+        return SM_OK;
+    }
+    return clientRet;
+}
+
+bool HaConfigStore::IsSelfConnectionHealthy() const noexcept
+{
+    if (clientDelegate_ == nullptr) {
+        return false;
+    }
+    /*
+     * Read-only probe over the delegate link: a healthy link answers with a normal
+     * store code (KEY_LEADER exists on the local server), while a broken or missing
+     * link returns IO_ERROR.
+     */
+    constexpr uint32_t kProbeRetryTimes = 5;
+    constexpr uint32_t kProbeRetryIntervalMs = 100;
+    for (uint32_t attempt = 0; attempt < kProbeRetryTimes; ++attempt) {
+        std::vector<uint8_t> value;
+        Result probeRet = clientDelegate_->Get(KEY_LEADER, value);
+        if (probeRet != StoreErrorCode::IO_ERROR) {
+            return true;
+        }
+        if (attempt + 1 < kProbeRetryTimes) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kProbeRetryIntervalMs));
+        }
+    }
+    SM_LOG_ERROR("delegate self link not healthy after " << kProbeRetryTimes << " probes");
+    return false;
 }
 
 Result HaConfigStore::BecomeFollower(const std::string &leaderIpPort) noexcept

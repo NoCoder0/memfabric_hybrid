@@ -133,6 +133,11 @@ private:
     Result LaunchCleanupThread();
     void CleanupStaleRanks() noexcept;
     bool CanReceiveNewLink();
+    /*
+     * Called when the recovery window expires: reads the group event and notifies
+     * ranks that are in the group bitmap but did not reconnect.
+     */
+    void RecoverFinished() noexcept;
 
     static constexpr uint32_t MAX_KEY_LEN_SERVER = 2048U;
     static constexpr uint32_t STORE_WAIT_TIMEOUT_SEC = 5U;
@@ -166,6 +171,7 @@ private:
     const std::string listenIp_;
     const uint16_t listenPort_;
     bool skipRecover_;
+    uint64_t lastReconnectTime_{0}; // us, refreshed by each reconnect, drives RECOVER -> NORMAL transition
     uint32_t worldSize_;
     uint32_t rankIndex_{0};
     std::unordered_set<uint32_t> aliveRankSet_;

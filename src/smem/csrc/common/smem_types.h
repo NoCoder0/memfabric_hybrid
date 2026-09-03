@@ -14,6 +14,10 @@
 #define MEMFABRIC_HYBRID_SMEM_TYPES_H
 
 #include <cstdint>
+#include <ostream>
+#include <string>
+
+#include "smem.h"
 
 namespace ock {
 namespace smem {
@@ -61,6 +65,46 @@ constexpr uint64_t HYBM_HBM_SIZE_ALIGNMENT = 1ULL << 30;  // 1GB
 
 constexpr uint32_t SMEM_GROUP_RETRY_TIME = 5U;
 constexpr uint32_t MF_GROUP_JOIN_DEFAULT_TIMEOUT = 900U; // 集群加入默认超时时间900s
+
+/*
+ * Dynamic group membership: the joined ranks are tracked as a bitmap, one bit per rank.
+ */
+constexpr uint32_t MAX_RANK_COUNT = SMEM_WORLD_SIZE_MAX;
+constexpr uint32_t BITS_COUNT_IN_U64 = 64U;
+constexpr uint32_t RANK_BITS_U64_COUNT = MAX_RANK_COUNT / BITS_COUNT_IN_U64;
+
+/*
+ * Key of the group listen event, shared by the group engine (writer) and the
+ * config store server (reader during recovery). The key is stored on the core
+ * store, so every access must go through ConfigStore::GetCoreStore().
+ */
+inline const std::string SMEM_GROUP_LISTEN_EVENT_KEY = "MF_SMEM_GROUP_EVENT";
+
+/*
+ * Payload of the group event: the serialized bytes of SmemGroupInfo.
+ */
+#pragma pack(push, 4)
+struct SmemGroupInfo {
+    // dynamic info
+    uint32_t version;
+    uint32_t groupSize;
+    uint32_t curEvent;
+    uint32_t targetRank;
+    uint32_t submitRank;
+    uint64_t joinedRanksBitmap[RANK_BITS_U64_COUNT]; // bit set means the rank is in the group
+
+    friend std::ostream &operator<<(std::ostream &os, const SmemGroupInfo &obj)
+    {
+        os << "SmemGroupInfo{size:" << obj.groupSize << " event:" << obj.curEvent << " target:" << obj.targetRank
+           << " src:" << obj.submitRank << " ver:" << obj.version << " mask:";
+        for (uint32_t i = 0; i < RANK_BITS_U64_COUNT; i++) {
+            os << std::hex << " " << obj.joinedRanksBitmap[i];
+        }
+        os << "}";
+        return os;
+    }
+};
+#pragma pack(pop)
 } // namespace smem
 } // namespace ock
 

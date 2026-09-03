@@ -207,7 +207,7 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
     connReq.rankId =
         rankId_ >= 0 ? ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | static_cast<uint64_t>(rankId_))
                      : ((static_cast<uint64_t>(worldSize_) << WORLD_SIZE_SHIFT) | std::numeric_limits<uint32_t>::max());
-    result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, retryMaxTimes, accClientLink_);
+    result = ConnectWithRecoverRetry(connReq, retryMaxTimes);
     if (result != 0) {
         STORE_LOG_ERROR("connect to server failed, ip: " << serverIp_ << " port: " << serverPort_
                                                          << " result: " << result);
@@ -216,6 +216,33 @@ Result TcpConfigStore::ClientStart(const smem_tls_config &tlsConfig, int reconne
     }
     isRunning_.store(true);
     heartBeatThread_ = std::thread{[this]() { HeartBeat(); }};
+    return result;
+}
+
+Result TcpConfigStore::ConnectWithRecoverRetry(const ock::acc::AccConnReq &connReq, uint32_t retryMaxTimes) noexcept
+{
+    /*
+     * The server runs a recover state machine: new connects are rejected while the
+     * server is in SS_RECOVER. Retry until the recovery window (SERVER_RECOVER_TIME)
+     * expires. A quick failure means the server is up but rejecting us (recovering);
+     * a slow one means the server is unreachable and ConnectToPeerServer already
+     * exhausted its internal retries, so give up to avoid compounding the wait time.
+     */
+    constexpr int kConnectRetryTimes = 10;
+    constexpr auto kConnectRetryIntervalMs = std::chrono::milliseconds(1000);
+    Result result = SM_ERROR;
+    for (int attempt = 0; attempt < kConnectRetryTimes; ++attempt) {
+        auto start = std::chrono::steady_clock::now();
+        result = accClient_->ConnectToPeerServer(serverIp_, serverPort_, connReq, retryMaxTimes, accClientLink_);
+        if (result == 0) {
+            break;
+        }
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        if (elapsed > kConnectRetryIntervalMs) {
+            break;
+        }
+        std::this_thread::sleep_for(kConnectRetryIntervalMs);
+    }
     return result;
 }
 

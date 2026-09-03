@@ -30,9 +30,9 @@ namespace smem {
 
 std::atomic<uint64_t> StoreWaitContext::idGen_{1UL};
 constexpr uint16_t MAX_U16_INDEX = 65535;
-constexpr uint64_t SERVER_RECOVER_TIME = 60 * 1000 * 1000;   // 60s (etcd distributed backend)
-constexpr uint64_t NON_ETCD_RECOVER_TIME = 10 * 1000 * 1000; // 10s (non-distributed backend)
-constexpr uint64_t RECOVER_PERIOD_TIME = 60;                 // 60s
+constexpr uint64_t SERVER_RECOVER_TIME = 60 * 1000 * 1000;     // 60s (etcd distributed backend)
+constexpr uint64_t NON_PERSIST_RECOVER_TIME = 5 * 1000 * 1000; // 5s (no persistent backend, group bitmap recover)
+constexpr uint64_t RECOVER_PERIOD_TIME = 60;                   // 60s
 constexpr uint32_t HEARTBEAT_TIMEOUT = 30;
 constexpr int32_t EPHEMERAL_KEY_TTL_SEC = 5;
 constexpr int32_t PERSISTENT_KEY_TTL_SEC = 0;
@@ -201,28 +201,19 @@ Result AccStoreServer::ReceiveMessageHandler(const ock::acc::AccTcpRequestContex
 // call in storeMutex_
 bool AccStoreServer::CanReceiveNewLink()
 {
-    static uint64_t startT = mf::MonotonicTime::TimeUs();
     if (state_.load() == SS_INITED) {
         state_.store(skipRecover_ ? SS_NORMAL : SS_RECOVER);
-        STORE_LOG_TRACE("change server state from INITED to " << (skipRecover_ ? "NORMAL" : "RECOVER"));
-    } else if (state_.load() == SS_RECOVER) {
-        uint64_t nowT = mf::MonotonicTime::TimeUs();
-        // Exit recovery when:
-        // 1. All old ranks (aliveRankFromBackend_) have reconnected (in reconnectedRankSet_), OR
-        // 2. Timeout kicks in (60s for distributed backend, 10s for non-distributed)
-        //
-        // aliveRankFromBackend_ is empty in non-distributed mode (RestoreFromBackend skips it).
-        // In that case we skip the rank-check and only use the shorter timeout — this gives a
-        // recovery window for expansion (扩容) scenarios even without etcd.
-        bool allReconnected = false;
-        uint64_t timeoutUs = SERVER_RECOVER_TIME;
-        if (!aliveRankFromBackend_.empty()) {
-            allReconnected = std::all_of(aliveRankFromBackend_.begin(), aliveRankFromBackend_.end(),
-                                         [this](uint32_t rk) { return reconnectedRankSet_.count(rk) > 0; });
-        } else {
-            timeoutUs = NON_ETCD_RECOVER_TIME;
+        if (!skipRecover_) {
+            lastReconnectTime_ = mf::MonotonicTime::TimeUs();
         }
-        if (allReconnected || nowT > startT + timeoutUs) {
+        STORE_LOG_TRACE("change server state from INITED to " << (skipRecover_ ? "NORMAL" : "RECOVER"));
+    } else if (state_.load() == SS_RECOVER && !aliveRankFromBackend_.empty()) {
+        // Persistent-backend recovery (aliveRankFromBackend_ based), keep old mechanism.
+        // Exit recovery once all old ranks reconnected, or fall back to the window timeout.
+        uint64_t nowT = mf::MonotonicTime::TimeUs();
+        bool allReconnected = std::all_of(aliveRankFromBackend_.begin(), aliveRankFromBackend_.end(),
+                                          [this](uint32_t rk) { return reconnectedRankSet_.count(rk) > 0; });
+        if (allReconnected || nowT > lastReconnectTime_ + SERVER_RECOVER_TIME) {
             state_.store(SS_NORMAL);
             STORE_LOG_TRACE("change server state to NORMAL"
                             << (allReconnected ? " (all ranks reconnected)" : " (timeout)"));
@@ -231,6 +222,41 @@ bool AccStoreServer::CanReceiveNewLink()
         }
     }
     return (state_.load() == SS_NORMAL);
+}
+
+// call in storeMutex_
+void AccStoreServer::RecoverFinished() noexcept
+{
+    std::vector<uint8_t> outValue;
+    auto ret = backend_->Get(SMEM_GROUP_LISTEN_EVENT_KEY, outValue);
+    if (ret != StoreErrorCode::SUCCESS || outValue.size() != sizeof(SmemGroupInfo)) {
+        STORE_LOG_TRACE("recover finished, no valid group event, ret: " << ret);
+        return;
+    }
+    auto info = reinterpret_cast<SmemGroupInfo *>(outValue.data());
+    bool hasDownRank = false;
+    for (uint32_t i = 0; i < RANK_BITS_U64_COUNT; i++) {
+        uint64_t bitmap = info->joinedRanksBitmap[i];
+        if (bitmap == 0) {
+            continue;
+        }
+        for (uint32_t j = 0; j < BITS_COUNT_IN_U64; j++) {
+            if (((bitmap >> j) & 1U) == 0U) {
+                continue;
+            }
+            uint32_t rankId = i * BITS_COUNT_IN_U64 + j;
+            // Ranks present in the bitmap but not reconnected are treated as down
+            if (aliveRankSet_.find(rankId) == aliveRankSet_.end()) {
+                STORE_LOG_WARN("recover finished, rank: " << rankId
+                                                          << " in group bitmap but not alive, trigger link down");
+                rankStateTaskQueue_.push(rankId);
+                hasDownRank = true;
+            }
+        }
+    }
+    if (hasDownRank) {
+        storeCond_.notify_all();
+    }
 }
 
 Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
@@ -250,6 +276,11 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
     }
 
     std::unique_lock<std::mutex> lockGuard{storeMutex_};
+
+    if (req.reconnect == 1 && state_.load() == SS_RECOVER && aliveRankFromBackend_.empty()) {
+        // Each reconnect refreshes the no-persistent-backend recovery window
+        lastReconnectTime_ = mf::MonotonicTime::TimeUs();
+    }
 
     if (!CanReceiveNewLink() && req.reconnect == 0) {
         STORE_LOG_ERROR("[RECOVER] reject new connection, linkId=" << link->Id() << " state=" << state_.load()
@@ -1071,6 +1102,18 @@ void AccStoreServer::TimerThreadTask() noexcept
         }
 
         lockerGuard.lock();
+        // No persistent backend (aliveRankFromBackend_ empty): the recovery window is
+        // time-driven. Once no reconnect arrives for the recover window, switch to NORMAL
+        // and report ranks that stayed in the group bitmap but did not reconnect.
+        if (state_.load() == SS_RECOVER && aliveRankFromBackend_.empty()) {
+            uint64_t nowT = mf::MonotonicTime::TimeUs();
+            if (nowT > lastReconnectTime_ + NON_PERSIST_RECOVER_TIME) {
+                state_.store(SS_NORMAL);
+                STORE_LOG_TRACE("change server state from RECOVER to NORMAL");
+                RecoverFinished();
+                recoveryCond_.notify_all();
+            }
+        }
         storeCond_.wait_for(lockerGuard, std::chrono::milliseconds(1),
                             [this]() { return (state_.load() == SS_EXITED); });
     }

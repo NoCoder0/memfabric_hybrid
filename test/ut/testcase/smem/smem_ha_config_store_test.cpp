@@ -459,6 +459,37 @@ TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderDeletesLeaderOnSelfConnectFailure)
     EXPECT_FALSE(store.isLeader_.load(std::memory_order_acquire));
 }
 
+TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderToleratesSelfConnectFailureWhenDelegateHealthy)
+{
+    auto backendBase = MakeBackend();
+    auto backend = Convert<ConfigStoreBackend, FakeStoreBackend>(backendBase);
+    auto client = MakeClientDelegate();
+    HaConfigStore store(backendBase, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE);
+
+    backend->getHook = [](const std::string &, std::vector<uint8_t> &) { return StoreErrorCode::NOT_EXIST; };
+
+    MOCKER_CPP(&NetworkEndpointUtil::FindAvailablePort, bool (*)(uint16_t &, bool)).stubs().will(returnValue(true));
+    MOCKER_CPP(&NetworkEndpointUtil::GetLocalIpWithTarget, bool (*)(const std::string &, std::string &))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&AccStoreServer::UpdateStatus, int32_t(*)(bool)).stubs().will(returnValue(int32_t(0)));
+    MOCKER_CPP(&AccStoreServer::RestoreFromBackend, int32_t(*)()).stubs().will(returnValue(int32_t(0)));
+    MOCKER_CPP(&AccStoreServer::Startup, int32_t(*)(const smem_tls_config &)).stubs().will(returnValue(int32_t(0)));
+    // Self-connect fails, but the delegate already holds a healthy link to the local
+    // server (probe GetReal returns SUCCESS instead of IO_ERROR). Leadership must be kept.
+    MOCKER_CPP(&TcpConfigStore::ClientStart, int32_t(*)(const smem_tls_config &, int))
+        .stubs()
+        .will(returnValue(int32_t(-1)));
+    MOCKER_CPP(&TcpConfigStore::GetReal, int32_t(*)(const std::string &, std::vector<uint8_t> &, int64_t))
+        .stubs()
+        .will(returnValue(int32_t(0)));
+
+    EXPECT_EQ(SM_OK, store.TryBecomeLeader());
+    EXPECT_TRUE(backend->lastDeleteKey.empty());
+    EXPECT_TRUE(store.isLeader_.load(std::memory_order_acquire));
+    EXPECT_EQ(KEY_LEADER, backend->lastPutKey);
+}
+
 TEST_F(SmemHaConfigStoreTest, ForwardingApisDelegateToClientOrUseClientLocalState)
 {
     auto backend = MakeBackend();

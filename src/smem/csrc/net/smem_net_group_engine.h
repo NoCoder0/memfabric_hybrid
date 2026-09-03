@@ -29,9 +29,6 @@ class SmemNetGroupEngine;
 using SmemGroupEnginePtr = SmRef<SmemNetGroupEngine>;
 using SmemGroupChangeCallback = std::function<Result(uint32_t rank)>;
 const uint32_t REMOVE_INTERVAL = 2;
-constexpr uint32_t MAX_RANK_COUNT = SMEM_WORLD_SIZE_MAX;
-constexpr uint32_t BITS_COUNT_IN_U64 = 64U;
-constexpr uint32_t RANK_BITS_U64_COUNT = MAX_RANK_COUNT / BITS_COUNT_IN_U64;
 constexpr uint32_t DEFAULT_STORE_KEY_DELAY_CLEAN_COUNT = 10;
 
 /**
@@ -72,29 +69,6 @@ struct GroupListenContext {
     int32_t ret = SM_OK;
     std::list<T> values;
 };
-
-#pragma pack(push, 4)
-struct SmemGroupInfo {
-    // dynamic info
-    uint32_t version;
-    uint32_t groupSize;
-    uint32_t curEvent;
-    uint32_t targetRank;
-    uint32_t submitRank;
-    uint64_t joinedRanksBitmap[RANK_BITS_U64_COUNT];
-
-    friend std::ostream &operator<<(std::ostream &os, const SmemGroupInfo &obj)
-    {
-        os << "SmemGroupInfo{size:" << obj.groupSize << " event:" << obj.curEvent << " target:" << obj.targetRank
-           << " src:" << obj.submitRank << " ver:" << obj.version << " mask:";
-        for (uint32_t i = 0; i < RANK_BITS_U64_COUNT; i++) {
-            os << std::hex << " " << obj.joinedRanksBitmap[i];
-        }
-        os << "}";
-        return os;
-    }
-};
-#pragma pack(pop)
 
 class SmemNetGroupEngine : public SmReferable {
 public:

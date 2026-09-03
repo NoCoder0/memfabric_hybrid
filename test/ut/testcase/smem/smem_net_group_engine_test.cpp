@@ -11,6 +11,7 @@
 */
 
 #include <atomic>
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <iostream>
@@ -202,5 +203,99 @@ TEST(SmemNetGroupEngineTest, concurrent_clients_join_leave_twice_should_succeed_
     std::cout << "[concurrent_join_leave] all workers finished, failure count="
               << failedCount.load(std::memory_order_relaxed) << std::endl;
     EXPECT_EQ(failedCount.load(std::memory_order_relaxed), 0);
+}
+
+/*
+ * Verifies that when the server finishes recovery (RecoverFinished), ranks that are
+ * present in the group event bitmap but have NOT reconnected (ghost ranks) are
+ * reported as link down to the WATCH_RANK_LINK_DOWN watchers. This covers the
+ * non-persistent-backend scenario: aliveRankFromBackend_ stays empty, so the
+ * recovery is driven by the no-persistent-backend timer window.
+ */
+TEST(SmemNetGroupEngineTest, recover_finished_triggers_link_down_for_ghost_ranks)
+{
+    constexpr uint16_t kRecoverPort = 5680;
+    constexpr int32_t kWorldSize = 8;
+    constexpr uint32_t kGhostRanks[] = {1U, 2U, 3U};
+    constexpr uint32_t kGhostRankCount = sizeof(kGhostRanks) / sizeof(kGhostRanks[0]);
+    constexpr auto kRecoverWindow = std::chrono::seconds(6); // NON_PERSIST_RECOVER_TIME is 5s, wait with margin
+    smem_tls_config tlsConfig{};
+
+    // Initialize URL parser state required by acc_links before opening listener/client sockets.
+    UrlExtraction parserInit;
+    ASSERT_EQ(parserInit.ExtractIpPortFromUrl("tcp://127.0.0.1:" + std::to_string(kRecoverPort)), SM_OK);
+
+    auto backend = SmMakeRef<SmemLocalMemoryBackend>();
+    ASSERT_NE(backend, nullptr);
+    ASSERT_EQ(backend->Initialize("0.0.0.0", "", ""), SUCCESS);
+    auto backendPtr = Convert<SmemLocalMemoryBackend, ConfigStoreBackend>(backend);
+
+    // Step 1: a first server (skipRecover=true -> NORMAL) lets the client connect once,
+    // so that afterwards it can reconnect (reconnect=1) as an old member to the recovering server.
+    auto server1 = SmMakeRef<TcpConfigStore>(backendPtr, "0.0.0.0", kRecoverPort, ConfigStoreModel::CSM_SERVER, true,
+                                             kWorldSize, -1);
+    ASSERT_NE(server1, nullptr);
+    ASSERT_EQ(server1->Startup(tlsConfig), SM_OK);
+
+    auto client = SmMakeRef<TcpConfigStore>(backendPtr, "127.0.0.1", kRecoverPort, ConfigStoreModel::CSM_CLIENT, true,
+                                            kWorldSize, 0);
+    ASSERT_NE(client, nullptr);
+    ASSERT_EQ(client->Startup(tlsConfig), SM_OK);
+
+    // Step 2: stop the first server, the client link breaks.
+    server1->Shutdown();
+    server1 = nullptr;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+    // Step 3: restart a recovering server (skipRecover=false -> RECOVER on the first connect) and persist a
+    // ghost bitmap in the group event key: ranks 1/2/3 are in the bitmap but will never reconnect.
+    auto server2 = SmMakeRef<TcpConfigStore>(backendPtr, "0.0.0.0", kRecoverPort, ConfigStoreModel::CSM_SERVER, false,
+                                             kWorldSize, -1);
+    ASSERT_NE(server2, nullptr);
+    Result startRet = SM_ERROR;
+    for (int attempt = 0; attempt < 10; ++attempt) {
+        startRet = server2->Startup(tlsConfig);
+        if (startRet == SM_OK) {
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    ASSERT_EQ(startRet, SM_OK);
+
+    SmemGroupInfo ghostInfo{};
+    ghostInfo.groupSize = kGhostRankCount;
+    for (uint32_t rank : kGhostRanks) {
+        ghostInfo.joinedRanksBitmap[rank / BITS_COUNT_IN_U64] |= (1UL << (rank % BITS_COUNT_IN_U64));
+    }
+    std::vector<uint8_t> ghostValue(reinterpret_cast<uint8_t *>(&ghostInfo),
+                                    reinterpret_cast<uint8_t *>(&ghostInfo) + sizeof(SmemGroupInfo));
+    ASSERT_EQ(backend->Put(SMEM_GROUP_LISTEN_EVENT_KEY, ghostValue, 0), SUCCESS);
+
+    // Step 4: the old member reconnects (reconnect=1, accepted in RECOVER) and registers the link-down watch.
+    ASSERT_EQ(client->ReConnectAfterBroken(-1), SM_OK);
+    std::mutex notifyMutex;
+    std::vector<uint32_t> linkDownRanks;
+    uint32_t wid = UINT32_MAX;
+    ASSERT_EQ(client->Watch(
+                  WatchRankType::WATCH_RANK_LINK_DOWN,
+                  [&](WatchRankType type, uint32_t rankId, Result result) {
+                      (void)type;
+                      (void)result;
+                      std::lock_guard<std::mutex> lock(notifyMutex);
+                      linkDownRanks.push_back(rankId);
+                  },
+                  wid),
+              SM_OK);
+
+    // Step 5: wait for the recovery window to expire; RecoverFinished must report the ghost ranks as link down.
+    std::this_thread::sleep_for(kRecoverWindow);
+    {
+        std::lock_guard<std::mutex> lock(notifyMutex);
+        std::sort(linkDownRanks.begin(), linkDownRanks.end());
+        EXPECT_EQ(linkDownRanks, std::vector<uint32_t>(kGhostRanks, kGhostRanks + kGhostRankCount));
+    }
+
+    client->Shutdown();
+    server2->Shutdown();
 }
 } // namespace
