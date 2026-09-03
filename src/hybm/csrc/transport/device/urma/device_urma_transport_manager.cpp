@@ -45,7 +45,7 @@ namespace device {
 
 namespace {
 constexpr uint32_t HCOMM_NORMAL_NOTIFY_NUM = 0;
-constexpr uint32_t HCOMM_CHANNEL_QOS_DEFAULT = 4U;
+constexpr uint32_t HCOMM_CHANNEL_QOS_DEFAULT = 0U;
 constexpr uint32_t HCOMM_CHANNEL_QOS_MAX = 7U;
 constexpr const char *HCOMM_CHANNEL_QOS_ENV = "MF_DEVICE_UB_QOS";
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
@@ -1465,7 +1465,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             channelDesc.remoteEndpoint = hcommRemoteEndpoint;
             channelDesc.notifyNum = HCOMM_NORMAL_NOTIFY_NUM;
             channelDesc.exchangeAllMems = true;     // 填true, 不用管memHandles了, remoteEndpoint要填对
-            channelDesc.qos = GetHcommChannelQos(); // 0-7, 值越小优先级越高。
+            channelDesc.qos = GetHcommChannelQos(); // 0-7, 值越大优先级越高。
             BM_LOG_INFO("device_urma Prepare channelDesc qos: " << channelDesc.qos);
 
             // 5. Allocate one thread per peer (use temporary variable for safe rollback)

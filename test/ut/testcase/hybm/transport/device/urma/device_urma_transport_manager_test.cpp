@@ -68,11 +68,12 @@ constexpr uint64_t MOCK_MEM_TAG = 7UL;
 constexpr uint32_t MOCK_HCOMM_DESC_LEN = 4U;
 constexpr uint32_t MOCK_NOTIFY_ID = 11U;
 constexpr uint32_t MOCK_NOTIFY_LEN = sizeof(int64_t);
+constexpr uint32_t QOS_NOT_SET = UINT32_MAX;
 uint32_t g_memExportCallCount = 0;
 uint32_t g_memImportCallCount = 0;
 uint32_t g_memUnregCallCount = 0;
 uint32_t g_kernelLaunchCallCount = 0;
-uint32_t g_lastHcommChannelQos = 0;
+uint32_t g_lastHcommChannelQos = QOS_NOT_SET;
 
 struct TestHybmOneSideOpParam {
     ock::mf::ThreadHandle thread;
@@ -1077,6 +1078,7 @@ struct DeviceTestFixture {
 
 void ExpectPrepareWithQos(const char *envValue, uint32_t expectedQos)
 {
+    g_lastHcommChannelQos = QOS_NOT_SET;
     EnvVarGuard envGuard("MF_DEVICE_UB_QOS");
     if (envValue == nullptr) {
         (void)unsetenv("MF_DEVICE_UB_QOS");
@@ -1152,7 +1154,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesThreadChannelAndImportsMemKey
     options.options.emplace(1, std::move(info));
 
     EXPECT_EQ(manager.Prepare(options), BM_OK);
-    EXPECT_EQ(g_lastHcommChannelQos, 4U);
+    EXPECT_EQ(g_lastHcommChannelQos, 0U);
     auto &state = manager.remoteRanks_[1];
     EXPECT_EQ(state.thread, MOCK_THREAD);
     EXPECT_EQ(state.channel, MOCK_CHANNEL);
@@ -1163,13 +1165,13 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesThreadChannelAndImportsMemKey
 
 TEST(DeviceUrmaTransportManagerTest, PrepareUsesConfiguredUbQos)
 {
-    ExpectPrepareWithQos(nullptr, 4U);
+    ExpectPrepareWithQos(nullptr, 0U);
     ExpectPrepareWithQos("0", 0U);
     ExpectPrepareWithQos("7", 7U);
-    ExpectPrepareWithQos("8", 4U);
-    ExpectPrepareWithQos("-1", 4U);
-    ExpectPrepareWithQos("not-a-number", 4U);
-    ExpectPrepareWithQos("", 4U);
+    ExpectPrepareWithQos("8", 0U);
+    ExpectPrepareWithQos("-1", 0U);
+    ExpectPrepareWithQos("not-a-number", 0U);
+    ExpectPrepareWithQos("", 0U);
 }
 
 TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseCleansUp)
