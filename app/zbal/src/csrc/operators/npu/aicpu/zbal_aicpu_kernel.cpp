@@ -114,6 +114,10 @@ extern "C" uint32_t ZBALAicpuScatter(void *args)
 {
     return ZBALAicpuDispatcherEntry(args);
 }
+extern "C" uint32_t ZBALAicpuGather(AicpuWorkDesc *workDesc)
+{
+    return ZBALAicpuDispatcherEntry(workDesc);
+}
 extern "C" uint32_t ZBALAicpuAlltoAllV(void *args)
 {
     return ZBALAicpuDispatcherEntry(args);

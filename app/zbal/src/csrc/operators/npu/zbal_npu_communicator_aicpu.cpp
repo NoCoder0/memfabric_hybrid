@@ -203,6 +203,41 @@ int32_t NpuCommunicatorAICPU::Scatter(const void *sendBuff, void *recvBuff, uint
                          static_cast<uint32_t>(root), "Scatter", stream);
 }
 
+int32_t NpuCommunicatorAICPU::GatherImpl(const GatherParams &params) noexcept
+{
+    if (params.root >= groupInfo_.groupSize) {
+        ZBAL_LOG_ERROR("Gather root is invalid, root=" << params.root << ", groupSize=" << groupInfo_.groupSize);
+        return Z_INVALID_PARAM;
+    }
+    if (params.dataType < 0 || params.dataType >= ZBAL_DATA_TYPE_BUTT) {
+        ZBAL_LOG_ERROR("Gather data type is invalid, dataType=" << params.dataType << ", root=" << params.root);
+        return Z_INVALID_PARAM;
+    }
+    if (groupInfo_.myGroupRank == params.root && params.recvBuff == nullptr) {
+        ZBAL_LOG_ERROR("Gather receive buffer is null on root, rank="
+                       << groupInfo_.myGroupRank << ", root=" << params.root << ", dataCount=" << params.dataCount);
+        return Z_INVALID_PARAM;
+    }
+
+    const uint64_t typeSize = ZBALDataTypeSize(static_cast<uint32_t>(params.dataType));
+    if (typeSize == 0) {
+        ZBAL_LOG_ERROR("Gather data type size is zero, dataType=" << params.dataType << ", root=" << params.root);
+        return Z_INVALID_PARAM;
+    }
+    if (params.dataCount > UINT64_MAX / typeSize) {
+        ZBAL_LOG_ERROR("Gather size overflow, rank=" << groupInfo_.myGroupRank << ", root=" << params.root
+                                                     << ", dataCount=" << params.dataCount
+                                                     << ", dataType=" << params.dataType);
+        return Z_INVALID_PARAM;
+    }
+
+    uint64_t rootExchangeGva = CalcPeerExchangeGva(params.root);
+    return LaunchAicpuOp(launcher_, ZBAL_CMD_GATHER, reinterpret_cast<uint64_t>(params.sendBuff),
+                         reinterpret_cast<uint64_t>(params.recvBuff), params.dataCount,
+                         static_cast<uint32_t>(params.dataType), static_cast<uint32_t>(params.root), "Gather",
+                         params.stream, 0, 0, 0, rootExchangeGva);
+}
+
 int32_t NpuCommunicatorAICPU::Broadcast(const void *buf, uint64_t dataCount, zbal_datatype_t dataType, uint16_t root,
                                         aclrtStream stream) noexcept
 {

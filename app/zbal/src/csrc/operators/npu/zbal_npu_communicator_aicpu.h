@@ -42,6 +42,7 @@ public:
                  aclrtStream stream) noexcept override;
 
 private:
+    int32_t GatherImpl(const GatherParams &params) noexcept override;
     ZResult AllocateAicpuResources();
     uint64_t CalcPeerExchangeGva(uint32_t peer) const noexcept;
 

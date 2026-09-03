@@ -49,7 +49,7 @@ struct CommOpParams {
     uint64_t buffer; /* scratch buffer GVA (AllReduce temp workspace) */
     uint64_t dataSize;
     uint64_t exchangeGva;
-    uint32_t root;     /* root rank (scatter/broadcast) / peer (send/recv) */
+    uint32_t root;     /* root rank (scatter/broadcast/gather) / peer (send/recv) */
     uint32_t dataType; /* zbal_datatype_t enum */
     uint32_t reduceOp; /* zbal_reduce_op_t — maps to SDMA opCode for hardware reduce */
     uint32_t commAlg;  /* resolved algorithm (host-side via SelectCommAlg, device reads desc->commAlg) */
@@ -59,6 +59,7 @@ struct CommOpParams {
     volatile stars_channel_info_t **channels;
     uint64_t waitSymbol;  /* incrementing barrier flag — all ops use this for cross-device sync */
     uint64_t reserved[4]; /* per-op extension (union semantics, ops never coexist in one launch):
+                           * Gather: [0]=rootExchangeGva
                            * AlltoAllV: [0]=sendCumSum, [1]=recvSplitCounts, [2]=elements
                            * Send/Recv: [0]=peerExchangeGva */
 };

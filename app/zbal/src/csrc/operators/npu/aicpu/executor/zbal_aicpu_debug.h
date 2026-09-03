@@ -54,6 +54,7 @@ enum AicpuDebugTag : uint32_t {
     TAG_INIT_CTX_RANK = 10,  /* rankId, rankNum */
     TAG_UPDATE_CTX = 13,     /* commType, count */
     TAG_ALGO_ALLGATHER = 30, /* sendBuffer, count */
+    TAG_ALGO_GATHER = 31,    /* root/myRank, count */
     TAG_RETURN = 61,         /* return code, coreId */
 };
 

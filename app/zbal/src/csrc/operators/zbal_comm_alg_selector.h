@@ -54,6 +54,7 @@ inline OpExecConfig GetCommOpConfig(uint32_t commType, uint32_t commAlg)
         case ZBAL_CMD_ALLREDUCE:
         case ZBAL_CMD_BROADCAST:
         case ZBAL_CMD_SCATTER:
+        case ZBAL_CMD_GATHER:
             return {1, 8};
         case ZBAL_CMD_SEND:
         case ZBAL_CMD_RECV:

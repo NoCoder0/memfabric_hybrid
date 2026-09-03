@@ -43,11 +43,13 @@ def get_golden_by_assembly(golden_dir, world_size, data_type, tensor_data_type, 
     return torch.cat(golden_parts, dim=0).npu().view(world_size * rows_per_rank, hidden)
 
 
-def test_gather(dist_type, case_list, hidden_size, data_op_type):
+def test_gather(dist_type, case_list, hidden_size, data_op_type, root):
     global_rank = int(os.environ["RANK"])
     local_rank = int(os.environ["LOCAL_RANK"])
     world_size = int(os.environ["WORLD_SIZE"] or 2)
-    test_type = os.environ["TEST_TYPE"] or "int"
+    if root < 0 or root >= world_size:
+        raise ValueError(f"root must be in [0, {world_size}), got {root}")
+    test_type = os.environ.get("TEST_TYPE", "int")
     current_dir = os.environ.get("CURRENT_DIR", ".")
     check_precision = os.getenv("CHECK_PRECISION", "1") == "1"
     enable_profiling = os.environ.get("ENABLE_PROFILING", "0") == "1"
@@ -78,9 +80,8 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
         local_mem = 4 * 1024 * 1024 * 1024
         if not zbal_init(world_size, device_id, global_rank, local_mem, data_op_type=data_op_type):
             logger.error(f"zbal_init failed on rank {global_rank}.")
-            return
-        else:
-            logger.info(f"zbal_init success on rank {global_rank}\n")
+            raise RuntimeError(f"zbal_init failed on rank {global_rank}")
+        logger.info(f"zbal_init success on rank {global_rank}\n")
 
         group = dist.init_process_group("zbal", rank=global_rank, world_size=world_size)
         logger.info(f"init zbal group success on rank {global_rank=} {world_size=}")
@@ -88,6 +89,18 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
         torch.npu.set_device(device_id)
         group = dist.init_process_group("hccl", rank=global_rank, world_size=world_size)
         logger.info(f"init hccl group success on rank {global_rank=} {world_size=}")
+
+    # Use native Gather for ZBAL and keep HCCL on its fallback implementation.
+    expected_compatible_impl = dist_type == "zbal"
+    torch_npu.npu.use_compatible_impl(expected_compatible_impl)
+    compatible_impl = torch_npu.npu.are_compatible_impl_enabled()
+    logger.info(f"rank={global_rank}, dist_type={dist_type}, compatible_impl={compatible_impl}")
+    if compatible_impl != expected_compatible_impl:
+        logger.error(
+            f"failed to set compatible implementation: rank={global_rank}, dist_type={dist_type}, "
+            f"expected={expected_compatible_impl}, actual={compatible_impl}"
+        )
+        raise RuntimeError("failed to configure Gather implementation")
 
     if enable_profiling:
         experimental_config = torch_npu.profiler._ExperimentalConfig(
@@ -136,7 +149,7 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
             for k in range(20):
                 if enable_profiling and prof_cnt >= 1:
                     prof.step()
-                dst = 0
+                dst = root
 
                 data = np.fromfile(f"{current_dir}/golden/{golden_dir}/input_gm_{global_rank}.bin", dtype=data_type)
                 tensor_input = torch.from_numpy(data).to(tensor_data_type).npu().view(rows_per_rank, hidden_size)
@@ -160,9 +173,11 @@ def test_gather(dist_type, case_list, hidden_size, data_op_type):
                 elif dist_type == 'zbal':
                     if global_rank == dst:
                         full_gather_result = torch.cat(gather_list, dim=0)
-                        if not torch.allclose(golden_tensor, full_gather_result, rtol=1e-4, atol=1e-8):
+                        if not torch.equal(golden_tensor, full_gather_result):
                             logger.error(f"rank {global_rank} case {data_len} gather result not correct")
-                            raise Exception(f"procesion error case:{data_len}")
+                            raise AssertionError(
+                                f"Gather precision check failed: rank={global_rank}, data_len={data_len}"
+                            )
             if dist_type == "zbal":
                 logging.info(
                     f"gather {world_size=} {global_rank=} {data_len=} {k} times compare precision success {os.linesep}"
@@ -187,6 +202,7 @@ if __name__ == "__main__":
     parser.add_argument('--case_list', type=str, nargs='*', default=[])
     parser.add_argument('--hidden_size', type=int, default=0)
     parser.add_argument('--data_op_type', type=int, default=0)
+    parser.add_argument('--root', type=int, default=0)
     args = parser.parse_args()
 
     dist_type = args.dist_type
@@ -195,4 +211,4 @@ if __name__ == "__main__":
     case_list = [int(case) for case in case_list]
     hidden_size = args.hidden_size
     data_op_type = args.data_op_type
-    test_gather(dist_type, case_list, hidden_size, data_op_type)
+    test_gather(dist_type, case_list, hidden_size, data_op_type, args.root)

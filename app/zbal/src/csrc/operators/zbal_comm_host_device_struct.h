@@ -219,6 +219,7 @@ enum AicpuCommType : uint32_t {
     ZBAL_CMD_ALLTOALLV = 6,
     ZBAL_CMD_SEND = 7,
     ZBAL_CMD_RECV = 8,
+    ZBAL_CMD_GATHER = 9,
     ZBAL_CMD_FINALIZE = 0xFF
 };
 
@@ -241,12 +242,12 @@ struct AicpuWorkDesc {
     uint64_t buffer;           /* scratch buffer GVA (AllReduce temp workspace) */
     uint64_t count;            /* data byte count */
     uint32_t dataType;         /* zbal_datatype_t enum */
-    uint32_t root;             /* root rank (scatter/broadcast) / peer (send/recv) */
+    uint32_t root;             /* root rank (scatter/broadcast/gather) / peer (send/recv) */
     uint32_t reduceOp;         /* zbal_reduce_op_t (PROD=0, SUM=1, MAX=2, MIN=3) — maps to SDMA opCode */
     uint32_t numCores;         /* runtime per-op core count (host sets via GetCommOpConfig) */
     uint32_t numChPerCore;     /* runtime per-op channels per core (host sets via GetCommOpConfig) */
     uint64_t waitSymbol;       /* incrementing barrier flag — avoids cross-call stale-flag races */
-    uint64_t reserved[4];      /* per-op extension: AlltoAllV uses [0]=sendCumSum, [1]=recvSplitCounts, [2]=elements */
+    uint64_t reserved[4];      /* extensions: Gather [0]=root exchange GVA; AlltoAllV uses [0..2] */
 };
 
 struct AicpuInitContext {

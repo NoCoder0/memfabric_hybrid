@@ -14,6 +14,7 @@ CASE_NUM=0  # if CASE_NUM is 0 will use CASE_LIST instead
 CASE_LIST=${1:-917504}
 WORLD_SIZE=${2:-16}
 DATA_OP_TYPE=${3:-0}
+ROOT=${4:-0}
 H_SIZE=1
 
 RANK_PER_NODE=16
@@ -42,7 +43,8 @@ export CURRENT_DIR=$CURRENT_DIR
 
 rm -rf golden output profiling.hccl* profiling.zbal*
 mkdir -p golden output
-python3 ${CURRENT_DIR}/scripts/data_gen.py $WORLD_SIZE $TEST_TYPE --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE
+python3 ${CURRENT_DIR}/scripts/data_gen.py $WORLD_SIZE $TEST_TYPE --case_num $CASE_NUM \
+    --case_list $CASE_LIST --hidden_size $H_SIZE
 
 export CHECK_PRECISION=1
 export ENABLE_PROFILING=1
@@ -51,15 +53,33 @@ node_rank=$(get_node_idx)
 
 if [[ $nnodes -eq 1 ]]; then
     if [[ ${ZBAL_ENABLE_PERF_TEST} = "1" ]]; then
-        echo; echo -e "run hccl..."; torchrun --nnodes ${nnodes} --nproc-per-node $WORLD_SIZE --master_port 8775 ${CURRENT_DIR}/test_zbal_gather.py hccl --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE --data_op_type $DATA_OP_TYPE
+        echo
+        echo -e "run hccl..."
+        torchrun --nnodes ${nnodes} --nproc-per-node $WORLD_SIZE --master_port 8775 \
+            ${CURRENT_DIR}/test_zbal_gather.py hccl --case_num $CASE_NUM --case_list $CASE_LIST \
+            --hidden_size $H_SIZE --data_op_type $DATA_OP_TYPE --root $ROOT
     fi
-    echo; echo -e "run zbal..."; torchrun --nnodes ${nnodes} --nproc-per-node $WORLD_SIZE --master_port 8775 ${CURRENT_DIR}/test_zbal_gather.py zbal --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE --data_op_type $DATA_OP_TYPE
+    echo
+    echo -e "run zbal..."
+    torchrun --nnodes ${nnodes} --nproc-per-node $WORLD_SIZE --master_port 8775 \
+        ${CURRENT_DIR}/test_zbal_gather.py zbal --case_num $CASE_NUM --case_list $CASE_LIST \
+        --hidden_size $H_SIZE --data_op_type $DATA_OP_TYPE --root $ROOT
 else
     if [[ $ip_size -eq $nnodes ]]; then
         if [[ ${ZBAL_ENABLE_PERF_TEST} = "1" ]]; then
-            echo; echo -e "run hccl..."; torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8775 ${CURRENT_DIR}/test_zbal_gather.py hccl --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE --data_op_type $DATA_OP_TYPE
+            echo
+            echo -e "run hccl..."
+            torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} \
+                --master_addr "${IPs[0]}" --master_port 8775 ${CURRENT_DIR}/test_zbal_gather.py hccl \
+                --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE \
+                --data_op_type $DATA_OP_TYPE --root $ROOT
         fi
-        echo; echo -e "run zbal..."; torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} --master_addr "${IPs[0]}" --master_port 8775 ${CURRENT_DIR}/test_zbal_gather.py zbal --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE --data_op_type $DATA_OP_TYPE
+        echo
+        echo -e "run zbal..."
+        torchrun --nnodes ${nnodes} --nproc-per-node $RANK_PER_NODE --node_rank ${node_rank} \
+            --master_addr "${IPs[0]}" --master_port 8775 ${CURRENT_DIR}/test_zbal_gather.py zbal \
+            --case_num $CASE_NUM --case_list $CASE_LIST --hidden_size $H_SIZE \
+            --data_op_type $DATA_OP_TYPE --root $ROOT
     else
         echo "run ${WORLD_SIZE} ranks process but IPs size is not match"
     fi

@@ -284,7 +284,12 @@ void NpuCommunicatorBase::SignalDumpTrace() noexcept
 int32_t NpuCommunicatorBase::Gather(const void *sendBuff, void *recvBuff, uint64_t data_count, zbal_datatype_t dataType,
                                     uint16_t root, aclrtStream stream) noexcept
 {
-    return ZBALOpGather(sendBuff, recvBuff, data_count, dataType, root, stream,
+    return GatherImpl({sendBuff, recvBuff, data_count, dataType, root, stream});
+}
+
+int32_t NpuCommunicatorBase::GatherImpl(const GatherParams &params) noexcept
+{
+    return ZBALOpGather(params.sendBuff, params.recvBuff, params.dataCount, params.dataType, params.root, params.stream,
                         const_cast<CommGroupInfo &>(GetMetaInfo()));
 }
 

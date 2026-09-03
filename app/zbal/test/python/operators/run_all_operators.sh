@@ -22,6 +22,7 @@ Examples:
   bash run_all_operators.sh 4 smoke                    # MTE, single rank=4
   bash run_all_operators.sh 4,8,16 perf 1              # SDMA, multi-rank perf
   bash run_all_operators.sh 4,8 precision 0 mock       # MTE mock dry-run
+  GATHER_ROOT=3 bash run_all_operators.sh 4 precision 2 # AICPU Gather with root=3
   bash run_all_operators.sh -h                         # Show this help
 HELP
     exit 0
@@ -31,6 +32,7 @@ WORLD_SIZES=${1:-4}
 RUN_MODE=${2:-smoke}
 DATA_OP_TYPE=${3:-0}
 MOCK=${4:-0}
+GATHER_ROOT=${GATHER_ROOT:-0}
 
 if [ "$DATA_OP_TYPE" != "0" ] && [ "$DATA_OP_TYPE" != "1" ] && [ "$DATA_OP_TYPE" != "2" ]; then
     echo "DATA_OP_TYPE must be 0 (MTE) or 1 (AIV_SDMA) or 2 (AICPU_SDMA), got: $DATA_OP_TYPE"
@@ -208,8 +210,13 @@ run_cases() {
                 mock_test "$op_name" "$case" "${WORLD_SIZE}"
             done
             test_rc=0
+        elif [ "$op_name" = "gather" ]; then
+            (cd "$subdir_path" && bash test_zbal_gather.sh "$CASE_LIST" "${WORLD_SIZE}" "${DATA_OP_TYPE}" \
+                "${GATHER_ROOT}")
+            test_rc=$?
         else
-            (cd "$subdir_path" && bash test_zbal_$op_name.sh "$CASE_LIST" ${WORLD_SIZE} ${DATA_OP_TYPE} $suite_mode)
+            (cd "$subdir_path" && bash "test_zbal_${op_name}.sh" "$CASE_LIST" "${WORLD_SIZE}" "${DATA_OP_TYPE}" \
+                "$suite_mode")
             test_rc=$?
         fi
 

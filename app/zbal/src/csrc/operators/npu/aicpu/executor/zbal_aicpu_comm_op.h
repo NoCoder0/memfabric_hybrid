@@ -23,6 +23,7 @@
 #include "ops/allgather/zbal_aicpu_allgather_op.h"
 #include "ops/reduce_scatter/zbal_aicpu_reducescatter_op.h"
 #include "ops/scatter/zbal_aicpu_scatter_op.h"
+#include "ops/gather/zbal_aicpu_gather_op.h"
 #include "ops/broadcast/zbal_aicpu_broadcast_op.h"
 #include "ops/allreduce/zbal_aicpu_allreduce_op.h"
 #include "ops/alltoallv/zbal_aicpu_alltoallv_op.h"
@@ -106,6 +107,8 @@ inline int CommOpBase::DispatchExecute(uint32_t commType, AicpuAlgorithmCtx &alg
             return ReduceScatterOp::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
         case ZBAL_CMD_SCATTER:
             return ScatterOp::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
+        case ZBAL_CMD_GATHER:
+            return GatherOp::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
         case ZBAL_CMD_BROADCAST:
             return BroadcastOp::Execute(alg, op, ringBufs, channels, numChPerCore, workspace, coreId, numCores);
         case ZBAL_CMD_ALLREDUCE:
@@ -132,6 +135,8 @@ inline int CommOpBase::AddrExchange(uint32_t commType, uint32_t commAlg, const E
             return ReduceScatterOp::AddrExchange(commAlg, ctx);
         case ZBAL_CMD_SCATTER:
             return ScatterOp::AddrExchange(commAlg, ctx);
+        case ZBAL_CMD_GATHER:
+            return GatherOp::AddrExchange(commAlg, ctx);
         case ZBAL_CMD_BROADCAST:
             return BroadcastOp::AddrExchange(commAlg, ctx);
         case ZBAL_CMD_ALLREDUCE:

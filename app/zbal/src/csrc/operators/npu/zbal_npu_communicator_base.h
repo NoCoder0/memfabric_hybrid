@@ -96,6 +96,17 @@ public:
 #endif
 
 protected:
+    struct GatherParams {
+        const void *sendBuff;
+        void *recvBuff;
+        uint64_t dataCount;
+        zbal_datatype_t dataType;
+        uint16_t root;
+        aclrtStream stream;
+    };
+
+    virtual int32_t GatherImpl(const GatherParams &params) noexcept;
+
     ZResult SetupProfMemory();
     void DestroyProfMemory();
 

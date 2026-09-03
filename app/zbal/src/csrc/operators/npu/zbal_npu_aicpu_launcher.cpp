@@ -176,6 +176,7 @@ constexpr uint32_t K_TAG_ENTRY = 0;
 constexpr uint32_t K_TAG_INIT_CTX_RANK = 10;
 constexpr uint32_t K_TAG_UPDATE_CTX = 13;
 constexpr uint32_t K_TAG_ALGO_ALLGATHER = 30;
+constexpr uint32_t K_TAG_ALGO_GATHER = 31;
 constexpr uint32_t K_TAG_RETURN = 61;
 
 static const char *AicpuDebugTagName(uint32_t tag)
@@ -189,6 +190,8 @@ static const char *AicpuDebugTagName(uint32_t tag)
             return "UPDATE_CTX";
         case K_TAG_ALGO_ALLGATHER:
             return "ALGO_ALLGATHER";
+        case K_TAG_ALGO_GATHER:
+            return "ALGO_GATHER";
         case K_TAG_RETURN:
             return "RETURN";
         default:
@@ -303,13 +306,10 @@ ZResult NpuAicpuLauncher::LoadKernelJson(const std::string &jsonPath)
         const char *name;
     };
     static const OpKernelEntry opKernels[] = {
-        {ZBAL_CMD_ALLGATHER, "ZBALAicpuAllGather"},
-        {ZBAL_CMD_SCATTER, "ZBALAicpuScatter"},
-        {ZBAL_CMD_REDUCE_SCATTER, "ZBALAicpuReduceScatter"},
-        {ZBAL_CMD_BROADCAST, "ZBALAicpuBroadcast"},
-        {ZBAL_CMD_ALLREDUCE, "ZBALAicpuAllReduce"},
-        {ZBAL_CMD_ALLTOALLV, "ZBALAicpuAlltoAllV"},
-        {ZBAL_CMD_SEND, "ZBALAicpuSend"},
+        {ZBAL_CMD_ALLGATHER, "ZBALAicpuAllGather"}, {ZBAL_CMD_SCATTER, "ZBALAicpuScatter"},
+        {ZBAL_CMD_GATHER, "ZBALAicpuGather"},       {ZBAL_CMD_REDUCE_SCATTER, "ZBALAicpuReduceScatter"},
+        {ZBAL_CMD_BROADCAST, "ZBALAicpuBroadcast"}, {ZBAL_CMD_ALLREDUCE, "ZBALAicpuAllReduce"},
+        {ZBAL_CMD_ALLTOALLV, "ZBALAicpuAlltoAllV"}, {ZBAL_CMD_SEND, "ZBALAicpuSend"},
         {ZBAL_CMD_RECV, "ZBALAicpuRecv"},
     };
 

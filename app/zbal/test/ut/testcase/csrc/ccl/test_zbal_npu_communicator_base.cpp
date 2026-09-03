@@ -31,6 +31,8 @@
 #undef private
 #undef protected
 
+#include "zbal_npu_communicator_aicpu.h"
+
 using namespace zbal;
 using namespace zbal::operators;
 using namespace zbal::bootstrap;
@@ -531,6 +533,7 @@ TEST_F(TestZBALNpuCommunicatorBase, CollectiveOpsDelegateToStubs)
     EXPECT_EQ(comm.AllReduce(buf, buf, buf, 1, ZBAL_DATA_TYPE_FP32, ZBAL_REDUCE_SUM, nullptr), Z_OK);
     EXPECT_EQ(comm.ReduceScatter(buf, buf, 1, ZBAL_DATA_TYPE_FP32, ZBAL_REDUCE_SUM, nullptr), Z_OK);
     EXPECT_EQ(comm.AllGather(buf, buf, 1, ZBAL_DATA_TYPE_FP32, nullptr), Z_OK);
+    EXPECT_EQ(comm.Gather(buf, buf, ZBAL_UT_NUM_1, ZBAL_DATA_TYPE_FP32, ZBAL_UT_NUM_0, nullptr), Z_OK);
     EXPECT_EQ(comm.AlltoAllV(buf, buf, buf, buf, buf, ZBAL_DATA_TYPE_FP32, nullptr), Z_OK);
     EXPECT_EQ(comm.Broadcast(buf, 1, ZBAL_DATA_TYPE_FP32, 0, nullptr), Z_OK);
     EXPECT_EQ(comm.Scatter(buf, buf, 1, ZBAL_DATA_TYPE_FP32, 0, nullptr), Z_OK);
@@ -539,6 +542,45 @@ TEST_F(TestZBALNpuCommunicatorBase, CollectiveOpsDelegateToStubs)
     EXPECT_EQ(comm.Barrier(nullptr), Z_OK);
     EXPECT_EQ(comm.Send(buf, ZBAL_DATA_TYPE_FP32, 0, nullptr), Z_OK);
     EXPECT_EQ(comm.Recv(buf, 1, ZBAL_DATA_TYPE_FP32, 0, nullptr), Z_OK);
+}
+
+TEST_F(TestZBALNpuCommunicatorBase, AicpuGatherRejectsInvalidRoot)
+{
+    NpuCommunicatorAICPU comm(opt_, false, nullptr);
+    comm.ConstructCommGroupInfo(opt_);
+    char buf[ZBAL_UT_NUM_64] = {};
+
+    EXPECT_EQ(comm.Gather(buf, buf, ZBAL_UT_NUM_1, ZBAL_DATA_TYPE_FP32, ZBAL_UT_NUM_1, nullptr), Z_INVALID_PARAM);
+}
+
+TEST_F(TestZBALNpuCommunicatorBase, AicpuGatherRejectsInvalidDataType)
+{
+    NpuCommunicatorAICPU comm(opt_, false, nullptr);
+    comm.ConstructCommGroupInfo(opt_);
+    char buf[ZBAL_UT_NUM_64] = {};
+    const auto invalidDataType = static_cast<zbal_datatype_t>(ZBAL_DATA_TYPE_BUTT);
+
+    EXPECT_EQ(comm.Gather(buf, buf, ZBAL_UT_NUM_1, invalidDataType, ZBAL_UT_NUM_0, nullptr), Z_INVALID_PARAM);
+}
+
+TEST_F(TestZBALNpuCommunicatorBase, AicpuGatherRejectsDataSizeOverflow)
+{
+    NpuCommunicatorAICPU comm(opt_, false, nullptr);
+    comm.ConstructCommGroupInfo(opt_);
+    char buf[ZBAL_UT_NUM_64] = {};
+    constexpr uint64_t kOverflowCount = UINT64_MAX;
+
+    EXPECT_EQ(comm.Gather(buf, buf, kOverflowCount, ZBAL_DATA_TYPE_FP32, ZBAL_UT_NUM_0, nullptr), Z_INVALID_PARAM);
+}
+
+TEST_F(TestZBALNpuCommunicatorBase, AicpuGatherRejectsNullRootReceiveBuffer)
+{
+    NpuCommunicatorAICPU comm(opt_, false, nullptr);
+    comm.ConstructCommGroupInfo(opt_);
+    char sendBuf[ZBAL_UT_NUM_64] = {};
+
+    EXPECT_EQ(comm.Gather(sendBuf, nullptr, ZBAL_UT_NUM_1, ZBAL_DATA_TYPE_FP32, ZBAL_UT_NUM_0, nullptr),
+              Z_INVALID_PARAM);
 }
 
 /* ================================================================
