@@ -22,6 +22,14 @@ class NpuCommunicatorAICPU : public NpuCommunicatorBase {
 public:
     using NpuCommunicatorBase::NpuCommunicatorBase;
 
+    ~NpuCommunicatorAICPU() override
+    {
+        /* Must call here: virtual dispatch from ~NpuCommunicatorBase resolves to the
+         * base version, skipping AICPU resource cleanup (workspace/binary/cclBuf).
+         * Idempotent when UnInitialize was already called explicitly. */
+        UnInitialize();
+    }
+
     ZResult Initialize() noexcept override;
     void UnInitialize() noexcept override;
 

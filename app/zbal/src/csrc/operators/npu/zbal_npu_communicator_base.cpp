@@ -215,6 +215,11 @@ void NpuCommunicatorBase::DestroyProfMemory()
         ZBAL_LOG_WARN("UnRegister host memory failed, result: " << result);
     }
 
+    result = DlCannApi::AclrtFreeHost(perfHostMemory_);
+    if (result != Z_OK) {
+        ZBAL_LOG_WARN("Free host memory failed, result: " << result);
+    }
+
     perfHostMemory_ = nullptr;
 }
 

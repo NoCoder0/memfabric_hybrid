@@ -105,6 +105,10 @@ ZResult NpuAicpuLauncher::Launch(const AicpuWorkDesc &desc, void *stream)
     /* Select per-op function handle for profiling visibility */
     uint32_t commIdx = param.commType < kMaxCommType ? param.commType : 0;
     aclrtFuncHandle launchHandle = opFuncHandles_[commIdx];
+    if (launchHandle == nullptr) {
+        ZBAL_LOG_ERROR("AICPU Launch: no function handle for commType=" << param.commType << ", commIdx=" << commIdx);
+        return Z_INVALID_PARAM;
+    }
 
     /* V2 API: single call, passes host buffer directly (no ArgsInit/Append/Finalize) */
     int32_t aclRet =

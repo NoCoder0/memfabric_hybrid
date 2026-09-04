@@ -196,8 +196,8 @@ private:
     uint32_t firstTpTokenEndIdx_{0};
     uint32_t firstTpTokenEndOffset_{0};
     uint32_t endTok_{0};
-    uint32_t epDataOffsetOnWin_{0};
-    uint32_t tpDataOffsetOnWin_{0};
+    uint64_t epDataOffsetOnWin_{0};
+    uint64_t tpDataOffsetOnWin_{0};
     uint32_t epStateOffsetOnWin_{0};
     uint32_t tpStateOffsetOnWin_{0};
     uint32_t axisHFloatSize_{0};
@@ -307,11 +307,12 @@ __aicore__ inline void CamMoeDistributeCombine<TemplateMC2TypeFunc>::Init(
     epWindowGM_ = combineWs; // local combine workspace replaces data window
     epStatusSpaceGm_ = GetWinStateAddrByRankId(epRankId_, EP_DOMAIN);
     epStatusSpaceGlobalTensor_.SetGlobalBuffer((__gm__ float *)epStatusSpaceGm_);
-    epDataOffsetOnWin_ = epRankId_ * moeExpertPerRankNum_ * static_cast<uint32_t>(expertPerSizeOnWin_);
+    epDataOffsetOnWin_ =
+        static_cast<uint64_t>(epRankId_) * moeExpertPerRankNum_ * expertPerSizeOnWin_; /* keep uint64, no truncation */
     epStateOffsetOnWin_ = epRankId_ * stateOffset_;
-    axisHFloatSize_ = axisH_ * sizeof(float);
-    axisHExpandXTypeSize_ = axisH_ * sizeof(ExpandXType);
-    bsKNum_ = axisBS_ * axisK_;
+    axisHFloatSize_ = static_cast<uint64_t>(axisH_) * sizeof(float);
+    axisHExpandXTypeSize_ = static_cast<uint64_t>(axisH_) * sizeof(ExpandXType);
+    bsKNum_ = static_cast<uint64_t>(axisBS_) * axisK_;
 
     if constexpr (IsNeedReduceScatter) {
         tpSendCountGM_.SetGlobalBuffer((__gm__ int32_t *)tpSendCount);

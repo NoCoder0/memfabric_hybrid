@@ -155,7 +155,12 @@ ZResult MemFabricBoostrap::CreateSHMSpace() noexcept
         return Z_INIT_BOOTSTRAP_FAILED;
     }
 
-    ZBAL_ASSERT_RETURN(options_.totalMemSize <= spaceSize, Z_ERROR);
+    if (options_.totalMemSize > spaceSize) {
+        ZBAL_LOG_AND_SET_LAST_ERROR("Requested memSize exceeds symmetric space, request=" << options_.totalMemSize
+                                                                                          << ", space=" << spaceSize);
+        DlMfApi::SmemShmDestroy(tmpShmHandle, 0);
+        return Z_ERROR;
+    }
     ZBAL_LOG_DEBUG("Space size: " << spaceSize << ", actual device memory size: " << options_.totalMemSize);
 
     /* get local GVA */

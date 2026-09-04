@@ -75,7 +75,14 @@ ZResult Communicator::Create(const zbal_comm_options_t &options, zbal_comm_t *co
     }
 
     result = commInner->AssignGatherGroupId(tmpGroupId);
-    ZBAL_VALIDATE_RETURN(result == Z_OK, "Assign group id failed, result: " << result, result);
+    if (result != Z_OK) {
+        ZBAL_LOG_AND_SET_LAST_ERROR("Assign group id failed, result: " << result);
+        /* roll back: erase from lookup maps, release group id and device resources,
+         * otherwise the half-created comm blocks re-create with the same name and
+         * leaks the cross-rank group id */
+        (void)DestroyInner(commInner);
+        return result;
+    }
 
     *comm = commInner.Get();
 
@@ -224,6 +231,9 @@ CommunicatorPtr Communicator::CreateInner(zbal_backend_t backendType, const Comm
     comm->ConstructCommGroupInfo(options);
     if (comm->Initialize()) {
         ZBAL_LOG_AND_SET_LAST_ERROR("Initialize communicator failed");
+        /* drop the creator's reference: local ZRef's DecreaseRef then triggers
+         * delete (refCount underflows to delete), releasing all resources */
+        comm->DecreaseRef();
         return nullptr;
     }
 
@@ -243,6 +253,7 @@ CommunicatorPtr Communicator::CreateInner(zbal_backend_t backendType, const Comm
          * return nullptr directly as its already created
          */
         ZBAL_LOG_AND_SET_LAST_ERROR("Create communicator failed as world group already created");
+        comm->DecreaseRef();
         return nullptr;
     } else if (!isWorldGroup && gWorldCommunicator == nullptr) {
         /*
@@ -251,6 +262,7 @@ CommunicatorPtr Communicator::CreateInner(zbal_backend_t backendType, const Comm
          * return nullptr
          */
         ZBAL_LOG_AND_SET_LAST_ERROR("Create communicator failed as world group not created");
+        comm->DecreaseRef();
         return nullptr;
     } else {
         /*

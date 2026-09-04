@@ -980,8 +980,8 @@ ProcessGroupZBAL::~ProcessGroupZBAL()
     if (groupComm_ != nullptr) {
         auto result = zbal_comm_destroy(groupComm_, 0);
         if (result != Z_OK) {
+            /* log and continue: aborting here would leak every remaining comm below */
             ZBAL_LOG_WARN("~ process group: " << groupName_ << " on rank " << myWorldRank_ << " result " << result);
-            return;
         }
         groupComm_ = nullptr;
         ZBAL_LOG_DEBUG("~ process group success: " << groupName_ << " on rank " << myWorldRank_);
@@ -990,10 +990,12 @@ ProcessGroupZBAL::~ProcessGroupZBAL()
     for (auto &[groupName, groupComm] : groupP2pComms_) {
         auto result = zbal_comm_destroy(groupComm, 0);
         if (result != Z_OK) {
+            /* keep destroying the rest, destructor is the last cleanup chance
+             * and partial abort would leak all remaining comms */
             ZBAL_LOG_WARN("~ process group: " << groupName << " on rank " << myWorldRank_ << " result " << result);
-            return;
+        } else {
+            ZBAL_LOG_DEBUG("~ process group success: " << groupName << " on rank " << myWorldRank_);
         }
-        ZBAL_LOG_DEBUG("~ process group success: " << groupName << " on rank " << myWorldRank_);
     }
     groupP2pComms_.clear();
 }
