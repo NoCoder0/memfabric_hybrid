@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """NUMA free memory scanner.
 
 Scans /proc/kpageflags per NUMA node to locate free (buddy) memory segments,
@@ -6,6 +5,7 @@ optionally intersected with target address ranges. Scans run in parallel
 (per-NUMA) threads and batch kpageflags reads to keep syscall count low.
 """
 
+import argparse
 import array
 import os
 import re
@@ -481,14 +481,17 @@ def stat(node=None, min_mb=1024, workers=None):
     return sum(results[n][0] for n in nodes) / 1024
 
 
-def main():
-    import argparse
-
-    parser = argparse.ArgumentParser(description="NUMA free memory intersect tool (multi-threaded)")
+def add_arguments(parser):
+    """Add memory scan arguments to an argument parser."""
     parser.add_argument("-n", "--node", type=int, help="NUMA node ID (default: all)")
     parser.add_argument("-m", "--min-mb", type=int, default=1024, help="min segment size in MB")
     parser.add_argument("-w", "--workers", type=int, default=None, help="thread pool size (default: min(nodes, 8))")
-    args = parser.parse_args()
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="NUMA free memory intersect tool")
+    add_arguments(parser)
+    args = parser.parse_args(argv)
     show(args.node, args.min_mb, args.workers)
 
 

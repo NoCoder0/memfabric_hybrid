@@ -25,7 +25,7 @@ namespace transport {
 namespace device {
 namespace {
 constexpr int32_t kCpuKernelMode = 0;
-constexpr const char *kKernelJsonSuffix = "/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json";
+constexpr const char *kKernelJsonSuffix = "/opp/vendors/cust/op_impl/aicpu/hybm/config/libcann_hybm_kernel.json";
 constexpr const char *kDefaultAscendPath = "/usr/local/Ascend/cann";
 
 Result GetKernelFilePath(std::string &jsonPath)
