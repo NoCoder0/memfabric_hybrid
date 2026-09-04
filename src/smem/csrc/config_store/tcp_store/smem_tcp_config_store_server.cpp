@@ -277,9 +277,19 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
 
     std::unique_lock<std::mutex> lockGuard{storeMutex_};
 
-    if (req.reconnect == 1 && state_.load() == SS_RECOVER && aliveRankFromBackend_.empty()) {
-        // Each reconnect refreshes the no-persistent-backend recovery window
-        lastReconnectTime_ = mf::MonotonicTime::TimeUs();
+    /*
+     * A reconnect proves this server restarted after an outage with old members still
+     * in the group (bitmap persisted via the core store). Clear skipRecover_ so that
+     * even a cold-started leader latches into SS_RECOVER, letting the recovery window
+     * drop ghost ranks (in group bitmap but never reconnected) before a relaunched peer
+     * instance re-joins. Sync from release/1.1, commit 4cc793b4.
+     */
+    if (req.reconnect == 1) {
+        if (state_.load() == SS_RECOVER && aliveRankFromBackend_.empty()) {
+            // Each reconnect refreshes the no-persistent-backend recovery window
+            lastReconnectTime_ = mf::MonotonicTime::TimeUs();
+        }
+        skipRecover_ = false;
     }
 
     if (!CanReceiveNewLink() && req.reconnect == 0) {

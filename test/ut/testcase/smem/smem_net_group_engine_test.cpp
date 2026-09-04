@@ -247,9 +247,12 @@ TEST(SmemNetGroupEngineTest, recover_finished_triggers_link_down_for_ghost_ranks
     server1 = nullptr;
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
-    // Step 3: restart a recovering server (skipRecover=false -> RECOVER on the first connect) and persist a
-    // ghost bitmap in the group event key: ranks 1/2/3 are in the bitmap but will never reconnect.
-    auto server2 = SmMakeRef<TcpConfigStore>(backendPtr, "0.0.0.0", kRecoverPort, ConfigStoreModel::CSM_SERVER, false,
+    // Step 3: restart the server as a cold-started leader (skipRecover=true), which is exactly the
+    // issue #417 scenario: all meta services were stopped and the new leader won election as the first
+    // leader (isFirstLeader_=true -> skipRecover=true). Recovery must still happen: the reconnect below
+    // (reconnect=1) clears skipRecover_ and latches the server into RECOVER. Persist a ghost bitmap in
+    // the group event key: ranks 1/2/3 are in the bitmap but will never reconnect.
+    auto server2 = SmMakeRef<TcpConfigStore>(backendPtr, "0.0.0.0", kRecoverPort, ConfigStoreModel::CSM_SERVER, true,
                                              kWorldSize, -1);
     ASSERT_NE(server2, nullptr);
     Result startRet = SM_ERROR;
