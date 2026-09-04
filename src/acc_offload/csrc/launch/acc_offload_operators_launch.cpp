@@ -252,7 +252,8 @@ int32_t PrepareAggregateUrmaDemoArgs(aclrtFuncHandle function, const HybmAggrega
         return BM_DL_FUNCTION_FAILED;
     }
     aclrtParamHandle paramHandle = nullptr;
-    ret = aclrtKernelArgsAppend(argsHandle, &param, sizeof(param), &paramHandle);
+    HybmAggregateUrmaDemoParam kernelParam = param;
+    ret = aclrtKernelArgsAppend(argsHandle, &kernelParam, sizeof(kernelParam), &paramHandle);
     if (ret != ACL_SUCCESS) {
         OFFLOAD_LOG_ERROR("aclrtKernelArgsAppend failed for aggregate URMA demo, ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -273,8 +274,9 @@ int32_t LaunchAggregateUrmaDemoKernel(aclrtFuncHandle function, aclrtStream stre
     if (ret != BM_OK) {
         return ret;
     }
-    aclrtLaunchKernelCfg config{nullptr, 0U};
-    ret = aclrtLaunchKernelWithConfig(function, kKernelBlockDim, stream, &config, argsHandle, nullptr);
+    // A null cfg means no launch attributes.  Passing a non-null cfg with
+    // attrs == nullptr is rejected by the runtime for CPU kernels.
+    ret = aclrtLaunchKernelWithConfig(function, kKernelBlockDim, stream, nullptr, argsHandle, nullptr);
     if (ret != ACL_SUCCESS) {
         OFFLOAD_LOG_ERROR("launch aggregate URMA demo failed, deviceId: " << deviceId << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;

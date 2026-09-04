@@ -157,6 +157,7 @@ Result HostDataOpRDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_directi
     Result ret;
     TransformVa(params.src, params.dest, direction);
     switch (direction) {
+        case HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE:
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST:
             ret = CopyHost2Gva(params.src, params.dest, params.dataSize, options);
             break;

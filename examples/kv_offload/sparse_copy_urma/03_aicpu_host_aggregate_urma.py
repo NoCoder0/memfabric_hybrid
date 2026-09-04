@@ -200,7 +200,7 @@ def main():
         listener = socket.create_server(("0.0.0.0", args.ctrl_port))
     import memfabric_hybrid as mf
     from memfabric_hybrid import bm
-
+    mf.set_log_level(0)
     assert mf.initialize() == 0
     handle = create_handle(args, bm, rank, runtime_device, layout[-1])
     if rank == HOST_RANK:

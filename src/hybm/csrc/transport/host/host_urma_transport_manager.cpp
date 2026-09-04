@@ -318,11 +318,20 @@ Result HostUrmaTransportManager::UnregisterMemoryRegion(uint64_t addr)
 bool HostUrmaTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = localRegistrations_.find(addr);
-    if (it == localRegistrations_.end()) {
+    if (addr == 0 || size == 0) {
         return false;
     }
-    return it->second.mr.size >= size;
+    for (const auto &item : localRegistrations_) {
+        const auto &mr = item.second.mr;
+        if (addr < mr.addr) {
+            continue;
+        }
+        const uint64_t offset = addr - mr.addr;
+        if (offset <= mr.size && size <= mr.size - offset) {
+            return true;
+        }
+    }
+    return false;
 }
 
 Result HostUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
