@@ -321,10 +321,8 @@ void HybmConnBasedSegment::FreeMemory() noexcept
         localVirtualBase_ = nullptr;
     }
 
-    if (options_.enable56BitsGva) {
-        globalVirtualAddress_ = localVirtualBase_ = nullptr;
-    } else if (globalVirtualAddress_ != nullptr) {
-        if (munmap(globalVirtualAddress_, totalVirtualSize_) != 0) {
+    if (globalVirtualAddress_ != nullptr) {
+        if (!options_.enable56BitsGva && munmap(globalVirtualAddress_, totalVirtualSize_) != 0) {
             BM_LOG_ERROR("Failed to unmap global memory");
         }
         HybmVaManager::GetInstance().FreeReserveGva((uintptr_t)globalVirtualAddress_);
