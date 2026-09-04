@@ -14,3 +14,7 @@
 
 - A3：对应宏`ZBAL_ASCEND_NPU_A3`，AIV核数有48、40等规格，最大不超过48；每个核的Unified Buffer是192KB。
 - A5：对应宏`ZBAL_ASCEND_NPU_A5`，AIV核数有72、56等规格，最大不超过72；每个核的Unified Buffer是256KB。
+
+## A5 硬件特性
+
+- NoC带宽大于UB带宽，核数多了会导致流量反压（带宽先升后降）。该结论适用于任何A5算子，不局限于dispatch/combine。

@@ -13,6 +13,7 @@
 #include <cstdio>
 
 #include "dl_cann_api.h"
+#include "zbal_functions.h"
 #include "zbal_kernel_combine_normal.h"
 
 using namespace AscendC;
@@ -42,17 +43,50 @@ extern "C" __global__ __aicore__ void combine_normal(uint64_t fftsAddr, GM_ADDR 
     }
 }
 
+namespace {
+// Resolve the combine kernel launch blockDim: env var ZBAL_COMBINE_BLOCK_DIM > auto by chip type
+// (A5-like backs off to 36 cores, others use full cores) > current-thread AIV count.
+// Fills blockDim and returns Z_OK on success; leaves blockDim at 0 and returns an error code on failure.
+int32_t ResolveCombineBlockDim(uint32_t &blockDim)
+{
+    uint32_t envBlockDim = zbal::Func::GetEnv<uint32_t>("ZBAL_COMBINE_BLOCK_DIM", 0);
+    if (envBlockDim > ZBAL_A5_MAX_AIV_CORES) {
+        printf("ZBALOpCombineNormal failed as invalid ZBAL_COMBINE_BLOCK_DIM, blockDim:%u, expect 0(auto) or [1,%u]\n",
+               envBlockDim, ZBAL_A5_MAX_AIV_CORES);
+        return zbal::Z_INVALID_PARAM;
+    }
+    if (envBlockDim != 0U) {
+        blockDim = envBlockDim;
+        return zbal::Z_OK;
+    }
+    uint32_t aivNum = 0;
+    auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&aivNum);
+    if (ret != 0 || aivNum == 0U) {
+        printf("ZBALOpCombineNormal failed as blockDim get failed, ret:%d, aivNum:%u\n", ret, aivNum);
+        return (ret != 0) ? ret : zbal::Z_ERROR;
+    }
+    // AIV count beyond A3 max cores indicates an A5-like chip: full-core launch triggers NoC/UB traffic
+    // backpressure (see CLAUDE.md), so back off to the measured-optimal 36 cores
+    blockDim = (aivNum > ZBAL_A3_MAX_AIV_CORES) ? ZBAL_COMBINE_DEFAULT_A5_BLOCK : aivNum;
+    return zbal::Z_OK;
+}
+} // namespace
+
 int32_t ZBALOpCombineNormal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *putOffset,
                             const zbal_tensor_info_t *topKWeight, const zbal_tensor_info_t *topkIndex,
                             const zbal_tensor_info_t *sendTokensIndex, const zbal_tensor_info_t *balanceMatrix,
                             uint16_t expertNum, const zbal_tensor_info_t *destTokens, bool enableBalance,
                             aclrtStream stream, const CommGroupInfo &groupInfo, int64_t flags)
 {
-    uint32_t blockDim = 0;
-    auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
-    if (ret != 0) {
-        printf("ZBALOpCombineNormal failed as blockDim get failed, blockDim:%d\n", blockDim);
-        return ret;
+    // blockDim is resolved only on the first call and cached in the static below; later calls reuse it
+    // directly, skipping both the env lookup and the AIV count query. 0 doubles as the unresolved
+    // sentinel because a valid blockDim lies in [1, ZBAL_A5_MAX_AIV_CORES].
+    static uint32_t blockDim = 0;
+    if (blockDim == 0U) {
+        auto ret = ResolveCombineBlockDim(blockDim);
+        if (ret != zbal::Z_OK) {
+            return ret;
+        }
     }
     uint32_t rank = static_cast<uint32_t>(groupInfo.myGroupRank);
     uint32_t numExperts = static_cast<uint32_t>(expertNum);

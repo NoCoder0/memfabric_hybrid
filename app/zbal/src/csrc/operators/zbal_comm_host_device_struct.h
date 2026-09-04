@@ -23,6 +23,9 @@
 #define ZBAL_PROFILING_FRAME_SHIFT      56
 #define ZBAL_PROFILING_BE_SHIFT         62
 #define ZBAL_MAX_RANKS                  1024
+#define ZBAL_COMBINE_DEFAULT_A5_BLOCK   36U
+#define ZBAL_A3_MAX_AIV_CORES           48U
+#define ZBAL_A5_MAX_AIV_CORES           72U
 
 enum zbal_profiling_name_t : uint16_t {
     ZBAL_PROF_UNKNOWN = 0,

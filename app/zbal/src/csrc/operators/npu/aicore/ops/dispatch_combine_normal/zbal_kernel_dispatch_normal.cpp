@@ -64,11 +64,12 @@ int32_t ZBALOpDispatchNormal(const zbal_tensor_info_t *srcTokens, const zbal_ten
                              const zbal_tensor_info_t *destTokens, const zbal_tensor_info_t *destScale,
                              bool enableBalance, aclrtStream stream, const CommGroupInfo &groupInfo, int64_t flags)
 {
+    // blockDim: directly use the current-thread AIV count
     uint32_t blockDim = 0;
     auto ret = zbal::underapi::DlCannApi::AclrtGetAIVCountInCurrentThread(&blockDim);
-    if (ret != 0) {
-        printf("ZBALOpDispatchNormal failed as blockDim get failed, blockDim:%d\n", blockDim);
-        return ret;
+    if (ret != 0 || blockDim == 0U) {
+        printf("ZBALOpDispatchNormal failed as blockDim get failed, ret:%d, aivNum:%u\n", ret, blockDim);
+        return (ret != 0) ? ret : zbal::Z_ERROR;
     }
     uint32_t rank = static_cast<uint32_t>(groupInfo.myGroupRank);
     uint32_t numExperts = static_cast<uint32_t>(expertNum);

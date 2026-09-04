@@ -190,6 +190,14 @@ private:
         ZBAL_LOG_ERROR(tmpStr.str());         \
     } while (0)
 
+#define ZBAL_LOG_WARN_AND_SET_LAST_ERROR(msg) \
+    do {                                      \
+        std::stringstream tmpStr;             \
+        tmpStr << msg;                        \
+        zbal::ZBLastError::Set(tmpStr.str()); \
+        ZBAL_LOG_WARN(tmpStr.str());          \
+    } while (0)
+
 #define ZBAL_LOG_INFO_AND_SET_LAST_ERROR(msg) \
     do {                                      \
         std::stringstream tmpStr;             \

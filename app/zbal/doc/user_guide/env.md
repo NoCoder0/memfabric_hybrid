@@ -31,6 +31,7 @@
 | `MOE_SHARED_EXPERT_RANK_NUM`      | 共享专家所在的rank数量           | 整数 `≥ 0`，默认 `0`                              |
 | `MOE_ENABLE_TOPK_NEG_ONE`         | 是否启用topk=-1（丢弃token功能） | `0`（关闭）/ `1`（开启），默认 `0`                |
 | `DEEP_NORMAL_MODE_USE_INT8_QUANT` | MoE dispatch是否使用INT8量化     | `"1"` 启用，其他值不启用，默认关闭                |
+| `ZBAL_COMBINE_BLOCK_DIM`          | MoE combine（normal）kernel启动block数（AIV核数） | 整数，`0`=自动（A5类芯片退避到 `36`，其他平台取满核AIV数）；有效范围 `[1,72]`（不超过A5最大AIV核数），越界报错 |
 
 ## Memory / Allocator
 
