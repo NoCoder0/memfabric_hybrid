@@ -44,6 +44,7 @@ public:
     enum class TransferOpcode { READ = 0, WRITE = 1 };
     enum class TransDataOpType {
         SDMA = SMEMB_DATA_OP_SDMA,
+        HOST_RDMA = SMEMB_DATA_OP_HOST_RDMA,
         DEVICE_RDMA = SMEMB_DATA_OP_DEVICE_RDMA,
         DEVICE_URMA = SMEMB_DATA_OP_DEVICE_URMA,
         DEVICE_UBOE = SMEMB_DATA_OP_DEVICE_UBOE
@@ -55,7 +56,7 @@ public:
     ~TransferAdapterPy();
 
     int Initialize(const char *storeUrl, const char *uniqueId, const char *role, uint32_t deviceId,
-                   TransDataOpType dataOpType, const char *storeServerRole = "Decode");
+                   TransDataOpType dataOpType, const char *storeServerRole = "Decode", const char *nic = nullptr);
 
     int GetRpcPort();
 

@@ -42,7 +42,9 @@ typedef struct {
     uint32_t initTimeout;            /* func timeout, default 120 seconds */
     uint32_t deviceId;               /* npu device id */
     uint32_t flags;                  /* optional flags */
-    smem_bm_data_op_type dataOpType; /* data operation type, only support DEVICE_RDMA & SDMA */
+    smem_bm_data_op_type dataOpType; /* data operation type: SDMA, HOST_RDMA, DEVICE_RDMA, DEVICE_URMA, DEVICE_UBOE */
+    char nic[64];                    /* host NIC addr for host_rdma, format: tcp://ip:port */
+    smem_tls_config hcomTlsConfig;   /* hcom TLS config for host_rdma */
 } smem_trans_config_t;
 
 typedef struct {

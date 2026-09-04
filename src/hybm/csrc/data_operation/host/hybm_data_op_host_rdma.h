@@ -53,7 +53,13 @@ private:
                           const ExtOptions &options) noexcept;
     Result BatchCopyLH2LD(void *deviceAddrs[], void *hostAddrs[], const uint64_t counts[], uint32_t batchSize,
                           const ExtOptions &options) noexcept;
+    Result BatchCopyLD2LD(void *destAddrs[], void *srcAddrs[], const uint64_t counts[], uint32_t batchSize,
+                          const ExtOptions &options) noexcept;
     Result BatchCopyLD2GH(void *gvaAddrs[], void *deviceAddrs[], const uint64_t counts[], uint32_t batchSize,
+                          const ExtOptions &options) noexcept;
+    Result BatchCopyLD2GD(void *gvaAddrs[], void *deviceAddrs[], const uint64_t counts[], uint32_t batchSize,
+                          const ExtOptions &options) noexcept;
+    Result BatchCopyGD2LD(void *deviceAddrs[], void *gvaAddrs[], const uint64_t counts[], uint32_t batchSize,
                           const ExtOptions &options) noexcept;
     Result BatchCopyGH2LD(void *deviceAddrs[], void *gvaAddrs[], const uint64_t counts[], uint32_t batchSize,
                           const ExtOptions &options) noexcept;
@@ -69,6 +75,8 @@ private:
                           std::unordered_map<uint32_t, CopyDescriptor> &localRankMap, const uint32_t rankId) noexcept;
     Result BatchWriteLD2RH(uint32_t rmtRankId, CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options) noexcept;
     Result BatchReadRH2LD(uint32_t rmtRankId, CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options) noexcept;
+    Result BatchWriteLD2RD(uint32_t rmtRankId, CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options) noexcept;
+    Result BatchReadRD2LD(uint32_t rmtRankId, CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options) noexcept;
 
     Result BatchReadRH2LH(CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options) noexcept;
     Result BatchWriteLH2RH(CopyDescriptor &rmtCopyDescriptor, const ExtOptions &options) noexcept;

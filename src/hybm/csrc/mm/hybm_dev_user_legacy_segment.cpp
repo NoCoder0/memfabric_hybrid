@@ -115,8 +115,11 @@ Result HybmDevUserLegacySegment::RegisterMemory(const void *addr, uint64_t size,
     uint64_t gva = reinterpret_cast<uint64_t>(lvaBase_) + allocatedSize_;
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(addr), size);
+    // host_rdma: write DVA/HVA maps (bare device addr) to match ConnBasedSegment's va-table layout;
+    // sdma/device_rdma: keep onlyGva=true to preserve the IPC-based sharing mechanism.
+    const bool onlyGva = (options_.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) == 0U;
     ret = HybmVaManager::GetInstance().AddVaInfo({gva, slice->vAddress_, slice->vAddress_, size, HYBM_MEM_TYPE_DEVICE},
-                                                 options_.rankId, true);
+                                                 options_.rankId, onlyGva);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
         if (options_.shared) {

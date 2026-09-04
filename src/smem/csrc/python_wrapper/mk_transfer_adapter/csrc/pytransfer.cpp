@@ -53,7 +53,7 @@ TransferAdapterPy::~TransferAdapterPy()
 }
 
 int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, const char *role, uint32_t deviceId,
-                                  TransDataOpType dataOpType, const char *storeServerRole)
+                                  TransDataOpType dataOpType, const char *storeServerRole, const char *nic)
 {
     if (strcmp(role, "Prefill") != 0 && strcmp(role, "Decode") != 0) {
         ADAPTER_LOG_ERROR("The value of role is invalid. Expected 'Prefill' or 'Decode.");
@@ -79,6 +79,12 @@ int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, co
     config_.role = (strcmp(role, "Prefill") == 0) ? SMEM_TRANS_SENDER : SMEM_TRANS_RECEIVER;
     config_.deviceId = deviceId;
     config_.dataOpType = static_cast<smem_bm_data_op_type>(dataOpType);
+
+    if (nic != nullptr && strlen(nic) > 0) {
+        auto copyLen = std::min(strlen(nic), sizeof(config_.nic) - 1);
+        std::copy_n(nic, copyLen, config_.nic);
+        config_.nic[copyLen] = '\0';
+    }
 
     configStoreProtocol_ = GetConfigStoreProtocol(std::string(storeUrl));
 
@@ -782,6 +788,7 @@ PYBIND11_MODULE(_pymf_transfer, m)
         .export_values();
     py::enum_<TransferAdapterPy::TransDataOpType> transfer_type(m, "TransDataOpType", py::arithmetic());
     transfer_type.value("SDMA", TransferAdapterPy::TransDataOpType::SDMA)
+        .value("HOST_RDMA", TransferAdapterPy::TransDataOpType::HOST_RDMA)
         .value("DEVICE_RDMA", TransferAdapterPy::TransDataOpType::DEVICE_RDMA)
         .value("DEVICE_URMA", TransferAdapterPy::TransDataOpType::DEVICE_URMA)
         .value("DEVICE_UBOE", TransferAdapterPy::TransDataOpType::DEVICE_UBOE)
@@ -795,7 +802,7 @@ PYBIND11_MODULE(_pymf_transfer, m)
             .def("initialize", &TransferAdapterPy::Initialize, py::call_guard<py::gil_scoped_release>(),
                  py::arg("store_url"), py::arg("session_id"), py::arg("role"), py::arg("device_id"),
                  py::arg("data_op_type") = TransferAdapterPy::TransDataOpType::SDMA,
-                 py::arg("store_server_role") = "Decode")
+                 py::arg("store_server_role") = "Decode", py::arg("nic") = "")
             .def("get_rpc_port", &TransferAdapterPy::GetRpcPort, py::call_guard<py::gil_scoped_release>())
             .def("transfer_sync_write", &TransferAdapterPy::TransferSyncWrite, py::call_guard<py::gil_scoped_release>(),
                  py::arg("dest_session"), py::arg("buffer"), py::arg("peer_buffer"), py::arg("length"),

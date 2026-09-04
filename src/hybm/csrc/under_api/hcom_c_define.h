@@ -434,12 +434,12 @@ typedef void (*Hcom_LogHandler)(int level, const char *msg);
  * @brief Options for Memory Allocator
  */
 typedef struct {
-    uintptr_t address;                                   /* base address of large range of memory for allocator */
-    uint64_t size;                                       /* size of large memory chuck */
-    uint32_t minBlockSize;                               /* min size of block, more than 4 KB is required */
-    uint32_t bucketCount;                                /* default size of hash bucket */
-    uint16_t alignedAddress;                             /* force to align the memory block allocated, 0 means not align
-                                                          1 means align */
+    uintptr_t address;     /* base address of large range of memory for allocator */
+    uint64_t size;         /* size of large memory chuck */
+    uint32_t minBlockSize; /* min size of block, more than 4 KB is required */
+    uint32_t bucketCount;  /* default size of hash bucket */
+    /* force to align the memory block allocated, 0 means not align, 1 means align */
+    uint16_t alignedAddress;
     uint16_t cacheTierCount;                             /* for DYNAMIC_SIZE_WITH_CACHE only */
     uint16_t cacheBlockCountPerTier;                     /* for DYNAMIC_SIZE_WITH_CACHE only */
     Hcom_MemoryAllocatorCacheTierPolicy cacheTierPolicy; /* tier policy */

@@ -30,6 +30,8 @@ SMEM_API int32_t smem_trans_config_init(smem_trans_config_t *config)
     config->role = SMEM_TRANS_SENDER;
     config->deviceId = UINT32_MAX;
     config->flags = 0;
+    bzero(config->nic, sizeof(config->nic));
+    bzero(&config->hcomTlsConfig, sizeof(config->hcomTlsConfig));
     return SM_OK;
 }
 

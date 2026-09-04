@@ -39,6 +39,7 @@ namespace ock {
 namespace smem {
 // reserve 128GB hbm va for malloc per rank, refine to configurable later
 constexpr uint64_t TRANS_RESERVE_HBM_VA_SIZE = 1024ULL * 1024 * 1024 * 128; // 128G
+constexpr uint64_t TRANS_RESERVE_DRAM_VA_SIZE = 1024ULL * 1024 * 1024 * 64; // 64G
 // LinkState wire values (keep in sync with LinkState in smem_group_manager_server.h)
 constexpr int8_t TRANS_LINK_IDLE = 0;
 constexpr int8_t TRANS_LINK_CONNECTED = 4;
@@ -98,6 +99,7 @@ int32_t SmemTransEntry::Initialize()
     auto options = GenerateHybmOptions();
     options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEFAULT);
     if (!ApplyDataOpType(options, SMEMB_DATA_OP_SDMA, HYBM_DOP_TYPE_SDMA, "device_sdma") ||
+        !ApplyDataOpType(options, SMEMB_DATA_OP_HOST_RDMA, HYBM_DOP_TYPE_HOST_RDMA, "host_rdma") ||
         !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_RDMA, "device_rdma") ||
         !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_URMA, HYBM_DOP_TYPE_DEVICE_URMA, "device_urma") ||
         !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_UBOE, HYBM_DOP_TYPE_DEVICE_UBOE, "device_uboe")) {
@@ -996,26 +998,45 @@ hybm_options SmemTransEntry::GenerateHybmOptions()
 {
     hybm_options options{};
     options.bmType = HYBM_TYPE_HOST_INITIATE;
-    options.memType = static_cast<hybm_mem_type>(HYBM_MEM_TYPE_DEVICE);
     options.rankCount = SMEM_TRANS_RANK_COUNT_MAX;
     options.rankId = rankId_;
     options.devId = config_.deviceId;
-    options.deviceVASpace = 0;
-    options.maxHBMSize = TRANS_RESERVE_HBM_VA_SIZE;
     options.scene = HYBM_SCENE_TRANS;
     options.role = config_.role == SMEM_TRANS_SENDER ? HYBM_ROLE_SENDER : HYBM_ROLE_RECEIVER;
     options.dramShmFd = -1;
     options.enable56BitsGva = true; // trans enabled
-    bzero(options.transUrl, sizeof(options.transUrl));
     bzero(options.tag, sizeof(options.tag));
     bzero(options.tagOpInfo, sizeof(options.tagOpInfo));
 
-    uint16_t port = 11000 + entityId_;
-    auto url = "tcp://127.0.0.1:" + std::to_string(port);
+    const bool isHostRdma = (config_.dataOpType & SMEMB_DATA_OP_HOST_RDMA) != 0U;
+    options.memType = static_cast<hybm_mem_type>(HYBM_MEM_TYPE_DEVICE);
+    options.maxHBMSize = TRANS_RESERVE_HBM_VA_SIZE;
+    options.maxDRAMSize = 0;
+    options.hostVASpace = 0;
+    options.deviceVASpace = 0;
 
-    constexpr size_t NIC_SIZE = sizeof(options.transUrl);
-    size_t max_chars = std::min(url.length(), NIC_SIZE - 1);
-    std::copy_n(url.c_str(), max_chars, options.transUrl);
+    bzero(options.transUrl, sizeof(options.transUrl));
+    if (isHostRdma && config_.nic[0] != '\0') {
+        constexpr size_t NIC_SIZE = sizeof(options.transUrl);
+        size_t urlLen = strnlen(config_.nic, sizeof(config_.nic));
+        size_t maxChars = std::min(urlLen, NIC_SIZE - 1);
+        std::copy_n(config_.nic, maxChars, options.transUrl);
+    } else {
+        uint16_t port = 11000 + entityId_;
+        auto url = "tcp://127.0.0.1:" + std::to_string(port);
+        constexpr size_t NIC_SIZE = sizeof(options.transUrl);
+        size_t maxChars = std::min(url.length(), NIC_SIZE - 1);
+        std::copy_n(url.c_str(), maxChars, options.transUrl);
+    }
+
+    options.tlsOption.tlsEnable = config_.hcomTlsConfig.tlsEnable;
+    std::copy_n(config_.hcomTlsConfig.caPath, SMEM_TLS_PATH_SIZE, options.tlsOption.caPath);
+    std::copy_n(config_.hcomTlsConfig.crlPath, SMEM_TLS_PATH_SIZE, options.tlsOption.crlPath);
+    std::copy_n(config_.hcomTlsConfig.certPath, SMEM_TLS_PATH_SIZE, options.tlsOption.certPath);
+    std::copy_n(config_.hcomTlsConfig.keyPath, SMEM_TLS_PATH_SIZE, options.tlsOption.keyPath);
+    std::copy_n(config_.hcomTlsConfig.keyPassPath, SMEM_TLS_PATH_SIZE, options.tlsOption.keyPassPath);
+    std::copy_n(config_.hcomTlsConfig.packagePath, SMEM_TLS_PATH_SIZE, options.tlsOption.packagePath);
+    std::copy_n(config_.hcomTlsConfig.decrypterLibPath, SMEM_TLS_PATH_SIZE, options.tlsOption.decrypterLibPath);
 
     return std::move(options);
 }

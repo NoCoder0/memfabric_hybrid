@@ -247,7 +247,6 @@ int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, ui
 
     auto addr = static_cast<uint64_t>(reinterpret_cast<ptrdiff_t>(ptr));
     std::shared_ptr<MemSegment> segment = nullptr;
-    // 只有trans场景才需要走hbmSegment_，bm场景优先走dramSegment_
     if (options_.scene == HYBM_SCENE_TRANS || dramSegment_ == nullptr) {
         segment = hbmSegment_;
     } else {
@@ -449,8 +448,9 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
         if (realSlice->size_ > 0) {
             ret = transportManager_->QueryMemoryKey(realSlice->vAddress_, transportKey.key);
             if (ret != 0) {
-                BM_LOG_ERROR("query memory key when export slice failed: " << ret);
-                return ret;
+                BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex << realSlice->vAddress_
+                                                                                 << std::dec << ", ret: " << ret);
+                transportKey.key = {};
             }
         }
         ret = desc.Append(transportKey);
@@ -1228,9 +1228,9 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
-    constexpr auto deviceTransportMask =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
-    if ((options_.bmDataOpType & deviceTransportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
+    constexpr auto transportMask =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_RDMA;
+    if ((options_.bmDataOpType & transportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
         segmentOptions.shared = false;
     }
 

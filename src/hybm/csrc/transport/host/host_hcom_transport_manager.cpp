@@ -222,8 +222,9 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(mr.addr != 0 && mr.size != 0, "mr.addr = " << mr.addr << ", " << "mr.size = " << mr.size,
                              BM_INVALID_PARAM);
-    if (!(mr.flags & transport::REG_MR_FLAG_DRAM)) {
-        BM_LOG_WARN("Only support register dram memory skip flag:" << mr.flags);
+    const bool isHbm = (mr.flags & transport::REG_MR_FLAG_HBM) != 0;
+    if ((mr.flags & (transport::REG_MR_FLAG_DRAM | transport::REG_MR_FLAG_HBM)) == 0) {
+        BM_LOG_WARN("Only support register dram/hbm memory, skip flag:" << mr.flags);
         return BM_OK;
     }
 
@@ -236,6 +237,12 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     Service_MemoryRegion memoryRegion;
     int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcService_, mr.addr, mr.size, &memoryRegion);
     if (ret != 0) {
+        if (isHbm) {
+            // Old HDK libhcom can not register hbm to host rdma service; skip and degrade to swap path.
+            BM_LOG_WARN("Failed to register hbm mem region, maybe hdk not support (ret: "
+                        << ret << "), fall back to swap path, size: " << mr.size << " addr:" << std::hex << mr.addr);
+            return BM_OK;
+        }
         BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
                                                              << " service: " << rpcService_ << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -261,7 +268,8 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
         mrs_[rankId_].insert(mrInfo);
     }
-    BM_LOG_INFO("Success to register to mr info size: " << mrInfo.size << " lKey: " << mrInfo.lKey.keys[0]);
+    BM_LOG_INFO("Success to register " << (isHbm ? "hbm" : "dram") << " mr info size: " << mrInfo.size
+                                       << " lKey: " << mrInfo.lKey.keys[0]);
     return BM_OK;
 }
 #else

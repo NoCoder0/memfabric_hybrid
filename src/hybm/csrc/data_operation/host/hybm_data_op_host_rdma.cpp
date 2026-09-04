@@ -429,9 +429,25 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
             TP_TRACE_END(TP_HYBM_HOST_RDMA_LD_TO_GH, ret);
             break;
         }
+        case HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE: {
+            // With peermem, hcom can write to peer HBM directly — check if local MR is registered,
+            // if so write directly (no swap); otherwise fall through to LD2GH swap path.
+            TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_LD_TO_GH);
+            ret = BatchCopyLD2GD(params.destinations, params.sources, params.dataSizes, params.batchSize, options);
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_LD_TO_GH, ret);
+            break;
+        }
         case HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE: {
             TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_GH_TO_LD);
             ret = BatchCopyGH2LD(params.destinations, params.sources, params.dataSizes, params.batchSize, options);
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_GH_TO_LD, ret);
+            break;
+        }
+        case HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE: {
+            // With peermem, hcom can read from peer HBM directly — check if local MR is registered,
+            // if so read directly (no swap); otherwise fall through to GH2LD swap path.
+            TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_GH_TO_LD);
+            ret = BatchCopyGD2LD(params.destinations, params.sources, params.dataSizes, params.batchSize, options);
             TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_GH_TO_LD, ret);
             break;
         }
@@ -712,6 +728,149 @@ Result HostDataOpRDMA::BatchReadRH2LD(uint32_t rmtRankId, CopyDescriptor &rmtCop
             break;
         }
         batchOffset = batchEnd;
+    }
+    return ret;
+}
+
+Result HostDataOpRDMA::BatchWriteLD2RD(uint32_t rmtRankId, CopyDescriptor &rmtCopyDescriptor,
+                                       const ExtOptions &options) noexcept
+{
+    bool allDirect = true;
+    size_t batchSize = rmtCopyDescriptor.counts.size();
+    for (size_t i = 0; i < batchSize; ++i) {
+        if (!transportManager_->QueryHasRegistered(reinterpret_cast<uint64_t>(rmtCopyDescriptor.localAddrs[i]),
+                                                   rmtCopyDescriptor.counts[i])) {
+            allDirect = false;
+            break;
+        }
+    }
+    if (allDirect) {
+        Result ret = BM_OK;
+        for (size_t i = 0; i < batchSize; ++i) {
+            ret = transportManager_->WriteRemoteAsync(
+                rmtRankId, reinterpret_cast<uint64_t>(rmtCopyDescriptor.localAddrs[i]),
+                reinterpret_cast<uint64_t>(rmtCopyDescriptor.globalAddrs[i]), rmtCopyDescriptor.counts[i]);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Direct D2D write failed, ret: " << ret << " localAddr: 0x" << std::hex
+                                                              << rmtCopyDescriptor.localAddrs[i] << " globalAddr: 0x"
+                                                              << rmtCopyDescriptor.globalAddrs[i] << std::dec
+                                                              << " size: " << rmtCopyDescriptor.counts[i]);
+                return ret;
+            }
+        }
+        return transportManager_->Synchronize(rmtRankId);
+    }
+    return BatchWriteLD2RH(rmtRankId, rmtCopyDescriptor, options);
+}
+
+Result HostDataOpRDMA::BatchReadRD2LD(uint32_t rmtRankId, CopyDescriptor &rmtCopyDescriptor,
+                                      const ExtOptions &options) noexcept
+{
+    bool allDirect = true;
+    size_t batchSize = rmtCopyDescriptor.counts.size();
+    for (size_t i = 0; i < batchSize; ++i) {
+        if (!transportManager_->QueryHasRegistered(reinterpret_cast<uint64_t>(rmtCopyDescriptor.localAddrs[i]),
+                                                   rmtCopyDescriptor.counts[i])) {
+            allDirect = false;
+            break;
+        }
+    }
+    if (allDirect) {
+        Result ret = BM_OK;
+        for (size_t i = 0; i < batchSize; ++i) {
+            ret = transportManager_->ReadRemoteAsync(
+                rmtRankId, reinterpret_cast<uint64_t>(rmtCopyDescriptor.localAddrs[i]),
+                reinterpret_cast<uint64_t>(rmtCopyDescriptor.globalAddrs[i]), rmtCopyDescriptor.counts[i]);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Direct D2D read failed, ret: " << ret << " localAddr: 0x" << std::hex
+                                                             << rmtCopyDescriptor.localAddrs[i] << " globalAddr: 0x"
+                                                             << rmtCopyDescriptor.globalAddrs[i] << std::dec
+                                                             << " size: " << rmtCopyDescriptor.counts[i]);
+                return ret;
+            }
+        }
+        return transportManager_->Synchronize(rmtRankId);
+    }
+    return BatchReadRH2LD(rmtRankId, rmtCopyDescriptor, options);
+}
+
+Result HostDataOpRDMA::BatchCopyLD2GD(void **destinations, void **sources, const uint64_t *counts, uint32_t batchSize,
+                                      const ExtOptions &options) noexcept
+{
+    Result ret = BM_OK;
+    ExtOptions tmpOptions = options;
+    std::unordered_map<uint32_t, CopyDescriptor> rmtRankMap{};
+    std::unordered_map<uint32_t, CopyDescriptor> localRankMap{};
+    ClassifyDataAddr(destinations, sources, counts, batchSize, rmtRankMap, localRankMap, options.destRankId);
+
+    for (auto &it : localRankMap) {
+        tmpOptions.destRankId = it.first;
+        ret = BatchCopyLD2LD(it.second.globalAddrs.data(), it.second.localAddrs.data(), it.second.counts.data(),
+                             it.second.counts.size(), tmpOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to copy local device to local device ret: " << ret);
+            return ret;
+        }
+    }
+    for (auto &it : rmtRankMap) {
+        ret = BatchWriteLD2RD(it.first, it.second, options);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to write local device to remote device ret: " << ret);
+            return ret;
+        }
+    }
+    return ret;
+}
+
+Result HostDataOpRDMA::BatchCopyGD2LD(void **destinations, void **sources, const uint64_t *counts, uint32_t batchSize,
+                                      const ExtOptions &options) noexcept
+{
+    Result ret = BM_OK;
+    ExtOptions tmpOptions = options;
+    std::unordered_map<uint32_t, CopyDescriptor> rmtRankMap{};
+    std::unordered_map<uint32_t, CopyDescriptor> localRankMap{};
+    ClassifyDataAddr(sources, destinations, counts, batchSize, rmtRankMap, localRankMap, options.srcRankId);
+
+    for (auto &it : localRankMap) {
+        tmpOptions.srcRankId = it.first;
+        ret = BatchCopyLD2LD(it.second.localAddrs.data(), it.second.globalAddrs.data(), it.second.counts.data(),
+                             it.second.counts.size(), tmpOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to copy local device to local device ret: " << ret);
+            return ret;
+        }
+    }
+    for (auto &it : rmtRankMap) {
+        ret = BatchReadRD2LD(it.first, it.second, options);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to read remote device to local device ret: " << ret);
+            return ret;
+        }
+    }
+    return ret;
+}
+
+Result HostDataOpRDMA::BatchCopyLD2LD(void **destAddrs, void **srcAddrs, const uint64_t *counts, uint32_t batchSize,
+                                      const ExtOptions &options) noexcept
+{
+    void *st = options.stream;
+    if (st == nullptr) {
+        st = HybmStreamManager::GetThreadAclStream();
+    }
+    Result ret = BM_OK;
+    for (size_t i = 0; i < batchSize; ++i) {
+        ret =
+            DlHybridApi::MemcpyAsync(destAddrs[i], counts[i], srcAddrs[i], counts[i], ACL_MEMCPY_DEVICE_TO_DEVICE, st);
+        if (ret != 0) {
+            BM_LOG_ERROR("MemcpyAsync(D2D) failed, ret: "
+                         << ret << " i: " << i << " stream: " << reinterpret_cast<uintptr_t>(st) << std::hex
+                         << " src: " << srcAddrs[i] << " dst: " << destAddrs[i] << std::dec << " size: " << counts[i]);
+            return BM_DL_FUNCTION_FAILED;
+        }
+    }
+    ret = DlHybridApi::StreamSynchronize(st);
+    if (ret != 0) {
+        BM_LOG_ERROR("aclrtSynchronizeStream failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st));
     }
     return ret;
 }
