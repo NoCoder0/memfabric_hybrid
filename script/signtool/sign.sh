@@ -3,14 +3,13 @@
 # build_and_pack_run.sh
 #         │
 #         ▼
-#      build.sh
+#      script/build.sh
 #         │
 #         ├─ 构建 MemFabric 主库
 #         │
-#         └─ build_hybm_ops
+#         └─ script/kernel/hybm/build.sh
 #               │
-#               ├─ 检查 NPU/CANN 环境
-#               ├─ 编译 AICPU 算子
+#               ├─ build HYBM AICPU kernel
 #               ├─ 生成原始算子 tar 包
 #               └─ 调用 sign.sh
 #                        │
@@ -27,14 +26,13 @@
 # make_run.sh
 #         │
 #         ├─ 收集主库和 wheel
-#         ├─ 收集最终算子包
 #         └─ 生成 run 包
 
 set -euo pipefail
 
 SIGN_TOOL="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
 PROJECT_ROOT="$(cd "$SIGN_TOOL/../.." && pwd)"
-SIGN_FILE="$PROJECT_ROOT/output/hybm/aicpu_kernel/cann-hybm-compat.tar.gz"
+SIGN_FILE="${SIGN_FILE:-$PROJECT_ROOT/output/hybm/aicpu_kernel/cann-hybm-compat.tar.gz}"
 SIGN_ROOT="${SIGNATRUST_ROOT:-/opt/signaturst}"
 export SIGNATRUST_ROOT="$SIGN_ROOT"
 SIGN_CLIENT="$SIGN_ROOT/signatrust_client"

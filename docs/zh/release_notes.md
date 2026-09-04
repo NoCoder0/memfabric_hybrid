@@ -78,7 +78,7 @@
 |文档名称|内容简介|
 |---|---|
 |《[编译安装](./installation.md)》|介绍组件编译和安装教程。|
-|《[安装 HYBM AICPU OPS](./installation_aicpu_kernel.md)》|提供 HYBM AICPU OPS 的构建、安装、卸载、使用和常见问题等。|
+|《[KERNEL OPS 编译与安装](./installation_kernel.md)》|介绍 KERNEL OPS 的独立编译、安装和卸载方法。|
 |《[LingQu Computing Network 安装包升级示例](./CCLink.md)》|提供LingQu Computing Network 安装包升级示例。|
 |《[故障注入的实现与使用](./fault_injection.md)》|提供故障注入的具体操作步骤。|
 |《[API 介绍](./API.md)》|MemFabric提供的多种API的简介。|

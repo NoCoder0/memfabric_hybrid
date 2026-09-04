@@ -718,7 +718,7 @@ void MakeDirectories(const std::string &dir)
 std::string PrepareKernelJson()
 {
     const std::string base = std::string(testing::TempDir()) + "device_urma_kernel_" + std::to_string(getpid());
-    const std::string dir = base + "/opp/vendors/cust/op_impl/aicpu/config";
+    const std::string dir = base + "/opp/vendors/cust/op_impl/aicpu/hybm/config";
     MakeDirectories(dir);
     const std::string path = dir + "/libcann_hybm_kernel.json";
     std::ofstream json(path);

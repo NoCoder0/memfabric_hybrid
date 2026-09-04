@@ -36,6 +36,14 @@ pip install memfabric_hybrid==1.0.0
     pip install --no-index memfabric_hybrid-*.whl
     ```
 
+### 3. AICPU算子安装
+
+A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
+
+安装 MemFabric Hybrid whl包后，执行 `mfcli kernel install` 完成部署。
+
+详细说明见 [安装 HYBM AICPU OPS](installation_kernel.md)。
+
 ---
 
 ## 二、 使用 C API
@@ -124,10 +132,14 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
-> **AICPU Kernel SO 部署：** `DEVICE_RDMA`（HCOMM 路径）和 `DEVICE_URMA` 均需在 NPU 上加载 AICPU kernel SO。主 run 包安装时增加 `--install-ops`，或安装 wheel 后执行 `mfcli aicpu install`。
->
-> 详细说明见 [安装 HYBM AICPU OPS](installation_aicpu_kernel.md)。
->
+### 5. AICPU算子安装
+
+A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
+
+安装 MemFabric Hybrid whl包后，执行 `mfcli kernel install` 完成部署。
+
+详细说明见 [安装 HYBM AICPU OPS](installation_kernel.md)。
+
 > **A2 环境使用 DEVICE_RDMA：** A2（Ascend 910B3）上使用自定义 AICPU kernel 需先关闭驱动验签：
 >
 > ```bash

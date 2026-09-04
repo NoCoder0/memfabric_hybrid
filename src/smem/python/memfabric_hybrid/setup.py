@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# coding=utf-8
 # Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 # MemFabric_Hybrid is licensed under Mulan PSL v2.
 # You can use this software according to the terms and conditions of the Mulan PSL v2.
@@ -116,7 +114,6 @@ setup(
     author_email="",
     description="python api for memfabric hybrid",
     packages=find_namespace_packages(exclude=("tests*",)),
-    py_modules=["mfcli"],
     url="https://gitcode.com/Ascend/memfabric_hybrid",
     license="Mulan PSL v2",
     python_requires=">=3.8",
@@ -131,12 +128,12 @@ setup(
             "include/smem/device/*.h",
             "include/hybm/*.h",
             "VERSION",
-            "_aicpu/*",
+            "_kernel/hybm/*",
         ]
     },
     entry_points={
         "console_scripts": [
-            "mfcli=mfcli:main",
+            "mfcli=memfabric_hybrid.cli:main",
         ]
     },
     cmdclass={

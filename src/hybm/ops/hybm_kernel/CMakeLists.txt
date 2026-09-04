@@ -71,6 +71,7 @@ set(AICPU_STAGING_DIR "${CMAKE_CURRENT_BINARY_DIR}/tar_staging")
 
 add_custom_command(
     OUTPUT ${AICPU_TAR_OUTPUT}
+    COMMAND ${CMAKE_COMMAND} -E rm -rf "${AICPU_STAGING_DIR}"
     COMMAND ${CMAKE_COMMAND} -E make_directory "${AICPU_STAGING_DIR}/${AICPU_TAR_ROOT}"
     COMMAND ${CMAKE_COMMAND} -E copy "${AICPU_SO_OUTPUT}" "${AICPU_STAGING_DIR}/${AICPU_TAR_ROOT}/"
     COMMAND tar czf "${AICPU_TAR_OUTPUT}" -C "${AICPU_STAGING_DIR}" "${AICPU_TAR_ROOT}"
@@ -83,11 +84,7 @@ message("==================hybm ai cpu ops compile done=========================
 # ---- Default target: build all artifacts ----
 add_custom_target(cann_hybm_kernel ALL DEPENDS ${AICPU_SO_OUTPUT} ${AICPU_JSON_OUTPUT} ${AICPU_TAR_OUTPUT})
 
-# ---- Install ----
-install(FILES ${AICPU_SO_OUTPUT}
-        DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
-        PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)
-
+# ---- Install consumer artifacts ----
 install(FILES ${AICPU_JSON_OUTPUT}
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
@@ -96,7 +93,7 @@ install(FILES ${AICPU_TAR_OUTPUT}
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ)
 
-install(PROGRAMS ${HYBM_KERNEL_PROJECT_ROOT}/script/install_aicpu_kernel.sh
+install(PROGRAMS ${HYBM_KERNEL_PROJECT_ROOT}/script/kernel/hybm/install.sh
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/aicpu_kernel
         RENAME install.sh
         PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE)

@@ -31,7 +31,7 @@ struct DeviceFuncHandles {
 // @param funcWrite     kernel function name for write (e.g. "HybmBatchWrite")
 // @param binHandle     [in/out] cached bin handle; if nullptr, loads from JSON
 // @param funcHandles   [out] resolved function handles
-// JSON path: ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/config/libcann_hybm_kernel.json
+// JSON path: ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/hybm/config/libcann_hybm_kernel.json
 Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
                                      DeviceFuncHandles &funcHandles);
 
