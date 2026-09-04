@@ -274,7 +274,8 @@ ZResult Communicator::DestroyInner(CommunicatorPtr &comm)
     /* if it is the world one */
     if (comm->isWorldGroup_) {
         if (gCommLookupMap.size() != 0) {
-            ZBAL_LOG_AND_SET_LAST_ERROR("Destroy other non world communicator firstly, then destroy the world one");
+            ZBAL_LOG_WARN_AND_SET_LAST_ERROR(
+                "Destroy other non world communicator firstly, then destroy the world one");
             return Z_COMM_DESTROY_GLOBAL_LAST;
         }
 

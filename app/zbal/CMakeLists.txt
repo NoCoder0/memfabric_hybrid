@@ -59,10 +59,18 @@ if (BUILD_ZBAL_MODULE_UT)
 endif ()
 
 # forward chip type macro from setup.py / build.sh to C++ preprocessor
+# Guard: abort configure when chip type is ambiguous (both set) or missing for NPU build, otherwise
+# kernel-side #if defined(A3)||defined(A5) compiles to empty shells without any error
+if (ZBAL_ASCEND_NPU_A3 AND ZBAL_ASCEND_NPU_A5)
+    message(FATAL_ERROR "zbal: ZBAL_ASCEND_NPU_A3 and ZBAL_ASCEND_NPU_A5 are both set, specify exactly one chip type")
+endif ()
 if (ZBAL_ASCEND_NPU_A3)
     add_compile_definitions(ZBAL_ASCEND_NPU_A3)
 elseif (ZBAL_ASCEND_NPU_A5)
     add_compile_definitions(ZBAL_ASCEND_NPU_A5)
+elseif (XPU_TYPE STREQUAL "NPU" AND NOT BUILD_ZBAL_MODULE_UT)
+    message(FATAL_ERROR "zbal: chip type not specified for NPU build, pass -DZBAL_ASCEND_NPU_A3=1 or "
+                        "-DZBAL_ASCEND_NPU_A5=1, otherwise device kernels compile to empty shells")
 endif ()
 
 if (ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
