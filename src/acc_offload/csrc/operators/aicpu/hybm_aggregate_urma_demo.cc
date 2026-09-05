@@ -93,7 +93,7 @@ void Scatter(const HybmAggregateUrmaDemoParam &param)
     for (uint32_t index = 0; index < request.segmentCount; ++index) {
         auto *destination = param.dstBase + index * request.dstStride;
         std::memcpy(destination, param.dstNew + index * request.segmentBytes, request.segmentBytes);
-        FlushDeviceCacheRange(reinterpret_cast<uintptr_t>(destination), request.segmentBytes);
+        //FlushDeviceCacheRange(reinterpret_cast<uintptr_t>(destination), request.segmentBytes);
     }
     __asm__ __volatile__("dsb ish" : : : "memory");
 }
@@ -101,7 +101,6 @@ void Scatter(const HybmAggregateUrmaDemoParam &param)
 
 extern "C" uint32_t HybmAggregateUrmaDemo(HybmAggregateUrmaDemoParam *param)
 {
-    const auto begin = Clock::now();
     const auto *route = reinterpret_cast<const ock::mf::BatchCopyRouteTable *>(ock::mf::HYBM_BATCH_COPY_META_ADDR);
     InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&route->header));
     const auto *range = FindMailboxRange(route, param->message->request.hostMailboxGva);
@@ -113,6 +112,7 @@ extern "C" uint32_t HybmAggregateUrmaDemo(HybmAggregateUrmaDemoParam *param)
     const auto &peer = route->peers[range->peerIndex];
     InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&peer));
     const uint64_t remote = range->hcommVaBegin + param->message->request.hostMailboxGva - range->srcGvaBegin;
+    const auto begin = Clock::now();
     auto ret = WriteRemote(peer, remote, &param->message->request, sizeof(param->message->request));
     if (ret == BM_OK) {
         ret = WriteRemote(peer, remote + offsetof(HybmAggregateUrmaDemoMessage, doorbell), &param->message->doorbell,
