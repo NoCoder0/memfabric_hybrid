@@ -22,6 +22,9 @@ from urma_example_common import (
 
 CONTROL_BYTES = 3 * 4096
 POOL_ALIGN = 2 << 20
+BENCHMARK_ITERATIONS = 20
+WARMUP_ITERATIONS = 5
+FIRST_DOORBELL = 1
 
 
 class Request(ctypes.Structure):
@@ -44,16 +47,24 @@ class Message(ctypes.Structure):
 
 class Timing(ctypes.Structure):
     _fields_ = [
-        ("request_ns", ctypes.c_uint64),
-        ("wait_host_ns", ctypes.c_uint64),
-        ("scatter_ns", ctypes.c_uint64),
-        ("total_ns", ctypes.c_uint64),
-        ("padding", ctypes.c_uint8 * 32),
+        ("request_p50_ns", ctypes.c_uint64),
+        ("wait_host_p50_ns", ctypes.c_uint64),
+        ("scatter_p50_ns", ctypes.c_uint64),
+        ("total_p50_ns", ctypes.c_uint64),
+        ("request_p99_ns", ctypes.c_uint64),
+        ("wait_host_p99_ns", ctypes.c_uint64),
+        ("scatter_p99_ns", ctypes.c_uint64),
+        ("total_p99_ns", ctypes.c_uint64),
     ]
 
 
 def align_up(value, alignment):
     return (value + alignment - 1) // alignment * alignment
+
+
+def p50_p99(samples):
+    samples = sorted(samples[WARMUP_ITERATIONS:])
+    return samples[len(samples) // 2], samples[-1]
 
 
 def make_layout(count, segment_bytes):
@@ -128,18 +139,34 @@ def run_host(args, handle, bm, listener, layout):
     conn, _ = listener.accept()
     with conn:
         conn.sendall(b"R")
-        dst_new_gva, ready_gva, request_bytes, wait_ns, gather_ns = offload.aggregate_wait_and_gather_demo(
-            mailbox, source, aggregate
-        )
-        write_begin = time.perf_counter_ns()
-        assert handle.copy_data(aggregate, dst_new_gva, request_bytes, bm.BmCopyType.H2G, 0) == 0
-        write_end = time.perf_counter_ns()
-        assert handle.copy_data(mailbox + Message.doorbell.offset, ready_gva, 8, bm.BmCopyType.H2G, 0) == 0
-        ready_end = time.perf_counter_ns()
+        wait_samples = []
+        gather_samples = []
+        write_samples = []
+        ready_samples = []
+        for iteration in range(BENCHMARK_ITERATIONS):
+            dst_new_gva, ready_gva, request_bytes, wait_ns, gather_ns = offload.aggregate_wait_and_gather_demo(
+                mailbox, source, aggregate, FIRST_DOORBELL + iteration
+            )
+            write_begin = time.perf_counter_ns()
+            assert handle.copy_data(aggregate, dst_new_gva, request_bytes, bm.BmCopyType.H2G, 0) == 0
+            write_end = time.perf_counter_ns()
+            assert handle.copy_data(mailbox + Message.doorbell.offset, ready_gva, 8, bm.BmCopyType.H2G, 0) == 0
+            ready_end = time.perf_counter_ns()
+            wait_samples.append(wait_ns)
+            gather_samples.append(gather_ns)
+            write_samples.append(write_end - write_begin)
+            ready_samples.append(ready_end - write_end)
         conn.recv(1)
+    wait_p50, wait_p99 = p50_p99(wait_samples)
+    gather_p50, gather_p99 = p50_p99(gather_samples)
+    write_p50, write_p99 = p50_p99(write_samples)
+    ready_p50, ready_p99 = p50_p99(ready_samples)
     print(
-        f"host bytes={total} wait_us={wait_ns / 1e3:.3f} gather_us={gather_ns / 1e3:.3f} "
-        f"write_us={(write_end - write_begin) / 1e3:.3f} ready_us={(ready_end - write_end) / 1e3:.3f}"
+        f"host bytes={total} samples={BENCHMARK_ITERATIONS - WARMUP_ITERATIONS} "
+        f"wait_us=p50:{wait_p50 / 1e3:.3f}/p99:{wait_p99 / 1e3:.3f} "
+        f"gather_us=p50:{gather_p50 / 1e3:.3f}/p99:{gather_p99 / 1e3:.3f} "
+        f"write_us=p50:{write_p50 / 1e3:.3f}/p99:{write_p99 / 1e3:.3f} "
+        f"ready_us=p50:{ready_p50 / 1e3:.3f}/p99:{ready_p99 / 1e3:.3f}"
     )
 
 
@@ -153,7 +180,7 @@ def run_npu(args, handle, bm, runtime_device, layout):
     hbm_gva = handle.peer_rank_ptr(NPU_RANK, bm.BmMemType.DEVICE)
     hbm_va = handle.gva_to_va(hbm_gva, bm.BmMemType.LOCAL_DEVICE)
     message = Message(Request(host_gva, hbm_gva + dst_new_offset, hbm_gva + 4096, total, stride, stride,
-                              args.segments, args.segment_bytes, 0), 1)
+                              args.segments, args.segment_bytes, 0), FIRST_DOORBELL)
     zero = ctypes.c_uint64(0)
     timing = Timing()
     copy_to_hbm(handle, bm, ctypes.addressof(message), hbm_gva, ctypes.sizeof(message))
@@ -175,9 +202,12 @@ def run_npu(args, handle, bm, runtime_device, layout):
                                 bm.BmCopyType.G2H, 0) == 0
         conn.sendall(b"D")
     print(
-        f"aicpu bytes={total} request_us={timing.request_ns / 1e3:.3f} "
-        f"wait_host_us={timing.wait_host_ns / 1e3:.3f} scatter_us={timing.scatter_ns / 1e3:.3f} "
-        f"e2e_us={timing.total_ns / 1e3:.3f} launch_sync_us={(launch_end - launch_begin) / 1e3:.3f}"
+        f"aicpu bytes={total} samples={BENCHMARK_ITERATIONS - WARMUP_ITERATIONS} "
+        f"request_us=p50:{timing.request_p50_ns / 1e3:.3f}/p99:{timing.request_p99_ns / 1e3:.3f} "
+        f"wait_host_us=p50:{timing.wait_host_p50_ns / 1e3:.3f}/p99:{timing.wait_host_p99_ns / 1e3:.3f} "
+        f"scatter_us=p50:{timing.scatter_p50_ns / 1e3:.3f}/p99:{timing.scatter_p99_ns / 1e3:.3f} "
+        f"e2e_us=p50:{timing.total_p50_ns / 1e3:.3f}/p99:{timing.total_p99_ns / 1e3:.3f} "
+        f"launch_sync_us={(launch_end - launch_begin) / 1e3:.3f}"
     )
 
 
@@ -200,7 +230,7 @@ def main():
         listener = socket.create_server(("0.0.0.0", args.ctrl_port))
     import memfabric_hybrid as mf
     from memfabric_hybrid import bm
-    mf.set_log_level(0)
+    mf.set_log_level(3)
     assert mf.initialize() == 0
     handle = create_handle(args, bm, rank, runtime_device, layout[-1])
     if rank == HOST_RANK:

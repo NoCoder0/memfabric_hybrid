@@ -24,7 +24,7 @@
 
 namespace py = pybind11;
 
-py::tuple AggregateWaitAndGatherDemo(uint64_t mailbox, uint64_t source, uint64_t aggregate)
+py::tuple AggregateWaitAndGatherDemo(uint64_t mailbox, uint64_t source, uint64_t aggregate, uint64_t doorbell)
 {
     using Clock = std::chrono::steady_clock;
     auto *message = reinterpret_cast<HybmAggregateUrmaDemoMessage *>(mailbox);
@@ -34,7 +34,7 @@ py::tuple AggregateWaitAndGatherDemo(uint64_t mailbox, uint64_t source, uint64_t
     {
         py::gil_scoped_release release;
         const auto waitBegin = Clock::now();
-        while (__atomic_load_n(&message->doorbell, __ATOMIC_ACQUIRE) == 0U) {}
+        while (__atomic_load_n(&message->doorbell, __ATOMIC_ACQUIRE) != doorbell) {}
         const auto gatherBegin = Clock::now();
         request = message->request;
         auto *src = reinterpret_cast<const uint8_t *>(source);
@@ -88,7 +88,7 @@ void DefineAccOffloadApi(py::module_ &m)
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("listNum"), py::arg("deviceId"));
 
     m.def("aggregate_wait_and_gather_demo", &AggregateWaitAndGatherDemo, py::arg("mailbox"), py::arg("source"),
-          py::arg("aggregate"));
+          py::arg("aggregate"), py::arg("doorbell"));
 
     m.def("npu_kvcache_scatter_copy", &offload_kvcache_scatter_copy, py::call_guard<py::gil_scoped_release>(),
           py::arg("hbmKpe"), py::arg("hbmCkv"), py::arg("hbmBlockTable"), py::arg("dramBlockTable"),

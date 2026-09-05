@@ -28,15 +28,18 @@ struct alignas(64) HybmAggregateUrmaDemoMessage {
 };
 
 struct alignas(64) HybmAggregateUrmaDemoTiming {
-    uint64_t requestNs;
-    uint64_t waitHostNs;
-    uint64_t scatterNs;
-    uint64_t totalNs;
-    uint8_t padding[32];
+    uint64_t requestP50Ns;
+    uint64_t waitHostP50Ns;
+    uint64_t scatterP50Ns;
+    uint64_t totalP50Ns;
+    uint64_t requestP99Ns;
+    uint64_t waitHostP99Ns;
+    uint64_t scatterP99Ns;
+    uint64_t totalP99Ns;
 };
 
 struct HybmAggregateUrmaDemoParam {
-    const HybmAggregateUrmaDemoMessage *message;
+    HybmAggregateUrmaDemoMessage *message;
     volatile uint64_t *ready;
     uint8_t *dstNew;
     uint8_t *dstBase;

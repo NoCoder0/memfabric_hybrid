@@ -253,6 +253,42 @@ uint32_t HybmBatchWrite(HybmOneSideOpParam *param)
     return ret;
 }
 
+uint32_t HybmWriteOrderedPair(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *firstDst,
+                              const void *firstSrc, uint64_t firstLen, void *secondDst, const void *secondSrc,
+                              uint64_t secondLen)
+{
+    if (thread == 0 || channel == 0 || firstDst == nullptr || firstSrc == nullptr || firstLen == 0 ||
+        secondDst == nullptr || secondSrc == nullptr || secondLen == 0) {
+        HYBM_LOGE(BM_INVALID_PARAM, "invalid ordered write pair, thread=%lu channel=%lu", thread, channel);
+        return BM_INVALID_PARAM;
+    }
+
+    const int32_t batchRet = BatchModeStart(kBatchTag);
+    if (batchRet != BM_OK && !IsNotSupported(batchRet)) {
+        HYBM_LOGE(BM_ERROR, "HcommBatchModeStart failed, batchTag=%s ret=%d", kBatchTag, batchRet);
+        return BM_ERROR;
+    }
+
+    int32_t ret = WriteOnThread(thread, channel, firstDst, firstSrc, firstLen);
+    if (ret == BM_OK) {
+        ret = ChannelFenceOnThread(thread, channel);
+    }
+    if (ret == BM_OK) {
+        ret = WriteOnThread(thread, channel, secondDst, secondSrc, secondLen);
+    }
+    if (batchRet == BM_OK) {
+        const int32_t endRet = BatchModeEnd(kBatchTag);
+        if (ret == BM_OK && endRet != BM_OK && !IsNotSupported(endRet)) {
+            ret = endRet;
+        }
+    }
+    if (ret != BM_OK) {
+        HYBM_LOGE(BM_ERROR, "ordered write pair failed, thread=%lu channel=%lu ret=%d", thread, channel, ret);
+        return BM_ERROR;
+    }
+    return BM_OK;
+}
+
 uint32_t HybmBatchRead(HybmOneSideOpParam *param)
 {
     const uint32_t ret = HybmBatchTransfer(true, param);

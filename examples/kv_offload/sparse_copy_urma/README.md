@@ -115,8 +115,9 @@ stage/rank/device/地址/长度上下文。不要为绕过
 
 ## 03：AICPU 发起 Host 聚合
 
-该 Demo 只测一条固定 happy path：AICPU 写 Host mailbox，Host busy-poll 后 gather，一次大包写入
-NPU HBM，AICPU 轮询 ready 后按固定 stride scatter。TCP 只在计时前做启动屏障，不承载聚合请求。
+该 Demo 每次只保持一条固定 happy path：AICPU 写 Host mailbox，Host busy-poll 后 gather，一次大包写入
+NPU HBM，AICPU 轮询 ready 后按固定 stride scatter。一次 kernel launch 顺序执行 20 次，丢弃前 5 次预热，
+对剩余 15 次输出 P50/P99；TCP 只在计时前做启动屏障，不承载聚合请求。
 
 先使用 local DRAM 验证开关构建并安装 MemFabric 主包，再构建并安装 AICPU kernel：
 
@@ -142,5 +143,5 @@ python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py \
 
 默认聚合 `4096 * 2048 B = 8 MiB`。两端可同时传入相同的 `--segments` 和
 `--segment-bytes`。Device 输出 AICPU 同一时钟下的 `request_us`、`wait_host_us`、`scatter_us`
-和 `e2e_us`；Host 输出 `gather_us`、大包 `write_us` 和 ready 写耗时。该程序没有数据校验、
-超时、重试、并发或异常清理，只用于上板穿刺。
+和 `e2e_us` 的 P50/P99；Host 同样输出 `gather_us`、大包 `write_us` 和 ready 写耗时的 P50/P99。
+该程序没有数据校验、超时、重试、并发或异常清理，只用于上板穿刺。

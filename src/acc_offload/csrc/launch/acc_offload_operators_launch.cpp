@@ -395,7 +395,7 @@ int32_t AccOffloadAggregateUrmaDemo(uint64_t message, uint64_t ready, uint64_t d
                                     uint64_t timing, uint16_t devIdx)
 {
     HybmAggregateUrmaDemoParam param{};
-    param.message = reinterpret_cast<const HybmAggregateUrmaDemoMessage *>(message);
+    param.message = reinterpret_cast<HybmAggregateUrmaDemoMessage *>(message);
     param.ready = reinterpret_cast<volatile uint64_t *>(ready);
     param.dstNew = reinterpret_cast<uint8_t *>(dstNew);
     param.dstBase = reinterpret_cast<uint8_t *>(dstBase);

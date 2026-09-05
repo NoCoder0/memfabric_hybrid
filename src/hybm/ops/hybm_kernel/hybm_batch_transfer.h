@@ -24,6 +24,9 @@ struct HybmOneSideOpParam {
 extern "C" {
 uint32_t HybmBatchWrite(HybmOneSideOpParam *param);
 uint32_t HybmBatchRead(HybmOneSideOpParam *param);
+uint32_t HybmWriteOrderedPair(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *firstDst,
+                              const void *firstSrc, uint64_t firstLen, void *secondDst, const void *secondSrc,
+                              uint64_t secondLen);
 }
 
 #endif // MF_HYBM_OPS_HYBM_KERNEL_HYBM_BATCH_TRANSFER_H
