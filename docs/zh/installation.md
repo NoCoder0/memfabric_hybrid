@@ -93,6 +93,7 @@ bash script/build_and_pack_run.sh
 | `--build_hcom` | `ON` / `OFF` | `OFF` | 是否编译 HCOM 通信库。<br>若数据传输类型涉及 `HOST_RDMA`, `HOST_TCP`, `HOST_URMA`，需设为 `ON`。 |
 | `--build_hcom_rdma` | `ON` / `OFF` | `ON` | (仅当 `build_hcom=ON` 有效) 是否启用 RDMA 支持。<br>需先执行 `apt install libibverbs-dev`。 |
 | `--build_hcom_ub` | `ON` / `OFF` | `OFF` | (仅当 `build_hcom=ON` 有效) 是否启用 UB (URMA) 支持。<br>RDMA 和 UB 可同时开启。|
+| `--build_etcd_backend` | `ON` / `OFF` | `OFF` | 是否编译 etcd 后端 SO。<br>启用后支持 `etcd://` 配置存储 URL，用于 etcd HA 模式下的分布式选主和元数据存储。 |
 
 > [!NOTE] 说明
 >
