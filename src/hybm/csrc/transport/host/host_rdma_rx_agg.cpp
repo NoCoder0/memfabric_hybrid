@@ -27,17 +27,23 @@ int WaitWriteDone(uint64_t flagHostVa, uint64_t expectSeq, int64_t timeoutUs)
         return -1;
     }
 
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(timeoutUs);
     auto *flag = reinterpret_cast<const volatile uint64_t *>(flagHostVa);
-    for (;;) {
-        if (*flag == expectSeq) {
-            return 0;
+    if (timeoutUs <= 0) {
+        // 无限自旋：场景为小包批量完成，等待窗口很短，用自旋避免调度延迟
+        while (*flag != expectSeq) {
         }
-        if (timeoutUs > 0 && std::chrono::steady_clock::now() >= deadline) {
+        return 0;
+    }
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::microseconds(timeoutUs);
+    uint32_t spins = 0;
+    while (*flag != expectSeq) {
+        // 每 1024 次自旋检查一次超时，避免高频读时钟
+        if (((++spins) & 0x3FFU) == 0 && std::chrono::steady_clock::now() >= deadline) {
             return -2;
         }
-        std::this_thread::sleep_for(std::chrono::microseconds(50));
     }
+    return 0;
 }
 
 int ScatterContiguous(uint64_t stagingHostVa, uint64_t blockSize, const uint64_t *targetHostVas,
