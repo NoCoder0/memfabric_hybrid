@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -2560,6 +2561,17 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysImportsFlagAndSkipsDupli
     EXPECT_EQ(state.remoteFlagAddr, MOCK_REMOTE_ADDR);
     EXPECT_EQ(state.remoteFlagSize, MOCK_SIZE);
     EXPECT_EQ(state.remoteFlagDescBytes.size(), MOCK_HCOMM_DESC_LEN);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysSkipsEmptyKey)
+{
+    DeviceUrmaTransportManager manager;
+    manager.localEndpoint_ = std::make_shared<UrmaEndpointEntity>();
+
+    auto &state = manager.remoteRanks_[1];
+    TransportMemoryKey emptyKey{};
+    EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {emptyKey}), BM_OK);
+    EXPECT_TRUE(state.imports.empty());
 }
 
 TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsBadInputsAndProtocolMismatch)
