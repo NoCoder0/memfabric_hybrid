@@ -133,16 +133,6 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
 
     SM_VALIDATE_RETURN(CheckRankConfigConsistency(options), "check rank config consistency failed", SM_INVALID_PARAM);
     SM_LOG_ERROR_RETURN_IT_IF_NOT_OK(CreateGlobalTeam(options.rankCount, options.rankId), "create global team failed");
-    if (!executorService_.Start()) {
-        SM_LOG_ERROR("executor service start failed");
-        if (globalGroup_ != nullptr && globalGroup_->IsJoined()) {
-            (void)globalGroup_->GroupLeave();
-        }
-        globalGroup_ = nullptr;
-        executorService_.Stop();
-        return SM_ERROR;
-    }
-    executorService_.SetThreadName("batch-copy");
 
     do {
         auto entityId = Id() + HYBM_ENTITY_ID_BM_BASE;
@@ -212,7 +202,6 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
 
 void SmemBmEntry::Uninitialize()
 {
-    executorService_.Stop();
     if (!inited_) {
         return;
     }
@@ -754,69 +743,6 @@ Result SmemBmEntry::DataCopyBatch(smem_batch_copy_params *params, smem_bm_copy_t
     }
     hybm_batch_copy_params copyParams = {params->sources, params->destinations, params->dataSizes, params->batchSize};
     return hybm_data_batch_copy(entity_, &copyParams, direct, params->stream, flags);
-}
-
-Result SmemBmEntry::DataCopyBatchConcurrent(smem_batch_copy_params *params, smem_bm_copy_type t, uint32_t flags,
-                                            smem_batch_copy_result *results)
-{
-    SM_VALIDATE_RETURN(params->sources != nullptr, "invalid param, src is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params->destinations != nullptr, "invalid param, dest is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params->batchSize != 0, "invalid param, size is 0", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(results != nullptr, "results is null", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(results->results, "results inner pointer is null", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(results->batchSize == params->batchSize, "result batch size invalid", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(t < SMEMB_COPY_BUTT, "invalid param, type invalid: " << t, SM_INVALID_PARAM);
-    SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
-    SM_RETURN_IT_IF_NOT_OK(CheckJoined());
-
-    std::mutex finishMutex;
-    std::condition_variable finishCond;
-    uint32_t finishedCount = 0;
-    for (auto i = 0U; i < params->batchSize; i++) {
-        auto submitSuccess =
-            executorService_.Execute([this, &finishedCount, &finishMutex, &finishCond, i, t, params, flags, results]() {
-                hybm_copy_params singleParam{};
-                singleParam.src = params->sources[i];
-                singleParam.dest = params->destinations[i];
-                singleParam.dataSize = params->dataSizes[i];
-                auto direct = (t == SMEMB_COPY_AUTO)
-                                  ? HYBM_DATA_COPY_DIRECTION_AUTO
-                                  : TransToHybmDirection(t, params->sources[i], params->dataSizes[i],
-                                                         params->destinations[i], params->dataSizes[i]);
-                auto ret = hybm_data_copy(entity_, &singleParam, direct, params->stream, flags);
-                SM_LOG_DEBUG("copy index: " << i << ", result:" << ret);
-                results->results[i] = (ret == BM_NOT_CONNECTED) ? SMEM_NOT_CONNECTED : ret;
-
-                std::unique_lock<std::mutex> locker{finishMutex};
-                if (++finishedCount >= params->batchSize) {
-                    locker.unlock();
-                    finishCond.notify_one();
-                }
-                SM_LOG_DEBUG("copy index: " << i << ", run exit:");
-            });
-        if (!submitSuccess) {
-            std::unique_lock<std::mutex> locker{finishMutex};
-            ++finishedCount;
-            results->results[i] = SM_ERROR;
-        }
-    }
-
-    std::unique_lock<std::mutex> locker{finishMutex};
-    finishCond.wait(locker, [&]() { return finishedCount >= params->batchSize; });
-    locker.unlock();
-    auto hasSuccess =
-        std::any_of(results->results, results->results + results->batchSize, [](int r) { return r == 0; });
-    auto hasFail = std::any_of(results->results, results->results + results->batchSize, [](int r) { return r != 0; });
-    SM_LOG_DEBUG("has success = " << hasSuccess << ", has failed = " << hasFail);
-    if (!hasFail) {
-        return SM_OK;
-    }
-
-    if (!hasSuccess) {
-        return SM_ERROR;
-    }
-
-    return SM_PARTIAL_FAILED;
 }
 
 Result SmemBmEntry::CreateGlobalTeam(uint32_t rankSize, uint32_t rankId)

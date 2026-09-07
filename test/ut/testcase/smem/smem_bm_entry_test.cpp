@@ -503,121 +503,6 @@ TEST_F(SmemBmEntryTest, DataCopyBatch_NotInited_ReturnsNotInitialized)
     EXPECT_EQ(ret, SM_NOT_INITIALIZED);
 }
 
-// ======================== DataCopyBatchConcurrent Validation Tests ========================
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_NullSources_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    int32_t resultArr[1] = {0};
-    params.sources = nullptr;
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 1;
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    results.results = resultArr;
-    results.batchSize = 1;
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_NullDestinations_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    int32_t resultArr[1] = {0};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = nullptr;
-    params.batchSize = 1;
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    results.results = resultArr;
-    results.batchSize = 1;
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_ZeroBatchSize_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 0; // 0
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_NullResults_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 1;
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, nullptr);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_NullResultsInner_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 1;
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    results.results = nullptr;
-    results.batchSize = 1;
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_BatchSizeMismatch_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    int32_t resultArr[1] = {0};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 2; // 2
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    results.results = resultArr;
-    results.batchSize = 1;
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_InvalidType_ReturnsInvalidParam)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    int32_t resultArr[1] = {0};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 1;
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    results.results = resultArr;
-    results.batchSize = 1;
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_BUTT, 0, &results);
-    EXPECT_EQ(ret, SM_INVALID_PARAM);
-}
-
-TEST_F(SmemBmEntryTest, DataCopyBatchConcurrent_NotInited_ReturnsNotInitialized)
-{
-    smem_batch_copy_params params{};
-    smem_batch_copy_result results{};
-    int32_t resultArr[1] = {0};
-    params.sources = reinterpret_cast<void **>(0x1000);
-    params.destinations = reinterpret_cast<void **>(0x2000);
-    params.batchSize = 1;
-    params.dataSizes = reinterpret_cast<uint64_t *>(0x3000);
-    results.results = resultArr;
-    results.batchSize = 1;
-    entry_->inited_ = false;
-    auto ret = entry_->DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_NOT_INITIALIZED);
-}
-
 // ======================== ExtendLocalMem Validation Tests ========================
 
 TEST_F(SmemBmEntryTest, ExtendLocalMem_InvalidMemType_ReturnsInvalidParam)
@@ -838,9 +723,6 @@ TEST_F(SmemBmEntryTest, DataCopyBatch_UseExternalStream)
     auto ret = entry_->DataCopyBatch(&params, SMEMB_COPY_H2GH, SMEM_BM_FLAG_USE_EXTERNAL_STREAM);
     EXPECT_EQ(ret, SM_OK);
 }
-
-// ======================== DataCopyBatchConcurrent Validation Only ========================
-// (Full path not tested due to thread pool + mockcpp thread safety issues)
 
 // ======================== AllocDramMemBySlice Tests ========================
 
