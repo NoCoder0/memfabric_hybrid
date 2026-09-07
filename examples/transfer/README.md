@@ -146,7 +146,7 @@ Prefill/Decode 分离部署的 main KV Cache 拉取（pull）传输：
 | --role | 是 | 工作角色：`Prefill` 或 `Decode` |
 | --local-ip | 否 | 本机 IPv4，默认 `127.0.0.1`；跨机须传对端可达的本机网卡 IP |
 | --prefill-ip | 否 | Prefill 机器 IPv4，默认 `127.0.0.1`；跨机须传真实 Prefill IP |
-| --npu-id | 否 | Decode 起始卡号（rank r 用起始+r，默认 0）；手动 `--tp-rank` 时为该 rank 的卡号 |
+| --npu-id | 否 | launcher 模式：Decode 起始卡号（rank r 用 `起始+r`，默认 0）；手动 `--tp-rank` 模式：可选，默认等于 rank，可指定任意卡号 |
 | --tp-size | 否 | Decode TP rank 数，默认 1 |
 | --tp-rank | 否 | Decode TP rank；缺省时一条命令拉起全部 rank 子进程 |
 | --decode-tp-size | 否 | 期望的 Decode rank 数（仅 Prefill 侧），默认 1 |
@@ -180,16 +180,22 @@ python test_transfer_engine_rd2h.py --role Prefill --decode-tp-size 2 --npu-id 0
 
 #### 2. 启动 Decode 侧（一条命令拉起全部 rank）
 
+Decode 与 Prefill 不能共用同一张卡，需通过 `--npu-id` 指定起始卡号（须与 Prefill 所用卡不同，例如 Prefill 用
+`--npu-id 0`，Decode 用 `--npu-id 1`，rank r 实际使用 `--npu-id + r`）：
+
 ```bash
-python test_transfer_engine_rd2h.py --role Decode --tp-size 2
+python test_transfer_engine_rd2h.py --role Decode --npu-id 1 --tp-size 2
 ```
 
 手动指定 rank 单独启动（等价上一条命令）或调整测量轮数：
 
 ```bash
-python test_transfer_engine_rd2h.py --role Decode --tp-rank 1 --tp-size 2                # 指定 rank
-python test_transfer_engine_rd2h.py --role Decode --tp-size 2 --warmup 2 --iterations 10 # 调轮数
+python test_transfer_engine_rd2h.py --role Decode --npu-id 1 --tp-rank 1 --tp-size 2                # 指定 rank
+python test_transfer_engine_rd2h.py --role Decode --npu-id 1 --tp-size 2 --warmup 2 --iterations 10 # 调轮数
 ```
+
+> 说明：`--npu-id` 在 launcher 模式（不传 `--tp-rank`）作为起始卡号，rank r 用 `--npu-id + r`；手动 `--tp-rank` 模式下
+> 可选，默认等于 rank，也可显式指定任意卡号（rank 与卡号不绑定）。
 
 #### 3. 观察结果
 

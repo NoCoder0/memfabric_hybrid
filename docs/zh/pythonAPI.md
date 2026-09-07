@@ -738,3 +738,4 @@ class OffloadConfig:
 |world_size属性|参与组网的rank数量（SHARED场景使用）|
 |rank_id属性|本地rank id（SHARED场景使用）|
 |scene属性|内存池场景，取值参考Scene枚举，默认LOCAL|
+|store_url属性|SHARED场景下共享池建立时的显式config store地址（如`tcp://127.0.0.1:8500`），同组各rank需保持一致；为空时回退为推导端口`8500 + device_id // world_size`|

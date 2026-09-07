@@ -1050,6 +1050,7 @@ typedef struct {
     uint32_t worldSize;
     uint32_t rankId;
     offload_scene_t scene;
+    char storeUrl[64];
 } offload_config_t;
 ```
 
@@ -1061,6 +1062,7 @@ typedef struct {
 |worldSize|参与组网的rank数量（SHARED场景使用）|
 |rankId|本地rank id（SHARED场景使用）|
 |scene|内存池场景，取值参考offload_scene_t，默认OFFLOAD_SCENE_LOCAL|
+|storeUrl|SHARED场景下共享池建立时的显式config store地址（如`tcp://127.0.0.1:8500`），同组各rank需保持一致；为空时回退为推导端口`8500 + deviceId / worldSize`|
 
 ### 2. 初始化/退出
 
