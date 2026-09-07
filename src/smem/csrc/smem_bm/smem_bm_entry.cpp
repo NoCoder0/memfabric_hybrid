@@ -911,7 +911,11 @@ int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFu
             SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << p.rankId << " ret=" << ret);
         }
     }
-    hybm_mmap(entity_, 0);
+    auto mmapRet = hybm_mmap(entity_, 0);
+    if (mmapRet != BM_OK) {
+        SM_LOG_ERROR("hybm_mmap failed in OnEstablishConnection, rankId=" << rankId << " ret=" << mmapRet);
+        return SMEM_ERROR;
+    }
     TP_TRACE_BEGIN(TP_SMEM_GROUP_ESTABLISH_CONNECTION);
     std::vector<uint32_t> rankIds;
     rankIds.reserve(peers.size());
@@ -989,7 +993,11 @@ int SmemBmEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlic
         SM_LOG_ERROR("OnAddSlices: hybm_import failed, extendingRank=" << extendingRankId << " ret=" << ret);
         return SM_ERROR;
     }
-    hybm_mmap(entity_, 0);
+    auto mmapRet = hybm_mmap(entity_, 0);
+    if (mmapRet != BM_OK) {
+        SM_LOG_ERROR("OnAddSlices: hybm_mmap failed, extendingRank=" << extendingRankId << " ret=" << mmapRet);
+        return SM_ERROR;
+    }
     SM_LOG_INFO("OnAddSlices extendingRank=" << extendingRankId << " slices=" << newSlices.size());
     return SM_OK;
 }

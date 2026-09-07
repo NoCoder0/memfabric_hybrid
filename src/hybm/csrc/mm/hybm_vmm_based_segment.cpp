@@ -583,6 +583,16 @@ uint64_t HybmVmmBasedSegment::ReserveLva(const HostSdmaExportInfo &im)
     return reinterpret_cast<uint64_t>(lva);
 }
 
+void HybmVmmBasedSegment::ReleaseMmapLva(uint64_t lva) noexcept
+{
+    HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
+    auto it = std::find(reservedLva_.begin(), reservedLva_.end(), reinterpret_cast<void *>(lva));
+    if (it != reservedLva_.end()) {
+        reservedLva_.erase(it);
+    }
+    DlHalApi::HalMemAddressFree(reinterpret_cast<void *>(lva));
+}
+
 Result HybmVmmBasedSegment::Mmap() noexcept
 {
     if (imports_.empty()) {
@@ -629,24 +639,46 @@ Result HybmVmmBasedSegment::Mmap() noexcept
                                         << " devId:" << im.devicePhyId << " segType:" << options_.segType
                                         << " size:" << im.size << " gva:" << VaToStr(im.gva)
                                         << " dva:" << VaToStr(im.deviceVa) << " va:" << VaToStr(lva));
-        drv_mem_handle_t *handle = nullptr;
-        auto ret = DlHalApi::HalMemImport(MEM_HANDLE_TYPE_FABRIC, &im.shareHandle, logicDeviceId_, &handle);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("HalMemImport memory failed:" << ret << " local sdid:" << sdid_ << " remote ssid:" << im.sdid);
-            if (options_.enable56BitsGva) {
-                HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
+
+        // 检查 P2P 双向就绪：Import 阶段已调用 EnableRemotePeerAccess，但对端可能还没使能完
+        // 不阻塞等待，未就绪立即返回错误，由上层（Server 状态机）控制重试时机
+        if (options_.shared && options_.segType == HYBM_MST_HBM && devicePhyId_ != static_cast<int>(im.devicePhyId) &&
+            CanLocalHostReaches(im.superPodId, im.serverId, im.devicePhyId)) {
+            uint32_t p2pStatus = 0;
+            auto p2pRet = DlAclApi::RtGetP2PStatus(static_cast<uint32_t>(deviceId_),
+                                                   static_cast<uint32_t>(im.devicePhyId), p2pStatus);
+            if (p2pRet != BM_OK || p2pStatus != 1) {
+                BM_LOG_WARN("P2P not ready, rank=" << im.rankId << " remote_dev=" << im.devicePhyId << " local_dev="
+                                                   << devicePhyId_ << " ret=" << p2pRet << " status=" << p2pStatus);
+                if (options_.enable56BitsGva) {
+                    ReleaseMmapLva(lva);
+                }
+                imports_.clear();
+                return BM_ERROR;
             }
+        }
+
+        drv_mem_handle_t *handle = nullptr;
+        auto importRet = DlHalApi::HalMemImport(MEM_HANDLE_TYPE_FABRIC, &im.shareHandle, logicDeviceId_, &handle);
+        if (importRet != BM_OK) {
+            BM_LOG_ERROR("HalMemImport failed, local sdid:" << sdid_ << " remote ssid:" << im.sdid
+                                                            << " rank=" << im.rankId);
+            if (options_.enable56BitsGva) {
+                ReleaseMmapLva(lva);
+            }
+            imports_.clear();
             return BM_ERROR;
         }
 
-        ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(lva), im.size, 0, handle, 0);
+        auto ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(lva), im.size, 0, handle, 0);
         if (ret != BM_OK) {
             BM_LOG_ERROR("HalMemMap memory failed:" << ret << " gva:" << VaToStr(im.gva) << " va:" << VaToStr(lva)
                                                     << " dva:" << VaToStr(im.deviceVa) << " size:" << im.size);
             DlHalApi::HalMemRelease(handle);
             if (options_.enable56BitsGva) {
-                HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
+                ReleaseMmapLva(lva);
             }
+            imports_.clear();
             return BM_ERROR;
         }
 
@@ -656,6 +688,9 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         if (ret != BM_OK) {
             DlHalApi::HalMemUnmap(reinterpret_cast<void *>(lva));
             DlHalApi::HalMemRelease(handle);
+            if (options_.enable56BitsGva) {
+                ReleaseMmapLva(lva);
+            }
             imports_.clear();
             return ret;
         }

@@ -164,6 +164,7 @@ using rtSetIpcMemorySuperPodPidFunc = int32_t (*)(const char *, uint32_t, int32_
 using rtIpcDestroyMemoryNameFunc = int32_t (*)(const char *);
 using rtEnableP2PFunc = int32_t (*)(uint32_t, uint32_t, uint32_t);
 using rtDisableP2PFunc = int32_t (*)(uint32_t, uint32_t);
+using rtGetP2PStatusFunc = int32_t (*)(uint32_t, uint32_t, uint32_t *);
 using rtGetLogicDevIdByUserDevIdFunc = int32_t (*)(const int32_t, int32_t *const);
 using aclrtGetPhyDevIdByLogicDevIdFunc = int32_t (*)(const int32_t, int32_t *const);
 using rtIpcOpenMemoryFunc = int32_t (*)(void **, const char *);
@@ -531,6 +532,14 @@ public:
         return pRtDisableP2P(devIdDes, phyIdSrc);
     }
 
+    static inline Result RtGetP2PStatus(uint32_t devId, uint32_t peerDevId, uint32_t &status) noexcept
+    {
+        if (pRtGetP2PStatus == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pRtGetP2PStatus(devId, peerDevId, &status);
+    }
+
     static inline Result RtGetLogicDevIdByUserDevId(const int32_t userDevId, int32_t *const logicDevId)
     {
         if (pRtGetLogicDevIdByUserDevId == nullptr) {
@@ -603,6 +612,7 @@ private:
     static aclrtGetVersionFunc pAclrtGetVersion;
     static rtEnableP2PFunc pRtEnableP2P;
     static rtDisableP2PFunc pRtDisableP2P;
+    static rtGetP2PStatusFunc pRtGetP2PStatus;
     static rtMemcpyAsyncFunc pRtMemcpyAsync;
     static rtGetLogicDevIdByUserDevIdFunc pRtGetLogicDevIdByUserDevId;
     static aclrtGetPhyDevIdByLogicDevIdFunc pAclrtGetPhyDevIdByLogicDevId;

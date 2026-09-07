@@ -61,6 +61,7 @@ aclrtGetSocNameFunc DlAclApi::pAclrtGetSocName = nullptr;
 aclrtGetVersionFunc DlAclApi::pAclrtGetVersion = nullptr;
 rtEnableP2PFunc DlAclApi::pRtEnableP2P = nullptr;
 rtDisableP2PFunc DlAclApi::pRtDisableP2P = nullptr;
+rtGetP2PStatusFunc DlAclApi::pRtGetP2PStatus = nullptr;
 rtMemcpyAsyncFunc DlAclApi::pRtMemcpyAsync = nullptr;
 rtGetLogicDevIdByUserDevIdFunc DlAclApi::pRtGetLogicDevIdByUserDevId = nullptr;
 aclrtGetPhyDevIdByLogicDevIdFunc DlAclApi::pAclrtGetPhyDevIdByLogicDevId = nullptr;
@@ -128,6 +129,7 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM_OPTIONAL(pAclrtGetVersion, aclrtGetVersionFunc, rtHandle, "aclrtGetVersion");
     DL_LOAD_SYM(pRtEnableP2P, rtEnableP2PFunc, rtHandle, "rtEnableP2P");
     DL_LOAD_SYM(pRtDisableP2P, rtDisableP2PFunc, rtHandle, "rtDisableP2P");
+    DL_LOAD_SYM_OPTIONAL(pRtGetP2PStatus, rtGetP2PStatusFunc, rtHandle, "rtGetP2PStatus");
     DL_LOAD_SYM(pRtGetLogicDevIdByUserDevId, rtGetLogicDevIdByUserDevIdFunc, rtHandle, "rtGetLogicDevIdByUserDevId");
     DL_LOAD_SYM_OPTIONAL(pAclrtGetPhyDevIdByLogicDevId, aclrtGetPhyDevIdByLogicDevIdFunc, rtHandle,
                          "aclrtGetPhyDevIdByLogicDevId");
@@ -217,6 +219,7 @@ void DlAclApi::CleanupLibrary()
     pRtIpcSetMemoryName = nullptr;
     pRtEnableP2P = nullptr;
     pRtDisableP2P = nullptr;
+    pRtGetP2PStatus = nullptr;
     pAclrtStreamGetId = nullptr;
     pAclrtCreateNotify = nullptr;
     pAclrtGetNotifyId = nullptr;

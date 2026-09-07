@@ -78,6 +78,7 @@ private:
                              drv_mem_handle_t *handle) noexcept;
     Result HalMemCreateAdapterFromHost(size_t size, drv_mem_handle_t **handle, drv_mem_prop prop);
     uint64_t ReserveLva(const HostSdmaExportInfo &im);
+    void ReleaseMmapLva(uint64_t lva) noexcept;
 
     std::vector<HostSdmaExportInfo> imports_;
     uint8_t *globalVirtualAddress_{nullptr}; // gva, if total size < 128t, it equal lva
