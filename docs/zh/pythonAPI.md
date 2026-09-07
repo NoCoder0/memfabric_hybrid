@@ -349,7 +349,6 @@ class BigMemory:
     def copy_data_batch(src_addrs, dst_addrs, sizes, count, type, flags, stream = 0) -> int:
     def set_group_event_handler(cb) -> int:
     def get_rank_id_by_gva(gva) -> int:
-    def copy_data_batch_partial_succeed(src_addrs, dst_addrs, sizes, count, type, flags, result) -> int:
     def wait() -> int:
 
 ```
@@ -390,8 +389,6 @@ class BigMemory:
 | set_group_event_handler参数cb   | 回调函数，签名 cb(rank_id: int, event: BmGroupEvent) |
 | get_rank_id_by_gva方法          | 根据GVA获取rank ID                                |
 | get_rank_id_by_gva参数gva       | 全局虚拟地址                                       |
-| copy_data_batch_partial_succeed方法 | 批量拷贝数据，允许部分失败                       |
-| copy_data_batch_partial_succeed参数result | 出参，记录哪些操作成功/失败                |
 | wait方法                        | 等待异步操作完成                                    |
 
 ## SHM接口

@@ -543,55 +543,6 @@ SMEM_API int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params *pa
     return ret;
 }
 
-SMEM_API int32_t smem_bm_copy_batch_partial_succeed(smem_bm_t handle, smem_batch_copy_params *params,
-                                                    smem_bm_copy_type t, uint32_t flags, smem_batch_copy_result *result)
-{
-    SM_VALIDATE_RETURN(handle != nullptr, "invalid param, handle is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params != nullptr, "params is null", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params->batchSize != 0, "batch size is zero", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params->dataSizes != nullptr, "dataSizes is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params->sources != nullptr, "src is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(params->destinations != nullptr, "dest is NULL", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(result != nullptr, "result is null", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(result->results != nullptr, "results pointer is null", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(result->batchSize == params->batchSize,
-                       "result batch size: " << result->batchSize
-                                             << " non-match param batch size: " << params->batchSize,
-                       SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(g_smemBmInited, "smem bm not initialized yet", SM_NOT_INITIALIZED);
-
-    SmemBmEntryPtr entry = nullptr;
-    auto ret = SmemBmEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
-    if (ret != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("input handle is invalid, result: " << ret);
-        return SM_INVALID_PARAM;
-    }
-
-    auto totalSize = std::accumulate(params->dataSizes, params->dataSizes + params->batchSize, 0UL);
-    SM_VALIDATE_RETURN(totalSize != 0, "total size is zero", SM_INVALID_PARAM);
-    void **sources = new (std::nothrow) void *[params->batchSize];
-    void **destinations = new (std::nothrow) void *[params->batchSize];
-    uint64_t *dataSizes = new (std::nothrow) uint64_t[params->batchSize];
-    if (sources == nullptr || destinations == nullptr || dataSizes == nullptr) {
-        delete[] sources;
-        delete[] destinations;
-        delete[] dataSizes;
-        SM_LOG_AND_SET_LAST_ERROR("failed to allocate batch copy params, batchSize: " << params->batchSize);
-        return SM_ERROR;
-    }
-    for (uint32_t i = 0; i < params->batchSize; ++i) {
-        sources[i] = params->sources[i];
-        destinations[i] = params->destinations[i];
-        dataSizes[i] = params->dataSizes[i];
-    }
-    smem_batch_copy_params paramsCopy = {sources, destinations, dataSizes, params->batchSize, params->stream};
-    ret = entry->DataCopyBatchConcurrent(&paramsCopy, t, flags, result);
-    delete[] sources;
-    delete[] destinations;
-    delete[] dataSizes;
-    return ret;
-}
-
 SMEM_API int32_t smem_bm_wait(smem_bm_t handle)
 {
     SM_VALIDATE_RETURN(handle != nullptr, "invalid param, handle is NULL", SM_INVALID_PARAM);

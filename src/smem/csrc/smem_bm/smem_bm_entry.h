@@ -55,7 +55,7 @@ struct SmemBmConsistencyConfig {
 class SmemBmEntry : public SmReferable {
 public:
     explicit SmemBmEntry(const SmemBmEntryOptions &options, const StorePtr &store)
-        : options_(options), _configStore(store), executorService_{2U}, coreOptions_{}, entityInfo_{}
+        : options_(options), _configStore(store), coreOptions_{}, entityInfo_{}
     {}
 
     ~SmemBmEntry() override
@@ -83,9 +83,6 @@ public:
     Result DataCopy(const void *src, void *dest, uint64_t size, smem_bm_copy_type t, void *stream, uint32_t flags);
 
     Result DataCopyBatch(smem_batch_copy_params *params, smem_bm_copy_type t, uint32_t flags);
-
-    Result DataCopyBatchConcurrent(smem_batch_copy_params *params, smem_bm_copy_type t, uint32_t flags,
-                                   smem_batch_copy_result *results);
 
     Result Wait();
 
@@ -149,7 +146,6 @@ private:
     SmemBmEntryOptions options_;
     hybm_options coreOptions_;
     StorePtr _configStore;
-    ExecutorService executorService_;
     hybm_exchange_info entityInfo_;
     std::vector<hybm_mem_slice_t> slices_;
     std::vector<hybm_exchange_info> sliceInfos_;

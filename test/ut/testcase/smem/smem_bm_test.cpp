@@ -830,34 +830,6 @@ TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_not_joined)
     EXPECT_EQ(ret, SM_NOT_STARTED);
 }
 
-TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_not_joined)
-{
-    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    char src[K_UT_BUF_SIZE] = "test data";
-    char dest[K_UT_BUF_SIZE] = {0};
-    void *sources[] = {src};
-    void *destinations[] = {dest};
-    uint64_t sizes[] = {sizeof(src)};
-    int32_t resultArray[] = {-1};
-
-    smem_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = sizes;
-    params.batchSize = 1;
-
-    smem_batch_copy_result results{};
-    results.results = resultArray;
-    results.batchSize = 1;
-
-    ock::smem::Result ret = entry.DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, SM_NOT_STARTED);
-}
-
 // Wait: 正常执行路径。
 TEST_F(SmemBmTest, smem_bm_entry_wait_success)
 {
@@ -1399,50 +1371,6 @@ TEST_F(SmemBmTest, smem_bm_copy_batch_not_joined)
     free(param.destinations);
     free(mockHost);
 
-    smem_bm_destroy(handle);
-    smem_bm_uninit(0);
-}
-
-TEST_F(SmemBmTest, smem_bm_copy_batch_partial_succeed_not_joined)
-{
-    smem_bm_t handle = MockInitAndCreateHandle(K_UT_ENTRY_ID_PARTIAL_SUCCEED);
-
-    constexpr uint32_t partialBatchSize = 2;
-    constexpr uint64_t largeCopySize = 5UL * 1024UL * 1024UL;
-    auto *src0 = malloc(largeCopySize);
-    auto *src1 = malloc(largeCopySize);
-    auto *dst0 = malloc(largeCopySize);
-    auto *dst1 = malloc(largeCopySize);
-    EXPECT_NE(src0, nullptr);
-    EXPECT_NE(src1, nullptr);
-    EXPECT_NE(dst0, nullptr);
-    EXPECT_NE(dst1, nullptr);
-
-    void *sources[partialBatchSize] = {src0, src1};
-    void *destinations[partialBatchSize] = {dst0, dst1};
-    uint64_t sizes[partialBatchSize] = {largeCopySize, largeCopySize};
-    smem_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = sizes;
-    params.batchSize = partialBatchSize;
-
-    int32_t resultArray[partialBatchSize] = {SM_OK, SM_OK};
-    smem_batch_copy_result result{};
-    result.results = resultArray;
-    result.batchSize = partialBatchSize;
-
-    MOCKER_CPP(&SmemBmEntry::DataCopyBatchConcurrent,
-               int32_t(*)(smem_batch_copy_params *, smem_bm_copy_type, uint32_t, smem_batch_copy_result *))
-        .stubs()
-        .will(returnValue(static_cast<int32_t>(SM_NOT_STARTED)));
-    auto ret = smem_bm_copy_batch_partial_succeed(handle, &params, SMEMB_COPY_H2GH, 0, &result);
-    EXPECT_EQ(ret, SM_NOT_STARTED);
-
-    free(src0);
-    free(src1);
-    free(dst0);
-    free(dst1);
     smem_bm_destroy(handle);
     smem_bm_uninit(0);
 }
@@ -2232,112 +2160,6 @@ TEST_F(SmemBmTest, smem_bm_get_rank_id_simple)
 TEST_F(SmemBmTest, smem_bm_extend_local_mem_zero_size)
 {
     int32_t ret = smem_bm_extend_local_mem(nullptr, SMEM_MEM_TYPE_HOST, 0);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
-// DataCopyBatchConcurrent with null results
-TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_null_results)
-{
-    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    char src[K_UT_BUF_SIZE] = "test";
-    char dest[K_UT_BUF_SIZE] = {0};
-    void *sources[] = {src};
-    void *destinations[] = {dest};
-    uint64_t sizes[] = {sizeof(src)};
-    smem_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = sizes;
-    params.batchSize = 1;
-
-    ock::smem::Result ret = entry.DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, nullptr);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
-// DataCopyBatchConcurrent with null inner results
-TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_null_inner_results)
-{
-    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    char src[K_UT_BUF_SIZE] = "test";
-    char dest[K_UT_BUF_SIZE] = {0};
-    void *sources[] = {src};
-    void *destinations[] = {dest};
-    uint64_t sizes[] = {sizeof(src)};
-    smem_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = sizes;
-    params.batchSize = 1;
-
-    smem_batch_copy_result results{};
-    results.results = nullptr;
-    results.batchSize = 1;
-
-    ock::smem::Result ret = entry.DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
-// DataCopyBatchConcurrent with mismatched batch sizes
-TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_mismatch_batch)
-{
-    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    char src[K_UT_BUF_SIZE] = "test";
-    char dest[K_UT_BUF_SIZE] = {0};
-    void *sources[] = {src};
-    void *destinations[] = {dest};
-    uint64_t sizes[] = {sizeof(src)};
-    smem_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = sizes;
-    params.batchSize = 1;
-
-    int32_t resultArray[1] = {0};
-    smem_batch_copy_result results{};
-    results.results = resultArray;
-    results.batchSize = K_UT_WORLD_SIZE; // mismatch 2
-
-    ock::smem::Result ret = entry.DataCopyBatchConcurrent(&params, SMEMB_COPY_G2G, 0, &results);
-    EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
-}
-
-// DataCopyBatchConcurrent with invalid copy type
-TEST_F(SmemBmTest, smem_bm_entry_data_copy_batch_concurrent_invalid_type)
-{
-    SmemBmEntryOptions opt{K_UT_SMEM_ID, 0, 1, K_UT_TIMEOUT_MS};
-    StorePtr dummyStore;
-    SmemBmEntry entry(opt, dummyStore);
-    entry.inited_ = true;
-
-    char src[K_UT_BUF_SIZE] = "test";
-    char dest[K_UT_BUF_SIZE] = {0};
-    void *sources[] = {src};
-    void *destinations[] = {dest};
-    uint64_t sizes[] = {sizeof(src)};
-    smem_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = sizes;
-    params.batchSize = 1;
-
-    int32_t resultArray[1] = {0};
-    smem_batch_copy_result results{};
-    results.results = resultArray;
-    results.batchSize = 1;
-
-    ock::smem::Result ret = entry.DataCopyBatchConcurrent(&params, SMEMB_COPY_BUTT, 0, &results);
     EXPECT_EQ(ret, ock::smem::SM_INVALID_PARAM);
 }
 
