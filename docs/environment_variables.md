@@ -19,6 +19,7 @@
 | `MF_HYBM_URMA_SWAP_SPACE_SIZE` | 0 | URMA交换空间大小（单位MB），用于device_urma数据传输未注册内存的中转内存。设为0时跳过交换空间分配，未注册内存路径将直接返回错误。 |
 | `MF_HYBM_RDMA_FORCE_UNREGISTERED` | 0 | 强制RDMA跳过内存注册检查路径。设为非0值时，`BatchDataCopy`直接走未注册路径发起RDMA读写。 |
 | `MF_HYBM_ENABLE_4K_PAGE` | 0  | RMDA场景默认拦截4K页，设为非0值时，开放支持。 |
+| `MF_DEVICE_UB_QOS` | 0 | device_urma/device_uboe 的 HCOMM channel QoS，取值范围0-7，数值越大优先级越高；非法值回退为0。 |
 | `MF_LOG_LEVEL` | 无 | MemFabric日志级别，取值范围0-4（0:DEBUG, 1:INFO, 2:WARN, 3:ERROR, 4:OFF）。**仅Python接口下生效，bm/shm场景不生效。** |
 | `MF_CONFIG_STORE_URL` | 无（必填） | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`。 |
 | `MF_CONFIG_STORE_PORT_START` | 9000 | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。TransferEngine在`session_id`未指定端口（如`ip`/`ip:0`）时自动选端口亦使用此范围。 |
