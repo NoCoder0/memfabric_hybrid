@@ -32,6 +32,8 @@ typedef struct {
     uint32_t worldSize;    /* number of ranks in the group (used in SHARED scene) */
     uint32_t rankId;       /* local rank id, 0 is the allocator (used in SHARED scene) */
     offload_scene_t scene; /* LOCAL: single-card pool; SHARED: multi-card shared pool */
+    char storeUrl[64];     /* Explicit config store url for the shared pool rendezvous
+                                                 (e.g. "tcp://127.0.0.1:8500"). */
 } offload_config_t;
 
 /**

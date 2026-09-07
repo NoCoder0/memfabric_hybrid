@@ -1,11 +1,23 @@
-# mf_adapter数据传输工具示例
+# memfabric_hybrid 数据传输示例
 
-## 简介
+## 目录说明
 
-本工具基于 `mf_adapter` 库实现了两个节点（Prefill 节点与 Decode 节点）之间的高效数据传输功能，适用于基于昇腾 NPU
-的分布式计算场景。通过内存注册与直接内存访问，实现了跨节点数据的快速传输，避免了传统 IO 操作的性能开销。
+本目录包含基于 memfabric_hybrid 传输引擎（mf_adapter / TransferEngine）的跨节点数据传输示例，适用于基于
+昇腾 NPU 的分布式计算场景。示例通过内存注册与直接内存访问实现节点间数据的高效传输，避免了传统 IO 操作的
+性能开销。
 
-## 功能说明
+各脚本均以 **Prefill**（数据生产方）与 **Decode**（数据消费方）两类角色运行，双方通过配置存储服务（store）
+协调发现，支持大规模张量数据（torch.Tensor）的传输。
+
+| 脚本 | 传输模式 | 说明 |
+|------|---------|------|
+| test_transfer_engine.py | push | 基础跨节点张量传输：Prefill 生成数据并主动写入 Decode |
+| test_quant_trans.py | push | 随路量化传输测试，命令行参数与 test_transfer_engine.py 相同 |
+| test_transfer_engine_rd2h.py | pull | SFA RD2H 场景 PD KV Cache 拉取传输，支持 Decode 侧多 rank |
+
+## test_transfer_engine.py：基础跨节点传输（push 模式）
+
+### 功能说明
 
 工具包含两种工作角色：
 
@@ -13,14 +25,14 @@
 
 * **Decode 角色**：负责接收并处理 Prefill 节点传输的数据
 
-两者通过配置存储服务（store\_url）进行协调，通过 RPC 端口进行通信，支持大规模张量数据（torch.Tensor）的高效传输。
+两者通过配置存储服务（store_url）进行协调，通过 RPC 端口进行通信。
 
-## 使用方法
+### 使用方法
 
-### 基本命令格式
+基本命令格式：
 
-```
-python test\_transfer\_engine.py \[参数]
+```bash
+python test_transfer_engine.py [参数]
 ```
 
 ### 参数说明
@@ -38,7 +50,7 @@ python test\_transfer\_engine.py \[参数]
 
 #### 1. 启动 Decode 节点
 
-```
+```bash
 python test_transfer_engine.py \
     --role Decode \
     --src-unique-id "127.0.0.1:50051" \
@@ -49,7 +61,7 @@ python test_transfer_engine.py \
 
 #### 2. 启动 Prefill 节点
 
-```
+```bash
 python test_transfer_engine.py \
     --role Prefill \
     --src-unique-id "127.0.0.1:50052" \
@@ -59,44 +71,161 @@ python test_transfer_engine.py \
     --log-level 1
 ```
 
-## 工作流程说明
+### 工作流程说明
 
 1. **初始化阶段**：
 
-* 两个节点分别启动并通过`engine.initialize()`初始化 TransferEngine
+    * 两个节点分别启动并通过`engine.initialize()`初始化 TransferEngine
 
-* Decode 节点与 Prefill 节点通过`store_url`进行配置同步，两个节点必须使用相同的`store_url`配置以确保能够相互发现
+    * Decode 节点与 Prefill 节点通过`store_url`进行配置同步，两个节点必须使用相同的`store_url`配置以确保能够相互发现
 
-* 双方通过各自的`src-unique-id`和目标节点的`dst-unique-id`建立通信通道，Prefill 节点的`dst-unique-id`必须与 Decode 节点的
-  `src-unique-id`完全一致（包括端口号）
+    * 双方通过各自的`src-unique-id`和目标节点的`dst-unique-id`建立通信通道，Prefill 节点的`dst-unique-id`必须与 Decode 节点的
+      `src-unique-id`完全一致（包括端口号）
 
 2. **数据传输阶段**：
 
-* Decode 节点创建接收缓冲区（大小为`(10, 50, 40, 20, 60)`的 float16 张量）并注册内存地址
+    * Decode 节点创建接收缓冲区（大小为`(10, 50, 40, 20, 60)`的 float16 张量）并注册内存地址
 
-* Prefill 节点生成随机张量数据，注册内存后通过`transfer_sync_write`方法将数据传输到 Decode 节点
+    * Prefill 节点生成随机张量数据，注册内存后通过`transfer_sync_write`方法将数据传输到 Decode 节点
 
-* 数据通过直接内存访问方式传输，避免数据拷贝
+    * 数据通过直接内存访问方式传输，避免数据拷贝
 
-3. **随路量化测试**
+3. 随路量化测试
 
-* 将测试脚本由test_transfer_engine.py替换为test_quant_trans.py,参数不变即可，需要手动观测日志打印的ret_quant和ret_scale的sum是否误差在可接受范围内
+    * 将测试脚本由test_transfer_engine.py替换为test_quant_trans.py,参数不变即可，需要手动观测日志打印的ret_quant和ret_scale的sum是否误差在可接受范围内
 
-## 故障排查
+### 故障排查
 
 1. **初始化失败**：
 
-* 检查 store\_url 是否可访问（可使用`telnet ip port`验证端口连通性），需使用所有节点均可访问的 TCP 地址，建议使用固定端口（如
-  `tcp://``192.168.1.1:23456`）
+    * 检查 store_url 是否可访问（可使用`telnet ip port`验证端口连通性），需使用所有节点均可访问的 TCP 地址，建议使用固定端口（如
+      `tcp://192.168.1.1:23456`）
 
-* 确认`src-unique-id`格式正确且未被占用
+    * 确认`src-unique-id`格式正确且未被占用
 
-* 验证 NPU 设备是否正常工作（可通过`npu-smi info`命令检查）
+    * 验证 NPU 设备是否正常工作（可通过`npu-smi info`命令检查）
 
 2. **数据传输失败**：
 
-* 检查 Prefill 节点的`dst-unique-id`是否与 Decode 节点的`src-unique-id`完全一致
+    * 检查 Prefill 节点的`dst-unique-id`是否与 Decode 节点的`src-unique-id`完全一致
 
-* 确认两个节点的内存注册成功（日志中包含`register success`）
+    * 确认两个节点的内存注册成功（日志中包含`register success`）
 
-* 查看 debug 级日志（`--log-level 0`）获取详细错误信息
+    * 查看 debug 级日志（`--log-level 0`）获取详细错误信息
+
+## test_transfer_engine_rd2h.py：SFA RD2H PD KV Cache 拉取传输（pull 模式）
+
+### 简介
+
+仿照 vllm-ascend `SfaRemoteD2HConnector` + `SparseKVOffloadManager` 的生产用法，模拟 SFA 场景下
+Prefill/Decode 分离部署的 main KV Cache 拉取（pull）传输：
+
+* **Prefill 侧**：按 MLA/SFA main cache 布局（bf16）生成每层 KV，仅 `register_memory` 注册源内存，从不主动写数据
+* **Decode 侧多 rank**：每 rank 一个进程模拟多卡，共享同一 DRAM offload 池（仅 rank0 分配、其余挂接），池基地址经
+  **HCCL broadcast** 同步（等价生产 `tp_group.broadcast(gvas)`，不经 Prefill 中继）
+* 各 rank 独立初始化 TransferEngine，按 `tp_block_range` 均分区间拉取各自分片；完成后 rank0 用同 seed 重放期望
+  KV 全量校验，并演示 `sparse_copy` 将 decode 新增 KV 直写 CPU 池（D2H）
+
+与 test_transfer_engine.py 的主要差异：
+
+| 维度 | test_transfer_engine.py | test_transfer_engine_rd2h.py |
+|------|-------------------------|-------------------------------|
+| 传输模式 | push（P 主动写 D） | pull（D 各 rank 主动读 P） |
+| 数据布局 | 任意张量 | MLA/SFA main KV cache（k/v 分离 + block table） |
+| Decode 并行 | 单进程 | 多 rank（共享池 + HCCL 广播 + 块区间切分） |
+| 目的内存 | D 侧注册的接收缓冲 | D 侧共享 offload DRAM 池（无需注册） |
+| 正确性校验 | 传输后比对 | seed 重放逐块全量校验 + D2H 演示 |
+| 性能统计 | 无 | warmup/iterations 多轮纯传输带宽（均值/最好） |
+
+默认参数（32 层 × 128 块）下单层 K+V 为 18 MiB、每轮约 576 MiB；默认 1 轮 warmup + 3 轮测量，单次约 2.25 GiB。
+
+### 参数说明
+
+| 参数名 | 必选 | 说明 |
+|-------|----|------|
+| --role | 是 | 工作角色：`Prefill` 或 `Decode` |
+| --local-ip | 否 | 本机 IPv4，默认 `127.0.0.1`；跨机须传对端可达的本机网卡 IP |
+| --prefill-ip | 否 | Prefill 机器 IPv4，默认 `127.0.0.1`；跨机须传真实 Prefill IP |
+| --npu-id | 否 | launcher 模式：Decode 起始卡号（rank r 用 `起始+r`，默认 0）；手动 `--tp-rank` 模式：可选，默认等于 rank，可指定任意卡号 |
+| --tp-size | 否 | Decode TP rank 数，默认 1 |
+| --tp-rank | 否 | Decode TP rank；缺省时一条命令拉起全部 rank 子进程 |
+| --decode-tp-size | 否 | 期望的 Decode rank 数（仅 Prefill 侧），默认 1 |
+| --control-port | 否 | TCP 控制通道端口，默认 29598 |
+| --dist-port | 否 | Decode HCCL 进程组 TCPStore 端口，默认 29599 |
+| --num-layers | 否 | KV cache 层数，默认 32 |
+| --num-blocks | 否 | 每层物理块数，默认 128 |
+| --block-size | 否 | 每块 token 数，默认 128 |
+| --kv-lora-rank | 否 | MLA kv_lora_rank（k 维），默认 512 |
+| --qk-rope-head-dim | 否 | MLA qk_rope_head_dim（v 维），默认 64 |
+| --dram-pool-gb | 否 | Decode 共享 offload DRAM 池大小（GiB），默认 2 |
+| --warmup | 否 | 预热轮数（不计入统计），默认 1 |
+| --iterations | 否 | 测量轮数（报均值/最好带宽），默认 3 |
+| --seed | 否 | mock 数据随机种子，默认 2026 |
+| --log-level | 否 | 日志级别：0 (debug)、1 (info)、2 (warn)、3 (error)，默认 2 |
+| --timeout | 否 | 控制通道超时（秒），默认 120 |
+
+约束：`num_layers * 2` 不得超过 256（底层 HCCL 注册 region 上限）；Decode 多 rank 必须在同一台机器上
+（共享 DRAM 池要求）。
+
+### 运行步骤
+
+单机快速验证两侧均可省略 `--local-ip` 与 `--prefill-ip`；跨机部署两侧都须传对端可达的 `--local-ip`（P 侧地址会
+进入 session id 供 D 回连），Decode 侧还须传真实 `--prefill-ip`。
+
+#### 1. 启动 Prefill 侧（store server）
+
+```bash
+python test_transfer_engine_rd2h.py --role Prefill --decode-tp-size 2 --npu-id 0
+```
+
+#### 2. 启动 Decode 侧（一条命令拉起全部 rank）
+
+Decode 与 Prefill 不能共用同一张卡，需通过 `--npu-id` 指定起始卡号（须与 Prefill 所用卡不同，例如 Prefill 用
+`--npu-id 0`，Decode 用 `--npu-id 1`，rank r 实际使用 `--npu-id + r`）：
+
+```bash
+python test_transfer_engine_rd2h.py --role Decode --npu-id 1 --tp-size 2
+```
+
+手动指定 rank 单独启动（等价上一条命令）或调整测量轮数：
+
+```bash
+python test_transfer_engine_rd2h.py --role Decode --npu-id 1 --tp-rank 1 --tp-size 2                # 指定 rank
+python test_transfer_engine_rd2h.py --role Decode --npu-id 1 --tp-size 2 --warmup 2 --iterations 10 # 调轮数
+```
+
+> 说明：`--npu-id` 在 launcher 模式（不传 `--tp-rank`）作为起始卡号，rank r 用 `--npu-id + r`；手动 `--tp-rank` 模式下
+> 可选，默认等于 rank，也可显式指定任意卡号（rank 与卡号不绑定）。
+
+#### 3. 观察结果
+
+两侧均输出 `PASS` 即成功，例如：
+
+```text
+[P] PASS: layers=32, decode_ranks=2, bytes=603979776/round, iterations=3,
+    transfer_bw=23.81 GiB/s (best 24.35), d2h_demo_ok=True
+[D1] PASS: pulled bytes=301989888/round, blocks=[64,128), transfer_bw=23.81 GiB/s (best 24.35), d2h_demo_ok=True
+```
+
+* `bytes/round`：单轮拉取总字节数（各 rank 分片之和）
+* `transfer_bw`：纯传输带宽（仅计时 `batch_transfer_sync_read`，不含描述符构建），多轮取均值，括号内为最好一轮
+* P 侧会打印 `desc X.XXXs, transfer X.XXXs per round`，可观察描述符构建开销占比；校验失败以 `verification failed`
+  报错退出，不会输出 PASS
+
+### 工作流程说明
+
+控制协议（P 与每个 D rank 之间的 TCP JSON 通道）：
+
+```text
+hello → init → pool_ready → meta → pull_done(各轮) → verify → final
+```
+
+1. **握手**：各 D rank 连接 P 并上报 tp_rank；P 校验 rank 集合完整
+2. **共享池建立**：P 下发 `init`；各 rank 初始化 offload 共享池（内部 GroupBarrier 会合），rank0 分配 CPU 池张量，
+   基地址经 HCCL broadcast 同步到所有 rank，随后 rank0 向 P 上报 `pool_ready`
+3. **元数据下发**：P 将每层 KV 基地址、块长、非连续 block table（seed 确定的 randperm）等打包为 `meta` 广播下发
+4. **分片拉取**：各 rank 按 `tp_block_range` 划分的块区间构造读描述符（按 block table 映射源地址，连续块自动合并），
+   调用 `batch_transfer_sync_read` 从 P 的 HBM 拉入共享池；warmup 轮静默执行，测量轮分段计时
+5. **全量校验**：所有轮完成后 rank0 用相同 seed 重放的期望 KV 对整个共享池逐层逐块 `torch.equal` 比对，
+   并运行 `sparse_copy` D2H 演示（失败仅告警）
+6. **收尾**：P 汇总各 rank 各轮纯传输用时（按轮取最慢 rank），计算均值/最好带宽并下发 `final`

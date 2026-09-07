@@ -12,6 +12,8 @@
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 
+#include <string>
+
 #include <pybind11/pybind11.h>
 #include <pybind11/pytypes.h>
 #include <pybind11/stl.h>
@@ -39,7 +41,19 @@ void DefineAccOffloadConfig(py::module_ &m)
                        "number of ranks in the group (multi-card shared mode)")
         .def_readwrite("rank_id", &offload_config_t::rankId, "local rank id, 0 is the server (multi-card shared mode)")
         .def_readwrite("scene", &offload_config_t::scene,
-                       "memory pool scene: LOCAL=single-card, SHARED=multi-card shared");
+                       "memory pool scene: LOCAL=single-card, SHARED=multi-card shared")
+        .def_property(
+            "store_url", [](const offload_config_t &config) { return std::string(config.storeUrl); },
+            [](offload_config_t &config, const std::string &url) {
+                if (url.size() >= sizeof(config.storeUrl)) {
+                    throw py::value_error("store_url too long, max 63 bytes, url: " + url);
+                }
+                url.copy(config.storeUrl, url.size());
+                config.storeUrl[url.size()] = '\0';
+            },
+            "Explicit config store url of the shared pool (e.g. tcp://127.0.0.1:8500), identical across "
+            "ranks of one group; empty falls back to the derived port 8500 + device_id // world_size, "
+            "which requires contiguous device ids aligned to world_size");
 }
 
 void DefineAccOffloadApi(py::module_ &m)

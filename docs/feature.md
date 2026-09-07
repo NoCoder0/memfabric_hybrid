@@ -109,7 +109,7 @@ LOCAL场景详情参考[local_dram_offload示例](../examples/kv_offload/local_d
 1. `from memfabric_hybrid import offload`。
 2. 构造OffloadConfig，调用offload.initialize接口初始化。
    - LOCAL场景：设置device_id、reserve_size、alloc_size（两者需相等），scene保持默认LOCAL。
-   - SHARED场景：设置device_id、reserve_size、alloc_size（传实际值）、world_size、rank_id，scene设为offload.Scene.SHARED。
+   - SHARED场景：设置device_id、reserve_size、alloc_size（传实际值）、world_size、rank_id，scene设为offload.Scene.SHARED；如显式指定共享池的config store地址，需再设置store_url（同组各rank保持一致）。
 3. 调用offload.empty分配内存并获得torch.Tensor，或调用offload.malloc获得地址。
 4. 调用offload.sparse_copy接口在device上执行批量稀疏拷贝。
 5. 调用offload.free释放内存，调用offload.uninitialize退出。
