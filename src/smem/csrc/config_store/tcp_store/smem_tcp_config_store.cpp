@@ -381,8 +381,10 @@ Result TcpConfigStore::GetReal(const std::string &key, std::vector<uint8_t> &val
 
     auto responseCode = response->Header().result;
     if (responseCode != 0 && responseCode != RESTORE) {
-        if (responseCode != NOT_EXIST) {
-            STORE_LOG_DEBUG("send get for key: " << key << ", resp code: " << responseCode << " timeout:" << timeoutMs);
+        if (responseCode != NOT_EXIST && response->DataPtr() != nullptr) {
+            std::string data(reinterpret_cast<char *>(response->DataPtr()), response->DataLen());
+            STORE_LOG_DEBUG("send get for key: " << key << ", resp code: " << responseCode << ", timeout:" << timeoutMs
+                                                 << ", reason:" << data);
         }
         return responseCode;
     }
