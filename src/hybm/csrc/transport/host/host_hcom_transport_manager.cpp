@@ -66,6 +66,18 @@ HcomRuntimeConfig LoadHcomRuntimeConfig()
     return runtimeConfig;
 }
 
+// Split ';' separated peer nic urls into per-ep urls (multi-link broadcast from remote side).
+static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
+{
+    auto urls = StrUtil::Split(nic, ';');
+    for (const auto &url : urls) {
+        auto seg = StrUtil::StrTrim(url);
+        if (!seg.empty()) {
+            out.emplace_back(seg);
+        }
+    }
+}
+
 void HcomExternalLoggerAdapter(int level, const char *msg)
 {
     const char *safeMsg = (msg == nullptr) ? "" : msg;
@@ -420,8 +432,11 @@ Result HcomTransportManager::Prepare(const HybmTransPrepareOptions &param)
     toAddRanks.reserve(options.size());
     for (const auto &item : options) {
         auto rankId = item.first;
-        auto nic = item.second.nic;
-        nics_[rankId][0] = nic;
+        std::vector<std::string> eps;
+        SplitRankNics(item.second.nic, eps);
+        for (uint32_t ep = 0; ep < eps.size() && ep < epCount_; ++ep) {
+            nics_[rankId][ep] = eps[ep];
+        }
         toAddRanks.emplace_back(rankId);
     }
     reconnect_.AddRanks(toAddRanks);
@@ -624,9 +639,13 @@ Result HcomTransportManager::UpdateRankConnectInfos(const std::unordered_map<uin
         }
         auto it = opt.find(i);
         if (it != opt.end()) {
-            nics_[i][0] = it->second.nic;
+            std::vector<std::string> eps;
+            SplitRankNics(it->second.nic, eps);
+            for (uint32_t ep = 0; ep < eps.size() && ep < epCount_; ++ep) {
+                nics_[i][ep] = eps[ep];
+            }
             addRankList.emplace_back(i);
-            BM_LOG_DEBUG("UpdateRankConnectInfos: saved nics for rank " << i << " url=" << nics_[i][0]);
+            BM_LOG_DEBUG("UpdateRankConnectInfos: saved nics for rank " << i << " epCount: " << eps.size());
         }
     }
 

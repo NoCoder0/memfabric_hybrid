@@ -117,7 +117,13 @@ Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
             CloseDevice();
             return BM_ERROR;
         }
-        ss << HOST_TRANSPORT_TYPE << hostTransportManager_->GetNic() << NIC_DELIMITER;
+        // host nic may carry several urls(';'-separated for multi-link); broadcast each as a host# segment
+        for (const auto &url : StrUtil::Split(hostTransportManager_->GetNic(), NIC_DELIMITER)) {
+            if (url.empty()) {
+                continue;
+            }
+            ss << HOST_TRANSPORT_TYPE << url << NIC_DELIMITER;
+        }
     }
     if (options_.protocol & DEVICE_PROTOCOL) {
         if (deviceTransportManager_ == nullptr) {
@@ -285,12 +291,15 @@ void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOption
             continue;
         }
         TransportRankPrepareInfo info{};
+        std::string joinedNic;
         std::vector<std::string> nicVec = StrUtil::Split(item.second.nic, NIC_DELIMITER);
         for (const auto &nic : nicVec) {
             if (StrUtil::StartWith(nic, HOST_TRANSPORT_TYPE)) {
-                info.nic = nic.substr(HOST_TRANSPORT_TYPE.length());
+                auto url = nic.substr(HOST_TRANSPORT_TYPE.length());
+                joinedNic = joinedNic.empty() ? url : joinedNic + ";" + url;
             }
         }
+        info.nic = joinedNic;
 
         for (auto &key : item.second.memKeys) {
             TransportMemoryKey tmp{};
