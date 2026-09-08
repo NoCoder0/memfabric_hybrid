@@ -437,6 +437,8 @@ Result HcomTransportManager::QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, Tran
     CopyHcomOneSideKey(mrInfo.lKey, hostKey.hostKey.hcomInfo.lKey);
     hostKey.hostKey.hcomInfo.size = mrInfo.size;
     key = hostKey.commonKey;
+    BM_LOG_WARN("[DIAG] QueryByEp out ep=" << ep << " key0=0x" << std::hex << key.keys[0] << " key1=0x" << key.keys[1]
+                                           << std::dec);
     BM_LOG_INFO("Success to query memory key ep: " << ep << " addr:" << std::hex << mrInfo.addr
                                                    << " size:" << mrInfo.size);
     return BM_OK;
@@ -633,6 +635,8 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             continue;
         }
         for (const auto &memKey : item.second.memKeys) {
+            BM_LOG_WARN("[DIAG] import memKeys size=" << item.second.memKeys.size() << " raw key0=0x" << std::hex
+                                                      << memKey.keys[0] << " key1=0x" << memKey.keys[1] << std::dec);
             RegMemoryKeyUnion keyUnion{};
             keyUnion.commonKey = memKey;
             HcomMemoryRegion mrInfo{};
