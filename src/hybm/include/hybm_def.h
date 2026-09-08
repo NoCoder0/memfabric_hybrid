@@ -112,7 +112,7 @@ typedef enum {
 } hybm_role_type;
 
 typedef struct {
-    uint8_t desc[1280L];
+    uint8_t desc[2048L]; // 1280 -> 2048: multi-link exports one transport key per ep(nic)
     uint32_t descLen;
 } hybm_exchange_info;
 

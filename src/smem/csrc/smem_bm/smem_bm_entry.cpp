@@ -28,8 +28,8 @@
 namespace ock {
 namespace smem {
 
-// Max payload carried in hybm_exchange_info.desc[1280]; keep headroom for framework metadata.
-constexpr size_t EXCHANGE_INFO_PAYLOAD_MAX = 1152;
+// Max payload carried in hybm_exchange_info.desc[2048]; keep headroom for framework metadata.
+constexpr size_t EXCHANGE_INFO_PAYLOAD_MAX = 1920;
 // LinkState wire values (keep in sync with LinkState in smem_group_manager_server.h)
 constexpr int8_t BM_LINK_IDLE = 0;
 constexpr int8_t BM_LINK_CONNECTED = 4;
