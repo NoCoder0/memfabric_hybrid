@@ -260,10 +260,12 @@ int main(int argc, char *argv[])
                 srcs[i] = reinterpret_cast<void *>(selfGva + i * a.stride);
                 dsts[i] = reinterpret_cast<void *>(peerGva + dispBase + i * a.stride);
             }
+            uint64_t sumUs = 0;
+            const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t seq = 1;
-            for (uint32_t r = 0; r < a.rounds; ++r) {
+            for (uint32_t r = 0; r < kTotal; ++r) {
+                const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 拷贝接口(含写完成 flag)从调用到返回 */
                 smem_batch_copy_params p{srcs.data(), dsts.data(), sizes.data(), a.count, nullptr};
-                const uint64_t t0 = NowUs();
                 int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
                 if (ret == 0) {
                     void *srcFlagVa = nullptr;
@@ -275,24 +277,33 @@ int main(int argc, char *argv[])
                     ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
                 }
                 const uint64_t t1 = NowUs();
-                printf("baseline round %u ret=%d cost_us=%llu\n", r, ret,
-                       static_cast<unsigned long long>(t1 - t0));
                 if (ret != 0) {
+                    printf("baseline sender abort at iter %u ret=%d\n", r, ret);
                     break;
+                }
+                if (r >= 1) { /* r==0 为 warmup，不计时不打印 */
+                    const uint64_t cost = t1 - t0;
+                    sumUs += cost;
+                    printf("baseline sender round %u cost_us=%llu\n", r - 1,
+                           static_cast<unsigned long long>(cost));
                 }
                 ++seq;
             }
+            printf("baseline sender avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
         } else {
             PrintLabel("baseline (observer)");
+            uint64_t sumUs = 0;
+            const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
-            for (uint32_t r = 0; r < a.rounds; ++r) {
+            for (uint32_t r = 0; r < kTotal; ++r) {
                 void *flagVa = nullptr;
                 GvaToHostVa(bm, selfGva + flagOff, &flagVa);
                 if (flagVa == nullptr) {
-                    printf("baseline observer round %u flag_va_failed\n", r);
+                    printf("baseline observer flag_va_failed at iter %u\n", r);
                     break;
                 }
-                const uint64_t t0 = NowUs();
+                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到数据校验完 */
                 while (*reinterpret_cast<const uint64_t *>(flagVa) != expect) {
                     std::this_thread::sleep_for(std::chrono::microseconds(50));
                 }
@@ -306,10 +317,16 @@ int main(int argc, char *argv[])
                     }
                 }
                 const uint64_t t1 = NowUs();
-                printf("baseline observer round %u err=%d cost_us=%llu\n", r, bad,
-                       static_cast<unsigned long long>(t1 - t0));
+                if (r >= 1) { /* r==0 为 warmup，不计时不打印 */
+                    const uint64_t cost = t1 - t0;
+                    sumUs += cost;
+                    printf("baseline observer round %u err=%d cost_us=%llu\n", r - 1, bad,
+                           static_cast<unsigned long long>(cost));
+                }
                 ++expect;
             }
+            printf("baseline observer avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
         }
     }
 
@@ -322,10 +339,12 @@ int main(int argc, char *argv[])
                 srcs[i] = reinterpret_cast<void *>(selfGva + i * a.stride); /* 离散源 */
                 dsts[i] = reinterpret_cast<void *>(peerGva + i * a.size);   /* 连续 staging */
             }
+            uint64_t sumUs = 0;
+            const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t seq = 1;
-            for (uint32_t r = 0; r < a.rounds; ++r) {
+            for (uint32_t r = 0; r < kTotal; ++r) {
+                const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 拷贝 + 写完成 flag，从调用到返回 */
                 smem_batch_copy_params p{srcs.data(), dsts.data(), sizes.data(), a.count, nullptr};
-                const uint64_t t0 = NowUs();
                 int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
                 if (ret == 0) {
                     /* 完成 flag：本端镜像写 seq（GVA 内偏移，先转 VA 写入），再单发到对端 flag 槽 */
@@ -339,22 +358,31 @@ int main(int argc, char *argv[])
                     ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
                 }
                 const uint64_t t1 = NowUs();
-                printf("cont sender round %u ret=%d cost_us=%llu\n", r, ret,
-                       static_cast<unsigned long long>(t1 - t0));
                 if (ret != 0) {
+                    printf("cont sender abort at iter %u ret=%d\n", r, ret);
                     break;
+                }
+                if (r >= 1) { /* r==0 为 warmup，不计时不打印 */
+                    const uint64_t cost = t1 - t0;
+                    sumUs += cost;
+                    printf("cont sender round %u cost_us=%llu\n", r - 1,
+                           static_cast<unsigned long long>(cost));
                 }
                 ++seq;
             }
+            printf("cont sender avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
         } else {
             PrintLabel("cont (receiver poll+scatter)");
+            uint64_t sumUs = 0;
+            const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t expect = 1;
-            for (uint32_t r = 0; r < a.rounds; ++r) {
-                const uint64_t t0 = NowUs();
+            for (uint32_t r = 0; r < kTotal; ++r) {
+                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到 scatter+校验完 */
                 void *flagVa = nullptr;
                 GvaToHostVa(bm, selfGva + flagOff, &flagVa);
                 if (flagVa == nullptr) {
-                    printf("cont receiver round %u flag_va_failed\n", r);
+                    printf("cont receiver flag_va_failed at iter %u\n", r);
                     break;
                 }
                 while (*reinterpret_cast<const uint64_t *>(flagVa) != expect) {
@@ -372,10 +400,16 @@ int main(int argc, char *argv[])
                 }
                 *reinterpret_cast<uint64_t *>(flagVa) = 0; /* 清 flag */
                 const uint64_t t1 = NowUs();
-                printf("cont receiver round %u err=%d cost_us=%llu\n", r, bad,
-                       static_cast<unsigned long long>(t1 - t0));
+                if (r >= 1) { /* r==0 为 warmup，不计时不打印 */
+                    const uint64_t cost = t1 - t0;
+                    sumUs += cost;
+                    printf("cont receiver round %u err=%d cost_us=%llu\n", r - 1, bad,
+                           static_cast<unsigned long long>(cost));
+                }
                 ++expect;
             }
+            printf("cont receiver avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
         }
     }
 
