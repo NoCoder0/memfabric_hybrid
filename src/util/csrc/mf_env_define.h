@@ -61,6 +61,7 @@ inline const std::string MF_LOG_LEVEL = GetEnvStr("MF_LOG_LEVEL", "ASCEND_MF_LOG
 inline const std::string MF_SOCKET_URL = GetEnvStr("MF_SOCKET_URL");
 inline const std::string MF_TRANSPORT_MANAGER = GetEnvStr("MF_TRANSPORT_MANAGER", "TRANSPORT_MANAGER");
 inline const std::string MF_CONFIG_STORE_URL = GetEnvStr("MF_CONFIG_STORE_URL", "ASCEND_MF_STORE_URL");
+inline const std::string MF_CONFIG_STORE_HEARTBEAT_TIMEOUT_S = GetEnvStr("MF_CONFIG_STORE_HEARTBEAT_TIMEOUT_S");
 inline const std::string MF_CONFIG_STORE_PORT_START =
     GetEnvStr("MF_CONFIG_STORE_PORT_START", "MEMFABRIC_HYBRID_CONFIG_STORE_PORT_START");
 inline const std::string MF_CONFIG_STORE_PORT_END =
