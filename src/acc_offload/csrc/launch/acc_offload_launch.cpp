@@ -9,7 +9,10 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+
 #include <dlfcn.h>
+#include <filesystem>
+#include <cstring>
 #include "mf_file_util.h"
 #include "acc_offload_launch.h"
 
@@ -25,6 +28,19 @@ AccOffloadSparseCopyFunc AccOffloadLaunchApi::pAccOffloadSparseCopy = nullptr;
 
 AccOffloadGroupPackCopyFunc AccOffloadLaunchApi::pAccOffloadGroupPackCopy = nullptr;
 
+std::string AccOffloadLaunchApi::GetSelfLibDir()
+{
+    Dl_info info;
+    if (dladdr(static_cast<const void *>(&AccOffloadLaunchApi::gAccOffloadLibName), &info) == 0) {
+        return "";
+    }
+    std::string fname = info.dli_fname == nullptr ? "" : std::string(info.dli_fname);
+    if (fname.empty()) {
+        return "";
+    }
+    return std::filesystem::path(fname).parent_path().string();
+}
+
 int32_t AccOffloadLaunchApi::TryLoadLibrary()
 {
     std::unique_lock<std::mutex> guard(gMutex);
@@ -32,20 +48,15 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
         return OFFLOAD_OK;
     }
 
-    char *path = std::getenv("MEMFABRIC_HYBRID_EXTEND_LIB_PATH");
-    if (path == nullptr) {
-        OFFLOAD_LOG_WARN("Environment MEMFABRIC_HYBRID_EXTEND_LIB_PATH is not set.");
-        return OFFLOAD_ERROR;
-    }
-    std::string libPath = std::string(path);
-    if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
-        OFFLOAD_LOG_WARN("Environment MEMFABRIC_HYBRID_EXTEND_LIB_PATH check failed.");
+    std::string libDir = GetSelfLibDir();
+    if (libDir.empty()) {
+        OFFLOAD_LOG_WARN("failed to locate self library directory.");
         return OFFLOAD_ERROR;
     }
 
     std::string realPath;
-    if (!ock::mf::FileUtil::LibraryRealPath(libPath, std::string(gAccOffloadLibName), realPath)) {
-        OFFLOAD_LOG_WARN(libPath << " get lib path failed");
+    if (!ock::mf::FileUtil::LibraryRealPath(libDir, std::string(gAccOffloadLibName), realPath)) {
+        OFFLOAD_LOG_WARN(libDir << " get lib path failed");
         return OFFLOAD_ERROR;
     }
 

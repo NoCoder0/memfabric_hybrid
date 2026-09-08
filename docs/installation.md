@@ -44,6 +44,14 @@ A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
 
 详细说明见 [安装 HYBM AICPU OPS](installation_kernel.md)。
 
+### 4. acc_offload扩展库安装
+
+NPU 类型的 wheel 包内置 acc_offload 算子源码，安装编译为扩展库 `libmf_hybm_accoffload.so` 后，`memfabric_hybrid.offload` 的稀疏拷贝等能力才可用。
+
+`mfcli kernel install` 会在安装 AICPU 算子的同时编译安装该扩展库；环境不支持时（如 910B 芯片）自动跳过。
+
+通过 `mfcli kernel info` 查看扩展库的安装状态和安装路径。
+
 ---
 
 ## 二、 使用 C API

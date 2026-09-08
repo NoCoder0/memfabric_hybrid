@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 from setuptools import find_namespace_packages, setup
+from setuptools.command.build_py import build_py
 from setuptools.dist import Distribution
 from wheel.bdist_wheel import bdist_wheel
 
@@ -41,6 +42,63 @@ if xpu_type == "NONE":
     current_version += "+cpu"
 elif xpu_type == "GPU":
     current_version += "+gpu"
+
+
+_PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../../.."))
+
+# acc_offload extend sources, staged into the wheel under _kernel/acc_offload (sibling of the
+# prebuilt AICPU payload _kernel/hybm) for install-time compilation. NPU wheels only.
+_ACC_OFFLOAD_SRC_ASSETS = [
+    ("_kernel/acc_offload/operators", "src/acc_offload/csrc/operators"),
+    (
+        "_kernel/acc_offload/launch/acc_offload_operators_launch.cpp",
+        "src/acc_offload/csrc/launch/acc_offload_operators_launch.cpp",
+    ),
+]
+
+# Placeholder file shipped in the wheel lib dir; the install-time build overwrites
+# it with the real .so (empty placeholder = not built yet).
+_EXTEND_PLACEHOLDER_FILES = [
+    "lib/libmf_hybm_accoffload.so",
+]
+
+
+def _copy_acc_offload_assets(build_lib):
+    """Stage acc_offload extend sources and placeholder files into build_lib (NPU wheels only)."""
+    if xpu_type != "NPU":
+        return
+    pkg_build = os.path.join(build_lib, "memfabric_hybrid")
+    # Refresh only the acc_offload subtree: _kernel/hybm holds the prebuilt AICPU payload that
+    # build_py already copied from the source tree and must survive.
+    src_dir = os.path.join(pkg_build, "_kernel", "acc_offload")
+    if os.path.isdir(src_dir):
+        shutil.rmtree(src_dir)
+    for rel_dst, rel_src in _ACC_OFFLOAD_SRC_ASSETS:
+        dst_full = os.path.join(pkg_build, rel_dst)
+        os.makedirs(os.path.dirname(dst_full), exist_ok=True)
+        full_src = os.path.join(_PROJECT_ROOT, rel_src)
+        if os.path.isdir(full_src):
+            shutil.copytree(full_src, dst_full)
+        else:
+            shutil.copy2(full_src, dst_full)
+    lib_dir = os.path.join(pkg_build, "lib")
+    os.makedirs(lib_dir, exist_ok=True)
+    for rel in _EXTEND_PLACEHOLDER_FILES:
+        path = os.path.join(pkg_build, rel)
+        if not os.path.exists(path):
+            with open(path, "w") as f:
+                f.write("")
+    marker = os.path.join(pkg_build, ".acc_offload_provision_wheel_only")
+    with open(marker, "w") as f:
+        f.write("")
+
+
+class _BuildPy(build_py):
+    """Custom build_py staging acc_offload extend sources into build_lib (NPU wheels only)."""
+
+    def run(self):
+        super().run()
+        _copy_acc_offload_assets(self.build_lib)
 
 
 class BinaryDistribution(Distribution):
@@ -129,6 +187,8 @@ setup(
             "include/hybm/*.h",
             "VERSION",
             "_kernel/hybm/*",
+            "_kernel/acc_offload/operators/*",
+            "_kernel/acc_offload/launch/*",
         ]
     },
     entry_points={
@@ -137,6 +197,7 @@ setup(
         ]
     },
     cmdclass={
+        "build_py": _BuildPy,
         "bdist_wheel": BuildWheel,
     },
     distclass=BinaryDistribution,

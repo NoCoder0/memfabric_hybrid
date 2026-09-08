@@ -58,6 +58,24 @@ mfcli kernel version
 mfcli kernel uninstall
 ```
 
+## acc_offload 扩展库
+
+NPU 类型的 wheel 包内置 acc_offload 算子源码，安装编译为扩展库 `libmf_hybm_accoffload.so` 后，`memfabric_hybrid.offload` 的稀疏拷贝等能力才可用。
+
+`mfcli kernel install` 会在安装 AICPU 算子的同时编译安装该扩展库；环境不支持时（如 910B 芯片）自动跳过，不影响 AICPU 算子安装。
+
+如果环境无法自动检测 SoC 类型，请通过 `--soc-version` 显式指定：
+
+```bash
+mfcli kernel install --soc-version A3
+```
+
+取值：`A2` / `A3` / `A5`。不指定时自动检测 SoC 类型。
+
+通过 `mfcli kernel info` 查看扩展库的安装状态和安装路径。
+
+`mfcli kernel uninstall` 会将扩展库还原到未安装状态。
+
 ## 扫描 NUMA 空闲内存
 
 扫描所有 NUMA 节点：
@@ -101,3 +119,7 @@ export ASCEND_HOME_PATH=/path/to/cann
 ### 提示权限不足
 
 请使用对 CANN 安装目录具有读写权限的用户执行命令。
+
+### acc_offload 扩展库未安装
+
+请执行 `mfcli kernel install`。若环境不支持（如 910B 芯片、CANN 或 torch/torch_npu 未安装），请按安装日志提示修正环境后重新执行。
