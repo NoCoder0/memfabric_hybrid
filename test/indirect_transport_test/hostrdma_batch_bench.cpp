@@ -8,8 +8,8 @@
  *
  * 对称内存布局（每 rank 各自贡献 localDRAMSize，GVA 空间按 rank 排列）：
  *   [0, stagingEnd)                连续 staging（接收侧），默认 600KB
- *   [stagingEnd, +4096)            完成 flag 槽（8B，remote 单发写，local 轮询）
  *   [dispBase, dispBase+count*stride)   600 个离散目标/源（stride 间隔模拟离散）
+ *   [dramBytes-8, dramBytes)       完成 flag 槽（段尾，8B，remote 单发写，local 轮询）
  *   remote(rank1) 的 600 源放在自己段的 0..count*stride（离散）；
  *   local(rank0)  的 staging/flag/目标放在自己段内。
  *
@@ -165,12 +165,17 @@ int main(int argc, char *argv[])
     printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu rounds=%u\n", a.role.c_str(), a.rank, a.count,
            static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride), a.rounds);
 
-    /* 布局常量（两端同一公式） */
+    /* 布局常量（两端同一公式）
+       [0, stagingEnd)               连续 staging（接收侧）
+       [stagingEnd, +4096)           预留 gap
+       [dispBase, dispBase+count*stride)  600 个离散目标/源（stride 间隔模拟离散）
+       [dramBytes-8, dramBytes)      完成 flag 槽（放段尾，避开源/目标/staging 区） */
+    const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
-    const uint64_t flagOff = stagingEnd;                         /* 完成 flag 槽（8B） */
-    const uint64_t dispBase = flagOff + 4096;                    /* 离散源/目标区起点 */
+    const uint64_t dispBase = stagingEnd + 4096;                 /* 离散源/目标区起点 */
     const uint64_t needBytes = dispBase + a.count * a.stride;
-    if (a.dramMB * 1024 * 1024 < needBytes) {
+    const uint64_t flagOff = dramBytes - 8;                      /* 完成 flag 槽：段尾 8B */
+    if (needBytes > flagOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
@@ -245,23 +250,65 @@ int main(int argc, char *argv[])
     const bool runBase = (a.mode == "all" || a.mode == "baseline");
     const bool runCont = (a.mode == "all" || a.mode == "cont");
 
-    /* 场景 1：baseline —— remote batch 直写 local 600 个离散目标（无 staging/scatter） */
-    if (runBase && !isLocal) {
-        PrintLabel("baseline");
-        std::vector<void *> srcs(a.count), dsts(a.count);
-        for (uint32_t i = 0; i < a.count; ++i) {
-            srcs[i] = reinterpret_cast<void *>(selfGva + i * a.stride);
-            dsts[i] = reinterpret_cast<void *>(peerGva + dispBase + i * a.stride);
-        }
-        for (uint32_t r = 0; r < a.rounds; ++r) {
-            smem_batch_copy_params p{srcs.data(), dsts.data(), sizes.data(), a.count, nullptr};
-            const uint64_t t0 = NowUs();
-            const int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
-            const uint64_t t1 = NowUs();
-            printf("baseline round %u ret=%d cost_us=%llu\n", r, ret,
-                   static_cast<unsigned long long>(t1 - t0));
-            if (ret != 0) {
-                break;
+    /* 场景 1：baseline —— remote batch 直写 local 600 个离散目标（无 staging/scatter）；
+       local 观察端每轮等 remote 的完成 flag（对齐 cont 的同步方式），保证双端不提前退出 */
+    if (runBase) {
+        if (!isLocal) {
+            PrintLabel("baseline (sender)");
+            std::vector<void *> srcs(a.count), dsts(a.count);
+            for (uint32_t i = 0; i < a.count; ++i) {
+                srcs[i] = reinterpret_cast<void *>(selfGva + i * a.stride);
+                dsts[i] = reinterpret_cast<void *>(peerGva + dispBase + i * a.stride);
+            }
+            uint64_t seq = 1;
+            for (uint32_t r = 0; r < a.rounds; ++r) {
+                smem_batch_copy_params p{srcs.data(), dsts.data(), sizes.data(), a.count, nullptr};
+                const uint64_t t0 = NowUs();
+                int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
+                if (ret == 0) {
+                    void *srcFlagVa = nullptr;
+                    if (GvaToHostVa(bm, selfGva + flagOff, &srcFlagVa)) {
+                        *reinterpret_cast<uint64_t *>(srcFlagVa) = seq;
+                    }
+                    smem_copy_params fp{reinterpret_cast<void *>(selfGva + flagOff),
+                                        reinterpret_cast<void *>(peerGva + flagOff), sizeof(seq), nullptr};
+                    ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
+                }
+                const uint64_t t1 = NowUs();
+                printf("baseline round %u ret=%d cost_us=%llu\n", r, ret,
+                       static_cast<unsigned long long>(t1 - t0));
+                if (ret != 0) {
+                    break;
+                }
+                ++seq;
+            }
+        } else {
+            PrintLabel("baseline (observer)");
+            uint64_t expect = 1;
+            for (uint32_t r = 0; r < a.rounds; ++r) {
+                void *flagVa = nullptr;
+                GvaToHostVa(bm, selfGva + flagOff, &flagVa);
+                if (flagVa == nullptr) {
+                    printf("baseline observer round %u flag_va_failed\n", r);
+                    break;
+                }
+                const uint64_t t0 = NowUs();
+                while (*reinterpret_cast<const uint64_t *>(flagVa) != expect) {
+                    std::this_thread::sleep_for(std::chrono::microseconds(50));
+                }
+                int bad = 0;
+                for (uint32_t i = 0; i < a.count; ++i) {
+                    void *dstVa = nullptr;
+                    if (!GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVa) ||
+                        *reinterpret_cast<const uint8_t *>(dstVa) != static_cast<uint8_t>(i & 0xFF)) {
+                        bad = 1;
+                        break;
+                    }
+                }
+                const uint64_t t1 = NowUs();
+                printf("baseline observer round %u err=%d cost_us=%llu\n", r, bad,
+                       static_cast<unsigned long long>(t1 - t0));
+                ++expect;
             }
         }
     }
