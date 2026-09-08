@@ -32,6 +32,12 @@ bool IsValidBackendOp(const smem_conf_store_backend_op_t &backendOp)
 }
 } // namespace
 
+SMEM_API uint32_t smem_get_abi_version()
+{
+    constexpr uint32_t versionMajorShift = 16U;
+    return (static_cast<uint32_t>(VERSION_MAJOR) << versionMajorShift) | static_cast<uint32_t>(VERSION_MINOR);
+}
+
 SMEM_API int32_t smem_init(uint32_t flags)
 {
     using namespace ock::smem;

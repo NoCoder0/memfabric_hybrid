@@ -47,6 +47,16 @@ extern "C" {
 #define SMEM_NOT_CONNECTED  (-2014)
 
 /**
+ * @brief Get the MemFabric runtime ABI compatibility version.
+ *
+ * The high 16 bits contain the major version and the low 16 bits contain the minor version.
+ * Patch versions within the same major.minor line are ABI compatible.
+ *
+ * @return Encoded major.minor ABI version
+ */
+uint32_t smem_get_abi_version(void);
+
+/**
  * @brief Initialize the smem running environment
  *
  * @param flags            [in] optional flags, reserved
