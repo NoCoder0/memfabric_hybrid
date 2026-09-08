@@ -947,6 +947,10 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
 Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
                                                    size_t begin, size_t end)
 {
+    BM_LOG_WARN("[DBG] WriteSlice rank=" << rankId << " ep=" << ep << " begin=" << begin << " end=" << end
+                                         << " counts=" << descriptor.counts.size()
+                                         << " local=" << descriptor.localAddrs.size()
+                                         << " global=" << descriptor.globalAddrs.size());
     Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
@@ -957,6 +961,13 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         Channel_OneSideRequestSgl sglReq;
         sglReq.iovCount = 0;
         for (; i < end && sglReq.iovCount < HCOM_IOV_BATCH_SIZE; ++i) {
+            if (i >= descriptor.counts.size() || i >= descriptor.localAddrs.size() ||
+                i >= descriptor.globalAddrs.size()) {
+                BM_LOG_ERROR("[DBG] WriteSlice oob i=" << i << " counts=" << descriptor.counts.size()
+                                                       << " local=" << descriptor.localAddrs.size()
+                                                       << " global=" << descriptor.globalAddrs.size());
+                return BM_ERROR;
+            }
             Channel_OneSideRequest req;
             req.lAddress = descriptor.localAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
