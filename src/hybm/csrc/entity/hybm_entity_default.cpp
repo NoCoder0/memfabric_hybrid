@@ -446,17 +446,24 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
     SliceExportTransportKey transportKey{exportMagic, options_.rankId, realSlice->gva_};
     if (transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
         if (realSlice->size_ > 0) {
-            ret = transportManager_->QueryMemoryKey(realSlice->vAddress_, transportKey.key);
-            if (ret != 0) {
-                BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex << realSlice->vAddress_
-                                                                                 << std::dec << ", ret: " << ret);
-                transportKey.key = {};
+            // multi-link: export one key per ep(link), each carries its own ep-coded key
+            uint32_t linkCount = transportManager_->GetLinkCount();
+            for (uint32_t ep = 0; ep < linkCount; ++ep) {
+                SliceExportTransportKey keyEntry{exportMagic, options_.rankId, realSlice->gva_};
+                auto queryRet = transportManager_->QueryMemoryKeyByEp(realSlice->vAddress_, ep, keyEntry.key);
+                if (queryRet != 0) {
+                    BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex
+                                                                                      << realSlice->vAddress_
+                                                                                      << std::dec << ", ep: " << ep
+                                                                                      << ", ret: " << queryRet);
+                    keyEntry.key = {};
+                }
+                auto ret = desc.Append(keyEntry);
+                if (ret != 0) {
+                    BM_LOG_ERROR("append transport key failed: " << ret);
+                    return ret;
+                }
             }
-        }
-        ret = desc.Append(transportKey);
-        if (ret != 0) {
-            BM_LOG_ERROR("append transport key failed: " << ret);
-            return ret;
         }
     }
 

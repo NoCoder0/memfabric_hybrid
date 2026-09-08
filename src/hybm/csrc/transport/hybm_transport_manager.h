@@ -54,6 +54,18 @@ public:
 
     virtual Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) = 0;
 
+    // Link/endpoint count per rank. Default 1 (single link); multi-link transports override.
+    virtual uint32_t GetLinkCount() const
+    {
+        return 1;
+    }
+
+    // Query memory key registered on a specific link(ep). Default falls back to QueryMemoryKey(ep0).
+    virtual Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key)
+    {
+        return QueryMemoryKey(addr, key);
+    }
+
     virtual void UpdateMemoryKey(TransportMemoryKey &key, void *addr) = 0;
 
     /*

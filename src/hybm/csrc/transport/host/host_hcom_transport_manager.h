@@ -74,6 +74,10 @@ public:
 
     Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) override;
 
+    uint32_t GetLinkCount() const override;
+
+    Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key) override;
+
     void UpdateMemoryKey(TransportMemoryKey &key, void *addr) override;
 
     Result Prepare(const HybmTransPrepareOptions &parma) override;
@@ -136,7 +140,8 @@ private:
 
     void HcomChannelDisconnected(uint32_t rankId, uint32_t ep, Hcom_Channel ch);
 
-    Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint64_t &addr, HcomMemoryRegion &mr);
+    Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
+                                 HcomMemoryRegion &mr);
 
     Result UpdateRankMrInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &opt);
 
@@ -175,7 +180,7 @@ private:
     uint32_t rankCount_{0};
     uint32_t epCount_{1}; // per-rank endpoint(link) count, 1 for single link
     std::vector<std::mutex> mrMutex_;
-    std::vector<std::set<HcomMemoryRegion>> mrs_;
+    std::vector<std::vector<std::set<HcomMemoryRegion>>> mrs_; // [rankId][ep]
     std::vector<std::mutex> channelMutex_;
     std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
     std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]

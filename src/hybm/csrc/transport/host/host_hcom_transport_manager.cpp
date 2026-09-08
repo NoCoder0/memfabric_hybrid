@@ -193,7 +193,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
     mrMutex_ = std::vector<std::mutex>(rankCount_);
-    mrs_ = std::vector<std::set<HcomMemoryRegion>>(rankCount_);
+    mrs_.assign(rankCount_, std::vector<std::set<HcomMemoryRegion>>(epCount_));
     channelMutex_ = std::vector<std::mutex>(rankCount_);
     nics_ = std::vector<std::vector<std::string>>(rankCount_, std::vector<std::string>(epCount_, ""));
     channels_ = std::vector<std::vector<Hcom_Channel>>(rankCount_, std::vector<Hcom_Channel>(epCount_, 0));
@@ -211,13 +211,13 @@ Result HcomTransportManager::CloseDevice()
     }
 
     // destroy all registered MRs first to release UBContext refs before ServiceDestroy
-    // NOTE: MRs are registered on ep0 service for now (per-ep MR comes later)
-    Hcom_Service ep0Service = rpcServices_[0];
     for (uint32_t i = 0; i < mrMutex_.size(); ++i) {
         std::unique_lock<std::mutex> lock(mrMutex_[i]);
-        for (auto it = mrs_[i].begin(); it != mrs_[i].end();) {
-            DlHcomApi::ServiceDestroyMemoryRegion(ep0Service, it->mr);
-            it = mrs_[i].erase(it);
+        for (uint32_t ep = 0; ep < epCount_; ++ep) {
+            for (auto it = mrs_[i][ep].begin(); it != mrs_[i][ep].end();) {
+                DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[ep], it->mr);
+                it = mrs_[i][ep].erase(it);
+            }
         }
     }
 
@@ -262,48 +262,51 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         return BM_OK;
     }
 
-    HcomMemoryRegion info{};
-    if (GetMemoryRegionByAddr(rankId_, mr.addr, info) == BM_OK) {
-        BM_LOG_ERROR("Failed to register mem region, addr: " << mr.addr << " already registered");
-        return BM_ERROR;
-    }
-
-    Service_MemoryRegion memoryRegion;
-    int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcServices_[0], mr.addr, mr.size, &memoryRegion);
-    if (ret != 0) {
-        if (isHbm) {
-            // Old HDK libhcom can not register hbm to host rdma service; skip and degrade to swap path.
-            BM_LOG_WARN("Failed to register hbm mem region, maybe hdk not support (ret: "
-                        << ret << "), fall back to swap path, size: " << mr.size << " addr:" << std::hex << mr.addr);
-            return BM_OK;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        HcomMemoryRegion info{};
+        if (GetMemoryRegionByAddr(rankId_, ep, mr.addr, info) == BM_OK) {
+            BM_LOG_ERROR("Failed to register mem region, addr: " << mr.addr << " already registered, ep: " << ep);
+            return BM_ERROR;
         }
-        BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
-                                                             << " service: " << rpcServices_[0] << " ret: " << ret);
-        return BM_DL_FUNCTION_FAILED;
-    }
 
-    Service_MemoryRegionInfo memoryRegionInfo;
-    ret = DlHcomApi::ServiceGetMemoryRegionInfo(memoryRegion, &memoryRegionInfo);
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcServices_[0]
-                                                             << " ret: " << ret);
-        DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[0], memoryRegion);
-        return BM_DL_FUNCTION_FAILED;
-    }
+        Service_MemoryRegion memoryRegion;
+        int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcServices_[ep], mr.addr, mr.size, &memoryRegion);
+        if (ret != 0) {
+            if (isHbm) {
+                // Old HDK libhcom can not register hbm to host rdma service; skip and degrade to swap path.
+                BM_LOG_WARN("Failed to register hbm mem region, maybe hdk not support (ret: "
+                            << ret << "), fall back to swap path, size: " << mr.size << " addr:" << std::hex << mr.addr
+                            << " ep: " << ep);
+                continue;
+            }
+            BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
+                                                                 << " service: " << rpcServices_[ep] << " ret: " << ret);
+            return BM_DL_FUNCTION_FAILED;
+        }
 
-    HcomMemoryRegion mrInfo{};
-    mrInfo.lva = mr.addr;
-    mrInfo.addr = mr.addr;
-    mrInfo.size = mr.size;
-    mrInfo.mr = memoryRegion;
-    std::copy_n(memoryRegionInfo.lKey.keys, sizeof(memoryRegionInfo.lKey.keys) / sizeof(memoryRegionInfo.lKey.keys[0]),
-                mrInfo.lKey.keys);
-    {
-        std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
-        mrs_[rankId_].insert(mrInfo);
+        Service_MemoryRegionInfo memoryRegionInfo;
+        ret = DlHcomApi::ServiceGetMemoryRegionInfo(memoryRegion, &memoryRegionInfo);
+        if (ret != 0) {
+            BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcServices_[ep]
+                                                                 << " ret: " << ret);
+            DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[ep], memoryRegion);
+            return BM_DL_FUNCTION_FAILED;
+        }
+
+        HcomMemoryRegion mrInfo{};
+        mrInfo.lva = mr.addr;
+        mrInfo.addr = mr.addr;
+        mrInfo.size = mr.size;
+        mrInfo.mr = memoryRegion;
+        std::copy_n(memoryRegionInfo.lKey.keys,
+                    sizeof(memoryRegionInfo.lKey.keys) / sizeof(memoryRegionInfo.lKey.keys[0]), mrInfo.lKey.keys);
+        {
+            std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
+            mrs_[rankId_][ep].insert(mrInfo);
+        }
+        BM_LOG_INFO("Success to register " << (isHbm ? "hbm" : "dram") << " mr info size: " << mrInfo.size
+                                           << " ep: " << ep << " lKey: " << mrInfo.lKey.keys[0]);
     }
-    BM_LOG_INFO("Success to register " << (isHbm ? "hbm" : "dram") << " mr info size: " << mrInfo.size
-                                       << " lKey: " << mrInfo.lKey.keys[0]);
     return BM_OK;
 }
 #else
@@ -322,44 +325,47 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         return BM_INVALID_PARAM;
     }
 
-    HcomMemoryRegion info{};
-    if (GetMemoryRegionByAddr(rankId_, mr.addr, info) == BM_OK) {
-        BM_LOG_ERROR("Failed to register mem region, addr already registered");
-        return BM_ERROR;
-    }
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        HcomMemoryRegion info{};
+        if (GetMemoryRegionByAddr(rankId_, ep, mr.addr, info) == BM_OK) {
+            BM_LOG_ERROR("Failed to register mem region, addr already registered, ep: " << ep);
+            return BM_ERROR;
+        }
 
-    Service_MemoryRegion memoryRegion;
-    int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcServices_[0], mr.addr, mr.size, &memoryRegion);
-    // 单rank不需要hcom,目的是在无网卡的情况下也可以测试
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
-                                                             << " service: " << rpcServices_[0] << " ret: " << ret);
-        return BM_ERROR;
-    }
+        Service_MemoryRegion memoryRegion;
+        int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcServices_[ep], mr.addr, mr.size, &memoryRegion);
+        // 单rank不需要hcom,目的是在无网卡的情况下也可以测试
+        if (ret != 0) {
+            BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
+                                                                 << " service: " << rpcServices_[ep] << " ret: " << ret);
+            return BM_ERROR;
+        }
 
-    Service_MemoryRegionInfo memoryRegionInfo;
-    if (ret == 0) {
-        ret = DlHcomApi::ServiceGetMemoryRegionInfo(memoryRegion, &memoryRegionInfo);
-    }
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcServices_[0]
-                                                             << " ret: " << ret);
-        DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[0], memoryRegion);
-        return BM_ERROR;
-    }
+        Service_MemoryRegionInfo memoryRegionInfo;
+        if (ret == 0) {
+            ret = DlHcomApi::ServiceGetMemoryRegionInfo(memoryRegion, &memoryRegionInfo);
+        }
+        if (ret != 0) {
+            BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcServices_[ep]
+                                                                 << " ret: " << ret);
+            DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[ep], memoryRegion);
+            return BM_ERROR;
+        }
 
-    HcomMemoryRegion mrInfo{};
-    mrInfo.lva = mr.addr;
-    mrInfo.addr = mr.addr;
-    mrInfo.size = mr.size;
-    mrInfo.mr = memoryRegion;
-    CopyHcomOneSideKey(memoryRegionInfo.lKey, mrInfo.lKey);
-    {
-        std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
-        mrs_[rankId_].insert(mrInfo);
+        HcomMemoryRegion mrInfo{};
+        mrInfo.lva = mr.addr;
+        mrInfo.addr = mr.addr;
+        mrInfo.size = mr.size;
+        mrInfo.mr = memoryRegion;
+        CopyHcomOneSideKey(memoryRegionInfo.lKey, mrInfo.lKey);
+        {
+            std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
+            mrs_[rankId_][ep].insert(mrInfo);
+        }
+        BM_LOG_INFO("Success to register to mr info size: " << mrInfo.size << " ep: " << ep
+                                                            << " lKey: " << mrInfo.lKey.keys[0] << std::hex
+                                                            << " laddr:" << mr.addr);
     }
-    BM_LOG_INFO("Success to register to mr info size: " << mrInfo.size << " lKey: " << mrInfo.lKey.keys[0] << std::hex
-                                                        << " laddr:" << mr.addr);
     return BM_OK;
 }
 #endif
@@ -370,23 +376,29 @@ Result HcomTransportManager::UnregisterMemoryRegion(uint64_t addr)
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
 
     std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
-    auto &localMrs = mrs_[rankId_];
-    for (auto it = localMrs.begin(); it != localMrs.end(); it++) {
-        if (it->addr == addr) {
-            DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[0], it->mr);
-            localMrs.erase(it);
-            BM_LOG_INFO("Addr: " << addr << " unregistered");
-            return BM_OK;
+    bool found = false;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        auto &localMrs = mrs_[rankId_][ep];
+        for (auto it = localMrs.begin(); it != localMrs.end(); ++it) {
+            if (it->addr == addr) {
+                DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[ep], it->mr);
+                localMrs.erase(it);
+                found = true;
+                BM_LOG_INFO("Addr: " << addr << " unregistered, ep: " << ep);
+                break;
+            }
         }
     }
-    BM_LOG_WARN("Addr: " << addr << " not registered");
+    if (!found) {
+        BM_LOG_WARN("Addr: " << addr << " not registered");
+    }
     return BM_OK;
 }
 
 bool HcomTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 {
     std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
-    for (const auto &mrInfo : mrs_[rankId_]) {
+    for (const auto &mrInfo : mrs_[rankId_][0]) {
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size >= addr + size) {
             return true;
         }
@@ -394,21 +406,34 @@ bool HcomTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
     return false;
 }
 
+uint32_t HcomTransportManager::GetLinkCount() const
+{
+    return epCount_;
+}
+
 Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
 {
+    return QueryMemoryKeyByEp(addr, 0, key);
+}
+
+Result HcomTransportManager::QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key)
+{
     HcomMemoryRegion mrInfo{};
-    if (GetMemoryRegionByAddr(rankId_, addr, mrInfo) != BM_OK) {
-        BM_LOG_ERROR("Failed to query memory region, addr: 0x" << std::hex << addr << " rankId: " << rankId_);
+    if (GetMemoryRegionByAddr(rankId_, ep, addr, mrInfo) != BM_OK) {
+        BM_LOG_ERROR("Failed to query memory region, addr: 0x" << std::hex << addr << " rankId: " << rankId_
+                                                               << " ep: " << ep);
         return BM_ERROR;
     }
     RegMemoryKeyUnion hostKey{};
     hostKey.hostKey.type = TT_HCOM;
+    hostKey.hostKey.reserved = ep; // 对端据此把 key 落到对应 ep 的 MR 表
     hostKey.hostKey.gva = HybmVaManager::GetInstance().TransformVa(mrInfo.addr, HVM_HVA, HVM_GVA);
     hostKey.hostKey.hcomInfo.lAddress = mrInfo.addr;
     CopyHcomOneSideKey(mrInfo.lKey, hostKey.hostKey.hcomInfo.lKey);
     hostKey.hostKey.hcomInfo.size = mrInfo.size;
     key = hostKey.commonKey;
-    BM_LOG_INFO("Success to query memory key addr:" << std::hex << mrInfo.addr << " size:" << mrInfo.size);
+    BM_LOG_INFO("Success to query memory key ep: " << ep << " addr:" << std::hex << mrInfo.addr
+                                                   << " size:" << mrInfo.size);
     return BM_OK;
 }
 
@@ -612,8 +637,14 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             if (mrInfo.size == 0) {
                 continue;
             }
+            uint32_t ep = keyUnion.hostKey.reserved; // QueryMemoryKeyByEp 写入，单链路时恒为 0
+            if (ep >= epCount_) {
+                BM_LOG_ERROR("import mr with invalid ep: " << ep << " rankId: " << rankId
+                                                           << " addr: 0x" << std::hex << mrInfo.addr);
+                continue;
+            }
             if (rankId != rankId_ && (bmOptype_ & HYBM_DOP_TYPE_HOST_URMA)) {
-                auto ret = DlHcomApi::ImportUrmaSegFunc(rpcServices_[0], mrInfo.addr, mrInfo.size,
+                auto ret = DlHcomApi::ImportUrmaSegFunc(rpcServices_[ep], mrInfo.addr, mrInfo.size,
                                                         &keyUnion.hostKey.hcomInfo.lKey);
                 BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
                 BM_LOG_DEBUG("hcom returned, tokens: " << keyUnion.hostKey.hcomInfo.lKey.tokens[0]);
@@ -621,9 +652,10 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             CopyHcomOneSideKey(keyUnion.hostKey.hcomInfo.lKey, mrInfo.lKey);
             {
                 std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
-                mrs_[rankId].insert(mrInfo);
+                mrs_[rankId][ep].insert(mrInfo);
             }
-            BM_LOG_INFO("Success to register to mr info rankId: " << rankId << " size: " << mrInfo.size
+            BM_LOG_INFO("Success to register to mr info rankId: " << rankId << " ep: " << ep
+                                                                  << " size: " << mrInfo.size
                                                                   << " lKey: " << mrInfo.lKey.keys[0]);
         }
     }
@@ -699,13 +731,13 @@ Result HcomTransportManager::InnerReadRemote(uint32_t rankId, uint64_t lAddr, ui
     req.size = static_cast<uint32_t>(size);
 
     HcomMemoryRegion mr{};
-    auto ret = GetMemoryRegionByAddr(rankId_, lAddr, mr);
+    auto ret = GetMemoryRegionByAddr(rankId_, 0, lAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find lKey, lAddr: is not register");
         return BM_ERROR;
     }
     std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
-    ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
+    ret = GetMemoryRegionByAddr(rankId, 0, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " is not set");
         return BM_ERROR;
@@ -738,13 +770,13 @@ Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, u
     req.size = static_cast<uint32_t>(size);
 
     HcomMemoryRegion mr{};
-    auto ret = GetMemoryRegionByAddr(rankId_, lAddr, mr);
+    auto ret = GetMemoryRegionByAddr(rankId_, 0, lAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find lKey, lAddr is not register");
         return BM_ERROR;
     }
     std::copy_n(mr.lKey.keys, sizeof(req.lKey.keys) / sizeof(req.lKey.keys[0]), req.lKey.keys);
-    ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
+    ret = GetMemoryRegionByAddr(rankId, 0, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " is not set");
         return BM_ERROR;
@@ -787,7 +819,7 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
     Channel_OneSideRequest req;
     req.size = static_cast<uint32_t>(size);
     HcomMemoryRegion mr{};
-    auto ret = GetMemoryRegionByAddr(rankId_, lAddr, mr);
+    auto ret = GetMemoryRegionByAddr(rankId_, 0, lAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
                                                      << ", lAddr: " << VaToInfo(lAddr));
@@ -795,7 +827,7 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
     }
     CopyHcomOneSideKey(mr.lKey, req.lKey);
     mr.lKey = {};
-    ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
+    ret = GetMemoryRegionByAddr(rankId, 0, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
                                                      << ", rAddr: " << VaToInfo(rAddr));
@@ -858,7 +890,7 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     req.lAddress = reinterpret_cast<void *>(lAddr);
     req.size = static_cast<uint32_t>(size);
     HcomMemoryRegion mr{};
-    auto ret = GetMemoryRegionByAddr(rankId_, lAddr, mr);
+    auto ret = GetMemoryRegionByAddr(rankId_, 0, lAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
                                                      << ", lAddr: " << VaToInfo(lAddr));
@@ -866,7 +898,7 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     }
     std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
     mr.lKey = {};
-    ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
+    ret = GetMemoryRegionByAddr(rankId, 0, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
                                                      << ", rAddr: " << VaToInfo(rAddr));
@@ -934,7 +966,7 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
             req.lAddress = descriptor.localAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
             HcomMemoryRegion mr{};
-            auto ret = GetMemoryRegionByAddr(rankId_, reinterpret_cast<uint64_t>(req.lAddress), mr);
+            auto ret = GetMemoryRegionByAddr(rankId_, 0, reinterpret_cast<uint64_t>(req.lAddress), mr);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
                                                              << ", lAddr: " << VaToStr(req.lAddress));
@@ -943,7 +975,7 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
             std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
             mr.lKey = {};
             auto rAddr = descriptor.globalAddrs[i];
-            ret = GetMemoryRegionByAddr(rankId, reinterpret_cast<uint64_t>(rAddr), mr);
+            ret = GetMemoryRegionByAddr(rankId, 0, reinterpret_cast<uint64_t>(rAddr), mr);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
@@ -1228,7 +1260,7 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
             req.lAddress = descriptor.globalAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
             HcomMemoryRegion mr{};
-            auto ret = GetMemoryRegionByAddr(rankId_, reinterpret_cast<uint64_t>(req.lAddress), mr);
+            auto ret = GetMemoryRegionByAddr(rankId_, 0, reinterpret_cast<uint64_t>(req.lAddress), mr);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
                                                              << ", lAddr: " << VaToStr(req.lAddress));
@@ -1237,7 +1269,7 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
             CopyHcomOneSideKey(mr.lKey, req.lKey);
             mr.lKey = {};
             auto rAddr = descriptor.localAddrs[i];
-            ret = GetMemoryRegionByAddr(rankId, reinterpret_cast<uint64_t>(rAddr), mr);
+            ret = GetMemoryRegionByAddr(rankId, 0, reinterpret_cast<uint64_t>(rAddr), mr);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
@@ -1285,11 +1317,13 @@ Result HcomTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uint64
     return InnerWriteRemote(rankId, lAddr, rAddr, size);
 }
 
-Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const uint64_t &addr, HcomMemoryRegion &mr)
+Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
+                                                   HcomMemoryRegion &mr)
 {
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
-    for (const auto &mrInfo : mrs_[rankId]) {
-        BM_LOG_DEBUG("Find rankId:" << rankId << std::hex << " addr:" << mrInfo.addr << " size:" << mrInfo.size);
+    for (const auto &mrInfo : mrs_[rankId][ep]) {
+        BM_LOG_DEBUG("Find rankId:" << rankId << " ep:" << ep << std::hex << " addr:" << mrInfo.addr
+                                    << " size:" << mrInfo.size);
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size > addr) {
             mr = mrInfo;
             return BM_OK;
