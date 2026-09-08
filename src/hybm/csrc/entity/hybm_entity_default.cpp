@@ -1114,23 +1114,26 @@ int32_t MemEntityDefault::ImportForTransportPrecheck(const ExchangeInfoReader de
     int ret = BM_OK;
     SliceExportTransportKey transportKey;
     for (auto i = 0U; i < count; i++) {
-        ret = desc[i].Read(transportKey);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("read info for transport failed: " << ret);
-            return ret;
-        }
+        // one desc may carry several transport keys (one per link/ep for multi-link)
+        while (desc[i].LeftBytes() >= static_cast<size_t>(sizeof(SliceExportTransportKey))) {
+            ret = desc[i].Read(transportKey);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("read info for transport failed: " << ret);
+                return ret;
+            }
 
-        // trans需要更新transportKey中的address
-        if (options_.scene == HYBM_SCENE_TRANS && addresses != nullptr) {
-            transportManager_->UpdateMemoryKey(transportKey.key, addresses[i]);
-        }
+            // trans需要更新transportKey中的address
+            if (options_.scene == HYBM_SCENE_TRANS && addresses != nullptr) {
+                transportManager_->UpdateMemoryKey(transportKey.key, addresses[i]);
+            }
 
-        {
-            std::unique_lock<std::mutex> uniqueLock{importMutex_};
-            importedMemories_[transportKey.rankId].insert(transportKey.key);
+            {
+                std::unique_lock<std::mutex> uniqueLock{importMutex_};
+                importedMemories_[transportKey.rankId].insert(transportKey.key);
+            }
+            BM_LOG_DEBUG("Success to import slice rankId:" << transportKey.rankId << " addr:" << std::hex
+                                                           << transportKey.address);
         }
-        BM_LOG_DEBUG("Success to import slice rankId:" << transportKey.rankId << " addr:" << std::hex
-                                                       << transportKey.address);
     }
     return BM_OK;
 }
