@@ -32,23 +32,25 @@ namespace host {
 
 constexpr int64_t DEFAULT_MIN_WAIT_MS = 50;
 constexpr int64_t DEFAULT_MAX_WAIT_MS = 1000;
-using ReconnFunc = std::function<Result(uint32_t rankId, const std::string &nic)>;
+using ReconnFunc = std::function<Result(uint32_t rankId, uint32_t ep, const std::string &nic)>;
 
 struct ReconnectTask {
     uint32_t rankId;
+    uint32_t ep;
     std::string nic;
     int64_t nextConnectTime;
     int64_t failedTimes;
-    ReconnectTask() noexcept : ReconnectTask(0, "", 0) {}
-    ReconnectTask(uint32_t r, std::string net, int64_t ts) noexcept
-        : rankId{r}, nic{std::move(net)}, nextConnectTime{ts}, failedTimes{0}
+    ReconnectTask() noexcept : ReconnectTask(0, 0, "", 0) {}
+    ReconnectTask(uint32_t r, uint32_t e, std::string net, int64_t ts) noexcept
+        : rankId{r}, ep{e}, nic{std::move(net)}, nextConnectTime{ts}, failedTimes{0}
     {}
 };
 
 struct ReconnectTaskKey {
     int64_t timestamp;
     uint32_t rankId;
-    ReconnectTaskKey(int64_t ts, uint32_t rk) noexcept : timestamp{ts}, rankId{rk} {}
+    uint32_t ep;
+    ReconnectTaskKey(int64_t ts, uint32_t rk, uint32_t e) noexcept : timestamp{ts}, rankId{rk}, ep{e} {}
 };
 
 struct TaskKeyComparator {
@@ -57,7 +59,10 @@ struct TaskKeyComparator {
         if (key1.timestamp != key2.timestamp) {
             return key1.timestamp < key2.timestamp;
         }
-        return key1.rankId < key2.rankId;
+        if (key1.rankId != key2.rankId) {
+            return key1.rankId < key2.rankId;
+        }
+        return key1.ep < key2.ep;
     }
 };
 
@@ -70,7 +75,7 @@ public:
     void AddRanks(const std::vector<uint32_t> &ranks) noexcept;
     void RemoveRank(uint32_t rankId) noexcept;
     void RemoveRanks(const std::vector<uint32_t> &ranks) noexcept;
-    Result AddReconnectTask(uint32_t rankId, const std::string &nic) noexcept;
+    Result AddReconnectTask(uint32_t rankId, uint32_t ep, const std::string &nic) noexcept;
 
 private:
     void ReconnectLoop() noexcept;

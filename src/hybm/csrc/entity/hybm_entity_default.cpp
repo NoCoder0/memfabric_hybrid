@@ -461,26 +461,34 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
         return BM_ERROR;
     }
 
-    SliceExportTransportKey transportKey{exportMagic, options_.rankId, realSlice->gva_};
     if (transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
         if (realSlice->size_ > 0) {
-            ret = transportManager_->QueryMemoryKey(realSlice->vAddress_, transportKey.key);
-            if (ret != 0) {
-                BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex << realSlice->vAddress_
-                                                                                 << std::dec << ", ret: " << ret);
-                transportKey.key = {};
+            // multi-link: export one key per ep(link), each carries its own ep-coded key
+            uint32_t linkCount = transportManager_->GetLinkCount();
+            for (uint32_t ep = 0; ep < linkCount; ++ep) {
+                SliceExportTransportKey keyEntry{exportMagic, options_.rankId, realSlice->gva_};
+                auto queryRet = transportManager_->QueryMemoryKeyByEp(realSlice->vAddress_, ep, keyEntry.key);
+                if (queryRet != 0) {
+                    BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex
+                                                                                      << realSlice->vAddress_
+                                                                                      << std::dec << ", ep: " << ep
+                                                                                      << ", ret: " << queryRet);
+                    keyEntry.key = {};
+                }
+                auto ret = desc.Append(keyEntry);
+                if (ret != 0) {
+                    BM_LOG_ERROR("append transport key failed: " << ret);
+                    return ret;
+                }
             }
-        }
-        ret = desc.Append(transportKey);
-        if (ret != 0) {
-            BM_LOG_ERROR("append transport key failed: " << ret);
-            return ret;
         }
     }
 
     if (options_.scene != HYBM_SCENE_TRANS) {
-        BM_LOG_DEBUG("Success to export slice rankId:" << transportKey.rankId << " addr:" << transportKey.address
-                                                       << " key:" << transportKey.key);
+        BM_LOG_DEBUG("Success to export slice rankId:" << options_.rankId << " addr:" << realSlice->gva_
+                                                       << " linkCount: " << (transportManager_ != nullptr
+                                                                                 ? transportManager_->GetLinkCount()
+                                                                                 : 0));
     } else {
         BM_LOG_DEBUG("Success to export slice rankId:" << options_.rankId << " addr:" << realSlice->vAddress_);
     }
@@ -1086,23 +1094,26 @@ int32_t MemEntityDefault::ImportForTransportPrecheck(const ExchangeInfoReader de
     int ret = BM_OK;
     SliceExportTransportKey transportKey;
     for (auto i = 0U; i < count; i++) {
-        ret = desc[i].Read(transportKey);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("read info for transport failed: " << ret);
-            return ret;
-        }
+        // one desc may carry several transport keys (one per link/ep for multi-link)
+        while (desc[i].LeftBytes() >= static_cast<size_t>(sizeof(SliceExportTransportKey))) {
+            ret = desc[i].Read(transportKey);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("read info for transport failed: " << ret);
+                return ret;
+            }
 
-        // trans需要更新transportKey中的address
-        if (options_.scene == HYBM_SCENE_TRANS && addresses != nullptr) {
-            transportManager_->UpdateMemoryKey(transportKey.key, addresses[i]);
-        }
+            // trans需要更新transportKey中的address
+            if (options_.scene == HYBM_SCENE_TRANS && addresses != nullptr) {
+                transportManager_->UpdateMemoryKey(transportKey.key, addresses[i]);
+            }
 
-        {
-            std::unique_lock<std::mutex> uniqueLock{importMutex_};
-            importedMemories_[transportKey.rankId].insert(transportKey.key);
+            {
+                std::unique_lock<std::mutex> uniqueLock{importMutex_};
+                importedMemories_[transportKey.rankId].insert(transportKey.key);
+            }
+            BM_LOG_DEBUG("Success to import slice rankId:" << transportKey.rankId << " addr:" << std::hex
+                                                           << transportKey.address);
         }
-        BM_LOG_DEBUG("Success to import slice rankId:" << transportKey.rankId << " addr:" << std::hex
-                                                       << transportKey.address);
     }
     return BM_OK;
 }

@@ -117,7 +117,13 @@ Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
             CloseDevice();
             return BM_ERROR;
         }
-        ss << HOST_TRANSPORT_TYPE << hostTransportManager_->GetNic() << NIC_DELIMITER;
+        // host nic may carry several urls(';'-separated for multi-link); broadcast each as a host# segment
+        for (const auto &url : StrUtil::Split(hostTransportManager_->GetNic(), NIC_DELIMITER)) {
+            if (url.empty()) {
+                continue;
+            }
+            ss << HOST_TRANSPORT_TYPE << url << NIC_DELIMITER;
+        }
     }
     if (options_.protocol & DEVICE_PROTOCOL) {
         if (deviceTransportManager_ == nullptr) {
@@ -256,6 +262,34 @@ Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey
     return BM_OK;
 }
 
+uint32_t ComposeTransportManager::GetLinkCount() const
+{
+    // Multi-link only applies to host rdma transport for now; device keeps single link.
+    if (hostTransportManager_) {
+        return hostTransportManager_->GetLinkCount();
+    }
+    return 1;
+}
+
+Result ComposeTransportManager::QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key)
+{
+    if (hostTransportManager_ != nullptr && ep < hostTransportManager_->GetLinkCount()) {
+        TransportMemoryKey tmp{};
+        auto ret = hostTransportManager_->QueryMemoryKeyByEp(addr, ep, tmp);
+        if (ret != BM_OK) {
+            BM_LOG_WARN("Unable to query host transport memKey ep: " << ep << " addr:" << std::hex << addr);
+        }
+        WriteHcomMemoryKey(tmp, key);
+        return BM_OK;
+    }
+    // Only device transport available: fall back to single-link query.
+    if (ep != 0) {
+        BM_LOG_ERROR("QueryMemoryKeyByEp with invalid ep: " << ep);
+        return BM_INVALID_PARAM;
+    }
+    return QueryMemoryKey(addr, key);
+}
+
 void ComposeTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
     if (deviceTransportManager_) {
@@ -285,12 +319,15 @@ void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOption
             continue;
         }
         TransportRankPrepareInfo info{};
+        std::string joinedNic;
         std::vector<std::string> nicVec = StrUtil::Split(item.second.nic, NIC_DELIMITER);
         for (const auto &nic : nicVec) {
             if (StrUtil::StartWith(nic, HOST_TRANSPORT_TYPE)) {
-                info.nic = nic.substr(HOST_TRANSPORT_TYPE.length());
+                auto url = nic.substr(HOST_TRANSPORT_TYPE.length());
+                joinedNic = joinedNic.empty() ? url : joinedNic + ";" + url;
             }
         }
+        info.nic = joinedNic;
 
         for (auto &key : item.second.memKeys) {
             TransportMemoryKey tmp{};

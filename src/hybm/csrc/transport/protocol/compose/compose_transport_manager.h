@@ -48,6 +48,10 @@ public:
 
     Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) override;
 
+    uint32_t GetLinkCount() const override;
+
+    Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key) override;
+
     void UpdateMemoryKey(TransportMemoryKey &key, void *addr) override;
 
     Result Prepare(const HybmTransPrepareOptions &options) override;

@@ -19,6 +19,7 @@
 #include "hcom_service_c_define.h"
 #include "host_hcom_counter_stream.h"
 #include "host_hcom_reconnector.h"
+#include "host_hcom_submit_pool.h"
 #include "mf_rwlock.h"
 
 namespace ock {
@@ -47,8 +48,8 @@ struct HcomMemoryRegion {
 union HcomPayload {
     uint64_t payload;
     struct {
-        uint32_t client;
-        uint32_t server;
+        uint32_t client;      // local(active side) rank id
+        uint32_t serverAndEp; // (server rank << 4) | ep
     };
 };
 
@@ -73,6 +74,10 @@ public:
     bool QueryHasRegistered(uint64_t addr, uint64_t size) override;
 
     Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) override;
+
+    uint32_t GetLinkCount() const override;
+
+    Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key) override;
 
     void UpdateMemoryKey(TransportMemoryKey &key, void *addr) override;
 
@@ -108,6 +113,12 @@ private:
 
     Result InnerWriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size);
 
+    Result SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
+                                 size_t end);
+
+    Result SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
+                                size_t end);
+
     Result CheckTransportOptions(const TransportOptions &options);
 
     static Result TransportRpcHcomNewEndPoint(Hcom_Channel newCh, uint64_t usrCtx, const char *payLoad);
@@ -120,13 +131,16 @@ private:
 
     static Result TransportRpcHcomOneSideDone(Service_Context ctx, uint64_t usrCtx);
 
-    Result ConnectHcomChannel(uint32_t rankId, const std::string &url);
+    Result ConnectHcomChannel(uint32_t rankId, uint32_t ep, const std::string &url);
 
-    void DisConnectHcomChannel(uint32_t rankId, Hcom_Channel ch);
+    void DisConnectHcomChannel(uint32_t rankId, uint32_t ep, Hcom_Channel ch);
 
-    void HcomChannelDisconnected(uint32_t rankId, Hcom_Channel ch);
+    void ClearRankChannels(uint32_t rankId);
 
-    Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint64_t &addr, HcomMemoryRegion &mr);
+    void HcomChannelDisconnected(uint32_t rankId, uint32_t ep, Hcom_Channel ch);
+
+    Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
+                                 HcomMemoryRegion &mr);
 
     Result UpdateRankMrInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &opt);
 
@@ -147,23 +161,29 @@ private:
 
     int PrepareThreadLocalStream();
 
+    void DestroyServices();
+
     void SetHcomServiceConfig(Hcom_Service service);
 
 private:
     hybm_data_op_type bmOptype_{};
     ReadWriteLock lock_;
     static thread_local HcomCounterStreamPtr stream_;
-    std::string localNic_{};
+    std::string localNic_{};                 // local listen url (single link); multi-link joined by ';'
     std::string localIp_{};
-    Hcom_Service rpcService_{0};
+    std::vector<std::string> localNics_{};   // per-ep local listen urls
+    std::vector<std::string> localIps_{};    // per-ep local nic ip (for ServiceSetDeviceIpMask)
+    std::vector<Hcom_Service> rpcServices_;  // one hcom service per ep(nic); ep0 for single link
     HcomRuntimeConfig runtimeConfig_{};
     uint32_t rankId_{UINT32_MAX};
     uint32_t rankCount_{0};
+    uint32_t epCount_{1}; // per-rank endpoint(link) count, 1 for single link
     std::vector<std::mutex> mrMutex_;
-    std::vector<std::set<HcomMemoryRegion>> mrs_;
+    std::vector<std::vector<std::set<HcomMemoryRegion>>> mrs_; // [rankId][ep]
     std::vector<std::mutex> channelMutex_;
-    std::vector<std::string> nics_;
-    std::vector<Hcom_Channel> channels_;
+    std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
+    std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
+    HostSubmitPool submitPool_; // 常驻 worker：multi-link batch 分片并发提交
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;
     static char keyPass_[KEYPASS_MAX_LEN];
