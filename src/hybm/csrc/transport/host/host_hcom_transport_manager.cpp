@@ -947,6 +947,10 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
 Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
                                                    size_t begin, size_t end)
 {
+    if (rpcServices_.empty() || rankId >= channels_.size() || ep >= channels_[rankId].size()) {
+        BM_LOG_WARN("SubmitWriteBatchSlice while closing, rank: " << rankId << " ep: " << ep);
+        return BM_NOT_INITIALIZED;
+    }
     Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
@@ -1290,6 +1294,10 @@ Result HcomTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_
 Result HcomTransportManager::SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
                                                   size_t begin, size_t end)
 {
+    if (rpcServices_.empty() || rankId >= channels_.size() || ep >= channels_[rankId].size()) {
+        BM_LOG_WARN("SubmitReadBatchSlice while closing, rank: " << rankId << " ep: " << ep);
+        return BM_NOT_INITIALIZED;
+    }
     Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
         BM_LOG_WARN("Unable to read remote, rankId: " << rankId << " ep: " << ep << " is not connect");
@@ -1421,6 +1429,10 @@ Result HcomTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uint64
 Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
                                                    HcomMemoryRegion &mr)
 {
+    if (rankId >= mrs_.size() || ep >= mrs_[rankId].size()) {
+        BM_LOG_ERROR("query mr with invalid rank: " << rankId << " ep: " << ep);
+        return BM_ERROR;
+    }
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
     for (const auto &mrInfo : mrs_[rankId][ep]) {
         BM_LOG_DEBUG("Find rankId:" << rankId << " ep:" << ep << std::hex << " addr:" << mrInfo.addr
