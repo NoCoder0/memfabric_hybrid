@@ -130,6 +130,8 @@ private:
 
     void DisConnectHcomChannel(uint32_t rankId, Hcom_Channel ch);
 
+    void ClearRankChannels(uint32_t rankId);
+
     Result ConnectTargets(const std::vector<uint32_t> &targets);
 
     void HcomChannelDisconnected(uint32_t rankId, Hcom_Channel ch);
@@ -167,11 +169,12 @@ private:
     HcomRuntimeConfig runtimeConfig_{};
     uint32_t rankId_{UINT32_MAX};
     uint32_t rankCount_{0};
+    uint32_t epCount_{1}; // per-rank endpoint(link) count, 1 for single link
     std::vector<std::mutex> mrMutex_;
     std::vector<std::set<HcomMemoryRegion>> mrs_;
     std::vector<std::mutex> channelMutex_;
-    std::vector<std::string> nics_;
-    std::vector<Hcom_Channel> channels_;
+    std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
+    std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;
     static char keyPass_[KEYPASS_MAX_LEN];

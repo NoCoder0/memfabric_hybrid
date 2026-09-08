@@ -169,8 +169,8 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     mrMutex_ = std::vector<std::mutex>(rankCount_);
     mrs_ = std::vector<std::set<HcomMemoryRegion>>(rankCount_);
     channelMutex_ = std::vector<std::mutex>(rankCount_);
-    nics_ = std::vector<std::string>(rankCount_, "");
-    channels_ = std::vector<Hcom_Channel>(rankCount_, 0);
+    nics_ = std::vector<std::vector<std::string>>(rankCount_, std::vector<std::string>(epCount_, ""));
+    channels_ = std::vector<std::vector<Hcom_Channel>>(rankCount_, std::vector<Hcom_Channel>(epCount_, 0));
     return BM_OK;
 }
 
@@ -182,9 +182,7 @@ Result HcomTransportManager::CloseDevice()
     reconnect_.Stop();
     auto service = rpcService_;
     for (uint32_t i = 0; i < rankCount_; ++i) {
-        if (channels_[i] != 0) {
-            DisConnectHcomChannel(i, channels_[i]);
-        }
+        ClearRankChannels(i);
     }
 
     // destroy all registered MRs first to release UBContext refs before ServiceDestroy
@@ -399,7 +397,7 @@ Result HcomTransportManager::Prepare(const HybmTransPrepareOptions &param)
     for (const auto &item : options) {
         auto rankId = item.first;
         auto nic = item.second.nic;
-        nics_[rankId] = nic;
+        nics_[rankId][0] = nic;
         toAddRanks.emplace_back(rankId);
     }
     reconnect_.AddRanks(toAddRanks);
@@ -422,7 +420,7 @@ Result HcomTransportManager::Connect()
     // Collect ranks to connect
     std::vector<uint32_t> targets;
     for (uint32_t i = 0; i < rankCount_; ++i) {
-        if (rankId_ <= i || nics_[i].empty()) {
+        if (rankId_ <= i || nics_[i][0].empty()) {
             continue;
         }
         targets.push_back(i);
@@ -458,15 +456,13 @@ Result HcomTransportManager::ConnectTargets(const std::vector<uint32_t> &targets
     };
 
     for (size_t idx = 0; idx < targets.size(); ++idx) {
-        pool.emplace_back(worker, targets[idx], nics_[targets[idx]]);
+        pool.emplace_back(worker, targets[idx], nics_[targets[idx]][0]);
         if (pool.size() >= poolSize) {
             for (auto &t : pool)
                 t.join();
             if (failed.load() != 0) {
                 for (auto r : connected) {
-                    DisConnectHcomChannel(r, channels_[r]);
-                    std::lock_guard<std::mutex> lock(channelMutex_[r]);
-                    channels_[r] = 0;
+                    ClearRankChannels(r);
                 }
                 return BM_ERROR;
             }
@@ -479,9 +475,7 @@ Result HcomTransportManager::ConnectTargets(const std::vector<uint32_t> &targets
     bool ok = (failed.load() == 0);
     if (!ok) {
         for (auto r : connected) {
-            DisConnectHcomChannel(r, channels_[r]);
-            std::lock_guard<std::mutex> lock(channelMutex_[r]);
-            channels_[r] = 0;
+            ClearRankChannels(r);
         }
     }
     return ok ? BM_OK : BM_ERROR;
@@ -497,7 +491,7 @@ Result HcomTransportManager::WaitChannelReady(uint32_t rankId, uint32_t timeoutM
     while (std::chrono::steady_clock::now() < deadline) {
         {
             std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
-            if (channels_[rankId] != 0) {
+            if (channels_[rankId][0] != 0) {
                 return BM_OK;
             }
         }
@@ -508,7 +502,7 @@ Result HcomTransportManager::WaitChannelReady(uint32_t rankId, uint32_t timeoutM
 
 Result HcomTransportManager::ConnectRank(uint32_t rankId)
 {
-    if (rankId >= rankCount_ || nics_[rankId].empty()) {
+    if (rankId >= rankCount_ || nics_[rankId][0].empty()) {
         return BM_OK;
     }
     if (rankId_ <= rankId) {
@@ -516,7 +510,7 @@ Result HcomTransportManager::ConnectRank(uint32_t rankId)
         return WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
     }
     TP_TRACE_BEGIN(TP_SMEM_GROUP_CONNECT_RANK);
-    const auto ret = ConnectHcomChannel(rankId, nics_[rankId]);
+    const auto ret = ConnectHcomChannel(rankId, nics_[rankId][0]);
     if (ret != BM_OK) {
         TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 1);
         return ret;
@@ -582,9 +576,9 @@ Result HcomTransportManager::UpdateRankConnectInfos(const std::unordered_map<uin
         }
         auto it = opt.find(i);
         if (it != opt.end()) {
-            nics_[i] = it->second.nic;
+            nics_[i][0] = it->second.nic;
             addRankList.emplace_back(i);
-            BM_LOG_DEBUG("UpdateRankConnectInfos: saved nics for rank " << i << " url=" << nics_[i]);
+            BM_LOG_DEBUG("UpdateRankConnectInfos: saved nics for rank " << i << " url=" << nics_[i][0]);
         }
     }
 
@@ -627,7 +621,7 @@ Result HcomTransportManager::InnerReadRemote(uint32_t rankId, uint64_t lAddr, ui
                              BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(size <= std::numeric_limits<uint32_t>::max(),
                              "size = " << size << " > " << std::numeric_limits<uint32_t>::max(), BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId];
+    Hcom_Channel channel = channels_[rankId][0];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
@@ -667,7 +661,7 @@ Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, u
                              BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(size <= std::numeric_limits<uint32_t>::max(),
                              "size = " << size << " > " << std::numeric_limits<uint32_t>::max(), BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId];
+    Hcom_Channel channel = channels_[rankId][0];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
@@ -718,7 +712,7 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId];
+    Hcom_Channel channel = channels_[rankId][0];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
@@ -787,7 +781,7 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId];
+    Hcom_Channel channel = channels_[rankId][0];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
@@ -856,7 +850,7 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId];
+    Hcom_Channel channel = channels_[rankId][0];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
@@ -964,7 +958,7 @@ Result HcomTransportManager::TransportRpcHcomNewEndPoint(Hcom_Channel newCh, uin
     auto rankId = payloadUn.client;
     auto self = HcomTransportManager::GetInstance();
     std::unique_lock<std::mutex> locker{self->channelMutex_[rankId]};
-    self->channels_[rankId] = newCh;
+    self->channels_[rankId][0] = newCh;
     locker.unlock();
 
     return BM_OK;
@@ -1013,7 +1007,7 @@ Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::stri
     TP_TRACE_BEGIN(TP_SMEM_GROUP_HCOM_CONNECT_CH);
     {
         std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
-        if (channels_[rankId] != 0) {
+        if (channels_[rankId][0] != 0) {
             BM_LOG_WARN("Stop connect to hcom service rankId: " << rankId << " url: " << url << " is connected");
             TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 0);
             return BM_OK;
@@ -1043,7 +1037,7 @@ Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::stri
         }
     } while (0);
     std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
-    channels_[rankId] = channel;
+    channels_[rankId][0] = channel;
     lock.unlock();
 
     BM_LOG_DEBUG("Success to connect to hcom service rankId: " << rankId << " url: " << url
@@ -1061,14 +1055,14 @@ void HcomTransportManager::HcomChannelDisconnected(uint32_t rankId, Hcom_Channel
     }
 
     std::unique_lock<std::mutex> locker{channelMutex_[rankId]};
-    channels_[rankId] = 0;
+    channels_[rankId][0] = 0;
     locker.unlock();
     if (rankId >= rankId_) {
         BM_LOG_TRACE("broken channel local server side:" << rankId_ << ", reconnect by remote side: " << rankId);
         return;
     }
 
-    auto ret = reconnect_.AddReconnectTask(rankId, nics_[rankId]);
+    auto ret = reconnect_.AddReconnectTask(rankId, nics_[rankId][0]);
     if (ret != BM_OK) {
         BM_LOG_ERROR("add reconnect task for rank:" << rankId << " failed: " << ret);
     }
@@ -1089,6 +1083,20 @@ void HcomTransportManager::DisConnectHcomChannel(uint32_t rankId, Hcom_Channel c
     }
 }
 
+void HcomTransportManager::ClearRankChannels(uint32_t rankId)
+{
+    // Disconnect all endpoints of the rank, then reset channel slots under lock.
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        if (channels_[rankId][ep] != 0) {
+            DisConnectHcomChannel(rankId, channels_[rankId][ep]);
+        }
+    }
+    std::lock_guard<std::mutex> lock(channelMutex_[rankId]);
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        channels_[rankId][ep] = 0;
+    }
+}
+
 Result HcomTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
     return InnerReadRemote(rankId, lAddr, rAddr, size);
@@ -1101,7 +1109,7 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId];
+    Hcom_Channel channel = channels_[rankId][0];
     if (channel == 0) {
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
         return BM_NOT_CONNECTED;
