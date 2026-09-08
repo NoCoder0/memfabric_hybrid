@@ -118,6 +118,12 @@ private:
 
     Result InnerWriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size);
 
+    Result SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
+                                 size_t end);
+
+    Result SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
+                                size_t end);
+
     Result CheckTransportOptions(const TransportOptions &options);
 
     static Result TransportRpcHcomNewEndPoint(Hcom_Channel newCh, uint64_t usrCtx, const char *payLoad);

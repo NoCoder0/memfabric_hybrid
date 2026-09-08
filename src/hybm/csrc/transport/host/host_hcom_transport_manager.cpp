@@ -943,48 +943,43 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     }
     return ret;
 }
-Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
+Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
+                                                   size_t begin, size_t end)
 {
-    BM_LOG_INFO("WriteRemoteBatchAsync start " << rankId << " rankId");
-    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
-    BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
-                             BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId][0];
+    Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
-        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
-
-    uint32_t allBatch = descriptor.counts.size();
-    auto batchs = (allBatch + HCOM_IOV_BATCH_SIZE - 1) / HCOM_IOV_BATCH_SIZE; // 向上取整
-    uint32_t index = 0;
-    while (index < batchs) {
+    size_t i = begin;
+    while (i < end) {
         Channel_OneSideRequestSgl sglReq;
         sglReq.iovCount = 0;
-        for (uint32_t i = index * HCOM_IOV_BATCH_SIZE; i < std::min(allBatch, (index + 1) * HCOM_IOV_BATCH_SIZE); ++i) {
+        for (; i < end && sglReq.iovCount < HCOM_IOV_BATCH_SIZE; ++i) {
             Channel_OneSideRequest req;
             req.lAddress = descriptor.localAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
             HcomMemoryRegion mr{};
-            auto ret = GetMemoryRegionByAddr(rankId_, 0, reinterpret_cast<uint64_t>(req.lAddress), mr);
+            auto ret = GetMemoryRegionByAddr(rankId_, ep, reinterpret_cast<uint64_t>(req.lAddress), mr);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
+                BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << " ep: " << ep << ", size: " << req.size
                                                              << ", lAddr: " << VaToStr(req.lAddress));
                 return BM_ERROR;
             }
             std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
             mr.lKey = {};
             auto rAddr = descriptor.globalAddrs[i];
-            ret = GetMemoryRegionByAddr(rankId, 0, reinterpret_cast<uint64_t>(rAddr), mr);
+            ret = GetMemoryRegionByAddr(rankId, ep, reinterpret_cast<uint64_t>(rAddr), mr);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
+                BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " ep: " << ep << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
                 return BM_ERROR;
             }
             auto offset = reinterpret_cast<uint64_t>(rAddr) - mr.addr;
             req.rAddress = reinterpret_cast<void *>(mr.lva + offset); // rewrite to remote local va
             CopyHcomOneSideKey(mr.lKey, req.rKey);
-            BM_LOG_DEBUG("Try to write remote rankId: " << rankId << " channel: " << (void *)channel
+            BM_LOG_DEBUG("Try to write remote rankId: " << rankId << " ep: " << ep
+                                                        << " channel: " << (void *)channel
                                                         << " lKey:" << req.lKey.keys[0] << " rKey: " << req.rKey.keys[0]
                                                         << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                         << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
@@ -994,27 +989,80 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                 BM_LOG_ERROR("prepare stream error rankId: " << rankId);
                 return ret;
             }
-
-            sglReq.iov[i - index * HCOM_IOV_BATCH_SIZE] = req;
-            sglReq.iovCount++;
+            sglReq.iov[sglReq.iovCount++] = req;
         }
-        index++;
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
         Channel_Callback channelCallback;
         channelCallback.arg = stream_.get();
         channelCallback.cb = ChannelAsyncCallback;
-
         stream_->SubmitTasks();
-        BM_LOG_INFO("DlHcomApi::ChannelPutV start, sglReq iocount " << sglReq.iovCount);
+        BM_LOG_INFO("DlHcomApi::ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
         auto ret = DlHcomApi::ChannelPutV(channel, sglReq, &channelCallback);
         if (ret != BM_OK) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
-            BM_LOG_ERROR("Failed to submit put task lRank:" << rankId_ << " rRank:" << rankId);
+            BM_LOG_ERROR("Failed to submit put task lRank:" << rankId_ << " rRank:" << rankId << " ep: " << ep);
             return ret;
         }
     }
     return BM_OK;
+}
+
+Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
+{
+    BM_LOG_INFO("WriteRemoteBatchAsync start " << rankId << " rankId");
+    BM_ASSERT_LOG_AND_RETURN(!descriptor.counts.empty(), "descriptor.counts is empty", BM_INVALID_PARAM);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
+                             BM_INVALID_PARAM);
+
+    uint32_t total = descriptor.counts.size();
+    // single link keeps original submit + outer synchronize behavior
+    if (epCount_ <= 1) {
+        return SubmitWriteBatchSlice(rankId, 0, descriptor, 0, total);
+    }
+
+    // multi link: only eps with a ready channel can carry data
+    std::vector<uint32_t> activeEps;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        if (!nics_[rankId][ep].empty() && channels_[rankId][ep] != 0) {
+            activeEps.emplace_back(ep);
+        }
+    }
+    if (activeEps.empty()) {
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
+        return BM_NOT_CONNECTED;
+    }
+    if (activeEps.size() == 1) {
+        return SubmitWriteBatchSlice(rankId, activeEps[0], descriptor, 0, total);
+    }
+
+    // split iov evenly across active eps and submit concurrently; each worker waits its own completion
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> workers;
+    workers.reserve(activeEps.size());
+    size_t base = total / activeEps.size();
+    size_t rem = total % activeEps.size();
+    size_t begin = 0;
+    for (size_t idx = 0; idx < activeEps.size(); ++idx) {
+        size_t end = begin + base + (idx < rem ? 1 : 0);
+        uint32_t ep = activeEps[idx];
+        workers.emplace_back([this, rankId, ep, &descriptor, begin, end, &failed]() {
+            auto ret = SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end);
+            if (ret == BM_OK && stream_ != nullptr) {
+                ret = stream_->Synchronize(static_cast<int32_t>(rankId));
+            }
+            if (ret != BM_OK) {
+                failed.store(true);
+                BM_LOG_ERROR("Failed to submit write slice rank: " << rankId << " ep: " << ep << " ret: " << ret);
+            }
+        });
+        begin = end;
+    }
+    for (auto &t : workers) {
+        t.join();
+    }
+    return failed.load() ? BM_ERROR : BM_OK;
 }
 
 Result HcomTransportManager::Synchronize(const uint32_t rankId)
@@ -1237,48 +1285,43 @@ Result HcomTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_
     return InnerReadRemote(rankId, lAddr, rAddr, size);
 }
 
-Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
+Result HcomTransportManager::SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
+                                                  size_t begin, size_t end)
 {
-    BM_LOG_INFO("ReadRemoteBatchAsync start : " << rankId << " size " << descriptor.counts.size());
-    BM_ASSERT_LOG_AND_RETURN(!descriptor.counts.empty(), "descriptor.counts is empty", BM_INVALID_PARAM);
-    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
-    BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
-                             BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId][0];
+    Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
-        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to read remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
-    uint32_t allBatch = descriptor.counts.size();
-    auto batchs = (allBatch + HCOM_IOV_BATCH_SIZE - 1) / HCOM_IOV_BATCH_SIZE; // 向上取整
-    uint32_t index = 0;
-    while (index < batchs) {
+    size_t i = begin;
+    while (i < end) {
         Channel_OneSideRequestSgl sglReq;
         sglReq.iovCount = 0;
-        for (uint32_t i = index * HCOM_IOV_BATCH_SIZE; i < std::min(allBatch, (index + 1) * HCOM_IOV_BATCH_SIZE); ++i) {
+        for (; i < end && sglReq.iovCount < HCOM_IOV_BATCH_SIZE; ++i) {
             Channel_OneSideRequest req;
             req.lAddress = descriptor.globalAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
             HcomMemoryRegion mr{};
-            auto ret = GetMemoryRegionByAddr(rankId_, 0, reinterpret_cast<uint64_t>(req.lAddress), mr);
+            auto ret = GetMemoryRegionByAddr(rankId_, ep, reinterpret_cast<uint64_t>(req.lAddress), mr);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
+                BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << " ep: " << ep << ", size: " << req.size
                                                              << ", lAddr: " << VaToStr(req.lAddress));
                 return BM_ERROR;
             }
             CopyHcomOneSideKey(mr.lKey, req.lKey);
             mr.lKey = {};
             auto rAddr = descriptor.localAddrs[i];
-            ret = GetMemoryRegionByAddr(rankId, 0, reinterpret_cast<uint64_t>(rAddr), mr);
+            ret = GetMemoryRegionByAddr(rankId, ep, reinterpret_cast<uint64_t>(rAddr), mr);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
+                BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " ep: " << ep << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
                 return BM_ERROR;
             }
             CopyHcomOneSideKey(mr.lKey, req.rKey);
             auto offset = reinterpret_cast<uint64_t>(rAddr) - mr.addr;
             req.rAddress = reinterpret_cast<void *>(mr.lva + offset); // rewrite to remote local va
-            BM_LOG_DEBUG("Try to read remote rankId: " << rankId << " channel: " << (void *)channel
+            BM_LOG_DEBUG("Try to read remote rankId: " << rankId << " ep: " << ep
+                                                       << " channel: " << (void *)channel
                                                        << " lKey:" << req.lKey.keys[0] << " rKey: " << req.rKey.keys[0]
                                                        << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                        << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
@@ -1288,16 +1331,14 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
                 BM_LOG_ERROR("prepare stream error rankId: " << rankId);
                 return ret;
             }
-            sglReq.iov[i - index * HCOM_IOV_BATCH_SIZE] = req;
-            sglReq.iovCount++;
+            sglReq.iov[sglReq.iovCount++] = req;
         }
-        index++;
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
         Channel_Callback channelCallback;
         channelCallback.arg = stream_.get();
         channelCallback.cb = ChannelAsyncCallback;
 
-        BM_LOG_INFO("ChannelGetV start, sglReq.iovCount " << sglReq.iovCount);
+        BM_LOG_INFO("ChannelGetV start, ep: " << ep << " sglReq.iovCount " << sglReq.iovCount);
         stream_->SubmitTasks();
         TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_HCOM_CH_GET);
         auto ret = DlHcomApi::ChannelGetV(channel, sglReq, &channelCallback);
@@ -1305,11 +1346,68 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
         if (ret != 0) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
-            BM_LOG_ERROR("Failed to submit read task lRank:" << rankId_ << " rRank:" << rankId);
+            BM_LOG_ERROR("Failed to submit read task lRank:" << rankId_ << " rRank:" << rankId << " ep: " << ep);
             return ret;
         }
     }
     return BM_OK;
+}
+
+Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
+{
+    BM_LOG_INFO("ReadRemoteBatchAsync start : " << rankId << " size " << descriptor.counts.size());
+    BM_ASSERT_LOG_AND_RETURN(!descriptor.counts.empty(), "descriptor.counts is empty", BM_INVALID_PARAM);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
+                             BM_INVALID_PARAM);
+
+    uint32_t total = descriptor.counts.size();
+    // single link keeps original submit + outer synchronize behavior
+    if (epCount_ <= 1) {
+        return SubmitReadBatchSlice(rankId, 0, descriptor, 0, total);
+    }
+
+    // multi link: only eps with a ready channel can carry data
+    std::vector<uint32_t> activeEps;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        if (!nics_[rankId][ep].empty() && channels_[rankId][ep] != 0) {
+            activeEps.emplace_back(ep);
+        }
+    }
+    if (activeEps.empty()) {
+        BM_LOG_WARN("Unable to read remote, rankId: " << rankId << " is not connect");
+        return BM_NOT_CONNECTED;
+    }
+    if (activeEps.size() == 1) {
+        return SubmitReadBatchSlice(rankId, activeEps[0], descriptor, 0, total);
+    }
+
+    // split iov evenly across active eps and submit concurrently; each worker waits its own completion
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> workers;
+    workers.reserve(activeEps.size());
+    size_t base = total / activeEps.size();
+    size_t rem = total % activeEps.size();
+    size_t begin = 0;
+    for (size_t idx = 0; idx < activeEps.size(); ++idx) {
+        size_t end = begin + base + (idx < rem ? 1 : 0);
+        uint32_t ep = activeEps[idx];
+        workers.emplace_back([this, rankId, ep, &descriptor, begin, end, &failed]() {
+            auto ret = SubmitReadBatchSlice(rankId, ep, descriptor, begin, end);
+            if (ret == BM_OK && stream_ != nullptr) {
+                ret = stream_->Synchronize(static_cast<int32_t>(rankId));
+            }
+            if (ret != BM_OK) {
+                failed.store(true);
+                BM_LOG_ERROR("Failed to submit read slice rank: " << rankId << " ep: " << ep << " ret: " << ret);
+            }
+        });
+        begin = end;
+    }
+    for (auto &t : workers) {
+        t.join();
+    }
+    return failed.load() ? BM_ERROR : BM_OK;
 }
 
 Result HcomTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
