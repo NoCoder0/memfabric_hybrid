@@ -304,9 +304,8 @@ int main(int argc, char *argv[])
                     break;
                 }
                 const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到数据校验完 */
-                while (*reinterpret_cast<const uint64_t *>(flagVa) != expect) {
-                    std::this_thread::sleep_for(std::chrono::microseconds(50));
-                }
+                while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
+                } /* 自旋等 flag（完成很快，不用 sleep） */
                 int bad = 0;
                 for (uint32_t i = 0; i < a.count; ++i) {
                     void *dstVa = nullptr;
@@ -385,9 +384,8 @@ int main(int argc, char *argv[])
                     printf("cont receiver flag_va_failed at iter %u\n", r);
                     break;
                 }
-                while (*reinterpret_cast<const uint64_t *>(flagVa) != expect) {
-                    std::this_thread::sleep_for(std::chrono::microseconds(50));
-                }
+                while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
+                } /* 自旋等 flag（完成很快，不用 sleep） */
                 int bad = 0;
                 for (uint32_t i = 0; i < a.count; ++i) {
                     void *srcVa = nullptr, *dstVa = nullptr;
