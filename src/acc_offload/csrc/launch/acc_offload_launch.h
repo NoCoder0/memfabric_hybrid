@@ -52,6 +52,7 @@ public:
     }
 
 private:
+    static std::string GetSelfLibDir();
     static std::mutex gMutex;
     static bool gLoaded;
     static void *libHandle;

@@ -18,6 +18,11 @@ import sys
 from pathlib import Path
 
 from . import mem_scan
+from ._acc_offload_build import ExtendBuildError as _ExtendBuildError
+from ._acc_offload_build import acc_offload_info as _acc_offload_info
+from ._acc_offload_build import ensure_acc_offload_ext as _ensure_acc_offload_ext
+from ._acc_offload_build import uninstall_acc_offload_ext as _uninstall_acc_offload_ext
+from .env_utils import get_soc_key as _get_soc_key
 
 LOGGER = logging.getLogger(__name__)
 
@@ -32,7 +37,28 @@ def _show_version(_args: argparse.Namespace) -> int:
     return 0
 
 
+def _install_acc_offload(soc_key=None) -> int:
+    """Build and install the acc_offload extend library after kernel ops install.
+
+    Any failure fails the whole kernel install. Only the "environment does not
+    support acc_offload (SoC/CANN/torch)" skip counts as success. All progress
+    and skip messages are echoed by _acc_offload_build itself.
+    """
+    try:
+        _ensure_acc_offload_ext(soc_key)
+    except _ExtendBuildError as exc:
+        LOGGER.error("failed to install acc_offload operator extend library: %s", exc)
+        return 1
+    except OSError as exc:
+        LOGGER.error("failed to install acc_offload operator extend library, unexpected OS error: %s", exc)
+        return 1
+    return 0
+
+
 def _manage_kernel(args: argparse.Namespace) -> int:
+    if args.command == "version":
+        return _show_version(args)
+
     bash = shutil.which("bash")
     if bash is None:
         LOGGER.error("bash is required to install kernel ops.")
@@ -45,10 +71,26 @@ def _manage_kernel(args: argparse.Namespace) -> int:
         )
         return 1
 
+    soc_key = None
+    if args.command == "install":
+        soc_key = args.soc_version or _get_soc_key()
+        if soc_key == "A3":
+            LOGGER.info("SoC A3 has no AICPU kernel support, skip kernel ops install.")
+            return _install_acc_offload(soc_key)
+
     command = [bash, str(installer), f"--{args.command}"]
     if args.command == "install" and args.install_for_all:
         command.append("--install-for-all")
-    return subprocess.run(command, check=False).returncode
+    exit_code = subprocess.run(command, check=False).returncode
+    if exit_code != 0:
+        return exit_code
+    if args.command == "install":
+        return _install_acc_offload(soc_key)
+    if args.command == "uninstall":
+        _uninstall_acc_offload_ext()
+    if args.command == "info":
+        _acc_offload_info()
+    return 0
 
 
 def _scan_memory(args: argparse.Namespace) -> int:
@@ -71,6 +113,12 @@ def _register_kernel_command(components) -> None:
         "--install-for-all",
         action="store_true",
         help="make the installed files readable by all users",
+    )
+    install.add_argument(
+        "--soc-version",
+        choices=("A2", "A3", "A5"),
+        default=None,
+        help="target SoC generation; skip auto detection when given (default: auto detect)",
     )
     commands.add_parser("info", help="show kernel ops install paths and CANN load configuration")
     commands.add_parser("version", help="show installed kernel version")
