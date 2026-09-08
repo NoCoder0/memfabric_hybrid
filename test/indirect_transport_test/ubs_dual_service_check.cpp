@@ -34,6 +34,8 @@ typedef int (*ConnectFn)(Hcom_Service, const char *, Hcom_Channel *, Service_Con
 typedef int (*DisConnectFn)(Hcom_Service, Hcom_Channel);
 typedef void (*IpMaskFn)(Hcom_Service, const char *);
 typedef void (*BrokerFn)(Hcom_Service, Service_ChannelHandler, Service_ChannelPolicy, uint64_t);
+typedef void (*RegisterHandlerFn)(Hcom_Service, Service_HandlerType, Service_RequestHandler, uint64_t);
+typedef void (*SetHeartbeatFn)(Hcom_Service, uint16_t, uint16_t, uint16_t);
 
 CreateFn gCreate = nullptr;
 BindFn gBind = nullptr;
@@ -43,6 +45,8 @@ ConnectFn gConnect = nullptr;
 DisConnectFn gDisConnect = nullptr;
 IpMaskFn gSetIpMask = nullptr;
 BrokerFn gRegBroker = nullptr;
+RegisterHandlerFn gRegHandler = nullptr;
+SetHeartbeatFn gSetHeartbeat = nullptr;
 
 void *gHandle = nullptr;
 
@@ -69,6 +73,8 @@ bool LoadLib()
     LOAD(gDisConnect, "ubs_hcom_service_disconnect", DisConnectFn);
     LOAD(gSetIpMask, "ubs_hcom_service_set_ipmask", IpMaskFn);
     LOAD(gRegBroker, "ubs_hcom_service_register_broken_handler", BrokerFn);
+    LOAD(gRegHandler, "ubs_hcom_service_register_handler", RegisterHandlerFn);
+    LOAD(gSetHeartbeat, "ubs_hcom_service_set_heartbeat_opt", SetHeartbeatFn);
     return true;
 #undef LOAD
 }
@@ -82,6 +88,28 @@ int NewEndPointHandler(Hcom_Channel ch, uint64_t usrCtx, const char *payLoad)
 int BrokenHandler(Hcom_Channel ch, uint64_t usrCtx, const char *payLoad)
 {
     printf("[cb] channel broken ch=%p ctx=%lu payload=%s\n", (void *)ch, usrCtx, payLoad ? payLoad : "<null>");
+    return 0;
+}
+
+// ubs 要求 start 前先注册 receive/readwrite handler（错误 501 即为缺 RecvHandler）
+int RecvHandler(Service_Context ctx, uint64_t usrCtx)
+{
+    (void)ctx;
+    (void)usrCtx;
+    return 0;
+}
+
+int PostedHandler(Service_Context ctx, uint64_t usrCtx)
+{
+    (void)ctx;
+    (void)usrCtx;
+    return 0;
+}
+
+int DoneHandler(Service_Context ctx, uint64_t usrCtx)
+{
+    (void)ctx;
+    (void)usrCtx;
     return 0;
 }
 
@@ -108,6 +136,10 @@ bool CreateService(int idx, const std::string &name, const std::string &ip, uint
         return false;
     }
     gRegBroker(svc, BrokenHandler, C_CHANNEL_RECONNECT, 1); // void
+    gRegHandler(svc, C_SERVICE_REQUEST_RECEIVED, RecvHandler, 0);
+    gRegHandler(svc, C_SERVICE_REQUEST_POSTED, PostedHandler, 0);
+    gRegHandler(svc, C_SERVICE_READWRITE_DONE, DoneHandler, 0);
+    gSetHeartbeat(svc, 10, 3, 5); // idle 10s, probe 3*5s（同 MF）
     ret = gStart(svc);
     printf("svc[%d] %s: start ret=%d\n", idx, name.c_str(), ret);
     return ret == 0;
