@@ -53,6 +53,8 @@ constexpr uint8_t HCOM_TRANS_EP_SIZE = 1;
 constexpr int8_t HCOM_THREAD_PRIORITY = -20;
 #endif
 const char *HCOM_RPC_SERVICE_NAME = "hybm_hcom_service";
+constexpr uint32_t HCOM_PAYLOAD_EP_SHIFT = 4U;
+constexpr uint32_t HCOM_PAYLOAD_EP_MASK = (1U << HCOM_PAYLOAD_EP_SHIFT) - 1U;
 
 HcomRuntimeConfig LoadHcomRuntimeConfig()
 {
@@ -114,7 +116,7 @@ static void CopyHcomOneSideKey(TransportMemoryKey &from, OneSideKey &to)
 
 Result HcomTransportManager::OpenDevice(const TransportOptions &options)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ == 0, "rpcService_ = " << rpcService_, BM_OK);
+    BM_ASSERT_LOG_AND_RETURN(rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_OK);
     auto ret = CheckTransportOptions(options);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, BM_INVALID_PARAM);
     runtimeConfig_ = LoadHcomRuntimeConfig();
@@ -124,50 +126,56 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     opt.maxSendRecvDataSize = runtimeConfig_.recvDataSize;
     opt.workerThreadPriority = HCOM_THREAD_PRIORITY;
     Service_Type enumProtocolType = HostHcomHelper::HybmDopTransHcomProtocol(options.protocol, options.nic);
-    ret = DlHcomApi::ServiceCreate(enumProtocolType, HCOM_RPC_SERVICE_NAME, opt, &rpcService_);
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to create hcom service, nic: " << options.nic << " type: " << enumProtocolType
-                                                            << " ret: " << ret);
-        return BM_DL_FUNCTION_FAILED;
-    }
-    BM_LOG_TRACE("Create hcom service successful, nic: " << options.nic << " type: " << enumProtocolType);
-    DlHcomApi::ServiceSetHeartBeatOptions(rpcService_, 10, 3, 5); /* idle 10s, probe 3*5s, total ~25s */
     tlsConfig_ = options.tlsOption;
-    DlHcomApi::ServiceSetTlsOptions(rpcService_, options.tlsOption.tlsEnable, C_SERVICE_TLS_1_3, C_SERVICE_AES_GCM_256,
-                                    GetCertCallBack, GetPrivateKeyCallBack, GetCACallBack);
-    DlHcomApi::SetUbsModeFunc(rpcService_, UbsHcomServiceUbcMode::C_SERVICE_HIGHBANDWIDTH);
-    DlHcomApi::ServiceRegisterChannelBrokerHandler(rpcService_, TransportRpcHcomEndPointBroken, C_CHANNEL_RECONNECT, 1);
-    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_REQUEST_RECEIVED, TransportRpcHcomRequestReceived, 1);
-    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_REQUEST_POSTED, TransportRpcHcomRequestPosted, 1);
-    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, 1);
 
-    if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
-        // Bind each ep(nic) with its own ip mask, one rdma nic per ep.
-        for (const auto &ip : localIps_) {
-            std::string ipMask = ip + "/32";
-            DlHcomApi::ServiceSetDeviceIpMask(rpcService_, ipMask.c_str());
+    // One hcom service per ep(nic): dual cards need dual services (ubs limits one driver per service).
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        Hcom_Service service = 0;
+        auto serviceName = HCOM_RPC_SERVICE_NAME + std::string("_ep") + std::to_string(ep);
+        ret = DlHcomApi::ServiceCreate(enumProtocolType, serviceName.c_str(), opt, &service);
+        if (ret != 0) {
+            BM_LOG_ERROR("Failed to create hcom service, ep: " << ep << " nic: " << localNics_[ep]
+                                                               << " type: " << enumProtocolType << " ret: " << ret);
+            DestroyServices();
+            return BM_DL_FUNCTION_FAILED;
         }
+        rpcServices_.emplace_back(service);
+        BM_LOG_TRACE("Create hcom service successful, ep: " << ep << " nic: " << localNics_[ep]
+                                                            << " type: " << enumProtocolType);
+        DlHcomApi::ServiceSetHeartBeatOptions(service, 10, 3, 5); /* idle 10s, probe 3*5s, total ~25s */
+        DlHcomApi::ServiceSetTlsOptions(service, options.tlsOption.tlsEnable, C_SERVICE_TLS_1_3, C_SERVICE_AES_GCM_256,
+                                        GetCertCallBack, GetPrivateKeyCallBack, GetCACallBack);
+        DlHcomApi::SetUbsModeFunc(service, UbsHcomServiceUbcMode::C_SERVICE_HIGHBANDWIDTH);
+        DlHcomApi::ServiceRegisterChannelBrokerHandler(service, TransportRpcHcomEndPointBroken, C_CHANNEL_RECONNECT, 1);
+        DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_REQUEST_RECEIVED, TransportRpcHcomRequestReceived, 1);
+        DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_REQUEST_POSTED, TransportRpcHcomRequestPosted, 1);
+        DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, 1);
+        if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
+            std::string ipMask = localIps_[ep] + "/32";
+            DlHcomApi::ServiceSetDeviceIpMask(service, ipMask.c_str());
+        }
+        SetHcomServiceConfig(service);
+        BM_LOG_INFO("bind hcom service ep: " << ep << " listen url: " << localNics_[ep]);
+        DlHcomApi::ServiceBind(service, localNics_[ep].c_str(), TransportRpcHcomNewEndPoint);
     }
 
-    ret = reconnect_.Start([this](uint32_t rankId, const std::string &nic) { return ConnectHcomChannel(rankId, nic); });
+    ret = reconnect_.Start(
+        [this](uint32_t rankId, uint32_t ep, const std::string &nic) { return ConnectHcomChannel(rankId, ep, nic); });
     if (ret != BM_OK) {
         BM_LOG_ERROR("start reconnect service failed: " << ret);
+        DestroyServices();
         return ret;
     }
 
-    SetHcomServiceConfig(rpcService_);
-    for (const auto &listenUrl : localNics_) {
-        BM_LOG_INFO("bind hcom service listen url: " << listenUrl);
-        DlHcomApi::ServiceBind(rpcService_, listenUrl.c_str(), TransportRpcHcomNewEndPoint);
-    }
-    ret = DlHcomApi::ServiceStart(rpcService_);
-    if (ret != 0) {
-        BM_LOG_ERROR("Failed to start hcom service, nic: " << localNic_ << " type: " << enumProtocolType
-                                                           << " ret: " << ret);
-        DlHcomApi::ServiceDestroy(rpcService_, HCOM_RPC_SERVICE_NAME);
-        reconnect_.Stop();
-        rpcService_ = 0;
-        return BM_DL_FUNCTION_FAILED;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        ret = DlHcomApi::ServiceStart(rpcServices_[ep]);
+        if (ret != 0) {
+            BM_LOG_ERROR("Failed to start hcom service, ep: " << ep << " nic: " << localNics_[ep]
+                                                              << " type: " << enumProtocolType << " ret: " << ret);
+            reconnect_.Stop();
+            DestroyServices();
+            return BM_DL_FUNCTION_FAILED;
+        }
     }
     bmOptype_ = static_cast<hybm_data_op_type>(options.protocol);
     rankId_ = options.rankId;
@@ -183,30 +191,26 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
 Result HcomTransportManager::CloseDevice()
 {
     DlHcomApi::SetExternalLogger([]([[maybe_unused]] int level, [[maybe_unused]] const char *msg) {});
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_OK);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_OK);
 
     reconnect_.Stop();
-    auto service = rpcService_;
     for (uint32_t i = 0; i < rankCount_; ++i) {
         ClearRankChannels(i);
     }
 
     // destroy all registered MRs first to release UBContext refs before ServiceDestroy
+    // NOTE: MRs are registered on ep0 service for now (per-ep MR comes later)
+    Hcom_Service ep0Service = rpcServices_[0];
     for (uint32_t i = 0; i < mrMutex_.size(); ++i) {
         std::unique_lock<std::mutex> lock(mrMutex_[i]);
         for (auto it = mrs_[i].begin(); it != mrs_[i].end();) {
-            DlHcomApi::ServiceDestroyMemoryRegion(service, it->mr);
+            DlHcomApi::ServiceDestroyMemoryRegion(ep0Service, it->mr);
             it = mrs_[i].erase(it);
         }
     }
 
-    auto ret = DlHcomApi::ServiceDestroy(service, HCOM_RPC_SERVICE_NAME);
-    if (ret != 0) {
-        BM_LOG_WARN("Unable to destroy hcom service, ret: " << ret);
-    }
-
+    DestroyServices();
     mf::MfTlsUtil::CloseTlsLib();
-    rpcService_ = 0;
     localNic_ = "";
     localIp_ = "";
     localNics_.clear();
@@ -222,10 +226,22 @@ Result HcomTransportManager::CloseDevice()
     return BM_OK;
 }
 
+void HcomTransportManager::DestroyServices()
+{
+    for (uint32_t ep = 0; ep < rpcServices_.size(); ++ep) {
+        auto serviceName = HCOM_RPC_SERVICE_NAME + std::string("_ep") + std::to_string(ep);
+        auto ret = DlHcomApi::ServiceDestroy(rpcServices_[ep], serviceName.c_str());
+        if (ret != 0) {
+            BM_LOG_WARN("Unable to destroy hcom service, ep: " << ep << " ret: " << ret);
+        }
+    }
+    rpcServices_.clear();
+}
+
 #if defined(ASCEND_NPU) || defined(NVIDIA_GPU)
 Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &mr)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(mr.addr != 0 && mr.size != 0, "mr.addr = " << mr.addr << ", " << "mr.size = " << mr.size,
                              BM_INVALID_PARAM);
     const bool isHbm = (mr.flags & transport::REG_MR_FLAG_HBM) != 0;
@@ -241,7 +257,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     }
 
     Service_MemoryRegion memoryRegion;
-    int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcService_, mr.addr, mr.size, &memoryRegion);
+    int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcServices_[0], mr.addr, mr.size, &memoryRegion);
     if (ret != 0) {
         if (isHbm) {
             // Old HDK libhcom can not register hbm to host rdma service; skip and degrade to swap path.
@@ -250,16 +266,16 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
             return BM_OK;
         }
         BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
-                                                             << " service: " << rpcService_ << " ret: " << ret);
+                                                             << " service: " << rpcServices_[0] << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
     Service_MemoryRegionInfo memoryRegionInfo;
     ret = DlHcomApi::ServiceGetMemoryRegionInfo(memoryRegion, &memoryRegionInfo);
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcService_
+        BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcServices_[0]
                                                              << " ret: " << ret);
-        DlHcomApi::ServiceDestroyMemoryRegion(rpcService_, memoryRegion);
+        DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[0], memoryRegion);
         return BM_DL_FUNCTION_FAILED;
     }
 
@@ -281,7 +297,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
 #else
 Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &mr)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(mr.addr != 0 && mr.size != 0, "mr.addr = " << mr.addr << ", " << "mr.size = " << mr.size,
                              BM_INVALID_PARAM);
     if ((mr.flags & transport::REG_MR_FLAG_DRAM) == 0) {
@@ -301,11 +317,11 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     }
 
     Service_MemoryRegion memoryRegion;
-    int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcService_, mr.addr, mr.size, &memoryRegion);
+    int32_t ret = DlHcomApi::ServiceRegisterAssignMemoryRegion(rpcServices_[0], mr.addr, mr.size, &memoryRegion);
     // 单rank不需要hcom,目的是在无网卡的情况下也可以测试
     if (ret != 0) {
         BM_LOG_ERROR("Failed to register mem region, size: " << mr.size << " addr:" << std::hex << mr.addr
-                                                             << " service: " << rpcService_ << " ret: " << ret);
+                                                             << " service: " << rpcServices_[0] << " ret: " << ret);
         return BM_ERROR;
     }
 
@@ -314,9 +330,9 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         ret = DlHcomApi::ServiceGetMemoryRegionInfo(memoryRegion, &memoryRegionInfo);
     }
     if (ret != 0) {
-        BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcService_
+        BM_LOG_ERROR("Failed to get mem region info, size: " << mr.size << " service: " << rpcServices_[0]
                                                              << " ret: " << ret);
-        DlHcomApi::ServiceDestroyMemoryRegion(rpcService_, memoryRegion);
+        DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[0], memoryRegion);
         return BM_ERROR;
     }
 
@@ -339,13 +355,13 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
 Result HcomTransportManager::UnregisterMemoryRegion(uint64_t addr)
 {
     BM_ASSERT_LOG_AND_RETURN(addr != 0, "addr = " << addr, BM_INVALID_PARAM);
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
 
     std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
     auto &localMrs = mrs_[rankId_];
     for (auto it = localMrs.begin(); it != localMrs.end(); it++) {
         if (it->addr == addr) {
-            DlHcomApi::ServiceDestroyMemoryRegion(rpcService_, it->mr);
+            DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[0], it->mr);
             localMrs.erase(it);
             BM_LOG_INFO("Addr: " << addr << " unregistered");
             return BM_OK;
@@ -422,16 +438,22 @@ Result HcomTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
 
 Result HcomTransportManager::Connect()
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     TP_TRACE_BEGIN(TP_SMEM_GROUP_HCOM_CONNECT_BATCH);
 
     // Collect ranks to connect
     std::vector<uint32_t> targets;
     for (uint32_t i = 0; i < rankCount_; ++i) {
-        if (rankId_ <= i || nics_[i][0].empty()) {
+        if (rankId_ <= i) {
             continue;
         }
-        targets.push_back(i);
+        bool hasNic = false;
+        for (uint32_t ep = 0; ep < epCount_ && !hasNic; ++ep) {
+            hasNic = !nics_[i][ep].empty();
+        }
+        if (hasNic) {
+            targets.push_back(i);
+        }
     }
     if (targets.empty()) {
         TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_BATCH, 0);
@@ -452,10 +474,21 @@ Result HcomTransportManager::ConnectTargets(const std::vector<uint32_t> &targets
     std::vector<uint32_t> connected;
     std::vector<std::thread> pool;
 
-    auto worker = [this, &failed, &successMtx, &connected](uint32_t rankId, const std::string &nic) {
-        auto ret = ConnectHcomChannel(rankId, nic);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect rank " << rankId << " nic: " << nic << " ret: " << ret);
+    auto worker = [this, &failed, &successMtx, &connected](uint32_t rankId) {
+        bool rankOk = true;
+        for (uint32_t ep = 0; ep < epCount_; ++ep) {
+            if (nics_[rankId][ep].empty()) {
+                continue;
+            }
+            auto ret = ConnectHcomChannel(rankId, ep, nics_[rankId][ep]);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Failed to connect rank " << rankId << " ep: " << ep << " nic: " << nics_[rankId][ep]
+                                                       << " ret: " << ret);
+                rankOk = false;
+                break;
+            }
+        }
+        if (!rankOk) {
             failed.fetch_add(1, std::memory_order_relaxed);
         } else {
             std::lock_guard<std::mutex> lock(successMtx);
@@ -464,7 +497,7 @@ Result HcomTransportManager::ConnectTargets(const std::vector<uint32_t> &targets
     };
 
     for (size_t idx = 0; idx < targets.size(); ++idx) {
-        pool.emplace_back(worker, targets[idx], nics_[targets[idx]][0]);
+        pool.emplace_back(worker, targets[idx]);
         if (pool.size() >= poolSize) {
             for (auto &t : pool)
                 t.join();
@@ -499,8 +532,10 @@ Result HcomTransportManager::WaitChannelReady(uint32_t rankId, uint32_t timeoutM
     while (std::chrono::steady_clock::now() < deadline) {
         {
             std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
-            if (channels_[rankId][0] != 0) {
-                return BM_OK;
+            for (uint32_t ep = 0; ep < epCount_; ++ep) {
+                if (channels_[rankId][ep] != 0) {
+                    return BM_OK;
+                }
             }
         }
         usleep(HCOM_CHANNEL_POLL_INTERVAL_US);
@@ -510,7 +545,7 @@ Result HcomTransportManager::WaitChannelReady(uint32_t rankId, uint32_t timeoutM
 
 Result HcomTransportManager::ConnectRank(uint32_t rankId)
 {
-    if (rankId >= rankCount_ || nics_[rankId][0].empty()) {
+    if (rankId >= rankCount_) {
         return BM_OK;
     }
     if (rankId_ <= rankId) {
@@ -518,10 +553,15 @@ Result HcomTransportManager::ConnectRank(uint32_t rankId)
         return WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
     }
     TP_TRACE_BEGIN(TP_SMEM_GROUP_CONNECT_RANK);
-    const auto ret = ConnectHcomChannel(rankId, nics_[rankId][0]);
-    if (ret != BM_OK) {
-        TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 1);
-        return ret;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        if (nics_[rankId][ep].empty()) {
+            continue;
+        }
+        const auto ret = ConnectHcomChannel(rankId, ep, nics_[rankId][ep]);
+        if (ret != BM_OK) {
+            TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 1);
+            return ret;
+        }
     }
     // Active side: serviceConnect is complete, but wait for passive side to confirm too
     auto waitRet = WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
@@ -558,7 +598,7 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
                 continue;
             }
             if (rankId != rankId_ && (bmOptype_ & HYBM_DOP_TYPE_HOST_URMA)) {
-                auto ret = DlHcomApi::ImportUrmaSegFunc(rpcService_, mrInfo.addr, mrInfo.size,
+                auto ret = DlHcomApi::ImportUrmaSegFunc(rpcServices_[0], mrInfo.addr, mrInfo.size,
                                                         &keyUnion.hostKey.hcomInfo.lKey);
                 BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
                 BM_LOG_DEBUG("hcom returned, tokens: " << keyUnion.hostKey.hcomInfo.lKey.tokens[0]);
@@ -624,7 +664,7 @@ const std::string &HcomTransportManager::GetNic() const
 
 Result HcomTransportManager::InnerReadRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(size <= std::numeric_limits<uint32_t>::max(),
@@ -664,7 +704,7 @@ Result HcomTransportManager::InnerReadRemote(uint32_t rankId, uint64_t lAddr, ui
 
 Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(size <= std::numeric_limits<uint32_t>::max(),
@@ -717,7 +757,7 @@ int HcomTransportManager::PrepareThreadLocalStream()
 
 Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId][0];
@@ -786,7 +826,7 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
 
 Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId][0];
@@ -855,7 +895,7 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
 Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
 {
     BM_LOG_INFO("WriteRemoteBatchAsync start " << rankId << " rankId");
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId][0];
@@ -987,12 +1027,18 @@ Result HcomTransportManager::TransportRpcHcomNewEndPoint(Hcom_Channel newCh, uin
 
     HcomPayload payloadUn{};
     payloadUn.payload = payloadNum;
-    BM_LOG_DEBUG("new channel from " << payloadUn.client << " to " << payloadUn.server);
-
     auto rankId = payloadUn.client;
+    auto ep = payloadUn.serverAndEp & HCOM_PAYLOAD_EP_MASK;
+    BM_LOG_DEBUG("new channel from " << payloadUn.client << " to " << (payloadUn.serverAndEp >> HCOM_PAYLOAD_EP_SHIFT)
+                                     << " ep: " << ep);
+
     auto self = HcomTransportManager::GetInstance();
+    if (rankId >= self->channels_.size() || ep >= self->epCount_) {
+        BM_LOG_ERROR("new channel with invalid rank: " << rankId << " ep: " << ep);
+        return BM_ERROR;
+    }
     std::unique_lock<std::mutex> locker{self->channelMutex_[rankId]};
-    self->channels_[rankId][0] = newCh;
+    self->channels_[rankId][ep] = newCh;
     locker.unlock();
 
     return BM_OK;
@@ -1010,11 +1056,13 @@ Result HcomTransportManager::TransportRpcHcomEndPointBroken(Hcom_Channel ch, uin
 
     HcomPayload payloadUn{};
     payloadUn.payload = payloadNum;
-    BM_LOG_DEBUG("channel: " << ch << " broken from " << payloadUn.client << " to " << payloadUn.server);
+    auto server = payloadUn.serverAndEp >> HCOM_PAYLOAD_EP_SHIFT;
+    auto ep = payloadUn.serverAndEp & HCOM_PAYLOAD_EP_MASK;
+    BM_LOG_DEBUG("channel: " << ch << " broken from " << payloadUn.client << " to " << server << " ep: " << ep);
 
     auto self = HcomTransportManager::GetInstance();
-    auto rankId = self->rankId_ == payloadUn.server ? payloadUn.client : payloadUn.server;
-    GetInstance()->HcomChannelDisconnected(rankId, ch);
+    auto rankId = self->rankId_ == server ? payloadUn.client : server;
+    GetInstance()->HcomChannelDisconnected(rankId, ep, ch);
     return BM_OK;
 }
 
@@ -1036,13 +1084,14 @@ Result HcomTransportManager::TransportRpcHcomOneSideDone(Service_Context ctx, ui
     return BM_OK;
 }
 
-Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::string &url)
+Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, uint32_t ep, const std::string &url)
 {
     TP_TRACE_BEGIN(TP_SMEM_GROUP_HCOM_CONNECT_CH);
     {
         std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
-        if (channels_[rankId][0] != 0) {
-            BM_LOG_WARN("Stop connect to hcom service rankId: " << rankId << " url: " << url << " is connected");
+        if (channels_[rankId][ep] != 0) {
+            BM_LOG_WARN("Stop connect to hcom service rankId: " << rankId << " ep: " << ep << " url: " << url
+                                                                << " is connected");
             TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 0);
             return BM_OK;
         }
@@ -1059,61 +1108,62 @@ Result HcomTransportManager::ConnectHcomChannel(uint32_t rankId, const std::stri
     }
     HcomPayload payload{};
     payload.client = rankId_;
-    payload.server = rankId;
+    payload.serverAndEp = (rankId << HCOM_PAYLOAD_EP_SHIFT) | ep;
     auto rankIdStr = std::to_string(payload.payload);
     std::copy_n(rankIdStr.c_str(), rankIdStr.size() + 1, options.payLoad);
     do {
-        auto ret = DlHcomApi::ServiceConnect(rpcService_, url.c_str(), &channel, options);
+        auto ret = DlHcomApi::ServiceConnect(rpcServices_[ep], url.c_str(), &channel, options);
         if (ret != 0) {
-            BM_LOG_ERROR("Failed to connect remote service, rankId" << rankId << " url: " << url << " ret: " << ret);
+            BM_LOG_ERROR("Failed to connect remote service, rankId" << rankId << " ep: " << ep << " url: " << url
+                                                                    << " ret: " << ret);
             TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 1);
             return BM_DL_FUNCTION_FAILED;
         }
     } while (0);
     std::unique_lock<std::mutex> lock(channelMutex_[rankId]);
-    channels_[rankId][0] = channel;
+    channels_[rankId][ep] = channel;
     lock.unlock();
 
-    BM_LOG_DEBUG("Success to connect to hcom service rankId: " << rankId << " url: " << url
+    BM_LOG_DEBUG("Success to connect to hcom service rankId: " << rankId << " ep: " << ep << " url: " << url
                                                                << " channel: " << (void *)channel);
     TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_CH, 0);
     return BM_OK;
 }
 
-void HcomTransportManager::HcomChannelDisconnected(uint32_t rankId, Hcom_Channel ch)
+void HcomTransportManager::HcomChannelDisconnected(uint32_t rankId, uint32_t ep, Hcom_Channel ch)
 {
-    BM_LOG_DEBUG("HcomChannelDisconnected for rank: " << rankId << ", channel: " << ch);
-    if (rankId >= channelMutex_.size()) {
-        BM_LOG_ERROR("channel disconnected with invalid rank id: " << rankId << ", channel: " << ch);
+    BM_LOG_DEBUG("HcomChannelDisconnected for rank: " << rankId << " ep: " << ep << ", channel: " << ch);
+    if (rankId >= channelMutex_.size() || ep >= epCount_) {
+        BM_LOG_ERROR("channel disconnected with invalid rank: " << rankId << " ep: " << ep << ", channel: " << ch);
         return;
     }
 
     std::unique_lock<std::mutex> locker{channelMutex_[rankId]};
-    channels_[rankId][0] = 0;
+    channels_[rankId][ep] = 0;
     locker.unlock();
     if (rankId >= rankId_) {
         BM_LOG_TRACE("broken channel local server side:" << rankId_ << ", reconnect by remote side: " << rankId);
         return;
     }
 
-    auto ret = reconnect_.AddReconnectTask(rankId, nics_[rankId][0]);
+    auto ret = reconnect_.AddReconnectTask(rankId, ep, nics_[rankId][ep]);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("add reconnect task for rank:" << rankId << " failed: " << ret);
+        BM_LOG_ERROR("add reconnect task for rank:" << rankId << " ep: " << ep << " failed: " << ret);
     }
 }
 
-void HcomTransportManager::DisConnectHcomChannel(uint32_t rankId, Hcom_Channel ch)
+void HcomTransportManager::DisConnectHcomChannel(uint32_t rankId, uint32_t ep, Hcom_Channel ch)
 {
-    BM_LOG_DEBUG("invoke DisConnectHcomChannel rankId: " << rankId << ", channel: " << ch);
+    BM_LOG_DEBUG("invoke DisConnectHcomChannel rankId: " << rankId << ", ep: " << ep << ", channel: " << ch);
     if (channels_.empty()) {
         return;
     }
-    if (rankId >= rankCount_ || ch == 0) {
-        BM_LOG_ERROR_LIMIT("Failed to remove channel invalid rankId" << rankId << " ch: " << ch);
+    if (rankId >= rankCount_ || ep >= epCount_ || ch == 0) {
+        BM_LOG_ERROR_LIMIT("Failed to remove channel invalid rankId" << rankId << " ep: " << ep << " ch: " << ch);
         return;
     }
-    if (GetInstance()->rpcService_ != 0) {
-        DlHcomApi::ServiceDisConnect(GetInstance()->rpcService_, ch);
+    if (!GetInstance()->rpcServices_.empty()) {
+        DlHcomApi::ServiceDisConnect(GetInstance()->rpcServices_[ep], ch);
     }
 }
 
@@ -1122,7 +1172,7 @@ void HcomTransportManager::ClearRankChannels(uint32_t rankId)
     // Disconnect all endpoints of the rank, then reset channel slots under lock.
     for (uint32_t ep = 0; ep < epCount_; ++ep) {
         if (channels_[rankId][ep] != 0) {
-            DisConnectHcomChannel(rankId, channels_[rankId][ep]);
+            DisConnectHcomChannel(rankId, ep, channels_[rankId][ep]);
         }
     }
     std::lock_guard<std::mutex> lock(channelMutex_[rankId]);
@@ -1140,7 +1190,7 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
 {
     BM_LOG_INFO("ReadRemoteBatchAsync start : " << rankId << " size " << descriptor.counts.size());
     BM_ASSERT_LOG_AND_RETURN(!descriptor.counts.empty(), "descriptor.counts is empty", BM_INVALID_PARAM);
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
     Hcom_Channel channel = channels_[rankId][0];

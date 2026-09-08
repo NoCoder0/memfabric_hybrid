@@ -77,11 +77,11 @@ void HcomReconnector::RemoveRanks(const std::vector<uint32_t> &ranks) noexcept
     }
 }
 
-Result HcomReconnector::AddReconnectTask(uint32_t rankId, const std::string &nic) noexcept
+Result HcomReconnector::AddReconnectTask(uint32_t rankId, uint32_t ep, const std::string &nic) noexcept
 {
     auto nextTime = std::chrono::steady_clock::now() + std::chrono::milliseconds(minWaitMs_);
     auto timeDifMs = std::chrono::duration_cast<std::chrono::milliseconds>(nextTime - baseTimePoint_).count();
-    ReconnectTask task{rankId, nic, timeDifMs};
+    ReconnectTask task{rankId, ep, nic, timeDifMs};
 
     if (!started_) {
         BM_LOG_ERROR("HcomReconnector not started.");
@@ -95,9 +95,9 @@ Result HcomReconnector::AddReconnectTask(uint32_t rankId, const std::string &nic
         return BM_INVALID_PARAM;
     }
 
-    taskMap_.emplace(ReconnectTaskKey{timeDifMs, rankId}, std::move(task));
+    taskMap_.emplace(ReconnectTaskKey{timeDifMs, rankId, ep}, std::move(task));
     locker.unlock();
-    BM_LOG_INFO("rank : " << rankId << " reconnect task added.");
+    BM_LOG_INFO("rank : " << rankId << " ep: " << ep << " reconnect task added.");
     return BM_OK;
 }
 
@@ -122,7 +122,7 @@ void HcomReconnector::ReconnectTimeoutTasks() noexcept
 {
     auto now = std::chrono::steady_clock::now();
     auto nowDifMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - baseTimePoint_).count();
-    ReconnectTaskKey boundKey{nowDifMs, 0};
+    ReconnectTaskKey boundKey{nowDifMs, 0, 0};
 
     std::vector<ReconnectTask> timeoutTasks;
     {
@@ -141,11 +141,11 @@ void HcomReconnector::ReconnectTimeoutTasks() noexcept
     std::vector<ReconnectTask> failedTasks;
     failedTasks.reserve(timeoutTasks.size());
     for (auto &task : timeoutTasks) {
-        auto res = reconnFunc_(task.rankId, task.nic);
+        auto res = reconnFunc_(task.rankId, task.ep, task.nic);
         if (res == BM_OK) {
-            BM_LOG_TRACE("reconnect for rank id: " << task.rankId << " success.");
+            BM_LOG_TRACE("reconnect for rank id: " << task.rankId << " ep: " << task.ep << " success.");
         } else {
-            BM_LOG_DEBUG("reconnect for rank id: " << task.rankId << " failed:" << res);
+            BM_LOG_DEBUG("reconnect for rank id: " << task.rankId << " ep: " << task.ep << " failed:" << res);
             failedTasks.emplace_back(std::move(task));
         }
     }
@@ -161,9 +161,10 @@ void HcomReconnector::ReconnectTimeoutTasks() noexcept
 
         std::unique_lock<std::mutex> locker{mapMutex_};
         for (auto &task : failedTasks) {
-            ReconnectTaskKey key{task.nextConnectTime, task.rankId};
+            ReconnectTaskKey key{task.nextConnectTime, task.rankId, task.ep};
             taskMap_.emplace(key, std::move(task));
-            BM_LOG_DEBUG("add back for task(rank: " << task.rankId << ", time:" << task.nextConnectTime << ")");
+            BM_LOG_DEBUG("add back for task(rank: " << task.rankId << ", ep:" << task.ep
+                                                    << ", time:" << task.nextConnectTime << ")");
         }
     }
 }

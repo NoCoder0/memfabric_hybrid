@@ -47,8 +47,8 @@ struct HcomMemoryRegion {
 union HcomPayload {
     uint64_t payload;
     struct {
-        uint32_t client;
-        uint32_t server;
+        uint32_t client;      // local(active side) rank id
+        uint32_t serverAndEp; // (server rank << 4) | ep
     };
 };
 
@@ -126,15 +126,15 @@ private:
 
     static Result TransportRpcHcomOneSideDone(Service_Context ctx, uint64_t usrCtx);
 
-    Result ConnectHcomChannel(uint32_t rankId, const std::string &url);
+    Result ConnectHcomChannel(uint32_t rankId, uint32_t ep, const std::string &url);
 
-    void DisConnectHcomChannel(uint32_t rankId, Hcom_Channel ch);
+    void DisConnectHcomChannel(uint32_t rankId, uint32_t ep, Hcom_Channel ch);
 
     void ClearRankChannels(uint32_t rankId);
 
     Result ConnectTargets(const std::vector<uint32_t> &targets);
 
-    void HcomChannelDisconnected(uint32_t rankId, Hcom_Channel ch);
+    void HcomChannelDisconnected(uint32_t rankId, uint32_t ep, Hcom_Channel ch);
 
     Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint64_t &addr, HcomMemoryRegion &mr);
 
@@ -157,6 +157,8 @@ private:
 
     int PrepareThreadLocalStream();
 
+    void DestroyServices();
+
     void SetHcomServiceConfig(Hcom_Service service);
 
 private:
@@ -167,7 +169,7 @@ private:
     std::string localIp_{};
     std::vector<std::string> localNics_{};   // per-ep local listen urls
     std::vector<std::string> localIps_{};    // per-ep local nic ip (for ServiceSetDeviceIpMask)
-    Hcom_Service rpcService_{0};
+    std::vector<Hcom_Service> rpcServices_;  // one hcom service per ep(nic); ep0 for single link
     HcomRuntimeConfig runtimeConfig_{};
     uint32_t rankId_{UINT32_MAX};
     uint32_t rankCount_{0};
