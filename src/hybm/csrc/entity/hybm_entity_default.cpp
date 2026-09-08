@@ -443,7 +443,6 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
         return BM_ERROR;
     }
 
-    SliceExportTransportKey transportKey{exportMagic, options_.rankId, realSlice->gva_};
     if (transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
         if (realSlice->size_ > 0) {
             // multi-link: export one key per ep(link), each carries its own ep-coded key
@@ -468,8 +467,10 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
     }
 
     if (options_.scene != HYBM_SCENE_TRANS) {
-        BM_LOG_DEBUG("Success to export slice rankId:" << transportKey.rankId << " addr:" << transportKey.address
-                                                       << " key:" << transportKey.key);
+        BM_LOG_DEBUG("Success to export slice rankId:" << options_.rankId << " addr:" << realSlice->gva_
+                                                       << " linkCount: " << (transportManager_ != nullptr
+                                                                                 ? transportManager_->GetLinkCount()
+                                                                                 : 0));
     } else {
         BM_LOG_DEBUG("Success to export slice rankId:" << options_.rankId << " addr:" << realSlice->vAddress_);
     }
