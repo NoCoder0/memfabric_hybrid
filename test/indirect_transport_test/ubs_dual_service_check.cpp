@@ -36,6 +36,8 @@ typedef void (*IpMaskFn)(Hcom_Service, const char *);
 typedef void (*BrokerFn)(Hcom_Service, Service_ChannelHandler, Service_ChannelPolicy, uint64_t);
 typedef void (*RegisterHandlerFn)(Hcom_Service, Service_HandlerType, Service_RequestHandler, uint64_t);
 typedef void (*SetHeartbeatFn)(Hcom_Service, uint16_t, uint16_t, uint16_t);
+typedef void (*SetTlsFn)(Hcom_Service, bool, Service_TlsVersion, Service_CipherSuite, Hcom_TlsGetCertCb,
+                         Hcom_TlsGetPrivateKeyCb, Hcom_TlsGetCACb);
 
 CreateFn gCreate = nullptr;
 BindFn gBind = nullptr;
@@ -47,6 +49,7 @@ IpMaskFn gSetIpMask = nullptr;
 BrokerFn gRegBroker = nullptr;
 RegisterHandlerFn gRegHandler = nullptr;
 SetHeartbeatFn gSetHeartbeat = nullptr;
+SetTlsFn gSetTls = nullptr;
 
 void *gHandle = nullptr;
 
@@ -75,6 +78,7 @@ bool LoadLib()
     LOAD(gRegBroker, "ubs_hcom_service_register_broken_handler", BrokerFn);
     LOAD(gRegHandler, "ubs_hcom_service_register_handler", RegisterHandlerFn);
     LOAD(gSetHeartbeat, "ubs_hcom_service_set_heartbeat_opt", SetHeartbeatFn);
+    LOAD(gSetTls, "ubs_hcom_service_set_tls_opt", SetTlsFn);
     return true;
 #undef LOAD
 }
@@ -113,6 +117,46 @@ int DoneHandler(Service_Context ctx, uint64_t usrCtx)
     return 0;
 }
 
+// ubs 要求 TLS 回调已注册（关闭 TLS 时仅占位，路径返回空串）
+int TlsGetCertCb(const char *name, char **certPath)
+{
+    (void)name;
+    if (certPath != nullptr) {
+        *certPath = const_cast<char *>("");
+    }
+    return 0;
+}
+
+int TlsGetPrivateKeyCb(const char *name, char **priKeyPath, char **keyPass, Hcom_TlsKeyPassErase *erase)
+{
+    (void)name;
+    (void)erase;
+    if (priKeyPath != nullptr) {
+        *priKeyPath = const_cast<char *>("");
+    }
+    if (keyPass != nullptr) {
+        *keyPass = const_cast<char *>("");
+    }
+    return 0;
+}
+
+int TlsGetCACb(const char *name, char **caPath, char **crlPath, Hcom_PeerCertVerifyType *verifyType,
+               Hcom_TlsCertVerify *verify)
+{
+    (void)name;
+    (void)verify;
+    if (caPath != nullptr) {
+        *caPath = const_cast<char *>("");
+    }
+    if (crlPath != nullptr) {
+        *crlPath = const_cast<char *>("");
+    }
+    if (verifyType != nullptr) {
+        *verifyType = C_VERIFY_BY_DEFAULT;
+    }
+    return 0;
+}
+
 // 创建第 idx 个 service：bind 到本机 ip，listen url = tcp://ip:port
 bool CreateService(int idx, const std::string &name, const std::string &ip, uint32_t port, Hcom_Service &svc,
                    std::string &url)
@@ -127,6 +171,8 @@ bool CreateService(int idx, const std::string &name, const std::string &ip, uint
     if (ret != 0) {
         return false;
     }
+    // 关闭 TLS（同 MF 默认 tlsEnable=false），但回调必须注册，否则 oob 建连报 128
+    gSetTls(svc, false, C_SERVICE_TLS_1_3, C_SERVICE_AES_GCM_256, TlsGetCertCb, TlsGetPrivateKeyCb, TlsGetCACb);
     std::string ipMask = ip + "/32";
     gSetIpMask(svc, ipMask.c_str()); // void
     url = "tcp://" + ip + ":" + std::to_string(port);
