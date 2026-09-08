@@ -262,8 +262,6 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         return BM_OK;
     }
 
-    BM_LOG_WARN("[DIAG] RegisterMemoryRegion addr=0x" << std::hex << mr.addr << " size=" << mr.size << std::dec
-                                                     << " epCount=" << epCount_);
     for (uint32_t ep = 0; ep < epCount_; ++ep) {
         HcomMemoryRegion info{};
         if (GetMemoryRegionByAddr(rankId_, ep, mr.addr, info) == BM_OK) {
@@ -327,8 +325,6 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         return BM_INVALID_PARAM;
     }
 
-    BM_LOG_WARN("[DIAG] RegisterMemoryRegion addr=0x" << std::hex << mr.addr << " size=" << mr.size << std::dec
-                                                     << " epCount=" << epCount_);
     for (uint32_t ep = 0; ep < epCount_; ++ep) {
         HcomMemoryRegion info{};
         if (GetMemoryRegionByAddr(rankId_, ep, mr.addr, info) == BM_OK) {
@@ -422,7 +418,6 @@ Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
 
 Result HcomTransportManager::QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key)
 {
-    BM_LOG_WARN("[DIAG] QueryMemoryKeyByEp addr=0x" << std::hex << addr << std::dec << " ep=" << ep);
     HcomMemoryRegion mrInfo{};
     if (GetMemoryRegionByAddr(rankId_, ep, addr, mrInfo) != BM_OK) {
         BM_LOG_ERROR("Failed to query memory region, addr: 0x" << std::hex << addr << " rankId: " << rankId_
@@ -437,8 +432,6 @@ Result HcomTransportManager::QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, Tran
     CopyHcomOneSideKey(mrInfo.lKey, hostKey.hostKey.hcomInfo.lKey);
     hostKey.hostKey.hcomInfo.size = mrInfo.size;
     key = hostKey.commonKey;
-    BM_LOG_WARN("[DIAG] QueryByEp out ep=" << ep << " key0=0x" << std::hex << key.keys[0] << " key1=0x" << key.keys[1]
-                                           << std::dec);
     BM_LOG_INFO("Success to query memory key ep: " << ep << " addr:" << std::hex << mrInfo.addr
                                                    << " size:" << mrInfo.size);
     return BM_OK;
@@ -635,8 +628,6 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             continue;
         }
         for (const auto &memKey : item.second.memKeys) {
-            BM_LOG_WARN("[DIAG] import memKeys size=" << item.second.memKeys.size() << " raw key0=0x" << std::hex
-                                                      << memKey.keys[0] << " key1=0x" << memKey.keys[1] << std::dec);
             RegMemoryKeyUnion keyUnion{};
             keyUnion.commonKey = memKey;
             HcomMemoryRegion mrInfo{};
@@ -658,8 +649,6 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
                 BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
                 BM_LOG_DEBUG("hcom returned, tokens: " << keyUnion.hostKey.hcomInfo.lKey.tokens[0]);
             }
-            BM_LOG_WARN("[DIAG] UpdateRankMrInfos rankId=" << rankId << " ep=" << ep << " addr=0x" << std::hex
-                                                           << mrInfo.addr << " size=" << mrInfo.size << std::dec);
             CopyHcomOneSideKey(keyUnion.hostKey.hcomInfo.lKey, mrInfo.lKey);
             {
                 std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
@@ -982,10 +971,6 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
             auto rAddr = descriptor.globalAddrs[i];
             ret = GetMemoryRegionByAddr(rankId, ep, reinterpret_cast<uint64_t>(rAddr), mr);
             if (ret != BM_OK) {
-                std::unique_lock<std::mutex> lk(mrMutex_[rankId]);
-                BM_LOG_ERROR("[DIAG] rKey miss rankId: " << rankId << " ep: " << ep << ", rAddr: " << VaToStr(rAddr)
-                                                         << " tableSize=" << mrs_[rankId][ep].size());
-                lk.unlock();
                 BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " ep: " << ep << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
                 return BM_ERROR;
