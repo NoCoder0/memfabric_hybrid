@@ -197,6 +197,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     channelMutex_ = std::vector<std::mutex>(rankCount_);
     nics_ = std::vector<std::vector<std::string>>(rankCount_, std::vector<std::string>(epCount_, ""));
     channels_ = std::vector<std::vector<Hcom_Channel>>(rankCount_, std::vector<Hcom_Channel>(epCount_, 0));
+    submitPool_.Start(epCount_); // 常驻拆批 worker（单链路时 1 个空转，开销可忽略）
     return BM_OK;
 }
 
@@ -1037,32 +1038,32 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
         return SubmitWriteBatchSlice(rankId, activeEps[0], descriptor, 0, total);
     }
 
-    // split iov evenly across active eps and submit concurrently; each worker waits its own completion
-    std::atomic<bool> failed{false};
-    std::vector<std::thread> workers;
-    workers.reserve(activeEps.size());
+    // split iov evenly across active eps and submit via resident worker pool concurrently;
+    // inactive ep slots get a no-op task to keep task count == worker count
+    std::vector<std::function<Result()>> tasks(epCount_);
     size_t base = total / activeEps.size();
     size_t rem = total % activeEps.size();
     size_t begin = 0;
-    for (size_t idx = 0; idx < activeEps.size(); ++idx) {
-        size_t end = begin + base + (idx < rem ? 1 : 0);
-        uint32_t ep = activeEps[idx];
-        workers.emplace_back([this, rankId, ep, &descriptor, begin, end, &failed]() {
-            auto ret = SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end);
+    size_t activeIdx = 0;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        bool active = !nics_[rankId][ep].empty() && channels_[rankId][ep] != 0;
+        if (!active) {
+            tasks[ep] = []() { return BM_OK; };
+            continue;
+        }
+        size_t end = begin + base + (activeIdx < rem ? 1 : 0);
+        uint32_t slotEp = ep;
+        tasks[ep] = [this, rankId, slotEp, &descriptor, begin, end]() {
+            auto ret = SubmitWriteBatchSlice(rankId, slotEp, descriptor, begin, end);
             if (ret == BM_OK && stream_ != nullptr) {
                 ret = stream_->Synchronize(static_cast<int32_t>(rankId));
             }
-            if (ret != BM_OK) {
-                failed.store(true);
-                BM_LOG_ERROR("Failed to submit write slice rank: " << rankId << " ep: " << ep << " ret: " << ret);
-            }
-        });
+            return ret;
+        };
         begin = end;
+        ++activeIdx;
     }
-    for (auto &t : workers) {
-        t.join();
-    }
-    return failed.load() ? BM_ERROR : BM_OK;
+    return submitPool_.RunTasks(std::move(tasks));
 }
 
 Result HcomTransportManager::Synchronize(const uint32_t rankId)
@@ -1382,32 +1383,32 @@ Result HcomTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDes
         return SubmitReadBatchSlice(rankId, activeEps[0], descriptor, 0, total);
     }
 
-    // split iov evenly across active eps and submit concurrently; each worker waits its own completion
-    std::atomic<bool> failed{false};
-    std::vector<std::thread> workers;
-    workers.reserve(activeEps.size());
+    // split iov evenly across active eps and submit via resident worker pool concurrently;
+    // inactive ep slots get a no-op task to keep task count == worker count
+    std::vector<std::function<Result()>> tasks(epCount_);
     size_t base = total / activeEps.size();
     size_t rem = total % activeEps.size();
     size_t begin = 0;
-    for (size_t idx = 0; idx < activeEps.size(); ++idx) {
-        size_t end = begin + base + (idx < rem ? 1 : 0);
-        uint32_t ep = activeEps[idx];
-        workers.emplace_back([this, rankId, ep, &descriptor, begin, end, &failed]() {
-            auto ret = SubmitReadBatchSlice(rankId, ep, descriptor, begin, end);
+    size_t activeIdx = 0;
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        bool active = !nics_[rankId][ep].empty() && channels_[rankId][ep] != 0;
+        if (!active) {
+            tasks[ep] = []() { return BM_OK; };
+            continue;
+        }
+        size_t end = begin + base + (activeIdx < rem ? 1 : 0);
+        uint32_t slotEp = ep;
+        tasks[ep] = [this, rankId, slotEp, &descriptor, begin, end]() {
+            auto ret = SubmitReadBatchSlice(rankId, slotEp, descriptor, begin, end);
             if (ret == BM_OK && stream_ != nullptr) {
                 ret = stream_->Synchronize(static_cast<int32_t>(rankId));
             }
-            if (ret != BM_OK) {
-                failed.store(true);
-                BM_LOG_ERROR("Failed to submit read slice rank: " << rankId << " ep: " << ep << " ret: " << ret);
-            }
-        });
+            return ret;
+        };
         begin = end;
+        ++activeIdx;
     }
-    for (auto &t : workers) {
-        t.join();
-    }
-    return failed.load() ? BM_ERROR : BM_OK;
+    return submitPool_.RunTasks(std::move(tasks));
 }
 
 Result HcomTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)

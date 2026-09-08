@@ -19,6 +19,7 @@
 #include "hcom_service_c_define.h"
 #include "host_hcom_counter_stream.h"
 #include "host_hcom_reconnector.h"
+#include "host_hcom_submit_pool.h"
 #include "mf_rwlock.h"
 
 namespace ock {
@@ -190,6 +191,7 @@ private:
     std::vector<std::mutex> channelMutex_;
     std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
     std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
+    HostSubmitPool submitPool_; // 常驻 worker：multi-link batch 分片并发提交
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;
     static char keyPass_[KEYPASS_MAX_LEN];
