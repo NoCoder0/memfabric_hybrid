@@ -142,8 +142,11 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, 1);
 
     if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
-        std::string ipMask = localIp_ + "/32";
-        DlHcomApi::ServiceSetDeviceIpMask(rpcService_, ipMask.c_str());
+        // Bind each ep(nic) with its own ip mask, one rdma nic per ep.
+        for (const auto &ip : localIps_) {
+            std::string ipMask = ip + "/32";
+            DlHcomApi::ServiceSetDeviceIpMask(rpcService_, ipMask.c_str());
+        }
     }
 
     ret = reconnect_.Start([this](uint32_t rankId, const std::string &nic) { return ConnectHcomChannel(rankId, nic); });
@@ -153,7 +156,10 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     }
 
     SetHcomServiceConfig(rpcService_);
-    DlHcomApi::ServiceBind(rpcService_, localNic_.c_str(), TransportRpcHcomNewEndPoint);
+    for (const auto &listenUrl : localNics_) {
+        BM_LOG_INFO("bind hcom service listen url: " << listenUrl);
+        DlHcomApi::ServiceBind(rpcService_, listenUrl.c_str(), TransportRpcHcomNewEndPoint);
+    }
     ret = DlHcomApi::ServiceStart(rpcService_);
     if (ret != 0) {
         BM_LOG_ERROR("Failed to start hcom service, nic: " << localNic_ << " type: " << enumProtocolType
@@ -203,6 +209,8 @@ Result HcomTransportManager::CloseDevice()
     rpcService_ = 0;
     localNic_ = "";
     localIp_ = "";
+    localNics_.clear();
+    localIps_.clear();
     rankId_ = UINT32_MAX;
     rankCount_ = 0;
     runtimeConfig_ = {};
@@ -928,16 +936,42 @@ Result HcomTransportManager::Synchronize(const uint32_t rankId)
 
 Result HcomTransportManager::CheckTransportOptions(const TransportOptions &options)
 {
+    // Multi-link support: options.nic may carry several urls separated by ';', one url per ep(nic).
+    auto urls = StrUtil::Split(options.nic, ';');
     std::string protocol;
-    uint32_t basePort;
-    auto ret = HostHcomHelper::AnalysisNic(options.nic, protocol, localIp_, basePort);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("Failed to check nic, nic: " << options.nic << " ret: " << ret);
-        return ret;
+    std::vector<std::string> epNics;
+    std::vector<std::string> epIps;
+    for (const auto &url : urls) {
+        auto seg = StrUtil::StrTrim(url);
+        if (seg.empty()) {
+            continue;
+        }
+        std::string ip;
+        uint32_t basePort = 0;
+        auto ret = HostHcomHelper::AnalysisNic(seg, protocol, ip, basePort);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to check nic, nic: " << seg << " ret: " << ret);
+            return ret;
+        }
+        const auto hcomAutoPort = basePort + options.rankId;
+        epNics.emplace_back(protocol + ip + ":" + std::to_string(hcomAutoPort));
+        epIps.emplace_back(ip);
+        BM_LOG_INFO("hcom base port: " << basePort << ", hcom auto port with rank: " << hcomAutoPort
+                                       << ", listen url: " << epNics.back());
     }
-    const auto hcomAutoPort = basePort + options.rankId;
-    BM_LOG_INFO("hcom base port: " << basePort << ", hcom auto port with rank: " << hcomAutoPort);
-    localNic_ = protocol + localIp_ + ":" + std::to_string(hcomAutoPort);
+    if (epNics.empty()) {
+        BM_LOG_ERROR("Failed to check nic, no valid url in nic: " << options.nic);
+        return BM_INVALID_PARAM;
+    }
+    localIps_ = std::move(epIps);
+    localNics_ = std::move(epNics);
+    epCount_ = static_cast<uint32_t>(localNics_.size());
+    std::string joined;
+    for (const auto &nic : localNics_) {
+        joined = joined.empty() ? nic : joined + ";" + nic;
+    }
+    localNic_ = joined;
+    localIp_ = localIps_[0];
     return BM_OK;
 }
 

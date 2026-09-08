@@ -163,8 +163,10 @@ private:
     hybm_data_op_type bmOptype_{};
     ReadWriteLock lock_;
     static thread_local HcomCounterStreamPtr stream_;
-    std::string localNic_{};
+    std::string localNic_{};                 // local listen url (single link); multi-link joined by ';'
     std::string localIp_{};
+    std::vector<std::string> localNics_{};   // per-ep local listen urls
+    std::vector<std::string> localIps_{};    // per-ep local nic ip (for ServiceSetDeviceIpMask)
     Hcom_Service rpcService_{0};
     HcomRuntimeConfig runtimeConfig_{};
     uint32_t rankId_{UINT32_MAX};
