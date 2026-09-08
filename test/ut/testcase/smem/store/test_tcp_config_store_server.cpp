@@ -13,8 +13,11 @@
 #include <gtest/gtest.h>
 
 #include <functional>
+#include <sstream>
 
+#define private public // Test access to heartbeat timeout parsing.
 #include "smem_tcp_config_store_server.h"
+#undef private
 #include "smem_local_memory_backend.h"
 
 namespace ock {
@@ -25,6 +28,9 @@ constexpr uint32_t K_WORLD_SIZE = 4;
 constexpr uint32_t K_STATE_RECOVERED = 2;
 constexpr uint32_t K_STATE_NORMAL = 3;
 constexpr uint32_t K_STATE_EXITED = 4;
+constexpr uint32_t K_DEFAULT_HEARTBEAT_TIMEOUT_S = 60;
+constexpr uint32_t K_HEARTBEAT_TIMEOUT_S = 15;
+constexpr uint32_t K_MAX_HEARTBEAT_TIMEOUT_S = 3600;
 
 /* Hand-written mock — no gmock dependency */
 class MockBackend : public ConfigStoreBackend {
@@ -172,6 +178,21 @@ protected:
         return StoreBackendPtr(rawBackend);
     }
 };
+
+TEST_F(AccStoreServerTest, HeartbeatTimeoutParsesSecondsAndZero)
+{
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("0"), 0U);
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("15"), K_HEARTBEAT_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("3600"), K_MAX_HEARTBEAT_TIMEOUT_S);
+}
+
+TEST_F(AccStoreServerTest, HeartbeatTimeoutMissingOrInvalidUsesDefault)
+{
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS(""), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("-1"), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("abc"), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("3601"), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
+}
 
 TEST_F(AccStoreServerTest, RestoreFromBackend_NonDistributedReturnsOk)
 {

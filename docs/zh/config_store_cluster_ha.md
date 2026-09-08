@@ -32,7 +32,7 @@ TCP 服务器通过内部的 AccTcpServer 组件启动，它侦听客户端连�
 | 组件                  | 职责                                              | 关键常量                                      |
 |---------------------|-------------------------------------------------|-------------------------------------------|
 | `TcpConfigStore`    | TCP 配置存储，Server/Client 双角色                      | `CONNECT_RETRY_MAX_TIMES = 60`            |
-| `AccStoreServer`    | TCP Server 实现，KV 存储管理                           | `HEARTBEAT_INTERVAL`, `HEARTBEAT_TIMEOUT` |
+| `AccStoreServer`    | TCP Server 实现，KV 存储管理                           | `MF_CONFIG_STORE_HEARTBEAT_TIMEOUT_S` |
 | `HybridConfigStore` | ETCD 模式混合存储，基于 TcpConfigStore 代理实现，负责 Leader 选举 | `ETCD_LEASE_TTL_SEC = 5`                  |
 | `EtcdClientV3`      | ETCD v3 客户端，分布式协调，封装go api，c接口->c++接口           | Lease 自动续约                                |
 | `NetworkEndpointUtil`| 网络连通性检查 (非阻塞)，Server连通性检查，查找本地可用bind端口          | `kConnectTimeoutMs = 1000`              |
@@ -45,7 +45,7 @@ TCP 服务器通过内部的 AccTcpServer 组件启动，它侦听客户端连�
 | Leader 健康检查间隔  | 4 秒                 | 检测 ETCD 连接和 Lease 状态                             |
 | 随机退避           | 100-1000ms          | 避免选举惊群                                           |
 | 网络检查超时         | 1 秒                 | 判断 Leader 是否可达（源码中 kConnectTimeoutMs = 1000）|
-| 心跳超时           | 6 秒                 | 心跳检测超时时间（HEARTBEAT_TIMEOUT=3 × HEARTBEAT_INTERVAL=2000ms）|
+| 心跳超时 | 默认 60 秒 | `MF_CONFIG_STORE_HEARTBEAT_TIMEOUT_S`；0 表示永不超时，检测周期为 2 秒 |
 | 恢复等待           | 5秒                    | 新 Leader 等待旧 Rank 重连（源码中 SERVER_RECOVER_TIME = 5s，单阶段等待）|
 | 客户端重连次数        | 60 次 (间隔1秒)         | Client 最大重连尝试次数，每次间隔1秒                           |
 
@@ -404,7 +404,7 @@ end
 |-----------|-------------------|
 | 健康检查间隔    | 4 秒               |
 | Lease TTL | 5 秒               |
-| 心跳超时      | 6 秒               |
+| 心跳超时      | 默认 60 秒，可通过 `MF_CONFIG_STORE_HEARTBEAT_TIMEOUT_S` 配置，0 表示永不超时 |
 | Leader 降级 | ~4s (健康检查周期触发后立即) |
 
 **确保旧 Leader 先降级再有新 Leader 产生。**
