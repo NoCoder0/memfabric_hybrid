@@ -48,9 +48,13 @@ A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
 
 NPU 类型的 wheel 包内置 acc_offload 算子源码，安装编译为扩展库 `libmf_hybm_accoffload.so` 后，`memfabric_hybrid.offload` 的稀疏拷贝等能力才可用。
 
-`mfcli kernel install` 会在安装 AICPU 算子的同时编译安装该扩展库；环境不支持时（如 910B 芯片）自动跳过。
+`.run` 包安装时不再编译该扩展库。安装 MemFabric Hybrid whl包后，执行 `mfcli kernel install` 完成编译安装；环境不支持时（如 910B 芯片）自动跳过。
 
 通过 `mfcli kernel info` 查看扩展库的安装状态和安装路径。
+
+> [!NOTE] 说明
+>
+> **纯 run 包（不含 whl）的场景不再支持 acc_offload 扩展库**，请安装 wheel 包后使用 `mfcli kernel install`。
 
 ---
 
