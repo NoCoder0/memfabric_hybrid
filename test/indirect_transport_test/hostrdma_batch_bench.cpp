@@ -67,8 +67,7 @@ struct BenchArgs {
     uint64_t stride = kDefaultStride;
     uint64_t dramMB = kDefaultDramMB;
     uint32_t rounds = 5;
-    bool ack = true; /* 握手模式(默认开): remote 每轮等 local ack，sender cost = 含 local scatter 的真 E2E;
-                        --ack=0 可关闭回到连发口径 */
+    bool old = false; /* --old=1 老版口径(如 e30bf29，无收端聚合): 只跑直写 baseline、只用单 url、无 ack/scatter */
 };
 
 void Usage(const char *prog)
@@ -82,8 +81,9 @@ void Usage(const char *prog)
             "  --stride=N                 离散摆放间隔(默认4096)\n"
             "  --dram-mb=N                每 rank 对称 host 内存 MB(默认16)\n"
             "  --rounds=N                 每场景轮数(默认5)\n"
-            "  --ack=0|1                  握手模式(默认1): remote 每轮等 local ack，\n"
-            "                             sender cost = 含 local scatter 的真 E2E；=0 回到连发口径\n"
+            "  --old=1                    老版口径(默认0，跑 e30bf29 等无聚合 MF 用):\n"
+            "                             只跑直写 baseline、只用单 url、无 staging/scatter/ack\n"
+            "                             不传 --old = 最新版: baseline 直写 + cont(收端聚合, 带 ack)\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n",
             prog);
 }
@@ -92,6 +92,10 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
 {
     for (int i = 1; i < argc; ++i) {
         std::string kv = argv[i];
+        if (kv == "--old") {
+            a.old = true;
+            continue;
+        }
         auto pos = kv.find('=');
         if (pos == std::string::npos) {
             continue;
@@ -120,8 +124,8 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.dramMB = std::stoull(v);
         } else if (k == "--rounds") {
             a.rounds = static_cast<uint32_t>(std::stoul(v));
-        } else if (k == "--ack") {
-            a.ack = v != "0";
+        } else if (k == "--old") {
+            a.old = v != "0";
         }
     }
     if (a.role != "local" && a.role != "remote") {
@@ -167,10 +171,19 @@ int main(int argc, char *argv[])
         Usage(argv[0]);
         return 1;
     }
+    /* --old：老 MF(无收端聚合) 直写口径 —— 强制单 url、只跑 baseline(直写)，无 staging/scatter/ack */
+    if (a.old) {
+        auto sep = a.hcomUrl.find(';');
+        if (sep != std::string::npos) {
+            a.hcomUrl = a.hcomUrl.substr(0, sep);
+        }
+        a.mode = "baseline";
+        printf("[bench] old-mode=1: force direct-write baseline, single url, no staging/scatter/ack\n");
+    }
     const bool isLocal = (a.role == "local");
-    printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu rounds=%u ack=%u\n", a.role.c_str(), a.rank,
+    printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu rounds=%u mode=%s\n", a.role.c_str(), a.rank,
            a.count, static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride), a.rounds,
-           a.ack ? 1U : 0U);
+           a.mode.c_str());
     /* 链路档位：hcom-url 含 ';'（多个 url）即为双卡/双连接，否则单卡/单连接 */
     const bool dualUrl = a.hcomUrl.find(';') != std::string::npos;
     printf("[bench] link-mode=%s hcom-url=%s\n", dualUrl ? "dual-link(2 NIC)" : "single-link(1 NIC)",
@@ -276,7 +289,7 @@ int main(int argc, char *argv[])
        local 观察端每轮等 remote 的完成 flag（对齐 cont 的同步方式），保证双端不提前退出 */
     if (runBase) {
         if (!isLocal) {
-            PrintLabel(a.ack ? "baseline (sender, ack/E2E)" : "baseline (sender)");
+            PrintLabel("baseline (sender)");
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
                 srcs[i] = reinterpret_cast<void *>(selfGva + i * a.stride);
@@ -299,14 +312,6 @@ int main(int argc, char *argv[])
                                         reinterpret_cast<void *>(peerGva + flagOff), sizeof(seq), nullptr};
                     ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
                 }
-                if (a.ack && ret == 0) {
-                    /* 握手：等 local 处理完写回的 ack(值=seq)，此时 sender cost = 真 E2E(含 local scatter) */
-                    void *ackVa = nullptr;
-                    if (GvaToHostVa(bm, selfGva + ackOff, &ackVa)) {
-                        while (*reinterpret_cast<volatile const uint64_t *>(ackVa) != seq) {
-                        }
-                    }
-                }
                 const uint64_t t1 = NowUs();
                 if (ret != 0) {
                     printf("baseline sender abort at iter %u ret=%d\n", r, ret);
@@ -328,8 +333,7 @@ int main(int argc, char *argv[])
         } else {
             PrintLabel("baseline (observer)");
             uint64_t sumUs = 0;
-            uint64_t sumPostFlagUs = 0;
-            std::vector<uint64_t> costs, postFlagCosts; /* 热循环不打日志，跑完后统一打印 */
+            std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
@@ -343,7 +347,6 @@ int main(int argc, char *argv[])
                 const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到数据校验完 */
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
-                const uint64_t tp0 = NowUs(); /* flag 可见时刻：post_flag = flag可见 -> 校验完 */
                 int bad = 0;
                 for (uint32_t i = 0; i < a.count; ++i) {
                     void *dstVa = nullptr;
@@ -354,42 +357,27 @@ int main(int argc, char *argv[])
                     }
                 }
                 const uint64_t t1 = NowUs();
-                if (a.ack) {
-                    /* 握手：本端处理完后写 ack=expect 回 remote，remote 收到才进入下一轮 */
-                    void *ackSrcVa = nullptr;
-                    if (GvaToHostVa(bm, selfGva + ackOff, &ackSrcVa)) {
-                        *reinterpret_cast<uint64_t *>(ackSrcVa) = expect;
-                    }
-                    smem_copy_params ap{reinterpret_cast<void *>(selfGva + ackOff),
-                                        reinterpret_cast<void *>(peerGva + ackOff), sizeof(expect), nullptr};
-                    smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
-                }
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
-                    const uint64_t postFlagCost = t1 - tp0;
                     sumUs += cost;
-                    sumPostFlagUs += postFlagCost;
                     costs.push_back(cost);
-                    postFlagCosts.push_back(postFlagCost);
                     errs.push_back(bad);
                 }
                 ++expect;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
-                printf("baseline observer round %u err=%d cost_us=%llu post_flag_us=%llu\n", k, errs[k],
-                       static_cast<unsigned long long>(costs[k]),
-                       static_cast<unsigned long long>(postFlagCosts[k]));
+                printf("baseline observer round %u err=%d cost_us=%llu\n", k, errs[k],
+                       static_cast<unsigned long long>(costs[k]));
             }
-            printf("baseline observer avg_us=%llu post_flag_avg_us=%llu (rounds=%u)\n",
-                   static_cast<unsigned long long>(sumUs / a.rounds),
-                   static_cast<unsigned long long>(sumPostFlagUs / a.rounds), a.rounds);
+            printf("baseline observer avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
         }
     }
 
     /* 场景 2：cont —— remote 写 local 连续 staging -> flag；local 轮询 flag -> scatter */
     if (runCont) {
         if (!isLocal) {
-            PrintLabel(a.ack ? "cont (sender, ack/E2E)" : "cont (sender)");
+            PrintLabel("cont (sender, ack/E2E)");
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
                 srcs[i] = reinterpret_cast<void *>(selfGva + i * a.stride); /* 离散源 */
@@ -414,7 +402,7 @@ int main(int argc, char *argv[])
                                         reinterpret_cast<void *>(peerGva + flagOff), sizeof(seq), nullptr};
                     ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
                 }
-                if (a.ack && ret == 0) {
+                if (ret == 0) {
                     /* 握手：等 local scatter 完写回的 ack(值=seq)，此时 sender cost = 真 E2E(含 local scatter) */
                     void *ackVa = nullptr;
                     if (GvaToHostVa(bm, selfGva + ackOff, &ackVa)) {
@@ -444,10 +432,11 @@ int main(int argc, char *argv[])
             PrintLabel("cont (receiver poll+scatter)");
             uint64_t sumUs = 0;
             uint64_t sumScatterUs = 0;
-            /* 600 对 staging/离散目标的 VA 整轮固定，先一次性转换（不计时），
-               scatter 计时只统计纯 memcpy 搬运开销 */
+            /* 600 对 staging/离散目标的 VA 整轮固定，一次性预转；
+               默认(新版)顺带计时得到每轮 GVA->VA 转换成本，scatter_us 只统计纯 memcpy */
             std::vector<void *> scatterSrcs(a.count), scatterDsts(a.count);
             bool vaOk = true;
+            const uint64_t tc0 = NowUs();
             for (uint32_t i = 0; i < a.count; ++i) {
                 if (!GvaToHostVa(bm, selfGva + i * a.size, &scatterSrcs[i]) ||
                     !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &scatterDsts[i])) {
@@ -455,17 +444,21 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
+            const uint64_t tc1 = NowUs();
             if (!vaOk) {
                 printf("cont receiver va convert failed, skip scenario\n");
                 return 1;
             }
+            uint64_t gvaConvUs = 0;
+            if (!a.old) {
+                gvaConvUs = tc1 - tc0; /* 一次性转换成本，作为每轮若需逐块换算的固定开销参考 */
+            }
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t expect = 1;
-            std::vector<uint64_t> costs, postFlagCosts, scatterCosts; /* 热循环不打日志，跑完后统一打印 */
+            std::vector<uint64_t> costs, scatterCosts; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
-            uint64_t sumPostFlagUs = 0;
             for (uint32_t r = 0; r < kTotal; ++r) {
-                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到 scatter+校验完 */
+                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到 scatter+清flag完 */
                 void *flagVa = nullptr;
                 GvaToHostVa(bm, selfGva + flagOff, &flagVa);
                 if (flagVa == nullptr) {
@@ -474,7 +467,6 @@ int main(int argc, char *argv[])
                 }
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
-                const uint64_t tp0 = NowUs(); /* flag 可见时刻：post_flag = flag可见 -> scatter+清flag完 */
                 int bad = 0;
                 const uint64_t ts0 = NowUs(); /* scatter 单独计时：纯 memcpy(staging -> 离散目标) */
                 for (uint32_t i = 0; i < a.count; ++i) {
@@ -483,7 +475,7 @@ int main(int argc, char *argv[])
                 const uint64_t ts1 = NowUs();
                 *reinterpret_cast<uint64_t *>(flagVa) = 0; /* 清 flag */
                 const uint64_t t1 = NowUs();
-                if (a.ack) {
+                {
                     /* 握手：本端 scatter/清 flag 完后写 ack=expect 回 remote，remote 收到才进入下一轮 */
                     void *ackSrcVa = nullptr;
                     if (GvaToHostVa(bm, selfGva + ackOff, &ackSrcVa)) {
@@ -496,27 +488,31 @@ int main(int argc, char *argv[])
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
                     const uint64_t scatterCost = ts1 - ts0;
-                    const uint64_t postFlagCost = t1 - tp0;
                     sumUs += cost;
                     sumScatterUs += scatterCost;
-                    sumPostFlagUs += postFlagCost;
                     costs.push_back(cost);
                     scatterCosts.push_back(scatterCost);
-                    postFlagCosts.push_back(postFlagCost);
                     errs.push_back(bad);
                 }
                 ++expect;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
-                printf("cont receiver round %u err=%d cost_us=%llu post_flag_us=%llu scatter_us=%llu\n", k,
-                       errs[k], static_cast<unsigned long long>(costs[k]),
-                       static_cast<unsigned long long>(postFlagCosts[k]),
+                printf("cont receiver round %u err=%d cost_us=%llu scatter_us=%llu\n", k, errs[k],
+                       static_cast<unsigned long long>(costs[k]),
                        static_cast<unsigned long long>(scatterCosts[k]));
             }
-            printf("cont receiver avg_us=%llu post_flag_avg_us=%llu scatter_avg_us=%llu (rounds=%u)\n",
-                   static_cast<unsigned long long>(sumUs / a.rounds),
-                   static_cast<unsigned long long>(sumPostFlagUs / a.rounds),
-                   static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds);
+            if (!a.old) {
+                printf("cont receiver gva_conv_us=%llu (one-time, %u pairs; per-round overall ~= scatter+gva)\n",
+                       static_cast<unsigned long long>(gvaConvUs), a.count);
+                printf("cont receiver avg_us=%llu scatter_avg_us=%llu local_overall_avg_us=%llu (rounds=%u)\n",
+                       static_cast<unsigned long long>(sumUs / a.rounds),
+                       static_cast<unsigned long long>(sumScatterUs / a.rounds),
+                       static_cast<unsigned long long>(sumScatterUs / a.rounds + gvaConvUs), a.rounds);
+            } else {
+                printf("cont receiver avg_us=%llu scatter_avg_us=%llu (rounds=%u)\n",
+                       static_cast<unsigned long long>(sumUs / a.rounds),
+                       static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds);
+            }
         }
     }
 
