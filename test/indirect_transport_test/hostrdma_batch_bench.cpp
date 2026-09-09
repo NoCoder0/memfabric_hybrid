@@ -164,6 +164,10 @@ int main(int argc, char *argv[])
     const bool isLocal = (a.role == "local");
     printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu rounds=%u\n", a.role.c_str(), a.rank, a.count,
            static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride), a.rounds);
+    /* 链路档位：hcom-url 含 ';'（多个 url）即为双卡/双连接，否则单卡/单连接 */
+    const bool dualUrl = a.hcomUrl.find(';') != std::string::npos;
+    printf("[bench] link-mode=%s hcom-url=%s\n", dualUrl ? "dual-link(2 NIC)" : "single-link(1 NIC)",
+           a.hcomUrl.c_str());
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)               连续 staging（接收侧）
@@ -375,6 +379,21 @@ int main(int argc, char *argv[])
             PrintLabel("cont (receiver poll+scatter)");
             uint64_t sumUs = 0;
             uint64_t sumScatterUs = 0;
+            /* 600 对 staging/离散目标的 VA 整轮固定，先一次性转换（不计时），
+               scatter 计时只统计纯 memcpy 搬运开销 */
+            std::vector<void *> scatterSrcs(a.count), scatterDsts(a.count);
+            bool vaOk = true;
+            for (uint32_t i = 0; i < a.count; ++i) {
+                if (!GvaToHostVa(bm, selfGva + i * a.size, &scatterSrcs[i]) ||
+                    !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &scatterDsts[i])) {
+                    vaOk = false;
+                    break;
+                }
+            }
+            if (!vaOk) {
+                printf("cont receiver va convert failed, skip scenario\n");
+                return 1;
+            }
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t expect = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -388,15 +407,9 @@ int main(int argc, char *argv[])
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
                 int bad = 0;
-                const uint64_t ts0 = NowUs(); /* scatter 单独计时：仅本地 memcpy(staging -> 离散目标) */
+                const uint64_t ts0 = NowUs(); /* scatter 单独计时：纯 memcpy(staging -> 离散目标) */
                 for (uint32_t i = 0; i < a.count; ++i) {
-                    void *srcVa = nullptr, *dstVa = nullptr;
-                    if (!GvaToHostVa(bm, selfGva + i * a.size, &srcVa) ||
-                        !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVa)) {
-                        bad = 1;
-                        break;
-                    }
-                    memcpy(dstVa, srcVa, a.size);
+                    memcpy(scatterDsts[i], scatterSrcs[i], a.size);
                 }
                 const uint64_t ts1 = NowUs();
                 *reinterpret_cast<uint64_t *>(flagVa) = 0; /* 清 flag */
