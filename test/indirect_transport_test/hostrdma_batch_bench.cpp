@@ -431,34 +431,16 @@ int main(int argc, char *argv[])
         } else {
             PrintLabel("cont (receiver poll+scatter)");
             uint64_t sumUs = 0;
+            uint64_t sumLocalUs = 0;
+            uint64_t sumConvUs = 0;
             uint64_t sumScatterUs = 0;
-            /* 600 对 staging/离散目标的 VA 整轮固定，一次性预转；
-               默认(新版)顺带计时得到每轮 GVA->VA 转换成本，scatter_us 只统计纯 memcpy */
-            std::vector<void *> scatterSrcs(a.count), scatterDsts(a.count);
-            bool vaOk = true;
-            const uint64_t tc0 = NowUs();
-            for (uint32_t i = 0; i < a.count; ++i) {
-                if (!GvaToHostVa(bm, selfGva + i * a.size, &scatterSrcs[i]) ||
-                    !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &scatterDsts[i])) {
-                    vaOk = false;
-                    break;
-                }
-            }
-            const uint64_t tc1 = NowUs();
-            if (!vaOk) {
-                printf("cont receiver va convert failed, skip scenario\n");
-                return 1;
-            }
-            uint64_t gvaConvUs = 0;
-            if (!a.old) {
-                gvaConvUs = tc1 - tc0; /* 一次性转换成本，作为每轮若需逐块换算的固定开销参考 */
-            }
+            std::vector<void *> srcVas(a.count), dstVas(a.count); /* 每轮 GVA->VA 转换结果 */
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t expect = 1;
-            std::vector<uint64_t> costs, scatterCosts; /* 热循环不打日志，跑完后统一打印 */
+            std::vector<uint64_t> costs, localCosts, convCosts, scatterCosts; /* 跑完后统一打印 */
             std::vector<int> errs;
             for (uint32_t r = 0; r < kTotal; ++r) {
-                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到 scatter+清flag完 */
+                const uint64_t t0 = NowUs(); /* cost_us = 本轮从等完成 flag 到 scatter+清flag 完 */
                 void *flagVa = nullptr;
                 GvaToHostVa(bm, selfGva + flagOff, &flagVa);
                 if (flagVa == nullptr) {
@@ -467,10 +449,22 @@ int main(int argc, char *argv[])
                 }
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
+                const uint64_t tp = NowUs(); /* flag 可见：local 处理起点 */
                 int bad = 0;
-                const uint64_t ts0 = NowUs(); /* scatter 单独计时：纯 memcpy(staging -> 离散目标) */
+                /* GVA->VA 转换（每轮真实执行，属收端聚合本地开销的一部分） */
+                const uint64_t tc0 = NowUs();
                 for (uint32_t i = 0; i < a.count; ++i) {
-                    memcpy(scatterDsts[i], scatterSrcs[i], a.size);
+                    if (!GvaToHostVa(bm, selfGva + i * a.size, &srcVas[i]) ||
+                        !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i])) {
+                        bad = 1;
+                        break;
+                    }
+                }
+                const uint64_t tc1 = NowUs();
+                /* scatter：纯 memcpy(staging -> 离散目标) */
+                const uint64_t ts0 = NowUs();
+                for (uint32_t i = 0; i < a.count; ++i) {
+                    memcpy(dstVas[i], srcVas[i], a.size);
                 }
                 const uint64_t ts1 = NowUs();
                 *reinterpret_cast<uint64_t *>(flagVa) = 0; /* 清 flag */
@@ -487,32 +481,33 @@ int main(int argc, char *argv[])
                 }
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
+                    const uint64_t localCost = t1 - tp; /* flag可见 -> scatter+清flag 完（含 GVA 转换） */
+                    const uint64_t convCost = tc1 - tc0;
                     const uint64_t scatterCost = ts1 - ts0;
                     sumUs += cost;
+                    sumLocalUs += localCost;
+                    sumConvUs += convCost;
                     sumScatterUs += scatterCost;
                     costs.push_back(cost);
+                    localCosts.push_back(localCost);
+                    convCosts.push_back(convCost);
                     scatterCosts.push_back(scatterCost);
                     errs.push_back(bad);
                 }
                 ++expect;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
-                printf("cont receiver round %u err=%d cost_us=%llu scatter_us=%llu\n", k, errs[k],
-                       static_cast<unsigned long long>(costs[k]),
+                printf("cont receiver round %u err=%d cost_us=%llu local_us=%llu conv_us=%llu scatter_us=%llu\n", k,
+                       errs[k], static_cast<unsigned long long>(costs[k]),
+                       static_cast<unsigned long long>(localCosts[k]),
+                       static_cast<unsigned long long>(convCosts[k]),
                        static_cast<unsigned long long>(scatterCosts[k]));
             }
-            if (!a.old) {
-                printf("cont receiver gva_conv_us=%llu (one-time, %u pairs; per-round overall ~= scatter+gva)\n",
-                       static_cast<unsigned long long>(gvaConvUs), a.count);
-                printf("cont receiver avg_us=%llu scatter_avg_us=%llu local_overall_avg_us=%llu (rounds=%u)\n",
-                       static_cast<unsigned long long>(sumUs / a.rounds),
-                       static_cast<unsigned long long>(sumScatterUs / a.rounds),
-                       static_cast<unsigned long long>(sumScatterUs / a.rounds + gvaConvUs), a.rounds);
-            } else {
-                printf("cont receiver avg_us=%llu scatter_avg_us=%llu (rounds=%u)\n",
-                       static_cast<unsigned long long>(sumUs / a.rounds),
-                       static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds);
-            }
+            printf("cont receiver avg_us=%llu local_avg_us=%llu conv_avg_us=%llu scatter_avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds),
+                   static_cast<unsigned long long>(sumLocalUs / a.rounds),
+                   static_cast<unsigned long long>(sumConvUs / a.rounds),
+                   static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds);
         }
     }
 
