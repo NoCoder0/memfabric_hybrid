@@ -44,6 +44,9 @@
 #include <thread>
 #include <vector>
 
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include "smem_bm.h"
 #include "smem_bm_def.h"
 
@@ -67,6 +70,8 @@ struct BenchArgs {
     uint64_t stride = kDefaultStride;
     uint64_t dramMB = kDefaultDramMB;
     uint32_t rounds = 5;
+    uint32_t altBlocks = 3;   /* hcom-url 传两个 url(;) 时：单/双交替块数 */
+    bool noAlternate = false; /* 内部参数：子进程只跑当前 hcom-url 一次，不再自动交替 */
 };
 
 void Usage(const char *prog)
@@ -80,7 +85,10 @@ void Usage(const char *prog)
             "  --stride=N                 离散摆放间隔(默认4096)\n"
             "  --dram-mb=N                每 rank 对称 host 内存 MB(默认16)\n"
             "  --rounds=N                 每场景轮数(默认5)\n"
-            "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n",
+            "  --alt-blocks=N             hcom-url 含两个 url(;) 时单/双交替块数(默认3)\n"
+            "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
+            "hcom-url 支持两个 url 以 ';' 分隔(如 tcp://ip1:p;tcp://ip2:p)：\n"
+            "  自动交替跑 单连接(url1) 与 双连接(url1;url2)，块内顺序逐块翻转，降低环境漂移影响\n",
             prog);
 }
 
@@ -116,6 +124,10 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.dramMB = std::stoull(v);
         } else if (k == "--rounds") {
             a.rounds = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--alt-blocks") {
+            a.altBlocks = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--no-alternate") {
+            a.noAlternate = v != "0";
         }
     }
     if (a.role != "local" && a.role != "remote") {
@@ -152,6 +164,133 @@ void PrintLabel(const char *mode)
     printf("\n==== mode=%s ====\n", mode);
 }
 
+/* ---------- 双 url 自动交替（单连接 vs 双连接）支持 ---------- */
+
+struct Cfg {
+    std::string tag;
+    std::string url;
+};
+
+static std::vector<std::string> SplitTrimUrls(const std::string &s)
+{
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : s) {
+        if (c == ';') {
+            if (!cur.empty()) {
+                out.push_back(cur);
+            }
+            cur.clear();
+        } else if (c != ' ' && c != '\t') {
+            cur.push_back(c);
+        }
+    }
+    if (!cur.empty()) {
+        out.push_back(cur);
+    }
+    return out;
+}
+
+/* hcom-url 只有一个 url -> 只跑单连接；含两个 url(;) -> 单/双交替，块内顺序逐块翻转 */
+static std::vector<Cfg> BuildPlan(const std::string &hcomUrl, uint32_t altBlocks)
+{
+    std::vector<Cfg> plan;
+    auto urls = SplitTrimUrls(hcomUrl);
+    if (urls.size() <= 1) {
+        const std::string &u = urls.empty() ? hcomUrl : urls[0];
+        plan.push_back({"single-link(1 NIC)", u});
+        return plan;
+    }
+    const std::string single = urls[0];
+    const std::string dual = urls[0] + ";" + urls[1];
+    for (uint32_t b = 1; b <= altBlocks; ++b) {
+        if (b % 2 == 1) {
+            plan.push_back({"single-link(1 NIC)", single});
+            plan.push_back({"dual-link(2 NIC)", dual});
+        } else {
+            plan.push_back({"dual-link(2 NIC)", dual});
+            plan.push_back({"single-link(1 NIC)", single});
+        }
+    }
+    return plan;
+}
+
+/* 生成子进程参数：原参数中 hcom-url 替换为本次 url，并追加 --no-alternate=1 防止子进程再递归 */
+static std::vector<std::string> BuildChildArgs(int argc, char *argv[], const std::string &url)
+{
+    std::vector<std::string> args;
+    for (int i = 1; i < argc; ++i) {
+        std::string tok = argv[i];
+        if (tok.rfind("--hcom-url=", 0) == 0) {
+            args.push_back("--hcom-url=" + url);
+        } else if (tok == "--hcom-url") {
+            args.push_back(tok);
+            args.push_back(url);
+            ++i;
+        } else {
+            args.push_back(tok);
+        }
+    }
+    args.push_back("--no-alternate=1");
+    return args;
+}
+
+static int RunOneChild(char *argv0, const std::vector<std::string> &args)
+{
+    std::vector<char *> cargv;
+    cargv.push_back(argv0);
+    for (const auto &s : args) {
+        cargv.push_back(const_cast<char *>(s.c_str()));
+    }
+    cargv.push_back(nullptr);
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        perror("fork");
+        return 1;
+    }
+    if (pid == 0) {
+        execvp(argv0, cargv.data());
+        perror("execvp");
+        _exit(127);
+    }
+    int status = 0;
+    if (waitpid(pid, &status, 0) < 0) {
+        perror("waitpid");
+        return 1;
+    }
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    return 1;
+}
+
+/* 双 url：父进程按 plan 顺序 fork 子进程逐次执行，失败自动重试（覆盖对端 store 重启间隔） */
+static int RunAlternating(int argc, char *argv[], const std::vector<Cfg> &plan)
+{
+    const int kMaxTries = 3;
+    for (size_t i = 0; i < plan.size(); ++i) {
+        int code = -1;
+        for (int t = 0; t < kMaxTries; ++t) {
+            printf("\n########## [alternate] %zu/%zu %s hcom-url=%s ##########\n", i + 1, plan.size(),
+                   plan[i].tag.c_str(), plan[i].url.c_str());
+            fflush(stdout);
+            auto args = BuildChildArgs(argc, argv, plan[i].url);
+            code = RunOneChild(argv[0], args);
+            if (code == 0) {
+                break;
+            }
+            fprintf(stderr, "config %zu failed code=%d, retry %d/%d\n", i + 1, code, t + 1, kMaxTries);
+            sleep(3);
+        }
+        if (code != 0) {
+            fprintf(stderr, "alternating bench aborted at config %zu (%s)\n", i + 1, plan[i].tag.c_str());
+            return code;
+        }
+    }
+    return 0;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -164,6 +303,20 @@ int main(int argc, char *argv[])
     const bool isLocal = (a.role == "local");
     printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu rounds=%u\n", a.role.c_str(), a.rank, a.count,
            static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride), a.rounds);
+
+    /* hcom-url 含两个 url(;) 时：自动交替跑 单连接(url1) 与 双连接(url1;url2)，
+       子进程每次独立 init/join，语义与逐次手动运行一致；单 url 时走原逻辑，行为不变 */
+    if (!a.noAlternate) {
+        auto plan = BuildPlan(a.hcomUrl, a.altBlocks);
+        if (plan.size() > 1) {
+            printf("[bench] alternate plan: %zu runs, alt-blocks=%u mode=%s rounds=%u\n", plan.size(), a.altBlocks,
+                   a.mode.c_str(), a.rounds);
+            for (const auto &c : plan) {
+                printf("[bench]   %s  %s\n", c.tag.c_str(), c.url.c_str());
+            }
+            return RunAlternating(argc, argv, plan);
+        }
+    }
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)               连续 staging（接收侧）
@@ -374,6 +527,7 @@ int main(int argc, char *argv[])
         } else {
             PrintLabel("cont (receiver poll+scatter)");
             uint64_t sumUs = 0;
+            uint64_t sumScatterUs = 0;
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             uint64_t expect = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -387,6 +541,7 @@ int main(int argc, char *argv[])
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
                 int bad = 0;
+                const uint64_t ts0 = NowUs(); /* scatter 单独计时：仅本地 memcpy(staging -> 离散目标) */
                 for (uint32_t i = 0; i < a.count; ++i) {
                     void *srcVa = nullptr, *dstVa = nullptr;
                     if (!GvaToHostVa(bm, selfGva + i * a.size, &srcVa) ||
@@ -396,18 +551,23 @@ int main(int argc, char *argv[])
                     }
                     memcpy(dstVa, srcVa, a.size);
                 }
+                const uint64_t ts1 = NowUs();
                 *reinterpret_cast<uint64_t *>(flagVa) = 0; /* 清 flag */
                 const uint64_t t1 = NowUs();
                 if (r >= 1) { /* r==0 为 warmup，不计时不打印 */
                     const uint64_t cost = t1 - t0;
+                    const uint64_t scatterCost = ts1 - ts0;
                     sumUs += cost;
-                    printf("cont receiver round %u err=%d cost_us=%llu\n", r - 1, bad,
-                           static_cast<unsigned long long>(cost));
+                    sumScatterUs += scatterCost;
+                    printf("cont receiver round %u err=%d cost_us=%llu scatter_us=%llu\n", r - 1, bad,
+                           static_cast<unsigned long long>(cost),
+                           static_cast<unsigned long long>(scatterCost));
                 }
                 ++expect;
             }
-            printf("cont receiver avg_us=%llu (rounds=%u)\n",
-                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
+            printf("cont receiver avg_us=%llu scatter_avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds),
+                   static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds);
         }
     }
 
