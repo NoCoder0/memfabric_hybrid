@@ -441,6 +441,10 @@ private:
     static bool gLoaded;
     static void *hcomHandle;
     static const char *hcomLibName;
+    static const char *hcomSoname;
+
+    // dlopen 两次尝试（bare name 失败且为"库未找到"时回退 SONAME），失败时返回 nullptr 并填充 errMsg
+    static void *DlopenWithSonameFallback(std::string &errMsg);
 
     static serviceCreateFunc gServiceCreate;
     static serviceBindFunc gServiceBind;

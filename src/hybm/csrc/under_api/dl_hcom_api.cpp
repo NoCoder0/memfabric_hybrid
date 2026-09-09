@@ -18,6 +18,7 @@ bool DlHcomApi::gLoaded = false;
 std::mutex DlHcomApi::gMutex;
 void *DlHcomApi::hcomHandle = nullptr;
 const char *DlHcomApi::hcomLibName = "libhcom.so";
+const char *DlHcomApi::hcomSoname = "libhcom.so.0";
 
 serviceCreateFunc DlHcomApi::gServiceCreate = nullptr;
 serviceBindFunc DlHcomApi::gServiceBind = nullptr;
@@ -73,15 +74,43 @@ SetUbsMode DlHcomApi::gSetUbsMode = nullptr;
 ImportUrmaSeg DlHcomApi::gImportUrmaSeg = nullptr;
 SetMaxSendRecvDataCntFunc DlHcomApi::gSetMaxSendRecvDataCnt = nullptr;
 
+// dlopen 两次尝试（bare name 失败且为"库未找到"时回退 SONAME），失败时返回 nullptr 并填充 errMSg
+void *DlHcomApi::DlopenWithSonameFallback(std::string &errMsg)
+{
+    void *handle = dlopen(hcomLibName, RTLD_NOW | RTLD_NODELETE);
+    if (handle != nullptr) {
+        return handle;
+    }
+    // dlerror() 返回的缓冲区会被后续调用覆盖，先保存首次错误信息
+    const char *err = dlerror();
+    errMsg = (err != nullptr) ? err : "unknown error";
+    // 库文件未找到（如未配置搜索路径）时，尝试 SONAME：dlopen 会以 SONAME 匹配进程内
+    // 已加载实例，可复用上层（如 Python 预加载）已加载的 libhcom；其他错误（如符号缺失）不重试
+    if (errMsg.find("cannot open shared object file") == std::string::npos) {
+        return nullptr;
+    }
+    handle = dlopen(hcomSoname, RTLD_NOW | RTLD_NODELETE);
+    if (handle != nullptr) {
+        return handle;
+    }
+    const char *sonameErr = dlerror();
+    if (sonameErr != nullptr) {
+        errMsg += "; ";
+        errMsg += sonameErr;
+    }
+    return nullptr;
+}
+
 Result DlHcomApi::LoadLibrary()
 {
     std::lock_guard<std::mutex> guard(gMutex);
     if (gLoaded) {
         return BM_OK;
     }
-    hcomHandle = dlopen(hcomLibName, RTLD_NOW | RTLD_NODELETE);
+    std::string errMsg;
+    hcomHandle = DlopenWithSonameFallback(errMsg);
     if (hcomHandle == nullptr) {
-        BM_LOG_WARN("Unable to open library [" << hcomLibName << "], " << dlerror());
+        BM_LOG_WARN("Unable to open library [" << hcomLibName << "], " << errMsg);
         return BM_DL_FUNCTION_FAILED;
     }
     DL_LOAD_SYM(gServiceCreate, serviceCreateFunc, hcomHandle, "ubs_hcom_service_create");
