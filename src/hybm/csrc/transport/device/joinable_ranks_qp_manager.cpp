@@ -25,6 +25,75 @@ namespace transport {
 namespace device {
 constexpr int MR_INFO_ACCESS = 7;
 constexpr int WAIT_TIME_MS = 300;
+constexpr int QP_MODE = 4;                // HCCP_RDMA_OP_MODE_EXT, same as original RaQpCreate(rdmaHandle, 0, 4)
+constexpr uint32_t QP_VERSION = 1;        // QP_CREATE_WITH_ATTR_VERSION required by RaQpCreateWithAttrs
+constexpr uint32_t SEND_CQ_DEPTH = 16384; // RS_DRV_CQ_DEPTH, driver default for RaQpCreate
+constexpr uint32_t RECV_CQ_DEPTH = 16384; // RS_DRV_CQ_DEPTH, driver default for RaQpCreate
+constexpr uint32_t MAX_SEND_WR = 32767;   // RS_QP_32K_DEPTH, driver default for RaQpCreate
+constexpr uint32_t MAX_RECV_WR = 32767;   // RS_QP_32K_DEPTH, driver default for RaQpCreate
+constexpr uint32_t MAX_SEND_SGE = 1;
+constexpr uint32_t MAX_RECV_SGE = 1;
+constexpr uint32_t CQ_DEPTH_MIN = 64;    // CQ_DEFAULT_MIN_SEND_DEPTH / CQ_DEFAULT_MIN_RECV_DEPTH
+constexpr uint32_t CQ_DEPTH_MAX = 32768; // RS_DRV_CQ_32K_DEPTH
+constexpr uint32_t WR_DEPTH_MIN = 64;    // QP_DEFAULT_MIN_CAP_SEND_WR / QP_DEFAULT_MIN_CAP_RECV_WR
+constexpr uint32_t WR_DEPTH_MAX = 32767; // RS_QP_32K_DEPTH
+static uint32_t GetValidatedDepth(const char *envName, uint32_t envValue, uint32_t defaultValue, uint32_t minValue,
+                                  uint32_t maxValue)
+{
+    if (envValue < minValue || envValue > maxValue) {
+        BM_LOG_WARN(envName << " is invalid:" << envValue << ", use default:" << defaultValue);
+        return defaultValue;
+    }
+    return envValue;
+}
+
+QpCreator::QpCreator() noexcept
+{
+    uint32_t sendCqDepth = 0;
+    uint32_t recvCqDepth = 0;
+    uint32_t maxSendWr = 0;
+    uint32_t maxRecvWr = 0;
+    bool hasSendCqDepth = MfEnvUtil::GetOptionalUint(env::MF_NPU_RDMA_SEND_CQ_DEPTH, sendCqDepth);
+    bool hasRecvCqDepth = MfEnvUtil::GetOptionalUint(env::MF_NPU_RDMA_RECV_CQ_DEPTH, recvCqDepth);
+    bool hasMaxSendWr = MfEnvUtil::GetOptionalUint(env::MF_NPU_RDMA_MAX_SEND_WR, maxSendWr);
+    bool hasMaxRecvWr = MfEnvUtil::GetOptionalUint(env::MF_NPU_RDMA_MAX_RECV_WR, maxRecvWr);
+    if (!hasSendCqDepth && !hasRecvCqDepth && !hasMaxSendWr && !hasMaxRecvWr) {
+        useAttr_ = false;
+        return;
+    }
+    useAttr_ = true;
+    qpExtAttrs_ = HccpQpExtAttrs{};
+    qpExtAttrs_.qpMode = QP_MODE;
+    qpExtAttrs_.version = QP_VERSION;
+    qpExtAttrs_.cqAttr.sendCqDepth = hasSendCqDepth ? GetValidatedDepth("MF_NPU_RDMA_SEND_CQ_DEPTH", sendCqDepth,
+                                                                        SEND_CQ_DEPTH, CQ_DEPTH_MIN, CQ_DEPTH_MAX)
+                                                    : SEND_CQ_DEPTH;
+    qpExtAttrs_.cqAttr.recvCqDepth = hasRecvCqDepth ? GetValidatedDepth("MF_NPU_RDMA_RECV_CQ_DEPTH", recvCqDepth,
+                                                                        RECV_CQ_DEPTH, CQ_DEPTH_MIN, CQ_DEPTH_MAX)
+                                                    : RECV_CQ_DEPTH;
+    qpExtAttrs_.qp_attr.cap.max_send_wr =
+        hasMaxSendWr ? GetValidatedDepth("MF_NPU_RDMA_MAX_SEND_WR", maxSendWr, MAX_SEND_WR, WR_DEPTH_MIN, WR_DEPTH_MAX)
+                     : MAX_SEND_WR;
+    qpExtAttrs_.qp_attr.cap.max_recv_wr =
+        hasMaxRecvWr ? GetValidatedDepth("MF_NPU_RDMA_MAX_RECV_WR", maxRecvWr, MAX_RECV_WR, WR_DEPTH_MIN, WR_DEPTH_MAX)
+                     : MAX_RECV_WR;
+    qpExtAttrs_.qp_attr.cap.max_send_sge = MAX_SEND_SGE;
+    qpExtAttrs_.qp_attr.cap.max_recv_sge = MAX_RECV_SGE;
+    qpExtAttrs_.qp_attr.qp_type = IBV_QPT_RC;
+    BM_LOG_TRACE("QpCreator use attrs, sendCqDepth:" << qpExtAttrs_.cqAttr.sendCqDepth
+                                                     << " recvCqDepth:" << qpExtAttrs_.cqAttr.recvCqDepth
+                                                     << " maxSendWr:" << qpExtAttrs_.qp_attr.cap.max_send_wr
+                                                     << " maxRecvWr:" << qpExtAttrs_.qp_attr.cap.max_recv_wr);
+}
+
+int QpCreator::Create(void *rdmaHandle, int flag, int qpMode, void *&qpHandle) noexcept
+{
+    if (!useAttr_) {
+        return DlHccpApi::RaQpCreate(rdmaHandle, flag, qpMode, qpHandle);
+    }
+    return DlHccpApi::RaQpCreateWithAttrs(rdmaHandle, &qpExtAttrs_, qpHandle);
+}
+
 JoinableRanksQpManager::JoinableRanksQpManager(uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId,
                                                uint32_t rankCount, sockaddr_in devNet, hybm_role_type role) noexcept
     : DeviceQpManager(deviceId, rankId, rankCount, devNet, role)
@@ -446,7 +515,7 @@ void JoinableRanksQpManager::MakeQpConnections(const std::set<uint32_t> &newRank
             auto info = new (std::nothrow) UserQpInfo;
             BM_ASSERT_RET_VOID(info != nullptr, "info is nullptr");
             TP_TRACE_BEGIN(TP_HYBM_RA_QP_CREATE);
-            auto ret = DlHccpApi::RaQpCreate(rdmaHandle_, 0, 4, qpHandle);
+            auto ret = qpCreator_.Create(rdmaHandle_, 0, QP_MODE, qpHandle);
             TP_TRACE_END(TP_HYBM_RA_QP_CREATE, ret);
             if (ret != 0) {
                 BM_LOG_ERROR("create QP to " << rankId << " failed: " << ret);

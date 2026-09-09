@@ -77,6 +77,10 @@ inline const std::string MF_ACC_CERT_CHECK_AHEAD_DAYS =
     GetEnvStr("MF_ACC_CERT_CHECK_AHEAD_DAYS", "ACCLINK_CERT_CHECK_AHEAD_DAYS");
 inline const std::string MF_DEVICE_RDMA_TC = GetEnvStr("HCCL_RDMA_TC");
 inline const std::string MF_DEVICE_RDMA_SL = GetEnvStr("HCCL_RDMA_SL");
+inline const std::string MF_NPU_RDMA_SEND_CQ_DEPTH = GetEnvStr("MF_NPU_RDMA_SEND_CQ_DEPTH");
+inline const std::string MF_NPU_RDMA_RECV_CQ_DEPTH = GetEnvStr("MF_NPU_RDMA_RECV_CQ_DEPTH");
+inline const std::string MF_NPU_RDMA_MAX_SEND_WR = GetEnvStr("MF_NPU_RDMA_MAX_SEND_WR");
+inline const std::string MF_NPU_RDMA_MAX_RECV_WR = GetEnvStr("MF_NPU_RDMA_MAX_RECV_WR");
 
 } // namespace env
 } // namespace mf
