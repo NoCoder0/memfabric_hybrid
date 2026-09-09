@@ -25,6 +25,17 @@ namespace ock {
 namespace mf {
 namespace transport {
 namespace device {
+class QpCreator {
+public:
+    QpCreator() noexcept;
+    ~QpCreator() noexcept = default;
+    int Create(void *rdmaHandle, int flag, int qpMode, void *&qpHandle) noexcept;
+
+private:
+    bool useAttr_;
+    HccpQpExtAttrs qpExtAttrs_;
+};
+
 class JoinableRanksQpManager : public DeviceQpManager {
 public:
     JoinableRanksQpManager(uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount,
@@ -74,6 +85,7 @@ private:
     std::set<uint32_t> removedServerRanks_;
     struct QosAttr qosAttr_ {};
     uint32_t userDeviceId_{0};
+    QpCreator qpCreator_;
 };
 
 } // namespace device
