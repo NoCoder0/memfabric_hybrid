@@ -121,6 +121,7 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_RemoteSlice_SucceedsAndSkipsLocal)
     EXPECT_EQ(seg.mappedGvaMem_.size(), 1U);
     EXPECT_TRUE(seg.mappedGvaMem_.count(remote.gva) == 1U);
     EXPECT_EQ(HybmVaManager::GetInstance().GetAllocCount(), 1U);
+    EXPECT_TRUE(seg.CheckSdmaReaches(remote.rankId));
 }
 
 /**
@@ -226,6 +227,7 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_A2_HBM_CrossMachine)
     EXPECT_EQ(outDva, 0U);
     auto outHva = HybmVaManager::GetInstance().TransformVa(remote.gva, HVM_GVA, HVM_HVA); // hva == 0
     EXPECT_EQ(outHva, 0U);
+    EXPECT_FALSE(seg.CheckSdmaReaches(remote.rankId));
 }
 
 // ReserveLva 非56bit返回im.deviceVa
@@ -322,6 +324,20 @@ TEST_F(HybmVmmBasedSegmentTest, ReleaseSliceMemory_ErrorPaths)
     seg.registerSlices_.emplace(regSlice->index_, std::make_pair(MemSliceStatus(regSlice, nullptr), 0x7000ULL));
     auto fakeReg = std::make_shared<MemSlice>(7, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_GVM, 0x5000, 0x6000, 4096);
     EXPECT_EQ(seg.ReleaseSliceMemory(fakeReg), BM_INVALID_PARAM);
+}
+
+TEST_F(HybmVmmBasedSegmentTest, ReleaseRegisteredHostMemoryForDeviceUrma)
+{
+    MemSegmentOptions opts;
+    opts.segType = HYBM_MST_DRAM;
+    opts.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_URMA);
+    HybmVmmBasedSegment seg(opts, 0);
+    auto slice = std::make_shared<MemSlice>(1, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, 0, 0x6000, 4096);
+    seg.registerSlices_.emplace(slice->index_, std::make_pair(MemSliceStatus(slice), 0x7000ULL));
+    MOCKER(&DlHalApi::HalHostUnregisterEx).expects(once()).will(returnValue(BM_OK));
+
+    EXPECT_EQ(seg.ReleaseSliceMemory(slice), BM_OK);
+    EXPECT_TRUE(seg.registerSlices_.empty());
 }
 
 TEST_F(HybmVmmBasedSegmentTest, MemoryInRange_ErrorBranches)

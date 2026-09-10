@@ -75,8 +75,6 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
         BM_LOG_ERROR("HybmVaManager Initialize failed: " << ret);
         return nullptr;
     }
-    auto CONN_BASED_SEGMENT =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_TCP;
     MemSegmentPtr tmpSeg;
     switch (options.segType) {
         case HYBM_MST_HBM:
@@ -86,18 +84,25 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
                 tmpSeg = std::make_shared<HybmDevLegacySegment>(options, entityId);
             }
             break;
-        case HYBM_MST_DRAM:
+        case HYBM_MST_DRAM: {
+            constexpr auto DEVICE_TRANSPORT_MASK =
+                HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+            const bool isSdmaMixedTransport =
+                (options.dataOpType & DEVICE_TRANSPORT_MASK) != 0U && (options.dataOpType & HYBM_DOP_TYPE_SDMA) != 0U;
+            const bool vmmSupport = HybmGetGvaVersion() == HYBM_GVA_V4 &&
+                                    (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
+                                    options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
+                                    (!(options.dataOpType & DEVICE_TRANSPORT_MASK) || isSdmaMixedTransport);
             // When host shared memory op type is set, use dedicated host shm segment.
             if ((options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
                 tmpSeg = std::make_shared<HybmHostShmSegment>(options, entityId);
-            } else if ((HybmGetGvaVersion() == HYBM_GVA_V4 &&
-                        (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
-                        options.shmFd < 0 && !(options.dataOpType & CONN_BASED_SEGMENT))) {
+            } else if (vmmSupport) {
                 tmpSeg = std::make_shared<HybmVmmBasedSegment>(options, entityId);
             } else {
                 tmpSeg = std::make_shared<HybmConnBasedSegment>(options, entityId);
             }
             break;
+        }
         case HYBM_MST_HBM_USER:
             tmpSeg = std::make_shared<HybmDevUserLegacySegment>(options, entityId);
             break;

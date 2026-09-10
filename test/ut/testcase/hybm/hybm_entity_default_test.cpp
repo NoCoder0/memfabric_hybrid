@@ -17,6 +17,7 @@
 #define private   public
 #define protected public
 #include "hybm_entity_default.h"
+#include "hybm_conn_based_segment.h"
 #include "hybm_mem_segment.h"
 #include "hybm_data_operator.h"
 #include "hybm_va_manager.h"
@@ -155,6 +156,11 @@ ock::mf::MemSegmentPtr CaptureSegmentOptions(const ock::mf::MemSegmentOptions &o
 {
     g_createdSegmentOptions = options;
     return std::make_shared<ock::mf::HybmVmmBasedSegment>(options, entityId);
+}
+
+ock::mf::MemSegmentPtr CreateConnSegment(const ock::mf::MemSegmentOptions &options, int entityId)
+{
+    return std::make_shared<ock::mf::HybmConnBasedSegment>(options, entityId);
 }
 } // namespace
 
@@ -1619,6 +1625,23 @@ TEST_F(HybmEntityDefaultTest, InitDramSegment_SharedForMixedSdmaAndDeviceRdma)
     entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
     EXPECT_EQ(entity.InitDramSegment(), BM_OK);
     EXPECT_FALSE(g_createdSegmentOptions.shared);
+}
+
+TEST_F(HybmEntityDefaultTest, InitDramSegment_MixedSdmaAllowsDeviceTransportFallback)
+{
+    union {
+        ock::mf::MemSegmentPtr (*func)(const ock::mf::MemSegmentOptions &, int);
+    } create{};
+    create.func = &ock::mf::MemSegment::Create;
+    MOCKER(create.func).stubs().will(invoke(CreateConnSegment));
+
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CAN_REACH_MULTI);
+    entity.options_.maxDRAMSize = TEST_PAGE_SIZE;
+    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA);
+    EXPECT_EQ(entity.InitDramSegment(), BM_OK);
+
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_SDMA;
+    EXPECT_EQ(entity.InitDramSegment(), BM_ERROR);
 }
 
 // ==================== CanReachDataOperators tests ====================

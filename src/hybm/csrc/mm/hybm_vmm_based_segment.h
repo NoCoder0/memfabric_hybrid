@@ -12,6 +12,8 @@
 #ifndef MF_HYBRID_HYBM_VMM_BASED_SEGMENT_H
 #define MF_HYBRID_HYBM_VMM_BASED_SEGMENT_H
 
+#include <unordered_set>
+
 #include "hybm_dev_legacy_segment.h"
 #include "hybm_mem_common.h"
 #include "dl_hal_api.h"
@@ -90,6 +92,7 @@ private:
     std::map<uint32_t, std::pair<MemSliceStatus, uint64_t>> registerSlices_;
     std::map<uint32_t, std::string> exportMap_;
     std::map<uint64_t, drv_mem_handle_t *> mappedGvaMem_; // mapped gva
+    std::unordered_set<uint32_t> sdmaReachableRanks_;
     std::vector<void *> reservedLva_;
 };
 } // namespace mf

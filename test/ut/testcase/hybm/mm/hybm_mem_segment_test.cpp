@@ -220,6 +220,39 @@ TEST_F(HybmMemSegmentTest, Create_Dram_V4_910C_Uses_VmmBasedSegment)
     EXPECT_NE(vmmSeg, nullptr);
 }
 
+TEST_F(HybmMemSegmentTest, Create_Dram_V4_910C_MixedDeviceTransportUsesVmm)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.rankCnt = 2;
+    opt.rankId = 0;
+    opt.segType = ock::mf::HYBM_MST_DRAM;
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_V4));
+    MOCKER(ock::mf::MemSegment::InitDeviceInfo).stubs().will(returnValue(0));
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910C;
+
+    struct TestCase {
+        hybm_data_op_type dataOpType;
+        bool expectVmm;
+    };
+    const TestCase testCases[] = {
+        {HYBM_DOP_TYPE_DEVICE_RDMA, false},
+        {HYBM_DOP_TYPE_DEVICE_URMA, false},
+        {HYBM_DOP_TYPE_DEVICE_UBOE, false},
+        {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA), true},
+        {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_URMA), true},
+        {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_UBOE), true},
+        {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_HOST_TCP), false},
+    };
+    for (const auto &testCase : testCases) {
+        opt.dataOpType = testCase.dataOpType;
+        auto segment = ock::mf::MemSegment::Create(opt, 2);
+        ASSERT_NE(segment, nullptr);
+        EXPECT_EQ(std::dynamic_pointer_cast<ock::mf::HybmVmmBasedSegment>(segment) != nullptr, testCase.expectVmm);
+        EXPECT_EQ(std::dynamic_pointer_cast<ock::mf::HybmConnBasedSegment>(segment) != nullptr, !testCase.expectVmm);
+    }
+}
+
 /**
 * Create_Dram_Default_Uses_ConnBasedSegment
 *  - 在非 V4/910C 情况下，DRAM 段默认走 `HybmConnBasedSegment`。
@@ -1045,12 +1078,12 @@ TEST_F(HybmMemSegmentTest, HybmVmmBasedSegment_CheckSdmaReaches)
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_DRAM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
-    options.rankCnt = 1;
+    options.rankCnt = 2;
+    options.rankId = 0;
 
     ock::mf::HybmVmmBasedSegment segment(options, 100);
-    // 测试 SDMA 可达性检查
-    bool sdmaReaches = segment.CheckSdmaReaches(0);
-    EXPECT_EQ(sdmaReaches, true);
+    EXPECT_TRUE(segment.CheckSdmaReaches(0));
+    EXPECT_FALSE(segment.CheckSdmaReaches(1));
 }
 
 // 测试 MemSegment SDMA 可达性检查

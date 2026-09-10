@@ -1268,7 +1268,7 @@ Result MemEntityDefault::InitDramSegment()
         return BM_ERROR;
     }
     if (options_.scene != HYBM_SCENE_TRANS && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) != 0U &&
-        !dramSegment_->CheckSdmaReaches(options_.rankId)) {
+        (options_.bmDataOpType & deviceTransportMask) == 0U && !dramSegment_->CheckSdmaReaches(options_.rankId)) {
         BM_LOG_ERROR("dram segment does not support sdma in current environment, rankId: " << options_.rankId);
         return BM_ERROR;
     }

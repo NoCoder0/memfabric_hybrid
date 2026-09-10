@@ -408,7 +408,9 @@ Result HybmVmmBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexcep
         }
         uint64_t realAddr = registerPos->second.second;
         bool isDevice = slice->GetMemoryType() == HYBM_MEM_TYPE_DEVICE;
-        if (!isDevice && ((options_.dataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0U)) {
+        constexpr auto deviceTransportMask =
+            HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+        if (!isDevice && (options_.dataOpType & deviceTransportMask) != 0U) {
             auto ret =
                 DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(realAddr), logicDeviceId_, HOST_MEM_MAP_DEV);
             BM_LOG_INFO("unregister slice(idx:" << slice->index_ << "), size: " << slice->size_ << " return:" << ret);
@@ -695,6 +697,7 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             return ret;
         }
         mappedGvaMem_.emplace(im.gva, handle);
+        sdmaReachableRanks_.emplace(im.rankId);
     }
     imports_.clear();
     return BM_OK;
@@ -714,6 +717,7 @@ Result HybmVmmBasedSegment::Unmap() noexcept
         HybmVaManager::GetInstance().RemoveOneVaInfo(it.first);
     }
     mappedGvaMem_.clear();
+    sdmaReachableRanks_.clear();
     return BM_OK;
 }
 
@@ -745,6 +749,7 @@ Result HybmVmmBasedSegment::RemoveImported(const std::vector<uint32_t> &ranks) n
         if (st != it) {
             mappedGvaMem_.erase(st, it);
         }
+        sdmaReachableRanks_.erase(rank);
     }
 
     // remove imports_ infos for specified ranks
@@ -790,5 +795,8 @@ bool HybmVmmBasedSegment::MemoryInRange(const void *begin, uint64_t size) const 
 
 bool HybmVmmBasedSegment::CheckSdmaReaches(uint32_t rankId) const noexcept
 {
-    return true;
+    if (rankId == options_.rankId) {
+        return true;
+    }
+    return sdmaReachableRanks_.find(rankId) != sdmaReachableRanks_.end();
 }
