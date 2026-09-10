@@ -11,7 +11,6 @@
 */
 
 #include <dlfcn.h>
-#include <filesystem>
 #include <cstring>
 #include "mf_file_util.h"
 #include "acc_offload_launch.h"
@@ -32,13 +31,27 @@ std::string AccOffloadLaunchApi::GetSelfLibDir()
 {
     Dl_info info;
     if (dladdr(static_cast<const void *>(&AccOffloadLaunchApi::gAccOffloadLibName), &info) == 0) {
+        OFFLOAD_LOG_ERROR("dladdr failed to locate self library, libName: " << gAccOffloadLibName);
         return "";
     }
-    std::string fname = info.dli_fname == nullptr ? "" : std::string(info.dli_fname);
-    if (fname.empty()) {
+
+    const char *fname = info.dli_fname;
+    if (fname == nullptr || fname[0] == '\0') {
+        OFFLOAD_LOG_ERROR("dladdr returned empty file name, libName: " << gAccOffloadLibName);
         return "";
     }
-    return std::filesystem::path(fname).parent_path().string();
+
+    const char *lastSlash = strrchr(fname, '/');
+    if (lastSlash == nullptr) {
+        OFFLOAD_LOG_ERROR("self library path contains no directory separator, fname: " << fname);
+        return "";
+    }
+
+    if (lastSlash == fname) {
+        return "/";
+    }
+
+    return std::string(fname, lastSlash - fname);
 }
 
 int32_t AccOffloadLaunchApi::TryLoadLibrary()
