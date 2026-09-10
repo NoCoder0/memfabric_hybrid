@@ -236,6 +236,10 @@ Result HaConfigStore::TryBecomeLeader() noexcept
         return SM_ERROR;
     }
     SM_LOG_TRACE("Self-connection established");
+    {
+        std::lock_guard<std::mutex> lock(lastLeaderMutex_);
+        lastConnectedLeader_ = myAddr;
+    }
 
     NotifyLeaderChange();
     return SM_OK;
@@ -516,6 +520,10 @@ void HaConfigStore::ConnectToLeaderAsFollower() noexcept
                 const auto connectRet = ConnectClient(ip, port, kClientConnectRetryTimes);
                 if (connectRet == SM_OK) {
                     SM_LOG_INFO("Client-only HaConfigStore connected to leader: " << leaderAddr);
+                    {
+                        std::lock_guard<std::mutex> lock(lastLeaderMutex_);
+                        lastConnectedLeader_ = leaderAddr;
+                    }
                     NotifyLeaderChange();
                     return;
                 }
@@ -598,13 +606,74 @@ Result HaConfigStore::BecomeFollower(const std::string &leaderIpPort) noexcept
     auto connectRet = ConnectClient(ip, port, kFollowerConnectRetryTimes);
     SM_ASSERT_RETURN(connectRet == SM_OK, connectRet);
     SM_LOG_INFO("Connection initiated to leader");
+    {
+        std::lock_guard<std::mutex> lock(lastLeaderMutex_);
+        lastConnectedLeader_ = leaderIpPort;
+    }
     NotifyLeaderChange();
     return SM_OK;
 }
 
-// ============================================================================
-// Health Check
-// ============================================================================
+void HaConfigStore::CheckLeaderConsistency(const std::string &backendLeader) noexcept
+{
+    std::string lastLeader;
+    {
+        std::lock_guard<std::mutex> lock(lastLeaderMutex_);
+        lastLeader = lastConnectedLeader_;
+    }
+
+    // 未连接|一致，均无需动作
+    if (lastLeader.empty()) {
+        // 尚未建立过连接（Startup 的同步连接循环仍在重试中）由连接循环自身负责，避免并发触发重复连接。
+        SM_LOG_DEBUG("Leader not connected yet, skip consistency check");
+        return;
+    }
+    if (backendLeader == lastLeader) {
+        SM_LOG_DEBUG("Leader consistent with connection");
+        return;
+    }
+
+    // 复核对比值
+    std::string recheckLeader;
+    int recheckRet;
+    {
+        std::lock_guard<std::mutex> bLock(backendMutex_);
+        recheckRet = backend_->Get(KEY_LEADER, recheckLeader);
+    }
+    if (recheckRet != SUCCESS) {
+        SM_LOG_WARN("Re-check KEY_LEADER failed, ret: " << recheckRet << ", defer consistency handling this round");
+        return;
+    }
+    std::string freshLeader;
+    {
+        std::lock_guard<std::mutex> lock(lastLeaderMutex_);
+        freshLeader = lastConnectedLeader_;
+    }
+    if (recheckLeader == freshLeader) {
+        SM_LOG_DEBUG("Stale snapshot detected (leader=" << freshLeader << "), skip");
+        return;
+    }
+
+    if (isLeader_.load(std::memory_order_acquire)) {
+        // 本进程是 leader，但 KEY_LEADER 已不是自己登记的地址：无 key 的 leader 不得继续服务。
+        if (reElectionInProgress_.load(std::memory_order_acquire)) {
+            // 窗口保护：重选举进行中（TryBecomeLeader 刚置位 isLeader_、可能刚写完新
+            // key），交给重选举流程收敛；其退出时 lastConnectedLeader_ 必已更新。
+            SM_LOG_DEBUG("Re-election in progress, skip leader self-demotion check");
+            return;
+        }
+        SM_LOG_WARN("Leader key no longer mine (lease expired or replaced): registered="
+                    << freshLeader << ", backend=" << recheckLeader << ", self-demoting");
+        StopServer();
+        TriggerReElectionAsync();
+        return;
+    }
+
+    // follower：假死场景下 leader 进程未退出、TCP 连接保持 ESTABLISHED，收不到断链
+    // 事件，HandleLinkBroken 不会被触发。发现 KEY_LEADER 与当前连接的 leader 不一致即触发重选举
+    SM_LOG_WARN("Leader changed: connected=" << freshLeader << ", backend=" << recheckLeader);
+    TriggerReElectionAsync();
+}
 
 void HaConfigStore::HealthCheckThreadFunc() noexcept
 {
@@ -629,7 +698,7 @@ void HaConfigStore::HealthCheckThreadFunc() noexcept
             StopServer();
             TriggerReElectionAsync();
         } else {
-            SM_LOG_DEBUG("Backend connection healthy");
+            CheckLeaderConsistency(testValue);
         }
     }
     SM_LOG_INFO("Health check thread exiting");

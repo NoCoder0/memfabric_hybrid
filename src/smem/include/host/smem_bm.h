@@ -87,6 +87,28 @@ int32_t smem_bm_update_store_server(const char *ip, uint16_t port);
 int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t *port);
 
 /**
+ * @brief Register a callback invoked when the HA leader changes.
+ *
+ * Pure notification: the library does not fetch or pass any address. The caller
+ * decides what to do on leader change (e.g. re-read the MetaService address via
+ * smem_bm_get_meta_service_info and switch its connections). Used to cover
+ * SIGSTOP-like failures where the old leader stays ESTABLISHED and no TCP
+ * link-broken event is delivered to clients.
+ *
+ * Only meaningful in etcd/HA mode; returns non-zero when the config store is
+ * not HA (caller may treat this as "not supported" and skip).
+ *
+ * The callback runs on the HA re-election thread inside the library and should
+ * return quickly. It is not invoked for the leader node's own transitions.
+ *
+ * @param callback    [in] invoked as callback(userData); may be NULL to unregister
+ * @param userData    [in] opaque user data passed back to the callback
+ * @return 0 on success, non-zero error code on failure
+ */
+typedef void (*smem_bm_leader_change_cb)(void *userData);
+int32_t smem_bm_register_leader_change_callback(smem_bm_leader_change_cb callback, void *userData);
+
+/**
  * @brief Create a Big Memory object locally after initialized, this only create local memory segment and after
  * call <i>smem_bm_join</i> the local memory segment will be joined into global space. One Big Memory object is
  * a global memory space, data operation does work across different Big Memory object.

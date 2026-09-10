@@ -148,6 +148,18 @@ private:
     void StopServer() noexcept;
     Result ConnectClient(const std::string &ip, uint16_t port, int reconnectRetryTimes = -1) noexcept;
     void HealthCheckThreadFunc() noexcept;
+    /**
+     * 校验etcd中的leader(backendLeader)和本进程所连接的leader(lastConnectedLeader_)的一致性；
+     * lastConnectedLeader_为空： 尚未建立连接由连接循环自身负责
+     * lastConnectedLeader_== backendLeader: 正常情况
+     * lastConnectedLeader_!= backendLeader && isLeader_:
+     *      所连接的leader与etcd记录的leader不一致，且本进程isLeader;
+     *      1. 如果重选举进行中: 交给重选举流程
+     *      2. 否则，触发本进程降级流程，停止本进程server服务，投入重选举流程；
+     * lastConnectedLeader_!= backendLeader && !isLeader_: 投入重选举流程；
+     * @param backendLeader: etcd中的leader
+     */
+    void CheckLeaderConsistency(const std::string &backendLeader) noexcept;
     void Uninitialize() noexcept;
 
     // Helper methods
@@ -180,6 +192,11 @@ private:
     std::mutex stateMutex_;
     std::atomic<bool> isLeader_{false};
     std::atomic<bool> brokenHandlerRegistered_{false};
+
+    // 当前连接的 leader 地址（与 KEY_LEADER 中原样字符串逐字节一致，避免格式归一化误差）。
+    // leader 进程自连时为自己登记的地址，follower 为所连 leader 的地址。
+    mutable std::mutex lastLeaderMutex_;
+    std::string lastConnectedLeader_;
 
     // Lifecycle flags
     std::atomic<bool> stopFlag_{false};

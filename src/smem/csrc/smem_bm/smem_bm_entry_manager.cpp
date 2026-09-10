@@ -396,6 +396,41 @@ Result SmemBmEntryManager::GetMetaServiceInfo(std::string &ip, uint16_t *port) c
     return SM_OK;
 }
 
+Result SmemBmEntryManager::RegisterLeaderChangeCallback(LeaderChangedFunc callback, void *userData) noexcept
+{
+    if (confStore_ == nullptr) {
+        SM_LOG_ERROR("RegisterLeaderChangeCallback: confStore_ is null, not initialized");
+        return SM_ERROR;
+    }
+    auto *haStore = confStore_->AsHaConfigStore();
+    if (haStore == nullptr) {
+        SM_LOG_TRACE("RegisterLeaderChangeCallback: store is not HaConfigStore, skip");
+        return SM_ERROR;
+    }
+    haStore->RegisterLeaderChangeCallback([callback, userData](const HaConfigStore::LeaderAddresses &addrs) {
+        if (addrs.isLeader) {
+            return;
+        }
+        if (callback != nullptr) {
+            try {
+                std::thread([callback, userData]() {
+                    try {
+                        callback(userData);
+                    } catch (const std::exception &e) {
+                        SM_LOG_ERROR("LeaderChangeCallback exception: " << e.what());
+                    } catch (...) {
+                        SM_LOG_ERROR("LeaderChangeCallback unknown exception");
+                    }
+                }).detach();
+            } catch (const std::system_error &e) {
+                SM_LOG_ERROR("LeaderChangeCallback failed to create thread: " << e.what());
+            }
+        }
+    });
+    SM_LOG_INFO("Registered leader change callback on HaConfigStore");
+    return SM_OK;
+}
+
 void SmemBmEntryManager::Destroy()
 {
     std::lock_guard<std::mutex> guard(entryMutex_);

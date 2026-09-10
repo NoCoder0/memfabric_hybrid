@@ -175,6 +175,16 @@ SMEM_API int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t 
     return ret;
 }
 
+SMEM_API int32_t smem_bm_register_leader_change_callback(smem_bm_leader_change_cb callback, void *userData)
+{
+    ReadGuard locker(g_smemBmMutex_);
+    if (!g_smemBmInited) {
+        SM_LOG_AND_SET_LAST_ERROR("smem bm not initialized yet");
+        return SM_NOT_INITIALIZED;
+    }
+    return SmemBmEntryManager::Instance().RegisterLeaderChangeCallback(callback, userData);
+}
+
 /* return 1 means check ok */
 static inline int32_t SmemBmDataOpCheck(smem_bm_data_op_type dataOpType)
 {

@@ -69,6 +69,32 @@ public:
 
     Result GetMetaServiceInfo(std::string &ip, uint16_t *port) const noexcept;
 
+    /**
+     * @brief Register a callback invoked when the HA leader changes.
+     *
+     * Pure leader-change notification: libsmem only tells the upper layer "the leader
+     * has changed"; what to do next (e.g. re-discover the MetaService address via
+     * GetMetaServiceInfo / smem_bm_get_meta_service_info and switch connections) is
+     * entirely up to the caller. Bridges HaConfigStore's leader-change notification
+     * across the C API boundary, covering SIGSTOP-like failures where the old leader
+     * stays ESTABLISHED and no TCP link-broken event is delivered.
+     *
+     * Notes:
+     * - Runs on the HA re-election thread inside libsmem; implementations should return
+     *   quickly or offload heavy work to their own thread.
+     * - Not fired on the leader node for its own leadership transitions (isLeader
+     *   short-circuits); a client process never becomes leader, so for callers the
+     *   semantics is simply "the leader I should talk to has changed".
+     * - No payload is passed: the caller fetches whatever it needs at notify time.
+     *
+     * @param callback    [in] C callback: void (*)(void *userData); NULL to unregister
+     * @param userData    [in] opaque user data passed back to the callback
+     * @return SM_OK on success; SM_ERROR when not initialized or when the store is
+     *         not HaConfigStore (non-etcd mode, caller should skip registration)
+     */
+    using LeaderChangedFunc = void (*)(void *userData);
+    Result RegisterLeaderChangeCallback(LeaderChangedFunc callback, void *userData) noexcept;
+
     inline uint32_t GetRankId() const
     {
         return config_.rankId;
