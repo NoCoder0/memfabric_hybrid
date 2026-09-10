@@ -15,6 +15,7 @@ from _pymf_acc_offload import offload
 
 sparse_copy_impl = offload.sparse_copy
 group_pack_copy_impl = offload.group_pack_copy
+kv_exchange_copy_impl = offload.kv_exchange_copy
 
 
 def empty(sizes, dtype=None, pin_memory=False):
@@ -50,3 +51,7 @@ def group_pack_copy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, pac
         packedGroupList.data_ptr(),
         deviceId.index,
     )
+
+
+def kv_exchange_copy(metaPtr, deviceId):
+    return kv_exchange_copy_impl(metaPtr.data_ptr(), deviceId.index)

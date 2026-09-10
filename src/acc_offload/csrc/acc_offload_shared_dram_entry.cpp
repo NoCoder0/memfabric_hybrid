@@ -370,5 +370,10 @@ int32_t AccOffloadSharedDramEntry::GroupPackCopy(uint64_t *srcPtrs, uint64_t *ds
                                                         packedGroupList, devIdx);
 }
 
+int32_t AccOffloadSharedDramEntry::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx)
+{
+    return AccOffloadLaunchApi::AccOffloadKvExchange(metaPtr, devIdx);
+}
+
 } // namespace offload
 } // namespace ock

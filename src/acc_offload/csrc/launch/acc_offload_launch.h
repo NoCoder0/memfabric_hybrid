@@ -23,6 +23,8 @@ using AccOffloadSparseCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *, ui
 using AccOffloadGroupPackCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *, uint32_t *, int64_t *, int64_t *,
                                              uint8_t);
 
+using AccOffloadKvExchangeFunc = void (*)(uint64_t *, uint8_t);
+
 class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
@@ -51,6 +53,16 @@ public:
         return OFFLOAD_OK;
     }
 
+    static inline int32_t AccOffloadKvExchange(uint64_t *metaPtr, uint8_t devIdx)
+    {
+        if (pAccOffloadKvExchange == nullptr) {
+            return OFFLOAD_UNLOAD;
+        }
+
+        pAccOffloadKvExchange(metaPtr, devIdx);
+        return OFFLOAD_OK;
+    }
+
 private:
     static std::string GetSelfLibDir();
     static std::mutex gMutex;
@@ -60,6 +72,7 @@ private:
 
     static AccOffloadSparseCopyFunc pAccOffloadSparseCopy;
     static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
+    static AccOffloadKvExchangeFunc pAccOffloadKvExchange;
 };
 
 } // namespace offload

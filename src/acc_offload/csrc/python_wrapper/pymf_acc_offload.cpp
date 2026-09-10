@@ -53,7 +53,10 @@ void DefineAccOffloadConfig(py::module_ &m)
             },
             "Explicit config store url of the shared pool (e.g. tcp://127.0.0.1:8500), identical across "
             "ranks of one group; empty falls back to the derived port 8500 + device_id // world_size, "
-            "which requires contiguous device ids aligned to world_size");
+            "which requires contiguous device ids aligned to world_size")
+        .def_readwrite("flags", &offload_config_t::flags, "optional flags, see OFFLOAD_FLAG_xxx");
+    m.attr("OFFLOAD_FLAG_GIANT_PAGE") = py::int_(OFFLOAD_FLAG_GIANT_PAGE);
+    ;
 }
 
 void DefineAccOffloadApi(py::module_ &m)
@@ -72,6 +75,21 @@ void DefineAccOffloadApi(py::module_ &m)
     m.def("group_pack_copy", &offload_group_pack_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("numLocalExpertPtr"), py::arg("groupList"),
           py::arg("packedGroupList"), py::arg("deviceId"));
+
+    m.def("kv_exchange_copy", &offload_kv_exchange_copy, py::call_guard<py::gil_scoped_release>(), py::arg("metaPtr"),
+          py::arg("deviceId"));
+
+    m.def(
+        "get_dva",
+        [](uint64_t hostPtr) -> uint64_t {
+            uint64_t dva = 0;
+            if (offload_get_dva(hostPtr, &dva) != 0) {
+                return 0;
+            }
+            return dva;
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("ptr"),
+        "returns the device virtual address (DVA) of an offload malloc address, 0 on failure");
 }
 
 PYBIND11_MODULE(_pymf_acc_offload, m)

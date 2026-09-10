@@ -78,6 +78,19 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
     auto CONN_BASED_SEGMENT =
         HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_TCP;
     MemSegmentPtr tmpSeg;
+
+    // Hal not support 1 GB huge pages in A5. This is a temporary solution and will be deleted in the formal solution.
+    if (options.flags & HYBM_FLAG_OFFLOAD_GIANT_PAGE) {
+        if (socType_ == AscendSocType::ASCEND_910C) {
+            tmpSeg = std::make_shared<HybmVmmBasedSegment>(options, entityId);
+        } else if (socType_ == AscendSocType::ASCEND_950) {
+            tmpSeg = std::make_shared<HybmConnBasedSegment>(options, entityId);
+        } else {
+            BM_LOG_ERROR("Invalid soc type use offload giant page");
+        }
+        return tmpSeg;
+    }
+
     switch (options.segType) {
         case HYBM_MST_HBM:
             if (HybmGetGvaVersion() == HYBM_GVA_V4 || socType_ == AscendSocType::ASCEND_950) {

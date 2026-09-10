@@ -61,9 +61,11 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
     options.maxDRAMSize = alignedReserveSize;
     options.hostVASpace = alignedAllocSize;
     options.scene = HYBM_SCENE_DEFAULT;
-    options.flags = HYBM_FLAG_DRAM_MAP_HOST_VA | HYBM_FLAG_UNRESTRICTED_MEM;
+    options.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
     options.dramShmFd = -1;
 
+    options.flags |=
+        (config.flags & OFFLOAD_FLAG_GIANT_PAGE) ? HYBM_FLAG_OFFLOAD_GIANT_PAGE : HYBM_FLAG_UNRESTRICTED_MEM;
     do {
         ret = AccOffloadLaunchApi::TryLoadLibrary();
         if (ret != OFFLOAD_OK) {
@@ -159,6 +161,18 @@ void AccOffloadLocalDramEntry::FreeHost(void *ptr)
     memMng_->Release(ptr);
 }
 
+int32_t AccOffloadLocalDramEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
+{
+    auto ret = hybm_gva_to_va(hostPtr, HYBM_MEM_TYPE_DEVICE, dvaPtr);
+    if (ret != 0) {
+        OFFLOAD_LOG_ERROR("hybm_gva_to_va failed, hostPtr: 0x" << std::hex << hostPtr << ", ret: " << ret);
+        return OFFLOAD_ERROR;
+    }
+
+    OFFLOAD_LOG_INFO("get dva: hva=0x" << std::hex << hostPtr << " -> dva=0x" << *dvaPtr);
+    return OFFLOAD_OK;
+}
+
 int32_t AccOffloadLocalDramEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
                                              uint8_t devIdx)
 {
@@ -176,6 +190,11 @@ int32_t AccOffloadLocalDramEntry::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dst
 {
     return AccOffloadLaunchApi::AccOffloadGroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList,
                                                         packedGroupList, devIdx);
+}
+
+int32_t AccOffloadLocalDramEntry::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx)
+{
+    return AccOffloadLaunchApi::AccOffloadKvExchange(metaPtr, devIdx);
 }
 
 } // namespace offload
