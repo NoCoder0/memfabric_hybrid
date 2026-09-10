@@ -14,11 +14,16 @@ include_directories(
         ${PROJECT_HYBM_SRC_BASE}/csrc/entity
         ${PROJECT_HYBM_SRC_BASE}/csrc/mm
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport
-        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/compose
-        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/device
-        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/device/indirect
-        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/host
-        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/utils
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/common
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/compose
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/rdma
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/sdma
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/urma
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/host
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/wrapper/hccp
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/wrapper/hcomm
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/wrapper/ubs_comm
         ${PROJECT_HYBM_SRC_BASE}/csrc/ts_engine
         ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
 

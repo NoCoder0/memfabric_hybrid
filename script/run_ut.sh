@@ -122,7 +122,7 @@ if ! $FAST_MODE; then
             "*/hybm/csrc/common/*"
             "*/hybm/csrc/ts_engine/*"
             "*/hybm/csrc/under_api/*"
-            "*/src/hybm/csrc/transport/device/urma/device_urma_eid_reader.cpp"
+            "*/src/hybm/csrc/transport/common/urma_topo_helper.cpp"
             "*/util/csrc/ptracer/tracers/*"
     )
     lcov --quiet -d "$BUILD_PATH" --c --output-file "$COVERAGE_PATH"/coverage.info -rc lcov_branch_coverage=1 --rc lcov_excl_br_line="LCOV_EXCL_BR_LINE|SM_LOG*|SM_ASSERT*|BM_LOG*|BM_ASSERT*|SM_VALIDATE_*|ASSERT*|LOG_*" --rc stop_on_error=0
