@@ -110,21 +110,25 @@ private:
     struct WhitelistRequest {
         uint32_t rankId;
         std::vector<RankFullInfo> others;
+        uint64_t reqId;
     };
 
     struct ConnEstablishRequest {
         uint32_t rankId;
         std::vector<RankFullInfo> peers;
+        uint64_t reqId;
     };
 
     struct ConnCloseRequest {
         uint32_t rankId;
         std::vector<uint32_t> peers;
+        uint64_t reqId;
     };
 
     struct AddSlicesRequest {
         uint32_t extendingRankId;
         MultiBytes newSlices;
+        uint64_t reqId;
     };
 
     // Jobs drained from the incoming queues in one background-loop iteration.
@@ -135,13 +139,7 @@ private:
         std::vector<ConnCloseRequest> disconnJobs;
         std::vector<uint32_t> leaveJobs;
         std::vector<AddSlicesRequest> slicesJobs;
-        uint64_t addReqId = 0;
-        uint64_t rmvReqId = 0;
-        uint64_t connReqId = 0;
-        uint64_t disconnReqId = 0;
-        uint64_t leaveReqId = 0;
         uint64_t queryReqId = 0;
-        uint64_t slicesReqId = 0;
         bool doQuery = false;
     };
 
@@ -152,7 +150,7 @@ private:
     void BackgroundRmvWhiteList(const WhitelistRequest &req, uint64_t reqId) noexcept;
     void BackgroundEstablishConnection(const ConnEstablishRequest &req, uint64_t reqId) noexcept;
     void BackgroundCloseConnection(const ConnCloseRequest &req, uint64_t reqId) noexcept;
-    void BackgroundLeaveNotify(uint32_t leavingRankId, uint64_t reqId) noexcept;
+    void BackgroundLeaveNotify(uint32_t leavingRankId) noexcept;
     void BackgroundQueryLinkState(uint64_t reqId) noexcept;
     void BackgroundAddSlices(const AddSlicesRequest &req, uint64_t reqId) noexcept;
 
@@ -173,13 +171,7 @@ private:
     std::vector<uint32_t> leaveNotifyQueue_;
     std::vector<AddSlicesRequest> addSlicesQueue_;
 
-    uint64_t addWhitelistReqId_{0};
-    uint64_t removeWhitelistReqId_{0};
-    uint64_t connectionReqId_{0};
-    uint64_t disconnectionReqId_{0};
-    uint64_t leaveNotifyReqId_{0};
     uint64_t queryLinkStateReqId_{0};
-    uint64_t addSlicesReqId_{0};
     bool hasQueryLinkState_{false};
 
     WhitelistCallback onAddToWhitelist_;

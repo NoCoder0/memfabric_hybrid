@@ -94,10 +94,7 @@ void SmemGroupCommandAsyncDispatcher::EnqueueAddToWhitelist(uint32_t rankId, std
                                                             uint64_t reqId) noexcept
 {
     std::lock_guard locker{mutex_};
-    if (addWhitelistQueue_.empty()) {
-        addWhitelistReqId_ = reqId;
-    }
-    addWhitelistQueue_.push_back({rankId, std::move(others)});
+    addWhitelistQueue_.push_back({rankId, std::move(others), reqId});
     cond_.notify_one();
 }
 
@@ -105,10 +102,7 @@ void SmemGroupCommandAsyncDispatcher::EnqueueRemoveFromWhitelist(uint32_t rankId
                                                                  uint64_t reqId) noexcept
 {
     std::lock_guard locker{mutex_};
-    if (removeWhitelistQueue_.empty()) {
-        removeWhitelistReqId_ = reqId;
-    }
-    removeWhitelistQueue_.push_back({rankId, std::move(others)});
+    removeWhitelistQueue_.push_back({rankId, std::move(others), reqId});
     cond_.notify_one();
 }
 
@@ -116,10 +110,7 @@ void SmemGroupCommandAsyncDispatcher::EnqueueEstablishConnection(uint32_t rankId
                                                                  uint64_t reqId) noexcept
 {
     std::lock_guard locker{mutex_};
-    if (connectionQueue_.empty()) {
-        connectionReqId_ = reqId;
-    }
-    connectionQueue_.push_back({rankId, std::move(peers)});
+    connectionQueue_.push_back({rankId, std::move(peers), reqId});
     cond_.notify_one();
 }
 
@@ -127,19 +118,13 @@ void SmemGroupCommandAsyncDispatcher::EnqueueCloseConnection(uint32_t rankId, st
                                                              uint64_t reqId) noexcept
 {
     std::lock_guard locker{mutex_};
-    if (disconnectionQueue_.empty()) {
-        disconnectionReqId_ = reqId;
-    }
-    disconnectionQueue_.push_back({rankId, std::move(peers)});
+    disconnectionQueue_.push_back({rankId, std::move(peers), reqId});
     cond_.notify_one();
 }
 
 void SmemGroupCommandAsyncDispatcher::EnqueueLeaveNotify(uint32_t leavingRankId) noexcept
 {
     std::lock_guard locker{mutex_};
-    if (leaveNotifyQueue_.empty()) {
-        leaveNotifyReqId_ = 0;
-    }
     leaveNotifyQueue_.push_back(leavingRankId);
     cond_.notify_one();
 }
@@ -158,8 +143,7 @@ void SmemGroupCommandAsyncDispatcher::EnqueueAddSlices(uint32_t extendingRankId,
                                                        uint64_t reqId) noexcept
 {
     std::lock_guard locker{mutex_};
-    addSlicesQueue_.push_back({extendingRankId, std::move(newSlices)});
-    addSlicesReqId_ = reqId;
+    addSlicesQueue_.push_back({extendingRankId, std::move(newSlices), reqId});
     cond_.notify_one();
 }
 
@@ -210,18 +194,6 @@ void SmemGroupCommandAsyncDispatcher::DrainQueues(DrainedJobs &jobs) noexcept
     jobs.disconnJobs.swap(disconnectionQueue_);
     jobs.leaveJobs.swap(leaveNotifyQueue_);
     jobs.slicesJobs.swap(addSlicesQueue_);
-    jobs.addReqId = addWhitelistReqId_;
-    jobs.rmvReqId = removeWhitelistReqId_;
-    jobs.connReqId = connectionReqId_;
-    jobs.disconnReqId = disconnectionReqId_;
-    jobs.leaveReqId = leaveNotifyReqId_;
-    jobs.slicesReqId = addSlicesReqId_;
-    addWhitelistReqId_ = 0;
-    removeWhitelistReqId_ = 0;
-    connectionReqId_ = 0;
-    disconnectionReqId_ = 0;
-    leaveNotifyReqId_ = 0;
-    addSlicesReqId_ = 0;
     if (hasQueryLinkState_) {
         jobs.doQuery = true;
         jobs.queryReqId = queryLinkStateReqId_;
@@ -232,23 +204,23 @@ void SmemGroupCommandAsyncDispatcher::DrainQueues(DrainedJobs &jobs) noexcept
 void SmemGroupCommandAsyncDispatcher::ProcessDrainedJobs(const DrainedJobs &jobs) noexcept
 {
     for (auto &req : jobs.addJobs) {
-        BackgroundAddWhiteList(req, jobs.addReqId);
+        BackgroundAddWhiteList(req, req.reqId);
     }
 
     for (auto &req : jobs.rmvJobs) {
-        BackgroundRmvWhiteList(req, jobs.rmvReqId);
+        BackgroundRmvWhiteList(req, req.reqId);
     }
 
     for (auto &req : jobs.connJobs) {
-        BackgroundEstablishConnection(req, jobs.connReqId);
+        BackgroundEstablishConnection(req, req.reqId);
     }
 
     for (auto &req : jobs.disconnJobs) {
-        BackgroundCloseConnection(req, jobs.disconnReqId);
+        BackgroundCloseConnection(req, req.reqId);
     }
 
     for (auto leavingRankId : jobs.leaveJobs) {
-        BackgroundLeaveNotify(leavingRankId, jobs.leaveReqId);
+        BackgroundLeaveNotify(leavingRankId);
     }
 
     if (jobs.doQuery) {
@@ -256,7 +228,7 @@ void SmemGroupCommandAsyncDispatcher::ProcessDrainedJobs(const DrainedJobs &jobs
     }
 
     for (auto &req : jobs.slicesJobs) {
-        BackgroundAddSlices(req, jobs.slicesReqId);
+        BackgroundAddSlices(req, req.reqId);
     }
 }
 
@@ -390,14 +362,14 @@ void SmemGroupCommandAsyncDispatcher::BackgroundCloseConnection(const ConnCloseR
     SendAck(CONTROL_CLOSE_CONNECTION_ACK, req.peers, results, reqId);
 }
 
-void SmemGroupCommandAsyncDispatcher::BackgroundLeaveNotify(uint32_t leavingRankId, uint64_t reqId) noexcept
+void SmemGroupCommandAsyncDispatcher::BackgroundLeaveNotify(uint32_t leavingRankId) noexcept
 {
     if (onLeaveNotify_) {
         int ret = onLeaveNotify_(leavingRankId);
         if (ret != 0) {
             SM_LOG_ERROR("[GM][Client][Recv] LeaveNotify FAIL lr=" << leavingRankId << " ret=" << ret);
         } else {
-            SM_LOG_INFO("[GM][Client][Recv] LeaveNotify lr=" << leavingRankId << " rid=" << reqId);
+            SM_LOG_INFO("[GM][Client][Recv] LeaveNotify lr=" << leavingRankId);
         }
     } else {
         SM_LOG_WARN("[GM][Client][Recv] LeaveNotify lr=" << leavingRankId << " no callback registered");

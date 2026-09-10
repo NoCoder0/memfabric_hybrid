@@ -311,7 +311,7 @@ TEST_F(AsyncDispatcherTest, BackgroundLeaveNotifyInvokesCallback)
         leaveCalls++;
         return 0;
     });
-    dispatcher_->BackgroundLeaveNotify(K_RANK_FIVE, 1);
+    dispatcher_->BackgroundLeaveNotify(K_RANK_FIVE);
     EXPECT_EQ(leaveCalls.load(), 1);
 }
 
@@ -345,15 +345,16 @@ TEST_F(AsyncDispatcherTest, BackgroundAddSlicesInvokesCallback)
 /*  Enqueue request-id bookkeeping                                    */
 /* ================================================================== */
 
-TEST_F(AsyncDispatcherTest, EnqueueKeepsFirstReqIdPerQueue)
+TEST_F(AsyncDispatcherTest, EnqueueKeepsReqIdPerRequest)
 {
     std::vector<RankFullInfo> others{MakeRankInfo(K_RANK_TWO)};
     dispatcher_->EnqueueAddToWhitelist(1, std::move(others), K_REQ_ID_ADD_WHITELIST_FIRST);
     std::vector<RankFullInfo> secondOthers{MakeRankInfo(K_RANK_TWO)};
     dispatcher_->EnqueueAddToWhitelist(1, std::move(secondOthers), K_REQ_ID_ADD_WHITELIST_SECOND);
 
-    // First enqueued reqId wins for the batch.
-    EXPECT_EQ(dispatcher_->addWhitelistReqId_, K_REQ_ID_ADD_WHITELIST_FIRST);
+    // Each queued request carries its own reqId.
+    EXPECT_EQ(dispatcher_->addWhitelistQueue_[0].reqId, K_REQ_ID_ADD_WHITELIST_FIRST);
+    EXPECT_EQ(dispatcher_->addWhitelistQueue_[1].reqId, K_REQ_ID_ADD_WHITELIST_SECOND);
     EXPECT_EQ(dispatcher_->addWhitelistQueue_.size(), K_RANK_TWO);
 
     dispatcher_->EnqueueQueryLinkState(K_REQ_ID_QUERY_FIRST);
