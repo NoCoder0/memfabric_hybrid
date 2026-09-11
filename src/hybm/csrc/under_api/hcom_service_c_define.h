@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define HCOM_IOV_BATCH_SIZE (30)
+#define HCOM_IOV_BATCH_SIZE (16)
 #define SMALL_IO_LIMIT_SIZE (1024 * 8) // 应小于 HCOM_MAX_SLICE_SIZE / HCOM_IOV_BATCH_SIZE
 
 typedef uintptr_t Hcom_Channel;
