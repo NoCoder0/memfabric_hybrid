@@ -33,10 +33,11 @@
  *   - --store-url 两端指向同一 config store（推荐 rank0 用 --with-store=1 内嵌启动）；
  *   - --hcom-url 各填本机 RDMA 网卡 IP:port（host rdma 建链地址）；
  *   - 数据正确性：remote 第 i 块由 FillBlock 填充（前 4B = 块号+1 小端，其余 = (i+1)&0xFF）；
- *       local 端在【所有轮次跑完之后】统一做一次整块校验（先验身份 tag 再 memcmp 内容），
- *       能识别漏写 / 错位 / 字节错，且完全不占计时区间、不与传输流量重叠。
+ *       local 端在每轮数据到达（拷贝完成）之后、计时区之外做整块校验（先验身份 tag 再 memcmp
+ *       内容），能识别漏写 / 错位 / 字节错；校验不入计时区间，故不影响任何耗时数字。
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -441,7 +442,7 @@ int main(int argc, char *argv[])
                     costs.push_back(cost);
                 }
                 /* baseline 阶段为单向流：发方不等收方，保持原有轮周期与 cost_us 口径。
-                   （收端的轻量检查已足够快，不会落后于发方周期；整块校验已移到全部轮次之后） */
+                   收端每轮只做轻量首字节检查 + 计时区外的整块校验，不会落后于发方周期 */
                 ++seq;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
@@ -455,7 +456,8 @@ int main(int argc, char *argv[])
             uint64_t sumUs = 0;
             std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
-            /* 600 个目标地址固定，一次性解析后复用（轻量检查每轮读首字节） */
+            std::vector<VerifyResult> verifies;
+            /* 600 个目标地址固定，一次性解析后复用（轻量检查与整块校验共用） */
             std::vector<void *> dstVas(a.count, nullptr);
             for (uint32_t i = 0; i < a.count; ++i) {
                 GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i]);
@@ -481,25 +483,31 @@ int main(int argc, char *argv[])
                     }
                 }
                 const uint64_t t1 = NowUs();
+                /* 拷贝完成之后、计时区之外：整块校验本轮数据（身份 tag + memcmp 内容） */
+                VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
                     sumUs += cost;
                     costs.push_back(cost);
-                    errs.push_back(bad);
+                    errs.push_back((bad == 0 && vr.ok) ? 0 : 1);
+                    verifies.push_back(vr);
                 }
                 ++expect;
             }
-            /* 全部轮次跑完后统一做一次整块数据校验：不占计时区、不与其他流量重叠 */
-            VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
             for (uint32_t k = 0; k < costs.size(); ++k) {
                 printf("baseline observer round %u err=%d cost_us=%llu\n", k, errs[k],
                        static_cast<unsigned long long>(costs[k]));
             }
-            if (!vr.ok) {
-                PrintVerifyFail("baseline observer", 0, vr);
+            for (uint32_t k = 0; k < verifies.size(); ++k) {
+                if (!verifies[k].ok) {
+                    PrintVerifyFail("baseline observer", k, verifies[k]);
+                    break;
+                }
             }
             printf("baseline observer avg_us=%llu (rounds=%u) verify=%s\n",
-                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds, vr.ok ? "OK" : "FAIL");
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds,
+                   std::all_of(verifies.begin(), verifies.end(), [](const VerifyResult &v) { return v.ok; }) ? "OK"
+                                                                                                            : "FAIL");
         }
     }
 
@@ -573,6 +581,7 @@ int main(int argc, char *argv[])
             uint64_t expect = 1;
             std::vector<uint64_t> convCosts, scatterCosts; /* 跑完后统一打印 */
             std::vector<int> errs;
+            std::vector<VerifyResult> stagVerifies, dispVerifies;
             for (uint32_t r = 0; r < kTotal; ++r) {
                 void *flagVa = nullptr;
                 GvaToHostVa(bm, selfGva + flagOff, &flagVa);
@@ -615,6 +624,11 @@ int main(int argc, char *argv[])
                         break;
                     }
                 }
+                /* 拷贝完成（ack 已回）之后、计时区之外：整块校验本轮数据。
+                   staging 反映"传输是否完整正确"，离散目标反映"scatter 是否正确"，
+                   分开便于区分故障点；复用 conv 段已解析的 VA，无额外 GVA 转换。 */
+                VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
+                VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t convCost = tc1 - tc0;
                     const uint64_t scatterCost = ts1 - ts0;
@@ -622,30 +636,38 @@ int main(int argc, char *argv[])
                     sumScatterUs += scatterCost;
                     convCosts.push_back(convCost);
                     scatterCosts.push_back(scatterCost);
-                    errs.push_back(bad);
+                    errs.push_back((bad == 0 && vStag.ok && vDisp.ok) ? 0 : 1);
+                    stagVerifies.push_back(vStag);
+                    dispVerifies.push_back(vDisp);
                 }
                 ++expect;
             }
-            /* 全部轮次跑完后统一做一次整块校验：staging 反映"传输是否完整正确"，
-               离散目标反映"scatter 是否正确"，分开便于区分故障点。
-               放在计时区外、且不与传输重叠，不引入额外 CPU/内存开销。 */
-            VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
-            VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
             for (uint32_t k = 0; k < convCosts.size(); ++k) {
                 printf("cont receiver round %u err=%d conv_us=%llu scatter_us=%llu\n", k, errs[k],
                        static_cast<unsigned long long>(convCosts[k]),
                        static_cast<unsigned long long>(scatterCosts[k]));
             }
-            if (!vStag.ok) {
-                PrintVerifyFail("cont receiver staging", 0, vStag);
+            for (uint32_t k = 0; k < stagVerifies.size(); ++k) {
+                if (!stagVerifies[k].ok) {
+                    PrintVerifyFail("cont receiver staging", k, stagVerifies[k]);
+                    break;
+                }
             }
-            if (!vDisp.ok) {
-                PrintVerifyFail("cont receiver scattered", 0, vDisp);
+            for (uint32_t k = 0; k < dispVerifies.size(); ++k) {
+                if (!dispVerifies[k].ok) {
+                    PrintVerifyFail("cont receiver scattered", k, dispVerifies[k]);
+                    break;
+                }
             }
             printf("cont receiver conv_avg_us=%llu scatter_avg_us=%llu (rounds=%u) verify=%s\n",
                    static_cast<unsigned long long>(sumConvUs / a.rounds),
                    static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds,
-                   (vStag.ok && vDisp.ok) ? "OK" : "FAIL");
+                   (std::all_of(stagVerifies.begin(), stagVerifies.end(),
+                                [](const VerifyResult &v) { return v.ok; }) &&
+                    std::all_of(dispVerifies.begin(), dispVerifies.end(),
+                                [](const VerifyResult &v) { return v.ok; }))
+                       ? "OK"
+                       : "FAIL");
         }
     }
 
