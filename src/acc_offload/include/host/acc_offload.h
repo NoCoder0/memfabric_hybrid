@@ -23,6 +23,17 @@ typedef enum {
     OFFLOAD_SCENE_SHARED = 1, /* multi-card shared DRAM memory pool */
 } offload_scene_t;
 
+/**
+ * @brief offload_config_t.flags bits.
+ *
+ * OFFLOAD_FLAG_GIANT_PAGE: allocate the dram pool in URMA-compatible mode
+ * (conn-based segment: plain host va + an independent HalHostRegister device
+ * mapping). Required when the pool is registered to smem_trans with
+ * DEVICE_URMA for cross-node remote writes. In this mode AIV operators must
+ * use the device address from offload_get_dva() instead of the malloc address.
+ */
+#define OFFLOAD_FLAG_GIANT_PAGE (1U << 0)
+
 typedef struct {
     uint32_t deviceId;     /* Device ID to bind */
     uint64_t reserveSize;  /* Reserved DRAM pool size in bytes, will be aligned up to GB. */
@@ -34,6 +45,7 @@ typedef struct {
     offload_scene_t scene; /* LOCAL: single-card pool; SHARED: multi-card shared pool */
     char storeUrl[64];     /* Explicit config store url for the shared pool rendezvous
                                                  (e.g. "tcp://127.0.0.1:8500"). */
+    uint32_t flags;        /* optional flags, see OFFLOAD_FLAG_xxx; 0 by default */
 } offload_config_t;
 
 /**
@@ -79,6 +91,19 @@ uint64_t offload_malloc(uint64_t size, uint64_t flags);
 void offload_free(uint64_t ptr, uint64_t flags);
 
 /**
+ * @brief Get the device virtual address (DVA) of a pool address from offload malloc.
+ *
+ * For URMA_POOL mode pools the DVA differs from the malloc address (an
+ * independent HalHostRegister device mapping); for vmm unified pools the DVA
+ * equals the malloc address. AIV operators (sparse_copy etc.) must use the DVA.
+ *
+ * @param hostPtr  [in] Address returned by offload malloc (or an interior address of it).
+ * @param dvaPtr   [out] Device virtual address corresponding to the input address.
+ * @return 0 on success, non-zero error code on failure.
+ */
+int32_t offload_get_dva(uint64_t hostPtr, uint64_t *dvaPtr);
+
+/**
  * @brief Batch copy sparse data from host to device or from device to host.
  *
  * Submits a batch of h2d or d2h copy requests. Each request copies
@@ -115,6 +140,43 @@ int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, u
  */
 int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t numLocalExpertPtr,
                                 uint64_t groupListPtr, uint64_t packedGroupListPtr, uint16_t deviceId);
+
+/**
+ * @brief Fused page_first <-> layer_first KV cache exchange copy.
+ *
+ * Unlike offload_sparse_copy, no (src, dst, len) entry table is built on the
+ * host.  Every (page, layer, split) block address is derived from the token
+ * indices and the per-component layout metadata, so no entry table is
+ * uploaded by the caller.
+ *
+ * variable (read on every call):
+ *   AIV MTE kernel path. metaPtr points to an
+ *       int64 array on device memory; the kernel derives every block address
+ *       on device, the indices never round-trip through the CPU. host_base
+ *       must already be rewritten to DVA by the caller (the Python
+ *       kv_exchange_copy wrapper does it via offload_get_dva, because
+ *       conn-based DRAM pools use an independent HalHostRegister dva != hva).
+ * Unknown values fall back to aiv with a warning.
+ *
+ * meta layout, int64 values (42 total):
+ *   [0] num_components (<= 4, k/v/index_k/index_k_scale order)
+ *   [1] num_pages      [2] page_size
+ *   [3] direction: 1 = H2D, 2 = D2H
+ *   [4] device_indices_ptr [5] host_indices_ptr (int64 token indices,
+ *       device memory in aiv mode, host-accessible memory in aicpu mode)
+ *   per component c (9 values starting at 6 + 9*c):
+ *   [0] device_base  [1] host_base (DVA in aiv mode, HVA in aicpu mode)
+ *   [2] device_layer_pitch  [3] device_page_pitch   (bytes)
+ *   [4] host_page_pitch     [5] host_layer_pitch    (bytes)
+ *   [6] width (bytes of one (page, layer) row)  [7] layer_lo  [8] layer_hi
+ * A component with layer_lo >= layer_hi (or width <= 0) transfers nothing.
+ *
+ * @param metaPtr  [in] Device (aiv) or host-accessible (aicpu) address of the
+ *                   int64 metadata array above.
+ * @param deviceId [in] Device ID to perform the copy on.
+ * @return 0 on success, non-zero error code on failure.
+ */
+int32_t offload_kv_exchange_copy(uint64_t metaPtr, uint16_t deviceId);
 
 #ifdef __cplusplus
 }

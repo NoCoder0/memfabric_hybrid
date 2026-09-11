@@ -47,6 +47,11 @@ OFFLOAD_API void offload_free(uint64_t ptr, uint64_t flags)
     AccOffloadEntryManager::Instance().FreeHost(reinterpret_cast<void *>(ptr));
 }
 
+OFFLOAD_API int32_t offload_get_dva(uint64_t hostPtr, uint64_t *dvaPtr)
+{
+    return AccOffloadEntryManager::Instance().GetDva(hostPtr, dvaPtr);
+}
+
 OFFLOAD_API int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t sizePtr,
                                         uint16_t deviceId)
 {
@@ -71,4 +76,10 @@ OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, ui
 
     return AccOffloadEntryManager::Instance().GroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtrs, groupList,
                                                             packedGroupList, deviceId);
+}
+
+OFFLOAD_API int32_t offload_kv_exchange_copy(uint64_t metaPtr, uint16_t deviceId)
+{
+    auto meta = reinterpret_cast<uint64_t *>(metaPtr);
+    return AccOffloadEntryManager::Instance().KvExchangeCopy(meta, deviceId);
 }

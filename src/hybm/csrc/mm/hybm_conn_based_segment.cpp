@@ -394,7 +394,9 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
         LvaShmReservePhysicalMemory(mapped, size);
     }
 
-    if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    uint32_t needReg =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_MTE;
+    if (options_.dataOpType & needReg) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
         if (ret != BM_OK) {
             BM_LOG_ERROR("register host va failed, ret:" << ret);
@@ -406,7 +408,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
                                                      options_.rankId);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
-        if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+        if (options_.dataOpType & needReg) {
             DlHalApi::HalHostUnregisterEx(mapped, logicDeviceId_, HOST_MEM_MAP_DEV);
         }
         FreeAllocatedMemory(mapped, size, allocMethod);
@@ -423,10 +425,19 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
     int mmapFlags = options_.shmFd < 0 ? (MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE) : (MAP_FIXED | MAP_SHARED);
     uint64_t mmapOffset = options_.shmFd < 0 ? 0 : lvOffset;
 
-    // 1. Try to alloc DRAM with hugepage via mmap
+    // 0. Try to alloc DRAM with 1GB hugepage via mmap
+    constexpr uint32_t MAP_HUGE_1GB = (30U << 26);
+    mapped = mmap(sliceAddr, size, prot, mmapFlags | MAP_HUGETLB | MAP_HUGE_1GB, mmapFd, mmapOffset);
+    if (mapped == sliceAddr) {
+        BM_LOG_INFO("Successfully allocated " << size << " bytes 1GB DRAM hugepage via mmap. addr:" << mapped);
+        allocMethod = MemAllocMethod::MMAP;
+        return mapped;
+    }
+
+    // 1. Try to alloc DRAM with 2MB hugepage via mmap
     mapped = mmap(sliceAddr, size, prot, mmapFlags | MAP_HUGETLB, mmapFd, mmapOffset);
     if (mapped == sliceAddr) {
-        BM_LOG_INFO("Successfully allocated " << size << " bytes DRAM hugepage via mmap. addr:" << mapped);
+        BM_LOG_INFO("Successfully allocated " << size << " bytes 2MB DRAM hugepage via mmap. addr:" << mapped);
         allocMethod = MemAllocMethod::MMAP;
         return mapped;
     }
@@ -533,10 +544,9 @@ Result HybmConnBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
     slices_.erase(pos);
 
 #if defined(ASCEND_NPU)
-    const bool needUnregister =
-        (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) !=
-        0U;
-    if (needUnregister) {
+    uint32_t needUnregister =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_MTE;
+    if ((options_.dataOpType & needUnregister) != 0) {
         auto unregRet =
             DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(slice->vAddress_), logicDeviceId_, HOST_MEM_MAP_DEV);
         if (unregRet != 0) {

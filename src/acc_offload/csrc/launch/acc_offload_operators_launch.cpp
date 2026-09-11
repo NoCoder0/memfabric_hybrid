@@ -53,4 +53,25 @@ void AccOffloadGroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *len
 
     at_npu::native::OpCommand::RunOpApiV2("acc_group_pack_copy", callback);
 }
+
+void AccOffloadKvExchange(uint64_t *metaPtr, uint8_t devIdx)
+{
+#if defined(ACC_SOC_VERSION_A5)
+    constexpr uint32_t blockDim = 64;
+#else
+    constexpr uint32_t blockDim = 48;
+#endif
+    c10_npu::OptionalNPUGuard npuGuard;
+    npuGuard.set_index(devIdx);
+
+    auto stream = c10_npu::getCurrentNPUStream(devIdx);
+    void *npuStream = stream.stream(false);
+
+    auto callback = [metaPtr, blockDim, npuStream]() -> int {
+        OffloadOpsKvExchange(metaPtr, blockDim, npuStream);
+        return 0;
+    };
+
+    at_npu::native::OpCommand::RunOpApiV2("acc_kv_exchange", callback);
+}
 }
