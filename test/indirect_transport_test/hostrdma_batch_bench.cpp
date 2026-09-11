@@ -32,9 +32,11 @@
  * 说明：
  *   - --store-url 两端指向同一 config store（推荐 rank0 用 --with-store=1 内嵌启动）；
  *   - --hcom-url 各填本机 RDMA 网卡 IP:port（host rdma 建链地址）；
- *   - 数据正确性：remote 第 i 块填值 (uint8)i，local 端在 cont 模式 scatter 后可自校验。
+ *   - 数据正确性：remote 第 i 块由 FillBlock 填充（前 4B = 块号+1 小端，其余 = (i+1)&0xFF），
+ *       local 端在计时区外整块校验（先验身份 tag 再验内容），能识别漏写 / 错位 / 字节错。
  */
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -157,6 +159,110 @@ uint64_t NowUs()
         std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
 }
 
+/* 每块数据布局（remote 填充 / local 校验共用同一规则）：
+     前 4 字节 = 块号+1 的小端（唯一身份标识，+1 是为了避开初始化值 0）
+     其余字节 = (块号+1) & 0xFF
+   这样校验既能验"内容对不对"，也能验"是不是这一块"（识别漏写 / 错位）。 */
+constexpr uint32_t kBlockIdBytes = 4;
+
+uint32_t BlockTag(uint32_t i)
+{
+    return i + 1U;
+}
+
+/* 块内填充字节的期望值（计时区内的轻量首字节检查也复用它） */
+uint8_t BlockFillByte(uint32_t i)
+{
+    return static_cast<uint8_t>(BlockTag(i) & 0xFF);
+}
+
+/* 按上述规则填充第 i 块 */
+void FillBlock(void *va, uint32_t i, uint64_t size)
+{
+    auto *p = static_cast<uint8_t *>(va);
+    const uint32_t tag = BlockTag(i);
+    if (size >= kBlockIdBytes) {
+        p[0] = static_cast<uint8_t>(tag & 0xFF);
+        p[1] = static_cast<uint8_t>((tag >> 8) & 0xFF);
+        p[2] = static_cast<uint8_t>((tag >> 16) & 0xFF);
+        p[3] = static_cast<uint8_t>((tag >> 24) & 0xFF);
+        memset(p + kBlockIdBytes, static_cast<int>(BlockFillByte(i)), size - kBlockIdBytes);
+    } else {
+        memset(p, static_cast<int>(BlockFillByte(i)), size);
+    }
+}
+
+/* 数据校验结果：ok=false 时记录首个不一致位置，便于定位 */
+struct VerifyResult {
+    bool ok = true;
+    bool vaFailed = false;
+    bool idMismatch = false; /* 身份不符（漏写/错位），而非内容字节错 */
+    uint32_t blockIdx = 0;
+    uint32_t actualTag = 0; /* 身份不符时：该块实际携带的 tag（0 = 从未被写过） */
+    uint64_t byteOff = 0;
+    uint8_t expect = 0;
+    uint8_t actual = 0;
+};
+
+/* 整块校验：先验身份（前 4B tag），再逐字节验内容。
+   baseGva 为第 0 块起始 GVA，块间距为 stride（staging 传 size，离散区传 stride）。 */
+VerifyResult VerifyBlocks(smem_bm_t bm, uint64_t baseGva, uint64_t stride, uint32_t count, uint64_t size)
+{
+    VerifyResult r;
+    const bool hasId = (size >= kBlockIdBytes);
+    for (uint32_t i = 0; i < count; ++i) {
+        void *va = nullptr;
+        if (!GvaToHostVa(bm, baseGva + static_cast<uint64_t>(i) * stride, &va) || va == nullptr) {
+            r.ok = false;
+            r.vaFailed = true;
+            r.blockIdx = i;
+            return r;
+        }
+        const auto *p = reinterpret_cast<const uint8_t *>(va);
+
+        if (hasId) {
+            const uint32_t got = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
+                                 (static_cast<uint32_t>(p[2]) << 16) | (static_cast<uint32_t>(p[3]) << 24);
+            if (got != BlockTag(i)) {
+                r.ok = false;
+                r.idMismatch = true;
+                r.blockIdx = i;
+                r.actualTag = got;
+                return r;
+            }
+        }
+
+        const uint8_t want = BlockFillByte(i);
+        for (uint64_t b = hasId ? kBlockIdBytes : 0; b < size; ++b) {
+            if (p[b] != want) {
+                r.ok = false;
+                r.blockIdx = i;
+                r.byteOff = b;
+                r.expect = want;
+                r.actual = p[b];
+                return r;
+            }
+        }
+    }
+    return r;
+}
+
+/* 打印首个校验失败的位置（只打一条，避免影响后续输出节奏） */
+void PrintVerifyFail(const char *tag, uint32_t round, const VerifyResult &r)
+{
+    if (r.vaFailed) {
+        printf("%s VERIFY FAIL round=%u block=%u (GVA->VA failed)\n", tag, round, r.blockIdx);
+    } else if (r.idMismatch) {
+        printf("%s VERIFY FAIL round=%u block=%u: identity tag=0x%08x expected=0x%08x (%s)\n", tag, round, r.blockIdx,
+               r.actualTag, BlockTag(r.blockIdx),
+               r.actualTag == 0 ? "block never written (still initial 0)" : "holds another block's data");
+    } else {
+        printf("%s VERIFY FAIL round=%u block=%u byte=%llu expect=0x%02x actual=0x%02x\n", tag, round, r.blockIdx,
+               static_cast<unsigned long long>(r.byteOff), static_cast<unsigned>(r.expect),
+               static_cast<unsigned>(r.actual));
+    }
+}
+
 void PrintLabel(const char *mode)
 {
     printf("\n==== mode=%s ====\n", mode);
@@ -260,7 +366,7 @@ int main(int argc, char *argv[])
             for (uint32_t i = 0; i < a.count; ++i) {
                 void *srcVa = nullptr;
                 if (GvaToHostVa(bm, selfGva + i * a.stride, &srcVa)) {
-                    memset(srcVa, static_cast<int>(i & 0xFF), a.size);
+                    FillBlock(srcVa, i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
                 }
             }
         } else {
@@ -335,6 +441,7 @@ int main(int argc, char *argv[])
             uint64_t sumUs = 0;
             std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
+            std::vector<VerifyResult> verifies;
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -351,17 +458,20 @@ int main(int argc, char *argv[])
                 for (uint32_t i = 0; i < a.count; ++i) {
                     void *dstVa = nullptr;
                     if (!GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVa) ||
-                        *reinterpret_cast<const uint8_t *>(dstVa) != static_cast<uint8_t>(i & 0xFF)) {
+                        *reinterpret_cast<const uint8_t *>(dstVa) != BlockFillByte(i)) {
                         bad = 1;
                         break;
                     }
                 }
                 const uint64_t t1 = NowUs();
+                /* 计时区外：整块校验（身份 tag + 逐字节内容），err 取它的结果 */
+                VerifyResult vr = VerifyBlocks(bm, selfGva + dispBase, a.stride, a.count, a.size);
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
                     sumUs += cost;
                     costs.push_back(cost);
-                    errs.push_back(bad);
+                    errs.push_back((bad == 0 && vr.ok) ? 0 : 1);
+                    verifies.push_back(vr);
                 }
                 ++expect;
             }
@@ -369,8 +479,16 @@ int main(int argc, char *argv[])
                 printf("baseline observer round %u err=%d cost_us=%llu\n", k, errs[k],
                        static_cast<unsigned long long>(costs[k]));
             }
-            printf("baseline observer avg_us=%llu (rounds=%u)\n",
-                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
+            for (uint32_t k = 0; k < verifies.size(); ++k) {
+                if (!verifies[k].ok) {
+                    PrintVerifyFail("baseline observer", k, verifies[k]);
+                    break;
+                }
+            }
+            printf("baseline observer avg_us=%llu (rounds=%u) verify=%s\n",
+                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds,
+                   std::all_of(verifies.begin(), verifies.end(), [](const VerifyResult &v) { return v.ok; }) ? "OK"
+                                                                                                            : "FAIL");
         }
     }
 
@@ -444,6 +562,7 @@ int main(int argc, char *argv[])
             uint64_t expect = 1;
             std::vector<uint64_t> convCosts, scatterCosts; /* 跑完后统一打印 */
             std::vector<int> errs;
+            std::vector<VerifyResult> stagVerifies, dispVerifies;
             for (uint32_t r = 0; r < kTotal; ++r) {
                 void *flagVa = nullptr;
                 GvaToHostVa(bm, selfGva + flagOff, &flagVa);
@@ -481,6 +600,11 @@ int main(int argc, char *argv[])
                                         reinterpret_cast<void *>(peerGva + ackOff), sizeof(expect), nullptr};
                     smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
                 }
+                /* 计时区外：整块校验（身份 tag + 逐字节内容）。
+                   staging 校验反映"传输是否完整正确"，离散目标校验反映"scatter 是否正确"，
+                   两者分开便于区分故障点。放在 ack 之后，不影响 conv/scatter/E2E 计时。 */
+                VerifyResult vStag = VerifyBlocks(bm, selfGva, a.size, a.count, a.size);
+                VerifyResult vDisp = VerifyBlocks(bm, selfGva + dispBase, a.stride, a.count, a.size);
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t convCost = tc1 - tc0;
                     const uint64_t scatterCost = ts1 - ts0;
@@ -488,7 +612,9 @@ int main(int argc, char *argv[])
                     sumScatterUs += scatterCost;
                     convCosts.push_back(convCost);
                     scatterCosts.push_back(scatterCost);
-                    errs.push_back(bad);
+                    errs.push_back((bad == 0 && vStag.ok && vDisp.ok) ? 0 : 1);
+                    stagVerifies.push_back(vStag);
+                    dispVerifies.push_back(vDisp);
                 }
                 ++expect;
             }
@@ -497,9 +623,27 @@ int main(int argc, char *argv[])
                        static_cast<unsigned long long>(convCosts[k]),
                        static_cast<unsigned long long>(scatterCosts[k]));
             }
-            printf("cont receiver conv_avg_us=%llu scatter_avg_us=%llu (rounds=%u)\n",
+            for (uint32_t k = 0; k < stagVerifies.size(); ++k) {
+                if (!stagVerifies[k].ok) {
+                    PrintVerifyFail("cont receiver staging", k, stagVerifies[k]);
+                    break;
+                }
+            }
+            for (uint32_t k = 0; k < dispVerifies.size(); ++k) {
+                if (!dispVerifies[k].ok) {
+                    PrintVerifyFail("cont receiver scattered", k, dispVerifies[k]);
+                    break;
+                }
+            }
+            printf("cont receiver conv_avg_us=%llu scatter_avg_us=%llu (rounds=%u) verify=%s\n",
                    static_cast<unsigned long long>(sumConvUs / a.rounds),
-                   static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds);
+                   static_cast<unsigned long long>(sumScatterUs / a.rounds), a.rounds,
+                   (std::all_of(stagVerifies.begin(), stagVerifies.end(),
+                                [](const VerifyResult &v) { return v.ok; }) &&
+                    std::all_of(dispVerifies.begin(), dispVerifies.end(),
+                                [](const VerifyResult &v) { return v.ok; }))
+                       ? "OK"
+                       : "FAIL");
         }
     }
 
