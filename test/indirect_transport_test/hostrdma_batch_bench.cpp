@@ -204,21 +204,23 @@ struct VerifyResult {
     uint8_t actual = 0;
 };
 
-/* 整块校验：先验身份（前 4B tag），再逐字节验内容。
-   baseGva 为第 0 块起始 GVA，块间距为 stride（staging 传 size，离散区传 stride）。 */
-VerifyResult VerifyBlocks(smem_bm_t bm, uint64_t baseGva, uint64_t stride, uint32_t count, uint64_t size)
+/* 整块校验：先验身份（前 4B tag），再用 memcmp 比内容。
+   vas      —— 该组块已解析好的本地 VA（调用方缓存复用，避免每轮重复 GVA 转换）；
+   refBlock —— 256 个参考块，refBlock[v] 为整块填 v 的 size 字节。
+   正常路径每块只做 1 次 tag 比较 + 1 次 memcmp（SIMD），逐字节扫描仅在失败路径上做。 */
+VerifyResult VerifyBlocks(const std::vector<void *> &vas, uint32_t count, uint64_t size, const uint8_t *refBlock)
 {
     VerifyResult r;
     const bool hasId = (size >= kBlockIdBytes);
+    const uint64_t from = hasId ? kBlockIdBytes : 0;
     for (uint32_t i = 0; i < count; ++i) {
-        void *va = nullptr;
-        if (!GvaToHostVa(bm, baseGva + static_cast<uint64_t>(i) * stride, &va) || va == nullptr) {
+        const auto *p = reinterpret_cast<const uint8_t *>(vas[i]);
+        if (p == nullptr) {
             r.ok = false;
             r.vaFailed = true;
             r.blockIdx = i;
             return r;
         }
-        const auto *p = reinterpret_cast<const uint8_t *>(va);
 
         if (hasId) {
             const uint32_t got = static_cast<uint32_t>(p[0]) | (static_cast<uint32_t>(p[1]) << 8) |
@@ -233,15 +235,18 @@ VerifyResult VerifyBlocks(smem_bm_t bm, uint64_t baseGva, uint64_t stride, uint3
         }
 
         const uint8_t want = BlockFillByte(i);
-        for (uint64_t b = hasId ? kBlockIdBytes : 0; b < size; ++b) {
-            if (p[b] != want) {
-                r.ok = false;
-                r.blockIdx = i;
-                r.byteOff = b;
-                r.expect = want;
-                r.actual = p[b];
-                return r;
+        if (memcmp(p + from, refBlock + static_cast<size_t>(want) * size + from, size - from) != 0) {
+            r.ok = false;
+            r.blockIdx = i;
+            for (uint64_t b = from; b < size; ++b) { /* 仅失败路径逐字节定位 */
+                if (p[b] != want) {
+                    r.byteOff = b;
+                    r.expect = want;
+                    r.actual = p[b];
+                    return r;
+                }
             }
+            return r;
         }
     }
     return r;
@@ -395,6 +400,14 @@ int main(int argc, char *argv[])
        较大 ack 值而误判为"已到达"，跳过等待导致双端失步。 */
     const uint64_t kContSeqBase = static_cast<uint64_t>(a.rounds) + 2;
 
+    /* 校验用参考块：refBlock[v] 为整块填 v 的 a.size 字节。
+       用 memcmp 比对可走 SIMD，比逐字节循环快一个量级——校验在收端关键路径上，
+       朴素逐字节比较会把 e2e 拖慢约一倍（实测 ~390us/轮）。 */
+    std::vector<uint8_t> refBlock(static_cast<size_t>(256) * a.size);
+    for (uint32_t v = 0; v < 256; ++v) {
+        memset(refBlock.data() + static_cast<size_t>(v) * a.size, static_cast<int>(v), a.size);
+    }
+
     /* 场景 1：baseline —— remote batch 直写 local 600 个离散目标（无 staging/scatter）；
        local 观察端每轮等 remote 的完成 flag（对齐 cont 的同步方式），保证双端不提前退出 */
     if (runBase) {
@@ -455,6 +468,11 @@ int main(int argc, char *argv[])
             std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
             std::vector<VerifyResult> verifies;
+            /* 600 个目标地址固定，一次性解析后复用：轻量检查与整块校验都不再重复 GVA 转换 */
+            std::vector<void *> dstVas(a.count, nullptr);
+            for (uint32_t i = 0; i < a.count; ++i) {
+                GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i]);
+            }
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -469,16 +487,15 @@ int main(int argc, char *argv[])
                 } /* 自旋等 flag（baseline 阶段 flag 单调递增，用 < 容错） */
                 int bad = 0;
                 for (uint32_t i = 0; i < a.count; ++i) {
-                    void *dstVa = nullptr;
-                    if (!GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVa) ||
-                        *reinterpret_cast<const uint8_t *>(dstVa) != BlockFillByte(i)) {
+                    if (dstVas[i] == nullptr ||
+                        *reinterpret_cast<const uint8_t *>(dstVas[i]) != BlockFillByte(i)) {
                         bad = 1;
                         break;
                     }
                 }
                 const uint64_t t1 = NowUs();
-                /* 计时区外：整块校验（身份 tag + 逐字节内容），err 取它的结果 */
-                VerifyResult vr = VerifyBlocks(bm, selfGva + dispBase, a.stride, a.count, a.size);
+                /* 计时区外：整块校验（身份 tag + memcmp 内容），err 取它的结果 */
+                VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
                     sumUs += cost;
@@ -633,11 +650,12 @@ int main(int argc, char *argv[])
                         break;
                     }
                 }
-                /* 计时区外：整块校验（身份 tag + 逐字节内容）。
+                /* 计时区外：整块校验（身份 tag + memcmp 内容）。
                    staging 校验反映"传输是否完整正确"，离散目标校验反映"scatter 是否正确"，
-                   两者分开便于区分故障点。放在 ack 之后，不影响 conv/scatter/E2E 计时。 */
-                VerifyResult vStag = VerifyBlocks(bm, selfGva, a.size, a.count, a.size);
-                VerifyResult vDisp = VerifyBlocks(bm, selfGva + dispBase, a.stride, a.count, a.size);
+                   两者分开便于区分故障点。放在 ack 之后，不影响 conv/scatter/E2E 计时。
+                   复用 conv 段已解析的 VA，不再重复 GVA 转换。 */
+                VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
+                VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t convCost = tc1 - tc0;
                     const uint64_t scatterCost = ts1 - ts0;
