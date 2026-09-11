@@ -177,9 +177,8 @@ int32_t AccOffloadLocalDramEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtr
                                              uint8_t devIdx)
 {
     OFFLOAD_LOG_DEBUG("sparse copy, src: " << reinterpret_cast<uint64_t>(srcPtrs)
-                                           << ", dst: " << reinterpret_cast<uint64_t>(dstPtrs)
-                                           << ", len: " << reinterpret_cast<uint64_t>(lenPtrs) << ", size: " << *sizePtr
-                                           << ", devIdx: " << devIdx);
+                                           << ", dst: " << reinterpret_cast<uint64_t>(dstPtrs) << ", len: "
+                                           << reinterpret_cast<uint64_t>(lenPtrs) << ", devIdx: " << devIdx);
 
     return AccOffloadLaunchApi::AccOffloadSparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr, devIdx);
 }
