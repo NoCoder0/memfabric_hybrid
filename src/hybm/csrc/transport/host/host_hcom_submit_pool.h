@@ -13,6 +13,7 @@
 #ifndef MF_HYBRID_HOST_HCOM_SUBMIT_POOL_H
 #define MF_HYBRID_HOST_HCOM_SUBMIT_POOL_H
 
+#include <algorithm>
 #include <condition_variable>
 #include <cstdint>
 #include <functional>
@@ -66,36 +67,50 @@ public:
             return BM_INVALID_PARAM;
         }
         roundTasks_ = std::move(tasks);
-        finished_ = 0;
+        roundDone_.assign(threads_.size(), false);
         roundFailed_ = false;
-        hasRound_ = true;
+        ++roundId_; // 发布新一轮：worker 认领该轮次后不会再重复取用同一轮任务
         workersCv_.notify_all();
-        doneCv_.wait(lock, [this]() { return finished_ >= roundTasks_.size(); });
-        hasRound_ = false;
+        doneCv_.wait(lock, [this]() { return stop_ || AllRoundDone(); });
         return roundFailed_ ? BM_ERROR : BM_OK;
     }
 
 private:
+    // 本轮是否所有 worker 都已上报完成
+    bool AllRoundDone() const
+    {
+        return std::all_of(roundDone_.begin(), roundDone_.end(), [](bool done) { return done; });
+    }
+
     void WorkerLoop(uint32_t idx)
     {
+        uint64_t lastRound = 0;
         for (;;) {
             std::unique_lock<std::mutex> lock(mutex_);
-            workersCv_.wait(lock, [this]() { return stop_ || hasRound_; });
+            workersCv_.wait(lock, [this, lastRound]() { return stop_ || roundId_ != lastRound; });
             if (stop_) {
                 return;
             }
+            lastRound = roundId_; // 认领本轮，保证同一轮任务只会被本 worker 取用一次
             auto task = roundTasks_[idx];
             lock.unlock();
 
-            Result ret = task();
+            Result ret = BM_OK;
+            try {
+                ret = task();
+            } catch (...) {
+                ret = BM_ERROR; // 异常也必须上报，否则 RunTasks 会一直等不到该 worker
+            }
 
             lock.lock();
-            if (ret != BM_OK) {
-                roundFailed_ = true;
-            }
-            ++finished_;
-            if (finished_ >= roundTasks_.size()) {
-                doneCv_.notify_one();
+            if (roundId_ == lastRound) { // 轮次已推进说明本轮早已判定完成，丢弃迟到上报以免污染下一轮
+                if (ret != BM_OK) {
+                    roundFailed_ = true;
+                }
+                roundDone_[idx] = true; // 每个 worker 只写自己那一位，重复执行无法替他人凑数
+                if (AllRoundDone()) {
+                    doneCv_.notify_all();
+                }
             }
         }
     }
@@ -110,6 +125,7 @@ private:
             stop_ = true;
         }
         workersCv_.notify_all();
+        doneCv_.notify_all(); // 唤醒可能仍阻塞在 RunTasks 的调用线程
         for (auto &t : threads_) {
             if (t.joinable()) {
                 t.join();
@@ -124,8 +140,8 @@ private:
     std::condition_variable workersCv_;
     std::condition_variable doneCv_;
     std::vector<std::function<Result()>> roundTasks_;
-    size_t finished_{0};
-    bool hasRound_{false};
+    std::vector<bool> roundDone_; // 每个 worker 一位：本轮是否已上报完成
+    uint64_t roundId_{0};         // 轮次代号：worker 本地记录已认领的轮次
     bool roundFailed_{false};
     bool started_{false};
     bool stop_{false};
