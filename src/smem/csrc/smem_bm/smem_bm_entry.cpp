@@ -980,13 +980,17 @@ int SmemBmEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlic
     if (newSlices.empty()) {
         return SM_OK;
     }
-    constexpr size_t kInfoSize = sizeof(hybm_exchange_info);
     std::vector<hybm_exchange_info> infos;
     infos.reserve(newSlices.size());
     for (const auto &slice : newSlices) {
         hybm_exchange_info info{};
-        auto copyLen = std::min(slice.size(), kInfoSize);
-        std::copy(slice.begin(), slice.begin() + copyLen, reinterpret_cast<uint8_t *>(&info));
+        if (slice.size() > sizeof(info.desc)) {
+            SM_LOG_ERROR("OnAddSlices: slice size " << slice.size() << " exceeds exchange info size "
+                                                    << sizeof(info.desc) << ", extendingRank=" << extendingRankId);
+            return SM_ERROR;
+        }
+        std::copy(slice.begin(), slice.end(), info.desc);
+        info.descLen = static_cast<uint32_t>(slice.size());
         infos.push_back(info);
     }
     if (auto ret = hybm_import(entity_, infos.data(), infos.size(), nullptr, 0); ret != BM_OK) {
