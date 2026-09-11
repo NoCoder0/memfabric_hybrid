@@ -32,8 +32,8 @@ if (BUILD_HCOM)
     set(CMAKE_INSTALL_PREFIX ${DEPS_INSTALL_DIR}/hcom)
     FetchContent_Declare(
             hcom
-            GIT_REPOSITORY https://atomgit.com/openeuler/ubs-comm.git
-            GIT_TAG br_BeiMing_MF_Poc
+            GIT_REPOSITORY https://gitcode.com/huanghaiyun_/ubs-comm.git
+            GIT_TAG oneside-msge-merge
     )
 
     message(STATUS "Configuring hcom with CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}, options: BUILD_WITH_RDMA:${BUILD_WITH_RDMA} BUILD_WITH_UB:${BUILD_WITH_UB}")
