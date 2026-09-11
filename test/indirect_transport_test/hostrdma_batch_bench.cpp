@@ -390,6 +390,10 @@ int main(int argc, char *argv[])
     std::vector<uint64_t> sizes(a.count, a.size);
     const bool runBase = (a.mode == "all" || a.mode == "baseline");
     const bool runCont = (a.mode == "all" || a.mode == "cont");
+    /* baseline 与 cont 复用同一 flag/ack 槽。baseline 的 ack 会累加到 rounds+1，
+       因此 cont 的轮次序号必须从 rounds+2 起，否则 cont 首轮会看到 baseline 遗留的
+       较大 ack 值而误判为"已到达"，跳过等待导致双端失步。 */
+    const uint64_t kContSeqBase = static_cast<uint64_t>(a.rounds) + 2;
 
     /* 场景 1：baseline —— remote batch 直写 local 600 个离散目标（无 staging/scatter）；
        local 观察端每轮等 remote 的完成 flag（对齐 cont 的同步方式），保证双端不提前退出 */
@@ -428,6 +432,15 @@ int main(int argc, char *argv[])
                     sumUs += cost;
                     costs.push_back(cost);
                 }
+                /* 计时区外握手：等 local 校验完写回的 ack(=seq)，使两端 lockstep。
+                   原 baseline 为单向流（发方不等收方），local 一旦有一轮慢过发方的
+                   541us 周期就会漏读某个 flag 值并永久自旋（flag 已被下一阶段回绕），
+                   表现为两端卡死。计时在写 flag 后即结束，此等待不影响 cost_us 口径。 */
+                void *ackVa = nullptr;
+                if (GvaToHostVa(bm, selfGva + ackOff, &ackVa)) {
+                    while (*reinterpret_cast<volatile const uint64_t *>(ackVa) < seq) {
+                    }
+                }
                 ++seq;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
@@ -452,8 +465,8 @@ int main(int argc, char *argv[])
                     break;
                 }
                 const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到数据校验完 */
-                while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
-                } /* 自旋等 flag（完成很快，不用 sleep） */
+                while (*reinterpret_cast<volatile const uint64_t *>(flagVa) < expect) {
+                } /* 自旋等 flag（baseline 阶段 flag 单调递增，用 < 容错） */
                 int bad = 0;
                 for (uint32_t i = 0; i < a.count; ++i) {
                     void *dstVa = nullptr;
@@ -472,6 +485,21 @@ int main(int argc, char *argv[])
                     costs.push_back(cost);
                     errs.push_back((bad == 0 && vr.ok) ? 0 : 1);
                     verifies.push_back(vr);
+                }
+                /* 计时区外握手：通知 sender 本轮已校验完（对齐 cont 的 ack 机制，保证两端 lockstep） */
+                {
+                    void *ackSrcVa = nullptr;
+                    int32_t ackRet = -1;
+                    if (GvaToHostVa(bm, selfGva + ackOff, &ackSrcVa)) {
+                        *reinterpret_cast<uint64_t *>(ackSrcVa) = expect;
+                        smem_copy_params ap{reinterpret_cast<void *>(selfGva + ackOff),
+                                            reinterpret_cast<void *>(peerGva + ackOff), sizeof(expect), nullptr};
+                        ackRet = smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
+                    }
+                    if (ackRet != 0) {
+                        printf("baseline observer ack write failed at iter %u ret=%d\n", r, ackRet);
+                        break;
+                    }
                 }
                 ++expect;
             }
@@ -505,7 +533,7 @@ int main(int argc, char *argv[])
             uint64_t sumTransportUs = 0;
             std::vector<uint64_t> costs, transportCosts; /* 热循环不打日志，跑完后统一打印 */
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
-            uint64_t seq = 1;
+            uint64_t seq = kContSeqBase; /* 从 baseline 之后继续，避免读到 baseline 遗留的较大 ack */
             for (uint32_t r = 0; r < kTotal; ++r) {
                 const uint64_t t0 = NowUs(); /* sender E2E 起点：batch 拷贝 + 写完成 flag + 等 ack */
                 smem_batch_copy_params p{srcs.data(), dsts.data(), sizes.data(), a.count, nullptr};
@@ -526,7 +554,7 @@ int main(int argc, char *argv[])
                     /* 握手：等 local scatter 完写回的 ack(值=seq)，此时 E2E 含 local scatter */
                     void *ackVa = nullptr;
                     if (GvaToHostVa(bm, selfGva + ackOff, &ackVa)) {
-                        while (*reinterpret_cast<volatile const uint64_t *>(ackVa) != seq) {
+                        while (*reinterpret_cast<volatile const uint64_t *>(ackVa) < seq) {
                         }
                     }
                 }
@@ -559,7 +587,7 @@ int main(int argc, char *argv[])
             uint64_t sumScatterUs = 0;
             std::vector<void *> srcVas(a.count), dstVas(a.count); /* 每轮 GVA->VA 转换结果 */
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
-            uint64_t expect = 1;
+            uint64_t expect = kContSeqBase; /* 与 sender 的 kContSeqBase 对齐 */
             std::vector<uint64_t> convCosts, scatterCosts; /* 跑完后统一打印 */
             std::vector<int> errs;
             std::vector<VerifyResult> stagVerifies, dispVerifies;
@@ -593,12 +621,17 @@ int main(int argc, char *argv[])
                 {
                     /* 握手：本端 scatter/清 flag 完后写 ack=expect 回 remote，remote 收到才进入下一轮 */
                     void *ackSrcVa = nullptr;
+                    int32_t ackRet = -1;
                     if (GvaToHostVa(bm, selfGva + ackOff, &ackSrcVa)) {
                         *reinterpret_cast<uint64_t *>(ackSrcVa) = expect;
                     }
                     smem_copy_params ap{reinterpret_cast<void *>(selfGva + ackOff),
                                         reinterpret_cast<void *>(peerGva + ackOff), sizeof(expect), nullptr};
-                    smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
+                    ackRet = smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
+                    if (ackRet != 0) {
+                        printf("cont receiver ack write failed at iter %u ret=%d\n", r, ackRet);
+                        break;
+                    }
                 }
                 /* 计时区外：整块校验（身份 tag + 逐字节内容）。
                    staging 校验反映"传输是否完整正确"，离散目标校验反映"scatter 是否正确"，
