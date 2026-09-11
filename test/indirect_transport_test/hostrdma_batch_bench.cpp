@@ -357,6 +357,19 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    /* 56-bit GVA 关闭时，segment 是用 mmap-at-GVA 把 GVA 段映射到该地址上的
+       （hybm_conn_based_segment.cpp:81），因此 GVA 就是本进程的实际 VA，
+       GVA->VA 转换退化为恒等操作，可以整体跳过。开关默认关闭，但别处（trans 路径、
+       python wrapper、地址空间 > 32TB）可能打开，所以这里用一次探针自检而不写死。 */
+    bool gvaIsVa = false;
+    {
+        void *probe = nullptr;
+        gvaIsVa = (smem_bm_gva_to_va(bm, reinterpret_cast<void *>(selfGva), SMEM_MEM_TYPE_LOCAL_HOST, &probe) == 0) &&
+                  (reinterpret_cast<uint64_t>(probe) == selfGva);
+    }
+    printf("[bench] gva-is-va=%d%s\n", gvaIsVa ? 1 : 0,
+           gvaIsVa ? " (skip GVA->VA conversion)" : " (keep GVA->VA conversion)");
+
     /* 3. 初始化数据：remote 源填值 i；local 的 staging/目标清 0；双方 ack/flag 槽清 0 */
     {
         /* 双方各自的 ack/flag 槽清 0（握手模式 expect/seq 从 1 起，需先归零） */
@@ -460,7 +473,11 @@ int main(int argc, char *argv[])
             /* 600 个目标地址固定，一次性解析供每轮的整块校验使用（避免每轮重复 GVA 转换） */
             std::vector<void *> dstVas(a.count, nullptr);
             for (uint32_t i = 0; i < a.count; ++i) {
-                GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i]);
+                if (gvaIsVa) {
+                    dstVas[i] = reinterpret_cast<void *>(selfGva + dispBase + i * a.stride);
+                } else {
+                    GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i]);
+                }
             }
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
@@ -584,11 +601,15 @@ int main(int argc, char *argv[])
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
                 int bad = 0;
-                /* GVA->VA 转换（每轮真实执行，属收端聚合本地开销的一部分） */
+                /* GVA->VA 转换（每轮真实执行，属收端聚合本地开销的一部分）。
+                   gvaIsVa 时退化为纯地址算术，省掉每轮 1200 次查表。 */
                 const uint64_t tc0 = NowUs();
                 for (uint32_t i = 0; i < a.count; ++i) {
-                    if (!GvaToHostVa(bm, selfGva + i * a.size, &srcVas[i]) ||
-                        !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i])) {
+                    if (gvaIsVa) {
+                        srcVas[i] = reinterpret_cast<void *>(selfGva + i * a.size);
+                        dstVas[i] = reinterpret_cast<void *>(selfGva + dispBase + i * a.stride);
+                    } else if (!GvaToHostVa(bm, selfGva + i * a.size, &srcVas[i]) ||
+                               !GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i])) {
                         bad = 1;
                         break;
                     }
