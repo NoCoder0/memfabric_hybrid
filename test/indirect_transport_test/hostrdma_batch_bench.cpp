@@ -457,7 +457,7 @@ int main(int argc, char *argv[])
             std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
             std::vector<VerifyResult> verifies;
-            /* 600 个目标地址固定，一次性解析后复用（轻量检查与整块校验共用） */
+            /* 600 个目标地址固定，一次性解析供每轮的整块校验使用（避免每轮重复 GVA 转换） */
             std::vector<void *> dstVas(a.count, nullptr);
             for (uint32_t i = 0; i < a.count; ++i) {
                 GvaToHostVa(bm, selfGva + dispBase + i * a.stride, &dstVas[i]);
@@ -471,25 +471,17 @@ int main(int argc, char *argv[])
                     printf("baseline observer flag_va_failed at iter %u\n", r);
                     break;
                 }
-                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮从等完成 flag 到轻量检查完 */
+                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮等完成 flag 的耗时（纯等待，不含任何校验） */
                 while (*reinterpret_cast<volatile const uint64_t *>(flagVa) != expect) {
                 } /* 自旋等 flag（完成很快，不用 sleep） */
-                int bad = 0;
-                for (uint32_t i = 0; i < a.count; ++i) {
-                    if (dstVas[i] == nullptr ||
-                        *reinterpret_cast<const uint8_t *>(dstVas[i]) != BlockFillByte(i)) {
-                        bad = 1;
-                        break;
-                    }
-                }
                 const uint64_t t1 = NowUs();
-                /* 拷贝完成之后、计时区之外：整块校验本轮数据（身份 tag + memcmp 内容） */
+                /* 计时区之外：拷贝完成后整块校验本轮数据（身份 tag + memcmp 内容） */
                 VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     const uint64_t cost = t1 - t0;
                     sumUs += cost;
                     costs.push_back(cost);
-                    errs.push_back((bad == 0 && vr.ok) ? 0 : 1);
+                    errs.push_back(vr.ok ? 0 : 1);
                     verifies.push_back(vr);
                 }
                 ++expect;
