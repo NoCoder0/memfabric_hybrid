@@ -60,6 +60,13 @@ public:
         return 1;
     }
 
+    // 所有 link(ep) 是否都就绪（已配置且已连接）。默认 true：单链路没有"多链路齐备"的概念。
+    virtual bool AllLinksReady(uint32_t rankId) const
+    {
+        (void)rankId;
+        return true;
+    }
+
     // Query memory key registered on a specific link(ep). Default falls back to QueryMemoryKey(ep0).
     virtual Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key)
     {
@@ -142,6 +149,26 @@ public:
     virtual Result Remove(const std::vector<uint32_t> &removeList);
 
     virtual Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
+
+    // 在【指定 link(ep)】上提交一段 iov（只提交、不等待完成）。多链路下"每链路一份进度水位"需要它。
+    // 默认不支持，返回错误。
+    virtual Result SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
+                                        size_t end)
+    {
+        (void)rankId;
+        (void)ep;
+        (void)descriptor;
+        (void)begin;
+        (void)end;
+        return BM_ERROR;
+    }
+
+    // 在【指定 link(ep)】上写一小段（只提交、不等待完成）。默认回落到 ep0 的 WriteRemoteAsync。
+    virtual Result WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr, uint64_t size)
+    {
+        (void)ep;
+        return WriteRemoteAsync(rankId, lAddr, rAddr, size);
+    }
 
     virtual Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
 
