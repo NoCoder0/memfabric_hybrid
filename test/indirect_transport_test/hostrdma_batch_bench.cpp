@@ -680,6 +680,8 @@ int main(int argc, char *argv[])
             uint64_t sumScatterUs = 0;
             uint64_t sumTailUs = 0;
             uint64_t sumAckUs = 0; /* 收端"散完 → ack 写完"的耗时：用来拆 e2e 里不属于 transport 的那部分 */
+            uint64_t sumVerifyUs = 0; /* 收端每轮校验耗时（排在 ack 之后，会推迟下一轮响应） */
+            uint64_t lastVerifyUs = 0;
             /* staging / 离散目标地址固定，一次性解析（GVA==VA，无每轮转换开销） */
             std::vector<void *> srcVas(a.count), dstVas(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
@@ -771,10 +773,14 @@ int main(int argc, char *argv[])
                 }
                 VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
                 VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
+                const uint64_t verifyUs = NowUs() - ta1; /* 校验耗时：它排在 ack 之后，会推迟收端回到
+                                                            下一轮等水位的时间，从而抬高发端测到的 e2e */
+                lastVerifyUs = verifyUs;
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     sumScatterUs += scatterUs;
                     sumTailUs += tailUs;
                     sumAckUs += ackUs;
+                    sumVerifyUs += verifyUs;
                     scatterCosts.push_back(scatterUs);
                     tailCosts.push_back(tailUs);
                     ackCosts.push_back(ackUs);
@@ -787,10 +793,12 @@ int main(int argc, char *argv[])
                 ++expect;
             }
             if (!scatterCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
-                printf("cont receiver last_round err=%d scatter_us=%llu tail_us=%llu ack_us=%llu arrivals_us=[%s]\n",
+                printf("cont receiver last_round err=%d scatter_us=%llu tail_us=%llu ack_us=%llu verify_us=%llu "
+                       "arrivals_us=[%s]\n",
                        errs.back(), static_cast<unsigned long long>(scatterCosts.back()),
                        static_cast<unsigned long long>(tailCosts.back()),
-                       static_cast<unsigned long long>(ackCosts.back()), arrivalLines.back().c_str());
+                       static_cast<unsigned long long>(ackCosts.back()),
+                       static_cast<unsigned long long>(lastVerifyUs), arrivalLines.back().c_str());
             }
             for (uint32_t k = 0; k < stagVerifies.size(); ++k) {
                 if (!stagVerifies[k].ok) {
@@ -804,10 +812,12 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu ack_avg_us=%llu (rounds=%u) verify=%s\n",
+            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu ack_avg_us=%llu verify_avg_us=%llu (rounds=%u) "
+                   "verify=%s\n",
                    static_cast<unsigned long long>(sumScatterUs / a.rounds),
                    static_cast<unsigned long long>(sumTailUs / a.rounds),
-                   static_cast<unsigned long long>(sumAckUs / a.rounds), a.rounds,
+                   static_cast<unsigned long long>(sumAckUs / a.rounds),
+                   static_cast<unsigned long long>(sumVerifyUs / a.rounds), a.rounds,
                    (std::all_of(stagVerifies.begin(), stagVerifies.end(),
                                 [](const VerifyResult &v) { return v.ok; }) &&
                     std::all_of(dispVerifies.begin(), dispVerifies.end(),
