@@ -762,11 +762,21 @@ int main(int argc, char *argv[])
                    再做整块校验。staging 反映"传输是否完整正确"，离散目标反映"scatter 是否正确"。
                    每轮之间有 RoundGap 隔离，校验期间不会被下一轮覆盖。 */
                 *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = expect;
-                smem_copy_params ap{HostPtr(selfGva + ackOff), HostPtr(peerGva + ackOff), sizeof(expect), nullptr};
+                /* ack 走 batch 接口（单元素）：与数据面同一套"异步 post + counter stream + Synchronize"
+                   机制。原先是单元素同步接口 smem_bm_copy（内部 ChannelPut），在收端实测 4ms，
+                   而发端写同样的 8 字节 flag 却只要几十 us —— 这里做 A/B 对照，看是不是同步路径的问题。 */
+                void *ackSrc[1] = {HostPtr(selfGva + ackOff)};
+                void *ackDst[1] = {HostPtr(peerGva + ackOff)};
+                uint64_t ackSize[1] = {sizeof(expect)};
+                smem_batch_copy_params ackParam{};
+                ackParam.sources = ackSrc;
+                ackParam.destinations = ackDst;
+                ackParam.dataSizes = ackSize;
+                ackParam.batchSize = 1;
                 const uint64_t ta0 = NowUs();
-                const int32_t ackRet = smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
+                const int32_t ackRet = smem_bm_copy_batch(bm, &ackParam, SMEMB_COPY_AUTO, 0);
                 const uint64_t ta1 = NowUs();
-                const uint64_t ackUs = ta1 - ta0; /* 本端"写完 ack"耗时（同步接口，含投递等） */
+                const uint64_t ackUs = ta1 - ta0; /* 本端"写完 ack"耗时（含投递与同步等待） */
                 if (ackRet != 0) {
                     printf("cont receiver ack write failed at iter %u ret=%d\n", r, ackRet);
                     break;
