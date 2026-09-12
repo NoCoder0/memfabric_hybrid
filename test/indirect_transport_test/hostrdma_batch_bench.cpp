@@ -28,7 +28,7 @@
  *   两端每轮跑完另各空转 RoundGap(--gap-ms，默认 5000ms，计时区外)，兼作收端校验的保护窗口。
  *   transport_us（发端单方）只含"写数据 + 逐批水位"，不含收端，用于与 e2e_us 对照看收端贡献。
  *
- * 每个场景跑 --rounds 轮，每轮耗时单独打印（不做均值，是否取平均/中位数由使用者定）。
+ * 每个场景跑 --rounds 轮，只打印**最后一轮**和**平均值**（避免多轮刷屏）。
  *
  * 编译：链接 smem 库；host rdma 环境（ubs-comm/libhcom）。
  *
@@ -539,9 +539,8 @@ int main(int argc, char *argv[])
                 RoundGap(a.gapMs);
                 ++seq;
             }
-            for (uint32_t k = 0; k < costs.size(); ++k) {
-                printf("baseline sender round %u cost_us=%llu\n", k,
-                       static_cast<unsigned long long>(costs[k]));
+            if (!costs.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
+                printf("baseline sender last_round cost_us=%llu\n", static_cast<unsigned long long>(costs.back()));
             }
             printf("baseline sender avg_us=%llu (rounds=%u)\n",
                    static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
@@ -589,9 +588,9 @@ int main(int argc, char *argv[])
                 RoundGap(a.gapMs);
                 ++expect;
             }
-            for (uint32_t k = 0; k < costs.size(); ++k) {
-                printf("baseline observer round %u err=%d cost_us=%llu\n", k, errs[k],
-                       static_cast<unsigned long long>(costs[k]));
+            if (!costs.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
+                printf("baseline observer last_round err=%d cost_us=%llu\n", errs.back(),
+                       static_cast<unsigned long long>(costs.back()));
             }
             for (uint32_t k = 0; k < verifies.size(); ++k) {
                 if (!verifies[k].ok) {
@@ -665,10 +664,10 @@ int main(int argc, char *argv[])
                 RoundGap(a.gapMs); /* 计时区外：隔离轮次 */
                 ++seq;
             }
-            for (uint32_t k = 0; k < transportCosts.size(); ++k) {
-                printf("cont sender round %u transport_us=%llu e2e_us=%llu\n", k,
-                       static_cast<unsigned long long>(transportCosts[k]),
-                       static_cast<unsigned long long>(e2eCosts[k]));
+            if (!transportCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
+                printf("cont sender last_round transport_us=%llu e2e_us=%llu\n",
+                       static_cast<unsigned long long>(transportCosts.back()),
+                       static_cast<unsigned long long>(e2eCosts.back()));
             }
             printf("cont sender transport_avg_us=%llu e2e_avg_us=%llu chunks=%u interval=%u (rounds=%u)\n",
                    static_cast<unsigned long long>(sumTransportUs / a.rounds),
@@ -779,10 +778,10 @@ int main(int argc, char *argv[])
                 RoundGap(a.gapMs);
                 ++expect;
             }
-            for (uint32_t k = 0; k < scatterCosts.size(); ++k) {
-                printf("cont receiver round %u err=%d scatter_us=%llu tail_us=%llu arrivals_us=[%s]\n", k, errs[k],
-                       static_cast<unsigned long long>(scatterCosts[k]),
-                       static_cast<unsigned long long>(tailCosts[k]), arrivalLines[k].c_str());
+            if (!scatterCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
+                printf("cont receiver last_round err=%d scatter_us=%llu tail_us=%llu arrivals_us=[%s]\n", errs.back(),
+                       static_cast<unsigned long long>(scatterCosts.back()),
+                       static_cast<unsigned long long>(tailCosts.back()), arrivalLines.back().c_str());
             }
             for (uint32_t k = 0; k < stagVerifies.size(); ++k) {
                 if (!stagVerifies[k].ok) {
