@@ -23,14 +23,12 @@
  *              已到达的那一段（staging 连续，偏移 = 块号*size）。这样后续批次的 RDMA 写时延与本地
  *              scatter 时延在两端重叠，降低端到端时延。
  *
- * 轮次同步与测量：收端把 600 块全部散完后，在**自己内存里**写一个完成标记(值=轮次号，CPU store)；
- *   发端用 **RDMA read** 把该标记取回来，取到就停表 —— 发端单时钟直测真端到端 e2e_us。
- *   为什么不用"收端单边写 ack"：收端进程每轮只发这一个 8 字节，那次同步单包单边写实测要 ~4ms，
- *   会把 e2e 抬到 7ms 量级；而它属于测法开销、不是数据路径开销。改成 read 取回后，收端侧零投递，
- *   测量误差只剩一次 read 往返(几 us)。
+ * 轮次同步与测量（cont）：**每轮由 local（接收端）发起** —— local 把 [staging 基址, 轮次号] 单边写给
+ *   remote，remote 按收到的地址投本轮数据，local 边收边散，600 块散完即本轮结束。
+ *   计时在 local 侧用**单时钟**完成：起点=发请求之前，终点=散完那一刻，整段（发请求 + 传输 + scatter）
+ *   都在计时区内，不需要任何回传信号/ack。
  *   两端每轮跑完另各空转 RoundGap(--gap-ms，**默认 0**，计时区外)。
  *   收端校验在所有轮次跑完之后只做一次，避免占用每轮关键路径。
- *   transport_us（发端单方）只含"写数据 + 逐批水位"，不含收端，用于与 e2e_us 对照看收端贡献。
  *
  * 每个场景跑 --rounds 轮，只打印**最后一轮**和**平均值**（避免多轮刷屏）。
  *
@@ -420,8 +418,13 @@ int main(int argc, char *argv[])
     const uint64_t ackOff = scratchOff - 8;                                       /* 完成 ack 槽：收端写回 */
     const uint64_t readyOutOff = ackOff - 8;                                      /* 握手发送槽：本端写 */
     const uint64_t readyOff = readyOutOff - 8;                                    /* 握手接收槽：对端写 */
-    const uint64_t addrMsgOff = readyOff - 16;                                    /* 地址传递槽：local 写给 remote */
-    if (needBytes > addrMsgOff) {
+    /* 请求槽 16B（每轮 local 用）：[0]=staging 基址（跨轮不变），[8]=轮次号。
+       local 写自己的 reqOutOff 再单边写到对端的 reqOff；对端只读自己的 reqOff。
+       轮次号写在最后 8 字节，且 staging 基址跨轮不变 —— 即使 16B 写被拆成两次落地，
+       也不会读到错的地址。 */
+    const uint64_t reqOutOff = readyOff - 16; /* local 的请求发送槽 */
+    const uint64_t reqOff = reqOutOff - 16;   /* remote 的请求接收槽 */
+    if (needBytes > reqOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
@@ -476,9 +479,10 @@ int main(int argc, char *argv[])
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff)) = 0;
-        for (uint32_t k = 0; k < 2; ++k) { /* 地址传递槽 16B 清零 */
-            *reinterpret_cast<uint64_t *>(HostPtr(selfGva + addrMsgOff + static_cast<uint64_t>(k) * 8ULL)) = 0;
-        }
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOff + 8ULL)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOutOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOutOff + 8ULL)) = 0;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -507,44 +511,9 @@ int main(int argc, char *argv[])
     }
     printf("[bench] peer ready handshake OK\n");
 
-    /* 地址交换（运行时显式传递，计时区之外）：local（接收端）把自己这边的
-       [staging 起始 GVA, 完成标记槽 GVA] 一并单边写给 remote；remote 轮询自己的 addrMsg 槽拿到它们，
-       之后"往哪儿写数据""去哪儿取完成标记"都用 local 给的地址，不再靠两侧按对称布局各自推算。
-       语义即：接收端决定往哪儿收，并把地址交给发送端。 */
-    uint64_t peerStagingGva = 0; /* remote 侧：目的 staging 基址（local 给） */
-    uint64_t peerDoneGva = 0;    /* remote 侧：local 完成标记槽 GVA（local 给） */
-    {
-        auto *msg = reinterpret_cast<uint64_t *>(HostPtr(selfGva + addrMsgOff));
-        if (isLocal) {
-            msg[0] = selfGva;          /* 本端 staging 基址 */
-            msg[1] = selfGva + ackOff; /* 本端完成标记槽 */
-            std::atomic_thread_fence(std::memory_order_release);
-            for (int i = 0; i < 50; ++i) { /* 对端可能还没起来，失败就重发 */
-                smem_copy_params mp{HostPtr(selfGva + addrMsgOff), HostPtr(peerGva + addrMsgOff),
-                                    sizeof(uint64_t) * 2, nullptr};
-                if (smem_bm_copy(bm, &mp, SMEMB_COPY_AUTO, 0) == 0) {
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            }
-            printf("[bench] addr exchange: sent staging=0x%llx doneSlot=0x%llx\n",
-                   static_cast<unsigned long long>(msg[0]), static_cast<unsigned long long>(msg[1]));
-        } else {
-            const uint64_t t0 = NowUs();
-            while (msg[0] == 0 || msg[1] == 0) {
-                if (NowUs() - t0 > 30ULL * 1000 * 1000) {
-                    fprintf(stderr, "[bench] addr exchange TIMEOUT: 没收到对端(local)给的地址\n");
-                    smem_bm_destroy(bm);
-                    return 1;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            }
-            printf("[bench] addr exchange: recv staging=0x%llx doneSlot=0x%llx\n",
-                   static_cast<unsigned long long>(msg[0]), static_cast<unsigned long long>(msg[1]));
-        }
-        peerStagingGva = msg[0];
-        peerDoneGva = msg[1];
-    }
+    /* cont 的驱动方向：**每轮由 local 发起**（local 发消息 → remote 写 → local 边收边散），
+       因此整个流程的计时在 local 侧用单时钟完成（见 receiver 的 cont 段）。
+       请求里带 staging 基址（跨轮不变）与轮次号；remote 只按收到的东西投数据，不参与计时。 */
 
     /* 校验用参考块：refBlock[v] 为整块填 v 的 a.size 字节。
        校验放在全部轮次跑完之后，用 memcmp（SIMD）比对，避免逐字节循环的额外开销。 */
@@ -661,23 +630,42 @@ int main(int argc, char *argv[])
     /* 场景 2：cont —— 进度通知由 smem_bm_copy_batch **接口内部**完成：每 a.chunk 个 IO 拷完，
        接口自动向对端水位槽单边写一次 (progressBase + 已完成个数)；local 见水位推进就增量 scatter。
        应用只填参数、只调一次。
-       目的地址由 local 在运行时显式给出（addr exchange）；收端散完后只在**自己内存**写完成标记，
-       发端用 RDMA read 取回来停表 —— 计时终点就是 local 散完那一瞬，误差只有一次 read 往返。 */
+       目的地址由 local 在**每轮请求里**显式给出；整轮流程（local 发请求 → remote 写 → local 边收边散）
+       全在计时区内，计时在 local 侧用单时钟完成，不需要任何回传信号。 */
     if (runCont) {
         if (!isLocal) {
-            PrintLabel("cont (sender, batch progress + read-poll e2e)");
+            PrintLabel("cont (sender: 等 local 请求 → 投数据；不计时)");
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
-                srcs[i] = HostPtr(selfGva + i * a.stride);       /* 离散源 */
-                dsts[i] = HostPtr(peerStagingGva + i * a.size);  /* 连续 staging：用 local 给的地址 */
+                srcs[i] = HostPtr(selfGva + i * a.stride); /* 离散源 */
             }
             const uint32_t chunks = (a.count + a.chunk - 1) / a.chunk;
             uint64_t sumTransportUs = 0;
-            uint64_t sumE2eUs = 0;
-            std::vector<uint64_t> transportCosts, e2eCosts; /* 热循环不打日志，跑完后统一打印 */
-            const uint32_t kTotal = a.rounds + 1;           /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
-            uint64_t seq = 1;
+            std::vector<uint64_t> transportCosts;
+            const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
+            /* 本轮是否开始由 local 决定：轮询请求槽的轮次号（[8]），看到推进就按 [0] 给的
+               staging 基址投本轮数据。发端不参与计时（计时在 local 侧单时钟完成）。 */
+            auto *reqSeqVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + reqOff + 8ULL));
+            auto *reqStagingVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + reqOff));
+            uint64_t lastSeq = 0;
+            bool aborted = false;
             for (uint32_t r = 0; r < kTotal; ++r) {
+                const uint64_t w0 = NowUs();
+                while (*reqSeqVa == lastSeq) {
+                    if (NowUs() - w0 > kSpinTimeoutUs) {
+                        printf("cont sender TIMEOUT at iter %u: 等不到 local 的请求\n", r);
+                        aborted = true;
+                        break;
+                    }
+                }
+                if (aborted) {
+                    break;
+                }
+                lastSeq = *reqSeqVa;
+                const uint64_t stagingBase = *reqStagingVa; /* local 给的 staging 基址 */
+                for (uint32_t i = 0; i < a.count; ++i) {
+                    dsts[i] = HostPtr(stagingBase + i * a.size);
+                }
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
                 p.destinations = dsts.data();
@@ -687,59 +675,33 @@ int main(int argc, char *argv[])
                 p.progressDest = HostPtr(peerGva + flagOff);         /* 对端水位槽（收端轮询的那个 8B） */
                 p.progressBase = static_cast<uint64_t>(r) * a.count; /* 跨轮单调、不归零 */
                 p.progressInterval = a.chunk;
-                const uint64_t t0 = NowUs(); /* 起点：一次接口调用（内部分块 + 逐批进度） */
+                const uint64_t t0 = NowUs();
                 const int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
-                const uint64_t tW = NowUs(); /* 传输结束：全部数据 + 逐批水位已投完（不含收端） */
+                const uint64_t tW = NowUs();
                 if (ret != 0) {
                     printf("cont sender abort at iter %u ret=%d\n", r, ret);
+                    aborted = true;
                     break;
                 }
-                /* 等收端"600 块全部散完"：收端只在**自己内存里**存一个完成标记（CPU store，~ns），
-                   发端用 **RDMA read** 把它取回来。这样收端那次"同步单包写"不进 e2e —— 实测那个
-                   同步单包写要 ~4ms（收端进程只发这一个 8 字节），会把 e2e 抬到 7ms 量级。
-                   代价只是测量误差多一次 read 往返（几 us），而且是发端单时钟直测。 */
-                bool ackTimedOut = false;
-                const uint64_t ta0 = NowUs();
-                uint64_t seen = 0;
-                for (;;) {
-                    smem_copy_params rp{HostPtr(peerDoneGva), HostPtr(selfGva + ackOff), sizeof(seen), nullptr};
-                    (void)smem_bm_copy(bm, &rp, SMEMB_COPY_AUTO, 0); /* 从 local 给的标记槽读回本端 */
-                    seen = *reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + ackOff));
-                    if (seen == seq) {
-                        break;
-                    }
-                    if (NowUs() - ta0 > kSpinTimeoutUs) {
-                        ackTimedOut = true;
-                        break;
-                    }
-                }
-                if (ackTimedOut) {
-                    printf("cont sender TIMEOUT at iter %u: 等不到收端完成标记（收端是否卡住/水位未推进）\n", r);
-                    break;
-                }
-                const uint64_t t1 = NowUs();
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     sumTransportUs += tW - t0;
-                    sumE2eUs += t1 - t0;
                     transportCosts.push_back(tW - t0);
-                    e2eCosts.push_back(t1 - t0);
                 }
-                RoundGap(a.gapMs); /* 计时区外：隔离轮次 */
-                ++seq;
+                RoundGap(a.gapMs);
             }
             if (!transportCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
-                printf("cont sender last_round transport_us=%llu e2e_us=%llu\n",
-                       static_cast<unsigned long long>(transportCosts.back()),
-                       static_cast<unsigned long long>(e2eCosts.back()));
+                printf("cont sender last_round transport_us=%llu\n",
+                       static_cast<unsigned long long>(transportCosts.back()));
             }
-            printf("cont sender transport_avg_us=%llu e2e_avg_us=%llu chunks=%u interval=%u (rounds=%u)\n",
-                   static_cast<unsigned long long>(sumTransportUs / a.rounds),
-                   static_cast<unsigned long long>(sumE2eUs / a.rounds), chunks, a.chunk, a.rounds);
-            printf("cont sender note: e2e = 发端投完 + 收端散完（收端只写本地标记，发端 RDMA read 取回）\n");
+            printf("cont sender transport_avg_us=%llu chunks=%u interval=%u (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumTransportUs / a.rounds), chunks, a.chunk, a.rounds);
+            printf("cont sender note: 这里只是投递段耗时；完整端到端由 local 侧单时钟测（见 receiver）\n");
         } else {
-            PrintLabel("cont (receiver watermark scatter, local done mark)");
+            PrintLabel("cont (receiver: 发请求 → 等水位 scatter；本轮 e2e 在此单时钟计)");
             uint64_t sumScatterUs = 0;
             uint64_t sumTailUs = 0;
+            uint64_t sumE2eUs = 0; /* 本轮完整端到端：从"发出请求"到"600 块全部散完" */
+            uint64_t sumReqUs = 0; /* 其中"发出请求"这一段（local 的一次单边写）耗时 */
             /* staging / 离散目标地址固定，一次性解析（GVA==VA，无每轮转换开销） */
             std::vector<void *> srcVas(a.count), dstVas(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
@@ -759,6 +721,7 @@ int main(int argc, char *argv[])
             std::vector<uint64_t> endPerEp(links, 0);
             uint64_t expect = 1; /* 与发端 seq 对齐，用于 ack 值 */
             std::vector<uint64_t> scatterCosts, tailCosts; /* 跑完后统一打印 */
+            std::vector<uint64_t> e2eCosts, reqCosts;
             std::vector<std::string> arrivalLines;         /* 各批数据可见时刻(相对本轮起点,us)，用于确认重叠 */
             bool aborted = false;                          /* 中途超时/出错则不再校验 */
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -772,6 +735,30 @@ int main(int argc, char *argv[])
                         donePerEp[e] = roundStart + cur;
                         endPerEp[e] = roundStart + cur + len;
                         cur += len;
+                    }
+                }
+                /* 本轮由 local 发起：先"发消息"（把自己的 staging 基址 + 轮次号单边写给 remote），
+                   然后等水位、边到边散。计时从**发请求之前**开始，到**600 块全部散完**结束 ——
+                   即你说的完整流程（local 发消息 → remote 写 → local scatter）都在计时范围内，
+                   而且是 local 侧单时钟，不需要任何回传信号。 */
+                const uint64_t tRoundStart = NowUs();
+                {
+                    auto *out = reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOutOff));
+                    out[0] = selfGva;  /* staging 基址（跨轮不变） */
+                    out[1] = expect;   /* 轮次号：写在最后，对端以它判断"新的一轮来了" */
+                    std::atomic_thread_fence(std::memory_order_release);
+                    smem_copy_params rq{HostPtr(selfGva + reqOutOff), HostPtr(peerGva + reqOff),
+                                        sizeof(uint64_t) * 2, nullptr};
+                    const int32_t reqRet = smem_bm_copy(bm, &rq, SMEMB_COPY_AUTO, 0);
+                    const uint64_t tReqDone = NowUs();
+                    if (reqRet != 0) {
+                        printf("cont receiver req write failed at iter %u ret=%d\n", r, reqRet);
+                        aborted = true;
+                        break;
+                    }
+                    if (r >= 1) {
+                        sumReqUs += tReqDone - tRoundStart;
+                        reqCosts.push_back(tReqDone - tRoundStart);
                     }
                 }
                 const uint64_t tr0 = NowUs(); /* 本轮起点：开始等第一份水位 */
@@ -816,14 +803,13 @@ int main(int argc, char *argv[])
                     aborted = true;
                     break;
                 }
-                /* "本轮全部散完"的完成标记：**只写本端内存**（CPU store，~ns），不做任何单边写。
-                   发端会用 RDMA read 把它取回去做停表依据。原先这里是一次同步单包单边写，
-                   实测要 ~4ms（收端进程只发这一个 8 字节），它会把 e2e 抬到 7ms 量级 —— 属于测法开销，
-                   不是数据路径开销，所以从测法里去掉。
-                   校验也不在这里做，改为所有轮次跑完后只做一次（见循环之后）。 */
-                *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = expect;
-                std::atomic_thread_fence(std::memory_order_release); /* 保证对端 RDMA read 能看到 */
+                /* 600 块全部散完 → 本轮结束、停表。发请求 + 传输 + scatter 全在计时区内，
+                   不需要任何回传信号（这就是"完整流程都计时"）。
+                   校验不在这里做，改为所有轮次跑完后只做一次（见循环之后）。 */
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
+                    const uint64_t e2eUs = NowUs() - tRoundStart;
+                    sumE2eUs += e2eUs;
+                    e2eCosts.push_back(e2eUs);
                     sumScatterUs += scatterUs;
                     sumTailUs += tailUs;
                     scatterCosts.push_back(scatterUs);
@@ -834,7 +820,9 @@ int main(int argc, char *argv[])
                 ++expect;
             }
             if (!scatterCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
-                printf("cont receiver last_round scatter_us=%llu tail_us=%llu arrivals_us=[%s]\n",
+                printf("cont receiver last_round e2e_us=%llu req_us=%llu scatter_us=%llu tail_us=%llu arrivals_us=[%s]\n",
+                       static_cast<unsigned long long>(e2eCosts.back()),
+                       static_cast<unsigned long long>(reqCosts.back()),
                        static_cast<unsigned long long>(scatterCosts.back()),
                        static_cast<unsigned long long>(tailCosts.back()), arrivalLines.back().c_str());
             }
@@ -854,7 +842,9 @@ int main(int argc, char *argv[])
                 printf("cont receiver one-shot verify=%s (staging+scattered, 末轮, %lluus)\n",
                        (vStag.ok && vDisp.ok) ? "OK" : "FAIL", static_cast<unsigned long long>(verifyUs));
             }
-            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu (rounds=%u)\n",
+            printf("cont receiver e2e_avg_us=%llu req_avg_us=%llu scatter_avg_us=%llu tail_avg_us=%llu (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumE2eUs / a.rounds),
+                   static_cast<unsigned long long>(sumReqUs / a.rounds),
                    static_cast<unsigned long long>(sumScatterUs / a.rounds),
                    static_cast<unsigned long long>(sumTailUs / a.rounds), a.rounds);
         }
