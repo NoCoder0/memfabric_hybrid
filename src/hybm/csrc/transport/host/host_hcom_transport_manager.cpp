@@ -170,11 +170,14 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
         if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
             /* 一组 ipMask（',' 分隔）：库按它挑出本地要用的网卡，多张即多条 rail */
             DlHcomApi::ServiceSetDeviceIpMask(service, localIpMask_.c_str());
-            /* 多 url(多网卡)时开 MultiRail：由库在**同一个 service 内**建多条 rail 并自动分流。
-               注意 threshold 默认 8192，对 1KB 小包等于不生效，这里按单包大小下调。 */
+            /* threshold 默认 8192，对 1KB 小包等于不生效，这里按单包大小下调 */
             const uint32_t multiRailThresh = static_cast<uint32_t>(
                 MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_THRESHOLD, kDefaultMultiRailThreshold));
-            const bool enableMultiRail = (localNics_.size() > 1U);
+            /* 多 url(多网卡)时必然开 MultiRail；单 url 时默认也开 ——
+               实测 MultiRail 关闭时"单笔小消息写"要 ~4ms，开启后只要十几 us，
+               所以这里不再跟 url 数绑定，可用 MF_HYBM_HCOM_MULTIRAIL_ENABLE=0 回退。 */
+            const bool enableMultiRail =
+                (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_ENABLE, 1U) != 0U);
             DlHcomApi::ServiceSetMultiRailOptions(service, enableMultiRail, multiRailThresh);
             /* 用 TRACE：本仓默认日志级别是 WARN，INFO 会被过滤掉，而这几行是验证多轨是否生效的关键 */
             BM_LOG_TRACE("[multirail-check] hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
