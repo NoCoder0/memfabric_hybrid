@@ -21,6 +21,7 @@
 #include "acc_offload.h"
 #include "acc_offload_entry.h"
 #include "acc_offload_mem_manager.h"
+#include "acc_offload_launch.h"
 
 namespace ock {
 namespace offload {
@@ -45,6 +46,8 @@ public:
 
     void FreeHost(void *ptr) override;
 
+    int32_t GetDva(uint64_t hostPtr, uint64_t *dvaPtr) override;
+
     int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
                        uint8_t devIdx) override;
 
@@ -52,6 +55,10 @@ public:
                           int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx) override;
 
     int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx) override;
+
+    int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot) override;
+
+    int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx) override;
 
 private:
     int32_t AllocAndExportHostSlices();
@@ -68,6 +75,8 @@ private:
     hybm_options options_{};
     uint8_t *base_ = nullptr;
     uint64_t size_ = 0;
+    AccOffloadEntryGatherLayout entryTable_{};
+    bool entryTableRegistered_ = false;
     std::shared_ptr<AccOffloadMemManager> memMng_;
 };
 

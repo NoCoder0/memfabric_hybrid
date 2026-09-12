@@ -66,12 +66,19 @@ from _pymf_hybrid import (
     get_and_clear_last_err_msg,
 )
 from _pymf_acc_offload import offload
-from mf_acc_offload import empty, sparse_copy, group_pack_copy, kv_exchange_copy
+from mf_acc_offload import (
+    empty,
+    sparse_copy,
+    group_pack_copy,
+    kv_exchange_copy,
+    entry_gather,
+)
 
 offload.empty = empty
 offload.sparse_copy = sparse_copy
 offload.group_pack_copy = group_pack_copy
 offload.kv_exchange_copy = kv_exchange_copy
+offload.entry_gather = entry_gather
 
 
 __all__ = [

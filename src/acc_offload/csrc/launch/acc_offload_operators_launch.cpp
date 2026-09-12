@@ -74,4 +74,33 @@ void AccOffloadKvExchange(uint64_t *metaPtr, uint8_t devIdx)
 
     at_npu::native::OpCommand::RunOpApiV2("acc_kv_exchange", callback);
 }
+
+void AccOffloadEntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint64_t poolGva, uint64_t slotStride,
+                           uint32_t entryBytes, uint32_t rowsPerSlot, uint8_t devIdx)
+{
+    /* Fused random-entry gather: device-resident GLOBAL row ids -> pool GVA
+     * conversion in-kernel (uniform row grid from each slot start, tail gaps
+     * strided over); the entry count is read from device memory by the kernel
+     * (graph-capture safe); the layout comes from the single table
+     * registration. */
+#if defined(ACC_SOC_VERSION_A5)
+    constexpr uint32_t blockDim = 64;
+#else
+    constexpr uint32_t blockDim = 48;
+#endif
+    c10_npu::OptionalNPUGuard npuGuard;
+    npuGuard.set_index(devIdx);
+
+    auto stream = c10_npu::getCurrentNPUStream(devIdx);
+    void *npuStream = stream.stream(false);
+
+    auto callback = [dstPtr, idsPtr, countPtr, poolGva, slotStride, entryBytes, rowsPerSlot, blockDim,
+                     npuStream]() -> int {
+        OffloadOpsEntryGather(dstPtr, idsPtr, countPtr, poolGva, slotStride, entryBytes, rowsPerSlot, blockDim,
+                              npuStream);
+        return 0;
+    };
+
+    at_npu::native::OpCommand::RunOpApiV2("acc_entry_gather", callback);
+}
 }

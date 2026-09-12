@@ -137,5 +137,33 @@ int32_t AccOffloadEntryManager::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx
     return entry_->KvExchangeCopy(metaPtr, devIdx);
 }
 
+int32_t AccOffloadEntryManager::RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot)
+{
+    if (entry_ == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null, register entry table failed");
+        return OFFLOAD_ERROR;
+    }
+    if (scene_ != OFFLOAD_SCENE_SHARED) {
+        OFFLOAD_LOG_ERROR("entry table only supported in SHARED scene, scene: " << static_cast<uint32_t>(scene_));
+        return OFFLOAD_ERROR;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    return entry_->RegisterEntryTable(entryBytes, rowsPerSlot);
+}
+
+int32_t AccOffloadEntryManager::EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
+{
+    if (entry_ == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null, entry gather failed");
+        return OFFLOAD_ERROR;
+    }
+    if (scene_ != OFFLOAD_SCENE_SHARED) {
+        OFFLOAD_LOG_ERROR("entry gather only supported in SHARED scene, scene: " << static_cast<uint32_t>(scene_)
+                                                                                 << ", deviceId: " << devIdx);
+        return OFFLOAD_ERROR;
+    }
+    return entry_->EntryGather(dstPtr, idsPtr, countPtr, devIdx);
+}
+
 } // namespace offload
 } // namespace ock

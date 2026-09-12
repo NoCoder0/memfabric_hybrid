@@ -29,10 +29,17 @@ typedef enum {
  * OFFLOAD_FLAG_GIANT_PAGE: allocate the dram pool in URMA-compatible mode
  * (conn-based segment: plain host va + an independent HalHostRegister device
  * mapping). Required when the pool is registered to smem_trans with
- * DEVICE_URMA for cross-node remote writes. In this mode AIV operators must
- * use the device address from offload_get_dva() instead of the malloc address.
+ * DEVICE_URMA for cross-node remote writes. LOCAL scene only. In this mode
+ * AIV operators must use the device address from offload_get_dva() instead
+ * of the malloc address.
  */
 #define OFFLOAD_FLAG_GIANT_PAGE (1U << 0)
+
+/* Upper bound on the entry_gather entry size: one entry must fit one UB
+ * ping-pong slot inside the AIV kernel (ENTRY_GATHER_UB_ONCE_SIZE / 2 —
+ * 120KB on A5, 88KB on A3). The registration check uses this A5 bound; on
+ * A3 keep entryBytes <= 88KB or the kernel's UB staging overflows. */
+#define OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES (120u * 1024u)
 
 typedef struct {
     uint32_t deviceId;     /* Device ID to bind */
@@ -118,6 +125,47 @@ int32_t offload_get_dva(uint64_t hostPtr, uint64_t *dvaPtr);
  * @return 0 on success, non-zero error code on failure.
  */
 int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, uint64_t sizePtr, uint16_t deviceId);
+
+/**
+ * @brief Register the pool's single entry-table layout for entry_gather.
+ *
+ * The SHARED pool lays every rank's slot out as ONE uniform row grid: rows of
+ * entryBytes back to back from the slot start; a gather of global row id `id`
+ * reads pool_base + (id / rowsPerSlot) * slot_size + (id % rowsPerSlot) *
+ * entryBytes. Exactly ONE layout per pool lifetime — callers with several
+ * same-width tables fold their per-segment offsets into the id space. The
+ * layout must be SYMMETRIC across ranks (same entryBytes/rowsPerSlot, grid
+ * starting at every slot start), which lets the kernel resolve any row on any
+ * rank from the row id alone. The layout is validated once here: row pitch in
+ * (0, OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES], grid fits one slot. Register
+ * after offload_init and before the first gather; cleared by offload_uninit.
+ *
+ * @param entryBytes  [in] Row pitch in bytes (the model's row width).
+ * @param rowsPerSlot [in] Rows the grid holds per slot (across all segments).
+ * @return 0 on success, non-zero error code on failure.
+ */
+int32_t offload_register_entry_table(uint32_t entryBytes, uint32_t rowsPerSlot);
+
+/**
+ * @brief Fused random-entry gather over the registered uniform row grid.
+ *
+ * Gathers the rows selected by the device-resident int64 GLOBAL row ids at
+ * idsPtr (< 2^32) with the layout registered above and packs the results
+ * contiguously at dstPtr + i * entryBytes; no (src, dst, len) descriptor
+ * table is built on the host. Like offload_sparse_copy, EVERY data parameter
+ * is a device address: the entry count is read by the kernel from the device
+ * memory at countPtr, so no host scalar is baked into the launch and
+ * stream/graph capture replays with the count the caller last wrote (any
+ * uint32 count; 0 gathers nothing).
+ *
+ * @param dstPtr   [in] Device address of the packed destination window; must be
+ *                     entryBytes-aligned and hold room for count * entryBytes bytes.
+ * @param idsPtr   [in] Device address of the int64 global row id array.
+ * @param countPtr [in] Device address of a uint32 holding the number of ids to gather.
+ * @param deviceId [in] Device ID to perform the copy on.
+ * @return 0 on success, non-zero error code on failure.
+ */
+int32_t offload_entry_gather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint16_t deviceId);
 
 /**
  * @brief Group-pack compacted copy: compact non-zero groupList entries to front.

@@ -90,6 +90,27 @@ void DefineAccOffloadApi(py::module_ &m)
         },
         py::call_guard<py::gil_scoped_release>(), py::arg("ptr"),
         "returns the device virtual address (DVA) of an offload malloc address, 0 on failure");
+
+    m.def(
+        "register_entry_table",
+        [](uint32_t entryBytes, uint32_t rowsPerSlot) -> int32_t {
+            return offload_register_entry_table(entryBytes, rowsPerSlot);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("entryBytes"), py::arg("rowsPerSlot"),
+        "register the pool's single uniform row-grid layout (row pitch / rows per slot across all segments; callers "
+        "with multiple same-width tables fold their per-segment offsets into the ids); returns 0 on success, negative "
+        "on failure");
+
+    m.def(
+        "entry_gather",
+        [](uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint16_t deviceId) {
+            return offload_entry_gather(dstPtr, idsPtr, countPtr, deviceId);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("dstPtr"), py::arg("idsPtr"), py::arg("countPtr"),
+        py::arg("deviceId"),
+        "fused random-row gather over the registered uniform grid: GLOBAL row ids -> pool GVA conversion in-kernel "
+        "(tail gaps strided over), results packed at dst + i*entryBytes; the entry count is read from device memory at "
+        "countPtr (graph-capture safe)");
 }
 
 PYBIND11_MODULE(_pymf_acc_offload, m)

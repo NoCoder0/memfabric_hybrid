@@ -63,6 +63,34 @@ OFFLOAD_API int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64
     return AccOffloadEntryManager::Instance().SparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr_, deviceId);
 }
 
+OFFLOAD_API int32_t offload_register_entry_table(uint32_t entryBytes, uint32_t rowsPerSlot)
+{
+    return AccOffloadEntryManager::Instance().RegisterEntryTable(entryBytes, rowsPerSlot);
+}
+
+OFFLOAD_API int32_t offload_entry_gather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint16_t deviceId)
+{
+    /* the internal chain narrows the device index to uint8_t, reject values
+     * that would be silently truncated instead of failing later. */
+    if (deviceId > UINT8_MAX) {
+        OFFLOAD_LOG_ERROR("invalid deviceId " << deviceId << ", exceeds uint8_t range");
+        return OFFLOAD_ERROR;
+    }
+    /* the addresses refer to device memory, validate numerically only; the
+     * entry count lives behind countPtr and is read by the kernel itself, so
+     * the launch parameters stay graph-capture stable. The layout was
+     * validated once at registration; nothing table-specific remains on the
+     * call (the pool holds a single registered grid). */
+    if (dstPtr == 0 || idsPtr == 0 || countPtr == 0) {
+        OFFLOAD_LOG_ERROR("invalid null address, dst null: " << (dstPtr == 0) << ", ids null: " << (idsPtr == 0)
+                                                             << ", countPtr null: " << (countPtr == 0)
+                                                             << ", deviceId: " << deviceId);
+        return OFFLOAD_ERROR;
+    }
+
+    return AccOffloadEntryManager::Instance().EntryGather(dstPtr, idsPtr, countPtr, static_cast<uint8_t>(deviceId));
+}
+
 OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr,
                                             uint64_t numLocalExpertPtr, uint64_t groupListPtr,
                                             uint64_t packedGroupListPtr, uint16_t deviceId)

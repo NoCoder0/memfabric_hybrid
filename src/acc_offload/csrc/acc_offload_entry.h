@@ -43,6 +43,22 @@ public:
                                   int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx) = 0;
 
     virtual int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx) = 0;
+
+    virtual int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot)
+    {
+        (void)entryBytes;
+        (void)rowsPerSlot;
+        return -1;
+    }
+
+    virtual int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
+    {
+        (void)dstPtr;
+        (void)idsPtr;
+        (void)countPtr;
+        (void)devIdx;
+        return -1;
+    }
 };
 
 } // namespace offload
