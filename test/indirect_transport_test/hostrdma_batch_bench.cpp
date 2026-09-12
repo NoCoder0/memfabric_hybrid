@@ -766,11 +766,17 @@ int main(int argc, char *argv[])
                 uint64_t tailUs = 0;          /* 最后一批的 scatter 耗时 */
                 std::string arrivals;
                 bool timedOut = false;
+                uint32_t spinRounds = 0;
                 const uint64_t tw0 = NowUs();
                 for (;;) {
                     if (NowUs() - tw0 > kSpinTimeoutUs) {
                         timedOut = true;
                         break;
+                    }
+                    /* 每若干次让一次 CPU：验证"主线程 100% 自旋把 HCOM 的 worker 线程饿死、
+                       导致本次写/上一笔写的 completion 迟迟没人处理"这个假设。 */
+                    if ((++spinRounds & 0x1FU) == 0) {
+                        std::this_thread::yield();
                     }
                     bool allDone = true;
                     for (uint32_t e = 0; e < links; ++e) {
