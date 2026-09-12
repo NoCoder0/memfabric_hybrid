@@ -214,9 +214,10 @@ uint64_t ReadyMagic(uint32_t rank, uint32_t phase)
 }
 
 bool WaitPeerReady(smem_bm_t bm, uint32_t selfRank, uint32_t peerRank, uint64_t selfGva, uint64_t peerGva,
-                   uint64_t readyOff)
+                   uint64_t readyOff, uint64_t readyOutOff)
 {
     auto *selfSlot = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + readyOff));
+    auto *outSlot = reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff));
     const uint64_t peerP1 = ReadyMagic(peerRank, 1);
     const uint64_t peerP2 = ReadyMagic(peerRank, 2);
     uint32_t phase = 1;
@@ -225,7 +226,9 @@ bool WaitPeerReady(smem_bm_t bm, uint32_t selfRank, uint32_t peerRank, uint64_t 
     printf("[bench] waiting for peer ready (handshake, up to %llus)...\n",
            static_cast<unsigned long long>(kReadyTimeoutUs / 1000000ULL));
     for (;;) {
-        smem_copy_params p{&out, HostPtr(peerGva + readyOff), sizeof(out), nullptr};
+        /* 源必须落在已注册的对称内存里：栈上变量不是 MR，SafePut 会直接拒绝 */
+        *outSlot = out;
+        smem_copy_params p{HostPtr(selfGva + readyOutOff), HostPtr(peerGva + readyOff), sizeof(out), nullptr};
         (void)smem_bm_copy(bm, &p, SMEMB_COPY_AUTO, 0); /* 失败就下一轮重发，不据此判成功 */
         const uint64_t rv = *selfSlot;
         if (phase == 1 && rv == peerP1) {
@@ -389,7 +392,8 @@ int main(int argc, char *argv[])
        [dispBase, dispBase+count*stride)  600 个离散目标/源（stride 间隔模拟离散）
        [scratchOff, wmOff)            进度源槽数组（发送端用；flagsPerRound*links 个 8B，写入后不覆写）
        [ackOff, ackOff+8)            完成 ack 槽（收端全部散完后写回发端，用于单时钟测端到端）
-       [readyOff, readyOff+8)        就绪握手槽（两端互写魔数，确认对端已 create 且链路可用）
+       [readyOutOff, readyOff+8)     就绪握手槽 16B（本端写自己的 readyOutOff 再单边写到对端的 readyOff；
+                                     本端只读自己的 readyOff，两边互不覆盖）
        [wmOff, wmOff+links*8)         水位槽（每条 link 一个 8B；cont 值 = 全局块号，跨轮单调不归零） */
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
@@ -401,7 +405,8 @@ int main(int argc, char *argv[])
     const uint64_t scratchOff =
         wmOff - AlignUp(static_cast<uint64_t>(flagsPerRound) * links * 8ULL, 64); /* 进度源槽数组起点 */
     const uint64_t ackOff = scratchOff - 8;                                       /* 完成 ack 槽：收端写回 */
-    const uint64_t readyOff = ackOff - 8;                                         /* 就绪握手槽：两端互写魔数 */
+    const uint64_t readyOutOff = ackOff - 8;                                      /* 握手发送槽：本端写 */
+    const uint64_t readyOff = readyOutOff - 8;                                    /* 握手接收槽：对端写 */
     if (needBytes > readyOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
@@ -456,6 +461,7 @@ int main(int argc, char *argv[])
         }
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff)) = 0;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -475,7 +481,7 @@ int main(int argc, char *argv[])
     /* 就绪握手：链路没建好就进场景，早起的一端会在等 flag 时超时并提前退出，
        晚起的一端随即因为对端 VA 被摘掉而 direction 推导失败（见 WaitPeerReady 注释）。
        两端都过了这一步才开始跑，因此两个进程按任意顺序、隔几秒启动都行。 */
-    if (!WaitPeerReady(bm, a.rank, peerRank, selfGva, peerGva, readyOff)) {
+    if (!WaitPeerReady(bm, a.rank, peerRank, selfGva, peerGva, readyOff, readyOutOff)) {
         fprintf(stderr,
                 "[bench] wait peer ready TIMEOUT: 对端未启动或链路未建立"
                 "（确认两端 --hcom-url / --mode 一致，store 无残留进程）\n");
