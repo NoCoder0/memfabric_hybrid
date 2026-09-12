@@ -405,6 +405,8 @@ int main(int argc, char *argv[])
        [ackOff, ackOff+8)            完成 ack 槽（收端全部散完后写回发端，用于单时钟测端到端）
        [readyOutOff, readyOff+8)     就绪握手槽 16B（本端写自己的 readyOutOff 再单边写到对端的 readyOff；
                                      本端只读自己的 readyOff，两边互不覆盖）
+       [addrMsgOff, addrMsgOff+16)   地址传递槽 16B：[0]=staging 起始 GVA，[8]=完成标记槽 GVA。
+                                     由 local（接收端）在运行时显式单边写给 remote，remote 照此写数据/取标记
        [wmOff, wmOff+links*8)         水位槽（每条 link 一个 8B；cont 值 = 全局块号，跨轮单调不归零） */
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
@@ -418,7 +420,8 @@ int main(int argc, char *argv[])
     const uint64_t ackOff = scratchOff - 8;                                       /* 完成 ack 槽：收端写回 */
     const uint64_t readyOutOff = ackOff - 8;                                      /* 握手发送槽：本端写 */
     const uint64_t readyOff = readyOutOff - 8;                                    /* 握手接收槽：对端写 */
-    if (needBytes > readyOff) {
+    const uint64_t addrMsgOff = readyOff - 16;                                    /* 地址传递槽：local 写给 remote */
+    if (needBytes > addrMsgOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
@@ -473,6 +476,9 @@ int main(int argc, char *argv[])
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff)) = 0;
+        for (uint32_t k = 0; k < 2; ++k) { /* 地址传递槽 16B 清零 */
+            *reinterpret_cast<uint64_t *>(HostPtr(selfGva + addrMsgOff + static_cast<uint64_t>(k) * 8ULL)) = 0;
+        }
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -500,6 +506,45 @@ int main(int argc, char *argv[])
         return 1;
     }
     printf("[bench] peer ready handshake OK\n");
+
+    /* 地址交换（运行时显式传递，计时区之外）：local（接收端）把自己这边的
+       [staging 起始 GVA, 完成标记槽 GVA] 一并单边写给 remote；remote 轮询自己的 addrMsg 槽拿到它们，
+       之后"往哪儿写数据""去哪儿取完成标记"都用 local 给的地址，不再靠两侧按对称布局各自推算。
+       语义即：接收端决定往哪儿收，并把地址交给发送端。 */
+    uint64_t peerStagingGva = 0; /* remote 侧：目的 staging 基址（local 给） */
+    uint64_t peerDoneGva = 0;    /* remote 侧：local 完成标记槽 GVA（local 给） */
+    {
+        auto *msg = reinterpret_cast<uint64_t *>(HostPtr(selfGva + addrMsgOff));
+        if (isLocal) {
+            msg[0] = selfGva;          /* 本端 staging 基址 */
+            msg[1] = selfGva + ackOff; /* 本端完成标记槽 */
+            std::atomic_thread_fence(std::memory_order_release);
+            for (int i = 0; i < 50; ++i) { /* 对端可能还没起来，失败就重发 */
+                smem_copy_params mp{HostPtr(selfGva + addrMsgOff), HostPtr(peerGva + addrMsgOff),
+                                    sizeof(uint64_t) * 2, nullptr};
+                if (smem_bm_copy(bm, &mp, SMEMB_COPY_AUTO, 0) == 0) {
+                    break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            printf("[bench] addr exchange: sent staging=0x%llx doneSlot=0x%llx\n",
+                   static_cast<unsigned long long>(msg[0]), static_cast<unsigned long long>(msg[1]));
+        } else {
+            const uint64_t t0 = NowUs();
+            while (msg[0] == 0 || msg[1] == 0) {
+                if (NowUs() - t0 > 30ULL * 1000 * 1000) {
+                    fprintf(stderr, "[bench] addr exchange TIMEOUT: 没收到对端(local)给的地址\n");
+                    smem_bm_destroy(bm);
+                    return 1;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            printf("[bench] addr exchange: recv staging=0x%llx doneSlot=0x%llx\n",
+                   static_cast<unsigned long long>(msg[0]), static_cast<unsigned long long>(msg[1]));
+        }
+        peerStagingGva = msg[0];
+        peerDoneGva = msg[1];
+    }
 
     /* 校验用参考块：refBlock[v] 为整块填 v 的 a.size 字节。
        校验放在全部轮次跑完之后，用 memcmp（SIMD）比对，避免逐字节循环的额外开销。 */
@@ -615,15 +660,16 @@ int main(int argc, char *argv[])
 
     /* 场景 2：cont —— 进度通知由 smem_bm_copy_batch **接口内部**完成：每 a.chunk 个 IO 拷完，
        接口自动向对端水位槽单边写一次 (progressBase + 已完成个数)；local 见水位推进就增量 scatter。
-       应用只填参数、只调一次。收端把 600 块全部散完后写回 ack，发端据此用**同一个时钟**
-       测出真端到端（含收端 scatter），不再依赖两端时钟相加。 */
+       应用只填参数、只调一次。
+       目的地址由 local 在运行时显式给出（addr exchange）；收端散完后只在**自己内存**写完成标记，
+       发端用 RDMA read 取回来停表 —— 计时终点就是 local 散完那一瞬，误差只有一次 read 往返。 */
     if (runCont) {
         if (!isLocal) {
-            PrintLabel("cont (sender, batch progress + ack-measured e2e)");
+            PrintLabel("cont (sender, batch progress + read-poll e2e)");
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
-                srcs[i] = HostPtr(selfGva + i * a.stride); /* 离散源 */
-                dsts[i] = HostPtr(peerGva + i * a.size);   /* 连续 staging */
+                srcs[i] = HostPtr(selfGva + i * a.stride);       /* 离散源 */
+                dsts[i] = HostPtr(peerStagingGva + i * a.size);  /* 连续 staging：用 local 给的地址 */
             }
             const uint32_t chunks = (a.count + a.chunk - 1) / a.chunk;
             uint64_t sumTransportUs = 0;
@@ -656,8 +702,8 @@ int main(int argc, char *argv[])
                 const uint64_t ta0 = NowUs();
                 uint64_t seen = 0;
                 for (;;) {
-                    smem_copy_params rp{HostPtr(peerGva + ackOff), HostPtr(selfGva + ackOff), sizeof(seen), nullptr};
-                    (void)smem_bm_copy(bm, &rp, SMEMB_COPY_AUTO, 0); /* 从对端读回本端 ackOff */
+                    smem_copy_params rp{HostPtr(peerDoneGva), HostPtr(selfGva + ackOff), sizeof(seen), nullptr};
+                    (void)smem_bm_copy(bm, &rp, SMEMB_COPY_AUTO, 0); /* 从 local 给的标记槽读回本端 */
                     seen = *reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + ackOff));
                     if (seen == seq) {
                         break;
