@@ -105,6 +105,7 @@ hybm_tls_config HcomTransportManager::tlsConfig_ = {};
 char HcomTransportManager::keyPass_[KEYPASS_MAX_LEN] = {0};
 std::mutex HcomTransportManager::keyPassMutex = {};
 thread_local HcomCounterStreamPtr HcomTransportManager::stream_ = nullptr;
+thread_local HcomTransportManager::MrHitCache HcomTransportManager::tlsMrHit_ = {nullptr, 0, UINT32_MAX, UINT32_MAX, {}};
 
 static void CopyHcomOneSideKey(const OneSideKey &from, TransportMemoryKey &to)
 {
@@ -194,6 +195,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     rankCount_ = options.rankCount;
     mrMutex_ = std::vector<std::mutex>(rankCount_);
     mrs_.assign(rankCount_, std::vector<std::set<HcomMemoryRegion>>(epCount_));
+    BumpMrGeneration(); // MR 集合变了，让各线程的免锁快路径缓存失效
     channelMutex_ = std::vector<std::mutex>(rankCount_);
     nics_ = std::vector<std::vector<std::string>>(rankCount_, std::vector<std::string>(epCount_, ""));
     channels_ = std::vector<std::vector<Hcom_Channel>>(rankCount_, std::vector<Hcom_Channel>(epCount_, 0));
@@ -221,6 +223,7 @@ Result HcomTransportManager::CloseDevice()
             }
         }
     }
+    BumpMrGeneration(); // 所有 MR 都被销毁，快路径缓存必须失效
 
     DestroyServices();
     mf::MfTlsUtil::CloseTlsLib();
@@ -233,6 +236,7 @@ Result HcomTransportManager::CloseDevice()
     runtimeConfig_ = {};
     mrMutex_.clear();
     mrs_.clear();
+    BumpMrGeneration();
     channelMutex_.clear();
     nics_.clear();
     channels_.clear();
@@ -304,6 +308,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         {
             std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
             mrs_[rankId_][ep].insert(mrInfo);
+            BumpMrGeneration();
         }
         BM_LOG_INFO("Success to register " << (isHbm ? "hbm" : "dram") << " mr info size: " << mrInfo.size
                                            << " ep: " << ep << " lKey: " << mrInfo.lKey.keys[0]);
@@ -362,6 +367,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         {
             std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
             mrs_[rankId_][ep].insert(mrInfo);
+            BumpMrGeneration();
         }
         BM_LOG_INFO("Success to register to mr info size: " << mrInfo.size << " ep: " << ep
                                                             << " lKey: " << mrInfo.lKey.keys[0] << std::hex
@@ -384,6 +390,7 @@ Result HcomTransportManager::UnregisterMemoryRegion(uint64_t addr)
             if (it->addr == addr) {
                 DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[ep], it->mr);
                 localMrs.erase(it);
+                BumpMrGeneration();
                 found = true;
                 BM_LOG_INFO("Addr: " << addr << " unregistered, ep: " << ep);
                 break;
@@ -410,6 +417,26 @@ bool HcomTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 uint32_t HcomTransportManager::GetLinkCount() const
 {
     return epCount_;
+}
+
+bool HcomTransportManager::AllLinksReady(uint32_t rankId) const
+{
+    if (epCount_ == 0 || rankId >= channels_.size() || rankId >= nics_.size() ||
+        channels_[rankId].size() < epCount_ || nics_[rankId].size() < epCount_) {
+        return false;
+    }
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        if (channels_[rankId][ep] == 0 || nics_[rankId][ep].empty()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Result HcomTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
+                                                  size_t begin, size_t end)
+{
+    return SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end);
 }
 
 Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
@@ -654,6 +681,7 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             {
                 std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
                 mrs_[rankId][ep].insert(mrInfo);
+                BumpMrGeneration();
             }
             BM_LOG_INFO("Success to register to mr info rankId: " << rankId << " ep: " << ep
                                                                   << " size: " << mrInfo.size
@@ -796,14 +824,10 @@ Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, u
 
 int HcomTransportManager::PrepareThreadLocalStream()
 {
-    lock_.LockRead();
-    if (stream_ != nullptr) {
-        lock_.UnLock();
-        return BM_OK;
+    /* stream_ 是 thread_local，纯线程私有，不存在跨线程共享，无需加锁 */
+    if (stream_ == nullptr) {
+        stream_ = std::make_shared<HostHcomCounterStream>(0);
     }
-    lock_.UnLock();
-    WriteGuard lockGuard(lock_);
-    stream_ = std::make_shared<HostHcomCounterStream>(0);
     return BM_OK;
 }
 
@@ -878,12 +902,22 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
 
 Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
+    return WriteRemoteAsyncOnEp(rankId, 0, lAddr, rAddr, size);
+}
+
+Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
+                                                  uint64_t size)
+{
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId][0];
+    if (rankId >= channels_.size() || ep >= channels_[rankId].size()) {
+        BM_LOG_ERROR("write remote with invalid rank: " << rankId << " ep: " << ep);
+        return BM_INVALID_PARAM;
+    }
+    Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
-        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
     Channel_OneSideRequest req;
@@ -891,15 +925,15 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     req.lAddress = reinterpret_cast<void *>(lAddr);
     req.size = static_cast<uint32_t>(size);
     HcomMemoryRegion mr{};
-    auto ret = GetMemoryRegionByAddr(rankId_, 0, lAddr, mr);
+    auto ret = GetMemoryRegionByAddr(rankId_, ep, lAddr, mr);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
+        BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << " ep: " << ep << ", size: " << req.size
                                                      << ", lAddr: " << VaToInfo(lAddr));
         return BM_ERROR;
     }
     std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
     mr.lKey = {};
-    ret = GetMemoryRegionByAddr(rankId, 0, rAddr, mr);
+    ret = GetMemoryRegionByAddr(rankId, ep, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
                                                      << ", rAddr: " << VaToInfo(rAddr));
@@ -956,6 +990,11 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
+    /* stream_ 只与线程相关，整个 slice 准备一次即可（原先是每个 iov 调一次） */
+    if (PrepareThreadLocalStream() != BM_OK) {
+        BM_LOG_ERROR("prepare stream error rankId: " << rankId);
+        return BM_ERROR;
+    }
     size_t i = begin;
     while (i < end) {
         Channel_OneSideRequestSgl sglReq;
@@ -989,11 +1028,6 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
                                                         << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                         << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
                                                         << " tokens: " << req.rKey.tokens[0]);
-            ret = PrepareThreadLocalStream();
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("prepare stream error rankId: " << rankId);
-                return ret;
-            }
             sglReq.iov[sglReq.iovCount++] = req;
         }
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
@@ -1303,6 +1337,11 @@ Result HcomTransportManager::SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, 
         BM_LOG_WARN("Unable to read remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
+    /* stream_ 只与线程相关，整个 slice 准备一次即可（原先是每个 iov 调一次） */
+    if (PrepareThreadLocalStream() != BM_OK) {
+        BM_LOG_ERROR("prepare stream error rankId: " << rankId);
+        return BM_ERROR;
+    }
     size_t i = begin;
     while (i < end) {
         Channel_OneSideRequestSgl sglReq;
@@ -1336,11 +1375,6 @@ Result HcomTransportManager::SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, 
                                                        << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                        << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
                                                        << " tokens: " << req.rKey.tokens[0]);
-            ret = PrepareThreadLocalStream();
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("prepare stream error rankId: " << rankId);
-                return ret;
-            }
             sglReq.iov[sglReq.iovCount++] = req;
         }
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
@@ -1433,12 +1467,22 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
         BM_LOG_ERROR("query mr with invalid rank: " << rankId << " ep: " << ep);
         return BM_ERROR;
     }
+    const uint64_t gen = mrGen_.load(std::memory_order_acquire);
+    /* 快路径：代际未变 + 同 rank/ep + 地址仍落在上次命中的 MR 内 → 免锁直接返回。
+       批量写场景里数百个地址通常都落在同一对 MR 里，命中率接近 100%，
+       因此把“每个 iov 2 次加锁遍历”降到整批 1~2 次。 */
+    if (tlsMrHit_.self == this && tlsMrHit_.gen == gen && tlsMrHit_.rankId == rankId && tlsMrHit_.ep == ep &&
+        tlsMrHit_.mr.addr <= addr && tlsMrHit_.mr.addr + tlsMrHit_.mr.size > addr) {
+        mr = tlsMrHit_.mr;
+        return BM_OK;
+    }
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
     for (const auto &mrInfo : mrs_[rankId][ep]) {
         BM_LOG_DEBUG("Find rankId:" << rankId << " ep:" << ep << std::hex << " addr:" << mrInfo.addr
                                     << " size:" << mrInfo.size);
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size > addr) {
             mr = mrInfo;
+            tlsMrHit_ = MrHitCache{this, gen, rankId, ep, mrInfo};
             return BM_OK;
         }
     }

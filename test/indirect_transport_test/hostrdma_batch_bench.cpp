@@ -325,25 +325,33 @@ int main(int argc, char *argv[])
            a.rank, a.count, static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride),
            a.rounds, a.chunk, a.mode.c_str());
     /* 链路档位：hcom-url 含 ';'（多个 url）即为双卡/双连接，否则单卡/单连接 */
-    const bool dualUrl = a.hcomUrl.find(';') != std::string::npos;
-    printf("[bench] link-mode=%s hcom-url=%s\n", dualUrl ? "dual-link(2 NIC)" : "single-link(1 NIC)",
+    uint32_t links = 1;
+    for (char c : a.hcomUrl) {
+        if (c == ';') {
+            ++links;
+        }
+    }
+    const bool dualUrl = links > 1;
+    printf("[bench] link-mode=%s links=%u hcom-url=%s\n", dualUrl ? "multi-link" : "single-link", links,
            a.hcomUrl.c_str());
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)               连续 staging（接收侧）
        [stagingEnd, +4096)           预留 gap
        [dispBase, dispBase+count*stride)  600 个离散目标/源（stride 间隔模拟离散）
-       [scratchOff, flagOff)          进度源槽数组（发送端用；每个 flag 一个 8B，写入后不覆写）
+       [scratchOff, wmOff)            进度源槽数组（发送端用；flagsPerRound*links 个 8B，写入后不覆写）
        [ackOff, ackOff+8)            完成 ack 槽（收端全部散完后写回发端，用于单时钟测端到端）
-       [dramBytes-8, dramBytes)        完成/水位槽（段尾 8B；cont 值 = 全局累计已完成块数，跨轮单调不归零） */
+       [wmOff, wmOff+links*8)         水位槽（每条 link 一个 8B；cont 值 = 全局块号，跨轮单调不归零） */
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
     const uint64_t dispBase = stagingEnd + 4096;                 /* 离散源/目标区起点 */
     const uint64_t needBytes = dispBase + a.count * a.stride;
-    const uint32_t flagsPerRound = (a.count + a.chunk - 1) / a.chunk;        /* cont 每轮 flag 个数 */
-    const uint64_t flagOff = dramBytes - 8;                                  /* 完成/水位槽：段尾 8B */
-    const uint64_t scratchOff = flagOff - AlignUp(flagsPerRound * 8ULL, 64); /* 进度源槽数组起点 */
-    const uint64_t ackOff = scratchOff - 8;                                  /* 完成 ack 槽：收端写回 */
+    const uint32_t flagsPerRound = (a.count + a.chunk - 1) / a.chunk; /* 每条 link 每轮最多这么多个水位 */
+    const uint64_t wmOff = dramBytes - static_cast<uint64_t>(links) * 8ULL; /* 水位槽区（每 link 一个 8B） */
+    const uint64_t flagOff = wmOff;                                         /* 兼容旧代码：ep0 的水位槽 */
+    const uint64_t scratchOff =
+        wmOff - AlignUp(static_cast<uint64_t>(flagsPerRound) * links * 8ULL, 64); /* 进度源槽数组起点 */
+    const uint64_t ackOff = scratchOff - 8;                                       /* 完成 ack 槽：收端写回 */
     if (needBytes > ackOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
@@ -393,7 +401,9 @@ int main(int argc, char *argv[])
 
     /* 3. 初始化数据：remote 源填值 i；local 的 staging/目标清 0；双方 flag/ack 槽清 0 */
     {
-        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + flagOff)) = 0;
+        for (uint32_t e = 0; e < links; ++e) { /* 每条 link 一个水位槽 */
+            *reinterpret_cast<uint64_t *>(HostPtr(selfGva + wmOff + static_cast<uint64_t>(e) * 8ULL)) = 0;
+        }
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 0;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
@@ -583,11 +593,17 @@ int main(int argc, char *argv[])
                 srcVas[i] = HostPtr(selfGva + i * a.size);
                 dstVas[i] = HostPtr(selfGva + dispBase + i * a.stride);
             }
-            auto *flagVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + flagOff));
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
-            /* flag 是全局累计块数（跨轮不归零），本轮水位 = (r+1)*count；
-               scatteredGlobal 与发端 flag 同一口径，据此把全局块号换算回本轮块号定位 staging 偏移 */
-            uint64_t scatteredGlobal = 0;
+            /* 多链路：每条 link 一段【连续】iov + 一条水位槽，分区规则与库侧一致
+               （base = count/K, rem = count%K, link e 拿 base + (e<rem?1:0) 个块），
+               水位值是【全局块号】，收端按 link 各自增量 scatter，全部 link 到位才算本轮结束。 */
+            std::vector<volatile uint64_t *> wmVas(links);
+            for (uint32_t e = 0; e < links; ++e) {
+                wmVas[e] =
+                    reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + wmOff + static_cast<uint64_t>(e) * 8ULL));
+            }
+            std::vector<uint64_t> donePerEp(links, 0);
+            std::vector<uint64_t> endPerEp(links, 0);
             uint64_t expect = 1; /* 与发端 seq 对齐，用于 ack 值 */
             std::vector<uint64_t> scatterCosts, tailCosts; /* 跑完后统一打印 */
             std::vector<std::string> arrivalLines;         /* 各批数据可见时刻(相对本轮起点,us)，用于确认重叠 */
@@ -595,28 +611,46 @@ int main(int argc, char *argv[])
             std::vector<VerifyResult> stagVerifies, dispVerifies;
             for (uint32_t r = 0; r < kTotal; ++r) {
                 const uint64_t roundStart = static_cast<uint64_t>(r) * a.count;
-                const uint64_t roundEnd = static_cast<uint64_t>(r + 1) * a.count; /* 本轮全局水位 */
-                const uint64_t tr0 = NowUs(); /* 本轮起点：开始等第一份 flag */
+                { /* 本轮每条 link 负责的块区间（全局块号） */
+                    const uint32_t per = a.count / links;
+                    const uint32_t rem = a.count % links;
+                    uint32_t cur = 0;
+                    for (uint32_t e = 0; e < links; ++e) {
+                        const uint32_t len = per + (e < rem ? 1U : 0U);
+                        donePerEp[e] = roundStart + cur;
+                        endPerEp[e] = roundStart + cur + len;
+                        cur += len;
+                    }
+                }
+                const uint64_t tr0 = NowUs(); /* 本轮起点：开始等第一份水位 */
                 uint64_t scatterUs = 0;       /* 本轮 scatter 累计耗时（只算 memcpy，不含轮询等待） */
-                uint64_t tailUs = 0;          /* 最后一批(600 块中收尾那批)的 scatter 耗时 */
+                uint64_t tailUs = 0;          /* 最后一批的 scatter 耗时 */
                 std::string arrivals;
-                while (scatteredGlobal < roundEnd) {
-                    const uint64_t doneGlobal = *flagVa;
-                    if (doneGlobal <= scatteredGlobal) {
-                        continue; /* 自旋等下一批 flag 推进（小包完成很快，不用 sleep） */
+                for (;;) {
+                    bool allDone = true;
+                    for (uint32_t e = 0; e < links; ++e) {
+                        const uint64_t w = *wmVas[e];
+                        const uint64_t uptoGlobal = std::min(w, endPerEp[e]);
+                        if (uptoGlobal > donePerEp[e]) {
+                            const uint32_t from = static_cast<uint32_t>(donePerEp[e] - roundStart);
+                            const uint32_t upto = static_cast<uint32_t>(uptoGlobal - roundStart);
+                            const uint64_t tb0 = NowUs();
+                            for (uint32_t i = from; i < upto; ++i) {
+                                memcpy(dstVas[i], srcVas[i], a.size);
+                            }
+                            const uint64_t tb1 = NowUs();
+                            scatterUs += tb1 - tb0;
+                            tailUs = tb1 - tb0; /* 收尾批的 scatter 即发端投完之后的"尾巴" */
+                            arrivals += (arrivals.empty() ? "" : ",") + std::to_string(tb0 - tr0);
+                            donePerEp[e] = uptoGlobal;
+                        }
+                        if (donePerEp[e] < endPerEp[e]) {
+                            allDone = false;
+                        }
                     }
-                    const uint64_t uptoGlobal = std::min(doneGlobal, roundEnd);
-                    const uint32_t from = static_cast<uint32_t>(scatteredGlobal - roundStart);
-                    const uint32_t upto = static_cast<uint32_t>(uptoGlobal - roundStart);
-                    const uint64_t tb0 = NowUs();
-                    for (uint32_t i = from; i < upto; ++i) {
-                        memcpy(dstVas[i], srcVas[i], a.size);
+                    if (allDone) {
+                        break; /* 自旋等水位推进（小包完成很快，不用 sleep） */
                     }
-                    const uint64_t tb1 = NowUs();
-                    scatterUs += tb1 - tb0;
-                    tailUs = tb1 - tb0; /* 收尾批的 scatter 即发端投完之后的"尾巴" */
-                    arrivals += (arrivals.empty() ? "" : ",") + std::to_string(tb0 - tr0);
-                    scatteredGlobal = uptoGlobal;
                 }
                 /* 计时区之外：先把"本轮 600 块全部散完"写回发端（发端用同一时钟据此测端到端），
                    再做整块校验。staging 反映"传输是否完整正确"，离散目标反映"scatter 是否正确"。
