@@ -271,34 +271,6 @@ uint32_t ComposeTransportManager::GetLinkCount() const
     return 1;
 }
 
-bool ComposeTransportManager::AllLinksReady(uint32_t rankId) const
-{
-    if (hostTransportManager_) {
-        return hostTransportManager_->AllLinksReady(rankId);
-    }
-    return false;
-}
-
-Result ComposeTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
-                                                     size_t begin, size_t end)
-{
-    if (hostTransportManager_ != nullptr && ep < hostTransportManager_->GetLinkCount()) {
-        return hostTransportManager_->SubmitWriteBatchOnEp(rankId, ep, descriptor, begin, end);
-    }
-    BM_LOG_WARN("SubmitWriteBatchOnEp not supported, rankId: " << rankId << " ep: " << ep);
-    return BM_ERROR;
-}
-
-Result ComposeTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
-                                                     uint64_t size)
-{
-    if (hostTransportManager_ != nullptr && ep < hostTransportManager_->GetLinkCount()) {
-        return hostTransportManager_->WriteRemoteAsyncOnEp(rankId, ep, lAddr, rAddr, size);
-    }
-    BM_LOG_WARN("WriteRemoteAsyncOnEp not supported, rankId: " << rankId << " ep: " << ep);
-    return BM_ERROR;
-}
-
 Result ComposeTransportManager::QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key)
 {
     if (hostTransportManager_ != nullptr && ep < hostTransportManager_->GetLinkCount()) {

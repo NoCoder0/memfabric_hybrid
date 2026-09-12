@@ -184,19 +184,10 @@ typedef struct {
     /* Optional batch copy progress notification. Every progressInterval elements are submitted, an 8-byte
      * one-sided write of (progressBase + submitted elements) is issued to progressDest on the same channel,
      * so the peer can consume the data by watermark earlier. Disabled when progressInterval == 0 or
-     * progressSrc / progressDest is null. Supported by the host rdma write path.
-     *
-     * Multi-link (K links): the batch is split into K contiguous ranges, link e owning
-     * [e * batchSize / K, (e + 1) * batchSize / K), and each link keeps its own watermark, because a
-     * watermark is only guaranteed not to run ahead of the data when both travel on the same channel.
-     * Layout for K links (K == 1 degenerates to the single slot layout described below):
-     *   peer watermark of link e : progressDest + e * 8                (progressDest needs K * 8 bytes)
-     *   source slot of (link e, chunk c) : progressSrc + (c * K + e) * 8
-     *   (progressSrc needs ceil(batchSize / progressInterval) * K * 8 bytes)
-     * The value stored in a slot is a batch-global element index, so the peer may scatter each link's range
-     * incrementally as its watermark advances.
-     * progressSrc must point to local registered memory: the k-th watermark is never rewritten, because the
-     * NIC reads the source when it processes the write request. */
+     * progressSrc / progressDest is null. Only supported by the single link host rdma write path.
+     * progressSrc must point to local registered memory holding ceil(batchSize / progressInterval) slots of
+     * 8 bytes: the k-th watermark is written to progressSrc + k * 8 and never rewritten, because the NIC
+     * reads the source when it processes the write request. */
     void *progressSrc;
     void *progressDest;
     uint64_t progressBase;

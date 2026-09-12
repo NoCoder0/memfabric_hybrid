@@ -15,7 +15,6 @@
 
 #include <mutex>
 #include <set>
-#include <atomic>
 #include "hybm_transport_manager.h"
 #include "hcom_service_c_define.h"
 #include "host_hcom_counter_stream.h"
@@ -113,13 +112,6 @@ public:
 
     Result WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
 
-    Result SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
-                                size_t end) override;
-
-    Result WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
-
-    bool AllLinksReady(uint32_t rankId) const override;
-
     Result Synchronize(uint32_t rankId) override;
 
 private:
@@ -185,22 +177,6 @@ private:
     hybm_data_op_type bmOptype_{};
     ReadWriteLock lock_;
     static thread_local HcomCounterStreamPtr stream_;
-    /* MR 查询快路径缓存：mrs_ 每次变动 mrGen_ +1；代际一致时本线程直接复用上次命中的 MR，
-       省掉每次查询的 mrMutex_ 加锁与遍历。批量写 600 个 iov 原本要 1200 次加锁，
-       且 mrMutex_ 是每 rank 一把，多链路时正是两个提交 worker 的争用点。 */
-    struct MrHitCache {
-        const void *self;
-        uint64_t gen;
-        uint32_t rankId;
-        uint32_t ep;
-        HcomMemoryRegion mr;
-    };
-    static thread_local MrHitCache tlsMrHit_;
-    std::atomic<uint64_t> mrGen_{1};
-    void BumpMrGeneration() noexcept
-    {
-        mrGen_.fetch_add(1, std::memory_order_acq_rel);
-    }
     std::string localNic_{};                 // local listen url (single link); multi-link joined by ';'
     std::string localIp_{};
     std::vector<std::string> localNics_{};   // per-ep local listen urls
