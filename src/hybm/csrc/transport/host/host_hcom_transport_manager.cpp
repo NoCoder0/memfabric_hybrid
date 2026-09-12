@@ -1172,7 +1172,19 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
         localIpMask_ = localIpMask_.empty() ? (ip + "/32") : (localIpMask_ + "," + ip + "/32");
     }
     epCount_ = 1;
-    localNic_ = localNics_[0]; /* 只发布第一个 url 作 oob 监听；其余 rail 由库在 OOB 握手里协商 */
+    /* 向上层发布**全部** url（';' 分隔，与 compose_transport_manager 的 NIC_DELIMITER 一致）：
+       compose 层会把每个 url 广播成一个 host# 段，对端据此为**每条 rail** 建连。
+       这里只发第一个会让对端永远建不起第二条 rail，MultiRail 退化成单链接。 */
+    localNic_.clear();
+    for (const auto &url : localNics_) {
+        if (url.empty()) {
+            continue;
+        }
+        if (!localNic_.empty()) {
+            localNic_ += ';';
+        }
+        localNic_ += url;
+    }
     localIp_ = localIps_[0];
     BM_LOG_TRACE("[multirail-check] hcom single service: ipMask(" << localIpMask_ << ") url-count(" << localNics_.size()
                                                                   << ") listen(" << localNic_ << ")");
