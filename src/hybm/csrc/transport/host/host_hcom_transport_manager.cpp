@@ -99,6 +99,10 @@ void HcomExternalLoggerAdapter(int level, const char *msg)
             break;
     }
 }
+
+/* MultiRail 分流阈值缺省值(字节)：库默认 8192，对小包等于不生效，这里按"单包大小"取 1024。
+   可用 MF_HYBM_HCOM_MULTIRAIL_THRESHOLD 覆盖。 */
+constexpr uint32_t kDefaultMultiRailThreshold = 1024;
 } // namespace
 
 hybm_tls_config HcomTransportManager::tlsConfig_ = {};
@@ -164,8 +168,16 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
         DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_REQUEST_POSTED, TransportRpcHcomRequestPosted, 1);
         DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, 1);
         if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
-            std::string ipMask = localIps_[ep] + "/32";
-            DlHcomApi::ServiceSetDeviceIpMask(service, ipMask.c_str());
+            /* 一组 ipMask（',' 分隔）：库按它挑出本地要用的网卡，多张即多条 rail */
+            DlHcomApi::ServiceSetDeviceIpMask(service, localIpMask_.c_str());
+            /* 多 url(多网卡)时开 MultiRail：由库在**同一个 service 内**建多条 rail 并自动分流。
+               注意 threshold 默认 8192，对 1KB 小包等于不生效，这里按单包大小下调。 */
+            const uint32_t multiRailThresh = static_cast<uint32_t>(
+                MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_THRESHOLD, kDefaultMultiRailThreshold));
+            const bool enableMultiRail = (localNics_.size() > 1U);
+            DlHcomApi::ServiceSetMultiRailOptions(service, enableMultiRail, multiRailThresh);
+            BM_LOG_INFO("hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
+                                                << " multiRailThresh: " << multiRailThresh);
         }
         SetHcomServiceConfig(service);
         BM_LOG_INFO("bind hcom service ep: " << ep << " listen url: " << localNics_[ep]);
@@ -1142,15 +1154,23 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
         BM_LOG_ERROR("Failed to check nic, no valid url in nic: " << options.nic);
         return BM_INVALID_PARAM;
     }
-    localIps_ = std::move(epIps);
     localNics_ = std::move(epNics);
-    epCount_ = static_cast<uint32_t>(localNics_.size());
-    std::string joined;
-    for (const auto &nic : localNics_) {
-        joined = joined.empty() ? nic : joined + ";" + nic;
+    localIps_ = std::move(epIps);
+    /* options.nic 里的多个 url = "本地要多用几张网卡"，但**不能**因此建多个 service：
+       ubs-comm 明确要求上层禁止同时创建同种协议的 2 个不同 Service 实例
+       （service_ctx_store.h 里 GetOrReturn 的注释：否则 Service2 会引用 Service1 的内存池），
+       而 HCOM 原生支持一个 service 带多条 rail（MultiRail：库内 CreateMultiRailDriver 按 ipMask
+       选出多张卡建多个 driver，上限 MAX_ENABLE_DEVCOUNT=4，并自动分流）。
+       所以这里把多 url 收敛成：1 个 service + 1 个 oob 监听 url + 一组 ipMask；多网卡交给库。
+       传输层的 epCount_ 因此恒为 1，数据面自动走单链路路径。 */
+    localIpMask_.clear();
+    for (const auto &ip : localIps_) { /* ',' 分隔的一组 mask（ubs_hcom_service_set_ipmask 按 ',' 拆） */
+        localIpMask_ = localIpMask_.empty() ? (ip + "/32") : (localIpMask_ + "," + ip + "/32");
     }
-    localNic_ = joined;
+    epCount_ = 1;
+    localNic_ = localNics_[0]; /* 只发布第一个 url 作 oob 监听；其余 rail 由库在 OOB 握手里协商 */
     localIp_ = localIps_[0];
+    BM_LOG_INFO("hcom single service + multirail: ipMask(" << localIpMask_ << ") listen(" << localNic_ << ")");
     return BM_OK;
 }
 

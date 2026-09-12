@@ -203,9 +203,11 @@ private:
     }
     std::string localNic_{};                 // local listen url (single link); multi-link joined by ';'
     std::string localIp_{};
+    std::string localIpMask_{};              // 本地多网卡的 ipMask 组(',' 分隔)，交给 ServiceSetDeviceIpMask
     std::vector<std::string> localNics_{};   // per-ep local listen urls
     std::vector<std::string> localIps_{};    // per-ep local nic ip (for ServiceSetDeviceIpMask)
-    std::vector<Hcom_Service> rpcServices_;  // one hcom service per ep(nic); ep0 for single link
+    // 一个 hcom service（多网卡由库内部 MultiRail 建多条 rail）
+    std::vector<Hcom_Service> rpcServices_;
     HcomRuntimeConfig runtimeConfig_{};
     uint32_t rankId_{UINT32_MAX};
     uint32_t rankCount_{0};
