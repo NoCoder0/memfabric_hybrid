@@ -705,7 +705,6 @@ int main(int argc, char *argv[])
             uint64_t sumTailUs = 0;
             uint64_t sumE2eUs = 0; /* 本轮完整端到端：从"发出请求"到"600 块全部散完" */
             uint64_t sumReqUs = 0; /* 其中"发出请求"这一段（local 的一次单边写）耗时 */
-            uint64_t sumReq2Us = 0; /* 探针：紧跟着补的第二笔同样写的耗时 */
             /* staging / 离散目标地址固定，一次性解析（GVA==VA，无每轮转换开销） */
             std::vector<void *> srcVas(a.count), dstVas(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
@@ -725,7 +724,7 @@ int main(int argc, char *argv[])
             std::vector<uint64_t> endPerEp(links, 0);
             uint64_t expect = 1; /* 与发端 seq 对齐，用于 ack 值 */
             std::vector<uint64_t> scatterCosts, tailCosts; /* 跑完后统一打印 */
-            std::vector<uint64_t> e2eCosts, reqCosts, req2Costs;
+            std::vector<uint64_t> e2eCosts, reqCosts;
             std::vector<std::string> arrivalLines;         /* 各批数据可见时刻(相对本轮起点,us)，用于确认重叠 */
             bool aborted = false;                          /* 中途超时/出错则不再校验 */
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -760,22 +759,6 @@ int main(int argc, char *argv[])
                         aborted = true;
                         break;
                     }
-                    /* 探针：紧接着再发一笔**完全一样**的写（写到握手用过的空闲槽，对端早已不再读它），
-                       单独计时。用来分辨"每轮第一笔慢（空闲/首包效应）"还是"每笔都慢（固定成本）"。 */
-                    {
-                        auto *dummy = reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff));
-                        dummy[0] = expect;
-                        std::atomic_thread_fence(std::memory_order_release);
-                        smem_copy_params rq2{HostPtr(selfGva + readyOutOff), HostPtr(peerGva + readyOff),
-                                             sizeof(uint64_t), nullptr};
-                        const uint64_t t2a = NowUs();
-                        (void)smem_bm_copy(bm, &rq2, SMEMB_COPY_AUTO, 0);
-                        const uint64_t t2b = NowUs();
-                        if (r >= 1) {
-                            sumReq2Us += t2b - t2a;
-                            req2Costs.push_back(t2b - t2a);
-                        }
-                    }
                     if (r >= 1) {
                         sumReqUs += tReqDone - tRoundStart;
                         reqCosts.push_back(tReqDone - tRoundStart);
@@ -786,17 +769,11 @@ int main(int argc, char *argv[])
                 uint64_t tailUs = 0;          /* 最后一批的 scatter 耗时 */
                 std::string arrivals;
                 bool timedOut = false;
-                uint32_t spinRounds = 0;
                 const uint64_t tw0 = NowUs();
                 for (;;) {
                     if (NowUs() - tw0 > kSpinTimeoutUs) {
                         timedOut = true;
                         break;
-                    }
-                    /* 每若干次让一次 CPU：验证"主线程 100% 自旋把 HCOM 的 worker 线程饿死、
-                       导致本次写/上一笔写的 completion 迟迟没人处理"这个假设。 */
-                    if ((++spinRounds & 0x1FU) == 0) {
-                        std::this_thread::yield();
                     }
                     bool allDone = true;
                     for (uint32_t e = 0; e < links; ++e) {
@@ -868,11 +845,9 @@ int main(int argc, char *argv[])
                 printf("cont receiver one-shot verify=%s (staging+scattered, 末轮, %lluus)\n",
                        (vStag.ok && vDisp.ok) ? "OK" : "FAIL", static_cast<unsigned long long>(verifyUs));
             }
-            printf("cont receiver e2e_avg_us=%llu req_avg_us=%llu req2_avg_us=%llu scatter_avg_us=%llu tail_avg_us=%llu "
-                   "(rounds=%u)\n",
+            printf("cont receiver e2e_avg_us=%llu req_avg_us=%llu scatter_avg_us=%llu tail_avg_us=%llu (rounds=%u)\n",
                    static_cast<unsigned long long>(sumE2eUs / a.rounds),
                    static_cast<unsigned long long>(sumReqUs / a.rounds),
-                   static_cast<unsigned long long>(sumReq2Us / a.rounds),
                    static_cast<unsigned long long>(sumScatterUs / a.rounds),
                    static_cast<unsigned long long>(sumTailUs / a.rounds), a.rounds);
         }
