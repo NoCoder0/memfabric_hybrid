@@ -205,7 +205,8 @@ void RoundGap(uint32_t gapMs)
    完成本端 phase2 需要收到对端 phase2，而对端 phase2 是以"收到本端 phase2"为前提的，
    于是【本端完成 ⇒ 对端收到过本端的写 ⇒ 本端的写真的通】，两个方向都被证明过。 */
 constexpr uint64_t kReadyMagicBase = 0x524541445900ULL;   /* "READY" 前缀 */
-constexpr uint32_t kReadyRetryMs = 200;                   /* 重发/轮询间隔 */
+constexpr uint32_t kReadyRetryMinMs = 100;                /* 重发起始间隔（对端秒起时尽快握上） */
+constexpr uint32_t kReadyRetryMaxMs = 1000;               /* 重发间隔上限（对端久等时少刷库日志） */
 constexpr uint64_t kReadyTimeoutUs = 30ULL * 1000 * 1000; /* 给对端留 30s 启动时间 */
 
 uint64_t ReadyMagic(uint32_t rank, uint32_t phase)
@@ -222,6 +223,7 @@ bool WaitPeerReady(smem_bm_t bm, uint32_t selfRank, uint32_t peerRank, uint64_t 
     const uint64_t peerP2 = ReadyMagic(peerRank, 2);
     uint32_t phase = 1;
     uint64_t out = ReadyMagic(selfRank, phase);
+    uint32_t retryMs = kReadyRetryMinMs;
     const uint64_t t0 = NowUs();
     printf("[bench] waiting for peer ready (handshake, up to %llus)...\n",
            static_cast<unsigned long long>(kReadyTimeoutUs / 1000000ULL));
@@ -241,7 +243,10 @@ bool WaitPeerReady(smem_bm_t bm, uint32_t selfRank, uint32_t peerRank, uint64_t 
         if (NowUs() - t0 > kReadyTimeoutUs) {
             return false;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(kReadyRetryMs));
+        std::this_thread::sleep_for(std::chrono::milliseconds(retryMs));
+        if (retryMs < kReadyRetryMaxMs) {
+            retryMs = std::min(retryMs * 2, kReadyRetryMaxMs);
+        }
     }
 }
 
@@ -546,8 +551,6 @@ int main(int argc, char *argv[])
                    static_cast<unsigned long long>(sumUs / a.rounds), a.rounds);
         } else {
             PrintLabel("baseline (observer)");
-            uint64_t sumUs = 0;
-            std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印 */
             std::vector<int> errs;
             std::vector<VerifyResult> verifies;
             /* 600 个目标地址固定，一次性解析供每轮的整块校验使用（GVA==VA，无转换开销） */
@@ -558,8 +561,11 @@ int main(int argc, char *argv[])
             auto *flagVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + flagOff));
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
+            uint32_t timedOutAt = UINT32_MAX;
             for (uint32_t r = 0; r < kTotal; ++r) {
-                const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮等完成 flag 的耗时（纯等待，不含任何校验） */
+                /* 本端只负责"等数据到齐 + 校验"，**不测时延**：
+                   observer 不驱动轮次，只是被动发现 flag 已推进，测出来恒为 0~1us，没有意义。
+                   时延一律由发端用同一时钟测（baseline 的 avg_us、cont 的 transport_us/e2e_us）。 */
                 bool timedOut = false;
                 const uint64_t tw0 = NowUs();
                 while (*flagVa < expect) {
@@ -568,29 +574,25 @@ int main(int argc, char *argv[])
                         break;
                     }
                 }
-                const uint64_t t1 = NowUs();
                 if (timedOut) {
-                    printf("baseline observer TIMEOUT at iter %u: flag=%llu expect=%llu —— 对端没在推进水位"
-                           "（两端 links 数 / mode 是否一致？swap 是否已关？）\n",
-                           r, static_cast<unsigned long long>(*flagVa), static_cast<unsigned long long>(expect));
+                    timedOutAt = r;
                     break;
                 }
                 /* 计时区之外：拷贝完成后整块校验本轮数据（身份 tag + memcmp 内容）。
                    每轮之间有 RoundGap 隔离，校验期间不会被下一轮直写覆盖，结果可信。 */
                 VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
-                    const uint64_t cost = t1 - t0;
-                    sumUs += cost;
-                    costs.push_back(cost);
                     errs.push_back(vr.ok ? 0 : 1);
                     verifies.push_back(vr);
                 }
                 RoundGap(a.gapMs);
                 ++expect;
             }
-            if (!costs.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
-                printf("baseline observer last_round err=%d cost_us=%llu\n", errs.back(),
-                       static_cast<unsigned long long>(costs.back()));
+            if (timedOutAt != UINT32_MAX) {
+                printf("baseline observer TIMEOUT at iter %u: flag=%llu expect=%llu —— 对端没在推进水位"
+                       "（两端 links 数 / mode 是否一致？swap 是否已关？）\n",
+                       timedOutAt, static_cast<unsigned long long>(*flagVa),
+                       static_cast<unsigned long long>(expect));
             }
             for (uint32_t k = 0; k < verifies.size(); ++k) {
                 if (!verifies[k].ok) {
@@ -598,10 +600,10 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            printf("baseline observer avg_us=%llu (rounds=%u) verify=%s\n",
-                   static_cast<unsigned long long>(sumUs / a.rounds), a.rounds,
+            printf("baseline observer verify=%s (rounds=%u, err 末轮=%d；本端不测时延)\n",
                    std::all_of(verifies.begin(), verifies.end(), [](const VerifyResult &v) { return v.ok; }) ? "OK"
-                                                                                                            : "FAIL");
+                                                                                                            : "FAIL",
+                   a.rounds, errs.empty() ? 0 : errs.back());
         }
     }
 
@@ -677,6 +679,7 @@ int main(int argc, char *argv[])
             PrintLabel("cont (receiver watermark scatter, ack back)");
             uint64_t sumScatterUs = 0;
             uint64_t sumTailUs = 0;
+            uint64_t sumAckUs = 0; /* 收端"散完 → ack 写完"的耗时：用来拆 e2e 里不属于 transport 的那部分 */
             /* staging / 离散目标地址固定，一次性解析（GVA==VA，无每轮转换开销） */
             std::vector<void *> srcVas(a.count), dstVas(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
@@ -695,7 +698,7 @@ int main(int argc, char *argv[])
             std::vector<uint64_t> donePerEp(links, 0);
             std::vector<uint64_t> endPerEp(links, 0);
             uint64_t expect = 1; /* 与发端 seq 对齐，用于 ack 值 */
-            std::vector<uint64_t> scatterCosts, tailCosts; /* 跑完后统一打印 */
+            std::vector<uint64_t> scatterCosts, tailCosts, ackCosts; /* 跑完后统一打印 */
             std::vector<std::string> arrivalLines;         /* 各批数据可见时刻(相对本轮起点,us)，用于确认重叠 */
             std::vector<int> errs;
             std::vector<VerifyResult> stagVerifies, dispVerifies;
@@ -758,7 +761,10 @@ int main(int argc, char *argv[])
                    每轮之间有 RoundGap 隔离，校验期间不会被下一轮覆盖。 */
                 *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = expect;
                 smem_copy_params ap{HostPtr(selfGva + ackOff), HostPtr(peerGva + ackOff), sizeof(expect), nullptr};
+                const uint64_t ta0 = NowUs();
                 const int32_t ackRet = smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
+                const uint64_t ta1 = NowUs();
+                const uint64_t ackUs = ta1 - ta0; /* 本端"写完 ack"耗时（同步接口，含投递等） */
                 if (ackRet != 0) {
                     printf("cont receiver ack write failed at iter %u ret=%d\n", r, ackRet);
                     break;
@@ -768,8 +774,10 @@ int main(int argc, char *argv[])
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     sumScatterUs += scatterUs;
                     sumTailUs += tailUs;
+                    sumAckUs += ackUs;
                     scatterCosts.push_back(scatterUs);
                     tailCosts.push_back(tailUs);
+                    ackCosts.push_back(ackUs);
                     arrivalLines.push_back(arrivals);
                     errs.push_back((vStag.ok && vDisp.ok) ? 0 : 1);
                     stagVerifies.push_back(vStag);
@@ -779,9 +787,10 @@ int main(int argc, char *argv[])
                 ++expect;
             }
             if (!scatterCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
-                printf("cont receiver last_round err=%d scatter_us=%llu tail_us=%llu arrivals_us=[%s]\n", errs.back(),
-                       static_cast<unsigned long long>(scatterCosts.back()),
-                       static_cast<unsigned long long>(tailCosts.back()), arrivalLines.back().c_str());
+                printf("cont receiver last_round err=%d scatter_us=%llu tail_us=%llu ack_us=%llu arrivals_us=[%s]\n",
+                       errs.back(), static_cast<unsigned long long>(scatterCosts.back()),
+                       static_cast<unsigned long long>(tailCosts.back()),
+                       static_cast<unsigned long long>(ackCosts.back()), arrivalLines.back().c_str());
             }
             for (uint32_t k = 0; k < stagVerifies.size(); ++k) {
                 if (!stagVerifies[k].ok) {
@@ -795,9 +804,10 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu (rounds=%u) verify=%s\n",
+            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu ack_avg_us=%llu (rounds=%u) verify=%s\n",
                    static_cast<unsigned long long>(sumScatterUs / a.rounds),
-                   static_cast<unsigned long long>(sumTailUs / a.rounds), a.rounds,
+                   static_cast<unsigned long long>(sumTailUs / a.rounds),
+                   static_cast<unsigned long long>(sumAckUs / a.rounds), a.rounds,
                    (std::all_of(stagVerifies.begin(), stagVerifies.end(),
                                 [](const VerifyResult &v) { return v.ok; }) &&
                     std::all_of(dispVerifies.begin(), dispVerifies.end(),
