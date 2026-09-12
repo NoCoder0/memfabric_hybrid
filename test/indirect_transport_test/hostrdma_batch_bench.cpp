@@ -384,16 +384,19 @@ int main(int argc, char *argv[])
     printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu rounds=%u chunk=%u mode=%s\n", a.role.c_str(),
            a.rank, a.count, static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride),
            a.rounds, a.chunk, a.mode.c_str());
-    /* 链路档位：hcom-url 含 ';'（多个 url）即为双卡/双连接，否则单卡/单连接 */
-    uint32_t links = 1;
+    /* 链路档位：库侧**恒为 1 条 transport 链路** —— 多网卡由 HCOM 在同一个 service 内部
+       MultiRail 建多条 rail 并自动分流（库侧 epCount_ = 1）。所以 bench 的 links 也必须恒为 1：
+       水位槽个数、每链路负责的块区间都要和库一致，否则两端布局错位、收端永远等不到水位。
+       hcom-url 里的 url 个数只决定库用几张网卡，**不参与 bench 的布局计算**。 */
+    uint32_t urlCount = 1;
     for (char c : a.hcomUrl) {
         if (c == ';') {
-            ++links;
+            ++urlCount;
         }
     }
-    const bool dualUrl = links > 1;
-    printf("[bench] link-mode=%s links=%u hcom-url=%s\n", dualUrl ? "multi-link" : "single-link", links,
-           a.hcomUrl.c_str());
+    const uint32_t links = 1;
+    printf("[bench] link-mode=%s url-count=%u links=%u hcom-url=%s\n",
+           urlCount > 1 ? "multi-nic (lib multirail)" : "single-nic", urlCount, links, a.hcomUrl.c_str());
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)               连续 staging（接收侧）
