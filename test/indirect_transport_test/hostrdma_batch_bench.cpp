@@ -25,7 +25,9 @@
  *
  * 轮次同步与测量：收端把 600 块全部散完后向发端写回一次 ack(值=轮次号)，发端等 ack 才进下一轮，
  *   轮次天然隔离；发端用**同一个时钟**据此测出真端到端 e2e_us（含收端 scatter + ack 回程，约几 us）。
- *   两端每轮跑完另各空转 RoundGap(--gap-ms，默认 5000ms，计时区外)，兼作收端校验的保护窗口。
+ *   两端每轮跑完另各空转 RoundGap(--gap-ms，默认 5000ms，计时区外)。
+ *   收端校验在所有轮次跑完之后只做一次 —— 它排在每轮关键路径上会推迟收端回到"等水位"的时间，
+ *   把发端测到的 e2e 污染掉（实测会让紧随其后的 ack 从几十 us 变成 ~4ms）。
  *   transport_us（发端单方）只含"写数据 + 逐批水位"，不含收端，用于与 e2e_us 对照看收端贡献。
  *
  * 每个场景跑 --rounds 轮，只打印**最后一轮**和**平均值**（避免多轮刷屏）。
@@ -680,8 +682,6 @@ int main(int argc, char *argv[])
             uint64_t sumScatterUs = 0;
             uint64_t sumTailUs = 0;
             uint64_t sumAckUs = 0; /* 收端"散完 → ack 写完"的耗时：用来拆 e2e 里不属于 transport 的那部分 */
-            uint64_t sumVerifyUs = 0; /* 收端每轮校验耗时（排在 ack 之后，会推迟下一轮响应） */
-            uint64_t lastVerifyUs = 0;
             /* staging / 离散目标地址固定，一次性解析（GVA==VA，无每轮转换开销） */
             std::vector<void *> srcVas(a.count), dstVas(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
@@ -702,8 +702,7 @@ int main(int argc, char *argv[])
             uint64_t expect = 1; /* 与发端 seq 对齐，用于 ack 值 */
             std::vector<uint64_t> scatterCosts, tailCosts, ackCosts; /* 跑完后统一打印 */
             std::vector<std::string> arrivalLines;         /* 各批数据可见时刻(相对本轮起点,us)，用于确认重叠 */
-            std::vector<int> errs;
-            std::vector<VerifyResult> stagVerifies, dispVerifies;
+            bool aborted = false;                          /* 中途超时/出错则不再校验 */
             for (uint32_t r = 0; r < kTotal; ++r) {
                 const uint64_t roundStart = static_cast<uint64_t>(r) * a.count;
                 { /* 本轮每条 link 负责的块区间（全局块号） */
@@ -756,84 +755,63 @@ int main(int argc, char *argv[])
                 if (timedOut) {
                     printf("cont receiver TIMEOUT at iter %u: 对端没在推进水位（检查两端 links 数/mode 是否一致、swap 是否已关）\n",
                            r);
+                    aborted = true;
                     break;
                 }
-                /* 计时区之外：先把"本轮 600 块全部散完"写回发端（发端用同一时钟据此测端到端），
-                   再做整块校验。staging 反映"传输是否完整正确"，离散目标反映"scatter 是否正确"。
-                   每轮之间有 RoundGap 隔离，校验期间不会被下一轮覆盖。 */
+                /* 计时区之外：把"本轮 600 块全部散完"写回发端（发端用同一时钟据此测端到端）。
+                   **校验不在这里做** —— 它排在收端每轮的关键路径上，会把收端回到"等水位"的时间推迟，
+                   从而污染发端测到的 e2e（实测会让紧随其后的 ack 从几十 us 变成 ~4ms）。
+                   轮次隔离由 ack 保证（发端收不到 ack 就不会开下一轮），不依赖校验占位置。
+                   校验改为所有轮次跑完后只做一次（见循环之后）。 */
                 *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = expect;
-                /* ack 走 batch 接口（单元素）：与数据面同一套"异步 post + counter stream + Synchronize"
-                   机制。原先是单元素同步接口 smem_bm_copy（内部 ChannelPut），在收端实测 4ms，
-                   而发端写同样的 8 字节 flag 却只要几十 us —— 这里做 A/B 对照，看是不是同步路径的问题。 */
-                void *ackSrc[1] = {HostPtr(selfGva + ackOff)};
-                void *ackDst[1] = {HostPtr(peerGva + ackOff)};
-                uint64_t ackSize[1] = {sizeof(expect)};
-                smem_batch_copy_params ackParam{};
-                ackParam.sources = ackSrc;
-                ackParam.destinations = ackDst;
-                ackParam.dataSizes = ackSize;
-                ackParam.batchSize = 1;
+                smem_copy_params ap{HostPtr(selfGva + ackOff), HostPtr(peerGva + ackOff), sizeof(expect), nullptr};
                 const uint64_t ta0 = NowUs();
-                const int32_t ackRet = smem_bm_copy_batch(bm, &ackParam, SMEMB_COPY_AUTO, 0);
+                const int32_t ackRet = smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
                 const uint64_t ta1 = NowUs();
-                const uint64_t ackUs = ta1 - ta0; /* 本端"写完 ack"耗时（含投递与同步等待） */
+                const uint64_t ackUs = ta1 - ta0; /* 本端"写完 ack"耗时（同步接口，含投递等待） */
                 if (ackRet != 0) {
                     printf("cont receiver ack write failed at iter %u ret=%d\n", r, ackRet);
+                    aborted = true;
                     break;
                 }
-                VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
-                VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
-                const uint64_t verifyUs = NowUs() - ta1; /* 校验耗时：它排在 ack 之后，会推迟收端回到
-                                                            下一轮等水位的时间，从而抬高发端测到的 e2e */
-                lastVerifyUs = verifyUs;
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
                     sumScatterUs += scatterUs;
                     sumTailUs += tailUs;
                     sumAckUs += ackUs;
-                    sumVerifyUs += verifyUs;
                     scatterCosts.push_back(scatterUs);
                     tailCosts.push_back(tailUs);
                     ackCosts.push_back(ackUs);
                     arrivalLines.push_back(arrivals);
-                    errs.push_back((vStag.ok && vDisp.ok) ? 0 : 1);
-                    stagVerifies.push_back(vStag);
-                    dispVerifies.push_back(vDisp);
                 }
                 RoundGap(a.gapMs);
                 ++expect;
             }
             if (!scatterCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
-                printf("cont receiver last_round err=%d scatter_us=%llu tail_us=%llu ack_us=%llu verify_us=%llu "
-                       "arrivals_us=[%s]\n",
-                       errs.back(), static_cast<unsigned long long>(scatterCosts.back()),
+                printf("cont receiver last_round scatter_us=%llu tail_us=%llu ack_us=%llu arrivals_us=[%s]\n",
+                       static_cast<unsigned long long>(scatterCosts.back()),
                        static_cast<unsigned long long>(tailCosts.back()),
-                       static_cast<unsigned long long>(ackCosts.back()),
-                       static_cast<unsigned long long>(lastVerifyUs), arrivalLines.back().c_str());
+                       static_cast<unsigned long long>(ackCosts.back()), arrivalLines.back().c_str());
             }
-            for (uint32_t k = 0; k < stagVerifies.size(); ++k) {
-                if (!stagVerifies[k].ok) {
-                    PrintVerifyFail("cont receiver staging", k, stagVerifies[k]);
-                    break;
+            /* 校验只做一次（所有轮次跑完之后）：此时没有任何后续写入，staging 与离散目标都是最后一轮的
+               真实内容，结果可信；而它不再占用每轮关键路径，不影响 e2e 口径。 */
+            if (!aborted) {
+                const uint64_t tv0 = NowUs();
+                VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
+                VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
+                const uint64_t verifyUs = NowUs() - tv0;
+                if (!vStag.ok) {
+                    PrintVerifyFail("cont receiver staging", 0, vStag);
                 }
-            }
-            for (uint32_t k = 0; k < dispVerifies.size(); ++k) {
-                if (!dispVerifies[k].ok) {
-                    PrintVerifyFail("cont receiver scattered", k, dispVerifies[k]);
-                    break;
+                if (!vDisp.ok) {
+                    PrintVerifyFail("cont receiver scattered", 0, vDisp);
                 }
+                printf("cont receiver one-shot verify=%s (staging+scattered, 末轮, %lluus)\n",
+                       (vStag.ok && vDisp.ok) ? "OK" : "FAIL", static_cast<unsigned long long>(verifyUs));
             }
-            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu ack_avg_us=%llu verify_avg_us=%llu (rounds=%u) "
-                   "verify=%s\n",
+            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu ack_avg_us=%llu (rounds=%u)\n",
                    static_cast<unsigned long long>(sumScatterUs / a.rounds),
                    static_cast<unsigned long long>(sumTailUs / a.rounds),
-                   static_cast<unsigned long long>(sumAckUs / a.rounds),
-                   static_cast<unsigned long long>(sumVerifyUs / a.rounds), a.rounds,
-                   (std::all_of(stagVerifies.begin(), stagVerifies.end(),
-                                [](const VerifyResult &v) { return v.ok; }) &&
-                    std::all_of(dispVerifies.begin(), dispVerifies.end(),
-                                [](const VerifyResult &v) { return v.ok; }))
-                       ? "OK"
-                       : "FAIL");
+                   static_cast<unsigned long long>(sumAckUs / a.rounds), a.rounds);
         }
     }
 
