@@ -68,6 +68,7 @@ constexpr uint64_t kDefaultStride = 4096; /* 离散摆放间隔 */
 constexpr uint64_t kDefaultDramMB = 16;   /* 每 rank 对称 host 内存，需覆盖 源区+目标区+staging+flag */
 constexpr uint32_t kDefaultChunk = 128;   /* cont: 每 chunk 个小 IO 发一次 flag */
 constexpr uint32_t kDefaultGapMs = 5000;  /* 每轮结束后的空转(ms)，计时区外 */
+constexpr uint64_t kSpinTimeoutUs = 5ULL * 1000 * 1000; /* 自旋等水位的上限：超过就报错退出，避免静默挂死 */
 
 struct BenchArgs {
     std::string role; /* local / remote */
@@ -492,9 +493,21 @@ int main(int argc, char *argv[])
             uint64_t expect = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
                 const uint64_t t0 = NowUs(); /* receiver 时延 = 本轮等完成 flag 的耗时（纯等待，不含任何校验） */
+                bool timedOut = false;
+                const uint64_t tw0 = NowUs();
                 while (*flagVa < expect) {
-                } /* 自旋等 flag 水位推进（用 < 而非 != ，避免发端领先时两端失步死等） */
+                    if (NowUs() - tw0 > kSpinTimeoutUs) { /* 自旋等 flag 水位推进（用 < 而非 != ，避免发端领先时两端失步死等） */
+                        timedOut = true;
+                        break;
+                    }
+                }
                 const uint64_t t1 = NowUs();
+                if (timedOut) {
+                    printf("baseline observer TIMEOUT at iter %u: flag=%llu expect=%llu —— 对端没在推进水位"
+                           "（两端 links 数 / mode 是否一致？swap 是否已关？）\n",
+                           r, static_cast<unsigned long long>(*flagVa), static_cast<unsigned long long>(expect));
+                    break;
+                }
                 /* 计时区之外：拷贝完成后整块校验本轮数据（身份 tag + memcmp 内容）。
                    每轮之间有 RoundGap 隔离，校验期间不会被下一轮直写覆盖，结果可信。 */
                 VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
@@ -562,7 +575,17 @@ int main(int argc, char *argv[])
                 }
                 /* 等收端"600 块全部散完"写回的 ack：同一时钟 → 真端到端 */
                 auto *ackVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + ackOff));
+                bool ackTimedOut = false;
+                const uint64_t ta0 = NowUs();
                 while (*ackVa != seq) {
+                    if (NowUs() - ta0 > kSpinTimeoutUs) {
+                        ackTimedOut = true;
+                        break;
+                    }
+                }
+                if (ackTimedOut) {
+                    printf("cont sender TIMEOUT at iter %u: 等不到收端 ack（收端是否卡住/水位未推进）\n", r);
+                    break;
                 }
                 const uint64_t t1 = NowUs();
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
@@ -626,7 +649,13 @@ int main(int argc, char *argv[])
                 uint64_t scatterUs = 0;       /* 本轮 scatter 累计耗时（只算 memcpy，不含轮询等待） */
                 uint64_t tailUs = 0;          /* 最后一批的 scatter 耗时 */
                 std::string arrivals;
+                bool timedOut = false;
+                const uint64_t tw0 = NowUs();
                 for (;;) {
+                    if (NowUs() - tw0 > kSpinTimeoutUs) {
+                        timedOut = true;
+                        break;
+                    }
                     bool allDone = true;
                     for (uint32_t e = 0; e < links; ++e) {
                         const uint64_t w = *wmVas[e];
@@ -651,6 +680,11 @@ int main(int argc, char *argv[])
                     if (allDone) {
                         break; /* 自旋等水位推进（小包完成很快，不用 sleep） */
                     }
+                }
+                if (timedOut) {
+                    printf("cont receiver TIMEOUT at iter %u: 对端没在推进水位（检查两端 links 数/mode 是否一致、swap 是否已关）\n",
+                           r);
+                    break;
                 }
                 /* 计时区之外：先把"本轮 600 块全部散完"写回发端（发端用同一时钟据此测端到端），
                    再做整块校验。staging 反映"传输是否完整正确"，离散目标反映"scatter 是否正确"。

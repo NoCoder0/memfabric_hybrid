@@ -1329,9 +1329,12 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
     // 只有"数据和水位在同一条 channel 上"才能靠 QP 内保序保证水位不超前，所以不能共用一份水位。
     // 契约（见 hybm_def.h）：对端水位槽 = progressDest + e*8；本端源槽 = progressSrc + (子块号*K + e)*8。
     if (!transportManager_->AllLinksReady(options.destRankId)) {
-        BM_LOG_WARN("multi link not all ready, progress ignored, linkCount: " << linkCount
-                                                                             << " destRank:" << options.destRankId);
-        return transportManager_->WriteRemoteBatchAsync(options.destRankId, descriptor);
+        // 进度模式下绝不能退化成普通提交：对端在按水位消费数据，一个水位都不写就会一直等下去。
+        // 链路未就绪属于配置/网络异常，直接报错让调用方感知，避免静默挂死。
+        BM_LOG_ERROR("multi link not all ready while progress enabled, linkCount: "
+                     << linkCount << " destRank:" << options.destRankId
+                     << ", check that both sides configure the same number of links");
+        return BM_NOT_CONNECTED;
     }
     const size_t base = total / linkCount;
     const size_t rem = total % linkCount;
