@@ -25,7 +25,7 @@
  *
  * 轮次同步与测量：收端把 600 块全部散完后向发端写回一次 ack(值=轮次号)，发端等 ack 才进下一轮，
  *   轮次天然隔离；发端用**同一个时钟**据此测出真端到端 e2e_us（含收端 scatter + ack 回程，约几 us）。
- *   两端每轮跑完另各空转 RoundGap(--gap-ms，默认 5000ms，计时区外)。
+ *   两端每轮跑完另各空转 RoundGap(--gap-ms，**默认 0**，计时区外)。
  *   收端校验在所有轮次跑完之后只做一次 —— 它排在每轮关键路径上会推迟收端回到"等水位"的时间，
  *   把发端测到的 e2e 污染掉（实测会让紧随其后的 ack 从几十 us 变成 ~4ms）。
  *   transport_us（发端单方）只含"写数据 + 逐批水位"，不含收端，用于与 e2e_us 对照看收端贡献。
@@ -69,7 +69,9 @@ constexpr uint64_t kDefaultSize = 1024;
 constexpr uint64_t kDefaultStride = 4096; /* 离散摆放间隔 */
 constexpr uint64_t kDefaultDramMB = 16;   /* 每 rank 对称 host 内存，需覆盖 源区+目标区+staging+flag */
 constexpr uint32_t kDefaultChunk = 128;   /* cont: 每 chunk 个小 IO 发一次 flag */
-constexpr uint32_t kDefaultGapMs = 5000;  /* 每轮结束后的空转(ms)，计时区外 */
+constexpr uint32_t kDefaultGapMs = 0;     /* 每轮结束后的空转(ms)，默认 0：轮次隔离已由 ack 保证。
+                                             空转会让收端的发送路径长时间静默，下一轮那次 8 字节 ack 从几十 us
+                                             变成 ~4ms（实测），从而把 e2e 抬高好几倍。需要隔轮校验时才调大。 */
 constexpr uint64_t kSpinTimeoutUs = 5ULL * 1000 * 1000; /* 自旋等水位的上限：超过就报错退出，避免静默挂死 */
 
 struct BenchArgs {
@@ -101,7 +103,7 @@ void Usage(const char *prog)
             "  --stride=N                 离散摆放间隔(默认4096)\n"
             "  --dram-mb=N                每 rank 对称 host 内存 MB(默认16)\n"
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
-            "  --gap-ms=N                 每轮之后的空转毫秒数，计时区外(默认5000；调试可调小)\n"
+            "  --gap-ms=N                 每轮之后的空转毫秒数，计时区外(默认0；调大会拖慢收端 ack，只在需要隔轮校验时用)\n"
             "  --rounds=N                 每场景轮数(默认5)\n"
             "  --old=1                    老版口径(默认0，跑 e30bf29 等无聚合 MF 用):\n"
             "                             只跑直写 baseline、只用单 url、无 staging/scatter\n"
@@ -189,9 +191,9 @@ uint64_t NowUs()
         std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
 }
 
-/* 每轮结束后两端各自空转（计时区之外），把轮次隔离开，避免下一轮写覆盖上一轮
-   收端正准备读取/校验的地址。只增加总时长，不影响任何 cost_us。
-   默认 5000ms；调试时用 --gap-ms 调小。 */
+/* 每轮结束后两端各自空转（计时区之外）。默认 0：轮次隔离由 ack 保证（发端收不到 ack 不会开下一轮），
+   不需要空转。空转会拖慢收端下一轮那次 8 字节 ack（发送路径长时间静默，实测几十 us → ~4ms），
+   把发端测到的 e2e 抬高好几倍，所以只有需要隔轮校验时才调大。 */
 void RoundGap(uint32_t gapMs)
 {
     std::this_thread::sleep_for(std::chrono::milliseconds(gapMs));
