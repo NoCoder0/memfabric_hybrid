@@ -195,39 +195,50 @@ void RoundGap(uint32_t gapMs)
     std::this_thread::sleep_for(std::chrono::milliseconds(gapMs));
 }
 
-/* 两端就绪握手（计时区之外）：确认对端已完成 smem_bm_create 且 RDMA 链路真的可用。
-   只判"本端写一次成功"不可靠：对端 GVA 在【已 reserve 未 join】窗口里方向推导会直接失败，
-   在【还没 reserve】窗口里又会被 GetLocalMemoryType 兜底成 HOST 类型、方向被误判成"接收"而
-   静默返回 0（什么都没写）。所以必须双向确认：本端反复把 MAGIC_SELF 写到对端槽，同时等本端槽
-   出现对端的 MAGIC_PEER。任一侧方向被误判都收不到对方标记，最终报错退出而不是跑出一堆假数据。 */
-constexpr uint64_t kMagicRank0 = 0x524541445930ULL;       /* "READY0" */
-constexpr uint64_t kMagicRank1 = 0x524541445931ULL;       /* "READY1" */
+/* 两端就绪握手（计时区之外）：确认对端已完成 smem_bm_create 且 RDMA 链路**双向**可用。
+   本端只【写对端槽】、只【读本端槽】（本端槽由对端写），所以不会把自己收到的标记覆盖掉。
+   两阶段：①两端先互换 phase1，证明"我起来了、且我的写能到你"；
+          ②本端见到对端 phase1 后升到 phase2，只有见到对端 phase2 才算握上。
+   为什么必须两阶段：若本端写不通、只有对端写能通（对端 VA 还没登记/链路单向），只判"我收到了
+   对端标记"会误判成功，带着其实没握上的状态进场景 —— 早跑的一端场景超时后直接 destroy 退出，
+   晚跑的一端随即因为对端 VA 被摘掉而 direction 推导失败。
+   完成本端 phase2 需要收到对端 phase2，而对端 phase2 是以"收到本端 phase2"为前提的，
+   于是【本端完成 ⇒ 对端收到过本端的写 ⇒ 本端的写真的通】，两个方向都被证明过。 */
+constexpr uint64_t kReadyMagicBase = 0x524541445900ULL;   /* "READY" 前缀 */
+constexpr uint32_t kReadyRetryMs = 200;                   /* 重发/轮询间隔 */
 constexpr uint64_t kReadyTimeoutUs = 30ULL * 1000 * 1000; /* 给对端留 30s 启动时间 */
 
-bool WaitPeerReady(smem_bm_t bm, bool isLocal, uint64_t selfGva, uint64_t peerGva, uint64_t readyOff)
+uint64_t ReadyMagic(uint32_t rank, uint32_t phase)
+{
+    return kReadyMagicBase + (static_cast<uint64_t>(rank) << 8) + phase;
+}
+
+bool WaitPeerReady(smem_bm_t bm, uint32_t selfRank, uint32_t peerRank, uint64_t selfGva, uint64_t peerGva,
+                   uint64_t readyOff)
 {
     auto *selfSlot = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + readyOff));
-    const uint64_t selfMagic = isLocal ? kMagicRank0 : kMagicRank1;
-    const uint64_t peerMagic = isLocal ? kMagicRank1 : kMagicRank0;
+    const uint64_t peerP1 = ReadyMagic(peerRank, 1);
+    const uint64_t peerP2 = ReadyMagic(peerRank, 2);
+    uint32_t phase = 1;
+    uint64_t out = ReadyMagic(selfRank, phase);
     const uint64_t t0 = NowUs();
     printf("[bench] waiting for peer ready (handshake, up to %llus)...\n",
            static_cast<unsigned long long>(kReadyTimeoutUs / 1000000ULL));
     for (;;) {
-        *selfSlot = selfMagic; /* 重发前重写，避免对端把它当脏值清掉 */
-        smem_copy_params p{HostPtr(selfGva + readyOff), HostPtr(peerGva + readyOff), sizeof(uint64_t), nullptr};
-        (void)smem_bm_copy(bm, &p, SMEMB_COPY_AUTO, 0); /* 链路未建立时返回非 0，下一轮重发 */
-        const uint64_t p0 = NowUs();
-        while (*selfSlot != peerMagic) {
-            if (NowUs() - p0 > 2ULL * 1000 * 1000) { /* 2s 没等到就重发一次标记 */
-                break;
-            }
+        smem_copy_params p{&out, HostPtr(peerGva + readyOff), sizeof(out), nullptr};
+        (void)smem_bm_copy(bm, &p, SMEMB_COPY_AUTO, 0); /* 失败就下一轮重发，不据此判成功 */
+        const uint64_t rv = *selfSlot;
+        if (phase == 1 && rv == peerP1) {
+            phase = 2; /* 对端在且写得到我：告诉它"我也在，且我写得到你" */
+            out = ReadyMagic(selfRank, phase);
         }
-        if (*selfSlot == peerMagic) {
+        if (rv == peerP2) {
             return true;
         }
         if (NowUs() - t0 > kReadyTimeoutUs) {
             return false;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kReadyRetryMs));
     }
 }
 
@@ -464,7 +475,7 @@ int main(int argc, char *argv[])
     /* 就绪握手：链路没建好就进场景，早起的一端会在等 flag 时超时并提前退出，
        晚起的一端随即因为对端 VA 被摘掉而 direction 推导失败（见 WaitPeerReady 注释）。
        两端都过了这一步才开始跑，因此两个进程按任意顺序、隔几秒启动都行。 */
-    if (!WaitPeerReady(bm, isLocal, selfGva, peerGva, readyOff)) {
+    if (!WaitPeerReady(bm, a.rank, peerRank, selfGva, peerGva, readyOff)) {
         fprintf(stderr,
                 "[bench] wait peer ready TIMEOUT: 对端未启动或链路未建立"
                 "（确认两端 --hcom-url / --mode 一致，store 无残留进程）\n");
