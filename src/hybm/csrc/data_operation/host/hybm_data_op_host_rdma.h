@@ -90,6 +90,10 @@ private:
     void PreRegisterLocalMr(hybm_copy_params &params, hybm_data_copy_direction direction) noexcept;
     void BatchPreRegisterLocalMr(hybm_batch_copy_params &params, hybm_data_copy_direction direction) noexcept;
     void BatchUnRegisterLocalMr(hybm_batch_copy_params &params, hybm_data_copy_direction direction) noexcept;
+    /* Submit the descriptor in chunks of options.progressInterval and carry an 8-byte progress watermark
+     * write after every chunk. All submits go through the same channel in order and the caller synchronizes
+     * once at the end, so it is still one batch submission from the outside. */
+    Result WriteRemoteBatchWithProgress(const CopyDescriptor &descriptor, const ExtOptions &options) noexcept;
 
     bool inited_{false};
     uint32_t rankId_{0};

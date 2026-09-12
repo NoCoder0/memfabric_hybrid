@@ -9,16 +9,19 @@
  * 对称内存布局（每 rank 各自贡献 localDRAMSize，GVA 空间按 rank 排列）：
  *   [0, stagingEnd)                连续 staging（接收侧），默认 600KB
  *   [dispBase, dispBase+count*stride)   600 个离散目标/源（stride 间隔模拟离散）
- *   [dramBytes-8, dramBytes)       完成 flag 槽（段尾，8B；值=全局累计已完成块数，跨轮单调不归零）
+ *   [scratchOff, flagOff)          进度源槽数组（发送端用；每个 flag 独占一格 8B，写入后不覆写）
+ *   [dramBytes-8, dramBytes)       水位/完成槽（段尾 8B；值=全局累计已完成块数，跨轮单调不归零）
  *   remote(rank1) 的 600 源放在自己段的 0..count*stride（离散）；
  *   local(rank0)  的 staging/flag/目标放在自己段内。
  *
  * 场景：
  *   baseline : remote 600x1KB batch 直写 local 600 个离散目标（现有实现，无 staging/scatter）
- *   cont     : remote 600x1KB 按 --chunk(默认128) 分块写 local 连续 staging，每批拷完立刻把
- *              "全局累计已完成块数"写给对端 flag 槽；local 每次见到 flag 推进就增量 scatter
- *              已到达的那一段（staging 连续，偏移 = 块号*size）。这样后续批次的 RDMA 写时延
- *              与本地 scatter 时延在两端重叠，降低端到端时延。
+ *   cont     : remote 600x1KB 写 local 连续 staging，进度通知由 smem_bm_copy_batch 接口内部完成
+ *              （progressSrc/progressDest/progressBase/progressInterval）：每 --chunk(默认128) 个 IO
+ *              拷完，接口自动向对端水位槽单边写一次 (progressBase + 已完成个数)；每格的源槽独立
+ *              不复用（网卡处理 WQE 时才读源，复用会让水位提前）。local 见到水位推进就增量 scatter
+ *              已到达的那一段（staging 连续，偏移 = 块号*size）。这样后续批次的 RDMA 写时延与本地
+ *              scatter 时延在两端重叠，降低端到端时延。
  *
  * 轮次同步：不用 ack，两端每轮跑完各自空转 RoundGap(kRoundGapMs)，把轮次彻底隔离开
  *   （收端有充足时间散完+校验，发端才进下一轮），因此不存在跨轮覆盖，也不会两端失步。
@@ -327,14 +330,16 @@ int main(int argc, char *argv[])
        [0, stagingEnd)               连续 staging（接收侧）
        [stagingEnd, +4096)           预留 gap
        [dispBase, dispBase+count*stride)  600 个离散目标/源（stride 间隔模拟离散）
-       [dramBytes-8, dramBytes)        完成 flag 槽（放段尾，避开源/目标/staging 区；
-                                       cont 值 = 全局累计已完成块数，跨轮单调、不归零） */
+       [scratchOff, flagOff)          进度源槽数组（发送端用；每个 flag 一个 8B，写入后不覆写）
+       [dramBytes-8, dramBytes)        完成/水位槽（段尾 8B；cont 值 = 全局累计已完成块数，跨轮单调不归零） */
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
     const uint64_t dispBase = stagingEnd + 4096;                 /* 离散源/目标区起点 */
     const uint64_t needBytes = dispBase + a.count * a.stride;
-    const uint64_t flagOff = dramBytes - 8;                      /* 完成 flag 槽：段尾 8B */
-    if (needBytes > flagOff) {
+    const uint32_t flagsPerRound = (a.count + a.chunk - 1) / a.chunk;        /* cont 每轮 flag 个数 */
+    const uint64_t flagOff = dramBytes - 8;                                  /* 完成/水位槽：段尾 8B */
+    const uint64_t scratchOff = flagOff - AlignUp(flagsPerRound * 8ULL, 64); /* 进度源槽数组起点 */
+    if (needBytes > scratchOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
@@ -369,10 +374,10 @@ int main(int argc, char *argv[])
     const uint64_t selfGva = reinterpret_cast<uint64_t>(smem_bm_ptr_by_mem_type(bm, SMEM_MEM_TYPE_HOST, a.rank));
     const uint32_t peerRank = 1 - a.rank;
     const uint64_t peerGva = reinterpret_cast<uint64_t>(smem_bm_ptr_by_mem_type(bm, SMEM_MEM_TYPE_HOST, peerRank));
-    printf("[bench] selfGva=0x%llx peerGva=0x%llx stagingEnd=%llu flagOff=%llu dispBase=%llu\n",
+    printf("[bench] selfGva=0x%llx peerGva=0x%llx stagingEnd=%llu flagOff=%llu scratchOff=%llu dispBase=%llu\n",
            static_cast<unsigned long long>(selfGva), static_cast<unsigned long long>(peerGva),
            static_cast<unsigned long long>(stagingEnd), static_cast<unsigned long long>(flagOff),
-           static_cast<unsigned long long>(dispBase));
+           static_cast<unsigned long long>(scratchOff), static_cast<unsigned long long>(dispBase));
     if (selfGva == 0 || peerGva == 0) {
         fprintf(stderr, "get gva failed\n");
         return 1;
@@ -423,7 +428,11 @@ int main(int argc, char *argv[])
             uint64_t seq = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
                 const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 拷贝接口(含写完成 flag)从调用到返回 */
-                smem_batch_copy_params p{srcs.data(), dsts.data(), sizes.data(), a.count, nullptr};
+                smem_batch_copy_params p{};
+                p.sources = srcs.data();
+                p.destinations = dsts.data();
+                p.dataSizes = sizes.data();
+                p.batchSize = a.count;
                 int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
                 if (ret == 0) {
                     *reinterpret_cast<uint64_t *>(HostPtr(selfGva + flagOff)) = seq;
@@ -500,54 +509,40 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* 场景 2：cont —— remote 分块写 local 连续 staging，每批写完推进一次 flag（全局累计块数）；
-       local 见 flag 推进就增量 scatter。两端不做 ack，靠每轮 RoundGap 隔离轮次。 */
+    /* 场景 2：cont —— 进度通知由 smem_bm_copy_batch **接口内部**完成：每 a.chunk 个 IO 拷完，
+       接口自动向对端 flag 槽单边写一次 (progressBase + 已完成个数)；local 见水位推进就增量 scatter。
+       应用只填参数、只调一次，不再在接口外单独发 flag。两端不做 ack，靠每轮 RoundGap 隔离轮次。 */
     if (runCont) {
         if (!isLocal) {
-            PrintLabel("cont (sender, chunked flag, no ack)");
+            PrintLabel("cont (sender, batch progress, no ack)");
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
                 srcs[i] = HostPtr(selfGva + i * a.stride); /* 离散源 */
                 dsts[i] = HostPtr(peerGva + i * a.size);   /* 连续 staging */
             }
-            /* 分块点：每 a.chunk 个 IO 提交一批、推进一次 flag（本轮已完成块数）。
-               600/128 => 128,256,384,512,600 共 5 次 flag */
-            std::vector<uint32_t> marks;
-            for (uint32_t done = 0; done < a.count; done += a.chunk) {
-                marks.push_back(std::min(done + a.chunk, a.count));
-            }
+            const uint32_t chunks = (a.count + a.chunk - 1) / a.chunk;
             uint64_t sumTransportUs = 0;
             std::vector<uint64_t> transportCosts; /* 热循环不打日志，跑完后统一打印 */
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
             for (uint32_t r = 0; r < kTotal; ++r) {
-                const uint64_t t0 = NowUs(); /* 起点：分块拷贝 + 逐批 flag（不等收端，无 ack） */
-                int32_t ret = 0;
-                for (size_t ci = 0; ci < marks.size() && ret == 0; ++ci) {
-                    const uint32_t begin = (ci == 0) ? 0 : marks[ci - 1];
-                    const uint32_t len = marks[ci] - begin;
-                    smem_batch_copy_params p{srcs.data() + begin, dsts.data() + begin, sizes.data() + begin, len,
-                                             nullptr};
-                    ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
-                    if (ret != 0) {
-                        break;
-                    }
-                    /* 本批拷贝接口是同步的（内部等写完成），因此这里可以立刻把进度写给对端 flag 槽：
-                       local 见到即提前 scatter 本批，与后续批次的 RDMA 写重叠。
-                       flag 值 = 全局累计已完成块数（跨轮单调、不归零），收端据此定位 staging 偏移。
-                       src 必须用本端已注册内存，故先写本端 flag 槽再单发过去。 */
-                    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + flagOff)) =
-                        static_cast<uint64_t>(r) * a.count + marks[ci];
-                    smem_copy_params fp{HostPtr(selfGva + flagOff), HostPtr(peerGva + flagOff), sizeof(uint64_t),
-                                        nullptr};
-                    ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
-                }
+                smem_batch_copy_params p{};
+                p.sources = srcs.data();
+                p.destinations = dsts.data();
+                p.dataSizes = sizes.data();
+                p.batchSize = a.count;
+                p.progressSrc = HostPtr(selfGva + scratchOff);       /* 本端进度源槽数组（每个 flag 一格） */
+                p.progressDest = HostPtr(peerGva + flagOff);         /* 对端水位槽（收端轮询的那个 8B） */
+                p.progressBase = static_cast<uint64_t>(r) * a.count; /* 跨轮单调、不归零 */
+                p.progressInterval = a.chunk;
+                const uint64_t t0 = NowUs(); /* 起点：一次接口调用（内部分块 + 逐批进度） */
+                const int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
                 const uint64_t t1 = NowUs();
                 if (ret != 0) {
                     printf("cont sender abort at iter %u ret=%d\n", r, ret);
                     break;
                 }
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
-                    const uint64_t transport = t1 - t0; /* 传输 = 全部分块写到 staging + 逐批 flag（不含收端） */
+                    const uint64_t transport = t1 - t0; /* 传输 = 全部分块写到 staging + 逐批进度（不含收端） */
                     sumTransportUs += transport;
                     transportCosts.push_back(transport);
                 }
@@ -557,8 +552,8 @@ int main(int argc, char *argv[])
                 printf("cont sender round %u transport_us=%llu\n", k,
                        static_cast<unsigned long long>(transportCosts[k]));
             }
-            printf("cont sender transport_avg_us=%llu chunks=%zu (rounds=%u, no ack)\n",
-                   static_cast<unsigned long long>(sumTransportUs / a.rounds), marks.size(), a.rounds);
+            printf("cont sender transport_avg_us=%llu chunks=%u interval=%u (rounds=%u, no ack)\n",
+                   static_cast<unsigned long long>(sumTransportUs / a.rounds), chunks, a.chunk, a.rounds);
             printf("cont sender note: end-to-end ~= transport_avg_us + receiver tail_avg_us\n");
         } else {
             PrintLabel("cont (receiver watermark scatter, no ack)");

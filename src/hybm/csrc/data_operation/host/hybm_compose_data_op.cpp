@@ -167,13 +167,23 @@ Result HostComposeDataOp::BatchDataCopy(hybm_batch_copy_params &params, hybm_dat
             destinations_group[j] = params.destinations[idx];
             dataSizes_group[j] = params.dataSizes[idx];
         }
-        hybm_batch_copy_params copyParams = {sources_group.data(), destinations_group.data(), dataSizes_group.data(),
-                                             groupSize};
+        hybm_batch_copy_params copyParams = {sources_group.data(),
+                                             destinations_group.data(),
+                                             dataSizes_group.data(),
+                                             groupSize,
+                                             params.progressSrc,
+                                             params.progressDest,
+                                             params.progressBase,
+                                             params.progressInterval};
         ExtOptions copyOptions{};
         copyOptions.srcRankId = p2pInfo.first;
         copyOptions.destRankId = p2pInfo.second;
         copyOptions.stream = options.stream;
         copyOptions.flags = options.flags;
+        copyOptions.progressSrc = options.progressSrc;
+        copyOptions.progressDest = options.progressDest;
+        copyOptions.progressBase = options.progressBase;
+        copyOptions.progressInterval = options.progressInterval;
         auto availableOps = GetPrioritedDataOperators(copyOptions);
         if (availableOps.empty()) {
             BM_LOG_ERROR("batch data copy from rank " << copyOptions.srcRankId << " to rank " << copyOptions.destRankId

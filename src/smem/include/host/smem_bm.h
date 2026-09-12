@@ -208,6 +208,10 @@ int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params, smem_bm_copy_
  *                              - destinations: Pointer to an array of destination addresses
  *                              - dataSizes: Pointer to an array of data lengths
  *                              - batchSize: Number of copy groups in the batch
+ *                              - progressSrc / progressDest / progressBase / progressInterval: optional progress
+ *                                notification, see smem_batch_copy_params. When enabled, every
+ *                                progressInterval elements are copied and then (progressBase + copied elements)
+ *                                is written once to progressDest by the interface itself.
  * @param t                [in] copy type, L2G, G2L, G2H, H2G
  * @param flags            [in] optional flags
  * @return 0 if successful

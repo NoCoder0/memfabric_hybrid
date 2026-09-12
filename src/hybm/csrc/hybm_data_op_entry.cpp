@@ -88,6 +88,12 @@ static int32_t BatchCopyByAutoGroup(MemEntity *entity, const hybm_batch_copy_par
         }
         groups[dir].push_back(i);
     }
+    // Progress notification follows the original element order, so it is only forwarded when all
+    // elements fall into a single direction group (the supported usage).
+    const bool forwardProgress = (groups.size() == 1U) && (params->progressInterval != 0U);
+    if (!forwardProgress && params->progressInterval != 0U) {
+        BM_LOG_WARN("batch copy progress ignored, elements span " << groups.size() << " direction groups");
+    }
     for (auto &[dir, indices] : groups) {
         std::vector<void *> subSrc;
         std::vector<void *> subDst;
@@ -100,8 +106,20 @@ static int32_t BatchCopyByAutoGroup(MemEntity *entity, const hybm_batch_copy_par
             subDst.push_back(params->destinations[idx]);
             subSizes.push_back(params->dataSizes[idx]);
         }
-        hybm_batch_copy_params subParams = {subSrc.data(), subDst.data(), subSizes.data(),
-                                            static_cast<uint32_t>(indices.size())};
+        // Progress notification follows the original element order, so it is only forwarded when all
+        // elements fall into a single direction group (the supported usage).
+        const bool forwardProgress = (groups.size() == 1U) && (params->progressInterval != 0U);
+        if (!forwardProgress && params->progressInterval != 0U) {
+            BM_LOG_WARN("batch copy progress ignored, elements span " << groups.size() << " direction groups");
+        }
+        hybm_batch_copy_params subParams = {subSrc.data(),
+                                            subDst.data(),
+                                            subSizes.data(),
+                                            static_cast<uint32_t>(indices.size()),
+                                            forwardProgress ? params->progressSrc : nullptr,
+                                            forwardProgress ? params->progressDest : nullptr,
+                                            forwardProgress ? params->progressBase : 0ULL,
+                                            forwardProgress ? params->progressInterval : 0U};
         auto ret = entity->BatchCopyData(subParams, dir, stream, flags);
         if (ret != BM_OK) {
             BM_LOG_ERROR("batch copy data failed, direction: " << dir << ", batchSize: " << indices.size()

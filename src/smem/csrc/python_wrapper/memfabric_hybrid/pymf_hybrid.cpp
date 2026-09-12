@@ -205,7 +205,7 @@ public:
             destinations[i] = reinterpret_cast<void *>(dsts[i]);
         }
         smem_batch_copy_params batch_params = {sources, destinations, sizes.data(), count,
-                                               reinterpret_cast<void *>(stream)};
+                                               reinterpret_cast<void *>(stream), nullptr, nullptr, 0, 0};
         auto ret = smem_bm_copy_batch(handle_, &batch_params, type, flags);
         delete[] ptr;
         return ret;
@@ -246,7 +246,7 @@ public:
         }
 
         smem_batch_copy_params batchParams = {sources, destinations, sizes.data(), count,
-                                              reinterpret_cast<void *>(stream)};
+                                              reinterpret_cast<void *>(stream), nullptr, nullptr, 0, 0};
         smem_batch_copy_result batchCopyResult = {batchResults, count};
         auto ret = smem_bm_copy_batch_partial_succeed(handle_, &batchParams, type, flags, &batchCopyResult);
         std::vector<int32_t> result(batchResults, batchResults + count);

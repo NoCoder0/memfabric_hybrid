@@ -139,6 +139,16 @@ typedef struct {
     const uint64_t *dataSizes;
     uint32_t batchSize;
     void *stream;
+    /* Optional batch copy progress notification. Every progressInterval elements copied, the interface
+     * writes (progressBase + copied elements) once to progressDest through a one-sided write, so the peer
+     * can consume the data by watermark earlier (for example scatter on the receiver side).
+     * Disabled when progressInterval == 0 or progressSrc / progressDest is null (behavior unchanged).
+     * progressSrc must point to local registered memory holding ceil(batchSize / progressInterval) slots
+     * of 8 bytes; the k-th watermark is written to progressSrc + k * 8 and never rewritten. */
+    void *progressSrc;
+    void *progressDest;
+    uint64_t progressBase;
+    uint32_t progressInterval;
 } smem_batch_copy_params;
 typedef smem_batch_copy_params smem_batch_copy_params_t; /* renamed smem_batch_copy_params_t */
 

@@ -11,6 +11,7 @@
 */
 
 #include <sys/mman.h>
+#include <algorithm>
 #include <memory>
 #include "hybm_space_allocator.h"
 #include "hybm_ptracer.h"
@@ -1231,10 +1232,19 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
     }
 
     if (!smallIoDes.counts.empty()) {
-        if (isPut) {
-            ret = transportManager_->WriteRemoteBatchAsync(options.destRankId, smallIoDes);
-        } else {
+        // 进度通知要求单链路：水位只走 ep0，多链路时数据分散在多条 channel 上，跨 channel 无保序保证，
+        // 因此多链路直接忽略进度（退化成普通批量提交），避免给出提前的水位
+        const bool withProgress = options.HasProgress() && transportManager_->GetLinkCount() <= 1U;
+        if (!isPut) {
             ret = transportManager_->ReadRemoteBatchAsync(options.srcRankId, smallIoDes);
+        } else if (withProgress) {
+            ret = WriteRemoteBatchWithProgress(smallIoDes, options);
+        } else {
+            if (options.HasProgress()) {
+                BM_LOG_WARN("batch copy progress ignored on multi link, linkCount: "
+                            << transportManager_->GetLinkCount());
+            }
+            ret = transportManager_->WriteRemoteBatchAsync(options.destRankId, smallIoDes);
         }
     }
     if (ret == 0) {
@@ -1271,4 +1281,41 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
         return errorCode;
     }
     return ret;
+}
+
+Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descriptor,
+                                                    const ExtOptions &options) noexcept
+{
+    const uint32_t total = static_cast<uint32_t>(descriptor.counts.size());
+    uint32_t done = 0;
+    uint32_t chunkIndex = 0;
+    while (done < total) {
+        const uint32_t chunkSize = std::min(options.progressInterval, total - done);
+        CopyDescriptor chunk;
+        chunk.localAddrs.assign(descriptor.localAddrs.begin() + done, descriptor.localAddrs.begin() + done + chunkSize);
+        chunk.globalAddrs.assign(descriptor.globalAddrs.begin() + done,
+                                 descriptor.globalAddrs.begin() + done + chunkSize);
+        chunk.counts.assign(descriptor.counts.begin() + done, descriptor.counts.begin() + done + chunkSize);
+        auto ret = transportManager_->WriteRemoteBatchAsync(options.destRankId, chunk);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to submit batch chunk, destRank:" << options.destRankId << " done:" << done
+                                                                   << " chunkSize:" << chunkSize << " ret:" << ret);
+            return ret;
+        }
+        done += chunkSize;
+        // Every watermark gets its own source slot: the NIC reads the source when it processes the WQE, so
+        // reusing one slot would let a later store be observed by an earlier queued write and publish a
+        // watermark before that chunk has landed. Slots are append-only, never rewritten.
+        auto *srcSlot = static_cast<uint8_t *>(options.progressSrc) + chunkIndex * sizeof(uint64_t);
+        *reinterpret_cast<uint64_t *>(srcSlot) = options.progressBase + done;
+        ret = transportManager_->WriteRemoteAsync(options.destRankId, reinterpret_cast<uint64_t>(srcSlot),
+                                                 reinterpret_cast<uint64_t>(options.progressDest), sizeof(uint64_t));
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to submit batch progress, destRank:" << options.destRankId << " done:" << done
+                                                                      << " slot:" << chunkIndex << " ret:" << ret);
+            return ret;
+        }
+        ++chunkIndex;
+    }
+    return BM_OK;
 }

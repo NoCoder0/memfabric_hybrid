@@ -729,8 +729,11 @@ Result DataOpDeviceURMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
     }
     // 再写本地
     for (auto &it : localed) {
-        hybm_batch_copy_params localParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                              it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params localParams{};
+        localParams.sources = it.second.localAddrs.data();
+        localParams.destinations = it.second.globalAddrs.data();
+        localParams.dataSizes = it.second.counts.data();
+        localParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
         TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LOCAL);
         ret = BatchDataCopyLocal(localParams, direction, tmpOptions);
@@ -739,8 +742,11 @@ Result DataOpDeviceURMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
     }
     // 再写未注册
     for (auto &it : notRegistered) {
-        hybm_batch_copy_params notParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params notParams{};
+        notParams.sources = it.second.localAddrs.data();
+        notParams.destinations = it.second.globalAddrs.data();
+        notParams.dataSizes = it.second.counts.data();
+        notParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
         ret = BatchDataCopyDefault(notParams, direction, tmpOptions);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);
@@ -786,8 +792,11 @@ Result DataOpDeviceURMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     }
     // 再写本地
     for (auto &it : localed) {
-        hybm_batch_copy_params localParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                              it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params localParams{};
+        localParams.sources = it.second.globalAddrs.data();
+        localParams.destinations = it.second.localAddrs.data();
+        localParams.dataSizes = it.second.counts.data();
+        localParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
         TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LOCAL);
         ret = BatchDataCopyLocal(localParams, direction, tmpOptions);
@@ -796,8 +805,11 @@ Result DataOpDeviceURMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     }
     // 再写未注册
     for (auto &it : notRegistered) {
-        hybm_batch_copy_params notParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params notParams{};
+        notParams.sources = it.second.globalAddrs.data();
+        notParams.destinations = it.second.localAddrs.data();
+        notParams.dataSizes = it.second.counts.data();
+        notParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.srcRankId = it.first;
         ret = BatchDataCopyDefault(notParams, direction, tmpOptions);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);

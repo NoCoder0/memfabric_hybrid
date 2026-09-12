@@ -181,6 +181,17 @@ typedef struct {
     void **destinations;
     const uint64_t *dataSizes;
     uint32_t batchSize;
+    /* Optional batch copy progress notification. Every progressInterval elements are submitted, an 8-byte
+     * one-sided write of (progressBase + submitted elements) is issued to progressDest on the same channel,
+     * so the peer can consume the data by watermark earlier. Disabled when progressInterval == 0 or
+     * progressSrc / progressDest is null. Only supported by the single link host rdma write path.
+     * progressSrc must point to local registered memory holding ceil(batchSize / progressInterval) slots of
+     * 8 bytes: the k-th watermark is written to progressSrc + k * 8 and never rewritten, because the NIC
+     * reads the source when it processes the write request. */
+    void *progressSrc;
+    void *progressDest;
+    uint64_t progressBase;
+    uint32_t progressInterval;
 } hybm_batch_copy_params;
 
 typedef struct {
