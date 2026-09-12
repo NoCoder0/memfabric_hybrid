@@ -176,8 +176,9 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
                 MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_THRESHOLD, kDefaultMultiRailThreshold));
             const bool enableMultiRail = (localNics_.size() > 1U);
             DlHcomApi::ServiceSetMultiRailOptions(service, enableMultiRail, multiRailThresh);
-            BM_LOG_INFO("hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
-                                                << " multiRailThresh: " << multiRailThresh);
+            /* 用 TRACE：本仓默认日志级别是 WARN，INFO 会被过滤掉，而这几行是验证多轨是否生效的关键 */
+            BM_LOG_TRACE("[multirail-check] hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
+                                                                   << " multiRailThresh: " << multiRailThresh);
         }
         SetHcomServiceConfig(service);
         BM_LOG_INFO("bind hcom service ep: " << ep << " listen url: " << localNics_[ep]);
@@ -1170,7 +1171,8 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
     epCount_ = 1;
     localNic_ = localNics_[0]; /* 只发布第一个 url 作 oob 监听；其余 rail 由库在 OOB 握手里协商 */
     localIp_ = localIps_[0];
-    BM_LOG_INFO("hcom single service + multirail: ipMask(" << localIpMask_ << ") listen(" << localNic_ << ")");
+    BM_LOG_TRACE("[multirail-check] hcom single service: ipMask(" << localIpMask_ << ") url-count(" << localNics_.size()
+                                                                  << ") listen(" << localNic_ << ")");
     return BM_OK;
 }
 
