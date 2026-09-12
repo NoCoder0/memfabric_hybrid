@@ -23,9 +23,10 @@
  *              已到达的那一段（staging 连续，偏移 = 块号*size）。这样后续批次的 RDMA 写时延与本地
  *              scatter 时延在两端重叠，降低端到端时延。
  *
- * 轮次同步：不用 ack，两端每轮跑完各自空转 RoundGap(kRoundGapMs)，把轮次彻底隔离开
- *   （收端有充足时间散完+校验，发端才进下一轮），因此不存在跨轮覆盖，也不会两端失步。
- *   去掉 ack 后发端只能测"纯传输"，端到端 ≈ 发端 transport_avg_us + 收端 tail_avg_us。
+ * 轮次同步与测量：收端把 600 块全部散完后向发端写回一次 ack(值=轮次号)，发端等 ack 才进下一轮，
+ *   轮次天然隔离；发端用**同一个时钟**据此测出真端到端 e2e_us（含收端 scatter + ack 回程，约几 us）。
+ *   两端每轮跑完另各空转 RoundGap(--gap-ms，默认 5000ms，计时区外)，兼作收端校验的保护窗口。
+ *   transport_us（发端单方）只含"写数据 + 逐批水位"，不含收端，用于与 e2e_us 对照看收端贡献。
  *
  * 每个场景跑 --rounds 轮，每轮耗时单独打印（不做均值，是否取平均/中位数由使用者定）。
  *
@@ -66,6 +67,7 @@ constexpr uint64_t kDefaultSize = 1024;
 constexpr uint64_t kDefaultStride = 4096; /* 离散摆放间隔 */
 constexpr uint64_t kDefaultDramMB = 16;   /* 每 rank 对称 host 内存，需覆盖 源区+目标区+staging+flag */
 constexpr uint32_t kDefaultChunk = 128;   /* cont: 每 chunk 个小 IO 发一次 flag */
+constexpr uint32_t kDefaultGapMs = 5000;  /* 每轮结束后的空转(ms)，计时区外 */
 
 struct BenchArgs {
     std::string role; /* local / remote */
@@ -80,6 +82,7 @@ struct BenchArgs {
     uint64_t stride = kDefaultStride;
     uint64_t dramMB = kDefaultDramMB;
     uint32_t chunk = kDefaultChunk; /* cont: 每 chunk 个 IO 提交一批并推进一次 flag */
+    uint32_t gapMs = kDefaultGapMs; /* 每轮之后的空转(ms)，计时区外 */
     uint32_t rounds = 5;
     bool old = false; /* --old=1 老版口径(如 e30bf29，无收端聚合): 只跑直写 baseline、只用单 url、无 ack/scatter */
 };
@@ -95,6 +98,7 @@ void Usage(const char *prog)
             "  --stride=N                 离散摆放间隔(默认4096)\n"
             "  --dram-mb=N                每 rank 对称 host 内存 MB(默认16)\n"
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
+            "  --gap-ms=N                 每轮之后的空转毫秒数，计时区外(默认5000；调试可调小)\n"
             "  --rounds=N                 每场景轮数(默认5)\n"
             "  --old=1                    老版口径(默认0，跑 e30bf29 等无聚合 MF 用):\n"
             "                             只跑直写 baseline、只用单 url、无 staging/scatter\n"
@@ -140,6 +144,8 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.dramMB = std::stoull(v);
         } else if (k == "--chunk") {
             a.chunk = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--gap-ms") {
+            a.gapMs = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--rounds") {
             a.rounds = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--old") {
@@ -180,15 +186,12 @@ uint64_t NowUs()
         std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
 }
 
-/* 每轮结束后两端各自空转（计时区之外），把轮次彻底隔离开，取代轮次 ack：
-   收端有足够时间把本轮数据散完/校验完，发端才进入下一轮，因此不存在
-   "第 N 轮还没读完、第 N+1 轮已写进同一段地址" 的覆盖，也不会两端失步。
-   只增加总时长，不影响任何 cost_us。 */
-constexpr uint32_t kRoundGapMs = 5000;
-
-void RoundGap()
+/* 每轮结束后两端各自空转（计时区之外），把轮次隔离开，避免下一轮写覆盖上一轮
+   收端正准备读取/校验的地址。只增加总时长，不影响任何 cost_us。
+   默认 5000ms；调试时用 --gap-ms 调小。 */
+void RoundGap(uint32_t gapMs)
 {
-    std::this_thread::sleep_for(std::chrono::milliseconds(kRoundGapMs));
+    std::this_thread::sleep_for(std::chrono::milliseconds(gapMs));
 }
 
 /* 每块数据布局（remote 填充 / local 校验共用同一规则）：
@@ -331,6 +334,7 @@ int main(int argc, char *argv[])
        [stagingEnd, +4096)           预留 gap
        [dispBase, dispBase+count*stride)  600 个离散目标/源（stride 间隔模拟离散）
        [scratchOff, flagOff)          进度源槽数组（发送端用；每个 flag 一个 8B，写入后不覆写）
+       [ackOff, ackOff+8)            完成 ack 槽（收端全部散完后写回发端，用于单时钟测端到端）
        [dramBytes-8, dramBytes)        完成/水位槽（段尾 8B；cont 值 = 全局累计已完成块数，跨轮单调不归零） */
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
@@ -339,7 +343,8 @@ int main(int argc, char *argv[])
     const uint32_t flagsPerRound = (a.count + a.chunk - 1) / a.chunk;        /* cont 每轮 flag 个数 */
     const uint64_t flagOff = dramBytes - 8;                                  /* 完成/水位槽：段尾 8B */
     const uint64_t scratchOff = flagOff - AlignUp(flagsPerRound * 8ULL, 64); /* 进度源槽数组起点 */
-    if (needBytes > scratchOff) {
+    const uint64_t ackOff = scratchOff - 8;                                  /* 完成 ack 槽：收端写回 */
+    if (needBytes > ackOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
@@ -386,9 +391,10 @@ int main(int argc, char *argv[])
     /* 56-bit GVA 在本路径恒为关闭（见 HostPtr 注释），GVA == VA，无任何转换，故这里不做自检 */
     printf("[bench] 56-bit GVA off (hardcoded in smem_bm_create): GVA == VA, no conversion\n");
 
-    /* 3. 初始化数据：remote 源填值 i；local 的 staging/目标清 0；双方 flag 槽清 0 */
+    /* 3. 初始化数据：remote 源填值 i；local 的 staging/目标清 0；双方 flag/ack 槽清 0 */
     {
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + flagOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 0;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -451,7 +457,7 @@ int main(int argc, char *argv[])
                 }
                 /* baseline 为单向流（发方不等收方），但每轮之间同样空转隔离：
                    否则下一轮直写会覆盖收端正准备校验的同一批离散目标 */
-                RoundGap();
+                RoundGap(a.gapMs);
                 ++seq;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
@@ -489,7 +495,7 @@ int main(int argc, char *argv[])
                     errs.push_back(vr.ok ? 0 : 1);
                     verifies.push_back(vr);
                 }
-                RoundGap();
+                RoundGap(a.gapMs);
                 ++expect;
             }
             for (uint32_t k = 0; k < costs.size(); ++k) {
@@ -510,11 +516,12 @@ int main(int argc, char *argv[])
     }
 
     /* 场景 2：cont —— 进度通知由 smem_bm_copy_batch **接口内部**完成：每 a.chunk 个 IO 拷完，
-       接口自动向对端 flag 槽单边写一次 (progressBase + 已完成个数)；local 见水位推进就增量 scatter。
-       应用只填参数、只调一次，不再在接口外单独发 flag。两端不做 ack，靠每轮 RoundGap 隔离轮次。 */
+       接口自动向对端水位槽单边写一次 (progressBase + 已完成个数)；local 见水位推进就增量 scatter。
+       应用只填参数、只调一次。收端把 600 块全部散完后写回 ack，发端据此用**同一个时钟**
+       测出真端到端（含收端 scatter），不再依赖两端时钟相加。 */
     if (runCont) {
         if (!isLocal) {
-            PrintLabel("cont (sender, batch progress, no ack)");
+            PrintLabel("cont (sender, batch progress + ack-measured e2e)");
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
                 srcs[i] = HostPtr(selfGva + i * a.stride); /* 离散源 */
@@ -522,8 +529,10 @@ int main(int argc, char *argv[])
             }
             const uint32_t chunks = (a.count + a.chunk - 1) / a.chunk;
             uint64_t sumTransportUs = 0;
-            std::vector<uint64_t> transportCosts; /* 热循环不打日志，跑完后统一打印 */
-            const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
+            uint64_t sumE2eUs = 0;
+            std::vector<uint64_t> transportCosts, e2eCosts; /* 热循环不打日志，跑完后统一打印 */
+            const uint32_t kTotal = a.rounds + 1;           /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
+            uint64_t seq = 1;
             for (uint32_t r = 0; r < kTotal; ++r) {
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
@@ -536,27 +545,36 @@ int main(int argc, char *argv[])
                 p.progressInterval = a.chunk;
                 const uint64_t t0 = NowUs(); /* 起点：一次接口调用（内部分块 + 逐批进度） */
                 const int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
-                const uint64_t t1 = NowUs();
+                const uint64_t tW = NowUs(); /* 传输结束：全部数据 + 逐批水位已投完（不含收端） */
                 if (ret != 0) {
                     printf("cont sender abort at iter %u ret=%d\n", r, ret);
                     break;
                 }
-                if (r >= 1) { /* r==0 为 warmup，不计入 */
-                    const uint64_t transport = t1 - t0; /* 传输 = 全部分块写到 staging + 逐批进度（不含收端） */
-                    sumTransportUs += transport;
-                    transportCosts.push_back(transport);
+                /* 等收端"600 块全部散完"写回的 ack：同一时钟 → 真端到端 */
+                auto *ackVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + ackOff));
+                while (*ackVa != seq) {
                 }
-                RoundGap(); /* 计时区外：给收端留出本轮 scatter/校验时间，避免下一轮覆盖 staging */
+                const uint64_t t1 = NowUs();
+                if (r >= 1) { /* r==0 为 warmup，不计入 */
+                    sumTransportUs += tW - t0;
+                    sumE2eUs += t1 - t0;
+                    transportCosts.push_back(tW - t0);
+                    e2eCosts.push_back(t1 - t0);
+                }
+                RoundGap(a.gapMs); /* 计时区外：隔离轮次 */
+                ++seq;
             }
             for (uint32_t k = 0; k < transportCosts.size(); ++k) {
-                printf("cont sender round %u transport_us=%llu\n", k,
-                       static_cast<unsigned long long>(transportCosts[k]));
+                printf("cont sender round %u transport_us=%llu e2e_us=%llu\n", k,
+                       static_cast<unsigned long long>(transportCosts[k]),
+                       static_cast<unsigned long long>(e2eCosts[k]));
             }
-            printf("cont sender transport_avg_us=%llu chunks=%u interval=%u (rounds=%u, no ack)\n",
-                   static_cast<unsigned long long>(sumTransportUs / a.rounds), chunks, a.chunk, a.rounds);
-            printf("cont sender note: end-to-end ~= transport_avg_us + receiver tail_avg_us\n");
+            printf("cont sender transport_avg_us=%llu e2e_avg_us=%llu chunks=%u interval=%u (rounds=%u)\n",
+                   static_cast<unsigned long long>(sumTransportUs / a.rounds),
+                   static_cast<unsigned long long>(sumE2eUs / a.rounds), chunks, a.chunk, a.rounds);
+            printf("cont sender note: e2e 含收端 scatter + ack 回程(约几 us)\n");
         } else {
-            PrintLabel("cont (receiver watermark scatter, no ack)");
+            PrintLabel("cont (receiver watermark scatter, ack back)");
             uint64_t sumScatterUs = 0;
             uint64_t sumTailUs = 0;
             /* staging / 离散目标地址固定，一次性解析（GVA==VA，无每轮转换开销） */
@@ -570,6 +588,7 @@ int main(int argc, char *argv[])
             /* flag 是全局累计块数（跨轮不归零），本轮水位 = (r+1)*count；
                scatteredGlobal 与发端 flag 同一口径，据此把全局块号换算回本轮块号定位 staging 偏移 */
             uint64_t scatteredGlobal = 0;
+            uint64_t expect = 1; /* 与发端 seq 对齐，用于 ack 值 */
             std::vector<uint64_t> scatterCosts, tailCosts; /* 跑完后统一打印 */
             std::vector<std::string> arrivalLines;         /* 各批数据可见时刻(相对本轮起点,us)，用于确认重叠 */
             std::vector<int> errs;
@@ -599,9 +618,16 @@ int main(int argc, char *argv[])
                     arrivals += (arrivals.empty() ? "" : ",") + std::to_string(tb0 - tr0);
                     scatteredGlobal = uptoGlobal;
                 }
-                /* 计时区之外：整块校验本轮数据。staging 反映"传输是否完整正确"，
-                   离散目标反映"scatter 是否正确"，分开便于区分故障点。
+                /* 计时区之外：先把"本轮 600 块全部散完"写回发端（发端用同一时钟据此测端到端），
+                   再做整块校验。staging 反映"传输是否完整正确"，离散目标反映"scatter 是否正确"。
                    每轮之间有 RoundGap 隔离，校验期间不会被下一轮覆盖。 */
+                *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = expect;
+                smem_copy_params ap{HostPtr(selfGva + ackOff), HostPtr(peerGva + ackOff), sizeof(expect), nullptr};
+                const int32_t ackRet = smem_bm_copy(bm, &ap, SMEMB_COPY_AUTO, 0);
+                if (ackRet != 0) {
+                    printf("cont receiver ack write failed at iter %u ret=%d\n", r, ackRet);
+                    break;
+                }
                 VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
                 VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
@@ -614,7 +640,8 @@ int main(int argc, char *argv[])
                     stagVerifies.push_back(vStag);
                     dispVerifies.push_back(vDisp);
                 }
-                RoundGap();
+                RoundGap(a.gapMs);
+                ++expect;
             }
             for (uint32_t k = 0; k < scatterCosts.size(); ++k) {
                 printf("cont receiver round %u err=%d scatter_us=%llu tail_us=%llu arrivals_us=[%s]\n", k, errs[k],
@@ -633,7 +660,7 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu (rounds=%u, no ack) verify=%s\n",
+            printf("cont receiver scatter_avg_us=%llu tail_avg_us=%llu (rounds=%u) verify=%s\n",
                    static_cast<unsigned long long>(sumScatterUs / a.rounds),
                    static_cast<unsigned long long>(sumTailUs / a.rounds), a.rounds,
                    (std::all_of(stagVerifies.begin(), stagVerifies.end(),
