@@ -90,6 +90,17 @@ private:
     void PreRegisterLocalMr(hybm_copy_params &params, hybm_data_copy_direction direction) noexcept;
     void BatchPreRegisterLocalMr(hybm_batch_copy_params &params, hybm_data_copy_direction direction) noexcept;
     void BatchUnRegisterLocalMr(hybm_batch_copy_params &params, hybm_data_copy_direction direction) noexcept;
+    /* Submit the descriptor in chunks of options.progressInterval and carry an 8-byte progress watermark
+     * write after every chunk. All submits go through the same channel in order and the caller synchronizes
+     * once at the end, so it is still one batch submission from the outside.
+     * Multi-link: iovs are split into contiguous ranges, one per link, and each link keeps its own watermark
+     * (watermark and data must share a channel for the in-order guarantee to hold). */
+    Result WriteRemoteBatchWithProgress(const CopyDescriptor &descriptor, const ExtOptions &options) noexcept;
+
+    /* 单条 link(ep) 上的分块提交 + 每块一次水位写（progressInterval==0 时整段一次）。 */
+    Result WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyDescriptor &descriptor, size_t begin, size_t end,
+                                            const ExtOptions &options, uint64_t progressDest, uint64_t progressSrc,
+                                            uint64_t srcStride) noexcept;
 
     bool inited_{false};
     uint32_t rankId_{0};

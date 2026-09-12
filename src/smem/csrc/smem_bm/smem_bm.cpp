@@ -545,7 +545,16 @@ SMEM_API int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params *pa
         destinations[i] = params->destinations[i];
         dataSizes[i] = params->dataSizes[i];
     }
-    smem_batch_copy_params paramsCopy = {sources, destinations, dataSizes, params->batchSize, params->stream};
+    smem_batch_copy_params paramsCopy{};
+    paramsCopy.sources = sources;
+    paramsCopy.destinations = destinations;
+    paramsCopy.dataSizes = dataSizes;
+    paramsCopy.batchSize = params->batchSize;
+    paramsCopy.stream = params->stream;
+    paramsCopy.progressSrc = params->progressSrc;
+    paramsCopy.progressDest = params->progressDest;
+    paramsCopy.progressBase = params->progressBase;
+    paramsCopy.progressInterval = params->progressInterval;
     ret = entry->DataCopyBatch(&paramsCopy, t, flags);
     delete[] sources;
     delete[] destinations;

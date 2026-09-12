@@ -656,8 +656,11 @@ Result DataOpDeviceURMA::CopyMultiRankLocal(hybm_batch_copy_params &params, hybm
     copyOptions.destRankId = rankId_;
     copyOptions.stream = options.stream;
     copyOptions.flags = options.flags;
-    hybm_batch_copy_params localParams{sources.data(), destinations.data(), sizes.data(),
-                                       static_cast<uint32_t>(sizes.size())};
+    hybm_batch_copy_params localParams{};
+    localParams.sources = sources.data();
+    localParams.destinations = destinations.data();
+    localParams.dataSizes = sizes.data();
+    localParams.batchSize = static_cast<uint32_t>(sizes.size());
     TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LOCAL);
     auto ret = BatchDataCopyLocal(localParams, direction, copyOptions);
     TP_TRACE_END(TP_HYBM_URMA_BATCH_LOCAL, ret);
@@ -737,8 +740,11 @@ Result DataOpDeviceURMA::BatchDataCopyMultiRank(hybm_batch_copy_params &params, 
     for (uint32_t sliceIndex = 0; sliceIndex < sliceCount; ++sliceIndex) {
         const uint32_t sliceOffset = sliceIndex * HCOMM_BATCH_TRANSFER_MAX_DESC_NUM;
         const uint32_t sliceSize = std::min(HCOMM_BATCH_TRANSFER_MAX_DESC_NUM, params.batchSize - sliceOffset);
-        hybm_batch_copy_params sliceParams{params.sources + sliceOffset, params.destinations + sliceOffset,
-                                           params.dataSizes + sliceOffset, sliceSize};
+        hybm_batch_copy_params sliceParams{};
+        sliceParams.sources = params.sources + sliceOffset;
+        sliceParams.destinations = params.destinations + sliceOffset;
+        sliceParams.dataSizes = params.dataSizes + sliceOffset;
+        sliceParams.batchSize = sliceSize;
         const auto &sliceGroupMap = sliceGroupMaps[sliceIndex];
 
         std::vector<uint32_t> localIndices;

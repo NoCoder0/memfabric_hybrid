@@ -40,6 +40,17 @@ struct ExtOptions {
     void *stream = nullptr;
     uint32_t flags;
     std::unordered_map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>, PairHash, PairEqual> groupMap;
+    /* Optional batch copy progress notification, carried from hybm_batch_copy_params. Only the host rdma
+     * single link write path implements it, see hybm_batch_copy_params for the semantics. */
+    void *progressSrc = nullptr;
+    void *progressDest = nullptr;
+    uint64_t progressBase = 0;
+    uint32_t progressInterval = 0;
+
+    bool HasProgress() const
+    {
+        return progressInterval != 0 && progressSrc != nullptr && progressDest != nullptr;
+    }
 };
 
 class DataOperator {

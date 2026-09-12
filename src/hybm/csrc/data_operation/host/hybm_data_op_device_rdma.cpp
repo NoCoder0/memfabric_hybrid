@@ -684,14 +684,20 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
         }
 
         if (isWrite) {
-            hybm_batch_copy_params swapParams = {tmpLocalAddrs.data(), tmpSwapAddrs.data(), tmpCounts.data(),
-                                                 static_cast<uint32_t>(currentBatchSize)};
+            hybm_batch_copy_params swapParams{};
+            swapParams.sources = tmpLocalAddrs.data();
+            swapParams.destinations = tmpSwapAddrs.data();
+            swapParams.dataSizes = tmpCounts.data();
+            swapParams.batchSize = static_cast<uint32_t>(currentBatchSize);
             TP_TRACE_BEGIN(TP_HYBM_RDMA_MERGE_WRITE);
             ret = BatchMergedWrite(swapParams, direction, &params.destinations[batchOffset], options);
             TP_TRACE_END(TP_HYBM_RDMA_MERGE_WRITE, ret);
         } else {
-            hybm_batch_copy_params swapParams = {tmpSwapAddrs.data(), tmpLocalAddrs.data(), tmpCounts.data(),
-                                                 static_cast<uint32_t>(currentBatchSize)};
+            hybm_batch_copy_params swapParams{};
+            swapParams.sources = tmpSwapAddrs.data();
+            swapParams.destinations = tmpLocalAddrs.data();
+            swapParams.dataSizes = tmpCounts.data();
+            swapParams.batchSize = static_cast<uint32_t>(currentBatchSize);
             TP_TRACE_BEGIN(TP_HYBM_RDMA_MERGE_READ);
             ret = BatchMergedRead(swapParams, direction, &params.sources[batchOffset], options);
             TP_TRACE_END(TP_HYBM_RDMA_MERGE_READ, ret);
@@ -889,8 +895,11 @@ Result DataOpDeviceRDMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
     std::set<uint32_t> asyncSubmittedRanks{};
     TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_REG_COPY);
     for (auto &it : registered) {
-        hybm_batch_copy_params regParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params regParams{};
+        regParams.sources = it.second.localAddrs.data();
+        regParams.destinations = it.second.globalAddrs.data();
+        regParams.dataSizes = it.second.counts.data();
+        regParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
 
         for (uint32_t i = 0; i < regParams.batchSize; ++i) {
@@ -911,8 +920,11 @@ Result DataOpDeviceRDMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
     }
     // 再写本地
     for (auto &it : localed) {
-        hybm_batch_copy_params localParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                              it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params localParams{};
+        localParams.sources = it.second.localAddrs.data();
+        localParams.destinations = it.second.globalAddrs.data();
+        localParams.dataSizes = it.second.counts.data();
+        localParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
         TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_LOCAL);
         ret = BatchDataCopyLocal(localParams, direction, tmpOptions);
@@ -921,8 +933,11 @@ Result DataOpDeviceRDMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
     }
     // 再写未注册
     for (auto &it : notRegistered) {
-        hybm_batch_copy_params notParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params notParams{};
+        notParams.sources = it.second.localAddrs.data();
+        notParams.destinations = it.second.globalAddrs.data();
+        notParams.dataSizes = it.second.counts.data();
+        notParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
         ret = BatchDataCopyDefault(notParams, direction, tmpOptions);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);
@@ -952,8 +967,11 @@ Result DataOpDeviceRDMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     // 先写异步
     std::set<uint32_t> asyncSubmittedRanks{};
     for (auto &it : registered) {
-        hybm_batch_copy_params regParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params regParams{};
+        regParams.sources = it.second.globalAddrs.data();
+        regParams.destinations = it.second.localAddrs.data();
+        regParams.dataSizes = it.second.counts.data();
+        regParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.srcRankId = it.first;
         for (uint32_t i = 0; i < regParams.batchSize; ++i) {
             ret = transportManager_->ReadRemoteAsync(tmpOptions.srcRankId, (uint64_t)regParams.destinations[i],
@@ -973,8 +991,11 @@ Result DataOpDeviceRDMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     }
     // 再写本地
     for (auto &it : localed) {
-        hybm_batch_copy_params localParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                              it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params localParams{};
+        localParams.sources = it.second.globalAddrs.data();
+        localParams.destinations = it.second.localAddrs.data();
+        localParams.dataSizes = it.second.counts.data();
+        localParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.destRankId = it.first;
         TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_LOCAL);
         ret = BatchDataCopyLocal(localParams, direction, tmpOptions);
@@ -983,8 +1004,11 @@ Result DataOpDeviceRDMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     }
     // 再写未注册
     for (auto &it : notRegistered) {
-        hybm_batch_copy_params notParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
+        hybm_batch_copy_params notParams{};
+        notParams.sources = it.second.globalAddrs.data();
+        notParams.destinations = it.second.localAddrs.data();
+        notParams.dataSizes = it.second.counts.data();
+        notParams.batchSize = static_cast<uint32_t>(it.second.counts.size());
         tmpOptions.srcRankId = it.first;
         ret = BatchDataCopyDefault(notParams, direction, tmpOptions);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);

@@ -52,6 +52,12 @@ inline const std::string MF_HCOM_PREPOST_SIZE = GetEnvStr("MF_HCOM_PREPOST_SIZE"
 inline const std::string MF_HCOM_MAX_SEND_RECV_DATA_CNT = GetEnvStr("MF_HCOM_MAX_SEND_RECV_DATA_CNT");
 inline const std::string MF_HYBM_RDMA_SWAP_SPACE_SIZE =
     GetEnvStr("MF_HYBM_RDMA_SWAP_SPACE_SIZE", "HYBM_RDMA_SWAP_SPACE_SIZE");
+// MultiRail 分流阈值(字节)：host hcom 单 service 多网卡时，超过该长度的传输才交给多 rail。
+// 库默认 8192，对小包(如 1KB)等于不生效，所以这里可下调。
+inline const std::string MF_HYBM_HCOM_MULTIRAIL_THRESHOLD = GetEnvStr("MF_HYBM_HCOM_MULTIRAIL_THRESHOLD");
+// 是否启用 host hcom 的 MultiRail 路径（默认 1=启用）。单个 url 时也建 1 条 rail。
+// 实测：不开时单笔小消息写要 ~4ms；开 MultiRail 后同样的写只要十几 us。
+inline const std::string MF_HYBM_HCOM_MULTIRAIL_ENABLE = GetEnvStr("MF_HYBM_HCOM_MULTIRAIL_ENABLE");
 inline const std::string MF_HYBM_URMA_SWAP_SPACE_SIZE =
     GetEnvStr("MF_HYBM_URMA_SWAP_SPACE_SIZE", "HYBM_URMA_SWAP_SPACE_SIZE");
 inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =

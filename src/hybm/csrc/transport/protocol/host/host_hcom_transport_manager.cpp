@@ -99,12 +99,17 @@ void HcomExternalLoggerAdapter(int level, const char *msg)
             break;
     }
 }
+
+/* MultiRail 分流阈值缺省值(字节)：库默认 8192，对小包等于不生效，这里按"单包大小"取 1024。
+   可用 MF_HYBM_HCOM_MULTIRAIL_THRESHOLD 覆盖。 */
+constexpr uint32_t kDefaultMultiRailThreshold = 1024;
 } // namespace
 
 hybm_tls_config HcomTransportManager::tlsConfig_ = {};
 char HcomTransportManager::keyPass_[KEYPASS_MAX_LEN] = {0};
 std::mutex HcomTransportManager::keyPassMutex = {};
 thread_local HcomCounterStreamPtr HcomTransportManager::stream_ = nullptr;
+thread_local HcomTransportManager::MrHitCache HcomTransportManager::tlsMrHit_ = {nullptr, 0, UINT32_MAX, UINT32_MAX, {}};
 
 static void CopyHcomOneSideKey(const OneSideKey &from, TransportMemoryKey &to)
 {
@@ -163,8 +168,20 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
         DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_REQUEST_POSTED, TransportRpcHcomRequestPosted, 1);
         DlHcomApi::ServiceRegisterHandler(service, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, 1);
         if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
-            std::string ipMask = localIps_[ep] + "/32";
-            DlHcomApi::ServiceSetDeviceIpMask(service, ipMask.c_str());
+            /* 一组 ipMask（',' 分隔）：库按它挑出本地要用的网卡，多张即多条 rail */
+            DlHcomApi::ServiceSetDeviceIpMask(service, localIpMask_.c_str());
+            /* threshold 默认 8192，对 1KB 小包等于不生效，这里按单包大小下调 */
+            const uint32_t multiRailThresh = static_cast<uint32_t>(
+                MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_THRESHOLD, kDefaultMultiRailThreshold));
+            /* 多 url(多网卡)时必然开 MultiRail；单 url 时默认也开 ——
+               实测 MultiRail 关闭时"单笔小消息写"要 ~4ms，开启后只要十几 us，
+               所以这里不再跟 url 数绑定，可用 MF_HYBM_HCOM_MULTIRAIL_ENABLE=0 回退。 */
+            const bool enableMultiRail =
+                (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_ENABLE, 1U) != 0U);
+            DlHcomApi::ServiceSetMultiRailOptions(service, enableMultiRail, multiRailThresh);
+            /* 用 TRACE：本仓默认日志级别是 WARN，INFO 会被过滤掉，而这几行是验证多轨是否生效的关键 */
+            BM_LOG_TRACE("[multirail-check] hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
+                                                                   << " multiRailThresh: " << multiRailThresh);
         }
         SetHcomServiceConfig(service);
         BM_LOG_INFO("bind hcom service ep: " << ep << " listen url: " << localNics_[ep]);
@@ -194,6 +211,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     rankCount_ = options.rankCount;
     mrMutex_ = std::vector<std::mutex>(rankCount_);
     mrs_.assign(rankCount_, std::vector<std::set<HcomMemoryRegion>>(epCount_));
+    BumpMrGeneration(); // MR 集合变了，让各线程的免锁快路径缓存失效
     channelMutex_ = std::vector<std::mutex>(rankCount_);
     nics_ = std::vector<std::vector<std::string>>(rankCount_, std::vector<std::string>(epCount_, ""));
     channels_ = std::vector<std::vector<Hcom_Channel>>(rankCount_, std::vector<Hcom_Channel>(epCount_, 0));
@@ -221,6 +239,7 @@ Result HcomTransportManager::CloseDevice()
             }
         }
     }
+    BumpMrGeneration(); // 所有 MR 都被销毁，快路径缓存必须失效
 
     DestroyServices();
     mf::MfTlsUtil::CloseTlsLib();
@@ -233,6 +252,7 @@ Result HcomTransportManager::CloseDevice()
     runtimeConfig_ = {};
     mrMutex_.clear();
     mrs_.clear();
+    BumpMrGeneration();
     channelMutex_.clear();
     nics_.clear();
     channels_.clear();
@@ -304,6 +324,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         {
             std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
             mrs_[rankId_][ep].insert(mrInfo);
+            BumpMrGeneration();
         }
         BM_LOG_INFO("Success to register " << (isHbm ? "hbm" : "dram") << " mr info size: " << mrInfo.size
                                            << " ep: " << ep << " lKey: " << mrInfo.lKey.keys[0]);
@@ -362,6 +383,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
         {
             std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
             mrs_[rankId_][ep].insert(mrInfo);
+            BumpMrGeneration();
         }
         BM_LOG_INFO("Success to register to mr info size: " << mrInfo.size << " ep: " << ep
                                                             << " lKey: " << mrInfo.lKey.keys[0] << std::hex
@@ -384,6 +406,7 @@ Result HcomTransportManager::UnregisterMemoryRegion(uint64_t addr)
             if (it->addr == addr) {
                 DlHcomApi::ServiceDestroyMemoryRegion(rpcServices_[ep], it->mr);
                 localMrs.erase(it);
+                BumpMrGeneration();
                 found = true;
                 BM_LOG_INFO("Addr: " << addr << " unregistered, ep: " << ep);
                 break;
@@ -410,6 +433,26 @@ bool HcomTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 uint32_t HcomTransportManager::GetLinkCount() const
 {
     return epCount_;
+}
+
+bool HcomTransportManager::AllLinksReady(uint32_t rankId) const
+{
+    if (epCount_ == 0 || rankId >= channels_.size() || rankId >= nics_.size() ||
+        channels_[rankId].size() < epCount_ || nics_[rankId].size() < epCount_) {
+        return false;
+    }
+    for (uint32_t ep = 0; ep < epCount_; ++ep) {
+        if (channels_[rankId][ep] == 0 || nics_[rankId][ep].empty()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Result HcomTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
+                                                  size_t begin, size_t end)
+{
+    return SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end);
 }
 
 Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
@@ -558,6 +601,7 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             {
                 std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
                 mrs_[rankId][ep].insert(mrInfo);
+                BumpMrGeneration();
             }
             BM_LOG_INFO("Success to register to mr info rankId: " << rankId << " ep: " << ep
                                                                   << " size: " << mrInfo.size
@@ -700,14 +744,10 @@ Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, u
 
 int HcomTransportManager::PrepareThreadLocalStream()
 {
-    lock_.LockRead();
-    if (stream_ != nullptr) {
-        lock_.UnLock();
-        return BM_OK;
+    /* stream_ 是 thread_local，纯线程私有，不存在跨线程共享，无需加锁 */
+    if (stream_ == nullptr) {
+        stream_ = std::make_shared<HostHcomCounterStream>(0);
     }
-    lock_.UnLock();
-    WriteGuard lockGuard(lock_);
-    stream_ = std::make_shared<HostHcomCounterStream>(0);
     return BM_OK;
 }
 
@@ -782,12 +822,22 @@ Result HcomTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr, ui
 
 Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)
 {
+    return WriteRemoteAsyncOnEp(rankId, 0, lAddr, rAddr, size);
+}
+
+Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
+                                                  uint64_t size)
+{
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
-    Hcom_Channel channel = channels_[rankId][0];
+    if (rankId >= channels_.size() || ep >= channels_[rankId].size()) {
+        BM_LOG_ERROR("write remote with invalid rank: " << rankId << " ep: " << ep);
+        return BM_INVALID_PARAM;
+    }
+    Hcom_Channel channel = channels_[rankId][ep];
     if (channel == 0) {
-        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " is not connect");
+        BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
     Channel_OneSideRequest req;
@@ -795,15 +845,15 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
     req.lAddress = reinterpret_cast<void *>(lAddr);
     req.size = static_cast<uint32_t>(size);
     HcomMemoryRegion mr{};
-    auto ret = GetMemoryRegionByAddr(rankId_, 0, lAddr, mr);
+    auto ret = GetMemoryRegionByAddr(rankId_, ep, lAddr, mr);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << ", size: " << req.size
+        BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << " ep: " << ep << ", size: " << req.size
                                                      << ", lAddr: " << VaToInfo(lAddr));
         return BM_ERROR;
     }
     std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
     mr.lKey = {};
-    ret = GetMemoryRegionByAddr(rankId, 0, rAddr, mr);
+    ret = GetMemoryRegionByAddr(rankId, ep, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << ", size: " << req.size
                                                      << ", rAddr: " << VaToInfo(rAddr));
@@ -860,6 +910,11 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         BM_LOG_WARN("Unable to write remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
+    /* stream_ 只与线程相关，整个 slice 准备一次即可（原先是每个 iov 调一次） */
+    if (PrepareThreadLocalStream() != BM_OK) {
+        BM_LOG_ERROR("prepare stream error rankId: " << rankId);
+        return BM_ERROR;
+    }
     size_t i = begin;
     while (i < end) {
         Channel_OneSideRequestSgl sglReq;
@@ -893,11 +948,6 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
                                                         << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                         << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
                                                         << " tokens: " << req.rKey.tokens[0]);
-            ret = PrepareThreadLocalStream();
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("prepare stream error rankId: " << rankId);
-                return ret;
-            }
             sglReq.iov[sglReq.iovCount++] = req;
         }
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
@@ -1012,15 +1062,36 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
         BM_LOG_ERROR("Failed to check nic, no valid url in nic: " << options.nic);
         return BM_INVALID_PARAM;
     }
-    localIps_ = std::move(epIps);
     localNics_ = std::move(epNics);
-    epCount_ = static_cast<uint32_t>(localNics_.size());
-    std::string joined;
-    for (const auto &nic : localNics_) {
-        joined = joined.empty() ? nic : joined + ";" + nic;
+    localIps_ = std::move(epIps);
+    /* options.nic 里的多个 url = "本地要多用几张网卡"，但**不能**因此建多个 service：
+       ubs-comm 明确要求上层禁止同时创建同种协议的 2 个不同 Service 实例
+       （service_ctx_store.h 里 GetOrReturn 的注释：否则 Service2 会引用 Service1 的内存池），
+       而 HCOM 原生支持一个 service 带多条 rail（MultiRail：库内 CreateMultiRailDriver 按 ipMask
+       选出多张卡建多个 driver，上限 MAX_ENABLE_DEVCOUNT=4，并自动分流）。
+       所以这里把多 url 收敛成：1 个 service + 1 个 oob 监听 url + 一组 ipMask；多网卡交给库。
+       传输层的 epCount_ 因此恒为 1，数据面自动走单链路路径。 */
+    localIpMask_.clear();
+    for (const auto &ip : localIps_) { /* ',' 分隔的一组 mask（ubs_hcom_service_set_ipmask 按 ',' 拆） */
+        localIpMask_ = localIpMask_.empty() ? (ip + "/32") : (localIpMask_ + "," + ip + "/32");
     }
-    localNic_ = joined;
+    epCount_ = 1;
+    /* 向上层发布**全部** url（';' 分隔，与 compose_transport_manager 的 NIC_DELIMITER 一致）：
+       compose 层会把每个 url 广播成一个 host# 段，对端据此为**每条 rail** 建连。
+       这里只发第一个会让对端永远建不起第二条 rail，MultiRail 退化成单链接。 */
+    localNic_.clear();
+    for (const auto &url : localNics_) {
+        if (url.empty()) {
+            continue;
+        }
+        if (!localNic_.empty()) {
+            localNic_ += ';';
+        }
+        localNic_ += url;
+    }
     localIp_ = localIps_[0];
+    BM_LOG_TRACE("[multirail-check] hcom single service: ipMask(" << localIpMask_ << ") url-count(" << localNics_.size()
+                                                                  << ") listen(" << localNic_ << ")");
     return BM_OK;
 }
 
@@ -1207,6 +1278,11 @@ Result HcomTransportManager::SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, 
         BM_LOG_WARN("Unable to read remote, rankId: " << rankId << " ep: " << ep << " is not connect");
         return BM_NOT_CONNECTED;
     }
+    /* stream_ 只与线程相关，整个 slice 准备一次即可（原先是每个 iov 调一次） */
+    if (PrepareThreadLocalStream() != BM_OK) {
+        BM_LOG_ERROR("prepare stream error rankId: " << rankId);
+        return BM_ERROR;
+    }
     size_t i = begin;
     while (i < end) {
         Channel_OneSideRequestSgl sglReq;
@@ -1240,11 +1316,6 @@ Result HcomTransportManager::SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, 
                                                        << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                        << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
                                                        << " tokens: " << req.rKey.tokens[0]);
-            ret = PrepareThreadLocalStream();
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("prepare stream error rankId: " << rankId);
-                return ret;
-            }
             sglReq.iov[sglReq.iovCount++] = req;
         }
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
@@ -1337,12 +1408,22 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
         BM_LOG_ERROR("query mr with invalid rank: " << rankId << " ep: " << ep);
         return BM_ERROR;
     }
+    const uint64_t gen = mrGen_.load(std::memory_order_acquire);
+    /* 快路径：代际未变 + 同 rank/ep + 地址仍落在上次命中的 MR 内 → 免锁直接返回。
+       批量写场景里数百个地址通常都落在同一对 MR 里，命中率接近 100%，
+       因此把“每个 iov 2 次加锁遍历”降到整批 1~2 次。 */
+    if (tlsMrHit_.self == this && tlsMrHit_.gen == gen && tlsMrHit_.rankId == rankId && tlsMrHit_.ep == ep &&
+        tlsMrHit_.mr.addr <= addr && tlsMrHit_.mr.addr + tlsMrHit_.mr.size > addr) {
+        mr = tlsMrHit_.mr;
+        return BM_OK;
+    }
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
     for (const auto &mrInfo : mrs_[rankId][ep]) {
         BM_LOG_DEBUG("Find rankId:" << rankId << " ep:" << ep << std::hex << " addr:" << mrInfo.addr
                                     << " size:" << mrInfo.size);
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size > addr) {
             mr = mrInfo;
+            tlsMrHit_ = MrHitCache{this, gen, rankId, ep, mrInfo};
             return BM_OK;
         }
     }

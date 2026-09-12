@@ -164,7 +164,8 @@ Result HostComposeDataOp::BatchDataCopy(hybm_batch_copy_params &params, hybm_dat
     }
 
     ExtOptions urmaOptions{options.srcRankId, options.destRankId, options.stream, options.flags, {}};
-    ExtOptions otherOptions{options.srcRankId, options.destRankId, options.stream, options.flags, {}};
+    ExtOptions otherOptions = options;
+    otherOptions.groupMap.clear();
     try {
         for (const auto &[p2pInfo, indices] : options.groupMap) {
             ExtOptions copyOptions{p2pInfo.first, p2pInfo.second, options.stream, options.flags, {}};
@@ -204,6 +205,10 @@ Result HostComposeDataOp::BatchDataCopyByGroup(hybm_batch_copy_params &params, h
         copyOptions.destRankId = p2pInfo.second;
         copyOptions.stream = options.stream;
         copyOptions.flags = options.flags;
+        copyOptions.progressSrc = options.progressSrc;
+        copyOptions.progressDest = options.progressDest;
+        copyOptions.progressBase = options.progressBase;
+        copyOptions.progressInterval = options.progressInterval;
         auto availableOps = GetPrioritedDataOperators(copyOptions);
         if (availableOps.empty()) {
             BM_LOG_ERROR("batch data copy from rank " << p2pInfo.first << " to rank " << p2pInfo.second
@@ -221,7 +226,9 @@ Result HostComposeDataOp::BatchDataCopyByGroup(hybm_batch_copy_params &params, h
             destinations[i] = params.destinations[index];
             dataSizes[i] = params.dataSizes[index];
         }
-        hybm_batch_copy_params copyParams{sources.data(), destinations.data(), dataSizes.data(), groupSize};
+        hybm_batch_copy_params copyParams{sources.data(), destinations.data(), dataSizes.data(), groupSize,
+                                           params.progressSrc, params.progressDest, params.progressBase,
+                                           params.progressInterval};
         auto ret = availableOps.front().second->BatchDataCopy(copyParams, direction, copyOptions);
         if (ret != BM_OK) {
             BM_LOG_ERROR("data batch copy failed, ret: " << ret << " srcRank: " << p2pInfo.first

@@ -908,6 +908,10 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
     ExtOptions sOptions{};
     sOptions.stream = stream;
     sOptions.flags = flags;
+    sOptions.progressSrc = params.progressSrc;
+    sOptions.progressDest = params.progressDest;
+    sOptions.progressBase = params.progressBase;
+    sOptions.progressInterval = params.progressInterval;
     // 将所有地址按srcRank - dstRank分组，并且转换地址
     for (uint32_t i = 0; i < params.batchSize; ++i) {
         std::pair<uint32_t, uint32_t> p2pInfo;

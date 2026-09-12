@@ -11,6 +11,7 @@
 */
 #include "smem_bm_entry.h"
 
+#include <algorithm>
 #include <chrono>
 
 #include "hybm_def.h"
@@ -600,7 +601,17 @@ Result SmemBmEntry::DataCopyBatch(smem_batch_copy_params *params, smem_bm_copy_t
                                                                      << " dest: " << params->destinations[0]);
         return SM_INVALID_PARAM;
     }
-    hybm_batch_copy_params copyParams = {params->sources, params->destinations, params->dataSizes, params->batchSize};
+    /* 进度通知参数原样透传给 hybm 层，实际按 interval 分批提交、夹带水位写由
+       HostDataOpRDMA::BatchCopyGH2GH 完成（整批仍只同步一次） */
+    hybm_batch_copy_params copyParams{};
+    copyParams.sources = params->sources;
+    copyParams.destinations = params->destinations;
+    copyParams.dataSizes = params->dataSizes;
+    copyParams.batchSize = params->batchSize;
+    copyParams.progressSrc = params->progressSrc;
+    copyParams.progressDest = params->progressDest;
+    copyParams.progressBase = params->progressBase;
+    copyParams.progressInterval = params->progressInterval;
     return hybm_data_batch_copy(entity_, &copyParams, direct, params->stream, flags);
 }
 
