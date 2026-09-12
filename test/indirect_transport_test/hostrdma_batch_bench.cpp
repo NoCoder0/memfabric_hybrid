@@ -195,6 +195,42 @@ void RoundGap(uint32_t gapMs)
     std::this_thread::sleep_for(std::chrono::milliseconds(gapMs));
 }
 
+/* 两端就绪握手（计时区之外）：确认对端已完成 smem_bm_create 且 RDMA 链路真的可用。
+   只判"本端写一次成功"不可靠：对端 GVA 在【已 reserve 未 join】窗口里方向推导会直接失败，
+   在【还没 reserve】窗口里又会被 GetLocalMemoryType 兜底成 HOST 类型、方向被误判成"接收"而
+   静默返回 0（什么都没写）。所以必须双向确认：本端反复把 MAGIC_SELF 写到对端槽，同时等本端槽
+   出现对端的 MAGIC_PEER。任一侧方向被误判都收不到对方标记，最终报错退出而不是跑出一堆假数据。 */
+constexpr uint64_t kMagicRank0 = 0x524541445930ULL;       /* "READY0" */
+constexpr uint64_t kMagicRank1 = 0x524541445931ULL;       /* "READY1" */
+constexpr uint64_t kReadyTimeoutUs = 30ULL * 1000 * 1000; /* 给对端留 30s 启动时间 */
+
+bool WaitPeerReady(smem_bm_t bm, bool isLocal, uint64_t selfGva, uint64_t peerGva, uint64_t readyOff)
+{
+    auto *selfSlot = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + readyOff));
+    const uint64_t selfMagic = isLocal ? kMagicRank0 : kMagicRank1;
+    const uint64_t peerMagic = isLocal ? kMagicRank1 : kMagicRank0;
+    const uint64_t t0 = NowUs();
+    printf("[bench] waiting for peer ready (handshake, up to %llus)...\n",
+           static_cast<unsigned long long>(kReadyTimeoutUs / 1000000ULL));
+    for (;;) {
+        *selfSlot = selfMagic; /* 重发前重写，避免对端把它当脏值清掉 */
+        smem_copy_params p{HostPtr(selfGva + readyOff), HostPtr(peerGva + readyOff), sizeof(uint64_t), nullptr};
+        (void)smem_bm_copy(bm, &p, SMEMB_COPY_AUTO, 0); /* 链路未建立时返回非 0，下一轮重发 */
+        const uint64_t p0 = NowUs();
+        while (*selfSlot != peerMagic) {
+            if (NowUs() - p0 > 2ULL * 1000 * 1000) { /* 2s 没等到就重发一次标记 */
+                break;
+            }
+        }
+        if (*selfSlot == peerMagic) {
+            return true;
+        }
+        if (NowUs() - t0 > kReadyTimeoutUs) {
+            return false;
+        }
+    }
+}
+
 /* 每块数据布局（remote 填充 / local 校验共用同一规则）：
      前 4 字节 = 块号+1 的小端（唯一身份标识，+1 是为了避开初始化值 0）
      其余字节 = (块号+1) & 0xFF
@@ -342,6 +378,7 @@ int main(int argc, char *argv[])
        [dispBase, dispBase+count*stride)  600 个离散目标/源（stride 间隔模拟离散）
        [scratchOff, wmOff)            进度源槽数组（发送端用；flagsPerRound*links 个 8B，写入后不覆写）
        [ackOff, ackOff+8)            完成 ack 槽（收端全部散完后写回发端，用于单时钟测端到端）
+       [readyOff, readyOff+8)        就绪握手槽（两端互写魔数，确认对端已 create 且链路可用）
        [wmOff, wmOff+links*8)         水位槽（每条 link 一个 8B；cont 值 = 全局块号，跨轮单调不归零） */
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
@@ -353,7 +390,8 @@ int main(int argc, char *argv[])
     const uint64_t scratchOff =
         wmOff - AlignUp(static_cast<uint64_t>(flagsPerRound) * links * 8ULL, 64); /* 进度源槽数组起点 */
     const uint64_t ackOff = scratchOff - 8;                                       /* 完成 ack 槽：收端写回 */
-    if (needBytes > ackOff) {
+    const uint64_t readyOff = ackOff - 8;                                         /* 就绪握手槽：两端互写魔数 */
+    if (needBytes > readyOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
@@ -406,6 +444,7 @@ int main(int argc, char *argv[])
             *reinterpret_cast<uint64_t *>(HostPtr(selfGva + wmOff + static_cast<uint64_t>(e) * 8ULL)) = 0;
         }
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOff)) = 0;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -421,6 +460,18 @@ int main(int argc, char *argv[])
     std::vector<uint64_t> sizes(a.count, a.size);
     const bool runBase = (a.mode == "all" || a.mode == "baseline");
     const bool runCont = (a.mode == "all" || a.mode == "cont");
+
+    /* 就绪握手：链路没建好就进场景，早起的一端会在等 flag 时超时并提前退出，
+       晚起的一端随即因为对端 VA 被摘掉而 direction 推导失败（见 WaitPeerReady 注释）。
+       两端都过了这一步才开始跑，因此两个进程按任意顺序、隔几秒启动都行。 */
+    if (!WaitPeerReady(bm, isLocal, selfGva, peerGva, readyOff)) {
+        fprintf(stderr,
+                "[bench] wait peer ready TIMEOUT: 对端未启动或链路未建立"
+                "（确认两端 --hcom-url / --mode 一致，store 无残留进程）\n");
+        smem_bm_destroy(bm);
+        return 1;
+    }
+    printf("[bench] peer ready handshake OK\n");
 
     /* 校验用参考块：refBlock[v] 为整块填 v 的 a.size 字节。
        校验放在全部轮次跑完之后，用 memcmp（SIMD）比对，避免逐字节循环的额外开销。 */
