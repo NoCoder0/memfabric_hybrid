@@ -278,8 +278,15 @@ Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA, void *destVA, uint64_
     uint64_t remainingLength = length;
     uint64_t offset = 0;
     if (transportManager_->QueryHasRegistered(srcBase, length)) {
+        /* 走"异步投递 + Synchronize"（与批量/数据面同一套机制：ChannelPut 带回调 + counter stream），
+           而不是同步单包口 WriteRemote（ChannelPut 传 nullptr 回调）。
+           实测同步单包口在小消息（几字节~几十字节）上有 ~4ms 的固定开销，异步口是几十 us 量级；
+           语义不变 —— 这里依旧等本次写完成才返回。 */
         TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_READ_REMOTE)
-        ret = transportManager_->WriteRemote(options.destRankId, srcBase, destBase, length);
+        ret = transportManager_->WriteRemoteAsync(options.destRankId, srcBase, destBase, length);
+        if (ret == BM_OK) {
+            ret = transportManager_->Synchronize(options.destRankId);
+        }
         TP_TRACE_END(TP_HYBM_HOST_RDMA_READ_REMOTE, ret)
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;

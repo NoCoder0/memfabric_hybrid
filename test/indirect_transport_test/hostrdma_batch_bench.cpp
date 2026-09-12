@@ -747,17 +747,9 @@ int main(int argc, char *argv[])
                     out[0] = selfGva;  /* staging 基址（跨轮不变） */
                     out[1] = expect;   /* 轮次号：写在最后，对端以它判断"新的一轮来了" */
                     std::atomic_thread_fence(std::memory_order_release);
-                    void *rqSrc[1] = {HostPtr(selfGva + reqOutOff)};
-                    void *rqDst[1] = {HostPtr(peerGva + reqOff)};
-                    uint64_t rqSize[1] = {sizeof(uint64_t) * 2};
-                    smem_batch_copy_params rqParam{};
-                    rqParam.sources = rqSrc;
-                    rqParam.destinations = rqDst;
-                    rqParam.dataSizes = rqSize;
-                    rqParam.batchSize = 1;
-                    /* 走 batch 单元素（数据面同款：异步 post + counter stream + Synchronize），
-                       而不是同步单包口 smem_bm_copy —— 实测后者在收端这条路上要 ~4ms。 */
-                    const int32_t reqRet = smem_bm_copy_batch(bm, &rqParam, SMEMB_COPY_AUTO, 0);
+                    smem_copy_params rq{HostPtr(selfGva + reqOutOff), HostPtr(peerGva + reqOff),
+                                        sizeof(uint64_t) * 2, nullptr};
+                    const int32_t reqRet = smem_bm_copy(bm, &rq, SMEMB_COPY_AUTO, 0);
                     const uint64_t tReqDone = NowUs();
                     if (reqRet != 0) {
                         printf("cont receiver req write failed at iter %u ret=%d\n", r, reqRet);
