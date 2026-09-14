@@ -92,7 +92,7 @@ struct BenchArgs {
     uint32_t rounds = 5;
     int32_t logLevel = -1; /* <0 表示不改库的日志级别；0~5 见 smem_set_log_level */
     bool old = false; /* --old=1 老版口径(如 e30bf29，无收端聚合): 只跑直写 baseline、只用单 url、无 ack/scatter */
-    bool passAddrs = false; /* --pass-addrs=1: baseline 由 local 显式把 600 个目标地址传给 remote */
+    bool passAddrs = true; /* --pass-addrs: baseline 由 local 显式把 600 个目标地址传给 remote（默认开） */
 };
 
 void Usage(const char *prog)
@@ -111,10 +111,12 @@ void Usage(const char *prog)
             "  --old=1                    老版口径(默认0，跑 e30bf29 等无聚合 MF 用):\n"
             "                             只跑直写 baseline、只用单 url、无 staging/scatter\n"
             "                             不传 --old = 最新版: baseline 直写 + cont(收端聚合)\n"
-            "  --pass-addrs=0|1           baseline: local 把自己 600 个目标地址显式传给 remote(1)，\n"
-            "                             不再依赖\"双方按同一公式算出相同目标地址\"\n"
+            "  --pass-addrs=0|1           baseline: local 把自己 600 个目标地址显式传给 remote(默认1)，\n"
+            "                             =0 则回退到\"双方按同一公式算出相同目标地址\"\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
-            "  说明: 两场景均不使用 ack，每轮结束两端各空转 5000ms(计时区外)隔离轮次\n",
+            "  说明: 两个场景都由 local 驱动轮次并在本端用单时钟计时；\n"
+            "        baseline = 传地址 → 远端单边直写 600 块 → local 收到（不 scatter）；\n"
+            "        cont     = 传地址 → 远端单边写 → local 边收边 scatter。\n",
             prog);
 }
 
@@ -437,7 +439,16 @@ int main(int argc, char *argv[])
        也不会读到错的地址。 */
     const uint64_t reqOutOff = readyOff - 16; /* local 的请求发送槽 */
     const uint64_t reqOff = reqOutOff - 16;   /* remote 的请求接收槽 */
-    /* --pass-addrs：地址列表复用 staging 区头部（baseline 不使用 staging）。
+    /* baseline 的每轮握手槽（放在 staging 区尾部；baseline 不用 staging 传数据）。
+       不复用 cont 的 reqOff/reqOutOff —— mode=all 下 baseline 先跑，残留的轮次号会让 cont 发端误判轮次：
+       [baseReqOff, +8)     remote 侧：本轮请求序号（local 单边写过来）
+       [baseReqOutOff, +8)  local 侧：本轮请求源（本端写好再单边写到对端的 baseReqOff）
+       [baseDoneOff, +8)    local 侧：完成标志（remote 写完 600 块后单边写过来；同一 channel 保序
+                            ⇒ 标志到 = 600 块已全部落地，local 才能用它做单时钟端到端计时） */
+    const uint64_t baseReqOff = stagingEnd - 24;
+    const uint64_t baseReqOutOff = stagingEnd - 16;
+    const uint64_t baseDoneOff = stagingEnd - 8;
+    /* --pass-addrs（默认开）：地址列表复用 staging 区头部（baseline 不使用 staging）。
        local 把 600 个离散目标地址单边写到对端这里，remote 从本端内存读出来直接当 dsts 用。 */
     const uint64_t addrListOff = 0;
     if (needBytes > reqOff) {
@@ -505,6 +516,9 @@ int main(int argc, char *argv[])
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOff + 8ULL)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOutOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + reqOutOff + 8ULL)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + baseReqOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + baseReqOutOff)) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + baseDoneOff)) = 0;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -579,23 +593,45 @@ int main(int argc, char *argv[])
             uint64_t sumUs = 0;
             std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印，避免日志影响计时/节奏 */
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时），后 a.rounds 轮计时 */
-            uint64_t seq = 1;
+            /* 轮次由 local 驱动：等本端 baseReqOff 的序号推进 → 写本轮 600 块 → 把完成标志单边写回 local。
+               两端时序由这个握手对齐，所以不需要 RoundGap 做轮次隔离。 */
+            auto *reqVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + baseReqOff));
+            uint64_t lastSeq = 0;
+            bool aborted = false;
             for (uint32_t r = 0; r < kTotal; ++r) {
-                const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 拷贝接口(含写完成 flag)从调用到返回 */
+                const uint64_t w0 = NowUs();
+                while (*reqVa == lastSeq) {
+                    if (NowUs() - w0 > kSpinTimeoutUs) {
+                        printf("baseline sender TIMEOUT at iter %u: 等不到 local 的本轮请求\n", r);
+                        aborted = true;
+                        break;
+                    }
+                }
+                if (aborted) {
+                    break;
+                }
+                lastSeq = *reqVa;
+                const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 从调用到返回 */
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
                 p.destinations = dsts.data();
                 p.dataSizes = sizes.data();
                 p.batchSize = a.count;
                 int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
-                if (ret == 0) {
-                    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + flagOff)) = seq;
-                    smem_copy_params fp{HostPtr(selfGva + flagOff), HostPtr(peerGva + flagOff), sizeof(seq), nullptr};
-                    ret = smem_bm_copy(bm, &fp, SMEMB_COPY_AUTO, 0);
-                }
                 const uint64_t t1 = NowUs();
                 if (ret != 0) {
                     printf("baseline sender abort at iter %u ret=%d\n", r, ret);
+                    break;
+                }
+                /* 600 块写完之后，在**同一条 channel** 上把完成标志写到 local：
+                   QP 内保序 ⇒ 标志到 = 前面 600 块已全部落地，local 才能用它做单时钟端到端计时。 */
+                *reinterpret_cast<uint64_t *>(HostPtr(selfGva + baseDoneOff)) = lastSeq;
+                std::atomic_thread_fence(std::memory_order_release);
+                smem_copy_params dp{HostPtr(selfGva + baseDoneOff), HostPtr(peerGva + baseDoneOff), sizeof(uint64_t),
+                                    nullptr};
+                ret = smem_bm_copy(bm, &dp, SMEMB_COPY_AUTO, 0);
+                if (ret != 0) {
+                    printf("baseline sender done-flag write failed at iter %u ret=%d\n", r, ret);
                     break;
                 }
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
@@ -603,10 +639,6 @@ int main(int argc, char *argv[])
                     sumUs += cost;
                     costs.push_back(cost);
                 }
-                /* baseline 为单向流（发方不等收方），但每轮之间同样空转隔离：
-                   否则下一轮直写会覆盖收端正准备校验的同一批离散目标 */
-                RoundGap(a.gapMs);
-                ++seq;
             }
             if (!costs.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
                 printf("baseline sender last_round cost_us=%llu\n", static_cast<unsigned long long>(costs.back()));
@@ -646,41 +678,60 @@ int main(int argc, char *argv[])
                 }
                 printf("[bench] pass-addrs: 已向 remote 下发 %u 个目标地址\n", a.count);
             }
-            auto *flagVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + flagOff));
+            auto *doneVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + baseDoneOff));
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */
             uint64_t expect = 1;
             uint32_t timedOutAt = UINT32_MAX;
+            uint64_t sumE2eUs = 0;
+            std::vector<uint64_t> e2eCosts;
             for (uint32_t r = 0; r < kTotal; ++r) {
-                /* 本端只负责"等数据到齐 + 校验"，**不测时延**：
-                   observer 不驱动轮次，只是被动发现 flag 已推进，测出来恒为 0~1us，没有意义。
-                   时延一律由发端用同一时钟测（baseline 的 avg_us、cont 的 transport_us/e2e_us）。 */
+                /* 本端**驱动轮次并单时钟计时**：写本轮请求(推进 baseReqOff) → remote 写 600 块 →
+                   remote 把完成标志写回本端 baseDoneOff。计时区 = 从写请求到看到完成标志。
+                   baseline 不做 scatter（数据直写 600 个离散目标），所以这个 e2e 就是纯传输时长。 */
+                const uint64_t t0 = NowUs();
+                {
+                    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + baseReqOutOff)) = expect;
+                    std::atomic_thread_fence(std::memory_order_release);
+                    smem_copy_params rp{HostPtr(selfGva + baseReqOutOff), HostPtr(peerGva + baseReqOff),
+                                        sizeof(uint64_t), nullptr};
+                    const int32_t rret = smem_bm_copy(bm, &rp, SMEMB_COPY_AUTO, 0);
+                    if (rret != 0) {
+                        printf("baseline observer req write failed at iter %u ret=%d\n", r, rret);
+                        timedOutAt = r;
+                        break;
+                    }
+                }
                 bool timedOut = false;
                 const uint64_t tw0 = NowUs();
-                while (*flagVa < expect) {
-                    if (NowUs() - tw0 > kSpinTimeoutUs) { /* 自旋等 flag 水位推进（用 < 而非 != ，避免发端领先时两端失步死等） */
+                while (*doneVa < expect) { /* 用 < 而非 == ，避免对端领先时两端失步死等 */
+                    if (NowUs() - tw0 > kSpinTimeoutUs) {
                         timedOut = true;
                         break;
                     }
                 }
+                const uint64_t t1 = NowUs();
                 if (timedOut) {
                     timedOutAt = r;
                     break;
                 }
-                /* 计时区之外：拷贝完成后整块校验本轮数据（身份 tag + memcmp 内容）。
-                   每轮之间有 RoundGap 隔离，校验期间不会被下一轮直写覆盖，结果可信。 */
-                VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
                 if (r >= 1) { /* r==0 为 warmup，不计入 */
+                    const uint64_t e2eUs = t1 - t0;
+                    sumE2eUs += e2eUs;
+                    e2eCosts.push_back(e2eUs);
+                }
+                /* 计时区之外：整块校验本轮数据（身份 tag + memcmp 内容）。
+                   轮次由握手对齐，校验期间对端不会开写下一轮，结果可信。 */
+                VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
+                if (r >= 1) {
                     errs.push_back(vr.ok ? 0 : 1);
                     verifies.push_back(vr);
                 }
-                RoundGap(a.gapMs);
                 ++expect;
             }
             if (timedOutAt != UINT32_MAX) {
-                printf("baseline observer TIMEOUT at iter %u: flag=%llu expect=%llu —— 对端没在推进水位"
-                       "（两端 links 数 / mode 是否一致？swap 是否已关？）\n",
-                       timedOutAt, static_cast<unsigned long long>(*flagVa),
-                       static_cast<unsigned long long>(expect));
+                printf("baseline observer TIMEOUT at iter %u: done=%llu expect=%llu —— 对端没在推进完成标志"
+                       "（两端 mode / 地址列表是否一致？）\n",
+                       timedOutAt, static_cast<unsigned long long>(*doneVa), static_cast<unsigned long long>(expect));
             }
             for (uint32_t k = 0; k < verifies.size(); ++k) {
                 if (!verifies[k].ok) {
@@ -688,7 +739,13 @@ int main(int argc, char *argv[])
                     break;
                 }
             }
-            printf("baseline observer verify=%s (rounds=%u, err 末轮=%d；本端不测时延)\n",
+            if (!e2eCosts.empty()) { /* 只打最后一轮 + 平均值，避免 100 轮刷屏 */
+                printf("baseline observer last_round e2e_us=%llu\n",
+                       static_cast<unsigned long long>(e2eCosts.back()));
+            }
+            printf("baseline observer e2e_avg_us=%llu (rounds=%u)\n", static_cast<unsigned long long>(sumE2eUs / a.rounds),
+                   a.rounds);
+            printf("baseline observer verify=%s (rounds=%u, err 末轮=%d)\n",
                    std::all_of(verifies.begin(), verifies.end(), [](const VerifyResult &v) { return v.ok; }) ? "OK"
                                                                                                             : "FAIL",
                    a.rounds, errs.empty() ? 0 : errs.back());

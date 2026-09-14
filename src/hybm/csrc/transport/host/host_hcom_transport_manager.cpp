@@ -78,6 +78,31 @@ static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
     }
 }
 
+/* ubs 内部用 uint8_t 存 CPU 号，且 128 被占用作"不绑核"哨兵，故可用 CPU 号上限为 127 */
+constexpr uint32_t WORKER_CPU_ID_MAX = 127;
+
+/* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
+   同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
+   另据 ubs 源码注释 "each number must be 0-127" 且 128 被占用作"不绑核"哨兵，故这里也限制 <=127。
+   返回该区间的 CPU 个数；格式不合法返回 false。 */
+bool ParseWorkerCpuRange(const std::string &range, uint32_t &cpuCount)
+{
+    cpuCount = 0;
+    auto dash = range.find('-');
+    if (dash == std::string::npos) {
+        return false;
+    }
+    uint32_t beginId = 0;
+    uint32_t endId = 0;
+    if (!StrUtil::String2Uint(StrUtil::StrTrim(range.substr(0, dash)), beginId) ||
+        !StrUtil::String2Uint(StrUtil::StrTrim(range.substr(dash + 1)), endId) || endId < beginId ||
+        endId > WORKER_CPU_ID_MAX) {
+        return false;
+    }
+    cpuCount = endId - beginId + 1;
+    return true;
+}
+
 void HcomExternalLoggerAdapter(int level, const char *msg)
 {
     const char *safeMsg = (msg == nullptr) ? "" : msg;
@@ -142,6 +167,29 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     opt.workerGroupMode = C_SERVICE_BUSY_POLLING;
     opt.maxSendRecvDataSize = runtimeConfig_.recvDataSize;
     opt.workerThreadPriority = HCOM_THREAD_PRIORITY;
+    /* 可选：把 worker 组钉到指定 CPU 段，格式 "<起始CPU>-<结束CPU>"，例如 "80-80"（1 个核）。
+       默认不设置（落核交给内核调度器）。不设置时忙轮询 worker 可能与调用线程落到同一个核上——
+       被唤醒的线程要排队等一个调度时间片，小消息写的等待会从十几 µs 抬到 ~4ms。
+       ubs 要求"该组 CPU 数 == worker 数"（BUSY_POLLING 严格相等），这里按核数自动设 worker 数；
+       校验不过就只打 WARN 并跳过，绝不把服务搞挂。
+       注意 ubs 内部用 uint8_t 存 CPU 号，所以只能绑 0-255 的核。 */
+    const auto &workerCpuRange = env::MF_HYBM_HCOM_WORKER_CPU_RANGE;
+    if (!workerCpuRange.empty()) {
+        uint32_t cpusInRange = 0;
+        const bool parsed = ParseWorkerCpuRange(workerCpuRange, cpusInRange);
+        const uint32_t workerNum = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_WORKER_NUM, cpusInRange);
+        if (!parsed || workerNum != cpusInRange || workerCpuRange.size() >= sizeof(opt.workerGroupCpuRange)) {
+            BM_LOG_WARN("skip hcom worker cpu range. range: "
+                        << workerCpuRange << " parsed: " << parsed << " cpusInRange: " << cpusInRange
+                        << " workerNum: " << workerNum
+                        << " (格式须为 \"起始CPU-结束CPU\"，且 CPU 数须等于 worker 数，CPU 号须为 0-127)");
+        } else {
+            std::copy_n(workerCpuRange.c_str(), workerCpuRange.size() + 1, opt.workerGroupCpuRange);
+            opt.workerGroupThreadCount = static_cast<uint16_t>(workerNum);
+            BM_LOG_INFO("hcom worker group cpu range: " << opt.workerGroupCpuRange
+                                                        << " threadCount: " << opt.workerGroupThreadCount);
+        }
+    }
     Service_Type enumProtocolType = HostHcomHelper::HybmDopTransHcomProtocol(options.protocol, options.nic);
     tlsConfig_ = options.tlsOption;
 
