@@ -125,31 +125,6 @@ TEST(HybmTransportManagerTest, GetQpInfo_Null)
     EXPECT_EQ(mgr.GetQpInfo(), nullptr);
 }
 
-TEST(HybmTransportManagerTest, ConnectWithOptions_NotConnected)
-{
-    TestTransportManager mgr;
-    HybmTransPrepareOptions opts{};
-    EXPECT_EQ(mgr.ConnectWithOptions(opts), BM_OK);
-    // Second call → already connected → UpdateRankOptions
-    EXPECT_EQ(mgr.ConnectWithOptions(opts), BM_OK);
-}
-
-TEST(HybmTransportManagerTest, ConnectWithOptions_PrepareFails)
-{
-    TestTransportManager mgr;
-    mgr.prepareResult = BM_ERROR;
-    HybmTransPrepareOptions opts{};
-    EXPECT_NE(mgr.ConnectWithOptions(opts), BM_OK);
-}
-
-TEST(HybmTransportManagerTest, ConnectWithOptions_ConnectFails)
-{
-    TestTransportManager mgr;
-    mgr.connectResult = BM_ERROR;
-    HybmTransPrepareOptions opts{};
-    EXPECT_NE(mgr.ConnectWithOptions(opts), BM_OK);
-}
-
 TEST(HybmTransportManagerTest, Remove_NotSupported)
 {
     TestTransportManager mgr;

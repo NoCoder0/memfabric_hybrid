@@ -99,18 +99,11 @@ struct SmemMessage {
     static int64_t UnpackEstablishConnection(const SmemMessage &msg, uint32_t &rankId,
                                              std::vector<RankFullInfo> &others) noexcept;
 
-    static SmemMessage PackCloseConnection(uint32_t rankId, const std::vector<uint32_t> &others) noexcept;
-    static int64_t UnpackCloseConnection(const SmemMessage &msg, uint32_t &rankId,
-                                         std::vector<uint32_t> &others) noexcept;
-
     static SmemMessage PackJoin(const RankFullInfo &info) noexcept;
     static int64_t UnpackJoin(const SmemMessage &msg, RankFullInfo &info) noexcept;
 
     static SmemMessage PackLeave(uint32_t rankId) noexcept;
     static int64_t UnpackLeave(const SmemMessage &msg, uint32_t &rankId) noexcept;
-
-    static SmemMessage PackLeaveNotify(uint32_t rankId) noexcept;
-    static int64_t UnpackLeaveNotify(const SmemMessage &msg, uint32_t &rankId) noexcept;
 
     static SmemMessage PackQueryLinkState(uint32_t rankId) noexcept;
     static int64_t UnpackQueryLinkState(const SmemMessage &msg, uint32_t &rankId) noexcept;
@@ -129,7 +122,6 @@ struct SmemMessage {
     static SmemMessage PackAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices) noexcept;
     static int64_t UnpackAddSlices(const SmemMessage &msg, uint32_t &extendingRankId, MultiBytes &newSlices) noexcept;
 
-    static SmemMessage PackAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept;
     static SmemMessage PackAckBatch(ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
                                     const std::vector<int32_t> &results = {}) noexcept;
     static int64_t UnpackAck(const SmemMessage &msg, ControlOp &ackOp, uint32_t &senderRankId,
@@ -151,8 +143,6 @@ public:
     static std::vector<uint8_t> Pack(const SmemMessage &message) noexcept;
 
     static bool Full(const uint8_t *buffer, const uint64_t bufferLen) noexcept;
-
-    static int64_t MessageSize(const std::vector<uint8_t> &buffer) noexcept;
 
     static int64_t Unpack(const uint8_t *buffer, const uint64_t bufferLen, SmemMessage &message) noexcept;
 

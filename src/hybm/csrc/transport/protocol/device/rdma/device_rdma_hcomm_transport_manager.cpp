@@ -640,7 +640,7 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
         }
 
         // 如果有远端内存 key，先 import，再创建通道
-        // 如果没有（第一次 Prepare 时），存数据等 ConnectWithOptions 再处理
+        // 如果没有（对端尚未注册内存），等 UpdateRankOptions 带 memKeys 后再处理
         if (!item.second.memKeys.empty()) {
             auto ret = ImportPeerMems(peerRank, item.second.memKeys);
             if (ret != BM_OK) {
@@ -653,9 +653,6 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
                 BM_LOG_ERROR("CreatePeerResources failed for peer: " << peerRank);
                 return ret;
             }
-        } else {
-            BM_LOG_DEBUG("Prepare no memKeys for rank=" << peerRank << ", deferring channel creation");
-            pendingPeerData_[peerRank] = peerData;
         }
     }
     return BM_OK;
@@ -772,8 +769,8 @@ Result DeviceRdmaHcommTransportManager::DestroyPeerResources(uint32_t peerRank)
 Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
                                                        const std::vector<TransportMemoryKey> &memKeys)
 {
-    // 幂等：peerDva 在 import 成功后设置。Prepare（640 行）和 ConnectWithOptions（892 行）
-    // 可能对同一 peer 各调一次 ImportPeerMems，重复 import 会让 HCOMM 返回
+    // 幂等：peerDva 在 import 成功后设置。Prepare（644 行）可能对同一 peer
+    // 多次调用（如后续 UpdateRankOptions 带 memKeys 再入），重复 import 会让 HCOMM 返回
     // "memDesc already imported"（HCCL_E_AGAIN），这里直接跳过已导入的 peer。
     if (remoteRanks_[peerRank].peerDva != 0) {
         return BM_OK;
@@ -883,53 +880,6 @@ int32_t DeviceRdmaHcommTransportManager::RawMemImportWithRetry(HcommEndpointHand
 
 Result DeviceRdmaHcommTransportManager::Connect()
 {
-    connected_ = true;
-    return BM_OK;
-}
-
-Result DeviceRdmaHcommTransportManager::ConnectWithOptions(const HybmTransPrepareOptions &options)
-{
-    std::lock_guard<std::mutex> guard(mutex_);
-    if (!opened_) {
-        BM_LOG_ERROR("transport not opened");
-        return BM_ERROR;
-    }
-
-    BM_LOG_DEBUG("ConnectWithOptions called, pendingPeerData_=" << pendingPeerData_.size());
-
-    for (const auto &item : options.options) {
-        const uint32_t peerRank = item.first;
-        if (peerRank >= rankCount_ || peerRank == rankId_) {
-            continue;
-        }
-
-        // Import peer memKeys (now available at this stage)
-        if (!item.second.memKeys.empty()) {
-            BM_LOG_DEBUG("ConnectWithOptions rank=" << peerRank << " memKeys.size=" << item.second.memKeys.size());
-            auto ret = ImportPeerMems(peerRank, item.second.memKeys);
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("ImportPeerMems failed for rank=" << peerRank << " during ConnectWithOptions");
-                return ret;
-            }
-        }
-
-        // If channel not created yet (deferred from Prepare), create it now
-        auto it = remoteRanks_.find(peerRank);
-        if (it == remoteRanks_.end() || it->second.channel == 0) {
-            auto pendingIt = pendingPeerData_.find(peerRank);
-            if (pendingIt != pendingPeerData_.end()) {
-                BM_LOG_DEBUG("ConnectWithOptions creating deferred channel for rank=" << peerRank);
-                auto ret = CreatePeerResources(peerRank, pendingIt->second);
-                if (ret != BM_OK) {
-                    BM_LOG_ERROR("CreatePeerResources failed for rank=" << peerRank << " during ConnectWithOptions");
-                    return ret;
-                }
-                pendingPeerData_.erase(pendingIt);
-            } else {
-                BM_LOG_DEBUG("ConnectWithOptions no pending data for rank=" << peerRank);
-            }
-        }
-    }
     connected_ = true;
     return BM_OK;
 }

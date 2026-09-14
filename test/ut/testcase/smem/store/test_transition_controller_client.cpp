@@ -121,28 +121,6 @@ TEST_F(TestTransitionControllerClient, EstablishConnection_CallbackInvoked)
     EXPECT_EQ(callbackRankId, static_cast<int>(K_RANK_TWO));
 }
 
-TEST_F(TestTransitionControllerClient, CloseConnection_DefaultReturnsSuccess)
-{
-    std::vector<uint32_t> ids{1, K_RANK_TWO};
-    EXPECT_EQ(ctrl_->CloseConnection(0, ids, 0), 0);
-    auto &res = ctrl_->GetLastAckResults();
-    EXPECT_EQ(res.size(), K_RANK_TWO);
-    EXPECT_EQ(res[0], 0);
-    EXPECT_EQ(res[1], 0);
-}
-
-TEST_F(TestTransitionControllerClient, CloseConnection_CallbackInvoked)
-{
-    uint32_t callbackRankId = 0;
-    ctrl_->onCloseConnection_ = [&](uint32_t rankId, const std::vector<uint32_t> &, uint64_t) -> int {
-        callbackRankId = rankId;
-        return 0;
-    };
-    std::vector<uint32_t> ids{1};
-    EXPECT_EQ(ctrl_->CloseConnection(K_RANK_FIVE, ids, 0), 0);
-    EXPECT_EQ(callbackRankId, static_cast<int>(K_RANK_FIVE));
-}
-
 TEST_F(TestTransitionControllerClient, QueryLinkState_DefaultReturnsSuccess)
 {
     EXPECT_EQ(ctrl_->QueryLinkState(0), 0);
@@ -164,28 +142,6 @@ TEST_F(TestTransitionControllerClient, QueryLinkState_CallbackStoresEntries)
     EXPECT_EQ(entries[0].state, static_cast<int8_t>(LINK_CONNECTED));
     EXPECT_EQ(entries[1].dstRankId, K_RANK_TWO);
     EXPECT_EQ(entries[1].state, static_cast<int8_t>(LINK_IDLE));
-}
-
-TEST_F(TestTransitionControllerClient, LeaveNotify_DefaultReturnsSuccess)
-{
-    EXPECT_EQ(ctrl_->LeaveNotify(0, 1), 0);
-}
-
-TEST_F(TestTransitionControllerClient, LeaveNotify_CallbackInvoked)
-{
-    uint32_t callbackLeavingRank = 0;
-    ctrl_->onLeaveNotify_ = [&](uint32_t leavingRankId) -> int {
-        callbackLeavingRank = leavingRankId;
-        return 0;
-    };
-    EXPECT_EQ(ctrl_->LeaveNotify(K_RANK_FIVE, K_RANK_THREE), 0);
-    EXPECT_EQ(callbackLeavingRank, K_RANK_THREE);
-}
-
-TEST_F(TestTransitionControllerClient, LeaveNotify_CallbackReturnsError)
-{
-    ctrl_->onLeaveNotify_ = [](uint32_t) -> int { return -1; };
-    EXPECT_EQ(ctrl_->LeaveNotify(0, 1), -1);
 }
 
 TEST_F(TestTransitionControllerClient, AckResultsResetOnEachCall)

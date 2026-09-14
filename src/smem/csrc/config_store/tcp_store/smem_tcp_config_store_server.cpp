@@ -1787,8 +1787,6 @@ const char *ControlOpName(ControlOp op) noexcept
             return "REMOVE_FROM_WHITELIST";
         case CONTROL_ESTABLISH_CONNECTION:
             return "ESTABLISH_CONNECTION";
-        case CONTROL_CLOSE_CONNECTION:
-            return "CLOSE_CONNECTION";
         case CONTROL_JOIN:
             return "JOIN";
         case CONTROL_LEAVE:
@@ -1803,10 +1801,6 @@ const char *ControlOpName(ControlOp op) noexcept
             return "REMOVE_FROM_WHITELIST_ACK";
         case CONTROL_ESTABLISH_CONNECTION_ACK:
             return "ESTABLISH_CONNECTION_ACK";
-        case CONTROL_CLOSE_CONNECTION_ACK:
-            return "CLOSE_CONNECTION_ACK";
-        case CONTROL_LEAVE_NOTIFY:
-            return "LEAVE_NOTIFY";
         default:
             return "UNKNOWN";
     }
@@ -1845,7 +1839,6 @@ Result AccStoreServer::ControlHandler(const ock::acc::AccTcpRequestContext &cont
         case ControlOp::CONTROL_ADD_TO_WHITELIST_ACK:
         case ControlOp::CONTROL_REMOVE_FROM_WHITELIST_ACK:
         case ControlOp::CONTROL_ESTABLISH_CONNECTION_ACK:
-        case ControlOp::CONTROL_CLOSE_CONNECTION_ACK:
             return HandleControlAck(context, request, static_cast<ControlOp>(op));
         default:
             STORE_LOG_ERROR("unhandled ControlOp: " << static_cast<int>(op) << " seqNo: " << context.SeqNo());

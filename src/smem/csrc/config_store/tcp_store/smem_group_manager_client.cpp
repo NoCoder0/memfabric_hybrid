@@ -58,17 +58,6 @@ int SmemGroupManagerClient::EstablishConnection(uint32_t rankId, const std::vect
     return 0;
 }
 
-int SmemGroupManagerClient::CloseConnection(uint32_t rankId, const std::vector<uint32_t> &others, uint64_t reqId)
-{
-    lastAckRes_.assign(others.size(), 0);
-    if (onCloseConnection_) {
-        return onCloseConnection_(rankId, others, reqId);
-    }
-    STORE_LOG_INFO("[GM][Client][Recv] CloseConnection rankId: " << rankId << " count: " << others.size()
-                                                                 << " reqId: " << reqId);
-    return 0;
-}
-
 int SmemGroupManagerClient::PromoteToActive(uint32_t rankId)
 {
     if (onPromoteToActive_) {
@@ -85,16 +74,6 @@ int SmemGroupManagerClient::QueryLinkState(uint32_t rankId)
         return 0;
     }
     STORE_LOG_INFO("[GM][Client][Recv] QueryLinkState rankId: " << rankId);
-    return 0;
-}
-
-int SmemGroupManagerClient::LeaveNotify(uint32_t targetRankId, uint32_t leavingRankId)
-{
-    (void)targetRankId;
-    if (onLeaveNotify_) {
-        return onLeaveNotify_(leavingRankId);
-    }
-    STORE_LOG_INFO("[GM][Client][Recv] LeaveNotify leavingRankId: " << leavingRankId);
     return 0;
 }
 

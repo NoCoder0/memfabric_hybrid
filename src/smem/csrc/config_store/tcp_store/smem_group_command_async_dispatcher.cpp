@@ -23,8 +23,6 @@ static const char *ControlOpName(ControlOp op)
             return "REMOVE_FROM_WHITELIST";
         case CONTROL_ESTABLISH_CONNECTION:
             return "ESTABLISH_CONNECTION";
-        case CONTROL_CLOSE_CONNECTION:
-            return "CLOSE_CONNECTION";
         case CONTROL_JOIN:
             return "JOIN";
         case CONTROL_LEAVE:
@@ -39,10 +37,6 @@ static const char *ControlOpName(ControlOp op)
             return "REMOVE_FROM_WHITELIST_ACK";
         case CONTROL_ESTABLISH_CONNECTION_ACK:
             return "ESTABLISH_CONNECTION_ACK";
-        case CONTROL_CLOSE_CONNECTION_ACK:
-            return "CLOSE_CONNECTION_ACK";
-        case CONTROL_LEAVE_NOTIFY:
-            return "LEAVE_NOTIFY";
         default:
             return "UNKNOWN";
     }
@@ -114,21 +108,6 @@ void SmemGroupCommandAsyncDispatcher::EnqueueEstablishConnection(uint32_t rankId
     cond_.notify_one();
 }
 
-void SmemGroupCommandAsyncDispatcher::EnqueueCloseConnection(uint32_t rankId, std::vector<uint32_t> &&peers,
-                                                             uint64_t reqId) noexcept
-{
-    std::lock_guard locker{mutex_};
-    disconnectionQueue_.push_back({rankId, std::move(peers), reqId});
-    cond_.notify_one();
-}
-
-void SmemGroupCommandAsyncDispatcher::EnqueueLeaveNotify(uint32_t leavingRankId) noexcept
-{
-    std::lock_guard locker{mutex_};
-    leaveNotifyQueue_.push_back(leavingRankId);
-    cond_.notify_one();
-}
-
 void SmemGroupCommandAsyncDispatcher::EnqueueQueryLinkState(uint64_t reqId) noexcept
 {
     std::lock_guard locker{mutex_};
@@ -184,15 +163,12 @@ void SmemGroupCommandAsyncDispatcher::DrainQueues(DrainedJobs &jobs) noexcept
     std::unique_lock locker{mutex_};
     cond_.wait(locker, [this] {
         return !started_.load() || !addWhitelistQueue_.empty() || !removeWhitelistQueue_.empty() ||
-               !connectionQueue_.empty() || !disconnectionQueue_.empty() || !leaveNotifyQueue_.empty() ||
-               hasQueryLinkState_ || !addSlicesQueue_.empty();
+               !connectionQueue_.empty() || hasQueryLinkState_ || !addSlicesQueue_.empty();
     });
 
     jobs.addJobs.swap(addWhitelistQueue_);
     jobs.rmvJobs.swap(removeWhitelistQueue_);
     jobs.connJobs.swap(connectionQueue_);
-    jobs.disconnJobs.swap(disconnectionQueue_);
-    jobs.leaveJobs.swap(leaveNotifyQueue_);
     jobs.slicesJobs.swap(addSlicesQueue_);
     if (hasQueryLinkState_) {
         jobs.doQuery = true;
@@ -215,14 +191,6 @@ void SmemGroupCommandAsyncDispatcher::ProcessDrainedJobs(const DrainedJobs &jobs
         BackgroundEstablishConnection(req, req.reqId);
     }
 
-    for (auto &req : jobs.disconnJobs) {
-        BackgroundCloseConnection(req, req.reqId);
-    }
-
-    for (auto leavingRankId : jobs.leaveJobs) {
-        BackgroundLeaveNotify(leavingRankId);
-    }
-
     if (jobs.doQuery) {
         BackgroundQueryLinkState(jobs.queryReqId);
     }
@@ -239,15 +207,6 @@ static int32_t DefaultResult(int ret)
     return (ret == 0) ? 0 : -1;
 }
 
-static int CallbackOrError(const char *name, const std::function<int()> &cb)
-{
-    if (!cb) {
-        SM_LOG_ERROR(name << ": callback not registered, reporting failure");
-        return -1;
-    }
-    return cb();
-}
-
 void SmemGroupCommandAsyncDispatcher::BackgroundAddWhiteList(const WhitelistRequest &req, uint64_t reqId) noexcept
 {
     if (req.others.empty()) {
@@ -255,12 +214,7 @@ void SmemGroupCommandAsyncDispatcher::BackgroundAddWhiteList(const WhitelistRequ
         return;
     }
 
-    int overallRet = CallbackOrError("onAddToWhitelist_", [this, &req, reqId]() {
-        if (!onAddToWhitelist_) {
-            return -1;
-        }
-        return onAddToWhitelist_(req.rankId, req.others, reqId);
-    });
+    int overallRet = onAddToWhitelist_ ? onAddToWhitelist_(req.rankId, req.others, reqId) : -1;
     {
         const std::string peers = JoinRankIds(req.others);
         if (overallRet != 0) {
@@ -288,12 +242,7 @@ void SmemGroupCommandAsyncDispatcher::BackgroundRmvWhiteList(const WhitelistRequ
         return;
     }
 
-    int overallRet = CallbackOrError("onRemoveFromWhitelist_", [this, &req, reqId]() {
-        if (!onRemoveFromWhitelist_) {
-            return -1;
-        }
-        return onRemoveFromWhitelist_(req.rankId, req.others, reqId);
-    });
+    int overallRet = onRemoveFromWhitelist_ ? onRemoveFromWhitelist_(req.rankId, req.others, reqId) : -1;
     if (overallRet != 0) {
         SM_LOG_ERROR("[GM][Client][Recv] RmvWhiteList FAIL r=" << req.rankId << " ret=" << overallRet);
     } else {
@@ -314,12 +263,7 @@ void SmemGroupCommandAsyncDispatcher::BackgroundRmvWhiteList(const WhitelistRequ
 void SmemGroupCommandAsyncDispatcher::BackgroundEstablishConnection(const ConnEstablishRequest &req,
                                                                     uint64_t reqId) noexcept
 {
-    int overallRet = CallbackOrError("onEstablishConnection_", [this, &req, reqId]() {
-        if (!onEstablishConnection_) {
-            return -1;
-        }
-        return onEstablishConnection_(req.rankId, req.peers, reqId);
-    });
+    int overallRet = onEstablishConnection_ ? onEstablishConnection_(req.rankId, req.peers, reqId) : -1;
     {
         const std::string peers = JoinRankIds(req.peers);
         if (overallRet != 0) {
@@ -338,42 +282,6 @@ void SmemGroupCommandAsyncDispatcher::BackgroundEstablishConnection(const ConnEs
         results.push_back(DefaultResult(overallRet));
     }
     SendAck(CONTROL_ESTABLISH_CONNECTION_ACK, targetIds, results, reqId);
-}
-
-void SmemGroupCommandAsyncDispatcher::BackgroundCloseConnection(const ConnCloseRequest &req, uint64_t reqId) noexcept
-{
-    int overallRet = CallbackOrError("onCloseConnection_", [this, &req, reqId]() {
-        if (!onCloseConnection_) {
-            return -1;
-        }
-        return onCloseConnection_(req.rankId, req.peers, reqId);
-    });
-    if (overallRet != 0) {
-        SM_LOG_ERROR("[GM][Client][Recv] CloseConn FAIL r=" << req.rankId << " rid=" << reqId << " ret=" << overallRet);
-    } else {
-        SM_LOG_INFO("[GM][Client][Recv] CloseConn r=" << req.rankId << " peers=[" << JoinRankIds(req.peers) << "]");
-    }
-
-    std::vector<int32_t> results;
-    results.reserve(req.peers.size());
-    for (size_t i = 0; i < req.peers.size(); ++i) {
-        results.push_back(DefaultResult(overallRet));
-    }
-    SendAck(CONTROL_CLOSE_CONNECTION_ACK, req.peers, results, reqId);
-}
-
-void SmemGroupCommandAsyncDispatcher::BackgroundLeaveNotify(uint32_t leavingRankId) noexcept
-{
-    if (onLeaveNotify_) {
-        int ret = onLeaveNotify_(leavingRankId);
-        if (ret != 0) {
-            SM_LOG_ERROR("[GM][Client][Recv] LeaveNotify FAIL lr=" << leavingRankId << " ret=" << ret);
-        } else {
-            SM_LOG_INFO("[GM][Client][Recv] LeaveNotify lr=" << leavingRankId);
-        }
-    } else {
-        SM_LOG_WARN("[GM][Client][Recv] LeaveNotify lr=" << leavingRankId << " no callback registered");
-    }
 }
 
 void SmemGroupCommandAsyncDispatcher::BackgroundQueryLinkState(uint64_t reqId) noexcept

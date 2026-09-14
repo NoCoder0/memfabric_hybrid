@@ -131,10 +131,11 @@ private:
     int OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
     int OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
     int OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept;
-    int OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept;
     std::vector<ock::smem::LinkStateEntry> OnQueryLinkState() noexcept;
-    int OnLeaveNotify(uint32_t leavingRankId) noexcept;
     int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
+
+    // Invoke the peer-down callback for a rank that left the group (worker notification)
+    void NotifyPeerDown(uint32_t leavingRankId) noexcept;
 
     // Group-manager callback plumbing (extracted to keep SetupGroupManagerCallbacks small)
     int RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
@@ -183,13 +184,11 @@ private:
     std::unordered_map<WorkerId, Local2GlobalMap, WorkerIdHash> remoteSlices_;
     std::unordered_map<uint32_t, WorkerId> rankToWorkerId_;
     std::map<std::string, WorkerId> nameToWorkerId_; /* To accelerate name parsed */
-    std::unordered_map<uint32_t, uint32_t> rankUpdateIdx_;
     std::unordered_map<uint32_t, smem_trans_role_t> ranksRole_;
 
     StorePtr store_;
     bool joined_ = false;
     std::shared_ptr<std::promise<void>> joinComplete_;
-    std::shared_ptr<std::promise<void>> extendComplete_;
 
     // peer down callback
     smem_trans_peer_down_callback_t peerDownCallback_ = nullptr;

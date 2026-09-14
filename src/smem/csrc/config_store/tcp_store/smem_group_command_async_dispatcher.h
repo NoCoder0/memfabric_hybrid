@@ -29,10 +29,7 @@ public:
         std::function<int(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId)>;
     using ConnectionCallback =
         std::function<int(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId)>;
-    using CloseConnectionCallback =
-        std::function<int(uint32_t rankId, const std::vector<uint32_t> &others, uint64_t reqId)>;
     using LinkStateQueryCallback = std::function<std::vector<LinkStateEntry>()>;
-    using LeaveNotifyCallback = std::function<int(uint32_t leavingRankId)>;
     using AddSlicesCallback = std::function<int(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId)>;
     using SendAckBatchFunc =
         std::function<void(ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
@@ -72,19 +69,9 @@ public:
         onEstablishConnection_ = std::move(cb);
     }
 
-    void SetCloseConnectionCallback(CloseConnectionCallback cb) noexcept
-    {
-        onCloseConnection_ = std::move(cb);
-    }
-
     void SetLinkStateQueryCallback(LinkStateQueryCallback cb) noexcept
     {
         onQueryLinkState_ = std::move(cb);
-    }
-
-    void SetLeaveNotifyCallback(LeaveNotifyCallback cb) noexcept
-    {
-        onLeaveNotify_ = std::move(cb);
     }
 
     void SetAddSlicesCallback(AddSlicesCallback cb) noexcept
@@ -95,16 +82,8 @@ public:
     void EnqueueAddToWhitelist(uint32_t rankId, std::vector<RankFullInfo> &&others, uint64_t reqId) noexcept;
     void EnqueueRemoveFromWhitelist(uint32_t rankId, std::vector<RankFullInfo> &&others, uint64_t reqId) noexcept;
     void EnqueueEstablishConnection(uint32_t rankId, std::vector<RankFullInfo> &&peers, uint64_t reqId) noexcept;
-    void EnqueueCloseConnection(uint32_t rankId, std::vector<uint32_t> &&peers, uint64_t reqId) noexcept;
-    void EnqueueCloseConnection(uint32_t rankId, std::vector<RankFullInfo> &&peers, uint64_t reqId) noexcept;
-    void EnqueueLeaveNotify(uint32_t leavingRankId) noexcept;
     void EnqueueQueryLinkState(uint64_t reqId) noexcept;
     void EnqueueAddSlices(uint32_t extendingRankId, MultiBytes &&newSlices, uint64_t reqId) noexcept;
-
-    uint32_t GetLocalRankId() const noexcept
-    {
-        return localRankId_;
-    }
 
 private:
     struct WhitelistRequest {
@@ -119,12 +98,6 @@ private:
         uint64_t reqId;
     };
 
-    struct ConnCloseRequest {
-        uint32_t rankId;
-        std::vector<uint32_t> peers;
-        uint64_t reqId;
-    };
-
     struct AddSlicesRequest {
         uint32_t extendingRankId;
         MultiBytes newSlices;
@@ -136,8 +109,6 @@ private:
         std::vector<WhitelistRequest> addJobs;
         std::vector<WhitelistRequest> rmvJobs;
         std::vector<ConnEstablishRequest> connJobs;
-        std::vector<ConnCloseRequest> disconnJobs;
-        std::vector<uint32_t> leaveJobs;
         std::vector<AddSlicesRequest> slicesJobs;
         uint64_t queryReqId = 0;
         bool doQuery = false;
@@ -149,8 +120,6 @@ private:
     void BackgroundAddWhiteList(const WhitelistRequest &req, uint64_t reqId) noexcept;
     void BackgroundRmvWhiteList(const WhitelistRequest &req, uint64_t reqId) noexcept;
     void BackgroundEstablishConnection(const ConnEstablishRequest &req, uint64_t reqId) noexcept;
-    void BackgroundCloseConnection(const ConnCloseRequest &req, uint64_t reqId) noexcept;
-    void BackgroundLeaveNotify(uint32_t leavingRankId) noexcept;
     void BackgroundQueryLinkState(uint64_t reqId) noexcept;
     void BackgroundAddSlices(const AddSlicesRequest &req, uint64_t reqId) noexcept;
 
@@ -167,8 +136,6 @@ private:
     std::vector<WhitelistRequest> addWhitelistQueue_;
     std::vector<WhitelistRequest> removeWhitelistQueue_;
     std::vector<ConnEstablishRequest> connectionQueue_;
-    std::vector<ConnCloseRequest> disconnectionQueue_;
-    std::vector<uint32_t> leaveNotifyQueue_;
     std::vector<AddSlicesRequest> addSlicesQueue_;
 
     uint64_t queryLinkStateReqId_{0};
@@ -177,9 +144,7 @@ private:
     WhitelistCallback onAddToWhitelist_;
     WhitelistCallback onRemoveFromWhitelist_;
     ConnectionCallback onEstablishConnection_;
-    CloseConnectionCallback onCloseConnection_;
     LinkStateQueryCallback onQueryLinkState_;
-    LeaveNotifyCallback onLeaveNotify_;
     AddSlicesCallback onAddSlices_;
     SendAckBatchFunc sendAckBatch_;
 };

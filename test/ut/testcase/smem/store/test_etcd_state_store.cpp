@@ -312,7 +312,7 @@ TEST_F(EtcdStateStoreTest, LoadAliveRanksIgnoresInvalidEntries)
 
 TEST_F(EtcdStateStoreTest, LoadLinksRoundTrip)
 {
-    std::vector<LinkState> links{LINK_IDLE, LINK_EXCHANGED, LINK_CONNECTED, LINK_CLEANING};
+    std::vector<LinkState> links{LINK_IDLE, LINK_EXCHANGED, LINK_CONNECTED, LINK_CONNECTING};
     store_->FlushLinks(links, K_LINK_COUNT_TWO);
     // FlushLinks only stages; the flush thread performs the Put.
     store_->StartFlushThread();
@@ -330,7 +330,7 @@ TEST_F(EtcdStateStoreTest, LoadLinksRoundTrip)
     EXPECT_EQ(loaded[0], LINK_IDLE);
     EXPECT_EQ(loaded[1], LINK_EXCHANGED);
     EXPECT_EQ(loaded[K_RANK_TWO], LINK_CONNECTED);
-    EXPECT_EQ(loaded[K_RANK_THREE], LINK_CLEANING);
+    EXPECT_EQ(loaded[K_RANK_THREE], LINK_CONNECTING);
 }
 
 TEST_F(EtcdStateStoreTest, LoadRankExternalFailsOnTruncatedData)

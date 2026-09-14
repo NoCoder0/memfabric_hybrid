@@ -94,7 +94,7 @@ TEST_F(TestTransitionControllerServer, CheckIn_TriggersAddToWhitelistSend)
     EXPECT_EQ(controlOp, CONTROL_ADD_TO_WHITELIST);
 }
 
-TEST_F(TestTransitionControllerServer, Checkout_TriggersLeaveNotifySend)
+TEST_F(TestTransitionControllerServer, Checkout_TriggersRemoveFromWhitelistSend)
 {
     auto server = CreateServer(MakeSender());
     ASSERT_EQ(server->CheckIn(MakeInfo(0)), 0);
@@ -108,7 +108,7 @@ TEST_F(TestTransitionControllerServer, Checkout_TriggersLeaveNotifySend)
     lastTargetRank_ = 0;
     lastSentData_.clear();
 
-    /* Checkout sends LeaveNotify directly */
+    /* Checkout notifies peers via RemoveFromWhitelist (LEAVE_NOTIFY was removed) */
     ASSERT_EQ(server->Checkout(K_RANK_FOUR), 0);
     EXPECT_EQ(server->GetRankState(K_RANK_FOUR), RANK_IDLE);
 }

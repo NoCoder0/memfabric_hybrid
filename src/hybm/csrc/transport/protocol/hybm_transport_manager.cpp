@@ -54,29 +54,6 @@ const void *TransportManager::GetQpInfo() const
     return nullptr;
 }
 
-Result TransportManager::ConnectWithOptions(const HybmTransPrepareOptions &options)
-{
-    BM_LOG_DEBUG("ConnectWithOptions now connected=" << connected_);
-    if (!connected_) {
-        auto ret = Prepare(options);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("prepare connection failed: " << ret);
-            return ret;
-        }
-
-        ret = Connect();
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("connect failed: " << ret);
-            return ret;
-        }
-
-        connected_ = true;
-        return BM_OK;
-    }
-
-    return UpdateRankOptions(options);
-}
-
 Result TransportManager::Remove(const std::vector<uint32_t> &removeList)
 {
     BM_LOG_ERROR("TransportManager is parent class, not support Remove by ranks, please use subclass");

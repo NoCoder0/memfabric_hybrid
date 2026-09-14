@@ -188,7 +188,6 @@ Result SmemBmEntryManager::CreateEntryById(uint32_t id, SmemBmEntryPtr &entry /*
 
     auto tmpEntry = SmMakeRef<SmemBmEntry>(opt, store);
     SM_ASSERT_RETURN(tmpEntry != nullptr, SM_NEW_OBJECT_FAILED);
-    tmpEntry->SetSmemFlags(config_.flags);
 
     /* add into set and map */
     entryIdMap_.emplace(id, tmpEntry);

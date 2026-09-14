@@ -39,10 +39,7 @@ public:
         std::function<int(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId)>;
     using ConnectionCallback =
         std::function<int(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId)>;
-    using CloseConnectionCallback =
-        std::function<int(uint32_t rankId, const std::vector<uint32_t> &others, uint64_t reqId)>;
     using LinkStateQueryCallback = std::function<std::vector<LinkStateEntry>()>;
-    using LeaveNotifyCallback = std::function<int(uint32_t leavingRankId)>;
     using PromoteToActiveCallback = std::function<int(uint32_t rankId)>;
     using AddSlicesCallback = std::function<int(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId)>;
 
@@ -55,10 +52,8 @@ public:
     int AddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId);
     int RemoveFromWhitelist(uint32_t rankId, const std::vector<RankBaseInfo> &others, uint64_t reqId);
     int EstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId);
-    int CloseConnection(uint32_t rankId, const std::vector<uint32_t> &others, uint64_t reqId);
     int PromoteToActive(uint32_t rankId);
     int QueryLinkState(uint32_t rankId);
-    int LeaveNotify(uint32_t targetRankId, uint32_t leavingRankId);
     int AddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId);
 
     const std::vector<LinkStateEntry> &GetLastQueryLinkStateEntries() const
@@ -69,8 +64,8 @@ public:
     /**
      * @brief Returns the result codes from the most recent callback invocation.
      *
-     * Each callback (AddToWhitelist, RemoveFromWhitelist, EstablishConnection,
-     * CloseConnection) initialises lastAckRes_ with zeroes before calling the
+     * Each callback (AddToWhitelist, RemoveFromWhitelist, EstablishConnection)
+     * initialises lastAckRes_ with zeroes before calling the
      * injected function. The caller may inspect this after HandleControlMessage
      * to determine per-target success/failure.
      */
@@ -82,9 +77,7 @@ public:
     WhitelistCallback onAddToWhitelist_;
     WhitelistCallback onRemoveFromWhitelist_;
     ConnectionCallback onEstablishConnection_;
-    CloseConnectionCallback onCloseConnection_;
     LinkStateQueryCallback onQueryLinkState_;
-    LeaveNotifyCallback onLeaveNotify_;
     PromoteToActiveCallback onPromoteToActive_;
     AddSlicesCallback onAddSlices_;
 

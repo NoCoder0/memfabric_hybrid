@@ -40,8 +40,6 @@ const char *AckTagName(ControlOp op) noexcept
             return "REMWACK";
         case CONTROL_ESTABLISH_CONNECTION_ACK:
             return "ESTCACK";
-        case CONTROL_CLOSE_CONNECTION_ACK:
-            return "CLSCACK";
         default:
             return "UNKNOWN";
     }
@@ -232,6 +230,10 @@ int SmemGroupManagerServer::ProcessExtendMemory(uint32_t rankId, const MultiByte
 
 void SmemGroupManagerServer::MarkRankReconnected(uint32_t rankId) noexcept
 {
+    if (rankId >= maxRanks_) {
+        STORE_LOG_ERROR("mark rank reconnected failed, rankId out of range: " << rankId);
+        return;
+    }
     std::unique_lock<std::mutex> lock(mutex_);
     if (states_[rankId] != RANK_IDLE) {
         lock.unlock();
@@ -251,7 +253,7 @@ void SmemGroupManagerServer::MarkRankReconnected(uint32_t rankId) noexcept
 
 /*
  * Deregister a rank from the group.
- * Immediately transitions all links to IDLE, broadcasts LeaveNotify to peers,
+ * Immediately transitions all links to IDLE, broadcasts RemoveFromWhitelist to peers,
  * and clears in-memory rank metadata.
  */
 void SmemGroupManagerServer::ResetRankState(uint32_t rankId, std::vector<uint32_t> &connectedPeers) noexcept
@@ -300,11 +302,6 @@ int SmemGroupManagerServer::Checkout(uint32_t rankId, uint64_t reqId, const std:
         if (sender_ && !connectedPeers.empty()) {
             for (uint32_t peerId : connectedPeers) {
                 EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId)});
-                EnqueueSend({SendOp::CLOSE, peerId, rankId, LinkIndex(peerId, rankId)});
-            }
-            // LEAVE_NOTIFY is the lightweight notification; REMOVE+CLOSE trigger actual cleanup
-            for (uint32_t peerId : connectedPeers) {
-                EnqueueSend({SendOp::LEAVE_NOTIFY, peerId, rankId, 0});
             }
         }
     }
@@ -508,42 +505,6 @@ void SmemGroupManagerServer::HandleLinkConnecting(LinkScanContext &ctx,
     }
 }
 
-void SmemGroupManagerServer::HandleLinkDisconnecting(LinkScanContext &ctx,
-                                                     std::vector<LinkScanJob> &removeJobs) noexcept
-{
-    if (ctx.tr.retryCount >= LINK_QUERY_MAX_RETRIES) {
-        links_[ctx.linkIdx] = LINK_DISCONNECTED;
-        ctx.tr = {ctx.now, 0};
-        return;
-    }
-    if (IsTimeout(ctx.elapsedMs)) {
-        ctx.tr.retryCount++;
-        removeJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
-    }
-}
-
-void SmemGroupManagerServer::HandleLinkDisconnected(LinkScanContext &ctx, std::vector<LinkScanJob> &closeJobs) noexcept
-{
-    if (ShouldDegradeLink(ctx.tr, ctx.linkIdx)) {
-        return;
-    }
-    if (ctx.tr.retryCount == 0 || IsTimeout(ctx.elapsedMs)) {
-        ctx.tr.retryCount++;
-        closeJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
-    }
-}
-
-void SmemGroupManagerServer::HandleLinkCleaning(LinkScanContext &ctx, std::vector<LinkScanJob> &closeJobs) noexcept
-{
-    if (ShouldDegradeLink(ctx.tr, ctx.linkIdx)) {
-        return;
-    }
-    if (IsTimeout(ctx.elapsedMs)) {
-        ctx.tr.retryCount++;
-        closeJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
-    }
-}
-
 void SmemGroupManagerServer::ScanLinkStates(LinkScanContext &ctx, LinkState st, LinkScanJobs &jobs) noexcept
 {
     switch (st) {
@@ -556,47 +517,8 @@ void SmemGroupManagerServer::ScanLinkStates(LinkScanContext &ctx, LinkState st, 
         case LINK_CONNECTING:
             HandleLinkConnecting(ctx, jobs.establishJobs);
             break;
-        case LINK_DISCONNECTING:
-            HandleLinkDisconnecting(ctx, jobs.removeJobs);
-            break;
-        case LINK_DISCONNECTED:
-            HandleLinkDisconnected(ctx, jobs.closeJobs);
-            break;
-        case LINK_CLEANING:
-            HandleLinkCleaning(ctx, jobs.closeJobs);
-            break;
         default:
             break;
-    }
-}
-
-/*
- * Transition LEAVING ranks to IDLE once all their links are IDLE.
- * Populates ranksToCleanup for caller to persist.
- */
-void SmemGroupManagerServer::CleanupLeavingRanks(std::vector<uint32_t> &ranksToCleanup) noexcept
-{
-    for (uint32_t r = 0; r < maxRanks_; ++r) {
-        if (states_[r] != RANK_LEAVING) {
-            continue;
-        }
-        bool allIdle = true;
-        for (uint32_t j = 0; j < maxRanks_; ++j) {
-            if (j == r) {
-                continue;
-            }
-            if (links_[LinkIndex(r, j)] != LINK_IDLE || links_[LinkIndex(j, r)] != LINK_IDLE) {
-                allIdle = false;
-                break;
-            }
-        }
-        if (allIdle) {
-            states_[r] = RANK_IDLE;
-            rankBase_[r].clear();
-            rankExternal_[r].clear();
-            ranksToCleanup.push_back(r);
-            STORE_LOG_INFO("rank=" << r << " state=IDLE, leave cleanup done");
-        }
     }
 }
 
@@ -690,7 +612,7 @@ void SmemGroupManagerServer::RetryIdleLinks() noexcept
  */
 void SmemGroupManagerServer::EnqueueLinkJobs(const LinkScanJobs &jobs) noexcept
 {
-    auto count = jobs.addJobs.size() + jobs.establishJobs.size() + jobs.removeJobs.size() + jobs.closeJobs.size();
+    auto count = jobs.addJobs.size() + jobs.establishJobs.size();
     if (count == 0) {
         return;
     }
@@ -705,8 +627,6 @@ void SmemGroupManagerServer::EnqueueLinkJobs(const LinkScanJobs &jobs) noexcept
     };
     append(jobs.addJobs, SendOp::ADD);
     append(jobs.establishJobs, SendOp::ESTABLISH);
-    append(jobs.removeJobs, SendOp::REMOVE);
-    append(jobs.closeJobs, SendOp::CLOSE);
 
     EnqueueBatchSend(std::move(batch));
 }
@@ -751,8 +671,8 @@ void SmemGroupManagerServer::AddActiveLink(size_t idx) noexcept
 }
 
 /*
- * Main driver: scan all non-stable links, enqueue actions for expired
- * states, promote CHECKED_IN ranks, and cleanup LEAVING ranks.
+ * Main driver: scan all non-stable links and enqueue actions for expired
+ * states, promote CHECKED_IN ranks.
  * Called periodically by TransitionDriverTask.
  */
 void SmemGroupManagerServer::DrivePendingTransitions() noexcept
@@ -763,7 +683,6 @@ void SmemGroupManagerServer::DrivePendingTransitions() noexcept
 
     std::vector<uint32_t> promotedToActive;
     {
-        std::vector<uint32_t> ranksToCleanup;
         std::unique_lock<std::mutex> lock(mutex_);
         for (size_t i = 0; i < activeLinks_.size();) {
             size_t idx = activeLinks_[i];
@@ -782,7 +701,6 @@ void SmemGroupManagerServer::DrivePendingTransitions() noexcept
             ScanLinkStates(ctx, st, jobs);
             ++i;
         }
-        CleanupLeavingRanks(ranksToCleanup);
         PromoteCheckedInRanks(promotedToActive);
         RetryIdleLinks();
     }
@@ -883,26 +801,6 @@ bool SmemGroupManagerServer::ApplyAckToLink(ControlOp ackOp, uint32_t senderRank
             TP_TRACE_END(TP_SMEM_GROUP_ON_ACK_ESTABLISH, 0);
             return advanced;
         }
-        case CONTROL_REMOVE_FROM_WHITELIST_ACK: {
-            TP_TRACE_BEGIN(TP_SMEM_GROUP_ON_ACK_LEAVE);
-            bool advanced = (st == LINK_DISCONNECTING);
-            if (advanced) {
-                st = LINK_DISCONNECTED;
-                tr = {now, 0};
-            }
-            TP_TRACE_END(TP_SMEM_GROUP_ON_ACK_LEAVE, 0);
-            return advanced;
-        }
-        case CONTROL_CLOSE_CONNECTION_ACK: {
-            TP_TRACE_BEGIN(TP_SMEM_GROUP_ON_ACK_CLOSE);
-            bool advanced = (st == LINK_CLEANING);
-            if (advanced) {
-                st = LINK_IDLE;
-                tr = {};
-            }
-            TP_TRACE_END(TP_SMEM_GROUP_ON_ACK_CLOSE, 0);
-            return advanced;
-        }
         default:
             break;
     }
@@ -920,7 +818,7 @@ void SmemGroupManagerServer::OnLinkBroken(uint32_t rankId) noexcept
 
     {
         std::unique_lock<std::mutex> lock(mutex_);
-        if (states_[rankId] != RANK_CHECKED_IN && states_[rankId] != RANK_ACTIVE && states_[rankId] != RANK_LEAVING) {
+        if (states_[rankId] != RANK_CHECKED_IN && states_[rankId] != RANK_ACTIVE) {
             return;
         }
         ResetRankState(rankId, connectedPeers);
@@ -931,10 +829,6 @@ void SmemGroupManagerServer::OnLinkBroken(uint32_t rankId) noexcept
     if (sender_ && !connectedPeers.empty()) {
         for (uint32_t peerId : connectedPeers) {
             EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId)});
-            EnqueueSend({SendOp::CLOSE, peerId, rankId, LinkIndex(peerId, rankId)});
-        }
-        for (uint32_t peerId : connectedPeers) {
-            EnqueueSend({SendOp::LEAVE_NOTIFY, peerId, rankId, 0});
         }
     }
 }
@@ -1027,38 +921,6 @@ int SmemGroupManagerServer::SendBatchEstablish(uint32_t srcRank, const std::vect
     return sender_(srcRank, packed);
 }
 
-int SmemGroupManagerServer::SendBatchClose(uint32_t srcRank, const std::vector<const SendTask *> &group,
-                                           uint64_t reqId) noexcept
-{
-    std::vector<uint32_t> dsts;
-    dsts.reserve(group.size());
-    for (auto *t : group) {
-        dsts.push_back(t->dstRank);
-    }
-    auto msg = SmemMessage::PackCloseConnection(srcRank, dsts);
-    msg.requestId = reqId;
-    auto packed = SmemMessagePacker::Pack(msg);
-    if (packed.empty()) {
-        return -1;
-    }
-    return sender_(srcRank, packed);
-}
-
-int SmemGroupManagerServer::SendBatchLeaveNotify(const std::vector<const SendTask *> &group) noexcept
-{
-    for (auto *t : group) {
-        auto msg = SmemMessage::PackLeaveNotify(t->dstRank);
-        auto packed = SmemMessagePacker::Pack(msg);
-        if (!packed.empty()) {
-            sender_(t->srcRank, packed);
-        }
-    }
-    if (!group.empty()) {
-        STORE_LOG_INFO("[GM][Server][Send] type=LEAV_NY rank=" << group.front()->dstRank);
-    }
-    return 0;
-}
-
 int SmemGroupManagerServer::SendBatchQueryLinkState(uint32_t srcRank) noexcept
 {
     auto msg = SmemMessage::PackQueryLinkState(srcRank);
@@ -1072,7 +934,7 @@ int SmemGroupManagerServer::SendBatchQueryLinkState(uint32_t srcRank) noexcept
 int SmemGroupManagerServer::SendBatchGroup(uint32_t srcRank, SendOp op,
                                            const std::vector<const SendTask *> &group) noexcept
 {
-    static const char *opTag[] = {"ADDWLST", "REMWLST", "ESTCONN", "CLSCONN", "LEAV_NY", "QRY_LST"};
+    static const char *opTag[] = {"ADDWLST", "REMWLST", "ESTCONN", "QRY_LST"};
     const char *tag = (static_cast<size_t>(op) < std::size(opTag)) ? opTag[static_cast<size_t>(op)] : "??????";
     uint64_t reqId = group.empty() ? 0 : group.front()->requestId;
     std::string tgt;
@@ -1089,10 +951,6 @@ int SmemGroupManagerServer::SendBatchGroup(uint32_t srcRank, SendOp op,
             return SendBatchAddRemove(srcRank, op, group, reqId);
         case SendOp::ESTABLISH:
             return SendBatchEstablish(srcRank, group, reqId);
-        case SendOp::CLOSE:
-            return SendBatchClose(srcRank, group, reqId);
-        case SendOp::LEAVE_NOTIFY:
-            return SendBatchLeaveNotify(group);
         case SendOp::QUERY_LINK_STATE:
             return SendBatchQueryLinkState(srcRank);
     }
@@ -1105,16 +963,10 @@ void SmemGroupManagerServer::UpdateLinkTransitionOnSuccess(LinkState st, size_t 
     switch (st) {
         case LINK_EXCHANGING:
         case LINK_CONNECTING:
-        case LINK_DISCONNECTING:
-        case LINK_CLEANING:
             tr.timestamp = now;
             break;
         case LINK_EXCHANGED:
             links_[linkIdx] = LINK_CONNECTING;
-            tr = {now, 0};
-            break;
-        case LINK_DISCONNECTED:
-            links_[linkIdx] = LINK_CLEANING;
             tr = {now, 0};
             break;
         default:
@@ -1129,15 +981,6 @@ void SmemGroupManagerServer::UpdateLinkTransitionOnFailure(LinkState st, size_t 
         case LINK_EXCHANGING:
         case LINK_EXCHANGED:
         case LINK_CONNECTING:
-            links_[linkIdx] = LINK_IDLE;
-            tr = {};
-            break;
-        case LINK_DISCONNECTING:
-            links_[linkIdx] = LINK_DISCONNECTED;
-            tr = {now, 0};
-            break;
-        case LINK_DISCONNECTED:
-        case LINK_CLEANING:
             links_[linkIdx] = LINK_IDLE;
             tr = {};
             break;
@@ -1214,65 +1057,6 @@ uint64_t SmemGroupManagerServer::SendTaskKey(const SendTask &t) const noexcept
     return srcRankFlag | opFlag | linkIdxLow;
 }
 
-/*
- * Execute a send task via the TransitionController.
- * On success, advances send-driven states (EXCHANGED→CONNECTING, DISCONNECTED→CLEANING)
- * or updates the timestamp for ACK-waiting states (EXCHANGING, CONNECTING, etc.).
- * On failure, increments retryCount and re-enqueues; degrades the link on max retries.
- */
-int SmemGroupManagerServer::ExecuteSendOperation(SendOp op, uint32_t srcRank, uint32_t dstRank,
-                                                 uint64_t requestId) const noexcept
-{
-    switch (op) {
-        case SendOp::ADD: {
-            RankFullInfo base;
-            base.rankId = dstRank;
-            {
-                std::lock_guard<std::mutex> lk(mutex_);
-                base.baseInfo = rankBase_[dstRank];
-                base.externalInfo = rankExternal_[dstRank];
-            }
-            auto msg = SmemMessage::PackAddToWhitelist(srcRank, {base});
-            msg.requestId = requestId;
-            return SendPackedMessage(srcRank, msg);
-        }
-        case SendOp::REMOVE: {
-            RankBaseInfo base;
-            base.rankId = dstRank;
-            {
-                std::lock_guard<std::mutex> lk(mutex_);
-                base.baseInfo = rankBase_[dstRank];
-            }
-            auto msg = SmemMessage::PackRemoveFromWhitelist(srcRank, {base});
-            msg.requestId = requestId;
-            return SendPackedMessage(srcRank, msg);
-        }
-        case SendOp::ESTABLISH: {
-            RankFullInfo full;
-            full.rankId = dstRank;
-            {
-                std::lock_guard<std::mutex> lk(mutex_);
-                full.baseInfo = rankBase_[dstRank];
-                full.externalInfo = rankExternal_[dstRank];
-            }
-            auto msg = SmemMessage::PackEstablishConnection(srcRank, {full});
-            msg.requestId = requestId;
-            return SendPackedMessage(srcRank, msg);
-        }
-        case SendOp::CLOSE: {
-            auto msg = SmemMessage::PackCloseConnection(srcRank, {dstRank});
-            msg.requestId = requestId;
-            return SendPackedMessage(srcRank, msg);
-        }
-        case SendOp::QUERY_LINK_STATE: {
-            auto msg = SmemMessage::PackQueryLinkState(srcRank);
-            return SendPackedMessage(srcRank, msg);
-        }
-        default:
-            return -1;
-    }
-}
-
 int SmemGroupManagerServer::SendPackedMessage(uint32_t srcRank, const SmemMessage &msg) const noexcept
 {
     auto packed = SmemMessagePacker::Pack(msg);
@@ -1280,30 +1064,6 @@ int SmemGroupManagerServer::SendPackedMessage(uint32_t srcRank, const SmemMessag
         return -1;
     }
     return sender_(srcRank, packed);
-}
-
-void SmemGroupManagerServer::ProcessSend(SendTask task) noexcept
-{
-    if (!sender_) {
-        return;
-    }
-
-    auto now = std::chrono::steady_clock::now();
-    int ret = ExecuteSendOperation(task.op, task.srcRank, task.dstRank, task.requestId);
-
-    std::lock_guard<std::mutex> lk(mutex_);
-    LinkState st = links_[task.linkIdx];
-    LinkTransition &tr = transitions_[task.linkIdx];
-
-    if (st == LINK_IDLE) {
-        return;
-    }
-
-    if (ret == 0) {
-        UpdateLinkTransitionOnSuccess(st, task.linkIdx, tr, now);
-    } else {
-        UpdateLinkTransitionOnFailure(st, task.linkIdx, tr, now);
-    }
 }
 
 /*

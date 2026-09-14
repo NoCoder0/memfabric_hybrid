@@ -125,7 +125,6 @@ public:
     Result Connect() override;
     Result AsyncConnect() override;
     Result WaitForConnected(int64_t timeoutNs) override;
-    Result ConnectWithOptions(const HybmTransPrepareOptions &options) override;
     Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
     const std::string &GetNic() const override;
     const TransportPrivateData GetPrivateData() const override;
@@ -229,7 +228,6 @@ private:
     uint32_t localFlagExportLen_{0};
 
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_;
-    std::unordered_map<uint32_t, RdmaHcommPrivateData> pendingPeerData_;
     std::unordered_map<uint64_t, LocalMemEntry> localRegistrations_;
     HcommApiWrapper hcommApi_;
 

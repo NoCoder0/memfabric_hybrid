@@ -424,30 +424,6 @@ Result ComposeTransportManager::ConnectRank(uint32_t rankId)
     return BM_OK;
 }
 
-Result ComposeTransportManager::ConnectWithOptions(const HybmTransPrepareOptions &options)
-{
-    Result ret = BM_OK;
-    if (hostTransportManager_) {
-        HybmTransPrepareOptions hostOptions{};
-        GetHostPrepareOptions(options, hostOptions);
-        ret = hostTransportManager_->ConnectWithOptions(hostOptions);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to ConnectWithOptions host ret: " << ret);
-            return ret;
-        }
-    }
-    if (deviceTransportManager_) {
-        HybmTransPrepareOptions deviceOptions{};
-        GetDevicePrepareOptions(options, deviceOptions);
-        ret = deviceTransportManager_->ConnectWithOptions(deviceOptions);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to ConnectWithOptions device ret: " << ret);
-            return ret;
-        }
-    }
-    return BM_OK;
-}
-
 Result ComposeTransportManager::AsyncConnect()
 {
     if (hostTransportManager_) {

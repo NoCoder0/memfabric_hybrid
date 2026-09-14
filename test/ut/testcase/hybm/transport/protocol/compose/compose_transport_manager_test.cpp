@@ -120,12 +120,6 @@ public:
         return connectRankResult;
     }
 
-    Result ConnectWithOptions(const HybmTransPrepareOptions &) override
-    {
-        ++connectWithOptionsCalls;
-        return connectWithOptionsResult;
-    }
-
     Result AsyncConnect() override
     {
         ++asyncConnectCalls;
@@ -219,7 +213,6 @@ public:
     uint32_t removeRanksCalls{0};
     uint32_t connectCalls{0};
     uint32_t connectRankCalls{0};
-    uint32_t connectWithOptionsCalls{0};
     uint32_t asyncConnectCalls{0};
     uint32_t waitConnectedCalls{0};
     uint32_t updateRankCalls{0};
@@ -243,7 +236,6 @@ public:
     Result removeRanksResult{BM_OK};
     Result connectResult{BM_OK};
     Result connectRankResult{BM_OK};
-    Result connectWithOptionsResult{BM_OK};
     Result asyncConnectResult{BM_OK};
     Result waitConnectedResult{BM_OK};
     Result updateRankResult{BM_OK};
@@ -1371,13 +1363,6 @@ TEST(ComposeTransportManagerTest, Connect_NoTransport)
     EXPECT_EQ(mgr.Connect(), BM_OK);
 }
 
-TEST(ComposeTransportManagerTest, ConnectWithOptions_NoTransport)
-{
-    ComposeTransportManager mgr(std::make_shared<FakeTagInfo>(0U));
-    HybmTransPrepareOptions opts{};
-    EXPECT_EQ(mgr.ConnectWithOptions(opts), BM_OK);
-}
-
 TEST(ComposeTransportManagerTest, AsyncConnect_NoTransport)
 {
     ComposeTransportManager mgr(std::make_shared<FakeTagInfo>(0U));
@@ -1568,7 +1553,7 @@ TEST(ComposeTransportManagerTest, ConnectDeviceFails)
 
 // ReadRemote: 委托给 device 并成功
 
-// -------- ConnectRank / ConnectWithOptions / AsyncConnect / WaitForConnected --------
+// -------- ConnectRank / AsyncConnect / WaitForConnected --------
 
 TEST(ComposeTransportManagerTest, ConnectRank_CallsHostAndDevice_Success)
 {
@@ -1612,36 +1597,6 @@ TEST(ComposeTransportManagerTest, ConnectRank_DeviceFails)
 
     EXPECT_NE(mgr.ConnectRank(3), BM_OK);
     EXPECT_EQ(host->connectRankCalls, 1u);
-}
-
-TEST(ComposeTransportManagerTest, ConnectWithOptions_CallsHostAndDevice)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-    auto host = std::make_shared<FakeTransportManager>();
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.hostTransportManager_ = host;
-    mgr.deviceTransportManager_ = dev;
-
-    HybmTransPrepareOptions opts{};
-    EXPECT_EQ(mgr.ConnectWithOptions(opts), BM_OK);
-    EXPECT_EQ(host->connectWithOptionsCalls, 1u);
-    EXPECT_EQ(dev->connectWithOptionsCalls, 1u);
-}
-
-TEST(ComposeTransportManagerTest, ConnectWithOptions_HostFails)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-    auto host = std::make_shared<FakeTransportManager>();
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.hostTransportManager_ = host;
-    mgr.deviceTransportManager_ = dev;
-    host->connectWithOptionsResult = BM_ERROR;
-
-    HybmTransPrepareOptions opts{};
-    EXPECT_NE(mgr.ConnectWithOptions(opts), BM_OK);
-    EXPECT_EQ(dev->connectWithOptionsCalls, 0u);
 }
 
 TEST(ComposeTransportManagerTest, AsyncConnect_HostFails)

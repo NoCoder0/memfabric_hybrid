@@ -90,20 +90,16 @@ enum ControlOp : int8_t {
     CONTROL_ADD_TO_WHITELIST = 0,
     CONTROL_REMOVE_FROM_WHITELIST = 1,
     CONTROL_ESTABLISH_CONNECTION = 2,
-    CONTROL_CLOSE_CONNECTION = 3,
-    CONTROL_JOIN = 4,
-    CONTROL_LEAVE = 5,
-    CONTROL_QUERY_LINK_STATE = 6,
-    CONTROL_LINK_STATE_RESPONSE = 7,
-    CONTROL_ADD_TO_WHITELIST_ACK = 8,
-    CONTROL_REMOVE_FROM_WHITELIST_ACK = 9,
-    CONTROL_ESTABLISH_CONNECTION_ACK = 10,
-    CONTROL_CLOSE_CONNECTION_ACK = 11,
-    CONTROL_LEAVE_NOTIFY = 12,
-    CONTROL_PROMOTE_TO_ACTIVE = 13,
-    CONTROL_EXTEND_MEMORY = 14,  // client → server: extend memory with new slices
-    CONTROL_ADD_SLICES = 15,     // server → clients: import new slices for a rank
-    CONTROL_ADD_SLICES_ACK = 16, // client → server: ack add slices
+    CONTROL_JOIN = 3,
+    CONTROL_LEAVE = 4,
+    CONTROL_QUERY_LINK_STATE = 5,
+    CONTROL_LINK_STATE_RESPONSE = 6,
+    CONTROL_ADD_TO_WHITELIST_ACK = 7,
+    CONTROL_REMOVE_FROM_WHITELIST_ACK = 8,
+    CONTROL_ESTABLISH_CONNECTION_ACK = 9,
+    CONTROL_PROMOTE_TO_ACTIVE = 10,
+    CONTROL_EXTEND_MEMORY = 11, // client → server: extend memory with new slices
+    CONTROL_ADD_SLICES = 12,    // server → clients: import new slices for a rank
 };
 
 const char *AckTagName(ControlOp op) noexcept;

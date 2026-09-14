@@ -52,21 +52,19 @@ extern std::atomic<uint32_t> g_ctrlReqSeq;
 /**
  * Rank lifecycle:
  *
- *   IDLE ──(CheckIn)──► CHECKED_IN ──(Connect)──► ACTIVE ──(Disconnect)──► LEAVING
- *     ▲                     │                                           │
- *     └───────(Clear)───────┘                                           │
- *     └───────────────────────────────(Clear)───────────────────────────┘
+ *   IDLE ──(CheckIn)──► CHECKED_IN ──(Connect)──► ACTIVE
+ *     ▲                     │                        │
+ *     └───────(Clear)───────┘                        │
+ *     └──────────────────(ResetRankState)────────────┘
  *
  * - IDLE:       rank not in the group, no info stored
  * - CHECKED_IN: info stored via CheckIn, not yet accepting connections
  * - ACTIVE:     online and accepting connections
- * - LEAVING:    departing, connections closing
  */
 enum RankState : int8_t {
     RANK_IDLE = 0,
     RANK_CHECKED_IN = 1,
     RANK_ACTIVE = 2,
-    RANK_LEAVING = 3,
 };
 
 /**
@@ -81,34 +79,22 @@ enum RankState : int8_t {
  *     │                                          connect response│
  *     │                                                          ▼
  *     │                                                    CONNECTED
- *     │                                                          │
- *     │                                                disconnect│
- *     │                                                          ▼
- *     │                                                  DISCONNECTING
- *     │                                                          │
- *     │                                       disconnect response│
- *     │                                                          ▼
- *     │                                                  DISCONNECTED
- *     │                                                          │
- *     │                                  whitelist remove request│
- *     │                                                          ▼
- *     └──────────────────────── CLEANING ────────────────────────┘
- *    whitelist remove response
+ *     └───────────────(ResetRankState / link broken)─────────────┘
  *
  * - IDLE:           no connection exists
  * - EXCHANGING:     whitelist add request sent, waiting for response
  * - EXCHANGED:      whitelist add response received, info exchanged
  * - CONNECTING:     connect request sent, waiting for response
  * - CONNECTED:      link established and usable
- * - DISCONNECTING:  disconnect request sent, waiting for response
- * - DISCONNECTED:   disconnected, pending resource cleanup
- * - CLEANING:      resources being released, about to return to IDLE
+ *
+ * Teardown does not use an intermediate state: links go back to IDLE
+ * directly via ResetRankState when the rank checks out or the link breaks.
  *
  * Stability:
  *   IDLE and CONNECTED are stable states — no action is triggered proactively
  *   and the link remains in that state indefinitely.
- *   EXCHANGED and DISCONNECTED actively trigger the next event.
- *   EXCHANGING, CONNECTING, DISCONNECTING and CLEANING wait for a response
+ *   EXCHANGED actively triggers the next event.
+ *   EXCHANGING and CONNECTING wait for a response
  *   and retry the event on timeout.
  */
 enum LinkState : int8_t {
@@ -117,9 +103,6 @@ enum LinkState : int8_t {
     LINK_EXCHANGED = 2,
     LINK_CONNECTING = 3,
     LINK_CONNECTED = 4,
-    LINK_DISCONNECTING = 5,
-    LINK_DISCONNECTED = 6,
-    LINK_CLEANING = 7,
 };
 
 /**
@@ -183,8 +166,8 @@ public:
      * Advances the link state machine based on the confirmed operation:
      *   AddToWhitelist ACK → EXCHANGING → EXCHANGED
      *   EstablishConnection ACK → CONNECTING → CONNECTED
-     *   RemoveFromWhitelist ACK → DISCONNECTING → DISCONNECTED
-     *   CloseConnection ACK → CLEANING → IDLE
+     * RemoveFromWhitelist ACK does not advance any link: teardown is driven
+     * directly by ResetRankState.
      */
     void OnControlAck(ControlOp ackOp, uint32_t senderRankId, const std::map<uint32_t, int32_t> &targetRankRes,
                       uint64_t requestId = 0) noexcept;
@@ -192,10 +175,9 @@ public:
     /**
      * @brief Notify the state machine that a rank's TCP connection has broken.
      *
-     * Transitions all non-IDLE links involving this rank to IDLE immediately,
-     * bypassing the normal DISCONNECTING→DISCONNECTED→CLEANING→IDLE sequence.
-     * If the rank is in LEAVING state, also transitions it to IDLE and clears
-     * its stored info, since there is no longer a channel to send control
+     * Transitions all non-IDLE links involving this rank to IDLE immediately
+     * and resets the rank state (if not IDLE) back to IDLE, clearing its
+     * stored info, since there is no longer a channel to send control
      * messages to that rank.
      */
     void OnLinkBroken(uint32_t rankId) noexcept;
@@ -278,17 +260,11 @@ private:
     void HandleLinkExchanging(LinkScanContext &ctx, std::vector<LinkScanJob> &addJobs) noexcept;
     void HandleLinkExchanged(LinkScanContext &ctx, std::vector<LinkScanJob> &establishJobs) noexcept;
     void HandleLinkConnecting(LinkScanContext &ctx, std::vector<LinkScanJob> &establishJobs) noexcept;
-    void HandleLinkDisconnecting(LinkScanContext &ctx, std::vector<LinkScanJob> &removeJobs) noexcept;
-    void HandleLinkDisconnected(LinkScanContext &ctx, std::vector<LinkScanJob> &closeJobs) noexcept;
-    void HandleLinkCleaning(LinkScanContext &ctx, std::vector<LinkScanJob> &closeJobs) noexcept;
     struct LinkScanJobs {
         std::vector<LinkScanJob> addJobs;
         std::vector<LinkScanJob> establishJobs;
-        std::vector<LinkScanJob> removeJobs;
-        std::vector<LinkScanJob> closeJobs;
     };
     void ScanLinkStates(LinkScanContext &ctx, LinkState st, LinkScanJobs &jobs) noexcept;
-    void CleanupLeavingRanks(std::vector<uint32_t> &ranksToCleanup) noexcept;
     void PromoteCheckedInRanks(std::vector<uint32_t> &promotedToActive) noexcept;
     bool HasEnoughConnectedLinks(uint32_t r) noexcept;
     void RetryIdleLinks() noexcept;
@@ -303,10 +279,10 @@ private:
     // Apply a per-target ACK to the link state machine (extracted from OnControlAck)
     bool ApplyAckToLink(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId,
                         const std::chrono::steady_clock::time_point &now) noexcept;
-    // Pack + send one control message (extracted from ExecuteSendOperation)
+    // Pack + send one control message
     int SendPackedMessage(uint32_t srcRank, const SmemMessage &msg) const noexcept;
 
-    enum class SendOp { ADD, REMOVE, ESTABLISH, CLOSE, LEAVE_NOTIFY, QUERY_LINK_STATE };
+    enum class SendOp { ADD, REMOVE, ESTABLISH, QUERY_LINK_STATE };
 
     struct SendTask {
         SendOp op{SendOp::ADD};
@@ -317,15 +293,11 @@ private:
         uint64_t requestId{0};
     };
 
-    int ExecuteSendOperation(SendOp op, uint32_t srcRank, uint32_t dstRank, uint64_t requestId = 0) const noexcept;
-    void ProcessSend(SendTask task) noexcept;
     void ProcessBatch(const std::vector<SendTask> &tasks) noexcept;
     int SendBatchGroup(uint32_t srcRank, SendOp op, const std::vector<const SendTask *> &group) noexcept;
     int SendBatchAddRemove(uint32_t srcRank, SendOp op, const std::vector<const SendTask *> &group,
                            uint64_t reqId) noexcept;
     int SendBatchEstablish(uint32_t srcRank, const std::vector<const SendTask *> &group, uint64_t reqId) noexcept;
-    int SendBatchClose(uint32_t srcRank, const std::vector<const SendTask *> &group, uint64_t reqId) noexcept;
-    int SendBatchLeaveNotify(const std::vector<const SendTask *> &group) noexcept;
     int SendBatchQueryLinkState(uint32_t srcRank) noexcept;
     void UpdateLinksAfterBatch(const std::vector<const SendTask *> &group, int overallRet) noexcept;
     void EnqueueSend(const SendTask &task) noexcept;

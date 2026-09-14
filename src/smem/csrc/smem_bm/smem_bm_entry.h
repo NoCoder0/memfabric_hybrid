@@ -75,11 +75,6 @@ public:
 
     Result ExtendLocalMem(smem_bm_mem_type memType, uint64_t size);
 
-    void SetSmemFlags(uint32_t flags) noexcept
-    {
-        smemFlags_ = flags;
-    }
-
     Result DataCopy(const void *src, void *dest, uint64_t size, smem_bm_copy_type t, void *stream, uint32_t flags);
 
     Result DataCopyBatch(smem_batch_copy_params *params, smem_bm_copy_type t, uint32_t flags);
@@ -119,9 +114,7 @@ private:
     int OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
     int OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
     int OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept;
-    int OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept;
     std::vector<ock::smem::LinkStateEntry> OnQueryLinkState() noexcept;
-    int OnLeaveNotify(uint32_t leavingRankId) noexcept;
     int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
 
     // Group-manager callback plumbing (extracted to keep SetupGroupManagerCallbacks small)
@@ -153,9 +146,7 @@ private:
     uint64_t realHBMSize_ = 0;
     std::map<uint64_t, std::pair<uint64_t, hybm_mem_slice_t>> registedSlice_;
 
-    uint32_t smemFlags_{0};
     std::shared_ptr<std::promise<void>> joinComplete_;
-    std::shared_ptr<std::promise<void>> extendComplete_;
 };
 using SmemBmEntryPtr = SmRef<SmemBmEntry>;
 

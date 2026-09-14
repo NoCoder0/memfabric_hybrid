@@ -277,9 +277,6 @@ Result SmemBmEntry::Join(uint32_t flags)
     }
 
     // Wait for server to promote rank to ACTIVE (all links established)
-    if (joinComplete_ == nullptr) {
-        joinComplete_ = std::make_shared<std::promise<void>>();
-    }
     auto future = joinComplete_->get_future();
     if (future.wait_for(std::chrono::seconds(MF_GROUP_JOIN_DEFAULT_TIMEOUT)) != std::future_status::ready) {
         SM_LOG_ERROR("SmemBmEntry::Join timeout waiting for PROMOTE_TO_ACTIVE, rank=" << options_.rank);
@@ -386,7 +383,6 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
     Bytes sliceBytes(&info.desc[0], &info.desc[info.descLen]);
     newSlices.push_back(std::move(sliceBytes));
 
-    extendComplete_ = std::make_shared<std::promise<void>>();
     if (auto ret2 = groupMgr->ExtendMemory(newSlices); ret2 != SM_OK) {
         SM_LOG_ERROR("ExtendLocalMem: ExtendMemory failed, ret=" << ret2);
         slices_.pop_back();
@@ -394,9 +390,7 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
         hybm_free_local_memory(entity_, slice, 1, 0);
         return SM_ERROR;
     }
-
     // Server responds synchronously; peers receive ADD_SLICES asynchronously
-    extendComplete_->set_value();
 
     if (memType == SMEM_MEM_TYPE_DEVICE) {
         realHBMSize_ += size;
@@ -726,11 +720,7 @@ int SmemBmEntry::RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMg
     asyncMgr->SetConnectionCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) {
         return OnEstablishConnection(rankId, peers, reqId);
     });
-    asyncMgr->SetCloseConnectionCallback([this](uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) {
-        return OnCloseConnection(rankId, peers, reqId);
-    });
     asyncMgr->SetLinkStateQueryCallback([this]() { return OnQueryLinkState(); });
-    asyncMgr->SetLeaveNotifyCallback([this](uint32_t leavingRankId) { return OnLeaveNotify(leavingRankId); });
     asyncMgr->SetAddSlicesCallback([this](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
         return OnAddSlices(extendingRankId, newSlices, reqId);
     });
@@ -757,18 +747,9 @@ int SmemBmEntry::RegisterExecutorCallbacks(SmemGroupManagerClient *executor,
         asyncMgr->EnqueueEstablishConnection(rankId, std::move(copy), reqId);
         return 0;
     };
-    executor->onCloseConnection_ = [asyncMgr](uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) {
-        std::vector<uint32_t> copy(peers);
-        asyncMgr->EnqueueCloseConnection(rankId, std::move(copy), reqId);
-        return 0;
-    };
     executor->onQueryLinkState_ = [asyncMgr]() {
         asyncMgr->EnqueueQueryLinkState(0);
         return std::vector<LinkStateEntry>{};
-    };
-    executor->onLeaveNotify_ = [asyncMgr](uint32_t leavingRankId) {
-        asyncMgr->EnqueueLeaveNotify(leavingRankId);
-        return 0;
     };
     executor->onPromoteToActive_ = [this](uint32_t rankId) {
         joined_ = true;
@@ -932,20 +913,6 @@ int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFu
     return SMEM_OK;
 }
 
-int SmemBmEntry::OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept
-{
-    (void)rankId;
-    (void)reqId;
-    for (auto peer : peers) {
-        auto ret = hybm_unmap_rank(entity_, peer);
-        if (ret != SMEM_OK) {
-            SM_LOG_WARN("OnCloseConnection unmap rank " << peer << " failed: " << ret);
-        }
-    }
-    SM_LOG_DEBUG("OnCloseConnection rankId=" << rankId << " peers.size=" << peers.size());
-    return SMEM_OK;
-}
-
 std::vector<ock::smem::LinkStateEntry> SmemBmEntry::OnQueryLinkState() noexcept
 {
     std::vector<ock::smem::LinkStateEntry> entries;
@@ -965,13 +932,6 @@ std::vector<ock::smem::LinkStateEntry> SmemBmEntry::OnQueryLinkState() noexcept
     }
     SM_LOG_DEBUG("OnQueryLinkState: " << entries.size() << " peers");
     return entries;
-}
-
-int SmemBmEntry::OnLeaveNotify(uint32_t leavingRankId) noexcept
-{
-    (void)leavingRankId;
-    SM_LOG_DEBUG("OnLeaveNotify leavingRankId=" << leavingRankId);
-    return SMEM_OK;
 }
 
 int SmemBmEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept

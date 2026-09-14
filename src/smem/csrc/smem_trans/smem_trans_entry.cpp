@@ -132,7 +132,7 @@ int32_t SmemTransEntry::Initialize()
 void SmemTransEntry::UnInitialize()
 {
     // Perform a graceful group leave so that peer ranks can synchronously
-    // clean up their imported state via OnCloseConnection / OnLeaveNotify.
+    // clean up their imported state via OnRemoveFromWhitelist.
     // This must happen before the local entity is destroyed because the
     // leave callbacks on the peer side still reference entity_.
     if (joined_) {
@@ -146,7 +146,6 @@ void SmemTransEntry::UnInitialize()
 
     {
         mf::WriteGuard locker(remoteSliceRwMutex_);
-        rankUpdateIdx_.clear();
         remoteSlices_.clear();
         rankToWorkerId_.clear();
         ranksRole_.clear();
@@ -201,11 +200,7 @@ int SmemTransEntry::RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyn
     asyncMgr->SetConnectionCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) {
         return OnEstablishConnection(rankId, peers, reqId);
     });
-    asyncMgr->SetCloseConnectionCallback([this](uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) {
-        return OnCloseConnection(rankId, peers, reqId);
-    });
     asyncMgr->SetLinkStateQueryCallback([this]() { return OnQueryLinkState(); });
-    asyncMgr->SetLeaveNotifyCallback([this](uint32_t leavingRankId) { return OnLeaveNotify(leavingRankId); });
     asyncMgr->SetAddSlicesCallback([this](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
         return OnAddSlices(extendingRankId, newSlices, reqId);
     });
@@ -232,18 +227,9 @@ int SmemTransEntry::RegisterExecutorCallbacks(SmemGroupManagerClient *executor,
         asyncMgr->EnqueueEstablishConnection(rankId, std::move(copy), reqId);
         return 0;
     };
-    executor->onCloseConnection_ = [asyncMgr](uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) {
-        std::vector<uint32_t> copy(peers);
-        asyncMgr->EnqueueCloseConnection(rankId, std::move(copy), reqId);
-        return 0;
-    };
     executor->onQueryLinkState_ = [asyncMgr]() {
         asyncMgr->EnqueueQueryLinkState(0);
         return std::vector<LinkStateEntry>{};
-    };
-    executor->onLeaveNotify_ = [asyncMgr](uint32_t leavingRankId) {
-        asyncMgr->EnqueueLeaveNotify(leavingRankId);
-        return 0;
     };
     executor->onPromoteToActive_ = [this](uint32_t rankId) {
         joined_ = true;
@@ -334,9 +320,33 @@ int SmemTransEntry::OnRemoveFromWhitelist(uint32_t rankId, const std::vector<Ran
         if (ret != SMEM_OK) {
             SM_LOG_WARN("OnRemoveFromWhitelist remove rank " << other.rankId << " failed: " << ret);
         }
+        NotifyPeerDown(other.rankId);
     }
     SM_LOG_DEBUG("OnRemoveFromWhitelist done, rank=" << rankId << " peers=" << others.size());
     return SMEM_OK;
+}
+
+void SmemTransEntry::NotifyPeerDown(uint32_t leavingRankId) noexcept
+{
+    if (peerDownCallback_ != nullptr) {
+        auto it = rankToWorkerId_.find(leavingRankId);
+        if (it != rankToWorkerId_.end()) {
+            WorkerIdUnion workerId{it->second};
+            WorkerUniqueId &w = workerId.session;
+
+            char ipBuf[INET6_ADDRSTRLEN] = {0};
+            if (w.address.type == ock::mf::IpV4) {
+                struct in_addr addr;
+                addr.s_addr = htonl(w.address.ip.ipv4.s_addr);
+                inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
+            } else if (w.address.type == ock::mf::IpV6) {
+                inet_ntop(AF_INET6, &w.address.ip.ipv6, ipBuf, sizeof(ipBuf));
+            }
+            std::string peerAddr = std::string(ipBuf) + ":" + std::to_string(w.port);
+            SM_LOG_INFO("invoking peer down callback for rank " << leavingRankId << " addr " << peerAddr);
+            peerDownCallback_(peerAddr.c_str(), peerDownUserData_);
+        }
+    }
 }
 
 int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers,
@@ -431,18 +441,6 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
     }
 }
 
-int SmemTransEntry::OnCloseConnection(uint32_t rankId, const std::vector<uint32_t> &peers, uint64_t reqId) noexcept
-{
-    for (auto peer : peers) {
-        auto ret = hybm_unmap_rank(entity_, peer);
-        if (ret != SMEM_OK) {
-            SM_LOG_WARN("OnCloseConnection unmap rank " << peer << " failed: " << ret);
-        }
-    }
-    SM_LOG_DEBUG("OnCloseConnection rankId=" << rankId << " peers.size=" << peers.size());
-    return SMEM_OK;
-}
-
 std::vector<ock::smem::LinkStateEntry> SmemTransEntry::OnQueryLinkState() noexcept
 {
     std::vector<ock::smem::LinkStateEntry> entries;
@@ -460,38 +458,6 @@ std::vector<ock::smem::LinkStateEntry> SmemTransEntry::OnQueryLinkState() noexce
     }
     SM_LOG_DEBUG("OnQueryLinkState: " << entries.size() << " peers");
     return entries;
-}
-
-int SmemTransEntry::OnLeaveNotify(uint32_t leavingRankId) noexcept
-{
-    SM_LOG_INFO("OnLeaveNotify leavingRankId: " << leavingRankId);
-
-    auto ret = hybm_remove_imported(entity_, leavingRankId, 0);
-    if (ret != 0) {
-        SM_LOG_ERROR("hybm remove imported failed in OnLeaveNotify, result: " << ret);
-    }
-
-    if (peerDownCallback_ != nullptr) {
-        auto it = rankToWorkerId_.find(leavingRankId);
-        if (it != rankToWorkerId_.end()) {
-            WorkerIdUnion workerId{it->second};
-            WorkerUniqueId &w = workerId.session;
-
-            char ipBuf[INET6_ADDRSTRLEN] = {0};
-            if (w.address.type == ock::mf::IpV4) {
-                struct in_addr addr;
-                addr.s_addr = htonl(w.address.ip.ipv4.s_addr);
-                inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
-            } else if (w.address.type == ock::mf::IpV6) {
-                inet_ntop(AF_INET6, &w.address.ip.ipv6, ipBuf, sizeof(ipBuf));
-            }
-            std::string peerAddr = std::string(ipBuf) + ":" + std::to_string(w.port);
-            SM_LOG_INFO("invoking peer down callback for rank " << leavingRankId << " addr " << peerAddr);
-            peerDownCallback_(peerAddr.c_str(), peerDownUserData_);
-        }
-    }
-
-    return SMEM_OK;
 }
 
 int SmemTransEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept
@@ -718,14 +684,12 @@ Result SmemTransEntry::RegisterLocalMemories(const std::vector<std::pair<const v
         return SM_ERROR;
     }
 
-    extendComplete_ = std::make_shared<std::promise<void>>();
     if (auto ret = groupMgr->ExtendMemory(newSlices); ret != SM_OK) {
         SM_LOG_ERROR("RegisterLocalMemories: ExtendMemory failed, ret=" << ret);
         registedInfo_.clear();
         return SM_ERROR;
     }
 
-    extendComplete_->set_value();
     registedInfo_.clear();
     return SM_OK;
 }
@@ -899,8 +863,6 @@ void SmemTransEntry::RemoveRanks(std::vector<uint32_t> &rankSet)
 {
     mf::WriteGuard locker(remoteSliceRwMutex_);
     for (auto rankId : rankSet) {
-        rankUpdateIdx_.erase(rankId);
-
         auto it = rankToWorkerId_.find(rankId);
         if (it == rankToWorkerId_.end()) {
             SM_LOG_INFO("not found this rank:" << rankId);

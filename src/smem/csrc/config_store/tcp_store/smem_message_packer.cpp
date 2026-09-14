@@ -81,17 +81,6 @@ bool SmemMessagePacker::Full(const uint8_t *buffer, const uint64_t bufferLen) no
     return bufferLen >= totalSize;
 }
 
-int64_t SmemMessagePacker::MessageSize(const std::vector<uint8_t> &buffer) noexcept
-{
-    if (buffer.size() < 5U * sizeof(uint64_t) + sizeof(MessageType)) {
-        return -1L;
-    }
-
-    int64_t totalSize = 0L;
-    std::copy_n(buffer.data(), sizeof(totalSize), static_cast<uint8_t *>(static_cast<void *>(&totalSize)));
-    return totalSize;
-}
-
 int64_t SmemMessagePacker::Unpack(const uint8_t *buffer, const uint64_t bufferLen, SmemMessage &message) noexcept
 {
     SM_ASSERT_RETURN_NOLOG(buffer != nullptr, -1);
@@ -370,46 +359,6 @@ int64_t SmemMessage::UnpackEstablishConnection(const SmemMessage &msg, uint32_t 
     return static_cast<int64_t>(offset);
 }
 
-SmemMessage SmemMessage::PackCloseConnection(uint32_t rankId, const std::vector<uint32_t> &others) noexcept
-{
-    SmemMessage msg{MessageType::CONTROL};
-    msg.keys.emplace_back(std::to_string(CONTROL_CLOSE_CONNECTION));
-    msg.userDef = static_cast<int64_t>(rankId);
-    std::vector<uint8_t> buf;
-    uint64_t count = others.size();
-    AppendUint64(buf, count);
-    for (const auto &id : others) {
-        AppendUint32(buf, id);
-    }
-    msg.values.emplace_back(std::move(buf));
-    return msg;
-}
-
-int64_t SmemMessage::UnpackCloseConnection(const SmemMessage &msg, uint32_t &rankId,
-                                           std::vector<uint32_t> &others) noexcept
-{
-    if (msg.mt != MessageType::CONTROL || msg.keys.empty() || msg.values.empty()) {
-        return -1;
-    }
-    if (GetControlOp(msg) != CONTROL_CLOSE_CONNECTION) {
-        return -1;
-    }
-    rankId = static_cast<uint32_t>(msg.userDef);
-    const auto &buf = msg.values[0];
-    uint64_t offset = 0;
-    uint64_t count = 0;
-    if (!ReadUint64(buf, offset, count)) {
-        return -1;
-    }
-    others.resize(count);
-    for (uint64_t i = 0; i < count; ++i) {
-        if (!ReadUint32(buf, offset, others[i])) {
-            return -1;
-        }
-    }
-    return static_cast<int64_t>(offset);
-}
-
 SmemMessage SmemMessage::PackJoin(const RankFullInfo &info) noexcept
 {
     SmemMessage msg{MessageType::CONTROL};
@@ -477,26 +426,6 @@ int64_t SmemMessage::UnpackLeave(const SmemMessage &msg, uint32_t &rankId) noexc
         return -1;
     }
     if (GetControlOp(msg) != CONTROL_LEAVE) {
-        return -1;
-    }
-    rankId = static_cast<uint32_t>(msg.userDef);
-    return 0;
-}
-
-SmemMessage SmemMessage::PackLeaveNotify(uint32_t rankId) noexcept
-{
-    SmemMessage msg{MessageType::CONTROL};
-    msg.keys.emplace_back(std::to_string(CONTROL_LEAVE_NOTIFY));
-    msg.userDef = static_cast<int64_t>(rankId);
-    return msg;
-}
-
-int64_t SmemMessage::UnpackLeaveNotify(const SmemMessage &msg, uint32_t &rankId) noexcept
-{
-    if (msg.mt != MessageType::CONTROL || msg.keys.empty()) {
-        return -1;
-    }
-    if (GetControlOp(msg) != CONTROL_LEAVE_NOTIFY) {
         return -1;
     }
     rankId = static_cast<uint32_t>(msg.userDef);
@@ -629,15 +558,6 @@ int64_t SmemMessage::UnpackPromoteToActive(const SmemMessage &msg, uint32_t &ran
     }
     rankId = static_cast<uint32_t>(msg.userDef);
     return 0;
-}
-
-SmemMessage SmemMessage::PackAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept
-{
-    SmemMessage msg{MessageType::CONTROL};
-    msg.keys.emplace_back(std::to_string(static_cast<int8_t>(ackOp)));
-    msg.keys.emplace_back(std::to_string(senderRankId));
-    msg.values.emplace_back(SmemMessagePacker::PackPod(targetRankId));
-    return msg;
 }
 
 SmemMessage SmemMessage::PackAckBatch(ControlOp ackOp, uint32_t senderRankId,

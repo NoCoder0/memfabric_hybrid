@@ -39,8 +39,6 @@ public:
 
     virtual Result CloseDevice() = 0;
 
-    virtual Result ConnectWithOptions(const HybmTransPrepareOptions &options);
-
     /*
      * 2、注册内存
      * @return 0 if successful

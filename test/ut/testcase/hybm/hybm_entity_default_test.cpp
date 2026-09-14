@@ -189,11 +189,9 @@ class FakeTransportManager : public ock::mf::transport::TransportManager {
 public:
     ock::mf::transport::HybmTransPrepareOptions preparedOptions{};
     ock::mf::transport::HybmTransPrepareOptions updatedOptions{};
-    ock::mf::transport::HybmTransPrepareOptions connectWithOptions{};
     int prepareCalled{0};
     int connectCalled{0};
     int updateCalled{0};
-    int connectWithOptionsCalled{0};
 
     ock::mf::Result OpenDevice(const ock::mf::transport::TransportOptions & /* options */) override
     {
@@ -294,13 +292,6 @@ public:
     ock::mf::Result ReadRemoteBatchAsync(uint32_t /* rankId */,
                                          const ock::mf::CopyDescriptor & /* descriptor */) override
     {
-        return BM_OK;
-    }
-
-    ock::mf::Result ConnectWithOptions(const ock::mf::transport::HybmTransPrepareOptions &options) override
-    {
-        connectWithOptionsCalled++;
-        connectWithOptions = options;
         return BM_OK;
     }
 

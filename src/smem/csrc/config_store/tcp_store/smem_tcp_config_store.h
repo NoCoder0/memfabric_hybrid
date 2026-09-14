@@ -74,7 +74,6 @@ public:
 
     int ExtendMemory(const MultiBytes &additionalSlices) noexcept override;
 
-    void SendControlAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept;
     void SendControlAckBatch(ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
                              const std::vector<int32_t> &results, uint64_t requestId) noexcept;
     std::string GetCompleteKey(const std::string &key) noexcept override
@@ -155,9 +154,7 @@ private:
     Result HandleAddToWhitelist(SmemMessage &msg) noexcept;
     Result HandleRemoveFromWhitelist(SmemMessage &msg) noexcept;
     Result HandleEstablishConnection(SmemMessage &msg) noexcept;
-    Result HandleCloseConnection(SmemMessage &msg) noexcept;
     Result HandleQueryLinkState(SmemMessage &msg) noexcept;
-    Result HandleLeaveNotify(SmemMessage &msg) noexcept;
     Result HandlePromoteToActive(SmemMessage &msg) noexcept;
     Result HandleAddSlices(SmemMessage &msg) noexcept;
     Result SendWatchRequest(const std::vector<uint8_t> &reqBody,

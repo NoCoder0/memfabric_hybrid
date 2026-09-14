@@ -57,7 +57,6 @@ public:
     Result Connect() override;
 
     Result ConnectRank(uint32_t rankId) override;
-    Result ConnectWithOptions(const HybmTransPrepareOptions &options) override;
 
     Result AsyncConnect() override;
 

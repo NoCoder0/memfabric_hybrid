@@ -81,7 +81,7 @@ protected:
 };
 
 /* ================================================================== */
-/*  1. CONTROLLER FAILURES — ProcessSend retry/degrade                */
+/*  1. CONTROLLER FAILURES — send worker retry/degrade                 */
 /* ================================================================== */
 
 TEST_F(GmGroupManagerTest, CheckIn_ThenSendWorker_AddToWhitelistFails_AndDegrades)
@@ -89,7 +89,7 @@ TEST_F(GmGroupManagerTest, CheckIn_ThenSendWorker_AddToWhitelistFails_AndDegrade
     ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
-    /* Sender always fails → ProcessSend will retry up to max then degrade */
+    /* Sender always fails → send worker will retry up to max then degrade */
     sendResult_ = -1;
 
     gm_->Start();
@@ -136,7 +136,7 @@ TEST_F(GmGroupManagerTest, DrivePendingScansAndEnqueues_EstConFailsThenDegrades)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
-    /* AddToWhitelist succeeds — ProcessSend updates timestamp, state stays EXCHANGING */
+    /* AddToWhitelist succeeds — send worker updates timestamp, state stays EXCHANGING */
     sendResult_ = 0;
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
@@ -155,45 +155,6 @@ TEST_F(GmGroupManagerTest, DrivePendingScansAndEnqueues_EstConFailsThenDegrades)
 
     /* After max retries the link should be degraded to IDLE */
     EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_IDLE);
-}
-
-TEST_F(GmGroupManagerTest, RemoveFromWhitelistFails_ImmediateDegrade)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
-
-    /* Drain ADD + ESTABLISH jobs so queue is clean before Checkout. */
-    sendResult_ = 0;
-    gm_->Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_LONG_MS));
-    gm_->Stop();
-
-    /* Make sender fail — ProcessSend should immediately degrade */
-    sendResult_ = -1;
-
-    /* Manually set a link to DISCONNECTING to test ProcessSend failure path */
-    gm_->SetLinkState(K_RANK_TWO, 0, LINK_DISCONNECTING);
-    gm_->SetLinkState(0, K_RANK_TWO, LINK_DISCONNECTING);
-}
-
-TEST_F(GmGroupManagerTest, CloseConnectionFails_ImmediateDegrade)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
-
-    /* Advance to EXCHANGED via ADD ACK */
-    gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, 0, std::map<uint32_t, int32_t>{{K_RANK_TWO, 0}});
-    gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{0, 0}});
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_EXCHANGED);
-
-    /* ProcessSend(ADD) only updates timestamp; state stays EXCHANGING until ACK */
-    sendResult_ = 0;
-    gm_->Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_SHORT_MS));
-    gm_->Stop();
-
-    /* Manually set link to DISCONNECTED to test CLOSE failure path */
-    gm_->SetLinkState(K_RANK_TWO, 0, LINK_DISCONNECTED);
 }
 
 /* ================================================================== */
@@ -309,12 +270,12 @@ TEST_F(GroupManagerTest, CheckoutFromIdleFails)
     EXPECT_EQ(gm_->Checkout(0), -1);
 }
 
-TEST_F(GroupManagerTest, CheckoutSendsLeaveNotify)
+TEST_F(GroupManagerTest, CheckoutSendsRemoveFromWhitelist)
 {
     ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_FOUR)), 0);
     ASSERT_EQ(gm_->Checkout(K_RANK_FOUR), 0);
-    /* Checkout now sends LeaveNotify directly instead of RemoveFromWhitelist */
+    /* Checkout transitions to IDLE directly and notifies peers via RemoveFromWhitelist */
     EXPECT_EQ(GetRank(K_RANK_FOUR), RANK_IDLE);
     EXPECT_EQ(GetLink(K_RANK_FOUR, 0), LINK_IDLE);
     EXPECT_EQ(GetLink(0, K_RANK_FOUR), LINK_IDLE);
@@ -350,22 +311,6 @@ TEST_F(GroupManagerTest, AckEstablishConnectionAdvancesLink)
     gm_->SetLinkState(K_RANK_TWO, 1, LINK_CONNECTING);
     gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
     EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_CONNECTED);
-}
-
-TEST_F(GroupManagerTest, AckCloseConnectionAdvancesLink)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
-    gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
-    gm_->SetLinkState(K_RANK_TWO, 1, LINK_CONNECTING);
-    gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
-    /* Manually set link states to test ACK advancement (Checkout no longer uses DISCONNECTING) */
-    gm_->SetLinkState(K_RANK_TWO, 1, LINK_DISCONNECTING);
-    gm_->OnControlAck(CONTROL_REMOVE_FROM_WHITELIST_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
-    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_DISCONNECTED);
-    gm_->SetLinkState(K_RANK_TWO, 1, LINK_CLEANING);
-    gm_->OnControlAck(CONTROL_CLOSE_CONNECTION_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
-    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_IDLE);
 }
 
 TEST_F(GroupManagerTest, AckUnknownOpNoChange)
@@ -462,7 +407,7 @@ TEST_F(GmGroupManagerTest, OnLinkBroken_LeavingRankBecomesIdle)
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
 
-    /* Checkout now immediately transitions to IDLE with LeaveNotify */
+    /* Checkout immediately transitions to IDLE and notifies peers via RemoveFromWhitelist */
     ASSERT_EQ(gm_->Checkout(1), 0);
     EXPECT_EQ(gm_->GetRankState(1), RANK_IDLE);
     EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_IDLE);
@@ -561,52 +506,6 @@ TEST_F(GmGroupManagerTest, CheckIn_TransClearsGhostLinks)
     EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
 }
 
-TEST_F(GmGroupManagerTest, SetLink_HandleDisconnecting_DriverReenqueues)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-
-    /* Set link to DISCONNECTING */
-    gm_->SetLinkState(1, 0, LINK_DISCONNECTING);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_DISCONNECTING);
-
-    /* Run driver for 1.5s to trigger timeout → re-enqueue */
-    gm_->Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_SLOW_MS));
-    gm_->Stop();
-
-    /* After timeout with retryCount=0, DISCONNECTING stays in that state
-       and gets re-enqueued (no transition since retryCount < LINK_QUERY_MAX_RETRIES).
-       The key is the driver handles the state without crashing. */
-    SUCCEED();
-}
-
-TEST_F(GmGroupManagerTest, SetLink_HandleDisconnected_DriverReenqueues)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-
-    gm_->SetLinkState(1, 0, LINK_DISCONNECTED);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_DISCONNECTED);
-
-    gm_->Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_SLOW_MS));
-    gm_->Stop();
-}
-
-TEST_F(GmGroupManagerTest, SetLink_HandleClearning_DriverReenqueues)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-
-    gm_->SetLinkState(1, 0, LINK_CLEANING);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_CLEANING);
-
-    gm_->Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_SLOW_MS));
-    gm_->Stop();
-}
-
 TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllIdleLinksPromotesToActive)
 {
     ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
@@ -647,25 +546,6 @@ TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllPeersConnectedPromotesToActi
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
     EXPECT_EQ(gm_->GetRankState(1), RANK_ACTIVE);
-}
-
-TEST_F(GmGroupManagerTest, CleanupLeavingRank_AllIdleTransitionsToIdle)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-
-    /* Set rank to LEAVING via manual set */
-    gm_->SetRankState(1, RANK_LEAVING);
-
-    /* Ensure links are IDLE */
-    gm_->SetLinkState(1, 0, LINK_IDLE);
-    gm_->SetLinkState(0, 1, LINK_IDLE);
-
-    gm_->Start();
-    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
-    gm_->Stop();
-
-    EXPECT_EQ(gm_->GetRankState(1), RANK_IDLE);
 }
 
 TEST_F(GmGroupManagerTest, GetLinkState_OutOfRangeReturnsIdle)
@@ -885,14 +765,6 @@ TEST_F(GroupManagerTest, RestoreState_WithLinksAndAlive)
     gm_->RestoreState(states, links, alive);
     EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
     EXPECT_EQ(gm_->GetLinkState(0, K_RANK_TWO), LINK_CONNECTED);
-}
-
-TEST_F(GroupManagerTest, RestoreState_StatesOnly)
-{
-    std::vector<RankState> states(K_RANK_COUNT, RANK_LEAVING);
-    std::unordered_set<uint32_t> alive{0};
-    gm_->RestoreState(states, alive);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_LEAVING);
 }
 
 TEST_F(GroupManagerTest, RebuildActiveLinks_NoCrash)

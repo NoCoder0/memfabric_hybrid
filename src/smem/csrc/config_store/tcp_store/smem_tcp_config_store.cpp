@@ -252,34 +252,12 @@ void TcpConfigStore::InitAsyncDispatcher(uint32_t localRankId) noexcept
     }
 }
 
-void TcpConfigStore::SendControlAck(ControlOp ackOp, uint32_t senderRankId, uint32_t targetRankId) noexcept
-{
-    static const char *ackTag[] = {"ADDWACK", "REMWACK", "ESTCACK", "CLSCACK"};
-    auto tag = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_CLOSE_CONNECTION_ACK)
-                   ? ackTag[ackOp - CONTROL_ADD_TO_WHITELIST_ACK]
-                   : "??????";
-    SmemMessage ackMsg = SmemMessage::PackAck(ackOp, senderRankId, targetRankId);
-    ackMsg.requestId = (static_cast<uint64_t>(senderRankId + 1) << REQUEST_ID_RANK_SHIFT) | g_clientMsgSeq.fetch_add(1);
-    auto packed = SmemMessagePacker::Pack(ackMsg);
-    auto buf = ock::acc::AccDataBuffer::Create(packed.data(), packed.size());
-    if (buf != nullptr && accClientLink_ != nullptr) {
-        int ackRet = LocalNonBlockSend(0, 0, buf, nullptr);
-        if (ackRet != 0) {
-            STORE_LOG_WARN("[GM][Client][Ack] rank=" << localRankId_ << " type=" << tag << " tgt=" << targetRankId
-                                                     << " fail: " << ackRet);
-        } else {
-            STORE_LOG_INFO("[GM][Client][Ack] rank=" << localRankId_ << " type=" << tag << " tgt=" << targetRankId
-                                                     << " ok");
-        }
-    }
-}
-
 void TcpConfigStore::SendControlAckBatch(ControlOp ackOp, uint32_t senderRankId,
                                          const std::vector<uint32_t> &targetRankIds,
                                          const std::vector<int32_t> &results, uint64_t requestId) noexcept
 {
-    static const char *typeTag[] = {"ADDWACK", "REMWACK", "ESTCACK", "CLSCACK"};
-    auto idx = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_CLOSE_CONNECTION_ACK)
+    static const char *typeTag[] = {"ADDWACK", "REMWACK", "ESTCACK"};
+    auto idx = (ackOp >= CONTROL_ADD_TO_WHITELIST_ACK && ackOp <= CONTROL_ESTABLISH_CONNECTION_ACK)
                    ? (ackOp - CONTROL_ADD_TO_WHITELIST_ACK)
                    : -1;
     const char *typeName = (idx >= 0) ? typeTag[idx] : "?";
@@ -1132,25 +1110,6 @@ Result TcpConfigStore::HandleEstablishConnection(SmemMessage &msg) noexcept
     return SM_OK;
 }
 
-Result TcpConfigStore::HandleCloseConnection(SmemMessage &msg) noexcept
-{
-    uint32_t rankId = 0;
-    std::vector<uint32_t> others;
-    if (SmemMessage::UnpackCloseConnection(msg, rankId, others) < 0) {
-        STORE_LOG_ERROR("HandleControlMessage: CloseConnection unpack failed");
-        return SM_ERROR;
-    }
-    if (executor_ != nullptr) {
-        auto ret = executor_->CloseConnection(rankId, others, msg.requestId);
-        if (ret != 0) {
-            STORE_LOG_ERROR("HandleControlMessage: CloseConnection failed, rankId: " << rankId << " ret: " << ret);
-        }
-    }
-    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=CLSCONN src=" << rankId << " reqId="
-                                              << msg.requestId << " peers=[" << JoinRankIds(others) << "]");
-    return SM_OK;
-}
-
 Result TcpConfigStore::HandleQueryLinkState(SmemMessage &msg) noexcept
 {
     uint32_t rankId = 0;
@@ -1214,20 +1173,6 @@ Result TcpConfigStore::HandleAddSlices(SmemMessage &msg) noexcept
     return SM_OK;
 }
 
-Result TcpConfigStore::HandleLeaveNotify(SmemMessage &msg) noexcept
-{
-    uint32_t leavingRankId = 0;
-    if (SmemMessage::UnpackLeaveNotify(msg, leavingRankId) < 0) {
-        STORE_LOG_ERROR("HandleControlMessage: LeaveNotify unpack failed");
-        return SM_ERROR;
-    }
-    if (executor_ != nullptr) {
-        executor_->LeaveNotify(localRankId_, leavingRankId);
-    }
-    STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=LEAV_NY" << " leavingRank=" << leavingRankId);
-    return SM_OK;
-}
-
 Result TcpConfigStore::HandleControlMessage(SmemMessage &msg) noexcept
 {
     int8_t op = SmemMessage::GetControlOp(msg);
@@ -1243,12 +1188,8 @@ Result TcpConfigStore::HandleControlMessage(SmemMessage &msg) noexcept
             return HandleRemoveFromWhitelist(msg);
         case ControlOp::CONTROL_ESTABLISH_CONNECTION:
             return HandleEstablishConnection(msg);
-        case ControlOp::CONTROL_CLOSE_CONNECTION:
-            return HandleCloseConnection(msg);
         case ControlOp::CONTROL_QUERY_LINK_STATE:
             return HandleQueryLinkState(msg);
-        case ControlOp::CONTROL_LEAVE_NOTIFY:
-            return HandleLeaveNotify(msg);
         case ControlOp::CONTROL_PROMOTE_TO_ACTIVE:
             return HandlePromoteToActive(msg);
         case ControlOp::CONTROL_ADD_SLICES:

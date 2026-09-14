@@ -159,39 +159,6 @@ TEST(PackEstablishConnection, RoundTrip_Empty)
     EXPECT_EQ(result.size(), 0u);
 }
 
-TEST(PackCloseConnection, RoundTrip_Basic)
-{
-    std::vector<uint32_t> others = {1, 2, 3, 100, 1023};
-
-    auto msg = SmemMessage::PackCloseConnection(5, others);
-    EXPECT_EQ(msg.mt, MessageType::CONTROL);
-    EXPECT_EQ(msg.userDef, 5);
-    EXPECT_EQ(msg.keys[0], std::to_string(CONTROL_CLOSE_CONNECTION));
-
-    uint32_t rankId = 0;
-    std::vector<uint32_t> result;
-    auto ret = SmemMessage::UnpackCloseConnection(msg, rankId, result);
-    EXPECT_GT(ret, 0);
-    EXPECT_EQ(rankId, 5u);
-    EXPECT_EQ(result.size(), others.size());
-    for (size_t i = 0; i < others.size(); ++i) {
-        EXPECT_EQ(result[i], others[i]);
-    }
-}
-
-TEST(PackCloseConnection, RoundTrip_Empty)
-{
-    std::vector<uint32_t> others;
-    auto msg = SmemMessage::PackCloseConnection(0, others);
-
-    uint32_t rankId = 99;
-    std::vector<uint32_t> result;
-    auto ret = SmemMessage::UnpackCloseConnection(msg, rankId, result);
-    EXPECT_GT(ret, 0);
-    EXPECT_EQ(rankId, 0u);
-    EXPECT_EQ(result.size(), 0u);
-}
-
 TEST(UnpackAddToWhitelist, InvalidMessageType)
 {
     SmemMessage msg{MessageType::SET};
@@ -225,9 +192,6 @@ TEST(GetControlOp, ValidOps)
 
     auto msgEstablish = SmemMessage::PackEstablishConnection(0, {});
     EXPECT_EQ(SmemMessage::GetControlOp(msgEstablish), CONTROL_ESTABLISH_CONNECTION);
-
-    auto msgClose = SmemMessage::PackCloseConnection(0, {});
-    EXPECT_EQ(SmemMessage::GetControlOp(msgClose), CONTROL_CLOSE_CONNECTION);
 
     RankFullInfo info;
     info.rankId = 0;
@@ -439,81 +403,8 @@ TEST(PackLinkStateResponse, RoundTrip_Empty)
 }
 
 /* ================================================================== */
-/*  MessageSize                                                       */
-/* ================================================================== */
-TEST(MessageSize, TooSmall_ReturnsMinus1)
-{
-    std::vector<uint8_t> buf(10, 0);
-    EXPECT_EQ(SmemMessagePacker::MessageSize(buf), -1);
-}
-
-TEST(MessageSize, Normal_ReturnsSize)
-{
-    SmemMessage msg = SmemMessage::PackAddToWhitelist(0, {});
-    auto packed = SmemMessagePacker::Pack(msg);
-    auto size = SmemMessagePacker::MessageSize(packed);
-    EXPECT_GT(size, 0);
-}
-
-/* ================================================================== */
-/*  LeaveNotify                                                        */
-/* ================================================================== */
-TEST(PackLeaveNotify, RoundTrip)
-{
-    auto msg = SmemMessage::PackLeaveNotify(42);
-    EXPECT_EQ(msg.mt, MessageType::CONTROL);
-    EXPECT_EQ(msg.userDef, 42);
-    EXPECT_EQ(msg.keys[0], std::to_string(CONTROL_LEAVE_NOTIFY));
-
-    uint32_t rankId = 0;
-    auto ret = SmemMessage::UnpackLeaveNotify(msg, rankId);
-    EXPECT_EQ(ret, 0);
-    EXPECT_EQ(rankId, 42u);
-}
-
-TEST(PackLeaveNotify, WrongControlOp)
-{
-    auto msg = SmemMessage::PackLeaveNotify(5);
-    uint32_t rankId = 0;
-    EXPECT_EQ(SmemMessage::UnpackLeaveNotify(SmemMessage::PackJoin(RankFullInfo{}), rankId), -1);
-}
-
-TEST(PackLeaveNotify, InvalidMessageType)
-{
-    SmemMessage msg{MessageType::SET};
-    msg.keys.emplace_back(std::to_string(CONTROL_LEAVE_NOTIFY));
-    uint32_t rankId = 0;
-    EXPECT_EQ(SmemMessage::UnpackLeaveNotify(msg, rankId), -1);
-}
-
-TEST(PackLeaveNotify, EmptyKeys)
-{
-    SmemMessage msg{MessageType::CONTROL};
-    uint32_t rankId = 0;
-    EXPECT_EQ(SmemMessage::UnpackLeaveNotify(msg, rankId), -1);
-}
-
-/* ================================================================== */
 /*  Single ACK                                                         */
 /* ================================================================== */
-TEST(PackAck, RoundTrip)
-{
-    auto msg = SmemMessage::PackAck(CONTROL_ADD_TO_WHITELIST_ACK, 7, 42);
-    EXPECT_EQ(msg.mt, MessageType::CONTROL);
-    EXPECT_EQ(msg.keys.size(), 2u);
-    EXPECT_EQ(msg.keys[0], std::to_string(CONTROL_ADD_TO_WHITELIST_ACK));
-    EXPECT_EQ(msg.keys[1], "7");
-
-    ControlOp ackOp = CONTROL_ADD_TO_WHITELIST_ACK;
-    uint32_t senderRankId = 0;
-    uint32_t targetRankId = 0;
-    auto ret = SmemMessage::UnpackAck(msg, ackOp, senderRankId, targetRankId);
-    EXPECT_EQ(ret, 0);
-    EXPECT_EQ(ackOp, CONTROL_ADD_TO_WHITELIST_ACK);
-    EXPECT_EQ(senderRankId, 7u);
-    EXPECT_EQ(targetRankId, 42u);
-}
-
 TEST(PackAck, InvalidMessageType)
 {
     SmemMessage msg{MessageType::SET};
@@ -618,7 +509,7 @@ TEST(PackAckBatch, RoundTrip_FallbackPath)
     /* Craft a batch message with only count + rank IDs (no result bytes).
        This triggers the legacy fallback path where results are assumed 0. */
     SmemMessage msg{MessageType::CONTROL};
-    msg.keys.emplace_back(std::to_string(CONTROL_CLOSE_CONNECTION_ACK));
+    msg.keys.emplace_back(std::to_string(CONTROL_ESTABLISH_CONNECTION_ACK));
     msg.keys.emplace_back("5");
     std::vector<uint8_t> data;
     auto appendNet = [&data](uint32_t v) {
@@ -719,27 +610,6 @@ TEST(PackRemoveFromWhitelist, WrongControlOp)
     uint32_t rankId = 0;
     std::vector<RankBaseInfo> result;
     EXPECT_EQ(SmemMessage::UnpackRemoveFromWhitelist(msg, rankId, result), -1);
-}
-
-/* ================================================================== */
-/*  Unpack error paths for CloseConnection                             */
-/* ================================================================== */
-TEST(UnpackCloseConnection, TruncatedValue)
-{
-    auto msg = SmemMessage::PackCloseConnection(5, {1, 2});
-    msg.values[0].resize(1);
-
-    uint32_t rankId = 0;
-    std::vector<uint32_t> result;
-    EXPECT_EQ(SmemMessage::UnpackCloseConnection(msg, rankId, result), -1);
-}
-
-TEST(PackCloseConnection, WrongControlOp)
-{
-    auto msg = SmemMessage::PackAddToWhitelist(5, {});
-    uint32_t rankId = 0;
-    std::vector<uint32_t> result;
-    EXPECT_EQ(SmemMessage::UnpackCloseConnection(msg, rankId, result), -1);
 }
 
 TEST(PackLinkStateResponse, WrongControlOp)
