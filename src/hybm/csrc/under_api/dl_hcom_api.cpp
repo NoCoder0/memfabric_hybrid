@@ -58,6 +58,8 @@ channelPutFunc DlHcomApi::gChannelPut = nullptr;
 channelBatchPutFunc DlHcomApi::gChannelBatchPut = nullptr;
 channelGetFunc DlHcomApi::gChannelGet = nullptr;
 channelBatchGetFunc DlHcomApi::gChannelBatchGet = nullptr;
+channelBatchPutOnRailFunc DlHcomApi::gChannelBatchPutOnRail = nullptr;
+channelBatchGetOnRailFunc DlHcomApi::gChannelBatchGetOnRail = nullptr;
 
 channelSetFlowControlConfigFunc DlHcomApi::gChannelSetFlowControlConfig = nullptr;
 channelSetChannelTimeOutFunc DlHcomApi::gChannelSetChannelTimeOut = nullptr;
@@ -140,6 +142,9 @@ Result DlHcomApi::LoadLibrary()
     DL_LOAD_SYM(gChannelBatchPut, channelBatchPutFunc, hcomHandle, "ubs_hcom_channel_putv");
     DL_LOAD_SYM(gChannelGet, channelGetFunc, hcomHandle, "ubs_hcom_channel_get");
     DL_LOAD_SYM(gChannelBatchGet, channelBatchGetFunc, hcomHandle, "ubs_hcom_channel_getv");
+    /* 双连接（按 rail 提交）用的两个符号；老版本 ubs 可能没有，用 OPTIONAL 避免整体加载失败 */
+    DL_LOAD_SYM_OPTIONAL(gChannelBatchPutOnRail, channelBatchPutOnRailFunc, hcomHandle, "ubs_hcom_channel_putv_rail");
+    DL_LOAD_SYM_OPTIONAL(gChannelBatchGetOnRail, channelBatchGetOnRailFunc, hcomHandle, "ubs_hcom_channel_getv_rail");
     DL_LOAD_SYM(gChannelSetFlowControlConfig, channelSetFlowControlConfigFunc, hcomHandle,
                 "ubs_hcom_channel_set_flowctl_cfg");
     DL_LOAD_SYM(gChannelSetChannelTimeOut, channelSetChannelTimeOutFunc, hcomHandle, "ubs_hcom_channel_set_timeout");

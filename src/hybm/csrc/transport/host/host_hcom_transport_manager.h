@@ -128,7 +128,7 @@ private:
     Result InnerWriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size);
 
     Result SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
-                                 size_t end);
+                                 size_t end, int32_t railIdx = -1);
 
     Result SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
                                 size_t end);

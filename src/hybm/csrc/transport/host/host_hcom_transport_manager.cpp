@@ -78,12 +78,13 @@ static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
     }
 }
 
-/* ubs 内部用 uint8_t 存 CPU 号，且 128 被占用作"不绑核"哨兵，故可用 CPU 号上限为 127 */
-constexpr uint32_t WORKER_CPU_ID_MAX = 127;
+/* ubs 侧 cpu id 已从 uint8_t 放宽到 uint32_t（上限仍是 NN_NO612-1 = 611），
+   所以这里也放宽到 611，让高编号 NUMA 节点（如 240-319）的核可以被绑定。
+   注意 UINT32_MAX(0xFFFFFFFF) 是 ubs 内部"不绑核"的哨兵值，绝不能作为 CPU 号传入。 */
+constexpr uint32_t WORKER_CPU_ID_MAX = 611;
 
 /* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
    同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
-   另据 ubs 源码注释 "each number must be 0-127" 且 128 被占用作"不绑核"哨兵，故这里也限制 <=127。
    返回该区间的 CPU 个数；格式不合法返回 false。 */
 bool ParseWorkerCpuRange(const std::string &range, uint32_t &cpuCount)
 {
@@ -182,7 +183,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
             BM_LOG_WARN("skip hcom worker cpu range. range: "
                         << workerCpuRange << " parsed: " << parsed << " cpusInRange: " << cpusInRange
                         << " workerNum: " << workerNum
-                        << " (格式须为 \"起始CPU-结束CPU\"，且 CPU 数须等于 worker 数，CPU 号须为 0-127)");
+                        << " (格式须为 \"起始CPU-结束CPU\"，且 CPU 数须等于 worker 数，CPU 号须为 0-611 且该核存在)");
         } else {
             std::copy_n(workerCpuRange.c_str(), workerCpuRange.size() + 1, opt.workerGroupCpuRange);
             opt.workerGroupThreadCount = static_cast<uint16_t>(workerNum);
@@ -1043,7 +1044,7 @@ Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, 
     return ret;
 }
 Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
-                                                   size_t begin, size_t end)
+                                                   size_t begin, size_t end, int32_t railIdx)
 {
     if (rpcServices_.empty() || rankId >= channels_.size() || ep >= channels_[rankId].size()) {
         BM_LOG_WARN("SubmitWriteBatchSlice while closing, rank: " << rankId << " ep: " << ep);
@@ -1099,8 +1100,17 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         channelCallback.arg = stream_.get();
         channelCallback.cb = ChannelAsyncCallback;
         stream_->SubmitTasks();
-        BM_LOG_INFO("DlHcomApi::ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
-        auto ret = DlHcomApi::ChannelPutV(channel, sglReq, &channelCallback);
+        /* railIdx >= 0：本批只走这一条 rail（双连接，不做库内 MultiRail 扇出）；
+           railIdx < 0：走库内默认行为（含 MultiRail 自动扇出） */
+        int ret = 0;
+        if (railIdx < 0) {
+            BM_LOG_INFO("DlHcomApi::ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
+            ret = DlHcomApi::ChannelPutV(channel, sglReq, &channelCallback);
+        } else {
+            BM_LOG_INFO("DlHcomApi::ChannelPutVOnRail start, rail: " << railIdx << " sglReq iocount "
+                                                                     << sglReq.iovCount);
+            ret = DlHcomApi::ChannelPutVOnRail(channel, sglReq, static_cast<uint16_t>(railIdx), &channelCallback);
+        }
         if (ret != BM_OK) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
@@ -1120,6 +1130,29 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                              BM_INVALID_PARAM);
 
     uint32_t total = descriptor.counts.size();
+    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上（MF_HYBM_HCOM_RAIL_SPLIT=1，默认关）。
+       例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
+       rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
+       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。 */
+    if (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_RAIL_SPLIT, 0U) != 0U && localNics_.size() > 1) {
+        const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
+        size_t begin = 0;
+        for (uint32_t rail = 0; rail < railCount; ++rail) {
+            const size_t cnt = total / railCount + (rail < total % railCount ? 1 : 0);
+            if (cnt == 0) {
+                continue;
+            }
+            auto ret = SubmitWriteBatchSlice(rankId, 0, descriptor, begin, begin + cnt, static_cast<int32_t>(rail));
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Failed to submit rail " << rail << " rankId: " << rankId);
+                Synchronize(rankId);
+                return ret;
+            }
+            begin += cnt;
+        }
+        BM_LOG_INFO("rail split submit done, railCount: " << railCount << " total: " << total);
+        return BM_OK;
+    }
     // single link keeps original submit + outer synchronize behavior
     if (epCount_ <= 1) {
         return SubmitWriteBatchSlice(rankId, 0, descriptor, 0, total);

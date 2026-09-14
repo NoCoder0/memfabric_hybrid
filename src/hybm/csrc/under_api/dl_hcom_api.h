@@ -61,6 +61,9 @@ using channelPutFunc = int (*)(Hcom_Channel, Channel_OneSideRequest, Channel_Cal
 using channelBatchPutFunc = int (*)(Hcom_Channel, Channel_OneSideRequestSgl, Channel_Callback *);
 using channelGetFunc = int (*)(Hcom_Channel, Channel_OneSideRequest, Channel_Callback *);
 using channelBatchGetFunc = int (*)(Hcom_Channel, Channel_OneSideRequestSgl, Channel_Callback *);
+/* 指定 rail(网卡) 提交 SGL：整批只走 railIdx 那一条，不做库内 MultiRail 扇出 */
+using channelBatchPutOnRailFunc = int (*)(Hcom_Channel, Channel_OneSideRequestSgl, uint16_t, Channel_Callback *);
+using channelBatchGetOnRailFunc = int (*)(Hcom_Channel, Channel_OneSideRequestSgl, uint16_t, Channel_Callback *);
 using channelSetFlowControlConfigFunc = int (*)(Hcom_Channel, Channel_FlowCtrlOptions);
 using channelSetChannelTimeOutFunc = void (*)(Hcom_Channel, int16_t, int16_t);
 using contextGetRspCtxFunc = int (*)(Service_Context, Channel_ReplyContext *);
@@ -337,6 +340,25 @@ public:
         return gChannelBatchGet(channel, req, cb);
     }
 
+    /* 指定 rail(网卡) 提交 SGL 单边写/读：整批 iov 只走 railIdx 这一条 rail，不做库内 MultiRail 扇出。
+       上层据此把 iov 按 rail 数切分（如 600 个 iov 拆成 300/300），让每条连接各承担一半。
+       railIdx 取值范围 [0, rail 数)；越界由库内回落到 rail 0。 */
+    static inline int ChannelPutVOnRail(Hcom_Channel channel, Channel_OneSideRequestSgl req, uint16_t railIdx,
+                                        Channel_Callback *cb)
+    {
+        BM_ASSERT_LOG_AND_RETURN(gChannelBatchPutOnRail != nullptr, "gChannelBatchPutOnRail is nullptr",
+                                 BM_UNDER_API_UNLOAD);
+        return gChannelBatchPutOnRail(channel, req, railIdx, cb);
+    }
+
+    static inline int ChannelGetVOnRail(Hcom_Channel channel, Channel_OneSideRequestSgl req, uint16_t railIdx,
+                                        Channel_Callback *cb)
+    {
+        BM_ASSERT_LOG_AND_RETURN(gChannelBatchGetOnRail != nullptr, "gChannelBatchGetOnRail is nullptr",
+                                 BM_UNDER_API_UNLOAD);
+        return gChannelBatchGetOnRail(channel, req, railIdx, cb);
+    }
+
     static inline int ChannelSetFlowControlConfig(Hcom_Channel channel, Channel_FlowCtrlOptions opt)
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelSetFlowControlConfig != nullptr, "gChannelSetFlowControlConfig is nullptr",
@@ -481,6 +503,8 @@ private:
     static channelBatchPutFunc gChannelBatchPut;
     static channelGetFunc gChannelGet;
     static channelBatchGetFunc gChannelBatchGet;
+    static channelBatchPutOnRailFunc gChannelBatchPutOnRail;
+    static channelBatchGetOnRailFunc gChannelBatchGetOnRail;
     static channelSetFlowControlConfigFunc gChannelSetFlowControlConfig;
     static channelSetChannelTimeOutFunc gChannelSetChannelTimeOut;
     static contextGetRspCtxFunc gContextGetRspCtx;
