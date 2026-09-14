@@ -928,6 +928,14 @@ int main(int argc, char *argv[])
                 if (timedOut) {
                     printf("cont receiver TIMEOUT at iter %u: 对端没在推进水位（检查两端 links 数/mode 是否一致、swap 是否已关）\n",
                            r);
+                    /* 诊断：把每条 rail 的水位槽实际值打出来 —— 全 0 表示一个都没落地；
+                       只有 rail1 为 0 表示 rail1 的水位写没生效（数据可能到了，但收端不敢散）。 */
+                    printf("cont receiver 水位实测:");
+                    for (uint32_t e = 0; e < links; ++e) {
+                        printf(" wm[%u]=%llu(需达到 %llu)", e, static_cast<unsigned long long>(*wmVas[e]),
+                               static_cast<unsigned long long>(endPerEp[e]));
+                    }
+                    printf("\n");
                     aborted = true;
                     break;
                 }
