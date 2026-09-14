@@ -61,6 +61,7 @@
 
 #include "smem_bm.h"
 #include "smem_bm_def.h"
+#include "smem.h" /* smem_set_log_level */
 
 namespace {
 
@@ -89,7 +90,9 @@ struct BenchArgs {
     uint32_t chunk = kDefaultChunk; /* cont: 每 chunk 个 IO 提交一批并推进一次 flag */
     uint32_t gapMs = kDefaultGapMs; /* 每轮之后的空转(ms)，计时区外 */
     uint32_t rounds = 5;
+    int32_t logLevel = -1; /* <0 表示不改库的日志级别；0~5 见 smem_set_log_level */
     bool old = false; /* --old=1 老版口径(如 e30bf29，无收端聚合): 只跑直写 baseline、只用单 url、无 ack/scatter */
+    bool passAddrs = false; /* --pass-addrs=1: baseline 由 local 显式把 600 个目标地址传给 remote */
 };
 
 void Usage(const char *prog)
@@ -108,6 +111,8 @@ void Usage(const char *prog)
             "  --old=1                    老版口径(默认0，跑 e30bf29 等无聚合 MF 用):\n"
             "                             只跑直写 baseline、只用单 url、无 staging/scatter\n"
             "                             不传 --old = 最新版: baseline 直写 + cont(收端聚合)\n"
+            "  --pass-addrs=0|1           baseline: local 把自己 600 个目标地址显式传给 remote(1)，\n"
+            "                             不再依赖\"双方按同一公式算出相同目标地址\"\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
             "  说明: 两场景均不使用 ack，每轮结束两端各空转 5000ms(计时区外)隔离轮次\n",
             prog);
@@ -153,6 +158,10 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.gapMs = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--rounds") {
             a.rounds = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--log-level") { /* 0~5: DEBUG/INFO/WARN/ERROR/FATAL/TRACE；不传则不改库的级别 */
+            a.logLevel = static_cast<int32_t>(std::stoi(v));
+        } else if (k == "--pass-addrs") {
+            a.passAddrs = (v != "0");
         } else if (k == "--old") {
             a.old = v != "0";
         }
@@ -396,7 +405,8 @@ int main(int argc, char *argv[])
     }
     const uint32_t links = 1;
     printf("[bench] link-mode=%s url-count=%u links=%u hcom-url=%s\n",
-           urlCount > 1 ? "multi-nic (lib multirail)" : "single-nic", urlCount, links, a.hcomUrl.c_str());
+           urlCount > 1 ? "multi-nic (K channels)" : "single-nic", urlCount, links, a.hcomUrl.c_str());
+    printf("[bench] target-addrs=%s\n", a.passAddrs ? "由 local 显式下发 600 个地址" : "双方按同一公式各自算");
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)               连续 staging（接收侧）
@@ -427,6 +437,9 @@ int main(int argc, char *argv[])
        也不会读到错的地址。 */
     const uint64_t reqOutOff = readyOff - 16; /* local 的请求发送槽 */
     const uint64_t reqOff = reqOutOff - 16;   /* remote 的请求接收槽 */
+    /* --pass-addrs：地址列表复用 staging 区头部（baseline 不使用 staging）。
+       local 把 600 个离散目标地址单边写到对端这里，remote 从本端内存读出来直接当 dsts 用。 */
+    const uint64_t addrListOff = 0;
     if (needBytes > reqOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
@@ -442,6 +455,12 @@ int main(int argc, char *argv[])
     config.rankId = a.rank;
     config.startConfigStoreServer = a.withStore;
     snprintf(config.hcomUrl, sizeof(config.hcomUrl), "%s", a.hcomUrl.c_str());
+    if (a.logLevel >= 0) {
+        /* 提库的日志级别：HCOM 的日志经 HcomExternalLoggerAdapter 转发进本仓 logger，
+           而默认级别是 WARN，会挡掉库的 INFO（例如 MultiRail 的 "create driver xxx_0/_1"）。 */
+        (void)smem_set_log_level(a.logLevel);
+        printf("[bench] smem log level -> %d\n", a.logLevel);
+    }
     if (smem_bm_init(a.storeUrl.c_str(), a.worldSize, 0, &config) != 0) {
         fprintf(stderr, "smem_bm_init failed, store=%s\n", a.storeUrl.c_str());
         return 1;
@@ -533,7 +552,29 @@ int main(int argc, char *argv[])
             std::vector<void *> srcs(a.count), dsts(a.count);
             for (uint32_t i = 0; i < a.count; ++i) {
                 srcs[i] = HostPtr(selfGva + i * a.stride);
-                dsts[i] = HostPtr(peerGva + dispBase + i * a.stride);
+            }
+            if (a.passAddrs) {
+                /* 等 local 把 600 个目标地址传过来：local 先写列表、再往本端 ackOff 槽写序号，
+                   同一 QP 保序 → 看到序号即列表已落地。然后用收到的地址，不套用本端公式。 */
+                auto *readyVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + ackOff));
+                const uint64_t rw0 = NowUs();
+                while (*readyVa == 0) {
+                    if (NowUs() - rw0 > kSpinTimeoutUs) {
+                        printf("[bench] pass-addrs: 等 local 的地址列表 TIMEOUT\n");
+                        smem_bm_destroy(bm);
+                        return 1;
+                    }
+                }
+                const auto *list = reinterpret_cast<const uint64_t *>(HostPtr(selfGva + addrListOff));
+                for (uint32_t i = 0; i < a.count; ++i) {
+                    dsts[i] = reinterpret_cast<void *>(list[i]);
+                }
+                printf("[bench] pass-addrs: 已从 local 收到 %u 个目标地址, 首个=0x%llx\n", a.count,
+                       static_cast<unsigned long long>(list[0]));
+            } else {
+                for (uint32_t i = 0; i < a.count; ++i) {
+                    dsts[i] = HostPtr(peerGva + dispBase + i * a.stride);
+                }
             }
             uint64_t sumUs = 0;
             std::vector<uint64_t> costs; /* 热循环不打日志，跑完后统一打印，避免日志影响计时/节奏 */
@@ -580,6 +621,30 @@ int main(int argc, char *argv[])
             std::vector<void *> dstVas(a.count, nullptr);
             for (uint32_t i = 0; i < a.count; ++i) {
                 dstVas[i] = HostPtr(selfGva + dispBase + i * a.stride);
+            }
+            if (a.passAddrs) {
+                /* 把这 600 个目标地址显式下发给 remote（不再依赖"双方按同一公式算出相同地址"）：
+                   先写列表，再往本端 ackOff 槽写序号（同一 QP 保序），对端看到序号即列表可用。 */
+                auto *list = reinterpret_cast<uint64_t *>(HostPtr(selfGva + addrListOff));
+                for (uint32_t i = 0; i < a.count; ++i) {
+                    list[i] = reinterpret_cast<uint64_t>(dstVas[i]);
+                }
+                std::atomic_thread_fence(std::memory_order_release);
+                smem_copy_params lp{HostPtr(selfGva + addrListOff), HostPtr(peerGva + addrListOff),
+                                    static_cast<size_t>(a.count) * sizeof(uint64_t), nullptr};
+                int32_t lret = smem_bm_copy(bm, &lp, SMEMB_COPY_AUTO, 0);
+                if (lret == 0) {
+                    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + ackOff)) = 1;
+                    std::atomic_thread_fence(std::memory_order_release);
+                    smem_copy_params sp{HostPtr(selfGva + ackOff), HostPtr(peerGva + ackOff), sizeof(uint64_t), nullptr};
+                    lret = smem_bm_copy(bm, &sp, SMEMB_COPY_AUTO, 0);
+                }
+                if (lret != 0) {
+                    printf("[bench] pass-addrs: 目标地址列表下发失败 ret=%d\n", lret);
+                    smem_bm_destroy(bm);
+                    return 1;
+                }
+                printf("[bench] pass-addrs: 已向 remote 下发 %u 个目标地址\n", a.count);
             }
             auto *flagVa = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + flagOff));
             const uint32_t kTotal = a.rounds + 1; /* 第 1 轮 warmup（不计时） */

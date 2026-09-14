@@ -62,6 +62,12 @@ inline const std::string MF_HYBM_URMA_SWAP_SPACE_SIZE =
     GetEnvStr("MF_HYBM_URMA_SWAP_SPACE_SIZE", "HYBM_URMA_SWAP_SPACE_SIZE");
 inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =
     GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED");
+// 把 HCOM 的忙轮询 worker 组钉到指定 CPU 段（形如 "0-1"），避免 worker 与调用线程挤在同一个核上。
+// 默认空 = 不设置，worker 落核交给内核调度器。实测不设置时 worker 可能和调用线程同核，
+// 被唤醒线程要排队等一个调度时间片，小消息写延迟能从十几 µs 抬到 ~4ms。
+inline const std::string MF_HYBM_HCOM_WORKER_CPU_RANGE =
+    GetEnvStr("MF_HYBM_HCOM_WORKER_CPU_RANGE", "HYBM_HCOM_WORKER_CPU_RANGE");
+inline const std::string MF_HYBM_HCOM_WORKER_NUM = GetEnvStr("MF_HYBM_HCOM_WORKER_NUM", "HYBM_HCOM_WORKER_NUM");
 // HCOMM 开关（默认关闭）：关闭时 DEVICE_RDMA 一律走 native；打开后按 CANN 版本判断
 inline const std::string MF_HYBM_RDMA_USE_HCOMM = GetEnvStr("MF_HYBM_RDMA_USE_HCOMM", "HYBM_RDMA_USE_HCOMM");
 inline const std::string MF_HYBM_ENABLE_4K_PAGE = GetEnvStr("MF_HYBM_ENABLE_4K_PAGE", "HYBM_ENABLE_4K_PAGE");

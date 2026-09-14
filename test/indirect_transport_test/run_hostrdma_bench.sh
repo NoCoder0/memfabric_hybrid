@@ -38,12 +38,13 @@ fi
 export MF_HYBM_ENABLE_4K_PAGE=1
 
 STORE_URL="tcp://90.91.183.86:18580"
+# 第 3 个及之后的参数原样透传给 bench（例如 --rounds=100 --req-batch=1）
 if [ "${ROLE}" == "local" ]; then
     # 86：local + 内嵌 config store
     exec "${BIN}" --role=local --rank=0 --store-url="${STORE_URL}" \
-        --hcom-url="tcp://192.168.75.86:19000" --with-store=1 --mode="${MODE}"
+        --hcom-url="tcp://192.168.75.86:19000" --with-store=1 --mode="${MODE}" "${@:3}"
 else
     # 87：remote
     exec "${BIN}" --role=remote --rank=1 --store-url="${STORE_URL}" \
-        --hcom-url="tcp://192.168.75.87:19000" --mode="${MODE}"
+        --hcom-url="tcp://192.168.75.87:19000" --mode="${MODE}" "${@:3}"
 fi
