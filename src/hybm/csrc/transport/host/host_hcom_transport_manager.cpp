@@ -83,14 +83,6 @@ static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
    注意 UINT32_MAX(0xFFFFFFFF) 是 ubs 内部"不绑核"的哨兵值，绝不能作为 CPU 号传入。 */
 constexpr uint32_t WORKER_CPU_ID_MAX = 611;
 
-/* 环境变量只在首次调用时解析一次：下面这段在每次 batch 提交的路径上（每轮都会走），
-   不能每次都去 parse 字符串。 */
-bool RailSplitEnabled()
-{
-    static const bool enabled = (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_RAIL_SPLIT, 1U) != 0U);
-    return enabled;
-}
-
 /* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
    同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
    返回该区间的 CPU 个数；格式不合法返回 false。 */
@@ -180,18 +172,15 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
        默认不设置（落核交给内核调度器）。不设置时忙轮询 worker 可能与调用线程落到同一个核上——
        被唤醒的线程要排队等一个调度时间片，小消息写的等待会从十几 µs 抬到 ~4ms。
        ubs 要求"该组 CPU 数 == worker 数"（BUSY_POLLING 严格相等），这里按核数自动设 worker 数；
-       校验不过就只打 WARN 并跳过，绝不把服务搞挂。
-       注意 ubs 内部用 uint8_t 存 CPU 号，所以只能绑 0-255 的核。 */
+       校验不过就只打 WARN 并跳过，绝不把服务搞挂。CPU 号须为 0-611 且该核存在。 */
     const auto &workerCpuRange = env::MF_HYBM_HCOM_WORKER_CPU_RANGE;
     if (!workerCpuRange.empty()) {
-        uint32_t cpusInRange = 0;
-        const bool parsed = ParseWorkerCpuRange(workerCpuRange, cpusInRange);
-        const uint32_t workerNum = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_WORKER_NUM, cpusInRange);
-        if (!parsed || workerNum != cpusInRange || workerCpuRange.size() >= sizeof(opt.workerGroupCpuRange)) {
+        uint32_t workerNum = 0; /* 直接按核数当 worker 数 */
+        const bool parsed = ParseWorkerCpuRange(workerCpuRange, workerNum);
+        if (!parsed || workerCpuRange.size() >= sizeof(opt.workerGroupCpuRange)) {
             BM_LOG_WARN("skip hcom worker cpu range. range: "
-                        << workerCpuRange << " parsed: " << parsed << " cpusInRange: " << cpusInRange
-                        << " workerNum: " << workerNum
-                        << " (格式须为 \"起始CPU-结束CPU\"，且 CPU 数须等于 worker 数，CPU 号须为 0-611 且该核存在)");
+                        << workerCpuRange << " parsed: " << parsed
+                        << " (格式须为 \"起始CPU-结束CPU\"，CPU 号须为 0-611 且该核存在)");
         } else {
             std::copy_n(workerCpuRange.c_str(), workerCpuRange.size() + 1, opt.workerGroupCpuRange);
             opt.workerGroupThreadCount = static_cast<uint16_t>(workerNum);
@@ -494,10 +483,8 @@ uint32_t HcomTransportManager::GetLinkCount() const
 
 uint32_t HcomTransportManager::GetRailCount() const
 {
-    if (!RailSplitEnabled() || localNics_.size() <= 1) {
-        return 1;
-    }
-    return static_cast<uint32_t>(localNics_.size());
+    /* 建链时传了多个 url(网卡) 就是多 rail；单连接返回 1，行为与以前完全一致。 */
+    return (localNics_.size() > 1) ? static_cast<uint32_t>(localNics_.size()) : 1;
 }
 
 bool HcomTransportManager::AllRailsReady(uint32_t rankId) const
@@ -1179,13 +1166,12 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                              BM_INVALID_PARAM);
 
     uint32_t total = descriptor.counts.size();
-    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上，**默认开**。
+    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上，**默认行为**。
        例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
        单连接（只有 1 个 url）时 localNics_ 只有 1 项，自动不生效、行为与以前一致。
        rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
-       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。
-       MF_HYBM_HCOM_RAIL_SPLIT=0 可关闭，回退到库内 MultiRail 自动扇出。 */
-    if (RailSplitEnabled() && localNics_.size() > 1) {
+       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。 */
+    if (localNics_.size() > 1) {
         const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
         size_t begin = 0;
         for (uint32_t rail = 0; rail < railCount; ++rail) {
