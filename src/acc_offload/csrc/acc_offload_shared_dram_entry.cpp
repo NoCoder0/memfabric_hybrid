@@ -295,6 +295,8 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
 
 void AccOffloadSharedDramEntry::UnInitialize()
 {
+    entryTable_ = {};
+    entryTableRegistered_ = false;
     if (!inited_) {
         return;
     }
@@ -351,6 +353,31 @@ void AccOffloadSharedDramEntry::FreeHost(void *ptr)
     memMng_->Release(ptr);
 }
 
+int32_t AccOffloadSharedDramEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
+{
+    if (!inited_) {
+        OFFLOAD_LOG_ERROR("entry not initialized, get dva failed");
+        return OFFLOAD_ERROR;
+    }
+    if (dvaPtr == nullptr || hostPtr == 0) {
+        OFFLOAD_LOG_ERROR("invalid input, hostPtr is null: " << (hostPtr == 0)
+                                                             << ", dvaPtr is null: " << (dvaPtr == nullptr));
+        return OFFLOAD_ERROR;
+    }
+    if (reinterpret_cast<uint64_t>(base_) > hostPtr || hostPtr >= reinterpret_cast<uint64_t>(base_) + size_) {
+        OFFLOAD_LOG_ERROR("hostPtr out of pool range, pool size: " << size_ << ", rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+
+    /* vmm unified mapping: dva == hva == gva (see EntryGather, where
+     * hostGva_ is passed to the kernel as the pool GVA directly), so the
+     * conversion is the identity in this scene. The range check above keeps
+     * the identity honest; a conn-based shared pool would need to resolve
+     * through its registered dva instead. */
+    *dvaPtr = hostPtr;
+    return OFFLOAD_OK;
+}
+
 int32_t AccOffloadSharedDramEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
                                               uint32_t *sizePtr, uint8_t devIdx)
 {
@@ -372,6 +399,58 @@ int32_t AccOffloadSharedDramEntry::GroupPackCopy(uint64_t *srcPtrs, uint64_t *ds
 int32_t AccOffloadSharedDramEntry::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx)
 {
     return AccOffloadLaunchApi::AccOffloadKvExchange(metaPtr, devIdx);
+}
+
+int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!inited_) {
+        OFFLOAD_LOG_ERROR("entry not initialized, register entry table failed, rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    if (entryTableRegistered_) {
+        OFFLOAD_LOG_ERROR("entry table already registered (one uniform grid per pool lifetime; the registry is "
+                          "cleared by uninit), rankId: "
+                          << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    if (entryBytes == 0 || entryBytes > OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES) {
+        OFFLOAD_LOG_ERROR("invalid entryBytes " << entryBytes << ", must be in (0, "
+                                                << OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES
+                                                << "], rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    if (rowsPerSlot == 0) {
+        OFFLOAD_LOG_ERROR("invalid rowsPerSlot 0, rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    if (static_cast<uint64_t>(rowsPerSlot) * entryBytes > size_) {
+        OFFLOAD_LOG_ERROR("row grid " << rowsPerSlot << " rows x " << entryBytes << "B does not fit one " << size_
+                                      << "B slot, rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    entryTable_ = AccOffloadEntryGatherLayout{0, size_, entryBytes, rowsPerSlot};
+    entryTableRegistered_ = true;
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadSharedDramEntry::EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
+{
+    if (!inited_ || !entryTableRegistered_) {
+        OFFLOAD_LOG_ERROR("entry not initialized or no table registered"
+                          << ", inited: " << inited_ << ", tableRegistered: " << entryTableRegistered_
+                          << ", rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    /* dva == hva == gva in the shared pool's unified mapping. hostGva_ is the
+     * whole-pool GVA base (rank 0 slot start) the kernel maps row ids against;
+     * the layout comes from the single registry entry (slotStride is this
+     * pool's slot size, stored at registration). countPtr is a device address
+     * of the uint32 entry count; the kernel reads it, nothing is
+     * dereferenced here. */
+    AccOffloadEntryGatherLayout layout = entryTable_;
+    layout.poolGva = reinterpret_cast<uint64_t>(hostGva_);
+    return AccOffloadLaunchApi::AccOffloadEntryGather(dstPtr, idsPtr, countPtr, layout, devIdx);
 }
 
 } // namespace offload

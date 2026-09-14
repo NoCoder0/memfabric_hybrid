@@ -27,6 +27,16 @@ void OffloadOpsGroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *len
 
 void OffloadOpsKvExchange(uint64_t *metaPtr, uint32_t blockDim, void *stream);
 
+/* Launch-bound gather entry: the layout (poolGva/slotStride/entryBytes/
+ * rowsPerSlot) is resolved from the registration at call time and passed as
+ * plain scalars so this header stays independent of the AccOffloadEntryGatherLayout
+ * struct in acc_offload_launch.h. */
+void AccOffloadEntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint64_t poolGva, uint64_t slotStride,
+                           uint32_t entryBytes, uint32_t rowsPerSlot, uint8_t devIdx);
+
+void OffloadOpsEntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint64_t poolGva, uint64_t slotStride,
+                           uint32_t entryBytes, uint32_t rowsPerSlot, uint32_t blockDim, void *stream);
+
 #ifdef __cplusplus
 }
 #endif

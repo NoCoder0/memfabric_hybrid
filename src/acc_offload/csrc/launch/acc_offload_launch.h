@@ -25,6 +25,20 @@ using AccOffloadGroupPackCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *,
 
 using AccOffloadKvExchangeFunc = void (*)(uint64_t *, uint8_t);
 
+/* Uniform row-grid gather layout, resolved from the single table registration
+ * at call time and baked into the launch (graph-capture stable). Lives here so
+ * this header stays independent of the kernel-side csrc/operators directory;
+ * the dlsym'd entry carries the fields as plain scalars instead. */
+struct AccOffloadEntryGatherLayout {
+    uint64_t poolGva;
+    uint64_t slotStride;
+    uint32_t entryBytes;
+    uint32_t rowsPerSlot;
+};
+
+using AccOffloadEntryGatherFunc = void (*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint32_t, uint32_t,
+                                           uint8_t);
+
 class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
@@ -63,6 +77,18 @@ public:
         return OFFLOAD_OK;
     }
 
+    static inline int32_t AccOffloadEntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr,
+                                                const AccOffloadEntryGatherLayout &layout, uint8_t devIdx)
+    {
+        if (pAccOffloadEntryGather == nullptr) {
+            return OFFLOAD_UNLOAD;
+        }
+
+        pAccOffloadEntryGather(dstPtr, idsPtr, countPtr, layout.poolGva, layout.slotStride, layout.entryBytes,
+                               layout.rowsPerSlot, devIdx);
+        return OFFLOAD_OK;
+    }
+
 private:
     static std::string GetSelfLibDir();
     static std::mutex gMutex;
@@ -73,6 +99,7 @@ private:
     static AccOffloadSparseCopyFunc pAccOffloadSparseCopy;
     static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
     static AccOffloadKvExchangeFunc pAccOffloadKvExchange;
+    static AccOffloadEntryGatherFunc pAccOffloadEntryGather;
 };
 
 } // namespace offload

@@ -29,6 +29,8 @@ AccOffloadGroupPackCopyFunc AccOffloadLaunchApi::pAccOffloadGroupPackCopy = null
 
 AccOffloadKvExchangeFunc AccOffloadLaunchApi::pAccOffloadKvExchange = nullptr;
 
+AccOffloadEntryGatherFunc AccOffloadLaunchApi::pAccOffloadEntryGather = nullptr;
+
 std::string AccOffloadLaunchApi::GetSelfLibDir()
 {
     Dl_info info;
@@ -87,6 +89,8 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
 
     DL_LOAD_SYM_OPTIONAL(pAccOffloadKvExchange, AccOffloadKvExchangeFunc, libHandle, "AccOffloadKvExchange");
 
+    DL_LOAD_SYM_OPTIONAL(pAccOffloadEntryGather, AccOffloadEntryGatherFunc, libHandle, "AccOffloadEntryGather");
+
     gLoaded = true;
     return OFFLOAD_OK;
 }
@@ -103,6 +107,8 @@ void AccOffloadLaunchApi::CleanupLibrary()
     pAccOffloadGroupPackCopy = nullptr;
 
     pAccOffloadKvExchange = nullptr;
+
+    pAccOffloadEntryGather = nullptr;
 
     if (libHandle != nullptr) {
         dlclose(libHandle);

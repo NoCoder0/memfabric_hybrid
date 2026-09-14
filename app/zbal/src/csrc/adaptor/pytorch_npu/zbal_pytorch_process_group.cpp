@@ -21,6 +21,7 @@
 #include "zbal_comm_host_device_struct.h"
 #include "dl_cann_api.h"
 #include "zbal_pytorch_process_group.h"
+#include <torch_npu/csrc/core/npu/NPUCachingAllocator.h>
 
 namespace zbal {
 namespace adaptor {

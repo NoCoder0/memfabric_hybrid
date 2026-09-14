@@ -16,6 +16,7 @@ from _pymf_acc_offload import offload
 sparse_copy_impl = offload.sparse_copy
 group_pack_copy_impl = offload.group_pack_copy
 kv_exchange_copy_impl = offload.kv_exchange_copy
+entry_gather_impl = offload.entry_gather
 
 
 def empty(sizes, dtype=None, pin_memory=False):
@@ -55,3 +56,8 @@ def group_pack_copy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, pac
 
 def kv_exchange_copy(metaPtr, deviceId):
     return kv_exchange_copy_impl(metaPtr.data_ptr(), deviceId.index)
+
+
+def entry_gather(dst, ids, count, deviceId):
+    dst_addr = dst.data_ptr() if hasattr(dst, "data_ptr") else int(dst)
+    return entry_gather_impl(dst_addr, ids.data_ptr(), count.data_ptr(), deviceId.index)

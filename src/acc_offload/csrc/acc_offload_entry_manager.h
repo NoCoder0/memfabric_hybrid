@@ -47,6 +47,10 @@ public:
 
     int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx);
 
+    int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot);
+
+    int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx);
+
     inline bool IsInitialized() const
     {
         return inited_;
