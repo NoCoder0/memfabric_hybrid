@@ -932,7 +932,8 @@ int main(int argc, char *argv[])
                        只有 rail1 为 0 表示 rail1 的水位写没生效（数据可能到了，但收端不敢散）。 */
                     printf("cont receiver 水位实测:");
                     for (uint32_t e = 0; e < links; ++e) {
-                        printf(" wm[%u]=%llu(需达到 %llu)", e, static_cast<unsigned long long>(*wmVas[e]),
+                        printf(" wm[%u]@%p=%llu(需达到 %llu)", e, const_cast<uint64_t *>(wmVas[e]),
+                               static_cast<unsigned long long>(*wmVas[e]),
                                static_cast<unsigned long long>(endPerEp[e]));
                     }
                     printf("\n");

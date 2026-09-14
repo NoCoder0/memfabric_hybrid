@@ -1309,6 +1309,9 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
         // watermark before that chunk has landed. Slots are append-only, never rewritten.
         const uint64_t srcAddr = progressSrc + static_cast<uint64_t>(chunkIndex) * srcStride;
         *reinterpret_cast<uint64_t *>(srcAddr) = options.progressBase + static_cast<uint64_t>(chunkEnd);
+        BM_LOG_WARN("[rail-dbg] submit rail=" << railIdx << " ep=" << ep << " chunk=[" << cursor << "," << chunkEnd
+                                              << ") srcAddr=" << srcAddr << " dest=" << progressDest
+                                              << " value=" << (options.progressBase + static_cast<uint64_t>(chunkEnd)));
         ret = (railIdx < 0) ? transportManager_->WriteRemoteAsyncOnEp(options.destRankId, ep, srcAddr, progressDest,
                                                                      sizeof(uint64_t))
                             : transportManager_->WriteRemoteAsyncOnEpOnRail(options.destRankId, ep, railIdx, srcAddr,
@@ -1336,6 +1339,8 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
     /* 双连接(多 rail) 复用同一套"每链独立水位"逻辑：linkCount 的来源换成 rail 数。
        单连接时 GetRailCount() 返回 1，走单链路径，行为与以前完全一致。 */
     const uint32_t linkCount = transportManager_->GetRailCount();
+    BM_LOG_WARN("[rail-dbg] progress: total=" << total << " railCount=" << linkCount << " destBase=" << destBase
+                                              << " srcBase=" << srcBase << " interval=" << options.progressInterval);
     if (linkCount <= 1) {
         return WriteRemoteBatchOnEpWithProgress(0, descriptor, 0, total, options, destBase, srcBase,
                                                 sizeof(uint64_t), -1);
@@ -1360,6 +1365,9 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
         const size_t end = begin + base + (ep < rem ? 1U : 0U);
         if (end > begin) {
             /* rail 共用 ep0 的 channel：ep 传 0，真正的网卡由 railIdx 指定 */
+            BM_LOG_WARN("[rail-dbg] rail=" << ep << " iovs=[" << begin << "," << end << ") progressDest="
+                                           << (destBase + ep * sizeof(uint64_t)) << " progressSrc="
+                                           << (srcBase + ep * sizeof(uint64_t)));
             const auto ret = WriteRemoteBatchOnEpWithProgress(0, descriptor, begin, end, options,
                                                               destBase + ep * sizeof(uint64_t),
                                                               srcBase + ep * sizeof(uint64_t), srcStride,
