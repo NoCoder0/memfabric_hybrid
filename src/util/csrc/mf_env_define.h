@@ -68,9 +68,10 @@ inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =
 inline const std::string MF_HYBM_HCOM_WORKER_CPU_RANGE =
     GetEnvStr("MF_HYBM_HCOM_WORKER_CPU_RANGE", "HYBM_HCOM_WORKER_CPU_RANGE");
 inline const std::string MF_HYBM_HCOM_WORKER_NUM = GetEnvStr("MF_HYBM_HCOM_WORKER_NUM", "HYBM_HCOM_WORKER_NUM");
-// 双连接（多 rail）切分开关：=1 时把一个 batch 的 iov 按"前一半/后一半"连续切到多条 rail(网卡)上。
-// 例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。默认关(0)。
-// rail 数 = 建链时传入的 url/网卡数（两者都在 hcom-url 里用 ';' 分隔）。
+// 双连接（多 rail）切分开关，**默认开**：建链时传了多个 url(网卡) 时，把一个 batch 的 iov 按
+// "前一半/后一半"连续切到多条 rail 上，例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
+// 单连接（只有 1 个 url）时自动不生效，行为与以前完全一致。=0 可关闭，
+// 回退到库内 MultiRail 自动扇出（受 multiRailThresh 阈值限制，小 IO 不扇）。
 inline const std::string MF_HYBM_HCOM_RAIL_SPLIT = GetEnvStr("MF_HYBM_HCOM_RAIL_SPLIT", "HYBM_HCOM_RAIL_SPLIT");
 // HCOMM 开关（默认关闭）：关闭时 DEVICE_RDMA 一律走 native；打开后按 CANN 版本判断
 inline const std::string MF_HYBM_RDMA_USE_HCOMM = GetEnvStr("MF_HYBM_RDMA_USE_HCOMM", "HYBM_RDMA_USE_HCOMM");

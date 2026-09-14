@@ -1130,11 +1130,13 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                              BM_INVALID_PARAM);
 
     uint32_t total = descriptor.counts.size();
-    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上（MF_HYBM_HCOM_RAIL_SPLIT=1，默认关）。
+    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上，**默认开**。
        例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
+       单连接（只有 1 个 url）时 localNics_ 只有 1 项，自动不生效、行为与以前一致。
        rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
-       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。 */
-    if (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_RAIL_SPLIT, 0U) != 0U && localNics_.size() > 1) {
+       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。
+       MF_HYBM_HCOM_RAIL_SPLIT=0 可关闭，回退到库内 MultiRail 自动扇出。 */
+    if (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_RAIL_SPLIT, 1U) != 0U && localNics_.size() > 1) {
         const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
         size_t begin = 0;
         for (uint32_t rail = 0; rail < railCount; ++rail) {
