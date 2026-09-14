@@ -11,6 +11,7 @@
 */
 #include <gtest/gtest.h>
 #include <limits>
+#include <string>
 
 #define private   public
 #define protected public
@@ -186,6 +187,36 @@ int FakeChannelGetVFail(Hcom_Channel, Channel_OneSideRequestSgl, Channel_Callbac
     }
     return BM_ERROR;
 }
+} // namespace
+
+// 本文件通过 #define private public 直接改写进程级单例 HcomTransportManager::GetInstance() 的私有状态
+// （rpcService_/rankCount_/mrs_/channels_ 等），且用例结束不复位。最后一个用例
+// ConnectSkipSelfAndEmptyNic 会把 rpcService_ 留成 1，同进程后续 suite 调 OpenDevice 时会命中
+// host_hcom_transport_manager.cpp:117 的 BM_ASSERT_LOG_AND_RETURN(rpcService_ == 0, ..., BM_OK)：
+// 该宏第三参是返回值，于是 OpenDevice 假装成功并跳过 ServiceCreate/ServiceBind/ServiceStart，
+// 之后再拿这个本进程并不存在的句柄去调真实 libhcom，直接抛 std::system_error 打死进程。
+// 这里在每个用例结束时复位，保证本 suite 不污染同进程其它 suite（如 SmemTransTest 的 4 个 e2e）。
+// 注意：复位后本文件内的用例必须自带前置状态，不可再依赖前一个用例泄漏的 rpcService_（同文件内已逐条核对）。
+namespace {
+class HcomTransportManagerStateCleaner : public ::testing::EmptyTestEventListener {
+public:
+    void OnTestEnd(const ::testing::TestInfo &info) override
+    {
+        if (std::string(info.test_suite_name()) != "HcomTransportManagerTest") {
+            return;
+        }
+        HcomTransportManager::GetInstance()->rpcService_ = 0;
+    }
+};
+
+struct HcomTransportManagerStateCleanerRegistrar {
+    HcomTransportManagerStateCleanerRegistrar()
+    {
+        ::testing::UnitTest::GetInstance()->listeners().Append(new HcomTransportManagerStateCleaner());
+    }
+};
+
+HcomTransportManagerStateCleanerRegistrar gHcomTransportManagerStateCleanerRegistrar;
 } // namespace
 
 TEST(HcomTransportManagerTest, IndirectlyCoversRuntimeConfigAndLoggerAdapterViaOpenDevice)
@@ -690,9 +721,12 @@ TEST(HcomTransportManagerTest, InnerWriteRemoteRejectsTooLargeSize)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
+// OpenDevice：rpcService_ != 0 时命中 host_hcom_transport_manager.cpp:117 的幂等短路，先于 options 校验返回 BM_OK。
+// 本用例原先依赖前一个用例泄漏的 rpcService_ = 1，逐用例复位后改为显式构造该前置状态。
 TEST(HcomTransportManagerTest, OpenDeviceInvalidOptions)
 {
     auto mgr = HcomTransportManager::GetInstance();
+    mgr->rpcService_ = 1;
 
     TransportOptions opts{};
     opts.rankId = 1;

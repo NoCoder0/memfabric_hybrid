@@ -8,13 +8,14 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
-#include <cstdint>
-#include <bitset>
-
-#include "hybm_ex_info_transfer.h"
+ */
 #include "hybm_vmm_based_segment.h"
+
+#include <bitset>
+#include <cstdint>
+
 #include "dl_acl_api.h"
+#include "hybm_ex_info_transfer.h"
 #include "hybm_types.h"
 #include "hybm_va_manager.h"
 #include "hybm_numa_util.h"

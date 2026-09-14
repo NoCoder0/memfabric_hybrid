@@ -52,11 +52,10 @@ constexpr uint32_t K_PEER_RANK_ONE = 1;
 constexpr uint32_t K_PEER_RANK_TWO = 2;
 constexpr uint32_t K_HALF_DIVISOR = 2;
 constexpr int STORE_CREATE_FAILED_EXIT_CODE = 10;
-constexpr int STREAM_COUNT_MISMATCH_EXIT_CODE = 10;
 constexpr int STORE_CREATE_RETRY_FAILED_EXIT_CODE = 11;
 const smem_trans_config_t g_trans_options = {SMEM_TRANS_SENDER, SMEM_DEFAUT_WAIT_TIME, 0, 0};
-const uint8_t MASK_MOCK_VAL = 12;       // BIT_LOCAL_DEVICE | BIT_GLOBAL_DEVICE
-constexpr int DUMMY_MEM_VALUE = 42;     // dummy address value for deregister tests
+const uint8_t MASK_MOCK_VAL = 3;    // BIT_LOCAL_HOST | BIT_GLOBAL_HOST → H2GH 方向（host transport 数据面）
+constexpr int DUMMY_MEM_VALUE = 42; // dummy address value for deregister tests
 constexpr int TRANS_SYNC_WAIT_MS = 500; // sleep for cross-process sync
 
 class SmemTransTest : public testing::Test {
@@ -1010,7 +1009,7 @@ TEST_F(SmemTransTest, smem_trans_read_write)
         if (rank == 1) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
-        trans_options.dataOpType = SMEMB_DATA_OP_SDMA;
+        trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
         MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
@@ -1147,7 +1146,7 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
 
     auto func = [](uint32_t rank, uint32_t rankCount, smem_trans_config_t trans_options, std::vector<int *> addrPtrs,
                    size_t capacities, const std::array<const char *, 2> unique_ids) {
-        trans_options.dataOpType = SMEMB_DATA_OP_SDMA;
+        trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
         MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
@@ -1198,9 +1197,10 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
             if (ret != SM_OK) {
                 _exit(6);
             }
-            if (stream_cnt != 1) {
-                _exit(7);
-            }
+            // Note: the old "stream_cnt == 1" assertion relied on the mock CANN stub
+            // (aclrtMemcpyAsync increments *stream). The HOST_TCP data plane goes
+            // through ubs-comm TCP instead and is synchronous, so no async task is
+            // ever submitted to an acl stream and the counter stays 0.
 
             ret = smem_trans_read(handle, addrPtrs[0], unique_ids[1], addrPtrs[1], capacities, 0);
             if (ret != SM_OK) {
@@ -1212,9 +1212,7 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
             if (ret != SM_OK) {
                 _exit(9);
             }
-            if (stream_cnt != 1) {
-                _exit(STREAM_COUNT_MISMATCH_EXIT_CODE);
-            }
+            // Same as above: HOST_TCP submit is synchronous, no stream counter.
         }
         if (rank == 1) {
             std::this_thread::sleep_for(std::chrono::seconds(TRANS_TEST_WAIT_TIME));
@@ -1315,7 +1313,7 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
     auto func = [](uint32_t rank, uint32_t rankCount, smem_trans_config_t trans_options,
                    std::vector<std::vector<void *>> addrPtrs, std::vector<size_t> capacities,
                    const std::array<const char *, 2> unique_ids) {
-        trans_options.dataOpType = SMEMB_DATA_OP_SDMA;
+        trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
         MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
@@ -1366,9 +1364,10 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
             if (ret != SM_OK) {
                 _exit(6);
             }
-            if (stream_cnt != 1) {
-                _exit(7);
-            }
+            // Note: the old "stream_cnt == 1" assertion relied on the mock CANN stub
+            // (aclrtMemcpyAsync increments *stream). The HOST_TCP data plane goes
+            // through ubs-comm TCP instead and is synchronous, so no async task is
+            // ever submitted to an acl stream and the counter stays 0.
 
             for (int retry = 0; retry < writeMaxRetry; ++retry) {
                 ret =
@@ -1387,9 +1386,7 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
             if (ret != SM_OK) {
                 _exit(6);
             }
-            if (stream_cnt != 1) {
-                _exit(7);
-            }
+            // Same as above: HOST_TCP submit is synchronous, no stream counter.
         }
         if (rank == 1) {
             std::this_thread::sleep_for(std::chrono::seconds(TRANS_TEST_WAIT_TIME));
@@ -1492,7 +1489,7 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
     auto func = [](uint32_t rank, uint32_t rankCount, smem_trans_config_t trans_options,
                    std::vector<std::vector<void *>> addrPtrs, std::vector<size_t> capacities,
                    const std::array<const char *, 2> unique_ids) {
-        trans_options.dataOpType = SMEMB_DATA_OP_SDMA;
+        trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
         MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));

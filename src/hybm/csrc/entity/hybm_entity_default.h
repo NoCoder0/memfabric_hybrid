@@ -8,20 +8,20 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
+ */
 #ifndef MEM_FABRIC_HYBRID_HYBM_ENGINE_IMPL_H
 #define MEM_FABRIC_HYBRID_HYBM_ENGINE_IMPL_H
 
 #include <map>
 #include <mutex>
-#include "hybm_common_include.h"
-#include "hybm_dev_legacy_segment.h"
-#include "hybm_data_operator.h"
-#include "hybm_mem_segment.h"
-#include "hybm_entity.h"
 
-#include "hybm_transport_manager.h"
+#include "hybm_common_include.h"
+#include "hybm_data_operator.h"
+#include "hybm_dev_legacy_segment.h"
+#include "hybm_entity.h"
+#include "hybm_mem_segment.h"
 #include "hybm_transport_common.h"
+#include "hybm_transport_manager.h"
 
 namespace ock {
 namespace mf {
@@ -117,6 +117,9 @@ private:
     hybm_options options_{};
     void *hbmGva_{nullptr};  // the hbm medium, started gva, no rankId offset
     void *dramGva_{nullptr}; // the dram medium, started gva, no rankId offset
+    // trans 场景：装载 AsymmetricMemSegment，单段同时管理 HBM/DRAM
+    // 用户注册内存（段内按地址分流）；非 trans 场景：装载纯 HBM 段。
+    // 两种场景共用此槽位，成员名保持不变（见 doc/asymmetric_mem_segment_改造方案.md 3.5）
     std::shared_ptr<MemSegment> hbmSegment_{nullptr};
     std::shared_ptr<MemSegment> dramSegment_{nullptr};
     std::shared_ptr<DataOperator> dataOperator_;

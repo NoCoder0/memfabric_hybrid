@@ -8,21 +8,25 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
-#include <algorithm>
+ */
+#include "hybm_entity_default.h"
 
-#include "dl_api.h"
+#include <algorithm>
+#include <cstring>
+
 #include "dl_acl_api.h"
+#include "dl_api.h"
 #include "dl_hal_api.h"
+
+#include "hybm_compose_data_op.h"
 #include "hybm_data_op_host_rdma.h"
+#include "hybm_data_op_host_shm.h"
 #include "hybm_dev_legacy_segment.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"
-#include "mf_fault_injection_point.h"
 #include "hybm_va_manager.h"
-#include "hybm_compose_data_op.h"
-#include "hybm_entity_default.h"
+#include "mf_fault_injection_point.h"
 
 namespace ock {
 namespace mf {
@@ -417,12 +421,10 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
     if (hbmSegment_ != nullptr) {
         realSlice = hbmSegment_->GetMemSlice(slice, true);
         currentSegment = hbmSegment_;
-        exportMagic = HBM_SLICE_EXPORT_INFO_MAGIC;
     }
     if (realSlice == nullptr && dramSegment_ != nullptr) {
         realSlice = dramSegment_->GetMemSlice(slice);
         currentSegment = dramSegment_;
-        exportMagic = DRAM_SLICE_EXPORT_INFO_MAGIC;
     }
     if (realSlice == nullptr) {
         BM_LOG_ERROR("cannot find input slice for export.");
@@ -433,6 +435,11 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
     if (ret != 0) {
         BM_LOG_ERROR("export to string failed: " << ret);
         return ret;
+    }
+    // 导出块首 8 字节即段内写入的 magic（与 Import 端 demux 约定一致），据此填充 transport key；
+    // asymmetric 段统一写 USER_MEM magic，池内 HBM/DRAM 段写各自 magic，无需按介质分支
+    if (info.size() >= sizeof(exportMagic)) {
+        std::memcpy(&exportMagic, info.data(), sizeof(exportMagic));
     }
     ret = desc.Append(info.data(), info.size());
     if (ret != 0) {
@@ -474,9 +481,9 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
     }
 
     std::vector<std::string> dramInfos;
-    std::vector<std::string> hbmInfos;
+    std::vector<std::string> userSegInfos;
     std::vector<uint32_t> dramIndex;
-    std::vector<uint32_t> hbmIndex;
+    std::vector<uint32_t> userSegIndex;
 
     for (uint32_t i = 0; i < count; i++) {
         uint64_t magic;
@@ -490,10 +497,10 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
             desc[i].Read(reinterpret_cast<void *>(tmp), UNIFIED_EXCHANGE_SEG_INFO_SIZE);
             dramInfos.emplace_back(tmp, UNIFIED_EXCHANGE_SEG_INFO_SIZE);
             dramIndex.emplace_back(i);
-        } else if (IsHbmSlice(magic)) {
+        } else if (IsHbmSlice(magic) || IsUserSlice(magic)) {
             desc[i].Read(reinterpret_cast<void *>(tmp), UNIFIED_EXCHANGE_SEG_INFO_SIZE);
-            hbmInfos.emplace_back(tmp, UNIFIED_EXCHANGE_SEG_INFO_SIZE);
-            hbmIndex.emplace_back(i);
+            userSegInfos.emplace_back(tmp, UNIFIED_EXCHANGE_SEG_INFO_SIZE);
+            userSegIndex.emplace_back(i);
         }
     }
 
@@ -512,17 +519,17 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
         }
     }
 
-    if (!hbmInfos.empty()) {
-        std::vector<void *> hbmAddrs(hbmInfos.size(), nullptr);
+    if (!userSegInfos.empty()) {
+        std::vector<void *> userSegAddrs(userSegInfos.size(), nullptr);
         BM_ASSERT_LOG_AND_RETURN(hbmSegment_ != nullptr, "hbmSegment is nullptr", BM_ERROR);
-        auto ret = hbmSegment_->Import(hbmInfos, hbmAddrs.data());
+        auto ret = hbmSegment_->Import(userSegInfos, userSegAddrs.data());
         if (ret != BM_OK) {
             BM_LOG_ERROR("hbm segment import infos failed: " << ret);
             return ret;
         }
         if (addresses != nullptr) {
-            for (uint32_t i = 0; i < hbmInfos.size(); i++) {
-                addresses[hbmIndex[i]] = hbmAddrs[i];
+            for (uint32_t i = 0; i < userSegInfos.size(); i++) {
+                addresses[userSegIndex[i]] = userSegAddrs[i];
             }
         }
     }
@@ -731,7 +738,8 @@ int32_t MemEntityDefault::Mmap() noexcept
         return BM_NOT_INITIALIZED;
     }
 
-    // in trans scene, two segement work togather, but hbm do not need to mmap, and wrongly mmap will make dram mmap fail
+    // in trans scene, two segement work togather, but hbm do not need to mmap, and wrongly mmap will make dram mmap
+    // fail
     if (hbmSegment_ != nullptr && options_.scene != HYBM_SCENE_TRANS) {
         auto ret = hbmSegment_->Mmap();
         if (ret != BM_OK) {
@@ -1216,7 +1224,7 @@ Result MemEntityDefault::InitHbmSegment()
     } else {
         segmentOptions.size = options_.deviceVASpace;
         segmentOptions.maxSize = options_.maxHBMSize;
-        segmentOptions.segType = HYBM_MST_HBM_USER;
+        segmentOptions.segType = HYBM_MST_ASYMMETRIC;
         BM_LOG_TRACE("create entity user defined memory space.");
     }
     segmentOptions.devId = HybmGetInitDeviceId();

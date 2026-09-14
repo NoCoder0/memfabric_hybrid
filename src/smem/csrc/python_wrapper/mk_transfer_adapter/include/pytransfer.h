@@ -95,7 +95,6 @@ public:
 
     int RegisterMemory(uintptr_t buffer_addr, size_t capacity);
 
-    // must be called before TransferAdapterPy::~TransferAdapterPy()
     int UnregisterMemory(uintptr_t buffer_addr);
 
     int BatchRegisterMemory(std::vector<uintptr_t> buffer_addrs, std::vector<size_t> capacities);
@@ -124,7 +123,11 @@ private:
     void StartLinkDownConsumer();
     void StopLinkDownConsumer();
 
+    // ordered teardown used by destroy()/unInitialize() and the destructor
+    void Shutdown();
+
     smem_trans_t handle_ = nullptr;   // direct handle (receiver or legacy single-store sender)
+    bool smemInited_ = false;         // true after smem_trans_init succeeded
     std::string sessionId_;           // local session id, format "IP:PORT"
     smem_trans_config_t config_{};    // transfer config
     std::string configStoreProtocol_; // transfer config store protocol

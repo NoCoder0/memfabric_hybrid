@@ -8,22 +8,22 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
+ */
 #include "hybm_mem_segment.h"
 
 #include <fstream>
 #include <sstream>
 
-#include "hybm_common_include.h"
 #include "dl_acl_api.h"
-#include "hybm_dev_user_legacy_segment.h"
+#include "hybm_asymmetric_mem_segment.h"
+#include "hybm_common_include.h"
+#include "hybm_conn_based_segment.h"
 #include "hybm_dev_legacy_segment.h"
 #include "hybm_gva.h"
-#include "hybm_types.h"
 #include "hybm_host_shm_segment.h"
-#include "hybm_conn_based_segment.h"
-#include "hybm_vmm_based_segment.h"
+#include "hybm_types.h"
 #include "hybm_va_manager.h"
+#include "hybm_vmm_based_segment.h"
 
 namespace ock {
 namespace mf {
@@ -116,8 +116,8 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
             }
             break;
         }
-        case HYBM_MST_HBM_USER:
-            tmpSeg = std::make_shared<HybmDevUserLegacySegment>(options, entityId);
+        case HYBM_MST_ASYMMETRIC:
+            tmpSeg = std::make_shared<AsymmetricMemSegment>(options, entityId);
             break;
         default:
             BM_LOG_ERROR("Invalid memory seg type " << int(options.segType));

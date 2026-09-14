@@ -1,22 +1,22 @@
 /*
-* Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
-* MemFabric_Hybrid is licensed under Mulan PSL v2.
-* You can use this software according to the terms and conditions of the Mulan PSL v2.
-* You may obtain a copy of Mulan PSL v2 at:
-*          http://license.coscl.org.cn/MulanPSL2
-* THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
-* EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
-* MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
-* See the Mulan PSL v2 for more details.
-*/
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
+ * MemFabric_Hybrid is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
 
 #include <gtest/gtest.h>
+
 #include <mockcpp/mockcpp.hpp>
 
 #define private   public
 #define protected public
-#include "hybm_dev_legacy_segment.h"
-#include "hybm_dev_user_legacy_segment.h"
+#include "hybm_asymmetric_mem_segment.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
 #include "devmm_svm_gva.h"
@@ -29,6 +29,18 @@
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::mf;
+
+namespace {
+constexpr int TEST_ENTITY_ID = 200; // G.CNS.02: 段构造的 entityId 参数具名化
+int g_rollbackCloseCount = 0;
+// stub 签名必须与被 mock 的 API 函数指针 typedef 完全一致（G.FUN.05 的 void* 参数无法更改）
+ock::mf::Result RtIpcCloseMemoryCountStub(const void *ptr)
+{
+    (void)ptr;
+    g_rollbackCloseCount++;
+    return 0;
+}
+} // namespace
 
 namespace {
 struct MemSegmentStaticsGuard {
@@ -96,8 +108,8 @@ TEST_F(HybmDevSegmentTest, HybmDevLegacySegment)
     EXPECT_EQ(validateRet, BM_OK);
 }
 
-// 测试 HybmDevUserLegacySegment 功能
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment)
+// 测试 AsymmetricMemSegment 功能
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
@@ -105,7 +117,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment)
     options.rankCnt = 1;
 
     // 测试构造和参数验证
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     auto validateRet = segment.ValidateOptions();
     EXPECT_EQ(validateRet, BM_OK);
 }
@@ -147,14 +159,14 @@ TEST_F(HybmDevSegmentTest, DevSegment_BoundaryCases)
     EXPECT_EQ(validateRet, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ReleaseSliceMemory_NotExist1)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ReleaseSliceMemory_NotExist1)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     auto validateRet = segment.ValidateOptions();
     EXPECT_EQ(validateRet, BM_OK);
 
@@ -165,14 +177,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ReleaseSliceMemory_NotExist1
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ReleaseSliceMemory_NotExist2)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ReleaseSliceMemory_NotExist2)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     auto slice = std::make_shared<ock::mf::MemSlice>(0xFFFF, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
@@ -182,38 +194,45 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ReleaseSliceMemory_NotExist2
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RollbackIpcMemory)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RollbackImportedSlices)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     auto validateRet = segment.ValidateOptions();
     EXPECT_EQ(validateRet, BM_OK);
 
-    void *addrs1[3] = {nullptr, nullptr, nullptr};
-    segment.RollbackIpcMemory(addrs1, 3);
+    // 仅 DEVICE 且 vAddress_ 非零的条目才回滚 RtIpcCloseMemory；HOST 条目与零 vAddress_ 条目跳过
+    auto hostSlice = std::make_shared<ock::mf::MemSlice>(0xFF01, HYBM_MEM_TYPE_HOST, ock::mf::MEM_PT_TYPE_SVM,
+                                                         0x10000000ULL, 0x20000000ULL, 4096ULL);
+    auto devSliceNoIpc = std::make_shared<ock::mf::MemSlice>(0xFF02, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
+                                                             0x10001000ULL, 0, 4096ULL);
+    auto devSliceIpc = std::make_shared<ock::mf::MemSlice>(0xFF03, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
+                                                           0x10002000ULL, 0x20002000ULL, 4096ULL);
 
-    void *dummy1 = reinterpret_cast<void *>(0x1000);
-    void *dummy2 = reinterpret_cast<void *>(0x2000);
-    void *addrs2[4] = {dummy1, nullptr, dummy2, nullptr};
-    segment.RollbackIpcMemory(addrs2, 4);
+    MOCKER(&ock::mf::DlAclApi::RtIpcCloseMemory).stubs().will(invoke(RtIpcCloseMemoryCountStub));
 
-    segment.RollbackIpcMemory(nullptr, 0);
+    g_rollbackCloseCount = 0;
+    std::vector<ock::mf::MemSlicePtr> slices = {hostSlice, devSliceNoIpc, devSliceIpc};
+    segment.RollbackImportedSlices(slices);
+    EXPECT_EQ(g_rollbackCloseCount, 1);
 
-    SUCCEED();
+    g_rollbackCloseCount = 0;
+    segment.RollbackImportedSlices({});
+    EXPECT_EQ(g_rollbackCloseCount, 0);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_Empty)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_Import_Empty)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::vector<std::string> emptyInfos;
@@ -223,18 +242,18 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_Empty)
     EXPECT_EQ(ret, BM_OK);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_ValidSliceMagic)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_Import_ValidSliceMagic)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
-    ock::mf::UserHbmExportSliceInfo exportInfo{};
-    exportInfo.magic = ock::mf::HBM_SLICE_EXPORT_INFO_MAGIC;
+    ock::mf::UserSliceExportInfo exportInfo{};
+    exportInfo.magic = ock::mf::USER_MEM_SLICE_EXPORT_INFO_MAGIC;
     exportInfo.segmentType = ock::mf::SEGMENT_TYPE_USER_DEV;
     exportInfo.gvaOffset = 0x10000000ULL;
     exportInfo.address = 0x20000000ULL;
@@ -251,14 +270,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_ValidSliceMagic)
     EXPECT_NE(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_InvalidMagic)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_Import_InvalidMagic)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::string badInfo(16, 'X');
@@ -271,14 +290,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_InvalidMagic)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_AddressesNull)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_Import_AddressesNull)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::string badInfo(16, 'X');
@@ -290,14 +309,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Import_AddressesNull)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveImported_NoCrash)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RemoveImported_NoCrash)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     EXPECT_EQ(segment.RemoveImported({}), BM_OK);
@@ -307,21 +326,21 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveImported_NoCrash)
     EXPECT_EQ(segment.RemoveImported({1, 2, 3}), BM_OK);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_RankNotExist)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RemoveSliceInfo_RankNotExist)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     segment.RemoveSliceInfo(999);
     SUCCEED();
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_SingleSliceNoSdma)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RemoveSliceInfo_SingleSliceNoSdma)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
@@ -329,7 +348,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_SingleSliceN
     options.rankCnt = 1;
     options.dataOpType = HYBM_DOP_TYPE_DEFAULT;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     const uint32_t rankId = 5;
@@ -348,8 +367,8 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_SingleSliceN
 
     segment.remoteSlices_[static_cast<uint16_t>(sliceIndex)] = ock::mf::RegisterSlice(remoteSlice, sliceName);
 
-    ock::mf::UserHbmExportSliceInfo exportInfo{};
-    exportInfo.magic = ock::mf::HBM_SLICE_EXPORT_INFO_MAGIC;
+    ock::mf::UserSliceExportInfo exportInfo{};
+    exportInfo.magic = ock::mf::USER_MEM_SLICE_EXPORT_INFO_MAGIC;
     exportInfo.segmentType = ock::mf::SEGMENT_TYPE_USER_DEV;
     exportInfo.gvaOffset = gva;
     exportInfo.address = vAddress;
@@ -376,14 +395,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_RemoveSliceInfo_SingleSliceN
     EXPECT_EQ(segment.importedSliceInfo_.count(sliceName), 0U);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Mmap_NotSupported)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_Mmap_NotSupported)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     auto ret = segment.Mmap();
@@ -391,14 +410,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Mmap_NotSupported)
     EXPECT_EQ(ret, BM_NOT_SUPPORTED);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Unmap_NotSupported)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_Unmap_NotSupported)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     auto ret = segment.Unmap();
@@ -406,14 +425,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_Unmap_NotSupported)
     EXPECT_EQ(ret, BM_NOT_SUPPORTED);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_DeserializeFailed)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportDeviceInfo_DeserializeFailed)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::string badInfo = "invalid_serialized_data";
@@ -421,14 +440,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_Deserialize
     EXPECT_NE(ret, BM_OK);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_InvalidLogicDeviceId)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportDeviceInfo_InvalidLogicDeviceId)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     ock::mf::HbmExportDeviceInfo deviceInfo{};
@@ -443,14 +462,14 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_InvalidLogi
     EXPECT_EQ(ret, BM_ERROR);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_SuccessNoP2PNoSlices)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportDeviceInfo_SuccessNoP2PNoSlices)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     const uint32_t localDeviceId = 5;
@@ -477,7 +496,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportDeviceInfo_SuccessNoP2
     EXPECT_EQ(stored.rankId, 10U);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_DeserializeFailed)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportSliceInfo_DeserializeFailed)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
@@ -485,7 +504,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_DeserializeF
     options.rankCnt = 1;
     options.dataOpType = 0; // avoid hardware paths
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     std::string badInfo = "invalid_data";
@@ -494,7 +513,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_DeserializeF
     EXPECT_NE(ret, BM_OK);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_InvalidLogicDeviceId)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportSliceInfo_InvalidLogicDeviceId)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
@@ -502,10 +521,10 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_InvalidLogic
     options.rankCnt = 1;
     options.dataOpType = 0;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
-    ock::mf::UserHbmExportSliceInfo sliceInfo{};
+    ock::mf::UserSliceExportInfo sliceInfo{};
     sliceInfo.devicePhyId = 16; // >= MAX_DEVICE_COUNT (16) → invalid
     sliceInfo.rankId = 5;
     sliceInfo.gvaOffset = 0x10000000ULL;
@@ -518,7 +537,7 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_InvalidLogic
     EXPECT_EQ(ret, BM_ERROR);
 }
 
-TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_SuccessNoHardware)
+TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportSliceInfo_SuccessNoHardware)
 {
     ock::mf::MemSegmentOptions options{};
     options.segType = ock::mf::HYBM_MST_HBM;
@@ -527,11 +546,12 @@ TEST_F(HybmDevSegmentTest, HybmDevUserLegacySegment_ImportSliceInfo_SuccessNoHar
     options.dataOpType = 0; // ← 关键：禁用 SDMA/RDMA
     options.shared = false;
 
-    ock::mf::HybmDevUserLegacySegment segment(options, 200);
+    ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     EXPECT_EQ(segment.ValidateOptions(), BM_OK);
 
     // Prepare valid slice info
-    ock::mf::UserHbmExportSliceInfo sliceInfo{};
+    ock::mf::UserSliceExportInfo sliceInfo{};
+    sliceInfo.segmentType = ock::mf::SEGMENT_TYPE_USER_DEV;
     sliceInfo.devicePhyId = 5; // < 16, valid
     sliceInfo.rankId = 10;
     sliceInfo.gvaOffset = 0x10000000ULL;
@@ -823,7 +843,7 @@ TEST_F(HybmDevSegmentTest, DevLegacy_Export_RtIpcSetMemoryNameFails)
     segment.slices_.emplace(slice->index_, ock::mf::MemSliceStatus(slice));
 
     auto oldRtIpcSetMemoryName = ock::mf::DlAclApi::pRtIpcSetMemoryName;
-    ock::mf::DlAclApi::pRtIpcSetMemoryName = [](void *, size_t, char *, uint32_t) -> int32_t { return BM_ERROR; };
+    ock::mf::DlAclApi::pRtIpcSetMemoryName = [](const void *, size_t, char *, uint32_t) -> int32_t { return BM_ERROR; };
 
     std::string exInfo;
     EXPECT_NE(segment.Export(slice, exInfo), BM_OK);
@@ -845,7 +865,7 @@ TEST_F(HybmDevSegmentTest, DevLegacy_Export_Success_SetsExportMap)
     segment.slices_.emplace(slice->index_, ock::mf::MemSliceStatus(slice));
 
     auto oldRtIpcSetMemoryName = ock::mf::DlAclApi::pRtIpcSetMemoryName;
-    ock::mf::DlAclApi::pRtIpcSetMemoryName = [](void *, size_t, char *name, uint32_t nameSize) -> int32_t {
+    ock::mf::DlAclApi::pRtIpcSetMemoryName = [](const void *, size_t, char *name, uint32_t nameSize) -> int32_t {
         (void)nameSize;
         const char *fakeName = "fake_shm_name";
         std::memcpy(name, fakeName, std::strlen(fakeName) + 1);

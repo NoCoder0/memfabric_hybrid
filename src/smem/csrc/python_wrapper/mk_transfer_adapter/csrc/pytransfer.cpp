@@ -13,6 +13,7 @@
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers" // ignore pybind11 warning
 
 #include "pytransfer.h"
+#include <algorithm>
 #include <thread>
 #include <chrono>
 #include <cctype>
@@ -45,11 +46,11 @@ TransferAdapterPy::TransferAdapterPy() {}
 
 TransferAdapterPy::~TransferAdapterPy()
 {
-    // ensure consumer thread is stopped before destruction
-    StopLinkDownConsumer();
-    if (sockfd_ != -1) {
-        close(sockfd_);
-    }
+    // Without ordered teardown the process exits with store/dispatcher/HCOM
+    // threads still running while static destructors free SMEM/HCOM state,
+    // which corrupts the heap (e.g. abort in malloc_consolidate) at exit.
+    py::gil_scoped_release gilRelease;
+    Shutdown();
 }
 
 int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, const char *role, uint32_t deviceId,
@@ -90,6 +91,7 @@ int TransferAdapterPy::Initialize(const char *storeUrl, const char *uniqueId, co
 
     ret = smem_trans_init(&config_);
     ADAPTER_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Failed to init smem_trans, ret=" << ret);
+    smemInited_ = true;
 
     bool isStoreServer = (strcmp(storeServerRole, role) == 0);
     std::string ip;
@@ -466,6 +468,29 @@ int TransferAdapterPy::RegisterMemory(uintptr_t buffer_addr, size_t capacity)
 
 int TransferAdapterPy::UnregisterMemory(uintptr_t buffer_addr)
 {
+    if (handle_ == nullptr) {
+        {
+            std::lock_guard<std::mutex> regLock(regMemMutex_);
+            registeredMems_.erase(std::remove_if(registeredMems_.begin(), registeredMems_.end(),
+                                                 [buffer_addr](const RegMem &m) { return m.addr == buffer_addr; }),
+                                  registeredMems_.end());
+        }
+
+        std::lock_guard<std::mutex> lock(connMutex_);
+        char *buffer = reinterpret_cast<char *>(buffer_addr);
+        for (auto &entry : connections_) {
+            if (!entry.second.active || entry.second.handle == nullptr) {
+                continue;
+            }
+            int ret = smem_trans_deregister_mem(entry.second.handle, buffer);
+            if (ret != 0) {
+                ADAPTER_LOG_ERROR("broadcast deregister_mem to " << entry.first << " failed, ret=" << ret);
+            }
+        }
+        ADAPTER_LOG_INFO("P unregistered memory addr=0x" << std::hex << buffer_addr << std::dec);
+        return 0;
+    }
+
     ADAPTER_ASSERT_RETURN(handle_ != nullptr, "handle_ is null", -1);
     char *buffer = reinterpret_cast<char *>(buffer_addr);
     return smem_trans_deregister_mem(handle_, buffer);
@@ -564,7 +589,16 @@ void TransferAdapterPy::UnInitialize()
         sockfd_ = -1;
     }
     rpcPort_ = 0;
-    smem_trans_uninit(0);
+    if (smemInited_) {
+        smem_trans_uninit(0);
+        smemInited_ = false;
+    }
+}
+
+void TransferAdapterPy::Shutdown()
+{
+    TransferDestroy();
+    UnInitialize();
 }
 
 // === connection management ===

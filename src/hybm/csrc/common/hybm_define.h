@@ -8,14 +8,16 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
+ */
 #ifndef MEM_FABRIC_HYBRID_HYBM_DEFINE_H
 #define MEM_FABRIC_HYBRID_HYBM_DEFINE_H
 
 #include <netinet/in.h>
-#include <cstdint>
+
 #include <cstddef>
+#include <cstdint>
 #include <vector>
+
 #include "mf_out_logger.h"
 
 namespace ock {
@@ -71,13 +73,21 @@ constexpr uint64_t HBM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE01UL;
 constexpr uint64_t DRAM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE02UL;
 constexpr uint64_t VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE03UL;
 constexpr uint64_t VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE04UL;
+// trans 用户注册 slice（HBM/DRAM 共用），介质类型由块内 segmentType 字段区分
+constexpr uint64_t USER_MEM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE05UL;
 constexpr uint64_t EXPORT_INFO_VERSION = 0x1UL;
 
 constexpr uint16_t SEGMENT_TYPE_VMM = 0x1U;
 constexpr uint16_t SEGMENT_TYPE_USER_DEV = 0x2U;
+constexpr uint16_t SEGMENT_TYPE_USER_DRAM = 0x3U;
 constexpr uint16_t SEGMENT_TYPE_DEFAULT = 0x10U;
 constexpr uint16_t SEGMENT_TYPE_OFFSET = 8U;
 constexpr uint16_t UNIFIED_EXCHANGE_SEG_INFO_SIZE = 192U; /* all exchange info padding to same size */
+
+inline bool IsHbmAddr(uint64_t va)
+{
+    return va >= HYBM_HBM_START_ADDR && va < HYBM_HBM_END_ADDR;
+}
 
 inline bool IsDramSlice(uint64_t magic)
 {
@@ -86,6 +96,10 @@ inline bool IsDramSlice(uint64_t magic)
 inline bool IsHbmSlice(uint64_t magic)
 {
     return magic == HBM_SLICE_EXPORT_INFO_MAGIC || magic == VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;
+}
+inline bool IsUserSlice(uint64_t magic)
+{
+    return magic == USER_MEM_SLICE_EXPORT_INFO_MAGIC;
 }
 
 inline bool IsArmArch()

@@ -8,17 +8,19 @@
  * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
-*/
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <pthread.h>
+ */
+#include "smem_trans_entry.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <sys/socket.h>
+
+#include <algorithm>
+#include <chrono>
+#include <cstring>
 #include <memory>
 #include <thread>
-#include <algorithm>
-#include <cstring>
-#include <chrono>
 
 #include "mf_syntactic_sugar.h"
 #include "hybm.h"
@@ -26,6 +28,9 @@
 #include "hybm_data_op.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
+#include "mf_fault_injection_point.h"
+#include "mf_str_util.h"
+#include "mf_syntactic_sugar.h"
 #include "smem_net_common.h"
 #include "smem_store_factory.h"
 #include "smem_trans_def.h"
@@ -99,10 +104,12 @@ int32_t SmemTransEntry::Initialize()
     auto options = GenerateHybmOptions();
     options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEFAULT);
     if (!ApplyDataOpType(options, SMEMB_DATA_OP_SDMA, HYBM_DOP_TYPE_SDMA, "device_sdma") ||
-        !ApplyDataOpType(options, SMEMB_DATA_OP_HOST_RDMA, HYBM_DOP_TYPE_HOST_RDMA, "host_rdma") ||
         !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_RDMA, "device_rdma") ||
         !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_URMA, HYBM_DOP_TYPE_DEVICE_URMA, "device_urma") ||
-        !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_UBOE, HYBM_DOP_TYPE_DEVICE_UBOE, "device_uboe")) {
+        !ApplyDataOpType(options, SMEMB_DATA_OP_DEVICE_UBOE, HYBM_DOP_TYPE_DEVICE_UBOE, "device_uboe") ||
+        !ApplyDataOpType(options, SMEMB_DATA_OP_HOST_RDMA, HYBM_DOP_TYPE_HOST_RDMA, "host_rdma") ||
+        !ApplyDataOpType(options, SMEMB_DATA_OP_HOST_URMA, HYBM_DOP_TYPE_HOST_URMA, "host_urma") ||
+        !ApplyDataOpType(options, SMEMB_DATA_OP_HOST_TCP, HYBM_DOP_TYPE_HOST_TCP, "host_tcp")) {
         return SM_ERROR;
     }
 
@@ -1079,8 +1086,13 @@ bool SmemTransEntry::ApplyDataOpType(hybm_options &options, uint32_t flag, hybm_
         return true;
     }
 #if !defined(ASCEND_NPU)
-    SM_LOG_ERROR("current memfabric-hybrid binary is not built for ascend npu, can not use " << opName << " optype.");
-    return false;
+    // host 类 op 为纯主机侧传输，不依赖昇腾设备 SDK，非 NPU 构建同样可用
+    const bool needNpu = (flag & (SMEMB_DATA_OP_HOST_RDMA | SMEMB_DATA_OP_HOST_URMA | SMEMB_DATA_OP_HOST_TCP)) == 0U;
+    if (needNpu) {
+        SM_LOG_ERROR("current memfabric-hybrid binary is not built for ascend npu, can not use " << opName
+                                                                                                 << " optype.");
+        return false;
+    }
 #endif
     auto temp = static_cast<uint32_t>(options.bmDataOpType) | hybmFlag;
     options.bmDataOpType = static_cast<hybm_data_op_type>(temp);
