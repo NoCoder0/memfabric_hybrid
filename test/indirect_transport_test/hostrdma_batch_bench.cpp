@@ -441,19 +441,20 @@ int main(int argc, char *argv[])
        也不会读到错的地址。 */
     const uint64_t reqOutOff = readyOff - 16; /* local 的请求发送槽 */
     const uint64_t reqOff = reqOutOff - 16;   /* remote 的请求接收槽 */
-    /* baseline 的每轮握手槽（放在 staging 区尾部；baseline 不用 staging 传数据）。
-       不复用 cont 的 reqOff/reqOutOff —— mode=all 下 baseline 先跑，残留的轮次号会让 cont 发端误判轮次：
-       [baseReqOff, +8)     remote 侧：本轮请求序号（local 单边写过来）
-       [baseReqOutOff, +8)  local 侧：本轮请求源（本端写好再单边写到对端的 baseReqOff）
-       [baseDoneOff, +8)    local 侧：完成标志（remote 写完 600 块后单边写过来；同一 channel 保序
-                            ⇒ 标志到 = 600 块已全部落地，local 才能用它做单时钟端到端计时） */
-    const uint64_t baseReqOff = stagingEnd - 24;
-    const uint64_t baseReqOutOff = stagingEnd - 16;
-    const uint64_t baseDoneOff = stagingEnd - 8;
-    /* --pass-addrs（默认开）：地址列表复用 staging 区头部（baseline 不使用 staging）。
-       local 把 600 个离散目标地址单边写到对端这里，remote 从本端内存读出来直接当 dsts 用。 */
-    const uint64_t addrListOff = 0;
-    if (needBytes > reqOff) {
+    /* baseline 的控制区：放在"离散区之后、其它控制槽之前"的空隙里。
+       ⚠ 绝不能放在 staging 区（头部或尾部）：baseline 发端的**数据源**就在 [0, count*stride)，
+       它覆盖了整个 staging 区，把控制槽/地址列表放进那里会污染源块（实测：目标块 0 收到的是
+       地址值 0x40097000 = selfGva+dispBase 的低 32 位）。
+       [baseAreaOff, +count*8)  local 下发的 600 个目标地址列表
+       [baseReqOff, +8)         remote 侧：本轮请求序号（local 单边写过来）
+       [baseReqOutOff, +8)      local 侧：本轮请求源
+       [baseDoneOff, +8)        local 侧：完成标志（remote 写完 600 块后单边写过来） */
+    const uint64_t baseAreaOff = AlignUp(needBytes, 4096);
+    const uint64_t addrListOff = baseAreaOff;
+    const uint64_t baseReqOff = baseAreaOff + AlignUp(static_cast<uint64_t>(a.count) * sizeof(uint64_t), 64);
+    const uint64_t baseReqOutOff = baseReqOff + 8;
+    const uint64_t baseDoneOff = baseReqOutOff + 8;
+    if (baseDoneOff + 8 > reqOff) {
         fprintf(stderr, "dram-mb too small, need >= %llu bytes\n", static_cast<unsigned long long>(needBytes));
         return 1;
     }
