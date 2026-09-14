@@ -97,10 +97,11 @@ private:
      * (watermark and data must share a channel for the in-order guarantee to hold). */
     Result WriteRemoteBatchWithProgress(const CopyDescriptor &descriptor, const ExtOptions &options) noexcept;
 
-    /* 单条 link(ep) 上的分块提交 + 每块一次水位写（progressInterval==0 时整段一次）。 */
+    /* 单条 link(ep)/rail 上的分块提交 + 每块一次水位写（progressInterval==0 时整段一次）。
+       railIdx >= 0 时数据和水位都只走该 rail（双连接）；railIdx < 0 走库内默认。 */
     Result WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyDescriptor &descriptor, size_t begin, size_t end,
                                             const ExtOptions &options, uint64_t progressDest, uint64_t progressSrc,
-                                            uint64_t srcStride) noexcept;
+                                            uint64_t srcStride, int32_t railIdx) noexcept;
 
     bool inited_{false};
     uint32_t rankId_{0};

@@ -83,6 +83,14 @@ static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
    注意 UINT32_MAX(0xFFFFFFFF) 是 ubs 内部"不绑核"的哨兵值，绝不能作为 CPU 号传入。 */
 constexpr uint32_t WORKER_CPU_ID_MAX = 611;
 
+/* 环境变量只在首次调用时解析一次：下面这段在每次 batch 提交的路径上（每轮都会走），
+   不能每次都去 parse 字符串。 */
+bool RailSplitEnabled()
+{
+    static const bool enabled = (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_RAIL_SPLIT, 1U) != 0U);
+    return enabled;
+}
+
 /* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
    同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
    返回该区间的 CPU 个数；格式不合法返回 false。 */
@@ -484,6 +492,21 @@ uint32_t HcomTransportManager::GetLinkCount() const
     return epCount_;
 }
 
+uint32_t HcomTransportManager::GetRailCount() const
+{
+    if (!RailSplitEnabled() || localNics_.size() <= 1) {
+        return 1;
+    }
+    return static_cast<uint32_t>(localNics_.size());
+}
+
+bool HcomTransportManager::AllRailsReady(uint32_t rankId) const
+{
+    /* rail 共用同一个 channel（rail 数只决定库内把请求投到哪张网卡，不额外建 channel），
+       所以只要 ep0 的 channel 建好就算就绪。 */
+    return rankId < channels_.size() && !channels_[rankId].empty() && channels_[rankId][0] != 0;
+}
+
 bool HcomTransportManager::AllLinksReady(uint32_t rankId) const
 {
     if (epCount_ == 0 || rankId >= channels_.size() || rankId >= nics_.size() ||
@@ -502,6 +525,12 @@ Result HcomTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, 
                                                   size_t begin, size_t end)
 {
     return SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end);
+}
+
+Result HcomTransportManager::SubmitWriteBatchOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx,
+                                                        const CopyDescriptor &descriptor, size_t begin, size_t end)
+{
+    return SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end, railIdx);
 }
 
 Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
@@ -973,6 +1002,18 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
 Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
                                                   uint64_t size)
 {
+    return WriteRemoteAsyncOnEpImpl(rankId, ep, lAddr, rAddr, size, -1);
+}
+
+Result HcomTransportManager::WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr,
+                                                        uint64_t rAddr, uint64_t size)
+{
+    return WriteRemoteAsyncOnEpImpl(rankId, ep, lAddr, rAddr, size, railIdx);
+}
+
+Result HcomTransportManager::WriteRemoteAsyncOnEpImpl(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
+                                                      uint64_t size, int32_t railIdx)
+{
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
@@ -1029,7 +1070,16 @@ Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, 
         req.lAddress = reinterpret_cast<void *>(lAddr + offset);
         req.size = sliceSize;
         stream_->SubmitTasks();
-        ret = DlHcomApi::ChannelPut(channel, req, &channelCallback);
+        if (railIdx < 0) {
+            ret = DlHcomApi::ChannelPut(channel, req, &channelCallback);
+        } else {
+            /* 指定 rail 时：水位必须和它所属 rail 的数据走同一条连接（靠 QP 内保序保证水位不超前）。
+               单点写没有 rail 版本，所以包成 1 个 iov 的 SGL 走 ChannelPutVOnRail。 */
+            Channel_OneSideRequestSgl sglReq;
+            sglReq.iovCount = 1;
+            sglReq.iov[0] = req;
+            ret = DlHcomApi::ChannelPutVOnRail(channel, sglReq, static_cast<uint16_t>(railIdx), &channelCallback);
+        }
         if (ret != BM_OK) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
@@ -1104,11 +1154,10 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
            railIdx < 0：走库内默认行为（含 MultiRail 自动扇出） */
         int ret = 0;
         if (railIdx < 0) {
-            BM_LOG_INFO("DlHcomApi::ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
+            BM_LOG_DEBUG("ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
             ret = DlHcomApi::ChannelPutV(channel, sglReq, &channelCallback);
         } else {
-            BM_LOG_INFO("DlHcomApi::ChannelPutVOnRail start, rail: " << railIdx << " sglReq iocount "
-                                                                     << sglReq.iovCount);
+            BM_LOG_DEBUG("ChannelPutVOnRail start, rail: " << railIdx << " sglReq iocount " << sglReq.iovCount);
             ret = DlHcomApi::ChannelPutVOnRail(channel, sglReq, static_cast<uint16_t>(railIdx), &channelCallback);
         }
         if (ret != BM_OK) {
@@ -1123,7 +1172,7 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
 
 Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
 {
-    BM_LOG_INFO("WriteRemoteBatchAsync start " << rankId << " rankId");
+    BM_LOG_DEBUG("WriteRemoteBatchAsync start " << rankId << " rankId");
     BM_ASSERT_LOG_AND_RETURN(!descriptor.counts.empty(), "descriptor.counts is empty", BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
@@ -1136,7 +1185,7 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
        rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
        两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。
        MF_HYBM_HCOM_RAIL_SPLIT=0 可关闭，回退到库内 MultiRail 自动扇出。 */
-    if (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_RAIL_SPLIT, 1U) != 0U && localNics_.size() > 1) {
+    if (RailSplitEnabled() && localNics_.size() > 1) {
         const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
         size_t begin = 0;
         for (uint32_t rail = 0; rail < railCount; ++rail) {
@@ -1152,7 +1201,6 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
             }
             begin += cnt;
         }
-        BM_LOG_INFO("rail split submit done, railCount: " << railCount << " total: " << total);
         return BM_OK;
     }
     // single link keeps original submit + outer synchronize behavior

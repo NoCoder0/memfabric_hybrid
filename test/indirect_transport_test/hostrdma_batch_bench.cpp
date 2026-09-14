@@ -405,7 +405,9 @@ int main(int argc, char *argv[])
             ++urlCount;
         }
     }
-    const uint32_t links = 1;
+    /* links = 建链用的 url(网卡) 数：传 1 个 url 就是单连接，传多个就是双/多连接。
+       MF 侧在多个 url 时会按 rail 前后切分，并按 rail 维护独立水位（每 rail 一个水位槽）。 */
+    const uint32_t links = urlCount;
     printf("[bench] link-mode=%s url-count=%u links=%u hcom-url=%s\n",
            urlCount > 1 ? "multi-nic (K channels)" : "single-nic", urlCount, links, a.hcomUrl.c_str());
     printf("[bench] target-addrs=%s\n", a.passAddrs ? "由 local 显式下发 600 个地址" : "双方按同一公式各自算");
