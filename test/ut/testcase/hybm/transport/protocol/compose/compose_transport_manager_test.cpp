@@ -108,28 +108,10 @@ public:
         return removeRanksResult;
     }
 
-    Result Connect() override
-    {
-        ++connectCalls;
-        return connectResult;
-    }
-
     Result ConnectRank(uint32_t) override
     {
         ++connectRankCalls;
         return connectRankResult;
-    }
-
-    Result AsyncConnect() override
-    {
-        ++asyncConnectCalls;
-        return asyncConnectResult;
-    }
-
-    Result WaitForConnected(int64_t) override
-    {
-        ++waitConnectedCalls;
-        return waitConnectedResult;
     }
 
     Result UpdateRankOptions(const HybmTransPrepareOptions &) override
@@ -183,13 +165,6 @@ public:
         return syncResult;
     }
 
-    Result Remove(const std::vector<uint32_t> &removeList) override
-    {
-        (void)removeList;
-        ++removeCalls;
-        return removeResult;
-    }
-
     Result WriteRemoteBatchAsync(uint32_t, const CopyDescriptor &) override
     {
         ++writeBatchAsyncCalls;
@@ -211,10 +186,7 @@ public:
     uint32_t queryKeyCalls{0};
     uint32_t prepareCalls{0};
     uint32_t removeRanksCalls{0};
-    uint32_t connectCalls{0};
     uint32_t connectRankCalls{0};
-    uint32_t asyncConnectCalls{0};
-    uint32_t waitConnectedCalls{0};
     uint32_t updateRankCalls{0};
     uint32_t updateMemKeyCalls{0};
     uint32_t readCalls{0};
@@ -222,7 +194,6 @@ public:
     uint32_t readAsyncCalls{0};
     uint32_t writeAsyncCalls{0};
     uint32_t syncCalls{0};
-    uint32_t removeCalls{0};
     uint32_t writeBatchAsyncCalls{0};
     uint32_t readBatchAsyncCalls{0};
 
@@ -234,17 +205,13 @@ public:
     Result queryKeyResult{BM_OK};
     Result prepareResult{BM_OK};
     Result removeRanksResult{BM_OK};
-    Result connectResult{BM_OK};
     Result connectRankResult{BM_OK};
-    Result asyncConnectResult{BM_OK};
-    Result waitConnectedResult{BM_OK};
     Result updateRankResult{BM_OK};
     Result readResult{BM_OK};
     Result writeResult{BM_OK};
     Result readAsyncResult{BM_OK};
     Result writeAsyncResult{BM_OK};
     Result syncResult{BM_OK};
-    Result removeResult{BM_OK};
     Result writeBatchAsyncResult{BM_OK};
     Result readBatchAsyncResult{BM_OK};
 
@@ -747,22 +714,6 @@ TEST(ComposeTransportManagerTest, OpenDeviceFailsWhenDeviceAlreadyOpened)
 
     Result ret = mgr.OpenDevice(opts);
     EXPECT_EQ(ret, BM_ERROR);
-}
-
-// Connect / AsyncConnect / WaitForConnected 在 host/device TM 为空时直接返回 BM_OK。
-TEST(ComposeTransportManagerTest, ConnectFamilyWithoutManagers)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-
-    Result ret1 = mgr.Connect();
-    EXPECT_EQ(ret1, BM_OK);
-
-    Result ret2 = mgr.AsyncConnect();
-    EXPECT_EQ(ret2, BM_OK);
-
-    Result ret3 = mgr.WaitForConnected(1000);
-    EXPECT_EQ(ret3, BM_OK);
 }
 
 // UpdateRankOptions 会调用 host/device TM 的 UpdateRankOptions。
@@ -1357,24 +1308,6 @@ TEST(ComposeTransportManagerTest, RemoveRanks_NoTransport)
     EXPECT_EQ(mgr.RemoveRanks({1, 2}), BM_OK);
 }
 
-TEST(ComposeTransportManagerTest, Connect_NoTransport)
-{
-    ComposeTransportManager mgr(std::make_shared<FakeTagInfo>(0U));
-    EXPECT_EQ(mgr.Connect(), BM_OK);
-}
-
-TEST(ComposeTransportManagerTest, AsyncConnect_NoTransport)
-{
-    ComposeTransportManager mgr(std::make_shared<FakeTagInfo>(0U));
-    EXPECT_EQ(mgr.AsyncConnect(), BM_OK);
-}
-
-TEST(ComposeTransportManagerTest, WaitForConnected_NoTransport)
-{
-    ComposeTransportManager mgr(std::make_shared<FakeTagInfo>(0U));
-    EXPECT_EQ(mgr.WaitForConnected(1000), BM_OK);
-}
-
 TEST(ComposeTransportManagerTest, ReadRemote_NoTransport)
 {
     ComposeTransportManager mgr(std::make_shared<FakeTagInfo>(0U));
@@ -1525,35 +1458,9 @@ TEST(ComposeTransportManagerTest, RemoveRanksDeviceFails)
     EXPECT_NE(ret, BM_OK);
 }
 
-// Connect: 有 device 时调用并成功
-TEST(ComposeTransportManagerTest, ConnectWithDevice)
-{
-    auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_DEVICE_RDMA);
-    ComposeTransportManager mgr(tag);
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.deviceTransportManager_ = dev;
-
-    Result ret = mgr.Connect();
-    EXPECT_EQ(ret, BM_OK);
-    EXPECT_EQ(dev->connectCalls, 1u);
-}
-
-// Connect: device 失败返回错误
-TEST(ComposeTransportManagerTest, ConnectDeviceFails)
-{
-    auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_DEVICE_RDMA);
-    ComposeTransportManager mgr(tag);
-    auto dev = std::make_shared<FakeTransportManager>();
-    dev->connectResult = BM_ERROR;
-    mgr.deviceTransportManager_ = dev;
-
-    Result ret = mgr.Connect();
-    EXPECT_NE(ret, BM_OK);
-}
-
 // ReadRemote: 委托给 device 并成功
 
-// -------- ConnectRank / AsyncConnect / WaitForConnected --------
+// -------- ConnectRank --------
 
 TEST(ComposeTransportManagerTest, ConnectRank_CallsHostAndDevice_Success)
 {
@@ -1597,60 +1504,6 @@ TEST(ComposeTransportManagerTest, ConnectRank_DeviceFails)
 
     EXPECT_NE(mgr.ConnectRank(3), BM_OK);
     EXPECT_EQ(host->connectRankCalls, 1u);
-}
-
-TEST(ComposeTransportManagerTest, AsyncConnect_HostFails)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-    auto host = std::make_shared<FakeTransportManager>();
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.hostTransportManager_ = host;
-    mgr.deviceTransportManager_ = dev;
-    host->asyncConnectResult = BM_ERROR;
-
-    EXPECT_NE(mgr.AsyncConnect(), BM_OK);
-    EXPECT_EQ(dev->asyncConnectCalls, 0u);
-}
-
-TEST(ComposeTransportManagerTest, AsyncConnect_DeviceFails)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-    auto host = std::make_shared<FakeTransportManager>();
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.hostTransportManager_ = host;
-    mgr.deviceTransportManager_ = dev;
-    dev->asyncConnectResult = BM_ERROR;
-
-    EXPECT_NE(mgr.AsyncConnect(), BM_OK);
-}
-
-TEST(ComposeTransportManagerTest, WaitForConnected_HostFails)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-    auto host = std::make_shared<FakeTransportManager>();
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.hostTransportManager_ = host;
-    mgr.deviceTransportManager_ = dev;
-    host->waitConnectedResult = BM_ERROR;
-
-    EXPECT_NE(mgr.WaitForConnected(1000), BM_OK);
-}
-
-TEST(ComposeTransportManagerTest, WaitForConnected_DeviceFails)
-{
-    auto tag = std::make_shared<FakeTagInfo>(0U);
-    ComposeTransportManager mgr(tag);
-    auto host = std::make_shared<FakeTransportManager>();
-    auto dev = std::make_shared<FakeTransportManager>();
-    mgr.hostTransportManager_ = host;
-    mgr.deviceTransportManager_ = dev;
-    dev->waitConnectedResult = BM_ERROR;
-
-    EXPECT_NE(mgr.WaitForConnected(1000), BM_OK);
-    EXPECT_EQ(host->waitConnectedCalls, 1u);
 }
 
 TEST(ComposeTransportManagerTest, CloseDevice_CollectsBothErrors)

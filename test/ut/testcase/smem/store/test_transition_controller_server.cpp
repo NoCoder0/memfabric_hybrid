@@ -110,7 +110,7 @@ TEST_F(TestTransitionControllerServer, Checkout_TriggersRemoveFromWhitelistSend)
 
     /* Checkout notifies peers via RemoveFromWhitelist (LEAVE_NOTIFY was removed) */
     ASSERT_EQ(server->Checkout(K_RANK_FOUR), 0);
-    EXPECT_EQ(server->GetRankState(K_RANK_FOUR), RANK_IDLE);
+    EXPECT_EQ(server->GetStates()[K_RANK_FOUR], RANK_IDLE);
 }
 
 TEST_F(TestTransitionControllerServer, NullSender_ServerStillOperates)
@@ -119,7 +119,7 @@ TEST_F(TestTransitionControllerServer, NullSender_ServerStillOperates)
     auto server = CreateServer(MakeNullSender());
     ASSERT_EQ(server->CheckIn(MakeInfo(0)), 0);
     ASSERT_EQ(server->CheckIn(MakeInfo(1)), 0);
-    EXPECT_EQ(server->GetRankState(0), RANK_CHECKED_IN);
+    EXPECT_EQ(server->GetStates()[0], RANK_CHECKED_IN);
 }
 
 TEST_F(TestTransitionControllerServer, QueryLinkState_WithAliveRanks)
@@ -141,8 +141,8 @@ TEST_F(TestTransitionControllerServer, QueryLinkState_WithAliveRanks)
     server->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_ACK_WAIT_MS));
     server->Stop();
-    EXPECT_EQ(server->GetRankState(0), RANK_ACTIVE);
-    EXPECT_EQ(server->GetRankState(1), RANK_ACTIVE);
+    EXPECT_EQ(server->GetStates()[0], RANK_ACTIVE);
+    EXPECT_EQ(server->GetStates()[1], RANK_ACTIVE);
 }
 
 } // namespace smem

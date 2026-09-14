@@ -54,15 +54,9 @@ public:
 
     Result RemoveRanks(const std::vector<uint32_t> &removedRanks) override;
 
-    Result Connect() override;
-
     Result ConnectRank(uint32_t rankId) override;
 
-    Result AsyncConnect() override;
-
     Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
-
-    Result WaitForConnected(int64_t timeoutNs) override;
 
     const std::string &GetNic() const override;
 

@@ -313,13 +313,6 @@ TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyToOneSideViaQue
     }
 }
 
-TEST(HcomTransportManagerTest, AsyncConnectAndWaitForConnectedReturnOk)
-{
-    auto mgr = HcomTransportManager::GetInstance();
-    EXPECT_EQ(mgr->AsyncConnect(), BM_OK);
-    EXPECT_EQ(mgr->WaitForConnected(0), BM_OK);
-}
-
 TEST(HcomTransportManagerTest, CloseDeviceWithoutServiceReturnsOk)
 {
     auto mgr = HcomTransportManager::GetInstance();
@@ -736,16 +729,6 @@ TEST(HcomTransportManagerTest, OpenDeviceInvalidOptions)
 
     Result ret = mgr->OpenDevice(opts);
     EXPECT_EQ(ret, BM_OK);
-}
-
-// Connect: 在 rpcService_ 为 0 时直接返回 BM_ERROR。
-TEST(HcomTransportManagerTest, ConnectWithoutRpcService)
-{
-    auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 0;
-    mgr->rankCount_ = 1;
-    Result ret = mgr->Connect();
-    EXPECT_EQ(ret, BM_ERROR);
 }
 
 // UpdateRankOptions: rankId 超过 rankCount_ 时返回 BM_INVALID_PARAM。
@@ -1253,21 +1236,6 @@ TEST(HcomTransportManagerTest, PrepareInvalidRankInOptions)
 
     Result ret = mgr->Prepare(param);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
-}
-
-// Connect: rpcService_ 已初始化，但所有 nics_ 为空，且包含 self rank，循环应全部走 continue 并返回 BM_OK。
-TEST(HcomTransportManagerTest, ConnectSkipSelfAndEmptyNic)
-{
-    auto mgr = HcomTransportManager::GetInstance();
-
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 3;
-    mgr->rankId_ = 1;
-    mgr->nics_.assign(3, std::string{});                    // 全部 empty
-    mgr->channels_.assign(3, static_cast<Hcom_Channel>(0)); // 不触发真正连接
-
-    Result ret = mgr->Connect();
-    EXPECT_EQ(ret, BM_OK);
 }
 
 // HcomChannelDisconnected: 给定的 channel 在数组中不存在时，应安全返回（不崩溃）。

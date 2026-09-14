@@ -177,13 +177,6 @@ public:
         return reachTypes;
     }
 
-    bool CheckAddressInEntity(const void *ptr, uint64_t length) const noexcept override
-    {
-        (void)ptr;
-        (void)length;
-        return checkAddrResult;
-    }
-
     int32_t CopyData(hybm_copy_params & /* params */, hybm_data_copy_direction /* direction */, void * /* stream */,
                      uint32_t /* flags */) noexcept override
     {
@@ -275,8 +268,6 @@ public:
 
     bool sdmaReachable{false};
     hybm_data_op_type reachTypes{HYBM_DOP_TYPE_DEFAULT};
-
-    bool checkAddrResult{false};
 };
 
 // ============= hybm_create_entity / hybm_destroy_entity =============

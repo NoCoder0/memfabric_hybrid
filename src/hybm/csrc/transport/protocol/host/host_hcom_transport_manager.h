@@ -80,14 +80,8 @@ public:
 
     Result RemoveRanks(const std::vector<uint32_t> &removedRanks) override;
 
-    Result Connect() override;
-
     Result ConnectRank(uint32_t rankId) override;
     Result WaitChannelReady(uint32_t rankId, uint32_t timeoutMs) noexcept;
-
-    Result AsyncConnect() override;
-
-    Result WaitForConnected(int64_t timeoutNs) override;
 
     Result UpdateRankOptions(const HybmTransPrepareOptions &param) override;
 
@@ -129,8 +123,6 @@ private:
     Result ConnectHcomChannel(uint32_t rankId, const std::string &url);
 
     void DisConnectHcomChannel(uint32_t rankId, Hcom_Channel ch);
-
-    Result ConnectTargets(const std::vector<uint32_t> &targets);
 
     void HcomChannelDisconnected(uint32_t rankId, Hcom_Channel ch);
 

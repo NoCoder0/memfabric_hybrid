@@ -384,26 +384,6 @@ Result ComposeTransportManager::RemoveRanks(const std::vector<uint32_t> &removed
     return lastResult;
 }
 
-Result ComposeTransportManager::Connect()
-{
-    if (hostTransportManager_) {
-        auto ret = hostTransportManager_->Connect();
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect host ret: " << ret);
-            return ret;
-        }
-    }
-
-    if (deviceTransportManager_) {
-        auto ret = deviceTransportManager_->Connect();
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect host ret: " << ret);
-            return ret;
-        }
-    }
-    return BM_OK;
-}
-
 Result ComposeTransportManager::ConnectRank(uint32_t rankId)
 {
     Result ret = BM_OK;
@@ -418,46 +398,6 @@ Result ComposeTransportManager::ConnectRank(uint32_t rankId)
         ret = deviceTransportManager_->ConnectRank(rankId);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to connect device rank " << rankId << " ret: " << ret);
-            return ret;
-        }
-    }
-    return BM_OK;
-}
-
-Result ComposeTransportManager::AsyncConnect()
-{
-    if (hostTransportManager_) {
-        auto ret = hostTransportManager_->AsyncConnect();
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect host ret: " << ret);
-            return ret;
-        }
-    }
-
-    if (deviceTransportManager_) {
-        auto ret = deviceTransportManager_->AsyncConnect();
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect host ret: " << ret);
-            return ret;
-        }
-    }
-    return BM_OK;
-}
-
-Result ComposeTransportManager::WaitForConnected(int64_t timeoutNs)
-{
-    if (hostTransportManager_) {
-        auto ret = hostTransportManager_->WaitForConnected(timeoutNs);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect host ret: " << ret);
-            return ret;
-        }
-    }
-
-    if (deviceTransportManager_) {
-        auto ret = deviceTransportManager_->WaitForConnected(timeoutNs);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect host ret: " << ret);
             return ret;
         }
     }

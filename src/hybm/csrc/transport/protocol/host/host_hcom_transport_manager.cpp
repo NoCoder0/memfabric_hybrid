@@ -414,79 +414,6 @@ Result HcomTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
     return BM_OK;
 }
 
-Result HcomTransportManager::Connect()
-{
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_ERROR);
-    TP_TRACE_BEGIN(TP_SMEM_GROUP_HCOM_CONNECT_BATCH);
-
-    // Collect ranks to connect
-    std::vector<uint32_t> targets;
-    for (uint32_t i = 0; i < rankCount_; ++i) {
-        if (rankId_ <= i || nics_[i].empty()) {
-            continue;
-        }
-        targets.push_back(i);
-    }
-    if (targets.empty()) {
-        TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_BATCH, 0);
-        return BM_OK;
-    }
-
-    auto ret = ConnectTargets(targets);
-    TP_TRACE_END(TP_SMEM_GROUP_HCOM_CONNECT_BATCH, ret == BM_OK ? 0 : 1);
-    return ret;
-}
-
-Result HcomTransportManager::ConnectTargets(const std::vector<uint32_t> &targets)
-{
-    // Parallel connect using fixed-size thread pool
-    constexpr size_t poolSize = 8;
-    std::atomic<int> failed{0};
-    std::mutex successMtx;
-    std::vector<uint32_t> connected;
-    std::vector<std::thread> pool;
-
-    auto worker = [this, &failed, &successMtx, &connected](uint32_t rankId, const std::string &nic) {
-        auto ret = ConnectHcomChannel(rankId, nic);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to connect rank " << rankId << " nic: " << nic << " ret: " << ret);
-            failed.fetch_add(1, std::memory_order_relaxed);
-        } else {
-            std::lock_guard<std::mutex> lock(successMtx);
-            connected.push_back(rankId);
-        }
-    };
-
-    for (size_t idx = 0; idx < targets.size(); ++idx) {
-        pool.emplace_back(worker, targets[idx], nics_[targets[idx]]);
-        if (pool.size() >= poolSize) {
-            for (auto &t : pool)
-                t.join();
-            if (failed.load() != 0) {
-                for (auto r : connected) {
-                    DisConnectHcomChannel(r, channels_[r]);
-                    std::lock_guard<std::mutex> lock(channelMutex_[r]);
-                    channels_[r] = 0;
-                }
-                return BM_ERROR;
-            }
-            pool.clear();
-            connected.clear();
-        }
-    }
-    for (auto &t : pool)
-        t.join();
-    bool ok = (failed.load() == 0);
-    if (!ok) {
-        for (auto r : connected) {
-            DisConnectHcomChannel(r, channels_[r]);
-            std::lock_guard<std::mutex> lock(channelMutex_[r]);
-            channels_[r] = 0;
-        }
-    }
-    return ok ? BM_OK : BM_ERROR;
-}
-
 static constexpr uint32_t HCOM_CHANNEL_READY_TIMEOUT_MS = 5000;
 static constexpr uint32_t HCOM_CHANNEL_POLL_INTERVAL_US = 1000;
 
@@ -525,16 +452,6 @@ Result HcomTransportManager::ConnectRank(uint32_t rankId)
     auto waitRet = WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
     if (waitRet != BM_OK) {}
     TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 0);
-    return BM_OK;
-}
-
-Result HcomTransportManager::AsyncConnect()
-{
-    return BM_OK;
-}
-
-Result HcomTransportManager::WaitForConnected(int64_t timeoutNs)
-{
     return BM_OK;
 }
 

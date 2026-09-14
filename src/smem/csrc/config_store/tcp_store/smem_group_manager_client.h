@@ -61,19 +61,6 @@ public:
         return lastQueryLinkStateEntries_;
     }
 
-    /**
-     * @brief Returns the result codes from the most recent callback invocation.
-     *
-     * Each callback (AddToWhitelist, RemoveFromWhitelist, EstablishConnection)
-     * initialises lastAckRes_ with zeroes before calling the
-     * injected function. The caller may inspect this after HandleControlMessage
-     * to determine per-target success/failure.
-     */
-    const std::vector<int> &GetLastAckResults() const
-    {
-        return lastAckRes_;
-    }
-
     WhitelistCallback onAddToWhitelist_;
     WhitelistCallback onRemoveFromWhitelist_;
     ConnectionCallback onEstablishConnection_;
@@ -83,7 +70,6 @@ public:
 
 private:
     std::vector<LinkStateEntry> lastQueryLinkStateEntries_; //< Cached entries from the most recent QueryLinkState call
-    std::vector<int> lastAckRes_; //< Per-target result codes from the most recent callback invocation
 };
 
 using SmemGroupManagerClientPtr = SmRef<SmemGroupManagerClient>;

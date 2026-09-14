@@ -298,23 +298,6 @@ Result RdmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
     return BM_OK;
 }
 
-Result RdmaTransportManager::Connect()
-{
-    auto ret = AsyncConnect();
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("AsyncConnect() failed: " << ret);
-        return ret;
-    }
-
-    ret = WaitForConnected(-1L);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("WaitForConnected(-1) failed: " << ret);
-        return ret;
-    }
-
-    return WaitQpReady();
-}
-
 Result RdmaTransportManager::ConnectRank(uint32_t rankId)
 {
     if (rankId >= rankCount_) {
@@ -322,27 +305,6 @@ Result RdmaTransportManager::ConnectRank(uint32_t rankId)
         return BM_INVALID_PARAM;
     }
     return WaitQpReady();
-}
-
-Result RdmaTransportManager::AsyncConnect()
-{
-    return BM_OK;
-}
-
-Result RdmaTransportManager::WaitForConnected(int64_t timeoutNs)
-{
-    if (qpManager_ == nullptr) {
-        BM_LOG_ERROR("server side not listen!");
-        return BM_ERROR;
-    }
-
-    auto ret = qpManager_->WaitingConnectionReady();
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("wait for server side connected on device failed: " << ret);
-        return ret;
-    }
-
-    return BM_OK;
 }
 
 Result RdmaTransportManager::WaitQpReady()

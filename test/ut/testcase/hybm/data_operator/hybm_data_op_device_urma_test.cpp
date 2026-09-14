@@ -90,18 +90,6 @@ public:
     {
         return BM_OK;
     }
-    Result Connect() override
-    {
-        return BM_OK;
-    }
-    Result AsyncConnect() override
-    {
-        return BM_OK;
-    }
-    Result WaitForConnected(int64_t) override
-    {
-        return BM_OK;
-    }
     Result UpdateRankOptions(const transport::HybmTransPrepareOptions &) override
     {
         return BM_OK;

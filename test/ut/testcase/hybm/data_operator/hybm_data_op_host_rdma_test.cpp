@@ -69,24 +69,6 @@ public:
         return removeRanksResult;
     }
 
-    ock::mf::Result Connect() noexcept override
-    {
-        connectCount++;
-        return connectResult;
-    }
-
-    ock::mf::Result AsyncConnect() noexcept override
-    {
-        asyncConnectCount++;
-        return asyncConnectResult;
-    }
-
-    ock::mf::Result WaitForConnected(int64_t timeoutNs) noexcept override
-    {
-        waitForConnectedCount++;
-        return waitForConnectedResult;
-    }
-
     ock::mf::Result UpdateRankOptions(const ock::mf::transport::HybmTransPrepareOptions &options) noexcept override
     {
         updateRankOptionsCount++;
@@ -162,9 +144,6 @@ public:
     uint64_t queryMemoryKeyCount{0};
     uint64_t prepareCount{0};
     uint64_t removeRanksCount{0};
-    uint64_t connectCount{0};
-    uint64_t asyncConnectCount{0};
-    uint64_t waitForConnectedCount{0};
     uint64_t updateRankOptionsCount{0};
     mutable uint64_t getNicCount{0};
     uint64_t writeRemoteCount{0};
@@ -184,9 +163,6 @@ public:
     ock::mf::Result queryMemoryKeyResult{BM_OK};
     ock::mf::Result prepareResult{BM_OK};
     ock::mf::Result removeRanksResult{BM_OK};
-    ock::mf::Result connectResult{BM_OK};
-    ock::mf::Result asyncConnectResult{BM_OK};
-    ock::mf::Result waitForConnectedResult{BM_OK};
     ock::mf::Result updateRankOptionsResult{BM_OK};
     ock::mf::Result writeRemoteResult{BM_OK};
     ock::mf::Result readRemoteResult{BM_OK};
@@ -208,9 +184,6 @@ public:
         queryMemoryKeyCount = 0;
         prepareCount = 0;
         removeRanksCount = 0;
-        connectCount = 0;
-        asyncConnectCount = 0;
-        waitForConnectedCount = 0;
         updateRankOptionsCount = 0;
         getNicCount = 0;
         writeRemoteCount = 0;
@@ -229,9 +202,6 @@ public:
         queryMemoryKeyResult = BM_OK;
         prepareResult = BM_OK;
         removeRanksResult = BM_OK;
-        connectResult = BM_OK;
-        asyncConnectResult = BM_OK;
-        waitForConnectedResult = BM_OK;
         updateRankOptionsResult = BM_OK;
         writeRemoteResult = BM_OK;
         readRemoteResult = BM_OK;

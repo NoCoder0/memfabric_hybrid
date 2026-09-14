@@ -449,7 +449,6 @@ Result DeviceRdmaHcommTransportManager::CloseDevice()
     deviceKernelHandle_ = nullptr;
     deviceFuncHandles_ = DeviceFuncHandles{};
     opened_ = false;
-    connected_ = false;
     BM_LOG_INFO("DeviceRdmaHcommTransportManager CloseDevice");
     return finalRet;
 }
@@ -875,25 +874,8 @@ int32_t DeviceRdmaHcommTransportManager::RawMemImportWithRetry(HcommEndpointHand
 }
 
 // ============================================================================
-// Connect / Remove ranks
+// Remove ranks
 // ============================================================================
-
-Result DeviceRdmaHcommTransportManager::Connect()
-{
-    connected_ = true;
-    return BM_OK;
-}
-
-Result DeviceRdmaHcommTransportManager::AsyncConnect()
-{
-    return Connect();
-}
-
-Result DeviceRdmaHcommTransportManager::WaitForConnected(int64_t timeoutNs)
-{
-    (void)timeoutNs;
-    return BM_OK;
-}
 
 Result DeviceRdmaHcommTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRanks)
 {

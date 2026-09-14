@@ -76,30 +76,6 @@ SmemGroupManagerServer::~SmemGroupManagerServer() noexcept
 }
 
 /*
- * Set the state of a single rank. No-op if rankId is out of range.
- */
-void SmemGroupManagerServer::SetRankState(uint32_t rankId, RankState state) noexcept
-{
-    if (rankId >= maxRanks_) {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(mutex_);
-    states_[rankId] = state;
-}
-
-/*
- * Get the current state of a single rank. Returns RANK_IDLE for out-of-range rankId.
- */
-RankState SmemGroupManagerServer::GetRankState(uint32_t rankId) const noexcept
-{
-    if (rankId >= maxRanks_) {
-        return RANK_IDLE;
-    }
-    std::unique_lock<std::mutex> lock(mutex_);
-    return states_[rankId];
-}
-
-/*
  * Returns ranks that are ACTIVE or CHECKED_IN.
  * LEAVING ranks are excluded because they are in teardown.
  * IDLE ranks have never connected.
@@ -311,96 +287,11 @@ int SmemGroupManagerServer::Checkout(uint32_t rankId, uint64_t reqId, const std:
 }
 
 /*
- * Forcefully clear a CHECKED_IN rank's state.
- * Resets all links, clears in-memory rank metadata, and enqueues
- * RemoveFromWhitelist for affected peers. Returns 0 on success.
- */
-int SmemGroupManagerServer::Clear(uint32_t rankId) noexcept
-{
-    if (rankId >= maxRanks_) {
-        return -1;
-    }
-
-    std::vector<uint32_t> affectedPeers;
-    {
-        RankBaseInfo departingBase;
-        std::unique_lock<std::mutex> lock(mutex_);
-        if (states_[rankId] != RANK_CHECKED_IN) {
-            return -1;
-        }
-        STORE_LOG_INFO("[GM][Server][Recv] RCV rank=" << rankId << " type=CLEAR");
-
-        departingBase.rankId = rankId;
-        departingBase.baseInfo = rankBase_[rankId];
-
-        for (uint32_t i = 0; i < maxRanks_; ++i) {
-            if (i == rankId) {
-                continue;
-            }
-            if (states_[i] != RANK_ACTIVE && states_[i] != RANK_CHECKED_IN) {
-                continue;
-            }
-
-            uint32_t fwdIdx = LinkIndex(rankId, i);
-            uint32_t revIdx = LinkIndex(i, rankId);
-            if (links_[fwdIdx] != LINK_IDLE || links_[revIdx] != LINK_IDLE) {
-                affectedPeers.push_back(i);
-            }
-            links_[fwdIdx] = LINK_IDLE;
-            links_[revIdx] = LINK_IDLE;
-            transitions_[fwdIdx] = {};
-            transitions_[revIdx] = {};
-        }
-
-        rankBase_[rankId].clear();
-        rankExternal_[rankId].clear();
-        states_[rankId] = RANK_IDLE;
-        aliveRanks_.erase(rankId);
-    }
-
-    if (sender_) {
-        for (uint32_t peerId : affectedPeers) {
-            EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId)});
-        }
-    }
-
-    return 0;
-}
-
-/*
  * Compute the row-major index for the directional link src→dst.
  */
 uint32_t SmemGroupManagerServer::LinkIndex(uint32_t src, uint32_t dst) const noexcept
 {
     return src * maxRanks_ + dst;
-}
-
-/*
- * Set the state of a single directional link. No-op if either rankId is out of range.
- */
-void SmemGroupManagerServer::SetLinkState(uint32_t srcRank, uint32_t dstRank, LinkState state) noexcept
-{
-    if (srcRank >= maxRanks_ || dstRank >= maxRanks_) {
-        return;
-    }
-    std::unique_lock<std::mutex> lock(mutex_);
-    auto idx = LinkIndex(srcRank, dstRank);
-    links_[idx] = state;
-    if (!IsStableLinkState(state)) {
-        AddActiveLink(idx);
-    }
-}
-
-/*
- * Get the state of a single directional link. Returns LINK_IDLE for out-of-range rankId.
- */
-LinkState SmemGroupManagerServer::GetLinkState(uint32_t srcRank, uint32_t dstRank) const noexcept
-{
-    if (srcRank >= maxRanks_ || dstRank >= maxRanks_) {
-        return LINK_IDLE;
-    }
-    std::unique_lock<std::mutex> lock(mutex_);
-    return links_[LinkIndex(srcRank, dstRank)];
 }
 
 void SmemGroupManagerServer::QueryLinkStates() noexcept
@@ -1145,26 +1036,6 @@ void SmemGroupManagerServer::TransitionDriverTask() noexcept
         driverCond_.wait_for(lock, std::chrono::milliseconds(linkTransitionDriverIntervalMs),
                              [this] { return !running_; });
     }
-}
-
-// ── 状态访问 ──
-
-const Bytes &SmemGroupManagerServer::GetRankBase(uint32_t rankId) const noexcept
-{
-    if (rankId >= maxRanks_) {
-        static const Bytes empty;
-        return empty;
-    }
-    return rankBase_[rankId];
-}
-
-const std::vector<Bytes> &SmemGroupManagerServer::GetRankExternal(uint32_t rankId) const noexcept
-{
-    if (rankId >= maxRanks_) {
-        static const std::vector<Bytes> empty;
-        return empty;
-    }
-    return rankExternal_[rankId];
 }
 
 // ── 状态恢复 ──

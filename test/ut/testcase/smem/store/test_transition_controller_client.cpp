@@ -55,9 +55,6 @@ TEST_F(TestTransitionControllerClient, AddToWhitelist_DefaultReturnsSuccess)
 {
     std::vector<RankFullInfo> others{MakeFullInfo(1)};
     EXPECT_EQ(ctrl_->AddToWhitelist(0, others, 0), 0);
-    auto &res = ctrl_->GetLastAckResults();
-    EXPECT_EQ(res.size(), 1);
-    EXPECT_EQ(res[0], 0);
 }
 
 TEST_F(TestTransitionControllerClient, AddToWhitelist_CallbackInvoked)
@@ -83,9 +80,6 @@ TEST_F(TestTransitionControllerClient, RemoveFromWhitelist_DefaultReturnsSuccess
 {
     std::vector<RankBaseInfo> others{MakeBaseInfo(K_RANK_TWO)};
     EXPECT_EQ(ctrl_->RemoveFromWhitelist(0, others, 0), 0);
-    auto &res = ctrl_->GetLastAckResults();
-    EXPECT_EQ(res.size(), 1);
-    EXPECT_EQ(res[0], 0);
 }
 
 TEST_F(TestTransitionControllerClient, RemoveFromWhitelist_CallbackInvoked)
@@ -104,9 +98,6 @@ TEST_F(TestTransitionControllerClient, EstablishConnection_DefaultReturnsSuccess
 {
     std::vector<RankFullInfo> others{MakeFullInfo(1)};
     EXPECT_EQ(ctrl_->EstablishConnection(0, others, 0), 0);
-    auto &res = ctrl_->GetLastAckResults();
-    EXPECT_EQ(res.size(), 1);
-    EXPECT_EQ(res[0], 0);
 }
 
 TEST_F(TestTransitionControllerClient, EstablishConnection_CallbackInvoked)
@@ -142,24 +133,6 @@ TEST_F(TestTransitionControllerClient, QueryLinkState_CallbackStoresEntries)
     EXPECT_EQ(entries[0].state, static_cast<int8_t>(LINK_CONNECTED));
     EXPECT_EQ(entries[1].dstRankId, K_RANK_TWO);
     EXPECT_EQ(entries[1].state, static_cast<int8_t>(LINK_IDLE));
-}
-
-TEST_F(TestTransitionControllerClient, AckResultsResetOnEachCall)
-{
-    std::vector<RankFullInfo> others3{MakeFullInfo(1), MakeFullInfo(K_RANK_TWO), MakeFullInfo(K_RANK_THREE)};
-    ctrl_->AddToWhitelist(0, others3, 0);
-    EXPECT_EQ(ctrl_->GetLastAckResults().size(), K_RANK_THREE);
-
-    std::vector<RankFullInfo> others1{MakeFullInfo(K_RANK_FIVE)};
-    ctrl_->AddToWhitelist(0, others1, 0);
-    EXPECT_EQ(ctrl_->GetLastAckResults().size(), 1);
-}
-
-TEST_F(TestTransitionControllerClient, EmptyOthersListZeroAckResults)
-{
-    std::vector<RankFullInfo> empty;
-    ctrl_->AddToWhitelist(0, empty, 0);
-    EXPECT_EQ(ctrl_->GetLastAckResults().size(), 0);
 }
 
 } // namespace smem

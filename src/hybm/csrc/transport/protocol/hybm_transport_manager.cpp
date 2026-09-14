@@ -53,9 +53,3 @@ const void *TransportManager::GetQpInfo() const
     BM_LOG_DEBUG("Not Implement GetQpInfo()");
     return nullptr;
 }
-
-Result TransportManager::Remove(const std::vector<uint32_t> &removeList)
-{
-    BM_LOG_ERROR("TransportManager is parent class, not support Remove by ranks, please use subclass");
-    return BM_INVALID_PARAM;
-}

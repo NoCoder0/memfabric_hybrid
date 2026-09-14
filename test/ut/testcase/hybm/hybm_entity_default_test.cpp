@@ -40,7 +40,6 @@ constexpr int32_t TEST_DEVICE_ID_IMPORT = 700;
 constexpr int32_t TEST_DEVICE_ID_REMOVE = 900;
 constexpr int32_t TEST_DEVICE_ID_CTX = 1000;
 constexpr int32_t TEST_DEVICE_ID_MMAP = 1100;
-constexpr int32_t TEST_DEVICE_ID_CHECK_ADDR = 1200;
 constexpr int32_t TEST_DEVICE_ID_COPY = 1300;
 constexpr int32_t TEST_DEVICE_ID_BATCH_COPY = 1400;
 constexpr int32_t TEST_DEVICE_ID_WAIT = 1500;
@@ -142,8 +141,6 @@ constexpr int32_t TEST_DEVICE_ID_CAN_REACH_SDMA = 3100;
 constexpr int32_t TEST_DEVICE_ID_CAN_REACH_DEVICE_RDMA = 3101;
 constexpr int32_t TEST_DEVICE_ID_CAN_REACH_MULTI = 3102;
 constexpr int32_t TEST_DEVICE_ID_GET_PTR_INVALID = 3103;
-constexpr int32_t TEST_DEVICE_ID_CHECK_ADDR_VA_RANGE = 3104;
-constexpr int32_t TEST_DEVICE_ID_CHECK_ADDR_OUT_RANGE = 3105;
 constexpr int32_t TEST_DEVICE_ID_REMOVE_EMPTY_RANKS = 3106;
 constexpr int32_t TEST_DEVICE_ID_EXPORT_ENTITY_SKIP_SEGMENT = 3107;
 constexpr int32_t TEST_DEVICE_ID_EXPORT_SLICE_TRANSPORT_MGR_NULL = 3108;
@@ -190,7 +187,6 @@ public:
     ock::mf::transport::HybmTransPrepareOptions preparedOptions{};
     ock::mf::transport::HybmTransPrepareOptions updatedOptions{};
     int prepareCalled{0};
-    int connectCalled{0};
     int updateCalled{0};
 
     ock::mf::Result OpenDevice(const ock::mf::transport::TransportOptions & /* options */) override
@@ -230,19 +226,6 @@ public:
         return BM_OK;
     }
     ock::mf::Result RemoveRanks(const std::vector<uint32_t> & /* removedRanks */) override
-    {
-        return BM_OK;
-    }
-    ock::mf::Result Connect() override
-    {
-        connectCalled++;
-        return BM_OK;
-    }
-    ock::mf::Result AsyncConnect() override
-    {
-        return BM_OK;
-    }
-    ock::mf::Result WaitForConnected(int64_t /* timeoutNs */) override
     {
         return BM_OK;
     }
@@ -1181,18 +1164,6 @@ TEST_F(HybmEntityDefaultTest, Mmap_Unmap)
     entity.Unmap();
 }
 
-// 测试 MemEntityDefault 地址检查
-TEST_F(HybmEntityDefaultTest, CheckAddressInEntity)
-{
-    int32_t deviceId = TEST_DEVICE_ID_CHECK_ADDR;
-    ock::mf::MemEntityDefault entity(deviceId);
-
-    // 测试地址检查（未初始化的情况）
-    int buf = 0;
-    bool inEntity = entity.CheckAddressInEntity(&buf, sizeof(buf));
-    EXPECT_FALSE(inEntity);
-}
-
 // 测试 MemEntityDefault 数据复制
 TEST_F(HybmEntityDefaultTest, CopyData)
 {
@@ -1375,7 +1346,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransportManager_Update_WhenPrepared)
     auto ret = entity.ImportForTransportManager();
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(fake->updateCalled, 1);
-    EXPECT_EQ(fake->connectCalled, 0);
     EXPECT_EQ(fake->updatedOptions.options.size(), TEST_RANK_COUNT_1);
     EXPECT_EQ(fake->updatedOptions.options.at(TEST_RANK_0).nic, std::string("nic0"));
 }
@@ -1680,32 +1650,6 @@ TEST_F(HybmEntityDefaultTest, GetReservedMemoryPtr_InvalidMemType)
     ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_GET_PTR_INVALID);
     void *ptr = entity.GetReservedMemoryPtr(static_cast<hybm_mem_type>(0xFF));
     EXPECT_EQ(ptr, nullptr);
-}
-
-// ==================== CheckAddressInEntity 测试 ====================
-
-TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_DeviceVaRange)
-{
-    ock::mf::HybmVaManager::GetInstance().ClearAll();
-    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().Initialize(ock::mf::AscendSocType::ASCEND_910C), BM_OK);
-    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CHECK_ADDR_VA_RANGE);
-    entity.initialized_ = true;
-    // Address in device VA range but not tracked by any segment -> the VA-range
-    // fallback should still accept it.
-    void *ptr = reinterpret_cast<void *>(ock::mf::HYBM_DEVICE_VA_START + 0x1000);
-    bool result = entity.CheckAddressInEntity(ptr, 64);
-    EXPECT_TRUE(result);
-    ock::mf::HybmVaManager::GetInstance().ClearAll();
-}
-
-TEST_F(HybmEntityDefaultTest, CheckAddressInEntity_OutOfRange)
-{
-    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_CHECK_ADDR_OUT_RANGE);
-    entity.initialized_ = true;
-    // A stack address is neither in segments nor in the device VA range.
-    int buf = 0;
-    bool result = entity.CheckAddressInEntity(&buf, sizeof(buf));
-    EXPECT_FALSE(result);
 }
 
 // ==================== RemoveImported 边界测试 ====================

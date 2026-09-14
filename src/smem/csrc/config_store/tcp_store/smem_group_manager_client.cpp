@@ -18,7 +18,6 @@ namespace smem {
 
 int SmemGroupManagerClient::AddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId)
 {
-    lastAckRes_.assign(others.size(), 0);
     if (onAddToWhitelist_) {
         return onAddToWhitelist_(rankId, others, reqId);
     }
@@ -30,7 +29,6 @@ int SmemGroupManagerClient::AddToWhitelist(uint32_t rankId, const std::vector<Ra
 int SmemGroupManagerClient::RemoveFromWhitelist(uint32_t rankId, const std::vector<RankBaseInfo> &others,
                                                 uint64_t reqId)
 {
-    lastAckRes_.assign(others.size(), 0);
     if (onRemoveFromWhitelist_) {
         std::vector<RankFullInfo> fullInfos;
         fullInfos.reserve(others.size());
@@ -49,7 +47,6 @@ int SmemGroupManagerClient::RemoveFromWhitelist(uint32_t rankId, const std::vect
 int SmemGroupManagerClient::EstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &others,
                                                 uint64_t reqId)
 {
-    lastAckRes_.assign(others.size(), 0);
     if (onEstablishConnection_) {
         return onEstablishConnection_(rankId, others, reqId);
     }

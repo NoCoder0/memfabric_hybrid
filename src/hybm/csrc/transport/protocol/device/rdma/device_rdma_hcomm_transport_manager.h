@@ -122,9 +122,7 @@ public:
 
     Result Prepare(const HybmTransPrepareOptions &options) override;
     Result RemoveRanks(const std::vector<uint32_t> &removedRanks) override;
-    Result Connect() override;
-    Result AsyncConnect() override;
-    Result WaitForConnected(int64_t timeoutNs) override;
+
     Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
     const std::string &GetNic() const override;
     const TransportPrivateData GetPrivateData() const override;
@@ -208,7 +206,6 @@ private:
 
     mutable std::mutex mutex_;
     bool opened_{false};
-    bool connected_{false};
 
     uint32_t rankId_{0};
     uint32_t rankCount_{0};

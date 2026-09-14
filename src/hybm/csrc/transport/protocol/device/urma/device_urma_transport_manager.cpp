@@ -1627,23 +1627,6 @@ Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &remo
     return finalRet;
 }
 
-Result DeviceUrmaTransportManager::Connect()
-{
-    connected_ = true;
-    return BM_OK;
-}
-
-Result DeviceUrmaTransportManager::AsyncConnect()
-{
-    return BM_OK;
-}
-
-Result DeviceUrmaTransportManager::WaitForConnected(int64_t timeoutNs)
-{
-    (void)timeoutNs;
-    return BM_OK;
-}
-
 Result DeviceUrmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &options)
 {
     bool needFallback = false;

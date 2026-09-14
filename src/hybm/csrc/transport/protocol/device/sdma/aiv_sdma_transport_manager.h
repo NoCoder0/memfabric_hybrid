@@ -125,21 +125,6 @@ public:
         return BM_NOT_SUPPORTED;
     }
 
-    Result Connect() override
-    {
-        return BM_NOT_SUPPORTED;
-    }
-
-    Result AsyncConnect() override
-    {
-        return BM_NOT_SUPPORTED;
-    }
-
-    Result WaitForConnected(int64_t) override
-    {
-        return BM_NOT_SUPPORTED;
-    }
-
     Result UpdateRankOptions(const HybmTransPrepareOptions &) override
     {
         return BM_NOT_SUPPORTED;

@@ -49,18 +49,6 @@ public:
     {
         return BM_OK;
     }
-    Result Connect() override
-    {
-        return connectResult;
-    }
-    Result AsyncConnect() override
-    {
-        return BM_OK;
-    }
-    Result WaitForConnected(int64_t) override
-    {
-        return BM_OK;
-    }
     Result UpdateRankOptions(const HybmTransPrepareOptions &) override
     {
         return updateRankResult;
@@ -107,7 +95,6 @@ public:
     }
 
     Result prepareResult{BM_OK};
-    Result connectResult{BM_OK};
     Result updateRankResult{BM_OK};
     const void *qpInfo_{nullptr};
     std::string nic_{"test_nic"};
@@ -123,12 +110,6 @@ TEST(HybmTransportManagerTest, GetQpInfo_Null)
 {
     TestTransportManager mgr;
     EXPECT_EQ(mgr.GetQpInfo(), nullptr);
-}
-
-TEST(HybmTransportManagerTest, Remove_NotSupported)
-{
-    TestTransportManager mgr;
-    EXPECT_NE(mgr.Remove({1, 2}), BM_OK);
 }
 
 // ── Factory creation paths (TransportType overload) ──

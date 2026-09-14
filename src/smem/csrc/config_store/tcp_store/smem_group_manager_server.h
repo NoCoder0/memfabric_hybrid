@@ -53,8 +53,7 @@ extern std::atomic<uint32_t> g_ctrlReqSeq;
  * Rank lifecycle:
  *
  *   IDLE ──(CheckIn)──► CHECKED_IN ──(Connect)──► ACTIVE
- *     ▲                     │                        │
- *     └───────(Clear)───────┘                        │
+ *     ▲                                              │
  *     └──────────────────(ResetRankState)────────────┘
  *
  * - IDLE:       rank not in the group, no info stored
@@ -132,14 +131,8 @@ public:
     int CheckIn(const RankFullInfo &info, uint64_t reqId = 0) noexcept;
     int ProcessExtendMemory(uint32_t rankId, const MultiBytes &additionalSlices, uint64_t reqId = 0) noexcept;
     int Checkout(uint32_t rankId, uint64_t reqId = 0, const std::string &reason = "client-leavreq") noexcept;
-    int Clear(uint32_t rankId) noexcept;
 
-    void SetRankState(uint32_t rankId, RankState state) noexcept;
-    RankState GetRankState(uint32_t rankId) const noexcept;
     std::vector<uint32_t> GetAliveRanks() const noexcept;
-
-    void SetLinkState(uint32_t srcRank, uint32_t dstRank, LinkState state) noexcept;
-    LinkState GetLinkState(uint32_t srcRank, uint32_t dstRank) const noexcept;
 
     /**
      * @brief Query all active ranks for their link state and update the in-memory matrix.
@@ -198,8 +191,6 @@ public:
     {
         return links_;
     }
-    const Bytes &GetRankBase(uint32_t rankId) const noexcept;
-    const std::vector<Bytes> &GetRankExternal(uint32_t rankId) const noexcept;
 
     // ── 状态恢复（供 EtcdStateStore 使用） ──
 

@@ -68,6 +68,16 @@ protected:
         gm_ = nullptr;
     }
 
+    LinkState GetLink(uint32_t src, uint32_t dst) const
+    {
+        return gm_->GetLinks()[src * gm_->GetMaxRanks() + dst];
+    }
+
+    RankState GetRank(uint32_t r) const
+    {
+        return gm_->GetStates()[r];
+    }
+
     static RankFullInfo MakeInfo(uint32_t rankId, uint8_t protocol = SMEM_RANK_PROTOCOL_DEFAULT)
     {
         RankFullInfo info;
@@ -98,7 +108,7 @@ TEST_F(GmGroupManagerTest, CheckIn_ThenSendWorker_AddToWhitelistFails_AndDegrade
     gm_->Stop();
 
     /* After max retries the link should be degraded to IDLE */
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_IDLE);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_IDLE);
 }
 
 TEST_F(GmGroupManagerTest, CheckIn_AddAndEstConBothSucceed_LinksReachConnected)
@@ -106,29 +116,29 @@ TEST_F(GmGroupManagerTest, CheckIn_AddAndEstConBothSucceed_LinksReachConnected)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_EXCHANGING);
 
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
 
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_EXCHANGING);
 
     /* Advance via ACK chain */
     gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{0, 0}});
     gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, 0, std::map<uint32_t, int32_t>{{K_RANK_TWO, 0}});
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_EXCHANGED);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_EXCHANGED);
 
     /* DrivePending sees EXCHANGED, enqueues ESTABLISH */
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
 
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_CONNECTING);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_CONNECTING);
 
     gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{0, 0}});
     gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, 0, std::map<uint32_t, int32_t>{{K_RANK_TWO, 0}});
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_CONNECTED);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_CONNECTED);
 }
 
 TEST_F(GmGroupManagerTest, DrivePendingScansAndEnqueues_EstConFailsThenDegrades)
@@ -144,7 +154,7 @@ TEST_F(GmGroupManagerTest, DrivePendingScansAndEnqueues_EstConFailsThenDegrades)
     /* Inject ADD ACK to advance to EXCHANGED so DrivePending enqueues ESTABLISH */
     gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{0, 0}});
     gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, 0, std::map<uint32_t, int32_t>{{K_RANK_TWO, 0}});
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_EXCHANGED);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_EXCHANGED);
 
     /* EstablishConnection always fails → retry → degrade */
     sendResult_ = -1;
@@ -154,7 +164,7 @@ TEST_F(GmGroupManagerTest, DrivePendingScansAndEnqueues_EstConFailsThenDegrades)
     gm_->Stop();
 
     /* After max retries the link should be degraded to IDLE */
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_IDLE);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_IDLE);
 }
 
 /* ================================================================== */
@@ -193,12 +203,12 @@ protected:
 
     LinkState GetLink(uint32_t src, uint32_t dst) const
     {
-        return gm_->GetLinkState(src, dst);
+        return gm_->GetLinks()[src * gm_->GetMaxRanks() + dst];
     }
 
     RankState GetRank(uint32_t r) const
     {
-        return gm_->GetRankState(r);
+        return gm_->GetStates()[r];
     }
 };
 
@@ -281,20 +291,6 @@ TEST_F(GroupManagerTest, CheckoutSendsRemoveFromWhitelist)
     EXPECT_EQ(GetLink(0, K_RANK_FOUR), LINK_IDLE);
 }
 
-TEST_F(GroupManagerTest, ClearCheckedInRank)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-    ASSERT_EQ(gm_->Clear(1), 0);
-    EXPECT_EQ(GetRank(1), RANK_IDLE);
-}
-
-TEST_F(GroupManagerTest, ClearFromActiveFails)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-    gm_->SetRankState(1, RANK_ACTIVE);
-    EXPECT_EQ(gm_->Clear(1), -1);
-}
-
 TEST_F(GroupManagerTest, AckAddToWhitelistAdvancesLink)
 {
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
@@ -308,7 +304,12 @@ TEST_F(GroupManagerTest, AckEstablishConnectionAdvancesLink)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
     gm_->OnControlAck(CONTROL_ADD_TO_WHITELIST_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
-    gm_->SetLinkState(K_RANK_TWO, 1, LINK_CONNECTING);
+    /* Drive send worker: ESTABLISH is enqueued at EXCHANGED → link becomes CONNECTING */
+    gm_->Start();
+    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
+    gm_->Stop();
+    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_CONNECTING);
+
     gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, K_RANK_TWO, std::map<uint32_t, int32_t>{{1, 0}});
     EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_CONNECTED);
 }
@@ -345,36 +346,12 @@ TEST_F(GroupManagerTest, GetAliveRanksExcludesLeaving)
     EXPECT_EQ(alive[0], 1);
 }
 
-TEST_F(GroupManagerTest, SetGetRankState)
-{
-    gm_->SetRankState(K_RANK_THREE, RANK_ACTIVE);
-    EXPECT_EQ(GetRank(K_RANK_THREE), RANK_ACTIVE);
-}
-
-TEST_F(GroupManagerTest, SetGetLinkState)
-{
-    gm_->SetLinkState(K_RANK_TWO, K_RANK_FIVE, LINK_CONNECTED);
-    EXPECT_EQ(GetLink(K_RANK_TWO, K_RANK_FIVE), LINK_CONNECTED);
-    EXPECT_EQ(GetLink(K_RANK_FIVE, K_RANK_TWO), LINK_IDLE);
-}
-
-TEST_F(GroupManagerTest, SetRankOutOfRangeNoOp)
-{
-    gm_->SetRankState(K_INVALID_RANK, RANK_ACTIVE);
-}
-
-TEST_F(GroupManagerTest, SetLinkOutOfRangeNoOp)
-{
-    gm_->SetLinkState(K_INVALID_RANK, 0, LINK_CONNECTED);
-    gm_->SetLinkState(0, K_INVALID_RANK, LINK_CONNECTED);
-}
-
 TEST_F(GroupManagerTest, CheckInTriggersStateTransitions)
 {
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
-    EXPECT_EQ(gm_->GetLinkState(1, K_RANK_TWO), LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 1), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(1, K_RANK_TWO), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_EXCHANGING);
 }
 
 TEST_F(GmGroupManagerTest, OnLinkBroken_ClearsAllLinksAndDegradedLeavingRank)
@@ -383,19 +360,19 @@ TEST_F(GmGroupManagerTest, OnLinkBroken_ClearsAllLinksAndDegradedLeavingRank)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
-    EXPECT_EQ(gm_->GetLinkState(0, 1), LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(1, K_RANK_TWO), LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 1), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(0, 1), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(1, 0), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(1, K_RANK_TWO), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_EXCHANGING);
 
     gm_->OnLinkBroken(1);
 
-    EXPECT_EQ(gm_->GetLinkState(0, 1), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(1, K_RANK_TWO), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 1), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(0, K_RANK_TWO), LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 0), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(0, 1), LINK_IDLE);
+    EXPECT_EQ(GetLink(1, 0), LINK_IDLE);
+    EXPECT_EQ(GetLink(1, K_RANK_TWO), LINK_IDLE);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_IDLE);
+    EXPECT_EQ(GetLink(0, K_RANK_TWO), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 0), LINK_EXCHANGING);
 }
 
 TEST_F(GmGroupManagerTest, OnLinkBroken_LeavingRankBecomesIdle)
@@ -409,13 +386,13 @@ TEST_F(GmGroupManagerTest, OnLinkBroken_LeavingRankBecomesIdle)
 
     /* Checkout immediately transitions to IDLE and notifies peers via RemoveFromWhitelist */
     ASSERT_EQ(gm_->Checkout(1), 0);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(0, 1), LINK_IDLE);
+    EXPECT_EQ(GetRank(1), RANK_IDLE);
+    EXPECT_EQ(GetLink(1, 0), LINK_IDLE);
+    EXPECT_EQ(GetLink(0, 1), LINK_IDLE);
 
     /* OnLinkBroken is a no-op on already-IDLE state */
     gm_->OnLinkBroken(1);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_IDLE);
+    EXPECT_EQ(GetRank(1), RANK_IDLE);
 }
 
 /* ================================================================== */
@@ -440,37 +417,24 @@ TEST_F(GmGroupManagerTest, CheckInReconnected_PromotesToActiveAndQueriesLinkStat
     /* Send ESTABLISH ACK → CONNECTED */
     gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, 1, std::map<uint32_t, int32_t>{{0, 0}});
     gm_->OnControlAck(CONTROL_ESTABLISH_CONNECTION_ACK, 0, std::map<uint32_t, int32_t>{{1, 0}});
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_CONNECTED);
+    EXPECT_EQ(GetLink(1, 0), LINK_CONNECTED);
 
     /* Run driver to promote ranks */
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
 
     /* CheckIn again on ACTIVE rank → MarkRankReconnected sees non-idle → fails */
     EXPECT_EQ(gm_->CheckIn(MakeInfo(0)), -1);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
-}
-
-TEST_F(GmGroupManagerTest, Clear_ActiveRankFails)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    gm_->SetRankState(0, RANK_ACTIVE);
-    EXPECT_EQ(gm_->Clear(0), -1);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
-}
-
-TEST_F(GmGroupManagerTest, Clear_OutOfRangeFails)
-{
-    EXPECT_EQ(gm_->Clear(K_INVALID_RANK), -1);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
 }
 
 TEST_F(GmGroupManagerTest, MarkRankReconnected_NonIdleStateSkips)
 {
     ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    /* Promote to ACTIVE via the setter */
-    gm_->SetRankState(0, RANK_ACTIVE);
+    /* Promote to ACTIVE via the reconnect path */
+    gm_->MarkRankReconnected(0);
     /* CheckIn again: MarkRankReconnected sees RANK_ACTIVE → warn and return */
     EXPECT_EQ(gm_->CheckIn(MakeInfo(0)), -1);
 }
@@ -481,11 +445,11 @@ TEST_F(GmGroupManagerTest, CheckIn_TransOverridesNonIdleState)
     /* Simulate a reconnect having promoted rank 1 to ACTIVE (stale w.r.t. a
        fresh Trans entry) */
     gm_->MarkRankReconnected(1);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_ACTIVE);
+    EXPECT_EQ(GetRank(1), RANK_ACTIVE);
 
     /* A Trans JOINREQ overrides the stale ACTIVE state and re-joins cleanly */
     EXPECT_EQ(gm_->CheckIn(MakeInfo(1, SMEM_RANK_PROTOCOL_TRANS)), 0);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_CHECKED_IN);
+    EXPECT_EQ(GetRank(1), RANK_CHECKED_IN);
 
     /* BM JOINREQ on a non-idle rank stays rejected */
     EXPECT_EQ(gm_->CheckIn(MakeInfo(0)), -1);
@@ -497,13 +461,16 @@ TEST_F(GmGroupManagerTest, CheckIn_TransClearsGhostLinks)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
     /* Stale link between rank 1 and peer 0 (e.g. written by LNKSRSP after the
        reconnect) must be cleared when the Trans entry re-joins. */
-    gm_->SetLinkState(1, 0, LINK_EXCHANGING);
-    gm_->SetLinkState(0, 1, LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
+    RankFullInfo info = MakeInfo(1);
+    LinkStateEntry e;
+    e.dstRankId = 0;
+    e.state = static_cast<uint8_t>(LINK_CONNECTED);
+    gm_->OnLinkStateResponse(info, {e}, 0);
+    EXPECT_EQ(GetLink(1, 0), LINK_CONNECTED);
 
     EXPECT_EQ(gm_->CheckIn(MakeInfo(1, SMEM_RANK_PROTOCOL_TRANS)), 0);
     /* Re-join re-arms the links as EXCHANGING for the newly-checked-in rank */
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(1, 0), LINK_EXCHANGING);
 }
 
 TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllIdleLinksPromotesToActive)
@@ -512,11 +479,17 @@ TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllIdleLinksPromotesToActive)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
-    /* Manually set all links for rank 1 to IDLE or CONNECTED */
-    gm_->SetLinkState(1, 0, LINK_CONNECTED);
-    gm_->SetLinkState(0, 1, LINK_CONNECTED);
-    gm_->SetLinkState(1, K_RANK_TWO, LINK_IDLE);
-    gm_->SetLinkState(K_RANK_TWO, 1, LINK_IDLE);
+    /* Inject link matrix: rank 1's link to 0 is CONNECTED, to 2 stays IDLE */
+    std::vector<RankState> states(K_RANK_COUNT, RANK_IDLE);
+    states[0] = RANK_CHECKED_IN;
+    states[1] = RANK_CHECKED_IN;
+    states[K_RANK_TWO] = RANK_CHECKED_IN;
+    std::vector<LinkState> links(K_RANK_COUNT * K_RANK_COUNT, LINK_IDLE);
+    links[1 * K_RANK_COUNT + 0] = LINK_CONNECTED;
+    links[0 * K_RANK_COUNT + 1] = LINK_CONNECTED;
+    std::unordered_set<uint32_t> alive{0, 1, K_RANK_TWO};
+    gm_->RestoreState(states, links, alive);
+    gm_->RebuildActiveLinks();
 
     /* DrivePendingTransitions → PromoteCheckedInRanks should NOT promote rank 1:
      * rank 2 is already CHECKED_IN but its link is IDLE (not connected), so a
@@ -526,7 +499,7 @@ TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllIdleLinksPromotesToActive)
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
-    EXPECT_EQ(gm_->GetRankState(1), RANK_CHECKED_IN);
+    EXPECT_EQ(GetRank(1), RANK_CHECKED_IN);
 }
 
 TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllPeersConnectedPromotesToActive)
@@ -536,22 +509,24 @@ TEST_F(GmGroupManagerTest, PromoteCheckedInRanks_AllPeersConnectedPromotesToActi
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
     /* All peers of rank 1 connected */
-    gm_->SetLinkState(1, 0, LINK_CONNECTED);
-    gm_->SetLinkState(0, 1, LINK_CONNECTED);
-    gm_->SetLinkState(1, K_RANK_TWO, LINK_CONNECTED);
-    gm_->SetLinkState(K_RANK_TWO, 1, LINK_CONNECTED);
+    std::vector<RankState> states(K_RANK_COUNT, RANK_IDLE);
+    states[0] = RANK_CHECKED_IN;
+    states[1] = RANK_CHECKED_IN;
+    states[K_RANK_TWO] = RANK_CHECKED_IN;
+    std::vector<LinkState> links(K_RANK_COUNT * K_RANK_COUNT, LINK_IDLE);
+    links[1 * K_RANK_COUNT + 0] = LINK_CONNECTED;
+    links[0 * K_RANK_COUNT + 1] = LINK_CONNECTED;
+    links[1 * K_RANK_COUNT + K_RANK_TWO] = LINK_CONNECTED;
+    links[K_RANK_TWO * K_RANK_COUNT + 1] = LINK_CONNECTED;
+    std::unordered_set<uint32_t> alive{0, 1, K_RANK_TWO};
+    gm_->RestoreState(states, links, alive);
+    gm_->RebuildActiveLinks();
 
     /* DrivePendingTransitions → PromoteCheckedInRanks should promote rank 1 */
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
-    EXPECT_EQ(gm_->GetRankState(1), RANK_ACTIVE);
-}
-
-TEST_F(GmGroupManagerTest, GetLinkState_OutOfRangeReturnsIdle)
-{
-    EXPECT_EQ(gm_->GetLinkState(K_INVALID_RANK, 0), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(0, K_INVALID_RANK), LINK_IDLE);
+    EXPECT_EQ(GetRank(1), RANK_ACTIVE);
 }
 
 TEST_F(GmGroupManagerTest, QueryLinkStates_WithAliveRanks)
@@ -576,25 +551,8 @@ TEST_F(GmGroupManagerTest, QueryLinkStates_WithAliveRanks)
     gm_->Start();
     std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
     gm_->Stop();
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_ACTIVE);
-}
-
-TEST_F(GroupManagerTest, GetRankState_OutOfRangeReturnsIdle)
-{
-    EXPECT_EQ(gm_->GetRankState(K_INVALID_RANK), RANK_IDLE);
-}
-
-TEST_F(GroupManagerTest, Clear_CheckedInRankSucceeds)
-{
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(0)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-    ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
-
-    EXPECT_EQ(gm_->Clear(1), 0);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(0, 1), LINK_IDLE);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
+    EXPECT_EQ(GetRank(1), RANK_ACTIVE);
 }
 
 TEST_F(GroupManagerTest, MultipleCheckoutAndCheckin_ResetRankStateClearsLinks)
@@ -605,17 +563,17 @@ TEST_F(GroupManagerTest, MultipleCheckoutAndCheckin_ResetRankStateClearsLinks)
 
     /* Checkout rank 1 → should clear links to 0 and K_RANK_TWO */
     ASSERT_EQ(gm_->Checkout(1), 0);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(0, 1), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(1, K_RANK_TWO), LINK_IDLE);
-    EXPECT_EQ(gm_->GetLinkState(K_RANK_TWO, 1), LINK_IDLE);
+    EXPECT_EQ(GetRank(1), RANK_IDLE);
+    EXPECT_EQ(GetLink(1, 0), LINK_IDLE);
+    EXPECT_EQ(GetLink(0, 1), LINK_IDLE);
+    EXPECT_EQ(GetLink(1, K_RANK_TWO), LINK_IDLE);
+    EXPECT_EQ(GetLink(K_RANK_TWO, 1), LINK_IDLE);
 
     /* Re-checkin rank 1 */
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
-    EXPECT_EQ(gm_->GetRankState(1), RANK_CHECKED_IN);
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_EXCHANGING);
-    EXPECT_EQ(gm_->GetLinkState(0, 1), LINK_EXCHANGING);
+    EXPECT_EQ(GetRank(1), RANK_CHECKED_IN);
+    EXPECT_EQ(GetLink(1, 0), LINK_EXCHANGING);
+    EXPECT_EQ(GetLink(0, 1), LINK_EXCHANGING);
 }
 
 /* ================================================================== */
@@ -625,15 +583,15 @@ TEST_F(GroupManagerTest, MultipleCheckoutAndCheckin_ResetRankStateClearsLinks)
 TEST_F(GmGroupManagerTest, MarkRankReconnected_RankIdle_SetsActiveAndEnqueuesQuery)
 {
     /* Set rank 0 to IDLE (its initial state) */
-    EXPECT_EQ(gm_->GetRankState(0), RANK_IDLE);
+    EXPECT_EQ(GetRank(0), RANK_IDLE);
 
     /* MarkReconnected on IDLE rank → becomes ACTIVE */
     gm_->MarkRankReconnected(0);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
 
     /* Second call on ACTIVE rank → warn and return (no crash) */
     gm_->MarkRankReconnected(0);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
 }
 
 TEST_F(GmGroupManagerTest, MarkRankReconnected_WithPeers_StaysActive)
@@ -643,11 +601,11 @@ TEST_F(GmGroupManagerTest, MarkRankReconnected_WithPeers_StaysActive)
 
     /* Reset rank 0 to IDLE via Checkout */
     ASSERT_EQ(gm_->Checkout(0), 0);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_IDLE);
+    EXPECT_EQ(GetRank(0), RANK_IDLE);
 
     /* MarkReconnected → ACTIVE, creates QUERY_LINK_STATE task */
     gm_->MarkRankReconnected(0);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
 }
 
 TEST_F(GmGroupManagerTest, QueryLinkStates_CallsControllerForAliveRanks)
@@ -656,10 +614,13 @@ TEST_F(GmGroupManagerTest, QueryLinkStates_CallsControllerForAliveRanks)
     ASSERT_EQ(gm_->CheckIn(MakeInfo(1)), 0);
     ASSERT_EQ(gm_->CheckIn(MakeInfo(K_RANK_TWO)), 0);
 
-    /* Manually set ranks 0 and 1 to ACTIVE */
-    gm_->SetRankState(0, RANK_ACTIVE);
-    gm_->SetRankState(1, RANK_ACTIVE);
-    gm_->SetRankState(K_RANK_TWO, RANK_CHECKED_IN);
+    /* Inject states: ranks 0 and 1 ACTIVE, rank 2 CHECKED_IN */
+    std::vector<RankState> states(K_RANK_COUNT, RANK_IDLE);
+    states[0] = RANK_ACTIVE;
+    states[1] = RANK_ACTIVE;
+    states[K_RANK_TWO] = RANK_CHECKED_IN;
+    std::unordered_set<uint32_t> alive{0, 1, K_RANK_TWO};
+    gm_->RestoreState(states, alive);
 
     /* Sender returns success by default */
     sendResult_ = 0;
@@ -696,8 +657,8 @@ TEST_F(GmGroupManagerTest, OnLinkStateResponse_UpdatesLinks)
 
     gm_->OnLinkStateResponse(info, entries, K_QUERY_REQUEST_ID);
 
-    EXPECT_EQ(gm_->GetLinkState(1, 0), LINK_CONNECTED);
-    EXPECT_EQ(gm_->GetLinkState(1, K_RANK_TWO), LINK_CONNECTED);
+    EXPECT_EQ(GetLink(1, 0), LINK_CONNECTED);
+    EXPECT_EQ(GetLink(1, K_RANK_TWO), LINK_CONNECTED);
 }
 
 TEST_F(GmGroupManagerTest, OnLinkStateResponse_UnknownDstIgnored)
@@ -718,34 +679,10 @@ TEST_F(GmGroupManagerTest, OnLinkStateResponse_UnknownDstIgnored)
 /* ================================================================== */
 /*  Rank base/external accessors                                       */
 /* ================================================================== */
-TEST_F(GroupManagerTest, GetRankBase_OutOfRangeReturnsEmpty)
-{
-    EXPECT_TRUE(gm_->GetRankBase(K_INVALID_RANK).empty());
-}
-
-TEST_F(GroupManagerTest, SetGetRankBase_RoundTrip)
-{
-    Bytes data{0x01, 0x02, 0x03};
-    gm_->SetRankBase(K_RANK_TWO, data);
-    EXPECT_EQ(gm_->GetRankBase(K_RANK_TWO), data);
-}
-
 TEST_F(GroupManagerTest, SetRankBase_OutOfRangeNoOp)
 {
     gm_->SetRankBase(K_INVALID_RANK, Bytes{0x01});
     SUCCEED();
-}
-
-TEST_F(GroupManagerTest, GetRankExternal_OutOfRangeReturnsEmpty)
-{
-    EXPECT_TRUE(gm_->GetRankExternal(K_INVALID_RANK).empty());
-}
-
-TEST_F(GroupManagerTest, SetGetRankExternal_RoundTrip)
-{
-    std::vector<Bytes> data{{0x01, 0x02}, {0x03}};
-    gm_->SetRankExternal(K_RANK_TWO, data);
-    EXPECT_EQ(gm_->GetRankExternal(K_RANK_TWO), data);
 }
 
 TEST_F(GroupManagerTest, SetRankExternal_OutOfRangeNoOp)
@@ -763,8 +700,8 @@ TEST_F(GroupManagerTest, RestoreState_WithLinksAndAlive)
     std::vector<LinkState> links(K_RANK_COUNT * K_RANK_COUNT, LINK_CONNECTED);
     std::unordered_set<uint32_t> alive{0, K_RANK_TWO};
     gm_->RestoreState(states, links, alive);
-    EXPECT_EQ(gm_->GetRankState(0), RANK_ACTIVE);
-    EXPECT_EQ(gm_->GetLinkState(0, K_RANK_TWO), LINK_CONNECTED);
+    EXPECT_EQ(GetRank(0), RANK_ACTIVE);
+    EXPECT_EQ(GetLink(0, K_RANK_TWO), LINK_CONNECTED);
 }
 
 TEST_F(GroupManagerTest, RebuildActiveLinks_NoCrash)

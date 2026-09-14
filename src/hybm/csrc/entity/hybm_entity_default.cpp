@@ -939,47 +939,6 @@ int32_t MemEntityDefault::Wait() noexcept
     return dataOperator_->Wait(0);
 }
 
-bool MemEntityDefault::CheckAddressInEntity(const void *ptr, uint64_t length) const noexcept
-{
-    if (!initialized_) {
-        BM_LOG_ERROR("the object is not initialized, please check whether Initialize is called.");
-        return false;
-    }
-
-    bool inRange = false;
-    bool isDramRange = false;
-    if (hbmSegment_ != nullptr && hbmSegment_->MemoryInRange(ptr, length)) {
-        inRange = true;
-    } else if (dramSegment_ != nullptr && dramSegment_->MemoryInRange(ptr, length)) {
-        inRange = true;
-        isDramRange = true;
-    }
-    if (!inRange) {
-        // 不在 segment 范围内但属于 device VA 范围 → 放行（ClassifyAddress 也认这个范围）
-        auto va = reinterpret_cast<uint64_t>(ptr);
-        hybm_mem_type memType;
-        auto ret = HybmVaManager::GetInstance().GetLocalMemoryType(va, memType);
-        if (ret != BM_OK) {
-            return false;
-        }
-        if (memType == HYBM_MEM_TYPE_DEVICE) {
-            return true;
-        }
-        return false;
-    }
-
-    // DRAM(host, GVA==HVA)才需要校验地址是否已分配/已import
-    if (isDramRange) {
-        auto addr = reinterpret_cast<uint64_t>(ptr);
-        // 本地 portion 已在 allocatedMap_ 中，跳过 IsValidAddr
-        // 非本地 portion（远端未 join）需校验是否已注册
-        if (!dramSegment_->IsLocalRange(ptr, length) && !HybmVaManager::GetInstance().IsValidAddr(addr)) {
-            return false;
-        }
-    }
-    return true;
-}
-
 int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
 {
     if (options == nullptr) {

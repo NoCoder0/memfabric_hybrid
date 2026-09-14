@@ -65,12 +65,6 @@ public:
     virtual Result RemoveRanks(const std::vector<uint32_t> &removedRanks) = 0;
 
     /*
-     * 4、建链
-     * @return 0 if successful
-     */
-    virtual Result Connect() = 0;
-
-    /*
      * 单rank建链，用于OnEstablishConnection逐rank建链
      * @return 0 if successful
      */
@@ -78,18 +72,6 @@ public:
     {
         return BM_OK;
     }
-
-    /*
-     * 异步建链
-     * @return 0 if successful
-     */
-    virtual Result AsyncConnect() = 0;
-
-    /*
-     * 等待异步建链完成
-     * @return 0 if successful
-     */
-    virtual Result WaitForConnected(int64_t timeoutNs) = 0;
 
     /*
      * 建链完成后，更新rank配置信息，可以新增rank或减少rank
@@ -124,14 +106,9 @@ public:
 
     virtual Result Synchronize(uint32_t rankId) = 0;
 
-    virtual Result Remove(const std::vector<uint32_t> &removeList);
-
     virtual Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
 
     virtual Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
-
-protected:
-    bool connected_{false};
 };
 
 using TransManagerPtr = std::shared_ptr<TransportManager>;

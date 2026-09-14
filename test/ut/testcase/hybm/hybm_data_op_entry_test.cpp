@@ -130,11 +130,6 @@ public:
         return BM_OK;
     }
 
-    bool CheckAddressInEntity(const void *ptr, uint64_t length) const noexcept override
-    {
-        return addressInRange;
-    }
-
     bool SdmaReaches(uint32_t remoteRank) const noexcept override
     {
         return true;
@@ -148,7 +143,6 @@ public:
     bool copyCalled = false;
     bool batchCopyCalled = false;
     bool waitCalled = false;
-    bool addressInRange = true;
     hybm_data_copy_direction copyDirection = HYBM_DATA_COPY_DIRECTION_BUTT;
     hybm_data_copy_direction batchCopyDirection = HYBM_DATA_COPY_DIRECTION_BUTT;
     uint64_t copySize = 0;

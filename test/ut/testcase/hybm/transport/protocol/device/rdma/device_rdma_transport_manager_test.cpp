@@ -302,20 +302,6 @@ private:
     mutable UserQpInfo userQpInfo_{};
 };
 
-class TestableRdmaTransportManager final : public RdmaTransportManager {
-public:
-    Result AsyncConnect() override
-    {
-        return asyncConnectRet;
-    }
-    Result WaitForConnected(int64_t) override
-    {
-        return waitConnectedRet;
-    }
-
-    Result asyncConnectRet{BM_OK};
-    Result waitConnectedRet{BM_OK};
-};
 } // namespace
 
 TEST(RdmaTransportManagerTest, CloseDeviceClearsStateAndShutdownsQpManager)
@@ -538,57 +524,11 @@ TEST(RdmaTransportManagerTest, RemoveRanksCallsQpManagerAndPropagatesError)
     EXPECT_TRUE(qp->removeRanksCalled);
 }
 
-TEST(RdmaTransportManagerTest, ConnectPropagatesAsyncWaitAndQpReadyErrors)
-{
-    TestableRdmaTransportManager mgr;
-    mgr.qpManager_ = std::make_shared<FakeQpManager>();
-    mgr.rankCount_ = 1;
-    mgr.ranksMRs_.resize(1);
-
-    mgr.asyncConnectRet = BM_ERROR;
-    EXPECT_EQ(mgr.Connect(), BM_ERROR);
-
-    mgr.asyncConnectRet = BM_OK;
-    mgr.waitConnectedRet = BM_ERROR;
-    EXPECT_EQ(mgr.Connect(), BM_ERROR);
-
-    mgr.waitConnectedRet = BM_OK;
-    EXPECT_EQ(mgr.Connect(), BM_OK);
-}
-
-TEST(RdmaTransportManagerTest, AsyncConnectAlwaysOk)
-{
-    RdmaTransportManager mgr;
-    // 功能：异步连接入口（当前实现直接返回 BM_OK）
-    // 使用：Prepare() 之后可先调用 AsyncConnect()，再 WaitForConnected()。
-    EXPECT_EQ(mgr.AsyncConnect(), BM_OK);
-}
-
-TEST(RdmaTransportManagerTest, WaitForConnectedNullQpManagerAndErrorAndOk)
-{
-    RdmaTransportManager mgr;
-    // 功能：等待所有连接建立完成（依赖 qpManager_->WaitingConnectionReady()）。
-    // 使用：Connect() 内部会调用 WaitForConnected(-1)。
-
-    // 1) qpManager_ 为空：直接报错 BM_ERROR
-    EXPECT_EQ(mgr.WaitForConnected(-1), BM_ERROR);
-
-    // 2) WaitingConnectionReady 返回错误：透传错误码
-    auto qp = std::make_shared<FakeQpManager>();
-    qp->waitingReadyRet = BM_TIMEOUT;
-    mgr.qpManager_ = qp;
-    EXPECT_EQ(mgr.WaitForConnected(-1), BM_TIMEOUT);
-
-    // 3) WaitingConnectionReady 返回 OK：WaitForConnected 返回 OK
-    qp->waitingReadyRet = BM_OK;
-    EXPECT_EQ(mgr.WaitForConnected(-1), BM_OK);
-}
-
 TEST(RdmaTransportManagerTest, WaitQpReadyNullQpManagerAndOkPath)
 {
     RdmaTransportManager mgr;
     // 功能：在连接建立后检查 qp 是否 ready（带超时循环）。
-    // 使用：Connect()/UpdateRankOptions() 最终都要 WaitQpReady()。
+    // 使用：ConnectRank()/UpdateRankOptions() 最终都要 WaitQpReady()。
 
     // 1) qpManager_ 为空：BM_MALLOC_FAILED
     EXPECT_EQ(mgr.WaitQpReady(), BM_MALLOC_FAILED);
