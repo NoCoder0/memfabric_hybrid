@@ -83,6 +83,15 @@ static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
    注意 UINT32_MAX(0xFFFFFFFF) 是 ubs 内部"不绑核"的哨兵值，绝不能作为 CPU 号传入。 */
 constexpr uint32_t WORKER_CPU_ID_MAX = 611;
 
+/* 单边写的 WR 额度 = QP 的 max_send_wr − 预留，而 ubs 是**按"远端地址的连续段数"逐个扣额度**的
+   （CreateOneSideCtx 里对 groupCount 每个段都调一次 GetOneSideWr）：
+   600 个 4KB 离散块（stride 4096 > size 1024）就是 600 段 = 600 个额度。
+   ubs 的 qpSendQueueSize 默认只有 256（hcom_c.cpp 里的 NN_NO256），于是完成回收稍慢就会报
+   "no one side wr left"（内部重试 8×64µs，延迟直接飙到 ms 级）。这里把 SQ/CQ 放大留足余量：
+   ubs 会向上取整到 2 的幂，合法范围 16~65535。 */
+constexpr uint32_t HCOM_QP_SEND_QUEUE_SIZE = 4096;
+constexpr uint16_t HCOM_QP_COMPLETION_QUEUE_DEPTH = 4096;
+
 /* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
    同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
    返回该区间的 CPU 个数；格式不合法返回 false。 */
@@ -225,6 +234,9 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
             const bool enableMultiRail =
                 (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_ENABLE, 1U) != 0U);
             DlHcomApi::ServiceSetMultiRailOptions(service, enableMultiRail, multiRailThresh);
+            /* 放大单边写的 WR 额度（默认 QP 只有 256，离散大 batch 一个 iov 吃一个额度，不够用） */
+            DlHcomApi::ServiceSetSendQueueSize(service, HCOM_QP_SEND_QUEUE_SIZE);
+            DlHcomApi::ServiceSetCompletionQueueDepth(service, HCOM_QP_COMPLETION_QUEUE_DEPTH);
             /* 用 TRACE：本仓默认日志级别是 WARN，INFO 会被过滤掉，而这几行是验证多轨是否生效的关键 */
             BM_LOG_TRACE("[multirail-check] hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
                                                                    << " multiRailThresh: " << multiRailThresh);
