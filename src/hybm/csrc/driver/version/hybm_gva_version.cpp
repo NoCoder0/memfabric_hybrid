@@ -204,5 +204,14 @@ int32_t HalGvaPrecheck()
     return BM_ERROR;
 }
 
+void HalGvaGetDriverInstallPath(std::string &driverInstallPath)
+{
+    driverInstallPath = LoadValueFromFile(DRIVER_INSTALL_INFO, "Driver_Install_Path_Param=");
+    if (driverInstallPath.empty()) {
+        BM_LOG_INFO("cannot found version file in " << DRIVER_INSTALL_INFO << ", use path:" << DRIVER_DEFAULT_PATH);
+        driverInstallPath = DRIVER_DEFAULT_PATH;
+    }
+}
+
 } // namespace mf
 } // namespace ock

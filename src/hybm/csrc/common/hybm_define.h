@@ -126,6 +126,9 @@ enum DeviceSystemInfoType {
     INFO_TYPE_SCALE_TYPE,
     INFO_TYPE_SUPER_POD_ID,
     INFO_TYPE_ADDR_MODE,
+    INFO_TYPE_MAINBOARD_ID = 39,
+    INFO_TYPE_CHASSI_ID = 48,
+    INFO_TYPE_SPOD_TYPE
 };
 
 struct HybmDeviceGlobalMeta {

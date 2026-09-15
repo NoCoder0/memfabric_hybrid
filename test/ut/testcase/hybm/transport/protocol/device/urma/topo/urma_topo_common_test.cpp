@@ -1,0 +1,1463 @@
+/*
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025-2026. All rights reserved.
+ * MemFabric_Hybrid is licensed under Mulan PSL v2.
+ * You can use this software according to the terms and conditions of the Mulan PSL v2.
+ * You may obtain a copy of Mulan PSL v2 at:
+ *          http://license.coscl.org.cn/MulanPSL2
+ * THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
+ * EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
+ * See the Mulan PSL v2 for more details.
+ */
+
+#include <gtest/gtest.h>
+#include <mockcpp/mockcpp.hpp>
+
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <string>
+#include <vector>
+
+#define private public
+#include "hybm_define.h"
+#include "dl_acl_api.h"
+#include "dl_hal_api.h"
+#include "hybm_gva_version.h"
+#include "urma_topo_common.h"
+#include "urma_topo_helper.h"
+#include "urma_topo_json_parser.h"
+#include "urma_topo_manager.h"
+#include "urma_topo_product.h"
+#undef private
+
+using namespace ock::mf;
+using namespace ock::mf::transport;
+namespace dev = ock::mf::transport::device;
+
+// ============================ EID hex conversion ============================
+
+TEST(UrmaTopoCommonTest, HexStrToEid_NormalLowercase)
+{
+    std::string hex = "e0e1e2e3e4e5e6e7e8e9eaebecedeeef";
+    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+    HexStrToEid(hex, eid);
+    for (size_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
+        EXPECT_EQ(eid[i], static_cast<uint8_t>(0xe0 + i));
+    }
+}
+
+TEST(UrmaTopoCommonTest, HexStrToEid_NormalUppercase)
+{
+    std::string hex = "AABBCCDDEEFF0011";
+    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+    HexStrToEid(hex, eid);
+    EXPECT_EQ(eid[0], 0xAA);
+    EXPECT_EQ(eid[1], 0xBB);
+    EXPECT_EQ(eid[2], 0xCC);
+    EXPECT_EQ(eid[3], 0xDD);
+    EXPECT_EQ(eid[4], 0xEE);
+    EXPECT_EQ(eid[5], 0xFF);
+    EXPECT_EQ(eid[6], 0x00);
+    EXPECT_EQ(eid[7], 0x11);
+    for (size_t i = 8; i < COMM_ADDR_EID_LEN; ++i) {
+        EXPECT_EQ(eid[i], 0);
+    }
+}
+
+TEST(UrmaTopoCommonTest, HexStrToEid_EmptyString)
+{
+    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+    eid[0] = 0xFF;
+    HexStrToEid("", eid);
+    for (size_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
+        EXPECT_EQ(eid[i], 0);
+    }
+}
+
+TEST(UrmaTopoCommonTest, HexStrToEid_ShortString)
+{
+    std::string hex = "ab";
+    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+    HexStrToEid(hex, eid);
+    EXPECT_EQ(eid[0], 0xAB);
+    for (size_t i = 1; i < COMM_ADDR_EID_LEN; ++i) {
+        EXPECT_EQ(eid[i], 0);
+    }
+}
+
+TEST(UrmaTopoCommonTest, EidToHexStr_RoundTrip)
+{
+    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+    for (size_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
+        eid[i] = static_cast<uint8_t>(i * 16 + (i % 16));
+    }
+    std::string hex;
+    EidToHexStr(*reinterpret_cast<dcmi_urma_eid *>(eid.data()), hex);
+    EXPECT_EQ(hex.size(), COMM_ADDR_EID_LEN * 2);
+    std::array<uint8_t, COMM_ADDR_EID_LEN> decoded{};
+    HexStrToEid(hex, decoded);
+    for (size_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
+        EXPECT_EQ(decoded[i], eid[i]);
+    }
+}
+
+// ============================ Card EID extraction ============================
+
+TEST(UrmaTopoCommonTest, GetCardPortId_AllZeros)
+{
+    dcmi_urma_eid eid{};
+    EXPECT_EQ(GetCardPortId(eid), 0);
+}
+
+TEST(UrmaTopoCommonTest, GetCardPortId_MaxPort)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[DCMI_URMA_EID_SIZE - 1] = 0x7E;
+    EXPECT_EQ(GetCardPortId(eid), 0x0F);
+}
+
+TEST(UrmaTopoCommonTest, GetCardDieId_Bit2Set)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[DCMI_URMA_EID_SIZE - 1] = 0x04;
+    EXPECT_EQ(GetCardDieId(eid), 1);
+}
+
+TEST(UrmaTopoCommonTest, GetCardDieId_Bit2Clear)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[DCMI_URMA_EID_SIZE - 1] = 0x00;
+    EXPECT_EQ(GetCardDieId(eid), 0);
+}
+
+// ============================ Server/Pod EID extraction ============================
+
+TEST(UrmaTopoCommonTest, UrmaEidGetFeId_Basic)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[6] = 0x45;
+    EXPECT_EQ(UrmaEidGetFeId(eid), 0x45);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidGetFeId_MasksHighBit)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[6] = 0x80;
+    EXPECT_EQ(UrmaEidGetFeId(eid), 0);
+    eid.raw[6] = 0xFF;
+    EXPECT_EQ(UrmaEidGetFeId(eid), 0x7F);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidGetPortId_Basic)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[5] = 0x2A;
+    EXPECT_EQ(UrmaEidGetPortId(eid), 0x2A);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidGetPortId_MasksUpperBits)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[5] = 0xFF;
+    EXPECT_EQ(UrmaEidGetPortId(eid), 0x3F);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidGetDieId_Basic)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[5] = 0xC0;
+    EXPECT_EQ(UrmaEidGetDieId(eid), 3);
+    eid.raw[5] = 0x00;
+    EXPECT_EQ(UrmaEidGetDieId(eid), 0);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidIsPortGroup_True)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[5] = 0x3F;
+    EXPECT_TRUE(UrmaEidIsPortGroup(eid));
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidIsPortGroup_False)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[5] = 0x3E;
+    EXPECT_FALSE(UrmaEidIsPortGroup(eid));
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidIsUBOE_True)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[7] = 0xC0;
+    EXPECT_TRUE(UrmaEidIsUBOE(eid));
+    eid.raw[7] = 0xFF;
+    EXPECT_TRUE(UrmaEidIsUBOE(eid));
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidIsUBOE_False)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[7] = 0x00;
+    EXPECT_FALSE(UrmaEidIsUBOE(eid));
+    eid.raw[7] = 0x80;
+    EXPECT_FALSE(UrmaEidIsUBOE(eid));
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidIsUbRtp_True)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[7] = 0x80;
+    EXPECT_TRUE(UrmaEidIsUbRtp(eid));
+}
+
+TEST(UrmaTopoCommonTest, UrmaEidIsUbRtp_False)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[7] = 0x00;
+    EXPECT_FALSE(UrmaEidIsUbRtp(eid));
+    eid.raw[7] = 0xC0;
+    EXPECT_FALSE(UrmaEidIsUbRtp(eid));
+}
+
+// ============================ UrmaEid2CNA ============================
+
+TEST(UrmaTopoCommonTest, UrmaEid2CNA_Basic)
+{
+    dcmi_urma_eid eid{};
+    eid.raw[6] = 192;
+    eid.raw[12] = 168;
+    eid.raw[13] = 1;
+    eid.raw[14] = 100;
+    std::string cna;
+    UrmaEid2CNA(eid, cna);
+    EXPECT_EQ(cna, "192.168.1.100");
+}
+
+// ============================ UrmaEntity helpers ============================
+
+TEST(UrmaTopoCommonTest, UrmaEntityGetId_EmptyReturnsNegOne)
+{
+    urmaEntity ue{};
+    EXPECT_EQ(UrmaEntityGetId(ue), -1);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEntityGetId_NonEmpty)
+{
+    urmaEntity ue{};
+    ue.eidNum = 1;
+    ue.eidList[0].eid.raw[6] = 0x33;
+    EXPECT_EQ(UrmaEntityGetId(ue), 0x33);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEntityGetDieId_EmptyReturnsNegOne)
+{
+    urmaEntity ue{};
+    EXPECT_EQ(UrmaEntityGetDieId(ue), -1);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEntityGetPortGroupIdx_NotFound)
+{
+    urmaEntity ue{};
+    ue.eidNum = 2;
+    ue.eidList[0].eid.raw[5] = 0x01;
+    ue.eidList[1].eid.raw[5] = 0x02;
+    EXPECT_EQ(UrmaEntityGetPortGroupIdx(ue), -1);
+}
+
+TEST(UrmaTopoCommonTest, UrmaEntityGetPortGroupIdx_Found)
+{
+    urmaEntity ue{};
+    ue.eidNum = 3;
+    ue.eidList[0].eid.raw[5] = 0x01;
+    ue.eidList[1].eid.raw[5] = 0x3F;
+    ue.eidList[2].eid.raw[5] = 0x02;
+    EXPECT_EQ(UrmaEntityGetPortGroupIdx(ue), 1);
+}
+
+// ============================ ToString ============================
+
+TEST(UrmaTopoCommonTest, RootInfoToString_Empty)
+{
+    RootInfo ri{};
+    std::string s = RootInfoToString(ri);
+    EXPECT_NE(s.find("rankCount:0"), std::string::npos);
+}
+
+TEST(UrmaTopoCommonTest, RootInfoToString_WithData)
+{
+    RootInfo ri{};
+    ri.version = "2.0";
+    ri.topoFilePath = "/test.json";
+    ri.rankCount = 1;
+    Rank r;
+    r.deviceId = 5;
+    r.localId = 5;
+    Level lvl;
+    lvl.netLayer = 0;
+    lvl.netInstanceId = "sp_1";
+    lvl.netType = "TOPO_FILE_DESC";
+    RankAddr addr;
+    addr.addrType = "EID";
+    addr.addr = "e0e1e2e3e4e5e6e7e8e9eaebecedeeef";
+    addr.ports = {"0/0", "0/1"};
+    addr.planeId = "plane_0";
+    lvl.rankAddrList.push_back(std::move(addr));
+    r.levelList.push_back(std::move(lvl));
+    ri.rankList.push_back(std::move(r));
+    std::string s = RootInfoToString(ri);
+    EXPECT_NE(s.find("ver:2.0"), std::string::npos);
+    EXPECT_NE(s.find("/test.json"), std::string::npos);
+    EXPECT_NE(s.find("dev:5"), std::string::npos);
+    EXPECT_NE(s.find("EID"), std::string::npos);
+}
+
+TEST(UrmaTopoCommonTest, TopoInfoToString_WithData)
+{
+    TopoInfo ti{};
+    ti.version = "1.0";
+    ti.hardwareType = "Atlas 850";
+    ti.peerCount = 2;
+    ti.peerList = {0, 1};
+    ti.edgeCount = 1;
+    Edge e;
+    e.netLayer = 0;
+    e.linkType = "HCCS";
+    e.localA = 0;
+    e.localB = 1;
+    e.localAPorts = {"0/0"};
+    e.localBPorts = {"1/0"};
+    e.protocols = {"HCCS-4P"};
+    ti.edgeList.push_back(std::move(e));
+    std::string s = TopoInfoToString(ti);
+    EXPECT_NE(s.find("Atlas 850"), std::string::npos);
+    EXPECT_NE(s.find("HCCS"), std::string::npos);
+}
+
+// ============================ JSON parser: SkipWs ============================
+
+TEST(UrmaTopoJsonParserTest, SkipWs_Spaces)
+{
+    std::string json = "   abc";
+    size_t pos = dev::SkipWs(json.data(), json.data() + json.size(), 0);
+    EXPECT_EQ(pos, 3U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipWs_NoWhitespace)
+{
+    std::string json = "abc";
+    size_t pos = dev::SkipWs(json.data(), json.data() + json.size(), 0);
+    EXPECT_EQ(pos, 0U);
+}
+
+// ============================ JSON parser: ExtractStrField ============================
+
+TEST(UrmaTopoJsonParserTest, ExtractStrField_Found)
+{
+    std::string json = R"({"name":"hello","val":42})";
+    std::string out;
+    EXPECT_EQ(dev::ExtractStrField(json, "\"name\"", out), BM_OK);
+    EXPECT_EQ(out, "hello");
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractStrField_NotFound)
+{
+    std::string json = R"({"other":"hello"})";
+    std::string out;
+    EXPECT_NE(dev::ExtractStrField(json, "\"name\"", out), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractStrField_WithEscapedQuote)
+{
+    std::string json = R"({"path":"a\"b"})";
+    std::string out;
+    EXPECT_EQ(dev::ExtractStrField(json, "\"path\"", out), BM_OK);
+    EXPECT_EQ(out, "a\\\"b");
+}
+
+// ============================ JSON parser: ExtractIntField ============================
+
+TEST(UrmaTopoJsonParserTest, ExtractIntField_Found)
+{
+    std::string json = R"({"count":42,"other":"x"})";
+    int32_t out = 0;
+    EXPECT_EQ(dev::ExtractIntField(json, "\"count\"", out), BM_OK);
+    EXPECT_EQ(out, 42);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractIntField_NotFound)
+{
+    std::string json = R"({"other":"x"})";
+    int32_t out = 0;
+    EXPECT_NE(dev::ExtractIntField(json, "\"count\"", out), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractIntField_NegativeRejected)
+{
+    std::string json = R"({"val":-5})";
+    int32_t out = 0;
+    EXPECT_NE(dev::ExtractIntField(json, "\"val\"", out), BM_OK);
+}
+
+// ============================ JSON parser: ParseJsonArrayHeader ============================
+
+TEST(UrmaTopoJsonParserTest, ParseJsonArrayHeader_Valid)
+{
+    std::string json = R"({"items":[1, 2, 3]})";
+    size_t pos = 0;
+    EXPECT_EQ(dev::ParseJsonArrayHeader(json, "\"items\"", pos), BM_OK);
+    EXPECT_LT(pos, json.size());
+}
+
+TEST(UrmaTopoJsonParserTest, ParseJsonArrayHeader_NotArray)
+{
+    std::string json = R"({"items":"not_array"})";
+    size_t pos = 0;
+    EXPECT_NE(dev::ParseJsonArrayHeader(json, "\"items\"", pos), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ParseJsonArrayHeader_KeyNotFound)
+{
+    std::string json = R"({"other":[1,2]})";
+    size_t pos = 0;
+    EXPECT_NE(dev::ParseJsonArrayHeader(json, "\"items\"", pos), BM_OK);
+}
+
+// ============================ JSON parser: ParseStrArray ============================
+
+TEST(UrmaTopoJsonParserTest, ParseStrArray_WithItems)
+{
+    std::string json = R"({"ports":["0/0","0/1","1/2"]})";
+    std::vector<std::string> out;
+    EXPECT_EQ(dev::ParseStrArray(json, "\"ports\"", out), BM_OK);
+    EXPECT_EQ(out.size(), 3U);
+    EXPECT_EQ(out[0], "0/0");
+    EXPECT_EQ(out[1], "0/1");
+    EXPECT_EQ(out[2], "1/2");
+}
+
+TEST(UrmaTopoJsonParserTest, ParseStrArray_Empty)
+{
+    std::string json = R"({"ports":[]})";
+    std::vector<std::string> out;
+    EXPECT_EQ(dev::ParseStrArray(json, "\"ports\"", out), BM_OK);
+    EXPECT_EQ(out.size(), 0U);
+}
+
+TEST(UrmaTopoJsonParserTest, ParseStrArray_KeyNotFound)
+{
+    std::string json = R"({"other":["a"]})";
+    std::vector<std::string> out;
+    EXPECT_EQ(dev::ParseStrArray(json, "\"ports\"", out), BM_OK);
+    EXPECT_EQ(out.size(), 0U);
+}
+
+// ============================ JSON parser: SkipValue ============================
+
+TEST(UrmaTopoJsonParserTest, SkipValue_String)
+{
+    std::string json = R"("hello world")";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, json.size());
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_Number)
+{
+    std::string json = "12345,";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 5U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_Object)
+{
+    std::string json = R"({"a":1},"x")";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 7U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_Array)
+{
+    std::string json = R"([1,2,3],"x")";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 7U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_LiteralTrue)
+{
+    std::string json = "true,";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 4U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_LiteralFalse)
+{
+    std::string json = "false,";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 5U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_LiteralNull)
+{
+    std::string json = "null,";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 4U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_Invalid)
+{
+    std::string json = "abc";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_NE(r.result, BM_OK);
+}
+
+// ============================ JSON parser: FindQuotedKeyInRange / ExtractIntInRange ============================
+
+TEST(UrmaTopoJsonParserTest, ExtractIntInRange_Found)
+{
+    std::string json = R"({"local_id":42,"other":"x"})";
+    int32_t out = 0;
+    EXPECT_EQ(dev::ExtractIntInRange(json.data(), 0, json.size(), "\"local_id\"", out), BM_OK);
+    EXPECT_EQ(out, 42);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractIntInRange_NotFound)
+{
+    std::string json = R"({"other":"x"})";
+    int32_t out = 0;
+    EXPECT_NE(dev::ExtractIntInRange(json.data(), 0, json.size(), "\"local_id\"", out), BM_OK);
+}
+
+// ============================ Manager: ParseRankListFull ============================
+
+class UrmaTopoManagerTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        UrmaTopoManager::GetInstance().Uninitialize();
+    }
+    void TearDown() override
+    {
+        UrmaTopoManager::GetInstance().Uninitialize();
+    }
+};
+
+TEST_F(UrmaTopoManagerTest, ParseRankListFull_FiltersByPhyDeviceId)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 3;
+    std::string json = R"({"rank_list":[{"device_id":1,"local_id":1,"level_list":[]},)"
+                       R"({"device_id":3,"local_id":3,"level_list":[]},)"
+                       R"({"device_id":5,"local_id":5,"level_list":[]}]})";
+    std::vector<Rank> ranks;
+    EXPECT_EQ(mgr.ParseRankListFull(json, ranks), BM_OK);
+    ASSERT_EQ(ranks.size(), 1U);
+    EXPECT_EQ(ranks[0].deviceId, 3);
+    EXPECT_EQ(ranks[0].localId, 3);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseRankListFull_NoMatch)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 99;
+    std::string json = R"({"rank_list":[{"device_id":1,"local_id":1,"level_list":[]}]})";
+    std::vector<Rank> ranks;
+    EXPECT_EQ(mgr.ParseRankListFull(json, ranks), BM_OK);
+    EXPECT_EQ(ranks.size(), 0U);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseRankListFull_InvalidJson)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 1;
+    std::string json = R"({"rank_list":"not_array"})";
+    std::vector<Rank> ranks;
+    EXPECT_NE(mgr.ParseRankListFull(json, ranks), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseRankListFull_KeyMissing)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 1;
+    std::string json = R"({"other":[]})";
+    std::vector<Rank> ranks;
+    EXPECT_NE(mgr.ParseRankListFull(json, ranks), BM_OK);
+}
+
+// ============================ Manager: ParseEdgeList ============================
+
+TEST_F(UrmaTopoManagerTest, ParseEdgeList_FiltersByLocalId)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    std::string json = R"({"edge_list":[)"
+                       R"({"local_a":0,"local_b":1,"local_a_ports":["0/0"],"local_b_ports":["1/0"]},)"
+                       R"({"local_a":2,"local_b":3,"local_a_ports":["0/1"],"local_b_ports":["1/1"]}]})";
+    std::vector<Edge> edges;
+    EXPECT_EQ(mgr.ParseEdgeList(json, edges), BM_OK);
+    ASSERT_EQ(edges.size(), 1U);
+    EXPECT_EQ(edges[0].localA, 0);
+    EXPECT_EQ(edges[0].localB, 1);
+    ASSERT_EQ(edges[0].localAPorts.size(), 1U);
+    EXPECT_EQ(edges[0].localAPorts[0], "0/0");
+}
+
+TEST_F(UrmaTopoManagerTest, ParseEdgeList_NoMatch)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 99;
+    std::string json = R"({"edge_list":[{"local_a":0,"local_b":1}]})";
+    std::vector<Edge> edges;
+    EXPECT_EQ(mgr.ParseEdgeList(json, edges), BM_OK);
+    EXPECT_EQ(edges.size(), 0U);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseEdgeList_KeyMissing)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    std::string json = R"({"other":[]})";
+    std::vector<Edge> edges;
+    EXPECT_EQ(mgr.ParseEdgeList(json, edges), BM_OK);
+    EXPECT_EQ(edges.size(), 0U);
+}
+
+// ============================ Manager: BuildPeer2PeerMap ============================
+
+TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_BasicMapping)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    mgr.phyDeviceId_ = 0;
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl;
+    lvl.netLayer = 1;
+    lvl.netType = "CLOS";
+    RankAddr addr;
+    addr.addrType = "EID";
+    addr.addr = "e0e1e2e3e4e5e6e7e8e9eaebecedeeef";
+    addr.ports = {"0/0", "0/1"};
+    lvl.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(lvl));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    Edge edge;
+    edge.localA = 0;
+    edge.localB = 1;
+    edge.localAPorts = {"0/0"};
+    edge.localBPorts = {"1/0"};
+    mgr.topoInfo_.edgeList.push_back(std::move(edge));
+    EXPECT_EQ(mgr.BuildPeer2PeerMap(), BM_OK);
+    EXPECT_EQ(mgr.peer2PeerMap_.size(), 1U);
+    auto it = mgr.peer2PeerMap_.find(1);
+    ASSERT_NE(it, mgr.peer2PeerMap_.end());
+    EXPECT_EQ(it->second[0], 0xe0);
+    EXPECT_EQ(it->second[1], 0xe1);
+    EXPECT_EQ(it->second[15], 0xef);
+}
+
+TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_EmptyRankList)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 0;
+    EXPECT_NE(mgr.BuildPeer2PeerMap(), BM_OK);
+    EXPECT_EQ(mgr.peer2PeerMap_.size(), 0U);
+}
+
+TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_NoMatchingPort)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    mgr.phyDeviceId_ = 0;
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl;
+    RankAddr addr;
+    addr.addrType = "EID";
+    addr.addr = "e0e1e2e3e4e5e6e7e8e9eaebecedeeef";
+    addr.ports = {"9/9"};
+    lvl.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(lvl));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    Edge edge;
+    edge.localA = 0;
+    edge.localB = 1;
+    edge.localAPorts = {"0/0"};
+    mgr.topoInfo_.edgeList.push_back(std::move(edge));
+    EXPECT_EQ(mgr.BuildPeer2PeerMap(), BM_OK);
+    EXPECT_EQ(mgr.peer2PeerMap_.size(), 0U);
+}
+
+// ============================ Manager: GetPeer2PeerEid / GetPeer2NetEid ============================
+
+TEST_F(UrmaTopoManagerTest, GetPeer2PeerEid_Found)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+    eid[0] = 0xAB;
+    mgr.peer2PeerMap_[5] = eid;
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_EQ(mgr.GetPeer2PeerEid(5, out), BM_OK);
+    EXPECT_EQ(out[0], 0xAB);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2PeerEid_NotFound)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_NE(mgr.GetPeer2PeerEid(999, out), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_Found)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl;
+    lvl.netType = NET_TYPE_CLOS;
+    RankAddr addr;
+    addr.addrType = ADDR_TYPE_EID;
+    addr.addr = "0123456789abcdef0123456789abcdef";
+    lvl.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(lvl));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_EQ(mgr.GetPeer2NetEid(out), BM_OK);
+    EXPECT_EQ(out[0], 0x01);
+    EXPECT_EQ(out[1], 0x23);
+    EXPECT_EQ(out[7], 0xef);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NoClosLayer)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl;
+    lvl.netType = "TOPO_FILE_DESC";
+    RankAddr addr;
+    addr.addrType = ADDR_TYPE_EID;
+    addr.addr = "0123456789abcdef0123456789abcdef";
+    lvl.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(lvl));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_EmptyRankList)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NotEidType)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl;
+    lvl.netType = NET_TYPE_CLOS;
+    RankAddr addr;
+    addr.addrType = "IPV4";
+    addr.addr = "192.168.1.1";
+    lvl.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(lvl));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
+}
+
+// ============================ Manager: ParsePeerList ============================
+
+TEST_F(UrmaTopoManagerTest, ParsePeerList_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"peer_list":[{"local_id":0},{"local_id":1},{"local_id":2}]})";
+    std::vector<int> peers;
+    EXPECT_EQ(mgr.ParsePeerList(json, peers), BM_OK);
+    EXPECT_EQ(peers.size(), 3U);
+    EXPECT_EQ(peers[0], 0);
+    EXPECT_EQ(peers[1], 1);
+    EXPECT_EQ(peers[2], 2);
+}
+
+TEST_F(UrmaTopoManagerTest, ParsePeerList_Empty)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"peer_list":[]})";
+    std::vector<int> peers;
+    EXPECT_EQ(mgr.ParsePeerList(json, peers), BM_OK);
+    EXPECT_EQ(peers.size(), 0U);
+}
+
+TEST_F(UrmaTopoManagerTest, ParsePeerList_KeyMissing)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"other":[]})";
+    std::vector<int> peers;
+    EXPECT_EQ(mgr.ParsePeerList(json, peers), BM_OK);
+    EXPECT_EQ(peers.size(), 0U);
+}
+
+// ============================ Manager: ParseRankAddrObj / ParseRankObj ============================
+
+TEST_F(UrmaTopoManagerTest, ParseRankAddrObj_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"addr_type":"EID","addr":"aabb","ports":["0/0"],"plane_id":"plane_0"})";
+    RankAddr addr;
+    mgr.ParseRankAddrObj(json, addr);
+    EXPECT_EQ(addr.addrType, "EID");
+    EXPECT_EQ(addr.addr, "aabb");
+    ASSERT_EQ(addr.ports.size(), 1U);
+    EXPECT_EQ(addr.ports[0], "0/0");
+    EXPECT_EQ(addr.planeId, "plane_0");
+}
+
+TEST_F(UrmaTopoManagerTest, ParseRankObj_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"device_id":7,"local_id":8,"level_list":[]})";
+    Rank rank;
+    mgr.ParseRankObj(json, rank);
+    EXPECT_EQ(rank.deviceId, 7);
+    EXPECT_EQ(rank.localId, 8);
+    EXPECT_EQ(rank.levelList.size(), 0U);
+}
+
+// ============================ Manager: ParseTopoInfo ============================
+
+TEST_F(UrmaTopoManagerTest, ParseTopoInfo_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"version":"1.0","hardwareType":"Atlas 850","peer_count":2,)"
+                       R"("peer_list":[{"local_id":0},{"local_id":1}],"edge_count":0,"edge_list":[]})";
+    TopoInfo info;
+    EXPECT_EQ(mgr.ParseTopoInfo(json, info), BM_OK);
+    EXPECT_EQ(info.version, "1.0");
+    EXPECT_EQ(info.hardwareType, "Atlas 850");
+    EXPECT_EQ(info.peerCount, 2);
+    EXPECT_EQ(info.peerList.size(), 2U);
+    EXPECT_EQ(info.edgeCount, 0);
+    EXPECT_EQ(info.edgeList.size(), 0U);
+}
+
+// ============================ Additional JSON parser edge cases ============================
+
+TEST(UrmaTopoJsonParserTest, SkipString_WithEscapes)
+{
+    std::string json = R"("a\nb\tc")";
+    auto r = dev::SkipString(json.data(), json.data() + json.size(), 0, 256);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, json.size());
+}
+
+TEST(UrmaTopoJsonParserTest, SkipString_UnicodeEscape)
+{
+    std::string json = R"("\u00e9")";
+    auto r = dev::SkipString(json.data(), json.data() + json.size(), 0, 256);
+    EXPECT_EQ(r.result, BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipString_Unterminated)
+{
+    std::string json = "\"unterminated";
+    auto r = dev::SkipString(json.data(), json.data() + json.size(), 0, 256);
+    EXPECT_NE(r.result, BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipString_NotStartingWithQuote)
+{
+    std::string json = "abc";
+    auto r = dev::SkipString(json.data(), json.data() + json.size(), 0, 256);
+    EXPECT_NE(r.result, BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipString_ControlChar)
+{
+    std::string json = "\"a\x01b\"";
+    auto r = dev::SkipString(json.data(), json.data() + json.size(), 0, 256);
+    EXPECT_NE(r.result, BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipNumber_Float)
+{
+    std::string json = "3.14,";
+    auto r = dev::SkipNumber(json.data(), json.data() + json.size(), 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 4U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipNumber_Exponent)
+{
+    std::string json = "1e10,";
+    auto r = dev::SkipNumber(json.data(), json.data() + json.size(), 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 4U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipNumber_NegativeExponent)
+{
+    std::string json = "-5e-2,";
+    auto r = dev::SkipNumber(json.data(), json.data() + json.size(), 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 5U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipNumber_Invalid)
+{
+    std::string json = "abc";
+    auto r = dev::SkipNumber(json.data(), json.data() + json.size(), 0);
+    EXPECT_NE(r.result, BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipNumber_LeadingZero)
+{
+    std::string json = "0123";
+    auto r = dev::SkipNumber(json.data(), json.data() + json.size(), 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 1U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_EmptyObject)
+{
+    std::string json = "{}";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 2U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_EmptyArray)
+{
+    std::string json = "[]";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 2U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_NestedObject)
+{
+    std::string json = R"({"a":{"b":1}},"x")";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 13U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_NestedArray)
+{
+    std::string json = R"([[1,2],[3,4]],"x")";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_EQ(r.result, BM_OK);
+    EXPECT_EQ(r.offset, 13U);
+}
+
+TEST(UrmaTopoJsonParserTest, SkipValue_InvalidChar)
+{
+    std::string json = "xyz";
+    auto r = dev::SkipValue(json.data(), json.data() + json.size(), 0, 0);
+    EXPECT_NE(r.result, BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractStrField_MalformedValue)
+{
+    std::string json = R"({"name":123})";
+    std::string out;
+    EXPECT_NE(dev::ExtractStrField(json, "\"name\"", out), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractStrField_NoColon)
+{
+    std::string json = R"({"name" "hello"})";
+    std::string out;
+    EXPECT_NE(dev::ExtractStrField(json, "\"name\"", out), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractIntField_Zero)
+{
+    std::string json = R"({"val":0})";
+    int32_t out = -1;
+    EXPECT_EQ(dev::ExtractIntField(json, "\"val\"", out), BM_OK);
+    EXPECT_EQ(out, 0);
+}
+
+TEST(UrmaTopoJsonParserTest, ParseJsonArrayHeader_EmptyArray)
+{
+    std::string json = R"({"items":[]})";
+    size_t pos = 0;
+    EXPECT_EQ(dev::ParseJsonArrayHeader(json, "\"items\"", pos), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, ParseStrArray_SingleItem)
+{
+    std::string json = R"({"ports":["0/0"]})";
+    std::vector<std::string> out;
+    EXPECT_EQ(dev::ParseStrArray(json, "\"ports\"", out), BM_OK);
+    EXPECT_EQ(out.size(), 1U);
+    EXPECT_EQ(out[0], "0/0");
+}
+
+TEST(UrmaTopoJsonParserTest, ParseStrArray_Malformed)
+{
+    std::string json = R"({"ports":[123]})";
+    std::vector<std::string> out;
+    EXPECT_NE(dev::ParseStrArray(json, "\"ports\"", out), BM_OK);
+}
+
+TEST(UrmaTopoJsonParserTest, FindQuotedKeyInRange_Found)
+{
+    std::string json = R"({"local_id":42})";
+    std::string key = "\"local_id\"";
+    size_t pos = dev::FindQuotedKeyInRange(json.data(), 0, json.size(), key.c_str(), key.size());
+    EXPECT_NE(pos, SIZE_MAX);
+}
+
+TEST(UrmaTopoJsonParserTest, FindQuotedKeyInRange_NotFound)
+{
+    std::string json = R"({"other":42})";
+    size_t pos = dev::FindQuotedKeyInRange(json.data(), 0, json.size(), "\"local_id\"", 11);
+    EXPECT_EQ(pos, SIZE_MAX);
+}
+
+TEST(UrmaTopoJsonParserTest, ExtractIntInRange_Zero)
+{
+    std::string json = R"({"local_id":0})";
+    int32_t out = -1;
+    EXPECT_EQ(dev::ExtractIntInRange(json.data(), 0, json.size(), "\"local_id\"", out), BM_OK);
+    EXPECT_EQ(out, 0);
+}
+
+// ============================ Additional manager tests ============================
+
+TEST_F(UrmaTopoManagerTest, ParseRankListFull_WithLevels)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 2;
+    std::string json =
+        R"({"rank_list":[{"device_id":2,"local_id":2,"level_list":[{"net_layer":0,"net_type":"TOPO_FILE_DESC","rank_addr_list":[]}]}]})";
+    std::vector<Rank> ranks;
+    EXPECT_EQ(mgr.ParseRankListFull(json, ranks), BM_OK);
+    ASSERT_EQ(ranks.size(), 1U);
+    EXPECT_EQ(ranks[0].deviceId, 2);
+    ASSERT_EQ(ranks[0].levelList.size(), 1U);
+    EXPECT_EQ(ranks[0].levelList[0].netLayer, 0);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseEdgeList_WithAllFields)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    std::string json = R"({"edge_list":[)"
+                       R"({"net_layer":0,"link_type":"HCCS","topo_type":"mesh",)"
+                       R"("topo_instance_id":1,"topo_attr":"attr","local_a":0,"local_b":3,)"
+                       R"("local_a_ports":["0/0","0/1"],"local_b_ports":["1/0","1/1"],)"
+                       R"("protocols":["HCCS-4P"],"position":"P2P"}]})";
+    std::vector<Edge> edges;
+    EXPECT_EQ(mgr.ParseEdgeList(json, edges), BM_OK);
+    ASSERT_EQ(edges.size(), 1U);
+    EXPECT_EQ(edges[0].linkType, "HCCS");
+    EXPECT_EQ(edges[0].topoType, "mesh");
+    EXPECT_EQ(edges[0].localB, 3);
+    EXPECT_EQ(edges[0].position, "P2P");
+    ASSERT_EQ(edges[0].protocols.size(), 1U);
+    EXPECT_EQ(edges[0].protocols[0], "HCCS-4P");
+}
+
+TEST_F(UrmaTopoManagerTest, ParseEdgeList_MalformedJson)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    std::string json = R"({"edge_list":[123]})";
+    std::vector<Edge> edges;
+    EXPECT_NE(mgr.ParseEdgeList(json, edges), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_MultiplePeers)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.localId_ = 0;
+    mgr.phyDeviceId_ = 0;
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl;
+    lvl.netType = "CLOS";
+    RankAddr addr;
+    addr.addrType = "EID";
+    addr.addr = "00112233445566778899aabbccddeeff";
+    addr.ports = {"0/0", "0/1", "0/2"};
+    lvl.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(lvl));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    for (int i = 1; i <= 3; ++i) {
+        Edge edge;
+        edge.localA = 0;
+        edge.localB = i;
+        edge.localAPorts = {"0/" + std::to_string(i - 1)};
+        mgr.topoInfo_.edgeList.push_back(std::move(edge));
+    }
+    EXPECT_EQ(mgr.BuildPeer2PeerMap(), BM_OK);
+    EXPECT_EQ(mgr.peer2PeerMap_.size(), 3U);
+    EXPECT_NE(mgr.peer2PeerMap_.find(1), mgr.peer2PeerMap_.end());
+    EXPECT_NE(mgr.peer2PeerMap_.find(2), mgr.peer2PeerMap_.end());
+    EXPECT_NE(mgr.peer2PeerMap_.find(3), mgr.peer2PeerMap_.end());
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_MultipleLevels)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    Level lvl0;
+    lvl0.netType = "TOPO_FILE_DESC";
+    lvl0.rankAddrList.push_back({"EID", "deadbeef", {"0/0"}, "plane_0"});
+    rank.levelList.push_back(std::move(lvl0));
+    Level lvl1;
+    lvl1.netType = NET_TYPE_CLOS;
+    lvl1.rankAddrList.push_back({"EID", "0123456789abcdef0123456789abcdef", {"1/0"}, "plane_clos_0"});
+    rank.levelList.push_back(std::move(lvl1));
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_EQ(mgr.GetPeer2NetEid(out), BM_OK);
+    EXPECT_EQ(out[0], 0x01);
+    EXPECT_EQ(out[7], 0xef);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_EmptyLevelList)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    Rank rank;
+    rank.deviceId = 0;
+    rank.localId = 0;
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, Uninitialize_ClearsAllState)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.phyDeviceId_ = 5;
+    mgr.localId_ = 3;
+    mgr.peer2PeerMap_[1] = {};
+    Rank r;
+    r.deviceId = 1;
+    mgr.rootInfo_.rankList.push_back(std::move(r));
+    Edge e;
+    e.localA = 0;
+    mgr.topoInfo_.edgeList.push_back(std::move(e));
+    mgr.Uninitialize();
+    EXPECT_EQ(mgr.phyDeviceId_, -1);
+    EXPECT_EQ(mgr.localId_, -1);
+    EXPECT_EQ(mgr.peer2PeerMap_.size(), 0U);
+    EXPECT_EQ(mgr.rootInfo_.rankList.size(), 0U);
+    EXPECT_EQ(mgr.topoInfo_.edgeList.size(), 0U);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseRankAddrList_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"rank_addr_list":[{"addr_type":"EID","addr":"aabb","ports":["0/0"],"plane_id":"p0"},)"
+                       R"({"addr_type":"IPV4","addr":"1.2.3.4","ports":["d2h"],"plane_id":"p1"}]})";
+    std::vector<RankAddr> addrs;
+    EXPECT_EQ(mgr.ParseRankAddrList(json, addrs), BM_OK);
+    EXPECT_EQ(addrs.size(), 2U);
+    EXPECT_EQ(addrs[0].addrType, "EID");
+    EXPECT_EQ(addrs[1].addrType, "IPV4");
+}
+
+TEST_F(UrmaTopoManagerTest, ParseRankAddrList_KeyMissing)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"other":[]})";
+    std::vector<RankAddr> addrs;
+    EXPECT_EQ(mgr.ParseRankAddrList(json, addrs), BM_OK);
+    EXPECT_EQ(addrs.size(), 0U);
+}
+
+TEST_F(UrmaTopoManagerTest, ParseLevelObj_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"net_layer":1,"net_instance_id":"sp_1","net_type":"CLOS",)"
+                       R"("net_attr":"attr","rank_addr_list":[]})";
+    Level level;
+    mgr.ParseLevelObj(json, level);
+    EXPECT_EQ(level.netLayer, 1);
+    EXPECT_EQ(level.netInstanceId, "sp_1");
+    EXPECT_EQ(level.netType, "CLOS");
+    EXPECT_EQ(level.netAttr, "attr");
+}
+
+TEST_F(UrmaTopoManagerTest, ParseLevelList_Basic)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    std::string json = R"({"level_list":[{"net_layer":0,"net_type":"TOPO_FILE_DESC","rank_addr_list":[]},)";
+    json += R"({"net_layer":3,"net_type":"CLOS","rank_addr_list":[]}]})";
+    std::vector<Level> levels;
+    EXPECT_EQ(mgr.ParseLevelList(json, levels), BM_OK);
+    EXPECT_EQ(levels.size(), 2U);
+    EXPECT_EQ(levels[0].netLayer, 0);
+    EXPECT_EQ(levels[1].netLayer, 3);
+}
+
+// ============================ HAL mock tests ============================
+
+int32_t MockRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
+{
+    (void)devId;
+    (void)moduleType;
+    if (value == nullptr) {
+        return -1;
+    }
+    switch (infoType) {
+        case 29:
+            *value = 1;
+            break;
+        case 27:
+            *value = 2;
+            break;
+        case 48:
+            *value = 3;
+            break;
+        case 49:
+            *value = 0;
+            break;
+        default:
+            *value = 0;
+            break;
+    }
+    return 0;
+}
+
+int32_t MockRtGetDeviceInfoFail(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
+{
+    (void)devId;
+    (void)moduleType;
+    (void)infoType;
+    (void)value;
+    return -1;
+}
+
+int MockDcmiGetUrmaDeviceCnt(int npuId, unsigned int *devCnt)
+{
+    (void)npuId;
+    if (devCnt != nullptr) {
+        *devCnt = 2;
+    }
+    return 0;
+}
+
+int MockDcmiGetUrmaDeviceCntZero(int npuId, unsigned int *devCnt)
+{
+    (void)npuId;
+    if (devCnt != nullptr) {
+        *devCnt = 0;
+    }
+    return 0;
+}
+
+int MockDcmiGetUrmaDeviceCntFail(int npuId, unsigned int *devCnt)
+{
+    (void)npuId;
+    (void)devCnt;
+    return -1;
+}
+
+int g_mockEidCnt = 1;
+
+int MockDcmiGetEidList(int npuId, int urmaDevIndex, dcmi_urma_eid_info *eidList, int *eidCnt)
+{
+    (void)npuId;
+    (void)urmaDevIndex;
+    if (eidList != nullptr && eidCnt != nullptr && *eidCnt >= 1) {
+        dcmi_urma_eid eid;
+        eid.raw[0] = 0xAA;
+        eid.raw[5] = 0x0A;
+        eid.raw[6] = 0x33;
+        eid.raw[15] = 0xBB;
+        eidList[0].eid = eid;
+        eidList[0].eid_index = 0;
+        *eidCnt = g_mockEidCnt;
+    }
+    return 0;
+}
+
+int MockDcmiGetEidListFail(int npuId, int urmaDevIndex, dcmi_urma_eid_info *eidList, int *eidCnt)
+{
+    (void)npuId;
+    (void)urmaDevIndex;
+    (void)eidList;
+    (void)eidCnt;
+    return -1;
+}
+
+void MockHalGvaGetDriverInstallPath(std::string &driverInstallPath)
+{
+    driverInstallPath = "/usr/local/Ascend";
+}
+
+class UrmaTopoCommonMockTest : public testing::Test {
+protected:
+    void SetUp() override
+    {
+        GlobalMockObject::reset();
+    }
+    void TearDown() override
+    {
+        GlobalMockObject::verify();
+    }
+};
+
+TEST_F(UrmaTopoCommonMockTest, GetSpodInfo_Success)
+{
+    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockRtGetDeviceInfo));
+    dcmi_spod_info spod{};
+    EXPECT_EQ(GetSpodInfo(0, spod), BM_OK);
+    EXPECT_EQ(spod.super_pod_id, 1U);
+    EXPECT_EQ(spod.server_index, 2U);
+    EXPECT_EQ(spod.chassis_id, 3U);
+    EXPECT_EQ(spod.super_pod_type, 0U);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetSpodInfo_FailSpodId)
+{
+    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockRtGetDeviceInfoFail));
+    dcmi_spod_info spod{};
+    EXPECT_NE(GetSpodInfo(0, spod), BM_OK);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_Server16FM)
+{
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    std::string path;
+    EXPECT_EQ(UrmaTopoProduct::GetTopoFilePath(MAIN_BOARD_ID_SERVER_8PMESH_UBOE, 3, path), BM_OK);
+    EXPECT_NE(path.find("atlas_850_2"), std::string::npos);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_Pod)
+{
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    std::string path;
+    EXPECT_EQ(UrmaTopoProduct::GetTopoFilePath(MAIN_BOARD_ID_POD, 99, path), BM_OK);
+    EXPECT_NE(path.find("atlas_950_1"), std::string::npos);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_PodFlex)
+{
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    std::string path;
+    EXPECT_EQ(UrmaTopoProduct::GetTopoFilePath(MAIN_BOARD_ID_POD_FLEX_RTP, 99, path), BM_OK);
+    EXPECT_NE(path.find("atlas_950_2"), std::string::npos);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_UnknownBoard)
+{
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    std::string path;
+    EXPECT_NE(UrmaTopoProduct::GetTopoFilePath(0xFFFF, 99, path), BM_OK);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_Success)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
+    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockDcmiGetEidList));
+    g_mockEidCnt = 1;
+    urmaEntityList ueList{};
+    EXPECT_EQ(GetUrmaEntityList(0, ueList), BM_OK);
+    EXPECT_EQ(ueList.ueNum, 2U);
+    EXPECT_EQ(ueList.ueList[0].eidNum, 1U);
+    EXPECT_EQ(ueList.ueList[0].eidList[0].eid.raw[0], 0xAA);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_DevCntFail)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCntFail));
+    urmaEntityList ueList{};
+    EXPECT_NE(GetUrmaEntityList(0, ueList), BM_OK);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_ZeroDev)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCntZero));
+    urmaEntityList ueList{};
+    EXPECT_EQ(GetUrmaEntityList(0, ueList), BM_OK);
+    EXPECT_EQ(ueList.ueNum, 0U);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_EidListFail)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
+    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockDcmiGetEidListFail));
+    urmaEntityList ueList{};
+    EXPECT_EQ(GetUrmaEntityList(0, ueList), BM_OK);
+    EXPECT_EQ(ueList.ueNum, 2U);
+    EXPECT_EQ(ueList.ueList[0].eidNum, 0U);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetEidList_Success)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
+    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockDcmiGetEidList));
+    g_mockEidCnt = 1;
+    std::vector<dcmi_urma_eid_info> eidList;
+    EXPECT_EQ(GetEidList(0, eidList), BM_OK);
+    EXPECT_EQ(eidList.size(), 2U);
+    EXPECT_EQ(eidList[0].eid.raw[0], 0xAA);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetEidList_DevCntFail)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCntFail));
+    std::vector<dcmi_urma_eid_info> eidList;
+    EXPECT_NE(GetEidList(0, eidList), BM_OK);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetEidList_EidListFail)
+{
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
+    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockDcmiGetEidListFail));
+    std::vector<dcmi_urma_eid_info> eidList;
+    EXPECT_EQ(GetEidList(0, eidList), BM_OK);
+    EXPECT_EQ(eidList.size(), 0U);
+}
+
+TEST_F(UrmaTopoCommonMockTest, UBGetMaxEntityId_Basic)
+{
+    urmaEntityList ueList{};
+    ueList.ueNum = 2;
+    ueList.ueList[0].eidNum = 1;
+    ueList.ueList[0].eidList[0].eid.raw[5] = 0xC0;
+    ueList.ueList[0].eidList[0].eid.raw[6] = 0x05;
+    ueList.ueList[1].eidNum = 1;
+    ueList.ueList[1].eidList[0].eid.raw[5] = 0xC0;
+    ueList.ueList[1].eidList[0].eid.raw[6] = 0x0A;
+    EXPECT_EQ(UBGetMaxEntityId(ueList, 3), 0x0A);
+}
+
+TEST_F(UrmaTopoCommonMockTest, UBGetMaxEntityId_NoMatch)
+{
+    urmaEntityList ueList{};
+    ueList.ueNum = 1;
+    ueList.ueList[0].eidNum = 1;
+    ueList.ueList[0].eidList[0].eid.raw[5] = 0x00;
+    EXPECT_EQ(UBGetMaxEntityId(ueList, 3), -1);
+}
+
+TEST_F(UrmaTopoCommonMockTest, UBGetMaxEntityId_EmptyList)
+{
+    urmaEntityList ueList{};
+    EXPECT_EQ(UBGetMaxEntityId(ueList, 0), -1);
+}

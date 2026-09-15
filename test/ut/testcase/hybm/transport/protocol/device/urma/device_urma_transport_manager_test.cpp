@@ -728,11 +728,8 @@ std::string PrepareKernelJson()
     return base;
 }
 
-ock::mf::Result MockGetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId,
-                                     std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+ock::mf::Result MockGetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
 {
-    EXPECT_EQ(phyDeviceId, 2U);
-    EXPECT_EQ(rankId, 0U);
     for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
         eidData[i] = static_cast<uint8_t>(0xE0U + i);
     }
@@ -1032,7 +1029,7 @@ struct DeviceTestFixture {
         DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
         DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
         MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-        MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+        MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
         MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     }
 
@@ -1184,7 +1181,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseClean
     PrepareKernelJson();
     InstallOpenDeviceMocks();
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -1225,7 +1222,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRollsBackWhenFlagMemcpyFails)
     InstallOpenDeviceMocks();
     DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFail;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -1290,7 +1287,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
     PrepareKernelJson();
     InstallOpenDeviceMocks();
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -1320,7 +1317,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoBatchAndSynchronizeUseDeviceKernel)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     g_kernelLaunchCallCount = 0;
@@ -1899,7 +1896,7 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -1959,7 +1956,7 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -2025,7 +2022,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureAclrtFreeSuccessRemovesRecord)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     // Make kernel launch fail
     DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
@@ -2082,7 +2079,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureAclrtFreeFailsRetainsDeferredR
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     // Make kernel launch fail, and AclrtFree also fail
     DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
@@ -2148,7 +2145,7 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureRetainsInFligh
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     g_syncCallCount = 0;
     DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamFirstOkThenFail;
@@ -2213,7 +2210,7 @@ TEST(DeviceUrmaTransportManagerTest, CloseRejectsInFlightAndRetriesDeferredFree)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -3112,7 +3109,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaEid).stubs().will(invoke(MockGetDeviceUrmaEid));
+    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;

@@ -26,6 +26,7 @@ include_directories(
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/rdma
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/sdma
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/urma
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/urma/topo
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/host
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/wrapper/hccp
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/wrapper/hcomm
@@ -39,7 +40,7 @@ include_directories(
 set(HYBM_PUBLIC_INCLUDE_DIR "${PROJECT_HYBM_SRC_BASE}/include")
 
 ## add files into src variables
-file(GLOB_RECURSE HYBMM_SRC_FILES
+file(GLOB_RECURSE HYBMM_SRC_FILES CONFIGURE_DEPENDS
         ${PROJECT_HYBM_SRC_BASE}/csrc/*.cpp
         ${PROJECT_HYBM_SRC_BASE}/csrc/*.h
 )

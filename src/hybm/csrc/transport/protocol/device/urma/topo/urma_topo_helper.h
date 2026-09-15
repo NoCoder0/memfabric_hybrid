@@ -25,7 +25,9 @@ namespace mf {
 namespace transport {
 namespace device {
 
-Result GetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
+Result GetPeer2PeerEid(int32_t dstPhyId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
+
+Result GetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
 
 Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
                            std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);

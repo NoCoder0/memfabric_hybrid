@@ -40,6 +40,8 @@
 #include "device_kernel_helper.h"
 #include "device_urma_transport_manager.h"
 
+#include "urma_topo_manager.h"
+
 namespace ock {
 namespace mf {
 namespace transport {
@@ -333,6 +335,7 @@ Result DeviceUrmaTransportManager::InitLocalDeviceInfoLocked(const TransportOpti
     BM_LOG_INFO("local device info: userId=" << userId << ", phyId=" << phyId << " sdid=" << sdid_
                                              << ", server_id=" << serverId_ << ", superpod id=" << superPodId_);
 
+    UrmaTopoManager::GetInstance().Initialize(userId, options_.rankId);
     return BM_OK;
 }
 
@@ -384,7 +387,7 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
 
     if (protocol == UrmaProtocol::UBC_CTP) {
         std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
-        const auto ret = GetDeviceUrmaEid(phyDeviceId_, rankId_, eidData);
+        const auto ret = GetPeer2NetEid(eidData);
         if (ret != BM_OK) {
             return ret;
         }

@@ -85,6 +85,9 @@ halMemGetAllocationGranularityFunc DlHalApi::pHalMemGetAllocationGranularity = n
 halMemAllocFunc DlHalApi::pHalMemAlloc = nullptr;
 halMemFreeFunc DlHalApi::pHalMemFree = nullptr;
 drvMemGetAttributeFunc DlHalApi::pDrvMemGetAttribute = nullptr;
+dcmiGetUrmaDeviceCntFunc DlHalApi::pDcmiGetUrmaDeviceCnt = nullptr;
+dcmiGetEidListByUrmaDevIndexFunc DlHalApi::pDcmiGetEidListByUrmaDevIndex = nullptr;
+dcmiGetDevicePcieInfoFunc DlHalApi::pDcmiGetDevicePcieInfo = nullptr;
 
 Result DlHalApi::LoadDcmiLibrary()
 {
@@ -97,6 +100,10 @@ Result DlHalApi::LoadDcmiLibrary()
     DL_LOAD_SYM(pDcmiInit, dcmiInitFunc, dcmiHandle, "dcmiv2_init");
     DL_LOAD_SYM(pDcmiGetAffinityCpuInfo, dcmiGetAffinityCpuInfoFunc, dcmiHandle,
                 "dcmiv2_get_affinity_cpu_info_by_dev_id");
+    DL_LOAD_SYM_OPTIONAL(pDcmiGetUrmaDeviceCnt, dcmiGetUrmaDeviceCntFunc, dcmiHandle, "dcmiv2_get_urma_device_cnt");
+    DL_LOAD_SYM_OPTIONAL(pDcmiGetEidListByUrmaDevIndex, dcmiGetEidListByUrmaDevIndexFunc, dcmiHandle,
+                         "dcmiv2_get_eid_list_by_urma_dev_index");
+    DL_LOAD_SYM_OPTIONAL(pDcmiGetDevicePcieInfo, dcmiGetDevicePcieInfoFunc, dcmiHandle, "dcmiv2_get_device_pcie_info");
     const int32_t ret = pDcmiInit();
     if (ret != 0) {
         BM_LOG_ERROR("Failed to initialize library [" << gDcmiLibName << "], ret: " << ret);
@@ -110,13 +117,6 @@ Result DlHalApi::LoadDcmiLibrary()
 Result DlHalApi::DcmiGetAffinityCpuInfo(int32_t deviceId, std::string &cpuList)
 {
     std::lock_guard<std::mutex> guard(gMutex);
-    const Result loadRet = LoadDcmiLibrary();
-    if (loadRet != BM_OK) {
-        pDcmiInit = nullptr;
-        pDcmiGetAffinityCpuInfo = nullptr;
-        return loadRet;
-    }
-
     constexpr size_t DCMI_CPU_LIST_BUFFER_SIZE = 4096U;
     std::array<char, DCMI_CPU_LIST_BUFFER_SIZE> buffer{};
     int32_t length = static_cast<int32_t>(buffer.size());
@@ -237,6 +237,13 @@ Result DlHalApi::LoadLibrary(uint32_t gvaVersion)
         return ret;
     }
 
+    ret = LoadDcmiLibrary();
+    if (ret != 0) {
+        dlclose(halHandle);
+        halHandle = nullptr;
+        return ret;
+    }
+
     DL_LOAD_SYM(pHalSqTaskSend, halSqTaskSendFunc, halHandle, "halSqTaskSend");
     DL_LOAD_SYM(pHalCqReportRecv, halCqReportRecvFunc, halHandle, "halCqReportRecv");
     DL_LOAD_SYM(pHalSqCqAllocate, halSqCqAllocateFunc, halHandle, "halSqCqAllocate");
@@ -309,6 +316,11 @@ void DlHalApi::CleanupHalApi()
     pHalMemAlloc = nullptr;
     pHalMemFree = nullptr;
     pDrvMemGetAttribute = nullptr;
+    pDcmiInit = nullptr;
+    pDcmiGetAffinityCpuInfo = nullptr;
+    pDcmiGetUrmaDeviceCnt = nullptr;
+    pDcmiGetEidListByUrmaDevIndex = nullptr;
+    pDcmiGetDevicePcieInfo = nullptr;
 }
 
 void DlHalApi::CleanupLibrary()

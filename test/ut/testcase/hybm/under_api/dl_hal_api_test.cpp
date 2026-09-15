@@ -150,12 +150,14 @@ TEST_F(DlHalApiDcmiTest, LoadDcmiLibraryFailsWhenInitFails)
 
 TEST_F(DlHalApiDcmiTest, DcmiGetAffinityCpuInfoHandlesSuccessAndFailure)
 {
+    ASSERT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_OK);
     std::string cpuList;
     EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), BM_OK);
     EXPECT_EQ(cpuList, TEST_CPU_LIST);
     EXPECT_EQ(gDcmiDeviceId, TEST_DEVICE_ID);
     EXPECT_EQ(gDcmiCloseCount, 1U);
 
+    ASSERT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_OK);
     gDcmiMockMode = DcmiMockMode::AFFINITY_FAILED;
     EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), DCMI_TEST_ERROR);
     EXPECT_EQ(gDcmiCloseCount, 2U);

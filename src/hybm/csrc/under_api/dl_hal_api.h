@@ -75,6 +75,9 @@ using halMemFreeFunc = int (*)(void *);
 using drvMemGetAttributeFunc = DVresult (*)(DVdeviceptr, struct DVattribute *);
 using dcmiInitFunc = int32_t (*)();
 using dcmiGetAffinityCpuInfoFunc = int32_t (*)(int32_t, char *, int32_t *);
+using dcmiGetUrmaDeviceCntFunc = int (*)(int npuId, unsigned int *devCnt);
+using dcmiGetEidListByUrmaDevIndexFunc = int (*)(int npuId, int urmaDevIndex, dcmi_urma_eid_info *eidList, int *eidCnt);
+using dcmiGetDevicePcieInfoFunc = int (*)(int npuId, dcmi_pcie_info_all *pcieInfo);
 
 class DlHalApi {
 public:
@@ -491,6 +494,31 @@ public:
         return pDrvMemGetAttribute(vptr, attr);
     }
 
+    static inline int DcmiGetUrmaDeviceCnt(int npuId, unsigned int *devCnt)
+    {
+        if (pDcmiGetUrmaDeviceCnt == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pDcmiGetUrmaDeviceCnt(npuId, devCnt);
+    }
+
+    static inline int DcmiGetEidListByUrmaDevIndex(int npuId, int urmaDevIndex, dcmi_urma_eid_info *eidList,
+                                                   int *eidCnt)
+    {
+        if (pDcmiGetEidListByUrmaDevIndex == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pDcmiGetEidListByUrmaDevIndex(npuId, urmaDevIndex, eidList, eidCnt);
+    }
+
+    static inline int DcmiGetDevicePcieInfo(int npuId, dcmi_pcie_info_all *pcieInfo)
+    {
+        if (pDcmiGetDevicePcieInfo == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pDcmiGetDevicePcieInfo(npuId, pcieInfo);
+    }
+
 private:
     static Result LoadHybmVmmLibrary(uint32_t gvaVersion);
     static Result LoadHybmV1V2Library(uint32_t gvaVersion);
@@ -559,6 +587,9 @@ private:
     static halMemAllocFunc pHalMemAlloc;
     static halMemFreeFunc pHalMemFree;
     static drvMemGetAttributeFunc pDrvMemGetAttribute;
+    static dcmiGetUrmaDeviceCntFunc pDcmiGetUrmaDeviceCnt;
+    static dcmiGetEidListByUrmaDevIndexFunc pDcmiGetEidListByUrmaDevIndex;
+    static dcmiGetDevicePcieInfoFunc pDcmiGetDevicePcieInfo;
 };
 
 } // namespace mf

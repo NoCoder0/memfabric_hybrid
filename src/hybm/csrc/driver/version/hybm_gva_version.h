@@ -22,6 +22,7 @@ namespace mf {
 
 HybmGvaVersion HybmGetGvaVersion();
 int32_t HalGvaPrecheck();
+void HalGvaGetDriverInstallPath(std::string &driverInstallPath);
 
 } // namespace mf
 } // namespace ock

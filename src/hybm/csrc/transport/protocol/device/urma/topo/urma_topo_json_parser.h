@@ -16,6 +16,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <vector>
 
 #include "dl_hcomm_api.h"
 #include "hybm_types.h"
@@ -63,14 +65,6 @@ struct ParseResult {
     ParserReason reason;
 };
 
-// ---------- CandidateInfo ----------
-
-struct CandidateInfo {
-    bool isCandidate = false;
-    const char *eidBegin = nullptr;
-    size_t eidLen = 0;
-};
-
 // ---------- Constants ----------
 
 constexpr size_t MAX_INPUT_BYTES = 1 * 1024 * 1024; // 1 MiB
@@ -85,15 +79,23 @@ ParseResult SkipNumber(const char *begin, const char *end, size_t offset);
 
 ParseResult SkipValue(const char *begin, const char *end, size_t offset, int depth);
 
-ParseResult ParseDeviceId(const char *begin, const char *end, size_t offset, uint32_t &value);
+// ---------- Generic JSON helpers ----------
 
-ParseResult ParseSingleRankAddr(const char *begin, const char *end, size_t offset, CandidateInfo &out);
+size_t SkipWs(const char *begin, const char *end, size_t offset);
 
-Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId, uint32_t rankId,
-                        std::array<uint8_t, COMM_ADDR_EID_LEN> &eid);
+Result ReadFileToString(const std::string &path, std::string &buf);
 
-Result ParseRootInfoEid(const char *begin, const char *end, uint32_t phyDeviceId, uint32_t rankId,
-                        std::array<uint8_t, COMM_ADDR_EID_LEN> &eid, size_t expectedPortCount);
+Result ExtractStrField(const std::string &json, const char *quotedKey, std::string &out);
+
+Result ExtractIntField(const std::string &json, const char *quotedKey, int32_t &out);
+
+size_t FindQuotedKeyInRange(const char *buf, size_t start, size_t stop, const char *quotedKey, size_t keyLen);
+
+Result ExtractIntInRange(const char *buf, size_t start, size_t stop, const char *quotedKey, int32_t &out);
+
+Result ParseJsonArrayHeader(const std::string &json, const char *quotedKey, size_t &pos);
+
+Result ParseStrArray(const std::string &json, const char *quotedKey, std::vector<std::string> &out);
 
 } // namespace device
 } // namespace transport

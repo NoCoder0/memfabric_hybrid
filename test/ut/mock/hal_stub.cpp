@@ -14,7 +14,6 @@
 #include "dl_hal_api.h"
 
 constexpr int32_t RETURN_OK = 0;
-constexpr int32_t RETURN_ERROR = -1;
 constexpr uint64_t baseAddr = 0x10000000000;
 constexpr uint32_t HYBM_SQCQ_DEPTH = 2048U;
 

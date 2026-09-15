@@ -20,9 +20,20 @@ set(HAL_STUB_FILE
 
 add_library(hal_object OBJECT ${HAL_STUB_FILE})
 target_compile_options(hal_object PRIVATE -fPIC)
-
 add_library(hal_shared SHARED $<TARGET_OBJECTS:hal_object>)
 set_target_properties(hal_shared PROPERTIES OUTPUT_NAME "ascend_hal")
+
+
+set(DCMI_STUB_FILE
+        dcmi_stub.cpp
+)
+
+add_library(dcmi_object OBJECT ${DCMI_STUB_FILE})
+target_compile_options(dcmi_object PRIVATE -fPIC)
+
+add_library(dcmi_shared SHARED $<TARGET_OBJECTS:dcmi_object>)
+set_target_properties(dcmi_shared PROPERTIES OUTPUT_NAME "dcmi")
+
 
 set(TSD_STUB_FILE
         tsd_stub.cpp
@@ -62,6 +73,12 @@ install(
 
 install(
         TARGETS hal_shared
+        DESTINATION ${PROJECT_HYBM_OUTPUT}/lib64/cann/driver/lib64
+        PERMISSIONS OWNER_READ GROUP_READ
+)
+
+install(
+        TARGETS dcmi_shared
         DESTINATION ${PROJECT_HYBM_OUTPUT}/lib64/cann/driver/lib64
         PERMISSIONS OWNER_READ GROUP_READ
 )

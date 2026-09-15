@@ -22,8 +22,9 @@
 
 #include "hybm_logger.h"
 #include "dl_hcomm_api.h"
-#include "urma_topo_rootinfo_reader.h"
 #include "urma_topo_helper.h"
+
+#include "urma_topo_manager.h"
 
 namespace ock {
 namespace mf {
@@ -224,36 +225,35 @@ Result GetDeviceUrmaIpAddrFromSources(const std::string &toolPath, const std::st
         if (ret == BM_OK) {
             return BM_OK;
         }
-        BM_LOG_WARN("device_urma hccn_tool returned invalid IP: '" << ipStr << "', phyDeviceId=" << phyDeviceId
+        BM_LOG_INFO("device_urma hccn_tool returned invalid IP: '" << ipStr << "', phyDeviceId=" << phyDeviceId
                                                                    << ", rankId=" << rankId
                                                                    << ", falling back to config");
     } else {
-        BM_LOG_WARN("device_urma hccn_tool failed for phyDeviceId=" << phyDeviceId << ", rankId=" << rankId
+        BM_LOG_INFO("device_urma hccn_tool failed for phyDeviceId=" << phyDeviceId << ", rankId=" << rankId
                                                                     << ", falling back to /etc/hccn.conf");
     }
     ret = TryGetIpFromConfig(configPath, phyDeviceId, rankId, ipStr);
     if (ret == BM_OK) {
         ret = ParseIpStr(phyDeviceId, ipStr, configPath, addrType, addrData);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma invalid IP value in " << configPath << " for phyDeviceId=" << phyDeviceId
-                                                            << ", rankId=" << rankId << ", value='" << ipStr << "'");
+            BM_LOG_INFO("device_urma invalid IP value in " << configPath << " for phyDeviceId=" << phyDeviceId
+                                                           << ", rankId=" << rankId << ", value='" << ipStr << "'");
         }
         return ret;
     }
-    BM_LOG_ERROR("device_urma both hccn_tool and /etc/hccn.conf failed, phyDeviceId=" << phyDeviceId
-                                                                                      << ", rankId=" << rankId);
+    BM_LOG_INFO("device_urma both hccn_tool and /etc/hccn.conf failed, phyDeviceId=" << phyDeviceId
+                                                                                     << ", rankId=" << rankId);
     return BM_ERROR;
 }
 
-Result GetDeviceUrmaEid(uint32_t phyDeviceId, uint32_t rankId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+Result GetPeer2PeerEid(int32_t dstPhyId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
 {
-    RootInfo ri;
-    Result ret = UrmaTopoRootInfoReader::ParseRootInfo(phyDeviceId, rankId, ri);
-    if (ret != BM_OK) {
-        return ret;
-    }
-    eidData = ri.eid;
-    return BM_OK;
+    return UrmaTopoManager::GetInstance().GetPeer2PeerEid(dstPhyId, eidData);
+}
+
+Result GetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+{
+    return UrmaTopoManager::GetInstance().GetPeer2NetEid(eidData);
 }
 
 Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,

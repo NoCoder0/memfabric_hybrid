@@ -383,6 +383,43 @@ struct ShareHandleAttr {
 #define MEM_RSV_TYPE_REMOTE_MAP_BIT   9 /* this va only map remote addr, not create double page table */
 #define MEM_RSV_TYPE_REMOTE_MAP       (0x1u << MEM_RSV_TYPE_REMOTE_MAP_BIT)
 
+#define DCMI_URMA_EID_SIZE (16)
+
+union dcmi_urma_eid {
+    unsigned char raw[DCMI_URMA_EID_SIZE];
+    struct {
+        unsigned long subnet_prefix;
+        unsigned long interface_id;
+    } in6;
+};
+
+struct dcmi_urma_eid_info {
+    dcmi_urma_eid eid;
+    unsigned int eid_index;
+};
+
+struct dcmi_spod_info {
+    unsigned int sdid;
+    unsigned int super_pod_size;
+    unsigned int super_pod_id;
+    unsigned int server_index;
+    unsigned int chassis_id;
+    unsigned int super_pod_type;
+    unsigned int reserve[6];
+};
+
+struct dcmi_pcie_info_all {
+    unsigned int venderid;     // 厂商ID
+    unsigned int subvenderid;  // 厂商子ID
+    unsigned int deviceid;     // 设备ID
+    unsigned int subdeviceid;  // 设备子ID
+    int domain;                // pcie domain
+    unsigned int bdf_busid;    // BDF（Bus，Device，Function）中的总线ID
+    unsigned int bdf_deviceid; // BDF（Bus，Device，Function）中的设备ID
+    unsigned int bdf_funcid;   // BDF（Bus，Device，Function）中的功能ID
+    unsigned char reserve[32];
+};
+
 #ifdef __cplusplus
 }
 #endif
