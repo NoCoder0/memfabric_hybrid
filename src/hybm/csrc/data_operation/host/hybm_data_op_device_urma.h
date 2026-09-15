@@ -14,8 +14,6 @@
 #define MF_HYBRID_HYBM_DATA_OP_DEVICE_URMA_H
 
 #include <cstdint>
-#include <unordered_map>
-
 #include "hybm_data_operator.h"
 #include "hybm_transport_manager.h"
 #include "hybm_rbtree_range_pool.h"
@@ -56,19 +54,6 @@ private:
     Result CopyLD2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
     Result CopyURMA(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
 
-    Result BatchCopyLH2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGD2LH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyLD2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyLD2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGH2LD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGD2LD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyLH2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGH2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGH2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGH2LH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGD2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-    Result BatchCopyGD2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept;
-
     Result BatchDataCopyDefault(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                 const ExtOptions &options) noexcept;
     Result BatchDataCopyLocal(hybm_batch_copy_params &params, int32_t direction, const ExtOptions &options) noexcept;
@@ -82,16 +67,13 @@ private:
     virtual Result AllocSwapMemory();
     void FreeSwapMemory();
 
-    void ClassifyDataAddr(void **globalAddrs, void **localAddrs, const uint64_t *counts, uint32_t batchSize,
-                          std::unordered_map<uint32_t, CopyDescriptor> &registered,
-                          std::unordered_map<uint32_t, CopyDescriptor> &localed,
-                          std::unordered_map<uint32_t, CopyDescriptor> &notRegistered, uint32_t globalRankId) noexcept;
-    Result BatchCopyWrite(hybm_batch_copy_params &params, const ExtOptions &options,
-                          hybm_data_copy_direction direction) noexcept;
-    Result BatchCopyRead(hybm_batch_copy_params &params, const ExtOptions &options,
-                         hybm_data_copy_direction direction) noexcept;
-    Result BatchCopyG2G(hybm_batch_copy_params &params, const ExtOptions &options,
-                        hybm_data_copy_direction direction) noexcept;
+    Result BatchDataCopyMultiRank(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                  const ExtOptions &options) noexcept;
+    Result CopyMultiRankLocal(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                              const ExtOptions &options, const std::vector<uint32_t> &localIndices) noexcept;
+    Result CopyMultiRankUnregistered(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                     const ExtOptions &options,
+                                     const transport::RankGroupMap &unregisteredGroups) noexcept;
     Result SafePut(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options, bool srcIsHost);
     Result SafeGet(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options, bool destIsHost);
 

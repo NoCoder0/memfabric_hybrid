@@ -92,6 +92,114 @@ int32_t BatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHand
     return HcommBatchTransferOnThread(thread, channel, transferDescs, transferDescNum);
 }
 
+int32_t CheckBatchParam(const HybmBatchTransferParam *param)
+{
+    if (param == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid HybmBatchTransferParam: param is null");
+        return BM_INVALID_PARAM;
+    }
+    if (param->rank_num == 0 || param->rank_id_list == nullptr || param->thread_list == nullptr ||
+        param->channel_list == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid rank param, rankNum=%u rankIds=%p threads=%p channels=%p",
+                  param->rank_num, static_cast<void *>(param->rank_id_list), static_cast<void *>(param->thread_list),
+                  static_cast<void *>(param->channel_list));
+        return BM_INVALID_PARAM;
+    }
+    for (uint32_t rankIdx = 0; rankIdx < param->rank_num; ++rankIdx) {
+        if (param->thread_list[rankIdx] == 0 || param->channel_list[rankIdx] == 0) {
+            HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid rank handle, rankIdx=%u rankId=%u thread=%lu channel=%lu",
+                      rankIdx, param->rank_id_list[rankIdx], param->thread_list[rankIdx], param->channel_list[rankIdx]);
+            return BM_INVALID_PARAM;
+        }
+    }
+    if (param->transfer_descs == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] transfer descriptors are null, totalListNum=%u", param->total_list_num);
+        return BM_INVALID_PARAM;
+    }
+    if (param->total_list_num == 0 || param->rank_start_idx_list == nullptr || param->rank_list_num_list == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid IO range param, totalListNum=%u starts=%p counts=%p",
+                  param->total_list_num, static_cast<void *>(param->rank_start_idx_list),
+                  static_cast<void *>(param->rank_list_num_list));
+        return BM_INVALID_PARAM;
+    }
+    for (uint32_t rankIdx = 0; rankIdx < param->rank_num; ++rankIdx) {
+        const uint32_t start = param->rank_start_idx_list[rankIdx];
+        const uint32_t count = param->rank_list_num_list[rankIdx];
+        if (start > param->total_list_num || count > param->total_list_num - start) {
+            HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid IO range, rankIdx=%u rankId=%u start=%u count=%u total=%u",
+                      rankIdx, param->rank_id_list[rankIdx], start, count, param->total_list_num);
+            return BM_INVALID_PARAM;
+        }
+        if (param->marker_descs != nullptr) {
+            const auto &marker = param->marker_descs[rankIdx];
+            if (marker.transType != ock::mf::HCOMM_TRANSFER_TYPE_READ || marker.transferInfo.read.src == nullptr ||
+                marker.transferInfo.read.dst == nullptr || marker.transferInfo.read.len == 0) {
+                HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid marker descriptor, rankIdx=%u rankId=%u", rankIdx,
+                          param->rank_id_list[rankIdx]);
+                return BM_INVALID_PARAM;
+            }
+        }
+    }
+    return BM_OK;
+}
+
+int32_t MultiRankTransferWithBatch(HybmBatchTransferParam *param, uint32_t rankIdx)
+{
+    const uint32_t start = param->rank_start_idx_list[rankIdx];
+    const uint32_t count = param->rank_list_num_list[rankIdx];
+    const auto thread = param->thread_list[rankIdx];
+    const auto channel = param->channel_list[rankIdx];
+    uint32_t offset = 0;
+    while (offset < count) {
+        const uint32_t batchSize = std::min(kMaxBatchSize, count - offset);
+        int32_t ret = BatchTransferOnThread(thread, channel, param->transfer_descs + start + offset, batchSize);
+        if (ret != BM_OK) {
+            if (IsNotSupported(ret)) {
+                HYBM_LOGW("[hybm] HcommBatchTransferOnThread unavailable, ret=%d rankId=%u count=%u", ret,
+                          param->rank_id_list[rankIdx], count);
+                return BM_NOT_SUPPORTED;
+            }
+            HYBM_LOGE(BM_ERROR,
+                      "[hybm] HcommBatchTransferOnThread failed, rankId=%u thread=%lu channel=%lu "
+                      "count=%u offset=%u batch=%u ret=%d",
+                      param->rank_id_list[rankIdx], thread, channel, count, offset, batchSize, ret);
+            return ret;
+        }
+        offset += batchSize;
+    }
+    return BM_OK;
+}
+
+int32_t TransferRank(HybmBatchTransferParam *param, uint32_t rankIdx)
+{
+    const auto thread = param->thread_list[rankIdx];
+    const auto channel = param->channel_list[rankIdx];
+    if (param->total_list_num > 0) {
+        const int32_t ret = MultiRankTransferWithBatch(param, rankIdx);
+        if (ret != BM_OK) {
+            return ret;
+        }
+    }
+    const int32_t ret = ChannelFenceOnThread(thread, channel);
+    if (ret != BM_OK) {
+        HYBM_LOGE(BM_ERROR, "[hybm] HcommChannelFenceOnThread failed, rankId=%u thread=%lu channel=%lu ret=%d",
+                  param->rank_id_list[rankIdx], thread, channel, ret);
+        return BM_ERROR;
+    }
+    // notify部分
+    if (param->marker_descs != nullptr) {
+        const auto &marker = param->marker_descs[rankIdx];
+        const int32_t markerRet = ReadOnThread(thread, channel, marker.transferInfo.read.dst,
+                                               marker.transferInfo.read.src, marker.transferInfo.read.len);
+        if (markerRet != BM_OK) {
+            HYBM_LOGE(BM_ERROR, "[hybm] marker submit failed, rankId=%u thread=%lu channel=%lu ret=%d",
+                      param->rank_id_list[rankIdx], thread, channel, markerRet);
+            return markerRet;
+        }
+    }
+    return BM_OK;
+}
+
 int32_t CheckParam(const HybmOneSideOpParam *param)
 {
     if (param == nullptr) {
@@ -274,6 +382,7 @@ int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
     HYBM_LOGI("[hybm] HybmBatchTransfer success, isRead=%d list_num=%u", isRead, param->list_num);
     return BM_OK;
 }
+
 } // namespace
 
 extern "C" {
@@ -293,5 +402,48 @@ int32_t HybmBatchRead(HybmOneSideOpParam *param)
         return BM_ERROR;
     }
     return ret;
+}
+
+int32_t HybmBatchTransfer(HybmBatchTransferParam *param)
+{
+    HYBM_LOGD("[hybm] HybmBatchTransfer start");
+    int32_t ret = CheckBatchParam(param);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    ret = BatchModeStart(kBatchTag);
+    if (ret != BM_OK && !IsNotSupported(ret)) {
+        HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeStart failed, batchTag=%s ret=%d", kBatchTag, ret);
+        return BM_ERROR;
+    }
+
+    for (uint32_t rankIdx = 0; rankIdx < param->rank_num; ++rankIdx) {
+        ret = TransferRank(param, rankIdx);
+        if (ret != BM_OK) {
+            const bool notSupported = ret == BM_NOT_SUPPORTED;
+            if (notSupported) {
+                HYBM_LOGW("[hybm] rank batch transfer unsupported, batchTag=%s rankIdx=%u rankId=%u ret=%d", kBatchTag,
+                          rankIdx, param->rank_id_list[rankIdx], ret);
+            } else {
+                HYBM_LOGE(BM_ERROR, "[hybm] rank transfer failed, batchTag=%s rankIdx=%u rankId=%u ret=%d", kBatchTag,
+                          rankIdx, param->rank_id_list[rankIdx], ret);
+            }
+            const int32_t endRet = BatchModeEnd(kBatchTag);
+            if (endRet != BM_OK && !IsNotSupported(endRet)) {
+                HYBM_LOGE(BM_ERROR,
+                          "[hybm] HcommBatchModeEnd after transfer failure failed, batchTag=%s rankId=%u ret=%d",
+                          kBatchTag, param->rank_id_list[rankIdx], endRet);
+            }
+            return notSupported ? BM_NOT_SUPPORTED : BM_ERROR;
+        }
+    }
+
+    ret = BatchModeEnd(kBatchTag);
+    if (ret != BM_OK && !IsNotSupported(ret)) {
+        HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeEnd failed, batchTag=%s ret=%d", kBatchTag, ret);
+        return BM_ERROR;
+    }
+    HYBM_LOGI("[hybm] HybmBatchTransfer success, rankNum=%u totalListNum=%u", param->rank_num, param->total_list_num);
+    return BM_OK;
 }
 }

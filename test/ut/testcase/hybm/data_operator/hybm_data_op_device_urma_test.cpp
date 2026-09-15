@@ -5,6 +5,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -15,6 +16,7 @@
 #include "hybm_data_op_device_urma.h"
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
+#include "dl_hcomm_api.h"
 #include "hybm_define.h"
 #include "hybm_rbtree_range_pool.h"
 #include "hybm_transport_manager.h"
@@ -72,9 +74,12 @@ public:
         unregisterMemoryRegionCount++;
         return unregisterMemoryRegionResult;
     }
-    bool QueryHasRegistered(uint64_t, uint64_t) override
+    bool QueryHasRegistered(uint64_t addr, uint64_t size) override
     {
         queryHasRegisteredCount++;
+        if (queryHasRegistered) {
+            return queryHasRegistered(addr, size);
+        }
         return queryHasRegisteredResult;
     }
     Result QueryMemoryKey(uint64_t, transport::TransportMemoryKey &) override
@@ -130,33 +135,83 @@ public:
     {
         synchronizeCount++;
         EXPECT_EQ(rankId, REMOTE_RANK);
+        if (beforeSynchronize) {
+            beforeSynchronize();
+        }
         return synchronizeResult;
     }
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &desc) override
     {
         writeRemoteBatchAsyncCount++;
         EXPECT_EQ(rankId, REMOTE_RANK);
-        if (writeRemoteBatchAsyncResult != BM_OK) {
-            return writeRemoteBatchAsyncResult;
-        }
-        for (size_t i = 0; i < desc.localAddrs.size(); ++i) {
-            std::memcpy(desc.globalAddrs[i], desc.localAddrs[i], desc.counts[i]);
-        }
-        return BM_OK;
+        (void)desc;
+        return BM_NOT_SUPPORTED;
     }
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &desc) override
     {
         readRemoteBatchAsyncCount++;
         EXPECT_EQ(rankId, REMOTE_RANK);
-        if (readRemoteBatchAsyncResult != BM_OK) {
-            return readRemoteBatchAsyncResult;
+        (void)desc;
+        return BM_NOT_SUPPORTED;
+    }
+
+    Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                    const transport::RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
+                                    transport::RankGroupMap &unregisteredGroups,
+                                    std::set<uint32_t> &batchRanks) override
+    {
+        (void)direction;
+        multiRankBatchSizes.push_back(params.batchSize);
+        multiRankGroupMaps.push_back(groupMap);
+        for (const auto &[p2pInfo, indices] : groupMap) {
+            for (uint32_t index : indices) {
+                if (index >= params.batchSize) {
+                    return BM_INVALID_PARAM;
+                }
+            }
         }
-        for (size_t i = 0; i < desc.localAddrs.size(); ++i) {
-            std::memcpy(desc.localAddrs[i], desc.globalAddrs[i], desc.counts[i]);
+        bool hasRemote = false;
+        std::set<uint32_t> currentBatchRanks;
+        for (const auto &[p2pInfo, indices] : groupMap) {
+            if (p2pInfo.first == LOCAL_RANK && p2pInfo.second == LOCAL_RANK) {
+                localIndices.insert(localIndices.end(), indices.begin(), indices.end());
+                continue;
+            }
+            const bool isRead = p2pInfo.second == LOCAL_RANK;
+            const uint32_t remoteRank = isRead ? p2pInfo.first : p2pInfo.second;
+            for (uint32_t index : indices) {
+                void *local = isRead ? params.destinations[index] : params.sources[index];
+                if (!QueryHasRegistered(reinterpret_cast<uint64_t>(local), params.dataSizes[index])) {
+                    unregisteredGroups[p2pInfo].push_back(index);
+                    continue;
+                }
+                hasRemote = true;
+                std::memcpy(params.destinations[index], params.sources[index], params.dataSizes[index]);
+                currentBatchRanks.insert(remoteRank);
+            }
         }
+        if (!hasRemote) {
+            return BM_OK;
+        }
+        multiRankSubmitCount++;
+        if (beforeBatchSubmit) {
+            beforeBatchSubmit();
+        }
+        if (failAfterBatchSubmit || multiRankSubmitCount == failBatchSubmitAt) {
+            return BM_ERROR;
+        }
+        batchRanks.insert(currentBatchRanks.begin(), currentBatchRanks.end());
         return BM_OK;
     }
 
+    std::function<void()> beforeBatchSubmit;
+    std::function<void()> beforeSynchronize;
+    std::function<bool(uint64_t, uint64_t)> queryHasRegistered;
+    bool failAfterBatchSubmit{false};
+    uint64_t failBatchSubmitAt{UINT64_MAX};
+    uint64_t multiRankSubmitCount{0};
+    std::vector<uint32_t> multiRankBatchSizes;
+    std::vector<transport::RankGroupMap> multiRankGroupMaps;
     std::string nic{"eth0"};
     bool queryHasRegisteredResult{true};
     uint64_t registerMemoryRegionCount{0};
@@ -173,8 +228,6 @@ public:
     Result writeRemoteResult{BM_OK};
     Result registerMemoryRegionResult{BM_OK};
     Result unregisterMemoryRegionResult{BM_OK};
-    Result readRemoteBatchAsyncResult{BM_OK};
-    Result writeRemoteBatchAsyncResult{BM_OK};
     Result synchronizeResult{BM_OK};
 };
 
@@ -295,15 +348,40 @@ void ExpectLocalBatchCopy(DataOpDeviceURMA &dataOp, hybm_data_copy_direction dir
     void *sources[2] = {src0, src1};
     void *destinations[2] = {dst0, dst1};
     uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    hybm_batch_copy_params params{sources, destinations, sizes, 2U};
     ExtOptions options{};
     options.srcRankId = LOCAL_RANK;
     options.destRankId = LOCAL_RANK;
+    options.groupMap[{LOCAL_RANK, LOCAL_RANK}] = {0U, 1U};
 
     EXPECT_EQ(dataOp.BatchDataCopy(params, direction, options), BM_OK);
     EXPECT_EQ(std::memcmp(dst0, src0, sizeof(src0)), 0);
     EXPECT_EQ(std::memcmp(dst1, src1, sizeof(src1)), 0);
 }
+
+struct MixedRankBatch {
+    static constexpr uint32_t LOCAL_INDEX = 0;
+    static constexpr uint32_t REMOTE_INDEX = 1;
+    static constexpr uint32_t BATCH_SIZE = 2;
+    static constexpr size_t COPY_SIZE = 8;
+    char localSource[COPY_SIZE] = "local";
+    char remoteSource[COPY_SIZE] = "remote";
+    char localDestination[COPY_SIZE] = {};
+    char remoteDestination[COPY_SIZE] = {};
+    void *sources[BATCH_SIZE] = {localSource, remoteSource};
+    void *destinations[BATCH_SIZE] = {localDestination, remoteDestination};
+    uint64_t sizes[BATCH_SIZE] = {COPY_SIZE, COPY_SIZE};
+    hybm_batch_copy_params params{sources, destinations, sizes, BATCH_SIZE};
+    ExtOptions options{};
+
+    explicit MixedRankBatch(bool isRead = false)
+    {
+        options.groupMap[{LOCAL_RANK, LOCAL_RANK}] = {LOCAL_INDEX};
+        const auto remotePair =
+            isRead ? std::make_pair(REMOTE_RANK, LOCAL_RANK) : std::make_pair(LOCAL_RANK, REMOTE_RANK);
+        options.groupMap[remotePair] = {REMOTE_INDEX};
+    }
+};
 } // namespace
 
 class HybmDataOpDeviceUrmaTest : public testing::Test {
@@ -476,33 +554,137 @@ TEST_F(HybmDataOpDeviceUrmaTest, DataCopyPropagatesAclMemcpyFailure)
     EXPECT_EQ(dataOp->DataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_DL_FUNCTION_FAILED);
 }
 
-TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyRegisteredWriteAndReadSynchronizes)
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankCopiesLocalBetweenRemoteSubmissionAndSynchronization)
 {
-    EXPECT_EQ(dataOp->Initialize(), BM_OK);
-    char src0[8] = "src0";
-    char src1[8] = "src1";
-    char dst0[8] = {};
-    char dst1[8] = {};
-    void *sources[2] = {src0, src1};
-    void *destinations[2] = {dst0, dst1};
-    uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    const bool readDirections[] = {false, true};
+    for (bool isRead : readDirections) {
+        MixedRankBatch batch(isRead);
+        tm->beforeBatchSubmit = [&batch]() { EXPECT_EQ(batch.localDestination[0], '\0'); };
+        tm->beforeSynchronize = [&batch]() {
+            EXPECT_EQ(std::memcmp(batch.localDestination, batch.localSource, MixedRankBatch::COPY_SIZE), 0);
+        };
+        const auto direction = isRead ? HYBM_GLOBAL_HOST_TO_LOCAL_HOST : HYBM_LOCAL_HOST_TO_GLOBAL_HOST;
+        EXPECT_EQ(dataOp->BatchDataCopy(batch.params, direction, batch.options), BM_OK);
+        EXPECT_EQ(std::memcmp(batch.remoteDestination, batch.remoteSource, MixedRankBatch::COPY_SIZE), 0);
+    }
+    EXPECT_EQ(tm->multiRankSubmitCount, 2U);
+    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 0U);
+    EXPECT_EQ(tm->synchronizeCount, 2U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankLocalFailureDrainsRemoteAndPreservesCopyError)
+{
+    MixedRankBatch batch;
+    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFailed;
+    tm->synchronizeResult = BM_ERROR;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options),
+              BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(tm->multiRankSubmitCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+    EXPECT_EQ(batch.localDestination[0], '\0');
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankSubmissionFailureSkipsSynchronizationAndLocalCopy)
+{
+    MixedRankBatch batch;
+    tm->failAfterBatchSubmit = true;
+    tm->beforeSynchronize = [&batch]() { EXPECT_EQ(batch.localDestination[0], '\0'); };
+
+    EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options), BM_ERROR);
+    EXPECT_EQ(tm->multiRankSubmitCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 0U);
+    EXPECT_EQ(batch.localDestination[0], '\0');
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankLargeBatchSynchronizesAndStopsSlicesIndependently)
+{
+    const uint32_t batchSize = HCOMM_BATCH_TRANSFER_MAX_DESC_NUM * 2U + 1U;
+    std::vector<char> sources(batchSize, 'x');
+    std::vector<char> destinations(batchSize, '\0');
+    std::vector<void *> sourceAddrs(batchSize);
+    std::vector<void *> destinationAddrs(batchSize);
+    std::vector<uint64_t> dataSizes(batchSize, sizeof(char));
+    std::vector<uint32_t> indices(batchSize);
+    for (uint32_t index = 0; index < batchSize; ++index) {
+        sourceAddrs[index] = &sources[index];
+        destinationAddrs[index] = &destinations[index];
+        indices[index] = index;
+    }
+    hybm_batch_copy_params params{sourceAddrs.data(), destinationAddrs.data(), dataSizes.data(), batchSize};
     ExtOptions options{};
-    options.srcRankId = LOCAL_RANK;
-    options.destRankId = REMOTE_RANK;
+    options.groupMap[{LOCAL_RANK, REMOTE_RANK}] = indices;
 
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
-    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 1U);
-    EXPECT_EQ(tm->synchronizeCount, 1U);
-    EXPECT_STREQ(dst0, src0);
-    EXPECT_STREQ(dst1, src1);
+    ASSERT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->multiRankBatchSizes,
+              (std::vector<uint32_t>{HCOMM_BATCH_TRANSFER_MAX_DESC_NUM, HCOMM_BATCH_TRANSFER_MAX_DESC_NUM, 1U}));
+    ASSERT_EQ(tm->multiRankGroupMaps.size(), 3U);
+    const auto &firstSliceIndices = tm->multiRankGroupMaps[0].at({LOCAL_RANK, REMOTE_RANK});
+    const auto &secondSliceIndices = tm->multiRankGroupMaps[1].at({LOCAL_RANK, REMOTE_RANK});
+    const auto &lastSliceIndices = tm->multiRankGroupMaps[2].at({LOCAL_RANK, REMOTE_RANK});
+    ASSERT_EQ(firstSliceIndices.size(), HCOMM_BATCH_TRANSFER_MAX_DESC_NUM);
+    ASSERT_EQ(secondSliceIndices.size(), HCOMM_BATCH_TRANSFER_MAX_DESC_NUM);
+    EXPECT_EQ(firstSliceIndices.front(), 0U);
+    EXPECT_EQ(firstSliceIndices.back(), HCOMM_BATCH_TRANSFER_MAX_DESC_NUM - 1U);
+    EXPECT_EQ(secondSliceIndices.front(), 0U);
+    EXPECT_EQ(secondSliceIndices.back(), HCOMM_BATCH_TRANSFER_MAX_DESC_NUM - 1U);
+    EXPECT_EQ(lastSliceIndices, (std::vector<uint32_t>{0U}));
+    EXPECT_EQ(tm->multiRankSubmitCount, 3U);
+    EXPECT_EQ(tm->synchronizeCount, 3U);
+    EXPECT_EQ(destinations, sources);
 
-    tm->synchronizeCount = 0;
-    options.srcRankId = REMOTE_RANK;
-    options.destRankId = LOCAL_RANK;
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, options), BM_OK);
-    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 1U);
+    tm->multiRankSubmitCount = 0U;
+    tm->synchronizeCount = 0U;
+    tm->multiRankBatchSizes.clear();
+    tm->multiRankGroupMaps.clear();
+    tm->failBatchSubmitAt = 2U;
+    std::memset(destinations.data(), 0, destinations.size());
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_ERROR);
+    EXPECT_EQ(tm->multiRankSubmitCount, 2U);
     EXPECT_EQ(tm->synchronizeCount, 1U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankSynchronizationFailureIsReturnedAfterLocalCopy)
+{
+    MixedRankBatch batch;
+    tm->synchronizeResult = BM_ERROR;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options), BM_ERROR);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+    EXPECT_EQ(std::memcmp(batch.localDestination, batch.localSource, MixedRankBatch::COPY_SIZE), 0);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankLocalOnlyDoesNotSubmitRemote)
+{
+    MixedRankBatch batch;
+    batch.options.groupMap.erase({LOCAL_RANK, REMOTE_RANK});
+
+    EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options), BM_OK);
+    EXPECT_EQ(tm->multiRankSubmitCount, 0U);
+    EXPECT_EQ(tm->synchronizeCount, 0U);
+    EXPECT_EQ(std::memcmp(batch.localDestination, batch.localSource, MixedRankBatch::COPY_SIZE), 0);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankRemoteOnlySkipsLocalCopy)
+{
+    MixedRankBatch batch;
+    batch.options.groupMap.erase({LOCAL_RANK, LOCAL_RANK});
+    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFailed;
+
+    EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options), BM_OK);
+    EXPECT_EQ(tm->multiRankSubmitCount, 1U);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankInvalidLocalIndexPreventsRemoteSubmission)
+{
+    MixedRankBatch batch;
+    batch.options.groupMap[{LOCAL_RANK, LOCAL_RANK}] = {MixedRankBatch::BATCH_SIZE};
+
+    EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options), BM_INVALID_PARAM);
+    EXPECT_EQ(tm->multiRankSubmitCount, 0U);
+    EXPECT_EQ(tm->synchronizeCount, 0U);
+    EXPECT_EQ(batch.localDestination[0], '\0');
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyAllLocalDirectionsSucceed)
@@ -520,7 +702,7 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyAllLocalDirectionsSucceed)
     }
 }
 
-TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyUsesDefaultPathWhenLocalMemoryIsNotRegistered)
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyDefaultUsesDataCopyWhenLocalMemoryIsNotRegistered)
 {
     EXPECT_EQ(dataOp->InitializeWithSwap(TEST_SWAP_ALLOC_SIZE), BM_OK);
     tm->queryHasRegisteredResult = false;
@@ -531,70 +713,42 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyUsesDefaultPathWhenLocalMemoryIsNo
     void *sources[2] = {src0, src1};
     void *destinations[2] = {dst0, dst1};
     uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    hybm_batch_copy_params params{sources, destinations, sizes, 2U};
     ExtOptions options{};
     options.srcRankId = LOCAL_RANK;
     options.destRankId = REMOTE_RANK;
 
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(dataOp->BatchDataCopyDefault(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
     EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 0U);
     EXPECT_EQ(tm->writeRemoteCount, 2U);
     EXPECT_STREQ(dst0, src0);
     EXPECT_STREQ(dst1, src1);
 }
 
-TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyG2GRemoteWriteAndReadUseSingleBatch)
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankMixesRegisteredBatchAndUnregisteredFallback)
 {
-    EXPECT_EQ(dataOp->Initialize(), BM_OK);
-    char src0[8] = "g0";
-    char src1[8] = "g1";
-    char dst0[8] = {};
-    char dst1[8] = {};
-    void *sources[2] = {src0, src1};
-    void *destinations[2] = {dst0, dst1};
-    uint64_t sizes[2] = {sizeof(src0), sizeof(src1)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 2};
+    constexpr uint32_t kBatchSize = 2U;
+    ASSERT_EQ(dataOp->InitializeWithSwap(TEST_SWAP_ALLOC_SIZE), BM_OK);
+    char registeredSource[8] = "batch";
+    char fallbackSource[8] = "single";
+    char registeredDestination[8] = {};
+    char fallbackDestination[8] = {};
+    void *sources[kBatchSize] = {registeredSource, fallbackSource};
+    void *destinations[kBatchSize] = {registeredDestination, fallbackDestination};
+    uint64_t sizes[kBatchSize] = {sizeof(registeredSource), sizeof(fallbackSource)};
+    hybm_batch_copy_params params{sources, destinations, sizes, kBatchSize};
     ExtOptions options{};
-    options.srcRankId = LOCAL_RANK;
-    options.destRankId = REMOTE_RANK;
+    options.groupMap[{LOCAL_RANK, REMOTE_RANK}] = {0U, 1U};
+    const uint64_t registeredAddr = reinterpret_cast<uint64_t>(registeredSource);
+    tm->queryHasRegistered = [registeredAddr](uint64_t addr, uint64_t) { return addr == registeredAddr; };
 
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
-    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 1U);
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->multiRankSubmitCount, 1U);
+    EXPECT_EQ(tm->writeRemoteCount, 1U);
+    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 0U);
     EXPECT_EQ(tm->synchronizeCount, 1U);
-    EXPECT_STREQ(dst0, src0);
-    EXPECT_STREQ(dst1, src1);
-
-    tm->synchronizeCount = 0;
-    options.srcRankId = REMOTE_RANK;
-    options.destRankId = LOCAL_RANK;
-    std::memset(src0, 0, sizeof(src0));
-    std::memset(src1, 0, sizeof(src1));
-    std::strcpy(dst0, "r0");
-    std::strcpy(dst1, "r1");
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
-    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 1U);
-    EXPECT_EQ(tm->synchronizeCount, 1U);
-    EXPECT_STREQ(src0, dst0);
-    EXPECT_STREQ(src1, dst1);
-}
-
-TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyPropagatesBatchAsyncFailure)
-{
-    EXPECT_EQ(dataOp->Initialize(), BM_OK);
-    tm->writeRemoteBatchAsyncResult = BM_ERROR;
-    char src[8] = "fail";
-    char dst[8] = {};
-    void *sources[1] = {src};
-    void *destinations[1] = {dst};
-    uint64_t sizes[1] = {sizeof(src)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 1};
-    ExtOptions options{};
-    options.srcRankId = LOCAL_RANK;
-    options.destRankId = REMOTE_RANK;
-
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_ERROR);
-    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 1U);
-    EXPECT_EQ(tm->synchronizeCount, 0U);
+    EXPECT_STREQ(registeredDestination, registeredSource);
+    EXPECT_STREQ(fallbackDestination, fallbackSource);
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyLocalAsyncFailureReturnsDlFailure)
@@ -606,10 +760,11 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyLocalAsyncFailureReturnsDlFailure)
     void *sources[1] = {src};
     void *destinations[1] = {dst};
     uint64_t sizes[1] = {sizeof(src)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 1};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1U};
     ExtOptions options{};
     options.srcRankId = LOCAL_RANK;
     options.destRankId = LOCAL_RANK;
+    options.groupMap[{LOCAL_RANK, LOCAL_RANK}] = {0U};
 
     EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE, options), BM_DL_FUNCTION_FAILED);
 }
@@ -621,10 +776,24 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyRejectsUnsupportedDirection)
     void *sources[1] = {src};
     void *destinations[1] = {dst};
     uint64_t sizes[1] = {sizeof(src)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 1};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1U};
     ExtOptions options{};
 
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options), BM_ERROR);
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options), BM_INVALID_PARAM);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyRequiresRankGroups)
+{
+    char src[4] = {};
+    char dst[4] = {};
+    void *sources[1] = {src};
+    void *destinations[1] = {dst};
+    uint64_t sizes[1] = {sizeof(src)};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1U};
+    ExtOptions options{};
+
+    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_INVALID_PARAM);
+    EXPECT_EQ(tm->multiRankSubmitCount, 0U);
 }
 
 TEST_F(HybmDataOpDeviceUrmaTest, InitializeSkipsSwapAllocationWhenSwapSpaceSizeIsZero)
@@ -684,7 +853,7 @@ TEST_F(HybmDataOpDeviceUrmaTest, SafeGetReturnsErrorWhenSwapAllocatorIsNotInitia
     EXPECT_EQ(tm->readRemoteCount, 0U);
 }
 
-TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyDefaultPathFailsWhenSwapAllocatorIsNotInitialized)
+TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyDefaultFailsWhenSwapAllocatorIsNotInitialized)
 {
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
     tm->queryHasRegisteredResult = false;
@@ -693,11 +862,36 @@ TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyDefaultPathFailsWhenSwapAllocatorI
     void *sources[1] = {src};
     void *destinations[1] = {dst};
     uint64_t sizes[1] = {sizeof(src)};
-    hybm_batch_copy_params params{sources, destinations, sizes, 1};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1U};
     ExtOptions options{};
     options.srcRankId = LOCAL_RANK;
     options.destRankId = REMOTE_RANK;
 
-    EXPECT_EQ(dataOp->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_ERROR);
+    EXPECT_EQ(dataOp->BatchDataCopyDefault(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, options), BM_ERROR);
     EXPECT_EQ(tm->writeRemoteCount, 0U);
+}
+
+TEST_F(HybmDataOpDeviceUrmaTest, MultiRankMixedReadWriteUsesOneSubmission)
+{
+    constexpr size_t kCopySize = 8U;
+    constexpr uint32_t kBatchSize = 2U;
+    char localSource[kCopySize] = "write";
+    char remoteSource[kCopySize] = "read";
+    char localDestination[kCopySize] = {};
+    char remoteDestination[kCopySize] = {};
+    void *sources[kBatchSize] = {localSource, remoteSource};
+    void *destinations[kBatchSize] = {remoteDestination, localDestination};
+    uint64_t sizes[kBatchSize] = {kCopySize, kCopySize};
+    hybm_batch_copy_params params{sources, destinations, sizes, kBatchSize};
+    ExtOptions options{};
+    options.groupMap[{LOCAL_RANK, REMOTE_RANK}] = {0U};
+    options.groupMap[{REMOTE_RANK, LOCAL_RANK}] = {1U};
+
+    ASSERT_EQ(dataOp->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(tm->multiRankSubmitCount, 1U);
+    EXPECT_EQ(tm->writeRemoteBatchAsyncCount, 0U);
+    EXPECT_EQ(tm->readRemoteBatchAsyncCount, 0U);
+    EXPECT_EQ(tm->synchronizeCount, 1U);
+    EXPECT_EQ(std::memcmp(remoteDestination, localSource, kCopySize), 0);
+    EXPECT_EQ(std::memcmp(localDestination, remoteSource, kCopySize), 0);
 }

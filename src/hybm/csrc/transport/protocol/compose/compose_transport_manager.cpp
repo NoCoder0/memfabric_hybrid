@@ -550,6 +550,19 @@ Result ComposeTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const Cop
     return BM_ERROR;
 }
 
+Result ComposeTransportManager::TransferRemoteBatchAsync(
+    const hybm_batch_copy_params &params, hybm_data_copy_direction direction, const RankGroupMap &groupMap,
+    std::vector<uint32_t> &localIndices, RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks)
+{
+    batchRanks.clear();
+    if (deviceTransportManager_ == nullptr) {
+        BM_LOG_ERROR("TransferRemoteBatchAsync raw batch device transport is null, batchSize: " << params.batchSize);
+        return BM_ERROR;
+    }
+    return deviceTransportManager_->TransferRemoteBatchAsync(params, direction, groupMap, localIndices,
+                                                             unregisteredGroups, batchRanks);
+}
+
 Result ComposeTransportManager::Synchronize(uint32_t rankId)
 {
     uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
@@ -571,6 +584,23 @@ Result ComposeTransportManager::Synchronize(uint32_t rankId)
 
     BM_LOG_ERROR("Failed to Synchronize, rankId: " << rankId);
     return BM_ERROR;
+}
+
+Result ComposeTransportManager::SynchronizeRanks(const std::set<uint32_t> &rankIds)
+{
+    if (rankIds.empty()) {
+        return BM_OK;
+    }
+    if (deviceTransportManager_ == nullptr) {
+        BM_LOG_ERROR("SynchronizeRanks raw batch device transport is null, rankNum: " << rankIds.size());
+        return BM_ERROR;
+    }
+
+    auto ret = deviceTransportManager_->SynchronizeRanks(rankIds);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("Failed to SynchronizeRanks by device transport, ret: " << ret << ", rankNum: " << rankIds.size());
+    }
+    return ret;
 }
 
 Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &options)

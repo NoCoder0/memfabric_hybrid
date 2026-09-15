@@ -112,6 +112,24 @@ Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite
     return GetFuncHandle(binHandle, funcWrite, funcHandles.batchWrite);
 }
 
+Result LoadDeviceKernelAndGetHandles(const char *funcTransfer, aclrtBinHandle &binHandle,
+                                     DeviceFuncHandles &funcHandles)
+{
+    funcHandles = DeviceFuncHandles{};
+    std::string jsonPath;
+    auto ret = GetKernelFilePath(jsonPath);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    if (binHandle == nullptr) {
+        ret = LoadBinaryFromJson(jsonPath.c_str(), binHandle);
+        if (ret != BM_OK) {
+            return ret;
+        }
+    }
+    return GetFuncHandle(binHandle, funcTransfer, funcHandles.batchTransfer);
+}
+
 Result LoadDeviceKernelAndValidate(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
                                    DeviceFuncHandles &funcHandles)
 {

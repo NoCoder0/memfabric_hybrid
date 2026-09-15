@@ -12,5 +12,12 @@
             "kernelSo": "libcann_hybm_kernel.so",
             "opKernelLib": "AICPUKernel"
         }
+    },
+    "HybmBatchTransfer": {
+        "opInfo": {
+            "functionName": "HybmBatchTransfer",
+            "kernelSo": "libcann_hybm_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
     }
 }

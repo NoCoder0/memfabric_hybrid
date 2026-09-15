@@ -72,9 +72,15 @@ public:
 
     Result Synchronize(uint32_t rankId) override;
 
+    Result SynchronizeRanks(const std::set<uint32_t> &rankIds) override;
+
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
+
+    Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                    const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
+                                    RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks) override;
 
 private:
     Result OpenHostTransport(const TransportOptions &options);

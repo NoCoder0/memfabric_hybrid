@@ -9,6 +9,8 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include <new>
+
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
 #include "dl_acl_api.h"
@@ -149,26 +151,54 @@ Result HostComposeDataOp::DataCopy(hybm_copy_params &params, hybm_data_copy_dire
 Result HostComposeDataOp::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                         const ExtOptions &options) noexcept
 {
+    if (options.groupMap.empty()) {
+        BM_LOG_ERROR("multi-rank batch copy has empty groupMap, batchSize: " << params.batchSize);
+        return BM_INVALID_PARAM;
+    }
+
     if (AllSupportSdma(options)) {
         return sdmaDataOperator_->BatchDataCopy(params, direction, options);
     }
+    if (AllPreferDeviceUrma(options)) {
+        return devUrmaDataOperator_->BatchDataCopy(params, direction, options);
+    }
 
-    // 为每组调用batch_copy
-    for (auto &[p2pInfo, indices] : options.groupMap) {
-        uint32_t groupSize = indices.size();
-        // 为当前组构建临时参数
-        std::vector<void *> sources_group(groupSize);
-        std::vector<void *> destinations_group(groupSize);
-        std::vector<size_t> dataSizes_group(groupSize);
-        // 填充组内参数
-        for (uint32_t j = 0; j < groupSize; ++j) {
-            uint32_t idx = indices[j];
-            sources_group[j] = params.sources[idx];
-            destinations_group[j] = params.destinations[idx];
-            dataSizes_group[j] = params.dataSizes[idx];
+    ExtOptions urmaOptions{options.srcRankId, options.destRankId, options.stream, options.flags, {}};
+    ExtOptions otherOptions{options.srcRankId, options.destRankId, options.stream, options.flags, {}};
+    try {
+        for (const auto &[p2pInfo, indices] : options.groupMap) {
+            ExtOptions copyOptions{p2pInfo.first, p2pInfo.second, options.stream, options.flags, {}};
+            auto availableOps = GetPrioritedDataOperators(copyOptions);
+            if (availableOps.empty()) {
+                BM_LOG_ERROR("batch data copy from rank " << p2pInfo.first << " to rank " << p2pInfo.second
+                                                          << " no data operator available");
+                return BM_INVALID_PARAM;
+            }
+            auto &targetGroupMap =
+                availableOps.front().second == devUrmaDataOperator_ ? urmaOptions.groupMap : otherOptions.groupMap;
+            targetGroupMap.emplace(p2pInfo, indices);
         }
-        hybm_batch_copy_params copyParams = {sources_group.data(), destinations_group.data(), dataSizes_group.data(),
-                                             groupSize};
+    } catch (const std::bad_alloc &) {
+        BM_LOG_ERROR("batch data copy split groupMap allocation failed, batchSize: "
+                     << params.batchSize << " groupNum: " << options.groupMap.size());
+        return BM_MALLOC_FAILED;
+    }
+
+    if (!urmaOptions.groupMap.empty()) {
+        auto ret = devUrmaDataOperator_->BatchDataCopy(params, direction, urmaOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("multi-rank batch copy failed, ret: " << ret << " rankNum: " << urmaOptions.groupMap.size());
+            return ret;
+        }
+    }
+    return otherOptions.groupMap.empty() ? BM_OK : BatchDataCopyByGroup(params, direction, otherOptions);
+}
+
+//原始的单rank BatchDataCopy
+Result HostComposeDataOp::BatchDataCopyByGroup(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                               const ExtOptions &options) noexcept
+{
+    for (const auto &[p2pInfo, indices] : options.groupMap) {
         ExtOptions copyOptions{};
         copyOptions.srcRankId = p2pInfo.first;
         copyOptions.destRankId = p2pInfo.second;
@@ -176,20 +206,27 @@ Result HostComposeDataOp::BatchDataCopy(hybm_batch_copy_params &params, hybm_dat
         copyOptions.flags = options.flags;
         auto availableOps = GetPrioritedDataOperators(copyOptions);
         if (availableOps.empty()) {
-            BM_LOG_ERROR("batch data copy from rank " << copyOptions.srcRankId << " to rank " << copyOptions.destRankId
+            BM_LOG_ERROR("batch data copy from rank " << p2pInfo.first << " to rank " << p2pInfo.second
                                                       << " no data operator available");
             return BM_INVALID_PARAM;
         }
 
-        BM_LOG_DEBUG("try batch data copy from rank " << copyOptions.srcRankId << " to rank " << copyOptions.destRankId
-                                                      << " with data op " << availableOps.front().first
-                                                      << " direction:" << direction);
-        // 暂时不做多路径拷贝失败重试,copyParams内容会被BatchDataCopy修改
-        auto result = availableOps.front().second->BatchDataCopy(copyParams, direction, copyOptions);
-        if (result != BM_OK) {
-            BM_LOG_ERROR("data batch copy failed: " << result << " src:" << copyOptions.srcRankId
-                                                    << " dest: " << copyOptions.destRankId);
-            return result;
+        const uint32_t groupSize = static_cast<uint32_t>(indices.size());
+        std::vector<void *> sources(groupSize);
+        std::vector<void *> destinations(groupSize);
+        std::vector<size_t> dataSizes(groupSize);
+        for (uint32_t i = 0; i < groupSize; ++i) {
+            const uint32_t index = indices[i];
+            sources[i] = params.sources[index];
+            destinations[i] = params.destinations[index];
+            dataSizes[i] = params.dataSizes[index];
+        }
+        hybm_batch_copy_params copyParams{sources.data(), destinations.data(), dataSizes.data(), groupSize};
+        auto ret = availableOps.front().second->BatchDataCopy(copyParams, direction, copyOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("data batch copy failed, ret: " << ret << " srcRank: " << p2pInfo.first
+                                                         << " destRank: " << p2pInfo.second);
+            return ret;
         }
     }
     return BM_OK;
@@ -253,6 +290,23 @@ bool HostComposeDataOp::AllSupportSdma(const ExtOptions &options) noexcept
     for (auto &[p2pInfo, indices] : options.groupMap) {
         auto opTypes = entityTagInfo_->GetRank2RankOpType(p2pInfo.first, p2pInfo.second);
         if (!(opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_SDMA))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool HostComposeDataOp::AllPreferDeviceUrma(const ExtOptions &options) noexcept
+{
+    if (devUrmaDataOperator_ == nullptr) {
+        return false;
+    }
+
+    for (const auto &[p2pInfo, indices] : options.groupMap) {
+        (void)indices;
+        ExtOptions copyOptions{p2pInfo.first, p2pInfo.second, options.stream, options.flags, {}};
+        auto availableOps = GetPrioritedDataOperators(copyOptions);
+        if (availableOps.empty() || availableOps.front().second != devUrmaDataOperator_) {
             return false;
         }
     }

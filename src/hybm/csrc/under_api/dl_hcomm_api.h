@@ -32,6 +32,7 @@ static constexpr uint32_t HCOMM_CHANNEL_VERSION_ONE = 1U;
 static constexpr uint32_t HCOMM_CHANNEL_VERSION = 3U;
 static constexpr uint32_t COMM_LINK_MAGIC_WORD = 0x0f0e0f0fU;
 static constexpr uint32_t COMM_LINK_VERSION = 1U;
+static constexpr uint32_t HCOMM_BATCH_TRANSFER_MAX_DESC_NUM = 8190U;
 
 using HcommResult = int32_t;
 

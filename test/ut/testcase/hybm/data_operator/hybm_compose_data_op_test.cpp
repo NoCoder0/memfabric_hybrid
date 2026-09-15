@@ -12,6 +12,8 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 
+#include <functional>
+
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
 #include "hybm_compose_data_op.h"
@@ -46,6 +48,7 @@ public:
     ock::mf::Result batchDataCopyResult{BM_OK};
     ock::mf::Result dataCopyAsyncResult{BM_OK};
     ock::mf::Result waitResult{BM_OK};
+    std::function<void(hybm_batch_copy_params &, const ock::mf::ExtOptions &)> batchDataCopyHook;
 
     const std::string name;
 };
@@ -72,6 +75,9 @@ ock::mf::Result DataOperatorMock::BatchDataCopy(hybm_batch_copy_params &params, 
                                                 const ock::mf::ExtOptions &options) noexcept
 {
     batchDataCopyCount++;
+    if (batchDataCopyHook) {
+        batchDataCopyHook(params, options);
+    }
     return batchDataCopyResult;
 }
 
@@ -101,6 +107,7 @@ void DataOperatorMock::Reset() noexcept
     batchDataCopyResult = BM_OK;
     dataCopyAsyncResult = BM_OK;
     waitResult = BM_OK;
+    batchDataCopyHook = nullptr;
 }
 
 void DataOperatorMock::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept {}
@@ -114,6 +121,8 @@ public:
     static std::shared_ptr<ock::mf::DataOperator> CreateSdmaDataOperator();
     static std::shared_ptr<ock::mf::DataOperator>
     CreateDevRdmaDataOperator(uint32_t rankId, const std::shared_ptr<ock::mf::transport::TransportManager> &tm);
+    static std::shared_ptr<ock::mf::DataOperator>
+    CreateDevUrmaDataOperator(uint32_t rankId, const std::shared_ptr<ock::mf::transport::TransportManager> &tm);
     static std::shared_ptr<ock::mf::DataOperator>
     CreateHostRdmaDataOperator(uint32_t rankId, const std::shared_ptr<ock::mf::transport::TransportManager> &tm);
     static std::shared_ptr<ock::mf::DataOperator> CreateHostShmDataOperator(uint32_t rankId);
@@ -134,6 +143,7 @@ protected:
 
     static std::shared_ptr<DataOperatorMock> sdmaDataOpMock;
     static std::shared_ptr<DataOperatorMock> devRdmaDataOpMock;
+    static std::shared_ptr<DataOperatorMock> devUrmaDataOpMock;
     static std::shared_ptr<DataOperatorMock> hostRdmaDataOpMock;
     static std::shared_ptr<DataOperatorMock> hostShmDataOpMock;
 };
@@ -141,6 +151,8 @@ protected:
 std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::sdmaDataOpMock = std::make_shared<DataOperatorMock>("sdma");
 std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::devRdmaDataOpMock =
     std::make_shared<DataOperatorMock>("dev_rdma");
+std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::devUrmaDataOpMock =
+    std::make_shared<DataOperatorMock>("dev_urma");
 std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::hostRdmaDataOpMock =
     std::make_shared<DataOperatorMock>("host_rdma");
 std::shared_ptr<DataOperatorMock> HybmComposeDataOpTest::hostShmDataOpMock =
@@ -150,6 +162,7 @@ void HybmComposeDataOpTest::SetUp()
 {
     sdmaDataOpMock->Reset();
     devRdmaDataOpMock->Reset();
+    devUrmaDataOpMock->Reset();
     hostRdmaDataOpMock->Reset();
     hostShmDataOpMock->Reset();
 }
@@ -159,6 +172,7 @@ void HybmComposeDataOpTest::TearDown()
     GlobalMockObject::verify();
     sdmaDataOpMock->Reset();
     devRdmaDataOpMock->Reset();
+    devUrmaDataOpMock->Reset();
     hostRdmaDataOpMock->Reset();
     hostShmDataOpMock->Reset();
 }
@@ -173,6 +187,13 @@ HybmComposeDataOpTest::CreateDevRdmaDataOperator(uint32_t rankId,
                                                  const std::shared_ptr<ock::mf::transport::TransportManager> &tm)
 {
     return devRdmaDataOpMock;
+}
+
+std::shared_ptr<ock::mf::DataOperator>
+HybmComposeDataOpTest::CreateDevUrmaDataOperator(uint32_t rankId,
+                                                 const std::shared_ptr<ock::mf::transport::TransportManager> &tm)
+{
+    return devUrmaDataOpMock;
 }
 
 std::shared_ptr<ock::mf::DataOperator>
@@ -654,6 +675,117 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_non_rank0_rdma_success)
 
     dataOp.UnInitialize();
     ASSERT_EQ(1UL, devRdmaDataOpMock->uninitializeCount);
+}
+
+TEST_F(HybmComposeDataOpTest, batch_data_copy_all_groups_urma_uses_single_submission)
+{
+    constexpr uint32_t kBatchSize = 2U;
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_URMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(1U, "urma1"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(2U, "urma2"), BM_OK);
+    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:urma1,local:DEVICE_URMA:urma2"), BM_OK);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator).stubs().will(invoke(CreateDevUrmaDataOperator));
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(dataOp.Initialize(), BM_OK);
+
+    char sourcesData[kBatchSize]{};
+    char destinationsData[kBatchSize]{};
+    void *sources[kBatchSize] = {&sourcesData[0], &sourcesData[1]};
+    void *destinations[kBatchSize] = {&destinationsData[0], &destinationsData[1]};
+    uint64_t sizes[kBatchSize] = {1U, 1U};
+    hybm_batch_copy_params params{sources, destinations, sizes, kBatchSize};
+    ock::mf::ExtOptions extOptions{};
+    extOptions.groupMap[{0U, 1U}] = {0U};
+    extOptions.groupMap[{0U, 2U}] = {1U};
+    devUrmaDataOpMock->batchDataCopyHook = [&](hybm_batch_copy_params &actual,
+                                               const ock::mf::ExtOptions &actualOptions) {
+        EXPECT_EQ(&actualOptions, &extOptions);
+        EXPECT_EQ(actual.sources, sources);
+        EXPECT_EQ(actual.destinations, destinations);
+        EXPECT_EQ(actual.batchSize, kBatchSize);
+        EXPECT_EQ(actualOptions.groupMap, extOptions.groupMap);
+    };
+
+    EXPECT_EQ(dataOp.BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions), BM_OK);
+    EXPECT_EQ(devUrmaDataOpMock->batchDataCopyCount, 1U);
+    EXPECT_EQ(devRdmaDataOpMock->batchDataCopyCount, 0U);
+    EXPECT_EQ(hostRdmaDataOpMock->batchDataCopyCount, 0U);
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, batch_data_copy_mixed_urma_and_host_aggregates_urma_groups)
+{
+    constexpr uint32_t kBatchSize = 3U;
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_DEVICE_URMA, HYBM_DOP_TYPE_HOST_TCP));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(1U, "urma1"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(2U, "host"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(3U, "urma2"), BM_OK);
+    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:urma1,local:HOST_TCP:host,local:DEVICE_URMA:urma2"), BM_OK);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator).stubs().will(invoke(CreateDevUrmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(dataOp.Initialize(), BM_OK);
+
+    char sourceData[kBatchSize]{};
+    char destinationData[kBatchSize]{};
+    void *sources[kBatchSize] = {&sourceData[0], &sourceData[1], &sourceData[2]};
+    void *destinations[kBatchSize] = {&destinationData[0], &destinationData[1], &destinationData[2]};
+    uint64_t sizes[kBatchSize] = {1U, 1U, 1U};
+    hybm_batch_copy_params params{sources, destinations, sizes, kBatchSize};
+    ock::mf::ExtOptions extOptions{};
+    extOptions.groupMap[{0U, 1U}] = {0U};
+    extOptions.groupMap[{0U, 2U}] = {1U};
+    extOptions.groupMap[{0U, 3U}] = {2U};
+    ock::mf::ExtOptions expectedUrmaOptions{};
+    expectedUrmaOptions.groupMap[{0U, 1U}] = {0U};
+    expectedUrmaOptions.groupMap[{0U, 3U}] = {2U};
+    devUrmaDataOpMock->batchDataCopyHook = [&](hybm_batch_copy_params &actual,
+                                               const ock::mf::ExtOptions &actualOptions) {
+        EXPECT_EQ(actual.sources, sources);
+        EXPECT_EQ(actual.destinations, destinations);
+        EXPECT_EQ(actual.dataSizes, sizes);
+        EXPECT_EQ(actual.batchSize, kBatchSize);
+        EXPECT_EQ(actualOptions.groupMap, expectedUrmaOptions.groupMap);
+    };
+    hostRdmaDataOpMock->batchDataCopyHook = [&](hybm_batch_copy_params &actual,
+                                                const ock::mf::ExtOptions &actualOptions) {
+        EXPECT_EQ(actual.batchSize, 1U);
+        EXPECT_EQ(actual.sources[0], sources[1]);
+        EXPECT_EQ(actualOptions.destRankId, 2U);
+        EXPECT_TRUE(actualOptions.groupMap.empty());
+    };
+
+    EXPECT_EQ(dataOp.BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions), BM_OK);
+    EXPECT_EQ(devUrmaDataOpMock->batchDataCopyCount, 1U);
+    EXPECT_EQ(hostRdmaDataOpMock->batchDataCopyCount, 1U);
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, batch_data_copy_urma_rejects_empty_group_map)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_URMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator).stubs().will(invoke(CreateDevUrmaDataOperator));
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(dataOp.Initialize(), BM_OK);
+
+    hybm_batch_copy_params params{};
+    ock::mf::ExtOptions extOptions{};
+    EXPECT_EQ(dataOp.BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions), BM_INVALID_PARAM);
+    EXPECT_EQ(devUrmaDataOpMock->batchDataCopyCount, 0U);
+    dataOp.UnInitialize();
 }
 
 TEST_F(HybmComposeDataOpTest, data_copy_async_sdma_success)

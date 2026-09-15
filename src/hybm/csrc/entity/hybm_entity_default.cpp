@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <sstream>
 
 #include "dl_acl_api.h"
 #include "dl_api.h"
@@ -901,6 +902,8 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
         sOptions.groupMap[p2pInfo].push_back(i);
     }
 
+    BM_LOG_DEBUG("BatchDataCopy: localRank=" << options_.rankId << ", batchSize=" << params.batchSize << ", direction="
+                                             << direction << ", groupNum=" << sOptions.groupMap.size());
     ret = dataOperator_->BatchDataCopy(params, direction, sOptions);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Data copy failed, ret: " << ret);

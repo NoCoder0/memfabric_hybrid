@@ -24,6 +24,7 @@ namespace device {
 struct DeviceFuncHandles {
     aclrtFuncHandle batchRead{nullptr};
     aclrtFuncHandle batchWrite{nullptr};
+    aclrtFuncHandle batchTransfer{nullptr};
 };
 
 // Load AICPU kernel JSON and resolve function handles.
@@ -33,6 +34,9 @@ struct DeviceFuncHandles {
 // @param funcHandles   [out] resolved function handles
 // JSON path: ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/hybm/config/libcann_hybm_kernel.json
 Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
+                                     DeviceFuncHandles &funcHandles);
+
+Result LoadDeviceKernelAndGetHandles(const char *funcTransfer, aclrtBinHandle &binHandle,
                                      DeviceFuncHandles &funcHandles);
 
 // Load AICPU kernel and validate the resolved handles are non-null.

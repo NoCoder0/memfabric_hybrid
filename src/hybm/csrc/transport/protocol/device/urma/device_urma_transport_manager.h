@@ -13,10 +13,12 @@
 #ifndef MF_HYBRID_DEVICE_URMA_TRANSPORT_MANAGER_H
 #define MF_HYBRID_DEVICE_URMA_TRANSPORT_MANAGER_H
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <unordered_map>
@@ -27,6 +29,8 @@
 #include "hcomm_api_wrapper.h"
 #include "hybm_transport_manager.h"
 #include "hybm_kernel_hepler.h"
+
+struct HybmOneSideOpParam;
 
 namespace ock {
 namespace mf {
@@ -140,8 +144,14 @@ public:
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
+    Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                    const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
+                                    RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks) override;
+
     // Sync stream
     Result Synchronize(uint32_t rankId) override;
+
+    Result SynchronizeRanks(const std::set<uint32_t> &rankIds) override;
 
 private:
     struct LocalRegistration {
@@ -184,30 +194,48 @@ private:
         uint64_t size;
     };
 
+    using RankTransferDescriptors = std::unordered_map<uint32_t, std::vector<HcommBatchTransferDesc>>;
+
     // Device kernel launch helpers (moved from removed HcomUrmaTransportAdapter)
     struct DeviceTransferBuffers {
-        void *dstList{nullptr};
-        void *srcList{nullptr};
-        void *lenList{nullptr};
+        void *base{nullptr};
+        size_t capacity{0};
+        std::vector<uint8_t> hostBuffer{};
+        void *rankIdList{nullptr};
+        void *rankStartIdxList{nullptr};
+        void *rankListNumList{nullptr};
+        void *threadList{nullptr};
+        void *channelList{nullptr};
+        void *transferDescs{nullptr};
+        void *markerDescs{nullptr};
     };
 
-    // A pending or deferred-free device transfer; owned by CompletionContext.
+    struct NotifyResource;
+
+    // A remote transfer awaiting completion; owned by CompletionContext.
     struct PendingTransfer {
         uint32_t rankId{0};
-        DeviceTransferBuffers buffers{};
         bool inFlight{false};
+        uint32_t notifyPoolIndex{UINT32_MAX};
     };
 
-    // Per-thread async completion context (manager-ownered via registry, weak TLS binding)
+    // Notify 池中的单个资源；只与当前 manager/device 生命周期绑定，不与 Host 线程绑定。
+    struct NotifyResource {
+        void *notify{nullptr};                      // ACL Notify 对象
+        uint32_t notifyId{0};                       // Notify 对应的设备资源 ID
+        uint64_t notifyAddr{0};                     // Notify record 的设备地址
+        uint64_t notifyLen{0};                      // Notify record 的长度
+        HcommMemHandle notifyHcommHandle{nullptr};  // Notify record 的 HCOMM 注册句柄
+        uint32_t poolIndex{UINT32_MAX};             // 资源在池中的稳定下标
+        std::atomic<uint32_t> nextFree{UINT32_MAX}; // 无锁空闲栈中的下一个槽位
+    };
+
+    // Per-thread async completion context (manager-owned via registry, weak TLS binding)
     struct CompletionContext {
         void *stream{nullptr}; // non-owning ACL stream, compared at each launch/sync
-        void *notify{nullptr};
-        uint32_t notifyId{0};
-        uint64_t notifyAddr{0};
-        uint64_t notifyLen{0};
-        HcommMemHandle notifyHcommHandle{nullptr};
-        bool initialized{false};
-        // All in-flight and deferred-free transfers; emptied by Synchronize or CloseDevice.
+        // Data-kernel launch parameters are reused after each launch stream synchronization.
+        DeviceTransferBuffers launchBuffers{};
+        // All in-flight transfers; emptied by Synchronize or CloseDevice.
         std::vector<PendingTransfer> pendingTransfers{};
     };
 
@@ -239,7 +267,7 @@ private:
     Result FindLocalRegistrationLocked(uint64_t addr, uint64_t size, LocalRegistration *registration) const;
     Result CorrectLocalRegAddressLocked(uint64_t addr, uint64_t size, uint64_t &correctedAddr) const;
     Result FindRemoteRegistrationLocked(uint32_t rankId, uint64_t addr, uint64_t size,
-                                        RemoteRegistration *registration) const;
+                                        const RemoteRegistration **registration) const;
     Result ImportRemoteMemKeysLocked(uint32_t peerRank, RemoteRankState &state,
                                      const std::vector<TransportMemoryKey> &memKeys);
 
@@ -248,15 +276,54 @@ private:
 
     // Data transfer/copy
     Result RemoteIo(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size, bool write);
-    Result RemoteIoBatch(uint32_t rankId, const CopyDescriptor &descriptor, bool write);
     Result StageAndLaunchTransfer(CompletionContext &ctx, RemoteRankState &state, bool isRead,
                                   const std::vector<uint64_t> &localVec, const std::vector<uint64_t> &remoteVec,
                                   const std::vector<uint64_t> &sizeVec, uint32_t rankId);
 
-    // Resolve remote registration addresses and build batch transfer vectors
-    Result ResolveBatchIoAddressesLocked(uint32_t rankId, const CopyDescriptor &descriptor,
-                                         std::vector<uint64_t> &localVec, std::vector<uint64_t> &remoteVec,
-                                         std::vector<uint64_t> &sizeVec) const;
+    Result ValidateMultiRankBatchLocked(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                        const RankGroupMap &groupMap) const;
+    Result ResolveMultiRankGroupLocked(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                       const std::pair<uint32_t, uint32_t> &p2pInfo,
+                                       const std::vector<uint32_t> &indices, RankTransferDescriptors &descriptors,
+                                       std::vector<uint32_t> &localIndices, RankGroupMap &unregisteredGroups) const;
+    Result ResolveMultiRankIoLocked(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                    const std::pair<uint32_t, uint32_t> &p2pInfo, uint32_t index,
+                                    RankTransferDescriptors &descriptors, RankGroupMap &unregisteredGroups) const;
+    Result ResolveLocalAddressLocked(uint64_t addr, uint64_t size, uint64_t &correctedAddr, bool &registered) const;
+    Result ResolveRemoteAddressLocked(uint32_t remoteRank, uint64_t remoteAddr, uint64_t size,
+                                      uint64_t &correctedAddr) const;
+    static HcommBatchTransferDesc BuildTransferDesc(uint64_t localAddr, uint64_t remoteAddr, uint64_t size,
+                                                    bool isRead);
+    Result PrepareMultiRankMarkersLocked(const std::vector<uint32_t> &rankIds,
+                                         std::vector<HcommBatchTransferDesc> &markerDescs,
+                                         std::vector<NotifyResource *> &notifyResources);
+    Result FlattenMultiRankDescriptorsLocked(const RankTransferDescriptors &descriptors,
+                                             std::vector<HcommBatchTransferDesc> &transferDescs,
+                                             std::vector<uint32_t> &rankIds, std::vector<uint32_t> &rankStartIdx,
+                                             std::vector<uint32_t> &rankListNum,
+                                             std::vector<HcommThreadHandle> &threads,
+                                             std::vector<HcommChannelHandle> &channels) const;
+    Result ResolveAndFlattenMultiRankBatchLocked(const hybm_batch_copy_params &params,
+                                                 hybm_data_copy_direction direction, const RankGroupMap &groupMap,
+                                                 std::vector<uint32_t> &localIndices, RankGroupMap &unregisteredGroups,
+                                                 std::vector<HcommBatchTransferDesc> &transferDescs,
+                                                 std::vector<uint32_t> &rankIds, std::vector<uint32_t> &rankStartIdx,
+                                                 std::vector<uint32_t> &rankListNum,
+                                                 std::vector<HcommThreadHandle> &threads,
+                                                 std::vector<HcommChannelHandle> &channels) const;
+    Result LaunchMultiRankBatchLocked(const std::vector<HcommBatchTransferDesc> &transferDescs,
+                                      const std::vector<uint32_t> &rankIds, const std::vector<uint32_t> &rankStartIdx,
+                                      const std::vector<uint32_t> &rankListNum,
+                                      const std::vector<HcommThreadHandle> &threads,
+                                      const std::vector<HcommChannelHandle> &channels, std::set<uint32_t> &batchRanks);
+    Result StageAndLaunchMultiTransfer(CompletionContext &ctx, const std::vector<HcommBatchTransferDesc> &transferDescs,
+                                       size_t transferOffset, size_t transferCount,
+                                       const std::vector<uint32_t> &rankIds, const std::vector<uint32_t> &rankStartIdx,
+                                       const std::vector<uint32_t> &rankListNum,
+                                       const std::vector<HcommThreadHandle> &threads,
+                                       const std::vector<HcommChannelHandle> &channels,
+                                       const std::vector<HcommBatchTransferDesc> *markerDescs,
+                                       std::vector<NotifyResource *> *notifyResources);
 
     // TLS(Thread Local Storage) binding container access (static thread_local via function-local static)
     static std::vector<ContextBinding> &GetTlsBindings();
@@ -264,15 +331,19 @@ private:
     // Per-thread context lifecycle: lookup via TLS binding or create new
     CompletionContext *LookupOrCreateContextLocked();
     Result CreateAndPublishContextLocked(CompletionContext *&ctx);
-    Result EnsureContextInitLocked(CompletionContext &ctx);
-    void RollbackContextInitLocked(CompletionContext &ctx);
+
+    // Notify 池生命周期及无锁申请/归还；未转入 pending 的资源由调用方归还，pending 同步失败时隔离至 CloseDevice。
+    Result InitNotifyPoolLocked();
+    Result GrowNotifyPool();
+    Result InitNotifyResource(NotifyResource &resource);
+    void CleanupNotifyResource(NotifyResource &resource);
+    void CleanupNotifyPoolLocked();
     void CleanupContextLocked(CompletionContext &ctx);
+    Result AcquireNotifyResource(NotifyResource *&resource);
+    void ReleaseNotifyResource(NotifyResource &resource);
 
     // Find current thread's context via TLS binding only (no registry scan for owner)
     CompletionContext *FindCurrentContextLocked() const;
-
-    // Synchronize and release a specific rank's pending transfers
-    Result SynchronizeContextLocked(void *notify, void *stream, std::vector<PendingTransfer> &pendingTransfers);
 
     // CloseDevice helpers
     void CloseDeviceCleanupResourcesLocked();
@@ -281,29 +352,26 @@ private:
     bool IsAnyRegistryContextPendingForRank(uint32_t rankId) const;
 
     // Device kernel buffer management
-    aclrtFuncHandle GetDeviceKernelFunc(bool isRead) const;
+    aclrtFuncHandle GetDeviceKernelFunc() const;
     static Result ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers);
+    static Result EnsureKernelLaunchBufferCapacity(DeviceTransferBuffers &buffers, size_t requiredBytes);
     static Result ReleasePendingTransfersLocked(std::vector<PendingTransfer> &pendingTransfers);
     // Move all entries matching rankId from src to dst
     static void ExtractRankPending(std::vector<PendingTransfer> &src, uint32_t rankId,
                                    std::vector<PendingTransfer> &dst);
-    // Move all entries back from src to dst (for error recovery)
-    static void RestoreRankPending(std::vector<PendingTransfer> &src, std::vector<PendingTransfer> &dst);
-    // Marker-launch + extract + sync + release for a single rank's pending
-    Result SynchronizeRankPendingLocked(CompletionContext &ctx, RemoteRankState &state, uint32_t rankId,
-                                        bool hasInFlight);
+    Result SynchronizePreSubmittedNotifiesLocked(CompletionContext &ctx, const std::set<uint32_t> &rankIds);
 
     // Device kernel launch helpers
-    Result PrepareKernelLaunchBuffers(bool isRead, const std::vector<uint64_t> &localAddrs,
-                                      const std::vector<uint64_t> &remoteAddrs, const std::vector<uint64_t> &sizes,
-                                      DeviceTransferBuffers &outBuffers);
+    Result PrepareKernelLaunchBuffers(const std::vector<HcommBatchTransferDesc> &transferDescs, size_t transferOffset,
+                                      size_t transferCount, const std::vector<uint32_t> &rankIds,
+                                      const std::vector<uint32_t> &rankStartIdx,
+                                      const std::vector<uint32_t> &rankListNum,
+                                      const std::vector<HcommThreadHandle> &threads,
+                                      const std::vector<HcommChannelHandle> &channels,
+                                      DeviceTransferBuffers &outBuffers,
+                                      const std::vector<HcommBatchTransferDesc> *markerDescs = nullptr);
     // Device kernel launch (builds args, configures and launches)
-    Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, HcommThreadHandle thread, bool isRead,
-                                   HcommChannelHandle channel, size_t batchSize);
-    // Device kernel launch for marker-only notify (no data transfer)
-    Result LaunchDeviceKernelNotify(HcommThreadHandle thread, HcommChannelHandle channel, uint64_t remoteFlagAddr,
-                                    uint64_t notifyAddr, uint32_t notifyLen);
-
+    Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, size_t batchSize, size_t rankNum);
     mutable std::shared_mutex mutex_{};
     mutable std::shared_mutex registryMutex_{};
     bool opened_{false};
@@ -332,6 +400,10 @@ private:
     std::shared_ptr<OpenGeneration> owner_;
     // Strong registry of all per-thread completion contexts
     std::vector<std::shared_ptr<CompletionContext>> registry_{};
+    std::unique_ptr<NotifyResource *[]> notifyPoolSlots_{}; // manager 级池，下标到稳定资源地址的只增映射
+    std::atomic<uint32_t> notifyPoolSize_{0};               // 已初始化的 Notify 池槽位数量
+    std::mutex notifyPoolGrowMutex_{};                      // 池耗尽时串行扩容，不进入正常申请路径
+    std::atomic<uint64_t> notifyFreeHead_{UINT32_MAX};      // 高 32 位为版本号，低 32 位为空闲槽位下标
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};
 };
 

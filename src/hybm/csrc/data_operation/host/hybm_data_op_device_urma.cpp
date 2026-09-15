@@ -13,9 +13,12 @@
 
 #include <sys/mman.h>
 #include <cstdint>
+#include <new>
 
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
+#include "dl_hcomm_api.h"
+#include "hybm_copy_direction.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
 #include "hybm_logger.h"
@@ -29,43 +32,17 @@
 
 namespace {
 constexpr uint64_t URMA_SWAP_SPACE_SIZE = 0;
+
+bool IsSupportedUrmaDirection(hybm_data_copy_direction direction)
+{
+    const auto value = static_cast<int32_t>(direction);
+    return value >= static_cast<int32_t>(HYBM_LOCAL_HOST_TO_GLOBAL_HOST) &&
+           value < static_cast<int32_t>(HYBM_DATA_COPY_DIRECTION_AUTO);
 }
+} // namespace
 
 namespace ock {
 namespace mf {
-
-// clang-format off
-static hybm_mem_type HybmDirectionSrcMemType[HYBM_DATA_COPY_DIRECTION_BUTT] = {
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_BUTT
-};
-static hybm_mem_type HybmDirectionDestMemType[HYBM_DATA_COPY_DIRECTION_BUTT] = {
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_HOST,
-    HYBM_MEM_TYPE_DEVICE,
-    HYBM_MEM_TYPE_BUTT
-};
-// clang-format on
 
 DataOpDeviceURMA::DataOpDeviceURMA(uint32_t rankId, std::shared_ptr<transport::TransportManager> tm) noexcept
     : rankId_{rankId}, transportManager_{std::move(tm)}
@@ -180,6 +157,12 @@ DataOpDeviceURMA::~DataOpDeviceURMA()
 Result DataOpDeviceURMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direction direction,
                                   const ock::mf::ExtOptions &options) noexcept
 {
+    if (!IsSupportedUrmaDirection(direction)) {
+        BM_LOG_ERROR("URMA data copy invalid direction: " << direction << " localRank: " << rankId_
+                                                          << " dataSize: " << params.dataSize);
+        return BM_INVALID_PARAM;
+    }
+
     Result ret;
     // only convert local-side addresses; remote side stays in GVA.
     TransformVa(params.src, params.dest, direction);
@@ -532,16 +515,6 @@ Result DataOpDeviceURMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
     return BM_OK;
 }
 
-Result DataOpDeviceURMA::BatchCopyLH2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyWrite(params, options, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE);
-}
-
-Result DataOpDeviceURMA::BatchCopyGD2LH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyRead(params, options, HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST);
-}
-
 Result DataOpDeviceURMA::BatchDataCopyLocal(hybm_batch_copy_params &params, int32_t direction,
                                             const ock::mf::ExtOptions &options) noexcept
 {
@@ -649,248 +622,159 @@ Result DataOpDeviceURMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params,
     return ret;
 }
 
-void DataOpDeviceURMA::ClassifyDataAddr(void **globalAddrs, void **localAddrs, const uint64_t *counts,
-                                        uint32_t batchSize, std::unordered_map<uint32_t, CopyDescriptor> &registered,
-                                        std::unordered_map<uint32_t, CopyDescriptor> &localed,
-                                        std::unordered_map<uint32_t, CopyDescriptor> &notRegistered,
-                                        uint32_t globalRankId) noexcept
+Result DataOpDeviceURMA::CopyMultiRankLocal(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                            const ExtOptions &options,
+                                            const std::vector<uint32_t> &localIndices) noexcept
 {
-    // globalRankId is constant for the whole batch, so every entry shares the same key.
-    // Get-or-create the descriptor once and reserve capacity to avoid repeated reallocations.
-    auto getOrCreateDesc = [&globalRankId, batchSize](std::unordered_map<uint32_t, CopyDescriptor> &m) {
-        auto [it, inserted] = m.try_emplace(globalRankId);
-        if (inserted) {
-            it->second.localAddrs.reserve(batchSize);
-            it->second.globalAddrs.reserve(batchSize);
-            it->second.counts.reserve(batchSize);
-        }
-        return &it->second;
-    };
-
-    if (globalRankId == rankId_) {
-        CopyDescriptor *desc = getOrCreateDesc(localed);
-        for (uint32_t i = 0; i < batchSize; ++i) {
-            desc->localAddrs.push_back(localAddrs[i]);
-            desc->globalAddrs.push_back(globalAddrs[i]);
-            desc->counts.push_back(counts[i]);
-        }
-        return;
+    if (localIndices.empty()) {
+        return BM_OK;
     }
-
-    // Per-item registration check splits items between registered and notRegistered.
-    // Cache the descriptor pointer so only the first item per bucket pays the hash lookup.
-    CopyDescriptor *regDesc = nullptr;
-    CopyDescriptor *notRegDesc = nullptr;
-    for (uint32_t i = 0; i < batchSize; ++i) {
-        CopyDescriptor *desc;
-        if (transportManager_->QueryHasRegistered((uint64_t)localAddrs[i], counts[i])) {
-            if (regDesc == nullptr) {
-                regDesc = getOrCreateDesc(registered);
-            }
-            desc = regDesc;
-        } else {
-            if (notRegDesc == nullptr) {
-                notRegDesc = getOrCreateDesc(notRegistered);
-            }
-            desc = notRegDesc;
+    std::vector<void *> sources;
+    std::vector<void *> destinations;
+    std::vector<uint64_t> sizes;
+    sources.reserve(localIndices.size());
+    destinations.reserve(localIndices.size());
+    sizes.reserve(localIndices.size());
+    for (uint32_t index : localIndices) {
+        if (index >= params.batchSize) {
+            BM_LOG_ERROR("local batch index out of range, index: " << index << " batchSize: " << params.batchSize
+                                                                   << " localRank: " << rankId_);
+            return BM_INVALID_PARAM;
         }
-        desc->localAddrs.push_back(localAddrs[i]);
-        desc->globalAddrs.push_back(globalAddrs[i]);
-        desc->counts.push_back(counts[i]);
+        void *src = params.sources[index];
+        void *dest = params.destinations[index];
+        TransformVa(src, dest, direction);
+        sources.push_back(src);
+        destinations.push_back(dest);
+        sizes.push_back(params.dataSizes[index]);
     }
+    ExtOptions copyOptions{};
+    copyOptions.srcRankId = rankId_;
+    copyOptions.destRankId = rankId_;
+    copyOptions.stream = options.stream;
+    copyOptions.flags = options.flags;
+    hybm_batch_copy_params localParams{sources.data(), destinations.data(), sizes.data(),
+                                       static_cast<uint32_t>(sizes.size())};
+    TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LOCAL);
+    auto ret = BatchDataCopyLocal(localParams, direction, copyOptions);
+    TP_TRACE_END(TP_HYBM_URMA_BATCH_LOCAL, ret);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("multi-rank local batch copy failed, ret: " << ret << " localRank: " << rankId_
+                                                                 << " batchSize: " << localParams.batchSize
+                                                                 << " direction: " << direction);
+    }
+    return ret;
 }
 
-Result DataOpDeviceURMA::BatchCopyWrite(hybm_batch_copy_params &params, const ExtOptions &options,
-                                        hybm_data_copy_direction direction) noexcept
+Result DataOpDeviceURMA::CopyMultiRankUnregistered(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                                   const ExtOptions &options,
+                                                   const transport::RankGroupMap &unregisteredGroups) noexcept
 {
-    auto ret = 0;
-    ExtOptions tmpOptions = options;
-    std::unordered_map<uint32_t, CopyDescriptor> localed{};
-    std::unordered_map<uint32_t, CopyDescriptor> registered{};
-    std::unordered_map<uint32_t, CopyDescriptor> notRegistered{};
-    ClassifyDataAddr(params.destinations, params.sources, params.dataSizes, params.batchSize, registered, localed,
-                     notRegistered, options.destRankId);
-
-    // 先写异步（batch）
-    std::set<uint32_t> asyncSubmittedRanks{};
-    for (auto &it : registered) {
-        tmpOptions.destRankId = it.first;
-
-        ret = transportManager_->WriteRemoteBatchAsync(it.first, it.second);
-        if (ret != BM_OK) {
-            for (uint32_t r : asyncSubmittedRanks) {
-                (void)transportManager_->Synchronize(r);
+    for (const auto &[p2pInfo, indices] : unregisteredGroups) {
+        ExtOptions copyOptions{};
+        copyOptions.srcRankId = p2pInfo.first;
+        copyOptions.destRankId = p2pInfo.second;
+        copyOptions.stream = options.stream;
+        copyOptions.flags = options.flags;
+        for (uint32_t index : indices) {
+            hybm_copy_params copyParam{params.sources[index], params.destinations[index], params.dataSizes[index]};
+            auto ret = DataCopy(copyParam, direction, copyOptions);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("multi-rank fallback copy failed, ret: " << ret << " index: " << index
+                                                                      << " srcRank: " << p2pInfo.first
+                                                                      << " destRank: " << p2pInfo.second);
+                return ret;
             }
-            BM_LOG_ERROR("Failed to write src to dest, ret: " << ret << " localRankId: " << rankId_ << " remoteRankId: "
-                                                              << it.first << " batchSize: " << it.second.counts.size());
-            return ret;
         }
-        asyncSubmittedRanks.insert(it.first);
-    }
-    // 再写本地
-    for (auto &it : localed) {
-        hybm_batch_copy_params localParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                              it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
-        tmpOptions.destRankId = it.first;
-        TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LOCAL);
-        ret = BatchDataCopyLocal(localParams, direction, tmpOptions);
-        TP_TRACE_END(TP_HYBM_URMA_BATCH_LOCAL, ret);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write local failed:", ret);
-    }
-    // 再写未注册
-    for (auto &it : notRegistered) {
-        hybm_batch_copy_params notParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
-        tmpOptions.destRankId = it.first;
-        ret = BatchDataCopyDefault(notParams, direction, tmpOptions);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);
-    }
-    // 再等异步
-    for (auto &it : registered) {
-        TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_WAIT_W);
-        ret = transportManager_->Synchronize(it.first);
-        TP_TRACE_END(TP_HYBM_URMA_BATCH_WAIT_W, ret);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to Synchronize", ret);
     }
     return BM_OK;
 }
 
-Result DataOpDeviceURMA::BatchCopyRead(hybm_batch_copy_params &params, const ExtOptions &options,
-                                       hybm_data_copy_direction direction) noexcept
+Result DataOpDeviceURMA::BatchDataCopyMultiRank(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                                const ExtOptions &options) noexcept
 {
-    auto ret = 0;
-    ExtOptions tmpOptions = options;
-    std::unordered_map<uint32_t, CopyDescriptor> localed{};
-    std::unordered_map<uint32_t, CopyDescriptor> registered{};
-    std::unordered_map<uint32_t, CopyDescriptor> notRegistered{};
-    TP_TRACE_BEGIN(TP_HYBM_URMA_CLASSIFY_DATA_ADDR);
-    ClassifyDataAddr(params.sources, params.destinations, params.dataSizes, params.batchSize, registered, localed,
-                     notRegistered, options.srcRankId);
-    TP_TRACE_END(TP_HYBM_URMA_CLASSIFY_DATA_ADDR, BM_OK);
-
-    // 先读异步（batch）
-    std::set<uint32_t> asyncSubmittedRanks{};
-    for (auto &it : registered) {
-        tmpOptions.srcRankId = it.first;
-
-        ret = transportManager_->ReadRemoteBatchAsync(it.first, it.second);
-        if (ret != BM_OK) {
-            for (uint32_t r : asyncSubmittedRanks) {
-                (void)transportManager_->Synchronize(r);
+    if (params.batchSize == 0 || params.sources == nullptr || params.destinations == nullptr ||
+        params.dataSizes == nullptr) {
+        BM_LOG_ERROR("invalid multi-rank batch params, batchSize: " << params.batchSize);
+        return BM_INVALID_PARAM;
+    }
+    //按照kernel一次可以下发的最大数切分
+    const uint32_t sliceCount = (params.batchSize - 1U) / HCOMM_BATCH_TRANSFER_MAX_DESC_NUM + 1U;
+    std::vector<transport::RankGroupMap> sliceGroupMaps;
+    TP_TRACE_BEGIN(TP_HYBM_URMA_BUILD_SLICE_GROUP_MAPS);
+    try {
+        sliceGroupMaps.resize(sliceCount);
+        for (const auto &[p2pInfo, indices] : options.groupMap) {
+            if (p2pInfo.first != rankId_ && p2pInfo.second != rankId_) {
+                BM_LOG_ERROR("multi-rank batch group excludes local rank, localRank: "
+                             << rankId_ << " srcRank: " << p2pInfo.first << " destRank: " << p2pInfo.second);
+                TP_TRACE_END(TP_HYBM_URMA_BUILD_SLICE_GROUP_MAPS, BM_INVALID_PARAM);
+                return BM_INVALID_PARAM;
             }
-            BM_LOG_ERROR("Failed to read src to dest, ret: " << ret << " localRankId: " << rankId_ << " remoteRankId: "
-                                                             << it.first << " batchSize: " << it.second.counts.size());
-            return ret;
+            for (uint32_t index : indices) {
+                if (index >= params.batchSize) {
+                    BM_LOG_ERROR("multi-rank batch index out of range, index: "
+                                 << index << " batchSize: " << params.batchSize << " srcRank: " << p2pInfo.first
+                                 << " destRank: " << p2pInfo.second);
+                    TP_TRACE_END(TP_HYBM_URMA_BUILD_SLICE_GROUP_MAPS, BM_INVALID_PARAM);
+                    return BM_INVALID_PARAM;
+                }
+                const uint32_t sliceIndex = index / HCOMM_BATCH_TRANSFER_MAX_DESC_NUM;
+                const uint32_t sliceOffset = sliceIndex * HCOMM_BATCH_TRANSFER_MAX_DESC_NUM;
+                sliceGroupMaps[sliceIndex][p2pInfo].push_back(index - sliceOffset);
+            }
         }
-        asyncSubmittedRanks.insert(it.first);
+    } catch (const std::bad_alloc &) {
+        BM_LOG_ERROR("multi-rank batch build slices failed, batchSize: " << params.batchSize
+                                                                         << " sliceCount: " << sliceCount);
+        TP_TRACE_END(TP_HYBM_URMA_BUILD_SLICE_GROUP_MAPS, BM_MALLOC_FAILED);
+        return BM_MALLOC_FAILED;
     }
-    // 再写本地
-    for (auto &it : localed) {
-        hybm_batch_copy_params localParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                              it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
-        tmpOptions.destRankId = it.first;
-        TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LOCAL);
-        ret = BatchDataCopyLocal(localParams, direction, tmpOptions);
-        TP_TRACE_END(TP_HYBM_URMA_BATCH_LOCAL, ret);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "read local failed:", ret);
-    }
-    // 再写未注册
-    for (auto &it : notRegistered) {
-        hybm_batch_copy_params notParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
-        tmpOptions.srcRankId = it.first;
-        ret = BatchDataCopyDefault(notParams, direction, tmpOptions);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);
-    }
-    // 再等异步
-    for (auto &it : registered) {
-        TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_WAIT_R);
-        ret = transportManager_->Synchronize(it.first);
-        TP_TRACE_END(TP_HYBM_URMA_BATCH_WAIT_R, ret);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to Synchronize", ret);
-    }
-    return BM_OK;
-}
+    TP_TRACE_END(TP_HYBM_URMA_BUILD_SLICE_GROUP_MAPS, BM_OK);
+    for (uint32_t sliceIndex = 0; sliceIndex < sliceCount; ++sliceIndex) {
+        const uint32_t sliceOffset = sliceIndex * HCOMM_BATCH_TRANSFER_MAX_DESC_NUM;
+        const uint32_t sliceSize = std::min(HCOMM_BATCH_TRANSFER_MAX_DESC_NUM, params.batchSize - sliceOffset);
+        hybm_batch_copy_params sliceParams{params.sources + sliceOffset, params.destinations + sliceOffset,
+                                           params.dataSizes + sliceOffset, sliceSize};
+        const auto &sliceGroupMap = sliceGroupMaps[sliceIndex];
 
-Result DataOpDeviceURMA::BatchCopyLD2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyWrite(params, options, HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE);
-}
+        std::vector<uint32_t> localIndices;
+        transport::RankGroupMap unregisteredGroups;
+        std::set<uint32_t> batchRanks;
+        // 以一个slice来调用kernel
+        auto submitRet = transportManager_->TransferRemoteBatchAsync(sliceParams, direction, sliceGroupMap,
+                                                                     localIndices, unregisteredGroups, batchRanks);
+        if (submitRet != BM_OK) {
+            BM_LOG_ERROR("multi-rank batch slice transfer failed, offset: " << sliceOffset << " count: " << sliceSize
+                                                                            << " groupNum: " << sliceGroupMap.size()
+                                                                            << " ret: " << submitRet);
+            return submitRet;
+        }
 
-Result DataOpDeviceURMA::BatchCopyLD2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyWrite(params, options, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST);
-}
-
-Result DataOpDeviceURMA::BatchCopyGH2LD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyRead(params, options, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE);
-}
-
-Result DataOpDeviceURMA::BatchCopyGD2LD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyRead(params, options, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE);
-}
-
-Result DataOpDeviceURMA::BatchCopyLH2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyWrite(params, options, HYBM_LOCAL_HOST_TO_GLOBAL_HOST);
-}
-
-Result DataOpDeviceURMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtOptions &options,
-                                      hybm_data_copy_direction direction) noexcept
-{
-    const auto srcRankId = options.srcRankId;
-    const auto dstRankId = options.destRankId;
-    const auto batchSize = params.batchSize;
-
-    // Separate local items from remote items, grouping all remote items into one batch.
-    CopyDescriptor remoteDesc;
-
-    for (uint32_t i = 0; i < batchSize; i++) {
-        if (srcRankId == rankId_ && dstRankId == rankId_) {
-            hybm_copy_params pm = {params.sources[i], params.destinations[i], params.dataSizes[i]};
-            const auto ret = DataCopy(pm, direction, options);
-            BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);
-        } else if (srcRankId == rankId_) {
-            // write: local=src, global=dst
-            remoteDesc.localAddrs.push_back(params.sources[i]);
-            remoteDesc.globalAddrs.push_back(params.destinations[i]);
-            remoteDesc.counts.push_back(params.dataSizes[i]);
-        } else if (dstRankId == rankId_) {
-            // read: local=dst, global=src
-            remoteDesc.localAddrs.push_back(params.destinations[i]);
-            remoteDesc.globalAddrs.push_back(params.sources[i]);
-            remoteDesc.counts.push_back(params.dataSizes[i]);
-        } else {
-            BM_LOG_ERROR("invalid param, local rank:" << rankId_ << ", srcId: " << srcRankId
-                                                      << ", dstId: " << dstRankId);
-            return BM_ERROR;
+        Result copyRet = BM_OK;
+        //本地&未注册
+        if (!localIndices.empty()) {
+            copyRet = CopyMultiRankLocal(sliceParams, direction, options, localIndices);
+        }
+        if (copyRet == BM_OK && !unregisteredGroups.empty()) {
+            copyRet = CopyMultiRankUnregistered(sliceParams, direction, options, unregisteredGroups);
+        }
+        //同步，batchRanks是当前slice的ranks
+        const Result syncRet = transportManager_->SynchronizeRanks(batchRanks);
+        if (syncRet != BM_OK) {
+            BM_LOG_ERROR("multi-rank batch slice synchronize failed, offset: " << sliceOffset << " count: " << sliceSize
+                                                                               << " rankNum: " << batchRanks.size()
+                                                                               << " ret: " << syncRet);
+        }
+        if (copyRet != BM_OK) {
+            BM_LOG_ERROR("multi-rank batch slice copy failed, offset: " << sliceOffset << " count: " << sliceSize
+                                                                        << " ret: " << copyRet);
+            return copyRet;
+        }
+        if (syncRet != BM_OK) {
+            return syncRet;
         }
     }
-
-    // Issue a single batch async call for all remote items
-    if (!remoteDesc.counts.empty()) {
-        const uint32_t remoteRank = (srcRankId == rankId_) ? dstRankId : srcRankId;
-
-        Result ret = BM_OK;
-        if (srcRankId == rankId_) {
-            ret = transportManager_->WriteRemoteBatchAsync(remoteRank, remoteDesc);
-        } else {
-            ret = transportManager_->ReadRemoteBatchAsync(remoteRank, remoteDesc);
-        }
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to batch write/read src to dest, ret: "
-                         << ret << " localRankId: " << rankId_ << " srcRankId: " << srcRankId << " destRankId: "
-                         << dstRankId << " remoteRank: " << remoteRank << " batch: " << remoteDesc.counts.size());
-            return ret;
-        }
-        TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_WAIT_W);
-        ret = transportManager_->Synchronize(remoteRank);
-        TP_TRACE_END(TP_HYBM_URMA_BATCH_WAIT_W, ret);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to Synchronize", ret);
-    }
-
     return BM_OK;
 }
 
@@ -968,118 +852,24 @@ Result DataOpDeviceURMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
     return 0;
 }
 
-Result DataOpDeviceURMA::BatchCopyGH2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyG2G(params, options, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST);
-}
-
-Result DataOpDeviceURMA::BatchCopyGH2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyG2G(params, options, HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE);
-}
-
-Result DataOpDeviceURMA::BatchCopyGH2LH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyRead(params, options, HYBM_GLOBAL_HOST_TO_LOCAL_HOST);
-}
-
-Result DataOpDeviceURMA::BatchCopyGD2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyG2G(params, options, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST);
-}
-
-Result DataOpDeviceURMA::BatchCopyGD2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
-{
-    return BatchCopyG2G(params, options, HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE);
-}
-
 Result DataOpDeviceURMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                        const ExtOptions &options) noexcept
 {
-    auto ret = 0;
-    for (uint32_t i = 0; i < params.batchSize; i++) {
-        // only convert local-side addresses; remote side stays in GVA.
-        TransformVa(params.sources[i], params.destinations[i], direction);
+    if (!IsSupportedUrmaDirection(direction)) {
+        BM_LOG_ERROR("URMA batch data copy invalid direction: " << direction << " localRank: " << rankId_
+                                                                << " batchSize: " << params.batchSize
+                                                                << " groupNum: " << options.groupMap.size());
+        return BM_INVALID_PARAM;
     }
-    switch (direction) {
-        case HYBM_LOCAL_HOST_TO_GLOBAL_HOST: { // 0
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LH_TO_GH);
-            ret = BatchCopyLH2GH(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_LH_TO_GH, ret);
-            break;
-        }
-        case HYBM_GLOBAL_HOST_TO_GLOBAL_HOST: { // 4
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GH_TO_GH);
-            ret = BatchCopyGH2GH(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GH_TO_GH, ret);
-            break;
-        }
-        case HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE: { // 5
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GH_TO_GD);
-            ret = BatchCopyGH2GD(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GH_TO_GD, ret);
-            break;
-        }
-        case HYBM_GLOBAL_HOST_TO_LOCAL_HOST: { // 6
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GH_TO_LH);
-            ret = BatchCopyGH2LH(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GH_TO_LH, ret);
-            break;
-        }
-        case HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST: { // 8
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GD_TO_GH);
-            ret = BatchCopyGD2GH(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GD_TO_GH, ret);
-            break;
-        }
-        case HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE: { // 9
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GD_TO_GD);
-            ret = BatchCopyGD2GD(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GD_TO_GD, ret);
-            break;
-        }
-        case HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE: { // 1
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LH_TO_GD);
-            ret = BatchCopyLH2GD(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_LH_TO_GD, ret);
-            break;
-        }
-        case HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST: { // 10
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GD_TO_LH);
-            ret = BatchCopyGD2LH(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GD_TO_LH, ret);
-            break;
-        }
-        case HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST: { // 2
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LD_TO_GH);
-            ret = BatchCopyLD2GH(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_LD_TO_GH, ret);
-            break;
-        }
-        case HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE: { // 7
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GH_TO_LD);
-            ret = BatchCopyGH2LD(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GH_TO_LD, ret);
-            break;
-        }
-        case HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE: { // 3
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_LD_TO_GD);
-            ret = BatchCopyLD2GD(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_LD_TO_GD, ret);
-            break;
-        }
-        case HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE: { // 11
-            TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_GD_TO_LD);
-            ret = BatchCopyGD2LD(params, options);
-            TP_TRACE_END(TP_HYBM_URMA_BATCH_GD_TO_LD, ret);
-            break;
-        }
-        default: {
-            ret = BM_ERROR;
-            BM_LOG_ERROR("unexcepted direction:" << direction);
-            break;
-        }
+    if (options.groupMap.empty()) {
+        BM_LOG_ERROR("URMA batch data copy requires rank groups, localRank: " << rankId_ << " direction: " << direction
+                                                                              << " batchSize: " << params.batchSize);
+        return BM_INVALID_PARAM;
     }
+
+    TP_TRACE_BEGIN(TP_HYBM_URMA_BATCH_MULTI_RANK);
+    auto ret = BatchDataCopyMultiRank(params, direction, options);
+    TP_TRACE_END(TP_HYBM_URMA_BATCH_MULTI_RANK, ret);
     return ret;
 }
 } // namespace mf

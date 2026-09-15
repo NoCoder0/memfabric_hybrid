@@ -53,3 +53,16 @@ const void *TransportManager::GetQpInfo() const
     BM_LOG_DEBUG("Not Implement GetQpInfo()");
     return nullptr;
 }
+Result TransportManager::TransferRemoteBatchAsync(const hybm_batch_copy_params &params,
+                                                  hybm_data_copy_direction direction, const RankGroupMap &groupMap,
+                                                  std::vector<uint32_t> &localIndices, RankGroupMap &unregisteredGroups,
+                                                  std::set<uint32_t> &batchRanks)
+{
+    (void)direction;
+    (void)localIndices;
+    (void)unregisteredGroups;
+    batchRanks.clear();
+    BM_LOG_ERROR("TransferRemoteBatchAsync raw batch is not supported by this transport, batchSize: "
+                 << params.batchSize << " rankNum: " << groupMap.size());
+    return BM_NOT_SUPPORTED;
+}

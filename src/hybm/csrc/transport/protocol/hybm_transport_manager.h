@@ -14,6 +14,8 @@
 #define MF_HYBRID_HYBM_TRANSPORT_MANAGER_H
 
 #include <memory>
+#include <set>
+#include "hybm_data_operator.h"
 #include "hybm_types.h"
 #include "hybm_transport_common.h"
 #include "hybm_entity_tag_info.h"
@@ -21,6 +23,8 @@
 namespace ock {
 namespace mf {
 namespace transport {
+
+using RankGroupMap = decltype(ExtOptions::groupMap);
 
 class TransportManager {
 public:
@@ -106,9 +110,26 @@ public:
 
     virtual Result Synchronize(uint32_t rankId) = 0;
 
+    virtual Result SynchronizeRanks(const std::set<uint32_t> &rankIds)
+    {
+        Result firstError = BM_OK;
+        for (uint32_t rankId : rankIds) {
+            const auto ret = Synchronize(rankId);
+            if (ret != BM_OK && firstError == BM_OK) {
+                firstError = ret;
+            }
+        }
+        return firstError;
+    }
+
     virtual Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
 
     virtual Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
+
+    // batchRanks is populated with all effective remote ranks only when the slice kernel succeeds as a whole.
+    virtual Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                            const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
+                                            RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks);
 };
 
 using TransManagerPtr = std::shared_ptr<TransportManager>;

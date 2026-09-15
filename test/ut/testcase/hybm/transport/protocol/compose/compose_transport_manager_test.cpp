@@ -12,6 +12,8 @@
 
 #include <gtest/gtest.h>
 
+#include <set>
+
 #define private public
 #include "compose_transport_manager.h"
 #include "dl_acl_api.h"
@@ -165,6 +167,13 @@ public:
         return syncResult;
     }
 
+    Result SynchronizeRanks(const std::set<uint32_t> &rankIds) override
+    {
+        ++syncRanksCalls;
+        synchronizedRanks = rankIds;
+        return syncRanksResult;
+    }
+
     Result WriteRemoteBatchAsync(uint32_t, const CopyDescriptor &) override
     {
         ++writeBatchAsyncCalls;
@@ -175,6 +184,22 @@ public:
     {
         ++readBatchAsyncCalls;
         return readBatchAsyncResult;
+    }
+
+    Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                    const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
+                                    RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks) override
+    {
+        (void)params;
+        (void)direction;
+        (void)localIndices;
+        (void)unregisteredGroups;
+        ++transferBatchAsyncCalls;
+        transferBatchRankCount = groupMap.size();
+        if (transferBatchAsyncResult == BM_OK) {
+            batchRanks.insert(transferBatchRanks.begin(), transferBatchRanks.end());
+        }
+        return transferBatchAsyncResult;
     }
 
 public:
@@ -194,8 +219,11 @@ public:
     uint32_t readAsyncCalls{0};
     uint32_t writeAsyncCalls{0};
     uint32_t syncCalls{0};
+    uint32_t syncRanksCalls{0};
     uint32_t writeBatchAsyncCalls{0};
     uint32_t readBatchAsyncCalls{0};
+    uint32_t transferBatchAsyncCalls{0};
+    size_t transferBatchRankCount{0U};
 
     Result openDeviceResult{BM_OK};
     Result closeDeviceResult{BM_OK};
@@ -212,8 +240,12 @@ public:
     Result readAsyncResult{BM_OK};
     Result writeAsyncResult{BM_OK};
     Result syncResult{BM_OK};
+    Result syncRanksResult{BM_OK};
     Result writeBatchAsyncResult{BM_OK};
     Result readBatchAsyncResult{BM_OK};
+    Result transferBatchAsyncResult{BM_OK};
+    std::set<uint32_t> transferBatchRanks;
+    std::set<uint32_t> synchronizedRanks;
 
     std::string nic_{"fake_nic"};
 };
@@ -855,6 +887,97 @@ TEST(ComposeTransportManagerTest, WriteRemoteBatchAsyncHostOnly)
     EXPECT_EQ(host->writeBatchAsyncCalls, 0u);
     EXPECT_EQ(dev->writeBatchAsyncCalls, 0u);
     EXPECT_EQ(ret, BM_ERROR);
+}
+
+TEST(ComposeTransportManagerTest, TransferRemoteBatchAsyncUrmaRequiresDeviceManager)
+{
+    auto tag = std::make_shared<HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(1U, "remote"), BM_OK);
+    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:remote"), BM_OK);
+    ComposeTransportManager mgr(tag);
+    mgr.options_.rankId = 0U;
+
+    hybm_batch_copy_params params{};
+    RankGroupMap groupMap{{{0U, 1U}, {0U}}};
+    std::vector<uint32_t> localIndices;
+    RankGroupMap unregisteredGroups;
+    std::set<uint32_t> batchRanks;
+    EXPECT_EQ(mgr.TransferRemoteBatchAsync(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, groupMap, localIndices,
+                                           unregisteredGroups, batchRanks),
+              BM_ERROR);
+    EXPECT_TRUE(batchRanks.empty());
+}
+
+TEST(ComposeTransportManagerTest, TransferRemoteBatchAsyncForwardsAllUrmaRanks)
+{
+    auto tag = std::make_shared<HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(1U, "remote1"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(2U, "remote2"), BM_OK);
+    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:remote1,local:DEVICE_URMA:remote2"), BM_OK);
+    ComposeTransportManager mgr(tag);
+    mgr.options_.rankId = 0U;
+    auto device = std::make_shared<FakeTransportManager>();
+    device->transferBatchRanks = {1U, 2U};
+    mgr.deviceTransportManager_ = device;
+
+    hybm_batch_copy_params params{};
+    RankGroupMap groupMap{{{0U, 1U}, {0U}}, {{2U, 0U}, {1U}}};
+    std::vector<uint32_t> localIndices;
+    RankGroupMap unregisteredGroups;
+    std::set<uint32_t> batchRanks;
+    EXPECT_EQ(mgr.TransferRemoteBatchAsync(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, groupMap, localIndices,
+                                           unregisteredGroups, batchRanks),
+              BM_OK);
+    EXPECT_EQ(device->transferBatchAsyncCalls, 1U);
+    EXPECT_EQ(device->transferBatchRankCount, 2U);
+    EXPECT_EQ(batchRanks, (std::set<uint32_t>{1U, 2U}));
+}
+
+TEST(ComposeTransportManagerTest, TransferRemoteBatchAsyncReturnsUrmaManagerError)
+{
+    auto tag = std::make_shared<HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
+    ASSERT_EQ(tag->AddRankTag(1U, "remote"), BM_OK);
+    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:remote"), BM_OK);
+    ComposeTransportManager mgr(tag);
+    mgr.options_.rankId = 0U;
+    auto device = std::make_shared<FakeTransportManager>();
+    device->transferBatchAsyncResult = BM_DL_FUNCTION_FAILED;
+    mgr.deviceTransportManager_ = device;
+
+    hybm_batch_copy_params params{};
+    RankGroupMap groupMap{{{0U, 1U}, {0U}}};
+    std::vector<uint32_t> localIndices;
+    RankGroupMap unregisteredGroups;
+    std::set<uint32_t> batchRanks{99U};
+    EXPECT_EQ(mgr.TransferRemoteBatchAsync(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, groupMap, localIndices,
+                                           unregisteredGroups, batchRanks),
+              BM_DL_FUNCTION_FAILED);
+    EXPECT_TRUE(batchRanks.empty());
+    EXPECT_EQ(device->transferBatchAsyncCalls, 1U);
+}
+
+TEST(ComposeTransportManagerTest, SynchronizeRanksForwardsOneDeviceBatch)
+{
+    auto tag = std::make_shared<HybmEntityTagInfo>();
+    ComposeTransportManager mgr(tag);
+    auto device = std::make_shared<FakeTransportManager>();
+    mgr.deviceTransportManager_ = device;
+
+    const std::set<uint32_t> rankIds{1U, 2U};
+    EXPECT_EQ(mgr.SynchronizeRanks(rankIds), BM_OK);
+    EXPECT_EQ(device->syncRanksCalls, 1U);
+    EXPECT_EQ(device->syncCalls, 0U);
+    EXPECT_EQ(device->synchronizedRanks, rankIds);
+}
+
+TEST(ComposeTransportManagerTest, SynchronizeRanksAllowsEmptySetWithoutDevice)
+{
+    auto tag = std::make_shared<HybmEntityTagInfo>();
+    ComposeTransportManager mgr(tag);
+    EXPECT_EQ(mgr.SynchronizeRanks({}), BM_OK);
 }
 
 // Synchronize：同时支持 device 和 host 时，device 成功后直接返回 BM_OK。

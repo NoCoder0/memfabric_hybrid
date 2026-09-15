@@ -49,6 +49,9 @@ private:
     using DataOperators = std::vector<std::pair<hybm_data_op_type, DataOperatorPtr>>;
     DataOperators GetPrioritedDataOperators(const ExtOptions &options) noexcept;
     bool AllSupportSdma(const ExtOptions &options) noexcept;
+    bool AllPreferDeviceUrma(const ExtOptions &options) noexcept;
+    Result BatchDataCopyByGroup(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                const ExtOptions &options) noexcept;
 
 private:
     const hybm_options options_;
