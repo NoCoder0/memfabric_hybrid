@@ -13,6 +13,7 @@
 #define MF_HYBRID_HYBM_DATA_OP_HOST_SHM_H
 
 #include "hybm_data_operator.h"
+#include "hybm_va_manager.h"
 
 namespace ock {
 namespace mf {
@@ -33,7 +34,15 @@ public:
                          const ExtOptions &options) noexcept override;
     void TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept override
     {
-        return;
+        uint64_t out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
+        if (out != 0) {
+            src = reinterpret_cast<void *>(out);
+        }
+
+        out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
+        if (out != 0) {
+            dst = reinterpret_cast<void *>(out);
+        }
     }
     Result Wait(int32_t waitId) noexcept override;
 

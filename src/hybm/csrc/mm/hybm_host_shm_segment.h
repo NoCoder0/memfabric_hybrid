@@ -13,8 +13,8 @@
 #define MF_HYBRID_HYBM_HOST_SHM_SEGMENT_H
 
 #include <map>
+#include <set>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "hybm_mem_segment.h"
@@ -71,10 +71,12 @@ private:
     std::string GetShmFilePath(uint32_t rankId) const noexcept;
     std::string GetShmFilePath(uint32_t rankId, bool useHugetlbfs) const noexcept;
     Result MapLocalShm() noexcept;
-    Result MapImportedShm(uint32_t rankId) noexcept;
+    Result MapImportedShm(const ShmExportInfo &im) noexcept;
     Result RemapRemoteAsReserved(uint32_t rankId) noexcept;
     void CloseImportedShmFds() noexcept;
     bool TryHugetlbfsAvailable() noexcept;
+    uint64_t ReserveLva(const ShmExportInfo &im) noexcept;
+    int OpenImportedShmFd(uint32_t rankId) noexcept;
 
 private:
     static uint64_t sUsedOffset_;
@@ -87,7 +89,7 @@ private:
     std::map<uint32_t, MemSliceStatus> slices_;
     std::map<uint32_t, std::string> exportMap_;
     std::vector<ShmExportInfo> imports_;
-    std::unordered_set<uint32_t> mappedRemoteRanks_;
+    std::set<uint64_t> mappedGvaMem_;
     std::unordered_map<uint32_t, int> importedShmFds_;
     std::unordered_map<uint32_t, bool> importedHugetlbfsFlags_;
     int localShmFd_{-1};

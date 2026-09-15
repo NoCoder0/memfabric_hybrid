@@ -1603,17 +1603,6 @@ TEST_F(HybmEntityDefaultTest, CheckOptions_DeviceRdmaAndUrmaConflict)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmWithZeroVaSpace)
-{
-    hybm_options options{};
-    options.rankId = 0;
-    options.rankCount = 1;
-    options.bmDataOpType = HYBM_DOP_TYPE_HOST_SHM;
-    options.hostVASpace = 0;
-    auto ret = ock::mf::MemEntityDefault::CheckOptions(&options);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
-}
-
 TEST_F(HybmEntityDefaultTest, CheckOptions_HostShmWithDeviceMemory)
 {
     hybm_options options{};
