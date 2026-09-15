@@ -185,7 +185,22 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     const auto &workerCpuRange = env::MF_HYBM_HCOM_WORKER_CPU_RANGE;
     if (!workerCpuRange.empty()) {
         uint32_t workerNum = 0; /* 直接按核数当 worker 数 */
-        const bool parsed = ParseWorkerCpuRange(workerCpuRange, workerNum);
+        bool parsed = ParseWorkerCpuRange(workerCpuRange, workerNum);
+        const uint32_t railCount = GetRailCount();
+        if (parsed && railCount > 1) {
+            /* 多 rail：一个 service 下有 railCount 个 driver，每个 driver 各建自己的一组 worker。
+               ubs 会按 driver 序号在 CPU 段内切片（见 NetDriverRDMA::CreateWorkers），
+               所以这里把核数**平均分给 railCount 个 driver**：
+               例：双 rail 想每 rail 各绑 2 核 ⇒ 给 "91-94"，这里自动设成每个 driver 2 个 worker。 */
+            if (workerNum < railCount || workerNum % railCount != 0) {
+                BM_LOG_WARN("skip hcom worker cpu range for multi rail. range: "
+                            << workerCpuRange << " 核数(" << workerNum << ") 须为 rail 数(" << railCount
+                            << ")的整数倍且不小于 rail 数，例如双 rail 各绑 2 核请给 \"91-94\"");
+                parsed = false;
+            } else {
+                workerNum /= railCount;
+            }
+        }
         if (!parsed || workerCpuRange.size() >= sizeof(opt.workerGroupCpuRange)) {
             BM_LOG_WARN("skip hcom worker cpu range. range: "
                         << workerCpuRange << " parsed: " << parsed
@@ -194,7 +209,8 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
             std::copy_n(workerCpuRange.c_str(), workerCpuRange.size() + 1, opt.workerGroupCpuRange);
             opt.workerGroupThreadCount = static_cast<uint16_t>(workerNum);
             BM_LOG_INFO("hcom worker group cpu range: " << opt.workerGroupCpuRange
-                                                        << " threadCount: " << opt.workerGroupThreadCount);
+                                                        << " threadCount: " << opt.workerGroupThreadCount
+                                                        << " (per driver, railCount: " << railCount << ")");
         }
     }
     Service_Type enumProtocolType = HostHcomHelper::HybmDopTransHcomProtocol(options.protocol, options.nic);
