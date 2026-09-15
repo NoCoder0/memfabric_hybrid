@@ -58,6 +58,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <thread>
@@ -462,6 +463,18 @@ void PrintLabel(const char *mode)
     printf("\n==== mode=%s ====\n", mode);
 }
 
+/* ===== 可选的 per-rail 到达时间线（默认关闭）=====
+   设 MF_BENCH_RAIL_TRACE=1 打开，只打印前 kRailTraceRounds 轮。用途：判定**两条 rail 的数据
+   是否真的同时在跑** ——
+     到达时刻交错（rail0/rail1 混在同一时间窗内）  → 真并行；
+     rail0 的三批全部先到、rail1 的三批全部后到    → 串行（提交线程把两条 rail 排成一前一后）。
+   只在开启时插 NowUs()，关闭时零开销、不影响任何时序。 */
+constexpr uint32_t kRailTraceRounds = 3;
+bool RailTraceEnabled()
+{
+    return getenv("MF_BENCH_RAIL_TRACE") != nullptr;
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -839,6 +852,7 @@ int main(int argc, char *argv[])
             uint64_t sumScatterUs = 0; /* 本地 scatter 累计（只算 memcpy，不含轮询等待） */
             uint64_t sumTailUs = 0;    /* 收尾那批 scatter（发端投完之后的"尾巴"） */
             bool aborted = false;
+            const bool railTrace = RailTraceEnabled();
             for (uint32_t r = 0; r < kTotal; ++r) {
                 const uint64_t roundStart = static_cast<uint64_t>(r) * a.count;
                 { /* 本轮每条 rail 负责的块区间（全局块号） */
@@ -861,6 +875,7 @@ int main(int argc, char *argv[])
                 bool timedOut = false;
                 uint64_t scatterUs = 0;
                 uint64_t tailUs = 0;
+                std::string railTraceLine; /* 开启 rail-trace 时记录"哪条 rail 在第几 us 到货" */
                 const uint64_t tw0 = NowUs();
                 for (;;) {
                     if (NowUs() - tw0 > kSpinTimeoutUs) {
@@ -881,6 +896,11 @@ int main(int argc, char *argv[])
                             const uint64_t tb1 = NowUs();
                             scatterUs += tb1 - tb0;
                             tailUs = tb1 - tb0;
+                            if (railTrace && r < kRailTraceRounds) {
+                                railTraceLine += " rail" + std::to_string(e) + ":blk" +
+                                                 std::to_string(uptoGlobal - roundStart) + "@" +
+                                                 std::to_string(tb0 - tRoundStart) + "us";
+                            }
                             donePerEp[e] = uptoGlobal;
                         }
                         if (donePerEp[e] < endPerEp[e]) {
@@ -900,6 +920,9 @@ int main(int argc, char *argv[])
                     printf("\n");
                     aborted = true;
                     break;
+                }
+                if (railTrace && r < kRailTraceRounds) { /* per-rail 到达时间线（判定是否真并行） */
+                    printf("[rail-trace] round=%u%s\n", r, railTraceLine.c_str());
                 }
                 if (r >= a.warmup) {
                     e2eCosts.push_back(NowUs() - tRoundStart);
