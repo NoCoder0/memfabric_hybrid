@@ -201,7 +201,10 @@ private:
     static thread_local HcomCounterStreamPtr stream_;
     /* MR 查询快路径缓存：mrs_ 每次变动 mrGen_ +1；代际一致时本线程直接复用上次命中的 MR，
        省掉每次查询的 mrMutex_ 加锁与遍历。批量写 600 个 iov 原本要 1200 次加锁，
-       且 mrMutex_ 是每 rank 一把，多链路时正是两个提交 worker 的争用点。 */
+       且 mrMutex_ 是每 rank 一把，多链路时正是两个提交 worker 的争用点。
+       注意必须用**多个槽位**：一个 SGL 请求里会交替查询"本端地址"(rankId_) 和"远端地址"(rankId)，
+       单槽会被交替击穿、几乎全部退化成慢路径（实测 32 次查询 ≈ 3.3us/请求）。 */
+    static constexpr uint32_t MR_HIT_SLOTS = 4;
     struct MrHitCache {
         const void *self;
         uint64_t gen;
@@ -209,7 +212,11 @@ private:
         uint32_t ep;
         HcomMemoryRegion mr;
     };
-    static thread_local MrHitCache tlsMrHit_;
+    static uint32_t MrHitSlot(uint32_t rankId, uint32_t ep) noexcept
+    {
+        return (rankId * 131U + ep * 7U) % MR_HIT_SLOTS;
+    }
+    static thread_local MrHitCache tlsMrHit_[MR_HIT_SLOTS];
     std::atomic<uint64_t> mrGen_{1};
     void BumpMrGeneration() noexcept
     {

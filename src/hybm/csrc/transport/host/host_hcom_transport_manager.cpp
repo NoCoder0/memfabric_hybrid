@@ -144,7 +144,7 @@ hybm_tls_config HcomTransportManager::tlsConfig_ = {};
 char HcomTransportManager::keyPass_[KEYPASS_MAX_LEN] = {0};
 std::mutex HcomTransportManager::keyPassMutex = {};
 thread_local HcomCounterStreamPtr HcomTransportManager::stream_ = nullptr;
-thread_local HcomTransportManager::MrHitCache HcomTransportManager::tlsMrHit_ = {nullptr, 0, UINT32_MAX, UINT32_MAX, {}};
+thread_local HcomTransportManager::MrHitCache HcomTransportManager::tlsMrHit_[HcomTransportManager::MR_HIT_SLOTS];
 
 static void CopyHcomOneSideKey(const OneSideKey &from, TransportMemoryKey &to)
 {
@@ -1636,10 +1636,12 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
     const uint64_t gen = mrGen_.load(std::memory_order_acquire);
     /* 快路径：代际未变 + 同 rank/ep + 地址仍落在上次命中的 MR 内 → 免锁直接返回。
        批量写场景里数百个地址通常都落在同一对 MR 里，命中率接近 100%，
-       因此把“每个 iov 2 次加锁遍历”降到整批 1~2 次。 */
-    if (tlsMrHit_.self == this && tlsMrHit_.gen == gen && tlsMrHit_.rankId == rankId && tlsMrHit_.ep == ep &&
-        tlsMrHit_.mr.addr <= addr && tlsMrHit_.mr.addr + tlsMrHit_.mr.size > addr) {
-        mr = tlsMrHit_.mr;
+       因此把“每个 iov 2 次加锁遍历”降到整批 1~2 次。多槽位是为了让"本端/远端"各自有槽，
+       否则交替查询会互相击穿缓存。 */
+    MrHitCache &hit = tlsMrHit_[MrHitSlot(rankId, ep)];
+    if (hit.self == this && hit.gen == gen && hit.rankId == rankId && hit.ep == ep && hit.mr.addr <= addr &&
+        hit.mr.addr + hit.mr.size > addr) {
+        mr = hit.mr;
         return BM_OK;
     }
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
@@ -1648,7 +1650,7 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
                                     << " size:" << mrInfo.size);
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size > addr) {
             mr = mrInfo;
-            tlsMrHit_ = MrHitCache{this, gen, rankId, ep, mrInfo};
+            hit = MrHitCache{this, gen, rankId, ep, mrInfo};
             return BM_OK;
         }
     }
