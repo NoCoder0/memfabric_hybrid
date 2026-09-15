@@ -29,14 +29,16 @@ ibverbs（ibv_* 开头）← 最终 RDMA 接口
 
 ### 8.2 每个 RDMA 接口的完整映射
 
+> **注意**：`RaRdevInit` 只在 legacy 目录中被调用。base_comm 中通过 `Endpoint::Init()` 直接初始化 RDMA 设备，不经过 `RaRdevInit`。
+
 | RDMA 接口 | HCOMM 封装（Rs*） | MF 调用的 Hcomm* 接口 | 调用流程 |
 |-----------|------------------|----------------------|---------|
-| **ibv_alloc_pd** | `RsIbvAllocPd()` | `HcommEndpointCreate()` | 创建 Endpoint 时自动分配 PD |
-| **ibv_create_cq** | `RsIbvCreateCq()` | `HcommEndpointCreate()` | 创建 Endpoint 时自动创建 CQ |
-| **ibv_create_qp** | `RsIbvCreateQp()` | `HcommChannelCreate()` | 创建 Channel 时创建 QP |
-| **ibv_reg_mr** | `RsIbvRegMr()` | `HcommMemReg()` | 注册内存区域 |
-| **ibv_post_send** | `RsIbvPostSend()` | `HcommBatchTransferOnThread()` | 发送 RDMA Write/Read |
-| **ibv_post_recv** | `RsIbvPostRecv()` | `HcommReadOnThread()` | 接收 RDMA 数据 |
+| **ibv_alloc_pd** | `RsIbvAllocPd()` | `HcommEndpointCreate()` | 创建 Endpoint → `RaRdevInit()` → `RsDrvQueryNotifyAndAllocPd()` |
+| **ibv_create_cq** | `RsIbvCreateCq()` | `HcommEndpointCreate()` | 创建 Endpoint → `RaRdevInit()` → `RsDrvCreateCq()` |
+| **ibv_create_qp** | `RsIbvCreateQp()` | `HcommChannelCreate()` | 创建 Channel → `RsDrvQpCreate()` |
+| **ibv_reg_mr** | `RsIbvRegMr()` | `HcommMemReg()` | 注册内存 → `RsDrvMrReg()` |
+| **ibv_post_send** | `RsIbvPostSend()` | `HcommBatchTransferOnThread()` | 数据传输 → `RsDrvSendExp()` |
+| **ibv_post_recv** | `RsIbvPostRecv()` | `HcommReadOnThread()` | 数据接收 → `RsDrvPostRecv()` |
 
 ### 8.3 MF 调用 HCOMM 接口的完整流程
 
