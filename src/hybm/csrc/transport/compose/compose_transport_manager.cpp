@@ -279,6 +279,23 @@ bool ComposeTransportManager::AllLinksReady(uint32_t rankId) const
     return false;
 }
 
+uint32_t ComposeTransportManager::GetRailCount() const
+{
+    // Multi-rail only applies to host rdma transport for now; device keeps single rail.
+    if (hostTransportManager_) {
+        return hostTransportManager_->GetRailCount();
+    }
+    return 1;
+}
+
+bool ComposeTransportManager::AllRailsReady(uint32_t rankId) const
+{
+    if (hostTransportManager_) {
+        return hostTransportManager_->AllRailsReady(rankId);
+    }
+    return false;
+}
+
 Result ComposeTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
                                                      size_t begin, size_t end)
 {
@@ -289,6 +306,17 @@ Result ComposeTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t e
     return BM_ERROR;
 }
 
+Result ComposeTransportManager::SubmitWriteBatchOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx,
+                                                           const CopyDescriptor &descriptor, size_t begin, size_t end)
+{
+    if (hostTransportManager_ != nullptr && ep < hostTransportManager_->GetLinkCount()) {
+        return hostTransportManager_->SubmitWriteBatchOnEpOnRail(rankId, ep, railIdx, descriptor, begin, end);
+    }
+    BM_LOG_ERROR("SubmitWriteBatchOnEpOnRail not supported, rankId: " << rankId << " ep: " << ep
+                                                                      << " railIdx: " << railIdx);
+    return BM_ERROR;
+}
+
 Result ComposeTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
                                                      uint64_t size)
 {
@@ -296,6 +324,17 @@ Result ComposeTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t e
         return hostTransportManager_->WriteRemoteAsyncOnEp(rankId, ep, lAddr, rAddr, size);
     }
     BM_LOG_WARN("WriteRemoteAsyncOnEp not supported, rankId: " << rankId << " ep: " << ep);
+    return BM_ERROR;
+}
+
+Result ComposeTransportManager::WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx,
+                                                           uint64_t lAddr, uint64_t rAddr, uint64_t size)
+{
+    if (hostTransportManager_ != nullptr && ep < hostTransportManager_->GetLinkCount()) {
+        return hostTransportManager_->WriteRemoteAsyncOnEpOnRail(rankId, ep, railIdx, lAddr, rAddr, size);
+    }
+    BM_LOG_ERROR("WriteRemoteAsyncOnEpOnRail not supported, rankId: " << rankId << " ep: " << ep
+                                                                      << " railIdx: " << railIdx);
     return BM_ERROR;
 }
 

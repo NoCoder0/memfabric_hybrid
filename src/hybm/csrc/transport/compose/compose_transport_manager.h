@@ -52,10 +52,20 @@ public:
 
     bool AllLinksReady(uint32_t rankId) const override;
 
+    uint32_t GetRailCount() const override;
+
+    bool AllRailsReady(uint32_t rankId) const override;
+
     Result SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
                                 size_t end) override;
 
+    Result SubmitWriteBatchOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, const CopyDescriptor &descriptor,
+                                      size_t begin, size_t end) override;
+
     Result WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
+
+    Result WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr, uint64_t rAddr,
+                                      uint64_t size) override;
 
     Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key) override;
 
