@@ -28,6 +28,7 @@ if (BUILD_ETCD_BACKEND)
         COMMAND ${CMAKE_COMMAND} -E make_directory ${ETCD_OUTPUT_DIR}
         COMMAND ${GO_EXECUTABLE} mod tidy
         COMMAND ${GO_EXECUTABLE} build -o libetcd_client_v3.so -buildmode=c-shared etcd_client_v3.go
+        COMMAND patchelf --set-soname libetcd_client_v3.so libetcd_client_v3.so
         COMMAND ${CMAKE_COMMAND} -E copy libetcd_client_v3.so ${ETCD_OUTPUT_DIR}/
         WORKING_DIRECTORY ${ETCD_SRC_DIR}
         COMMENT "Building etcd client shared library"
