@@ -95,6 +95,16 @@ OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, ui
                                             uint64_t numLocalExpertPtr, uint64_t groupListPtr,
                                             uint64_t packedGroupListPtr, uint16_t deviceId)
 {
+    if (srcPtr == 0 || dstPtr == 0 || lenPtr == 0 || numLocalExpertPtr == 0 || groupListPtr == 0 ||
+        packedGroupListPtr == 0) {
+        OFFLOAD_LOG_ERROR("invalid null address, src null: "
+                          << (srcPtr == 0) << ", dst null: " << (dstPtr == 0) << ", len null: " << (lenPtr == 0)
+                          << ", numLocalExpert null: " << (numLocalExpertPtr == 0)
+                          << ", groupList null: " << (groupListPtr == 0)
+                          << ", packedGroupList null: " << (packedGroupListPtr == 0) << ", deviceId: " << deviceId);
+        return OFFLOAD_ERROR;
+    }
+
     auto srcPtrs = reinterpret_cast<uint64_t *>(srcPtr);
     auto dstPtrs = reinterpret_cast<uint64_t *>(dstPtr);
     auto lenPtrs = reinterpret_cast<uint32_t *>(lenPtr);

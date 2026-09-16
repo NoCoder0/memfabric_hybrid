@@ -72,12 +72,12 @@ inline Result PrepareLaunchBuffer(const KernelLaunchConfig &config, void *&dstLi
 {
     const auto ptrBytes = config.batchSize * sizeof(void *);
     const auto totalBytes = ptrBytes * 2UL + config.batchSize * sizeof(uint64_t);
+    std::vector<uint8_t> hostBuf(totalBytes);
     auto ret = DlAclApi::AclrtMalloc(&dstListDev, totalBytes, 0);
     if (ret != BM_OK || dstListDev == nullptr) {
         BM_LOG_ERROR("LaunchDeviceKernel AclrtMalloc failed, size=" << totalBytes << " ret=" << ret);
         return ret;
     }
-    std::vector<uint8_t> hostBuf(totalBytes);
     auto *dstBase = reinterpret_cast<void **>(hostBuf.data());
     auto *srcBase = reinterpret_cast<void **>(hostBuf.data() + ptrBytes);
     auto *lenBase = reinterpret_cast<uint64_t *>(hostBuf.data() + ptrBytes * 2UL);

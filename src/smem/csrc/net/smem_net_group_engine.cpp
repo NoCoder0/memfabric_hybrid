@@ -447,7 +447,7 @@ Result SmemNetGroupEngine::GroupAllGather(const char *sendBuf, uint32_t sendSize
     SM_ASSERT_RETURN(store_ != nullptr, SM_INVALID_PARAM);
     SM_ASSERT_RETURN(!option_.dynamic, SM_ERROR);
     uint32_t size = groupInfo_.groupSize;
-    SM_VALIDATE_RETURN(sendSize * size == recvSize,
+    SM_VALIDATE_RETURN(static_cast<uint64_t>(sendSize) * size == recvSize,
                        "size mismatch, sendSize: " << sendSize << " groupSize: " << size << " recvSize: " << recvSize,
                        SM_INVALID_PARAM);
 
@@ -544,7 +544,7 @@ Result SmemNetGroupEngine::GroupAllGather(const char *key, uint32_t rankSize, ui
                        SM_INVALID_PARAM);
 
     uint32_t size = rankSize;
-    SM_VALIDATE_RETURN(sendSize * size == recvSize,
+    SM_VALIDATE_RETURN(static_cast<uint64_t>(sendSize) * size == recvSize,
                        "size mismatch, sendSize: " << sendSize << " rankSize: " << size << " recvSize: " << recvSize,
                        SM_INVALID_PARAM);
 

@@ -1405,7 +1405,7 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
 
         const uint64_t remoteSize = exportDesc.size;
         const uint64_t memTag = exportDesc.memTag;
-        const uint32_t memDescLen = sizeof(UrmaExportDesc) + exportDesc.hcommDescLen;
+        const uint64_t memDescLen = sizeof(UrmaExportDesc) + exportDesc.hcommDescLen;
 
         // Validate total payload fits within the key data area
         if (memDescLen + exportDesc.devTransFlagDescLen > DEVICE_URMA_EXPORT_KEY_DATA_BYTES) {

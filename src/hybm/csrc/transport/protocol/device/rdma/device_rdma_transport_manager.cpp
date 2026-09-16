@@ -984,7 +984,11 @@ int32_t RdmaTransportManager::InitStreamNotifyBuf()
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "alloc notify buf failed.", ret);
 
     ret = DlAclApi::AclrtMemcpy(ptr, notifySize, &notifyVal, notifySize, ACL_MEMCPY_HOST_TO_DEVICE);
-    BM_ASSERT_LOG_AND_RETURN(ret == 0, "set notify val failed.", ret);
+    if (ret != 0) {
+        BM_LOG_ERROR("set notify val failed: " << ret);
+        DlAclApi::AclrtFree(ptr);
+        return ret;
+    }
 
     void *mrHandle = nullptr;
     HccpMrInfo info2{ptr, HYBM_LARGE_PAGE_SIZE, RA_ACCESS_NORMAL, 0, 0};

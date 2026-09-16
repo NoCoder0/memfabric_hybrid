@@ -845,6 +845,10 @@ Result TcpConfigStore::SendMessageNonBlock(const std::vector<uint8_t> &reqBody) 
     STORE_ASSERT_RETURN(accClientLink_ != nullptr, SM_ERROR);
     auto seqNo = reqSeqGen_.fetch_add(1U);
     auto dataBuf = ock::acc::AccDataBuffer::Create(reqBody.data(), reqBody.size());
+    if (dataBuf.Get() == nullptr) {
+        STORE_LOG_ERROR("create data buffer failed, seqNo: " << seqNo);
+        return SM_ERROR;
+    }
     auto ret = LocalNonBlockSend(0, seqNo, dataBuf, nullptr);
     return ret;
 }

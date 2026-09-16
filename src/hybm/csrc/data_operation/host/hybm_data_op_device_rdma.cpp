@@ -160,7 +160,11 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
                                                rankId_);
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
-        FreeSwapMemory();
+        DlHalApi::HalHostUnregisterEx(ptr, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
+        const auto freeRet = DlHalApi::HalMemFree(ptr);
+        if (freeRet != 0) {
+            BM_LOG_ERROR("Failed to HalMemFree swap memory, ret: " << freeRet);
+        }
         return ret;
     }
 

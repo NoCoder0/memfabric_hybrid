@@ -647,14 +647,25 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
 {
     std::vector<HccpSocketConnectInfo> connectInfos;
     std::set<uint32_t> rollbacks;
+    auto rollback = [&]() {
+        for (auto rank : rollbacks) {
+            if (connections_[rank].socketHandle != nullptr) {
+                (void)DlHccpApi::RaSocketDeinit(connections_[rank].socketHandle);
+                connections_[rank].socketHandle = nullptr;
+            }
+        }
+        rollbacks.clear();
+    };
     for (auto rankId : newServers) {
         if (rankId >= rankId_) {
             BM_LOG_ERROR("new server rankId: " << rankId << "invalid. self: " << rankId_);
+            rollback();
             return BM_ERROR;
         }
 
         if (connections_[rankId].remoteNet.sin_addr.s_addr == 0) {
             BM_LOG_ERROR("rankId: " << rankId << ", no ip address.");
+            rollback();
             return BM_ERROR;
         }
 
@@ -665,6 +676,7 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         auto socketHandle = CreateLocalSocket();
         if (socketHandle == nullptr) {
             BM_LOG_ERROR("create local socket to connect to server: " << rankId << " failed");
+            rollback();
             return BM_ERROR;
         }
         connections_[rankId].socketHandle = socketHandle;
@@ -695,6 +707,7 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         TP_TRACE_END(TP_HYBM_RA_SOCKET_BATCH_CONNECT, ret);
         if (ret != 0) {
             BM_LOG_ERROR("connect to all servers failed: " << ret << ", servers count = " << connectInfos.size());
+            rollback();
             return BM_ERROR;
         }
     }

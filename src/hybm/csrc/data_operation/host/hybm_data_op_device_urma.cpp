@@ -122,7 +122,10 @@ Result DataOpDeviceURMA::AllocSwapMemory()
         {0, reinterpret_cast<uint64_t>(ptr), 0, urmaSwapSpaceSize_, HYBM_MEM_TYPE_DEVICE}, rankId_);
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
-        FreeSwapMemory();
+        const auto freeRet = DlAclApi::AclrtFree(ptr);
+        if (freeRet != 0) {
+            BM_LOG_ERROR("Failed to AclrtFree urma swap memory, ret: " << freeRet);
+        }
         return ret;
     }
 
