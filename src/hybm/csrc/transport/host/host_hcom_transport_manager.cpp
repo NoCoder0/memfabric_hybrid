@@ -1130,7 +1130,7 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
     uint64_t stageT1 = 0;
     uint64_t stageT2 = 0;
     while (i < end) {
-        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MR_BUILD, stageT0);
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MR_BUILD, &stageT0);
         Channel_OneSideRequestSgl sglReq;
         sglReq.iovCount = 0;
         for (; i < end && sglReq.iovCount < HCOM_IOV_BATCH_SIZE; ++i) {
@@ -1169,10 +1169,10 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         Channel_Callback channelCallback;
         channelCallback.arg = stream_.get();
         channelCallback.cb = ChannelAsyncCallback;
-        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_SUBMIT_TASKS, stageT1);
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_SUBMIT_TASKS, &stageT1);
         stream_->SubmitTasks();
         TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_SUBMIT_TASKS, stageT1, 0);
-        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_CHANNEL_PUT, stageT2);
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_CHANNEL_PUT, &stageT2);
         /* railIdx >= 0：本批只走这一条 rail（双连接，不做库内 MultiRail 扇出）；
            railIdx < 0：走库内默认行为（含 MultiRail 自动扇出） */
         int ret = 0;
