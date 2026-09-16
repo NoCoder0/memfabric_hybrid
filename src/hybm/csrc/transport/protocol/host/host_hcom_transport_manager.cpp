@@ -78,6 +78,41 @@ static void SplitRankNics(const std::string &nic, std::vector<std::string> &out)
     }
 }
 
+/* ubs 侧 cpu id 已从 uint8_t 放宽到 uint32_t（上限仍是 NN_NO612-1 = 611），
+   所以这里也放宽到 611，让高编号 NUMA 节点（如 240-319）的核可以被绑定。
+   注意 UINT32_MAX(0xFFFFFFFF) 是 ubs 内部"不绑核"的哨兵值，绝不能作为 CPU 号传入。 */
+constexpr uint32_t WORKER_CPU_ID_MAX = 611;
+
+/* 单边写的 WR 额度 = QP 的 max_send_wr − 预留，而 ubs 是**按"远端地址的连续段数"逐个扣额度**的
+   （CreateOneSideCtx 里对 groupCount 每个段都调一次 GetOneSideWr）：
+   600 个 4KB 离散块（stride 4096 > size 1024）就是 600 段 = 600 个额度。
+   ubs 的 qpSendQueueSize 默认只有 256（hcom_c.cpp 里的 NN_NO256），于是完成回收稍慢就会报
+   "no one side wr left"（内部重试 8×64µs，延迟直接飙到 ms 级）。这里把 SQ/CQ 放大留足余量：
+   ubs 会向上取整到 2 的幂，合法范围 16~65535。 */
+constexpr uint32_t HCOM_QP_SEND_QUEUE_SIZE = 4096;
+constexpr uint16_t HCOM_QP_COMPLETION_QUEUE_DEPTH = 4096;
+
+/* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
+   同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
+   返回该区间的 CPU 个数；格式不合法返回 false。 */
+bool ParseWorkerCpuRange(const std::string &range, uint32_t &cpuCount)
+{
+    cpuCount = 0;
+    auto dash = range.find('-');
+    if (dash == std::string::npos) {
+        return false;
+    }
+    uint32_t beginId = 0;
+    uint32_t endId = 0;
+    if (!StrUtil::String2Uint(StrUtil::StrTrim(range.substr(0, dash)), beginId) ||
+        !StrUtil::String2Uint(StrUtil::StrTrim(range.substr(dash + 1)), endId) || endId < beginId ||
+        endId > WORKER_CPU_ID_MAX) {
+        return false;
+    }
+    cpuCount = endId - beginId + 1;
+    return true;
+}
+
 void HcomExternalLoggerAdapter(int level, const char *msg)
 {
     const char *safeMsg = (msg == nullptr) ? "" : msg;
@@ -109,7 +144,7 @@ hybm_tls_config HcomTransportManager::tlsConfig_ = {};
 char HcomTransportManager::keyPass_[KEYPASS_MAX_LEN] = {0};
 std::mutex HcomTransportManager::keyPassMutex = {};
 thread_local HcomCounterStreamPtr HcomTransportManager::stream_ = nullptr;
-thread_local HcomTransportManager::MrHitCache HcomTransportManager::tlsMrHit_ = {nullptr, 0, UINT32_MAX, UINT32_MAX, {}};
+thread_local HcomTransportManager::MrHitCache HcomTransportManager::tlsMrHit_[HcomTransportManager::MR_HIT_SLOTS];
 
 static void CopyHcomOneSideKey(const OneSideKey &from, TransportMemoryKey &to)
 {
@@ -142,6 +177,42 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     opt.workerGroupMode = C_SERVICE_BUSY_POLLING;
     opt.maxSendRecvDataSize = runtimeConfig_.recvDataSize;
     opt.workerThreadPriority = HCOM_THREAD_PRIORITY;
+    /* 可选：把 worker 组钉到指定 CPU 段，格式 "<起始CPU>-<结束CPU>"，例如 "80-80"（1 个核）。
+       默认不设置（落核交给内核调度器）。不设置时忙轮询 worker 可能与调用线程落到同一个核上——
+       被唤醒的线程要排队等一个调度时间片，小消息写的等待会从十几 µs 抬到 ~4ms。
+       ubs 要求"该组 CPU 数 == worker 数"（BUSY_POLLING 严格相等），这里按核数自动设 worker 数；
+       校验不过就只打 WARN 并跳过，绝不把服务搞挂。CPU 号须为 0-611 且该核存在。 */
+    const auto &workerCpuRange = env::MF_HYBM_HCOM_WORKER_CPU_RANGE;
+    if (!workerCpuRange.empty()) {
+        uint32_t workerNum = 0; /* 直接按核数当 worker 数 */
+        bool parsed = ParseWorkerCpuRange(workerCpuRange, workerNum);
+        const uint32_t railCount = GetRailCount();
+        if (parsed && railCount > 1) {
+            /* 多 rail：一个 service 下有 railCount 个 driver，每个 driver 各建自己的一组 worker。
+               ubs 会按 driver 序号在 CPU 段内切片（见 NetDriverRDMA::CreateWorkers），
+               所以这里把核数**平均分给 railCount 个 driver**：
+               例：双 rail 想每 rail 各绑 2 核 ⇒ 给 "91-94"，这里自动设成每个 driver 2 个 worker。 */
+            if (workerNum < railCount || workerNum % railCount != 0) {
+                BM_LOG_WARN("skip hcom worker cpu range for multi rail. range: "
+                            << workerCpuRange << " 核数(" << workerNum << ") 须为 rail 数(" << railCount
+                            << ")的整数倍且不小于 rail 数，例如双 rail 各绑 2 核请给 \"91-94\"");
+                parsed = false;
+            } else {
+                workerNum /= railCount;
+            }
+        }
+        if (!parsed || workerCpuRange.size() >= sizeof(opt.workerGroupCpuRange)) {
+            BM_LOG_WARN("skip hcom worker cpu range. range: "
+                        << workerCpuRange << " parsed: " << parsed
+                        << " (格式须为 \"起始CPU-结束CPU\"，CPU 号须为 0-611 且该核存在)");
+        } else {
+            std::copy_n(workerCpuRange.c_str(), workerCpuRange.size() + 1, opt.workerGroupCpuRange);
+            opt.workerGroupThreadCount = static_cast<uint16_t>(workerNum);
+            BM_LOG_INFO("hcom worker group cpu range: " << opt.workerGroupCpuRange
+                                                        << " threadCount: " << opt.workerGroupThreadCount
+                                                        << " (per driver, railCount: " << railCount << ")");
+        }
+    }
     Service_Type enumProtocolType = HostHcomHelper::HybmDopTransHcomProtocol(options.protocol, options.nic);
     tlsConfig_ = options.tlsOption;
 
@@ -179,6 +250,9 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
             const bool enableMultiRail =
                 (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_MULTIRAIL_ENABLE, 1U) != 0U);
             DlHcomApi::ServiceSetMultiRailOptions(service, enableMultiRail, multiRailThresh);
+            /* 放大单边写的 WR 额度（默认 QP 只有 256，离散大 batch 一个 iov 吃一个额度，不够用） */
+            DlHcomApi::ServiceSetSendQueueSize(service, HCOM_QP_SEND_QUEUE_SIZE);
+            DlHcomApi::ServiceSetCompletionQueueDepth(service, HCOM_QP_COMPLETION_QUEUE_DEPTH);
             /* 用 TRACE：本仓默认日志级别是 WARN，INFO 会被过滤掉，而这几行是验证多轨是否生效的关键 */
             BM_LOG_TRACE("[multirail-check] hcom service ipMask: " << localIpMask_ << " multiRail: " << enableMultiRail
                                                                    << " multiRailThresh: " << multiRailThresh);
@@ -435,6 +509,19 @@ uint32_t HcomTransportManager::GetLinkCount() const
     return epCount_;
 }
 
+uint32_t HcomTransportManager::GetRailCount() const
+{
+    /* 建链时传了多个 url(网卡) 就是多 rail；单连接返回 1，行为与以前完全一致。 */
+    return (localNics_.size() > 1) ? static_cast<uint32_t>(localNics_.size()) : 1;
+}
+
+bool HcomTransportManager::AllRailsReady(uint32_t rankId) const
+{
+    /* rail 共用同一个 channel（rail 数只决定库内把请求投到哪张网卡，不额外建 channel），
+       所以只要 ep0 的 channel 建好就算就绪。 */
+    return rankId < channels_.size() && !channels_[rankId].empty() && channels_[rankId][0] != 0;
+}
+
 bool HcomTransportManager::AllLinksReady(uint32_t rankId) const
 {
     if (epCount_ == 0 || rankId >= channels_.size() || rankId >= nics_.size() ||
@@ -453,6 +540,12 @@ Result HcomTransportManager::SubmitWriteBatchOnEp(uint32_t rankId, uint32_t ep, 
                                                   size_t begin, size_t end)
 {
     return SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end);
+}
+
+Result HcomTransportManager::SubmitWriteBatchOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx,
+                                                        const CopyDescriptor &descriptor, size_t begin, size_t end)
+{
+    return SubmitWriteBatchSlice(rankId, ep, descriptor, begin, end, railIdx);
 }
 
 Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
@@ -828,6 +921,18 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
 Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
                                                   uint64_t size)
 {
+    return WriteRemoteAsyncOnEpImpl(rankId, ep, lAddr, rAddr, size, -1);
+}
+
+Result HcomTransportManager::WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr,
+                                                        uint64_t rAddr, uint64_t size)
+{
+    return WriteRemoteAsyncOnEpImpl(rankId, ep, lAddr, rAddr, size, railIdx);
+}
+
+Result HcomTransportManager::WriteRemoteAsyncOnEpImpl(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr,
+                                                      uint64_t size, int32_t railIdx)
+{
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
@@ -884,7 +989,16 @@ Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, 
         req.lAddress = reinterpret_cast<void *>(lAddr + offset);
         req.size = sliceSize;
         stream_->SubmitTasks();
-        ret = DlHcomApi::ChannelPut(channel, req, &channelCallback);
+        if (railIdx < 0) {
+            ret = DlHcomApi::ChannelPut(channel, req, &channelCallback);
+        } else {
+            /* 指定 rail 时：水位必须和它所属 rail 的数据走同一条连接（靠 QP 内保序保证水位不超前）。
+               单点写没有 rail 版本，所以包成 1 个 iov 的 SGL 走 ChannelPutVOnRail。 */
+            Channel_OneSideRequestSgl sglReq;
+            sglReq.iovCount = 1;
+            sglReq.iov[0] = req;
+            ret = DlHcomApi::ChannelPutVOnRail(channel, sglReq, static_cast<uint16_t>(railIdx), &channelCallback);
+        }
         if (ret != BM_OK) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
@@ -899,7 +1013,7 @@ Result HcomTransportManager::WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, 
     return ret;
 }
 Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor,
-                                                   size_t begin, size_t end)
+                                                   size_t begin, size_t end, int32_t railIdx)
 {
     if (rpcServices_.empty() || rankId >= channels_.size() || ep >= channels_[rankId].size()) {
         BM_LOG_WARN("SubmitWriteBatchSlice while closing, rank: " << rankId << " ep: " << ep);
@@ -916,7 +1030,11 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         return BM_ERROR;
     }
     size_t i = begin;
+    uint64_t stageT0 = 0; /* TP_TRACE_TRACE_BEGIN/END 用的时间戳变量 */
+    uint64_t stageT1 = 0;
+    uint64_t stageT2 = 0;
     while (i < end) {
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MR_BUILD, &stageT0);
         Channel_OneSideRequestSgl sglReq;
         sglReq.iovCount = 0;
         for (; i < end && sglReq.iovCount < HCOM_IOV_BATCH_SIZE; ++i) {
@@ -950,13 +1068,26 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
                                                         << " tokens: " << req.rKey.tokens[0]);
             sglReq.iov[sglReq.iovCount++] = req;
         }
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_MR_BUILD, stageT0, 0);
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
         Channel_Callback channelCallback;
         channelCallback.arg = stream_.get();
         channelCallback.cb = ChannelAsyncCallback;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_SUBMIT_TASKS, &stageT1);
         stream_->SubmitTasks();
-        BM_LOG_INFO("DlHcomApi::ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
-        auto ret = DlHcomApi::ChannelPutV(channel, sglReq, &channelCallback);
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_SUBMIT_TASKS, stageT1, 0);
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_CHANNEL_PUT, &stageT2);
+        /* railIdx >= 0：本批只走这一条 rail（双连接，不做库内 MultiRail 扇出）；
+           railIdx < 0：走库内默认行为（含 MultiRail 自动扇出） */
+        int ret = 0;
+        if (railIdx < 0) {
+            BM_LOG_DEBUG("ChannelPutV start, ep: " << ep << " sglReq iocount " << sglReq.iovCount);
+            ret = DlHcomApi::ChannelPutV(channel, sglReq, &channelCallback);
+        } else {
+            BM_LOG_DEBUG("ChannelPutVOnRail start, rail: " << railIdx << " sglReq iocount " << sglReq.iovCount);
+            ret = DlHcomApi::ChannelPutVOnRail(channel, sglReq, static_cast<uint16_t>(railIdx), &channelCallback);
+        }
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_CHANNEL_PUT, stageT2, ret == 0 ? 0 : 1);
         if (ret != BM_OK) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
@@ -969,13 +1100,36 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
 
 Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
 {
-    BM_LOG_INFO("WriteRemoteBatchAsync start " << rankId << " rankId");
+    BM_LOG_DEBUG("WriteRemoteBatchAsync start " << rankId << " rankId");
     BM_ASSERT_LOG_AND_RETURN(!descriptor.counts.empty(), "descriptor.counts is empty", BM_INVALID_PARAM);
     BM_ASSERT_LOG_AND_RETURN(!rpcServices_.empty(), "rpcServices_.size() = " << rpcServices_.size(), BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(rankId < rankCount_, "rankId = " << rankId << " << rankCount_ = " << rankCount_,
                              BM_INVALID_PARAM);
 
     uint32_t total = descriptor.counts.size();
+    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上，**默认行为**。
+       例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
+       单连接（只有 1 个 url）时 localNics_ 只有 1 项，自动不生效、行为与以前一致。
+       rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
+       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。 */
+    if (localNics_.size() > 1) {
+        const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
+        size_t begin = 0;
+        for (uint32_t rail = 0; rail < railCount; ++rail) {
+            const size_t cnt = total / railCount + (rail < total % railCount ? 1 : 0);
+            if (cnt == 0) {
+                continue;
+            }
+            auto ret = SubmitWriteBatchSlice(rankId, 0, descriptor, begin, begin + cnt, static_cast<int32_t>(rail));
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("Failed to submit rail " << rail << " rankId: " << rankId);
+                Synchronize(rankId);
+                return ret;
+            }
+            begin += cnt;
+        }
+        return BM_OK;
+    }
     // single link keeps original submit + outer synchronize behavior
     if (epCount_ <= 1) {
         return SubmitWriteBatchSlice(rankId, 0, descriptor, 0, total);
@@ -1411,10 +1565,12 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
     const uint64_t gen = mrGen_.load(std::memory_order_acquire);
     /* 快路径：代际未变 + 同 rank/ep + 地址仍落在上次命中的 MR 内 → 免锁直接返回。
        批量写场景里数百个地址通常都落在同一对 MR 里，命中率接近 100%，
-       因此把“每个 iov 2 次加锁遍历”降到整批 1~2 次。 */
-    if (tlsMrHit_.self == this && tlsMrHit_.gen == gen && tlsMrHit_.rankId == rankId && tlsMrHit_.ep == ep &&
-        tlsMrHit_.mr.addr <= addr && tlsMrHit_.mr.addr + tlsMrHit_.mr.size > addr) {
-        mr = tlsMrHit_.mr;
+       因此把“每个 iov 2 次加锁遍历”降到整批 1~2 次。多槽位是为了让"本端/远端"各自有槽，
+       否则交替查询会互相击穿缓存。 */
+    MrHitCache &hit = tlsMrHit_[MrHitSlot(rankId, ep)];
+    if (hit.self == this && hit.gen == gen && hit.rankId == rankId && hit.ep == ep && hit.mr.addr <= addr &&
+        hit.mr.addr + hit.mr.size > addr) {
+        mr = hit.mr;
         return BM_OK;
     }
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
@@ -1423,7 +1579,7 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
                                     << " size:" << mrInfo.size);
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size > addr) {
             mr = mrInfo;
-            tlsMrHit_ = MrHitCache{this, gen, rankId, ep, mrInfo};
+            hit = MrHitCache{this, gen, rankId, ep, mrInfo};
             return BM_OK;
         }
     }

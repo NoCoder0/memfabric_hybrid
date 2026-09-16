@@ -399,6 +399,8 @@ int Channel_Call(Hcom_Channel channel, Channel_Request req, Channel_Response *rs
 int Channel_Reply(Hcom_Channel channel, Channel_Request req, Channel_ReplyContext ctx, Channel_Callback *cb);
 int Channel_Put(Hcom_Channel channel, Channel_OneSideRequest req, Channel_Callback *cb);
 int Channel_Get(Hcom_Channel channel, Channel_OneSideRequest req, Channel_Callback *cb);
+int Channel_PutVOnRail(Hcom_Channel channel, Channel_OneSideRequestSgl req, uint16_t railIdx, Channel_Callback *cb);
+int Channel_GetVOnRail(Hcom_Channel channel, Channel_OneSideRequestSgl req, uint16_t railIdx, Channel_Callback *cb);
 int Channel_SetFlowControlConfig(Hcom_Channel channel, Channel_FlowCtrlOptions opt);
 void Channel_SetChannelTimeOut(Hcom_Channel channel, int16_t oneSideTimeout, int16_t twoSideTimeout);
 void Channel_Close(Hcom_Channel channel);

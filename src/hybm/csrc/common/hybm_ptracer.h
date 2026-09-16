@@ -62,6 +62,10 @@ enum MF_HYBM_MOD {
     TP_HYBM_EXTEND_COPY,
     TP_HYBM_EXTEND_BATCH_COPY,
     TP_HYBM_EXTEND_BATCH_COPY_QUANT,
+    /* 提交路径分段（host RDMA 每请求固定开销定位用） */
+    TP_HYBM_HOST_RDMA_MR_BUILD,     /* MR 查询 + keys 拷贝 + SGL 组装 */
+    TP_HYBM_HOST_RDMA_SUBMIT_TASKS, /* stream_->SubmitTasks */
+    TP_HYBM_HOST_RDMA_CHANNEL_PUT,  /* ChannelPutV[OnRail]（含 ubs 全部开销） */
 
     TP_HYBM_HOST_RDMA_LH_TO_GH,
     TP_HYBM_HOST_RDMA_LH_TO_GD,
@@ -76,6 +80,7 @@ enum MF_HYBM_MOD {
     TP_HYBM_HOST_RDMA_BATCH_RH_TO_LH,
     TP_HYBM_HOST_RDMA_BATCH_LOCAL_COPY,
 
+    TP_HYBM_HOST_RDMA_SYNC_WAIT,
     TP_HYBM_HOST_RDMA_BATCH_GH_TO_LD,
     TP_HYBM_HOST_RDMA_BATCH_GH_TO_LH,
     TP_HYBM_HOST_RDMA_BATCH_GD_TO_LD,
@@ -85,6 +90,10 @@ enum MF_HYBM_MOD {
     TP_HYBM_HOST_RDMA_BATCH_GH_TO_GD,
     TP_HYBM_HOST_RDMA_BATCH_GD_TO_GD,
     TP_HYBM_HOST_RDMA_BATCH_GD_TO_GH,
+
+    /* 每 iov 预处理（不进 dataOperator 的逐 iov 循环） */
+    TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR,  /* LocateAddrAndRank + groupMap 分组 */
+    TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, /* TransformVa */
 
     TP_HYBM_RDMA_LH_TO_GH,
     TP_HYBM_RDMA_LH_TO_GD,

@@ -77,6 +77,10 @@ public:
     Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) override;
 
     uint32_t GetLinkCount() const override;
+    /* 双连接(多 rail)：一个 channel 内的网卡连接数（= 建链时传的 url 数；单连接为 1）。
+       注意别拿它替换 GetLinkCount()：后者是"channel/ep 数"，语义不同。 */
+    uint32_t GetRailCount() const override;
+    bool AllRailsReady(uint32_t rankId) const override;
 
     Result QueryMemoryKeyByEp(uint64_t addr, uint32_t ep, TransportMemoryKey &key) override;
 
@@ -112,6 +116,12 @@ public:
 
     Result WriteRemoteAsyncOnEp(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr, uint64_t size) override;
 
+    /* 双连接：带 rail 的版本（rail 与 ep 不同 —— 多 rail 共用 ep0 的 channel，railIdx 决定走哪张网卡） */
+    Result SubmitWriteBatchOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, const CopyDescriptor &descriptor,
+                                      size_t begin, size_t end) override;
+    Result WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr, uint64_t rAddr,
+                                      uint64_t size) override;
+
     bool AllLinksReady(uint32_t rankId) const override;
 
     Result Synchronize(uint32_t rankId) override;
@@ -122,10 +132,14 @@ private:
     Result InnerWriteRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size);
 
     Result SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
-                                 size_t end);
+                                 size_t end, int32_t railIdx = -1);
 
     Result SubmitReadBatchSlice(uint32_t rankId, uint32_t ep, const CopyDescriptor &descriptor, size_t begin,
                                 size_t end);
+
+    /* WriteRemoteAsyncOnEp / WriteRemoteAsyncOnEpOnRail 的公共实现：railIdx < 0 表示不带 rail */
+    Result WriteRemoteAsyncOnEpImpl(uint32_t rankId, uint32_t ep, uint64_t lAddr, uint64_t rAddr, uint64_t size,
+                                    int32_t railIdx);
 
     Result CheckTransportOptions(const TransportOptions &options);
 
@@ -179,7 +193,10 @@ private:
     static thread_local HcomCounterStreamPtr stream_;
     /* MR 查询快路径缓存：mrs_ 每次变动 mrGen_ +1；代际一致时本线程直接复用上次命中的 MR，
        省掉每次查询的 mrMutex_ 加锁与遍历。批量写 600 个 iov 原本要 1200 次加锁，
-       且 mrMutex_ 是每 rank 一把，多链路时正是两个提交 worker 的争用点。 */
+       且 mrMutex_ 是每 rank 一把，多链路时正是两个提交 worker 的争用点。
+       注意必须用**多个槽位**：一个 SGL 请求里会交替查询"本端地址"(rankId_) 和"远端地址"(rankId)，
+       单槽会被交替击穿、几乎全部退化成慢路径（实测 32 次查询 ≈ 3.3us/请求）。 */
+    static constexpr uint32_t MR_HIT_SLOTS = 4;
     struct MrHitCache {
         const void *self;
         uint64_t gen;
@@ -187,7 +204,11 @@ private:
         uint32_t ep;
         HcomMemoryRegion mr;
     };
-    static thread_local MrHitCache tlsMrHit_;
+    static uint32_t MrHitSlot(uint32_t rankId, uint32_t ep) noexcept
+    {
+        return (rankId * 131U + ep * 7U) % MR_HIT_SLOTS;
+    }
+    static thread_local MrHitCache tlsMrHit_[MR_HIT_SLOTS];
     std::atomic<uint64_t> mrGen_{1};
     void BumpMrGeneration() noexcept
     {

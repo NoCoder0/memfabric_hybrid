@@ -163,6 +163,40 @@ public:
         return WriteRemoteAsync(rankId, lAddr, rAddr, size);
     }
 
+    // 双连接(多 rail)：在【指定 rail(网卡)】上提交一段 iov / 写一小段。
+    // 注意 rail 与 link(ep) 不是一回事：多 rail 共用同一个 channel，railIdx 只决定库内把请求投到哪张网卡。
+    // 默认不支持，返回错误 / 回落到不带 rail 的版本。
+    virtual Result SubmitWriteBatchOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx,
+                                              const CopyDescriptor &descriptor, size_t begin, size_t end)
+    {
+        (void)rankId;
+        (void)ep;
+        (void)railIdx;
+        (void)descriptor;
+        (void)begin;
+        (void)end;
+        return BM_ERROR;
+    }
+
+    virtual Result WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr,
+                                              uint64_t rAddr, uint64_t size)
+    {
+        (void)railIdx;
+        return WriteRemoteAsyncOnEp(rankId, ep, lAddr, rAddr, size);
+    }
+
+    // 双连接(多 rail)：一个 channel 内的网卡连接数（单连接为 1）。默认 1 = 不支持多 rail。
+    virtual uint32_t GetRailCount() const
+    {
+        return 1;
+    }
+
+    // 双连接(多 rail)：多 rail 是否都已就绪。默认回落到 AllLinksReady。
+    virtual bool AllRailsReady(uint32_t rankId) const
+    {
+        return AllLinksReady(rankId);
+    }
+
     virtual Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) = 0;
 
     // batchRanks is populated with all effective remote ranks only when the slice kernel succeeds as a whole.
