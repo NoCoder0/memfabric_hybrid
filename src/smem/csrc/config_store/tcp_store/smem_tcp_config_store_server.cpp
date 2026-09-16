@@ -267,6 +267,7 @@ Result AccStoreServer::ReceiveMessageHandler(const ock::acc::AccTcpRequestContex
 }
 
 // call in storeMutex_
+// 准入判定：无旧 rank（后端空集）时立即退出恢复并接受新连接；其余场景只读。
 bool AccStoreServer::CanReceiveNewLink()
 {
     uint32_t state = state_.load();
@@ -281,16 +282,20 @@ bool AccStoreServer::CanReceiveNewLink()
         // CAS 成功/失败都不会保证把最新值写回 state，需重新加载再继续处理。
         state = state_.load();
     }
-    if (state == SS_RECOVERING) {
-        // 无法退出恢复时保持 RECOVERING 拒绝新连接，由后续重连或超时推进状态，避免自旋。
-        CanExitRecover(state);
+    if (state == SS_RECOVERING && aliveRankFromBackend_.empty()) {
+        // 无旧 rank（全新部署/二任 leader 且后端无持久化存活 rank）时立即退出恢复：
+        // 该场景 cleanup 线程被跳过（LaunchCleanupThread isFirstUpdate 直返），
+        // 且 reconnect==0 首条连接在入口被拒、到不了 LinkConnectedHandler 末尾的
+        // 迁移点——此处若不迁移，状态将永久卡在 RECOVERING 拒绝所有新连接。
+        uint32_t srcState = state;
+        UpdateRecoverState(srcState);
         state = state_.load();
     }
     // SS_RECOVERED 表示恢复完成，必须接受新连接（无旧 rank 时 cleanupThread 被跳过）。
     return (state == SS_NORMAL || state == SS_RECOVERED);
 }
 
-bool AccStoreServer::CanExitRecover(uint32_t &srcState)
+void AccStoreServer::UpdateRecoverState(uint32_t &srcState)
 {
     uint64_t nowT = mf::MonotonicTime::TimeUs();
     // 无旧 rank 时立即退出恢复，避免第二任 leader 停在 RECOVERING 拒绝新连接。
@@ -299,7 +304,7 @@ bool AccStoreServer::CanExitRecover(uint32_t &srcState)
             STORE_LOG_INFO("state RECOVERED (no old ranks to recover)");
             recoveryCond_.notify_all();
         }
-        return true;
+        return;
     }
     // Exit recovery when:
     // 1. All old ranks (aliveRankFromBackend_) have reconnected (in reconnectedRankSet_), OR
@@ -307,13 +312,12 @@ bool AccStoreServer::CanExitRecover(uint32_t &srcState)
     bool allReconnected = std::all_of(aliveRankFromBackend_.begin(), aliveRankFromBackend_.end(),
                                       [this](uint32_t rk) { return reconnectedRankSet_.count(rk) > 0; });
     if (!allReconnected && nowT <= startupTimestamp_ + SERVER_RECOVER_TIME) {
-        return false;
+        return;
     }
     if (state_.compare_exchange_strong(srcState, SS_RECOVERED)) {
         STORE_LOG_INFO("state RECOVERED" << (allReconnected ? " (all ranks reconnected)" : " (timeout)"));
         recoveryCond_.notify_all();
     }
-    return true;
 }
 
 Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
@@ -369,6 +373,13 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
         groupManager_->MarkRankReconnected(rankId);
     }
     STORE_ASSERT_RETURN(PersistAliveRankIds(aliveRankSet_) == SUCCESS, SM_ERROR);
+    // 注册完成后评估恢复退出：本次接入的 rank 立即参与 allReconnected 判定，
+    // "aliveRankFromBackend_ 中最后一个旧 rank 重连" 即时置位 SS_RECOVERED，
+    // 无需等待下一条连接事件或 60s 超时。
+    uint32_t srcState = state_.load();
+    if (srcState == SS_RECOVERING) {
+        UpdateRecoverState(srcState);
+    }
     return SM_OK;
 }
 
@@ -1504,7 +1515,7 @@ Result AccStoreServer::LaunchCleanupThread()
         {
             std::unique_lock<std::mutex> recoveryLock(recoveryMutex_);
             // 恢复窗口为 SERVER_RECOVER_TIME：以 RECOVER_PERIOD_TIME 为轮询周期
-            // 循环等待，期间 rank 全部重连（CanExitRecover 置位 SS_RECOVERED）则提前退出。
+            // 循环等待，期间 rank 全部重连（UpdateRecoverState 置位 SS_RECOVERED）则提前退出。
             const uint64_t recoverDeadlineT = startupTimestamp_ + SERVER_RECOVER_TIME;
             while (state_.load() < SS_RECOVERED && mf::MonotonicTime::TimeUs() <= recoverDeadlineT) {
                 recoveryCond_.wait_for(recoveryLock, std::chrono::seconds(RECOVER_PERIOD_TIME),

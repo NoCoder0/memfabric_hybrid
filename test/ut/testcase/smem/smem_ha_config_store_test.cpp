@@ -631,7 +631,8 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsToRecove
     server.state_.store(SS_INITED);
 
     // First call: INITED → RECOVERING (not all reconnected, window not expired)
-    // → new links rejected until recovery completes.
+    // → new links rejected until recovery completes. CanReceiveNewLink is a
+    // read-only admission check; the transition lives in UpdateRecoverState.
     EXPECT_FALSE(server.CanReceiveNewLink());
     EXPECT_EQ(SS_RECOVERING, server.state_.load());
 
@@ -639,9 +640,11 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsToRecove
     server.reconnectedRankSet_.insert(0);
     server.reconnectedRankSet_.insert(1);
 
-    // Second call: all reconnected → recovery completes (SS_RECOVERED),
-    // so the server accepts new links again.
-    EXPECT_TRUE(server.CanReceiveNewLink());
+    // LinkConnectedHandler end (post-registration) drives the transition:
+    // all reconnected → recovery completes (SS_RECOVERED), so the server
+    // accepts new links again.
+    uint32_t srcState = SS_RECOVERING;
+    server.UpdateRecoverState(srcState);
     EXPECT_EQ(SS_RECOVERED, server.state_.load());
 
     // Manually advance to NORMAL (as LaunchCleanupThread would do).
@@ -650,6 +653,25 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsToRecove
     // Third call: NORMAL → returns true.
     EXPECT_TRUE(server.CanReceiveNewLink());
     EXPECT_EQ(SS_NORMAL, server.state_.load());
+}
+
+// 全新部署/二任 leader 且后端无持久化存活 rank（aliveRankFromBackend_ 为空）：
+// cleanup 线程被 LaunchCleanupThread 的 isFirstUpdate 分支跳过，且 reconnect==0
+// 首条连接在 old 逻辑的准入处即被拒——空集退出必须发生在 CanReceiveNewLink 内，
+// 否则状态永久卡 RECOVERING（回归防护）。
+TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkExitsRecoverImmediatelyWhenNoOldRanks)
+{
+    auto backend = MakeBackend();
+    AccStoreServer server(K_LOOPBACK_IP, K_STORE_PORT, K_DEFAULT_WORLD_SIZE, backend, false);
+    server.skipRecover_ = false;
+
+    // 无持久化存活 rank：aliveRankFromBackend_ 保持为空。
+    server.startupTimestamp_ = ock::mf::MonotonicTime::TimeUs();
+    server.state_.store(SS_INITED);
+
+    // 首条 reconnect==0 连接：INITED → RECOVERING → 空集立即 RECOVERED，且被接受。
+    EXPECT_TRUE(server.CanReceiveNewLink());
+    EXPECT_EQ(SS_RECOVERED, server.state_.load());
 }
 
 TEST_F(SmemHaConfigStoreTest, AccStoreServerCleanupStaleRanksDetectsOrphans)

@@ -148,7 +148,7 @@ private:
     Result LaunchCleanupThread();
     void CleanupStaleRanks() noexcept;
     bool CanReceiveNewLink();
-    bool CanExitRecover(uint32_t &srcState);
+    void UpdateRecoverState(uint32_t &srcState);
     int SendControlToRank(uint32_t targetRankId, const std::vector<uint8_t> &data) noexcept;
 
     static constexpr uint32_t MAX_KEY_LEN_SERVER = 2048U;
