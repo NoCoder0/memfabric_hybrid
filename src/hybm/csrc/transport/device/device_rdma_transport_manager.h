@@ -130,6 +130,7 @@ private:
     std::vector<std::pair<uint64_t, uint32_t>> notifyRemoteInfo_;
     std::shared_ptr<DeviceChipInfo> deviceChipInfo_;
     std::atomic<uint64_t> wrIdx_{0};
+    std::vector<std::mutex> rankMutex_;
 
     ReadWriteLock lock_;
 };

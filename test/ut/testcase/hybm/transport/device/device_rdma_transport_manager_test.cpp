@@ -682,7 +682,7 @@ TEST(RdmaTransportManagerTest, SynchronizeRankIdNullQpManagerAndNoQpHandleAndPut
     RdmaTransportManager mgr;
     // 功能：Synchronize(rankId) 对指定 rank 的 qp 发送 notify + 等待完成。
     // 使用：sync 写/读路径或上层显式 barrier。
-
+    mgr.rankMutex_ = std::vector<std::mutex>(1);
     // 1) qpManager_ 为空：BM_MALLOC_FAILED
     EXPECT_EQ(mgr.Synchronize(0), BM_MALLOC_FAILED);
 
