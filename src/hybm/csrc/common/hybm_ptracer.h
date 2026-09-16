@@ -91,6 +91,10 @@ enum MF_HYBM_MOD {
     TP_HYBM_HOST_RDMA_BATCH_GD_TO_GD,
     TP_HYBM_HOST_RDMA_BATCH_GD_TO_GH,
 
+    /* 每 iov 预处理（不进 dataOperator 的逐 iov 循环） */
+    TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR,  /* LocateAddrAndRank + groupMap 分组 */
+    TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, /* TransformVa */
+
     TP_HYBM_RDMA_LH_TO_GH,
     TP_HYBM_RDMA_LH_TO_GD,
     TP_HYBM_RDMA_LD_TO_GH,

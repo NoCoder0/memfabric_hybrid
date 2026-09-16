@@ -426,9 +426,11 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
                                      const ExtOptions &options) noexcept
 {
     BM_ASSERT_LOG_AND_RETURN(inited_, "inited_ = " << inited_, BM_NOT_INITIALIZED);
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
     for (uint32_t i = 0; i < params.batchSize; i++) {
         TransformVa(params.sources[i], params.destinations[i], direction);
     }
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
     Result ret = BM_OK;
     switch (direction) {
         case HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST: {

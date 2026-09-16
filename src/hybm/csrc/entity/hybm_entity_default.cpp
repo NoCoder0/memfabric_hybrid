@@ -26,6 +26,7 @@
 #include "hybm_va_manager.h"
 #include "hybm_compose_data_op.h"
 #include "hybm_entity_default.h"
+#include "hybm_ptracer.h"
 
 namespace ock {
 namespace mf {
@@ -894,6 +895,7 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
     sOptions.progressBase = params.progressBase;
     sOptions.progressInterval = params.progressInterval;
     // 将所有地址按srcRank - dstRank分组，并且转换地址
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR)
     for (uint32_t i = 0; i < params.batchSize; ++i) {
         std::pair<uint32_t, uint32_t> p2pInfo;
         ret = LocateAddrAndRank(params.sources[i], params.destinations[i], p2pInfo);
@@ -901,12 +903,14 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
             BM_LOG_ERROR("failed to locate addr and rank, ret:"
                          << ret << ", index:" << i << ", src:" << VaToStr(params.sources[i])
                          << ", dest:" << VaToStr(params.destinations[i]) << ", size:" << params.dataSizes[i]);
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR, ret)
             return ret;
         }
         BM_LOG_DEBUG("source:" << VaToStr(params.sources[i]) << " destination:" << VaToStr(params.destinations[i])
                                << " dataSize:" << params.dataSizes[i]);
         sOptions.groupMap[p2pInfo].push_back(i);
     }
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR, ret)
 
     ret = dataOperator_->BatchDataCopy(params, direction, sOptions);
     if (ret != BM_OK) {
