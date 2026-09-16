@@ -132,12 +132,16 @@ TEST_F(DlHalApiDcmiTest, LoadDcmiLibraryFailsWhenInitSymbolMissing)
     EXPECT_EQ(gDcmiCloseCount, 1U);
 }
 
-TEST_F(DlHalApiDcmiTest, LoadDcmiLibraryFailsWhenAffinitySymbolMissing)
+TEST_F(DlHalApiDcmiTest, LoadDcmiLibrarySucceedsWhenAffinitySymbolMissing)
 {
     gDcmiMockMode = DcmiMockMode::AFFINITY_SYMBOL_FAILED;
 
-    EXPECT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_DL_FUNCTION_FAILED);
-    EXPECT_EQ(gDcmiCloseCount, 1U);
+    EXPECT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_OK);
+    EXPECT_EQ(gDcmiCloseCount, 0U);
+
+    std::string cpuList;
+    EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), BM_DL_FUNCTION_FAILED);
+    EXPECT_TRUE(cpuList.empty());
 }
 
 TEST_F(DlHalApiDcmiTest, LoadDcmiLibraryFailsWhenInitFails)
@@ -155,12 +159,13 @@ TEST_F(DlHalApiDcmiTest, DcmiGetAffinityCpuInfoHandlesSuccessAndFailure)
     EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), BM_OK);
     EXPECT_EQ(cpuList, TEST_CPU_LIST);
     EXPECT_EQ(gDcmiDeviceId, TEST_DEVICE_ID);
-    EXPECT_EQ(gDcmiCloseCount, 1U);
+    EXPECT_EQ(gDcmiCloseCount, 0U);
 
-    ASSERT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_OK);
     gDcmiMockMode = DcmiMockMode::AFFINITY_FAILED;
-    EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), DCMI_TEST_ERROR);
-    EXPECT_EQ(gDcmiCloseCount, 2U);
+    cpuList.clear();
+    EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), BM_OK);
+    EXPECT_TRUE(cpuList.empty());
+    EXPECT_EQ(gDcmiCloseCount, 0U);
 }
 } // namespace mf
 } // namespace ock

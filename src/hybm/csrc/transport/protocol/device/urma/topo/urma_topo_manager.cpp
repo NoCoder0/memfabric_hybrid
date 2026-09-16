@@ -283,8 +283,8 @@ Result UrmaTopoManager::SetDeviceBaseInfo()
         BM_LOG_ERROR("get logic deviceId failed: " << ret << " userId:" << userDeviceId_);
         return BM_DL_FUNCTION_FAILED;
     }
-
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(logicDeviceId_, &phyDeviceId_);
+    // 实测需要使用userDeviceId
+    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userDeviceId_, &phyDeviceId_);
     if (ret != 0) {
         BM_LOG_WARN("Failed to get phy deviceId by logicDevId, fallback to logicId: user="
                     << userDeviceId_ << ", logic=" << logicDeviceId_ << ", ret=" << ret);
