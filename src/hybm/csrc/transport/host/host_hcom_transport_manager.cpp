@@ -1126,6 +1126,9 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         return BM_ERROR;
     }
     size_t i = begin;
+    uint64_t stageT0 = 0; /* TP_TRACE_TRACE_BEGIN/END 用的时间戳变量 */
+    uint64_t stageT1 = 0;
+    uint64_t stageT2 = 0;
     while (i < end) {
         TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MR_BUILD, stageT0);
         Channel_OneSideRequestSgl sglReq;
