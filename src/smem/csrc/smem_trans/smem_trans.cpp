@@ -9,17 +9,19 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
-#include "smem_trans.h"
 
 #include "smem_common_includes.h"
 #include "hybm.h"
+#include "smem_trans.h"
+#include "mf_rwlock.h"
 #include "smem_trans_entry.h"
 #include "smem_trans_entry_manager.h"
 #include "smem_store_factory.h"
 
 using namespace ock::smem;
+using namespace ock::mf;
 
-std::mutex g_smemTransMutex_;
+ReadWriteLock g_smemTransMutex_;
 bool g_smemTransInited = false;
 
 SMEM_API int32_t smem_trans_config_init(smem_trans_config_t *config)
@@ -38,6 +40,7 @@ SMEM_API int32_t smem_trans_config_init(smem_trans_config_t *config)
 SMEM_API int32_t smem_trans_init(const smem_trans_config_t *config)
 {
     SM_VALIDATE_RETURN(config != nullptr, "invalid config, which is null", SM_INVALID_PARAM);
+    WriteGuard transLock(g_smemTransMutex_);
 
     if (g_smemTransInited) {
         SM_LOG_TRACE("smem trans initialized already");
@@ -63,6 +66,7 @@ SMEM_API smem_trans_t smem_trans_create(const char *store_url, const char *uniqu
     SM_VALIDATE_RETURN(config != nullptr, "invalid config, which is null", nullptr);
     SM_VALIDATE_RETURN(strlen(store_url) != 0, "invalid store_url, which is empty", nullptr);
     SM_VALIDATE_RETURN(strlen(unique_id) != 0, "invalid engineId, which is empty", nullptr);
+    WriteGuard transLock(g_smemTransMutex_);
 
     /* create entry */
     auto entry = SmemTransEntry::Create(unique_id, store_url, *config);
@@ -77,6 +81,7 @@ SMEM_API smem_trans_t smem_trans_create(const char *store_url, const char *uniqu
 SMEM_API void smem_trans_destroy(smem_trans_t handle, uint32_t flags)
 {
     SM_ASSERT_RET_VOID(handle != nullptr);
+    WriteGuard transLock(g_smemTransMutex_);
 
     /* remove entry by ptr */
     auto result = SmemTransEntryManager::Instance().RemoveEntryByPtr(reinterpret_cast<uintptr_t>(handle));
@@ -95,6 +100,7 @@ SMEM_API void smem_trans_uninit(uint32_t flags)
         SM_LOG_WARN("smem trans not initialized yet");
         return;
     }
+    WriteGuard transLock(g_smemTransMutex_);
 
     SmemTransEntryManager::Instance().UnInitialize();
     hybm_uninit();

@@ -10,9 +10,12 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -87,6 +90,9 @@ uint32_t g_waitAndResetCallCount = 0;
 uint32_t g_streamSyncCallCount = 0;
 uint32_t g_streamSyncFailAt = UINT32_MAX;
 std::vector<void *> g_waitedNotifies;
+uint32_t g_notifyDestroyCallCount = 0U;
+uint32_t g_notifyUnregCallCount = 0U;
+std::mutex g_kernelLaunchMutex;
 
 struct TestHybmBatchTransferParam {
     uint32_t rankNum;
@@ -364,6 +370,15 @@ int32_t MockHcommMemRegAny(EndpointHandle endpoint, const char *memTag, const Hc
 int32_t MockHcommMemRegFailAny(EndpointHandle, const char *, const HcommCommMem *, HcommMemHandle *)
 {
     return BM_ERROR;
+}
+
+int32_t MockHcommMemUnregTrackNotify(EndpointHandle endpoint, HcommMemHandle memHandle)
+{
+    EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+    if (memHandle == MOCK_NOTIFY_HANDLE) {
+        g_notifyUnregCallCount++;
+    }
+    return BM_OK;
 }
 
 int32_t MockHcommMemUnregAny(EndpointHandle endpoint, HcommMemHandle memHandle)
@@ -847,6 +862,13 @@ int32_t MockAclrtDestroyNotify(void *notify)
     return BM_OK;
 }
 
+int32_t MockAclrtDestroyNotifyCounted(void *notify)
+{
+    EXPECT_EQ(notify, MOCK_NOTIFY);
+    g_notifyDestroyCallCount++;
+    return BM_OK;
+}
+
 int32_t MockRtGetDevResAddress(rtDevResInfo *resInfo, rtDevResAddrInfo *addrInfo)
 {
     EXPECT_NE(resInfo, nullptr);
@@ -1002,6 +1024,7 @@ int32_t MockAclrtLaunchKernelWithConfig(aclrtFuncHandle funcHandle, uint32_t blo
     EXPECT_EQ(cfg->numAttrs, 1U);
     EXPECT_EQ(argsHandle, MOCK_ARGS_HANDLE);
     EXPECT_EQ(reserved, nullptr);
+    std::lock_guard<std::mutex> guard(g_kernelLaunchMutex);
     g_kernelLaunchCallCount++;
     return BM_OK;
 }
@@ -1075,8 +1098,29 @@ void InstallKernelLaunchMocks()
     DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
 }
 
+void ResetTlsContextForTest()
+{
+    auto &ctx = DeviceUrmaTransportManager::GetTlsContext();
+    // Device buffers are malloc-backed in UT; production leaves TLS resources to process teardown.
+    std::free(ctx.launchBuffers.base);
+    ctx = DeviceUrmaTransportManager::CompletionContext{};
+}
+
+struct TlsContextGuard {
+    TlsContextGuard()
+    {
+        ResetTlsContextForTest();
+    }
+
+    ~TlsContextGuard()
+    {
+        ResetTlsContextForTest();
+    }
+};
+
 // Helper: bundles guards for tests that do OpenDevice+Prepare+kernel launch
 struct DeviceTestFixture {
+    TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard;
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -1217,6 +1261,46 @@ void InstallDistinctSecondNotifyMocks()
     DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamAtCall;
 }
 
+bool RunConcurrentRegisterAndQuery(DeviceUrmaTransportManager &manager, const TransportMemoryRegion &mr)
+{
+    constexpr uint32_t kReaderCount = 4U;
+    constexpr uint32_t kIterationCount = 200U;
+    std::atomic<bool> start{false};
+    std::atomic<bool> failed{false};
+    std::vector<std::thread> threads;
+    threads.reserve(kReaderCount + 1U);
+    threads.emplace_back([&]() {
+        while (!start.load(std::memory_order_acquire)) {
+            std::this_thread::yield();
+        }
+        for (uint32_t i = 0U; i < kIterationCount; ++i) {
+            if (manager.RegisterMemoryRegion(mr) != BM_OK || manager.UnregisterMemoryRegion(mr.addr) != BM_OK) {
+                failed.store(true, std::memory_order_release);
+                return;
+            }
+        }
+    });
+    for (uint32_t reader = 0U; reader < kReaderCount; ++reader) {
+        threads.emplace_back([&]() {
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            for (uint32_t i = 0U; i < kIterationCount; ++i) {
+                if (!manager.QueryHasRegistered(mr.addr, mr.size)) {
+                    failed.store(true, std::memory_order_release);
+                    return;
+                }
+            }
+        });
+    }
+
+    start.store(true, std::memory_order_release);
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    return !failed.load(std::memory_order_acquire);
+}
+
 } // namespace
 
 TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
@@ -1352,10 +1436,11 @@ TEST(DeviceUrmaTransportManagerTest, CreatingContextsDoesNotLeaseNotify)
 
     DeviceUrmaTransportManager::CompletionContext *first = nullptr;
     DeviceUrmaTransportManager::CompletionContext *second = nullptr;
-    ASSERT_EQ(manager.CreateAndPublishContextLocked(first), BM_OK);
-    ASSERT_EQ(manager.CreateAndPublishContextLocked(second), BM_OK);
+    first = manager.LookupOrCreateContextLocked();
+    second = manager.LookupOrCreateContextLocked();
     ASSERT_NE(first, nullptr);
     ASSERT_NE(second, nullptr);
+    EXPECT_EQ(first, second);
     EXPECT_EQ(manager.notifyPoolSize_.load(), 1U);
     DeviceUrmaTransportManager::NotifyResource *resource = nullptr;
     ASSERT_EQ(manager.AcquireNotifyResource(resource), BM_OK);
@@ -1395,9 +1480,10 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizationReturnsNotifyForOtherThreads
     auto *resource = manager.notifyPoolSlots_[0];
     for (uint32_t i = 0U; i < kWorkerCount; ++i) {
         std::thread worker([&]() {
+            TlsContextGuard tlsContextGuard;
             ASSERT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-            ASSERT_FALSE(manager.registry_.empty());
-            const auto &pending = manager.registry_.back()->pendingTransfers.back();
+            ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+            const auto &pending = DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.back();
             ASSERT_NE(pending.notifyPoolIndex, UINT32_MAX);
             EXPECT_EQ(manager.notifyPoolSlots_[pending.notifyPoolIndex], resource);
             ASSERT_EQ(manager.Synchronize(kRemoteRank), BM_OK);
@@ -1405,7 +1491,7 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizationReturnsNotifyForOtherThreads
         });
         worker.join();
     }
-    EXPECT_EQ(manager.registry_.size(), kWorkerCount);
+    EXPECT_FALSE(DeviceUrmaTransportManager::GetTlsContext().initialized);
     EXPECT_EQ(manager.notifyPoolSize_.load(), 1U);
     fix.CleanupAndClose(manager);
 }
@@ -1422,8 +1508,8 @@ TEST(DeviceUrmaTransportManagerTest, NotifyAcquisitionFailureRejectsRemoteIoWith
     ASSERT_EQ(manager.AcquireNotifyResource(held), BM_OK);
     DlAclApi::pAclrtCreateNotify = [](void **, uint64_t) { return BM_ERROR; };
     EXPECT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_ERROR);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    EXPECT_TRUE(manager.registry_[0]->pendingTransfers.empty());
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    EXPECT_TRUE(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.empty());
     manager.ReleaseNotifyResource(*held);
     DlAclApi::pAclrtCreateNotify = MockAclrtCreateNotify;
     EXPECT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
@@ -1444,8 +1530,8 @@ TEST(DeviceUrmaTransportManagerTest, WaitAndResetFailureIsTerminalAndKeepsNotify
     auto *failedNotify = manager.notifyPoolSlots_[0];
     DlAclApi::pAclrtWaitAndResetNotify = [](void *, void *, uint32_t) { return BM_ERROR; };
     EXPECT_EQ(manager.Synchronize(kRemoteRank), BM_ERROR);
-    ASSERT_EQ(manager.registry_[0]->pendingTransfers.size(), 1U);
-    EXPECT_EQ(manager.registry_[0U]->pendingTransfers[0U].notifyPoolIndex, UINT32_MAX);
+    ASSERT_EQ(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.size(), 1U);
+    EXPECT_EQ(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers[0U].notifyPoolIndex, UINT32_MAX);
     DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotify;
     EXPECT_EQ(manager.Synchronize(kRemoteRank), BM_ERROR);
     ASSERT_EQ(manager.notifyPoolSize_.load(), 1U);
@@ -1543,6 +1629,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
 
 TEST(DeviceUrmaTransportManagerTest, RemoteIoAndSynchronizeUseDeviceKernel)
 {
+    TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -2009,13 +2096,11 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     notifyResource.notifyAddr = MOCK_NOTIFY_ADDR;
     notifyResource.notifyLen = MOCK_NOTIFY_LEN;
     manager.notifyFreeHead_.store(UINT32_MAX);
-    auto ctx = std::make_shared<DeviceUrmaTransportManager::CompletionContext>();
     HcommMemHandle notifyHandle = nullptr;
     const HcommCommMem notifyMem{COMM_MEM_TYPE_DEVICE, reinterpret_cast<void *>(MOCK_NOTIFY_ADDR), MOCK_NOTIFY_LEN};
     ASSERT_EQ(manager.hcommApi_.RegisterMemory(manager.localEndpoint_, MOCK_NOTIFY_ADDR, notifyMem, notifyHandle),
               BM_OK);
     notifyResource.notifyHcommHandle = notifyHandle;
-    manager.registry_.push_back(ctx);
 
     auto &state = manager.remoteRanks_[1];
     state.channel = MOCK_CHANNEL;
@@ -2208,6 +2293,7 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizeNotOpenedFails)
 
 TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
 {
+    TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -2252,8 +2338,8 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
 
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR + 0x100U, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->pendingTransfers.size(), 2U);
     EXPECT_TRUE(ctx->pendingTransfers[0].inFlight);
@@ -2268,6 +2354,7 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
 
 TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
 {
+    TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -2316,8 +2403,8 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(manager.ReadRemoteAsync(2, MOCK_LOCAL_ADDR + 0x100U, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
 
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->pendingTransfers.size(), 2U);
     auto *rankOneNotify = manager.notifyPoolSlots_[ctx->pendingTransfers[0].notifyPoolIndex];
@@ -2342,6 +2429,7 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
 
 TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
 {
+    TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -2389,8 +2477,8 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
 
     // Launch failure removes the pending record but keeps the context-owned buffer for reuse.
     EXPECT_NE(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
     EXPECT_NE(ctx->launchBuffers.base, nullptr);
@@ -2400,6 +2488,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
 
 TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
 {
+    TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
@@ -2449,8 +2538,8 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
     manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
 
     EXPECT_NE(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
     EXPECT_NE(ctx->launchBuffers.base, nullptr);
@@ -2464,6 +2553,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
 
 TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
 {
+    TlsContextGuard tlsContextGuard;
     g_kernelLaunchCallCount = 0U;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
@@ -2510,8 +2600,8 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
     manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
 
     EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     EXPECT_EQ(ctx->pendingTransfers.size(), 1U);
     EXPECT_TRUE(ctx->pendingTransfers[0].inFlight);
@@ -2547,8 +2637,8 @@ TEST(DeviceUrmaTransportManagerTest, PreSubmittedMarkerSyncDoesNotLaunchKernel)
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
 
     ASSERT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     auto *leasedNotify = manager.notifyPoolSlots_[0];
     ASSERT_NE(leasedNotify, nullptr);
@@ -2579,8 +2669,8 @@ TEST(DeviceUrmaTransportManagerTest, WaitStreamFailureQuarantinesNotifyUntilClos
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
 
     ASSERT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     auto *leasedNotify = manager.notifyPoolSlots_[0U];
     ASSERT_NE(leasedNotify, nullptr);
@@ -2609,8 +2699,8 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizeKeepsContextBufferForReuse)
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
 
     ASSERT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     auto *leasedNotify = manager.notifyPoolSlots_[0];
     ASSERT_NE(leasedNotify, nullptr);
@@ -2631,63 +2721,6 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizeKeepsContextBufferForReuse)
     DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
     DlAclApi::pAclrtFree = MockAclrtFreeOk;
     fix.CleanupAndClose(manager);
-}
-
-TEST(DeviceUrmaTransportManagerTest, CloseRejectsInFlightAndRetriesDeferredFree)
-{
-    EnvVarGuard envGuard("ASCEND_HOME_PATH");
-    DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
-    MockcppScope mockcpp;
-    PrepareKernelJson();
-    InstallOpenDeviceMocks();
-    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
-    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
-    DlHcommApi::gHcommMemImport = MockHcommMemImport;
-    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
-    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
-    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
-    MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
-
-    DeviceUrmaTransportManager manager;
-    TransportOptions openOptions{};
-    openOptions.rankId = 0;
-    openOptions.rankCount = 2;
-    openOptions.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
-    ASSERT_EQ(manager.OpenDevice(openOptions), BM_OK);
-    HybmTransPrepareOptions prepareOptions{};
-    TransportRankPrepareInfo info{};
-    auto peerDesc = MakeEndpointDesc();
-    peerDesc.protocol = UrmaProtocol::UBC_CTP;
-    peerDesc.type = COMM_ADDR_TYPE_IP_V6;
-    info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
-    info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
-    prepareOptions.options.emplace(1, std::move(info));
-    ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
-
-    DeviceUrmaTransportManager::LocalRegistration localReg{};
-    localReg.mr.addr = MOCK_LOCAL_ADDR;
-    localReg.mr.size = MOCK_SIZE;
-    localReg.mr.flags = REG_MR_FLAG_DRAM;
-    localReg.deviceVa = 0;
-    manager.localRegistrations_.emplace(MOCK_LOCAL_ADDR, localReg);
-
-    // Launch a successful transfer (creates inFlight entry)
-    InstallKernelLaunchMocks();
-    EXPECT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
-    ASSERT_NE(ctx, nullptr);
-    EXPECT_EQ(ctx->pendingTransfers.size(), 1U);
-
-    // CloseDevice releases inFlight and deferred transfers, then succeeds
-    EXPECT_EQ(manager.CloseDevice(), BM_OK);
-    EXPECT_FALSE(manager.opened_);
-    manager.opened_ = false; // prevent destructor double-close
 }
 
 // ============================================================================
@@ -3447,8 +3480,8 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoConvertsAclDramLocalAddrToDva)
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_ACL_DRAM, MOCK_DRAM_DVA);
 
     ASSERT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
     const auto *staged = static_cast<const HcommBatchTransferDesc *>(ctx->launchBuffers.transferDescs);
@@ -3484,8 +3517,8 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoAllowsDvaRangeEndWrapWhenStartIsVal
 
     ASSERT_EQ(manager.ReadRemoteAsync(1, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_GE(g_kernelLaunchCallCount, 1U);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
     EXPECT_TRUE(ctx->pendingTransfers[0].inFlight);
@@ -3505,8 +3538,8 @@ TEST(DeviceUrmaTransportManagerTest, WriteRemoteConvertsDramLocalAddrToDva)
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, MOCK_DRAM_DVA);
 
     ASSERT_EQ(manager.WriteRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
     const auto *staged = static_cast<const HcommBatchTransferDesc *>(ctx->launchBuffers.transferDescs);
@@ -3531,8 +3564,8 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoKeepsHbmLocalAddrUnchanged)
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_HBM, 0);
 
     ASSERT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
     const auto *staged = static_cast<const HcommBatchTransferDesc *>(ctx->launchBuffers.transferDescs);
@@ -3555,8 +3588,8 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoDramNoDvaKeepsHva)
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0);
 
     ASSERT_EQ(manager.ReadRemoteAsync(1UL, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
-    ASSERT_EQ(manager.registry_.size(), 1U);
-    auto *ctx = manager.registry_[0].get();
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    auto *ctx = &DeviceUrmaTransportManager::GetTlsContext();
     ASSERT_NE(ctx, nullptr);
     ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
     const auto *staged = static_cast<const HcommBatchTransferDesc *>(ctx->launchBuffers.transferDescs);
@@ -3651,8 +3684,8 @@ TEST(DeviceUrmaTransportManagerTest, RawMultiRankBatchReturnsFallbacksAndMergesD
     ASSERT_EQ(g_lastKernelArgs.totalListNum, 2U);
     EXPECT_NE(g_lastKernelArgs.transferDescs[0].transType, g_lastKernelArgs.transferDescs[1].transType);
     ASSERT_NE(g_lastKernelArgs.markerDescs, nullptr);
-    ASSERT_EQ(manager.registry_.front()->pendingTransfers.size(), 1U);
-    const auto &pending = manager.registry_.front()->pendingTransfers.front();
+    ASSERT_EQ(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.size(), 1U);
+    const auto &pending = DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.front();
     ASSERT_NE(pending.notifyPoolIndex, UINT32_MAX);
     const auto *resource = manager.notifyPoolSlots_[pending.notifyPoolIndex];
     EXPECT_EQ(g_lastKernelArgs.markerDescs[0].transferInfo.read.dst, reinterpret_cast<void *>(resource->notifyAddr));
@@ -3689,9 +3722,9 @@ TEST(DeviceUrmaTransportManagerTest, RawTwoRankBatchWaitsAllNotifiesWithOneFinal
     ASSERT_NE(g_lastKernelArgs.markerDescs, nullptr);
     EXPECT_NE(g_lastKernelArgs.markerDescs[0].transferInfo.read.dst,
               g_lastKernelArgs.markerDescs[1].transferInfo.read.dst);
-    ASSERT_EQ(manager.registry_.front()->pendingTransfers.size(), 2U);
+    ASSERT_EQ(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.size(), 2U);
     for (size_t i = 0; i < 2U; ++i) {
-        const auto &pending = manager.registry_.front()->pendingTransfers[i];
+        const auto &pending = DeviceUrmaTransportManager::GetTlsContext().pendingTransfers[i];
         EXPECT_EQ(pending.rankId, g_lastKernelArgs.rankIdList[i]);
         const auto *resource = manager.notifyPoolSlots_[pending.notifyPoolIndex];
         EXPECT_EQ(g_lastKernelArgs.markerDescs[i].transferInfo.read.dst,
@@ -3703,7 +3736,7 @@ TEST(DeviceUrmaTransportManagerTest, RawTwoRankBatchWaitsAllNotifiesWithOneFinal
     EXPECT_EQ((std::set<void *>{g_waitedNotifies.begin(), g_waitedNotifies.end()}),
               (std::set<void *>{MOCK_NOTIFY, MOCK_SECOND_NOTIFY}));
     EXPECT_EQ(g_streamSyncCallCount, 2U);
-    EXPECT_TRUE(manager.registry_.front()->pendingTransfers.empty());
+    EXPECT_TRUE(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.empty());
     fix.CleanupAndClose(manager);
 }
 
@@ -3731,8 +3764,8 @@ TEST(DeviceUrmaTransportManagerTest, RawTwoRankKernelFailureReleasesAllNotifiesW
                                                unregisteredGroups, batchRanks),
               BM_ERROR);
     EXPECT_TRUE(batchRanks.empty());
-    ASSERT_FALSE(manager.registry_.empty());
-    EXPECT_TRUE(manager.registry_.front()->pendingTransfers.empty());
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    EXPECT_TRUE(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.empty());
     const uint32_t poolSize = manager.notifyPoolSize_.load(std::memory_order_acquire);
     EXPECT_EQ(poolSize, 2U);
     EXPECT_NE(manager.notifyPoolSlots_[0U], nullptr);
@@ -3771,6 +3804,166 @@ TEST(DeviceUrmaTransportManagerTest, RawMultiRankUnregisteredDoesNotRequireRemot
     EXPECT_EQ(unregisteredGroups.at({0U, 1U}), (std::vector<uint32_t>{0U}));
     EXPECT_TRUE(batchRanks.empty());
     manager.opened_ = false;
+}
+
+TEST(DeviceUrmaTransportManagerTest, ConcurrentRemoveRanksUseRemoteRanksLock)
+{
+    constexpr uint32_t kRemovedRankCount = 8U;
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0U;
+    manager.rankCount_ = kRemovedRankCount + 1U;
+    for (uint32_t rankId = 1U; rankId <= kRemovedRankCount; ++rankId) {
+        manager.remoteRanks_.try_emplace(rankId);
+    }
+
+    std::atomic<bool> start{false};
+    std::vector<int32_t> results(kRemovedRankCount, BM_ERROR);
+    std::vector<std::thread> threads;
+    threads.reserve(kRemovedRankCount);
+    for (uint32_t index = 0U; index < kRemovedRankCount; ++index) {
+        threads.emplace_back([&, index]() {
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            results[index] = manager.RemoveRanks({index + 1U});
+        });
+    }
+
+    start.store(true, std::memory_order_release);
+    for (auto &thread : threads) {
+        thread.join();
+    }
+
+    for (const auto result : results) {
+        EXPECT_EQ(result, BM_OK);
+    }
+    EXPECT_TRUE(manager.remoteRanks_.empty());
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ConcurrentRegisterAndQueryUseLocalRegistrationLock)
+{
+    DlHcommApiFnGuard guard;
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregAny;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0U;
+    manager.rankCount_ = 2U;
+    manager.localEndpoint_ = MOCK_ENDPOINT;
+    ASSERT_NE(manager.localEndpoint_, nullptr);
+
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_HBM;
+    ASSERT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+
+    EXPECT_TRUE(RunConcurrentRegisterAndQuery(manager, mr));
+    ASSERT_EQ(manager.localRegistrations_.size(), 1U);
+    EXPECT_EQ(manager.localRegistrations_.at(mr.addr).refCount, 1U);
+    EXPECT_EQ(manager.UnregisterMemoryRegion(mr.addr), BM_OK);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, CloseCleansNotifyPoolWithoutWaitingForInflight)
+{
+    constexpr uint32_t kRemoteRank = 1U;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
+    ASSERT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    auto &ctx = DeviceUrmaTransportManager::GetTlsContext();
+    ASSERT_EQ(ctx.pendingTransfers.size(), 1U);
+    ASSERT_TRUE(ctx.pendingTransfers.front().inFlight);
+    void *launchBuffer = ctx.launchBuffers.base;
+    ASSERT_NE(launchBuffer, nullptr);
+
+    g_notifyDestroyCallCount = 0U;
+    g_notifyUnregCallCount = 0U;
+    g_waitAndResetCallCount = 0U;
+    g_streamSyncCallCount = 0U;
+    g_streamSyncFailAt = UINT32_MAX;
+    g_aclrtFreeCallCount = 0U;
+    g_aclrtFreeFailAt = UINT32_MAX;
+    DlHcommApi::gHcommMemUnreg = MockHcommMemUnregTrackNotify;
+    DlAclApi::pAclrtDestroyNotify = MockAclrtDestroyNotifyCounted;
+    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotifyCounting;
+    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamAtCall;
+    DlAclApi::pAclrtFree = MockAclrtFreeAtCall;
+
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    EXPECT_FALSE(manager.opened_);
+    EXPECT_EQ(manager.notifyPoolSize_.load(), 0U);
+    EXPECT_EQ(manager.notifyPoolSlots_, nullptr);
+    EXPECT_EQ(g_notifyDestroyCallCount, 1U);
+    EXPECT_EQ(g_notifyUnregCallCount, 1U);
+    EXPECT_EQ(g_waitAndResetCallCount, 0U);
+    EXPECT_EQ(g_streamSyncCallCount, 0U);
+    EXPECT_EQ(g_aclrtFreeCallCount, 1U); // Only the manager's transfer flag is freed.
+    EXPECT_EQ(ctx.launchBuffers.base, launchBuffer);
+    ASSERT_EQ(ctx.pendingTransfers.size(), 1U);
+    EXPECT_TRUE(ctx.pendingTransfers.front().inFlight);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    EXPECT_EQ(g_notifyDestroyCallCount, 1U);
+    EXPECT_EQ(g_notifyUnregCallCount, 1U);
+}
+
+bool RunConcurrentMultiRankIo(DeviceUrmaTransportManager &manager)
+{
+    constexpr uint32_t kThreadCount = 4U;
+    std::atomic<bool> start{false};
+    std::vector<int32_t> results(kThreadCount, BM_ERROR);
+    std::vector<std::thread> threads;
+    for (uint32_t index = 0U; index < kThreadCount; ++index) {
+        threads.emplace_back([&, index]() {
+            TlsContextGuard tlsContextGuard;
+            void *sources[] = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR)};
+            void *destinations[] = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR)};
+            uint64_t sizes[] = {MOCK_SIZE};
+            hybm_batch_copy_params params{sources, destinations, sizes, 1U};
+            transport::RankGroupMap groups{{{0U, 1U}, {0U}}};
+            std::vector<uint32_t> localIndices;
+            transport::RankGroupMap unregisteredGroups;
+            std::set<uint32_t> batchRanks;
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            auto ret = manager.TransferRemoteBatchAsync(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, groups, localIndices,
+                                                        unregisteredGroups, batchRanks);
+            if (ret != BM_OK || batchRanks != std::set<uint32_t>{1U}) {
+                return;
+            }
+            ret = manager.SynchronizeRanks(batchRanks);
+            const auto &ctx = DeviceUrmaTransportManager::GetTlsContext();
+            if (ret == BM_OK && ctx.initialized && ctx.pendingTransfers.empty()) {
+                results[index] = BM_OK;
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto &thread : threads) {
+        thread.join();
+    }
+    return std::all_of(results.begin(), results.end(), [](int32_t result) { return result == BM_OK; });
+}
+
+TEST(DeviceUrmaTransportManagerTest, ConcurrentMultiRankIoUsesPerThreadContexts)
+{
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
+    EXPECT_TRUE(RunConcurrentMultiRankIo(manager));
+    EXPECT_FALSE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+    fix.CleanupAndClose(manager);
 }
 
 // ===================== DeviceUrmaEidReader tests =====================

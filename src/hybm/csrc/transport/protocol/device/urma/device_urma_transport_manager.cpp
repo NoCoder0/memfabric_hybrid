@@ -317,11 +317,10 @@ std::string FormatIpAddress(CommAddrType addrType, const uint8_t *addrData)
 
 } // namespace
 
-// get TLS(Thread Local Storage) bingdings
-std::vector<DeviceUrmaTransportManager::ContextBinding> &DeviceUrmaTransportManager::GetTlsBindings()
+DeviceUrmaTransportManager::CompletionContext &DeviceUrmaTransportManager::GetTlsContext()
 {
-    thread_local std::vector<ContextBinding> bindings;
-    return bindings;
+    thread_local CompletionContext ctx;
+    return ctx;
 }
 
 DeviceUrmaTransportManager::~DeviceUrmaTransportManager()
@@ -532,10 +531,6 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
         return BM_NOT_SUPPORTED;
     }
 
-    static std::atomic<uint64_t> g_nextGen{1};
-    auto newOwner = std::make_shared<OpenGeneration>();
-    newOwner->id = g_nextGen.fetch_add(1, std::memory_order_relaxed);
-
     auto ret = InitLocalDeviceInfoLocked(options);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma InitLocalDeviceInfoLocked failed, rank=" << options.rankId << " ret: " << ret);
@@ -550,7 +545,6 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
         RollbackOpenDeviceLocked();
         return ret;
     }
-    owner_ = std::move(newOwner);
     opened_ = true;
     BM_LOG_INFO("device_urma OpenDevice success, rank: " << rankId_ << " rankCount: " << rankCount_
                                                          << " devPhyId: " << phyDeviceId_);
@@ -578,51 +572,27 @@ Result DeviceUrmaTransportManager::EnsureDeviceKernelLoadedLocked()
 
 DeviceUrmaTransportManager::CompletionContext *DeviceUrmaTransportManager::LookupOrCreateContextLocked()
 {
-    // Scan TLS bindings for a valid (owner matches this manager generation, context alive)
-    auto &bindings = GetTlsBindings();
-    CompletionContext *foundCtx = nullptr;
-    TP_TRACE_BEGIN(TP_HYBM_URMA_TLS_SCAN);
-    for (auto &binding : bindings) {
-        auto ownerSp = binding.owner.lock();
-        if (!ownerSp || ownerSp != owner_) {
-            continue;
-        }
-        auto ctxSp = binding.ctx.lock();
-        if (!ctxSp) {
-            continue;
-        }
-        foundCtx = ctxSp.get();
-        break;
-    }
-    TP_TRACE_END(TP_HYBM_URMA_TLS_SCAN, foundCtx == nullptr ? BM_ERROR : BM_OK);
-    if (foundCtx != nullptr) {
-        return foundCtx;
+    auto &ctx = GetTlsContext();
+    if (ctx.initialized) {
+        return &ctx;
     }
 
-    // create and publish
-    CompletionContext *newCtx = nullptr;
-    auto ret = CreateAndPublishContextLocked(newCtx);
+    auto ret = InitThreadContextLocked(ctx);
     if (ret != BM_OK) {
         return nullptr;
     }
-    return newCtx;
+    return &ctx;
 }
 
-Result DeviceUrmaTransportManager::CreateAndPublishContextLocked(CompletionContext *&outRaw)
+Result DeviceUrmaTransportManager::InitThreadContextLocked(CompletionContext &ctx)
 {
-    std::shared_ptr<CompletionContext> ctx;
-    ctx = std::make_shared<CompletionContext>();
     void *stream = HybmStreamManager::GetThreadAclStream();
     if (stream == nullptr) {
-        BM_LOG_ERROR("device_urma CreateAndPublishContextLocked GetThreadAclStream failed");
-        return BM_DL_FUNCTION_FAILED;
+        BM_LOG_ERROR("device_urma InitThreadContextLocked GetThreadAclStream failed");
+        return BM_ERROR;
     }
-    ctx->stream = stream;
-    std::lock_guard<std::shared_mutex> guard(registryMutex_);
-    auto &bindings = GetTlsBindings();
-    registry_.push_back(ctx);
-    bindings.push_back({owner_, ctx});
-    outRaw = ctx.get();
+    ctx.stream = stream;
+    ctx.initialized = true;
     return BM_OK;
 }
 
@@ -782,15 +752,6 @@ void DeviceUrmaTransportManager::CleanupNotifyPoolLocked()
     notifyPoolSize_.store(0U, std::memory_order_release);
 }
 
-void DeviceUrmaTransportManager::CleanupContextLocked(CompletionContext &ctx)
-{
-    auto ret = ReleaseDeviceTransferBuffers(ctx.launchBuffers);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma CleanupContextLocked release launch buffer failed, stream: "
-                     << VaToStr(ctx.stream) << " capacity: " << ctx.launchBuffers.capacity << " ret: " << ret);
-    }
-}
-
 Result DeviceUrmaTransportManager::AcquireNotifyResource(NotifyResource *&resource)
 {
     TP_TRACE_BEGIN(TP_HYBM_URMA_ACQUIRE_NOTIFY_RESOURCE);
@@ -872,32 +833,6 @@ void DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
     deviceKernelLoaded_ = false;
 }
 
-DeviceUrmaTransportManager::CompletionContext *DeviceUrmaTransportManager::FindCurrentContextLocked() const
-{
-    void *stream = HybmStreamManager::GetThreadAclStream();
-    if (stream == nullptr) {
-        return nullptr;
-    }
-    auto &bindings = GetTlsBindings();
-    for (auto &binding : bindings) {
-        auto ownerSp = binding.owner.lock();
-        if (!ownerSp || ownerSp != owner_) {
-            continue;
-        }
-        auto ctxSp = binding.ctx.lock();
-        if (!ctxSp) {
-            continue;
-        }
-        if (ctxSp->stream != stream) {
-            BM_LOG_ERROR("device_urma FindCurrentContextLocked stream mismatch, expected: "
-                         << VaToStr(ctxSp->stream) << " actual: " << VaToStr(stream));
-            return nullptr;
-        }
-        return ctxSp.get();
-    }
-    return nullptr;
-}
-
 Result DeviceUrmaTransportManager::ReleasePendingTransfersLocked(std::vector<PendingTransfer> &pendingTransfers)
 {
     pendingTransfers.clear();
@@ -924,22 +859,7 @@ Result DeviceUrmaTransportManager::CloseDevice()
     if (!opened_) {
         return BM_OK;
     }
-    for (const auto &ctxSp : registry_) {
-        if (!ctxSp) {
-            continue;
-        }
-        (void)ReleasePendingTransfersLocked(ctxSp->pendingTransfers);
-    }
-
     CloseDeviceCleanupResourcesLocked();
-    for (const auto &ctxSp : registry_) {
-        if (ctxSp != nullptr) {
-            CleanupContextLocked(*ctxSp);
-        }
-    }
-
-    registry_.clear();
-    owner_.reset();
     opened_ = false;
     BM_LOG_INFO("device_urma CloseDevice success");
     return BM_OK;
@@ -1232,7 +1152,7 @@ bool DeviceUrmaTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size
 
 Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
 {
-    std::shared_lock<std::shared_mutex> guard(mutex_);
+    std::lock_guard<std::shared_mutex> guard(mutex_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
     LocalRegistration registration{};
     auto ret = FindLocalRegistrationLocked(addr, 1, &registration);
@@ -1663,37 +1583,12 @@ Result DeviceUrmaTransportManager::RemoveRankLocked(uint32_t rankId)
     return finalRet;
 }
 
-bool DeviceUrmaTransportManager::IsAnyRegistryContextPendingForRank(uint32_t rankId) const
-{
-    std::shared_lock<std::shared_mutex> guard(registryMutex_);
-    for (const auto &ctxSp : registry_) {
-        if (!ctxSp) {
-            continue;
-        }
-        for (const auto &pt : ctxSp->pendingTransfers) {
-            if (pt.inFlight && pt.rankId == rankId) {
-                return true;
-            }
-        }
-    }
-    return false;
-}
-
 Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRanks)
 {
     std::lock_guard<std::shared_mutex> guard(mutex_);
     BM_LOG_INFO("device_urma RemoveRanks called, localRank: " << rankId_ << " ranks: " << removedRanks.size()
                                                               << " opened: " << opened_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
-
-    // Atomic pending preflight: any target rank with pending ops → reject all
-    for (auto rankId : removedRanks) {
-        BM_LOG_INFO("device_urma RemoveRanks checking IsAnyRegistryContextPendingForRank, rankId: " << rankId);
-        if (IsAnyRegistryContextPendingForRank(rankId)) {
-            BM_LOG_ERROR("device_urma RemoveRanks: rank " << rankId << " has pending ops, rejecting all");
-            return BM_ERROR;
-        }
-    }
 
     Result finalRet = BM_OK;
     for (auto rankId : removedRanks) {
@@ -1737,8 +1632,8 @@ Result DeviceUrmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptio
             }
             auto stateIt = remoteRanks_.find(peerRank);
             if (stateIt == remoteRanks_.end()) {
-                BM_LOG_WARN("device_urma UpdateRankOptions peer rank " << peerRank
-                                                                       << " not prepared yet, fallback to Prepare");
+                BM_LOG_INFO("device_urma UpdateRankOptions peer rank " << peerRank
+                                                                       << " not prepared yet, need to Prepare");
                 needFallback = true;
                 break;
             }
@@ -1750,34 +1645,27 @@ Result DeviceUrmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptio
                 break;
             }
         }
-    } // mutex_ released
+        if (!needFallback) {
+            // Keep validation and import in one exclusive remote-rank lock cycle so a rank cannot exit between them.
+            for (const auto &item : options.options) {
+                const uint32_t peerRank = item.first;
+                if (peerRank == rankId_) {
+                    continue;
+                }
+                auto &state = remoteRanks_.at(peerRank);
+                auto ret = ImportRemoteMemKeysLocked(peerRank, state, item.second.memKeys);
+                if (ret != BM_OK) {
+                    BM_LOG_ERROR("device_urma UpdateRankOptions ImportRemoteMemKeysLocked failed, peer: " << peerRank);
+                    return ret;
+                }
+                BM_LOG_INFO("device_urma UpdateRankOptions success, peer: " << peerRank);
+            }
+            return BM_OK;
+        }
+    } // Lifecycle and remote-rank locks released before Prepare acquires them.
 
-    if (needFallback) {
-        // Fallback to Prepare (without holding mutex_) — it will create resources and import memKeys.
-        BM_LOG_INFO("device_urma UpdateRankOptions falling back to Prepare for new dynamic ranks");
-        return Prepare(options);
-    }
-
-    // Only import remote memory keys without re-creating resources.
-    std::lock_guard<std::shared_mutex> guard(mutex_);
-    for (const auto &item : options.options) {
-        const uint32_t peerRank = item.first;
-        if (peerRank >= rankCount_ || peerRank == rankId_) {
-            continue; // already validated/skipped above
-        }
-        auto stateIt = remoteRanks_.find(peerRank);
-        if (stateIt == remoteRanks_.end()) {
-            continue;
-        }
-        auto &state = stateIt->second;
-        auto ret = ImportRemoteMemKeysLocked(peerRank, state, item.second.memKeys);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma UpdateRankOptions ImportRemoteMemKeysLocked failed, peer: " << peerRank);
-            return ret;
-        }
-        BM_LOG_INFO("device_urma UpdateRankOptions success, peer: " << peerRank);
-    }
-    return BM_OK;
+    BM_LOG_INFO("device_urma UpdateRankOptions falling back to Prepare for new dynamic ranks");
+    return Prepare(options);
 }
 
 const std::string &DeviceUrmaTransportManager::GetNic() const
@@ -1788,7 +1676,7 @@ const std::string &DeviceUrmaTransportManager::GetNic() const
 
 const TransportPrivateData DeviceUrmaTransportManager::GetPrivateData() const
 {
-    std::shared_lock<std::shared_mutex> guard(mutex_);
+    std::lock_guard<std::shared_mutex> guard(mutex_);
     TransportPrivateData data{};
     if (localEndpoint_ == nullptr) {
         BM_LOG_ERROR("device_urma GetPrivateData called before localEndpoint_ is ready, returning empty");
@@ -2680,24 +2568,15 @@ Result DeviceUrmaTransportManager::SynchronizeRanks(const std::set<uint32_t> &ra
             return BM_NOT_CONNECTED;
         }
     }
-    CompletionContext *currentCtx = FindCurrentContextLocked();
-    if (currentCtx == nullptr) {
-        for (uint32_t rankId : rankIds) {
-            if (IsAnyRegistryContextPendingForRank(rankId)) {
-                BM_LOG_ERROR("device_urma SynchronizeRanks no TLS context but rank "
-                             << rankId << " has pending in another context");
-                return BM_ERROR;
-            }
-        }
+    auto &ctx = GetTlsContext();
+    if (!ctx.initialized) {
         return BM_OK;
     }
     for (uint32_t rankId : rankIds) {
-        bool hasPending = false;
-        for (const auto &pending : currentCtx->pendingTransfers) {
+        for (const auto &pending : ctx.pendingTransfers) {
             if (pending.rankId != rankId) {
                 continue;
             }
-            hasPending = true;
             if (!pending.inFlight || pending.notifyPoolIndex == UINT32_MAX) {
                 BM_LOG_ERROR("device_urma SynchronizeRanks invalid pending, rankId: "
                              << rankId << " inFlight: " << pending.inFlight
@@ -2705,15 +2584,9 @@ Result DeviceUrmaTransportManager::SynchronizeRanks(const std::set<uint32_t> &ra
                 return BM_ERROR;
             }
         }
-        if (!hasPending) {
-            if (IsAnyRegistryContextPendingForRank(rankId)) {
-                BM_LOG_ERROR("device_urma SynchronizeRanks rank " << rankId << " has pending in another context");
-                return BM_ERROR;
-            }
-        }
     }
     TP_TRACE_BEGIN(TP_HYBM_URMA_SYNC_RANK_PENDING);
-    auto ret = SynchronizePreSubmittedNotifiesLocked(*currentCtx, rankIds);
+    auto ret = SynchronizePreSubmittedNotifiesLocked(ctx, rankIds);
     TP_TRACE_END(TP_HYBM_URMA_SYNC_RANK_PENDING, ret);
     return ret;
 }

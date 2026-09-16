@@ -230,24 +230,14 @@ private:
         std::atomic<uint32_t> nextFree{UINT32_MAX}; // 无锁空闲栈中的下一个槽位
     };
 
-    // Per-thread async completion context (manager-owned via registry, weak TLS binding)
+    // Per-thread async completion context.
     struct CompletionContext {
         void *stream{nullptr}; // non-owning ACL stream, compared at each launch/sync
         // Data-kernel launch parameters are reused after each launch stream synchronization.
         DeviceTransferBuffers launchBuffers{};
-        // All in-flight transfers; emptied by Synchronize or CloseDevice.
+        bool initialized{false};
+        // All in-flight transfers; emptied by Synchronize.
         std::vector<PendingTransfer> pendingTransfers{};
-    };
-
-    // Open generation identity — unique per OpenDevice call
-    struct OpenGeneration {
-        uint64_t id{0};
-    };
-
-    // TLS binding: weak owner + weak context, does NOT own ACL/Hcomm resources
-    struct ContextBinding {
-        std::weak_ptr<OpenGeneration> owner;
-        std::weak_ptr<CompletionContext> ctx;
     };
 
     // Initialization/open/close helpers and lifecycle
@@ -325,12 +315,12 @@ private:
                                        const std::vector<HcommBatchTransferDesc> *markerDescs,
                                        std::vector<NotifyResource *> *notifyResources);
 
-    // TLS(Thread Local Storage) binding container access (static thread_local via function-local static)
-    static std::vector<ContextBinding> &GetTlsBindings();
+    // Each thread uses only one manager.
+    static CompletionContext &GetTlsContext();
 
-    // Per-thread context lifecycle: lookup via TLS binding or create new
+    // Per-thread context lifecycle.
     CompletionContext *LookupOrCreateContextLocked();
-    Result CreateAndPublishContextLocked(CompletionContext *&ctx);
+    Result InitThreadContextLocked(CompletionContext &ctx);
 
     // Notify 池生命周期及无锁申请/归还；未转入 pending 的资源由调用方归还，pending 同步失败时隔离至 CloseDevice。
     Result InitNotifyPoolLocked();
@@ -338,18 +328,11 @@ private:
     Result InitNotifyResource(NotifyResource &resource);
     void CleanupNotifyResource(NotifyResource &resource);
     void CleanupNotifyPoolLocked();
-    void CleanupContextLocked(CompletionContext &ctx);
     Result AcquireNotifyResource(NotifyResource *&resource);
     void ReleaseNotifyResource(NotifyResource &resource);
 
-    // Find current thread's context via TLS binding only (no registry scan for owner)
-    CompletionContext *FindCurrentContextLocked() const;
-
     // CloseDevice helpers
     void CloseDeviceCleanupResourcesLocked();
-
-    // Check if any context in registry has pending ops for a specific rank
-    bool IsAnyRegistryContextPendingForRank(uint32_t rankId) const;
 
     // Device kernel buffer management
     aclrtFuncHandle GetDeviceKernelFunc() const;
@@ -373,7 +356,6 @@ private:
     // Device kernel launch (builds args, configures and launches)
     Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, size_t batchSize, size_t rankNum);
     mutable std::shared_mutex mutex_{};
-    mutable std::shared_mutex registryMutex_{};
     bool opened_{false};
     uint32_t rankId_{0};
     uint32_t rankCount_{0};
@@ -387,7 +369,7 @@ private:
     HcommApiWrapper hcommApi_;
     HcommEndpointHandle localEndpoint_{nullptr};
     UrmaEndpointDesc localEndpointDesc_{};
-    std::map<uint64_t, LocalRegistration> localRegistrations_{};
+
     // Device kernel launch state
     bool deviceKernelLoaded_{false};
     aclrtBinHandle deviceKernelHandle_{nullptr};
@@ -396,14 +378,13 @@ private:
     void *devTransFlagPtr_{nullptr};
     uint64_t devTransFlagSize_{0};
     HcommMemHandle devTransFlagHcommHandle_{nullptr};
-    // Open generation identity for this manager instance
-    std::shared_ptr<OpenGeneration> owner_;
-    // Strong registry of all per-thread completion contexts
-    std::vector<std::shared_ptr<CompletionContext>> registry_{};
     std::unique_ptr<NotifyResource *[]> notifyPoolSlots_{}; // manager 级池，下标到稳定资源地址的只增映射
     std::atomic<uint32_t> notifyPoolSize_{0};               // 已初始化的 Notify 池槽位数量
     std::mutex notifyPoolGrowMutex_{};                      // 池耗尽时串行扩容，不进入正常申请路径
     std::atomic<uint64_t> notifyFreeHead_{UINT32_MAX};      // 高 32 位为版本号，低 32 位为空闲槽位下标
+
+    // lock 粒度跟随 mutex_
+    std::map<uint64_t, LocalRegistration> localRegistrations_{};
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};
 };
 
