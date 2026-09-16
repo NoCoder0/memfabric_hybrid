@@ -132,6 +132,7 @@ private:
     std::shared_ptr<DeviceChipInfo> deviceChipInfo_;
     std::atomic<uint64_t> wrIdx_{0};
     std::unique_ptr<std::atomic<bool>[]> qpReadyCache_; // per-rank QP ready cache, skip RaGetQpStatus after ready
+    std::vector<std::mutex> rankMutex_;
 
     ReadWriteLock lock_;
 };

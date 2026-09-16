@@ -118,6 +118,7 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
     ret = InitStreamNotifyBuf();
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "notify init failed: " << ret, ret);
     ranksMRs_.resize(rankCount_);
+    rankMutex_ = std::vector<std::mutex>(rankCount_);
     BM_LOG_TRACE("open device with " << options << " success.");
     return BM_OK;
 }
@@ -134,6 +135,7 @@ Result RdmaTransportManager::CloseDevice()
     started_ = false;
     rdmaHandle_ = nullptr;
     ranksMRs_.clear();
+    rankMutex_.clear();
     notifyRemoteInfo_.clear();
     deviceChipInfo_ = nullptr;
     BM_LOG_TRACE("CloseDevice successful.");
@@ -465,6 +467,8 @@ Result RdmaTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
 Result RdmaTransportManager::Synchronize(uint32_t rankId)
 {
     BM_ASSERT_LOG_AND_RETURN(qpManager_ != nullptr, "qpManager_ is nullptr", BM_MALLOC_FAILED);
+    BM_ASSERT_LOG_AND_RETURN(rankId < rankMutex_.size(), "rankId out of range, rankId: " << rankId, BM_ERROR);
+    std::unique_lock<std::mutex> rankLock(rankMutex_[rankId]);
     auto qp = qpManager_->GetQpHandleWithRankId(rankId);
     if (qp == nullptr) {
         BM_LOG_ERROR("no qp to rankId: " << rankId);
@@ -745,6 +749,8 @@ int RdmaTransportManager::RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAd
         BM_LOG_ERROR("ReadRemote(): connection manager not created.");
         return BM_ERROR;
     }
+    BM_ASSERT_LOG_AND_RETURN(rankId < rankMutex_.size(), "rankId out of range, rankId: " << rankId, BM_ERROR);
+    std::unique_lock<std::mutex> rankLock(rankMutex_[rankId]);
     auto qp = qpManager_->GetQpHandleWithRankId(rankId);
     if (qp == nullptr) {
         BM_LOG_ERROR("no qp to rankId: " << rankId);
