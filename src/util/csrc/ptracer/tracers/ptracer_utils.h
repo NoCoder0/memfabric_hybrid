@@ -114,11 +114,14 @@ inline int32_t Func::MakeDir(const std::string &name)
         }
 
         pathTmp += "/" + item;
-        if (access(pathTmp.c_str(), F_OK) != 0) {
-            ret = mkdir(pathTmp.c_str(), DEFAULT_DIR_MODE);
-            if (ret != 0 && errno != EEXIST) {
-                break;
-            }
+        /* do not check existence before mkdir to avoid TOCTOU race among processes */
+        ret = mkdir(pathTmp.c_str(), DEFAULT_DIR_MODE);
+        if (ret != 0 && errno == EEXIST) {
+            /* the dir has been created by another process, treat it as success like mkdir -p */
+            ret = 0;
+        }
+        if (ret != 0) {
+            break;
         }
     }
     return ret;
