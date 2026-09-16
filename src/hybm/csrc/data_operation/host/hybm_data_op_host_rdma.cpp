@@ -1066,7 +1066,9 @@ Result HostDataOpRDMA::InnerBatchWriteLH2RH(const CopyDescriptor &rmtCopyDescrip
             break;
         }
     }
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_SYNC_WAIT)
     ret = transportManager_->Synchronize(options.destRankId);
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_SYNC_WAIT, ret)
     if (ret != 0) {
         BM_LOG_ERROR("Failed to sync write remote, ret: " << ret << " localRankId: " << rankId_
                                                           << " remoteRankId: " << options.destRankId);
@@ -1273,7 +1275,9 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
         errorCode = ret;
     }
 
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_SYNC_WAIT)
     ret = transportManager_->Synchronize(isPut ? options.destRankId : options.srcRankId);
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_SYNC_WAIT, ret)
     if (ret != 0) {
         BM_LOG_ERROR("Failed to sync host rdma tasks, ret: " << ret);
         return ret;
