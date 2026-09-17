@@ -19,7 +19,7 @@
 extern "C" {
 #endif
 
-#define HCOM_IOV_BATCH_SIZE (16)
+#define HCOM_IOV_BATCH_SIZE (30) /* 必须与 ubs 的 C_NET_SGE_MAX_IOV 一致（受硬件 max_sge=30 限制） */
 #define SMALL_IO_LIMIT_SIZE (1024 * 8) // 应小于 HCOM_MAX_SLICE_SIZE / HCOM_IOV_BATCH_SIZE
 
 typedef uintptr_t Hcom_Channel;
