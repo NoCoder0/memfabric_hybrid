@@ -92,6 +92,7 @@ struct BenchArgs {
     uint64_t size = kDefaultSize;
     uint64_t stride = kDefaultStride;
     uint64_t dramMB = kDefaultDramMB;
+    bool dramMBSet = false; /* 是否显式指定 --dram-mb；未指定时按布局自动放大（count 大时默认 16MB 不够） */
     uint32_t chunk = kDefaultChunk;   /* cont: 每 chunk 个 IO 提交一批并推进一次 flag */
     uint32_t warmup = kDefaultWarmup; /* 前 warmup 轮不计时 */
     uint32_t rounds = kDefaultRounds; /* 计时轮数 */
@@ -107,7 +108,7 @@ void Usage(const char *prog)
             "  --count=N                  小 IO 数(默认600)\n"
             "  --size=N                   单块字节(默认1024)\n"
             "  --stride=N                 离散摆放间隔(默认4096，必须 >= --size)\n"
-            "  --dram-mb=N                每 rank 对称 host 内存 MB(默认16)\n"
+            "  --dram-mb=N                每 rank 对称 host 内存 MB(不指定则按 count/size/stride 自动计算，最小16)\n"
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
             "  --warmup=N                 前 N 轮不计时(默认100)\n"
             "  --rounds=N                 计时轮数(默认1000)\n"
@@ -151,6 +152,7 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.stride = std::stoull(v);
         } else if (k == "--dram-mb") {
             a.dramMB = std::stoull(v);
+            a.dramMBSet = true;
         } else if (k == "--chunk") {
             a.chunk = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--warmup") {
@@ -523,6 +525,26 @@ int main(int argc, char *argv[])
        [msgOff, msgOff+msgRegionBytes)    地址消息（每轮 local 单边下发，布局见 Msg* 注释）
        [doneOff, doneOff+8)               baseline 完成标志（remote 写回 local）
        [readyOutOff/readyOff, +8 各]      就绪握手槽 */
+    /* DRAM 默认值按布局自动放大（仅在未显式指定 --dram-mb 时）：
+       布局至少要装下 staging(count×size) + gap + 离散区(count×stride) + 地址消息区 + 槽区余量。
+       否则 count 一变大就会命中下面的 "dram-mb too small" 断言
+       —— 例如 count=9600、size=1KB、stride=4KB 需要约 50MB，而默认只有 16MB。 */
+    if (!a.dramMBSet) {
+        const uint64_t stagingNeed = AlignUp(a.count * a.size, 4096) + 4096;
+        const uint64_t dispNeed = a.count * a.stride;
+        const uint64_t msgNeed = AlignUp(MsgBytes(a.count, baseDstCount), 4096);
+        const uint64_t slotNeed =
+            AlignUp(static_cast<uint64_t>((a.count + a.chunk - 1) / a.chunk) * links * 8ULL, 64) + 4 * 8 + 4096;
+        const uint64_t minBytes = stagingNeed + dispNeed + msgNeed + slotNeed;
+        uint64_t needMB = (minBytes + (1ULL << 20) - 1) >> 20;
+        needMB = ((needMB + 15) / 16) * 16; /* 向上取整到 16MB */
+        if (needMB > a.dramMB) {
+            fprintf(stderr, "[bench] --dram-mb 未显式指定，按布局自动提升: %llu -> %llu MB\n",
+                    static_cast<unsigned long long>(a.dramMB), static_cast<unsigned long long>(needMB));
+            a.dramMB = needMB;
+        }
+    }
+
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
     const uint64_t dispBase = stagingEnd + 4096;                 /* 离散源/目标区起点 */
@@ -542,8 +564,11 @@ int main(int argc, char *argv[])
     const uint64_t msgRegionBytes = MsgBytes(a.count, baseDstCount);
     const uint64_t doneOff = msgOff + msgRegionBytes;
     if (doneOff + 8 > readyOff) {
-        fprintf(stderr, "dram-mb too small: need >= %llu bytes\n",
-                static_cast<unsigned long long>(needBytes + msgRegionBytes + 4096));
+        fprintf(stderr,
+                "dram-mb too small: need >= %llu bytes (count=%u size=%llu stride=%llu)，请加 --dram-mb=%llu\n",
+                static_cast<unsigned long long>(needBytes + msgRegionBytes + 4096), a.count,
+                static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride),
+                static_cast<unsigned long long>(((needBytes + msgRegionBytes + 8192) + (1ULL << 20) - 1) >> 20));
         return 1;
     }
 
