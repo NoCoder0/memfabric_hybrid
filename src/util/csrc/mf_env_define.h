@@ -67,6 +67,10 @@ inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =
 // 被唤醒线程要排队等一个调度时间片，小消息写延迟能从十几 µs 抬到 ~4ms。
 inline const std::string MF_HYBM_HCOM_WORKER_CPU_RANGE =
     GetEnvStr("MF_HYBM_HCOM_WORKER_CPU_RANGE", "HYBM_HCOM_WORKER_CPU_RANGE");
+// 把 MF 侧常驻"提交 worker"（HostSubmitPool，多 rail 时每 rail 一个）钉到指定 CPU 段（形如 "99-100"）。
+// 提交本身是 CPU 密集的短任务，不绑核时可能被唤醒后落到忙轮询 worker 的核上互相抢占，p99 出尖刺。
+// 默认空 = 不绑，落核交给内核调度器（与加这个配置之前的行为完全一致）。
+inline const std::string MF_HYBM_SUBMIT_CPU_RANGE = GetEnvStr("MF_HYBM_SUBMIT_CPU_RANGE");
 // HCOMM 开关（默认关闭）：关闭时 DEVICE_RDMA 一律走 native；打开后按 CANN 版本判断
 inline const std::string MF_HYBM_RDMA_USE_HCOMM = GetEnvStr("MF_HYBM_RDMA_USE_HCOMM", "HYBM_RDMA_USE_HCOMM");
 inline const std::string MF_HYBM_ENABLE_4K_PAGE = GetEnvStr("MF_HYBM_ENABLE_4K_PAGE", "HYBM_ENABLE_4K_PAGE");

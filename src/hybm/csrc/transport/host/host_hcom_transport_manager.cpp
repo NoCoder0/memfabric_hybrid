@@ -92,11 +92,12 @@ constexpr uint32_t WORKER_CPU_ID_MAX = 611;
 constexpr uint32_t HCOM_QP_SEND_QUEUE_SIZE = 4096;
 constexpr uint16_t HCOM_QP_COMPLETION_QUEUE_DEPTH = 4096;
 
-/* ubs 的 workerGroupCpuRange 格式是 "<起始CPU>-<结束CPU>"（含两端，单个区间），例如 "6-10"。
-   同时要求"该组 CPU 数 == 该组 worker 数"（BUSY_POLLING 下严格相等），否则拒绝启动。
-   返回该区间的 CPU 个数；格式不合法返回 false。 */
-bool ParseWorkerCpuRange(const std::string &range, uint32_t &cpuCount)
+/* 解析 "<起始CPU>-<结束CPU>"（含两端，形如 "91-94"），成功时输出起始核与核数。
+   ubs 的 workerGroupCpuRange 用的也是这个格式，且要求"该组 CPU 数 == 该组 worker 数"
+   （BUSY_POLLING 下严格相等）。注意单核也要写成 "91-91"：没有 '-' 一律判非法。 */
+bool ParseCpuRange(const std::string &range, uint32_t &cpuBegin, uint32_t &cpuCount)
 {
+    cpuBegin = 0;
     cpuCount = 0;
     auto dash = range.find('-');
     if (dash == std::string::npos) {
@@ -109,8 +110,15 @@ bool ParseWorkerCpuRange(const std::string &range, uint32_t &cpuCount)
         endId > WORKER_CPU_ID_MAX) {
         return false;
     }
+    cpuBegin = beginId;
     cpuCount = endId - beginId + 1;
     return true;
+}
+
+bool ParseWorkerCpuRange(const std::string &range, uint32_t &cpuCount)
+{
+    uint32_t cpuBegin = 0;
+    return ParseCpuRange(range, cpuBegin, cpuCount);
 }
 
 void HcomExternalLoggerAdapter(int level, const char *msg)
@@ -293,7 +301,24 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
        多 ep 时按 ep 数；单链路时 1 个空转，开销可忽略。任务数少于 worker 数时由 HostSubmitPool
        补空转任务，所以这里取两者较大值即可。 */
     const uint32_t submitWorkerCount = (epCount_ > GetRailCount()) ? epCount_ : GetRailCount();
-    submitPool_.Start(submitWorkerCount);
+    /* 可选：把提交 worker 也钉核（形如 "99-100"，第 i 个 worker 用第 i 个核）。
+       不设则落核交给内核 —— 提交是 CPU 密集的短任务，被唤醒后可能落进忙轮询核互相抢占，
+       表现是 p99 出尖刺、且每次启动结果漂移。核数不足则整段跳过（只 WARN），不影响功能。 */
+    uint32_t submitCpuBegin = 0;
+    uint32_t submitCpuCount = 0;
+    const auto &submitCpuRange = env::MF_HYBM_SUBMIT_CPU_RANGE;
+    if (!submitCpuRange.empty()) {
+        if (!ParseCpuRange(submitCpuRange, submitCpuBegin, submitCpuCount) ||
+            submitCpuCount < submitWorkerCount) {
+            BM_LOG_WARN("skip submit worker cpu range: "
+                        << submitCpuRange << " (格式须为 \"起始CPU-结束CPU\"，且核数不少于提交 worker 数 "
+                        << submitWorkerCount << "，例如 \"99-100\")");
+            submitCpuCount = 0;
+        } else {
+            BM_LOG_INFO("submit worker cpu range: " << submitCpuRange << " workerCount: " << submitWorkerCount);
+        }
+    }
+    submitPool_.Start(submitWorkerCount, submitCpuBegin, submitCpuCount);
     return BM_OK;
 }
 
