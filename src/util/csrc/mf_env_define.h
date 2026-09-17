@@ -71,6 +71,11 @@ inline const std::string MF_HYBM_HCOM_WORKER_CPU_RANGE =
 // 提交本身是 CPU 密集的短任务，不绑核时可能被唤醒后落到忙轮询 worker 的核上互相抢占，p99 出尖刺。
 // 默认空 = 不绑，落核交给内核调度器（与加这个配置之前的行为完全一致）。
 inline const std::string MF_HYBM_SUBMIT_CPU_RANGE = GetEnvStr("MF_HYBM_SUBMIT_CPU_RANGE");
+// 双 rail 是否并行提交（每 rail 一个常驻 worker）。默认 0 = 串行，即改动前的行为。
+// ⚠ 并行版仅"提交 worker 已绑核"时验证通过；不绑核时实测 e2e 劣化到 ~4ms/轮，且 baseline
+// 出现数据校验失败（完成标志与两条 rail 的数据不在同一个 QP 上，失去了原有的保序保证）。
+// 因此默认关闭，只作为实验开关：MF_HYBM_RAIL_SUBMIT_PARALLEL=1 + MF_HYBM_SUBMIT_CPU_RANGE=99-100。
+inline const std::string MF_HYBM_RAIL_SUBMIT_PARALLEL = GetEnvStr("MF_HYBM_RAIL_SUBMIT_PARALLEL");
 // HCOMM 开关（默认关闭）：关闭时 DEVICE_RDMA 一律走 native；打开后按 CANN 版本判断
 inline const std::string MF_HYBM_RDMA_USE_HCOMM = GetEnvStr("MF_HYBM_RDMA_USE_HCOMM", "HYBM_RDMA_USE_HCOMM");
 inline const std::string MF_HYBM_ENABLE_4K_PAGE = GetEnvStr("MF_HYBM_ENABLE_4K_PAGE", "HYBM_ENABLE_4K_PAGE");

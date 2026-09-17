@@ -251,6 +251,9 @@ private:
     std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
     std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
     HostSubmitPool submitPool_; // 常驻 worker：multi-link batch 分片并发提交
+    /* 双 rail 是否并行提交（MF_HYBM_RAIL_SUBMIT_PARALLEL，默认关）。默认走串行 —— 与并行版
+       引入前逐字一致；并行版只在提交 worker 已绑核时验证通过，见 RunRailsParallel 注释。 */
+    bool railSubmitParallel_{false};
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;
     static char keyPass_[KEYPASS_MAX_LEN];

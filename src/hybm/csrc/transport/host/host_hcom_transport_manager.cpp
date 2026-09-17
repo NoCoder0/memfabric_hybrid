@@ -318,6 +318,11 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
             BM_LOG_INFO("submit worker cpu range: " << submitCpuRange << " workerCount: " << submitWorkerCount);
         }
     }
+    railSubmitParallel_ = (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RAIL_SUBMIT_PARALLEL, 0U) != 0U);
+    if (railSubmitParallel_) {
+        BM_LOG_WARN("rail submit parallel ENABLED (MF_HYBM_RAIL_SUBMIT_PARALLEL=1): 实验特性，"
+                    "必须同时用 MF_HYBM_SUBMIT_CPU_RANGE 给提交 worker 绑核，否则会劣化且可能校验失败");
+    }
     submitPool_.Start(submitWorkerCount, submitCpuBegin, submitCpuCount);
     return BM_OK;
 }
@@ -1250,10 +1255,19 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
 Result HcomTransportManager::RunRailsParallel(uint32_t rankId, uint32_t railCount,
                                               const std::function<Result(uint32_t)> &body)
 {
-    /* 单 rail 无从并行，保持原来的单线程路径（提交完等一次，与旧行为逐字一致）。 */
-    if (railCount <= 1) {
-        auto ret = body(0);
-        return (ret == BM_OK) ? Synchronize(rankId) : ret;
+    /* ⚠ 默认串行（railSubmitParallel_ 关），与并行版引入前的行为逐字一致。
+       并行版只在"提交 worker 已绑核"时验证通过：不绑核时实测每轮劣化到 ~4ms，并且 baseline
+       出现数据校验失败 —— 两条 rail 的数据分属两个 QP，而 baseline 的完成标志只走其中一条，
+       bench 侧"标志到 ⇒ 前面所有块已落地"这个依赖 QP 内保序的前提就不成立了。
+       所以在根因定位清楚之前，并行只作为显式实验开关，默认不走。 */
+    if (!railSubmitParallel_ || railCount <= 1) {
+        for (uint32_t rail = 0; rail < railCount; ++rail) {
+            auto ret = body(rail);
+            if (ret != BM_OK) {
+                return ret;
+            }
+        }
+        return BM_OK;
     }
     std::vector<std::function<Result()>> tasks(railCount);
     for (uint32_t rail = 0; rail < railCount; ++rail) {
