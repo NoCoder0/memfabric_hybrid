@@ -104,8 +104,15 @@ static int32_t BatchCopyByAutoGroup(MemEntity *entity, const hybm_batch_copy_par
                 uint8_t dstMask = vaMgr.ClassifyAddressMask(firstDst);
                 auto dir = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[srcMask | (dstMask << 4)]);
                 if (dir < HYBM_DATA_COPY_DIRECTION_AUTO) {
-                    /* 单方向：原始数组本身已按序构成整组，直接透传（progress 参数原样转发） */
+                    /* 单方向：原始数组本身已按序构成整组，直接透传。
+                       progress 参数按原路径的规范化规则处理（interval 为 0 时视为不转发，
+                       与下面分组路径里 forwardProgress 的取值保持一致），保证两条路完全等价。 */
                     hybm_batch_copy_params directParams = *params;
+                    if (directParams.progressInterval == 0) {
+                        directParams.progressSrc = nullptr;
+                        directParams.progressDest = nullptr;
+                        directParams.progressBase = 0ULL;
+                    }
                     return entity->BatchCopyData(directParams, dir, stream, flags);
                 }
             }
