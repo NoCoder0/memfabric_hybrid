@@ -71,11 +71,15 @@ static int32_t BatchCopyByAutoGroup(MemEntity *entity, const hybm_batch_copy_par
                                     uint32_t flags)
 {
     auto &vaMgr = ock::mf::HybmVaManager::GetInstance();
-    /* 快路径：真实批量里每个 iov 的 src/dst 通常各自落在同一个段内，而"段 + 段内 memType/imported"
-       就决定了地址类型掩码、进而决定方向。于是只要后续 iov 仍落在首 iov 的那两个段里，整批就能沿用
-       同一方向 —— 免掉逐 iov 两次 ClassifyAddressMask（各含 shared_lock + 红黑树查询，600 iov 约
-       1200 次，实测约 50us），也免掉 map 分组与 3 个 batchSize 元 vector 的拷贝。
-       任一处越出这两个段就整体退回原分组路径，语义完全不变。 */
+    /* 快路径（仅当这一批恰好同段时生效，属于"廉价特例"）：段 + 段内 memType/imported 决定地址类型
+       掩码、掩码决定方向，因此若后续 iov 都还落在首 iov 的那两个段内，整批可沿用同一方向 ——
+       免掉逐 iov 两次 ClassifyAddressMask（各含 shared_lock + 红黑树查询，600 iov 约 1200 次，
+       实测约 50us），也免掉 map 分组与 3 个 batchSize 元 vector 的拷贝。
+
+       注意：真实场景一批 IO 未必同段、甚至方向都不同（smem_bm 最外层按方向分组正是为此），
+       所以这里**不是假设**，而是"命中则快、不命中则原样退回"：任一 iov 越出这两个段就整体走下面的
+       原分组路径，行为与改动前完全一致。多段/多方向批次目前仍要逐 iov 分类（后续可按
+       alloc 段 / reserved 段 / HBM 段三级范围缓存来降低，见 TODO）。 */
     if (params->batchSize != 0 && params->sources[0] != nullptr && params->destinations[0] != nullptr) {
         const uint64_t firstSrc = reinterpret_cast<uint64_t>(params->sources[0]);
         const uint64_t firstDst = reinterpret_cast<uint64_t>(params->destinations[0]);
