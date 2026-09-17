@@ -1844,18 +1844,15 @@ Result DeviceUrmaTransportManager::ValidateMultiRankBatchLocked(const hybm_batch
 Result DeviceUrmaTransportManager::ResolveLocalAddressLocked(uint64_t addr, uint64_t size, uint64_t &correctedAddr,
                                                              bool &registered) const
 {
-    TP_TRACE_BEGIN(TP_HYBM_URMA_RESOLVE_LOCAL_ADDRESS);
     correctedAddr = addr;
     registered = false;
     auto pos = localRegistrations_.upper_bound(addr);
     if (pos == localRegistrations_.begin()) {
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_LOCAL_ADDRESS, BM_OK);
         return BM_OK;
     }
     --pos;
     const auto &registration = pos->second;
     if (!ContainsAddressRange(registration.mr.addr, registration.mr.size, addr, size)) {
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_LOCAL_ADDRESS, BM_OK);
         return BM_OK;
     }
     registered = true;
@@ -1865,7 +1862,6 @@ Result DeviceUrmaTransportManager::ResolveLocalAddressLocked(uint64_t addr, uint
         if (registration.deviceVa > std::numeric_limits<uint64_t>::max() - offset) {
             BM_LOG_ERROR("device_urma local DVA overflow, localRank: "
                          << rankId_ << " deviceVa: " << VaToStr(registration.deviceVa) << " offset: " << offset);
-            TP_TRACE_END(TP_HYBM_URMA_RESOLVE_LOCAL_ADDRESS, BM_INVALID_PARAM);
             return BM_INVALID_PARAM;
         }
         correctedAddr = registration.deviceVa + offset;
@@ -1873,49 +1869,39 @@ Result DeviceUrmaTransportManager::ResolveLocalAddressLocked(uint64_t addr, uint
     if (size > std::numeric_limits<uint64_t>::max() - correctedAddr) {
         BM_LOG_ERROR("device_urma local address range overflow, localRank: "
                      << rankId_ << " localAddr: " << VaToStr(correctedAddr) << " size: " << size);
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_LOCAL_ADDRESS, BM_INVALID_PARAM);
         return BM_INVALID_PARAM;
     }
-    TP_TRACE_END(TP_HYBM_URMA_RESOLVE_LOCAL_ADDRESS, BM_OK);
     return BM_OK;
 }
 
 Result DeviceUrmaTransportManager::ResolveRemoteAddressLocked(uint32_t remoteRank, uint64_t remoteAddr, uint64_t size,
                                                               uint64_t &correctedAddr) const
 {
-    TP_TRACE_BEGIN(TP_HYBM_URMA_RESOLVE_REMOTE_ADDRESS);
     const RemoteRegistration *remote = nullptr;
-    TP_TRACE_BEGIN(TP_HYBM_URMA_FIND_REMOTE_REGISTRATION);
     auto ret = FindRemoteRegistrationLocked(remoteRank, remoteAddr, size, &remote);
-    TP_TRACE_END(TP_HYBM_URMA_FIND_REMOTE_REGISTRATION, ret);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma remote address is not imported, remoteRank: "
                      << remoteRank << " remoteAddr: " << VaToStr(remoteAddr) << " size: " << size << " ret: " << ret);
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_REMOTE_ADDRESS, ret);
         return ret;
     }
     const uint64_t offset = remoteAddr - remote->addr;
     if (remote->view.addr > std::numeric_limits<uint64_t>::max() - offset) {
         BM_LOG_ERROR("device_urma imported view address overflow, remoteRank: "
                      << remoteRank << " viewAddr: " << VaToStr(remote->view.addr) << " offset: " << offset);
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_REMOTE_ADDRESS, BM_INVALID_PARAM);
         return BM_INVALID_PARAM;
     }
     correctedAddr = remote->view.addr + offset;
     if (size > std::numeric_limits<uint64_t>::max() - correctedAddr) {
         BM_LOG_ERROR("device_urma imported view range overflow, remoteRank: "
                      << remoteRank << " peerAddr: " << VaToStr(correctedAddr) << " size: " << size);
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_REMOTE_ADDRESS, BM_INVALID_PARAM);
         return BM_INVALID_PARAM;
     }
-    TP_TRACE_END(TP_HYBM_URMA_RESOLVE_REMOTE_ADDRESS, BM_OK);
     return BM_OK;
 }
 
 HcommBatchTransferDesc DeviceUrmaTransportManager::BuildTransferDesc(uint64_t localAddr, uint64_t remoteAddr,
                                                                      uint64_t size, bool isRead)
 {
-    TP_TRACE_BEGIN(TP_HYBM_URMA_BUILD_TRANSFER_DESC);
     HcommBatchTransferDesc desc{};
     auto *local = reinterpret_cast<void *>(localAddr);
     auto *peer = reinterpret_cast<void *>(remoteAddr);
@@ -1925,7 +1911,6 @@ HcommBatchTransferDesc DeviceUrmaTransportManager::BuildTransferDesc(uint64_t lo
     } else {
         desc.transferInfo.write = {size, peer, local};
     }
-    TP_TRACE_END(TP_HYBM_URMA_BUILD_TRANSFER_DESC, BM_OK);
     return desc;
 }
 
@@ -1972,33 +1957,27 @@ Result DeviceUrmaTransportManager::ResolveMultiRankIoLocked(const hybm_batch_cop
                                                             uint32_t index, RankTransferDescriptors &descriptors,
                                                             RankGroupMap &unregisteredGroups) const
 {
-    TP_TRACE_BEGIN(TP_HYBM_URMA_RESOLVE_MULTI_RANK_IO);
     const bool isWrite = p2pInfo.first == rankId_;
     const uint32_t remoteRank = isWrite ? p2pInfo.second : p2pInfo.first;
     const uint64_t size = params.dataSizes[index];
     if (size == 0) {
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_IO, BM_OK);
         return BM_OK;
     }
     const uint64_t originalLocal =
         reinterpret_cast<uint64_t>(isWrite ? params.sources[index] : params.destinations[index]);
     const auto memType = isWrite ? HybmDirectionSrcMemType[direction] : HybmDirectionDestMemType[direction];
     const uint32_t outputType = memType == HYBM_MEM_TYPE_HOST ? HVM_HVA : HVM_DVA;
-    TP_TRACE_BEGIN(TP_HYBM_URMA_TRANSFORM_LOCAL_VA);
     const uint64_t transformed = HybmVaManager::GetInstance().TransformVa(originalLocal, HVM_GVA, outputType);
-    TP_TRACE_END(TP_HYBM_URMA_TRANSFORM_LOCAL_VA, BM_OK);
     const uint64_t localAddr = transformed == 0 ? originalLocal : transformed;
     uint64_t correctedLocal = localAddr;
     bool registered = false;
     //先处理本地，地址范围+dva
     auto ret = ResolveLocalAddressLocked(localAddr, size, correctedLocal, registered);
     if (ret != BM_OK) {
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_IO, ret);
         return ret;
     }
     if (!registered) {
         unregisteredGroups[p2pInfo].push_back(index);
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_IO, BM_OK);
         return BM_OK;
     }
     const uint64_t remoteAddr =
@@ -2007,12 +1986,10 @@ Result DeviceUrmaTransportManager::ResolveMultiRankIoLocked(const hybm_batch_cop
     uint64_t correctedRemote = 0;
     ret = ResolveRemoteAddressLocked(remoteRank, remoteAddr, size, correctedRemote);
     if (ret != BM_OK) {
-        TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_IO, ret);
         return ret;
     }
     //根据read/write构造descs
     descriptors[remoteRank].push_back(BuildTransferDesc(correctedLocal, correctedRemote, size, !isWrite));
-    TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_IO, BM_OK);
     return BM_OK;
 }
 
