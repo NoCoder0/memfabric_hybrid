@@ -453,19 +453,19 @@ public:
         }
     }
 
-    void Gather(const std::vector<void *> &sources, void *contiguous, uint64_t bytes)
+    void GatherAddresses(const uint64_t *sourceAddresses, uint32_t count, void *contiguous, uint64_t bytes)
     {
-        sources_ = &sources;
+        sourceAddresses_ = sourceAddresses;
         destinations_ = nullptr;
         contiguous_ = static_cast<uint8_t *>(contiguous);
         segmentBytes_ = bytes;
-        count_ = static_cast<uint32_t>(sources.size());
+        count_ = count;
         Dispatch(TaskType::GATHER);
     }
 
     void Scatter(const void *contiguous, const std::vector<void *> &destinations, uint64_t bytes)
     {
-        sources_ = nullptr;
+        sourceAddresses_ = nullptr;
         destinations_ = &destinations;
         contiguous_ = const_cast<uint8_t *>(static_cast<const uint8_t *>(contiguous));
         segmentBytes_ = bytes;
@@ -494,7 +494,8 @@ private:
         for (uint32_t index = begin; index < end; ++index) {
             auto *linear = contiguous_ + static_cast<uint64_t>(index) * segmentBytes_;
             if (task_ == TaskType::GATHER) {
-                std::memcpy(linear, (*sources_)[index], segmentBytes_);
+                const void *source = reinterpret_cast<const void *>(sourceAddresses_[index]);
+                std::memcpy(linear, source, segmentBytes_);
             } else {
                 std::memcpy((*destinations_)[index], linear, segmentBytes_);
             }
@@ -530,7 +531,7 @@ private:
     std::atomic<uint32_t> done_;
     std::atomic<bool> stopping_{false};
     TaskType task_{TaskType::GATHER};
-    const std::vector<void *> *sources_{nullptr};
+    const uint64_t *sourceAddresses_{nullptr};
     const std::vector<void *> *destinations_{nullptr};
     uint8_t *contiguous_{nullptr};
     uint64_t segmentBytes_{0};
@@ -949,7 +950,6 @@ bool RunGatherSender(const GatherScenarioContext &ctx, GatherMetrics *metrics = 
     const auto &a = *ctx.args;
     PrintLabel("gather (sender)");
     ParallelCopyPool gatherPool(a.gatherThreads, a.gatherCpus);
-    std::vector<void *> sources(a.count), destinations(a.count);
     std::vector<uint64_t> gatherCosts, writeCosts, serviceCosts;
     auto *sequence = reinterpret_cast<volatile uint64_t *>(
         HostPtr(ctx.selfGva + ctx.msgOff + MsgSeqOff(a.count, 1)));
@@ -963,14 +963,16 @@ bool RunGatherSender(const GatherScenarioContext &ctx, GatherMetrics *metrics = 
         }
         lastSequence = *sequence;
         const uint64_t serviceBegin = NowUs();
-        uint64_t unusedProgress = 0;
-        uint64_t doneDestination = 0;
-        ReadAddrMsg(ctx.selfGva, ctx.msgOff, a.count, 1, a.count, a.size, sources, destinations, unusedProgress,
-                    doneDestination);
+        const auto *message = reinterpret_cast<const uint64_t *>(HostPtr(ctx.selfGva + ctx.msgOff));
+        const uint64_t doneDestination = message[1];
+        const auto *sourceAddresses =
+            reinterpret_cast<const uint64_t *>(HostPtr(ctx.selfGva + ctx.msgOff + kMsgHdrBytes));
+        const uint64_t destination = sourceAddresses[a.count];
         const uint64_t gatherBegin = NowUs();
-        gatherPool.Gather(sources, HostPtr(ctx.selfGva + ctx.aggregateOff), a.size);
+        gatherPool.GatherAddresses(sourceAddresses, a.count, HostPtr(ctx.selfGva + ctx.aggregateOff), a.size);
         const uint64_t gatherEnd = NowUs();
-        smem_copy_params data{HostPtr(ctx.selfGva + ctx.aggregateOff), destinations[0], a.count * a.size, nullptr};
+        smem_copy_params data{HostPtr(ctx.selfGva + ctx.aggregateOff), reinterpret_cast<void *>(destination),
+                              a.count * a.size, nullptr};
         const int32_t dataRet = smem_bm_copy(ctx.bm, &data, SMEMB_COPY_AUTO, 0);
         const uint64_t writeEnd = NowUs();
         const int32_t doneRet = dataRet == 0 ? PublishDone(ctx, doneDestination, lastSequence) : dataRet;
