@@ -1273,6 +1273,11 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
 
     CopyDescriptor smallIoDes;
     CopyDescriptor bigIoDes;
+    /* 预分配：否则逐 iov emplace_back 过程中两个 vector 会反复扩容+搬迁元素
+       （cont 一批就是 600 个 iov，扩容是纯白干的内存搬运；容量不影响语义） */
+    smallIoDes.localAddrs.reserve(batchSize);
+    smallIoDes.globalAddrs.reserve(batchSize);
+    smallIoDes.counts.reserve(batchSize);
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC)
     for (auto i = 0U; i < batchSize; i++) {
         if (counts[i] <= SMALL_IO_LIMIT_SIZE) {
