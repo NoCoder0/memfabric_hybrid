@@ -166,6 +166,9 @@ private:
     [[nodiscard]] bool InitBackendConnection() noexcept;
     [[nodiscard]] Result TryBecomeLeader() noexcept;
     [[nodiscard]] bool IsLeaderAlive(std::string &leaderAddr) noexcept;
+    // 本进程登记到 backend 的 leader 地址（tcp:// 之后部分），格式与 KEY_LEADER 中的值逐字节一致；
+    // 尚未确定绑定地址时返回空串。用于识别“KEY_LEADER 指向本节点”，避免leader把自己当其它主降级。
+    [[nodiscard]] std::string BuildSelfLeaderAddr() const noexcept;
     void StartHealthCheckThread() noexcept;
     void TriggerReElectionAsync() noexcept;
     void ReElectionThreadFunc();

@@ -477,6 +477,65 @@ TEST_F(SmemHaConfigStoreTest, TryBecomeLeaderDeletesLeaderOnSelfConnectFailure)
     EXPECT_FALSE(store.isLeader_.load(std::memory_order_acquire));
 }
 
+TEST_F(SmemHaConfigStoreTest, BuildSelfLeaderAddrMatchesKeyLeaderFormat)
+{
+    auto backend = MakeBackend();
+    auto client = MakeClientDelegate();
+    HaConfigStore store(backend, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE);
+
+    // 绑定地址尚未确定时为空串，不能与任何 backend 中的 leader 地址相等。
+    EXPECT_TRUE(store.BuildSelfLeaderAddr().empty());
+
+    store.leaderBindIp_ = K_LOOPBACK_IP;
+    store.leaderBindPort_ = K_STORE_PORT;
+    EXPECT_EQ(K_LEADER_ADDRESS, store.BuildSelfLeaderAddr());
+
+    // IPv6 必须与 KEY_LEADER 中登记的带方括号格式逐字节一致。
+    store.leaderBindIp_ = "::1";
+    EXPECT_EQ("[::1]:19000", store.BuildSelfLeaderAddr());
+}
+
+TEST_F(SmemHaConfigStoreTest, TryAcquireLeadershipReacquiresWhenLeaderKeyPointsToSelf)
+{
+    auto backendBase = MakeBackend();
+    auto backend = Convert<ConfigStoreBackend, FakeStoreBackend>(backendBase);
+    auto client = MakeClientDelegate();
+    HaConfigStore store(backendBase, client, K_STORE_ENDPOINT, K_DEFAULT_WORLD_SIZE);
+    store.leaderBindIp_ = K_LOOPBACK_IP;
+    store.leaderBindPort_ = K_STORE_PORT;
+
+    // KEY_LEADER 仍是本节点登记的地址：必须重新登记继续当主，不能被当作其它 leader 降级。
+    backend->getHook = [](const std::string &key, std::vector<uint8_t> &outValue) {
+        if (key == KEY_LEADER) {
+            const std::string value = K_LEADER_ADDRESS;
+            outValue.assign(value.begin(), value.end());
+            return StoreErrorCode::SUCCESS;
+        }
+        return StoreErrorCode::NOT_EXIST;
+    };
+
+    MOCKER_CPP(&NetworkEndpointUtil::FindAvailablePort, bool (*)(uint16_t &, bool, uint16_t))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&NetworkEndpointUtil::GetLocalIpWithTarget, bool (*)(const std::string &, std::string &))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&AccStoreServer::UpdateStatus, int32_t(*)(bool)).stubs().will(returnValue(int32_t(0)));
+    MOCKER_CPP(&AccStoreServer::RestoreFromBackend, int32_t(*)()).stubs().will(returnValue(int32_t(0)));
+    MOCKER_CPP(&AccStoreServer::Startup, int32_t(*)(const smem_tls_config &)).stubs().will(returnValue(int32_t(0)));
+    MOCKER_CPP(&TcpConfigStore::ClientStart, int32_t(*)(const smem_tls_config &, int))
+        .stubs()
+        .will(returnValue(int32_t(0)));
+
+    bool becameLeader = false;
+    EXPECT_TRUE(store.TryAcquireLeadership(becameLeader, 1));
+    EXPECT_TRUE(becameLeader);
+    EXPECT_TRUE(store.isLeader_.load(std::memory_order_acquire));
+    EXPECT_NE(std::find(backend->putKeys.begin(), backend->putKeys.end(), KEY_LEADER), backend->putKeys.end());
+    EXPECT_EQ(K_LEADER_ADDRESS,
+              std::string(backend->putValues[KEY_LEADER].begin(), backend->putValues[KEY_LEADER].end()));
+}
+
 TEST_F(SmemHaConfigStoreTest, ForwardingApisDelegateToClientOrUseClientLocalState)
 {
     auto backend = MakeBackend();

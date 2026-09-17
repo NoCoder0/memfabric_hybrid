@@ -142,6 +142,9 @@ Result HaConfigStore::Startup(const smem_tls_config &tlsConfig) noexcept
 bool HaConfigStore::InitBackendConnection() noexcept
 {
     SM_LOG_TRACE("Initializing backend connection: " << endpoints_);
+    // backendMutex_ 只保护 backend 句柄的初始化/反初始化，临界区必须短，
+    // 不得把抢分布式锁等长阻塞操作包含进来，否则会饿死健康检查并拖长降级时延。
+    std::lock_guard<std::mutex> lock(backendMutex_);
     int backendRet = backend_->Initialize(endpoints_, "", "");
     if (backendRet != 0) {
         SM_LOG_ERROR("Failed to init backend client, endpoints: " << endpoints_ << ", ret: " << backendRet);
@@ -165,7 +168,11 @@ void HaConfigStore::RandomBackoff() noexcept
 
 bool HaConfigStore::IsLeaderAlive(std::string &leaderAddr) noexcept
 {
-    int backendRet = backend_->Get(KEY_LEADER, leaderAddr);
+    int backendRet;
+    {
+        std::lock_guard<std::mutex> lock(backendMutex_);
+        backendRet = backend_->Get(KEY_LEADER, leaderAddr);
+    }
     if (backendRet != SUCCESS) {
         SM_LOG_ERROR("Backend Get failed, key: " << KEY_LEADER << ", ret: " << backendRet);
         return false;
@@ -181,6 +188,16 @@ bool HaConfigStore::IsLeaderAlive(std::string &leaderAddr) noexcept
                  ", liveness governed by etcd lease (key auto-deleted on lease expiry)");
     // clang-format on
     return true;
+}
+
+std::string HaConfigStore::BuildSelfLeaderAddr() const noexcept
+{
+    constexpr size_t kTcpSchemeLen = 6;
+    const std::string endpoint = NetworkEndpointUtil::BuildEndpoint("tcp", leaderBindIp_, leaderBindPort_);
+    if (endpoint.size() <= kTcpSchemeLen) {
+        return "";
+    }
+    return endpoint.substr(kTcpSchemeLen);
 }
 
 Result HaConfigStore::TryBecomeLeader() noexcept
@@ -247,6 +264,15 @@ Result HaConfigStore::TryBecomeLeader() noexcept
 
 bool HaConfigStore::HandleLeaderExists(const std::string &leaderAddr) noexcept
 {
+    if (leaderAddr == BuildSelfLeaderAddr()) {
+        // KEY_LEADER 指向本节点：本节点就是 leader，重新登记并继续服务，不能降级为“跟随自己”。
+        SM_LOG_INFO("Leader key points to this node, re-acquiring leadership: " << leaderAddr);
+        if (TryBecomeLeader() != SM_OK) {
+            SM_LOG_ERROR("Re-acquire leadership failed when leader key points to this node, leader: " << leaderAddr);
+            return false;
+        }
+        return true;
+    }
     isFirstLeader_ = false;
     SM_LOG_INFO("Found alive leader: " << leaderAddr << ", becoming follower");
     if (BecomeFollower(leaderAddr) != SM_OK) {
@@ -262,10 +288,10 @@ bool HaConfigStore::HandleLeaderExists(const std::string &leaderAddr) noexcept
 
 bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAttempt) noexcept
 {
-    {
-        std::unique_lock<std::shared_mutex> lock(delegateRwLock_);
-        isLeader_.store(false, std::memory_order_release);
-    }
+    // 进入重选举即先停服：领导权待定期间不得继续对外服务，避免旧主与新主并存。
+    // StopServer 对非 leader 进程是幂等空操作；若本进程恰为旧主，则会立即停 AccStoreServer
+    // 并回调通知上层（memcache 侧据此停 MetaNetServer）。
+    StopServer();
     std::string leaderAddr;
     {
         DistributedLockGuard lockGuard(backend_, backendLockName_);
@@ -275,6 +301,17 @@ bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAt
         }
         SM_LOG_INFO("Distributed lock acquired, double-checking leader");
         if (IsLeaderAlive(leaderAddr)) {
+            if (leaderAddr == BuildSelfLeaderAddr()) {
+                // KEY_LEADER 仍指向本节点（如健康检查瞬时超时后的重选举）：本节点仍是 leader，
+                // 重新登记并继续服务；绝不能把自己登记的地址当作其它 leader 降级，否则会出现无主。
+                SM_LOG_INFO("Leader key still points to this node, re-acquiring leadership: " << leaderAddr);
+                becameLeader = TryBecomeLeader() == SM_OK;
+                if (!becameLeader) {
+                    SM_LOG_ERROR("Re-acquire leadership failed, attempt=" << electionAttempt
+                                                                          << ", addr=" << leaderAddr);
+                }
+                return becameLeader;
+            }
             SM_LOG_INFO("Leader appeared during lock acquisition: " << leaderAddr);
             if (BecomeFollower(leaderAddr) != SM_OK) {
                 SM_LOG_ERROR("Becoming follower failed after lock, leader: " << leaderAddr);
@@ -312,7 +349,9 @@ void HaConfigStore::RunElectionLoop() noexcept
             SM_LOG_INFO("Stop flag detected, exiting election loop");
             break;
         }
-        std::lock_guard<std::mutex> bLock(backendMutex_);
+        // 注意：这里不再整段持有 backendMutex_。抢分布式锁最长可阻塞 LockAcquireTimeout，
+        // 若与健康检查共用同一把锁，会让旧主在租约失效后仍无法及时降级，造成双主。
+        // backendMutex_ 仅在 InitBackendConnection / IsLeaderAlive 的短临界区内持有。
         if (!InitBackendConnection()) {
             SM_LOG_ERROR("Backend connection failed, will retry");
             continue;
@@ -595,6 +634,9 @@ Result HaConfigStore::BecomeFollower(const std::string &leaderIpPort) noexcept
     uint16_t port = 0;
     if (!NetworkEndpointUtil::ExtractIpAndPort(fullUrl, ip, port)) {
         SM_LOG_ERROR("Invalid leader address format: " << leaderIpPort);
+        // 无法跟随 leader 时必须确保本进程已降级，否则旧主会与新主并存。
+        StopServer();
+        NotifyLeaderChange();
         return SM_ERROR;
     }
 
@@ -604,7 +646,14 @@ Result HaConfigStore::BecomeFollower(const std::string &leaderIpPort) noexcept
     // the etcd lease expiry drive the next election attempt.
     constexpr int kFollowerConnectRetryTimes = 3;
     auto connectRet = ConnectClient(ip, port, kFollowerConnectRetryTimes);
-    SM_ASSERT_RETURN(connectRet == SM_OK, connectRet);
+    if (connectRet != SM_OK) {
+        SM_LOG_ERROR("Connect to leader failed, ret: " << connectRet << ", leader: " << leaderIpPort
+                                                       << ", demoting local server to avoid dual master");
+        // 跟随失败也必须先停服并通知上层：即使连接新主失败，旧主也绝不能继续对外服务。
+        StopServer();
+        NotifyLeaderChange();
+        return connectRet;
+    }
     SM_LOG_INFO("Connection initiated to leader");
     {
         std::lock_guard<std::mutex> lock(lastLeaderMutex_);
@@ -656,10 +705,13 @@ void HaConfigStore::CheckLeaderConsistency(const std::string &backendLeader) noe
 
     if (isLeader_.load(std::memory_order_acquire)) {
         // 本进程是 leader，但 KEY_LEADER 已不是自己登记的地址：无 key 的 leader 不得继续服务。
-        if (reElectionInProgress_.load(std::memory_order_acquire)) {
-            // 窗口保护：重选举进行中（TryBecomeLeader 刚置位 isLeader_、可能刚写完新
-            // key），交给重选举流程收敛；其退出时 lastConnectedLeader_ 必已更新。
-            SM_LOG_DEBUG("Re-election in progress, skip leader self-demotion check");
+        // 窗口保护仅限“本进程正在登记新 leader”的瞬态：KEY_LEADER 为空（Put 尚未生效）或已
+        // 指向自己（已生效但 lastConnectedLeader_ 尚未更新）。一旦 etcd 中出现其它 leader 地址，
+        // 无论重选举是否在进行，都必须立即降级，否则旧主会与新主并存。
+        const std::string selfAddr = BuildSelfLeaderAddr();
+        if (reElectionInProgress_.load(std::memory_order_acquire) &&
+            (recheckLeader.empty() || recheckLeader == selfAddr)) {
+            SM_LOG_DEBUG("Leader registration in progress, skip self-demotion this round, backend=" << recheckLeader);
             return;
         }
         SM_LOG_WARN("Leader key no longer mine (lease expired or replaced): registered="

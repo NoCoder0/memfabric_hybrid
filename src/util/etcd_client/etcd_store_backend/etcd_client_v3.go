@@ -64,7 +64,10 @@ const (
 
 	// LockAcquireTimeout bounds how long a distributed lock acquisition waits.
 	// A stale lock key from a killed leader must not wedge the election loop.
-	LockAcquireTimeout = 30 * time.Second
+	// Keep it well below the leader lease TTL (5s) so that a failed/timed-out
+	// acquisition returns to the election loop quickly instead of stalling
+	// failover (and, previously, starving the health-check demotion path).
+	LockAcquireTimeout = 2 * time.Second
 
 	// CleanupTimeout defines the timeout for cleanup operations during Close.
 	CleanupTimeout = 2 * time.Second
