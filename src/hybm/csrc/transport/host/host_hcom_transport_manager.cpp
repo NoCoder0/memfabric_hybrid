@@ -495,6 +495,13 @@ Result HcomTransportManager::UnregisterMemoryRegion(uint64_t addr)
 
 bool HcomTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 {
+    /* 快路径：复用 MR 命中缓存（免锁）。批量拷贝前的预检会对每个 iov 调一次（600 次/轮），
+       原先每次都要加锁 + 遍历 mrs_；命中的段若长度也覆盖 [addr, addr+size) 则必然为 true（与慢路径结论一致）。 */
+    const HcomMemoryRegion *hit = FindMemoryRegionByAddr(rankId_, 0, addr);
+    if (hit != nullptr && hit->addr <= addr && hit->addr + hit->size >= addr + size) {
+        return true;
+    }
+    /* 慢路径：缓存未命中，或命中的段容纳不下该长度（可能存在重叠 MR），保持原语义全表扫描 */
     std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
     for (const auto &mrInfo : mrs_[rankId_][0]) {
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size >= addr + size) {
