@@ -171,6 +171,11 @@ private:
 
     Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
                                  HcomMemoryRegion &mr);
+    /* 与上面同义，但返回本线程 MR 缓存槽里的指针，不再把整个 HcomMemoryRegion(~250B) 拷回调用方。
+       HcomMemoryRegion 里 lva/addr/size/lKey/mr 共约 250 字节，批量提交时每个 iov 要查 2 次
+       （本端 + 远端），原先每 iov 有 ~1KB 的清零+拷贝开销。
+       返回指针指向 thread_local 槽位，有效期到本线程下一次查询该槽为止，只可即时读取。 */
+    const HcomMemoryRegion *FindMemoryRegionByAddr(uint32_t rankId, uint32_t ep, uint64_t addr);
 
     Result UpdateRankMrInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &opt);
 

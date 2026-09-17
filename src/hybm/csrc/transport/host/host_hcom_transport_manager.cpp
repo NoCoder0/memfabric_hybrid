@@ -1137,25 +1137,25 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
             Channel_OneSideRequest req;
             req.lAddress = descriptor.localAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
-            HcomMemoryRegion mr{};
-            auto ret = GetMemoryRegionByAddr(rankId_, ep, reinterpret_cast<uint64_t>(req.lAddress), mr);
-            if (ret != BM_OK) {
+            /* 用返回缓存指针的查询：命中的都是 thread_local 槽，避免每 iov 把整个
+               HcomMemoryRegion(~250B) 清零后拷回来（600 个 iov 过去约 1KB/iov 的内存搬运） */
+            const auto *lmr = FindMemoryRegionByAddr(rankId_, ep, reinterpret_cast<uint64_t>(req.lAddress));
+            if (lmr == nullptr) {
                 BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << " ep: " << ep << ", size: " << req.size
                                                              << ", lAddr: " << VaToStr(req.lAddress));
                 return BM_ERROR;
             }
-            std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
-            mr.lKey = {};
+            std::copy_n(lmr->lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
             auto rAddr = descriptor.globalAddrs[i];
-            ret = GetMemoryRegionByAddr(rankId, ep, reinterpret_cast<uint64_t>(rAddr), mr);
-            if (ret != BM_OK) {
+            const auto *rmr = FindMemoryRegionByAddr(rankId, ep, reinterpret_cast<uint64_t>(rAddr));
+            if (rmr == nullptr) {
                 BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " ep: " << ep << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
                 return BM_ERROR;
             }
-            auto offset = reinterpret_cast<uint64_t>(rAddr) - mr.addr;
-            req.rAddress = reinterpret_cast<void *>(mr.lva + offset); // rewrite to remote local va
-            CopyHcomOneSideKey(mr.lKey, req.rKey);
+            auto offset = reinterpret_cast<uint64_t>(rAddr) - rmr->addr;
+            req.rAddress = reinterpret_cast<void *>(rmr->lva + offset); // rewrite to remote local va
+            CopyHcomOneSideKey(rmr->lKey, req.rKey);
             BM_LOG_DEBUG("Try to write remote rankId: " << rankId << " ep: " << ep
                                                         << " channel: " << (void *)channel
                                                         << " lKey:" << req.lKey.keys[0] << " rKey: " << req.rKey.keys[0]
@@ -1651,12 +1651,11 @@ Result HcomTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uint64
     return InnerWriteRemote(rankId, lAddr, rAddr, size);
 }
 
-Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
-                                                   HcomMemoryRegion &mr)
+const HcomMemoryRegion *HcomTransportManager::FindMemoryRegionByAddr(uint32_t rankId, uint32_t ep, uint64_t addr)
 {
     if (rankId >= mrs_.size() || ep >= mrs_[rankId].size()) {
         BM_LOG_ERROR("query mr with invalid rank: " << rankId << " ep: " << ep);
-        return BM_ERROR;
+        return nullptr;
     }
     const uint64_t gen = mrGen_.load(std::memory_order_acquire);
     /* 快路径：代际未变 + 同 rank/ep + 地址仍落在上次命中的 MR 内 → 免锁直接返回。
@@ -1666,20 +1665,29 @@ Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const
     MrHitCache &hit = tlsMrHit_[MrHitSlot(rankId, ep)];
     if (hit.self == this && hit.gen == gen && hit.rankId == rankId && hit.ep == ep && hit.mr.addr <= addr &&
         hit.mr.addr + hit.mr.size > addr) {
-        mr = hit.mr;
-        return BM_OK;
+        return &hit.mr;
     }
     std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
     for (const auto &mrInfo : mrs_[rankId][ep]) {
         BM_LOG_DEBUG("Find rankId:" << rankId << " ep:" << ep << std::hex << " addr:" << mrInfo.addr
                                     << " size:" << mrInfo.size);
         if (mrInfo.addr <= addr && mrInfo.addr + mrInfo.size > addr) {
-            mr = mrInfo;
             hit = MrHitCache{this, gen, rankId, ep, mrInfo};
-            return BM_OK;
+            return &hit.mr;
         }
     }
-    return BM_ERROR;
+    return nullptr;
+}
+
+Result HcomTransportManager::GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
+                                                   HcomMemoryRegion &mr)
+{
+    const HcomMemoryRegion *found = FindMemoryRegionByAddr(rankId, ep, addr);
+    if (found == nullptr) {
+        return BM_ERROR;
+    }
+    mr = *found;
+    return BM_OK;
 }
 
 int HcomTransportManager::GetCACallBack(const char *name, char **caPath, char **crlPath,
