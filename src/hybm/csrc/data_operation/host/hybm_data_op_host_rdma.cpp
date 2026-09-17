@@ -1400,6 +1400,42 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
     if (total == 0) {
         return BM_OK;
     }
+    /* 多 service（每 ep 一张网卡、一条**独立 channel**）：每条 link 负责一段【连续】iov，各自一份水位
+       （契约同下：对端水位槽 = progressDest + e*8，本端源槽 = progressSrc + (子块号*K + e)*8）。
+       水位仍与它所属 link 的数据走同一条连接，靠 QP 内保序保证水位不超前。
+       与多 rail 的关键区别：这里每个分片是独立 channel，所以可以每分片一个线程并行提交，
+       不存在"同一个 channel 被多线程并发提交"的问题。 */
+    const uint32_t epCount = transportManager_->GetLinkCount();
+    if (epCount > 1) {
+        if (!transportManager_->AllLinksReady(options.destRankId)) {
+            /* 进度模式下绝不能退化成普通提交：对端在按水位消费数据，一个水位都不写就会一直等下去。 */
+            BM_LOG_ERROR("multi link not all ready while progress enabled, epCount: "
+                         << epCount << " destRank:" << options.destRankId
+                         << ", check that both sides configure the same number of urls");
+            return BM_NOT_CONNECTED;
+        }
+        const size_t per = total / epCount;
+        const size_t rem = total % epCount;
+        const uint64_t srcStride = static_cast<uint64_t>(epCount) * sizeof(uint64_t);
+        std::vector<std::pair<size_t, size_t>> ranges(epCount);
+        size_t begin = 0;
+        for (uint32_t ep = 0; ep < epCount; ++ep) {
+            const size_t end = begin + per + (ep < rem ? 1U : 0U);
+            ranges[ep] = std::make_pair(begin, end);
+            begin = end;
+        }
+        return transportManager_->RunSlicesParallel(
+            options.destRankId, epCount,
+            [this, &descriptor, &options, &ranges, destBase, srcBase, srcStride](uint32_t ep) -> Result {
+                const auto &range = ranges[ep];
+                if (range.second <= range.first) { /* 该 link 没分到 iov */
+                    return BM_OK;
+                }
+                return WriteRemoteBatchOnEpWithProgress(ep, descriptor, range.first, range.second, options,
+                                                        destBase + ep * sizeof(uint64_t),
+                                                        srcBase + ep * sizeof(uint64_t), srcStride, -1);
+            });
+    }
     /* 双连接(多 rail) 复用同一套"每链独立水位"逻辑：linkCount 的来源换成 rail 数。
        单连接时 GetRailCount() 返回 1，走单链路径，行为与以前完全一致。 */
     const uint32_t linkCount = transportManager_->GetRailCount();
@@ -1430,12 +1466,12 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
         begin = end;
     }
     /* 每条 rail 的"分块提交 + 每块一次水位写"整体投到各自的常驻 worker 上并行执行。
-       串行做两条 rail 等于把同一份 CPU 密集的提交工作排队跑两遍（见 RunRailsParallel 注释），
+       串行做两条 rail 等于把同一份 CPU 密集的提交工作排队跑两遍（见 RunSlicesParallel 注释），
        而 rail 本来就没法并行提交时间 —— 这才是双 rail 曾经比单 rail 慢的原因。
        水位语义不变：每条 rail 的水位仍走它自己那条连接（QP 内保序保证水位不超前）。
-       ⚠ RunRailsParallel 会阻塞到所有 rail 提交并完成，所以这里捕获的 ranges/descriptor/options
+       ⚠ RunSlicesParallel 会阻塞到所有 rail 提交并完成，所以这里捕获的 ranges/descriptor/options
        在整个调用期间都活着。 */
-    return transportManager_->RunRailsParallel(
+    return transportManager_->RunSlicesParallel(
         options.destRankId, linkCount,
         [this, &descriptor, &options, &ranges, destBase, srcBase, srcStride](uint32_t rail) -> Result {
             const auto &range = ranges[rail];

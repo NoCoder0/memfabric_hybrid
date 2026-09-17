@@ -205,17 +205,20 @@ public:
         return AllLinksReady(rankId);
     }
 
-    // 双连接(多 rail)：把每条 rail 的工作并行投到传送层自己的 worker 上执行，body(i) 处理第 i 条 rail。
-    // 为什么需要它：单边写的提交是 CPU 密集的（实测约 0.212us/iov），调用方自己串行循环两条 rail
-    // 等于把同一份工作排队跑两遍 —— rail 只能并行"线上时间"，而线上时间被提交时间盖住，
-    // 结果是双 rail 反而比单 rail 慢。交给传送层并行提交后，两条 rail 各自提交、各自等待完成。
-    // 默认实现退化为串行调用（单线程依次 body(0..railCount-1)），行为与调用方自己写 for 循环一致。
+    // 分片并行提交：把 sliceCount 个分片的工作交给传送层并行执行，body(i) 处理第 i 个分片。
+    // slice 的语义由调用方决定：多 rail 时是 rail 下标，多 service 时是 ep 下标。
+    // 为什么需要它：单边写的提交是 CPU 密集的（实测约 0.212us/iov，且与单包大小无关），
+    // 调用方自己串行循环各分片，等于把同一份工作排队跑两遍 —— 分片只能并行"线上时间"，
+    // 而线上时间被提交时间盖住，结果是分片越多反而越慢。交给传送层并行提交后，
+    // 各分片各自提交、各自等待完成。
+    // 默认实现退化为串行调用（单线程依次 body(0..sliceCount-1)），与调用方自己写 for 循环一致。
     // 注意：body 会在别的线程上执行，它捕获的引用必须活到本函数返回（实现内部阻塞等待全部完成）。
-    virtual Result RunRailsParallel(uint32_t rankId, uint32_t railCount, const std::function<Result(uint32_t)> &body)
+    virtual Result RunSlicesParallel(uint32_t rankId, uint32_t sliceCount,
+                                     const std::function<Result(uint32_t)> &body)
     {
         (void)rankId;
-        for (uint32_t rail = 0; rail < railCount; ++rail) {
-            auto ret = body(rail);
+        for (uint32_t slice = 0; slice < sliceCount; ++slice) {
+            auto ret = body(slice);
             if (ret != BM_OK) {
                 return ret;
             }

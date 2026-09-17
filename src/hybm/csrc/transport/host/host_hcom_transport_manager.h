@@ -129,11 +129,14 @@ public:
     Result WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr, uint64_t rAddr,
                                       uint64_t size) override;
 
-    /* 双连接：把每条 rail 的工作并行投到常驻 worker 池上（每 worker 一条 rail）。
-       body 在 worker 线程里执行，其中的提交走该 worker 私有的 thread_local stream_，天然就是
-       "每 rail 一个独立提交线程"；返回前每个 worker 会 Synchronize 自己的 stream，所以整体语义
-       与原串行版一致（调用方在外层再 Synchronize 时，等的是自己那份空 stream，立即返回）。 */
-    Result RunRailsParallel(uint32_t rankId, uint32_t railCount, const std::function<Result(uint32_t)> &body) override;
+    /* 分片并行提交：把 sliceCount 个分片的工作并行投到常驻 worker 池上（每 worker 一个分片）。
+       分片语义：多 rail 模式下是 rail 下标（各 rail 共用 ep0 的 channel），多 service 模式下是
+       ep 下标（每 ep 一条独立 channel）。body 在 worker 线程里执行，其中的提交走该 worker 私有的
+       thread_local stream_，所以天然就是"每分片一个独立提交线程"；返回前每个 worker 会 Synchronize
+       自己的 stream，整体语义与原串行版一致（调用方在外层再 Synchronize 时等的是自己的空 stream）。
+       是否真并行由 submitParallel_ 决定（多 service 默认开、多 rail 默认关）。 */
+    Result RunSlicesParallel(uint32_t rankId, uint32_t sliceCount,
+                             const std::function<Result(uint32_t)> &body) override;
 
     bool AllLinksReady(uint32_t rankId) const override;
 
@@ -251,9 +254,12 @@ private:
     std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
     std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
     HostSubmitPool submitPool_; // 常驻 worker：multi-link batch 分片并发提交
-    /* 双 rail 是否并行提交（MF_HYBM_RAIL_SUBMIT_PARALLEL，默认关）。默认走串行 —— 与并行版
-       引入前逐字一致；并行版只在提交 worker 已绑核时验证通过，见 RunRailsParallel 注释。 */
-    bool railSubmitParallel_{false};
+    /* 多 service 模式（MF_HYBM_HCOM_DUAL_SERVICE=1）：每张网卡一个 service，epCount_ = url 数。
+       默认 false = 单 service + MultiRail。 */
+    bool dualService_{false};
+    /* 分片是否并行提交：多 service 模式默认开（每 slice 一条独立 channel，是已验证形态）；
+       多 rail 模式默认关（两条 rail 共用同一个 channel，并发提交未验证，见 387a43d7）。 */
+    bool submitParallel_{false};
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;
     static char keyPass_[KEYPASS_MAX_LEN];
