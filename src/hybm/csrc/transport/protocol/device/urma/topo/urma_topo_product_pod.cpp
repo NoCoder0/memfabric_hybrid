@@ -154,8 +154,8 @@ Result BuildPodClosLevel(int32_t npuId, uint32_t mainboardId, Level &level, cons
 Result UrmaTopoProductPod::GetLocalId(int32_t &localId)
 {
     dcmi_spod_info spod{};
-    if (GetSpodInfo(logicId_, spod) != BM_OK) {
-        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, logicId=" << logicId_ << " phyId=" << phyId_);
+    if (GetSpodInfo(deviceId_, spod) != BM_OK) {
+        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, deviceId=" << deviceId_ << " phyId=" << phyId_);
         return BM_ERROR;
     }
 
@@ -175,8 +175,8 @@ Result UrmaTopoProductPod::GetRootInfo(RootInfo &rootInfo)
     }
 
     dcmi_spod_info spod{};
-    if (GetSpodInfo(logicId_, spod) != BM_OK) {
-        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, logicId=" << logicId_ << " phyId=" << phyId_);
+    if (GetSpodInfo(deviceId_, spod) != BM_OK) {
+        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, deviceId=" << deviceId_ << " phyId=" << phyId_);
         return BM_ERROR;
     }
 

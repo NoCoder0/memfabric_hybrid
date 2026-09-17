@@ -291,9 +291,10 @@ Result UrmaTopoManager::SetDeviceBaseInfo()
         phyDeviceId_ = logicDeviceId_;
     }
     int64_t value = 0;
-    ret = DlAclApi::RtGetDeviceInfo(logicDeviceId_, 0, INFO_TYPE_MAINBOARD_ID, &value);
+    ret = DlAclApi::RtGetDeviceInfo(userDeviceId_, 0, INFO_TYPE_MAINBOARD_ID, &value);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("Failed to get mainboardId: " << ret << " logicId:" << logicDeviceId_);
+        BM_LOG_ERROR("Failed to get mainboardId: " << ret << " userId:" << userDeviceId_
+                                                   << " logicId:" << logicDeviceId_);
         return BM_DL_FUNCTION_FAILED;
     }
     mainboardId_ = static_cast<uint32_t>(value);

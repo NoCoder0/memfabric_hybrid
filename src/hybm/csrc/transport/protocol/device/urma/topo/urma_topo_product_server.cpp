@@ -464,8 +464,8 @@ Result UrmaTopoProductServer::GetRootInfo(RootInfo &rootInfo)
     rootInfo.version = "2.0";
 
     dcmi_spod_info spod{};
-    if (GetSpodInfo(logicId_, spod) != BM_OK) {
-        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, logicId=" << logicId_ << " phyId=" << phyId_);
+    if (GetSpodInfo(deviceId_, spod) != BM_OK) {
+        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, deviceId=" << deviceId_ << " phyId=" << phyId_);
         return BM_ERROR;
     }
 
@@ -509,8 +509,8 @@ Result UrmaTopoProductServer::GetRootInfo(RootInfo &rootInfo)
 Result UrmaTopoProductServer::GetLocalId(int32_t &localId)
 {
     dcmi_spod_info spod{};
-    if (GetSpodInfo(logicId_, spod) != BM_OK) {
-        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, logicId=" << logicId_ << " phyId=" << phyId_);
+    if (GetSpodInfo(deviceId_, spod) != BM_OK) {
+        BM_LOG_ERROR("GetRootInfo: GetSpodInfo failed, deviceId=" << deviceId_ << " phyId=" << phyId_);
         return BM_ERROR;
     }
     localId = phyId_;

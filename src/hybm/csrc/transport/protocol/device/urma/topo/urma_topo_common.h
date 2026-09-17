@@ -55,7 +55,7 @@ int32_t UrmaEntityGetDieId(const urmaEntity &ue);
 int32_t UrmaEntityGetPortGroupIdx(const urmaEntity &ue);
 int32_t UBGetMaxEntityId(const urmaEntityList &ueList, int32_t dieId);
 
-Result GetSpodInfo(int32_t logicId, dcmi_spod_info &spodInfo);
+Result GetSpodInfo(int32_t deviceId, dcmi_spod_info &spodInfo);
 Result GetUrmaEntityList(int32_t logicId, urmaEntityList &ueList);
 Result GetEidList(int32_t logicId, std::vector<dcmi_urma_eid_info> &eidList);
 

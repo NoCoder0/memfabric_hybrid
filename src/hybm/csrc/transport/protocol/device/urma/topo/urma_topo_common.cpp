@@ -194,31 +194,31 @@ int32_t UBGetMaxEntityId(const urmaEntityList &ueList, int32_t dieId)
     return maxId;
 }
 
-Result GetSpodInfo(int32_t logicId, dcmi_spod_info &spodInfo)
+Result GetSpodInfo(int32_t deviceId, dcmi_spod_info &spodInfo)
 {
     spodInfo = {};
     int64_t spodId = 0;
     int64_t serverId = 0;
     int64_t chassisId = 0;
     int64_t spodType = 0;
-    auto ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(logicId), 0, INFO_TYPE_SUPER_POD_ID, &spodId);
+    auto ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SUPER_POD_ID, &spodId);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("GetSpodInfo: get spod_id failed, logicId=" << logicId << " ret=" << ret);
+        BM_LOG_ERROR("GetSpodInfo: get spod_id failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(logicId), 0, INFO_TYPE_SERVER_ID, &serverId);
+    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SERVER_ID, &serverId);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("GetSpodInfo: get server_id failed, logicId=" << logicId << " ret=" << ret);
+        BM_LOG_ERROR("GetSpodInfo: get server_id failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(logicId), 0, INFO_TYPE_CHASSI_ID, &chassisId);
+    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_CHASSI_ID, &chassisId);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("GetSpodInfo: get chassis_id failed, logicId=" << logicId << " ret=" << ret);
+        BM_LOG_ERROR("GetSpodInfo: get chassis_id failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(logicId), 0, INFO_TYPE_SPOD_TYPE, &spodType);
+    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SPOD_TYPE, &spodType);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("GetSpodInfo: get spod_type failed, logicId=" << logicId << " ret=" << ret);
+        BM_LOG_ERROR("GetSpodInfo: get spod_type failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
     spodInfo.super_pod_id = static_cast<unsigned int>(spodId);

@@ -548,6 +548,48 @@ protected:
     }
 };
 
+namespace {
+constexpr int32_t MOCK_USER_DEVICE_ID = 0;
+constexpr int32_t MOCK_LOGIC_DEVICE_ID = 1;
+constexpr int32_t MOCK_PHY_DEVICE_ID = 1;
+
+int32_t MockGetLogicIdForVisibleDevice(int32_t userDeviceId, int32_t *logicDeviceId)
+{
+    EXPECT_EQ(userDeviceId, MOCK_USER_DEVICE_ID);
+    *logicDeviceId = MOCK_LOGIC_DEVICE_ID;
+    return BM_OK;
+}
+
+int32_t MockGetPhyIdForVisibleDevice(int32_t deviceId, int32_t *phyDeviceId)
+{
+    EXPECT_EQ(deviceId, MOCK_USER_DEVICE_ID);
+    *phyDeviceId = MOCK_PHY_DEVICE_ID;
+    return BM_OK;
+}
+
+int32_t MockGetDeviceInfoForVisibleDevice(uint32_t deviceId, int32_t, int32_t infoType, int64_t *value)
+{
+    EXPECT_EQ(deviceId, static_cast<uint32_t>(MOCK_USER_DEVICE_ID));
+    *value = (infoType == INFO_TYPE_MAINBOARD_ID) ? MAIN_BOARD_ID_POD : 0;
+    return BM_OK;
+}
+} // namespace
+
+TEST_F(UrmaTopoManagerTest, SetDeviceBaseInfoUsesUserDeviceId)
+{
+    MOCKER(&DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(MockGetLogicIdForVisibleDevice));
+    MOCKER(&DlAclApi::AclrtGetPhyDevIdByLogicDevId).stubs().will(invoke(MockGetPhyIdForVisibleDevice));
+    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockGetDeviceInfoForVisibleDevice));
+
+    auto &mgr = UrmaTopoManager::GetInstance();
+    mgr.userDeviceId_ = MOCK_USER_DEVICE_ID;
+    EXPECT_EQ(mgr.SetDeviceBaseInfo(), BM_OK);
+    EXPECT_EQ(mgr.logicDeviceId_, MOCK_LOGIC_DEVICE_ID);
+    EXPECT_EQ(mgr.phyDeviceId_, MOCK_PHY_DEVICE_ID);
+    EXPECT_EQ(mgr.localId_, MOCK_PHY_DEVICE_ID);
+    GlobalMockObject::verify();
+}
+
 TEST_F(UrmaTopoManagerTest, ParseRankListFull_FiltersByPhyDeviceId)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
