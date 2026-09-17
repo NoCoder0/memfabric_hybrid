@@ -908,6 +908,20 @@ struct GatherScenarioContext {
     uint64_t seqBase;
 };
 
+struct GatherMetrics {
+    uint64_t gather = 0;
+    uint64_t write = 0;
+    uint64_t service = 0;
+    uint64_t scatter = 0;
+    uint64_t e2e = 0;
+};
+
+struct GatherCaseResult {
+    uint64_t size;
+    uint32_t count;
+    GatherMetrics metrics;
+};
+
 bool WaitForSequence(volatile uint64_t *sequence, uint64_t previous, uint32_t round, const char *label)
 {
     const uint64_t begin = NowUs();
@@ -930,7 +944,7 @@ int32_t PublishDone(const GatherScenarioContext &ctx, uint64_t doneDestination, 
     return smem_bm_copy(ctx.bm, &done, SMEMB_COPY_AUTO, 0);
 }
 
-bool RunGatherSender(const GatherScenarioContext &ctx)
+bool RunGatherSender(const GatherScenarioContext &ctx, GatherMetrics *metrics = nullptr)
 {
     const auto &a = *ctx.args;
     PrintLabel("gather (sender)");
@@ -975,10 +989,15 @@ bool RunGatherSender(const GatherScenarioContext &ctx)
     PrintLat("gather sender", "gather", gatherCosts, a.warmup);
     PrintLat("gather sender", "write", writeCosts, a.warmup);
     PrintLat("gather sender", "service", serviceCosts, a.warmup);
+    if (metrics != nullptr) {
+        metrics->gather = CalcLatStats(gatherCosts).avg;
+        metrics->write = CalcLatStats(writeCosts).avg;
+        metrics->service = CalcLatStats(serviceCosts).avg;
+    }
     return succeeded && serviceCosts.size() == a.rounds;
 }
 
-bool RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *reference)
+bool RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *reference, GatherMetrics *metrics = nullptr)
 {
     const auto &a = *ctx.args;
     PrintLabel("gather (receiver)");
@@ -1023,6 +1042,10 @@ bool RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *referenc
     }
     PrintLat("gather receiver", "scatter", scatterCosts, a.warmup);
     PrintLat("gather receiver", "e2e", e2eCosts, a.warmup);
+    if (metrics != nullptr) {
+        metrics->scatter = CalcLatStats(scatterCosts).avg;
+        metrics->e2e = CalcLatStats(e2eCosts).avg;
+    }
     const auto stagingResult = VerifyBlocks(staging, a.count, a.size, reference);
     const auto scatterResult = VerifyBlocks(destinations, a.count, a.size, reference);
     if (!stagingResult.ok) {
@@ -1033,6 +1056,34 @@ bool RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *referenc
     }
     printf("gather receiver verify=%s\n", (stagingResult.ok && scatterResult.ok) ? "OK" : "FAIL");
     return succeeded && e2eCosts.size() == a.rounds && stagingResult.ok && scatterResult.ok;
+}
+
+void PrintGatherSummary(bool isLocal, const std::vector<GatherCaseResult> &results)
+{
+    printf("\n%s\n", isLocal ? "gather copy summary (local; unit: us)" :
+                                "gather copy summary (remote; unit: us)");
+    if (isLocal) {
+        printf("+------------+---------+------------+-------------+\n");
+        printf("| %10s | %7s | %10s | %11s |\n", "bytes/pkt", "packets", "E2E", "scatter");
+        printf("+------------+---------+------------+-------------+\n");
+        for (const auto &result : results) {
+            printf("| %10llu | %7u | %10llu | %11llu |\n", static_cast<unsigned long long>(result.size), result.count,
+                   static_cast<unsigned long long>(result.metrics.e2e),
+                   static_cast<unsigned long long>(result.metrics.scatter));
+        }
+        printf("+------------+---------+------------+-------------+\n");
+        return;
+    }
+    printf("+------------+---------+------------+------------+------------+\n");
+    printf("| %10s | %7s | %10s | %10s | %10s |\n", "bytes/pkt", "packets", "gather", "write", "service");
+    printf("+------------+---------+------------+------------+------------+\n");
+    for (const auto &result : results) {
+        printf("| %10llu | %7u | %10llu | %10llu | %10llu |\n", static_cast<unsigned long long>(result.size),
+               result.count, static_cast<unsigned long long>(result.metrics.gather),
+               static_cast<unsigned long long>(result.metrics.write),
+               static_cast<unsigned long long>(result.metrics.service));
+    }
+    printf("+------------+---------+------------+------------+------------+\n");
 }
 
 void PrepareGatherCase(const BenchArgs &args, bool isLocal, uint64_t selfGva, uint64_t gatherMsgOff,
@@ -1614,6 +1665,8 @@ int main(int argc, char *argv[])
     if (runGather && matrixMode) {
         uint64_t caseIndex = 0;
         const uint64_t totalCases = a.counts.size() * a.sizes.size();
+        std::vector<GatherCaseResult> results;
+        results.reserve(totalCases);
         for (uint64_t caseSize : a.sizes) {
             for (uint32_t caseCount : a.counts) {
                 a.count = caseCount;
@@ -1639,16 +1692,20 @@ int main(int argc, char *argv[])
                 }
                 GatherScenarioContext context{bm,       &a,          selfGva, peerGva, gatherMsgOff,
                                               aggregateOff, dispBase, doneOff, seqBase};
-                benchmarkOk = isLocal ? RunGatherReceiver(context, caseReference.data()) : RunGatherSender(context);
+                GatherMetrics metrics;
+                benchmarkOk = isLocal ? RunGatherReceiver(context, caseReference.data(), &metrics) :
+                                        RunGatherSender(context, &metrics);
                 if (!benchmarkOk) {
                     break;
                 }
+                results.push_back(GatherCaseResult{a.size, a.count, metrics});
                 ++caseIndex;
             }
             if (!benchmarkOk) {
                 break;
             }
         }
+        PrintGatherSummary(isLocal, results);
     }
 
     smem_bm_leave(bm, 0);
