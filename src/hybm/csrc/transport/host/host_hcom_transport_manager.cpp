@@ -156,7 +156,7 @@ static void CopyHcomOneSideKey(const OneSideKey &from, TransportMemoryKey &to)
 #endif
 }
 
-static void CopyHcomOneSideKey(TransportMemoryKey &from, OneSideKey &to)
+static void CopyHcomOneSideKey(const TransportMemoryKey &from, OneSideKey &to)
 {
     std::copy_n(from.keys, std::size(to.keys), to.keys);
     std::copy_n(from.keys + std::size(to.keys), std::size(to.tokens), to.tokens);
