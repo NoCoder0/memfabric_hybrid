@@ -9,6 +9,7 @@
  * 对称内存布局（每 rank 各自贡献 localDRAMSize，GVA 空间按 rank 排列）：
  *   [0, stagingEnd)                    连续 staging（cont 的接收侧），默认 count*size
  *   [dispBase, dispBase+count*stride)  count 个离散目标/源（stride 间隔模拟离散）
+ *   [aggregateOff, message slots)      gather 场景的远端连续聚合区
  *   [scratchOff, wmOff)                进度源槽数组（发送端用；每个 flag 独占一格 8B，写入后不覆写）
  *   [wmOff, wmOff+links*8)             水位槽（每 rail 一个 8B；值 = 全局累计已完成块数，跨轮不归零）
  *   [msgOff, msgOff+msgRegionBytes)    地址消息区（见下）
@@ -29,12 +30,15 @@
  *              （网卡处理 WQE 时才读源，复用会让水位提前）。local 见水位推进就增量 scatter 已到达的
  *              那一段（staging 连续，偏移 = 块号*size），使后续批次的 RDMA 写时延与本地 scatter
  *              在两端重叠。
+ *   gather   : local 发布远端源地址表和 seq doorbell；remote 常驻线程池把离散源 gather 到连续区，
+ *              再用一次整块 RDMA write 写回 local staging，最后写 done；local 收到 done 后由常驻
+ *              线程池并行 scatter 到离散目标。该场景参考 AICPU URMA gather/scatter demo 的时序。
  *
  * 测量：每轮由 local 驱动，计时在 local 侧用**单时钟**完成（起点 = 下发地址消息之前，
  *   终点 = count 块全部散完），发请求 + 传输 + scatter 全在计时区内，不需要回传信号。
  *   前 --warmup(默认100) 轮不计时，之后 --rounds(默认1000) 轮计入统计。
- *   每端每个场景只打印：avg / P50 / P95 / P99（最近秩法）各一行，cont 收端另加一行
- *   scatter / tail 的均值；其余明细一律不打印，避免影响节奏。
+ *   每端每个场景只打印：avg / P50 / P95 / P99（最近秩法）；cont 另打印 scatter/tail 均值，
+ *   gather 另打印 gather、整块 write、service、并行 scatter 分段耗时。
  *   收端校验在所有轮次跑完之后只做一次（不占每轮关键路径），只打一行 OK/FAIL。
  *
  * 编译：链接 smem 库；host rdma 环境（ubs-comm/libhcom）。
@@ -79,6 +83,8 @@ constexpr uint64_t kDefaultDramMB = 16;   /* 每 rank 对称 host 内存，需�
 constexpr uint32_t kDefaultChunk = 128;   /* cont: 每 chunk 个小 IO 发一次 flag */
 constexpr uint32_t kDefaultWarmup = 100;  /* 前 100 轮只热身，不计入统计 */
 constexpr uint32_t kDefaultRounds = 1000; /* 计时轮数：1000 */
+constexpr uint32_t kDefaultGatherThreads = 6;
+constexpr uint32_t kDefaultScatterThreads = 6;
 constexpr uint32_t kContDstAgg = 16; /* cont：本地侧是连续 staging，按 16 个 IO 聚合一次地址描述 */
 constexpr uint64_t kSpinTimeoutUs = 5ULL * 1000 * 1000; /* 自旋等水位的上限：超过就报错退出，避免静默挂死 */
 
@@ -89,7 +95,7 @@ struct BenchArgs {
     std::string storeUrl;
     std::string hcomUrl;
     bool withStore = false;
-    std::string mode = "all"; /* all / baseline / cont */
+    std::string mode = "all"; /* all / baseline / cont / gather */
     uint32_t count = kDefaultCount;
     uint64_t size = kDefaultSize;
     uint64_t stride = kDefaultStride;
@@ -98,6 +104,8 @@ struct BenchArgs {
     uint32_t chunk = kDefaultChunk;   /* cont: 每 chunk 个 IO 提交一批并推进一次 flag */
     uint32_t warmup = kDefaultWarmup; /* 前 warmup 轮不计时 */
     uint32_t rounds = kDefaultRounds; /* 计时轮数 */
+    uint32_t gatherThreads = kDefaultGatherThreads;
+    uint32_t scatterThreads = kDefaultScatterThreads;
     int32_t logLevel = -1;            /* <0 表示不改库的日志级别；0~5 见 smem_set_log_level */
 };
 
@@ -106,7 +114,7 @@ void Usage(const char *prog)
     fprintf(stderr,
             "Usage: %s --role=local|remote --rank=N --store-url=tcp://ip:port "
             "--hcom-url=tcp://ip:port [options]\n"
-            "  --mode=all|baseline|cont   场景(默认 all)\n"
+            "  --mode=all|baseline|cont|gather  场景(默认 all)\n"
             "  --count=N                  小 IO 数(默认600)\n"
             "  --size=N                   单块字节(默认1024)\n"
             "  --stride=N                 离散摆放间隔(默认4096，必须 >= --size)\n"
@@ -114,13 +122,16 @@ void Usage(const char *prog)
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
             "  --warmup=N                 前 N 轮不计时(默认100)\n"
             "  --rounds=N                 计时轮数(默认1000)\n"
+            "  --gather-threads=N          gather 场景远端聚合线程数(默认6)\n"
+            "  --scatter-threads=N         gather 场景本地分散线程数(默认6)\n"
             "  --log-level=0..5           设置库日志级别(默认不改)\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
-            "  说明: 两个场景都由 local 驱动轮次并在本端用单时钟计时；\n"
+            "  说明: 三个场景都由 local 驱动轮次并在本端用单时钟计时；\n"
             "        每轮 local 先把【两侧地址】单边下发给 remote（计时区内），remote 照此投数据；\n"
             "        本地侧聚合固定：baseline 每个目标一个描述；cont 每 %u 个 IO 一个描述；\n"
             "        baseline = 直写 local 的 count 个离散目标（不 scatter）；\n"
-            "        cont     = 写 local 的连续 staging（水位推进）→ local 边收边散。\n",
+            "        cont     = 写 local 的连续 staging（水位推进）→ local 边收边散；\n"
+            "        gather   = remote 多线程 gather → 单次整块 write → local 多线程 scatter。\n",
             prog, kContDstAgg);
 }
 
@@ -161,6 +172,10 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.warmup = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--rounds") {
             a.rounds = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--gather-threads") {
+            a.gatherThreads = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--scatter-threads") {
+            a.scatterThreads = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--log-level") { /* 0~5: DEBUG/INFO/WARN/ERROR/FATAL/TRACE；不传则不改库的级别 */
             a.logLevel = static_cast<int32_t>(std::stoi(v));
         }
@@ -171,6 +186,14 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
     }
     if (a.storeUrl.empty() || a.hcomUrl.empty()) {
         fprintf(stderr, "missing --store-url or --hcom-url\n");
+        return false;
+    }
+    if (a.mode != "all" && a.mode != "baseline" && a.mode != "cont" && a.mode != "gather") {
+        fprintf(stderr, "invalid --mode=%s\n", a.mode.c_str());
+        return false;
+    }
+    if (a.gatherThreads == 0 || a.gatherThreads > 64 || a.scatterThreads == 0 || a.scatterThreads > 64) {
+        fprintf(stderr, "gather/scatter threads must be in [1, 64]\n");
         return false;
     }
     return true;
@@ -197,6 +220,118 @@ uint64_t NowUs()
     auto now = std::chrono::steady_clock::now();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(now.time_since_epoch()).count());
 }
+
+void CpuRelax()
+{
+#if defined(__aarch64__)
+    __asm__ __volatile__("yield" : : : "memory");
+#elif defined(__x86_64__) || defined(__i386__)
+    __asm__ __volatile__("pause" : : : "memory");
+#else
+    std::this_thread::yield();
+#endif
+}
+
+class ParallelCopyPool {
+public:
+    explicit ParallelCopyPool(uint32_t threadCount) : threadCount_(threadCount), done_(threadCount + 1U)
+    {
+        workers_.reserve(threadCount_);
+        for (uint32_t index = 0; index < threadCount_; ++index) {
+            workers_.emplace_back(&ParallelCopyPool::WorkerLoop, this, index);
+        }
+    }
+
+    ~ParallelCopyPool()
+    {
+        stopping_.store(true, std::memory_order_release);
+        generation_.fetch_add(1U, std::memory_order_release);
+        for (auto &worker : workers_) {
+            worker.join();
+        }
+    }
+
+    void Gather(const std::vector<void *> &sources, void *contiguous, uint64_t bytes)
+    {
+        sources_ = &sources;
+        destinations_ = nullptr;
+        contiguous_ = static_cast<uint8_t *>(contiguous);
+        segmentBytes_ = bytes;
+        count_ = static_cast<uint32_t>(sources.size());
+        Dispatch(TaskType::GATHER);
+    }
+
+    void Scatter(const void *contiguous, const std::vector<void *> &destinations, uint64_t bytes)
+    {
+        sources_ = nullptr;
+        destinations_ = &destinations;
+        contiguous_ = const_cast<uint8_t *>(static_cast<const uint8_t *>(contiguous));
+        segmentBytes_ = bytes;
+        count_ = static_cast<uint32_t>(destinations.size());
+        Dispatch(TaskType::SCATTER);
+    }
+
+private:
+    enum class TaskType : uint8_t { GATHER, SCATTER };
+
+    void Dispatch(TaskType task)
+    {
+        task_ = task;
+        done_.store(0U, std::memory_order_relaxed);
+        generation_.fetch_add(1U, std::memory_order_release);
+        while (done_.load(std::memory_order_acquire) != threadCount_ + 1U) {
+            CpuRelax();
+        }
+    }
+
+    void CopyPartition(uint32_t workerIndex)
+    {
+        const uint32_t begin = static_cast<uint32_t>(static_cast<uint64_t>(count_) * workerIndex / threadCount_);
+        const uint32_t end =
+            static_cast<uint32_t>(static_cast<uint64_t>(count_) * (workerIndex + 1U) / threadCount_);
+        for (uint32_t index = begin; index < end; ++index) {
+            auto *linear = contiguous_ + static_cast<uint64_t>(index) * segmentBytes_;
+            if (task_ == TaskType::GATHER) {
+                std::memcpy(linear, (*sources_)[index], segmentBytes_);
+            } else {
+                std::memcpy((*destinations_)[index], linear, segmentBytes_);
+            }
+        }
+    }
+
+    void WorkerLoop(uint32_t workerIndex)
+    {
+        uint64_t observedGeneration = 0;
+        while (!stopping_.load(std::memory_order_acquire)) {
+            auto generation = generation_.load(std::memory_order_acquire);
+            while (generation == observedGeneration && !stopping_.load(std::memory_order_relaxed)) {
+                CpuRelax();
+                generation = generation_.load(std::memory_order_acquire);
+            }
+            if (stopping_.load(std::memory_order_acquire)) {
+                return;
+            }
+            observedGeneration = generation;
+            CopyPartition(workerIndex);
+            const uint32_t finished = done_.fetch_add(1U, std::memory_order_acq_rel) + 1U;
+            if (finished == threadCount_) {
+                done_.store(threadCount_ + 1U, std::memory_order_release);
+            }
+        }
+    }
+
+    uint32_t threadCount_;
+    std::vector<std::thread> workers_;
+    std::atomic<uint64_t> generation_{0U};
+    std::atomic<uint32_t> done_;
+    std::atomic<bool> stopping_{false};
+    TaskType task_{TaskType::GATHER};
+    const std::vector<void *> *sources_{nullptr};
+    const std::vector<void *> *destinations_{nullptr};
+    uint8_t *contiguous_{nullptr};
+    uint64_t segmentBytes_{0};
+    uint32_t count_{0};
+};
 
 /* 两端就绪握手（计时区之外）：确认对端已完成 smem_bm_create 且 RDMA 链路**双向**可用。
    本端只【写对端槽】、只【读本端槽】（本端槽由对端写），所以不会把自己收到的标记覆盖掉。
@@ -446,6 +581,35 @@ void SendAddrMsg(smem_bm_t bm, uint64_t selfGva, uint64_t peerGva, uint64_t msgO
     (void)smem_bm_copy(bm, &mp, SMEMB_COPY_AUTO, 0);
 }
 
+/* gather 场景参考 AICPU URMA demo：先发布地址正文，再单独发布 8B generation doorbell。 */
+int32_t SendAddrMsgAndDoorbell(smem_bm_t bm, uint64_t selfGva, uint64_t peerGva, uint64_t msgOff,
+                               const std::vector<void *> &sources, const std::vector<void *> &destinations,
+                               uint32_t count, uint64_t doneDestination, uint64_t sequence)
+{
+    auto *message = reinterpret_cast<uint64_t *>(HostPtr(selfGva + msgOff));
+    message[0] = selfGva;
+    message[1] = doneDestination;
+    message[2] = count;
+    message[3] = 1;
+    auto *sourceList = reinterpret_cast<uint64_t *>(HostPtr(selfGva + msgOff + kMsgHdrBytes));
+    auto *destinationList = sourceList + count;
+    for (uint32_t index = 0; index < count; ++index) {
+        sourceList[index] = reinterpret_cast<uint64_t>(sources[index]);
+    }
+    destinationList[0] = reinterpret_cast<uint64_t>(destinations[0]);
+    const uint64_t sequenceOffset = MsgSeqOff(count, 1);
+    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + msgOff + sequenceOffset)) = sequence;
+    std::atomic_thread_fence(std::memory_order_release);
+    smem_copy_params body{HostPtr(selfGva + msgOff), HostPtr(peerGva + msgOff), sequenceOffset, nullptr};
+    const int32_t bodyRet = smem_bm_copy(bm, &body, SMEMB_COPY_AUTO, 0);
+    if (bodyRet != 0) {
+        return bodyRet;
+    }
+    smem_copy_params doorbell{HostPtr(selfGva + msgOff + sequenceOffset),
+                              HostPtr(peerGva + msgOff + sequenceOffset), sizeof(sequence), nullptr};
+    return smem_bm_copy(bm, &doorbell, SMEMB_COPY_AUTO, 0);
+}
+
 /* remote：把对端下发的地址消息展开成两侧地址列表（自己不再算地址） */
 void ReadAddrMsg(uint64_t selfGva, uint64_t msgOff, uint32_t count, uint32_t dstCount, uint32_t agg, uint64_t size,
                  std::vector<void *> &srcs, std::vector<void *> &dsts, uint64_t &progressDest, uint64_t &doneDest)
@@ -507,6 +671,137 @@ void PinMainThreadIfRequested()
     printf("[bench] main thread pinned to cpu %d\n", cpu);
 }
 
+struct GatherScenarioContext {
+    smem_bm_t bm;
+    const BenchArgs *args;
+    uint64_t selfGva;
+    uint64_t peerGva;
+    uint64_t msgOff;
+    uint64_t aggregateOff;
+    uint64_t dispBase;
+    uint64_t doneOff;
+    uint64_t seqBase;
+};
+
+bool WaitForSequence(volatile uint64_t *sequence, uint64_t previous, uint32_t round, const char *label)
+{
+    const uint64_t begin = NowUs();
+    while (*sequence == previous) {
+        if (NowUs() - begin > kSpinTimeoutUs) {
+            printf("%s TIMEOUT at iter %u: 等不到地址消息和 doorbell\n", label, round);
+            return false;
+        }
+        CpuRelax();
+    }
+    return true;
+}
+
+int32_t PublishDone(const GatherScenarioContext &ctx, uint64_t doneDestination, uint64_t sequence)
+{
+    auto *doneSource = reinterpret_cast<uint64_t *>(HostPtr(ctx.selfGva + ctx.doneOff));
+    *doneSource = sequence;
+    std::atomic_thread_fence(std::memory_order_release);
+    smem_copy_params done{doneSource, reinterpret_cast<void *>(doneDestination), sizeof(sequence), nullptr};
+    return smem_bm_copy(ctx.bm, &done, SMEMB_COPY_AUTO, 0);
+}
+
+void RunGatherSender(const GatherScenarioContext &ctx)
+{
+    const auto &a = *ctx.args;
+    PrintLabel("gather (sender)");
+    ParallelCopyPool gatherPool(a.gatherThreads);
+    std::vector<void *> sources(a.count), destinations(a.count);
+    std::vector<uint64_t> gatherCosts, writeCosts, serviceCosts;
+    auto *sequence = reinterpret_cast<volatile uint64_t *>(
+        HostPtr(ctx.selfGva + ctx.msgOff + MsgSeqOff(a.count, 1)));
+    uint64_t lastSequence = ctx.seqBase;
+    const uint32_t totalRounds = a.warmup + a.rounds;
+    for (uint32_t round = 0; round < totalRounds; ++round) {
+        if (!WaitForSequence(sequence, lastSequence, round, "gather sender")) {
+            break;
+        }
+        lastSequence = *sequence;
+        const uint64_t serviceBegin = NowUs();
+        uint64_t unusedProgress = 0;
+        uint64_t doneDestination = 0;
+        ReadAddrMsg(ctx.selfGva, ctx.msgOff, a.count, 1, a.count, a.size, sources, destinations, unusedProgress,
+                    doneDestination);
+        const uint64_t gatherBegin = NowUs();
+        gatherPool.Gather(sources, HostPtr(ctx.selfGva + ctx.aggregateOff), a.size);
+        const uint64_t gatherEnd = NowUs();
+        smem_copy_params data{HostPtr(ctx.selfGva + ctx.aggregateOff), destinations[0], a.count * a.size, nullptr};
+        const int32_t dataRet = smem_bm_copy(ctx.bm, &data, SMEMB_COPY_AUTO, 0);
+        const uint64_t writeEnd = NowUs();
+        const int32_t doneRet = dataRet == 0 ? PublishDone(ctx, doneDestination, lastSequence) : dataRet;
+        const uint64_t serviceEnd = NowUs();
+        if (doneRet != 0) {
+            printf("gather sender abort at iter %u dataRet=%d doneRet=%d\n", round, dataRet, doneRet);
+            break;
+        }
+        if (round >= a.warmup) {
+            gatherCosts.push_back(gatherEnd - gatherBegin);
+            writeCosts.push_back(writeEnd - gatherEnd);
+            serviceCosts.push_back(serviceEnd - serviceBegin);
+        }
+    }
+    PrintLat("gather sender", "gather", gatherCosts, a.warmup);
+    PrintLat("gather sender", "write", writeCosts, a.warmup);
+    PrintLat("gather sender", "service", serviceCosts, a.warmup);
+}
+
+void RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *reference)
+{
+    const auto &a = *ctx.args;
+    PrintLabel("gather (receiver)");
+    ParallelCopyPool scatterPool(a.scatterThreads);
+    std::vector<void *> staging(a.count), destinations(a.count), peerSources(a.count);
+    for (uint32_t index = 0; index < a.count; ++index) {
+        staging[index] = HostPtr(ctx.selfGva + static_cast<uint64_t>(index) * a.size);
+        destinations[index] = HostPtr(ctx.selfGva + ctx.dispBase + static_cast<uint64_t>(index) * a.stride);
+        peerSources[index] = HostPtr(ctx.peerGva + static_cast<uint64_t>(index) * a.stride);
+    }
+    auto *done = reinterpret_cast<volatile uint64_t *>(HostPtr(ctx.selfGva + ctx.doneOff));
+    std::vector<uint64_t> e2eCosts, scatterCosts;
+    uint64_t expected = ctx.seqBase + 1U;
+    const uint32_t totalRounds = a.warmup + a.rounds;
+    for (uint32_t round = 0; round < totalRounds; ++round, ++expected) {
+        const uint64_t begin = NowUs();
+        const int32_t requestRet = SendAddrMsgAndDoorbell(ctx.bm, ctx.selfGva, ctx.peerGva, ctx.msgOff, peerSources,
+                                                         staging, a.count, ctx.selfGva + ctx.doneOff, expected);
+        if (requestRet != 0) {
+            printf("gather receiver request failed at iter %u ret=%d\n", round, requestRet);
+            break;
+        }
+        const uint64_t waitBegin = NowUs();
+        while (*done < expected && NowUs() - waitBegin <= kSpinTimeoutUs) {
+            CpuRelax();
+        }
+        if (*done < expected) {
+            printf("gather receiver TIMEOUT at iter %u: done=%llu expect=%llu\n", round,
+                   static_cast<unsigned long long>(*done), static_cast<unsigned long long>(expected));
+            break;
+        }
+        const uint64_t scatterBegin = NowUs();
+        scatterPool.Scatter(HostPtr(ctx.selfGva), destinations, a.size);
+        const uint64_t end = NowUs();
+        if (round >= a.warmup) {
+            scatterCosts.push_back(end - scatterBegin);
+            e2eCosts.push_back(end - begin);
+        }
+    }
+    PrintLat("gather receiver", "scatter", scatterCosts, a.warmup);
+    PrintLat("gather receiver", "e2e", e2eCosts, a.warmup);
+    const auto stagingResult = VerifyBlocks(staging, a.count, a.size, reference);
+    const auto scatterResult = VerifyBlocks(destinations, a.count, a.size, reference);
+    if (!stagingResult.ok) {
+        PrintVerifyFail("gather receiver staging", 0, stagingResult);
+    }
+    if (!scatterResult.ok) {
+        PrintVerifyFail("gather receiver scattered", 0, scatterResult);
+    }
+    printf("gather receiver verify=%s\n", (stagingResult.ok && scatterResult.ok) ? "OK" : "FAIL");
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -525,12 +820,16 @@ int main(int argc, char *argv[])
         return 1;
     }
     const bool isLocal = (a.role == "local");
+    const bool runBase = (a.mode == "all" || a.mode == "baseline");
+    const bool runCont = (a.mode == "all" || a.mode == "cont");
+    const bool runGather = (a.mode == "all" || a.mode == "gather");
     /* 本地侧目标地址描述的个数（= 发起方每轮下发的目标地址列表长度）：
        baseline 的本地目标是离散的 → 逐个给；cont 的本地侧是连续 staging → 按 kContDstAgg 聚合。 */
     const uint32_t baseDstCount = a.count;
     /* 必须向上取整：若用整除，count 不是 agg 整数倍时最后 count%agg 个 iov 会被夹到最后一个描述上，
        目标地址算错（实测：600/16=37 → 592~599 号块被写到 576 号槽，校验必然 FAIL）。 */
     const uint32_t contDstCount = (a.count + kContDstAgg - 1) / kContDstAgg;
+    const uint32_t gatherDstCount = 1; /* 整块 write 只需下发 local staging 起始地址 */
     /* 链路档位：库侧恒为 1 条 transport 链路 —— 多网卡由 HCOM 在同一个 service 内部建多条 rail
        并自动分流（库侧 epCount_ = 1）。hcom-url 里的 url 个数只决定库用几张网卡，
        **不参与 bench 的布局计算**（但水位槽个数要按 rail 数）。 */
@@ -541,30 +840,31 @@ int main(int argc, char *argv[])
         }
     }
     printf("[bench] role=%s rank=%u count=%u size=%llu stride=%llu warmup=%u rounds=%u chunk=%u "
-           "baseDstCount=%u contDstCount=%u links=%u mode=%s\n",
+           "baseDstCount=%u contDstCount=%u links=%u gatherThreads=%u scatterThreads=%u mode=%s\n",
            a.role.c_str(), a.rank, a.count, static_cast<unsigned long long>(a.size),
            static_cast<unsigned long long>(a.stride), a.warmup, a.rounds, a.chunk, baseDstCount, contDstCount, links,
-           a.mode.c_str());
+           a.gatherThreads, a.scatterThreads, a.mode.c_str());
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)                    连续 staging（cont 的接收侧）
        [stagingEnd, +4096)                预留 gap
        [dispBase, dispBase+count*stride)  count 个离散目标/源（stride 间隔模拟离散）
+       [aggregateOff, +stagingEnd)        gather 场景 remote 多线程聚合出的连续数据
        [scratchOff, wmOff)                进度源槽数组（发送端用；flagsPerRound*links 个 8B，写入后不覆写）
        [wmOff, wmOff+links*8)             水位槽（每条 rail 一个 8B；值 = 全局块号，跨轮单调不归零）
-       [msgOff, msgOff+msgRegionBytes)    地址消息（每轮 local 单边下发，布局见 Msg* 注释）
-       [doneOff, doneOff+8)               baseline 完成标志（remote 写回 local）
+       [base/cont/gatherMsgOff, ...)      三个场景各自的地址消息槽，避免不同 seq 偏移互相覆盖
+       [doneOff, doneOff+8)               baseline/gather 完成标志（remote 写回 local）
        [readyOutOff/readyOff, +8 各]      就绪握手槽 */
     /* DRAM 默认值按布局自动放大（仅在未显式指定 --dram-mb 时）：
        布局至少要装下 staging(count×size) + gap + 离散区(count×stride) + 地址消息区 + 槽区余量。
        否则 count 一变大就会命中下面的 "dram-mb too small" 断言
        —— 例如 count=9600、size=1KB、stride=4KB 需要约 50MB，而默认只有 16MB。 */
     if (!a.dramMBSet) {
-        const uint64_t stagingNeed = AlignUp(a.count * a.size, 4096) + 4096;
-        const uint64_t dispNeed = a.count * a.stride;
-        const uint64_t msgNeed = AlignUp(MsgBytes(a.count, baseDstCount), 4096);
+        const uint64_t stagingNeed = 2 * AlignUp(a.count * a.size, 4096) + 4096;
+        const uint64_t dispNeed = AlignUp(a.count * a.stride, 4096);
+        const uint64_t msgNeed = 3 * MsgBytes(a.count, baseDstCount);
         const uint64_t slotNeed =
-            AlignUp(static_cast<uint64_t>((a.count + a.chunk - 1) / a.chunk) * links * 8ULL, 64) + 4 * 8 + 4096;
+            AlignUp(static_cast<uint64_t>((a.count + a.chunk - 1) / a.chunk) * links * 8ULL, 64) + static_cast<uint64_t>(links) * 8ULL + 3 * 8 + 4096;
         const uint64_t minBytes = stagingNeed + dispNeed + msgNeed + slotNeed;
         uint64_t needMB = (minBytes + (1ULL << 20) - 1) >> 20;
         needMB = ((needMB + 15) / 16) * 16; /* 向上取整到 16MB */
@@ -578,7 +878,8 @@ int main(int argc, char *argv[])
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
     const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
     const uint64_t dispBase = stagingEnd + 4096;                 /* 离散源/目标区起点 */
-    const uint64_t needBytes = dispBase + a.count * a.stride;
+    const uint64_t sparseEnd = dispBase + a.count * a.stride;
+    const uint64_t aggregateOff = AlignUp(sparseEnd, 4096);
     const uint32_t flagsPerRound = (a.count + a.chunk - 1) / a.chunk; /* 每条 rail 每轮最多这么多个水位 */
     const uint64_t wmOff = dramBytes - static_cast<uint64_t>(links) * 8ULL; /* 水位槽区（每 rail 一个 8B） */
     const uint64_t flagOff = wmOff;                                         /* rail0 的水位槽 */
@@ -589,16 +890,19 @@ int main(int argc, char *argv[])
     /* 地址消息区：放在"离散区之后、段尾控制槽之前"的空隙里。
        ⚠ 绝不能放进 staging 区：baseline 发端的数据源就在 [0, count*stride)，把控制区放那里会污染源块。
        固定按"两侧各 count 个地址"预留整块空间，本轮实际有效项数由消息头的 dstCount/agg 决定。 */
-    const uint64_t msgOff = AlignUp(needBytes, 4096);
-    /* 消息区按两个场景里较大的那份预留（baseline 的列表最长 = count + count 项） */
+    const uint64_t msgOff = AlignUp(aggregateOff + stagingEnd, 4096);
+    /* 每个场景独占一个按最大消息长度预留的槽，避免前一场景的地址表覆盖后一场景的 seq。 */
     const uint64_t msgRegionBytes = MsgBytes(a.count, baseDstCount);
-    const uint64_t doneOff = msgOff + msgRegionBytes;
+    const uint64_t baseMsgOff = msgOff;
+    const uint64_t contMsgOff = baseMsgOff + msgRegionBytes;
+    const uint64_t gatherMsgOff = contMsgOff + msgRegionBytes;
+    const uint64_t doneOff = gatherMsgOff + msgRegionBytes;
     if (doneOff + 8 > readyOff) {
         fprintf(stderr,
                 "dram-mb too small: need >= %llu bytes (count=%u size=%llu stride=%llu)，请加 --dram-mb=%llu\n",
-                static_cast<unsigned long long>(needBytes + msgRegionBytes + 4096), a.count,
+                static_cast<unsigned long long>(doneOff + 8 + dramBytes - readyOff), a.count,
                 static_cast<unsigned long long>(a.size), static_cast<unsigned long long>(a.stride),
-                static_cast<unsigned long long>(((needBytes + msgRegionBytes + 8192) + (1ULL << 20) - 1) >> 20));
+                static_cast<unsigned long long>(((doneOff + 8 + dramBytes - readyOff) + (1ULL << 20) - 1) >> 20));
         return 1;
     }
 
@@ -638,10 +942,12 @@ int main(int argc, char *argv[])
     const uint64_t selfGva = reinterpret_cast<uint64_t>(smem_bm_ptr_by_mem_type(bm, SMEM_MEM_TYPE_HOST, a.rank));
     const uint32_t peerRank = 1 - a.rank;
     const uint64_t peerGva = reinterpret_cast<uint64_t>(smem_bm_ptr_by_mem_type(bm, SMEM_MEM_TYPE_HOST, peerRank));
-    printf("[bench] selfGva=0x%llx peerGva=0x%llx stagingEnd=%llu flagOff=%llu scratchOff=%llu dispBase=%llu\n",
+    printf("[bench] selfGva=0x%llx peerGva=0x%llx stagingEnd=%llu flagOff=%llu scratchOff=%llu "
+           "dispBase=%llu aggregateOff=%llu\n",
            static_cast<unsigned long long>(selfGva), static_cast<unsigned long long>(peerGva),
            static_cast<unsigned long long>(stagingEnd), static_cast<unsigned long long>(flagOff),
-           static_cast<unsigned long long>(scratchOff), static_cast<unsigned long long>(dispBase));
+           static_cast<unsigned long long>(scratchOff), static_cast<unsigned long long>(dispBase),
+           static_cast<unsigned long long>(aggregateOff));
     if (selfGva == 0 || peerGva == 0) {
         fprintf(stderr, "get gva failed\n");
         return 1;
@@ -658,9 +964,14 @@ int main(int argc, char *argv[])
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + doneOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOff)) = 0;
         *reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff)) = 0;
-        /* 两个场景各有一套消息布局，两份 seq 都清零 */
-        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + msgOff + MsgSeqOff(a.count, baseDstCount))) = 0;
-        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + msgOff + MsgSeqOff(a.count, contDstCount))) = 0;
+        /* 三个场景各有一套消息布局；后一场景的 seq 初始化为其独立号段基值。 */
+        const uint64_t roundsPerScenario = static_cast<uint64_t>(a.warmup) + a.rounds;
+        const uint64_t contSeqBase = runBase ? roundsPerScenario : 0U;
+        const uint64_t gatherSeqBase = contSeqBase + (runCont ? roundsPerScenario : 0U);
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + baseMsgOff + MsgSeqOff(a.count, baseDstCount))) = 0;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + contMsgOff + MsgSeqOff(a.count, contDstCount))) = contSeqBase;
+        *reinterpret_cast<uint64_t *>(HostPtr(selfGva + gatherMsgOff + MsgSeqOff(a.count, gatherDstCount))) =
+            gatherSeqBase;
         if (!isLocal) {
             for (uint32_t i = 0; i < a.count; ++i) {
                 FillBlock(HostPtr(selfGva + i * a.stride), i, a.size); /* 前 4B 携带块号，其余填 (i+1)&0xFF */
@@ -674,11 +985,9 @@ int main(int argc, char *argv[])
     }
 
     std::vector<uint64_t> sizes(a.count, a.size);
-    const bool runBase = (a.mode == "all" || a.mode == "baseline");
-    const bool runCont = (a.mode == "all" || a.mode == "cont");
     /* 每场景的轮数；seq 用【每场景独立的号段】而不是都从 1 开始 ——
        避免 next 场景的 remote 读到上一场景残留的消息就当成"本轮请求"（地址语义完全不同）。
-       baseline: [1, R]；cont: [R+1, 2R]（只跑 cont 时 R=0，即从 1 开始）。 */
+       baseline、cont、gather 按实际启用顺序各占一段长度为 R 的号段。 */
     const uint64_t kRoundsPerScenario = static_cast<uint64_t>(a.warmup) + a.rounds;
 
     /* 就绪握手：链路没建好就进场景，早起的一端会在等 flag 时超时并提前退出，
@@ -719,7 +1028,7 @@ int main(int argc, char *argv[])
             /* 轮次由 local 驱动：等对端消息的 seq 推进（同 QP 保序 ⇒ 整份消息已落地），
                然后按消息里的**两侧地址**投数据 —— 自己不再按公式算地址。 */
             auto *seqVa =
-                reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + msgOff + MsgSeqOff(a.count, baseDstCount)));
+                reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + baseMsgOff + MsgSeqOff(a.count, baseDstCount)));
             uint64_t lastSeq = 0;
             bool aborted = false;
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -737,7 +1046,7 @@ int main(int argc, char *argv[])
                 lastSeq = *seqVa;
                 uint64_t progressDest = 0;
                 uint64_t doneDest = 0;
-                ReadAddrMsg(selfGva, msgOff, a.count, baseDstCount, 1, a.size, srcs, dsts, progressDest, doneDest);
+                ReadAddrMsg(selfGva, baseMsgOff, a.count, baseDstCount, 1, a.size, srcs, dsts, progressDest, doneDest);
                 const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 从调用到返回 */
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
@@ -787,7 +1096,7 @@ int main(int argc, char *argv[])
                    → ② remote 按消息直写 600 块 → ③ remote 把完成标志写回本端 done 槽。
                    baseline 不做 scatter（数据直写 600 个离散目标），所以这个 e2e 就是纯传输时长。 */
                 const uint64_t t0 = NowUs();
-                SendAddrMsg(bm, selfGva, peerGva, msgOff, peerSrcVas, dstVas, a.count, baseDstCount, 1,
+                SendAddrMsg(bm, selfGva, peerGva, baseMsgOff, peerSrcVas, dstVas, a.count, baseDstCount, 1,
                             selfGva + flagOff, selfGva + doneOff, expect);
                 bool timedOut = false;
                 const uint64_t tw0 = NowUs();
@@ -842,7 +1151,7 @@ int main(int argc, char *argv[])
                （远端离散源 + local 的连续 staging 目标，都由发起方给出）。发端不参与计时。
                起始 seq 用 cont 号段（只跑 cont 时为 0），避免把上一场景残留的消息当成本轮请求。 */
             auto *seqVa =
-                reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + msgOff + MsgSeqOff(a.count, contDstCount)));
+                reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + contMsgOff + MsgSeqOff(a.count, contDstCount)));
             uint64_t lastSeq = runBase ? kRoundsPerScenario : 0;
             bool aborted = false;
             for (uint32_t r = 0; r < kTotal; ++r) {
@@ -860,7 +1169,7 @@ int main(int argc, char *argv[])
                 lastSeq = *seqVa;
                 uint64_t progressDest = 0;
                 uint64_t doneDest = 0;
-                ReadAddrMsg(selfGva, msgOff, a.count, contDstCount, kContDstAgg, a.size, srcs, dsts, progressDest,
+                ReadAddrMsg(selfGva, contMsgOff, a.count, contDstCount, kContDstAgg, a.size, srcs, dsts, progressDest,
                             doneDest);
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
@@ -930,7 +1239,7 @@ int main(int argc, char *argv[])
                    → ③ local 边到边散。计时 = 从下发消息之前开始，到 600 块全部散完结束（单时钟）。
                    校验不在这里做，改为所有轮次跑完后只做一次（见循环之后）。 */
                 const uint64_t tRoundStart = NowUs();
-                SendAddrMsg(bm, selfGva, peerGva, msgOff, peerSrcVas, srcVas, a.count, contDstCount, kContDstAgg,
+                SendAddrMsg(bm, selfGva, peerGva, contMsgOff, peerSrcVas, srcVas, a.count, contDstCount, kContDstAgg,
                             selfGva + flagOff, selfGva + doneOff, expect);
                 bool timedOut = false;
                 uint64_t scatterUs = 0;
@@ -1010,6 +1319,17 @@ int main(int argc, char *argv[])
                 }
                 printf("cont receiver verify=%s (staging+scattered)\n", (vStag.ok && vDisp.ok) ? "OK" : "FAIL");
             }
+        }
+    }
+
+    if (runGather) {
+        const uint64_t seqBase = (runBase ? kRoundsPerScenario : 0U) + (runCont ? kRoundsPerScenario : 0U);
+        GatherScenarioContext context{bm,       &a,          selfGva, peerGva, gatherMsgOff,
+                                      aggregateOff, dispBase, doneOff, seqBase};
+        if (isLocal) {
+            RunGatherReceiver(context, refBlock.data());
+        } else {
+            RunGatherSender(context);
         }
     }
 

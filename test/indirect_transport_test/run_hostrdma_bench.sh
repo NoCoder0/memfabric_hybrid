@@ -3,7 +3,7 @@
 # 用法：
 #   86 机器: bash run_hostrdma_bench.sh local [mode]
 #   87 机器: bash run_hostrdma_bench.sh remote [mode]
-#   mode: all(默认) / baseline / cont
+#   mode: all(默认) / baseline / cont / gather
 set -e
 
 ROLE="$1"
@@ -38,7 +38,8 @@ fi
 export MF_HYBM_ENABLE_4K_PAGE=1
 
 STORE_URL="tcp://90.91.183.86:18580"
-# 第 3 个及之后的参数原样透传给 bench（例如 --warmup=100 --rounds=1000 --agg=16 --chunk=128）
+# 第 3 个及之后的参数原样透传给 bench（例如 --warmup=100 --rounds=1000
+# --chunk=128 --gather-threads=6 --scatter-threads=6）
 if [ "${ROLE}" == "local" ]; then
     # 86：local + 内嵌 config store
     exec "${BIN}" --role=local --rank=0 --store-url="${STORE_URL}" \
