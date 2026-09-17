@@ -445,6 +445,11 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
                                      const ExtOptions &options) noexcept
 {
     BM_ASSERT_LOG_AND_RETURN(inited_, "inited_ = " << inited_, BM_NOT_INITIALIZED);
+    /* ubs 调用计时：只在打点打开时启用；配合 DlHcomApi 里的 Begin/End，
+       把"ubs 函数内部（同步段）"从"MF 纯软件"里剥出来（见 ubs_call_time 注释） */
+    ubs_call_time::enabled = g_tracer.enabled;
+    ubs_call_time::Reset();
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL)
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
     /* 段缓存（src/dst 各一个）：一批 iov 的地址通常集中在一个段里，
        避免每个 iov 都走一次 shared_lock + 红黑树查询 */
@@ -506,6 +511,8 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
             BM_LOG_ERROR("data copy invalid direction: " << direction);
             ret = BM_INVALID_PARAM;
     }
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL, ret)
+    TP_TRACE_RECORD(TP_HYBM_HOST_RDMA_UBS_CALL_TOTAL, ubs_call_time::Get(), 0)
     return ret;
 }
 

@@ -104,6 +104,8 @@ enum MF_HYBM_MOD {
     TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC, /* 单包单边写 + 同步（SendAddrMsg / done flag） */
     TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, /* ↑ 内部：WriteRemoteAsync 段 */
     TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT,   /* ↑ 内部：Synchronize 等完成段 */
+    TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL,    /* MF 数据面整体（HostDataOpRDMA::BatchDataCopy） */
+    TP_HYBM_HOST_RDMA_UBS_CALL_TOTAL,     /* 取值：单批内 ubs C-API 调用（同步段）累计耗时 */
     /* 取值类打点：本轮 iov 个数 / 总 KB（打印列按 us 显示，值按 ×1000 换回个数或 KB） */
     TP_HYBM_HOST_RDMA_IOV_COUNT,
     TP_HYBM_HOST_RDMA_TOTAL_KB,
