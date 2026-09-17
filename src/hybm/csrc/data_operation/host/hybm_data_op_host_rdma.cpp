@@ -116,11 +116,12 @@ void HostDataOpRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_directio
 void HostDataOpRDMA::TransformVaCached(void *&src, void *&dst, VaRangeCache &srcCache,
                                        VaRangeCache &dstCache) noexcept
 {
-    uint64_t out = srcCache.Transform(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
+    /* GvaToHva：类型编译期固定，命中时每地址只剩「1 次减 + 1 次比较」判区间 + 纯算术 */
+    uint64_t out = srcCache.GvaToHva(reinterpret_cast<uint64_t>(src));
     if (out != 0) {
         src = reinterpret_cast<void *>(out);
     }
-    out = dstCache.Transform(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
+    out = dstCache.GvaToHva(reinterpret_cast<uint64_t>(dst));
     if (out != 0) {
         dst = reinterpret_cast<void *>(out);
     }

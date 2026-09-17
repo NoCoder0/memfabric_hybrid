@@ -379,7 +379,7 @@ public:
                 Reset();
                 return false;
             }
-            Fill(info, HVM_GVA);
+            Fill(info, HVM_GVA, HVM_BUTT);
         }
         rank = info_.RankId();
         return true;
@@ -391,40 +391,66 @@ public:
         if (inType == outType) {
             return va;
         }
-        if (!Contains(va, inType) || info_.base.va[outType] == 0) {
+        if (inType_ != inType || outType_ != outType || !InRange(va)) {
             auto [info, found] = HybmVaManager::GetInstance().FindAllocByVa(va, inType);
             if (!found || info.base.va[outType] == 0) {
                 Reset();
                 return 0;
             }
-            Fill(info, inType);
+            Fill(info, inType, outType);
         }
-        return info_.base.va[outType] + (va - info_.base.va[inType]);
+        return outBase_ + (va - inBase_);
+    }
+
+    /* 热路径专用：GVA -> HVA（两个类型都是编译期常量）。
+       每地址只有「1 次减 + 1 次无符号比较」判区间、「1 次减 + 1 次加」做变换，
+       不再做类型比较，也不再用运行期下标去 info_.base.va[] 里取基址。 */
+    uint64_t GvaToHva(uint64_t va)
+    {
+        if (inType_ == HVM_GVA && outType_ == HVM_HVA && (va - start_) < size_) {
+            return outBase_ + (va - inBase_);
+        }
+        return Transform(va, HVM_GVA, HVM_HVA);
     }
 
 private:
-    void Fill(const AllocatedGvaInfo &info, uint32_t type)
+    void Fill(const AllocatedGvaInfo &info, uint32_t inType, uint32_t outType)
     {
         info_ = info;
-        type_ = type;
-        start_ = info.base.va[type];
+        inType_ = inType;
+        outType_ = outType;
+        start_ = info.base.va[inType];
         size_ = info.base.size;
+        inBase_ = start_;
+        /* outType == HVM_BUTT 表示只关心 rank（RankByGva 用），此时不取输出基址 */
+        outBase_ = (outType < HVM_BUTT) ? info.base.va[outType] : 0;
     }
 
     void Reset()
     {
         size_ = 0;
+        inType_ = HVM_BUTT;
+        outType_ = HVM_BUTT;
+    }
+
+    /* 单条无符号比较判区间：size_ == 0（未填充）时恒为 false */
+    bool InRange(uint64_t addr) const
+    {
+        return (addr - start_) < size_;
     }
 
     bool Contains(uint64_t addr, uint32_t type) const
     {
-        return size_ != 0 && type_ == type && addr >= start_ && addr < start_ + size_;
+        return inType_ == type && InRange(addr);
     }
 
     AllocatedGvaInfo info_{};
     uint64_t start_ = 0;
     uint64_t size_ = 0;
-    uint32_t type_ = HVM_BUTT;
+    uint64_t inBase_ = 0;
+    uint64_t outBase_ = 0;
+    uint32_t inType_ = HVM_BUTT;
+    uint32_t outType_ = HVM_BUTT;
 };
 
 template<typename T>
