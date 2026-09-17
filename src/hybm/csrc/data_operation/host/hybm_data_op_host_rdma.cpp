@@ -113,20 +113,6 @@ void HostDataOpRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_directio
     }
 }
 
-void HostDataOpRDMA::TransformVaCached(void *&src, void *&dst, VaRangeCache &srcCache,
-                                       VaRangeCache &dstCache) noexcept
-{
-    /* GvaToHva：类型编译期固定，命中时每地址只剩「1 次减 + 1 次比较」判区间 + 纯算术 */
-    uint64_t out = srcCache.GvaToHva(reinterpret_cast<uint64_t>(src));
-    if (out != 0) {
-        src = reinterpret_cast<void *>(out);
-    }
-    out = dstCache.GvaToHva(reinterpret_cast<uint64_t>(dst));
-    if (out != 0) {
-        dst = reinterpret_cast<void *>(out);
-    }
-}
-
 void *HostDataOpRDMA::GetLocalMrAddr(hybm_copy_params &params, hybm_data_copy_direction direction) noexcept
 {
     auto realDirection = direction;
@@ -453,11 +439,35 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL)
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
     /* 段缓存（src/dst 各一个）：一批 iov 的地址通常集中在一个段里，
-       避免每个 iov 都走一次 shared_lock + 红黑树查询 */
+       避免每个 iov 都走一次 shared_lock + 红黑树查询。
+       段状态额外复制到循环外的局部变量：循环体会写回 sources[]/destinations[]，
+       若状态只存在缓存对象里，编译器无法证明这些指针写不会别名到该对象，只能在每次写后
+       重新载入成员（每 iov 多出数次内存读）；放到局部变量后即可常驻寄存器。 */
     VaRangeCache srcVaCache;
     VaRangeCache dstVaCache;
+    uint64_t srcStart = 0;
+    uint64_t srcSize = 0;
+    uint64_t srcInBase = 0;
+    uint64_t srcOutBase = 0;
+    uint64_t dstStart = 0;
+    uint64_t dstSize = 0;
+    uint64_t dstInBase = 0;
+    uint64_t dstOutBase = 0;
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVaCached(params.sources[i], params.destinations[i], srcVaCache, dstVaCache);
+        uint64_t src = reinterpret_cast<uint64_t>(params.sources[i]);
+        if ((src - srcStart) >= srcSize) { /* 冷路径：首次或换段，刷新局部状态 */
+            srcVaCache.ResolveGvaToHva(src, srcStart, srcSize, srcInBase, srcOutBase);
+        }
+        if (srcSize != 0) {
+            params.sources[i] = reinterpret_cast<void *>(srcOutBase + (src - srcInBase));
+        }
+        uint64_t dst = reinterpret_cast<uint64_t>(params.destinations[i]);
+        if ((dst - dstStart) >= dstSize) {
+            dstVaCache.ResolveGvaToHva(dst, dstStart, dstSize, dstInBase, dstOutBase);
+        }
+        if (dstSize != 0) {
+            params.destinations[i] = reinterpret_cast<void *>(dstOutBase + (dst - dstInBase));
+        }
     }
     TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
     Result ret = BM_OK;

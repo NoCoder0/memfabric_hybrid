@@ -413,6 +413,27 @@ public:
         return Transform(va, HVM_GVA, HVM_HVA);
     }
 
+    /* 热循环批量版本：把段状态直接写进调用方的局部变量（而不是让调用方每次回读本对象成员）。
+       原因是调用方循环里会写 sources[]/destinations[] 这类指针数组，编译器无法证明这些写不会
+       别名到本对象，于是每次写后都要重新载入成员 —— 状态放到局部变量后就能常驻寄存器。
+       命中：写入缓存的段区间与两个基址；未命中：回表刷新后写入；回表失败：size 写 0（调用方据此保持原地址）。 */
+    void ResolveGvaToHva(uint64_t va, uint64_t &start, uint64_t &size, uint64_t &inBase, uint64_t &outBase)
+    {
+        if (inType_ != HVM_GVA || outType_ != HVM_HVA || (va - start_) >= size_) {
+            auto [info, found] = HybmVaManager::GetInstance().FindAllocByVa(va, HVM_GVA);
+            if (!found || info.base.va[HVM_HVA] == 0) {
+                Reset();
+                size = 0;
+                return;
+            }
+            Fill(info, HVM_GVA, HVM_HVA);
+        }
+        start = start_;
+        size = size_;
+        inBase = inBase_;
+        outBase = outBase_;
+    }
+
 private:
     void Fill(const AllocatedGvaInfo &info, uint32_t inType, uint32_t outType)
     {

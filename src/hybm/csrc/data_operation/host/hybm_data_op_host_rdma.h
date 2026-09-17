@@ -39,8 +39,6 @@ public:
     Result BatchDataCopy(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                          const ExtOptions &options) noexcept override;
     void TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept override;
-    /* 带段缓存的批量转换：一次批量拷贝内复用 src/dst 各自命中的段，避免逐 iov 回表 VA 管理器 */
-    void TransformVaCached(void *&src, void *&dst, VaRangeCache &srcCache, VaRangeCache &dstCache) noexcept;
     Result Wait(int32_t waitId) noexcept override;
 
 private:
