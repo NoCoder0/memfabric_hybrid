@@ -113,6 +113,19 @@ void HostDataOpRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_directio
     }
 }
 
+void HostDataOpRDMA::TransformVaCached(void *&src, void *&dst, VaRangeCache &srcCache,
+                                       VaRangeCache &dstCache) noexcept
+{
+    uint64_t out = srcCache.Transform(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
+    if (out != 0) {
+        src = reinterpret_cast<void *>(out);
+    }
+    out = dstCache.Transform(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
+    if (out != 0) {
+        dst = reinterpret_cast<void *>(out);
+    }
+}
+
 void *HostDataOpRDMA::GetLocalMrAddr(hybm_copy_params &params, hybm_data_copy_direction direction) noexcept
 {
     auto realDirection = direction;
@@ -433,8 +446,12 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
 {
     BM_ASSERT_LOG_AND_RETURN(inited_, "inited_ = " << inited_, BM_NOT_INITIALIZED);
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
+    /* 段缓存（src/dst 各一个）：一批 iov 的地址通常集中在一个段里，
+       避免每个 iov 都走一次 shared_lock + 红黑树查询 */
+    VaRangeCache srcVaCache;
+    VaRangeCache dstVaCache;
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVa(params.sources[i], params.destinations[i], direction);
+        TransformVaCached(params.sources[i], params.destinations[i], srcVaCache, dstVaCache);
     }
     TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
     Result ret = BM_OK;

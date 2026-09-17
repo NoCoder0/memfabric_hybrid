@@ -907,22 +907,26 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
     }
     // 将所有地址按srcRank - dstRank分组，并且转换地址
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR)
+    /* 段缓存 + 同 key 快路径：一批 iov 的 src/dest 通常各自落在同一个段里，
+       避免每个 iov 都做一次 shared_lock + 红黑树查询，以及一次 groupMap 哈希查找 */
+    VaRangeCache srcCache;
+    VaRangeCache dstCache;
+    std::vector<uint32_t> *groupVec = nullptr;
+    std::pair<uint32_t, uint32_t> lastKey {};
     for (uint32_t i = 0; i < params.batchSize; ++i) {
         std::pair<uint32_t, uint32_t> p2pInfo;
-        ret = LocateAddrAndRank(params.sources[i], params.destinations[i], p2pInfo);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("failed to locate addr and rank, ret:"
-                         << ret << ", index:" << i << ", src:" << VaToStr(params.sources[i])
-                         << ", dest:" << VaToStr(params.destinations[i]) << ", size:" << params.dataSizes[i]);
-            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR, ret)
-            TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TOTAL, batchTotalT0, ret)
-            return ret;
+        uint32_t srcRank = options_.rankId;
+        uint32_t dstRank = options_.rankId;
+        srcCache.RankByGva(reinterpret_cast<uint64_t>(params.sources[i]), srcRank);
+        dstCache.RankByGva(reinterpret_cast<uint64_t>(params.destinations[i]), dstRank);
+        p2pInfo = {srcRank, dstRank};
+        if (groupVec == nullptr || p2pInfo != lastKey) {
+            groupVec = &sOptions.groupMap[p2pInfo];
+            lastKey = p2pInfo;
         }
-        BM_LOG_DEBUG("source:" << VaToStr(params.sources[i]) << " destination:" << VaToStr(params.destinations[i])
-                               << " dataSize:" << params.dataSizes[i]);
-        sOptions.groupMap[p2pInfo].push_back(i);
+        groupVec->push_back(i);
     }
-    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR, ret)
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR, 0)
 
     ret = dataOperator_->BatchDataCopy(params, direction, sOptions);
     TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TOTAL, batchTotalT0, ret)
