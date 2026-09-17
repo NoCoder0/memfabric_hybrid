@@ -39,7 +39,7 @@ export MF_HYBM_ENABLE_4K_PAGE=1
 
 STORE_URL="tcp://90.91.183.86:18580"
 # 第 3 个及之后的参数原样透传给 bench（例如 --warmup=100 --rounds=1000
-# --chunk=128 --gather-threads=6 --scatter-threads=6）
+# --chunk=128 --gather-threads=16 --gather-cpus=0-15 --scatter-threads=6）
 if [ "${ROLE}" == "local" ]; then
     # 86：local + 内嵌 config store
     exec "${BIN}" --role=local --rank=0 --store-url="${STORE_URL}" \

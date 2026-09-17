@@ -65,10 +65,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <sched.h>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
+
+#include <pthread.h>
+#include <sched.h>
 
 #include "smem_bm.h"
 #include "smem_bm_def.h"
@@ -83,7 +86,7 @@ constexpr uint64_t kDefaultDramMB = 16;   /* 每 rank 对称 host 内存，需�
 constexpr uint32_t kDefaultChunk = 128;   /* cont: 每 chunk 个小 IO 发一次 flag */
 constexpr uint32_t kDefaultWarmup = 100;  /* 前 100 轮只热身，不计入统计 */
 constexpr uint32_t kDefaultRounds = 1000; /* 计时轮数：1000 */
-constexpr uint32_t kDefaultGatherThreads = 6;
+constexpr uint32_t kDefaultGatherThreads = 16;
 constexpr uint32_t kDefaultScatterThreads = 6;
 constexpr uint32_t kContDstAgg = 16; /* cont：本地侧是连续 staging，按 16 个 IO 聚合一次地址描述 */
 constexpr uint64_t kSpinTimeoutUs = 5ULL * 1000 * 1000; /* 自旋等水位的上限：超过就报错退出，避免静默挂死 */
@@ -106,6 +109,8 @@ struct BenchArgs {
     uint32_t rounds = kDefaultRounds; /* 计时轮数 */
     uint32_t gatherThreads = kDefaultGatherThreads;
     uint32_t scatterThreads = kDefaultScatterThreads;
+    std::string gatherCpuSpec;
+    std::vector<int> gatherCpus;
     int32_t logLevel = -1;            /* <0 表示不改库的日志级别；0~5 见 smem_set_log_level */
 };
 
@@ -122,7 +127,9 @@ void Usage(const char *prog)
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
             "  --warmup=N                 前 N 轮不计时(默认100)\n"
             "  --rounds=N                 计时轮数(默认1000)\n"
-            "  --gather-threads=N          gather 场景远端聚合线程数(默认6)\n"
+            "  --gather-threads=N          gather 场景远端聚合线程数(默认16)\n"
+            "  --gather-cpus=LIST          远端 gather 线程绑核，如 0-15 或 0-7,16-23\n"
+            "                              未指定时自动选核，也可用 MF_GATHER_AFFINITY_CPUS\n"
             "  --scatter-threads=N         gather 场景本地分散线程数(默认6)\n"
             "  --log-level=0..5           设置库日志级别(默认不改)\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
@@ -133,6 +140,64 @@ void Usage(const char *prog)
             "        cont     = 写 local 的连续 staging（水位推进）→ local 边收边散；\n"
             "        gather   = remote 多线程 gather → 单次整块 write → local 多线程 scatter。\n",
             prog, kContDstAgg);
+}
+
+bool ParseCpuNumber(const std::string &text, int &cpu)
+{
+    try {
+        size_t parsed = 0;
+        const unsigned long value = std::stoul(text, &parsed);
+        if (parsed != text.size() || value >= CPU_SETSIZE) {
+            return false;
+        }
+        cpu = static_cast<int>(value);
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+bool AppendCpuRange(const std::string &token, std::vector<int> &cpus)
+{
+    const size_t dash = token.find('-');
+    int begin = 0;
+    int end = 0;
+    if (dash == std::string::npos) {
+        if (!ParseCpuNumber(token, begin)) {
+            return false;
+        }
+        end = begin;
+    } else if (token.find('-', dash + 1) != std::string::npos ||
+               !ParseCpuNumber(token.substr(0, dash), begin) || !ParseCpuNumber(token.substr(dash + 1), end) ||
+               begin > end) {
+        return false;
+    }
+    for (int cpu = begin; cpu <= end; ++cpu) {
+        if (std::find(cpus.begin(), cpus.end(), cpu) != cpus.end()) {
+            return false;
+        }
+        cpus.push_back(cpu);
+    }
+    return true;
+}
+
+bool ParseCpuList(const std::string &spec, std::vector<int> &cpus)
+{
+    size_t begin = 0;
+    while (begin < spec.size()) {
+        const size_t comma = spec.find(',', begin);
+        const std::string token = spec.substr(begin, comma == std::string::npos ? comma : comma - begin);
+        if (token.empty() || !AppendCpuRange(token, cpus)) {
+            fprintf(stderr, "[ERROR] invalid --gather-cpus=%s\n", spec.c_str());
+            return false;
+        }
+        if (comma == std::string::npos) {
+            return true;
+        }
+        begin = comma + 1;
+    }
+    fprintf(stderr, "[ERROR] invalid --gather-cpus=%s\n", spec.c_str());
+    return false;
 }
 
 bool ParseArgs(int argc, char *argv[], BenchArgs &a)
@@ -174,6 +239,8 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.rounds = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--gather-threads") {
             a.gatherThreads = static_cast<uint32_t>(std::stoul(v));
+        } else if (k == "--gather-cpus") {
+            a.gatherCpuSpec = v;
         } else if (k == "--scatter-threads") {
             a.scatterThreads = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--log-level") { /* 0~5: DEBUG/INFO/WARN/ERROR/FATAL/TRACE；不传则不改库的级别 */
@@ -194,6 +261,13 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
     }
     if (a.gatherThreads == 0 || a.gatherThreads > 64 || a.scatterThreads == 0 || a.scatterThreads > 64) {
         fprintf(stderr, "gather/scatter threads must be in [1, 64]\n");
+        return false;
+    }
+    if (a.gatherCpuSpec.empty()) {
+        const char *envCpus = std::getenv("MF_GATHER_AFFINITY_CPUS");
+        a.gatherCpuSpec = envCpus == nullptr ? "" : envCpus;
+    }
+    if (!a.gatherCpuSpec.empty() && !ParseCpuList(a.gatherCpuSpec, a.gatherCpus)) {
         return false;
     }
     return true;
@@ -232,13 +306,70 @@ void CpuRelax()
 #endif
 }
 
+std::vector<int> GetGatherCpus(uint32_t threadCount)
+{
+    cpu_set_t affinity;
+    CPU_ZERO(&affinity);
+    if (sched_getaffinity(0, sizeof(affinity), &affinity) != 0) {
+        fprintf(stderr, "[ERROR] sched_getaffinity failed: %s\n", std::strerror(errno));
+        return {};
+    }
+    std::vector<int> cpus;
+    const int callerCpu = sched_getcpu();
+    if (callerCpu >= 0 && CPU_ISSET(callerCpu, &affinity)) {
+        cpus.push_back(callerCpu);
+    }
+    for (int cpu = 0; cpu < CPU_SETSIZE && cpus.size() < threadCount; ++cpu) {
+        if (CPU_ISSET(cpu, &affinity) && cpu != callerCpu) {
+            cpus.push_back(cpu);
+        }
+    }
+    return cpus;
+}
+
+bool ConfigureGatherCpus(BenchArgs &args)
+{
+    if (args.gatherCpus.empty()) {
+        args.gatherCpus = GetGatherCpus(args.gatherThreads);
+    }
+    if (args.gatherCpus.size() < args.gatherThreads) {
+        fprintf(stderr, "[ERROR] gather needs %u CPUs, but only %zu CPUs are configured/allowed\n", args.gatherThreads,
+                args.gatherCpus.size());
+        return false;
+    }
+    args.gatherCpus.resize(args.gatherThreads);
+    printf("[bench] gather worker CPUs:");
+    for (int cpu : args.gatherCpus) {
+        printf(" %d", cpu);
+    }
+    printf("\n");
+    return true;
+}
+
+void PinGatherWorker(uint32_t workerIndex, int cpu)
+{
+    if (cpu < 0) {
+        return;
+    }
+    cpu_set_t affinity;
+    CPU_ZERO(&affinity);
+    CPU_SET(cpu, &affinity);
+    const int ret = pthread_setaffinity_np(pthread_self(), sizeof(affinity), &affinity);
+    if (ret != 0) {
+        fprintf(stderr, "[ERROR] gather worker %u failed to bind CPU %d: %s\n", workerIndex, cpu,
+                std::strerror(ret));
+    }
+}
+
 class ParallelCopyPool {
 public:
-    explicit ParallelCopyPool(uint32_t threadCount) : threadCount_(threadCount), done_(threadCount + 1U)
+    explicit ParallelCopyPool(uint32_t threadCount, const std::vector<int> &workerCpus = {})
+        : threadCount_(threadCount), workerCpus_(workerCpus), done_(threadCount + 1U)
     {
         workers_.reserve(threadCount_);
         for (uint32_t index = 0; index < threadCount_; ++index) {
-            workers_.emplace_back(&ParallelCopyPool::WorkerLoop, this, index);
+            const int cpu = workerCpus_.empty() ? -1 : workerCpus_[index];
+            workers_.emplace_back(&ParallelCopyPool::WorkerLoop, this, index, cpu);
         }
     }
 
@@ -299,8 +430,9 @@ private:
         }
     }
 
-    void WorkerLoop(uint32_t workerIndex)
+    void WorkerLoop(uint32_t workerIndex, int cpu)
     {
+        PinGatherWorker(workerIndex, cpu);
         uint64_t observedGeneration = 0;
         while (!stopping_.load(std::memory_order_acquire)) {
             auto generation = generation_.load(std::memory_order_acquire);
@@ -321,6 +453,7 @@ private:
     }
 
     uint32_t threadCount_;
+    std::vector<int> workerCpus_;
     std::vector<std::thread> workers_;
     std::atomic<uint64_t> generation_{0U};
     std::atomic<uint32_t> done_;
@@ -709,7 +842,7 @@ void RunGatherSender(const GatherScenarioContext &ctx)
 {
     const auto &a = *ctx.args;
     PrintLabel("gather (sender)");
-    ParallelCopyPool gatherPool(a.gatherThreads);
+    ParallelCopyPool gatherPool(a.gatherThreads, a.gatherCpus);
     std::vector<void *> sources(a.count), destinations(a.count);
     std::vector<uint64_t> gatherCosts, writeCosts, serviceCosts;
     auto *sequence = reinterpret_cast<volatile uint64_t *>(
@@ -823,6 +956,9 @@ int main(int argc, char *argv[])
     const bool runBase = (a.mode == "all" || a.mode == "baseline");
     const bool runCont = (a.mode == "all" || a.mode == "cont");
     const bool runGather = (a.mode == "all" || a.mode == "gather");
+    if (runGather && a.role == "remote" && !ConfigureGatherCpus(a)) {
+        return 1;
+    }
     /* 本地侧目标地址描述的个数（= 发起方每轮下发的目标地址列表长度）：
        baseline 的本地目标是离散的 → 逐个给；cont 的本地侧是连续 staging → 按 kContDstAgg 聚合。 */
     const uint32_t baseDstCount = a.count;
