@@ -1140,13 +1140,23 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
         TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MR_BUILD, &stageT0);
         Channel_OneSideRequestSgl sglReq;
         sglReq.iovCount = 0;
+        /* 同一 MR 内的 iov 占绝大多数：先用"上一次命中的 MR"做区间检查（与 FindMemoryRegionByAddr
+           内部缓存的判据完全一致），命中就跳过槽位/generation 校验；未命中再回表，语义不变。 */
+        const HcomMemoryRegion *lastLmr = nullptr;
+        const HcomMemoryRegion *lastRmr = nullptr;
         for (; i < end && sglReq.iovCount < HCOM_IOV_BATCH_SIZE; ++i) {
-            Channel_OneSideRequest req;
+            /* 直接写进 SGL 的目标槽位，省掉「先构造临时 req、再把整结构体拷进去」的一次拷贝 */
+            auto &req = sglReq.iov[sglReq.iovCount];
             req.lAddress = descriptor.localAddrs[i];
             req.size = static_cast<uint32_t>(descriptor.counts[i]);
-            /* 用返回缓存指针的查询：命中的都是 thread_local 槽，避免每 iov 把整个
-               HcomMemoryRegion(~250B) 清零后拷回来（600 个 iov 过去约 1KB/iov 的内存搬运） */
-            const auto *lmr = FindMemoryRegionByAddr(rankId_, ep, reinterpret_cast<uint64_t>(req.lAddress));
+            const auto lAddr = reinterpret_cast<uint64_t>(req.lAddress);
+            const HcomMemoryRegion *lmr = nullptr;
+            if (lastLmr != nullptr && lAddr >= lastLmr->addr && lAddr < lastLmr->addr + lastLmr->size) {
+                lmr = lastLmr;
+            } else {
+                lmr = FindMemoryRegionByAddr(rankId_, ep, lAddr);
+                lastLmr = lmr;
+            }
             if (lmr == nullptr) {
                 BM_LOG_ERROR("Failed to find lKey, rankId: " << rankId_ << " ep: " << ep << ", size: " << req.size
                                                              << ", lAddr: " << VaToStr(req.lAddress));
@@ -1154,13 +1164,20 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
             }
             std::copy_n(lmr->lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
             auto rAddr = descriptor.globalAddrs[i];
-            const auto *rmr = FindMemoryRegionByAddr(rankId, ep, reinterpret_cast<uint64_t>(rAddr));
+            const auto rAddrU = reinterpret_cast<uint64_t>(rAddr);
+            const HcomMemoryRegion *rmr = nullptr;
+            if (lastRmr != nullptr && rAddrU >= lastRmr->addr && rAddrU < lastRmr->addr + lastRmr->size) {
+                rmr = lastRmr;
+            } else {
+                rmr = FindMemoryRegionByAddr(rankId, ep, rAddrU);
+                lastRmr = rmr;
+            }
             if (rmr == nullptr) {
                 BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " ep: " << ep << ", size: " << req.size
                                                              << ", rAddr: " << VaToStr(rAddr));
                 return BM_ERROR;
             }
-            auto offset = reinterpret_cast<uint64_t>(rAddr) - rmr->addr;
+            auto offset = rAddrU - rmr->addr;
             req.rAddress = reinterpret_cast<void *>(rmr->lva + offset); // rewrite to remote local va
             CopyHcomOneSideKey(rmr->lKey, req.rKey);
             BM_LOG_DEBUG("Try to write remote rankId: " << rankId << " ep: " << ep
@@ -1169,7 +1186,7 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
                                                         << " lAddr:" << VaToStr(req.lAddress) << " rAddr: "
                                                         << VaToStr(req.rAddress) << " size: " << descriptor.counts[i]
                                                         << " tokens: " << req.rKey.tokens[0]);
-            sglReq.iov[sglReq.iovCount++] = req;
+            ++sglReq.iovCount;
         }
         TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_MR_BUILD, stageT0, 0);
         BM_ASSERT_LOG_AND_RETURN(stream_.get() != nullptr, "stream_.get() is nullptr", BM_ERROR);
