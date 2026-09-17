@@ -76,13 +76,6 @@ inline const std::string MF_HYBM_SUBMIT_CPU_RANGE = GetEnvStr("MF_HYBM_SUBMIT_CP
 // 出现数据校验失败（完成标志与两条 rail 的数据不在同一个 QP 上，失去了原有的保序保证）。
 // 因此默认关闭，只作为实验开关：MF_HYBM_RAIL_SUBMIT_PARALLEL=1 + MF_HYBM_SUBMIT_CPU_RANGE=99-100。
 inline const std::string MF_HYBM_RAIL_SUBMIT_PARALLEL = GetEnvStr("MF_HYBM_RAIL_SUBMIT_PARALLEL");
-/* 多 url(多网卡) 的两种接法，默认 0：
-   - 0 单 service + MultiRail（一组 ipMask 交给库，库内 CreateMultiRailDriver 选卡）；
-   - 1 每张网卡一个 service（旧的双 service 形态），数据面按 ep 拆批、每 ep 一条独立 channel +
-     一个线程并发提交。注意历史结论（f4c50c74）：两个各带 1 个 driver 的 service 实际可能仍走
-     同一张网卡（数据面选卡按 driver 序号，ipMask 只管控制面），所以这个模式**不保证两张卡都用上**，
-     它的价值是把提交面拆成两条独立 channel 以并行提交。 */
-inline const std::string MF_HYBM_HCOM_DUAL_SERVICE = GetEnvStr("MF_HYBM_HCOM_DUAL_SERVICE");
 // HCOMM 开关（默认关闭）：关闭时 DEVICE_RDMA 一律走 native；打开后按 CANN 版本判断
 inline const std::string MF_HYBM_RDMA_USE_HCOMM = GetEnvStr("MF_HYBM_RDMA_USE_HCOMM", "HYBM_RDMA_USE_HCOMM");
 inline const std::string MF_HYBM_ENABLE_4K_PAGE = GetEnvStr("MF_HYBM_ENABLE_4K_PAGE", "HYBM_ENABLE_4K_PAGE");

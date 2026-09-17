@@ -577,13 +577,13 @@ uint32_t HcomTransportManager::GetLinkCount() const
 
 uint32_t HcomTransportManager::GetRailCount() const
 {
-    /* 多 service 模式下多网卡由"每张卡一个 service"承担，rail 概念不适用，返回 1 ——
-       否则数据面会同时按 rail 和按 ep 切两次。 */
-    if (dualService_) {
-        return 1;
-    }
-    /* 建链时传了多个 url(网卡) 就是多 rail；单连接返回 1，行为与以前完全一致。 */
-    return (localNics_.size() > 1) ? static_cast<uint32_t>(localNics_.size()) : 1;
+    /* 恒返回 1：多 url 现在一律走"每 url 一个 service"的多 ep 形态（见 CheckTransportOptions），
+       数据面不再按 rail 切分，所以"一个 channel 内多条 rail"这条路径不再启用。
+       注意：库侧的 MultiRail 开关（ServiceSetMultiRailOptions）仍然对单 url 保持打开 ——
+       那是用来修"单笔小消息写要 ~4ms"的，与本函数无关。
+       rail 相关代码（SubmitWriteBatchOnEpOnRail / per-rail 水位 / 按 rail 平分核数）暂时保留，
+       以后若要切回"一个 service + 多 rail"，把这里改回 localNics_.size() 并恢复开关即可。 */
+    return 1;
 }
 
 bool HcomTransportManager::AllRailsReady(uint32_t rankId) const
@@ -1328,17 +1328,14 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                              BM_INVALID_PARAM);
 
     uint32_t total = descriptor.counts.size();
-    /* 双连接（多 rail）：把一个 batch 的 iov 连续切到多条 rail(网卡) 上，**默认行为**。
-       例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
-       单连接（只有 1 个 url）时 localNics_ 只有 1 项，自动不生效、行为与以前一致。
-       rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
-       ★ 必须并行提交：提交本身是 CPU 密集的（实测约 0.212us/iov，且与单包大小无关），调用方
-       自己串行 for 两条 rail，等于把同一份工作在同一个线程上排队跑两遍 —— 两条 rail 只并行了
-       "线上时间"，而线上时间被提交时间盖住，结果双 rail 反而比单 rail 慢（实测 600x1KB：
-       单 138us / 双 154us）。所以这里交给 RunRailsParallel：每 rail 一个常驻 worker，各自
-       提交、各自 Synchronize 自己那份 stream。 */
-    if (localNics_.size() > 1) {
-        const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
+    /* 多 rail：把一个 batch 的 iov 连续切到多条 rail(网卡) 上（rail = 同一个 channel 内的多条
+       网卡连接，与下面 epCount_>1 的多 channel 路径互斥）。
+       判据必须是 GetRailCount() 而不是 localNics_：多 url 现在走"每 url 一个 service"的多 ep
+       路径，GetRailCount() 返回 1，这条分支自动不生效。
+       提交是 CPU 密集的（约 0.212us/iov，与单包大小无关），所以交给 RunSlicesParallel 让每条
+       rail 各自提交、各自等完成（是否真并行由 submitParallel_ 决定，见该函数注释）。 */
+    if (GetRailCount() > 1) {
+        const uint32_t railCount = GetRailCount();
         std::vector<std::pair<size_t, size_t>> ranges(railCount);
         size_t begin = 0;
         for (uint32_t rail = 0; rail < railCount; ++rail) {
@@ -1449,27 +1446,26 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
     }
     localNics_ = std::move(epNics);
     localIps_ = std::move(epIps);
-    /* 多 url = "本地要多用几张网卡"，两种接法（由 MF_HYBM_HCOM_DUAL_SERVICE 选）：
-       - 0（默认）单 service + MultiRail：ubs 明确要求上层禁止同时创建同种协议的 2 个不同 Service
-         实例（service_ctx_store.h 的 GetOrReturn 注释：否则 Service2 会引用 Service1 的内存池），
-         而 HCOM 原生支持一个 service 带多条 rail（库内 CreateMultiRailDriver 按 ipMask 选卡，
-         上限 MAX_ENABLE_DEVCOUNT=4 并自动分流）。于是把多 url 收敛成 1 个 service + 一组 ipMask，
-         epCount_ = 1，数据面按 rail 切。
-       - 1 每张网卡一个 service（旧的双 service 形态）。注意历史结论（f4c50c74）：两个各带 1 个
-         driver 的 service 实际可能仍走同一张网卡（数据面选卡按 driver 序号，ipMask 只管控制面），
-         所以这个模式**不保证两张卡都用上**；它的价值是把提交面拆成 N 条**独立 channel**，
-         每 channel 一个线程并行提交 —— 这正是"两个 service 用不同线程操作"的形态。 */
+    /* 多 url = "本地要多用几张网卡"，连接形态**只由 url 数决定**（不再有环境变量开关）：
+       - 传 1 个 url：单连接。1 个 service，数据面单链路；MultiRail 仍保持默认开（实测关掉时
+         "单笔小消息写"要 ~4ms，开启后只要十几 us）。
+       - 传多个 url：双连接。**每个 url 一个 service**，epCount_ = url 数。每 ep 一条独立 channel，
+         数据面按 ep 拆批、每 ep 一个线程并行提交（这就是同事验证过的"两个 service 由不同线程操作"）。
+         注意历史结论（f4c50c74）：两个各带 1 个 driver 的 service 实际可能仍走同一张网卡
+         （数据面选卡按 driver 序号，ipMask 只管控制面），所以多 url ≠ 一定用上多张卡；
+         这个形态的价值在于把提交面拆成 N 条独立 channel。
+         多 service 时必须关掉 MultiRail：多卡本来就是靠"每 service 一条 driver"实现的，
+         再叠一层 MultiRail 只会让一个 service 内部的 driver 又去选多张卡。 */
     localIpMask_.clear();
     for (const auto &ip : localIps_) { /* ',' 分隔的一组 mask（ubs_hcom_service_set_ipmask 按 ',' 拆） */
         localIpMask_ = localIpMask_.empty() ? (ip + "/32") : (localIpMask_ + "," + ip + "/32");
     }
-    dualService_ = (localNics_.size() > 1U) &&
-                   (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HCOM_DUAL_SERVICE, 0U) != 0U);
-    epCount_ = dualService_ ? static_cast<uint32_t>(localNics_.size()) : 1U;
+    dualService_ = (localNics_.size() > 1U);
+    epCount_ = static_cast<uint32_t>(localNics_.size());
     if (dualService_) {
-        BM_LOG_WARN("dual hcom service mode ENABLED (MF_HYBM_HCOM_DUAL_SERVICE=1): epCount="
-                    << epCount_ << "，每 ep 一个 service 并各自一条 channel + 一个提交线程并行提交。"
-                       "注意：两个 service 各 1 个 driver 时数据面可能仍走同一张网卡（见 f4c50c74）");
+        BM_LOG_INFO("dual hcom service (multi url): epCount="
+                    << epCount_ << "，每 ep 一个 service、一条独立 channel，数据面按 ep 并行提交。"
+                       "注意两个 service 各 1 个 driver 时数据面可能仍走同一张网卡（见 f4c50c74）");
     }
     /* 向上层发布**全部** url（';' 分隔，与 compose_transport_manager 的 NIC_DELIMITER 一致）：
        compose 层会把每个 url 广播成一个 host# 段，对端据此为**每条 rail** 建连。
