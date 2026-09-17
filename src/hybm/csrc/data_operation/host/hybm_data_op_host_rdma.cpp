@@ -1274,7 +1274,9 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
             ret = transportManager_->ReadRemoteBatchAsync(options.srcRankId, smallIoDes);
         } else if (options.HasProgress()) {
             /* 单链路/多链路都支持：多链路时每条 link 各自维护一份水位（契约见 hybm_def.h） */
+            TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PROGRESS_ALL)
             ret = WriteRemoteBatchWithProgress(smallIoDes, options);
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_PROGRESS_ALL, ret)
         } else {
             ret = transportManager_->WriteRemoteBatchAsync(options.destRankId, smallIoDes);
         }
@@ -1345,10 +1347,13 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
         // watermark before that chunk has landed. Slots are append-only, never rewritten.
         const uint64_t srcAddr = progressSrc + static_cast<uint64_t>(chunkIndex) * srcStride;
         *reinterpret_cast<uint64_t *>(srcAddr) = options.progressBase + static_cast<uint64_t>(chunkEnd);
+        uint64_t wmPutT0 = 0;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_WM_WRITE, &wmPutT0);
         ret = (railIdx < 0) ? transportManager_->WriteRemoteAsyncOnEp(options.destRankId, ep, srcAddr, progressDest,
                                                                      sizeof(uint64_t))
                             : transportManager_->WriteRemoteAsyncOnEpOnRail(options.destRankId, ep, railIdx, srcAddr,
                                                                             progressDest, sizeof(uint64_t));
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_WM_WRITE, wmPutT0, ret);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to submit batch progress, destRank:" << options.destRankId << " ep:" << ep
                                                                       << " done:" << chunkEnd << " ret:" << ret);

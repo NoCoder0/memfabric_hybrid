@@ -99,6 +99,8 @@ enum MF_HYBM_MOD {
     TP_HYBM_HOST_RDMA_BATCH_QUERY_MR,   /* BatchCopyLH2GH 里 600 次 QueryHasRegistered */
     TP_HYBM_HOST_RDMA_BATCH_PREP_DESC,  /* BatchCopyGH2GH 里 600 次分类 + vector 构造 */
     TP_HYBM_HOST_RDMA_PROGRESS_WM,      /* 分块提交循环（含每 chunk 一次水位写） */
+    TP_HYBM_HOST_RDMA_BATCH_PROGRESS_ALL, /* ↑ 外层：WriteRemoteBatchWithProgress 整体（分块循环+水位写） */
+    TP_HYBM_HOST_RDMA_BATCH_WM_WRITE,     /* 单次水位单边写（非 SGL 的单包 put） */
     TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC, /* 单包单边写 + 同步（SendAddrMsg / done flag） */
     TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, /* ↑ 内部：WriteRemoteAsync 段 */
     TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT,   /* ↑ 内部：Synchronize 等完成段 */
