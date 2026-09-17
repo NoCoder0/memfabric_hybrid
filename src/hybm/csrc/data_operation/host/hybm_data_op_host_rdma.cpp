@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <algorithm>
 #include <memory>
+#include <utility>
 #include "hybm_space_allocator.h"
 #include "hybm_ptracer.h"
 #include "dl_hybrid_api.h"
@@ -1421,20 +1422,30 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
     const size_t base = total / linkCount;
     const size_t rem = total % linkCount;
     const uint64_t srcStride = static_cast<uint64_t>(linkCount) * sizeof(uint64_t);
+    std::vector<std::pair<size_t, size_t>> ranges(linkCount);
     size_t begin = 0;
     for (uint32_t ep = 0; ep < linkCount; ++ep) {
         const size_t end = begin + base + (ep < rem ? 1U : 0U);
-        if (end > begin) {
-            /* rail 共用 ep0 的 channel：ep 传 0，真正的网卡由 railIdx 指定 */
-            const auto ret = WriteRemoteBatchOnEpWithProgress(0, descriptor, begin, end, options,
-                                                              destBase + ep * sizeof(uint64_t),
-                                                              srcBase + ep * sizeof(uint64_t), srcStride,
-                                                              static_cast<int32_t>(ep));
-            if (ret != BM_OK) {
-                return ret;
-            }
-        }
+        ranges[ep] = std::make_pair(begin, end);
         begin = end;
     }
-    return BM_OK;
+    /* 每条 rail 的"分块提交 + 每块一次水位写"整体投到各自的常驻 worker 上并行执行。
+       串行做两条 rail 等于把同一份 CPU 密集的提交工作排队跑两遍（见 RunRailsParallel 注释），
+       而 rail 本来就没法并行提交时间 —— 这才是双 rail 曾经比单 rail 慢的原因。
+       水位语义不变：每条 rail 的水位仍走它自己那条连接（QP 内保序保证水位不超前）。
+       ⚠ RunRailsParallel 会阻塞到所有 rail 提交并完成，所以这里捕获的 ranges/descriptor/options
+       在整个调用期间都活着。 */
+    return transportManager_->RunRailsParallel(
+        options.destRankId, linkCount,
+        [this, &descriptor, &options, &ranges, destBase, srcBase, srcStride](uint32_t rail) -> Result {
+            const auto &range = ranges[rail];
+            if (range.second <= range.first) { /* 该 rail 没分到 iov */
+                return BM_OK;
+            }
+            /* rail 共用 ep0 的 channel：ep 传 0，真正的网卡由 railIdx 指定 */
+            return WriteRemoteBatchOnEpWithProgress(0, descriptor, range.first, range.second, options,
+                                                    destBase + rail * sizeof(uint64_t),
+                                                    srcBase + rail * sizeof(uint64_t), srcStride,
+                                                    static_cast<int32_t>(rail));
+        });
 }

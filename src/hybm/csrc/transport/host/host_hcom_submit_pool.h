@@ -62,10 +62,13 @@ public:
             BM_LOG_ERROR("HostSubmitPool not started");
             return BM_NOT_INITIALIZED;
         }
-        if (tasks.size() != threads_.size()) {
-            BM_LOG_ERROR("HostSubmitPool task count " << tasks.size() << " mismatch workers " << threads_.size());
+        if (tasks.size() > threads_.size()) {
+            BM_LOG_ERROR("HostSubmitPool task count " << tasks.size() << " exceeds workers " << threads_.size());
             return BM_INVALID_PARAM;
         }
+        /* 允许任务数少于 worker 数：不足的槽位补空转任务，worker 仍然一人一格。
+           这样调用方不必把"任务条数"和"池子大小"绑死（多 rail / 多 ep 的条目数会随配置变）。 */
+        tasks.resize(threads_.size(), []() { return BM_OK; });
         roundTasks_ = std::move(tasks);
         roundDone_.assign(threads_.size(), false);
         roundFailed_ = false;

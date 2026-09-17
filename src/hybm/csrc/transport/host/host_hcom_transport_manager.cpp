@@ -289,7 +289,11 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     channelMutex_ = std::vector<std::mutex>(rankCount_);
     nics_ = std::vector<std::vector<std::string>>(rankCount_, std::vector<std::string>(epCount_, ""));
     channels_ = std::vector<std::vector<Hcom_Channel>>(rankCount_, std::vector<Hcom_Channel>(epCount_, 0));
-    submitPool_.Start(epCount_); // 常驻拆批 worker（单链路时 1 个空转，开销可忽略）
+    /* 常驻提交 worker：多 rail 时每 rail 一个（这是"并行提交"的前提，见 RunRailsParallel），
+       多 ep 时按 ep 数；单链路时 1 个空转，开销可忽略。任务数少于 worker 数时由 HostSubmitPool
+       补空转任务，所以这里取两者较大值即可。 */
+    const uint32_t submitWorkerCount = (epCount_ > GetRailCount()) ? epCount_ : GetRailCount();
+    submitPool_.Start(submitWorkerCount);
     return BM_OK;
 }
 
@@ -1218,6 +1222,29 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
     return BM_OK;
 }
 
+Result HcomTransportManager::RunRailsParallel(uint32_t rankId, uint32_t railCount,
+                                              const std::function<Result(uint32_t)> &body)
+{
+    /* 单 rail 无从并行，保持原来的单线程路径（提交完等一次，与旧行为逐字一致）。 */
+    if (railCount <= 1) {
+        auto ret = body(0);
+        return (ret == BM_OK) ? Synchronize(rankId) : ret;
+    }
+    std::vector<std::function<Result()>> tasks(railCount);
+    for (uint32_t rail = 0; rail < railCount; ++rail) {
+        tasks[rail] = [this, rankId, rail, &body]() -> Result {
+            auto ret = body(rail);
+            if (ret != BM_OK) {
+                return ret;
+            }
+            /* 每个 worker 在自己线程上 Synchronize 自己那份 stream：语义等价于原来"串行提交完
+               统一等一次"，但两条 rail 是并行等的，而不是排队等。 */
+            return Synchronize(rankId);
+        };
+    }
+    return submitPool_.RunTasks(std::move(tasks));
+}
+
 Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)
 {
     BM_LOG_DEBUG("WriteRemoteBatchAsync start " << rankId << " rankId");
@@ -1231,24 +1258,34 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
        例如 600 个 iov + 2 条 rail ⇒ rail0 拿 [0,300)、rail1 拿 [300,600)。
        单连接（只有 1 个 url）时 localNics_ 只有 1 项，自动不生效、行为与以前一致。
        rail = "同一个 channel 内的多条网卡连接"，所以与下面 epCount_>1 的多 channel 路径互斥。
-       两条 rail 的提交都记在同一个线程本地 stream 上，外层一次 Synchronize 即可。 */
+       ★ 必须并行提交：提交本身是 CPU 密集的（实测约 0.212us/iov，且与单包大小无关），调用方
+       自己串行 for 两条 rail，等于把同一份工作在同一个线程上排队跑两遍 —— 两条 rail 只并行了
+       "线上时间"，而线上时间被提交时间盖住，结果双 rail 反而比单 rail 慢（实测 600x1KB：
+       单 138us / 双 154us）。所以这里交给 RunRailsParallel：每 rail 一个常驻 worker，各自
+       提交、各自 Synchronize 自己那份 stream。 */
     if (localNics_.size() > 1) {
         const uint32_t railCount = static_cast<uint32_t>(localNics_.size());
+        std::vector<std::pair<size_t, size_t>> ranges(railCount);
         size_t begin = 0;
         for (uint32_t rail = 0; rail < railCount; ++rail) {
             const size_t cnt = total / railCount + (rail < total % railCount ? 1 : 0);
-            if (cnt == 0) {
-                continue;
-            }
-            auto ret = SubmitWriteBatchSlice(rankId, 0, descriptor, begin, begin + cnt, static_cast<int32_t>(rail));
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("Failed to submit rail " << rail << " rankId: " << rankId);
-                Synchronize(rankId);
-                return ret;
-            }
+            ranges[rail] = std::make_pair(begin, begin + cnt);
             begin += cnt;
         }
-        return BM_OK;
+        auto ret = RunRailsParallel(
+            rankId, railCount, [this, rankId, &descriptor, &ranges](uint32_t rail) -> Result {
+                const auto &range = ranges[rail];
+                if (range.second <= range.first) { /* 该 rail 没分到 iov */
+                    return BM_OK;
+                }
+                return SubmitWriteBatchSlice(rankId, 0, descriptor, range.first, range.second,
+                                             static_cast<int32_t>(rail));
+            });
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to submit rails, rankId: " << rankId);
+            Synchronize(rankId);
+        }
+        return ret;
     }
     // single link keeps original submit + outer synchronize behavior
     if (epCount_ <= 1) {

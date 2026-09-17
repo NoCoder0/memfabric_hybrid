@@ -13,6 +13,7 @@
 #ifndef MF_HYBRID_HOST_HCOM_TRANSPORT_MANAGER_H
 #define MF_HYBRID_HOST_HCOM_TRANSPORT_MANAGER_H
 
+#include <functional>
 #include <mutex>
 #include <set>
 #include <atomic>
@@ -127,6 +128,12 @@ public:
                                       size_t begin, size_t end) override;
     Result WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr, uint64_t rAddr,
                                       uint64_t size) override;
+
+    /* 双连接：把每条 rail 的工作并行投到常驻 worker 池上（每 worker 一条 rail）。
+       body 在 worker 线程里执行，其中的提交走该 worker 私有的 thread_local stream_，天然就是
+       "每 rail 一个独立提交线程"；返回前每个 worker 会 Synchronize 自己的 stream，所以整体语义
+       与原串行版一致（调用方在外层再 Synchronize 时，等的是自己那份空 stream，立即返回）。 */
+    Result RunRailsParallel(uint32_t rankId, uint32_t railCount, const std::function<Result(uint32_t)> &body) override;
 
     bool AllLinksReady(uint32_t rankId) const override;
 
