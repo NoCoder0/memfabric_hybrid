@@ -66,6 +66,8 @@ protected:
     void SetUp() override
     {
         GlobalMockObject::reset();
+        // 清理前序用例/suite 遗留的 VA 登记，避免 AllocLocalMemory 因地址重叠失败
+        HybmVaManager::GetInstance().ClearAll();
     }
 
     void TearDown() override

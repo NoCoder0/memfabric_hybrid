@@ -1155,7 +1155,11 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
             _exit(1);
         }
         constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
-        if (rank == 0) {
+        if (rank == 1) {
+            // 接收端延后启动：发送端（fork0，store 宿主）先入组并注册，接收端加入时
+            // 服务端下发 ADDWLST/ESTCONN，其注册切片才能广播到发送端。
+            // 延迟放在发送端会使两个子进程生命周期零交叠（接收端注册 1s 后即退出），
+            // 导致发送端写重试全程 "session not found"（ASAN CI 下必现）。
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         void *handle = nullptr;

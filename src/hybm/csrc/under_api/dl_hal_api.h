@@ -72,6 +72,7 @@ using halMemTransShareableHandleFunc = int (*)(drv_mem_handle_type, struct MemSh
 using halMemGetAllocationGranularityFunc = int (*)(const struct drv_mem_prop *, drv_mem_granularity_options, size_t *);
 using halMemAllocFunc = int (*)(void **, uint64_t, uint64_t);
 using halMemFreeFunc = int (*)(void *);
+using halMemRetainAllocationHandleFunc = int (*)(drv_mem_handle_t **, void *);
 using drvMemGetAttributeFunc = DVresult (*)(DVdeviceptr, struct DVattribute *);
 using dcmiInitFunc = int32_t (*)();
 using dcmiGetAffinityCpuInfoFunc = int32_t (*)(int32_t, char *, int32_t *);
@@ -443,6 +444,16 @@ public:
         return pHalMemImport(type, sHandle, devid, handle);
     }
 
+    // 对用户已分配（非 halMemCreate 出自本模块）的内存取 allocation 引用，用于后续 HalMemExport；
+    // 旧驱动无此符号（OPTIONAL 加载），仅 A5 VMM 共享路径使用
+    static inline int HalMemRetainAllocationHandle(drv_mem_handle_t **handle, void *ptr)
+    {
+        if (pHalMemRetainAllocationHandle == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pHalMemRetainAllocationHandle(handle, ptr);
+    }
+
     static inline int HalMemShareHandleSetAttribute(uint64_t handle, enum ShareHandleAttrType type,
                                                     struct ShareHandleAttr attr)
     {
@@ -586,6 +597,7 @@ private:
     static halMemGetAllocationGranularityFunc pHalMemGetAllocationGranularity;
     static halMemAllocFunc pHalMemAlloc;
     static halMemFreeFunc pHalMemFree;
+    static halMemRetainAllocationHandleFunc pHalMemRetainAllocationHandle;
     static drvMemGetAttributeFunc pDrvMemGetAttribute;
     static dcmiGetUrmaDeviceCntFunc pDcmiGetUrmaDeviceCnt;
     static dcmiGetEidListByUrmaDevIndexFunc pDcmiGetEidListByUrmaDevIndex;

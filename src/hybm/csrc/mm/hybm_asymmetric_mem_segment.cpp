@@ -11,6 +11,9 @@
  */
 #include "hybm_asymmetric_mem_segment.h"
 
+#include <algorithm>
+#include <cstring>
+
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
 #include "hybm_ex_info_transfer.h"
@@ -62,7 +65,7 @@ Result AsymmetricMemSegment::UnReserveMemorySpace() noexcept
     BM_LOG_INFO("un-reserve memory space.");
     if (!memNames_.empty() && options_.shared) {
         for (auto &name : memNames_) {
-            DlAclApi::RtIpcDestroyMemoryName(name.c_str());
+            (void)UserMemDestroyName(name.c_str());
         }
         BM_LOG_INFO("Finish to destroy memory names.");
     } else {
@@ -105,6 +108,56 @@ bool IsDeviceMemoryAddr(uint64_t va)
 }
 } // namespace
 
+namespace {
+// 共享名类型提取：空名/未知首字节返回 0（调用方按 no-op 处理）
+inline uint16_t UserMemNameType(const char *name)
+{
+    return name == nullptr ? 0U : static_cast<uint16_t>(static_cast<uint8_t>(name[0]));
+}
+
+inline uint16_t UserMemNameType(const std::string &name)
+{
+    return name.empty() ? 0U : static_cast<uint16_t>(static_cast<uint8_t>(name[0]));
+}
+
+// 日志用共享名预览：IPC 按跳过类型字节的 C 字符串打印；VMM share_handle 为二进制（可含 \0），
+// 仅打印类型标识与前 8 字节十六进制，避免二进制数据污染日志
+std::string UserMemNamePreview(const char *name)
+{
+    if (name == nullptr) {
+        return "<null>";
+    }
+    if (UserMemNameType(name) != USER_HBM_NAME_TYPE_VMM) {
+        return std::string(name + 1);
+    }
+    static constexpr char kHex[] = "0123456789abcdef";
+    std::string preview = "vmm:";
+    for (size_t i = 1; i <= 8; ++i) {
+        const auto byte = static_cast<uint8_t>(name[i]);
+        preview.push_back(kHex[byte >> 4]);
+        preview.push_back(kHex[byte & 0xF]);
+    }
+    return preview;
+}
+
+std::string UserMemNamePreview(const std::string &name)
+{
+    return UserMemNamePreview(name.c_str());
+}
+
+// 释放 VMM handle 的静默封装：失败仅告警（引用泄漏风险），不打断调用方主流程
+void ReleaseVmmHandleQuietly(drv_mem_handle_t *handle)
+{
+    if (handle == nullptr) {
+        return;
+    }
+    const auto ret = DlHalApi::HalMemRelease(handle);
+    if (ret != 0) {
+        BM_LOG_WARN("HalMemRelease failed, handle may leak: ret=" << ret);
+    }
+}
+} // namespace
+
 Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, MemSlicePtr &slice) noexcept
 {
     if (addr == nullptr || size == 0) {
@@ -134,15 +187,13 @@ Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, Mem
 
 Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t size, MemSlicePtr &slice) noexcept
 {
-    char name[DEVICE_SHM_NAME_SIZE + 1U]{};
+    char name[USER_HBM_NAME_MAX_LEN]{};
     Result ret = BM_OK;
     if (options_.shared) {
-        ret = DlAclApi::RtIpcSetMemoryName(addr, size, name, sizeof(name));
-        if (ret != 0) {
-            BM_LOG_ERROR("set memory name failed: rankId=" << options_.rankId
-                                                           << " addr=" << VaToStr(reinterpret_cast<uint64_t>(addr))
-                                                           << " size=" << size << " ret=" << ret);
-            return BM_DL_FUNCTION_FAILED;
+        ret = UserMemExportName(addr, size, name);
+        if (ret != BM_OK) {
+            // 根因日志已在 UserMemExportName 内记录
+            return ret;
         }
     }
     std::unique_lock<std::mutex> uniqueLock{mutex_};
@@ -151,22 +202,19 @@ Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t siz
             !CanSdmaReaches(remoteDev.second.superPodId, remoteDev.second.serverId, remoteDev.second.devicePhyId)) {
             continue;
         }
-        ret = DlAclApi::RtSetIpcMemorySuperPodPid(name, remoteDev.second.sdid, (int *)&remoteDev.second.pid, 1);
-        if (ret != 0) {
-            BM_LOG_ERROR("set shm(" << name << ") for sdid=" << remoteDev.second.sdid << " pid=" << remoteDev.second.pid
-                                    << " failed: " << ret);
-            DlAclApi::RtIpcDestroyMemoryName(name);
+        ret = UserMemSetSuperPodPid(name, remoteDev.second.sdid, remoteDev.second.pid);
+        if (ret != BM_OK) {
+            // 根因日志已在 UserMemSetSuperPodPid 内记录
+            (void)UserMemDestroyName(name);
             return BM_DL_FUNCTION_FAILED;
         }
-        BM_LOG_INFO("set shm(" << name << ") for sdid=" << remoteDev.second.sdid << " pid=" << remoteDev.second.pid
-                               << " success.");
     }
 
     uint64_t gva = reinterpret_cast<uint64_t>(lvaBase_) + allocatedSize_;
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(addr), size);
     // host_rdma: write DVA/HVA maps (bare device addr) to match ConnBasedSegment's va-table layout;
-    // sdma/device_rdma: keep onlyGva=true to preserve the IPC-based sharing mechanism.
+    // sdma/device_rdma: keep onlyGva=true to preserve the IPC/VMM-based sharing mechanism.
     const bool onlyGva = (options_.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) == 0U;
     ret = HybmVaManager::GetInstance().AddVaInfo({gva, slice->vAddress_, slice->vAddress_, size, HYBM_MEM_TYPE_DEVICE},
                                                  options_.rankId, onlyGva);
@@ -174,14 +222,16 @@ Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t siz
         BM_LOG_ERROR("AddVaInfo failed: rankId=" << options_.rankId << " gva=" << VaToStr(gva) << " size=" << size
                                                  << " ret=" << ret);
         if (options_.shared) {
-            DlAclApi::RtIpcDestroyMemoryName(name);
+            (void)UserMemDestroyName(name);
         }
         slice = nullptr;
         return ret;
     }
 
-    memNames_.emplace_back(name);
-    registerSlices_.emplace(slice->index_, RegisterSlice{slice, name});
+    // VMM share_handle 为二进制（可含 \0），std::string 必须定长构造，禁止隐式 strlen 截断
+    const std::string shareName = options_.shared ? std::string(name, USER_HBM_NAME_MAX_LEN) : std::string{};
+    memNames_.emplace_back(shareName);
+    registerSlices_.emplace(slice->index_, RegisterSlice{slice, shareName});
     allocatedSize_ += size;
     uniqueLock.unlock();
     return BM_OK;
@@ -304,11 +354,15 @@ Result AsymmetricMemSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
         // DRAM 的 AddVaInfo 登记 GVA/DVA/HVA 三表，释放时即时移除，防止 HalHostUnregisterEx 后 DVA 悬挂
         HybmVaManager::GetInstance().RemoveOneVaInfo(pos->second.slice->gva_);
     } else if (options_.shared) {
-        ret = DlAclApi::RtIpcDestroyMemoryName(pos->second.name.c_str());
-        if (ret != 0) {
-            BM_LOG_ERROR("destroy memory name failed: rankId=" << options_.rankId << " name=" << pos->second.name
-                                                               << " ret=" << ret);
-            return BM_DL_FUNCTION_FAILED;
+        ret = UserMemDestroyName(pos->second.name.c_str());
+        if (ret != BM_OK) {
+            // 根因日志已在 UserMemDestroyName 内记录
+            return ret;
+        }
+        // 名称已即时销毁，需从 UnReserveMemorySpace 的待销毁列表移除，避免重复销毁
+        auto nameIt = std::find(memNames_.begin(), memNames_.end(), pos->second.name);
+        if (nameIt != memNames_.end()) {
+            memNames_.erase(nameIt);
         }
     }
 
@@ -357,8 +411,11 @@ Result AsymmetricMemSegment::ExportSlice(const RegisterSlice &regSlice, std::str
     info.devicePhyId = static_cast<uint32_t>(devicePhyId_);
     info.rankId = options_.rankId;
     HybmDevLegacySegment::GetDeviceInfo(sdId, info.serverId, info.superPodId);
-    // HBM slice 携带 IPC name（shared 场景对端 RtIpcOpenMemory 用）；DRAM 为空串，拷贝 0 字节
-    std::copy_n(regSlice.name.c_str(), std::min(regSlice.name.size(), sizeof(info.name) - 1), info.name);
+    // HBM shared 携带带类型标记的定长共享名（129B，VMM share_handle 可含 \0，必须整段拷贝防截断）；
+    // DRAM/非 shared 为空名，info.name 保持全零
+    if (!regSlice.name.empty()) {
+        std::memcpy(info.name, regSlice.name.data(), USER_HBM_NAME_MAX_LEN);
+    }
     auto ret = LiteralExInfoTranslater<UserSliceExportInfo>{}.Serialize(info, exInfo);
     if (ret != BM_OK) {
         BM_LOG_ERROR("export user slice failed: rankId=" << options_.rankId << " index=" << regSlice.slice->index_
@@ -366,8 +423,8 @@ Result AsymmetricMemSegment::ExportSlice(const RegisterSlice &regSlice, std::str
         return BM_ERROR;
     }
 
-    BM_LOG_DEBUG("export user slice success. type:" << info.segmentType << " addr:" << VaToStr(info.address)
-                                                    << " size:" << VaToStr(info.size) << " name:" << info.name
+    BM_LOG_DEBUG("export user slice success. type:" << info.segmentType << " addr:" << VaToStr(info.address) << " size:"
+                                                    << VaToStr(info.size) << " name:" << UserMemNamePreview(info.name)
                                                     << " rank:" << options_.rankId);
     return BM_OK;
 }
@@ -384,15 +441,9 @@ void AsymmetricMemSegment::RollbackImportedSlices(const std::vector<MemSlicePtr>
         return;
     }
     for (auto &slice : slices) {
-        if (slice->memType_ != HYBM_MEM_TYPE_DEVICE || slice->vAddress_ == 0) {
-            // 仅回滚真实打开过 IPC 映射的 DEVICE 条目；DRAM 条目及 GVA/nullptr 不能传给 RtIpcCloseMemory
-            continue;
-        }
-        auto ret = DlAclApi::RtIpcCloseMemory(reinterpret_cast<void *>(slice->vAddress_));
-        if (ret != 0) {
-            BM_LOG_WARN("RtIpcCloseMemory failed: deviceId=" << devicePhyId_ << " addr=" << VaToStr(slice->vAddress_)
-                                                             << " ret=" << ret);
-        }
+        // 按登记类型回滚（IPC close / VMM unmap+release）；未登记或空名条目为 no-op，
+        // DRAM 与 GVA-only 条目不会被误传给 RtIpcCloseMemory
+        UserMemUnImportName(slice->index_);
     }
 }
 
@@ -462,37 +513,17 @@ void AsymmetricMemSegment::RemoveSliceInfo(const uint32_t rankId) noexcept
     }
     auto &remoteSliceVec = it->second;
     for (auto &remoteSlice : remoteSliceVec) {
-        registerAddrs_.erase(reinterpret_cast<void *>(static_cast<ptrdiff_t>(remoteSlice->vAddress_)));
         HybmVaManager::GetInstance().RemoveOneVaInfo(remoteSlice->gva_);
         auto rIt = remoteSlices_.find(remoteSlice->index_);
         if (rIt == remoteSlices_.end()) {
             continue;
         }
-        auto sIt = importedSliceInfo_.find(rIt->second.name);
-        if (sIt == importedSliceInfo_.end()) {
-            remoteSlices_.erase(remoteSlice->index_);
-            continue;
-        }
-        auto &sliceInfo = sIt->second;
-        if (options_.shared && CanSdmaReaches(sliceInfo.superPodId, sliceInfo.serverId, sliceInfo.devicePhyId)) {
-            void *address = reinterpret_cast<void *>(static_cast<ptrdiff_t>(remoteSlice->vAddress_ << 16 >> 16));
-            BM_LOG_INFO("RtIpcCloseMemory start address="
-                        << address
-                        << ", vAddress_ = " << reinterpret_cast<void *>(static_cast<ptrdiff_t>(remoteSlice->vAddress_))
-                        << ", deviceId=" << devicePhyId_ << ", sliceInfo.devicePhyId=" << sliceInfo.devicePhyId
-                        << ", sliceInfo.rankId=" << sliceInfo.rankId);
-            auto ret = DlAclApi::RtIpcCloseMemory(address);
-            if (ret != 0) {
-                BM_LOG_WARN("Unable to close memory, address="
-                            << address << ", vAddress_"
-                            << reinterpret_cast<void *>(static_cast<ptrdiff_t>(remoteSlice->vAddress_))
-                            << ", deviceId=" << devicePhyId_ << ", sliceInfo.devicePhyId=" << sliceInfo.devicePhyId
-                            << ", sliceInfo.rankId=" << sliceInfo.rankId << ", ret:" << ret
-                            << ", This may affect future memory registration.");
-            }
+        if (options_.shared) {
+            // 按登记类型解除映射（IPC close / VMM unmap+release）；未实际打开的条目 vAddress_=0 为 no-op
+            UserMemUnImportName(remoteSlice->index_);
         }
         BM_LOG_INFO("RemoveSliceInfo, rankId=" << rankId << ", remoteSlice->index_=" << remoteSlice->index_
-                                               << ",slice name " << rIt->second.name);
+                                               << ", slice name " << UserMemNamePreview(rIt->second.name));
         importedSliceInfo_.erase(rIt->second.name);
         remoteSlices_.erase(remoteSlice->index_);
     }
@@ -560,19 +591,13 @@ Result AsymmetricMemSegment::ImportDeviceInfo(const std::string &info) noexcept
     if (options_.shared) {
         for (auto &it : registerSlices_) {
             if (it.second.name.empty()) {
-                continue; // DRAM 注册内存无 IPC name，无需设置设备白名单
+                continue; // DRAM/非 shared 注册内存无共享名；VMM 已设 NO_WLIST 免白名单，helper 内 no-op
             }
-            ret =
-                DlAclApi::RtSetIpcMemorySuperPodPid(it.second.name.c_str(), deviceInfo.sdid, (int *)&deviceInfo.pid, 1);
-            if (ret != 0) {
-                BM_LOG_ERROR("RtSetIpcMemorySuperPodPid failed: name=" << it.second.name << " sdid=" << deviceInfo.sdid
-                                                                       << " pid=" << deviceInfo.pid << " rankId="
-                                                                       << deviceInfo.rankId << " ret=" << ret);
-                return BM_DL_FUNCTION_FAILED;
+            ret = UserMemSetSuperPodPid(it.second.name.c_str(), deviceInfo.sdid, deviceInfo.pid);
+            if (ret != BM_OK) {
+                // 根因日志已在 UserMemSetSuperPodPid 内记录
+                return ret;
             }
-            BM_LOG_DEBUG("set whitelist for shm(" << it.second.name << ") sdid=" << deviceInfo.sdid
-                                                  << " pid=" << deviceInfo.pid << " rank=" << deviceInfo.rankId
-                                                  << " devId=" << deviceInfo.devicePhyId);
         }
     }
 
@@ -615,17 +640,11 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
             return ret;
         }
 
-        ret = DlAclApi::RtIpcOpenMemory(&address, sliceInfo.name);
-        if (ret != 0) {
-            BM_LOG_ERROR("IpcOpenMemory(" << sliceInfo.name << ") failed:" << ret << ",sdid=" << sdid_
-                                          << ", pid=" << pid_ << ", deviceId=" << devicePhyId_
-                                          << ", sliceInfo.devicePhyId=" << sliceInfo.devicePhyId);
-            return BM_DL_FUNCTION_FAILED;
+        // IPC 名打开映射；VMM share_handle 导入 + 预留 LVA + 映射（根因日志均在 helper 内记录）
+        ret = UserMemImportAndMapName(&address, sliceInfo);
+        if (ret != BM_OK) {
+            return ret;
         }
-        BM_LOG_INFO("IpcOpenMemory(" << sliceInfo.name << ") success, sdid=" << sdid_ << ", pid=" << pid_
-                                     << ", deviceId=" << devicePhyId_
-                                     << ", sliceInfo.devicePhyId=" << sliceInfo.devicePhyId);
-        registerAddrs_.insert(address);
     } else if (options_.dataOpType &
                (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
         address = nullptr;
@@ -635,8 +654,10 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
                                              sliceInfo.gvaOffset + reinterpret_cast<uint64_t>(globalVirtualAddress_),
                                              reinterpret_cast<uint64_t>(address), sliceInfo.size);
     rankToRemoteSlices_[sliceInfo.rankId].push_back(remoteSlice);
-    remoteSlices_.emplace(remoteSlice->index_, RegisterSlice{remoteSlice, sliceInfo.name});
-    importedSliceInfo_.emplace(sliceInfo.name, sliceInfo);
+    // name 定长构造：VMM share_handle 为二进制，隐式 strlen 会在首个 \0 截断导致 find/erase 失配
+    const std::string shareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN);
+    remoteSlices_.emplace(remoteSlice->index_, RegisterSlice{remoteSlice, shareName});
+    importedSliceInfo_.emplace(shareName, sliceInfo);
     uniqueLock.unlock();
     ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
         {remoteSlice->gva_, remoteSlice->vAddress_, 0, remoteSlice->size_, HYBM_MEM_TYPE_DEVICE}, options_.rankId,
@@ -671,11 +692,11 @@ Result AsymmetricMemSegment::ImportDramSlice(const UserSliceExportInfo &sliceInf
 void AsymmetricMemSegment::CloseMemory() noexcept
 {
     if (options_.shared) {
-        for (auto &addr : registerAddrs_) {
-            if (DlAclApi::RtIpcCloseMemory(addr) != 0) {
-                BM_LOG_WARN("Unable to close memory. This may affect future memory registration.");
-            }
+        for (auto &it : remoteSlices_) {
+            // 按登记类型解除映射（IPC close / VMM unmap+release）
+            UserMemUnImportName(it.first);
         }
+        remoteSlices_.clear();
     }
     for (auto &it : registerSlices_) {
         if (it.second.hostMapped) {
@@ -684,7 +705,6 @@ void AsymmetricMemSegment::CloseMemory() noexcept
         }
         HybmVaManager::GetInstance().RemoveOneVaInfo(it.second.slice->gva_);
     }
-    registerAddrs_.clear();
     if (globalVirtualAddress_ != nullptr) {
         HybmVaManager::GetInstance().FreeReserveGva(reinterpret_cast<uint64_t>(globalVirtualAddress_));
     }
@@ -727,6 +747,284 @@ bool AsymmetricMemSegment::CheckSdmaReaches(uint32_t rankId) const noexcept
     }
 
     return pos->second.superPodId == superPodId;
+}
+
+// ====================== IPC/VMM 双路径共享 helper 实现 ======================
+
+Result AsymmetricMemSegment::UserMemExportName(const void *ptr, uint64_t len, char *name) noexcept
+{
+    // A5 上 IPC 共享接口不可用，改走 VMM share_handle；旧 SoC 保持 IPC 名路径
+    // （todo: 后续改为驱动能力探测，见设计文档开放问题 2）
+    const bool useVmm = (socType_ == AscendSocType::ASCEND_950);
+    name[0] = static_cast<char>(useVmm ? USER_HBM_NAME_TYPE_VMM : USER_HBM_NAME_TYPE_IPC);
+    if (!useVmm) {
+        auto ret = DlAclApi::RtIpcSetMemoryName(ptr, len, name + 1, DEVICE_SHM_NAME_SIZE + 1);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("set memory name failed: rankId=" << options_.rankId
+                                                           << " addr=" << VaToStr(reinterpret_cast<uint64_t>(ptr))
+                                                           << " size=" << len << " ret=" << ret);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        return BM_OK;
+    }
+    return ExportVmmShareName(ptr, name);
+}
+
+Result AsymmetricMemSegment::ExportVmmShareName(const void *ptr, char *name) noexcept
+{
+    const auto addrStr = VaToStr(reinterpret_cast<uint64_t>(ptr));
+    drv_mem_handle_t *handle = nullptr;
+    MemShareHandle shareHandle{};
+    auto ret = DlHalApi::HalMemRetainAllocationHandle(&handle, const_cast<void *>(ptr));
+    if (ret != BM_OK || handle == nullptr) {
+        BM_LOG_ERROR("HalMemRetainAllocationHandle failed: rankId=" << options_.rankId << " addr=" << addrStr
+                                                                    << " ret=" << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    // halMemExport 的 flags 实测必须传 0：传 ACL 的 DISABLE_PID_VALIDATION(0x1) 返回 65534 被拒，
+    // 该 flag 语义仅在 ACL 层 aclrtMemExportToShareableHandleV2 支持；免白名单当前以
+    // SetAttribute 降级（WARN）换取链路验证，白名单拦截时再切 ACL 层 export 链路
+    ret = DlHalApi::HalMemExport(handle, MEM_HANDLE_TYPE_FABRIC, 0, &shareHandle);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemExport failed: rankId=" << options_.rankId << " addr=" << addrStr << " ret=" << ret);
+        ReleaseVmmHandleQuietly(handle);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    // 实测：export 后立即 release 会导致同 allocation 的后续 slice retain/export 全部 PARA_ERROR，
+    // share_handle 疑似依赖 retain 引用存活，故 retain 引用保持不释放（销毁对称待段级统一处理）；
+    // trans/setAttr 失败路径仍对称释放
+    uint64_t shareable = 0U;
+    uint32_t sId = 0;
+    ret = DlHalApi::HalMemTransShareableHandle(MEM_HANDLE_TYPE_FABRIC, &shareHandle, &sId, &shareable);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemTransShareableHandle failed: rankId=" << options_.rankId << " addr=" << addrStr
+                                                                  << " ret=" << ret);
+        ReleaseVmmHandleQuietly(handle);
+        return BM_ERROR;
+    }
+    BM_LOG_INFO("trans shareable ok: rankId=" << options_.rankId << " shareable=0x" << std::hex << shareable
+                                              << " serverId=" << std::dec << sId);
+    struct ShareHandleAttr attr = {.enableFlag = SHR_HANDLE_NO_WLIST_ENABLE, .rsv = {0}};
+    ret = DlHalApi::HalMemShareHandleSetAttribute(shareable, SHR_HANDLE_ATTR_NO_WLIST_IN_SERVER, attr);
+    if (ret != BM_OK) {
+        // A5 上 ACL 物理分配来源的 shareable 可能不被 HAL 属性接口接受（实测 PARA_ERROR）；
+        // 免白名单已由 export flag 承担，此处降级为告警不阻断；若对端 import 被白名单拒绝再回退本步
+        BM_LOG_WARN("HalMemShareHandleSetAttribute degraded: rankId=" << options_.rankId << " shareable=0x" << std::hex
+                                                                      << shareable << " ret=" << std::dec << ret);
+    }
+    std::memcpy(name + 1, shareHandle.share_info, MEM_SHARE_HANDLE_LEN);
+    return BM_OK;
+}
+
+Result AsymmetricMemSegment::UserMemSetSuperPodPid(const char *name, uint32_t sdid, uint32_t pid) noexcept
+{
+    // 仅 IPC 名需要 superPod/pid 白名单；VMM 共享已设 NO_WLIST 免白名单，空名（DRAM/非 shared）无需处理
+    if (UserMemNameType(name) != USER_HBM_NAME_TYPE_IPC) {
+        return BM_OK;
+    }
+    int32_t pidArg = static_cast<int32_t>(pid);
+    auto ret = DlAclApi::RtSetIpcMemorySuperPodPid(name + 1, sdid, &pidArg, 1);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("set shm(" << name + 1 << ") for sdid=" << sdid << " pid=" << pid << " failed: " << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    BM_LOG_INFO("set shm(" << name + 1 << ") for sdid=" << sdid << " pid=" << pid << " success.");
+    return BM_OK;
+}
+
+namespace {
+// reserve flags 候选（按优先级）：该驱动（25.7.0/ascendhal 7.35.23）实测 reserve 的 flags 为页型
+// 标志（1=HUGE）而非旧驱动的 MEM_RSV_TYPE_REMOTE_MAP 语义，且 expectPtr 可能为空才被接受；
+// 逐候选探测，失败降级。useExpect=false 时采用驱动自选地址。
+struct ReserveFlagCandidate {
+    uint64_t flags;
+    bool useExpect;
+};
+const ReserveFlagCandidate kReserveCandidates[] = {
+    {MEM_RSV_TYPE_REMOTE_MAP, true}, // 旧语义：REMOTE_MAP + 指定 VaManager 预留地址
+    {1, true},                       // 页型(HUGE) + 指定地址
+    {1, false},                      // 页型(HUGE) + 驱动自选地址（放弃 VaManager 预留）
+    {0, false},
+};
+
+// 单次 reserve 尝试：成功且地址符合期望返回 lva；地址不符时释放驱动侧预留返回 0 表示换候选
+uint64_t TryHalReserve(uint64_t size, uint64_t expectLva, uint64_t flags, bool useExpect)
+{
+    void *lva = nullptr;
+    void *expect = useExpect ? reinterpret_cast<void *>(expectLva) : nullptr;
+    auto ret = DlHalApi::HalMemAddressReserve(&lva, size, 0, expect, flags);
+    if (ret != 0) {
+        return 0;
+    }
+    const auto got = reinterpret_cast<uint64_t>(lva);
+    if (useExpect && got != expectLva) {
+        (void)DlHalApi::HalMemAddressFree(lva); // 驱动返回了非请求地址：释放该预留，尝试下一候选
+        return 0;
+    }
+    return got;
+}
+} // namespace
+
+uint64_t AsymmetricMemSegment::ReserveLva(const UserSliceExportInfo &info) noexcept
+{
+    auto reserved =
+        HybmVaManager::GetInstance().AllocReserveLva(options_.rankId, info.size, HVM_DVA, HYBM_MEM_TYPE_DEVICE);
+    const auto reservedLva = reserved.va[HVM_DVA];
+    if (reservedLva == 0) {
+        BM_LOG_ERROR("AllocReserveLva failed: rankId=" << options_.rankId << " remoteRank=" << info.rankId
+                                                       << " size=" << info.size);
+        return 0;
+    }
+    for (const auto &candidate : kReserveCandidates) {
+        auto lva = TryHalReserve(info.size, reservedLva, candidate.flags, candidate.useExpect);
+        if (lva == 0) {
+            continue;
+        }
+        if (!candidate.useExpect) {
+            // 驱动自选地址：归还 VaManager 的预留，后续映射/登记均采用驱动地址
+            HybmVaManager::GetInstance().FreeReserveLva(reservedLva, HVM_DVA);
+        }
+        BM_LOG_INFO("reserve lva ok: rankId=" << options_.rankId << " remoteRank=" << info.rankId
+                                              << " lva=" << VaToStr(lva) << " flags=0x" << std::hex << candidate.flags
+                                              << " useExpect=" << std::dec << candidate.useExpect);
+        return lva;
+    }
+    BM_LOG_ERROR("HalMemAddressReserve failed for all candidates: rankId=" << options_.rankId << " remoteRank="
+                                                                           << info.rankId << " size=" << info.size
+                                                                           << " reservedVa=" << VaToStr(reservedLva));
+    HybmVaManager::GetInstance().FreeReserveLva(reservedLva, HVM_DVA);
+    return 0;
+}
+
+Result AsymmetricMemSegment::UserMemImportAndMapName(void **ptr, const UserSliceExportInfo &info) noexcept
+{
+    const uint16_t type = UserMemNameType(info.name);
+    if (type == USER_HBM_NAME_TYPE_IPC) {
+        auto ret = DlAclApi::RtIpcOpenMemory(ptr, info.name + 1);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("IpcOpenMemory(" << info.name + 1 << ") failed: rankId=" << options_.rankId
+                                          << " sdid=" << sdid_ << " pid=" << pid_ << " deviceId=" << devicePhyId_
+                                          << " remoteDeviceId=" << info.devicePhyId << " ret=" << ret);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        BM_LOG_INFO("IpcOpenMemory(" << info.name + 1 << ") success: rankId=" << options_.rankId
+                                     << " deviceId=" << devicePhyId_);
+        return BM_OK;
+    }
+    if (type != USER_HBM_NAME_TYPE_VMM) {
+        // 未知类型（含 0）：exchange 数据损坏或对端版本不匹配，必须显式报错而非静默跳过
+        BM_LOG_ERROR("unknown user mem name type: rankId=" << options_.rankId << " remoteRank=" << info.rankId
+                                                           << " type=" << type);
+        return BM_INVALID_PARAM;
+    }
+    return ImportAndMapVmmName(ptr, info);
+}
+
+Result AsymmetricMemSegment::ImportAndMapVmmName(void **ptr, const UserSliceExportInfo &info) noexcept
+{
+    MemShareHandle shareHandle{};
+    std::memcpy(shareHandle.share_info, info.name + 1, MEM_SHARE_HANDLE_LEN);
+    drv_mem_handle_t *handle = nullptr;
+    auto ret = DlHalApi::HalMemImport(MEM_HANDLE_TYPE_FABRIC, &shareHandle, logicDeviceId_, &handle);
+    if (ret != BM_OK || handle == nullptr) {
+        BM_LOG_ERROR("HalMemImport failed: rankId=" << options_.rankId << " remoteRank=" << info.rankId
+                                                    << " deviceId=" << logicDeviceId_ << " ret=" << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    const auto lva = ReserveLva(info);
+    if (lva == 0) {
+        // 预留失败的根因已在 ReserveLva 记录；imported handle 不能泄漏
+        ReleaseVmmHandleQuietly(handle);
+        return BM_ERROR;
+    }
+    ret = DlHalApi::HalMemMap(reinterpret_cast<void *>(lva), info.size, 0, handle, 0);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemMap failed: rankId=" << options_.rankId << " remoteRank=" << info.rankId
+                                                 << " lva=" << VaToStr(lva) << " size=" << info.size << " ret=" << ret);
+        ReleaseVmmHandleQuietly(handle);
+        HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    // 授权本地设备对导入内存的读写权限：A5 上 import 映射默认无写权限，
+    // SDMA 写会被硬件静默丢弃（实测 ret=0 但数据未落地），须显式 SetAccess
+    struct drv_mem_access_desc accessDesc[1] = {};
+    accessDesc[0].location.side = MEM_DEV_SIDE;
+    accessDesc[0].location.id = logicDeviceId_;
+    accessDesc[0].type = MEM_ACCESS_TYPE_READWRITE;
+    ret = DlHalApi::HalMemSetAccess(reinterpret_cast<void *>(lva), info.size, accessDesc, 1);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("HalMemSetAccess failed: rankId=" << options_.rankId << " remoteRank=" << info.rankId << " lva="
+                                                       << VaToStr(lva) << " size=" << info.size << " ret=" << ret);
+        ReleaseVmmHandleQuietly(handle);
+        HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    vmmNameToHandle_[std::string(info.name, USER_HBM_NAME_MAX_LEN)] = handle;
+    *ptr = reinterpret_cast<void *>(lva);
+    BM_LOG_INFO("import vmm slice success: rankId=" << options_.rankId << " remoteRank=" << info.rankId
+                                                    << " lva=" << VaToStr(lva) << " size=" << info.size);
+    return BM_OK;
+}
+
+void AsymmetricMemSegment::CloseRemoteIpcMemory(const RegisterSlice &reg) noexcept
+{
+    // RtIpcOpenMemory 返回的地址高 16 位带标记位，close 时需掩码还原（历史行为，保持不变）
+    void *address = reinterpret_cast<void *>(static_cast<ptrdiff_t>(reg.slice->vAddress_ << 16 >> 16));
+    auto ret = DlAclApi::RtIpcCloseMemory(address);
+    if (ret != 0) {
+        BM_LOG_WARN("RtIpcCloseMemory failed: deviceId=" << devicePhyId_ << " addr=" << VaToStr(reg.slice->vAddress_)
+                                                         << " ret=" << ret << ", This may affect future registration.");
+    }
+}
+
+void AsymmetricMemSegment::UnmapRemoteVmmMemory(const RegisterSlice &reg) noexcept
+{
+    const auto lva = reg.slice->vAddress_;
+    auto ret = DlHalApi::HalMemUnmap(reinterpret_cast<void *>(static_cast<ptrdiff_t>(lva)));
+    if (ret != 0) {
+        BM_LOG_WARN("HalMemUnmap failed: deviceId=" << devicePhyId_ << " lva=" << VaToStr(lva) << " ret=" << ret);
+    }
+    HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
+    auto it = vmmNameToHandle_.find(reg.name);
+    if (it == vmmNameToHandle_.end()) {
+        BM_LOG_WARN("vmm handle not found on unimport, may leak: deviceId=" << devicePhyId_ << " lva=" << VaToStr(lva));
+        return;
+    }
+    ReleaseVmmHandleQuietly(it->second);
+    vmmNameToHandle_.erase(it);
+}
+
+void AsymmetricMemSegment::UserMemUnImportName(uint32_t sliceId) noexcept
+{
+    auto rIt = remoteSlices_.find(sliceId);
+    if (rIt == remoteSlices_.end()) {
+        return; // 未登记条目（含尚未登记的回滚场景）为 no-op
+    }
+    const auto &reg = rIt->second;
+    if (reg.slice == nullptr || reg.slice->vAddress_ == 0) {
+        return; // 未实际打开映射（不可达/非 shared/DRAM），无资源可释放
+    }
+    const auto type = UserMemNameType(reg.name);
+    if (type == USER_HBM_NAME_TYPE_IPC) {
+        CloseRemoteIpcMemory(reg);
+    } else if (type == USER_HBM_NAME_TYPE_VMM) {
+        UnmapRemoteVmmMemory(reg);
+    }
+}
+
+Result AsymmetricMemSegment::UserMemDestroyName(const char *name) noexcept
+{
+    // 仅 IPC 名有可销毁的共享名；VMM 导出侧 retain 引用已在导出时释放，无资源可清理
+    if (UserMemNameType(name) != USER_HBM_NAME_TYPE_IPC) {
+        return BM_OK;
+    }
+    auto ret = DlAclApi::RtIpcDestroyMemoryName(name + 1);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("destroy memory name failed: rankId=" << options_.rankId << " name=" << name + 1
+                                                           << " ret=" << ret);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    return BM_OK;
 }
 
 } // namespace mf

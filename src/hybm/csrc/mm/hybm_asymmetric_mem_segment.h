@@ -16,15 +16,21 @@
 #include <atomic>
 #include <bitset>
 
+#include "dl_hal_api.h"
 #include "hybm_dev_legacy_segment.h"
 #include "hybm_mem_segment.h"
 
 namespace ock {
 namespace mf {
 constexpr size_t MAX_PEER_DEVICES = 16;
+// 共享名首字节类型标记：IPC（C 字符串名）或 VMM（128B 二进制 share_handle）
+constexpr uint16_t USER_HBM_NAME_TYPE_IPC = 0x1U;
+constexpr uint16_t USER_HBM_NAME_TYPE_VMM = 0x2U;
+// max(DEVICE_SHM_NAME_SIZE + 1, MEM_SHARE_HANDLE_LEN) + 1：1 字节类型标记 + IPC 名或 128B share_handle
+constexpr uint32_t USER_HBM_NAME_MAX_LEN = MEM_SHARE_HANDLE_LEN + 1U;
 struct RegisterSlice {
     MemSlicePtr slice;
-    std::string name;       // HBM 为 IPC name；DRAM 为空串
+    std::string name;       // HBM shared 为带类型标记的定长名（129B）；DRAM/非 shared 为空串
     bool hostMapped{false}; // DRAM 注册时是否执行过 HalHostRegister（释放时对称回滚）
     RegisterSlice() = default;
     RegisterSlice(MemSlicePtr s, std::string n) noexcept : slice(std::move(s)), name(std::move(n)) {}
@@ -63,10 +69,13 @@ struct UserSliceExportInfo {
     uint32_t superPodId{0};
     uint32_t rankId{0};
     uint32_t devicePhyId{0};
-    char name[DEVICE_SHM_NAME_SIZE + 1]{}; // HBM shared 时的 IPC name；DRAM 恒为空
+    // 共享名：name[0] 为类型标记（USER_HBM_NAME_TYPE_*），name+1 为 IPC 名（C 字符串）或
+    // 128B 二进制 share_handle（可含 \0，全链路必须定长构造 std::string，禁止 strlen 截断）；
+    // DRAM/非 shared 恒为全零
+    char name[USER_HBM_NAME_MAX_LEN]{};
 
     // Padding to make total size UNIFIED_EXCHANGE_SEG_INFO_SIZE(192) bytes
-    char padding_[UNIFIED_EXCHANGE_SEG_INFO_SIZE - 117]{};
+    char padding_[UNIFIED_EXCHANGE_SEG_INFO_SIZE - 181]{};
 };
 static_assert(sizeof(UserSliceExportInfo) == UNIFIED_EXCHANGE_SEG_INFO_SIZE, "UserSliceExportInfo must be 192 bytes");
 static_assert(offsetof(UserSliceExportInfo, segmentType) == SEGMENT_TYPE_OFFSET, "segmentType offset mismatch!");
@@ -114,6 +123,18 @@ private:
     void RollbackImportedSlices(const std::vector<MemSlicePtr> &slices) noexcept;
     void RemoveSliceInfo(const uint32_t rankId) noexcept;
 
+    // ===== IPC/VMM 双路径共享 helper：分流点集中在以下函数，业务函数只感知 name 类型 =====
+    Result UserMemExportName(const void *ptr, uint64_t len, char *name) noexcept;
+    Result ExportVmmShareName(const void *ptr, char *name) noexcept;
+    Result UserMemSetSuperPodPid(const char *name, uint32_t sdid, uint32_t pid) noexcept;
+    uint64_t ReserveLva(const UserSliceExportInfo &info) noexcept;
+    Result UserMemImportAndMapName(void **ptr, const UserSliceExportInfo &info) noexcept;
+    Result ImportAndMapVmmName(void **ptr, const UserSliceExportInfo &info) noexcept;
+    void UserMemUnImportName(uint32_t sliceId) noexcept;
+    void CloseRemoteIpcMemory(const RegisterSlice &reg) noexcept;
+    void UnmapRemoteVmmMemory(const RegisterSlice &reg) noexcept;
+    Result UserMemDestroyName(const char *name) noexcept;
+
 private:
     std::mutex mutex_;
     std::bitset<MAX_PEER_DEVICES> enablePeerDevices_;
@@ -122,7 +143,7 @@ private:
     std::map<uint32_t, std::vector<MemSlicePtr>> rankToRemoteSlices_;
     std::map<uint32_t, HbmExportDeviceInfo> importedDeviceInfo_;
     std::map<std::string, UserSliceExportInfo> importedSliceInfo_;
-    std::set<void *> registerAddrs_{};
+    std::map<std::string, drv_mem_handle_t *> vmmNameToHandle_{}; // VMM 导入的远端映射 handle（key 为 129B 定长名）
     std::vector<std::string> memNames_{};
     std::atomic<bool> unReserveDone_{false};
 };

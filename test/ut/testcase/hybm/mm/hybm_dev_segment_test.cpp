@@ -200,18 +200,25 @@ TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RollbackImportedSlices)
     options.segType = ock::mf::HYBM_MST_HBM;
     options.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
     options.rankCnt = 1;
+    options.shared = true; // RollbackImportedSlices 仅在 shared 段执行
 
     ock::mf::AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     auto validateRet = segment.ValidateOptions();
     EXPECT_EQ(validateRet, BM_OK);
 
-    // 仅 DEVICE 且 vAddress_ 非零的条目才回滚 RtIpcCloseMemory；HOST 条目与零 vAddress_ 条目跳过
+    // 回滚按 remoteSlices_ 登记名分流：仅 IPC 且 vAddress_ 非零的条目关闭 RtIpcCloseMemory；
+    // 空名（HOST）与零 vAddress_ 条目为 no-op
     auto hostSlice = std::make_shared<ock::mf::MemSlice>(0xFF01, HYBM_MEM_TYPE_HOST, ock::mf::MEM_PT_TYPE_SVM,
                                                          0x10000000ULL, 0x20000000ULL, 4096ULL);
     auto devSliceNoIpc = std::make_shared<ock::mf::MemSlice>(0xFF02, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
                                                              0x10001000ULL, 0, 4096ULL);
     auto devSliceIpc = std::make_shared<ock::mf::MemSlice>(0xFF03, HYBM_MEM_TYPE_DEVICE, ock::mf::MEM_PT_TYPE_SVM,
                                                            0x10002000ULL, 0x20002000ULL, 4096ULL);
+    std::string ipcName(ock::mf::USER_HBM_NAME_MAX_LEN, '\0');
+    ipcName[0] = static_cast<char>(ock::mf::USER_HBM_NAME_TYPE_IPC);
+    segment.remoteSlices_[hostSlice->index_] = ock::mf::RegisterSlice{hostSlice, ""};
+    segment.remoteSlices_[devSliceNoIpc->index_] = ock::mf::RegisterSlice{devSliceNoIpc, ipcName};
+    segment.remoteSlices_[devSliceIpc->index_] = ock::mf::RegisterSlice{devSliceIpc, ipcName};
 
     MOCKER(&ock::mf::DlAclApi::RtIpcCloseMemory).stubs().will(invoke(RtIpcCloseMemoryCountStub));
 
@@ -362,9 +369,6 @@ TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RemoveSliceInfo_SingleSliceNoSdm
 
     segment.rankToRemoteSlices_[rankId].assign({remoteSlice});
 
-    void *addrKey = reinterpret_cast<void *>(static_cast<uintptr_t>(vAddress));
-    segment.registerAddrs_.insert(addrKey);
-
     segment.remoteSlices_[static_cast<uint16_t>(sliceIndex)] = ock::mf::RegisterSlice(remoteSlice, sliceName);
 
     ock::mf::UserSliceExportInfo exportInfo{};
@@ -383,14 +387,12 @@ TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_RemoveSliceInfo_SingleSliceNoSdm
     segment.importedSliceInfo_[sliceName] = exportInfo;
 
     EXPECT_EQ(segment.rankToRemoteSlices_.count(rankId), 1U);
-    EXPECT_EQ(segment.registerAddrs_.count(addrKey), 1U);
     EXPECT_EQ(segment.remoteSlices_.count(static_cast<uint16_t>(sliceIndex)), 1U);
     EXPECT_EQ(segment.importedSliceInfo_.count(sliceName), 1U);
 
     segment.RemoveSliceInfo(rankId);
 
     EXPECT_EQ(segment.rankToRemoteSlices_.count(rankId), 0U);
-    EXPECT_EQ(segment.registerAddrs_.count(addrKey), 0U);
     EXPECT_EQ(segment.remoteSlices_.count(static_cast<uint16_t>(sliceIndex)), 0U);
     EXPECT_EQ(segment.importedSliceInfo_.count(sliceName), 0U);
 }
@@ -575,12 +577,14 @@ TEST_F(HybmDevSegmentTest, AsymmetricMemSegment_ImportSliceInfo_SuccessNoHardwar
     EXPECT_EQ(segment.rankToRemoteSlices_.at(10).size(), 1U);
     EXPECT_EQ(segment.rankToRemoteSlices_.at(10)[0], remoteSlice);
 
+    // shared=false 亦按 129B 定长名登记（防 VMM 二进制名 strlen 截断）
+    const std::string storedName(sliceInfo.name, USER_HBM_NAME_MAX_LEN);
     EXPECT_EQ(segment.remoteSlices_.count(0), 1U);
-    EXPECT_EQ(segment.remoteSlices_.at(0).name, "slice_10_5");
+    EXPECT_EQ(segment.remoteSlices_.at(0).name, storedName);
     EXPECT_EQ(segment.remoteSlices_.at(0).slice, remoteSlice);
 
-    EXPECT_EQ(segment.importedSliceInfo_.count("slice_10_5"), 1U);
-    const auto &stored = segment.importedSliceInfo_.at("slice_10_5");
+    EXPECT_EQ(segment.importedSliceInfo_.count(storedName), 1U);
+    const auto &stored = segment.importedSliceInfo_.at(storedName);
     EXPECT_EQ(stored.gvaOffset, sliceInfo.gvaOffset);
     EXPECT_EQ(stored.rankId, 10U);
 }

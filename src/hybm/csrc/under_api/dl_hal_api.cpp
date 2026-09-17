@@ -84,6 +84,7 @@ halMemTransShareableHandleFunc DlHalApi::pHalMemTransShareableHandle = nullptr;
 halMemGetAllocationGranularityFunc DlHalApi::pHalMemGetAllocationGranularity = nullptr;
 halMemAllocFunc DlHalApi::pHalMemAlloc = nullptr;
 halMemFreeFunc DlHalApi::pHalMemFree = nullptr;
+halMemRetainAllocationHandleFunc DlHalApi::pHalMemRetainAllocationHandle = nullptr;
 drvMemGetAttributeFunc DlHalApi::pDrvMemGetAttribute = nullptr;
 dcmiGetUrmaDeviceCntFunc DlHalApi::pDcmiGetUrmaDeviceCnt = nullptr;
 dcmiGetEidListByUrmaDevIndexFunc DlHalApi::pDcmiGetEidListByUrmaDevIndex = nullptr;
@@ -159,6 +160,9 @@ Result DlHalApi::LoadHybmVmmLibrary(uint32_t gvaVersion)
                 "halMemGetAllocationGranularity");
     DL_LOAD_SYM(pHalMemAlloc, halMemAllocFunc, halHandle, "halMemAlloc");
     DL_LOAD_SYM(pHalMemFree, halMemFreeFunc, halHandle, "halMemFree");
+    // 旧驱动无此符号：OPTIONAL 加载，仅 A5 VMM 共享路径调用，缺失时 wrapper 返回 BM_UNDER_API_UNLOAD
+    DL_LOAD_SYM_OPTIONAL(pHalMemRetainAllocationHandle, halMemRetainAllocationHandleFunc, halHandle,
+                         "halMemRetainAllocationHandle");
 
     return BM_OK;
 }
@@ -308,6 +312,7 @@ void DlHalApi::CleanupHalApi()
     pHalMemTransShareableHandle = nullptr;
     pHalMemAlloc = nullptr;
     pHalMemFree = nullptr;
+    pHalMemRetainAllocationHandle = nullptr;
     pDrvMemGetAttribute = nullptr;
     pDcmiInit = nullptr;
     pDcmiGetAffinityCpuInfo = nullptr;
