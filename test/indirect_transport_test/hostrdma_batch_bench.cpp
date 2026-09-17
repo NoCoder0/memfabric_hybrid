@@ -65,6 +65,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -90,6 +91,9 @@ constexpr uint32_t kDefaultGatherThreads = 16;
 constexpr uint32_t kDefaultScatterThreads = 6;
 constexpr uint32_t kContDstAgg = 16; /* cont：本地侧是连续 staging，按 16 个 IO 聚合一次地址描述 */
 constexpr uint64_t kSpinTimeoutUs = 5ULL * 1000 * 1000; /* 自旋等水位的上限：超过就报错退出，避免静默挂死 */
+const std::vector<uint32_t> kDefaultMatrixCounts = {100,  200,  300,  400,  600,   800,   1200,  1600,
+                                                    2400, 3200, 4800, 6400, 9600, 12800, 19200, 25600};
+const std::vector<uint64_t> kDefaultMatrixSizes = {576, 656, 1152, 8192};
 
 struct BenchArgs {
     std::string role; /* local / remote */
@@ -103,7 +107,8 @@ struct BenchArgs {
     uint64_t size = kDefaultSize;
     uint64_t stride = kDefaultStride;
     uint64_t dramMB = kDefaultDramMB;
-    bool dramMBSet = false; /* 是否显式指定 --dram-mb；未指定时按布局自动放大（count 大时默认 16MB 不够） */
+    bool dramSpecified = false;
+    bool matrixSpecified = false;
     uint32_t chunk = kDefaultChunk;   /* cont: 每 chunk 个 IO 提交一批并推进一次 flag */
     uint32_t warmup = kDefaultWarmup; /* 前 warmup 轮不计时 */
     uint32_t rounds = kDefaultRounds; /* 计时轮数 */
@@ -111,6 +116,8 @@ struct BenchArgs {
     uint32_t scatterThreads = kDefaultScatterThreads;
     std::string gatherCpuSpec;
     std::vector<int> gatherCpus;
+    std::vector<uint32_t> counts;
+    std::vector<uint64_t> sizes;
     int32_t logLevel = -1;            /* <0 表示不改库的日志级别；0~5 见 smem_set_log_level */
 };
 
@@ -122,6 +129,8 @@ void Usage(const char *prog)
             "  --mode=all|baseline|cont|gather  场景(默认 all)\n"
             "  --count=N                  小 IO 数(默认600)\n"
             "  --size=N                   单块字节(默认1024)\n"
+            "  --counts=N,N,...           gather 多 case 包数列表\n"
+            "  --sizes=N,N,...            gather 多 case 包大小列表\n"
             "  --stride=N                 离散摆放间隔(默认4096，必须 >= --size)\n"
             "  --dram-mb=N                每 rank 对称 host 内存 MB(不指定则按 count/size/stride 自动计算，最小16)\n"
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
@@ -140,6 +149,48 @@ void Usage(const char *prog)
             "        cont     = 写 local 的连续 staging（水位推进）→ local 边收边散；\n"
             "        gather   = remote 多线程 gather → 单次整块 write → local 多线程 scatter。\n",
             prog, kContDstAgg);
+}
+
+bool ParsePositiveList(const std::string &spec, std::vector<uint64_t> &values)
+{
+    size_t begin = 0;
+    while (begin < spec.size()) {
+        const size_t comma = spec.find(',', begin);
+        const std::string token = spec.substr(begin, comma == std::string::npos ? comma : comma - begin);
+        try {
+            size_t parsed = 0;
+            const uint64_t value = std::stoull(token, &parsed);
+            if (token.empty() || token[0] == '-' || parsed != token.size() || value == 0) {
+                throw std::invalid_argument("invalid positive integer");
+            }
+            values.push_back(value);
+        } catch (const std::exception &) {
+            fprintf(stderr, "[ERROR] invalid matrix list: %s\n", spec.c_str());
+            return false;
+        }
+        if (comma == std::string::npos) {
+            return true;
+        }
+        begin = comma + 1;
+    }
+    fprintf(stderr, "[ERROR] empty matrix list\n");
+    return false;
+}
+
+bool ParseCounts(const std::string &spec, std::vector<uint32_t> &counts)
+{
+    std::vector<uint64_t> values;
+    if (!ParsePositiveList(spec, values)) {
+        return false;
+    }
+    for (uint64_t value : values) {
+        if (value > std::numeric_limits<uint32_t>::max()) {
+            fprintf(stderr, "[ERROR] count is too large: %llu\n", static_cast<unsigned long long>(value));
+            return false;
+        }
+        counts.push_back(static_cast<uint32_t>(value));
+    }
+    return true;
 }
 
 bool ParseCpuNumber(const std::string &text, int &cpu)
@@ -226,11 +277,21 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.count = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--size") {
             a.size = std::stoull(v);
+        } else if (k == "--counts") {
+            a.matrixSpecified = true;
+            if (!ParseCounts(v, a.counts)) {
+                return false;
+            }
+        } else if (k == "--sizes") {
+            a.matrixSpecified = true;
+            if (!ParsePositiveList(v, a.sizes)) {
+                return false;
+            }
         } else if (k == "--stride") {
             a.stride = std::stoull(v);
         } else if (k == "--dram-mb") {
             a.dramMB = std::stoull(v);
-            a.dramMBSet = true;
+            a.dramSpecified = true;
         } else if (k == "--chunk") {
             a.chunk = static_cast<uint32_t>(std::stoul(v));
         } else if (k == "--warmup") {
@@ -269,6 +330,16 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
     }
     if (!a.gatherCpuSpec.empty() && !ParseCpuList(a.gatherCpuSpec, a.gatherCpus)) {
         return false;
+    }
+    if (a.matrixSpecified && a.mode != "gather") {
+        fprintf(stderr, "[ERROR] --counts/--sizes require --mode=gather\n");
+        return false;
+    }
+    if (a.counts.empty()) {
+        a.counts = a.matrixSpecified ? kDefaultMatrixCounts : std::vector<uint32_t>{a.count};
+    }
+    if (a.sizes.empty()) {
+        a.sizes = a.matrixSpecified ? kDefaultMatrixSizes : std::vector<uint64_t>{a.size};
     }
     return true;
 }
@@ -519,6 +590,27 @@ bool WaitPeerReady(smem_bm_t bm, uint32_t selfRank, uint32_t peerRank, uint64_t 
             retryMs = std::min(retryMs * 2, kReadyRetryMaxMs);
         }
     }
+}
+
+bool WaitCaseBarrier(smem_bm_t bm, uint64_t selfGva, uint64_t peerGva, uint64_t readyOff, uint64_t readyOutOff,
+                     uint64_t generation)
+{
+    auto *received = reinterpret_cast<volatile uint64_t *>(HostPtr(selfGva + readyOff));
+    auto *out = reinterpret_cast<uint64_t *>(HostPtr(selfGva + readyOutOff));
+    const uint64_t begin = NowUs();
+    while (NowUs() - begin <= kReadyTimeoutUs) {
+        *out = generation;
+        std::atomic_thread_fence(std::memory_order_release);
+        smem_copy_params params{out, HostPtr(peerGva + readyOff), sizeof(generation), nullptr};
+        const int32_t ret = smem_bm_copy(bm, &params, SMEMB_COPY_AUTO, 0);
+        if (ret == 0 && *received == generation) {
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(kReadyRetryMinMs));
+    }
+    fprintf(stderr, "[ERROR] case barrier timeout: generation=%llu received=%llu\n",
+            static_cast<unsigned long long>(generation), static_cast<unsigned long long>(*received));
+    return false;
 }
 
 /* 每块数据布局（remote 填充 / local 校验共用同一规则）：
@@ -838,7 +930,7 @@ int32_t PublishDone(const GatherScenarioContext &ctx, uint64_t doneDestination, 
     return smem_bm_copy(ctx.bm, &done, SMEMB_COPY_AUTO, 0);
 }
 
-void RunGatherSender(const GatherScenarioContext &ctx)
+bool RunGatherSender(const GatherScenarioContext &ctx)
 {
     const auto &a = *ctx.args;
     PrintLabel("gather (sender)");
@@ -848,9 +940,11 @@ void RunGatherSender(const GatherScenarioContext &ctx)
     auto *sequence = reinterpret_cast<volatile uint64_t *>(
         HostPtr(ctx.selfGva + ctx.msgOff + MsgSeqOff(a.count, 1)));
     uint64_t lastSequence = ctx.seqBase;
+    bool succeeded = true;
     const uint32_t totalRounds = a.warmup + a.rounds;
     for (uint32_t round = 0; round < totalRounds; ++round) {
         if (!WaitForSequence(sequence, lastSequence, round, "gather sender")) {
+            succeeded = false;
             break;
         }
         lastSequence = *sequence;
@@ -869,6 +963,7 @@ void RunGatherSender(const GatherScenarioContext &ctx)
         const uint64_t serviceEnd = NowUs();
         if (doneRet != 0) {
             printf("gather sender abort at iter %u dataRet=%d doneRet=%d\n", round, dataRet, doneRet);
+            succeeded = false;
             break;
         }
         if (round >= a.warmup) {
@@ -880,9 +975,10 @@ void RunGatherSender(const GatherScenarioContext &ctx)
     PrintLat("gather sender", "gather", gatherCosts, a.warmup);
     PrintLat("gather sender", "write", writeCosts, a.warmup);
     PrintLat("gather sender", "service", serviceCosts, a.warmup);
+    return succeeded && serviceCosts.size() == a.rounds;
 }
 
-void RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *reference)
+bool RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *reference)
 {
     const auto &a = *ctx.args;
     PrintLabel("gather (receiver)");
@@ -895,6 +991,7 @@ void RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *referenc
     }
     auto *done = reinterpret_cast<volatile uint64_t *>(HostPtr(ctx.selfGva + ctx.doneOff));
     std::vector<uint64_t> e2eCosts, scatterCosts;
+    bool succeeded = true;
     uint64_t expected = ctx.seqBase + 1U;
     const uint32_t totalRounds = a.warmup + a.rounds;
     for (uint32_t round = 0; round < totalRounds; ++round, ++expected) {
@@ -903,6 +1000,7 @@ void RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *referenc
                                                          staging, a.count, ctx.selfGva + ctx.doneOff, expected);
         if (requestRet != 0) {
             printf("gather receiver request failed at iter %u ret=%d\n", round, requestRet);
+            succeeded = false;
             break;
         }
         const uint64_t waitBegin = NowUs();
@@ -912,6 +1010,7 @@ void RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *referenc
         if (*done < expected) {
             printf("gather receiver TIMEOUT at iter %u: done=%llu expect=%llu\n", round,
                    static_cast<unsigned long long>(*done), static_cast<unsigned long long>(expected));
+            succeeded = false;
             break;
         }
         const uint64_t scatterBegin = NowUs();
@@ -933,6 +1032,25 @@ void RunGatherReceiver(const GatherScenarioContext &ctx, const uint8_t *referenc
         PrintVerifyFail("gather receiver scattered", 0, scatterResult);
     }
     printf("gather receiver verify=%s\n", (stagingResult.ok && scatterResult.ok) ? "OK" : "FAIL");
+    return succeeded && e2eCosts.size() == a.rounds && stagingResult.ok && scatterResult.ok;
+}
+
+void PrepareGatherCase(const BenchArgs &args, bool isLocal, uint64_t selfGva, uint64_t gatherMsgOff,
+                       uint64_t dispBase, uint64_t doneOff, uint64_t seqBase)
+{
+    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + doneOff)) = seqBase;
+    *reinterpret_cast<uint64_t *>(HostPtr(selfGva + gatherMsgOff + MsgSeqOff(args.count, 1))) = seqBase;
+    if (isLocal) {
+        for (uint32_t index = 0; index < args.count; ++index) {
+            memset(HostPtr(selfGva + static_cast<uint64_t>(index) * args.size), 0, args.size);
+            memset(HostPtr(selfGva + dispBase + static_cast<uint64_t>(index) * args.stride), 0, args.size);
+        }
+    } else {
+        for (uint32_t index = 0; index < args.count; ++index) {
+            FillBlock(HostPtr(selfGva + static_cast<uint64_t>(index) * args.stride), index, args.size);
+        }
+    }
+    std::atomic_thread_fence(std::memory_order_release);
 }
 
 } // namespace
@@ -942,6 +1060,24 @@ int main(int argc, char *argv[])
     BenchArgs a;
     if (!ParseArgs(argc, argv, a)) {
         Usage(argv[0]);
+        return 1;
+    }
+    const bool matrixMode = a.matrixSpecified;
+    const uint32_t layoutCount = *std::max_element(a.counts.begin(), a.counts.end());
+    const uint64_t layoutSize = *std::max_element(a.sizes.begin(), a.sizes.end());
+    const uint64_t layoutStride = matrixMode ? 2U * layoutSize : a.stride;
+    a.count = a.counts.front();
+    a.size = a.sizes.front();
+    if (matrixMode) {
+        a.stride = 2U * a.size;
+        const uint64_t required = 4U * static_cast<uint64_t>(layoutCount) * layoutSize + 32U * 1024U * 1024U;
+        const uint64_t autoDramMb = AlignUp(required, 2U * 1024U * 1024U) / (1024U * 1024U);
+        if (!a.dramSpecified) {
+            a.dramMB = autoDramMb;
+        }
+    }
+    if (a.dramMB == 0 || (a.dramMB % 2U) != 0) {
+        fprintf(stderr, "[ERROR] --dram-mb must be a positive multiple of 2 MiB\n");
         return 1;
     }
     /* chunk 非法或超过总数：退化为整批一次 flag */
@@ -961,10 +1097,10 @@ int main(int argc, char *argv[])
     }
     /* 本地侧目标地址描述的个数（= 发起方每轮下发的目标地址列表长度）：
        baseline 的本地目标是离散的 → 逐个给；cont 的本地侧是连续 staging → 按 kContDstAgg 聚合。 */
-    const uint32_t baseDstCount = a.count;
+    const uint32_t baseDstCount = layoutCount;
     /* 必须向上取整：若用整除，count 不是 agg 整数倍时最后 count%agg 个 iov 会被夹到最后一个描述上，
        目标地址算错（实测：600/16=37 → 592~599 号块被写到 576 号槽，校验必然 FAIL）。 */
-    const uint32_t contDstCount = (a.count + kContDstAgg - 1) / kContDstAgg;
+    const uint32_t contDstCount = (layoutCount + kContDstAgg - 1) / kContDstAgg;
     const uint32_t gatherDstCount = 1; /* 整块 write 只需下发 local staging 起始地址 */
     /* 链路档位：库侧恒为 1 条 transport 链路 —— 多网卡由 HCOM 在同一个 service 内部建多条 rail
        并自动分流（库侧 epCount_ = 1）。hcom-url 里的 url 个数只决定库用几张网卡，
@@ -980,6 +1116,11 @@ int main(int argc, char *argv[])
            a.role.c_str(), a.rank, a.count, static_cast<unsigned long long>(a.size),
            static_cast<unsigned long long>(a.stride), a.warmup, a.rounds, a.chunk, baseDstCount, contDstCount, links,
            a.gatherThreads, a.scatterThreads, a.mode.c_str());
+    if (matrixMode) {
+        printf("[bench] matrix cases=%zu layoutCount=%u layoutSize=%llu dramMB=%llu\n",
+               a.counts.size() * a.sizes.size(), layoutCount, static_cast<unsigned long long>(layoutSize),
+               static_cast<unsigned long long>(a.dramMB));
+    }
 
     /* 布局常量（两端同一公式）
        [0, stagingEnd)                    连续 staging（cont 的接收侧）
@@ -995,12 +1136,13 @@ int main(int argc, char *argv[])
        布局至少要装下 staging(count×size) + gap + 离散区(count×stride) + 地址消息区 + 槽区余量。
        否则 count 一变大就会命中下面的 "dram-mb too small" 断言
        —— 例如 count=9600、size=1KB、stride=4KB 需要约 50MB，而默认只有 16MB。 */
-    if (!a.dramMBSet) {
-        const uint64_t stagingNeed = 2 * AlignUp(a.count * a.size, 4096) + 4096;
-        const uint64_t dispNeed = AlignUp(a.count * a.stride, 4096);
-        const uint64_t msgNeed = 3 * MsgBytes(a.count, baseDstCount);
+    if (!a.dramSpecified) {
+        const uint64_t stagingNeed = 2 * AlignUp(static_cast<uint64_t>(layoutCount) * layoutSize, 4096) + 4096;
+        const uint64_t dispNeed = AlignUp(static_cast<uint64_t>(layoutCount) * layoutStride, 4096);
+        const uint64_t msgNeed = 3 * MsgBytes(layoutCount, baseDstCount);
         const uint64_t slotNeed =
-            AlignUp(static_cast<uint64_t>((a.count + a.chunk - 1) / a.chunk) * links * 8ULL, 64) + static_cast<uint64_t>(links) * 8ULL + 3 * 8 + 4096;
+            AlignUp(static_cast<uint64_t>((layoutCount + a.chunk - 1) / a.chunk) * links * 8ULL, 64) +
+            static_cast<uint64_t>(links) * 8ULL + 3 * 8 + 4096;
         const uint64_t minBytes = stagingNeed + dispNeed + msgNeed + slotNeed;
         uint64_t needMB = (minBytes + (1ULL << 20) - 1) >> 20;
         needMB = ((needMB + 15) / 16) * 16; /* 向上取整到 16MB */
@@ -1012,11 +1154,11 @@ int main(int argc, char *argv[])
     }
 
     const uint64_t dramBytes = a.dramMB * 1024 * 1024;
-    const uint64_t stagingEnd = AlignUp(a.count * a.size, 4096); /* staging 连续区尾部 */
+    const uint64_t stagingEnd = AlignUp(static_cast<uint64_t>(layoutCount) * layoutSize, 4096);
     const uint64_t dispBase = stagingEnd + 4096;                 /* 离散源/目标区起点 */
-    const uint64_t sparseEnd = dispBase + a.count * a.stride;
+    const uint64_t sparseEnd = dispBase + static_cast<uint64_t>(layoutCount) * layoutStride;
     const uint64_t aggregateOff = AlignUp(sparseEnd, 4096);
-    const uint32_t flagsPerRound = (a.count + a.chunk - 1) / a.chunk; /* 每条 rail 每轮最多这么多个水位 */
+    const uint32_t flagsPerRound = (layoutCount + a.chunk - 1) / a.chunk;
     const uint64_t wmOff = dramBytes - static_cast<uint64_t>(links) * 8ULL; /* 水位槽区（每 rail 一个 8B） */
     const uint64_t flagOff = wmOff;                                         /* rail0 的水位槽 */
     const uint64_t scratchOff =
@@ -1028,7 +1170,7 @@ int main(int argc, char *argv[])
        固定按"两侧各 count 个地址"预留整块空间，本轮实际有效项数由消息头的 dstCount/agg 决定。 */
     const uint64_t msgOff = AlignUp(aggregateOff + stagingEnd, 4096);
     /* 每个场景独占一个按最大消息长度预留的槽，避免前一场景的地址表覆盖后一场景的 seq。 */
-    const uint64_t msgRegionBytes = MsgBytes(a.count, baseDstCount);
+    const uint64_t msgRegionBytes = MsgBytes(layoutCount, baseDstCount);
     const uint64_t baseMsgOff = msgOff;
     const uint64_t contMsgOff = baseMsgOff + msgRegionBytes;
     const uint64_t gatherMsgOff = contMsgOff + msgRegionBytes;
@@ -1458,14 +1600,54 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (runGather) {
+    bool benchmarkOk = true;
+    if (runGather && !matrixMode) {
         const uint64_t seqBase = (runBase ? kRoundsPerScenario : 0U) + (runCont ? kRoundsPerScenario : 0U);
         GatherScenarioContext context{bm,       &a,          selfGva, peerGva, gatherMsgOff,
                                       aggregateOff, dispBase, doneOff, seqBase};
         if (isLocal) {
-            RunGatherReceiver(context, refBlock.data());
+            benchmarkOk = RunGatherReceiver(context, refBlock.data());
         } else {
-            RunGatherSender(context);
+            benchmarkOk = RunGatherSender(context);
+        }
+    }
+    if (runGather && matrixMode) {
+        uint64_t caseIndex = 0;
+        const uint64_t totalCases = a.counts.size() * a.sizes.size();
+        for (uint64_t caseSize : a.sizes) {
+            for (uint32_t caseCount : a.counts) {
+                a.count = caseCount;
+                a.size = caseSize;
+                a.stride = 2U * caseSize;
+                a.chunk = std::min(kDefaultChunk, caseCount);
+                const uint64_t seqBase = caseIndex * kRoundsPerScenario;
+                if (caseIndex != 0) {
+                    PrepareGatherCase(a, isLocal, selfGva, gatherMsgOff, dispBase, doneOff, seqBase);
+                    const uint64_t generation = 0x4341534500000000ULL + caseIndex;
+                    if (!WaitCaseBarrier(bm, selfGva, peerGva, readyOff, readyOutOff, generation)) {
+                        benchmarkOk = false;
+                        break;
+                    }
+                }
+                printf("\n[suite] case=%llu/%llu bytes/pkt=%llu packets=%u total_bytes=%llu\n",
+                       static_cast<unsigned long long>(caseIndex + 1U), static_cast<unsigned long long>(totalCases),
+                       static_cast<unsigned long long>(a.size), a.count,
+                       static_cast<unsigned long long>(a.count * a.size));
+                std::vector<uint8_t> caseReference(static_cast<size_t>(256) * a.size);
+                for (uint32_t value = 0; value < 256; ++value) {
+                    memset(caseReference.data() + static_cast<size_t>(value) * a.size, static_cast<int>(value), a.size);
+                }
+                GatherScenarioContext context{bm,       &a,          selfGva, peerGva, gatherMsgOff,
+                                              aggregateOff, dispBase, doneOff, seqBase};
+                benchmarkOk = isLocal ? RunGatherReceiver(context, caseReference.data()) : RunGatherSender(context);
+                if (!benchmarkOk) {
+                    break;
+                }
+                ++caseIndex;
+            }
+            if (!benchmarkOk) {
+                break;
+            }
         }
     }
 
@@ -1473,5 +1655,5 @@ int main(int argc, char *argv[])
     smem_bm_destroy(bm);
     smem_bm_uninit(0);
     printf("[bench] done\n");
-    return 0;
+    return benchmarkOk ? 0 : 1;
 }
