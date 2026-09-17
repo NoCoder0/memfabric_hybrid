@@ -94,6 +94,17 @@ enum MF_HYBM_MOD {
     /* 每 iov 预处理（不进 dataOperator 的逐 iov 循环） */
     TP_HYBM_HOST_RDMA_BATCH_LOCATE_ADDR,  /* LocateAddrAndRank + groupMap 分组 */
     TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, /* TransformVa */
+    /* 整轮 batch 覆盖 + 其余逐 iov 循环 */
+    TP_HYBM_HOST_RDMA_BATCH_TOTAL,      /* smem_bm_copy_batch 全流程（与 bench 打印的 transport 对齐） */
+    TP_HYBM_HOST_RDMA_BATCH_QUERY_MR,   /* BatchCopyLH2GH 里 600 次 QueryHasRegistered */
+    TP_HYBM_HOST_RDMA_BATCH_PREP_DESC,  /* BatchCopyGH2GH 里 600 次分类 + vector 构造 */
+    TP_HYBM_HOST_RDMA_PROGRESS_WM,      /* 分块提交循环（含每 chunk 一次水位写） */
+    TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC, /* 单包单边写 + 同步（SendAddrMsg / done flag） */
+    TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, /* ↑ 内部：WriteRemoteAsync 段 */
+    TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT,   /* ↑ 内部：Synchronize 等完成段 */
+    /* 取值类打点：本轮 iov 个数 / 总 KB（打印列按 us 显示，值按 ×1000 换回个数或 KB） */
+    TP_HYBM_HOST_RDMA_IOV_COUNT,
+    TP_HYBM_HOST_RDMA_TOTAL_KB,
 
     TP_HYBM_RDMA_LH_TO_GH,
     TP_HYBM_RDMA_LH_TO_GD,

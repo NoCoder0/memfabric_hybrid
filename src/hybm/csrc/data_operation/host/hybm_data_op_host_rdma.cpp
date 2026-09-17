@@ -282,12 +282,18 @@ Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA, void *destVA, uint64_
            而不是同步单包口 WriteRemote（ChannelPut 传 nullptr 回调）。
            实测同步单包口在小消息（几字节~几十字节）上有 ~4ms 的固定开销，异步口是几十 us 量级；
            语义不变 —— 这里依旧等本次写完成才返回。 */
-        TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_READ_REMOTE)
+        TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC) /* 此前误用 READ_REMOTE：这里是单包单边写 + 等完成 */
+        uint64_t putSubmitT0 = 0;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, &putSubmitT0);
         ret = transportManager_->WriteRemoteAsync(options.destRankId, srcBase, destBase, length);
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, putSubmitT0, ret)
+        uint64_t putWaitT0 = 0;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT, &putWaitT0);
         if (ret == BM_OK) {
             ret = transportManager_->Synchronize(options.destRankId);
         }
-        TP_TRACE_END(TP_HYBM_HOST_RDMA_READ_REMOTE, ret)
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT, putWaitT0, ret)
+        TP_TRACE_END(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC, ret)
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;
     }
@@ -1152,12 +1158,14 @@ Result HostDataOpRDMA::BatchCopyLH2GH(void **gvaAddrs, void **hostAddrs, const u
         }
     } else {
         bool registered = true;
+        TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_QUERY_MR)
         for (uint32_t i = 0U; i < batchSize; i++) {
             if (!transportManager_->QueryHasRegistered(reinterpret_cast<uint64_t>(hostAddrs[i]), counts[i])) {
                 registered = false;
                 break;
             }
         }
+        TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_QUERY_MR, registered ? 0 : 1)
         if (registered) {
             ret = BatchCopyGH2GH(gvaAddrs, hostAddrs, counts, batchSize, options);
         } else {
@@ -1230,6 +1238,7 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
 
     CopyDescriptor smallIoDes;
     CopyDescriptor bigIoDes;
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC)
     for (auto i = 0U; i < batchSize; i++) {
         if (counts[i] <= SMALL_IO_LIMIT_SIZE) {
             smallIoDes.localAddrs.emplace_back(srcAddrs[i]);
@@ -1241,6 +1250,7 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
             bigIoDes.counts.emplace_back(counts[i]);
         }
     }
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC, 0)
 
     if (!smallIoDes.counts.empty()) {
         if (!isPut) {
@@ -1298,6 +1308,8 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
     const size_t interval = (options.progressInterval == 0) ? (end - begin) : options.progressInterval;
     size_t cursor = begin;
     uint32_t chunkIndex = 0;
+    uint64_t wmT0 = 0;
+    TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_PROGRESS_WM, &wmT0);
     while (cursor < end) {
         const size_t chunkEnd = std::min(cursor + interval, end);
         auto ret = (railIdx < 0) ? transportManager_->SubmitWriteBatchOnEp(options.destRankId, ep, descriptor, cursor,
@@ -1308,6 +1320,7 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
             BM_LOG_ERROR("Failed to submit batch chunk, destRank:" << options.destRankId << " ep:" << ep
                                                                    << " begin:" << cursor << " end:" << chunkEnd
                                                                    << " ret:" << ret);
+            TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, ret)
             return ret;
         }
         // Every watermark gets its own source slot: the NIC reads the source when it processes the WQE, so
@@ -1322,11 +1335,13 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to submit batch progress, destRank:" << options.destRankId << " ep:" << ep
                                                                       << " done:" << chunkEnd << " ret:" << ret);
+            TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, ret)
             return ret;
         }
         cursor = chunkEnd;
         ++chunkIndex;
     }
+    TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, 0);
     return BM_OK;
 }
 
