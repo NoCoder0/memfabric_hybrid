@@ -23,6 +23,18 @@ constexpr int LISTEN_POLL_TIME = 500; // 500ms
 #else
 constexpr int LISTEN_POLL_TIME = 10; // 10ms
 #endif
+
+namespace {
+// 依据 listener 自身配置的 ip:port 构造 URL，IPv6 需加方括号，保证解析出的地址就是本 listener 要 bind 的地址。
+std::string BuildListenUrl(const std::string &ip, uint16_t port)
+{
+    if (ip.find(':') != std::string::npos && (ip.empty() || ip.front() != '[')) {
+        return "tcp://[" + ip + "]:" + std::to_string(port);
+    }
+    return "tcp://" + ip + ":" + std::to_string(port);
+}
+} // namespace
+
 Result AccTcpListener::Start() noexcept
 {
     if (started_) {
@@ -32,12 +44,11 @@ Result AccTcpListener::Start() noexcept
 
     VALIDATE_RETURN(connHandler_ != nullptr, "connection handler not initialized", ACC_ERROR);
 
+    // 必须按本 listener 的 ip:port 解析地址，不能复用 GetParser(port) 的端口缓存：
+    // HA 主备场景下同一端口会先后出现不同 IP 的 parser，复用会导致 bind 到其它节点的 IP，
+    // 报 "Cannot assign requested address"(EADDRNOTAVAIL)，本节点永远无法成为 leader。
     auto &mgr = mf::SocketAddressParserMgr::getInstance();
-    auto parser = mgr.GetParser(listenPort_);
-    if (parser == nullptr) {
-        std::string url = "tcp://" + listenIp_ + ":" + std::to_string(listenPort_);
-        parser = mgr.CreateParser(url);
-    }
+    auto parser = mgr.CreateParser(BuildListenUrl(listenIp_, listenPort_));
     VALIDATE_RETURN(parser != nullptr, "parser not initialized", ACC_ERROR);
 
     /* create socket */

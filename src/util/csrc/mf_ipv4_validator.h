@@ -345,6 +345,9 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         auto find = url2Parsers_.find(url);
         if (find != url2Parsers_.end()) {
+            // 同一端口可能对应不同 IP 的 parser，端口表须始终指向最近一次显式创建的 parser，
+            // 否则按端口取到的地址族/IP 与预期不一致。
+            port2Parsers_[find->second->GetPort()] = find->second;
             return find->second;
         }
         auto *o = new (std::nothrow) UrlParser;
