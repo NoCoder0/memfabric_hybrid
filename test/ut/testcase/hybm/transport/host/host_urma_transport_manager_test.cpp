@@ -35,13 +35,13 @@ uint32_t g_fenceCount = 0;
 bool g_channelCreated = false;
 
 struct HcommSubmitGuard {
-    hcommWriteOnThreadFunc oldWrite{DlHcommApi::gHcommWriteOnThread};
-    hcommChannelFenceOnThreadFunc oldFence{DlHcommApi::gHcommChannelFenceOnThread};
+    hcommWriteNbiFunc oldWrite{DlHcommApi::gHcommWriteNbi};
+    hcommChannelFenceFunc oldFence{DlHcommApi::gHcommChannelFence};
 
     ~HcommSubmitGuard()
     {
-        DlHcommApi::gHcommWriteOnThread = oldWrite;
-        DlHcommApi::gHcommChannelFenceOnThread = oldFence;
+        DlHcommApi::gHcommWriteNbi = oldWrite;
+        DlHcommApi::gHcommChannelFence = oldFence;
     }
 };
 
@@ -53,6 +53,15 @@ struct HcommPrepareGuard {
     {
         DlHcommApi::gHcommChannelCreate = oldChannelCreate;
         DlHcommApi::gHcommChannelGetStatus = oldChannelGetStatus;
+    }
+};
+
+struct HcommImportGuard {
+    hcommMemImportFunc oldImport{DlHcommApi::gHcommMemImport};
+
+    ~HcommImportGuard()
+    {
+        DlHcommApi::gHcommMemImport = oldImport;
     }
 };
 
@@ -110,7 +119,16 @@ int32_t ChannelReady(const ChannelHandle *channels, uint32_t count, int32_t *sta
     return 0;
 }
 
-int32_t WriteAgainThenSuccess(ThreadHandle, ChannelHandle channel, void *dst, const void *src, uint64_t size)
+int32_t ImportDeviceMemory(EndpointHandle endpoint, const void *, uint32_t descLen, HcommCommMem *memory)
+{
+    EXPECT_EQ(endpoint, TEST_ENDPOINT);
+    EXPECT_EQ(descLen, 1U);
+    memory->addr = reinterpret_cast<void *>(HCOMM_ADDR);
+    memory->size = TEST_SIZE;
+    return 0;
+}
+
+int32_t WriteAgainThenSuccess(ChannelHandle channel, void *dst, const void *src, uint64_t size)
 {
     EXPECT_EQ(channel, TEST_CHANNEL);
     EXPECT_EQ(dst, reinterpret_cast<void *>(HCOMM_ADDR));
@@ -119,7 +137,7 @@ int32_t WriteAgainThenSuccess(ThreadHandle, ChannelHandle channel, void *dst, co
     return g_writeCount++ == 0 ? HCOMM_E_AGAIN : 0;
 }
 
-int32_t FenceSuccess(ThreadHandle, ChannelHandle channel)
+int32_t FenceSuccess(ChannelHandle channel)
 {
     EXPECT_EQ(channel, TEST_CHANNEL);
     ++g_fenceCount;
@@ -130,8 +148,8 @@ int32_t FenceSuccess(ThreadHandle, ChannelHandle channel)
 TEST(HostUrmaTransportManagerTest, WriteRemoteRetriesAfterQueueFull)
 {
     HcommSubmitGuard guard;
-    DlHcommApi::gHcommWriteOnThread = WriteAgainThenSuccess;
-    DlHcommApi::gHcommChannelFenceOnThread = FenceSuccess;
+    DlHcommApi::gHcommWriteNbi = WriteAgainThenSuccess;
+    DlHcommApi::gHcommChannelFence = FenceSuccess;
     g_writeCount = 0;
     g_fenceCount = 0;
 
@@ -149,6 +167,18 @@ TEST(HostUrmaTransportManagerTest, WriteRemoteRetriesAfterQueueFull)
     EXPECT_EQ(g_writeCount, 2U);
     EXPECT_EQ(g_fenceCount, 1U);
     EXPECT_TRUE(state.pending);
+}
+
+TEST(HostUrmaTransportManagerTest, QueryHasRegisteredAcceptsSubrange)
+{
+    HostUrmaTransportManager manager;
+    HostUrmaTransportManager::LocalRegistration registration{};
+    registration.mr.addr = LOCAL_ADDR;
+    registration.mr.size = TEST_SIZE;
+    manager.localRegistrations_.emplace(LOCAL_ADDR, registration);
+
+    EXPECT_TRUE(manager.QueryHasRegistered(LOCAL_ADDR + 64U, TEST_SIZE - 64U));
+    EXPECT_FALSE(manager.QueryHasRegistered(LOCAL_ADDR + 64U, TEST_SIZE));
 }
 
 TEST(HostUrmaTransportManagerTest, UpdateRankOptionsFallsBackToPrepareForNewPeerWithoutHoldingLock)
@@ -178,8 +208,10 @@ TEST(HostUrmaTransportManagerTest, UpdateRankOptionsFallsBackToPrepareForNewPeer
     manager.opened_ = false;
 }
 
-TEST(HostUrmaTransportManagerTest, UpdateRankOptionsProcessesExistingDevicePeerMemoryKeysThroughPrepare)
+TEST(HostUrmaTransportManagerTest, UpdateRankOptionsProcessesExistingDevicePeerMemoryKeysDirectly)
 {
+    HcommImportGuard guard;
+    DlHcommApi::gHcommMemImport = ImportDeviceMemory;
     HostUrmaTransportManager manager;
     auto endpoint = MakeEndpointDesc();
     endpoint.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
@@ -187,18 +219,28 @@ TEST(HostUrmaTransportManagerTest, UpdateRankOptionsProcessesExistingDevicePeerM
     state.endpointDesc = endpoint;
     state.channel = TEST_CHANNEL;
     manager.opened_ = true;
+    manager.rankCount_ = 2U;
+    manager.localEndpoint_ = std::make_shared<urma::UrmaEndpointEntity>();
+    manager.localEndpoint_->hcommEndpoint = TEST_ENDPOINT;
+    manager.localEndpoint_->desc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
 
     HybmTransPrepareOptions options{};
     options.options[REMOTE_RANK].privateData = MakePrivateData(endpoint);
     options.options[REMOTE_RANK].memKeys.emplace_back(MakeDeviceMemoryKey());
 
     EXPECT_EQ(manager.UpdateRankOptions(options), BM_OK);
+    ASSERT_EQ(state.imports.size(), 1U);
+    EXPECT_EQ(state.imports[0].exportedAddr, REMOTE_ADDR);
+    EXPECT_EQ(state.imports[0].view.addr, HCOMM_ADDR);
+    EXPECT_EQ(state.imports[0].view.type, UrmaMemoryType::DEVICE_HBM);
     manager.opened_ = false;
 }
 
 TEST(HostUrmaTransportManagerTest, UpdateRankOptionsRejectsExistingPeerEndpointChange)
 {
     HostUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankCount_ = 2U;
     auto endpoint = MakeEndpointDesc();
     auto &state = manager.remoteRanks_[REMOTE_RANK];
     state.endpointDesc = endpoint;
@@ -208,6 +250,22 @@ TEST(HostUrmaTransportManagerTest, UpdateRankOptionsRejectsExistingPeerEndpointC
     changedEndpoint.raws[0]++;
     HybmTransPrepareOptions changedOptions{};
     changedOptions.options[REMOTE_RANK].privateData = MakePrivateData(changedEndpoint);
-    changedOptions.options[REMOTE_RANK].privateData.ip[0] = '1';
     EXPECT_EQ(manager.UpdateRankOptions(changedOptions), BM_NOT_SUPPORTED);
+    manager.opened_ = false;
+}
+
+TEST(HostUrmaTransportManagerTest, PrepareRejectsExistingPeerEndpointChange)
+{
+    HostUrmaTransportManager manager;
+    manager.opened_ = true;
+    auto endpoint = MakeEndpointDesc();
+    auto &state = manager.remoteRanks_[REMOTE_RANK];
+    state.endpointDesc = endpoint;
+    state.channel = TEST_CHANNEL;
+
+    endpoint.raws[0]++;
+    HybmTransPrepareOptions changedOptions{};
+    changedOptions.options[REMOTE_RANK].privateData = MakePrivateData(endpoint);
+    EXPECT_EQ(manager.Prepare(changedOptions), BM_NOT_SUPPORTED);
+    manager.opened_ = false;
 }
