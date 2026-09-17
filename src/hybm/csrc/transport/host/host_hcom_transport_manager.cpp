@@ -162,7 +162,7 @@ static void CopyHcomOneSideKey(const TransportMemoryKey &from, OneSideKey &to)
     std::copy_n(from.keys + std::size(to.keys), std::size(to.tokens), to.tokens);
 #if defined(NO_XPU)
     auto offset = std::size(to.tokens) + std::size(to.keys);
-    std::copy_n(reinterpret_cast<uint8_t *>(from.keys + offset), URMA_EID_LENGTH, to.eid);
+    std::copy_n(reinterpret_cast<const uint8_t *>(from.keys + offset), URMA_EID_LENGTH, to.eid);
 #endif
 }
 
