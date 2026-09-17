@@ -113,7 +113,7 @@ typedef enum {
 } hybm_role_type;
 
 typedef struct {
-    uint8_t desc[1280L];
+    uint8_t *desc;
     uint32_t descLen;
 } hybm_exchange_info;
 

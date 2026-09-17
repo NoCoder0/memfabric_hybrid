@@ -553,8 +553,7 @@ TEST_F(HybmEntityDefaultTest, ExportExchangeInfo)
 {
     ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_EXPORT);
 
-    hybm_exchange_info hbmSliceInfo;
-    bzero(&hbmSliceInfo, sizeof(hybm_exchange_info));
+    hybm_exchange_info hbmSliceInfo{};
     ock::mf::ExchangeInfoWriter writer(&hbmSliceInfo);
 
     // 测试导出实体信息（未初始化的情况）
@@ -564,6 +563,7 @@ TEST_F(HybmEntityDefaultTest, ExportExchangeInfo)
     // 测试导出切片信息（未初始化的情况）
     exportRet = entity.ExportSliceExchangeInfo(nullptr, writer, 0);
     EXPECT_EQ(exportRet, BM_NOT_INITIALIZED);
+    hybm_export_info_free(&hbmSliceInfo);
 }
 
 // 测试 MemEntityDefault 导入交换信息
@@ -595,6 +595,7 @@ TEST_F(HybmEntityDefaultTest, ImportExchangeInfo)
 
     entity.UnInitialize();
     EXPECT_FALSE(entity.initialized_);
+    hybm_export_info_free(&info);
 }
 
 // 测试 MemEntityDefault 移除导入的内存
@@ -1361,7 +1362,6 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     entity.transportManager_ = std::make_shared<FakeTransportManager>();
 
     hybm_exchange_info ex0{};
-    bzero(&ex0, sizeof(ex0));
     ock::mf::ExchangeInfoWriter w0(&ex0);
     ock::mf::EntityExportInfo e0{};
     e0.rankId = TEST_RANK_0;
@@ -1371,7 +1371,6 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     w0.Append(e0);
 
     hybm_exchange_info ex1{};
-    bzero(&ex1, sizeof(ex1));
     ock::mf::ExchangeInfoWriter w1(&ex1);
     ock::mf::EntityExportInfo e1{};
     e1.rankId = TEST_RANK_1;
@@ -1387,6 +1386,8 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_0), "tag_0");
     EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_1), "tag_1");
     EXPECT_TRUE(entity.transportPrepared_);
+    hybm_export_info_free(&ex0);
+    hybm_export_info_free(&ex1);
 }
 
 TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareWithOptions)
@@ -1435,11 +1436,11 @@ TEST_F(HybmEntityDefaultTest, ExportExchangeInfo_WithLongNic_ReturnError)
     entity.transportManager_ = std::make_shared<FakeTransportManagerLongNic>();
 
     hybm_exchange_info ex{};
-    bzero(&ex, sizeof(ex));
     ock::mf::ExchangeInfoWriter writer(&ex);
 
     auto ret = entity.ExportEntityExchangeInfo(writer, 0);
     EXPECT_NE(ret, BM_OK);
+    hybm_export_info_free(&ex);
 }
 
 TEST_F(HybmEntityDefaultTest, ExportExchangeInfo_AppendFail_ReturnError)
@@ -1473,11 +1474,11 @@ TEST_F(HybmEntityDefaultTest, ExportExchangeInfo_TransScene_HbmSegmentNull_Retur
     entity.hbmSegment_ = nullptr;
 
     hybm_exchange_info ex{};
-    bzero(&ex, sizeof(ex));
     ock::mf::ExchangeInfoWriter writer(&ex);
 
     auto ret = entity.ExportEntityExchangeInfo(writer, 0);
     EXPECT_NE(ret, BM_OK);
+    hybm_export_info_free(&ex);
 }
 
 // ==================== CheckOptions 扩展测试 ====================
@@ -1677,11 +1678,11 @@ TEST_F(HybmEntityDefaultTest, ExportEntityExchangeInfo_NonTransHbmNull_SkipSegme
     entity.hbmSegment_ = nullptr;
 
     hybm_exchange_info ex{};
-    bzero(&ex, sizeof(ex));
     ock::mf::ExchangeInfoWriter writer(&ex);
 
     auto ret = entity.ExportEntityExchangeInfo(writer, 0);
     EXPECT_EQ(ret, BM_OK); // should skip hbm segment and return OK
+    hybm_export_info_free(&ex);
 }
 
 // ==================== ExportSliceExchangeInfo 边界测试 ====================
@@ -1699,13 +1700,13 @@ TEST_F(HybmEntityDefaultTest, ExportSliceExchangeInfo_SliceNotFoundInSegments)
     entity.dramSegment_ = nullptr;
 
     hybm_exchange_info ex{};
-    bzero(&ex, sizeof(ex));
     ock::mf::ExchangeInfoWriter writer(&ex);
 
     // Passing a non-null but invalid slice should cause the export to fail
     hybm_mem_slice_t badSlice = reinterpret_cast<hybm_mem_slice_t>(0xDEAD);
     auto ret = entity.ExportSliceExchangeInfo(badSlice, writer, 0);
     EXPECT_NE(ret, BM_OK);
+    hybm_export_info_free(&ex);
 }
 
 // ==================== ImportSliceExchangeInfo 边界测试 ====================

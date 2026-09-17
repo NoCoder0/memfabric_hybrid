@@ -33,36 +33,47 @@ static int32_t AllGatherAndImportPeers(const SmemGroupEnginePtr &group,
                                        const std::vector<hybm_exchange_info> &localInfos, hybm_entity_t entity,
                                        uint32_t importFlags, uint32_t rankCount, uint32_t selfRank)
 {
-    uint32_t infoCount = static_cast<uint32_t>(localInfos.size());
-    std::vector<uint32_t> allCounts(rankCount, 0);
-    auto ret = group->GroupAllGather(reinterpret_cast<const char *>(&infoCount), sizeof(uint32_t),
-                                     reinterpret_cast<char *>(allCounts.data()), sizeof(uint32_t) * rankCount);
+    std::vector<uint8_t> localPayload;
+    for (auto info : localInfos) {
+        const auto *infoLen = reinterpret_cast<const uint8_t *>(&info.descLen);
+        localPayload.insert(localPayload.end(), infoLen, infoLen + sizeof(info.descLen));
+        if (info.descLen <= 0 || info.desc == nullptr) {
+            OFFLOAD_LOG_ERROR("allgather exchange localInfos is invalid.");
+            return OFFLOAD_ERROR;
+        }
+        localPayload.insert(localPayload.end(), info.desc, info.desc + info.descLen);
+    }
+    uint32_t payloadSize = static_cast<uint32_t>(localPayload.size());
+    std::vector<uint32_t> payloadSizes(rankCount, 0);
+    auto ret = group->GroupAllGather(reinterpret_cast<const char *>(&payloadSize), sizeof(uint32_t),
+                                     reinterpret_cast<char *>(payloadSizes.data()), rankCount * sizeof(uint32_t));
     if (ret != OFFLOAD_OK) {
         return ret;
     }
-    uint32_t maxCount = *std::max_element(allCounts.cbegin(), allCounts.cend());
-    if (maxCount == 0) {
+    uint32_t maxPayload = *std::max_element(payloadSizes.cbegin(), payloadSizes.cend());
+    if (maxPayload == 0) {
         return group->GroupBarrier();
     }
-    std::vector<hybm_exchange_info> sendInfos(maxCount);
-    for (uint32_t i = 0; i < infoCount; i++) {
+
+    std::vector<hybm_exchange_info> sendInfos(maxPayload);
+    for (uint32_t i = 0; i < localInfos.size(); i++) {
         sendInfos[i] = localInfos[i];
     }
-    std::vector<hybm_exchange_info> allInfos(static_cast<size_t>(rankCount) * maxCount);
-    ret = group->GroupAllGather(reinterpret_cast<const char *>(sendInfos.data()), maxCount * sizeof(hybm_exchange_info),
-                                reinterpret_cast<char *>(allInfos.data()),
-                                rankCount * maxCount * sizeof(hybm_exchange_info));
+    std::vector<hybm_exchange_info> allInfos(static_cast<size_t>(rankCount) * maxPayload);
+    ret = group->GroupAllGather(reinterpret_cast<const char *>(sendInfos.data()), maxPayload,
+                                reinterpret_cast<char *>(allInfos.data()), rankCount * maxPayload);
     if (ret != OFFLOAD_OK) {
         return ret;
     }
+
     std::vector<hybm_exchange_info> peerInfos;
-    peerInfos.reserve(static_cast<size_t>(rankCount > 0 ? rankCount - 1 : 0) * maxCount);
+    peerInfos.reserve(static_cast<size_t>(rankCount > 0 ? rankCount - 1 : 0) * maxPayload);
     for (uint32_t r = 0; r < rankCount; r++) {
         if (r == selfRank) {
             continue;
         }
-        for (uint32_t i = 0; i < maxCount; i++) {
-            const auto &info = allInfos[static_cast<size_t>(r) * maxCount + i];
+        for (uint32_t i = 0; i < maxPayload; i++) {
+            const auto &info = allInfos[static_cast<size_t>(r) * maxPayload + i];
             if (info.descLen > 0) {
                 peerInfos.push_back(info);
             }
@@ -70,7 +81,12 @@ static int32_t AllGatherAndImportPeers(const SmemGroupEnginePtr &group,
     }
     if (!peerInfos.empty()) {
         ret = hybm_import(entity, peerInfos.data(), peerInfos.size(), nullptr, importFlags);
+        for (auto &parsed : peerInfos) {
+            hybm_export_info_free(&parsed);
+        }
         if (ret != OFFLOAD_OK) {
+            OFFLOAD_LOG_ERROR("hybm import peer infos failed, result: " << ret << ", count: " << peerInfos.size()
+                                                                        << ", rankId: " << selfRank);
             return ret;
         }
     }
@@ -98,6 +114,7 @@ int32_t AccOffloadSharedDramEntry::AllocAndExportHostSlices()
         if (ret != OFFLOAD_OK) {
             OFFLOAD_LOG_ERROR("export host slice failed, result: " << ret << ", sliceSize: " << sliceSize
                                                                    << ", rankId: " << options_.rankId);
+            hybm_export_info_free(&sliceInfo);
             return ret;
         }
         slices_.push_back(memSlice);
@@ -242,6 +259,7 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
         ret = hybm_export(entity_, nullptr, HYBM_FLAG_EXPORT_ENTITY, &entityInfo);
         if (ret != OFFLOAD_OK) {
             OFFLOAD_LOG_ERROR("export entity failed, result: " << ret << ", rankId: " << config.rankId);
+            hybm_export_info_free(&entityInfo);
             ret = OFFLOAD_ERROR;
             break;
         }
@@ -249,6 +267,7 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
             std::vector<hybm_exchange_info> entityInfos{entityInfo};
             ret = AllGatherAndImportPeers(group_, entityInfos, entity_, HYBM_FLAG_EXPORT_ENTITY, options_.rankCount,
                                           options_.rankId);
+            hybm_export_info_free(&entityInfo);
             if (ret != OFFLOAD_OK) {
                 OFFLOAD_LOG_ERROR("allgather/import entity info failed, result: " << ret
                                                                                   << ", rankId: " << config.rankId);
@@ -312,6 +331,9 @@ void AccOffloadSharedDramEntry::UnInitialize()
             hybm_free_local_memory(entity_, slice, 1, flags);
         }
         slices_.clear();
+        for (auto &info : sliceInfos_) {
+            hybm_export_info_free(&info);
+        }
         sliceInfos_.clear();
         hybm_unreserve_mem_space(entity_, flags);
         hybm_destroy_entity(entity_, flags);

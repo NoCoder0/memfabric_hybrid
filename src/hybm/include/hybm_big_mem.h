@@ -117,6 +117,14 @@ hybm_mem_slice_t hybm_register_local_memory(hybm_entity_t e, const void *ptr, ui
 int32_t hybm_export(hybm_entity_t e, hybm_mem_slice_t slice, uint32_t flags, hybm_exchange_info *exInfo);
 
 /**
+ * @brief Clear the exported exchange infor for peer to import
+ *
+ * @param exInfo           [out] exchange info to be filled in
+ * @return 0 if successful, error code if failed
+ */
+void hybm_export_info_free(hybm_exchange_info *exInfo);
+
+/**
  * @brief Import batch of exchange info of other HyBM entities
  *
  * @param e                [in] entity created by hybm_create_entity

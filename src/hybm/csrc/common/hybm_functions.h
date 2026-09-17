@@ -12,7 +12,6 @@
 #ifndef MEM_FABRIC_HYBRID_HYBM_FUNCTIONS_H
 #define MEM_FABRIC_HYBRID_HYBM_FUNCTIONS_H
 
-#include "hybm_define.h"
 #include "hybm_types.h"
 #include "hybm_logger.h"
 #include "mf_str_util.h"

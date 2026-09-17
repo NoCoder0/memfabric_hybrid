@@ -96,7 +96,9 @@ public:
     explicit SmemTransEntry(const smem_trans_config_t &config, std::string &name, uint32_t rank, uint32_t id,
                             StorePtr &store)
         : config_(config), name_(name), store_(store), entityId_(id), rankId_(rank)
-    {}
+    {
+        entityInfo_.hybmInfo = {};
+    }
 
     ~SmemTransEntry() override;
 
@@ -133,6 +135,8 @@ private:
     int OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept;
     std::vector<ock::smem::LinkStateEntry> OnQueryLinkState() noexcept;
     int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
+    int ImportPeerSlicesToMap(const RankFullInfo &other, std::vector<void *> &global,
+                              std::vector<SmemTransExchangeInfo> &slices) noexcept;
 
     // Invoke the peer-down callback for a rank that left the group (worker notification)
     void NotifyPeerDown(uint32_t leavingRankId) noexcept;

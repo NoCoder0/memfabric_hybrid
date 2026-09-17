@@ -28,8 +28,6 @@
 namespace ock {
 namespace smem {
 
-// Max payload carried in hybm_exchange_info.desc[1280]; keep headroom for framework metadata.
-constexpr size_t EXCHANGE_INFO_PAYLOAD_MAX = 1152;
 // LinkState wire values (keep in sync with LinkState in smem_group_manager_server.h)
 constexpr int8_t BM_LINK_IDLE = 0;
 constexpr int8_t BM_LINK_CONNECTED = 4;
@@ -56,6 +54,7 @@ Result SmemBmEntry::AllocDramMemBySlice(hybm_entity_t entity, uint64_t totalSize
         if (ret != 0) {
             SM_LOG_ERROR("hybm export host slice failed, allocated: " << allocated << " sliceSize: " << sliceSize
                                                                       << " result: " << ret);
+            hybm_export_info_free(&sliceInfo);
             return SM_ERROR;
         }
         sliceInfos_.push_back(sliceInfo);
@@ -90,6 +89,7 @@ Result SmemBmEntry::AllocDramMemBestEffort(hybm_entity_t entity, uint64_t totalS
         auto ret = hybm_export(entity, memSlice, flags, &sliceInfo);
         if (ret != 0) {
             SM_LOG_ERROR("hybm export host slice failed at slice: " << sliceIdx << " result: " << ret);
+            hybm_export_info_free(&sliceInfo);
             return SM_ERROR;
         }
         sliceInfos_.push_back(sliceInfo);
@@ -124,6 +124,7 @@ Result SmemBmEntry::AllocDramMem(hybm_entity_t entity, const hybm_options &optio
     auto ret = hybm_export(entity, slice, flags, &dramSliceInfo);
     if (ret != 0) {
         SM_LOG_ERROR("hybm export host slice failed, result: " << ret);
+        hybm_export_info_free(&dramSliceInfo);
         return SM_ERROR;
     }
     sliceInfos_.push_back(dramSliceInfo);
@@ -235,6 +236,9 @@ void SmemBmEntry::Uninitialize()
         hybm_free_local_memory(entity_, slice, 1, flags);
     }
     slices_.clear();
+    for (auto &info : sliceInfos_) {
+        hybm_export_info_free(&info);
+    }
     sliceInfos_.clear();
     realDRAMSize_ = 0;
     realHBMSize_ = 0;
@@ -242,6 +246,7 @@ void SmemBmEntry::Uninitialize()
         hybm_free_local_memory(entity_, pair.second.second, 1, flags);
     }
     registedSlice_.clear();
+    hybm_export_info_free(&entityInfo_);
     hybm_unreserve_mem_space(entity_, flags);
     hybm_destroy_entity(entity_, flags);
     entity_ = nullptr;
@@ -265,9 +270,14 @@ Result SmemBmEntry::Join(uint32_t flags)
     }
 
     RankFullInfo info{groupMgr->GetLocalRankId()};
-    info.baseInfo.insert(info.baseInfo.end(), &entityInfo_.desc[0], &entityInfo_.desc[entityInfo_.descLen]);
+    if (entityInfo_.descLen > 0 && entityInfo_.desc != nullptr) {
+        info.baseInfo.insert(info.baseInfo.end(), entityInfo_.desc, entityInfo_.desc + entityInfo_.descLen);
+    }
     for (auto &[data, len] : sliceInfos_) {
-        Bytes bytes(&data[0], &data[len]);
+        if (len == 0 || data == nullptr) {
+            continue;
+        }
+        Bytes bytes(data, data + len);
         info.externalInfo.emplace_back(std::move(bytes));
     }
     if (auto joinRet = groupMgr->Join(info); joinRet != SM_OK) {
@@ -362,6 +372,7 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
     auto ret = hybm_export(entity_, slice, 0, &info);
     if (ret != 0) {
         SM_LOG_ERROR("Failed to export slice:" << slice << " memType:" << memType << " size:" << size);
+        hybm_export_info_free(&info);
         hybm_free_local_memory(entity_, slice, 1, 0);
         return ret;
     }
@@ -374,18 +385,20 @@ Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
     if (groupMgr == nullptr) {
         SM_LOG_ERROR("ExtendLocalMem: group manager is nullptr");
         slices_.pop_back();
+        hybm_export_info_free(&sliceInfos_.back());
         sliceInfos_.pop_back();
         hybm_free_local_memory(entity_, slice, 1, 0);
         return SM_ERROR;
     }
 
     MultiBytes newSlices;
-    Bytes sliceBytes(&info.desc[0], &info.desc[info.descLen]);
+    Bytes sliceBytes(info.desc, info.desc + info.descLen);
     newSlices.push_back(std::move(sliceBytes));
 
     if (auto ret2 = groupMgr->ExtendMemory(newSlices); ret2 != SM_OK) {
         SM_LOG_ERROR("ExtendLocalMem: ExtendMemory failed, ret=" << ret2);
         slices_.pop_back();
+        hybm_export_info_free(&sliceInfos_.back());
         sliceInfos_.pop_back();
         hybm_free_local_memory(entity_, slice, 1, 0);
         return SM_ERROR;
@@ -776,10 +789,6 @@ int SmemBmEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInf
         return BM_INVALID_PARAM;
     }
 
-    if (auto ret = ValidatePeerPayloads(rankId, others); ret != SMEM_OK) {
-        return ret;
-    }
-
     TP_TRACE_BEGIN(TP_SMEM_GROUP_ADD_TO_WHITELIST);
     auto importRet = ImportPeerEntities(others);
     TP_TRACE_END(TP_SMEM_GROUP_ADD_TO_WHITELIST, importRet == SMEM_OK ? 0 : 1);
@@ -798,36 +807,28 @@ int SmemBmEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInf
     return SMEM_OK;
 }
 
-int SmemBmEntry::ValidatePeerPayloads(uint32_t rankId, const std::vector<RankFullInfo> &others) noexcept
-{
-    for (auto &info : others) {
-        if (info.baseInfo.size() > EXCHANGE_INFO_PAYLOAD_MAX) {
-            SM_LOG_ERROR("rankId: " << rankId << " other rank: " << info.rankId
-                                    << " entity too large: " << info.baseInfo.size());
-            return BM_INVALID_PARAM;
-        }
-
-        for (auto &slice : info.externalInfo) {
-            if (slice.size() > EXCHANGE_INFO_PAYLOAD_MAX) {
-                SM_LOG_ERROR("rankId: " << rankId << " other rank: " << info.rankId
-                                        << " slice too large: " << slice.size());
-                return BM_INVALID_PARAM;
-            }
-        }
-    }
-    return SMEM_OK;
-}
-
 int SmemBmEntry::ImportPeerEntities(const std::vector<RankFullInfo> &others) noexcept
 {
     std::vector<hybm_exchange_info> entities(others.size());
     for (auto i = 0U; i < others.size(); ++i) {
-        std::copy(others[i].baseInfo.begin(), others[i].baseInfo.end(), entities[i].desc);
         entities[i].descLen = others[i].baseInfo.size();
+        entities[i].desc = new (std::nothrow) uint8_t[entities[i].descLen];
+        if (entities[i].desc == nullptr) {
+            SM_LOG_ERROR("ImportPeerEntities: alloc desc failed, rank=" << others[i].rankId
+                                                                        << " size=" << entities[i].descLen);
+            for (auto &parsed : entities) {
+                hybm_export_info_free(&parsed);
+            }
+            return SMEM_ERROR;
+        }
+        std::copy(others[i].baseInfo.begin(), others[i].baseInfo.end(), entities[i].desc);
     }
 
-    if (auto ret = hybm_import(entity_, entities.data(), entities.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
-        ret != BM_OK) {
+    auto ret = hybm_import(entity_, entities.data(), entities.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
+    for (auto &parsed : entities) {
+        hybm_export_info_free(&parsed);
+    }
+    if (ret != BM_OK) {
         SM_LOG_ERROR("failed to import entity: " << ret);
         return SMEM_ERROR;
     }
@@ -846,11 +847,25 @@ int SmemBmEntry::ImportPeerSlices(const std::vector<RankFullInfo> &others) noexc
     std::vector<hybm_exchange_info> slices(totalSliceCount);
     for (auto &info : others) {
         for (auto &slice : info.externalInfo) {
+            slices[i].descLen = slice.size();
+            slices[i].desc = new (std::nothrow) uint8_t[slices[i].descLen];
+            if (slices[i].desc == nullptr) {
+                SM_LOG_ERROR("ImportPeerSlices: alloc desc failed, rank=" << info.rankId
+                                                                          << " size=" << slices[i].descLen);
+                for (auto &s : slices) {
+                    hybm_export_info_free(&s);
+                }
+                return SMEM_ERROR;
+            }
             std::copy(slice.begin(), slice.end(), slices[i].desc);
-            slices[i++].descLen = slice.size();
+            i++;
         }
     }
-    if (auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0); ret != BM_OK) {
+    auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0);
+    for (auto &s : slices) {
+        hybm_export_info_free(&s);
+    }
+    if (ret != BM_OK) {
         SM_LOG_ERROR("hybm import slice failed, result: " << ret << " local_rank:" << options_.rank);
         return SMEM_ERROR;
     }
@@ -885,10 +900,23 @@ int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFu
             continue;
         std::vector<hybm_exchange_info> slices(p.externalInfo.size());
         for (size_t i = 0; i < p.externalInfo.size(); ++i) {
-            std::copy(p.externalInfo[i].begin(), p.externalInfo[i].end(), slices[i].desc);
             slices[i].descLen = p.externalInfo[i].size();
+            slices[i].desc = new (std::nothrow) uint8_t[slices[i].descLen];
+            if (slices[i].desc == nullptr) {
+                SM_LOG_ERROR("OnEstablishConnection: alloc desc failed, rank=" << rankId
+                                                                               << " size=" << slices[i].descLen);
+                for (auto &parsed : slices) {
+                    hybm_export_info_free(&parsed);
+                }
+                return SMEM_ERROR;
+            }
+            std::copy(p.externalInfo[i].begin(), p.externalInfo[i].end(), slices[i].desc);
         }
-        if (auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0); ret != BM_OK) {
+        auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0);
+        for (auto &parsed : slices) {
+            hybm_export_info_free(&parsed);
+        }
+        if (ret != BM_OK) {
             SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << p.rankId << " ret=" << ret);
         }
     }
@@ -944,16 +972,24 @@ int SmemBmEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlic
     infos.reserve(newSlices.size());
     for (const auto &slice : newSlices) {
         hybm_exchange_info info{};
-        if (slice.size() > sizeof(info.desc)) {
-            SM_LOG_ERROR("OnAddSlices: slice size " << slice.size() << " exceeds exchange info size "
-                                                    << sizeof(info.desc) << ", extendingRank=" << extendingRankId);
+        info.descLen = slice.size();
+        info.desc = new (std::nothrow) uint8_t[info.descLen];
+        if (info.desc == nullptr) {
+            SM_LOG_ERROR("OnAddSlices: alloc desc failed, extendingRank=" << extendingRankId
+                                                                          << " size=" << info.descLen);
+            for (auto &parsed : infos) {
+                hybm_export_info_free(&parsed);
+            }
             return SM_ERROR;
         }
         std::copy(slice.begin(), slice.end(), info.desc);
-        info.descLen = static_cast<uint32_t>(slice.size());
         infos.push_back(info);
     }
-    if (auto ret = hybm_import(entity_, infos.data(), infos.size(), nullptr, 0); ret != BM_OK) {
+    auto ret = hybm_import(entity_, infos.data(), infos.size(), nullptr, 0);
+    for (auto &info : infos) {
+        hybm_export_info_free(&info);
+    }
+    if (ret != BM_OK) {
         SM_LOG_ERROR("OnAddSlices: hybm_import failed, extendingRank=" << extendingRankId << " ret=" << ret);
         return SM_ERROR;
     }

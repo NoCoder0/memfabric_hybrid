@@ -553,6 +553,7 @@ TEST_F(HybmBigMemEntryTest, hybm_export_entity_success)
     auto ret = hybm_export(fakeEntity, nullptr, HYBM_FLAG_EXPORT_ENTITY, &info);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_TRUE(stub->exportEntityCalled);
+    hybm_export_info_free(&info);
 }
 
 TEST_F(HybmBigMemEntryTest, hybm_export_slice_success)
@@ -575,6 +576,7 @@ TEST_F(HybmBigMemEntryTest, hybm_export_slice_success)
     EXPECT_EQ(ret, BM_OK);
     EXPECT_TRUE(stub->exportSliceCalled);
     EXPECT_EQ(stub->exportSlice, slice);
+    hybm_export_info_free(&info);
 }
 
 TEST_F(HybmBigMemEntryTest, hybm_import_slices_success)
@@ -597,6 +599,9 @@ TEST_F(HybmBigMemEntryTest, hybm_import_slices_success)
     EXPECT_EQ(ret, BM_OK);
     EXPECT_TRUE(stub->importCalled);
     EXPECT_EQ(stub->importCount, 2U);
+    for (auto info : infos) {
+        hybm_export_info_free(&info);
+    }
 }
 
 TEST_F(HybmBigMemEntryTest, hybm_import_entity_success)
@@ -613,10 +618,20 @@ TEST_F(HybmBigMemEntryTest, hybm_import_entity_success)
     MOCKER(f.func).stubs().will(returnValue(std::static_pointer_cast<ock::mf::MemEntityDefault>(stub)));
 
     hybm_exchange_info infos[1]{};
+    auto testSize = 2048;
+    infos[0].desc = new (std::nothrow) uint8_t[testSize];
+    ASSERT_NE(infos[0].desc, nullptr);
+    infos[0].descLen = testSize;
+    for (uint32_t i = 0; i < testSize; i++) {
+        infos[0].desc[i] = static_cast<uint8_t>(i % 256);
+    }
     auto fakeEntity = reinterpret_cast<hybm_entity_t>(0x12);
     auto ret = hybm_import(fakeEntity, infos, 1, nullptr, HYBM_FLAG_EXPORT_ENTITY);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_TRUE(stub->importEntityCalled);
+    for (auto info : infos) {
+        hybm_export_info_free(&info);
+    }
 }
 
 // ============= hybm_mmap / hybm_unmap =============

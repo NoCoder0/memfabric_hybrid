@@ -93,7 +93,8 @@ public:
     {
         BM_ASSERT_LOG_AND_RETURN(exchangeInfo_ != nullptr, "exchangeInfo_ is nullptr", -1);
         if (readOffset_ + length > exchangeInfo_->descLen) {
-            BM_LOG_ERROR("read data size: " << length << " too long");
+            BM_LOG_ERROR("read data size: " << length << " too long , readOffset_ : " << readOffset_
+                                            << ", descLen :" << exchangeInfo_->descLen);
             return -1;
         }
 
@@ -151,25 +152,39 @@ public:
     explicit ExchangeInfoWriter(hybm_exchange_info *info) noexcept : exchangeInfo_{info}
     {
         if (exchangeInfo_ != nullptr) {
+            exchangeInfo_->desc = nullptr;
             exchangeInfo_->descLen = 0;
         }
     }
 
+    ExchangeInfoWriter(const ExchangeInfoWriter &) = delete;
+    ExchangeInfoWriter &operator=(const ExchangeInfoWriter &) = delete;
+
     inline int Append(const void *data, size_t length) noexcept
     {
         BM_ASSERT_LOG_AND_RETURN(exchangeInfo_ != nullptr, "exchangeInfo_ is nullptr", -1);
-        if (exchangeInfo_->descLen + length > sizeof(exchangeInfo_->desc)) {
+        if (length > UINT32_MAX - exchangeInfo_->descLen) {
             BM_LOG_ERROR("write data size: " << length << " too long");
             return -1;
         }
-
         try {
-            std::copy_n(reinterpret_cast<const uint8_t *>(data), length, exchangeInfo_->desc + exchangeInfo_->descLen);
+            uint32_t newLen = exchangeInfo_->descLen + length;
+            auto *newData = new (std::nothrow) uint8_t[newLen];
+            if (newData == nullptr) {
+                BM_LOG_ERROR("alloc desc buffer failed, newLen: " << newLen << "curLen: " << exchangeInfo_->descLen);
+                return -1;
+            }
+            if (exchangeInfo_->desc != nullptr && exchangeInfo_->descLen > 0) {
+                std::copy_n(exchangeInfo_->desc, exchangeInfo_->descLen, newData);
+            }
+            std::copy_n(reinterpret_cast<const uint8_t *>(data), length, newData + exchangeInfo_->descLen);
+            delete[] exchangeInfo_->desc;
+            exchangeInfo_->desc = newData;
+            exchangeInfo_->descLen = newLen;
         } catch (...) {
             BM_LOG_ERROR("copy failed.");
             return -1;
         }
-        exchangeInfo_->descLen += length;
         return 0;
     }
 

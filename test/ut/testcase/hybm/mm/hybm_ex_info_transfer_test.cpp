@@ -14,6 +14,7 @@
 #include <cstring>
 
 #include "hybm_ex_info_transfer.h"
+#include "hybm_big_mem.h"
 
 using namespace ock::mf;
 
@@ -29,9 +30,13 @@ class ExInfoTransferTest : public testing::Test {
 public:
     void SetUp() override
     {
-        bzero(&exchangeInfo_, sizeof(exchangeInfo_));
+        exchangeInfo_.desc = nullptr;
+        exchangeInfo_.descLen = 0;
     }
-    void TearDown() override {}
+    void TearDown() override
+    {
+        hybm_export_info_free(&exchangeInfo_);
+    }
 
 protected:
     hybm_exchange_info exchangeInfo_;
@@ -74,7 +79,7 @@ TEST_F(ExInfoTransferTest, Writer_AppendMultiple)
 TEST_F(ExInfoTransferTest, Writer_AppendOverflow)
 {
     ExchangeInfoWriter writer(&exchangeInfo_);
-    ASSERT_EQ(writer.Append(exchangeInfo_.desc, sizeof(exchangeInfo_.desc)), 0);
+    exchangeInfo_.descLen = UINT32_MAX;
     char c = 'x';
     EXPECT_NE(writer.Append(&c, sizeof(c)), 0);
 }

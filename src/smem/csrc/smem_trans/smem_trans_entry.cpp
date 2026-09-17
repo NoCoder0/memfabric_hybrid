@@ -121,8 +121,11 @@ int32_t SmemTransEntry::Initialize()
     auto ret = hybm_reserve_mem_space(entity_, 0);
     SM_VALIDATE_RETURN(ret == SM_OK, "hybm_reserve_mem_space failed, ret: " << ret, SM_ERROR);
 
-    ret = hybm_export(entity_, nullptr, HYBM_FLAG_EXPORT_ENTITY, &entityInfo_.hybmInfo);
-    SM_VALIDATE_RETURN(ret == SM_OK, "HybmExport device info failed: " << ret, SM_ERROR);
+    if (auto ret = hybm_export(entity_, nullptr, HYBM_FLAG_EXPORT_ENTITY, &entityInfo_.hybmInfo); ret != SMEM_OK) {
+        SM_LOG_ERROR("HybmExport device info failed: " << ret);
+        hybm_export_info_free(&entityInfo_.hybmInfo);
+        return SM_ERROR;
+    }
 
     entityInfo_.u.session = workerUniqueId_;
     entityInfo_.u.session.reserved = config_.role;
@@ -151,6 +154,8 @@ void SmemTransEntry::UnInitialize()
         ranksRole_.clear();
         nameToWorkerId_.clear();
     }
+
+    hybm_export_info_free(&entityInfo_.hybmInfo);
 
     if (entity_ != nullptr) {
         hybm_destroy_entity(entity_, 0);
@@ -249,6 +254,66 @@ int SmemTransEntry::RegisterExecutorCallbacks(SmemGroupManagerClient *executor,
     return SMEM_OK;
 }
 
+static void SerializeTransExchangeInfo(std::vector<uint8_t> &out, const SmemTransExchangeInfo &info) noexcept
+{
+    const auto *uPtr = reinterpret_cast<const uint8_t *>(&info.u);
+    out.insert(out.end(), uPtr, uPtr + sizeof(info.u));
+    const auto *lenPtr = reinterpret_cast<const uint8_t *>(&info.hybmInfo.descLen);
+    out.insert(out.end(), lenPtr, lenPtr + sizeof(info.hybmInfo.descLen));
+    if (info.hybmInfo.descLen > 0 && info.hybmInfo.desc != nullptr) {
+        out.insert(out.end(), info.hybmInfo.desc, info.hybmInfo.desc + info.hybmInfo.descLen);
+    }
+}
+
+static size_t DeserializeTransExchangeInfo(const uint8_t *buf, size_t bufLen, SmemTransExchangeInfo &info) noexcept
+{
+    constexpr size_t lenFieldSize = sizeof(uint32_t);
+    const size_t uSize = sizeof(SmemTransExchangeInfo::U);
+    const size_t headerSize = uSize + lenFieldSize;
+    if (buf == nullptr || bufLen < headerSize) {
+        return 0;
+    }
+    uint32_t descLen = 0;
+    std::copy_n(buf + uSize, lenFieldSize, reinterpret_cast<uint8_t *>(&descLen));
+    const size_t need = headerSize + descLen;
+    if (bufLen < need) {
+        return 0;
+    }
+    SmemTransExchangeInfo parsed{};
+    std::copy_n(buf, uSize, reinterpret_cast<uint8_t *>(&parsed.u));
+    parsed.hybmInfo.descLen = descLen;
+    if (descLen > 0) {
+        parsed.hybmInfo.desc = new (std::nothrow) uint8_t[descLen];
+        if (parsed.hybmInfo.desc == nullptr) {
+            return 0;
+        }
+        std::copy_n(buf + headerSize, descLen, parsed.hybmInfo.desc);
+    }
+    hybm_export_info_free(&info.hybmInfo);
+    info = parsed;
+    return need;
+}
+
+int SmemTransEntry::ImportPeerSlicesToMap(const RankFullInfo &other, std::vector<void *> &global,
+                                          std::vector<SmemTransExchangeInfo> &slices) noexcept
+{
+    global.assign(slices.size(), nullptr);
+    std::vector<hybm_exchange_info> hybmInfos;
+    hybmInfos.reserve(slices.size());
+    for (const auto &s : slices) {
+        hybmInfos.push_back(s.hybmInfo);
+    }
+    auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(), 0);
+    for (auto &s : slices) {
+        hybm_export_info_free(&s.hybmInfo);
+    }
+    if (ret != BM_OK) {
+        SM_LOG_ERROR("ImportPeerSlicesToMap: hybm_import failed, rank=" << other.rankId << " ret=" << ret);
+        return SMEM_ERROR;
+    }
+    return BM_OK;
+}
+
 int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept
 {
     if (others.empty()) {
@@ -258,19 +323,24 @@ int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFull
 
     std::vector<SmemTransExchangeInfo> entities(others.size());
     for (auto i = 0U; i < others.size(); ++i) {
-        if (others[i].baseInfo.size() != sizeof(SmemTransExchangeInfo)) {
+        if (DeserializeTransExchangeInfo(others[i].baseInfo.data(), others[i].baseInfo.size(), entities[i]) == 0) {
+            for (auto j = 0U; j < i; ++j) {
+                hybm_export_info_free(&entities[j].hybmInfo);
+            }
             SM_LOG_ERROR("OnAddToWhitelist: invalid baseInfo size for rank " << others[i].rankId);
             return SMEM_ERROR;
         }
-        std::copy(others[i].baseInfo.begin(), others[i].baseInfo.end(), reinterpret_cast<uint8_t *>(&entities[i]));
     }
     std::vector<hybm_exchange_info> entityInfos;
     entityInfos.reserve(entities.size());
     for (const auto &e : entities) {
         entityInfos.push_back(e.hybmInfo);
     }
-    if (auto ret = hybm_import(entity_, entityInfos.data(), entityInfos.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
-        ret != BM_OK) {
+    auto ret = hybm_import(entity_, entityInfos.data(), entityInfos.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
+    for (auto &e : entities) {
+        hybm_export_info_free(&e.hybmInfo);
+    }
+    if (ret != BM_OK) {
         SM_LOG_ERROR("failed to import entity: " << ret);
         return SMEM_ERROR;
     }
@@ -279,33 +349,24 @@ int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFull
     // BatchSyncTransfer can resolve remote addresses later. The mapping must be
     // recorded even when the peer has no slices yet: slices registered after
     // Join arrive later via OnAddSlices, which looks up rankToWorkerId_.
-    for (const auto &other : others) {
-        SmemTransExchangeInfo entityInfo{};
-        smem_trans_role_t role = SMEM_TRANS_NONE;
-        WorkerId id;
-        if (!ParseExchangeInfo(other, entityInfo, role, id)) {
-            continue;
-        }
+    for (auto i = 0U; i < others.size(); ++i) {
+        smem_trans_role_t role = static_cast<smem_trans_role_t>(entities[i].u.session.reserved);
+        entities[i].u.session.reserved = 0U; // reserved must be cleared so the WorkerId matches ParseNameToUniqueId
+        WorkerIdUnion wu(entities[i].u.session);
+        WorkerId id = wu.workerId;
 
-        std::vector<SmemTransExchangeInfo> slices;
         std::vector<void *> global;
         std::vector<LocalMapAddress> local;
-        if (!other.externalInfo.empty()) {
-            if (auto ret = ParsePeerSlices(other, slices, local); ret != BM_OK) {
-                continue; // invalid slice size, skip this peer
+        if (!others[i].externalInfo.empty()) {
+            std::vector<SmemTransExchangeInfo> slices;
+            if (auto ret = ParsePeerSlices(others[i], slices, local); ret != BM_OK) {
+                continue;
             }
-            global.resize(other.externalInfo.size(), nullptr);
-            std::vector<hybm_exchange_info> hybmInfos;
-            hybmInfos.reserve(slices.size());
-            for (const auto &s : slices) {
-                hybmInfos.push_back(s.hybmInfo);
-            }
-            if (auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(), 0); ret != BM_OK) {
-                SM_LOG_ERROR("hybm import slice failed, rank: " << other.rankId << " ret: " << ret);
+            if (auto ret = ImportPeerSlicesToMap(others[i], global, slices); ret != BM_OK) {
                 return SMEM_ERROR;
             }
         }
-        AddRemoteInfo(other.rankId, role, id, global, local);
+        AddRemoteInfo(others[i].rankId, role, id, global, local);
     }
 
     SM_LOG_DEBUG("OnAddToWhitelist done, rank=" << rankId << " peers=" << others.size());
@@ -426,8 +487,14 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
         }
         if (auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(), 0); ret != BM_OK) {
             SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
+            for (auto &s : slices) {
+                hybm_export_info_free(&s.hybmInfo);
+            }
             return;
         }
+    }
+    for (auto &s : slices) {
+        hybm_export_info_free(&s.hybmInfo);
     }
 
     mf::WriteGuard locker(remoteSliceRwMutex_);
@@ -466,20 +533,30 @@ int SmemTransEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newS
     if (newSlices.empty()) {
         return SMEM_OK;
     }
-    constexpr size_t kInfoSize = sizeof(SmemTransExchangeInfo);
     std::vector<SmemTransExchangeInfo> infos;
     infos.reserve(newSlices.size());
     std::vector<hybm_exchange_info> hybmInfos;
+    hybmInfos.reserve(newSlices.size());
     std::vector<void *> globalAddrs;
+    globalAddrs.reserve(newSlices.size());
     for (const auto &slice : newSlices) {
         SmemTransExchangeInfo info{};
-        auto copyLen = std::min(slice.size(), kInfoSize);
-        std::copy(slice.begin(), slice.begin() + copyLen, reinterpret_cast<uint8_t *>(&info));
+        if (DeserializeTransExchangeInfo(slice.data(), slice.size(), info) == 0) {
+            SM_LOG_ERROR("OnAddSlices: invalid slice payload for rank " << extendingRankId);
+            for (auto &parsed : hybmInfos) {
+                hybm_export_info_free(&parsed);
+            }
+            return SMEM_ERROR;
+        }
         infos.push_back(info);
         hybmInfos.push_back(info.hybmInfo);
         globalAddrs.push_back(nullptr);
     }
-    if (auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), globalAddrs.data(), 0); ret != BM_OK) {
+    auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), globalAddrs.data(), 0);
+    for (auto &parsed : hybmInfos) {
+        hybm_export_info_free(&parsed);
+    }
+    if (ret != BM_OK) {
         SM_LOG_ERROR("OnAddSlices: hybm_import failed, extendingRank=" << extendingRankId << " ret=" << ret);
         return SMEM_ERROR;
     }
@@ -575,11 +652,10 @@ Result SmemTransEntry::Join(uint32_t flags)
 
     RankFullInfo info{groupMgr->GetLocalRankId()};
     info.protocol = SMEM_RANK_PROTOCOL_TRANS;
-    info.baseInfo.insert(info.baseInfo.end(), reinterpret_cast<const uint8_t *>(&entityInfo_),
-                         reinterpret_cast<const uint8_t *>(&entityInfo_) + sizeof(entityInfo_));
+    SerializeTransExchangeInfo(info.baseInfo, entityInfo_);
     for (const auto &regInfo : registedInfo_) {
-        Bytes bytes(reinterpret_cast<const uint8_t *>(&regInfo),
-                    reinterpret_cast<const uint8_t *>(&regInfo) + sizeof(regInfo));
+        Bytes bytes;
+        SerializeTransExchangeInfo(bytes, regInfo);
         info.externalInfo.emplace_back(std::move(bytes));
     }
 
@@ -665,6 +741,9 @@ Result SmemTransEntry::RegisterLocalMemories(const std::vector<std::pair<const v
     for (auto &m : mm) {
         auto ret = RegisterOneMemory(m.first, m.second, flags);
         if (ret != 0) {
+            for (auto &info : registedInfo_) {
+                hybm_export_info_free(&info.hybmInfo);
+            }
             registedInfo_.clear();
             return ret;
         }
@@ -672,24 +751,34 @@ Result SmemTransEntry::RegisterLocalMemories(const std::vector<std::pair<const v
     // Pack and send new slices to server for propagation to all peers
     MultiBytes newSlices;
     for (const auto &info : registedInfo_) {
-        Bytes bytes(reinterpret_cast<const uint8_t *>(&info), reinterpret_cast<const uint8_t *>(&info) + sizeof(info));
-        newSlices.push_back(std::move(bytes));
+        Bytes bytes;
+        SerializeTransExchangeInfo(bytes, info);
+        newSlices.emplace_back(std::move(bytes));
     }
 
     auto coreStore = store_->GetCoreStore();
     auto groupMgr = dynamic_cast<SmemGroupManager *>(coreStore.Get());
     if (groupMgr == nullptr) {
         SM_LOG_ERROR("RegisterLocalMemories: group manager is nullptr");
+        for (auto &info : registedInfo_) {
+            hybm_export_info_free(&info.hybmInfo);
+        }
         registedInfo_.clear();
         return SM_ERROR;
     }
 
     if (auto ret = groupMgr->ExtendMemory(newSlices); ret != SM_OK) {
         SM_LOG_ERROR("RegisterLocalMemories: ExtendMemory failed, ret=" << ret);
+        for (auto &info : registedInfo_) {
+            hybm_export_info_free(&info.hybmInfo);
+        }
         registedInfo_.clear();
         return SM_ERROR;
     }
 
+    for (auto &info : registedInfo_) {
+        hybm_export_info_free(&info.hybmInfo);
+    }
     registedInfo_.clear();
     return SM_OK;
 }
@@ -950,11 +1039,12 @@ Result SmemTransEntry::RegisterOneMemory(const void *address, uint64_t size, uin
     }
     SM_LOG_DEBUG("register memory(address with size=" << size << ") return slice=" << slice);
 
-    SmemTransExchangeInfo info;
+    SmemTransExchangeInfo info{};
     auto ret = hybm_export(entity_, slice, 0, &info.hybmInfo);
     if (ret != 0) {
         SM_LOG_ERROR("export slice for register address with size: " << size << " failed:" << ret);
         hybm_free_local_memory(entity_, slice, size, 0);
+        hybm_export_info_free(&info.hybmInfo);
         return SM_ERROR;
     }
 
@@ -1013,15 +1103,16 @@ hybm_options SmemTransEntry::GenerateHybmOptions()
 bool SmemTransEntry::ParseExchangeInfo(const RankFullInfo &peer, SmemTransExchangeInfo &entityInfo,
                                        smem_trans_role_t &role, WorkerId &id) noexcept
 {
-    if (peer.baseInfo.size() != sizeof(SmemTransExchangeInfo)) {
-        SM_LOG_ERROR("ParseExchangeInfo: invalid baseInfo size for rank " << peer.rankId);
+    if (DeserializeTransExchangeInfo(peer.baseInfo.data(), peer.baseInfo.size(), entityInfo) == 0) {
+        SM_LOG_ERROR("ParseExchangeInfo: invalid baseInfo size for rank " << peer.rankId
+                                                                          << " size: " << peer.baseInfo.size());
         return false;
     }
-    std::copy(peer.baseInfo.begin(), peer.baseInfo.end(), reinterpret_cast<uint8_t *>(&entityInfo));
     role = static_cast<smem_trans_role_t>(entityInfo.u.session.reserved);
     entityInfo.u.session.reserved = 0U; // reserved must be cleared so the WorkerId matches ParseNameToUniqueId
     WorkerIdUnion wu(entityInfo.u.session);
     id = wu.workerId;
+    hybm_export_info_free(&entityInfo.hybmInfo);
     return true;
 }
 
@@ -1031,11 +1122,16 @@ int SmemTransEntry::ParsePeerSlices(const RankFullInfo &peer, std::vector<SmemTr
     slices.resize(peer.externalInfo.size());
     local.reserve(peer.externalInfo.size());
     for (size_t i = 0; i < peer.externalInfo.size(); ++i) {
-        if (peer.externalInfo[i].size() != sizeof(SmemTransExchangeInfo)) {
-            SM_LOG_ERROR("ParsePeerSlices: invalid externalInfo size for rank " << peer.rankId);
+        SmemTransExchangeInfo info{};
+        if (DeserializeTransExchangeInfo(peer.externalInfo[i].data(), peer.externalInfo[i].size(), info) == 0) {
+            SM_LOG_ERROR("ParsePeerSlices: invalid externalInfo size for rank "
+                         << peer.rankId << " size: " << peer.externalInfo[i].size());
+            for (auto &s : slices) {
+                hybm_export_info_free(&s.hybmInfo);
+            }
             return BM_INVALID_PARAM;
         }
-        std::copy(peer.externalInfo[i].begin(), peer.externalInfo[i].end(), reinterpret_cast<uint8_t *>(&slices[i]));
+        slices[i] = info;
         local.emplace_back(slices[i].u.address.address, slices[i].u.address.size);
     }
     return BM_OK;

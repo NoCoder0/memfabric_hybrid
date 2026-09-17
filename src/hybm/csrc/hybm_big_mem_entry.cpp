@@ -125,6 +125,18 @@ HYBM_API hybm_mem_slice_t hybm_register_local_memory(hybm_entity_t e, const void
     return slice;
 }
 
+HYBM_API void hybm_export_info_free(hybm_exchange_info *exInfo)
+{
+    if (exInfo == nullptr) {
+        return;
+    }
+    if (exInfo->desc != nullptr) {
+        delete[] exInfo->desc;
+        exInfo->desc = nullptr;
+    }
+    exInfo->descLen = 0;
+}
+
 HYBM_API int32_t hybm_export(hybm_entity_t e, hybm_mem_slice_t slice, uint32_t flags, hybm_exchange_info *exInfo)
 {
     BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);
@@ -137,12 +149,14 @@ HYBM_API int32_t hybm_export(hybm_entity_t e, hybm_mem_slice_t slice, uint32_t f
         auto ret = entity->ExportEntityExchangeInfo(writer, 0);
         if (ret != 0) {
             BM_LOG_ERROR("export entity data failed: " << ret);
+            hybm_export_info_free(exInfo);
             return ret;
         }
     } else {
         auto ret = entity->ExportSliceExchangeInfo(slice, writer, flags);
         if (ret != 0) {
             BM_LOG_ERROR("export slices: " << slice << " failed: " << ret);
+            hybm_export_info_free(exInfo);
             return ret;
         }
     }

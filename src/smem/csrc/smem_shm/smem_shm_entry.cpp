@@ -11,6 +11,7 @@
 */
 
 #include <algorithm>
+#include <cstring>
 #include "smem_common_includes.h"
 #include "smem_shm_entry_manager.h"
 #include "hybm_big_mem.h"
@@ -57,22 +58,6 @@ SmemShmEntry::~SmemShmEntry()
     if (entity_ != nullptr) {
         hybm_destroy_entity(entity_, 0);
         entity_ = nullptr;
-    }
-}
-
-static void ReleaseAfterFailed(hybm_entity_t entity, hybm_mem_slice_t slice, void *reservedMem)
-{
-    uint32_t flags = 0;
-    if (entity != nullptr && slice != 0) {
-        hybm_free_local_memory(entity, slice, 1, flags);
-    }
-
-    if (entity != nullptr) {
-        hybm_unreserve_mem_space(entity, flags);
-    }
-
-    if (entity != nullptr) {
-        hybm_destroy_entity(entity, flags);
     }
 }
 
@@ -211,30 +196,84 @@ void SmemShmEntry::InitStepFreeSlice()
     slice_ = nullptr;
 }
 
+static int32_t AllGatherExchangeInfos(const SmemGroupEnginePtr &group, const hybm_exchange_info &localInfo,
+                                      uint32_t rankCount, std::vector<hybm_exchange_info> &allInfos)
+{
+    std::vector<uint8_t> localPayload;
+    const auto *infoLen = reinterpret_cast<const uint8_t *>(&localInfo.descLen);
+    localPayload.insert(localPayload.end(), infoLen, infoLen + sizeof(localInfo.descLen));
+    if (localInfo.descLen <= 0 || localInfo.desc == nullptr) {
+        SM_LOG_ERROR("allgather exchange localInfo is invalid.");
+        return SM_ERROR;
+    }
+    localPayload.insert(localPayload.end(), localInfo.desc, localInfo.desc + localInfo.descLen);
+    uint32_t payloadSize = static_cast<uint32_t>(localPayload.size());
+
+    std::vector<uint32_t> payloadSizes(rankCount, 0);
+    auto ret = group->GroupAllGather(reinterpret_cast<const char *>(&payloadSize), sizeof(uint32_t),
+                                     reinterpret_cast<char *>(payloadSizes.data()), sizeof(uint32_t) * rankCount);
+    if (ret != 0) {
+        SM_LOG_ERROR("allgather payload size failed, result: " << ret << ", rankCount: " << rankCount);
+        return ret;
+    }
+    uint32_t maxPayload = *std::max_element(payloadSizes.cbegin(), payloadSizes.cend());
+    if (maxPayload == 0) {
+        return group->GroupBarrier();
+    }
+
+    std::vector<uint8_t> sendBuf(maxPayload, 0);
+    std::copy(localPayload.begin(), localPayload.end(), sendBuf.begin());
+    std::vector<uint8_t> allPayload(static_cast<size_t>(rankCount) * maxPayload);
+    ret = group->GroupAllGather(reinterpret_cast<const char *>(sendBuf.data()), maxPayload,
+                                reinterpret_cast<char *>(allPayload.data()), rankCount * maxPayload);
+    if (ret != 0) {
+        SM_LOG_ERROR("allgather exchange info failed, result: " << ret << ", maxPayload: " << maxPayload);
+        return ret;
+    }
+
+    for (uint32_t r = 0; r < rankCount; r++) {
+        hybm_exchange_info info{};
+        const uint8_t *base = allPayload.data() + r * maxPayload;
+        std::memcpy(&info.descLen, base, sizeof(uint32_t));
+        if (info.descLen > 0) {
+            info.desc = new (std::nothrow) uint8_t[info.descLen];
+            if (info.desc == nullptr) {
+                SM_LOG_ERROR("allgather exchange info alloc failed.");
+                for (auto &parsed : allInfos) {
+                    hybm_export_info_free(&parsed);
+                }
+                return SM_ERROR;
+            }
+            std::memcpy(info.desc, base + sizeof(uint32_t), info.descLen);
+            allInfos.push_back(info);
+        }
+    }
+    return SM_OK;
+}
+
 int32_t SmemShmEntry::InitStepExchangeSlice()
 {
-    hybm_exchange_info exInfo;
-    bzero(&exInfo, sizeof(exInfo));
+    hybm_exchange_info exInfo{};
     auto ret = hybm_export(entity_, slice_, 0, &exInfo);
     if (ret != 0) {
         SM_LOG_ERROR("hybm export slice failed, result: " << ret);
         return ret;
     }
 
-    hybm_exchange_info *allExInfo = new hybm_exchange_info[options_.rankCount];
-    SM_ASSERT_RETURN(allExInfo != nullptr, SM_MALLOC_FAILED);
-    ret = globalGroup_->GroupAllGather((char *)&exInfo, sizeof(hybm_exchange_info), (char *)allExInfo,
-                                       sizeof(hybm_exchange_info) * options_.rankCount);
+    std::vector<hybm_exchange_info> allExInfo;
+    allExInfo.reserve(options_.rankCount);
+    ret = AllGatherExchangeInfos(globalGroup_, exInfo, options_.rankCount, allExInfo);
+    hybm_export_info_free(&exInfo);
     if (ret != 0) {
-        SM_LOG_ERROR("hybm gather export slice failed, result: " << ret);
-        delete[] allExInfo;
         return ret;
     }
 
-    ret = hybm_import(entity_, allExInfo, options_.rankCount, nullptr, 0);
+    ret = hybm_import(entity_, allExInfo.data(), options_.rankCount, nullptr, 0);
+    for (auto &parsed : allExInfo) {
+        hybm_export_info_free(&parsed);
+    }
     if (ret != 0) {
         SM_LOG_ERROR("hybm import failed, result: " << ret);
-        delete[] allExInfo;
         return ret;
     }
 
@@ -242,15 +281,12 @@ int32_t SmemShmEntry::InitStepExchangeSlice()
     if (ret != 0) {
         SM_LOG_ERROR("hybm barrier for slice failed, result: " << ret);
     }
-
-    delete[] allExInfo;
     return ret;
 }
 
 int32_t SmemShmEntry::InitStepExchangeEntity()
 {
-    hybm_exchange_info exInfo;
-    bzero(&exInfo, sizeof(exInfo));
+    hybm_exchange_info exInfo{};
     auto ret = hybm_export(entity_, nullptr, HYBM_FLAG_EXPORT_ENTITY, &exInfo);
     if (ret != 0) {
         SM_LOG_ERROR("hybm export entity failed, result: " << ret);
@@ -261,19 +297,20 @@ int32_t SmemShmEntry::InitStepExchangeEntity()
         return SM_OK;
     }
 
-    hybm_exchange_info *allExInfo = new hybm_exchange_info[options_.rankCount];
-    ret = globalGroup_->GroupAllGather((char *)&exInfo, sizeof(hybm_exchange_info), (char *)allExInfo,
-                                       sizeof(hybm_exchange_info) * options_.rankCount);
+    std::vector<hybm_exchange_info> allExInfo;
+    allExInfo.reserve(options_.rankCount);
+    ret = AllGatherExchangeInfos(globalGroup_, exInfo, options_.rankCount, allExInfo);
+    hybm_export_info_free(&exInfo);
     if (ret != 0) {
-        SM_LOG_ERROR("hybm gather export entity failed, result: " << ret);
-        delete[] allExInfo;
         return ret;
     }
 
-    ret = hybm_import(entity_, allExInfo, options_.rankCount, nullptr, HYBM_FLAG_EXPORT_ENTITY);
+    ret = hybm_import(entity_, allExInfo.data(), options_.rankCount, nullptr, HYBM_FLAG_EXPORT_ENTITY);
+    for (auto &parsed : allExInfo) {
+        hybm_export_info_free(&parsed);
+    }
     if (ret != 0) {
         SM_LOG_ERROR("hybm import entity failed, result: " << ret);
-        delete[] allExInfo;
         return ret;
     }
 
@@ -281,8 +318,6 @@ int32_t SmemShmEntry::InitStepExchangeEntity()
     if (ret != 0) {
         SM_LOG_ERROR("hybm barrier for entity failed, result: " << ret);
     }
-
-    delete[] allExInfo;
     return ret;
 }
 

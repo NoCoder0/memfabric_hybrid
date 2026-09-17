@@ -122,7 +122,6 @@ private:
     int RegisterExecutorCallbacks(SmemGroupManagerClient *executor, SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
 
     // Validate peer payload sizes (extracted from OnAddToWhitelist)
-    int ValidatePeerPayloads(uint32_t rankId, const std::vector<RankFullInfo> &others) noexcept;
     int ImportPeerEntities(const std::vector<RankFullInfo> &others) noexcept;
     int ImportPeerSlices(const std::vector<RankFullInfo> &others) noexcept;
 
