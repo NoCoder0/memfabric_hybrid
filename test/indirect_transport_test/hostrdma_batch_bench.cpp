@@ -55,11 +55,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sched.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -477,6 +479,34 @@ bool RailTraceEnabled()
     return getenv("MF_BENCH_RAIL_TRACE") != nullptr;
 }
 
+/* ===== 可选的"主线程绑核"（默认关闭）=====
+   设 MF_BENCH_APP_CPU=<cpu> 就把本进程主线程钉到该核。收端的时间/轮询/散播都在这个线程上，
+   而库自己的忙轮询 worker / 提交 worker 是另外的线程（通常由 MF_HYBM_HCOM_WORKER_CPU_RANGE、
+   MF_HYBM_SUBMIT_CPU_RANGE 指定），把计时线程显式钉住可以避免它被调度器搬来搬去、也便于和
+   库线程彻底分开 —— 与"同事的 demo 用 --app-cpu 单独指定 app 核"是同一套做法。
+   ⚠ 绑核只能限制本线程，并不能独占该核：库的后台线程仍可能被调度上来。所以收益预期是个位数 µs，
+   主要作用是**去掉调度抖动**（p99），不是压均值。不设该变量则完全不改行为。 */
+void PinMainThreadIfRequested()
+{
+    const char *cpuStr = std::getenv("MF_BENCH_APP_CPU");
+    if (cpuStr == nullptr || *cpuStr == '\0') {
+        return;
+    }
+    const int cpu = std::atoi(cpuStr);
+    if (cpu < 0) {
+        printf("[bench] ignore invalid MF_BENCH_APP_CPU=%s\n", cpuStr);
+        return;
+    }
+    cpu_set_t set;
+    CPU_ZERO(&set);
+    CPU_SET(cpu, &set);
+    if (sched_setaffinity(0, sizeof(set), &set) != 0) {
+        printf("[bench] pin main thread to cpu %d failed (errno=%d), ignored\n", cpu, errno);
+        return;
+    }
+    printf("[bench] main thread pinned to cpu %d\n", cpu);
+}
+
 } // namespace
 
 int main(int argc, char *argv[])
@@ -661,6 +691,11 @@ int main(int argc, char *argv[])
         return 1;
     }
     printf("[bench] peer ready handshake OK\n");
+
+    /* ⚠ 绑核必须放在这里：**要在建链/握手完成之后**。
+       新建线程会继承创建线程的 affinity，若在 smem_bm_init 之前就把主线程钉到一个核，
+       之后库内部创建的线程（store/acc/重连…）会一起继承成"只有一个核"，反而害了它自己。 */
+    PinMainThreadIfRequested();
 
     /* cont 的驱动方向：**每轮由 local 发起**（local 发消息 → remote 写 → local 边收边散），
        因此整个流程的计时在 local 侧用单时钟完成（见 receiver 的 cont 段）。
