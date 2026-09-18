@@ -36,14 +36,10 @@ struct BatchCopyGroup {
     std::vector<void *> destinations;
     std::vector<void *> sources;
     std::vector<uint64_t> lengths;
-
-    bool Empty() const
-    {
-        return lengths.empty();
-    }
 };
 
 using BatchCopyGroups = std::array<BatchCopyGroup, ock::mf::BATCH_COPY_MAX_PEER_COUNT>;
+using BatchCopyRoundState = std::array<uint32_t, ock::mf::BATCH_COPY_MAX_PEER_COUNT>;
 
 void InvalidateDeviceCache(uintptr_t address)
 {
@@ -54,7 +50,19 @@ void InvalidateDeviceCache(uintptr_t address)
 void FlushDeviceCache(uintptr_t address)
 {
     __asm__ __volatile__("dc cvac, %0" :: "r"(address) : "memory");
-    __asm__ __volatile__("dsb ish" :::"memory");
+    // Caller batches all cleans before a single DeviceMemoryBarrier().
+}
+
+void InvalidateRangeWithoutBarrier(uintptr_t address, size_t bytes)
+{
+    constexpr uintptr_t lineBytes = 64U;
+    if (bytes == 0U) {
+        return;
+    }
+    const uintptr_t last = (address + bytes - 1U) & ~(lineBytes - 1U);
+    for (uintptr_t line = address & ~(lineBytes - 1U); line <= last; line += lineBytes) {
+        __asm__ __volatile__("dc civac, %0" :: "r"(line) : "memory");
+    }
 }
 
 void DeviceMemoryBarrier()
@@ -104,7 +112,6 @@ int32_t ValidateRoutePeers(const BatchCopyRouteTable *route)
 {
     for (uint16_t peerIndex = 0U; peerIndex < route->header.peerCount; ++peerIndex) {
         const auto &peer = route->peers[peerIndex];
-        InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&peer));
         if (peer.thread == 0U || peer.channel == 0U || peer.remoteFlagAddr == 0U) {
             HYBM_LOGE(BM_NOT_CONNECTED,
                       "invalid BatchCopy peer, peerIndex=%u thread=%lu channel=%lu remoteFlagAddr=0x%lx", peerIndex,
@@ -141,7 +148,6 @@ int32_t ValidateRouteRanges(const BatchCopyRouteTable *route)
     uint64_t previousEnd = 0U;
     for (uint16_t index = 0U; index < route->header.rangeCount; ++index) {
         const auto &range = route->ranges[index];
-        InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&range));
         const auto ret = ValidateRouteRange(range, route->header.peerCount, index, rangeCounts);
         if (ret != BM_OK) {
             return ret;
@@ -157,32 +163,18 @@ int32_t ValidateRouteRanges(const BatchCopyRouteTable *route)
     return BM_OK;
 }
 
-void LogRouteTableForDebug(const BatchCopyRouteTable *route)
-{
-    HYBM_LOGE(BM_OK, "BatchCopy route debug, magic=0x%x peerCount=%u rangeCount=%u", route->header.magic,
-              route->header.peerCount, route->header.rangeCount);
-    for (uint16_t index = 0U; index < route->header.peerCount; ++index) {
-        const auto &peer = route->peers[index];
-        InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&peer));
-        HYBM_LOGE(BM_OK, "BatchCopy route peer, index=%u thread=%lu channel=%lu remoteFlagAddr=0x%lx", index,
-                  peer.thread, peer.channel, peer.remoteFlagAddr);
-    }
-    for (uint16_t index = 0U; index < route->header.rangeCount; ++index) {
-        const auto &range = route->ranges[index];
-        InvalidateDeviceCache(reinterpret_cast<uintptr_t>(&range));
-        HYBM_LOGE(BM_OK,
-                  "BatchCopy route range, index=%u srcGvaBegin=0x%lx srcGvaEnd=0x%lx hcommVaBegin=0x%lx peerIndex=%u",
-                  index, range.srcGvaBegin, range.srcGvaEnd, range.hcommVaBegin, range.peerIndex);
-    }
-}
-
 int32_t ValidatePublishedRoute(const BatchCopyRouteTable *route)
 {
     auto ret = ValidateRouteHeader(route);
     if (ret != BM_OK) {
         return ret;
     }
-    LogRouteTableForDebug(route);
+    // Header counts have been bounded above. Each 64B line contains two entries.
+    InvalidateRangeWithoutBarrier(reinterpret_cast<uintptr_t>(route->peers),
+                                  route->header.peerCount * sizeof(route->peers[0]));
+    InvalidateRangeWithoutBarrier(reinterpret_cast<uintptr_t>(route->ranges),
+                                  route->header.rangeCount * sizeof(route->ranges[0]));
+    DeviceMemoryBarrier();
     ret = ValidateRoutePeers(route);
     if (ret != BM_OK) {
         return ret;
@@ -284,55 +276,81 @@ volatile uint64_t *GetCompletionCell(uint16_t peerIndex)
     return reinterpret_cast<volatile uint64_t *>(kCompletionAddress + peerIndex * sizeof(uint64_t));
 }
 
-void ClearUsedCompletionCells(const BatchCopyGroups &groups, uint16_t peerCount)
+void ClearUsedCompletionCells(const BatchCopyRoundState &roundCounts, uint16_t peerCount)
 {
     for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
-        if (groups[peerIndex].Empty()) {
+        if (roundCounts[peerIndex] == 0U) {
             continue;
         }
         auto *cell = GetCompletionCell(peerIndex);
         *cell = 0U;
-        FlushDeviceCache(reinterpret_cast<uintptr_t>(cell));
+    }
+    // Finish all stores first: eight peer cells share a cache line.
+    uintptr_t previousLine = 0U;
+    for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
+        if (roundCounts[peerIndex] == 0U) {
+            continue;
+        }
+        const uintptr_t line = reinterpret_cast<uintptr_t>(GetCompletionCell(peerIndex)) & ~uintptr_t{63U};
+        if (line != previousLine) {
+            FlushDeviceCache(line);
+            previousLine = line;
+        }
     }
     DeviceMemoryBarrier();
 }
 
-int32_t SubmitPeerGroups(const BatchCopyRouteTable *route, BatchCopyGroups &groups)
+int32_t SubmitPeerGroups(const BatchCopyRouteTable *route, BatchCopyGroups &groups,
+                         const BatchCopyRoundState &offsets, const BatchCopyRoundState &roundCounts)
 {
     for (uint16_t peerIndex = 0U; peerIndex < route->header.peerCount; ++peerIndex) {
         auto &group = groups[peerIndex];
-        if (group.Empty()) {
+        const uint32_t count = roundCounts[peerIndex];
+        if (count == 0U) {
             continue;
         }
+        const uint32_t offset = offsets[peerIndex];
         const auto &peer = route->peers[peerIndex];
         HybmOneSideOpParam oneSide{};
         oneSide.thread = peer.thread;
         oneSide.channel = peer.channel;
-        oneSide.list_num = static_cast<uint32_t>(group.lengths.size());
-        oneSide.dst_buf_addr_list = group.destinations.data();
-        oneSide.src_buf_addr_list = group.sources.data();
-        oneSide.len_list = group.lengths.data();
+        oneSide.list_num = count;
+        oneSide.dst_buf_addr_list = group.destinations.data() + offset;
+        oneSide.src_buf_addr_list = group.sources.data() + offset;
+        oneSide.len_list = group.lengths.data() + offset;
         oneSide.remote_flag_addr = peer.remoteFlagAddr;
         oneSide.local_flag_addr = reinterpret_cast<uint64_t>(GetCompletionCell(peerIndex));
         oneSide.flag_size = sizeof(uint64_t);
         const auto ret = static_cast<int32_t>(HybmBatchRead(&oneSide));
         if (ret != BM_OK) {
-            HYBM_LOGE(ret, "HybmBatchRead failed for BatchCopy peer, peerIndex=%u itemCount=%zu", peerIndex,
-                      group.lengths.size());
+            HYBM_LOGE(ret,
+                      "HybmBatchRead failed for BatchCopy peer, peerIndex=%u offset=%u itemCount=%u", peerIndex,
+                      offset, count);
             return ret;
         }
     }
     return BM_OK;
 }
 
-bool AllUsedPeersCompleted(const BatchCopyGroups &groups, uint16_t peerCount)
+bool AllUsedPeersCompleted(const BatchCopyRoundState &roundCounts, uint16_t peerCount)
 {
+    uintptr_t previousLine = 0U;
     for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
-        if (groups[peerIndex].Empty()) {
+        if (roundCounts[peerIndex] == 0U) {
+            continue;
+        }
+        const uintptr_t line = reinterpret_cast<uintptr_t>(GetCompletionCell(peerIndex)) & ~uintptr_t{63U};
+        if (line != previousLine) {
+            InvalidateRangeWithoutBarrier(line, 64U);
+            previousLine = line;
+        }
+    }
+    DeviceMemoryBarrier();
+    for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
+        if (roundCounts[peerIndex] == 0U) {
             continue;
         }
         auto *cell = GetCompletionCell(peerIndex);
-        InvalidateDeviceCache(reinterpret_cast<uintptr_t>(cell));
         if (*cell == 0U) {
             return false;
         }
@@ -340,11 +358,11 @@ bool AllUsedPeersCompleted(const BatchCopyGroups &groups, uint16_t peerCount)
     return true;
 }
 
-int32_t WaitForPeerCompletions(const BatchCopyGroups &groups, uint16_t peerCount)
+int32_t WaitForPeerCompletions(const BatchCopyRoundState &roundCounts, uint16_t peerCount)
 {
     const auto deadline = std::chrono::steady_clock::now() + kCompletionTimeout;
     uint32_t spins = 0U;
-    while (!AllUsedPeersCompleted(groups, peerCount)) {
+    while (!AllUsedPeersCompleted(roundCounts, peerCount)) {
         if (std::chrono::steady_clock::now() >= deadline) {
             HYBM_LOGE(BM_TIMEOUT, "BatchCopy completion timed out, peerCount=%u", peerCount);
             return BM_TIMEOUT;
@@ -354,6 +372,41 @@ int32_t WaitForPeerCompletions(const BatchCopyGroups &groups, uint16_t peerCount
         }
     }
     DeviceMemoryBarrier();
+    return BM_OK;
+}
+
+bool PrepareNextRound(const BatchCopyGroups &groups, uint16_t peerCount, const BatchCopyRoundState &offsets,
+                      BatchCopyRoundState &roundCounts)
+{
+    bool hasWork = false;
+    for (uint16_t peerIndex = 0U; peerIndex < peerCount; ++peerIndex) {
+        const auto total = static_cast<uint32_t>(groups[peerIndex].lengths.size());
+        const uint32_t remaining = total - offsets[peerIndex];
+        roundCounts[peerIndex] = std::min(remaining, kHybmBatchCopyMaxRoundDescriptors);
+        hasWork = hasWork || roundCounts[peerIndex] != 0U;
+    }
+    return hasWork;
+}
+
+int32_t SubmitInCompletionRounds(const BatchCopyRouteTable *route, BatchCopyGroups &groups)
+{
+    BatchCopyRoundState offsets{};
+    BatchCopyRoundState roundCounts{};
+    while (PrepareNextRound(groups, route->header.peerCount, offsets, roundCounts)) {
+        // 只有完成标志回到本端后才进入下一轮，确保上一轮WQE已执行并释放SQ空间。
+        ClearUsedCompletionCells(roundCounts, route->header.peerCount);
+        auto ret = SubmitPeerGroups(route, groups, offsets, roundCounts);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        ret = WaitForPeerCompletions(roundCounts, route->header.peerCount);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        for (uint16_t peerIndex = 0U; peerIndex < route->header.peerCount; ++peerIndex) {
+            offsets[peerIndex] += roundCounts[peerIndex];
+        }
+    }
     return BM_OK;
 }
 
@@ -373,9 +426,7 @@ int32_t ExecuteBatchCopy(HybmBatchCopyParam *param)
     if (ret != BM_OK) {
         return ret;
     }
-    ClearUsedCompletionCells(groups, route->header.peerCount);
-    ret = SubmitPeerGroups(route, groups);
-    return ret == BM_OK ? WaitForPeerCompletions(groups, route->header.peerCount) : ret;
+    return SubmitInCompletionRounds(route, groups);
 }
 } // namespace
 

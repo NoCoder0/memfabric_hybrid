@@ -1,6 +1,41 @@
 # sparse_copy_urma examples
 
-这两个示例共用生产 `HybmBatchCopy`、固定 route 和
+## 03：aggregate / direct E2E 对照
+
+单入口仍默认 `--mode aggregate`、1000 轮。新增 `--mode direct`，复用生产
+`HybmBatchCopy`：从 Host 离散 GVA 直接 batch read 到最终离散 HBM VA，
+不经过 Host gather、聚合区 write 和 AICPU scatter。Host 初始化源后保持注册内存和连接存活，
+直到 Device 完成所有轮次。两个模式使用相同包大小、数量、两倍包大小的地址 stride 和校验方式。
+
+先执行带校验的小规模验证，再比较完整 1000 轮：
+
+```bash
+python3 03_aicpu_host_aggregate_urma.py --mode direct --segment-bytes 656 --segments 100 3200 25600 --rounds 3 --verify
+python3 03_aicpu_host_aggregate_urma.py --mode aggregate --segment-bytes 656 --segments 100 3200 25600
+python3 03_aicpu_host_aggregate_urma.py --mode direct --segment-bytes 656 --segments 100 3200 25600
+```
+
+E2E 均为同步 C 接口调用的提交到完成时间，包含 launch 和 stream synchronize，
+不包含进程初始化、输入准备、地址列表创建/H2D、目的区 poison 和结果 G2H 校验。
+direct 地址列表在测试前一次创建并同步；aggregate 控制消息也在每轮计时前准备。
+因此这是固定布局下的算子接口 E2E，不是包含动态请求准备的应用 E2E。
+direct 表中的 Host/gather/write/scatter 为 `-`，不伪造为零；`--device-timing-every`
+仅对 aggregate 生效。`--verify` 每轮 poison 后回读检查有效包，源模式固定，
+不证明跨轮更新的可见性，也不检查地址空洞。不开启校验时汇总明确标记 `verify=OFF`。
+
+direct 会增加小包 URMA 描述符数量，不保证比 aggregate 更快；以相同参数实测为准。
+
+如果 HCOMM 包含 experimental NIC plugin，demo 默认在 Host 子进程导入 MemFabric/HCOMM 前设置
+`HCOMM_NIC_PLUGIN_FORCE_LOAD=1`，使可见 NPU 的 Host 进程也加载 plugin。Device 子进程不会由 demo 设置该变量。
+是否确实选中 plugin 应以 Host 日志中的 `[NicPlugin] protocol[...] is handled` 为准。
+
+如需回退到 HCOMM 内置 Host URMA 路径进行对照，可增加：
+
+```bash
+--no-host-nic-plugin
+```
+
+01/02 共用生产 `HybmBatchCopy`、固定 route 和
 `mf_acc_offload.sparse_copy_urma`，不调用 `offload.initialize()`。建链使用
 `bm.BmDataOpType.HOST_DEVICE_URMA`；route 首次发布后不增加内存区间、不替换 peer，调用方保证 entity
 在同步拷贝完成前保持存活。
@@ -69,7 +104,9 @@ EID_TOOL=/tmp/mf_urma_eid_query
 python3 examples/kv_offload/sparse_copy_urma/update_env_from_eid.py
 ```
 
-工具的 `--device-id` 是物理卡号；工具输出的 `MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID`、
+工具的 `--device-id` 是物理卡号；工具将 EID 映射到 UDMA/逻辑卡，并通过 DCMI 输出该逻辑卡的
+`MF_LOCAL_DRAM_AFFINITY_CPUS`（Linux cpulist，例如 `48-63`）。旧版 `libdcmi.so` 不支持查询时输出
+`unavailable`，不影响 EID 查询。工具输出的 `MF_LOCAL_DRAM_PHYSICAL_DEVICE_ID`、
 `MF_LOCAL_DRAM_LOGICAL_DEVICE_ID` 和 EID 环境变量由更新脚本写入本目录的 `env` 文件。该脚本保留两端公共的
 `ASCEND_RT_VISIBLE_DEVICES`、`MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 和 `MF_LOG_LEVEL`；Python 脚本启动时读取
 该文件并通过 `os.environ` 设置进程环境，不执行 shell。`MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 应指向安装包的
@@ -112,3 +149,108 @@ EID、物理/逻辑卡映射、尺寸、范围和地址加法在可检查处先�
 stage/rank/device/地址/长度上下文。不要为绕过
 生产 key/type/address 门禁而设置额外变量。验证完成后删除该临时 Python 分支、构建宏/脚本参数和配套工具，
 再以默认 `--build_local_dram_validation OFF` 重新构建。
+
+## 03：AICPU 发起 Host 聚合
+
+该 Demo 只测一条固定 happy path：AICPU 将 request 和递增 doorbell 合并为一次远端 batch write，Host
+busy-poll 后整轮 gather 并执行一次 URMA write；AICPU 轮询 ready 后按固定 stride scatter。TCP 只在计时前
+做启动屏障，不承载每轮请求或完成通知。
+
+先使用 local DRAM 验证开关构建并安装 MemFabric 主包，再构建并安装 AICPU kernel：
+
+```bash
+bash script/build_and_pack_run.sh --build_local_dram_validation ON
+bash script/kernel/build_ops_run.sh
+./output/memfabric_hybrid_aicpu_kernel.run --install --force
+```
+
+按上文生成 `env` 后启动 Host：
+
+```bash
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py \
+  --role host --head-ip 127.0.0.1
+```
+
+再启动 Device：
+
+```bash
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py \
+  --role device --head-ip 127.0.0.1
+```
+
+默认聚合 `4096 * 2048 B = 8 MiB`。Host 每轮完成整批 gather 后执行一次 URMA write。两端必须传入相同的
+`--segments` 和 `--segment-bytes`。
+
+Device 的 message 和 ready 控制区默认合并为一次 H2G；timing 是纯输出，不再做无效的初始化 H2G。
+`--device-timing-every N` 每 N 轮回读一次 AICPU timing，传 `0` 可在性能测试时关闭 timing G2H。
+Host 可通过 `--host-cpus 48-63` 绑核；未传时会读取 env 中的
+`MF_LOCAL_DRAM_AFFINITY_CPUS`。
+Device 可通过 `--device-cpus 64-71` 绑定到另一组 CPU；未传时读取
+`MF_DEVICE_AFFINITY_CPUS`。Host 与 Device CPU 列表应互不重叠。
+Gather worker 可通过 `--gather-cpus 48-63` 单独绑核；未传时读取
+`MF_GATHER_AFFINITY_CPUS`。gather CPU 必须是 Host CPU 的真子集，剩余 Host CPU 专供协调线程和
+初始化阶段创建的 HCOMM 后台线程。
+
+例如测试 `32000 * 656 B`：
+
+```bash
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py \
+  --role host --head-ip 127.0.0.1 --segments 32000 --segment-bytes 656 \
+  --rounds 100 --gather-threads 4 --host-cpus 48-55 --gather-cpus 48-51 --device-cpus 64-71
+
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py \
+  --role device --head-ip 127.0.0.1 --segments 32000 --segment-bytes 656 \
+  --rounds 100 --device-timing-every 0 --device-cpus 64-71
+```
+
+Host 输出 gather、URMA write、总耗时和带宽；Device 在开启 timing 时输出 scatter 和 AICPU e2e。
+手动双端模式可在 Device 加 `--verify`，用 G2H 逐字节校验有效 segment。
+
+Host gather 参考 vLLM 的 gather executor，创建 `--gather-threads` 个固定绑核的专用 worker 持续
+轮询任务，协调线程不参与拷贝。该设计避免每轮唤醒开销，但会持续占用相同数量的 CPU 核。
+
+### 单入口批量测试（推荐）
+
+配置好本目录 `env` 并加载 MemFabric 环境后，只运行：
+
+```bash
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py
+```
+
+- 默认包大小：576、656、1152、8192 B。
+- 默认包数量：`(100, 200, 300, 400) × (1, 2, 4, 8, 16, 32, 64)`，乘积去重并升序测试。
+- 每组默认 1000 轮；不剔除首轮。
+- 每组用 spawn 启动 Host/Device 两个独立进程，避免 fork 已初始化的 NPU runtime。
+- 自动选择本机端口，每组完成后回收子进程；一端失败或超过 600 秒时停止该组并回收另一端。
+- 控制端口保持监听并通过 spawn 传给 Host，不再释放后重新绑定；BM store 仅接受端口号，
+  暂时仍需探测后释放端口，存在被其他程序抢占的小窗口。
+- 失败时直接打印两端日志末尾，避免只看到子进程 exit code。
+- Host/Device 详细日志及均值 JSON 保存在输出的 `mf_aggregate_suite_*` 临时目录。
+- 最终表格只包含包大小、包数量、总 MiB、平均 E2E/host total/gather/write/scatter 时延及 E2E 带宽。
+  时延为每轮平均值，不是 1000 轮累加值。E2E 为同步算子接口的 `launch sync`，
+  不包含初始化、控制结构 H2G、timing G2H 和可选校验；这些额外操作仍可能改变 cache 状态。
+
+只测 656B 或自定义矩阵：
+
+```bash
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py --segment-bytes 656
+python3 examples/kv_offload/sparse_copy_urma/03_aicpu_host_aggregate_urma.py \
+  --segment-bytes 576 656 --segments 100 3200 --rounds 1000
+```
+
+加 `--verify` 开启校验；加 `--case-timeout 1800` 扩大每组（含初始化和校验）的超时。
+
+### memcpy microbenchmark
+
+`test_memcpy_lantency.cpp` 测试随机离散源、目的地址间的 copy；656 B 使用固定展开路径，其他尺寸使用普通
+`memcpy`，并支持多线程并发：
+
+```bash
+g++ -O2 -std=c++14 -pthread test_memcpy_lantency.cpp -o test_memcpy_lantency
+./test_memcpy_lantency 100000 656       # 单线程
+./test_memcpy_lantency 100000 656 8     # 8 线程，每线程 100000 次
+```
+
+每个线程使用独立的源和目的缓冲区，并在计时前以固定 seed 生成随机地址序列，随机数生成不计入时延。
+`average/min/max/P95/P99` 是所有线程逐次调用的实测时延；`wall(ns/copy)` 是并发墙钟时间除以总 copy 数，
+配合聚合 `GiB/s` 判断并发带来的吞吐收益。
