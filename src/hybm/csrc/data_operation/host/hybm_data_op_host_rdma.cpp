@@ -438,40 +438,18 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
     ubs_call_time::enabled = g_tracer.enabled;
     ubs_call_time::Reset();
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL)
-    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
-    /* 段缓存（src/dst 各一个）：一批 iov 的地址通常集中在一个段里，
-       避免每个 iov 都走一次 shared_lock + 红黑树查询。
-       段状态额外复制到循环外的局部变量：循环体会写回 sources[]/destinations[]，
-       若状态只存在缓存对象里，编译器无法证明这些指针写不会别名到该对象，只能在每次写后
-       重新载入成员（每 iov 多出数次内存读）；放到局部变量后即可常驻寄存器。 */
-    VaRangeCache srcVaCache;
-    VaRangeCache dstVaCache;
-    uint64_t srcStart = 0;
-    uint64_t srcSize = 0;
-    uint64_t srcInBase = 0;
-    uint64_t srcOutBase = 0;
-    uint64_t dstStart = 0;
-    uint64_t dstSize = 0;
-    uint64_t dstInBase = 0;
-    uint64_t dstOutBase = 0;
-    for (uint32_t i = 0; i < params.batchSize; i++) {
-        uint64_t src = reinterpret_cast<uint64_t>(params.sources[i]);
-        if ((src - srcStart) >= srcSize) { /* 冷路径：首次或换段，刷新局部状态 */
-            srcVaCache.ResolveGvaToHva(src, srcStart, srcSize, srcInBase, srcOutBase);
-        }
-        if (srcSize != 0) {
-            params.sources[i] = reinterpret_cast<void *>(srcOutBase + (src - srcInBase));
-        }
-        uint64_t dst = reinterpret_cast<uint64_t>(params.destinations[i]);
-        if ((dst - dstStart) >= dstSize) {
-            dstVaCache.ResolveGvaToHva(dst, dstStart, dstSize, dstInBase, dstOutBase);
-        }
-        if (dstSize != 0) {
-            params.destinations[i] = reinterpret_cast<void *>(dstOutBase + (dst - dstInBase));
-        }
-    }
-    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
     Result ret = BM_OK;
+    /* 【多 link 前置层并行】满足条件时，"逐 iov 前置层 + 提交"整体按 link 分片在 worker 上并行；
+       不满足（单 link / 非 PUT / 非进度 / 有未注册或大 IO）则返回 false，走下面的原路径。 */
+    if (TryMultiLinkHostPut(params, direction, options, ret)) {
+        TP_TRACE_END(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL, ret)
+        TP_TRACE_RECORD(TP_HYBM_HOST_RDMA_UBS_CALL_TOTAL, ubs_call_time::Get(), 0)
+        return ret;
+    }
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
+    TransformVaRange(params, 0, params.batchSize);
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
+    ret = BM_OK;
     switch (direction) {
         case HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST: {
             TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_LD_TO_GH);
@@ -1389,6 +1367,110 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
     }
     TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, 0);
     return BM_OK;
+}
+
+void HostDataOpRDMA::TransformVaRange(hybm_batch_copy_params &params, uint32_t begin, uint32_t end) noexcept
+{
+    /* 段缓存（src/dst 各一个）：一批 iov 的地址通常集中在一个段里，
+       避免每个 iov 都走一次 shared_lock + 红黑树查询。
+       段状态额外复制到循环外的局部变量：循环体会写回 sources[]/destinations[]，
+       若状态只存在缓存对象里，编译器无法证明这些指针写不会别名到该对象，只能在每次写后
+       重新载入成员（每 iov 多出数次内存读）；放到局部变量后即可常驻寄存器。 */
+    VaRangeCache srcVaCache;
+    VaRangeCache dstVaCache;
+    uint64_t srcStart = 0;
+    uint64_t srcSize = 0;
+    uint64_t srcInBase = 0;
+    uint64_t srcOutBase = 0;
+    uint64_t dstStart = 0;
+    uint64_t dstSize = 0;
+    uint64_t dstInBase = 0;
+    uint64_t dstOutBase = 0;
+    for (uint32_t i = begin; i < end; i++) {
+        uint64_t src = reinterpret_cast<uint64_t>(params.sources[i]);
+        if ((src - srcStart) >= srcSize) { /* 冷路径：首次或换段，刷新局部状态 */
+            srcVaCache.ResolveGvaToHva(src, srcStart, srcSize, srcInBase, srcOutBase);
+        }
+        if (srcSize != 0) {
+            params.sources[i] = reinterpret_cast<void *>(srcOutBase + (src - srcInBase));
+        }
+        uint64_t dst = reinterpret_cast<uint64_t>(params.destinations[i]);
+        if ((dst - dstStart) >= dstSize) {
+            dstVaCache.ResolveGvaToHva(dst, dstStart, dstSize, dstInBase, dstOutBase);
+        }
+        if (dstSize != 0) {
+            params.destinations[i] = reinterpret_cast<void *>(dstOutBase + (dst - dstInBase));
+        }
+    }
+}
+
+bool HostDataOpRDMA::TryMultiLinkHostPut(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                         const ExtOptions &options, Result &ret) noexcept
+{
+    /* 适用条件（任一不满足就整批回落原路径，行为逐字不变）：
+       1) 方向为本端 host → 对端 host 的单向 PUT（cont / baseline 的写路径都是这条）；
+       2) 多 link：每 link 一条独立 channel，"每分片一个提交 worker、互不干扰"才成立；
+       3) 进度模式：水位语义与 WriteRemoteBatchWithProgress 的多 link 分支保持一致；
+       4) 全部 iov 都已注册且都是小 IO —— 大小混排会走"大 IO 逐条提交"，与分片流水线不同构。 */
+    const uint32_t linkCount = transportManager_->GetLinkCount();
+    if (direction != HYBM_LOCAL_HOST_TO_GLOBAL_HOST || options.destRankId == rankId_ || linkCount <= 1U ||
+        params.batchSize < linkCount * 2U || !options.HasProgress() ||
+        !transportManager_->AllLinksReady(options.destRankId)) {
+        return false;
+    }
+    for (uint32_t i = 0; i < params.batchSize; ++i) {
+        if (params.dataSizes[i] > SMALL_IO_LIMIT_SIZE ||
+            !transportManager_->QueryHasRegistered(reinterpret_cast<uint64_t>(params.sources[i]),
+                                                   params.dataSizes[i])) {
+            return false;
+        }
+    }
+    /* 切分契约与 WriteRemoteBatchWithProgress 的多 link 分支逐字一致：
+       第 e 条 link 负责连续一段 iov；对端水位槽 = progressDest + e*8；
+       本端水位源槽 = progressSrc + (子块号*linkCount + e)*8（故 srcStride = linkCount*8）。 */
+    const uint32_t per = params.batchSize / linkCount;
+    const uint32_t rem = params.batchSize % linkCount;
+    std::vector<std::pair<uint32_t, uint32_t>> ranges(linkCount);
+    uint32_t begin = 0;
+    for (uint32_t ep = 0; ep < linkCount; ++ep) {
+        const uint32_t end = begin + per + (ep < rem ? 1U : 0U);
+        ranges[ep] = std::make_pair(begin, end);
+        begin = end;
+    }
+    const auto destBase = reinterpret_cast<uint64_t>(options.progressDest);
+    const auto srcBase = reinterpret_cast<uint64_t>(options.progressSrc);
+    const uint64_t srcStride = static_cast<uint64_t>(linkCount) * sizeof(uint64_t);
+    /* 每个分片只读写自己那段 iov（[begin,end)），VA 转换与 descriptor 构造都各做各的，互不重叠；
+       前置层因此和提交一起被分片并行。收尾的 Synchronize 由 RunSlicesParallel 在各自 worker
+       上执行（各等自己那份 thread_local stream）。 ⚠ 副作用：前置层里的 ubs 调用改在 worker
+       线程发生，而 UBS_CALL_TOTAL 打点取的是调用线程的 TLS 计数，此路径下该打点会偏小（仅影响观测）。 */
+    ret = transportManager_->RunSlicesParallel(
+        options.destRankId, linkCount,
+        [this, &params, &options, &ranges, destBase, srcBase, srcStride](uint32_t ep) -> Result {
+            const auto range = ranges[ep];
+            if (range.second <= range.first) { /* 该 link 没分到 iov */
+                return BM_OK;
+            }
+            TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
+            TransformVaRange(params, range.first, range.second);
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
+            CopyDescriptor des;
+            const uint32_t cnt = range.second - range.first;
+            des.localAddrs.reserve(cnt);
+            des.globalAddrs.reserve(cnt);
+            des.counts.reserve(cnt);
+            TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC)
+            for (uint32_t i = range.first; i < range.second; ++i) {
+                des.localAddrs.emplace_back(params.sources[i]);
+                des.globalAddrs.emplace_back(params.destinations[i]);
+                des.counts.emplace_back(params.dataSizes[i]);
+            }
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC, 0)
+            return WriteRemoteBatchOnEpWithProgress(ep, des, 0, des.counts.size(), options,
+                                                    destBase + ep * sizeof(uint64_t),
+                                                    srcBase + ep * sizeof(uint64_t), srcStride, -1);
+        });
+    return true;
 }
 
 Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descriptor,
