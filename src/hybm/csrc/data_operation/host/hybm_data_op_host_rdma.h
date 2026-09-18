@@ -104,17 +104,6 @@ private:
                                             const ExtOptions &options, uint64_t progressDest, uint64_t progressSrc,
                                             uint64_t srcStride, int32_t railIdx) noexcept;
 
-    /* 对 [begin,end) 这段 iov 做 GVA→HVA 转换（段缓存 + 循环外局部状态，见实现里的注释）。
-       按区间切开只影响"谁做"，每个 iov 的算法与整批一次做完完全一致。 */
-    void TransformVaRange(hybm_batch_copy_params &params, uint32_t begin, uint32_t end) noexcept;
-
-    /* 【多 link 前置层并行】把"逐 iov 前置层（VA 转换 + 描述符构造）+ 分块提交"整体按 link 分片：
-       每个分片在各自 worker 线程上只处理 1/N 的 iov，于是前置层也随提交一起并行。
-       仅在"本端 host → 对端 host 的单向 PUT + 进度模式 + 多 link + 全部 iov 已注册且为小 IO"时启用，
-       返回 true 表示已处理并填好 ret；其余情况返回 false，调用方逐字回落到原路径（行为不变）。 */
-    bool TryMultiLinkHostPut(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
-                             const ExtOptions &options, Result &ret) noexcept;
-
     bool inited_{false};
     uint32_t rankId_{0};
     void *rdmaSwapBaseAddr_{nullptr};
