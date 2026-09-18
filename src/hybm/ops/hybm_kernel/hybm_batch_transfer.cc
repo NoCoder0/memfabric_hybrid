@@ -5,6 +5,8 @@
 
 #include "hybm_batch_transfer.h"
 
+#include <dlfcn.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <vector>
@@ -12,22 +14,141 @@
 #include "hybm_def.h"
 #include "hybm_kernel_log.h"
 
-extern "C" {
-__attribute__((weak)) int32_t HcommBatchModeStart(const char *batchTag);
-__attribute__((weak)) int32_t HcommBatchModeEnd(const char *batchTag);
-__attribute__((weak)) int32_t HcommReadOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *dst,
-                                                const void *src, uint64_t len);
-__attribute__((weak)) int32_t HcommWriteOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
-                                                 void *dst, const void *src, uint64_t len);
-__attribute__((weak)) int32_t HcommChannelFenceOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel);
-__attribute__((weak)) int32_t HcommBatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
-                                                         const ock::mf::HcommBatchTransferDesc *transferDescs,
-                                                         uint32_t transferDescNum);
-}
-
 namespace {
 constexpr uint32_t kMaxBatchSize = 1000;
 constexpr const char *kBatchTag = "HybmKernel";
+
+// Match HCCL's device loader: HCOMM device primitives are provided by libccl_kernel.so.
+constexpr const char *kHcommLibName = "libccl_kernel.so";
+
+// 接口签名须与 CANN 设备接口保持一致；签名写错不会编译报错，运行时直接踩内存
+using HcommBatchModeStartFunc = int32_t (*)(const char *batchTag);
+using HcommBatchModeEndFunc = int32_t (*)(const char *batchTag);
+using HcommReadOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *dst,
+                                          const void *src, uint64_t len);
+using HcommWriteOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *dst,
+                                           const void *src, uint64_t len);
+using HcommChannelFenceOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel);
+using HcommBatchTransferOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
+                                                   const ock::mf::HcommBatchTransferDesc *transferDescs,
+                                                   uint32_t transferDescNum);
+
+void *g_hcommHandle = nullptr;
+HcommBatchModeStartFunc g_hcommBatchModeStart = nullptr;
+HcommBatchModeEndFunc g_hcommBatchModeEnd = nullptr;
+HcommReadOnThreadFunc g_hcommReadOnThread = nullptr;
+HcommWriteOnThreadFunc g_hcommWriteOnThread = nullptr;
+HcommChannelFenceOnThreadFunc g_hcommChannelFenceOnThread = nullptr;
+HcommBatchTransferOnThreadFunc g_hcommBatchTransferOnThread = nullptr;
+
+int32_t ResetHcommSymbols()
+{
+    if (g_hcommHandle != nullptr && dlclose(g_hcommHandle) != 0) {
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlclose failed, lib=%s error=%s", kHcommLibName, dlerror());
+        return BM_DL_FUNCTION_FAILED;
+    }
+    g_hcommHandle = nullptr;
+    g_hcommBatchModeStart = nullptr;
+    g_hcommBatchModeEnd = nullptr;
+    g_hcommReadOnThread = nullptr;
+    g_hcommWriteOnThread = nullptr;
+    g_hcommChannelFenceOnThread = nullptr;
+    g_hcommBatchTransferOnThread = nullptr;
+    return BM_OK;
+}
+
+void *LoadRequiredSymbol(const char *symbol)
+{
+    void *addr = dlsym(g_hcommHandle, symbol);
+    if (addr == nullptr) {
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlsym failed, lib=%s symbol=%s error=%s", kHcommLibName, symbol,
+                  dlerror());
+    }
+    return addr;
+}
+
+void *LoadOptionalSymbol(const char *symbol)
+{
+    void *addr = dlsym(g_hcommHandle, symbol);
+    if (addr == nullptr) {
+        HYBM_LOGW("[hybm] optional symbol unavailable, lib=%s symbol=%s reason=%s", kHcommLibName, symbol, dlerror());
+    }
+    return addr;
+}
+
+int32_t LoadRequiredSymbols()
+{
+    g_hcommReadOnThread = reinterpret_cast<HcommReadOnThreadFunc>(LoadRequiredSymbol("HcommReadOnThread"));
+    g_hcommWriteOnThread = reinterpret_cast<HcommWriteOnThreadFunc>(LoadRequiredSymbol("HcommWriteOnThread"));
+    g_hcommChannelFenceOnThread =
+        reinterpret_cast<HcommChannelFenceOnThreadFunc>(LoadRequiredSymbol("HcommChannelFenceOnThread"));
+    if (g_hcommReadOnThread == nullptr || g_hcommWriteOnThread == nullptr || g_hcommChannelFenceOnThread == nullptr) {
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] required hcomm symbols missing, lib=%s", kHcommLibName);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    return BM_OK;
+}
+
+void LoadOptionalSymbols()
+{
+    g_hcommBatchModeStart = reinterpret_cast<HcommBatchModeStartFunc>(LoadOptionalSymbol("HcommBatchModeStart"));
+    g_hcommBatchModeEnd = reinterpret_cast<HcommBatchModeEndFunc>(LoadOptionalSymbol("HcommBatchModeEnd"));
+    g_hcommBatchTransferOnThread =
+        reinterpret_cast<HcommBatchTransferOnThreadFunc>(LoadOptionalSymbol("HcommBatchTransferOnThread"));
+}
+
+int32_t LoadHcommLibrary()
+{
+    g_hcommHandle = dlopen(kHcommLibName, RTLD_NOW | RTLD_NODELETE);
+    if (g_hcommHandle == nullptr) {
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED,
+                  "[hybm] device dlopen failed, lib=%s error=%s; check device HCOMM library deployment", kHcommLibName,
+                  dlerror());
+        return BM_DL_FUNCTION_FAILED;
+    }
+    (void)dlerror(); // 清空历史错误，确保后续 dlerror() 反映的是本次 dlsym 的结果
+
+    if (LoadRequiredSymbols() != BM_OK) {
+        ResetHcommSymbols();
+        return BM_DL_FUNCTION_FAILED;
+    }
+    LoadOptionalSymbols();
+
+    HYBM_LOGI("[hybm] hcomm library loaded, lib=%s batchTransfer=%d batchMode=%d", kHcommLibName,
+              static_cast<int32_t>(g_hcommBatchTransferOnThread != nullptr),
+              static_cast<int32_t>(g_hcommBatchModeStart != nullptr));
+    return BM_OK;
+}
+
+// The device module owns the loader for its lifetime. Its normal teardown must
+// happen after all kernel calls have finished, just like unloading the kernel itself.
+class HcommLibrary {
+public:
+    HcommLibrary() : result_(LoadHcommLibrary()) {}
+
+    ~HcommLibrary()
+    {
+        (void)ResetHcommSymbols();
+    }
+
+    HcommLibrary(const HcommLibrary &) = delete;
+    HcommLibrary &operator=(const HcommLibrary &) = delete;
+
+    int32_t Result() const
+    {
+        return result_;
+    }
+
+private:
+    const int32_t result_;
+};
+
+// C++ guarantees thread-safe first initialization; subsequent calls reuse it.
+int32_t EnsureHcommLoaded()
+{
+    static const HcommLibrary library;
+    return library.Result();
+}
 
 bool IsNotSupported(int32_t ret)
 {
@@ -43,53 +164,53 @@ bool IsMarkerOnly(const HybmOneSideOpParam *param)
 
 int32_t BatchModeStart(const char *batchTag)
 {
-    if (HcommBatchModeStart == nullptr) {
+    if (g_hcommBatchModeStart == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommBatchModeStart(batchTag);
+    return g_hcommBatchModeStart(batchTag);
 }
 
 int32_t BatchModeEnd(const char *batchTag)
 {
-    if (HcommBatchModeEnd == nullptr) {
+    if (g_hcommBatchModeEnd == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommBatchModeEnd(batchTag);
+    return g_hcommBatchModeEnd(batchTag);
 }
 
 int32_t ReadOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *dst, const void *src,
                      uint64_t len)
 {
-    if (HcommReadOnThread == nullptr) {
+    if (g_hcommReadOnThread == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommReadOnThread(thread, channel, dst, src, len);
+    return g_hcommReadOnThread(thread, channel, dst, src, len);
 }
 
 int32_t WriteOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel, void *dst, const void *src,
                       uint64_t len)
 {
-    if (HcommWriteOnThread == nullptr) {
+    if (g_hcommWriteOnThread == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommWriteOnThread(thread, channel, dst, src, len);
+    return g_hcommWriteOnThread(thread, channel, dst, src, len);
 }
 
 int32_t ChannelFenceOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel)
 {
-    if (HcommChannelFenceOnThread == nullptr) {
+    if (g_hcommChannelFenceOnThread == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommChannelFenceOnThread(thread, channel);
+    return g_hcommChannelFenceOnThread(thread, channel);
 }
 
 int32_t BatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
                               const ock::mf::HcommBatchTransferDesc *transferDescs, uint32_t transferDescNum)
 {
-    if (HcommBatchTransferOnThread == nullptr) {
+    if (g_hcommBatchTransferOnThread == nullptr) {
         return BM_NOT_SUPPORTED;
     }
-    return HcommBatchTransferOnThread(thread, channel, transferDescs, transferDescNum);
+    return g_hcommBatchTransferOnThread(thread, channel, transferDescs, transferDescNum);
 }
 
 int32_t CheckBatchParam(const HybmBatchTransferParam *param)
@@ -318,11 +439,41 @@ int32_t HybmBatchTransferTask(bool isRead, HybmOneSideOpParam *param)
     return BM_OK;
 }
 
+int32_t ReadRemoteFlag(const HybmOneSideOpParam *param)
+{
+    if (param->remote_flag_addr == 0 || param->flag_size == 0) {
+        return BM_OK;
+    }
+    HYBM_LOGD("[hybm] remote flag read start, thread=%lu channel=%lu localFlag=0x%lx remoteFlag=0x%lx flagSize=%u",
+              param->thread, param->channel, param->local_flag_addr, param->remote_flag_addr, param->flag_size);
+    int32_t ret = ReadOnThread(
+        param->thread, param->channel, reinterpret_cast<void *>(static_cast<uintptr_t>(param->local_flag_addr)),
+        reinterpret_cast<void *>(static_cast<uintptr_t>(param->remote_flag_addr)), param->flag_size);
+    if (ret != BM_OK) {
+        HYBM_LOGE(BM_ERROR,
+                  "[hybm] remote flag read failed, thread=%lu channel=%lu localFlag=0x%lx remoteFlag=0x%lx "
+                  "flagSize=%u ret=%d",
+                  param->thread, param->channel, param->local_flag_addr, param->remote_flag_addr, param->flag_size,
+                  ret);
+        return BM_ERROR;
+    }
+    HYBM_LOGD("[hybm] remote flag read success, thread=%lu channel=%lu flagSize=%u", param->thread, param->channel,
+              param->flag_size);
+    return BM_OK;
+}
+
 int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 {
     HYBM_LOGD("[hybm] HybmBatchTransfer start, isRead=%d", isRead);
     int32_t ret = CheckParam(param);
     if (ret != BM_OK) {
+        return ret;
+    }
+
+    ret = EnsureHcommLoaded();
+    if (ret != BM_OK) {
+        HYBM_LOGE(ret, "[hybm] hcomm library unavailable, isRead=%d thread=%lu channel=%lu", isRead, param->thread,
+                  param->channel);
         return ret;
     }
     HYBM_LOGI("[hybm] HybmBatchTransfer entry, isRead=%d param=%p thread=%lu channel=%lu list_num=%u "
@@ -354,24 +505,10 @@ int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
     }
     HYBM_LOGD("[hybm] channel fence success, thread=%lu channel=%lu", param->thread, param->channel);
 
-    if (param->remote_flag_addr != 0 && param->flag_size != 0) {
-        HYBM_LOGD("[hybm] remote flag read start, thread=%lu channel=%lu localFlag=0x%lx remoteFlag=0x%lx "
-                  "flagSize=%u",
-                  param->thread, param->channel, param->local_flag_addr, param->remote_flag_addr, param->flag_size);
-        ret = ReadOnThread(param->thread, param->channel,
-                           reinterpret_cast<void *>(static_cast<uintptr_t>(param->local_flag_addr)),
-                           reinterpret_cast<void *>(static_cast<uintptr_t>(param->remote_flag_addr)), param->flag_size);
-        if (ret != BM_OK) {
-            HYBM_LOGE(BM_ERROR,
-                      "[hybm] remote flag read failed, thread=%lu channel=%lu localFlag=0x%lx remoteFlag=0x%lx "
-                      "flagSize=%u ret=%d",
-                      param->thread, param->channel, param->local_flag_addr, param->remote_flag_addr, param->flag_size,
-                      ret);
-            (void)BatchModeEnd(kBatchTag);
-            return BM_ERROR;
-        }
-        HYBM_LOGD("[hybm] remote flag read success, thread=%lu channel=%lu flagSize=%u", param->thread, param->channel,
-                  param->flag_size);
+    ret = ReadRemoteFlag(param);
+    if (ret != BM_OK) {
+        (void)BatchModeEnd(kBatchTag);
+        return BM_ERROR;
     }
 
     ret = BatchModeEnd(kBatchTag);
@@ -409,6 +546,11 @@ int32_t HybmBatchTransfer(HybmBatchTransferParam *param)
     HYBM_LOGD("[hybm] HybmBatchTransfer start");
     int32_t ret = CheckBatchParam(param);
     if (ret != BM_OK) {
+        return ret;
+    }
+    ret = EnsureHcommLoaded();
+    if (ret != BM_OK) {
+        HYBM_LOGE(ret, "[hybm] hcomm library unavailable, rankNum=%u", param->rank_num);
         return ret;
     }
     ret = BatchModeStart(kBatchTag);

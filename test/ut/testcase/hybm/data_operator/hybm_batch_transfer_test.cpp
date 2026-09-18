@@ -6,6 +6,13 @@
 #include <cstring>
 #include <vector>
 #include <gtest/gtest.h>
+#include <dlfcn.h>
+
+namespace {
+void *BatchTestDlopen(const char *, int);
+void *BatchTestDlsym(void *, const char *);
+int BatchTestDlclose(void *);
+} // namespace
 
 // Exercise the kernel on the CPU without requiring the device logging runtime.
 #define MF_HYBM_OPS_HYBM_KERNEL_HYBM_KERNEL_LOG_H
@@ -13,7 +20,13 @@
 #define HYBM_LOGW(...) ((void)0)
 #define HYBM_LOGI(...) ((void)0)
 #define HYBM_LOGD(...) ((void)0)
+#define dlopen         BatchTestDlopen
+#define dlsym          BatchTestDlsym
+#define dlclose        BatchTestDlclose
 #include "../../../../../src/hybm/ops/hybm_kernel/hybm_batch_transfer.cc"
+#undef dlopen
+#undef dlsym
+#undef dlclose
 
 namespace {
 constexpr uint32_t kFirstRank = 1U;
@@ -126,6 +139,45 @@ int32_t HcommBatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::Channe
     return batchResult;
 }
 }
+
+namespace {
+// Resolve the existing HCOMM test doubles through the same loader path as the device.
+void *BatchTestDlopen(const char *name, int)
+{
+    EXPECT_STREQ(name, "libccl_kernel.so");
+    static int handle;
+    return &handle;
+}
+
+int BatchTestDlclose(void *)
+{
+    return 0;
+}
+
+void *BatchTestDlsym(void *, const char *name)
+{
+    if (std::strcmp(name, "HcommBatchModeStart") == 0) {
+        return reinterpret_cast<void *>(&HcommBatchModeStart);
+    }
+    if (std::strcmp(name, "HcommBatchModeEnd") == 0) {
+        return reinterpret_cast<void *>(&HcommBatchModeEnd);
+    }
+    if (std::strcmp(name, "HcommChannelFenceOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommChannelFenceOnThread);
+    }
+    if (std::strcmp(name, "HcommReadOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommReadOnThread);
+    }
+    if (std::strcmp(name, "HcommWriteOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommWriteOnThread);
+    }
+    if (std::strcmp(name, "HcommBatchTransferOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommBatchTransferOnThread);
+    }
+    ADD_FAILURE() << "Unexpected HCOMM symbol: " << name;
+    return nullptr;
+}
+} // namespace
 
 TEST_F(HybmBatchTransferTest, UnifiedEntrySubmitsMixedDescriptorsUnchangedByRankAndChunk)
 {
