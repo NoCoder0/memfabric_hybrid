@@ -254,11 +254,11 @@ private:
     std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
     std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
     HostSubmitPool submitPool_; // 常驻 worker：multi-link batch 分片并发提交
-    /* 多 service 模式（MF_HYBM_HCOM_DUAL_SERVICE=1）：每张网卡一个 service，epCount_ = url 数。
-       默认 false = 单 service + MultiRail。 */
+    /* 多 service 模式：每张网卡一个 service，epCount_ = url 数。连接形态**只由 url 数决定**
+       （options.nic 里用 ';' 分隔多个 url 即进入该模式，没有任何环境变量开关）。 */
     bool dualService_{false};
-    /* 分片是否并行提交：多 service 模式默认开（每 slice 一条独立 channel，是已验证形态）；
-       多 rail 模式默认关（两条 rail 共用同一个 channel，并发提交未验证，见 387a43d7）。 */
+    /* 分片是否并行提交：多 service 模式为 true（每 slice 一条独立 channel）。
+       单链路时 sliceCount==1，会走 RunSlicesParallel 的串行分支，与本项无关。 */
     bool submitParallel_{false};
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;

@@ -16,6 +16,8 @@
 #include <string>
 #include <thread>
 #include <sstream>
+#include <functional>
+#include <vector>
 #include <arpa/inet.h>
 #include "dl_hcom_api.h"
 #include "hybm_logger.h"
@@ -341,11 +343,11 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
             BM_LOG_INFO("submit worker cpu range: " << submitCpuRange << " workerCount: " << submitWorkerCount);
         }
     }
-    /* 分片并行提交：多 service 模式默认开（每 slice 一条独立 channel，是已验证形态）；
-       多 rail 模式默认关（两条 rail 共用同一个 channel，并发提交未验证），可用
-       MF_HYBM_RAIL_SUBMIT_PARALLEL=1 显式打开做实验。 */
-    submitParallel_ = dualService_ ||
-                      (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RAIL_SUBMIT_PARALLEL, 0U) != 0U);
+    /* 分片并行提交：多 service 模式（每 ep 一条独立 channel）默认开。
+       多 rail 模式（两条 rail 共用 ep0 的同一个 channel）已随"连接形态只由 url 数决定"停用
+       （GetRailCount() 恒返回 1），所以不再需要实验开关；将来若要恢复该模式，需要同时
+       补回"同一 channel 并发提交"的开关与验证（历史坑见 387a43d7）。 */
+    submitParallel_ = dualService_;
     BM_LOG_INFO("submit parallel: " << submitParallel_ << " (dualService: " << dualService_
                                     << ", submitWorkerCount: " << submitWorkerCount << ")");
     submitPool_.Start(submitWorkerCount, submitCpuBegin, submitCpuCount);
@@ -1289,12 +1291,11 @@ Result HcomTransportManager::SubmitWriteBatchSlice(uint32_t rankId, uint32_t ep,
 Result HcomTransportManager::RunSlicesParallel(uint32_t rankId, uint32_t sliceCount,
                                                const std::function<Result(uint32_t)> &body)
 {
-    /* ⚠ 是否真并行由 submitParallel_ 决定：
-       - 多 service 模式（每 ep 一条独立 channel）默认开 —— 这是同事验证过的形态；
-       - 多 rail 模式（两条 rail 共用 ep0 的同一个 channel）默认关 —— 同一 channel 并发提交未验证，
-         实测不绑核时每轮劣化到 ~4ms 且 baseline 校验失败（见 387a43d7），所以只在显式
-         MF_HYBM_RAIL_SUBMIT_PARALLEL=1 时才走并行。
-       串行分支与并行版引入前的行为逐字一致。 */
+    /* ⚠ 是否真并行由 submitParallel_ 决定（多 service 模式为真；单链路时 sliceCount==1 走串行分支）。
+       串行分支与并行版引入前的行为逐字一致。
+       ⚠ 这个函数必须被真正调用到：数据面持有的是 ComposeTransportManager，它必须显式转发
+       （见 compose_transport_manager.cpp），否则会落到基类的串行默认实现上。
+       历史踩坑：转发曾经缺失，导致"并行提交"静默退化成串行，排障时打点打在本函数里一行都出不来。 */
     if (!submitParallel_ || sliceCount <= 1) {
         for (uint32_t slice = 0; slice < sliceCount; ++slice) {
             auto ret = body(slice);
