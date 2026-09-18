@@ -13,6 +13,7 @@
 #include <sys/mman.h>
 #include <algorithm>
 #include <memory>
+#include <utility>
 #include "hybm_space_allocator.h"
 #include "hybm_ptracer.h"
 #include "dl_hybrid_api.h"
@@ -282,12 +283,18 @@ Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA, void *destVA, uint64_
            而不是同步单包口 WriteRemote（ChannelPut 传 nullptr 回调）。
            实测同步单包口在小消息（几字节~几十字节）上有 ~4ms 的固定开销，异步口是几十 us 量级；
            语义不变 —— 这里依旧等本次写完成才返回。 */
-        TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_READ_REMOTE)
+        TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC) /* 此前误用 READ_REMOTE：这里是单包单边写 + 等完成 */
+        uint64_t putSubmitT0 = 0;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, &putSubmitT0);
         ret = transportManager_->WriteRemoteAsync(options.destRankId, srcBase, destBase, length);
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SUBMIT, putSubmitT0, ret)
+        uint64_t putWaitT0 = 0;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT, &putWaitT0);
         if (ret == BM_OK) {
             ret = transportManager_->Synchronize(options.destRankId);
         }
-        TP_TRACE_END(TP_HYBM_HOST_RDMA_READ_REMOTE, ret)
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_ONESIDE_PUT_WAIT, putWaitT0, ret)
+        TP_TRACE_END(TP_HYBM_HOST_RDMA_ONESIDE_PUT_SYNC, ret)
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy rdma", ret);
         return ret;
     }
@@ -426,9 +433,42 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
                                      const ExtOptions &options) noexcept
 {
     BM_ASSERT_LOG_AND_RETURN(inited_, "inited_ = " << inited_, BM_NOT_INITIALIZED);
+    /* ubs 调用计时：只在打点打开时启用；配合 DlHcomApi 里的 Begin/End，
+       把"ubs 函数内部（同步段）"从"MF 纯软件"里剥出来（见 ubs_call_time 注释） */
+    ubs_call_time::enabled = g_tracer.enabled;
+    ubs_call_time::Reset();
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL)
     TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
+    /* 段缓存（src/dst 各一个）：一批 iov 的地址通常集中在一个段里，
+       避免每个 iov 都走一次 shared_lock + 红黑树查询。
+       段状态额外复制到循环外的局部变量：循环体会写回 sources[]/destinations[]，
+       若状态只存在缓存对象里，编译器无法证明这些指针写不会别名到该对象，只能在每次写后
+       重新载入成员（每 iov 多出数次内存读）；放到局部变量后即可常驻寄存器。 */
+    VaRangeCache srcVaCache;
+    VaRangeCache dstVaCache;
+    uint64_t srcStart = 0;
+    uint64_t srcSize = 0;
+    uint64_t srcInBase = 0;
+    uint64_t srcOutBase = 0;
+    uint64_t dstStart = 0;
+    uint64_t dstSize = 0;
+    uint64_t dstInBase = 0;
+    uint64_t dstOutBase = 0;
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVa(params.sources[i], params.destinations[i], direction);
+        uint64_t src = reinterpret_cast<uint64_t>(params.sources[i]);
+        if ((src - srcStart) >= srcSize) { /* 冷路径：首次或换段，刷新局部状态 */
+            srcVaCache.ResolveGvaToHva(src, srcStart, srcSize, srcInBase, srcOutBase);
+        }
+        if (srcSize != 0) {
+            params.sources[i] = reinterpret_cast<void *>(srcOutBase + (src - srcInBase));
+        }
+        uint64_t dst = reinterpret_cast<uint64_t>(params.destinations[i]);
+        if ((dst - dstStart) >= dstSize) {
+            dstVaCache.ResolveGvaToHva(dst, dstStart, dstSize, dstInBase, dstOutBase);
+        }
+        if (dstSize != 0) {
+            params.destinations[i] = reinterpret_cast<void *>(dstOutBase + (dst - dstInBase));
+        }
     }
     TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
     Result ret = BM_OK;
@@ -483,6 +523,8 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
             BM_LOG_ERROR("data copy invalid direction: " << direction);
             ret = BM_INVALID_PARAM;
     }
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_MF_DATAOP_TOTAL, ret)
+    TP_TRACE_RECORD(TP_HYBM_HOST_RDMA_UBS_CALL_TOTAL, ubs_call_time::Get(), 0)
     return ret;
 }
 
@@ -1152,12 +1194,14 @@ Result HostDataOpRDMA::BatchCopyLH2GH(void **gvaAddrs, void **hostAddrs, const u
         }
     } else {
         bool registered = true;
+        TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_QUERY_MR)
         for (uint32_t i = 0U; i < batchSize; i++) {
             if (!transportManager_->QueryHasRegistered(reinterpret_cast<uint64_t>(hostAddrs[i]), counts[i])) {
                 registered = false;
                 break;
             }
         }
+        TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_QUERY_MR, registered ? 0 : 1)
         if (registered) {
             ret = BatchCopyGH2GH(gvaAddrs, hostAddrs, counts, batchSize, options);
         } else {
@@ -1230,6 +1274,12 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
 
     CopyDescriptor smallIoDes;
     CopyDescriptor bigIoDes;
+    /* 预分配：否则逐 iov emplace_back 过程中两个 vector 会反复扩容+搬迁元素
+       （cont 一批就是 600 个 iov，扩容是纯白干的内存搬运；容量不影响语义） */
+    smallIoDes.localAddrs.reserve(batchSize);
+    smallIoDes.globalAddrs.reserve(batchSize);
+    smallIoDes.counts.reserve(batchSize);
+    TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC)
     for (auto i = 0U; i < batchSize; i++) {
         if (counts[i] <= SMALL_IO_LIMIT_SIZE) {
             smallIoDes.localAddrs.emplace_back(srcAddrs[i]);
@@ -1241,13 +1291,16 @@ Result HostDataOpRDMA::BatchCopyGH2GH(void **destAddrs, void **srcAddrs, const u
             bigIoDes.counts.emplace_back(counts[i]);
         }
     }
+    TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC, 0)
 
     if (!smallIoDes.counts.empty()) {
         if (!isPut) {
             ret = transportManager_->ReadRemoteBatchAsync(options.srcRankId, smallIoDes);
         } else if (options.HasProgress()) {
             /* 单链路/多链路都支持：多链路时每条 link 各自维护一份水位（契约见 hybm_def.h） */
+            TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PROGRESS_ALL)
             ret = WriteRemoteBatchWithProgress(smallIoDes, options);
+            TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_PROGRESS_ALL, ret)
         } else {
             ret = transportManager_->WriteRemoteBatchAsync(options.destRankId, smallIoDes);
         }
@@ -1298,6 +1351,8 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
     const size_t interval = (options.progressInterval == 0) ? (end - begin) : options.progressInterval;
     size_t cursor = begin;
     uint32_t chunkIndex = 0;
+    uint64_t wmT0 = 0;
+    TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_PROGRESS_WM, &wmT0);
     while (cursor < end) {
         const size_t chunkEnd = std::min(cursor + interval, end);
         auto ret = (railIdx < 0) ? transportManager_->SubmitWriteBatchOnEp(options.destRankId, ep, descriptor, cursor,
@@ -1308,6 +1363,7 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
             BM_LOG_ERROR("Failed to submit batch chunk, destRank:" << options.destRankId << " ep:" << ep
                                                                    << " begin:" << cursor << " end:" << chunkEnd
                                                                    << " ret:" << ret);
+            TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, ret)
             return ret;
         }
         // Every watermark gets its own source slot: the NIC reads the source when it processes the WQE, so
@@ -1315,18 +1371,23 @@ Result HostDataOpRDMA::WriteRemoteBatchOnEpWithProgress(uint32_t ep, const CopyD
         // watermark before that chunk has landed. Slots are append-only, never rewritten.
         const uint64_t srcAddr = progressSrc + static_cast<uint64_t>(chunkIndex) * srcStride;
         *reinterpret_cast<uint64_t *>(srcAddr) = options.progressBase + static_cast<uint64_t>(chunkEnd);
+        uint64_t wmPutT0 = 0;
+        TP_TRACE_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_WM_WRITE, &wmPutT0);
         ret = (railIdx < 0) ? transportManager_->WriteRemoteAsyncOnEp(options.destRankId, ep, srcAddr, progressDest,
                                                                      sizeof(uint64_t))
                             : transportManager_->WriteRemoteAsyncOnEpOnRail(options.destRankId, ep, railIdx, srcAddr,
                                                                             progressDest, sizeof(uint64_t));
+        TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_WM_WRITE, wmPutT0, ret);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to submit batch progress, destRank:" << options.destRankId << " ep:" << ep
                                                                       << " done:" << chunkEnd << " ret:" << ret);
+            TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, ret)
             return ret;
         }
         cursor = chunkEnd;
         ++chunkIndex;
     }
+    TP_TRACE_TRACE_END(TP_HYBM_HOST_RDMA_PROGRESS_WM, wmT0, 0);
     return BM_OK;
 }
 
@@ -1338,6 +1399,42 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
     const size_t total = descriptor.counts.size();
     if (total == 0) {
         return BM_OK;
+    }
+    /* 多 service（每 ep 一张网卡、一条**独立 channel**）：每条 link 负责一段【连续】iov，各自一份水位
+       （契约同下：对端水位槽 = progressDest + e*8，本端源槽 = progressSrc + (子块号*K + e)*8）。
+       水位仍与它所属 link 的数据走同一条连接，靠 QP 内保序保证水位不超前。
+       与多 rail 的关键区别：这里每个分片是独立 channel，所以可以每分片一个线程并行提交，
+       不存在"同一个 channel 被多线程并发提交"的问题。 */
+    const uint32_t epCount = transportManager_->GetLinkCount();
+    if (epCount > 1) {
+        if (!transportManager_->AllLinksReady(options.destRankId)) {
+            /* 进度模式下绝不能退化成普通提交：对端在按水位消费数据，一个水位都不写就会一直等下去。 */
+            BM_LOG_ERROR("multi link not all ready while progress enabled, epCount: "
+                         << epCount << " destRank:" << options.destRankId
+                         << ", check that both sides configure the same number of urls");
+            return BM_NOT_CONNECTED;
+        }
+        const size_t per = total / epCount;
+        const size_t rem = total % epCount;
+        const uint64_t srcStride = static_cast<uint64_t>(epCount) * sizeof(uint64_t);
+        std::vector<std::pair<size_t, size_t>> ranges(epCount);
+        size_t begin = 0;
+        for (uint32_t ep = 0; ep < epCount; ++ep) {
+            const size_t end = begin + per + (ep < rem ? 1U : 0U);
+            ranges[ep] = std::make_pair(begin, end);
+            begin = end;
+        }
+        return transportManager_->RunSlicesParallel(
+            options.destRankId, epCount,
+            [this, &descriptor, &options, &ranges, destBase, srcBase, srcStride](uint32_t ep) -> Result {
+                const auto &range = ranges[ep];
+                if (range.second <= range.first) { /* 该 link 没分到 iov */
+                    return BM_OK;
+                }
+                return WriteRemoteBatchOnEpWithProgress(ep, descriptor, range.first, range.second, options,
+                                                        destBase + ep * sizeof(uint64_t),
+                                                        srcBase + ep * sizeof(uint64_t), srcStride, -1);
+            });
     }
     /* 双连接(多 rail) 复用同一套"每链独立水位"逻辑：linkCount 的来源换成 rail 数。
        单连接时 GetRailCount() 返回 1，走单链路径，行为与以前完全一致。 */
@@ -1361,20 +1458,30 @@ Result HostDataOpRDMA::WriteRemoteBatchWithProgress(const CopyDescriptor &descri
     const size_t base = total / linkCount;
     const size_t rem = total % linkCount;
     const uint64_t srcStride = static_cast<uint64_t>(linkCount) * sizeof(uint64_t);
+    std::vector<std::pair<size_t, size_t>> ranges(linkCount);
     size_t begin = 0;
     for (uint32_t ep = 0; ep < linkCount; ++ep) {
         const size_t end = begin + base + (ep < rem ? 1U : 0U);
-        if (end > begin) {
-            /* rail 共用 ep0 的 channel：ep 传 0，真正的网卡由 railIdx 指定 */
-            const auto ret = WriteRemoteBatchOnEpWithProgress(0, descriptor, begin, end, options,
-                                                              destBase + ep * sizeof(uint64_t),
-                                                              srcBase + ep * sizeof(uint64_t), srcStride,
-                                                              static_cast<int32_t>(ep));
-            if (ret != BM_OK) {
-                return ret;
-            }
-        }
+        ranges[ep] = std::make_pair(begin, end);
         begin = end;
     }
-    return BM_OK;
+    /* 每条 rail 的"分块提交 + 每块一次水位写"整体投到各自的常驻 worker 上并行执行。
+       串行做两条 rail 等于把同一份 CPU 密集的提交工作排队跑两遍（见 RunSlicesParallel 注释），
+       而 rail 本来就没法并行提交时间 —— 这才是双 rail 曾经比单 rail 慢的原因。
+       水位语义不变：每条 rail 的水位仍走它自己那条连接（QP 内保序保证水位不超前）。
+       ⚠ RunSlicesParallel 会阻塞到所有 rail 提交并完成，所以这里捕获的 ranges/descriptor/options
+       在整个调用期间都活着。 */
+    return transportManager_->RunSlicesParallel(
+        options.destRankId, linkCount,
+        [this, &descriptor, &options, &ranges, destBase, srcBase, srcStride](uint32_t rail) -> Result {
+            const auto &range = ranges[rail];
+            if (range.second <= range.first) { /* 该 rail 没分到 iov */
+                return BM_OK;
+            }
+            /* rail 共用 ep0 的 channel：ep 传 0，真正的网卡由 railIdx 指定 */
+            return WriteRemoteBatchOnEpWithProgress(0, descriptor, range.first, range.second, options,
+                                                    destBase + rail * sizeof(uint64_t),
+                                                    srcBase + rail * sizeof(uint64_t), srcStride,
+                                                    static_cast<int32_t>(rail));
+        });
 }

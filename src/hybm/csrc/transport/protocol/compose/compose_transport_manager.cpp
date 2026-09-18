@@ -707,6 +707,21 @@ Result ComposeTransportManager::SynchronizeRanks(const std::set<uint32_t> &rankI
     return ret;
 }
 
+Result ComposeTransportManager::RunSlicesParallel(uint32_t rankId, uint32_t sliceCount,
+                                                  const std::function<Result(uint32_t)> &body)
+{
+    /* ⚠ 必须显式转发到 host transport。
+       分片（多 ep / 多 rail）只出现在 host rdma 路径上（GetLinkCount 的注释也这么说），
+       而 TransportManager 基类的默认实现是**纯串行 for 循环** —— 数据面拿到的正是本类对象，
+       不转发的话"分片并行提交"会静默退化成串行：现象是两条 rail 的数据一前一后、
+       且所有并行开关（submitParallel_ / MF_HYBM_SUBMIT_CPU_RANGE / 常驻提交池）全部无效。
+       这条曾经误导了整个排障过程（打点打在 HcomTransportManager 里，一行都打不出来）。 */
+    if (hostTransportManager_ != nullptr) {
+        return hostTransportManager_->RunSlicesParallel(rankId, sliceCount, body);
+    }
+    return TransportManager::RunSlicesParallel(rankId, sliceCount, body);
+}
+
 Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &options)
 {
     Result ret = BM_OK;

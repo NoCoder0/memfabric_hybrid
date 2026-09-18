@@ -95,6 +95,9 @@ public:
 
     Result SynchronizeRanks(const std::set<uint32_t> &rankIds) override;
 
+    Result RunSlicesParallel(uint32_t rankId, uint32_t sliceCount,
+                             const std::function<Result(uint32_t)> &body) override;
+
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;

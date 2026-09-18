@@ -13,6 +13,8 @@
 #ifndef MF_HYBRID_HOST_HCOM_SUBMIT_POOL_H
 #define MF_HYBRID_HOST_HCOM_SUBMIT_POOL_H
 
+#include <pthread.h>
+#include <sched.h>
 #include <algorithm>
 #include <condition_variable>
 #include <cstdint>
@@ -28,8 +30,8 @@ namespace mf {
 namespace transport {
 namespace host {
 
-// 常驻 worker 池：multi-link batch 把每个 ep 的分片任务分发给固定 worker 并发提交，
-// 避免每轮新建线程。任务数必须等于 Start 时的 worker 数（调用方为不活跃 ep 补 no-op 任务）。
+// 常驻 worker 池：multi-link / multi-rail batch 把每条 ep(rail) 的分片任务分发给固定 worker 并发提交，
+// 避免每轮新建线程。任务数不必等于 worker 数：多出的 worker 补空转任务，任务数超过 worker 数才报错。
 class HostSubmitPool {
 public:
     HostSubmitPool() noexcept = default;
@@ -41,8 +43,11 @@ public:
     HostSubmitPool(const HostSubmitPool &) = delete;
     HostSubmitPool &operator=(const HostSubmitPool &) = delete;
 
-    // 幂等启动 workerCount 个常驻线程（每线程绑定一个固定槽位）
-    void Start(uint32_t workerCount)
+    /* 幂等启动 workerCount 个常驻线程（每线程绑定一个固定槽位）。
+       cpuBegin/cpuCount：可选绑核区段，第 i 个 worker 绑到 cpuBegin+i；cpuCount==0 表示不绑，
+       落核交给内核调度器。提交是 CPU 密集的短任务，不绑核时可能被唤醒后落到忙轮询 worker 的核上
+       互相抢占（提交变慢、完成回收也被推迟），所以多 rail 场景建议显式指定。 */
+    void Start(uint32_t workerCount, uint32_t cpuBegin = 0, uint32_t cpuCount = 0)
     {
         std::lock_guard<std::mutex> lock(mutex_);
         if (started_ || stop_) {
@@ -50,7 +55,14 @@ public:
         }
         started_ = true;
         for (uint32_t i = 0; i < workerCount; ++i) {
-            threads_.emplace_back([this, i]() { WorkerLoop(i); });
+            const bool needBind = (i < cpuCount);
+            const uint32_t cpu = cpuBegin + i;
+            threads_.emplace_back([this, i, needBind, cpu]() {
+                if (needBind) {
+                    PinCurrentThread(cpu);
+                }
+                WorkerLoop(i);
+            });
         }
     }
 
@@ -62,10 +74,13 @@ public:
             BM_LOG_ERROR("HostSubmitPool not started");
             return BM_NOT_INITIALIZED;
         }
-        if (tasks.size() != threads_.size()) {
-            BM_LOG_ERROR("HostSubmitPool task count " << tasks.size() << " mismatch workers " << threads_.size());
+        if (tasks.size() > threads_.size()) {
+            BM_LOG_ERROR("HostSubmitPool task count " << tasks.size() << " exceeds workers " << threads_.size());
             return BM_INVALID_PARAM;
         }
+        /* 允许任务数少于 worker 数：不足的槽位补空转任务，worker 仍然一人一格。
+           这样调用方不必把"任务条数"和"池子大小"绑死（多 rail / 多 ep 的条目数会随配置变）。 */
+        tasks.resize(threads_.size(), []() { return BM_OK; });
         roundTasks_ = std::move(tasks);
         roundDone_.assign(threads_.size(), false);
         roundFailed_ = false;
@@ -80,6 +95,17 @@ private:
     bool AllRoundDone() const
     {
         return std::all_of(roundDone_.begin(), roundDone_.end(), [](bool done) { return done; });
+    }
+
+    /* 把当前线程钉到指定核。失败只打 WARN 不返回错误：绑核是性能手段，不该让服务起不来。 */
+    static void PinCurrentThread(uint32_t cpu)
+    {
+        cpu_set_t cpuSet;
+        CPU_ZERO(&cpuSet);
+        CPU_SET(static_cast<int>(cpu), &cpuSet);
+        if (pthread_setaffinity_np(pthread_self(), sizeof(cpuSet), &cpuSet) != 0) {
+            BM_LOG_WARN("Unable to bind submit worker to cpu " << cpu);
+        }
     }
 
     void WorkerLoop(uint32_t idx)

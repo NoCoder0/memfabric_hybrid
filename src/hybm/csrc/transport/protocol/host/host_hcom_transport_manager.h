@@ -13,6 +13,7 @@
 #ifndef MF_HYBRID_HOST_HCOM_TRANSPORT_MANAGER_H
 #define MF_HYBRID_HOST_HCOM_TRANSPORT_MANAGER_H
 
+#include <functional>
 #include <mutex>
 #include <set>
 #include <atomic>
@@ -122,6 +123,15 @@ public:
     Result WriteRemoteAsyncOnEpOnRail(uint32_t rankId, uint32_t ep, int32_t railIdx, uint64_t lAddr, uint64_t rAddr,
                                       uint64_t size) override;
 
+    /* 分片并行提交：把 sliceCount 个分片的工作并行投到常驻 worker 池上（每 worker 一个分片）。
+       分片语义：多 rail 模式下是 rail 下标（各 rail 共用 ep0 的 channel），多 service 模式下是
+       ep 下标（每 ep 一条独立 channel）。body 在 worker 线程里执行，其中的提交走该 worker 私有的
+       thread_local stream_，所以天然就是"每分片一个独立提交线程"；返回前每个 worker 会 Synchronize
+       自己的 stream，整体语义与原串行版一致（调用方在外层再 Synchronize 时等的是自己的空 stream）。
+       是否真并行由 submitParallel_ 决定（多 service 默认开、多 rail 默认关）。 */
+    Result RunSlicesParallel(uint32_t rankId, uint32_t sliceCount,
+                             const std::function<Result(uint32_t)> &body) override;
+
     bool AllLinksReady(uint32_t rankId) const override;
 
     Result Synchronize(uint32_t rankId) override;
@@ -163,6 +173,11 @@ private:
 
     Result GetMemoryRegionByAddr(const uint32_t &rankId, const uint32_t &ep, const uint64_t &addr,
                                  HcomMemoryRegion &mr);
+    /* 与上面同义，但返回本线程 MR 缓存槽里的指针，不再把整个 HcomMemoryRegion(~250B) 拷回调用方。
+       HcomMemoryRegion 里 lva/addr/size/lKey/mr 共约 250 字节，批量提交时每个 iov 要查 2 次
+       （本端 + 远端），原先每 iov 有 ~1KB 的清零+拷贝开销。
+       返回指针指向 thread_local 槽位，有效期到本线程下一次查询该槽为止，只可即时读取。 */
+    const HcomMemoryRegion *FindMemoryRegionByAddr(uint32_t rankId, uint32_t ep, uint64_t addr);
 
     Result UpdateRankMrInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &opt);
 
@@ -231,6 +246,12 @@ private:
     std::vector<std::vector<std::string>> nics_;      // [rankId][ep]
     std::vector<std::vector<Hcom_Channel>> channels_; // [rankId][ep]
     HostSubmitPool submitPool_; // 常驻 worker：multi-link batch 分片并发提交
+    /* 多 service 模式：每张网卡一个 service，epCount_ = url 数。连接形态**只由 url 数决定**
+       （options.nic 里用 ';' 分隔多个 url 即进入该模式，没有任何环境变量开关）。 */
+    bool dualService_{false};
+    /* 分片是否并行提交：多 service 模式为 true（每 slice 一条独立 channel）。
+       单链路时 sliceCount==1，会走 RunSlicesParallel 的串行分支，与本项无关。 */
+    bool submitParallel_{false};
     HcomReconnector reconnect_;
     static hybm_tls_config tlsConfig_;
     static char keyPass_[KEYPASS_MAX_LEN];

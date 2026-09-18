@@ -17,6 +17,7 @@
 #include "hybm_mem_segment.h"
 #include "hybm_transport_manager.h"
 #include "hybm_rbtree_range_pool.h"
+#include "hybm_va_manager.h"
 
 namespace ock {
 namespace mf {

@@ -316,28 +316,42 @@ public:
         return gChannelReply(channel, req, ctx, cb);
     }
 
+    /* 单边读写调用统一用 ubs_call_time 计时：把"ubs 函数内部（同步段）"与"MF 纯软件"分开统计。
+       未开启时 Begin() 返回 0、End(0) 直接返回，只有一次 TLS 判断的开销。 */
     static inline int ChannelPut(Hcom_Channel channel, Channel_OneSideRequest req, Channel_Callback *cb)
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelPut != nullptr, "gChannelPut is nullptr", BM_UNDER_API_UNLOAD);
-        return gChannelPut(channel, req, cb);
+        uint64_t ubsT0 = ubs_call_time::Begin();
+        auto ret = gChannelPut(channel, req, cb);
+        ubs_call_time::End(ubsT0);
+        return ret;
     }
 
     static inline int ChannelPutV(Hcom_Channel channel, Channel_OneSideRequestSgl req, Channel_Callback *cb)
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelBatchPut != nullptr, "gChannelBatchPut is nullptr", BM_UNDER_API_UNLOAD);
-        return gChannelBatchPut(channel, req, cb);
+        uint64_t ubsT0 = ubs_call_time::Begin();
+        auto ret = gChannelBatchPut(channel, req, cb);
+        ubs_call_time::End(ubsT0);
+        return ret;
     }
 
     static inline int ChannelGet(Hcom_Channel channel, Channel_OneSideRequest req, Channel_Callback *cb)
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelGet != nullptr, "gChannelGet is nullptr", BM_UNDER_API_UNLOAD);
-        return gChannelGet(channel, req, cb);
+        uint64_t ubsT0 = ubs_call_time::Begin();
+        auto ret = gChannelGet(channel, req, cb);
+        ubs_call_time::End(ubsT0);
+        return ret;
     }
 
     static inline int ChannelGetV(Hcom_Channel channel, Channel_OneSideRequestSgl req, Channel_Callback *cb)
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelBatchGet != nullptr, "gChannelBatchGet is nullptr", BM_UNDER_API_UNLOAD);
-        return gChannelBatchGet(channel, req, cb);
+        uint64_t ubsT0 = ubs_call_time::Begin();
+        auto ret = gChannelBatchGet(channel, req, cb);
+        ubs_call_time::End(ubsT0);
+        return ret;
     }
 
     /* 指定 rail(网卡) 提交 SGL 单边写/读：整批 iov 只走 railIdx 这一条 rail，不做库内 MultiRail 扇出。
@@ -348,7 +362,10 @@ public:
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelBatchPutOnRail != nullptr, "gChannelBatchPutOnRail is nullptr",
                                  BM_UNDER_API_UNLOAD);
-        return gChannelBatchPutOnRail(channel, req, railIdx, cb);
+        uint64_t ubsT0 = ubs_call_time::Begin();
+        auto ret = gChannelBatchPutOnRail(channel, req, railIdx, cb);
+        ubs_call_time::End(ubsT0);
+        return ret;
     }
 
     static inline int ChannelGetVOnRail(Hcom_Channel channel, Channel_OneSideRequestSgl req, uint16_t railIdx,
@@ -356,7 +373,10 @@ public:
     {
         BM_ASSERT_LOG_AND_RETURN(gChannelBatchGetOnRail != nullptr, "gChannelBatchGetOnRail is nullptr",
                                  BM_UNDER_API_UNLOAD);
-        return gChannelBatchGetOnRail(channel, req, railIdx, cb);
+        uint64_t ubsT0 = ubs_call_time::Begin();
+        auto ret = gChannelBatchGetOnRail(channel, req, railIdx, cb);
+        ubs_call_time::End(ubsT0);
+        return ret;
     }
 
     static inline int ChannelSetFlowControlConfig(Hcom_Channel channel, Channel_FlowCtrlOptions opt)

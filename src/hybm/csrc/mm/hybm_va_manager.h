@@ -406,6 +406,119 @@ private:
     };
 };
 
+/* 一段地址范围缓存：把"同一段内连续地址"的重复查询从 shared_lock+红黑树(O(logN)) 降成内存比较。
+   背景：批量拷贝按 iov 逐个查归属/转换（每轮 600 iov × 2 个地址 × 2 类查询 = 2400 次），
+   而一批地址通常集中在同一个段里（本地段 / 对端导入段各一个），绝大多数查询是重复遍历同一棵树。
+   用法约束：
+     - 一个实例只服务"一个地址流"（如 sources 一个、destinations 一个），混用会因交替换段而全部未命中；
+     - 生命周期就是一次批量拷贝，因此不存在跨调用失效问题（段在拷贝过程中被摘除本来就是既有竞态）。
+   未命中时回表 HybmVaManager::FindAllocByVa（公开 API，管理器内部不加锁改动）。 */
+class VaRangeCache {
+public:
+    /* 查 gva 的归属 rank：命中缓存直接返回；未命中回表，回表失败返回 false（调用方按本地 rank 处理） */
+    bool RankByGva(uint64_t gva, uint32_t &rank)
+    {
+        if (!Contains(gva, HVM_GVA)) {
+            auto [info, found] = HybmVaManager::GetInstance().FindAllocByVa(gva, HVM_GVA);
+            if (!found) {
+                Reset();
+                return false;
+            }
+            Fill(info, HVM_GVA, HVM_BUTT);
+        }
+        rank = info_.RankId();
+        return true;
+    }
+
+    /* va 从 inType 转到 outType（如 GVA->HVA）：命中缓存按段内线性关系直接算，返回 0 表示不可转 */
+    uint64_t Transform(uint64_t va, uint32_t inType, uint32_t outType)
+    {
+        if (inType == outType) {
+            return va;
+        }
+        if (inType_ != inType || outType_ != outType || !InRange(va)) {
+            auto [info, found] = HybmVaManager::GetInstance().FindAllocByVa(va, inType);
+            if (!found || info.base.va[outType] == 0) {
+                Reset();
+                return 0;
+            }
+            Fill(info, inType, outType);
+        }
+        return outBase_ + (va - inBase_);
+    }
+
+    /* 热路径专用：GVA -> HVA（两个类型都是编译期常量）。
+       每地址只有「1 次减 + 1 次无符号比较」判区间、「1 次减 + 1 次加」做变换，
+       不再做类型比较，也不再用运行期下标去 info_.base.va[] 里取基址。 */
+    uint64_t GvaToHva(uint64_t va)
+    {
+        if (inType_ == HVM_GVA && outType_ == HVM_HVA && (va - start_) < size_) {
+            return outBase_ + (va - inBase_);
+        }
+        return Transform(va, HVM_GVA, HVM_HVA);
+    }
+
+    /* 热循环批量版本：把段状态直接写进调用方的局部变量（而不是让调用方每次回读本对象成员）。
+       原因是调用方循环里会写 sources[]/destinations[] 这类指针数组，编译器无法证明这些写不会
+       别名到本对象，于是每次写后都要重新载入成员 —— 状态放到局部变量后就能常驻寄存器。
+       命中：写入缓存的段区间与两个基址；未命中：回表刷新后写入；回表失败：size 写 0（调用方据此保持原地址）。 */
+    void ResolveGvaToHva(uint64_t va, uint64_t &start, uint64_t &size, uint64_t &inBase, uint64_t &outBase)
+    {
+        if (inType_ != HVM_GVA || outType_ != HVM_HVA || (va - start_) >= size_) {
+            auto [info, found] = HybmVaManager::GetInstance().FindAllocByVa(va, HVM_GVA);
+            if (!found || info.base.va[HVM_HVA] == 0) {
+                Reset();
+                size = 0;
+                return;
+            }
+            Fill(info, HVM_GVA, HVM_HVA);
+        }
+        start = start_;
+        size = size_;
+        inBase = inBase_;
+        outBase = outBase_;
+    }
+
+private:
+    void Fill(const AllocatedGvaInfo &info, uint32_t inType, uint32_t outType)
+    {
+        info_ = info;
+        inType_ = inType;
+        outType_ = outType;
+        start_ = info.base.va[inType];
+        size_ = info.base.size;
+        inBase_ = start_;
+        /* outType == HVM_BUTT 表示只关心 rank（RankByGva 用），此时不取输出基址 */
+        outBase_ = (outType < HVM_BUTT) ? info.base.va[outType] : 0;
+    }
+
+    void Reset()
+    {
+        size_ = 0;
+        inType_ = HVM_BUTT;
+        outType_ = HVM_BUTT;
+    }
+
+    /* 单条无符号比较判区间：size_ == 0（未填充）时恒为 false */
+    bool InRange(uint64_t addr) const
+    {
+        return (addr - start_) < size_;
+    }
+
+    bool Contains(uint64_t addr, uint32_t type) const
+    {
+        return inType_ == type && InRange(addr);
+    }
+
+    AllocatedGvaInfo info_{};
+    uint64_t start_ = 0;
+    uint64_t size_ = 0;
+    uint64_t inBase_ = 0;
+    uint64_t outBase_ = 0;
+    uint32_t inType_ = HVM_BUTT;
+    uint32_t outType_ = HVM_BUTT;
+};
+
 template<typename T>
 std::string VaToInfo(T v)
 {
