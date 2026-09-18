@@ -1454,19 +1454,23 @@ bool HostDataOpRDMA::TryMultiLinkHostPut(hybm_batch_copy_params &params, hybm_da
             TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA)
             TransformVaRange(params, range.first, range.second);
             TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_TRANSFORM_VA, 0)
+            /* ⚠ descriptor 与 begin/end 必须用**全批绝对下标**：WriteRemoteBatchOnEpWithProgress 会把
+               chunkEnd 直接写进水位值（progressBase + chunkEnd），而对端是按"本批的全局块号"在等
+               （双 link 时 ep1 的水位要涨到 600 才算完，见 bench 的 endPerEp）。
+               所以这里把 descriptor 按整批尺寸开好、只填自己那一段，其余留 0 —— 读写都只落在
+               [begin, end)，其余槽位不会被碰。 */
             CopyDescriptor des;
-            const uint32_t cnt = range.second - range.first;
-            des.localAddrs.reserve(cnt);
-            des.globalAddrs.reserve(cnt);
-            des.counts.reserve(cnt);
+            des.localAddrs.resize(params.batchSize);
+            des.globalAddrs.resize(params.batchSize);
+            des.counts.assign(params.batchSize, 0);
             TP_TRACE_BEGIN(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC)
             for (uint32_t i = range.first; i < range.second; ++i) {
-                des.localAddrs.emplace_back(params.sources[i]);
-                des.globalAddrs.emplace_back(params.destinations[i]);
-                des.counts.emplace_back(params.dataSizes[i]);
+                des.localAddrs[i] = params.sources[i];
+                des.globalAddrs[i] = params.destinations[i];
+                des.counts[i] = params.dataSizes[i];
             }
             TP_TRACE_END(TP_HYBM_HOST_RDMA_BATCH_PREP_DESC, 0)
-            return WriteRemoteBatchOnEpWithProgress(ep, des, 0, des.counts.size(), options,
+            return WriteRemoteBatchOnEpWithProgress(ep, des, range.first, range.second, options,
                                                     destBase + ep * sizeof(uint64_t),
                                                     srcBase + ep * sizeof(uint64_t), srcStride, -1);
         });
