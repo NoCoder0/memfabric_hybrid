@@ -240,8 +240,9 @@ public:
 
     static HybmVaManager &GetInstance()
     {
-        static HybmVaManager instance;
-        return instance;
+        // 设定为进程生命周期，以确保在其他单例销毁期间仍保持可用。
+        static HybmVaManager *const instance = new HybmVaManager();
+        return *instance;
     }
     Result Initialize(AscendSocType socType) noexcept;
 
