@@ -32,8 +32,9 @@ if (BUILD_HCOM)
     set(CMAKE_INSTALL_PREFIX ${DEPS_INSTALL_DIR}/hcom)
     FetchContent_Declare(
             hcom
-            GIT_REPOSITORY https://gitcode.com/huanghaiyun_/ubs-comm.git
-            GIT_TAG oneside-msge-merge
+            GIT_REPOSITORY https://github.com/NoCoder0/ubs-comm.git
+            # Keep MF and the RDMA trace baseline on the same ubs-comm revision.
+            GIT_TAG 740f0bbb25134eeb63f5061f019f0497e6b0effa
     )
 
     message(STATUS "Configuring hcom with CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}, options: BUILD_WITH_RDMA:${BUILD_WITH_RDMA} BUILD_WITH_UB:${BUILD_WITH_UB}")

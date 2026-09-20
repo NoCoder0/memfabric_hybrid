@@ -129,7 +129,7 @@ export MF_ACC_CERT_CHECK_AHEAD_DAYS=14
 |------  |-----------------|-------------|--------------------------------------------|-------------------|
 | 依赖三方库  |  https://github.com/google/googletest.git | .gitmodules | https://github.com/google/googletest.git   | 单元测试框架依赖 |
 | 依赖三方库  | https://github.com/sinojelly/mockcpp.git  | .gitmodules | https://github.com/sinojelly/mockcpp.git   | 单元测试框架依赖 |
-| 依赖三方库  | https://atomgit.com/openeuler/ubs-comm.git  | cmake/config_hcom.cmake | https://atomgit.com/openeuler/ubs-comm.git   | UBS通信库依赖 |
+| 依赖三方库  | https://github.com/NoCoder0/ubs-comm.git  | cmake/config_hcom.cmake | https://github.com/NoCoder0/ubs-comm.git   | UBS通信库依赖 |
 | 依赖三方库  | https://atomgit.com/openeuler/libboundscheck.git | bazel/memfabric_deps.bzl | https://atomgit.com/openeuler/libboundscheck.git | boundscheck安全库依赖 |
 | 依赖三方库  | https://github.com/bazel-contrib/rules_python | WORKSPACE | https://github.com/bazel-contrib/rules_python | Bazel Python规则依赖 |
 | 依赖三方库  | https://github.com/pybind/pybind11 | WORKSPACE | https://github.com/pybind/pybind11 | Python绑定库依赖 |

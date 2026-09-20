@@ -89,9 +89,10 @@ constexpr uint32_t WORKER_CPU_ID_MAX = 611;
    （CreateOneSideCtx 里对 groupCount 每个段都调一次 GetOneSideWr）：
    600 个 4KB 离散块（stride 4096 > size 1024）就是 600 段 = 600 个额度。
    ubs 的 qpSendQueueSize 默认只有 256（hcom_c.cpp 里的 NN_NO256），于是完成回收稍慢就会报
-   "no one side wr left"（内部重试 8×64µs，延迟直接飙到 ms 级）。这里把 SQ/CQ 放大留足余量：
-   ubs 会向上取整到 2 的幂，合法范围 16~65535。 */
-constexpr uint32_t HCOM_QP_SEND_QUEUE_SIZE = 4096;
+   "no one side wr left"（内部重试 8×64µs，延迟直接飙到 ms 级）。ubs-comm 740f0bb 的 QP
+   max_sge 固定为 30；SQ=4096 时 ibv_create_qp 会返回 EINVAL。2048 仍可覆盖本分支 1600 个离散
+   WR 的峰值，并避开该版本的 QP 参数组合限制。ubs 会向上取整到 2 的幂，合法范围 16~65535。 */
+constexpr uint32_t HCOM_QP_SEND_QUEUE_SIZE = 2048;
 constexpr uint16_t HCOM_QP_COMPLETION_QUEUE_DEPTH = 4096;
 
 /* 解析 "<起始CPU>-<结束CPU>"（含两端，形如 "91-94"），成功时输出起始核与核数。
