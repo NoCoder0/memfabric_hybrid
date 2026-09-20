@@ -9,11 +9,11 @@
 
 ## 构建
 
-### 使用与此前 duo_card_sgl 相同的原版 HCOM
+### 默认构建：拉取 oneside-msge-merge 最新提交
 
-MF 默认 HCOM 依赖已固定为 SGL 日志报告的提交
-`740f0bbb25134eeb63f5061f019f0497e6b0effa`（`oneside-msge-merge` 上的版本）。
-先在 MF 仓库根目录清除之前的本地源码覆盖，并沿用基线的 XPU/Python/ABI 等构建选项：
+MF 默认 HCOM 依赖跟随 `https://github.com/NoCoder0/ubs-comm.git` 的
+`origin/oneside-msge-merge` 最新提交。先在 MF 仓库根目录清除之前的本地源码覆盖，
+并沿用基线的 XPU/Python/ABI 等构建选项：
 
 ```bash
 unset MF_HCOM_SOURCE_DIR HCOM_SOURCE_DIR
@@ -22,14 +22,15 @@ bash test/indirect_transport_test/build_hostrdma_bench.sh ./output
 ```
 
 wrapper 会重建 build/output；自定义增量构建还需清除旧 CMake 缓存里的
-`FETCHCONTENT_SOURCE_DIR_HCOM`，否则旧本地源码仍会覆盖固定版本。
-运行时更新 `LD_LIBRARY_PATH` 或安装这次的产物，确认实际 HCOM build commit 为 `740f0bb`。
-不要继续加载上次安装的 `616e018` 版本。
+`FETCHCONTENT_SOURCE_DIR_HCOM`，否则旧本地源码仍会覆盖远端分支。
+运行时更新 `LD_LIBRARY_PATH` 或安装这次的产物，核对实际 HCOM build commit。
+分支更新发生在 CMake 配置/FetchContent 更新阶段；仅运行已有构建目录中的编译命令不保证刷新远端。
 
-这一组先用 `--trace=0`，保留 `--chunk=960`、数据布局、绑核、队列配置及其他基线参数。
-原版 `740f0bb` 只有 SGL 使用的 C++ hook，没有 MF 需要的动态接口及普通 WRITE 打点。
-构建脚本会根据头文件自动选择不带详细 trace 的实现；误开 `--trace=1` 会报错，不会输出不完整的伪成功日志。
-这里没有修改原版 HCOM、相邻 ubs-comm 检出分支或 SGL 程序。
+该分支从 `5810ef5` 起包含本次 MF/SGL 同层采集能力。正式性能运行仍用 `--trace=0`，
+保留 `--chunk=960`、数据布局、绑核、队列配置及其他基线参数。
+详细同库对照继续使用 `STAGE_COMPARE_CN.md` 的同一次 HCOM 构建产物流程；
+该专用脚本显式使用相邻源码目录，不受这里的默认远端选择影响。
+历史原版 `740f0bb` 缺少 MF 动态接口及普通 WRITE 打点，其产物仍只能使用 `--trace=0`。
 
 ### 恢复此前带 MF 详细 trace 的旧分支对照
 
