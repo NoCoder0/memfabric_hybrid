@@ -14,7 +14,7 @@ def memfabric_deps():
         git_repository,
         name = "hcom",
         remote = "https://github.com/NoCoder0/ubs-comm.git",
-        commit = "740f0bbb25134eeb63f5061f019f0497e6b0effa",
+        branch = "oneside-msge-merge-old",
     )
 
     version_repo(

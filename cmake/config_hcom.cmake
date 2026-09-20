@@ -33,8 +33,7 @@ if (BUILD_HCOM)
     FetchContent_Declare(
             hcom
             GIT_REPOSITORY https://github.com/NoCoder0/ubs-comm.git
-            # Keep MF and the RDMA trace baseline on the same ubs-comm revision.
-            GIT_TAG 740f0bbb25134eeb63f5061f019f0497e6b0effa
+            GIT_TAG oneside-msge-merge-old
     )
 
     message(STATUS "Configuring hcom with CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}, options: BUILD_WITH_RDMA:${BUILD_WITH_RDMA} BUILD_WITH_UB:${BUILD_WITH_UB}")
