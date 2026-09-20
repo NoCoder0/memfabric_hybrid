@@ -127,10 +127,20 @@ void PrintEvent(const Event &e, size_t thread)
               << "\",\"cq_id\":\"0x" << e.cqId << "\",\"local_address\":\"0x" << e.localAddress
               << "\",\"remote_address\":\"0x" << e.remoteAddress << std::dec << "\",\"qp_num\":" << e.qpNum
               << ",\"batch_id\":" << e.batchId << ",\"opcode\":" << e.opcode << ",\"status\":" << e.status
-              << ",\"count\":" << e.count << ",\"sge_count\":" << e.sgeCount << ",\"bytes\":" << e.bytes
+              << ",\"count\":" << e.count << ",\"send_flags\":" << e.sendFlags
+              << ",\"post_call_status\":" << e.postCallStatus
+              << ",\"sge_count\":" << e.sgeCount << ",\"bytes\":" << e.bytes
               << ",\"poll_begin_ns\":" << e.pollBeginNs << ",\"previous_poll_end_ns\":" << e.previousPollEndNs
               << ",\"empty_polls\":" << e.emptyPolls << ",\"max_poll_gap_ns\":" << e.maxPollGapNs
-              << ",\"max_poll_call_ns\":" << e.maxPollCallNs << "}\n";
+              << ",\"max_poll_call_ns\":" << e.maxPollCallNs;
+    if (e.kind == Kind::CQ_POLL_BATCH) {
+        std::cout << ",\"poll_call_bins\":[";
+        for (int bin = 0; bin < 8; ++bin) std::cout << (bin ? "," : "") << e.pollCallBins[bin];
+        std::cout << "],\"poll_gap_bins\":[";
+        for (int bin = 0; bin < 8; ++bin) std::cout << (bin ? "," : "") << e.pollGapBins[bin];
+        std::cout << "]";
+    }
+    std::cout << "}\n";
 }
 
 void PrintApp(const AppEvent &e)
@@ -155,6 +165,9 @@ bool LoadHooks()
         fprintf(stderr, "ERROR: loaded libhcom.so lacks UBSHcomRdmaTraceConfigureV1; rebuild patched ubs-comm\n");
         return false;
     }
+    auto identity = reinterpret_cast<const char *(*)()>(dlsym(library, "UBSHcomRdmaTraceBuildIdentityV1"));
+    std::cout << "{\"record_type\":\"hcom_build_identity\",\"id\":"
+              << std::quoted(identity ? identity() : "missing") << "}\n";
     Dl_info info{};
     dladdr(reinterpret_cast<void *>(configure), &info);
     std::cout << "{\"record_type\":\"mf_trace_library\",\"path\":"
@@ -198,6 +211,10 @@ void SetLayout(uint64_t peerBase, uint64_t watermarkOffset, uint64_t messageOffs
     watermark = peerBase + watermarkOffset;
     message = peerBase + messageOffset;
     railCount = rails;
+    if (enabled) {
+        std::cout << "{\"record_type\":\"mf_trace_layout\",\"links\":" << rails
+                  << ",\"source_order\":\"sequential-stride\"}\n";
+    }
 }
 
 void BeginRound(uint32_t round)
@@ -226,10 +243,11 @@ bool Finish()
     EndRound();
     configure(nullptr, sizeof(Event)); // caller has stopped/joined HCOM workers
     size_t dropped = unregistered.load() + appDropped, clocks = 0, errors = 0, posts = 0, cqes = 0;
-    size_t finishedRounds = 0;
+    size_t finishedRounds = 0, records = 0;
     uint64_t dataBytes = 0;
     for (size_t t = 0; t < kThreads; ++t) {
         const auto &buffer = buffers[t];
+        records += buffer.size;
         dropped += buffer.dropped;
         for (size_t i = 0; i < buffer.size; ++i) {
             const auto &e = buffer.events[i];
@@ -252,6 +270,7 @@ bool Finish()
     std::cout << "{\"record_type\":\"mf_trace_summary\",\"status\":\"" << (ok ? "ok" : "incomplete")
               << "\",\"dropped\":" << dropped << ",\"clock_errors\":" << clocks << ",\"event_errors\":" << errors
               << ",\"post_records\":" << posts << ",\"cqe_records\":" << cqes << ",\"data_bytes\":" << dataBytes
+              << ",\"records\":" << records << ",\"app_records\":" << appSize
               << ",\"thread_count\":" << nextThread.load() << ",\"capacity_per_thread\":" << capacity << "}\n";
     if (!ok) {
         fprintf(stderr, "ERROR: incomplete MF trace: dropped=%zu clock_errors=%zu event_errors=%zu rounds=%zu/%u\n",

@@ -1,5 +1,9 @@
 # MF / HCOM 同层打点
 
+2026-09-20 同源采集更新：当前工作区已在 **740f0bb 基底**上补齐动态接口、普通 WRITE/SEND、flags 和 poll 直方图，
+并新增同一构建产物供 MF/SGL 使用的脚本。请优先使用 [STAGE_COMPARE_CN.md](STAGE_COMPARE_CN.md) 的构建、
+运行与四文件紧凑对照流程。下文原版740f0bb不支持MF trace的说明仍适用于未打补丁的产物；旧616e018路径仅为历史参考。
+
 用于解释已经复现的 `cont receiver e2e` 差距。默认 `--trace=0`；正式性能结果仍用关闭 trace 的多轮测试。
 开启后会对每次 busy poll 读时钟，诊断时延包含采集开销，不能直接当作原始基线。
 

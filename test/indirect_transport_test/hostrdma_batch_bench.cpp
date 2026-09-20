@@ -463,7 +463,9 @@ void SendAddrMsg(smem_bm_t bm, uint64_t selfGva, uint64_t peerGva, uint64_t msgO
     *reinterpret_cast<uint64_t *>(HostPtr(selfGva + msgOff + MsgSeqOff(count, dstCount))) = seq;
     std::atomic_thread_fence(std::memory_order_release);
     smem_copy_params mp{HostPtr(selfGva + msgOff), HostPtr(peerGva + msgOff), MsgBytes(count, dstCount), nullptr};
+    mf_trace::Mark("request_submit_begin");
     (void)smem_bm_copy(bm, &mp, SMEMB_COPY_AUTO, 0);
+    mf_trace::Mark("request_submit_end");
 }
 
 /* remote：把对端下发的地址消息展开成两侧地址列表（自己不再算地址） */
