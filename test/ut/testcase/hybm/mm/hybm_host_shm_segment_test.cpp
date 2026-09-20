@@ -161,6 +161,8 @@ TEST_F(HybmHostShmSegmentTest, ExportSlice_CoversNullUnknownSerializeAndCacheReu
     EXPECT_EQ(info.memSegType, HYBM_MST_DRAM);
     EXPECT_EQ(info.exchangeType, HYBM_INFO_EXG_IN_NODE);
     EXPECT_FALSE(info.useHugetlbfs);
+    EXPECT_FALSE(info.useMemfd);
+    EXPECT_EQ(info.memfdFd, -1);
 
     std::string cached = "cache_miss";
     ASSERT_EQ(segment.Export(localSlice, cached), BM_OK);
@@ -233,8 +235,10 @@ TEST_F(HybmHostShmSegmentTest, Import_KeepsAllSlicesDedupDeferredToMmap)
     EXPECT_EQ(segment.imports_[2].sliceIndex, 1U);
     EXPECT_EQ(segment.imports_[3].rankId, 2U);
     EXPECT_EQ(segment.imports_[3].sliceIndex, 3U);
-    EXPECT_EQ(segment.importedHugetlbfsFlags_.at(0U), true);
-    EXPECT_EQ(segment.importedHugetlbfsFlags_.at(2U), true);
+    EXPECT_EQ(segment.importedSources_.at(0U).useHugetlbfs, true);
+    EXPECT_EQ(segment.importedSources_.at(0U).useMemfd, false);
+    EXPECT_EQ(segment.importedSources_.at(2U).useHugetlbfs, true);
+    EXPECT_EQ(segment.importedSources_.at(2U).useMemfd, false);
 }
 
 TEST_F(HybmHostShmSegmentTest, ReleaseSliceMemory_CoversNullUnknownAndValid)

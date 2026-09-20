@@ -35,7 +35,12 @@ struct ShmExportInfo {
     MemSegType memSegType{};
     MemSegInfoExchangeType exchangeType{};
     bool useHugetlbfs{false};
-    char padding_[UNIFIED_EXCHANGE_SEG_INFO_SIZE - 56]{};
+    // useMemfd=true 时本地大页由 memfd_create(MFD_HUGETLB) 支撑，不要求挂载 /dev/hugepages；
+    // 对端通过 /proc/<memfdPid>/fd/<memfdFd> 打开同一块共享内存
+    bool useMemfd{false};
+    int32_t memfdPid{0};
+    int32_t memfdFd{-1};
+    char padding_[UNIFIED_EXCHANGE_SEG_INFO_SIZE - 64]{};
 };
 
 static_assert(sizeof(ShmExportInfo) == UNIFIED_EXCHANGE_SEG_INFO_SIZE, "ShmExportInfo must be 192 bytes");
@@ -67,10 +72,19 @@ public:
     }
 
 private:
+    // 对端 rank 共享内存的来源描述：memfd（经 /proc/<pid>/fd/<fd> 打开）或具名文件（/dev/hugepages、/dev/shm）
+    struct ImportedShmSource {
+        bool useHugetlbfs{false};
+        bool useMemfd{false};
+        int32_t pid{0};
+        int32_t fd{-1};
+    };
+
     void FreeMemory() noexcept;
     std::string GetShmFilePath(uint32_t rankId) const noexcept;
     std::string GetShmFilePath(uint32_t rankId, bool useHugetlbfs) const noexcept;
     Result MapLocalShm() noexcept;
+    bool TryMapLocalMemfdHuge() noexcept;
     Result MapImportedShm(const ShmExportInfo &im) noexcept;
     Result RemapRemoteAsReserved(uint32_t rankId) noexcept;
     void CloseImportedShmFds() noexcept;
@@ -91,9 +105,10 @@ private:
     std::vector<ShmExportInfo> imports_;
     std::set<uint64_t> mappedGvaMem_;
     std::unordered_map<uint32_t, int> importedShmFds_;
-    std::unordered_map<uint32_t, bool> importedHugetlbfsFlags_;
+    std::unordered_map<uint32_t, ImportedShmSource> importedSources_;
     int localShmFd_{-1};
     bool useHugetlbfs_{false};
+    bool useMemfd_{false};
 };
 
 } // namespace mf

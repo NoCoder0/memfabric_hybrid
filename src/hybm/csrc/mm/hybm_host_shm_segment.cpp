@@ -15,6 +15,7 @@
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <sys/vfs.h>
 #include <unistd.h>
 
@@ -26,6 +27,8 @@
 #include "hybm_ex_info_transfer.h"
 #include "hybm_logger.h"
 #include "hybm_va_manager.h"
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 
 namespace ock {
 namespace mf {
@@ -38,6 +41,21 @@ constexpr const char *HOST_SHM_FALLBACK_DIR = "/dev/shm";
 constexpr unsigned long HOST_SHM_HUGETLBFS_MAGIC = 0x958458f6UL;
 constexpr uint32_t HOST_SHM_IMPORT_OPEN_RETRY_TIMES = 50U;
 constexpr uint32_t HOST_SHM_IMPORT_OPEN_RETRY_INTERVAL_US = 10000U;
+
+#ifndef MFD_HUGETLB
+#define MFD_HUGETLB 0x0004U
+#endif
+
+// 直接走 syscall，避免依赖 glibc 版本提供 memfd_create 包装函数
+int MemfdCreate(const char *name, unsigned int flags) noexcept
+{
+#if defined(SYS_memfd_create)
+    return static_cast<int>(::syscall(SYS_memfd_create, name, flags));
+#else
+    errno = ENOSYS;
+    return -1;
+#endif
+}
 
 bool IsHugetlbfsMounted() noexcept
 {
@@ -208,6 +226,9 @@ Result HybmHostShmSegment::Export(const std::shared_ptr<MemSlice> &slice, std::s
     info.memSegType = HYBM_MST_DRAM;
     info.exchangeType = HYBM_INFO_EXG_IN_NODE;
     info.useHugetlbfs = useHugetlbfs_;
+    info.useMemfd = useMemfd_;
+    info.memfdPid = useMemfd_ ? static_cast<int32_t>(getpid()) : 0;
+    info.memfdFd = useMemfd_ ? localShmFd_ : -1;
     auto ret = LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(info, exInfo);
     if (ret != BM_OK) {
         return BM_ERROR;
@@ -233,7 +254,7 @@ Result HybmHostShmSegment::Import(const std::vector<std::string> &allExInfo, voi
     try {
         for (const auto &info : deserializedInfos) {
             imports_.push_back(info);
-            importedHugetlbfsFlags_[info.rankId] = info.useHugetlbfs;
+            importedSources_[info.rankId] = {info.useHugetlbfs, info.useMemfd, info.memfdPid, info.memfdFd};
         }
     } catch (...) {
         return BM_MALLOC_FAILED;
@@ -297,9 +318,10 @@ void HybmHostShmSegment::FreeMemory() noexcept
     if (localShmFd_ >= 0) {
         close(localShmFd_);
         localShmFd_ = -1;
-        auto shmPath = GetShmFilePath(options_.rankId);
-        if (unlink(shmPath.c_str()) != 0) {
-            if (errno != ENOENT) {
+        // memfd 为匿名文件，close 即释放，无路径可 unlink
+        if (!useMemfd_) {
+            auto shmPath = GetShmFilePath(options_.rankId);
+            if (unlink(shmPath.c_str()) != 0 && errno != ENOENT) {
                 BM_LOG_ERROR("Failed to unlink local shm file " << shmPath << " error:" << errno << " "
                                                                 << SafeStrError(errno));
                 if (errno == EBUSY || errno == EACCES) {
@@ -307,6 +329,7 @@ void HybmHostShmSegment::FreeMemory() noexcept
                 }
             }
         }
+        useMemfd_ = false;
     }
     localVirtualBase_ = nullptr;
     if (globalVirtualAddress_ != nullptr) {
@@ -374,13 +397,52 @@ std::string HybmHostShmSegment::GetShmFilePath(uint32_t rankId, bool useHugetlbf
     return std::string(baseDir) + "/memfabric_hybrid_" + std::to_string(rankId);
 }
 
+bool HybmHostShmSegment::TryMapLocalMemfdHuge() noexcept
+{
+    auto name = "memfabric_hybrid_" + std::to_string(options_.rankId);
+    int fd = MemfdCreate(name.c_str(), MFD_HUGETLB);
+    if (fd < 0) {
+        BM_LOG_WARN("memfd_create(MFD_HUGETLB) failed, error:" << errno << " " << SafeStrError(errno)
+                                                               << ", fallback to file-based shm");
+        return false;
+    }
+    if (ftruncate(fd, static_cast<off_t>(options_.size)) != 0) {
+        BM_LOG_WARN("Failed to truncate memfd hugepage size:" << options_.size << " error:" << errno << " "
+                                                              << SafeStrError(errno) << ", fallback to file-based shm");
+        close(fd);
+        return false;
+    }
+    // memfd 为匿名文件，不存在具名冲突，无需 flock；MAP_POPULATE 触发大页分配，
+    // 大页池不足时 mmap 失败并回退到文件方式
+    void *mapped =
+        mmap(localVirtualBase_, options_.size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_SHARED | MAP_POPULATE, fd, 0);
+    if (mapped == MAP_FAILED || mapped != localVirtualBase_) {
+        BM_LOG_WARN("Failed to mmap memfd hugepage addr: "
+                    << static_cast<void *>(localVirtualBase_) << " size: " << options_.size << " ret: " << mapped
+                    << " error: " << errno << " " << SafeStrError(errno) << ", fallback to file-based shm");
+        close(fd);
+        return false;
+    }
+    localShmFd_ = fd;
+    BM_LOG_INFO("MapLocalShm success via memfd hugepage: rankId=" << options_.rankId
+                                                                  << " addr=" << static_cast<void *>(localVirtualBase_)
+                                                                  << " size=" << options_.size << " fd=" << fd);
+    return true;
+}
+
 Result HybmHostShmSegment::MapLocalShm() noexcept
 {
-    useHugetlbfs_ = TryHugetlbfsAvailable();
     if (options_.size == 0) {
         BM_LOG_INFO("MapLocalShm success: rankId=" << options_.rankId << " size=" << options_.size << " skip it");
         return BM_OK;
     }
+    if (MfEnvUtil::GetOptionalUintOrDefault(env::MF_HOST_SHM_USE_MEMFD, 0u) == 1u && TryMapLocalMemfdHuge()) {
+        useMemfd_ = true;
+        useHugetlbfs_ = true;
+        return BM_OK;
+    }
+    useMemfd_ = false;
+    useHugetlbfs_ = TryHugetlbfsAvailable();
     auto shmPath = GetShmFilePath(options_.rankId);
     BM_LOG_INFO("MapLocalShm start: rankId=" << options_.rankId << " size=" << options_.size
                                              << " useHugetlbfs=" << useHugetlbfs_ << " shmPath=" << shmPath);
@@ -477,11 +539,23 @@ int HybmHostShmSegment::OpenImportedShmFd(uint32_t rankId) noexcept
         return fdIt->second;
     }
     bool remoteUseHugetlbfs = useHugetlbfs_;
-    auto flagIt = importedHugetlbfsFlags_.find(rankId);
-    if (flagIt != importedHugetlbfsFlags_.end()) {
-        remoteUseHugetlbfs = flagIt->second;
+    bool remoteUseMemfd = false;
+    int32_t remotePid = 0;
+    int32_t remoteFd = -1;
+    auto flagIt = importedSources_.find(rankId);
+    if (flagIt != importedSources_.end()) {
+        remoteUseHugetlbfs = flagIt->second.useHugetlbfs;
+        remoteUseMemfd = flagIt->second.useMemfd;
+        remotePid = flagIt->second.pid;
+        remoteFd = flagIt->second.fd;
     }
-    auto shmPath = GetShmFilePath(rankId, remoteUseHugetlbfs);
+    // memfd 无文件系统路径，经 /proc/<pid>/fd/<fd> 打开对端的 memfd 引用同一块共享大页内存
+    std::string shmPath;
+    if (remoteUseMemfd && remotePid > 0 && remoteFd >= 0) {
+        shmPath = "/proc/" + std::to_string(remotePid) + "/fd/" + std::to_string(remoteFd);
+    } else {
+        shmPath = GetShmFilePath(rankId, remoteUseHugetlbfs);
+    }
     constexpr uint32_t extendedRetryTimes = 100U;
     for (uint32_t attempt = 0U; attempt < extendedRetryTimes; ++attempt) {
         int fd = open(shmPath.c_str(), O_RDWR, S_IRUSR | S_IWUSR);
