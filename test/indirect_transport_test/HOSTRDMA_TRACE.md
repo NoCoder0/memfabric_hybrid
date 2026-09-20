@@ -5,11 +5,37 @@
 
 ## 构建
 
+### 使用与此前 duo_card_sgl 相同的原版 HCOM
+
+MF 默认 HCOM 依赖已固定为 SGL 日志报告的提交
+`740f0bbb25134eeb63f5061f019f0497e6b0effa`（`oneside-msge-merge` 上的版本）。
+先在 MF 仓库根目录清除之前的本地源码覆盖，并沿用基线的 XPU/Python/ABI 等构建选项：
+
+```bash
+unset MF_HCOM_SOURCE_DIR HCOM_SOURCE_DIR
+bash script/build_and_pack_run.sh --build_hcom ON --build_hcom_rdma ON
+bash test/indirect_transport_test/build_hostrdma_bench.sh ./output
+```
+
+wrapper 会重建 build/output；自定义增量构建还需清除旧 CMake 缓存里的
+`FETCHCONTENT_SOURCE_DIR_HCOM`，否则旧本地源码仍会覆盖固定版本。
+运行时更新 `LD_LIBRARY_PATH` 或安装这次的产物，确认实际 HCOM build commit 为 `740f0bb`。
+不要继续加载上次安装的 `616e018` 版本。
+
+这一组先用 `--trace=0`，保留 `--chunk=960`、数据布局、绑核、队列配置及其他基线参数。
+原版 `740f0bb` 只有 SGL 使用的 C++ hook，没有 MF 需要的动态接口及普通 WRITE 打点。
+构建脚本会根据头文件自动选择不带详细 trace 的实现；误开 `--trace=1` 会报错，不会输出不完整的伪成功日志。
+这里没有修改原版 HCOM、相邻 ubs-comm 检出分支或 SGL 程序。
+
+### 恢复此前带 MF 详细 trace 的旧分支对照
+
 修改涉及两个仓库：MF `testRDMA`，相邻 ubs-comm `oneside-msge-merge-old`。
-MF 默认 FetchContent 拉远端分支，**不会自动包含相邻目录的未提交修改**。在 MF 仓库根目录执行：
+这个路径会覆盖上面的默认版本，**不再是与 SGL 相同的 HCOM**。在 MF 仓库根目录执行：
 
 ```bash
 export MF_HCOM_SOURCE_DIR="$(cd ../ubs-comm && pwd)"
+# 此路径必须确实检出 oneside-msge-merge-old / 616e018；若已切到原版 SGL 分支，
+# 请改为单独保留的旧分支源码目录，而不是继续使用当前路径。
 # 在原构建命令中打开以下两项，XPU/Python/ABI 等其他选项保持基线设置。
 # 下例使用 wrapper 的默认 XPU/Python/ABI 设置；原来有显式选项的请继续保留。
 bash script/build_and_pack_run.sh --build_hcom ON --build_hcom_rdma ON
@@ -116,7 +142,7 @@ python3 test/indirect_transport_test/analyze_hostrdma_trace.py --compact mf-remo
 - `max_poll_gap_ns` 包含上次非空 poll 以来的回调与采集开销，不等于 CPU 调度停顿。
 - MF 采集的是 CQ dispatch 区间，没有把整个 dispatch 命名成应用 callback；它们不能视作相同口径。
 
-当前指定的旧 HCOM 分支 `NET_WR_MAX_SGE=16`，请求 IOV 上限为 30。
+此前详细 trace 使用的旧 HCOM 分支 `NET_WR_MAX_SGE=16`，请求 IOV 上限为 30。
 因此在远端目标连续、同 rkey 的情况下，1600 块、chunk=960、每次 PutV 最多 30 项对应：
 **54 次数据 PutV，但通常为 107 个数据 WR + 2 个水位 WRITE**。
 53 组 30 项各拆为 16+14 SGE，最后一组 10 项为一个 WR。实际以 trace 为准。

@@ -1,11 +1,33 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 #include "hostrdma_trace.h"
+#include <cstdio>
+
+#ifdef MF_BENCH_NO_HCOM_TRACE
+// The unmodified SGL HCOM revision has no MF dynamic trace entry point.
+// Keep the benchmark usable without changing that library's transport code.
+namespace mf_trace {
+bool Initialize(bool requested, const char *, uint32_t, uint64_t, uint32_t, uint32_t, uint32_t, uint64_t)
+{
+    if (requested) {
+        fprintf(stderr, "ERROR: this benchmark was built without the MF HCOM trace interface; "
+                        "use --trace=0 for the original SGL HCOM comparison\n");
+        return false;
+    }
+    return true;
+}
+void SetLayout(uint64_t, uint64_t, uint64_t, uint32_t) {}
+void BeginRound(uint32_t) {}
+void EndRound() {}
+void Mark(const char *, int32_t, uint32_t, uint32_t, uint64_t, int32_t) {}
+void Fail() {}
+bool Finish() { return true; }
+} // namespace mf_trace
+#else
 #include "hcom_rdma_trace.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <cstdio>
 #include <dlfcn.h>
 #include <iomanip>
 #include <iostream>
@@ -239,3 +261,4 @@ bool Finish()
     return ok;
 }
 } // namespace mf_trace
+#endif

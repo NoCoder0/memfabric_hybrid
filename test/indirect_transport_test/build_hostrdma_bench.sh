@@ -44,18 +44,28 @@ echo "  smem lib dir : ${SMEM_LIB_DIR}"
 echo "  hybm lib dir : ${HYBM_LIB_DIR}"
 
 # ---------- 3. 编译 ----------
-HCOM_SOURCE_DIR="${HCOM_SOURCE_DIR:-${MF_ROOT}/../ubs-comm}"
-TRACE_HEADER="${HCOM_SOURCE_DIR}/src/hcom/hcom_rdma_trace.h"
-if [ ! -f "${TRACE_HEADER}" ]; then
+TRACE_HEADER=""
+if [ -n "${HCOM_SOURCE_DIR}" ]; then
+    TRACE_HEADER="${HCOM_SOURCE_DIR}/src/hcom/hcom_rdma_trace.h"
+    if [ ! -f "${TRACE_HEADER}" ]; then
+        echo "[ERROR] HCOM_SOURCE_DIR does not contain src/hcom/hcom_rdma_trace.h: ${HCOM_SOURCE_DIR}"
+        exit 1
+    fi
+else
+    # Prefer the header packaged with the selected MF libraries, not a sibling
+    # checkout that may still be on a different HCOM branch.
     TRACE_HEADER=$(find "${MF}" -name hcom_rdma_trace.h 2>/dev/null | head -1)
 fi
-if [ -z "${TRACE_HEADER}" ] || [ ! -f "${TRACE_HEADER}" ]; then
-    echo "[ERROR] 找不到 hcom_rdma_trace.h；设置 HCOM_SOURCE_DIR 为修改后的 ubs-comm 仓库"
-    exit 1
+TRACE_FLAGS=(-DMF_BENCH_NO_HCOM_TRACE=1)
+if [ -n "${TRACE_HEADER}" ] && grep -q UBSHcomRdmaTraceConfigureV1 "${TRACE_HEADER}"; then
+    TRACE_FLAGS=(-I"$(dirname "${TRACE_HEADER}")")
+    echo "[INFO] MF detailed trace interface: ${TRACE_HEADER}"
+else
+    echo "[INFO] HCOM has no MF dynamic trace interface; building benchmark for --trace=0"
 fi
 SRC="${SCRIPT_DIR}/hostrdma_batch_bench.cpp"
 g++ -std=c++17 -O2 "${SRC}" "${SCRIPT_DIR}/hostrdma_trace.cpp" \
-    -I"${SMEM_INC}" -I"$(dirname "${TRACE_HEADER}")" \
+    -I"${SMEM_INC}" "${TRACE_FLAGS[@]}" \
     -L"${SMEM_LIB_DIR}" -lmf_smem \
     -L"${HYBM_LIB_DIR}" -lmf_hybm_core \
     -lpthread -ldl \

@@ -43,7 +43,8 @@ if (BUILD_HCOM)
     FetchContent_Declare(
             hcom
             GIT_REPOSITORY https://github.com/NoCoder0/ubs-comm.git
-            GIT_TAG oneside-msge-merge-old
+            # Exact HCOM revision reported by the duo_card_sgl comparison trace.
+            GIT_TAG 740f0bbb25134eeb63f5061f019f0497e6b0effa
     )
 
     message(STATUS "Configuring hcom with CMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}, options: BUILD_WITH_RDMA:${BUILD_WITH_RDMA} BUILD_WITH_UB:${BUILD_WITH_UB}")
