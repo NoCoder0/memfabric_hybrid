@@ -30,6 +30,16 @@ if (BUILD_HCOM)
     set(CMAKE_C_COMPILER ${CMAKE_C_COMPILER_PATH} CACHE FILEPATH "C compiler" FORCE)
     set(CMAKE_CXX_COMPILER ${CMAKE_CXX_COMPILER_PATH} CACHE FILEPATH "CXX compiler" FORCE)
     set(CMAKE_INSTALL_PREFIX ${DEPS_INSTALL_DIR}/hcom)
+    # Optional local source override, including uncommitted diagnostic changes.
+    # Keep the normal remote dependency unchanged unless explicitly requested.
+    if (DEFINED ENV{MF_HCOM_SOURCE_DIR} AND NOT "$ENV{MF_HCOM_SOURCE_DIR}" STREQUAL "")
+        get_filename_component(MF_LOCAL_HCOM_SOURCE "$ENV{MF_HCOM_SOURCE_DIR}" ABSOLUTE)
+        if (NOT EXISTS "${MF_LOCAL_HCOM_SOURCE}/CMakeLists.txt")
+            message(FATAL_ERROR "Invalid MF_HCOM_SOURCE_DIR: ${MF_LOCAL_HCOM_SOURCE}")
+        endif ()
+        set(FETCHCONTENT_SOURCE_DIR_HCOM "${MF_LOCAL_HCOM_SOURCE}" CACHE PATH "Local HCOM source" FORCE)
+        message(STATUS "Using local HCOM source: ${FETCHCONTENT_SOURCE_DIR_HCOM}")
+    endif ()
     FetchContent_Declare(
             hcom
             GIT_REPOSITORY https://github.com/NoCoder0/ubs-comm.git

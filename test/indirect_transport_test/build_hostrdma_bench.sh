@@ -44,12 +44,21 @@ echo "  smem lib dir : ${SMEM_LIB_DIR}"
 echo "  hybm lib dir : ${HYBM_LIB_DIR}"
 
 # ---------- 3. 编译 ----------
+HCOM_SOURCE_DIR="${HCOM_SOURCE_DIR:-${MF_ROOT}/../ubs-comm}"
+TRACE_HEADER="${HCOM_SOURCE_DIR}/src/hcom/hcom_rdma_trace.h"
+if [ ! -f "${TRACE_HEADER}" ]; then
+    TRACE_HEADER=$(find "${MF}" -name hcom_rdma_trace.h 2>/dev/null | head -1)
+fi
+if [ -z "${TRACE_HEADER}" ] || [ ! -f "${TRACE_HEADER}" ]; then
+    echo "[ERROR] 找不到 hcom_rdma_trace.h；设置 HCOM_SOURCE_DIR 为修改后的 ubs-comm 仓库"
+    exit 1
+fi
 SRC="${SCRIPT_DIR}/hostrdma_batch_bench.cpp"
-g++ -std=c++17 -O2 "${SRC}" \
-    -I"${SMEM_INC}" \
+g++ -std=c++17 -O2 "${SRC}" "${SCRIPT_DIR}/hostrdma_trace.cpp" \
+    -I"${SMEM_INC}" -I"$(dirname "${TRACE_HEADER}")" \
     -L"${SMEM_LIB_DIR}" -lmf_smem \
     -L"${HYBM_LIB_DIR}" -lmf_hybm_core \
-    -lpthread \
+    -lpthread -ldl \
     -o "${SCRIPT_DIR}/hostrdma_batch_bench"
 echo "[OK] 编译完成: ${SCRIPT_DIR}/hostrdma_batch_bench"
 

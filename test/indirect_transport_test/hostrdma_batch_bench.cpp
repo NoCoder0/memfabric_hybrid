@@ -66,6 +66,7 @@
 #include <thread>
 #include <vector>
 
+#include "hostrdma_trace.h"
 #include "smem_bm.h"
 #include "smem_bm_def.h"
 #include "smem.h" /* smem_set_log_level */
@@ -89,6 +90,7 @@ struct BenchArgs {
     std::string storeUrl;
     std::string hcomUrl;
     bool withStore = false;
+    bool trace = false; // Detailed cont-only trace; stdout JSONL is dumped after workers stop.
     std::string mode = "all"; /* all / baseline / cont */
     uint32_t count = kDefaultCount;
     uint64_t size = kDefaultSize;
@@ -114,6 +116,7 @@ void Usage(const char *prog)
             "  --chunk=N                  cont: 每 N 个小 IO 提交一批并发一次 flag(默认128)\n"
             "  --warmup=N                 前 N 轮不计时(默认100)\n"
             "  --rounds=N                 计时轮数(默认1000)\n"
+            "  --trace=0|1                 cont 同层打点(默认0；建议 --rounds=3)\n"
             "  --log-level=0..5           设置库日志级别(默认不改)\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
             "  说明: 两个场景都由 local 驱动轮次并在本端用单时钟计时；\n"
@@ -144,6 +147,12 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
             a.hcomUrl = v;
         } else if (k == "--with-store") {
             a.withStore = v != "0";
+        } else if (k == "--trace") {
+            if (v != "0" && v != "1") {
+                fprintf(stderr, "ERROR: --trace expects 0 or 1\n");
+                return false;
+            }
+            a.trace = v == "1";
         } else if (k == "--mode") {
             a.mode = v;
         } else if (k == "--count") {
@@ -171,6 +180,17 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
     }
     if (a.storeUrl.empty() || a.hcomUrl.empty()) {
         fprintf(stderr, "missing --store-url or --hcom-url\n");
+        return false;
+    }
+    if (a.trace && (a.mode != "cont" || a.count == 0 || a.size == 0 || a.chunk == 0 ||
+                    a.rounds == 0 || a.rounds > 32 || a.warmup > UINT32_MAX - a.rounds ||
+                    a.size > UINT64_MAX / a.count / a.rounds)) {
+        fprintf(stderr, "ERROR: --trace requires --mode=cont, positive count/size/chunk, rounds=1..32, "
+                        "and non-overflowing round/payload totals\n");
+        return false;
+    }
+    if (a.trace && getenv("MF_BENCH_RAIL_TRACE") != nullptr) {
+        fprintf(stderr, "ERROR: unset MF_BENCH_RAIL_TRACE when using --trace (prints during capture)\n");
         return false;
     }
     return true;
@@ -618,6 +638,8 @@ int main(int argc, char *argv[])
         (void)smem_set_log_level(a.logLevel);
         printf("[bench] smem log level -> %d\n", a.logLevel);
     }
+    if (!mf_trace::Initialize(a.trace, a.role.c_str(), a.count, a.size,
+                              a.rounds, a.warmup, a.chunk, a.stride)) return 1;
     if (smem_bm_init(a.storeUrl.c_str(), a.worldSize, 0, &config) != 0) {
         fprintf(stderr, "smem_bm_init failed, store=%s\n", a.storeUrl.c_str());
         return 1;
@@ -646,6 +668,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "get gva failed\n");
         return 1;
     }
+
+    mf_trace::SetLayout(peerGva, wmOff, msgOff, links);
 
     /* 56-bit GVA 在本路径恒为关闭（见 HostPtr 注释），GVA == VA，无任何转换，故这里不做自检 */
     printf("[bench] 56-bit GVA off (hardcoded in smem_bm_create): GVA == VA, no conversion\n");
@@ -846,6 +870,7 @@ int main(int argc, char *argv[])
             uint64_t lastSeq = runBase ? kRoundsPerScenario : 0;
             bool aborted = false;
             for (uint32_t r = 0; r < kTotal; ++r) {
+                mf_trace::BeginRound(r);
                 const uint64_t w0 = NowUs();
                 while (*seqVa == lastSeq) {
                     if (NowUs() - w0 > kSpinTimeoutUs) {
@@ -858,10 +883,12 @@ int main(int argc, char *argv[])
                     break;
                 }
                 lastSeq = *seqVa;
+                mf_trace::Mark("request_observed", -1, 0, 0, lastSeq);
                 uint64_t progressDest = 0;
                 uint64_t doneDest = 0;
                 ReadAddrMsg(selfGva, msgOff, a.count, contDstCount, kContDstAgg, a.size, srcs, dsts, progressDest,
                             doneDest);
+                mf_trace::Mark("request_decoded", -1, 0, a.count, lastSeq);
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
                 p.destinations = dsts.data();
@@ -872,8 +899,11 @@ int main(int argc, char *argv[])
                 p.progressBase = static_cast<uint64_t>(r) * a.count;     /* 跨轮单调、不归零 */
                 p.progressInterval = a.chunk;
                 const uint64_t t0 = NowUs();
+                mf_trace::Mark("copy_batch_begin");
                 const int32_t ret = smem_bm_copy_batch(bm, &p, SMEMB_COPY_AUTO, 0);
                 const uint64_t tW = NowUs();
+                mf_trace::Mark("copy_batch_end", -1, 0, a.count, 0, ret);
+                mf_trace::EndRound();
                 if (ret != 0) {
                     printf("cont sender abort at iter %u ret=%d\n", r, ret);
                     aborted = true;
@@ -883,6 +913,8 @@ int main(int argc, char *argv[])
                     transportCosts.push_back(tW - t0);
                 }
             }
+            if (aborted) mf_trace::Fail();
+            mf_trace::EndRound();
             PrintLat("cont sender", "transport", transportCosts, a.warmup);
         } else {
             PrintLabel("cont (receiver)");
@@ -914,6 +946,7 @@ int main(int argc, char *argv[])
             bool aborted = false;
             const bool railTrace = RailTraceEnabled();
             for (uint32_t r = 0; r < kTotal; ++r) {
+                mf_trace::BeginRound(r);
                 const uint64_t roundStart = static_cast<uint64_t>(r) * a.count;
                 { /* 本轮每条 rail 负责的块区间（全局块号） */
                     const uint32_t per = a.count / links;
@@ -930,8 +963,11 @@ int main(int argc, char *argv[])
                    → ③ local 边到边散。计时 = 从下发消息之前开始，到 600 块全部散完结束（单时钟）。
                    校验不在这里做，改为所有轮次跑完后只做一次（见循环之后）。 */
                 const uint64_t tRoundStart = NowUs();
+                mf_trace::Mark("local_round_begin");
+                mf_trace::Mark("request_begin");
                 SendAddrMsg(bm, selfGva, peerGva, msgOff, peerSrcVas, srcVas, a.count, contDstCount, kContDstAgg,
                             selfGva + flagOff, selfGva + doneOff, expect);
+                mf_trace::Mark("request_end");
                 bool timedOut = false;
                 uint64_t scatterUs = 0;
                 uint64_t tailUs = 0;
@@ -949,10 +985,13 @@ int main(int argc, char *argv[])
                         if (uptoGlobal > donePerEp[e]) {
                             const uint32_t from = static_cast<uint32_t>(donePerEp[e] - roundStart);
                             const uint32_t upto = static_cast<uint32_t>(uptoGlobal - roundStart);
+                            mf_trace::Mark("watermark_observed", e, from, upto, w);
                             const uint64_t tb0 = NowUs();
+                            mf_trace::Mark("scatter_begin", e, from, upto);
                             for (uint32_t i = from; i < upto; ++i) {
                                 memcpy(dstVas[i], srcVas[i], a.size);
                             }
+                            mf_trace::Mark("scatter_end", e, from, upto);
                             const uint64_t tb1 = NowUs();
                             scatterUs += tb1 - tb0;
                             tailUs = tb1 - tb0;
@@ -971,6 +1010,8 @@ int main(int argc, char *argv[])
                         break; /* 自旋等水位推进（小包完成很快，不用 sleep） */
                     }
                 }
+                mf_trace::Mark("local_round_end", -1, 0, a.count, 0, timedOut ? -1 : 0);
+                mf_trace::EndRound();
                 if (timedOut) {
                     printf("cont receiver TIMEOUT at iter %u: 对端没在推进水位。水位实测:", r);
                     for (uint32_t e = 0; e < links; ++e) {
@@ -991,6 +1032,8 @@ int main(int argc, char *argv[])
                 }
                 ++expect;
             }
+            if (aborted) mf_trace::Fail();
+            mf_trace::EndRound();
             PrintLat("cont receiver", "e2e", e2eCosts, a.warmup);
             if (!e2eCosts.empty()) {
                 printf("cont receiver scatter_us: avg=%llu tail_avg=%llu (timed=%zu)\n",
@@ -1002,6 +1045,7 @@ int main(int argc, char *argv[])
             if (!aborted) {
                 VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
                 VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
+                if (!vStag.ok || !vDisp.ok) mf_trace::Fail();
                 if (!vStag.ok) {
                     PrintVerifyFail("cont receiver staging", 0, vStag);
                 }
@@ -1016,6 +1060,7 @@ int main(int argc, char *argv[])
     smem_bm_leave(bm, 0);
     smem_bm_destroy(bm);
     smem_bm_uninit(0);
+    const bool traceOk = mf_trace::Finish();
     printf("[bench] done\n");
-    return 0;
+    return traceOk ? 0 : 1;
 }
