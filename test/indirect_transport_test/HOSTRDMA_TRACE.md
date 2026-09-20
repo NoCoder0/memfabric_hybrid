@@ -57,6 +57,32 @@ python3 test/indirect_transport_test/analyze_hostrdma_trace.py mf-remote.log > m
 分析器非零退出表示记录不完整或数据覆盖不符；缺少 CQE 不能当作更低时延。
 原日志和分析结果都需保留。单个文件只放一个进程的一次运行，不要合并两台机器的日志。
 
+### 日志不便传出时：设备上先生成紧凑统计
+
+只需更新 Python 分析脚本，无需重新编译 benchmark 或 HCOM。完整日志留在设备上，进程正常退出后执行：
+
+```bash
+# local 设备，MF 仓库根目录
+python3 test/indirect_transport_test/analyze_hostrdma_trace.py --compact mf-local.log > mf-local-compact.json
+# remote 设备，MF 仓库根目录
+python3 test/indirect_transport_test/analyze_hostrdma_trace.py --compact mf-remote.log > mf-remote-compact.json
+```
+
+带回两个 `*-compact.json` 即可。常见两三轮输出只有几 KB，不包含逐条 POST/CQE、地址或完整完成曲线。
+保留配置、实际库路径、每轮阶段耗时、WR 形态、poll 调用/相邻 CQE/逐 WR 等待的 min/p50/p95/max，
+以及完成 10/25/50/75/100% 数据的时间。单次 post_send 提交多个 WR 时，调用耗时按同线程相同起止时间
+去重；不把两个 WR 算成两次 post_send。local 水位组最多展示首尾各四组，实际总组数仍保留。
+
+紧凑模式额外对照采集器汇总的 POST/CQE 数量，并检查对应 poll 和 dispatch 记录是否保留。
+`status=incomplete` 或非零退出码表示不能据此认定完整完成耗时；JSON 中仍保留可用的应用阶段信息和
+完整性检查结果。不要先从终端复制被省略的文本再生成统计；预处理不能恢复丢失的 CQE。
+
+口径：p50/p95 是**单轮内事件样本**的最近秩分位数，不是多轮 e2e 分位数；
+`data_post_to_cqe_us` 包含排队时间；`reported_empty_polls` 和最大 poll 间隔来自返回数据 CQE 的 poll
+所携带的累计窗口，该窗口可能从首个数据提交之前开始，不是严格数据传输区间的空轮询总数。
+同一 poll 返回的多条 CQE 观察间隔可为 0。`first_data_post_to_batch_return_us` 包含同步返回开销，
+不能当成精确 CQE 完成时间。
+
 重点比较：
 
 | 端 | 输出 | 含义 |
