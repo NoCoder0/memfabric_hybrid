@@ -37,22 +37,43 @@ typedef enum {
 
 /* Upper bound on the entry_gather entry size: one entry must fit one UB
  * ping-pong slot inside the AIV kernel (ENTRY_GATHER_UB_ONCE_SIZE / 2 —
- * 120KB on A5, 88KB on A3). The registration check uses this A5 bound; on
- * A3 keep entryBytes <= 88KB or the kernel's UB staging overflows. */
-#define OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES (120u * 1024u)
+ * 120KB on A5, 88KB on A3). The bound is platform-independent: 64KB sits
+ * below every supported SoC's slot. */
+#define OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES (64u * 1024u)
 
 typedef struct {
-    uint32_t deviceId;     /* Device ID to bind */
-    uint64_t reserveSize;  /* Reserved DRAM pool size in bytes, will be aligned up to GB. */
-    uint64_t allocSize;    /* Allocated local physical DRAM size in bytes, will be aligned
-                                                 up to GB. LOCAL: must equal reserveSize; SHARED: provides
-                                                 the actual size. */
-    uint32_t worldSize;    /* number of ranks in the group (used in SHARED scene) */
-    uint32_t rankId;       /* local rank id, 0 is the allocator (used in SHARED scene) */
-    offload_scene_t scene; /* LOCAL: single-card pool; SHARED: multi-card shared pool */
-    char storeUrl[64];     /* Explicit config store url for the shared pool rendezvous
-                                                 (e.g. "tcp://127.0.0.1:8500"). */
-    uint32_t flags;        /* optional flags, see OFFLOAD_FLAG_xxx; 0 by default */
+    uint32_t deviceId;       /* Device ID to bind */
+    uint64_t reserveSize;    /* Reserved DRAM pool size in bytes (slot virtual size, whole-pool
+                                                 uniform in the multi-node SHARED pool), will be
+                                                 aligned up to GB. SHARED: must be identical on every
+                                                 rank — it is the pool-wide slot stride the whole-pool
+                                                 GVA layout is built from (enforced by the init-time
+                                                 fingerprint exchange). */
+    uint64_t allocSize;      /* Allocated local physical DRAM size in bytes, will be aligned
+                                                 up to GB. LOCAL: must equal reserveSize. SHARED: this
+                                                 rank's own contribution, must be <= reserveSize. Ranks
+                                                 of one SHARED pool MAY pass different values (scenarios
+                                                 that need equal allocations must pass equal values
+                                                 themselves — equality is caller-guaranteed, NOT
+                                                 validated across ranks). */
+    uint32_t worldSize;      /* number of ranks in the group (SHARED scene): the GLOBAL rank
+                                                 total across all machines of the pool. */
+    uint32_t rankId;         /* GLOBAL rank id in the group (SHARED scene); 0 is the allocator
+                                                 and hosts the store server; slot = global rank, so
+                                                 machineRank = rankId / localWorldSize,
+                                                 localRank = rankId % localWorldSize. */
+    offload_scene_t scene;   /* LOCAL: single-card pool; SHARED: multi-card shared pool */
+    char storeUrl[64];       /* Explicit config store url for the shared pool rendezvous
+                                                 (e.g. "tcp://127.0.0.1:8500", "etcd://...", "reg://...").
+                                                 Resolution order: this field > ASCEND_MF_STORE_URL env
+                                                 > derived loopback port 8500 + deviceId / localWorldSize
+                                                 (single machine only). */
+    uint32_t flags;          /* optional flags, see OFFLOAD_FLAG_xxx; 0 by default */
+    uint32_t localWorldSize; /* ranks of this machine within the pool (SHARED scene); 0 = worldSize
+                                                 (single machine, backward compatible). Must divide worldSize;
+                                                 all ranks of one pool must report the same value. A
+                                                 multi-machine pool (< worldSize) currently accepts A3
+                                                 (Ascend910C) nodes only — rejected at initialization. */
 } offload_config_t;
 
 /**
@@ -60,6 +81,15 @@ typedef struct {
  *
  * This function initializes the hybm big memory entity and loads the
  * offload library for sparse copy operations.
+ *
+ * SHARED scene per-rank size semantics: every rank of one pool MUST pass the
+ * same reserveSize (slot virtual size / whole-pool GVA stride — validated at
+ * init), while allocSize (each rank's local physical DRAM) MAY differ across
+ * ranks: some scenarios allocate unequal per-rank sizes, others need every
+ * rank equal. Equality of allocSize is NOT validated — a scenario that
+ * requires equal allocations must guarantee it on the caller side. Per rank,
+ * allocSize must be <= reserveSize; offload_malloc hands out addresses only
+ * within this rank's allocSize span.
  *
  * @param config  [in] Init config, see offload_config_t.
  * @return 0 on success, non-zero error code on failure.
@@ -136,9 +166,12 @@ int32_t offload_sparse_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr, u
  * same-width tables fold their per-segment offsets into the id space. The
  * layout must be SYMMETRIC across ranks (same entryBytes/rowsPerSlot, grid
  * starting at every slot start), which lets the kernel resolve any row on any
- * rank from the row id alone. The layout is validated once here: row pitch in
- * (0, OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES], grid fits one slot. Register
- * after offload_init and before the first gather; cleared by offload_uninit.
+ * rank from the row id alone. On a SHARED pool whose ranks pass different
+ * allocSize values the grid must fit EVERY rank's allocated span (each rank
+ * validates it against its own allocSize here). The layout is validated once
+ * here: row pitch in (0, OFFLOAD_ENTRY_GATHER_MAX_ENTRY_BYTES], grid fits one
+ * slot. Register after offload_init and before the first gather; cleared by
+ * offload_uninit.
  *
  * @param entryBytes  [in] Row pitch in bytes (the model's row width).
  * @param rowsPerSlot [in] Rows the grid holds per slot (across all segments).

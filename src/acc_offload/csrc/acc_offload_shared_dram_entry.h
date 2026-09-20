@@ -63,8 +63,25 @@ public:
 private:
     int32_t AllocAndExportHostSlices();
 
+    int32_t ValidateSharedConfig(const offload_config_t &config);
+
+    int32_t InitSharedPool(const offload_config_t &config);
+
+    int32_t ResolveStoreUrl(const offload_config_t &config);
+
+    int32_t CreateGroupStore(const offload_config_t &config);
+
+    int32_t CreateEntityAndPool(const offload_config_t &config);
+
+    int32_t ExportAndImportEntityInfo();
+
+    int32_t MapPool(const offload_config_t &config);
+
+    int32_t ExchangeAndValidatePoolFingerprint(const offload_config_t &config);
+
     std::mutex mutex_;
     bool inited_ = false;
+    bool multiNode_ = false;
     std::string storeUrl_;
     smem::StorePtr entryStore_;
     smem::SmemGroupEnginePtr group_;

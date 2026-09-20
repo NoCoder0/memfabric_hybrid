@@ -20,6 +20,9 @@ include_directories(
         ${PROJECT_SMEM_SRC_BASE}/csrc/config_store
         ${PROJECT_SMEM_SRC_BASE}/include/host
         ${PROJECT_HYBM_SRC_BASE}/include
+        ${PROJECT_HYBM_SRC_BASE}/csrc/common
+        ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
+        ${PROJECT_HYBM_SRC_BASE}/csrc/driver/version
         ${PROJECT_UTIL_SRC_BASE}/ptracer/include
         ${PROJECT_ACCLINKS_SRC_BASE}/include
 )

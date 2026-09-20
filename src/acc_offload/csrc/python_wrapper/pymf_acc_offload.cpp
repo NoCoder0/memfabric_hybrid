@@ -33,13 +33,18 @@ void DefineAccOffloadConfig(py::module_ &m)
         .def(py::init<>())
         .def_readwrite("device_id", &offload_config_t::deviceId)
         .def_readwrite("reserve_size", &offload_config_t::reserveSize,
-                       "Reserved DRAM pool size in bytes, will be aligned up to GB")
+                       "Reserved DRAM pool size in bytes, will be aligned up to GB. SHARED: must be identical on "
+                       "every rank (pool-wide slot stride)")
         .def_readwrite("alloc_size", &offload_config_t::allocSize,
-                       "Allocated local physical DRAM size in bytes, will be aligned up to GB. "
-                       "LOCAL: must equal reserve_size; SHARED: provides the actual size")
+                       "Allocated local physical DRAM size in bytes, will be aligned up to GB. LOCAL: must equal "
+                       "reserve_size; SHARED: this rank's own contribution (<= reserve_size). Ranks MAY pass "
+                       "different values; scenarios that need equal allocations must pass equal values themselves — "
+                       "equality is caller-guaranteed, not validated")
         .def_readwrite("world_size", &offload_config_t::worldSize,
-                       "number of ranks in the group (multi-card shared mode)")
-        .def_readwrite("rank_id", &offload_config_t::rankId, "local rank id, 0 is the server (multi-card shared mode)")
+                       "number of ranks in the group (multi-card shared mode): the GLOBAL rank total across all "
+                       "machines of the pool")
+        .def_readwrite("rank_id", &offload_config_t::rankId,
+                       "GLOBAL rank id in the group, 0 is the server (multi-card shared mode); slot = global rank")
         .def_readwrite("scene", &offload_config_t::scene,
                        "memory pool scene: LOCAL=single-card, SHARED=multi-card shared")
         .def_property(
@@ -51,9 +56,14 @@ void DefineAccOffloadConfig(py::module_ &m)
                 url.copy(config.storeUrl, url.size());
                 config.storeUrl[url.size()] = '\0';
             },
-            "Explicit config store url of the shared pool (e.g. tcp://127.0.0.1:8500), identical across "
-            "ranks of one group; empty falls back to the derived port 8500 + device_id // world_size, "
-            "which requires contiguous device ids aligned to world_size")
+            "Explicit config store url of the shared pool (e.g. tcp://127.0.0.1:8500, etcd://..., reg://...), "
+            "identical across ranks of one group; resolution order: this field > ASCEND_MF_STORE_URL env > derived "
+            "port 8500 + device_id // local_world_size (single machine only, requires contiguous device ids aligned "
+            "to world_size)")
+        .def_readwrite("local_world_size", &offload_config_t::localWorldSize,
+                       "ranks of this machine within the pool; 0 = world_size (single machine, backward compatible). "
+                       "Must divide world_size; machine_rank = rank_id // local_world_size. A multi-machine pool "
+                       "(< world_size) currently accepts A3 (Ascend910C) nodes only")
         .def_readwrite("flags", &offload_config_t::flags, "optional flags, see OFFLOAD_FLAG_xxx");
     m.attr("OFFLOAD_FLAG_GIANT_PAGE") = py::int_(OFFLOAD_FLAG_GIANT_PAGE);
     ;

@@ -1036,7 +1036,7 @@ typedef enum {
 |枚举值|含义|
 |-|-|
 |OFFLOAD_SCENE_LOCAL|单卡本地DRAM内存池，每rank独占一份池|
-|OFFLOAD_SCENE_SHARED|多卡共享DRAM内存池，reserveSize需保证相同，allocSize支持按需传入|
+|OFFLOAD_SCENE_SHARED|多卡共享DRAM内存池，reserveSize需保证相同，allocSize各rank可按需传入（允许不同）|
 
 #### offload_config_t
 
@@ -1057,8 +1057,8 @@ typedef struct {
 |成员|含义|
 |-|-|
 |deviceId|绑定的device id|
-|reserveSize|预留DRAM内存池大小，单位字节，内部会向上对齐到GB|
-|allocSize|本地实际分配物理DRAM大小，单位字节，内部会向上对齐到GB。LOCAL场景需与reserveSize相等；SHARED场景支持按需传入|
+|reserveSize|预留DRAM内存池大小，单位字节，内部会向上对齐到GB。SHARED场景需保证相同，作为全池槽位虚拟大小（初始化时校验）|
+|allocSize|本地实际分配物理DRAM大小，单位字节，内部会向上对齐到GB。LOCAL场景需与reserveSize相等；SHARED场景为本rank实际贡献，需不超过reserveSize，各rank允许传入不同大小——是否要求各rank等大由业务场景决定，框架不校验一致性，需要等大的场景由调用方保证各rank传入相同值|
 |worldSize|参与组网的rank数量（SHARED场景使用）|
 |rankId|本地rank id（SHARED场景使用）|
 |scene|内存池场景，取值参考offload_scene_t，默认OFFLOAD_SCENE_LOCAL|

@@ -58,6 +58,7 @@ cc_library(
         "//src:util_headers",
         "//src:acc_links_headers",
         "//src:hybm_headers",
+        "//src/hybm/csrc:hybm_under_api_headers",
         "//src:smem_headers",
     ],
     alwayslink = True,
