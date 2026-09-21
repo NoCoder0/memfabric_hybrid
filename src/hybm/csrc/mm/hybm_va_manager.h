@@ -20,8 +20,10 @@
 #include <memory>
 #include <unordered_map>
 #include <iomanip>
+#include <cstring>
 #include "hybm_common_include.h"
 #include "hybm_mem_common.h"
+#include "dl_hal_api_def.h"
 
 namespace ock {
 namespace mf {
@@ -153,6 +155,16 @@ struct ReservedGvaInfo {
     }
 };
 constexpr uint32_t INVALID_RANK_ID = std::numeric_limits<uint32_t>::max();
+
+// share handle 字符串：仅保存 MemShareHandle::share_info 本体（二进制安全，
+// 恒为 MEM_SHARE_HANDLE_LEN 字节，禁止按 c_str/strlen 解析），登记/查询接口与
+// 存储均不再直接使用驱动结构体；未登记时为空串
+using ShareHandleStr = std::string;
+
+inline ShareHandleStr ToShareInfo(const MemShareHandle &handle)
+{
+    return ShareHandleStr(reinterpret_cast<const char *>(handle.share_info), MEM_SHARE_HANDLE_LEN);
+}
 struct BaseAllocatedGvaInfo {
     uint64_t va[HVM_BUTT]{};
     uint64_t size{};                             // >0
@@ -166,6 +178,7 @@ struct AllocatedGvaInfo {
     BaseAllocatedGvaInfo base;
     uint32_t localRankId{INVALID_RANK_ID};    // Must be set >=0
     uint32_t importedRankId{INVALID_RANK_ID}; // can be set >=0
+    ShareHandleStr shareHandle;               // share_info（二进制安全字符串），未登记时为空串
 
     AllocatedGvaInfo() = default;
     AllocatedGvaInfo(BaseAllocatedGvaInfo b, uint32_t localRankId) : base{b}, localRankId(localRankId) {}
@@ -173,6 +186,23 @@ struct AllocatedGvaInfo {
     AllocatedGvaInfo(BaseAllocatedGvaInfo b, uint32_t localRankId, uint32_t importedRankId)
         : base{b}, localRankId(localRankId), importedRankId(importedRankId)
     {}
+
+    // 单独保存的 share_info（二进制安全字符串），与本记录一一对应（登记地址必为
+    // 记录起始 VA），随记录一起增删；未登记时为空串
+    void SetShareHandle(const ShareHandleStr &shareInfo)
+    {
+        shareHandle = shareInfo;
+    }
+
+    [[nodiscard]] bool GetShareHandle(ShareHandleStr &shareInfo) const
+    {
+        // 未登记判定与旧定长数组语义一致：空串或全 0 字节串均视为未登记
+        if (shareHandle.empty() || shareHandle.find_first_not_of('\0') == std::string::npos) {
+            return false;
+        }
+        shareInfo = shareHandle;
+        return true;
+    }
 
     [[nodiscard]] bool Contains(uint64_t addr, uint32_t t) const
     {
@@ -332,6 +362,14 @@ public:
         return result;
     }
 
+    // =============Share info 登记/复用====================================
+    // share_info 不再独立建表，直接内嵌在对应的 AllocatedGvaInfo 记录中：
+    // 登记地址必为记录起始 VA（slice 导出记录 DVA=HVA=slice 起始，导入记录 DVA=lva），
+    // 记录删除（RemoveOneVaInfo/ClearAll）时随之失效，避免悬挂残留；
+    // 全程使用二进制安全的字符串 ShareHandleStr，驱动结构体 MemShareHandle 经 ToShareInfo 转换后进入
+    Result AddHandle(const void *ptr, const ShareHandleStr &shareInfo);
+    Result GetHandle(const void *ptr, ShareHandleStr &shareInfo) const;
+
 private:
     HybmVaManager() = default;
 
@@ -343,6 +381,11 @@ private:
                                   hybm_scene scene = HYBM_SCENE_DEFAULT);
 
     std::pair<uint64_t, bool> FindFreeSpace(uint64_t start, uint64_t end, uint64_t size, uint32_t type);
+
+    // 按 HVA 优先、DVA 回退的顺序查找包含 addr 的记录（调用方须已持有 mutex_）；
+    // 导入映射（如 SHARED 池非分配 rank）只登记 DVA 表，故需回退 DVA 查找
+    const AllocatedGvaInfo *FindAllocRecordLocked(uint64_t addr) const;
+    AllocatedGvaInfo *FindAllocRecordLocked(uint64_t addr);
 
 private:
     mutable std::shared_mutex mutex_{};

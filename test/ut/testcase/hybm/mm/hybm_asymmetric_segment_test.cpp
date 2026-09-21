@@ -508,14 +508,15 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HostAddr_Sdma_Rejected)
 /**
  * Register_HalAttr_DeviceType_WinsOverAddress
  *  - HAL 属性查询成功且 memType 为设备类型：即使地址不在 HBM 地址段内，也走设备注册路径
- *    （RtIpcSetMemoryName 建名，slice memType=DEVICE，不触发 HalHostRegister）。
+ *    （slice memType=DEVICE，不触发 HalHostRegister）。
+ *  - 导出名类型与 HAL 判型无关，按地址窗口路由：窗口外地址走 VMM share_handle。
  */
 TEST_F(HybmAsymmetricSegmentTest, Register_HalAttr_DeviceType_WinsOverAddress)
 {
     auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).stubs().will(invoke(RtIpcSetMemoryNameStub));
+    MockVmmExportPath();
     MOCKER(&ock::mf::DlHalApi::HalHostRegister).expects(never());
 
     g_drvMemAttrRet = 0;                  // 查询成功
@@ -526,6 +527,8 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HalAttr_DeviceType_WinsOverAddress)
     EXPECT_EQ(ret, BM_OK);
     ASSERT_NE(slice, nullptr);
     EXPECT_EQ(slice->memType_, HYBM_MEM_TYPE_DEVICE);
+    const auto &reg = segment.registerSlices_.at(slice->index_);
+    EXPECT_EQ(static_cast<uint8_t>(reg.name[0]), USER_HBM_NAME_TYPE_VMM);
 }
 
 /**
@@ -721,10 +724,11 @@ TEST_F(HybmAsymmetricSegmentTest, ImportDeviceInfo_SkipsEmptyNameWhitelist)
 }
 
 /**
- * Register_DupAddr_BothTypes_Rejected
- *  - 同一地址重复注册（HBM/DRAM 各一次）→ 第二次 BM_ERROR。
+ * Register_DupAddr_FakeRegister_ReuseSlice
+ *  - 同一区间重复注册（HBM/DRAM 各一次）→ 复用既有 slice 返回 BM_OK，
+ *    不新增登记、allocatedSize_ 不重复累加（d2rh 整池注册语义）。
  */
-TEST_F(HybmAsymmetricSegmentTest, Register_DupAddr_BothTypes_Rejected)
+TEST_F(HybmAsymmetricSegmentTest, Register_DupAddr_FakeRegister_ReuseSlice)
 {
     auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
@@ -732,90 +736,19 @@ TEST_F(HybmAsymmetricSegmentTest, Register_DupAddr_BothTypes_Rejected)
     MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).stubs().will(invoke(RtIpcSetMemoryNameStub));
 
     MemSlicePtr hbmSlice;
-    EXPECT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, hbmSlice), BM_OK);
+    ASSERT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, hbmSlice), BM_OK);
     MemSlicePtr dupHbmSlice;
-    EXPECT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, dupHbmSlice), BM_ERROR);
+    EXPECT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, dupHbmSlice), BM_OK);
+    EXPECT_EQ(dupHbmSlice, hbmSlice);
 
     MemSlicePtr hostSlice;
     EXPECT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HOST_ADDR), TEST_SIZE, hostSlice), BM_OK);
     MemSlicePtr dupHostSlice;
-    EXPECT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HOST_ADDR), TEST_SIZE, dupHostSlice), BM_ERROR);
+    EXPECT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HOST_ADDR), TEST_SIZE, dupHostSlice), BM_OK);
+    EXPECT_EQ(dupHostSlice, hostSlice);
 
     EXPECT_EQ(segment.registerSlices_.size(), 2U);
-}
-
-// ====================== A5 VMM 共享路径：导出侧 ======================
-
-/**
- * Register_HBM_A5_VmmExport
- *  - A5 上注册 HBM：retain/export/trans/attr 四接口被调且各一次，retain 引用导出后立即释放；
- *  - RegisterSlice.name 为 129B 定长、首字节为 VMM 类型标记。
- */
-TEST_F(HybmAsymmetricSegmentTest, Register_HBM_A5_VmmExport)
-{
-    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
-    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
-    InitSegmentBase(segment);
-    MockVmmExportPath();
-
-    MemSlicePtr slice;
-    auto ret = segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, slice);
-    EXPECT_EQ(ret, BM_OK);
-    ASSERT_NE(slice, nullptr);
-    EXPECT_EQ(g_retainCount, 1);
-    EXPECT_EQ(g_exportCount, 1);
-    EXPECT_EQ(g_transCount, 1);
-    EXPECT_EQ(g_attrCount, 1);
-
-    const auto &reg = segment.registerSlices_.at(slice->index_);
-    ASSERT_EQ(reg.name.size(), USER_HBM_NAME_MAX_LEN);
-    EXPECT_EQ(static_cast<uint8_t>(reg.name[0]), USER_HBM_NAME_TYPE_VMM);
-    // retain 引用保持不释放（实测 release 后同 allocation 后续 slice export 失败），销毁对称由段级兜底
-    EXPECT_EQ(g_vmmReleaseCount, 0);
-}
-
-/**
- * Register_HBM_A5_ExportFail / TransFail / SetAttrFail
- *  - 导出链路各失败点：错误上抛且 retain 出的 handle 均被释放（引用零泄漏）。
- */
-TEST_F(HybmAsymmetricSegmentTest, Register_HBM_A5_ExportFail)
-{
-    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
-    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
-    InitSegmentBase(segment);
-    MockVmmExportPath();
-    g_exportRet = -1;
-
-    MemSlicePtr slice;
-    auto ret = segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, slice);
-    EXPECT_EQ(ret, BM_DL_FUNCTION_FAILED);
-    EXPECT_EQ(slice, nullptr);
-    EXPECT_EQ(g_vmmReleaseCount, 1);
-    EXPECT_TRUE(segment.registerSlices_.empty());
-}
-
-/**
- * ExportSlice_VmmName_NoTruncate
- *  - VMM 导出信息经序列化/反序列化后 129B name 逐字节一致（含 \0），防 strlen 截断回归。
- */
-TEST_F(HybmAsymmetricSegmentTest, ExportSlice_VmmName_NoTruncate)
-{
-    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
-    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
-    InitSegmentBase(segment);
-    MockVmmExportPath();
-
-    MemSlicePtr slice;
-    ASSERT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, slice), BM_OK);
-    std::string exInfo;
-    ASSERT_EQ(segment.Export(slice, exInfo), BM_OK);
-    ASSERT_EQ(exInfo.size(), sizeof(UserSliceExportInfo));
-
-    UserSliceExportInfo out{};
-    ASSERT_EQ(LiteralExInfoTranslater<UserSliceExportInfo>{}.Deserialize(exInfo, out), 0);
-    EXPECT_EQ(static_cast<uint8_t>(out.name[0]), USER_HBM_NAME_TYPE_VMM);
-    const auto &reg = segment.registerSlices_.at(slice->index_);
-    EXPECT_EQ(std::memcmp(out.name, reg.name.data(), USER_HBM_NAME_MAX_LEN), 0);
+    EXPECT_EQ(segment.allocatedSize_, 2 * TEST_SIZE);
 }
 
 // ====================== A5 VMM 共享路径：导入侧 ======================

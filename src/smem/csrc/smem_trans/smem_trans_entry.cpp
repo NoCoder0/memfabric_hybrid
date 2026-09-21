@@ -1037,18 +1037,38 @@ Result SmemTransEntry::RegisterOneMemory(const void *address, uint64_t size, uin
         SM_LOG_ERROR("hybm_register_local_memory failed, address: " << address << " size: " << size);
         return SM_ERROR;
     }
-    SM_LOG_DEBUG("register memory(address with size=" << size << ") return slice=" << slice);
+    // 区间内重复注册由 segment 层 fake 掉（返回首次注册的同一 slice ID），
+    // 此处按 ID 去重：已 export 过的 slice 不再生成/广播交换记录，避免对端出现
+    // "整段 handle + 子块 u.address" 的错配记录
+    const auto sliceKey = reinterpret_cast<uint64_t>(slice);
+    if (!exportedSliceIds_.insert(sliceKey).second) {
+        SM_LOG_INFO("fake register, skip duplicated export: address: " << address << " size: " << size);
+        return SM_OK;
+    }
+    // fake/区间扩展后 slice 登记的范围可能与本次调用入参不同，
+    // u.address 必须用 slice 的真实范围，保证与广播的 handle 覆盖一致，
+    // 否则对端 TransformAddr 会因记录范围不含目标地址而报 out of range
+    void *sliceVa = hybm_get_slice_va(entity_, slice);
+    uint64_t sliceSize = hybm_get_slice_size(entity_, slice);
+    if (sliceVa == nullptr || sliceSize == 0) {
+        SM_LOG_ERROR("query slice range failed, address: " << address << " size: " << size);
+        hybm_free_local_memory(entity_, slice, size, 0);
+        return SM_ERROR;
+    }
+    SM_LOG_DEBUG("register memory(address with size=" << size << ") return slice=" << slice << " sliceVa=" << sliceVa
+                                                      << " sliceSize=" << sliceSize);
 
     SmemTransExchangeInfo info{};
     auto ret = hybm_export(entity_, slice, 0, &info.hybmInfo);
     if (ret != 0) {
         SM_LOG_ERROR("export slice for register address with size: " << size << " failed:" << ret);
         hybm_free_local_memory(entity_, slice, size, 0);
+        exportedSliceIds_.erase(sliceKey);
         hybm_export_info_free(&info.hybmInfo);
         return SM_ERROR;
     }
 
-    info.u.address = LocalMapAddress(const_cast<void *>(address), size);
+    info.u.address = LocalMapAddress(sliceVa, sliceSize);
     registedInfo_.emplace_back(info);
     return SM_OK;
 }

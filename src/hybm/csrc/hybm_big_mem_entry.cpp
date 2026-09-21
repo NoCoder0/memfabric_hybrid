@@ -83,6 +83,14 @@ HYBM_API void *hybm_get_slice_va(hybm_entity_t e, hybm_mem_slice_t slice)
     return entity->GetSliceVa(slice);
 }
 
+HYBM_API uint64_t hybm_get_slice_size(hybm_entity_t e, hybm_mem_slice_t slice)
+{
+    BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", 0);
+    auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "entity is nullptr", 0);
+    return entity->GetSliceSize(slice);
+}
+
 HYBM_API hybm_mem_slice_t hybm_alloc_local_memory(hybm_entity_t e, hybm_mem_type mType, uint64_t size, uint32_t flags)
 {
     BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", nullptr);

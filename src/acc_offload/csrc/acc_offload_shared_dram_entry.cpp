@@ -27,7 +27,6 @@ namespace offload {
 using namespace ock::smem;
 
 constexpr uint64_t GB = 1024ULL * 1024ULL * 1024ULL;
-constexpr uint64_t HOST_MEM_SLICE_SIZE = 32ULL * GB;
 
 static uint64_t AlignUp(uint64_t value, uint64_t align) noexcept
 {
@@ -147,32 +146,24 @@ static int32_t AllGatherAndImportPeers(const SmemGroupEnginePtr &group,
 
 int32_t AccOffloadSharedDramEntry::AllocAndExportHostSlices()
 {
+    // 整池一次性申请（单 allocation = 单 share handle）：分片申请会使跨片的注册区域
+    // 携带多个 share handle，超出交换协议容量；单次申请失败时直接暴露容量/碎片问题
     const uint64_t totalSize = options_.hostVASpace;
-    uint64_t remaining = totalSize;
-    do {
-        uint64_t sliceSize = (remaining >= HOST_MEM_SLICE_SIZE) ? HOST_MEM_SLICE_SIZE : remaining;
-        uint64_t allocated = totalSize - remaining;
-        OFFLOAD_LOG_INFO("alloc host slice progress: " << allocated << "/" << totalSize << ", sliceSize: " << sliceSize
-                                                       << ", rankId: " << options_.rankId);
-        auto memSlice = hybm_alloc_local_memory(entity_, HYBM_MEM_TYPE_HOST, sliceSize, 0);
-        if (memSlice == nullptr) {
-            OFFLOAD_LOG_ERROR("alloc host slice failed, allocated: " << allocated << ", sliceSize: " << sliceSize
-                                                                     << ", totalSize: " << totalSize
-                                                                     << ", rankId: " << options_.rankId);
-            return OFFLOAD_ERROR;
-        }
-        hybm_exchange_info sliceInfo{};
-        auto ret = hybm_export(entity_, memSlice, 0, &sliceInfo);
-        if (ret != OFFLOAD_OK) {
-            OFFLOAD_LOG_ERROR("export host slice failed, result: " << ret << ", sliceSize: " << sliceSize
-                                                                   << ", rankId: " << options_.rankId);
-            hybm_export_info_free(&sliceInfo);
-            return ret;
-        }
-        slices_.push_back(memSlice);
-        sliceInfos_.push_back(sliceInfo);
-        remaining -= sliceSize;
-    } while (remaining > 0);
+    OFFLOAD_LOG_INFO("alloc host slice: totalSize: " << totalSize << ", rankId: " << options_.rankId);
+    auto memSlice = hybm_alloc_local_memory(entity_, HYBM_MEM_TYPE_HOST, totalSize, 0);
+    if (memSlice == nullptr) {
+        OFFLOAD_LOG_ERROR("alloc local host mem failed, totalSize: " << totalSize << ", rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    hybm_exchange_info sliceInfo{};
+    auto ret = hybm_export(entity_, memSlice, 0, &sliceInfo);
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("export host slice failed, result: " << ret << ", totalSize: " << totalSize
+                                                               << ", rankId: " << options_.rankId);
+        return ret;
+    }
+    slices_.push_back(memSlice);
+    sliceInfos_.push_back(sliceInfo);
     OFFLOAD_LOG_INFO("alloc and export host slices done, sliceCount: " << sliceInfos_.size() << ", totalSize: "
                                                                        << totalSize << ", rankId: " << options_.rankId);
     return OFFLOAD_OK;
@@ -295,9 +286,6 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
     options_.role = HYBM_ROLE_PEER;
     options_.scene = HYBM_SCENE_OFFLOAD; // offload 独立 VA 区段(常规 GVM 区最前2T)，与 BM 物理隔离
     options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
-    if (!multiNode_) {
-        options_.flags |= HYBM_FLAG_UNRESTRICTED_MEM;
-    }
     options_.dramShmFd = -1;
     options_.enable56BitsGva = false;
     bzero(options_.transUrl, sizeof(options_.transUrl));

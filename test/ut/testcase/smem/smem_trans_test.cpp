@@ -344,8 +344,8 @@ TEST_F(SmemTransTest, smem_trans_register_mem_duplicate_address)
             _exit(3);
         }
         ret = smem_trans_register_mem(handle, address, size, 0);
-        if (ret == SM_OK) {
-            _exit(4);
+        if (ret != SM_OK) {
+            _exit(4); // 重复注册应复用既有 slice 并返回成功
         }
         smem_trans_deregister_mem(handle, address);
         smem_trans_destroy(handle, 0);

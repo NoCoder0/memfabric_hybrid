@@ -100,7 +100,7 @@ bool IsDeviceMemoryAddr(uint64_t va)
                                            << " rawMemType=" << static_cast<uint32_t>(attr.memType));
     if (ret == BM_OK) {
         return attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV ||
-               attr.memType == DV_MEM_LOCK_DEV_DVPP;
+               attr.memType == DV_MEM_LOCK_DEV_DVPP || attr.memType == DV_MEM_LOCK_HOST;
     }
     BM_LOG_DEBUG("DrvMemGetAttribute unavailable, fallback to address check: va=" << VaToStr(va));
 #endif
@@ -165,24 +165,48 @@ Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, Mem
         return BM_INVALID_PARAM;
     }
 
+    // 同一已注册区间内的重复注册复用既有 slice（首次调用注册生效，后续跳过），
+    // 避免 offload 池多段注册触发 2MiB 对齐重叠与重复导出；对端按首个锚点+偏移寻址
+    const auto va = reinterpret_cast<uint64_t>(addr);
     for (auto &it : registerSlices_) {
-        if (it.second.slice->vAddress_ == reinterpret_cast<uint64_t>(addr)) {
-            BM_LOG_ERROR("addr has registered: rankId=" << options_.rankId
-                                                        << " addr=" << VaToStr(reinterpret_cast<uint64_t>(addr)));
-            return BM_ERROR;
+        const auto &exist = it.second.slice;
+        const auto base = exist->vAddress_;
+        if (va >= base && va + size <= base + exist->size_) {
+            BM_LOG_INFO("fake register, reuse existing slice: rankId=" << options_.rankId << " addr=" << VaToStr(va)
+                                                                       << " size=" << size << " sliceIdx=" << it.first);
+            slice = exist;
+            return BM_OK;
         }
     }
 
-    if (allocatedSize_ + size > totalVirtualSize_) {
+    //offload 池内存（GVM 窗口）首次注册时，向 VaManager 查分配时登记的整段区间，
+    // 以整个 allocation 的 [base, size) 注册（单分配=单 handle=单锚点）；后续落在该区间内的
+    // 注册由上方复用逻辑跳过
+    uint64_t regBase = va;
+    uint64_t regSize = size;
+    const uint64_t gvmStart = socType_ == AscendSocType::ASCEND_950 ? HYBM_GVM_START_ADDR_A5 : HYBM_GVM_START_ADDR;
+    if (va >= gvmStart && va < gvmStart + HYBM_GVM_MAX_POOL_SIZE) {
+        // 分配记录 HVA/DVA=allocAddr；导入记录 HVA=0、DVA=lva——按 DVA 查询对两种 rank 均命中
+        auto [allocInfo, found] = HybmVaManager::GetInstance().FindAllocByVa(va, HVM_DVA);
+        if (found && allocInfo.base.va[HVM_DVA] != 0) {
+            regBase = allocInfo.base.va[HVM_DVA];
+            regSize = allocInfo.base.size;
+            BM_LOG_INFO("expand registration to alloc interval: rankId=" << options_.rankId << " addr=" << VaToStr(va)
+                                                                         << " size=" << size << " regBase="
+                                                                         << VaToStr(regBase) << " regSize=" << regSize);
+        }
+    }
+
+    if (allocatedSize_ + regSize > totalVirtualSize_) {
         BM_LOG_ERROR("gva space exhausted: rankId=" << options_.rankId << " allocated=" << allocatedSize_
-                                                    << " request=" << size << " total=" << totalVirtualSize_);
+                                                    << " request=" << regSize << " total=" << totalVirtualSize_);
         return BM_ERROR;
     }
 
-    if (IsDeviceMemoryAddr(reinterpret_cast<uint64_t>(addr))) {
-        return RegisterDeviceMemory(addr, size, slice);
+    if (IsDeviceMemoryAddr(reinterpret_cast<uint64_t>(regBase))) {
+        return RegisterDeviceMemory(reinterpret_cast<const void *>(regBase), regSize, slice);
     }
-    return RegisterHostMemory(addr, size, slice);
+    return RegisterHostMemory(reinterpret_cast<const void *>(regBase), regSize, slice);
 }
 
 Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t size, MemSlicePtr &slice) noexcept
@@ -753,9 +777,12 @@ bool AsymmetricMemSegment::CheckSdmaReaches(uint32_t rankId) const noexcept
 
 Result AsymmetricMemSegment::UserMemExportName(const void *ptr, uint64_t len, char *name) noexcept
 {
-    // A5 上 IPC 共享接口不可用，改走 VMM share_handle；旧 SoC 保持 IPC 名路径
-    // （todo: 后续改为驱动能力探测，见设计文档开放问题 2）
-    const bool useVmm = (socType_ == AscendSocType::ASCEND_950);
+    //   A3：HBM 地址窗口内的用户态设备内存（torch/acl 直接分配，LOCK_DEV 型，
+    //   驱动不支持 HalMemRetainAllocationHandle）走 IPC 名路径；窗口外的 host 内存
+    //   （offload 池等，GVM 窗口 0x28 开头，可 retain+export）走 VMM share_handle 路径。
+    //   注意 A3 驱动对 host 用户态内存的 DrvMemGetAttribute 也返回 LOCK_DEV(0x10)，
+    //   属性查询无法区分介质，只能按地址窗口判型。
+    const bool useVmm = !IsHbmAddr(reinterpret_cast<uint64_t>(ptr));
     name[0] = static_cast<char>(useVmm ? USER_HBM_NAME_TYPE_VMM : USER_HBM_NAME_TYPE_IPC);
     if (!useVmm) {
         auto ret = DlAclApi::RtIpcSetMemoryName(ptr, len, name + 1, DEVICE_SHM_NAME_SIZE + 1);
@@ -773,8 +800,15 @@ Result AsymmetricMemSegment::UserMemExportName(const void *ptr, uint64_t len, ch
 Result AsymmetricMemSegment::ExportVmmShareName(const void *ptr, char *name) noexcept
 {
     const auto addrStr = VaToStr(reinterpret_cast<uint64_t>(ptr));
+    ShareHandleStr shareInfo;
+    // 本地已登记该地址的 share handle 时直接复用并跳过 retain/export：SHARED 池仅分配 rank
+    // 能 export 成功，其他 rank 的同 VA 是导入映射（句柄在导入时登记），对其 export 会报错
+    if (HybmVaManager::GetInstance().GetHandle(ptr, shareInfo) == 0) {
+        BM_LOG_INFO("reuse registered share handle, skip export: rankId=" << options_.rankId << " addr=" << addrStr);
+        std::memcpy(name + 1, shareInfo.data(), shareInfo.size());
+        return BM_OK;
+    }
     drv_mem_handle_t *handle = nullptr;
-    MemShareHandle shareHandle{};
     auto ret = DlHalApi::HalMemRetainAllocationHandle(&handle, const_cast<void *>(ptr));
     if (ret != BM_OK || handle == nullptr) {
         BM_LOG_ERROR("HalMemRetainAllocationHandle failed: rankId=" << options_.rankId << " addr=" << addrStr
@@ -784,6 +818,7 @@ Result AsymmetricMemSegment::ExportVmmShareName(const void *ptr, char *name) noe
     // halMemExport 的 flags 实测必须传 0：传 ACL 的 DISABLE_PID_VALIDATION(0x1) 返回 65534 被拒，
     // 该 flag 语义仅在 ACL 层 aclrtMemExportToShareableHandleV2 支持；免白名单当前以
     // SetAttribute 降级（WARN）换取链路验证，白名单拦截时再切 ACL 层 export 链路
+    MemShareHandle shareHandle{}; // 驱动出参，HalMemExport 成功后填充
     ret = DlHalApi::HalMemExport(handle, MEM_HANDLE_TYPE_FABRIC, 0, &shareHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("HalMemExport failed: rankId=" << options_.rankId << " addr=" << addrStr << " ret=" << ret);

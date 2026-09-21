@@ -67,6 +67,7 @@ extern "C" {
 #define MEM_PAGE_HUGE   (0X1UL << MEM_PAGE_BIT)
 
 #define DV_MEM_SVM_DEVICE    0x0004
+#define DV_MEM_LOCK_HOST     0x0008
 #define DV_MEM_LOCK_DEV      0x0010
 #define DV_MEM_LOCK_DEV_DVPP 0x0020
 #define DV_MEM_RESV          8

@@ -15,6 +15,7 @@
 #include <thread>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <condition_variable>
 #include <future>
 
@@ -177,6 +178,7 @@ private:
 
     std::mutex memMutex_;
     std::vector<SmemTransExchangeInfo> registedInfo_;
+    std::unordered_set<uint64_t> exportedSliceIds_; /* 已 export/广播过的 slice ID，用于 fake 注册去重 */
 
     const std::string name_;
     UrlExtraction storeUrlExtraction_;

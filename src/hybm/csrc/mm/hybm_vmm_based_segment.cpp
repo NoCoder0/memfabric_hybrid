@@ -454,6 +454,8 @@ Result HybmVmmBasedSegment::ExportInner(const MemSlicePtr &slice, MemShareHandle
         return BM_DL_FUNCTION_FAILED;
     }
 
+    HybmVaManager::GetInstance().AddHandle((void *)(slice->vAddress_), ToShareInfo(info.shareHandle));
+
     uint64_t shareable = 0U;
     uint32_t sId;
     ret = DlHalApi::HalMemTransShareableHandle(MEM_HANDLE_TYPE_FABRIC, &info.shareHandle, &sId, &shareable);
@@ -703,6 +705,9 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         }
         mappedGvaMem_.emplace(im.gva, handle);
         sdmaReachableRanks_.emplace(im.rankId);
+        // 登记导入 slice 的 share handle（即对端导出的同一 allocation 句柄）：
+        // SHARED 池非分配 rank 的注册导出（ExportVmmShareName）据此复用句柄跳过 HalMemExport
+        HybmVaManager::GetInstance().AddHandle(reinterpret_cast<void *>(lva), ToShareInfo(im.shareHandle));
     }
     imports_.clear();
     return BM_OK;

@@ -96,6 +96,15 @@ int32_t hybm_free_local_memory(hybm_entity_t e, hybm_mem_slice_t slice, uint32_t
 void *hybm_get_slice_va(hybm_entity_t e, hybm_mem_slice_t slice);
 
 /**
+ * @brief get size from slice
+ *
+ * @param e                [in] entity created by hybm_create_entity
+ * @param slice             [in] mf slice ptr
+ * @return size of the slice, 0 if failed
+ */
+uint64_t hybm_get_slice_size(hybm_entity_t e, hybm_mem_slice_t slice);
+
+/**
  * @brief Register memory at local side, registered memory can be accessed by remote.
  * @param e                [in] entity created by hybm_create_entity
  * @param ptr              [in] local memory start address

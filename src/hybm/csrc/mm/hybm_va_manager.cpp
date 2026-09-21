@@ -641,5 +641,57 @@ void HybmVaManager::ClearAll()
         reservedMap_[i].clear();
     }
 }
+
+const AllocatedGvaInfo *HybmVaManager::FindAllocRecordLocked(uint64_t addr) const
+{
+    for (uint32_t type : {HVM_HVA, HVM_DVA}) {
+        auto &vaMap = allocatedMap_[type];
+        if (vaMap.empty()) {
+            continue;
+        }
+        auto it = vaMap.upper_bound(addr);
+        if (it == vaMap.begin()) {
+            continue;
+        }
+        --it;
+        if (it->second.Contains(addr, type)) {
+            return &it->second;
+        }
+    }
+    return nullptr;
+}
+
+AllocatedGvaInfo *HybmVaManager::FindAllocRecordLocked(uint64_t addr)
+{
+    return const_cast<AllocatedGvaInfo *>(static_cast<const HybmVaManager *>(this)->FindAllocRecordLocked(addr));
+}
+
+Result HybmVaManager::AddHandle(const void *ptr, const ShareHandleStr &shareInfo)
+{
+    const auto addr = reinterpret_cast<uint64_t>(ptr);
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    auto *record = FindAllocRecordLocked(addr);
+    if (record == nullptr) {
+        BM_LOG_ERROR("AddHandle failed: no alloc record covers addr=" << VaToStr(addr));
+        return 1;
+    }
+    record->SetShareHandle(shareInfo);
+    BM_LOG_DEBUG("AddHandle success: addr=" << VaToStr(addr) << " base=" << VaToStr(record->base.va[HVM_DVA])
+                                            << " size=" << VaToStr(record->base.size));
+    return 0;
+}
+
+Result HybmVaManager::GetHandle(const void *ptr, ShareHandleStr &shareInfo) const
+{
+    const auto addr = reinterpret_cast<uint64_t>(ptr);
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    const auto *record = FindAllocRecordLocked(addr);
+    // 未登记属预期路径（如本 rank 首次导出），调用方会回退 retain/export，不记 ERROR
+    if (record == nullptr || !record->GetShareHandle(shareInfo)) {
+        BM_LOG_DEBUG("GetHandle miss: addr=" << VaToStr(addr));
+        return 1;
+    }
+    return 0;
+}
 } // namespace mf
 } // namespace ock

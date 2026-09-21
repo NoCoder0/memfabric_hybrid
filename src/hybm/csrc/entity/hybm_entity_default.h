@@ -84,6 +84,7 @@ public:
     bool SdmaReaches(uint32_t remoteRank) const noexcept override;
     hybm_data_op_type CanReachDataOperators(uint32_t remoteRank) const noexcept override;
     void *GetSliceVa(hybm_mem_slice_t slice);
+    uint64_t GetSliceSize(hybm_mem_slice_t slice);
     int32_t ConnectTransport(const uint32_t *ranks, uint32_t count, uint32_t flags) noexcept override;
     int32_t UnmapRank(uint32_t rankId) noexcept override;
 

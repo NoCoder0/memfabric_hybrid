@@ -344,6 +344,19 @@ void *MemEntityDefault::GetSliceVa(hybm_mem_slice_t slice)
     return nullptr;
 }
 
+uint64_t MemEntityDefault::GetSliceSize(hybm_mem_slice_t slice)
+{
+    std::shared_ptr<MemSlice> memSlice;
+    if (hbmSegment_ != nullptr && (memSlice = hbmSegment_->GetMemSlice(slice, true)) != nullptr) {
+        return memSlice->size_;
+    } else if (dramSegment_ != nullptr && (memSlice = dramSegment_->GetMemSlice(slice)) != nullptr) {
+        return memSlice->size_;
+    }
+
+    BM_LOG_ERROR("failed to get slice size, invalid slice:" << slice);
+    return 0;
+}
+
 // entityExchangeInfo = entityInfo + segmentInfo
 int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uint32_t flags) noexcept
 {
