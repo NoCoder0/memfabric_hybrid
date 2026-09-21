@@ -125,6 +125,13 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
     BM_LOG_DEBUG("Src[0]: " << VaToInfo(params->sources[0]) << ", dest[0]: " << VaToInfo(params->destinations[0])
                             << " flag:" << VaToStr(flags) << " direction:" << direction);
 
+    for (uint32_t i = 0; i < params->batchSize; ++i) {
+        if (params->dataSizes[i] == 0) {
+            BM_LOG_ERROR("input copy data size is zero, index:" << i << " batchSize:" << params->batchSize);
+            return BM_INVALID_PARAM;
+        }
+    }
+
     auto entity = (MemEntity *)e;
 
     if (direction == HYBM_DATA_COPY_DIRECTION_AUTO) {

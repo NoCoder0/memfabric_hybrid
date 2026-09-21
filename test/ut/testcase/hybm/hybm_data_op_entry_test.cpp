@@ -401,6 +401,21 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_zero_batch_size)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
+TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_zero_data_size)
+{
+    constexpr uint32_t batchSize = 2U;
+    void *sources[batchSize] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR),
+                                reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x2000)};
+    void *destinations[batchSize] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x1000),
+                                     reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x3000)};
+    uint64_t dataSizes[batchSize] = {1024ULL, 0ULL};
+    hybm_batch_copy_params params{sources, destinations, dataSizes, batchSize};
+
+    auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+    EXPECT_FALSE(mockEntity->batchCopyCalled);
+}
+
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_invalid_direction)
 {
     hybm_batch_copy_params params{};
