@@ -634,14 +634,6 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
     bool isWrite = (direction <= HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE);
     size_t batchSize = params.batchSize;
 
-    auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(rdmaSwapSpaceSize_);
-    void *tmpHost = tmpRdmaMemory.Address();
-    if (tmpHost == nullptr) {
-        BM_LOG_ERROR("Failed to malloc swap length: " << rdmaSwapSpaceSize_);
-        TP_TRACE_END(TP_HYBM_RDMA_BATCH_DEFAULT, BM_MALLOC_FAILED);
-        return BM_MALLOC_FAILED;
-    }
-
     uint64_t batchOffset = 0;
     while (batchOffset < batchSize) {
         uint64_t currentBatchDataSize = 0;
@@ -656,6 +648,17 @@ Result DataOpDeviceRDMA::BatchDataCopyDefault(hybm_batch_copy_params &params, hy
                                                                        << rdmaSwapSpaceSize_);
             ret = BM_INVALID_PARAM;
             break;
+        }
+
+        // 按当前 batch 实际大小申请 swap，而不是一次性申请整个 swap 池：
+        // 整池申请在并发传输时会被第一个请求占满，其余请求 Allocate 失败（error -3）。
+        // AllocatedElement 是 RAII，出本次循环作用域自动 Release。
+        auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(currentBatchDataSize);
+        void *tmpHost = tmpRdmaMemory.Address();
+        if (tmpHost == nullptr) {
+            BM_LOG_ERROR("Failed to malloc swap length: " << currentBatchDataSize);
+            TP_TRACE_END(TP_HYBM_RDMA_BATCH_DEFAULT, BM_MALLOC_FAILED);
+            return BM_MALLOC_FAILED;
         }
 
         size_t currentBatchSize = batchEnd - batchOffset;
