@@ -102,6 +102,7 @@ typedef enum {
     HYBM_SCENE_DEFAULT = 1U << 0,
     HYBM_SCENE_TRANS = 1U << 1,
     HYBM_SCENE_SHM = 1U << 2,
+    HYBM_SCENE_OFFLOAD = 1U << 3, // offload 独立 VA 区段(常规 GVM 区最前2T)
     HYBM_SCENE_BUTT
 } hybm_scene;
 

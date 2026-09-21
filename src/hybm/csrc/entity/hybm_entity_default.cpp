@@ -1195,6 +1195,7 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
+    segmentOptions.scene = options_.scene;
     constexpr auto transportMask =
         HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_RDMA;
     if ((options_.bmDataOpType & transportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
@@ -1227,6 +1228,7 @@ Result MemEntityDefault::InitDramSegment()
     segmentOptions.flags = options_.flags;
     segmentOptions.shmFd = options_.dramShmFd;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
+    segmentOptions.scene = options_.scene;
     constexpr auto deviceTransportMask =
         HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
     if ((options_.bmDataOpType & deviceTransportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {

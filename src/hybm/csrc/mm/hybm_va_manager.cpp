@@ -305,10 +305,10 @@ hybm_data_copy_direction HybmVaManager::InferCopyDirection(uint64_t srcVa, uint6
         // 方向表 BUTT 兜底：L2G 和 H2GD 已在表中，仅 LOCAL→LOCAL 需要
         if (src == LOCAL_HOST && dst == LOCAL_HOST) {
             // 检查哪个地址在 managed 范围内，就让它作为被检查的一方
-            if (dstVa >= HYBM_GVM_START_ADDR && dstVa < HYBM_GVM_END_ADDR) {
+            if (dstVa >= HYBM_GLOBAL_GVM_START_ADDR && dstVa < HYBM_GVM_END_ADDR) {
                 return HYBM_LOCAL_HOST_TO_GLOBAL_HOST; // g_checkMap[0]={false,true} 查 dest
             }
-            if (srcVa >= HYBM_GVM_START_ADDR && srcVa < HYBM_GVM_END_ADDR) {
+            if (srcVa >= HYBM_GLOBAL_GVM_START_ADDR && srcVa < HYBM_GVM_END_ADDR) {
                 return HYBM_GLOBAL_HOST_TO_LOCAL_HOST; // g_checkMap[6]={true,false} 查 src
             }
         }
@@ -323,7 +323,7 @@ bool HybmVaManager::IsValidAddr(uint64_t va)
 }
 
 ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize,
-                                               hybm_mem_type memType, bool enable56BitsGva, bool isTrans)
+                                               hybm_mem_type memType, bool enable56BitsGva, hybm_scene scene)
 {
     ReservedGvaInfo result;
     uint32_t t = HVM_DVA; // reserve device va all
@@ -337,7 +337,7 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
         if (soc_ == ASCEND_950) {
             localSize += GB; // A5被底软额外占用了1G
         }
-        lva = AllocReserveLvaInner(localRankId, localSize, t);
+        lva = AllocReserveLvaInner(localRankId, localSize, t, scene);
         if (lva == 0) {
             return result;
         }
@@ -347,7 +347,7 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
     if (enable56BitsGva) {
         uint64_t startAddr = HYBM_56BITS_GVA_START_ADDR;
         uint64_t endAddr = HYBM_56BITS_GVA_END_ADDR;
-        if (isTrans) {
+        if (scene == HYBM_SCENE_TRANS) {
             startAddr = HYBM_TRANS_GVA_START_ADDR;
             endAddr = HYBM_TRANS_GVA_END_ADDR;
         }
@@ -400,26 +400,33 @@ ReservedGvaInfo HybmVaManager::AllocReserveLva(uint32_t localRankId, uint64_t si
     return result;
 }
 
-uint64_t HybmVaManager::AllocReserveLvaInner(uint32_t localRankId, uint64_t size, uint32_t type)
+uint64_t HybmVaManager::AllocReserveLvaInner(uint32_t localRankId, uint64_t size, uint32_t type, hybm_scene scene)
 {
     if (size == 0) {
         BM_LOG_ERROR("AllocReserveLva failed: size=0");
         return 0;
     }
-    uint64_t startAddr = HYBM_GVM_START_ADDR;
-    uint64_t endAddr = HYBM_GVM_END_ADDR;
-    if (soc_ == ASCEND_950) {
-        startAddr = HYBM_GVM_START_ADDR_A5;
-        endAddr = HYBM_GVM_END_ADDR_A5;
+    // VA 区段选择：常规 GVM 区按 scene 物理隔离。
+    // HYBM_SCENE_OFFLOAD       → 搜索 [OFFLOAD_VA_START, OFFLOAD_VA_END)（最前2T）
+    // 其他(BM/SHM/Trans/...)   → 搜索 [GVM_START_ADDR, GVM_END)，HYBM_GVM_START_ADDR 已等于 OFFLOAD_VA_END_ADDR
+    uint64_t startAddr;
+    uint64_t endAddr;
+    if (scene == HYBM_SCENE_OFFLOAD) {
+        startAddr = (soc_ == ASCEND_950) ? HYBM_OFFLOAD_VA_START_ADDR_A5 : HYBM_OFFLOAD_VA_START_ADDR;
+        endAddr = (soc_ == ASCEND_950) ? HYBM_OFFLOAD_VA_END_ADDR_A5 : HYBM_OFFLOAD_VA_END_ADDR;
+    } else {
+        startAddr = (soc_ == ASCEND_950) ? HYBM_GVM_START_ADDR_A5 : HYBM_GVM_START_ADDR;
+        endAddr = (soc_ == ASCEND_950) ? HYBM_GVM_END_ADDR_A5 : HYBM_GVM_END_ADDR;
     }
 
     uint64_t upperLimit = endAddr - startAddr;
     if (size > upperLimit) {
-        BM_LOG_ERROR("Failed to reserve size:" << size << ", upper limit size:" << upperLimit);
+        BM_LOG_ERROR("Failed to reserve size:" << size << ", upper limit size:" << upperLimit << ", scene=" << scene);
         return 0;
     }
 
-    BM_LOG_DEBUG("AllocReserveLva, searching in HOST range " << VaToStr(startAddr) << "-" << VaToStr(endAddr));
+    BM_LOG_DEBUG("AllocReserveLva, searching in range " << VaToStr(startAddr) << "-" << VaToStr(endAddr)
+                                                        << ", scene=" << scene);
     // Find free space
     auto [freeAddr, found] = FindFreeSpace(startAddr, endAddr, size, type);
     if (!found) {

@@ -60,7 +60,7 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
     options.devId = config.deviceId;
     options.maxDRAMSize = alignedReserveSize;
     options.hostVASpace = alignedAllocSize;
-    options.scene = HYBM_SCENE_DEFAULT;
+    options.scene = HYBM_SCENE_OFFLOAD; // offload 独立 VA 区段(常规 GVM 区最前2T)，与 BM 物理隔离
     options.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
     options.dramShmFd = -1;
 

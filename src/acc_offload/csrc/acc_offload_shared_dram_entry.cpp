@@ -293,7 +293,7 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
     options_.maxDRAMSize = AlignUp(config.reserveSize, GB);
     options_.hostVASpace = AlignUp(config.allocSize, GB);
     options_.role = HYBM_ROLE_PEER;
-    options_.scene = HYBM_SCENE_DEFAULT;
+    options_.scene = HYBM_SCENE_OFFLOAD; // offload 独立 VA 区段(常规 GVM 区最前2T)，与 BM 物理隔离
     options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
     if (!multiNode_) {
         options_.flags |= HYBM_FLAG_UNRESTRICTED_MEM;

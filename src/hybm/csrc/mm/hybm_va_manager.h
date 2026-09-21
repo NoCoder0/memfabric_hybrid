@@ -297,7 +297,7 @@ public:
 
     // =============ReservedGvaInfo Management==============================
     ReservedGvaInfo AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize, hybm_mem_type memType,
-                                    bool enable56BitsGva = false, bool isTrans = false);
+                                    bool enable56BitsGva = false, hybm_scene scene = HYBM_SCENE_DEFAULT);
     ReservedGvaInfo AllocReserveLva(uint32_t localRankId, uint64_t size, uint32_t type, hybm_mem_type memType);
     void FreeReserveGva(uint64_t addr);
     void FreeReserveLva(uint64_t addr, uint32_t type);
@@ -339,7 +339,8 @@ private:
 
     std::pair<bool, AllocatedGvaInfo> CheckOverlap(uint64_t va, uint64_t size, uint32_t type);
 
-    uint64_t AllocReserveLvaInner(uint32_t localRankId, uint64_t size, uint32_t type);
+    uint64_t AllocReserveLvaInner(uint32_t localRankId, uint64_t size, uint32_t type,
+                                  hybm_scene scene = HYBM_SCENE_DEFAULT);
 
     std::pair<uint64_t, bool> FindFreeSpace(uint64_t start, uint64_t end, uint64_t size, uint32_t type);
 

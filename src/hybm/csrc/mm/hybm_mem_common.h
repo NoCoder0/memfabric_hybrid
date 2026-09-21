@@ -63,6 +63,7 @@ struct MemSegmentOptions {
     uint32_t flags = 0;
     int shmFd = -1;
     bool enable56BitsGva = false;
+    hybm_scene scene = HYBM_SCENE_DEFAULT; // 场景，兼作 VA 区段选择
 };
 } // namespace mf
 } // namespace ock

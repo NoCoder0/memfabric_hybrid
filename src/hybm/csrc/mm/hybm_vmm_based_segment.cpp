@@ -61,9 +61,13 @@ Result HybmVmmBasedSegment::ValidateOptions() noexcept
         return BM_INVALID_PARAM;
     }
 
-    // check memory pool size upper limit 128TB for 910C
-    if (options_.maxSize * options_.rankCnt > HYBM_GVM_MAX_POOL_SIZE && !options_.enable56BitsGva) {
-        BM_LOG_ERROR("Memory pool size > 128T. maxSize:" << options_.maxSize << ", rankCnt:" << options_.rankCnt);
+    // check memory pool size upper limit
+    uint64_t vaUpperLimit =
+        (options_.scene == HYBM_SCENE_OFFLOAD) ? HYBM_OFFLOAD_VA_SIZE : (HYBM_GVM_MAX_POOL_SIZE - HYBM_OFFLOAD_VA_SIZE);
+    if (options_.maxSize * options_.rankCnt > vaUpperLimit && !options_.enable56BitsGva) {
+        BM_LOG_ERROR("Memory pool size > limit. maxSize:" << options_.maxSize << ", rankCnt:" << options_.rankCnt
+                                                          << ", limit:" << vaUpperLimit
+                                                          << ", scene:" << options_.scene);
         return BM_INVALID_PARAM;
     }
     return BM_OK;
@@ -82,7 +86,7 @@ Result HybmVmmBasedSegment::ReserveMemorySpace(void **address) noexcept
     auto totalLvaSize = options_.enable56BitsGva ? options_.maxSize : totalVirtualSize_;
     auto mem_type = options_.segType == HYBM_MST_HBM ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
     auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalVirtualSize_, totalLvaSize,
-                                                                mem_type, options_.enable56BitsGva);
+                                                                mem_type, options_.enable56BitsGva, options_.scene);
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "gvaInfo.va[HVM_GVA] = " << gvaInfo.va[HVM_GVA], BM_ERROR);
     globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
 

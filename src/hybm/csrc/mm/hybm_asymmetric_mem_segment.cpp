@@ -46,8 +46,8 @@ Result AsymmetricMemSegment::ReserveMemorySpace(void **address) noexcept
                              "rank(" << options_.rankId << ") but total " << options_.rankCnt, BM_INVALID_PARAM);
 
     totalVirtualSize_ = options_.rankCnt * options_.maxSize;
-    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalVirtualSize_, 0,
-                                                                HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva, true);
+    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
+        options_.rankId, totalVirtualSize_, 0, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva, options_.scene);
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "gvaInfo.va[HVM_GVA] = " << gvaInfo.va[HVM_GVA], BM_ERROR);
     globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
     lvaBase_ = globalVirtualAddress_ + options_.maxSize * options_.rankId;
