@@ -184,7 +184,8 @@ Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, Mem
     // 注册由上方复用逻辑跳过
     uint64_t regBase = va;
     uint64_t regSize = size;
-    const uint64_t gvmStart = socType_ == AscendSocType::ASCEND_950 ? HYBM_GVM_START_ADDR_A5 : HYBM_GVM_START_ADDR;
+    const uint64_t gvmStart =
+        socType_ == AscendSocType::ASCEND_950 ? HYBM_GLOBAL_GVM_START_ADDR_A5 : HYBM_GLOBAL_GVM_START_ADDR;
     if (va >= gvmStart && va < gvmStart + HYBM_GVM_MAX_POOL_SIZE) {
         // 分配记录 HVA/DVA=allocAddr；导入记录 HVA=0、DVA=lva——按 DVA 查询对两种 rank 均命中
         auto [allocInfo, found] = HybmVaManager::GetInstance().FindAllocByVa(va, HVM_DVA);
