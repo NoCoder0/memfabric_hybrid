@@ -1,5 +1,10 @@
 # MF / HCOM 同层打点
 
+2026-09-21：新增 `--source-update=static|markers`（默认 static）。本次源更新对照只需手动 trace，
+退出后手动 `analyze_hostrdma_trace.py --compact`；无需 measure 或运行包装脚本。
+两边模式语义、构建及四组双端命令见相邻 SGL 仓库的
+[SOURCE_UPDATE_CN.md](../../../perf_test_duo_card_sgl/SOURCE_UPDATE_CN.md)。
+
 2026-09-20 同源采集更新：当前工作区已在 **740f0bb 基底**上补齐动态接口、普通 WRITE/SEND、flags 和 poll 直方图，
 并新增同一构建产物供 MF/SGL 使用的脚本。请优先使用 [STAGE_COMPARE_CN.md](STAGE_COMPARE_CN.md) 的构建、
 运行与四文件紧凑对照流程。下文原版740f0bb不支持MF trace的说明仍适用于未打补丁的产物；旧616e018路径仅为历史参考。

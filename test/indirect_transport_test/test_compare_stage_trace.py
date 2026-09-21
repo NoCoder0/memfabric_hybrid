@@ -148,6 +148,24 @@ def local(app):
 
 
 class CompareTests(unittest.TestCase):
+    def test_source_preparation_keeps_transfer_window(self):
+        for app in ("mf", "sgl"):
+            records = remote(app)
+            before = self.reduce(records, app)
+            prefix = "" if app == "mf" else "remote_"
+            names = [(prefix + "source_prepare_begin", 210)]
+            if app == "mf":
+                names.append(("source_prepared", 250))
+                next(r for r in records if r.get("record_type") == "mf_trace_config")["source_update"] = "markers"
+                next(r for r in records if r.get("record_type") == "mf_trace_summary")["app_records"] += 2
+            for name, time in names:
+                records.append(dict(records[0], event=name, timestamp_ns=time))
+            after = self.reduce(records, app)
+            self.assertEqual(after["status"], "ok", after)
+            self.assertEqual(after["rounds"][0]["source_prepare_us"], 0.04)
+            self.assertEqual(after["rounds"][0]["first_data_post_to_last_cqe_us"],
+                             before["rounds"][0]["first_data_post_to_last_cqe_us"])
+
     def test_split_merge_requires_all_rounds_without_duplicates(self):
         r = reduce_run(remote(), IDENTITY, "mf", "remote")
         r["identity"] = dict(IDENTITY, trace_rounds=2)

@@ -7,7 +7,7 @@
 namespace mf_trace {
 // Configure before smem initialization; Finish only after smem uninitialization.
 bool Initialize(bool enabled, const char *role, uint32_t count, uint64_t size,
-                uint32_t rounds, uint32_t warmup, uint32_t chunk, uint64_t stride);
+                uint32_t rounds, uint32_t warmup, uint32_t chunk, uint64_t stride, const char *sourceUpdate = "static");
 void SetLayout(uint64_t peerBase, uint64_t watermarkOffset, uint64_t messageOffset, uint32_t rails);
 void BeginRound(uint32_t round);
 void EndRound();

@@ -6,7 +6,7 @@
 // The unmodified SGL HCOM revision has no MF dynamic trace entry point.
 // Keep the benchmark usable without changing that library's transport code.
 namespace mf_trace {
-bool Initialize(bool requested, const char *, uint32_t, uint64_t, uint32_t, uint32_t, uint32_t, uint64_t)
+bool Initialize(bool requested, const char *, uint32_t, uint64_t, uint32_t, uint32_t, uint32_t, uint64_t, const char *)
 {
     if (requested) {
         fprintf(stderr, "ERROR: this benchmark was built without the MF HCOM trace interface; "
@@ -177,7 +177,7 @@ bool LoadHooks()
 } // namespace
 
 bool Initialize(bool requested, const char *hostRole, uint32_t count, uint64_t size,
-                uint32_t rounds, uint32_t warmup, uint32_t chunk, uint64_t stride)
+                uint32_t rounds, uint32_t warmup, uint32_t chunk, uint64_t stride, const char *sourceUpdate)
 {
     if (!requested) return true;
     role = hostRole;
@@ -200,6 +200,7 @@ bool Initialize(bool requested, const char *hostRole, uint32_t count, uint64_t s
     enabled = true;
     std::cout << "{\"record_type\":\"mf_trace_config\",\"host_role\":\"" << role << "\",\"count\":" << count
               << ",\"size\":" << size << ",\"stride\":" << stride << ",\"chunk\":" << chunk
+              << ",\"source_update\":\"" << sourceUpdate << "\""
               << ",\"warmup\":" << warmup << ",\"rounds\":" << rounds << ",\"clock\":\"CLOCK_MONOTONIC_RAW\""
               << ",\"cqe_time_basis\":\"poll-observation-not-hardware-completion\"}\n";
     return true;

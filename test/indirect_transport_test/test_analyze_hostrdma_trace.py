@@ -30,6 +30,23 @@ def complete_remote(count=2):
 
 
 class TraceAnalysisTest(unittest.TestCase):
+    def test_source_update_modes_and_legacy_timing(self):
+        legacy = compact_summary(complete_remote())
+        self.assertNotIn("source_prepare_us", legacy["rounds"][0])
+        for mode in ("static", "markers"):
+            records = complete_remote()
+            records[0]["source_update"] = mode
+            for name, time in (("source_prepare_begin", 120), ("source_prepared", 170)):
+                records.append({"record_type": "mf_app_trace", "event": name, "timestamp_ns": time, "capture_round": 1})
+            current = compact_summary(records)
+            self.assertEqual(current["status"], "ok")
+            self.assertEqual(current["config"]["source_update"], mode)
+            self.assertEqual(current["rounds"][0]["source_prepare_us"], 0.05)
+            self.assertEqual(current["rounds"][0]["first_data_post_to_last_cqe_us"],
+                             legacy["rounds"][0]["first_data_post_to_last_cqe_us"])
+            records.pop()
+            self.assertEqual(compact_summary(records)["status"], "incomplete")
+
     def test_compact_output_is_bounded_and_keeps_percentiles(self):
         result = compact_summary(complete_remote(1000))
         self.assertEqual(result["status"], "ok")

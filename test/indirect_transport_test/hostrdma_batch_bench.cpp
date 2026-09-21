@@ -91,6 +91,7 @@ struct BenchArgs {
     std::string hcomUrl;
     bool withStore = false;
     bool trace = false; // Detailed cont-only trace; stdout JSONL is dumped after workers stop.
+    std::string sourceUpdate = "static";
     std::string mode = "all"; /* all / baseline / cont */
     uint32_t count = kDefaultCount;
     uint64_t size = kDefaultSize;
@@ -117,6 +118,7 @@ void Usage(const char *prog)
             "  --warmup=N                 前 N 轮不计时(默认100)\n"
             "  --rounds=N                 计时轮数(默认1000)\n"
             "  --trace=0|1                 cont 同层打点(默认0；建议 --rounds=3)\n"
+            "  --source-update=static|markers  源内容复用或每轮改写首尾8B(默认static)\n"
             "  --log-level=0..5           设置库日志级别(默认不改)\n"
             "  --with-store=0|1           本进程是否内嵌启动 config store(默认0)\n"
             "  说明: 两个场景都由 local 驱动轮次并在本端用单时钟计时；\n"
@@ -153,6 +155,8 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
                 return false;
             }
             a.trace = v == "1";
+        } else if (k == "--source-update") {
+            a.sourceUpdate = v;
         } else if (k == "--mode") {
             a.mode = v;
         } else if (k == "--count") {
@@ -173,6 +177,11 @@ bool ParseArgs(int argc, char *argv[], BenchArgs &a)
         } else if (k == "--log-level") { /* 0~5: DEBUG/INFO/WARN/ERROR/FATAL/TRACE；不传则不改库的级别 */
             a.logLevel = static_cast<int32_t>(std::stoi(v));
         }
+    }
+    if ((a.sourceUpdate != "static" && a.sourceUpdate != "markers") ||
+        (a.sourceUpdate == "markers" && (a.size < 16 || a.size % 8 != 0))) {
+        fprintf(stderr, "ERROR: --source-update expects static|markers; markers requires size >=16 and divisible by 8\n");
+        return false;
     }
     if (a.role != "local" && a.role != "remote") {
         fprintf(stderr, "invalid --role=%s\n", a.role.c_str());
@@ -306,6 +315,26 @@ void FillBlock(void *va, uint32_t i, uint64_t size)
     }
 }
 
+// Same marker expression and offsets as SGL; no body fill in the measured source preparation.
+void FillMarkers(void *va, uint32_t block, uint64_t size, uint64_t generation)
+{
+    auto *p = static_cast<uint8_t *>(va);
+    const uint64_t head = 0x9e3779b97f4a7c15ULL ^ (generation * 0x100000001b3ULL) ^
+                          (static_cast<uint64_t>(block) << 32U);
+    const uint64_t tail = head ^ (size / 8 - 1);
+    memcpy(p, &head, sizeof(head));
+    memcpy(p + size - sizeof(tail), &tail, sizeof(tail));
+}
+
+void PrepareSource(const BenchArgs &a, const std::vector<void *> &srcs, uint64_t generation)
+{
+    mf_trace::Mark("source_prepare_begin");
+    if (a.sourceUpdate == "markers") {
+        for (uint32_t i = 0; i < a.count; ++i) FillMarkers(srcs[i], i, a.size, generation);
+    }
+    mf_trace::Mark("source_prepared");
+}
+
 /* 数据校验结果：ok=false 时记录首个不一致位置，便于定位 */
 struct VerifyResult {
     bool ok = true;
@@ -317,12 +346,40 @@ struct VerifyResult {
     uint8_t actual = 0;
 };
 
+// Outside the timed path: validate generation markers AND every unchanged body byte.
+VerifyResult VerifyMarkerBlocks(const std::vector<void *> &vas, uint32_t count, uint64_t size, uint64_t generation)
+{
+    std::vector<uint8_t> expected(size);
+    for (uint32_t i = 0; i < count; ++i) {
+        FillBlock(expected.data(), i, size);
+        FillMarkers(expected.data(), i, size, generation);
+        const auto *actual = static_cast<const uint8_t *>(vas[i]);
+        if (memcmp(actual, expected.data(), size) == 0) continue;
+        for (uint64_t b = 0; b < size; ++b) {
+            if (actual[b] != expected[b]) {
+                VerifyResult result;
+                result.ok = false;
+                result.blockIdx = i;
+                result.byteOff = b;
+                result.expect = expected[b];
+                result.actual = actual[b];
+                fprintf(stderr, "ERROR: source content mismatch block=%u offset=%llu generation=%llu\n", i,
+                        static_cast<unsigned long long>(b), static_cast<unsigned long long>(generation));
+                return result;
+            }
+        }
+    }
+    return {};
+}
+
 /* 整块校验：先验身份（前 4B tag），再用 memcmp 比内容。
    vas      —— 该组块的本地 VA（GVA==VA，调用方直接算好并复用）；
    refBlock —— 256 个参考块，refBlock[v] 为整块填 v 的 size 字节。
    正常路径每块只做 1 次 tag 比较 + 1 次 memcmp（SIMD），逐字节扫描仅在失败路径上做。 */
-VerifyResult VerifyBlocks(const std::vector<void *> &vas, uint32_t count, uint64_t size, const uint8_t *refBlock)
+VerifyResult VerifyBlocks(const std::vector<void *> &vas, uint32_t count, uint64_t size, const uint8_t *refBlock,
+                          uint64_t markerGeneration = 0)
 {
+    if (markerGeneration != 0) return VerifyMarkerBlocks(vas, count, size, markerGeneration);
     VerifyResult r;
     const bool hasId = (size >= kBlockIdBytes);
     const uint64_t from = hasId ? kBlockIdBytes : 0;
@@ -641,7 +698,7 @@ int main(int argc, char *argv[])
         printf("[bench] smem log level -> %d\n", a.logLevel);
     }
     if (!mf_trace::Initialize(a.trace, a.role.c_str(), a.count, a.size,
-                              a.rounds, a.warmup, a.chunk, a.stride)) return 1;
+                              a.rounds, a.warmup, a.chunk, a.stride, a.sourceUpdate.c_str())) return 1;
     if (smem_bm_init(a.storeUrl.c_str(), a.worldSize, 0, &config) != 0) {
         fprintf(stderr, "smem_bm_init failed, store=%s\n", a.storeUrl.c_str());
         return 1;
@@ -764,6 +821,7 @@ int main(int argc, char *argv[])
                 uint64_t progressDest = 0;
                 uint64_t doneDest = 0;
                 ReadAddrMsg(selfGva, msgOff, a.count, baseDstCount, 1, a.size, srcs, dsts, progressDest, doneDest);
+                PrepareSource(a, srcs, lastSeq);
                 const uint64_t t0 = NowUs(); /* sender 时延 = 一次 batch 从调用到返回 */
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
@@ -832,7 +890,8 @@ int main(int argc, char *argv[])
                     e2eCosts.push_back(t1 - t0);
                 }
                 /* 计时区之外：整块校验本轮数据（身份 tag + memcmp 内容） */
-                VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
+                VerifyResult vr = VerifyBlocks(dstVas, a.count, a.size, refBlock.data(),
+                                               a.sourceUpdate == "markers" ? expect : 0);
                 if (!vr.ok) {
                     ++verifyFail;
                     if (verifyFail == 1) {
@@ -891,6 +950,7 @@ int main(int argc, char *argv[])
                 ReadAddrMsg(selfGva, msgOff, a.count, contDstCount, kContDstAgg, a.size, srcs, dsts, progressDest,
                             doneDest);
                 mf_trace::Mark("request_decoded", -1, 0, a.count, lastSeq);
+                PrepareSource(a, srcs, lastSeq);
                 smem_batch_copy_params p{};
                 p.sources = srcs.data();
                 p.destinations = dsts.data();
@@ -1045,8 +1105,9 @@ int main(int argc, char *argv[])
             /* 校验只做一次（所有轮次跑完之后）：此时没有任何后续写入，staging 与离散目标都是末轮真实内容，
                且不再占用每轮关键路径。 */
             if (!aborted) {
-                VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data());
-                VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data());
+                const uint64_t markerGeneration = a.sourceUpdate == "markers" ? expect - 1 : 0;
+                VerifyResult vStag = VerifyBlocks(srcVas, a.count, a.size, refBlock.data(), markerGeneration);
+                VerifyResult vDisp = VerifyBlocks(dstVas, a.count, a.size, refBlock.data(), markerGeneration);
                 if (!vStag.ok || !vDisp.ok) mf_trace::Fail();
                 if (!vStag.ok) {
                     PrintVerifyFail("cont receiver staging", 0, vStag);

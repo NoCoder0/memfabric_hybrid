@@ -253,18 +253,23 @@ def remote_app_metrics(apps, app, first, errors):
     observed = "request_observed" if app == "mf" else "remote_request_observed"
     decoded = "request_decoded" if app == "mf" else "remote_request_decoded"
     names = [("request_decode_us", observed, decoded)]
+    events = {e["event"] for e in apps}
     if app == "mf":
         names += [
             ("decoded_to_copy_begin_us", decoded, "copy_batch_begin"),
             ("copy_batch_us", "copy_batch_begin", "copy_batch_end"),
         ]
         required = [observed, decoded, "copy_batch_begin", "copy_batch_end"]
+        if events & {"source_prepare_begin", "source_prepared"}:
+            names.append(("source_prepare_us", "source_prepare_begin", "source_prepared"))
+            required += ["source_prepare_begin", "source_prepared"]
     else:
         names += [
             ("callback_to_request_observed_us", "remote_request_received", observed),
             ("request_copy_us", observed, "remote_request_copied"),
             ("request_parse_us", "remote_request_copied", decoded),
-            ("source_prepare_us", decoded, "remote_source_prepared"),
+            ("source_prepare_us", "remote_source_prepare_begin" if "remote_source_prepare_begin" in events
+             else decoded, "remote_source_prepared"),
             ("requests_prepare_us", "remote_source_prepared", "remote_requests_prepared"),
         ]
         required = [observed, decoded, "remote_request_received", "remote_source_prepared", "remote_requests_prepared"]
@@ -426,6 +431,7 @@ def reduce_run(records, identity, app, role):
                 "notify_every_wrs",
                 "pipeline",
                 "source_order",
+                "source_update",
                 "kind",
             )
             if k in config

@@ -111,6 +111,8 @@ def compact_remote(row, events, app, pairs, expected_bytes, poll_events):
             row["first_data_post_to_batch_return_us"] = delta_us(times["copy_batch_end"], first)
     if "request_decoded" in times:
         row["request_decode_us"] = delta_us(times["request_decoded"], times["request_observed"])
+    if "source_prepare_begin" in times and "source_prepared" in times:
+        row["source_prepare_us"] = delta_us(times["source_prepared"], times["source_prepare_begin"])
     if "copy_batch_begin" in times and "copy_batch_end" in times:
         row["copy_batch_us"] = delta_us(times["copy_batch_end"], times["copy_batch_begin"])
     row["data_post_call_us"] = post_call_stats(events)
@@ -167,6 +169,8 @@ def compact_summary(records):
         app = [e for e in apps if e["capture_round"] == row["round"]]
         required = ({"request_observed", "request_decoded", "copy_batch_begin", "copy_batch_end"}
                     if config["host_role"] == "remote" else {"local_round_begin", "local_round_end"})
+        if config["host_role"] == "remote" and "source_update" in config:
+            required |= {"source_prepare_begin", "source_prepared"}
         missing_app = sorted(required - {e["event"] for e in app})
         if missing_app:
             result["status"] = "incomplete"
@@ -175,6 +179,8 @@ def compact_summary(records):
             pairs = [(p, c) for p, c in matches if p["capture_round"] == row["round"] and p["transfer_kind"] == "data"]
             # Poll records can belong to a later observation window than the POST.
             compact_remote(row, per_round, app, pairs, config["count"] * config["size"], poll_records)
+            if row.get("source_prepare_us", 0) < 0:
+                result["status"] = "incomplete"
         else:
             # Bound output even for chunk=1; the complete per-group trace stays on the device.
             groups = row["ready_groups"]
