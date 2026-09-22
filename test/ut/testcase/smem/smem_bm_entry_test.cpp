@@ -13,6 +13,7 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include <cstdint>
+#include <cstdlib>
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
@@ -1043,3 +1044,39 @@ TEST_F(SmemBmEntryTest, ExtendLocalMem_ExportFail_NoSizeUpdate)
 }
 
 // ======================== Leave Validation ========================
+
+TEST_F(SmemBmEntryTest, SparseConfigUsesCoreRankCount)
+{
+    const char *previous = std::getenv("MF_HOST_RDMA_SPARSE_MODE");
+    const bool hadMode = previous != nullptr;
+    const std::string savedMode = previous == nullptr ? "" : previous;
+    setenv("MF_HOST_RDMA_SPARSE_MODE", "gather", 1);
+    entry_->inited_ = true;
+    entry_->joined_ = true;
+    entry_->coreOptions_.rankCount = 2;
+    entry_->coreOptions_.bmDataOpType = HYBM_DOP_TYPE_HOST_RDMA;
+    entry_->realDRAMSize_ = MB;
+    MOCKER(hybm_gva_to_va).stubs().will(invoke(+[](uint64_t gva, hybm_mem_type, uint64_t *va) -> int32_t {
+        *va = gva;
+        return 0;
+    }));
+    smem_bm_host_rdma_sparse_options_t options{};
+    options.timeoutMs = 100;
+    HostRdmaSparseConfig config{};
+    for (uint32_t legacyRankSize : {0U, 1U}) {
+        entry_->options_.rankSize = legacyRankSize;
+        EXPECT_EQ(entry_->BuildHostRdmaSparseConfig(options, config), SM_OK);
+    }
+    for (uint32_t rankCount : {1U, 3U}) {
+        entry_->coreOptions_.rankCount = rankCount;
+        EXPECT_EQ(entry_->BuildHostRdmaSparseConfig(options, config), SM_INVALID_PARAM);
+    }
+    entry_->coreOptions_.rankCount = 2;
+    entry_->coreOptions_.bmDataOpType = HYBM_DOP_TYPE_HOST_TCP;
+    EXPECT_EQ(entry_->BuildHostRdmaSparseConfig(options, config), SM_INVALID_PARAM);
+    if (hadMode) {
+        setenv("MF_HOST_RDMA_SPARSE_MODE", savedMode.c_str(), 1);
+    } else {
+        unsetenv("MF_HOST_RDMA_SPARSE_MODE");
+    }
+}

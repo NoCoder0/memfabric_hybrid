@@ -134,8 +134,11 @@ Result SmemBmEntry::BuildHostRdmaSparseConfig(const smem_bm_host_rdma_sparse_opt
                                               HostRdmaSparseConfig &c) const
 {
     SM_VALIDATE_RETURN(inited_ && joined_ && !sparseUsed_, "sparse requires joined, unprepared BM", SM_INVALID_PARAM);
-    SM_VALIDATE_RETURN(options_.rankSize == 2 && coreOptions_.bmDataOpType == HYBM_DOP_TYPE_HOST_RDMA,
-                       "sparse requires two ranks and HOST_RDMA only", SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(coreOptions_.rankCount == 2,
+                       "sparse requires two ranks, rankCount: " << coreOptions_.rankCount, SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(coreOptions_.bmDataOpType == HYBM_DOP_TYPE_HOST_RDMA,
+                       "sparse requires HOST_RDMA only, bmDataOpType: " << coreOptions_.bmDataOpType,
+                       SM_INVALID_PARAM);
     c.options = options;
     c.rank = options_.rank;
     c.localGva = reinterpret_cast<uint64_t>(hostGva_) + coreOptions_.maxDRAMSize * c.rank;
