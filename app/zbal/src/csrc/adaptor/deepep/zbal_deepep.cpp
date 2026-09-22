@@ -28,6 +28,7 @@ namespace zbal {
 namespace adaptor {
 namespace deep_ep {
 
+constexpr uint32_t kMxBlockSize = 32;
 #if defined(ZBAL_ASCEND_NPU_A3) && defined(ZBAL_FUSED_DEEP_MOE_ENABLED)
 // Workspace size constants (mirrors zbal_kernel_fused_deep_moe_host.cpp)
 static constexpr uint32_t kSystemNeedWorkspace = 16 * 1024 * 1024;
@@ -131,6 +132,17 @@ const zbal_tensor_info_t transfer_tensor_info(const torch::Tensor &ori_tensor, c
         case at::ScalarType::BFloat16:
             result.dataType = ZBAL_DATA_TYPE_BFP16;
             break;
+        case at::ScalarType::Float8_e4m3fn:
+            result.dataType = ZBAL_DATA_TYPE_FP8_E4M3;
+            break;
+        case at::ScalarType::Float8_e5m2:
+            result.dataType = ZBAL_DATA_TYPE_FP8_E5M2;
+            break;
+#ifdef ZBAL_ASCEND_NPU_A5
+        case at::ScalarType::Float8_e8m0fnu:
+            result.dataType = ZBAL_DATA_TYPE_E8M0;
+            break;
+#endif
         default:
             throw std::runtime_error("Unsupported torch scalar type.");
     }
@@ -276,7 +288,7 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
                            const std::optional<at::Tensor> &num_tokens_per_rank, const at::Tensor &is_token_in_rank,
                            const std::optional<at::Tensor> &num_tokens_per_expert, int num_worst_tokens,
                            const Config &config, std::optional<EventHandle> &previous_event, bool async,
-                           bool allocate_on_comm_stream, bool use_quant)
+                           bool allocate_on_comm_stream, bool use_quant, const std::string &quant_type)
 {
     (void)x_scales;
     (void)topk_weights;
@@ -288,7 +300,6 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
     (void)allocate_on_comm_stream;
     auto device = x.device();
 
-    zbal_quant_mode_t quant_mode = use_quant ? QUANT_BF16_2_INT8 : NO_QUANT;
     auto recv_topk_idx = std::optional<at::Tensor>();
     auto recv_topk_weights = std::optional<at::Tensor>();
     // Wait streams
@@ -370,26 +381,51 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
     at_npu::native::OpCommand::RunOpApiV2("zbal_dispatch_normal_notify", acl_call_notify);
 
     int total_recv_cnt = total_recv_token.item<int>();
-    int num_recv_tokens = (total_recv_cnt == 0) ? 1 : total_recv_cnt;
-    auto expandx_out = use_quant ? torch::empty({num_recv_tokens, hidden}, at::dtype(at::kChar).device(device))
-                                 : torch::empty({num_recv_tokens, hidden}, x.options());
-    auto dynamic_scales_out = use_quant ? torch::empty({num_recv_tokens}, at::dtype(at::kFloat).device(device))
-                                        : torch::empty({1}, at::dtype(at::kFloat).device(device));
-    // tensor to zbal_tensor_info_t
-    auto expandx_out_info = transfer_tensor_info(expandx_out);
-    auto dynamic_scales_out_info = transfer_tensor_info(dynamic_scales_out);
+    int num_recv_tokens = total_recv_cnt;
+    zbal_quant_mode_t quant_mode = NO_QUANT;
+    at::ScalarType expandx_dtype = x.scalar_type();
+    at::ScalarType scales_dtype = at::kFloat;
+    if (use_quant) {
+        if (quant_type == "int8") {
+            quant_mode = QUANT_BF16_2_INT8;
+            expandx_dtype = at::kChar;
+#ifdef ZBAL_ASCEND_NPU_A5
+        } else if (quant_type == "mx_fp8_e4m3") {
+            quant_mode = QUANT_BF16_2_FP8_E4M3;
+            expandx_dtype = at::kFloat8_e4m3fn;
+            scales_dtype = at::kFloat8_e8m0fnu;
+        } else if (quant_type == "mx_fp8_e5m2") {
+            quant_mode = QUANT_BF16_2_FP8_E5M2;
+            expandx_dtype = at::kFloat8_e5m2;
+            scales_dtype = at::kFloat8_e8m0fnu;
+#endif
+        } else {
+            ZBAL_CHECK_S(false, "unsupported quant_type: ", quant_type);
+        }
+    }
+    at::Tensor expandx_out = torch::empty({num_recv_tokens, hidden}, at::dtype(expandx_dtype).device(device));
+    at::Tensor dynamic_scales_out =
+        (quant_mode == QUANT_BF16_2_FP8_E4M3 || quant_mode == QUANT_BF16_2_FP8_E5M2)
+            ? torch::empty({num_recv_tokens * hidden / static_cast<int>(kMxBlockSize)},
+                           at::dtype(scales_dtype).device(device))
+            : torch::empty({use_quant ? num_recv_tokens : 1}, at::dtype(scales_dtype).device(device));
+    if (total_recv_cnt > 0) {
+        // tensor to zbal_tensor_info_t
+        auto expandx_out_info = transfer_tensor_info(expandx_out);
+        auto dynamic_scales_out_info = transfer_tensor_info(dynamic_scales_out);
 
-    // call dispatch
-    std::function<int()> acl_call_dispatch;
-    acl_call_dispatch = [this, x_info, expert_ids_info, send_token_idx_info, put_offset_info, balance_matrix_info,
-                         num_experts, quant_mode, expandx_out_info, dynamic_scales_out_info, acl_stream,
-                         flags]() -> int {
-        auto api_ret = zbal_dispatch_normal(&x_info, &expert_ids_info, &send_token_idx_info, &put_offset_info,
-                                            &balance_matrix_info, num_experts, quant_mode, &expandx_out_info,
-                                            &dynamic_scales_out_info, this->comm_, acl_stream, flags);
-        return api_ret;
-    };
-    at_npu::native::OpCommand::RunOpApiV2("zbal_dispatch_normal", acl_call_dispatch);
+        // call dispatch
+        std::function<int()> acl_call_dispatch;
+        acl_call_dispatch = [this, x_info, expert_ids_info, send_token_idx_info, put_offset_info, balance_matrix_info,
+                             num_experts, quant_mode, expandx_out_info, dynamic_scales_out_info, acl_stream,
+                             flags]() -> int {
+            auto api_ret = zbal_dispatch_normal(&x_info, &expert_ids_info, &send_token_idx_info, &put_offset_info,
+                                                &balance_matrix_info, num_experts, quant_mode, &expandx_out_info,
+                                                &dynamic_scales_out_info, this->comm_, acl_stream, flags);
+            return api_ret;
+        };
+        at_npu::native::OpCommand::RunOpApiV2("zbal_dispatch_normal", acl_call_dispatch);
+    }
 
     auto recv_token_per_exp_cpu = recv_tokens_per_expert.to(at::kCPU);
     auto recv_token_per_exp_ptr = recv_token_per_exp_cpu.data_ptr<int64_t>();
@@ -441,6 +477,12 @@ Buffer::intranode_combine(const torch::Tensor &x, const torch::Tensor &topk_idx,
     auto acl_stream = c10_npu::getCurrentNPUStream().stream(false);
     int64_t flags = 0;
 
+    if (recv_x.size(0) == 0) {
+        ZBAL_LOG_INFO(
+            "intranode_combine: 0 tokens received, skipping combine kernel, combined_x_rows=" << combined_x.size(0));
+        combined_x.zero_();
+        return {combined_x, recv_topk_weights, event};
+    }
     // tensor to zbal_tensor_info_t
     auto recv_x_info = transfer_tensor_info(recv_x);
     auto put_offset_info = transfer_tensor_info(put_offset);

@@ -22,10 +22,12 @@ namespace adaptor {
 namespace pytorch_npu {
 
 const std::map<at::ScalarType, zbal_datatype_t> kScalarTypeToZbalDataType = {
-    {at::kByte, ZBAL_DATA_TYPE_UINT8},     {at::kChar, ZBAL_DATA_TYPE_INT8},   {at::kShort, ZBAL_DATA_TYPE_INT16},
-    {at::kInt, ZBAL_DATA_TYPE_INT32},      {at::kLong, ZBAL_DATA_TYPE_INT64},  {at::kHalf, ZBAL_DATA_TYPE_FP16},
-    {at::kFloat, ZBAL_DATA_TYPE_FP32},     {at::kDouble, ZBAL_DATA_TYPE_FP64}, {at::kBool, ZBAL_DATA_TYPE_UINT8},
-    {at::kBFloat16, ZBAL_DATA_TYPE_BFP16},
+    {at::kByte, ZBAL_DATA_TYPE_UINT8},          {at::kChar, ZBAL_DATA_TYPE_INT8},
+    {at::kShort, ZBAL_DATA_TYPE_INT16},         {at::kInt, ZBAL_DATA_TYPE_INT32},
+    {at::kLong, ZBAL_DATA_TYPE_INT64},          {at::kHalf, ZBAL_DATA_TYPE_FP16},
+    {at::kFloat, ZBAL_DATA_TYPE_FP32},          {at::kDouble, ZBAL_DATA_TYPE_FP64},
+    {at::kBool, ZBAL_DATA_TYPE_UINT8},          {at::kBFloat16, ZBAL_DATA_TYPE_BFP16},
+    {at::kFloat8_e4m3fn, ZBAL_DATA_TYPE_UINT8}, {at::kFloat8_e5m2, ZBAL_DATA_TYPE_UINT8},
 };
 
 const std::map<c10d::ReduceOp, zbal_reduce_op_t> ReduceOpToZbalReduceOp = {

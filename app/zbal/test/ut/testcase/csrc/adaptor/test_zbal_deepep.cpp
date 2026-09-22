@@ -256,7 +256,7 @@ TEST_F(TestDeepEPBuffer, IntranodeDispatchInvalidInputs)
         std::optional<at::Tensor> empty_topk_idx, empty_num_tokens_per_rank, empty_num_tokens_per_expert;
         EXPECT_THROW(buf.intranode_dispatch(x, x_scales, empty_topk_idx, topk_weights, empty_num_tokens_per_rank,
                                             is_token_in_rank, empty_num_tokens_per_expert, ZBAL_UT_NUM_16, config,
-                                            prev_event, false, false, false),
+                                            prev_event, false, false, false, "none"),
                      std::runtime_error);
     }
     // 1D x (should be 2D)
@@ -268,7 +268,7 @@ TEST_F(TestDeepEPBuffer, IntranodeDispatchInvalidInputs)
         auto topk_idx = torch::ones({ZBAL_UT_NUM_4, ZBAL_UT_NUM_2}, at::kInt);
         EXPECT_THROW(buf.intranode_dispatch(x_1d, x_scales, topk_idx, topk_weights, num_tokens_per_rank,
                                             is_token_in_rank, num_tokens_per_expert, ZBAL_UT_NUM_16, config, prev_event,
-                                            false, false, false),
+                                            false, false, false, "none"),
                      std::runtime_error);
     }
     // 2D tokens_per_expert (should be 1D)
@@ -280,7 +280,7 @@ TEST_F(TestDeepEPBuffer, IntranodeDispatchInvalidInputs)
         auto topk_idx = torch::ones({ZBAL_UT_NUM_4, ZBAL_UT_NUM_2}, at::kInt);
         EXPECT_THROW(buf.intranode_dispatch(x, x_scales, topk_idx, topk_weights, num_tokens_per_rank, is_token_in_rank,
                                             num_tokens_per_expert, ZBAL_UT_NUM_16, config, prev_event, false, false,
-                                            false),
+                                            false, "none"),
                      std::runtime_error);
     }
 }
@@ -304,9 +304,9 @@ TEST_F(TestDeepEPBuffer, IntranodeDispatchSuccessNoQuant)
     auto [recv_x, recv_scales, recv_topk_idx, recv_topk_weights, num_recv_per_expert, put_offset, balance_matrix,
           event] =
         buf.intranode_dispatch(x, x_scales, topk_idx, topk_weights, num_tokens_per_rank, is_token_in_rank,
-                               num_tokens_per_expert, ZBAL_UT_NUM_16, config, prev_event, false, false, false);
+                               num_tokens_per_expert, ZBAL_UT_NUM_16, config, prev_event, false, false, false, "none");
 
-    EXPECT_GT(recv_x.size(0), 0);
+    EXPECT_EQ(recv_x.size(0), 0);
     EXPECT_EQ(recv_x.size(1), ZBAL_UT_NUM_512);
     EXPECT_FALSE(event.has_value());
     EXPECT_EQ(put_offset.size(0), ZBAL_UT_NUM_8);

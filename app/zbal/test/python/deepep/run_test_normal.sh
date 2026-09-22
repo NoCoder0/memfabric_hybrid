@@ -11,14 +11,16 @@ usage() {
     echo "  TOPK      number of top-k      (default: 8)"
     echo "  EXPERTS   number of experts    (default: 256)"
     echo ""
-    echo "Runs two passes:"
-    echo "  Step 1 (quick verify): 2 processes, 64 tokens, hidden=1024"
-    echo "  Step 2 (full test):    NP processes, full parameters"
+    echo "Runs one pass per quant type, sequentially, with the same parameters."
+    echo "The chip generation (A3/A5) is auto-detected to pick the default cases:"
+    echo "  A5: int8 none mx_fp8_e4m3 mx_fp8_e5m2"
+    echo "  A3: int8 none"
     echo ""
     echo "Examples:"
     echo "  bash run_test_normal.sh"
     echo "  bash run_test_normal.sh 8"
     echo "  bash run_test_normal.sh 8 1024 7168 8 256"
+    echo "  DEEP_NORMAL_MODE_QUANT_TYPE='int8 none mx_fp8_e4m3' bash run_test_normal.sh"
 }
 
 if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
@@ -28,6 +30,29 @@ fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
+
+A5_ONLY_QUANT_TYPES="mx_fp8_e4m3 mx_fp8_e5m2"
+
+detect_chip_type() {
+    local soc
+    soc=$(python -c "
+import acl
+try:
+    print(acl.get_soc_name() or '')
+except Exception:
+    pass" 2>/dev/null | tail -1)
+    case "${soc}" in
+        *Ascend950* | *Ascend910_95*) echo "A5" ;;
+        *) echo "A3" ;;
+    esac
+}
+
+is_a5_only_quant_type() {
+    case " ${A5_ONLY_QUANT_TYPES} " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
 
 get_installed_mf_commit() {
     local pkg_location
@@ -120,6 +145,55 @@ run_test_pass() {
     return "${rc}"
 }
 
+# Collect the root-rank average bandwidth/latency lines emitted by every pass.
+summarize_avg_stats() {
+    local log_dir="${SCRIPT_DIR}/logs"
+    local -a rows=()
+    local f row qtype dbw dlat cbw clat
+
+    for f in "${log_dir}"/rank00_pid*.log; do
+        [ -f "${f}" ] || continue
+        row=$(awk '
+            /Average Dispatch bandwidth/ {
+                found = 1
+                if (match($0, /quant_type=[^)]*/)) qtype = substr($0, RSTART + 11, RLENGTH - 11)
+                if (match($0, /: [0-9.]+ GB\/s/)) dbw = substr($0, RSTART + 2, RLENGTH - 7)
+                if (match($0, /avg_t=[0-9.]+/)) dlat = substr($0, RSTART + 6, RLENGTH - 6)
+            }
+            /Average Combine bandwidth/ {
+                found = 1
+                if (match($0, /: [0-9.]+ GB\/s/)) cbw = substr($0, RSTART + 2, RLENGTH - 7)
+                if (match($0, /avg_t=[0-9.]+/)) clat = substr($0, RSTART + 6, RLENGTH - 6)
+            }
+            END {
+                if (found) {
+                    if (qtype == "") qtype = "(unknown)"
+                    if (dbw == "") dbw = "-"
+                    if (dlat == "") dlat = "-"
+                    if (cbw == "") cbw = "-"
+                    if (clat == "") clat = "-"
+                    print qtype, dbw, dlat, cbw, clat
+                }
+            }
+        ' "${f}")
+        [ -n "${row}" ] || continue
+        rows+=("${row}")
+    done
+
+    echo ""
+    echo "==================== Average Bandwidth Summary ===================="
+    if [ "${#rows[@]}" -eq 0 ]; then
+        echo "  (no average stats found; expected in ${log_dir}/rank00_pid*.log)"
+    else
+        printf '  %-20s %14s %12s %14s %12s\n' "quant_type" "Dispatch(GB/s)" "Dispatch(us)" "Combine(GB/s)" "Combine(us)"
+        for row in "${rows[@]}"; do
+            read -r qtype dbw dlat cbw clat <<< "${row}"
+            printf '  %-20s %14s %12s %14s %12s\n' "${qtype}" "${dbw}" "${dlat}" "${cbw}" "${clat}"
+        done
+    fi
+    echo "==================================================================="
+}
+
 install_memfabric_hybrid
 
 NP=${1:-8}
@@ -131,20 +205,33 @@ EXPERTS=${5:-256}
 export TASK_QUEUE_ENABLE=2
 export ASCEND_PROCESS_LOG_PATH=./logs
 export ASCEND_GLOBAL_LOG_LEVEL=2
-export DEEP_NORMAL_MODE_USE_INT8_QUANT=1
 rm -rf ./logs
 
 check_memfabric_zbal_commit
 
+CHIP_TYPE=$(detect_chip_type)
+if [ "${CHIP_TYPE}" = "A5" ]; then
+    DEFAULT_QUANT_TYPES="int8 none ${A5_ONLY_QUANT_TYPES}"
+else
+    DEFAULT_QUANT_TYPES="int8 none"
+fi
+QUANT_TYPES="${DEEP_NORMAL_MODE_QUANT_TYPE:-${DEFAULT_QUANT_TYPES}}"
+
+echo "[run_test_normal] Detected chip type: ${CHIP_TYPE}, quant types to run: ${QUANT_TYPES}"
+
 overall_rc=0
 
-echo "[run_test_normal] Running test_normal.py with INT8 quantization"
-run_test_pass test_normal.py --num-processes ${NP} --num-tokens ${TOKENS} --hidden ${HIDDEN} --num-topk ${TOPK} --num-experts ${EXPERTS} \
-    || overall_rc=$?
+for qt in ${QUANT_TYPES}; do
+    if [ "${CHIP_TYPE}" != "A5" ] && is_a5_only_quant_type "${qt}"; then
+        echo "[run_test_normal] Skipping quant_type=${qt}: requires A5, detected ${CHIP_TYPE}" >&2
+        continue
+    fi
+    echo "[run_test_normal] Running test_normal.py with quant_type=${qt}"
+    export DEEP_NORMAL_MODE_QUANT_TYPE=${qt}
+    run_test_pass test_normal.py --num-processes ${NP} --num-tokens ${TOKENS} --hidden ${HIDDEN} --num-topk ${TOPK} --num-experts ${EXPERTS} \
+        || overall_rc=$?
+done
 
-echo "[run_test_normal] Running test_normal.py with BF16 (no quantization)"
-export DEEP_NORMAL_MODE_USE_INT8_QUANT=0
-run_test_pass test_normal.py --num-processes ${NP} --num-tokens ${TOKENS} --hidden ${HIDDEN} --num-topk ${TOPK} --num-experts ${EXPERTS} \
-    || overall_rc=$?
+summarize_avg_stats
 
 exit "${overall_rc}"

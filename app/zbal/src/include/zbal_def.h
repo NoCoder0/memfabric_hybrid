@@ -29,18 +29,21 @@ typedef void *zbal_comm_t;
 typedef void *aclrtStream;
 
 typedef enum {
-    ZBAL_DATA_TYPE_INT8 = 0,    /**< int8 */
-    ZBAL_DATA_TYPE_INT16 = 1,   /**< int16 */
-    ZBAL_DATA_TYPE_INT32 = 2,   /**< int32 */
-    ZBAL_DATA_TYPE_INT64 = 3,   /**< int64 */
-    ZBAL_DATA_TYPE_UINT64 = 4,  /**< uint64 */
-    ZBAL_DATA_TYPE_FP64 = 5,    /**< fp64 */
-    ZBAL_DATA_TYPE_FP16 = 6,    /**< fp16 */
-    ZBAL_DATA_TYPE_FP32 = 7,    /**< fp32 */
-    ZBAL_DATA_TYPE_BFP16 = 8,   /**< bfp16 */
-    ZBAL_DATA_TYPE_UINT8 = 9,   /**< uint8 */
-    ZBAL_DATA_TYPE_UINT16 = 10, /**< uint16 */
-    ZBAL_DATA_TYPE_UINT32 = 11, /**< uint32 */
+    ZBAL_DATA_TYPE_INT8 = 0,      /**< int8 */
+    ZBAL_DATA_TYPE_INT16 = 1,     /**< int16 */
+    ZBAL_DATA_TYPE_INT32 = 2,     /**< int32 */
+    ZBAL_DATA_TYPE_INT64 = 3,     /**< int64 */
+    ZBAL_DATA_TYPE_UINT64 = 4,    /**< uint64 */
+    ZBAL_DATA_TYPE_FP64 = 5,      /**< fp64 */
+    ZBAL_DATA_TYPE_FP16 = 6,      /**< fp16 */
+    ZBAL_DATA_TYPE_FP32 = 7,      /**< fp32 */
+    ZBAL_DATA_TYPE_BFP16 = 8,     /**< bfp16 */
+    ZBAL_DATA_TYPE_UINT8 = 9,     /**< uint8 */
+    ZBAL_DATA_TYPE_UINT16 = 10,   /**< uint16 */
+    ZBAL_DATA_TYPE_UINT32 = 11,   /**< uint32 */
+    ZBAL_DATA_TYPE_FP8_E4M3 = 12, /**< fp8 e4m3fn (A5 MXFP8) */
+    ZBAL_DATA_TYPE_FP8_E5M2 = 13, /**< fp8 e5m2 (A5 MXFP8) */
+    ZBAL_DATA_TYPE_E8M0 = 15,     /**< e8m0 MX block scale (A5 MXFP8) */
 
     ZBAL_DATA_TYPE_BUTT /* reserved */
 } zbal_datatype_t;
@@ -150,6 +153,10 @@ typedef enum {
     NO_QUANT = 0,
 
     QUANT_BF16_2_INT8 = 1, /* from bf16 to int8 */
+
+    QUANT_BF16_2_FP8_E4M3 = 3, /* from bf16 to mxfp8 e4m3 (block-wise, e8m0 scale) */
+
+    QUANT_BF16_2_FP8_E5M2 = 4, /* from bf16 to mxfp8 e5m2 (block-wise, e8m0 scale) */
 
     QUANT_BUTT
 } zbal_quant_mode_t;

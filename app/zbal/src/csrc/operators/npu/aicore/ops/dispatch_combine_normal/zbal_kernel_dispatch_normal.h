@@ -18,6 +18,9 @@
 #include "zbal_kernel_utils.h"
 #include "zbal_kernel_base.h"
 #include "zbal_kernel_constant.h"
+#ifdef ZBAL_ASCEND_NPU_A5
+#include "quantize_functions.h"
+#endif
 
 namespace MoeDispatchNormal {
 using namespace AscendC;
@@ -27,6 +30,10 @@ using namespace zbal;
 constexpr uint8_t BUFFER_NUM = 2;
 constexpr uint64_t DISPATCH_STATUS_OFFSET = 20UL * 1024UL;
 
+// Quantization constants (mirror sgl-kernel-npu cam_moe_dispatch_normal_a5.h)
+constexpr float INT8_MAX_VALUE = 127.0f;
+constexpr uint32_t MX_BLOCK_SIZE = 32U; // 32 elements per MX scale block
+
 template<AscendC::HardEvent event>
 ZBAL_KERNEL void SyncFunc()
 {
@@ -35,8 +42,8 @@ ZBAL_KERNEL void SyncFunc()
     AscendC::WaitFlag<event>(eventID);
 }
 
-#define TypeClass typename XType, typename ExpandXOutType, bool DynamicQuant
-#define TypeFunc  XType, ExpandXOutType, DynamicQuant
+#define TypeClass typename XType, typename ExpandXOutType, bool DynamicQuant, bool IsMxQuant
+#define TypeFunc  XType, ExpandXOutType, DynamicQuant, IsMxQuant
 
 template<TypeClass>
 class DispatchNormal : public ZBALBaseKernel {
@@ -62,6 +69,7 @@ private:
                                         uint32_t expertHi);
     ZBAL_KERNEL void ReduceMaxInplace(const LocalTensor<float> &srcLocal, uint32_t count);
     ZBAL_KERNEL void QuantProcess();
+    ZBAL_KERNEL void QuantDynamicMx();
     ZBAL_KERNEL void HandleAllRankToken();
     ZBAL_KERNEL void DispatchForTargetRank(uint32_t startId, uint32_t endId, uint32_t tokenCnt, uint32_t tarRankId);
 
@@ -219,7 +227,12 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR x, GM_
     expertIdsCnt = batchSize * topK;
 
     hUBAlignSize = Ceil(h * sizeof(ExpandXOutType), UB_ALIGN) * UB_ALIGN;
+    // Scale area: MX quant needs h/32 e8m0 scales (aligned to 256B); others need 1 float (32B)
     uint32_t hScaleSizeAlign = hUBAlignSize + UB_ALIGN;
+    if constexpr (IsMxQuant) {
+        uint32_t mxScaleBytes = Ceil(h / MX_BLOCK_SIZE, UB_ALIGN) * UB_ALIGN;
+        hScaleSizeAlign = hUBAlignSize + Ceil(mxScaleBytes, 256U) * 256U;
+    }
 
     hOutUBAlignSize = Ceil(hScaleSizeAlign, UB_ALIGN) * UB_ALIGN; // h_align_32b + scale(32b)
     if constexpr (DynamicQuant) {
@@ -450,20 +463,17 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::ReduceMaxInplace(const LocalTensor<fl
 template<TypeClass>
 ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantProcess()
 {
+    // Non-MX quant (INT8): per-token dynamic scale
     float dynamicScale = 0.0;
+    float maxVal = 0.0f;
+    if constexpr (std::is_same_v<ExpandXOutType, int8_t>) {
+        maxVal = INT8_MAX_VALUE;
+    }
+
     LocalTensor<float> floatLocalTemp;
     floatLocalTemp = tokenCastFloatBuf.Get<float>();
 
-    // INT8 quant steps:
     // step1: tokenF16 -> tokenF32
-    // step2: tokenF32 -> tokenF32Abs
-    // step3: tokenF32Abs -> max
-    // step4: max scale = MAX_VAL / max
-    // step5: scaled tensor = TokenF32 * scale
-    // step6: tokenF32 -> tokenInt32
-    // step7: tokenInt32 -> tokenHalf
-    // step8: tokenHalf -> tokenInt8
-
     Cast(floatLocalTemp, xInTensor, RoundMode::CAST_NONE, h);
 #ifdef ZBAL_ASCEND_NPU_A5
     SyncFunc<AscendC::HardEvent::V_S>();
@@ -471,32 +481,71 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantProcess()
     PipeBarrier<PIPE_V>();
     xInQueue.FreeTensor<XType>(xInTensor);
 
-    if constexpr (DynamicQuant) {
-        LocalTensor<float> floatLocalAbsTemp = tokenAbsFloatBuf.Get<float>();
+    // step2-4: abs -> reduceMax -> dynamicScale = maxVal / max
+    LocalTensor<float> floatLocalAbsTemp = tokenAbsFloatBuf.Get<float>();
+    Abs(floatLocalAbsTemp, floatLocalTemp, h);
+    PipeBarrier<PIPE_V>();
+    ReduceMaxInplace(floatLocalAbsTemp, h);
 
-        Abs(floatLocalAbsTemp, floatLocalTemp, h);
-        PipeBarrier<PIPE_V>();
-        ReduceMaxInplace(floatLocalAbsTemp, h);
+    SyncFunc<AscendC::HardEvent::V_S>();
+    dynamicScale = maxVal / (floatLocalAbsTemp.GetValue(0) + 1e-12f);
+    SyncFunc<AscendC::HardEvent::S_V>();
 
-        SyncFunc<AscendC::HardEvent::V_S>();
-        dynamicScale = float(127.0) / (floatLocalAbsTemp.GetValue(0) + 1e-12f);
-        SyncFunc<AscendC::HardEvent::S_V>();
-        Muls(floatLocalTemp, floatLocalTemp, dynamicScale, h);
+    // step5: scaled tensor = TokenF32 * scale
+    Muls(floatLocalTemp, floatLocalTemp, dynamicScale, h);
+    PipeBarrier<PIPE_V>();
+
+    if constexpr (std::is_same_v<ExpandXOutType, int8_t>) {
+        // INT8 path: step6-8: tokenF32 -> tokenInt32 -> tokenHalf -> tokenInt8
+        LocalTensor<half> halfLocalTemp = floatLocalTemp.ReinterpretCast<half>();
+        LocalTensor<int32_t> int32LocalTemp = floatLocalTemp.ReinterpretCast<int32_t>();
+        Cast(int32LocalTemp, floatLocalTemp, RoundMode::CAST_RINT, h);
         PipeBarrier<PIPE_V>();
+        SetDeqScale((half)1.000000e+00f);
+        PipeBarrier<PIPE_V>();
+        Cast(halfLocalTemp, int32LocalTemp, RoundMode::CAST_ROUND, h);
+        PipeBarrier<PIPE_V>();
+        Cast(xOutTensor, halfLocalTemp, RoundMode::CAST_TRUNC, h);
     }
-    LocalTensor<half> halfLocalTemp = floatLocalTemp.ReinterpretCast<half>();
-    LocalTensor<int32_t> int32LocalTemp = floatLocalTemp.ReinterpretCast<int32_t>();
-    Cast(int32LocalTemp, floatLocalTemp, RoundMode::CAST_RINT, h);
-    PipeBarrier<PIPE_V>();
-    SetDeqScale((half)1.000000e+00f);
-    PipeBarrier<PIPE_V>();
 
-    Cast(halfLocalTemp, int32LocalTemp, RoundMode::CAST_ROUND, h);
-    PipeBarrier<PIPE_V>();
-    Cast(xOutTensor, halfLocalTemp, RoundMode::CAST_TRUNC, h);
-
+    // Store per-token scale (1/scale) at the tail of output UB for write-back
     floatLocalTemp = xOutTensor.template ReinterpretCast<float>();
-    floatLocalTemp.SetValue(hUBAlignSize / sizeof(float), float(1.0) / dynamicScale); // int8->float32
+    floatLocalTemp.SetValue(hUBAlignSize / sizeof(float), float(1.0) / dynamicScale);
+    SyncFunc<AscendC::HardEvent::S_MTE3>();
+}
+
+template<TypeClass>
+ZBAL_KERNEL void DispatchNormal<TypeFunc>::QuantDynamicMx()
+{
+#ifdef ZBAL_ASCEND_NPU_A5
+    // MX block-wise quantization (MXFP8): per-32-element block with e8m0 scale.
+    // Mirrors sgl-kernel-npu cam_moe_dispatch_normal_a5.h QuantDynamicMx.
+    uint32_t mxScaleNum = Ceil(Ceil(h, MX_BLOCK_SIZE), 2U) * 2U; // align block count to 2
+    LocalTensor<float> tokenF32LT = tokenCastFloatBuf.Get<float>();
+
+    __ubuf__ XType *srcAddr = (__ubuf__ XType *)xInTensor.GetPhyAddr();
+    __ubuf__ uint16_t *maxExpAddr = (__ubuf__ uint16_t *)tokenF32LT.GetPhyAddr();
+    // halfScaleLocalAddr placed after maxExp area, offset by Align32(mxScaleNum) float elements
+    __ubuf__ uint16_t *halfScaleLocalAddr = (__ubuf__ uint16_t *)tokenF32LT[Ceil(mxScaleNum, 32U) * 32U].GetPhyAddr();
+    __ubuf__ int8_t *outLocalAddr = (__ubuf__ int8_t *)xOutTensor.GetPhyAddr();
+
+    // MX scales stored after output data in UB, offset aligned to 256 elements.
+    uint32_t outElemCount = h;
+    uint32_t scaleUBOffset = Ceil(outElemCount, 256U) * 256U;
+    __ubuf__ uint16_t *mxScaleLocalAddr = (__ubuf__ uint16_t *)xOutTensor[scaleUBOffset].GetPhyAddr();
+
+    // step1: compute max exponent per 32-element block
+    quant::ComputeMaxExp(srcAddr, maxExpAddr, h);
+    // step2: compute e8m0 scale from max exponent
+    quant::ComputeScale<ExpandXOutType>(maxExpAddr, mxScaleLocalAddr, halfScaleLocalAddr, mxScaleNum);
+    // step3: quantize data using the computed scale
+    if constexpr (std::is_same_v<ExpandXOutType, fp8_e4m3fn_t> || std::is_same_v<ExpandXOutType, fp8_e5m2_t>) {
+        quant::ComputeFp8Data<XType, ExpandXOutType, AscendC::RoundMode::CAST_TRUNC, AscendC::RoundMode::CAST_RINT>(
+            srcAddr, halfScaleLocalAddr, outLocalAddr, h);
+    }
+    xInQueue.FreeTensor<XType>(xInTensor);
+    SyncFunc<AscendC::HardEvent::S_MTE3>();
+#endif
 }
 
 template<TypeClass>
@@ -565,8 +614,17 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::DispatchTokenRange(uint32_t roundStar
 {
     DataCopyExtParams xCopyParams = {1U, static_cast<uint32_t>(h * sizeof(XType)), 0U, 0U, 0U};
     DataCopyPadExtParams<XType> tokenCopyPadExtParams{false, 0U, 0U, 0U};
-    DataCopyExtParams xOutCopyParams = {1U, static_cast<uint32_t>(h * sizeof(ExpandXOutType)), 0U, 0U, 0U};
-    DataCopyExtParams scaleCopyParams = {1U, sizeof(float), 0U, 0U, 0U};
+    // Output copy size: 1:1 for all supported quant types (fp8/int8/bf16)
+    uint32_t outElemCount = h;
+    DataCopyExtParams xOutCopyParams = {1U, static_cast<uint32_t>(outElemCount * sizeof(ExpandXOutType)), 0U, 0U, 0U};
+    // Scale copy size: MX quant needs h/32 e8m0 bytes; per-token needs 1 float
+    uint32_t scaleOutBytesPerToken;
+    if constexpr (IsMxQuant) {
+        scaleOutBytesPerToken = Ceil(h, MX_BLOCK_SIZE);
+    } else {
+        scaleOutBytesPerToken = sizeof(float);
+    }
+    DataCopyExtParams scaleCopyParams = {1U, static_cast<uint32_t>(scaleOutBytesPerToken), 0U, 0U, 0U};
 
     // scan in token-expanded order, write only when hitting [expertLo, expertHi); sendTokenIdx of the same
     // expert grows with token order, so write addresses are strictly increasing and contiguous within an
@@ -590,21 +648,36 @@ ZBAL_KERNEL void DispatchNormal<TypeFunc>::DispatchTokenRange(uint32_t roundStar
         dstGT.SetGlobalBuffer((__gm__ ExpandXOutType *)(shareExpandXOutAddrs[dstRankId] + recvByteOffset));
 
         if constexpr (DynamicQuant) {
-            dstScaleOutGT.SetGlobalBuffer((__gm__ float *)(shareDynamicScaleAddrs[dstRankId]));
+            auto dsPtr = shareDynamicScaleAddrs[dstRankId];
 
             xInTensor = xInQueue.AllocTensor<XType>();
             DataCopyPad(xInTensor, xGT[tokenIndex / topK * h], xCopyParams, tokenCopyPadExtParams);
             xInQueue.EnQue(xInTensor);
             xInTensor = xInQueue.DeQue<XType>();
             xOutTensor = xOutQueue.AllocTensor<ExpandXOutType>();
-            QuantProcess();
+            if constexpr (IsMxQuant) {
+                QuantDynamicMx();
+            } else {
+                QuantProcess();
+            }
             xOutQueue.EnQue(xOutTensor);
             xOutTensor = xOutQueue.DeQue<ExpandXOutType>();
             DataCopyPad(dstGT, xOutTensor, xOutCopyParams); // copy token
 
-            LocalTensor<float> xOutFp32Tensor = xOutTensor.template ReinterpretCast<float>();
-            DataCopyPad(dstScaleOutGT[dstExpertOffset + curExpertIdx], xOutFp32Tensor[hUBAlignSize / sizeof(float)],
-                        scaleCopyParams);
+            // Scale write-back: MX scales at Align256(outElemCount) offset, per-token at hUBAlignSize offset
+            if constexpr (IsMxQuant) {
+                uint32_t scaleUBOffset = Ceil(outElemCount, 256U) * 256U;
+                GlobalTensor<uint8_t> dynamicScalesOutU8GT;
+                dynamicScalesOutU8GT.SetGlobalBuffer((__gm__ uint8_t *)(dsPtr));
+                LocalTensor<uint8_t> scaleLT = xOutTensor.template ReinterpretCast<uint8_t>();
+                DataCopyPad(dynamicScalesOutU8GT[(dstExpertOffset + curExpertIdx) * scaleOutBytesPerToken],
+                            scaleLT[scaleUBOffset], scaleCopyParams);
+            } else {
+                dstScaleOutGT.SetGlobalBuffer((__gm__ float *)(dsPtr));
+                LocalTensor<float> xOutFp32Tensor = xOutTensor.template ReinterpretCast<float>();
+                DataCopyPad(dstScaleOutGT[dstExpertOffset + curExpertIdx], xOutFp32Tensor[hUBAlignSize / sizeof(float)],
+                            scaleCopyParams);
+            }
 
             xOutQueue.FreeTensor(xOutTensor);
         } else {

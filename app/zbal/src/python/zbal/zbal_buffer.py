@@ -231,6 +231,8 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
         dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
+        quant_type: str = "",
+        **kwargs,
     ) -> Tuple[
         Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
         Optional[torch.Tensor],
@@ -292,10 +294,27 @@ class Buffer:
             raise NotImplementedError("Not support internode")
 
         # Launch the kernel with cached or non-cached mode
-        if isinstance(x, tuple):
-            raise NotImplementedError("Not support fp8")
-        x_scales = None
-        use_quant = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
+        _tuple = isinstance(x, tuple)
+        if _tuple:
+            x, x_scales = x
+        is_fp8 = (
+            _tuple
+            and x_scales is not None
+            and x_scales.numel() != 0
+            and getattr(x, "dtype", None) in (torch.float8_e4m3fn, torch.float8_e5m2)
+        )
+        if not is_fp8:
+            x_scales = None
+        use_quant_env = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
+
+        # Determine quant_type: explicit parameter takes priority, then infer from input.
+        # Supported: "none", "int8", "mx_fp8_e4m3", "mx_fp8_e5m2"
+        if not quant_type:
+            if is_fp8:
+                quant_type = "mx_fp8_e4m3" if x.dtype == torch.float8_e4m3fn else "mx_fp8_e5m2"
+            else:
+                quant_type = "int8" if use_quant_env else "none"
+        use_quant = quant_type != "none"
 
         if handle is not None:
             raise NotImplementedError("Optional communication handle is not supported yet.")
@@ -327,6 +346,7 @@ class Buffer:
                 async_finish,
                 allocate_on_comm_stream,
                 use_quant,
+                quant_type,
             )
             handle = (
                 is_token_in_rank,
@@ -335,8 +355,17 @@ class Buffer:
                 put_offset,
                 balance_matrix,
             )
+            if is_fp8:
+                recv_x_return = (recv_x, recv_x_scales)
+            elif _tuple:
+                recv_x_return = (recv_x, None)
+            elif use_quant:
+                recv_x_return = (recv_x, recv_x_scales)
+            else:
+                recv_x_return = recv_x
+
             return (
-                (recv_x, recv_x_scales) if use_quant else recv_x,
+                recv_x_return,
                 recv_topk_idx,
                 recv_topk_weights,
                 num_recv_tokens_per_expert_list,

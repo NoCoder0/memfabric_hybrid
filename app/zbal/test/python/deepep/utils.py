@@ -131,6 +131,17 @@ def per_token_cast_back(x_fp8: torch.Tensor, x_scales: torch.Tensor):
     return (x_fp32 * x_scales).view(x_fp8.shape).to(torch.bfloat16)
 
 
+def per_block_cast_back(x_fp8: torch.Tensor, x_scales: torch.Tensor, block_size: int = 32):
+    """Dequantize MXFP8 data (e8m0 block scales) back to bf16, mirroring the kernel quant."""
+    if x_fp8.numel() == 0:
+        return x_fp8.to(torch.bfloat16)
+    exp = x_scales.view(dtype=torch.uint8).to(torch.int32) - 127
+    scales = torch.exp2(exp.to(torch.float32))
+    x_f32 = x_fp8.to(torch.float32).view(x_fp8.size(0), -1, block_size)
+    scales = scales.view(x_fp8.size(0), -1, 1)
+    return (x_f32 * scales).view(x_fp8.shape).to(torch.bfloat16)
+
+
 def calc_diff(x: torch.Tensor, y: torch.Tensor):
     x, y = x.double() + 1, y.double() + 1
     denominator = (x * x + y * y).sum()
@@ -267,6 +278,7 @@ def calculate_avg_stats(
     rank,
     num_ranks,
     root_rank: 0,
+    quant_type: str = "",
 ):
     # dispatch_t / combine_t: the unit is second
     local_stats = torch.tensor(
@@ -296,7 +308,11 @@ def calculate_avg_stats(
 
         avg_dispatch_bw = avg_dispatch_bytes / avg_dispatch_lat * 1e-3  # GB/s
         avg_combine_bw = avg_combine_bytes / avg_combine_lat * 1e-3  # GB/s
+        quant_tag = f" (quant_type={quant_type})" if quant_type else ""
         logging.info(
-            f"\n\nAverage Dispatch bandwidth: {avg_dispatch_bw:.2f} GB/s, avg_t={avg_dispatch_lat:.2f} us \n"
-            f"Average Combine bandwidth: {avg_combine_bw:.2f} GB/s, avg_t={avg_combine_lat:.2f} us\n\n"
+            "\n\n"
+            f"Average Dispatch bandwidth{quant_tag}: {avg_dispatch_bw:.2f} GB/s, "
+            f"avg_t={avg_dispatch_lat:.2f} us\n"
+            f"Average Combine bandwidth{quant_tag}: {avg_combine_bw:.2f} GB/s, "
+            f"avg_t={avg_combine_lat:.2f} us\n\n"
         )

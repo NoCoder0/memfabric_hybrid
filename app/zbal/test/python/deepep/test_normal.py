@@ -22,6 +22,7 @@ from utils import (
     calculate_avg_stats,
     init_dist,
     inplace_unique,
+    per_block_cast_back,
     per_token_cast_back,
 )
 
@@ -61,6 +62,29 @@ def test_main(
     num_servers = num_ranks // num_local_ranks
     expert_token_nums_type = int(os.getenv("MOE_EXPERT_TOKEN_NUMS_TYPE", 1))
     use_quant = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
+    quant_type = os.getenv("DEEP_NORMAL_MODE_QUANT_TYPE", "int8" if use_quant else "none")
+    assert quant_type in ("none", "int8", "mx_fp8_e4m3", "mx_fp8_e5m2"), (
+        f"Invalid DEEP_NORMAL_MODE_QUANT_TYPE: {quant_type}"
+    )
+    use_quant = quant_type != "none"
+    quant_atol = {
+        "none": 5e-5,
+        "int8": 5e-5,
+        "mx_fp8_e4m3": 5e-5,
+        "mx_fp8_e5m2": 5e-5,
+    }
+    quant_diff_tol = {
+        "none": 5e-5,
+        "int8": 5e-5,
+        "mx_fp8_e4m3": 5e-3,
+        "mx_fp8_e5m2": 5e-3,
+    }
+    quant_bytes_div = {
+        "none": 1,
+        "int8": 2,
+        "mx_fp8_e4m3": 2,
+        "mx_fp8_e5m2": 2,
+    }
 
     multi_list = [1] * num_ranks
     num_tokens = int(num_tokens * multi_list[rank])
@@ -165,7 +189,7 @@ def test_main(
         """Return True if the caller should skip its own full dump.
 
         - 1D tensor or rows <= MAX_DUMP_ROWS: return False (caller dumps all).
-        - rows > MAX_DUMP_ROWS, focus_row given: print window [focus_row-1, focus_row+1],
+        - rows > MAX_DUMP_ROWS, focus_row given: print window [focus_row-2, focus_row+3],
           return True.
         - rows > MAX_DUMP_ROWS, no focus_row: skip with warning, return True.
         """
@@ -175,8 +199,8 @@ def test_main(
         if focus_row is None:
             logger.warning(f"[rank {rank}] skip dump {name}: {rows} rows > {MAX_DUMP_ROWS}")
             return True
-        start = max(0, focus_row - 1)
-        end = min(rows, focus_row + 2)
+        start = max(0, focus_row - 2)
+        end = min(rows, focus_row + 3)
         logger.warning(
             f"[rank {rank}] dump {name} window [{start}:{end}] around focus_row={focus_row} (total {rows} rows)"
         )
@@ -184,7 +208,7 @@ def test_main(
             logger.warning(f"[rank {rank}] {name} row{r} = {tensor[r].tolist()}")
         return True
 
-    def verify_combine_output(check_x):
+    def verify_combine_output(check_x, atol=5e-5):
         """Verify combined_x correctness for deterministic input (x = ones * rank, weights = ones * rank).
         Expected: every token row = 8 * rank^2  (uniform across hidden dims).
         Returns True on success, False on failure after logging diagnostics."""
@@ -194,13 +218,13 @@ def test_main(
         # 1. Row uniformity: all hidden dims in a row must be identical
         row_diffs = (cx_float[:, 1:] - cx_float[:, :1]).abs().max(dim=1)[0]
         max_col_diff, bad_idx = row_diffs.max().item(), row_diffs.argmax().item()
-        non_uniform = (row_diffs > 5e-5).sum().item()
+        non_uniform = (row_diffs > atol).sum().item()
 
         # 2. First-column values vs expected
         vals = cx_float[:, 0]
         val_errs = (vals - expected_val).abs()
         max_val_err, worst_row = val_errs.max().item(), val_errs.argmax().item()
-        wrong_rows = (val_errs > 5e-5).sum().item()
+        wrong_rows = (val_errs > atol).sum().item()
 
         ok = non_uniform == 0 and wrong_rows == 0
         if not ok:
@@ -213,7 +237,7 @@ def test_main(
             if not _skip_2d_dump("check_x", check_x, focus_row=bad_idx):
                 for r in range(check_x.shape[0]):
                     logger.warning(f"[rank {rank}] row{r} [:32] = {check_x[r, :32].tolist()}")
-            wrong_mask = val_errs > 5e-5
+            wrong_mask = val_errs > atol
             wrong_indices = wrong_mask.nonzero(as_tuple=True)[0]
             for wi in wrong_indices:
                 logger.error(
@@ -230,15 +254,23 @@ def test_main(
             lines.append(f"[rank {rank}] send_token_idx row{t} = {sti_cpu[t].tolist()}")
         logger.warning("\n".join(lines))
 
-    def dump_dispatch_output(recv_x, put_offset, balance_matrix):
+    def dump_dispatch_output(recv_x, put_offset, balance_matrix, focus_row=None):
         dump_send_token_idx(send_token_idx)
 
         # dump recv_x (2D, skip row-by-row if too many rows)
-        if not _skip_2d_dump("recv_x", recv_x):
+        if not _skip_2d_dump("recv_x", recv_x, focus_row=focus_row):
             lines = []
             for r in range(recv_x.shape[0]):
                 lines.append(f"[rank {rank}] recv_x row{r} [:32] = {recv_x[r, :32].tolist()}")
             logger.warning("\n".join(lines))
+        elif focus_row is not None:
+            rx_float = recv_x.float()
+            unique_vals = torch.unique(rx_float[:, 0])
+            logger.warning(
+                f"[rank {rank}] recv_x summary: shape={list(recv_x.shape)}, "
+                f"unique_vals[:16]={unique_vals[:16].tolist()}, "
+                f"min={rx_float.min().item():.4f}, max={rx_float.max().item():.4f}"
+            )
 
         logger.warning(f"[rank {rank}] put_offset = {put_offset.tolist()}")
         logger.warning(f"[rank {rank}] balance_matrix = {balance_matrix.tolist()}")
@@ -267,7 +299,7 @@ def test_main(
         logger.info(f"[rank {rank}] send_token_idx check passed, expert_counter[:8]={expert_counter[:8]}")
         return True
 
-    def verify_recv_x(recv_x, put_offset, balance_matrix):
+    def verify_recv_x(recv_x, put_offset, balance_matrix, atol=5e-5):
         """Verify dispatch output recv_x for deterministic input x = ones * rank.
 
         Checks (in order):
@@ -288,14 +320,24 @@ def test_main(
             return False
 
         rx_float = recv_x.float()
+        unique_vals = torch.unique(rx_float[:, 0])
+        summary_msg = (
+            f"[rank {rank}] recv_x summary: shape={list(recv_x.shape)}, "
+            f"unique_vals[:16]={unique_vals[:16].tolist()}, "
+            f"min={rx_float.min().item():.4f}, max={rx_float.max().item():.4f}"
+        )
+        logger.warning(summary_msg)
+        print(summary_msg, flush=True)
         # 2. row uniformity: all hidden dims in a row must be identical
         row_diffs = (rx_float[:, 1:] - rx_float[:, :1]).abs().max(dim=1)[0]
         max_col_diff = row_diffs.max().item()
-        if max_col_diff >= 5e-5:
-            first_bad = (row_diffs > 5e-5).nonzero(as_tuple=True)[0]
+        if max_col_diff >= atol:
+            first_bad = (row_diffs > atol).nonzero(as_tuple=True)[0]
             first_bad = first_bad[0].item() if len(first_bad) > 0 else row_diffs.argmax().item()
-            logger.error(f"[rank {rank}] recv_x hidden first bad row {first_bad}: {rx_float[first_bad].tolist()}")
-            dump_dispatch_output(recv_x, put_offset, balance_matrix)
+            err_msg = f"[rank {rank}] recv_x hidden first bad row {first_bad}: {rx_float[first_bad].tolist()}"
+            logger.error(err_msg)
+            print(err_msg, flush=True)
+            dump_dispatch_output(recv_x, put_offset, balance_matrix, focus_row=first_bad)
             return False
 
         # 3. block-based source rank check
@@ -304,10 +346,12 @@ def test_main(
         for i in range(0, vals.shape[0], entries_per_exp_src):
             expected = float((i // entries_per_exp_src) % num_ranks)
             block = vals[i : i + entries_per_exp_src]
-            if (block - expected).abs().max().item() >= 5e-5:
+            if (block - expected).abs().max().item() >= atol:
                 end = min(i + entries_per_exp_src, vals.shape[0])
-                logger.error(f"[rank {rank}] recv_x rows [{i}:{end}] expected all ≈ {expected}, got {block.tolist()}")
-                dump_dispatch_output(recv_x, put_offset, balance_matrix)
+                err_msg = f"[rank {rank}] recv_x rows [{i}:{end}] expected all ≈ {expected}, got {block.tolist()}"
+                logger.error(err_msg)
+                print(err_msg, flush=True)
+                dump_dispatch_output(recv_x, put_offset, balance_matrix, focus_row=i)
                 return False
         return True
 
@@ -359,10 +403,10 @@ def test_main(
         return True
 
     def test_correctness():
+        combine_atol = 5e-5
         for current_x in filter(lambda elem: elem is not None, (x, x_pure_rand)):
             if local_rank == 0:
-                tp = "INT8" if use_quant else "BF16"
-                logger.info(f"[rank {rank}] [testing] Running with {tp}, with top-k {num_topk} ...")
+                logger.info(f"[rank {rank}] [testing] Running with {quant_type}, with top-k {num_topk} ...")
             logger.info(f"[rank {rank}] begin running dispatch")
             # Test dispatch
             dispatch_args = {
@@ -373,6 +417,7 @@ def test_main(
                 "config": config,
                 "topk_idx": topk_idx,
                 "topk_weights": (topk_weights_pure_rand if current_x is x_pure_rand else topk_weights),
+                "quant_type": quant_type,
             }
 
             (
@@ -386,13 +431,16 @@ def test_main(
             if isinstance(recv_x, tuple):
                 quant_stream = torch.npu.Stream()
                 with torch.npu.Stream(quant_stream):
-                    recv_x_int8_cpu = recv_x[0].cpu()
+                    recv_x_quant_cpu = recv_x[0].cpu()
                     recv_x_scales_cpu = recv_x[1].cpu()
                     put_offset_cpu = handle[3].cpu()
                     balance_matrix_cpu = handle[4].cpu()
                     recv_topk_weights_cpu = handle[2].cpu()
                 quant_stream.synchronize()
-                recv_x_cpu = per_token_cast_back(recv_x_int8_cpu, recv_x_scales_cpu)
+                if quant_type in ("mx_fp8_e4m3", "mx_fp8_e5m2"):
+                    recv_x_cpu = per_block_cast_back(recv_x_quant_cpu, recv_x_scales_cpu, 32)
+                else:  # int8: per-token float scales
+                    recv_x_cpu = per_token_cast_back(recv_x_quant_cpu, recv_x_scales_cpu)
                 recv_x = recv_x_cpu.to("npu")
             else:
                 recv_x_cpu = recv_x.cpu()
@@ -407,7 +455,7 @@ def test_main(
             # Verify recv_x token count and content (deterministic input: x = ones * rank)
             if current_x is x:
                 assert verify_send_token_idx(send_token_idx)
-                assert verify_recv_x(recv_x_cpu, put_offset_cpu, balance_matrix_cpu)
+                assert verify_recv_x(recv_x_cpu, put_offset_cpu, balance_matrix_cpu, atol=quant_atol[quant_type])
                 assert verify_put_offset(recv_x_cpu, put_offset_cpu, balance_matrix_cpu)
                 assert verify_balance_matrix(recv_x_cpu, put_offset_cpu, balance_matrix_cpu)
             logger.info(f"[rank {rank}] [dispatch] Test passed.")
@@ -428,9 +476,11 @@ def test_main(
                 -1, 1
             )
             diff = calc_diff(check_x, ref_x_compute)
-            if diff > 5e-5 or math.isnan(diff):
+            if diff > quant_diff_tol[quant_type] or math.isnan(diff):
                 if current_x is x:
-                    assert verify_combine_output(check_x), f"[rank {rank}] combine verification failed"
+                    assert verify_combine_output(check_x, atol=combine_atol), (
+                        f"[rank {rank}] combine verification failed"
+                    )
                 else:
                     assert False, f"[rank {rank}] combine diff={diff}"
 
@@ -449,7 +499,7 @@ def test_main(
         combine_bf16_send_bytes = dispatch_bf16_recv_bytes
 
         # tuning dispatch
-        recv_bytes = (dispatch_bf16_recv_bytes / 2) if use_quant else dispatch_bf16_recv_bytes
+        recv_bytes = dispatch_bf16_recv_bytes / quant_bytes_div[quant_type]
         tune_dispatch_args = {
             "x": current_x,
             "config": config,
@@ -458,12 +508,13 @@ def test_main(
             "num_tokens_per_expert": ref_num_tokens_per_expert,
             "topk_idx": topk_idx,
             "topk_weights": topk_weights,
+            "quant_type": quant_type,
         }
         dispatch_t = bench(lambda: buffer.dispatch(**tune_dispatch_args))[0]
         logger.info(
-            f'[rank {rank}] [tuning] Dispatch ({"INT8" if use_quant else "BF16"}) '
-            f'{recv_bytes / 1e9 / dispatch_t:.2f} GB/s (HCCS), '
-            f'avg_t: {dispatch_t * 1e6:.2f} us'
+            f"[rank {rank}] [tuning] Dispatch ({quant_type}) "
+            f"{recv_bytes / 1e9 / dispatch_t:.2f} GB/s (HCCS), "
+            f"avg_t: {dispatch_t * 1e6:.2f} us"
         )
 
         dispatch_args = {
@@ -474,15 +525,19 @@ def test_main(
             "num_tokens_per_expert": ref_num_tokens_per_expert,
             "topk_idx": topk_idx,
             "topk_weights": topk_weights,
+            "quant_type": quant_type,
         }
         recv_x, _, _, _, handle, _ = buffer.dispatch(**dispatch_args)
         if isinstance(recv_x, tuple):
             quant_stream = torch.npu.Stream()
             with torch.npu.Stream(quant_stream):
-                recv_x_int8_cpu = recv_x[0].cpu()
+                recv_x_quant_cpu = recv_x[0].cpu()
                 recv_x_scales_cpu = recv_x[1].cpu()
             quant_stream.synchronize()
-            recv_x = per_token_cast_back(recv_x_int8_cpu, recv_x_scales_cpu).to("npu")
+            if quant_type in ("mx_fp8_e4m3", "mx_fp8_e5m2"):
+                recv_x = per_block_cast_back(recv_x_quant_cpu, recv_x_scales_cpu, 32).to("npu")
+            else:  # int8
+                recv_x = per_token_cast_back(recv_x_quant_cpu, recv_x_scales_cpu).to("npu")
         else:
             recv_x = recv_x
         # Tune combine performance
@@ -507,6 +562,7 @@ def test_main(
             rank=rank,
             num_ranks=num_ranks,
             root_rank=0,
+            quant_type=quant_type,
         )
 
     test_correctness()

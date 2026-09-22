@@ -61,7 +61,7 @@ public:
                        const std::optional<at::Tensor> &num_tokens_per_rank, const at::Tensor &is_token_in_rank,
                        const std::optional<at::Tensor> &num_tokens_per_expert, int num_worst_tokens,
                        const Config &config, std::optional<EventHandle> &previous_event, bool async,
-                       bool allocate_on_comm_stream, bool use_quant);
+                       bool allocate_on_comm_stream, bool use_quant, const std::string &quant_type);
 
     std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
     intranode_combine(const torch::Tensor &x, const torch::Tensor &topk_idx,

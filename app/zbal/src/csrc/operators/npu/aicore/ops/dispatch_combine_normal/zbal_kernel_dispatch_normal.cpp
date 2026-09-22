@@ -29,13 +29,13 @@ extern "C" __global__ __aicore__ void dispatch_normal(uint64_t fftsAddr, GM_ADDR
     AscendC::TPipe pipe;
     if (dstDataType == ZBAL_DATA_TYPE_BFP16 || dstDataType == ZBAL_DATA_TYPE_FP16) {
         if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == NO_QUANT) {
-            MoeDispatchNormal::DispatchNormal<bfloat16_t, bfloat16_t, false> op;
+            MoeDispatchNormal::DispatchNormal<bfloat16_t, bfloat16_t, false, false> op;
             op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
                     hidden, topK, enableBalance, destTokens, destScale, &pipe);
             op.Process();
             return;
         } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == NO_QUANT) {
-            MoeDispatchNormal::DispatchNormal<float16_t, float16_t, false> op;
+            MoeDispatchNormal::DispatchNormal<float16_t, float16_t, false, false> op;
             op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
                     hidden, topK, enableBalance, destTokens, destScale, &pipe);
             op.Process();
@@ -43,19 +43,50 @@ extern "C" __global__ __aicore__ void dispatch_normal(uint64_t fftsAddr, GM_ADDR
         }
     } else if (dstDataType == ZBAL_DATA_TYPE_INT8) { // QUANT_BF16_2_INT8
         if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == QUANT_BF16_2_INT8) {
-            MoeDispatchNormal::DispatchNormal<bfloat16_t, int8_t, true> op;
+            MoeDispatchNormal::DispatchNormal<bfloat16_t, int8_t, true, false> op;
             op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
                     hidden, topK, enableBalance, destTokens, destScale, &pipe);
             op.Process();
             return;
         } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == QUANT_BF16_2_INT8) {
-            MoeDispatchNormal::DispatchNormal<float16_t, int8_t, true> op;
+            MoeDispatchNormal::DispatchNormal<float16_t, int8_t, true, false> op;
             op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
                     hidden, topK, enableBalance, destTokens, destScale, &pipe);
             op.Process();
             return;
         }
     }
+#ifdef ZBAL_ASCEND_NPU_A5
+    else if (dstDataType == ZBAL_DATA_TYPE_FP8_E4M3) { // QUANT_BF16_2_FP8_E4M3
+        if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == QUANT_BF16_2_FP8_E4M3) {
+            MoeDispatchNormal::DispatchNormal<bfloat16_t, fp8_e4m3fn_t, true, true> op;
+            op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
+                    hidden, topK, enableBalance, destTokens, destScale, &pipe);
+            op.Process();
+            return;
+        } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == QUANT_BF16_2_FP8_E4M3) {
+            MoeDispatchNormal::DispatchNormal<float16_t, fp8_e4m3fn_t, true, true> op;
+            op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
+                    hidden, topK, enableBalance, destTokens, destScale, &pipe);
+            op.Process();
+            return;
+        }
+    } else if (dstDataType == ZBAL_DATA_TYPE_FP8_E5M2) { // QUANT_BF16_2_FP8_E5M2
+        if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == QUANT_BF16_2_FP8_E5M2) {
+            MoeDispatchNormal::DispatchNormal<bfloat16_t, fp8_e5m2_t, true, true> op;
+            op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
+                    hidden, topK, enableBalance, destTokens, destScale, &pipe);
+            op.Process();
+            return;
+        } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == QUANT_BF16_2_FP8_E5M2) {
+            MoeDispatchNormal::DispatchNormal<float16_t, fp8_e5m2_t, true, true> op;
+            op.Init(metaAddr, srcTokens, topkIndex, sendTokensIndex, putOffset, balanceMatrix, rank, numExperts, bs,
+                    hidden, topK, enableBalance, destTokens, destScale, &pipe);
+            op.Process();
+            return;
+        }
+    }
+#endif
 }
 
 int32_t ZBALOpDispatchNormal(const zbal_tensor_info_t *srcTokens, const zbal_tensor_info_t *topkIndex,
