@@ -16,8 +16,8 @@ import socket
 import sys
 import time
 
-DEFAULT_COUNTS = [100, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 9600, 12800, 19200, 25600]
-DEFAULT_SIZES = [576, 656, 1152, 8192]
+DEFAULT_COUNTS = [100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600]
+DEFAULT_SIZES = [656, 1024]
 MODES = ("baseline", "cont", "gather")
 MIB = 1024 * 1024
 
@@ -33,9 +33,9 @@ def parse_args(argv=None):
     p.add_argument("--hcom-url", required=True, help="this host's RDMA URL(s), separated by semicolons")
     p.add_argument("--control-host", required=True, help="local rank 0 control address reachable by remote rank 1")
     p.add_argument("--control-port", type=int, default=18581)
-    p.add_argument("--counts", "--segments", nargs="+", type=int)
-    p.add_argument("--sizes", "--segment-bytes", nargs="+", type=int)
-    p.add_argument("--matrix", action="store_true", help="use the C++ default count/size matrix")
+    p.add_argument("--counts", "--segments", nargs="+", type=int, help="default: 100, 200, 400, ..., 25600")
+    p.add_argument("--sizes", "--segment-bytes", nargs="+", type=int, help="default: 656, 1024 bytes")
+    p.add_argument("--matrix", action="store_true", help="compatibility flag; the default already runs the matrix")
     p.add_argument("--stride", type=int, help="default: twice each case's block size")
     p.add_argument("--rounds", type=int, default=1000)
     p.add_argument("--warmup", "--warmup-rounds", type=int, default=10)
@@ -50,8 +50,8 @@ def parse_args(argv=None):
     p.add_argument("--env-file", type=Path, help="literal KEY=VALUE lines; no shell evaluation")
     p.add_argument("--stats-file", type=Path, help="default: host_rdma_<role>.json")
     a = p.parse_args(argv)
-    a.counts = sorted(set(a.counts or (DEFAULT_COUNTS if a.matrix else [600])))
-    a.sizes = sorted(set(a.sizes or (DEFAULT_SIZES if a.matrix else [1024])))
+    a.counts = sorted(set(a.counts or DEFAULT_COUNTS))
+    a.sizes = sorted(set(a.sizes or DEFAULT_SIZES))
     a.links = len(a.hcom_url.split(";"))
     validate_args(p, a)
     return a
@@ -262,6 +262,26 @@ def run_cases(a, bench, control):
     return rows
 
 
+def print_summary(a, rows):
+    headers = ("Count", "Size(B)", "Samples", "Avg(us)", "P50(us)", "P95(us)", "P99(us)", "GB/s", "Verify")
+    cells = []
+    for row in rows:
+        metrics = row["local"]["e2e"]
+        bandwidth = row["count"] * row["size"] / (metrics["avg_us"] * 1000) if metrics["avg_us"] > 0 else 0
+        cells.append([str(row["count"]), str(row["size"]), str(metrics["samples"]),
+                      *[f"{metrics[key]:.3f}" for key in ("avg_us", "p50_us", "p95_us", "p99_us")],
+                      f"{bandwidth:.3f}", row["verify"]])
+    widths = [max([len(header), *[len(row[i]) for row in cells]]) for i, header in enumerate(headers)]
+    border = "+" + "+".join("-" * (width + 2) for width in widths) + "+"
+
+    def line(values):
+        return "| " + " | ".join(value.rjust(width) for value, width in zip(values, widths)) + " |"
+
+    print(f"\nHOST_RDMA summary: mode={a.mode}, role={a.role}, cases={len(rows)}\n"
+          "Requester E2E latency; GB/s = payload bytes / average E2E time (decimal).\n"
+          + "\n".join([border, line(headers), border, *[line(row) for row in cells], border]), flush=True)
+
+
 def write_results(a, rows, status="running"):
     path = a.stats_file or Path(f"host_rdma_{a.role}.json")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -308,6 +328,7 @@ def run_connected(a, control):
         rows = run_cases(a, bench, control)
         control.exchange({"finished": True})  # All copies and poll calls have returned before either BM is destroyed.
         write_results(a, rows, "complete")
+        print_summary(a, rows)
     finally:
         if handle is not None:
             handle.destroy()

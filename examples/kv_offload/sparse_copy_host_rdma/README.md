@@ -70,7 +70,7 @@ export MF_HOST_RDMA_SPARSE_MODE=gather
 python3 examples/kv_offload/sparse_copy_host_rdma/001_host_rdma_bench.py \
   --role local --control-host LOCAL_CONTROL_IP --control-port 18581 \
   --store-url tcp://LOCAL_CONTROL_IP:18580 --hcom-url tcp://LOCAL_RDMA_IP:19000 \
-  --counts 100 600 3200 --sizes 576 656 1152 --warmup 10 --rounds 1000 \
+  --warmup 10 --rounds 1000 \
   --stats-file local_results.json
 
 # remote / rank 1
@@ -78,10 +78,12 @@ export MF_HOST_RDMA_SPARSE_MODE=gather
 python3 examples/kv_offload/sparse_copy_host_rdma/001_host_rdma_bench.py \
   --role remote --control-host LOCAL_CONTROL_IP --control-port 18581 \
   --store-url tcp://LOCAL_CONTROL_IP:18580 --hcom-url tcp://REMOTE_RDMA_IP:19000 \
-  --counts 100 600 3200 --sizes 576 656 1152 --warmup 10 --rounds 1000 \
+  --warmup 10 --rounds 1000 \
   --poll-timeout-ms 100 --stats-file remote_results.json
 ```
 
+默认运行 `[100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600]` 个块 × `[656, 1024]` 字节，共 18 组。
+可用 `--counts`、`--sizes` 分别覆盖；例如 `--counts 100 --sizes 656` 只运行一组。
 测试矩阵、模式、stride、rounds、warmup、chunk、links 和显式容量必须两端一致，开始前会核对。
 多网卡时两端 URL 数量相同，例如 `--hcom-url 'tcp://IP0:19000;tcp://IP1:19000'`。
 TCP 只承载配置核对、屏障、结果和退出消息；地址消息、request、数据、水位及完成状态仍走 RDMA。
@@ -95,10 +97,10 @@ TCP 只承载配置核对、屏障、结果和退出消息；地址消息、requ
 | `--hcom-url` | 本端 RDMA URL，多网卡用 `;` 分隔 | 必填 |
 | `--control-host` | local 控制网地址 | 必填 |
 | `--control-port` | 控制通道端口 | `18581` |
-| `--counts` | 每次读取块数，支持列表；别名 `--segments` | `600` |
-| `--sizes` | 每块字节数，支持列表；别名 `--segment-bytes` | `1024` |
+| `--counts` | 每次读取块数，支持列表；别名 `--segments` | `100 200 400 800 1600 3200 6400 12800 25600` |
+| `--sizes` | 每块字节数，支持列表；别名 `--segment-bytes` | `656 1024` |
 | `--stride` | 相邻源/目标块起始地址间隔 | 当前块大小的两倍 |
-| `--matrix` | 使用预设 16 个块数 × 4 个块大小；counts/sizes 可覆盖 | 关闭 |
+| `--matrix` | 兼容保留；默认已运行 9 个块数 × 2 个块大小 | 无需指定 |
 | `--warmup` | 每 case 预热次数；别名 `--warmup-rounds` | `10` |
 | `--rounds` | 每 case 计时次数 | `1000` |
 | `--chunk` | cont 每条链路发布水位的块数间隔 | `128` |
@@ -119,6 +121,12 @@ TCP 只承载配置核对、屏障、结果和退出消息；地址消息、requ
 
 每轮都在计时外验证最终目标数据。结果报告 Python 调用 C++ offload 的端到端 avg/p50/p95/p99，
 包含 pybind 参数转换开销，不含数据校验及 case 控制握手；远端报告处理请求数及空轮询次数。
+
+全部用例完成后，两端终端输出 ASCII 汇总表，列出 Count、Size(B)、Samples、Avg(us)、
+P50(us)、P95(us)、P99(us)、GB/s 和 Verify。两端表格均使用请求端计时结果。
+GB/s 按有效数据字节数 `count * size / (avg_us * 1000)` 计算，使用十进制单位，
+表示端到端有效吞吐，不是网卡线速。预热不纳入统计，JSON 结果仍按原格式保存。
+完整矩阵耗时超过默认 600 秒时，可在两端增加 `--timeout`，或减少 `--rounds`。
 
 ## 应用接口
 
