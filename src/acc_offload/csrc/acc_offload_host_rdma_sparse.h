@@ -20,6 +20,7 @@
 #include <vector>
 #include "smem_bm_sparse_backend.h"
 #include "smem_thread_pool.h"
+#include "acc_offload.h"
 
 namespace ock::offload {
 using smem::HostRdmaSparseConfig;
@@ -36,6 +37,7 @@ public:
     int32_t Prepare();
     int32_t Run(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes);
     int32_t ProcessRequest(uint64_t request);
+    int32_t LastTiming(offload_host_rdma_sparse_timing_t &timing);
     void Stop();
 
 private:
@@ -60,6 +62,7 @@ private:
     Batch batch_;
     uint64_t workspaceOffset_;
     uint64_t sequence_ = 0;
+    offload_host_rdma_sparse_timing_t timing_{};
     std::atomic<bool> stopped_{false};
     std::atomic<bool> failed_{false};
     bool started_ = false;

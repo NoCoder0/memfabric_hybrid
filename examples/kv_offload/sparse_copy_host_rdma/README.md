@@ -122,10 +122,30 @@ TCP 只承载配置核对、屏障、结果和退出消息；地址消息、requ
 每轮都在计时外验证最终目标数据。结果报告 Python 调用 C++ offload 的端到端 avg/p50/p95/p99，
 包含 pybind 参数转换开销，不含数据校验及 case 控制握手；远端报告处理请求数及空轮询次数。
 
-全部用例完成后，两端终端输出 ASCII 汇总表，列出 Count、Size(B)、Samples、Avg(us)、
-P50(us)、P95(us)、P99(us)、GB/s 和 Verify。两端表格均使用请求端计时结果。
-GB/s 按有效数据字节数 `count * size / (avg_us * 1000)` 计算，使用十进制单位，
-表示端到端有效吞吐，不是网卡线速。预热不纳入统计，JSON 结果仍按原格式保存。
+全部用例完成后，按 URMA 示例的样式打印平均耗时汇总表：
+
+```text
+| bytes/pkt | packets | E2E(us) | request(us) | host gather(us) | host write(us) | scatter(us) |
+```
+
+两端表格相同：E2E/request/scatter 来自 local，host gather/write 来自 remote。
+不适用的阶段显示 `-`：baseline 无 gather/scatter，cont 无 gather；CPU 路径没有 AICPU 和 launch 阶段。
+JSON 保留原有字段并新增各阶段统计及 min/max；同目录 `<stats-file>.txt` 保存详细 ASCII 表格：
+`bytes/pkt、packets、stage、avg(us)、min(us)、max(us)、P50(us)、P95(us)、P99(us)`，附各列含义。
+例如 `--stats-file local_results.json` 同时生成 `local_results.json.txt`。预热不纳入任何阶段统计。
+
+| 指标 | 计时范围 |
+|---|---|
+| E2E | Python 调用同步 offload 接口，包括 pybind、地址校验、发布请求、等待和数据搬运；不含结果校验和统计查询 |
+| request | 构建地址消息、传输消息并发布 request doorbell |
+| host gather | 构建 CPU 拷贝地址并聚合，含工作线程调度和等待 |
+| host write | 同步 MF copy/batch 调用；cont 包含进度水位发布，不含最终 status/done 发布 |
+| scatter | gather：构建地址并执行线程池 scatter；cont：累加已有进度的 CPU 拷贝区间，不含等待水位 |
+
+阶段耗时由各端原生算子计时，每次成功请求后查询，按 sequence 校验匹配。
+`cont` 的 write/scatter 重叠，request 和远端处理也可能重叠，**不能将各阶段相加作为 E2E**。
+E2E 还包含未单列的协议等待、消息解析等开销；算子内读时钟的开销包含在本次测试中。
+本次新增原生统计接口，两端需重新构建安装 offload 库及 Python 扩展。
 完整矩阵耗时超过默认 600 秒时，可在两端增加 `--timeout`，或减少 `--rounds`。
 
 ## 应用接口
@@ -150,6 +170,12 @@ ret = handle.poll_host_rdma_sparse(timeout_ms=100)
 # rank 0：远端需要同时执行上述 poll。
 ret = offload.sparse_copy_host_rdma(handle, src_gvas, dst_gvas, block_bytes)
 # 0：同步拷贝成功；非零：错误。
+
+# 可选：在当前端下一次请求前读取最近一次成功 copy / poll 的阶段耗时。
+timing = offload.host_rdma_sparse_last_timing(handle)
+# dict: sequence, request_ns, gather_ns, write_ns, scatter_ns
+# rank 0 提供 request/scatter，rank 1 提供 gather/write；其余字段为 0。
+# 尚无成功请求或上下文已失效时抛出异常。
 ```
 
 C 接口分别为 `smem_bm_poll_host_rdma_sparse`（`smem_bm_sparse.h`）和

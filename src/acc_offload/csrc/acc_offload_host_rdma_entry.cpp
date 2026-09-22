@@ -64,6 +64,12 @@ int32_t ExecuteSparse(void *context, void *opaque)
     auto args = static_cast<const SparseCopyArgs *>(opaque);
     return static_cast<HostRdmaSparse *>(context)->Run(args->sources, args->destinations, args->count, args->bytes);
 }
+
+int32_t ReadSparseTiming(void *context, void *opaque)
+{
+    return static_cast<HostRdmaSparse *>(context)->LastTiming(
+        *static_cast<offload_host_rdma_sparse_timing_t *>(opaque));
+}
 } // namespace
 } // namespace ock::offload
 
@@ -73,4 +79,13 @@ OFFLOAD_API int32_t offload_sparse_copy_host_rdma(void *bmHandle, const uint64_t
     ock::offload::SparseCopyArgs args{sources, destinations, count, blockBytes};
     // SMEM holds the attachment lock for the visitor, so destroy/leave cannot free it during copy.
     return ock::smem::UseHostRdmaSparseContext(bmHandle, ock::offload::ExecuteSparse, &args);
+}
+
+OFFLOAD_API int32_t offload_host_rdma_sparse_last_timing(void *bmHandle, offload_host_rdma_sparse_timing_t *timing)
+{
+    if (timing == nullptr) {
+        OFFLOAD_LOG_ERROR("null sparse timing output");
+        return ock::smem::SM_INVALID_PARAM;
+    }
+    return ock::smem::UseHostRdmaSparseContext(bmHandle, ock::offload::ReadSparseTiming, timing);
 }

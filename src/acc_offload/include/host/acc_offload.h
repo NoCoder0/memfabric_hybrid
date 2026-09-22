@@ -33,6 +33,21 @@ extern "C" {
 int32_t offload_sparse_copy_host_rdma(void *bmHandle, const uint64_t *sources, const uint64_t *destinations,
                                     uint32_t count, uint64_t blockBytes);
 
+/* Local stage durations in nanoseconds for the last successful request.
+ * Rank 0 supplies request/scatter; rank 1 supplies gather/write. Unused stages are zero.
+ * Query after copy (rank 0) or a poll returning 1 (rank 1), before the next request.
+ * Durations can overlap across ranks, especially in cont mode; do not sum them as E2E.
+ */
+typedef struct {
+    uint64_t sequence;
+    uint64_t requestNs;
+    uint64_t gatherNs;
+    uint64_t writeNs;
+    uint64_t scatterNs;
+} offload_host_rdma_sparse_timing_t;
+
+int32_t offload_host_rdma_sparse_last_timing(void *bmHandle, offload_host_rdma_sparse_timing_t *timing);
+
 typedef enum {
     OFFLOAD_SCENE_LOCAL = 0,  /* single-card local DRAM memory pool */
     OFFLOAD_SCENE_SHARED = 1, /* multi-card shared DRAM memory pool */

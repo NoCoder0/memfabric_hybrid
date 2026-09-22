@@ -191,6 +191,37 @@ TEST(HostRdmaSparseTest, ThreeModesPreserveOrderAcrossVariableRequestsAndRails)
     }
 }
 
+TEST(HostRdmaSparseTest, TimingTracksCompletedRequestsAndApplicableStages)
+{
+    for (auto mode : {HostRdmaSparseMode::BASELINE, HostRdmaSparseMode::CONT, HostRdmaSparseMode::GATHER}) {
+        SparsePair pair(mode);
+        offload_host_rdma_sparse_timing_t local{}, remote{};
+        EXPECT_EQ(pair.endpoints[0]->LastTiming(local), SM_INVALID_PARAM);
+        pair.delayBatch = mode != HostRdmaSparseMode::GATHER;
+        pair.Start();
+        for (uint64_t sequence = 1; sequence <= 2; ++sequence) {
+            pair.VerifyCopy(17, 31, 10);
+            ASSERT_EQ(pair.endpoints[0]->LastTiming(local), SM_OK);
+            ASSERT_EQ(pair.endpoints[1]->LastTiming(remote), SM_OK);
+            EXPECT_EQ(local.sequence, sequence);
+            EXPECT_EQ(remote.sequence, sequence);
+            EXPECT_GT(local.requestNs, 0);
+            EXPECT_GT(remote.writeNs, 0);
+            EXPECT_EQ(local.gatherNs, 0);
+            EXPECT_EQ(local.writeNs, 0);
+            EXPECT_EQ(remote.requestNs, 0);
+            EXPECT_EQ(remote.scatterNs, 0);
+            EXPECT_EQ(remote.gatherNs > 0, mode == HostRdmaSparseMode::GATHER);
+            EXPECT_EQ(local.scatterNs > 0, mode != HostRdmaSparseMode::BASELINE);
+            if (pair.delayBatch) {
+                EXPECT_GE(remote.writeNs, 30000000);
+            }
+        }
+        pair.endpoints[0]->Stop();
+        EXPECT_EQ(pair.endpoints[0]->LastTiming(local), SM_INVALID_PARAM);
+    }
+}
+
 TEST(HostRdmaSparseTest, RejectsInvalidRangesOverlapsAndProviderCallsWithoutPoisoning)
 {
     SparsePair pair(HostRdmaSparseMode::BASELINE);

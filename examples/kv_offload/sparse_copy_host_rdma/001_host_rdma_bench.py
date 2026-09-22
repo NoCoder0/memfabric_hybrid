@@ -170,7 +170,7 @@ def verify_blocks(base, count, size, stride):
 
 def summarize(values):
     values = sorted(value / 1000 for value in values)
-    return {"avg_us": sum(values) / len(values),
+    return {"avg_us": sum(values) / len(values), "min_us": values[0], "max_us": values[-1],
             **{f"p{p}_us": values[math.ceil(len(values) * p / 100) - 1] for p in (50, 95, 99)},
             "samples": len(values)}
 
@@ -178,6 +178,8 @@ def summarize(values):
 class Benchmark:
     def __init__(self, a, handle, bm, offload, workspace_offset, workspace_bytes):
         self.a, self.handle, self.operation = a, handle, offload.sparse_copy_host_rdma
+        self.read_timing = offload.host_rdma_sparse_last_timing
+        self.sequence = 0
         rank = 0 if a.role == "local" else 1
         self.local = handle.peer_rank_ptr(rank, bm.BmMemType.HOST)
         self.peer = handle.peer_rank_ptr(1 - rank, bm.BmMemType.HOST)
@@ -188,6 +190,13 @@ class Benchmark:
             self.local + workspace_offset, workspace_bytes, max(a.counts), max(a.sizes),
             progress_interval=a.chunk, timeout_ms=math.ceil(a.round_timeout * 1000),
             gather_threads=a.gather_threads, scatter_threads=a.scatter_threads), "prepare_host_rdma_sparse")
+
+    def timing(self):
+        result = self.read_timing(self.handle)
+        self.sequence += 1
+        if result["sequence"] != self.sequence:
+            raise RuntimeError("sparse timing sequence does not match the completed request")
+        return result
 
     def prepare_data(self, case):
         for index in range(case["count"]):
@@ -201,18 +210,22 @@ class Benchmark:
         count, size, stride = case["count"], case["size"], case["stride"]
         sources = [self.peer + i * stride for i in range(count)]
         targets = [self.local + i * stride for i in range(count)]
-        samples = []
+        samples = {name: [] for name in ("e2e", "request", "scatter")}
         for iteration in range(self.a.warmup + self.a.rounds):
             begin = time.perf_counter_ns()
             checked(self.operation(self.handle, sources, targets, size), "offload.sparse_copy_host_rdma")
             elapsed = time.perf_counter_ns() - begin
+            timing = self.timing()  # Query outside E2E timing, before the next request.
             verify_blocks(self.va, count, size, stride)  # Every round, outside timing.
             if iteration >= self.a.warmup:
-                samples.append(elapsed)
-        return {"e2e": summarize(samples)}
+                samples["e2e"].append(elapsed)
+                samples["request"].append(timing["request_ns"])
+                samples["scatter"].append(timing["scatter_ns"])
+        return {name: summarize(values) for name, values in samples.items()}
 
     def serve_case(self, case, control):
         processed, idle_polls = 0, 0
+        samples = {name: [] for name in ("gather", "write")}
         while True:
             message = control.receive(0)
             if message is not None:
@@ -221,6 +234,7 @@ class Benchmark:
                 if processed != self.a.warmup + self.a.rounds:
                     raise RuntimeError(f"request count mismatch: processed={processed}")
                 remote = {"processed_requests": processed, "idle_polls": idle_polls}
+                remote["timing"] = {name: summarize(values) for name, values in samples.items()}
                 control.send({"case_done_ack": case, "remote": remote})
                 return message["metrics"], remote
             # The application calls MF explicitly; no hidden polling thread exists.
@@ -229,11 +243,16 @@ class Benchmark:
                 raise RuntimeError(f"poll_host_rdma_sparse failed: ret={result}")
             processed += result
             idle_polls += result == 0
+            if result == 1:
+                timing = self.timing()
+                if processed > self.a.warmup:
+                    for name in samples:
+                        samples[name].append(timing[f"{name}_ns"])
 
 
 def suite_config(a):
     keys = ("mode", "counts", "sizes", "stride", "rounds", "warmup", "chunk", "links", "dram_mb", "store_url")
-    return {"protocol": 2, **{key: getattr(a, key) for key in keys}}
+    return {"protocol": 3, **{key: getattr(a, key) for key in keys}}
 
 
 def run_cases(a, bench, control):
@@ -262,24 +281,52 @@ def run_cases(a, bench, control):
     return rows
 
 
-def print_summary(a, rows):
-    headers = ("Count", "Size(B)", "Samples", "Avg(us)", "P50(us)", "P95(us)", "P99(us)", "GB/s", "Verify")
-    cells = []
-    for row in rows:
-        metrics = row["local"]["e2e"]
-        bandwidth = row["count"] * row["size"] / (metrics["avg_us"] * 1000) if metrics["avg_us"] > 0 else 0
-        cells.append([str(row["count"]), str(row["size"]), str(metrics["samples"]),
-                      *[f"{metrics[key]:.3f}" for key in ("avg_us", "p50_us", "p95_us", "p99_us")],
-                      f"{bandwidth:.3f}", row["verify"]])
+def format_table(title, headers, rows):
+    cells = [[str(value) for value in row] for row in rows]
     widths = [max([len(header), *[len(row[i]) for row in cells]]) for i, header in enumerate(headers)]
     border = "+" + "+".join("-" * (width + 2) for width in widths) + "+"
 
     def line(values):
         return "| " + " | ".join(value.rjust(width) for value, width in zip(values, widths)) + " |"
 
-    print(f"\nHOST_RDMA summary: mode={a.mode}, role={a.role}, cases={len(rows)}\n"
-          "Requester E2E latency; GB/s = payload bytes / average E2E time (decimal).\n"
-          + "\n".join([border, line(headers), border, *[line(row) for row in cells], border]), flush=True)
+    return title + "\n" + "\n".join([border, line(headers), border, *[line(row) for row in cells], border])
+
+
+def print_summary(a, rows):
+    averages, details = [], []
+    keys = ("avg_us", "min_us", "max_us", "p50_us", "p95_us", "p99_us")
+    for row in rows:
+        local, remote = row["local"], row["remote"]["timing"]
+        stages = [("E2E", local["e2e"]), ("request", local["request"]),
+                  ("host gather", remote["gather"] if a.mode == "gather" else None),
+                  ("host write", remote["write"]),
+                  ("scatter", local["scatter"] if a.mode != "baseline" else None)]
+        averages.append([row["size"], row["count"],
+                         *[f"{metrics['avg_us']:.3f}" if metrics is not None else "-" for _, metrics in stages]])
+        for name, metrics in stages:
+            if metrics is not None:
+                details.append([row["size"], row["count"], name, *[f"{metrics[key]:.3f}" for key in keys]])
+    title = f"{a.mode} copy summary (E2E = Python/offload synchronous call; verify=PASS)"
+    print("\n" + format_table(title, ("bytes/pkt", "packets", "E2E(us)", "request(us)",
+                                     "host gather(us)", "host write(us)", "scatter(us)"), averages), flush=True)
+    descriptions = (
+        "Metric descriptions (overlapping stages must not be added as E2E):\n"
+        "  E2E         : requester Python/offload call, including validation and pybind; "
+        "excludes result verification.\n"
+        "  request     : build and publish the address message and request doorbell.\n"
+        "  host gather : build CPU copy addresses and gather into the remote aggregate buffer, including worker wait.\n"
+        "  host write  : synchronous MF data copy/batch call; cont includes progress publishing.\n"
+        "  scatter     : gather mode includes address setup and worker wait; cont sums ready-chunk CPU copies only.\n"
+        "  -           : stage does not apply to this mode. Warmup samples are excluded.\n"
+        "  Stage clocks run on their own hosts; cont write/scatter overlap. "
+        "E2E also includes unlisted waits/overhead.\n"
+        "  Timing queries are outside E2E; native stage clock reads are inside the operation.\n"
+    )
+    path = Path(str(a.stats_file or Path(f"host_rdma_{a.role}.json")) + ".txt")
+    path.write_text(format_table(title, ("bytes/pkt", "packets", "stage", "avg(us)", "min(us)", "max(us)",
+                                        "P50(us)", "P95(us)", "P99(us)"), details)
+                    + "\n\n" + descriptions, encoding="utf-8")
+    print(f"Detailed latency statistics: {path.resolve()}", flush=True)
 
 
 def write_results(a, rows, status="running"):

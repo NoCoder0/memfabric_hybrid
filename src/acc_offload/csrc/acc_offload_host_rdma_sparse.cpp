@@ -22,6 +22,18 @@ namespace ock::offload {
 using namespace smem;
 namespace {
 using Clock = std::chrono::steady_clock;
+class StageTimer {
+public:
+    explicit StageTimer(uint64_t &duration) : duration_(duration), begin_(Clock::now()) {}
+    ~StageTimer()
+    {
+        duration_ += std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - begin_).count();
+    }
+
+private:
+    uint64_t &duration_;
+    Clock::time_point begin_;
+};
 } // namespace
 
 HostRdmaSparse::HostRdmaSparse(const HostRdmaSparseConfig &config, Copy copy, Batch batch)
@@ -205,10 +217,13 @@ int32_t HostRdmaSparse::ConsumeProgress(const uint64_t *destinations, uint32_t c
         for (uint32_t rail = 0; rail < config_.links; ++rail) {
             auto watermark = Load(layout_.watermark + rail * 8);
             uint64_t upto = watermark > base ? std::min(watermark - base, uint64_t(ends[rail])) : 0;
-            while (consumed[rail] < upto) {
-                auto i = consumed[rail]++;
-                std::memcpy(reinterpret_cast<void *>(config_.localVa + destinations[i] - config_.localGva),
-                            reinterpret_cast<void *>(Va(i * bytes)), bytes);
+            if (consumed[rail] < upto) {
+                StageTimer timer(timing_.scatterNs);
+                while (consumed[rail] < upto) {
+                    auto i = consumed[rail]++;
+                    std::memcpy(reinterpret_cast<void *>(config_.localVa + destinations[i] - config_.localGva),
+                                reinterpret_cast<void *>(Va(i * bytes)), bytes);
+                }
             }
         }
         std::this_thread::yield();
@@ -235,6 +250,7 @@ int32_t HostRdmaSparse::Receive(const uint64_t *destinations, uint32_t count, ui
         return SM_ERROR;
     }
     if (config_.mode == HostRdmaSparseMode::GATHER) {
+        StageTimer timer(timing_.scatterNs);
         std::vector<uint64_t> sources(count), targets(count);
         for (uint32_t i = 0; i < count; ++i) {
             sources[i] = Va(i * bytes);
@@ -248,6 +264,7 @@ int32_t HostRdmaSparse::Receive(const uint64_t *destinations, uint32_t count, ui
 int32_t HostRdmaSparse::Run(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes)
 {
     std::lock_guard<std::mutex> lock(copyMutex_);
+    timing_ = {};
     try {
         if (!started_ || stopped_ || failed_ || config_.rank != 0 ||
             sequence_ >= UINT64_MAX / config_.options.maxBlocks || !ValidRequest(sources, destinations, count, bytes)) {
@@ -255,11 +272,16 @@ int32_t HostRdmaSparse::Run(const uint64_t *sources, const uint64_t *destination
             return SM_INVALID_PARAM;
         }
         ++sequence_;
-        auto ret = Submit(sources, destinations, count, bytes);
+        int32_t ret;
+        {
+            StageTimer timer(timing_.requestNs);
+            ret = Submit(sources, destinations, count, bytes);
+        }
         if (ret == SM_OK) {
             ret = Receive(destinations, count, bytes);
         }
         failed_ = ret != SM_OK;
+        timing_.sequence = ret == SM_OK ? sequence_ : 0;
         return ret;
     } catch (const std::exception &error) {
         failed_ = true;
@@ -273,12 +295,16 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
 {
     auto count = sources.size();
     if (config_.mode == HostRdmaSparseMode::GATHER) {
-        std::vector<uint64_t> nativeSources(count), aggregate(count);
-        for (size_t i = 0; i < count; ++i) {
-            nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
-            aggregate[i] = Va(i * bytes);
+        {
+            StageTimer timer(timing_.gatherNs);
+            std::vector<uint64_t> nativeSources(count), aggregate(count);
+            for (size_t i = 0; i < count; ++i) {
+                nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
+                aggregate[i] = Va(i * bytes);
+            }
+            CpuCopy(nativeSources, aggregate, bytes);
         }
-        CpuCopy(nativeSources, aggregate, bytes);
+        StageTimer timer(timing_.writeNs);
         return copy_(Local(0), destinations[0], count * bytes);
     }
     std::vector<void *> src(count);
@@ -299,6 +325,7 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
         params.progressBase = (sequence_ - 1) * config_.options.maxBlocks;
         params.progressInterval = config_.options.progressInterval;
     }
+    StageTimer timer(timing_.writeNs);
     return batch_(&params);
 }
 
@@ -334,6 +361,7 @@ int32_t HostRdmaSparse::Serve()
 int32_t HostRdmaSparse::ProcessRequest(uint64_t request)
 {
     std::lock_guard<std::mutex> lock(copyMutex_);
+    timing_ = {};
     if (!started_ || stopped_ || failed_ || config_.rank != 1) {
         OFFLOAD_LOG_ERROR("invalid sparse provider state, rank=" << config_.rank);
         return SM_INVALID_PARAM;
@@ -364,6 +392,18 @@ int32_t HostRdmaSparse::ProcessRequest(uint64_t request)
         OFFLOAD_LOG_ERROR("cannot publish sparse completion: " << error.what());
     }
     failed_ = ret != SM_OK;
+    timing_.sequence = ret == SM_OK ? sequence_ : 0;
     return ret;
+}
+
+int32_t HostRdmaSparse::LastTiming(offload_host_rdma_sparse_timing_t &timing)
+{
+    std::lock_guard<std::mutex> lock(copyMutex_);
+    if (!started_ || stopped_ || failed_ || timing_.sequence == 0) {
+        OFFLOAD_LOG_ERROR("no successful sparse timing available, rank=" << config_.rank);
+        return SM_INVALID_PARAM;
+    }
+    timing = timing_;
+    return SM_OK;
 }
 } // namespace ock::offload

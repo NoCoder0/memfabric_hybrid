@@ -101,6 +101,26 @@ targets are rank 0 BM DRAM GVAs. Call handle.prepare_host_rdma_sparse on both ra
 Rank 1 must call handle.poll_host_rdma_sparse; preparation creates no polling thread.
 Returns 0 on success. No offload.initialize or NPU required.)");
 
+    m.def("host_rdma_sparse_last_timing", [](const py::object &handle) {
+        py::capsule capsule = handle.attr("_native_handle");
+        void *native = PyCapsule_GetPointer(capsule.ptr(), "memfabric.smem_bm_t");
+        if (native == nullptr) { throw py::error_already_set(); }
+        offload_host_rdma_sparse_timing_t timing{};
+        int32_t ret;
+        {
+            py::gil_scoped_release release;
+            ret = offload_host_rdma_sparse_last_timing(native, &timing);
+        }
+        if (ret != 0) { throw std::runtime_error("no successful HOST_RDMA sparse timing, ret=" + std::to_string(ret)); }
+        py::dict result;
+        result["sequence"] = timing.sequence;
+        result["request_ns"] = timing.requestNs;
+        result["gather_ns"] = timing.gatherNs;
+        result["write_ns"] = timing.writeNs;
+        result["scatter_ns"] = timing.scatterNs;
+        return result;
+    }, py::arg("handle"), "Local stage times (ns) of the last successful copy/poll; read before the next request.");
+
     m.def("group_pack_copy", &offload_group_pack_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("numLocalExpertPtr"), py::arg("groupList"),
           py::arg("packedGroupList"), py::arg("deviceId"));
