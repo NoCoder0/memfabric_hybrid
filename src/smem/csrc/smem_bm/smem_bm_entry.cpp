@@ -212,6 +212,7 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
 
 void SmemBmEntry::Uninitialize()
 {
+    StopHostRdmaSparse();
     if (!inited_) {
         return;
     }
@@ -317,6 +318,7 @@ Result SmemBmEntry::Update(uint32_t flags)
 
 Result SmemBmEntry::Leave(uint32_t flags)
 {
+    StopHostRdmaSparse();
     (void)flags;
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
     TP_TRACE_BEGIN(TP_SMEM_GROUP_LEAVE_RANK);
@@ -357,6 +359,8 @@ Result SmemBmEntry::Leave(uint32_t flags)
 
 Result SmemBmEntry::ExtendLocalMem(smem_bm_mem_type memType, uint64_t size)
 {
+    std::lock_guard<std::mutex> sparseLock(sparseMutex_);
+    SM_VALIDATE_RETURN(!sparseUsed_, "cannot extend BM after sparse preparation", SM_INVALID_PARAM);
     SM_ASSERT_RETURN(inited_, SM_NOT_INITIALIZED);
     SM_ASSERT_RETURN(memType == SMEM_MEM_TYPE_DEVICE || memType == SMEM_MEM_TYPE_HOST, SM_INVALID_PARAM);
     SM_ASSERT_RETURN(size > 0, SM_INVALID_PARAM);

@@ -17,6 +17,7 @@ include_directories(
         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/operators
         ${PROJECT_SMEM_SRC_BASE}/csrc/net
         ${PROJECT_SMEM_SRC_BASE}/csrc/common
+        ${PROJECT_SMEM_SRC_BASE}/csrc/smem_bm
         ${PROJECT_SMEM_SRC_BASE}/csrc/config_store
         ${PROJECT_SMEM_SRC_BASE}/include/host
         ${PROJECT_HYBM_SRC_BASE}/include

@@ -82,6 +82,25 @@ void DefineAccOffloadApi(py::module_ &m)
     m.def("sparse_copy", &offload_sparse_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("sizePtr"), py::arg("deviceId"));
 
+    m.def("sparse_copy_host_rdma",
+          [](const py::object &handle, const std::vector<uint64_t> &sources,
+             const std::vector<uint64_t> &destinations, uint64_t bytes) {
+              if (sources.empty() || sources.size() != destinations.size() || sources.size() > UINT32_MAX) {
+                  throw py::value_error("source/destination counts must match and be in [1, UINT32_MAX]");
+              }
+              // Keep the Python BM owner alive, but never depend on its private C++ class ABI.
+              py::capsule capsule = handle.attr("_native_handle");
+              void *native = PyCapsule_GetPointer(capsule.ptr(), "memfabric.smem_bm_t");
+              if (native == nullptr) { throw py::error_already_set(); }
+              py::gil_scoped_release release;
+              return offload_sparse_copy_host_rdma(native, sources.data(), destinations.data(),
+                                                   static_cast<uint32_t>(sources.size()), bytes);
+          }, py::arg("handle"), py::arg("src_addrs"), py::arg("dst_addrs"), py::arg("block_bytes"),
+          R"(Synchronous CPU sparse copy, implemented by acc_offload. Sources are rank 1 BM DRAM GVAs;
+targets are rank 0 BM DRAM GVAs. Call handle.prepare_host_rdma_sparse on both ranks first.
+Rank 1 must call handle.poll_host_rdma_sparse; preparation creates no polling thread.
+Returns 0 on success. No offload.initialize or NPU required.)");
+
     m.def("group_pack_copy", &offload_group_pack_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("numLocalExpertPtr"), py::arg("groupList"),
           py::arg("packedGroupList"), py::arg("deviceId"));

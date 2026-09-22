@@ -23,6 +23,7 @@
 #include "smem_config_store.h"
 #include "smem_tcp_config_store.h"
 #include "smem_bm.h"
+#include "smem_bm_sparse_backend.h"
 
 namespace ock {
 namespace smem {
@@ -81,6 +82,11 @@ public:
 
     Result Wait();
 
+    Result PrepareHostRdmaSparse(const smem_bm_host_rdma_sparse_options_t &options);
+    Result UseHostRdmaSparse(HostRdmaSparseVisitor visitor, void *args);
+    int32_t PollHostRdmaSparse(uint32_t timeoutMs);
+    void StopHostRdmaSparse();
+
     Result RegisterMem(uint64_t addr, uint64_t size);
 
     Result UnRegisterMem(uint64_t addr);
@@ -99,6 +105,9 @@ public:
     uint64_t GetRealHBMSize() const;
 
 private:
+    Result BuildHostRdmaSparseConfig(const smem_bm_host_rdma_sparse_options_t &options,
+                                    HostRdmaSparseConfig &config) const;
+    Result AttachHostRdmaSparse(const HostRdmaSparseConfig &config, const HostRdmaSparseBackend &backend);
     bool AddrInHostGva(const void *address, uint64_t size);
     bool AddrInDeviceGva(const void *address, uint64_t size);
     [[nodiscard]] bool CheckRankConfigConsistency(const hybm_options &options) const;
@@ -146,6 +155,10 @@ private:
     std::map<uint64_t, std::pair<uint64_t, hybm_mem_slice_t>> registedSlice_;
 
     std::shared_ptr<std::promise<void>> joinComplete_;
+    std::mutex sparseMutex_;
+    bool sparseUsed_ = false;
+    std::shared_ptr<void> sparse_;
+    std::unique_ptr<HostRdmaSparsePoller> sparsePoller_;
 };
 using SmemBmEntryPtr = SmRef<SmemBmEntry>;
 

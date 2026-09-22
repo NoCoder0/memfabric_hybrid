@@ -705,6 +705,57 @@ def sparse_copy(srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId) -> int
 |deviceId|torch.device，执行拷贝的设备|
 |返回值|成功返回0，其他为错误码|
 
+#### sparse_copy_host_rdma（纯 CPU HOST_RDMA）
+
+由 `_pymf_acc_offload.offload` 直接提供，C API 为 `acc_offload.h` 中的
+`offload_sparse_copy_host_rdma`，执行逻辑位于 acc_offload。MF 负责准备、显式轮询和上下文生命周期。
+
+```python
+offload.sparse_copy_host_rdma(handle, src_addrs, dst_addrs, block_bytes) -> int
+```
+
+在 rank 0 同步读取 rank 1 BM DRAM 池中的离散源，写入 rank 0 BM DRAM 池中的最终目标。
+`src_addrs`、`dst_addrs` 为等长非空 Python 整数列表（GVA），每块长度为 `block_bytes`。
+成功返回 `0`，其他值为错误码；列表长度非法抛出 `ValueError`。无需 Torch、NPU 或 `offload.initialize()`。
+
+两端先使用现有 MF 接口初始化、创建 HOST_RDMA-only BM 并 join，再分别调用：
+
+```python
+workspace_bytes = bm.host_rdma_sparse_workspace_size(max_blocks, max_block_bytes, links=1, progress_interval=128)
+ret = handle.prepare_host_rdma_sparse(
+    workspace_gva, workspace_bytes, max_blocks, max_block_bytes,
+    progress_interval=128, timeout_ms=30000, gather_threads=16, scatter_threads=6,
+)
+```
+
+准备接口返回错误码，必须检查；不会创建请求轮询线程。工作区由应用在本地 BM 池中预留，
+两端相同偏移、64 字节对齐，与用户数据不重叠；`links` 等于配置的 HOST_RDMA URL 数。
+`MF_HOST_RDMA_SPARSE_MODE=baseline|cont|gather` 在准备时选择模式，两端须一致，未设置或非法值报错。
+
+#### poll_host_rdma_sparse（BM 接口）
+
+```python
+ret = handle.poll_host_rdma_sparse(timeout_ms=0)
+```
+
+仅在准备成功的 rank 1 调用，在调用线程中处理至多一条请求，无自动后台轮询。
+
+| 返回值/参数 | 语义 |
+|---|---|
+| `1` | 完成一条请求并回写完成状态 |
+| `0` | 没有新请求，或等待新请求超时；不是错误 |
+| 负数 | 请求处理或状态错误，应停止并协调两端退出 |
+| `timeout_ms=0`（API 默认） | 检查一次，空闲立即返回 |
+| `timeout_ms>0` | 使用 busy-poll + yield 等待请求，最多等待指定毫秒数 |
+
+超时只约束等待新请求，不会打断已接受的拷贝。应用负责重复调用、线程调度与停止；
+example 使用 `100 ms` 的默认值，poll 返回后检查控制通道。C API 为 `smem_bm_poll_host_rdma_sparse`。
+
+首版支持两端、等长块、单 BM 串行请求，消息、staging 和最终目标均在 BM DRAM 池中。
+每 BM 只能准备一次，不能运行时改模式或扩容；传输失败/算子等待超时后应协调两端重建。
+最后一次拷贝与 poll 返回后，应通过应用控制通道同步两端，再销毁 BM；应用创建的轮询线程由应用回收。
+完整示例见 [HOST_RDMA 示例](../../examples/kv_offload/sparse_copy_host_rdma/README.md)。
+
 ### 4. 常用类型
 
 #### Scene枚举类

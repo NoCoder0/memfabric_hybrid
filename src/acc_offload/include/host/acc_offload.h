@@ -18,6 +18,21 @@
 extern "C" {
 #endif
 
+/**
+ * CPU HOST_RDMA sparse copy; does not require offload_init or an NPU.
+ * bmHandle is a joined, prepared smem_bm_t. Call smem_bm_prepare_host_rdma_sparse
+ * on both ranks first, with libmf_acc_offload loaded throughout the BM lifetime.
+ * Rank 1 must explicitly call smem_bm_poll_host_rdma_sparse to process requests.
+ * Call this operation on rank 0: sources are rank 1 pool GVAs; destinations are
+ * rank 0 pool GVAs. Every block has blockBytes bytes. Targets cannot overlap,
+ * and no source/target may overlap workspace. Mode is selected at preparation
+ * by MF_HOST_RDMA_SPARSE_MODE=baseline|cont|gather. Returns 0 on synchronous success.
+ * Transport failure/timeout invalidates the context. Coordinate both peers
+ * before BM destruction. All memory preparation remains in MF.
+ */
+int32_t offload_sparse_copy_host_rdma(void *bmHandle, const uint64_t *sources, const uint64_t *destinations,
+                                    uint32_t count, uint64_t blockBytes);
+
 typedef enum {
     OFFLOAD_SCENE_LOCAL = 0,  /* single-card local DRAM memory pool */
     OFFLOAD_SCENE_SHARED = 1, /* multi-card shared DRAM memory pool */

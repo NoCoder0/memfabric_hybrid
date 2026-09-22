@@ -28,6 +28,7 @@
 #include "smem.h"
 #include "smem_shm.h"
 #include "smem_bm.h"
+#include "smem_bm_sparse.h"
 #include "smem_logger.h"
 #include "smem_version.h"
 
@@ -172,6 +173,26 @@ public:
         handle_ = nullptr;
     }
 
+    int32_t PrepareHostRdmaSparse(uint64_t workspace, uint64_t workspaceBytes, uint32_t maxBlocks,
+                                 uint64_t maxBlockBytes, uint32_t chunk, uint32_t timeoutMs,
+                                 uint32_t gatherThreads, uint32_t scatterThreads)
+    {
+        smem_bm_host_rdma_sparse_options_t options{workspace, workspaceBytes, maxBlockBytes, maxBlocks,
+                                                  chunk, timeoutMs, gatherThreads, scatterThreads};
+        return smem_bm_prepare_host_rdma_sparse(handle_, &options);
+    }
+
+    py::capsule NativeHandle() const
+    {
+        if (handle_ == nullptr) { throw std::runtime_error("BM has been destroyed"); }
+        return py::capsule(handle_, "memfabric.smem_bm_t");
+    }
+
+    int32_t PollHostRdmaSparse(uint32_t timeoutMs)
+    {
+        return smem_bm_poll_host_rdma_sparse(handle_, timeoutMs);
+    }
+
     int32_t CopyData(uint64_t src, uint64_t dest, uint64_t size, smem_bm_copy_type type, uint32_t flags,
                      uint64_t stream)
     {
@@ -206,6 +227,43 @@ public:
         }
         smem_batch_copy_params batch_params = {sources, destinations, sizes.data(), count,
                                                reinterpret_cast<void *>(stream), nullptr, nullptr, 0, 0};
+        auto ret = smem_bm_copy_batch(handle_, &batch_params, type, flags);
+        delete[] ptr;
+        return ret;
+    }
+
+    int32_t CopyDataBatchWithProgress(std::vector<uintptr_t> srcs, std::vector<uintptr_t> dsts, std::vector<size_t> sizes,
+                          uint32_t count, smem_bm_copy_type type, uint32_t flags, uint64_t stream,
+                          uintptr_t progressSrc, uintptr_t progressDest, uint64_t progressBase,
+                          uint32_t progressInterval)
+    {
+        if (count == 0 || srcs.size() != count || dsts.size() != count || sizes.size() != count) {
+            SM_LOG_ERROR("invalid batch copy arrays, count: " << count);
+            return SMEM_INVALID_PARAM;
+        }
+        if (progressSrc == 0 || progressDest == 0 || progressInterval == 0) {
+            SM_LOG_ERROR("batch progress addresses and interval must be nonzero, count: " << count);
+            return SMEM_INVALID_PARAM;
+        }
+        void **ptr = new void *[count + count];
+        if (ptr == nullptr) {
+            throw std::runtime_error(std::string("alloc mem failed."));
+        }
+
+        if (stream != 0) {
+            flags |= SMEM_BM_FLAG_USE_EXTERNAL_STREAM;
+        }
+
+        void **sources = ptr;
+        void **destinations = ptr + count;
+        for (uint64_t i = 0; i < count; ++i) {
+            sources[i] = reinterpret_cast<void *>(srcs[i]);
+            destinations[i] = reinterpret_cast<void *>(dsts[i]);
+        }
+        smem_batch_copy_params batch_params = {sources, destinations, sizes.data(), count,
+                                               reinterpret_cast<void *>(stream),
+                                               reinterpret_cast<void *>(progressSrc),
+                                               reinterpret_cast<void *>(progressDest), progressBase, progressInterval};
         auto ret = smem_bm_copy_batch(handle_, &batch_params, type, flags);
         delete[] ptr;
         return ret;
@@ -762,6 +820,22 @@ Returns:
         Converted Virtual Address, 0 if failed)")
         .def("destroy", &BigMemory::Destroy, py::call_guard<py::gil_scoped_release>(), R"(
 Destroy the big memory handle.)")
+        .def_property_readonly("_native_handle", &BigMemory::NativeHandle)
+        .def("prepare_host_rdma_sparse", &BigMemory::PrepareHostRdmaSparse,
+             py::call_guard<py::gil_scoped_release>(), py::arg("workspace_gva"), py::arg("workspace_bytes"),
+             py::arg("max_blocks"), py::arg("max_block_bytes"), py::kw_only(), py::arg("progress_interval") = 128,
+             py::arg("timeout_ms") = 30000, py::arg("gather_threads") = 16, py::arg("scatter_threads") = 6,
+             R"(Collective preparation on both joined HOST_RDMA BM ranks. Rank 0 requests, rank 1 explicitly polls.
+Reserve exclusive, 64-byte-aligned BM DRAM workspace at the same offset on both ranks.
+MF_HOST_RDMA_SPARSE_MODE selects baseline/cont/gather, fixed until BM destruction.
+Call once per BM. Creates no polling thread. No offload.initialize or NPU required. Returns 0 on success.
+Synchronize peers after the final copy before destroying the BM.)")
+        .def("poll_host_rdma_sparse", &BigMemory::PollHostRdmaSparse,
+             py::call_guard<py::gil_scoped_release>(), py::arg("timeout_ms") = 0,
+             R"(On prepared rank 1, process at most one sparse request on the calling thread.
+Returns 1 if processed, 0 if idle, negative on error. timeout_ms=0 checks once;
+positive values busy-poll with yield for at most timeout_ms while waiting for a request.
+The timeout does not interrupt a request already being processed. Creates no thread.)")
         .def("get_rank_id_by_gva", &BigMemory::GetRankIdByGva, py::call_guard<py::gil_scoped_release>(), py::arg("gva"),
              R"(Get rank id of gva that belongs to.)")
         .def("register", &BigMemory::RegisterMem, py::call_guard<py::gil_scoped_release>(), py::arg("addr"),
@@ -785,6 +859,16 @@ Returns:
         .def("copy_data_batch", &BigMemory::CopyDataBatch, py::call_guard<py::gil_scoped_release>(),
              py::arg("src_addrs"), py::arg("dst_addrs"), py::arg("sizes"), py::arg("count"), py::arg("type"),
              py::arg("flags") = 0, py::arg("stream") = 0, R"(cop data with batch.)")
+        .def("copy_data_batch_with_progress", &BigMemory::CopyDataBatchWithProgress, py::call_guard<py::gil_scoped_release>(),
+             py::arg("src_addrs"), py::arg("dst_addrs"), py::arg("sizes"), py::arg("count"), py::arg("type"),
+             py::arg("flags") = 0, py::arg("stream") = 0, py::kw_only(), py::arg("progress_src"),
+             py::arg("progress_dest"), py::arg("progress_base") = 0, py::arg("progress_interval"),
+             R"(Copy a HOST_RDMA batch with progress notifications. Arguments match smem_batch_copy_params:
+progress_src is registered local storage; progress_dest is the peer watermark array GVA.
+For K links, reserve ceil(count / progress_interval) * K uint64 slots at progress_src
+(count * K slots is always sufficient), and K uint64 slots at progress_dest.
+Keep both allocations alive until synchronous completion. Addresses and progress_interval must be nonzero.
+Watermarks are progress_base plus the completed global element index for each link.)")
         .def("wait", &BigMemory::Wait, py::call_guard<py::gil_scoped_release>(), R"(
 Wait all issued async copy(s) finish.)")
         .def(
@@ -816,6 +900,11 @@ PYBIND11_MODULE(_pymf_hybrid, m)
 
     DefineBmConfig(bm);
     DefineBmClass(bm);
+    bm.def("host_rdma_sparse_workspace_size", &smem_bm_host_rdma_sparse_workspace_size,
+           py::arg("max_blocks"), py::arg("max_block_bytes"), py::arg("links") = 1,
+           py::arg("progress_interval") = 128,
+           R"(Return required workspace bytes, or 0 for invalid dimensions. Does not allocate memory.)");
+
 }
 
 #pragma GCC diagnostic pop
