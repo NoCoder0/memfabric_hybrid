@@ -20,6 +20,9 @@ offload.sparse_copy_host_rdma(...)    handle.poll_host_rdma_sparse(...)
 
 `prepare_host_rdma_sparse` 只准备工作区、交换配置并初始化算子上下文，**不会启动轮询线程**。
 `gather` 模式仍会准备执行 CPU gather/scatter 的工作线程池。
+线程池使用原 `hostrdma_batch_bench.cpp` 的 `ParallelCopyPool`：固定线程分片，
+generation 原子变量派发，工作线程和调用线程自旋等待；不使用任务队列、条件变量或 future。
+远端 gather 工作线程逐线程绑核，本地 scatter 工作线程沿用原实现，不主动绑核。
 远端由 example 的主线程显式调用 poll；两次 poll 之间检查控制消息。
 一个 BM 上串行处理请求，整个块数/块大小矩阵复用同一次建链和准备。
 
@@ -105,6 +108,7 @@ TCP 只承载配置核对、屏障、结果和退出消息；地址消息、requ
 | `--rounds` | 每 case 计时次数 | `1000` |
 | `--chunk` | cont 每条链路发布水位的块数间隔 | `128` |
 | `--gather-threads` | gather 模式的远端 CPU 工作线程数 | `16` |
+| `--gather-cpus` | 远端 gather 逐线程 CPU 列表，例如 `0-15`、`0-7,16-23` | 自动选取允许的 CPU，优先当前 CPU |
 | `--scatter-threads` | gather 模式的本地 CPU 工作线程数 | `6` |
 | `--dram-mb` | 每端池容量，包括数据和工作区；正的 2 MiB 倍数 | 自动计算，至少 16 MiB |
 | `--poll-timeout-ms` | 远端每次 poll 等待新请求的上限，范围 `[0, 60000]` | `100` |
@@ -117,7 +121,12 @@ TCP 只承载配置核对、屏障、结果和退出消息；地址消息、requ
 `--poll-timeout-ms=100` 是 **最多 100 ms 的忙轮询加 yield**，不是 sleep，也不是网卡事件等待。
 没有请求时返回，收到请求时立即处理并返回。它只限制等待新请求的时间，不能打断已经接受的拷贝。
 设置 `0` 表示每次只检查一次，example 仍会反复调用，并在每次调用之间检查控制消息。
-等待和轮询会占用 CPU；没有隐含的无限等待参数。此版本不提供 CPU 绑核参数。
+等待和轮询会占用 CPU；gather/scatter 工作线程池在等待任务时也自旋。
+`--gather-cpus` 只需在 remote 端设置，通过 `MF_HOST_RDMA_GATHER_CPUS` 在准备时传给 offload，
+不改变 MF 准备接口。也可直接设置该环境变量；命令行值优先于环境变量和 env-file。
+未设置时从当前线程允许的 CPU 中自动选择，优先当前 CPU，再按 CPU 编号补齐。
+CPU 数少于 gather 线程数、列表重复/非法或指定 CPU 不在允许集合内时，准备阶段报错。
+列表多于线程数时使用前 N 个。线程数仍由 `--gather-threads` 控制，scatter 不主动绑核。
 
 每轮都在计时外验证最终目标数据。结果报告 Python 调用 C++ offload 的端到端 avg/p50/p95/p99，
 包含 pybind 参数转换开销，不含数据校验及 case 控制握手；远端报告处理请求数及空轮询次数。

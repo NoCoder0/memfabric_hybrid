@@ -41,6 +41,7 @@ def parse_args(argv=None):
     p.add_argument("--warmup", "--warmup-rounds", type=int, default=10)
     p.add_argument("--chunk", type=int, default=128, help="cont watermark interval in blocks per link")
     p.add_argument("--gather-threads", type=int, default=16)
+    p.add_argument("--gather-cpus", help="remote gather worker CPUs, e.g. 0-15 or 0-7,16-23; default: auto-select")
     p.add_argument("--scatter-threads", type=int, default=6)
     p.add_argument("--dram-mb", type=int, help="per-rank pool capacity; otherwise calculated automatically")
     p.add_argument("--poll-timeout-ms", type=int, default=100, help="remote busy-poll idle deadline; 0 checks once")
@@ -396,6 +397,8 @@ def worker(a):
 def main():
     a = parse_args()
     a.mode = load_env(a.env_file)
+    if a.gather_cpus is not None:
+        os.environ["MF_HOST_RDMA_GATHER_CPUS"] = a.gather_cpus
     write_results(a, [])
     process = mp.get_context("spawn").Process(target=worker, args=(a,))
     process.start()

@@ -19,14 +19,13 @@
 #include <thread>
 #include <vector>
 #include "smem_bm_sparse_backend.h"
-#include "smem_thread_pool.h"
+#include "acc_offload_parallel_copy_pool.h"
 #include "acc_offload.h"
 
 namespace ock::offload {
 using smem::HostRdmaSparseConfig;
 using smem::HostRdmaSparseLayout;
 using smem::HostRdmaSparseMode;
-using smem::ExecutorService;
 
 class HostRdmaSparse {
 public:
@@ -50,7 +49,6 @@ private:
     int32_t Wait(uint64_t offset, uint64_t value);
     int32_t Serve();
     int32_t Transfer(const std::vector<uint64_t> &sources, std::vector<uint64_t> &destinations, uint64_t bytes);
-    void CpuCopy(const std::vector<uint64_t> &sources, const std::vector<uint64_t> &destinations, uint64_t bytes);
     uint64_t Load(uint64_t offset) const;
     uint64_t Local(uint64_t offset) const;
     uint64_t Remote(uint64_t offset) const;
@@ -67,7 +65,7 @@ private:
     std::atomic<bool> failed_{false};
     bool started_ = false;
     std::mutex copyMutex_;
-    std::unique_ptr<ExecutorService> workers_;
+    std::unique_ptr<ParallelCopyPool> workers_;
 };
 } // namespace ock::offload
 #endif

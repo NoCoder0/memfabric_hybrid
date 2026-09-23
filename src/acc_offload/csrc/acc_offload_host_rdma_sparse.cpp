@@ -14,7 +14,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <future>
+#include <cstdlib>
+#include <stdexcept>
 #include "smem_types.h"
 #include "acc_offload_logger.h"
 
@@ -22,6 +23,39 @@ namespace ock::offload {
 using namespace smem;
 namespace {
 using Clock = std::chrono::steady_clock;
+std::vector<int> GatherCpus(uint32_t threads)
+{
+    std::vector<int> cpus;
+    const char *spec = std::getenv("MF_HOST_RDMA_GATHER_CPUS");
+    if (spec != nullptr && !ParseCpuList(spec, cpus)) {
+        throw std::invalid_argument("invalid MF_HOST_RDMA_GATHER_CPUS");
+    }
+    if (cpus.empty()) {
+        cpus = GetGatherCpus(threads);
+    }
+    if (cpus.size() < threads) {
+        throw std::invalid_argument("gather requires at least gatherThreads allowed/configured CPUs");
+    }
+    cpus.resize(threads);
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    if (sched_getaffinity(0, sizeof(allowed), &allowed) != 0) {
+        throw std::runtime_error("cannot read gather CPU affinity");
+    }
+    for (int cpu : cpus) {
+        if (!CPU_ISSET(cpu, &allowed)) {
+            throw std::invalid_argument("gather CPU is outside caller's allowed CPU set: " + std::to_string(cpu));
+        }
+    }
+    std::fprintf(stdout, "[offload] gather worker CPUs:");
+    for (int cpu : cpus) {
+        std::fprintf(stdout, " %d", cpu);
+    }
+    std::fprintf(stdout, "\n");
+    std::fflush(stdout);
+    return cpus;
+}
+
 class StageTimer {
 public:
     explicit StageTimer(uint64_t &duration) : duration_(duration), begin_(Clock::now()) {}
@@ -89,11 +123,12 @@ int32_t HostRdmaSparse::Prepare()
     std::memset(reinterpret_cast<void *>(Va(layout_.message)), 0, layout_.bytes - layout_.message);
     try {
         if (config_.mode == HostRdmaSparseMode::GATHER) {
-            workers_ = std::make_unique<ExecutorService>(config_.rank == 1 ? o.gatherThreads : o.scatterThreads);
-            if (!workers_->Start()) {
-                OFFLOAD_LOG_ERROR("cannot start sparse CPU workers, rank=" << config_.rank);
-                return SM_ERROR;
+            std::vector<int> cpus;
+            if (config_.rank == 1) {
+                cpus = GatherCpus(o.gatherThreads);
             }
+            workers_ = std::make_unique<ParallelCopyPool>(
+                config_.rank == 1 ? o.gatherThreads : o.scatterThreads, cpus);
         }
         started_ = true;
         return SM_OK;
@@ -168,36 +203,6 @@ int32_t HostRdmaSparse::Submit(const uint64_t *sources, const uint64_t *destinat
     return ret == SM_OK ? Publish(layout_.request, sequence_) : ret;
 }
 
-void HostRdmaSparse::CpuCopy(const std::vector<uint64_t> &sources, const std::vector<uint64_t> &destinations,
-                             uint64_t bytes)
-{
-    uint32_t threads = config_.rank == 1 ? config_.options.gatherThreads : config_.options.scatterThreads;
-    std::vector<std::future<void>> futures;
-    // Wait for every submitted job even on allocation/submission failure.
-    try {
-        futures.reserve(threads);
-        for (uint32_t t = 0; t < threads; ++t) {
-            auto task = std::make_shared<std::packaged_task<void()>>([&, t] {
-                for (size_t i = sources.size() * t / threads; i < sources.size() * (t + 1) / threads; ++i) {
-                    std::memcpy(reinterpret_cast<void *>(destinations[i]), reinterpret_cast<void *>(sources[i]), bytes);
-                }
-            });
-            futures.push_back(task->get_future());
-            if (!workers_->Execute([task] { (*task)(); })) {
-                (*task)();
-            }
-        }
-    } catch (...) {
-        for (auto &future : futures) {
-            future.wait();
-        }
-        throw;
-    }
-    for (auto &future : futures) {
-        future.get();
-    }
-}
-
 int32_t HostRdmaSparse::ConsumeProgress(const uint64_t *destinations, uint32_t count, uint64_t bytes)
 {
     std::vector<uint32_t> consumed(config_.links), ends(config_.links);
@@ -251,12 +256,11 @@ int32_t HostRdmaSparse::Receive(const uint64_t *destinations, uint32_t count, ui
     }
     if (config_.mode == HostRdmaSparseMode::GATHER) {
         StageTimer timer(timing_.scatterNs);
-        std::vector<uint64_t> sources(count), targets(count);
+        std::vector<void *> targets(count);
         for (uint32_t i = 0; i < count; ++i) {
-            sources[i] = Va(i * bytes);
-            targets[i] = config_.localVa + destinations[i] - config_.localGva;
+            targets[i] = reinterpret_cast<void *>(config_.localVa + destinations[i] - config_.localGva);
         }
-        CpuCopy(sources, targets, bytes);
+        workers_->Scatter(reinterpret_cast<void *>(Va(0)), targets, bytes);
     }
     return SM_OK;
 }
@@ -297,12 +301,12 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
     if (config_.mode == HostRdmaSparseMode::GATHER) {
         {
             StageTimer timer(timing_.gatherNs);
-            std::vector<uint64_t> nativeSources(count), aggregate(count);
+            std::vector<uint64_t> nativeSources(count);
             for (size_t i = 0; i < count; ++i) {
                 nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
-                aggregate[i] = Va(i * bytes);
             }
-            CpuCopy(nativeSources, aggregate, bytes);
+            workers_->GatherAddresses(nativeSources.data(), static_cast<uint32_t>(count),
+                                      reinterpret_cast<void *>(Va(0)), bytes);
         }
         StageTimer timer(timing_.writeNs);
         return copy_(Local(0), destinations[0], count * bytes);

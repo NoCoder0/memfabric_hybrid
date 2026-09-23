@@ -222,6 +222,26 @@ TEST(HostRdmaSparseTest, TimingTracksCompletedRequestsAndApplicableStages)
     }
 }
 
+TEST(HostRdmaSparseTest, OriginalGatherCpuListSyntaxAndAutomaticSelection)
+{
+    std::vector<int> cpus;
+    ASSERT_TRUE(ParseCpuList("0-2,5,7-8", cpus));
+    EXPECT_EQ(cpus, (std::vector<int>{0, 1, 2, 5, 7, 8}));
+    for (const auto *invalid : {"", "1,1", "2-1", "1,", "1,,2", "-1", "abc", "999999"}) {
+        cpus.clear();
+        EXPECT_FALSE(ParseCpuList(invalid, cpus));
+    }
+    cpu_set_t allowed;
+    CPU_ZERO(&allowed);
+    ASSERT_EQ(sched_getaffinity(0, sizeof(allowed), &allowed), 0);
+    cpus = GetGatherCpus(3);
+    ASSERT_FALSE(cpus.empty());
+    EXPECT_LE(cpus.size(), 3U);
+    for (int cpu : cpus) {
+        EXPECT_TRUE(CPU_ISSET(cpu, &allowed));
+    }
+}
+
 TEST(HostRdmaSparseTest, RejectsInvalidRangesOverlapsAndProviderCallsWithoutPoisoning)
 {
     SparsePair pair(HostRdmaSparseMode::BASELINE);
