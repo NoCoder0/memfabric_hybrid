@@ -16,7 +16,7 @@ import socket
 import sys
 import time
 
-DEFAULT_COUNTS = [100, 200, 400, 800, 1600, 3200, 6400, 12800, 25600]
+DEFAULT_COUNTS = [100, 200, 300, 400, 600, 800, 1200, 1600, 2400, 3200, 4800, 6400, 9600, 12800, 19200, 25600]
 DEFAULT_SIZES = [656, 1024]
 MODES = ("baseline", "cont", "gather")
 MIB = 1024 * 1024
@@ -33,7 +33,7 @@ def parse_args(argv=None):
     p.add_argument("--hcom-url", required=True, help="this host's RDMA URL(s), separated by semicolons")
     p.add_argument("--control-host", required=True, help="local rank 0 control address reachable by remote rank 1")
     p.add_argument("--control-port", type=int, default=18581)
-    p.add_argument("--counts", "--segments", nargs="+", type=int, help="default: 100, 200, 400, ..., 25600")
+    p.add_argument("--counts", "--segments", nargs="+", type=int, help=f"default: {DEFAULT_COUNTS}")
     p.add_argument("--sizes", "--segment-bytes", nargs="+", type=int, help="default: 656, 1024 bytes")
     p.add_argument("--matrix", action="store_true", help="compatibility flag; the default already runs the matrix")
     p.add_argument("--stride", type=int, help="default: twice each case's block size")
