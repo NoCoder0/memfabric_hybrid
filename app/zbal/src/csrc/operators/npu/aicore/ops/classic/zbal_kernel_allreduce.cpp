@@ -126,38 +126,50 @@ private:
         ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_KERNEL_ALL);
         if (meta.aivNumLtGroupSize) {
             ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
-            if (aivIndex == 0) {
-                xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(input), totalElems);
-                buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
-                CpGM2GM(xGm, buffGm, totalElems);
-            }
-            AscendC::SyncAll<true>();
+            if constexpr (std::is_same_v<T, int64_t>) {
+                // int64 has no atomic add: core0 acts as the single writer and does the whole reduction
+                InitDataAddrAndFlag(INPUT_ONLY);
+                ProcessLtSingleWriter();
+            } else {
+                if (aivIndex == 0) {
+                    xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(input), totalElems);
+                    buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
+                    CpGM2GM(xGm, buffGm, totalElems);
+                }
+                AscendC::SyncAll<true>();
 
-            InitDataAddrAndFlag(INPUT_ONLY);
-            for (auto srcRank = meta.startRank; srcRank < meta.endRank; srcRank++) {
-                WaitFlagAndPtr(srcRank, INPUT_ONLY);
-                xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr), totalElems);
-                buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
-                if (srcRank != rank) {
-                    CpGM2GM(xGm, buffGm, totalElems, true, atomicOp);
+                InitDataAddrAndFlag(INPUT_ONLY);
+                for (auto srcRank = meta.startRank; srcRank < meta.endRank; srcRank++) {
+                    WaitFlagAndPtr(srcRank, INPUT_ONLY);
+                    xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr), totalElems);
+                    buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
+                    if (srcRank != rank) {
+                        CpGM2GM(xGm, buffGm, totalElems, true, atomicOp);
+                    }
                 }
             }
             ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
         } else {
             InitDataAddrAndFlag(INPUT_BUFFER_BOTH);
-            WaitFlagAndPtr(aivIndex, INPUT_BUFFER_BOTH);
-
-            ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
-            xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr), totalElems);
-            buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
-            if (aivIndex == rank) {
-                CpGM2GM(xGm, buffGm, totalElems);
-                AscendC::SyncAll<true>();
+            if constexpr (std::is_same_v<T, int64_t>) {
+                ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
+                ProcessLtSingleWriter();
+                ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
             } else {
-                AscendC::SyncAll<true>();
-                CpGM2GM(xGm, buffGm, totalElems, true, atomicOp);
+                WaitFlagAndPtr(aivIndex, INPUT_BUFFER_BOTH);
+
+                ZBAL_PROF_START(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
+                xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr), totalElems);
+                buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
+                if (aivIndex == rank) {
+                    CpGM2GM(xGm, buffGm, totalElems);
+                    AscendC::SyncAll<true>();
+                } else {
+                    AscendC::SyncAll<true>();
+                    CpGM2GM(xGm, buffGm, totalElems, true, atomicOp);
+                }
+                ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
             }
-            ZBAL_PROF_STOP(comm, ZBAL_PROF_ALLREDUCE_SCATTER_REDUCE);
         }
 
         BarrierAll(true, true, waitSymbol);
@@ -231,35 +243,95 @@ private:
         InitDataAddrAndFlag(INPUT_ONLY);
 
         // step3. 分核与并行拷贝
-        uint32_t xOffset = 0;
-        uint32_t yOffset = 0;
-        uint32_t numPerCore = 0;
-        if (meta.aivNumLtGroupSize) {
-            numPerCore = elements;
-            xOffset = rank * slice;
-            yOffset = 0;
+        if constexpr (std::is_same_v<T, int64_t>) {
+            // int64 has no MTE atomic add: switch to a single-writer serial reduction, reusing step1's
+            // per-core sub-range split to avoid losing read-modify-write updates when multiple cores
+            // write the same buffer concurrently
+            ProcessRsSingleWriter(xOffsetLocal, yOffsetLocal, numPerCoreLocal);
         } else {
-            numPerCore = elements / meta.corePerRank;
-            xOffset = rank * slice + meta.coreRankIdx * numPerCore;
-            yOffset = meta.coreRankIdx * numPerCore;
-            if (meta.coreRankIdx == meta.corePerRank - 1) {
-                numPerCore = elements - (meta.corePerRank - 1) * numPerCore;
+            uint32_t xOffset = 0;
+            uint32_t yOffset = 0;
+            uint32_t numPerCore = 0;
+            if (meta.aivNumLtGroupSize) {
+                numPerCore = elements;
+                xOffset = rank * slice;
+                yOffset = 0;
+            } else {
+                numPerCore = elements / meta.corePerRank;
+                xOffset = rank * slice + meta.coreRankIdx * numPerCore;
+                yOffset = meta.coreRankIdx * numPerCore;
+                if (meta.coreRankIdx == meta.corePerRank - 1) {
+                    numPerCore = elements - (meta.corePerRank - 1) * numPerCore;
+                }
+            }
+
+            for (auto srcRank = meta.startRank; srcRank < meta.endRank; srcRank++) {
+                WaitFlagAndPtr(srcRank, INPUT_ONLY);
+                xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr) + xOffset, numPerCore);
+                buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer) + yOffset, numPerCore);
+                if (srcRank != rank) {
+                    ZBAL_PROF_START(comm, ZBAL_PROF_REDUCESCATTER_COPY);
+                    CpGM2GM(xGm, buffGm, numPerCore, true, atomicOp);
+                    ZBAL_PROF_STOP(comm, ZBAL_PROF_REDUCESCATTER_COPY);
+                }
             }
         }
 
-        for (auto srcRank = meta.startRank; srcRank < meta.endRank; srcRank++) {
+        // Do not reuse waitSymbol for BarrierAll: the same magic as at Process start leaves two-stage
+        // flag/stat residue behind and turns the barrier into a no-op,
+        BarrierAll(true, true, waitSymbol - 1);
+    }
+
+    // int64-only GT reduction: serially accumulate from each source within this core's sub-range
+    // (single writer, safe without atomics). Precondition: step1 finished the local copy via bindQueue;
+    // this function switches the pipe to the Reduce64 two-operand buffers, and the pipe.Reset() at the
+    // start of the AG phase restores bindQueue afterwards.
+    ZBAL_KERNEL void ProcessRsSingleWriter(uint32_t xOffset, uint32_t yOffset, uint32_t numPerCore)
+    {
+        if (numPerCore == 0) {
+            return;
+        }
+        InitReduce64Buffer();
+        for (uint32_t srcRank = 0; srcRank < groupSize; srcRank++) {
+            if (srcRank == rank) {
+                continue;
+            }
             WaitFlagAndPtr(srcRank, INPUT_ONLY);
             xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr) + xOffset, numPerCore);
             buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer) + yOffset, numPerCore);
-            if (srcRank != rank) {
+            ZBAL_PROF_START(comm, ZBAL_PROF_REDUCESCATTER_COPY);
+            Reduce64MTE<T>(xGm, buffGm, numPerCore, atomicOp);
+            ZBAL_PROF_STOP(comm, ZBAL_PROF_REDUCESCATTER_COPY);
+        }
+    }
+
+    // int64-only LT reduction: core0 first initializes buffer with this rank's data via a plain copy
+    // (bindQueue must stay alive), then switches to the Reduce64 two-operand buffers to accumulate from
+    // each source, and finally restores bindQueue for the trailing buff->y copy. Other cores only join
+    // the SyncAll alignment. Precondition: the caller finished the InitDataAddrAndFlag flag exchange.
+    ZBAL_KERNEL void ProcessLtSingleWriter()
+    {
+        if (aivIndex == 0) {
+            xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(input), totalElems);
+            buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
+            CpGM2GM(xGm, buffGm, totalElems);
+        }
+        AscendC::SyncAll<true>();
+        if (aivIndex == 0) {
+            InitReduce64Buffer();
+            for (uint32_t srcRank = 0; srcRank < groupSize; srcRank++) {
+                if (srcRank == rank) {
+                    continue;
+                }
+                WaitFlagAndPtr(srcRank, INPUT_ONLY);
+                xGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(inputPtr), totalElems);
+                buffGm.SetGlobalBuffer(reinterpret_cast<__gm__ T *>(buffer), totalElems);
                 ZBAL_PROF_START(comm, ZBAL_PROF_REDUCESCATTER_COPY);
-                CpGM2GM(xGm, buffGm, numPerCore, true, atomicOp);
+                Reduce64MTE<T>(xGm, buffGm, totalElems, atomicOp);
                 ZBAL_PROF_STOP(comm, ZBAL_PROF_REDUCESCATTER_COPY);
             }
+            RestoreBindQueueBuffer();
         }
-
-        // 不复用 waitSymbol 做 BarrierAll: 与 Process 开头相同 magic 会导致 two-stage flag/stat 残留而 no-op,
-        BarrierAll(true, true, waitSymbol - 1);
     }
 
     ZBAL_KERNEL void ProcessAg()
@@ -415,6 +487,16 @@ extern "C" __global__ __aicore__ void ZBALAllReduceInner(GM_ADDR input, GM_ADDR 
             op.Process();
             break;
         }
+#if defined(ZBAL_ASCEND_NPU_A5)
+        // INT64 stays A5-only: the A3 (dav_c220) vector core has no 64-bit integer
+        // vadd/vmax/vmin, so instantiating this kernel there fails to compile.
+        case zbal_datatype_t::ZBAL_DATA_TYPE_INT64: {
+            ZBALAllReduceKernel<int64_t> op;
+            op.Init(input, output, gva, buffer, totalElems, reduceOp, waitSymbol);
+            op.Process();
+            break;
+        }
+#endif
         default:
             return;
     }
@@ -423,6 +505,15 @@ extern "C" __global__ __aicore__ void ZBALAllReduceInner(GM_ADDR input, GM_ADDR 
 int32_t ZBALOpAllReduce(const void *inp, void *out, void *buf, size_t numel, zbal_datatype_t dataType,
                         aclrtStream stream, zbal_reduce_op_t reduceOp, CommGroupInfo &groupInfo)
 {
+    // INT64 allreduce needs the A5 AIV/MTE data path: the A3 vector core has no 64-bit integer
+    // vadd/vmax/vmin, both SDMA channels (AIV and AICPU) encode reduce dtypes without an INT64
+    // entry, and vector reduce has no PROD. A3 is blocked at the torch adaptor entry (chip macro)
+    // and the device switch below compiles no INT64 case on A3, so this guard can stay purely
+    // runtime: the host-side TU of this launcher does not reliably see the chip macro.
+    if (dataType == zbal_datatype_t::ZBAL_DATA_TYPE_INT64 &&
+        (groupInfo.dataOpType != ZBAL_DATA_OP_MTE || reduceOp == ZBAL_REDUCE_PROD)) {
+        return Z_INVALID_VALUE;
+    }
     uint32_t blockDim = ZBALOpGetAivBlockDim(groupInfo, numel, dataType);
     if (numel <= groupInfo.groupSize && blockDim > groupInfo.groupSize) {
         blockDim = groupInfo.groupSize;

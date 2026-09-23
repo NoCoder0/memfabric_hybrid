@@ -443,7 +443,16 @@ c10::intrusive_ptr<c10d::Work> ProcessGroupZBAL::allreduce(std::vector<at::Tenso
             auto zbalType = GetZbalDataType(scalarType);
             auto zbalReduceOp = GetZbalReduceOp(opts.reduceOp);
 
+        // int64 allreduce is A5-only (AIV/MTE path): A5 builds accept kLong here and the kernel
+        // launcher rejects non-MTE routes; A3 builds reject it outright, since the A3 vector core
+        // has no 64-bit integer reduce. reduce_scatter has no int64 implementation yet, so the
+        // shared ZbalReduceSupportDataType whitelist stays without kLong.
+#if defined(ZBAL_ASCEND_NPU_A5)
+            ZBAL_CHECK_S(ZbalReduceSupportDataType(scalarType) || scalarType == at::kLong,
+                         "Unsupported data type for ZBAL allreduce");
+#else
             ZBAL_CHECK_S(ZbalReduceSupportDataType(scalarType), "Unsupported data type for ZBAL allreduce");
+#endif
 
             auto slice = numel / size_;
             auto elements = (rank_ != size_ - 1) ? slice : numel - (size_ - 1) * slice;
