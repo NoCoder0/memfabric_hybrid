@@ -48,7 +48,11 @@ int32_t ProcessSparse(void *context, uint64_t request)
 {
     return static_cast<HostRdmaSparse *>(context)->ProcessRequest(request);
 }
-const smem::HostRdmaSparseBackend BACKEND{CreateSparse, DestroySparse, ProcessSparse};
+int32_t PrepareSparseCase(void *context, const uint64_t *destinations, uint32_t count, uint64_t bytes)
+{
+    return static_cast<HostRdmaSparse *>(context)->PrepareCase(destinations, count, bytes);
+}
+const smem::HostRdmaSparseBackend BACKEND{CreateSparse, DestroySparse, ProcessSparse, PrepareSparseCase};
 // Only register the lifecycle hooks at load time: no allocation, threads, MF init or NPU init.
 [[maybe_unused]] const int32_t REGISTERED = smem::RegisterHostRdmaSparseBackend(&BACKEND);
 

@@ -296,6 +296,24 @@ SMEM_API int32_t smem_bm_poll_host_rdma_sparse(smem_bm_t handle, uint32_t timeou
     return entry->PollHostRdmaSparse(timeoutMs);
 }
 
+SMEM_API int32_t smem_bm_prepare_host_rdma_sparse_case(smem_bm_t handle, const uint64_t *destinations,
+                                                      uint32_t count, uint64_t blockBytes)
+{
+    const auto *backend = Backend().load();
+    SM_VALIDATE_RETURN(backend != nullptr && backend->prepareCase != nullptr,
+                       "sparse backend does not support case preparation", SM_NOT_INITIALIZED);
+    struct CaseArgs {
+        const HostRdmaSparseBackend *backend;
+        const uint64_t *destinations;
+        uint32_t count;
+        uint64_t bytes;
+    } args{backend, destinations, count, blockBytes};
+    return UseHostRdmaSparseContext(handle, [](void *context, void *opaque) {
+        const auto &c = *static_cast<CaseArgs *>(opaque);
+        return c.backend->prepareCase(context, c.destinations, c.count, c.bytes);
+    }, &args);
+}
+
 namespace ock::smem {
 int32_t UseHostRdmaSparseContext(smem_bm_t handle, HostRdmaSparseVisitor visitor, void *args)
 {

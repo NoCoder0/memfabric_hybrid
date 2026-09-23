@@ -127,6 +127,7 @@ int32_t HostRdmaSparse::Prepare()
             if (config_.rank == 1) {
                 cpus = GatherCpus(o.gatherThreads);
             }
+            gatherCpus_ = cpus;
             workers_ = std::make_unique<ParallelCopyPool>(
                 config_.rank == 1 ? o.gatherThreads : o.scatterThreads, cpus);
         }
@@ -180,7 +181,7 @@ int32_t HostRdmaSparse::Wait(uint64_t offset, uint64_t value)
         if (Load(offset) == value) {
             return SM_OK;
         }
-        std::this_thread::yield();
+        CpuRelax();
     }
     OFFLOAD_LOG_ERROR("sparse wait interrupted/timed out, rank=" << config_.rank << " sequence=" << sequence_);
     return SM_TIMEOUT;
@@ -256,11 +257,7 @@ int32_t HostRdmaSparse::Receive(const uint64_t *destinations, uint32_t count, ui
     }
     if (config_.mode == HostRdmaSparseMode::GATHER) {
         StageTimer timer(timing_.scatterNs);
-        std::vector<void *> targets(count);
-        for (uint32_t i = 0; i < count; ++i) {
-            targets[i] = reinterpret_cast<void *>(config_.localVa + destinations[i] - config_.localGva);
-        }
-        workers_->Scatter(reinterpret_cast<void *>(Va(0)), targets, bytes);
+        workers_->Scatter(reinterpret_cast<void *>(Va(0)), targetVas_, bytes);
     }
     return SM_OK;
 }
@@ -276,6 +273,9 @@ int32_t HostRdmaSparse::Run(const uint64_t *sources, const uint64_t *destination
             return SM_INVALID_PARAM;
         }
         ++sequence_;
+        if (config_.mode == HostRdmaSparseMode::GATHER) {
+            PrepareTargets(destinations, count);
+        }
         int32_t ret;
         {
             StageTimer timer(timing_.requestNs);
@@ -299,12 +299,12 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
 {
     auto count = sources.size();
     if (config_.mode == HostRdmaSparseMode::GATHER) {
+        std::vector<uint64_t> nativeSources(count);
+        for (size_t i = 0; i < count; ++i) {
+            nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
+        }
         {
             StageTimer timer(timing_.gatherNs);
-            std::vector<uint64_t> nativeSources(count);
-            for (size_t i = 0; i < count; ++i) {
-                nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
-            }
             workers_->GatherAddresses(nativeSources.data(), static_cast<uint32_t>(count),
                                       reinterpret_cast<void *>(Va(0)), bytes);
         }
@@ -409,5 +409,48 @@ int32_t HostRdmaSparse::LastTiming(offload_host_rdma_sparse_timing_t &timing)
     }
     timing = timing_;
     return SM_OK;
+}
+
+void HostRdmaSparse::PrepareTargets(const uint64_t *destinations, uint32_t count)
+{
+    if (targetGvas_.size() == count && std::equal(targetGvas_.begin(), targetGvas_.end(), destinations)) {
+        return;
+    }
+    targetGvas_.assign(destinations, destinations + count);
+    targetVas_.resize(count);
+    for (uint32_t i = 0; i < count; ++i) {
+        targetVas_[i] = reinterpret_cast<void *>(config_.localVa + destinations[i] - config_.localGva);
+    }
+}
+
+int32_t HostRdmaSparse::PrepareCase(const uint64_t *destinations, uint32_t count, uint64_t bytes)
+{
+    std::lock_guard<std::mutex> lock(copyMutex_);
+    if (!started_ || stopped_ || failed_ || count == 0 || count > config_.options.maxBlocks ||
+        bytes == 0 || bytes > config_.options.maxBlockBytes || (config_.rank == 0 && destinations == nullptr)) {
+        OFFLOAD_LOG_ERROR("invalid sparse case preparation, rank=" << config_.rank << " count=" << count);
+        return SM_INVALID_PARAM;
+    }
+    try {
+        if (config_.rank == 0) {
+            for (uint32_t i = 0; i < count; ++i) {
+                if (!ValidRange(destinations[i], bytes, true)) {
+                    OFFLOAD_LOG_ERROR("invalid sparse case target, index=" << i);
+                    return SM_INVALID_PARAM;
+                }
+            }
+            PrepareTargets(destinations, count);
+        }
+        if (config_.mode == HostRdmaSparseMode::GATHER) {
+            workers_.reset();
+            workers_ = std::make_unique<ParallelCopyPool>(
+                config_.rank == 1 ? config_.options.gatherThreads : config_.options.scatterThreads, gatherCpus_);
+        }
+        return SM_OK;
+    } catch (const std::exception &error) {
+        failed_ = true;
+        OFFLOAD_LOG_ERROR("cannot prepare sparse case: " << error.what());
+        return SM_ERROR;
+    }
 }
 } // namespace ock::offload

@@ -200,6 +200,11 @@ class Benchmark:
         return result
 
     def prepare_data(self, case):
+        self.sources = [self.peer + i * case["stride"] for i in range(case["count"])]
+        self.targets = [self.local + i * case["stride"] for i in range(case["count"])]
+        checked(self.handle.prepare_host_rdma_sparse_case(
+            self.targets if self.a.role == "local" else [], case["count"], case["size"]),
+            "prepare_host_rdma_sparse_case")
         for index in range(case["count"]):
             address = self.va + index * case["stride"]
             if self.a.role == "remote":
@@ -209,19 +214,17 @@ class Benchmark:
 
     def copy_case(self, case):
         count, size, stride = case["count"], case["size"], case["stride"]
-        sources = [self.peer + i * stride for i in range(count)]
-        targets = [self.local + i * stride for i in range(count)]
         samples = {name: [] for name in ("e2e", "request", "scatter")}
         for iteration in range(self.a.warmup + self.a.rounds):
             begin = time.perf_counter_ns()
-            checked(self.operation(self.handle, sources, targets, size), "offload.sparse_copy_host_rdma")
+            checked(self.operation(self.handle, self.sources, self.targets, size), "offload.sparse_copy_host_rdma")
             elapsed = time.perf_counter_ns() - begin
             timing = self.timing()  # Query outside E2E timing, before the next request.
-            verify_blocks(self.va, count, size, stride)  # Every round, outside timing.
             if iteration >= self.a.warmup:
                 samples["e2e"].append(elapsed)
                 samples["request"].append(timing["request_ns"])
                 samples["scatter"].append(timing["scatter_ns"])
+        verify_blocks(self.va, count, size, stride)  # Original benchmark: validate after all rounds.
         return {name: summarize(values) for name, values in samples.items()}
 
     def serve_case(self, case, control):
@@ -253,7 +256,7 @@ class Benchmark:
 
 def suite_config(a):
     keys = ("mode", "counts", "sizes", "stride", "rounds", "warmup", "chunk", "links", "dram_mb", "store_url")
-    return {"protocol": 3, **{key: getattr(a, key) for key in keys}}
+    return {"protocol": 3, "benchmark": "post-loop-verify-v1", **{key: getattr(a, key) for key in keys}}
 
 
 def run_cases(a, bench, control):
@@ -315,9 +318,9 @@ def print_summary(a, rows):
         "  E2E         : requester Python/offload call, including validation and pybind; "
         "excludes result verification.\n"
         "  request     : build and publish the address message and request doorbell.\n"
-        "  host gather : build CPU copy addresses and gather into the remote aggregate buffer, including worker wait.\n"
+        "  host gather : original GatherAddresses call only, including dispatch and worker completion wait.\n"
         "  host write  : synchronous MF data copy/batch call; cont includes progress publishing.\n"
-        "  scatter     : gather mode includes address setup and worker wait; cont sums ready-chunk CPU copies only.\n"
+        "  scatter     : original Scatter call only; cont sums ready-chunk CPU copies only.\n"
         "  -           : stage does not apply to this mode. Warmup samples are excluded.\n"
         "  Stage clocks run on their own hosts; cont write/scatter overlap. "
         "E2E also includes unlisted waits/overhead.\n"
@@ -354,6 +357,20 @@ def memory_layout(a, bm):
     return offset, workspace, capacity
 
 
+def pin_main_thread():
+    value = os.environ.get("MF_BENCH_APP_CPU", "")
+    if not value:
+        return
+    try:
+        cpu = int(value)
+        if cpu < 0:
+            raise ValueError("CPU must be nonnegative")
+        os.sched_setaffinity(0, {cpu})
+        print(f"[bench] main thread pinned to cpu {cpu}", flush=True)
+    except (ValueError, OSError) as error:
+        print(f"[bench] cannot pin main thread with MF_BENCH_APP_CPU={value}: {error}; ignored", flush=True)
+
+
 def run_connected(a, control):
     import memfabric_hybrid as mf
     from memfabric_hybrid import bm, offload
@@ -371,6 +388,7 @@ def run_connected(a, control):
                             data_op_type=bm.BmDataOpType.HOST_RDMA, enable_56bits_gva=False)
         checked(handle.join(), "join")
         bench = Benchmark(a, handle, bm, offload, offset, workspace)
+        pin_main_thread()  # MF/HCOM threads already exist; per-case copy pools are created afterwards.
         print(f"rank={rank} mode={a.mode} HOST_RDMA ready; capacity={capacity // MIB} MiB, links={a.links}",
               flush=True)
         rows = run_cases(a, bench, control)

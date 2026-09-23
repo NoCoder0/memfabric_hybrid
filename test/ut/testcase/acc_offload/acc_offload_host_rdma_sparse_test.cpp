@@ -242,6 +242,29 @@ TEST(HostRdmaSparseTest, OriginalGatherCpuListSyntaxAndAutomaticSelection)
     }
 }
 
+TEST(HostRdmaSparseTest, CasePreparationReusesTargetsAndKeepsSequenceAcrossCases)
+{
+    SparsePair pair(HostRdmaSparseMode::GATHER);
+    pair.Start();
+    uint64_t sequence = 0;
+    for (uint32_t count : {17U, 2U, 33U}) {
+        std::vector<uint64_t> targets(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            targets[i] = pair.config[0].localGva + i * 128;
+        }
+        ASSERT_EQ(pair.endpoints[0]->PrepareCase(targets.data(), count, 13), SM_OK);
+        ASSERT_EQ(pair.endpoints[1]->PrepareCase(nullptr, count, 13), SM_OK);
+        for (unsigned round = 0; round < 2; ++round) {
+            pair.VerifyCopy(count, 13, 7);
+            offload_host_rdma_sparse_timing_t timing{};
+            ASSERT_EQ(pair.endpoints[0]->LastTiming(timing), SM_OK);
+            EXPECT_EQ(timing.sequence, ++sequence);
+        }
+    }
+    EXPECT_EQ(pair.endpoints[0]->PrepareCase(nullptr, 2, 13), SM_INVALID_PARAM);
+    EXPECT_EQ(pair.endpoints[1]->PrepareCase(nullptr, 34, 13), SM_INVALID_PARAM);
+}
+
 TEST(HostRdmaSparseTest, RejectsInvalidRangesOverlapsAndProviderCallsWithoutPoisoning)
 {
     SparsePair pair(HostRdmaSparseMode::BASELINE);

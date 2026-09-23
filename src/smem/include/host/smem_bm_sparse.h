@@ -45,6 +45,14 @@ uint64_t smem_bm_host_rdma_sparse_workspace_size(uint32_t maxBlocks, uint64_t ma
  */
 int32_t smem_bm_prepare_host_rdma_sparse(smem_bm_t handle, const smem_bm_host_rdma_sparse_options_t *options);
 
+/** Optional case preparation outside the measured loop, after sparse preparation.
+ * Rank 0 passes count destination GVAs; rank 1 passes nullptr and the same count/bytes.
+ * Caches local destination VAs and recreates the original gather/scatter pool for this case.
+ * Call on idle peers, then synchronize before issuing requests. Does not reset request sequence.
+ */
+int32_t smem_bm_prepare_host_rdma_sparse_case(smem_bm_t handle, const uint64_t *destinations,
+                                            uint32_t count, uint64_t blockBytes);
+
 /**
  * Poll and synchronously process at most one request on prepared rank 1.
  * Returns 1 when processed, 0 when idle, or a negative error code.

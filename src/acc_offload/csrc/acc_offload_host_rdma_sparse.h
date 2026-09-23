@@ -34,12 +34,14 @@ public:
     HostRdmaSparse(const HostRdmaSparseConfig &config, Copy copy, Batch batch);
     ~HostRdmaSparse();
     int32_t Prepare();
+    int32_t PrepareCase(const uint64_t *destinations, uint32_t count, uint64_t bytes);
     int32_t Run(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes);
     int32_t ProcessRequest(uint64_t request);
     int32_t LastTiming(offload_host_rdma_sparse_timing_t &timing);
     void Stop();
 
 private:
+    void PrepareTargets(const uint64_t *destinations, uint32_t count);
     bool ValidRange(uint64_t address, uint64_t bytes, bool local, bool workspace = false) const;
     bool ValidRequest(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes) const;
     int32_t Publish(uint64_t offset, uint64_t value);
@@ -66,6 +68,9 @@ private:
     bool started_ = false;
     std::mutex copyMutex_;
     std::unique_ptr<ParallelCopyPool> workers_;
+    std::vector<int> gatherCpus_;
+    std::vector<uint64_t> targetGvas_;
+    std::vector<void *> targetVas_;
 };
 } // namespace ock::offload
 #endif

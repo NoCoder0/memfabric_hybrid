@@ -40,6 +40,7 @@ struct HostRdmaSparseBackend {
     int32_t (*create)(const HostRdmaSparseConfig &, smem_bm_t, void **);
     void (*destroy)(void *);
     int32_t (*process)(void *, uint64_t request);
+    int32_t (*prepareCase)(void *, const uint64_t *, uint32_t, uint64_t);
 };
 
 // The application owns the calling thread; this object only waits and dispatches.

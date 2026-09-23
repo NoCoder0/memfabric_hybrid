@@ -25,6 +25,8 @@ generation 原子变量派发，工作线程和调用线程自旋等待；不使
 远端 gather 工作线程逐线程绑核，本地 scatter 工作线程沿用原实现，不主动绑核。
 远端由 example 的主线程显式调用 poll；两次 poll 之间检查控制消息。
 一个 BM 上串行处理请求，整个块数/块大小矩阵复用同一次建链和准备。
+每个 case 在热循环前调用 MF 的 `prepare_host_rdma_sparse_case`，缓存目标 VA 数组并重建原线程池。
+相同目标地址的后续请求复用数组；正常 copy 接口仍支持目标地址变化，并自动更新缓存。
 
 ## 模式
 
@@ -129,7 +131,8 @@ TCP 只承载配置核对、屏障、结果和退出消息；地址消息、requ
 CPU 数少于 gather 线程数、列表重复/非法或指定 CPU 不在允许集合内时，准备阶段报错。
 列表多于线程数时使用前 N 个。线程数仍由 `--gather-threads` 控制，scatter 不主动绑核。
 
-每轮都在计时外验证最终目标数据。结果报告 Python 调用 C++ offload 的端到端 avg/p50/p95/p99，
+沿用原 C++ benchmark：每个 case 的预热及全部计时轮次结束后，再校验最终目标数据。
+结果报告 Python 调用 C++ offload 的端到端 avg/p50/p95/p99，
 包含 pybind 参数转换开销，不含数据校验及 case 控制握手；远端报告处理请求数及空轮询次数。
 
 全部用例完成后，按 URMA 示例的样式打印平均耗时汇总表：
@@ -148,14 +151,19 @@ JSON 保留原有字段并新增各阶段统计及 min/max；同目录 `<stats-f
 |---|---|
 | E2E | Python 调用同步 offload 接口，包括 pybind、地址校验、发布请求、等待和数据搬运；不含结果校验和统计查询 |
 | request | 构建地址消息、传输消息并发布 request doorbell |
-| host gather | 构建 CPU 拷贝地址并聚合，含工作线程调度和等待 |
+| host gather | 仅原 `GatherAddresses()` 调用，含派发和等待完成；地址解析/换算在此计时外 |
 | host write | 同步 MF copy/batch 调用；cont 包含进度水位发布，不含最终 status/done 发布 |
-| scatter | gather：构建地址并执行线程池 scatter；cont：累加已有进度的 CPU 拷贝区间，不含等待水位 |
+| scatter | gather：仅原 `Scatter()` 调用，不含目标数组分配、换算和释放；cont：累加已有进度的 CPU 拷贝区间 |
 
 阶段耗时由各端原生算子计时，每次成功请求后查询，按 sequence 校验匹配。
 `cont` 的 write/scatter 重叠，request 和远端处理也可能重叠，**不能将各阶段相加作为 E2E**。
 E2E 还包含未单列的协议等待、消息解析等开销；算子内读时钟的开销包含在本次测试中。
 本次新增原生统计接口，两端需重新构建安装 offload 库及 Python 扩展。
+case 准备接口也需要同步更新 SMEM 库和 Python 扩展。旧 copy/prepare 接口签名保持不变。
+支持原 `MF_BENCH_APP_CPU`：通信线程和全局准备完成后绑定调用线程，再创建各 case 的线程池。
+gather 仍显式逐线程绑核；scatter 沿用原实现，继承创建线程的 affinity。
+因此若指定单个 `MF_BENCH_APP_CPU`，scatter 线程也会继承这个单核集合，这与原 benchmark 一致。
+阶段计时口径已对齐；Python E2E 仍含 Python/pybind 调用开销，不等同于原纯 C++ E2E。
 完整矩阵耗时超过默认 600 秒时，可在两端增加 `--timeout`，或减少 `--rounds`。
 
 ## 应用接口
@@ -172,6 +180,12 @@ ret = handle.prepare_host_rdma_sparse(
 )
 if ret != 0:
     raise RuntimeError(f"prepare failed: {ret}")
+
+# 可选：每个 case 的热循环前准备目标地址与线程池，之后两端做 ready 屏障。
+# rank 0 传本 case 的 dst_gvas；rank 1 传 []。无需重置请求序号。
+ret = handle.prepare_host_rdma_sparse_case(dst_gvas if rank == 0 else [], count, block_bytes)
+if ret != 0:
+    raise RuntimeError(f"case prepare failed: {ret}")
 
 # rank 1：应用在自己的线程/事件循环中按需调用。
 ret = handle.poll_host_rdma_sparse(timeout_ms=100)

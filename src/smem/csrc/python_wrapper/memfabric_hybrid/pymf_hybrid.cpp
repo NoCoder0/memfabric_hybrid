@@ -182,6 +182,15 @@ public:
         return smem_bm_prepare_host_rdma_sparse(handle_, &options);
     }
 
+    int32_t PrepareHostRdmaSparseCase(const std::vector<uint64_t> &destinations, uint32_t count, uint64_t bytes)
+    {
+        if (!destinations.empty() && destinations.size() != count) {
+            throw py::value_error("destination count does not match sparse case count");
+        }
+        return smem_bm_prepare_host_rdma_sparse_case(
+            handle_, destinations.empty() ? nullptr : destinations.data(), count, bytes);
+    }
+
     py::capsule NativeHandle() const
     {
         if (handle_ == nullptr) { throw std::runtime_error("BM has been destroyed"); }
@@ -821,6 +830,8 @@ Returns:
         .def("destroy", &BigMemory::Destroy, py::call_guard<py::gil_scoped_release>(), R"(
 Destroy the big memory handle.)")
         .def_property_readonly("_native_handle", &BigMemory::NativeHandle)
+        .def("prepare_host_rdma_sparse_case", &BigMemory::PrepareHostRdmaSparseCase,
+             py::call_guard<py::gil_scoped_release>(), py::arg("dst_addrs"), py::arg("count"), py::arg("block_bytes"))
         .def("prepare_host_rdma_sparse", &BigMemory::PrepareHostRdmaSparse,
              py::call_guard<py::gil_scoped_release>(), py::arg("workspace_gva"), py::arg("workspace_bytes"),
              py::arg("max_blocks"), py::arg("max_block_bytes"), py::kw_only(), py::arg("progress_interval") = 128,
