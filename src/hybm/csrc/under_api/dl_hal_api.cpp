@@ -99,21 +99,30 @@ Result DlHalApi::LoadDcmiLibrary()
     }
 
     DL_LOAD_SYM_OPTIONAL(pDcmiInit, dcmiInitFunc, dcmiHandle, "dcmiv2_init");
-    if (pDcmiInit == nullptr) {
-        dlclose(dcmiHandle);
-        dcmiHandle = nullptr;
-        BM_LOG_INFO("Failed to pDcmiInit, because pDcmiInit is null");
-        return BM_DL_FUNCTION_FAILED;
-    }
     DL_LOAD_SYM_OPTIONAL(pDcmiGetAffinityCpuInfo, dcmiGetAffinityCpuInfoFunc, dcmiHandle,
                          "dcmiv2_get_affinity_cpu_info_by_dev_id");
     DL_LOAD_SYM_OPTIONAL(pDcmiGetUrmaDeviceCnt, dcmiGetUrmaDeviceCntFunc, dcmiHandle, "dcmiv2_get_urma_device_cnt");
     DL_LOAD_SYM_OPTIONAL(pDcmiGetEidListByUrmaDevIndex, dcmiGetEidListByUrmaDevIndexFunc, dcmiHandle,
                          "dcmiv2_get_eid_list_by_urma_dev_index");
     DL_LOAD_SYM_OPTIONAL(pDcmiGetDevicePcieInfo, dcmiGetDevicePcieInfoFunc, dcmiHandle, "dcmiv2_get_device_pcie_info");
+    if (pDcmiInit == nullptr) {
+        BM_LOG_WARN("DCMI v2 interface is unavailable in [" << gDcmiLibName
+                                                            << "], DCMI dependent features are disabled");
+        pDcmiGetAffinityCpuInfo = nullptr;
+        pDcmiGetUrmaDeviceCnt = nullptr;
+        pDcmiGetEidListByUrmaDevIndex = nullptr;
+        pDcmiGetDevicePcieInfo = nullptr;
+        dlclose(dcmiHandle);
+        dcmiHandle = nullptr;
+        return BM_OK;
+    }
+
     const int32_t ret = pDcmiInit();
     if (ret != 0) {
-        BM_LOG_INFO("Failed to initialize library [" << gDcmiLibName << "], ret: " << ret);
+        BM_LOG_ERROR("Failed to initialize library [" << gDcmiLibName << "], ret: " << ret);
+        pDcmiGetUrmaDeviceCnt = nullptr;
+        pDcmiGetEidListByUrmaDevIndex = nullptr;
+        pDcmiGetDevicePcieInfo = nullptr;
         dlclose(dcmiHandle);
         dcmiHandle = nullptr;
         return ret;
@@ -123,9 +132,12 @@ Result DlHalApi::LoadDcmiLibrary()
 
 Result DlHalApi::DcmiGetAffinityCpuInfo(int32_t deviceId, std::string &cpuList)
 {
+    std::lock_guard<std::mutex> guard(gMutex);
     if (pDcmiGetAffinityCpuInfo == nullptr) {
+        BM_LOG_ERROR("DCMI affinity interface is unavailable, deviceId: " << deviceId);
         return BM_DL_FUNCTION_FAILED;
     }
+
     constexpr size_t DCMI_CPU_LIST_BUFFER_SIZE = 4096U;
     std::array<char, DCMI_CPU_LIST_BUFFER_SIZE> buffer{};
     int32_t length = static_cast<int32_t>(buffer.size());

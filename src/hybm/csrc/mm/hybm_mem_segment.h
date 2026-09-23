@@ -12,7 +12,9 @@
 #ifndef MEM_FABRIC_HYBRID_HYBM_MEM_SEGMENT_H
 #define MEM_FABRIC_HYBRID_HYBM_MEM_SEGMENT_H
 
+#include <map>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "hybm_common_include.h"
@@ -143,6 +145,31 @@ public:
 
     Result RegisterMemCommon(const void *addr, uint64_t size, MemSlicePtr &slice);
 
+    // ---- gva -> remote rank resolution ----
+    // VA layout invariant: gva = globalVirtualAddress_ + rank * maxSize + delta for any slice (delta < maxSize).
+    // All 5 segments reserve by this layout in ReserveMemorySpace (locally base + localRank * maxSize),
+    // and an imported gva also falls in the peer rank's window, so the rank is derived from the address with
+    // no index table to maintain.
+    // A miss (not reserved / outside the window) returns false and the caller falls back to its local rank.
+    bool FindRemoteRankByVa(uint64_t va, uint32_t &remoteRank) const
+    {
+        if (globalVirtualAddress_ == nullptr || options_.maxSize == 0U || options_.rankCnt == 0U) {
+            return false;
+        }
+        const uint64_t base = reinterpret_cast<uint64_t>(globalVirtualAddress_);
+        // The lower bound must be checked first: if va < base the unsigned subtraction underflows into a
+        // huge but "legitimate" rank.
+        if (va < base) {
+            return false;
+        }
+        const uint64_t offset = va - base;
+        if (offset >= options_.maxSize * options_.rankCnt) {
+            return false;
+        }
+        remoteRank = static_cast<uint32_t>(offset / options_.maxSize);
+        return true;
+    }
+
 protected:
     static bool CanLocalHostReaches(uint32_t superPodId, uint32_t serverId, uint32_t deviceId) noexcept;
     static bool CanSdmaReaches(uint32_t superPodId, uint32_t serverId, uint32_t deviceId) noexcept;
@@ -152,6 +179,8 @@ protected:
 protected:
     const MemSegmentOptions options_;
     const int entityId_;
+    // GVA base of the reserved region, set by each segment in ReserveMemorySpace(); FindRemoteRankByVa uses it
+    uint8_t *globalVirtualAddress_{nullptr};
 
     static bool deviceInfoReady_;
     static int deviceId_;

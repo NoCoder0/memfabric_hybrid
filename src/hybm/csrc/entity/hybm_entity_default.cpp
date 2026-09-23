@@ -469,6 +469,15 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
                 BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex << realSlice->vAddress_
                                                                                  << std::dec << ", ret: " << ret);
                 transportKey.key = {};
+            } else {
+                const uint64_t sliceGva = realSlice->gva_;
+                if (sliceGva != 0) {
+                    // trans scene: the slice already holds the paired GVA, so overwrite the address inside the key
+                    // directly. A peer-side reverse HVA lookup would otherwise yield an "owner GVA" differing from
+                    // the local rebuilt GVA sent by the data plane. Non-trans segments have gva_ == 0, a no-op there.
+                    transportManager_->UpdateMemoryKey(transportKey.key,
+                                                       reinterpret_cast<void *>(static_cast<uintptr_t>(sliceGva)));
+                }
             }
         }
         ret = desc.Append(transportKey);
@@ -1151,11 +1160,19 @@ int32_t MemEntityDefault::ImportForTransport() noexcept
 
 Result MemEntityDefault::LocateAddrAndRank(void *&src, void *&dest, std::pair<uint32_t, uint32_t> &p2pInfo) noexcept
 {
-    auto [srcRank, srcFound] = HybmVaManager::GetInstance().GetRankByGva(reinterpret_cast<uint64_t>(src));
-    p2pInfo.first = srcFound ? srcRank : options_.rankId;
+    // va -> remote rank: resolve by the GVA layout of this entity's segments (gva<->rank is computed by the
+    // segment itself, see MemSegment::FindRemoteRankByVa). A miss means local memory, fall back to options_.rankId.
+    auto resolveRank = [this](uint64_t va) {
+        uint32_t rank = 0;
+        if ((hbmSegment_ != nullptr && hbmSegment_->FindRemoteRankByVa(va, rank)) ||
+            (dramSegment_ != nullptr && dramSegment_->FindRemoteRankByVa(va, rank))) {
+            return rank;
+        }
+        return options_.rankId;
+    };
 
-    auto [destRank, destFound] = HybmVaManager::GetInstance().GetRankByGva(reinterpret_cast<uint64_t>(dest));
-    p2pInfo.second = destFound ? destRank : options_.rankId;
+    p2pInfo.first = resolveRank(reinterpret_cast<uint64_t>(src));
+    p2pInfo.second = resolveRank(reinterpret_cast<uint64_t>(dest));
 
     BM_LOG_DEBUG("LocateAddrAndRank, srcRank: " << p2pInfo.first << ", destRank: " << p2pInfo.second);
     return BM_OK;

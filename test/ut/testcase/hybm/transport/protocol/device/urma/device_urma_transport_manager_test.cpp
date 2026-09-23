@@ -3373,7 +3373,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionAclDramExportsDvaAndHos
     baseInfo.va[HVM_HVA] = MOCK_DRAM_HVA;
     baseInfo.size = MOCK_DRAM_SIZE;
     baseInfo.memType = HYBM_MEM_TYPE_HOST;
-    ASSERT_EQ(vaManager.AddVaInfoFromExternal(baseInfo, 0), BM_OK);
+    ASSERT_EQ(vaManager.AddVaInfo(baseInfo), BM_OK);
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;

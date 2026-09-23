@@ -377,7 +377,7 @@ TEST_F(HybmEntryTest, hybm_gva_to_va_valid_address)
     uint64_t gva = 0x100000000000; // 16T
     uint64_t hva = 0x10000000;     // 4GB
     BaseAllocatedGvaInfo baseInfo = {{gva, 0, hva}, 0x1000, HYBM_MEM_TYPE_HOST};
-    HybmVaManager::GetInstance().AddVaInfoFromExternal(baseInfo, 0);
+    HybmVaManager::GetInstance().AddVaInfo(baseInfo);
 
     uint64_t va = 0;
     auto ret_gva_to_va = hybm_gva_to_va(gva, HYBM_MEM_TYPE_HOST, &va);

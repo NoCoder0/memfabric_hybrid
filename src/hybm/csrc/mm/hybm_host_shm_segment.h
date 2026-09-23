@@ -95,7 +95,6 @@ private:
 private:
     static uint64_t sUsedOffset_;
 
-    uint8_t *globalVirtualAddress_{nullptr};
     uint64_t totalVirtualSize_{0UL};
     uint8_t *localVirtualBase_{nullptr};
     uint64_t allocatedSize_{0UL};

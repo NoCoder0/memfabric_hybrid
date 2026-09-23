@@ -135,17 +135,26 @@ std::string VaToStr(T v)
     return ss.str();
 }
 
+// Parameters of AllocReserveGva. Grouped so that a further one only adds a member here: the call sites pass the
+// leading members by position and leave the specialised trailing ones to their defaults.
+struct GvaReserveOptions {
+    uint64_t size{0};                            // total size to reserve, > 0
+    uint64_t localSize{0};                       // local VA size, may be 0 when enable56BitsGva is set
+    hybm_mem_type memType{HYBM_MEM_TYPE_DEVICE}; // memory type of the reserved range
+    bool enable56BitsGva{false};                 // reserve in the 56-bit GVA area
+    hybm_scene scene{HYBM_SCENE_DEFAULT};        // selects the GVA area, differs for HYBM_SCENE_TRANS
+    uint64_t expectAddr{0};                      // 0 takes the first fit, otherwise that exact window base
+};
+
 // Reserved virtual address ranges; GVA ranges of all types must not overlap.
 struct ReservedGvaInfo {
     uint64_t va[HVM_BUTT]{};                   // >0
     uint64_t size{};                           // >0
     hybm_mem_type memType{HYBM_MEM_TYPE_BUTT}; // Must be set
-    uint32_t localRankId{};                    // Must be set >=0; currently only one localRankId per process
     friend std::ostream &operator<<(std::ostream &os, const ReservedGvaInfo &obj)
     {
         os << "ReservedGvaInfo{va: " << VaToStr(obj.va[HVM_GVA]) << " " << VaToStr(obj.va[HVM_DVA]) << " "
-           << VaToStr(obj.va[HVM_DVA]) << ", size: " << VaToStr(obj.size) << ", memType: " << obj.memType
-           << ", localRankId: " << obj.localRankId << "}";
+           << VaToStr(obj.va[HVM_DVA]) << ", size: " << VaToStr(obj.size) << ", memType: " << obj.memType << "}";
         return os;
     }
 
@@ -154,7 +163,6 @@ struct ReservedGvaInfo {
         return addr >= va[HVM_GVA] && addr < va[HVM_GVA] + size;
     }
 };
-constexpr uint32_t INVALID_RANK_ID = std::numeric_limits<uint32_t>::max();
 
 // share handle 字符串：仅保存 MemShareHandle::share_info 本体（二进制安全，
 // 恒为 MEM_SHARE_HANDLE_LEN 字节，禁止按 c_str/strlen 解析），登记/查询接口与
@@ -165,6 +173,11 @@ inline ShareHandleStr ToShareInfo(const MemShareHandle &handle)
 {
     return ShareHandleStr(reinterpret_cast<const char *>(handle.share_info), MEM_SHARE_HANDLE_LEN);
 }
+
+// Address ownership: used for address classification only; gva<->rank is resolved by each segment from the
+// GVA layout (MemSegment::FindRemoteRankByVa).
+enum class AddressOwnership : uint8_t { Local = 0, Imported = 1 };
+
 struct BaseAllocatedGvaInfo {
     uint64_t va[HVM_BUTT]{};
     uint64_t size{};                             // >0
@@ -176,15 +189,12 @@ struct BaseAllocatedGvaInfo {
 // For imported memory: lva = 0.
 struct AllocatedGvaInfo {
     BaseAllocatedGvaInfo base;
-    uint32_t localRankId{INVALID_RANK_ID};    // Must be set >=0
-    uint32_t importedRankId{INVALID_RANK_ID}; // can be set >=0
-    ShareHandleStr shareHandle;               // share_info（二进制安全字符串），未登记时为空串
+    AddressOwnership ownership{AddressOwnership::Local};
+    ShareHandleStr shareHandle; // share_info (binary-safe string), empty when not registered
 
     AllocatedGvaInfo() = default;
-    AllocatedGvaInfo(BaseAllocatedGvaInfo b, uint32_t localRankId) : base{b}, localRankId(localRankId) {}
-
-    AllocatedGvaInfo(BaseAllocatedGvaInfo b, uint32_t localRankId, uint32_t importedRankId)
-        : base{b}, localRankId(localRankId), importedRankId(importedRankId)
+    explicit AllocatedGvaInfo(BaseAllocatedGvaInfo b, AddressOwnership ownership = AddressOwnership::Local)
+        : base{b}, ownership(ownership)
     {}
 
     // 单独保存的 share_info（二进制安全字符串），与本记录一一对应（登记地址必为
@@ -209,28 +219,27 @@ struct AllocatedGvaInfo {
         return t < HVM_BUTT && addr >= base.va[t] && addr < base.va[t] + base.size;
     }
 
-    [[nodiscard]] uint32_t RankId() const noexcept
+    [[nodiscard]] bool IsImported() const noexcept
     {
-        return (importedRankId != INVALID_RANK_ID) ? importedRankId : localRankId;
+        return ownership == AddressOwnership::Imported;
     }
 
     friend std::ostream &operator<<(std::ostream &os, const AllocatedGvaInfo &obj)
     {
         os << "AllocatedGvaInfo{gva: " << VaToStr(obj.base.va[HVM_GVA]) << ", size: " << VaToStr(obj.base.size)
-           << ", localRankId: " << obj.localRankId << ", importRankId: " << obj.importedRankId
-           << ", memType: " << obj.base.memType << ", deviceVa: " << VaToStr(obj.base.va[HVM_DVA])
-           << ", hostVa: " << VaToStr(obj.base.va[HVM_HVA]) << "}";
+           << ", ownership: " << (obj.IsImported() ? "imported" : "local") << ", memType: " << obj.base.memType
+           << ", deviceVa: " << VaToStr(obj.base.va[HVM_DVA]) << ", hostVa: " << VaToStr(obj.base.va[HVM_HVA]) << "}";
         return os;
     }
 
     [[nodiscard]] std::string ToString() const
     {
         auto type = base.memType == hybm_mem_type::HYBM_MEM_TYPE_HOST ? "H" : "D";
-        auto remote = base.va[HVM_DVA] > 0 or base.va[HVM_HVA] > 0 ? "L" : "R";
+        auto remote = IsImported() ? "R" : "L";
         std::stringstream os;
         os << "{gva: " << VaToStr(base.va[HVM_GVA]) << ", ";
-        os << remote << type << "(";
-        os << localRankId << "), deviceVa: " << VaToStr(base.va[HVM_DVA]);
+        os << remote << type;
+        os << ", deviceVa: " << VaToStr(base.va[HVM_DVA]);
         os << ", hostVa: " << VaToStr(base.va[HVM_HVA]) << "}";
         return os.str();
     }
@@ -240,7 +249,7 @@ inline bool operator==(const AllocatedGvaInfo &lhs, const AllocatedGvaInfo &rhs)
 {
     return lhs.base.va[HVM_GVA] == rhs.base.va[HVM_GVA] && lhs.base.va[HVM_DVA] == rhs.base.va[HVM_DVA] &&
            lhs.base.va[HVM_HVA] == rhs.base.va[HVM_HVA] && lhs.base.size == rhs.base.size &&
-           lhs.RankId() == rhs.RankId();
+           lhs.base.memType == rhs.base.memType && lhs.ownership == rhs.ownership;
 }
 
 inline bool operator!=(const AllocatedGvaInfo &lhs, const AllocatedGvaInfo &rhs)
@@ -254,7 +263,7 @@ inline bool operator!=(const AllocatedGvaInfo &lhs, const AllocatedGvaInfo &rhs)
 struct AddrQueryResult {
     bool inAllocGva{false};
     hybm_mem_type memType{HYBM_MEM_TYPE_BUTT};
-    uint32_t importedRankId{INVALID_RANK_ID};
+    bool imported{false};
 };
 
 /*
@@ -304,9 +313,13 @@ public:
     static uint8_t directionLut[BIT_LUT_SIZE];
     static void InitDirectionLut();
 
-    Result AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId);
-    Result AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId, uint32_t importedRankId);
-    Result AddVaInfo(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId, bool onlyGva = false);
+    // Re-registering the same local physical memory (identical dva/hva/size/memType, only gva differs) is treated
+    // as an alias: only a new gva identity is created and the dva/hva tables stay first-wins. It serves the
+    // replay registration of the same user memory by every entity under multiple connections.
+    // ownership defaults to Local (registration on this side); the cross-side import path must pass
+    // AddressOwnership::Imported explicitly.
+    Result AddVaInfo(const BaseAllocatedGvaInfo &baseInfo, bool onlyGva = false,
+                     AddressOwnership ownership = AddressOwnership::Local);
     Result AddVaInfo(const AllocatedGvaInfo &info, bool onlyGva = false);
     void RemoveOneVaInfo(uint64_t va, uint32_t type = HVM_GVA);
 
@@ -315,7 +328,6 @@ public:
     std::pair<AllocatedGvaInfo, bool> FindAllocByVa(uint64_t va, uint32_t type = HVM_GVA) const;
 
     hybm_mem_type GetGvaMemType(uint64_t gva); // Supports both LVA and GVA
-    std::pair<uint32_t, bool> GetRankByGva(uint64_t gva);
     // Checks if 'va' is within any AllocatedGvaInfo range (either LVA or GVA).
     bool IsValidAddr(uint64_t va);
 
@@ -326,9 +338,8 @@ public:
     Result GetLocalMemoryType(uint64_t va, hybm_mem_type &memType) const noexcept;
 
     // =============ReservedGvaInfo Management==============================
-    ReservedGvaInfo AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize, hybm_mem_type memType,
-                                    bool enable56BitsGva = false, hybm_scene scene = HYBM_SCENE_DEFAULT);
-    ReservedGvaInfo AllocReserveLva(uint32_t localRankId, uint64_t size, uint32_t type, hybm_mem_type memType);
+    ReservedGvaInfo AllocReserveGva(const GvaReserveOptions &options);
+    ReservedGvaInfo AllocReserveLva(uint64_t size, uint32_t type, hybm_mem_type memType);
     void FreeReserveGva(uint64_t addr);
     void FreeReserveLva(uint64_t addr, uint32_t type);
 
@@ -357,7 +368,7 @@ public:
             auto &info = it->second;
             result.inAllocGva = true;
             result.memType = info.base.memType;
-            result.importedRankId = info.importedRankId;
+            result.imported = info.IsImported();
         }
         return result;
     }
@@ -377,8 +388,18 @@ private:
 
     std::pair<bool, AllocatedGvaInfo> CheckOverlap(uint64_t va, uint64_t size, uint32_t type);
 
-    uint64_t AllocReserveLvaInner(uint32_t localRankId, uint64_t size, uint32_t type,
-                                  hybm_scene scene = HYBM_SCENE_DEFAULT);
+    // Duplicate check (the lock must be held): replay registration of the same local physical memory
+    // (identical dva/hva/size/memType) is allowed
+    Result ValidateAddVaInfo(const AllocatedGvaInfo &info);
+
+    // Duplicate check on the onlyGva path: only GVA overlap is validated
+    Result ValidateOnlyGvaAdd(const AllocatedGvaInfo &info);
+
+    // Decrements the HVA reference count; returns true when other registration records still share this physical
+    // memory, in which case the dva/hva rows must be kept
+    bool ReleaseHvaRef(uint64_t hva);
+
+    uint64_t AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene = HYBM_SCENE_DEFAULT);
 
     std::pair<uint64_t, bool> FindFreeSpace(uint64_t start, uint64_t end, uint64_t size, uint32_t type);
 
@@ -393,6 +414,10 @@ private:
 
     std::map<uint64_t, AllocatedGvaInfo> allocatedMap_[HVM_BUTT]{}; // map<va, allocInfo>
     std::map<uint64_t, ReservedGvaInfo> reservedMap_[HVM_BUTT]{};   // map<va, reserveInfo>  (HVM_HVA not used now)
+    // HVA -> number of registrations sharing this physical memory (including aliases produced by cross-entity
+    // replays). The dva/hva tables are first-wins, so once the owner record is removed this count decides
+    // whether a surviving alias still needs those two tables; the map rows can be reclaimed only at zero.
+    std::map<uint64_t, uint32_t> hvaRefCnt_{};
 
     static constexpr hybm_data_copy_direction COPY_DIRECTION_TABLE[ADDRESS_CATEGORY_BUTT][ADDRESS_CATEGORY_BUTT] = {
         {HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,

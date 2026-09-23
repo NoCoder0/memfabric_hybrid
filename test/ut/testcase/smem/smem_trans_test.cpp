@@ -1051,6 +1051,12 @@ TEST_F(SmemTransTest, smem_trans_read_write)
                 _exit(4);
             }
         }
+        if (rank == 1) {
+            // The receiver must stay registered while the sender's write retries run: the HOST_TCP
+            // data plane writes over a live hcom channel, which is torn down as soon as the receiver
+            // deregisters and exits, making every sender retry fail with "rankId is not connect".
+            std::this_thread::sleep_for(std::chrono::seconds(TRANS_TEST_WAIT_TIME));
+        }
 
         ret = smem_trans_deregister_mem(handle, addrPtrs[rank]);
         if (ret != SM_OK) {
@@ -1502,7 +1508,14 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
             _exit(1);
         }
         constexpr int retryIntervalMs = TRANS_RETRY_INTERVAL_MS;
-        if (rank == 0) {
+        if (rank == 1) {
+            // The receiver starts late on purpose: the sender (fork0, the store host) joins the group and registers
+            // first, so that when the receiver joins the server delivers ADDWLST/ESTCONN and its registered slices can
+            // be broadcast to the sender.
+            // Putting the delay on the sender side would leave the two child processes with no overlap in lifetime
+            // (the receiver exits 1s after registering),
+            // which makes the sender's batch_write retry "session not found" all the way (always reproducible under
+            // the ASAN CI).
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         void *handle = nullptr;

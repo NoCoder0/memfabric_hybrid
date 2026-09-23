@@ -591,9 +591,11 @@ TEST_F(HybmHostShmSegmentTest, AllocLocalMemory_AddVaInfoFails_RollsBack)
     std::vector<uint8_t> window(options.size * options.rankCnt, 0U);
     SetManualMemoryWindow(segment, window);
 
-    using AddVaInfoMemberFn = ock::mf::Result (HybmVaManager::*)(const BaseAllocatedGvaInfo &, uint32_t, bool);
+    using AddVaInfoMemberFn =
+        ock::mf::Result (HybmVaManager::*)(const BaseAllocatedGvaInfo &, bool, ock::mf::AddressOwnership);
     auto addVaInfoPtr = static_cast<AddVaInfoMemberFn>(&HybmVaManager::AddVaInfo);
-    MOCKER_CPP(addVaInfoPtr, ock::mf::Result(*)(HybmVaManager *, const BaseAllocatedGvaInfo &, uint32_t, bool))
+    MOCKER_CPP(addVaInfoPtr,
+               ock::mf::Result(*)(HybmVaManager *, const BaseAllocatedGvaInfo &, bool, ock::mf::AddressOwnership))
         .stubs()
         .will(returnValue(BM_ERROR));
 

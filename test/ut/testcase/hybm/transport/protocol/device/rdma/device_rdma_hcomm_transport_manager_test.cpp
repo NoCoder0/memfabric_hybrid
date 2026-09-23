@@ -777,15 +777,22 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, UpdateMemoryKey)
     // UpdateMemoryKey writes to HcommKeyMetaAt().addr which is at TRANS_KEY_DEV_SLOT2
     auto &meta = HcommKeyMetaAt(key);
     ASSERT_EQ(meta.addr, 0x12345678UL);
+    // gvaBase shares its origin with addr and must be rewritten together; otherwise the offset base of
+    // ConvertRemoteGvaToDva (rGva - peerGva)
+    // would stay on the owner GVA obtained by QueryMemoryKey's reverse HVA lookup, which does not share
+    // its origin with the data-plane address.
+    ASSERT_EQ(meta.gvaBase, 0x12345678UL);
 }
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, UpdateMemoryKeyNullAddr)
 {
     auto mgr = CreateHcommMgr();
     TransportMemoryKey key{};
+    HcommKeyMetaAt(key).gvaBase = 0xABCDUL;
     mgr->UpdateMemoryKey(key, nullptr);
     // null addr → no change
     ASSERT_EQ(HcommKeyMetaAt(key).addr, 0UL);
+    ASSERT_EQ(HcommKeyMetaAt(key).gvaBase, 0xABCDUL);
 }
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, GetPrivateDataAfterOpen)

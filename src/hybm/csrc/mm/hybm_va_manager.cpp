@@ -63,52 +63,95 @@ Result HybmVaManager::AddVaInfo(const AllocatedGvaInfo &info, bool onlyGva)
         return BM_ERROR;
     }
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    for (uint32_t i = 0; i < HVM_BUTT; i++) {
-        if (onlyGva && (i != HVM_GVA)) {
-            continue;
-        }
-        if (info.base.va[i] != 0) {
-            auto old = CheckOverlap(info.base.va[i], info.base.size, i);
-            if (old.first && old.second != info) {
-                BM_LOG_ERROR("AddVaInfo failed: address overlap. gva="
-                             << VaToStr(info.base.va[0]) << " va:" << VaToStr(info.base.va[i])
-                             << ", size=" << VaToStr(info.base.size) << ", vaType=" << i
-                             << ", localRankId=" << info.localRankId << ", importedRankId=" << info.importedRankId
-                             << ", memType=" << info.base.memType << ", old: " << old.second);
-                return BM_ERROR;
-            }
-        }
+    // onlyGva=true (sdma/device_rdma/vmm, etc.) records the GVA identity only and does not enter the DVA/HVA
+    // translation tables, so "several entities sharing the same dva/hva pair" cannot happen and the check
+    // reduces to a plain GVA overlap test.
+    const auto ret = onlyGva ? ValidateOnlyGvaAdd(info) : ValidateAddVaInfo(info);
+    if (ret != BM_OK) {
+        return ret;
     }
 
+    const uint64_t gva = info.base.va[HVM_GVA];
+    const uint64_t hva = info.base.va[HVM_HVA];
+    if (onlyGva) {
+        allocatedMap_[HVM_GVA][gva] = info;
+        return BM_OK;
+    }
+
+    // A GVA row corresponds one-to-one with a registration record and is always written; the DVA/HVA tables are
+    // first-wins, so when an earlier registration (the owner) already holds that key it is not overwritten and
+    // this registration only records its new gva identity.
+    bool newRegistration = (gva != 0) && (allocatedMap_[HVM_GVA].find(gva) == allocatedMap_[HVM_GVA].end());
     for (uint32_t i = 0; i < HVM_BUTT; i++) {
-        if (onlyGva && (i != HVM_GVA)) {
+        const uint64_t key = info.base.va[i];
+        if (key == 0) {
             continue;
         }
-        if (info.base.va[i] != 0) {
-            allocatedMap_[i][info.base.va[i]] = info;
+        if (i == HVM_GVA) {
+            allocatedMap_[i][key] = info;
+            continue;
         }
+        if (allocatedMap_[i].find(key) != allocatedMap_[i].end()) {
+            continue;
+        }
+        allocatedMap_[i][key] = info;
+        // Registrations with gva == 0 (mem_segment, etc.) produce no GVA row, so a new dva/hva row is what counts
+        newRegistration = newRegistration || (gva == 0);
+    }
+    // Idempotent replays (GVA row already present) are not counted again, otherwise the count never reaches
+    // zero and the dva/hva rows would stay occupied forever.
+    if (newRegistration && hva != 0) {
+        ++hvaRefCnt_[hva];
     }
     return BM_OK;
 }
 
-Result HybmVaManager::AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId)
+Result HybmVaManager::ValidateOnlyGvaAdd(const AllocatedGvaInfo &info)
 {
-    return AddVaInfoFromExternal(baseInfo, localRankId, INVALID_RANK_ID);
+    if (info.base.va[HVM_GVA] == 0) {
+        return BM_OK;
+    }
+    auto old = CheckOverlap(info.base.va[HVM_GVA], info.base.size, HVM_GVA);
+    if (!old.first || old.second == info) {
+        return BM_OK;
+    }
+    BM_LOG_ERROR("AddVaInfo failed: address overlap. gva=" << VaToStr(info.base.va[0])
+                                                           << ", size=" << VaToStr(info.base.size) << ", memType="
+                                                           << info.base.memType << ", old: " << old.second);
+    return BM_ERROR;
 }
 
-Result HybmVaManager::AddVaInfoFromExternal(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId,
-                                            uint32_t importedRankId)
+Result HybmVaManager::ValidateAddVaInfo(const AllocatedGvaInfo &info)
 {
-    AllocatedGvaInfo info(baseInfo, localRankId, importedRankId);
-    const auto ret = AddVaInfo(info);
-    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
-    BM_LOG_INFO("AddVaInfoFromExternal success: " << info);
+    for (uint32_t i = 0; i < HVM_BUTT; i++) {
+        if (info.base.va[i] == 0) {
+            continue;
+        }
+        auto old = CheckOverlap(info.base.va[i], info.base.size, i);
+        if (!old.first || old.second == info) {
+            continue;
+        }
+        // Replay registration of the same local physical memory (identical dva/hva/size/memType, only gva differs):
+        // allowed, and the caller records the new gva identity first-wins without overwriting the dva/hva owner row.
+        // Imported records never take part in this judgement.
+        const AllocatedGvaInfo &prev = old.second;
+        if (prev.base.va[HVM_DVA] == info.base.va[HVM_DVA] && prev.base.va[HVM_HVA] == info.base.va[HVM_HVA] &&
+            prev.base.size == info.base.size && prev.base.memType == info.base.memType &&
+            prev.ownership == AddressOwnership::Local && info.ownership == AddressOwnership::Local) {
+            continue;
+        }
+        BM_LOG_ERROR("AddVaInfo failed: address overlap. gva="
+                     << VaToStr(info.base.va[0]) << " va:" << VaToStr(info.base.va[i])
+                     << ", size=" << VaToStr(info.base.size) << ", vaType=" << i << ", memType=" << info.base.memType
+                     << ", old: " << old.second);
+        return BM_ERROR;
+    }
     return BM_OK;
 }
 
-Result HybmVaManager::AddVaInfo(const BaseAllocatedGvaInfo &baseInfo, uint32_t localRankId, bool onlyGva)
+Result HybmVaManager::AddVaInfo(const BaseAllocatedGvaInfo &baseInfo, bool onlyGva, AddressOwnership ownership)
 {
-    AllocatedGvaInfo info(baseInfo, localRankId);
+    AllocatedGvaInfo info(baseInfo, ownership);
     const auto ret = AddVaInfo(info, onlyGva);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
     BM_LOG_INFO("AddVaInfo success: " << info);
@@ -126,19 +169,51 @@ void HybmVaManager::RemoveOneVaInfo(uint64_t va, uint32_t type)
         BM_LOG_WARN("Unable to RemoveOneVaInfo: address not found. va=" << VaToStr(va) << " type=" << type);
         return;
     }
-    const AllocatedGvaInfo &info = it->second;
+    const AllocatedGvaInfo info = it->second;
     BM_LOG_INFO("Removing VaInfo: " << info);
+
+    // The DVA/HVA translation tables hold the first-wins owner row: the same physical memory may still be
+    // shared by other gva records (aliases produced by cross-entity replay registration) and must be kept
+    // until the share count reaches zero, otherwise the HVA->DVA lookup on a surviving alias silently returns 0
+    // (device_rdma then reports BM_INVALID_PARAM). A GVA row maps one-to-one to a registration record and is
+    // always removed together with it.
+    const bool keepShared = info.base.va[HVM_HVA] != 0 && ReleaseHvaRef(info.base.va[HVM_HVA]);
+    if (!keepShared || type != HVM_HVA) {
+        allocatedMap_[type].erase(it);
+    }
     for (uint32_t i = 0; i < HVM_BUTT; i++) {
-        if (i == type) {
+        const uint64_t key = info.base.va[i];
+        if (i == type || key == 0 || (i != HVM_GVA && keepShared)) {
             continue;
         }
-        auto its = allocatedMap_[i].find(info.base.va[i]);
-        if (its != allocatedMap_[i].end() && its->second.base.va[i] == info.base.va[i]) {
-            allocatedMap_[i].erase(its);
+        auto its = allocatedMap_[i].find(key);
+        if (its == allocatedMap_[i].end()) {
+            continue;
         }
+        // The dva/hva keys may already be held by another physical memory, so a row is removed only when it has the
+        // same origin as this record (same gva) or the same physical memory (same hva), to avoid dropping an
+        // unrelated registration.
+        if (i != HVM_GVA && its->second.base.va[HVM_GVA] != info.base.va[HVM_GVA] &&
+            its->second.base.va[HVM_HVA] != info.base.va[HVM_HVA]) {
+            continue;
+        }
+        allocatedMap_[i].erase(its);
     }
-    allocatedMap_[type].erase(it);
     BM_LOG_DEBUG("RemoveOneGvaInfo success: gva=" << VaToStr(va) << " type=" << type);
+}
+
+bool HybmVaManager::ReleaseHvaRef(uint64_t hva)
+{
+    auto it = hvaRefCnt_.find(hva);
+    if (it == hvaRefCnt_.end()) {
+        return false;
+    }
+    if (it->second > 1U) {
+        --it->second;
+        return true;
+    }
+    hvaRefCnt_.erase(it);
+    return false;
 }
 
 uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t outputType)
@@ -187,29 +262,6 @@ hybm_mem_type HybmVaManager::GetGvaMemType(uint64_t va)
     }
     BM_LOG_DEBUG("GetMemType: va=" << VaToStr(va) << " not found, returning default type");
     return HYBM_MEM_TYPE_BUTT;
-}
-
-std::pair<uint32_t, bool> HybmVaManager::GetRankByGva(uint64_t gva)
-{
-    if (gva == 0) {
-        BM_LOG_WARN("GetRankByGva: va=0 is invalid");
-        return {0, false};
-    }
-    std::shared_lock<std::shared_mutex> lock(mutex_);
-    if (allocatedMap_[HVM_GVA].empty()) {
-        BM_LOG_DEBUG("No allocated spaces found.");
-        return {0, false};
-    }
-    auto it = allocatedMap_[HVM_GVA].upper_bound(gva);
-    if (it != allocatedMap_[HVM_GVA].begin()) {
-        --it;
-    }
-    if (it->second.Contains(gva, HVM_GVA)) {
-        BM_LOG_DEBUG("GetRankByGva: va=" << VaToStr(gva) << " rankId=" << it->second.RankId());
-        return {it->second.RankId(), true};
-    }
-    BM_LOG_DEBUG("GetRankByGva: va=" << VaToStr(gva) << " not found");
-    return {0, false};
 }
 
 AddrType HybmVaManager::ClassifyAddress(const uint64_t va)
@@ -261,7 +313,7 @@ uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
 {
     auto r = QueryAddr(va);
     // 已 import → 单 GLOBAL
-    if (r.inAllocGva && r.importedRankId != INVALID_RANK_ID) {
+    if (r.inAllocGva && r.imported) {
         return (r.memType == HYBM_MEM_TYPE_DEVICE) ? BIT_GLOBAL_DEVICE : BIT_GLOBAL_HOST;
     }
     // reservedMap_ → GVA，已在 allocatedMap_ 中才设有效位
@@ -322,46 +374,60 @@ bool HybmVaManager::IsValidAddr(uint64_t va)
     return r.inAllocGva;
 }
 
-ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t size, uint64_t localSize,
-                                               hybm_mem_type memType, bool enable56BitsGva, hybm_scene scene)
+ReservedGvaInfo HybmVaManager::AllocReserveGva(const GvaReserveOptions &options)
 {
     ReservedGvaInfo result;
     uint32_t t = HVM_DVA; // reserve device va all
-    BM_VALIDATE_RETURN(size != 0, "size must > 0.", result);
-    BM_VALIDATE_RETURN(localSize != 0 || enable56BitsGva, "local size must > 0 when 56-bit GVA is not enabled.",
-                       result);
+    BM_VALIDATE_RETURN(options.size != 0, "size must > 0.", result);
+    BM_VALIDATE_RETURN(options.localSize != 0 || options.enable56BitsGva,
+                       "local size must > 0 when 56-bit GVA is not enabled.", result);
+    BM_VALIDATE_RETURN(options.expectAddr == 0 || options.enable56BitsGva,
+                       "expect addr only applies to the 56-bit GVA area.", result);
 
     std::unique_lock<std::shared_mutex> lock(mutex_);
     uint64_t lva = 0;
+    // The A5 branch bumps localSize, so operate on the copy instead of on options.localSize.
+    uint64_t localSize = options.localSize;
     if (localSize > 0) {
         if (soc_ == ASCEND_950) {
             localSize += GB; // A5被底软额外占用了1G
         }
-        lva = AllocReserveLvaInner(localRankId, localSize, t, scene);
+        lva = AllocReserveLvaInner(localSize, t, options.scene);
         if (lva == 0) {
             return result;
         }
     }
 
     uint64_t gva = lva;
-    if (enable56BitsGva) {
+    if (options.enable56BitsGva) {
         uint64_t startAddr = HYBM_56BITS_GVA_START_ADDR;
         uint64_t endAddr = HYBM_56BITS_GVA_END_ADDR;
-        if (scene == HYBM_SCENE_TRANS) {
+        if (options.scene == HYBM_SCENE_TRANS) {
             startAddr = HYBM_TRANS_GVA_START_ADDR;
             endAddr = HYBM_TRANS_GVA_END_ADDR;
         }
         uint64_t upperLimit = endAddr - startAddr;
-        if (size > upperLimit) {
-            BM_LOG_ERROR("Failed to reserve size:" << size << ", upper limit size:" << upperLimit);
+        if (options.size > upperLimit) {
+            BM_LOG_ERROR("Failed to reserve size:" << options.size << ", upper limit size:" << upperLimit);
             return result;
         }
 
         BM_LOG_DEBUG("enable56BitsGva searching in GVA range " << VaToStr(startAddr) << "-" << VaToStr(endAddr));
+        if (options.expectAddr != 0) {
+            // Caller-dictated layout (one GVA window per entity): narrowing the search to that single slot makes
+            // first fit resolve to the requested address, and FindFreeSpace reports it as taken if it is.
+            if (options.expectAddr < startAddr || options.expectAddr > endAddr - options.size) {
+                BM_LOG_ERROR("AllocReserveGva failed: expect addr " << VaToStr(options.expectAddr)
+                                                                    << " outside the area");
+                return result;
+            }
+            startAddr = options.expectAddr;
+            endAddr = options.expectAddr + options.size;
+        }
         // Find free space
-        auto [freeAddr, found] = FindFreeSpace(startAddr, endAddr, size, HVM_GVA);
+        auto [freeAddr, found] = FindFreeSpace(startAddr, endAddr, options.size, HVM_GVA);
         if (!found) {
-            BM_LOG_ERROR("AllocReserveGva failed: no free space found for size=" << VaToStr(size));
+            BM_LOG_ERROR("AllocReserveGva failed: no free space found for size=" << VaToStr(options.size));
             return result;
         }
         gva = freeAddr;
@@ -369,9 +435,8 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
 
     result.va[HVM_GVA] = gva;
     result.va[t] = lva;
-    result.size = size;
-    result.memType = memType;
-    result.localRankId = localRankId;
+    result.size = options.size;
+    result.memType = options.memType;
     reservedMap_[HVM_GVA][result.va[HVM_GVA]] = result;
     // 启用 56 位 GVA 时 lvaSize 与 gvaSize 不一致
     auto lvaResult = result;
@@ -381,26 +446,24 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(uint32_t localRankId, uint64_t si
     return result;
 }
 
-ReservedGvaInfo HybmVaManager::AllocReserveLva(uint32_t localRankId, uint64_t size, uint32_t type,
-                                               hybm_mem_type memType)
+ReservedGvaInfo HybmVaManager::AllocReserveLva(uint64_t size, uint32_t type, hybm_mem_type memType)
 {
     ReservedGvaInfo result;
     BM_VALIDATE_RETURN(size != 0, "size must > 0.", result);
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    auto lva = AllocReserveLvaInner(localRankId, size, type);
+    auto lva = AllocReserveLvaInner(size, type);
     if (lva == 0) {
         return result;
     }
     result.va[type] = lva;
     result.size = size;
     result.memType = memType;
-    result.localRankId = localRankId;
     reservedMap_[type][result.va[type]] = result;
     BM_LOG_DEBUG("AllocReserveLva success: " << result);
     return result;
 }
 
-uint64_t HybmVaManager::AllocReserveLvaInner(uint32_t localRankId, uint64_t size, uint32_t type, hybm_scene scene)
+uint64_t HybmVaManager::AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene)
 {
     if (size == 0) {
         BM_LOG_ERROR("AllocReserveLva failed: size=0");
@@ -640,6 +703,7 @@ void HybmVaManager::ClearAll()
         allocatedMap_[i].clear();
         reservedMap_[i].clear();
     }
+    hvaRefCnt_.clear();
 }
 
 const AllocatedGvaInfo *HybmVaManager::FindAllocRecordLocked(uint64_t addr) const

@@ -119,7 +119,7 @@ Result DataOpDeviceURMA::AllocSwapMemory()
         return BM_MALLOC_FAILED;
     }
     ret = HybmVaManager::GetInstance().AddVaInfo(
-        {0, reinterpret_cast<uint64_t>(ptr), 0, urmaSwapSpaceSize_, HYBM_MEM_TYPE_DEVICE}, rankId_);
+        {0, reinterpret_cast<uint64_t>(ptr), 0, urmaSwapSpaceSize_, HYBM_MEM_TYPE_DEVICE});
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
         const auto freeRet = DlAclApi::AclrtFree(ptr);

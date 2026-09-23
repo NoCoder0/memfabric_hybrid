@@ -83,9 +83,8 @@ private:
     void ReleaseMmapLva(uint64_t lva) noexcept;
 
     std::vector<HostSdmaExportInfo> imports_;
-    uint8_t *globalVirtualAddress_{nullptr}; // gva, if total size < 128t, it equal lva
-    uint8_t *localVirtualAddress_{nullptr};  // lva, the address in 910C pod for sdma
-    uint64_t totalVirtualSize_{0UL};         // total gva size
+    uint8_t *localVirtualAddress_{nullptr}; // lva, the address in 910C pod for sdma
+    uint64_t totalVirtualSize_{0UL};        // total gva size
     uint64_t allocatedSize_{0UL};
 
     std::map<uint32_t, MemSliceStatus> slices_;

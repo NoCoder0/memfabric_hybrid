@@ -56,7 +56,7 @@ protected:
         baseInfo.va[HVM_HVA] = hva;
         baseInfo.size = size;
         baseInfo.memType = HYBM_MEM_TYPE_HOST;
-        ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo(baseInfo, rankId), BM_OK);
+        ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo(baseInfo), BM_OK);
     }
 
     void SetUp() override
@@ -245,14 +245,18 @@ TEST_F(HybmConnBasedSegmentTest, MmapAndUnmap_RegisterAndClearImportedGva)
 {
     auto options = MakeOptions(3U, 1U);
     HybmConnBasedSegment segment(options, 0);
+    // gva is always base + rank*maxSize + delta, so a real base address is required and the address must fall
+    // inside the window of its rank
+    std::vector<uint8_t> buffer(options.rankCnt * options.maxSize);
+    segment.globalVirtualAddress_ = buffer.data();
 
     HostExportInfo local{};
-    local.gva = 0x400000000ULL;
+    local.gva = reinterpret_cast<uint64_t>(buffer.data()) + options.maxSize * options.rankId;
     local.rankId = options.rankId;
     local.size = HYBM_LARGE_PAGE_SIZE;
 
     HostExportInfo remote{};
-    remote.gva = 0x500000000ULL;
+    remote.gva = reinterpret_cast<uint64_t>(buffer.data()) + options.maxSize * 2UL;
     remote.rankId = 2U;
     remote.size = HYBM_LARGE_PAGE_SIZE;
 
@@ -266,7 +270,10 @@ TEST_F(HybmConnBasedSegmentTest, MmapAndUnmap_RegisterAndClearImportedGva)
 
     auto found = HybmVaManager::GetInstance().FindAllocByVa(remote.gva, HVM_GVA);
     ASSERT_TRUE(found.second);
-    EXPECT_EQ(found.first.RankId(), remote.rankId);
+    EXPECT_TRUE(found.first.IsImported());
+    uint32_t remoteRank = 0;
+    EXPECT_TRUE(segment.FindRemoteRankByVa(remote.gva, remoteRank));
+    EXPECT_EQ(remoteRank, remote.rankId);
 
     ASSERT_EQ(segment.Unmap(), BM_OK);
     EXPECT_TRUE(segment.mappedGvaMem_.empty());
@@ -398,13 +405,13 @@ TEST_F(HybmConnBasedSegmentTest, RemoveImported_RemovesSpecifiedRanksFromMapAndI
     rank1Info.va[HVM_GVA] = rank1Gva;
     rank1Info.size = HYBM_LARGE_PAGE_SIZE;
     rank1Info.memType = HYBM_MEM_TYPE_HOST;
-    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfoFromExternal(rank1Info, options.rankId, 1U), BM_OK);
+    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo(rank1Info, false, AddressOwnership::Imported), BM_OK);
 
     BaseAllocatedGvaInfo rank2Info{};
     rank2Info.va[HVM_GVA] = rank2Gva;
     rank2Info.size = HYBM_LARGE_PAGE_SIZE;
     rank2Info.memType = HYBM_MEM_TYPE_HOST;
-    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfoFromExternal(rank2Info, options.rankId, 2U), BM_OK);
+    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo(rank2Info, false, AddressOwnership::Imported), BM_OK);
 
     HostExportInfo import1{};
     import1.gva = rank1Gva;

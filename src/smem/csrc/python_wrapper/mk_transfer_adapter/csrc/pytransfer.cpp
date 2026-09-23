@@ -626,6 +626,37 @@ std::string TransferAdapterPy::GetConfigStoreProtocol(const std::string &storeUr
     return storeUrl.substr(0, pos + protocolLen);
 }
 
+// Create the transfer connection to the peer and replay the registered memories; returns nullptr on failure
+// (on that path the connection has already been destroyed).
+smem_trans_t TransferAdapterPy::CreateAndReplayConnection(const std::string &sessionId, const std::string &storeUrl)
+{
+    ADAPTER_LOG_INFO("lazy connecting to D: " << sessionId << " via store: " << storeUrl);
+    smem_trans_t handle = smem_trans_create(storeUrl.c_str(), sessionId_.c_str(), &config_);
+    if (handle == nullptr) {
+        ADAPTER_LOG_ERROR("lazy smem_trans_create failed for session: " << sessionId);
+        return nullptr;
+    }
+
+    smem_trans_set_peer_down_callback(handle, TransferAdapterPy::PeerDownCallback, this);
+    const int replayRet = ReplayRegisteredMemories(handle);
+    if (replayRet == 0) {
+        return handle;
+    }
+    // A connection whose replay failed carries incomplete registration info, so drop it and let the next
+    // transfer lazily reconnect.
+    ADAPTER_LOG_ERROR("replay registered memories failed, drop connection. session: " << sessionId
+                                                                                      << ", ret: " << replayRet);
+    smem_trans_destroy(handle, 0);
+    return nullptr;
+}
+
+// Connection teardown: clear the pending flag and wake up the waiting threads; connMutex_ must be held.
+void TransferAdapterPy::FinishPendingConnection(const std::string &sessionId)
+{
+    pendingConnections_.erase(sessionId);
+    connCv_.notify_all();
+}
+
 smem_trans_t TransferAdapterPy::GetOrCreateConnection(const std::string &sessionId)
 {
     if (handle_ != nullptr) {
@@ -648,53 +679,42 @@ smem_trans_t TransferAdapterPy::GetOrCreateConnection(const std::string &session
     // session_id format is now "IP:PORT" (no _pid suffix), the store URL prefix
     // is the session_id itself.
     std::string storeUrl = configStoreProtocol_ + sessionId;
-    if (storeUrl.empty() || sessionId.empty()) {
+    smem_trans_t handle = nullptr;
+    if (!storeUrl.empty() && !sessionId.empty()) {
+        handle = CreateAndReplayConnection(sessionId, storeUrl);
+    } else {
         ADAPTER_LOG_ERROR("no store URL for session: " << sessionId << ", storeUrl=" << storeUrl);
-        lock.lock();
-        pendingConnections_.erase(sessionId);
-        connCv_.notify_all();
-        return nullptr;
     }
-
-    ADAPTER_LOG_INFO("lazy connecting to D: " << sessionId << " via store: " << storeUrl);
-    smem_trans_t handle = smem_trans_create(storeUrl.c_str(), sessionId_.c_str(), &config_);
-    if (handle == nullptr) {
-        ADAPTER_LOG_ERROR("lazy smem_trans_create failed for session: " << sessionId);
-        lock.lock();
-        pendingConnections_.erase(sessionId);
-        connCv_.notify_all();
-        return nullptr;
-    }
-
-    smem_trans_set_peer_down_callback(handle, TransferAdapterPy::PeerDownCallback, this);
-    ReplayRegisteredMemories(handle);
 
     lock.lock();
-    pendingConnections_.erase(sessionId);
+    FinishPendingConnection(sessionId);
     it = connections_.find(sessionId);
     if (it != connections_.end() && it->second.active) {
-        smem_trans_destroy(handle, 0);
+        if (handle != nullptr) {
+            smem_trans_destroy(handle, 0);
+        }
         ADAPTER_LOG_INFO("connection for " << sessionId << " already exists, reusing");
-        connCv_.notify_all();
         return it->second.handle;
     }
-    connections_[sessionId] = {handle, true};
-    connCv_.notify_all();
+    if (handle == nullptr) {
+        return nullptr;
+    }
 
+    connections_[sessionId] = {handle, true};
     ADAPTER_LOG_INFO("lazy connected to D: " << sessionId << " (total connections: " << connections_.size() << ")");
     return handle;
 }
 
-void TransferAdapterPy::ReplayRegisteredMemories(smem_trans_t handle)
+int TransferAdapterPy::ReplayRegisteredMemories(smem_trans_t handle)
 {
     if (handle == nullptr) {
-        return;
+        return 0;
     }
     std::vector<RegMem> snapshot;
     {
         std::lock_guard<std::mutex> lock(regMemMutex_);
         if (registeredMems_.empty()) {
-            return;
+            return 0;
         }
         snapshot = registeredMems_;
     }
@@ -712,7 +732,9 @@ void TransferAdapterPy::ReplayRegisteredMemories(smem_trans_t handle)
     int ret = smem_trans_batch_register_mem(handle, addrs.data(), caps.data(), static_cast<uint32_t>(count), 0);
     if (ret != 0) {
         ADAPTER_LOG_ERROR("replay batch_register_mem failed, ret=" << ret);
+        return -1;
     }
+    return 0;
 }
 
 void TransferAdapterPy::OnLinkDownByPeerAddr(const std::string &peerAddr)

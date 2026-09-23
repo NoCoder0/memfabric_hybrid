@@ -174,8 +174,8 @@ public:
         auto &vaManager = HybmVaManager::GetInstance();
         vaManager.ClearAll();
         // 预留 GVM 地址范围（BM 可用范围 = 128T - offload 独立2T = 126T）
-        vaManager.AllocReserveGva(0, HYBM_GVM_MAX_POOL_SIZE - HYBM_OFFLOAD_VA_SIZE,
-                                  HYBM_GVM_MAX_POOL_SIZE - HYBM_OFFLOAD_VA_SIZE, HYBM_MEM_TYPE_HOST, false);
+        vaManager.AllocReserveGva({HYBM_GVM_MAX_POOL_SIZE - HYBM_OFFLOAD_VA_SIZE,
+                                   HYBM_GVM_MAX_POOL_SIZE - HYBM_OFFLOAD_VA_SIZE, HYBM_MEM_TYPE_HOST, false});
 
         // 添加虚拟地址信息（GVM 范围内）
         BaseAllocatedGvaInfo info;
@@ -186,7 +186,7 @@ public:
             info.va[HVM_HVA] = a;
             info.size = 4096; // 4096
             info.memType = HYBM_MEM_TYPE_HOST;
-            vaManager.AddVaInfoFromExternal(info, 0);
+            vaManager.AddVaInfo(info);
         }
     }
 

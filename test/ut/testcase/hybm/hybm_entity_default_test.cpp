@@ -99,6 +99,98 @@ constexpr uint32_t TEST_RANK_12 = 12;
 constexpr uint32_t TEST_RANK_13 = 13;
 constexpr uint32_t TEST_RANK_COUNT_1 = 1;
 constexpr uint32_t TEST_RANK_COUNT_2 = 2;
+
+// FakeMemSegment GVA layout: an address inside the segment is always base + rank * maxSize + delta, and
+// FindRemoteRankByVa resolves the rank this way
+constexpr uint64_t TEST_FAKE_GVA_MAX_SIZE = 0x10000;
+constexpr uint32_t TEST_FAKE_GVA_RANK_CNT = 16;
+
+// Minimal test segment: carries the gva -> rank layout resolution (the VA manager no longer records rank)
+class FakeMemSegment : public ock::mf::MemSegment {
+public:
+    FakeMemSegment() : MemSegment{MakeFakeOptions(), 0} {}
+
+    // gva inside the window of the given rank (delta must be smaller than maxSize, otherwise it lands in the
+    // next rank)
+    uint64_t GvaOfRank(uint32_t rank, uint64_t delta = 0) const
+    {
+        return reinterpret_cast<uint64_t>(globalVirtualAddress_) + options_.maxSize * rank + delta;
+    }
+
+    static ock::mf::MemSegmentOptions MakeFakeOptions()
+    {
+        ock::mf::MemSegmentOptions options{};
+        options.maxSize = TEST_FAKE_GVA_MAX_SIZE;
+        options.rankCnt = TEST_FAKE_GVA_RANK_CNT;
+        options.rankId = 0U;
+        return options;
+    }
+
+    ock::mf::Result ValidateOptions() noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result ReserveMemorySpace(void **) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result UnReserveMemorySpace() noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result AllocLocalMemory(uint64_t, ock::mf::MemSlicePtr &) noexcept override
+    {
+        return BM_NOT_SUPPORTED;
+    }
+    ock::mf::Result RegisterMemory(const void *, uint64_t, ock::mf::MemSlicePtr &) noexcept override
+    {
+        return BM_NOT_SUPPORTED;
+    }
+    ock::mf::Result ReleaseSliceMemory(const ock::mf::MemSlicePtr &) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result Export(std::string &) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result Export(const ock::mf::MemSlicePtr &, std::string &) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result GetExportSliceSize(size_t &) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result Import(const std::vector<std::string> &, void *[]) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result RemoveImported(const std::vector<uint32_t> &) noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result Mmap() noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::Result Unmap() noexcept override
+    {
+        return BM_OK;
+    }
+    ock::mf::MemSlicePtr GetMemSlice(hybm_mem_slice_t, bool) const noexcept override
+    {
+        return nullptr;
+    }
+    bool MemoryInRange(const void *, uint64_t) const noexcept override
+    {
+        return false;
+    }
+    hybm_mem_type GetMemoryType() const noexcept override
+    {
+        return HYBM_MEM_TYPE_HOST;
+    }
+};
 constexpr uint32_t TEST_RANK_COUNT_3 = 3;
 
 // Test constants for addresses
@@ -874,21 +966,26 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_UseRankFromVaManagerInSocRa
 
     ock::mf::HybmVaManager::GetInstance().ClearAll();
     ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().Initialize(ock::mf::AscendSocType::ASCEND_910C), BM_OK);
-    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
+    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfo(
                   {{ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_1, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
-                  0, TEST_RANK_11),
+                  false, ock::mf::AddressOwnership::Imported),
               BM_OK);
-    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
+    ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfo(
                   {{ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_4, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
-                  0, TEST_RANK_12),
+                  false, ock::mf::AddressOwnership::Imported),
               BM_OK);
+    // The rank is resolved from the address layout, so a real base address is needed and src/dest must be put
+    // inside the window of the target rank
+    auto dramSegment = std::make_shared<FakeMemSegment>();
+    dramSegment->globalVirtualAddress_ = reinterpret_cast<uint8_t *>(ock::mf::HYBM_GVM_START_ADDR);
+    entity.dramSegment_ = dramSegment;
 
     auto dop = std::make_shared<FakeDataOperator>();
     entity.dataOperator_ = dop;
 
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void *>(ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_2);
-    params.dest = reinterpret_cast<void *>(ock::mf::HYBM_GVM_START_ADDR + TEST_ADDR_OFFSET_5);
+    params.src = reinterpret_cast<void *>(dramSegment->GvaOfRank(TEST_RANK_11, TEST_ADDR_OFFSET_2));
+    params.dest = reinterpret_cast<void *>(dramSegment->GvaOfRank(TEST_RANK_12, TEST_ADDR_OFFSET_5));
     params.dataSize = TEST_DATA_SIZE;
 
     auto ret = entity.CopyData(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
@@ -918,16 +1015,20 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_A5Soc_UseRankFromVaManagerI
     ock::mf::HybmVaManager::GetInstance().ClearAll();
     ASSERT_EQ(ock::mf::HybmVaManager::GetInstance().Initialize(ock::mf::AscendSocType::ASCEND_950), BM_OK);
     ASSERT_EQ(
-        ock::mf::HybmVaManager::GetInstance().AddVaInfoFromExternal(
-            {{ock::mf::HYBM_GVM_START_ADDR_A5 + TEST_ADDR_OFFSET_1, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST}, 0,
-            TEST_RANK_13),
+        ock::mf::HybmVaManager::GetInstance().AddVaInfo(
+            {{ock::mf::HYBM_GVM_START_ADDR_A5 + TEST_ADDR_OFFSET_1, 0, 0}, TEST_ADDR_OFFSET_3, HYBM_MEM_TYPE_HOST},
+            false, ock::mf::AddressOwnership::Imported),
         BM_OK);
+    // The A5 segment has a different base address, but the rank is still resolved from base + rank*maxSize + delta
+    auto dramSegment = std::make_shared<FakeMemSegment>();
+    dramSegment->globalVirtualAddress_ = reinterpret_cast<uint8_t *>(ock::mf::HYBM_GVM_START_ADDR_A5);
+    entity.dramSegment_ = dramSegment;
 
     auto dop = std::make_shared<FakeDataOperator>();
     entity.dataOperator_ = dop;
 
     hybm_copy_params params{};
-    params.src = reinterpret_cast<void *>(ock::mf::HYBM_GVM_START_ADDR_A5 + TEST_ADDR_OFFSET_2);
+    params.src = reinterpret_cast<void *>(dramSegment->GvaOfRank(TEST_RANK_13, TEST_ADDR_OFFSET_2));
     params.dest = reinterpret_cast<void *>(TEST_ADDR_DST);
     params.dataSize = TEST_DATA_SIZE;
 

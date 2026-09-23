@@ -124,11 +124,13 @@ TEST_F(DlHalApiDcmiTest, LoadDcmiLibraryFailsWhenLibraryMissing)
     EXPECT_EQ(gDcmiLibraryName, "libdcmi.so");
 }
 
-TEST_F(DlHalApiDcmiTest, LoadDcmiLibraryFailsWhenInitSymbolMissing)
+TEST_F(DlHalApiDcmiTest, LoadDcmiLibrarySucceedsWhenInitSymbolMissing)
 {
     gDcmiMockMode = DcmiMockMode::INIT_SYMBOL_FAILED;
 
-    EXPECT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_DL_FUNCTION_FAILED);
+    // A missing DCMI v2 interface is not a fatal error (drivers other than A5 have no such symbol) and should
+    // degrade to DCMI being unavailable.
+    EXPECT_EQ(DlHalApiForDcmiTest::LoadDcmiLibrary(), BM_OK);
     EXPECT_EQ(gDcmiCloseCount, 1U);
 }
 

@@ -39,6 +39,7 @@ struct DlHcomApiFnGuard {
     setExternalLoggerFunc oldSetLogger{DlHcomApi::gSetExternalLogger};
     serviceRegisterAssignMemoryRegionFunc oldRegAssignMr{DlHcomApi::gServiceRegisterAssignMemoryRegion};
     serviceGetMemoryRegionInfoFunc oldGetMrInfo{DlHcomApi::gServiceGetMemoryRegionInfo};
+    serviceDestroyMemoryRegionFunc oldDestroyMr{DlHcomApi::gServiceDestroyMemoryRegion};
     serviceConnectFunc oldServiceConnect{DlHcomApi::gServiceConnect};
     ImportUrmaSeg oldImportUrmaSeg{DlHcomApi::gImportUrmaSeg};
     contextGetResultFunc oldContextGetResult{DlHcomApi::gContextGetResult};
@@ -61,6 +62,7 @@ struct DlHcomApiFnGuard {
         DlHcomApi::gSetExternalLogger = oldSetLogger;
         DlHcomApi::gServiceRegisterAssignMemoryRegion = oldRegAssignMr;
         DlHcomApi::gServiceGetMemoryRegionInfo = oldGetMrInfo;
+        DlHcomApi::gServiceDestroyMemoryRegion = oldDestroyMr;
         DlHcomApi::gServiceConnect = oldServiceConnect;
         DlHcomApi::gImportUrmaSeg = oldImportUrmaSeg;
         DlHcomApi::gContextGetResult = oldContextGetResult;
@@ -81,6 +83,17 @@ int FakeServiceCreate(Service_Type, const char *, Service_Options, Hcom_Service 
 }
 int FakeServiceBind(Hcom_Service, const char *, Service_ChannelHandler)
 {
+    return 0;
+}
+
+// programmable number of bind failures (used to test the port conflict retry)
+int g_serviceBindFailTimes = 0;
+int FakeServiceBindFailFirst(Hcom_Service, const char *, Service_ChannelHandler)
+{
+    if (g_serviceBindFailTimes > 0) {
+        g_serviceBindFailTimes--;
+        return -1;
+    }
     return 0;
 }
 int FakeServiceStart(Hcom_Service)
@@ -114,6 +127,11 @@ int FakeGetMrInfo(Service_MemoryRegion, Service_MemoryRegionInfo *info)
         info->lKey.keys[i] = 0x1111111100000000ULL + i;
         info->lKey.tokens[i] = 0x2222222200000000ULL + i;
     }
+    return 0;
+}
+
+int FakeServiceDestroyMemoryRegion(Hcom_Service, Service_MemoryRegion)
+{
     return 0;
 }
 
@@ -186,6 +204,21 @@ int FakeChannelGetVFail(Hcom_Channel, Channel_OneSideRequestSgl, Channel_Callbac
         return BM_UNDER_API_UNLOAD;
     }
     return BM_ERROR;
+}
+
+// Initialize the per-rank containers and the default service state of the manager under test in one place,
+// so that each case does not have to assemble them by hand.
+void SetupManager(const std::shared_ptr<HcomTransportManager> &mgr, uint32_t rankCount, uint32_t rankId = 0)
+{
+    mgr->rpcService_ = 1;
+    mgr->rankId_ = rankId;
+    mgr->rankCount_ = rankCount;
+    mgr->mrMutex_ = std::vector<std::mutex>(rankCount);
+    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(rankCount);
+    mgr->mrRefCnts_ = std::vector<std::map<uint64_t, uint32_t>>(rankCount);
+    mgr->channelMutex_ = std::vector<std::mutex>(rankCount);
+    mgr->channels_ = std::vector<Hcom_Channel>(rankCount, 0);
+    mgr->nics_ = std::vector<std::string>(rankCount, "");
 }
 } // namespace
 
@@ -260,11 +293,7 @@ TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyViaRegisterMemo
     DlHcomApi::gServiceGetMemoryRegionInfo = &FakeGetMrInfo;
 
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 1;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     TransportMemoryRegion mr{};
     mr.addr = 0x1000;
@@ -280,14 +309,74 @@ TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyViaRegisterMemo
     }
 }
 
+// Several entities replaying the same MR: the duplicate registration is reused with the reference count
+// incremented, and the MR is destroyed when the last referrer deregisters.
+TEST(HcomTransportManagerTest, RegisterMemoryRegion_DuplicateSameRange_ReusesAndRefCounts)
+{
+    DlHcomApiFnGuard guard;
+    DlHcomApi::gServiceRegisterAssignMemoryRegion = &FakeRegisterAssignMr;
+    DlHcomApi::gServiceGetMemoryRegionInfo = &FakeGetMrInfo;
+    DlHcomApi::gServiceDestroyMemoryRegion = &FakeServiceDestroyMemoryRegion;
+
+    auto mgr = HcomTransportManager::GetInstance();
+    SetupManager(mgr, 1, 0);
+
+    TransportMemoryRegion mr{};
+    mr.addr = 0x1000;
+    mr.size = 0x100;
+    mr.flags = transport::REG_MR_FLAG_DRAM;
+
+    EXPECT_EQ(mgr->RegisterMemoryRegion(mr), BM_OK);
+    EXPECT_EQ(mgr->RegisterMemoryRegion(mr), BM_OK);
+    EXPECT_EQ(mgr->mrs_[0].size(), 1U);
+    EXPECT_EQ(mgr->mrRefCnts_[0][0x1000], 2U);
+
+    EXPECT_EQ(mgr->UnregisterMemoryRegion(0x1000), BM_OK);
+    EXPECT_EQ(mgr->mrs_[0].size(), 1U);
+    EXPECT_EQ(mgr->mrRefCnts_[0][0x1000], 1U);
+
+    EXPECT_EQ(mgr->UnregisterMemoryRegion(0x1000), BM_OK);
+    EXPECT_EQ(mgr->mrs_[0].size(), 0U);
+    EXPECT_TRUE(mgr->mrRefCnts_[0].empty());
+}
+
+// A registration at the same address but with a different size, or with a partially overlapping range, is
+// still treated as a conflict and rejected.
+TEST(HcomTransportManagerTest, RegisterMemoryRegion_PartialOverlap_Rejected)
+{
+    DlHcomApiFnGuard guard;
+    DlHcomApi::gServiceRegisterAssignMemoryRegion = &FakeRegisterAssignMr;
+    DlHcomApi::gServiceGetMemoryRegionInfo = &FakeGetMrInfo;
+
+    auto mgr = HcomTransportManager::GetInstance();
+    SetupManager(mgr, 1, 0);
+
+    TransportMemoryRegion mr{};
+    mr.addr = 0x1000;
+    mr.size = 0x100;
+    mr.flags = transport::REG_MR_FLAG_DRAM;
+    EXPECT_EQ(mgr->RegisterMemoryRegion(mr), BM_OK);
+
+    TransportMemoryRegion smaller{};
+    smaller.addr = 0x1000;
+    smaller.size = 0x80;
+    smaller.flags = transport::REG_MR_FLAG_DRAM;
+    EXPECT_EQ(mgr->RegisterMemoryRegion(smaller), BM_ERROR);
+
+    TransportMemoryRegion contained{};
+    contained.addr = 0x1080;
+    contained.size = 0x40;
+    contained.flags = transport::REG_MR_FLAG_DRAM;
+    EXPECT_EQ(mgr->RegisterMemoryRegion(contained), BM_ERROR);
+
+    EXPECT_EQ(mgr->mrs_[0].size(), 1U);
+    EXPECT_EQ(mgr->mrRefCnts_[0][0x1000], 1U);
+}
+
 TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyToOneSideViaQueryMemoryKey)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 1;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     // Prepare a local MR with a known TransportMemoryKey layout.
     HcomMemoryRegion info{};
@@ -340,9 +429,10 @@ TEST(HcomTransportManagerTest, CheckTransportOptionsValidNicBuildsLocalNic)
     EXPECT_EQ(mgr->localNic_, "tcp://127.0.0.1:2049");
 }
 
-TEST(HcomTransportManagerTest, TransportRpcHcomEndPointBrokenValidPayloadDisconnectsChannel)
+TEST(HcomTransportManagerTest, EndPointBrokenValidPayloadDisconnectsChannel)
 {
-    auto mgr = HcomTransportManager::GetInstance();
+    auto mgr = std::make_shared<HcomTransportManager>();
+    mgr->rankId_ = 0;
     mgr->rankCount_ = 2;
     mgr->channelMutex_ = std::vector<std::mutex>(mgr->rankCount_);
     mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
@@ -350,19 +440,14 @@ TEST(HcomTransportManagerTest, TransportRpcHcomEndPointBrokenValidPayloadDisconn
     mgr->nics_ = std::vector<std::string>(mgr->rankCount_);
 
     // payload carries rank id.
-    EXPECT_EQ(HcomTransportManager::TransportRpcHcomEndPointBroken(static_cast<Hcom_Channel>(0x123UL), 0, "1"), BM_OK);
+    EXPECT_EQ(mgr->OnEndPointBroken(static_cast<Hcom_Channel>(0x123UL), "1"), BM_OK);
     EXPECT_EQ(mgr->channels_[1], static_cast<Hcom_Channel>(0));
 }
 
 TEST(HcomTransportManagerTest, InnerReadWriteRemoteNotConnectedOrMissingKeysReturnError)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 1;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
-    mgr->channels_ = std::vector<Hcom_Channel>(1, 0);
+    SetupManager(mgr, 1, 0);
 
     // Not connected.
     EXPECT_NE(BM_OK, mgr->InnerReadRemote(0, 0x1000, 0x2000, 16));
@@ -418,12 +503,8 @@ TEST(HcomTransportManagerTest, SynchronizeReturnsErrorWhenStreamFailed)
 TEST(HcomTransportManagerTest, UpdateRankMrInfosSkipsSelfAndZeroSizeAndStoresMr)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 2;
+    SetupManager(mgr, 2, 0);
     mgr->bmOptype_ = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_URMA);
-    mgr->mrMutex_ = std::vector<std::mutex>(2);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(2);
 
     DlHcomApiFnGuard guard;
     DlHcomApi::gImportUrmaSeg = &FakeImportUrmaSegOk; // NO_XPU 下会被调用，否则也不影响
@@ -468,12 +549,7 @@ TEST(HcomTransportManagerTest, UpdateRankMrInfosSkipsSelfAndZeroSizeAndStoresMr)
 TEST(HcomTransportManagerTest, UpdateRankConnectInfosConnectsWhenChannelEmptyAndOptionProvided)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 1;
-    mgr->rankCount_ = 2;
-    mgr->channelMutex_ = std::vector<std::mutex>(2);
-    mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
-    mgr->nics_ = std::vector<std::string>(2, "");
+    SetupManager(mgr, 2, 1);
 
     DlHcomApiFnGuard guard;
     DlHcomApi::gServiceConnect = &FakeServiceConnectOk;
@@ -491,12 +567,7 @@ TEST(HcomTransportManagerTest, UpdateRankConnectInfosConnectsWhenChannelEmptyAnd
 TEST(HcomTransportManagerTest, UpdateRankConnectInfosStoresNic)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 1;
-    mgr->rankCount_ = 2;
-    mgr->channelMutex_ = std::vector<std::mutex>(2);
-    mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
-    mgr->nics_ = std::vector<std::string>(2, "");
+    SetupManager(mgr, 2, 1);
 
     TransportRankPrepareInfo r0{};
     r0.nic = "tcp://127.0.0.1:2048";
@@ -522,13 +593,8 @@ TEST(HcomTransportManagerTest, UpdateRankOptionsInvalidRankReturnsInvalidParam)
 TEST(HcomTransportManagerTest, UpdateRankOptionsSucceeds)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 1;
-    mgr->rankCount_ = 2;
+    SetupManager(mgr, 2, 1);
     mgr->bmOptype_ = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_URMA);
-    mgr->mrMutex_ = std::vector<std::mutex>(2);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(2);
-    mgr->nics_ = std::vector<std::string>(2, "");
 
     HybmTransPrepareOptions param{};
     TransportRankPrepareInfo r0{};
@@ -542,10 +608,7 @@ TEST(HcomTransportManagerTest, UpdateRankOptionsSucceeds)
 TEST(HcomTransportManagerTest, ConnectHcomChannelAlreadyConnectedReturnsOkWithoutServiceConnect)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 2;
-    mgr->channelMutex_ = std::vector<std::mutex>(2);
-    mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
+    SetupManager(mgr, 2, 0);
 
     // Mark rank 1 already connected.
     mgr->channels_[1] = static_cast<Hcom_Channel>(0x123UL);
@@ -561,11 +624,7 @@ TEST(HcomTransportManagerTest, ConnectHcomChannelAlreadyConnectedReturnsOkWithou
 TEST(HcomTransportManagerTest, ConnectHcomChannelSetsLinkCountAndPayload)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 3;
-    mgr->rankId_ = 2;
-    mgr->channelMutex_ = std::vector<std::mutex>(3);
-    mgr->channels_ = std::vector<Hcom_Channel>(3, 0);
+    SetupManager(mgr, 3, 2);
 
     DlHcomApiFnGuard guard;
     static uint64_t capturedLinkCount = 0;
@@ -596,10 +655,7 @@ TEST(HcomTransportManagerTest, ConnectHcomChannelSetsLinkCountAndPayload)
 TEST(HcomTransportManagerTest, ConnectHcomChannelPropagatesServiceConnectFailure)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 2;
-    mgr->channelMutex_ = std::vector<std::mutex>(2);
-    mgr->channels_ = std::vector<Hcom_Channel>(2, 0);
+    SetupManager(mgr, 2, 0);
 
     DlHcomApiFnGuard guard;
     DlHcomApi::gServiceConnect = &FakeServiceConnectFail;
@@ -630,32 +686,40 @@ TEST(HcomTransportManagerTest, GetNicDefaultEmpty)
     EXPECT_TRUE(nic.empty());
 }
 
-// NewEndPoint callback: payload null / non-null return failed.
+// NewEndPoint callback: invalid payload rejected; valid payload registers channel; out-of-range rank rejected.
 TEST(HcomTransportManagerTest, NewEndPointCallbackHandlesNullAndNonNull)
 {
+    auto mgr = std::make_shared<HcomTransportManager>();
+    mgr->rankCount_ = 1;
+    mgr->channelMutex_ = std::vector<std::mutex>(1);
+    mgr->channels_ = std::vector<Hcom_Channel>(1, 0);
+
     Hcom_Channel dummyCh = static_cast<Hcom_Channel>(0x1UL);
-    uint64_t usrCtx = 0;
+    EXPECT_NE(mgr->OnNewEndPoint(dummyCh, nullptr), BM_OK);
+    EXPECT_NE(mgr->OnNewEndPoint(dummyCh, "test_payload"), BM_OK);
 
-    Result ret1 = HcomTransportManager::TransportRpcHcomNewEndPoint(dummyCh, usrCtx, nullptr);
-    EXPECT_NE(ret1, BM_OK);
+    EXPECT_EQ(mgr->OnNewEndPoint(dummyCh, "0"), BM_OK);
+    EXPECT_EQ(mgr->channels_[0], dummyCh);
 
-    const char *payload = "test_payload";
-    Result ret2 = HcomTransportManager::TransportRpcHcomNewEndPoint(dummyCh, usrCtx, payload);
-    EXPECT_NE(ret2, BM_OK);
+    // payload client=1 exceeds rankCount_=1 -> rejected
+    EXPECT_NE(mgr->OnNewEndPoint(dummyCh, "1"), BM_OK);
 }
 
 // EndPointBroken: invalid payload (null / non-number) returns BM_ERROR.
 TEST(HcomTransportManagerTest, EndPointBrokenCallbackInvalidPayload)
 {
-    Hcom_Channel dummyCh = static_cast<Hcom_Channel>(0x2UL);
-    uint64_t usrCtx = 0;
+    auto mgr = std::make_shared<HcomTransportManager>();
+    mgr->rankId_ = 0;
+    mgr->rankCount_ = 1;
+    mgr->channelMutex_ = std::vector<std::mutex>(1);
+    mgr->channels_ = std::vector<Hcom_Channel>(1, 0);
+    mgr->nics_ = std::vector<std::string>(1);
 
-    Result ret1 = HcomTransportManager::TransportRpcHcomEndPointBroken(dummyCh, usrCtx, nullptr);
-    EXPECT_EQ(ret1, BM_ERROR);
+    Hcom_Channel dummyCh = static_cast<Hcom_Channel>(0x2UL);
+    EXPECT_EQ(mgr->OnEndPointBroken(dummyCh, nullptr), BM_ERROR);
 
     const char *badPayload = "not_a_number";
-    Result ret2 = HcomTransportManager::TransportRpcHcomEndPointBroken(dummyCh, usrCtx, badPayload);
-    EXPECT_EQ(ret2, BM_ERROR);
+    EXPECT_EQ(mgr->OnEndPointBroken(dummyCh, badPayload), BM_ERROR);
 }
 
 // Simple lifecycle callbacks just log and return BM_OK.
@@ -667,6 +731,79 @@ TEST(HcomTransportManagerTest, SimpleCallbacksReturnOk)
     EXPECT_EQ(HcomTransportManager::TransportRpcHcomRequestReceived(ctx, usrCtx), BM_OK);
     EXPECT_EQ(HcomTransportManager::TransportRpcHcomRequestPosted(ctx, usrCtx), BM_OK);
     EXPECT_EQ(HcomTransportManager::TransportRpcHcomOneSideDone(ctx, usrCtx), BM_OK);
+}
+
+// Several instances can Open/Close at the same time, their service names and slots do not clash, and a slot
+// can be reused after close.
+TEST(HcomTransportManagerTest, MultiInstanceOpenClose_IndependentServiceAndSlot)
+{
+    DlHcomApiFnGuard guard;
+    DlHcomApi::gServiceCreate = &FakeServiceCreate;
+    DlHcomApi::gServiceBind = &FakeServiceBind;
+    DlHcomApi::gServiceStart = &FakeServiceStart;
+    DlHcomApi::gServiceDestroy = &FakeServiceDestroy;
+    DlHcomApi::gServiceSetTlsOptions = &FakeSetTlsOptions;
+    DlHcomApi::gServiceRegisterChannelBrokerHandler = &FakeRegisterChannelBrokerHandler;
+    DlHcomApi::gServiceRegisterHandler = &FakeRegisterHandler;
+    DlHcomApi::gServiceSetDeviceIpMask = &FakeSetDeviceIpMask;
+    DlHcomApi::gSetExternalLogger = &FakeSetExternalLogger;
+
+    auto a = std::make_shared<HcomTransportManager>();
+    auto b = std::make_shared<HcomTransportManager>();
+
+    TransportOptions optsA{};
+    optsA.rankId = 1;
+    optsA.rankCount = 2;
+    optsA.protocol = HYBM_DOP_TYPE_HOST_TCP;
+    optsA.nic = "tcp://127.0.0.1:2048";
+    TransportOptions optsB = optsA;
+    optsB.rankId = 2;
+
+    EXPECT_EQ(a->OpenDevice(optsA), BM_OK);
+    EXPECT_EQ(b->OpenDevice(optsB), BM_OK);
+    EXPECT_NE(a->slot_, b->slot_);
+    EXPECT_NE(a->serviceName_, b->serviceName_);
+    EXPECT_NE(a->localNic_, b->localNic_); // basePort + rankId gives disjoint ports
+
+    a->CloseDevice();
+    b->CloseDevice();
+    EXPECT_EQ(a->slot_, HcomTransportManager::kInvalidSlot);
+    EXPECT_EQ(b->slot_, HcomTransportManager::kInvalidSlot);
+
+    // the slot has been released: a new instance can run the full Open/Close again
+    auto c = std::make_shared<HcomTransportManager>();
+    EXPECT_EQ(c->OpenDevice(optsA), BM_OK);
+    c->CloseDevice();
+}
+
+// port conflict avoidance: when the starting port fails to bind, retry with an increment and publish the
+// address actually bound in localNic_
+TEST(HcomTransportManagerTest, OpenDevice_BindPortConflict_RetriesWithOffset)
+{
+    DlHcomApiFnGuard guard;
+    DlHcomApi::gServiceCreate = &FakeServiceCreate;
+    DlHcomApi::gServiceBind = &FakeServiceBindFailFirst;
+    DlHcomApi::gServiceStart = &FakeServiceStart;
+    DlHcomApi::gServiceDestroy = &FakeServiceDestroy;
+    DlHcomApi::gServiceSetTlsOptions = &FakeSetTlsOptions;
+    DlHcomApi::gServiceRegisterChannelBrokerHandler = &FakeRegisterChannelBrokerHandler;
+    DlHcomApi::gServiceRegisterHandler = &FakeRegisterHandler;
+    DlHcomApi::gServiceSetDeviceIpMask = &FakeSetDeviceIpMask;
+    DlHcomApi::gSetExternalLogger = &FakeSetExternalLogger;
+
+    auto mgr = std::make_shared<HcomTransportManager>();
+    TransportOptions opts{};
+    opts.rankId = 1;
+    opts.rankCount = 2;
+    opts.protocol = HYBM_DOP_TYPE_HOST_TCP;
+    opts.nic = "tcp://127.0.0.1:2048";
+
+    // preferred port 2048+1=2049 is occupied (one bind failure) -> the retry on 2050 succeeds
+    g_serviceBindFailTimes = 1;
+    EXPECT_EQ(mgr->OpenDevice(opts), BM_OK);
+    EXPECT_EQ(mgr->localNic_, "tcp://127.0.0.1:2050");
+    mgr->CloseDevice();
+    g_serviceBindFailTimes = 0;
 }
 
 // PrepareThreadLocalStream should create stream once and reuse.
@@ -690,10 +827,8 @@ TEST(HcomTransportManagerTest, PrepareThreadLocalStreamCreatesOnce)
 TEST(HcomTransportManagerTest, InnerReadRemoteRejectsTooLargeSize)
 {
     auto mgr = HcomTransportManager::GetInstance();
-
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 1;
-    mgr->channels_.assign(1, static_cast<Hcom_Channel>(0x10UL));
+    SetupManager(mgr, 1, 0);
+    mgr->channels_[0] = static_cast<Hcom_Channel>(0x10UL);
 
     uint64_t bigSize = static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL;
     Result ret = mgr->InnerReadRemote(0, 0x1000, 0x2000, bigSize);
@@ -704,10 +839,8 @@ TEST(HcomTransportManagerTest, InnerReadRemoteRejectsTooLargeSize)
 TEST(HcomTransportManagerTest, InnerWriteRemoteRejectsTooLargeSize)
 {
     auto mgr = HcomTransportManager::GetInstance();
-
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 1;
-    mgr->channels_.assign(1, static_cast<Hcom_Channel>(0x20UL));
+    SetupManager(mgr, 1, 0);
+    mgr->channels_[0] = static_cast<Hcom_Channel>(0x20UL);
 
     uint64_t bigSize = static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()) + 1ULL;
     Result ret = mgr->InnerWriteRemote(0, 0x1000, 0x2000, bigSize);
@@ -792,13 +925,8 @@ TEST(HcomTransportManagerTest, ReadRemoteBatchAsyncChannelGetVFailAfterKeyLookup
     auto mgr = HcomTransportManager::GetInstance();
     HcomTransportManager::stream_.reset();
 
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 1;
-
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
-    mgr->channels_ = std::vector<Hcom_Channel>(1, static_cast<Hcom_Channel>(0x1UL));
+    SetupManager(mgr, 1, 0);
+    mgr->channels_[0] = static_cast<Hcom_Channel>(0x1UL);
 
     // For ReadRemoteBatchAsync:
     // - req.lAddress = descriptor.globalAddrs[i]
@@ -856,14 +984,9 @@ TEST(HcomTransportManagerTest, ReadWriteRemoteAsyncChannelGetPutFailAfterKeyLook
     // Keep thread_local stream isolated and deterministic.
     HcomTransportManager::stream_.reset();
 
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 1;
+    SetupManager(mgr, 1, 0);
     mgr->runtimeConfig_.maxSliceSize = 1024;
-
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
-    mgr->channels_ = std::vector<Hcom_Channel>(1, static_cast<Hcom_Channel>(0x1UL));
+    mgr->channels_[0] = static_cast<Hcom_Channel>(0x1UL);
 
     HcomMemoryRegion localMr{};
     localMr.addr = 0x1000;
@@ -935,13 +1058,8 @@ TEST(HcomTransportManagerTest, WriteRemoteBatchAsyncChannelPutVFailAfterKeyLooku
     auto mgr = HcomTransportManager::GetInstance();
     HcomTransportManager::stream_.reset();
 
-    mgr->rpcService_ = 1;
-    mgr->rankId_ = 0;
-    mgr->rankCount_ = 1;
-
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
-    mgr->channels_ = std::vector<Hcom_Channel>(1, static_cast<Hcom_Channel>(0x1UL));
+    SetupManager(mgr, 1, 0);
+    mgr->channels_[0] = static_cast<Hcom_Channel>(0x1UL);
 
     HcomMemoryRegion localMr{};
     localMr.addr = 0x1000;
@@ -1083,10 +1201,7 @@ TEST(HcomTransportManagerTest, GetCertCallBackSuccessBasic)
 TEST(HcomTransportManagerTest, GetMemoryRegionByAddrNotFound)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rankCount_ = 1;
-    mgr->rankId_ = 0;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     HcomMemoryRegion mr{};
     Result ret = mgr->GetMemoryRegionByAddr(0, 0x1000, mr);
@@ -1097,10 +1212,7 @@ TEST(HcomTransportManagerTest, GetMemoryRegionByAddrNotFound)
 TEST(HcomTransportManagerTest, GetMemoryRegionByAddrHit)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rankCount_ = 1;
-    mgr->rankId_ = 0;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     HcomMemoryRegion info{};
     info.addr = 0x1000;
@@ -1118,10 +1230,7 @@ TEST(HcomTransportManagerTest, GetMemoryRegionByAddrHit)
 TEST(HcomTransportManagerTest, QueryHasRegisteredBasic)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rankCount_ = 1;
-    mgr->rankId_ = 0;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     HcomMemoryRegion info{};
     info.addr = 0x2000;
@@ -1145,11 +1254,7 @@ TEST(HcomTransportManagerTest, UnregisterMemoryRegionZeroAddr)
 TEST(HcomTransportManagerTest, UnregisterMemoryRegionAddrNotFound)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rpcService_ = 1;
-    mgr->rankCount_ = 1;
-    mgr->rankId_ = 0;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     Result ret = mgr->UnregisterMemoryRegion(0x1234);
     EXPECT_EQ(ret, BM_OK);
@@ -1168,14 +1273,84 @@ TEST(HcomTransportManagerTest, UnregisterMemoryRegionWithoutServiceReturnsError)
 TEST(HcomTransportManagerTest, QueryMemoryKeyNoRegion)
 {
     auto mgr = HcomTransportManager::GetInstance();
-    mgr->rankCount_ = 1;
-    mgr->rankId_ = 0;
-    mgr->mrMutex_ = std::vector<std::mutex>(1);
-    mgr->mrs_ = std::vector<std::set<HcomMemoryRegion>>(1);
+    SetupManager(mgr, 1, 0);
 
     TransportMemoryKey key{};
     Result ret = mgr->QueryMemoryKey(0x4000, key);
     EXPECT_EQ(ret, BM_ERROR);
+}
+
+// QueryMemoryKey: when the HVA->GVA reverse lookup misses it must fall back to the HVA, so that 0 is not
+// taken downstream as the peer MR address.
+TEST(HcomTransportManagerTest, QueryMemoryKeyFallsBackToHvaWhenTransformMisses)
+{
+    auto mgr = HcomTransportManager::GetInstance();
+    SetupManager(mgr, 1, 0);
+
+    HcomMemoryRegion info{};
+    info.addr = 0x3000;
+    info.size = 0x100;
+    mgr->mrs_[0].insert(info);
+
+    TransportMemoryKey key{};
+    Result ret = mgr->QueryMemoryKey(0x3000, key);
+    EXPECT_EQ(ret, BM_OK);
+
+    RegMemoryKeyUnion keyUnion{};
+    keyUnion.commonKey = key;
+    // the VA table has no paired record for this HVA => TransformVa returns 0 => the HVA must be kept
+    EXPECT_EQ(keyUnion.hostKey.gva, 0x3000UL);
+}
+
+// UpdateMemoryKey: in the trans scene the gva of the host key should be overwritten with the local rebuilt
+// GVA given by the caller, leaving the other fields untouched.
+TEST(HcomTransportManagerTest, UpdateMemoryKeyRewritesGvaForHostKey)
+{
+    auto mgr = HcomTransportManager::GetInstance();
+
+    RegMemoryKeyUnion keyUnion{};
+    keyUnion.hostKey.type = TT_HCOM;
+    keyUnion.hostKey.gva = 0x1000UL;
+    keyUnion.hostKey.hcomInfo.lAddress = 0x2800UL;
+    TransportMemoryKey key = keyUnion.commonKey;
+
+    mgr->UpdateMemoryKey(key, reinterpret_cast<void *>(0x20000000UL));
+
+    RegMemoryKeyUnion updated{};
+    updated.commonKey = key;
+    EXPECT_EQ(updated.hostKey.type, TT_HCOM);
+    EXPECT_EQ(updated.hostKey.gva, 0x20000000UL);
+    EXPECT_EQ(updated.hostKey.hcomInfo.lAddress, 0x2800UL);
+}
+
+// UpdateMemoryKey: a non-host key must not be rewritten, to avoid polluting the keys of other transports.
+TEST(HcomTransportManagerTest, UpdateMemoryKeySkipsNonHostKey)
+{
+    auto mgr = HcomTransportManager::GetInstance();
+
+    TransportMemoryKey key{};
+    key.keys[0] = 0x1234UL;
+
+    mgr->UpdateMemoryKey(key, reinterpret_cast<void *>(0x20000000UL));
+
+    EXPECT_EQ(key.keys[0], 0x1234UL);
+}
+
+// UpdateMemoryKey: keeps the original value when addr is empty.
+TEST(HcomTransportManagerTest, UpdateMemoryKeyNullAddrKeepsGva)
+{
+    auto mgr = HcomTransportManager::GetInstance();
+
+    RegMemoryKeyUnion keyUnion{};
+    keyUnion.hostKey.type = TT_HCOM;
+    keyUnion.hostKey.gva = 0x1000UL;
+    TransportMemoryKey key = keyUnion.commonKey;
+
+    mgr->UpdateMemoryKey(key, nullptr);
+
+    RegMemoryKeyUnion updated{};
+    updated.commonKey = key;
+    EXPECT_EQ(updated.hostKey.gva, 0x1000UL);
 }
 
 // CloseDevice: 在 rpcService_ 为 0 时直接返回 BM_OK。

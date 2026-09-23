@@ -131,7 +131,7 @@ Result HybmDevLegacySegment::ReserveMemorySpace(void **address) noexcept
     lvaBase_ = reinterpret_cast<uint8_t *>(base) + options_.maxSize * options_.rankId;
     if (options_.enable56BitsGva) {
         auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
-            options_.rankId, totalVirtualSize_, totalVirtualSize_, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva);
+            {totalVirtualSize_, totalVirtualSize_, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva});
         globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
     } else {
         globalVirtualAddress_ = reinterpret_cast<uint8_t *>(base);
@@ -179,7 +179,7 @@ Result HybmDevLegacySegment::AllocLocalMemory(uint64_t size, MemSlicePtr &slice)
     slices_.emplace(slice->index_, slice);
     if (size > 0) {
         auto ret = HybmVaManager::GetInstance().AddVaInfo(
-            {gva, slice->vAddress_, slice->vAddress_, size, HYBM_MEM_TYPE_DEVICE}, options_.rankId);
+            {gva, slice->vAddress_, slice->vAddress_, size, HYBM_MEM_TYPE_DEVICE});
         if (ret != 0) {
             BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
             drv::HalGvaFree(slice->vAddress_, size);
@@ -392,8 +392,8 @@ Result HybmDevLegacySegment::Mmap() noexcept
         mappedGvaMem_.insert(im.gva);
 
         // .host_va use info.deviceVa, because .host_va is the part of key for hybm_va_manager allocatedLookupMapByLva_
-        int ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-            {im.gva, im.deviceVa, im.deviceVa, im.size, HYBM_MEM_TYPE_DEVICE}, options_.rankId, im.rankId);
+        int ret = HybmVaManager::GetInstance().AddVaInfo(
+            {im.gva, im.deviceVa, im.deviceVa, im.size, HYBM_MEM_TYPE_DEVICE}, false, AddressOwnership::Imported);
         if (ret != BM_OK) {
             if (gvaOpened) {
                 drv::HalGvaClose(im.deviceVa, 0);

@@ -45,12 +45,17 @@ Result AsymmetricMemSegment::ReserveMemorySpace(void **address) noexcept
     BM_ASSERT_LOG_AND_RETURN(options_.rankId < options_.rankCnt,
                              "rank(" << options_.rankId << ") but total " << options_.rankCnt, BM_INVALID_PARAM);
 
-    totalVirtualSize_ = options_.rankCnt * options_.maxSize;
+    // The origin is a constant shared by every process, so an offset taken against it denotes the same gva
+    // everywhere; this entity books only its own window [origin + rankId * maxSize, + maxSize).
+    const uint64_t layoutOrigin =
+        (options_.scene == HYBM_SCENE_TRANS) ? HYBM_TRANS_GVA_START_ADDR : HYBM_56BITS_GVA_START_ADDR;
+    totalVirtualSize_ = options_.maxSize;
+    const uint64_t windowBase = layoutOrigin + options_.maxSize * options_.rankId;
     auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
-        options_.rankId, totalVirtualSize_, 0, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva, options_.scene);
-    BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "gvaInfo.va[HVM_GVA] = " << gvaInfo.va[HVM_GVA], BM_ERROR);
-    globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
-    lvaBase_ = globalVirtualAddress_ + options_.maxSize * options_.rankId;
+        {totalVirtualSize_, 0, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva, options_.scene, windowBase});
+    BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] == windowBase, "unexpected window " << VaToStr(windowBase), BM_ERROR);
+    globalVirtualAddress_ = reinterpret_cast<uint8_t *>(layoutOrigin);
+    lvaBase_ = reinterpret_cast<uint8_t *>(gvaInfo.va[HVM_GVA]);
     unReserveDone_ = false;
     return BM_OK;
 }
@@ -198,9 +203,11 @@ Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, Mem
         }
     }
 
-    if (allocatedSize_ + regSize > totalVirtualSize_) {
+    // allocatedSize_ is the bump pointer of this entity's window (lvaBase_ = origin + rankId * maxSize), so the
+    // bound is the window capacity options_.maxSize.
+    if (allocatedSize_ + regSize > options_.maxSize) {
         BM_LOG_ERROR("gva space exhausted: rankId=" << options_.rankId << " allocated=" << allocatedSize_
-                                                    << " request=" << regSize << " total=" << totalVirtualSize_);
+                                                    << " request=" << regSize << " maxSize=" << options_.maxSize);
         return BM_ERROR;
     }
 
@@ -238,11 +245,13 @@ Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t siz
     uint64_t gva = reinterpret_cast<uint64_t>(lvaBase_) + allocatedSize_;
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(addr), size);
-    // host_rdma: write DVA/HVA maps (bare device addr) to match ConnBasedSegment's va-table layout;
-    // sdma/device_rdma: keep onlyGva=true to preserve the IPC/VMM-based sharing mechanism.
-    const bool onlyGva = (options_.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) == 0U;
+    // onlyGva=true: the HBM segment does no device-side DVA translation and only needs the GVA table. The whole
+    // record (including the dva/hva fields) is still stored in the GVA table, so the data-plane GVA->HVA / GVA->DVA
+    // translation is unaffected; the previous host_rdma branch additionally wrote the DVA/HVA tables to match
+    // the ConnBasedSegment layout, whose readers (HVA->GVA reverse lookup, HVA->DVA translation) either
+    // already have a fallback or are not triggered on this media.
     ret = HybmVaManager::GetInstance().AddVaInfo({gva, slice->vAddress_, slice->vAddress_, size, HYBM_MEM_TYPE_DEVICE},
-                                                 options_.rankId, onlyGva);
+                                                 true);
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed: rankId=" << options_.rankId << " gva=" << VaToStr(gva) << " size=" << size
                                                  << " ret=" << ret);
@@ -315,7 +324,9 @@ Result AsymmetricMemSegment::RegisterHostMemory(const void *addr, uint64_t size,
     }
 
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, gva, hostVa, size);
-    ret = HybmVaManager::GetInstance().AddVaInfo({gva, dva, hostVa, size, HYBM_MEM_TYPE_HOST}, options_.rankId);
+    // Registering the same DRAM block via replay on several connections is auto-detected as an alias when
+    // dva/hva/size/memType are all equal; only the new gva identity is recorded.
+    ret = HybmVaManager::GetInstance().AddVaInfo({gva, dva, hostVa, size, HYBM_MEM_TYPE_HOST});
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed: rankId=" << options_.rankId << " gva=" << VaToStr(gva) << " size=" << size
                                                  << " ret=" << ret);
@@ -429,7 +440,7 @@ Result AsymmetricMemSegment::ExportSlice(const RegisterSlice &regSlice, std::str
     UserSliceExportInfo info;
     info.segmentType =
         (regSlice.slice->memType_ == HYBM_MEM_TYPE_DEVICE) ? SEGMENT_TYPE_USER_DEV : SEGMENT_TYPE_USER_DRAM;
-    // 多trans实例场景下,同一实例不同进程的gva_start不相同,所以仅传递offset
+    // gvaOffset is taken against the constant origin, so it is the same number in every process.
     info.gvaOffset = regSlice.slice->gva_ - reinterpret_cast<uint64_t>(globalVirtualAddress_);
     info.address = regSlice.slice->vAddress_;
     info.size = regSlice.slice->size_;
@@ -684,9 +695,9 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
     remoteSlices_.emplace(remoteSlice->index_, RegisterSlice{remoteSlice, shareName});
     importedSliceInfo_.emplace(shareName, sliceInfo);
     uniqueLock.unlock();
-    ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-        {remoteSlice->gva_, remoteSlice->vAddress_, 0, remoteSlice->size_, HYBM_MEM_TYPE_DEVICE}, options_.rankId,
-        sliceInfo.rankId);
+    ret = HybmVaManager::GetInstance().AddVaInfo(
+        {remoteSlice->gva_, remoteSlice->vAddress_, 0, remoteSlice->size_, HYBM_MEM_TYPE_DEVICE}, false,
+        AddressOwnership::Imported);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
     return BM_OK;
 }
@@ -702,12 +713,11 @@ Result AsymmetricMemSegment::ImportDramSlice(const UserSliceExportInfo &sliceInf
     rankToRemoteSlices_[sliceInfo.rankId].push_back(remoteSlice);
     remoteSlices_.emplace(remoteSlice->index_, RegisterSlice{remoteSlice, "", false});
     uniqueLock.unlock();
-    ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-        {remoteSlice->gva_, 0, 0, remoteSlice->size_, HYBM_MEM_TYPE_HOST}, options_.rankId, sliceInfo.rankId);
+    ret = HybmVaManager::GetInstance().AddVaInfo({remoteSlice->gva_, 0, 0, remoteSlice->size_, HYBM_MEM_TYPE_HOST},
+                                                 false, AddressOwnership::Imported);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK,
-                             "AddVaInfoFromExternal failed: rankId=" << options_.rankId
-                                                                     << " remoteRankId=" << sliceInfo.rankId << " gva="
-                                                                     << VaToStr(remoteSlice->gva_) << " ret=" << ret,
+                             "AddVaInfo failed: rankId=" << options_.rankId << " remoteRankId=" << sliceInfo.rankId
+                                                         << " gva=" << VaToStr(remoteSlice->gva_) << " ret=" << ret,
                              ret);
     BM_LOG_INFO("import dram slice success: rankId=" << sliceInfo.rankId << " gva=" << VaToStr(remoteSlice->gva_)
                                                      << " size=" << VaToStr(sliceInfo.size));
@@ -730,8 +740,8 @@ void AsymmetricMemSegment::CloseMemory() noexcept
         }
         HybmVaManager::GetInstance().RemoveOneVaInfo(it.second.slice->gva_);
     }
-    if (globalVirtualAddress_ != nullptr) {
-        HybmVaManager::GetInstance().FreeReserveGva(reinterpret_cast<uint64_t>(globalVirtualAddress_));
+    if (lvaBase_ != nullptr) {
+        HybmVaManager::GetInstance().FreeReserveGva(reinterpret_cast<uint64_t>(lvaBase_));
     }
     globalVirtualAddress_ = lvaBase_ = nullptr;
     totalVirtualSize_ = 0;
@@ -740,11 +750,11 @@ void AsymmetricMemSegment::CloseMemory() noexcept
 
 bool AsymmetricMemSegment::MemoryInRange(const void *begin, uint64_t size) const noexcept
 {
-    if (begin < globalVirtualAddress_) {
+    if (begin < lvaBase_) {
         return false;
     }
 
-    if (reinterpret_cast<const uint8_t *>(begin) + size > globalVirtualAddress_ + totalVirtualSize_) {
+    if (reinterpret_cast<const uint8_t *>(begin) + size > lvaBase_ + totalVirtualSize_) {
         return false;
     }
 
@@ -903,8 +913,7 @@ uint64_t TryHalReserve(uint64_t size, uint64_t expectLva, uint64_t flags, bool u
 
 uint64_t AsymmetricMemSegment::ReserveLva(const UserSliceExportInfo &info) noexcept
 {
-    auto reserved =
-        HybmVaManager::GetInstance().AllocReserveLva(options_.rankId, info.size, HVM_DVA, HYBM_MEM_TYPE_DEVICE);
+    auto reserved = HybmVaManager::GetInstance().AllocReserveLva(info.size, HVM_DVA, HYBM_MEM_TYPE_DEVICE);
     const auto reservedLva = reserved.va[HVM_DVA];
     if (reservedLva == 0) {
         BM_LOG_ERROR("AllocReserveLva failed: rankId=" << options_.rankId << " remoteRank=" << info.rankId

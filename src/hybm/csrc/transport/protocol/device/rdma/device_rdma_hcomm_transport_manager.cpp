@@ -605,7 +605,12 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
 void DeviceRdmaHcommTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
     if (addr != nullptr) {
-        HcommKeyMetaAt(key).addr = reinterpret_cast<uint64_t>(addr);
+        auto &meta = HcommKeyMetaAt(key);
+        meta.addr = reinterpret_cast<uint64_t>(addr);
+        // gvaBase shares its origin with addr: QueryMemoryKey derives it from the reverse HVA lookup (the owner GVA
+        // under multiple entities), so it has to be rewritten as well; otherwise the offset base of
+        // ConvertRemoteGvaToDva (rGva - peerGva) would not match the data-plane address.
+        meta.gvaBase = reinterpret_cast<uint64_t>(addr);
     }
 }
 

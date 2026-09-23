@@ -538,8 +538,8 @@ whether to start config store, default true)")
         .def_readwrite("dynamic_world_size", &smem_bm_config_t::dynamicWorldSize, "member cannot join dynamically")
         .def_readwrite("unified_address_space", &smem_bm_config_t::unifiedAddressSpace, "unified address with SVM")
         .def_readwrite("auto_ranking", &smem_bm_config_t::autoRanking, R"(
-automatically allocate rank IDs, default is false)")
-        .def_readwrite("rank_id", &smem_bm_config_t::rankId, "user specified rank ID, valid for autoRanking is False")
+automatically allocate rank IDs, default is true)")
+        .def_readwrite("rank_id", &smem_bm_config_t::rankId, "user specified rank ID, valid when autoRanking is false")
         .def_readwrite("flags", &smem_bm_config_t::flags, "other flags, default 0")
         .def(
             "set_nic",

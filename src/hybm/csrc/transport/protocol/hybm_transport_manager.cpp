@@ -29,7 +29,8 @@ std::shared_ptr<TransportManager> TransportManager::Create(TransportType type, H
     }
     switch (type) {
         case TT_HCOM:
-            return host::HcomTransportManager::GetInstance();
+            // per-instance: see the comment on ComposeTransportManager::OpenHostTransport
+            return std::make_shared<host::HcomTransportManager>();
         case TT_HCCP:
             return std::make_shared<device::RdmaTransportManager>();
         case TT_SDMA:

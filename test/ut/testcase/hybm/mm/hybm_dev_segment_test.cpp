@@ -823,9 +823,11 @@ TEST_F(HybmDevSegmentTest, DevLegacy_AllocLocalMemory_AddVaInfoFails)
 
     MOCKER_CPP(&ock::mf::drv::HalGvaAlloc, int32_t(*)(uint64_t, size_t, uint64_t)).stubs().will(returnValue(BM_OK));
     MOCKER_CPP(&ock::mf::drv::HalGvaFree, int32_t(*)(uint64_t, size_t)).stubs().will(returnValue(BM_OK));
-    using AddVaInfoMemberFn = ock::mf::Result (ock::mf::HybmVaManager::*)(const BaseAllocatedGvaInfo &, uint32_t, bool);
+    using AddVaInfoMemberFn =
+        ock::mf::Result (ock::mf::HybmVaManager::*)(const BaseAllocatedGvaInfo &, bool, ock::mf::AddressOwnership);
     auto addVaInfoPtr = static_cast<AddVaInfoMemberFn>(&ock::mf::HybmVaManager::AddVaInfo);
-    MOCKER_CPP(addVaInfoPtr, ock::mf::Result(*)(ock::mf::HybmVaManager *, const BaseAllocatedGvaInfo &, uint32_t, bool))
+    MOCKER_CPP(addVaInfoPtr, ock::mf::Result(*)(ock::mf::HybmVaManager *, const BaseAllocatedGvaInfo &, bool,
+                                                ock::mf::AddressOwnership))
         .stubs()
         .will(returnValue(BM_ERROR));
 

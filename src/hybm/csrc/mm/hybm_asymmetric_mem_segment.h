@@ -63,7 +63,7 @@ struct UserSliceExportInfo {
     uint64_t magic{USER_MEM_SLICE_EXPORT_INFO_MAGIC};
     uint32_t segmentType{SEGMENT_TYPE_USER_DEV};
     uint32_t serverId{0};
-    uint64_t gvaOffset{0}; // 相对 globalVirtualAddress_ 的偏移（多 trans 实例基址不同）
+    uint64_t gvaOffset{0}; // offset from globalVirtualAddress_ (a constant layout origin, identical everywhere)
     uint64_t address{0};   // lva（HBM: 设备 VA；DRAM: host VA）
     uint64_t size{0};
     uint32_t superPodId{0};

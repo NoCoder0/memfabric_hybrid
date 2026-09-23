@@ -104,8 +104,8 @@ typedef struct {
     bool startConfigStoreOnly;        /* only start the config store */
     bool dynamicWorldSize;            /* member cannot join dynamically */
     bool unifiedAddressSpace;         /* unified address with SVM */
-    bool autoRanking;                 /* automatically allocate rank IDs, default is false. */
-    uint32_t rankId;                  /* user specified rank ID, valid for autoRanking is False */
+    bool autoRanking;                 /* automatically allocate rank IDs, default is true. */
+    uint32_t rankId;                  /* user specified rank ID, valid when autoRanking is false */
     uint32_t flags;                   /* other flag, default 0 */
     char hcomUrl[64];
     smem_tls_config hcomTlsConfig;

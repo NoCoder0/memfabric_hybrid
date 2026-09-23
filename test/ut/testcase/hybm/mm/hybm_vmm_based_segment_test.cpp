@@ -82,8 +82,8 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_RemoteSlice_SucceedsAndSkipsLocal)
     opt.shared = true;
 
     HybmVmmBasedSegment seg(opt, 0);
-    HybmVaManager::GetInstance().AllocReserveGva(opt.rankId, opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt,
-                                                 HYBM_MEM_TYPE_HOST);
+    HybmVaManager::GetInstance().AllocReserveGva(
+        {opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST});
 
     HostSdmaExportInfo local{};
     local.gva = 0x1000;
@@ -138,8 +138,8 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_MapFailure_RollsBackVaInfo)
     opt.shared = true;
 
     HybmVmmBasedSegment seg(opt, 0);
-    HybmVaManager::GetInstance().AllocReserveGva(opt.rankId, opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt,
-                                                 HYBM_MEM_TYPE_HOST);
+    HybmVaManager::GetInstance().AllocReserveGva(
+        {opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST});
 
     HostSdmaExportInfo remote{};
     remote.gva = opt.maxSize;
@@ -184,8 +184,8 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_A2_HBM_CrossMachine)
     opt.shared = true;
 
     HybmVmmBasedSegment seg(opt, 0);
-    HybmVaManager::GetInstance().AllocReserveGva(opt.rankId, opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt,
-                                                 HYBM_MEM_TYPE_DEVICE);
+    HybmVaManager::GetInstance().AllocReserveGva(
+        {opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_DEVICE});
 
     HostSdmaExportInfo local{};
     local.gva = 0x1000;

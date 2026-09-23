@@ -156,8 +156,7 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
     }
     ret =
         HybmVaManager::GetInstance().AddVaInfo({0, reinterpret_cast<uint64_t>(output), reinterpret_cast<uint64_t>(ptr),
-                                                rdmaSwapSpaceSize_, HYBM_MEM_TYPE_HOST},
-                                               rankId_);
+                                                rdmaSwapSpaceSize_, HYBM_MEM_TYPE_HOST});
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
         DlHalApi::HalHostUnregisterEx(ptr, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);

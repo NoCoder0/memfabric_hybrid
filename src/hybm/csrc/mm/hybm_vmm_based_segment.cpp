@@ -85,8 +85,8 @@ Result HybmVmmBasedSegment::ReserveMemorySpace(void **address) noexcept
     totalVirtualSize_ = options_.rankCnt * options_.maxSize;
     auto totalLvaSize = options_.enable56BitsGva ? options_.maxSize : totalVirtualSize_;
     auto mem_type = options_.segType == HYBM_MST_HBM ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalVirtualSize_, totalLvaSize,
-                                                                mem_type, options_.enable56BitsGva, options_.scene);
+    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
+        {totalVirtualSize_, totalLvaSize, mem_type, options_.enable56BitsGva, options_.scene});
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "gvaInfo.va[HVM_GVA] = " << gvaInfo.va[HVM_GVA], BM_ERROR);
     globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
 
@@ -286,8 +286,7 @@ Result HybmVmmBasedSegment::AllocLocalMemory(uint64_t size, MemSlicePtr &slice) 
     BM_ASSERT_LOG_AND_RETURN(slice != nullptr, "slice is nullptr", BM_MALLOC_FAILED);
     slices_.emplace(slice->index_, MemSliceStatus(slice, reinterpret_cast<void *>(handle)));
     auto type = options_.segType == HYBM_MST_HBM ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-    ret =
-        HybmVaManager::GetInstance().AddVaInfo({gva, slice->vAddress_, slice->vAddress_, size, type}, options_.rankId);
+    ret = HybmVaManager::GetInstance().AddVaInfo({gva, slice->vAddress_, slice->vAddress_, size, type});
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
         DlHalApi::HalMemRelease(handle);
@@ -573,7 +572,7 @@ uint64_t HybmVmmBasedSegment::ReserveLva(const HostSdmaExportInfo &im)
     }
     void *lva = reinterpret_cast<void *>(im.deviceVa);
     auto memType = im.magic == HBM_SLICE_EXPORT_INFO_MAGIC ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-    auto info = HybmVaManager::GetInstance().AllocReserveLva(options_.rankId, im.size, HVM_DVA, memType);
+    auto info = HybmVaManager::GetInstance().AllocReserveLva(im.size, HVM_DVA, memType);
     auto reservedLva = info.va[HVM_DVA];
     if (reservedLva == 0) {
         BM_LOG_ERROR("AllocReserveLva failed");
@@ -629,14 +628,13 @@ Result HybmVmmBasedSegment::Mmap() noexcept
 
         if (!options_.shared || !CanSdmaReaches(im.superPodId, im.serverId, im.devicePhyId)) {
             // A2 device_rdma 跨机访问适配
-            // AddVaInfoFromExternal 只需要记录GVA，因为device_rdma不需要访问HVM_DVA，所以才值0，
+            // The imported registration only records the GVA: device_rdma never accesses HVM_DVA, hence DVA/HVA are 0
             // 防止copy的时候地址被TransformVa转换，Transport就找不到 Lkey/Rkey
             auto memType = (options_.segType == HYBM_MST_HBM) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-            auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal({im.gva, 0, 0, im.size, memType},
-                                                                          options_.rankId, im.rankId);
+            auto ret = HybmVaManager::GetInstance().AddVaInfo({im.gva, 0, 0, im.size, memType}, false,
+                                                              AddressOwnership::Imported);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("AddVaInfoFromExternal failed:" << ret << " gva:" << VaToStr(im.gva)
-                                                             << " size:" << im.size);
+                BM_LOG_ERROR("AddVaInfo failed:" << ret << " gva:" << VaToStr(im.gva) << " size:" << im.size);
                 return ret;
             }
             continue;
@@ -692,8 +690,8 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         }
 
         auto memType = IsHbmSlice(im.magic) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-        ret = HybmVaManager::GetInstance().AddVaInfoFromExternal({im.gva, lva, 0, im.size, memType}, options_.rankId,
-                                                                 im.rankId);
+        ret = HybmVaManager::GetInstance().AddVaInfo({im.gva, lva, 0, im.size, memType}, false,
+                                                     AddressOwnership::Imported);
         if (ret != BM_OK) {
             DlHalApi::HalMemUnmap(reinterpret_cast<void *>(lva));
             DlHalApi::HalMemRelease(handle);

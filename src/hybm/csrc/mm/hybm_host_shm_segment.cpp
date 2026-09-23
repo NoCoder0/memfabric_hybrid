@@ -133,8 +133,8 @@ Result HybmHostShmSegment::ReserveMemorySpace(void **address) noexcept
     BM_ASSERT_LOG_AND_RETURN(address != nullptr, "Invalid param, address is NULL.", BM_INVALID_PARAM);
     uint64_t totalSize = options_.rankCnt * options_.maxSize;
     uint64_t localSize = options_.enable56BitsGva ? options_.maxSize : totalSize;
-    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalSize, localSize,
-                                                                HYBM_MEM_TYPE_HOST, options_.enable56BitsGva);
+    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
+        {totalSize, localSize, HYBM_MEM_TYPE_HOST, options_.enable56BitsGva});
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "Invalid reserved gva.", BM_ERROR);
     void *startAddr = reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
     if (!options_.enable56BitsGva) {
@@ -183,8 +183,12 @@ Result HybmHostShmSegment::AllocLocalMemory(uint64_t size, std::shared_ptr<MemSl
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(sliceAddr), size);
     slices_.emplace(slice->index_, slice);
+    // onlyGva=true: this segment always records DVA as 0 and does no device-side DVA translation, so only
+    // the GVA table is needed. Previously options_.rankId was passed (uint32_t implicitly converted to bool):
+    // rankId == 0 degraded to writing all three tables, inserting a DVA row keyed 0 into allocatedMap_[HVM_DVA]
+    // and polluting the range lookup.
     auto ret = HybmVaManager::GetInstance().AddVaInfo(
-        {gva, 0, reinterpret_cast<uint64_t>(sliceAddr), size, HYBM_MEM_TYPE_HOST}, options_.rankId);
+        {gva, 0, reinterpret_cast<uint64_t>(sliceAddr), size, HYBM_MEM_TYPE_HOST}, true);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AddVaInfo failed for slice(idx:" << slice->index_ << "), ret:" << ret);
         slices_.erase(slice->index_);
@@ -524,7 +528,7 @@ uint64_t HybmHostShmSegment::ReserveLva(const ShmExportInfo &im) noexcept
         return reinterpret_cast<uint64_t>(globalVirtualAddress_) + options_.maxSize * im.rankId + im.mappingOffset;
     }
     auto memType = im.magic == HBM_SLICE_EXPORT_INFO_MAGIC ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
-    const auto info = HybmVaManager::GetInstance().AllocReserveLva(options_.rankId, im.size, HVM_DVA, memType);
+    const auto info = HybmVaManager::GetInstance().AllocReserveLva(im.size, HVM_DVA, memType);
     const auto reservedLva = info.va[HVM_DVA];
     if (reservedLva == 0) {
         BM_LOG_ERROR("AllocReserveLva failed rank:" << im.rankId << " size:" << im.size);
@@ -608,12 +612,14 @@ Result HybmHostShmSegment::MapImportedShm(const ShmExportInfo &im) noexcept
         return BM_ERROR;
     }
     mappedGvaMem_.insert(remoteGva);
-    auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-        {remoteGva, 0, reinterpret_cast<uint64_t>(remoteLva), im.size, HYBM_MEM_TYPE_HOST}, options_.rankId, rankId);
+    auto ret = HybmVaManager::GetInstance().AddVaInfo(
+        {remoteGva, 0, reinterpret_cast<uint64_t>(remoteLva), im.size, HYBM_MEM_TYPE_HOST}, false,
+        AddressOwnership::Imported);
     BM_LOG_INFO("MapImportedShm: ret:" << ret << " rankId=" << im.rankId << " addr=" << remoteGva << " size=" << im.size
                                        << " useHugetlbfs=" << im.useHugetlbfs << " fd=" << fd);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("AddVaInfoFromExternal failed for rank " << rankId);
+        BM_LOG_ERROR("AddVaInfo failed for rank " << rankId);
+        return ret;
     }
     return BM_OK;
 }

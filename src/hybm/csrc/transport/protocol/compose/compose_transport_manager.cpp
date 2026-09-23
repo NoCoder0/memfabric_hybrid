@@ -44,7 +44,10 @@ Result ComposeTransportManager::OpenHostTransport(const TransportOptions &option
         BM_LOG_ERROR("Failed to open host transport is opened");
         return BM_ERROR;
     }
-    hostTransportManager_ = host::HcomTransportManager::GetInstance();
+    // Per-entity host transport instance: the per-rank channel/key state of a singleton cannot serve
+    // several store groups of the same process at the same time (the multi-connection replay case), and
+    // independent instances get naturally disjoint bind ports via basePort + rankId.
+    hostTransportManager_ = std::make_shared<host::HcomTransportManager>();
     return hostTransportManager_->OpenDevice(options);
 }
 
@@ -269,6 +272,14 @@ void ComposeTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *add
             deviceTransportManager_->UpdateMemoryKey(tmp, addr);
             WriteDeviceRdmaMemoryKey(tmp, key);
         }
+    }
+
+    if (hostTransportManager_) {
+        // host and device each occupy their own slot in the key, so both must be read out, updated and written back
+        TransportMemoryKey tmp{};
+        ReadHcomMemoryKey(key, tmp);
+        hostTransportManager_->UpdateMemoryKey(tmp, addr);
+        WriteHcomMemoryKey(tmp, key);
     }
 }
 

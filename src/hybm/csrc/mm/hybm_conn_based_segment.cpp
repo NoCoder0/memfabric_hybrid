@@ -74,8 +74,8 @@ Result HybmConnBasedSegment::ReserveMemorySpace(void **address) noexcept
 
     uint64_t totalSize = options_.rankCnt * options_.maxSize;
     uint64_t localSize = options_.enable56BitsGva ? options_.maxSize : totalSize;
-    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(options_.rankId, totalSize, localSize,
-                                                                HYBM_MEM_TYPE_HOST, options_.enable56BitsGva);
+    auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
+        {totalSize, localSize, HYBM_MEM_TYPE_HOST, options_.enable56BitsGva});
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "Invalid param, start is 0.", BM_ERROR);
     void *startAddr = reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
     if (!options_.enable56BitsGva) {
@@ -236,8 +236,8 @@ Result HybmConnBasedSegment::Mmap() noexcept
         }
         mappedGvaMem_.insert(import.gva);
 
-        auto ret = HybmVaManager::GetInstance().AddVaInfoFromExternal(
-            {import.gva, 0, 0, import.size, HYBM_MEM_TYPE_HOST}, options_.rankId, import.rankId);
+        auto ret = HybmVaManager::GetInstance().AddVaInfo({import.gva, 0, 0, import.size, HYBM_MEM_TYPE_HOST}, false,
+                                                          AddressOwnership::Imported);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
     }
     imports_.clear();
@@ -405,8 +405,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
             return BM_ERROR;
         }
     }
-    int ret = HybmVaManager::GetInstance().AddVaInfo({gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST},
-                                                     options_.rankId);
+    int ret = HybmVaManager::GetInstance().AddVaInfo({gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST});
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
         if (options_.dataOpType & needReg) {

@@ -75,7 +75,6 @@ private:
 
 private:
     std::mutex mutex_;
-    uint8_t *globalVirtualAddress_{nullptr};
     uint64_t totalVirtualSize_{0UL};
     uint8_t *localVirtualBase_{nullptr};
     uint64_t allocatedSize_{0UL};

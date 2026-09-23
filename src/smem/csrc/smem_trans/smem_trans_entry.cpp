@@ -45,6 +45,8 @@ namespace smem {
 // reserve 128GB hbm va for malloc per rank, refine to configurable later
 constexpr uint64_t TRANS_RESERVE_HBM_VA_SIZE = 1024ULL * 1024 * 1024 * 128; // 128G
 constexpr uint64_t TRANS_RESERVE_DRAM_VA_SIZE = 1024ULL * 1024 * 1024 * 64; // 64G
+// Packs the store rank and the entity index into disjoint bit fields, so the span is 64x the store ranks.
+constexpr uint32_t TRANS_RANK_ID_SPAN = SMEM_TRANS_RANK_COUNT_MAX * HYBM_ENTITY_ID_SEGMENT_SIZE;
 // LinkState wire values (keep in sync with LinkState in smem_group_manager_server.h)
 constexpr int8_t TRANS_LINK_IDLE = 0;
 constexpr int8_t TRANS_LINK_CONNECTED = 4;
@@ -1077,8 +1079,12 @@ hybm_options SmemTransEntry::GenerateHybmOptions()
 {
     hybm_options options{};
     options.bmType = HYBM_TYPE_HOST_INITIATE;
-    options.rankCount = SMEM_TRANS_RANK_COUNT_MAX;
-    options.rankId = rankId_;
+    // Entities of one process share a single auto-ranked store rank, so the identity packs that rank in the high
+    // bits and the process-local entity index in the low HYBM_ENTITY_ID_SEGMENT_SIZE bits. Packing rather than
+    // summing keeps the encoding injective: the store ranks of co-communicating processes can be arbitrarily
+    // close. That one index feeds the GVA window, the channels_/nics_ tables and the HCOM port offset.
+    options.rankCount = TRANS_RANK_ID_SPAN;
+    options.rankId = rankId_ * HYBM_ENTITY_ID_SEGMENT_SIZE + entityId_;
     options.devId = config_.deviceId;
     options.scene = HYBM_SCENE_TRANS;
     options.role = config_.role == SMEM_TRANS_SENDER ? HYBM_ROLE_SENDER : HYBM_ROLE_RECEIVER;

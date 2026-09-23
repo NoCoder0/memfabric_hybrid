@@ -87,7 +87,6 @@ protected:
     void FreeMemory() noexcept;
 
 protected:
-    uint8_t *globalVirtualAddress_{nullptr};
     uint64_t totalVirtualSize_{0UL};
     uint8_t *lvaBase_{nullptr}; // device lva base
     uint64_t allocatedSize_{0UL};

@@ -140,7 +140,7 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
     }
     if (memType == HYBM_MEM_TYPE_DEVICE) {
         slice = std::make_shared<MemSlice>(sliceCount_++, memType, MEM_PT_TYPE_SVM, 0, va, size);
-        ret = HybmVaManager::GetInstance().AddVaInfo({0, va, va, size, memType}, options_.rankId);
+        ret = HybmVaManager::GetInstance().AddVaInfo({0, va, va, size, memType});
         if (ret != 0) {
             BM_LOG_ERROR("add va info failed, va:" << VaToStr(va) << " ret:" << ret);
             return ret;
@@ -161,7 +161,7 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
 #endif
         auto dva = reinterpret_cast<uint64_t>(output);
         slice = std::make_shared<MemSlice>(sliceCount_++, memType, MEM_PT_TYPE_SVM, 0, va, size);
-        ret = HybmVaManager::GetInstance().AddVaInfo({0, dva, va, size, memType}, options_.rankId);
+        ret = HybmVaManager::GetInstance().AddVaInfo({0, dva, va, size, memType});
         if (ret != 0) {
             BM_LOG_ERROR("add va info failed, va:" << VaToStr(va) << " ret:" << ret);
 #if defined(ASCEND_NPU)

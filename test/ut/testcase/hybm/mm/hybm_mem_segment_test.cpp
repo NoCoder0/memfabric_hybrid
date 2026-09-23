@@ -567,8 +567,8 @@ TEST_F(HybmMemSegmentTest, ConnBasedSegment_ExportSlice_Not_UsesCache)
     info.base.memType = HYBM_MEM_TYPE_HOST;
 
     ock::mf::HybmConnBasedSegment seg(opt, 0);
-    ock::mf::HybmVaManager::GetInstance().AllocReserveGva(opt.rankId, opt.maxSize * opt.rankCnt,
-                                                          opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST);
+    ock::mf::HybmVaManager::GetInstance().AllocReserveGva(
+        {opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST});
     EXPECT_EQ(ock::mf::HybmVaManager::GetInstance().AddVaInfo(info), BM_OK);
 
     // 构造一个 slice，并放入内部 map
@@ -618,7 +618,7 @@ TEST_F(HybmMemSegmentTest, ConnBasedSegment_ExportSlice_InvalidSlice)
  * ConnBasedSegment_Import_AddsRemoteVaInfo
  *  - 通过序列化/反序列化 HostExportInfo 来模拟跨节点导入：
  *    - 本 rank 为 0，导入 rank1 的 HostExportInfo。
- *    - Import 会调用 HybmVaManager::AddVaInfoFromExternal 注册远端 GVA 区间。
+ *    - Import calls HybmVaManager::AddVaInfo with AddressOwnership::Imported to register the remote GVA range.
  */
 TEST_F(HybmMemSegmentTest, ConnBasedSegment_Import_AddsRemoteVaInfo)
 {
@@ -629,8 +629,8 @@ TEST_F(HybmMemSegmentTest, ConnBasedSegment_Import_AddsRemoteVaInfo)
     opt.rankId = 0; // 本地 rank 0
 
     ock::mf::HybmConnBasedSegment seg(opt, 0);
-    ock::mf::HybmVaManager::GetInstance().AllocReserveGva(opt.rankId, opt.maxSize * opt.rankCnt,
-                                                          opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST);
+    ock::mf::HybmVaManager::GetInstance().AllocReserveGva(
+        {opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST});
 
     // 构造一个来自 rank1 的 HostExportInfo，并序列化
     ock::mf::HostExportInfo info{};

@@ -114,9 +114,24 @@ static void CopyHcomOneSideKey(TransportMemoryKey &from, OneSideKey &to)
 
 Result HcomTransportManager::OpenDevice(const TransportOptions &options)
 {
-    BM_ASSERT_LOG_AND_RETURN(rpcService_ == 0, "rpcService_ = " << rpcService_, BM_OK);
+    std::lock_guard<std::mutex> openLock(openMutex_);
+    // per-instance double-open protection (the normal flow already guarantees one open per instance in compose)
+    if (rpcService_ != 0) {
+        ++openRefCnt_;
+        BM_LOG_INFO("hcom service already opened, increase refCnt: " << openRefCnt_);
+        return BM_OK;
+    }
+    if (!BindSlot()) {
+        BM_LOG_ERROR("Failed to allocate hcom transport slot, max instances: " << kMaxInstances);
+        return BM_ERROR;
+    }
+    serviceName_ = std::string(HCOM_RPC_SERVICE_NAME) + "_" + std::to_string(slot_);
     auto ret = CheckTransportOptions(options);
-    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, BM_INVALID_PARAM);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("Failed to check transport options, nic: " << options.nic << " ret: " << ret);
+        ReleaseSlot();
+        return ret;
+    }
     runtimeConfig_ = LoadHcomRuntimeConfig();
     DlHcomApi::SetExternalLogger(HcomExternalLoggerAdapter);
     Service_Options opt{};
@@ -124,22 +139,25 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     opt.maxSendRecvDataSize = runtimeConfig_.recvDataSize;
     opt.workerThreadPriority = HCOM_THREAD_PRIORITY;
     Service_Type enumProtocolType = HostHcomHelper::HybmDopTransHcomProtocol(options.protocol, options.nic);
-    ret = DlHcomApi::ServiceCreate(enumProtocolType, HCOM_RPC_SERVICE_NAME, opt, &rpcService_);
+    ret = DlHcomApi::ServiceCreate(enumProtocolType, serviceName_.c_str(), opt, &rpcService_);
     if (ret != 0) {
         BM_LOG_ERROR("Failed to create hcom service, nic: " << options.nic << " type: " << enumProtocolType
                                                             << " ret: " << ret);
+        ReleaseSlot();
         return BM_DL_FUNCTION_FAILED;
     }
-    BM_LOG_TRACE("Create hcom service successful, nic: " << options.nic << " type: " << enumProtocolType);
+    BM_LOG_TRACE("Create hcom service successful, nic: " << options.nic << " type: " << enumProtocolType
+                                                         << " name: " << serviceName_);
     DlHcomApi::ServiceSetHeartBeatOptions(rpcService_, 10, 3, 5); /* idle 10s, probe 3*5s, total ~25s */
     tlsConfig_ = options.tlsOption;
     DlHcomApi::ServiceSetTlsOptions(rpcService_, options.tlsOption.tlsEnable, C_SERVICE_TLS_1_3, C_SERVICE_AES_GCM_256,
                                     GetCertCallBack, GetPrivateKeyCallBack, GetCACallBack);
     DlHcomApi::SetUbsModeFunc(rpcService_, UbsHcomServiceUbcMode::C_SERVICE_HIGHBANDWIDTH);
-    DlHcomApi::ServiceRegisterChannelBrokerHandler(rpcService_, TransportRpcHcomEndPointBroken, C_CHANNEL_RECONNECT, 1);
-    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_REQUEST_RECEIVED, TransportRpcHcomRequestReceived, 1);
-    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_REQUEST_POSTED, TransportRpcHcomRequestPosted, 1);
-    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, 1);
+    DlHcomApi::ServiceRegisterChannelBrokerHandler(rpcService_, EndPointBrokenTramps()[slot_], C_CHANNEL_RECONNECT,
+                                                   slot_);
+    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_REQUEST_RECEIVED, TransportRpcHcomRequestReceived, slot_);
+    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_REQUEST_POSTED, TransportRpcHcomRequestPosted, slot_);
+    DlHcomApi::ServiceRegisterHandler(rpcService_, C_SERVICE_READWRITE_DONE, TransportRpcHcomOneSideDone, slot_);
 
     if (enumProtocolType != Service_Type::C_SERVICE_UBC) {
         std::string ipMask = localIp_ + "/32";
@@ -149,18 +167,29 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     ret = reconnect_.Start([this](uint32_t rankId, const std::string &nic) { return ConnectHcomChannel(rankId, nic); });
     if (ret != BM_OK) {
         BM_LOG_ERROR("start reconnect service failed: " << ret);
+        DlHcomApi::ServiceDestroy(rpcService_, serviceName_.c_str());
+        rpcService_ = 0;
+        ReleaseSlot();
         return ret;
     }
 
     SetHcomServiceConfig(rpcService_);
-    DlHcomApi::ServiceBind(rpcService_, localNic_.c_str(), TransportRpcHcomNewEndPoint);
+    ret = BindServiceWithPortRetry();
+    if (ret != BM_OK) {
+        DlHcomApi::ServiceDestroy(rpcService_, serviceName_.c_str());
+        reconnect_.Stop();
+        rpcService_ = 0;
+        ReleaseSlot();
+        return ret;
+    }
     ret = DlHcomApi::ServiceStart(rpcService_);
     if (ret != 0) {
         BM_LOG_ERROR("Failed to start hcom service, nic: " << localNic_ << " type: " << enumProtocolType
                                                            << " ret: " << ret);
-        DlHcomApi::ServiceDestroy(rpcService_, HCOM_RPC_SERVICE_NAME);
+        DlHcomApi::ServiceDestroy(rpcService_, serviceName_.c_str());
         reconnect_.Stop();
         rpcService_ = 0;
+        ReleaseSlot();
         return BM_DL_FUNCTION_FAILED;
     }
     bmOptype_ = static_cast<hybm_data_op_type>(options.protocol);
@@ -168,17 +197,28 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
     rankCount_ = options.rankCount;
     mrMutex_ = std::vector<std::mutex>(rankCount_);
     mrs_ = std::vector<std::set<HcomMemoryRegion>>(rankCount_);
+    mrRefCnts_ = std::vector<std::map<uint64_t, uint32_t>>(rankCount_);
     channelMutex_ = std::vector<std::mutex>(rankCount_);
     nics_ = std::vector<std::string>(rankCount_, "");
     channels_ = std::vector<Hcom_Channel>(rankCount_, 0);
+    openRefCnt_ = 1;
     return BM_OK;
 }
 
 Result HcomTransportManager::CloseDevice()
 {
-    DlHcomApi::SetExternalLogger([]([[maybe_unused]] int level, [[maybe_unused]] const char *msg) {});
+    std::lock_guard<std::mutex> openLock(openMutex_);
     BM_ASSERT_LOG_AND_RETURN(rpcService_ != 0, "rpcService_ = " << rpcService_, BM_OK);
+    // protection against closing an instance twice: only decrement the count, do not destroy service / MR /
+    // reconnect thread
+    if (openRefCnt_ > 1) {
+        --openRefCnt_;
+        BM_LOG_INFO("hcom service still used by other entities, skip destroy, refCnt: " << openRefCnt_);
+        return BM_OK;
+    }
+    openRefCnt_ = 0;
 
+    DlHcomApi::SetExternalLogger([]([[maybe_unused]] int level, [[maybe_unused]] const char *msg) {});
     reconnect_.Stop();
     auto service = rpcService_;
     for (uint32_t i = 0; i < rankCount_; ++i) {
@@ -196,7 +236,12 @@ Result HcomTransportManager::CloseDevice()
         }
     }
 
-    auto ret = DlHcomApi::ServiceDestroy(service, HCOM_RPC_SERVICE_NAME);
+    // Remove the callback slot before destroying the service; the service name must be taken out first
+    // (ReleaseSlot clears serviceName_).
+    const std::string serviceName = serviceName_;
+    ReleaseSlot();
+
+    auto ret = DlHcomApi::ServiceDestroy(service, serviceName.c_str());
     if (ret != 0) {
         BM_LOG_WARN("Unable to destroy hcom service, ret: " << ret);
     }
@@ -210,10 +255,28 @@ Result HcomTransportManager::CloseDevice()
     runtimeConfig_ = {};
     mrMutex_.clear();
     mrs_.clear();
+    mrRefCnts_.clear();
     channelMutex_.clear();
     nics_.clear();
     channels_.clear();
     return BM_OK;
+}
+
+// Handling an existing MR at the same address: same address and same size is treated as a multi-entity
+// replay and reused with the reference count incremented; otherwise it is reported as a range conflict.
+Result HcomTransportManager::HandleExistingMemoryRegion(const TransportMemoryRegion &mr, const HcomMemoryRegion &info)
+{
+    if (info.addr == mr.addr && info.size == mr.size) {
+        std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
+        const uint32_t refCnt = ++mrRefCnts_[rankId_][mr.addr];
+        BM_LOG_INFO("Mem region already registered, reuse it. addr: " << mr.addr << " size: " << mr.size
+                                                                      << " refCnt: " << refCnt);
+        return BM_OK;
+    }
+    BM_LOG_ERROR("Failed to register mem region, addr: " << mr.addr << " size: " << mr.size
+                                                         << " conflicts with existing region addr: " << info.addr
+                                                         << " size: " << info.size);
+    return BM_ERROR;
 }
 
 #if defined(ASCEND_NPU) || defined(NVIDIA_GPU)
@@ -230,8 +293,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
 
     HcomMemoryRegion info{};
     if (GetMemoryRegionByAddr(rankId_, mr.addr, info) == BM_OK) {
-        BM_LOG_ERROR("Failed to register mem region, addr: " << mr.addr << " already registered");
-        return BM_ERROR;
+        return HandleExistingMemoryRegion(mr, info);
     }
 
     Service_MemoryRegion memoryRegion;
@@ -267,6 +329,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     {
         std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
         mrs_[rankId_].insert(mrInfo);
+        mrRefCnts_[rankId_][mr.addr] = 1;
     }
     BM_LOG_INFO("Success to register " << (isHbm ? "hbm" : "dram") << " mr info size: " << mrInfo.size
                                        << " lKey: " << mrInfo.lKey.keys[0]);
@@ -290,8 +353,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
 
     HcomMemoryRegion info{};
     if (GetMemoryRegionByAddr(rankId_, mr.addr, info) == BM_OK) {
-        BM_LOG_ERROR("Failed to register mem region, addr already registered");
-        return BM_ERROR;
+        return HandleExistingMemoryRegion(mr, info);
     }
 
     Service_MemoryRegion memoryRegion;
@@ -323,6 +385,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     {
         std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
         mrs_[rankId_].insert(mrInfo);
+        mrRefCnts_[rankId_][mr.addr] = 1;
     }
     BM_LOG_INFO("Success to register to mr info size: " << mrInfo.size << " lKey: " << mrInfo.lKey.keys[0] << std::hex
                                                         << " laddr:" << mr.addr);
@@ -339,6 +402,17 @@ Result HcomTransportManager::UnregisterMemoryRegion(uint64_t addr)
     auto &localMrs = mrs_[rankId_];
     for (auto it = localMrs.begin(); it != localMrs.end(); it++) {
         if (it->addr == addr) {
+            // Other entities still reference this MR: only decrement the reference count, and really destroy it when
+            // the last referrer deregisters
+            auto cntIt = mrRefCnts_[rankId_].find(addr);
+            if (cntIt != mrRefCnts_[rankId_].end() && cntIt->second > 1) {
+                --cntIt->second;
+                BM_LOG_INFO("Addr: " << addr << " unregister deferred, refCnt: " << cntIt->second);
+                return BM_OK;
+            }
+            if (cntIt != mrRefCnts_[rankId_].end()) {
+                mrRefCnts_[rankId_].erase(cntIt);
+            }
             DlHcomApi::ServiceDestroyMemoryRegion(rpcService_, it->mr);
             localMrs.erase(it);
             BM_LOG_INFO("Addr: " << addr << " unregistered");
@@ -369,7 +443,10 @@ Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
     }
     RegMemoryKeyUnion hostKey{};
     hostKey.hostKey.type = TT_HCOM;
-    hostKey.hostKey.gva = HybmVaManager::GetInstance().TransformVa(mrInfo.addr, HVM_HVA, HVM_GVA);
+    // The reverse lookup may miss (that HVA never entered the DVA/HVA tables), in which case fall back to the
+    // HVA: otherwise 0 would be taken downstream as the peer MR address and break the range matching.
+    const uint64_t ownerGva = HybmVaManager::GetInstance().TransformVa(mrInfo.addr, HVM_HVA, HVM_GVA);
+    hostKey.hostKey.gva = (ownerGva != 0) ? ownerGva : mrInfo.addr;
     hostKey.hostKey.hcomInfo.lAddress = mrInfo.addr;
     CopyHcomOneSideKey(mrInfo.lKey, hostKey.hostKey.hcomInfo.lKey);
     hostKey.hostKey.hcomInfo.size = mrInfo.size;
@@ -380,7 +457,19 @@ Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
 
 void HcomTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
-    return;
+    if (addr == nullptr) {
+        return;
+    }
+    RegMemoryKeyUnion keyUnion{};
+    keyUnion.commonKey = key;
+    if (keyUnion.hostKey.type != TT_HCOM) {
+        return;
+    }
+    // trans scene: the key's gva was derived from the exporter's HVA and does not share its origin with the
+    // local rebuilt GVA handed down by the data plane;
+    // overwrite it with the caller address so the peer MR range matching matches the data plane.
+    keyUnion.hostKey.gva = reinterpret_cast<uint64_t>(addr);
+    key = keyUnion.commonKey;
 }
 
 Result HcomTransportManager::Prepare(const HybmTransPrepareOptions &param)
@@ -858,16 +947,43 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
         BM_LOG_ERROR("Failed to check nic, nic: " << options.nic << " ret: " << ret);
         return ret;
     }
-    const auto hcomAutoPort = basePort + options.rankId;
-    BM_LOG_INFO("hcom base port: " << basePort << ", hcom auto port with rank: " << hcomAutoPort);
-    localNic_ = protocol + localIp_ + ":" + std::to_string(hcomAutoPort);
+    // The auto port is basePort + rank index, so the base port must leave room for every rank below rankCount.
+    constexpr uint32_t kMaxPort = std::numeric_limits<uint16_t>::max();
+    if (options.rankCount == 0 || options.rankCount - 1 > kMaxPort - basePort) {
+        BM_LOG_ERROR("base port " << basePort << " leaves no room for " << options.rankCount << " rank ports");
+        return BM_INVALID_PARAM;
+    }
+    hcomAutoPort_ = basePort + options.rankId;
+    nicProtocol_ = protocol;
+    BM_LOG_INFO("hcom base port: " << basePort << ", hcom auto port with rank: " << hcomAutoPort_);
+    localNic_ = protocol + localIp_ + ":" + std::to_string(hcomAutoPort_);
     return BM_OK;
 }
 
-Result HcomTransportManager::TransportRpcHcomNewEndPoint(Hcom_Channel newCh, uint64_t usrCtx, const char *payLoad)
+Result HcomTransportManager::BindServiceWithPortRetry()
+{
+    // The port may be occupied by another instance or process on the same host; on bind failure retry with a
+    // small port increment.
+    constexpr uint32_t kMaxBindAttempts = 8;
+    for (uint32_t attempt = 0; attempt < kMaxBindAttempts; ++attempt) {
+        localNic_ = nicProtocol_ + localIp_ + ":" + std::to_string(hcomAutoPort_ + attempt);
+        auto ret = DlHcomApi::ServiceBind(rpcService_, localNic_.c_str(), NewEndPointTramps()[slot_]);
+        if (ret == 0) {
+            if (attempt != 0) {
+                BM_LOG_WARN("ServiceBind succeeded with offset port, nic: " << localNic_ << " attempt: " << attempt);
+            }
+            return BM_OK;
+        }
+        BM_LOG_WARN("ServiceBind failed, nic: " << localNic_ << " ret: " << ret << " attempt: " << attempt);
+    }
+    BM_LOG_ERROR("Failed to bind hcom service after retries, base port: " << hcomAutoPort_);
+    return BM_DL_FUNCTION_FAILED;
+}
+
+Result HcomTransportManager::OnNewEndPoint(Hcom_Channel newCh, const char *payLoad)
 {
     const char *logPayLoad = (payLoad != nullptr) ? payLoad : "<null>";
-    BM_LOG_DEBUG("New hcom ch, ch: " << std::hex << newCh << " usrCtx: " << usrCtx << " payLoad: " << logPayLoad);
+    BM_LOG_DEBUG("New hcom ch, ch: " << std::hex << newCh << " payLoad: " << logPayLoad);
     uint64_t payloadNum = UINT64_MAX;
     if (payLoad == nullptr || !StrUtil::String2Uint<uint64_t>(payLoad, payloadNum)) {
         BM_LOG_ERROR("Failed to get rankId payLoad: " << logPayLoad);
@@ -879,18 +995,21 @@ Result HcomTransportManager::TransportRpcHcomNewEndPoint(Hcom_Channel newCh, uin
     BM_LOG_DEBUG("new channel from " << payloadUn.client << " to " << payloadUn.server);
 
     auto rankId = payloadUn.client;
-    auto self = HcomTransportManager::GetInstance();
-    std::unique_lock<std::mutex> locker{self->channelMutex_[rankId]};
-    self->channels_[rankId] = newCh;
+    if (rankId >= channelMutex_.size()) {
+        BM_LOG_ERROR("New hcom ch with invalid rankId: " << rankId << " payLoad: " << logPayLoad);
+        return BM_ERROR;
+    }
+    std::unique_lock<std::mutex> locker{channelMutex_[rankId]};
+    channels_[rankId] = newCh;
     locker.unlock();
 
     return BM_OK;
 }
 
-Result HcomTransportManager::TransportRpcHcomEndPointBroken(Hcom_Channel ch, uint64_t usrCtx, const char *payLoad)
+Result HcomTransportManager::OnEndPointBroken(Hcom_Channel ch, const char *payLoad)
 {
     const char *logPayLoad = (payLoad != nullptr) ? payLoad : "<null>";
-    BM_LOG_DEBUG("Broken on hcom ch, ch: " << ch << " usrCtx: " << usrCtx << " payLoad: " << logPayLoad);
+    BM_LOG_DEBUG("Broken on hcom ch, ch: " << ch << " payLoad: " << logPayLoad);
     uint64_t payloadNum = UINT64_MAX;
     if (payLoad == nullptr || !StrUtil::String2Uint<uint64_t>(payLoad, payloadNum)) {
         BM_LOG_ERROR("Failed to get rankId payLoad: " << logPayLoad);
@@ -901,9 +1020,8 @@ Result HcomTransportManager::TransportRpcHcomEndPointBroken(Hcom_Channel ch, uin
     payloadUn.payload = payloadNum;
     BM_LOG_DEBUG("channel: " << ch << " broken from " << payloadUn.client << " to " << payloadUn.server);
 
-    auto self = HcomTransportManager::GetInstance();
-    auto rankId = self->rankId_ == payloadUn.server ? payloadUn.client : payloadUn.server;
-    GetInstance()->HcomChannelDisconnected(rankId, ch);
+    auto rankId = rankId_ == payloadUn.server ? payloadUn.client : payloadUn.server;
+    HcomChannelDisconnected(rankId, ch);
     return BM_OK;
 }
 
@@ -1001,9 +1119,30 @@ void HcomTransportManager::DisConnectHcomChannel(uint32_t rankId, Hcom_Channel c
         BM_LOG_ERROR_LIMIT("Failed to remove channel invalid rankId" << rankId << " ch: " << ch);
         return;
     }
-    if (GetInstance()->rpcService_ != 0) {
-        DlHcomApi::ServiceDisConnect(GetInstance()->rpcService_, ch);
+    if (rpcService_ != 0) {
+        DlHcomApi::ServiceDisConnect(rpcService_, ch);
     }
+}
+
+bool HcomTransportManager::BindSlot()
+{
+    for (size_t i = 0; i < kMaxInstances; i++) {
+        HcomTransportManager *expected = nullptr;
+        if (g_slotInstances[i].compare_exchange_strong(expected, this)) {
+            slot_ = i;
+            return true;
+        }
+    }
+    return false;
+}
+
+void HcomTransportManager::ReleaseSlot()
+{
+    if (slot_ < kMaxInstances) {
+        g_slotInstances[slot_].store(nullptr, std::memory_order_release);
+    }
+    slot_ = kInvalidSlot;
+    serviceName_.clear();
 }
 
 Result HcomTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size)

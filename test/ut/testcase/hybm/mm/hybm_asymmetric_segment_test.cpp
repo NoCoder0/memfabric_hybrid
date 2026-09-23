@@ -628,7 +628,8 @@ TEST_F(HybmAsymmetricSegmentTest, Export_HostSlice_UsesUserMemMagic)
 /**
  * Import_UserDramInfo_CreatesRemoteHostSlice
  *  - 构造 192B DRAM 导出信息导入：远端 slice HOST / gva=gvaOffset+base / vAddress_=0；
- *  - addresses 返回 gva；VaManager 记录 importedRankId；不写 importedSliceInfo_。
+ *  - the gva recorded in addresses is marked imported by VaManager, and the rank relation is kept by the
+ *    segment GVA layout
  */
 TEST_F(HybmAsymmetricSegmentTest, Import_UserDramInfo_CreatesRemoteHostSlice)
 {
@@ -659,7 +660,7 @@ TEST_F(HybmAsymmetricSegmentTest, Import_UserDramInfo_CreatesRemoteHostSlice)
 
     auto hit = HybmVaManager::GetInstance().FindAllocByVa(TEST_GVA_BASE + 0x1000000ULL, HVM_GVA);
     EXPECT_TRUE(hit.second);
-    EXPECT_EQ(hit.first.importedRankId, 7U);
+    EXPECT_TRUE(hit.first.IsImported());
 }
 
 /**

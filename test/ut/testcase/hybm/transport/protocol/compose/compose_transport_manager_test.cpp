@@ -1552,6 +1552,22 @@ TEST(ComposeTransportManagerTest, UpdateMemoryKeyDeviceRdma)
     EXPECT_EQ(dev->updateMemKeyCalls, 1u);
 }
 
+// UpdateMemoryKey: it must also be forwarded when only the host transport exists, otherwise on the
+// trans + DRAM + HOST_RDMA path the gva of the host key is never updated to the local rebuilt address.
+TEST(ComposeTransportManagerTest, UpdateMemoryKeyHostOnly)
+{
+    auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_HOST_TCP);
+    ComposeTransportManager mgr(tag);
+
+    auto host = std::make_shared<FakeTransportManager>();
+    mgr.hostTransportManager_ = host;
+
+    TransportMemoryKey key{};
+    void *addr = reinterpret_cast<void *>(0x1234UL);
+    mgr.UpdateMemoryKey(key, addr);
+    EXPECT_EQ(host->updateMemKeyCalls, 1u);
+}
+
 // RemoveRanks: 同时有 host 和 device 时都调用
 TEST(ComposeTransportManagerTest, RemoveRanksWithBothTransports)
 {
