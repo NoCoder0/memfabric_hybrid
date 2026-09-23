@@ -98,7 +98,10 @@ def _get_soc_version():
 is_manylinux = _check_env_flag("IS_MANYLINUX", "FALSE")
 is_debug_mode = _check_env_flag("DEBUG_MODE", "FALSE")
 build_ut = _check_env_flag("ENABLE_ZBAL_UT", "OFF")
-build_fused_deep_moe = _check_env_flag("BUILD_FUSED_DEEP_MOE", "ON")
+build_filter = os.getenv("ZBAL_OP_BUILD_FILTER", "").strip()
+_op_aliases = {"dcn": "dispatch_combine_normal", "dcll": "dispatch_combine_low_latency", "fmoe": "fused_deep_moe"}
+filter_ops = [_op_aliases.get(op.strip(), op.strip()) for op in build_filter.split(",") if op.strip()]
+fused_deep_moe_enabled = not filter_ops or "fused_deep_moe" in filter_ops
 
 soc_version = _get_soc_version()
 _chip_type = "A5" if soc_version.startswith("ascend950") else "A3"
@@ -134,7 +137,7 @@ include_dirs = [
     f"{zbal_root}/src/csrc/adaptor/pytorch_npu/",
     f"{zbal_root}/src/csrc/adaptor/deepep/",
 ]
-if _chip_type == "A3" and build_fused_deep_moe:
+if _chip_type == "A3" and fused_deep_moe_enabled:
     include_dirs.append(f"{zbal_root}/src/csrc/operators/npu/host/fused_deep_moe")
 
 
@@ -278,9 +281,10 @@ class CustomBuildExtension(BuildExtension):
             "-DDISABLE_ALLOCATOR_COMPILE=ON",
             "-DDISABLE_SHARE_COMPILE=ON",
         ]
-        if _chip_type == "A3" and not build_fused_deep_moe:
-            cmake_cmd.append("-DBUILD_FUSED_DEEP_MOE=OFF")
-            logger.info("fused_deep_moe compilation is disabled via BUILD_FUSED_DEEP_MOE=OFF")
+        if build_filter:
+            canonical_filter = ",".join(filter_ops)
+            cmake_cmd.append(f"-DZBAL_OP_BUILD_FILTER={canonical_filter}")
+            logger.info(f"operator build filter enabled: {canonical_filter}")
         result = subprocess.run(cmake_cmd, cwd=build_dir)
         if result.returncode != 0:
             logger.error(f"python cmake exec failed ret code {result.returncode}, msg {result.stderr}")

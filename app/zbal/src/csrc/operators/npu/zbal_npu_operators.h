@@ -14,6 +14,8 @@
 
 #include "zbal.h"
 #include "zbal_communicator.h"
+#include "zbal_defines.h"
+#include "zbal_logger.h"
 
 int32_t ZBALOpAllGather(const void *sendBuff, void *recvBuff, size_t sendCount, zbal_datatype_t dataType,
                         aclrtStream stream, CommGroupInfo &groupInfo);
@@ -97,5 +99,49 @@ int32_t ZBALOpFusedDeepMoe(const zbal_tensor_info_t *x, const zbal_tensor_info_t
                            aclrtStream stream, const CommGroupInfo &epGroupInfo, const CommGroupInfo &tpGroupInfo,
                            int64_t flags, bool needTilingCopy = true);
 #endif // ZBAL_ASCEND_NPU_A3 && ZBAL_FUSED_DEEP_MOE_ENABLED
+
+// When an operator group is filtered out (see ZBAL_OP_BUILD_FILTER), its device launcher
+// declared above is not built. Redirect the host call sites to an inline error stub so the
+// host objects emit no undefined reference to the missing group.
+namespace zbal {
+namespace operators {
+namespace detail {
+
+inline int32_t ZBALOpUnavailable(const char *op, const char *group) noexcept
+{
+    ZBAL_LOG_ERROR(op << " is unavailable: operator group '" << group << "' was not built (add it via --build-filter)");
+    return Z_ERROR;
+}
+
+} // namespace detail
+} // namespace operators
+} // namespace zbal
+
+#define ZBAL_OP_MISSING(op, group) ::zbal::operators::detail::ZBALOpUnavailable(op, group)
+
+#if !defined(ZBAL_OP_CLASSIC_ENABLED)
+#define ZBALOpAllGather(...)     ZBAL_OP_MISSING("AllGather", "classic")
+#define ZBALOpReduceScatter(...) ZBAL_OP_MISSING("ReduceScatter", "classic")
+#define ZBALOpAllReduce(...)     ZBAL_OP_MISSING("AllReduce", "classic")
+#define ZBALOpAlltoAllV(...)     ZBAL_OP_MISSING("AlltoAllV", "classic")
+#define ZBALOpBroadcast(...)     ZBAL_OP_MISSING("Broadcast", "classic")
+#define ZBALOpGather(...)        ZBAL_OP_MISSING("Gather", "classic")
+#define ZBALOpScatter(...)       ZBAL_OP_MISSING("Scatter", "classic")
+#define ZBALOpBarrier(...)       ZBAL_OP_MISSING("Barrier", "classic")
+#define ZBALOpSend(...)          ZBAL_OP_MISSING("Send", "classic")
+#define ZBALOpRecv(...)          ZBAL_OP_MISSING("Recv", "classic")
+#endif
+
+#if !defined(ZBAL_OP_DISPATCH_NORMAL_ENABLED)
+#define ZBALOpDispatchLayout(...) ZBAL_OP_MISSING("DispatchLayout", "dispatch_combine_normal")
+#define ZBALOpNotifyDispatch(...) ZBAL_OP_MISSING("NotifyDispatch", "dispatch_combine_normal")
+#define ZBALOpDispatchNormal(...) ZBAL_OP_MISSING("DispatchNormal", "dispatch_combine_normal")
+#define ZBALOpCombineNormal(...)  ZBAL_OP_MISSING("CombineNormal", "dispatch_combine_normal")
+#endif
+
+#if !defined(ZBAL_OP_DISPATCH_LOW_LATENCY_ENABLED)
+#define ZBALOpDispatchLowLatency(...) ZBAL_OP_MISSING("DispatchLowLatency", "dispatch_combine_low_latency")
+#define ZBALOpCombineLowLatency(...)  ZBAL_OP_MISSING("CombineLowLatency", "dispatch_combine_low_latency")
+#endif
 
 #endif // ZBAL_NPU_OPERATORS_H

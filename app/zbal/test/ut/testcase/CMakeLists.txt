@@ -42,7 +42,7 @@ include_directories(
         ${CMAKE_CURRENT_SOURCE_DIR}/../mock
 )
 
-if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
+if(ZBAL_ASCEND_NPU_A3 AND ZBAL_BUILD_OP_FUSED_DEEP_MOE)
     include_directories(${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)
 endif()
 

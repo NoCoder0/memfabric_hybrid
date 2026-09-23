@@ -11,7 +11,76 @@ cmake_minimum_required(VERSION 3.12 FATAL_ERROR)
 project(zbal LANGUAGES CXX)
 
 option(BUILD_ZBAL_MODULE_UT "build unit test for zbal library" OFF)
-option(BUILD_FUSED_DEEP_MOE "Build fused_deep_moe operator (A3 only)" ON)
+
+# Operator build filter: comma-separated list of operator groups under
+# src/csrc/operators/npu/aicore/ops/ to compile. Empty means build all groups.
+set(ZBAL_OP_BUILD_FILTER "" CACHE STRING
+        "Comma-separated operator groups to build (classic, dispatch_combine_normal, \
+dispatch_combine_low_latency, fused_deep_moe). Empty builds all groups.")
+# Canonical group names, used for validation.
+set(ZBAL_OP_GROUPS classic dispatch_combine_normal dispatch_combine_low_latency fused_deep_moe)
+
+# Accepts both short aliases (classic, dcn, dcll, fmoe) and canonical group names,
+# so every entry point (build.sh, setup.py, direct -DZBAL_OP_BUILD_FILTER=...) works
+# without a separate translation step. Unknown tokens pass through and are rejected below.
+function(zbal_op_normalize token out_var)
+    string(TOLOWER "${token}" _op)
+    if (_op STREQUAL "dcn")
+        set(${out_var} "dispatch_combine_normal" PARENT_SCOPE)
+    elseif (_op STREQUAL "dcll")
+        set(${out_var} "dispatch_combine_low_latency" PARENT_SCOPE)
+    elseif (_op STREQUAL "fmoe")
+        set(${out_var} "fused_deep_moe" PARENT_SCOPE)
+    else ()
+        set(${out_var} "${_op}" PARENT_SCOPE)
+    endif ()
+endfunction()
+
+string(REPLACE "," ";" _raw_filter "${ZBAL_OP_BUILD_FILTER}")
+set(ZBAL_OP_BUILD_FILTER_LIST "")
+foreach (_token IN LISTS _raw_filter)
+    if (_token STREQUAL "")
+        continue()
+    endif ()
+    zbal_op_normalize("${_token}" _canonical)
+    list(APPEND ZBAL_OP_BUILD_FILTER_LIST "${_canonical}")
+endforeach ()
+list(REMOVE_DUPLICATES ZBAL_OP_BUILD_FILTER_LIST)
+foreach (_op IN LISTS ZBAL_OP_BUILD_FILTER_LIST)
+    if (NOT _op IN_LIST ZBAL_OP_GROUPS)
+        message(FATAL_ERROR "zbal: unknown operator group '${_op}' in ZBAL_OP_BUILD_FILTER "
+                "(valid: classic,dcn,dcll,fmoe or their full names)")
+    endif ()
+endforeach ()
+
+# Sets <out_var> to TRUE when the operator group is selected (or no filter given).
+function(zbal_op_enabled op_name out_var)
+    if (NOT ZBAL_OP_BUILD_FILTER_LIST)
+        set(${out_var} TRUE PARENT_SCOPE)
+    elseif (op_name IN_LIST ZBAL_OP_BUILD_FILTER_LIST)
+        set(${out_var} TRUE PARENT_SCOPE)
+    else ()
+        set(${out_var} FALSE PARENT_SCOPE)
+    endif ()
+endfunction()
+
+zbal_op_enabled("classic" ZBAL_BUILD_OP_CLASSIC)
+zbal_op_enabled("dispatch_combine_normal" ZBAL_BUILD_OP_DISPATCH_COMBINE_NORMAL)
+zbal_op_enabled("dispatch_combine_low_latency" ZBAL_BUILD_OP_DISPATCH_COMBINE_LOW_LATENCY)
+zbal_op_enabled("fused_deep_moe" ZBAL_BUILD_OP_FUSED_DEEP_MOE)
+
+# UT mode skips device kernel compilation, so fused_deep_moe has no launcher
+# symbol to link against. Force it off to match the pre-filter UT behavior.
+if (BUILD_ZBAL_MODULE_UT AND ZBAL_BUILD_OP_FUSED_DEEP_MOE)
+    message(STATUS "zbal: UT build forces fused_deep_moe off (device kernel is not compiled)")
+    set(ZBAL_BUILD_OP_FUSED_DEEP_MOE FALSE)
+endif ()
+
+message(STATUS "zbal: operator build filter='${ZBAL_OP_BUILD_FILTER}' "
+        "(classic=${ZBAL_BUILD_OP_CLASSIC}, "
+        "dispatch_combine_normal=${ZBAL_BUILD_OP_DISPATCH_COMBINE_NORMAL}, "
+        "dispatch_combine_low_latency=${ZBAL_BUILD_OP_DISPATCH_COMBINE_LOW_LATENCY}, "
+        "fused_deep_moe=${ZBAL_BUILD_OP_FUSED_DEEP_MOE})")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,12 +142,25 @@ elseif (XPU_TYPE STREQUAL "NPU" AND NOT BUILD_ZBAL_MODULE_UT)
                         "-DZBAL_ASCEND_NPU_A5=1, otherwise device kernels compile to empty shells")
 endif ()
 
-if (ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
-    add_compile_definitions(ZBAL_FUSED_DEEP_MOE_ENABLED)
-    message(STATUS "fused_deep_moe operator compilation ENABLED (BUILD_FUSED_DEEP_MOE=ON)")
+# Availability macros consumed by the host-side launcher call sites. A group that
+# is not selected must be compiled out there, otherwise its device launcher symbols
+# would be undefined and the zbal extension would fail to load.
+if (ZBAL_BUILD_OP_CLASSIC)
+    add_compile_definitions(ZBAL_OP_CLASSIC_ENABLED)
+endif ()
+if (ZBAL_BUILD_OP_DISPATCH_COMBINE_NORMAL)
+    add_compile_definitions(ZBAL_OP_DISPATCH_NORMAL_ENABLED)
+endif ()
+if (ZBAL_BUILD_OP_DISPATCH_COMBINE_LOW_LATENCY)
+    add_compile_definitions(ZBAL_OP_DISPATCH_LOW_LATENCY_ENABLED)
 endif ()
 
-if (ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
+if (ZBAL_ASCEND_NPU_A3 AND ZBAL_BUILD_OP_FUSED_DEEP_MOE)
+    add_compile_definitions(ZBAL_FUSED_DEEP_MOE_ENABLED)
+    message(STATUS "fused_deep_moe operator compilation ENABLED (selected by ZBAL_OP_BUILD_FILTER)")
+endif ()
+
+if (ZBAL_ASCEND_NPU_A3 AND ZBAL_BUILD_OP_FUSED_DEEP_MOE)
     include(FetchContent)
     FetchContent_Declare(
             catlass

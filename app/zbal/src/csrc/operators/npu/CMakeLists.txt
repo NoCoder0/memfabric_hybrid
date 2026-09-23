@@ -2,22 +2,28 @@ set(RUN_MODE "npu" CACHE STRING "run mode: npu")
 
 set(ZBAL_AICORE_DIR ${ZBAL_SRC_DIR}/csrc/operators/npu/aicore)
 
-file(GLOB ZBAL_KERNEL_CLASSIC_SRCS
-    ${ZBAL_AICORE_DIR}/ops/classic/*.cpp
-)
-source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/classic" FILES ${ZBAL_KERNEL_CLASSIC_SRCS})
+if(ZBAL_BUILD_OP_CLASSIC)
+    file(GLOB ZBAL_KERNEL_CLASSIC_SRCS
+        ${ZBAL_AICORE_DIR}/ops/classic/*.cpp
+    )
+    source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/classic" FILES ${ZBAL_KERNEL_CLASSIC_SRCS})
+endif()
 
-file(GLOB ZBAL_KERNEL_DISPATCH_NORMAL_SRCS
-    ${ZBAL_AICORE_DIR}/ops/dispatch_combine_normal/*.cpp
-)
-source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/dispatch_combine_normal" FILES ${ZBAL_KERNEL_DISPATCH_NORMAL_SRCS})
+if(ZBAL_BUILD_OP_DISPATCH_COMBINE_NORMAL)
+    file(GLOB ZBAL_KERNEL_DISPATCH_NORMAL_SRCS
+        ${ZBAL_AICORE_DIR}/ops/dispatch_combine_normal/*.cpp
+    )
+    source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/dispatch_combine_normal" FILES ${ZBAL_KERNEL_DISPATCH_NORMAL_SRCS})
+endif()
 
-file(GLOB ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS
-    ${ZBAL_AICORE_DIR}/ops/dispatch_combine_low_latency/*.cpp
-)
-source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/dispatch_combine_low_latency" FILES ${ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS})
+if(ZBAL_BUILD_OP_DISPATCH_COMBINE_LOW_LATENCY)
+    file(GLOB ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS
+        ${ZBAL_AICORE_DIR}/ops/dispatch_combine_low_latency/*.cpp
+    )
+    source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/dispatch_combine_low_latency" FILES ${ZBAL_KERNEL_DISPATCH_LOW_LATENCY_SRCS})
+endif()
 
-if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
+if(ZBAL_ASCEND_NPU_A3 AND ZBAL_BUILD_OP_FUSED_DEEP_MOE)
     file(GLOB ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS
             ${ZBAL_AICORE_DIR}/ops/fused_deep_moe/*.cpp)
     source_group(TREE ${ZBAL_AICORE_DIR} PREFIX "ops/fused_deep_moe" FILES ${ZBAL_KERNEL_FUSED_DEEP_MOE_SRCS})
@@ -44,7 +50,7 @@ ascendc_include_directories(zbal_kernel PRIVATE
         ${ZBAL_SRC_DIR}/csrc/operators/npu/aicore/common
         ${ZBAL_SRC_DIR}/csrc/under_api/cann
 )
-if(ZBAL_ASCEND_NPU_A3 AND BUILD_FUSED_DEEP_MOE)
+if(ZBAL_ASCEND_NPU_A3 AND ZBAL_BUILD_OP_FUSED_DEEP_MOE)
     ascendc_include_directories(zbal_kernel PRIVATE
         ${catlass_SOURCE_DIR}/include
         ${ZBAL_SRC_DIR}/csrc/operators/npu/host/fused_deep_moe)

@@ -3,7 +3,8 @@ set -e
 
 DEBUG_MODE="OFF"
 ENABLE_ZBAL_UT="OFF"
-BUILD_FUSED_DEEP_MOE="ON"
+BUILD_FILTER=""
+VALID_OPS="classic,dcn,dcll,fmoe"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -15,17 +16,24 @@ while [[ $# -gt 0 ]]; do
             ENABLE_ZBAL_UT="ON"
             shift
             ;;
-        --skip-fused-moe)
-            BUILD_FUSED_DEEP_MOE="OFF"
-            shift
+        --build-filter)
+            if [ -z "$2" ]; then
+                echo "Error: --build-filter requires an argument" 1>&2
+                echo "Valid values: ${VALID_OPS}" 1>&2
+                exit 1
+            fi
+            BUILD_FILTER="${BUILD_FILTER},$2"
+            shift 2
             ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
-            echo "  --debug           Enable debug mode"
-            echo "  --ut              Enable unit tests (skips wheel build)"
-            echo "  --skip-fused-moe  Skip fused_deep_moe compilation (A3 only, implies --debug)"
-            echo "  -h, --help        Show this help message"
+            echo "  --debug                     Enable debug mode"
+            echo "  --ut                        Enable unit tests (skips wheel build)"
+            echo "  --build-filter <ops>        Compile only the given operator group(s), comma-separated."
+            echo "                              Valid values: ${VALID_OPS}"
+            echo "                              Repeatable. Omit to compile all groups."
+            echo "  -h, --help                  Show this help message"
             exit 1
             ;;
         *)
@@ -36,14 +44,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [[ "${BUILD_FUSED_DEEP_MOE}" == "OFF" && "${DEBUG_MODE}" == "OFF" ]]; then
-    echo "[build.sh] --skip-fused-moe implies --debug"
-    DEBUG_MODE="ON"
+if [ -n "${BUILD_FILTER}" ]; then
+    echo "[build.sh] operator build filter: ${BUILD_FILTER}"
+else
+    echo "[build.sh] operator build filter: <all>"
 fi
 
 export DEBUG_MODE=$DEBUG_MODE
 export ENABLE_ZBAL_UT=$ENABLE_ZBAL_UT
-export BUILD_FUSED_DEEP_MOE=$BUILD_FUSED_DEEP_MOE
+export ZBAL_OP_BUILD_FILTER="${BUILD_FILTER}"
 
 if [ -n "$ASCEND_HOME_PATH" ]; then
     _ASCEND_INSTALL_PATH=$ASCEND_HOME_PATH
@@ -137,14 +146,14 @@ function build_ut()
         echo "[build.sh] GoogleTest built successfully."
     fi
 
-    echo "[build.sh] Configuring UT build... (${chip_macro}, BUILD_FUSED_DEEP_MOE=OFF)"
+    echo "[build.sh] Configuring UT build... (${chip_macro}, ZBAL_OP_BUILD_FILTER=${BUILD_FILTER})"
     rm -rf "${build_dir}"
     mkdir -p "${build_dir}"
     cmake -S "${zbal_dir}" -B "${build_dir}" \
         -DBUILD_ZBAL_MODULE_UT=ON \
         -DSOC_VERSION="${soc_version}" \
         -D${chip_macro}=1 \
-        -DBUILD_FUSED_DEEP_MOE=OFF \
+        -DZBAL_OP_BUILD_FILTER="${BUILD_FILTER}" \
         -DCMAKE_BUILD_TYPE=DEBUG \
         -DDISABLE_ADAPTOR_COMPILE=ON \
         -DDISABLE_ALLOCATOR_COMPILE=ON \
