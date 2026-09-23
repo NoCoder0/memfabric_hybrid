@@ -27,7 +27,7 @@ public:
     std::vector<uint64_t> memory[2] = {std::vector<uint64_t>(CAPACITY / 8), std::vector<uint64_t>(CAPACITY / 8)};
     HostRdmaSparseConfig config[2];
     std::unique_ptr<HostRdmaSparse> endpoints[2];
-    std::atomic<uint32_t> batches{0}, progressBatches{0}, aggregateWrites{0};
+    std::atomic<uint32_t> batches{0}, progressBatches{0}, aggregateWrites{0}, statusWrites{0}, doneWrites{0};
     bool failBatch = false;
     bool dropRequest = false;
     bool delayBatch = false;
@@ -74,6 +74,12 @@ public:
         auto layout = HostRdmaSparseLayout::Make(33, 64, config[0].links, 4);
         if (dropRequest && destination == config[1].options.workspaceGva + layout.request) {
             return SM_OK;
+        }
+        if (destination == config[0].options.workspaceGva + layout.status) {
+            ++statusWrites;
+        }
+        if (destination == config[0].options.workspaceGva + layout.done) {
+            ++doneWrites;
         }
         if (source == config[1].options.workspaceGva) {
             ++aggregateWrites;
@@ -386,4 +392,41 @@ TEST(HostRdmaSparseTest, PollIdleDeadlineDoesNotInterruptAcceptedCopy)
     EXPECT_EQ(pair.poller->Poll(1), 1); // Simulated batch takes 30 ms after accepting the request.
     EXPECT_TRUE(pair.batchReturned.load());
     EXPECT_EQ(copy.get(), SM_OK);
+}
+
+TEST(HostRdmaSparseTest, PreparedCopyOwnsTargetsAndAcceptsChangingSources)
+{
+    for (auto mode : {HostRdmaSparseMode::BASELINE, HostRdmaSparseMode::CONT, HostRdmaSparseMode::GATHER}) {
+        SparsePair pair(mode);
+        pair.Start();
+        uint64_t source[2] = {pair.config[1].localGva, pair.config[1].localGva + 128};
+        uint64_t targets[2] = {pair.config[0].localGva + 256, pair.config[0].localGva + 128};
+        EXPECT_EQ(pair.endpoints[0]->RunPrepared(source, 2, 13), SM_INVALID_PARAM);
+        ASSERT_EQ(pair.endpoints[0]->PrepareCase(targets, 2, 13), SM_OK);
+        ASSERT_EQ(pair.endpoints[1]->PrepareCase(nullptr, 2, 13), SM_OK);
+        const auto firstTarget = targets[0];
+        targets[0] = 0; // Preparation owns the layout; the caller array is no longer used.
+        for (uint32_t round = 0; round < 3; ++round) {
+            source[0] = pair.config[1].localGva + round * 256;
+            std::memset(pair.Ptr(source[0]), 17 + round, 13);
+            std::memset(pair.Ptr(source[1]), 37 + round, 13);
+            ASSERT_EQ(pair.endpoints[0]->RunPrepared(source, 2, 13), SM_OK);
+            EXPECT_EQ(std::memcmp(pair.Ptr(firstTarget), pair.Ptr(source[0]), 13), 0);
+            EXPECT_EQ(std::memcmp(pair.Ptr(targets[1]), pair.Ptr(source[1]), 13), 0);
+        }
+        EXPECT_EQ(pair.statusWrites, 0);
+        EXPECT_EQ(pair.doneWrites, 3);
+        EXPECT_EQ(pair.endpoints[0]->RunPrepared(source, 1, 13), SM_INVALID_PARAM);
+        EXPECT_EQ(pair.endpoints[0]->RunPrepared(source, 2, 14), SM_INVALID_PARAM);
+        source[0] = pair.config[1].options.workspaceGva;
+        EXPECT_EQ(pair.endpoints[0]->RunPrepared(source, 2, 13), SM_INVALID_PARAM);
+        targets[0] = targets[1];
+        EXPECT_EQ(pair.endpoints[0]->PrepareCase(targets, 2, 13), SM_INVALID_PARAM);
+        source[0] = pair.config[1].localGva;
+        EXPECT_EQ(pair.endpoints[0]->RunPrepared(source, 2, 13), SM_INVALID_PARAM);
+        targets[0] = firstTarget;
+        ASSERT_EQ(pair.endpoints[0]->PrepareCase(targets, 2, 13), SM_OK);
+        ASSERT_EQ(pair.endpoints[0]->Run(source, targets, 2, 13), SM_OK);
+        EXPECT_EQ(pair.endpoints[0]->RunPrepared(source, 2, 13), SM_INVALID_PARAM);
+    }
 }

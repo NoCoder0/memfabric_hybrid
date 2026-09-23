@@ -3,6 +3,7 @@
 # MemFabric_Hybrid is licensed under Mulan PSL v2.
 """MF prepares and polls; offload copies. Pure CPU HOST_RDMA sparse-copy benchmark."""
 
+from array import array
 import argparse
 import ctypes
 import json
@@ -200,7 +201,7 @@ class Benchmark:
         return result
 
     def prepare_data(self, case):
-        self.sources = [self.peer + i * case["stride"] for i in range(case["count"])]
+        self.sources = array("Q", (self.peer + i * case["stride"] for i in range(case["count"])))
         self.targets = [self.local + i * case["stride"] for i in range(case["count"])]
         checked(self.handle.prepare_host_rdma_sparse_case(
             self.targets if self.a.role == "local" else [], case["count"], case["size"]),
@@ -218,7 +219,7 @@ class Benchmark:
         samples = {name: [] for name in ("e2e", "request", wait_stage, "scatter")}
         for iteration in range(self.a.warmup + self.a.rounds):
             begin = time.perf_counter_ns()
-            ret = self.operation(self.handle, self.sources, self.targets, size)
+            ret = self.operation(self.handle, self.sources, size)
             elapsed = time.perf_counter_ns() - begin
             checked(ret, "offload.sparse_copy_host_rdma")
             timing = self.timing()  # Query outside E2E timing, before the next request.
@@ -259,7 +260,7 @@ class Benchmark:
 
 def suite_config(a):
     keys = ("mode", "counts", "sizes", "stride", "rounds", "warmup", "chunk", "links", "dram_mb", "store_url")
-    return {"protocol": 3, "benchmark": "stage-boundaries-v2", **{key: getattr(a, key) for key in keys}}
+    return {"protocol": 3, "benchmark": "prepared-buffer-v3", **{key: getattr(a, key) for key in keys}}
 
 
 def run_cases(a, bench, control):

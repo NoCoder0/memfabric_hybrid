@@ -268,17 +268,43 @@ int32_t HostRdmaSparse::Receive(const uint64_t *destinations, uint32_t count, ui
 
 int32_t HostRdmaSparse::Run(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes)
 {
+    return RunImpl(sources, destinations, count, bytes, false);
+}
+
+int32_t HostRdmaSparse::RunPrepared(const uint64_t *sources, uint32_t count, uint64_t bytes)
+{
+    return RunImpl(sources, nullptr, count, bytes, true);
+}
+
+int32_t HostRdmaSparse::RunImpl(const uint64_t *sources, const uint64_t *destinations,
+                              uint32_t count, uint64_t bytes, bool prepared)
+{
     std::lock_guard<std::mutex> lock(copyMutex_);
     timing_ = {};
     try {
+        bool valid = false;
+        if (prepared) {
+            destinations = targetGvas_.data();
+            valid = sources != nullptr && count != 0 && count == targetGvas_.size() &&
+                    bytes != 0 && bytes == preparedBytes_;
+            // Sources may change on every call. Targets were checked once in PrepareCase.
+            for (uint32_t i = 0; valid && i < count; ++i) {
+                valid = ValidRange(sources[i], bytes, false);
+            }
+        } else {
+            valid = ValidRequest(sources, destinations, count, bytes);
+        }
         if (!started_ || stopped_ || failed_ || config_.rank != 0 ||
-            sequence_ >= UINT64_MAX / config_.options.maxBlocks || !ValidRequest(sources, destinations, count, bytes)) {
+            sequence_ >= UINT64_MAX / config_.options.maxBlocks || !valid) {
             OFFLOAD_LOG_ERROR("invalid sparse copy state/addresses, rank=" << config_.rank << " count=" << count);
             return SM_INVALID_PARAM;
         }
         ++sequence_;
-        if (config_.mode == HostRdmaSparseMode::GATHER) {
-            PrepareTargets(destinations, count);
+        if (!prepared) {
+            preparedBytes_ = 0;
+            if (config_.mode == HostRdmaSparseMode::GATHER) {
+                PrepareTargets(destinations, count);
+            }
         }
         auto ret = Submit(sources, destinations, count, bytes);
         if (ret == SM_OK) {
@@ -298,20 +324,6 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
                                  uint64_t bytes)
 {
     auto count = sources.size();
-    if (config_.mode == HostRdmaSparseMode::GATHER) {
-        std::vector<uint64_t> nativeSources(count);
-        for (size_t i = 0; i < count; ++i) {
-            nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
-        }
-        StageTimer totalTimer(timing_.gatherWriteNs);
-        {
-            StageTimer timer(timing_.gatherNs);
-            workers_->GatherAddresses(nativeSources.data(), static_cast<uint32_t>(count),
-                                      reinterpret_cast<void *>(Va(0)), bytes);
-        }
-        StageTimer timer(timing_.writeNs);
-        return copy_(Local(0), destinations[0], count * bytes);
-    }
     std::vector<void *> src(count);
     std::vector<void *> dst(count);
     std::vector<size_t> sizes(count, bytes);
@@ -334,9 +346,32 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
     return batch_(&params);
 }
 
+int32_t HostRdmaSparse::GatherFromMessage(uint64_t *sources, uint32_t count, uint64_t bytes, uint64_t destination)
+{
+    if (destination != Remote(0)) {
+        OFFLOAD_LOG_ERROR("invalid gather destination, sequence=" << sequence_);
+        return SM_INVALID_PARAM;
+    }
+    // The request owns this message until done. Convert in place, without temporary arrays.
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!ValidRange(sources[i], bytes, true)) {
+            OFFLOAD_LOG_ERROR("invalid gather source, index=" << i);
+            return SM_INVALID_PARAM;
+        }
+        sources[i] = config_.localVa + sources[i] - config_.localGva;
+    }
+    StageTimer totalTimer(timing_.gatherWriteNs);
+    {
+        StageTimer timer(timing_.gatherNs);
+        workers_->GatherAddresses(sources, count, reinterpret_cast<void *>(Va(0)), bytes);
+    }
+    StageTimer timer(timing_.writeNs);
+    return copy_(Local(0), destination, count * bytes);
+}
+
 int32_t HostRdmaSparse::Serve()
 {
-    auto words = reinterpret_cast<const uint64_t *>(Va(layout_.message));
+    auto words = reinterpret_cast<uint64_t *>(Va(layout_.message));
     uint64_t count = words[0], bytes = words[1];
     uint64_t agg = config_.mode == HostRdmaSparseMode::CONT ? 16 : 1;
     uint64_t dstCount = config_.mode == HostRdmaSparseMode::GATHER ? 1 : (count + agg - 1) / agg;
@@ -344,6 +379,9 @@ int32_t HostRdmaSparse::Serve()
         words[2] != dstCount || words[3] != agg) {
         OFFLOAD_LOG_ERROR("invalid sparse address message header, sequence=" << sequence_);
         return SM_INVALID_PARAM;
+    }
+    if (config_.mode == HostRdmaSparseMode::GATHER) {
+        return GatherFromMessage(words + 4, static_cast<uint32_t>(count), bytes, words[4 + count]);
     }
     std::vector<uint64_t> sources(words + 4, words + 4 + count), destinations;
     for (uint64_t i = 0; i < count; ++i) {
@@ -387,7 +425,8 @@ int32_t HostRdmaSparse::ProcessRequest(uint64_t request)
     }
     // Completion follows synchronous data/progress completion on every link.
     try {
-        auto statusRet = Publish(layout_.status, ret == SM_OK ? 0 : 1);
+        // Status starts at zero; a failure poisons the context. Success needs only done.
+        auto statusRet = ret == SM_OK ? SM_OK : Publish(layout_.status, 1);
         auto doneRet = statusRet == SM_OK ? Publish(layout_.done, request) : statusRet;
         if (ret == SM_OK) {
             ret = doneRet;
@@ -437,6 +476,7 @@ void HostRdmaSparse::PrepareTargets(const uint64_t *destinations, uint32_t count
 int32_t HostRdmaSparse::PrepareCase(const uint64_t *destinations, uint32_t count, uint64_t bytes)
 {
     std::lock_guard<std::mutex> lock(copyMutex_);
+    preparedBytes_ = 0;
     if (!started_ || stopped_ || failed_ || count == 0 || count > config_.options.maxBlocks ||
         bytes == 0 || bytes > config_.options.maxBlockBytes || (config_.rank == 0 && destinations == nullptr)) {
         OFFLOAD_LOG_ERROR("invalid sparse case preparation, rank=" << config_.rank << " count=" << count);
@@ -450,6 +490,14 @@ int32_t HostRdmaSparse::PrepareCase(const uint64_t *destinations, uint32_t count
                     return SM_INVALID_PARAM;
                 }
             }
+            std::vector<uint64_t> sorted(destinations, destinations + count);
+            std::sort(sorted.begin(), sorted.end());
+            for (uint32_t i = 1; i < count; ++i) {
+                if (sorted[i] - sorted[i - 1] < bytes) {
+                    OFFLOAD_LOG_ERROR("overlapping sparse case targets, index=" << i);
+                    return SM_INVALID_PARAM;
+                }
+            }
             PrepareTargets(destinations, count);
         }
         if (config_.mode == HostRdmaSparseMode::GATHER) {
@@ -457,6 +505,7 @@ int32_t HostRdmaSparse::PrepareCase(const uint64_t *destinations, uint32_t count
             workers_ = std::make_unique<ParallelCopyPool>(
                 config_.rank == 1 ? config_.options.gatherThreads : config_.options.scatterThreads, gatherCpus_);
         }
+        preparedBytes_ = bytes;
         return SM_OK;
     } catch (const std::exception &error) {
         failed_ = true;

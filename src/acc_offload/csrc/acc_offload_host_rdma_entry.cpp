@@ -69,6 +69,12 @@ int32_t ExecuteSparse(void *context, void *opaque)
     return static_cast<HostRdmaSparse *>(context)->Run(args->sources, args->destinations, args->count, args->bytes);
 }
 
+int32_t ExecutePreparedSparse(void *context, void *opaque)
+{
+    auto args = static_cast<const SparseCopyArgs *>(opaque);
+    return static_cast<HostRdmaSparse *>(context)->RunPrepared(args->sources, args->count, args->bytes);
+}
+
 int32_t ReadSparseTiming(void *context, void *opaque)
 {
     return static_cast<HostRdmaSparse *>(context)->LastTiming(
@@ -106,4 +112,11 @@ OFFLOAD_API int32_t offload_host_rdma_sparse_last_timing_v2(void *bmHandle, offl
         return ock::smem::SM_INVALID_PARAM;
     }
     return ock::smem::UseHostRdmaSparseContext(bmHandle, ock::offload::ReadSparseTimingV2, timing);
+}
+
+OFFLOAD_API int32_t offload_sparse_copy_host_rdma_prepared(void *bmHandle, const uint64_t *sources,
+                                                         uint32_t count, uint64_t blockBytes)
+{
+    ock::offload::SparseCopyArgs args{sources, nullptr, count, blockBytes};
+    return ock::smem::UseHostRdmaSparseContext(bmHandle, ock::offload::ExecutePreparedSparse, &args);
 }

@@ -171,12 +171,20 @@ case 准备接口也需要同步更新 SMEM 库和 Python 扩展。旧 copy/prep
 gather 仍显式逐线程绑核；scatter 沿用原实现，继承创建线程的 affinity。
 因此若指定单个 `MF_BENCH_APP_CPU`，scatter 线程也会继承这个单核集合，这与原 benchmark 一致。
 阶段计时口径已对齐；Python E2E 仍含 Python/pybind 调用开销，不等同于原纯 C++ E2E。
+example 使用三参数 `offload.sparse_copy_host_rdma(handle, src_buffer, block_bytes)`：
+源地址为准备阶段创建的 `array('Q')`，绑定直接读取连续 uint64 buffer，不逐项转为 C++ vector。
+目标布局由 MF 的 `prepare_host_rdma_sparse_case` 保存，范围及重叠检查在准备阶段完成。
+copy 每轮仍检查源地址范围（源可变化），不再复制排序目标数组或比较目标缓存。
+gather 远端直接将消息区源 GVA 原地换算为本进程 VA，再交给原 `GatherAddresses`；不构建中间数组。
+成功请求只发布 done；失败时发布 status 再发布 done，并使上下文失效。
+两端需同步更新库、Python 扩展和脚本。此修改不改变线程池和绑核。
 完整矩阵耗时超过默认 600 秒时，可在两端增加 `--timeout`，或减少 `--rounds`。
 
 ## 应用接口
 
 ```python
 from memfabric_hybrid import bm, offload
+from array import array
 
 # 两端用 MF initialize / create2 / join，预留不与用户数据重叠的工作区。
 workspace_bytes = bm.host_rdma_sparse_workspace_size(max_blocks, max_block_bytes, links=1)
@@ -188,7 +196,7 @@ ret = handle.prepare_host_rdma_sparse(
 if ret != 0:
     raise RuntimeError(f"prepare failed: {ret}")
 
-# 可选：每个 case 的热循环前准备目标地址与线程池，之后两端做 ready 屏障。
+# 三参数 copy 必需：热循环前准备目标地址与线程池，之后两端做 ready 屏障。
 # rank 0 传本 case 的 dst_gvas；rank 1 传 []。无需重置请求序号。
 ret = handle.prepare_host_rdma_sparse_case(dst_gvas if rank == 0 else [], count, block_bytes)
 if ret != 0:
@@ -199,8 +207,14 @@ ret = handle.poll_host_rdma_sparse(timeout_ms=100)
 # 1：处理完成一条请求；0：没有请求；负数：错误，应停止并协调两端退出。
 
 # rank 0：远端需要同时执行上述 poll。
-ret = offload.sparse_copy_host_rdma(handle, src_gvas, dst_gvas, block_bytes)
+src_buffer = array('Q', src_gvas)  # 热循环外构建；每轮可更换源地址值。
+ret = offload.sparse_copy_host_rdma(handle, src_buffer, block_bytes)
 # 0：同步拷贝成功；非零：错误。
+# count/block_bytes 必须匹配 case 准备；调用期间不得修改源 buffer。
+# 目标变化时重新 prepare_host_rdma_sparse_case；准备失败会撤销先前的可用布局。
+# 旧四参数形式仍兼容，但包含 list 转换和全量校验：
+# ret = offload.sparse_copy_host_rdma(handle, src_gvas, dst_gvas, block_bytes)
+# 成功调用旧形式后，使用三参数形式前需重新准备 case。
 
 # 可选：在当前端下一次请求前读取最近一次成功 copy / poll 的阶段耗时。
 timing = offload.host_rdma_sparse_last_timing(handle)
@@ -213,6 +227,7 @@ timing = offload.host_rdma_sparse_last_timing(handle)
 
 C 接口分别为 `smem_bm_poll_host_rdma_sparse`（`smem_bm_sparse.h`）和
 `offload_sparse_copy_host_rdma`（`acc_offload.h`）。offload 直接绑定自己的 Python 入口，执行三种模式；
+三参数 Python 形式对应新增的 `offload_sparse_copy_host_rdma_prepared`，旧 C 接口保持兼容。
 SMEM 负责准备、请求轮询和调用已注册的处理函数，不反向链接 offload。
 直接使用 C/C++ 时，在准备前加载并保留 `libmf_acc_offload.so`，直到相关 BM 全部销毁。
 Python 包自动完成库加载，无需 offload session 或 NPU 初始化。

@@ -36,12 +36,15 @@ public:
     int32_t Prepare();
     int32_t PrepareCase(const uint64_t *destinations, uint32_t count, uint64_t bytes);
     int32_t Run(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes);
+    int32_t RunPrepared(const uint64_t *sources, uint32_t count, uint64_t bytes);
     int32_t ProcessRequest(uint64_t request);
     int32_t LastTiming(offload_host_rdma_sparse_timing_t &timing);
     int32_t LastTiming(offload_host_rdma_sparse_timing_v2_t &timing);
     void Stop();
 
 private:
+    int32_t RunImpl(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes, bool prepared);
+    int32_t GatherFromMessage(uint64_t *sources, uint32_t count, uint64_t bytes, uint64_t destination);
     void PrepareTargets(const uint64_t *destinations, uint32_t count);
     bool ValidRange(uint64_t address, uint64_t bytes, bool local, bool workspace = false) const;
     bool ValidRequest(const uint64_t *sources, const uint64_t *destinations, uint32_t count, uint64_t bytes) const;
@@ -63,6 +66,7 @@ private:
     Batch batch_;
     uint64_t workspaceOffset_;
     uint64_t sequence_ = 0;
+    uint64_t preparedBytes_ = 0;
     offload_host_rdma_sparse_timing_v2_t timing_{};
     std::atomic<bool> stopped_{false};
     std::atomic<bool> failed_{false};

@@ -33,6 +33,14 @@ extern "C" {
 int32_t offload_sparse_copy_host_rdma(void *bmHandle, const uint64_t *sources, const uint64_t *destinations,
                                     uint32_t count, uint64_t blockBytes);
 
+/* Copy to the owned target layout established by smem_bm_prepare_host_rdma_sparse_case.
+ * Sources may vary; count and blockBytes must match that preparation. Preparation
+ * checks target ranges/overlaps once. A successful legacy copy invalidates this layout.
+ * The source array must remain valid and unmodified until this synchronous call returns.
+ */
+int32_t offload_sparse_copy_host_rdma_prepared(void *bmHandle, const uint64_t *sources,
+                                             uint32_t count, uint64_t blockBytes);
+
 /* Local stage durations in nanoseconds for the last successful request.
  * Rank 0 supplies request/scatter; rank 1 supplies gather/write. Unused stages are zero.
  * Query after copy (rank 0) or a poll returning 1 (rank 1), before the next request.

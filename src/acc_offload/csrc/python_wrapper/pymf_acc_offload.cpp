@@ -83,6 +83,25 @@ void DefineAccOffloadApi(py::module_ &m)
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("sizePtr"), py::arg("deviceId"));
 
     m.def("sparse_copy_host_rdma",
+          [](const py::object &handle, const py::buffer &sources, uint64_t bytes) {
+              auto info = sources.request();
+              if (info.ndim != 1 || info.itemsize != sizeof(uint64_t) || info.strides[0] != sizeof(uint64_t) ||
+                  (info.format != "Q" && !(info.format == "L" && sizeof(unsigned long) == sizeof(uint64_t))) ||
+                  info.size <= 0 || static_cast<uint64_t>(info.size) > UINT32_MAX ||
+                  reinterpret_cast<uintptr_t>(info.ptr) % alignof(uint64_t) != 0) {
+                  throw py::value_error("sources must be a contiguous native uint64 buffer with 1..UINT32_MAX entries");
+              }
+              py::capsule capsule = handle.attr("_native_handle");
+              void *native = PyCapsule_GetPointer(capsule.ptr(), "memfabric.smem_bm_t");
+              if (native == nullptr) { throw py::error_already_set(); }
+              py::gil_scoped_release release;
+              return offload_sparse_copy_host_rdma_prepared(native, static_cast<const uint64_t *>(info.ptr),
+                                                            static_cast<uint32_t>(info.size), bytes);
+          }, py::arg("handle"), py::arg("src_addrs"), py::arg("block_bytes"),
+          "Copy to targets from prepare_host_rdma_sparse_case; sources are a native uint64 buffer. "
+          "Do not modify the buffer during this synchronous call. No per-call list conversion.");
+
+    m.def("sparse_copy_host_rdma",
           [](const py::object &handle, const std::vector<uint64_t> &sources,
              const std::vector<uint64_t> &destinations, uint64_t bytes) {
               if (sources.empty() || sources.size() != destinations.size() || sources.size() > UINT32_MAX) {
