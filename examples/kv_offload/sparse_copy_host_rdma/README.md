@@ -138,10 +138,11 @@ CPU 数少于 gather 线程数、列表重复/非法或指定 CPU 不在允许�
 全部用例完成后，按 URMA 示例的样式打印平均耗时汇总表：
 
 ```text
-| bytes/pkt | packets | E2E(us) | request(us) | host gather(us) | host write(us) | scatter(us) |
+| bytes/pkt | packets | E2E(us) | request(us) | wait remote(us) | host gather(us) | host write(us) | gather+write(us) | scatter(us) |
 ```
 
-两端表格相同：E2E/request/scatter 来自 local，host gather/write 来自 remote。
+两端表格相同：E2E/request/wait remote/scatter 来自 local，host gather/write/gather+write 来自 remote。
+cont 的 `wait remote(us)` 列替换为 `receive+scatter(us)`，包含等待进度和分段拷贝。
 不适用的阶段显示 `-`：baseline 无 gather/scatter，cont 无 gather；CPU 路径没有 AICPU 和 launch 阶段。
 JSON 保留原有字段并新增各阶段统计及 min/max；同目录 `<stats-file>.txt` 保存详细 ASCII 表格：
 `bytes/pkt、packets、stage、avg(us)、min(us)、max(us)、P50(us)、P95(us)、P99(us)`，附各列含义。
@@ -149,16 +150,22 @@ JSON 保留原有字段并新增各阶段统计及 min/max；同目录 `<stats-f
 
 | 指标 | 计时范围 |
 |---|---|
-| E2E | Python 调用同步 offload 接口，包括 pybind、地址校验、发布请求、等待和数据搬运；不含结果校验和统计查询 |
-| request | 构建地址消息、传输消息并发布 request doorbell |
+| E2E | 紧贴 Python 同步 offload 调用前后打点，包括 pybind、原生地址校验、发布请求、等待和数据搬运；不含 Python 返回码检查、结果校验和统计查询 |
+| request | 传输地址消息并发布 request doorbell；不含地址消息构建 |
+| wait remote | baseline/gather：等待 done 并检查 status；不含 gather 模式的本地 scatter |
+| receive+scatter | cont：从等待进度、分段 CPU 拷贝到等待 done 并检查 status 的连续区间 |
 | host gather | 仅原 `GatherAddresses()` 调用，含派发和等待完成；地址解析/换算在此计时外 |
 | host write | 同步 MF copy/batch 调用；cont 包含进度水位发布，不含最终 status/done 发布 |
+| gather+write | gather：从调用 `GatherAddresses()` 前到同步 MF copy 返回后的连续区间；不含源地址数组构建及最终 status/done 发布 |
 | scatter | gather：仅原 `Scatter()` 调用，不含目标数组分配、换算和释放；cont：累加已有进度的 CPU 拷贝区间 |
 
 阶段耗时由各端原生算子计时，每次成功请求后查询，按 sequence 校验匹配。
-`cont` 的 write/scatter 重叠，request 和远端处理也可能重叠，**不能将各阶段相加作为 E2E**。
+各主机只计算自身单调时钟的耗时，不跨主机相减时间戳。
+`cont` 的 write/scatter 重叠；receive+scatter 包含 scatter，gather+write 包含 gather/write，
+local 的等待与 remote 的处理重叠，request 和远端处理也可能重叠，**不能将各阶段相加作为 E2E**。
 E2E 还包含未单列的协议等待、消息解析等开销；算子内读时钟的开销包含在本次测试中。
-本次新增原生统计接口，两端需重新构建安装 offload 库及 Python 扩展。
+本次新增原生 V2 统计接口，旧 C 结构体和 getter 保留；Python getter 名称不变，增加字段。
+两端需同步更新 example，并重新构建安装 offload 库及 Python 扩展；握手会拒绝旧统计版本的脚本。
 case 准备接口也需要同步更新 SMEM 库和 Python 扩展。旧 copy/prepare 接口签名保持不变。
 支持原 `MF_BENCH_APP_CPU`：通信线程和全局准备完成后绑定调用线程，再创建各 case 的线程池。
 gather 仍显式逐线程绑核；scatter 沿用原实现，继承创建线程的 affinity。
@@ -197,8 +204,10 @@ ret = offload.sparse_copy_host_rdma(handle, src_gvas, dst_gvas, block_bytes)
 
 # 可选：在当前端下一次请求前读取最近一次成功 copy / poll 的阶段耗时。
 timing = offload.host_rdma_sparse_last_timing(handle)
-# dict: sequence, request_ns, gather_ns, write_ns, scatter_ns
-# rank 0 提供 request/scatter，rank 1 提供 gather/write；其余字段为 0。
+# dict: sequence, request_ns, gather_ns, write_ns, scatter_ns,
+#       wait_remote_ns, receive_scatter_ns, gather_write_ns
+# rank 0 提供 request/scatter，以及 baseline/gather 的 wait_remote 或 cont 的 receive_scatter；
+# rank 1 提供 gather/write，以及 gather 模式的 gather_write；其余字段为 0。
 # 尚无成功请求或上下文已失效时抛出异常。
 ```
 

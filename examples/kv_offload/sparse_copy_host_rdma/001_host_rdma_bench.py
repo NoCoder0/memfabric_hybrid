@@ -214,22 +214,25 @@ class Benchmark:
 
     def copy_case(self, case):
         count, size, stride = case["count"], case["size"], case["stride"]
-        samples = {name: [] for name in ("e2e", "request", "scatter")}
+        wait_stage = "receive_scatter" if self.a.mode == "cont" else "wait_remote"
+        samples = {name: [] for name in ("e2e", "request", wait_stage, "scatter")}
         for iteration in range(self.a.warmup + self.a.rounds):
             begin = time.perf_counter_ns()
-            checked(self.operation(self.handle, self.sources, self.targets, size), "offload.sparse_copy_host_rdma")
+            ret = self.operation(self.handle, self.sources, self.targets, size)
             elapsed = time.perf_counter_ns() - begin
+            checked(ret, "offload.sparse_copy_host_rdma")
             timing = self.timing()  # Query outside E2E timing, before the next request.
             if iteration >= self.a.warmup:
                 samples["e2e"].append(elapsed)
                 samples["request"].append(timing["request_ns"])
+                samples[wait_stage].append(timing[f"{wait_stage}_ns"])
                 samples["scatter"].append(timing["scatter_ns"])
         verify_blocks(self.va, count, size, stride)  # Original benchmark: validate after all rounds.
         return {name: summarize(values) for name, values in samples.items()}
 
     def serve_case(self, case, control):
         processed, idle_polls = 0, 0
-        samples = {name: [] for name in ("gather", "write")}
+        samples = {name: [] for name in ("gather", "write", "gather_write")}
         while True:
             message = control.receive(0)
             if message is not None:
@@ -256,7 +259,7 @@ class Benchmark:
 
 def suite_config(a):
     keys = ("mode", "counts", "sizes", "stride", "rounds", "warmup", "chunk", "links", "dram_mb", "store_url")
-    return {"protocol": 3, "benchmark": "post-loop-verify-v1", **{key: getattr(a, key) for key in keys}}
+    return {"protocol": 3, "benchmark": "stage-boundaries-v2", **{key: getattr(a, key) for key in keys}}
 
 
 def run_cases(a, bench, control):
@@ -298,12 +301,16 @@ def format_table(title, headers, rows):
 
 def print_summary(a, rows):
     averages, details = [], []
+    wait_stage = "receive_scatter" if a.mode == "cont" else "wait_remote"
+    wait_label = "receive+scatter" if a.mode == "cont" else "wait remote"
     keys = ("avg_us", "min_us", "max_us", "p50_us", "p95_us", "p99_us")
     for row in rows:
         local, remote = row["local"], row["remote"]["timing"]
         stages = [("E2E", local["e2e"]), ("request", local["request"]),
+                  (wait_label, local[wait_stage]),
                   ("host gather", remote["gather"] if a.mode == "gather" else None),
                   ("host write", remote["write"]),
+                  ("gather+write", remote["gather_write"] if a.mode == "gather" else None),
                   ("scatter", local["scatter"] if a.mode != "baseline" else None)]
         averages.append([row["size"], row["count"],
                          *[f"{metrics['avg_us']:.3f}" if metrics is not None else "-" for _, metrics in stages]])
@@ -312,12 +319,16 @@ def print_summary(a, rows):
                 details.append([row["size"], row["count"], name, *[f"{metrics[key]:.3f}" for key in keys]])
     title = f"{a.mode} copy summary (E2E = Python/offload synchronous call; verify=PASS)"
     print("\n" + format_table(title, ("bytes/pkt", "packets", "E2E(us)", "request(us)",
-                                     "host gather(us)", "host write(us)", "scatter(us)"), averages), flush=True)
+                                     f"{wait_label}(us)", "host gather(us)", "host write(us)",
+                                     "gather+write(us)", "scatter(us)"), averages), flush=True)
     descriptions = (
         "Metric descriptions (overlapping stages must not be added as E2E):\n"
         "  E2E         : requester Python/offload call, including validation and pybind; "
-        "excludes result verification.\n"
-        "  request     : build and publish the address message and request doorbell.\n"
+        "excludes result verification and Python return-code checking.\n"
+        "  request     : send the address message and publish the doorbell; excludes message construction.\n"
+        "  wait remote : wait for done and check status; excludes gather-mode scatter.\n"
+        "  receive+scatter: cont progress wait/copy through done and status check.\n"
+        "  gather+write: remote continuous interval from GatherAddresses entry through MF copy return.\n"
         "  host gather : original GatherAddresses call only, including dispatch and worker completion wait.\n"
         "  host write  : synchronous MF data copy/batch call; cont includes progress publishing.\n"
         "  scatter     : original Scatter call only; cont sums ready-chunk CPU copies only.\n"
@@ -339,7 +350,8 @@ def write_results(a, rows, status="running"):
     path.write_text(json.dumps({"config": suite_config(a), "role": a.role, "status": status,
                                "gather_threads": a.gather_threads, "scatter_threads": a.scatter_threads,
                                "poll_timeout_ms": a.poll_timeout_ms,
-                               "timing": "Python/native offload E2E including pybind; validation excluded",
+                               "timing": "Python/native offload E2E including pybind and native address validation; "
+                                         "result verification and Python return-code checking excluded",
                                "results": rows}, indent=2) + "\n", encoding="utf-8")
 
 

@@ -200,6 +200,7 @@ int32_t HostRdmaSparse::Submit(const uint64_t *sources, const uint64_t *destinat
     for (uint64_t i = 0; i < dstCount; ++i) {
         words[4 + count + i] = config_.mode == HostRdmaSparseMode::BASELINE ? destinations[i] : Local(i * agg * bytes);
     }
+    StageTimer timer(timing_.requestNs);
     auto ret = copy_(Local(layout_.message), Remote(layout_.message), (4 + count + dstCount) * 8);
     return ret == SM_OK ? Publish(layout_.request, sequence_) : ret;
 }
@@ -243,17 +244,20 @@ int32_t HostRdmaSparse::ConsumeProgress(const uint64_t *destinations, uint32_t c
 
 int32_t HostRdmaSparse::Receive(const uint64_t *destinations, uint32_t count, uint64_t bytes)
 {
-    auto ret = config_.mode == HostRdmaSparseMode::CONT ? ConsumeProgress(destinations, count, bytes) : SM_OK;
-    if (ret != SM_OK) {
-        return ret;
-    }
-    ret = Wait(layout_.done, sequence_);
-    if (ret != SM_OK) {
-        return ret;
-    }
-    if (Load(layout_.status) != 0) {
-        OFFLOAD_LOG_ERROR("peer failed sparse copy, sequence=" << sequence_);
-        return SM_ERROR;
+    {
+        StageTimer timer(config_.mode == HostRdmaSparseMode::CONT ? timing_.receiveScatterNs : timing_.waitRemoteNs);
+        auto ret = config_.mode == HostRdmaSparseMode::CONT ? ConsumeProgress(destinations, count, bytes) : SM_OK;
+        if (ret != SM_OK) {
+            return ret;
+        }
+        ret = Wait(layout_.done, sequence_);
+        if (ret != SM_OK) {
+            return ret;
+        }
+        if (Load(layout_.status) != 0) {
+            OFFLOAD_LOG_ERROR("peer failed sparse copy, sequence=" << sequence_);
+            return SM_ERROR;
+        }
     }
     if (config_.mode == HostRdmaSparseMode::GATHER) {
         StageTimer timer(timing_.scatterNs);
@@ -276,11 +280,7 @@ int32_t HostRdmaSparse::Run(const uint64_t *sources, const uint64_t *destination
         if (config_.mode == HostRdmaSparseMode::GATHER) {
             PrepareTargets(destinations, count);
         }
-        int32_t ret;
-        {
-            StageTimer timer(timing_.requestNs);
-            ret = Submit(sources, destinations, count, bytes);
-        }
+        auto ret = Submit(sources, destinations, count, bytes);
         if (ret == SM_OK) {
             ret = Receive(destinations, count, bytes);
         }
@@ -303,6 +303,7 @@ int32_t HostRdmaSparse::Transfer(const std::vector<uint64_t> &sources, std::vect
         for (size_t i = 0; i < count; ++i) {
             nativeSources[i] = config_.localVa + sources[i] - config_.localGva;
         }
+        StageTimer totalTimer(timing_.gatherWriteNs);
         {
             StageTimer timer(timing_.gatherNs);
             workers_->GatherAddresses(nativeSources.data(), static_cast<uint32_t>(count),
@@ -401,6 +402,16 @@ int32_t HostRdmaSparse::ProcessRequest(uint64_t request)
 }
 
 int32_t HostRdmaSparse::LastTiming(offload_host_rdma_sparse_timing_t &timing)
+{
+    offload_host_rdma_sparse_timing_v2_t extended{};
+    auto ret = LastTiming(extended);
+    if (ret == SM_OK) {
+        timing = {extended.sequence, extended.requestNs, extended.gatherNs, extended.writeNs, extended.scatterNs};
+    }
+    return ret;
+}
+
+int32_t HostRdmaSparse::LastTiming(offload_host_rdma_sparse_timing_v2_t &timing)
 {
     std::lock_guard<std::mutex> lock(copyMutex_);
     if (!started_ || stopped_ || failed_ || timing_.sequence == 0) {

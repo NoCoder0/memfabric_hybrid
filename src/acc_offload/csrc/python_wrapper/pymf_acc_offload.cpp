@@ -105,11 +105,11 @@ Returns 0 on success. No offload.initialize or NPU required.)");
         py::capsule capsule = handle.attr("_native_handle");
         void *native = PyCapsule_GetPointer(capsule.ptr(), "memfabric.smem_bm_t");
         if (native == nullptr) { throw py::error_already_set(); }
-        offload_host_rdma_sparse_timing_t timing{};
+        offload_host_rdma_sparse_timing_v2_t timing{};
         int32_t ret;
         {
             py::gil_scoped_release release;
-            ret = offload_host_rdma_sparse_last_timing(native, &timing);
+            ret = offload_host_rdma_sparse_last_timing_v2(native, &timing);
         }
         if (ret != 0) { throw std::runtime_error("no successful HOST_RDMA sparse timing, ret=" + std::to_string(ret)); }
         py::dict result;
@@ -118,6 +118,9 @@ Returns 0 on success. No offload.initialize or NPU required.)");
         result["gather_ns"] = timing.gatherNs;
         result["write_ns"] = timing.writeNs;
         result["scatter_ns"] = timing.scatterNs;
+        result["wait_remote_ns"] = timing.waitRemoteNs;
+        result["receive_scatter_ns"] = timing.receiveScatterNs;
+        result["gather_write_ns"] = timing.gatherWriteNs;
         return result;
     }, py::arg("handle"), "Local stage times (ns) of the last successful copy/poll; read before the next request.");
 

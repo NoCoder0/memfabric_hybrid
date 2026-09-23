@@ -48,6 +48,25 @@ typedef struct {
 
 int32_t offload_host_rdma_sparse_last_timing(void *bmHandle, offload_host_rdma_sparse_timing_t *timing);
 
+/* Extended timing; original structure/API remain ABI-compatible.
+ * requestNs measures message transfer plus doorbell, excluding message construction.
+ * waitRemoteNs is the completion wait/status check for baseline/gather.
+ * receiveScatterNs is cont progress consumption plus completion wait/status check.
+ * gatherWriteNs spans remote GatherAddresses through synchronous write return.
+ */
+typedef struct {
+    uint64_t sequence;
+    uint64_t requestNs;
+    uint64_t gatherNs;
+    uint64_t writeNs;
+    uint64_t scatterNs;
+    uint64_t waitRemoteNs;
+    uint64_t receiveScatterNs;
+    uint64_t gatherWriteNs;
+} offload_host_rdma_sparse_timing_v2_t;
+
+int32_t offload_host_rdma_sparse_last_timing_v2(void *bmHandle, offload_host_rdma_sparse_timing_v2_t *timing);
+
 typedef enum {
     OFFLOAD_SCENE_LOCAL = 0,  /* single-card local DRAM memory pool */
     OFFLOAD_SCENE_SHARED = 1, /* multi-card shared DRAM memory pool */

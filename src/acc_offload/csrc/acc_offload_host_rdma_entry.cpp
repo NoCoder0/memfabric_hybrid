@@ -74,6 +74,11 @@ int32_t ReadSparseTiming(void *context, void *opaque)
     return static_cast<HostRdmaSparse *>(context)->LastTiming(
         *static_cast<offload_host_rdma_sparse_timing_t *>(opaque));
 }
+int32_t ReadSparseTimingV2(void *context, void *opaque)
+{
+    return static_cast<HostRdmaSparse *>(context)->LastTiming(
+        *static_cast<offload_host_rdma_sparse_timing_v2_t *>(opaque));
+}
 } // namespace
 } // namespace ock::offload
 
@@ -92,4 +97,13 @@ OFFLOAD_API int32_t offload_host_rdma_sparse_last_timing(void *bmHandle, offload
         return ock::smem::SM_INVALID_PARAM;
     }
     return ock::smem::UseHostRdmaSparseContext(bmHandle, ock::offload::ReadSparseTiming, timing);
+}
+
+OFFLOAD_API int32_t offload_host_rdma_sparse_last_timing_v2(void *bmHandle, offload_host_rdma_sparse_timing_v2_t *timing)
+{
+    if (timing == nullptr) {
+        OFFLOAD_LOG_ERROR("null sparse timing output");
+        return ock::smem::SM_INVALID_PARAM;
+    }
+    return ock::smem::UseHostRdmaSparseContext(bmHandle, ock::offload::ReadSparseTimingV2, timing);
 }

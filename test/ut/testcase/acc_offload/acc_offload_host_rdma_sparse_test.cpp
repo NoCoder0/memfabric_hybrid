@@ -195,7 +195,7 @@ TEST(HostRdmaSparseTest, TimingTracksCompletedRequestsAndApplicableStages)
 {
     for (auto mode : {HostRdmaSparseMode::BASELINE, HostRdmaSparseMode::CONT, HostRdmaSparseMode::GATHER}) {
         SparsePair pair(mode);
-        offload_host_rdma_sparse_timing_t local{}, remote{};
+        offload_host_rdma_sparse_timing_v2_t local{}, remote{};
         EXPECT_EQ(pair.endpoints[0]->LastTiming(local), SM_INVALID_PARAM);
         pair.delayBatch = mode != HostRdmaSparseMode::GATHER;
         pair.Start();
@@ -205,6 +205,20 @@ TEST(HostRdmaSparseTest, TimingTracksCompletedRequestsAndApplicableStages)
             ASSERT_EQ(pair.endpoints[1]->LastTiming(remote), SM_OK);
             EXPECT_EQ(local.sequence, sequence);
             EXPECT_EQ(remote.sequence, sequence);
+            offload_host_rdma_sparse_timing_t legacy{};
+            ASSERT_EQ(pair.endpoints[0]->LastTiming(legacy), SM_OK);
+            EXPECT_EQ(legacy.sequence, local.sequence);
+            EXPECT_EQ(legacy.requestNs, local.requestNs);
+            EXPECT_EQ(legacy.scatterNs, local.scatterNs);
+            EXPECT_EQ(local.waitRemoteNs > 0, mode != HostRdmaSparseMode::CONT);
+            EXPECT_EQ(local.receiveScatterNs > 0, mode == HostRdmaSparseMode::CONT);
+            EXPECT_EQ(remote.gatherWriteNs > 0, mode == HostRdmaSparseMode::GATHER);
+            if (mode == HostRdmaSparseMode::GATHER) {
+                EXPECT_GE(remote.gatherWriteNs, remote.gatherNs + remote.writeNs);
+            }
+            if (mode == HostRdmaSparseMode::CONT) {
+                EXPECT_GE(local.receiveScatterNs, local.scatterNs);
+            }
             EXPECT_GT(local.requestNs, 0);
             EXPECT_GT(remote.writeNs, 0);
             EXPECT_EQ(local.gatherNs, 0);
@@ -215,6 +229,7 @@ TEST(HostRdmaSparseTest, TimingTracksCompletedRequestsAndApplicableStages)
             EXPECT_EQ(local.scatterNs > 0, mode != HostRdmaSparseMode::BASELINE);
             if (pair.delayBatch) {
                 EXPECT_GE(remote.writeNs, 30000000);
+                EXPECT_GE(local.waitRemoteNs + local.receiveScatterNs, 30000000);
             }
         }
         pair.endpoints[0]->Stop();
