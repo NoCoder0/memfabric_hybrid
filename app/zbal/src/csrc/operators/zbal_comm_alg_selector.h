@@ -44,11 +44,7 @@ inline OpExecConfig GetCommOpConfig(uint32_t commType, uint32_t commAlg)
             return {1, 16};
         case ZBAL_CMD_REDUCE_SCATTER:
             if (commAlg == ZBAL_COMM_ALG_DOUBLE_RING) {
-                return {2, 8}; /* 2 cores (CW+CCW), 8 channels per core.
-                                * Phase 1: data copies distributed round-robin across 8 channels;
-                                * stat SQEs on ch0 after data completes. Phase 2: ch0 only
-                                * for stat ordering safety. Multi-channel Phase 1 gives ~8x
-                                * bandwidth for the Nx ringElemCount local copies. */
+                return {2, 2}; /* Per direction: ring reduce channel + next-chunk prefetch channel. */
             }
             return {1, 8}; /* FULL_MESH: 1 core, 8 channels. All N-1 peer reduces at once. */
         case ZBAL_CMD_ALLREDUCE:

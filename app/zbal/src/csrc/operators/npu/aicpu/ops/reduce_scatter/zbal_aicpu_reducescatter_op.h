@@ -26,8 +26,7 @@
  *   - FULL_MESH  (≤32MB): 1 core, 8 channels. Batched progressive barrier —
  *     self-copy (NoWait) starts immediately, then batched poll submits reduce
  *     SQEs for ready peers. Slow peers don't block fast ones.
- *   - DOUBLE_RING (>32MB): 2 cores (CW+CCW), 3-slice stat pipeline.
- *     NoWait submission for slices 0/1, Mc+flag only for slice 2.
+ *   - DOUBLE_RING (>32MB): 2 cores (CW+CCW), two channels and one slice per core.
  */
 class ReduceScatterOp {
 public:

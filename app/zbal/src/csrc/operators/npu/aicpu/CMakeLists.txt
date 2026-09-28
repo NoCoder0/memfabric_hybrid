@@ -13,6 +13,13 @@ set(AICPU_INCLUDE_DIRS
 
 set(AICPU_COMPILER "${ASCEND_HOME_PATH}/toolkit/toolchain/hcc/bin/aarch64-target-linux-gnu-g++")
 
+# Algorithm implementations are header-only; changing them must rebuild the kernel archive.
+file(GLOB_RECURSE AICPU_KERNEL_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+list(APPEND AICPU_KERNEL_HEADERS
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../zbal_comm_alg_selector.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../zbal_comm_host_device_struct.h"
+)
+
 set(AICPU_OUTPUT_DIR "${CMAKE_BINARY_DIR}/aicpu_kernels")
 file(MAKE_DIRECTORY ${AICPU_OUTPUT_DIR})
 set(AICPU_SO_OUTPUT "${AICPU_OUTPUT_DIR}/libzbal_aicpu_kernel.so")
@@ -38,7 +45,7 @@ add_custom_command(
         ${AICPU_INC_FLAGS}
         -o ${AICPU_SO_OUTPUT}
         ${AICPU_KERNEL_SRC}
-    DEPENDS ${AICPU_KERNEL_SRC}
+    DEPENDS ${AICPU_KERNEL_SRC} ${AICPU_KERNEL_HEADERS}
     COMMENT "Compiling AICPU kernel shared library with aarch64 cross-compiler"
 )
 

@@ -23,15 +23,15 @@ using namespace zbal;
 
 /* DoubleRing ReduceScatter — true ring topology with cclBuf forwarding.
  *
- * Mirrors AllGatherDoubleRing (RingCtx + Emit helpers + Phase 1 overlap).
+ * Uses separate per-direction SDMA channels for ring reduce and next-chunk prefetch.
  * Key differences from AllGather:
  *  1. cclBuf (op.buffer) as forwarding buffer — recvBuf is per-rank output
  *     only (dataSize/N), so cclBuf holds per-chunk working copies for ring
  *     accumulation. sendBuf stays read-only.
  *  2. SDMA reduce in Phase 2 (reduceOpCode = dataType<<4 | reduceOp).
- *  3. Outer chunk loop: cclBuf is fixed 256M, so data is split into outer
- *     chunks when perRankBytes > 256M/(2*N).
- *  4. Phase 1 copies all N chunks to cclBuf (AllGather only copies 1).
+ *  3. Outer chunks are capped by ZBAL_RS_CHUNK_BYTES and the CCL buffer capacity.
+ *  4. Phase 1 copies N-1 chunks to cclBuf and the local chunk to recvBuf.
+ *  5. A slot is reused only after local completion and downstream consumed acknowledgement.
 *
 * cclBuf layout (double-buffered):
 *   [CW-A: N×cb][CW-B: N×cb][CCW-A: N×cb][CCW-B: N×cb]
@@ -39,91 +39,214 @@ using namespace zbal;
 *   K+1 from overwriting cclBuf data still being read for K.
 *
 * chunkCurBase bit-field: (outerIdx << OUTIDX_SHIFT) | (iter << ITER_SHIFT) | slice
-*   slice (bits 0-1): 3 pipeline slices (0/1/2)
-*   iter (bits 2-3): ring iteration round (0..N-2)
+*   slice (bits 0-1): pipeline slice index (currently only 0)
+*   iter (bits 2-15): ring iteration round (0..N-2)
 *   outerIdx (bits 16+): outer chunk sequence number
 */
 
 /* CCL buffer size — must match host-side allocation in NpuCommunicatorAICPU. */
 constexpr uint64_t ZBAL_RS_CCL_BUFFER_BYTES = 256ULL * 1024ULL * 1024ULL; /* 256M */
 
-/* Slices per core: 3 enables ring pipelining across ranks (mirrors AllGather) */
-constexpr uint32_t ZBAL_RS_SLICE_PER_CORE = 3;
+/* Per-rank, per-direction chunk limit; use 1, 2 or 4 MiB for comparison. */
+constexpr uint64_t ZBAL_RS_CHUNK_BYTES = 1ULL * 1024ULL * 1024ULL;
+
+/* Use one slice per core to avoid subdividing each ring chunk. */
+constexpr uint32_t ZBAL_RS_SLICE_PER_CORE = 1;
 
 class ReduceScatterDoubleRing {
 public:
-    /* Execute: owns ring loop (Phase 1 + N-1 rounds × 3 slices with stat sync).
-     * Phase 1: multi-channel data copy, then stat on ch0 after data completes.
-     * Phase 2: ch0 only, NoWait for slices 0/1, Submit+Wait for slice 2. */
+    /* Channel 0 reduces the current slot while channel 1 prepares the next slot. */
     static int Execute(AicpuAlgorithmCtx &alg, const CommOpParams &op, SqeLocalRingBuffer *ringBufs,
                        volatile stars_channel_info_t **channels, uint32_t numChPerCore, volatile uint8_t *workspace,
                        uint32_t coreId, uint32_t numCores)
     {
-        bool noWaitInflight = false;
-        int batch;
-        do {
-            batch = BuildSqes(alg, op);
-            if (batch < 0)
-                return batch;
+        if (numCores != 2 || numChPerCore != 2 || op.waitSymbol == 0 || op.waitSymbol > UINT32_MAX ||
+            alg.ctx->rankNum < 2 || op.numCores != numCores || op.numChPerCore != numChPerCore) {
+            return BUILD_ERROR;
+        }
+        if (channels[0] == nullptr || channels[1] == nullptr || channels[0]->sq_base == channels[1]->sq_base ||
+            op.coreId != coreId || alg.ringBufs != ringBufs || op.channels != channels) {
+            return ERR_CHANNEL_INVALID;
+        }
+        const uint32_t elemSize = ZBALDataTypeSize(op.dataType);
+        if (elemSize == 0 || op.dataSize % (static_cast<uint64_t>(alg.ctx->rankNum) * elemSize) != 0) {
+            return BUILD_ERROR;
+        }
+        return ExecutePipeline(alg, op, workspace);
+    }
 
-            if (IsPhase1Start(batch, alg)) {
-                if (AicpuSubmitAndWait(ringBufs, channels, numChPerCore, workspace, coreId) < 0)
-                    return ERR_WAIT_TIMEOUT;
-                RingCtx c = ComputeRingCtx(alg, op);
-                if (EmitPhase1StatSqes(alg, op, c) < 0)
-                    return BUILD_ERROR;
-                if (ringBufs[0].HasWork() && AicpuLaunchTaskNoWait(&ringBufs[0], channels[0]) < 0)
-                    return ERR_DOORBELL_FAILED;
-                continue;
-            }
+private:
+    struct RingCtx;
 
-            /* Phase 2: NoWait for non-last slices, Submit+Wait for last slice. */
-            const bool isLastSlice = (batch != BUILD_MORE) || !alg.chunkActive || IsLastSliceInGroup(alg);
-            if (!isLastSlice && !AnyHwSqNearFull(channels, numChPerCore)) {
-                if (LaunchNoWaitAllChannels(ringBufs, channels, numChPerCore) < 0)
-                    return ERR_DOORBELL_FAILED;
-                noWaitInflight = true;
-            } else {
-                if (AicpuSubmitAndWait(ringBufs, channels, numChPerCore, workspace, coreId) < 0)
-                    return ERR_WAIT_TIMEOUT;
-                noWaitInflight = false;
-            }
-        } while (batch == BUILD_MORE);
+    static uint64_t ChunkToken(const CommOpParams &op, uint32_t outerIdx)
+    {
+        return (op.waitSymbol << 32U) | static_cast<uint64_t>(outerIdx);
+    }
 
-        /* Final drain: safety net for pending NoWait SQEs. */
-        if (noWaitInflight) {
-            if (AicpuSubmitAndWait(ringBufs, channels, numChPerCore, workspace, coreId) < 0)
-                return ERR_WAIT_TIMEOUT;
+    static int SubmitChannel(AicpuAlgorithmCtx &alg, const CommOpParams &op, volatile uint8_t *workspace,
+                             uint32_t channel, bool wait)
+    {
+        const uint32_t fid = AicpuWorkspace::FlagIdx(op.coreId, op.numChPerCore, channel);
+        int ret =
+            AicpuLaunchTaskMc(&alg.ringBufs[channel], op.channels[channel], workspace, op.coreId, 1, channel, fid);
+        if (ret < 0) {
+            return ret;
+        }
+        return wait ? WaitChannel(op, workspace, channel) : 0;
+    }
+
+    static int WaitChannel(const CommOpParams &op, volatile uint8_t *workspace, uint32_t channel)
+    {
+        CompletionFlag flag(workspace, op.coreId, op.numChPerCore, channel);
+        return flag.Wait();
+    }
+
+    static int StartPrefetch(AicpuAlgorithmCtx &slot, const CommOpParams &op, volatile uint8_t *workspace,
+                             uint32_t outerIdx)
+    {
+        slot.chunkCurBase = static_cast<uint64_t>(outerIdx) << ZBAL_AICPU_OUTERIDX_SHIFT;
+        slot.chunkActive = false;
+        const RingCtx c = ComputeRingCtx(slot, op);
+        if (outerIdx >= 2 && WaitConsumed(op, c, outerIdx - 2) < 0) {
+            return BUILD_ERROR;
+        }
+        if (EmitPhase1Sqes(slot, op, c) < 0) {
+            return BUILD_ERROR;
+        }
+        if (EmitPhase1ReadySqes(slot, op, c) < 0) {
+            return BUILD_ERROR;
+        }
+        return SubmitChannel(slot, op, workspace, 1, false);
+    }
+
+    static int BuildAndSubmitReduceRound(AicpuAlgorithmCtx &slot, const CommOpParams &op, volatile uint8_t *workspace,
+                                         const RingCtx &c, uint32_t &queuedSqes)
+    {
+        if (EmitPhase2SliceSqes(slot, op, c) < 0) {
+            return BUILD_ERROR;
+        }
+        if (!slot.chunkActive && EmitConsumedSqe(slot, op, c) < 0) {
+            return BUILD_ERROR;
+        }
+        return SubmitReduceRound(slot, op, workspace, queuedSqes);
+    }
+
+    static int EmitConsumedSqe(AicpuAlgorithmCtx &slot, const CommOpParams &op, const RingCtx &c)
+    {
+        /* Same-channel FIFO publishes consumed after the final remote read. */
+        const int64_t delta = static_cast<int64_t>(c.readNeighborRank) - c.myRank;
+        const uint64_t remote = op.exchangeGva + delta * slot.ctx->localDeviceMemSize;
+        if (AicpuDispatcher::CopyData(slot.ringBufs, 0, c.statSrcGva, remote + c.statDirOff + sizeof(uint64_t),
+                                      sizeof(uint64_t), op.channels[0]) != 0) {
+            return BUILD_ERROR;
         }
         return 0;
     }
 
-    static int BuildSqes(AicpuAlgorithmCtx &alg, const CommOpParams &op)
+    static int SubmitReduceRound(AicpuAlgorithmCtx &slot, const CommOpParams &op, volatile uint8_t *workspace,
+                                 uint32_t &queuedSqes)
     {
-        SqeLocalRingBuffer *ring = alg.ringBufs;
-        const uint32_t groupSize = alg.ctx->rankNum;
-        const uint64_t dataSize = op.dataSize;
-
-        if (groupSize <= 1) {
-            return AicpuDispatcher::CopyData(ring, 0U, op.sendBuf, op.recvBuf, static_cast<uint32_t>(dataSize),
-                                             op.channels[0]);
+        const uint32_t pending = static_cast<uint32_t>(slot.ringBufs[0].sqeCnt);
+        const auto *channel = op.channels[0];
+        const uint32_t depth = channel == nullptr ? 0U : channel->sq_depth;
+        /* Reserve a completion SQE and an empty slot, including on NoWait submissions. */
+        if (static_cast<uint64_t>(queuedSqes) + pending + 1U >= depth) {
+            return ERR_CAPACITY_EXCEEDED;
         }
-        if (op.numCores % ZBAL_AICPU_RING_NUM != 0) {
-            return BUILD_ERROR;
+        /* Normally only the final round drains; retain the capacity guard for long rings. */
+        const bool capacityDrain = static_cast<uint64_t>(queuedSqes) + pending >= depth / 2U;
+        if (!slot.chunkActive || capacityDrain) {
+            const int ret = SubmitChannel(slot, op, workspace, 0, true);
+            if (ret < 0) {
+                return ret;
+            }
+            queuedSqes = 0;
+            return 0;
         }
-
-        RingCtx c = ComputeRingCtx(alg, op);
-        if (c.myLen == 0)
-            return BUILD_DONE;
-
-        if (!alg.chunkActive) {
-            return EmitPhase1Sqes(alg, op, c);
+        const int ret = AicpuLaunchTaskNoWait(&slot.ringBufs[0], op.channels[0]);
+        if (ret < 0) {
+            return ret;
         }
-        return EmitPhase2SliceSqes(alg, op, c);
+        queuedSqes += pending;
+        return 0;
     }
 
-private:
-    /* Derived ring parameters — computed once per BuildSqes entry. */
+    static int FinishReduceSlot(AicpuAlgorithmCtx &slot, const CommOpParams &op, volatile uint8_t *workspace,
+                                const RingCtx &c, uint32_t &queuedSqes)
+    {
+        while (slot.chunkActive) {
+            if (BuildAndSubmitReduceRound(slot, op, workspace, c, queuedSqes) < 0) {
+                return BUILD_ERROR;
+            }
+        }
+        return 0;
+    }
+
+    /* NoWait work needs a fresh completion on error; an earlier flag cannot drain it. */
+    static void DrainReduceOnError(AicpuAlgorithmCtx &slot, const CommOpParams &op, volatile uint8_t *workspace,
+                                   const RingCtx &c, uint32_t queuedSqes)
+    {
+        if (queuedSqes == 0 && !slot.ringBufs[0].HasWork()) {
+            return;
+        }
+        if (!slot.ringBufs[0].HasWork() && AicpuDispatcher::CopyData(slot.ringBufs, 0U, c.statSrcGva, c.statSrcGva,
+                                                                     sizeof(uint64_t), op.channels[0]) != 0) {
+            return;
+        }
+        (void)SubmitChannel(slot, op, workspace, 0, true);
+    }
+
+    static int ExecutePipeline(AicpuAlgorithmCtx &alg, const CommOpParams &op, volatile uint8_t *workspace)
+    {
+        AicpuAlgorithmCtx slots[2] = {alg, alg};
+        const RingCtx initial = ComputeRingCtx(alg, op);
+        if (initial.numOuterChunks == 0) {
+            return 0;
+        }
+        if (StartPrefetch(slots[0], op, workspace, 0) < 0) {
+            return BUILD_ERROR;
+        }
+        for (uint32_t outer = 0; outer < initial.numOuterChunks; ++outer) {
+            auto &current = slots[outer & 1U];
+            auto &next = slots[(outer + 1) & 1U];
+            if (WaitChannel(op, workspace, 1) < 0) {
+                return BUILD_ERROR;
+            }
+            const RingCtx c = ComputeRingCtx(current, op);
+            /* Submit round zero NoWait before starting the next outer's prefetch. */
+            uint32_t queuedSqes = 0;
+            if (BuildAndSubmitReduceRound(current, op, workspace, c, queuedSqes) < 0) {
+                DrainReduceOnError(current, op, workspace, c, queuedSqes);
+                return BUILD_ERROR;
+            }
+            const bool hasNext = outer + 1 < initial.numOuterChunks;
+            if (hasNext && StartPrefetch(next, op, workspace, outer + 1) < 0) {
+                DrainReduceOnError(current, op, workspace, c, queuedSqes);
+                return BUILD_ERROR;
+            }
+            if (FinishReduceSlot(current, op, workspace, c, queuedSqes) < 0) {
+                DrainReduceOnError(current, op, workspace, c, queuedSqes);
+                if (hasNext) {
+                    (void)WaitChannel(op, workspace, 1);
+                }
+                return BUILD_ERROR;
+            }
+        }
+        /* Drain downstream reads before a subsequent invocation can reuse either slot. */
+        const uint32_t first = initial.numOuterChunks > 1 ? initial.numOuterChunks - 2 : 0;
+        for (uint32_t outer = first; outer < initial.numOuterChunks; ++outer) {
+            auto &slot = slots[outer & 1U];
+            slot.chunkCurBase = static_cast<uint64_t>(outer) << ZBAL_AICPU_OUTERIDX_SHIFT;
+            if (WaitConsumed(op, ComputeRingCtx(slot, op), outer) < 0) {
+                return BUILD_ERROR;
+            }
+        }
+        alg = slots[(initial.numOuterChunks - 1) & 1U];
+        alg.chunkCurBase = static_cast<uint64_t>(initial.numOuterChunks) << ZBAL_AICPU_OUTERIDX_SHIFT;
+        return 0;
+    }
+
+    /* Derived ring parameters for one outer chunk. */
     struct RingCtx {
         uint32_t groupSize;
         uint32_t myRank;
@@ -151,7 +274,6 @@ private:
         uint64_t neighborCclBuf;
         uint8_t reduceOpCode;
         uint32_t elemSize;
-        uint32_t numChPerCore;
     };
 
     static RingCtx ComputeRingCtx(const AicpuAlgorithmCtx &alg, const CommOpParams &op)
@@ -161,11 +283,12 @@ private:
         c.myRank = alg.ctx->rankId;
         c.dataSize = op.dataSize;
         c.numCores = op.numCores;
+        c.elemSize = ZBALDataTypeSize(op.dataType);
 
         c.coreNumPerRing = c.numCores / ZBAL_AICPU_RING_NUM;
         /* perRankBytes: dataSize is total = N × perRankBytes (unlike AllGather). */
         c.perRankBytes = c.dataSize / c.groupSize;
-        const uint64_t halfBytes = c.perRankBytes / ZBAL_AICPU_RING_NUM;
+        const uint64_t halfBytes = (c.perRankBytes / c.elemSize / ZBAL_AICPU_RING_NUM) * c.elemSize;
         c.isCwRing = (op.coreId < c.coreNumPerRing);
         c.ringCoreId = c.isCwRing ? op.coreId : (op.coreId - c.coreNumPerRing);
         c.ringElemCount = c.isCwRing ? halfBytes : (c.perRankBytes - halfBytes);
@@ -175,7 +298,9 @@ private:
         c.strideBytes = ZBAL_AICPU_EXCHANGE_STRIDE * static_cast<uint32_t>(sizeof(uint64_t));
 
         /* cclBuf double-buffer: outer chunk K uses A (even) or B (odd). */
-        c.chunkBytes = ZBAL_RS_CCL_BUFFER_BYTES / (4ULL * c.groupSize);
+        const uint64_t slotCapacity = ZBAL_RS_CCL_BUFFER_BYTES / (4ULL * c.groupSize);
+        const uint64_t chunkLimit = slotCapacity < ZBAL_RS_CHUNK_BYTES ? slotCapacity : ZBAL_RS_CHUNK_BYTES;
+        c.chunkBytes = (chunkLimit / c.elemSize) * c.elemSize;
         const uint32_t outerIdx = static_cast<uint32_t>(alg.chunkCurBase >> ZBAL_AICPU_OUTERIDX_SHIFT);
         const uint64_t bufSlot = static_cast<uint64_t>(outerIdx & 1U);
         const uint64_t dirBase = c.isCwRing ? 0ULL : (2ULL * static_cast<uint64_t>(c.groupSize) * c.chunkBytes);
@@ -194,12 +319,14 @@ private:
         c.statDirOff = c.isCwRing
                            ? statBaseOff
                            : statBaseOff + static_cast<uint64_t>(c.groupSize) * c.statSizePerRank * c.strideBytes;
+        /* Each 64-byte stat stride contains A-ready/A-consumed/B-ready/B-consumed. */
+        c.statDirOff += bufSlot * 2ULL * sizeof(uint64_t);
 
         /* Scratch at end of core ring buffer holds stat value for SDMA to read. */
         uint8_t *coreRingBase = alg.ringBufs[0].localBuff;
-        constexpr uint32_t scratchSlots = 1;
+        constexpr uint32_t scratchSlots = 2;
         c.scratch = reinterpret_cast<volatile uint64_t *>(coreRingBase + ZBAL_AICPU_CORE_RINGBUF_SIZE -
-                                                          scratchSlots * sizeof(uint64_t));
+                                                          (scratchSlots - bufSlot) * sizeof(uint64_t));
         c.statSrcGva = reinterpret_cast<uint64_t>(&c.scratch[0]);
 
         /* Neighbor cclBuf GVA — published by RingExchange slot 1. */
@@ -209,14 +336,6 @@ private:
         c.neighborCclBuf = PeerBufferGva(op.exchangeGva, c.readNeighborRank);
 
         c.reduceOpCode = (uint8_t)((op.dataType << ZBAL_AICPU_RS_DATATYE_SHIFT) | op.reduceOp);
-        c.elemSize = ZBALDataTypeSize(op.dataType);
-        if (c.elemSize == 0) {
-            c.elemSize = 1;
-        }
-        c.numChPerCore = op.numChPerCore;
-        if (c.numChPerCore == 0) {
-            c.numChPerCore = 1;
-        }
         return c;
     }
 
@@ -235,13 +354,12 @@ private:
     /* ================================================================
     * Phase 1: copy sendBuf → cclBuf for all ranks + self-copy → recvBuf.
     * Must initialize ALL N chunks (ring reduce needs every rank's raw data).
-    * Multi-channel: (N+1) copies per slice distributed round-robin.
+    * Copies run on the dedicated prefetch channel, independently of ring reduce.
     * cclBuf[myRank] skipped — never read by downstream nor reduced by self.
     * ================================================================ */
     static int EmitPhase1Sqes(AicpuAlgorithmCtx &alg, const CommOpParams &op, const RingCtx &c)
     {
         SqeLocalRingBuffer *ring = alg.ringBufs;
-
         uint32_t outerIdx = static_cast<uint32_t>(alg.chunkCurBase >> ZBAL_AICPU_OUTERIDX_SHIFT);
         if (outerIdx >= c.numOuterChunks) {
             return BUILD_DONE;
@@ -251,7 +369,7 @@ private:
         alg.chunkRemaining = c.groupSize - 1;
         alg.chunkCurBase = (static_cast<uint64_t>(outerIdx) << ZBAL_AICPU_OUTERIDX_SHIFT);
 
-        const uint64_t curStatVal = op.waitSymbol + outerIdx;
+        const uint64_t curStatVal = ChunkToken(op, outerIdx);
         c.scratch[0] = curStatVal;
         AicpuCacheFlush(reinterpret_cast<uintptr_t>(&c.scratch[0]));
 
@@ -272,7 +390,7 @@ private:
         /* Element-aligned sliceBytes: SDMA reduce requires elem-aligned src/dst/len. */
         const uint64_t sliceBytes = (coreChunkLen / ZBAL_RS_SLICE_PER_CORE / c.elemSize) * c.elemSize;
 
-        uint32_t ch = 0;
+        constexpr uint32_t ch = 1U; /* Prefetch is independent of channel 0 reduction. */
         for (uint32_t s = 0; s < ZBAL_RS_SLICE_PER_CORE; s++) {
             const uint64_t sOff = coreChunkOff + static_cast<uint64_t>(s) * sliceBytes;
             const uint64_t sLen =
@@ -292,7 +410,6 @@ private:
                     alg.chunkActive = false;
                     return BUILD_ERROR;
                 }
-                ch = (ch + 1) % c.numChPerCore;
             }
 
             /* Self-copy: sendBuf[myRank] → recvBuf (pre-loads for final round reduce). */
@@ -303,23 +420,23 @@ private:
                 alg.chunkActive = false;
                 return BUILD_ERROR;
             }
-            ch = (ch + 1) % c.numChPerCore;
         }
         return BUILD_MORE;
     }
 
-    /* Phase 1 stat: build stat SQEs on ch0 for all 3 slices.
-     * Called AFTER data channels complete — stat fires after ALL data written. */
-    static int EmitPhase1StatSqes(AicpuAlgorithmCtx &alg, const CommOpParams &op, const RingCtx &c)
+    /* Append ready to the prefetch channel so it executes after all P1 writes. */
+    static int EmitPhase1ReadySqes(AicpuAlgorithmCtx &alg, const CommOpParams &op, const RingCtx &c)
     {
         SqeLocalRingBuffer *ring = alg.ringBufs;
+        constexpr uint32_t prefetchChannel = 1U;
 
         const uint32_t fwdChunk0 =
             c.isCwRing ? ((c.myRank + c.groupSize - 1) % c.groupSize) : ((c.myRank + 1) % c.groupSize);
 
         for (uint32_t s = 0; s < ZBAL_RS_SLICE_PER_CORE; s++) {
             const uint64_t statDst = PeerStatAddr(alg, op, c, fwdChunk0, s);
-            if (AicpuDispatcher::CopyData(ring, 0U, c.statSrcGva, statDst, sizeof(uint64_t), op.channels[0U]) != 0) {
+            if (AicpuDispatcher::CopyData(ring, prefetchChannel, c.statSrcGva, statDst, sizeof(uint64_t),
+                                          op.channels[prefetchChannel]) != 0) {
                 alg.chunkActive = false;
                 return BUILD_ERROR;
             }
@@ -369,7 +486,7 @@ private:
                                       ? (coreChunkLen - static_cast<uint64_t>(slice) * sliceBytes)
                                       : sliceBytes;
 
-        const uint64_t curStatVal = op.waitSymbol + outerIdx;
+        const uint64_t curStatVal = ChunkToken(op, outerIdx);
 
         /* reduceChunk: the chunk I recv & reduce this round.
          * CW: (i-2-r) mod N; CCW: (i+2+r) mod N. Final r=N-2 gives i (myRank). */
@@ -409,18 +526,27 @@ private:
         return AdvanceCursor(alg, outerIdx, c.numOuterChunks, iter, slice, lastRingIter);
     }
 
+    static int WaitConsumed(const CommOpParams &op, const RingCtx &c, uint32_t outerIdx)
+    {
+        auto *ack = reinterpret_cast<volatile uint64_t *>(op.exchangeGva + c.statDirOff + sizeof(uint64_t));
+        if (!AicpuPollStat(ack, ChunkToken(op, outerIdx), 6000000)) {
+            return ERR_WAIT_TIMEOUT;
+        }
+        return 0;
+    }
+
     /* Poll local stat slot for upstream neighbor's signal. */
     static int WaitNeighborStat(const CommOpParams &op, const RingCtx &c, uint32_t reduceChunk, uint32_t slice,
                                 uint64_t curStatVal)
     {
         volatile uint64_t *statBase = reinterpret_cast<volatile uint64_t *>(op.exchangeGva + c.statDirOff);
         const uint32_t strideWords = c.strideBytes / static_cast<uint32_t>(sizeof(uint64_t));
-        constexpr uint32_t timeoutUs = 6000000;
+        constexpr uint32_t maxPolls = 6000000U;
         volatile uint64_t *statSlot = statBase + static_cast<uint64_t>(reduceChunk) * c.statSizePerRank * strideWords +
                                       static_cast<uint64_t>(c.ringCoreId) * ZBAL_RS_SLICE_PER_CORE * strideWords +
                                       static_cast<uint64_t>(slice) * strideWords;
-        if (!AicpuPollStat(statSlot, curStatVal, timeoutUs)) {
-            return BUILD_ERROR;
+        if (!AicpuPollStat(statSlot, curStatVal, maxPolls)) {
+            return ERR_WAIT_TIMEOUT;
         }
         return 0;
     }
@@ -445,55 +571,6 @@ private:
         alg.chunkActive = false;
         alg.chunkCurBase = (static_cast<uint64_t>(outerIdx + 1) << ZBAL_AICPU_OUTERIDX_SHIFT);
         return (outerIdx + 1 >= numOuterChunks) ? BUILD_DONE : BUILD_MORE;
-    }
-
-    /* True if Phase 1 just finished (lower 16 bits of chunkCurBase are 0). */
-    static bool IsPhase1Start(int batch, const AicpuAlgorithmCtx &alg)
-    {
-        return batch == BUILD_MORE && (alg.chunkCurBase & 0xFFFFU) == 0 && alg.chunkActive;
-    }
-
-    /* True if the slice just processed was the last in its 3-slice group. */
-    static bool IsLastSliceInGroup(const AicpuAlgorithmCtx &alg)
-    {
-        return (alg.chunkCurBase & 0x3U) == 0U;
-    }
-
-    /* SQ overflow protection: returns true if HW SQ ring is past half capacity. */
-    static bool HwSqNearFull(volatile stars_channel_info_t *channel)
-    {
-        if (channel == nullptr || channel->sq_depth == 0) {
-            return false;
-        }
-        const uint32_t depth = channel->sq_depth;
-        const uint32_t head = channel->sq_head;
-        const uint32_t tail = channel->sq_tail;
-        const uint32_t inFlight = (tail >= head) ? (tail - head) : (depth - head + tail);
-        return inFlight >= depth / 2U;
-    }
-
-    static bool AnyHwSqNearFull(volatile stars_channel_info_t **channels, uint32_t numChPerCore)
-    {
-        for (uint32_t s = 0; s < numChPerCore; s++) {
-            if (HwSqNearFull(channels[s])) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    static int LaunchNoWaitAllChannels(SqeLocalRingBuffer *ringBufs, volatile stars_channel_info_t **channels,
-                                       uint32_t numChPerCore)
-    {
-        for (uint32_t s = 0; s < numChPerCore; s++) {
-            if (!ringBufs[s].HasWork()) {
-                continue;
-            }
-            if (AicpuLaunchTaskNoWait(&ringBufs[s], channels[s]) < 0) {
-                return ERR_DOORBELL_FAILED;
-            }
-        }
-        return 0;
     }
 };
 
