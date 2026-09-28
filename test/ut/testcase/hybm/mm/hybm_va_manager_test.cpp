@@ -1312,12 +1312,20 @@ TEST_F(HybmVaManagerTest, AddVaInfo_AliasDifferentSize_Rejected)
     EXPECT_NE(manager.AddVaInfo({ALIAS_GVA_A, ALIAS_DVA, ALIAS_DVA, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_DEVICE}), BM_OK);
 }
 
-TEST_F(HybmVaManagerTest, AddVaInfo_ImportedBuffer_NeverAliased)
+// Cross-ownership overlap (Local vs Imported) is allowed: imported rows are classification-only entries,
+// and the first-wins dva/hva rows keep the local owner's translations intact.
+TEST_F(HybmVaManagerTest, AddVaInfo_ImportedBuffer_CrossOwnershipAllowed)
 {
     EXPECT_EQ(manager.AddVaInfo({ALIAS_GVA_OWNER, ALIAS_DVA, ALIAS_DVA, ALIAS_SIZE, TEST_MEM_TYPE_DEVICE}), BM_OK);
     AllocatedGvaInfo importedInfo({ALIAS_GVA_A, ALIAS_DVA, ALIAS_DVA, ALIAS_SIZE, TEST_MEM_TYPE_DEVICE},
                                   AddressOwnership::Imported);
-    EXPECT_NE(manager.AddVaInfo(importedInfo), BM_OK);
+    EXPECT_EQ(manager.AddVaInfo(importedInfo), BM_OK);
+
+    // the local dva -> gva translation still resolves to the local owner (first-wins dva/hva rows)
+    EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_GVA), ALIAS_GVA_OWNER);
+    // the imported gva itself resolves back to its mapped address
+    EXPECT_EQ(manager.TransformVa(ALIAS_GVA_A, HVM_GVA, HVM_DVA), ALIAS_DVA);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_TWO);
 }
 
 TEST_F(HybmVaManagerTest, RemoveOneVaInfo_RemoveAlias_KeepsOwner)

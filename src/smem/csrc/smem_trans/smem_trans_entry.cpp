@@ -318,6 +318,11 @@ int SmemTransEntry::ImportPeerSlicesToMap(const RankFullInfo &other, std::vector
 
 int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept
 {
+    if (entity_ == nullptr) {
+        // 本端已 teardown：迟到的白名单命令按无害处理
+        SM_LOG_DEBUG("OnAddToWhitelist after teardown, skip rank=" << rankId);
+        return SMEM_OK;
+    }
     if (others.empty()) {
         SM_LOG_DEBUG("OnAddToWhitelist rankId=" << rankId << " others empty, skip");
         return SMEM_OK;
@@ -357,9 +362,14 @@ int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFull
         WorkerIdUnion wu(entities[i].u.session);
         WorkerId id = wu.workerId;
 
+        // Same-role members never exchange data (transfers always cross roles), so their slices are not
+        // imported: imported rows live in the same process-wide VA ledger as local rows, and under multi-store
+        // numbering (PD multi-P shares one store) a peer window number can coincide with a local window —
+        // importing same-role slices is the whitelist overlap root cause. Rank/role/workerId records are kept
+        // so peer-down and bookkeeping stay consistent; entity import above is unaffected.
         std::vector<void *> global;
         std::vector<LocalMapAddress> local;
-        if (!others[i].externalInfo.empty()) {
+        if (role != config_.role && !others[i].externalInfo.empty()) {
             std::vector<SmemTransExchangeInfo> slices;
             if (auto ret = ParsePeerSlices(others[i], slices, local); ret != BM_OK) {
                 continue;
@@ -378,6 +388,11 @@ int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFull
 int SmemTransEntry::OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others,
                                           uint64_t reqId) noexcept
 {
+    if (entity_ == nullptr) {
+        // 本端已 teardown（entity 已销毁）：迟到的成员退出命令按无害处理，group 状态由 store 自行清理
+        SM_LOG_DEBUG("OnRemoveFromWhitelist after teardown, skip rank=" << rankId);
+        return SMEM_OK;
+    }
     for (const auto &other : others) {
         auto ret = hybm_remove_imported(entity_, other.rankId, 0);
         if (ret != SMEM_OK) {
@@ -415,6 +430,11 @@ void SmemTransEntry::NotifyPeerDown(uint32_t leavingRankId) noexcept
 int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers,
                                           uint64_t reqId) noexcept
 {
+    if (entity_ == nullptr) {
+        // 本端已 teardown：迟到的建连命令按无害处理
+        SM_LOG_DEBUG("OnEstablishConnection after teardown, skip rank=" << rankId);
+        return SMEM_OK;
+    }
     if (peers.empty()) {
         SM_LOG_DEBUG("OnEstablishConnection rankId=" << rankId << " peers empty, skip");
         return SMEM_OK;
@@ -426,17 +446,27 @@ int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<Ran
 
     hybm_mmap(entity_, 0);
 
+    // Same-role members never exchange data (no address maps are recorded for them), so no transport
+    // channel is established for them either — building one would only waste per-rank resources.
     std::vector<uint32_t> rankIds;
     rankIds.reserve(peers.size());
-    for (const auto &p : peers)
+    for (const auto &p : peers) {
+        if (QueryRole(p.rankId) == config_.role) {
+            continue;
+        }
         rankIds.push_back(p.rankId);
+    }
+    if (rankIds.empty()) {
+        SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " no cross-role peers, skip transport connect");
+        return SMEM_OK;
+    }
     auto ret = hybm_transport_connect(entity_, rankIds.data(), rankIds.size(), 0);
     if (ret != SMEM_OK) {
         SM_LOG_ERROR("OnEstablishConnection rankId=" << rankId << " hybm_transport_connect failed: " << ret);
         return ret;
     }
 
-    SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " peers.size=" << peers.size());
+    SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " peers.size=" << rankIds.size());
     return SMEM_OK;
 }
 
@@ -452,6 +482,15 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
     smem_trans_role_t role = SMEM_TRANS_NONE;
     WorkerId id;
     if (!ParseExchangeInfo(peer, entityInfo, role, id)) {
+        return;
+    }
+
+    // Same-role members never exchange data (transfers always cross roles): record bookkeeping only and
+    // skip slice parse/import — same-role peer windows must stay out of the VA ledger (whitelist overlap).
+    if (role == config_.role) {
+        std::vector<void *> global;
+        std::vector<LocalMapAddress> local;
+        AddRemoteInfo(peer.rankId, role, id, global, local);
         return;
     }
 
@@ -502,9 +541,6 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
     mf::WriteGuard locker(remoteSliceRwMutex_);
     rankToWorkerId_[peer.rankId] = id;
     ranksRole_[peer.rankId] = role;
-    if (role == config_.role) { // same role, skip record
-        return;
-    }
     for (auto i = 0U; i < local.size(); ++i) {
         remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
     }
@@ -533,6 +569,15 @@ int SmemTransEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newS
 {
     (void)reqId;
     if (newSlices.empty()) {
+        return SMEM_OK;
+    }
+    if (entity_ == nullptr) {
+        // 本端已 teardown：迟到的增量导入命令按无害处理
+        SM_LOG_DEBUG("OnAddSlices after teardown, skip rank=" << extendingRankId);
+        return SMEM_OK;
+    }
+    // Same-role members never exchange data: skip their slice extensions (whitelist overlap guard)
+    if (QueryRole(extendingRankId) == config_.role) {
         return SMEM_OK;
     }
     std::vector<SmemTransExchangeInfo> infos;

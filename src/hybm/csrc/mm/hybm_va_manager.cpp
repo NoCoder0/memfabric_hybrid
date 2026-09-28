@@ -140,6 +140,16 @@ Result HybmVaManager::ValidateAddVaInfo(const AllocatedGvaInfo &info)
             prev.ownership == AddressOwnership::Local && info.ownership == AddressOwnership::Local) {
             continue;
         }
+        // Imported rows are classification-only entries (the data plane resolves remote addresses per connection
+        // via remoteSlices_/TransformAddr) and never occupy local address space. Under multi-store numbering
+        // (PD multi-P) a peer window number can legitimately coincide with a local window, so cross-ownership
+        // overlap is allowed instead of failing the registration; same-ownership overlap keeps the rules above.
+        if (info.IsImported() != prev.IsImported()) {
+            BM_LOG_INFO("AddVaInfo cross-ownership overlap allowed: gva="
+                        << VaToStr(info.base.va[0]) << " va:" << VaToStr(info.base.va[i]) << ", size="
+                        << VaToStr(info.base.size) << ", ownership=" << (info.IsImported() ? "imported" : "local"));
+            continue;
+        }
         BM_LOG_ERROR("AddVaInfo failed: address overlap. gva="
                      << VaToStr(info.base.va[0]) << " va:" << VaToStr(info.base.va[i])
                      << ", size=" << VaToStr(info.base.size) << ", vaType=" << i << ", memType=" << info.base.memType
