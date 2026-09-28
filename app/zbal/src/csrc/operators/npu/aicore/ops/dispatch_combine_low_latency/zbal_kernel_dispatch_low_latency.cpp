@@ -27,33 +27,64 @@ dispatch_low_latency(uint64_t fftsAddr, GM_ADDR metaAddr, GM_ADDR x, GM_ADDR exp
     AscendC::TPipe pipe;
     if (dstDataType == ZBAL_DATA_TYPE_BFP16 || dstDataType == ZBAL_DATA_TYPE_FP16) {
         if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == NO_QUANT) {
-            MoeDispatchLowLatency::DispatchLowLatency<bfloat16_t, bfloat16_t, false, false, false, false> op;
+            MoeDispatchLowLatency::DispatchLowLatency<bfloat16_t, bfloat16_t, false, false, false, false, false> op;
             op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
                     epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
             op.Process();
             return;
         } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == NO_QUANT) {
-            MoeDispatchLowLatency::DispatchLowLatency<float16_t, float16_t, false, false, false, false> op;
+            MoeDispatchLowLatency::DispatchLowLatency<float16_t, float16_t, false, false, false, false, false> op;
             op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
                     epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
             op.Process();
             return;
         }
-    } else if (dstDataType == ZBAL_DATA_TYPE_INT8) {
+    } else if (dstDataType == ZBAL_DATA_TYPE_INT8) { // QUANT_BF16_2_INT8
         if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == QUANT_BF16_2_INT8) {
-            MoeDispatchLowLatency::DispatchLowLatency<bfloat16_t, int8_t, false, true, false, false> op;
+            MoeDispatchLowLatency::DispatchLowLatency<bfloat16_t, int8_t, false, true, false, false, false> op;
             op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
                     epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
             op.Process();
             return;
         } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == QUANT_BF16_2_INT8) {
-            MoeDispatchLowLatency::DispatchLowLatency<float16_t, int8_t, false, true, false, false> op;
+            MoeDispatchLowLatency::DispatchLowLatency<float16_t, int8_t, false, true, false, false, false> op;
             op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
                     epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
             op.Process();
             return;
         }
     }
+#ifdef ZBAL_ASCEND_NPU_A5
+    else if (dstDataType == ZBAL_DATA_TYPE_FP8_E4M3) { // QUANT_BF16_2_FP8_E4M3
+        if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == QUANT_BF16_2_FP8_E4M3) {
+            MoeDispatchLowLatency::DispatchLowLatency<bfloat16_t, fp8_e4m3fn_t, false, true, false, false, true> op;
+            op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
+                    epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
+            op.Process();
+            return;
+        } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == QUANT_BF16_2_FP8_E4M3) {
+            MoeDispatchLowLatency::DispatchLowLatency<float16_t, fp8_e4m3fn_t, false, true, false, false, true> op;
+            op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
+                    epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
+            op.Process();
+            return;
+        }
+    } else if (dstDataType == ZBAL_DATA_TYPE_FP8_E5M2) { // QUANT_BF16_2_FP8_E5M2
+        if (srcDataType == ZBAL_DATA_TYPE_BFP16 && quantMode == QUANT_BF16_2_FP8_E5M2) {
+            MoeDispatchLowLatency::DispatchLowLatency<bfloat16_t, fp8_e5m2_t, false, true, false, false, true> op;
+            op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
+                    epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
+            op.Process();
+            return;
+        } else if (srcDataType == ZBAL_DATA_TYPE_FP16 && quantMode == QUANT_BF16_2_FP8_E5M2) {
+            MoeDispatchLowLatency::DispatchLowLatency<float16_t, fp8_e5m2_t, false, true, false, false, true> op;
+            op.Init(metaAddr, x, expertIds, expandXOut, dynamicScalesOut, expandIdxOut, expertTokenNumsOut,
+                    epSendCountsOut, putOffset, putOffsetStatus, rank, numExperts, bs, hidden, topK, magicVal, &pipe);
+            op.Process();
+            return;
+        }
+    }
+#endif
 }
 
 int32_t ZBALOpDispatchLowLatency(const zbal_tensor_info_t *x, const zbal_tensor_info_t *expertIds, int64_t moeExpertNum,

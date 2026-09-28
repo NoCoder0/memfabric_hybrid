@@ -17,6 +17,7 @@ from utils import (
     calculate_avg_stats,
     hash_tensor,
     init_dist,
+    per_block_cast_back,
     per_token_cast_back,
 )
 
@@ -73,12 +74,34 @@ def test(
 
     cumulative_local_expert_recv_stats = torch.zeros((num_local_experts,), dtype=torch.int, device="npu")
 
-    dispatch_use_int8 = os.getenv("DEEP_LOW_LATENCY_MODE_USE_INT8_QUANT") == "1"
+    quant_type = os.getenv("DEEP_LOW_LATENCY_MODE_QUANT_TYPE", "")
+    assert quant_type in ("none", "int8", "mx_fp8_e4m3"), f"Invalid DEEP_LOW_LATENCY_MODE_QUANT_TYPE: {quant_type}"
+    # Combined result tolerance: MXFP8 e4m3 allows ~6% per-element quant error
+    quant_diff_tol = {
+        "none": 1e-5,
+        "int8": 1e-4,
+        "mx_fp8_e4m3": 5e-2,
+    }
+    # Dispatch traffic per selection: quantized data plus its scales
+    num_int8_bytes, num_bf16_bytes = (hidden + hidden // 128 * 4 + 16), hidden * 2
+    num_mxfp8_bytes = hidden + hidden // 32  # fp8 data + e8m0 block scales
+    quant_dispatch_bytes_per_sel = {
+        "none": num_bf16_bytes,
+        "int8": num_int8_bytes,
+        "mx_fp8_e4m3": num_mxfp8_bytes,
+    }
+    # The dispatch interface only exposes bool flags (no explicit mode name), so map
+    # the test's quant type onto them: use_mxfp8 > use_fp8, otherwise no quantization.
+    quant_kwargs = {
+        "none": {"use_fp8": False},
+        "int8": {"use_fp8": True},
+        "mx_fp8_e4m3": {"use_mxfp8": True},
+    }[quant_type]
 
     logging.info(f"Rank {rank}: x shape={x.shape}, device={x.device}")
     logging.info(f"Rank {rank}: topk_idx shape={topk_idx.shape}, device={topk_idx.device}")
     logging.info(f"Rank {rank}: topk_idx.shape = {topk_idx.shape}")
-    logging.info(f"Rank {rank}: quantization mode = {dispatch_use_int8=}")
+    logging.info(f"Rank {rank}: quantization mode = {quant_type}")
 
     for i in range(100):
         packed_recv_x, packed_recv_count, handle, event, hook = buffer.low_latency_dispatch(
@@ -86,14 +109,22 @@ def test(
             topk_idx,
             num_tokens,
             num_experts,
-            use_fp8=dispatch_use_int8,
-            round_scale=False,
-            use_ue8m0=False,
             cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
             async_finish=not return_recv_hook,
             return_recv_hook=return_recv_hook,
+            **quant_kwargs,
         )
-        if dispatch_use_int8:
+        if quant_type == "mx_fp8_e4m3":
+            # A fresh side stream has no dependency on the stream the dispatch kernel runs on, and .cpu() bypasses stream ordering anyway.
+            torch.npu.synchronize()
+            quant_stream = torch.npu.Stream()
+            with torch.npu.Stream(quant_stream):
+                recv_x_fp8_cpu = packed_recv_x[0].cpu()
+                recv_x_scales_cpu = packed_recv_x[1].cpu()
+            quant_stream.synchronize()
+            simulated_gemm_x = per_block_cast_back(recv_x_fp8_cpu, recv_x_scales_cpu, 32).to("npu")
+        elif quant_type == "int8":
+            torch.npu.synchronize()
             quant_stream = torch.npu.Stream()
             with torch.npu.Stream(quant_stream):
                 recv_x_int8_cpu = packed_recv_x[0].cpu()
@@ -115,6 +146,9 @@ def test(
             out=out,
         )
 
+    # Side stream has no dependency on the stream the dispatch/combine kernels ran on,
+    # and .cpu() bypasses stream ordering -- sync before reading combined_x.
+    torch.npu.synchronize()
     quant_stream = torch.npu.Stream()
     with torch.npu.Stream(quant_stream):
         combined_x_cpu = combined_x.cpu()
@@ -129,10 +163,7 @@ def test(
             combined_x_cpu,
         )
         assert torch.isnan(combined_x_cpu).sum().item() == 0
-        if dispatch_use_int8:
-            assert diff < 1e-4, f"Error: {diff=}"
-        else:
-            assert diff < 1e-5, f"Error: {diff=}"
+        assert diff < quant_diff_tol[quant_type], f"Error: {diff=}"
         hash_value ^= hash_tensor(combined_x_cpu)
 
         logging.info(f"[rank {rank}] PASSED")
@@ -147,12 +178,10 @@ def test(
             topk_idx,
             num_tokens,
             num_experts,
-            use_fp8=dispatch_use_int8,
-            round_scale=False,
-            use_ue8m0=False,
             cumulative_local_expert_recv_stats=cumulative_local_expert_recv_stats,
             async_finish=not return_recv_hook,
             return_recv_hook=return_recv_hook,
+            **quant_kwargs,
         )
         combined_x, event, hook = buffer.low_latency_combine(
             simulated_gemm_x,
@@ -166,11 +195,7 @@ def test(
         )
 
     # Calculate bandwidth
-    num_int8_bytes, num_bf16_bytes = (hidden + hidden // 128 * 4 + 16), hidden * 2
-    if dispatch_use_int8:
-        num_dispatch_bytes_per_sel = num_int8_bytes
-    else:
-        num_dispatch_bytes_per_sel = num_bf16_bytes
+    num_dispatch_bytes_per_sel = quant_dispatch_bytes_per_sel[quant_type]
     num_combine_bytes_per_sel = num_bf16_bytes
     num_dispatch_comm_bytes, num_combine_comm_bytes = 0, 0
     for i in range(num_tokens):
@@ -221,6 +246,7 @@ def test(
                 rank=rank,
                 num_ranks=num_ranks,
                 root_rank=0,
+                quant_type=quant_type,
             )
 
         else:

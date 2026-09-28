@@ -86,8 +86,10 @@ Config is a data class to hold deepep configurations.
                            previous_event,          # not used
                            async_op,                # not used
                            allocate_on_comm_stream, # not used
-                           use_quant)               # do quant casting flag, boolean type
-
+                           use_quant,               # do quant casting flag, boolean type
+                           quant_mode_name)         # quantization mode:
+                                                    # none/int8/mx_fp8_e4m3/mx_fp8_e5m2,
+                                                    # inferred from use_fp8/use_ue8m0 when empty
     #
     # description: Dispatch tokens to dest ranks, used for prefill
     #
@@ -124,16 +126,18 @@ Config is a data class to hold deepep configurations.
                              cumulative_local_expert_recv_stats, # not used
                              num_max_dispatch_tokens_per_rank,   # the maximum number of tokens to dispatch
                              num_experts,                        # the number of all experts
-                             use_fp8,                            # whether to enable FP8 casting
-                             round_scale,                        # not used
-                             use_ue8m0,                          # not used
                              async_op,                           # not used
-                             return_recv_hook)                   # not used
+                             return_recv_hook,                   # not used
+                             quant_mode_name)                    # quantization mode:
+                                                                 # none/int8/mx_fp8_e4m3/mx_fp8_e5m2,
+                                                                 # inferred from use_fp8/use_ue8m0 when empty
     #
     # description: A low-latency implementation for dispatch, used for decode
     #
     # packed_recv_x        : receive tokens tensor
     # packed_recv_x_scales : the quant casting scales if enable quant casting
+    #                        (per-token float for int8, one e8m0 byte per 32-element
+    #                        block for mx_fp8_e4m3/mx_fp8_e5m2)
     # packed_recv_count    : receive token count
     # expandIdx            : receive token expert index
     # ep_recv_count        : ranks's receive token per expert

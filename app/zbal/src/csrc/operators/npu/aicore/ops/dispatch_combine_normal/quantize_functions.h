@@ -213,6 +213,19 @@ __aicore__ inline void ComputeFp8Data(__ubuf__ T *srcAddr, __ubuf__ uint16_t *ha
                                                              MicroAPI::MaskMergeMode::ZEROING, RoundMode::UNKNOWN};
         static constexpr MicroAPI::CastTrait castTrait32to8 = {MicroAPI::RegLayout::ZERO, MicroAPI::SatMode::SAT,
                                                                MicroAPI::MaskMergeMode::ZEROING, RoundMode::CAST_RINT};
+        // e4m3fn/e5m2 reserve the all-ones-mantissa encoding (0x7F/0xFF) for NaN. The block
+        // scale is a floor exponent, so in-block products reach up to 2x the format maximum
+        // (e.g. 512 for e4m3); CAST_RINT of >= max + half-ulp rounds into the NaN encoding
+        // and SatMode::SAT does not pull it back on C310, so real activations with outliers
+        // ship NaN payload bytes. Clamp to the representable maximum before the cast, which
+        // is what npu_dynamic_mx_quant (the GEMM-calibrated reference) effectively does.
+        MicroAPI::RegTensor<float> fp8ClampHi, fp8ClampLo;
+        float fp8ClampMax = FP8_E4M3_MAX_VALUE;
+        if constexpr (Std::IsSame<U, fp8_e5m2_t>::value) {
+            fp8ClampMax = FP8_E5M2_MAX_VALUE;
+        }
+        MicroAPI::Duplicate(fp8ClampHi, fp8ClampMax);
+        MicroAPI::Duplicate(fp8ClampLo, -fp8ClampMax);
         for (uint16_t i = 0; i < loopNum; i++) {
             dataMask1 = MicroAPI::UpdateMask<T>(totalCountInUB);
             dataMask2 = MicroAPI::UpdateMask<T>(totalCountInUB);
@@ -237,6 +250,14 @@ __aicore__ inline void ComputeFp8Data(__ubuf__ T *srcAddr, __ubuf__ uint16_t *ha
                 MicroAPI::Interleave(vdExp1FP32Zero, vdExp1FP32One, vdExp1FP32Zero, vdExp1FP32One);
                 MicroAPI::Interleave(vdExp0FP32Zero, vdExp1FP32Zero, vdExp0FP32Zero, vdExp1FP32Zero);
                 MicroAPI::Interleave(vdExp0FP32One, vdExp1FP32One, vdExp0FP32One, vdExp1FP32One);
+                MicroAPI::Min(vdExp0FP32Zero, vdExp0FP32Zero, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp0FP32Zero, vdExp0FP32Zero, fp8ClampLo, maskAll);
+                MicroAPI::Min(vdExp1FP32Zero, vdExp1FP32Zero, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp1FP32Zero, vdExp1FP32Zero, fp8ClampLo, maskAll);
+                MicroAPI::Min(vdExp0FP32One, vdExp0FP32One, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp0FP32One, vdExp0FP32One, fp8ClampLo, maskAll);
+                MicroAPI::Min(vdExp1FP32One, vdExp1FP32One, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp1FP32One, vdExp1FP32One, fp8ClampLo, maskAll);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp0FP8Zero, vdExp0FP32Zero, dataMask3);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp0FP8One, vdExp1FP32Zero, dataMask3);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp1FP8Zero, vdExp0FP32One, dataMask4);
@@ -248,11 +269,19 @@ __aicore__ inline void ComputeFp8Data(__ubuf__ T *srcAddr, __ubuf__ uint16_t *ha
                 MicroAPI::Cast<float, T, castTraitZero>(vdExp0FP32Zero, vdExp0, dataMask1);
                 MicroAPI::Cast<float, T, castTraitOne>(vdExp0FP32One, vdExp0, dataMask1);
                 MicroAPI::Interleave(vdExp0FP32Zero, vdExp0FP32One, vdExp0FP32Zero, vdExp0FP32One);
+                MicroAPI::Min(vdExp0FP32Zero, vdExp0FP32Zero, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp0FP32Zero, vdExp0FP32Zero, fp8ClampLo, maskAll);
+                MicroAPI::Min(vdExp0FP32One, vdExp0FP32One, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp0FP32One, vdExp0FP32One, fp8ClampLo, maskAll);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp0FP8Zero, vdExp0FP32Zero, dataMask3);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp0FP8One, vdExp0FP32One, dataMask3);
                 MicroAPI::Cast<float, T, castTraitZero>(vdExp1FP32Zero, vdExp1, dataMask2);
                 MicroAPI::Cast<float, T, castTraitOne>(vdExp1FP32One, vdExp1, dataMask2);
                 MicroAPI::Interleave(vdExp1FP32Zero, vdExp1FP32One, vdExp1FP32Zero, vdExp1FP32One);
+                MicroAPI::Min(vdExp1FP32Zero, vdExp1FP32Zero, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp1FP32Zero, vdExp1FP32Zero, fp8ClampLo, maskAll);
+                MicroAPI::Min(vdExp1FP32One, vdExp1FP32One, fp8ClampHi, maskAll);
+                MicroAPI::Max(vdExp1FP32One, vdExp1FP32One, fp8ClampLo, maskAll);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp1FP8Zero, vdExp1FP32Zero, dataMask4);
                 MicroAPI::Cast<U, float, castTrait32to8>(vdExp1FP8One, vdExp1FP32One, dataMask4);
             }

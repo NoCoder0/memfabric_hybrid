@@ -63,28 +63,30 @@ def test_main(
     expert_token_nums_type = int(os.getenv("MOE_EXPERT_TOKEN_NUMS_TYPE", 1))
     use_quant = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
     quant_type = os.getenv("DEEP_NORMAL_MODE_QUANT_TYPE", "int8" if use_quant else "none")
-    assert quant_type in ("none", "int8", "mx_fp8_e4m3", "mx_fp8_e5m2"), (
-        f"Invalid DEEP_NORMAL_MODE_QUANT_TYPE: {quant_type}"
-    )
+    assert quant_type in ("none", "int8", "mx_fp8_e4m3"), f"Invalid DEEP_NORMAL_MODE_QUANT_TYPE: {quant_type}"
     use_quant = quant_type != "none"
     quant_atol = {
         "none": 5e-5,
         "int8": 5e-5,
         "mx_fp8_e4m3": 5e-5,
-        "mx_fp8_e5m2": 5e-5,
     }
     quant_diff_tol = {
         "none": 5e-5,
         "int8": 5e-5,
         "mx_fp8_e4m3": 5e-3,
-        "mx_fp8_e5m2": 5e-3,
     }
     quant_bytes_div = {
         "none": 1,
         "int8": 2,
         "mx_fp8_e4m3": 2,
-        "mx_fp8_e5m2": 2,
     }
+    # The dispatch interface only exposes bool flags (no explicit mode name), so map
+    # the test's quant type onto them: use_mxfp8 > use_fp8, otherwise no quantization.
+    quant_kwargs = {
+        "none": {"use_fp8": False},
+        "int8": {"use_fp8": True},
+        "mx_fp8_e4m3": {"use_mxfp8": True},
+    }[quant_type]
 
     multi_list = [1] * num_ranks
     num_tokens = int(num_tokens * multi_list[rank])
@@ -417,7 +419,7 @@ def test_main(
                 "config": config,
                 "topk_idx": topk_idx,
                 "topk_weights": (topk_weights_pure_rand if current_x is x_pure_rand else topk_weights),
-                "quant_type": quant_type,
+                **quant_kwargs,
             }
 
             (
@@ -437,7 +439,7 @@ def test_main(
                     balance_matrix_cpu = handle[4].cpu()
                     recv_topk_weights_cpu = handle[2].cpu()
                 quant_stream.synchronize()
-                if quant_type in ("mx_fp8_e4m3", "mx_fp8_e5m2"):
+                if quant_type == "mx_fp8_e4m3":
                     recv_x_cpu = per_block_cast_back(recv_x_quant_cpu, recv_x_scales_cpu, 32)
                 else:  # int8: per-token float scales
                     recv_x_cpu = per_token_cast_back(recv_x_quant_cpu, recv_x_scales_cpu)
@@ -508,7 +510,7 @@ def test_main(
             "num_tokens_per_expert": ref_num_tokens_per_expert,
             "topk_idx": topk_idx,
             "topk_weights": topk_weights,
-            "quant_type": quant_type,
+            **quant_kwargs,
         }
         dispatch_t = bench(lambda: buffer.dispatch(**tune_dispatch_args))[0]
         logger.info(
@@ -525,7 +527,7 @@ def test_main(
             "num_tokens_per_expert": ref_num_tokens_per_expert,
             "topk_idx": topk_idx,
             "topk_weights": topk_weights,
-            "quant_type": quant_type,
+            **quant_kwargs,
         }
         recv_x, _, _, _, handle, _ = buffer.dispatch(**dispatch_args)
         if isinstance(recv_x, tuple):
@@ -534,7 +536,7 @@ def test_main(
                 recv_x_quant_cpu = recv_x[0].cpu()
                 recv_x_scales_cpu = recv_x[1].cpu()
             quant_stream.synchronize()
-            if quant_type in ("mx_fp8_e4m3", "mx_fp8_e5m2"):
+            if quant_type == "mx_fp8_e4m3":
                 recv_x = per_block_cast_back(recv_x_quant_cpu, recv_x_scales_cpu, 32).to("npu")
             else:  # int8
                 recv_x = per_token_cast_back(recv_x_quant_cpu, recv_x_scales_cpu).to("npu")

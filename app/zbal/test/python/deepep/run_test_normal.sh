@@ -13,7 +13,7 @@ usage() {
     echo ""
     echo "Runs one pass per quant type, sequentially, with the same parameters."
     echo "The chip generation (A3/A5) is auto-detected to pick the default cases:"
-    echo "  A5: int8 none mx_fp8_e4m3 mx_fp8_e5m2"
+    echo "  A5: int8 none mx_fp8_e4m3"
     echo "  A3: int8 none"
     echo ""
     echo "Examples:"
@@ -31,7 +31,7 @@ fi
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../../../.." && pwd)"
 
-A5_ONLY_QUANT_TYPES="mx_fp8_e4m3 mx_fp8_e5m2"
+A5_ONLY_QUANT_TYPES="mx_fp8_e4m3"
 
 detect_chip_type() {
     local soc

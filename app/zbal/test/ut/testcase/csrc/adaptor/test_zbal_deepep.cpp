@@ -364,8 +364,8 @@ TEST_F(TestDeepEPBuffer, LowLatencyDispatch)
     {
         Buffer buf(0, ZBAL_UT_NUM_8, ZBAL_UT_SIZE_1KB, ZBAL_UT_SIZE_1KB, true, kMoeGroupName);
         auto x = torch::ones({ZBAL_UT_NUM_4, ZBAL_UT_NUM_512}, at::kBFloat16);
-        auto [recv_x, recv_scales, recv_count, expand_idx, ep_recv_count, event, recv_hook] = buf.low_latency_dispatch(
-            x, topk_idx, cumu_stats, ZBAL_UT_NUM_16, ZBAL_UT_NUM_8, false, false, false, false, false);
+        auto [recv_x, recv_scales, recv_count, expand_idx, ep_recv_count, event, recv_hook] =
+            buf.low_latency_dispatch(x, topk_idx, cumu_stats, ZBAL_UT_NUM_16, ZBAL_UT_NUM_8, false, false, "none");
 
         EXPECT_GT(recv_x.size(0), 0);
         EXPECT_EQ(recv_x.size(1), ZBAL_UT_NUM_512);
@@ -377,8 +377,8 @@ TEST_F(TestDeepEPBuffer, LowLatencyDispatch)
     {
         Buffer buf(0, ZBAL_UT_NUM_8, ZBAL_UT_SIZE_1KB, ZBAL_UT_SIZE_1KB, true, kMoeGroupName);
         auto x = torch::ones({ZBAL_UT_NUM_4, ZBAL_UT_NUM_512}, at::kBFloat16);
-        auto [recv_x, recv_scales, recv_count, expand_idx, ep_recv_count, event, recv_hook] = buf.low_latency_dispatch(
-            x, topk_idx, cumu_stats, ZBAL_UT_NUM_16, ZBAL_UT_NUM_8, true, false, false, false, false);
+        auto [recv_x, recv_scales, recv_count, expand_idx, ep_recv_count, event, recv_hook] =
+            buf.low_latency_dispatch(x, topk_idx, cumu_stats, ZBAL_UT_NUM_16, ZBAL_UT_NUM_8, false, false, "int8");
 
         EXPECT_GT(recv_x.size(0), 0);
         EXPECT_EQ(recv_x.scalar_type(), at::kChar);
@@ -388,8 +388,8 @@ TEST_F(TestDeepEPBuffer, LowLatencyDispatch)
         Buffer buf(0, ZBAL_UT_NUM_8, ZBAL_UT_SIZE_1KB, ZBAL_UT_SIZE_1KB, true, kMoeGroupName);
         auto x = torch::empty({0, ZBAL_UT_NUM_512}, at::kBFloat16);
         auto empty_topk = torch::empty({0, ZBAL_UT_NUM_2}, at::kLong);
-        auto [recv_x, recv_scales, recv_count, expand_idx, ep_recv_count, event, recv_hook] = buf.low_latency_dispatch(
-            x, empty_topk, cumu_stats, ZBAL_UT_NUM_16, ZBAL_UT_NUM_8, false, false, false, false, false);
+        auto [recv_x, recv_scales, recv_count, expand_idx, ep_recv_count, event, recv_hook] =
+            buf.low_latency_dispatch(x, empty_topk, cumu_stats, ZBAL_UT_NUM_16, ZBAL_UT_NUM_8, false, false, "none");
 
         EXPECT_GT(recv_x.size(0), 0);
     }

@@ -231,8 +231,8 @@ class Buffer:
         async_finish: bool = False,
         allocate_on_comm_stream: bool = False,
         dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
-        quant_type: str = "",
-        **kwargs,
+        use_fp8: bool = False,
+        use_mxfp8: bool = False,
     ) -> Tuple[
         Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
         Optional[torch.Tensor],
@@ -273,6 +273,9 @@ class Buffer:
             dispatch_wait_recv_cost_stats:
                 `[num_ranks]` with `torch.int`, record the time it takes for the dispatch phase
                 to receive all tokens from each slave rank in the current rank.
+            use_fp8: whether to enable FP8 casting, resolved to `int8` on all devices.
+            use_mxfp8: whether to enable MXFP8 casting, only supported on A5 (Ascend950*) devices,
+                resolved to `mx_fp8_e4m3`. Takes priority over `use_fp8`.
 
         Returns:
             recv_x: received tokens, the first element is a `torch.Tensor` shaped as `[received_token_count, hidden]`
@@ -301,19 +304,20 @@ class Buffer:
             _tuple
             and x_scales is not None
             and x_scales.numel() != 0
-            and getattr(x, "dtype", None) in (torch.float8_e4m3fn, torch.float8_e5m2)
+            and getattr(x, "dtype", None) == torch.float8_e4m3fn
         )
         if not is_fp8:
             x_scales = None
         use_quant_env = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
 
         # Determine quant_type: explicit parameter takes priority, then infer from input.
-        # Supported: "none", "int8", "mx_fp8_e4m3", "mx_fp8_e5m2"
-        if not quant_type:
-            if is_fp8:
-                quant_type = "mx_fp8_e4m3" if x.dtype == torch.float8_e4m3fn else "mx_fp8_e5m2"
-            else:
-                quant_type = "int8" if use_quant_env else "none"
+        # Supported: "none", "int8", "mx_fp8_e4m3"
+        if use_mxfp8:
+            quant_type = "mx_fp8_e4m3"
+        elif use_fp8:
+            quant_type = "int8"
+        else:
+            quant_type = "int8" if use_quant_env else "none"
         use_quant = quant_type != "none"
 
         if handle is not None:
@@ -461,6 +465,7 @@ class Buffer:
         use_fp8: bool = True,
         round_scale: bool = False,
         use_ue8m0: bool = False,
+        use_mxfp8: bool = False,
         async_finish: bool = False,
         return_recv_hook: bool = False,
         topk_weights: Optional[torch.Tensor] = None,
@@ -483,6 +488,8 @@ class Buffer:
                 a tuple of FP8 tensor and scaling factors.
             round_scale: whether round the scaling factors into power of 2.
             use_ue8m0: whether use UE8M0 as scaling factor format (available only with `round_scale=True`).
+            use_mxfp8: whether to enable MXFP8 (block-wise e8m0 scales) casting, only supported on A5
+                (Ascend950*) devices. When set, `use_fp8`/`use_ue8m0` are ignored.
             async_finish: the current stream will not wait for the communication kernels to be finished if set.
             return_recv_hook: return a receiving hook if set. If set, the kernel will just do the RDMA request issues,
                 but **without actually receiving the data**. You must call the received hook to
@@ -510,6 +517,20 @@ class Buffer:
             hook: the receiving hook function (valid only if `return_recv_hook` is set).
         """
         topk_ids = topk_idx.int()
+        # Determine quant_mode_name from the bool flags: use_mxfp8 (or the legacy
+        # use_fp8 + use_ue8m0 combo) takes priority over use_fp8.
+        # Supported: "none", "int8", "mx_fp8_e4m3"
+        if use_mxfp8:
+            quant_mode_name = "mx_fp8_e4m3"
+        elif use_fp8:
+            quant_mode_name = "mx_fp8_e4m3" if use_ue8m0 else "int8"
+        else:
+            quant_mode_name = "none"
+        # The LL kernel supports "none"/"int8"/"mx_fp8_e4m3"/"mx_fp8_e5m2" natively;
+        # unsupported modes raise in the C++ layer instead of being silently downgraded.
+        # The result is a (fp8 data, scales) tuple whenever quantization is enabled, so
+        # derive the return format from quant_mode_name instead of the legacy bool flags.
+        use_fp8 = quant_mode_name != "none"
         (
             packed_recv_x,
             packed_recv_x_scales,
@@ -524,11 +545,9 @@ class Buffer:
             cumulative_local_expert_recv_stats,
             num_max_dispatch_tokens_per_rank,
             num_experts,
-            use_fp8,
-            round_scale,
-            use_ue8m0,
             async_finish,
             return_recv_hook,
+            quant_mode_name,
         )
         handle = (
             packed_recv_src_info,

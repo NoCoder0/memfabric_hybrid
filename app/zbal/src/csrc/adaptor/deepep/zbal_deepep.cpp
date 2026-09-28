@@ -510,12 +510,10 @@ std::tuple<at::Tensor, std::optional<at::Tensor>, at::Tensor, at::Tensor, at::Te
            std::optional<std::function<void()>>>
 Buffer::low_latency_dispatch(const at::Tensor &x, const at::Tensor &topk_idx,
                              const std::optional<at::Tensor> &cumulative_local_expert_recv_stats,
-                             int64_t num_max_dispatch_tokens_per_rank, int64_t num_experts, bool use_fp8,
-                             bool round_scale, bool use_ue8m0, bool async, bool return_recv_hook)
+                             int64_t num_max_dispatch_tokens_per_rank, int64_t num_experts, bool async,
+                             bool return_recv_hook, const std::string &quant_mode_name)
 {
     (void)cumulative_local_expert_recv_stats;
-    (void)round_scale;
-    (void)use_ue8m0;
     (void)async;
     (void)return_recv_hook;
     g_magicVal += 1;
@@ -563,11 +561,34 @@ Buffer::low_latency_dispatch(const at::Tensor &x, const at::Tensor &topk_idx,
     }
     int localMagic = g_magicVal;
     auto max_size = std::max(num_tokens * num_topk, num_max_tokens * 128);
+    // Quant selection: MXFP8 (block-wise e8m0 scales) is A5-only; int8 is supported on all devices.
+    int64_t quant_mode = NO_QUANT;
+    at::ScalarType expandx_dtype = at::kBFloat16;
+    at::ScalarType scales_dtype = at::kFloat;
+    if (quant_mode_name == "int8") {
+        quant_mode = QUANT_BF16_2_INT8;
+        expandx_dtype = at::kChar;
+#ifdef ZBAL_ASCEND_NPU_A5
+    } else if (quant_mode_name == "mx_fp8_e4m3") {
+        quant_mode = QUANT_BF16_2_FP8_E4M3;
+        expandx_dtype = at::kFloat8_e4m3fn;
+        scales_dtype = at::kFloat8_e8m0fnu;
+    } else if (quant_mode_name == "mx_fp8_e5m2") {
+        quant_mode = QUANT_BF16_2_FP8_E5M2;
+        expandx_dtype = at::kFloat8_e5m2;
+        scales_dtype = at::kFloat8_e8m0fnu;
+#endif
+    } else {
+        ZBAL_CHECK_S(quant_mode_name == "none", "unsupported quant_mode_name: ", quant_mode_name);
+    }
+    const bool is_mxfp8_quant = (quant_mode == QUANT_BF16_2_FP8_E4M3) || (quant_mode == QUANT_BF16_2_FP8_E5M2);
     // Allocate packed tensors
     auto device = x.device();
-    auto packed_recv_x =
-        at::empty({num_max_tokens, hidden}, new_x.options().dtype(use_fp8 ? at::kChar : at::kBFloat16));
-    auto packed_recv_x_scales = at::empty({num_max_tokens}, at::dtype(at::kFloat).device(device));
+    auto packed_recv_x = at::empty({num_max_tokens, hidden}, at::dtype(expandx_dtype).device(device));
+    // MXFP8: one e8m0 scale per 32-element block, otherwise one float scale per token
+    auto packed_recv_x_scales = is_mxfp8_quant ? at::empty({num_max_tokens * hidden / static_cast<int>(kMxBlockSize)},
+                                                           at::dtype(scales_dtype).device(device))
+                                               : at::empty({num_max_tokens}, at::dtype(scales_dtype).device(device));
     auto expandIdx = at::empty({max_size}, at::dtype(at::kInt).device(device));
 
     at::Tensor ep_recv_count =
@@ -577,7 +598,6 @@ Buffer::low_latency_dispatch(const at::Tensor &x, const at::Tensor &topk_idx,
 
     int enable_neg_one = get_value_from_env("MOE_ENABLE_TOPK_NEG_ONE", 0);
     (void)enable_neg_one;
-    int64_t quant_mode = use_fp8 ? QUANT_BF16_2_INT8 : NO_QUANT;
     int64_t shared_expert_num = 1;
     int outType = get_value_from_env("MOE_EXPERT_TOKEN_NUMS_TYPE", 1);
     int64_t expert_token_nums_type = outType;

@@ -6,6 +6,9 @@
 #include "zbal_kernel_utils.h"
 #include "zbal_kernel_base.h"
 #include "zbal_kernel_constant.h"
+#ifdef ZBAL_ASCEND_NPU_A5
+#include "aicore/ops/dispatch_combine_normal/quantize_functions.h"
+#endif
 
 using namespace AscendC;
 using namespace Moe;
@@ -36,6 +39,7 @@ constexpr uint32_t MAX_UB_SIZE = 170U * 1024U;
 // add meta info offset on meta_gva_gm
 constexpr uint64_t RANK_META_INFO_OFFSET = 1024UL * 1024UL;
 constexpr uint32_t UB_ALIGN = 32U;
+constexpr uint32_t MX_BLOCK_SIZE = 32U;
 
 template<AscendC::HardEvent event>
 __aicore__ inline void SyncFunc()
@@ -47,8 +51,9 @@ __aicore__ inline void SyncFunc()
 
 #define TemplateTypeClass                                                                                  \
     typename XType, typename ExpandXOutType, bool StaticQuant, bool DynamicQuant, bool IsSmoothScaleExist, \
-        bool IsNeedAllgather
-#define TemplateTypeFunc XType, ExpandXOutType, StaticQuant, DynamicQuant, IsSmoothScaleExist, IsNeedAllgather
+        bool IsNeedAllgather, bool IsMxQuant
+#define TemplateTypeFunc \
+    XType, ExpandXOutType, StaticQuant, DynamicQuant, IsSmoothScaleExist, IsNeedAllgather, IsMxQuant
 
 template<TemplateTypeClass>
 class DispatchLowLatency : public ZBALBaseKernel {
@@ -75,6 +80,7 @@ private:
     __aicore__ inline void CleanUp();
     __aicore__ inline void ReduceMaxInplace(const LocalTensor<float> &srcLocal, uint32_t count);
     __aicore__ inline void QuantProcess();
+    __aicore__ inline void QuantDynamicMx();
     __aicore__ inline void NotifyBufInit();
     __aicore__ inline void QuantInit();
     __aicore__ inline void SplitToCore(uint32_t curSendCnt, uint32_t curUseAivNum, uint32_t &startTokenId,
@@ -220,6 +226,8 @@ private:
     uint32_t addrUint64AlignLen_{0};
     uint32_t addrAllAlignLen_{0};
     uint32_t expertIdsBufSize_{0};
+    uint32_t scaleBytesPerToken_{sizeof(float)}; // non-MX: fp32 scale (4B); MX: Ceil(h/32) e8m0 bytes
+    uint32_t scaleUBOffset_{0};                  // MX: byte offset of the scale region in xOutTensor_
 
     DataCopyExtParams expandXCopyParams_;
     DataCopyExtParams scaleCopyParams_;
@@ -346,9 +354,16 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::Init(
 
     hOutSize_ = axisH_ * sizeof(ExpandXOutType);
     hOutSizeAlign_ = Ceil(hOutSize_, UB_ALIGN) * UB_ALIGN; // scale起始放置偏移
-    uint32_t hScaleSizeAlign = hOutSizeAlign_ + UB_ALIGN;  // 填充三元组起始偏移
-    // 实际搬运大小，搬运token_align32B + 32B(float)
-    uint32_t hScaleIdxSize = hScaleSizeAlign;
+    uint32_t hScaleIdxSize;
+    if constexpr (IsMxQuant) {
+        scaleBytesPerToken_ = Ceil(axisH_, MX_BLOCK_SIZE);
+        scaleUBOffset_ = Ceil(axisH_, 256U) * 256U;
+        uint32_t mxScaleBytes = Ceil(scaleBytesPerToken_, UB_ALIGN) * UB_ALIGN;
+        hScaleIdxSize = scaleUBOffset_ + mxScaleBytes;
+    } else {
+        uint32_t hScaleSizeAlign = hOutSizeAlign_ + UB_ALIGN; // 填充三元组起始偏移
+        hScaleIdxSize = hScaleSizeAlign;
+    }
     if (sharedExpertRankNum_ != 0U) {
         sharedUsedAivNum_ = (aivNum_ * sharedExpertNum_) / (axisK_ + sharedExpertNum_);
         if (sharedUsedAivNum_ == 0) {
@@ -420,7 +435,11 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::Init(
     uint32_t axisHCommu = hScaleIdxSize / sizeof(ExpandXOutType); // 有效搬运长度
     xCopyParams_ = {1U, static_cast<uint32_t>(axisH_ * sizeof(XType)), 0U, 0U, 0U};
     expandXCopyParams_ = {1U, static_cast<uint32_t>(hOutSizeAlign_), 0U, 0U, 0U};
-    scaleCopyParams_ = {1U, sizeof(float), 0U, 0U, 0U};
+    if constexpr (IsMxQuant) {
+        scaleCopyParams_ = {1U, scaleBytesPerToken_, 0U, 0U, 0U};
+    } else {
+        scaleCopyParams_ = {1U, sizeof(float), 0U, 0U, 0U};
+    }
 }
 
 template<TemplateTypeClass>
@@ -808,21 +827,31 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::SendToMoeExpert()
 
         if constexpr (DynamicQuant || StaticQuant) {
             auto dstScalePtr = scaleShareAddrLt_.GetValue(dstRankId);
-            dstScaleGMTensor.SetGlobalBuffer(
-                (__gm__ float *)(dstScalePtr + sizeof(float) * (dstExpertOffset + curExpertCnt)));
             xInTensor_ = xInQueue_.AllocTensor<XType>();
             DataCopyPad(xInTensor_, xGMTensor_[tokenIndex * axisH_], xCopyParams_, copyPadExtParams);
             xInQueue_.EnQue(xInTensor_);
             xInTensor_ = xInQueue_.DeQue<XType>();
             xOutTensor_ = xOutQueue_.AllocTensor<ExpandXOutType>();
-            QuantProcess();
-            xOutQueue_.EnQue(xOutTensor_);
-            xOutTensor_ = xOutQueue_.DeQue<ExpandXOutType>();
-
-            DataCopyPad(dstWinGMTensor, xOutTensor_, expandXCopyParams_); // 拷贝token
-            LocalTensor<float> xOutFp32Tensor = xOutTensor_.template ReinterpretCast<float>();
-            DataCopyPad(dstScaleGMTensor, xOutFp32Tensor[hOutSizeAlign_ / sizeof(float)],
-                        scaleCopyParams_); // 拷贝Scale
+            if constexpr (IsMxQuant) {
+                QuantDynamicMx();
+                xOutQueue_.EnQue(xOutTensor_);
+                xOutTensor_ = xOutQueue_.DeQue<ExpandXOutType>();
+                DataCopyPad(dstWinGMTensor, xOutTensor_, expandXCopyParams_); // 拷贝token
+                GlobalTensor<uint8_t> dstScaleU8GT;
+                dstScaleU8GT.SetGlobalBuffer(
+                    (__gm__ uint8_t *)(dstScalePtr + scaleBytesPerToken_ * (dstExpertOffset + curExpertCnt)));
+                LocalTensor<uint8_t> scaleLT = xOutTensor_.template ReinterpretCast<uint8_t>();
+                DataCopyPad(dstScaleU8GT, scaleLT[scaleUBOffset_], scaleCopyParams_);
+            } else {
+                QuantProcess();
+                xOutQueue_.EnQue(xOutTensor_);
+                xOutTensor_ = xOutQueue_.DeQue<ExpandXOutType>();
+                DataCopyPad(dstWinGMTensor, xOutTensor_, expandXCopyParams_); // 拷贝token
+                dstScaleGMTensor.SetGlobalBuffer(
+                    (__gm__ float *)(dstScalePtr + sizeof(float) * (dstExpertOffset + curExpertCnt)));
+                LocalTensor<float> xOutFp32Tensor = xOutTensor_.template ReinterpretCast<float>();
+                DataCopyPad(dstScaleGMTensor, xOutFp32Tensor[hOutSizeAlign_ / sizeof(float)], scaleCopyParams_);
+            }
             xOutQueue_.FreeTensor<ExpandXOutType>(xOutTensor_);
         } else {
             xTmpTensor_ = xQueue_.AllocTensor<ExpandXOutType>();
@@ -961,6 +990,29 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::QuantProcess()
 
     floatLocalTemp = xOutTensor_.template ReinterpretCast<float>();
     floatLocalTemp.SetValue(hOutSizeAlign_ / sizeof(float), float(1.0) / dynamicScale); // int8->float32
+}
+
+template<TemplateTypeClass>
+__aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::QuantDynamicMx()
+{
+#ifdef ZBAL_ASCEND_NPU_A5
+    uint32_t mxScaleNum = Ceil(Ceil(axisH_, MX_BLOCK_SIZE), 2U) * 2U;
+    LocalTensor<float> tokenF32LT = receiveDataCastFloatBuf_.Get<float>();
+
+    __ubuf__ XType *srcAddr = (__ubuf__ XType *)xInTensor_.GetPhyAddr();
+    __ubuf__ uint16_t *maxExpAddr = (__ubuf__ uint16_t *)tokenF32LT.GetPhyAddr();
+    __ubuf__ uint16_t *halfScaleLocalAddr = (__ubuf__ uint16_t *)tokenF32LT[Ceil(mxScaleNum, 32U) * 32U].GetPhyAddr();
+    __ubuf__ int8_t *outLocalAddr = (__ubuf__ int8_t *)xOutTensor_.GetPhyAddr();
+    __ubuf__ uint16_t *mxScaleLocalAddr = (__ubuf__ uint16_t *)xOutTensor_[scaleUBOffset_].GetPhyAddr();
+
+    quant::ComputeMaxExp(srcAddr, maxExpAddr, axisH_);
+    quant::ComputeScale<ExpandXOutType>(maxExpAddr, mxScaleLocalAddr, halfScaleLocalAddr, mxScaleNum);
+    quant::ComputeFp8Data<XType, ExpandXOutType, AscendC::RoundMode::CAST_TRUNC, AscendC::RoundMode::CAST_RINT>(
+        srcAddr, halfScaleLocalAddr, outLocalAddr, axisH_);
+
+    xInQueue_.FreeTensor<XType>(xInTensor_);
+    SyncFunc<AscendC::HardEvent::S_MTE3>();
+#endif
 }
 
 template<TemplateTypeClass>
