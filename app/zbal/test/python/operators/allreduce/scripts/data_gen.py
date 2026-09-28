@@ -51,6 +51,7 @@ def gen_golden_data():
     type_map = {
         "int": torch.int32,
         "int32_t": torch.int32,
+        "int64_t": torch.int64,
         "float16_t": torch.float16,
         "float": torch.float32,
         "bfloat16_t": torch.bfloat16,

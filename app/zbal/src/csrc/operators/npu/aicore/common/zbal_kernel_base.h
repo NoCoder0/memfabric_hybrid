@@ -25,6 +25,10 @@
 
 using namespace zbal;
 
+// Reduce64 two-operand UB budget: 2 * chunk must stay below UB_MAX_SIZE (192KB on A3 / 256KB on A5).
+// It does not stack with bindQueue's UB_DMA_MAX_SIZE: they belong to different phases, switched by pipe.Reset().
+constexpr uint32_t ZBAL_REDUCE64_CHUNK_BYTES = static_cast<uint32_t>(UB_MAX_SIZE / 2 - 16 * 1024);
+
 class ZBALBaseKernel {
 public:
     ZBAL_KERNEL ZBALBaseKernel() {};
@@ -194,6 +198,62 @@ protected:
         bindQueue.FreeTensor(localTensor);
     }
 
+    // Switch the pipe to Reduce64MTE's two-operand buffers. Precondition: bindQueue is no longer used
+    // in this phase (the GT path restores it via pipe.Reset() at the start of the AG phase, the LT path
+    // restores it by calling RestoreBindQueueBuffer when done).
+    ZBAL_KERNEL void InitReduce64Buffer()
+    {
+        pipe.Reset();
+        pipe.InitBuffer(reduceXBuf_, ZBAL_REDUCE64_CHUNK_BYTES);
+        pipe.InitBuffer(reduceYBuf_, ZBAL_REDUCE64_CHUNK_BYTES);
+    }
+
+    ZBAL_KERNEL void RestoreBindQueueBuffer()
+    {
+        pipe.Reset();
+        pipe.InitBuffer(bindQueue, 1, UB_DMA_MAX_SIZE);
+    }
+
+    // Non-atomic read-modify-write reduction for types without MTE atomic add support, e.g. int64.
+    // Correctness relies on the caller guaranteeing a single writer: each element of outputTensor is
+    // written by one core only and sources are flag-ordered before being read; otherwise concurrent
+    // read-modify-write would lose updates. Only SUM/MAX/MIN are supported; other ops are rejected host-side.
+    template<typename T>
+    ZBAL_KERNEL void Reduce64MTE(AscendC::GlobalTensor<T> inputTensor, AscendC::GlobalTensor<T> outputTensor,
+                                 uint32_t elemNum, uint32_t atomicOp)
+    {
+        if (atomicOp != ZBAL_REDUCE_SUM && atomicOp != ZBAL_REDUCE_MAX && atomicOp != ZBAL_REDUCE_MIN) {
+            return;
+        }
+        uint32_t chunkElems = ZBAL_REDUCE64_CHUNK_BYTES / sizeof(T);
+        uint32_t times = 0;
+        uint32_t leftElems = elemNum;
+        while (leftElems > 0) {
+            uint32_t curCount = (leftElems > chunkElems) ? chunkElems : leftElems;
+            AscendC::LocalTensor<T> xLocal = reduceXBuf_.Get<T>();
+            AscendC::LocalTensor<T> yLocal = reduceYBuf_.Get<T>();
+            AscendC::DataCopyExtParams copyParams(1, curCount * sizeof(T), 0, 0, 0);
+            AscendC::DataCopyPadExtParams<T> padParams;
+            SyncFunc<AscendC::HardEvent::MTE3_MTE2>(EVENT_ID0);
+            AscendC::DataCopyPad(xLocal, inputTensor[times * chunkElems], copyParams, padParams);
+            AscendC::DataCopyPad(yLocal, outputTensor[times * chunkElems], copyParams, padParams);
+            SyncFunc<AscendC::HardEvent::MTE2_V>(EVENT_ID0);
+            if (atomicOp == ZBAL_REDUCE_SUM) {
+                AscendC::Add<T>(yLocal, xLocal, yLocal, curCount);
+            } else if (atomicOp == ZBAL_REDUCE_MAX) {
+                AscendC::Max<T>(yLocal, xLocal, yLocal, curCount);
+            } else {
+                AscendC::Min<T>(yLocal, xLocal, yLocal, curCount);
+            }
+            AscendC::PipeBarrier<PIPE_V>();
+            SyncFunc<AscendC::HardEvent::V_MTE3>(EVENT_ID0);
+            AscendC::DataCopyPad(outputTensor[times * chunkElems], yLocal, copyParams);
+            leftElems -= curCount;
+            times++;
+        }
+        AscendC::PipeBarrier<PIPE_ALL>();
+    }
+
 private:
 #ifdef ZBAL_ASCEND_NPU_A3
     template<typename T>
@@ -275,6 +335,8 @@ protected:
     AscendC::TPipe pipe;
     AscendC::TQueBind<AscendC::TPosition::VECIN, AscendC::TPosition::VECOUT, 1> bindQueue;
     TBuf<> flagBuf_;
+    TBuf<> reduceXBuf_;
+    TBuf<> reduceYBuf_;
     uint32_t dataOpType;
     uint16_t groupSize;
     uint16_t myGroupRank;
