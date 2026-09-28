@@ -224,6 +224,8 @@ extra_compile_args = [
     f"{torch_npu_dir}/include/torch_npu/csrc/core/npu/",
 ]  # "-fvisibility=hidden"
 common_macros = [(_chip_macro, "1")]
+if _chip_type == "A3" and fused_deep_moe_enabled:
+    common_macros.append(("ZBAL_FUSED_DEEP_MOE_ENABLED", "1"))
 
 
 def set_torch_version():

@@ -19,7 +19,9 @@
 #include "zbal_kernel_fused_deep_moe_tiling.h"
 #include "zbal_comm_host_device_struct.h"
 
-// Forward declaration of the launch function compiled by tikcpp (in device/zbal_kernel_fused_deep_moe.cpp)
+// Forward declaration of the host-side launch dispatcher compiled by tikcpp. It is defined in
+// zbal_kernel_fused_deep_moe_bf16.cpp and forwards to the bf16/fp16 kernels compiled in
+// zbal_kernel_fused_deep_moe_bf16.cpp / zbal_kernel_fused_deep_moe_fp16.cpp.
 int32_t ZBALOpFusedDeepMoeLaunch(uint8_t *xAddr, uint8_t *expertIdsAddr, uint8_t *gmm1WAddr, uint8_t *gmm1ScaleAddr,
                                  uint8_t *gmm2WAddr, uint8_t *gmm2ScaleAddr, uint8_t *expertScalesAddr,
                                  uint8_t *smoothScalesAddr, uint8_t *shareGmm1WAddr, uint8_t *shareGmm1ScaleAddr,

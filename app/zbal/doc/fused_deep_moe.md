@@ -1,6 +1,6 @@
 # FusedDeepMoe 算子设计说明
 
-> 本文档描述 `app/zbal/src/csrc/operators/npu/device/fused_deep_moe/` 中 fused_deep_moe 融合算子的架构设计与实现细节。
+> 本文档描述 `app/zbal/src/csrc/operators/npu/aicore/ops/fused_deep_moe/`（设备核）与 `app/zbal/src/csrc/operators/npu/host/fused_deep_moe/`（Host 侧 tiling / launch）中 fused_deep_moe 融合算子的架构设计与实现细节。
 
 ---
 
@@ -27,7 +27,8 @@ Token Quantization → Dispatch (AllToAll) → GMM1 (Grouped MatMul + SwiGLU + D
 
 ```text
 fused_deep_moe/
-├── zbal_kernel_fused_deep_moe.cpp          # 入口 kernel + Host 侧 Launch 函数
+├── zbal_kernel_fused_deep_moe_bf16.cpp      # bf16 入口 kernel + Host 侧 Launch 函数
+├── zbal_kernel_fused_deep_moe_fp16.cpp      # fp16 入口 kernel + Host 侧 Launch 函数
 ├── zbal_kernel_fused_deep_moe.h            # 主编排类 FusedDeepMoe<...>
 ├── zbal_kernel_fused_deep_moe_base.h        # 类型别名、模板宏、HCCL 上下文结构体
 ├── zbal_kernel_fused_deep_moe_comm.h        # ZBAL 通信上下文与 GVA 地址计算
@@ -132,10 +133,11 @@ Input Tokens (bf16/fp16)
 
 ### 4.1 入口函数
 
-**[zbal_kernel_fused_deep_moe.cpp](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/zbal_kernel_fused_deep_moe.cpp)**
+**[zbal_kernel_fused_deep_moe_bf16.cpp](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/zbal_kernel_fused_deep_moe_bf16.cpp) / [zbal_kernel_fused_deep_moe_fp16.cpp](../src/csrc/operators/npu/aicore/ops/fused_deep_moe/zbal_kernel_fused_deep_moe_fp16.cpp)**
 
-- `fused_deep_moe()` — AscendC `__global__ __aicore__` kernel，根据 `exec_flag` + `src_data_type` dispatch 到正确的模板实例化
-- `ZBALOpFusedDeepMoeLaunch()` — Host 侧启动函数，调用 `aclrtLaunchKernel` 发射 kernel
+- `FusedDeepMoeBf16()` / `FusedDeepMoeFp16()` — AscendC `__global__ __aicore__` kernel，按 `exec_flag` dispatch 到对应的模板实例化（两个 kernel 分置于独立 `.cpp`，便于并行编译）
+- `ZBALOpFusedDeepMoeLaunch()` — Host 侧启动函数，按 `src_data_type` 选择对应 kernel 发射
+- 两个 `.cpp` 各自独立定义 kernel 参数列表与 `exec_flag` dispatch，无共享宏
 - 支持的数据类型组合：`(bf16, float, bf16)` 和 `(fp16, float, bf16)`
 - Execution flag 支持的值：0 (基础), 1 (DEEP_FUSE), 9 (DEEP_FUSE+SHARED_EXPERT), 25 (DEEP_FUSE+SHARED_EXPERT+SMOOTH_QUANT), 27, 29, 31
 
