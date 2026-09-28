@@ -12,7 +12,9 @@
 #ifndef MEMFABRIC_HYBRID_SMEM_BM_ENTRY_MANAGER_H
 #define MEMFABRIC_HYBRID_SMEM_BM_ENTRY_MANAGER_H
 
+#include <condition_variable>
 #include <string>
+#include <thread>
 #include "smem_net_common.h"
 #include "smem_bm.h"
 #include "smem_bm_entry.h"
@@ -80,8 +82,12 @@ public:
      * stays ESTABLISHED and no TCP link-broken event is delivered.
      *
      * Notes:
-     * - Runs on the HA re-election thread inside libsmem; implementations should return
-     *   quickly or offload heavy work to their own thread.
+     * - The haStore lambda runs on the HA re-election thread inside libsmem and only
+     *   sets a pending flag (microseconds); the callback itself is dispatched on a
+     *   dedicated single worker thread owned by this manager.
+     * - Multiple notifications arriving while the worker is executing a callback are
+     *   merged (debounced): pending is re-set and one extra round runs afterwards, so
+     *   leader-change storms (>=2 notifies per failover) never spawn concurrent threads.
      * - Not fired on the leader node for its own leadership transitions (isLeader
      *   short-circuits); a client process never becomes leader, so for callers the
      *   semantics is simply "the leader I should talk to has changed".
@@ -130,6 +136,9 @@ private:
     int32_t RacingForStoreServer();
     int32_t AutoRanking();
 
+    void NotifyWorkerLoop() noexcept;
+    void StopNotifyWorker() noexcept;
+
 private:
     std::mutex entryMutex_;
     std::map<uintptr_t, SmemBmEntryPtr> ptr2EntryMap_; /* lookup entry by ptr */
@@ -141,6 +150,14 @@ private:
     bool inited_ = false;
     UrlExtraction storeUrlExtraction_;
     StorePtr confStore_ = nullptr;
+
+    std::thread notifyWorker_;
+    std::mutex notifyMutex_;
+    std::condition_variable notifyCv_;
+    bool notifyPending_{false};
+    bool notifyStopped_{false};
+    LeaderChangedFunc notifyCallback_{nullptr};
+    void *notifyUserData_{nullptr};
 };
 
 } // namespace smem

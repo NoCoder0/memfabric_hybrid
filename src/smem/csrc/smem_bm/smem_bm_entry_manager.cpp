@@ -11,6 +11,7 @@
 */
 #include <thread>
 #include <algorithm>
+#include <pthread.h>
 
 #include "mf_ipv4_validator.h"
 #include "smem_net_common.h"
@@ -33,6 +34,7 @@ SmemBmEntryManager &SmemBmEntryManager::Instance()
 
 SmemBmEntryManager::~SmemBmEntryManager()
 {
+    StopNotifyWorker();
     // 防止析构函数里面调用Uninitialize
     for (auto &pair : ptr2EntryMap_) {
         pair.second->Uninitialize();
@@ -406,32 +408,86 @@ Result SmemBmEntryManager::RegisterLeaderChangeCallback(LeaderChangedFunc callba
         SM_LOG_TRACE("RegisterLeaderChangeCallback: store is not HaConfigStore, skip");
         return SM_ERROR;
     }
-    haStore->RegisterLeaderChangeCallback([callback, userData](const HaConfigStore::LeaderAddresses &addrs) {
+
+    {
+        std::lock_guard<std::mutex> guard(notifyMutex_);
+        notifyCallback_ = callback;
+        notifyUserData_ = userData;
+        if (callback != nullptr && !notifyWorker_.joinable()) {
+            notifyStopped_ = false;
+            try {
+                notifyWorker_ = std::thread(&SmemBmEntryManager::NotifyWorkerLoop, this);
+            } catch (const std::system_error &e) {
+                SM_LOG_ERROR("Failed to create notify worker thread: " << e.what());
+                notifyCallback_ = nullptr;
+                notifyUserData_ = nullptr;
+                return SM_ERROR;
+            }
+        }
+    }
+
+    haStore->RegisterLeaderChangeCallback([this](const HaConfigStore::LeaderAddresses &addrs) {
         if (addrs.isLeader) {
             return;
         }
-        if (callback != nullptr) {
-            try {
-                std::thread([callback, userData]() {
-                    try {
-                        callback(userData);
-                    } catch (const std::exception &e) {
-                        SM_LOG_ERROR("LeaderChangeCallback exception: " << e.what());
-                    } catch (...) {
-                        SM_LOG_ERROR("LeaderChangeCallback unknown exception");
-                    }
-                }).detach();
-            } catch (const std::system_error &e) {
-                SM_LOG_ERROR("LeaderChangeCallback failed to create thread: " << e.what());
-            }
+        std::lock_guard<std::mutex> guard(notifyMutex_);
+        if (notifyStopped_) {
+            return;
         }
+        notifyPending_ = true;
+        notifyCv_.notify_one();
     });
     SM_LOG_INFO("Registered leader change callback on HaConfigStore");
     return SM_OK;
 }
 
+void SmemBmEntryManager::NotifyWorkerLoop() noexcept
+{
+    pthread_setname_np(pthread_self(), "bm_leader_ntf");
+    SM_LOG_INFO("Leader notify worker started");
+    for (;;) {
+        LeaderChangedFunc cb = nullptr;
+        void *userData = nullptr;
+        {
+            std::unique_lock<std::mutex> lock(notifyMutex_);
+            notifyCv_.wait(lock, [this] { return notifyPending_ || notifyStopped_; });
+            if (notifyStopped_) {
+                SM_LOG_INFO("Leader notify worker exiting");
+                return;
+            }
+
+            notifyPending_ = false;
+            cb = notifyCallback_;
+            userData = notifyUserData_;
+        }
+        if (cb == nullptr) {
+            continue;
+        }
+        try {
+            cb(userData);
+        } catch (const std::exception &e) {
+            SM_LOG_ERROR("LeaderChangeCallback exception: " << e.what());
+        } catch (...) {
+            SM_LOG_ERROR("LeaderChangeCallback unknown exception");
+        }
+    }
+}
+
+void SmemBmEntryManager::StopNotifyWorker() noexcept
+{
+    {
+        std::lock_guard<std::mutex> guard(notifyMutex_);
+        notifyStopped_ = true;
+        notifyCv_.notify_all();
+    }
+    if (notifyWorker_.joinable()) {
+        notifyWorker_.join();
+    }
+}
+
 void SmemBmEntryManager::Destroy()
 {
+    StopNotifyWorker();
     std::lock_guard<std::mutex> guard(entryMutex_);
     const size_t entryCount = ptr2EntryMap_.size();
     // Uninitialize any entries that were not explicitly destroyed by the caller.
