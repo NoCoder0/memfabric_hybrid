@@ -80,6 +80,8 @@ constexpr int TEST_OPERATIONS_PER_THREAD_FIFTY = 50;
 
 // host mock memType：非 DV_MEM_SVM_DEVICE 即视为 host
 constexpr uint32_t MOCK_HOST_ATTR_MEM_TYPE = 0x0002;
+// A3 驱动对 NPU-pinned host 内存的 memType 返回值（普通 host=0x80、pinned host=0x8、HBM=0x10）
+constexpr uint32_t MOCK_PINNED_HOST_ATTR_MEM_TYPE = 0x0008;
 uint32_t g_mockAttrMemType = MOCK_HOST_ATTR_MEM_TYPE;
 
 int MockDrvMemGetAttribute(DVdeviceptr vptr, DVattribute *attr)
@@ -556,7 +558,7 @@ TEST_F(HybmVaManagerTest, GetMemType_BoundaryAddresses)
     EXPECT_TRUE(manager.GetGvaMemType(hostGva + TEST_SIZE_SIXTEEN_MB - TEST_COUNT_ONE) == TEST_MEM_TYPE_HOST);
 }
 
-// GetLocalMemoryType: 非 A5 SoC 上 HBM 地址返回 DEVICE，非 HBM 返回 HOST
+// GetLocalMemoryType: 910B（未启用驱动查询的 SoC）上 HBM 地址返回 DEVICE，非 HBM 返回 HOST
 TEST_F(HybmVaManagerTest, GetLocalMemoryType_NonA5_HbmAndHost_ReturnsCorrectMemType)
 {
     hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
@@ -583,6 +585,64 @@ TEST_F(HybmVaManagerTest, GetLocalMemoryType_A5_DeviceAttr_ReturnsDevice)
     EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
 }
 
+// GetLocalMemoryType: on 910C+device_rdma, a pinned host attr (0x8) must be classified as HOST even when the VA
+// falls inside the HBM address range (A3 issue: NPU-pinned host memory misjudged as HBM broke RDMA registration)
+TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_PinnedHostAttrInHbmRange_ReturnsHost)
+{
+    manager.Initialize(TEST_SOC_910);
+    g_mockAttrMemType = MOCK_PINNED_HOST_ATTR_MEM_TYPE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+    const uint64_t pinnedHostVa = HYBM_HBM_START_ADDR + 0x2C0011F0000UL;
+    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_HOST);
+}
+
+// GetLocalMemoryType: on 910C+device_rdma, an HBM attr (0x10, same value as DV_MEM_LOCK_DEV) is classified as DEVICE
+TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_DeviceAttr_ReturnsDevice)
+{
+    manager.Initialize(TEST_SOC_910);
+    g_mockAttrMemType = DV_MEM_LOCK_DEV;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+    const uint64_t hbmVa = HYBM_HBM_START_ADDR + TEST_OFFSET_ONE_MB;
+    EXPECT_EQ(manager.GetLocalMemoryType(hbmVa, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
+}
+
+// GetLocalMemoryType: on 910C+device_rdma, an unavailable driver query (old HAL without the exported symbol)
+// falls back to the address-range check, keeping the legacy behavior
+TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_AttrUnavailable_FallbackToAddrRange)
+{
+    manager.Initialize(TEST_SOC_910);
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttributeUnload));
+
+    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+    EXPECT_EQ(manager.GetLocalMemoryType(HYBM_HBM_START_ADDR, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
+    EXPECT_EQ(manager.GetLocalMemoryType(TEST_LVA_BASE, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_HOST);
+}
+
+// GetLocalMemoryType: on 910C, non-device_rdma transports (or no transport context) skip the driver query and
+// keep the address-range check; a pinned-host-attr VA inside the HBM range is still classified as DEVICE (legacy)
+TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_NonDeviceRdma_KeepsAddrRangeCheck)
+{
+    manager.Initialize(TEST_SOC_910);
+    g_mockAttrMemType = MOCK_PINNED_HOST_ATTR_MEM_TYPE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+
+    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+    const uint64_t pinnedHostVa = HYBM_HBM_START_ADDR + 0x2C0011F0000UL;
+    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType, HYBM_DOP_TYPE_DEVICE_URMA), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
+    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType), BM_OK);
+    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
+}
+
+// 测试37: AllocReserveGva - 零大小
 TEST_F(HybmVaManagerTest, AllocReserveGva_ZeroSize)
 {
     ReservedGvaInfo reserved = manager.AllocReserveGva({TEST_SIZE_ZERO, TEST_SIZE_ZERO, TEST_MEM_TYPE_HOST});

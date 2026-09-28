@@ -292,7 +292,7 @@ AddrType HybmVaManager::ClassifyAddress(const uint64_t va)
     return LOCAL_HOST;
 }
 
-Result HybmVaManager::GetLocalMemoryType(uint64_t va, hybm_mem_type &memType) const noexcept
+Result HybmVaManager::GetLocalMemoryType(uint64_t va, hybm_mem_type &memType, uint32_t dataOpType) const noexcept
 {
     memType = HYBM_MEM_TYPE_BUTT;
     if (va == 0) {
@@ -300,19 +300,29 @@ Result HybmVaManager::GetLocalMemoryType(uint64_t va, hybm_mem_type &memType) co
         return BM_INVALID_PARAM;
     }
 
-    if (soc_ == ASCEND_950) {
+    // On A3 (910C) the VA of NPU-pinned host memory may fall into the HBM address range, where the
+    // address-range check misclassifies it and breaks RDMA registration. Enable the driver attribute
+    // query only for 910C + device_rdma (A3 memcache error fix); all other cases keep the range check.
+    const bool queryDrvAttr =
+        soc_ == ASCEND_950 || (soc_ == ASCEND_910C && (dataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0U);
+    if (queryDrvAttr) {
         DVattribute attr{};
         auto ret = DlHalApi::DrvMemGetAttribute(static_cast<DVdeviceptr>(va), &attr);
-        if (ret != BM_OK) {
+        if (ret == BM_OK) {
+            memType = (attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV ||
+                       attr.memType == DV_MEM_LOCK_DEV_DVPP)
+                          ? HYBM_MEM_TYPE_DEVICE
+                          : HYBM_MEM_TYPE_HOST;
+            return BM_OK;
+        }
+        if (soc_ == ASCEND_950) {
             BM_LOG_ERROR("GetLocalMemoryType failed: interface=DrvMemGetAttribute ret=" << ret
                                                                                         << ", va=" << VaToStr(va));
             return ret;
         }
-        memType = (attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV ||
-                   attr.memType == DV_MEM_LOCK_DEV_DVPP)
-                      ? HYBM_MEM_TYPE_DEVICE
-                      : HYBM_MEM_TYPE_HOST;
-        return BM_OK;
+        // 910C+device_rdma if driver attr unavailable, fallback to address check
+        BM_LOG_DEBUG("GetLocalMemoryType: DrvMemGetAttribute unavailable on 910C, fallback to address check, ret="
+                     << ret << ", va=" << VaToStr(va));
     }
 
     memType = (va >= HYBM_HBM_START_ADDR && va < HYBM_HBM_END_ADDR) ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
