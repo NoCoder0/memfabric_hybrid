@@ -230,7 +230,10 @@ void pybind11_allocator(pybind11::module_ &m)
         "check whether allocator is using vmm mix mode");
 }
 
-PYBIND11_MODULE(zbal, m)
+// TORCH_EXTENSION_NAME lets one source file build multiple chip variants
+// (zbal_a3 / zbal_a5) bundled into a single wheel; zbal/__init__.py picks the
+// matching one at import time.
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
     m.doc() = "zbal package";
 

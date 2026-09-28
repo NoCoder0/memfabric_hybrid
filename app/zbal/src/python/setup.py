@@ -16,6 +16,8 @@ import subprocess
 import platform
 import shutil
 import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from importlib.metadata import version
 import setuptools
@@ -63,36 +65,53 @@ def _check_env_flag(name: str, default: str = "") -> bool:
     return os.getenv(name, default).upper() in ["ON", "1", "YES", "TRUE", "Y"]
 
 
-def _get_soc_version():
-    """
-    Get the SOC_VERSION for kernel compiling via torch.npu auto-detection.
-    """
-    default_soc_version = "ascend910_9382"
-    try:
-        chip_name = torch.npu.get_device_properties(torch.device('npu')).name
-    except Exception as e:
-        logger.warning(
-            f"failed to auto-detect NPU chip ({type(e).__name__}: {e}). "
-            f"Falling back to default SOC_VERSION='{default_soc_version}'."
-        )
-        return default_soc_version
+# Chip variants that can be bundled into one wheel. SOC_VERSION selects the AscendC
+# kernel compilation target of each variant; at runtime zbal/__init__.py detects the
+# local chip and imports the matching zbal.zbal_<a3|a5> backend extension.
+CHIP_VARIANT_CONFIG = {
+    "A3": {"soc_version": "ascend910_9382"},
+    "A5": {"soc_version": "ascend950pr_9599"},
+}
 
-    if chip_name.startswith("Ascend910_93"):
-        res_soc_version = "ascend910_9382"
-    elif chip_name.startswith("Ascend950"):
-        res_soc_version = "ascend950pr_9599"
-    elif chip_name.startswith("Ascend910"):
-        res_soc_version = default_soc_version
-        logger.warning(f"auto-detected {chip_name}, Ascend910_93* or Ascend950* are recommended.")
-    else:
-        logger.warning(
-            f"unsupported chip '{chip_name}'. Only Ascend910* and Ascend950* are supported. "
-            f"Falling back to default SOC_VERSION='{default_soc_version}'."
-        )
-        return default_soc_version
 
-    logger.info(f"auto-detected {chip_name} → SOC_VERSION={res_soc_version}")
-    return res_soc_version
+def _get_chip_variants():
+    """
+    Parse the chip variant list from ZBAL_CHIP_TYPES (comma-separated, e.g. "A3", "A3,A5").
+    Default builds both variants so a single wheel runs on either hardware.
+    """
+    raw = os.getenv("ZBAL_CHIP_TYPES", "A3,A5")
+    variants = []
+    for item in raw.split(","):
+        chip = item.strip().upper()
+        if not chip:
+            continue
+        if chip not in CHIP_VARIANT_CONFIG:
+            raise ValueError(
+                f"unsupported chip type '{chip}' in ZBAL_CHIP_TYPES='{raw}', supported: {sorted(CHIP_VARIANT_CONFIG)}"
+            )
+        if chip not in variants:
+            variants.append(chip)
+    if not variants:
+        raise ValueError(f"ZBAL_CHIP_TYPES='{raw}' contains no valid chip type")
+    return variants
+
+
+def _run_cmd(cmd, cwd, tag):
+    """Run cmd and prefix every output line with the variant tag, so interleaved output
+    from concurrently building variants stays distinguishable in the build log. Start/end
+    wall-clock stamps make variant overlap (parallel execution) visible in the log."""
+    start_ts = time.time()
+    logger.info(f"{tag} {cmd[0]} started at {time.strftime('%H:%M:%S')}")
+    with subprocess.Popen(
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True
+    ) as proc:
+        for line in proc.stdout:
+            print(f"{tag} {line}", end="", flush=True)
+        # returncode is set only after wait(): reading it right after the stdout loop
+        # (pipe EOF) still yields None, falsely failing builds whose cmake/make exited 0.
+        proc.wait()
+        logger.info(f"{tag} {cmd[0]} finished at {time.strftime('%H:%M:%S')} in {time.time() - start_ts:.0f}s")
+        return proc.returncode
 
 
 is_manylinux = _check_env_flag("IS_MANYLINUX", "FALSE")
@@ -103,9 +122,7 @@ _op_aliases = {"dcn": "dispatch_combine_normal", "dcll": "dispatch_combine_low_l
 filter_ops = [_op_aliases.get(op.strip(), op.strip()) for op in build_filter.split(",") if op.strip()]
 fused_deep_moe_enabled = not filter_ops or "fused_deep_moe" in filter_ops
 
-soc_version = _get_soc_version()
-_chip_type = "A5" if soc_version.startswith("ascend950") else "A3"
-_chip_macro = f"ZBAL_ASCEND_NPU_{_chip_type}"
+chip_variants = _get_chip_variants()
 
 ascend_home = Path(_find_ascend_home_dir()).resolve()
 python_include_dir = Path(_find_python_include()).resolve()
@@ -137,16 +154,30 @@ include_dirs = [
     f"{zbal_root}/src/csrc/adaptor/pytorch_npu/",
     f"{zbal_root}/src/csrc/adaptor/deepep/",
 ]
-if _chip_type == "A3" and fused_deep_moe_enabled:
-    include_dirs.append(f"{zbal_root}/src/csrc/operators/npu/host/fused_deep_moe")
 
 
-library_dirs = [
+def _variant_include_dirs(chip):
+    dirs = list(include_dirs)
+    if chip == "A3" and fused_deep_moe_enabled:
+        dirs.append(f"{zbal_root}/src/csrc/operators/npu/host/fused_deep_moe")
+    return dirs
+
+
+def _variant_define_macros(chip):
+    # Mirrors CMakeLists.txt: `ZBAL_ASCEND_NPU_A3 AND ZBAL_BUILD_OP_FUSED_DEEP_MOE` defines the
+    # same macro for the kernel archives; the pybind registration in zbal_deepep*.cpp is guarded
+    # by it, so both sides must stay in sync or the extension fails to link/load.
+    macros = [(f"ZBAL_ASCEND_NPU_{chip}", "1")]
+    if chip == "A3" and fused_deep_moe_enabled:
+        macros.append(("ZBAL_FUSED_DEEP_MOE_ENABLED", "1"))
+    return macros
+
+
+base_library_dirs = [
     f"{torch_dir}/lib",
     f"{torch_npu_dir}/lib",
     f"{ascend_home}/lib64",
     sysconfig.get_config_var("LIBDIR"),
-    f"{zbal_root}/output/",
 ]
 
 
@@ -163,9 +194,10 @@ libraries = ["torch", "torch_npu", "c10", "torch_python", "opapi", "zbal_core", 
 
 
 logger.warning(f"Using ASCEND_TOOLKIT_HOME at: {ascend_home}")
+logger.warning(f"{chip_variants=}")
 logger.warning(f"{include_dirs=}")
 logger.warning(f"{sources=}")
-logger.warning(f"{library_dirs=}")
+logger.warning(f"{base_library_dirs=}")
 logger.warning(f"{libraries=}")
 
 
@@ -223,9 +255,10 @@ extra_compile_args = [
     "-isystem",
     f"{torch_npu_dir}/include/torch_npu/csrc/core/npu/",
 ]  # "-fvisibility=hidden"
-common_macros = [(_chip_macro, "1")]
-if _chip_type == "A3" and fused_deep_moe_enabled:
-    common_macros.append(("ZBAL_FUSED_DEEP_MOE_ENABLED", "1"))
+
+# Strip at link time in release: CANN's ascendc.cmake compiles host code with -g, which
+# otherwise adds ~50MB of DWARF to each .so. .dynsym is kept for pybind/ctypes lookups.
+extra_link_args = [] if is_debug_mode else ["-Wl,-s"]
 
 
 def set_torch_version():
@@ -258,27 +291,46 @@ set_torch_version()
 
 class CustomBuildExtension(BuildExtension):
     def build_base_zbal(self):
-        # make dir
         root_dir = Path(cur_dir).parent.parent
-        build_dir = os.path.join(f"{root_dir}", "build")
-        output_dir = os.path.join(f"{root_dir}", "output")
-        shutil.rmtree(build_dir, ignore_errors=True)
-        shutil.rmtree(output_dir, ignore_errors=True)
+        # Wipe the whole build/output trees: they are pure artifacts, and a stale parent
+        # build dir (e.g. CMakeCache.txt left by old single-variant builds) can break
+        # nested per-variant cmake invocations.
+        shutil.rmtree(os.path.join(f"{root_dir}", "build"), ignore_errors=True)
+        shutil.rmtree(os.path.join(f"{root_dir}", "output"), ignore_errors=True)
+        # Variants are fully isolated (own build/output dirs, own SOC_VERSION and chip
+        # macros), so compile them concurrently: with N variants the kernel compilation
+        # wall time drops from sum(T_i) to max(T_i).
+        with ThreadPoolExecutor(max_workers=len(chip_variants)) as pool:
+            futures = [pool.submit(self.build_zbal_variant, root_dir, chip) for chip in chip_variants]
+            for future in futures:
+                future.result()
+
+    def build_zbal_variant(self, root_dir, chip):
+        chip_lower = chip.lower()
+        tag = f"[{chip}]"
+        build_dir = os.path.join(f"{root_dir}", "build", chip_lower)
+        output_dir = os.path.join(f"{root_dir}", "output", chip_lower)
         os.makedirs(build_dir, exist_ok=True)
         os.makedirs(output_dir, exist_ok=True)
-        logger.info(f"make build dir:{build_dir}")
-        logger.info(f"make output dir:{output_dir}")
+        logger.info(f"{tag} make build dir:{build_dir}")
+        logger.info(f"{tag} make output dir:{output_dir}")
 
         # cmake
-        build_type = "Debug" if is_debug_mode and not is_manylinux else "Release"
+        # Uppercase is mandatory: CMakeLists.txt matches `CMAKE_BUILD_TYPE MATCHES "RELEASE"`
+        # case-sensitively, so "Release" would silently fall into the -g -rdynamic branch.
+        build_type = "DEBUG" if is_debug_mode else "RELEASE"
 
         cmake_cmd = [
             "cmake",
-            "..",
-            f"-DSOC_VERSION={soc_version}",
-            f"-D{_chip_macro}=1",
+            # Source dir must be explicit: with a nested build dir (build/<chip>) the relative
+            # ".." resolves to the stale parent build dir (holding an old CMakeCache.txt from
+            # single-variant builds), which cmake silently reuses and writes files to.
+            f"{root_dir}",
+            f"-DSOC_VERSION={CHIP_VARIANT_CONFIG[chip]['soc_version']}",
+            f"-DZBAL_ASCEND_NPU_{chip}=1",
             f"-DBUILD_ZBAL_MODULE_UT={build_ut}",
             f"-DCMAKE_BUILD_TYPE={build_type}",
+            f"-DZBAL_LIB_OUTPUT_SUBDIR={chip_lower}",
             "-DDISABLE_ADAPTOR_COMPILE=ON",
             "-DDISABLE_ALLOCATOR_COMPILE=ON",
             "-DDISABLE_SHARE_COMPILE=ON",
@@ -286,22 +338,20 @@ class CustomBuildExtension(BuildExtension):
         if build_filter:
             canonical_filter = ",".join(filter_ops)
             cmake_cmd.append(f"-DZBAL_OP_BUILD_FILTER={canonical_filter}")
-            logger.info(f"operator build filter enabled: {canonical_filter}")
-        result = subprocess.run(cmake_cmd, cwd=build_dir)
-        if result.returncode != 0:
-            logger.error(f"python cmake exec failed ret code {result.returncode}, msg {result.stderr}")
-            raise RuntimeError("cmake exec failed")
-        else:
-            logger.info("python cmake exec success")
+            logger.info(f"{tag} operator build filter enabled: {canonical_filter}")
+        ret = _run_cmd(cmake_cmd, cwd=build_dir, tag=tag)
+        if ret != 0:
+            logger.error(f"{tag} python cmake exec failed ret code {ret}")
+            raise RuntimeError(f"cmake exec failed for {chip} variant")
+        logger.info(f"{tag} python cmake exec success")
 
         # make
-        make_cmd = ["make", "-j16"]
-        result = subprocess.run(make_cmd, cwd=build_dir)
-        if result.returncode != 0:
-            logger.error(f"python make exec failed ret code {result.returncode}, msg {result.stderr}")
-            raise RuntimeError("make exec failed")
-        else:
-            logger.info("python make exec success")
+        make_cmd = ["make", f"-j16"]
+        ret = _run_cmd(make_cmd, cwd=build_dir, tag=tag)
+        if ret != 0:
+            logger.error(f"{tag} python make exec failed ret code {ret}")
+            raise RuntimeError(f"make exec failed for {chip} variant")
+        logger.info(f"{tag} python make exec success")
 
         # copy
         static_output = glob.glob(f"{build_dir}/**/*.a", recursive=True)
@@ -309,7 +359,7 @@ class CustomBuildExtension(BuildExtension):
             static_name = os.path.basename(x)
             dst = f"{output_dir}/{static_name}"
             shutil.copy2(x, dst)
-            logger.info(f"copy {x} to {dst}")
+            logger.info(f"{tag} copy {x} to {dst}")
 
     def run(self):
         self.build_base_zbal()
@@ -363,17 +413,17 @@ setup(
     license="Mulan PSL v2",
     ext_modules=[
         CppExtension(
-            name="zbal.zbal",  # TORCH_EXTENSION_NAME
+            name=f"zbal.zbal_{chip.lower()}",  # TORCH_EXTENSION_NAME; .so lands directly in zbal/, no nested package needed
             sources=sources,
-            include_dirs=include_dirs,
-            library_dirs=library_dirs,
+            include_dirs=_variant_include_dirs(chip),
+            library_dirs=[*base_library_dirs, f"{zbal_root}/output/{chip.lower()}"],
             libraries=libraries,
-            define_macros=[
-                *common_macros,
-            ],
+            define_macros=_variant_define_macros(chip),
             extra_compile_args=extra_compile_args,
+            extra_link_args=extra_link_args,
             cxx_std=17,
         )
+        for chip in chip_variants
     ],
     python_requires=">=3.10",
     packages=setuptools.find_packages(include=["zbal", "zbal.*"]),

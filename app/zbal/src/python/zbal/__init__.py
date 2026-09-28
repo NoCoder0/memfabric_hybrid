@@ -1,6 +1,8 @@
+import importlib
+import logging
 import os
 import sys
-import logging
+import types
 from importlib.metadata import version
 
 import torch
@@ -30,6 +32,61 @@ try:
 except Exception as e:
     logger.exception(f"[ERROR] zbal init module failed: {e}")
     raise e
+
+# ---- Load the chip-variant pybind backend (one wheel bundles zbal_a3 / zbal_a5) ----
+# The variant matching the local chip is imported and aliased under the legacy `zbal.zbal`
+# namespace, so existing `zbal.zbal` / `zbal.zbal.<submodule>` import paths keep working.
+
+
+def _query_soc_name_via_acl():
+    """Query the SoC name (e.g. 'Ascend910_93' / 'Ascend950') through the Python ACL binding.
+
+    MUST NOT use torch.npu device APIs here: they trigger torch_npu's lazy init and
+    mark its allocator initialized, which would later break switch_to_allocator()
+    with 'Can't swap an already initialized allocator'. The standalone `acl` package
+    does not touch torch_npu's allocator state.
+    """
+    try:
+        import acl
+
+        soc = acl.get_soc_name()
+    except Exception:
+        return None
+    return soc if isinstance(soc, str) and soc else None
+
+
+def _detect_chip_type():
+    """Detect the local NPU chip type: 'A5' for Ascend950/Ascend910_95, otherwise 'A3'."""
+    soc_name = _query_soc_name_via_acl()
+    if not soc_name:
+        raise RuntimeError(
+            "failed to detect the NPU SoC name via acl.get_soc_name(); check that the acl Python package "
+            "is installed and the Ascend driver/runtime environment (ASCEND_HOME_PATH) is configured"
+        )
+    chip = "A5" if ("Ascend950" in soc_name or "Ascend910_95" in soc_name) else "A3"
+    logger.info("detected SoC %r -> chip type %s", soc_name, chip)
+    return chip
+
+
+chip_type = _detect_chip_type()
+try:
+    backend = importlib.import_module(f"zbal.zbal_{chip_type.lower()}")
+except ImportError as e:
+    backend_name = f"zbal.zbal_{chip_type.lower()}"
+    raise ImportError(
+        f"failed to load zbal backend '{backend_name}' for chip type {chip_type}: the wheel may not bundle "
+        f"this variant, rebuild with ZBAL_CHIP_TYPES={chip_type}"
+    ) from e
+
+sys.modules["zbal.zbal"] = backend
+sys.modules[__name__].zbal = backend  # keep `zbal.zbal.<attr>` attribute-style access working
+for _attr in dir(backend):
+    _obj = getattr(backend, _attr)
+    if isinstance(_obj, types.ModuleType):
+        sys.modules[f"zbal.zbal.{_attr}"] = _obj
+# Absolute path of the loaded variant .so, used by the pluggable allocator (zbal_module.ZBAL_LIB).
+backend_lib_path = backend.__file__
+logger.info("zbal backend loaded: %s (chip_type=%s)", backend.__name__, chip_type)
 
 from zbal.zbal.allocator import record_memory_history, dump_snapshot, simulate_init, is_mix_alloc
 from zbal.zbal import ProcessGroupZBAL

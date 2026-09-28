@@ -106,7 +106,13 @@ set(ZBAL_BASE_DIR ${PROJECT_SOURCE_DIR})
 set(ZBAL_SRC_DIR ${ZBAL_BASE_DIR}/src)
 
 # set the library output dir to the python dir for wheel package build
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${ZBAL_BASE_DIR}/output)
+# ZBAL_LIB_OUTPUT_SUBDIR keeps artifacts of multi-variant builds (e.g. a3/a5 in one wheel) separate
+set(ZBAL_LIB_OUTPUT_SUBDIR "" CACHE STRING "Subdirectory under output/ for library artifacts (e.g. a3, a5)")
+if (ZBAL_LIB_OUTPUT_SUBDIR STREQUAL "")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${ZBAL_BASE_DIR}/output)
+else ()
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${ZBAL_BASE_DIR}/output/${ZBAL_LIB_OUTPUT_SUBDIR})
+endif ()
 
 add_compile_options(-Wunused-value -Wcast-align -Wno-macro-redefined)
 add_compile_options(-fpermissive -Wno-error)

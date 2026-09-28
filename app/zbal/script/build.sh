@@ -5,9 +5,14 @@ DEBUG_MODE="OFF"
 ENABLE_ZBAL_UT="OFF"
 BUILD_FILTER=""
 VALID_OPS="classic,dcn,dcll,fmoe"
+ZBAL_CHIP_TYPES="${ZBAL_CHIP_TYPES:-A3,A5}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --release)
+            DEBUG_MODE="OFF"
+            shift
+            ;;
         --debug)
             DEBUG_MODE="ON"
             shift
@@ -25,20 +30,36 @@ while [[ $# -gt 0 ]]; do
             BUILD_FILTER="${BUILD_FILTER},$2"
             shift 2
             ;;
+        --chips)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --chips requires an argument (e.g. A3 or A3,A5)" 1>&2
+                exit 1
+            fi
+            ZBAL_CHIP_TYPES="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [options]"
             echo "Options:"
+            echo "  --release                   Build RELEASE wheel (default when no mode flag is given)"
             echo "  --debug                     Enable debug mode"
             echo "  --ut                        Enable unit tests (skips wheel build)"
-            echo "  --build-filter <ops>        Compile only the given operator group(s), comma-separated."
-            echo "                              Valid values: ${VALID_OPS}"
+            echo "  --build-filter <ops>        [TEST ONLY] Compile only the given operator group(s),"
+            echo "                              comma-separated. Valid values: ${VALID_OPS}"
             echo "                              Repeatable. Omit to compile all groups."
+            echo "                              Formal release wheels must contain all operators:"
+            echo "                              do NOT use this flag for official builds."
+            echo "  --chips <list>              [TEST ONLY] Chip variants bundled into the wheel: A3, A5 or A3,A5"
+            echo "                              (default: A3,A5). Make parallelism is auto-sized: CPU cores"
+            echo "                              split evenly across chips."
+            echo "                              Formal release wheels must bundle both variants:"
+            echo "                              do NOT use this flag for official builds."
             echo "  -h, --help                  Show this help message"
             exit 1
             ;;
         *)
             echo "Error: unknown option: $1" 1>&2
-            echo "Run '$0 -h' for more information."
+            echo "Run '$0 -h' for more information." 1>&2
             exit 1
             ;;
     esac
@@ -53,6 +74,7 @@ fi
 export DEBUG_MODE=$DEBUG_MODE
 export ENABLE_ZBAL_UT=$ENABLE_ZBAL_UT
 export ZBAL_OP_BUILD_FILTER="${BUILD_FILTER}"
+export ZBAL_CHIP_TYPES=$ZBAL_CHIP_TYPES
 
 if [ -n "$ASCEND_HOME_PATH" ]; then
     _ASCEND_INSTALL_PATH=$ASCEND_HOME_PATH
@@ -168,12 +190,28 @@ function build_ut()
     echo "[build.sh] UT binary: ${build_dir}/test/ut/testcase/test_zbal"
 }
 
+function format_duration()
+{
+    local total=$1
+    printf '%dh:%02dm:%02ds' $((total/3600)) $((total%3600/60)) $((total%60))
+}
+
 function main()
 {
+    local start_ts end_ts duration
+    start_ts=$(date +%s)
     if pip3 show wheel;then
         echo "wheel has been installed"
     else
         pip3 install wheel==0.45.1
+    fi
+    # torch BuildExtension uses the ninja backend by default (parallel, #CPUS jobs) and falls
+    # back to the serial distutils backend when ninja is missing, which makes the pybind
+    # extension stage compile its 17 sources one by one.
+    if command -v ninja >/dev/null 2>&1;then
+        echo "ninja has been installed"
+    else
+        pip3 install ninja || echo "[build.sh] warn: ninja install failed, extension compile will be serial" 1>&2
     fi
     if [[ "${ENABLE_ZBAL_UT}" == "ON" ]]; then
         update_ut_submodules
@@ -182,6 +220,9 @@ function main()
     else
         build_zbal
     fi
+    end_ts=$(date +%s)
+    duration=$((end_ts - start_ts))
+    echo "[build.sh] total build time: ${duration}s ($(format_duration ${duration}))"
 }
 
 main

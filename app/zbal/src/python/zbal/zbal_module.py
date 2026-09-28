@@ -8,9 +8,10 @@ from torch.distributed import ReduceOp
 from zbal.zbal import ZBALBootstrapType, ZBALBootstrapOption
 from zbal.zbal import zbal_version, zbal_bootstrap, zbal_unbootstrap, zbal_comm_destroy_all
 from zbal.zbal.allocator import get_heap_stats
+from zbal import backend_lib_path
 
-CURRENT_DIR = Path(__file__).resolve().parent
-ZBAL_LIB = list(CURRENT_DIR.glob("zbal.*.so"))[0]
+# path of the loaded chip-variant backend .so, used by the pluggable allocator and ctypes symbol lookup
+ZBAL_LIB = Path(backend_lib_path)
 ZBAL_ENABLE_GRAPH = int(os.environ.get("ZBAL_ENABLE_GRAPH", 0)) == 1
 
 __version__ = zbal_version()
