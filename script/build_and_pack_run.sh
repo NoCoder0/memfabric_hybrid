@@ -23,6 +23,7 @@ BUILD_HCOM_WITH_RDMA="ON"
 BUILD_HCOM_WITH_UB="OFF"
 BUILD_ETCD_BACKEND="OFF"
 BUILD_TOOL="cmake"
+BUILD_ZBAL="OFF"
 
 show_help() {
     echo "Usage: $0 [options]"
@@ -37,6 +38,8 @@ show_help() {
     echo "  --build_hcom_ub <ON/OFF>    Enable/disable build and package hcom with ub, default: OFF"
     echo "  --build_etcd_backend <ON/OFF> Enable/disable build and package etcd backend so, default: OFF"
     echo "  --build_tool <cmake/bazel>  Set build tool (cmake/bazel), default: cmake"
+    echo "  --build_zbal <ON/OFF>       Bundle zbal (A3/A5) into the memfabric_hybrid wheel, default: OFF"
+    echo "                              (NPU + python builds only; needs torch/torch_npu preinstalled)"
     echo "  --help                      Show this help message"
     echo ""
     echo "Example:"
@@ -86,6 +89,10 @@ while [[ "$#" -gt 0 ]]; do
             BUILD_TOOL="$2"
             shift 2
             ;;
+        --build_zbal)
+            BUILD_ZBAL="$2"
+            shift 2
+            ;;
         --help)
             show_help
             exit 0
@@ -109,10 +116,11 @@ echo "BUILD_HCOM_RDMA: $BUILD_HCOM_WITH_RDMA"
 echo "BUILD_HCOM_WITH_UB: $BUILD_HCOM_WITH_UB"
 echo "BUILD_ETCD_BACKEND: $BUILD_ETCD_BACKEND"
 echo "BUILD_TOOL: $BUILD_TOOL"
+echo "BUILD_ZBAL: $BUILD_ZBAL"
 
 cd ${ROOT_PATH}
 
-bash build.sh "${BUILD_MODE}" OFF "${BUILD_OPEN_ABI}" "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}"
+bash build.sh "${BUILD_MODE}" OFF "${BUILD_OPEN_ABI}" "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}" "${BUILD_ZBAL}"
 
 bash run_pkg_maker/make_run.sh "${BUILD_TEST}" "${XPU_TYPE}" "${BUILD_PYTHON}" "${BUILD_HCOM}" "${BUILD_ETCD_BACKEND}"
 

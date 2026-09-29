@@ -46,6 +46,10 @@ elif xpu_type == "GPU":
 
 _PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), "../../../.."))
 
+# zbal package staged by script/build.sh (BUILD_ZBAL=ON); its prebuilt zbal_a3/zbal_a5 .so
+# ship as package data, so a single wheel installs both `memfabric_hybrid` and `zbal`.
+_zbal_staged = os.path.isdir(os.path.join(os.path.dirname(__file__), "zbal"))
+
 # acc_offload extend sources, staged into the wheel under _kernel/acc_offload (sibling of the
 # prebuilt AICPU payload _kernel/hybm) for install-time compilation. NPU wheels only.
 _ACC_OFFLOAD_SRC_ASSETS = [
@@ -133,6 +137,17 @@ class BuildWheel(bdist_wheel):
             "libmf_acc_offload.so",
             "libboundscheck.so",
         ]
+        if _zbal_staged:
+            # zbal's extensions resolve torch/CANN libs at runtime via `import torch`;
+            # mirrors the exclude list of app/zbal's own BuildWheel.
+            exclude_libraries += [
+                "libtorch.so",
+                "libtorch_npu.so",
+                "libc10.so",
+                "libtorch_python.so",
+                "libtorch_cpu.so",
+                "libopapi.so",
+            ]
 
         file = glob.glob(os.path.join(self.dist_dir, "*-linux_*.whl"))[0]
         if is_manylinux:
@@ -174,7 +189,7 @@ setup(
     packages=find_namespace_packages(exclude=("tests*",)),
     url="https://gitcode.com/Ascend/memfabric_hybrid",
     license="Mulan PSL v2",
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     zip_safe=False,
     package_data={
         "memfabric_hybrid": [
@@ -189,7 +204,8 @@ setup(
             "_kernel/hybm/*",
             "_kernel/acc_offload/operators/*",
             "_kernel/acc_offload/launch/*",
-        ]
+        ],
+        "zbal": ["zbal*.so"],
     },
     entry_points={
         "console_scripts": [

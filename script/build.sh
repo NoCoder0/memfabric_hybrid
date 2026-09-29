@@ -21,6 +21,7 @@ BUILD_HCOM_WITH_RDMA=${9:-ON}
 BUILD_HCOM_WITH_UB=${10:-OFF}
 BUILD_ETCD_BACKEND=${11:-OFF}
 BUILD_TOOL=${12:-cmake}
+BUILD_ZBAL=${13:-OFF}
 # 导出环境变量用于后续构建whl包
 export MF_BUILD_HCOM=${8:-OFF}
 export MF_BUILD_HCOM_WITH_RDMA=${9:-ON}
@@ -134,9 +135,49 @@ check_contains_path()
     return 0  # not contain
 }
 
+# Build the zbal wheel and stage its zbal/ package into the mf wheel staging dir, so one
+# combined wheel ships both. BUILD_MODE maps 1:1: DEBUG -> --debug, otherwise --release.
+build_zbal_wheel()
+{
+    local zbal_init_py="app/zbal/src/python/zbal/__init__.py"
+    # Unconditionally restore the baked _TORCH_NPU_VERSION_ left behind by an interrupted build.
+    git -C "${PROJ_DIR}" checkout -- "${zbal_init_py}"
+    local mode="--release"
+    if [ "${BUILD_MODE}" == "DEBUG" ]; then
+        mode="--debug"
+    fi
+    echo "========= build zbal wheel (mode: ${mode}) ============"
+    # Disable zbal-side auditwheel repair; mf's bdist_wheel is the single repairer.
+    IS_MANYLINUX=FALSE bash "${PROJ_DIR}/app/zbal/script/build.sh" "${mode}"
+    local zbal_wheel
+    zbal_wheel=$(ls "${PROJ_DIR}"/app/zbal/output/memfabric_zbal-*.whl 2>/dev/null | head -n 1)
+    if [ -z "${zbal_wheel}" ]; then
+        echo "[ERROR] zbal wheel not found in ${PROJ_DIR}/app/zbal/output after build (BUILD_MODE=${BUILD_MODE}, mode=${mode})" 1>&2
+        exit 1
+    fi
+
+    local staging_dir="${PROJ_DIR}/src/smem/python/memfabric_hybrid"
+    local extract_dir="${PROJ_DIR}/build/zbal_extract"
+    rm -rf "${extract_dir}"
+    python3 -m zipfile -e "${zbal_wheel}" "${extract_dir}"
+    if [ ! -d "${extract_dir}/zbal" ]; then
+        echo "[ERROR] zbal package not found in wheel ${zbal_wheel} after extraction" 1>&2
+        exit 1
+    fi
+    rm -rf "${staging_dir}/zbal"
+    cp -r "${extract_dir}/zbal" "${staging_dir}/zbal"
+}
+
 cd ${ROOT_PATH}/..
 PROJ_DIR=$(pwd)
 LIBBOUNDSCHECK_INSTALL_PATH="${PROJ_DIR}/build/_deps/hcom-src/dist/hcom_3rdparty/libboundscheck/lib/"
+
+if [ "${BUILD_ZBAL}" == "ON" ]; then
+    if [ "${XPU_TYPE}" != "NPU" ] || [ "${BUILD_PYTHON}" != "ON" ]; then
+        echo "[ERROR] zbal build requires XPU_TYPE=NPU and BUILD_PYTHON=ON, got XPU_TYPE=${XPU_TYPE}, BUILD_PYTHON=${BUILD_PYTHON}" 1>&2
+        exit 1
+    fi
+fi
 
 if [ "${BUILD_PYTHON}" == "ON" ]; then
     readonly BACK_PATH_EVN=$PATH
@@ -386,6 +427,12 @@ do
     \cp -v "${PROJ_DIR}"/build/src/smem/csrc/python_wrapper/mk_transfer_adapter/_pymf_transfer*.so "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/
     rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/_pymf_acc_offload*.so
     \cp -v "${PROJ_DIR}"/build/src/acc_offload/csrc/python_wrapper/_pymf_acc_offload*.so "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/
+
+    # zbal .so is cp3X-ABI specific: rebuild inside the loop for each python version.
+    if [ "${BUILD_ZBAL}" == "ON" ]; then
+        build_zbal_wheel
+    fi
+
     cd "${PROJ_DIR}/src/smem/python/memfabric_hybrid"
     rm -rf build memfabric_hybrid.egg-info
     if check_contains_path "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib"; then
@@ -409,5 +456,8 @@ rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/include
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/script
 rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/memfabric_hybrid/_kernel
+rm -rf "${PROJ_DIR}"/src/smem/python/memfabric_hybrid/zbal \
+    "${PROJ_DIR}"/app/zbal/build "${PROJ_DIR}"/app/zbal/output \
+    "${PROJ_DIR}"/build/zbal_extract
 
 cd ${CURRENT_DIR}
