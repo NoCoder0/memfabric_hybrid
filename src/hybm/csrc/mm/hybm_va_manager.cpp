@@ -329,31 +329,78 @@ Result HybmVaManager::GetLocalMemoryType(uint64_t va, hybm_mem_type &memType, ui
     return BM_OK;
 }
 
-uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
+bool HybmVaManager::TryGetLocalRegisteredMemTypeLocked(uint64_t va, hybm_mem_type &memType) const
 {
-    auto r = QueryAddr(va);
+    const uint32_t localTypes[] = {HVM_HVA, HVM_DVA};
+    bool found = false;
+    for (auto type : localTypes) {
+        const auto &allocations = allocatedMap_[type];
+        if (allocations.empty()) {
+            continue;
+        }
+        auto it = allocations.upper_bound(va);
+        if (it == allocations.begin()) {
+            continue;
+        }
+        --it;
+        if (!it->second.Contains(va, type)) {
+            continue;
+        }
+        if (found && memType != it->second.base.memType) {
+            return false;
+        }
+        memType = it->second.base.memType;
+        found = true;
+    }
+    return found;
+}
+
+bool HybmVaManager::ClassifyAddressMaskLocked(uint64_t va, uint8_t &mask) const
+{
+    auto r = QueryAddrLocked(va);
     // 已 import → 单 GLOBAL
     if (r.inAllocGva && r.imported) {
-        return (r.memType == HYBM_MEM_TYPE_DEVICE) ? BIT_GLOBAL_DEVICE : BIT_GLOBAL_HOST;
+        mask = (r.memType == HYBM_MEM_TYPE_DEVICE) ? BIT_GLOBAL_DEVICE : BIT_GLOBAL_HOST;
+        return true;
     }
     // reservedMap_ → GVA，已在 allocatedMap_ 中才设有效位
+    if (!reservedMap_[HVM_GVA].empty()) {
+        auto it = reservedMap_[HVM_GVA].upper_bound(va);
+        if (it != reservedMap_[HVM_GVA].begin()) {
+            --it;
+        }
+        if (it->second.Contains(va)) {
+            if (!r.inAllocGva) {
+                mask = 0; // 未 join → 无效
+                return true;
+            }
+            if (it->second.memType == HYBM_MEM_TYPE_DEVICE) {
+                mask = BIT_LOCAL_DEVICE | BIT_GLOBAL_DEVICE;
+            } else {
+                mask = BIT_LOCAL_HOST | BIT_GLOBAL_HOST;
+            }
+            return true;
+        }
+    }
+    if (r.inAllocGva) {
+        mask = (r.memType == HYBM_MEM_TYPE_DEVICE) ? BIT_LOCAL_DEVICE : BIT_LOCAL_HOST;
+        return true;
+    }
+    hybm_mem_type registeredMemType = HYBM_MEM_TYPE_BUTT;
+    if (TryGetLocalRegisteredMemTypeLocked(va, registeredMemType)) {
+        mask = (registeredMemType == HYBM_MEM_TYPE_DEVICE) ? BIT_LOCAL_DEVICE : BIT_LOCAL_HOST;
+        return true;
+    }
+    return false;
+}
+
+uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
+{
+    uint8_t mask = 0U;
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);
-        if (!reservedMap_[HVM_GVA].empty()) {
-            auto it = reservedMap_[HVM_GVA].upper_bound(va);
-            if (it != reservedMap_[HVM_GVA].begin()) {
-                --it;
-            }
-            if (it->second.Contains(va)) {
-                if (!r.inAllocGva) {
-                    return 0; // 未 join → 无效
-                }
-                if (it->second.memType == HYBM_MEM_TYPE_DEVICE) {
-                    return BIT_LOCAL_DEVICE | BIT_GLOBAL_DEVICE;
-                } else {
-                    return BIT_LOCAL_HOST | BIT_GLOBAL_HOST;
-                }
-            }
+        if (ClassifyAddressMaskLocked(va, mask)) {
+            return mask;
         }
     }
 
@@ -363,6 +410,33 @@ uint8_t HybmVaManager::ClassifyAddressMask(const uint64_t va)
         return 0; // 无效
     }
     return (memType == HYBM_MEM_TYPE_DEVICE) ? BIT_LOCAL_DEVICE : BIT_LOCAL_HOST;
+}
+
+void HybmVaManager::ClassifyAddressMask(uint64_t srcVa, uint64_t destVa, uint8_t &srcMask, uint8_t &destMask)
+{
+    bool srcResolved = false;
+    bool destResolved = false;
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        srcResolved = ClassifyAddressMaskLocked(srcVa, srcMask);
+        destResolved = ClassifyAddressMaskLocked(destVa, destMask);
+    }
+
+    auto classifyLocal = [this](uint64_t va, uint8_t &mask) {
+        hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
+        auto ret = GetLocalMemoryType(va, memType);
+        if (ret != BM_OK) {
+            mask = 0U;
+            return;
+        }
+        mask = (memType == HYBM_MEM_TYPE_DEVICE) ? BIT_LOCAL_DEVICE : BIT_LOCAL_HOST;
+    };
+    if (!srcResolved) {
+        classifyLocal(srcVa, srcMask);
+    }
+    if (!destResolved) {
+        classifyLocal(destVa, destMask);
+    }
 }
 
 hybm_data_copy_direction HybmVaManager::InferCopyDirection(uint64_t srcVa, uint64_t dstVa)

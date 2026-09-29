@@ -34,6 +34,7 @@
 
 using namespace ock::smem;
 using namespace ock::mf;
+using ClassifyAddressMaskMemberFn = uint8_t (HybmVaManager::*)(const uint64_t);
 
 const char STORE_URL[] = "tcp://127.0.0.1:5432";
 const char UNIQUE_ID[] = "127.0.0.1:5321";
@@ -1010,7 +1011,8 @@ TEST_F(SmemTransTest, smem_trans_read_write)
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
         }
         trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
-        MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
+        auto classifyAddressMaskPtr = static_cast<ClassifyAddressMaskMemberFn>(&HybmVaManager::ClassifyAddressMask);
+        MOCKER_CPP(classifyAddressMaskPtr, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
         int ret = smem_trans_init(&trans_options);
@@ -1153,7 +1155,8 @@ TEST_F(SmemTransTest, smem_trans_write_ipv6)
     auto func = [](uint32_t rank, uint32_t rankCount, smem_trans_config_t trans_options, std::vector<int *> addrPtrs,
                    size_t capacities, const std::array<const char *, 2> unique_ids) {
         trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
-        MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
+        auto classifyAddressMaskPtr = static_cast<ClassifyAddressMaskMemberFn>(&HybmVaManager::ClassifyAddressMask);
+        MOCKER_CPP(classifyAddressMaskPtr, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
         int ret = smem_trans_init(&trans_options);
@@ -1324,7 +1327,8 @@ TEST_F(SmemTransTest, smem_trans_batch_read_write)
                    std::vector<std::vector<void *>> addrPtrs, std::vector<size_t> capacities,
                    const std::array<const char *, 2> unique_ids) {
         trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
-        MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
+        auto classifyAddressMaskPtr = static_cast<ClassifyAddressMaskMemberFn>(&HybmVaManager::ClassifyAddressMask);
+        MOCKER_CPP(classifyAddressMaskPtr, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
         int ret = smem_trans_init(&trans_options);
@@ -1500,7 +1504,8 @@ TEST_F(SmemTransTest, smem_trans_batch_write_ipv6)
                    std::vector<std::vector<void *>> addrPtrs, std::vector<size_t> capacities,
                    const std::array<const char *, 2> unique_ids) {
         trans_options.dataOpType = SMEMB_DATA_OP_HOST_TCP;
-        MOCKER_CPP(&HybmVaManager::ClassifyAddressMask, uint8_t(*)(HybmVaManager *, const uint64_t))
+        auto classifyAddressMaskPtr = static_cast<ClassifyAddressMaskMemberFn>(&HybmVaManager::ClassifyAddressMask);
+        MOCKER_CPP(classifyAddressMaskPtr, uint8_t(*)(HybmVaManager *, const uint64_t))
             .stubs()
             .will(returnValue(MASK_MOCK_VAL));
         int ret = smem_trans_init(&trans_options);

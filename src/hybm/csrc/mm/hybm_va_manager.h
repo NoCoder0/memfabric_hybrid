@@ -335,6 +335,7 @@ public:
 
     // 返回地址类型掩码（可多 bit 组合），用于 bitmask 方向校验
     uint8_t ClassifyAddressMask(const uint64_t va);
+    void ClassifyAddressMask(uint64_t srcVa, uint64_t destVa, uint8_t &srcMask, uint8_t &destMask);
     // dataOpType is the caller's transport type bitmask; 0 means no transport context (address-range check only).
     // On 910C the driver attribute query is enabled only for the device_rdma transport.
     Result GetLocalMemoryType(uint64_t va, hybm_mem_type &memType, uint32_t dataOpType = 0U) const noexcept;
@@ -357,8 +358,23 @@ public:
     // 查 GVA map：地址在 GVA 范围内 → GVA 命中
     AddrQueryResult QueryAddr(const uint64_t va) const
     {
-        AddrQueryResult result;
         std::shared_lock<std::shared_mutex> lock(mutex_);
+        return QueryAddrLocked(va);
+    }
+
+    // =============Share info 登记/复用====================================
+    // share_info 不再独立建表，直接内嵌在对应的 AllocatedGvaInfo 记录中：
+    // 登记地址必为记录起始 VA（slice 导出记录 DVA=HVA=slice 起始，导入记录 DVA=lva），
+    // 记录删除（RemoveOneVaInfo/ClearAll）时随之失效，避免悬挂残留；
+    // 全程使用二进制安全的字符串 ShareHandleStr，驱动结构体 MemShareHandle 经 ToShareInfo 转换后进入
+    Result AddHandle(const void *ptr, const ShareHandleStr &shareInfo);
+    Result GetHandle(const void *ptr, ShareHandleStr &shareInfo) const;
+
+private:
+    // Caller must hold mutex_.
+    AddrQueryResult QueryAddrLocked(const uint64_t va) const
+    {
+        AddrQueryResult result;
         if (allocatedMap_[HVM_GVA].empty()) {
             return result;
         }
@@ -375,15 +391,12 @@ public:
         return result;
     }
 
-    // =============Share info 登记/复用====================================
-    // share_info 不再独立建表，直接内嵌在对应的 AllocatedGvaInfo 记录中：
-    // 登记地址必为记录起始 VA（slice 导出记录 DVA=HVA=slice 起始，导入记录 DVA=lva），
-    // 记录删除（RemoveOneVaInfo/ClearAll）时随之失效，避免悬挂残留；
-    // 全程使用二进制安全的字符串 ShareHandleStr，驱动结构体 MemShareHandle 经 ToShareInfo 转换后进入
-    Result AddHandle(const void *ptr, const ShareHandleStr &shareInfo);
-    Result GetHandle(const void *ptr, ShareHandleStr &shareInfo) const;
+    // Caller must hold mutex_.
+    bool TryGetLocalRegisteredMemTypeLocked(uint64_t va, hybm_mem_type &memType) const;
 
-private:
+    // Caller must hold mutex_.
+    bool ClassifyAddressMaskLocked(uint64_t va, uint8_t &mask) const;
+
     HybmVaManager() = default;
 
     ~HybmVaManager() = default;

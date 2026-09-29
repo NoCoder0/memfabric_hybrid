@@ -12,6 +12,7 @@
 #include <type_traits>
 #include <iomanip>
 #include "hybm_logger.h"
+#include "hybm_ptracer.h"
 #include "mf_num_util.h"
 #include "hybm_entity_factory.h"
 #include "hybm_data_op.h"
@@ -77,8 +78,10 @@ static int32_t BatchCopyByAutoGroup(MemEntity *entity, const hybm_batch_copy_par
             BM_LOG_ERROR("input copy address is invalid, source or dest is nullptr, index:" << i);
             return BM_INVALID_PARAM;
         }
-        uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[i]));
-        uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->destinations[i]));
+        uint8_t srcMask = 0U;
+        uint8_t dstMask = 0U;
+        vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[i]),
+                                  reinterpret_cast<uint64_t>(params->destinations[i]), srcMask, dstMask);
         uint8_t except = srcMask | (dstMask << 4);
         auto dir = static_cast<hybm_data_copy_direction>(HybmVaManager::directionLut[except]);
         if (dir >= HYBM_DATA_COPY_DIRECTION_AUTO) {
@@ -138,24 +141,30 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
         return BatchCopyByAutoGroup(entity, params, stream, flags);
     }
 
+    TP_TRACE_BEGIN(TP_HYBM_BATCH_VALIDATE_ADDRESSES);
     for (uint32_t i = 0; i < params->batchSize; i++) {
         if (params->sources[i] == nullptr || params->destinations[i] == nullptr) {
+            TP_TRACE_END(TP_HYBM_BATCH_VALIDATE_ADDRESSES, BM_INVALID_PARAM);
             BM_LOG_ERROR("input copy address is invalid, source or dest is nullptr, index:" << i);
             return BM_INVALID_PARAM;
         }
 
         auto &vaMgr = HybmVaManager::GetInstance();
-        uint8_t srcMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[i]));
-        uint8_t dstMask = vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->destinations[i]));
+        uint8_t srcMask = 0U;
+        uint8_t dstMask = 0U;
+        vaMgr.ClassifyAddressMask(reinterpret_cast<uint64_t>(params->sources[i]),
+                                  reinterpret_cast<uint64_t>(params->destinations[i]), srcMask, dstMask);
         uint8_t except = srcMask | (dstMask << 4);
 
         if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
+            TP_TRACE_END(TP_HYBM_BATCH_VALIDATE_ADDRESSES, BM_INVALID_PARAM);
             BM_LOG_ERROR("Direction mismatch at index "
                          << i << ": dir=" << static_cast<int>(direction) << " except:" << static_cast<int>(except)
                          << " src=" << params->sources[i] << " dest=" << params->destinations[i]);
             return BM_INVALID_PARAM;
         }
     }
+    TP_TRACE_END(TP_HYBM_BATCH_VALIDATE_ADDRESSES, BM_OK);
     return entity->BatchCopyData(*params, direction, stream, flags);
 }
 

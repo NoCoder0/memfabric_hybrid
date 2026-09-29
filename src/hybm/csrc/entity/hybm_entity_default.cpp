@@ -26,6 +26,7 @@
 #include "hybm_ex_info_transfer.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"
+#include "hybm_ptracer.h"
 #include "hybm_va_manager.h"
 #include "mf_fault_injection_point.h"
 
@@ -913,10 +914,12 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
     sOptions.stream = stream;
     sOptions.flags = flags;
     // 将所有地址按srcRank - dstRank分组，并且转换地址
+    TP_TRACE_BEGIN(TP_HYBM_BATCH_BUILD_GROUP_MAP);
     for (uint32_t i = 0; i < params.batchSize; ++i) {
         std::pair<uint32_t, uint32_t> p2pInfo;
         ret = LocateAddrAndRank(params.sources[i], params.destinations[i], p2pInfo);
         if (ret != BM_OK) {
+            TP_TRACE_END(TP_HYBM_BATCH_BUILD_GROUP_MAP, ret);
             BM_LOG_ERROR("failed to locate addr and rank, ret:"
                          << ret << ", index:" << i << ", src:" << VaToStr(params.sources[i])
                          << ", dest:" << VaToStr(params.destinations[i]) << ", size:" << params.dataSizes[i]);
@@ -926,10 +929,13 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
                                << " dataSize:" << params.dataSizes[i]);
         sOptions.groupMap[p2pInfo].push_back(i);
     }
+    TP_TRACE_END(TP_HYBM_BATCH_BUILD_GROUP_MAP, BM_OK);
 
     BM_LOG_DEBUG("BatchDataCopy: localRank=" << options_.rankId << ", batchSize=" << params.batchSize << ", direction="
                                              << direction << ", groupNum=" << sOptions.groupMap.size());
+    TP_TRACE_BEGIN(TP_HYBM_BATCH_DISPATCH_DATA_OP);
     ret = dataOperator_->BatchDataCopy(params, direction, sOptions);
+    TP_TRACE_END(TP_HYBM_BATCH_DISPATCH_DATA_OP, ret);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Data copy failed, ret: " << ret);
         return ret;

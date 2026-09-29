@@ -1076,6 +1076,60 @@ TEST_F(HybmVaManagerTest, ClassifyAddressMask_RemoteImported_ReturnsGlobal)
     EXPECT_EQ(mask, HybmVaManager::BIT_GLOBAL_HOST);
 }
 
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_RegisteredHva_UsesStoredMemType)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_SVM_DEVICE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+    const uint64_t hostVa = TEST_LVA_BASE;
+    const uint64_t deviceVa = TEST_LVA_BASE + TEST_OFFSET_SIXTEEN_MB;
+    EXPECT_EQ(manager.AddVaInfo({{0ULL, deviceVa, hostVa}, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_HOST}), BM_OK);
+
+    EXPECT_EQ(manager.ClassifyAddressMask(hostVa), HybmVaManager::BIT_LOCAL_HOST);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_RegisteredDva_UsesStoredMemType)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = MOCK_HOST_ATTR_MEM_TYPE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+    const uint64_t deviceVa = TEST_LVA_BASE;
+    EXPECT_EQ(manager.AddVaInfo({{0ULL, deviceVa, 0ULL}, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_DEVICE}), BM_OK);
+
+    EXPECT_EQ(manager.ClassifyAddressMask(deviceVa), HybmVaManager::BIT_LOCAL_DEVICE);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_RegisteredGva_UsesStoredMemType)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_SVM_DEVICE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+    const uint64_t gva = TEST_GVA_BASE_HOST;
+    EXPECT_EQ(manager.AddVaInfo({{gva, 0ULL, 0ULL}, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_HOST}), BM_OK);
+
+    EXPECT_EQ(manager.ClassifyAddressMask(gva), HybmVaManager::BIT_LOCAL_HOST);
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_PairUsesStoredMemType)
+{
+    manager.Initialize(TEST_SOC_A5);
+    g_mockAttrMemType = DV_MEM_SVM_DEVICE;
+    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
+    const uint64_t hostVa = TEST_LVA_BASE;
+    const uint64_t remoteGva = TEST_GVA_BASE_DEVICE;
+    ASSERT_EQ(manager.AddVaInfo({{0ULL, 0ULL, hostVa}, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_HOST}), BM_OK);
+    ASSERT_EQ(manager.AddVaInfo({{remoteGva, 0ULL, 0ULL}, TEST_SIZE_ONE_MB, TEST_MEM_TYPE_DEVICE}, false,
+                                AddressOwnership::Imported),
+              BM_OK);
+    uint8_t srcMask = 0U;
+    uint8_t destMask = 0U;
+
+    manager.ClassifyAddressMask(hostVa, remoteGva, srcMask, destMask);
+
+    EXPECT_EQ(srcMask, HybmVaManager::BIT_LOCAL_HOST);
+    EXPECT_EQ(destMask, HybmVaManager::BIT_GLOBAL_DEVICE);
+}
+
 // ======================== LUT 方向推断测试 ========================
 
 TEST_F(HybmVaManagerTest, DirectionLut_LocalToGlobal_ReturnsH2GH)

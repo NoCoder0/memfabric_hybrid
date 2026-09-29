@@ -601,7 +601,10 @@ Result SmemBmEntry::DataCopyBatch(smem_batch_copy_params *params, smem_bm_copy_t
         return SM_INVALID_PARAM;
     }
     hybm_batch_copy_params copyParams = {params->sources, params->destinations, params->dataSizes, params->batchSize};
-    return hybm_data_batch_copy(entity_, &copyParams, direct, params->stream, flags);
+    TP_TRACE_BEGIN(TP_SMEM_BM_BATCH_TO_HYBM);
+    auto ret = hybm_data_batch_copy(entity_, &copyParams, direct, params->stream, flags);
+    TP_TRACE_END(TP_SMEM_BM_BATCH_TO_HYBM, ret);
+    return ret;
 }
 
 bool SmemBmEntry::AddrInHostGva(const void *address, uint64_t size)

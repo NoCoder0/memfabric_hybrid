@@ -14,6 +14,7 @@
 #include <numeric>
 #include "smem_common_includes.h"
 #include "hybm_big_mem.h"
+#include "hybm_ptracer.h"
 #include "smem_logger.h"
 #include "smem_bm_entry_manager.h"
 #include "smem_hybm_helper.h"
@@ -523,13 +524,18 @@ SMEM_API int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params *pa
     SM_VALIDATE_RETURN(params->batchSize != 0, "batchSizes is 0", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(params->dataSizes != nullptr, "dataSizes is NULL", SM_INVALID_PARAM);
 
+    TP_TRACE_BEGIN(TP_SMEM_BM_COPY_BATCH);
+    TP_TRACE_BEGIN(TP_SMEM_BM_BATCH_GET_ENTRY);
     SmemBmEntryPtr entry = nullptr;
     auto ret = SmemBmEntryManager::Instance().GetEntryByPtr(reinterpret_cast<uintptr_t>(handle), entry);
+    TP_TRACE_END(TP_SMEM_BM_BATCH_GET_ENTRY, ret == SM_OK && entry != nullptr ? SM_OK : SM_INVALID_PARAM);
     if (ret != SM_OK || entry == nullptr) {
-        SM_LOG_AND_SET_LAST_ERROR("input handle is invalid, result: " << ret);
+        TP_TRACE_END(TP_SMEM_BM_COPY_BATCH, SM_INVALID_PARAM);
+        SM_LOG_AND_SET_LAST_ERROR("input handle is invalid, handle: " << handle << ", result: " << ret);
         return SM_INVALID_PARAM;
     }
 
+    TP_TRACE_BEGIN(TP_SMEM_BM_BATCH_PREPARE_PARAMS);
     void **sources = new (std::nothrow) void *[params->batchSize];
     void **destinations = new (std::nothrow) void *[params->batchSize];
     uint64_t *dataSizes = new (std::nothrow) uint64_t[params->batchSize];
@@ -537,6 +543,8 @@ SMEM_API int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params *pa
         delete[] sources;
         delete[] destinations;
         delete[] dataSizes;
+        TP_TRACE_END(TP_SMEM_BM_BATCH_PREPARE_PARAMS, SM_ERROR);
+        TP_TRACE_END(TP_SMEM_BM_COPY_BATCH, SM_ERROR);
         SM_LOG_AND_SET_LAST_ERROR("failed to allocate batch copy params, batchSize: " << params->batchSize);
         return SM_ERROR;
     }
@@ -545,11 +553,15 @@ SMEM_API int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params *pa
         destinations[i] = params->destinations[i];
         dataSizes[i] = params->dataSizes[i];
     }
+    TP_TRACE_END(TP_SMEM_BM_BATCH_PREPARE_PARAMS, SM_OK);
     smem_batch_copy_params paramsCopy = {sources, destinations, dataSizes, params->batchSize, params->stream};
     ret = entry->DataCopyBatch(&paramsCopy, t, flags);
+    TP_TRACE_BEGIN(TP_SMEM_BM_BATCH_RELEASE_PARAMS);
     delete[] sources;
     delete[] destinations;
     delete[] dataSizes;
+    TP_TRACE_END(TP_SMEM_BM_BATCH_RELEASE_PARAMS, SM_OK);
+    TP_TRACE_END(TP_SMEM_BM_COPY_BATCH, ret);
     return ret;
 }
 
