@@ -218,7 +218,10 @@ void SmemGroupCommandAsyncDispatcher::BackgroundAddWhiteList(const WhitelistRequ
     {
         const std::string peers = JoinRankIds(req.others);
         if (overallRet != 0) {
-            SM_LOG_ERROR("[GM][Client][Recv] WhiteList FAIL r=" << req.rankId << " ret=" << overallRet);
+            // P2P 未就绪为可重试瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
+            if (overallRet != SMEM_GROUP_P2P_NOT_READY) {
+                SM_LOG_ERROR("[GM][Client][Recv] WhiteList FAIL r=" << req.rankId << " ret=" << overallRet);
+            }
         } else {
             SM_LOG_INFO("[GM][Client][Recv] WhiteList r=" << req.rankId << " peers=[" << peers << "]");
         }

@@ -547,7 +547,10 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
         BM_ASSERT_LOG_AND_RETURN(hbmSegment_ != nullptr, "hbmSegment is nullptr", BM_ERROR);
         auto ret = hbmSegment_->Import(userSegInfos, userSegAddrs.data());
         if (ret != BM_OK) {
-            BM_LOG_ERROR("hbm segment import infos failed: " << ret);
+            // P2P 未就绪是可重试的瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
+            if (ret != BM_P2P_NOT_READY) {
+                BM_LOG_ERROR("hbm segment import infos failed: " << ret);
+            }
             return ret;
         }
         if (addresses != nullptr) {

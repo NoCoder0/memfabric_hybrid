@@ -310,8 +310,11 @@ int SmemTransEntry::ImportPeerSlicesToMap(const RankFullInfo &other, std::vector
         hybm_export_info_free(&s.hybmInfo);
     }
     if (ret != BM_OK) {
-        SM_LOG_ERROR("ImportPeerSlicesToMap: hybm_import failed, rank=" << other.rankId << " ret=" << ret);
-        return SMEM_ERROR;
+        // P2P 未就绪为可重试瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
+        if (ret != BM_P2P_NOT_READY) {
+            SM_LOG_ERROR("ImportPeerSlicesToMap: hybm_import failed, rank=" << other.rankId << " ret=" << ret);
+        }
+        return ret; // 透传原始错误码（含 BM_P2P_NOT_READY），供上层识别
     }
     return BM_OK;
 }
@@ -375,7 +378,8 @@ int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFull
                 continue;
             }
             if (auto ret = ImportPeerSlicesToMap(others[i], global, slices); ret != BM_OK) {
-                return SMEM_ERROR;
+                // 仅 P2P 未就绪用专用标记上抛（供 dispatcher 跳过重复打印），其余按普通失败
+                return (ret == BM_P2P_NOT_READY) ? SMEM_GROUP_P2P_NOT_READY : SMEM_ERROR;
             }
         }
         AddRemoteInfo(others[i].rankId, role, id, global, local);
@@ -441,10 +445,22 @@ int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<Ran
     }
 
     for (const auto &p : peers) {
-        EstablishPeerConnection(p);
+        auto estRet = EstablishPeerConnection(p);
+        if (estRet != SMEM_OK) {
+            // P2P 未就绪为可重试瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
+            if (estRet != SMEM_GROUP_P2P_NOT_READY) {
+                SM_LOG_WARN("OnEstablishConnection rankId=" << rankId << " establish peer " << p.rankId
+                                                            << " failed: " << estRet);
+            }
+            return estRet;
+        }
     }
 
-    hybm_mmap(entity_, 0);
+    auto mmapRet = hybm_mmap(entity_, 0);
+    if (mmapRet != BM_OK) {
+        SM_LOG_WARN("hybm_mmap failed in OnEstablishConnection, rankId=" << rankId << " ret=" << mmapRet);
+        return SMEM_ERROR;
+    }
 
     // Same-role members never exchange data (no address maps are recorded for them), so no transport
     // channel is established for them either — building one would only waste per-rank resources.
@@ -470,10 +486,10 @@ int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<Ran
     return SMEM_OK;
 }
 
-void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
+int SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
 {
     if (peer.externalInfo.empty()) {
-        return;
+        return SMEM_OK;
     }
 
     // Parse the peer session from baseInfo so the WorkerId key matches
@@ -482,7 +498,8 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
     smem_trans_role_t role = SMEM_TRANS_NONE;
     WorkerId id;
     if (!ParseExchangeInfo(peer, entityInfo, role, id)) {
-        return;
+        SM_LOG_WARN("OnEstablishConnection: parse exchange info failed, rank=" << peer.rankId);
+        return SMEM_ERROR;
     }
 
     // Same-role members never exchange data (transfers always cross roles): record bookkeeping only and
@@ -491,7 +508,7 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
         std::vector<void *> global;
         std::vector<LocalMapAddress> local;
         AddRemoteInfo(peer.rankId, role, id, global, local);
-        return;
+        return SMEM_OK;
     }
 
     std::vector<SmemTransExchangeInfo> slices;
@@ -499,7 +516,7 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
     std::vector<LocalMapAddress> local;
     if (auto ret = ParsePeerSlices(peer, slices, local); ret != BM_OK) {
         SM_LOG_ERROR("parse slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
-        return;
+        return SMEM_ERROR;
     }
     global.resize(peer.externalInfo.size(), nullptr);
 
@@ -527,11 +544,14 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
             hybmInfos.push_back(s.hybmInfo);
         }
         if (auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(), 0); ret != BM_OK) {
-            SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
+            // P2P 未就绪为可重试瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
+            if (ret != BM_P2P_NOT_READY) {
+                SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
+            }
             for (auto &s : slices) {
                 hybm_export_info_free(&s.hybmInfo);
             }
-            return;
+            return (ret == BM_P2P_NOT_READY) ? SMEM_GROUP_P2P_NOT_READY : SMEM_ERROR;
         }
     }
     for (auto &s : slices) {
@@ -544,6 +564,7 @@ void SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
     for (auto i = 0U; i < local.size(); ++i) {
         remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
     }
+    return SMEM_OK;
 }
 
 std::vector<ock::smem::LinkStateEntry> SmemTransEntry::OnQueryLinkState() noexcept
@@ -617,7 +638,11 @@ int SmemTransEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newS
     } else {
         SM_LOG_ERROR("OnAddSlices: rank " << extendingRankId << " not found in rankToWorkerId_");
     }
-    hybm_mmap(entity_, 0);
+    auto mmapRet = hybm_mmap(entity_, 0);
+    if (mmapRet != BM_OK) {
+        SM_LOG_WARN("OnAddSlices: hybm_mmap failed, extendingRank=" << extendingRankId << " ret=" << mmapRet);
+        return SMEM_ERROR;
+    }
     SM_LOG_INFO("OnAddSlices extendingRank=" << extendingRankId << " slices=" << newSlices.size());
     return SMEM_OK;
 }

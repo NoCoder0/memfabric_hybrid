@@ -676,6 +676,21 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
             return ret;
         }
 
+        // 检查 P2P 双向就绪：本端已 EnsurePeerAccess(EnableRemotePeerAccess)，但对端可能还没使能完。
+        // 不阻塞等待：未就绪返回专用码 BM_P2P_NOT_READY，由上层状态机重试；该码在上层只保留本处 WARN，
+        // 不再逐层打 ERROR。查询接口本身失败（含符号缺失 BM_UNDER_API_UNLOAD）不做拦截，交实际导入决定。
+        if (devicePhyId_ != static_cast<int>(sliceInfo.devicePhyId)) {
+            uint32_t p2pStatus = 0;
+            auto p2pRet = DlAclApi::RtGetP2PStatus(static_cast<uint32_t>(deviceId_),
+                                                   static_cast<uint32_t>(sliceInfo.devicePhyId), p2pStatus);
+            if (p2pRet == BM_OK && p2pStatus != 1) {
+                BM_LOG_WARN("trans P2P not ready, rankId=" << options_.rankId << " remoteRank=" << sliceInfo.rankId
+                                                           << " peerDev=" << sliceInfo.devicePhyId << " ret=" << p2pRet
+                                                           << " status=" << p2pStatus << ", will retry later");
+                return BM_P2P_NOT_READY;
+            }
+        }
+
         // IPC 名打开映射；VMM share_handle 导入 + 预留 LVA + 映射（根因日志均在 helper 内记录）
         ret = UserMemImportAndMapName(&address, sliceInfo);
         if (ret != BM_OK) {

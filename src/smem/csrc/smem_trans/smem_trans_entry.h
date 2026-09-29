@@ -151,8 +151,9 @@ private:
                            WorkerId &id) noexcept;
     int ParsePeerSlices(const RankFullInfo &peer, std::vector<SmemTransExchangeInfo> &slices,
                         std::vector<LocalMapAddress> &local) noexcept;
-    // Per-peer import/dedup/record for the establish path (extracted from OnEstablishConnection)
-    void EstablishPeerConnection(const RankFullInfo &peer) noexcept;
+    // Per-peer import/dedup/record for the establish path (extracted from OnEstablishConnection)。
+    // 返回 SMEM_OK/SMEM_ERROR：import 失败需上抛，交由上层状态机重试，避免静默吞错。
+    int EstablishPeerConnection(const RankFullInfo &peer) noexcept;
 
     // Apply one data-op flag to the hybm options (shared by the four op-type branches in Initialize)
     bool ApplyDataOpType(hybm_options &options, uint32_t flag, hybm_data_op_type hybmFlag, const char *opName) noexcept;

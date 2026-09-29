@@ -350,6 +350,10 @@ void SmemGroupManagerServer::OnLinkStateResponse(const RankFullInfo &rankInfo,
 bool SmemGroupManagerServer::ShouldDegradeLink(LinkTransition &tr, size_t idx) noexcept
 {
     if (tr.retryCount >= LINK_QUERY_MAX_RETRIES) {
+        const uint32_t src = static_cast<uint32_t>(idx / maxRanks_);
+        const uint32_t dst = static_cast<uint32_t>(idx % maxRanks_);
+        STORE_LOG_WARN("[GM][Server][Event] link degrade to IDLE after " << tr.retryCount << " retries, src=" << src
+                                                                         << " tgt=" << dst);
         links_[idx] = LINK_IDLE;
         tr = {};
         return true;
@@ -369,6 +373,9 @@ void SmemGroupManagerServer::HandleLinkExchanging(LinkScanContext &ctx, std::vec
     }
     if (IsTimeout(ctx.elapsedMs)) {
         ctx.tr.retryCount++;
+        STORE_LOG_WARN("[GM][Server][Event] link EXCHANGING retry " << ctx.tr.retryCount << "/"
+                                                                    << LINK_QUERY_MAX_RETRIES << " src=" << ctx.srcRank
+                                                                    << " tgt=" << ctx.dstRank << ", will retry later");
         addJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
     }
 }
@@ -380,6 +387,9 @@ void SmemGroupManagerServer::HandleLinkExchanged(LinkScanContext &ctx, std::vect
     }
     if (ctx.tr.retryCount == 0 || IsTimeout(ctx.elapsedMs)) {
         ctx.tr.retryCount++;
+        STORE_LOG_WARN("[GM][Server][Event] link EXCHANGED retry " << ctx.tr.retryCount << "/" << LINK_QUERY_MAX_RETRIES
+                                                                   << " src=" << ctx.srcRank << " tgt=" << ctx.dstRank
+                                                                   << ", will retry later");
         establishJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
     }
 }
@@ -392,6 +402,9 @@ void SmemGroupManagerServer::HandleLinkConnecting(LinkScanContext &ctx,
     }
     if (IsTimeout(ctx.elapsedMs)) {
         ctx.tr.retryCount++;
+        STORE_LOG_WARN("[GM][Server][Event] link CONNECTING retry " << ctx.tr.retryCount << "/"
+                                                                    << LINK_QUERY_MAX_RETRIES << " src=" << ctx.srcRank
+                                                                    << " tgt=" << ctx.dstRank << ", will retry later");
         establishJobs.push_back({ctx.srcRank, ctx.dstRank, ctx.linkIdx});
     }
 }
