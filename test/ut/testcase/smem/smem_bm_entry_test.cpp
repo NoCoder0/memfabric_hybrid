@@ -1043,3 +1043,23 @@ TEST_F(SmemBmEntryTest, ExtendLocalMem_ExportFail_NoSizeUpdate)
 }
 
 // ======================== Leave Validation ========================
+
+// =================== OnEstablishConnection: no redundant import ===================
+// Peer slices are imported once by OnAddToWhitelist::ImportPeerSlices, and the group
+// manager only dispatches ESTABLISH after the whitelist ADD was acked, so the
+// establish stage must not import peers' externalInfo again.
+TEST_F(SmemBmEntryTest, OnEstablishConnection_DoesNotImportSlicesAgain)
+{
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .expects(never());
+    MOCKER_CPP(&hybm_mmap, int32_t(*)(hybm_entity_t, uint32_t)).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&hybm_transport_connect, int32_t(*)(hybm_entity_t, const uint32_t *, uint32_t, uint32_t))
+        .expects(once())
+        .will(returnValue(SMEM_OK));
+
+    RankFullInfo peer;
+    peer.rankId = TEST_RANK_ID + 1;
+    peer.externalInfo.push_back(Bytes(8, 0xAB)); // non-empty slice info
+
+    EXPECT_EQ(entry_->OnEstablishConnection(peer.rankId, {peer}, 0), SMEM_OK);
+}

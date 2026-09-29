@@ -898,31 +898,6 @@ int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFu
         SM_LOG_DEBUG("OnEstablishConnection rankId=" << rankId << " peers empty, skip");
         return SMEM_OK;
     }
-    for (auto &p : peers) {
-        if (p.externalInfo.empty())
-            continue;
-        std::vector<hybm_exchange_info> slices(p.externalInfo.size());
-        for (size_t i = 0; i < p.externalInfo.size(); ++i) {
-            slices[i].descLen = p.externalInfo[i].size();
-            slices[i].desc = new (std::nothrow) uint8_t[slices[i].descLen];
-            if (slices[i].desc == nullptr) {
-                SM_LOG_ERROR("OnEstablishConnection: alloc desc failed, rank=" << rankId
-                                                                               << " size=" << slices[i].descLen);
-                for (auto &parsed : slices) {
-                    hybm_export_info_free(&parsed);
-                }
-                return SMEM_ERROR;
-            }
-            std::copy(p.externalInfo[i].begin(), p.externalInfo[i].end(), slices[i].desc);
-        }
-        auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0);
-        for (auto &parsed : slices) {
-            hybm_export_info_free(&parsed);
-        }
-        if (ret != BM_OK) {
-            SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << p.rankId << " ret=" << ret);
-        }
-    }
     auto mmapRet = hybm_mmap(entity_, 0);
     if (mmapRet != BM_OK) {
         SM_LOG_ERROR("hybm_mmap failed in OnEstablishConnection, rankId=" << rankId << " ret=" << mmapRet);

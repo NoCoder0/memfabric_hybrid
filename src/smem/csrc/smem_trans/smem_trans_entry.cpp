@@ -502,68 +502,9 @@ int SmemTransEntry::EstablishPeerConnection(const RankFullInfo &peer) noexcept
         return SMEM_ERROR;
     }
 
-    // Same-role members never exchange data (transfers always cross roles): record bookkeeping only and
-    // skip slice parse/import — same-role peer windows must stay out of the VA ledger (whitelist overlap).
-    if (role == config_.role) {
-        std::vector<void *> global;
-        std::vector<LocalMapAddress> local;
-        AddRemoteInfo(peer.rankId, role, id, global, local);
-        return SMEM_OK;
-    }
-
-    std::vector<SmemTransExchangeInfo> slices;
     std::vector<void *> global;
     std::vector<LocalMapAddress> local;
-    if (auto ret = ParsePeerSlices(peer, slices, local); ret != BM_OK) {
-        SM_LOG_ERROR("parse slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
-        return SMEM_ERROR;
-    }
-    global.resize(peer.externalInfo.size(), nullptr);
-
-    // Dedup: slices may already have arrived via the ADD_SLICES broadcast
-    // (OnAddSlices) when the extension happened after this rank went active.
-    bool needImport = false;
-    {
-        mf::ReadGuard guard(remoteSliceRwMutex_);
-        auto it = remoteSlices_.find(id);
-        if (it == remoteSlices_.end()) {
-            needImport = true;
-        } else {
-            for (const auto &l : local) {
-                if (it->second.find(l.address) == it->second.end()) {
-                    needImport = true;
-                    break;
-                }
-            }
-        }
-    }
-    if (needImport) {
-        std::vector<hybm_exchange_info> hybmInfos;
-        hybmInfos.reserve(slices.size());
-        for (const auto &s : slices) {
-            hybmInfos.push_back(s.hybmInfo);
-        }
-        if (auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(), 0); ret != BM_OK) {
-            // P2P 未就绪为可重试瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
-            if (ret != BM_P2P_NOT_READY) {
-                SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
-            }
-            for (auto &s : slices) {
-                hybm_export_info_free(&s.hybmInfo);
-            }
-            return (ret == BM_P2P_NOT_READY) ? SMEM_GROUP_P2P_NOT_READY : SMEM_ERROR;
-        }
-    }
-    for (auto &s : slices) {
-        hybm_export_info_free(&s.hybmInfo);
-    }
-
-    mf::WriteGuard locker(remoteSliceRwMutex_);
-    rankToWorkerId_[peer.rankId] = id;
-    ranksRole_[peer.rankId] = role;
-    for (auto i = 0U; i < local.size(); ++i) {
-        remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
-    }
+    AddRemoteInfo(peer.rankId, role, id, global, local);
     return SMEM_OK;
 }
 
