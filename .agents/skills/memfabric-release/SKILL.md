@@ -19,7 +19,7 @@ description: "生成 MemFabric Hybrid changelog 或 release note 时使用。只
 
 ## 需要收集的信息
 
-生成前先确认：
+优先从用户已有上下文、本地 git 和可用的远端 PR 信息中核实以下内容，不重复询问已提供的信息：
 
 - `VERSION`：目标版本，例如 `1.2.1`。
 - `YYYY-MM-DD`：发布日期；用户未指定时使用当前日期。
@@ -27,16 +27,17 @@ description: "生成 MemFabric Hybrid changelog 或 release note 时使用。只
 - 本次 release 所有新增 PR 的编号、链接和标题。
 - 是否已有用户整理的重点变更；如有，优先使用用户整理内容，并用 git/PR 差异补充遗漏。
 
-如果缺少对比范围或 PR 列表，应先通过本地 git、远端 PR 信息或用户补充来获得；无法确认时在结果中明确标注信息缺失。
+仅在目标版本或对比范围无法可靠确定、且会改变收录内容时询问用户；同时继续整理已有依据的内容。
+若 PR 信息不完整，输出基于已知范围的草稿，注明信息缺失和覆盖范围尚未确认，不声称已收录全部 PR。
 
 ## 生成原则
 
-- 只包含有变化的章节；空章节必须省略。
+- 除固定保留的 `Installation` 和 `References` 外，只包含有变化的章节，空章节必须省略。
 - 内容应面向用户，描述行为变化、使用影响和兼容性影响，不要机械罗列 commit。
 - 同一条变更只放入最合适的一个章节，避免重复。
 - 保留必要的技术名词、API 名称、环境变量、命令、路径和 PR 编号。
 - 不确定分类时，优先放入 `Changed`，并在需要时说明依据。
-- `References` 必须列出本次 release 所有新增 PR。
+- 范围和 PR 信息完整时，`References` 必须列出本次 release 所有新增 PR；草稿仅列可核实项并注明缺失。
 
 ## 分类规则
 
@@ -91,7 +92,7 @@ Summary of this release
 
 ## References 规则
 
-`References` 中列出本次 release 所有新增 PR，格式必须为：
+`References` 中列出本次 release 所有可核实的新增 PR；完整发布说明须覆盖全部新增 PR，格式必须为：
 
 ```markdown
 - [!728](https://gitcode.com/Ascend/memfabric_hybrid/pull/728) — PR 标题
@@ -109,7 +110,7 @@ Summary of this release
 输出前确认：
 
 - 标题版本和日期正确。
-- 空章节已删除。
+- 无变化的章节已删除；`Installation` 和 `References` 按输出格式保留。
 - `Installation` 中 PyPI 链接和安装命令保持固定格式。
-- `References` 覆盖本次 release 所有新增 PR。
+- 完整发布说明的 `References` 覆盖所有新增 PR；信息不完整时已明确标为草稿，并注明已知范围及缺失项。
 - 每条变更描述都能对应到 PR、commit 或用户提供的发布信息。

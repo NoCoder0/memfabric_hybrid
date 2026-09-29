@@ -8,13 +8,15 @@
 |---|---|---|
 | `memfabric-code-review` | 代码审查、错误返回日志、代码规范、UT/test 字面量、行宽和函数长度检查 | `使用 memfabric-code-review 检查这次变更` |
 | `memfabric-release` | 生成 MemFabric Hybrid changelog / release note，并列出本次 release 新增 PR | `使用 memfabric-release 生成 1.2.1 release note` |
+| `technical-design-proposal` | 编写技术方案、设计文档或 RFC，区分事实、目标和待验证项 | `使用 technical-design-proposal 编写内存池扩容方案` |
 
 ## 使用方式
 
 - 需要某个能力时，在请求中显式写出 skill 名称，例如：`使用 memfabric-release ...`。
 - 不确定该用哪个 skill 时，描述任务目标即可；Agent 应根据 `SKILL.md` 的 `description` 自动选择最匹配的 skill。
 - 一个任务可以组合多个 skill，例如发布前可同时使用 `memfabric-code-review` 和 `memfabric-release`。
-- 修改或新增 skill 时，只编辑对应目录下的 `SKILL.md`；本仓库不保留 `openai.yaml` 等平台专用 UI 元数据。
+- 修改或新增 skill 时，优先编辑对应目录下的 `SKILL.md`；涉及模板或引用说明时同步更新相关文件，
+  保持目录索引一致。本仓库不保留 `openai.yaml` 等平台专用 UI 元数据。
 
 ## 免责声明
 

@@ -1,13 +1,15 @@
 # Technical Scheme Design Template (Reference)
 
 This is the complete template for technical design proposals. Copy and fill in each section as needed.
+Mark non-applicable sections briefly. Distinguish verified facts, proposed targets, and items awaiting validation;
+do not invent measurements or decisions to fill the template.
 
 ---
 
 **Authors:** @Your_Community
 **Created:** YYYY-MM-DD
 **Updated:** YYYY-MM-DD
-**Related Issue/PR:** #123 (Must link to Issue/PR for traceability)
+**Related Issue/PR:** Link an existing Issue/PR when available; otherwise state "Not yet linked".
 
 ---
 

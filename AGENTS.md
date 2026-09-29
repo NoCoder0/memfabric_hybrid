@@ -10,7 +10,7 @@
 - **Bazel**：`--build_tool bazel`（CMake 为默认）。
 - 优先使用 wrapper 而非 `script/build.sh`（位置参数易混淆）。build.sh 默认值：
   BUILD_OPEN_ABI=OFF（旧 C++11 ABI），BUILD_PYTHON=ON，ENABLE_PTRACER=ON，XPU_TYPE=NPU，
-  HCOM/etcd 禁用，MF_BUILD_JOBS=32。
+  HCOM/etcd 禁用；MF_BUILD_JOBS 默认取 CPU 数的 60%（向下取整，最低 1），可通过同名环境变量覆盖。
 
 ## 测试
 
@@ -18,6 +18,9 @@
 - **快速（增量，无覆盖率）**：`bash script/run_ut.sh --fast`
 - **单个测试**：`bash script/run_ut.sh --fast TestName`（传递 `--gtest_filter=*TestName*`）
 - **首次运行前需初始化子模块**：`git submodule update --recursive --init`（获取 `test/3rdparty/googletest` 和 `test/3rdparty/mockcpp`）。
+- **测试范围**：文档修改检查内容、路径和链接；代码修改先运行相关 UT，存在跨模块影响时再扩大范围。
+  用户要求或 CI 要求的检查仍须完成；已通过的检查仅在新增变更、失败或未解决问题需要时重复。
+- **快速模式清理**：`--fast` 在首次构建或构建配置指纹变化时仍会清理当前 worktree 的 `build/` 和 `output/`。
 
 ## 已知问题（aarch64 / devcontainer）
 
@@ -56,7 +59,7 @@
 
 ### 错误返回日志
 
-- 新增代码中出现 `return` 错误返回路径时，必须记录 ERROR 级别日志
+- 新增错误返回路径必须有可追溯的 ERROR 级别日志；仅透传已记录错误时按下述规则处理
 - 根错误发生处必须记录失败原因和关键参数，确保日志能定位问题
 - 上层仅透传下层已记录过的错误时，可不强制重复记录 ERROR 日志
 - 禁止只返回错误而完全没有任何一层记录根因日志
@@ -87,7 +90,7 @@
 - **NPU**：`ASCEND_HOME_PATH` 必须指向 CANN/Ascend 安装目录。
 - **GPU**：`CUDA_HOME` 必须指向 CUDA 安装目录。
 - **Python 日志级别**：`ASCEND_MF_LOG_LEVEL`（0-4）。
-- 完整环境变量列表：`docs/environment_variables.md`。
+- 完整环境变量列表：`docs/zh/environment_variables.md`。
 
 ## 仓库模块边界
 
