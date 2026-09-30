@@ -48,7 +48,8 @@ enum LogLevel : int {
     WARN_LEVEL,
     ERROR_LEVEL,
     FATAL_LEVEL,
-    BUTT_LEVEL // no use
+    TRACE_LEVEL, // aligned with MemFabric; most verbose level, only output at DEBUG threshold
+    BUTT_LEVEL   // no use
 };
 
 class OutLogger {
@@ -59,13 +60,37 @@ public:
         return gLogger;
     }
 
+    /* TRACE is not a settable threshold: it is the most verbose level but numerically largest */
     static bool ValidateLevel(int level)
     {
-        return level >= DEBUG_LEVEL && level < BUTT_LEVEL;
+        return level >= DEBUG_LEVEL && level < TRACE_LEVEL;
     }
 
     static void DefaultLog(int level, const char *logMsg)
     {
+        zbal::OutLogger::Instance().Log(level, logMsg);
+    }
+
+    /* TRACE is the most verbose level but numerically largest (aligned with MemFabric),
+       so it only passes the filter when the threshold is DEBUG */
+    bool ShouldLog(int level) const
+    {
+        if (level == TRACE_LEVEL) {
+            return logLevel_ <= DEBUG_LEVEL;
+        }
+        return level >= logLevel_;
+    }
+
+    /* Adapter for MemFabric log entries: mf's internal filter always passes TRACE,
+       so filter uniformly by the current zbal level before zbal's log output */
+    static void MfLogAdapter(int level, const char *logMsg)
+    {
+        if (logMsg == nullptr) {
+            return;
+        }
+        if (!zbal::OutLogger::Instance().ShouldLog(level)) {
+            return;
+        }
         zbal::OutLogger::Instance().Log(level, logMsg);
     }
 
@@ -146,7 +171,7 @@ private:
     LogLevel logLevel_ = ERROR_LEVEL;
     ExternalLog logFunc_ = nullptr;
 
-    const char *logLevelDesc_[BUTT_LEVEL] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL"};
+    const char *logLevelDesc_[BUTT_LEVEL] = {"DEBUG", "INFO", "WARN", "ERROR", "FATAL", "TRACE"};
 };
 } // namespace zbal
 
@@ -158,14 +183,14 @@ private:
 #endif
 
 #define ZBAL_LOG_FORMAT ZBAL_LOG_FILENAME_SHORT << ":" << __LINE__ << " " << __FUNCTION__ << "] "
-#define ZBAL_OUT_LOG(TAG, LEVEL, ARGS)                                             \
-    do {                                                                           \
-        if (static_cast<int>(LEVEL) < zbal::OutLogger::Instance().GetLogLevel()) { \
-            break;                                                                 \
-        }                                                                          \
-        std::ostringstream oss;                                                    \
-        oss << (TAG) << ZBAL_LOG_FORMAT << ARGS;                                   \
-        zbal::OutLogger::Instance().Log(static_cast<int>(LEVEL), oss.str());       \
+#define ZBAL_OUT_LOG(TAG, LEVEL, ARGS)                                         \
+    do {                                                                       \
+        if (!zbal::OutLogger::Instance().ShouldLog(static_cast<int>(LEVEL))) { \
+            break;                                                             \
+        }                                                                      \
+        std::ostringstream oss;                                                \
+        oss << (TAG) << ZBAL_LOG_FORMAT << ARGS;                               \
+        zbal::OutLogger::Instance().Log(static_cast<int>(LEVEL), oss.str());   \
     } while (0)
 
 #define ZBAL_LOG_DEBUG(ARGS)      ZBAL_OUT_LOG("[ZBAL ", zbal::DEBUG_LEVEL, ARGS)

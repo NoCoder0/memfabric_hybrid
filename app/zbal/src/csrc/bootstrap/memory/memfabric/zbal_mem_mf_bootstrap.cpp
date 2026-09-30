@@ -84,7 +84,19 @@ ZResult MemFabricBoostrap::Initialize() noexcept
 
 ZResult MemFabricBoostrap::CreateSHMSpace() noexcept
 {
-    auto result = DlMfApi::SmemInit(0);
+    /* Sync log level and hook MfLogAdapter before any mf call, so mf logs are also filtered by zbal level */
+    auto loggerLevel = OutLogger::Instance().GetLogLevel();
+    auto result = DlMfApi::SmemSetLoggerLevel(loggerLevel);
+    if (result != Z_OK) {
+        ZBAL_LOG_WARN("Set logger level of MemFabric to " << loggerLevel << " failed, no action required");
+    }
+
+    result = DlMfApi::SmemSetExternLogger(zbal::OutLogger::MfLogAdapter);
+    if (result != Z_OK) {
+        ZBAL_LOG_WARN("Set extern logger of MemFabric failed, result: " << result);
+    }
+
+    result = DlMfApi::SmemInit(0);
     if (result != Z_OK) {
         ZBAL_LOG_AND_SET_LAST_ERROR("Call external api 'smem_init' failed, result: " << result);
         return Z_INIT_BOOTSTRAP_FAILED;
@@ -108,12 +120,6 @@ ZResult MemFabricBoostrap::CreateSHMSpace() noexcept
         ZBAL_LOG_AND_SET_LAST_ERROR("Call external api 'smem_shm_init' failed, result: " << result);
         return Z_INIT_BOOTSTRAP_FAILED;
     }
-
-    auto logger = OutLogger::Instance().GetExternalLogFunction();
-    if (logger == nullptr) {
-        logger = zbal::OutLogger::DefaultLog;
-    }
-    DlMfApi::SmemSetExternLogger(logger);
 
     auto dataOpType = static_cast<zbal_data_op_type_t>(options_.dataOperationType);
     smem_shm_data_op_type shmDataOpType;
@@ -170,13 +176,6 @@ ZResult MemFabricBoostrap::CreateSHMSpace() noexcept
     output_.myGvaDevice = reinterpret_cast<void *>(curGvaOffset);
     output_.memorySizeDevice = options_.totalMemSize;
     output_.memorySpaceSizeDevice = spaceSize;
-
-    /* set logger level */
-    auto loggerLevel = OutLogger::Instance().GetLogLevel();
-    result = DlMfApi::SmemSetLoggerLevel(loggerLevel);
-    if (result != Z_OK) {
-        ZBAL_LOG_WARN("Set logger level of MemFabric to " << loggerLevel << " failed, no action required");
-    }
 
     ZBAL_LOG_DEBUG("Initialized SHM space successfully");
     initialized_ = true;

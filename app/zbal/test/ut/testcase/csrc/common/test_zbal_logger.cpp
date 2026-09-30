@@ -43,9 +43,28 @@ TEST_F(TestZBALLogger, ValidateLevelBounds)
     EXPECT_TRUE(OutLogger::ValidateLevel(ERROR_LEVEL));
     EXPECT_TRUE(OutLogger::ValidateLevel(FATAL_LEVEL));
 
+    EXPECT_FALSE(OutLogger::ValidateLevel(TRACE_LEVEL)); // TRACE is receive-only, not a threshold
     EXPECT_FALSE(OutLogger::ValidateLevel(-1));
     EXPECT_FALSE(OutLogger::ValidateLevel(BUTT_LEVEL));
     EXPECT_FALSE(OutLogger::ValidateLevel(ZBAL_UT_NUM_100));
+}
+
+/*
+ * ShouldLog: TRACE only passes at DEBUG threshold; other levels pass numerically.
+ */
+TEST_F(TestZBALLogger, ShouldLogLevels)
+{
+    auto &logger = OutLogger::Instance();
+
+    logger.SetLogLevel(ERROR_LEVEL);
+    EXPECT_FALSE(logger.ShouldLog(TRACE_LEVEL));
+    EXPECT_FALSE(logger.ShouldLog(WARN_LEVEL));
+    EXPECT_TRUE(logger.ShouldLog(ERROR_LEVEL));
+    EXPECT_TRUE(logger.ShouldLog(FATAL_LEVEL));
+
+    logger.SetLogLevel(DEBUG_LEVEL);
+    EXPECT_TRUE(logger.ShouldLog(TRACE_LEVEL));
+    EXPECT_TRUE(logger.ShouldLog(DEBUG_LEVEL));
 }
 
 /*
