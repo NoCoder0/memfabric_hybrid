@@ -37,7 +37,7 @@ constexpr char K_DEFAULT_CLUSTERED_BETA_KEY[] = "/memfabric_hybrid/config_store/
 constexpr char K_CLUSTERED_ALPHA_KEY[] = "/memfabric_hybrid/config_store/clusters/cluster-a/alpha";
 constexpr char K_CLUSTERED_BETA_KEY[] = "/memfabric_hybrid/config_store/clusters/cluster-a/beta";
 constexpr char K_CLUSTERED_LEADER_KEY[] =
-    "/memfabric_hybrid/config_store/clusters/cluster-a/memfabric_hybrid/config_store/meta/leader";
+    "/memfabric_hybrid/config_store/clusters/cluster-a/memfabric_hybrid/config_store/leader/elected";
 constexpr char K_CLUSTERED_BACKEND_LOCK[] = "/memfabric_hybrid/config_store/clusters/cluster-a/backend";
 constexpr char K_CLUSTERED_CUSTOM_LOCK[] = "/memfabric_hybrid/config_store/clusters/cluster-a/custom-lock";
 constexpr char K_BACKEND_LOCK_NAME[] = "backend";

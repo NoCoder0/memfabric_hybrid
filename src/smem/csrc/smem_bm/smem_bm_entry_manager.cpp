@@ -359,42 +359,55 @@ Result SmemBmEntryManager::GetStoreServerInfo(std::string &ip, uint16_t *port) c
     return SM_OK;
 }
 
-Result SmemBmEntryManager::GetMetaServiceInfo(std::string &ip, uint16_t *port) const noexcept
+Result SmemBmEntryManager::ReadBindableLeaderAddress(const StorePtr &store, std::string &ip, uint16_t *port) noexcept
 {
-    if (confStore_ == nullptr) {
-        SM_LOG_ERROR("GetMetaServiceInfo: confStore_ is null, not initialized");
+    if (store == nullptr) {
+        SM_LOG_ERROR("ReadBindableLeaderAddress: store is null");
         return SM_ERROR;
     }
-    auto *haStore = confStore_->AsHaConfigStore();
+    auto *haStore = store->AsHaConfigStore();
     if (haStore == nullptr) {
-        SM_LOG_ERROR("GetMetaServiceInfo: underlying store is not HaConfigStore");
+        SM_LOG_ERROR("ReadBindableLeaderAddress: underlying store is not HaConfigStore");
         return SM_ERROR;
     }
     auto backend = haStore->GetBackend();
     if (backend == nullptr) {
-        SM_LOG_ERROR("GetMetaServiceInfo: backend is null");
+        SM_LOG_ERROR("ReadBindableLeaderAddress: backend is null");
         return SM_ERROR;
     }
-    std::string metaServiceAddr;
-    auto ret = backend->Get(KEY_META_SERVICE_ADDR, metaServiceAddr);
+    std::string bindableLeaderAddress;
+    auto ret = backend->Get(KEY_BINDABLE_LEADER_ADDRESS, bindableLeaderAddress);
     if (ret != StoreErrorCode::SUCCESS) {
-        SM_LOG_ERROR("GetMetaServiceInfo: backend Get failed, key: " << KEY_META_SERVICE_ADDR << ", ret: " << ret);
+        SM_LOG_ERROR("ReadBindableLeaderAddress: backend Get failed, key: " << KEY_BINDABLE_LEADER_ADDRESS
+                                                                            << ", ret: " << ret);
         return SM_ERROR;
     }
     uint16_t parsedPort = 0;
     std::string host;
-    if (!NetworkEndpointUtil::ExtractIpAndPort("tcp://" + metaServiceAddr, host, parsedPort)) {
-        SM_LOG_ERROR("GetMetaServiceInfo: invalid MetaService address: " << metaServiceAddr);
+    if (!NetworkEndpointUtil::ExtractIpAndPort("tcp://" + bindableLeaderAddress, host, parsedPort)) {
+        SM_LOG_ERROR("ReadBindableLeaderAddress: invalid upper leader address: " << bindableLeaderAddress);
         return SM_ERROR;
     }
     if (host.empty() || parsedPort == 0) {
-        SM_LOG_ERROR("GetMetaServiceInfo: MetaService address is empty, addr: " << metaServiceAddr);
+        SM_LOG_ERROR("ReadBindableLeaderAddress: upper leader address is empty, addr: " << bindableLeaderAddress);
         return SM_ERROR;
     }
     ip = host;
     *port = parsedPort;
-    SM_LOG_INFO("GetMetaServiceInfo: ip=" << ip << ", port=" << *port);
     return SM_OK;
+}
+
+Result SmemBmEntryManager::GetBindableLeaderAddress(std::string &ip, uint16_t *port) const noexcept
+{
+    if (confStore_ == nullptr) {
+        SM_LOG_ERROR("GetBindableLeaderAddress: confStore_ is null, not initialized");
+        return SM_ERROR;
+    }
+    auto ret = ReadBindableLeaderAddress(confStore_, ip, port);
+    if (ret == SM_OK) {
+        SM_LOG_INFO("GetBindableLeaderAddress: ip=" << ip << ", port=" << *port);
+    }
+    return ret;
 }
 
 Result SmemBmEntryManager::RegisterLeaderChangeCallback(LeaderChangedFunc callback, void *userData) noexcept

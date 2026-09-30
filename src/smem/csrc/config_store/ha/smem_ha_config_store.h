@@ -111,7 +111,7 @@ public:
 
     struct LeaderAddresses {
         bool isLeader;
-        std::string metaServiceAddr;
+        std::string bindableLeaderAddress;
     };
 
     using LeaderChangeCallback = std::function<void(const LeaderAddresses &)>;
@@ -180,9 +180,9 @@ private:
     const uint32_t worldSize_;
     const std::string backendLockName_;
     const uint16_t model_ = 0;
-    std::string leaderBindIp_;         // Only meaningful on leader node
-    uint16_t leaderBindPort_ = 0;      // Only meaningful on leader node
-    uint16_t metaServiceBindPort_ = 0; // MetaService port, selected from port range excluding leaderBindPort_
+    std::string leaderBindIp_;           // Only meaningful on leader node
+    uint16_t leaderBindPort_ = 0;        // Only meaningful on leader node
+    uint16_t leaderAddressBindPort_ = 0; // leader bind port, selected from port range excluding leaderBindPort_
     bool isFirstLeader_ = true;
     smem_tls_config tlsConfig_{};
 

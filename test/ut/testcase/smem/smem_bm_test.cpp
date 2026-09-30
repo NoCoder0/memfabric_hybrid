@@ -2300,12 +2300,12 @@ TEST_F(SmemBmTest, smem_bm_entry_get_rank_id_by_gva_host_past_end)
     EXPECT_EQ(rank, UINT32_MAX);
 }
 
-// smem_bm_get_meta_service_info with null output params
-TEST_F(SmemBmTest, smem_bm_get_meta_service_info_null_params)
+// smem_bm_get_bindable_leader_address with null output params
+TEST_F(SmemBmTest, smem_bm_get_bindable_leader_address_null_params)
 {
-    EXPECT_EQ(smem_bm_get_meta_service_info(nullptr, 0, nullptr), ock::smem::SM_INVALID_PARAM);
+    EXPECT_EQ(smem_bm_get_bindable_leader_address(nullptr, 0, nullptr), ock::smem::SM_INVALID_PARAM);
     char ip[K_UT_IP_SIZE] = {0};
-    EXPECT_EQ(smem_bm_get_meta_service_info(ip, sizeof(ip), nullptr), ock::smem::SM_INVALID_PARAM);
+    EXPECT_EQ(smem_bm_get_bindable_leader_address(ip, sizeof(ip), nullptr), ock::smem::SM_INVALID_PARAM);
 }
 
 // smem_bm_update_store_server with null ip

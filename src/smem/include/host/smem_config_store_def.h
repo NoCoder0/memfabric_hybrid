@@ -20,7 +20,7 @@ typedef void *smem_config_store_t;
 
 typedef struct {
     uint8_t is_leader;
-    const char *meta_service_address;
+    const char *bindable_leader_address;
 } smem_config_store_leader_info_t;
 
 /**

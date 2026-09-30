@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 #include <algorithm>
+#include <mutex>
 #include <new>
 #include <numeric>
 #include "smem_common_includes.h"
@@ -17,6 +18,8 @@
 #include "hybm_ptracer.h"
 #include "smem_logger.h"
 #include "smem_bm_entry_manager.h"
+#include "smem_config_store.h"
+#include "smem_store_factory.h"
 #include "smem_hybm_helper.h"
 #include "mf_rwlock.h"
 #include "mf_env_define.h"
@@ -160,20 +163,71 @@ SMEM_API int32_t smem_bm_update_store_server(const char *ip, uint16_t port)
     return SmemBmEntryManager::Instance().UpdateStoreServer(std::string(ip), port);
 }
 
-SMEM_API int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t *port)
+SMEM_API int32_t smem_bm_get_bindable_leader_address(char *ip, size_t ipLen, uint16_t *port)
 {
     if (ip == nullptr || port == nullptr) {
-        SM_LOG_ERROR("smem_bm_get_meta_service_info: null parameter");
+        SM_LOG_ERROR("smem_bm_get_bindable_leader_address: null parameter");
         return SM_INVALID_PARAM;
     }
     std::string ipStr;
-    auto ret = SmemBmEntryManager::Instance().GetMetaServiceInfo(ipStr, port);
+    auto ret = SmemBmEntryManager::Instance().GetBindableLeaderAddress(ipStr, port);
     if (ret == SM_OK) {
         size_t copyLen = std::min(ipStr.size(), ipLen > 0 ? ipLen - 1 : 0);
         std::copy_n(ipStr.begin(), copyLen, ip);
         ip[copyLen] = '\0';
     }
     return ret;
+}
+
+namespace {
+// client-only 发现用的 store：进程内惰性创建并缓存，不随每次发现创建/销毁。
+// 工厂按 URL 缓存且忽略 model，反复 create+destroy 会抹掉工厂表项并新建重复连接。
+std::mutex g_upperLeaderStoreMutex;
+StorePtr g_upperLeaderStore = nullptr;
+} // namespace
+
+SMEM_API int32_t smem_bm_get_bindable_leader_address_by_store_url(const char *storeUrl,
+                                                                  const smem_tls_config *tlsOption, uint32_t worldSize,
+                                                                  char *ip, size_t ipLen, uint16_t *port)
+{
+    if (storeUrl == nullptr || ip == nullptr || port == nullptr) {
+        SM_LOG_ERROR("smem_bm_get_bindable_leader_address_by_store_url: null parameter");
+        return SM_INVALID_PARAM;
+    }
+    std::lock_guard<std::mutex> guard(g_upperLeaderStoreMutex);
+
+    // TLS 为进程级全局状态，必须在创建 store 之前设置（与 smem_bm_init 的做法一致）。
+    if (tlsOption != nullptr) {
+        StoreFactory::SetTlsInfo(*tlsOption);
+    }
+
+    if (g_upperLeaderStore == nullptr) {
+        // 与 BM 初始化时的 client 分支同构：CSM_CLIENT 只创建客户端、不参与选举、不注册 rank。
+        const std::string storeUrlStr(storeUrl);
+        g_upperLeaderStore = StoreFactory::CreateStoreByUrl(storeUrlStr, ConfigStoreModel::CSM_CLIENT, worldSize);
+        if (g_upperLeaderStore == nullptr) {
+            SM_LOG_ERROR("smem_bm_get_bindable_leader_address_by_store_url: create store failed, url: "
+                         << storeUrlStr << ", worldSize: " << worldSize);
+            return StoreFactory::GetFailedReason();
+        }
+    }
+
+    std::string ipStr;
+    auto ret = SmemBmEntryManager::ReadBindableLeaderAddress(g_upperLeaderStore, ipStr, port);
+    if (ret != SM_OK) {
+        return ret;
+    }
+    size_t copyLen = std::min(ipStr.size(), ipLen > 0 ? ipLen - 1 : 0);
+    std::copy_n(ipStr.begin(), copyLen, ip);
+    ip[copyLen] = '\0';
+    SM_LOG_INFO("smem_bm_get_bindable_leader_address_by_store_url: ip=" << ip << ", port=" << *port);
+    return SM_OK;
+}
+
+SMEM_API void smem_bm_release_leader_address_store(void)
+{
+    std::lock_guard<std::mutex> guard(g_upperLeaderStoreMutex);
+    g_upperLeaderStore = nullptr;
 }
 
 SMEM_API int32_t smem_bm_register_leader_change_callback(smem_bm_leader_change_cb callback, void *userData)

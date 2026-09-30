@@ -62,7 +62,7 @@ uint32_t smem_bm_get_rank_id(void);
 /**
  * @brief Update the config store server address and reconnect.
  *
- * Called when the MetaService leader has changed. The rank's config store
+ * Called when the config store leader has changed. The rank's config store
  * client will disconnect from the old leader and connect to the new one.
  *
  * @param ip    New leader's IP address
@@ -72,26 +72,54 @@ uint32_t smem_bm_get_rank_id(void);
 int32_t smem_bm_update_store_server(const char *ip, uint16_t port);
 
 /**
- * @brief Get the MetaService address registered by the current MetaService leader.
+ * @brief Get the bindable upper leader address registered by the current config store leader.
  *
- * Used by upper-layer applications (e.g. MemCache LocalService) to discover
- * the MetaService endpoint in HA mode. The MetaService leader publishes its
- * address to the config store backend, and this returns the currently
- * registered one regardless of whether the caller is the leader itself.
+ * Used by upper-layer applications to discover the bindable upper leader endpoint in
+ * HA mode: the config store leader publishes the upper leader's address to the
+ * config store backend, and this returns the currently registered one regardless
+ * of whether the caller itself is the config store leader.
  *
- * @param ip         [out] buffer to receive MetaService IP (at least 64 bytes)
+ * @param ip         [out] buffer to receive the upper leader IP (at least 64 bytes)
  * @param ipLen      [in] size of the ip buffer
- * @param port       [out] MetaService port
+ * @param port       [out] upper leader bind port
  * @return 0 on success, non-zero error code on failure
  */
-int32_t smem_bm_get_meta_service_info(char *ip, size_t ipLen, uint16_t *port);
+int32_t smem_bm_get_bindable_leader_address(char *ip, size_t ipLen, uint16_t *port);
+
+/**
+ * @brief Read the bindable leader address published in the config store, without creating a BM.
+ *
+ * For client-only processes (e.g. a scheduler that must not register a rank) that
+ * need the HA-discovered upper leader address. A client-only config store is
+ * created lazily for storeUrl and cached in the process (so repeated discovery
+ * does not churn etcd connections); release it with smem_bm_release_leader_address_store.
+ * In non-etcd deployments prefer smem_bm_get_bindable_leader_address / the static URL.
+ *
+ * @param storeUrl   [in] config store URL, e.g. etcd://ip:port#instanceId
+ * @param tlsOption  [in] config store TLS; NULL when TLS is disabled
+ * @param worldSize  [in] world size, must match the upper leader/local service (default 256)
+ * @param ip         [out] buffer receiving the upper leader IP
+ * @param ipLen      [in] capacity of ip, including the null terminator
+ * @param port       [out] upper leader bind port
+ * @return 0 on success; non-zero on failure, and the caller may fall back to a static URL
+ */
+int32_t smem_bm_get_bindable_leader_address_by_store_url(const char *storeUrl, const smem_tls_config *tlsOption,
+                                                         uint32_t worldSize, char *ip, size_t ipLen, uint16_t *port);
+
+/**
+ * @brief Release the client-only discovery store cached by
+ *        smem_bm_get_bindable_leader_address_by_store_url.
+ *
+ * Call on client shutdown; safe to call when nothing was cached.
+ */
+void smem_bm_release_leader_address_store(void);
 
 /**
  * @brief Register a callback invoked when the HA leader changes.
  *
  * Pure notification: the library does not fetch or pass any address. The caller
- * decides what to do on leader change (e.g. re-read the MetaService address via
- * smem_bm_get_meta_service_info and switch its connections). Used to cover
+ * decides what to do on upper leader change (e.g. re-read the leader address via
+ * smem_bm_get_bindable_leader_address and switch its connections). Used to cover
  * SIGSTOP-like failures where the old leader stays ESTABLISHED and no TCP
  * link-broken event is delivered to clients.
  *
@@ -270,7 +298,7 @@ int32_t smem_bm_unregister_user_mem(smem_bm_t handle, uint64_t addr);
 uint32_t smem_bm_get_rank_id_by_gva(smem_bm_t handle, void *gva);
 
 /**
- * @brief Update the config store URL after smem_bm_init, used when MetaService restarts with a new IP.
+ * @brief Update the config store URL after smem_bm_init, used when the upper leader restarts with a new IP.
  * This function lazily updates the config store connection target without recreating the store.
  * The new URL is set on the underlying TcpConfigStore and the existing reconnection mechanism
  * (ReConnectAfterBroken) will automatically establish a connection using the new address.

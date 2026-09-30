@@ -99,7 +99,7 @@ int32_t SetLeaderHandler(smem_config_store_t store, smem_config_store_leader_cha
     } else {
         ha->RegisterLeaderChangeCallback([callback, context](const smem::HaConfigStore::LeaderAddresses &addresses) {
             smem_config_store_leader_info_t info{static_cast<uint8_t>(addresses.isLeader),
-                                                 addresses.metaServiceAddr.c_str()};
+                                                 addresses.bindableLeaderAddress.c_str()};
             callback(context, &info);
         });
     }

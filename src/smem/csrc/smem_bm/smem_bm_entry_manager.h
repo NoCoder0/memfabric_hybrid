@@ -46,7 +46,7 @@ public:
     void Destroy();
 
     /**
-     * @brief Update the config store URL lazily, used when MetaService restarts with a new IP.
+     * @brief Update the config store URL lazily, used when the leader restarts with a new IP.
      * This only updates the underlying TcpConfigStore's server IP/port via SetServerInfo.
      * The actual reconnection is handled by the existing reconnection mechanism (ReConnectAfterBroken),
      * which will use the new IP/port automatically when the connection is broken.
@@ -69,14 +69,28 @@ public:
 
     Result GetStoreServerInfo(std::string &ip, uint16_t *port) const noexcept;
 
-    Result GetMetaServiceInfo(std::string &ip, uint16_t *port) const noexcept;
+    Result GetBindableLeaderAddress(std::string &ip, uint16_t *port) const noexcept;
+
+    /**
+     * @brief Read the published bindable upper leader address from a config store backend.
+     *
+     * Shared by the BM path (confStore_) and the client-only path
+     * (smem_bm_get_bindable_leader_address_by_store_url): the caller supplies the store,
+     * this helper only unwraps HaConfigStore and parses KEY_BINDABLE_LEADER_ADDRESS.
+     *
+     * @param store  config store that exposes an HaConfigStore view
+     * @param ip     [out] upper leader IP, empty on failure
+     * @param port   [out] upper leader bind port, 0 on failure
+     * @return SM_OK when the address was read and parsed
+     */
+    static Result ReadBindableLeaderAddress(const StorePtr &store, std::string &ip, uint16_t *port) noexcept;
 
     /**
      * @brief Register a callback invoked when the HA leader changes.
      *
      * Pure leader-change notification: libsmem only tells the upper layer "the leader
-     * has changed"; what to do next (e.g. re-discover the MetaService address via
-     * GetMetaServiceInfo / smem_bm_get_meta_service_info and switch connections) is
+     * has changed"; what to do next (e.g. re-discover the leader address via
+     * GetBindableLeaderAddress / smem_bm_get_bindable_leader_address and switch connections) is
      * entirely up to the caller. Bridges HaConfigStore's leader-change notification
      * across the C API boundary, covering SIGSTOP-like failures where the old leader
      * stays ESTABLISHED and no TCP link-broken event is delivered.

@@ -28,12 +28,12 @@
 namespace ock {
 namespace smem {
 
-constexpr auto KEY_LEADER = "/memfabric_hybrid/config_store/meta/leader";
-constexpr auto KEY_LEADER_STATUS = "/memfabric_hybrid/config_store/meta/leader_status";
+constexpr auto KEY_LEADER = "/memfabric_hybrid/config_store/leader/elected";
+constexpr auto KEY_LEADER_STATUS = "/memfabric_hybrid/config_store/leader/elected_status";
 constexpr auto KEY_ELECTION_LOCK = "/memfabric_hybrid/config_store/lock/election";
 constexpr auto KEY_WORLD_SIZE = "/memfabric_hybrid/config_store/data/world_size";
 constexpr auto KEY_ALIVE_RANK_LIST = "/memfabric_hybrid/config_store/data/alive_rank_list";
-constexpr auto KEY_META_SERVICE_ADDR = "/memcache/meta/service_addr";
+constexpr auto KEY_BINDABLE_LEADER_ADDRESS = "/memfabric_hybrid/config_store/leader/bindable_addr";
 
 using PrefixGetMap = std::unordered_map<std::string, std::vector<uint8_t>>;
 

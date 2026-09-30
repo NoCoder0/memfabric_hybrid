@@ -124,8 +124,8 @@ int main(int argc, char *argv[])
 
     std::cout << "\n[Step 1] Writing test data..." << std::endl;
     std::vector<std::pair<std::string, std::string>> testData = {
-        {"/memfabric_hybrid/config_store/meta/leader", "rank_0"},
-        {"/memfabric_hybrid/config_store/meta/leader_status", "active"},
+        {"/memfabric_hybrid/config_store/leader/elected", "rank_0"},
+        {"/memfabric_hybrid/config_store/leader/elected_status", "active"},
         {"/memfabric_hybrid/config_store/data/world_size", "8"},
         {"/memfabric_hybrid/config_store/other/random_key", "junk"}};
 
@@ -140,7 +140,7 @@ int main(int argc, char *argv[])
     std::atomic<int> success_count{0};
     std::vector<std::thread> threads;
 
-    std::string prefix = "/memfabric_hybrid/config_store/meta/";
+    std::string prefix = "/memfabric_hybrid/config_store/leader/";
 
     for (int i = 0; i < thread_count; ++i) {
         threads.emplace_back(ThreadWorker, i, etcd_addr, prefix, std::ref(success_count));

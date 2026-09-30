@@ -209,10 +209,10 @@ Result HaConfigStore::TryBecomeLeader() noexcept
     SM_ASSERT_RETURN(NetworkEndpointUtil::GetLocalIpWithTarget(leaderBindIp_, leaderBindIp_), SM_ERROR);
     SM_LOG_TRACE("Attempting to become leader, addr: " << leaderBindIp_ << ":" << leaderBindPort_);
 
-    // Select MetaService port from the same port range, excluding the port
+    // Select the leader bind port from the same port range, excluding the port
     // already bound by the config store leader to avoid a port collision.
-    SM_ASSERT_RETURN(NetworkEndpointUtil::FindAvailablePort(metaServiceBindPort_, isIpv6, leaderBindPort_), SM_ERROR);
-    SM_LOG_INFO("MetaService port selected: " << metaServiceBindPort_);
+    SM_ASSERT_RETURN(NetworkEndpointUtil::FindAvailablePort(leaderAddressBindPort_, isIpv6, leaderBindPort_), SM_ERROR);
+    SM_LOG_INFO("Leader address port selected: " << leaderAddressBindPort_);
 
     // Start server
     StartServer();
@@ -234,12 +234,12 @@ Result HaConfigStore::TryBecomeLeader() noexcept
     }
     SM_LOG_TRACE("Registered in backend: " << myAddr << ", TTL: " << PUT_LEASE_TTL_SEC << "s");
 
-    std::string metaServiceAddr = leaderBindIp_ + ":" + std::to_string(metaServiceBindPort_);
-    auto metaAddrRet = backend_->Put(KEY_META_SERVICE_ADDR, metaServiceAddr, PUT_LEASE_TTL_SEC);
-    if (metaAddrRet != 0) {
-        SM_LOG_WARN("Failed to register MetaService address in backend: " << metaServiceAddr);
+    std::string bindableLeaderAddress = leaderBindIp_ + ":" + std::to_string(leaderAddressBindPort_);
+    auto leaderAddrRet = backend_->Put(KEY_BINDABLE_LEADER_ADDRESS, bindableLeaderAddress, PUT_LEASE_TTL_SEC);
+    if (leaderAddrRet != 0) {
+        SM_LOG_WARN("Failed to register bindable leader address in backend: " << bindableLeaderAddress);
     } else {
-        SM_LOG_INFO("Registered MetaService address in backend: " << metaServiceAddr);
+        SM_LOG_INFO("Registered bindable leader address in backend: " << bindableLeaderAddress);
     }
 
     NotifyLeaderChange();
@@ -290,7 +290,7 @@ bool HaConfigStore::TryAcquireLeadership(bool &becameLeader, uint32_t electionAt
 {
     // 进入重选举即先停服：领导权待定期间不得继续对外服务，避免旧主与新主并存。
     // StopServer 对非 leader 进程是幂等空操作；若本进程恰为旧主，则会立即停 AccStoreServer
-    // 并回调通知上层（memcache 侧据此停 MetaNetServer）。
+    // 并回调通知上层（上层据此停止其服务端监听）。
     StopServer();
     std::string leaderAddr;
     {
@@ -481,7 +481,7 @@ void HaConfigStore::NotifyLeaderChange() noexcept
     LeaderAddresses addrs;
     addrs.isLeader = IsLeader();
     if (addrs.isLeader) {
-        addrs.metaServiceAddr = leaderBindIp_ + ":" + std::to_string(metaServiceBindPort_);
+        addrs.bindableLeaderAddress = leaderBindIp_ + ":" + std::to_string(leaderAddressBindPort_);
     }
     leaderChangeCallback_(addrs);
 }
