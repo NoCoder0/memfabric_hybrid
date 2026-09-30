@@ -285,7 +285,9 @@ class Buffer:
             recv_topk_weights: received expert weights.
             num_recv_tokens_per_expert_list: Python list shaped `[num_local_experts]`, the received token count by
                 each local expert, aligned to the input `expert_alignment`. If `num_worst_tokens` is specified,
-                the list will be empty.
+                the list will be empty. The list format is controlled by the environment variable
+                `MOE_EXPERT_TOKEN_NUMS_TYPE`: `1` (default) = per-expert token count;
+                `0` = prefix sum of the token count received by each local expert.
             handle: the returned communication handle.
             event: the event after executing the kernel (valid only if `async_finish` is set).
         """
@@ -469,6 +471,7 @@ class Buffer:
         async_finish: bool = False,
         return_recv_hook: bool = False,
         topk_weights: Optional[torch.Tensor] = None,
+        **kwargs,
     ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable]:
         """
         A low-latency implementation for dispatch.
@@ -511,7 +514,9 @@ class Buffer:
                 Moreover, not all tokens are valid, only some of the `num_max_dispatch_tokens_per_rank * num_ranks` are,
                 as we do not synchronize CPU received count with GPU (also not incompatible with CUDA graph if synced).
             recv_count: a tensor shaped `[num_local_experts]` with type `torch.int`, indicating how many tokens each
-                expert receives. As mentioned before, not all tokens are valid in `recv_x`.
+                expert receives. As mentioned before, not all tokens are valid in `recv_x`. The tensor format is
+                controlled by the environment variable `MOE_EXPERT_TOKEN_NUMS_TYPE`: `1` (default) = per-expert
+                token count; `0` = prefix sum of the token count received by each local expert.
             handle: the communication handle to be used in the `low_latency_combine` function.
             event: the event after executing the kernel (valid only if `async_finish` is set).
             hook: the receiving hook function (valid only if `return_recv_hook` is set).

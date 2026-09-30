@@ -238,4 +238,11 @@ done
 
 summarize_avg_stats
 
+echo "[run_test_low_latency] Running test_low_latency.py with BF16 + prefix-sum token counts (MOE_EXPERT_TOKEN_NUMS_TYPE=0)"
+export DEEP_LOW_LATENCY_MODE_QUANT_TYPE=none
+export MOE_EXPERT_TOKEN_NUMS_TYPE=0
+run_test_pass "${SCRIPT_DIR}/logs/quant_none_prefix.log" test_low_latency.py --num-processes ${NP} --num-tokens ${TOKENS} --hidden ${HIDDEN} --num-topk ${TOPK} --num-experts ${EXPERTS} \
+    || overall_rc=$?
+export MOE_EXPERT_TOKEN_NUMS_TYPE=1
+
 exit "${overall_rc}"

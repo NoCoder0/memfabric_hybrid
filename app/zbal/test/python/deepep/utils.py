@@ -270,6 +270,100 @@ def hash_tensor(t: torch.Tensor):
     return t.view(torch.int8).sum().item()
 
 
+def get_moe_expert_token_nums_type() -> int:
+    """Dispatch token-count output format: 0 = prefix sum, 1 = per-expert count (default)."""
+    raw = os.getenv("MOE_EXPERT_TOKEN_NUMS_TYPE", "1")
+    assert raw in ("0", "1"), f"invalid MOE_EXPERT_TOKEN_NUMS_TYPE: {raw}, expect 0 or 1"
+    return int(raw)
+
+
+def calc_recv_tokens_per_expert_golden(
+    topk_idx: torch.Tensor,
+    num_local_experts: int,
+    expert_offset: int,
+    alignment: int = 1,
+    group=None,
+    num_total_experts: int = None,
+) -> torch.Tensor:
+    """Golden per-expert received token counts derived from topk_idx (global expert ids, < 0 dropped).
+
+    Each rank only knows its own topk_idx, while the dispatch receive count aggregates selections
+    from all ranks. When `group` is given, per-expert counts are aggregated across the group.
+
+    NOTES: aggregation uses `all_gather_into_tensor` on the default group (same pattern as
+    `calculate_avg_stats`, verified to coexist with live low-latency buffers). A zbal-backend
+    `all_reduce` on a `new_group` subgroup deadlocks with the LL dispatch/combine channels.
+    """
+    valid = topk_idx.detach().cpu().flatten()
+    valid = valid[valid >= 0].to(torch.long)
+    counts = torch.bincount(valid, minlength=expert_offset + num_local_experts)
+    if group is not None:
+        assert num_total_experts is not None, "num_total_experts is required for cross-rank aggregation"
+        counts = torch.bincount(valid, minlength=num_total_experts)
+        local_counts = counts.to(torch.int).to("npu")
+        world_size = dist.get_world_size()
+        gather_counts = torch.zeros((world_size, num_total_experts), dtype=torch.int, device="npu")
+        dist.all_gather_into_tensor(gather_counts, local_counts)
+        counts = gather_counts.sum(dim=0).cpu().to(torch.long)
+    local = counts[expert_offset : expert_offset + num_local_experts].clone()
+    if alignment > 1:
+        local = torch.div(local + alignment - 1, alignment, rounding_mode="floor") * alignment
+    return local
+
+
+def verify_recv_tokens_per_expert(
+    recv_tokens_per_expert,
+    topk_idx: torch.Tensor,
+    num_local_experts: int,
+    expert_offset: int,
+    alignment: int = 1,
+    rank: int = 0,
+    group=None,
+    num_total_experts: int = None,
+    golden_counts: torch.Tensor = None,
+):
+    """Verify dispatch token-count output against the golden reference.
+
+    The output format follows MOE_EXPERT_TOKEN_NUMS_TYPE: 1 (default) per-expert count, 0 prefix sum.
+    `recv_tokens_per_expert` can be a device tensor or a python list (normal-mode dispatch output).
+
+    Golden source, either one:
+    - `golden_counts`: precomputed cross-rank per-expert counts of this rank's local experts
+      (raw counts, NOT prefix-summed). Use it when the caller already holds an aggregated
+      ground truth (e.g. an all-reduced num_tokens_per_expert) to avoid a duplicate collective.
+    - topk_idx-derived: pass `group` (+ `num_total_experts`) to aggregate selections from all ranks.
+    """
+    token_nums_type = get_moe_expert_token_nums_type()
+    if golden_counts is not None:
+        golden = golden_counts.detach().cpu().to(torch.long).flatten()
+        assert golden.numel() == num_local_experts, (
+            f"[rank {rank}] golden_counts size {golden.numel()} != num_local_experts {num_local_experts}"
+        )
+    else:
+        golden = calc_recv_tokens_per_expert_golden(
+            topk_idx, num_local_experts, expert_offset, alignment, group=group, num_total_experts=num_total_experts
+        )
+    if token_nums_type == 0:
+        golden = torch.cumsum(golden, dim=0)
+    if isinstance(recv_tokens_per_expert, torch.Tensor):
+        actual = recv_tokens_per_expert.detach().cpu().to(torch.long).flatten()
+    else:
+        # device="cpu" is required: tests set a global npu default device, which would
+        # otherwise place this tensor on npu and break the CPU-side torch.equal below.
+        actual = torch.tensor(list(recv_tokens_per_expert), dtype=torch.long, device="cpu")
+    assert actual.numel() == num_local_experts, (
+        f"[rank {rank}] recv token nums size {actual.numel()} != num_local_experts {num_local_experts}"
+    )
+    assert torch.equal(actual, golden), (
+        f"[rank {rank}] dispatch token count verification FAILED (MOE_EXPERT_TOKEN_NUMS_TYPE={token_nums_type}, "
+        f"alignment={alignment}): actual={actual.tolist()}, golden={golden.tolist()}"
+    )
+    shown = actual.tolist() if num_local_experts <= 16 else f"sum={int(actual.sum())}"
+    logger.info(
+        f"[rank {rank}] dispatch token count format verified (MOE_EXPERT_TOKEN_NUMS_TYPE={token_nums_type}): {shown}"
+    )
+
+
 def calculate_avg_stats(
     dispatch_t,
     num_dispatch_comm_bytes,

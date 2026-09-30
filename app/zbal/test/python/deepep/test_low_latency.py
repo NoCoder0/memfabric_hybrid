@@ -19,6 +19,7 @@ from utils import (
     init_dist,
     per_block_cast_back,
     per_token_cast_back,
+    verify_recv_tokens_per_expert,
 )
 
 
@@ -158,6 +159,17 @@ def test(
     logging.info(f"Rank {rank}: combined_x ={combined_x_cpu[:100, 0]}")
 
     if do_check:
+        # Verify the dispatch token-count output format (golden aggregates selections from all ranks):
+        # MOE_EXPERT_TOKEN_NUMS_TYPE=1 (default) per-expert count, 0 prefix sum
+        verify_recv_tokens_per_expert(
+            packed_recv_count,
+            topk_idx_cpu,
+            num_local_experts,
+            rank * num_local_experts,
+            rank=rank,
+            group=group,
+            num_total_experts=num_experts,
+        )
         diff = calc_diff(
             x_cpu * topk_weights_cpu.masked_fill(topk_idx_cpu == -1, 0).sum(dim=1).view(-1, 1),
             combined_x_cpu,

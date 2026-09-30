@@ -599,7 +599,11 @@ Buffer::low_latency_dispatch(const at::Tensor &x, const at::Tensor &topk_idx,
     int enable_neg_one = get_value_from_env("MOE_ENABLE_TOPK_NEG_ONE", 0);
     (void)enable_neg_one;
     int64_t shared_expert_num = 1;
+    // indicates the value type of the output packed_recv_count, with a range of [0, 1]
+    // 0 means the prefix sum of the number of tokens received by each expert;
+    // 1 means the number of tokens received by each expert (default)
     int outType = get_value_from_env("MOE_EXPERT_TOKEN_NUMS_TYPE", 1);
+    ZBAL_CHECK_S(outType == 1 or outType == 0, "MOE_EXPERT_TOKEN_NUMS_TYPE is invalid, value: ", outType);
     int64_t expert_token_nums_type = outType;
     int64_t flags = 0;
 

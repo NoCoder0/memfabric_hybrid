@@ -232,6 +232,14 @@ for qt in ${QUANT_TYPES}; do
         || overall_rc=$?
 done
 
+# Extra pass covering the prefix-sum token-count format (default passes use MOE_EXPERT_TOKEN_NUMS_TYPE=1)
+echo "[run_test_normal] Running test_normal.py with quant_type=none + prefix-sum token counts (MOE_EXPERT_TOKEN_NUMS_TYPE=0)"
+export DEEP_NORMAL_MODE_QUANT_TYPE=none
+export MOE_EXPERT_TOKEN_NUMS_TYPE=0
+run_test_pass test_normal.py --num-processes ${NP} --num-tokens ${TOKENS} --hidden ${HIDDEN} --num-topk ${TOPK} --num-experts ${EXPERTS} \
+    || overall_rc=$?
+export MOE_EXPERT_TOKEN_NUMS_TYPE=1
+
 summarize_avg_stats
 
 exit "${overall_rc}"

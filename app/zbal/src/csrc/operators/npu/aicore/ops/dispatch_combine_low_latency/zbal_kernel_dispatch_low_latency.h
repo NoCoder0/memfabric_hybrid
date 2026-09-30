@@ -64,7 +64,7 @@ public:
                                 GM_ADDR dynamicScalesOut, GM_ADDR expandIdxOut, GM_ADDR expertTokenNumsOut,
                                 GM_ADDR sendCountsOut, GM_ADDR putOffset, GM_ADDR putOffsetStatus, uint32_t rank,
                                 uint32_t numExperts, uint32_t bs, uint32_t hidden, uint32_t topK, int64_t magicVal,
-                                TPipe *pipe);
+                                uint32_t expertTokenNumsType, TPipe *pipe);
     __aicore__ inline void Process();
 
 private:
@@ -87,6 +87,7 @@ private:
                                        uint32_t &endTokenId, uint32_t &sendTokenNum, bool isFront = true);
     __aicore__ inline void CalTokenSendExpertCnt(uint32_t dstExpertId, int32_t calCnt, int32_t &curExpertCnt);
     __aicore__ inline void ReorderRecvDataOutput(int32_t rankId, LocalTensor<int32_t> &transLt, bool isCumSum = false);
+    __aicore__ inline void BuildExpertTokenNums(LocalTensor<int32_t> &recvTokenLt);
 
     // get metaInfo address
     __aicore__ inline GM_ADDR GetMetaInfoAddrByRankId(GM_ADDR gva_gm, const int32_t rankId)
@@ -157,6 +158,7 @@ private:
     TBuf<> SendCountBuf_;
     TBuf<> recvDataBuf_;
     TBuf<> sendCountBuf_;
+    TBuf<> expertNumsBuf_;
     TBuf<QuePosition::VECCALC> CleartBuf;
     TQueBind<QuePosition::VECIN, QuePosition::VECOUT, 1> xQueue_; // 非量化使用，量化场景接收也可使用
     TQue<QuePosition::VECIN, 1> xInQueue_;                        // 量化使用，量化前的输入
@@ -235,10 +237,12 @@ private:
 };
 
 template<TemplateTypeClass>
-__aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::Init(
-    GM_ADDR metaAddr, GM_ADDR x, GM_ADDR expertIds, GM_ADDR expandXOut, GM_ADDR dynamicScalesOut, GM_ADDR expandIdxOut,
-    GM_ADDR expertTokenNumsOut, GM_ADDR sendCountsOut, GM_ADDR putOffset, GM_ADDR putOffsetStatus, uint32_t rank,
-    uint32_t numExperts, uint32_t bs, uint32_t hidden, uint32_t topK, int64_t magicVal, TPipe *pipe)
+__aicore__ inline void
+DispatchLowLatency<TemplateTypeFunc>::Init(GM_ADDR metaAddr, GM_ADDR x, GM_ADDR expertIds, GM_ADDR expandXOut,
+                                           GM_ADDR dynamicScalesOut, GM_ADDR expandIdxOut, GM_ADDR expertTokenNumsOut,
+                                           GM_ADDR sendCountsOut, GM_ADDR putOffset, GM_ADDR putOffsetStatus,
+                                           uint32_t rank, uint32_t numExperts, uint32_t bs, uint32_t hidden,
+                                           uint32_t topK, int64_t magicVal, uint32_t expertTokenNumsType, TPipe *pipe)
 {
     tpipe_ = pipe;
     aivId_ = GetBlockIdx();
@@ -342,7 +346,8 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::Init(
     dynamicScalesOutGM_ = dynamicScalesOut;
     expertTokenNumsOutGM_ = expertTokenNumsOut;
     // LocalRank ---> Token Number Per Expert: Size --> [localExpert]
-    // use expertTokenNumsType_ to select prefix or number
+    // use expertTokenNumsType_ to select prefix or number: 0 = prefix sum, 1 = per-expert count (default)
+    expertTokenNumsType_ = expertTokenNumsType;
     expertTokenNumsGlobal.SetGlobalBuffer(reinterpret_cast<__gm__ int64_t *>(expertTokenNumsOutGM_));
     sendCountsOutGM_ = sendCountsOut; // 无GlobalTensor
     sendCountsGlobal.SetGlobalBuffer(reinterpret_cast<__gm__ int32_t *>(sendCountsOutGM_));
@@ -685,18 +690,33 @@ __aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::WaitNotify()
 
         // build local expertTokenNum
         if (rank == epRankId_) {
-            SyncFunc<AscendC::HardEvent::MTE3_S>();
-            uint32_t tokenSums = 0;
-            for (uint32_t localMoeIndex = 0; localMoeIndex < moeExpertNumPerRank_; ++localMoeIndex) {
-                uint32_t curIndex = epWorldSize_ * (localMoeIndex + 1) - 1;
-                uint32_t preMoeIndexCnt = (localMoeIndex == 0) ? 0 : recvTokenLt.GetValue(curIndex - epWorldSize_);
-                uint32_t curMoeIndexCnt = recvTokenLt.GetValue(curIndex);
-                tokenSums =
-                    ((expertTokenNumsType_ == 0) ? tokenSums : 0) + (curMoeIndexCnt - preMoeIndexCnt) + gatherCount_;
-                expertTokenNumsGlobal.SetValue(localMoeIndex, tokenSums);
-            }
+            BuildExpertTokenNums(recvTokenLt);
         }
     }
+}
+
+template<TemplateTypeClass>
+__aicore__ inline void DispatchLowLatency<TemplateTypeFunc>::BuildExpertTokenNums(LocalTensor<int32_t> &recvTokenLt)
+{
+    SyncFunc<AscendC::HardEvent::MTE3_S>();
+    uint32_t expertNumsBufSize = Ceil(moeExpertNumPerRank_ * sizeof(int64_t), UB_ALIGN_SIZE) * UB_ALIGN_SIZE;
+    tpipe_->InitBuffer(expertNumsBuf_, expertNumsBufSize);
+    LocalTensor<int64_t> expertNumsLt = expertNumsBuf_.Get<int64_t>();
+
+    uint32_t tokenSums = 0;
+    for (uint32_t localMoeIndex = 0; localMoeIndex < moeExpertNumPerRank_; ++localMoeIndex) {
+        uint32_t curIndex = epWorldSize_ * (localMoeIndex + 1) - 1;
+        uint32_t preMoeIndexCnt = (localMoeIndex == 0) ? 0 : recvTokenLt.GetValue(curIndex - epWorldSize_);
+        uint32_t curMoeIndexCnt = recvTokenLt.GetValue(curIndex);
+        tokenSums = ((expertTokenNumsType_ == 0) ? tokenSums : 0) + (curMoeIndexCnt - preMoeIndexCnt) + gatherCount_;
+        expertNumsLt.SetValue(localMoeIndex, static_cast<int64_t>(tokenSums));
+    }
+    // A5 上 GlobalTensor 标量写（SetValue 直写 GM）不保证落地：先写 UB 再经 MTE3 DataCopyPad 搬出到
+    // GM，与 sendCountsGlobal 同通路（该通路在 A3/A5 上均已验证正常）。
+    SyncFunc<AscendC::HardEvent::S_MTE3>();
+    uint32_t expertNumsBytes = moeExpertNumPerRank_ * sizeof(int64_t);
+    DataCopyExtParams expertNumsCopyParams{1U, expertNumsBytes, 0U, 0U, 0U};
+    DataCopyPad(expertTokenNumsGlobal, expertNumsLt, expertNumsCopyParams);
 }
 
 template<TemplateTypeClass>

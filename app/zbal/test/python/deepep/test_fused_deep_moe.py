@@ -24,7 +24,7 @@ from zbal import Buffer
 
 torch_npu.npu.config.allow_internal_format = True
 
-from utils import calc_diff, init_dist
+from utils import calc_diff, get_moe_expert_token_nums_type, init_dist, verify_recv_tokens_per_expert
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -184,6 +184,8 @@ def run_unfused(
     num_ranks,
     num_max_dispatch_tokens_per_rank,
     use_fp8=True,
+    rank=0,
+    group=None,
 ):
     """Unfused reference with BF16 low-latency dispatch/combine.
 
@@ -217,6 +219,23 @@ def run_unfused(
         recv_x, recv_x_scale = recv_x_pack
     else:
         raise NotImplementedError
+
+    # Verify the dispatch token-count output format (golden aggregates selections from all ranks)
+    verify_recv_tokens_per_expert(
+        packed_recv_count,
+        topk_idx,
+        num_local_experts,
+        rank * num_local_experts,
+        rank=rank,
+        group=group,
+        num_total_experts=num_experts,
+    )
+
+    # MOE_EXPERT_TOKEN_NUMS_TYPE=0 makes dispatch return prefix sums; convert back to per-expert
+    # counts which npu_grouped_matmul(group_list_type=1) and the fused-vs-unfused comparison expect.
+    if get_moe_expert_token_nums_type() == 0:
+        zero = torch.zeros(1, dtype=packed_recv_count.dtype, device=packed_recv_count.device)
+        packed_recv_count = torch.diff(packed_recv_count, prepend=zero)
 
     expected_m = (x.shape[0] * buffer.group_size * topk_idx.shape[1] + num_experts) // num_experts
     masked_m = packed_recv_count
@@ -363,6 +382,8 @@ def test_fused_moe(rank, num_ranks, args):
         ne,
         num_ranks,
         num_max_dispatch * num_ranks,
+        rank=rank,
+        group=group,
     )
 
     torch.npu.synchronize()

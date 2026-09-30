@@ -24,6 +24,7 @@ from utils import (
     inplace_unique,
     per_block_cast_back,
     per_token_cast_back,
+    verify_recv_tokens_per_expert,
 )
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,6 @@ def test_main(
     num_tokens, hidden = args.num_tokens, args.hidden
     num_topk, num_experts = args.num_topk, args.num_experts
     num_servers = num_ranks // num_local_ranks
-    expert_token_nums_type = int(os.getenv("MOE_EXPERT_TOKEN_NUMS_TYPE", 1))
     use_quant = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
     quant_type = os.getenv("DEEP_NORMAL_MODE_QUANT_TYPE", "int8" if use_quant else "none")
     assert quant_type in ("none", "int8", "mx_fp8_e4m3"), f"Invalid DEEP_NORMAL_MODE_QUANT_TYPE: {quant_type}"
@@ -175,15 +175,6 @@ def test_main(
 
     x_cpu = x.cpu()
     x_pure_rand_cpu = x_pure_rand.cpu()
-
-    def get_num_tokens_per_expert_list(rank: int):
-        local_expert_token = gbl_num_tokens_per_expert.view(num_ranks, -1)[rank]
-        if expert_token_nums_type == 0:
-            # 计算前缀和并转为 list
-            local_expert_token_list = local_expert_token.cumsum(dim=0).tolist()
-        else:
-            local_expert_token_list = local_expert_token.tolist()
-        return local_expert_token_list
 
     MAX_DUMP_ROWS = 1024
 
@@ -450,9 +441,16 @@ def test_main(
                 balance_matrix_cpu = handle[4].cpu()
                 recv_topk_weights_cpu = handle[2].cpu()
 
-            # Checks notify output
-            local_expert_token_list = get_num_tokens_per_expert_list(rank)
-            assert local_expert_token_list == recv_num_tokens_per_expert_list
+            # Checks notify output: verify against the all-reduced ground truth with explicit
+            # per-format logging (MOE_EXPERT_TOKEN_NUMS_TYPE: 1=count, 0=prefix sum)
+            verify_recv_tokens_per_expert(
+                recv_num_tokens_per_expert_list,
+                topk_idx_cpu,
+                experts_per_rank,
+                rank * experts_per_rank,
+                rank=rank,
+                golden_counts=gbl_num_tokens_per_expert.view(num_ranks, -1)[rank],
+            )
 
             # Verify recv_x token count and content (deterministic input: x = ones * rank)
             if current_x is x:
@@ -495,8 +493,11 @@ def test_main(
         logger.info(f"[rank {rank}] [layout] Kernel performance: {t * 1000:.3f} ms")
 
         current_x = x
-        local_expert_token_list = get_num_tokens_per_expert_list(rank)
-        real_recv_tokens = sum(local_expert_token_list)
+        # Real recv token count must be format-independent: derive it from the ground-truth
+        # per-expert counts (same as verify_recv_x). Summing the dispatch output list directly
+        # is wrong under MOE_EXPERT_TOKEN_NUMS_TYPE=0, whose prefix-sum entries inflate the
+        # byte count by ~(experts_per_rank+1)/2 (~16.5x for 32 local experts).
+        real_recv_tokens = int(gbl_num_tokens_per_expert.view(num_ranks, -1)[rank].sum().item())
         dispatch_bf16_recv_bytes = real_recv_tokens * hidden * 2
         combine_bf16_send_bytes = dispatch_bf16_recv_bytes
 
