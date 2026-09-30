@@ -183,7 +183,7 @@ static Result ParseIpStr(uint32_t phyDeviceId, const std::string &ipStr, const s
         addrType = COMM_ADDR_TYPE_IP_V4;
         addrData.fill(0);
         std::memcpy(addrData.data(), &ipv4Addr, sizeof(ipv4Addr));
-        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv4, devPhyId=" << phyDeviceId << " ip=" << ipStr);
+        BM_LOG_DEBUG("device_urma GetDeviceUBoEIpAddr ipv4, devPhyId=" << phyDeviceId << " ip=" << ipStr);
         return BM_OK;
     }
     struct in6_addr ipv6Addr;
@@ -191,7 +191,7 @@ static Result ParseIpStr(uint32_t phyDeviceId, const std::string &ipStr, const s
         addrType = COMM_ADDR_TYPE_IP_V6;
         addrData.fill(0);
         std::memcpy(addrData.data(), &ipv6Addr, sizeof(ipv6Addr));
-        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv6, devPhyId=" << phyDeviceId << " ip=" << ipStr);
+        BM_LOG_DEBUG("device_urma GetDeviceUBoEIpAddr ipv6, devPhyId=" << phyDeviceId << " ip=" << ipStr);
         return BM_OK;
     }
     // 32 hex digits only (reject leading signs, whitespace, non-hex chars)
@@ -204,7 +204,7 @@ static Result ParseIpStr(uint32_t phyDeviceId, const std::string &ipStr, const s
         addrType = COMM_ADDR_TYPE_IP_V6;
         addrData.fill(0);
         std::memcpy(addrData.data(), raw.data(), raw.size());
-        BM_LOG_DEBUG("device_urma GetDeviceUrmaIpAddr ipv6-hex, devPhyId=" << phyDeviceId << " ip=" << ipStr);
+        BM_LOG_DEBUG("device_urma GetDeviceUBoEIpAddr ipv6-hex, devPhyId=" << phyDeviceId << " ip=" << ipStr);
         return BM_OK;
     }
     BM_LOG_WARN("device_urma invalid IP address format: '" << ipStr << "' for devPhyId " << phyDeviceId
@@ -214,7 +214,7 @@ static Result ParseIpStr(uint32_t phyDeviceId, const std::string &ipStr, const s
 
 } // anonymous namespace
 
-Result GetDeviceUrmaIpAddrFromSources(const std::string &toolPath, const std::string &configPath, uint32_t phyDeviceId,
+Result GetDeviceUBoEIpAddrFromSources(const std::string &toolPath, const std::string &configPath, uint32_t phyDeviceId,
                                       uint32_t rankId, CommAddrType &addrType,
                                       std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData)
 {
@@ -246,17 +246,12 @@ Result GetDeviceUrmaIpAddrFromSources(const std::string &toolPath, const std::st
     return BM_ERROR;
 }
 
-Result GetPeer2PeerEid(int32_t dstPhyId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+Result GetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
 {
-    return UrmaTopoManager::GetInstance().GetPeer2PeerEid(dstPhyId, eidData);
+    return UrmaTopoManager::GetInstance().GetPeer2NetEid(protocol, eidData);
 }
 
-Result GetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
-{
-    return UrmaTopoManager::GetInstance().GetPeer2NetEid(eidData);
-}
-
-Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+Result GetDeviceUBoEIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
                            std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData)
 {
     std::string toolPath;
@@ -265,7 +260,7 @@ Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &
     } else {
         toolPath = "hccn_tool";
     }
-    return GetDeviceUrmaIpAddrFromSources(toolPath, "/etc/hccn.conf", phyDeviceId, rankId, addrType, addrData);
+    return GetDeviceUBoEIpAddrFromSources(toolPath, "/etc/hccn.conf", phyDeviceId, rankId, addrType, addrData);
 }
 
 } // namespace device

@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <ostream>
 #include <set>
 #include <shared_mutex>
 #include <string>
@@ -29,6 +30,7 @@
 #include "hcomm_api_wrapper.h"
 #include "hybm_transport_manager.h"
 #include "hybm_kernel_hepler.h"
+#include "urma_topo_def.h"
 
 struct HybmOneSideOpParam;
 
@@ -62,6 +64,58 @@ enum UrmaProtocol {
     UBC_TP = 5,
     UB_MEM = 6,
     UBOE = 7,
+    UB_RTP = 9,
+};
+
+inline std::ostream &operator<<(std::ostream &stream, UrmaProtocol protocol)
+{
+    switch (protocol) {
+        case UrmaProtocol::RESERVED:
+            return stream << "RESERVED";
+        case UrmaProtocol::HCCS:
+            return stream << "HCCS";
+        case UrmaProtocol::ROCE:
+            return stream << "ROCE";
+        case UrmaProtocol::PCIE:
+            return stream << "PCIE";
+        case UrmaProtocol::SIO:
+            return stream << "SIO";
+        case UrmaProtocol::UBC_CTP:
+            return stream << "UBC_CTP";
+        case UrmaProtocol::UBC_TP:
+            return stream << "UBC_TP";
+        case UrmaProtocol::UB_MEM:
+            return stream << "UB_MEM";
+        case UrmaProtocol::UBOE:
+            return stream << "UBOE";
+        case UrmaProtocol::UB_RTP:
+            return stream << "UB_RTP";
+        default:
+            return stream << "UNKNOWN";
+    }
+}
+
+// 机型 × 协议支持表：第一维 mainboardId，第二维协议；顺序即优先级
+// 选择规则：用户请求的协议族（DEVICE_URMA 命中 UBC_CTP/UB_RTP，DEVICE_UBOE 命中 UBOE）
+// 与行内协议取交集，按行序取第一个。
+constexpr uint32_t URMA_PROTOCOL_TABLE_MAX_PROTOCOLS = 2;
+
+struct UrmaProtocolTableEntry {
+    uint32_t mainboardId;
+    UrmaProtocol protocols[URMA_PROTOCOL_TABLE_MAX_PROTOCOLS];
+    uint32_t protocolCount;
+};
+
+constexpr UrmaProtocolTableEntry URMA_PROTOCOL_TABLE[] = {
+    {MAIN_BOARD_ID_POD, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_POD_2D, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_SERVER_TYPE1, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_SERVER_8PMESH, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_SERVER_8PMESH_UBOE, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_SERVER_8PMESH_NOSP, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_SERVER_8PMESH_NOSP_UBOE, {UBC_CTP, UBOE}, 2},
+    {MAIN_BOARD_ID_POD_FLEX, {UB_RTP}, 1},     // 950 SuperPod PC16
+    {MAIN_BOARD_ID_POD_FLEX_RTP, {UB_RTP}, 1}, // 950 SuperPod PC16
 };
 
 enum UrmaMemoryType : uint16_t {
@@ -365,6 +419,8 @@ private:
     uint32_t sdid_{0};
     uint32_t serverId_{0};
     uint32_t superPodId_{0};
+    uint32_t mainboardId_{0};
+    UrmaProtocol protocol_{UrmaProtocol::RESERVED};
     TransportOptions options_{};
     HcommApiWrapper hcommApi_;
     HcommEndpointHandle localEndpoint_{nullptr};

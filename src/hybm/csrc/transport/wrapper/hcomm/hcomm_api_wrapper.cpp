@@ -267,7 +267,9 @@ Result HcommApiWrapper::ImportMemory(HcommEndpointHandle endpoint, const uint8_t
         return BM_DL_FUNCTION_FAILED;
     }
     if (outMem.type == COMM_MEM_TYPE_INVALID) {
-        BM_LOG_ERROR("ImportMemory returned invalid memory type");
+        BM_LOG_ERROR("ImportMemory returned invalid memory type, endpoint: "
+                     << endpoint << " descLen: " << descLen << " addr: " << outMem.addr << " size: " << outMem.size
+                     << " type: " << outMem.type);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;

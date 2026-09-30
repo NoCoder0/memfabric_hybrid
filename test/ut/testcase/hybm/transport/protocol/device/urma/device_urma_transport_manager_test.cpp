@@ -29,7 +29,9 @@
 
 #define private   public
 #define protected public
+#include "hybm_gva_version.h"
 #include "urma_topo_helper.h"
+#include "urma_topo_json_parser.h"
 #include "device_urma_transport_manager.h"
 #include "dl_hccl_api.h"
 #include "dl_hcomm_api.h"
@@ -191,6 +193,7 @@ struct DlHcommApiFnGuard {
 
 struct DlAclApiFnGuard {
     aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
+    rtGetLogicDevIdByUserDevIdFunc oldRtGetLogicDevId{DlAclApi::pRtGetLogicDevIdByUserDevId};
     aclrtCreateNotifyFunc oldCreateNotify{DlAclApi::pAclrtCreateNotify};
     aclrtGetNotifyIdFunc oldGetNotifyId{DlAclApi::pAclrtGetNotifyId};
     aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
@@ -211,6 +214,7 @@ struct DlAclApiFnGuard {
     ~DlAclApiFnGuard()
     {
         DlAclApi::pAclrtGetDevice = oldGetDevice;
+        DlAclApi::pRtGetLogicDevIdByUserDevId = oldRtGetLogicDevId;
         DlAclApi::pAclrtCreateNotify = oldCreateNotify;
         DlAclApi::pAclrtGetNotifyId = oldGetNotifyId;
         DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
@@ -274,7 +278,7 @@ int32_t MockHcommEndpointCreateOpenDevice(const EndpointDesc *endpoint, Endpoint
     EXPECT_NE(endpoint, nullptr);
     EXPECT_NE(endpointHandle, nullptr);
     EXPECT_EQ(endpoint->protocol, COMM_PROTOCOL_UBC_CTP);
-    EXPECT_EQ(endpoint->commAddr.type, COMM_ADDR_TYPE_IP_V6);
+    EXPECT_EQ(endpoint->commAddr.type, COMM_ADDR_TYPE_EID);
     EXPECT_EQ(endpoint->loc.locType, ENDPOINT_LOC_TYPE_DEVICE);
     EXPECT_EQ(endpoint->loc.device.devPhyId, 2U);
     EXPECT_EQ(endpoint->loc.device.superDevId, 3U);
@@ -786,15 +790,16 @@ std::string PrepareKernelJson()
     return base;
 }
 
-ock::mf::Result MockGetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+ock::mf::Result MockGetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
 {
+    (void)protocol;
     for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
         eidData[i] = static_cast<uint8_t>(0xE0U + i);
     }
     return BM_OK;
 }
 
-ock::mf::Result MockGetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+ock::mf::Result MockGetDeviceUBoEIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
                                         std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData)
 {
     EXPECT_EQ(phyDeviceId, 2U);
@@ -805,6 +810,80 @@ ock::mf::Result MockGetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, C
     addrData[1U] = 10U;
     addrData[2U] = 21U;
     addrData[3U] = 2U;
+    return BM_OK;
+}
+
+// OpenDevice 全流程需要 UrmaTopoManager::Initialize 解析 rootinfo 与 950 topo 文件。
+// 无真实 Ascend driver 的环境通过 mock ReadFileToString 提供最小合法 JSON，保证 UT 不依赖真机。
+const std::string kFakeRootInfoJson = R"({
+    "topo_file_path": "/usr/local/Ascend/driver/topo/950/atlas_950_1.json",
+    "version": "2.0",
+    "rank_count": 1,
+    "rank_list": [
+        {
+            "device_id": 2,
+            "local_id": 34,
+            "level_list": [
+                {
+                    "net_layer": 1,
+                    "net_instance_id": "superpod_5",
+                    "net_type": "CLOS",
+                    "net_attr": "",
+                    "rank_addr_list": [
+                        {
+                            "addr_type": "EID",
+                            "addr": "00000000003f020000100000df12eb01",
+                            "ports": ["0/0", "0/1", "0/2", "0/3", "0/4", "0/5"],
+                            "plane_id": "plane_pg_0"
+                        }
+                    ]
+                }
+            ]
+        }
+    ]
+})";
+
+const std::string kFakeTopoJson = R"({
+    "version": "1.0",
+    "hardwareType": "atlas_950",
+    "peer_count": 1,
+    "edge_count": 1,
+    "peer_list": [{"local_id": 34}],
+    "edge_list": [
+        {
+            "net_layer": 1,
+            "link_type": "PEER2NET",
+            "topo_type": "CLOS",
+            "topo_instance_id": 0,
+            "topo_attr": "",
+            "local_a": 34,
+            "local_a_ports": ["0/0", "0/1", "0/2", "0/3", "0/4", "0/5"],
+            "local_b": 36,
+            "local_b_ports": ["0/0"],
+            "protocols": ["UB_CTP", "UB_MEM"],
+            "position": "DEVICE"
+        }
+    ]
+})";
+
+ock::mf::Result MockReadFileToString(const std::string &path, std::string &buf)
+{
+    if (path == "/etc/hccl_rootinfo.json") {
+        buf = kFakeRootInfoJson;
+        return BM_OK;
+    }
+    if (path == "/usr/local/Ascend/driver/topo/950/atlas_950_1.json") {
+        buf = kFakeTopoJson;
+        return BM_OK;
+    }
+    return BM_ERROR;
+}
+
+int32_t MockRtGetLogicDevIdByUserDevId(const int32_t userDevId, int32_t *const logicDevId)
+{
+    EXPECT_EQ(userDevId, 0);
+    EXPECT_NE(logicDevId, nullptr);
+    *logicDevId = 1;
     return BM_OK;
 }
 
@@ -834,6 +913,12 @@ int32_t MockRtGetDeviceInfo(uint32_t deviceId, int32_t moduleType, int32_t infoT
         *val = 4ULL;
     } else if (infoType == INFO_TYPE_SUPER_POD_ID) {
         *val = 5ULL;
+    } else if (infoType == INFO_TYPE_MAINBOARD_ID) {
+        *val = MAIN_BOARD_ID_POD;
+    } else if (infoType == INFO_TYPE_CHASSI_ID) {
+        *val = 0ULL;
+    } else if (infoType == INFO_TYPE_SPOD_TYPE) {
+        *val = 0ULL;
     } else {
         return BM_INVALID_PARAM;
     }
@@ -1075,6 +1160,7 @@ void InstallOpenDeviceMocks()
     DlHcommApi::gHcommMemUnreg = MockHcommMemUnregOpenDevice;
     DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
     DlAclApi::pAclrtGetDevice = MockAclrtGetDevice;
+    DlAclApi::pRtGetLogicDevIdByUserDevId = MockRtGetLogicDevIdByUserDevId;
     DlAclApi::pAclrtGetPhyDevIdByLogicDevId = MockAclrtGetPhyDevIdByLogicDevId;
     DlAclApi::pRtGetDeviceInfo = MockRtGetDeviceInfo;
     DlAclApi::pAclrtCreateNotify = MockAclrtCreateNotify;
@@ -1086,6 +1172,7 @@ void InstallOpenDeviceMocks()
     DlAclApi::pAclrtMemcpy = MockAclrtMemcpyOk;
     DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFile;
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+    MOCKER(&ock::mf::transport::device::ReadFileToString).stubs().will(invoke(MockReadFileToString));
 }
 
 void InstallKernelLaunchMocks()
@@ -1591,7 +1678,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
     InstallOpenDeviceMocks();
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDeviceUboe;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetDeviceUrmaIpAddr).stubs().will(invoke(MockGetDeviceUrmaIpAddr));
+    MOCKER(&ock::mf::transport::device::GetDeviceUBoEIpAddr).stubs().will(invoke(MockGetDeviceUBoEIpAddr));
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -1621,8 +1708,8 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
     TransportOptions options{};
     options.rankId = 0;
     options.rankCount = 2;
-    options.protocol = 0; // 无 DEVICE_URMA/DEVICE_UBOE 位 -> GetEndpointProtocolFromOptions 返回 RESERVED
-    EXPECT_EQ(manager.OpenDevice(options), BM_INVALID_PARAM);
+    options.protocol = 0U; // No requested protocol matches the board's supported protocols.
+    EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
     EXPECT_FALSE(manager.opened_);
     EXPECT_EQ(manager.localEndpoint_, nullptr);
 }
@@ -4066,7 +4153,7 @@ TEST(DeviceUrmaEidReaderTest, ValidToolWinsOverDifferentConfIp)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4085,7 +4172,7 @@ TEST(DeviceUrmaEidReaderTest, NonZeroToolFallsBack)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4104,7 +4191,7 @@ TEST(DeviceUrmaEidReaderTest, MissingIpaddrFallsBack)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4123,7 +4210,7 @@ TEST(DeviceUrmaEidReaderTest, InvalidToolIpFallsBack)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4142,7 +4229,7 @@ TEST(DeviceUrmaEidReaderTest, ValidOutputPlusNonZeroExitFallsBack)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4162,7 +4249,7 @@ TEST(DeviceUrmaEidReaderTest, ExactKeyArbitraryOrder)
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
     // Must match address_1, NOT address_10
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4182,7 +4269,7 @@ TEST(DeviceUrmaEidReaderTest, BothSourcesFail)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_NE(ret, BM_OK);
 }
 
@@ -4197,7 +4284,7 @@ TEST(DeviceUrmaEidReaderTest, NonexistentToolFallsBackToConfig)
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
     const auto ret =
-        GetDeviceUrmaIpAddrFromSources(tmp.path() + "/nonexistent_tool", confPath, 1, 0, addrType, addrData);
+        GetDeviceUBoEIpAddrFromSources(tmp.path() + "/nonexistent_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4216,7 +4303,7 @@ TEST(DeviceUrmaEidReaderTest, ConfigTrimmedExactKey)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4235,7 +4322,7 @@ TEST(DeviceUrmaEidReaderTest, ConfigIpv6Parse)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V6);
     // 2001:0db8::1 in network byte order
@@ -4257,7 +4344,7 @@ TEST(DeviceUrmaEidReaderTest, ToolReturns32HexIp)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V6);
     // 2001:0db8::1 in network byte order (32 hex: 20010db8000000000000000000000001)
@@ -4280,7 +4367,7 @@ TEST(DeviceUrmaEidReaderTest, InvalidSigned32CharRejected)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[3], 55);
@@ -4297,7 +4384,7 @@ TEST(DeviceUrmaEidReaderTest, InvalidNonhex32CharRejected)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[3], 55);
@@ -4315,7 +4402,7 @@ TEST(DeviceUrmaEidReaderTest, InvalidToolIpAndInvalidConfigIpFails)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_NE(ret, BM_OK);
 }
 
@@ -4328,7 +4415,7 @@ TEST(DeviceUrmaEidReaderTest, BothSourcesFailConfigMissing)
     const std::string confPath = tmp.path() + "/nonexistent/hccn.conf";
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_NE(ret, BM_OK);
 }
 
@@ -4345,7 +4432,7 @@ TEST(DeviceUrmaEidReaderTest, ShellSafeToolPath)
 
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
-    const auto ret = GetDeviceUrmaIpAddrFromSources(toolDir + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(toolDir + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);
@@ -4372,7 +4459,7 @@ TEST(DeviceUrmaEidReaderTest, LegacyEnvVarDoesNotAffectResult)
     CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
     std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrData{};
     // Internal seam does not read env var; result purely from injected paths
-    const auto ret = GetDeviceUrmaIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
+    const auto ret = GetDeviceUBoEIpAddrFromSources(tmp.path() + "/hccn_tool", confPath, 1, 0, addrType, addrData);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addrType, COMM_ADDR_TYPE_IP_V4);
     EXPECT_EQ(addrData[0], 10);

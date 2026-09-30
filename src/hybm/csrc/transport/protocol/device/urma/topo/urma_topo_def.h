@@ -15,7 +15,9 @@
 
 #include "hybm_define.h"
 #include "dl_hal_api_def.h"
+#include "dl_hcomm_api.h"
 
+#include <array>
 #include <string>
 #include <vector>
 
@@ -96,6 +98,16 @@ struct RootInfo {
     std::string topoFilePath;
     int rankCount;
     std::vector<Rank> rankList;
+};
+
+struct Peer2NetProtocolEntry {
+    CommProtocol protocol;
+    const char *topoProtocol;
+};
+
+constexpr Peer2NetProtocolEntry PEER2NET_PROTOCOL_TABLE[] = {
+    {COMM_PROTOCOL_UBC_CTP, "UB_CTP"},
+    {COMM_PROTOCOL_UB_RTP, "UB_RTP"},
 };
 
 struct Edge {

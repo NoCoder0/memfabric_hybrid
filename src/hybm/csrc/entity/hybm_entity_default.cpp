@@ -985,15 +985,14 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
         return BM_INVALID_PARAM;
     }
 
-    if ((options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0 &&
-        ((options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0 ||
-         (options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) != 0)) {
-        BM_LOG_ERROR("DEVICE_RDMA and DEVICE_URMA/DEVICE_UBOE cannot be enabled together");
-        return BM_INVALID_PARAM;
-    }
-    if ((options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0 &&
-        (options->bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) != 0) {
-        BM_LOG_ERROR("DEVICE_URMA and DEVICE_UBOE cannot be enabled together");
+    constexpr uint32_t deviceNetworkProtocolMask =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+    const uint32_t enabledDeviceNetworkProtocols = options->bmDataOpType & deviceNetworkProtocolMask;
+    // 只允许启用一种协议
+    if (enabledDeviceNetworkProtocols != 0U &&
+        (enabledDeviceNetworkProtocols & (enabledDeviceNetworkProtocols - 1U)) != 0U) {
+        BM_LOG_ERROR("device network protocols conflict: rankId=" << options->rankId
+                                                                  << " bmDataOpType=" << options->bmDataOpType);
         return BM_INVALID_PARAM;
     }
 

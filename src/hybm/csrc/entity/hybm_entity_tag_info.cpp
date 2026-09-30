@@ -68,9 +68,8 @@ Result HybmEntityTagInfo::AddOneTagOpInfo(const std::string &tagOpInfo)
     auto it = str2OpTypeMap.find(opTypeStr);
     if (it == str2OpTypeMap.end()) {
         BM_LOG_ERROR("Failed to check opType:"
-                     << opTypeStr
-                     << " should be in (DEVICE_SDMA, DEVICE_RDMA, DEVICE_URMA, DEVICE_UBOE, HOST_RDMA, HOST_TCP, "
-                     << "HOST_URMA, HOST_SHM, AIV_SDMA, DEVICE_MTE)");
+                     << opTypeStr << " should be in (DEVICE_SDMA, DEVICE_RDMA, DEVICE_URMA, DEVICE_UBOE, HOST_RDMA, "
+                     << "HOST_TCP, HOST_URMA, HOST_SHM, AIV_SDMA, DEVICE_MTE)");
         return BM_INVALID_PARAM;
     }
     auto opType = GetTag2TagOpType(tag1, tag2);

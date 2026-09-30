@@ -25,17 +25,16 @@ namespace mf {
 namespace transport {
 namespace device {
 
-Result GetPeer2PeerEid(int32_t dstPhyId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
+// Get the local peer2net EID with the most total ports among addresses sharing a port with a matching topo edge.
+Result GetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
 
-Result GetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
-
-Result GetDeviceUrmaIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+Result GetDeviceUBoEIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
                            std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
 
 #ifdef UT_ENABLED
 // Internal seam for UT: inject mock hccn_tool path and temp /etc/hccn.conf.
 // Production wrapper calls with default paths; tests inject temp paths.
-Result GetDeviceUrmaIpAddrFromSources(const std::string &toolPath, const std::string &configPath, uint32_t phyDeviceId,
+Result GetDeviceUBoEIpAddrFromSources(const std::string &toolPath, const std::string &configPath, uint32_t phyDeviceId,
                                       uint32_t rankId, CommAddrType &addrType,
                                       std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
 #endif

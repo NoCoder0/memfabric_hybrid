@@ -552,6 +552,10 @@ namespace {
 constexpr int32_t MOCK_USER_DEVICE_ID = 0;
 constexpr int32_t MOCK_LOGIC_DEVICE_ID = 1;
 constexpr int32_t MOCK_PHY_DEVICE_ID = 1;
+constexpr int32_t kLocalDeviceId = 0;
+constexpr int32_t kMeshLayer = 0;
+constexpr int32_t kCtpLayer = 1;
+constexpr int32_t kRtpLayer = 2;
 
 int32_t MockGetLogicIdForVisibleDevice(int32_t userDeviceId, int32_t *logicDeviceId)
 {
@@ -573,6 +577,42 @@ int32_t MockGetDeviceInfoForVisibleDevice(uint32_t deviceId, int32_t, int32_t in
     *value = (infoType == INFO_TYPE_MAINBOARD_ID) ? MAIN_BOARD_ID_POD : 0;
     return BM_OK;
 }
+
+Rank &AddLocalRank(UrmaTopoManager &mgr)
+{
+    mgr.phyDeviceId_ = kLocalDeviceId;
+    mgr.localId_ = kLocalDeviceId;
+    Rank rank{};
+    rank.deviceId = kLocalDeviceId;
+    rank.localId = kLocalDeviceId;
+    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    return mgr.rootInfo_.rankList.back();
+}
+
+void AddEidAddr(Rank &rank, int32_t netLayer, const std::string &eid, const std::vector<std::string> &ports)
+{
+    Level level{};
+    level.netLayer = netLayer;
+    RankAddr addr{};
+    addr.addrType = ADDR_TYPE_EID;
+    addr.addr = eid;
+    addr.ports = ports;
+    level.rankAddrList.push_back(std::move(addr));
+    rank.levelList.push_back(std::move(level));
+}
+
+void AddPeer2NetEdge(UrmaTopoManager &mgr, int32_t netLayer, const std::string &protocol,
+                     const std::vector<std::string> &ports)
+{
+    Edge edge{};
+    edge.netLayer = netLayer;
+    edge.linkType = "PEER2NET";
+    edge.localA = kLocalDeviceId;
+    edge.protocols = {protocol};
+    edge.position = "DEVICE";
+    edge.localAPorts = ports;
+    mgr.topoInfo_.edgeList.push_back(std::move(edge));
+}
 } // namespace
 
 TEST_F(UrmaTopoManagerTest, SetDeviceBaseInfoUsesUserDeviceId)
@@ -583,6 +623,7 @@ TEST_F(UrmaTopoManagerTest, SetDeviceBaseInfoUsesUserDeviceId)
 
     auto &mgr = UrmaTopoManager::GetInstance();
     mgr.userDeviceId_ = MOCK_USER_DEVICE_ID;
+    ASSERT_EQ(mgr.SetDeviceIdentity(), BM_OK);
     EXPECT_EQ(mgr.SetDeviceBaseInfo(), BM_OK);
     EXPECT_EQ(mgr.logicDeviceId_, MOCK_LOGIC_DEVICE_ID);
     EXPECT_EQ(mgr.phyDeviceId_, MOCK_PHY_DEVICE_ID);
@@ -670,156 +711,73 @@ TEST_F(UrmaTopoManagerTest, ParseEdgeList_KeyMissing)
     EXPECT_EQ(edges.size(), 0U);
 }
 
-// ============================ Manager: BuildPeer2PeerMap ============================
+// ============================ Manager: GetPeer2NetEid ============================
 
-TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_BasicMapping)
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_SelectsLargestAddressWithOverlappingPorts)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
-    mgr.localId_ = 0;
-    mgr.phyDeviceId_ = 0;
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl;
-    lvl.netLayer = 1;
-    lvl.netType = "CLOS";
-    RankAddr addr;
-    addr.addrType = "EID";
-    addr.addr = "e0e1e2e3e4e5e6e7e8e9eaebecedeeef";
-    addr.ports = {"0/0", "0/1"};
-    lvl.rankAddrList.push_back(std::move(addr));
-    rank.levelList.push_back(std::move(lvl));
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
-    Edge edge;
-    edge.localA = 0;
-    edge.localB = 1;
-    edge.localAPorts = {"0/0"};
-    edge.localBPorts = {"1/0"};
-    mgr.topoInfo_.edgeList.push_back(std::move(edge));
-    EXPECT_EQ(mgr.BuildPeer2PeerMap(), BM_OK);
-    EXPECT_EQ(mgr.peer2PeerMap_.size(), 1U);
-    auto it = mgr.peer2PeerMap_.find(1);
-    ASSERT_NE(it, mgr.peer2PeerMap_.end());
-    EXPECT_EQ(it->second[0], 0xe0);
-    EXPECT_EQ(it->second[1], 0xe1);
-    EXPECT_EQ(it->second[15], 0xef);
-}
-
-TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_EmptyRankList)
-{
-    auto &mgr = UrmaTopoManager::GetInstance();
-    mgr.phyDeviceId_ = 0;
-    EXPECT_NE(mgr.BuildPeer2PeerMap(), BM_OK);
-    EXPECT_EQ(mgr.peer2PeerMap_.size(), 0U);
-}
-
-TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_NoMatchingPort)
-{
-    auto &mgr = UrmaTopoManager::GetInstance();
-    mgr.localId_ = 0;
-    mgr.phyDeviceId_ = 0;
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl;
-    RankAddr addr;
-    addr.addrType = "EID";
-    addr.addr = "e0e1e2e3e4e5e6e7e8e9eaebecedeeef";
-    addr.ports = {"9/9"};
-    lvl.rankAddrList.push_back(std::move(addr));
-    rank.levelList.push_back(std::move(lvl));
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
-    Edge edge;
-    edge.localA = 0;
-    edge.localB = 1;
-    edge.localAPorts = {"0/0"};
-    mgr.topoInfo_.edgeList.push_back(std::move(edge));
-    EXPECT_EQ(mgr.BuildPeer2PeerMap(), BM_OK);
-    EXPECT_EQ(mgr.peer2PeerMap_.size(), 0U);
-}
-
-// ============================ Manager: GetPeer2PeerEid / GetPeer2NetEid ============================
-
-TEST_F(UrmaTopoManagerTest, GetPeer2PeerEid_Found)
-{
-    auto &mgr = UrmaTopoManager::GetInstance();
-    std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
-    eid[0] = 0xAB;
-    mgr.peer2PeerMap_[5] = eid;
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kMeshLayer, "11111111111111111111111111111111", {"1/1", "1/2", "1/3", "1/4", "1/5", "1/6"});
+    AddEidAddr(rank, kCtpLayer, "22222222222222222222222222222222", {"1/1", "1/2"});
+    AddEidAddr(rank, kCtpLayer, "33333333333333333333333333333333", {"1/2", "1/8", "1/9"});
+    AddEidAddr(rank, kCtpLayer, "44444444444444444444444444444444", {"1/3", "1/4", "1/5", "1/6", "1/7"});
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/1", "1/2"});
+    Edge ignored{};
+    ignored.netLayer = kCtpLayer;
+    ignored.linkType = "PEER2PEER";
+    ignored.localA = kLocalDeviceId;
+    ignored.protocols = {"UB_CTP"};
+    ignored.position = "DEVICE";
+    ignored.localAPorts = {"1/3"};
+    mgr.topoInfo_.edgeList.push_back(std::move(ignored));
+    Edge nonDevice = mgr.topoInfo_.edgeList.back();
+    nonDevice.linkType = "PEER2NET";
+    nonDevice.position = "SERVER";
+    mgr.topoInfo_.edgeList.push_back(std::move(nonDevice));
+    Edge wrongProtocol = mgr.topoInfo_.edgeList.back();
+    wrongProtocol.position = "DEVICE";
+    wrongProtocol.protocols = {"UB_RTP"};
+    mgr.topoInfo_.edgeList.push_back(std::move(wrongProtocol));
+    Edge wrongLocal = mgr.topoInfo_.edgeList.back();
+    wrongLocal.protocols = {"UB_CTP"};
+    wrongLocal.localA = kLocalDeviceId + 1;
+    mgr.topoInfo_.edgeList.push_back(std::move(wrongLocal));
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_EQ(mgr.GetPeer2PeerEid(5, out), BM_OK);
-    EXPECT_EQ(out[0], 0xAB);
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
+    std::array<uint8_t, COMM_ADDR_EID_LEN> expected{};
+    expected.fill(0x33U);
+    EXPECT_EQ(out, expected);
 }
 
-TEST_F(UrmaTopoManagerTest, GetPeer2PeerEid_NotFound)
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_MeshWithoutClosAddressFails)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kMeshLayer, "11111111111111111111111111111111", {"0/0"});
+    AddPeer2NetEdge(mgr, kMeshLayer, "UB_CTP", {"0/1"});
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/1"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_NE(mgr.GetPeer2PeerEid(999, out), BM_OK);
+    EXPECT_NE(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
 }
 
-TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_Found)
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_SeparatesCtpAndRtpLayers)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl;
-    lvl.netType = NET_TYPE_CLOS;
-    RankAddr addr;
-    addr.addrType = ADDR_TYPE_EID;
-    addr.addr = "0123456789abcdef0123456789abcdef";
-    lvl.rankAddrList.push_back(std::move(addr));
-    rank.levelList.push_back(std::move(lvl));
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
-    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_EQ(mgr.GetPeer2NetEid(out), BM_OK);
-    EXPECT_EQ(out[0], 0x01);
-    EXPECT_EQ(out[1], 0x23);
-    EXPECT_EQ(out[7], 0xef);
-}
-
-TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NoClosLayer)
-{
-    auto &mgr = UrmaTopoManager::GetInstance();
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl;
-    lvl.netType = "TOPO_FILE_DESC";
-    RankAddr addr;
-    addr.addrType = ADDR_TYPE_EID;
-    addr.addr = "0123456789abcdef0123456789abcdef";
-    lvl.rankAddrList.push_back(std::move(addr));
-    rank.levelList.push_back(std::move(lvl));
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
-    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
-}
-
-TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_EmptyRankList)
-{
-    auto &mgr = UrmaTopoManager::GetInstance();
-    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
-}
-
-TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NotEidType)
-{
-    auto &mgr = UrmaTopoManager::GetInstance();
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl;
-    lvl.netType = NET_TYPE_CLOS;
-    RankAddr addr;
-    addr.addrType = "IPV4";
-    addr.addr = "192.168.1.1";
-    lvl.rankAddrList.push_back(std::move(addr));
-    rank.levelList.push_back(std::move(lvl));
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
-    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kCtpLayer, "11111111111111111111111111111111", {"1/0"});
+    AddEidAddr(rank, kRtpLayer, "0000000000080a80001000000a0f6106", {"2/0"});
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
+    AddPeer2NetEdge(mgr, kRtpLayer, "UB_RTP", {"2/0"});
+    std::array<uint8_t, COMM_ADDR_EID_LEN> ctp{};
+    std::array<uint8_t, COMM_ADDR_EID_LEN> rtp{};
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, ctp), BM_OK);
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UB_RTP, rtp), BM_OK);
+    std::array<uint8_t, COMM_ADDR_EID_LEN> expectedCtp{};
+    expectedCtp.fill(0x11U);
+    const std::array<uint8_t, COMM_ADDR_EID_LEN> expectedRtp = {0x00U, 0x00U, 0x00U, 0x00U, 0x00U, 0x08U, 0x0AU, 0x80U,
+                                                                0x00U, 0x10U, 0x00U, 0x00U, 0x0AU, 0x0FU, 0x61U, 0x06U};
+    EXPECT_EQ(ctp, expectedCtp);
+    EXPECT_EQ(rtp, expectedRtp);
 }
 
 // ============================ Manager: ParsePeerList ============================
@@ -1126,67 +1084,68 @@ TEST_F(UrmaTopoManagerTest, ParseEdgeList_MalformedJson)
     EXPECT_NE(mgr.ParseEdgeList(json, edges), BM_OK);
 }
 
-TEST_F(UrmaTopoManagerTest, BuildPeer2PeerMap_MultiplePeers)
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_UnsupportedProtocol)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
-    mgr.localId_ = 0;
-    mgr.phyDeviceId_ = 0;
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl;
-    lvl.netType = "CLOS";
-    RankAddr addr;
-    addr.addrType = "EID";
-    addr.addr = "00112233445566778899aabbccddeeff";
-    addr.ports = {"0/0", "0/1", "0/2"};
-    lvl.rankAddrList.push_back(std::move(addr));
-    rank.levelList.push_back(std::move(lvl));
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
-    for (int i = 1; i <= 3; ++i) {
-        Edge edge;
-        edge.localA = 0;
-        edge.localB = i;
-        edge.localAPorts = {"0/" + std::to_string(i - 1)};
-        mgr.topoInfo_.edgeList.push_back(std::move(edge));
-    }
-    EXPECT_EQ(mgr.BuildPeer2PeerMap(), BM_OK);
-    EXPECT_EQ(mgr.peer2PeerMap_.size(), 3U);
-    EXPECT_NE(mgr.peer2PeerMap_.find(1), mgr.peer2PeerMap_.end());
-    EXPECT_NE(mgr.peer2PeerMap_.find(2), mgr.peer2PeerMap_.end());
-    EXPECT_NE(mgr.peer2PeerMap_.find(3), mgr.peer2PeerMap_.end());
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_TP, out), BM_NOT_SUPPORTED);
 }
 
-TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_MultipleLevels)
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NoLocalRankFails)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    Level lvl0;
-    lvl0.netType = "TOPO_FILE_DESC";
-    lvl0.rankAddrList.push_back({"EID", "deadbeef", {"0/0"}, "plane_0"});
-    rank.levelList.push_back(std::move(lvl0));
-    Level lvl1;
-    lvl1.netType = NET_TYPE_CLOS;
-    lvl1.rankAddrList.push_back({"EID", "0123456789abcdef0123456789abcdef", {"1/0"}, "plane_clos_0"});
-    rank.levelList.push_back(std::move(lvl1));
+    mgr.phyDeviceId_ = kLocalDeviceId;
+    mgr.localId_ = kLocalDeviceId;
+    Rank rank{};
+    rank.deviceId = kLocalDeviceId + 1;
     mgr.rootInfo_.rankList.push_back(std::move(rank));
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_EQ(mgr.GetPeer2NetEid(out), BM_OK);
-    EXPECT_EQ(out[0], 0x01);
-    EXPECT_EQ(out[7], 0xef);
+    EXPECT_NE(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
 }
 
-TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_EmptyLevelList)
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_EmptyPeer2NetPortsFail)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
-    Rank rank;
-    rank.deviceId = 0;
-    rank.localId = 0;
-    mgr.rootInfo_.rankList.push_back(std::move(rank));
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kCtpLayer, "11111111111111111111111111111111", {"1/0"});
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    EXPECT_NE(mgr.GetPeer2NetEid(out), BM_OK);
+    EXPECT_NE(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_InvalidLengthFails)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kCtpLayer, "1111111111111111111111111111111", {"1/0"});
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_INVALID_PARAM);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NonHexValueFails)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kCtpLayer, "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", {"1/0"});
+    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_INVALID_PARAM);
+}
+
+TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_RtpRejectsCtpEid)
+{
+    auto &mgr = UrmaTopoManager::GetInstance();
+    auto &rank = AddLocalRank(mgr);
+    AddEidAddr(rank, kRtpLayer, "11111111111111111111111111111111", {"2/0"});
+    AddPeer2NetEdge(mgr, kRtpLayer, "UB_RTP", {"2/0"});
+    std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
+    constexpr uint8_t kSentinel = 0xA5U;
+    out.fill(kSentinel);
+    const auto original = out;
+    EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UB_RTP, out), BM_INVALID_PARAM);
+    EXPECT_EQ(out, original);
 }
 
 TEST_F(UrmaTopoManagerTest, Uninitialize_ClearsAllState)
@@ -1194,7 +1153,6 @@ TEST_F(UrmaTopoManagerTest, Uninitialize_ClearsAllState)
     auto &mgr = UrmaTopoManager::GetInstance();
     mgr.phyDeviceId_ = 5;
     mgr.localId_ = 3;
-    mgr.peer2PeerMap_[1] = {};
     Rank r;
     r.deviceId = 1;
     mgr.rootInfo_.rankList.push_back(std::move(r));
@@ -1204,7 +1162,6 @@ TEST_F(UrmaTopoManagerTest, Uninitialize_ClearsAllState)
     mgr.Uninitialize();
     EXPECT_EQ(mgr.phyDeviceId_, -1);
     EXPECT_EQ(mgr.localId_, -1);
-    EXPECT_EQ(mgr.peer2PeerMap_.size(), 0U);
     EXPECT_EQ(mgr.rootInfo_.rankList.size(), 0U);
     EXPECT_EQ(mgr.topoInfo_.edgeList.size(), 0U);
 }
@@ -1447,33 +1404,6 @@ TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_EidListFail)
     EXPECT_EQ(GetUrmaEntityList(0, ueList), BM_OK);
     EXPECT_EQ(ueList.ueNum, 2U);
     EXPECT_EQ(ueList.ueList[0].eidNum, 0U);
-}
-
-TEST_F(UrmaTopoCommonMockTest, GetEidList_Success)
-{
-    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
-    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockDcmiGetEidList));
-    g_mockEidCnt = 1;
-    std::vector<dcmi_urma_eid_info> eidList;
-    EXPECT_EQ(GetEidList(0, eidList), BM_OK);
-    EXPECT_EQ(eidList.size(), 2U);
-    EXPECT_EQ(eidList[0].eid.raw[0], 0xAA);
-}
-
-TEST_F(UrmaTopoCommonMockTest, GetEidList_DevCntFail)
-{
-    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCntFail));
-    std::vector<dcmi_urma_eid_info> eidList;
-    EXPECT_NE(GetEidList(0, eidList), BM_OK);
-}
-
-TEST_F(UrmaTopoCommonMockTest, GetEidList_EidListFail)
-{
-    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
-    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockDcmiGetEidListFail));
-    std::vector<dcmi_urma_eid_info> eidList;
-    EXPECT_EQ(GetEidList(0, eidList), BM_OK);
-    EXPECT_EQ(eidList.size(), 0U);
 }
 
 TEST_F(UrmaTopoCommonMockTest, UBGetMaxEntityId_Basic)

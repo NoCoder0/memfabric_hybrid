@@ -253,28 +253,6 @@ Result GetUrmaEntityList(int32_t logicId, urmaEntityList &ueList)
     return BM_OK;
 }
 
-Result GetEidList(int32_t logicId, std::vector<dcmi_urma_eid_info> &eidList)
-{
-    unsigned int devCnt = 0;
-    auto ret = DlHalApi::DcmiGetUrmaDeviceCnt(logicId, &devCnt);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("GetEidList: DcmiGetUrmaDeviceCnt failed, logicId=" << logicId << " ret=" << ret);
-        return BM_ERROR;
-    }
-    for (unsigned int i = 0; i < devCnt; ++i) {
-        dcmi_urma_eid_info eidArray[MAX_EID_NUM];
-        int eidCnt = static_cast<int>(MAX_EID_NUM);
-        ret = DlHalApi::DcmiGetEidListByUrmaDevIndex(logicId, static_cast<int>(i), eidArray, &eidCnt);
-        if (ret != BM_OK) {
-            continue;
-        }
-        for (int j = 0; j < eidCnt; ++j) {
-            eidList.push_back(eidArray[j]);
-        }
-    }
-    return BM_OK;
-}
-
 Result ProcessLayerRoce(uint32_t phyId, Level &level)
 {
     return BM_ERROR;

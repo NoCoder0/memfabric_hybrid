@@ -20,7 +20,6 @@
 
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace ock {
@@ -50,18 +49,24 @@ public:
     Result Initialize(int32_t deviceId, uint32_t rankId);
     void Uninitialize();
 
-    Result GetPeer2PeerEid(int32_t dstPhyId, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
-    Result GetPeer2NetEid(std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
+    inline uint32_t GetMainboardId() const
+    {
+        return mainboardId_;
+    }
+
+    // Locate network layers using PEER2NET edges that support the requested protocol,
+    // then select the EID with the most total ports among addresses sharing a port with a matching edge.
+    Result GetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
 
 private:
     UrmaTopoManager() = default;
     ~UrmaTopoManager() = default;
 
     Result SetDeviceBaseInfo();
+    Result SetDeviceIdentity();
     Result BuildRootInfo();
     Result BuildRootInfoFromFile();
     Result BuildTopoInfo();
-    Result BuildPeer2PeerMap();
 
 private:
     int32_t userDeviceId_{-1};
@@ -69,11 +74,11 @@ private:
     int32_t phyDeviceId_{-1};
     uint32_t rankId_{0};
     uint32_t mainboardId_{0};
+    bool initialized_{false};
     int32_t localId_{-1};
     UrmaTopoProductPtr topoProductPtr_{nullptr};
     RootInfo rootInfo_{};
     TopoInfo topoInfo_{};
-    std::unordered_map<int32_t, std::array<uint8_t, COMM_ADDR_EID_LEN>> peer2PeerMap_;
 };
 
 } // namespace transport

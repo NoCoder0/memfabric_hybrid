@@ -141,6 +141,9 @@ CommProtocol ToHcommProtocol(UrmaProtocol protocol)
     if (protocol == UrmaProtocol::UBOE) {
         return COMM_PROTOCOL_UBOE;
     }
+    if (protocol == UrmaProtocol::UB_RTP) {
+        return COMM_PROTOCOL_UB_RTP;
+    }
     return COMM_PROTOCOL_RESERVED;
 }
 
@@ -274,15 +277,44 @@ Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, U
     return BM_OK;
 }
 
-UrmaProtocol GetEndpointProtocolFromOptions(uint32_t protocol)
+bool ProtocolMatchesRequestedBits(UrmaProtocol protocol, uint32_t protocolBits)
 {
-    if (protocol & HYBM_DOP_TYPE_DEVICE_UBOE) {
-        return UrmaProtocol::UBOE;
+    if (protocol == UrmaProtocol::UBC_CTP || protocol == UrmaProtocol::UB_RTP) {
+        return (protocolBits & HYBM_DOP_TYPE_DEVICE_URMA) != 0;
     }
-    if (protocol & HYBM_DOP_TYPE_DEVICE_URMA) {
-        return UrmaProtocol::UBC_CTP;
+    if (protocol == UrmaProtocol::UBOE) {
+        return (protocolBits & HYBM_DOP_TYPE_DEVICE_UBOE) != 0;
     }
-    return UrmaProtocol::RESERVED;
+    return false;
+}
+
+const UrmaProtocolTableEntry *FindUrmaProtocolTableEntry(uint32_t mainboardId)
+{
+    for (const auto &entry : URMA_PROTOCOL_TABLE) {
+        if (entry.mainboardId == mainboardId) {
+            return &entry;
+        }
+    }
+    return nullptr;
+}
+
+Result SelectUrmaProtocol(uint32_t mainboardId, uint32_t protocolBits, UrmaProtocol &protocol)
+{
+    const UrmaProtocolTableEntry *entry = FindUrmaProtocolTableEntry(mainboardId);
+    if (entry == nullptr) {
+        BM_LOG_ERROR("device_urma unsupported mainboardId, mainboardId=" << mainboardId
+                                                                         << " protocolBits=" << protocolBits);
+        return BM_NOT_SUPPORTED;
+    }
+    for (uint32_t i = 0; i < entry->protocolCount; ++i) {
+        if (ProtocolMatchesRequestedBits(entry->protocols[i], protocolBits)) {
+            protocol = entry->protocols[i];
+            return BM_OK;
+        }
+    }
+    BM_LOG_ERROR("device_urma no protocol matched, mainboardId=" << mainboardId << " protocolBits=" << protocolBits
+                                                                 << " rowProtocols=" << entry->protocolCount);
+    return BM_NOT_SUPPORTED;
 }
 
 std::string FormatEid(const std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
@@ -366,7 +398,22 @@ Result DeviceUrmaTransportManager::InitLocalDeviceInfoLocked(const TransportOpti
     BM_LOG_INFO("local device info: userId=" << userId << ", phyId=" << phyId << " sdid=" << sdid_
                                              << ", server_id=" << serverId_ << ", superpod id=" << superPodId_);
 
-    UrmaTopoManager::GetInstance().Initialize(userId, options_.rankId);
+    ret = UrmaTopoManager::GetInstance().Initialize(userId, options_.rankId);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma initialize topo failed, deviceId=" << userId << " rankId=" << options_.rankId
+                                                                     << " ret=" << ret);
+        return ret;
+    }
+    mainboardId_ = UrmaTopoManager::GetInstance().GetMainboardId();
+    ret = SelectUrmaProtocol(mainboardId_, options.protocol, protocol_);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma SelectUrmaProtocol failed, deviceId="
+                     << userId << " rankId=" << options_.rankId << " mainboardId=" << mainboardId_
+                     << " protocolBits=" << options.protocol << " ret=" << ret);
+        return ret;
+    }
+    BM_LOG_INFO("device_urma selected protocol=" << protocol_ << " mainboardId=" << mainboardId_
+                                                 << " deviceId=" << userId << " rankId=" << options_.rankId);
     return BM_OK;
 }
 
@@ -416,22 +463,25 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
     localDesc.serverIdx = serverId_;
     localDesc.superPodIdx = superPodId_;
 
-    if (protocol == UrmaProtocol::UBC_CTP) {
+    if (protocol == UrmaProtocol::UBC_CTP || protocol == UrmaProtocol::UB_RTP) {
         std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
-        const auto ret = GetPeer2NetEid(eidData);
+        const auto ret = GetPeer2NetEid(ToHcommProtocol(protocol), eidData);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma get peer2net EID failed, protocol=" << protocol << " phyDeviceId=" << phyDeviceId_
+                                                                          << " rankId=" << rankId_ << " ret=" << ret);
             return ret;
         }
-        localDesc.type = COMM_ADDR_TYPE_IP_V6;
+        localDesc.type = COMM_ADDR_TYPE_EID;
         std::memcpy(localDesc.raws, eidData.data(), COMM_ADDR_EID_LEN);
-        BM_LOG_INFO("device_urma local endpoint address protocol=UBC_CTP phyDeviceId="
-                    << phyDeviceId_ << " rankId=" << rankId_ << " eid=" << FormatEid(eidData));
+        BM_LOG_INFO("device_urma local endpoint address protocol=" << protocol << " phyDeviceId=" << phyDeviceId_
+                                                                   << " rankId=" << rankId_
+                                                                   << " eid=" << FormatEid(eidData));
         return BM_OK;
     }
     if (protocol == UrmaProtocol::UBOE) {
         CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
         std::array<uint8_t, sizeof(localDesc.raws)> addrData{};
-        const auto ret = GetDeviceUrmaIpAddr(phyDeviceId_, rankId_, addrType, addrData);
+        const auto ret = GetDeviceUBoEIpAddr(phyDeviceId_, rankId_, addrType, addrData);
         if (ret != BM_OK) {
             return ret;
         }
@@ -442,8 +492,8 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
                     << phyDeviceId_ << " rankId=" << rankId_ << " ip=" << FormatIpAddress(addrType, addrData.data()));
         return BM_OK;
     }
-    BM_LOG_ERROR("device_urma unexpected protocol=" << static_cast<int>(protocol) << " phyDeviceId=" << phyDeviceId_
-                                                    << " rankId=" << rankId_);
+    BM_LOG_ERROR("device_urma unexpected protocol=" << protocol << "(" << static_cast<int>(protocol)
+                                                    << ") phyDeviceId=" << phyDeviceId_ << " rankId=" << rankId_);
     return BM_INVALID_PARAM;
 }
 
@@ -453,9 +503,8 @@ Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const Ur
     HcommEndpointHandle endpoint = nullptr;
     auto ret = hcommApi_.CreateEndpoint(hcommDesc, endpoint);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma CreateEndpoint failed, protocol=" << static_cast<int>(localDesc.protocol)
-                                                                    << " phyDeviceId=" << phyDeviceId_
-                                                                    << " rankId=" << rankId_);
+        BM_LOG_ERROR("device_urma CreateEndpoint failed, protocol=" << localDesc.protocol << " phyDeviceId="
+                                                                    << phyDeviceId_ << " rankId=" << rankId_);
         return BM_MALLOC_FAILED;
     }
     localEndpoint_ = endpoint;
@@ -495,16 +544,15 @@ void DeviceUrmaTransportManager::RollbackOpenDeviceLocked()
 
 Result DeviceUrmaTransportManager::OpenEndpointResourcesLocked(const TransportOptions &options)
 {
-    const auto protocol = GetEndpointProtocolFromOptions(options.protocol);
-    if (protocol == UrmaProtocol::RESERVED) {
-        BM_LOG_ERROR("device_urma OpenDevice unsupported protocol bits: " << options.protocol
-                                                                          << ", rankId=" << rankId_);
+    if (protocol_ == UrmaProtocol::RESERVED) {
+        BM_LOG_ERROR("device_urma OpenDevice unsupported protocol bits: " << options.protocol << ", rankId=" << rankId_
+                                                                          << ", mainboardId=" << mainboardId_);
         return BM_INVALID_PARAM;
     }
-    BM_LOG_INFO("device_urma OpenDevice protocol=" << static_cast<int>(protocol) << ", rankId=" << rankId_
-                                                   << ", phyDeviceId=" << phyDeviceId_);
+    BM_LOG_INFO("device_urma OpenDevice protocol=" << protocol_ << ", rankId=" << rankId_ << ", phyDeviceId="
+                                                   << phyDeviceId_ << ", mainboardId=" << mainboardId_);
     UrmaEndpointDesc localDesc{};
-    auto ret = BuildLocalEndpointDescLocked(protocol, localDesc);
+    auto ret = BuildLocalEndpointDescLocked(protocol_, localDesc);
     if (ret != BM_OK) {
         return ret;
     }

@@ -97,7 +97,7 @@ static Result GetDeviceUrmaIpAddrFromFile(uint32_t phyDeviceId, uint32_t rankId,
 
 // Query NPU device IP via hccn_tool with 910B3-compatible syntax:
 //   hccn_tool -i <devId> -ip -g
-// This is different from the A5 syntax used in GetDeviceUrmaIpAddr.
+// This is different from the A5 syntax used in GetDeviceUBoEIpAddr.
 static Result GetDeviceIpViaHccnTool(uint32_t phyDeviceId, struct in_addr &addr)
 {
     // Find hccn_tool path
@@ -178,10 +178,10 @@ Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &des
 
     // Get NPU-side IP address for HCOMM endpoint creation.
     {
-        // 1) Try GetDeviceUrmaIpAddr (A5 hccn_tool syntax: -g -ip -i <dev> -d bond<dev>)
+        // 1) Try GetDeviceUBoEIpAddr (A5 hccn_tool syntax: -g -ip -i <dev> -d bond<dev>)
         CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
         std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrBytes{};
-        if (GetDeviceUrmaIpAddr(phyDeviceId_, rankId_, addrType, addrBytes) == BM_OK) {
+        if (GetDeviceUBoEIpAddr(phyDeviceId_, rankId_, addrType, addrBytes) == BM_OK) {
             desc.commAddr.type = addrType;
             std::memcpy(desc.commAddr.raws, addrBytes.data(), sizeof(desc.commAddr.raws));
             return BM_OK;
