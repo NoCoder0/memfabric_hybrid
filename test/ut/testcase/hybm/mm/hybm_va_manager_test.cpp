@@ -585,8 +585,8 @@ TEST_F(HybmVaManagerTest, GetLocalMemoryType_A5_DeviceAttr_ReturnsDevice)
     EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
 }
 
-// GetLocalMemoryType: on 910C+device_rdma, a pinned host attr (0x8) must be classified as HOST even when the VA
-// falls inside the HBM address range (A3 issue: NPU-pinned host memory misjudged as HBM broke RDMA registration)
+// GetLocalMemoryType: on 910C (any transport, incl. sdma), a pinned host attr (0x8) must be classified as HOST
+// even when the VA falls inside the HBM address range (A3 issue: NPU-pinned host memory misjudged as HBM)
 TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_PinnedHostAttrInHbmRange_ReturnsHost)
 {
     manager.Initialize(TEST_SOC_910);
@@ -595,11 +595,11 @@ TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_PinnedHostAttrInHbmRange_Retur
 
     hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
     const uint64_t pinnedHostVa = HYBM_HBM_START_ADDR + 0x2C0011F0000UL;
-    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType), BM_OK);
     EXPECT_EQ(memType, HYBM_MEM_TYPE_HOST);
 }
 
-// GetLocalMemoryType: on 910C+device_rdma, an HBM attr (0x10, same value as DV_MEM_LOCK_DEV) is classified as DEVICE
+// GetLocalMemoryType: on 910C, an HBM attr (0x10, same value as DV_MEM_LOCK_DEV) is classified as DEVICE
 TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_DeviceAttr_ReturnsDevice)
 {
     manager.Initialize(TEST_SOC_910);
@@ -608,38 +608,22 @@ TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_DeviceAttr_ReturnsDevice)
 
     hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
     const uint64_t hbmVa = HYBM_HBM_START_ADDR + TEST_OFFSET_ONE_MB;
-    EXPECT_EQ(manager.GetLocalMemoryType(hbmVa, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(manager.GetLocalMemoryType(hbmVa, memType), BM_OK);
     EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
 }
 
-// GetLocalMemoryType: on 910C+device_rdma, an unavailable driver query (old HAL without the exported symbol)
-// falls back to the address-range check, keeping the legacy behavior
+// GetLocalMemoryType: on 910C, an unavailable driver query (old HAL without the exported symbol) falls back
+// to the address-range check, keeping the legacy behavior
 TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_AttrUnavailable_FallbackToAddrRange)
 {
     manager.Initialize(TEST_SOC_910);
     MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttributeUnload));
 
     hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
-    EXPECT_EQ(manager.GetLocalMemoryType(HYBM_HBM_START_ADDR, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(manager.GetLocalMemoryType(HYBM_HBM_START_ADDR, memType), BM_OK);
     EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
-    EXPECT_EQ(manager.GetLocalMemoryType(TEST_LVA_BASE, memType, HYBM_DOP_TYPE_DEVICE_RDMA), BM_OK);
+    EXPECT_EQ(manager.GetLocalMemoryType(TEST_LVA_BASE, memType), BM_OK);
     EXPECT_EQ(memType, HYBM_MEM_TYPE_HOST);
-}
-
-// GetLocalMemoryType: on 910C, non-device_rdma transports (or no transport context) skip the driver query and
-// keep the address-range check; a pinned-host-attr VA inside the HBM range is still classified as DEVICE (legacy)
-TEST_F(HybmVaManagerTest, GetLocalMemoryType_910C_NonDeviceRdma_KeepsAddrRangeCheck)
-{
-    manager.Initialize(TEST_SOC_910);
-    g_mockAttrMemType = MOCK_PINNED_HOST_ATTR_MEM_TYPE;
-    MOCKER(&ock::mf::DlHalApi::DrvMemGetAttribute).stubs().will(invoke(MockDrvMemGetAttribute));
-
-    hybm_mem_type memType = HYBM_MEM_TYPE_BUTT;
-    const uint64_t pinnedHostVa = HYBM_HBM_START_ADDR + 0x2C0011F0000UL;
-    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType, HYBM_DOP_TYPE_DEVICE_URMA), BM_OK);
-    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
-    EXPECT_EQ(manager.GetLocalMemoryType(pinnedHostVa, memType), BM_OK);
-    EXPECT_EQ(memType, HYBM_MEM_TYPE_DEVICE);
 }
 
 // 测试37: AllocReserveGva - 零大小

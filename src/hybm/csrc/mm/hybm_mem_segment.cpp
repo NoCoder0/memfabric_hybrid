@@ -134,7 +134,7 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
 {
     uint64_t va = reinterpret_cast<uint64_t>(addr);
     hybm_mem_type memType;
-    auto ret = HybmVaManager::GetInstance().GetLocalMemoryType(va, memType, options_.dataOpType);
+    auto ret = HybmVaManager::GetInstance().GetLocalMemoryType(va, memType);
     if (ret != BM_OK) {
         return ret;
     }

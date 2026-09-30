@@ -336,9 +336,7 @@ public:
     // 返回地址类型掩码（可多 bit 组合），用于 bitmask 方向校验
     uint8_t ClassifyAddressMask(const uint64_t va);
     void ClassifyAddressMask(uint64_t srcVa, uint64_t destVa, uint8_t &srcMask, uint8_t &destMask);
-    // dataOpType is the caller's transport type bitmask; 0 means no transport context (address-range check only).
-    // On 910C the driver attribute query is enabled only for the device_rdma transport.
-    Result GetLocalMemoryType(uint64_t va, hybm_mem_type &memType, uint32_t dataOpType = 0U) const noexcept;
+    Result GetLocalMemoryType(uint64_t va, hybm_mem_type &memType) const noexcept;
 
     // =============ReservedGvaInfo Management==============================
     ReservedGvaInfo AllocReserveGva(const GvaReserveOptions &options);
