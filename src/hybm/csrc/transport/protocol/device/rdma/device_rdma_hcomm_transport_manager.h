@@ -6,6 +6,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -56,6 +57,13 @@ inline const HcommKeyMeta &HcommKeyMetaAt(const TransportMemoryKey &key)
 {
     return *reinterpret_cast<const HcommKeyMeta *>(&key.keys[TRANS_KEY_DEV_SLOT2]);
 }
+// Guarantee the payload is large enough for the slot-2 metadata (HcommKeyMetaAt reads at TRANS_KEY_DEV_SLOT2).
+inline void EnsureHcommKeyMeta(TransportMemoryKey &key)
+{
+    if (key.keys.size() < TRANS_KEY_DEV_SLOT2 + KEY_SIZE) {
+        key.ResizeWords(TRANS_KEY_DEV_SLOT2 + KEY_SIZE);
+    }
+}
 
 // Slot 3: flag descriptor data
 constexpr uint32_t HCOMM_KEY_FLAG_SLOT = TRANS_KEY_DEV_SLOT3;
@@ -77,8 +85,8 @@ struct RdmaHcommPrivateData {
     uint32_t sdid{0};
     uint32_t listenPort{0}; // HCOMM endpoint listen port for channel creation
 };
-static_assert(sizeof(RdmaHcommPrivateData) <= sizeof(TransportPrivateData{}.key.keys),
-              "RdmaHcommPrivateData must fit in TransportPrivateData.key.keys");
+static_assert(std::is_trivially_copyable<RdmaHcommPrivateData>::value,
+              "RdmaHcommPrivateData must be trivially copyable for byte serialization");
 
 struct RemoteRankState {
     ChannelHandle channel{0};

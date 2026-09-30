@@ -564,7 +564,16 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
         return BM_DL_FUNCTION_FAILED;
     }
 
-    std::memcpy(key.keys, memDesc, (descLen <= sizeof(key.keys)) ? descLen : sizeof(key.keys));
+    // HCOMM mem descriptor lives in slots [0, TRANS_KEY_DEV_SLOT2); slot 2 holds metadata; slot 3+ holds flag data.
+    constexpr uint32_t maxDescBytes = TRANS_KEY_DEV_SLOT2 * sizeof(uint64_t);
+    if (descLen > maxDescBytes) {
+        BM_LOG_ERROR("HcommMemExport descriptor too large, addr: " << std::hex << addr << " descLen: " << descLen
+                                                                   << " max: " << maxDescBytes);
+        return BM_ERROR;
+    }
+    const size_t flagWords = (localFlagExportLen_ + sizeof(uint64_t) - 1U) / sizeof(uint64_t);
+    key.ResizeWords(TRANS_KEY_DEV_SLOT3 + flagWords);
+    std::memcpy(key.ByteData(), memDesc, descLen);
     // Store metadata in slot 2 via HcommKeyMeta struct (device_urma-compatible pattern)
     auto &meta = HcommKeyMetaAt(key);
     meta.addr = it->second.addr;
@@ -580,18 +589,15 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
                                                     << " descSize=" << localFlagExportDesc_.size());
     if (localFlagHandle_ != nullptr) {
         const uint32_t flagSlot = HCOMM_KEY_FLAG_SLOT;
-        const uint32_t maxFlagBytes = (sizeof(key.keys) / sizeof(key.keys[0]) - HCOMM_KEY_FLAG_SLOT) * sizeof(uint64_t);
         meta.flagLen = static_cast<uint64_t>(localFlagExportLen_);
-        BM_LOG_DEBUG("QueryMemoryKey flagExportLen=" << localFlagExportLen_
-                                                     << " descSize=" << localFlagExportDesc_.size()
-                                                     << " maxFlagBytes=" << maxFlagBytes);
-        if (localFlagExportLen_ > 0 && !localFlagExportDesc_.empty() && localFlagExportLen_ <= maxFlagBytes) {
+        BM_LOG_DEBUG("QueryMemoryKey flagExportLen=" << localFlagExportLen_ << " descSize="
+                                                     << localFlagExportDesc_.size() << " flagWords=" << flagWords);
+        if (localFlagExportLen_ > 0 && !localFlagExportDesc_.empty()) {
             std::memcpy(&key.keys[flagSlot], localFlagExportDesc_.data(), localFlagExportLen_);
             BM_LOG_DEBUG("QueryMemoryKey flag data copied, len=" << localFlagExportLen_);
         } else {
             BM_LOG_DEBUG("QueryMemoryKey flag memcpy skipped: len=" << localFlagExportLen_
-                                                                    << " empty=" << localFlagExportDesc_.empty()
-                                                                    << " maxBytes=" << maxFlagBytes);
+                                                                    << " empty=" << localFlagExportDesc_.empty());
         }
     } else {
         meta.flagLen = 0;
@@ -605,6 +611,7 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
 void DeviceRdmaHcommTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
     if (addr != nullptr) {
+        EnsureHcommKeyMeta(key);
         auto &meta = HcommKeyMetaAt(key);
         meta.addr = reinterpret_cast<uint64_t>(addr);
         // gvaBase shares its origin with addr: QueryMemoryKey derives it from the reverse HVA lookup (the owner GVA
@@ -637,7 +644,11 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
         }
 
         RdmaHcommPrivateData peerData{};
-        std::memcpy(&peerData, item.second.privateData.key.keys, sizeof(peerData));
+        if (!ReadStructFromKey(item.second.privateData.key, peerData)) {
+            BM_LOG_ERROR("invalid private data size from peer: " << peerRank << " bytes: "
+                                                                 << item.second.privateData.key.ByteSize());
+            return BM_INVALID_PARAM;
+        }
         if (peerData.magic != RDMA_HCOMM_PRIVATE_DATA_MAGIC || peerData.version != RDMA_HCOMM_PRIVATE_DATA_VERSION) {
             BM_LOG_ERROR("invalid private data from peer: " << peerRank);
             return BM_INVALID_PARAM;
@@ -780,19 +791,21 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
         return BM_OK;
     }
     for (const auto &key : memKeys) {
-        // Read metadata from slot 2 via HcommKeyMeta struct; fallback to other slots if empty
+        if (key.keys.size() < TRANS_KEY_DEV_SLOT2 + KEY_SIZE) {
+            BM_LOG_DEBUG("ImportPeerMems skip rank=" << peerRank << " key too small: " << key.keys.size());
+            continue;
+        }
+        // Read metadata from slot 2 via HcommKeyMeta struct; fall back to the legacy slot index if empty
         const auto &meta = HcommKeyMetaAt(key);
         uint64_t peerAddr = meta.addr;
         uint64_t peerSize = meta.size;
         if (peerAddr == 0 || peerSize == 0) {
-            peerAddr = key.keys[HCOMM_KEY_LEGACY_ADDR_IDX];
-            peerSize = key.keys[HCOMM_KEY_LEGACY_SIZE_IDX];
+            if (HCOMM_KEY_LEGACY_ADDR_IDX < key.keys.size() && HCOMM_KEY_LEGACY_SIZE_IDX < key.keys.size()) {
+                peerAddr = key.keys[HCOMM_KEY_LEGACY_ADDR_IDX];
+                peerSize = key.keys[HCOMM_KEY_LEGACY_SIZE_IDX];
+            }
             if (peerAddr == 0 || peerSize == 0) {
-                peerAddr = key.keys[HCOMM_KEY_HOST_ADDR_IDX];
-                peerSize = key.keys[HCOMM_KEY_HOST_SIZE_IDX];
-                if (peerAddr == 0 || peerSize == 0) {
-                    continue;
-                }
+                continue;
             }
         }
         const uint64_t descLen = meta.descLen;
@@ -805,8 +818,13 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
             BM_LOG_DEBUG("ImportPeerMems skip rank=" << peerRank << " (no valid HCOMM descriptor in memKeys)");
             continue;
         }
+        if (descLen > key.ByteSize()) {
+            BM_LOG_ERROR("ImportPeerMems rank=" << peerRank << " descLen: " << descLen
+                                                << " exceeds key bytes: " << key.ByteSize());
+            return BM_INVALID_PARAM;
+        }
 
-        void *memDesc = reinterpret_cast<void *>(const_cast<uint64_t *>(key.keys));
+        const void *memDesc = key.ByteData();
         BM_LOG_DEBUG("ImportPeerMems descLen=" << descLen << " meta={addr=0x" << std::hex << meta.addr << " size=0x"
                                                << meta.size << " descLen=" << std::dec << meta.descLen << " gvaBase=0x"
                                                << std::hex << meta.gvaBase << std::dec << " flagLen=" << meta.flagLen
@@ -836,7 +854,7 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
                                                        << state.peerDvaSize << std::dec);
 
         // Import flag descriptor from slot 3+ (if present)
-        if (flagLen > 0 && flagLen <= (sizeof(TransportMemoryKey{}.keys) - HCOMM_KEY_FLAG_SLOT * sizeof(uint64_t))) {
+        if (flagLen > 0 && flagLen <= (key.ByteSize() - HCOMM_KEY_FLAG_SLOT * sizeof(uint64_t))) {
             const void *flagDesc = reinterpret_cast<const void *>(&key.keys[HCOMM_KEY_FLAG_SLOT]);
             HcommCommMem flagOutMem{};
             auto flagRet =
@@ -932,7 +950,7 @@ const TransportPrivateData DeviceRdmaHcommTransportManager::GetPrivateData() con
     priv.sdid = sdid_;
     // listenPort defaults to 0; channel creation works via peer endpoint, not port.
 
-    std::memcpy(data.key.keys, &priv, sizeof(priv));
+    WriteStructToKey(priv, data.key);
     return data;
 }
 

@@ -383,6 +383,7 @@ TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyToOneSideViaQue
     info.addr = 0x1000;
     info.lva = 0x1000;
     info.size = 0x100;
+    info.lKey.keys.assign(8, 0);
     for (size_t i = 0; i < 4; i++) {
         info.lKey.keys[i] = 0xABC0000000000000ULL + i;
         info.lKey.keys[4 + i] = 0xDEF0000000000000ULL + i;
@@ -392,9 +393,9 @@ TEST(HcomTransportManagerTest, IndirectlyCoversCopyHcomOneSideKeyToOneSideViaQue
     TransportMemoryKey out{};
     EXPECT_EQ(mgr->QueryMemoryKey(0x1000, out), BM_OK);
 
-    RegMemoryKeyUnion keyUnion{};
-    keyUnion.commonKey = out;
-    const auto &lKey = keyUnion.hostKey.hcomInfo.lKey;
+    RegMemoryKey key{};
+    ASSERT_TRUE(ReadStructFromKey(out, key));
+    const auto &lKey = key.hcomInfo.lKey;
 
     for (size_t i = 0; i < 4; i++) {
         EXPECT_EQ(lKey.keys[i], 0xABC0000000000000ULL + i);
@@ -517,23 +518,27 @@ TEST(HcomTransportManagerTest, UpdateRankMrInfosSkipsSelfAndZeroSizeAndStoresMr)
     TransportRankPrepareInfo r1{};
     r1.nic = "tcp://127.0.0.1:2048";
 
-    RegMemoryKeyUnion k0{};
-    k0.hostKey.type = TT_HCOM;
-    k0.hostKey.gva = 0x2000;
-    k0.hostKey.hcomInfo.lAddress = static_cast<uintptr_t>(0x1000);
-    k0.hostKey.hcomInfo.size = 0; // should be skipped
-    r1.memKeys.push_back(k0.commonKey);
+    RegMemoryKey k0{};
+    k0.type = TT_HCOM;
+    k0.gva = 0x2000;
+    k0.hcomInfo.lAddress = static_cast<uintptr_t>(0x1000);
+    k0.hcomInfo.size = 0; // should be skipped
+    TransportMemoryKey k0Key{};
+    WriteStructToKey(k0, k0Key);
+    r1.memKeys.push_back(k0Key);
 
-    RegMemoryKeyUnion k1{};
-    k1.hostKey.type = TT_HCOM;
-    k1.hostKey.gva = 0x3000;
-    k1.hostKey.hcomInfo.lAddress = static_cast<uintptr_t>(0x1111);
-    k1.hostKey.hcomInfo.size = 0x100;
+    RegMemoryKey k1{};
+    k1.type = TT_HCOM;
+    k1.gva = 0x3000;
+    k1.hcomInfo.lAddress = static_cast<uintptr_t>(0x1111);
+    k1.hcomInfo.size = 0x100;
     for (size_t i = 0; i < 4; i++) {
-        k1.hostKey.hcomInfo.lKey.keys[i] = 0x1111111100000000ULL + i;
-        k1.hostKey.hcomInfo.lKey.tokens[i] = 0x2222222200000000ULL + i;
+        k1.hcomInfo.lKey.keys[i] = 0x1111111100000000ULL + i;
+        k1.hcomInfo.lKey.tokens[i] = 0x2222222200000000ULL + i;
     }
-    r1.memKeys.push_back(k1.commonKey);
+    TransportMemoryKey k1Key{};
+    WriteStructToKey(k1, k1Key);
+    r1.memKeys.push_back(k1Key);
 
     std::unordered_map<uint32_t, TransportRankPrepareInfo> opt;
     opt.emplace(0U, selfInfo);
@@ -543,7 +548,7 @@ TEST(HcomTransportManagerTest, UpdateRankMrInfosSkipsSelfAndZeroSizeAndStoresMr)
     ASSERT_EQ(mgr->mrs_[1].size(), 1U);
     EXPECT_EQ(mgr->mrs_[1].begin()->addr, 0x3000U);
     EXPECT_EQ(mgr->mrs_[1].begin()->size, 0x100U);
-    EXPECT_EQ(mgr->mrs_[1].begin()->lva, reinterpret_cast<uint64_t>(k1.hostKey.hcomInfo.lAddress));
+    EXPECT_EQ(mgr->mrs_[1].begin()->lva, reinterpret_cast<uint64_t>(k1.hcomInfo.lAddress));
 }
 
 TEST(HcomTransportManagerTest, UpdateRankConnectInfosConnectsWhenChannelEmptyAndOptionProvided)
@@ -935,7 +940,8 @@ TEST(HcomTransportManagerTest, ReadRemoteBatchAsyncChannelGetVFailAfterKeyLookup
     localMr.addr = 0x2000; // matches globalAddrs
     localMr.lva = 0x2000;
     localMr.size = 0x1000;
-    for (size_t i = 0; i < std::size(localMr.lKey.keys); i++) {
+    localMr.lKey.keys.assign(8, 0);
+    for (size_t i = 0; i < 8; i++) {
         localMr.lKey.keys[i] = 0x2000ULL + i;
     }
 
@@ -943,7 +949,8 @@ TEST(HcomTransportManagerTest, ReadRemoteBatchAsyncChannelGetVFailAfterKeyLookup
     remoteMr.addr = 0x1000; // matches localAddrs (remote source)
     remoteMr.lva = 0x1000;
     remoteMr.size = 0x1000;
-    for (size_t i = 0; i < std::size(remoteMr.lKey.keys); i++) {
+    remoteMr.lKey.keys.assign(8, 0);
+    for (size_t i = 0; i < 8; i++) {
         remoteMr.lKey.keys[i] = 0x1000ULL + i;
     }
 
@@ -992,7 +999,8 @@ TEST(HcomTransportManagerTest, ReadWriteRemoteAsyncChannelGetPutFailAfterKeyLook
     localMr.addr = 0x1000;
     localMr.lva = 0x1000;
     localMr.size = 0x1000;
-    for (size_t i = 0; i < std::size(localMr.lKey.keys); i++) {
+    localMr.lKey.keys.assign(8, 0);
+    for (size_t i = 0; i < 8; i++) {
         localMr.lKey.keys[i] = 0x1000ULL + i;
     }
 
@@ -1000,7 +1008,8 @@ TEST(HcomTransportManagerTest, ReadWriteRemoteAsyncChannelGetPutFailAfterKeyLook
     remoteMr.addr = 0x2000;
     remoteMr.lva = 0x2000;
     remoteMr.size = 0x1000;
-    for (size_t i = 0; i < std::size(remoteMr.lKey.keys); i++) {
+    remoteMr.lKey.keys.assign(8, 0);
+    for (size_t i = 0; i < 8; i++) {
         remoteMr.lKey.keys[i] = 0x2000ULL + i;
     }
 
@@ -1065,7 +1074,8 @@ TEST(HcomTransportManagerTest, WriteRemoteBatchAsyncChannelPutVFailAfterKeyLooku
     localMr.addr = 0x1000;
     localMr.lva = 0x1000;
     localMr.size = 0x1000;
-    for (size_t i = 0; i < std::size(localMr.lKey.keys); i++) {
+    localMr.lKey.keys.assign(8, 0);
+    for (size_t i = 0; i < 8; i++) {
         localMr.lKey.keys[i] = 0x1000ULL + i;
     }
 
@@ -1073,7 +1083,8 @@ TEST(HcomTransportManagerTest, WriteRemoteBatchAsyncChannelPutVFailAfterKeyLooku
     remoteMr.addr = 0x2000;
     remoteMr.lva = 0x2000;
     remoteMr.size = 0x1000;
-    for (size_t i = 0; i < std::size(remoteMr.lKey.keys); i++) {
+    remoteMr.lKey.keys.assign(8, 0);
+    for (size_t i = 0; i < 8; i++) {
         remoteMr.lKey.keys[i] = 0x2000ULL + i;
     }
 
@@ -1296,10 +1307,10 @@ TEST(HcomTransportManagerTest, QueryMemoryKeyFallsBackToHvaWhenTransformMisses)
     Result ret = mgr->QueryMemoryKey(0x3000, key);
     EXPECT_EQ(ret, BM_OK);
 
-    RegMemoryKeyUnion keyUnion{};
-    keyUnion.commonKey = key;
+    RegMemoryKey parsed{};
+    ASSERT_TRUE(ReadStructFromKey(key, parsed));
     // the VA table has no paired record for this HVA => TransformVa returns 0 => the HVA must be kept
-    EXPECT_EQ(keyUnion.hostKey.gva, 0x3000UL);
+    EXPECT_EQ(parsed.gva, 0x3000UL);
 }
 
 // UpdateMemoryKey: in the trans scene the gva of the host key should be overwritten with the local rebuilt
@@ -1308,19 +1319,20 @@ TEST(HcomTransportManagerTest, UpdateMemoryKeyRewritesGvaForHostKey)
 {
     auto mgr = HcomTransportManager::GetInstance();
 
-    RegMemoryKeyUnion keyUnion{};
-    keyUnion.hostKey.type = TT_HCOM;
-    keyUnion.hostKey.gva = 0x1000UL;
-    keyUnion.hostKey.hcomInfo.lAddress = 0x2800UL;
-    TransportMemoryKey key = keyUnion.commonKey;
+    RegMemoryKey hostKey{};
+    hostKey.type = TT_HCOM;
+    hostKey.gva = 0x1000UL;
+    hostKey.hcomInfo.lAddress = 0x2800UL;
+    TransportMemoryKey key{};
+    WriteStructToKey(hostKey, key);
 
     mgr->UpdateMemoryKey(key, reinterpret_cast<void *>(0x20000000UL));
 
-    RegMemoryKeyUnion updated{};
-    updated.commonKey = key;
-    EXPECT_EQ(updated.hostKey.type, TT_HCOM);
-    EXPECT_EQ(updated.hostKey.gva, 0x20000000UL);
-    EXPECT_EQ(updated.hostKey.hcomInfo.lAddress, 0x2800UL);
+    RegMemoryKey updated{};
+    ASSERT_TRUE(ReadStructFromKey(key, updated));
+    EXPECT_EQ(updated.type, TT_HCOM);
+    EXPECT_EQ(updated.gva, 0x20000000UL);
+    EXPECT_EQ(updated.hcomInfo.lAddress, 0x2800UL);
 }
 
 // UpdateMemoryKey: a non-host key must not be rewritten, to avoid polluting the keys of other transports.
@@ -1329,7 +1341,7 @@ TEST(HcomTransportManagerTest, UpdateMemoryKeySkipsNonHostKey)
     auto mgr = HcomTransportManager::GetInstance();
 
     TransportMemoryKey key{};
-    key.keys[0] = 0x1234UL;
+    key.keys.assign(1, 0x1234UL);
 
     mgr->UpdateMemoryKey(key, reinterpret_cast<void *>(0x20000000UL));
 
@@ -1341,16 +1353,17 @@ TEST(HcomTransportManagerTest, UpdateMemoryKeyNullAddrKeepsGva)
 {
     auto mgr = HcomTransportManager::GetInstance();
 
-    RegMemoryKeyUnion keyUnion{};
-    keyUnion.hostKey.type = TT_HCOM;
-    keyUnion.hostKey.gva = 0x1000UL;
-    TransportMemoryKey key = keyUnion.commonKey;
+    RegMemoryKey hostKey{};
+    hostKey.type = TT_HCOM;
+    hostKey.gva = 0x1000UL;
+    TransportMemoryKey key{};
+    WriteStructToKey(hostKey, key);
 
     mgr->UpdateMemoryKey(key, nullptr);
 
-    RegMemoryKeyUnion updated{};
-    updated.commonKey = key;
-    EXPECT_EQ(updated.hostKey.gva, 0x1000UL);
+    RegMemoryKey updated{};
+    ASSERT_TRUE(ReadStructFromKey(key, updated));
+    EXPECT_EQ(updated.gva, 0x1000UL);
 }
 
 // CloseDevice: 在 rpcService_ 为 0 时直接返回 BM_OK。

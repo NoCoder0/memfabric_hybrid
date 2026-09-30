@@ -25,115 +25,129 @@ public:
     void TearDown() override {}
 };
 
-// ============================================================
-// ReadDeviceRdmaMemoryKey / WriteDeviceRdmaMemoryKey
-// ============================================================
-TEST_F(HybmTransportCommonTest, ReadDeviceRdmaMemoryKey_CopiesFirstKeySlots)
-{
-    TransportMemoryKey input{};
-    TransportMemoryKey output{};
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        input.keys[i] = i + 100; // 100
-    }
-    ReadDeviceRdmaMemoryKey(input, output);
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        EXPECT_EQ(output.keys[i], input.keys[i]);
-    }
-    // Only first KEY_SIZE slots should be set, rest remain zero
-    for (size_t i = KEY_SIZE; i < sizeof(output.keys) / sizeof(output.keys[0]); ++i) {
-        EXPECT_EQ(output.keys[i], 0U);
-    }
-}
-
-TEST_F(HybmTransportCommonTest, WriteDeviceRdmaMemoryKey_WritesFirstKeySlots)
-{
-    TransportMemoryKey input{};
-    TransportMemoryKey output{};
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        input.keys[i] = i + 200; // 200
-    }
-    WriteDeviceRdmaMemoryKey(input, output);
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        EXPECT_EQ(output.keys[i], input.keys[i]);
-    }
-}
+namespace {
+struct TestPayload {
+    uint64_t field0;
+    uint32_t field1;
+    uint32_t field2;
+};
+} // namespace
 
 // ============================================================
-// ReadHcomMemoryKey / WriteHcomMemoryKey
+// WriteStructToKey / ReadStructFromKey
 // ============================================================
-TEST_F(HybmTransportCommonTest, ReadHcomMemoryKey_CopiesHostKeySlots)
+TEST_F(HybmTransportCommonTest, WriteStructToKey_RoundTrip)
 {
-    TransportMemoryKey input{};
-    TransportMemoryKey output{};
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        input.keys[6 * KEY_SIZE + i] = i + 300; // 6 300
-    }
-    ReadHcomMemoryKey(input, output);
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        EXPECT_EQ(output.keys[i], input.keys[6 * KEY_SIZE + i]); // 6
-    }
+    TestPayload payload{0x1122334455667788UL, 0xAABBCCDDUL, 0x01020304UL};
+    TransportMemoryKey key{};
+    WriteStructToKey(payload, key);
+    EXPECT_EQ(key.ByteSize(), sizeof(TestPayload));
+
+    TestPayload parsed{};
+    ASSERT_TRUE(ReadStructFromKey(key, parsed));
+    EXPECT_EQ(parsed.field0, payload.field0);
+    EXPECT_EQ(parsed.field1, payload.field1);
+    EXPECT_EQ(parsed.field2, payload.field2);
 }
 
-TEST_F(HybmTransportCommonTest, WriteHcomMemoryKey_WritesToHostKeySlots)
+TEST_F(HybmTransportCommonTest, ReadStructFromKey_TooSmallFails)
 {
-    TransportMemoryKey input{};
-    TransportMemoryKey output{};
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        input.keys[i] = i + 400; // 400
-    }
-    WriteHcomMemoryKey(input, output);
-    for (size_t i = 0; i < KEY_SIZE; ++i) {
-        EXPECT_EQ(output.keys[6 * KEY_SIZE + i], input.keys[i]); // 6
-    }
+    TransportMemoryKey key{};
+    key.keys.assign(1, 0);
+    TestPayload parsed{};
+    EXPECT_FALSE(ReadStructFromKey(key, parsed));
 }
 
 // ============================================================
-// ReadDeviceUrmaMemoryKey / WriteDeviceUrmaMemoryKey
+// WriteDeviceMemoryKey / WriteHostMemoryKey / ReadDeviceMemoryKey / ReadHostMemoryKey
 // ============================================================
-TEST_F(HybmTransportCommonTest, ReadDeviceUrmaMemoryKey_CopiesAll32KeySlots)
+TEST_F(HybmTransportCommonTest, Envelope_RoundTripBothSides)
 {
-    TransportMemoryKey input{};
-    TransportMemoryKey output{};
-    for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
-        input.keys[i] = i + 500;                // 500
-    }
-    ReadDeviceUrmaMemoryKey(input, output);
-    for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
-        EXPECT_EQ(output.keys[i], input.keys[i]);
-    }
+    TransportMemoryKey deviceKey{};
+    deviceKey.keys.assign({100, 101, 102});
+    TransportMemoryKey hostKey{};
+    hostKey.keys.assign({200, 201});
+
+    TransportMemoryKey merged{};
+    WriteDeviceMemoryKey(deviceKey, merged);
+    WriteHostMemoryKey(hostKey, merged);
+    // Envelope header + both payloads
+    EXPECT_EQ(merged.WordCount(), TRANS_KEY_ENVELOPE_WORDS + 3U + 2U);
+
+    TransportMemoryKey deviceOut{};
+    TransportMemoryKey hostOut{};
+    ReadDeviceMemoryKey(merged, deviceOut);
+    ReadHostMemoryKey(merged, hostOut);
+    EXPECT_EQ(deviceOut.keys, deviceKey.keys);
+    EXPECT_EQ(hostOut.keys, hostKey.keys);
 }
 
-TEST_F(HybmTransportCommonTest, WriteDeviceUrmaMemoryKey_WritesAll32KeySlots)
+TEST_F(HybmTransportCommonTest, Envelope_EmptyDeviceKeepsHostPayload)
 {
-    TransportMemoryKey input{};
-    TransportMemoryKey output{};
-    for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
-        input.keys[i] = i + 600;                // 600
-    }
-    WriteDeviceUrmaMemoryKey(input, output);
-    for (size_t i = 0; i < KEY_SIZE * 4; ++i) { // 4
-        EXPECT_EQ(output.keys[i], input.keys[i]);
-    }
+    TransportMemoryKey deviceKey{};
+    TransportMemoryKey hostKey{};
+    hostKey.keys.assign({300, 301, 302, 303});
+
+    TransportMemoryKey merged{};
+    WriteDeviceMemoryKey(deviceKey, merged);
+    WriteHostMemoryKey(hostKey, merged);
+
+    TransportMemoryKey deviceOut{};
+    TransportMemoryKey hostOut{};
+    ReadDeviceMemoryKey(merged, deviceOut);
+    ReadHostMemoryKey(merged, hostOut);
+    EXPECT_TRUE(deviceOut.keys.empty());
+    EXPECT_EQ(hostOut.keys, hostKey.keys);
+}
+
+TEST_F(HybmTransportCommonTest, ReadDeviceMemoryKey_TooShortReturnsEmpty)
+{
+    TransportMemoryKey merged{};
+    merged.keys.assign(1, 0); // fewer than envelope header words
+    TransportMemoryKey deviceOut{};
+    deviceOut.keys.assign(1, 0xABCDUL);
+    ReadDeviceMemoryKey(merged, deviceOut);
+    EXPECT_TRUE(deviceOut.keys.empty());
+}
+
+TEST_F(HybmTransportCommonTest, ReadHostMemoryKey_InconsistentLengthsReturnsEmpty)
+{
+    TransportMemoryKey merged{};
+    // device word count says 3, but no device payload follows
+    merged.keys.assign({3, 1, 0});
+    TransportMemoryKey hostOut{};
+    hostOut.keys.assign(1, 0xABCDUL);
+    ReadHostMemoryKey(merged, hostOut);
+    EXPECT_TRUE(hostOut.keys.empty());
 }
 
 // ============================================================
-// TransportMemoryKey::operator<
+// TransportMemoryKey::operator</operator==
 // ============================================================
-TEST_F(HybmTransportCommonTest, TransportMemoryKey_LessThan_ByMemcmp)
+TEST_F(HybmTransportCommonTest, TransportMemoryKey_LessThanAndEquality)
 {
     TransportMemoryKey a{};
     TransportMemoryKey b{};
-    a.keys[0] = 10; // 10
-    b.keys[0] = 20; // 20
+    a.keys.assign(1, 10);
+    b.keys.assign(1, 20);
     EXPECT_TRUE(a < b);
     EXPECT_FALSE(b < a);
+    EXPECT_TRUE(a != b);
+
     // Equal keys
     TransportMemoryKey c{};
     TransportMemoryKey d{};
-    c.keys[0] = 42; // 42
-    d.keys[0] = 42; // 42
+    c.keys.assign(1, 42);
+    d.keys.assign(1, 42);
     EXPECT_FALSE(c < d);
     EXPECT_FALSE(d < c);
+    EXPECT_TRUE(c == d);
+
+    // Prefix order: a (1 word) sorts before e (2 words sharing the prefix)
+    TransportMemoryKey e{};
+    e.keys.assign({10, 11});
+    EXPECT_TRUE(a < e);
+    EXPECT_FALSE(e < a);
 }
 
 // ============================================================
@@ -168,8 +182,7 @@ TEST_F(HybmTransportCommonTest, TransportMemoryRegion_Ostream)
 TEST_F(HybmTransportCommonTest, TransportMemoryKey_Ostream)
 {
     TransportMemoryKey key{};
-    key.keys[0] = 42; // 42
-    key.keys[1] = 99; // 99
+    key.keys.assign({42, 99});
     std::stringstream ss;
     ss << key;
     std::string s = ss.str();
@@ -181,7 +194,7 @@ TEST_F(HybmTransportCommonTest, TransportMemoryKey_Ostream)
 TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_Ostream)
 {
     TransportMemoryKey memKey{};
-    memKey.keys[0] = 777; // 777
+    memKey.keys.assign(1, 777);
     TransportRankPrepareInfo info("myNic", memKey);
     info.role = HYBM_ROLE_SENDER;
     std::stringstream ss;
@@ -214,7 +227,7 @@ TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_DefaultConstructor)
 TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_SingleKeyConstructor)
 {
     TransportMemoryKey key{};
-    key.keys[0] = 123; // 123
+    key.keys.assign(1, 123);
     TransportRankPrepareInfo info("eth2", key);
     EXPECT_EQ(info.nic, "eth2");
     ASSERT_EQ(info.memKeys.size(), 1U);
@@ -225,8 +238,8 @@ TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_MultiKeyConstructor)
 {
     TransportMemoryKey k1{};
     TransportMemoryKey k2{};
-    k1.keys[0] = 10; // 10
-    k2.keys[0] = 20; // 20
+    k1.keys.assign(1, 10);
+    k2.keys.assign(1, 20);
     std::vector<TransportMemoryKey> keys = {k1, k2};
     TransportRankPrepareInfo info("eth3", keys);
     EXPECT_EQ(info.nic, "eth3");

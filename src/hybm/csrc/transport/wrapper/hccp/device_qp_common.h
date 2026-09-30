@@ -55,11 +55,6 @@ struct RegMemResult {
     {}
 };
 
-union RegMemKeyUnion {
-    TransportMemoryKey commonKey;
-    RegMemResult deviceKey;
-};
-
 using MemoryRegionMap = std::map<uint64_t, RegMemResult, std::greater<uint64_t>>;
 
 struct ConnectRankInfo {
@@ -69,17 +64,25 @@ struct ConnectRankInfo {
 
     ConnectRankInfo(hybm_role_type r, sockaddr_in nw, const TransportMemoryKey &mk) : role{r}, network{std::move(nw)}
     {
-        auto &deviceKey = container_of(&mk, RegMemKeyUnion, commonKey)->deviceKey;
-        memoryMap.emplace(deviceKey.address, deviceKey);
+        AddMemoryKey(mk);
     }
 
     ConnectRankInfo(hybm_role_type r, sockaddr_in nw, const std::vector<TransportMemoryKey> &mks)
         : role{r}, network{std::move(nw)}
     {
         for (auto &mk : mks) {
-            auto &deviceKey = container_of(&mk, RegMemKeyUnion, commonKey)->deviceKey;
-            memoryMap.emplace(deviceKey.address, deviceKey);
+            AddMemoryKey(mk);
         }
+    }
+
+private:
+    void AddMemoryKey(const TransportMemoryKey &mk)
+    {
+        RegMemResult deviceKey{};
+        if (!ReadStructFromKey(mk, deviceKey)) {
+            return;
+        }
+        memoryMap.emplace(deviceKey.address, deviceKey);
     }
 };
 

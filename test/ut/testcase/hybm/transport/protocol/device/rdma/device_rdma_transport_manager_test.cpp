@@ -963,18 +963,20 @@ TEST(RdmaTransportManagerTest, OptionsToRankMRsSkipsOutOfRangeAndUpdatesNotifyAn
     opts.options.emplace(9U, badNode);
 
     // 2) valid node with memKey; include notify so notifyRemoteInfo_ is updated
-    RegMemKeyUnion u{};
-    u.deviceKey.type = TT_HCCP;
-    u.deviceKey.address = 0x1000;
-    u.deviceKey.size = 0x10;
-    u.deviceKey.notifyAddr = 0x8888;
-    u.deviceKey.notifyRkey = 0x66;
+    RegMemResult devKey{};
+    devKey.type = TT_HCCP;
+    devKey.address = 0x1000;
+    devKey.size = 0x10;
+    devKey.notifyAddr = 0x8888;
+    devKey.notifyRkey = 0x66;
+    TransportMemoryKey commonKey{};
+    WriteStructToKey(devKey, commonKey);
 
     TransportRankPrepareInfo good;
     good.nic = "tcp://127.0.0.1:2";
-    good.memKeys.push_back(u.commonKey);
+    good.memKeys.push_back(commonKey);
     // duplicate key to hit "already exists, skip emplace"
-    good.memKeys.push_back(u.commonKey);
+    good.memKeys.push_back(commonKey);
     opts.options.emplace(1U, good);
 
     mgr.OptionsToRankMRs(opts);

@@ -1865,7 +1865,7 @@ TEST(ComposeTransportManagerTest, GetPrivateData_DeviceOnlyAndEmpty)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-    EXPECT_EQ(mgr.GetPrivateData().key.keys[0], 0ULL);
+    EXPECT_TRUE(mgr.GetPrivateData().key.keys.empty());
 
     auto dev = std::make_shared<FakeTransportManager>();
     mgr.deviceTransportManager_ = dev;

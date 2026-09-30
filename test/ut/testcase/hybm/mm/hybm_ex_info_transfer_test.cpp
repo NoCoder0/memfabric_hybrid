@@ -228,6 +228,57 @@ TEST_F(ExInfoTransferTest, Reader_TestTemplate)
     EXPECT_EQ(readPod.a, 100U);
 }
 
+// ==================== Vector Append/Read Tests ====================
+
+TEST_F(ExInfoTransferTest, Writer_AppendVectorRoundTrip)
+{
+    ExchangeInfoWriter writer(&exchangeInfo_);
+    std::vector<uint64_t> words{0x1111U, 0x2222U, 0x3333U};
+    ASSERT_EQ(writer.Append(words), 0);
+    EXPECT_EQ(exchangeInfo_.descLen, sizeof(uint32_t) + words.size() * sizeof(uint64_t));
+
+    ExchangeInfoReader reader(&exchangeInfo_);
+    std::vector<uint64_t> readBack;
+    ASSERT_EQ(reader.Read(readBack, 16U), 0);
+    EXPECT_EQ(readBack, words);
+    EXPECT_EQ(reader.LeftBytes(), 0U);
+}
+
+TEST_F(ExInfoTransferTest, Writer_AppendEmptyVectorRoundTrip)
+{
+    ExchangeInfoWriter writer(&exchangeInfo_);
+    std::vector<uint64_t> empty;
+    ASSERT_EQ(writer.Append(empty), 0);
+    EXPECT_EQ(exchangeInfo_.descLen, sizeof(uint32_t));
+
+    ExchangeInfoReader reader(&exchangeInfo_);
+    std::vector<uint64_t> readBack{1U};
+    ASSERT_EQ(reader.Read(readBack, 16U), 0);
+    EXPECT_TRUE(readBack.empty());
+}
+
+TEST_F(ExInfoTransferTest, Reader_ReadVectorExceedsMax)
+{
+    ExchangeInfoWriter writer(&exchangeInfo_);
+    std::vector<uint64_t> words{1U, 2U, 3U};
+    ASSERT_EQ(writer.Append(words), 0);
+
+    ExchangeInfoReader reader(&exchangeInfo_);
+    std::vector<uint64_t> readBack;
+    EXPECT_NE(reader.Read(readBack, 2U), 0);
+}
+
+TEST_F(ExInfoTransferTest, Reader_ReadVectorTruncatedPayload)
+{
+    ExchangeInfoWriter writer(&exchangeInfo_);
+    uint32_t count = 3U;
+    ASSERT_EQ(writer.Append(count), 0);
+
+    ExchangeInfoReader reader(&exchangeInfo_);
+    std::vector<uint64_t> readBack;
+    EXPECT_NE(reader.Read(readBack, 16U), 0);
+}
+
 // ==================== LiteralExInfoTranslater Tests ====================
 
 TEST_F(ExInfoTransferTest, LiteralSerializeDeserializeRoundTrip)

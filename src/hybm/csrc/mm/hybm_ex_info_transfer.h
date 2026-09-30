@@ -17,6 +17,7 @@
 #include <string>
 #include <type_traits>
 #include <algorithm>
+#include <vector>
 #include "hybm_def.h"
 #include "hybm_logger.h"
 
@@ -142,6 +143,25 @@ public:
         return Read(static_cast<void *>(&data), sizeof(data));
     }
 
+    template<typename ElementType>
+    inline int Read(std::vector<ElementType> &items, size_t maxItems) const noexcept
+    {
+        uint32_t count = 0;
+        int ret = Read(count);
+        if (ret != 0) {
+            return ret;
+        }
+        if (count > maxItems) {
+            BM_LOG_ERROR("read vector count: " << count << " exceeds max: " << maxItems);
+            return -1;
+        }
+        items.assign(count, ElementType{});
+        if (count == 0U) {
+            return 0;
+        }
+        return Read(static_cast<void *>(items.data()), count * sizeof(ElementType));
+    }
+
 private:
     const hybm_exchange_info *exchangeInfo_;
     mutable uint32_t readOffset_;
@@ -192,6 +212,17 @@ public:
     inline int Append(const DataType &data) noexcept
     {
         return Append(reinterpret_cast<const void *>(&data), sizeof(data));
+    }
+
+    template<class ElementType>
+    inline int Append(const std::vector<ElementType> &items) noexcept
+    {
+        auto count = static_cast<uint32_t>(items.size());
+        int ret = Append(count);
+        if (ret != 0 || count == 0U) {
+            return ret;
+        }
+        return Append(reinterpret_cast<const void *>(items.data()), count * sizeof(ElementType));
     }
 
 private:

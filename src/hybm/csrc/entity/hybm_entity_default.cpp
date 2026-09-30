@@ -358,6 +358,52 @@ uint64_t MemEntityDefault::GetSliceSize(hybm_mem_slice_t slice)
     return 0;
 }
 
+namespace {
+constexpr size_t kMaxTransportKeyWords = transport::TRANS_KEY_MAX_WORDS;
+
+int AppendEntityExportInfo(ExchangeInfoWriter &desc, const EntityExportInfo &info)
+{
+    int ret = desc.Append(info.magic);
+    ret = (ret != 0) ? ret : desc.Append(info.version);
+    ret = (ret != 0) ? ret : desc.Append(info.rankId);
+    ret = (ret != 0) ? ret : desc.Append(info.role);
+    ret = (ret != 0) ? ret : desc.Append(info.reserved);
+    ret = (ret != 0) ? ret : desc.Append(info.nic, sizeof(info.nic));
+    ret = (ret != 0) ? ret : desc.Append(info.tag, sizeof(info.tag));
+    ret = (ret != 0) ? ret : desc.Append(info.transportPrivateData.ip, sizeof(info.transportPrivateData.ip));
+    return (ret != 0) ? ret : desc.Append(info.transportPrivateData.key.keys);
+}
+
+int ReadEntityExportInfo(const ExchangeInfoReader &reader, EntityExportInfo &info)
+{
+    int ret = reader.Read(info.magic);
+    ret = (ret != 0) ? ret : reader.Read(info.version);
+    ret = (ret != 0) ? ret : reader.Read(info.rankId);
+    ret = (ret != 0) ? ret : reader.Read(info.role);
+    ret = (ret != 0) ? ret : reader.Read(info.reserved);
+    ret = (ret != 0) ? ret : reader.Read(info.nic, sizeof(info.nic));
+    ret = (ret != 0) ? ret : reader.Read(info.tag, sizeof(info.tag));
+    ret = (ret != 0) ? ret : reader.Read(info.transportPrivateData.ip, sizeof(info.transportPrivateData.ip));
+    return (ret != 0) ? ret : reader.Read(info.transportPrivateData.key.keys, kMaxTransportKeyWords);
+}
+
+int AppendSliceTransportKey(ExchangeInfoWriter &desc, const SliceExportTransportKey &key)
+{
+    int ret = desc.Append(key.rankId);
+    ret = (ret != 0) ? ret : desc.Append(key.reserved, sizeof(key.reserved));
+    ret = (ret != 0) ? ret : desc.Append(key.address);
+    return (ret != 0) ? ret : desc.Append(key.key.keys);
+}
+
+int ReadSliceTransportKey(const ExchangeInfoReader &reader, SliceExportTransportKey &key)
+{
+    int ret = reader.Read(key.rankId);
+    ret = (ret != 0) ? ret : reader.Read(key.reserved, sizeof(key.reserved));
+    ret = (ret != 0) ? ret : reader.Read(key.address);
+    return (ret != 0) ? ret : reader.Read(key.key.keys, kMaxTransportKeyWords);
+}
+} // namespace
+
 // entityExchangeInfo = entityInfo + segmentInfo
 int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uint32_t flags) noexcept
 {
@@ -366,7 +412,6 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
         return BM_NOT_INITIALIZED;
     }
 
-    std::string info;
     EntityExportInfo exportInfo{};
     exportInfo.version = EXPORT_INFO_VERSION;
     exportInfo.rankId = options_.rankId;
@@ -384,15 +429,9 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
         exportInfo.transportPrivateData = privateData;
         BM_LOG_DEBUG("transport get nic:" << nic << ", ip: " << privateData.ip);
     }
-    auto ret = LiteralExInfoTranslater<EntityExportInfo>{}.Serialize(exportInfo, info);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("export info failed: " << ret);
-        return BM_ERROR;
-    }
-
-    ret = desc.Append(info.data(), info.size());
+    auto ret = AppendEntityExportInfo(desc, exportInfo);
     if (ret != 0) {
-        BM_LOG_ERROR("export to string wrong size: " << info.size());
+        BM_LOG_ERROR("export entity exchange info failed: " << ret);
         return BM_ERROR;
     }
 
@@ -481,7 +520,7 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
                 }
             }
         }
-        ret = desc.Append(transportKey);
+        ret = AppendSliceTransportKey(desc, transportKey);
         if (ret != 0) {
             BM_LOG_ERROR("append transport key failed: " << ret);
             return ret;
@@ -679,7 +718,7 @@ int32_t MemEntityDefault::ImportEntityExchangeInfo(const ExchangeInfoReader desc
 
     std::vector<EntityExportInfo> deserializedInfos(count);
     for (auto i = 0U; i < count; i++) {
-        auto ret = desc[i].Read(deserializedInfos[i]);
+        auto ret = ReadEntityExportInfo(desc[i], deserializedInfos[i]);
         if (ret != 0) {
             BM_LOG_ERROR("deserialize imported info(" << i << ") failed.");
             return BM_INVALID_PARAM;
@@ -1103,7 +1142,7 @@ int32_t MemEntityDefault::ImportForTransportPrecheck(const ExchangeInfoReader de
     int ret = BM_OK;
     SliceExportTransportKey transportKey;
     for (auto i = 0U; i < count; i++) {
-        ret = desc[i].Read(transportKey);
+        ret = ReadSliceTransportKey(desc[i], transportKey);
         if (ret != BM_OK) {
             BM_LOG_ERROR("read info for transport failed: " << ret);
             return ret;

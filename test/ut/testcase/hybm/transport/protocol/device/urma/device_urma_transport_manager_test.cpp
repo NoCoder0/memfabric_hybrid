@@ -660,14 +660,16 @@ TransportPrivateData MakePrivateData(const UrmaEndpointDesc &desc)
         uint16_t version;
         uint16_t payloadLen;
     } header{0xA5FAC003U, 1U, static_cast<uint16_t>(sizeof(UrmaEndpointDesc))};
-    std::memcpy(data.key.keys, &header, sizeof(header));
-    std::memcpy(reinterpret_cast<uint8_t *>(data.key.keys) + sizeof(header), &desc, sizeof(desc));
+    data.key.ResizeBytes(sizeof(header) + sizeof(desc));
+    std::memcpy(data.key.ByteData(), &header, sizeof(header));
+    std::memcpy(data.key.ByteData() + sizeof(header), &desc, sizeof(desc));
     return data;
 }
 
 TransportMemoryKey MakeImportKey(uint64_t remoteAddr, uint64_t size, uint64_t memTag)
 {
     TransportMemoryKey key{};
+    key.ResizeWords(DEVICE_URMA_MAX_EXPORT_KEY_LENGTH);
     key.keys[0] = URMA_EXPORT_DESC_MAGIC;
     key.keys[1] = remoteAddr;
     UrmaExportDesc exportDesc{};
@@ -677,26 +679,23 @@ TransportMemoryKey MakeImportKey(uint64_t remoteAddr, uint64_t size, uint64_t me
     exportDesc.size = size;
     exportDesc.memTag = memTag;
     exportDesc.hcommDescLen = MOCK_HCOMM_DESC_LEN;
-    constexpr uint32_t kHeaderSlots = DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS;
-    auto *payload = reinterpret_cast<uint8_t *>(&key.keys[kHeaderSlots]);
+    auto *payload = key.ByteData() + DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS * sizeof(uint64_t);
     std::memcpy(payload, &exportDesc, sizeof(exportDesc));
     std::memset(payload + sizeof(exportDesc), 0, MOCK_HCOMM_DESC_LEN);
-    static_assert(sizeof(UrmaExportDesc) + MOCK_HCOMM_DESC_LEN <= sizeof(key.keys) - kHeaderSlots * sizeof(uint64_t));
+    static_assert(sizeof(UrmaExportDesc) + MOCK_HCOMM_DESC_LEN <= DEVICE_URMA_EXPORT_KEY_DATA_BYTES);
     return key;
 }
 
 TransportMemoryKey MakeImportKeyWithFlag(uint64_t remoteAddr, uint64_t size, uint64_t memTag)
 {
     auto key = MakeImportKey(remoteAddr, size, memTag);
-    auto *payload = reinterpret_cast<uint8_t *>(&key.keys[DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS]);
+    auto *payload = key.ByteData() + DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS * sizeof(uint64_t);
     UrmaExportDesc exportDesc{};
     std::memcpy(&exportDesc, payload, sizeof(exportDesc));
     exportDesc.devTransFlagDescLen = MOCK_HCOMM_DESC_LEN;
     std::memcpy(payload, &exportDesc, sizeof(exportDesc));
     std::memset(payload + sizeof(exportDesc) + exportDesc.hcommDescLen, 0xF1, MOCK_HCOMM_DESC_LEN);
-    constexpr uint32_t kHeaderSlots = DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS;
-    static_assert(sizeof(UrmaExportDesc) + MOCK_HCOMM_DESC_LEN * 2 <=
-                  sizeof(key.keys) - kHeaderSlots * sizeof(uint64_t));
+    static_assert(sizeof(UrmaExportDesc) + MOCK_HCOMM_DESC_LEN * 2 <= DEVICE_URMA_EXPORT_KEY_DATA_BYTES);
     return key;
 }
 
@@ -1403,7 +1402,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
     manager.opened_ = true;
 
     const auto data = manager.GetPrivateData();
-    const auto *raw = reinterpret_cast<const uint8_t *>(data.key.keys);
+    const auto *raw = data.key.ByteData();
     uint32_t magic = 0;
     uint16_t version = 0;
     uint16_t payloadLen = 0;
@@ -2844,7 +2843,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataContainsValidEndpointDesc)
     manager.opened_ = true;
 
     const auto data = manager.GetPrivateData();
-    const auto *raw = reinterpret_cast<const uint8_t *>(data.key.keys);
+    const auto *raw = data.key.ByteData();
     // Check header (magic=0xA5FAC003, version=1, payloadLen=sizeof(UrmaEndpointDesc))
     uint32_t magic = 0;
     uint16_t version = 0;
@@ -2926,7 +2925,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareFailsOnBadPrivateDataMagic)
 
     // Private data with wrong magic
     TransportPrivateData badData{};
-    badData.key.keys[0] = 0xDEADBEEFU;
+    badData.key.keys.assign(1, 0xDEADBEEFU);
     auto key = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
@@ -3143,6 +3142,7 @@ TEST(DeviceUrmaTransportManagerTest, UpdateMemoryKeyRewritesAddressWhenProvided)
 {
     DeviceUrmaTransportManager manager;
     TransportMemoryKey key{};
+    key.ResizeWords(DEVICE_URMA_MAX_EXPORT_KEY_LENGTH);
     manager.UpdateMemoryKey(key, reinterpret_cast<void *>(MOCK_REMOTE_ADDR));
     EXPECT_EQ(key.keys[1], MOCK_REMOTE_ADDR);
 
@@ -3263,7 +3263,7 @@ TEST(DeviceUrmaTransportManagerTest, ImportRemoteMemKeysRejectsMalformedPayloads
     auto tooLarge = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
     payload = reinterpret_cast<uint8_t *>(&tooLarge.keys[DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS]);
     std::memcpy(&exportDesc, payload, sizeof(exportDesc));
-    exportDesc.hcommDescLen = sizeof(tooLarge.keys);
+    exportDesc.hcommDescLen = static_cast<uint32_t>(tooLarge.ByteSize());
     exportDesc.devTransFlagDescLen = 1U;
     std::memcpy(payload, &exportDesc, sizeof(exportDesc));
     EXPECT_EQ(manager.ImportRemoteMemKeysLocked(1, state, {tooLarge}), BM_INVALID_PARAM);

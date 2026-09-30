@@ -380,7 +380,7 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, GetPrivateData)
 
     auto priv = mgr->GetPrivateData();
     RdmaHcommPrivateData parsed{};
-    std::memcpy(&parsed, priv.key.keys, sizeof(parsed));
+    std::memcpy(&parsed, priv.key.ByteData(), sizeof(parsed));
     ASSERT_EQ(parsed.magic, RDMA_HCOMM_PRIVATE_DATA_MAGIC);
     ASSERT_EQ(parsed.version, RDMA_HCOMM_PRIVATE_DATA_VERSION);
     ASSERT_EQ(parsed.protocol, COMM_PROTOCOL_ROCE);
@@ -548,9 +548,8 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, GetPrivateDataWithoutOpen)
 {
     auto mgr = CreateHcommMgr();
     // GetPrivateData without OpenDevice → should return empty descriptor
-    RdmaHcommPrivateData priv{};
     auto ret = mgr->GetPrivateData();
-    ASSERT_EQ(ret.key.keys[0], 0UL);
+    ASSERT_TRUE(ret.key.keys.empty());
 }
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, RegisterMemoryDramFallback)
@@ -788,6 +787,7 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, UpdateMemoryKeyNullAddr)
 {
     auto mgr = CreateHcommMgr();
     TransportMemoryKey key{};
+    key.ResizeWords(TRANS_KEY_DEV_SLOT2 + KEY_SIZE);
     HcommKeyMetaAt(key).gvaBase = 0xABCDUL;
     mgr->UpdateMemoryKey(key, nullptr);
     // null addr → no change
@@ -805,7 +805,7 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, GetPrivateDataAfterOpen)
     ASSERT_EQ(mgr->OpenDevice(MakeOptions()), BM_OK);
 
     auto priv = mgr->GetPrivateData();
-    auto *parsed = reinterpret_cast<const RdmaHcommPrivateData *>(priv.key.keys);
+    auto *parsed = reinterpret_cast<const RdmaHcommPrivateData *>(priv.key.ByteData());
     ASSERT_EQ(parsed->magic, RDMA_HCOMM_PRIVATE_DATA_MAGIC);
     ASSERT_EQ(parsed->version, RDMA_HCOMM_PRIVATE_DATA_VERSION);
 }

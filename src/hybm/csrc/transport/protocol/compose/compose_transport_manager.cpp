@@ -231,29 +231,25 @@ bool ComposeTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 
 Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
 {
-    // device固定占[0, 6 * KEY_SIZE) slots， host占[6 * KEY_SIZE, 7 * KEY_SIZE) slots
+    // device and host payloads are wrapped into a length-prefixed envelope; each keeps its own variable length.
     if (deviceTransportManager_) {
-        TransportMemoryKey tmp{};
-        auto ret = deviceTransportManager_->QueryMemoryKey(addr, tmp);
+        TransportMemoryKey deviceKey{};
+        auto ret = deviceTransportManager_->QueryMemoryKey(addr, deviceKey);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to query device transport memKey addr:" << std::hex << addr);
             return ret;
         }
-        if (IsDeviceUrma()) {
-            WriteDeviceUrmaMemoryKey(tmp, key);
-        } else {
-            WriteDeviceRdmaMemoryKey(tmp, key);
-        }
+        WriteDeviceMemoryKey(deviceKey, key);
     }
 
     if (hostTransportManager_) {
-        TransportMemoryKey tmp{};
-        auto ret = hostTransportManager_->QueryMemoryKey(addr, tmp);
+        TransportMemoryKey hostKey{};
+        auto ret = hostTransportManager_->QueryMemoryKey(addr, hostKey);
         if (ret != BM_OK) {
             BM_LOG_WARN("Unable to query host transport memKey addr:" << std::hex << addr);
             // HCOM 无法处理HBM池，这里直接返回，兼容即开启HBM池又要走HCOM通信的场景
         }
-        WriteHcomMemoryKey(tmp, key);
+        WriteHostMemoryKey(hostKey, key);
     }
 
     return BM_OK;
@@ -261,26 +257,23 @@ Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey
 
 void ComposeTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
+    // Split first, then update each payload, then rebuild the envelope: writing one payload resets the envelope.
+    TransportMemoryKey deviceKey{};
+    TransportMemoryKey hostKey{};
     if (deviceTransportManager_) {
-        TransportMemoryKey tmp{};
-        if (IsDeviceUrma()) {
-            ReadDeviceUrmaMemoryKey(key, tmp);
-            deviceTransportManager_->UpdateMemoryKey(tmp, addr);
-            WriteDeviceUrmaMemoryKey(tmp, key);
-        } else {
-            ReadDeviceRdmaMemoryKey(key, tmp);
-            deviceTransportManager_->UpdateMemoryKey(tmp, addr);
-            WriteDeviceRdmaMemoryKey(tmp, key);
-        }
+        ReadDeviceMemoryKey(key, deviceKey);
     }
-
     if (hostTransportManager_) {
-        // host and device each occupy their own slot in the key, so both must be read out, updated and written back
-        TransportMemoryKey tmp{};
-        ReadHcomMemoryKey(key, tmp);
-        hostTransportManager_->UpdateMemoryKey(tmp, addr);
-        WriteHcomMemoryKey(tmp, key);
+        ReadHostMemoryKey(key, hostKey);
     }
+    if (deviceTransportManager_) {
+        deviceTransportManager_->UpdateMemoryKey(deviceKey, addr);
+    }
+    if (hostTransportManager_) {
+        hostTransportManager_->UpdateMemoryKey(hostKey, addr);
+    }
+    WriteDeviceMemoryKey(deviceKey, key);
+    WriteHostMemoryKey(hostKey, key);
 }
 
 void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOptions &param,
@@ -305,7 +298,7 @@ void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOption
 
         for (auto &key : item.second.memKeys) {
             TransportMemoryKey tmp{};
-            ReadHcomMemoryKey(key, tmp);
+            ReadHostMemoryKey(key, tmp);
             info.memKeys.emplace_back(tmp);
         }
         hostOptions.options.emplace(rankId, info);
@@ -334,11 +327,7 @@ void ComposeTransportManager::GetDevicePrepareOptions(const HybmTransPrepareOpti
 
         for (auto &key : item.second.memKeys) {
             TransportMemoryKey tmp{};
-            if (IsDeviceUrma()) {
-                ReadDeviceUrmaMemoryKey(key, tmp);
-            } else {
-                ReadDeviceRdmaMemoryKey(key, tmp);
-            }
+            ReadDeviceMemoryKey(key, tmp);
             info.memKeys.emplace_back(tmp);
         }
         info.privateData = item.second.privateData;

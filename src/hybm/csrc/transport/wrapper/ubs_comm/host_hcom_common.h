@@ -26,11 +26,6 @@ struct RegMemoryKey {
     uint64_t gva{0};
     Service_MemoryRegionInfo hcomInfo;
 };
-
-union RegMemoryKeyUnion {
-    TransportMemoryKey commonKey;
-    RegMemoryKey hostKey;
-};
 } // namespace host
 } // namespace transport
 } // namespace mf

@@ -1508,11 +1508,9 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareWithOptions)
     std::strncpy(r1.tag, "tag_1", sizeof(r1.tag) - 1);
     entity.importedRanks_[TEST_RANK_1] = r1;
     ock::mf::transport::TransportMemoryKey k1{};
-    std::memset(&k1, 0, sizeof(k1));
-    k1.keys[0] = TEST_KEY_VALUE_2;
+    k1.keys.assign(1, TEST_KEY_VALUE_2);
     ock::mf::transport::TransportMemoryKey k2{};
-    std::memset(&k2, 0, sizeof(k2));
-    k2.keys[0] = TEST_KEY_VALUE_3;
+    k2.keys.assign(1, TEST_KEY_VALUE_3);
     entity.importedMemories_[TEST_RANK_1] = std::set<ock::mf::transport::TransportMemoryKey>{k1, k2};
 
     // ImportForTransport now calls Prepare (first time) or UpdateRankOptions (subsequent)

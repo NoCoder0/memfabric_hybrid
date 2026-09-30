@@ -109,8 +109,8 @@ struct UrmaPrivateDataDesc {
     uint16_t payloadLen{0};
 };
 
-static_assert(sizeof(UrmaPrivateDataDesc) + sizeof(UrmaEndpointDesc) <= sizeof(TransportPrivateData{}.key.keys),
-              "UrmaEndpointDesc cannot fit into TransportPrivateData.key");
+static_assert(std::is_trivially_copyable<UrmaEndpointDesc>::value,
+              "UrmaEndpointDesc must be trivially copyable for byte serialization");
 
 UrmaMemoryType ToUrmaMemoryType(uint32_t flags)
 {
@@ -249,7 +249,7 @@ inline bool ContainsAddressRange(const uint64_t &outerAddr, const uint64_t &oute
 Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, UrmaEndpointDesc &outDesc)
 {
     constexpr size_t headerSize = sizeof(UrmaPrivateDataDesc);
-    const uint8_t *raw = reinterpret_cast<const uint8_t *>(privateData.key.keys);
+    const uint8_t *raw = privateData.key.ByteData();
 
     UrmaPrivateDataDesc header{};
     std::memcpy(&header, raw, headerSize);
@@ -268,9 +268,9 @@ Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, U
                      << header.payloadLen << " expected: " << sizeof(UrmaEndpointDesc));
         return BM_INVALID_PARAM;
     }
-    if (headerSize + header.payloadLen > sizeof(privateData.key.keys)) {
+    if (headerSize + header.payloadLen > privateData.key.ByteSize()) {
         BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc payload exceeds key capacity, payloadLen: "
-                     << header.payloadLen);
+                     << header.payloadLen << " capacity: " << privateData.key.ByteSize());
         return BM_INVALID_PARAM;
     }
     std::memcpy(&outDesc, raw + headerSize, sizeof(UrmaEndpointDesc));
@@ -1266,6 +1266,7 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
     }
 
     // Serialize into key payload
+    key.ResizeWords(DEVICE_URMA_MAX_EXPORT_KEY_LENGTH);
     key.keys[0] = URMA_EXPORT_DESC_MAGIC;
     uint64_t gva = HybmVaManager::GetInstance().TransformVa(registration.mr.addr, HVM_HVA, HVM_GVA);
     key.keys[1] = (gva != 0) ? gva : registration.mr.addr; // 要导出gva
@@ -1284,6 +1285,10 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
 void DeviceUrmaTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
     if (addr != nullptr) {
+        if (key.keys.size() <= DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS) {
+            BM_LOG_ERROR("device_urma UpdateMemoryKey key too small, words: " << key.keys.size());
+            return;
+        }
         key.keys[1] = reinterpret_cast<uint64_t>(addr);
     }
 }
@@ -1325,6 +1330,13 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         if (IsEmptyMemoryKey(key)) {
             BM_LOG_DEBUG("device_urma ImportRemoteMemKeysLocked skip empty memory key, peer: " << peerRank);
             continue;
+        }
+        // --- 0. Validate payload capacity before touching header/payload words ---
+        if (key.ByteSize() < DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS * sizeof(uint64_t) + sizeof(UrmaExportDesc)) {
+            BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked key too small, peer: " << peerRank
+                                                                                       << " bytes: " << key.ByteSize());
+            rollbackNewImports();
+            return BM_INVALID_PARAM;
         }
         // --- 1. Validate top-level magic ---
         if (key.keys[0] != URMA_EXPORT_DESC_MAGIC) {
@@ -1376,10 +1388,11 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         const uint64_t memDescLen = sizeof(UrmaExportDesc) + exportDesc.hcommDescLen;
 
         // Validate total payload fits within the key data area
-        if (memDescLen + exportDesc.devTransFlagDescLen > DEVICE_URMA_EXPORT_KEY_DATA_BYTES) {
+        const size_t payloadCapacity = key.ByteSize() - DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS * sizeof(uint64_t);
+        if (memDescLen + exportDesc.devTransFlagDescLen > payloadCapacity) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked total payload exceeds key capacity, "
                          << "peer: " << peerRank << " memDescLen: " << memDescLen
-                         << " flagDescLen: " << exportDesc.devTransFlagDescLen);
+                         << " flagDescLen: " << exportDesc.devTransFlagDescLen << " capacity: " << payloadCapacity);
             rollbackNewImports();
             return BM_INVALID_PARAM;
         }
@@ -1732,7 +1745,8 @@ const TransportPrivateData DeviceUrmaTransportManager::GetPrivateData() const
     }
     UrmaPrivateDataDesc header{};
     header.payloadLen = static_cast<uint16_t>(sizeof(UrmaEndpointDesc));
-    uint8_t *raw = reinterpret_cast<uint8_t *>(data.key.keys);
+    data.key.ResizeBytes(sizeof(UrmaPrivateDataDesc) + sizeof(UrmaEndpointDesc));
+    uint8_t *raw = data.key.ByteData();
     std::memcpy(raw, &header, sizeof(UrmaPrivateDataDesc));
     std::memcpy(raw + sizeof(UrmaPrivateDataDesc), &localEndpointDesc_, sizeof(UrmaEndpointDesc));
     return data;

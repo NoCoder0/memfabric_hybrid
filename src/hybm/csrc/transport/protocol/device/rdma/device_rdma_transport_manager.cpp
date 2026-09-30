@@ -198,7 +198,6 @@ bool RdmaTransportManager::QueryHasRegistered(uint64_t addr, uint64_t size)
 
 Result RdmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &key)
 {
-    RegMemKeyUnion keyUnion{};
     ReadGuard lockGuard(lock_);
     auto pos = registerMRS_.lower_bound(addr);
     if (pos == registerMRS_.end() || pos->first + pos->second.size <= addr) {
@@ -206,27 +205,32 @@ Result RdmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
         return BM_INVALID_PARAM;
     }
 
-    keyUnion.deviceKey = pos->second;
-    uint64_t gva = HybmVaManager::GetInstance().TransformVa(keyUnion.deviceKey.address, HVM_HVA, HVM_GVA);
-    keyUnion.deviceKey.address = (gva != 0) ? gva : keyUnion.deviceKey.address;
-    keyUnion.deviceKey.notifyAddr = notifyInfo_.srcAddr;
-    keyUnion.deviceKey.notifyRkey = notifyInfo_.srcRkey;
+    RegMemResult deviceKey = pos->second;
+    uint64_t gva = HybmVaManager::GetInstance().TransformVa(deviceKey.address, HVM_HVA, HVM_GVA);
+    deviceKey.address = (gva != 0) ? gva : deviceKey.address;
+    deviceKey.notifyAddr = notifyInfo_.srcAddr;
+    deviceKey.notifyRkey = notifyInfo_.srcRkey;
 
-    key = keyUnion.commonKey;
-    BM_LOG_INFO("Success to query memory key rank:" << rankId_ << " addr:" << std::hex << keyUnion.deviceKey.address
-                                                    << " size:" << keyUnion.deviceKey.size);
+    WriteStructToKey(deviceKey, key);
+    BM_LOG_INFO("Success to query memory key rank:" << rankId_ << " addr:" << std::hex << deviceKey.address
+                                                    << " size:" << deviceKey.size);
     return BM_OK;
 }
 
 void RdmaTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
-    RegMemKeyUnion keyUnion{};
-    keyUnion.commonKey = key;
-    if (addr != nullptr) {
-        BM_LOG_DEBUG("update address from 0x" << std::hex << keyUnion.deviceKey.address << " to " << addr);
-        keyUnion.deviceKey.address = reinterpret_cast<uint64_t>(addr);
-        key = keyUnion.commonKey;
+    if (addr == nullptr) {
+        return;
     }
+    RegMemResult deviceKey{};
+    if (!ReadStructFromKey(key, deviceKey)) {
+        BM_LOG_ERROR("update memory key failed: key too small, bytes:" << key.ByteSize()
+                                                                       << " need:" << sizeof(RegMemResult));
+        return;
+    }
+    BM_LOG_DEBUG("update address from 0x" << std::hex << deviceKey.address << " to " << addr);
+    deviceKey.address = reinterpret_cast<uint64_t>(addr);
+    WriteStructToKey(deviceKey, key);
 }
 
 Result RdmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
@@ -887,7 +891,6 @@ int RdmaTransportManager::ConvertHccpMrInfo(const TransportMemoryRegion &mr, Hcc
 
 void RdmaTransportManager::OptionsToRankMRs(const HybmTransPrepareOptions &options)
 {
-    RegMemKeyUnion keyUnion{};
     WriteGuard lockGuard(lock_);
     for (auto it = options.options.begin(); it != options.options.end(); ++it) {
         auto node = it->first;
@@ -899,11 +902,14 @@ void RdmaTransportManager::OptionsToRankMRs(const HybmTransPrepareOptions &optio
         auto &pos = ranksMRs_[node];
         // 对于不支持sdma的环境,va_manager中仅记录gva;对于支持sdma的环境,va_maanger中会记录dva,data_operator优先使用dva给transport
         for (auto &key : it->second.memKeys) {
-            keyUnion.commonKey = key;
-            auto &devKey = keyUnion.deviceKey;
+            RegMemResult devKey{};
+            if (!ReadStructFromKey(key, devKey)) {
+                BM_LOG_ERROR("query memory key failed: key too small for rank:" << node << " bytes:" << key.ByteSize());
+                continue;
+            }
             uint64_t dva = HybmVaManager::GetInstance().TransformVa(devKey.address, HVM_GVA, HVM_DVA);
-            BM_LOG_DEBUG("query memory key rank:" << node << " gva:" << std::hex << keyUnion.deviceKey.address
-                                                  << " dva:" << dva << " size:" << keyUnion.deviceKey.size);
+            BM_LOG_DEBUG("query memory key rank:" << node << " gva:" << std::hex << devKey.address << " dva:" << dva
+                                                  << " size:" << devKey.size);
             if (dva != 0) {
                 devKey.address = dva;
             }

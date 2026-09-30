@@ -1196,9 +1196,10 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoOnlySelfMrSuccess)
     net0.sin_port = htons(12345);
     net0.sin_family = AF_INET;
 
-    RegMemKeyUnion key0{};
-    key0.deviceKey = RegMemResult(0x1000, 0x100, nullptr, 11, 22);
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, key0.commonKey));
+    RegMemResult devKey0(0x1000, 0x100, nullptr, 11, 22);
+    TransportMemoryKey commonKey0{};
+    WriteStructToKey(devKey0, commonKey0);
+    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, commonKey0));
 
     sockaddr_in net1{};
     inet_aton("192.168.1.2", &net1.sin_addr);
@@ -1238,9 +1239,10 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoMissingConnectionForRemoteMr)
     inet_aton("192.168.1.2", &net1.sin_addr);
     net1.sin_port = htons(12346);
     net1.sin_family = AF_INET;
-    RegMemKeyUnion key1{};
-    key1.deviceKey = RegMemResult(0x2000, 0x100, nullptr, 33, 44);
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, key1.commonKey));
+    RegMemResult devKey1(0x2000, 0x100, nullptr, 33, 44);
+    TransportMemoryKey commonKey1{};
+    WriteStructToKey(devKey1, commonKey1);
+    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, commonKey1));
 
     manager.currentRanksInfo_ = ranks;
 

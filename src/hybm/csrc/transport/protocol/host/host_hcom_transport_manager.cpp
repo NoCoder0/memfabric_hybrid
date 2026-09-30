@@ -94,21 +94,41 @@ thread_local HcomCounterStreamPtr HcomTransportManager::stream_ = nullptr;
 
 static void CopyHcomOneSideKey(const OneSideKey &from, TransportMemoryKey &to)
 {
-    std::copy_n(from.keys, std::size(from.keys), to.keys);
-    std::copy_n(from.tokens, std::size(from.tokens), to.keys + std::size(from.keys));
+    size_t words = std::size(from.keys) + std::size(from.tokens);
+#if defined(NO_XPU)
+    words += (URMA_EID_LENGTH + sizeof(uint64_t) - 1U) / sizeof(uint64_t);
+#endif
+    to.ResizeWords(words);
+    std::copy_n(from.keys, std::size(from.keys), to.keys.begin());
+    std::copy_n(from.tokens, std::size(from.tokens), to.keys.begin() + std::size(from.keys));
 #if defined(NO_XPU)
     auto offset = std::size(from.tokens) + std::size(from.keys);
-    std::copy_n(from.eid, URMA_EID_LENGTH, reinterpret_cast<uint8_t *>(to.keys + offset));
+    std::copy_n(from.eid, URMA_EID_LENGTH, to.ByteData() + offset * sizeof(uint64_t));
 #endif
 }
 
-static void CopyHcomOneSideKey(TransportMemoryKey &from, OneSideKey &to)
+static void CopyHcomLocalKeyWords(const TransportMemoryKey &from, OneSideKey &to)
 {
-    std::copy_n(from.keys, std::size(to.keys), to.keys);
-    std::copy_n(from.keys + std::size(to.keys), std::size(to.tokens), to.tokens);
+    if (from.keys.size() < std::size(to.keys)) {
+        return;
+    }
+    std::copy_n(from.keys.begin(), std::size(to.keys), to.keys);
+}
+
+static void CopyHcomOneSideKey(const TransportMemoryKey &from, OneSideKey &to)
+{
+    const size_t offset = std::size(to.keys) + std::size(to.tokens);
+    size_t needBytes = offset * sizeof(uint64_t);
 #if defined(NO_XPU)
-    auto offset = std::size(to.tokens) + std::size(to.keys);
-    std::copy_n(reinterpret_cast<uint8_t *>(from.keys + offset), URMA_EID_LENGTH, to.eid);
+    needBytes += URMA_EID_LENGTH;
+#endif
+    if (from.ByteSize() < needBytes) {
+        return;
+    }
+    std::copy_n(from.keys.begin(), std::size(to.keys), to.keys);
+    std::copy_n(from.keys.begin() + std::size(to.keys), std::size(to.tokens), to.tokens);
+#if defined(NO_XPU)
+    std::copy_n(from.ByteData() + offset * sizeof(uint64_t), URMA_EID_LENGTH, to.eid);
 #endif
 }
 
@@ -324,8 +344,7 @@ Result HcomTransportManager::RegisterMemoryRegion(const TransportMemoryRegion &m
     mrInfo.addr = mr.addr;
     mrInfo.size = mr.size;
     mrInfo.mr = memoryRegion;
-    std::copy_n(memoryRegionInfo.lKey.keys, sizeof(memoryRegionInfo.lKey.keys) / sizeof(memoryRegionInfo.lKey.keys[0]),
-                mrInfo.lKey.keys);
+    CopyHcomOneSideKey(memoryRegionInfo.lKey, mrInfo.lKey);
     {
         std::unique_lock<std::mutex> lock(mrMutex_[rankId_]);
         mrs_[rankId_].insert(mrInfo);
@@ -441,16 +460,16 @@ Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
         BM_LOG_ERROR("Failed to query memory region, addr: 0x" << std::hex << addr << " rankId: " << rankId_);
         return BM_ERROR;
     }
-    RegMemoryKeyUnion hostKey{};
-    hostKey.hostKey.type = TT_HCOM;
+    RegMemoryKey hostKey{};
+    hostKey.type = TT_HCOM;
     // The reverse lookup may miss (that HVA never entered the DVA/HVA tables), in which case fall back to the
     // HVA: otherwise 0 would be taken downstream as the peer MR address and break the range matching.
     const uint64_t ownerGva = HybmVaManager::GetInstance().TransformVa(mrInfo.addr, HVM_HVA, HVM_GVA);
-    hostKey.hostKey.gva = (ownerGva != 0) ? ownerGva : mrInfo.addr;
-    hostKey.hostKey.hcomInfo.lAddress = mrInfo.addr;
-    CopyHcomOneSideKey(mrInfo.lKey, hostKey.hostKey.hcomInfo.lKey);
-    hostKey.hostKey.hcomInfo.size = mrInfo.size;
-    key = hostKey.commonKey;
+    hostKey.gva = (ownerGva != 0) ? ownerGva : mrInfo.addr;
+    hostKey.hcomInfo.lAddress = mrInfo.addr;
+    CopyHcomOneSideKey(mrInfo.lKey, hostKey.hcomInfo.lKey);
+    hostKey.hcomInfo.size = mrInfo.size;
+    WriteStructToKey(hostKey, key);
     BM_LOG_INFO("Success to query memory key addr:" << std::hex << mrInfo.addr << " size:" << mrInfo.size);
     return BM_OK;
 }
@@ -460,16 +479,15 @@ void HcomTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
     if (addr == nullptr) {
         return;
     }
-    RegMemoryKeyUnion keyUnion{};
-    keyUnion.commonKey = key;
-    if (keyUnion.hostKey.type != TT_HCOM) {
+    RegMemoryKey hostKey{};
+    if (!ReadStructFromKey(key, hostKey) || hostKey.type != TT_HCOM) {
         return;
     }
     // trans scene: the key's gva was derived from the exporter's HVA and does not share its origin with the
     // local rebuilt GVA handed down by the data plane;
     // overwrite it with the caller address so the peer MR range matching matches the data plane.
-    keyUnion.hostKey.gva = reinterpret_cast<uint64_t>(addr);
-    key = keyUnion.commonKey;
+    hostKey.gva = reinterpret_cast<uint64_t>(addr);
+    WriteStructToKey(hostKey, key);
 }
 
 Result HcomTransportManager::Prepare(const HybmTransPrepareOptions &param)
@@ -552,22 +570,24 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
             continue;
         }
         for (const auto &memKey : item.second.memKeys) {
-            RegMemoryKeyUnion keyUnion{};
-            keyUnion.commonKey = memKey;
+            RegMemoryKey hostKey{};
+            if (!ReadStructFromKey(memKey, hostKey)) {
+                BM_LOG_ERROR("Failed to parse host memory key rankId: " << rankId << " bytes: " << memKey.ByteSize());
+                continue;
+            }
             HcomMemoryRegion mrInfo{};
-            mrInfo.lva = keyUnion.hostKey.hcomInfo.lAddress;
-            mrInfo.addr = keyUnion.hostKey.gva;
-            mrInfo.size = keyUnion.hostKey.hcomInfo.size;
+            mrInfo.lva = hostKey.hcomInfo.lAddress;
+            mrInfo.addr = hostKey.gva;
+            mrInfo.size = hostKey.hcomInfo.size;
             if (mrInfo.size == 0) {
                 continue;
             }
             if (rankId != rankId_ && (bmOptype_ & HYBM_DOP_TYPE_HOST_URMA)) {
-                auto ret = DlHcomApi::ImportUrmaSegFunc(rpcService_, mrInfo.addr, mrInfo.size,
-                                                        &keyUnion.hostKey.hcomInfo.lKey);
+                auto ret = DlHcomApi::ImportUrmaSegFunc(rpcService_, mrInfo.addr, mrInfo.size, &hostKey.hcomInfo.lKey);
                 BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
-                BM_LOG_DEBUG("hcom returned, tokens: " << keyUnion.hostKey.hcomInfo.lKey.tokens[0]);
+                BM_LOG_DEBUG("hcom returned, tokens: " << hostKey.hcomInfo.lKey.tokens[0]);
             }
-            CopyHcomOneSideKey(keyUnion.hostKey.hcomInfo.lKey, mrInfo.lKey);
+            CopyHcomOneSideKey(hostKey.hcomInfo.lKey, mrInfo.lKey);
             {
                 std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
                 mrs_[rankId].insert(mrInfo);
@@ -649,7 +669,7 @@ Result HcomTransportManager::InnerReadRemote(uint32_t rankId, uint64_t lAddr, ui
         BM_LOG_ERROR("Failed to find lKey, lAddr: is not register");
         return BM_ERROR;
     }
-    std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
+    CopyHcomLocalKeyWords(mr.lKey, req.lKey);
     ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " is not set");
@@ -688,7 +708,7 @@ Result HcomTransportManager::InnerWriteRemote(uint32_t rankId, uint64_t lAddr, u
         BM_LOG_ERROR("Failed to find lKey, lAddr is not register");
         return BM_ERROR;
     }
-    std::copy_n(mr.lKey.keys, sizeof(req.lKey.keys) / sizeof(req.lKey.keys[0]), req.lKey.keys);
+    CopyHcomLocalKeyWords(mr.lKey, req.lKey);
     ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to find rKey, rankId: " << rankId << " is not set");
@@ -809,7 +829,7 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
                                                      << ", lAddr: " << VaToInfo(lAddr));
         return BM_ERROR;
     }
-    std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
+    CopyHcomLocalKeyWords(mr.lKey, req.lKey);
     mr.lKey = {};
     ret = GetMemoryRegionByAddr(rankId, rAddr, mr);
     if (ret != BM_OK) {
@@ -885,7 +905,7 @@ Result HcomTransportManager::WriteRemoteBatchAsync(uint32_t rankId, const CopyDe
                                                              << ", lAddr: " << VaToStr(req.lAddress));
                 return BM_ERROR;
             }
-            std::copy_n(mr.lKey.keys, std::size(req.lKey.keys), req.lKey.keys);
+            CopyHcomLocalKeyWords(mr.lKey, req.lKey);
             mr.lKey = {};
             auto rAddr = descriptor.globalAddrs[i];
             ret = GetMemoryRegionByAddr(rankId, reinterpret_cast<uint64_t>(rAddr), mr);
