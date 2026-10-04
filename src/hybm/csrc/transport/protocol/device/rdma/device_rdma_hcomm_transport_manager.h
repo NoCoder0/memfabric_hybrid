@@ -25,15 +25,21 @@ namespace device {
 
 constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_TC = 132;
 constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_SL = 4;
+// 对齐 hixl 的 kRdmaRetryCntDefault / kRdmaRetryIntervalDefault；不设会留下 0xFF 的脏值
+constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_RETRY_CNT = 7;
+constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_RETRY_INTERVAL_MS = 20;
 constexpr uint32_t ACL_NOTIFY_DEVICE_USE_ONLY = 1;
 constexpr uint32_t DEFAULT_NOTIFY_NUM = 0;
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 600;
 constexpr uint32_t HCOMM_KERNEL_BATCH_TIMEOUT_US = 600000000;
-constexpr uint64_t DEVICE_RDMA_HCOMM_FLAG_SIZE = 8;
+// transfer flag 只是一次性完成性标记，参考 hixl：host 侧 8 字节 + COMM_MEM_TYPE_HOST 注册
+constexpr uint64_t DEVICE_RDMA_HCOMM_FLAG_SIZE = sizeof(uint64_t);
 
 constexpr uint32_t RDMA_HCOMM_PRIVATE_DATA_MAGIC = 0xA5FAD001U;
+// DEVICE 形态保持 master 的 v1；A5(950) host RoCE 用 v2（额外交换 flagAddr），两者互不影响。
 constexpr uint16_t RDMA_HCOMM_PRIVATE_DATA_VERSION = 1U;
+constexpr uint16_t RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST = 2U;
 
 // TransportMemoryKey slot 2 metadata layout (like device_urma's UrmaExportDesc):
 // keys[TRANS_KEY_DEV_SLOT2 .. TRANS_KEY_DEV_SLOT3-1] accessed via HcommKeyMeta struct
@@ -87,6 +93,33 @@ struct RdmaHcommPrivateData {
 };
 static_assert(std::is_trivially_copyable<RdmaHcommPrivateData>::value,
               "RdmaHcommPrivateData must be trivially copyable for byte serialization");
+
+// A5(950) host RoCE 专用私有数据（v2）：在 v1 基础上增加本端 transfer flag 的注册地址。
+// 参考 hixl：对端直接拿它当 RDMA 远端地址做一次读，不走 memory key 描述符 + MemImport。
+struct RdmaHcommPrivateDataHost {
+    uint32_t magic{RDMA_HCOMM_PRIVATE_DATA_MAGIC};
+    uint16_t version{RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST};
+    uint16_t payloadLen{0};
+    CommProtocol protocol{COMM_PROTOCOL_RESERVED};
+    CommAddrType addrType{COMM_ADDR_TYPE_RESERVED};
+    uint8_t addrBytes[36]{};
+    uint32_t devPhyId{0};
+    uint32_t sdid{0};
+    uint32_t listenPort{0};
+    uint64_t flagAddr{0};
+};
+static_assert(std::is_trivially_copyable<RdmaHcommPrivateDataHost>::value,
+              "RdmaHcommPrivateDataHost must be trivially copyable for byte serialization");
+
+// v1/v2 归一化后的对端私有信息，供 CreatePeerResources 使用（DEVICE 形态 flagAddr=0）。
+struct RdmaHcommPeerPrivateInfo {
+    CommAddrType addrType{COMM_ADDR_TYPE_RESERVED};
+    uint8_t addrBytes[36]{};
+    uint32_t devPhyId{0};
+    uint32_t sdid{0};
+    uint32_t listenPort{0};
+    uint64_t flagAddr{0};
+};
 
 struct RemoteRankState {
     ChannelHandle channel{0};
@@ -173,7 +206,7 @@ private:
 
     // Endpoint/peer lifecycle
     Result BuildLocalEndpointDesc(EndpointDesc &desc) const;
-    Result CreatePeerResources(uint32_t peerRank, const RdmaHcommPrivateData &peerData);
+    Result CreatePeerResources(uint32_t peerRank, const RdmaHcommPeerPrivateInfo &peerData);
     Result DestroyPeerResources(uint32_t peerRank);
     Result ImportPeerMems(uint32_t peerRank, const std::vector<TransportMemoryKey> &memKeys);
     // 并发 join 时多进程对同一对端 HcommMemImport 会返回 HCCL_E_AGAIN(20)（HCOMM 内部
@@ -214,6 +247,9 @@ private:
 
     mutable std::mutex mutex_;
     bool opened_{false};
+    // A5(950) 走主机侧 RoCE（ROCE + HOST 端点 + 主机侧 Nbi 提交，不下发 AICPU 算子），
+    // 其它 SoC 保持原有 DEVICE 形态实现（各分支点在 cpp 里以 hostRocePath_ 区分）。
+    bool hostRocePath_{false};
 
     uint32_t rankId_{0};
     uint32_t rankCount_{0};
@@ -223,12 +259,15 @@ private:
     uint32_t superPodId_{0};
     EndpointHandle localEndpoint_{nullptr};
     EndpointDesc localEndpointDesc_{};
+    // 本端 endpoint 的监听端口（HcommEndpointGetListenPort），host RoCE 形态需交换给对端建 channel
+    uint32_t localListenPort_{0};
     std::string localNic_{};
     std::string channelNameStore_;
 
     void *localFlagPtr_{nullptr};
     uint64_t localFlagSize_{DEVICE_RDMA_HCOMM_FLAG_SIZE};
     HcommMemHandle localFlagHandle_{nullptr};
+    // 仅 DEVICE 形态用：flag 描述符随 memory key 交换给对端 MemImport
     std::vector<uint8_t> localFlagExportDesc_;
     uint32_t localFlagExportLen_{0};
 

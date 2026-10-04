@@ -29,7 +29,11 @@ static constexpr uint32_t COMM_ADDR_EID_LEN = 16U;
 static constexpr uint32_t URMA_ENDPOINT_RAW_LEN = 36UL;
 static constexpr uint32_t HCOMM_CHANNEL_MAGIC_WORD = 0x0fcf0f0fU;
 static constexpr uint32_t HCOMM_CHANNEL_VERSION_ONE = 1U;
+// 默认（DEVICE 形态 / URMA）保持 master 的 ABI v3，行为不变。
 static constexpr uint32_t HCOMM_CHANNEL_VERSION = 3U;
+// A5(950) host RoCE 专用：仅该路径把 channel desc 升到 v4。v4 追加字段位于 union raw 区内，
+// 结构体 sizeof 与偏移和 v3 一致，因此不影响其它场景。
+static constexpr uint32_t HCOMM_CHANNEL_VERSION_V4 = 4U;
 static constexpr uint32_t COMM_LINK_MAGIC_WORD = 0x0f0e0f0fU;
 static constexpr uint32_t COMM_LINK_VERSION = 1U;
 static constexpr uint32_t HCOMM_BATCH_TRANSFER_MAX_DESC_NUM = 8190U;
@@ -286,12 +290,19 @@ struct HcommChannelDesc {
             uint8_t tc;             ///< 流量类别（QoS)
             uint8_t sl;             ///< 服务等级（QoS)
             uint32_t qpThreshold;   ///< 多QP场景下，每个QP最小数据量(B)
+            // ABI v4 追加字段。均在 union 的 raws[128] 区内，sizeof 与偏移和 v3 完全一致，
+            // 仅 A5(950) host RoCE 路径把它升到 version=4 并显式归零（见 HCOMM_CHANNEL_VERSION_V4）。
+            uint32_t cqAttrFlags;  ///< CQ属性标志位，默认0
+            uint16_t *srcPortList; ///< QP源端口号(ABI v4)，用于哈希分流，NULL表示默认
+            uint32_t sqDepth;      ///< SQ队列深度(ABI v4)，0/0xffffffff表示使用默认值
+            uint32_t scqDepth;     ///< SCQ队列深度(ABI v4)，0/0xffffffff表示使用默认值
         } roceAttr;
         struct {
             uint32_t qos; ///< HCCS QoS
         } hccsAttr;
         struct {
-            uint32_t sqDepth; ///< UB队列深度，0表示使用默认值
+            uint32_t sqDepth;  ///< UB队列深度，0表示使用默认值
+            uint32_t scqDepth; ///< UB SCQ队列深度，0表示使用默认值
         } ubAttr;
     };
     uint32_t qos;            ///< 通信域QoS，与协议解耦
@@ -390,6 +401,9 @@ struct HcommBatchTransferDesc {
 // =============================================================================
 using hcommEndpointCreateFunc = HcommResult (*)(const EndpointDesc *, EndpointHandle *);
 using hcommEndpointDestroyFunc = HcommResult (*)(EndpointHandle);
+using hcommEndpointGetListenPortFunc = HcommResult (*)(EndpointHandle, uint32_t *);
+using hcommReadNbiOnThreadFunc = int32_t (*)(ThreadHandle, ChannelHandle, void *, const void *, uint64_t);
+using hcommWriteNbiOnThreadFunc = int32_t (*)(ThreadHandle, ChannelHandle, void *, const void *, uint64_t);
 using hcommMemRegFunc = HcommResult (*)(EndpointHandle, const char *, const HcommCommMem *, HcommMemHandle *);
 using hcommMemUnregFunc = HcommResult (*)(EndpointHandle, HcommMemHandle);
 using hcommMemExportFunc = HcommResult (*)(EndpointHandle, HcommMemHandle, void **, uint32_t *);
@@ -557,6 +571,33 @@ public:
             return BM_UNDER_API_UNLOAD;
         }
         return gHcommEndpointDestroy(endpointHandle);
+    }
+
+    /// @return BM_UNDER_API_UNLOAD 表示库未提供该符号，调用方应回退（例如 listen port 用 0）
+    static inline int32_t HcommEndpointGetListenPort(EndpointHandle endpointHandle, uint32_t *port)
+    {
+        if (gHcommEndpointGetListenPort == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gHcommEndpointGetListenPort(endpointHandle, port);
+    }
+
+    static inline int32_t HcommReadNbiOnThread(ThreadHandle thread, ChannelHandle channel, void *dst, const void *src,
+                                               uint64_t len)
+    {
+        if (gHcommReadNbiOnThread == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gHcommReadNbiOnThread(thread, channel, dst, src, len);
+    }
+
+    static inline int32_t HcommWriteNbiOnThread(ThreadHandle thread, ChannelHandle channel, void *dst, const void *src,
+                                                uint64_t len)
+    {
+        if (gHcommWriteNbiOnThread == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gHcommWriteNbiOnThread(thread, channel, dst, src, len);
     }
 
     static inline int32_t HcommMemReg(EndpointHandle endpoint, const char *memTag, const HcommCommMem *mem,
@@ -749,6 +790,10 @@ private:
 
     static hcommEndpointCreateFunc gHcommEndpointCreate;
     static hcommEndpointDestroyFunc gHcommEndpointDestroy;
+    static hcommEndpointGetListenPortFunc gHcommEndpointGetListenPort;
+    // HOST(CPU engine) 提交必须用 Nbi 变体：阻塞版在非插件 channel 上会退回 legacy Transport 路径
+    static hcommReadNbiOnThreadFunc gHcommReadNbiOnThread;
+    static hcommWriteNbiOnThreadFunc gHcommWriteNbiOnThread;
     static hcommMemRegFunc gHcommMemReg;
     static hcommMemUnregFunc gHcommMemUnreg;
     static hcommMemExportFunc gHcommMemExport;

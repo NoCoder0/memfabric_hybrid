@@ -25,6 +25,9 @@ const char *DlHcommApi::hcommLibName = "libhcomm.so";
 
 hcommEndpointCreateFunc DlHcommApi::gHcommEndpointCreate = nullptr;
 hcommEndpointDestroyFunc DlHcommApi::gHcommEndpointDestroy = nullptr;
+hcommEndpointGetListenPortFunc DlHcommApi::gHcommEndpointGetListenPort = nullptr;
+hcommReadNbiOnThreadFunc DlHcommApi::gHcommReadNbiOnThread = nullptr;
+hcommWriteNbiOnThreadFunc DlHcommApi::gHcommWriteNbiOnThread = nullptr;
 hcommMemRegFunc DlHcommApi::gHcommMemReg = nullptr;
 hcommMemUnregFunc DlHcommApi::gHcommMemUnreg = nullptr;
 hcommMemExportFunc DlHcommApi::gHcommMemExport = nullptr;
@@ -67,6 +70,10 @@ Result DlHcommApi::LoadLibrary()
 
     DL_LOAD_SYM(gHcommEndpointCreate, hcommEndpointCreateFunc, hcommHandle, "HcommEndpointCreate");
     DL_LOAD_SYM(gHcommEndpointDestroy, hcommEndpointDestroyFunc, hcommHandle, "HcommEndpointDestroy");
+    DL_LOAD_SYM_OPTIONAL(gHcommEndpointGetListenPort, hcommEndpointGetListenPortFunc, hcommHandle,
+                         "HcommEndpointGetListenPort");
+    DL_LOAD_SYM_OPTIONAL(gHcommReadNbiOnThread, hcommReadNbiOnThreadFunc, hcommHandle, "HcommReadNbiOnThread");
+    DL_LOAD_SYM_OPTIONAL(gHcommWriteNbiOnThread, hcommWriteNbiOnThreadFunc, hcommHandle, "HcommWriteNbiOnThread");
     DL_LOAD_SYM(gHcommMemReg, hcommMemRegFunc, hcommHandle, "HcommMemReg");
     DL_LOAD_SYM(gHcommMemUnreg, hcommMemUnregFunc, hcommHandle, "HcommMemUnreg");
     DL_LOAD_SYM(gHcommMemExport, hcommMemExportFunc, hcommHandle, "HcommMemExport");
@@ -106,6 +113,9 @@ void DlHcommApi::CleanupLibrary()
 
     gHcommEndpointCreate = nullptr;
     gHcommEndpointDestroy = nullptr;
+    gHcommEndpointGetListenPort = nullptr;
+    gHcommReadNbiOnThread = nullptr;
+    gHcommWriteNbiOnThread = nullptr;
     gHcommMemReg = nullptr;
     gHcommMemUnreg = nullptr;
     gHcommMemExport = nullptr;

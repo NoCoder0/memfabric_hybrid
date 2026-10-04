@@ -69,6 +69,8 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
         // HCOMM 开关（默认关闭）：关闭时无论 CANN 版本一律走 native RDMA；
         // 打开后恢复 CANN 版本判断（>= 9.1 走 HCOMM，否则 native）。
         // HCOMM 代码保留，待 HCOMM 支持动态 MR 更新后置 1 即可启用。
+        // 注：A5(950) 的 HCOMM device RDMA 是主机侧 RoCE 形态（HOST 端点 + 主机侧 Nbi 提交），
+        // 与 910B/910_93 的 DEVICE 形态实现不同，由 DeviceRdmaHcommTransportManager 内部按 SoC 分派。
         static const bool hcommEnabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_HCOMM, 0u) != 0u;
         const bool useHcomm = hcommEnabled && DlAclApi::IsCannGE(HCOMM_REQUIRED_MAJOR, HCOMM_REQUIRED_MINOR);
         BM_LOG_INFO("useHcomm=" << (useHcomm ? "true" : "false") << " (hcommEnabled=" << hcommEnabled

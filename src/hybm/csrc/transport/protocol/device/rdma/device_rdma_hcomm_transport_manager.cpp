@@ -39,8 +39,25 @@ namespace {
 
 constexpr int32_t CHANNEL_STATUS_POLL_INTERVAL_MS = 1;
 constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
+// 搬运完成性判定：Nbi 提交后读对端 flag(8B, 恒为 1)，本端读回 1 即数据已落地
+constexpr uint32_t TRANSFER_FLAG_BYTES = sizeof(uint64_t);
+constexpr uint64_t TRANSFER_FLAG_DONE = 1ULL;
+constexpr int32_t SUBMIT_COMPLETION_TIMEOUT_MS = 5000;
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
+
+// A5(950) host RoCE 专用：把 channel desc 升到 HCOMM ABI v4 并归零 v4 新增字段
+// （srcPortList 若保持 memset 的 0xFF 即野指针）。v4 新字段都在 union raw 区内，
+// sizeof/偏移与 v3 完全一致，因此这里只改 version，不影响 DEVICE/URMA 等其它场景。
+void UpgradeChannelDescToV4(HcommChannelDesc &chDesc)
+{
+    chDesc.header.version = HCOMM_CHANNEL_VERSION_V4;
+    chDesc.roceAttr.qpThreshold = 0U;
+    chDesc.roceAttr.cqAttrFlags = 0U;
+    chDesc.roceAttr.srcPortList = nullptr;
+    chDesc.roceAttr.sqDepth = 0U;
+    chDesc.roceAttr.scqDepth = 0U;
+}
 
 bool IsValidMem(const TransportMemoryRegion &mr)
 {
@@ -170,11 +187,22 @@ Result DeviceRdmaHcommTransportManager::LoadDeviceKernel()
 Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &desc) const
 {
     desc.protocol = COMM_PROTOCOL_ROCE;
-    desc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
-    desc.loc.device.devPhyId = phyDeviceId_;
-    desc.loc.device.superDevId = sdid_;
-    desc.loc.device.serverIdx = serverId_;
-    desc.loc.device.superPodIdx = superPodId_;
+    if (hostRocePath_) {
+        // A5(950) 上 ROCE 只有 HOST 形态可用：ROCE + DEVICE 会落到 AicpuTsRoceEndpoint，
+        // 该类只允许 910B/910_93；ROCE + HOST 落到 CpuRoceEndpoint，明确支持 950/960，
+        // 且内部走 HccpPeerManager(PEER 模式)，直接用主机侧的 RoCE 网口（无需 NPU 侧地址）。
+        desc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
+        // 注意：EndpointLoc 里 device/host 是 union，共用同一段内存。
+        // HOST 形态只能填 host.id（hixl 恒为 0，CpuRoceEndpoint 内部也是 kHostResourceId=0），
+        // 填 device.* 会覆盖成 host.id = phyDeviceId，导致两端 host id 不一致。
+        desc.loc.host.id = 0;
+    } else {
+        desc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+        desc.loc.device.devPhyId = phyDeviceId_;
+        desc.loc.device.superDevId = sdid_;
+        desc.loc.device.serverIdx = serverId_;
+        desc.loc.device.superPodIdx = superPodId_;
+    }
 
     // Get NPU-side IP address for HCOMM endpoint creation.
     {
@@ -238,6 +266,11 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
     rankCount_ = options.rankCount;
     localNic_ = options.nic;
 
+    // A5(950) 的 ROCE 没有 DEVICE 形态端点（AicpuTsRoceEndpoint 只支持 910B/910_93），走主机侧
+    // RoCE：HOST 端点 + COMM_ENGINE_CPU + 主机侧 Nbi 提交（不下发 AICPU 算子）；其它 SoC 保持
+    // 原有 DEVICE 形态实现，行为不变。
+    hostRocePath_ = (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950);
+
     // Get local device info
     auto ret = InitLocalDeviceInfo(phyDeviceId_, sdid_, serverId_, superPodId_);
     if (ret != BM_OK) {
@@ -260,6 +293,19 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
     localEndpoint_ = handle;
     localEndpointDesc_ = desc;
     BM_LOG_INFO("HcommEndpointCreate success, handle=" << handle << " protocol=ROCE addrType=" << desc.commAddr.type);
+
+    if (hostRocePath_) {
+        // 取本端监听端口，随 private data 交换给对端建 channel 用（对齐 hixl 的 GetListenPort + SetPort）；
+        // libhcomm 未提供该符号时回退为 0（DEVICE 形态不需要端口交换）。
+        uint32_t listenPort = 0;
+        auto portRet = DlHcommApi::HcommEndpointGetListenPort(localEndpoint_, &listenPort);
+        if (portRet == 0) {
+            localListenPort_ = listenPort;
+            BM_LOG_INFO("local endpoint listen port: " << localListenPort_);
+        } else {
+            BM_LOG_WARN("HcommEndpointGetListenPort unavailable, ret=" << portRet << ", fallback to port 0");
+        }
+    }
 
     // Load AICPU kernel
     ret = LoadDeviceKernel();
@@ -306,6 +352,40 @@ Result DeviceRdmaHcommTransportManager::InitTransferFlagLocked()
     if (localFlagPtr_ != nullptr) {
         return BM_OK;
     }
+    if (hostRocePath_) {
+        // 参考 hixl：flag 用 host 内存（页对齐）+ COMM_MEM_TYPE_HOST 注册，
+        // 这样本端可以 CPU 直接轮询它的值，对端也可以直接拿它的地址做 RDMA 读。
+        const long pageSize = sysconf(_SC_PAGESIZE);
+        if (pageSize <= 0) {
+            BM_LOG_ERROR("sysconf(_SC_PAGESIZE) failed");
+            return BM_ERROR;
+        }
+        void *hostFlag = nullptr;
+        if (posix_memalign(&hostFlag, static_cast<size_t>(pageSize), localFlagSize_) != 0 || hostFlag == nullptr) {
+            BM_LOG_ERROR("posix_memalign for local flag buffer failed, size: " << localFlagSize_);
+            return BM_MALLOC_FAILED;
+        }
+        *reinterpret_cast<uint64_t *>(hostFlag) = TRANSFER_FLAG_DONE;
+        localFlagPtr_ = hostFlag;
+
+        HcommCommMem flagMem{};
+        flagMem.type = COMM_MEM_TYPE_HOST;
+        flagMem.addr = localFlagPtr_;
+        flagMem.size = localFlagSize_;
+        auto ret = hcommApi_.RawMemReg(localEndpoint_, "__hybm_transfer_flag__", flagMem, localFlagHandle_);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("HcommMemReg for local flag buffer failed, ret: " << ret);
+            free(localFlagPtr_);
+            localFlagPtr_ = nullptr;
+            return ret;
+        }
+
+        BM_LOG_INFO("local flag buffer allocated and registered, addr: " << localFlagPtr_ << " size: " << localFlagSize_
+                                                                         << " handle: " << localFlagHandle_
+                                                                         << " type: HOST");
+        return BM_OK;
+    }
+
     auto ret = DlAclApi::AclrtMalloc(
         &localFlagPtr_, localFlagSize_,
         static_cast<aclrtMemMallocPolicy>(ACL_MEM_TYPE_HIGH_BAND_WIDTH | ACL_MEM_MALLOC_HUGE_ONLY));
@@ -363,7 +443,11 @@ void DeviceRdmaHcommTransportManager::DestroyTransferFlagLocked()
         localFlagHandle_ = nullptr;
     }
     if (localFlagPtr_ != nullptr) {
-        (void)DlAclApi::AclrtFree(localFlagPtr_);
+        if (hostRocePath_) {
+            free(localFlagPtr_); // host 侧 posix_memalign 的内存不能交给 AclrtFree
+        } else {
+            (void)DlAclApi::AclrtFree(localFlagPtr_);
+        }
         localFlagPtr_ = nullptr;
     }
     localFlagExportDesc_.clear();
@@ -475,10 +559,12 @@ Result DeviceRdmaHcommTransportManager::RegisterMemoryRegion(const TransportMemo
         return BM_OK;
     }
 
-    // Follow device_urma pattern: convert HVA to DVA for DRAM memory
+    // Follow device_urma pattern: convert HVA to DVA for DRAM memory.
+    // host RoCE 形态不走这个转换：DRAM/ACL_DRAM 就是主机内存，直接用 HVA + COMM_MEM_TYPE_HOST 注册，
+    // HCOMM/HCCP 内部自己做 HVA->设备地址转换；传 HalHostRegister 的 DVA 反而会注册失败。
     uint64_t regAddr = mr.addr;
     CommMemType memType = (mr.flags & REG_MR_FLAG_HBM) ? COMM_MEM_TYPE_DEVICE : COMM_MEM_TYPE_HOST;
-    if ((mr.flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) != 0) {
+    if (!hostRocePath_ && (mr.flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) != 0) {
         const uint64_t dva = HybmVaManager::GetInstance().TransformVa(mr.addr, HVM_HVA, HVM_DVA);
         if (dva != 0) {
             regAddr = dva;
@@ -584,24 +670,30 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
     // and TransformVa returns the original value.
     const uint64_t peerGva = HybmVaManager::GetInstance().TransformVa(addr, HVM_HVA, HVM_GVA);
     meta.gvaBase = (peerGva != 0) ? peerGva : addr;
-    BM_LOG_DEBUG("QueryMemoryKey localFlagHandle_=" << localFlagHandle_
-                                                    << " localFlagExportLen_=" << localFlagExportLen_
-                                                    << " descSize=" << localFlagExportDesc_.size());
-    if (localFlagHandle_ != nullptr) {
-        const uint32_t flagSlot = HCOMM_KEY_FLAG_SLOT;
-        meta.flagLen = static_cast<uint64_t>(localFlagExportLen_);
-        BM_LOG_DEBUG("QueryMemoryKey flagExportLen=" << localFlagExportLen_ << " descSize="
-                                                     << localFlagExportDesc_.size() << " flagWords=" << flagWords);
-        if (localFlagExportLen_ > 0 && !localFlagExportDesc_.empty()) {
-            std::memcpy(&key.keys[flagSlot], localFlagExportDesc_.data(), localFlagExportLen_);
-            BM_LOG_DEBUG("QueryMemoryKey flag data copied, len=" << localFlagExportLen_);
-        } else {
-            BM_LOG_DEBUG("QueryMemoryKey flag memcpy skipped: len=" << localFlagExportLen_
-                                                                    << " empty=" << localFlagExportDesc_.empty());
-        }
-    } else {
+    if (hostRocePath_) {
+        // 主机侧 RoCE：flag 地址随 private data 交换（参考 hixl：对端直接读它判完成），
+        // 不走 memory key 里的 flag 描述符，保持 0 避免对端走已废弃的 MemImport 路径。
         meta.flagLen = 0;
-        BM_LOG_DEBUG("QueryMemoryKey localFlagHandle_ is nullptr!");
+    } else {
+        BM_LOG_DEBUG("QueryMemoryKey localFlagHandle_=" << localFlagHandle_
+                                                        << " localFlagExportLen_=" << localFlagExportLen_
+                                                        << " descSize=" << localFlagExportDesc_.size());
+        if (localFlagHandle_ != nullptr) {
+            const uint32_t flagSlot = HCOMM_KEY_FLAG_SLOT;
+            meta.flagLen = static_cast<uint64_t>(localFlagExportLen_);
+            BM_LOG_DEBUG("QueryMemoryKey flagExportLen=" << localFlagExportLen_ << " descSize="
+                                                         << localFlagExportDesc_.size() << " flagWords=" << flagWords);
+            if (localFlagExportLen_ > 0 && !localFlagExportDesc_.empty()) {
+                std::memcpy(&key.keys[flagSlot], localFlagExportDesc_.data(), localFlagExportLen_);
+                BM_LOG_DEBUG("QueryMemoryKey flag data copied, len=" << localFlagExportLen_);
+            } else {
+                BM_LOG_DEBUG("QueryMemoryKey flag memcpy skipped: len=" << localFlagExportLen_
+                                                                        << " empty=" << localFlagExportDesc_.empty());
+            }
+        } else {
+            meta.flagLen = 0;
+            BM_LOG_DEBUG("QueryMemoryKey localFlagHandle_ is nullptr!");
+        }
     }
 
     BM_LOG_DEBUG("QueryMemoryKey addr=0x" << std::hex << addr << " export descLen=" << descLen << std::dec);
@@ -643,15 +735,34 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
             continue;
         }
 
-        RdmaHcommPrivateData peerData{};
-        if (!ReadStructFromKey(item.second.privateData.key, peerData)) {
-            BM_LOG_ERROR("invalid private data size from peer: " << peerRank << " bytes: "
-                                                                 << item.second.privateData.key.ByteSize());
-            return BM_INVALID_PARAM;
-        }
-        if (peerData.magic != RDMA_HCOMM_PRIVATE_DATA_MAGIC || peerData.version != RDMA_HCOMM_PRIVATE_DATA_VERSION) {
-            BM_LOG_ERROR("invalid private data from peer: " << peerRank);
-            return BM_INVALID_PARAM;
+        // 私有数据按形态分流：DEVICE 用 v1（与 master 一致），A5 host RoCE 用 v2（额外带 flagAddr）。
+        const TransportMemoryKey &privKey = item.second.privateData.key;
+        RdmaHcommPeerPrivateInfo peerData{};
+        if (hostRocePath_) {
+            RdmaHcommPrivateDataHost hostData{};
+            if (!ReadStructFromKey(privKey, hostData) || hostData.magic != RDMA_HCOMM_PRIVATE_DATA_MAGIC ||
+                hostData.version != RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST) {
+                BM_LOG_ERROR("invalid host private data from peer: " << peerRank << " bytes: " << privKey.ByteSize());
+                return BM_INVALID_PARAM;
+            }
+            peerData.addrType = hostData.addrType;
+            std::memcpy(peerData.addrBytes, hostData.addrBytes, sizeof(peerData.addrBytes));
+            peerData.devPhyId = hostData.devPhyId;
+            peerData.sdid = hostData.sdid;
+            peerData.listenPort = hostData.listenPort;
+            peerData.flagAddr = hostData.flagAddr;
+        } else {
+            RdmaHcommPrivateData devData{};
+            if (!ReadStructFromKey(privKey, devData) || devData.magic != RDMA_HCOMM_PRIVATE_DATA_MAGIC ||
+                devData.version != RDMA_HCOMM_PRIVATE_DATA_VERSION) {
+                BM_LOG_ERROR("invalid private data from peer: " << peerRank << " bytes: " << privKey.ByteSize());
+                return BM_INVALID_PARAM;
+            }
+            peerData.addrType = devData.addrType;
+            std::memcpy(peerData.addrBytes, devData.addrBytes, sizeof(peerData.addrBytes));
+            peerData.devPhyId = devData.devPhyId;
+            peerData.sdid = devData.sdid;
+            peerData.listenPort = devData.listenPort;
         }
 
         // 如果有远端内存 key，先 import，再创建通道
@@ -673,7 +784,7 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
     return BM_OK;
 }
 
-Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, const RdmaHcommPrivateData &peerData)
+Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, const RdmaHcommPeerPrivateInfo &peerData)
 {
     auto &state = remoteRanks_[peerRank];
 
@@ -686,17 +797,31 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
     remoteDesc.protocol = COMM_PROTOCOL_ROCE;
     remoteDesc.commAddr.type = peerData.addrType;
     std::memcpy(remoteDesc.commAddr.raws, peerData.addrBytes, sizeof(remoteDesc.commAddr.raws));
-    remoteDesc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
-    remoteDesc.loc.device.devPhyId = peerData.devPhyId;
-    remoteDesc.loc.device.superDevId = peerData.sdid;
-    remoteDesc.loc.device.serverIdx = serverId_;
-    remoteDesc.loc.device.superPodIdx = superPodId_;
+    if (hostRocePath_) {
+        remoteDesc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
+        remoteDesc.loc.host.id = 0; // 同本端：HOST 形态不写 device.*（union 会覆盖 host.id）
+    } else {
+        remoteDesc.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
+        remoteDesc.loc.device.devPhyId = peerData.devPhyId;
+        remoteDesc.loc.device.superDevId = peerData.sdid;
+        remoteDesc.loc.device.serverIdx = serverId_;
+        remoteDesc.loc.device.superPodIdx = superPodId_;
+    }
     state.remoteEndpointDesc = remoteDesc;
+    if (hostRocePath_) {
+        // 对端 flag 地址随 private data 交换（参考 hixl），完成性判定时直接对它做一次 RDMA 读
+        state.remoteFlagAddr = peerData.flagAddr;
+        state.remoteFlagSize = DEVICE_RDMA_HCOMM_FLAG_SIZE;
+        BM_LOG_INFO("CreatePeerResources peer rank=" << peerRank << " remoteFlagAddr=0x" << std::hex
+                                                     << state.remoteFlagAddr << std::dec);
+    }
 
     // Allocate thread
     uint32_t notifyNum = DEFAULT_NOTIFY_NUM;
     ThreadHandle threadHandle = 0;
-    auto ret = HcommApiWrapper::AllocThread(COMM_ENGINE_AICPU_TS, notifyNum, threadHandle);
+    // HOST 形态的 endpoint 必须搭配 COMM_ENGINE_CPU：channel 层据此选 HostCpuRoceChannel
+    const CommEngine threadEngine = hostRocePath_ ? COMM_ENGINE_CPU : COMM_ENGINE_AICPU_TS;
+    auto ret = HcommApiWrapper::AllocThread(threadEngine, notifyNum, threadHandle);
     if (ret != 0) {
         BM_LOG_ERROR("HcommThreadAlloc failed for peer: " << peerRank << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -721,12 +846,31 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
     chDesc.roceAttr.sl = DEVICE_RDMA_HCOMM_DEFAULT_SL;
     chDesc.roceAttr.queueNum = 1;
 
-    // Set port from peer's listen port (critical for QP to enter RTS state)
-    chDesc.port = static_cast<uint16_t>(peerData.listenPort);
-    BM_LOG_INFO("CreatePeerResources: using peer listenPort=" << peerData.listenPort << " for peer rank=" << peerRank);
+    if (hostRocePath_) {
+        // A5 host RoCE：channel desc 升到 ABI v4（仅该路径）
+        UpgradeChannelDescToV4(chDesc);
+        // 对齐 hixl：显式设置重传参数，不设会留下 0xFF 的脏值
+        chDesc.roceAttr.retryCnt = DEVICE_RDMA_HCOMM_DEFAULT_RETRY_CNT;
+        chDesc.roceAttr.retryInterval = DEVICE_RDMA_HCOMM_DEFAULT_RETRY_INTERVAL_MS;
+        // 对齐 hixl：qos 保持 unset（hixl 的 kQosUnset 语义）
+        chDesc.qos = 0xFFFFFFFFU;
+        // port 语义是「监听端口或目标端口」：SERVER 用本端监听端口，CLIENT 用对端监听端口
+        chDesc.port =
+            static_cast<uint16_t>(chDesc.role == HCOMM_SOCKET_ROLE_SERVER ? localListenPort_ : peerData.listenPort);
+        BM_LOG_INFO("CreatePeerResources: role=" << (chDesc.role == HCOMM_SOCKET_ROLE_SERVER ? "SERVER" : "CLIENT")
+                                                 << " localPort=" << localListenPort_ << " peerListenPort="
+                                                 << peerData.listenPort << " for peer rank=" << peerRank);
+    } else {
+        // Set port from peer's listen port (critical for QP to enter RTS state)
+        chDesc.port = static_cast<uint16_t>(peerData.listenPort);
+        BM_LOG_INFO("CreatePeerResources: using peer listenPort=" << peerData.listenPort
+                                                                  << " for peer rank=" << peerRank);
+    }
 
     ChannelHandle channelHandle = 0;
-    ret = hcommApi_.CreateChannel(localEndpoint_, COMM_ENGINE_AICPU, chDesc, channelHandle);
+    // HOST 形态的 channel 必须用 COMM_ENGINE_CPU，DEVICE 形态用 COMM_ENGINE_AICPU
+    const CommEngine channelEngine = hostRocePath_ ? COMM_ENGINE_CPU : COMM_ENGINE_AICPU;
+    ret = hcommApi_.CreateChannel(localEndpoint_, channelEngine, chDesc, channelHandle);
     if (ret != 0) {
         BM_LOG_ERROR("HcommChannelCreate failed for peer: " << peerRank << " ret: " << ret);
         (void)HcommApiWrapper::FreeThread(threadHandle);
@@ -852,21 +996,24 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
         BM_LOG_INFO("ImportPeerMems stored peer rank=" << peerRank << " peerDva=0x" << std::hex << state.peerDva
                                                        << " peerGva=0x" << state.peerGva << " peerSize=0x"
                                                        << state.peerDvaSize << std::dec);
-
-        // Import flag descriptor from slot 3+ (if present)
-        if (flagLen > 0 && flagLen <= (key.ByteSize() - HCOMM_KEY_FLAG_SLOT * sizeof(uint64_t))) {
-            const void *flagDesc = reinterpret_cast<const void *>(&key.keys[HCOMM_KEY_FLAG_SLOT]);
-            HcommCommMem flagOutMem{};
-            auto flagRet =
-                RawMemImportWithRetry(localEndpoint_, flagDesc, static_cast<uint32_t>(flagLen), peerRank, flagOutMem);
-            if (flagRet == 0 && flagOutMem.type != COMM_MEM_TYPE_INVALID) {
-                state.remoteFlagAddr = reinterpret_cast<uint64_t>(flagOutMem.addr);
-                state.remoteFlagSize = flagOutMem.size;
-                state.importedDescs.emplace_back(static_cast<const uint8_t *>(flagDesc),
-                                                 static_cast<const uint8_t *>(flagDesc) + flagLen);
-                BM_LOG_INFO("ImportPeerMems imported flag for peer=" << peerRank << " addr=0x" << std::hex
-                                                                     << state.remoteFlagAddr << std::dec
-                                                                     << " size=" << state.remoteFlagSize);
+        if (hostRocePath_) {
+            // 对端 flag 地址不走 memory key，改由 private data 交换（见 CreatePeerResources）。
+        } else {
+            // Import flag descriptor from slot 3+ (if present)
+            if (flagLen > 0 && flagLen <= (key.ByteSize() - HCOMM_KEY_FLAG_SLOT * sizeof(uint64_t))) {
+                const void *flagDesc = reinterpret_cast<const void *>(&key.keys[HCOMM_KEY_FLAG_SLOT]);
+                HcommCommMem flagOutMem{};
+                auto flagRet = RawMemImportWithRetry(localEndpoint_, flagDesc, static_cast<uint32_t>(flagLen), peerRank,
+                                                     flagOutMem);
+                if (flagRet == 0 && flagOutMem.type != COMM_MEM_TYPE_INVALID) {
+                    state.remoteFlagAddr = reinterpret_cast<uint64_t>(flagOutMem.addr);
+                    state.remoteFlagSize = flagOutMem.size;
+                    state.importedDescs.emplace_back(static_cast<const uint8_t *>(flagDesc),
+                                                     static_cast<const uint8_t *>(flagDesc) + flagLen);
+                    BM_LOG_INFO("ImportPeerMems imported flag for peer=" << peerRank << " addr=0x" << std::hex
+                                                                         << state.remoteFlagAddr << std::dec
+                                                                         << " size=" << state.remoteFlagSize);
+                }
             }
         }
     }
@@ -942,13 +1089,27 @@ const TransportPrivateData DeviceRdmaHcommTransportManager::GetPrivateData() con
         return data;
     }
 
+    if (hostRocePath_) {
+        // A5 host RoCE（v2）：对端建 channel 需要本端监听端口；flag 地址也一并带过去（对端直接读它判完成）
+        RdmaHcommPrivateDataHost priv{};
+        priv.protocol = COMM_PROTOCOL_ROCE;
+        priv.addrType = localEndpointDesc_.commAddr.type;
+        std::memcpy(priv.addrBytes, localEndpointDesc_.commAddr.raws, sizeof(priv.addrBytes));
+        priv.devPhyId = phyDeviceId_;
+        priv.sdid = sdid_;
+        priv.listenPort = localListenPort_;
+        priv.flagAddr = reinterpret_cast<uint64_t>(localFlagPtr_);
+        WriteStructToKey(priv, data.key);
+        return data;
+    }
+
+    // DEVICE 形态（v1，与 master 一致）：listenPort/flagAddr 保持 0（channel 建链靠对端 endpoint；flag 走 memory key）
     RdmaHcommPrivateData priv{};
     priv.protocol = COMM_PROTOCOL_ROCE;
     priv.addrType = localEndpointDesc_.commAddr.type;
     std::memcpy(priv.addrBytes, localEndpointDesc_.commAddr.raws, sizeof(priv.addrBytes));
     priv.devPhyId = phyDeviceId_;
     priv.sdid = sdid_;
-    // listenPort defaults to 0; channel creation works via peer endpoint, not port.
 
     WriteStructToKey(priv, data.key);
     return data;
@@ -1182,6 +1343,69 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
                                                                const std::vector<uint64_t> &sizeVec, uint32_t rankId)
 {
     std::lock_guard<std::mutex> rankLock(state.rankMutex);
+
+    if (hostRocePath_) {
+        // HOST 形态的 RoCE endpoint 走主机侧提交（对齐 hixl 的 BatchTransferHostAsync）：不下发 AICPU 算子。
+        // 用 Nbi 变体提交（thread 传 0）：
+        // cpu_primitives_c_adpt 里阻塞版 *OnThread 会先判 IS_PLUGIN_HANDLE，非插件 channel 退回 legacy 路径
+        // (HcclRemoteWrite -> Transport::pimpl_)，未安装 NIC plugin 时必然失败；Nbi 变体直接走 channel 的 nic ops。
+        for (size_t i = 0; i < localVec.size(); ++i) {
+            int32_t ret = 0;
+            if (isRead) {
+                ret = DlHcommApi::HcommReadNbiOnThread(0, state.channel, reinterpret_cast<void *>(localVec[i]),
+                                                       reinterpret_cast<const void *>(remoteVec[i]), sizeVec[i]);
+            } else {
+                ret = DlHcommApi::HcommWriteNbiOnThread(0, state.channel, reinterpret_cast<void *>(remoteVec[i]),
+                                                        reinterpret_cast<const void *>(localVec[i]), sizeVec[i]);
+            }
+            if (ret != 0) {
+                BM_LOG_ERROR("StageAndLaunchTransfer " << (isRead ? "read" : "write")
+                                                       << " submit failed, rank: " << rankId << " idx: " << i
+                                                       << " size: " << sizeVec[i] << " ret: " << ret);
+                return BM_DL_FUNCTION_FAILED;
+            }
+        }
+
+        BM_LOG_DEBUG("StageAndLaunchTransfer submit done, rank: " << rankId << (isRead ? " read" : " write")
+                                                                  << " count: " << localVec.size());
+        const int32_t fenceRet = DlHcommApi::HcommChannelFenceOnThread(0, state.channel);
+        if (fenceRet != 0) {
+            BM_LOG_ERROR("StageAndLaunchTransfer HcommChannelFenceOnThread failed, rank: " << rankId
+                                                                                           << " ret: " << fenceRet);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        BM_LOG_DEBUG("StageAndLaunchTransfer fence done, rank: " << rankId);
+
+        // 完成性判定（参考 hixl）：flag 是 host 内存，本端先清零，再在同一 channel 上 Nbi 读对端 flag（对端恒为 1）。
+        // RDMA 在同一条 QP 上保序，本地读回 1 即说明前面的数据搬运已落地。
+        if (state.remoteFlagAddr == 0) {
+            BM_LOG_ERROR("StageAndLaunchTransfer peer flag addr missing, rank: " << rankId);
+            return BM_NOT_INITIALIZED;
+        }
+        auto *hostFlag = reinterpret_cast<volatile uint64_t *>(localFlagPtr_);
+        *hostFlag = 0;
+        int32_t ret = DlHcommApi::HcommReadNbiOnThread(
+            0, state.channel, localFlagPtr_, reinterpret_cast<const void *>(state.remoteFlagAddr), TRANSFER_FLAG_BYTES);
+        if (ret != 0) {
+            BM_LOG_ERROR("StageAndLaunchTransfer submit flag read failed, rank: " << rankId << " ret: " << ret);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        BM_LOG_DEBUG("StageAndLaunchTransfer flag read submitted, rank: " << rankId << " remoteFlag=0x" << std::hex
+                                                                          << state.remoteFlagAddr << std::dec);
+
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(SUBMIT_COMPLETION_TIMEOUT_MS);
+        while (*hostFlag != TRANSFER_FLAG_DONE && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(CHANNEL_STATUS_POLL_INTERVAL_MS));
+        }
+        if (*hostFlag != TRANSFER_FLAG_DONE) {
+            BM_LOG_ERROR("StageAndLaunchTransfer wait completion timeout, rank: " << rankId << " flag: " << *hostFlag);
+            return BM_TIMEOUT;
+        }
+        BM_LOG_DEBUG("StageAndLaunchTransfer done, rank: " << rankId << " isRead: " << isRead
+                                                           << " count: " << localVec.size());
+        return BM_OK;
+    }
 
     DeviceTransferBuffers buffers{};
     auto ret = device::LaunchDeviceKernel(
