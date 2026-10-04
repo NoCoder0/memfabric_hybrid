@@ -65,6 +65,7 @@ halSqCqFreeFunc DlHalApi::pHalSqCqFree = nullptr;
 halResourceIdAllocFunc DlHalApi::pHalResourceIdAlloc = nullptr;
 halResourceIdFreeFunc DlHalApi::pHalResourceIdFree = nullptr;
 halResourceConfigFunc DlHalApi::pHalResourceConfig = nullptr;
+halResourceDetailQueryFunc DlHalApi::pHalResourceDetailQuery = nullptr;
 halSqCqQueryFunc DlHalApi::pHalSqCqQuery = nullptr;
 halHostRegisterFunc DlHalApi::pHalHostRegister = nullptr;
 halHostUnregisterExFunc DlHalApi::pHalHostUnregisterEx = nullptr;
@@ -259,6 +260,7 @@ Result DlHalApi::LoadLibrary(uint32_t gvaVersion)
     DL_LOAD_SYM(pHalResourceIdAlloc, halResourceIdAllocFunc, halHandle, "halResourceIdAlloc");
     DL_LOAD_SYM(pHalResourceIdFree, halResourceIdFreeFunc, halHandle, "halResourceIdFree");
     DL_LOAD_SYM(pHalResourceConfig, halResourceConfigFunc, halHandle, "halResourceConfig");
+    DL_LOAD_SYM_OPTIONAL(pHalResourceDetailQuery, halResourceDetailQueryFunc, halHandle, "halResourceDetailQuery");
     DL_LOAD_SYM(pHalSqCqQuery, halSqCqQueryFunc, halHandle, "halSqCqQuery");
     DL_LOAD_SYM(pHalHostRegister, halHostRegisterFunc, halHandle, "halHostRegister");
     DL_LOAD_SYM(pHalHostUnregisterEx, halHostUnregisterExFunc, halHandle, "halHostUnregisterEx");
@@ -305,6 +307,7 @@ void DlHalApi::CleanupHalApi()
     pHalResourceIdAlloc = nullptr;
     pHalResourceIdFree = nullptr;
     pHalResourceConfig = nullptr;
+    pHalResourceDetailQuery = nullptr;
     pHalSqCqQuery = nullptr;
     pHalHostRegister = nullptr;
     pHalHostUnregisterEx = nullptr;

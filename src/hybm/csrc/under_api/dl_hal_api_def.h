@@ -19,6 +19,8 @@
 extern "C" {
 #endif
 
+struct halResourceDetailInfo;
+
 #define SQCQ_RTS_INFO_LENGTH        5
 #define SQCQ_RESV_LENGTH            8
 #define SQCQ_QUERY_INFO_LENGTH      8
@@ -263,6 +265,17 @@ struct halResourceIdInputInfo {
 
 struct halResourceIdOutputInfo {
     uint32_t resourceId;
+    uint32_t res[RESOURCEID_RESV_LENGTH];
+};
+
+typedef enum tagDrvResourceDetailQueryType {
+    DRV_RES_QUERY_OFFSET = 0,
+} drvResourceDetailQueryType_t;
+
+struct halResourceDetailInfo {
+    drvResourceDetailQueryType_t type;
+    uint32_t value0;
+    uint32_t value1;
     uint32_t res[RESOURCEID_RESV_LENGTH];
 };
 

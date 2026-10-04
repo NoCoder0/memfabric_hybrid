@@ -102,6 +102,22 @@ int32_t DlcloseForDcmiTest(void *)
 
 namespace ock {
 namespace mf {
+namespace {
+constexpr int32_t HAL_RESOURCE_DETAIL_TEST_ERROR = -23;
+uint32_t gHalResourceDetailDevId = 0U;
+struct halResourceIdInputInfo *gHalResourceDetailInput = nullptr;
+struct halResourceDetailInfo *gHalResourceDetailOutput = nullptr;
+
+int HalResourceDetailQueryForTest(uint32_t devId, struct halResourceIdInputInfo *input,
+                                  struct halResourceDetailInfo *output)
+{
+    gHalResourceDetailDevId = devId;
+    gHalResourceDetailInput = input;
+    gHalResourceDetailOutput = output;
+    return HAL_RESOURCE_DETAIL_TEST_ERROR;
+}
+} // namespace
+
 class DlHalApiDcmiTest : public ::testing::Test {
 protected:
     void SetUp() override
@@ -113,6 +129,7 @@ protected:
         DlHalApiForDcmiTest::dcmiHandle = nullptr;
         DlHalApiForDcmiTest::pDcmiInit = nullptr;
         DlHalApiForDcmiTest::pDcmiGetAffinityCpuInfo = nullptr;
+        DlHalApiForDcmiTest::pHalResourceDetailQuery = nullptr;
     }
 };
 
@@ -168,6 +185,25 @@ TEST_F(DlHalApiDcmiTest, DcmiGetAffinityCpuInfoHandlesSuccessAndFailure)
     EXPECT_EQ(DlHalApiForDcmiTest::DcmiGetAffinityCpuInfo(TEST_DEVICE_ID, cpuList), BM_OK);
     EXPECT_TRUE(cpuList.empty());
     EXPECT_EQ(gDcmiCloseCount, 0U);
+}
+
+TEST_F(DlHalApiDcmiTest, HalResourceDetailQueryReturnsUnderApiUnloadWhenMissing)
+{
+    EXPECT_EQ(DlHalApiForDcmiTest::HalResourceDetailQuery(TEST_DEVICE_ID, nullptr, nullptr), BM_UNDER_API_UNLOAD);
+}
+
+TEST_F(DlHalApiDcmiTest, HalResourceDetailQueryForwardsArgumentsAndResult)
+{
+    DlHalApiForDcmiTest::pHalResourceDetailQuery = HalResourceDetailQueryForTest;
+    halResourceIdInputInfo input{};
+    uint64_t outputBuffer[16]{};
+    auto *output = reinterpret_cast<struct halResourceDetailInfo *>(outputBuffer);
+
+    EXPECT_EQ(DlHalApiForDcmiTest::HalResourceDetailQuery(TEST_DEVICE_ID, &input, output),
+              HAL_RESOURCE_DETAIL_TEST_ERROR);
+    EXPECT_EQ(gHalResourceDetailDevId, TEST_DEVICE_ID);
+    EXPECT_EQ(gHalResourceDetailInput, &input);
+    EXPECT_EQ(gHalResourceDetailOutput, output);
 }
 } // namespace mf
 } // namespace ock

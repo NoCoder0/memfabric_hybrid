@@ -53,6 +53,7 @@ using halSqCqFreeFunc = int (*)(uint32_t, halSqCqFreeInfo *);
 using halResourceIdAllocFunc = int (*)(uint32_t, struct halResourceIdInputInfo *, struct halResourceIdOutputInfo *);
 using halResourceIdFreeFunc = int (*)(uint32_t, struct halResourceIdInputInfo *);
 using halResourceConfigFunc = int (*)(uint32_t, struct halResourceIdInputInfo *, struct halResourceConfigInfo *);
+using halResourceDetailQueryFunc = int (*)(uint32_t, struct halResourceIdInputInfo *, struct halResourceDetailInfo *);
 using halSqCqQueryFunc = int (*)(uint32_t devId, struct halSqCqQueryInfo *info);
 using halHostRegisterFunc = int (*)(void *, uint64_t, uint32_t, uint32_t, void **);
 using halHostUnregisterExFunc = int (*)(void *, uint32_t, uint32_t);
@@ -338,6 +339,15 @@ public:
         return pHalResourceConfig(devId, in, para);
     }
 
+    static inline int HalResourceDetailQuery(uint32_t devId, struct halResourceIdInputInfo *in,
+                                             struct halResourceDetailInfo *info)
+    {
+        if (pHalResourceDetailQuery == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pHalResourceDetailQuery(devId, in, info);
+    }
+
     static inline int HalSqCqQuery(uint32_t devId, struct halSqCqQueryInfo *info)
     {
         if (pHalSqCqQuery == nullptr) {
@@ -578,6 +588,7 @@ private:
     static halResourceIdAllocFunc pHalResourceIdAlloc;
     static halResourceIdFreeFunc pHalResourceIdFree;
     static halResourceConfigFunc pHalResourceConfig;
+    static halResourceDetailQueryFunc pHalResourceDetailQuery;
     static halSqCqQueryFunc pHalSqCqQuery;
     static halHostRegisterFunc pHalHostRegister;
     static halHostUnregisterExFunc pHalHostUnregisterEx;

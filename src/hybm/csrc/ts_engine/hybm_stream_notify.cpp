@@ -25,11 +25,35 @@ int32_t HybmStreamNotify::Init()
     auto ret = NotifyIdAlloc(stream_->GetDevId(), stream_->GetTsId(), notifyid_);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "create notify id failed.", ret);
 
+    struct halResourceIdInputInfo detailInput {};
+    detailInput.type = DRV_NOTIFY_ID;
+    detailInput.tsId = stream_->GetTsId();
+    detailInput.resourceId = notifyid_;
+    detailInput.res[1U] = 0U;
+
+    struct halResourceDetailInfo detailInfo = {DRV_RES_QUERY_OFFSET, 0U, 0U, {0U}};
+    ret = DlHalApi::HalResourceDetailQuery(stream_->GetDevId(), &detailInput, &detailInfo);
+    if (ret == 0) {
+        offset_ = detailInfo.value0;
+        return BM_OK;
+    }
+    if (ret != BM_UNDER_API_UNLOAD) {
+        BM_LOG_ERROR("halResourceDetailQuery failed, dev_id:" << stream_->GetDevId() << " ts_id:" << stream_->GetTsId()
+                                                              << " notify_id:" << notifyid_ << " hal_ret:" << ret);
+        return ret;
+    }
+
+    BM_LOG_WARN("halResourceDetailQuery is unavailable, fall back to drvNotifyIdAddrOffset, dev_id:"
+                << stream_->GetDevId() << " ts_id:" << stream_->GetTsId() << " notify_id:" << notifyid_);
     drvNotifyInfo drvInfo = {};
     drvInfo.tsId = stream_->GetTsId();
     drvInfo.notifyId = notifyid_;
     ret = DlHalApi::DrvNotifyIdAddrOffset(stream_->GetDevId(), &drvInfo);
-    BM_ASSERT_LOG_AND_RETURN(ret == 0, "get notify offset failed.", ret);
+    BM_ASSERT_LOG_AND_RETURN(ret == 0,
+                             "drvNotifyIdAddrOffset failed, dev_id:" << stream_->GetDevId() << " ts_id:"
+                                                                     << stream_->GetTsId() << " notify_id:" << notifyid_
+                                                                     << " drv_ret:" << ret,
+                             ret);
     offset_ = drvInfo.devAddrOffset;
     return BM_OK;
 }
