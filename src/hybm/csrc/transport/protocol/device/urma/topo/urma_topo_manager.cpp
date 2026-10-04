@@ -323,7 +323,7 @@ Result UrmaTopoManager::ParseEdgeList(const std::string &json, std::vector<Edge>
         (void)device::ParseStrArray(edgeJson, "\"local_a_ports\"", edge.localAPorts);
         (void)device::ParseStrArray(edgeJson, "\"local_b_ports\"", edge.localBPorts);
         (void)device::ParseStrArray(edgeJson, "\"protocols\"", edge.protocols);
-        if (edge.localA == localId_) {
+        if (edge.localA == localId_ || edge.localB == localId_) {
             edgeList.push_back(std::move(edge));
         }
         pos = vr.offset;
@@ -372,6 +372,8 @@ Result UrmaTopoManager::Initialize(int32_t deviceId, uint32_t rankId)
     }
     BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(
         BuildTopoInfo(), "TopoManager: BuildTopoInfo failed, deviceId=" << userDeviceId_ << " rankId=" << rankId_);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(BuildPeer2PeerMap(), "TopoManager: BuildPeer2PeerMap failed, deviceId="
+                                                              << userDeviceId_ << " rankId=" << rankId_);
     initialized_ = true;
     return BM_OK;
 }
@@ -480,8 +482,50 @@ Result UrmaTopoManager::BuildTopoInfo()
     return BM_OK;
 }
 
+Result UrmaTopoManager::BuildPeer2PeerMap()
+{
+    if (rootInfo_.rankList.empty()) {
+        BM_LOG_ERROR("BuildPeer2PeerMap: rootInfo rankList is empty, phyDeviceId=" << phyDeviceId_);
+        return BM_ERROR;
+    }
+    const auto &rank = rootInfo_.rankList[0];
+    for (const auto &edge : topoInfo_.edgeList) {
+        if (edge.localA != localId_ && edge.localB != localId_) {
+            continue;
+        }
+        for (const auto &edgePort : edge.localAPorts) {
+            std::array<uint8_t, COMM_ADDR_EID_LEN> eid{};
+            bool found = false;
+            for (const auto &level : rank.levelList) {
+                for (const auto &addr : level.rankAddrList) {
+                    if (std::find(addr.ports.begin(), addr.ports.end(), edgePort) != addr.ports.end()) {
+                        HexStrToEid(addr.addr, eid);
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    break;
+                }
+            }
+            if (found) {
+                if (edge.localA == localId_) {
+                    peer2PeerMap_[edge.localB] = eid;
+                } else {
+                    peer2PeerMap_[edge.localA] = eid;
+                }
+                break;
+            }
+        }
+    }
+    BM_LOG_INFO("BuildPeer2PeerMap: peerCount=" << peer2PeerMap_.size() << " phyDeviceId=" << phyDeviceId_
+                                                << " localId=" << localId_);
+    return BM_OK;
+}
+
 void UrmaTopoManager::Uninitialize()
 {
+    peer2PeerMap_.clear();
     rootInfo_ = RootInfo{};
     topoInfo_ = TopoInfo{};
     logicDeviceId_ = -1;
@@ -534,6 +578,29 @@ Result UrmaTopoManager::GetPeer2NetEid(CommProtocol protocol, std::array<uint8_t
     return BM_OK;
 }
 
+Result UrmaTopoManager::GetPeer2PeerEids(std::unordered_map<int32_t, std::array<uint8_t, COMM_ADDR_EID_LEN>> &eidInfos)
+{
+    eidInfos = peer2PeerMap_;
+    return BM_OK;
+}
+
+Result UrmaTopoManager::GetRootInfo(RootInfo &rootInfo)
+{
+    rootInfo.version = rootInfo_.version;
+    rootInfo.topoFilePath = rootInfo_.topoFilePath;
+    rootInfo.rankCount = rootInfo_.rankCount;
+    rootInfo.rankList.clear();
+    for (const auto &rank : rootInfo_.rankList) {
+        rootInfo.rankList.push_back(rank);
+    }
+    return BM_OK;
+}
+
+Result UrmaTopoManager::GetLocalId(int32_t &localId)
+{
+    localId = localId_;
+    return BM_OK;
+}
 } // namespace transport
 } // namespace mf
 } // namespace ock

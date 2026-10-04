@@ -115,17 +115,19 @@ Result HcommApiWrapper::RegisterMemory(HcommEndpointHandle endpoint, MemTag memT
 
     std::lock_guard<std::mutex> guard(mutex_);
 
-    // Check if tag already registered
-    auto tagIt = tagIndex_.find(memTag);
+    const EndpointMemTagKey tagKey{endpoint, memTag};
+
+    // Check if tag already registered on this endpoint
+    auto tagIt = tagIndex_.find(tagKey);
     if (tagIt != tagIndex_.end()) {
-        auto entryIt = memEntries_.find(tagIt->second);
-        if (entryIt == memEntries_.end()) {
-            BM_LOG_ERROR("RegisterMemory: tag index points to non-existent memEntry");
+        auto &entry = tagIt->second;
+        if (entry == nullptr) {
+            BM_LOG_ERROR("RegisterMemory: tag index points to non-existent memEntry, endpoint: "
+                         << endpoint << " memTag: " << memTag);
             return BM_ERROR;
         }
-        auto &entry = entryIt->second;
         if (!SameMem(*entry, mem)) {
-            BM_LOG_ERROR("RegisterMemory: memTag conflict, memTag: " << memTag);
+            BM_LOG_ERROR("RegisterMemory: memTag conflict, endpoint: " << endpoint << " memTag: " << memTag);
             return BM_ERROR;
         }
         entry->refCount++;
@@ -133,11 +135,11 @@ Result HcommApiWrapper::RegisterMemory(HcommEndpointHandle endpoint, MemTag memT
         return BM_OK;
     }
 
-    // Check overlap with existing registrations
+    // Check overlap with existing registrations on the same endpoint
     for (const auto &item : memEntries_) {
-        if (item.second != nullptr && Overlaps(*item.second, mem)) {
-            BM_LOG_ERROR("RegisterMemory: memory range overlaps existing MR, addr: " << std::hex << mem.addr
-                                                                                     << " size: " << mem.size);
+        if (item.second != nullptr && item.second->endpoint == endpoint && Overlaps(*item.second, mem)) {
+            BM_LOG_ERROR("RegisterMemory: memory range overlaps existing MR, endpoint: "
+                         << endpoint << " addr: " << std::hex << mem.addr << " size: " << mem.size);
             return BM_ERROR;
         }
     }
@@ -147,12 +149,15 @@ Result HcommApiWrapper::RegisterMemory(HcommEndpointHandle endpoint, MemTag memT
     const std::string tag = std::to_string(memTag);
     int ret = DlHcommApi::HcommMemReg(endpoint, tag.c_str(), &mem, &hcommHandle);
     if (ret != 0) {
-        BM_LOG_ERROR("RegisterMemory HcommMemReg failed, addr: " << std::hex << mem.addr << " ret: " << ret);
+        BM_LOG_ERROR("RegisterMemory HcommMemReg failed, endpoint: " << endpoint << " addr: " << std::hex << mem.addr
+                                                                     << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
+    BM_LOG_INFO("RegisterMemory HcommMemReg success endpoint: " << endpoint << " addr: " << std::hex << mem.addr);
 
     try {
         auto entry = std::make_shared<HcommMemEntry>();
+        entry->endpoint = endpoint;
         entry->handle = hcommHandle;
         entry->tag = memTag;
         entry->addr = reinterpret_cast<uint64_t>(mem.addr);
@@ -160,14 +165,16 @@ Result HcommApiWrapper::RegisterMemory(HcommEndpointHandle endpoint, MemTag memT
         entry->memType = mem.type;
         entry->refCount = 1;
 
-        auto entryInserted = memEntries_.emplace(entry->handle, entry);
-        auto tagInserted = tagIndex_.emplace(memTag, entry->handle);
+        const EndpointMemHandleKey handleKey{endpoint, entry->handle};
+        auto entryInserted = memEntries_.emplace(handleKey, entry);
+        auto tagInserted = tagIndex_.emplace(tagKey, entry);
         if (!entryInserted.second || !tagInserted.second) {
-            memEntries_.erase(entry->handle);
-            tagIndex_.erase(memTag);
+            memEntries_.erase(handleKey);
+            tagIndex_.erase(tagKey);
             int deregRet = DlHcommApi::HcommMemUnreg(endpoint, hcommHandle);
             if (deregRet != 0) {
-                BM_LOG_ERROR("RegisterMemory: rollback HcommMemUnreg failed, ret: " << deregRet);
+                BM_LOG_ERROR("RegisterMemory: rollback HcommMemUnreg failed, endpoint: " << endpoint
+                                                                                         << " ret: " << deregRet);
             }
             return BM_ERROR;
         }
@@ -177,7 +184,8 @@ Result HcommApiWrapper::RegisterMemory(HcommEndpointHandle endpoint, MemTag memT
     } catch (...) {
         int deregRet = DlHcommApi::HcommMemUnreg(endpoint, hcommHandle);
         if (deregRet != 0) {
-            BM_LOG_ERROR("RegisterMemory: exception rollback HcommMemUnreg failed, ret: " << deregRet);
+            BM_LOG_ERROR("RegisterMemory: exception rollback HcommMemUnreg failed, endpoint: " << endpoint
+                                                                                               << " ret: " << deregRet);
         }
         return BM_MALLOC_FAILED;
     }
@@ -191,9 +199,9 @@ Result HcommApiWrapper::UnregisterMemory(HcommEndpointHandle endpoint, HcommMemH
     }
 
     std::lock_guard<std::mutex> guard(mutex_);
-    auto entryIt = memEntries_.find(handle);
+    auto entryIt = memEntries_.find(EndpointMemHandleKey{endpoint, handle});
     if (entryIt == memEntries_.end() || entryIt->second == nullptr) {
-        BM_LOG_ERROR("UnregisterMemory: handle not found in cache");
+        BM_LOG_ERROR("UnregisterMemory: handle not found in cache, endpoint: " << endpoint << " handle: " << handle);
         return BM_INVALID_PARAM;
     }
 
@@ -205,11 +213,12 @@ Result HcommApiWrapper::UnregisterMemory(HcommEndpointHandle endpoint, HcommMemH
 
     const auto ret = DlHcommApi::HcommMemUnreg(endpoint, entry->handle);
     if (ret != 0) {
-        BM_LOG_ERROR("UnregisterMemory HcommMemUnreg failed, handle: " << entry->handle << " ret: " << ret);
+        BM_LOG_ERROR("UnregisterMemory HcommMemUnreg failed, endpoint: " << endpoint << " handle: " << entry->handle
+                                                                         << " ret: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    tagIndex_.erase(entry->tag);
+    tagIndex_.erase(EndpointMemTagKey{entry->endpoint, entry->tag});
     memEntries_.erase(entryIt);
     return BM_OK;
 }
@@ -223,9 +232,9 @@ Result HcommApiWrapper::ExportMemory(HcommEndpointHandle endpoint, HcommMemHandl
     }
 
     std::lock_guard<std::mutex> guard(mutex_);
-    auto entryIt = memEntries_.find(handle);
+    auto entryIt = memEntries_.find(EndpointMemHandleKey{endpoint, handle});
     if (entryIt == memEntries_.end() || entryIt->second == nullptr) {
-        BM_LOG_ERROR("ExportMemory: handle not found in cache");
+        BM_LOG_ERROR("ExportMemory: handle not found in cache, endpoint: " << endpoint << " handle: " << handle);
         return BM_INVALID_PARAM;
     }
 

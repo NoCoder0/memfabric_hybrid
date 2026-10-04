@@ -46,8 +46,10 @@ constexpr uint32_t URMA_EXPORT_DESC_MAGIC = 0xA5FAB001U;
 constexpr uint16_t URMA_EXPORT_DESC_VERSION = 1U;
 constexpr uint32_t DEVICE_URMA_MAX_EXPORT_KEY_LENGTH = KEY_SIZE * 6;
 constexpr uint32_t DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS = 2;
+constexpr uint32_t DEVICE_URMA_EXPORT_KEY_INFO = 1256;
 constexpr uint32_t DEVICE_URMA_EXPORT_KEY_DATA_BYTES =
-    (DEVICE_URMA_MAX_EXPORT_KEY_LENGTH - DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS) * sizeof(uint64_t);
+    (DEVICE_URMA_MAX_EXPORT_KEY_LENGTH - DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS + DEVICE_URMA_EXPORT_KEY_INFO) *
+    sizeof(uint64_t);
 constexpr void *INVALID_MEM_HANDLE = nullptr;
 
 using UrmaMemTag = uint64_t;
@@ -126,6 +128,8 @@ enum UrmaMemoryType : uint16_t {
 
 struct UrmaEndpointDesc {
     uint32_t devPhyId{0};
+    int32_t localId{0};
+    int32_t remoteId{-1};
     uint32_t superDevId{0};
     uint32_t serverIdx{0};
     uint32_t superPodIdx{0};
@@ -144,6 +148,7 @@ struct UrmaExportDesc {
     uint32_t magic{URMA_EXPORT_DESC_MAGIC};
     uint16_t version{URMA_EXPORT_DESC_VERSION};
     uint16_t headerSize{0};
+    int32_t remoteId{-1};
     UrmaMemoryType memoryType{UrmaMemoryType::INVALID_BUTT};
     UrmaMemTag memTag{0};
     uint64_t addr{0};
@@ -210,7 +215,7 @@ public:
 private:
     struct LocalRegistration {
         TransportMemoryRegion mr{};
-        HcommMemHandle handle{nullptr};
+        std::vector<HcommMemHandle> handle;
         UrmaMemTag memTag{0};
         uint32_t refCount{0};
         uint64_t deviceVa{0};
@@ -275,13 +280,13 @@ private:
 
     // Notify 池中的单个资源；只与当前 manager/device 生命周期绑定，不与 Host 线程绑定。
     struct NotifyResource {
-        void *notify{nullptr};                      // ACL Notify 对象
-        uint32_t notifyId{0};                       // Notify 对应的设备资源 ID
-        uint64_t notifyAddr{0};                     // Notify record 的设备地址
-        uint64_t notifyLen{0};                      // Notify record 的长度
-        HcommMemHandle notifyHcommHandle{nullptr};  // Notify record 的 HCOMM 注册句柄
-        uint32_t poolIndex{UINT32_MAX};             // 资源在池中的稳定下标
-        std::atomic<uint32_t> nextFree{UINT32_MAX}; // 无锁空闲栈中的下一个槽位
+        void *notify{nullptr};                         // ACL Notify 对象
+        uint32_t notifyId{0};                          // Notify 对应的设备资源 ID
+        uint64_t notifyAddr{0};                        // Notify record 的设备地址
+        uint64_t notifyLen{0};                         // Notify record 的长度
+        std::vector<HcommMemHandle> notifyHcommHandle; // Notify record 的 HCOMM 注册句柄
+        uint32_t poolIndex{UINT32_MAX};                // 资源在池中的稳定下标
+        std::atomic<uint32_t> nextFree{UINT32_MAX};    // 无锁空闲栈中的下一个槽位
     };
 
     // Per-thread async completion context.
@@ -298,7 +303,9 @@ private:
     Result InitLocalDeviceInfoLocked(const TransportOptions &options);
     Result OpenEndpointResourcesLocked(const TransportOptions &options);
     Result BuildLocalEndpointDescLocked(UrmaProtocol protocol, UrmaEndpointDesc &localDesc);
+    Result BuildLocalEndpointsDescLocked(UrmaProtocol protocol, std::vector<UrmaEndpointDesc> &localDesc);
     Result CreateEndpointAndInitResourcesLocked(const UrmaEndpointDesc &localDesc);
+    Result CreateEndpointsAndInitResourcesLocked(const std::vector<UrmaEndpointDesc> &descs);
     Result InitDeviceTransferFlagLocked();
     void RollbackOpenDeviceLocked();
     Result EnsureDeviceKernelLoadedLocked();
@@ -423,17 +430,18 @@ private:
     UrmaProtocol protocol_{UrmaProtocol::RESERVED};
     TransportOptions options_{};
     HcommApiWrapper hcommApi_;
-    HcommEndpointHandle localEndpoint_{nullptr};
-    UrmaEndpointDesc localEndpointDesc_{};
+    std::vector<uint32_t> localIds_;
+    std::vector<HcommEndpointHandle> localEndpoint_;
+    std::vector<UrmaEndpointDesc> localEndpointDesc_;
 
     // Device kernel launch state
     bool deviceKernelLoaded_{false};
     aclrtBinHandle deviceKernelHandle_{nullptr};
     DeviceFuncHandles deviceFuncHandles_{};
     // Local flag buffer allocated via AclrtMalloc in OpenDevice, initialised to 1.
-    void *devTransFlagPtr_{nullptr};
+    std::vector<void *> devTransFlagPtr_;
     uint64_t devTransFlagSize_{0};
-    HcommMemHandle devTransFlagHcommHandle_{nullptr};
+    std::vector<HcommMemHandle> devTransFlagHcommHandle_;
     std::unique_ptr<NotifyResource *[]> notifyPoolSlots_{}; // manager 级池，下标到稳定资源地址的只增映射
     std::atomic<uint32_t> notifyPoolSize_{0};               // 已初始化的 Notify 池槽位数量
     std::mutex notifyPoolGrowMutex_{};                      // 池耗尽时串行扩容，不进入正常申请路径

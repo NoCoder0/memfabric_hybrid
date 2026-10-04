@@ -247,6 +247,82 @@ TEST(HcommApiWrapperTest, RegisterMemory_OverlapConflict)
     ASSERT_NE(wrapper.RegisterMemory(reinterpret_cast<HcommEndpointHandle>(0xA001UL), 0xCAFE, mem2, h2), BM_OK);
 }
 
+TEST(HcommApiWrapperTest, RegisterMemory_MultiEndpoint_SameTagSameMem)
+{
+    DlHcommApiGuard guard;
+    static int regCount = 0;
+    static int unregCount = 0;
+    regCount = 0;
+    unregCount = 0;
+    DlHcommApi::gHcommMemReg = [](EndpointHandle, const char *, const HcommCommMem *,
+                                  HcommMemHandle *handle) -> int32_t {
+        *handle = reinterpret_cast<HcommMemHandle>(0xB001UL + regCount);
+        regCount++;
+        return 0;
+    };
+    DlHcommApi::gHcommMemUnreg = [](EndpointHandle, HcommMemHandle) -> int32_t {
+        unregCount++;
+        return 0;
+    };
+
+    HcommApiWrapper wrapper;
+    auto ep0 = reinterpret_cast<HcommEndpointHandle>(0xA001UL);
+    auto ep1 = reinterpret_cast<HcommEndpointHandle>(0xA002UL);
+    HcommMemHandleType h0 = nullptr;
+    HcommMemHandleType h1 = nullptr;
+    auto mem = MakeCommMem(MOCK_ADDR_1, MOCK_SIZE, COMM_MEM_TYPE_HOST);
+
+    // Same tag / same mem on different endpoints must register independently
+    ASSERT_EQ(wrapper.RegisterMemory(ep0, 0xBEEF, mem, h0), BM_OK);
+    ASSERT_EQ(wrapper.RegisterMemory(ep1, 0xBEEF, mem, h1), BM_OK);
+    EXPECT_EQ(regCount, 2);
+    EXPECT_NE(h0, h1);
+
+    // Same endpoint / tag / mem → cache hit, no new registration
+    HcommMemHandleType h0Again = nullptr;
+    ASSERT_EQ(wrapper.RegisterMemory(ep0, 0xBEEF, mem, h0Again), BM_OK);
+    EXPECT_EQ(regCount, 2);
+    EXPECT_EQ(h0, h0Again);
+
+    // Unregister is scoped per endpoint: ep0 refCount is 2, ep1 is 1
+    ASSERT_EQ(wrapper.UnregisterMemory(ep0, h0), BM_OK);
+    EXPECT_EQ(unregCount, 0);
+    ASSERT_EQ(wrapper.UnregisterMemory(ep0, h0), BM_OK);
+    EXPECT_EQ(unregCount, 1);
+    ASSERT_EQ(wrapper.UnregisterMemory(ep1, h1), BM_OK);
+    EXPECT_EQ(unregCount, 2);
+}
+
+TEST(HcommApiWrapperTest, RegisterMemory_MultiEndpoint_OverlapAllowedAcrossEndpoints)
+{
+    DlHcommApiGuard guard;
+    static int regCount = 0;
+    regCount = 0;
+    DlHcommApi::gHcommMemReg = [](EndpointHandle, const char *, const HcommCommMem *,
+                                  HcommMemHandle *handle) -> int32_t {
+        *handle = reinterpret_cast<HcommMemHandle>(0xB001UL + regCount);
+        regCount++;
+        return 0;
+    };
+    DlHcommApi::gHcommMemUnreg = [](EndpointHandle, HcommMemHandle) -> int32_t { return 0; };
+
+    HcommApiWrapper wrapper;
+    auto ep0 = reinterpret_cast<HcommEndpointHandle>(0xA001UL);
+    auto ep1 = reinterpret_cast<HcommEndpointHandle>(0xA002UL);
+    HcommMemHandleType h0 = nullptr;
+    HcommMemHandleType h1 = nullptr;
+    auto mem = MakeCommMem(MOCK_ADDR_1, MOCK_SIZE, COMM_MEM_TYPE_HOST);
+
+    // Same range with different tags on different endpoints → both allowed
+    ASSERT_EQ(wrapper.RegisterMemory(ep0, 0xBEEF, mem, h0), BM_OK);
+    ASSERT_EQ(wrapper.RegisterMemory(ep1, 0xCAFE, mem, h1), BM_OK);
+    EXPECT_EQ(regCount, 2);
+
+    // Same range / different tag on the SAME endpoint → still a conflict
+    HcommMemHandleType h2 = nullptr;
+    EXPECT_NE(wrapper.RegisterMemory(ep0, 0xCAFE, mem, h2), BM_OK);
+}
+
 TEST(HcommApiWrapperTest, UnregisterMemory_Success)
 {
     DlHcommApiGuard guard;

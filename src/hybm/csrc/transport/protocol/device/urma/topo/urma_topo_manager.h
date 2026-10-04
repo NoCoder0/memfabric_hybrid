@@ -20,6 +20,7 @@
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace ock {
@@ -57,6 +58,9 @@ public:
     // Locate network layers using PEER2NET edges that support the requested protocol,
     // then select the EID with the most total ports among addresses sharing a port with a matching edge.
     Result GetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData);
+    Result GetPeer2PeerEids(std::unordered_map<int32_t, std::array<uint8_t, COMM_ADDR_EID_LEN>> &eidInfos);
+    Result GetRootInfo(RootInfo &rootInfo);
+    Result GetLocalId(int32_t &localId);
 
 private:
     UrmaTopoManager() = default;
@@ -67,6 +71,7 @@ private:
     Result BuildRootInfo();
     Result BuildRootInfoFromFile();
     Result BuildTopoInfo();
+    Result BuildPeer2PeerMap();
 
 private:
     int32_t userDeviceId_{-1};
@@ -79,6 +84,7 @@ private:
     UrmaTopoProductPtr topoProductPtr_{nullptr};
     RootInfo rootInfo_{};
     TopoInfo topoInfo_{};
+    std::unordered_map<int32_t, std::array<uint8_t, COMM_ADDR_EID_LEN>> peer2PeerMap_;
 };
 
 } // namespace transport

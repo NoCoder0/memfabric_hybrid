@@ -27,7 +27,7 @@ GLOBAL_COPTS = [
 }) + select({
     "//:memfabric_mode_opt": [
         "-fstack-protector-strong",
-        "-Wstack-usage=16384",
+        "-Wstack-usage=32768",
         "-Werror",
         "-Wl,-z,noexecstack",
         "-Wl,-z,relro",

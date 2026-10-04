@@ -30,6 +30,7 @@ using HcommMemHandleType = void *;
 // MemEntry: cached memory registration entry
 // ─────────────────────────────────────────────────────────────────
 struct HcommMemEntry {
+    HcommEndpointHandle endpoint{nullptr};
     HcommMemHandleType handle{nullptr};
     uint64_t tag{0};
     uint64_t addr{0};
@@ -38,6 +39,42 @@ struct HcommMemEntry {
     uint32_t refCount{0};
     bool exportCacheValid{false};
     std::vector<uint8_t> exportCache{};
+};
+
+// Registration caches are scoped per endpoint: the same memTag / memory range may be
+// registered on multiple endpoints, and each endpoint owns an independent handle.
+struct EndpointMemTagKey {
+    HcommEndpointHandle endpoint{nullptr};
+    uint64_t memTag{0};
+
+    bool operator==(const EndpointMemTagKey &other) const
+    {
+        return endpoint == other.endpoint && memTag == other.memTag;
+    }
+};
+
+struct EndpointMemTagKeyHash {
+    std::size_t operator()(const EndpointMemTagKey &key) const
+    {
+        return std::hash<const void *>()(key.endpoint) ^ (std::hash<uint64_t>()(key.memTag) << 1U);
+    }
+};
+
+struct EndpointMemHandleKey {
+    HcommEndpointHandle endpoint{nullptr};
+    HcommMemHandleType handle{nullptr};
+
+    bool operator==(const EndpointMemHandleKey &other) const
+    {
+        return endpoint == other.endpoint && handle == other.handle;
+    }
+};
+
+struct EndpointMemHandleKeyHash {
+    std::size_t operator()(const EndpointMemHandleKey &key) const
+    {
+        return std::hash<const void *>()(key.endpoint) ^ (std::hash<const void *>()(key.handle) << 1U);
+    }
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -99,8 +136,8 @@ private:
     static bool Overlaps(const HcommMemEntry &entry, const HcommCommMem &mem);
 
     mutable std::mutex mutex_;
-    std::unordered_map<MemTag, HcommMemHandleType> tagIndex_;
-    std::unordered_map<HcommMemHandleType, std::shared_ptr<HcommMemEntry>> memEntries_;
+    std::unordered_map<EndpointMemTagKey, std::shared_ptr<HcommMemEntry>, EndpointMemTagKeyHash> tagIndex_;
+    std::unordered_map<EndpointMemHandleKey, std::shared_ptr<HcommMemEntry>, EndpointMemHandleKeyHash> memEntries_;
 };
 
 } // namespace device
