@@ -41,6 +41,11 @@ public:
     void CleanUp() noexcept override;
 
 private:
+    // imported gva → 本实体导入映射地址：同进程多实体同址共存时全局台账无法区分连接，
+    // 优先经实体注入的解析器（本实体的导入记录），未命中回退全局台账
+    uint64_t TransformImportedGva(uint64_t gva) noexcept;
+
+private:
     Result CopyLH2GD(void *gvaAddr, const void *hostAddr, size_t count, void *stream) noexcept;
     Result CopyGD2LH(void *hostAddr, const void *gvaAddr, size_t count, void *stream) noexcept;
     Result CopyLH2GH(void *destVA, const void *srcVA, uint64_t length, void *stream) noexcept;

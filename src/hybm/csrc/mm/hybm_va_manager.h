@@ -323,6 +323,12 @@ public:
     Result AddVaInfo(const AllocatedGvaInfo &info, bool onlyGva = false);
     void RemoveOneVaInfo(uint64_t va, uint32_t type = HVM_GVA);
 
+    // 精确注销：按调用方记录在 AddVaInfo 时登记的 key 逐表递减引用计数，归零回收行。
+    // 同 gva 的 imported 记录共存（多 store 组窗口号撞车）时，各行 content 是最后写者，
+    // 单 key 级联会误删共存方的 DVA 行，此类调用方（如 trans 导入卸载）必须使用本重载。
+    // key 为 0 表示该表无行，跳过。
+    void RemoveOneVaInfo(uint64_t gva, uint64_t dva, uint64_t hva);
+
     // Returns 0 if not found.
     uint64_t TransformVa(uint64_t va, uint32_t inputType, uint32_t outputType);
     std::pair<AllocatedGvaInfo, bool> FindAllocByVa(uint64_t va, uint32_t type = HVM_GVA) const;
@@ -408,9 +414,11 @@ private:
     // Duplicate check on the onlyGva path: only GVA overlap is validated
     Result ValidateOnlyGvaAdd(const AllocatedGvaInfo &info);
 
-    // Decrements the HVA reference count; returns true when other registration records still share this physical
-    // memory, in which case the dva/hva rows must be kept
-    bool ReleaseHvaRef(uint64_t hva);
+    // 行引用计数递增：行已存在（新的共存记录）则 ++，否则初始化为 1（调用方须已持有 mutex_）
+    void AddRowRef(uint32_t type, uint64_t key);
+
+    // 行引用计数递减：归零回收行与计数；行/计数不存在时静默跳过（如 onlyGva 记录无 DVA/HVA 行）
+    void RemoveRowRef(uint32_t type, uint64_t key);
 
     uint64_t AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene = HYBM_SCENE_DEFAULT);
 
@@ -427,10 +435,10 @@ private:
 
     std::map<uint64_t, AllocatedGvaInfo> allocatedMap_[HVM_BUTT]{}; // map<va, allocInfo>
     std::map<uint64_t, ReservedGvaInfo> reservedMap_[HVM_BUTT]{};   // map<va, reserveInfo>  (HVM_HVA not used now)
-    // HVA -> number of registrations sharing this physical memory (including aliases produced by cross-entity
-    // replays). The dva/hva tables are first-wins, so once the owner record is removed this count decides
-    // whether a surviving alias still needs those two tables; the map rows can be reclaimed only at zero.
-    std::map<uint64_t, uint32_t> hvaRefCnt_{};
+    // 每张 VA 表的行寿命计数：rowRefCnt_[table][key] = 引用该行的存活记录数。
+    // 行在多条记录间共享（同 gva 的 imported 共存、同 host buffer 的 alias 注册）时，
+    // 最后一条引用记录注销才回收行，避免存活方的分类/翻译行被提前拆除或悬挂泄漏。
+    std::map<uint64_t, uint32_t> rowRefCnt_[HVM_BUTT]{};
 
     static constexpr hybm_data_copy_direction COPY_DIRECTION_TABLE[ADDRESS_CATEGORY_BUTT][ADDRESS_CATEGORY_BUTT] = {
         {HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE,

@@ -325,16 +325,26 @@ Result HostDataOpSDMA::DataCopyAsync(hybm_copy_params &params, hybm_data_copy_di
 
 void HostDataOpSDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
 {
-    uint64_t out;
     if (src != nullptr) {
-        out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_DVA);
+        auto out = TransformImportedGva(reinterpret_cast<uint64_t>(src));
         src = (out != 0) ? reinterpret_cast<void *>(out) : src;
     }
 
     if (dst != nullptr) {
-        out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_DVA);
+        auto out = TransformImportedGva(reinterpret_cast<uint64_t>(dst));
         dst = (out != 0) ? reinterpret_cast<void *>(out) : dst;
     }
+}
+
+uint64_t HostDataOpSDMA::TransformImportedGva(uint64_t gva) noexcept
+{
+    if (importedGvaResolver_ != nullptr) {
+        auto lva = importedGvaResolver_(gva);
+        if (lva != 0) {
+            return lva;
+        }
+    }
+    return HybmVaManager::GetInstance().TransformVa(gva, HVM_GVA, HVM_DVA);
 }
 
 Result HostDataOpSDMA::Wait(int32_t waitId) noexcept

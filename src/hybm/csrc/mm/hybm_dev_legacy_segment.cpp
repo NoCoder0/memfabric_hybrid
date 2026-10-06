@@ -439,7 +439,8 @@ Result HybmDevLegacySegment::RemoveImported(const std::vector<uint32_t> &ranks) 
             if (deviceVa > 0) {
                 (void)drv::HalGvaClose(deviceVa, 0);
             }
-            HybmVaManager::GetInstance().RemoveOneVaInfo(deviceVa);
+            // 按记录的 GVA 注销（传入 DVA 会在 GVA 表 miss 导致记录泄漏）
+            HybmVaManager::GetInstance().RemoveOneVaInfo(*it);
             it++;
         }
 

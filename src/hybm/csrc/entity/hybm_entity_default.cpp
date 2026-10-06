@@ -1382,6 +1382,18 @@ Result MemEntityDefault::InitDataOperator()
         BM_LOG_ERROR("Failed to init data operator ret:" << ret);
         return ret;
     }
+    // imported gva 的连接域解析：多进程实体同址共存（多 store 组窗口号撞车）时，
+    // 全局台账的同 gva 行无法区分连接，注入本实体导入记录的解析器供数据面优先使用
+    dataOperator_->SetImportedGvaResolver([this](uint64_t gva) -> uint64_t {
+        uint64_t lva = 0;
+        if (hbmSegment_ != nullptr && hbmSegment_->ResolveRemoteGva(gva, lva)) {
+            return lva;
+        }
+        if (dramSegment_ != nullptr && dramSegment_->ResolveRemoteGva(gva, lva)) {
+            return lva;
+        }
+        return 0;
+    });
     return BM_OK;
 }
 

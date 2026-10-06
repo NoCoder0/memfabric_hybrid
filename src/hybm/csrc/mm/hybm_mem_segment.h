@@ -145,6 +145,13 @@ public:
 
     Result RegisterMemCommon(const void *addr, uint64_t size, MemSlicePtr &slice);
 
+    // imported gva → 本实体导入映射地址（lva）：同进程多实体同址共存（多 store 组窗口号撞车）时，
+    // 全局台账的同 gva 行无法区分连接，数据面须按实体域解析；未命中返回 false
+    virtual bool ResolveRemoteGva(uint64_t gva, uint64_t &lva)
+    {
+        return false;
+    }
+
     // ---- gva -> remote rank resolution ----
     // VA layout invariant: gva = globalVirtualAddress_ + rank * maxSize + delta for any slice (delta < maxSize).
     // All 5 segments reserve by this layout in ReserveMemorySpace (locally base + localRank * maxSize),

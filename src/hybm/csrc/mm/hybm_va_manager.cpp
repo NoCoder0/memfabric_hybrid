@@ -72,36 +72,31 @@ Result HybmVaManager::AddVaInfo(const AllocatedGvaInfo &info, bool onlyGva)
     }
 
     const uint64_t gva = info.base.va[HVM_GVA];
-    const uint64_t hva = info.base.va[HVM_HVA];
     if (onlyGva) {
+        AddRowRef(HVM_GVA, gva);
         allocatedMap_[HVM_GVA][gva] = info;
         return BM_OK;
     }
 
     // A GVA row corresponds one-to-one with a registration record and is always written; the DVA/HVA tables are
     // first-wins, so when an earlier registration (the owner) already holds that key it is not overwritten and
-    // this registration only records its new gva identity.
-    bool newRegistration = (gva != 0) && (allocatedMap_[HVM_GVA].find(gva) == allocatedMap_[HVM_GVA].end());
+    // this registration only records its new gva identity. Every touched row gets a per-table lifetime reference.
     for (uint32_t i = 0; i < HVM_BUTT; i++) {
         const uint64_t key = info.base.va[i];
         if (key == 0) {
             continue;
         }
-        if (i == HVM_GVA) {
+        auto rowIt = allocatedMap_[i].find(key);
+        if (rowIt != allocatedMap_[i].end() && rowIt->second == info) {
+            // 完全相同的记录再次登记：幂等重放或不同物理内存的等描述符共存（多 store 组）。
+            // 引用计数照加（每次登记都有对应的注销），仅告警提示存在重放路径
+            BM_LOG_WARN("identical record re-added, key=" << VaToStr(key) << " type=" << i
+                                                          << " - replay path or identical coexistence");
+        }
+        AddRowRef(i, key);
+        if (i == HVM_GVA || rowIt == allocatedMap_[i].end()) {
             allocatedMap_[i][key] = info;
-            continue;
         }
-        if (allocatedMap_[i].find(key) != allocatedMap_[i].end()) {
-            continue;
-        }
-        allocatedMap_[i][key] = info;
-        // Registrations with gva == 0 (mem_segment, etc.) produce no GVA row, so a new dva/hva row is what counts
-        newRegistration = newRegistration || (gva == 0);
-    }
-    // Idempotent replays (GVA row already present) are not counted again, otherwise the count never reaches
-    // zero and the dva/hva rows would stay occupied forever.
-    if (newRegistration && hva != 0) {
-        ++hvaRefCnt_[hva];
     }
     return BM_OK;
 }
@@ -150,6 +145,15 @@ Result HybmVaManager::ValidateAddVaInfo(const AllocatedGvaInfo &info)
                         << VaToStr(info.base.size) << ", ownership=" << (info.IsImported() ? "imported" : "local"));
             continue;
         }
+        // 同 gva 的 imported↔imported 共存：多 store 组下不同对端（如各自 store 的 0 号 rank）窗口号相同，
+        // 属合法拓扑。imported 行 classification-only，共存记录的 ownership/memType 一致，分类结果不受影响；
+        // 生命周期由 rowRefCnt_ 保证（最后一条注销才回收行），数据面按连接经实体域解析、不经此行寻址
+        if (info.IsImported() && prev.IsImported()) {
+            BM_LOG_INFO("AddVaInfo imported-over-imported overlap allowed: gva=" << VaToStr(info.base.va[0])
+                                                                                 << " size=" << VaToStr(info.base.size)
+                                                                                 << " memType=" << info.base.memType);
+            continue;
+        }
         BM_LOG_ERROR("AddVaInfo failed: address overlap. gva="
                      << VaToStr(info.base.va[0]) << " va:" << VaToStr(info.base.va[i])
                      << ", size=" << VaToStr(info.base.size) << ", vaType=" << i << ", memType=" << info.base.memType
@@ -179,51 +183,72 @@ void HybmVaManager::RemoveOneVaInfo(uint64_t va, uint32_t type)
         BM_LOG_WARN("Unable to RemoveOneVaInfo: address not found. va=" << VaToStr(va) << " type=" << type);
         return;
     }
-    const AllocatedGvaInfo info = it->second;
-    BM_LOG_INFO("Removing VaInfo: " << info);
-
-    // The DVA/HVA translation tables hold the first-wins owner row: the same physical memory may still be
-    // shared by other gva records (aliases produced by cross-entity replay registration) and must be kept
-    // until the share count reaches zero, otherwise the HVA->DVA lookup on a surviving alias silently returns 0
-    // (device_rdma then reports BM_INVALID_PARAM). A GVA row maps one-to-one to a registration record and is
-    // always removed together with it.
-    const bool keepShared = info.base.va[HVM_HVA] != 0 && ReleaseHvaRef(info.base.va[HVM_HVA]);
-    if (!keepShared || type != HVM_HVA) {
-        allocatedMap_[type].erase(it);
+    const AllocatedGvaInfo record = it->second;
+    BM_LOG_INFO("Removing VaInfo: " << record);
+    // 共享 GVA 行（多实体 imported 同址共存）时行 content 是最后写者，按内容级联会误减共存方的 DVA 行；
+    // 此类调用方必须改用 (gva, dva, hva) 精确重载并携带自己的 dva
+    auto cntIt = rowRefCnt_[type].find(va);
+    if (type == HVM_GVA && cntIt != rowRefCnt_[type].end() && cntIt->second > 1U && record.base.va[HVM_DVA] != 0) {
+        BM_LOG_WARN("RemoveOneVaInfo cascades on a shared GVA row, dva=" << VaToStr(record.base.va[HVM_DVA])
+                                                                         << " may belong to a coexisting record");
     }
     for (uint32_t i = 0; i < HVM_BUTT; i++) {
-        const uint64_t key = info.base.va[i];
-        if (i == type || key == 0 || (i != HVM_GVA && keepShared)) {
-            continue;
-        }
-        auto its = allocatedMap_[i].find(key);
-        if (its == allocatedMap_[i].end()) {
-            continue;
-        }
-        // The dva/hva keys may already be held by another physical memory, so a row is removed only when it has the
-        // same origin as this record (same gva) or the same physical memory (same hva), to avoid dropping an
-        // unrelated registration.
-        if (i != HVM_GVA && its->second.base.va[HVM_GVA] != info.base.va[HVM_GVA] &&
-            its->second.base.va[HVM_HVA] != info.base.va[HVM_HVA]) {
-            continue;
-        }
-        allocatedMap_[i].erase(its);
+        RemoveRowRef(i, record.base.va[i]);
     }
     BM_LOG_DEBUG("RemoveOneGvaInfo success: gva=" << VaToStr(va) << " type=" << type);
 }
 
-bool HybmVaManager::ReleaseHvaRef(uint64_t hva)
+void HybmVaManager::RemoveOneVaInfo(uint64_t gva, uint64_t dva, uint64_t hva)
 {
-    auto it = hvaRefCnt_.find(hva);
-    if (it == hvaRefCnt_.end()) {
-        return false;
+    if (gva == 0 && dva == 0 && hva == 0) {
+        BM_LOG_WARN("RemoveOneVaInfo: all keys are zero, nothing to remove");
+        return;
     }
-    if (it->second > 1U) {
-        --it->second;
-        return true;
+    std::unique_lock<std::shared_mutex> lock(mutex_);
+    bool removedAny = false;
+    uint64_t keys[HVM_BUTT] = {};
+    keys[HVM_GVA] = gva;
+    keys[HVM_DVA] = dva;
+    keys[HVM_HVA] = hva;
+    for (uint32_t i = 0; i < HVM_BUTT; i++) {
+        if (keys[i] == 0 || rowRefCnt_[i].find(keys[i]) == rowRefCnt_[i].end()) {
+            continue;
+        }
+        removedAny = true;
+        RemoveRowRef(i, keys[i]);
     }
-    hvaRefCnt_.erase(it);
-    return false;
+    if (!removedAny) {
+        BM_LOG_WARN("RemoveOneVaInfo: none of the keys has a live row, gva=" << VaToStr(gva) << " dva=" << VaToStr(dva)
+                                                                             << " hva=" << VaToStr(hva));
+    }
+}
+
+void HybmVaManager::AddRowRef(uint32_t type, uint64_t key)
+{
+    if (key == 0 || type >= HVM_BUTT) {
+        return;
+    }
+    auto &cnt = rowRefCnt_[type][key];
+    if (allocatedMap_[type].find(key) != allocatedMap_[type].end()) {
+        ++cnt;
+    } else {
+        cnt = 1;
+    }
+}
+
+void HybmVaManager::RemoveRowRef(uint32_t type, uint64_t key)
+{
+    if (key == 0 || type >= HVM_BUTT) {
+        return;
+    }
+    auto cntIt = rowRefCnt_[type].find(key);
+    if (cntIt == rowRefCnt_[type].end()) {
+        return;
+    }
+    if (--cntIt->second == 0) {
+        rowRefCnt_[type].erase(cntIt);
+        allocatedMap_[type].erase(key);
+    }
 }
 
 uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t outputType)
@@ -795,8 +820,8 @@ void HybmVaManager::ClearAll()
     for (uint32_t i = 0; i < HVM_BUTT; i++) {
         allocatedMap_[i].clear();
         reservedMap_[i].clear();
+        rowRefCnt_[i].clear();
     }
-    hvaRefCnt_.clear();
 }
 
 const AllocatedGvaInfo *HybmVaManager::FindAllocRecordLocked(uint64_t addr) const

@@ -44,6 +44,14 @@ public:
     {
         return;
     }
+    // 转发给内部算子：SDMA 的 imported gva 翻译需按实体域解析（多实体同址共存）
+    void SetImportedGvaResolver(std::function<uint64_t(uint64_t)> resolver) noexcept override
+    {
+        importedGvaResolver_ = resolver;
+        if (sdmaDataOperator_ != nullptr) {
+            sdmaDataOperator_->SetImportedGvaResolver(resolver);
+        }
+    }
 
 private:
     using DataOperators = std::vector<std::pair<hybm_data_op_type, DataOperatorPtr>>;

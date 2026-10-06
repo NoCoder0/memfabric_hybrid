@@ -41,6 +41,7 @@ constexpr uint64_t TEST_GVA_BASE = 0x400000000000ULL;   // 自造的段基址（
 constexpr uint64_t TEST_HBM_ADDR = HYBM_HBM_START_ADDR; // 0x100000000000, 落在 HBM 区间内
 constexpr uint64_t TEST_HOST_ADDR = 0x00007F1234000000ULL;
 constexpr uint64_t TEST_SIZE = 4096ULL;
+constexpr uint64_t TEST_SIZE_ONE_BYTE = 1ULL;
 constexpr uint64_t TEST_TOTAL_SIZE = 1ULL << 30;
 constexpr uint64_t TEST_FAKE_DVA = 0x600012340000ULL;
 constexpr uint32_t TEST_LOGIC_DEVICE_ID = 5;
@@ -690,7 +691,10 @@ TEST_F(HybmAsymmetricSegmentTest, Import_Rollback_SkipsDramGvaAddresses)
     auto ret = segment.Import(infos, addresses);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
     EXPECT_EQ(addresses[0], TestAddr(TEST_GVA_BASE + 0x1000000ULL)); // 成功条目仍返回 GVA
-    EXPECT_EQ(segment.rankToRemoteSlices_.count(7U), 1U);            // 成功条目已登记
+    // 回滚为完整清理：映射解除 + VA 记录/导入账本同步注销，保证后续导入重试可完整重新执行
+    EXPECT_EQ(segment.rankToRemoteSlices_.count(7U), 0U);
+    EXPECT_EQ(segment.importedSliceInfo_.empty(), true);
+    EXPECT_EQ(HybmVaManager::GetInstance().FindAllocByVa(TEST_GVA_BASE + 0x1000000ULL, HVM_GVA).second, false);
 }
 
 /**
@@ -781,6 +785,67 @@ TEST_F(HybmAsymmetricSegmentTest, ImportSlice_A5_VmmMap)
     EXPECT_NE(remoteSlice->vAddress_, 0U);
     EXPECT_EQ(addresses[0], TestAddr(TEST_GVA_BASE + 0x1000000ULL));
     EXPECT_EQ(g_setAccessCount, 1); // import 映射后本地设备 RW 授权
+}
+
+/**
+ * ResolveRemoteGva_MappedImport_HitsOwnLva
+ *  - VMM 导入成功后：导入 gva（起点与范围内偏移）经实体域解析命中本实体的映射地址，范围外 miss。
+ */
+TEST_F(HybmAsymmetricSegmentTest, ResolveRemoteGva_MappedImport_HitsOwnLva)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+    MockVmmImportPath();
+
+    auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
+    std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
+    void *addresses[1] = {nullptr};
+    ASSERT_EQ(segment.Import({data}, addresses), BM_OK);
+
+    auto remoteSlice = segment.rankToRemoteSlices_.at(7U).at(0);
+    const auto gva = remoteSlice->gva_;
+    const auto lva = remoteSlice->vAddress_;
+
+    uint64_t resolved = 0;
+    EXPECT_TRUE(segment.ResolveRemoteGva(gva, resolved));
+    EXPECT_EQ(resolved, lva);
+    EXPECT_TRUE(segment.ResolveRemoteGva(gva + TEST_SIZE_ONE_BYTE, resolved));
+    EXPECT_EQ(resolved, lva + TEST_SIZE_ONE_BYTE);
+    EXPECT_FALSE(segment.ResolveRemoteGva(gva + TEST_SIZE, resolved));
+}
+
+/**
+ * ResolveRemoteGva_CoexistingImports_ResolveOwnLva
+ *  - 多 store 组拓扑：两个实体以相同 gvaOffset 导入不同对端的 slice（同址共存），
+ *    各实体的实体域解析必须命中各自的映射 LVA（数据面连接域正确性的回归用例）。
+ */
+TEST_F(HybmAsymmetricSegmentTest, ResolveRemoteGva_CoexistingImports_ResolveOwnLva)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
+    AsymmetricMemSegment segmentA(options, TEST_ENTITY_ID);
+    InitSegmentBase(segmentA);
+    AsymmetricMemSegment segmentB(options, TEST_ENTITY_ID + 1U);
+    InitSegmentBase(segmentB);
+    MockVmmImportPath();
+
+    auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U); // 同 gvaOffset：两个实体同址共存
+    std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
+    void *addrA[1] = {nullptr};
+    void *addrB[1] = {nullptr};
+    ASSERT_EQ(segmentA.Import({data}, addrA), BM_OK);
+    ASSERT_EQ(segmentB.Import({data}, addrB), BM_OK);
+
+    auto sliceA = segmentA.rankToRemoteSlices_.at(7U).at(0);
+    auto sliceB = segmentB.rankToRemoteSlices_.at(7U).at(0);
+    ASSERT_EQ(sliceA->gva_, sliceB->gva_);           // 同址（对端窗口号相同）
+    ASSERT_NE(sliceA->vAddress_, sliceB->vAddress_); // 各自独立的映射 LVA
+
+    uint64_t resolved = 0;
+    EXPECT_TRUE(segmentA.ResolveRemoteGva(sliceA->gva_, resolved));
+    EXPECT_EQ(resolved, sliceA->vAddress_);
+    EXPECT_TRUE(segmentB.ResolveRemoteGva(sliceB->gva_, resolved));
+    EXPECT_EQ(resolved, sliceB->vAddress_);
 }
 
 /**

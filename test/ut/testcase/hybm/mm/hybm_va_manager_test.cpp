@@ -158,10 +158,14 @@ TEST_F(HybmVaManagerTest, AddRegisterVaInfo_OverlappingAddress_ReturnsAddrOverla
 {
     uint64_t gva = TEST_GVA_BASE_HOST;
     uint64_t lva = TEST_LVA_BASE;
+    // local 记录占用本地地址空间，同 gva 重叠必须拒绝
+    EXPECT_TRUE(manager.AddVaInfo({{gva, 0, lva}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST}, false,
+                                  AddressOwnership::Local) == BM_OK);
+    EXPECT_TRUE(manager.AddVaInfo({{gva, 0, lva + TEST_OFFSET_SIXTEEN_MB}, TEST_SIZE_FOUR_MB, TEST_MEM_TYPE_HOST},
+                                  false, AddressOwnership::Local) != BM_OK);
+    // imported 行是分类专用记录，不占用本地地址空间：同 gva 多实体共存属合法拓扑（多 store 组窗口号撞车）
     EXPECT_TRUE(manager.AddVaInfo({{gva, 0, lva}, TEST_SIZE_SIXTEEN_MB, TEST_MEM_TYPE_HOST}, false,
                                   AddressOwnership::Imported) == BM_OK);
-    EXPECT_TRUE(manager.AddVaInfo({{gva, 0, lva + TEST_OFFSET_SIXTEEN_MB}, TEST_SIZE_FOUR_MB, TEST_MEM_TYPE_HOST},
-                                  false, AddressOwnership::Imported) != BM_OK);
 }
 
 TEST_F(HybmVaManagerTest, AddSelfVaInfo_ValidParameters_ReturnsSuccess)
@@ -1477,5 +1481,78 @@ TEST_F(HybmVaManagerTest, RemoveOneVaInfo_MultipleAliases_KeepUntilLastShared)
     // reclaimed only at zero
     manager.RemoveOneVaInfo(ALIAS_GVA_B, HVM_GVA);
     EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_HVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
+}
+
+// ============================ imported coexistence tests ============================
+
+// 多 store 组拓扑下不同对端的窗口号可能相同（如各自 store 的 0 号 rank）：
+// 同 gva、不同 dva 的两条 imported 记录必须允许共存（d2rh 双实体导入场景）
+constexpr uint64_t COEXIST_GVA = TEST_GVA_BASE_DEVICE + TEST_OFFSET_SIXTEEN_MB * TEST_COUNT_TEN;
+constexpr uint64_t COEXIST_DVA_A = TEST_LVA_BASE + TEST_OFFSET_SIXTEEN_MB;
+constexpr uint64_t COEXIST_DVA_B = TEST_LVA_BASE + TEST_OFFSET_SIXTEEN_MB * TEST_COUNT_TWO;
+constexpr uint64_t COEXIST_SIZE = TEST_SIZE_FOUR_MB;
+
+TEST_F(HybmVaManagerTest, AddVaInfo_ImportedSameGva_CoexistenceAllowed)
+{
+    AllocatedGvaInfo first({COEXIST_GVA, COEXIST_DVA_A, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE},
+                           AddressOwnership::Imported);
+    AllocatedGvaInfo second({COEXIST_GVA, COEXIST_DVA_B, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE},
+                            AddressOwnership::Imported);
+    EXPECT_EQ(manager.AddVaInfo(first), BM_OK);
+    EXPECT_EQ(manager.AddVaInfo(second), BM_OK);
+    // 共存记录共用一行（last-wins），分类字段一致
+    EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
+}
+
+// 精确注销：A 先退只回收 A 自己的 DVA 行，共存方的映射不受影响
+TEST_F(HybmVaManagerTest, RemoveOneVaInfo_PreciseRemoval_KeepsCoexistingRecord)
+{
+    AllocatedGvaInfo first({COEXIST_GVA, COEXIST_DVA_A, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE},
+                           AddressOwnership::Imported);
+    AllocatedGvaInfo second({COEXIST_GVA, COEXIST_DVA_B, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE},
+                            AddressOwnership::Imported);
+    EXPECT_EQ(manager.AddVaInfo(first), BM_OK);
+    EXPECT_EQ(manager.AddVaInfo(second), BM_OK);
+
+    manager.RemoveOneVaInfo(COEXIST_GVA, COEXIST_DVA_A, 0);
+    // GVA 行由 second 的引用保活，DVA 翻译仍指向 second 的映射
+    EXPECT_EQ(manager.TransformVa(COEXIST_GVA, HVM_GVA, HVM_DVA), COEXIST_DVA_B);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
+
+    manager.RemoveOneVaInfo(COEXIST_GVA, COEXIST_DVA_B, 0);
+    EXPECT_EQ(manager.TransformVa(COEXIST_GVA, HVM_GVA, HVM_DVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
+}
+
+// 注销顺序无关：先按单 key 级联注销（content 为最后写者），共存方仍可精确注销
+TEST_F(HybmVaManagerTest, RemoveOneVaInfo_CoexistenceTeardownOrderIndependent)
+{
+    AllocatedGvaInfo first({COEXIST_GVA, COEXIST_DVA_A, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE},
+                           AddressOwnership::Imported);
+    AllocatedGvaInfo second({COEXIST_GVA, COEXIST_DVA_B, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE},
+                            AddressOwnership::Imported);
+    EXPECT_EQ(manager.AddVaInfo(first), BM_OK);
+    EXPECT_EQ(manager.AddVaInfo(second), BM_OK);
+
+    manager.RemoveOneVaInfo(COEXIST_GVA, HVM_GVA);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
+    manager.RemoveOneVaInfo(COEXIST_GVA, COEXIST_DVA_A, 0);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
+}
+
+// 同描述符的两条 imported 记录（HOST_RDMA 下 dva=0 的不同物理内存）：
+// 每次登记各计一次引用，全部注销后行才回收
+TEST_F(HybmVaManagerTest, AddVaInfo_ImportedIdenticalDescriptor_CountPerRegistration)
+{
+    AllocatedGvaInfo info({COEXIST_GVA, 0, 0, COEXIST_SIZE, TEST_MEM_TYPE_DEVICE}, AddressOwnership::Imported);
+    EXPECT_EQ(manager.AddVaInfo(info), BM_OK);
+    EXPECT_EQ(manager.AddVaInfo(info), BM_OK);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
+
+    manager.RemoveOneVaInfo(COEXIST_GVA, 0, 0);
+    EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
+
+    manager.RemoveOneVaInfo(COEXIST_GVA, 0, 0);
     EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
 }

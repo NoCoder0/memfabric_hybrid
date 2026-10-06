@@ -12,6 +12,7 @@
 #ifndef MEM_FABRIC_HYBRID_HYBM_DATA_ACTION_H
 #define MEM_FABRIC_HYBRID_HYBM_DATA_ACTION_H
 
+#include <functional>
 #include <ostream>
 #include <unordered_map>
 #include "hybm_common_include.h"
@@ -89,10 +90,18 @@ public:
         return;
     }
 
+    // 注入 imported gva → 本实体映射地址 的解析器：同进程多实体同址共存（多 store 组窗口号撞车）时，
+    // 全局台账的同 gva 行无法区分连接，由实体注入自己的导入记录解析；未命中由调用方回退全局台账
+    virtual void SetImportedGvaResolver(std::function<uint64_t(uint64_t)> resolver) noexcept
+    {
+        importedGvaResolver_ = std::move(resolver);
+    }
+
 protected:
     static inline uint64_t gva_[HYBM_MEM_TYPE_BUTT] = {0};
     static inline uint64_t localSpaceSize_[HYBM_MEM_TYPE_BUTT] = {0};
     static inline uint64_t rankCount_[HYBM_MEM_TYPE_BUTT] = {0};
+    std::function<uint64_t(uint64_t)> importedGvaResolver_{};
 };
 
 using DataOperatorPtr = std::shared_ptr<DataOperator>;

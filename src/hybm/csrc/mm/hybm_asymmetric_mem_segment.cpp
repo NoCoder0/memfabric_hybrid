@@ -473,14 +473,55 @@ Result AsymmetricMemSegment::GetExportSliceSize(size_t &size) noexcept
 
 void AsymmetricMemSegment::RollbackImportedSlices(const std::vector<MemSlicePtr> &slices) noexcept
 {
-    if (!options_.shared) {
+    if (slices.empty()) {
         return;
     }
     for (auto &slice : slices) {
         // 按登记类型回滚（IPC close / VMM unmap+release）；未登记或空名条目为 no-op，
-        // DRAM 与 GVA-only 条目不会被误传给 RtIpcCloseMemory
+        // DRAM 与 GVA-only 条目不会被误传给 RtIpcCloseMemory（依赖 remoteSlices_，须先于账本清理调用）
         UserMemUnImportName(slice->index_);
     }
+    {
+        std::unique_lock<std::mutex> uniqueLock{mutex_};
+        for (auto &slice : slices) {
+            auto rIt = remoteSlices_.find(slice->index_);
+            if (rIt == remoteSlices_.end()) {
+                continue;
+            }
+            // 仅 HBM 条目登记过导入账本；DRAM 条目账本本就为空，erase 按键为 no-op
+            importedSliceInfo_.erase(rIt->second.name);
+            remoteSlices_.erase(rIt);
+        }
+        // rank 关系无条件清理：DRAM 条目不在 importedSliceInfo_，不能以账本查找结果为前提；
+        // 清空后的 rank 键一并移除，保证回滚后导入重试可完整重新执行
+        for (auto it = rankToRemoteSlices_.begin(); it != rankToRemoteSlices_.end();) {
+            auto &vec = it->second;
+            for (auto &slice : slices) {
+                vec.erase(std::remove(vec.begin(), vec.end(), slice), vec.end());
+            }
+            it = vec.empty() ? rankToRemoteSlices_.erase(it) : std::next(it);
+        }
+    }
+    for (auto &slice : slices) {
+        // VA 记录同步注销：否则导入重试会被 shareName 短路复用已回滚的映射
+        HybmVaManager::GetInstance().RemoveOneVaInfo(slice->gva_, slice->vAddress_, 0);
+    }
+}
+
+bool AsymmetricMemSegment::ResolveRemoteGva(uint64_t gva, uint64_t &lva)
+{
+    std::unique_lock<std::mutex> uniqueLock{mutex_};
+    for (auto &it : remoteSlices_) {
+        const auto &slice = it.second.slice;
+        if (slice == nullptr || slice->vAddress_ == 0 || slice->size_ == 0) {
+            continue; // 未本地映射（device_rdma 等路径）或空 slice：无 lva 可给
+        }
+        if (gva >= slice->gva_ && gva < slice->gva_ + slice->size_) {
+            lva = slice->vAddress_ + (gva - slice->gva_);
+            return true;
+        }
+    }
+    return false;
 }
 
 Result AsymmetricMemSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[]) noexcept
@@ -549,7 +590,9 @@ void AsymmetricMemSegment::RemoveSliceInfo(const uint32_t rankId) noexcept
     }
     auto &remoteSliceVec = it->second;
     for (auto &remoteSlice : remoteSliceVec) {
-        HybmVaManager::GetInstance().RemoveOneVaInfo(remoteSlice->gva_);
+        // 同 gva 的 imported 记录可能多实体共存（多 store 组窗口号撞车），必须携带自己的 dva 精确注销，
+        // 避免按行内容级联误减共存方的 DVA 行
+        HybmVaManager::GetInstance().RemoveOneVaInfo(remoteSlice->gva_, remoteSlice->vAddress_, 0);
         auto rIt = remoteSlices_.find(remoteSlice->index_);
         if (rIt == remoteSlices_.end()) {
             continue;
@@ -665,10 +708,36 @@ Result AsymmetricMemSegment::ImportSliceInfo(const std::string &info, MemSlicePt
     return ImportHbmSlice(sliceInfo, remoteSlice);
 }
 
+MemSlicePtr AsymmetricMemSegment::FindReusableImport(const std::string &shareName) noexcept
+{
+    std::unique_lock<std::mutex> uniqueLock{mutex_};
+    if (importedSliceInfo_.find(shareName) == importedSliceInfo_.end()) {
+        return nullptr;
+    }
+    for (auto &it : remoteSlices_) {
+        if (it.second.name == shareName) {
+            return it.second.slice;
+        }
+    }
+    // 账本有名但无对应 slice（异常态）：告警后走完整导入
+    BM_LOG_WARN("importedSliceInfo_ has name but no slice, fallback to full import: " << UserMemNamePreview(shareName));
+    return nullptr;
+}
+
 Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo, MemSlicePtr &remoteSlice) noexcept
 {
     Result ret = BM_OK;
     void *address = nullptr;
+    // name 定长构造：VMM share_handle 为二进制，隐式 strlen 会在首个 \0 截断导致 find/erase 失配
+    const std::string shareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN);
+    auto reused = FindReusableImport(shareName);
+    if (reused != nullptr) {
+        // 幂等短路：重复导入复用既有 slice 与映射，避免重复 ReserveLva/map 与 va_manager 重复计数
+        remoteSlice = reused;
+        BM_LOG_INFO("import hbm slice replay reuse: gva=" << VaToStr(remoteSlice->gva_)
+                                                          << " size=" << VaToStr(remoteSlice->size_));
+        return BM_OK;
+    }
     std::unique_lock<std::mutex> uniqueLock{mutex_};
     if (options_.shared && CanSdmaReaches(sliceInfo.superPodId, sliceInfo.serverId, sliceInfo.devicePhyId)) {
         ret = EnsurePeerAccess(sliceInfo.devicePhyId);
@@ -705,8 +774,6 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
                                              sliceInfo.gvaOffset + reinterpret_cast<uint64_t>(globalVirtualAddress_),
                                              reinterpret_cast<uint64_t>(address), sliceInfo.size);
     rankToRemoteSlices_[sliceInfo.rankId].push_back(remoteSlice);
-    // name 定长构造：VMM share_handle 为二进制，隐式 strlen 会在首个 \0 截断导致 find/erase 失配
-    const std::string shareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN);
     remoteSlices_.emplace(remoteSlice->index_, RegisterSlice{remoteSlice, shareName});
     importedSliceInfo_.emplace(shareName, sliceInfo);
     uniqueLock.unlock();
@@ -746,8 +813,12 @@ void AsymmetricMemSegment::CloseMemory() noexcept
             // 按登记类型解除映射（IPC close / VMM unmap+release）
             UserMemUnImportName(it.first);
         }
-        remoteSlices_.clear();
     }
+    // 导入记录的 VA 行同步注销（多实体同址共存时按各自 dva 精确回收，防止僵尸记录驻留进程级台账）
+    for (auto &it : remoteSlices_) {
+        HybmVaManager::GetInstance().RemoveOneVaInfo(it.second.slice->gva_, it.second.slice->vAddress_, 0);
+    }
+    remoteSlices_.clear();
     for (auto &it : registerSlices_) {
         if (it.second.hostMapped) {
             // 段级销毁兜底：未逐个 ReleaseSliceMemory 的 hostMapped DRAM slice 需对称解除设备映射

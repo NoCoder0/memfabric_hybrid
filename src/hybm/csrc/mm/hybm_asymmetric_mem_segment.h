@@ -118,10 +118,13 @@ private:
     Result ImportSliceInfo(const std::string &info, MemSlicePtr &remoteSlice) noexcept;
     Result ImportHbmSlice(const UserSliceExportInfo &sliceInfo, MemSlicePtr &remoteSlice) noexcept;
     Result ImportDramSlice(const UserSliceExportInfo &sliceInfo, MemSlicePtr &remoteSlice) noexcept;
+    // shareName 幂等查找：已导入过（白名单重试/命令重放）时返回既有 slice，避免重复映射与重复计数
+    MemSlicePtr FindReusableImport(const std::string &shareName) noexcept;
     Result EnsurePeerAccess(uint32_t remotePhyId) noexcept;
     void ReleaseHostMapping(uint64_t hostVa) noexcept; // HalHostUnregisterEx 封装
     void RollbackImportedSlices(const std::vector<MemSlicePtr> &slices) noexcept;
     void RemoveSliceInfo(const uint32_t rankId) noexcept;
+    bool ResolveRemoteGva(uint64_t gva, uint64_t &lva) override;
 
     // ===== IPC/VMM 双路径共享 helper：分流点集中在以下函数，业务函数只感知 name 类型 =====
     Result UserMemExportName(const void *ptr, uint64_t len, char *name) noexcept;
