@@ -83,6 +83,8 @@ Result ComposeTransportManager::OpenDeviceTransport(const TransportOptions &opti
             deviceTransportManager_ = std::make_shared<device::RdmaTransportManager>();
         }
     } else {
+        BM_LOG_ERROR("Failed to open device transport with unsupported protocol: " << options.protocol
+                                                                                   << ", rankId: " << options.rankId);
         return BM_INVALID_PARAM;
     }
     return deviceTransportManager_->OpenDevice(options);
@@ -109,7 +111,9 @@ Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
     if (options_.protocol & DEVICE_PROTOCOL) {
         ret = OpenDeviceTransport(options);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to open device transport nic: " << options.nic);
+            BM_LOG_ERROR("Failed to open device transport, nic: " << options.nic << ", protocol: " << options.protocol
+                                                                  << ", rankId: " << options.rankId
+                                                                  << ", ret: " << ret);
             CloseDevice();
             return BM_ERROR;
         }

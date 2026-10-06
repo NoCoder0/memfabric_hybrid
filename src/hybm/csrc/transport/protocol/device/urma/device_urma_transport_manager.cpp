@@ -556,6 +556,8 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
         std::array<uint8_t, sizeof(localDesc.raws)> addrData{};
         const auto ret = GetDeviceUBoEIpAddr(phyDeviceId_, rankId_, addrType, addrData);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma get UBoE IP addr failed, protocol=UBOE phyDeviceId="
+                         << phyDeviceId_ << " rankId=" << rankId_ << " ret=" << ret);
             return ret;
         }
         localDesc.type = addrType;
@@ -618,6 +620,7 @@ Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const Ur
     }
     localEndpoint_.push_back(endpoint);
     localEndpointDesc_.push_back(localDesc);
+    localIds_.push_back(localDesc.localId);
 
     ret = InitDeviceTransferFlagLocked();
     if (ret != BM_OK) {
@@ -711,10 +714,15 @@ Result DeviceUrmaTransportManager::OpenEndpointResourcesLocked(const TransportOp
         std::vector<UrmaEndpointDesc> localDescs;
         auto ret = BuildLocalEndpointsDescLocked(protocol_, localDescs);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma build local endpoint descs failed, protocol=" << protocol_ << " rankId="
+                                                                                    << rankId_ << " ret=" << ret);
             return ret;
         }
         ret = CreateEndpointsAndInitResourcesLocked(localDescs);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma create endpoints and init resources failed, protocol="
+                         << protocol_ << " rankId=" << rankId_ << " endpointCount=" << localDescs.size()
+                         << " ret=" << ret);
             (void)RollbackOpenDeviceLocked();
             return ret;
         }
@@ -722,10 +730,14 @@ Result DeviceUrmaTransportManager::OpenEndpointResourcesLocked(const TransportOp
         UrmaEndpointDesc localDesc{};
         auto ret = BuildLocalEndpointDescLocked(protocol_, localDesc);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma build local endpoint desc failed, protocol=" << protocol_ << " rankId=" << rankId_
+                                                                                   << " ret=" << ret);
             return ret;
         }
         ret = CreateEndpointAndInitResourcesLocked(localDesc);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma create endpoint and init resources failed, protocol="
+                         << protocol_ << " rankId=" << rankId_ << " ret=" << ret);
             (void)RollbackOpenDeviceLocked();
             return ret;
         }
@@ -755,10 +767,13 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
     }
     ret = OpenEndpointResourcesLocked(options);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma OpenEndpointResourcesLocked failed, rank=" << rankId_ << " protocol=" << protocol_
+                                                                             << " ret=" << ret);
         return ret;
     }
     ret = InitNotifyPoolLocked();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma InitNotifyPoolLocked failed, rank=" << rankId_ << " ret=" << ret);
         RollbackOpenDeviceLocked();
         return ret;
     }
@@ -776,6 +791,7 @@ Result DeviceUrmaTransportManager::EnsureDeviceKernelLoadedLocked()
 
     auto ret = LoadDeviceKernelAndGetHandles(HYBM_DEVICE_FUNC_TRANSFER, deviceKernelHandle_, deviceFuncHandles_);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma load device kernel failed, rankId=" << rankId_ << " ret=" << ret);
         return ret;
     }
     if (deviceFuncHandles_.batchTransfer == nullptr) {
