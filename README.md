@@ -222,6 +222,10 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 ## 📝相关信息
 
+- [贡献指南](./CONTRIBUTING.md)
+
+- [社区行为准则](./CODE_OF_CONDUCT.md)
+
 - [安全声明](./docs/zh/SECURITYNOTE.md)
 
 - [许可证](./LICENSE)

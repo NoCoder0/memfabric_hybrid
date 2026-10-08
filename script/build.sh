@@ -9,6 +9,10 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 
+if ! command -v dos2unix &> /dev/null; then
+    dos2unix() { sed -i 's/\r$//' "$@"; }
+fi
+
 export BUILD_MODE=${1:-RELEASE}
 BUILD_UT=${2:-OFF}
 BUILD_OPEN_ABI=${3:-OFF}
