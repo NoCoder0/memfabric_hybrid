@@ -17,6 +17,7 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <mockcpp/mockcpp.hpp>
 
 #define private   public
 #define protected public
@@ -329,6 +330,27 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, OpenDevice_Success)
     auto ret = mgr->OpenDevice(opts);
     ASSERT_EQ(ret, BM_OK);
     ASSERT_EQ(mgr->localEndpoint_, MOCK_ENDPOINT);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, OpenDevice_A5HostRocePathUsesGetifaddrs)
+{
+    // A5(950)：hostRocePath_ = true，BuildLocalEndpointDesc 先按 ens<phyId/2>f<phyId%2>
+    // 命名规则用 getifaddrs 取 device 网口 IP（取不到再走 EID 兜底）。
+    MOCKER(&DlAclApi::GetAscendSocType).stubs().will(returnValue(AscendSocType::ASCEND_950));
+    DlHcommApi::gHcommEndpointCreate = [](const EndpointDesc *, EndpointHandle *handle) -> int32_t {
+        *handle = MOCK_ENDPOINT;
+        return 0;
+    };
+
+    auto mgr = CreateHcommMgr();
+    auto opts = MakeOptions();
+    auto ret = mgr->OpenDevice(opts);
+    ASSERT_EQ(ret, BM_OK);
+    ASSERT_TRUE(mgr->hostRocePath_);
+    ASSERT_EQ(mgr->localEndpoint_, MOCK_ENDPOINT);
+
+    GlobalMockObject::verify();
+    GlobalMockObject::reset();
 }
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, OpenDevice_Fail_EndpointCreate)

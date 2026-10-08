@@ -92,7 +92,8 @@ Result DataOpDeviceRDMA::Initialize() noexcept
     transport::TransportMemoryRegion input;
     input.addr = reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_);
     input.size = rdmaSwapSpaceSize_;
-    input.flags = transport::REG_MR_FLAG_ACL_DRAM;
+    // mmap 的普通 host 内存按 DRAM(=池内 host 内存)注册；HalMemAlloc 分配的仍按 ACL_DRAM。
+    input.flags = rdmaSwapUseMmap_ ? transport::REG_MR_FLAG_DRAM : transport::REG_MR_FLAG_ACL_DRAM;
     if (transportManager_ != nullptr) {
         ret = transportManager_->RegisterMemoryRegion(input);
         if (ret != BM_OK) {
@@ -132,12 +133,27 @@ void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
 
 Result DataOpDeviceRDMA::AllocSwapMemory()
 {
+    // A5(950) 主机侧 RoCE 形态：swap 用普通 host 内存(mmap)。HcommMemReg 不接受 HalMemAlloc(MEM_HOST)
+    // 的地址区间，而池内 DRAM 与普通 host 内存同为 mmap，可正常注册；与 host_rdma 路径保持一致。
+    // 其它 SoC 的 native device RDMA 仍需 HalMemAlloc + HalHostRegister 拿 DVA 供设备侧 DMA。
+    const bool useMmap = DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950;
+    if (useMmap) {
+        void *base =
+            mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_HUGETLB, -1, 0);
+        if (base == MAP_FAILED) {
+            base = mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        }
+        if (base == MAP_FAILED) {
+            BM_LOG_ERROR("mmap swap memory failed, size: " << rdmaSwapSpaceSize_ << " errno: " << errno);
+            return BM_MALLOC_FAILED;
+        }
+        rdmaSwapBaseAddr_ = base;
+        rdmaSwapUseMmap_ = true;
+        return BM_OK;
+    }
+
     void *ptr = nullptr;
     uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_HUGE;
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
-        // ASCEND_950 (A5) does not support HalMemAlloc with MEM_PAGE_HUGE, use normal page
-        allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_NORMAL;
-    }
     int ret = DlHalApi::HalMemAlloc(&ptr, rdmaSwapSpaceSize_, allocFlag);
     if (ret != 0) {
         BM_LOG_ERROR("Failed to HalMemAlloc rdma swap memory, size: " << rdmaSwapSpaceSize_ << " ret:" << ret);
@@ -180,13 +196,18 @@ void DataOpDeviceRDMA::FreeSwapMemory()
                 BM_LOG_ERROR("Failed to UnregisterMemoryRegion, ret: " << ret);
             }
         }
-        DlHalApi::HalHostUnregisterEx(rdmaSwapBaseAddr_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
-        const auto ret = DlHalApi::HalMemFree(rdmaSwapBaseAddr_);
-        if (ret != 0) {
-            BM_LOG_ERROR("Failed to HalMemFree swap memory, ret: " << ret);
+        if (rdmaSwapUseMmap_) {
+            (void)munmap(rdmaSwapBaseAddr_, rdmaSwapSpaceSize_);
+        } else {
+            DlHalApi::HalHostUnregisterEx(rdmaSwapBaseAddr_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
+            const auto ret = DlHalApi::HalMemFree(rdmaSwapBaseAddr_);
+            if (ret != 0) {
+                BM_LOG_ERROR("Failed to HalMemFree swap memory, ret: " << ret);
+            }
+            HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_), HVM_HVA);
         }
-        HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_), HVM_HVA);
         rdmaSwapBaseAddr_ = nullptr;
+        rdmaSwapUseMmap_ = false;
     }
 }
 

@@ -74,6 +74,15 @@ static int HalMemFreeCountingStub(void *ptr)
     return 0;
 }
 
+// AllocSwapMemory 按 SoC 分派（A5/950 走 mmap，其它走 HalMemAlloc）；用变量控制 mock 返回值，
+// 默认 910B 以保持既有用例行为不变。
+static ock::mf::AscendSocType g_mockSocType = ock::mf::AscendSocType::ASCEND_910B;
+
+static ock::mf::AscendSocType GetAscendSocTypeStub()
+{
+    return g_mockSocType;
+}
+
 class TransportManagerMock : public ock::mf::transport::TransportManager {
 public:
     TransportManagerMock() = default;
@@ -285,13 +294,14 @@ public:
         // 必须在 SetUp 中对所有测试生效（含不调用 InitMockEnv 的测试），否则首个
         // 未 mock 的测试会在 ACL stub 加载前调用真实 GetAscendSocType，把进程级
         // 静态缓存污染为 ASCEND_UNKNOWN，导致后续实体类用例全部失败。
-        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910B));
+        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(invoke(GetAscendSocTypeStub));
     }
 
     void TearDown() override
     {
         GlobalMockObject::verify();
         GlobalMockObject::reset();
+        g_mockSocType = ock::mf::AscendSocType::ASCEND_910B;
         transportManagerMock_->Reset();
 
         // 释放模拟内存
@@ -341,6 +351,18 @@ TEST_F(HybmDataOpDeviceRdmaTest, initialize_success)
 {
     InitMockEnv();
     // 测试 Initialize 成功场景
+    auto ret = dataOp_->Initialize();
+    ASSERT_EQ(BM_OK, ret);
+    ASSERT_EQ(1UL, transportManagerMock_->registerMemoryRegionCount);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, initialize_a5_swap_allocated_by_mmap)
+{
+    // A5(950)：swap 走普通 host 内存(mmap)，注册 flags 用 REG_MR_FLAG_DRAM，
+    // UnInitialize 走 munmap 分支（不再调用 HalHostUnregisterEx/HalMemFree）。
+    g_mockSocType = ock::mf::AscendSocType::ASCEND_950;
+    InitMockEnv();
     auto ret = dataOp_->Initialize();
     ASSERT_EQ(BM_OK, ret);
     ASSERT_EQ(1UL, transportManagerMock_->registerMemoryRegionCount);

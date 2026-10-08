@@ -107,6 +107,7 @@ private:
     bool forceUnregistered_{false};
     std::shared_ptr<transport::TransportManager> transportManager_;
     void *rdmaSwapBaseAddr_{nullptr};
+    bool rdmaSwapUseMmap_{false}; // swap 是否走普通 host 内存(mmap)分配
     std::shared_ptr<RbtreeRangePool> rdmaSwapMemoryAllocator_;
 };
 } // namespace mf

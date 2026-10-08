@@ -19,8 +19,11 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#include <vector>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 
 #include "dl_acl_api.h"
 #include "dl_hccp_api.h"
@@ -159,6 +162,41 @@ static Result GetDeviceIpViaHccnTool(uint32_t phyDeviceId, struct in_addr &addr)
     return BM_ERROR;
 }
 
+// A5(950) host RoCE：按"卡号 → 网口"命名规则（ens<phyId/2>f<phyId%2>，例如 dev3→ens1f1）
+// 用 getifaddrs 取该 device 网口的 IPv4，不依赖 /etc/hccn.conf（后者仍作为后续兜底保留）。
+static Result GetIpViaGetifaddrs(uint32_t phyDeviceId, struct in_addr &addr)
+{
+    char ifName[IFNAMSIZ]{};
+    (void)snprintf(ifName, sizeof(ifName), "ens%uf%u", phyDeviceId / 2U, phyDeviceId % 2U);
+
+    struct ifaddrs *ifap = nullptr;
+    if (getifaddrs(&ifap) != 0) {
+        BM_LOG_ERROR("GetIpViaGetifaddrs: getifaddrs failed, errno=" << errno);
+        return BM_ERROR;
+    }
+
+    Result ret = BM_INVALID_PARAM;
+    for (auto *p = ifap; p != nullptr; p = p->ifa_next) {
+        if (p->ifa_name == nullptr || p->ifa_addr == nullptr) {
+            continue;
+        }
+        if (std::strcmp(p->ifa_name, ifName) != 0 || p->ifa_addr->sa_family != AF_INET) {
+            continue;
+        }
+        addr = reinterpret_cast<struct sockaddr_in *>(p->ifa_addr)->sin_addr;
+        char ipStr[INET_ADDRSTRLEN]{};
+        (void)inet_ntop(AF_INET, &addr, ipStr, sizeof(ipStr));
+        BM_LOG_INFO("GetIpViaGetifaddrs: phyId=" << phyDeviceId << " ifname=" << ifName << " ip=" << ipStr);
+        ret = BM_OK;
+        break;
+    }
+    if (ret != BM_OK) {
+        BM_LOG_WARN("GetIpViaGetifaddrs: no AF_INET on ifname=" << ifName << " for phyId=" << phyDeviceId);
+    }
+    freeifaddrs(ifap);
+    return ret;
+}
+
 } // namespace
 
 DeviceRdmaHcommTransportManager::~DeviceRdmaHcommTransportManager()
@@ -206,6 +244,17 @@ Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &des
 
     // Get NPU-side IP address for HCOMM endpoint creation.
     {
+        // 0) A5(950) host RoCE：按命名规则 ens<phyId/2>f<phyId%2> 从 getifaddrs 取本 device 网口 IPv4，
+        //    不依赖 /etc/hccn.conf；失败则继续走下面的原有链路（hccn.conf 兜底保留）。
+        if (hostRocePath_) {
+            struct in_addr nicIpv4 {};
+            if (GetIpViaGetifaddrs(phyDeviceId_, nicIpv4) == BM_OK) {
+                desc.commAddr.type = COMM_ADDR_TYPE_IP_V4;
+                desc.commAddr.addr = nicIpv4;
+                return BM_OK;
+            }
+        }
+
         // 1) Try GetDeviceUBoEIpAddr (A5 hccn_tool syntax: -g -ip -i <dev> -d bond<dev>)
         CommAddrType addrType = COMM_ADDR_TYPE_RESERVED;
         std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> addrBytes{};
@@ -307,13 +356,20 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
         }
     }
 
-    // Load AICPU kernel
+    // Load AICPU kernel (仅 DEVICE 形态的 launch 需要；A5 host RoCE 数据面走主机侧 Nbi，不用算子，
+    // 因此这里缺 kernel 文件/加载失败时不应阻塞 host 路径)
     ret = LoadDeviceKernel();
     if (ret != BM_OK) {
-        BM_LOG_ERROR("LoadDeviceKernel failed, ret: " << ret);
-        (void)hcommApi_.DestroyEndpoint(localEndpoint_);
-        localEndpoint_ = nullptr;
-        return ret;
+        if (hostRocePath_) {
+            BM_LOG_WARN("LoadDeviceKernel failed, ret: " << ret
+                                                         << ", but A5 host RoCE path does not use the AICPU kernel,"
+                                                            " continue.");
+        } else {
+            BM_LOG_ERROR("LoadDeviceKernel failed, ret: " << ret);
+            (void)hcommApi_.DestroyEndpoint(localEndpoint_);
+            localEndpoint_ = nullptr;
+            return ret;
+        }
     }
 
     // Initialize transfer flag buffer (for kernel notify/confirm read-back)
