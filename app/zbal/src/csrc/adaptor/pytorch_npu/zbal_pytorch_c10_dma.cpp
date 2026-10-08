@@ -1296,6 +1296,12 @@ public:
         }
 
         if (!block_found) {
+            ZBAL_LOG_ERROR("malloc: block_found=false"
+                           << " params.err=" << static_cast<int>(params.err) << " params.block=" << params.block
+                           << " Z_ERROR_ALLOC=" << static_cast<int>(zbal::Z_ERROR_ALLOC) << " is_Z_ERROR_ALLOC="
+                           << (params.err == zbal::Z_ERROR_ALLOC) << " requested_size=" << params.size()
+                           << " alloc_size=" << alloc_size << " device=" << device
+                           << " expandable_segments=" << CachingAllocatorConfig::expandable_segments());
             if (params.err == zbal::Z_ERROR_ALLOC) {
                 size_t device_free;
                 size_t device_total;
@@ -2577,7 +2583,7 @@ private:
         }
 
         if (set_fraction && total_allocated_memory + size > allowed_memory_maximum) {
-            p.err = ACL_ERROR_RT_MEMORY_ALLOCATION;
+            p.err = zbal::Z_ERROR_ALLOC;
             return false;
         } else if (CachingAllocatorConfig::expandable_segments()) {
             p.block = try_allocate_expandable_block(p.device(), p.stream(), p.pool, p.size(), ctx);
@@ -2588,14 +2594,14 @@ private:
                     p.pool->owner_PrivatePool->npuMalloc_count++;
                 }
             } else {
-                p.err = ACL_ERROR_RT_MEMORY_ALLOCATION;
+                p.err = zbal::Z_ERROR_ALLOC;
             }
             return bool(p.block);
         } else {
             auto active_pool = MemPoolContext::getActiveMemPool();
             if (active_pool && active_pool->allocator() && p.pool->owner_PrivatePool) {
                 ptr = active_pool->allocator()->raw_alloc(size);
-                p.err = ptr ? ACL_ERROR_NONE : ACL_ERROR_RT_MEMORY_ALLOCATION;
+                p.err = ptr ? ACL_ERROR_NONE : zbal::Z_ERROR_ALLOC;
             } else {
                 auto policy = zbal::underapi::aclrtMemMallocPolicy::ACL_MEM_MALLOC_HUGE_FIRST;
                 if (IsMallocPage1GMem(p.pool->is_small)) {
@@ -2611,6 +2617,7 @@ private:
                 }
             }
             if (p.err != ACL_ERROR_NONE) {
+                p.err = zbal::Z_ERROR_ALLOC;
                 return false;
             }
         }

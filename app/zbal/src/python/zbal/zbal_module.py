@@ -128,6 +128,9 @@ def switch_to_allocator():
     torch_npu.npu.memory.change_current_allocator(new_alloc)
     zbal_allocator = ctypes.CDLL(ZBAL_LIB)
 
+    # load the CANN runtime before the pluggable allocator is used
+    zbal_allocator.zbal_load_library()
+
     init_fn = ctypes.cast(getattr(zbal_allocator, "zbal_pluggable_init"), ctypes.c_void_p).value
     empty_fn = ctypes.cast(getattr(zbal_allocator, "zbal_pluggable_empty_cache"), ctypes.c_void_p).value
     record_stream_fn = ctypes.cast(getattr(zbal_allocator, "zbal_pluggable_record_stream"), ctypes.c_void_p).value

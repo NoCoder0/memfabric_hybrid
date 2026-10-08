@@ -13,6 +13,7 @@
 #include "zbal_bootstrap_default.h"
 #include "zbal_init_state.h"
 #include "zbal_mem_allocator.h"
+#include "dl_cann_api.h"
 
 using namespace zbal;
 using namespace zbal::bootstrap;
@@ -32,6 +33,25 @@ ZBAL_API int32_t zbal_bootstrap_options_init(zbal_bootstrap_options_t *options)
     options->commGroupCap = COMM_GROUP_COUNT_CAP_DEFAULT;
 
     return Z_OK;
+}
+
+ZBAL_API int32_t zbal_load_library(void)
+{
+    char *ascend_home = std::getenv("ASCEND_HOME_PATH");
+    ZBAL_VALIDATE_RETURN(ascend_home != nullptr, "ENV ASCEND_HOME_PATH is not set, set this ENV properly",
+                         Z_INVALID_PARAM);
+
+    std::string lib_dir_path = std::string(ascend_home).append("/lib64");
+    if (!zbal::Func::Realpath(lib_dir_path)) {
+        ZBAL_LOG_AND_SET_LAST_ERROR("Path with ASCEND_HOME_PATH is invalid");
+        return Z_INVALID_PARAM;
+    }
+
+    int32_t ret = zbal::underapi::DlCannApi::LoadLibrary(lib_dir_path);
+    if (ret != Z_OK) {
+        ZBAL_LOG_ERROR("zbal_load_library failed, path=" << lib_dir_path << " ret=" << ret);
+    }
+    return ret;
 }
 
 ZBAL_API int32_t zbal_bootstrap(zbal_bootstrap_options_t *options, zbal_bootstrap_output_t *output)

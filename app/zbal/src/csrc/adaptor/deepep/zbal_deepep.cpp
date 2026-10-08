@@ -382,6 +382,7 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
 
     int total_recv_cnt = total_recv_token.item<int>();
     int num_recv_tokens = total_recv_cnt;
+    int num_alloc_rows = (num_recv_tokens > 0) ? num_recv_tokens : num_tokens;
     zbal_quant_mode_t quant_mode = NO_QUANT;
     at::ScalarType expandx_dtype = x.scalar_type();
     at::ScalarType scales_dtype = at::kFloat;
@@ -403,13 +404,13 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
             ZBAL_CHECK_S(false, "unsupported quant_type: ", quant_type);
         }
     }
-    at::Tensor expandx_out = torch::empty({num_recv_tokens, hidden}, at::dtype(expandx_dtype).device(device));
+    at::Tensor expandx_out = torch::empty({num_alloc_rows, hidden}, at::dtype(expandx_dtype).device(device));
     at::Tensor dynamic_scales_out =
         (quant_mode == QUANT_BF16_2_FP8_E4M3 || quant_mode == QUANT_BF16_2_FP8_E5M2)
-            ? torch::empty({num_recv_tokens * hidden / static_cast<int>(kMxBlockSize)},
+            ? torch::empty({num_alloc_rows * hidden / static_cast<int>(kMxBlockSize)},
                            at::dtype(scales_dtype).device(device))
-            : torch::empty({use_quant ? num_recv_tokens : 1}, at::dtype(scales_dtype).device(device));
-    if (total_recv_cnt > 0) {
+            : torch::empty({use_quant ? num_alloc_rows : 1}, at::dtype(scales_dtype).device(device));
+    {
         // tensor to zbal_tensor_info_t
         auto expandx_out_info = transfer_tensor_info(expandx_out);
         auto dynamic_scales_out_info = transfer_tensor_info(dynamic_scales_out);
@@ -425,6 +426,16 @@ Buffer::intranode_dispatch(const at::Tensor &x, const std::optional<at::Tensor> 
             return api_ret;
         };
         at_npu::native::OpCommand::RunOpApiV2("zbal_dispatch_normal", acl_call_dispatch);
+    }
+
+    // Narrow to 0 rows when this rank received no tokens, so that GroupedMatmul sees recv_x.rows == 0
+    // matching the all-zero group_list. The scales are narrowed as well, otherwise their length no
+    // longer matches the 0-token hidden states.
+    if (num_recv_tokens == 0) {
+        expandx_out = expandx_out.narrow(0, 0, 0);
+        if (use_quant) {
+            dynamic_scales_out = dynamic_scales_out.narrow(0, 0, 0);
+        }
     }
 
     auto recv_token_per_exp_cpu = recv_tokens_per_expert.to(at::kCPU);
@@ -477,12 +488,12 @@ Buffer::intranode_combine(const torch::Tensor &x, const torch::Tensor &topk_idx,
     auto acl_stream = c10_npu::getCurrentNPUStream().stream(false);
     int64_t flags = 0;
 
-    if (recv_x.size(0) == 0) {
-        ZBAL_LOG_INFO(
-            "intranode_combine: 0 tokens received, skipping combine kernel, combined_x_rows=" << combined_x.size(0));
-        combined_x.zero_();
-        return {combined_x, recv_topk_weights, event};
-    }
+    // Always launch the combine kernel, even when recv_x has 0 rows.
+    // The combine kernel has cross-rank barriers (SetSyncFlag/WaitSyncFlag for
+    // FLAG and STATE) identical to dispatch_normal. If any rank skips the
+    // kernel, other ranks deadlock at WaitSyncFlag. When this rank has 0 tokens,
+    // the kernel's internal loops skip empty ranges but still execute barriers,
+    // keeping all ranks in sync.
     // tensor to zbal_tensor_info_t
     auto recv_x_info = transfer_tensor_info(recv_x);
     auto put_offset_info = transfer_tensor_info(put_offset);

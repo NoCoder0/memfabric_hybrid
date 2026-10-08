@@ -28,6 +28,14 @@ extern "C" {
 int32_t zbal_bootstrap_options_init(zbal_bootstrap_options_t *options);
 
 /**
+ * @brief Load the CANN runtime library used by zbal, the library path is
+ * resolved from the ENV ASCEND_HOME_PATH
+ *
+ * @return 0 if successful
+ */
+int32_t zbal_load_library(void);
+
+/**
  * @brief Bootstrap zbal
  *
  * @param options          [in] options of bootstrap

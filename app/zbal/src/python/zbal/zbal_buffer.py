@@ -233,6 +233,8 @@ class Buffer:
         dispatch_wait_recv_cost_stats: Optional[torch.Tensor] = None,
         use_fp8: bool = False,
         use_mxfp8: bool = False,
+        quant_mode: Optional[str] = None,
+        **kwargs,
     ) -> Tuple[
         Union[Tuple[torch.Tensor, torch.Tensor], torch.Tensor],
         Optional[torch.Tensor],
@@ -306,15 +308,17 @@ class Buffer:
             _tuple
             and x_scales is not None
             and x_scales.numel() != 0
-            and getattr(x, "dtype", None) == torch.float8_e4m3fn
+            and getattr(x, "dtype", None) in (torch.float8_e4m3fn, torch.float8_e5m2)
         )
         if not is_fp8:
             x_scales = None
         use_quant_env = os.getenv("DEEP_NORMAL_MODE_USE_INT8_QUANT") == "1"
 
         # Determine quant_type: explicit parameter takes priority, then infer from input.
-        # Supported: "none", "int8", "mx_fp8_e4m3"
-        if use_mxfp8:
+        # Supported: "none", "int8", "mx_fp8_e4m3", "mx_fp8_e5m2"
+        if quant_mode:
+            quant_type = quant_mode
+        elif use_mxfp8:
             quant_type = "mx_fp8_e4m3"
         elif use_fp8:
             quant_type = "int8"
@@ -471,6 +475,7 @@ class Buffer:
         async_finish: bool = False,
         return_recv_hook: bool = False,
         topk_weights: Optional[torch.Tensor] = None,
+        quant_mode: Optional[str] = None,
         **kwargs,
     ) -> Tuple[Tuple[torch.Tensor, torch.Tensor], torch.Tensor, Tuple, EventOverlap, Callable]:
         """
@@ -522,10 +527,11 @@ class Buffer:
             hook: the receiving hook function (valid only if `return_recv_hook` is set).
         """
         topk_ids = topk_idx.int()
-        # Determine quant_mode_name from the bool flags: use_mxfp8 (or the legacy
-        # use_fp8 + use_ue8m0 combo) takes priority over use_fp8.
-        # Supported: "none", "int8", "mx_fp8_e4m3"
-        if use_mxfp8:
+        # Determine quant_mode_name: explicit parameter takes priority, then infer from bool flags.
+        # Supported: "none", "int8", "mx_fp8_e4m3", "mx_fp8_e5m2"
+        if quant_mode is not None:
+            quant_mode_name = quant_mode
+        elif use_mxfp8:
             quant_mode_name = "mx_fp8_e4m3"
         elif use_fp8:
             quant_mode_name = "mx_fp8_e4m3" if use_ue8m0 else "int8"
