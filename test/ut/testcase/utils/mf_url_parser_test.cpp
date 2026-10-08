@@ -135,6 +135,20 @@ TEST_F(MFUrlParserTest, InitializeWithoutPort)
     EXPECT_FALSE(parser.IsInitialized());
 }
 
+TEST_F(MFUrlParserTest, InitializeWithoutHost)
+{
+    const std::vector<std::string> urls = {":8080", "tcp://:8080", "http://:8080", "https://:8080"};
+    for (const auto &url : urls) {
+        SCOPED_TRACE(url);
+        UrlParser parser;
+        EXPECT_FALSE(parser.Initialize(url));
+        EXPECT_FALSE(parser.IsInitialized());
+        EXPECT_EQ(parser.GetIp(), "");
+        EXPECT_EQ(parser.GetPort(), 0U);
+        EXPECT_TRUE(parser.Initialize("tcp://127.0.0.1:8080"));
+    }
+}
+
 // 测试边界值 - 端口为0
 TEST_F(MFUrlParserTest, InitializeWithInvalidPortZero)
 {

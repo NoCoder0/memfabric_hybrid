@@ -276,7 +276,7 @@ private:
         }
 
         // 处理IPv6地址（包含在方括号中）
-        if (host.front() == '[' && host.back() == ']') {
+        if (!host.empty() && host.front() == '[' && host.back() == ']') {
             ip_ = host.substr(1, host.length() - 2);
             is_ipv6_ = true;
         } else {
