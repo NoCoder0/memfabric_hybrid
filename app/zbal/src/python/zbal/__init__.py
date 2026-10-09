@@ -8,18 +8,34 @@ from importlib.metadata import version
 import torch
 import torch_npu
 
-_TORCH_NPU_VERSION_ = 0
 _RT_MAJOR_VER_MIN_ = 9
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
+
+def _read_build_version_info():
+    """Read the build-time VERSION file bundled in the installed package."""
+    version_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "VERSION")
+    info = {}
+    with open(version_file, "r", encoding="utf-8") as f:
+        for line in f:
+            key, sep, value = line.partition(":")
+            if sep:
+                info[key.strip()] = value.strip()
+    return info
+
+
 try:
-    # check pta version
+    # check pta version against the build-time version recorded in the bundled VERSION file
+    build_info = _read_build_version_info()
+    exp_torch_npu_version = build_info.get("pta (torch_npu) version")
+    if not exp_torch_npu_version:
+        raise ValueError(f"[ERROR] pta version not found in VERSION file, build_info={build_info}")
     cur_torch_npu_version = version('torch_npu')
     cur_major, cur_minor, *_ = cur_torch_npu_version.split(".")
-    exp_major, exp_minor, *_ = str(_TORCH_NPU_VERSION_).split(".")
+    exp_major, exp_minor, *_ = exp_torch_npu_version.split(".")
     if cur_major != exp_major or cur_minor != exp_minor:
-        raise ValueError(f"[ERROR] Expect torch_npu version {_TORCH_NPU_VERSION_} but found {cur_torch_npu_version}")
+        raise ValueError(f"[ERROR] Expect torch_npu version {exp_torch_npu_version} but found {cur_torch_npu_version}")
 
     # check cann version
     ascend_home_path = os.environ.get("ASCEND_HOME_PATH", "un-defined env ASCEND_HOME_PATH")

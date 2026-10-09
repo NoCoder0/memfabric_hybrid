@@ -12,7 +12,7 @@
 #ifndef ZBAL_VERSION_H
 #define ZBAL_VERSION_H
 
-/* version information, these variables are read in cmake from VERSION file */
+/* version information, these variables are read in cmake from the repo-level VERSION file */
 #ifndef ZBAL_VERSION_MAJOR
 #define ZBAL_VERSION_MAJOR 0
 #define ZBAL_VERSION_MINOR 0

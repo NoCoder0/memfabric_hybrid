@@ -8,8 +8,8 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 
-# read version content from file
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" ZBAL_VERSION_CONTENT)
+# read version content from the repo-level memfabric_hybrid VERSION file
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/../../VERSION" ZBAL_VERSION_CONTENT)
 
 # verify version format which should be x.x.x
 # i.e. {major_version}.{minor_version}.{fix}

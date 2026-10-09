@@ -143,9 +143,6 @@ check_contains_path()
 # combined wheel ships both. BUILD_MODE maps 1:1: DEBUG -> --debug, otherwise --release.
 build_zbal_wheel()
 {
-    local zbal_init_py="app/zbal/src/python/zbal/__init__.py"
-    # Unconditionally restore the baked _TORCH_NPU_VERSION_ left behind by an interrupted build.
-    git -C "${PROJ_DIR}" checkout -- "${zbal_init_py}"
     local mode="--release"
     if [ "${BUILD_MODE}" == "DEBUG" ]; then
         mode="--debug"

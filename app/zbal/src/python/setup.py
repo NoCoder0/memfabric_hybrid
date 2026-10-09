@@ -55,10 +55,7 @@ def _find_python_include():
 
 def _get_version(version_dir):
     with open(f"{version_dir}/VERSION", "r", encoding="utf-8") as f:
-        version_val = f.read().strip()
-        torch_npu_int_ver = torch_npu_version.replace('post', '').replace('dev', '').replace('.', '')
-        main_ver, sub_ver, patch_ver = version_val.split(".")
-        return f"{main_ver}.{sub_ver}.{torch_npu_int_ver}.post{patch_ver}"
+        return f.read().strip()
 
 
 def _check_env_flag(name: str, default: str = "") -> bool:
@@ -129,9 +126,9 @@ python_include_dir = Path(_find_python_include()).resolve()
 torch_dir = Path(os.path.dirname(torch.__file__)).resolve()
 torch_npu_dir = Path(os.path.dirname(torch_npu.__file__)).resolve()
 torch_npu_version = version('torch_npu')
-repo_root = Path(__file__).parent.parent.parent.parent.parent  # sgl-kernel-npu/
+repo_root = Path(__file__).parent.parent.parent.parent.parent  # memfabric_hybrid repo root
 zbal_root = repo_root / "app/zbal/"
-package_version = _get_version(version_dir=zbal_root)
+package_version = _get_version(version_dir=repo_root)
 cur_dir = os.path.dirname(os.path.abspath(__file__))
 
 
@@ -260,33 +257,58 @@ extra_compile_args = [
 # otherwise adds ~50MB of DWARF to each .so. .dynsym is kept for pybind/ctypes lookups.
 extra_link_args = [] if is_debug_mode else ["-Wl,-s"]
 
+VERSION_FILE = "VERSION"
 
-def set_torch_version():
-    # set torch_npu_version
-    sed_cmd = [
-        "sed",
-        "-i",
-        f"s/^_TORCH_NPU_VERSION_.*$/_TORCH_NPU_VERSION_ = '{torch_npu_version}'/",
-        "zbal/__init__.py",
+
+def version_file_path():
+    return os.path.join(cur_dir, "zbal", VERSION_FILE)
+
+
+def get_git_commit():
+    try:
+        result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True)
+    except OSError as err:
+        logger.warning(f"failed to run git for commit id: {err}")
+        return "unknown"
+    if result.returncode != 0:
+        logger.warning(f"git rev-parse HEAD failed with code {result.returncode}: {result.stderr.strip()}")
+        return "unknown"
+    return result.stdout.strip()
+
+
+def write_version_file():
+    """Write into the package source so the built wheel bundles it at site-packages/zbal/VERSION."""
+    version_file = version_file_path()
+    lines = [
+        f"zbal version: {package_version}",
+        f"commit id: {get_git_commit()}",
+        f"pta (torch_npu) version: {torch_npu_version}",
+        f"torch version: {torch.__version__}",
+        f"build time: {time.strftime('%Y-%m-%d %H:%M:%S')}",
     ]
-    result = subprocess.run(sed_cmd, cwd=cur_dir)
-    if result.returncode != 0:
-        logger.error(f"sed torch_npu version failed ret code {result.returncode}, msg {result.stderr}")
+    content = os.linesep.join(lines) + os.linesep
+    try:
+        with open(version_file, "wb") as f:
+            f.write(content.encode("utf-8"))
+    except OSError as err:
+        logger.error(f"failed to write version file {version_file}: {err}")
+        raise
+    logger.info(f"version info written to {version_file}: pta={torch_npu_version}")
+
+
+def remove_version_file():
+    version_file = version_file_path()
+    if not os.path.exists(version_file):
+        return
+    try:
+        os.remove(version_file)
+    except OSError as err:
+        logger.warning(f"failed to remove generated version file {version_file}: {err}")
     else:
-        logger.info(f"set torch_npu version to {torch_npu_version}")
+        logger.info(f"removed generated {version_file}")
 
 
-def recover_torch_version():
-    # recover __init__.py
-    recover_cmd = ["git", "checkout", "--", "zbal/__init__.py"]
-    result = subprocess.run(recover_cmd, cwd=cur_dir)
-    if result.returncode != 0:
-        logger.warning(f"recover src code failed ret code {result.returncode}, msg {result.stderr}")
-    else:
-        logger.info(f"recover src code success from {torch_npu_version} to original")
-
-
-set_torch_version()
+write_version_file()
 
 
 class CustomBuildExtension(BuildExtension):
@@ -427,7 +449,8 @@ setup(
     ],
     python_requires=">=3.10",
     packages=setuptools.find_packages(include=["zbal", "zbal.*"]),
+    package_data={"zbal": [VERSION_FILE]},
     cmdclass={'build_ext': CustomBuildExtension, 'bdist_wheel': BuildWheel},
 )
 
-recover_torch_version()
+remove_version_file()
