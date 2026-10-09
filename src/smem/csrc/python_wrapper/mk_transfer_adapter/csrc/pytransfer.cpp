@@ -24,6 +24,7 @@
 #include "transfer_util.h"
 #include "smem_ptracer.h"
 #include "adapter_logger.h"
+#include "smem_logger.h"
 
 using namespace ock::adapter;
 
@@ -491,6 +492,7 @@ int TransferAdapterPy::UnregisterMemory(uintptr_t buffer_addr)
 
         std::lock_guard<std::mutex> lock(connMutex_);
         char *buffer = reinterpret_cast<char *>(buffer_addr);
+        SM_VALIDATE_RETURN(buffer != nullptr, "invalid address, which is null", SMEM_INVALID_PARAM);
         for (auto &entry : connections_) {
             if (!entry.second.active || entry.second.handle == nullptr) {
                 continue;
