@@ -205,7 +205,7 @@ setup(
             "_kernel/acc_offload/operators/*",
             "_kernel/acc_offload/launch/*",
         ],
-        "zbal": ["zbal*.so"],
+        "zbal": ["zbal*.so", "VERSION"],
     },
     entry_points={
         "console_scripts": [
