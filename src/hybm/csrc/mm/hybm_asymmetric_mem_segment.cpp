@@ -662,9 +662,15 @@ Result AsymmetricMemSegment::ImportDeviceInfo(const std::string &info) noexcept
         return BM_ERROR;
     }
 
-    ret = EnsurePeerAccess(deviceInfo.devicePhyId);
-    if (ret != BM_OK) {
-        return ret;
+    // RtEnableP2P 仅本机设备间语义：同机对端才使能本地 P2P；跨机对端走下方 superPodPid 白名单通路
+    if (CanLocalHostReaches(deviceInfo.superPodId, deviceInfo.serverId, deviceInfo.devicePhyId)) {
+        ret = EnsurePeerAccess(deviceInfo.devicePhyId);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("ensure peer access failed, rankId=" << options_.rankId << " remoteRank=" << deviceInfo.rankId
+                                                              << " peerDev=" << deviceInfo.devicePhyId
+                                                              << " ret=" << ret);
+            return ret;
+        }
     }
     std::unique_lock<std::mutex> uniqueLock{mutex_};
     if (options_.shared) {
@@ -740,15 +746,21 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
     }
     std::unique_lock<std::mutex> uniqueLock{mutex_};
     if (options_.shared && CanSdmaReaches(sliceInfo.superPodId, sliceInfo.serverId, sliceInfo.devicePhyId)) {
-        ret = EnsurePeerAccess(sliceInfo.devicePhyId);
-        if (ret != BM_OK) {
-            return ret;
-        }
+        // RtEnableP2P/RtGetP2PStatus 均为本机设备间语义，仅同机对端执行；同超节点跨机由
+        // RtIpc(share name + superPodPid 白名单) 打通，跳过本地 P2P 使能与查询
+        if (CanLocalHostReaches(sliceInfo.superPodId, sliceInfo.serverId, sliceInfo.devicePhyId) &&
+            devicePhyId_ != static_cast<int>(sliceInfo.devicePhyId)) {
+            ret = EnsurePeerAccess(sliceInfo.devicePhyId);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("ensure peer access failed, rankId=" << options_.rankId
+                                                                  << " remoteRank=" << sliceInfo.rankId << " peerDev="
+                                                                  << sliceInfo.devicePhyId << " ret=" << ret);
+                return ret;
+            }
 
-        // 检查 P2P 双向就绪：本端已 EnsurePeerAccess(EnableRemotePeerAccess)，但对端可能还没使能完。
-        // 不阻塞等待：未就绪返回专用码 BM_P2P_NOT_READY，由上层状态机重试；该码在上层只保留本处 WARN，
-        // 不再逐层打 ERROR。查询接口本身失败（含符号缺失 BM_UNDER_API_UNLOAD）不做拦截，交实际导入决定。
-        if (devicePhyId_ != static_cast<int>(sliceInfo.devicePhyId)) {
+            // 检查 P2P 双向就绪：本端已 EnsurePeerAccess(EnableRemotePeerAccess)，但对端可能还没使能完。
+            // 不阻塞等待：未就绪返回专用码 BM_P2P_NOT_READY，由上层状态机重试；该码在上层只保留本处 WARN，
+            // 不再逐层打 ERROR。查询接口本身失败（含符号缺失 BM_UNDER_API_UNLOAD）不做拦截，交实际导入决定。
             uint32_t p2pStatus = 0;
             auto p2pRet = DlAclApi::RtGetP2PStatus(static_cast<uint32_t>(deviceId_),
                                                    static_cast<uint32_t>(sliceInfo.devicePhyId), p2pStatus);
