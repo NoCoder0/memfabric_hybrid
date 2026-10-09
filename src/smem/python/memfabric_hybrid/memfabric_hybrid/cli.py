@@ -133,12 +133,117 @@ def _register_mem_command(components) -> None:
     scan.set_defaults(handler=_scan_memory)
 
 
+def _run_benchmark(args: argparse.Namespace) -> int:
+    from memfabric_hybrid.benchmark.benchmark import run as _benchmark_run
+
+    return _benchmark_run(args)
+
+
+def _register_benchmark_command(components) -> None:
+    benchmark = components.add_parser("benchmark", help="run performance benchmark")
+    benchmark.set_defaults(handler=_run_benchmark)
+
+    benchmark.add_argument(
+        "command",
+        nargs="?",
+        choices=("write", "read", "trans"),
+        default="read",
+        help="benchmark operation type (default: read)",
+    )
+    benchmark.add_argument(
+        "--framework",
+        choices=("sglang", "vllm"),
+        default="vllm",
+        help="inference framework type (default: vllm)",
+    )
+    benchmark.add_argument(
+        "--model",
+        choices=("glm5.2", "dsv4"),
+        default="glm5.2",
+        help="model type (default: glm5.2)",
+    )
+    benchmark.add_argument(
+        "--protocol",
+        choices=("sdma", "device_rdma", "device_urma", "device_uboe", "host_rdma", "host_urma", "host_tcp"),
+        default="device_rdma",
+        help="communication protocol (default: device_rdma)",
+    )
+    benchmark.add_argument(
+        "--ip",
+        type=str,
+        default="tcp://127.0.0.1:12050",
+        help="config store node IP, format tcp://<ip>:<port> (default: tcp://127.0.0.1:12050)",
+    )
+    benchmark.add_argument(
+        "--copysize",
+        type=int,
+        default=2097152,
+        help="block size in bytes (default: 2097152)",
+    )
+    benchmark.add_argument(
+        "--batchsize",
+        type=int,
+        default=1,
+        help="batch count (default: 1)",
+    )
+    benchmark.add_argument(
+        "--copy-count",
+        type=int,
+        default=1000,
+        help="copy iteration count (default: 1000)",
+    )
+    benchmark.add_argument(
+        "--device",
+        type=int,
+        default=None,
+        help="starting (virtual) device ID, Ascend runtime maps via ASCEND_RT_VISIBLE_DEVICES (default: 0)",
+    )
+    benchmark.add_argument(
+        "--world-size",
+        type=int,
+        default=-1,
+        help="total NPU count in cluster (default: 256 for multi-node, auto-detect for single-node)",
+    )
+    benchmark.add_argument(
+        "--local-rank-size",
+        type=int,
+        default=None,
+        help="NPU count on this node (default: auto-detected)",
+    )
+    benchmark.add_argument(
+        "--rank-start",
+        type=int,
+        default=0,
+        help="starting rankId for the local node (default: 0)",
+    )
+    benchmark.add_argument(
+        "--rdma",
+        type=str,
+        default="tcp://0.0.0.0:10005",
+        help="host RDMA NIC IP and port, format tcp://<ip>:<port> (default: tcp://0.0.0.0:10005)",
+    )
+    benchmark.add_argument(
+        "--local-hbm-size",
+        type=int,
+        default=0,
+        help="per-rank HBM contributed to the big memory pool, in bytes (default: 0, DRAM only)",
+    )
+    benchmark.add_argument(
+        "--peer-mem-type",
+        choices=("host", "device"),
+        default="host",
+        help="memory type of the peer side that is read from / written to; "
+        "'device' needs --local-hbm-size > 0 (default: host)",
+    )
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="mfcli")
     components = parser.add_subparsers(dest="component", required=True)
     _register_version_command(components)
     _register_kernel_command(components)
     _register_mem_command(components)
+    _register_benchmark_command(components)
     return parser
 
 
