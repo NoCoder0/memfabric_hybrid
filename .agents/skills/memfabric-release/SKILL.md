@@ -32,26 +32,25 @@ description: "生成 MemFabric Hybrid changelog 或 release note 时使用。只
 
 ## 生成原则
 
-- 除固定保留的 `Installation` 和 `References` 外，只包含有变化的章节，空章节必须省略。
+- 除固定保留的 `Installation` 外，只包含有变化的章节，空章节必须省略。
 - 内容应面向用户，描述行为变化、使用影响和兼容性影响，不要机械罗列 commit。
 - 同一条变更只放入最合适的一个章节，避免重复。
 - 保留必要的技术名词、API 名称、环境变量、命令、路径和 PR 编号。
 - 不确定分类时，优先放入 `Changed`，并在需要时说明依据。
-- 范围和 PR 信息完整时，`References` 必须列出本次 release 所有新增 PR；草稿仅列可核实项并注明缺失。
+- 在变更条目中附上相关 PR 链接，使用 `Full Changelog` 链接完整版本差异。
 
 ## 分类规则
 
-- `Summary`：本次 release 的整体摘要，概括最重要的能力、修复和影响。
 - `Feature`：新增能力、新 API、新运行模式、新平台支持、新工具或新集成。
 - `Changed`：已有行为、配置、构建、性能、日志、默认值、内部实现或非 bug 修复类调整。
 - `Fixed`：bug 修复、稳定性修复、错误处理修复、崩溃/hang/timeout/数据错误修复。
 - `Compatibility`：ABI/API、Python 版本、硬件/驱动/CANN、依赖、包名、安装方式或行为兼容性说明。
 - `Documentation`：文档、示例、README、安装说明、API 说明、release 文档更新。
-- `References`：本次 release 所有新增 PR。
+- `Full Changelog`：上一版本到当前版本的完整差异链接。
 
 ## 输出格式
 
-严格使用以下格式。除 `Installation` 和 `References` 外，仅包含有变化的章节；没有变化的章节不要输出。
+严格使用以下格式。除 `Installation` 外，仅包含有变化的章节；没有变化的章节不要输出。
 
 ```markdown
 # MemFabric Hybrid v{VERSION} - {YYYY-MM-DD}
@@ -60,10 +59,6 @@ description: "生成 MemFabric Hybrid changelog 或 release note 时使用。只
 
 - PyPI: [memfabric-hybrid](https://pypi.org/project/memfabric-hybrid/)
 - Install: `pip install memfabric-hybrid`
-
-## Summary
-
-Summary of this release
 
 ## Feature
 
@@ -85,32 +80,17 @@ Summary of this release
 
 - Description of docs changes
 
-## References
+## Full Changelog
 
-- [!728](https://gitcode.com/Ascend/memfabric_hybrid/pull/728) — PR 标题
+[v{PREVIOUS_VERSION}...v{VERSION}](https://gitcode.com/Ascend/memfabric_hybrid/compare/v{PREVIOUS_VERSION}...v{VERSION})
 ```
-
-## References 规则
-
-`References` 中列出本次 release 所有可核实的新增 PR；完整发布说明须覆盖全部新增 PR，格式必须为：
-
-```markdown
-- [!728](https://gitcode.com/Ascend/memfabric_hybrid/pull/728) — PR 标题
-```
-
-要求：
-
-- PR 按编号升序或合入时间排序；同一份 release note 中保持一种排序方式。
-- PR 标题使用实际标题，不要改写到失真。
-- 如果 PR 链接不可用，但编号和标题可确认，仍按标准格式输出链接。
-- 如果某个变更来自直接 commit 而非 PR，应在 `References` 后补充说明，不要伪造 PR。
 
 ## 最终检查
 
 输出前确认：
 
 - 标题版本和日期正确。
-- 无变化的章节已删除；`Installation` 和 `References` 按输出格式保留。
+- 无变化的章节已删除；`Installation` 按输出格式保留。
 - `Installation` 中 PyPI 链接和安装命令保持固定格式。
-- 完整发布说明的 `References` 覆盖所有新增 PR；信息不完整时已明确标为草稿，并注明已知范围及缺失项。
+- `Full Changelog` 指向正确的版本比较区间；信息不完整时已明确标为草稿，并注明已知范围及缺失项。
 - 每条变更描述都能对应到 PR、commit 或用户提供的发布信息。

@@ -1,0 +1,41 @@
+name: MemFabric Hybrid Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  enable: true
+  max: 1
+  exceed-action: QUEUE
+  preemption:
+    enable: false
+
+permissions:
+  repository: read
+  pr: read
+
+jobs:
+  release:
+    name: Generate notes and create Release
+    runs-on: [self-hosted, x86, cpu=16]
+    container:
+      image: swr.cn-north-4.myhuaweicloud.com/memfabric-hybrid/memfabric-hybrid_x86:multi_python_v2
+    steps:
+      - name: Checkout tag and history
+        uses: checkout
+        with:
+          ref: ${{ atomgit.ref }}
+          fetch-depth: 0
+
+      - name: Generate notes and publish
+        env:
+          GITCODE_TOKEN: ${{ secrets.MF_RELEASE_TOKEN }}
+        run: |
+          git fetch --tags --force
+          python3 script/gitcode_release.py \
+            --repo "$ATOMGIT_REPOSITORY" \
+            --tag "$ATOMGIT_REF_NAME" \
+            --publish
+          cat release-notes.md >> "$ATOMGIT_STEP_SUMMARY"
