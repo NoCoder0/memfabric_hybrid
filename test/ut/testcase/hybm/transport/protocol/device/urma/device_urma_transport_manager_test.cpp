@@ -3041,6 +3041,52 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionPropagatesHcommRegFailu
     EXPECT_TRUE(manager.localRegistrations_.empty());
 }
 
+TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionRollsBackEarlierEndpointOnFailure)
+{
+    DlHcommApiFnGuard guard;
+    constexpr uintptr_t kFailingEndpointValue = 0xA510UL;
+    constexpr int32_t kFirstLocalId = 0;
+    constexpr int32_t kSecondLocalId = 1;
+    DlHcommApi::gHcommEndpointDestroy = [](EndpointHandle) { return BM_OK; };
+    DlHcommApi::gHcommMemReg = [](EndpointHandle endpoint, const char *, const HcommCommMem *, HcommMemHandle *handle) {
+        if (endpoint != MOCK_ENDPOINT) {
+            return BM_ERROR;
+        }
+        *handle = MOCK_MEM_HANDLE;
+        return BM_OK;
+    };
+    g_memUnregCallCount = 0U;
+    DlHcommApi::gHcommMemUnreg = [](EndpointHandle endpoint, HcommMemHandle handle) {
+        EXPECT_EQ(endpoint, MOCK_ENDPOINT);
+        EXPECT_EQ(handle, MOCK_MEM_HANDLE);
+        g_memUnregCallCount++;
+        return BM_OK;
+    };
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.localEndpoint_ = {MOCK_ENDPOINT, reinterpret_cast<EndpointHandle>(kFailingEndpointValue)};
+    manager.localIds_ = {kFirstLocalId, kSecondLocalId};
+    TransportMemoryRegion mr{};
+    mr.addr = MOCK_LOCAL_ADDR;
+    mr.size = MOCK_SIZE;
+    mr.flags = REG_MR_FLAG_HBM;
+
+    EXPECT_EQ(manager.RegisterMemoryRegion(mr), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(g_memUnregCallCount, 1U);
+    EXPECT_TRUE(manager.localRegistrations_.empty());
+    EXPECT_TRUE(manager.hcommApi_.memEntries_.empty());
+    EXPECT_TRUE(manager.hcommApi_.tagIndex_.empty());
+
+    manager.localEndpoint_.pop_back();
+    manager.localIds_.pop_back();
+    ASSERT_EQ(manager.RegisterMemoryRegion(mr), BM_OK);
+    EXPECT_EQ(manager.UnregisterMemoryRegion(mr.addr), BM_OK);
+    EXPECT_EQ(g_memUnregCallCount, 2U);
+    EXPECT_TRUE(manager.hcommApi_.memEntries_.empty());
+    EXPECT_TRUE(manager.hcommApi_.tagIndex_.empty());
+}
+
 TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionRejectsInvalidRangesAndMissingEndpoint)
 {
     DlHcommApiFnGuard guard;

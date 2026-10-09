@@ -1378,6 +1378,9 @@ Result DeviceUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryReg
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma HcommMemReg failed, addr: " << VaToStr(mr.addr) << " size: " << mr.size
                                                                   << " ret: " << ret);
+            for (size_t registered = 0; registered < registration.handle.size(); registered++) {
+                (void)hcommApi_.UnregisterMemory(localEndpoint_[registered], registration.handle[registered]);
+            }
             return ret;
         }
         registration.handle.push_back(hcommHandle);

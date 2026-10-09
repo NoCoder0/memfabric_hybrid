@@ -1308,6 +1308,42 @@ void MockHalGvaGetDriverInstallPath(std::string &driverInstallPath)
     driverInstallPath = "/usr/local/Ascend";
 }
 
+int32_t MockTopologyRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
+{
+    constexpr int64_t kServerIndex = 10;
+    const auto ret = MockRtGetDeviceInfo(devId, moduleType, infoType, value);
+    if (ret == BM_OK && infoType == INFO_TYPE_SERVER_ID) {
+        *value = kServerIndex;
+    } else if (ret == BM_OK && infoType == INFO_TYPE_SPOD_TYPE) {
+        *value = TOPO_TYPE_SERVER_16FM;
+    }
+    return ret;
+}
+
+int MockTopologyEidList(int npuId, int urmaDevIndex, dcmi_urma_eid_info *eidList, int *eidCnt)
+{
+    constexpr size_t kDiePortByte = 5U;
+    constexpr size_t kFeByte = 6U;
+    constexpr uint8_t kDieOneBits = 0x40U;
+    constexpr uint8_t kPortGroupId = 0x3FU;
+    constexpr uint8_t kDieZeroFe = 3U;
+    constexpr uint8_t kDieOneFe = 2U;
+    (void)npuId;
+    const std::vector<uint8_t> ports = urmaDevIndex == 0 ? std::vector<uint8_t>{0U, 1U, kPortGroupId}
+                                                         : std::vector<uint8_t>{0U, 1U, 2U, 3U, 5U, 6U, kPortGroupId};
+    if (eidList == nullptr || eidCnt == nullptr || *eidCnt < static_cast<int>(ports.size())) {
+        return BM_INVALID_PARAM;
+    }
+    for (size_t i = 0; i < ports.size(); ++i) {
+        eidList[i] = {};
+        eidList[i].eid.raw[kDiePortByte] = ports[i] | (urmaDevIndex == 0 ? 0U : kDieOneBits);
+        eidList[i].eid.raw[kFeByte] = urmaDevIndex == 0 ? kDieZeroFe : kDieOneFe;
+        eidList[i].eid_index = static_cast<uint32_t>(i);
+    }
+    *eidCnt = static_cast<int>(ports.size());
+    return BM_OK;
+}
+
 class UrmaTopoCommonMockTest : public testing::Test {
 protected:
     void SetUp() override
@@ -1404,6 +1440,87 @@ TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_EidListFail)
     EXPECT_EQ(GetUrmaEntityList(0, ueList), BM_OK);
     EXPECT_EQ(ueList.ueNum, 2U);
     EXPECT_EQ(ueList.ueList[0].eidNum, 0U);
+}
+
+TEST_F(UrmaTopoCommonMockTest, Server16FmRootInfoPreservesRankAndClosPortGroups)
+{
+    constexpr int32_t kDeviceId = 0;
+    constexpr int32_t kPhysicalId = 3;
+    constexpr int32_t kExpectedLocalId = 83;
+    constexpr size_t kRankCount = 1U;
+    constexpr size_t kLayerCount = 2U;
+    constexpr size_t kMeshPortCount = 6U;
+    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockTopologyRtGetDeviceInfo));
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
+    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockTopologyEidList));
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    auto product = UrmaTopoProduct::GetUrmaTopoProduct(kDeviceId, kDeviceId, kPhysicalId, MAIN_BOARD_ID_SERVER_TYPE1);
+    ASSERT_NE(product, nullptr);
+    int32_t localId = -1;
+    ASSERT_EQ(product->GetLocalId(localId), BM_OK);
+    EXPECT_EQ(localId, kExpectedLocalId);
+    RootInfo root;
+    ASSERT_EQ(product->GetRootInfo(root), BM_OK);
+    EXPECT_EQ(root.version, "2.0");
+    EXPECT_EQ(root.topoFilePath, "/usr/local/Ascend/driver/topo/950/atlas_850_2.json");
+    EXPECT_EQ(root.rankCount, static_cast<int>(kRankCount));
+    ASSERT_EQ(root.rankList.size(), kRankCount);
+    const auto &rank = root.rankList.front();
+    EXPECT_EQ(rank.deviceId, kPhysicalId);
+    EXPECT_EQ(rank.localId, localId);
+    ASSERT_EQ(rank.levelList.size(), kLayerCount);
+    EXPECT_EQ(rank.levelList[0U].netType, NET_TYPE_TOPO_FILE_DESC);
+    ASSERT_EQ(rank.levelList[0U].rankAddrList.size(), kMeshPortCount);
+    EXPECT_EQ(rank.levelList[0U].rankAddrList.front().ports, (std::vector<std::string>{"1/0"}));
+    const auto &clos = rank.levelList[1U];
+    EXPECT_EQ(clos.netType, NET_TYPE_CLOS);
+    EXPECT_EQ(clos.netInstanceId, "sp_1");
+    ASSERT_EQ(clos.rankAddrList.size(), kLayerCount);
+    EXPECT_EQ(clos.rankAddrList[0U].ports, (std::vector<std::string>{"0/0", "0/1"}));
+    EXPECT_EQ(clos.rankAddrList[0U].planeId, "plane_clos_0");
+    EXPECT_EQ(clos.rankAddrList[1U].ports, (std::vector<std::string>{"1/0", "1/1", "1/2", "1/3", "1/5", "1/6"}));
+    EXPECT_EQ(clos.rankAddrList[1U].planeId, "plane_clos_1");
+}
+
+TEST_F(UrmaTopoCommonMockTest, PodRootInfoWrapsServerIndexAndPrioritizesClosPortGroup)
+{
+    constexpr int32_t kDeviceId = 0;
+    constexpr int32_t kPhysicalId = 3;
+    constexpr int32_t kExpectedLocalId = 19;
+    constexpr size_t kRankCount = 1U;
+    constexpr size_t kLayerCount = 2U;
+    constexpr size_t kMeshPortCount = 2U;
+    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockTopologyRtGetDeviceInfo));
+    MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
+    MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockTopologyEidList));
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    auto product = UrmaTopoProduct::GetUrmaTopoProduct(kDeviceId, kDeviceId, kPhysicalId, MAIN_BOARD_ID_POD);
+    ASSERT_NE(product, nullptr);
+    int32_t localId = -1;
+    ASSERT_EQ(product->GetLocalId(localId), BM_OK);
+    EXPECT_EQ(localId, kExpectedLocalId);
+    RootInfo root;
+    ASSERT_EQ(product->GetRootInfo(root), BM_OK);
+    EXPECT_EQ(root.version, "2.0");
+    EXPECT_EQ(root.topoFilePath, "/usr/local/Ascend/driver/topo/950/atlas_950_1.json");
+    EXPECT_EQ(root.rankCount, static_cast<int>(kRankCount));
+    ASSERT_EQ(root.rankList.size(), kRankCount);
+    const auto &rank = root.rankList.front();
+    EXPECT_EQ(rank.deviceId, kPhysicalId);
+    EXPECT_EQ(rank.localId, localId);
+    ASSERT_EQ(rank.levelList.size(), kLayerCount);
+    const auto &mesh = rank.levelList[0U];
+    EXPECT_EQ(mesh.netType, NET_TYPE_MESH);
+    EXPECT_EQ(mesh.netInstanceId, "sp1_srv10");
+    ASSERT_EQ(mesh.rankAddrList.size(), kMeshPortCount);
+    EXPECT_EQ(mesh.rankAddrList[0U].ports, (std::vector<std::string>{"0/0"}));
+    EXPECT_EQ(mesh.rankAddrList[1U].ports, (std::vector<std::string>{"0/1"}));
+    const auto &clos = rank.levelList[1U];
+    EXPECT_EQ(clos.netType, NET_TYPE_CLOS);
+    EXPECT_EQ(clos.netInstanceId, "superpod_1");
+    ASSERT_EQ(clos.rankAddrList.size(), kRankCount);
+    EXPECT_EQ(clos.rankAddrList.front().ports, (std::vector<std::string>{"1/0", "1/1", "1/2", "1/3", "1/5", "1/6"}));
+    EXPECT_EQ(clos.rankAddrList.front().planeId, "plane_0");
 }
 
 TEST_F(UrmaTopoCommonMockTest, UBGetMaxEntityId_Basic)
