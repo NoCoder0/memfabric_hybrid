@@ -606,6 +606,9 @@ Result HybmVmmBasedSegment::Mmap() noexcept
     if (imports_.empty()) {
         return BM_OK;
     }
+    // 逐项映射待处理导入，已映射项由 mappedGvaMem_ 去重跳过。任一项失败时都不清理 imports_：P2P 未就绪等
+    // 为可重试瞬时状态，上层（Server 状态机）会再次调用 hybm_mmap()，届时从断点继续补齐剩余项；若在此清空，
+    // 重试时 imports_ 已空、Mmap 直接返回 BM_OK，未映射的对端 slice 将永久丢失（方向校验随即失败）。
     for (auto &im : imports_) {
         if (im.rankId == options_.rankId || im.magic == ENTITY_EXPORT_INFO_MAGIC) {
             continue;
@@ -660,7 +663,6 @@ Result HybmVmmBasedSegment::Mmap() noexcept
                 if (options_.enable56BitsGva) {
                     ReleaseMmapLva(lva);
                 }
-                imports_.clear();
                 return BM_ERROR;
             }
         }
@@ -673,7 +675,6 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             if (options_.enable56BitsGva) {
                 ReleaseMmapLva(lva);
             }
-            imports_.clear();
             return BM_ERROR;
         }
 
@@ -685,7 +686,6 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             if (options_.enable56BitsGva) {
                 ReleaseMmapLva(lva);
             }
-            imports_.clear();
             return BM_ERROR;
         }
 
@@ -698,7 +698,6 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             if (options_.enable56BitsGva) {
                 ReleaseMmapLva(lva);
             }
-            imports_.clear();
             return ret;
         }
         mappedGvaMem_.emplace(im.gva, handle);
@@ -726,6 +725,9 @@ Result HybmVmmBasedSegment::Unmap() noexcept
     }
     mappedGvaMem_.clear();
     sdmaReachableRanks_.clear();
+    // 拆链后不应残留待映射项：失败重试期间 imports_ 会保留未完成项，若此后再次 hybm_mmap 会把旧项误映射；
+    // 这里随完整 unmapping 一并丢弃（对端下线由 RemoveImported 按 rank 单独清理）。
+    imports_.clear();
     return BM_OK;
 }
 

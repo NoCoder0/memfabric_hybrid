@@ -41,6 +41,12 @@ int HalMemMapFail(void *, size_t, size_t, drv_mem_handle_t *, uint64_t)
     return BM_ERROR;
 }
 
+int gHalMemMapCalls = 0;
+int HalMemMapSuccessAfterFirstFailure(void *, size_t, size_t, drv_mem_handle_t *, uint64_t)
+{
+    return (gHalMemMapCalls++ == 0) ? BM_ERROR : BM_OK;
+}
+
 int HalMemReleaseOk(drv_mem_handle_t *)
 {
     return BM_OK;
@@ -168,6 +174,62 @@ TEST_F(HybmVmmBasedSegmentTest, Mmap_MapFailure_RollsBackVaInfo)
     EXPECT_EQ(ret, BM_ERROR);
     EXPECT_TRUE(seg.mappedGvaMem_.empty());
     EXPECT_EQ(HybmVaManager::GetInstance().GetAllocCount(), 0U);
+}
+
+/**
+* Mmap_Failure_KeepsPendingImportsForRetry
+*  - 映射失败时不得清空 imports_，否则上层重试 hybm_mmap() 时无数据可映射，对端 slice 永久丢失。
+*/
+TEST_F(HybmVmmBasedSegmentTest, Mmap_Failure_KeepsPendingImportsForRetry)
+{
+    MemSegmentOptions opt{};
+    opt.segType = HYBM_MST_DRAM;
+    opt.maxSize = HYBM_LARGE_PAGE_SIZE;
+    opt.rankCnt = 2UL;
+    opt.rankId = 0;
+    opt.shared = true;
+
+    HybmVmmBasedSegment seg(opt, 0);
+    HybmVaManager::GetInstance().AllocReserveGva(
+        {opt.maxSize * opt.rankCnt, opt.maxSize * opt.rankCnt, HYBM_MEM_TYPE_HOST});
+
+    HostSdmaExportInfo remote{};
+    remote.gva = opt.maxSize;
+    remote.deviceVa = opt.maxSize;
+    remote.rankId = 1;
+    remote.size = HYBM_LARGE_PAGE_SIZE;
+    remote.segmentType = SEGMENT_TYPE_VMM;
+    remote.magic = DRAM_SLICE_EXPORT_INFO_MAGIC;
+    remote.superPodId = 1;
+    remote.serverId = 1;
+
+    seg.imports_.push_back(remote);
+    gHalMemMapCalls = 0;
+
+    MOCKER_CPP(&MemSegment::CanSdmaReaches, bool (*)(MemSegment *, uint32_t, uint32_t, uint32_t))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&DlHalApi::HalMemImport, int (*)(drv_mem_handle_type, MemShareHandle *, uint32_t, drv_mem_handle_t **))
+        .stubs()
+        .will(invoke(HalMemImportOk));
+    MOCKER_CPP(&DlHalApi::HalMemMap, int (*)(void *, size_t, size_t, drv_mem_handle_t *, uint64_t))
+        .stubs()
+        .will(invoke(HalMemMapSuccessAfterFirstFailure));
+    MOCKER_CPP(&DlHalApi::HalMemRelease, int (*)(drv_mem_handle_t *)).stubs().will(invoke(HalMemReleaseOk));
+    MOCKER_CPP(&DlHalApi::HalMemUnmap, int (*)(void *)).stubs().will(invoke(HalMemUnmapOk));
+
+    // 首次映射失败：待映射项必须保留，供上层重试
+    auto ret = seg.Mmap();
+    EXPECT_EQ(ret, BM_ERROR);
+    EXPECT_EQ(seg.imports_.size(), 1U);
+    EXPECT_TRUE(seg.mappedGvaMem_.empty());
+
+    // 重试成功：从断点继续补齐
+    ret = seg.Mmap();
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_TRUE(seg.imports_.empty());
+    EXPECT_EQ(seg.mappedGvaMem_.size(), 1U);
+    EXPECT_EQ(HybmVaManager::GetInstance().GetAllocCount(), 1U);
 }
 
 /**
