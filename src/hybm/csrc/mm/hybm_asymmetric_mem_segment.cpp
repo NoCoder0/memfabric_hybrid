@@ -714,6 +714,18 @@ Result AsymmetricMemSegment::ImportSliceInfo(const std::string &info, MemSlicePt
     return ImportHbmSlice(sliceInfo, remoteSlice);
 }
 
+// 导出名是否携带有效的共享句柄。仅 shared/VMM 会写入非全 0 的唯一共享名，可安全作为幂等身份键；
+// 非 shared（HBM 未走 VMM/IPC 共享名）name 恒为全 0（见 RegisterMemory 内的 RegisterSlice name 构造）。
+static bool HasShareName(const char *name, size_t len)
+{
+    for (size_t i = 0; i < len; ++i) {
+        if (name[i] != '\0') {
+            return true;
+        }
+    }
+    return false;
+}
+
 MemSlicePtr AsymmetricMemSegment::FindReusableImport(const std::string &shareName) noexcept
 {
     std::unique_lock<std::mutex> uniqueLock{mutex_};
@@ -736,7 +748,11 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
     void *address = nullptr;
     // name 定长构造：VMM share_handle 为二进制，隐式 strlen 会在首个 \0 截断导致 find/erase 失配
     const std::string shareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN);
-    auto reused = FindReusableImport(shareName);
+    // 幂等短路仅对 shared/VMM 生效：其共享句柄全局唯一，可安全作身份键。非 shared（name 全 0）没有
+    // 可区分不同对端的字段（rankId 只在单 store rank 空间内 injective、多 D 场景各 D 常同为 0，
+    // 描述符在多 server 同规格部署下也完全相同），据此去重会让不同对端互相命中并塌缩到同一 GVA，
+    // 因此非 shared 一律不做幂等短路，逐 slice 独立导入并各自登记 GVA。
+    auto reused = HasShareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN) ? FindReusableImport(shareName) : nullptr;
     if (reused != nullptr) {
         // 幂等短路：重复导入复用既有 slice 与映射，避免重复 ReserveLva/map 与 va_manager 重复计数
         remoteSlice = reused;

@@ -762,7 +762,8 @@ void SmemTransEntry::AddRemoteInfo(uint32_t rk, smem_trans_role_t role, WorkerId
     for (auto i = 0U; i < global.size(); i++) {
         remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
         SM_LOG_DEBUG("record mem, local_rk:" << rankId_ << " remote_rk:" << rk << " global_addr:0x" << global[i]
-                                             << " remote_addr:0x" << local[i].address);
+                                             << " remote_addr:0x" << local[i].address
+                                             << " uniqueId:" << uniqueToString(id));
     }
 }
 
@@ -775,23 +776,6 @@ smem_trans_role_t SmemTransEntry::QueryRole(uint32_t rk)
         return SMEM_TRANS_BUTT;
     }
     return it->second;
-}
-
-void SmemTransEntry::AddRemoteInfo(uint32_t rk, std::vector<void *> &global, std::vector<LocalMapAddress> &local)
-{
-    mf::WriteGuard locker(remoteSliceRwMutex_);
-    auto it = rankToWorkerId_.find(rk);
-    if (it == rankToWorkerId_.end()) {
-        SM_LOG_ERROR("not found this rank:" << rk << " in rankToWorkerId_");
-        return;
-    }
-
-    WorkerId id = it->second;
-    for (auto i = 0U; i < global.size(); i++) {
-        remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
-        SM_LOG_DEBUG("record mem, local_rk:" << rankId_ << " remote_rk:" << rk << " global_addr:0x" << global[i]
-                                             << " remote_addr:0x" << local[i].address);
-    }
 }
 
 void SmemTransEntry::SetPeerDownCallback(smem_trans_peer_down_callback_t callback, void *userData)
@@ -1023,7 +1007,7 @@ Result SmemTransEntry::BatchSyncTransfer(void *localAddrs[], const std::string &
             return SM_INVALID_PARAM;
     }
     if (ret != 0) {
-        SM_LOG_ERROR("batch copy data failed:" << ret);
+        SM_LOG_ERROR("batch copy data failed:" << ret << " remoteUniqueId:" << uniqueToString(unique));
     }
     return ret;
 }

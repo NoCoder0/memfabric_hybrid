@@ -698,6 +698,48 @@ TEST_F(HybmAsymmetricSegmentTest, Import_Rollback_SkipsDramGvaAddresses)
 }
 
 /**
+ * ImportHbmSlice_NonShared_NoDedupByAllZeroName
+ *  - 非 shared HBM 导出 name 恒为全 0，不能作为幂等身份键：
+ *    1) 同一对端的两个不同 slice 必须各自登记独立 GVA（回归：旧实现按全 0 name 复用，
+ *       全部塌缩到第一个 slice 的 GVA，导致后续拷贝目标越界、方向推断失败）；
+ *    2) 多 D / 多 server 场景下不同对端的 slice 描述符（rankId/gvaOffset/address/size）可能完全相同，
+ *       也不能互相命中复用——非 shared 一律不去重，逐 slice 独立导入。
+ */
+TEST_F(HybmAsymmetricSegmentTest, ImportHbmSlice_NonShared_NoDedupByAllZeroName)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_DEVICE_URMA, ASCEND_910B);
+    options.shared = false; // 非 shared：导出 name 全 0，走设备侧 transport 通路
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+
+    auto makeInfo = [](uint64_t offset) {
+        UserSliceExportInfo info{};
+        info.segmentType = SEGMENT_TYPE_USER_DEV;
+        info.gvaOffset = offset;
+        info.address = TEST_HBM_ADDR + offset;
+        info.size = TEST_SIZE;
+        info.rankId = 7U;
+        return info; // name 全 0：非 shared
+    };
+
+    MemSlicePtr slice1;
+    MemSlicePtr slice2;
+    ASSERT_EQ(segment.ImportHbmSlice(makeInfo(0U), slice1), BM_OK);
+    ASSERT_EQ(segment.ImportHbmSlice(makeInfo(TEST_SIZE), slice2), BM_OK);
+    ASSERT_NE(slice1, nullptr);
+    ASSERT_NE(slice2, nullptr);
+    EXPECT_NE(slice1.get(), slice2.get());
+    EXPECT_EQ(slice1->gva_, TEST_GVA_BASE);
+    EXPECT_EQ(slice2->gva_, TEST_GVA_BASE + TEST_SIZE);
+
+    // 另一个对端描述符与 slice1 完全相同：非 shared 不去重，必须独立导入、不复用 slice1
+    MemSlicePtr otherPeer;
+    ASSERT_EQ(segment.ImportHbmSlice(makeInfo(0U), otherPeer), BM_OK);
+    ASSERT_NE(otherPeer, nullptr);
+    EXPECT_NE(otherPeer.get(), slice1.get());
+}
+
+/**
  * ImportDeviceInfo_SkipsEmptyNameWhitelist
  *  - 已注册 HBM + DRAM slice 时导入远端设备信息：
  *    RtSetIpcMemorySuperPodPid 仅对 HBM slice 调用一次，DRAM（空 name）条目被跳过。

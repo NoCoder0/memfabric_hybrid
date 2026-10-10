@@ -684,6 +684,9 @@ int32_t MemEntityDefault::ImportForTransportManager()
     transport::HybmTransPrepareOptions prepareOptions;
     for (const auto &item : importedRanks_) {
         auto &info = item.second;
+        if (options_.role != HYBM_ROLE_PEER && static_cast<hybm_role_type>(info.role) == options_.role) {
+            continue;
+        }
         transport::TransportRankPrepareInfo prepareInfo;
         prepareInfo.nic = info.nic;
         prepareInfo.privateData = info.transportPrivateData;

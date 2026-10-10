@@ -165,7 +165,6 @@ private:
 
     void AddRemoteInfo(uint32_t rk, smem_trans_role_t role, WorkerId &id, std::vector<void *> &global,
                        std::vector<LocalMapAddress> &local);
-    void AddRemoteInfo(uint32_t rk, std::vector<void *> &global, std::vector<LocalMapAddress> &local);
     smem_trans_role_t QueryRole(uint32_t rk);
 
     bool ParseTransName(const std::string &name, ock::mf::net_addr_t &ip, uint16_t &port);
