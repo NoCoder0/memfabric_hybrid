@@ -10,7 +10,10 @@
  * See the Mulan PSL v2 for more details.
 */
 #include "smem_config_store_api.h"
+#include "smem_cluster_status.h"
 #include <cstdio>
+#include <cstring>
+#include <string>
 #include <new>
 #include "smem_bm_def.h"
 #include "smem_define.h"
@@ -134,5 +137,34 @@ SMEM_API int32_t smem_config_store_set_leader_handler(smem_config_store_t store,
                                                       smem_config_store_leader_change_cb callback, void *context)
 {
     return SetLeaderHandler(store, callback, context);
+}
+
+SMEM_API int32_t smem_config_store_get_cluster_status(char *json, uint32_t bufLen, uint32_t *outLen)
+{
+    if (json == nullptr && outLen == nullptr) {
+        return SMEM_INVALID_PARAM;
+    }
+    const std::string status = smem::GetClusterStatusJson();
+    const uint32_t required = static_cast<uint32_t>(status.size() + 1);
+    // 无 store（空数组）统一返回 SMEM_NOT_EXIST，供上层区分"空集群"与真实错误；
+    // json 非 NULL 时仍写入 "[]"，便于调用方直接使用
+    const bool noStore = (status == "[]");
+    if (json == nullptr) {
+        if (outLen != nullptr) {
+            *outLen = required;
+        }
+        return noStore ? SMEM_NOT_EXIST : SMEM_OK;
+    }
+    if (outLen != nullptr) {
+        *outLen = static_cast<uint32_t>(status.size());
+    }
+    if (bufLen < required) {
+        if (outLen != nullptr) {
+            *outLen = required;
+        }
+        return SMEM_BUFFER_TOO_SMALL;
+    }
+    memcpy(json, status.c_str(), required);
+    return noStore ? SMEM_NOT_EXIST : SMEM_OK;
 }
 }

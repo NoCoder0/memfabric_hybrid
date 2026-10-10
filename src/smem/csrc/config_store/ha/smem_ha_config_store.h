@@ -124,6 +124,8 @@ public:
         }
     }
 
+    void GetClusterStatusJson(std::string &out) noexcept override;
+
     StoreBackendPtr GetBackend() const noexcept
     {
         std::lock_guard<std::mutex> lock(backendMutex_);

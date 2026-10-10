@@ -178,6 +178,17 @@ public:
 
     // ── 状态访问（供 etcd 持久化使用） ──
 
+    /**
+     * @brief 单条链路的转换观测信息。
+     *
+     * 链路进入中间态（EXCHANGING/EXCHANGED/CONNECTING）时记录状态进入时刻与重试计数；
+     * 回到稳定态（CONNECTED/IDLE）时清零。供集群状态快照输出 unstableLinks 明细。
+     */
+    struct LinkTransition {
+        std::chrono::steady_clock::time_point timestamp{};
+        uint32_t retryCount{0};
+    };
+
     uint32_t GetMaxRanks() const noexcept
     {
         return maxRanks_;
@@ -187,9 +198,36 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         return states_;
     }
-    const std::vector<LinkState> &GetLinks() const noexcept
+    std::vector<LinkState> GetLinks() const noexcept
     {
+        std::lock_guard<std::mutex> lock(mutex_);
         return links_;
+    }
+    /**
+     * @brief 单次持锁同时拷贝 rank 状态数组与链路矩阵。
+     *
+     * 供观测/持久化使用：分开调用 GetStates()/GetLinks() 会得到两个不同瞬间的快照，
+     * 可能出现 ranks 与 links 互不一致的输出；本接口保证两者来自同一状态机瞬间。
+     */
+    void GetSnapshot(std::vector<RankState> &states, std::vector<LinkState> &links) const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        states = states_;
+        links = links_;
+    }
+    /**
+     * @brief 单次持锁同时拷贝 rank 状态数组、链路矩阵与链路转换信息。
+     *
+     * 三参数重载：集群状态快照的 unstableLinks 明细需要每条链路的转换重试计数与
+     * 状态进入时刻，且必须与 states/links 来自同一状态机瞬间；锁语义与两参数版本一致。
+     */
+    void GetSnapshot(std::vector<RankState> &states, std::vector<LinkState> &links,
+                     std::vector<LinkTransition> &transitions) const noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        states = states_;
+        links = links_;
+        transitions = transitions_;
     }
 
     // ── 状态恢复（供 EtcdStateStore 使用） ──
@@ -214,11 +252,6 @@ public:
 
 private:
     uint32_t LinkIndex(uint32_t src, uint32_t dst) const noexcept;
-
-    struct LinkTransition {
-        std::chrono::steady_clock::time_point timestamp{};
-        uint32_t retryCount{0};
-    };
 
     static constexpr uint32_t linkTransitionDriverIntervalMs = 10U;
     static constexpr uint32_t sendWorkerPollMs = 100U;

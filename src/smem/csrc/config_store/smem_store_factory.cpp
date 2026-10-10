@@ -295,6 +295,17 @@ void StoreFactory::DestroyStore(const std::string &storeUrl) noexcept
     storesMap_.erase(storeUrl);
 }
 
+std::vector<StorePtr> StoreFactory::SnapshotStores() noexcept
+{
+    std::lock_guard<std::mutex> guard{storesMutex_};
+    std::vector<StorePtr> snapshot;
+    snapshot.reserve(storesMap_.size());
+    for (const auto &item : storesMap_) {
+        snapshot.push_back(item.second);
+    }
+    return snapshot;
+}
+
 void StoreFactory::DestroyStoreAll(bool afterFork) noexcept
 {
     if (afterFork) {

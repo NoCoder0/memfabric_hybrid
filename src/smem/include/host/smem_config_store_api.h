@@ -13,6 +13,7 @@
 #define MEMFABRIC_SMEM_CONFIG_STORE_API_H
 
 #include "smem_config_store_def.h"
+#include "smem.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,6 +78,26 @@ void smem_config_store_set_server_broken_handler(smem_config_store_t store, smem
  */
 int32_t smem_config_store_set_leader_handler(smem_config_store_t store, smem_config_store_leader_change_cb callback,
                                              void *context);
+
+/**
+ * @brief Get the cluster status summary of all config stores in this process.
+ *
+ * Each store contributes one self-described JSON object; the result is a JSON
+ * array. The CPU (leader) store reports the server state machine (SS_*),
+ * world size, backend alive ranks, ranks reconnected after startup, heartbeat
+ * set and group-manager rank/link states; HA stores report their role and the
+ * connected leader. Thread-safe and non-blocking.
+ *
+ * @param json            [out] destination buffer; may be NULL to query the required size
+ * @param bufLen          [in] buffer capacity in bytes; ignored when json is NULL
+ * @param outLen          [out] required (json NULL) or actual (excluding \0) length; may be NULL
+ * @return SMEM_OK on success;
+ *         SMEM_BUFFER_TOO_SMALL if the buffer is too small (outLen holds the required size);
+ *         SMEM_NOT_EXIST if no store exists in this process (status is the empty array,
+ *         written as "[]" when json is not NULL);
+ *         SMEM_INVALID_PARAM if json and outLen are both NULL
+ */
+int32_t smem_config_store_get_cluster_status(char *json, uint32_t bufLen, uint32_t *outLen);
 
 #ifdef __cplusplus
 }

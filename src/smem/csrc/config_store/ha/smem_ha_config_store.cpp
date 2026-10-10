@@ -933,5 +933,34 @@ Result HaConfigStore::GetReal(const std::string &key, std::vector<uint8_t> &valu
     return clientDelegate_->Get(key, value, timeoutMs);
 }
 
+void HaConfigStore::GetClusterStatusJson(std::string &out) noexcept
+{
+    out.append("{\"type\":\"ha\",\"role\":");
+    std::string leaderAddr;
+    TcpConfigStorePtr delegate;
+    AccStoreServerPtr serverDelegate;
+    bool isLeader = false;
+    {
+        std::shared_lock<std::shared_mutex> guard(delegateRwLock_);
+        delegate = clientDelegate_;
+        serverDelegate = serverDelegate_;
+    }
+    isLeader = isLeader_.load(std::memory_order_acquire);
+    {
+        std::lock_guard<std::mutex> lock(lastLeaderMutex_);
+        leaderAddr = lastConnectedLeader_;
+    }
+    out.append(isLeader ? "\"leader\"" : "\"follower\"");
+    out.append(",\"leaderAddr\":\"").append(leaderAddr).append("\"");
+    if (delegate != nullptr) {
+        out.append(",\"connect\":").append(delegate->GetConnectStatus() ? "true" : "false");
+    }
+    if (serverDelegate != nullptr) {
+        out.append(",\"server\":");
+        serverDelegate->GetClusterStatusJson(out);
+    }
+    out.push_back('}');
+}
+
 } // namespace smem
 } // namespace ock

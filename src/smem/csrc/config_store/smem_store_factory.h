@@ -15,6 +15,7 @@
 
 #include <mutex>
 #include <string>
+#include <vector>
 #include <unordered_map>
 
 #include "smem.h"
@@ -64,6 +65,16 @@ public:
     static void DestroyStore(const std::string &storeUrl) noexcept;
 
     static void DestroyStoreAll(bool afterFork = false) noexcept;
+
+    /**
+     * @brief Snapshot copy of stores currently kept in this process.
+     *
+     * Keys are not needed by the cluster-status reporter, so the returned
+     * vector holds only the StorePtrs. Copying the map keeps aggregator code
+     * out of the factory critical section.
+     * @return vector of stores currently registered in the factory
+     */
+    static std::vector<StorePtr> SnapshotStores() noexcept;
 
     /**
      * @brief Encapsulate an existing store into a prefix store.

@@ -229,6 +229,22 @@ public:
      * @return 0 if successfully done
      */
     virtual Result QueryAlive(uint32_t rank, uint32_t &alive) noexcept = 0;
+
+    /**
+     * @brief Cluster status summary of this store as a JSON object string.
+     *
+     * Default implementation returns an empty object. Store implementations
+     * (TCP config store server / HA config store) report their own view:
+     * server state machine, world size, backend alive ranks and group-manager
+     * rank/link states on the leader; role and connected leader on followers.
+     * All accessors used when building the summary are thread-safe and
+     * non-blocking, so this is safe to call from an HTTP worker thread.
+     * @param out appended with a JSON object string, always "{"..."}" form
+     */
+    virtual void GetClusterStatusJson(std::string &out) noexcept
+    {
+        out.append("{}");
+    }
     /**
      * @brief Get error string by code
      *

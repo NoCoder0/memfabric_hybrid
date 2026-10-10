@@ -18,7 +18,10 @@
 #include <chrono>
 #include <mutex>
 #include <queue>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 #include <condition_variable>
 #include <unordered_map>
 #include <unordered_set>
@@ -33,6 +36,14 @@
 #include "smem_ref.h"
 
 namespace ock::smem {
+
+/* 集群状态快照 unstableLinks 明细的输出条目上限。
+ * join 窗口内全部 N² 条链路依次路过中间态，1024 rank 规模下单次 join 可能瞬时产出
+ * 数十万条，超出该上限时按 (retry 降序, elapsedMs 降序) 截断并输出 unstableTruncated
+ * 计数。该阈值是对外行为契约（memcache 侧 memcache_restful_api.md 同步登记），
+ * 修改需走文档变更。 */
+inline constexpr uint32_t kUnstableLinksMaxEntries = 256U;
+
 class StoreWaitContext {
 public:
     StoreWaitContext(int64_t tmMs, std::string key, const ock::acc::AccTcpRequestContext &reqCtx) noexcept
@@ -93,7 +104,42 @@ public:
     // 通过 linkId 查询 rankId，用于外部心跳超时回调
     uint32_t GetRankIdByLinkId(uint32_t linkId) const noexcept;
 
+    /**
+     * @brief Cluster status summary of this server as a JSON object string.
+     *
+     * Fields: server state (SS_*), world size, listen endpoint, backend alive
+     * ranks, ranks reconnected after startup, heartbeat count and the
+     * group-manager rank/link state summary. Reads thread-safe getters and
+     * copies; safe to call from foreign threads (HTTP workers).
+     */
+    void GetClusterStatusJson(std::string &out) noexcept;
+    std::string GetClusterStatusJson() noexcept
+    {
+        std::string out;
+        GetClusterStatusJson(out);
+        return out;
+    }
+
+    // 集群状态快照：GetClusterStatusJson 的数据形态。锁内一次拷出全部共享状态（copy-out 模式），
+    // 锁外做 O(N²) 遍历与 JSON 拼接，避免长持 storeMutex_ 阻塞心跳/CheckIn 等热路径写者
+    struct ClusterStatusSnapshot {
+        std::string listen;
+        std::unordered_set<uint32_t> backendAliveRanks;
+        std::unordered_set<uint32_t> aliveRanks;
+        std::unordered_set<uint32_t> reconnectedRanks;
+        std::vector<std::pair<uint32_t, int64_t>> heartbeats; // (rankId, sinceLastMs)，按 rank 升序
+        bool hasGm{false};
+        uint32_t maxRanks{0};
+        std::vector<RankState> states;
+        std::vector<LinkState> links;
+        std::vector<SmemGroupManagerServer::LinkTransition> transitions;
+    };
+
 private:
+    // 持有 storeMutex_ 拷出集群状态快照：仅做数据拷贝（短持锁），GM 三维度经 GetSnapshot
+    // 单次持锁拷贝，保证与 server 级集合同一状态机瞬间
+    ClusterStatusSnapshot CaptureClusterStatus() noexcept;
+
     Result ReceiveMessageHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
     Result LinkConnectedHandler(const ock::acc::AccConnReq &req, const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
     Result LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept;

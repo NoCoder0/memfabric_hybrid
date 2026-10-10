@@ -1204,5 +1204,22 @@ Result TcpConfigStore::HandleControlMessage(SmemMessage &msg) noexcept
     }
 }
 
+void TcpConfigStore::GetClusterStatusJson(std::string &out) noexcept
+{
+    out.append("{\"type\":\"tcp\"");
+    out.append(",\"model\":")
+        .append(std::to_string(startupModel_))
+        .append(",\"connect\":")
+        .append(GetConnectStatus() ? "true" : "false");
+    std::lock_guard<std::recursive_mutex> guard(mutex_);
+    if (accServer_ == nullptr) {
+        out.push_back('}');
+        return;
+    }
+    out.append(",\"server\":");
+    accServer_->GetClusterStatusJson(out);
+    out.push_back('}');
+}
+
 } // namespace smem
 } // namespace ock

@@ -110,6 +110,8 @@ public:
         return accServer_ != nullptr ? accServer_->GetRankIdByLinkId(linkId) : UINT32_MAX;
     }
 
+    void GetClusterStatusJson(std::string &out) noexcept override;
+
     SmemGroupCommandAsyncDispatcher *GetAsyncDispatcher() const noexcept
     {
         return asyncDispatcher_.get();

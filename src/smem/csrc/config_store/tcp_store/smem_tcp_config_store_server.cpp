@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <algorithm>
 #include <climits>
+#include <iomanip>
 #include <sstream>
 #include <map>
 #include <cstring>
@@ -1878,5 +1879,273 @@ int AccStoreServer::SendControlToRank(uint32_t targetRankId, const std::vector<u
     }
     return 0;
 }
+
+namespace {
+const char *ServerStateName(uint32_t state)
+{
+    switch (state) {
+        case SS_INITED:
+            return "SS_INITED";
+        case SS_RECOVERING:
+            return "SS_RECOVERING";
+        case SS_RECOVERED:
+            return "SS_RECOVERED";
+        case SS_NORMAL:
+            return "SS_NORMAL";
+        case SS_EXITED:
+            return "SS_EXITED";
+        default:
+            return "SS_UNKNOWN";
+    }
+}
+
+const char *RankStateName(int8_t state)
+{
+    switch (state) {
+        case RANK_CHECKED_IN:
+            return "RANK_CHECKED_IN";
+        case RANK_ACTIVE:
+            return "RANK_ACTIVE";
+        default:
+            return "RANK_IDLE";
+    }
+}
+
+const char *LinkStateName(int8_t state)
+{
+    switch (state) {
+        case LINK_EXCHANGING:
+            return "LINK_EXCHANGING";
+        case LINK_EXCHANGED:
+            return "LINK_EXCHANGED";
+        case LINK_CONNECTING:
+            return "LINK_CONNECTING";
+        case LINK_CONNECTED:
+            return "LINK_CONNECTED";
+        default:
+            return "LINK_IDLE";
+    }
+}
+
+void AppendUintSetJson(std::string &out, const std::unordered_set<uint32_t> &values)
+{
+    std::vector<uint32_t> ranks(values.begin(), values.end());
+    std::sort(ranks.begin(), ranks.end());
+    out.push_back('[');
+    for (size_t i = 0; i < ranks.size(); ++i) {
+        if (i != 0) {
+            out.push_back(',');
+        }
+        out.append(std::to_string(ranks[i]));
+    }
+    out.push_back(']');
+}
+
+// unstableLinks 明细条目：中间态链路，或双端存活却处于 IDLE 的断链
+struct UnstableLinkInfo {
+    uint32_t src;
+    uint32_t dst;
+    LinkState state;
+    uint32_t retry;
+    int64_t elapsedMs;
+};
+
+// 链路矩阵单次遍历的产出：摘要计数 + 异常明细（输出聚合，替代多个出参）
+struct LinkSummary {
+    uint32_t connectedLinks{0};
+    uint32_t abnormalLinks{0};
+    std::vector<UnstableLinkInfo> unstableLinks;
+};
+
+bool IsMiddleStateLink(LinkState st) noexcept
+{
+    return st == LINK_EXCHANGING || st == LINK_EXCHANGED || st == LINK_CONNECTING;
+}
+
+// 单次遍历链路矩阵（数据取自集群状态快照），同时产出 connected/abnormal 计数与 unstable 明细
+LinkSummary CollectLinkSummary(const AccStoreServer::ClusterStatusSnapshot &snap,
+                               const std::chrono::steady_clock::time_point &now) noexcept
+{
+    LinkSummary summary;
+    for (uint32_t src = 0; src < snap.maxRanks; ++src) {
+        for (uint32_t dst = 0; dst < snap.maxRanks; ++dst) {
+            if (src == dst) {
+                continue; // 对角线无链路语义
+            }
+            const size_t idx = static_cast<size_t>(src) * snap.maxRanks + dst;
+            const LinkState st = snap.links[idx];
+            if (st == LINK_CONNECTED) {
+                ++summary.connectedLinks;
+                continue;
+            }
+            // 双端存活却非 CONNECTED 才算异常：对端已死的 IDLE 是预期状态，不计入
+            const bool bothAlive = (snap.aliveRanks.count(src) > 0) && (snap.aliveRanks.count(dst) > 0);
+            if (bothAlive) {
+                ++summary.abnormalLinks;
+            }
+            const bool middleState = IsMiddleStateLink(st);
+            if (!middleState && !(st == LINK_IDLE && bothAlive)) {
+                continue;
+            }
+            UnstableLinkInfo info{src, dst, st, 0, -1};
+            if (middleState) {
+                const auto &tr = snap.transitions[idx];
+                info.retry = tr.retryCount;
+                // transitions_ 时间戳为 steady_clock 单调时钟，elapsed 同域计算，避免系统时钟跳变导致负值
+                info.elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - tr.timestamp).count();
+            }
+            summary.unstableLinks.push_back(info);
+        }
+    }
+    return summary;
+}
+
+// linkSummary 摘要输出：expectedLinks 以 activeRanks 为基数（未 join 完成时不用 worldSize 压低完成率）
+void AppendLinkSummaryJson(std::string &out, uint32_t activeRanks, uint32_t connectedLinks,
+                           uint32_t abnormalLinks) noexcept
+{
+    const uint64_t expectedLinks = (activeRanks == 0) ? 0 : static_cast<uint64_t>(activeRanks) * (activeRanks - 1U);
+    const double completionRate = (expectedLinks == 0) ? 1.0 : static_cast<double>(connectedLinks) / expectedLinks;
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(3) << completionRate;
+    out.append(",\"linkSummary\":{\"activeRanks\":").append(std::to_string(activeRanks));
+    out.append(",\"connectedLinks\":").append(std::to_string(connectedLinks));
+    out.append(",\"expectedLinks\":").append(std::to_string(expectedLinks));
+    out.append(",\"completionRate\":").append(oss.str());
+    out.append(",\"abnormalLinks\":").append(std::to_string(abnormalLinks)).append("}");
+}
+
+// unstableLinks 明细输出：按 (retry 降序, elapsedMs 降序) 排序——最可能卡死的排最前；
+// 超出 kUnstableLinksMaxEntries 截断，并在响应追加 unstableTruncated 计数
+void AppendUnstableLinksJson(std::string &out, std::vector<UnstableLinkInfo> &unstableLinks) noexcept
+{
+    std::sort(unstableLinks.begin(), unstableLinks.end(), [](const UnstableLinkInfo &a, const UnstableLinkInfo &b) {
+        if (a.retry != b.retry) {
+            return a.retry > b.retry;
+        }
+        return a.elapsedMs > b.elapsedMs;
+    });
+    size_t outputCount = unstableLinks.size();
+    if (outputCount > kUnstableLinksMaxEntries) {
+        outputCount = kUnstableLinksMaxEntries;
+    }
+    out.append(",\"unstableLinks\":[");
+    for (size_t i = 0; i < outputCount; ++i) {
+        const UnstableLinkInfo &info = unstableLinks[i];
+        if (i != 0) {
+            out.push_back(',');
+        }
+        out.append("{\"src\":").append(std::to_string(info.src));
+        out.append(",\"dst\":").append(std::to_string(info.dst));
+        out.append(",\"state\":\"").append(LinkStateName(info.state)).append("\"");
+        out.append(",\"retry\":").append(std::to_string(info.retry));
+        out.append(",\"elapsedMs\":").append(std::to_string(info.elapsedMs)).append("}");
+    }
+    out.push_back(']');
+    if (unstableLinks.size() > outputCount) {
+        out.append(",\"unstableTruncated\":").append(std::to_string(unstableLinks.size() - outputCount));
+    }
+}
+
+// lastHeartbeat 数组输出
+void AppendHeartbeatJson(std::string &out, const std::vector<std::pair<uint32_t, int64_t>> &heartbeats) noexcept
+{
+    out.append(",\"lastHeartbeat\":[");
+    std::string sep = "";
+    for (const auto &rankBeat : heartbeats) {
+        out.append(sep)
+            .append("{\"rank\":")
+            .append(std::to_string(rankBeat.first))
+            .append(",\"sinceLastMs\":")
+            .append(std::to_string(rankBeat.second))
+            .append("}");
+        sep = ",";
+    }
+    out.push_back(']');
+}
+
+// ranks 数组输出：单次遍历同时统计 activeRanks 与序列化非 IDLE rank（IDLE 属预期状态不输出）
+uint32_t AppendGmRanksJson(std::string &out, const std::vector<RankState> &states) noexcept
+{
+    out.append(",\"ranks\":[");
+    uint32_t activeRanks = 0;
+    std::string sep = "";
+    for (uint32_t rankId = 0; rankId < states.size(); ++rankId) {
+        if (states[rankId] == RANK_ACTIVE) {
+            ++activeRanks;
+        }
+        if (states[rankId] == RANK_IDLE) {
+            continue;
+        }
+        out.append(sep)
+            .append("{\"rank\":")
+            .append(std::to_string(rankId))
+            .append(",\"state\":\"")
+            .append(RankStateName(states[rankId]))
+            .append("\"}");
+        sep = ",";
+    }
+    out.push_back(']');
+    return activeRanks;
+}
+} // namespace
+
+// 持 storeMutex_ 拷出集群状态快照（短持锁，仅数据拷贝，不做 JSON 拼接）：
+AccStoreServer::ClusterStatusSnapshot AccStoreServer::CaptureClusterStatus() noexcept
+{
+    ClusterStatusSnapshot snap;
+    std::lock_guard<std::mutex> guard(storeMutex_);
+    snap.listen = listenIp_ + ":" + std::to_string(listenPort_);
+    snap.backendAliveRanks = aliveRankFromBackend_;
+    snap.aliveRanks = aliveRankSet_;
+    snap.reconnectedRanks = reconnectedRankSet_;
+    const int64_t nowMs = mf::StrUtil::GetNowTime();
+    snap.heartbeats.reserve(heartBeatMap_.size());
+    for (const auto &item : heartBeatMap_) {
+        const uint32_t rankId = GetRankIdByLinkId(item.first); // storeMutex_ 已持有
+        if (rankId == UINT32_MAX) {
+            continue; // 尚未建立 rank 映射的连接不输出
+        }
+        snap.heartbeats.emplace_back(rankId, nowMs - item.second);
+    }
+    std::sort(snap.heartbeats.begin(), snap.heartbeats.end());
+    if (groupManager_ != nullptr) {
+        snap.hasGm = true;
+        snap.maxRanks = groupManager_->GetMaxRanks();
+        groupManager_->GetSnapshot(snap.states, snap.links, snap.transitions);
+    }
+    return snap;
+}
+
+// 集群状态 JSON 输出
+void AccStoreServer::GetClusterStatusJson(std::string &out) noexcept
+{
+    const ClusterStatusSnapshot snap = CaptureClusterStatus();
+    out.push_back('{');
+    const uint32_t state = state_.load(std::memory_order_acquire);
+    out.append("\"state\":\"").append(ServerStateName(state)).append("\"");
+    out.append(",\"worldSize\":").append(std::to_string(worldSize_));
+    out.append(",\"listen\":\"").append(snap.listen).append("\"");
+    out.append(",\"backendAliveRanks\":");
+    AppendUintSetJson(out, snap.backendAliveRanks);
+    out.append(",\"aliveRanks\":");
+    AppendUintSetJson(out, snap.aliveRanks);
+    out.append(",\"reconnectedRanks\":");
+    AppendUintSetJson(out, snap.reconnectedRanks);
+    AppendHeartbeatJson(out, snap.heartbeats);
+
+    if (!snap.hasGm) {
+        out.append(",\"groupManager\":null}");
+        return;
+    }
+    out.append(",\"groupManager\":{\"maxRanks\":").append(std::to_string(snap.maxRanks));
+    const uint32_t activeRanks = AppendGmRanksJson(out, snap.states);
+    // 单次遍历矩阵产出摘要计数与异常明细，替代原 activeLinks 全量矩阵输出
+    LinkSummary summary = CollectLinkSummary(snap, std::chrono::steady_clock::now());
+    AppendLinkSummaryJson(out, activeRanks, summary.connectedLinks, summary.abnormalLinks);
+    AppendUnstableLinksJson(out, summary.unstableLinks);
+    out.append("}}");
+}
+
 } // namespace smem
 } // namespace ock
