@@ -138,9 +138,14 @@ private:
     int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
     int ImportPeerSlicesToMap(const RankFullInfo &other, std::vector<void *> &global,
                               std::vector<SmemTransExchangeInfo> &slices) noexcept;
+    int ImportPeerEntities(const std::vector<RankFullInfo> &others,
+                           const std::vector<SmemTransExchangeInfo> &entities) noexcept;
+    // These helpers require remoteSliceRwMutex_ to be held for writing.
+    int RemovePeerImported(uint32_t groupRank) noexcept;
+    int PreparePeerReplacement(uint32_t groupRank, uint32_t newHybmRank, const Bytes &baseInfo) noexcept;
 
     // Invoke the peer-down callback for a rank that left the group (worker notification)
-    void NotifyPeerDown(uint32_t leavingRankId) noexcept;
+    void NotifyPeerDown(uint32_t leavingRankId, const WorkerId &workerId) noexcept;
 
     // Group-manager callback plumbing (extracted to keep SetupGroupManagerCallbacks small)
     int RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept;
@@ -190,6 +195,8 @@ private:
     ock::mf::ReadWriteLock remoteSliceRwMutex_;
     std::unordered_map<WorkerId, Local2GlobalMap, WorkerIdHash> remoteSlices_;
     std::unordered_map<uint32_t, WorkerId> rankToWorkerId_;
+    std::unordered_map<uint32_t, uint32_t> rankToHybmRank_;
+    std::unordered_map<uint32_t, Bytes> rankToPeerBase_;
     std::map<std::string, WorkerId> nameToWorkerId_; /* To accelerate name parsed */
     std::unordered_map<uint32_t, smem_trans_role_t> ranksRole_;
 

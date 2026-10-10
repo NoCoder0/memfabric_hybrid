@@ -14,7 +14,9 @@
 #include <unistd.h>
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
+#include <algorithm>
 #include <array>
+#include <cstring>
 #include <thread>
 #include <chrono>
 #include "smem_types.h"
@@ -23,12 +25,105 @@
 #include "dl_acl_api.h"
 #include "dl_api.h"
 #include "hybm_big_mem.h"
+#include "hybm_entity_default.h"
+#include "hybm_asymmetric_mem_segment.h"
 #include "hybm_mem_segment.h"
 #define private public // NOLINT(google-runtime-int) test hack: expose private members
 #include "smem_trans/smem_trans_entry.h"
 #include "smem_trans/smem_trans_entry_manager.h"
 #undef private
 #include "hybm_va_manager.h"
+
+namespace {
+struct TransRankOperation {
+    std::string operation;
+    uint32_t rank;
+};
+
+std::vector<TransRankOperation> g_transRankOperations;
+int32_t g_transRemoveResult = SMEM_OK;
+int32_t g_transImportResult = SMEM_OK;
+
+template<typename T>
+static void AppendTransBytes(std::vector<uint8_t> &output, const T &value)
+{
+    const auto *bytes = reinterpret_cast<const uint8_t *>(&value);
+    output.insert(output.end(), bytes, bytes + sizeof(value));
+}
+
+static void AppendTransRaw(std::vector<uint8_t> &output, const void *value, size_t size)
+{
+    if (size == 0U) {
+        return;
+    }
+    const auto *bytes = reinterpret_cast<const uint8_t *>(value);
+    output.insert(output.end(), bytes, bytes + size);
+}
+
+static std::vector<uint8_t> MakeTransEntityBaseInfo(uint32_t hybmRank, smem_trans_role_t role, uint32_t pid = 0)
+{
+    ock::mf::EntityExportInfo exported{};
+    exported.rankId = hybmRank;
+    exported.role = static_cast<uint16_t>(role == SMEM_TRANS_SENDER ? HYBM_ROLE_SENDER : HYBM_ROLE_RECEIVER);
+
+    std::vector<uint8_t> desc;
+    AppendTransBytes(desc, exported.magic);
+    AppendTransBytes(desc, exported.version);
+    AppendTransBytes(desc, exported.rankId);
+    AppendTransBytes(desc, exported.role);
+    AppendTransBytes(desc, exported.reserved);
+    AppendTransRaw(desc, exported.nic, sizeof(exported.nic));
+    AppendTransRaw(desc, exported.tag, sizeof(exported.tag));
+    AppendTransRaw(desc, exported.transportPrivateData.ip, sizeof(exported.transportPrivateData.ip));
+    const uint32_t keyWordCount = static_cast<uint32_t>(exported.transportPrivateData.key.WordCount());
+    AppendTransBytes(desc, keyWordCount);
+    AppendTransRaw(desc, exported.transportPrivateData.key.ByteData(), exported.transportPrivateData.key.ByteSize());
+    ock::mf::HbmExportDeviceInfo segment{};
+    segment.rankId = hybmRank;
+    segment.pid = pid;
+    AppendTransRaw(desc, &segment, sizeof(segment));
+
+    ock::smem::SmemTransExchangeInfo exchange{};
+    exchange.u.session.address.type = ock::mf::IpV4;
+    exchange.u.session.address.ip.ipv4.s_addr = htonl(0x7f000001U);
+    exchange.u.session.port = 5321;
+    exchange.u.session.reserved = static_cast<uint16_t>(role);
+    exchange.hybmInfo.descLen = static_cast<uint32_t>(desc.size());
+
+    std::vector<uint8_t> output;
+    AppendTransRaw(output, &exchange.u, sizeof(exchange.u));
+    AppendTransBytes(output, exchange.hybmInfo.descLen);
+    output.insert(output.end(), desc.begin(), desc.end());
+    return output;
+}
+
+static int32_t CaptureTransImport(hybm_entity_t, const hybm_exchange_info infos[], uint32_t count, void *[], uint32_t)
+{
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t rank = 0;
+        if (infos[i].descLen >= sizeof(uint64_t) * 2 + sizeof(rank)) {
+            std::memcpy(&rank, infos[i].desc + sizeof(uint64_t) * 2, sizeof(rank));
+        }
+        g_transRankOperations.push_back({"import", rank});
+    }
+    return g_transImportResult;
+}
+
+static int32_t CaptureTransRemove(hybm_entity_t, uint32_t rank, uint32_t)
+{
+    g_transRankOperations.push_back({"remove", rank});
+    return g_transRemoveResult;
+}
+
+struct TransFakeEntityGuard {
+    explicit TransFakeEntityGuard(ock::smem::SmemTransEntry &entry) : entry_(entry) {}
+    ~TransFakeEntityGuard()
+    {
+        entry_.entity_ = nullptr;
+    }
+    ock::smem::SmemTransEntry &entry_;
+};
+} // namespace
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
@@ -71,7 +166,10 @@ void SmemTransTest::SetUpTestCase() {}
 
 void SmemTransTest::TearDownTestCase() {}
 
-void SmemTransTest::SetUp() {}
+void SmemTransTest::SetUp()
+{
+    g_transImportResult = SMEM_OK;
+}
 
 void SmemTransTest::TearDown()
 {
@@ -2063,4 +2161,272 @@ TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
     RankFullInfo badPeer = peer;
     badPeer.baseInfo.assign(K_SLICE2_SIZE / K_HALF_DIVISOR, 0);
     EXPECT_EQ(entry.OnEstablishConnection(K_PEER_RANK_TWO, {badPeer}, 0), SMEM_OK);
+}
+
+TEST_F(SmemTransTest, Rejoin_RemovesOldHybmRankBeforeImport)
+{
+    g_transRankOperations.clear();
+    g_transRemoveResult = SMEM_OK;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+
+    RankFullInfo oldPeer;
+    oldPeer.rankId = 1;
+    oldPeer.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {oldPeer}, 0), SMEM_OK);
+    ASSERT_EQ(entry.rankToHybmRank_.at(1), 64U);
+
+    RankFullInfo replacement = oldPeer;
+    replacement.baseInfo = MakeTransEntityBaseInfo(65, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {replacement}, 0), SMEM_OK);
+    ASSERT_EQ(entry.rankToHybmRank_.at(1), 65U);
+    RankFullInfo leaving;
+    leaving.rankId = 1; // Legacy rank-only REMOVE must also use the imported HYBM rank.
+    EXPECT_EQ(entry.OnRemoveFromWhitelist(0, {leaving}, 0), SMEM_OK);
+    EXPECT_TRUE(entry.rankToHybmRank_.empty());
+    EXPECT_TRUE(entry.rankToPeerBase_.empty());
+
+    ASSERT_EQ(g_transRankOperations.size(), 4U);
+    EXPECT_EQ(g_transRankOperations[0].operation, "import");
+    EXPECT_EQ(g_transRankOperations[0].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[1].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[1].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[2].operation, "import");
+    EXPECT_EQ(g_transRankOperations[2].rank, 65U);
+    EXPECT_EQ(g_transRankOperations[3].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[3].rank, 65U);
+    EXPECT_EQ(
+        std::find_if(g_transRankOperations.begin(), g_transRankOperations.end(),
+                     [](const auto &operation) { return operation.operation == "remove" && operation.rank == 1U; }),
+        g_transRankOperations.end());
+}
+
+TEST_F(SmemTransTest, Rejoin_SameIdentityIsIdempotent)
+{
+    g_transRankOperations.clear();
+    g_transRemoveResult = SMEM_OK;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+
+    RankFullInfo peer;
+    peer.rankId = 1;
+    peer.baseInfo = MakeTransEntityBaseInfo(65, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {peer}, 0), SMEM_OK);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {peer}, 0), SMEM_OK);
+
+    ASSERT_EQ(g_transRankOperations.size(), 2U);
+    EXPECT_EQ(g_transRankOperations[0].operation, "import");
+    EXPECT_EQ(g_transRankOperations[1].operation, "import");
+    EXPECT_EQ(entry.rankToHybmRank_.at(1), 65U);
+}
+
+TEST_F(SmemTransTest, RemoveWhitelist_IgnoresDelayedOldIdentity)
+{
+    g_transRankOperations.clear();
+    g_transRemoveResult = SMEM_OK;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+
+    RankFullInfo oldPeer;
+    oldPeer.rankId = 1;
+    oldPeer.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {oldPeer}, 0), SMEM_OK);
+
+    RankFullInfo replacement = oldPeer;
+    replacement.baseInfo = MakeTransEntityBaseInfo(65, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {replacement}, 0), SMEM_OK);
+    ASSERT_EQ(entry.OnRemoveFromWhitelist(0, {oldPeer}, 0), SMEM_OK);
+
+    ASSERT_EQ(g_transRankOperations.size(), 3U);
+    EXPECT_EQ(g_transRankOperations[0].operation, "import");
+    EXPECT_EQ(g_transRankOperations[1].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[1].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[2].operation, "import");
+    EXPECT_EQ(entry.rankToHybmRank_.at(1), 65U);
+}
+
+TEST_F(SmemTransTest, Rejoin_SameRankNewProcessReplacesOldIdentity)
+{
+    g_transRankOperations.clear();
+    g_transRemoveResult = SMEM_OK;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+    RankFullInfo oldPeer;
+    oldPeer.rankId = 1;
+    oldPeer.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER, 100);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {oldPeer}, 0), SMEM_OK);
+    RankFullInfo replacement = oldPeer;
+    replacement.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER, 200);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {replacement}, 0), SMEM_OK);
+    EXPECT_EQ(entry.OnRemoveFromWhitelist(0, {oldPeer}, 0), SMEM_OK);
+    ASSERT_EQ(g_transRankOperations.size(), 3U);
+    EXPECT_EQ(g_transRankOperations[1].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[1].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[2].operation, "import");
+    EXPECT_EQ(entry.rankToHybmRank_.at(1), 64U);
+    EXPECT_EQ(entry.rankToPeerBase_.at(1), replacement.baseInfo);
+    EXPECT_EQ(entry.OnRemoveFromWhitelist(0, {replacement}, 0), SMEM_OK);
+    EXPECT_TRUE(entry.rankToHybmRank_.empty());
+}
+
+TEST_F(SmemTransTest, Rejoin_CleanupFailureDoesNotImportReplacement)
+{
+    g_transRankOperations.clear();
+    g_transRemoveResult = SM_ERROR;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+
+    RankFullInfo oldPeer;
+    oldPeer.rankId = 1;
+    oldPeer.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {oldPeer}, 0), SMEM_OK);
+
+    RankFullInfo replacement = oldPeer;
+    replacement.baseInfo = MakeTransEntityBaseInfo(65, SMEM_TRANS_RECEIVER);
+    EXPECT_EQ(entry.OnAddToWhitelist(0, {replacement}, 0), SM_ERROR);
+    ASSERT_EQ(g_transRankOperations.size(), 2U);
+    EXPECT_EQ(g_transRankOperations[0].operation, "import");
+    EXPECT_EQ(g_transRankOperations[0].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[1].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[1].rank, 64U);
+    EXPECT_EQ(entry.rankToHybmRank_.at(1), 64U);
+}
+
+TEST_F(SmemTransTest, Rejoin_ImportFailureRollsBackOnlyReplacement)
+{
+    g_transRankOperations.clear();
+    g_transRemoveResult = SMEM_OK;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+    RankFullInfo peer;
+    peer.rankId = 1;
+    peer.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER);
+    RankFullInfo unchanged;
+    unchanged.rankId = 2;
+    unchanged.baseInfo = MakeTransEntityBaseInfo(128, SMEM_TRANS_RECEIVER);
+    ASSERT_EQ(entry.OnAddToWhitelist(0, {peer, unchanged}, 0), SMEM_OK);
+    const auto unchangedWorker = entry.rankToWorkerId_.at(2);
+    peer.baseInfo = MakeTransEntityBaseInfo(65, SMEM_TRANS_RECEIVER);
+    g_transImportResult = SMEM_ERROR;
+    EXPECT_EQ(entry.OnAddToWhitelist(0, {peer, unchanged}, 0), SMEM_ERROR);
+    EXPECT_EQ(entry.rankToHybmRank_.count(1), 0U);
+    EXPECT_EQ(entry.rankToPeerBase_.count(1), 0U);
+    EXPECT_EQ(entry.rankToHybmRank_.at(2), 128U);
+    EXPECT_EQ(entry.rankToPeerBase_.at(2), unchanged.baseInfo);
+    EXPECT_EQ(entry.rankToWorkerId_.at(2), unchangedWorker);
+    ASSERT_EQ(g_transRankOperations.size(), 6U);
+    EXPECT_EQ(g_transRankOperations[2].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[2].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[5].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[5].rank, 65U);
+    g_transImportResult = SMEM_OK;
+    EXPECT_EQ(entry.OnAddToWhitelist(0, {peer, unchanged}, 0), SMEM_OK);
+    EXPECT_EQ(entry.rankToHybmRank_.at(1), 65U);
+    EXPECT_EQ(entry.rankToHybmRank_.at(2), 128U);
+}
+
+TEST_F(SmemTransTest, Rejoin_FailedRollbackRetriesCleanupBeforeSameIdentityImport)
+{
+    g_transRankOperations.clear();
+    g_transImportResult = SMEM_ERROR;
+    g_transRemoveResult = SMEM_ERROR;
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransImport));
+    MOCKER_CPP(&hybm_remove_imported, int32_t(*)(hybm_entity_t, uint32_t, uint32_t))
+        .stubs()
+        .will(invoke(CaptureTransRemove));
+    auto config = g_trans_options;
+    std::string name = "127.0.0.1:5321";
+    StorePtr store;
+    SmemTransEntry entry(config, name, 0, 0, store);
+    entry.entity_ = reinterpret_cast<hybm_entity_t>(0x1);
+    TransFakeEntityGuard entityGuard(entry);
+    RankFullInfo peer;
+    peer.rankId = 1;
+    peer.baseInfo = MakeTransEntityBaseInfo(64, SMEM_TRANS_RECEIVER);
+    EXPECT_EQ(entry.OnAddToWhitelist(0, {peer}, 0), SMEM_ERROR);
+    ASSERT_EQ(entry.rankToHybmRank_.at(1), 64U);
+    EXPECT_EQ(entry.rankToPeerBase_.count(1), 0U);
+    ASSERT_EQ(g_transRankOperations.size(), 2U);
+    EXPECT_EQ(g_transRankOperations[1].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[1].rank, 64U);
+    g_transImportResult = SMEM_OK;
+    EXPECT_EQ(entry.OnAddToWhitelist(0, {peer}, 0), SMEM_ERROR);
+    ASSERT_EQ(g_transRankOperations.size(), 3U);
+    EXPECT_EQ(g_transRankOperations[2].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[2].rank, 64U);
+    g_transRemoveResult = SMEM_OK;
+    EXPECT_EQ(entry.OnAddToWhitelist(0, {peer}, 0), SMEM_OK);
+    ASSERT_EQ(g_transRankOperations.size(), 5U);
+    EXPECT_EQ(g_transRankOperations[3].operation, "remove");
+    EXPECT_EQ(g_transRankOperations[3].rank, 64U);
+    EXPECT_EQ(g_transRankOperations[4].operation, "import");
+    EXPECT_EQ(g_transRankOperations[4].rank, 64U);
+    EXPECT_EQ(entry.rankToPeerBase_.at(1), peer.baseInfo);
 }

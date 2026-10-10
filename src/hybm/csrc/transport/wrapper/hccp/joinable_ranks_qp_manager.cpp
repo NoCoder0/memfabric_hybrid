@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 #include <chrono>
+#include <cstdio>
 #include <sstream>
 #include "hybm_logger.h"
 #include "hybm_ptracer.h"
@@ -115,7 +116,11 @@ int JoinableRanksQpManager::SetRemoteRankInfo(const std::unordered_map<uint32_t,
         if (it->first >= rankCount_) {
             continue;
         }
-        connections_[it->first].remoteNet = it->second.network;
+        if (removedServerRanks_.count(it->first) != 0U || removedClientRanks_.count(it->first) != 0U) {
+            replacementNetworks_[it->first] = it->second.network;
+        } else {
+            connections_[it->first].remoteNet = it->second.network;
+        }
         if (it->first < rankId_) {
             newServers_.emplace(it->first);
         }
@@ -137,6 +142,7 @@ int JoinableRanksQpManager::RemoveRanks(const std::unordered_set<uint32_t> &rank
 {
     std::unique_lock<std::mutex> uniqueLock{mutex_};
     for (auto rank : ranks) {
+        replacementNetworks_.erase(rank);
         if (rank < rankId_) {
             removedServerRanks_.emplace(rank);
             newServers_.erase(rank);
@@ -186,12 +192,14 @@ int JoinableRanksQpManager::Startup(void *rdma) noexcept
 
 void JoinableRanksQpManager::Shutdown() noexcept
 {
-    std::unique_lock<std::mutex> unique_lock(mutex_);
+    // Join workers before detaching resources; their cancellation checks also acquire mutex_.
+    CloseServices();
     std::set<uint32_t> list;
     for (uint32_t i = 0; i < connections_.size(); ++i) {
         list.insert(i);
     }
     RemoveRanksProcess(list);
+    std::unique_lock<std::mutex> unique_lock(mutex_);
     started_.store(false);
     running_.store(false);
     rdmaHandle_ = nullptr;
@@ -201,14 +209,18 @@ void JoinableRanksQpManager::Shutdown() noexcept
     newServers_.clear();
     removedClientRanks_.clear();
     removedServerRanks_.clear();
+    replacementNetworks_.clear();
     unique_lock.unlock();
-    CloseServices();
 }
 
 UserQpInfo *JoinableRanksQpManager::GetQpHandleWithRankId(uint32_t rankId) noexcept
 {
     if (rankId >= rankCount_) {
         BM_LOG_ERROR("invalid rank id: " << rankId << ", rank count: " << rankCount_);
+        return nullptr;
+    }
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!running_.load() || removedServerRanks_.count(rankId) != 0U || removedClientRanks_.count(rankId) != 0U) {
         return nullptr;
     }
     ReadGuard lockGuard(qpLock_);
@@ -236,6 +248,10 @@ void JoinableRanksQpManager::PutQpHandle(UserQpInfo *qp) const noexcept
 
 bool JoinableRanksQpManager::CheckQpReady(const std::vector<uint32_t> &rankIds) const noexcept
 {
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!running_.load()) {
+        return false;
+    }
     for (auto rankId : rankIds) {
         if (rankId == rankId_) {
             continue;
@@ -244,7 +260,8 @@ bool JoinableRanksQpManager::CheckQpReady(const std::vector<uint32_t> &rankIds) 
             BM_LOG_ERROR("invalid rank id: " << rankId << ", rank count: " << rankCount_);
             return false;
         }
-        if (connections_[rankId].qpStatus != 1) {
+        if (removedServerRanks_.count(rankId) != 0U || removedClientRanks_.count(rankId) != 0U ||
+            connections_[rankId].qpStatus != 1) {
             return false;
         }
     }
@@ -347,15 +364,14 @@ void JoinableRanksQpManager::ServerSideRunLoop() noexcept
             break;
         }
         auto newClients = newClients_;
-        auto removedRanks = std::move(removedClientRanks_);
+        auto removedRanks = removedClientRanks_;
         uniqueLock.unlock();
-
-        if (!newClients.empty()) {
-            ServerSideHandleNewClients(newClients);
-        }
 
         if (!removedRanks.empty()) {
             RemoveRanksProcess(removedRanks);
+        }
+        if (!newClients.empty() && IsConnectBatchCurrent(newClients)) {
+            ServerSideHandleNewClients(newClients);
         }
     }
 }
@@ -373,22 +389,26 @@ void JoinableRanksQpManager::ClientSideRunLoop() noexcept
             break;
         }
         auto newServers = newServers_;
-        auto removedRanks = std::move(removedServerRanks_);
+        auto removedRanks = removedServerRanks_;
         uniqueLock.unlock();
-
-        if (!newServers.empty()) {
-            auto ret = CreateConnectionToServers(newServers);
-            if (ret != 0) {
-                BM_LOG_ERROR("create connection to server failed: " << ret);
-            }
-
-            WaitSocketConnections(newServers);
-            MakeQpConnections(newServers);
-            WaitQpConnections(newServers);
-        }
 
         if (!removedRanks.empty()) {
             RemoveRanksProcess(removedRanks);
+        }
+
+        if (!newServers.empty() && IsConnectBatchCurrent(newServers)) {
+            auto ret = CreateConnectionToServers(newServers);
+            if (ret != 0) {
+                BM_LOG_ERROR("create connection to server failed: " << ret);
+                continue;
+            }
+            ret = WaitSocketConnections(newServers);
+            if (ret != 0) {
+                BM_LOG_ERROR("make socket connections for client side failed: " << ret);
+                continue;
+            }
+            MakeQpConnections(newServers);
+            WaitQpConnections(newServers);
         }
     }
 }
@@ -398,12 +418,10 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
     if (newRanks.empty()) {
         return BM_OK;
     }
-
     bool socketRole = *newRanks.begin() < rankId_ ? 1 : 0;
-    uint32_t successCount = 0;
     uint32_t cnt = 0;
     std::vector<HccpSocketInfo> socketInfos;
-    std::unordered_map<in_addr_t, uint32_t> addr2rank;
+    std::map<std::pair<in_addr_t, std::string>, uint32_t> socketKeyToRank;
     for (auto rankId : newRanks) {
         if (connections_[rankId].remoteNet.sin_addr.s_addr == 0) {
             BM_LOG_ERROR("rankId: " << rankId << ", no ip address.");
@@ -420,9 +438,9 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
         info.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         info.status = 0;
         bzero(info.tag, sizeof(info.tag));
-        FillHccpTag(info.tag);
+        FillHccpTag(info.tag, rankId);
         socketInfos.push_back(info);
-        addr2rank.emplace(info.remoteIp.addr.s_addr, rankId);
+        socketKeyToRank.emplace(std::make_pair(info.remoteIp.addr.s_addr, std::string(info.tag)), rankId);
     }
 
     if (socketInfos.empty()) {
@@ -434,6 +452,9 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
     constexpr auto MAX_WAIT_DURATION = std::chrono::hours(2);
     uint32_t batchCnt = 16U;
     do {
+        if (!IsConnectBatchCurrent(newRanks)) {
+            return BM_ERROR;
+        }
         uint32_t getSize = socketInfos.size() < batchCnt ? socketInfos.size() : batchCnt;
         TP_TRACE_BEGIN(TP_HYBM_RA_GET_SOCKETS);
         auto ret = DlHccpApi::RaGetSockets(socketRole, socketInfos.data(), getSize, cnt);
@@ -442,7 +463,13 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
             BM_LOG_ERROR("socketRole(" << socketRole << ") side get sockets failed: " << ret);
             return 1;
         }
+        if (!IsConnectBatchCurrent(newRanks)) {
+            return BM_ERROR;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(100L));
+        if (!IsConnectBatchCurrent(newRanks)) {
+            return BM_ERROR;
+        }
         if (std::chrono::steady_clock::now() - startTime > MAX_WAIT_DURATION) {
             BM_LOG_ERROR("GetSocketFdByAddrs timeout after 2 hours, remaining sockets: " << socketInfos.size());
             return 1;
@@ -454,10 +481,12 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
             if (socketInfos[i].status != 1) {
                 continue;
             }
-            auto socketInfoPos = addr2rank.find(socketInfos[i].remoteIp.addr.s_addr);
-            if (socketInfoPos == addr2rank.end()) {
-                BM_LOG_ERROR("socket ip(" << DescribeIPv4(socketInfos[i].remoteIp.addr) << ") should not exist.");
-                continue;
+            auto socketInfoPos = socketKeyToRank.find(
+                std::make_pair(socketInfos[i].remoteIp.addr.s_addr, std::string(socketInfos[i].tag)));
+            if (socketInfoPos == socketKeyToRank.end()) {
+                BM_LOG_ERROR("socket ip/tag (" << DescribeIPv4(socketInfos[i].remoteIp.addr) << "/"
+                                               << socketInfos[i].tag << ") should not exist.");
+                return BM_ERROR;
             }
             auto rankId = socketInfoPos->second;
             if (rankId >= rankCount_) {
@@ -469,7 +498,6 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
                 continue;
             }
             connections_[rankId].socketFd = socketInfos[i].fd;
-            successCount++;
         }
         std::vector<HccpSocketInfo>::iterator it = socketInfos.begin();
         for (; it != socketInfos.end();) {
@@ -481,6 +509,39 @@ int JoinableRanksQpManager::WaitSocketConnections(const std::set<uint32_t> &newR
         }
     } while (socketInfos.size() > 0);
     return BM_OK;
+}
+
+bool JoinableRanksQpManager::IsConnectBatchCurrent(const std::set<uint32_t> &ranks) noexcept
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    if (!running_.load()) {
+        return false;
+    }
+    for (auto rank : ranks) {
+        if (rank == rankId_) {
+            continue;
+        }
+        if (rank >= rankCount_) {
+            return false;
+        }
+        if (!IsRankPending(rank)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool JoinableRanksQpManager::IsRankPending(uint32_t rank) const noexcept
+{
+    const auto &pending = rank < rankId_ ? newServers_ : newClients_;
+    const auto &removed = rank < rankId_ ? removedServerRanks_ : removedClientRanks_;
+    return pending.count(rank) != 0U && removed.count(rank) == 0U;
+}
+
+bool JoinableRanksQpManager::IsConnectRankCurrent(uint32_t rank) noexcept
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    return running_.load() && rank < rankCount_ && (rank == rankId_ || IsRankPending(rank));
 }
 
 void JoinableRanksQpManager::TrySetQos()
@@ -507,6 +568,9 @@ void JoinableRanksQpManager::MakeQpConnections(const std::set<uint32_t> &newRank
     }
 
     for (auto rankId : newRanks) {
+        if (!IsConnectRankCurrent(rankId)) {
+            return;
+        }
         if (connections_[rankId].socketFd == nullptr) {
             continue;
         }
@@ -540,6 +604,9 @@ void JoinableRanksQpManager::MakeQpConnections(const std::set<uint32_t> &newRank
         }
 
         if (!connections_[rankId].qpConnectCalled) {
+            if (!IsConnectRankCurrent(rankId)) {
+                return;
+            }
             TP_TRACE_BEGIN(TP_HYBM_RA_QP_CONNECT_ASYNC);
             auto ret = DlHccpApi::RaQpConnectAsync(connections_[rankId].qpHandle, connections_[rankId].socketFd);
             TP_TRACE_END(TP_HYBM_RA_QP_CONNECT_ASYNC, ret);
@@ -555,7 +622,7 @@ void JoinableRanksQpManager::MakeQpConnections(const std::set<uint32_t> &newRank
 
 void JoinableRanksQpManager::WaitQpConnections(const std::set<uint32_t> &newRanks) noexcept
 {
-    if (newRanks.empty()) {
+    if (newRanks.empty() || !IsConnectBatchCurrent(newRanks)) {
         return;
     }
 
@@ -571,14 +638,20 @@ void JoinableRanksQpManager::WaitQpConnections(const std::set<uint32_t> &newRank
         }
 
         TP_TRACE_BEGIN(TP_HYBM_RA_GET_QP_STATUS);
-        auto ret = DlHccpApi::RaGetQpStatus(connections_[rankId].qpHandle, connections_[rankId].qpStatus);
+        int qpStatus = -1;
+        auto ret = DlHccpApi::RaGetQpStatus(connections_[rankId].qpHandle, qpStatus);
         TP_TRACE_END(TP_HYBM_RA_GET_QP_STATUS, ret);
         if (ret != 0) {
             BM_LOG_ERROR("get QP status to " << rankId << " failed: " << ret);
             continue;
         }
 
-        if (connections_[rankId].qpStatus == 1) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!IsRankPending(rankId)) {
+            continue;
+        }
+        connections_[rankId].qpStatus = qpStatus;
+        if (qpStatus == 1) {
             BM_LOG_DEBUG("from " << rankId_ << " to " << rankId << " query qp ready.");
             finishedRanks.emplace(rankId);
         }
@@ -586,6 +659,9 @@ void JoinableRanksQpManager::WaitQpConnections(const std::set<uint32_t> &newRank
 
     std::unique_lock<std::mutex> uniqueLock{mutex_};
     for (auto rankId : finishedRanks) {
+        if (!IsRankPending(rankId)) {
+            continue;
+        }
         if (rankId < rankId_) {
             newServers_.erase(rankId);
         } else {
@@ -597,7 +673,11 @@ void JoinableRanksQpManager::WaitQpConnections(const std::set<uint32_t> &newRank
 int JoinableRanksQpManager::GenerateWhiteList(const std::set<uint32_t> &newClients) noexcept
 {
     std::vector<HccpSocketWhiteListInfo> whitelist;
+    std::vector<uint32_t> whitelistRanks;
     for (auto rankId : newClients) {
+        if (!IsConnectRankCurrent(rankId)) {
+            return BM_ERROR;
+        }
         if (rankId <= rankId_ || rankId >= rankCount_) {
             BM_LOG_ERROR("new client rankId: " << rankId << "invalid. self: " << rankId_ << ", total: " << rankCount_);
             return BM_ERROR;
@@ -616,9 +696,9 @@ int JoinableRanksQpManager::GenerateWhiteList(const std::set<uint32_t> &newClien
         info.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         info.connLimit = rankCount_;
         bzero(info.tag, sizeof(info.tag));
-        FillHccpTag(info.tag);
+        FillHccpTag(info.tag, rankId);
         whitelist.emplace_back(info);
-        connections_[rankId].socketHandle = serverSocketHandle_;
+        whitelistRanks.emplace_back(rankId);
     }
 
     if (whitelist.empty()) {
@@ -628,6 +708,10 @@ int JoinableRanksQpManager::GenerateWhiteList(const std::set<uint32_t> &newClien
     uint32_t batchSize = 16;
     for (size_t i = 0; i < whitelist.size(); i += batchSize) {
         size_t currentBatchSize = (whitelist.size() - i) >= batchSize ? batchSize : (whitelist.size() - i);
+        std::set<uint32_t> batchRanks(whitelistRanks.begin() + i, whitelistRanks.begin() + i + currentBatchSize);
+        if (!IsConnectBatchCurrent(batchRanks)) {
+            return BM_ERROR;
+        }
         auto batchStart = whitelist.begin() + i;
         auto batchEnd = batchStart + currentBatchSize;
         std::vector<HccpSocketWhiteListInfo> currentBatch(batchStart, batchEnd);
@@ -638,6 +722,9 @@ int JoinableRanksQpManager::GenerateWhiteList(const std::set<uint32_t> &newClien
             BM_LOG_ERROR("RaSocketWhiteListAdd() with size=" << currentBatch.size() << " failed: " << ret);
             return BM_ERROR;
         }
+        for (size_t j = 0; j < currentBatchSize; ++j) {
+            connections_[whitelistRanks[i + j]].socketHandle = serverSocketHandle_;
+        }
     }
 
     return BM_OK;
@@ -646,6 +733,7 @@ int JoinableRanksQpManager::GenerateWhiteList(const std::set<uint32_t> &newClien
 int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &newServers) noexcept
 {
     std::vector<HccpSocketConnectInfo> connectInfos;
+    std::vector<uint32_t> connectRanks;
     std::set<uint32_t> rollbacks;
     auto rollback = [&]() {
         for (auto rank : rollbacks) {
@@ -657,6 +745,10 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         rollbacks.clear();
     };
     for (auto rankId : newServers) {
+        if (!IsConnectRankCurrent(rankId)) {
+            rollback();
+            return BM_ERROR;
+        }
         if (rankId >= rankId_) {
             BM_LOG_ERROR("new server rankId: " << rankId << "invalid. self: " << rankId_);
             rollback();
@@ -687,9 +779,10 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         connectInfo.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         connectInfo.port = connections_[rankId].remoteNet.sin_port;
         bzero(connectInfo.tag, sizeof(connectInfo.tag));
-        FillHccpTag(connectInfo.tag);
+        FillHccpTag(connectInfo.tag, rankId);
         BM_LOG_DEBUG("add connecting server " << connectInfo);
         connectInfos.emplace_back(connectInfo);
+        connectRanks.emplace_back(rankId);
     }
 
     if (connectInfos.empty()) {
@@ -698,6 +791,11 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
     uint32_t batchSize = 16;
     for (size_t i = 0; i < connectInfos.size(); i += batchSize) {
         size_t currentBatchSize = (connectInfos.size() - i) >= batchSize ? batchSize : (connectInfos.size() - i);
+        std::set<uint32_t> batchRanks(connectRanks.begin() + i, connectRanks.begin() + i + currentBatchSize);
+        if (!IsConnectBatchCurrent(batchRanks)) {
+            rollback();
+            return BM_ERROR;
+        }
         auto batchStart = connectInfos.begin() + i;
         auto batchEnd = batchStart + currentBatchSize;
         std::vector<HccpSocketConnectInfo> currentBatch(batchStart, batchEnd);
@@ -714,17 +812,38 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
     return BM_OK;
 }
 
-void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks) noexcept
+std::map<uint32_t, ConnectionChannel>
+JoinableRanksQpManager::DetachConnections(const std::set<uint32_t> &ranks) noexcept
 {
     std::map<uint32_t, ConnectionChannel> removedConnections;
+    std::unique_lock<std::mutex> lock(mutex_);
     for (auto rank : ranks) {
         if (rank >= connections_.size() || rank == rankId_) {
             continue;
         }
         removedConnections.emplace(rank, connections_[rank]);
-        bzero(&connections_[rank], sizeof(ConnectionChannel));
+        connections_[rank] = ConnectionChannel{};
     }
+    return removedConnections;
+}
 
+void JoinableRanksQpManager::FinishRemovingRanks(const std::set<uint32_t> &ranks) noexcept
+{
+    std::unique_lock<std::mutex> lock(mutex_);
+    for (auto rank : ranks) {
+        auto replacement = replacementNetworks_.find(rank);
+        if (rank < connections_.size() && replacement != replacementNetworks_.end()) {
+            connections_[rank].remoteNet = replacement->second;
+            replacementNetworks_.erase(replacement);
+        }
+        removedServerRanks_.erase(rank);
+        removedClientRanks_.erase(rank);
+    }
+}
+
+void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks) noexcept
+{
+    auto removedConnections = DetachConnections(ranks);
     for (auto it = removedConnections.begin(); it != removedConnections.end(); ++it) {
         BM_LOG_DEBUG("close connection from " << rankId_ << " to " << it->first);
         if (it->second.qpHandle != nullptr) {
@@ -752,6 +871,7 @@ void JoinableRanksQpManager::RemoveRanksProcess(const std::set<uint32_t> &ranks)
     }
 
     DeleteWhiteList(removedConnections);
+    FinishRemovingRanks(ranks);
 }
 
 void JoinableRanksQpManager::DeleteWhiteList(const std::map<uint32_t, ConnectionChannel> &removedConnections) noexcept
@@ -770,7 +890,7 @@ void JoinableRanksQpManager::DeleteWhiteList(const std::map<uint32_t, Connection
         info.remoteIp.addr = it->second.remoteNet.sin_addr;
         info.connLimit = 0;
         bzero(info.tag, sizeof(info.tag));
-        FillHccpTag(info.tag);
+        FillHccpTag(info.tag, it->first);
         whitelist.emplace_back(info);
     }
 
@@ -792,26 +912,20 @@ void JoinableRanksQpManager::DeleteWhiteList(const std::map<uint32_t, Connection
     }
 }
 
-void JoinableRanksQpManager::FillHccpTag(char *output)
+void JoinableRanksQpManager::FillHccpTag(char *output, uint32_t peerRank)
 {
     static constexpr const char *bmTag = "BM_TAG";
-    static constexpr const char *transTag = "TRANS_TAG";
     static constexpr const char *undefineTag = "UNDEFINE_TAG";
 
-    const char *tag = nullptr;
-    size_t len = 0;
-
     if (rankRole_ == HYBM_ROLE_PEER) {
-        tag = bmTag;
-        len = std::strlen(bmTag);
+        std::snprintf(output, HCCP_SOCK_CONN_TAG_SIZE, "%s", bmTag);
     } else if (rankRole_ == HYBM_ROLE_SENDER || rankRole_ == HYBM_ROLE_RECEIVER) {
-        tag = transTag;
-        len = std::strlen(transTag);
+        uint32_t firstRank = std::min(rankId_, peerRank);
+        uint32_t secondRank = std::max(rankId_, peerRank);
+        std::snprintf(output, HCCP_SOCK_CONN_TAG_SIZE, "TRANS_TAG_%u_%u", firstRank, secondRank);
     } else {
-        tag = undefineTag;
-        len = std::strlen(undefineTag);
+        std::snprintf(output, HCCP_SOCK_CONN_TAG_SIZE, "%s", undefineTag);
     }
-    std::copy_n(tag, len, output);
 }
 
 } // namespace device

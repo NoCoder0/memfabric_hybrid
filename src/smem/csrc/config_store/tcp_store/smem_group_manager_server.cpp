@@ -272,12 +272,13 @@ int SmemGroupManagerServer::Checkout(uint32_t rankId, uint64_t reqId, const std:
         if (states_[rankId] != RANK_CHECKED_IN && states_[rankId] != RANK_ACTIVE) {
             return -1;
         }
+        const Bytes removedBaseInfo = rankBase_[rankId];
         ResetRankState(rankId, connectedPeers);
         aliveRanks_.erase(rankId);
 
         if (sender_ && !connectedPeers.empty()) {
             for (uint32_t peerId : connectedPeers) {
-                EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId)});
+                EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId), 0, 0, removedBaseInfo});
             }
         }
     }
@@ -720,11 +721,13 @@ void SmemGroupManagerServer::OnLinkBroken(uint32_t rankId) noexcept
 
     std::vector<uint32_t> connectedPeers;
 
+    Bytes removedBaseInfo;
     {
         std::unique_lock<std::mutex> lock(mutex_);
         if (states_[rankId] != RANK_CHECKED_IN && states_[rankId] != RANK_ACTIVE) {
             return;
         }
+        removedBaseInfo = rankBase_[rankId];
         ResetRankState(rankId, connectedPeers);
         aliveRanks_.erase(rankId);
     }
@@ -732,7 +735,7 @@ void SmemGroupManagerServer::OnLinkBroken(uint32_t rankId) noexcept
     STORE_LOG_INFO("rank=" << rankId << " linkBroken connectedPeers=" << connectedPeers.size());
     if (sender_ && !connectedPeers.empty()) {
         for (uint32_t peerId : connectedPeers) {
-            EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId)});
+            EnqueueSend({SendOp::REMOVE, peerId, rankId, LinkIndex(peerId, rankId), 0, 0, removedBaseInfo});
         }
     }
 }
@@ -787,7 +790,7 @@ int SmemGroupManagerServer::SendBatchAddRemove(uint32_t srcRank, SendOp op, cons
             for (auto *t : group) {
                 RankBaseInfo base;
                 base.rankId = t->dstRank;
-                base.baseInfo = rankBase_[t->dstRank];
+                base.baseInfo = t->removedBaseInfo;
                 bases.push_back(base);
             }
         }
@@ -924,7 +927,7 @@ void SmemGroupManagerServer::EnqueueSend(const SendTask &task) noexcept
     t.requestId = (static_cast<uint64_t>(maxRanks_ + 1) << reqIdShift) | g_ctrlReqSeq.fetch_add(1);
     std::lock_guard<std::mutex> lk(sendMutex_);
     uint64_t key = SendTaskKey(t);
-    if (!pendingSendKeys_.insert(key).second) {
+    if (!pendingSendKeys_.insert(key).second && t.op != SendOp::REMOVE) {
         return;
     }
     sendQueue_.push_back(t);
@@ -942,7 +945,7 @@ void SmemGroupManagerServer::EnqueueBatchSend(std::vector<SendTask> &&tasks) noe
     for (auto &t : tasks) {
         t.requestId = base | g_ctrlReqSeq.fetch_add(1);
         uint64_t key = SendTaskKey(t);
-        if (!pendingSendKeys_.insert(key).second) {
+        if (!pendingSendKeys_.insert(key).second && t.op != SendOp::REMOVE) {
             continue;
         }
         sendQueue_.push_back(t);

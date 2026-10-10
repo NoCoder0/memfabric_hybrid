@@ -704,6 +704,42 @@ TEST_F(GroupManagerTest, RestoreState_WithLinksAndAlive)
     EXPECT_EQ(GetLink(0, K_RANK_TWO), LINK_CONNECTED);
 }
 
+TEST_F(GmGroupManagerTest, DelayedRemovesRetainEachDepartedInstanceAcrossRejoin)
+{
+    std::mutex captureMutex;
+    std::condition_variable captureCond;
+    std::vector<RankBaseInfo> removed;
+    auto sender = [&](uint32_t, const Bytes &data) {
+        SmemMessage msg;
+        uint32_t target = 0;
+        std::vector<RankBaseInfo> peers;
+        if (SmemMessagePacker::Unpack(data.data(), data.size(), msg) >= 0 &&
+            SmemMessage::UnpackRemoveFromWhitelist(msg, target, peers) >= 0) {
+            std::lock_guard<std::mutex> lock(captureMutex);
+            removed.insert(removed.end(), peers.begin(), peers.end());
+            captureCond.notify_one();
+        }
+        return 0;
+    };
+    gm_ = SmMakeRef<SmemGroupManagerServer>(sender, K_RANK_COUNT);
+    auto oldPeer = MakeInfo(K_RANK_TWO, SMEM_RANK_PROTOCOL_TRANS);
+    ASSERT_EQ(gm_->CheckIn(MakeInfo(0, SMEM_RANK_PROTOCOL_TRANS)), 0);
+    ASSERT_EQ(gm_->CheckIn(oldPeer), 0);
+    ASSERT_EQ(gm_->Checkout(K_RANK_TWO), 0);
+    auto newPeer = oldPeer;
+    newPeer.baseInfo.push_back(0xFF);
+    ASSERT_EQ(gm_->CheckIn(newPeer), 0);
+    gm_->OnLinkBroken(K_RANK_TWO);
+    gm_->Start();
+    std::unique_lock<std::mutex> lock(captureMutex);
+    bool received = captureCond.wait_for(lock, std::chrono::seconds(2), [&] { return removed.size() == 2U; });
+    lock.unlock();
+    gm_->Stop();
+    ASSERT_TRUE(received);
+    EXPECT_EQ(removed[0].baseInfo, oldPeer.baseInfo);
+    EXPECT_EQ(removed[1].baseInfo, newPeer.baseInfo);
+}
+
 TEST_F(GroupManagerTest, RebuildActiveLinks_NoCrash)
 {
     gm_->RebuildActiveLinks();

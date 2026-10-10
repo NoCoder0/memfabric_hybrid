@@ -254,7 +254,7 @@ public:
     }
     int RemoveRanks(const std::unordered_set<uint32_t> &ranks) noexcept override
     {
-        (void)ranks;
+        removedRanks = ranks;
         removeRanksCalled = true;
         return removeRanksRet;
     }
@@ -286,6 +286,7 @@ public:
     }
 
     bool shutdownCalled{false};
+    std::unordered_set<uint32_t> removedRanks;
     bool removeRanksCalled{false};
     int setRemoteRet{BM_OK};
     int startupRet{BM_OK};
@@ -484,23 +485,29 @@ TEST(RdmaTransportManagerTest, RemoveRanksRequiresQpManager)
     EXPECT_EQ(mgr.RemoveRanks(removed), BM_MALLOC_FAILED);
 }
 
-TEST(RdmaTransportManagerTest, RemoveRanksEmptyOrOutOfRangeIsOkAndCleansNotify)
+TEST(RdmaTransportManagerTest, RemoveRanksWithoutMemoryStillCancelsQpAndCleansNotify)
 {
     RdmaTransportManager mgr;
     auto qp = std::make_shared<FakeQpManager>();
     mgr.qpManager_ = qp;
     mgr.rankCount_ = 2;
+    mgr.qpReadyCache_.reset(new std::atomic<bool>[mgr.rankCount_]());
     mgr.ranksMRs_.resize(2);
     mgr.notifyRemoteInfo_.resize(2);
     mgr.notifyRemoteInfo_[0] = {1, 2};
     mgr.notifyRemoteInfo_[1] = {3, 4};
+    mgr.qpReadyCache_[0].store(true);
+    mgr.qpReadyCache_[1].store(true);
 
     // Valid ranks must remove QPs even when ranksMRs_ is empty; out-of-range ranks are ignored.
     std::vector<uint32_t> removed{9, 0, 1};
     EXPECT_EQ(mgr.RemoveRanks(removed), BM_OK);
     EXPECT_TRUE(qp->removeRanksCalled);
+    EXPECT_EQ(qp->removedRanks, (std::unordered_set<uint32_t>{0, 1}));
     EXPECT_EQ(mgr.notifyRemoteInfo_[0].first, 0U);
     EXPECT_EQ(mgr.notifyRemoteInfo_[1].first, 0U);
+    EXPECT_FALSE(mgr.qpReadyCache_[0].load());
+    EXPECT_FALSE(mgr.qpReadyCache_[1].load());
 }
 
 TEST(RdmaTransportManagerTest, RemoveRanksCallsQpManagerAndPropagatesError)
@@ -509,6 +516,7 @@ TEST(RdmaTransportManagerTest, RemoveRanksCallsQpManagerAndPropagatesError)
     auto qp = std::make_shared<FakeQpManager>();
     mgr.qpManager_ = qp;
     mgr.rankCount_ = 2;
+    mgr.qpReadyCache_.reset(new std::atomic<bool>[mgr.rankCount_]());
     mgr.ranksMRs_.resize(2);
     mgr.notifyRemoteInfo_.resize(2);
 

@@ -161,6 +161,81 @@ TEST_F(JoinableRanksQpManagerTest, RemoveRanksClearsNewClients)
     EXPECT_TRUE(clientManager->newClients_.count(K_RANK_ID_3));
 }
 
+TEST_F(JoinableRanksQpManagerTest, TransTags_DistinguishRanksSharingAnIp)
+{
+    sockaddr_in devNet{};
+    devNet.sin_family = AF_INET;
+    devNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
+    JoinableRanksQpManager sender(0, 0, 0, 66, devNet, HYBM_ROLE_SENDER);
+    JoinableRanksQpManager receiver(0, 0, 65, 66, devNet, HYBM_ROLE_RECEIVER);
+
+    char senderTo64[HCCP_SOCK_CONN_TAG_SIZE]{};
+    char senderTo65[HCCP_SOCK_CONN_TAG_SIZE]{};
+    char receiverTo0[HCCP_SOCK_CONN_TAG_SIZE]{};
+    sender.FillHccpTag(senderTo64, 64);
+    sender.FillHccpTag(senderTo65, 65);
+    receiver.FillHccpTag(receiverTo0, 0);
+
+    EXPECT_STREQ(senderTo64, "TRANS_TAG_0_64");
+    EXPECT_STREQ(senderTo65, "TRANS_TAG_0_65");
+    EXPECT_STREQ(senderTo65, receiverTo0);
+    EXPECT_STRNE(senderTo64, senderTo65);
+
+    JoinableRanksQpManager bmManager(0, 0, 0, 4, devNet, HYBM_ROLE_PEER);
+    char bmTag[HCCP_SOCK_CONN_TAG_SIZE]{};
+    bmManager.FillHccpTag(bmTag, 1);
+    EXPECT_STREQ(bmTag, "BM_TAG");
+}
+
+TEST_F(JoinableRanksQpManagerTest, RemovedRank_CancelsStaleSocketWaitBatch)
+{
+    sockaddr_in devNet{};
+    devNet.sin_family = AF_INET;
+    devNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
+    JoinableRanksQpManager transManager(0, 0, 0, 66, devNet, HYBM_ROLE_SENDER);
+
+    sockaddr_in remote{};
+    remote.sin_family = AF_INET;
+    remote.sin_port = htons(K_PORT_8001);
+    inet_pton(AF_INET, "10.20.0.2", &remote.sin_addr);
+    ock::mf::transport::TransportMemoryKey key{};
+    transManager.SetRemoteRankInfo({{64, ConnectRankInfo(HYBM_ROLE_RECEIVER, remote, key)},
+                                    {65, ConnectRankInfo(HYBM_ROLE_RECEIVER, remote, key)}});
+    ASSERT_TRUE(transManager.IsConnectBatchCurrent({64, 65}));
+
+    transManager.RemoveRanks({64});
+    EXPECT_FALSE(transManager.IsConnectBatchCurrent({64, 65}));
+    EXPECT_TRUE(transManager.IsConnectBatchCurrent({65}));
+}
+
+TEST_F(JoinableRanksQpManagerTest, SameRankReplacementPreservesNewAddressAndCancelsOldReadiness)
+{
+    sockaddr_in oldNet{};
+    oldNet.sin_family = AF_INET;
+    oldNet.sin_port = htons(K_PORT_8000);
+    inet_pton(AF_INET, "10.20.0.2", &oldNet.sin_addr);
+    sockaddr_in newNet = oldNet;
+    newNet.sin_port = htons(K_PORT_8001);
+    JoinableRanksQpManager manager(0, 0, 0, 66, oldNet, HYBM_ROLE_SENDER);
+    ock::mf::transport::TransportMemoryKey key{};
+    manager.SetRemoteRankInfo({{64, ConnectRankInfo(HYBM_ROLE_RECEIVER, oldNet, key)}});
+    manager.connections_[64].qpStatus = 1;
+    EXPECT_TRUE(manager.CheckQpReady({64}));
+    manager.RemoveRanks({64});
+    manager.SetRemoteRankInfo({{64, ConnectRankInfo(HYBM_ROLE_RECEIVER, newNet, key)}});
+    EXPECT_FALSE(manager.CheckQpReady({64}));
+    EXPECT_FALSE(manager.IsConnectBatchCurrent({64}));
+    EXPECT_EQ(manager.connections_[64].remoteNet.sin_port, oldNet.sin_port);
+    manager.RemoveRanksProcess({64});
+    EXPECT_EQ(manager.connections_[64].remoteNet.sin_port, newNet.sin_port);
+    EXPECT_EQ(manager.connections_[64].remoteNet.sin_addr.s_addr, newNet.sin_addr.s_addr);
+    EXPECT_TRUE(manager.IsConnectBatchCurrent({64}));
+    EXPECT_FALSE(manager.CheckQpReady({64}));
+    EXPECT_TRUE(manager.replacementNetworks_.empty());
+}
+
 TEST_F(JoinableRanksQpManagerTest, ScenarioRegression_NoIpAddressAfterLeave)
 {
     sockaddr_in devNet{};

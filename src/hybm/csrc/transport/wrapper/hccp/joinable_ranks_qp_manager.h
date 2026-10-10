@@ -61,13 +61,18 @@ private:
     void ClientSideRunLoop() noexcept;
     void ServerSideHandleNewClients(const std::set<uint32_t> &newRanks) noexcept;
     int WaitSocketConnections(const std::set<uint32_t> &newRanks) noexcept;
+    bool IsConnectBatchCurrent(const std::set<uint32_t> &ranks) noexcept;
+    bool IsConnectRankCurrent(uint32_t rank) noexcept;
+    bool IsRankPending(uint32_t rank) const noexcept; // Requires mutex_.
     void MakeQpConnections(const std::set<uint32_t> &newRanks) noexcept;
     void WaitQpConnections(const std::set<uint32_t> &newRanks) noexcept;
     int GenerateWhiteList(const std::set<uint32_t> &newClients) noexcept;
     int CreateConnectionToServers(const std::set<uint32_t> &newServers) noexcept;
     void RemoveRanksProcess(const std::set<uint32_t> &ranks) noexcept;
+    std::map<uint32_t, ConnectionChannel> DetachConnections(const std::set<uint32_t> &ranks) noexcept;
+    void FinishRemovingRanks(const std::set<uint32_t> &ranks) noexcept;
     void DeleteWhiteList(const std::map<uint32_t, ConnectionChannel> &removedConnections) noexcept;
-    void FillHccpTag(char *output);
+    void FillHccpTag(char *output, uint32_t peerRank);
     void TrySetQos();
 
 private:
@@ -80,12 +85,13 @@ private:
     std::vector<UserQpInfo *> qpArray_;
     ReadWriteLock qpLock_;
     std::vector<ConnectionChannel> connections_; // connections_操作由mutex_保证不并发
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cond_;
     std::set<uint32_t> newClients_;
     std::set<uint32_t> newServers_;
     std::set<uint32_t> removedClientRanks_;
     std::set<uint32_t> removedServerRanks_;
+    std::unordered_map<uint32_t, sockaddr_in> replacementNetworks_; // Guarded by mutex_.
     struct QosAttr qosAttr_ {};
     uint32_t userDeviceId_{0};
     QpCreator qpCreator_;

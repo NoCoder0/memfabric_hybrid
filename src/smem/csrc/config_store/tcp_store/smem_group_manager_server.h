@@ -315,6 +315,7 @@ private:
         size_t linkIdx{};
         uint32_t retryCount{0};
         uint64_t requestId{0};
+        Bytes removedBaseInfo{}; // Snapshot of the departed instance, retained across rejoin and send delay.
     };
 
     void ProcessBatch(const std::vector<SendTask> &tasks) noexcept;

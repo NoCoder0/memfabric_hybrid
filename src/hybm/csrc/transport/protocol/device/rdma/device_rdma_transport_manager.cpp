@@ -284,6 +284,7 @@ Result RdmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
         }
         // Zero-capacity clients have QPs even when they contribute no remote memory regions.
         ranksSet.emplace(rank);
+        qpReadyCache_[rank].store(false, std::memory_order_release);
         auto &pos = ranksMRs_[rank];
         if (!pos.empty()) {
             removedRankRegions.emplace(rank, pos);

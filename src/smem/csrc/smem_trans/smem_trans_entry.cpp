@@ -26,6 +26,7 @@
 #include "hybm.h"
 #include "hybm_big_mem.h"
 #include "hybm_data_op.h"
+#include "hybm_define.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "mf_fault_injection_point.h"
@@ -153,6 +154,8 @@ void SmemTransEntry::UnInitialize()
         mf::WriteGuard locker(remoteSliceRwMutex_);
         remoteSlices_.clear();
         rankToWorkerId_.clear();
+        rankToHybmRank_.clear();
+        rankToPeerBase_.clear();
         ranksRole_.clear();
         nameToWorkerId_.clear();
     }
@@ -296,6 +299,36 @@ static size_t DeserializeTransExchangeInfo(const uint8_t *buf, size_t bufLen, Sm
     return need;
 }
 
+static bool ParsePeerHybmRank(const SmemTransExchangeInfo &info, uint32_t groupRank, uint32_t &hybmRank) noexcept
+{
+    if (info.hybmInfo.desc == nullptr || groupRank >= SMEM_TRANS_RANK_COUNT_MAX) {
+        return false;
+    }
+
+    const size_t descLen = info.hybmInfo.descLen;
+    size_t offset = 0;
+    auto hasBytes = [&descLen, &offset](size_t size) { return size <= descLen - offset; };
+    auto readField = [&info, &offset, &hasBytes](auto &field) {
+        if (!hasBytes(sizeof(field))) {
+            return false;
+        }
+        std::memcpy(&field, info.hybmInfo.desc + offset, sizeof(field));
+        offset += sizeof(field);
+        return true;
+    };
+    uint64_t magic = 0;
+    uint64_t version = 0;
+    uint32_t rank = 0;
+    if (!readField(magic) || !readField(version) || !readField(rank) || magic != mf::ENTITY_EXPORT_INFO_MAGIC ||
+        version != mf::EXPORT_INFO_VERSION || rank >= TRANS_RANK_ID_SPAN ||
+        rank / HYBM_ENTITY_ID_SEGMENT_SIZE != groupRank) {
+        return false;
+    }
+
+    hybmRank = rank;
+    return true;
+}
+
 int SmemTransEntry::ImportPeerSlicesToMap(const RankFullInfo &other, std::vector<void *> &global,
                                           std::vector<SmemTransExchangeInfo> &slices) noexcept
 {
@@ -319,18 +352,106 @@ int SmemTransEntry::ImportPeerSlicesToMap(const RankFullInfo &other, std::vector
     return BM_OK;
 }
 
-int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept
+int SmemTransEntry::RemovePeerImported(uint32_t groupRank) noexcept
 {
-    if (entity_ == nullptr) {
-        // 本端已 teardown：迟到的白名单命令按无害处理
-        SM_LOG_DEBUG("OnAddToWhitelist after teardown, skip rank=" << rankId);
-        return SMEM_OK;
+    auto hybmRank = rankToHybmRank_.find(groupRank);
+    if (hybmRank != rankToHybmRank_.end()) {
+        auto ret = hybm_remove_imported(entity_, hybmRank->second, 0);
+        if (ret != BM_OK) {
+            SM_LOG_ERROR("remove imported HYBM rank " << hybmRank->second << " for group rank " << groupRank
+                                                      << " failed: " << ret);
+            return ret;
+        }
+        rankToHybmRank_.erase(hybmRank);
     }
-    if (others.empty()) {
-        SM_LOG_DEBUG("OnAddToWhitelist rankId=" << rankId << " others empty, skip");
+
+    auto worker = rankToWorkerId_.find(groupRank);
+    if (worker != rankToWorkerId_.end()) {
+        const WorkerId id = worker->second;
+        rankToWorkerId_.erase(worker);
+        const bool workerStillUsed = std::any_of(rankToWorkerId_.begin(), rankToWorkerId_.end(),
+                                                 [&id](const auto &entry) { return entry.second == id; });
+        if (!workerStillUsed) {
+            remoteSlices_.erase(id);
+        }
+    }
+    ranksRole_.erase(groupRank);
+    rankToPeerBase_.erase(groupRank);
+    return SMEM_OK;
+}
+
+int SmemTransEntry::PreparePeerReplacement(uint32_t groupRank, uint32_t newHybmRank, const Bytes &baseInfo) noexcept
+{
+    auto current = rankToHybmRank_.find(groupRank);
+    auto previousBase = rankToPeerBase_.find(groupRank);
+    // The exported segment includes the peer process identity; the numeric rank alone can be reused.
+    if (current == rankToHybmRank_.end() ||
+        (current->second == newHybmRank && previousBase != rankToPeerBase_.end() && previousBase->second == baseInfo)) {
         return SMEM_OK;
     }
 
+    const uint32_t oldHybmRank = current->second;
+    auto ret = RemovePeerImported(groupRank);
+    if (ret == SMEM_OK) {
+        SM_LOG_INFO("replace imported TRANS entity: groupRank=" << groupRank << " oldHybmRank=" << oldHybmRank
+                                                                << " newHybmRank=" << newHybmRank);
+    }
+    return ret;
+}
+
+int SmemTransEntry::ImportPeerEntities(const std::vector<RankFullInfo> &others,
+                                       const std::vector<SmemTransExchangeInfo> &entities) noexcept
+{
+    std::vector<uint32_t> hybmRanks(others.size());
+    for (auto i = 0U; i < others.size(); ++i) {
+        if (!ParsePeerHybmRank(entities[i], others[i].rankId, hybmRanks[i])) {
+            SM_LOG_ERROR("OnAddToWhitelist: invalid HYBM identity for group rank " << others[i].rankId);
+            return SMEM_ERROR;
+        }
+    }
+
+    std::vector<hybm_exchange_info> entityInfos;
+    entityInfos.reserve(entities.size());
+    std::vector<uint32_t> stagedGroupRanks;
+
+    // Data copies hold the read side of this lock until they finish using the imported resources.
+    mf::WriteGuard locker(remoteSliceRwMutex_);
+    for (auto i = 0U; i < others.size(); ++i) {
+        auto ret = PreparePeerReplacement(others[i].rankId, hybmRanks[i], others[i].baseInfo);
+        if (ret != SMEM_OK) {
+            SM_LOG_ERROR("failed to clean old HYBM entity for group rank " << others[i].rankId << ": " << ret);
+            return SMEM_ERROR;
+        }
+    }
+    for (auto i = 0U; i < others.size(); ++i) {
+        entityInfos.push_back(entities[i].hybmInfo);
+        // A rank without baseInfo needs cleanup before retrying, even if the peer identity is unchanged.
+        if (rankToHybmRank_.emplace(others[i].rankId, hybmRanks[i]).second) {
+            stagedGroupRanks.push_back(others[i].rankId);
+        }
+    }
+    auto ret = hybm_import(entity_, entityInfos.data(), entityInfos.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
+    if (ret != BM_OK) {
+        SM_LOG_ERROR("failed to import entity: " << ret);
+        // HYBM may already have started transport tasks. Keep failed cleanup records for the next retry.
+        for (auto groupRank : stagedGroupRanks) {
+            RemovePeerImported(groupRank);
+        }
+        return SMEM_ERROR;
+    }
+    for (auto i = 0U; i < others.size(); ++i) {
+        rankToHybmRank_[others[i].rankId] = hybmRanks[i];
+        rankToPeerBase_[others[i].rankId] = others[i].baseInfo;
+    }
+    return SMEM_OK;
+}
+
+int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept
+{
+    if (entity_ == nullptr || others.empty()) {
+        SM_LOG_DEBUG("OnAddToWhitelist skip rank=" << rankId << " peers=" << others.size());
+        return SMEM_OK;
+    }
     std::vector<SmemTransExchangeInfo> entities(others.size());
     for (auto i = 0U; i < others.size(); ++i) {
         if (DeserializeTransExchangeInfo(others[i].baseInfo.data(), others[i].baseInfo.size(), entities[i]) == 0) {
@@ -341,18 +462,12 @@ int SmemTransEntry::OnAddToWhitelist(uint32_t rankId, const std::vector<RankFull
             return SMEM_ERROR;
         }
     }
-    std::vector<hybm_exchange_info> entityInfos;
-    entityInfos.reserve(entities.size());
-    for (const auto &e : entities) {
-        entityInfos.push_back(e.hybmInfo);
+    auto importRet = ImportPeerEntities(others, entities);
+    for (auto &entity : entities) {
+        hybm_export_info_free(&entity.hybmInfo);
     }
-    auto ret = hybm_import(entity_, entityInfos.data(), entityInfos.size(), nullptr, HYBM_FLAG_EXPORT_ENTITY);
-    for (auto &e : entities) {
-        hybm_export_info_free(&e.hybmInfo);
-    }
-    if (ret != BM_OK) {
-        SM_LOG_ERROR("failed to import entity: " << ret);
-        return SMEM_ERROR;
+    if (importRet != SMEM_OK) {
+        return importRet;
     }
 
     // Record per-peer rank->workerId mapping and import remote slices so that
@@ -398,36 +513,57 @@ int SmemTransEntry::OnRemoveFromWhitelist(uint32_t rankId, const std::vector<Ran
         return SMEM_OK;
     }
     for (const auto &other : others) {
-        auto ret = hybm_remove_imported(entity_, other.rankId, 0);
+        WorkerId workerId{};
+        bool hasWorkerId = false;
+        bool staleRemove = false;
+        int ret = SMEM_OK;
+        {
+            mf::WriteGuard locker(remoteSliceRwMutex_);
+            auto current = rankToPeerBase_.find(other.rankId);
+            // Older servers send only the group rank on leave; new servers retain the departed baseInfo.
+            if (!other.baseInfo.empty() && current != rankToPeerBase_.end() && current->second != other.baseInfo) {
+                staleRemove = true;
+            } else {
+                auto worker = rankToWorkerId_.find(other.rankId);
+                if (worker != rankToWorkerId_.end()) {
+                    workerId = worker->second;
+                    hasWorkerId = true;
+                }
+                ret = RemovePeerImported(other.rankId);
+            }
+        }
+        if (staleRemove) {
+            SM_LOG_INFO("ignore stale REMOVE for group rank " << other.rankId);
+            continue;
+        }
         if (ret != SMEM_OK) {
             SM_LOG_WARN("OnRemoveFromWhitelist remove rank " << other.rankId << " failed: " << ret);
         }
-        NotifyPeerDown(other.rankId);
+        if (hasWorkerId) {
+            NotifyPeerDown(other.rankId, workerId);
+        }
     }
     SM_LOG_DEBUG("OnRemoveFromWhitelist done, rank=" << rankId << " peers=" << others.size());
     return SMEM_OK;
 }
 
-void SmemTransEntry::NotifyPeerDown(uint32_t leavingRankId) noexcept
+void SmemTransEntry::NotifyPeerDown(uint32_t leavingRankId, const WorkerId &workerId) noexcept
 {
     if (peerDownCallback_ != nullptr) {
-        auto it = rankToWorkerId_.find(leavingRankId);
-        if (it != rankToWorkerId_.end()) {
-            WorkerIdUnion workerId{it->second};
-            WorkerUniqueId &w = workerId.session;
+        WorkerIdUnion workerIdUnion{workerId};
+        WorkerUniqueId &worker = workerIdUnion.session;
 
-            char ipBuf[INET6_ADDRSTRLEN] = {0};
-            if (w.address.type == ock::mf::IpV4) {
-                struct in_addr addr;
-                addr.s_addr = htonl(w.address.ip.ipv4.s_addr);
-                inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
-            } else if (w.address.type == ock::mf::IpV6) {
-                inet_ntop(AF_INET6, &w.address.ip.ipv6, ipBuf, sizeof(ipBuf));
-            }
-            std::string peerAddr = std::string(ipBuf) + ":" + std::to_string(w.port);
-            SM_LOG_INFO("invoking peer down callback for rank " << leavingRankId << " addr " << peerAddr);
-            peerDownCallback_(peerAddr.c_str(), peerDownUserData_);
+        char ipBuf[INET6_ADDRSTRLEN] = {0};
+        if (worker.address.type == ock::mf::IpV4) {
+            struct in_addr addr;
+            addr.s_addr = htonl(worker.address.ip.ipv4.s_addr);
+            inet_ntop(AF_INET, &addr, ipBuf, sizeof(ipBuf));
+        } else if (worker.address.type == ock::mf::IpV6) {
+            inet_ntop(AF_INET6, &worker.address.ip.ipv6, ipBuf, sizeof(ipBuf));
         }
+        std::string peerAddr = std::string(ipBuf) + ":" + std::to_string(worker.port);
+        SM_LOG_INFO("invoking peer down callback for rank " << leavingRankId << " addr " << peerAddr);
+        peerDownCallback_(peerAddr.c_str(), peerDownUserData_);
     }
 }
 
@@ -466,11 +602,20 @@ int SmemTransEntry::OnEstablishConnection(uint32_t rankId, const std::vector<Ran
     // channel is established for them either — building one would only waste per-rank resources.
     std::vector<uint32_t> rankIds;
     rankIds.reserve(peers.size());
-    for (const auto &p : peers) {
-        if (QueryRole(p.rankId) == config_.role) {
-            continue;
+    {
+        mf::ReadGuard locker(remoteSliceRwMutex_);
+        for (const auto &p : peers) {
+            auto role = ranksRole_.find(p.rankId);
+            if (role != ranksRole_.end() && role->second == config_.role) {
+                continue;
+            }
+            auto hybmRank = rankToHybmRank_.find(p.rankId);
+            if (hybmRank == rankToHybmRank_.end()) {
+                SM_LOG_ERROR("OnEstablishConnection: HYBM identity not found for group rank " << p.rankId);
+                return SMEM_ERROR;
+            }
+            rankIds.push_back(hybmRank->second);
         }
-        rankIds.push_back(p.rankId);
     }
     if (rankIds.empty()) {
         SM_LOG_INFO("OnEstablishConnection rankId=" << rankId << " no cross-role peers, skip transport connect");
@@ -516,8 +661,11 @@ std::vector<ock::smem::LinkStateEntry> SmemTransEntry::OnQueryLinkState() noexce
     }
     mf::ReadGuard locker(remoteSliceRwMutex_);
     for (const auto &[peerRank, workerId] : rankToWorkerId_) {
+        auto hybmRank = rankToHybmRank_.find(peerRank);
         hybm_data_op_type reachTypes = static_cast<hybm_data_op_type>(0);
-        auto ret = hybm_entity_reach_types(entity_, peerRank, reachTypes, 0);
+        auto ret = hybmRank == rankToHybmRank_.end()
+                       ? SMEM_ERROR
+                       : hybm_entity_reach_types(entity_, hybmRank->second, reachTypes, 0);
         LinkStateEntry entry;
         entry.dstRankId = peerRank;
         entry.state = (ret == 0 && reachTypes != 0) ? TRANS_LINK_CONNECTED : TRANS_LINK_IDLE;
@@ -965,18 +1113,7 @@ void SmemTransEntry::RemoveRanks(std::vector<uint32_t> &rankSet)
 {
     mf::WriteGuard locker(remoteSliceRwMutex_);
     for (auto rankId : rankSet) {
-        auto it = rankToWorkerId_.find(rankId);
-        if (it == rankToWorkerId_.end()) {
-            SM_LOG_INFO("not found this rank:" << rankId);
-            continue;
-        }
-
-        WorkerId id = it->second;
-        rankToWorkerId_.erase(rankId);
-        remoteSlices_.erase(id);
-        ranksRole_.erase(rankId);
-
-        auto ret = hybm_remove_imported(entity_, rankId, 0);
+        auto ret = RemovePeerImported(rankId);
         if (ret != 0) {
             SM_LOG_ERROR("remove rank:" << rankId << " failed: " << ret);
         }
