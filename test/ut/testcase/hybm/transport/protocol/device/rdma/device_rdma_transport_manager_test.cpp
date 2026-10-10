@@ -495,10 +495,10 @@ TEST(RdmaTransportManagerTest, RemoveRanksEmptyOrOutOfRangeIsOkAndCleansNotify)
     mgr.notifyRemoteInfo_[0] = {1, 2};
     mgr.notifyRemoteInfo_[1] = {3, 4};
 
-    // ranksMRs_ empty for these ranks -> ranksSet stays empty -> BM_OK
+    // Valid ranks must remove QPs even when ranksMRs_ is empty; out-of-range ranks are ignored.
     std::vector<uint32_t> removed{9, 0, 1};
     EXPECT_EQ(mgr.RemoveRanks(removed), BM_OK);
-    EXPECT_FALSE(qp->removeRanksCalled);
+    EXPECT_TRUE(qp->removeRanksCalled);
     EXPECT_EQ(mgr.notifyRemoteInfo_[0].first, 0U);
     EXPECT_EQ(mgr.notifyRemoteInfo_[1].first, 0U);
 }

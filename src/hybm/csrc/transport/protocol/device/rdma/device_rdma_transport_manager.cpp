@@ -282,9 +282,10 @@ Result RdmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
             BM_LOG_ERROR("input rank is large than world size! rk:" << rank << " world_size:" << rankCount_);
             continue;
         }
+        // Zero-capacity clients have QPs even when they contribute no remote memory regions.
+        ranksSet.emplace(rank);
         auto &pos = ranksMRs_[rank];
         if (!pos.empty()) {
-            ranksSet.emplace(rank);
             removedRankRegions.emplace(rank, pos);
             pos.clear();
         }
