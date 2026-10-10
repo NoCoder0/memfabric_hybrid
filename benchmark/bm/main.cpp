@@ -55,7 +55,7 @@ void PrintHelp()
                  "(h2d,d2h,h2rd,h2rh,d2rh,d2rd,rh2d,rh2h,rd2h,rd2d,all).\n"
                  "    -s,  --size             Specifies block size (default 1024).\n"
                  "    -cc, --copy-count       Specifies copy count (default 1000).\n"
-                 "    -bs, --batch-size       Specifies block count (default 1).\n"
+                 "    -bs, --batch-size       Specifies block count (default: auto = 128MiB / block size).\n"
                  "    -d,  --device           Specifies starting device ID (default 0).\n"
                  "    -ws, --world-size       Specifies the total number of NPUs in the cluster.\n"
                  "    -lrs, --local-rank-size Specifies the number of NPUs on the local node.\n"
@@ -151,6 +151,42 @@ uint64_t ParseUint64(const std::string &arg, const std::string &field)
     }
 }
 
+// 支持 K/M/G 后缀（1024 进制，大小写不敏感，可带 B/iB），不带后缀按字节。
+// 例：16384 / 16K / 512K / 1M / 16M / 64MB / 1G
+uint64_t ParseSize(const std::string &arg, const std::string &field)
+{
+    if (arg.empty()) {
+        ExitWithError("invalid size for " + field);
+    }
+    uint64_t mult = 1;
+    size_t numLen = arg.size();
+    const size_t unitPos = arg.find_first_of("KMGkmg");
+    if (unitPos != std::string::npos) {
+        char unit = arg[unitPos];
+        if (unit >= 'a' && unit <= 'z') {
+            unit = static_cast<char>(unit - 'a' + 'A');
+        }
+        if (unit == 'K') {
+            mult = 1024ULL;
+        } else if (unit == 'M') {
+            mult = 1024ULL * 1024ULL;
+        } else {
+            mult = 1024ULL * 1024ULL * 1024ULL;
+        }
+        numLen = unitPos;
+        std::string rest = arg.substr(unitPos + 1);
+        for (char &c : rest) {
+            if (c >= 'a' && c <= 'z') {
+                c = static_cast<char>(c - 'a' + 'A');
+            }
+        }
+        if (!rest.empty() && rest != "B" && rest != "IB") {
+            ExitWithError("invalid size unit for " + field + ": " + arg);
+        }
+    }
+    return ParseUint64(arg.substr(0, numLen), field) * mult;
+}
+
 uint32_t ParseUint32(const std::string &arg, const std::string &field)
 {
     uint64_t val = ParseUint64(arg, field);
@@ -167,6 +203,9 @@ void ParseIp(const std::string &arg)
         ExitWithError("invalid IP address and port format: " + arg + " (must be tcp://<ip>:<port>)");
     }
 }
+
+// 按「一次传 128MiB」的吞吐口径：一次 smem_bm_copy_batch 调用搬 128MiB
+constexpr uint64_t kDefaultTotalBytes = 128ULL * 1024 * 1024;
 
 void CheckCmdBw(BwTestParam &opts)
 {
@@ -190,6 +229,13 @@ void CheckCmdBw(BwTestParam &opts)
     }
     if (opts.copySize == 0) {
         ExitWithError("size must be greater than 0");
+    }
+    // batchSize 默认不显式传：按「一次调用 128MiB」自动算 = 128MiB / copySize（传了 -bs 则用传的值）
+    if (opts.batchSize == 0) {
+        opts.batchSize = kDefaultTotalBytes / opts.copySize;
+        if (opts.batchSize == 0) {
+            opts.batchSize = 1; // copySize 超过 128MiB 时不再合并
+        }
     }
 }
 
@@ -216,7 +262,7 @@ void ParseCmdBw(int argc, char *argv[], BwTestParam &opts)
             if (i + 1 >= argc) {
                 ExitWithError("missing value for " + arg);
             }
-            opts.copySize = ParseUint64(argv[++i], "size");
+            opts.copySize = ParseSize(argv[++i], "size");
         } else if (arg == "-cc" || arg == "--copy-count") {
             if (i + 1 >= argc) {
                 ExitWithError("missing value for " + arg);

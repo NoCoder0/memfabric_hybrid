@@ -83,6 +83,9 @@ static ock::mf::AscendSocType GetAscendSocTypeStub()
     return g_mockSocType;
 }
 
+// 本文件与其它 UT 文件存在同名的 TransportManagerMock。同名类的 vtable 与内联成员函数
+// 在链接期会跨 TU 合并，若各文件的成员布局不一致，就会读到错的成员。放入匿名命名空间隔离。
+namespace {
 class TransportManagerMock : public ock::mf::transport::TransportManager {
 public:
     TransportManagerMock() = default;
@@ -187,12 +190,14 @@ public:
     ock::mf::Result WriteRemoteBatchAsync(uint32_t rankId, const ock::mf::CopyDescriptor &descriptor) noexcept override
     {
         writeRemoteBatchAsyncCount++;
+        lastWriteBatchSize = descriptor.counts.size();
         return writeRemoteBatchAsyncResult;
     }
 
     ock::mf::Result ReadRemoteBatchAsync(uint32_t rankId, const ock::mf::CopyDescriptor &descriptor) noexcept override
     {
         readRemoteBatchAsyncCount++;
+        lastReadBatchSize = descriptor.counts.size();
         return readRemoteBatchAsyncResult;
     }
 
@@ -219,6 +224,8 @@ public:
     uint64_t synchronizeCount{0};
     uint64_t writeRemoteBatchAsyncCount{0};
     uint64_t readRemoteBatchAsyncCount{0};
+    uint64_t lastWriteBatchSize{0};
+    uint64_t lastReadBatchSize{0};
     uint64_t queryHasRegisteredCount{0};
 
     // 结果
@@ -259,6 +266,8 @@ public:
         synchronizeCount = 0;
         writeRemoteBatchAsyncCount = 0;
         readRemoteBatchAsyncCount = 0;
+        lastWriteBatchSize = 0;
+        lastReadBatchSize = 0;
         queryHasRegisteredCount = 0;
 
         openDeviceResult = BM_OK;
@@ -280,6 +289,7 @@ public:
         nicName = "eth0";
     }
 };
+} // namespace
 
 class HybmDataOpDeviceRdmaTest : public testing::Test {
 public:
@@ -751,11 +761,11 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
     ret = dataOp_->BatchDataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options);
     ASSERT_EQ(BM_ERROR, ret);
 
-    // 测试已注册远程地址走注册路径
+    // 测试已注册远程地址走注册路径：整批一次提交（只 fence 一次）
     transportManagerMock_->queryHasRegisteredResult = true;
     transportManagerMock_->queryHasRegisteredCount = 0;
-    transportManagerMock_->writeRemoteAsyncCount = 0;
-    transportManagerMock_->readRemoteAsyncCount = 0;
+    transportManagerMock_->writeRemoteBatchAsyncCount = 0;
+    transportManagerMock_->readRemoteBatchAsyncCount = 0;
 
     ock::mf::ExtOptions remoteOptions{};
     remoteOptions.srcRankId = rankId_;
@@ -766,10 +776,11 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
     ret = dataOp_->BatchDataCopy(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, remoteOptions);
     ASSERT_EQ(BM_OK, ret);
     ASSERT_EQ(2UL, transportManagerMock_->queryHasRegisteredCount);
-    ASSERT_EQ(2UL, transportManagerMock_->writeRemoteAsyncCount);
+    ASSERT_EQ(1UL, transportManagerMock_->writeRemoteBatchAsyncCount);
+    ASSERT_EQ(2UL, transportManagerMock_->lastWriteBatchSize);
 
     transportManagerMock_->queryHasRegisteredCount = 0;
-    transportManagerMock_->readRemoteAsyncCount = 0;
+    transportManagerMock_->readRemoteBatchAsyncCount = 0;
     remoteOptions.srcRankId = rankId_ + 1;
     remoteOptions.destRankId = rankId_;
     params.sources = srcGH;
@@ -777,7 +788,8 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
     ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, remoteOptions);
     ASSERT_EQ(BM_OK, ret);
     ASSERT_EQ(2UL, transportManagerMock_->queryHasRegisteredCount);
-    ASSERT_EQ(2UL, transportManagerMock_->readRemoteAsyncCount);
+    ASSERT_EQ(1UL, transportManagerMock_->readRemoteBatchAsyncCount);
+    ASSERT_EQ(2UL, transportManagerMock_->lastReadBatchSize);
 
     dataOp_->UnInitialize();
 }

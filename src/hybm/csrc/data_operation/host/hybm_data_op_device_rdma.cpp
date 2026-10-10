@@ -909,25 +909,18 @@ Result DataOpDeviceRDMA::BatchCopyWrite(hybm_batch_copy_params &params, const Ex
     std::set<uint32_t> asyncSubmittedRanks{};
     TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_REG_COPY);
     for (auto &it : registered) {
-        hybm_batch_copy_params regParams = {it.second.localAddrs.data(), it.second.globalAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
-        tmpOptions.destRankId = it.first;
-
-        for (uint32_t i = 0; i < regParams.batchSize; ++i) {
-            ret = transportManager_->WriteRemoteAsync(tmpOptions.destRankId, (uint64_t)regParams.sources[i],
-                                                      (uint64_t)regParams.destinations[i], regParams.dataSizes[i]);
-            if (ret != BM_OK) {
-                for (uint32_t r : asyncSubmittedRanks) {
-                    transportManager_->Synchronize(r);
-                }
-                BM_LOG_ERROR("Failed to write src to dest, ret: "
-                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << tmpOptions.destRankId
-                             << " i: " << i << std::hex << " src: " << regParams.sources[i] << " dst: "
-                             << regParams.destinations[i] << std::dec << " size: " << regParams.dataSizes[i]);
-                return ret;
+        // 整批一次提交（只 fence 一次）。逐笔 WriteRemoteAsync 会把「提交 + 等一个网络往返」的
+        // 固定开销叠加成 N 倍；批量后 N 笔只付一个往返（it.second 就是按 rank 分好的 CopyDescriptor）。
+        ret = transportManager_->WriteRemoteBatchAsync(it.first, it.second);
+        if (ret != BM_OK) {
+            for (uint32_t r : asyncSubmittedRanks) {
+                transportManager_->Synchronize(r);
             }
-            asyncSubmittedRanks.insert(it.first);
+            BM_LOG_ERROR("Failed to batch write, ret: " << ret << " localRankId: " << rankId_ << " remoteRankId: "
+                                                        << it.first << " batchSize: " << it.second.counts.size());
+            return ret;
         }
+        asyncSubmittedRanks.insert(it.first);
     }
     // 再写本地
     for (auto &it : localed) {
@@ -972,24 +965,17 @@ Result DataOpDeviceRDMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     // 先写异步
     std::set<uint32_t> asyncSubmittedRanks{};
     for (auto &it : registered) {
-        hybm_batch_copy_params regParams = {it.second.globalAddrs.data(), it.second.localAddrs.data(),
-                                            it.second.counts.data(), static_cast<uint32_t>(it.second.counts.size())};
-        tmpOptions.srcRankId = it.first;
-        for (uint32_t i = 0; i < regParams.batchSize; ++i) {
-            ret = transportManager_->ReadRemoteAsync(tmpOptions.srcRankId, (uint64_t)regParams.destinations[i],
-                                                     (uint64_t)regParams.sources[i], regParams.dataSizes[i]);
-            if (ret != BM_OK) {
-                for (uint32_t r : asyncSubmittedRanks) {
-                    transportManager_->Synchronize(r);
-                }
-                BM_LOG_ERROR("Failed to read src to dest, ret: "
-                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << tmpOptions.srcRankId
-                             << " i: " << i << std::hex << " src: " << regParams.sources[i] << " dst: "
-                             << regParams.destinations[i] << std::dec << " size: " << regParams.dataSizes[i]);
-                return ret;
+        // 同 BatchCopyWrite：整批一次提交（只 fence 一次），不再逐笔 ReadRemoteAsync。
+        ret = transportManager_->ReadRemoteBatchAsync(it.first, it.second);
+        if (ret != BM_OK) {
+            for (uint32_t r : asyncSubmittedRanks) {
+                transportManager_->Synchronize(r);
             }
-            asyncSubmittedRanks.insert(it.first);
+            BM_LOG_ERROR("Failed to batch read, ret: " << ret << " localRankId: " << rankId_ << " remoteRankId: "
+                                                       << it.first << " batchSize: " << it.second.counts.size());
+            return ret;
         }
+        asyncSubmittedRanks.insert(it.first);
     }
     // 再写本地
     for (auto &it : localed) {
@@ -1047,59 +1033,57 @@ Result DataOpDeviceRDMA::BatchCopyLH2GH(hybm_batch_copy_params &params, const Ex
 Result DataOpDeviceRDMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtOptions &options,
                                       hybm_data_copy_direction direction) noexcept
 {
-    auto ret = 0;
-    auto batchSize = params.batchSize;
-    std::set<uint32_t> asyncWriteRanks{};
-    // 先写异步
-    for (uint32_t i = 0; i < batchSize; i++) {
-        auto srcRankId = options.srcRankId;
-        auto dstRankId = options.destRankId;
+    const auto batchSize = params.batchSize;
+    if (batchSize == 0) {
+        return BM_OK;
+    }
 
-        if (srcRankId == rankId_ && dstRankId == rankId_) {
+    const auto srcRankId = options.srcRankId;
+    const auto dstRankId = options.destRankId;
+
+    // 全本地：逐个走本地拷贝
+    if (srcRankId == rankId_ && dstRankId == rankId_) {
+        for (uint32_t i = 0; i < batchSize; i++) {
             hybm_copy_params pm = {params.sources[i], params.destinations[i], params.dataSizes[i]};
-            ret = DataCopy(pm, direction, options);
-            BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "write default failed:", ret);
-        } else if (srcRankId == rankId_) {
-            ret = transportManager_->WriteRemoteAsync(options.destRankId, (uint64_t)params.sources[i],
-                                                      (uint64_t)params.destinations[i], params.dataSizes[i]);
-            if (ret != BM_OK) {
-                for (uint32_t r : asyncWriteRanks) {
-                    transportManager_->Synchronize(r);
-                }
-                BM_LOG_ERROR("Failed to write src to dest, ret: "
-                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << options.destRankId
-                             << " i: " << i << std::hex << " src: " << params.sources[i]
-                             << " dst: " << params.destinations[i] << std::dec << " size: " << params.dataSizes[i]);
-                return ret;
-            }
-            asyncWriteRanks.insert(options.destRankId);
-        } else if (dstRankId == rankId_) {
-            ret = transportManager_->ReadRemoteAsync(options.srcRankId, (uint64_t)params.destinations[i],
-                                                     (uint64_t)params.sources[i], params.dataSizes[i]);
-            if (ret != BM_OK) {
-                for (uint32_t r : asyncWriteRanks) {
-                    transportManager_->Synchronize(r);
-                }
-                BM_LOG_ERROR("Failed to read src to dest, ret: "
-                             << ret << " localRankId: " << rankId_ << " remoteRankId: " << options.srcRankId
-                             << " i: " << i << std::hex << " src: " << params.sources[i]
-                             << " dst: " << params.destinations[i] << std::dec << " size: " << params.dataSizes[i]);
-                return ret;
-            }
-            asyncWriteRanks.insert(options.srcRankId);
-        } else {
-            BM_LOG_ERROR("invalid param, local rank:" << rankId_ << ", srcId: " << srcRankId
-                                                      << ", dstId: " << dstRankId);
-            return BM_ERROR;
+            auto ret = DataCopy(pm, direction, options);
+            BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "copy default failed:", ret);
         }
+        return BM_OK;
     }
-    // 再等异步
-    for (auto &it : asyncWriteRanks) {
-        TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_WAIT_W);
-        ret = transportManager_->Synchronize(it);
-        TP_TRACE_END(TP_HYBM_RDMA_BATCH_WAIT_W, ret);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to Synchronize", ret);
+
+    // 远端收发：整批一次提交、一次 fence。
+    // 逐笔提交会把「提交 + 等一个网络往返」的固定开销叠加成 N 倍（实测 16K 每笔约 25us，
+    // 其中 fence 约占 16us），批量后 N 笔只付一个往返。
+    const bool isRead = (dstRankId == rankId_);
+    if (isRead == (srcRankId == rankId_)) { // 写要求本端是源、读要求本端是目的，二者互斥
+        BM_LOG_ERROR("invalid param, local rank:" << rankId_ << ", srcId: " << srcRankId << ", dstId: " << dstRankId);
+        return BM_ERROR;
     }
+    const uint32_t remoteRank = isRead ? srcRankId : dstRankId;
+
+    // 写：local=sources,      global=destinations
+    // 读：local=destinations, global=sources
+    CopyDescriptor descriptor{};
+    descriptor.localAddrs.reserve(batchSize);
+    descriptor.globalAddrs.reserve(batchSize);
+    descriptor.counts.reserve(batchSize);
+    for (uint32_t i = 0; i < batchSize; i++) {
+        descriptor.localAddrs.emplace_back(isRead ? params.destinations[i] : params.sources[i]);
+        descriptor.globalAddrs.emplace_back(isRead ? params.sources[i] : params.destinations[i]);
+        descriptor.counts.emplace_back(params.dataSizes[i]);
+    }
+
+    auto ret = isRead ? transportManager_->ReadRemoteBatchAsync(remoteRank, descriptor)
+                      : transportManager_->WriteRemoteBatchAsync(remoteRank, descriptor);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("Failed to batch " << (isRead ? "read" : "write") << ", ret: " << ret << " localRankId: "
+                                        << rankId_ << " remoteRankId: " << remoteRank << " batchSize: " << batchSize);
+        return ret;
+    }
+    TP_TRACE_BEGIN(TP_HYBM_RDMA_BATCH_WAIT_W);
+    ret = transportManager_->Synchronize(remoteRank);
+    TP_TRACE_END(TP_HYBM_RDMA_BATCH_WAIT_W, ret);
+    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to Synchronize", ret);
     return ret;
 }
 

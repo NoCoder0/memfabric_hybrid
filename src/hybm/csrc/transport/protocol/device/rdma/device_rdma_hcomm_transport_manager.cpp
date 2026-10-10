@@ -42,10 +42,9 @@ namespace {
 
 constexpr int32_t CHANNEL_STATUS_POLL_INTERVAL_MS = 1;
 constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
-// 搬运完成性判定：Nbi 提交后读对端 flag(8B, 恒为 1)，本端读回 1 即数据已落地
-constexpr uint32_t TRANSFER_FLAG_BYTES = sizeof(uint64_t);
+// 本端 flag 缓冲初值：device(AICPU kernel) 路径用它做完成确认；
+// host RoCE 路径已不再读对端 flag，完成确认只依赖 fence。
 constexpr uint64_t TRANSFER_FLAG_DONE = 1ULL;
-constexpr int32_t SUBMIT_COMPLETION_TIMEOUT_MS = 5000;
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
 
@@ -162,12 +161,25 @@ static Result GetDeviceIpViaHccnTool(uint32_t phyDeviceId, struct in_addr &addr)
     return BM_ERROR;
 }
 
-// A5(950) host RoCE：按"卡号 → 网口"命名规则（ens<phyId/2>f<phyId%2>，例如 dev3→ens1f1）
-// 用 getifaddrs 取该 device 网口的 IPv4，不依赖 /etc/hccn.conf（后者仍作为后续兜底保留）。
+// A5(950) host RoCE：用 getifaddrs 取「本 device 对应网口」的 IPv4，不依赖 /etc/hccn.conf
+// （后者 / hccn_tool 仍作为后续兜底保留）。
+//
+// 注意：网口命名在不同机型上不同，这里按候选逐个试，不写死：
+//   - MF_HOST_ROCE_IFNAME 显式指定（优先级最高，机型不认识时用它）
+//   - ens<phyId/4>f<phyId%4>：每 slot 4 个 func 的机型（2 卡各 4 口，hrn5_0..hrn5_7 ↔ ens0f0..ens1f3）
+//   - ens<phyId/2>f<phyId%2>：每 slot 2 个 func 的机型（4 卡各 2 口）
 static Result GetIpViaGetifaddrs(uint32_t phyDeviceId, struct in_addr &addr)
 {
+    const char *forced = std::getenv("MF_HOST_ROCE_IFNAME");
+    std::vector<std::string> candidates;
+    if (forced != nullptr && forced[0] != '\0') {
+        candidates.emplace_back(forced);
+    }
     char ifName[IFNAMSIZ]{};
+    (void)snprintf(ifName, sizeof(ifName), "ens%uf%u", phyDeviceId / 4U, phyDeviceId % 4U);
+    candidates.emplace_back(ifName);
     (void)snprintf(ifName, sizeof(ifName), "ens%uf%u", phyDeviceId / 2U, phyDeviceId % 2U);
+    candidates.emplace_back(ifName);
 
     struct ifaddrs *ifap = nullptr;
     if (getifaddrs(&ifap) != 0) {
@@ -176,22 +188,28 @@ static Result GetIpViaGetifaddrs(uint32_t phyDeviceId, struct in_addr &addr)
     }
 
     Result ret = BM_INVALID_PARAM;
-    for (auto *p = ifap; p != nullptr; p = p->ifa_next) {
-        if (p->ifa_name == nullptr || p->ifa_addr == nullptr) {
-            continue;
+    for (const auto &want : candidates) {
+        for (auto *p = ifap; p != nullptr; p = p->ifa_next) {
+            if (p->ifa_name == nullptr || p->ifa_addr == nullptr) {
+                continue;
+            }
+            if (want != p->ifa_name || p->ifa_addr->sa_family != AF_INET) {
+                continue;
+            }
+            addr = reinterpret_cast<struct sockaddr_in *>(p->ifa_addr)->sin_addr;
+            char ipStr[INET_ADDRSTRLEN]{};
+            (void)inet_ntop(AF_INET, &addr, ipStr, sizeof(ipStr));
+            BM_LOG_INFO("GetIpViaGetifaddrs: phyId=" << phyDeviceId << " ifname=" << want << " ip=" << ipStr);
+            ret = BM_OK;
+            break;
         }
-        if (std::strcmp(p->ifa_name, ifName) != 0 || p->ifa_addr->sa_family != AF_INET) {
-            continue;
+        if (ret == BM_OK) {
+            break;
         }
-        addr = reinterpret_cast<struct sockaddr_in *>(p->ifa_addr)->sin_addr;
-        char ipStr[INET_ADDRSTRLEN]{};
-        (void)inet_ntop(AF_INET, &addr, ipStr, sizeof(ipStr));
-        BM_LOG_INFO("GetIpViaGetifaddrs: phyId=" << phyDeviceId << " ifname=" << ifName << " ip=" << ipStr);
-        ret = BM_OK;
-        break;
     }
     if (ret != BM_OK) {
-        BM_LOG_WARN("GetIpViaGetifaddrs: no AF_INET on ifname=" << ifName << " for phyId=" << phyDeviceId);
+        BM_LOG_WARN("GetIpViaGetifaddrs: no AF_INET on candidates for phyId="
+                    << phyDeviceId << " (tried " << candidates.size() << " ifname(s), e.g. " << candidates[0] << ")");
     }
     freeifaddrs(ifap);
     return ret;
@@ -231,7 +249,7 @@ Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &des
         // 且内部走 HccpPeerManager(PEER 模式)，直接用主机侧的 RoCE 网口（无需 NPU 侧地址）。
         desc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
         // 注意：EndpointLoc 里 device/host 是 union，共用同一段内存。
-        // HOST 形态只能填 host.id（hixl 恒为 0，CpuRoceEndpoint 内部也是 kHostResourceId=0），
+        // HOST 形态只能填 host.id（CpuRoceEndpoint 内部是 kHostResourceId=0），
         // 填 device.* 会覆盖成 host.id = phyDeviceId，导致两端 host id 不一致。
         desc.loc.host.id = 0;
     } else {
@@ -244,8 +262,9 @@ Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &des
 
     // Get NPU-side IP address for HCOMM endpoint creation.
     {
-        // 0) A5(950) host RoCE：按命名规则 ens<phyId/2>f<phyId%2> 从 getifaddrs 取本 device 网口 IPv4，
-        //    不依赖 /etc/hccn.conf；失败则继续走下面的原有链路（hccn.conf 兜底保留）。
+        // 0) A5(950) host RoCE：用 getifaddrs 按候选规则逐个试（MF_HOST_ROCE_IFNAME -> ens<phyId/4>f<phyId%4>
+        //    -> ens<phyId/2>f<phyId%2>）取本 device 网口 IPv4，不依赖 /etc/hccn.conf；
+        //    失败则继续走下面的原有链路（hccn_tool 等兜底保留）。
         if (hostRocePath_) {
             struct in_addr nicIpv4 {};
             if (GetIpViaGetifaddrs(phyDeviceId_, nicIpv4) == BM_OK) {
@@ -344,7 +363,7 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
     BM_LOG_INFO("HcommEndpointCreate success, handle=" << handle << " protocol=ROCE addrType=" << desc.commAddr.type);
 
     if (hostRocePath_) {
-        // 取本端监听端口，随 private data 交换给对端建 channel 用（对齐 hixl 的 GetListenPort + SetPort）；
+        // 取本端监听端口，随 private data 交换给对端建 channel 用；
         // libhcomm 未提供该符号时回退为 0（DEVICE 形态不需要端口交换）。
         uint32_t listenPort = 0;
         auto portRet = DlHcommApi::HcommEndpointGetListenPort(localEndpoint_, &listenPort);
@@ -409,7 +428,7 @@ Result DeviceRdmaHcommTransportManager::InitTransferFlagLocked()
         return BM_OK;
     }
     if (hostRocePath_) {
-        // 参考 hixl：flag 用 host 内存（页对齐）+ COMM_MEM_TYPE_HOST 注册，
+        // flag 用 host 内存（页对齐）+ COMM_MEM_TYPE_HOST 注册，
         // 这样本端可以 CPU 直接轮询它的值，对端也可以直接拿它的地址做 RDMA 读。
         const long pageSize = sysconf(_SC_PAGESIZE);
         if (pageSize <= 0) {
@@ -727,7 +746,7 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
     const uint64_t peerGva = HybmVaManager::GetInstance().TransformVa(addr, HVM_HVA, HVM_GVA);
     meta.gvaBase = (peerGva != 0) ? peerGva : addr;
     if (hostRocePath_) {
-        // 主机侧 RoCE：flag 地址随 private data 交换（参考 hixl：对端直接读它判完成），
+        // 主机侧 RoCE：flag 地址随 private data 交换（对端直接读它判完成），
         // 不走 memory key 里的 flag 描述符，保持 0 避免对端走已废弃的 MemImport 路径。
         meta.flagLen = 0;
     } else {
@@ -865,7 +884,7 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
     }
     state.remoteEndpointDesc = remoteDesc;
     if (hostRocePath_) {
-        // 对端 flag 地址随 private data 交换（参考 hixl），完成性判定时直接对它做一次 RDMA 读
+        // 对端 flag 地址随 private data 交换，完成性判定时直接对它做一次 RDMA 读
         state.remoteFlagAddr = peerData.flagAddr;
         state.remoteFlagSize = DEVICE_RDMA_HCOMM_FLAG_SIZE;
         BM_LOG_INFO("CreatePeerResources peer rank=" << peerRank << " remoteFlagAddr=0x" << std::hex
@@ -905,10 +924,10 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
     if (hostRocePath_) {
         // A5 host RoCE：channel desc 升到 ABI v4（仅该路径）
         UpgradeChannelDescToV4(chDesc);
-        // 对齐 hixl：显式设置重传参数，不设会留下 0xFF 的脏值
+        // 显式设置重传参数，不设会留下 0xFF 的脏值
         chDesc.roceAttr.retryCnt = DEVICE_RDMA_HCOMM_DEFAULT_RETRY_CNT;
         chDesc.roceAttr.retryInterval = DEVICE_RDMA_HCOMM_DEFAULT_RETRY_INTERVAL_MS;
-        // 对齐 hixl：qos 保持 unset（hixl 的 kQosUnset 语义）
+        // qos 保持 unset（kQosUnset 语义）
         chDesc.qos = 0xFFFFFFFFU;
         // port 语义是「监听端口或目标端口」：SERVER 用本端监听端口，CLIENT 用对端监听端口
         chDesc.port =
@@ -1401,25 +1420,54 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
     std::lock_guard<std::mutex> rankLock(state.rankMutex);
 
     if (hostRocePath_) {
-        // HOST 形态的 RoCE endpoint 走主机侧提交（对齐 hixl 的 BatchTransferHostAsync）：不下发 AICPU 算子。
+        // HOST 形态的 RoCE endpoint 走主机侧提交：不下发 AICPU 算子。
         // 用 Nbi 变体提交（thread 传 0）：
         // cpu_primitives_c_adpt 里阻塞版 *OnThread 会先判 IS_PLUGIN_HANDLE，非插件 channel 退回 legacy 路径
         // (HcclRemoteWrite -> Transport::pimpl_)，未安装 NIC plugin 时必然失败；Nbi 变体直接走 channel 的 nic ops。
+        // 一批 N 个 IO 连续提交，SQ(send queue) 可能被这一批 WR 打满：ibv_post_send 返回 ENOMEM 时
+        // HCOMM 归一成 HCCL_E_AGAIN(20)。先把已提交的排空
+        // （fence 会等 CQE 到齐并把 wqeNums_ 归零、腾出 SQ），再重试这一笔，避免整批直接失败。
+        constexpr int32_t kHcclEAgain = 20;
+        constexpr int64_t kSubmitRetryTimeoutMs = 60 * 1000;
+        const auto submitRetryDeadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(kSubmitRetryTimeoutMs);
+
+        int32_t submitRet = 0;
         for (size_t i = 0; i < localVec.size(); ++i) {
-            int32_t ret = 0;
-            if (isRead) {
-                ret = DlHcommApi::HcommReadNbiOnThread(0, state.channel, reinterpret_cast<void *>(localVec[i]),
-                                                       reinterpret_cast<const void *>(remoteVec[i]), sizeVec[i]);
-            } else {
-                ret = DlHcommApi::HcommWriteNbiOnThread(0, state.channel, reinterpret_cast<void *>(remoteVec[i]),
-                                                        reinterpret_cast<const void *>(localVec[i]), sizeVec[i]);
+            while (true) {
+                if (isRead) {
+                    submitRet =
+                        DlHcommApi::HcommReadNbiOnThread(0, state.channel, reinterpret_cast<void *>(localVec[i]),
+                                                         reinterpret_cast<const void *>(remoteVec[i]), sizeVec[i]);
+                } else {
+                    submitRet =
+                        DlHcommApi::HcommWriteNbiOnThread(0, state.channel, reinterpret_cast<void *>(remoteVec[i]),
+                                                          reinterpret_cast<const void *>(localVec[i]), sizeVec[i]);
+                }
+                if (submitRet != kHcclEAgain) {
+                    break; // 成功，或非「暂不可用」类错误：这一层不重试
+                }
+                if (std::chrono::steady_clock::now() >= submitRetryDeadline) {
+                    BM_LOG_ERROR("StageAndLaunchTransfer submit retry timeout, rank: " << rankId << " idx: " << i);
+                    break;
+                }
+                const int32_t drainRet = DlHcommApi::HcommChannelFenceOnThread(0, state.channel);
+                if (drainRet != 0) {
+                    BM_LOG_ERROR("StageAndLaunchTransfer fence-before-retry failed, rank: " << rankId
+                                                                                            << " ret: " << drainRet);
+                    submitRet = drainRet;
+                    break;
+                }
             }
-            if (ret != 0) {
+            if (submitRet != 0) {
                 BM_LOG_ERROR("StageAndLaunchTransfer " << (isRead ? "read" : "write")
                                                        << " submit failed, rank: " << rankId << " idx: " << i
-                                                       << " size: " << sizeVec[i] << " ret: " << ret);
-                return BM_DL_FUNCTION_FAILED;
+                                                       << " size: " << sizeVec[i] << " ret: " << submitRet);
+                break;
             }
+        }
+        if (submitRet != 0) {
+            return BM_DL_FUNCTION_FAILED;
         }
 
         BM_LOG_DEBUG("StageAndLaunchTransfer submit done, rank: " << rankId << (isRead ? " read" : " write")
@@ -1432,32 +1480,9 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
         }
         BM_LOG_DEBUG("StageAndLaunchTransfer fence done, rank: " << rankId);
 
-        // 完成性判定（参考 hixl）：flag 是 host 内存，本端先清零，再在同一 channel 上 Nbi 读对端 flag（对端恒为 1）。
-        // RDMA 在同一条 QP 上保序，本地读回 1 即说明前面的数据搬运已落地。
-        if (state.remoteFlagAddr == 0) {
-            BM_LOG_ERROR("StageAndLaunchTransfer peer flag addr missing, rank: " << rankId);
-            return BM_NOT_INITIALIZED;
-        }
-        auto *hostFlag = reinterpret_cast<volatile uint64_t *>(localFlagPtr_);
-        *hostFlag = 0;
-        int32_t ret = DlHcommApi::HcommReadNbiOnThread(
-            0, state.channel, localFlagPtr_, reinterpret_cast<const void *>(state.remoteFlagAddr), TRANSFER_FLAG_BYTES);
-        if (ret != 0) {
-            BM_LOG_ERROR("StageAndLaunchTransfer submit flag read failed, rank: " << rankId << " ret: " << ret);
-            return BM_DL_FUNCTION_FAILED;
-        }
-        BM_LOG_DEBUG("StageAndLaunchTransfer flag read submitted, rank: " << rankId << " remoteFlag=0x" << std::hex
-                                                                          << state.remoteFlagAddr << std::dec);
-
-        const auto deadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(SUBMIT_COMPLETION_TIMEOUT_MS);
-        while (*hostFlag != TRANSFER_FLAG_DONE && std::chrono::steady_clock::now() < deadline) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(CHANNEL_STATUS_POLL_INTERVAL_MS));
-        }
-        if (*hostFlag != TRANSFER_FLAG_DONE) {
-            BM_LOG_ERROR("StageAndLaunchTransfer wait completion timeout, rank: " << rankId << " flag: " << *hostFlag);
-            return BM_TIMEOUT;
-        }
+        // 完成性判定只依赖 fence：HcommChannelFenceOnThread 会忙等本端 sendCq，直到本次提交的
+        // 所有 WR 都拿到 CQE（RC QP 下即对端已 ACK、数据已落地）。原先在 fence 之后又读一次
+        // 对端 flag 属于二次确认，多一个 RDMA READ 往返，去掉以降低每笔延迟。
         BM_LOG_DEBUG("StageAndLaunchTransfer done, rank: " << rankId << " isRead: " << isRead
                                                            << " count: " << localVec.size());
         return BM_OK;
@@ -1544,24 +1569,36 @@ Result DeviceRdmaHcommTransportManager::RemoteIoBatch(uint32_t rankId, const Cop
         return BM_NOT_INITIALIZED;
     }
 
-    const auto batchSize = descriptor.counts.size();
-    std::vector<uint64_t> localVec(batchSize);
-    std::vector<uint64_t> remoteVec(batchSize);
-    for (size_t i = 0; i < batchSize; ++i) {
-        // Convert GVA to DVA for HCOMM RDMA
-        const uint64_t gvaLocal = reinterpret_cast<uint64_t>(descriptor.localAddrs[i]);
-        const uint64_t gvaRemote = reinterpret_cast<uint64_t>(descriptor.globalAddrs[i]);
-        localVec[i] = ConvertGvaToDva(gvaLocal);
-        remoteVec[i] = ConvertRemoteGvaToDva(state, gvaRemote);
-    }
-
     CompletionContext *ctx = LookupOrCreateContextLocked();
     if (ctx == nullptr) {
         BM_LOG_ERROR("RemoteIoBatch LookupOrCreateContextLocked failed");
         return BM_MALLOC_FAILED;
     }
 
-    return StageAndLaunchTransfer(*ctx, state, isRead, localVec, remoteVec, descriptor.counts, rankId);
+    // A5(950) host RoCE：一次提交的 WR 数受 QP send queue 深度限制（实测约 2048），超过会把 SQ
+    // 打满、ibv_post_send 失败，因此按 SQ 安全上限切片，每片一次提交 + 各自 fence。
+    // DEVICE 形态(含 A2/A3)仍逐笔下发一片，保持原有的 kernel 下发粒度与提交行为不变。
+    const size_t maxWrPerBatch = hostRocePath_ ? 1024U : 1U;
+    const size_t total = descriptor.counts.size();
+    for (size_t beg = 0; beg < total; beg += maxWrPerBatch) {
+        const size_t n = std::min(maxWrPerBatch, total - beg);
+        std::vector<uint64_t> localVec(n);
+        std::vector<uint64_t> remoteVec(n);
+        std::vector<uint64_t> counts(n);
+        for (size_t i = 0; i < n; ++i) {
+            // Convert GVA to DVA for HCOMM RDMA
+            localVec[i] = ConvertGvaToDva(reinterpret_cast<uint64_t>(descriptor.localAddrs[beg + i]));
+            remoteVec[i] = ConvertRemoteGvaToDva(state, reinterpret_cast<uint64_t>(descriptor.globalAddrs[beg + i]));
+            counts[i] = descriptor.counts[beg + i];
+        }
+        auto ret = StageAndLaunchTransfer(*ctx, state, isRead, localVec, remoteVec, counts, rankId);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("RemoteIoBatch chunk failed, rank: " << rankId << " beg: " << beg << " n: " << n
+                                                              << " ret: " << ret);
+            return ret;
+        }
+    }
+    return BM_OK;
 }
 
 // ============================================================================

@@ -25,7 +25,7 @@ namespace device {
 
 constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_TC = 132;
 constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_SL = 4;
-// 对齐 hixl 的 kRdmaRetryCntDefault / kRdmaRetryIntervalDefault；不设会留下 0xFF 的脏值
+// 显式设置重传参数；不设会留下 0xFF 的脏值
 constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_RETRY_CNT = 7;
 constexpr uint32_t DEVICE_RDMA_HCOMM_DEFAULT_RETRY_INTERVAL_MS = 20;
 constexpr uint32_t ACL_NOTIFY_DEVICE_USE_ONLY = 1;
@@ -33,7 +33,7 @@ constexpr uint32_t DEFAULT_NOTIFY_NUM = 0;
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 600;
 constexpr uint32_t HCOMM_KERNEL_BATCH_TIMEOUT_US = 600000000;
-// transfer flag 只是一次性完成性标记，参考 hixl：host 侧 8 字节 + COMM_MEM_TYPE_HOST 注册
+// transfer flag 只是一次性完成性标记：host 侧 8 字节 + COMM_MEM_TYPE_HOST 注册
 constexpr uint64_t DEVICE_RDMA_HCOMM_FLAG_SIZE = sizeof(uint64_t);
 
 constexpr uint32_t RDMA_HCOMM_PRIVATE_DATA_MAGIC = 0xA5FAD001U;
@@ -95,7 +95,7 @@ static_assert(std::is_trivially_copyable<RdmaHcommPrivateData>::value,
               "RdmaHcommPrivateData must be trivially copyable for byte serialization");
 
 // A5(950) host RoCE 专用私有数据（v2）：在 v1 基础上增加本端 transfer flag 的注册地址。
-// 参考 hixl：对端直接拿它当 RDMA 远端地址做一次读，不走 memory key 描述符 + MemImport。
+// 对端直接拿它当 RDMA 远端地址做一次读，不走 memory key 描述符 + MemImport。
 struct RdmaHcommPrivateDataHost {
     uint32_t magic{RDMA_HCOMM_PRIVATE_DATA_MAGIC};
     uint16_t version{RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST};

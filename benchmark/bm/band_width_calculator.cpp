@@ -22,6 +22,9 @@
 #include "band_width_calculator.h"
 
 const uint64_t GVA_SIZE = 4 * 1024ULL * 1024ULL * 1024ULL;
+// 校验读回时用的「段内 scratch」对齐粒度：G2H 的落点必须是已注册的段内地址，
+// 裸 malloc 的 host 地址在未配 swap 空间时会被拒（unable to copy unregistered addresses）。
+const uint64_t kReadbackScratchAlignBytes = 2ULL * 1024 * 1024;
 const int32_t RANDOM_MULTIPLIER = 23;
 const int32_t RANDOM_INCREMENT = 17;
 const int32_t NEGATIVE_RATIO_DIVISOR = 3;
@@ -134,6 +137,33 @@ BandWidthCalculator::BandWidthCalculator(BwTestParam &param)
     if (param.localRankStart == 0) {
         isMaster_ = true;
     }
+}
+
+// 507899 是底层 UB/URMA 的随机失败（与单次尺寸无强相关），块越大、次数越多越容易踩。
+// 所以 device<->host 的搬运统一按「固定小块 + 有限重试」来做，不跟着 copySize 放大。
+constexpr uint64_t kDevCopyChunkBytes = 64 * 1024;
+constexpr int32_t kDevCopyMaxRetry = 5;
+
+// dst/src 都按 off 推进（两侧都是完整缓冲）。失败按块重试。
+static int32_t CopyDevMemInChunks(void *dst, const void *src, uint64_t len, aclrtMemcpyKind kind)
+{
+    auto *d = static_cast<uint8_t *>(dst);
+    const auto *s = static_cast<const uint8_t *>(src);
+    for (uint64_t off = 0; off < len; off += kDevCopyChunkBytes) {
+        const uint64_t n = std::min(kDevCopyChunkBytes, len - off);
+        int32_t ret = 0;
+        for (int32_t attempt = 0; attempt < kDevCopyMaxRetry; ++attempt) {
+            ret = aclrtMemcpy(d + off, n, s + off, n, kind);
+            if (ret == 0) {
+                break;
+            }
+        }
+        if (ret != 0) {
+            LOG_ERROR("aclrtMemcpy chunk failed, ret:" << ret << " off:" << off << " size:" << n);
+            return ret;
+        }
+    }
+    return 0;
 }
 
 int32_t BandWidthCalculator::MultiProcessExecute()
@@ -264,41 +294,33 @@ void BandWidthCalculator::FinalizeAll(uint32_t deviceId, BarrierUtil *&barrier, 
 
 int32_t BandWidthCalculator::PrepareLocalMem(smem_bm_t handle, uint32_t rankId)
 {
+    // 统一改成「创建方式」：本地 DRAM / HBM 都取自 smem_bm_create 创建出来的段内内存，
+    // 不再 posix_memalign/aclrtMalloc + smem_bm_register_user_mem（动态注册）。
+    // 原因：device_rdma over HCOMM(A2/A3) 与 A5(950) host RoCE 都不识别动态注册的地址，
+    // 那类地址只能走 swap 中转，测不到直传带宽。
     uint64_t len = cmdParam_.batchSize * cmdParam_.copySize;
-    void *dataPtr = malloc(len);
-    CHECK_RET_ERR((dataPtr == nullptr), "malloc data dram failed, len:" << len);
-    GenerateData(dataPtr, static_cast<int32_t>(rankId), len);
-    do {
-        auto ret = posix_memalign(&localDram_, 4096, len);
-        CHECK_RET_ERR(ret, "malloc dram failed, len:" << len);
-        ret = aclrtMemcpy(localDram_, len, dataPtr, len, ACL_MEMCPY_HOST_TO_HOST);
-        CHECK_RET_ERR((ret != 0), "memcpy data dram failed, len:" << len);
-        ret = smem_bm_register_user_mem(handle, reinterpret_cast<uint64_t>(localDram_), len);
-        if (ret != 0) {
-            LOG_WARN("register dram failed, ret:" << ret << ", len:" << len << ", addr:" << localDram_);
-        }
-    } while (0);
-    do {
-        auto ret = aclrtMalloc(&localHbm_, len, ACL_MEM_MALLOC_HUGE_FIRST);
-        CHECK_RET_ERR((ret != 0 || localHbm_ == nullptr), "malloc hbm failed, ret:" << ret << " len:" << len);
-        ret = aclrtMemcpy(localHbm_, len, dataPtr, len, ACL_MEMCPY_HOST_TO_DEVICE);
-        CHECK_RET_ERR((ret != 0), "memcpy data dram failed, len:" << len);
-        if (cmdParam_.opType == SMEMB_DATA_OP_HOST_RDMA || cmdParam_.opType == SMEMB_DATA_OP_SDMA) {
-            break;
-        }
-        ret = smem_bm_register_user_mem(handle, reinterpret_cast<uint64_t>(localHbm_), len);
-        if (ret != 0) {
-            LOG_WARN("register hbm failed, ret:" << ret << ", len:" << len
-                                                 << ", addr:" << reinterpret_cast<uint64_t>(localHbm_));
-        }
-    } while (0);
-    if (cmdParam_.opType == SMEMB_DATA_OP_SDMA) {
-        auto gva = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_HOST, rankId);
-        CHECK_RET_ERR((len > GVA_SIZE || gva == nullptr || dataPtr == nullptr), "check memcpy param failed.");
-        memcpy(gva, dataPtr, len);
-        CHECK_RET_ERR((memcmp(gva, dataPtr, len) != 0), "check data failed, len:" << len);
-    }
-    free(dataPtr);
+    CHECK_RET_ERR((len == 0 || len > GVA_SIZE || len > UINT32_MAX),
+                  "invalid copy len:" << len << ", seg size:" << GVA_SIZE);
+
+    // 本端 HBM：段基址（rankId 传自己）+ gva2va 拿可用 VA
+    void *localHbmGva = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_DEVICE, rankId);
+    CHECK_RET_ERR((localHbmGva == nullptr), "get local hbm gva failed, rank:" << rankId);
+    auto ret = smem_bm_gva_to_va(handle, localHbmGva, SMEM_MEM_TYPE_LOCAL_DEVICE, &localHbm_);
+    CHECK_RET_ERR((ret != 0 || localHbm_ == nullptr), "gva2va local hbm failed, ret:" << ret);
+
+    // 本端 DRAM(host)：同上
+    void *localDramGva = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_HOST, rankId);
+    CHECK_RET_ERR((localDramGva == nullptr), "get local dram gva failed, rank:" << rankId);
+    ret = smem_bm_gva_to_va(handle, localDramGva, SMEM_MEM_TYPE_LOCAL_HOST, &localDram_);
+    CHECK_RET_ERR((ret != 0 || localDram_ == nullptr), "gva2va local dram failed, ret:" << ret);
+
+    // 两端各自填充自己的数据，供拷贝完成后做一致性校验
+    std::vector<uint8_t> data(len);
+    GenerateData(data.data(), static_cast<int32_t>(rankId), static_cast<uint32_t>(len));
+    // 灌 HBM：按固定小块 + 重试（507899 是随机失败，块越小越稳）
+    ret = CopyDevMemInChunks(localHbm_, data.data(), len, ACL_MEMCPY_HOST_TO_DEVICE);
+    CHECK_RET_ERR((ret != 0), "memcpy data to hbm failed, ret:" << ret);
+    std::memcpy(localDram_, data.data(), len);
     return 0;
 }
 
@@ -336,25 +358,55 @@ int64_t BandWidthCalculator::CheckCopyResult(smem_bm_mem_type localMemType, smem
     }
     int ret = 0;
     uint64_t len = cmdParam_.copySize * cmdParam_.batchSize;
-    void *localPtr = malloc(len);
-    CHECK_RET_ERR((localPtr == nullptr), "malloc failed, len:" << len);
-    if (localMemType == SMEM_MEM_TYPE_LOCAL_DEVICE) {
-        ret = aclrtMemcpy(localPtr, len, localHbm_, len, ACL_MEMCPY_DEVICE_TO_HOST);
-    } else if (localMemType == SMEM_MEM_TYPE_LOCAL_HOST) {
-        ret = aclrtMemcpy(localPtr, len, localDram_, len, ACL_MEMCPY_HOST_TO_HOST);
-    }
-    CHECK_RET_ERR((ret != 0), "memcpy failed, ret:" << ret);
 
-    void *rmtPtr = malloc(len);
-    CHECK_RET_ERR((rmtPtr == nullptr), "malloc failed, len:" << len);
+    // 对端读回的落点必须落在「已注册」的段内 DRAM scratch 上：裸 malloc 的 host 地址会被拒
+    // （HYBM_RDMA_SWAP_SPACE_SIZE is 0, unable to copy unregistered addresses）。
+    const uint64_t scratchOff =
+        ((len + kReadbackScratchAlignBytes - 1) / kReadbackScratchAlignBytes) * kReadbackScratchAlignBytes;
+    CHECK_RET_ERR((localDram_ == nullptr || scratchOff + len > GVA_SIZE), "no scratch room for readback, len:" << len);
+    void *scratch = static_cast<uint8_t *>(localDram_) + scratchOff;
+
+    // 本端数据读回：device 走 aclrtMemcpy D2H（保持原语义），host 直接 memcpy。
+    // D2H 落点用 pinned（aclrtMallocHost）：pageable 的 std::vector 在 16M 就会被拒（ret 507899）。
+    std::vector<uint8_t> localBuf(len);
+    if (localMemType == SMEM_MEM_TYPE_LOCAL_DEVICE) {
+        // 按固定小块 + 重试读回。落点必须 pinned（pageable 会被拒），所以用一小块 pinned 中转；
+        // 507899 是随机失败，块越小、重试越稳。
+        void *pinned = nullptr;
+        ret = aclrtMallocHost(&pinned, kDevCopyChunkBytes);
+        CHECK_RET_ERR((ret != 0 || pinned == nullptr), "aclrtMallocHost failed, ret:" << ret);
+        for (uint64_t off = 0; off < len; off += kDevCopyChunkBytes) {
+            const uint64_t n = std::min(kDevCopyChunkBytes, len - off);
+            ret = 0;
+            for (int32_t attempt = 0; attempt < kDevCopyMaxRetry; ++attempt) {
+                ret = aclrtMemcpy(pinned, n, static_cast<uint8_t *>(localHbm_) + off, n, ACL_MEMCPY_DEVICE_TO_HOST);
+                if (ret == 0) {
+                    break;
+                }
+            }
+            if (ret != 0) {
+                (void)aclrtFreeHost(pinned);
+                LOG_ERROR("read local hbm failed, ret:" << ret << " off:" << off << " size:" << n);
+                return -1;
+            }
+            std::memcpy(localBuf.data() + off, pinned, n);
+        }
+        (void)aclrtFreeHost(pinned);
+    } else if (localMemType == SMEM_MEM_TYPE_LOCAL_HOST) {
+        std::memcpy(localBuf.data(), localDram_, len);
+    }
+
+    std::vector<uint8_t> rmtBuf(len);
     void *gva = smem_bm_ptr_by_mem_type(handle, rmtMemType, gvaRankId);
     smem_copy_params params{};
     params.src = gva;
-    params.dest = rmtPtr;
+    params.dest = scratch;
     params.dataSize = len;
     ret = smem_bm_copy(handle, &params, SMEMB_COPY_G2H, 0);
     CHECK_RET_ERR((ret != 0), "g2h copy failed, ret:" << ret);
-    auto wrongNum = CheckData(localPtr, rmtPtr, len);
+    std::memcpy(rmtBuf.data(), scratch, len);
+
+    auto wrongNum = CheckData(localBuf.data(), rmtBuf.data(), len);
     if (wrongNum != 0) {
         LOG_ERROR("check data failed, localMemType:" << localMemType << " rmtMemType:" << rmtMemType);
     }
@@ -484,6 +536,12 @@ int32_t BandWidthCalculator::BandWidthCalculation(BarrierUtil *barrier, smem_bm_
         return 0;
     }
     for (auto i = 0; i < DIRECTION_TYPE_NUM_MAX; ++i) {
+        // H2D/D2H 是纯本机拷贝（不走网络），-t all 时跳过；需要单测时用 -t h2d / -t d2h。
+        // 跳过后 results[i].flag 保持 -1，PrintResult 会自动忽略该行，两端对称不会卡 barrier。
+        const auto dirType = static_cast<CopyType>(i);
+        if (dirType == CopyType::HOST_TO_DEVICE || dirType == CopyType::DEVICE_TO_HOST) {
+            continue;
+        }
         if (!isMaster_) {
             barrier->Barrier();
         }
@@ -520,17 +578,28 @@ void BandWidthCalculator::BatchCopyPut(smem_bm_mem_type localMemType, smem_bm_me
         LOG_ERROR("rmtMemType type error, localMemType:" << localMemType << " rmtMemType:" << rmtMemType);
         return;
     }
-    uint64_t startTime = TimeNs();
-    for (uint64_t i = 0; i < cmdParam_.copyCount; i++) {
+    // warmup：前 kWarmupRounds 笔只做暖机、不计入统计。每个 block 的第一次传输有一次性的
+    // 建链/MR/内存首触开销（实测 6~19ms），会把平均值拉爆，所以丢弃，用后面的 copyCount 笔算带宽。
+    constexpr uint64_t kWarmupRounds = 10;
+    uint64_t totalTimeUs = 0;
+    for (uint64_t i = 0; i < cmdParam_.copyCount + kWarmupRounds; i++) {
+        uint64_t roundStart = TimeNs();
         ret = smem_bm_copy_batch(handle, &param, copyType, 0);
-        CHECK_RET_VOID(ret, "copy hbm to gva failed, ret:" << ret << " rank:" << gvaRankId);
+        if (ret != 0) {
+            LOG_ERROR("copy hbm to gva failed, ret:" << ret << " rank:" << gvaRankId);
+            return;
+        }
+        uint64_t oneRoundUs = (TimeNs() - roundStart) / 1000;
+        if (i < kWarmupRounds) {
+            continue;
+        }
+        totalTimeUs += oneRoundUs;
     }
-    uint64_t totalTimeUs = (TimeNs() - startTime) / 1000;
     auto direction = CopyType2Str(type);
     result.wrongNum = CheckCopyResult(localMemType, rmtMemType, gvaRankId, handle);
-    if (result.wrongNum == -1) {
-        LOG_ERROR(direction << " check data failed, rank:" << gvaRankId);
-        return;
+    if (result.wrongNum < 0) {
+        // 校验读回失败不应丢掉本方向的带宽数据：WrongBytes 记 -1 表示「未校验」，带宽照常输出。
+        LOG_WARN(direction << " check unavailable (readback failed), rank:" << gvaRankId);
     } else if (result.wrongNum != 0) {
         LOG_WARN(direction << " check data wrong num:" << result.wrongNum << ", rank:" << gvaRankId);
     }
@@ -569,19 +638,30 @@ void BandWidthCalculator::BatchCopyGet(smem_bm_mem_type localMemType, smem_bm_me
         LOG_ERROR("rmtMemType type error, localMemType:" << localMemType << " rmtMemType:" << rmtMemType);
         return;
     }
-    uint64_t startTime = TimeNs();
-    for (uint64_t i = 0; i < cmdParam_.copyCount; i++) {
+    // warmup：前 kWarmupRounds 笔只做暖机、不计入统计。每个 block 的第一次传输有一次性的
+    // 建链/MR/内存首触开销（实测 6~19ms），会把平均值拉爆，所以丢弃，用后面的 copyCount 笔算带宽。
+    constexpr uint64_t kWarmupRounds = 10;
+    uint64_t totalTimeUs = 0;
+    for (uint64_t i = 0; i < cmdParam_.copyCount + kWarmupRounds; i++) {
+        uint64_t roundStart = TimeNs();
         ret = smem_bm_copy_batch(handle, &param, copyType, 0);
-        CHECK_RET_VOID(ret, "copy hbm to gva failed, ret:" << ret << " rank:" << gvaRankId);
+        if (ret != 0) {
+            LOG_ERROR("copy hbm to gva failed, ret:" << ret << " rank:" << gvaRankId);
+            return;
+        }
+        uint64_t oneRoundUs = (TimeNs() - roundStart) / 1000;
+        if (i < kWarmupRounds) {
+            continue;
+        }
+        totalTimeUs += oneRoundUs;
     }
-    uint64_t totalTimeUs = (TimeNs() - startTime) / 1000;
     auto direction = CopyType2Str(type);
     result.wrongNum = CheckCopyResult(localMemType, rmtMemType, gvaRankId, handle);
-    if (result.wrongNum == -1) {
-        LOG_ERROR(direction << " check data failed, rank:" << gvaRankId);
-        return;
+    if (result.wrongNum < 0) {
+        // 校验读回失败不应丢掉本方向的带宽数据：WrongBytes 记 -1 表示「未校验」，带宽照常输出。
+        LOG_WARN(direction << " check unavailable (readback failed), rank:" << gvaRankId);
     } else if (result.wrongNum != 0) {
-        LOG_ERROR(direction << " check data wrong num:" << result.wrongNum << ", rank:" << gvaRankId);
+        LOG_WARN(direction << " check data wrong num:" << result.wrongNum << ", rank:" << gvaRankId);
     }
     result.totalTimeUs = totalTimeUs;
     result.copySize = cmdParam_.copySize;

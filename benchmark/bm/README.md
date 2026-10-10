@@ -1,8 +1,10 @@
+# 带宽性能测试用例
+
 ## 代码实现介绍
 
 本样例基于smem_bm层接口，测试如下路径的带宽/时延性能：
 
-```
+```text
 1、H2D
 2、D2H
 3、H2RD
@@ -14,6 +16,15 @@
 9、RD2D
 10、RD2H
 ```
+
+> **内存方式**：本地 DRAM/HBM 统一取自 `smem_bm_create` 的**段内内存**（`smem_bm_ptr_by_mem_type` +
+> `smem_bm_gva_to_va`），**不做动态注册**（不再 `smem_bm_register_user_mem`）。
+> 原因：`device_rdma` over HCOMM(A2/A3) 与 A5(950) host RoCE 都不识别动态注册的地址，那类地址只能走
+> swap 中转，测不到直传带宽。
+> 两个约束：① 单次拷贝量 `batchSize × copySize` 不能超过段大小（`GVA_SIZE`，4GiB）；
+> ② 段内 DRAM 需要大页，机器没配大页时先 `export MF_HYBM_ENABLE_4K_PAGE=1`，否则 `smem_bm_create` 会失败。
+> 另注意：`-t all` 会**跳过** `H2D`/`D2H`（纯本机拷贝，与网络无关）；需要单测时用 `-t h2d` / `-t d2h`。
+> 结果表里 `WrongBytes = -1` 表示**该方向校验读回失败、未做校验**（带宽数值仍有效）。
 
 本样例需要在npu环境下编译运行
 
@@ -45,7 +56,7 @@ source /usr/local/memfabric_hybrid/set_env.sh
 
 或执行编译脚本：
 
-```
+```bash
 bash build_bm_perf_benchmark.sh
 ```
 
@@ -63,6 +74,7 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   ```bash
   ./bm_perf_benchmark -bw -ot [DATA_OP_TYPE] -t [DATA_COPY_TYPE] -cc[COPY_COUNT] -s [BLOCK_SIZE] -bs[BATCH_SIZE] -d [DEVICE_START] -ws [WORLD_SIZE] -lrs [LOCAL_RANK_SIZE] -rs [RANK_START] -ip [SERVER_IP] -rdma [RDMA_URL]
   ```
+
     - DATA_OP_TYPE: 数据操作类型,参考smem_bm_data_op_type定义,
       可选项[sdma,device_rdma,device_urma,device_uboe,host_rdma,host_urma,host_tcp]
     - DATA_COPY_TYPE: 数据拷贝方式,可选项[h2d,d2h,h2rd,h2rh,d2rh,d2rd,rh2d,rh2h,rd2h,rd2d,all],当选择all时，会依次测试其余所有拷贝路径
@@ -72,7 +84,7 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
     - DEVICE_START: 本节点使用的卡号的起始值,本节点的卡号范围就是[DEVICE_START, DEVICE_START + LOCAL_RANK_SIZE)
     - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。
       关于 configStore 配置存储系统的说明，请参考
-      [config_store_cluster_ha](../../../doc/config_store_cluster_ha.md)。
+      [config_store_cluster_ha](../../docs/zh/config_store_cluster_ha.md)。
     - RDMA_URL: ```tcp://<ip>:<port>``` 使用数据操作类型为host_rdma时需要额外指定的rdma网卡的ip和端口,其余操作类型可省略（-rdma参数主要用于host RDMA/hcomUrl）
     - BLOCK_SIZE: 单个拷贝数据块的大小
     - BATCH_SIZE：每次下发拷贝的block个数
@@ -107,3 +119,18 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   nodeA: ./bm_perf_benchmark -bw -ot device_uboe -t all -s 2097152 -ws 8 -lrs 4 -rs 0 -d 2 -ip tcp://x.x.x.x:8570
   nodeB: ./bm_perf_benchmark -bw -ot device_uboe -t all -s 2097152 -ws 8 -lrs 4 -rs 4 -d 4 -ip tcp://x.x.x.x:8570
   ```
+
+### 出「块大小 × 8 方向」带宽矩阵（A5(950) host RoCE / device_rdma）
+
+两台各起一个进程，`-ip` 都填同一台；一台 `-rs 0`，另一台 `-rs 1`：
+
+```bash
+for S in 16K 32K 64K 128K 256K 512K 1M 2M; do
+  ./bm_perf_benchmark -bw -ot device_rdma -t all -s $S -cc 100 -ws 2 -lrs 1 -rs 0 -d 0 \
+      -ip tcp://<server_ip>:8570
+done
+# 另一台：-rs 0 改成 -rs 1，其余不变
+```
+
+每档打一张 8 行表，看 `BW(GB/s)` 列即可。`-s` 支持 `K/M/G`；不传 `-bs` 时每轮自动按
+`128MiB / copySize` 算 batchSize（各档数据量一致）。两台各测自己发起的传输，**交付取同一台**的结果，勿混用。

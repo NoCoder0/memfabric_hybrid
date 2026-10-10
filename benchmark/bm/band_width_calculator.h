@@ -54,7 +54,7 @@ typedef struct {
     uint32_t localRankStart{0};
     uint64_t copyCount{1000};
     uint64_t copySize{1024};
-    uint64_t batchSize{1};
+    uint64_t batchSize{0}; // 0 = 自动：一次调用传 128MiB，即 batchSize = 128MiB / copySize
     uint32_t deviceId{0};
 } BwTestParam;
 

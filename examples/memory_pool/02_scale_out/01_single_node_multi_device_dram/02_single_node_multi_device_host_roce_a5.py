@@ -13,7 +13,7 @@
 
 A5 上 ROCE + DEVICE 端点不可用（AicpuTsRoceEndpoint 只支持 910B/910_93），
 所以 device_rdma + hcomm 在 A5 上落到 ROCE + HOST 端点（CpuRoceEndpoint +
-HostCpuRoceChannel），数据面由主机侧 Nbi 提交（对齐 hixl 的 BatchTransferHostAsync），
+HostCpuRoceChannel），数据面由主机侧 Nbi 提交，
 不下发 AICPU 算子。底层仍是标准 RoCE（ibv_*），不是 URMA。
 
 使用前提：
@@ -21,7 +21,7 @@ HostCpuRoceChannel），数据面由主机侧 Nbi 提交（对齐 hixl 的 Batch
        address_3=10.1.0.114
        address_5=10.1.0.116
 2. 必须用**两张不同卡**的 host RoCE 口：同一颗 UB 芯片的两个口之间 RoCE 走不通
-   （表现为 RDMA write 收不到 ACK、CQ 报 IBV_WC_RETRY_EXC_ERR），hixl 也一样。
+   （表现为 RDMA write 收不到 ACK、CQ 报 IBV_WC_RETRY_EXC_ERR）。
    本机 hrn5_0/hrn5_1 是同一颗芯片的两个口，故不要用 10.1.0.111 + 10.1.0.112 这一对。
 3. 需要 export HCCL_INTRA_ROCE_ENABLE=1。
 """

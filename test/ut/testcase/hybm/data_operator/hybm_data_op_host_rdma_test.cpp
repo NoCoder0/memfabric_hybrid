@@ -237,6 +237,10 @@ public:
 
     void TearDown() override
     {
+        // 清理本用例初始化的对象，避免把已初始化状态泄漏给后续用例
+        if (dataOp_ != nullptr) {
+            dataOp_->UnInitialize();
+        }
         GlobalMockObject::verify();
         transportManagerMock_->Reset();
     }
