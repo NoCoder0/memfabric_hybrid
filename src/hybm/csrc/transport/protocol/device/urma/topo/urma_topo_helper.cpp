@@ -128,8 +128,8 @@ static Result TryGetIpFromConfig(const std::string &configPath, uint32_t phyDevi
 {
     std::ifstream configFile(configPath);
     if (!configFile.is_open()) {
-        BM_LOG_ERROR("device_urma cannot open /etc/hccn.conf: " << configPath << ", phyDeviceId=" << phyDeviceId
-                                                                << ", rankId=" << rankId);
+        BM_LOG_WARN("device_urma cannot open " << configPath << ", phyDeviceId=" << phyDeviceId
+                                               << ", rankId=" << rankId);
         return BM_ERROR;
     }
     const std::string targetKey = "address_" + std::to_string(phyDeviceId);
@@ -168,8 +168,8 @@ static Result TryGetIpFromConfig(const std::string &configPath, uint32_t phyDevi
             return BM_OK;
         }
     }
-    BM_LOG_ERROR("device_urma key '" << targetKey << "' not found or empty in " << configPath
-                                     << ", phyDeviceId=" << phyDeviceId << ", rankId=" << rankId);
+    BM_LOG_WARN("device_urma key '" << targetKey << "' not found or empty in " << configPath
+                                    << ", phyDeviceId=" << phyDeviceId << ", rankId=" << rankId);
     return BM_ERROR;
 }
 
@@ -261,6 +261,18 @@ Result GetDeviceUBoEIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &
         toolPath = "hccn_tool";
     }
     return GetDeviceUBoEIpAddrFromSources(toolPath, "/etc/hccn.conf", phyDeviceId, rankId, addrType, addrData);
+}
+
+Result GetDeviceIpFromHccnConf(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+                               std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData)
+{
+    const std::string configPath = "/etc/hccn.conf";
+    std::string ipStr;
+    auto ret = TryGetIpFromConfig(configPath, phyDeviceId, rankId, ipStr);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    return ParseIpStr(phyDeviceId, ipStr, configPath, addrType, addrData);
 }
 
 } // namespace device

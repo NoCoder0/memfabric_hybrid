@@ -31,6 +31,11 @@ Result GetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_L
 Result GetDeviceUBoEIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
                            std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
 
+// Read-only half of GetDeviceUBoEIpAddr: parse the phyId -> IP mapping purely from /etc/hccn.conf,
+// without forking hccn_tool. Host-RoCE callers use this as the authoritative first source.
+Result GetDeviceIpFromHccnConf(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
+                               std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> &addrData);
+
 #ifdef UT_ENABLED
 // Internal seam for UT: inject mock hccn_tool path and temp /etc/hccn.conf.
 // Production wrapper calls with default paths; tests inject temp paths.

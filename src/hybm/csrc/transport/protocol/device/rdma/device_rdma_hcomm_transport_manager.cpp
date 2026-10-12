@@ -12,6 +12,7 @@
 
 #include "device_rdma_hcomm_transport_manager.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -161,13 +162,35 @@ static Result GetDeviceIpViaHccnTool(uint32_t phyDeviceId, struct in_addr &addr)
     return BM_ERROR;
 }
 
+// 解析 "ens<slot>f<port>"，其它命名返回 false。
+static bool ParseEnsIfName(const char *name, unsigned &slot, unsigned &port)
+{
+    constexpr unsigned MAX_IDX = 255U;
+    if (name == nullptr || std::strncmp(name, "ens", 3) != 0) {
+        return false;
+    }
+    const char *p = name + 3;
+    char *end = nullptr;
+    const unsigned long s = std::strtoul(p, &end, 10);
+    if (end == p || *end != 'f' || s > MAX_IDX) {
+        return false;
+    }
+    p = end + 1;
+    const unsigned long f = std::strtoul(p, &end, 10);
+    if (end == p || *end != '\0' || f > MAX_IDX) {
+        return false;
+    }
+    slot = static_cast<unsigned>(s);
+    port = static_cast<unsigned>(f);
+    return true;
+}
+
 // A5(950) host RoCE：用 getifaddrs 取「本 device 对应网口」的 IPv4，不依赖 /etc/hccn.conf
 // （后者 / hccn_tool 仍作为后续兜底保留）。
 //
-// 注意：网口命名在不同机型上不同，这里按候选逐个试，不写死：
-//   - MF_HOST_ROCE_IFNAME 显式指定（优先级最高，机型不认识时用它）
-//   - ens<phyId/4>f<phyId%4>：每 slot 4 个 func 的机型（2 卡各 4 口，hrn5_0..hrn5_7 ↔ ens0f0..ens1f3）
-//   - ens<phyId/2>f<phyId%2>：每 slot 2 个 func 的机型（4 卡各 2 口）
+// 网口命名 ens<slot>f<port> 固定，但「每 slot 几个 func」因机型而异（2 卡各 4 口 / 4 卡各 2 口），
+// 写死任何一种都会在另一类机型上选错口（如 4 卡各 2 口机型上 phyId=4 会被算成 ens1f0，实际是 ens2f0）。
+// 因此这里从本机实际存在的网口反推：每 slot 口数 = port 最大值 + 1，再按 phyId 顺序切分 slot/port。
 static Result GetIpViaGetifaddrs(uint32_t phyDeviceId, struct in_addr &addr)
 {
     const char *forced = std::getenv("MF_HOST_ROCE_IFNAME");
@@ -175,16 +198,29 @@ static Result GetIpViaGetifaddrs(uint32_t phyDeviceId, struct in_addr &addr)
     if (forced != nullptr && forced[0] != '\0') {
         candidates.emplace_back(forced);
     }
-    char ifName[IFNAMSIZ]{};
-    (void)snprintf(ifName, sizeof(ifName), "ens%uf%u", phyDeviceId / 4U, phyDeviceId % 4U);
-    candidates.emplace_back(ifName);
-    (void)snprintf(ifName, sizeof(ifName), "ens%uf%u", phyDeviceId / 2U, phyDeviceId % 2U);
-    candidates.emplace_back(ifName);
 
     struct ifaddrs *ifap = nullptr;
     if (getifaddrs(&ifap) != 0) {
         BM_LOG_ERROR("GetIpViaGetifaddrs: getifaddrs failed, errno=" << errno);
         return BM_ERROR;
+    }
+
+    unsigned maxPort = 0;
+    bool sawEns = false;
+    for (auto *p = ifap; p != nullptr; p = p->ifa_next) {
+        unsigned slot = 0;
+        unsigned port = 0;
+        if (!ParseEnsIfName(p->ifa_name, slot, port)) {
+            continue;
+        }
+        sawEns = true;
+        maxPort = std::max(maxPort, port);
+    }
+    if (sawEns) {
+        const unsigned portsPerSlot = maxPort + 1U;
+        char ifName[IFNAMSIZ]{};
+        (void)snprintf(ifName, sizeof(ifName), "ens%uf%u", phyDeviceId / portsPerSlot, phyDeviceId % portsPerSlot);
+        candidates.emplace_back(ifName);
     }
 
     Result ret = BM_INVALID_PARAM;
@@ -208,8 +244,9 @@ static Result GetIpViaGetifaddrs(uint32_t phyDeviceId, struct in_addr &addr)
         }
     }
     if (ret != BM_OK) {
-        BM_LOG_WARN("GetIpViaGetifaddrs: no AF_INET on candidates for phyId="
-                    << phyDeviceId << " (tried " << candidates.size() << " ifname(s), e.g. " << candidates[0] << ")");
+        const std::string first = candidates.empty() ? std::string("(none)") : candidates[0];
+        BM_LOG_WARN("GetIpViaGetifaddrs: no AF_INET for phyId=" << phyDeviceId << " (tried " << candidates.size()
+                                                                << " ifname(s), e.g. " << first << ")");
     }
     freeifaddrs(ifap);
     return ret;
@@ -262,10 +299,18 @@ Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &des
 
     // Get NPU-side IP address for HCOMM endpoint creation.
     {
-        // 0) A5(950) host RoCE：用 getifaddrs 按候选规则逐个试（MF_HOST_ROCE_IFNAME -> ens<phyId/4>f<phyId%4>
-        //    -> ens<phyId/2>f<phyId%2>）取本 device 网口 IPv4，不依赖 /etc/hccn.conf；
-        //    失败则继续走下面的原有链路（hccn_tool 等兜底保留）。
+        // 0) A5(950) host RoCE：先读 /etc/hccn.conf 拿 phyId->IP 的权威映射（不依赖网口命名，
+        //    也不 fork hccn_tool）；读不到再按 MF_HOST_ROCE_IFNAME / 本机网口拓扑推算 ens<slot>f<port>；
+        //    都失败则继续走下面的原有链路（hccn_tool 等兜底保留）。
         if (hostRocePath_) {
+            CommAddrType confAddrType = COMM_ADDR_TYPE_RESERVED;
+            std::array<uint8_t, URMA_ENDPOINT_RAW_LEN> confAddrBytes{};
+            if (GetDeviceIpFromHccnConf(phyDeviceId_, rankId_, confAddrType, confAddrBytes) == BM_OK) {
+                desc.commAddr.type = confAddrType;
+                std::memcpy(desc.commAddr.raws, confAddrBytes.data(), sizeof(desc.commAddr.raws));
+                return BM_OK;
+            }
+
             struct in_addr nicIpv4 {};
             if (GetIpViaGetifaddrs(phyDeviceId_, nicIpv4) == BM_OK) {
                 desc.commAddr.type = COMM_ADDR_TYPE_IP_V4;
