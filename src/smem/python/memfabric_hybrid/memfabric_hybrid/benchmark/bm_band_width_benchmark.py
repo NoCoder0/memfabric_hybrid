@@ -357,10 +357,17 @@ def run_bm(args):
             sync.abort()
         time.sleep(0.2)
 
-    for p in processes:
-        p.join()
-
     results = []
+    for local_idx, p in enumerate(processes):
+        p.join()
+        if p.exitcode != 0:
+            results.append(
+                {
+                    "rank_id": rank_start + local_idx,
+                    "error": f"worker failed: device_id={device_start + local_idx}, pid={p.pid}, exitcode={p.exitcode}",
+                }
+            )
+
     while not result_queue.empty():
         results.append(result_queue.get())
 
