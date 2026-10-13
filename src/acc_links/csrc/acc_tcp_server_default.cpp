@@ -543,7 +543,8 @@ Result AccTcpServerDefault::ConnectToPeerServer(const std::string &peerIp, uint1
     }
 
     SafeCloseFd(tmpFD);
-    LOG_ERROR_LIMIT("Failed to connect to " << ipAndPort << " after tried " << timesRetried << " times");
+    // 对端实例先行退出（teardown 竞态）时必然走到这里，属预期场景，降级 INFO；
+    LOG_INFO_LIMIT("Failed to connect to " << ipAndPort << " after tried " << timesRetried << " times");
     return ACC_ERROR;
 }
 

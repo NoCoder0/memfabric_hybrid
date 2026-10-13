@@ -1806,7 +1806,10 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             ret = DlHcommApi::HcommChannelCreate(localEndpoint_[index], COMM_ENGINE_AICPU, &channelDesc, 1,
                                                  &channelHandle);
             if (ret != 0) {
-                BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, peer: " << peerRank << " ret: " << ret);
+                BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, peer: "
+                             << peerRank << " peerDev=" << peerDesc.devPhyId << " peerServer=" << peerDesc.serverIdx
+                             << " peerSuperPod=" << peerDesc.superPodIdx << " localDev=" << phyDeviceId_
+                             << " ret: " << ret);
                 auto rollbackThread = threadHandle;
                 // No stream sync needed: thread was just allocated, no RemoteIO launched during Prepare.
                 (void)DlHcommApi::HcommThreadFree(&rollbackThread, 1);
@@ -1828,13 +1831,20 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             state.channel = channelHandle;
             resourcesCreatedInThisCall = true;
 
-            BM_LOG_INFO("device_urma Prepare created channel/thread, peer: " << peerRank << " thread: " << threadHandle
-                                                                             << " channel: " << channelHandle);
+            BM_LOG_INFO("device_urma Prepare created channel/thread, peer: "
+                        << peerRank << " peerDev=" << peerDesc.devPhyId << " peerServer=" << peerDesc.serverIdx
+                        << " peerSuperPod=" << peerDesc.superPodIdx << " localDev=" << phyDeviceId_
+                        << " thread: " << threadHandle << " channel: " << channelHandle);
 
             // 7.5 Wait for channel ready before importing mem keys
             ret = HcommApiWrapper::WaitForChannelReady(channelHandle, peerRank);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("device_urma Prepare WaitForChannelReady failed, peer: " << peerRank << " ret: " << ret);
+                // peerRank 是 rankId*64+entryIdx 的合成值，不直观；此处补对端/本端卡定位信息，
+                // 卡号与 serverIdx 来自对端 endpoint desc（对端序列化其真实拓扑），可直接定位到卡
+                BM_LOG_ERROR("device_urma Prepare WaitForChannelReady failed, peer: "
+                             << peerRank << " peerDev=" << peerDesc.devPhyId << " peerServer=" << peerDesc.serverIdx
+                             << " peerSuperPod=" << peerDesc.superPodIdx << " localDev=" << phyDeviceId_
+                             << " localServer=" << serverId_ << " ret: " << ret);
                 auto rbRet = DlHcommApi::HcommChannelDestroy(&channelHandle, 1);
                 if (rbRet != 0) {
                     BM_LOG_ERROR("device_urma Prepare rollback HcommChannelDestroy failed, "

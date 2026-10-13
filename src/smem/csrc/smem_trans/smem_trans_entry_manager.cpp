@@ -59,9 +59,13 @@ Result SmemTransEntryManager::CreateEntryByName(const std::string &name, const s
         rank = trans.rankId;
         auto tcpConfigStore = Convert<ConfigStore, ConfigStoreManager>(confStore);
         tcpConfigStore->SetRankId(static_cast<int32_t>(rank));
-        SM_LOG_TRACE("Success to auto ranking rankId: " << trans.rankId << " deviceId: " << deviceId_);
+        // TRACE（开关可控）：与 entity Initialize 的合成 rankId（rank*64+entryIdx）对照定位进程/卡；
+        // 多 store 场景补充 storeUrl/clientUrl 定位是哪个对端 store、本端哪个会话
+        SM_LOG_TRACE("Success to auto ranking rankId: " << trans.rankId << " deviceId: " << deviceId_
+                                                        << " storeUrl: " << storeUrl << " clientUrl: " << name);
     } else {
-        SM_LOG_ERROR("Failed to auto ranking deviceId: " << deviceId_ << ", ret: " << ret
+        SM_LOG_ERROR("Failed to auto ranking storeUrl: " << storeUrl << " clientUrl: " << name
+                                                         << " deviceId: " << deviceId_ << ", ret: " << ret
                                                          << ", dataSize: " << rankIdData.size());
         return SM_ERROR;
     }

@@ -53,6 +53,15 @@ typedef union {
 
 using aclError = int32_t;
 constexpr aclError ACL_SUCCESS = 0;
+
+// CANN runtime 通用内部错误码：rtIpcOpenMemory 等接口返回。plog 证据表明该码在 IPC open 上
+// 覆盖两类对端未就绪的瞬时拒绝：白名单未设置（drv: Find wlist fail / Wlist verify fail）
+// 与节点不可见（drv: Query ipc node attr fail）；调用方可按可重试处理
+constexpr aclError ACL_RT_INTERNAL_ERROR = 507899;
+
+// 驱动 IPC 名字节点不存在：RtIpcDestroyMemoryName 对已销毁/对端先行退出的共享名返回，
+// teardown 期属预期场景
+constexpr aclError ACL_RT_IPC_NAME_NOT_FOUND = 107002;
 using aclrtBinHandle = void *;
 using aclrtFuncHandle = void *;
 using aclrtArgsHandle = void *;

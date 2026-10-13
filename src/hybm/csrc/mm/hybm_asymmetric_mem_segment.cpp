@@ -1055,12 +1055,23 @@ uint64_t AsymmetricMemSegment::ReserveLva(const UserSliceExportInfo &info) noexc
     return 0;
 }
 
+// 507899（ACL_RT_INTERNAL_ERROR，定义见 dl_acl_api.h）在 IPC open 上覆盖两类对端未就绪的
+// 瞬时拒绝：白名单未设置与节点不可见，初始化竞争期常见，对端白名单落地后重试即成功。此处
+// 按可重试码上抛，复用上层既有的 WARN + 服务端重试管线；其余失败码仍按硬错误处理
+
 Result AsymmetricMemSegment::UserMemImportAndMapName(void **ptr, const UserSliceExportInfo &info) noexcept
 {
     const uint16_t type = UserMemNameType(info.name);
     if (type == USER_HBM_NAME_TYPE_IPC) {
         auto ret = DlAclApi::RtIpcOpenMemory(ptr, info.name + 1);
         if (ret != BM_OK) {
+            // 对端 IPC 白名单/节点尚未就绪属瞬时竞争，按可重试码上抛，交上层状态机重试
+            if (ret == ACL_RT_INTERNAL_ERROR) {
+                BM_LOG_WARN("IpcOpenMemory(" << info.name + 1 << ") not ready, will retry: rankId=" << options_.rankId
+                                             << " sdid=" << sdid_ << " pid=" << pid_ << " deviceId=" << devicePhyId_
+                                             << " remoteDeviceId=" << info.devicePhyId << " ret=" << ret);
+                return BM_P2P_NOT_READY;
+            }
             BM_LOG_ERROR("IpcOpenMemory(" << info.name + 1 << ") failed: rankId=" << options_.rankId
                                           << " sdid=" << sdid_ << " pid=" << pid_ << " deviceId=" << devicePhyId_
                                           << " remoteDeviceId=" << info.devicePhyId << " ret=" << ret);
@@ -1171,6 +1182,10 @@ void AsymmetricMemSegment::UserMemUnImportName(uint32_t sliceId) noexcept
     }
 }
 
+// 107002（ACL_RT_IPC_NAME_NOT_FOUND，定义见 dl_acl_api.h）：共享名不存在（对端先行退出/
+// 名字已销毁）时 teardown 期属预期场景，降级 WARN；其余失败仍按 ERROR 记录（可能泄漏，
+// 需人工跟进）
+
 Result AsymmetricMemSegment::UserMemDestroyName(const char *name) noexcept
 {
     // 仅 IPC 名有可销毁的共享名；VMM 导出侧 retain 引用已在导出时释放，无资源可清理
@@ -1179,8 +1194,13 @@ Result AsymmetricMemSegment::UserMemDestroyName(const char *name) noexcept
     }
     auto ret = DlAclApi::RtIpcDestroyMemoryName(name + 1);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("destroy memory name failed: rankId=" << options_.rankId << " name=" << name + 1
-                                                           << " ret=" << ret);
+        if (ret == ACL_RT_IPC_NAME_NOT_FOUND) {
+            BM_LOG_WARN("destroy memory name skipped (already gone): rankId=" << options_.rankId << " name=" << name + 1
+                                                                              << " ret=" << ret);
+        } else {
+            BM_LOG_ERROR("destroy memory name failed: rankId=" << options_.rankId << " name=" << name + 1
+                                                               << " ret=" << ret);
+        }
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
