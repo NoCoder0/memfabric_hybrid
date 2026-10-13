@@ -816,6 +816,13 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalAsync(hybm_batch_copy_params &params,
 Result DataOpDeviceRDMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params, int32_t direction,
                                                  const ExtOptions &options) noexcept
 {
+    // A5(950) host RoCE：走 stream 逐笔异步 + 末尾一次同步。实测 16K 小包下逐笔异步明显优于
+    // AclrtMemcpyBatch 同步批量（同包同参数 3 轮对照，D2RD 1.01 vs 0.61 GB/s），950 不再用批量接口。
+    // 其它 SoC 保持原有批量实现，行为不变。
+    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
+        return BatchDataCopyLocalAsync(params, direction, options);
+    }
+
     uint32_t batchNum = params.batchSize;
     std::vector<aclrtMemcpyBatchAttr> attrs(batchNum);
     std::vector<size_t> attrsIds(batchNum);
