@@ -202,25 +202,29 @@ def _register_benchmark_command(components) -> None:
         "--world-size",
         type=int,
         default=-1,
-        help="total NPU count in cluster (default: 256 for multi-node, auto-detect for single-node)",
+        help="global rank count; twice local ranks selects paired write/read "
+        "(default: local ranks for loopback --ip, otherwise twice local ranks)",
     )
     benchmark.add_argument(
         "--local-rank-size",
         type=int,
         default=None,
-        help="NPU count on this node (default: auto-detected)",
+        help="NPU process count started by this command (default: visible NPU count)",
     )
     benchmark.add_argument(
         "--rank-start",
         type=int,
         default=0,
-        help="starting rankId for the local node (default: 0)",
+        help="starting rankId (default: local rank count for paired read, otherwise 0)",
     )
     benchmark.add_argument(
+        "--nic",
         "--rdma",
+        dest="nic",
         type=str,
         default="tcp://0.0.0.0:10005",
-        help="host RDMA NIC IP and port, format tcp://<ip>:<port> (default: tcp://0.0.0.0:10005)",
+        help="local transport NIC IP and port, format tcp://<ip>:<port> "
+        "(--rdma is a compatibility alias; default: tcp://0.0.0.0:10005)",
     )
     benchmark.add_argument(
         "--local-hbm-size",
@@ -234,6 +238,28 @@ def _register_benchmark_command(components) -> None:
         default="host",
         help="memory type of the peer side that is read from / written to; "
         "'device' needs --local-hbm-size > 0 (default: host)",
+    )
+    _register_paired_arguments(benchmark)
+
+
+def _register_paired_arguments(benchmark) -> None:
+    benchmark.add_argument(
+        "--sync-port",
+        type=int,
+        default=None,
+        help="paired synchronization TCP port on the write host (default: store port + 1)",
+    )
+    benchmark.add_argument(
+        "--sync-timeout",
+        type=float,
+        default=3600,
+        help="paired synchronization timeout in seconds (default: 3600, one hour)",
+    )
+    benchmark.add_argument(
+        "--warmup-count",
+        type=int,
+        default=10,
+        help="untimed copies before each write/read measurement in paired mode (default: 10)",
     )
 
 

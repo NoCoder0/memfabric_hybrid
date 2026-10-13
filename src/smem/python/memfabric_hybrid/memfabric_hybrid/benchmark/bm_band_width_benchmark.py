@@ -12,9 +12,10 @@
 
 import logging
 import multiprocessing as mp
+import sys
 import threading
 import time
-import sys
+from queue import Empty
 
 import torch
 
@@ -84,9 +85,10 @@ def _run_bm_rank(params, rank_id, device_id, result_queue, sync):
     handle = None
     try:
         cfg = bm.BmConfig()
+        cfg.auto_ranking = False
         cfg.rank_id = rank_id
         cfg.start_store = rank_id == 0
-        cfg.set_nic(params["rdma"])
+        cfg.set_nic(params["nic"])
         ret = bm.initialize(params["store_url"], params["world_size"], device_id, cfg)
         if ret != 0:
             _fail(f"bm.initialize failed, ret={ret}")
@@ -116,7 +118,6 @@ def _run_bm_rank(params, rank_id, device_id, result_queue, sync):
         if params["local_rank_size"] == params["world_size"]:
             peer_rank_id = (rank_id + 1) % params["world_size"]
 
-        local_mem_type = params["local_mem_type"]
         peer_mem_type = params["peer_mem_type"]
         copy_size = params["copy_size"]
         batch_size = params["batch_size"]
@@ -292,15 +293,15 @@ def _get_bm_params(args):
     if args.command == "write":
         bm_copy_type = bm.BmCopyType.L2G
         direction = "write"
-        type_name = "D2RH"
+        type_name = "D2RD" if args.peer_mem_type == "device" else "D2RH"
     else:
         bm_copy_type = bm.BmCopyType.G2L
         direction = "read"
-        type_name = "RH2D"
+        type_name = "RD2D" if args.peer_mem_type == "device" else "RH2D"
 
     return {
         "store_url": store_url,
-        "rdma": args.rdma,
+        "nic": args.nic,
         "protocol": protocol,
         "bm_data_op_type": bm_data_op_type,
         "local_mem_type": local_mem_type,
@@ -314,14 +315,18 @@ def _get_bm_params(args):
         "copy_count": args.copy_count,
         "batch_size": args.batchsize,
         "local_hbm_size": args.local_hbm_size,
+        "peer_mem_name": args.peer_mem_type,
+        "paired": args.paired,
+        "sync_host": getattr(args, "sync_host", None),
+        "sync_port": args.sync_port,
+        "sync_timeout": args.sync_timeout,
+        "warmup_count": args.warmup_count,
     }
 
 
 def run_bm(args):
     params = _get_bm_params(args)
     local_rank_size = params["local_rank_size"]
-    device_start = args.device
-    rank_start = args.rank_start
 
     # A peer-HBM copy needs a non-empty peer HBM slot.
     if args.peer_mem_type == "device" and args.local_hbm_size <= 0:
@@ -330,55 +335,94 @@ def run_bm(args):
             "got local_hbm_size=%s, peer_mem_type=%s, rank_start=%s",
             args.local_hbm_size,
             args.peer_mem_type,
-            rank_start,
+            args.rank_start,
         )
         return 1
 
     ctx = mp.get_context("spawn")
     result_queue = ctx.Queue()
     sync = ctx.Barrier(local_rank_size)
-    processes = []
-
-    for local_idx in range(local_rank_size):
-        rank_id = rank_start + local_idx
-        device_id = device_start + local_idx
-        p = ctx.Process(
-            target=_run_bm_rank,
-            args=(params, rank_id, device_id, result_queue, sync),
-        )
-        p.start()
-        processes.append(p)
-
-    # A crashed rank never reaches a barrier (nor its _fail path), so watch the
-    # children and abort the barrier to unblock the survivors instead of letting
-    # them wait for the full timeout.
-    while any(p.exitcode is None for p in processes):
-        if any(p.exitcode not in (None, 0) for p in processes):
-            sync.abort()
-        time.sleep(0.2)
-
-    results = []
-    for local_idx, p in enumerate(processes):
-        p.join()
-        if p.exitcode != 0:
-            results.append(
-                {
-                    "rank_id": rank_start + local_idx,
-                    "error": f"worker failed: device_id={device_start + local_idx}, pid={p.pid}, exitcode={p.exitcode}",
-                }
-            )
-
-    while not result_queue.empty():
-        results.append(result_queue.get())
-
+    processes = _spawn_ranks(ctx, params, args, result_queue, sync)
+    reporter = _writer_reporter(args) if args.paired and args.command == "write" else None
+    results = _collect_results(processes, result_queue, sync, args.rank_start, reporter)
     errors = [r for r in results if "error" in r]
     if errors:
         for err in errors:
             LOGGER.error("rank %s: %s", err.get("rank_id", "?"), err["error"])
         return 1
-
+    expected = set(range(args.rank_start, args.rank_start + local_rank_size))
+    if len(results) != local_rank_size or {r["rank_id"] for r in results} != expected:
+        LOGGER.error("missing or duplicate rank results, expected=%s, received=%s", expected, results)
+        return 1
+    if args.paired and args.command == "write":
+        print("Remote read verification OK; source pool released.", flush=True)
+        return 0
+    if args.paired:
+        print("Paired read: source writes, warmup, synchronization and verification are not timed.")
     _print_bm_results(results, args)
     return 0
+
+
+def _spawn_ranks(ctx, params, args, result_queue, sync):
+    target = _run_bm_rank
+    if args.paired:
+        from .paired_benchmark import run_paired_rank
+
+        target = run_paired_rank
+    processes = []
+    for local_idx in range(args.local_rank_size):
+        process = ctx.Process(
+            target=target,
+            args=(params, args.rank_start + local_idx, args.device + local_idx, result_queue, sync),
+        )
+        process.start()
+        processes.append(process)
+    return processes
+
+
+def _writer_reporter(args):
+    measurements = {}
+    expected = set(range(args.rank_start, args.rank_start + args.local_rank_size))
+    printed = False
+
+    def report(result):
+        nonlocal printed
+        measurements[result["rank_id"]] = result
+        if not printed and set(measurements) == expected:
+            _print_bm_results(list(measurements.values()), args)
+            print("Write benchmark complete; keeping source pool alive while waiting for remote read.", flush=True)
+            printed = True
+
+    return report
+
+
+def _record_result(result, results, on_measurement):
+    if result.get("event") == "measurement":
+        if on_measurement is not None:
+            on_measurement(result["result"])
+    else:
+        results.append(result)
+
+
+def _collect_results(processes, result_queue, sync, rank_start, on_measurement=None):
+    results = []
+    while any(process.exitcode is None for process in processes):
+        try:
+            _record_result(result_queue.get(timeout=0.2), results, on_measurement)
+        except Empty:
+            pass
+        if any(process.exitcode not in (None, 0) for process in processes):
+            sync.abort()
+    for index, process in enumerate(processes):
+        process.join()
+        if process.exitcode != 0:
+            results.append({"rank_id": rank_start + index, "error": f"process exited with code {process.exitcode}"})
+    while True:
+        try:
+            _record_result(result_queue.get_nowait(), results, on_measurement)
+        except Empty:
+            break
+    return results
 
 
 def _print_bm_results(results, args):
@@ -388,7 +432,7 @@ def _print_bm_results(results, args):
     sep = "-" * 57
 
     print()
-    print(f"  copy_size:{copy_size}  copy_count:{copy_count}  batch_size:{batch_size}")
+    print(f"  protocol:{args.protocol}  copy_size:{copy_size}  copy_count:{copy_count}  batch_size:{batch_size}")
     print(sep + " Band Width Test " + sep)
     print(
         f"{'Type':<8}{'NPU':<8}{'Rank':<8}{'TotalSize(KB)':<20}"
@@ -427,3 +471,4 @@ def _print_bm_results(results, args):
             )
 
     print(sep + "-" * 57)
+    sys.stdout.flush()

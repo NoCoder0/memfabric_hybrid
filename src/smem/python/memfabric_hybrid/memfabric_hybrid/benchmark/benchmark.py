@@ -11,11 +11,13 @@
 """Benchmark entry point for mfcli benchmark command."""
 
 import logging
+import math
 import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
+from urllib.parse import urlsplit
 
 LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +73,76 @@ def _parse_npu_devices():
     return [0]
 
 
+def _configure_benchmark(args):
+    if args.world_size == -1:
+        args.world_size = args.local_rank_size if _is_localhost(args.ip) else 2 * args.local_rank_size
+    args.paired = args.local_rank_size > 0 and args.world_size == 2 * args.local_rank_size
+    if args.paired:
+        _configure_paired(args)
+
+
+def _configure_paired(args):
+    if args.command not in ("write", "read"):
+        raise ValueError("paired mode requires write or read")
+    endpoint = urlsplit(args.ip)
+    if (
+        endpoint.scheme != "tcp"
+        or not endpoint.hostname
+        or endpoint.port is None
+        or endpoint.username is not None
+        or endpoint.path
+        or endpoint.query
+        or endpoint.fragment
+    ):
+        raise ValueError("paired --ip must be tcp://<write-host>:<port>")
+    if endpoint.hostname == "0.0.0.0" or not 0 < endpoint.port < 65536:
+        raise ValueError("paired --ip must have a reachable host and a valid port")
+    if args.command == "read" and args.rank_start == 0:
+        args.rank_start = args.local_rank_size
+    expected_start = 0 if args.command == "write" else args.local_rank_size
+    if args.rank_start != expected_start:
+        raise ValueError(f"paired {args.command} requires --rank-start {expected_start}")
+    if args.sync_port is None:
+        args.sync_port = endpoint.port + 1
+    if not 0 < args.sync_port < 65536 or args.sync_port == endpoint.port:
+        raise ValueError("--sync-port must be valid and different from the BM store port")
+    if not math.isfinite(args.sync_timeout) or args.sync_timeout <= 0 or args.warmup_count < 0:
+        raise ValueError("--sync-timeout must be positive and finite; --warmup-count must be nonnegative")
+    if args.copysize % 4096:
+        raise ValueError("paired --copysize must be a multiple of 4096 bytes")
+    if args.peer_mem_type == "device" and args.protocol.startswith("host_"):
+        raise ValueError("host protocols in paired mode require --peer-mem-type host")
+    capacity = args.local_hbm_size if args.peer_mem_type == "device" else 4 * 1024**3
+    if args.local_hbm_size < 0 or args.copysize * args.batchsize > capacity:
+        raise ValueError("copy payload exceeds the contributed pool size, or HBM size is negative")
+    args.sync_host = endpoint.hostname
+
+
+def _validate_layout(args, npu_count):
+    if args.local_rank_size <= 0 or args.device < 0 or args.device + args.local_rank_size > npu_count:
+        raise ValueError("requested local ranks/devices exceed the visible NPU count")
+    if args.copysize <= 0 or args.copysize % 4 or args.batchsize <= 0 or args.copy_count <= 0:
+        raise ValueError("copy size must be positive and divisible by 4; batch size and copy count must be positive")
+    if args.rank_start < 0 or args.rank_start + args.local_rank_size > args.world_size:
+        raise ValueError("local rank range must be within --world-size")
+
+
+def _log_invalid_configuration(args, error):
+    LOGGER.error(
+        "invalid benchmark configuration: %s; rank_start=%s local_ranks=%s world_size=%s "
+        "device=%s protocol=%s copy_size=%s batch_size=%s copy_count=%s",
+        error,
+        args.rank_start,
+        args.local_rank_size,
+        args.world_size,
+        args.device,
+        args.protocol,
+        args.copysize,
+        args.batchsize,
+        args.copy_count,
+    )
+
+
 def run(args):
     devices = _parse_npu_devices()
     npu_count = len(devices)
@@ -80,15 +152,17 @@ def run(args):
     if args.local_rank_size is None:
         args.local_rank_size = npu_count
 
-    if args.world_size == -1:
-        if _is_localhost(args.ip):
-            args.world_size = args.local_rank_size
-        else:
-            args.world_size = 256
+    try:
+        _configure_benchmark(args)
+        _validate_layout(args, npu_count)
+    except ValueError as error:
+        _log_invalid_configuration(args, error)
+        return 1
 
     LOGGER.info(
-        "benchmark: cmd=%s protocol=%s framework=%s model=%s npu_devices=%s world_size=%d local_rank_size=%d",
+        "benchmark: cmd=%s mode=%s protocol=%s framework=%s model=%s npu_devices=%s world_size=%d local_rank_size=%d",
         args.command,
+        "paired" if args.paired else "same_operation",
         args.protocol,
         args.framework,
         args.model,
@@ -96,10 +170,6 @@ def run(args):
         args.world_size,
         args.local_rank_size,
     )
-
-    if args.protocol == "sdma" and not _is_localhost(args.ip):
-        LOGGER.error("sdma protocol is not supported in multi-node mode")
-        return 1
 
     if args.command in ("write", "read"):
         from .bm_band_width_benchmark import run_bm
