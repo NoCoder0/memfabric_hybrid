@@ -150,6 +150,12 @@ private:
     void StopServer() noexcept;
     Result ConnectClient(const std::string &ip, uint16_t port, int reconnectRetryTimes = -1) noexcept;
     void HealthCheckThreadFunc() noexcept;
+    // etcd 健康检查连续失败后，本轮是否可容忍（跳过 StopServer/重选）。纯判定，便于 UT 覆盖：
+    // clientOnly      : 本进程是否 CSM_CLIENT（链路指向远端 leader，链路存活即数据面可用）；
+    // isLeader        : 本进程当前是否 leader（其 KEY_LEADER 受 PUT_LEASE_TTL_SEC 租约约束）；
+    // leaderLinkAlive : clientOnly 下到远端 leader 的直连链路是否存活。
+    [[nodiscard]] static bool MayTolerateBackendFail(int consecutiveFails, bool clientOnly, bool isLeader,
+                                                     bool leaderLinkAlive) noexcept;
     /**
      * 校验etcd中的leader(backendLeader)和本进程所连接的leader(lastConnectedLeader_)的一致性；
      * lastConnectedLeader_为空： 尚未建立连接由连接循环自身负责

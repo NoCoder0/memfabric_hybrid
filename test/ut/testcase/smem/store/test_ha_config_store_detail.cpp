@@ -15,7 +15,9 @@
 #include <unordered_map>
 #include <functional>
 
+#define private public // NOLINT(google-runtime-int) test hack: expose MayTolerateBackendFail
 #include "smem_ha_config_store.h"
+#undef private
 #include "smem_tcp_config_store_server.h"
 #include "smem_local_memory_backend.h"
 
@@ -28,6 +30,10 @@ constexpr uint16_t K_TEST_PORT = 29500;
 constexpr uint32_t K_TEST_WORLD_SIZE = 4;
 constexpr int32_t K_TEST_RECONNECT_RETRIES = 5;
 constexpr int32_t K_TEST_RECONNECT_RETRIES_FEWER = 3;
+/* 与 smem_ha_config_store.cpp 的阈值保持一致：HEALTH_CHECK_FAIL_THRESHOLD=3、LEADER=1 */
+constexpr int K_HEALTH_FAIL_BELOW_THRESHOLD = 2;
+constexpr int K_HEALTH_FAIL_AT_THRESHOLD = 3;
+constexpr int K_HEALTH_FAIL_LEADER_HIT = 1;
 
 /* Hand-written mock for ConfigStoreBackend — same pattern as test_ha_config_store.cpp */
 class MockBackend : public ConfigStoreBackend {
@@ -230,6 +236,45 @@ TEST_F(HaConfigStoreDetailTest, SetGetConnectStatus_WithClient)
     EXPECT_TRUE(ha_->GetConnectStatus());
     ha_->SetConnectStatus(false);
     EXPECT_FALSE(ha_->GetConnectStatus());
+}
+
+/* ================================================================== */
+/*  ProbeLeaderAlive                                                   */
+/* ================================================================== */
+
+TEST_F(HaConfigStoreDetailTest, ProbeLeaderAlive_NoLink_ReturnsFalse)
+{
+    /* client 未启动：无 accClientLink_，探活必须快速返回 false（不阻塞） */
+    EXPECT_FALSE(client_->ProbeLeaderAlive());
+}
+
+TEST_F(HaConfigStoreDetailTest, ProbeLeaderAlive_LinkNullEvenIfStatusTrue_ReturnsFalse)
+{
+    /* 即使连接状态被强置为 true，无实际链路时探活仍返回 false */
+    client_->SetConnectStatus(true);
+    EXPECT_FALSE(client_->ProbeLeaderAlive());
+    client_->SetConnectStatus(false);
+}
+
+/* ================================================================== */
+/*  MayTolerateBackendFail                                             */
+/* ================================================================== */
+
+TEST_F(HaConfigStoreDetailTest, MayTolerateBackendFail_ClientToleratesOnlyWithHealthyLink)
+{
+    /* client-only：阈值内直接容忍；达到阈值后只有链路存活才容忍（否则必须重连） */
+    EXPECT_TRUE(HaConfigStore::MayTolerateBackendFail(K_HEALTH_FAIL_BELOW_THRESHOLD, true, false, false));
+    EXPECT_FALSE(HaConfigStore::MayTolerateBackendFail(K_HEALTH_FAIL_AT_THRESHOLD, true, false, false));
+    EXPECT_TRUE(HaConfigStore::MayTolerateBackendFail(K_HEALTH_FAIL_AT_THRESHOLD, true, false, true));
+}
+
+TEST_F(HaConfigStoreDetailTest, MayTolerateBackendFail_MetaLeaderLinkNeverExempts)
+{
+    /* leader/meta：链路存活不能豁免，否则 KEY_LEADER 丢失后无人重新登记/重选（控制面卡死） */
+    EXPECT_TRUE(HaConfigStore::MayTolerateBackendFail(K_HEALTH_FAIL_BELOW_THRESHOLD, false, false, true));
+    EXPECT_FALSE(HaConfigStore::MayTolerateBackendFail(K_HEALTH_FAIL_AT_THRESHOLD, false, false, true));
+    /* leader 受 5s 租约约束：单次失败即动作（HEALTH_CHECK_FAIL_THRESHOLD_LEADER=1） */
+    EXPECT_FALSE(HaConfigStore::MayTolerateBackendFail(K_HEALTH_FAIL_LEADER_HIT, false, true, true));
 }
 
 /* ================================================================== */

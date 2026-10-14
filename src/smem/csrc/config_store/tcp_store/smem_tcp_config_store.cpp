@@ -35,9 +35,14 @@ public:
     std::shared_ptr<ock::acc::AccTcpRequestContext> WaitFinished() noexcept override
     {
         constexpr auto WAIT_TIMEOUT = std::chrono::seconds(600);
+        return WaitFinishedFor(WAIT_TIMEOUT);
+    }
+
+    std::shared_ptr<ock::acc::AccTcpRequestContext> WaitFinishedFor(std::chrono::seconds waitTimeout) noexcept
+    {
         std::unique_lock<std::mutex> locker{waitMutex_};
-        if (!waitCond_.wait_for(locker, WAIT_TIMEOUT, [this]() { return finished_; })) {
-            STORE_LOG_ERROR("ClientWaitContext::WaitFinished timeout after 600s");
+        if (!waitCond_.wait_for(locker, waitTimeout, [this]() { return finished_; })) {
+            STORE_LOG_ERROR("ClientWaitContext::WaitFinished timeout after " << waitTimeout.count() << "s");
             return nullptr;
         }
         auto copy = responseInfo_;
@@ -814,8 +819,8 @@ Result TcpConfigStore::Unwatch(uint32_t wid) noexcept
     return SM_OK;
 }
 
-std::shared_ptr<ock::acc::AccTcpRequestContext>
-TcpConfigStore::SendMessageBlocked(const std::vector<uint8_t> &reqBody) noexcept
+std::shared_ptr<ock::acc::AccTcpRequestContext> TcpConfigStore::SendMessageBlocked(const std::vector<uint8_t> &reqBody,
+                                                                                   int waitTimeoutSec) noexcept
 {
     auto seqNo = reqSeqGen_.fetch_add(1U);
     auto dataBuf = ock::acc::AccDataBuffer::Create(reqBody.data(), reqBody.size());
@@ -836,7 +841,12 @@ TcpConfigStore::SendMessageBlocked(const std::vector<uint8_t> &reqBody) noexcept
         return nullptr;
     }
 
-    auto response = waitContext->WaitFinished();
+    auto response = waitContext->WaitFinishedFor(std::chrono::seconds(waitTimeoutSec));
+    if (response == nullptr) {
+        // 等待超时：移除挂起上下文，避免迟到的响应占用表项（响应本身会被丢弃）
+        std::unique_lock<std::mutex> msgCtxLocker1{msgCtxMutex_};
+        msgClientContext_.erase(seqNo);
+    }
     return response;
 }
 
@@ -887,6 +897,27 @@ Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
     }
     SetConnectStatus(true);
     return SM_OK;
+}
+
+bool TcpConfigStore::ProbeLeaderAlive(int timeoutMs) noexcept
+{
+    if (accClientLink_ == nullptr || !GetConnectStatus()) {
+        return false;
+    }
+    // 探测不存在的 key：只要服务端返回（含 NOT_EXIST）即证明链路与服务端均可用
+    constexpr const char *PROBE_KEY = "__leader_link_probe__";
+    SmemMessage request{MessageType::GET};
+    request.keys.emplace_back(PROBE_KEY);
+    request.userDef = timeoutMs;
+    auto packedRequest = SmemMessagePacker::Pack(request);
+    // 等待上限略大于服务端处理超时，保证正常情况一定能等到响应
+    auto response = SendMessageBlocked(packedRequest, timeoutMs / 1000 + 1);
+    if (response == nullptr) {
+        STORE_LOG_WARN("leader link probe failed, link considered not alive");
+        return false;
+    }
+    STORE_LOG_DEBUG("leader link probe succeeded, link alive");
+    return true;
 }
 
 bool TcpConfigStore::GetConnectStatus() noexcept

@@ -43,7 +43,18 @@ using namespace ock::mf;
 
 namespace {
 constexpr char BACKEND_LOCK_NAME[] = "backend";
-}
+// etcd 健康检查去抖阈值（client 及非 leader 的控制面成员）：连续失败达到该次数才触发 re-election。
+// 单次 Get 超时（如 etcd 瞬时抖动）不应触发重连——历史上曾因单次超时引发
+// 对健康 leader 链路的 rec:1 重连风暴（被服务端 already-active 反劫持拒绝）。
+constexpr int HEALTH_CHECK_FAIL_THRESHOLD = 3;
+// leader 的 etcd 去抖阈值：leader 的 KEY_LEADER 靠 PUT_LEASE_TTL_SEC(5s) 租约存活，检查周期为
+// HEALTH_CHECK_INTERVAL_SEC(4s)，阈值必须满足 threshold * interval < 租约 TTL，否则旧主会在租约
+// 已可能失效、别的节点已可抢主时继续服务（双主风险）。故 leader 侧单次失败即保守降级；
+// 若希望 leader 也去抖，需同步放大 PUT_LEASE_TTL_SEC。
+constexpr int HEALTH_CHECK_FAIL_THRESHOLD_LEADER = 1;
+// leader 链路探活单次请求超时（ms）
+constexpr int kLeaderProbeTimeoutMs = 2000;
+} // namespace
 
 // ============================================================================
 // HaConfigStore - Construction / Destruction
@@ -596,6 +607,12 @@ Result HaConfigStore::ConnectClient(const std::string &ip, uint16_t port, int re
 
     // Check if already started
     if (clientDelegate_->SetServerInfo(ip, port)) {
+        // 重连前先探活：旧链路仍健康时不需要 rec:1 重连（服务端会以 already-active 拒绝），
+        // 直接复用现有链路。探活失败再走重连。
+        if (clientDelegate_->ProbeLeaderAlive(kLeaderProbeTimeoutMs)) {
+            SM_LOG_INFO("Existing link to " << ip << ":" << port << " is alive, skip reconnect");
+            return SM_OK;
+        }
         SM_LOG_INFO("Reconnecting to: " << ip << ":" << port);
         Result reconnectRet = clientDelegate_->ReConnectAfterBroken(reconnectRetryTimes);
         if (reconnectRet != SM_OK) {
@@ -727,11 +744,27 @@ void HaConfigStore::CheckLeaderConsistency(const std::string &backendLeader) noe
     TriggerReElectionAsync();
 }
 
+bool HaConfigStore::MayTolerateBackendFail(int consecutiveFails, bool clientOnly, bool isLeader,
+                                           bool leaderLinkAlive) noexcept
+{
+    if (!clientOnly) {
+        // leader 受 5s 租约约束，容忍窗口必须短于租约；其余控制面成员用统一阈值防抖即可。
+        const int threshold = isLeader ? HEALTH_CHECK_FAIL_THRESHOLD_LEADER : HEALTH_CHECK_FAIL_THRESHOLD;
+        return consecutiveFails < threshold;
+    }
+    if (consecutiveFails < HEALTH_CHECK_FAIL_THRESHOLD) {
+        return true;
+    }
+    // client-only：链路指向远端 leader，收到响应即数据面可用，可豁免停服/重选。
+    return leaderLinkAlive;
+}
+
 void HaConfigStore::HealthCheckThreadFunc() noexcept
 {
     constexpr auto CHECK_INTERVAL = std::chrono::seconds(HEALTH_CHECK_INTERVAL_SEC);
     pthread_setname_np(pthread_self(), "ha_health_chk");
     SM_LOG_INFO("Health check thread started, interval: " << HEALTH_CHECK_INTERVAL_SEC << "s");
+    int consecutiveFails = 0;
     while (!stopFlag_.load(std::memory_order_acquire)) {
         std::this_thread::sleep_for(CHECK_INTERVAL);
         if (stopFlag_.load(std::memory_order_acquire)) {
@@ -746,10 +779,29 @@ void HaConfigStore::HealthCheckThreadFunc() noexcept
             backendRet = backend_->Get(KEY_LEADER, testValue);
         }
         if (backendRet != SUCCESS) {
-            SM_LOG_ERROR("Backend connection timeout, ret: " << backendRet << ", triggering re-election");
+            ++consecutiveFails;
+            const bool clientOnly = (model_ == CSM_CLIENT);
+            const bool isLeader = isLeader_.load(std::memory_order_acquire);
+            // 仅 client-only 才探活：leader/meta 的自连链路恒活，探活无法说明 KEY_LEADER 是否仍有效，
+            // 用它豁免会导致 key 丢失后无人重新登记/重选（控制面卡死），故这里必须按角色区分。
+            bool leaderLinkAlive = false;
+            if (clientOnly && consecutiveFails >= HEALTH_CHECK_FAIL_THRESHOLD && clientDelegate_ != nullptr) {
+                leaderLinkAlive = clientDelegate_->ProbeLeaderAlive(kLeaderProbeTimeoutMs);
+            }
+            if (MayTolerateBackendFail(consecutiveFails, clientOnly, isLeader, leaderLinkAlive)) {
+                SM_LOG_WARN("Backend check failed " << consecutiveFails << ", ret: " << backendRet
+                                                    << ", model: " << model_ << ", isLeader: " << isLeader
+                                                    << ", leaderLinkAlive: " << leaderLinkAlive << ", tolerate");
+                continue;
+            }
+            SM_LOG_ERROR("Backend unreachable for "
+                         << consecutiveFails << " checks, model: " << model_ << ", isLeader: " << isLeader
+                         << ", leaderLinkAlive: " << leaderLinkAlive << ", triggering re-election");
+            consecutiveFails = 0;
             StopServer();
             TriggerReElectionAsync();
         } else {
+            consecutiveFails = 0;
             CheckLeaderConsistency(testValue);
         }
     }

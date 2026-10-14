@@ -100,6 +100,10 @@ public:
 
     Result ReConnectAfterBroken(int reconnectRetryTimes) noexcept override;
     bool GetConnectStatus() noexcept override;
+    // 通过现有 leader 链路发一条轻量 GET 探测链路端到端是否存活。
+    // 收到任何响应（含 NOT_EXIST）即认为存活；发送失败/等待超时/无链路返回 false。
+    // 用于 etcd 抖动时避免对健康链路发起 rec:1 重连（会被服务端 already-active 反劫持拒绝）。
+    bool ProbeLeaderAlive(int timeoutMs = 2000) noexcept;
     void SetConnectStatus(bool status) noexcept override;
     void RegisterClientBrokenHandler(const ConfigStoreClientBrokenHandler &handler) noexcept override;
 
@@ -148,7 +152,8 @@ protected:
     Result GetReal(const std::string &key, std::vector<uint8_t> &value, int64_t timeoutMs) noexcept override;
 
 private:
-    std::shared_ptr<ock::acc::AccTcpRequestContext> SendMessageBlocked(const std::vector<uint8_t> &reqBody) noexcept;
+    std::shared_ptr<ock::acc::AccTcpRequestContext> SendMessageBlocked(const std::vector<uint8_t> &reqBody,
+                                                                       int waitTimeoutSec = 600) noexcept;
     Result SendMessageNonBlock(const std::vector<uint8_t> &reqBody) noexcept;
     Result LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
     Result ReceiveResponseHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
