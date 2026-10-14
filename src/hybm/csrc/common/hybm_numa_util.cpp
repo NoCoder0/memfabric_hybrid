@@ -145,6 +145,7 @@ bool GetDeviceAffinityCpuListImpl(int32_t deviceId, std::vector<int32_t> &cpus)
     std::string cpuList;
     const int32_t ret = DlHalApi::DcmiGetAffinityCpuInfo(deviceId, cpuList);
     if (ret != 0) {
+        BM_LOG_ERROR("Call api:DcmiGetAffinityCpuInfo failed, ret=" << ret << ", deviceId=" << deviceId);
         return false;
     }
 

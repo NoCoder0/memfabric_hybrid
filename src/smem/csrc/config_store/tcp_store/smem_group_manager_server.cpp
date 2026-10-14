@@ -103,6 +103,8 @@ int SmemGroupManagerServer::CheckIn(const RankFullInfo &info, uint64_t reqId) no
     STORE_LOG_INFO("[GM][Server][Recv] RCV rank=" << info.rankId << " type=JOINREQ reqId=" << reqId);
     TP_TRACE_BEGIN(TP_SMEM_GROUP_SERVER_CHECKIN);
     if (info.rankId >= maxRanks_) {
+        STORE_LOG_ERROR("CheckIn failed, invalid rankId=" << info.rankId << ", maxRanks=" << maxRanks_
+                                                          << ", reqId=" << reqId);
         TP_TRACE_END(TP_SMEM_GROUP_SERVER_CHECKIN, 1);
         return -1;
     }

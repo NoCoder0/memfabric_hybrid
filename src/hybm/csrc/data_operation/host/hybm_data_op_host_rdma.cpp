@@ -146,7 +146,8 @@ void HostDataOpRDMA::PreRegisterLocalMr(hybm_copy_params &params, hybm_data_copy
 
     auto ret = transportManager_->RegisterMemoryRegion(mr);
     if (ret != BM_OK) {
-        BM_LOG_WARN("Unable to pre register host rdma mr, addr:" << (void *)mr.addr << " size: " << mr.size);
+        BM_LOG_WARN("Unable to pre register host rdma mr, ret=" << ret << ", addr=" << (void *)mr.addr
+                                                                << ", size=" << mr.size);
     }
 }
 

@@ -1,0 +1,707 @@
+# MemFabric C++ 通用编码规范
+
+> **适用场景**：通用编程规范适用于所有 C++ 代码。
+
+## 规范列表
+
+| 规范编号 | 规范名称 | 类别 |
+|---------|---------|------|
+| 1.1 | 外部数据合法性检查 | 代码设计 |
+| 1.2 | 函数结果优先使用返回值 | 代码设计 |
+| 1.3 | 清理无效冗余代码（建议） | 代码设计 |
+| 2.1 | 使用新的标准 C++ 头文件 | 头文件 |
+| 2.2 | 禁止头文件循环依赖 | 头文件 |
+| 2.3 | 避免包含用不到的头文件（建议） | 头文件 |
+| 2.4 | 禁止 extern 声明引用外部接口 | 头文件 |
+| 2.5 | 禁止在 extern "C" 中包含头文件 | 头文件 |
+| 2.6 | 避免在头文件中使用 using 导入命名空间（建议） | 头文件 |
+| 2.7 | 按合理顺序包含头文件 | 头文件 |
+| 2.8 | 头文件应当自包含 | 头文件 |
+| 3.1 | 避免滥用 typedef/#define 类型别名 | 数据类型 |
+| 3.2 | 使用 using 而非 typedef 定义别名 | 数据类型 |
+| 4.1 | 禁止使用宏表示常量 | 常量 |
+| 4.2 | 不要使用难以理解的字面量 | 常量 |
+| 4.3 | 每个常量保证单一职责 | 常量 |
+| 5.1 | 优先使用命名空间管理全局常量 | 变量 |
+| 5.2 | 避免全局变量，谨慎使用单例 | 变量 |
+| 5.3 | 禁止变量自增/自减表达式中再次引用 | 变量 |
+| 5.4 | 资源释放后指针置新值 | 变量 |
+| 5.5 | 禁止使用未经初始化的变量 | 变量 |
+| 6.1 | 表达式比较左变右不变 | 表达式 |
+| 6.2 | 使用括号明确操作符优先级 | 表达式 |
+| 7.1 | 使用 C++ 类型转换而非 C 风格 | 转换 |
+| 8.1 | switch 语句要有 default 分支 | 控制语句 |
+| 8.2 | 循环计数器类型必须与边界值类型宽度匹配 | 控制语句 |
+| 9.1 | 禁止用 memcpy_s/memset_s 初始化非 POD | 声明初始化 |
+| 10.1 | 禁止持有 c_str() 返回的指针 | 指针数组 |
+| 10.2 | 优先使用 unique_ptr 而非 shared_ptr | 指针数组 |
+| 10.3 | 使用 make_shared 而非 new 创建 shared_ptr | 指针数组 |
+| 10.4 | 使用智能指针管理对象 | 指针数组 |
+| 10.5 | 禁止使用 auto_ptr | 指针数组 |
+| 10.6 | 指针/引用形参不修改用 const | 指针数组 |
+| 10.7 | 数组参数必须同时传长度 | 指针数组 |
+| 11.1 | 字符串存储确保有 '\0' 结束符 | 字符串 |
+| 12.1 | 断言不能用于运行期错误处理 | 断言 |
+| 13.1 | delete/delete[] 配对使用 | 类和对象 |
+| 13.2 | 禁止 std::move 操作 const 对象 | 类和对象 |
+| 13.3 | 严格使用 virtual/override/final | 类和对象 |
+| 13.4 | 不会修改成员变量的成员函数必须使用 const 修饰 | 类和对象 |
+| 13.5 | 禁止析构函数抛出异常 | 类和对象 |
+| 14.1 | 使用 RAII 追踪动态分配 | 函数设计 |
+| 14.2 | 非局部 lambda 避免按引用捕获 | 函数设计 |
+| 14.3 | 禁止虚函数使用缺省参数值 | 函数设计 |
+| 14.4 | 使用强类型参数，避免 void* | 函数设计 |
+| 14.5 | 函数功能要单一（建议） | 函数设计 |
+| 15.1 | 函数传参顺序同一文件内保持一致 | 函数使用 |
+| 15.2 | 入参用 const T&，出参用 T& 或 T* | 函数使用 |
+| 15.3 | 不涉及所有权用 T* 或 const T& | 函数使用 |
+| 15.4 | 传递所有权用 shared_ptr + move | 函数使用 |
+| 15.5 | 单参数构造函数用 explicit | 函数使用 |
+| 15.6 | 拷贝构造和赋值操作符成对出现 | 函数使用 |
+| 15.7 | 禁止保存、delete 指针参数 | 函数使用 |
+| 15.8 | 函数声明与定义的签名一致 | 函数使用 |
+
+---
+
+### 1. 代码设计
+
+#### 规则 1.1 对所有外部数据进行合法性检查，包括但不限于：函数入参、外部输入命名行、文件、环境变量、用户数据等
+
+#### 规则 1.2 函数执行结果传递，优先使用返回值，尽量避免使用出参
+
+```cpp
+FooBar *Func(const std::string &in);
+```
+
+#### 建议 1.3 清理无效、冗余或永不执行的代码
+
+虽然大多数现代编译器在许多情况下可以对无效或从不执行的代码告警，响应告警应识别并清除告警；
+应该主动识别无效的语句或表达式，并将其从代码中删除。
+
+> **说明**：业务代码中经常为特定场景预制冗余参数（如预留的函数入参、预留的结构体字段等），这些参数当前可能未被引用但属于合理的工程预留，检视时不应标记为 FAIL。
+>
+> 以下情况可标记为提醒（SUSPICIOUS），供开发者参考：
+>
+> - 明显的死代码（如被条件编译永久排除的代码块）
+> - 大段注释掉的代码（应使用 git 管理历史）
+> - 明显无效且无预留意图的变量或表达式
+
+#### 规则 1.4 补充C++异常机制的规范
+
+##### 规则 1.4.1 需要指定捕获异常种类，禁止捕获所有异常
+
+```cpp
+// 错误示范
+try {
+  // do something;
+} catch (...) {
+  // do something;
+}
+// 正确示范
+try {
+  // do something;
+} catch (const std::bad_alloc &e) {
+  // do something;
+}
+```
+
+---
+
+### 2. 头文件和预处理
+
+#### 规则 2.1 使用新的标准C++头文件
+
+```cpp
+// 正确示范
+#include <cstdlib>
+// 错误示范
+#include <stdlib.h>
+```
+
+#### 规则 2.2 禁止头文件循环依赖
+
+头文件循环依赖，指a.h包含b.h，b.h包含c.h，c.h包含a.h之类导致任何一个头文件修改，都导致所有包含了a.h/b.h/c.h的代码全部重新编译一遍。
+头文件循环依赖直接体现了架构设计上的不合理，可通过优化架构去避免。
+
+#### 建议 2.3 避免包含用不到的头文件
+
+> **说明**：未使用的头文件会增加编译依赖和编译时间。但某些头文件可能为未来功能扩展预留，或用于提供类型前向声明，检视时仅作为提醒，不强制标记为 FAIL。
+
+#### 规则 2.4 禁止通过 extern 声明的方式引用外部函数接口、变量
+
+#### 规则 2.5 禁止在extern "C"中包含头文件
+
+#### 建议 2.6 避免在头文件中使用 using 导入命名空间
+
+`using namespace` 在头文件中的传播范围取决于其作用域：
+
+- **file-scope**（命名空间外部）：传播到所有包含该头文件的翻译单元
+- **namespace-scoped**（`namespace X {}` 内部）：仅传播到重新打开同一命名空间的代码
+
+> **项目内部命名空间豁免**：导入项目内部命名空间（受项目控制、冲突风险低）不标记。
+
+**FAIL 条件**（满足任一即 FAIL，但须先做危害分析再定级）：
+
+1. **file-scope `using namespace` 出现在同文件后续 `#include` 之前**——后续 include 在该命名空间上下文中编译
+2. **共享头文件路径**（`include/` 等公共目录）在 file-scope 导入大型命名空间（`std` 等）
+
+> **定级前必须追溯传播链评估实际危害，结构违规 ≠ 实质危害：**
+>
+> 1. **确认 using 作用域**：在 `namespace X {}` 块内部则只对 X 可见，不泄漏到 includer 的 file-scope，**不是 file-scope 污染**
+> 2. **追踪 include 链**：若被污染头文件的 include guard 在 using 之前已被更早的头文件激活，则**污染未实际发生**
+> 3. **检查子头文件自主性**：若子头文件自带相同 using namespace，则外部污染是**冗余**，无新增风险
+> 4. **定级**：有真实新增污染 → FAIL；结构违规但无实质危害 → SUSPICIOUS，注明原因
+
+**SUSPICIOUS 条件**（标记提醒，不强制 FAIL）：
+
+- 非共享头文件在 file-scope 导入 `std` 等大型命名空间
+- 公开 API 头文件（`include/` 目录）导入非项目命名空间（被外部调用者 include）
+- 共享头文件在命名空间**内部**（非 file-scope）导入大型命名空间
+
+#### 规则 2.7 按合理顺序包含头文件
+
+`.cpp`/`.cc` 源文件中，`#include` 应按以下顺序排列：
+
+1. 本文件对应的头文件（如 `foo.cc` 对应 `foo.h`）
+2. C/C++ 标准库头文件（如 `<string>`、`<vector>`、`<cstring>`）
+3. 系统库头文件（如 `<unistd.h>`、`<arpa/inet.h>`）
+4. 其他第三方库头文件（如 `securec.h`、`nlohmann/json.hpp`）
+5. 本项目内其他头文件（如 `hybm_logger.h`、`hybm_big_mem.h`）
+
+将本文件对应的头文件置于首位，可在编译该翻译单元时第一时间暴露自身头文件的隐式依赖问题；按从"稳定/通用"到"项目专用"的顺序排列，可清晰区分依赖来源，便于排查与裁剪。
+
+```cpp
+// foo.cc
+#include "foo.h"    // 1. 本文件对应头文件
+#include <cstring>  // 2. C/C++ 标准库
+#include <vector>
+#include <unistd.h>           // 3. 系统库
+#include "securec.h"          // 4. 其他第三方库
+#include "hybm_logger.h"      // 5. 本项目内其他头文件
+#include "hybm_big_mem.h"
+```
+
+> **说明**：检视时，顺序明显混乱（如自身对应头文件置于标准库之后，或项目内头文件穿插到标准库中）标记为 SUSPICIOUS，提醒开发者调整。
+
+#### 规则 2.8 头文件应当自包含
+
+头文件必须直接包含其直接使用的所有符号所对应的头文件，确保单独编译一个仅 `#include "该头文件"` 的翻译单元时能通过，不依赖外部翻译单元预先包含的其他头文件。
+
+```cpp
+// 反例（不自包含）：uint64_t/uintptr_t 来自 <cstdint>，但未包含
+#include <vector>
+inline uint64_t PtrToValue(const void *ptr);
+// 正例：补 #include <cstdint>（size_t 再补 <cstddef>）
+```
+
+**验证方法**：编写仅包含被测头文件的 `.cc`，用项目真实 include 路径执行 `g++ -fsyntax-only` 编译通过。
+
+**定级**：
+
+- **FAIL**：单独 `#include` 该头文件编译失败（缺失其直接使用符号的 include）
+- **SUSPICIOUS**：编译通过但实际使用的头未直接 include、仅靠传递依赖（提醒按 IWYU 补全，不强制 FAIL）
+
+---
+
+### 3. 数据类型
+
+#### 建议 3.1 避免滥用 typedef或者#define 对基本类型起别名
+
+#### 规则 3.2 使用using 而非typedef定义类型的别名，避免类型变化带来的散弹式修改
+
+```cpp
+// 正确示范
+using FooBarPtr = std::shared_ptr<FooBar>;
+// 错误示范
+typedef std::shared_ptr<FooBar> FooBarPtr;
+```
+
+---
+
+### 4. 常量
+
+#### 规则 4.1 禁止使用宏表示常量
+
+#### 规则 4.2 不要使用难以理解的字面量
+
+难以理解的字面量是指通过代码上下文难以明确业务含义的字面量，包括整型字面量、浮点数字面量、布尔字面量和字符串字面量等。字面量是否难以理解并非非黑即白，需要结合代码上下文和业务相关知识判断，例如同样的整型字面量1000，`value = 1000;`不能理解其表示的含义，而`millisecond = second * 1000;`则可以理解其中的1000是将秒数转换成毫秒数的比例。
+
+```cpp
+// 错误示范：直接使用整型字面量1和2，不易理解其具体表示哪种类型
+int current_type = in_param->GetValue("servType");
+if (current_type == 1) {
+  ...
+} else if (current_type == 2) {
+  ...
+} else {
+  ...
+}
+
+// 错误示范：用无意义的标识符命名解释数字含义，这种做法无益于理解
+constexpr uint32_t kNumberOne = 1;
+constexpr uint32_t kNumberTwo = 2;
+
+// 正确示范：使用能表达含义的常量
+enum ServType {
+  SERV_TYPE_RESERVED,
+  SERV_TYPE_SET,
+  SERV_TYPE_QUERY,
+  ...
+};
+
+int current_type = in_param->GetValue("servType");
+if (current_type == SERV_TYPE_SET) {
+  ...
+} else if (current_type == SERV_TYPE_QUERY) {
+  ...
+} else {
+  ...
+}
+```
+
+修复建议：如果某个字面量经常使用、在使用的上下文中具有固定的含义，应定义为具名常量或枚举；命名应能自注释，不能自注释的，必要时可添加注释加以说明。例外：如果字面量仅在某一处使用、无需提取常量，可添加注释说明其含义。
+
+#### 建议 4.3 建议每个常量保证单一职责
+
+---
+
+### 5. 变量
+
+#### 规则 5.1 优先使用命名空间来管理全局常量，如果和某个class有直接关系的，可以使用静态成员常量
+
+```cpp
+namespace foo {
+constexpr int kGlobalVar = 1;  // 命名空间管理全局常量
+
+class Bar {
+ private:
+  static int static_member_var_;
+};
+}  // namespace foo
+```
+
+#### 规则 5.2 尽量避免使用全局变量，谨慎使用单例模式，避免滥用
+
+#### 规则 5.3 禁止在变量自增或自减运算的表达式中再次引用该变量
+
+#### 规则 5.4 指向资源句柄或描述符的指针变量在资源释放后立即赋予新值或置为NULL
+
+#### 规则 5.5 禁止使用未经初始化的变量
+
+---
+
+### 6. 表达式
+
+#### 建议 6.1 表达式的比较遵循左侧倾向于变化、右侧倾向于不变的原则
+
+```cpp
+// 正确示范
+if (ret != SUCCESS) {
+  ...
+}
+
+// 错误示范
+if (SUCCESS != ret) {
+  ...
+}
+```
+
+#### 规则 6.2 通过使用括号明确操作符的优先级，避免出现低级错误
+
+```cpp
+// 正确示范
+if (cond1 || (cond2 && cond3)) {
+  ...
+}
+
+// 错误示范
+if (cond1 || cond2 && cond3) {
+  ...
+}
+```
+
+---
+
+### 7. 转换
+
+#### 规则 7.1 使用有C++提供的类型转换，而不是C风格的类型转换，避免使用const_cast和reinterpret_cast
+
+---
+
+### 8. 控制语句
+
+#### 规则 8.1 switch语句要有default分支
+
+#### 规则 8.2 循环计数器类型必须与被比较的边界值类型宽度匹配
+
+循环计数器的整数类型宽度不得窄于循环边界表达式的值类型，否则计数器可能在到达边界前发生溢出或回绕，导致死循环或越界访问。
+
+**常见错误模式：**
+
+| 计数器类型 | 边界类型 | 风险 |
+|-----------|---------|------|
+| `uint32_t` | `size_t`（64 位） | 回绕到 0 → 死循环 |
+| `int32_t` | `size_t`（64 位） | 溢出为负 → 隐式转换为极大 `size_t` → 越界 |
+| `uint16_t` | `uint32_t` | 回绕到 0 → 死循环 |
+
+**错误示例：**
+
+```cpp
+// 错误 — uint32_t 计数器 vs size_t 边界，size 超过 UINT32_MAX 时死循环
+for (uint32_t i = 0U; i < data_vec.size(); ++i) { ... }
+
+// 错误 — int32_t 计数器 vs size_t 边界，溢出为负后隐式提升为极大 size_t
+for (int32_t i = 0; i < data_vec.size(); ++i) { ... }
+```
+
+**正确示例：**
+
+```cpp
+// 正确 — 计数器类型与 size() 返回类型匹配
+for (size_t i = 0; i < data_vec.size(); ++i) { ... }
+
+// 正确 — 使用范围 for 避免类型不匹配
+for (auto &item : data_vec) { ... }
+```
+
+---
+
+### 9. 声明与初始化
+
+#### 规则 9.1 禁止用 `memcpy_s`、`memset_s`初始化非POD对象
+
+---
+
+### 10. 指针和数组
+
+#### 规则 10.1 禁止持有std::string的c_str()返回的指针
+
+```cpp
+// 错误示范
+const char *a = std::to_string(12345).c_str();
+```
+
+#### 规则 10.2 优先使用unique_ptr 而不是shared_ptr
+
+#### 规则 10.3 使用std::make_shared 而不是new 创建shared_ptr
+
+```cpp
+// 正确示范
+std::shared_ptr<FooBar> foo = std::make_shared<FooBar>();
+// 错误示范
+std::shared_ptr<FooBar> foo(new FooBar());
+```
+
+#### 规则 10.4 使用智能指针管理对象，避免使用new/delete
+
+#### 规则 10.5 禁止使用auto_ptr
+
+#### 规则 10.6 对于指针和引用类型的形参，如果是不需要修改的，要求使用const
+
+#### 规则 10.7 数组作为函数参数时，必须同时将其长度作为函数的参数
+
+```cpp
+int ParseMsg(BYTE *msg, size_t msgLen) {
+  ...
+}
+```
+
+---
+
+### 11. 字符串
+
+#### 规则 11.1 对字符串进行存储操作，确保字符串有'\0'结束符
+
+---
+
+### 12. 断言
+
+#### 规则 12.1 断言不能用于校验程序在运行期间可能导致的错误，可能发生的运行错误要用错误处理代码来处理
+
+---
+
+### 13. 类和对象
+
+#### 规则 13.1 单个对象释放使用delete，数组对象释放使用delete []
+
+```cpp
+const int kSize = 5;
+int *number_array = new int[kSize];
+int *number = new int();
+...
+delete[] number_array;
+number_array = nullptr;
+delete number;
+number = nullptr;
+```
+
+#### 规则 13.2 禁止使用std::move操作const对象
+
+#### 规则 13.3 严格使用virtual/override/final修饰虚函数
+
+```cpp
+class Base {
+ public:
+  virtual void Func();
+};
+
+class Derived : public Base {
+ public:
+  void Func() override;
+};
+
+class FinalDerived : public Derived {
+ public:
+  void Func() final;
+};
+```
+
+#### 规则 13.4 不会修改成员变量的成员函数必须使用 const 修饰
+
+> **说明**：const 成员函数向调用者承诺不修改对象的成员变量，有助于编译器做正确性检查，也是 const-correctness 的基础。此处"修改成员变量"以 C++ 语法为准：指在函数体内直接写入 this 的非 mutable 成员，或通过 this 的非 const 成员访问器（如 operator[] 非 const 重载）取得可写引用。通过引用或指针参数修改参数指向的对象（即使该对象是 this 容器的元素）不受 const 约束，不构成违规。若成员函数未访问任何成员变量或成员函数（即不依赖 this），应优先使用 static 修饰而非 const，以明确表达函数与对象实例无关。检视时标记为 SUSPICIOUS，提醒开发者补充 const 或改为 static。
+
+```cpp
+class Config {
+ public:
+  // ✅ getter 不修改成员，声明为 const
+  const std::string &GetName() const {
+    return name_;
+  }
+  int GetSize() const {
+    return size_;
+  }
+
+  // ❌ getter 未加 const，调用者无法在 const 对象上调用
+  const std::string &GetName() {
+    return name_;
+  }
+
+  void SetName(const std::string &name) {
+    name_ = name;
+  }  // 修改成员，不加 const
+
+ private:
+  std::string name_;
+  int size_ = 0;
+};
+```
+
+#### 建议 13.5 禁止从析构函数中抛出异常
+
+> **说明**：C++11 起析构函数默认为 `noexcept`，若析构函数抛出异常将触发 `std::terminate` 导致程序崩溃；若在栈展开（另一个异常尚未处理）过程中析构函数抛出异常，同样会触发 `std::terminate`。析构函数应保证不抛出异常，清理操作可能失败时应在析构函数内部捕获并记录日志。检视时标记为 SUSPICIOUS，提醒开发者修复。
+
+```cpp
+class FileWriter {
+ public:
+  // ❌ 析构函数抛异常，触发 std::terminate 导致程序崩溃
+  ~FileWriter() {
+    if (!Flush()) {
+      throw std::runtime_error("flush failed");
+    }
+  }
+
+ private:
+  bool Flush();
+};
+
+class SafeFileWriter {
+ public:
+  // ✅ 析构函数中捕获异常并记录日志，不向上抛出
+  ~SafeFileWriter() noexcept {
+    try {
+      if (!Flush()) {
+        // 记录错误日志
+      }
+    } catch (const std::exception &e) {
+      // 记录错误日志，吞掉异常
+    }
+  }
+
+ private:
+  bool Flush();
+};
+```
+
+---
+
+### 14. 函数设计
+
+#### 规则 14.1 使用 RAII 特性来帮助追踪动态分配
+
+```cpp
+// 正确示范
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  ...
+}
+```
+
+#### 规则 14.2 非局部范围使用lambdas时，避免按引用捕获
+
+```cpp
+// 反例：按引用捕获局部变量并提交到线程池，作用域结束后引用悬空
+{
+  int local_var = 1;
+  auto func = [&]() {
+    ...
+    std::cout << local_var << std::endl;
+  };
+  thread_pool.commit(func);
+}
+
+// 正例：按值捕获所需数据
+{
+  int local_var = 1;
+  auto func = [local_var]() { std::cout << local_var << std::endl; };
+  thread_pool.commit(func);
+}
+```
+
+#### 规则 14.3 禁止虚函数使用缺省参数值
+
+#### 建议 14.4 使用强类型参数\成员变量，避免使用void*
+
+#### 建议 14.5 函数功能要单一
+
+功能单一的函数，更有利于理解和维护。对于功能不单一的函数，可以进行进一步拆分或分层处理。
+
+可从如下维度间接衡量函数功能是否单一：
+
+- **函数行数**，建议不超过 50 行（非空非注释）
+- **函数的参数个数**，建议不超过 5 个
+- **函数最大代码块嵌套深度**，建议不超过 4 层（if/for/while/switch/try 及宏展开块）
+
+> **说明**：嵌套深度超出 4 层时，应提取 helper 函数或使用 early return 简化控制流；函数过长时应按职责拆分为多个小函数；参数过多时应考虑将强相关的参数封装为结构体。检视时标记为 SUSPICIOUS，提醒开发者优化。
+
+---
+
+### 15. 函数使用
+
+#### 建议 15.1 函数传参顺序在同一文件（或同一模块）内保持一致
+
+> **说明**：不强制要求"入参在前、出参在后"。只要同一文件内的函数参数顺序风格统一即可（如统一采用入参在前，或统一采用出参在前）。检视时以文件内多数函数的风格为基准，仅标记明显不一致的情况。
+
+```cpp
+// ✅ 风格统一：全部采用入参在前
+bool FuncA(const std::string &in, FooBar *out1, FooBar *out2);
+bool FuncB(int val, Result *out);
+
+// ✅ 风格统一：全部采用出参在前
+bool FuncC(FooBar *out1, FooBar *out2, const std::string &in);
+bool FuncD(Result *out, int val);
+
+// ❌ 不一致：同文件内混用
+bool FuncE(const std::string &in, FooBar *out);  // 入参在前
+bool FuncF(Result *out, int val);                // 出参在前 → 风格不一致
+```
+
+#### 建议 15.2 函数传参传递，入参用 `const T &`，出参用 `T &` 或 `T *`
+
+> **说明**：出参使用引用（`T &`）或指针（`T *`）均可。实践中，`T &` 是更常见的出参方式（尤其标量出参和结构体），`T *` 多见于需要表达可选（nullable）语义的场景。检视时不强制要求出参必须为指针，但同一文件内应保持一致。
+
+```cpp
+// ✅ 出参用引用（常见风格）
+bool Func(const std::string &in, FooBar &out1, FooBar &out2);
+
+// ✅ 出参用指针（可选语义风格）
+bool Func(const std::string &in, FooBar *out1, FooBar *out2);
+
+// ❌ 同文件内混用（风格不一致）
+void FuncA(const Input &in, Output &out);  // 出参用引用
+void FuncB(const Input &in, Output *out);  // 出参用指针 → 同文件风格不一致
+```
+
+#### 规则 15.3 函数传参传递，不涉及所有权的场景，使用T * 或const T & 作为参数，而不是智能指针
+
+```cpp
+// 正确示范
+bool Func(const FooBar &in);
+// 错误示范
+bool Func(std::shared_ptr<FooBar> in);
+```
+
+#### 规则 15.4 函数传参传递，如需传递所有权，建议使用shared_ptr + move传参
+
+```cpp
+class Foo {
+ public:
+  explicit Foo(std::shared_ptr<T> x) : x_(std::move(x)) {}
+
+ private:
+  std::shared_ptr<T> x_;
+};
+```
+
+#### 规则 15.5 单参数构造函数必须用explicit修饰，多参数构造函数禁止使用explicit修饰
+
+```cpp
+explicit Foo(int x);             // good
+explicit Foo(int x, int y = 0);  // good
+Foo(int x, int y = 0);           // bad
+explicit Foo(int x, int y);      // bad
+```
+
+#### 规则 15.6 拷贝构造和拷贝赋值操作符应该是成对出现或者禁止
+
+```cpp
+class Foo {
+ private:
+  Foo(const Foo &) = default;
+  Foo &operator=(const Foo &) = default;
+  Foo(Foo &&) = delete;
+  Foo &operator=(Foo &&) = delete;
+};
+```
+
+#### 规则 15.7 禁止保存、delete指针参数
+
+#### 规则 15.8 函数的所有声明必须与定义具有一致的签名
+
+同一函数的声明与定义必须在参数类型（含顶层 `const`/`volatile`、数组/指针写法、类型别名写法）、参数顺序、参数个数、返回类型、cv/引用限定、`noexcept` 及参数名上保持一致。默认实参只影响调用方，不属于函数类型，且按 C++ 规则只能出现在声明中、定义中不得重复，因此本条不比对默认实参；其值变更见 [cpp-abi.md](cpp-abi.md) 规则 4.3。属性（`[[nodiscard]]`、`[[deprecated]]` 等）不属于本条校验范围。
+
+**必须检视的场景（跨边界，不一致标记为 FAIL）：**
+
+1. `extern "C"` 或弱符号（`__attribute__((weak))`）的手写声明与库中真实定义不一致（尤其是未包含权威头文件、自行声明外部接口的场景）；
+2. 同一符号在多个头文件中的重复声明不一致；
+3. 通过函数指针 typedef 或回调注册使用的函数，其类型与 typedef 不一致；
+4. `include/` 下公开接口声明与导出实现符号的签名不一致。
+
+**其余场景（标记为 SUSPICIOUS）：**
+
+1. 基类声明与派生类定义的虚函数覆盖签名不一致且未使用 `override`（退化为新函数，多态失效）；
+2. 同一翻译单元内声明与定义的类型不一致；
+3. 仅参数名不一致（含声明省略参数名，类型等其余项相同）；
+4. 仅写法不一致：by-value 形参顶层 `const`/`volatile`、数组形参退化（`T a[N]` 与 `T* a`）、等价别名（`int32_t` 与 `int`、`aclError` 与 `int`、`uint32_t` 与 `unsigned int`）的差异。
+
+**正确示例：**
+
+```cpp
+// foo.h
+void MsprofStopRange(uint64_t range_id);
+// foo.cc
+void MsprofStopRange(uint64_t range_id) { ... }  // 与声明逐项一致
+```
+
+**错误示例：**
+
+```cpp
+// 错误 1：类型不一致（跨 TU 弱声明与权威头参数类型不一致，链接与调用均可能偏离 ABI）
+__attribute__((weak)) int32_t aclprofSetStampTraceMessage(void *stamp, const char *msg, int32_t len);
+// acl/acl_prof.h：aclError aclprofSetStampTraceMessage(void* stamp, const char* msg, uint32_t msgLen);
+
+// 错误 2：虚函数覆盖签名不一致且未加 override，退化为新增重载
+class Base { virtual void Run(int x); };
+class Derived : public Base { void Run(int64_t x); };
+
+// 错误 3：仅参数名不一致
+// foo.h:  bool ParseConfig(const std::string &config_path, int max_retry, bool enable_log);
+// foo.cc: bool ParseConfig(const std::string &path, int retry_count, bool log);
+
+// 错误 4：仅写法不一致（SUSPICIOUS）
+// foo.h: void MsprofStopRange(uint64_t range_id);
+// foo.cc: void MsprofStopRange(const uint64_t range_id) { ... }
+```
+
+---
+
+> **说明**：安全相关的编码规范（如内存安全、输入验证、安全函数使用等）请参见[cpp-secure.md](cpp-secure.md)。

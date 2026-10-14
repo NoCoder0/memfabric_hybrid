@@ -114,7 +114,7 @@ bool FileValidator::CheckPermission(const std::string &filePath, const mode_t &m
     struct stat buf;
     int ret = stat(filePath.c_str(), &buf);
     if (ret != 0) {
-        errMsg = "Get file stat failed.";
+        errMsg = "Call api:stat failed, ret=" + std::to_string(ret) + ", filePath=" + filePath;
         return false;
     }
 

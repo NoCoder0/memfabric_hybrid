@@ -4,11 +4,12 @@
 
 ## Skills 列表
 
-| Skill | 适用场景 | 示例用法 |
-|---|---|---|
-| `memfabric-code-review` | 代码审查、错误返回日志、代码规范、UT/test 字面量、行宽和函数长度检查 | `使用 memfabric-code-review 检查这次变更` |
+| Skill | 适用场景 | 示例用法                                        |
+|---|---|---------------------------------------------|
+| `memfabric-code-review` | 代码审查、错误返回日志、代码规范、UT/test 字面量、行宽和函数长度检查 | `使用 memfabric-code-review 检查这次变更`           |
+| `memfabric-log-audit` | 扫描代码仓日志代码，找出关键执行分支中缺失或过弱的日志，输出日志修改方案 | `使用 memfabric-log-audit 扫描 src/ 和 app/ 的日志问题`       |
 | `memfabric-release` | 生成 MemFabric Hybrid changelog / release note，并列出本次 release 新增 PR | `使用 memfabric-release 生成 1.2.1 release note` |
-| `technical-design-proposal` | 编写技术方案、设计文档或 RFC，区分事实、目标和待验证项 | `使用 technical-design-proposal 编写内存池扩容方案` |
+| `technical-design-proposal` | 编写技术方案、设计文档或 RFC，区分事实、目标和待验证项 | `使用 technical-design-proposal 编写内存池扩容方案`    |
 
 ## 使用方式
 

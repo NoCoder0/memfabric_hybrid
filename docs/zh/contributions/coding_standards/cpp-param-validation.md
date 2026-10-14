@@ -1,0 +1,119 @@
+# 不可信入参参数校验规范
+
+> **适用场景**：当函数入参来自不可信模块（如 device kernel 入口、`extern "C"` 导出函数、Python 绑定、跨进程 RPC 回调等）时，必须在参数被解引用或使用前完成校验，防止非法输入导致崩溃、任意地址读写或资源耗尽。
+
+## 核心原则
+
+**报告会导致非法解引用、非法内存访问、未定义行为或 OOM/DoS 的问题。** 以下情况不算安全问题，不应报告：
+
+- 参数只是透传给下层函数，本层未解引用
+- 下层函数在使用前已有校验（不要求在信任边界入口层重复校验）
+- 调用方按 API 约定保证的指针+长度组合（如 C API 的 `desc_list` + `list_num`）
+
+## 信任边界识别
+
+以下函数签名模式视为信任边界入口：
+
+| 入口类型 | 识别特征 | 示例 |
+|---------|---------|------|
+| Device kernel 入口 | `extern "C"` + kernel 函数名 | `OffloadOpsEntryGather(...)`、`smem_bm_copy_batch(...)` |
+| 公开 C API | `extern "C"` 或 `include/` 下头文件声明 | `smem_bm_init(...)`、`hybm_create_entity(...)` |
+| Python 绑定 | `pybind11` module def | `m.def("batch_write", ...)` |
+| 跨进程回调 | RPC/消息处理函数 | `smem_trans_set_peer_down_callback(...)` |
+
+## 校验检查清单
+
+对每个信任边界入口函数，检查参数在**被解引用或使用前**是否完成校验。校验可以不在入口层，但必须在首次解引用前完成。
+
+| 编号 | 检查项 | 校验要求 | 违规后果 |
+|------|--------|---------|---------|
+| P1 | 指针解引用前判空 | 指针在解引用（`*p`、`p->`、`std::string(p)`、`strlen(p)` 等）前必须判空 | 空指针解引用导致崩溃 |
+| P2 | 地址字段解引用前非零 | 结构体中以整数存储的地址字段（如 `xxx_addr`），在解引用前必须校验非 0（`reinterpret_cast` 本身不解引用，转换后判空也可以） | 零地址解引用导致崩溃或非法访问 |
+| P3 | 数量/长度范围 | 表示数量、长度、大小的整数字段必须校验 `> 0` 且 `<= 上限`；仅用于循环遍历且调用方保证数组长度时不需要 | 0 值导致空循环或 OOM；极大值导致整数溢出或 OOM |
+| P4 | 校验失败阻断执行 | 校验失败必须立即返回错误码，不能继续执行后续逻辑 | 非法参数透传到底层触发更严重问题 |
+| P5 | 校验前不解引用参数 | 校验完成前不得对参数做任何解引用 | 校验前的非法访问已经造成崩溃 |
+| P6 | 避免未定义行为 | 对空容器取地址（`&vec[0]`）、对空指针取引用等 C++ 标准未定义行为必须避免 | 未定义行为可能导致崩溃或不可预测结果 |
+
+## 非问题（排除项）
+
+以下情况**不应报告**为安全问题：
+
+| 排除项 | 说明 | 示例 |
+|--------|------|------|
+| 透传不解引用 | 参数只是传递给下层函数，本层未解引用 | `bmHandle` 透传给 `smem_bm_copy`，MemFabric 代码中未解引用 |
+| 下层已有校验 | 下层函数在首次使用前已做校验，不要求在入口层重复 | `endpoint_list` 在 C API 层未判空，但 `Initialize` 内部已 `CHECK_NOTNULL` |
+| 调用方保证的指针+长度 | C API 调用约定中，调用方保证指针指向至少 N 个元素 | `desc_list` + `list_num`：调用方保证 `desc_list` 至少有 `list_num` 个元素 |
+| 整数溢出但无非法访问 | 整数运算溢出但结果不会被用于解引用、内存访问或资源分配 | 计数器溢出但只用于日志打印 |
+
+## 检查方法
+
+### 1. 定位信任边界入口
+
+在变更文件中搜索以下模式：
+
+```cpp
+extern "C"
+PYBIND11_MODULE
+m\.def\(
+```
+
+以及 `include/` 目录下头文件中声明的公开函数。
+
+### 2. 逐函数检查校验完整性
+
+对每个入口函数：
+
+1. 列出所有入参字段（含结构体成员）
+2. 对每个字段，追踪到**首次解引用或使用**的位置
+3. 检查在首次解引用前是否完成校验（可以在本层或下层）
+4. 对照排除项，确认不是误报
+5. 检查校验失败路径是否立即返回错误码
+
+## 正确示例
+
+```cpp
+int32_t smem_trans_batch_write(smem_trans_t handle, const void *localAddrs[], const char *remoteUniqueId,
+                               void *remoteAddrs[], size_t dataSizes[], uint32_t batchSize, uint32_t flags) {
+  // P1: 指针判空（handle、localAddrs、remoteUniqueId 即将被解引用）
+  BM_ASSERT_LOG_AND_RETURN(handle != nullptr, "handle is nullptr", BM_INVALID_PARAM);
+  BM_ASSERT_LOG_AND_RETURN(localAddrs != nullptr, "localAddrs is nullptr", BM_INVALID_PARAM);
+  BM_ASSERT_LOG_AND_RETURN(remoteUniqueId != nullptr, "remoteUniqueId is nullptr", BM_INVALID_PARAM);
+  BM_ASSERT_LOG_AND_RETURN(remoteAddrs != nullptr, "remoteAddrs is nullptr", BM_INVALID_PARAM);
+  BM_ASSERT_LOG_AND_RETURN(dataSizes != nullptr, "dataSizes is nullptr", BM_INVALID_PARAM);
+  // P3: batchSize 范围校验，后续将用它遍历数组并做地址运算
+  constexpr uint32_t kMaxBatchSize = 8192;
+  BM_ASSERT_LOG_AND_RETURN(batchSize > 0 && batchSize <= kMaxBatchSize,
+      "invalid batchSize=" << batchSize << ", valid range is [1, " << kMaxBatchSize << "]", BM_INVALID_PARAM);
+  // P5: 校验完成后才开始使用参数
+  return entry_->BatchWrite(localAddrs, remoteUniqueId, remoteAddrs, dataSizes, batchSize, flags);
+}
+```
+
+## 错误示例
+
+```cpp
+// 错误：storeURL 未判空，std::string 构造函数内部调用 strlen 解引用 nullptr
+smem_trans_t smem_trans_create(const char *storeUrl, const char *uniqueId, const smem_trans_config_t *config) {
+  smem_trans_config_t localConfig = *config;  // config 也未判空！
+  auto trans = std::make_unique<SmTransEntry>(storeUrl, uniqueId, localConfig);  // storeUrl 为 nullptr 时崩溃
+  ...
+}
+```
+
+## 非问题示例（不应报告）
+
+```cpp
+// 不是问题：bmHandle 只是透传，本层未解引用
+BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(smem_bm_copy(bmHandle, params, copyType, flags),
+    "smem_bm_copy failed, handle=" << bmHandle);
+
+// 不是问题：addresses 在下层 Entry 内部已判空
+BM_ASSERT_LOG_AND_RETURN(handle != nullptr, "handle is nullptr", BM_INVALID_PARAM);
+return entry_->BatchRegister(addresses, capacities, count, flags);
+// Entry::BatchRegister 内部：BM_ASSERT_LOG_AND_RETURN(addresses != nullptr, ...)
+
+// 不是问题：调用方保证 localAddrs 至少有 batchSize 个元素
+for (uint32_t i = 0; i < batchSize; i++) {
+  void *src = localAddrs[i];  // 调用方保证，不是库的责任
+}
+```

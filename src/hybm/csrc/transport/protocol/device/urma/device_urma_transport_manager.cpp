@@ -579,6 +579,7 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointsDescLocked(UrmaProtocol pr
         std::unordered_map<int32_t, std::array<uint8_t, COMM_ADDR_EID_LEN>> eidInfos;
         const auto ret = UrmaTopoManager::GetInstance().GetPeer2PeerEids(eidInfos);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("device_urma GetPeer2PeerEids failed, protocol=UBC_CTP rankId=" << rankId_ << " ret=" << ret);
             return ret;
         }
         int32_t localId = -1;
@@ -624,11 +625,15 @@ Result DeviceUrmaTransportManager::CreateEndpointAndInitResourcesLocked(const Ur
 
     ret = InitDeviceTransferFlagLocked();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma CreateEndpointAndInitResourcesLocked InitDeviceTransferFlagLocked failed, rankId="
+                     << rankId_ << " protocol=" << localDesc.protocol << " ret=" << ret);
         RollbackOpenDeviceLocked();
         return ret;
     }
     ret = EnsureDeviceKernelLoadedLocked();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma CreateEndpointAndInitResourcesLocked EnsureDeviceKernelLoadedLocked failed, rankId="
+                     << rankId_ << " protocol=" << localDesc.protocol << " ret=" << ret);
         RollbackOpenDeviceLocked();
         return ret;
     }
@@ -653,11 +658,15 @@ Result DeviceUrmaTransportManager::CreateEndpointsAndInitResourcesLocked(const s
 
     auto ret = InitDeviceTransferFlagLocked();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma CreateEndpointsAndInitResourcesLocked InitDeviceTransferFlagLocked failed, rankId="
+                     << rankId_ << " endpointCount=" << descs.size() << " ret=" << ret);
         RollbackOpenDeviceLocked();
         return ret;
     }
     ret = EnsureDeviceKernelLoadedLocked();
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma CreateEndpointsAndInitResourcesLocked EnsureDeviceKernelLoadedLocked failed, rankId="
+                     << rankId_ << " endpointCount=" << descs.size() << " ret=" << ret);
         RollbackOpenDeviceLocked();
         return ret;
     }
@@ -1309,6 +1318,8 @@ Result DeviceUrmaTransportManager::FindRemoteRegistrationLocked(uint32_t rankId,
 {
     const auto rankIt = remoteRanks_.find(rankId);
     if (rankIt == remoteRanks_.end()) {
+        BM_LOG_ERROR("device_urma FindRemoteRegistrationLocked rank not found, rankId=" << rankId << " remoteRanksSize="
+                                                                                        << remoteRanks_.size());
         return BM_NOT_CONNECTED;
     }
     for (const auto &remote : rankIt->second.imports) {
@@ -2052,6 +2063,8 @@ Result DeviceUrmaTransportManager::StageAndLaunchTransfer(CompletionContext &ctx
     std::vector<NotifyResource *> notifyResources;
     auto ret = PrepareMultiRankMarkersLocked(rankIds, markerDescs, notifyResources);
     if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma StageAndLaunchTransfer PrepareMultiRankMarkersLocked failed, rankId="
+                     << rankId << " rankCount=" << rankIds.size() << " ret=" << ret);
         return ret;
     }
     ret = StageAndLaunchMultiTransfer(ctx, transferDescs, 0U, transferDescs.size(), rankIds, rankStartIdx, rankListNum,

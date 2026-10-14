@@ -203,18 +203,18 @@ AccResult AccTcpSslHelper::LoadPrivateKey(SSL_CTX *sslCtx)
         std::string cipher;
         auto ret = ReadFile(tmpTlsPriKeyPwdPath, cipher);
         if (ret != ACC_OK) {
-            LOG_ERROR("Read private key file failed");
+            LOG_ERROR("Read private key file failed, ret=" << ret << ", path=" << tmpTlsPriKeyPwdPath);
             return ACC_ERROR;
         }
         auto buffer = new (std::nothrow) char[cipher.length()];
         if (buffer == nullptr) {
-            LOG_ERROR("allocate memory for buffer failed");
+            LOG_ERROR("allocate memory for buffer failed, size=" << cipher.length());
             return ACC_ERROR;
         }
         auto dataLength = static_cast<int>(cipher.length());
         ret = static_cast<AccResult>(mDecryptHandler_(cipher.c_str(), cipher.length(), buffer, dataLength));
         if (ret != ACC_OK) {
-            LOG_ERROR("Failed to decrypt private key password");
+            LOG_ERROR("Failed to decrypt private key password, ret=" << ret);
             delete[] buffer;
             buffer = nullptr;
             return ret;
@@ -321,12 +321,14 @@ static X509_CRL *LoadCertRevokeListFile(const char *crlFile)
     // check whether file is exist
     char *realCrlPath = realpath(crlFile, nullptr);
     if (realCrlPath == nullptr) {
+        LOG_ERROR("Call api:realpath failed, crlFile=" << crlFile);
         return nullptr;
     }
 
     // load crl file
     BIO *in = OpenSslApiWrapper::BioNew(OpenSslApiWrapper::BioSFile());
     if (in == nullptr) {
+        LOG_ERROR("Call api:BioNew failed, crlFile=" << crlFile);
         free(realCrlPath);
         realCrlPath = nullptr;
         return nullptr;
@@ -336,6 +338,7 @@ static X509_CRL *LoadCertRevokeListFile(const char *crlFile)
         OpenSslApiWrapper::BioCtrl(in, OpenSslApiWrapper::BIO_C_SET_FILENAME,
                                    OpenSslApiWrapper::BIO_CLOSE | OpenSslApiWrapper::BIO_FP_READ, realCrlPath);
     if (result <= 0) {
+        LOG_ERROR("Call api:BioCtrl failed, result=" << result << ", crlFile=" << crlFile);
         (void)OpenSslApiWrapper::BioFree(in);
         free(realCrlPath);
         realCrlPath = nullptr;
@@ -344,6 +347,7 @@ static X509_CRL *LoadCertRevokeListFile(const char *crlFile)
 
     X509_CRL *crl = OpenSslApiWrapper::PemReadBioX509Crl(in, nullptr, nullptr, nullptr);
     if (crl == nullptr) {
+        LOG_ERROR("Call api:PemReadBioX509Crl failed, crlFile=" << crlFile);
         (void)OpenSslApiWrapper::BioFree(in);
         free(realCrlPath);
         realCrlPath = nullptr;

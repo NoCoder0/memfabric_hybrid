@@ -36,6 +36,7 @@ AccDataBuffer::~AccDataBuffer()
 bool AccDataBuffer::AllocIfNeed(uint32_t newSize) noexcept
 {
     if (newSize > MAX_RECV_BODY_LEN) {
+        LOG_ERROR("AllocIfNeed failed, newSize=" << newSize << ", exceeds MAX_RECV_BODY_LEN=" << MAX_RECV_BODY_LEN);
         return false;
     }
 
@@ -54,6 +55,7 @@ bool AccDataBuffer::AllocIfNeed(uint32_t newSize) noexcept
         }
         auto *newBuf = new (std::nothrow) uint8_t[targetSize];
         if (newBuf == nullptr) {
+            LOG_ERROR("AllocIfNeed failed to allocate memory, targetSize=" << targetSize);
             return false;
         }
         if (dataSize_ > 0) {
