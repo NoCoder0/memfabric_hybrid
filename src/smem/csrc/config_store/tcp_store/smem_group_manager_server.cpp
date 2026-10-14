@@ -24,6 +24,9 @@ namespace ock::smem {
 // Each alive rank needs two ADD tasks (src->newRank and newRank->src) to build bidirectional links.
 constexpr size_t K_ADD_DIRECTIONS = 2;
 
+// 重发超时以秒配置，而链路状态持续时长（LinkScanContext::elapsedMs）以毫秒统计，比较时统一换算。
+constexpr int64_t K_MS_PER_SECOND = 1000;
+
 // SendTaskKey packs srcRank into the high bits, op into bits 32..39 and linkIdx
 // into the low 32 bits, so distinct ops on the same link (e.g. REMOVE then CLOSE
 // during teardown) are queued independently instead of being deduped together.
@@ -45,8 +48,10 @@ const char *AckTagName(ControlOp op) noexcept
     }
 }
 
-SmemGroupManagerServer::SmemGroupManagerServer(SmemGroupCommandSender sender, const uint32_t maxRanks) noexcept
-    : sender_(std::move(sender)), maxRanks_(maxRanks > SMEM_RANK_MAX ? SMEM_RANK_MAX : maxRanks)
+SmemGroupManagerServer::SmemGroupManagerServer(SmemGroupCommandSender sender, const uint32_t maxRanks,
+                                               const uint32_t linkRetryTimeoutS) noexcept
+    : sender_(std::move(sender)), maxRanks_(maxRanks > SMEM_RANK_MAX ? SMEM_RANK_MAX : maxRanks),
+      linkRetryTimeoutS_(linkRetryTimeoutS == 0U ? kDefaultLinkRetryTimeoutS : linkRetryTimeoutS)
 {
     /*
      * Vectors are sized once on construction and never resized.
@@ -366,7 +371,7 @@ bool SmemGroupManagerServer::ShouldDegradeLink(LinkTransition &tr, size_t idx) n
 
 bool SmemGroupManagerServer::IsTimeout(int64_t elapsed) const noexcept
 {
-    return elapsed >= static_cast<int64_t>(LINK_QUERY_TIMEOUT_MS);
+    return elapsed >= static_cast<int64_t>(linkRetryTimeoutS_) * K_MS_PER_SECOND;
 }
 
 void SmemGroupManagerServer::HandleLinkExchanging(LinkScanContext &ctx, std::vector<LinkScanJob> &addJobs) noexcept

@@ -40,6 +40,9 @@ constexpr uint64_t SERVER_RECOVER_TIME = 60 * 1000 * 1000; // 60s
 constexpr uint64_t RECOVER_PERIOD_TIME = 10;               // 10s
 constexpr uint32_t DEFAULT_HEARTBEAT_TIMEOUT_S = 60;
 constexpr uint32_t MAX_HEARTBEAT_TIMEOUT_S = 3600; // 1 hour
+constexpr uint32_t DEFAULT_LINK_RETRY_TIMEOUT_S = 2;
+constexpr uint32_t MIN_LINK_RETRY_TIMEOUT_S = 1;
+constexpr uint32_t MAX_LINK_RETRY_TIMEOUT_S = 600; // 10 minutes
 constexpr int32_t EPHEMERAL_KEY_TTL_SEC = 5;
 constexpr int32_t PERSISTENT_KEY_TTL_SEC = 0;
 constexpr size_t MAX_WRITE_TOTAL_SIZE = MAX_VALUE_SIZE * 16ULL;
@@ -71,7 +74,8 @@ AccStoreServer::AccStoreServer(std::string ip, uint16_t port, uint32_t worldSize
         return SendControlToRank(targetRankId, data);
     };
     sender_ = sendFunc;
-    groupManager_ = SmMakeRef<SmemGroupManagerServer>(sendFunc, worldSize_);
+    groupManager_ = SmMakeRef<SmemGroupManagerServer>(
+        sendFunc, worldSize_, ParseLinkRetryTimeoutS(mf::env::MF_CONFIG_STORE_LINK_RETRY_TIMEOUT_S));
     if (backend_ != nullptr && backend_->IsDistributed()) {
         etcdStore_ = std::make_unique<EtcdStateStore>(backend_);
         groupManager_->SetOnStateChangeCallback([this]() {
@@ -1270,6 +1274,20 @@ uint32_t AccStoreServer::ParseHeartbeatTimeoutS(const std::string &value) noexce
                                                                        << MAX_HEARTBEAT_TIMEOUT_S << "], using default="
                                                                        << DEFAULT_HEARTBEAT_TIMEOUT_S);
         return DEFAULT_HEARTBEAT_TIMEOUT_S;
+    }
+    return timeoutS;
+}
+
+uint32_t AccStoreServer::ParseLinkRetryTimeoutS(const std::string &value) noexcept
+{
+    uint32_t timeoutS = DEFAULT_LINK_RETRY_TIMEOUT_S;
+    if (!value.empty() && (value.find_first_not_of("0123456789") != std::string::npos ||
+                           !mf::MfEnvUtil::GetOptionalUint(value, timeoutS) || timeoutS < MIN_LINK_RETRY_TIMEOUT_S ||
+                           timeoutS > MAX_LINK_RETRY_TIMEOUT_S)) {
+        STORE_LOG_ERROR("invalid MF_CONFIG_STORE_LINK_RETRY_TIMEOUT_S="
+                        << value << ", expected seconds in [" << MIN_LINK_RETRY_TIMEOUT_S << ", "
+                        << MAX_LINK_RETRY_TIMEOUT_S << "], using default=" << DEFAULT_LINK_RETRY_TIMEOUT_S);
+        return DEFAULT_LINK_RETRY_TIMEOUT_S;
     }
     return timeoutS;
 }

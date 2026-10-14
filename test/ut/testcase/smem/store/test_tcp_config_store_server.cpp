@@ -33,6 +33,10 @@ constexpr uint32_t K_STATE_EXITED = 4;
 constexpr uint32_t K_DEFAULT_HEARTBEAT_TIMEOUT_S = 60;
 constexpr uint32_t K_HEARTBEAT_TIMEOUT_S = 15;
 constexpr uint32_t K_MAX_HEARTBEAT_TIMEOUT_S = 3600;
+constexpr uint32_t K_DEFAULT_LINK_RETRY_TIMEOUT_S = 2;
+constexpr uint32_t K_LINK_RETRY_TIMEOUT_S = 5;
+constexpr uint32_t K_MIN_LINK_RETRY_TIMEOUT_S = 1;
+constexpr uint32_t K_MAX_LINK_RETRY_TIMEOUT_S = 600;
 constexpr uint32_t K_RETRY_COUNT = 2;
 constexpr int64_t K_MIDDLE_STATE_ELAPSED_MS = 500;
 constexpr uint32_t K_TRUNC_WORLD_SIZE = 24; // 24*23=552 对中间态链路，超过 256 条输出上限
@@ -207,6 +211,22 @@ TEST_F(AccStoreServerTest, HeartbeatTimeoutMissingOrInvalidUsesDefault)
     EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("-1"), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
     EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("abc"), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
     EXPECT_EQ(AccStoreServer::ParseHeartbeatTimeoutS("3601"), K_DEFAULT_HEARTBEAT_TIMEOUT_S);
+}
+
+TEST_F(AccStoreServerTest, LinkRetryTimeoutParsesSecondsWithinRange)
+{
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("1"), K_MIN_LINK_RETRY_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("5"), K_LINK_RETRY_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("600"), K_MAX_LINK_RETRY_TIMEOUT_S);
+}
+
+TEST_F(AccStoreServerTest, LinkRetryTimeoutMissingOrInvalidUsesDefault)
+{
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS(""), K_DEFAULT_LINK_RETRY_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("-1"), K_DEFAULT_LINK_RETRY_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("abc"), K_DEFAULT_LINK_RETRY_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("0"), K_DEFAULT_LINK_RETRY_TIMEOUT_S);
+    EXPECT_EQ(AccStoreServer::ParseLinkRetryTimeoutS("601"), K_DEFAULT_LINK_RETRY_TIMEOUT_S);
 }
 
 TEST_F(AccStoreServerTest, RestoreFromBackend_NonDistributedReturnsOk)

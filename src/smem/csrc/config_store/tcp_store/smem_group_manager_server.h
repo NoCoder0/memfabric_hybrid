@@ -31,13 +31,13 @@ namespace ock {
 // Upper bound for managed ranks; must stay in sync with SMEM_GROUP_MAX in smem_group_manager.h.
 inline constexpr uint32_t SMEM_RANK_MAX = 1024U;
 
-/* Link-state query timeout and retry constants.
- * After a server crash Recovery queries each active rank for its link state.
- * • Per-query timeout: 1 s
- * • Max retries:       10 (total wall-clock ≈ 10 s)
- * • After 10 failures the link is assumed IDLE (no connection).
+/* Middle-state (EXCHANGING/EXCHANGED/CONNECTING) link retry constants.
+ * A non-stable link is re-sent once it has waited linkRetryTimeoutS without
+ * receiving an ACK, up to LINK_QUERY_MAX_RETRIES times; after that the link
+ * degrades to IDLE and is retried later by the periodic idle-link scan.
+ * The wait is configurable via MF_CONFIG_STORE_LINK_RETRY_TIMEOUT_S (seconds).
  */
-inline constexpr uint32_t LINK_QUERY_TIMEOUT_MS = 20000U;
+inline constexpr uint32_t kDefaultLinkRetryTimeoutS = 2U;
 inline constexpr uint32_t LINK_QUERY_MAX_RETRIES = 10U;
 
 namespace smem {
@@ -118,7 +118,8 @@ enum LinkState : int8_t {
  */
 class SmemGroupManagerServer : public SmReferable {
 public:
-    explicit SmemGroupManagerServer(SmemGroupCommandSender sender, uint32_t maxRanks = SMEM_RANK_MAX) noexcept;
+    explicit SmemGroupManagerServer(SmemGroupCommandSender sender, uint32_t maxRanks = SMEM_RANK_MAX,
+                                    uint32_t linkRetryTimeoutS = kDefaultLinkRetryTimeoutS) noexcept;
     ~SmemGroupManagerServer() noexcept override;
     SmemGroupManagerServer(const SmemGroupManagerServer &) = delete;
     SmemGroupManagerServer &operator=(const SmemGroupManagerServer &) = delete;
@@ -137,10 +138,9 @@ public:
     /**
      * @brief Query all active ranks for their link state and update the in-memory matrix.
      *
-     * Called during Restore(). Sends a QUERY_LINK_STATE request to each active
-     * rank via the TransitionController, waits up to LINK_QUERY_TIMEOUT_MS per
-     * attempt and retries up to LINK_QUERY_MAX_RETRIES times. Links for which
-     * no response is received are assumed IDLE.
+     * Called during Restore(). Sends a QUERY_LINK_STATE request to each active rank;
+     * each rank replies with its own link-state entries via OnLinkStateResponse.
+     * Links for which no response is received are assumed IDLE.
      */
     void QueryLinkStates() noexcept;
 
@@ -345,6 +345,7 @@ private:
     std::vector<size_t> activeLinks_;              // current non-stable link indices for O(1) scan
     std::unordered_set<uint32_t> aliveRanks_;
     uint32_t maxRanks_;
+    uint32_t linkRetryTimeoutS_{kDefaultLinkRetryTimeoutS};
     std::chrono::steady_clock::time_point lastIdleRetryTime_{};
     std::thread driverThread_;
     std::condition_variable driverCond_;

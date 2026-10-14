@@ -180,6 +180,7 @@ private:
     void RankStateTask() noexcept;
     void CheckerThreadTask() noexcept;
     static uint32_t ParseHeartbeatTimeoutS(const std::string &value) noexcept;
+    static uint32_t ParseLinkRetryTimeoutS(const std::string &value) noexcept;
     void RestoreFromEtcdIfNeeded() noexcept;
     Result FindOrInsertRank(const ock::acc::AccTcpRequestContext &context, SmemMessage &request) noexcept;
 
