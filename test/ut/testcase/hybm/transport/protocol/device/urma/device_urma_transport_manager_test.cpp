@@ -31,6 +31,7 @@
 #define protected public
 #include "hybm_gva_version.h"
 #include "urma_topo_helper.h"
+#include "urma_topo_manager.h"
 #include "urma_topo_json_parser.h"
 #include "device_urma_transport_manager.h"
 #include "dl_hccl_api.h"
@@ -1509,6 +1510,38 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseClean
     EXPECT_TRUE(manager.localEndpoint_.empty());
     EXPECT_TRUE(manager.devTransFlagPtr_.empty());
     EXPECT_TRUE(manager.devTransFlagHcommHandle_.empty());
+}
+
+TEST(DeviceUrmaTransportManagerTest, OpenDevice350LSelectsCtpProtocol)
+{
+    struct TopologyGuard {
+        ~TopologyGuard()
+        {
+            ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
+        }
+    } topologyGuard;
+    ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
+    DeviceTestFixture fixture;
+    fixture.InstallAll();
+    DlAclApi::pRtGetDeviceInfo = [](uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *value) {
+        auto ret = MockRtGetDeviceInfo(deviceId, moduleType, infoType, value);
+        if (ret == BM_OK && infoType == INFO_TYPE_MAINBOARD_ID) {
+            *value = MAIN_BOARD_ID_SERVER_350L;
+        }
+        return ret;
+    };
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0U;
+    options.rankCount = 2U;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
+
+    ASSERT_EQ(manager.OpenDevice(options), BM_OK);
+    EXPECT_EQ(manager.mainboardId_, MAIN_BOARD_ID_SERVER_350L);
+    EXPECT_EQ(manager.protocol_, UrmaProtocol::UBC_CTP);
+    ASSERT_FALSE(manager.localEndpointDesc_.empty());
+    EXPECT_EQ(manager.localEndpointDesc_[0].protocol, UrmaProtocol::UBC_CTP);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
 TEST(DeviceUrmaTransportManagerTest, CreatingContextsDoesNotLeaseNotify)
