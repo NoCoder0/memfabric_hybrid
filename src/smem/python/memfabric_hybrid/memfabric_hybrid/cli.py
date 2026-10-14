@@ -98,6 +98,25 @@ def _scan_memory(args: argparse.Namespace) -> int:
     return 0
 
 
+def _collect_logs(args: argparse.Namespace) -> int:
+    bash = shutil.which("bash")
+    if bash is None:
+        LOGGER.error("failed to collect logs: bash is not available, command=logs")
+        return 1
+
+    collector = Path(__file__).resolve().parent / "logs" / "collect_logs.sh"
+    if not collector.is_file():
+        LOGGER.error("failed to collect logs: collector script is missing, path=%s", collector)
+        return 1
+
+    command = [bash, str(collector), *args.collector_args]
+    try:
+        return subprocess.run(command, check=False).returncode
+    except OSError as error:
+        LOGGER.error("failed to start log collector, path=%s, error=%s", collector, error)
+        return 1
+
+
 def _register_version_command(components) -> None:
     version = components.add_parser("version", help="show version information")
     version.set_defaults(handler=_show_version)
@@ -131,6 +150,11 @@ def _register_mem_command(components) -> None:
     scan = commands.add_parser("scan", help="scan NUMA free memory")
     mem_scan.add_arguments(scan)
     scan.set_defaults(handler=_scan_memory)
+
+
+def _register_logs_command(components) -> None:
+    logs = components.add_parser("logs", help="collect troubleshooting logs", add_help=False)
+    logs.set_defaults(handler=_collect_logs)
 
 
 def _run_benchmark(args: argparse.Namespace) -> int:
@@ -269,8 +293,19 @@ def _parser() -> argparse.ArgumentParser:
     _register_version_command(components)
     _register_kernel_command(components)
     _register_mem_command(components)
+    _register_logs_command(components)
     _register_benchmark_command(components)
     return parser
+
+
+def _parse_args(argv=None) -> argparse.Namespace:
+    parser = _parser()
+    args, remaining = parser.parse_known_args(argv)
+    if args.component == "logs":
+        args.collector_args = remaining
+    elif remaining:
+        parser.error(f"unrecognized arguments: {' '.join(remaining)}")
+    return args
 
 
 def main() -> int:
@@ -279,7 +314,7 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%Y-%m-%dT%H:%M:%S%z",
     )
-    args = _parser().parse_args()
+    args = _parse_args()
     return args.handler(args)
 
 

@@ -201,6 +201,7 @@ setup(
             "include/smem/device/*.h",
             "include/hybm/*.h",
             "VERSION",
+            "logs/collect_logs.sh",
             "_kernel/hybm/*",
             "_kernel/acc_offload/operators/*",
             "_kernel/acc_offload/launch/*",

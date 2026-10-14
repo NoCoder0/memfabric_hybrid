@@ -16,6 +16,14 @@ pip3 install memfabric_hybrid-*.whl
 export ASCEND_HOME_PATH=/path/to/cann
 ```
 
+## 查看帮助
+
+查看 `mfcli` 支持的命令：
+
+```bash
+mfcli --help
+```
+
 ## 查看版本
 
 显示 MemFabric Hybrid 的版本：
@@ -96,10 +104,44 @@ mfcli mem scan --node 0
 mfcli mem scan --min-mb 1024 --workers 8
 ```
 
-## 查看帮助
+## 运行 benchmark
+
+使用 `mfcli benchmark` 测试 MemFabric 数据读写性能：
 
 ```bash
-mfcli --help
+mfcli benchmark
+```
+
+环境准备、编译安装、参数配置和使用示例请参考
+[benchmark 使用指南](../../src/smem/python/memfabric_hybrid/memfabric_hybrid/benchmark/README.md)。
+
+## 收集故障诊断日志
+
+收集环境信息、MemFabric、MemCache、Ascend 日志和内核日志，并在当前目录生成压缩包。请在业务程序所在的容器内，
+程序运行结束后立即执行采集；不要退出或关闭容器后再执行，否则相关环境变量可能丢失，影响日志路径识别和采集结果。
+查看日志采集命令的全部参数：
+
+```bash
+mfcli logs --help
+```
+
+默认收集最近 6 小时的 MemFabric、MemCache、Ascend 和内核日志。目录日志根据文件修改时间筛选，并保留原始
+相对路径；内核日志按照相同时间范围从 `dmesg` 或 `journalctl` 获取。Ascend 日志优先从
+`ASCEND_PROCESS_LOG_PATH` 指定的目录收集；该变量未设置或目录不存在时，使用 `/root/ascend/log`：
+
+```bash
+mfcli logs
+```
+
+下面集中展示全部可选的采集参数，请按需删除不需要的参数：
+
+```bash
+mfcli logs \                     # 收集故障诊断日志
+  --output-dir=/data/logs \     # 指定压缩包输出目录，默认是当前目录
+  --hours=6 \                   # 收集最近 N 小时的运行日志
+  --max-size=2048 \             # 单类日志的最大收集容量，单位为 MB
+  --no-plog \                   # 跳过 Ascend 日志
+  --no-dmesg                    # 跳过内核 dmesg 日志
 ```
 
 ## 常见问题
