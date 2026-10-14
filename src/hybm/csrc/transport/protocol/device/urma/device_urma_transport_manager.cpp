@@ -1067,6 +1067,10 @@ void DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
     devTransFlagHcommHandle_.clear();
 
     remoteRanks_.clear();
+    {
+        std::unique_lock<std::shared_mutex> faultLock(faultedRanksMutex_);
+        faultedRanks_.clear();
+    }
 
     if (!localEndpoint_.empty()) {
         for (auto &localEndpoint : localEndpoint_) {
@@ -1754,6 +1758,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             continue;
         }
         auto &state = remoteRanks_[peerRank];
+        // peer 重新 Prepare 视为恢复，解除故障标记，否则重连后无法再通信
+        UnmarkRankFaulted(peerRank);
 
         // 1. Parse peer UrmaEndpointDesc from privateData
         UrmaEndpointDesc peerDesc{};
@@ -1904,6 +1910,30 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
     return BM_OK;
 }
 
+void DeviceUrmaTransportManager::MarkRanksFaulted(const std::vector<uint32_t> &ranks)
+{
+    std::unique_lock<std::shared_mutex> lock(faultedRanksMutex_);
+    for (auto rankId : ranks) {
+        if (faultedRanks_.insert(rankId).second) {
+            BM_LOG_INFO("device_urma mark peer rank faulted, localRank: " << rankId_ << " peerRank: " << rankId);
+        }
+    }
+}
+
+void DeviceUrmaTransportManager::UnmarkRankFaulted(uint32_t rankId)
+{
+    std::unique_lock<std::shared_mutex> lock(faultedRanksMutex_);
+    if (faultedRanks_.erase(rankId) != 0) {
+        BM_LOG_INFO("device_urma unmark peer rank faulted, localRank: " << rankId_ << " peerRank: " << rankId);
+    }
+}
+
+bool DeviceUrmaTransportManager::IsRankFaulted(uint32_t rankId) const
+{
+    std::shared_lock<std::shared_mutex> lock(faultedRanksMutex_);
+    return faultedRanks_.count(rankId) != 0;
+}
+
 Result DeviceUrmaTransportManager::RemoveRankLocked(uint32_t rankId)
 {
     auto rankIt = remoteRanks_.find(rankId);
@@ -1927,11 +1957,21 @@ Result DeviceUrmaTransportManager::RemoveRankLocked(uint32_t rankId)
 
 Result DeviceUrmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRanks)
 {
-    std::lock_guard<std::shared_mutex> guard(mutex_);
     BM_LOG_INFO("device_urma RemoveRanks called, localRank: " << rankId_ << " ranks: " << removedRanks.size()
                                                               << " opened: " << opened_);
-    BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
+    {
+        std::shared_lock<std::shared_mutex> guard(mutex_);
+        BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
+    }
 
+    // 关键：先在不持 mutex_ 的前提下标记故障并中止所有 memfabric 线程 stream。
+    // 若有数据线程正阻塞在共享锁保护的 notify/stream 等待中，此处 abort 可让其立即返回
+    // ACL_ERROR_RT_STREAM_ABORT，避免被拖到 device task timeout(107020) 污染整卡 context。
+    // 若先取独占锁再 abort，会被该 shared 持有者阻塞，永远到不了 abort。
+    MarkRanksFaulted(removedRanks);
+    HybmStreamManager::AbortAllThreadAclStreams();
+
+    std::lock_guard<std::shared_mutex> guard(mutex_);
     Result finalRet = BM_OK;
     for (auto rankId : removedRanks) {
         BM_LOG_INFO("device_urma RemoveRanks calling RemoveRankLocked, rankId: " << rankId);
@@ -2081,6 +2121,10 @@ Result DeviceUrmaTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uin
 {
     if (size == 0) {
         return BM_OK;
+    }
+    if (IsRankFaulted(rankId)) {
+        BM_LOG_WARN("device_urma RemoteIo skip faulted rank, localRank: " << rankId_ << " peerRank: " << rankId);
+        return BM_NOT_CONNECTED;
     }
     std::shared_lock<std::shared_mutex> guard(mutex_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
@@ -2511,6 +2555,13 @@ Result DeviceUrmaTransportManager::LaunchMultiRankBatchLocked(const std::vector<
                                                               const std::vector<HcommChannelHandle> &channels,
                                                               std::set<uint32_t> &batchRanks)
 {
+    for (uint32_t rankId : rankIds) {
+        if (IsRankFaulted(rankId)) {
+            BM_LOG_WARN("device_urma LaunchMultiRankBatchLocked skip faulted rank, localRank: "
+                        << rankId_ << " peerRank: " << rankId);
+            return BM_NOT_CONNECTED;
+        }
+    }
     CompletionContext *ctx = LookupOrCreateContextLocked();
     if (ctx == nullptr) {
         BM_LOG_ERROR("device_urma raw multi-rank context creation failed, rankNum: " << rankIds.size());
@@ -2853,6 +2904,15 @@ Result DeviceUrmaTransportManager::SynchronizePreSubmittedNotifiesLocked(Complet
         syncRet = DlAclApi::AclrtSynchronizeStream(ctx.stream);
         TP_TRACE_END(TP_HYBM_URMA_SYNC_STREAM, syncRet);
     }
+    // stream 因 peer 故障被中止：归一化为可降级错误，避免上层把 107023 当致命错误处理
+    if (syncRet == ACL_ERROR_RT_STREAM_ABORT) {
+        BM_LOG_WARN("device_urma stream aborted on peer fault, treat as recoverable, localRank: "
+                    << rankId_ << " rankNum: " << rankIds.size());
+        syncRet = BM_TIMEOUT;
+    }
+    if (waitRet == ACL_ERROR_RT_STREAM_ABORT) {
+        waitRet = BM_TIMEOUT;
+    }
     if (waitRet != BM_OK || syncRet != BM_OK) {
         //入队失败or同步失败
         for (auto *pending : targets) {
@@ -2883,6 +2943,14 @@ Result DeviceUrmaTransportManager::SynchronizePreSubmittedNotifiesLocked(Complet
 
 Result DeviceUrmaTransportManager::SynchronizeRanks(const std::set<uint32_t> &rankIds)
 {
+    // 故障 rank 直接快速失败；在取锁前判定，避免与正在退出的阻塞线程抢 shared_lock
+    for (uint32_t rankId : rankIds) {
+        if (IsRankFaulted(rankId)) {
+            BM_LOG_WARN("device_urma SynchronizeRanks skip faulted rank, localRank: " << rankId_
+                                                                                      << " peerRank: " << rankId);
+            return BM_NOT_CONNECTED;
+        }
+    }
     std::shared_lock<std::shared_mutex> guard(mutex_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
     for (uint32_t rankId : rankIds) {

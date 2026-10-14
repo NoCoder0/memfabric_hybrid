@@ -25,6 +25,7 @@ struct DlAclApiFnGuard {
     aclrtGetSocNameFunc oldGetSocName{DlAclApi::pAclrtGetSocName};
     aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
     aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
+    aclrtStreamAbortFunc oldStreamAbort{DlAclApi::pAclrtStreamAbort};
 
     ~DlAclApiFnGuard()
     {
@@ -32,8 +33,17 @@ struct DlAclApiFnGuard {
         DlAclApi::pAclrtGetSocName = oldGetSocName;
         DlAclApi::pAclrtMemcpy = oldMemcpy;
         DlAclApi::pAclrtFree = oldFree;
+        DlAclApi::pAclrtStreamAbort = oldStreamAbort;
     }
 };
+
+void *g_lastAbortedStream = nullptr;
+
+int FakeStreamAbort(void *stream)
+{
+    g_lastAbortedStream = stream;
+    return 0;
+}
 
 TEST(DlAclApiTest, AclrtGetVersion_NullFuncPtr)
 {
@@ -175,6 +185,26 @@ TEST(DlAclApiTest, AclrtSynchronizeStream_NullFuncPtr)
     DlAclApiFnGuard guard;
     DlAclApi::pAclrtSynchronizeStream = nullptr;
     ASSERT_NE(DlAclApi::AclrtSynchronizeStream(nullptr), 0);
+}
+
+// aclrtStreamAbort 为 OPTIONAL 符号：老 CANN 或未支持的平台不导出，此时必须安全降级
+TEST(DlAclApiTest, AclrtStreamAbort_NullFuncPtr)
+{
+    DlAclApiFnGuard guard;
+    DlAclApi::pAclrtStreamAbort = nullptr;
+    void *stream = reinterpret_cast<void *>(0xA520UL);
+    ASSERT_NE(DlAclApi::AclrtStreamAbort(stream), 0);
+}
+
+TEST(DlAclApiTest, AclrtStreamAbort_ForwardsStreamToLoadedSymbol)
+{
+    DlAclApiFnGuard guard;
+    g_lastAbortedStream = nullptr;
+    DlAclApi::pAclrtStreamAbort = FakeStreamAbort;
+
+    void *stream = reinterpret_cast<void *>(0xA520UL);
+    ASSERT_EQ(DlAclApi::AclrtStreamAbort(stream), 0);
+    ASSERT_EQ(g_lastAbortedStream, stream);
 }
 
 } // namespace

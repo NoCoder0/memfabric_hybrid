@@ -23,6 +23,10 @@ public:
     static void DestroyAllThreadHybmStream();
     static void *GetThreadAclStream();
     static int SetDevice(uint32_t devId);
+    // peer 退出时由故障线程跨线程中止所有 memfabric 线程 ACL stream，实现快速失败
+    static void AbortAllThreadAclStreams();
+    // 线程退出时从注册表摘除自身 stream，避免故障线程 abort 到已销毁的句柄
+    static void UnregisterThreadAclStream(int64_t tid, void *stream);
 };
 } // namespace mf
 } // namespace ock

@@ -13,6 +13,7 @@
 #include <thread>
 #include <shared_mutex>
 #include <unordered_map>
+#include <vector>
 #include "dl_acl_api.h"
 #include "hybm_logger.h"
 #include "hybm_stream_manager.h"
@@ -56,14 +57,24 @@ void HybmStreamManager::DestroyAllThreadHybmStream()
     g_allThreadStreams.clear();
 }
 
+namespace {
+// tid -> stream：供故障线程跨线程中止本线程的 stream。
+// 独立于 device_urma 的 mutex_，避免与被阻塞在 notify 等待中的数据线程争用。
+std::shared_mutex g_threadAclStreamMutex;
+std::unordered_map<int64_t, void *> g_threadAclStreams;
+} // namespace
+
+// 线程退出时兜底销毁本线程 ACL stream；销毁前先从注册表摘除，避免故障线程 abort 到已销毁句柄。
 class AclrtStream {
 public:
     explicit AclrtStream(void *stream) : stream_(stream) {}
     ~AclrtStream()
     {
-        if (stream_ != nullptr) {
-            DlAclApi::AclrtDestroyStream(stream_);
+        if (stream_ == nullptr) {
+            return;
         }
+        HybmStreamManager::UnregisterThreadAclStream(Func::GetCurTid(), stream_);
+        (void)DlAclApi::AclrtDestroyStream(stream_);
     }
 
 private:
@@ -94,9 +105,50 @@ void *HybmStreamManager::GetThreadAclStream()
         BM_LOG_ERROR("create stream failed: " << ret);
         return nullptr;
     }
+    {
+        // 登记到全局表，供故障线程在对端退出时跨线程中止
+        std::unique_lock<std::shared_mutex> lock(g_threadAclStreamMutex);
+        g_threadAclStreams[Func::GetCurTid()] = stream_;
+    }
 #endif
     static thread_local AclrtStream aclrtStream_(stream_);
     return stream_;
+}
+
+void HybmStreamManager::AbortAllThreadAclStreams()
+{
+    std::vector<void *> streams;
+    {
+        std::shared_lock<std::shared_mutex> lock(g_threadAclStreamMutex);
+        streams.reserve(g_threadAclStreams.size());
+        for (const auto &item : g_threadAclStreams) {
+            streams.push_back(item.second);
+        }
+    }
+    for (auto *stream : streams) {
+        if (stream == nullptr) {
+            continue;
+        }
+        auto ret = DlAclApi::AclrtStreamAbort(stream);
+        if (ret == BM_UNDER_API_UNLOAD) {
+            BM_LOG_WARN("AclrtStreamAbort unavailable on this platform, skip abort, stream: " << stream);
+            continue;
+        }
+        if (ret != 0) {
+            BM_LOG_ERROR("AclrtStreamAbort failed, stream: " << stream << " ret: " << ret);
+            continue;
+        }
+        BM_LOG_WARN("AclrtStreamAbort done for peer fault, stream: " << stream);
+    }
+}
+
+void HybmStreamManager::UnregisterThreadAclStream(int64_t tid, void *stream)
+{
+    std::unique_lock<std::shared_mutex> lock(g_threadAclStreamMutex);
+    auto it = g_threadAclStreams.find(tid);
+    if (it != g_threadAclStreams.end() && it->second == stream) {
+        g_threadAclStreams.erase(it);
+    }
 }
 } // namespace mf
 } // namespace ock

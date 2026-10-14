@@ -62,6 +62,9 @@ constexpr aclError ACL_RT_INTERNAL_ERROR = 507899;
 // 驱动 IPC 名字节点不存在：RtIpcDestroyMemoryName 对已销毁/对端先行退出的共享名返回，
 // teardown 期属预期场景
 constexpr aclError ACL_RT_IPC_NAME_NOT_FOUND = 107002;
+
+// stream 被 aclrtStreamAbort 中止后，对该 stream 的同步接口（aclrtSynchronizeStream 等）返回该码。
+constexpr aclError ACL_ERROR_RT_STREAM_ABORT = 107023;
 using aclrtBinHandle = void *;
 using aclrtFuncHandle = void *;
 using aclrtArgsHandle = void *;
@@ -157,6 +160,7 @@ using aclrtGetCurrentContextFunc = int (*)(void **);
 using aclrtSetStreamAttributeFunc = int (*)(void *, aclrtStreamAttr, aclrtStreamAttrValue *);
 using aclrtDestroyStreamFunc = int (*)(void *);
 using aclrtSynchronizeStreamFunc = int (*)(void *);
+using aclrtStreamAbortFunc = int (*)(void *);
 using aclrtMallocFunc = int32_t (*)(void **, size_t, uint32_t);
 using aclrtFreeFunc = int (*)(void *);
 using aclrtMallocHostFunc = int32_t (*)(void **, size_t);
@@ -319,6 +323,16 @@ public:
             return BM_UNDER_API_UNLOAD;
         }
         return pAclrtSynchronizeStream(stream);
+    }
+
+    // 停止 stream 上正在执行/已下发未执行的任务；平台或 CANN 版本不支持时返回 BM_UNDER_API_UNLOAD。
+    // 调用后，对该 stream 的同步接口会返回 ACL_ERROR_RT_STREAM_ABORT(107023)。
+    static inline Result AclrtStreamAbort(void *stream)
+    {
+        if (pAclrtStreamAbort == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pAclrtStreamAbort(stream);
     }
 
     static inline Result AclrtBinaryLoadFromFile(const char *binPath, aclrtBinaryLoadOptions *options,
@@ -596,6 +610,7 @@ private:
     static aclrtSetStreamAttributeFunc pAclrtSetStreamAttribute;
     static aclrtDestroyStreamFunc pAclrtDestroyStream;
     static aclrtSynchronizeStreamFunc pAclrtSynchronizeStream;
+    static aclrtStreamAbortFunc pAclrtStreamAbort;
     static aclrtBinaryLoadFromFileFunc pAclrtBinaryLoadFromFile;
     static aclrtBinaryGetFunctionFunc pAclrtBinaryGetFunction;
     static aclrtKernelArgsInitFunc pAclrtKernelArgsInit;

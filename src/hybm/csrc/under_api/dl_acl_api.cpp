@@ -34,6 +34,7 @@ aclrtGetCurrentContextFunc DlAclApi::pAclrtGetCurrentContext = nullptr;
 aclrtSetStreamAttributeFunc DlAclApi::pAclrtSetStreamAttribute = nullptr;
 aclrtDestroyStreamFunc DlAclApi::pAclrtDestroyStream = nullptr;
 aclrtSynchronizeStreamFunc DlAclApi::pAclrtSynchronizeStream = nullptr;
+aclrtStreamAbortFunc DlAclApi::pAclrtStreamAbort = nullptr;
 aclrtBinaryLoadFromFileFunc DlAclApi::pAclrtBinaryLoadFromFile = nullptr;
 aclrtBinaryGetFunctionFunc DlAclApi::pAclrtBinaryGetFunction = nullptr;
 aclrtKernelArgsInitFunc DlAclApi::pAclrtKernelArgsInit = nullptr;
@@ -102,6 +103,9 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtSetStreamAttribute, aclrtSetStreamAttributeFunc, rtHandle, "aclrtSetStreamAttribute");
     DL_LOAD_SYM(pAclrtDestroyStream, aclrtDestroyStreamFunc, rtHandle, "aclrtDestroyStream");
     DL_LOAD_SYM(pAclrtSynchronizeStream, aclrtSynchronizeStreamFunc, rtHandle, "aclrtSynchronizeStream");
+    // A5/950 支持性待确认，且老 CANN 可能不导出该符号：用 OPTIONAL，缺失时 AclrtStreamAbort 返回
+    // BM_UNDER_API_UNLOAD，上层降级为"不中止"，不影响原有流程。
+    DL_LOAD_SYM_OPTIONAL(pAclrtStreamAbort, aclrtStreamAbortFunc, rtHandle, "aclrtStreamAbort");
     DL_LOAD_SYM_OPTIONAL(pAclrtBinaryLoadFromFile, aclrtBinaryLoadFromFileFunc, rtHandle, "aclrtBinaryLoadFromFile");
     DL_LOAD_SYM_OPTIONAL(pAclrtBinaryGetFunction, aclrtBinaryGetFunctionFunc, rtHandle, "aclrtBinaryGetFunction");
     DL_LOAD_SYM_OPTIONAL(pAclrtKernelArgsInit, aclrtKernelArgsInitFunc, rtHandle, "aclrtKernelArgsInit");
@@ -216,6 +220,7 @@ void DlAclApi::CleanupLibrary()
     pAclrtCreateStreamWithConfig = nullptr;
     pAclrtDestroyStream = nullptr;
     pAclrtSynchronizeStream = nullptr;
+    pAclrtStreamAbort = nullptr;
     pAclrtBinaryLoadFromFile = nullptr;
     pAclrtBinaryGetFunction = nullptr;
     pAclrtKernelArgsInit = nullptr;

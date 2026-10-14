@@ -384,6 +384,11 @@ private:
     CompletionContext *LookupOrCreateContextLocked();
     Result InitThreadContextLocked(CompletionContext &ctx);
 
+    // 对端 rank 退出后的快速失败：故障 rank 集合用独立锁，避免与长时间持 shared_lock 的数据线程争用 mutex_
+    void MarkRanksFaulted(const std::vector<uint32_t> &ranks);
+    void UnmarkRankFaulted(uint32_t rankId);
+    bool IsRankFaulted(uint32_t rankId) const;
+
     // Notify 池生命周期及无锁申请/归还；未转入 pending 的资源由调用方归还，pending 同步失败时隔离至 CloseDevice。
     Result InitNotifyPoolLocked();
     Result GrowNotifyPool();
@@ -451,6 +456,9 @@ private:
     // lock 粒度跟随 mutex_
     std::map<uint64_t, LocalRegistration> localRegistrations_{};
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_{};
+    // 故障 rank 集合：独立锁，与 mutex_ 无嵌套反序
+    mutable std::shared_mutex faultedRanksMutex_{};
+    std::set<uint32_t> faultedRanks_{};
 };
 
 } // namespace device

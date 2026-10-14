@@ -200,6 +200,8 @@ struct DlAclApiFnGuard {
     aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
     aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
     aclrtSynchronizeStreamFunc oldSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
+    aclrtCreateStreamWithConfigFunc oldCreateStreamWithConfig{DlAclApi::pAclrtCreateStreamWithConfig};
+    aclrtStreamAbortFunc oldStreamAbort{DlAclApi::pAclrtStreamAbort};
     aclrtBinaryLoadFromFileFunc oldBinaryLoadFromFile{DlAclApi::pAclrtBinaryLoadFromFile};
     aclrtBinaryGetFunctionFunc oldBinaryGetFunction{DlAclApi::pAclrtBinaryGetFunction};
     aclrtKernelArgsInitFunc oldKernelArgsInit{DlAclApi::pAclrtKernelArgsInit};
@@ -221,6 +223,8 @@ struct DlAclApiFnGuard {
         DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
         DlAclApi::pAclrtWaitAndResetNotify = oldWaitAndResetNotify;
         DlAclApi::pAclrtSynchronizeStream = oldSynchronizeStream;
+        DlAclApi::pAclrtCreateStreamWithConfig = oldCreateStreamWithConfig;
+        DlAclApi::pAclrtStreamAbort = oldStreamAbort;
         DlAclApi::pAclrtBinaryLoadFromFile = oldBinaryLoadFromFile;
         DlAclApi::pAclrtBinaryGetFunction = oldBinaryGetFunction;
         DlAclApi::pAclrtKernelArgsInit = oldKernelArgsInit;
@@ -1386,6 +1390,76 @@ bool RunConcurrentRegisterAndQuery(DeviceUrmaTransportManager &manager, const Tr
         thread.join();
     }
     return !failed.load(std::memory_order_acquire);
+}
+
+// ── DTS2026100704144: 对端退出后的「快速失败 + 中止本线程 stream」测试辅助 ──
+uint32_t g_streamAbortCallCount = 0U;
+std::vector<void *> g_abortedStreams;
+void *const MOCK_REGISTERED_STREAM = reinterpret_cast<void *>(0xA520UL);
+
+int FakeCreateStreamWithConfig(void **stream, int32_t priority, uint32_t flags)
+{
+    (void)priority;
+    (void)flags;
+    if (stream == nullptr) {
+        return -1;
+    }
+    *stream = MOCK_REGISTERED_STREAM;
+    return 0;
+}
+
+int FakeStreamAbort(void *stream)
+{
+    ++g_streamAbortCallCount;
+    g_abortedStreams.push_back(stream);
+    return 0;
+}
+
+void InstallFakeStreamApis()
+{
+    DlAclApi::pAclrtCreateStreamWithConfig = FakeCreateStreamWithConfig;
+    DlAclApi::pAclrtStreamAbort = FakeStreamAbort;
+    g_streamAbortCallCount = 0U;
+    g_abortedStreams.clear();
+}
+
+// 用例结束清理：摘除本用例登记的注册表项，避免同进程内后续用例的故障处理再 abort 到它
+void CleanupRegisteredStream()
+{
+    HybmStreamManager::UnregisterThreadAclStream(Func::GetCurTid(), MOCK_REGISTERED_STREAM);
+}
+
+void InstallSingleRankHcommMocks()
+{
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
+    DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
+    DlHcommApi::gHcommThreadAlloc = MockHcommThreadAlloc;
+    DlHcommApi::gHcommChannelCreate = MockHcommChannelCreate;
+    DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
+    DlHcommApi::gHcommMemImport = MockHcommMemImport;
+    DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
+}
+
+void PrepareSinglePeerManually(DeviceUrmaTransportManager &manager)
+{
+    manager.opened_ = true;
+    manager.rankId_ = 0;
+    manager.rankCount_ = 2;
+    manager.localEndpoint_.push_back(MOCK_ENDPOINT);
+    manager.localEndpointDesc_.push_back(MakeEndpointDesc());
+}
+
+HybmTransPrepareOptions MakeSingleRankPrepareOptions(uint32_t rankId)
+{
+    HybmTransPrepareOptions options{};
+    TransportRankPrepareInfo info{};
+    info.privateData = MakePrivateData(MakeEndpointDesc());
+    info.role = HYBM_ROLE_PEER;
+    info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
+    options.options.emplace(rankId, std::move(info));
+    return options;
 }
 
 } // namespace
@@ -4555,4 +4629,108 @@ TEST(DeviceUrmaEidReaderTest, LegacyEnvVarDoesNotAffectResult)
     EXPECT_EQ(addrData[1], 10);
     EXPECT_EQ(addrData[2], 21);
     EXPECT_EQ(addrData[3], 2);
+}
+
+// ============================================================================
+// DTS2026100704144: 对端 rank 退出 -> 标记故障 + 中止本线程 stream + 快速失败
+// ============================================================================
+
+TEST(DeviceUrmaTransportManagerTest, RemoveRanksMarksPeerFaultedAndAbortsRegisteredStreams)
+{
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    InstallSingleRankHcommMocks();
+    InstallFakeStreamApis();
+
+    DeviceUrmaTransportManager manager;
+    PrepareSinglePeerManually(manager);
+    ASSERT_EQ(manager.Prepare(MakeSingleRankPrepareOptions(1U)), BM_OK);
+    EXPECT_FALSE(manager.IsRankFaulted(1U));
+    EXPECT_EQ(g_streamAbortCallCount, 0U);
+
+    // 真实走一次 GetThreadAclStream，让注册表里有本线程的 stream 可供中止（必要时会销毁后重建）
+    void *stream = HybmStreamManager::GetThreadAclStream();
+    ASSERT_EQ(stream, MOCK_REGISTERED_STREAM);
+
+    EXPECT_EQ(manager.RemoveRanks({1U}), BM_OK);
+    EXPECT_TRUE(manager.IsRankFaulted(1U));
+    EXPECT_TRUE(manager.remoteRanks_.empty());
+    ASSERT_EQ(g_streamAbortCallCount, 1U);
+    EXPECT_EQ(g_abortedStreams[0U], stream);
+
+    CleanupRegisteredStream();
+}
+
+TEST(DeviceUrmaTransportManagerTest, RemoteIoSkipsFaultedRank)
+{
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.MarkRanksFaulted({7U});
+    ASSERT_TRUE(manager.IsRankFaulted(7U));
+
+    EXPECT_EQ(manager.WriteRemoteAsync(7U, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_NOT_CONNECTED);
+    EXPECT_EQ(manager.ReadRemoteAsync(7U, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_NOT_CONNECTED);
+    EXPECT_EQ(manager.WriteRemote(7U, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_NOT_CONNECTED);
+}
+
+TEST(DeviceUrmaTransportManagerTest, SynchronizeSkipsFaultedRank)
+{
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.MarkRanksFaulted({3U});
+
+    EXPECT_EQ(manager.Synchronize(3U), BM_NOT_CONNECTED);
+    EXPECT_EQ(manager.SynchronizeRanks({3U}), BM_NOT_CONNECTED);
+}
+
+TEST(DeviceUrmaTransportManagerTest, SynchronizeMapsStreamAbortToRecoverableTimeout)
+{
+    constexpr uint32_t kRemoteRank = 1U;
+    DeviceTestFixture fix;
+    fix.InstallAll();
+    DeviceUrmaTransportManager manager;
+    fix.OpenAndPreparePeer(manager);
+    fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
+
+    ASSERT_EQ(manager.ReadRemoteAsync(kRemoteRank, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
+
+    // 模拟对端故障导致 stream 被 aclrtStreamAbort 中止：同步接口返回 ACL_ERROR_RT_STREAM_ABORT。
+    // 该错误必须是可降级的普通错误（BM_TIMEOUT），不能把 107023 原样透传给上层。
+    DlAclApi::pAclrtSynchronizeStream = [](void *) { return ACL_ERROR_RT_STREAM_ABORT; };
+    EXPECT_EQ(manager.Synchronize(kRemoteRank), BM_TIMEOUT);
+
+    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    fix.CleanupAndClose(manager);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareClearsFaultedRankMark)
+{
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    InstallSingleRankHcommMocks();
+
+    DeviceUrmaTransportManager manager;
+    PrepareSinglePeerManually(manager);
+    ASSERT_EQ(manager.Prepare(MakeSingleRankPrepareOptions(1U)), BM_OK);
+
+    EXPECT_EQ(manager.RemoveRanks({1U}), BM_OK);
+    ASSERT_TRUE(manager.IsRankFaulted(1U));
+
+    // 对端重新 Prepare 视为恢复，否则重连后再也无法建立数据面
+    EXPECT_EQ(manager.Prepare(MakeSingleRankPrepareOptions(1U)), BM_OK);
+    EXPECT_FALSE(manager.IsRankFaulted(1U));
+}
+
+TEST(DeviceUrmaTransportManagerTest, CloseDeviceClearsFaultedRankMarks)
+{
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.MarkRanksFaulted({4U, 5U});
+    ASSERT_TRUE(manager.IsRankFaulted(4U));
+    ASSERT_TRUE(manager.IsRankFaulted(5U));
+
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    EXPECT_FALSE(manager.IsRankFaulted(4U));
+    EXPECT_FALSE(manager.IsRankFaulted(5U));
 }
