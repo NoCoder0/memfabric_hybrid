@@ -12,6 +12,9 @@
 #ifndef MF_HYBM_CORE_DL_HCCP_API_H
 #define MF_HYBM_CORE_DL_HCCP_API_H
 
+#include <cstring>
+#include <vector>
+
 #include "hybm_common_include.h"
 #include "dl_hccp_def.h"
 
@@ -104,6 +107,9 @@ public:
     {
         if (gRaSocketBatchConnect == nullptr) {
             return BM_UNDER_API_UNLOAD;
+        }
+        if (GetSockConnLayout() == RaSockConnLayout::V1) {
+            return RaSocketBatchConnectLegacy(conn, num);
         }
         return gRaSocketBatchConnect(conn, num);
     }
@@ -284,7 +290,23 @@ public:
         return gRaSetQpAttrQos(qpHandle, attr);
     }
 
+    // CANN 包版本，>= 9.2.0 为 V2，其余（含获取失败）为 V1。
+    static RaSockConnLayout GetSockConnLayout();
+
 private:
+    static inline int RaSocketBatchConnectLegacy(HccpSocketConnectInfo conn[], uint32_t num)
+    {
+        BM_LOG_INFO("RaSocketBatchConnectLegacy start with num: " << num);
+        std::vector<HccpSocketConnectInfoV1> legacy(num);
+        for (uint32_t i = 0; i < num; i++) {
+            legacy[i].handle = conn[i].handle;
+            legacy[i].remoteIp = conn[i].remoteIp;
+            legacy[i].port = conn[i].port;
+            memcpy(legacy[i].tag, conn[i].tag, sizeof(legacy[i].tag));
+        }
+        return gRaSocketBatchConnect(reinterpret_cast<HccpSocketConnectInfo *>(legacy.data()), num);
+    }
+
     static std::mutex gMutex;
     static bool gLoaded;
     static void *raHandle;

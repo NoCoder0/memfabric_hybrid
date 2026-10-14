@@ -228,7 +228,7 @@ int FixedRanksQpManager::StartClientSide() noexcept
         }
 
         clientConnections_.emplace(it->first, AiCoreConnChannel{it->second.network.sin_addr, socketHandle});
-        HccpSocketConnectInfo connectInfo;
+        HccpSocketConnectInfo connectInfo{};
         connectInfo.handle = socketHandle;
         connectInfo.remoteIp.addr = it->second.network.sin_addr;
         connectInfo.port = it->second.network.sin_port;

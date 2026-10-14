@@ -10,11 +10,19 @@
  * See the Mulan PSL v2 for more details.
 */
 
+#include <cstdio>
 #include <dlfcn.h>
+
+#include "dl_acl_api.h"
 #include "dl_hccp_api.h"
 
 namespace ock {
 namespace mf {
+namespace {
+constexpr uint32_t CANN_LAYOUT_V2_MAJOR = 9;
+constexpr uint32_t CANN_LAYOUT_V2_MINOR = 2;
+} // namespace
+
 bool DlHccpApi::gLoaded = false;
 std::mutex DlHccpApi::gMutex;
 void *DlHccpApi::raHandle;
@@ -171,6 +179,28 @@ void DlHccpApi::CleanupLibrary()
         tsdHandle = nullptr;
     }
     gLoaded = false;
+}
+
+// CANN >= 9.2.0 为 V2；其余（含版本获取失败，视为旧 CANN）为 V1
+RaSockConnLayout DlHccpApi::GetSockConnLayout()
+{
+    std::string versionStr;
+    if (!DlAclApi::AclsysGetVersionStr("runtime", versionStr)) {
+        BM_LOG_DEBUG("get CANN version failed, default to V1 layout");
+        return RaSockConnLayout::V1;
+    }
+    BM_LOG_INFO("CANN version string: " << versionStr);
+    uint32_t major = 0;
+    uint32_t minor = 0;
+    uint32_t patch = 0;
+    if (sscanf(versionStr.c_str(), "%u.%u.%u", &major, &minor, &patch) != 3) {
+        BM_LOG_WARN("invalid CANN version string: " << versionStr);
+        return RaSockConnLayout::V1;
+    }
+    if (major > CANN_LAYOUT_V2_MAJOR || (major == CANN_LAYOUT_V2_MAJOR && minor >= CANN_LAYOUT_V2_MINOR)) {
+        return RaSockConnLayout::V2;
+    }
+    return RaSockConnLayout::V1;
 }
 } // namespace mf
 } // namespace ock

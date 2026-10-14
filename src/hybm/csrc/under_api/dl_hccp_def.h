@@ -155,6 +155,28 @@ struct HccpSocketConnectInfo {
     HccpIpAddr remoteIp;               /**< IP address of remote socket, [0-7] is reserved for vnic */
     uint32_t port;                     /**< Socket listening port number */
     char tag[HCCP_SOCK_CONN_TAG_SIZE]; /**< tag must ended by '\0' */
+    bool tagChkDis;                    /**< per-socket tag check disable: false=check, true=skip tag check*/
+    unsigned char resv[7];             /**< reserved for future use */
+};
+
+/**
+ * @ingroup libsocket
+ * 旧版 libra 使用的 HccpSocketConnectInfo
+ * 与 HccpSocketConnectInfo 的区别仅在于缺少尾部 tagChkDis/resv 字段，
+ * 其余字段偏移完全一致。调用方统一填充 HccpSocketConnectInfo，
+ * 由适配层按 libra 版本决定直传或转换为 V1 布局。
+ */
+struct HccpSocketConnectInfoV1 {
+    void *handle;                      /**< socket handle */
+    HccpIpAddr remoteIp;               /**< IP address of remote socket, [0-7] is reserved for vnic */
+    uint32_t port;                     /**< Socket listening port number */
+    char tag[HCCP_SOCK_CONN_TAG_SIZE]; /**< tag must ended by '\0' */
+};
+
+/** libra 侧 HccpSocketConnectInfo 布局版本，由 DlHccpApi 按 CANN 版本运行时判定 */
+enum class RaSockConnLayout {
+    V1 = 1, // CANN < 9.2.0
+    V2 = 2, // CANN >= 9.2.0
 };
 
 /**

@@ -774,7 +774,7 @@ int JoinableRanksQpManager::CreateConnectionToServers(const std::set<uint32_t> &
         connections_[rankId].socketHandle = socketHandle;
         rollbacks.emplace(rankId);
 
-        HccpSocketConnectInfo connectInfo;
+        HccpSocketConnectInfo connectInfo{};
         connectInfo.handle = socketHandle;
         connectInfo.remoteIp.addr = connections_[rankId].remoteNet.sin_addr;
         connectInfo.port = connections_[rankId].remoteNet.sin_port;

@@ -181,6 +181,7 @@ using rtIpcCloseMemoryFunc = int32_t (*)(const void *);
 using rtMemcpyAsyncFunc = int32_t (*)(void *, size_t, const void *, size_t, uint32_t, void *);
 using aclrtGetSocNameFunc = const char *(*)();
 using aclrtGetVersionFunc = int32_t (*)(int32_t *, int32_t *, int32_t *);
+using aclsysGetVersionStrFunc = int32_t (*)(char *, char *); // (pkgName, versionStr)
 using aclrtMemcpyBatchFunc = int32_t (*)(void **, size_t *, void **, size_t *, size_t, aclrtMemcpyBatchAttr *, size_t *,
                                          size_t, size_t *);
 using aclrtBinaryLoadFromFileFunc = int32_t (*)(const char *, aclrtBinaryLoadOptions *, aclrtBinHandle *);
@@ -197,6 +198,7 @@ public:
     static void CleanupLibrary();
     static AscendSocType GetAscendSocType();
     static int32_t AclrtGetVersion(int32_t *major, int32_t *minor, int32_t *patch);
+    static bool AclsysGetVersionStr(const std::string &pkgName, std::string &versionStr);
     static bool IsCannGE(int32_t major, int32_t minor);
 
     static inline Result AclrtSetDevice(int32_t deviceId, bool force = false)
@@ -619,6 +621,7 @@ private:
     static rtIpcCloseMemoryFunc pRtIpcCloseMemory;
     static aclrtGetSocNameFunc pAclrtGetSocName;
     static aclrtGetVersionFunc pAclrtGetVersion;
+    static aclsysGetVersionStrFunc pAclsysGetVersionStr;
     static rtEnableP2PFunc pRtEnableP2P;
     static rtDisableP2PFunc pRtDisableP2P;
     static rtGetP2PStatusFunc pRtGetP2PStatus;

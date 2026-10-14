@@ -59,6 +59,7 @@ rtIpcOpenMemoryFunc DlAclApi::pRtIpcOpenMemory = nullptr;
 rtIpcCloseMemoryFunc DlAclApi::pRtIpcCloseMemory = nullptr;
 aclrtGetSocNameFunc DlAclApi::pAclrtGetSocName = nullptr;
 aclrtGetVersionFunc DlAclApi::pAclrtGetVersion = nullptr;
+aclsysGetVersionStrFunc DlAclApi::pAclsysGetVersionStr = nullptr;
 rtEnableP2PFunc DlAclApi::pRtEnableP2P = nullptr;
 rtDisableP2PFunc DlAclApi::pRtDisableP2P = nullptr;
 rtGetP2PStatusFunc DlAclApi::pRtGetP2PStatus = nullptr;
@@ -127,6 +128,7 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pRtIpcCloseMemory, rtIpcCloseMemoryFunc, rtHandle, "rtIpcCloseMemory");
     DL_LOAD_SYM(pAclrtGetSocName, aclrtGetSocNameFunc, rtHandle, "aclrtGetSocName");
     DL_LOAD_SYM_OPTIONAL(pAclrtGetVersion, aclrtGetVersionFunc, rtHandle, "aclrtGetVersion");
+    DL_LOAD_SYM_OPTIONAL(pAclsysGetVersionStr, aclsysGetVersionStrFunc, rtHandle, "aclsysGetVersionStr");
     DL_LOAD_SYM(pRtEnableP2P, rtEnableP2PFunc, rtHandle, "rtEnableP2P");
     DL_LOAD_SYM(pRtDisableP2P, rtDisableP2PFunc, rtHandle, "rtDisableP2P");
     DL_LOAD_SYM_OPTIONAL(pRtGetP2PStatus, rtGetP2PStatusFunc, rtHandle, "rtGetP2PStatus");
@@ -145,6 +147,23 @@ int32_t DlAclApi::AclrtGetVersion(int32_t *major, int32_t *minor, int32_t *patch
         return -1;
     }
     return pAclrtGetVersion(major, minor, patch);
+}
+
+bool DlAclApi::AclsysGetVersionStr(const std::string &pkgName, std::string &versionStr)
+{
+    if (pAclsysGetVersionStr == nullptr) {
+        BM_LOG_INFO("pAclsysGetVersionStr is nullptr, acl under api unload");
+        return false;
+    }
+    char buf[128] = {0};
+    std::vector<char> pkg(pkgName.begin(), pkgName.end());
+    pkg.push_back('\0');
+    if (pAclsysGetVersionStr(pkg.data(), buf) != ACL_SUCCESS) {
+        BM_LOG_WARN("aclsysGetVersionStr failed, pkgName: " << pkgName);
+        return false;
+    }
+    versionStr = buf;
+    return true;
 }
 
 bool DlAclApi::IsCannGE(int32_t major, int32_t minor)
@@ -229,6 +248,7 @@ void DlAclApi::CleanupLibrary()
     pAclrtSetStreamAttribute = nullptr;
     pAclrtGetPhyDevIdByLogicDevId = nullptr;
     pAclrtGetVersion = nullptr;
+    pAclsysGetVersionStr = nullptr;
 
     if (rtHandle != nullptr) {
         dlclose(rtHandle);
