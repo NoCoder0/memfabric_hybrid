@@ -95,6 +95,20 @@ def get_soc_key():
     return _map_soc_key(get_soc_name())
 
 
+def _benchmark_soc_key(soc):
+    """Require an unambiguous ACL model; generic Ascend910 is insufficient."""
+    if not isinstance(soc, str):
+        return None
+    model = re.fullmatch(r"(?:Ascend)?(910B|910_93|950|910_95)[A-Za-z0-9_]*", soc)
+    return {"910B": "A2", "910_93": "A3", "950": "A5", "910_95": "A5"}[model[1]] if model else None
+
+
+def get_benchmark_soc():
+    """Return the ACL SoC name and generation for benchmark protocol selection."""
+    soc = _detect_soc_from_acl()
+    return soc, _benchmark_soc_key(soc)
+
+
 def get_torch_abi_flag(python_bin):
     """Query torch's C++ ABI flag by running a snippet in a child interpreter.
 

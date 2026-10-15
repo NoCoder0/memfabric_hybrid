@@ -81,6 +81,22 @@ def _configure_benchmark(args):
         _configure_paired(args)
 
 
+def _resolve_protocol(args):
+    if args.protocol != "auto":
+        return
+    from memfabric_hybrid.env_utils import get_benchmark_soc
+
+    soc, generation = get_benchmark_soc()
+    protocol = {"A2": "device_rdma", "A3": "sdma", "A5": "device_urma"}.get(generation)
+    if protocol is None:
+        raise ValueError(
+            f"cannot select protocol automatically: soc={soc!r}; "
+            "acl.get_soc_name() did not identify A2/A3/A5; specify --protocol explicitly"
+        )
+    args.protocol = protocol
+    LOGGER.info("benchmark protocol: requested=auto soc=%r generation=%s protocol=%s", soc, generation, protocol)
+
+
 def _configure_paired(args):
     if args.command not in ("write", "read"):
         raise ValueError("paired mode requires write or read")
@@ -153,6 +169,7 @@ def run(args):
         args.local_rank_size = npu_count
 
     try:
+        _resolve_protocol(args)
         _configure_benchmark(args)
         _validate_layout(args, npu_count)
     except ValueError as error:

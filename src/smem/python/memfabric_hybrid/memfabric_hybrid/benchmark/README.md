@@ -39,7 +39,7 @@ pip install --force-reinstall output/memfabric_hybrid/wheel/mem*.whl
 |----------|--------|------|
 | `--framework` | `vllm` | 框架类型，可选 vllm、sglang |
 | `--model` | `glm5.2` | 模型名称，可选 glm5.2、dsv4 |
-| `--protocol` | `device_rdma` | 传输协议，支持类型见下文 |
+| `--protocol` | `auto` | 根据本机机型选择传输协议；显式指定协议可覆盖，支持类型见下文 |
 | `--ip` | `tcp://127.0.0.1:12050` | 配置存储地址；跨机测试两端都填写 write 机器的地址 |
 | `--nic`（兼容 `--rdma`） | `tcp://0.0.0.0:10005` | 本机传输 NIC 地址；host_rdma 需指定本机实际 NIC，与 `--ip` 不同 |
 | `--copysize` | `2097152` | 每个 block 的字节数，即 2 MiB；配对测试要求正数且为 4096 的倍数 |
@@ -56,7 +56,22 @@ pip install --force-reinstall output/memfabric_hybrid/wheel/mem*.whl
 | `--warmup-count` | `10` | 配对测试不计时的预热次数，可以为 0 |
 
 `framework` 和 `model` 当前仅记录配置，不会启动推理框架或模型负载。
-协议可选 sdma、device_rdma、device_urma、device_uboe、host_rdma、host_urma、host_tcp，
+省略 `--protocol` 或指定 `--protocol auto` 时，按本机机型选择协议：
+
+| 机型 | 自动选择协议 |
+|------|--------------|
+| A2 | `device_rdma` |
+| A3 | `sdma` |
+| A5 | `device_urma` |
+
+仅通过 Python ACL 的 `acl.get_soc_name()` 获取完整 SoC 名称，
+识别明确的 910B、910_93、950 或 910_95 型号；
+通用 `Ascend910`、未知机型或无法检测时返回非零，提示通过 `--protocol` 手动指定。
+启动日志记录检测到的 SoC、机型及实际协议，性能表和配对配置校验使用实际协议。
+显式指定协议和帮助命令不进行机型检测。
+自动选择不会检测或修复互联拓扑，也不会在失败后切换协议。
+
+显式协议可选 sdma、device_rdma、device_urma、device_uboe、host_rdma、host_urma、host_tcp，
 需匹配硬件、编译依赖和网络配置；host 协议在配对测试中只支持 DRAM 池。
 SDMA 可用于具备 HCCS 互联且底层支持对应内存池访问的跨机拓扑；普通网络跨机需使用网络协议。
 配对两端的协议、池类型、local rank 数、HBM 容量、copy 大小、批量、次数和预热次数必须一致。
@@ -69,7 +84,8 @@ SDMA 可用于具备 HCCS 互联且底层支持对应内存池访问的跨机拓
 
 ## 跨机测试
 
-机器 A 执行 write，机器 B 执行 read。以下以 `device_urma` 为例，两端选择相同协议。
+机器 A 执行 write，机器 B 执行 read。以下使用自动协议，两端应为同代机型且自动结果相同；
+也可在两端显式指定相同的 `--protocol`。自动与显式配置只要最终协议相同即可配对。
 将 `10.0.0.1` 替换为 **机器 A 的可达 IP**，两端 `--ip` 都指向 A。
 A 的 12050（配置存储）和 12051（默认同步）端口需对 B 可达。
 
@@ -77,14 +93,14 @@ A 的 12050（配置存储）和 12051（默认同步）端口需对 B 可达。
 
 ```bash
 export ASCEND_RT_VISIBLE_DEVICES=0
-mfcli benchmark write --protocol device_urma --ip tcp://10.0.0.1:12050
+mfcli benchmark write --ip tcp://10.0.0.1:12050
 ```
 
 机器 B：
 
 ```bash
 export ASCEND_RT_VISIBLE_DEVICES=0
-mfcli benchmark read --protocol device_urma --ip tcp://10.0.0.1:12050
+mfcli benchmark read --ip tcp://10.0.0.1:12050
 ```
 
 默认使用 DRAM 池。A 测量 HBM → A 自己的 DRAM 池（D2RH），

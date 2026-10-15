@@ -238,6 +238,38 @@ class PairedBenchmarkTest(unittest.TestCase):
                     explicit = self._args(command, ["--ip", endpoint, "--world-size", str(LOCAL_RANKS * PEER_GROUPS)])
                     self.assertTrue(explicit.paired)
 
+    def test_auto_protocol_is_resolved_before_validation_and_worker_configuration(self):
+        env = types.SimpleNamespace(get_benchmark_soc=Mock())
+        with (
+            patch.dict(sys.modules, {"memfabric_hybrid.env_utils": env}),
+            patch.object(self.entry, "_parse_npu_devices", return_value=[0]),
+            patch.object(self.runner, "run_bm", return_value=0) as run_bm,
+        ):
+            for generation, protocol in (("A2", "device_rdma"), ("A3", "sdma"), ("A5", "device_urma")):
+                for command in ("write", "read"):
+                    with self.subTest(generation=generation, command=command):
+                        env.get_benchmark_soc.return_value = ("Ascend-test", generation)
+                        args = self.parser.parse_args(["benchmark", command, "--ip", WRITE_STORE])
+                        self.assertEqual(args.protocol, "auto")
+                        self.assertEqual(self.entry.run(args), 0)
+                        self.assertEqual(args.protocol, protocol)
+                        self.assertEqual(self.runner._get_bm_params(args)["protocol"], protocol)
+                        self.assertTrue(args.paired)
+            env.get_benchmark_soc.side_effect = AssertionError("explicit protocol must bypass detection")
+            for protocol in ("sdma", "device_rdma", "device_urma", "host_tcp"):
+                args = self.parser.parse_args(["benchmark", "write", "--protocol", protocol])
+                self.assertEqual(self.entry.run(args), 0)
+                self.assertEqual(args.protocol, protocol)
+            env.get_benchmark_soc.side_effect = None
+            for soc in ("Ascend910", None):
+                env.get_benchmark_soc.return_value = (soc, None)
+                run_bm.reset_mock()
+                with self.assertLogs(self.entry.LOGGER, level="ERROR") as logs:
+                    self.assertEqual(self.entry.run(self.parser.parse_args(["benchmark", "--protocol", "auto"])), 1)
+                self.assertIn("acl.get_soc_name()", logs.output[0])
+                self.assertIn("specify --protocol explicitly", logs.output[0])
+                run_bm.assert_not_called()
+
     def test_writer_reports_before_reader_and_keeps_paired_pools_alive(self):
         writers = self._start("write")
         try:
@@ -280,10 +312,15 @@ class PairedBenchmarkTest(unittest.TestCase):
                 self.pools.clear()
 
     def test_configuration_mismatch_fails_both_groups(self):
-        results = self._finish(self._start("write") + self._start("read", ["--copy-count", str(COPIES + 1)]))
-        errors = [result["error"] for result in results if "error" in result]
-        self.assertEqual(len(errors), LOCAL_RANKS * PEER_GROUPS)
-        self.assertTrue(any("configuration mismatch" in error for error in errors))
+        for options in (["--copy-count", str(COPIES + 1)], ["--protocol", "sdma"]):
+            with self.subTest(options=options):
+                results = self._finish(self._start("write") + self._start("read", options))
+                errors = [result["error"] for result in results if "error" in result]
+                self.assertEqual(len(errors), LOCAL_RANKS * PEER_GROUPS)
+                self.assertTrue(any("configuration mismatch" in error for error in errors))
+                self.values.clear()
+                self.memory.clear()
+                self.pools.clear()
 
     def test_missing_reader_times_out_after_valid_write_measurement(self):
         messages = self._finish(self._start("write", ["--sync-timeout", str(SHORT_TIMEOUT)]))
