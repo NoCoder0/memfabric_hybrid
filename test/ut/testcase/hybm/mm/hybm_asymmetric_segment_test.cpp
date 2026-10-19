@@ -427,11 +427,12 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HostAddr_CreatesHostSlice)
 
 /**
  * Register_HostAddr_RejectedWithoutCapability
- *  - 纯设备侧 op（无 host 类传输、无 SDMA）：host DRAM 无数据面通道，能力校验拒绝。
+ *  - 无 host/device 连接类传输、无 SDMA 的 op（如 MTE 拷贝引擎）：host DRAM 无数据面通道，能力校验拒绝。
+ *  - 连接类 op（HOST_RDMA/HOST_TCP/DEVICE_RDMA 等）现已在 CheckHostRegisterAllowed 放行。
  */
 TEST_F(HybmAsymmetricSegmentTest, Register_HostAddr_RejectedWithoutCapability)
 {
-    auto options = MakeOptions(HYBM_DOP_TYPE_DEVICE_RDMA, ASCEND_910B);
+    auto options = MakeOptions(HYBM_DOP_TYPE_MTE, ASCEND_910B);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
 
@@ -648,7 +649,7 @@ TEST_F(HybmAsymmetricSegmentTest, Import_UserDramInfo_CreatesRemoteHostSlice)
     std::vector<std::string> infos = {info};
 
     void *addresses[1] = {nullptr};
-    auto ret = segment.Import(infos, addresses);
+    auto ret = segment.Import(infos, addresses, HYBM_IMPORT_RANK_INVALID);
     EXPECT_EQ(ret, BM_OK);
     EXPECT_EQ(addresses[0], TestAddr(TEST_GVA_BASE + 0x1000000ULL));
 
@@ -688,7 +689,7 @@ TEST_F(HybmAsymmetricSegmentTest, Import_Rollback_SkipsDramGvaAddresses)
     std::vector<std::string> infos = {dramInfo, invalidInfo};
 
     void *addresses[2] = {nullptr, nullptr};
-    auto ret = segment.Import(infos, addresses);
+    auto ret = segment.Import(infos, addresses, HYBM_IMPORT_RANK_INVALID);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
     EXPECT_EQ(addresses[0], TestAddr(TEST_GVA_BASE + 0x1000000ULL)); // 成功条目仍返回 GVA
     // 回滚为完整清理：映射解除 + VA 记录/导入账本同步注销，保证后续导入重试可完整重新执行
@@ -766,7 +767,7 @@ TEST_F(HybmAsymmetricSegmentTest, ImportDeviceInfo_SkipsEmptyNameWhitelist)
     deviceInfo.pid = 456U;
     std::string info(reinterpret_cast<const char *>(&deviceInfo), sizeof(deviceInfo));
 
-    EXPECT_EQ(segment.ImportDeviceInfo(info), BM_OK);
+    EXPECT_EQ(segment.ImportDeviceInfo(info, HYBM_IMPORT_RANK_INVALID), BM_OK);
     EXPECT_EQ(g_ipcWhitelistCount, 1);
 }
 
@@ -815,7 +816,7 @@ TEST_F(HybmAsymmetricSegmentTest, ImportSlice_A5_VmmMap)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    EXPECT_EQ(segment.Import({data}, addresses), BM_OK);
+    EXPECT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
 
     EXPECT_EQ(g_importCount, 1);
     EXPECT_EQ(g_reserveCount, 1);
@@ -843,7 +844,7 @@ TEST_F(HybmAsymmetricSegmentTest, ResolveRemoteGva_MappedImport_HitsOwnLva)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    ASSERT_EQ(segment.Import({data}, addresses), BM_OK);
+    ASSERT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
 
     auto remoteSlice = segment.rankToRemoteSlices_.at(7U).at(0);
     const auto gva = remoteSlice->gva_;
@@ -875,8 +876,8 @@ TEST_F(HybmAsymmetricSegmentTest, ResolveRemoteGva_CoexistingImports_ResolveOwnL
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addrA[1] = {nullptr};
     void *addrB[1] = {nullptr};
-    ASSERT_EQ(segmentA.Import({data}, addrA), BM_OK);
-    ASSERT_EQ(segmentB.Import({data}, addrB), BM_OK);
+    ASSERT_EQ(segmentA.Import({data}, addrA, HYBM_IMPORT_RANK_INVALID), BM_OK);
+    ASSERT_EQ(segmentB.Import({data}, addrB, HYBM_IMPORT_RANK_INVALID), BM_OK);
 
     auto sliceA = segmentA.rankToRemoteSlices_.at(7U).at(0);
     auto sliceB = segmentB.rankToRemoteSlices_.at(7U).at(0);
@@ -907,7 +908,7 @@ TEST_F(HybmAsymmetricSegmentTest, ImportSlice_A5_ReserveFail)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    EXPECT_EQ(segment.Import({data}, addresses), BM_ERROR);
+    EXPECT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_ERROR);
     EXPECT_EQ(g_importCount, 1);
     EXPECT_EQ(g_vmmReleaseCount, 1); // imported handle 已释放
     EXPECT_TRUE(segment.vmmNameToHandle_.empty());
@@ -929,7 +930,7 @@ TEST_F(HybmAsymmetricSegmentTest, ImportSlice_A5_MapFail_Rollback)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    EXPECT_EQ(segment.Import({data}, addresses), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_DL_FUNCTION_FAILED);
     EXPECT_EQ(g_vmmReleaseCount, 1);
     EXPECT_TRUE(segment.vmmNameToHandle_.empty());
     EXPECT_EQ(HybmVaManager::GetInstance().GetReservedCount(), 0U);
@@ -951,7 +952,7 @@ TEST_F(HybmAsymmetricSegmentTest, ImportSlice_A5_InvalidNameType)
         sliceInfo.name[0] = static_cast<char>(badType);
         std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
         void *addresses[1] = {nullptr};
-        EXPECT_EQ(segment.Import({data}, addresses), BM_INVALID_PARAM);
+        EXPECT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_INVALID_PARAM);
         EXPECT_EQ(g_importCount, 0);
     }
     EXPECT_TRUE(segment.rankToRemoteSlices_.empty());
@@ -973,7 +974,7 @@ TEST_F(HybmAsymmetricSegmentTest, ImportSlice_A5_MultiSliceSameRank)
     std::string data1(reinterpret_cast<const char *>(&info1), sizeof(info1));
     std::string data2(reinterpret_cast<const char *>(&info2), sizeof(info2));
     void *addresses[2] = {nullptr, nullptr};
-    EXPECT_EQ(segment.Import({data1, data2}, addresses), BM_OK);
+    EXPECT_EQ(segment.Import({data1, data2}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
 
     EXPECT_EQ(segment.vmmNameToHandle_.size(), 2U);
     EXPECT_EQ(segment.rankToRemoteSlices_.at(7U).size(), 2U);
@@ -997,7 +998,7 @@ TEST_F(HybmAsymmetricSegmentTest, RemoveImported_A5_VmmUnimport)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    ASSERT_EQ(segment.Import({data}, addresses), BM_OK);
+    ASSERT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
 
     EXPECT_EQ(segment.RemoveImported({7U}), BM_OK);
     EXPECT_EQ(g_unmapCount, 1);
@@ -1021,10 +1022,10 @@ TEST_F(HybmAsymmetricSegmentTest, RemoveImported_A5_Rejoin)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    ASSERT_EQ(segment.Import({data}, addresses), BM_OK);
+    ASSERT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
     ASSERT_EQ(segment.RemoveImported({7U}), BM_OK);
 
-    ASSERT_EQ(segment.Import({data}, addresses), BM_OK);
+    ASSERT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
     EXPECT_EQ(g_importCount, 2);
     EXPECT_EQ(g_reserveCount, 2);
     EXPECT_EQ(g_unmapCount, 1);
@@ -1057,7 +1058,7 @@ TEST_F(HybmAsymmetricSegmentTest, CloseMemory_A5_MixedTypes)
     std::string ipcData(reinterpret_cast<const char *>(&ipcInfo), sizeof(ipcInfo));
     std::string dramData(reinterpret_cast<const char *>(&dramInfo), sizeof(dramInfo));
     void *addresses[3] = {nullptr, nullptr, nullptr};
-    ASSERT_EQ(segment.Import({vmmData, ipcData, dramData}, addresses), BM_OK);
+    ASSERT_EQ(segment.Import({vmmData, ipcData, dramData}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
     ASSERT_EQ(g_ipcOpenCount, 1);
 
     segment.CloseMemory();
@@ -1085,7 +1086,7 @@ TEST_F(HybmAsymmetricSegmentTest, UnImport_UnregisteredOrRepeat_NoCrash)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    ASSERT_EQ(segment.Import({data}, addresses), BM_OK);
+    ASSERT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_OK);
     ASSERT_EQ(segment.remoteSlices_.size(), 1U);
     const auto sliceId = segment.remoteSlices_.begin()->first;
 
@@ -1113,6 +1114,6 @@ TEST_F(HybmAsymmetricSegmentTest, Import_CrossSoc_A3ReceivesVmmName)
     auto sliceInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     std::string data(reinterpret_cast<const char *>(&sliceInfo), sizeof(sliceInfo));
     void *addresses[1] = {nullptr};
-    EXPECT_EQ(segment.Import({data}, addresses), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(segment.Import({data}, addresses, HYBM_IMPORT_RANK_INVALID), BM_DL_FUNCTION_FAILED);
     EXPECT_TRUE(segment.rankToRemoteSlices_.empty());
 }

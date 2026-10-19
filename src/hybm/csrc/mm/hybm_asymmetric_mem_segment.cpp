@@ -45,17 +45,12 @@ Result AsymmetricMemSegment::ReserveMemorySpace(void **address) noexcept
     BM_ASSERT_LOG_AND_RETURN(options_.rankId < options_.rankCnt,
                              "rank(" << options_.rankId << ") but total " << options_.rankCnt, BM_INVALID_PARAM);
 
-    // The origin is a constant shared by every process, so an offset taken against it denotes the same gva
-    // everywhere; this entity books only its own window [origin + rankId * maxSize, + maxSize).
-    const uint64_t layoutOrigin =
-        (options_.scene == HYBM_SCENE_TRANS) ? HYBM_TRANS_GVA_START_ADDR : HYBM_56BITS_GVA_START_ADDR;
-    totalVirtualSize_ = options_.maxSize;
-    const uint64_t windowBase = layoutOrigin + options_.maxSize * options_.rankId;
+    totalVirtualSize_ = options_.maxSize * options_.rankCnt;
     auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
-        {totalVirtualSize_, 0, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva, options_.scene, windowBase});
-    BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] == windowBase, "unexpected window " << VaToStr(windowBase), BM_ERROR);
-    globalVirtualAddress_ = reinterpret_cast<uint8_t *>(layoutOrigin);
-    lvaBase_ = reinterpret_cast<uint8_t *>(gvaInfo.va[HVM_GVA]);
+        {totalVirtualSize_, 0, HYBM_MEM_TYPE_DEVICE, options_.enable56BitsGva, options_.scene});
+    BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "gvaInfo.va[HVM_GVA] = " << gvaInfo.va[HVM_GVA], BM_ERROR);
+    globalVirtualAddress_ = reinterpret_cast<uint8_t *>(gvaInfo.va[HVM_GVA]);
+    lvaBase_ = globalVirtualAddress_ + options_.maxSize * options_.rankId;
     unReserveDone_ = false;
     return BM_OK;
 }
@@ -203,8 +198,8 @@ Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, Mem
         }
     }
 
-    // allocatedSize_ is the bump pointer of this entity's window (lvaBase_ = origin + rankId * maxSize), so the
-    // bound is the window capacity options_.maxSize.
+    // allocatedSize_ is the bump pointer of this entity's window (lvaBase_ = globalVirtualAddress_ + rankId * maxSize),
+    // so the bound is the window capacity options_.maxSize.
     if (allocatedSize_ + regSize > options_.maxSize) {
         BM_LOG_ERROR("gva space exhausted: rankId=" << options_.rankId << " allocated=" << allocatedSize_
                                                     << " request=" << regSize << " maxSize=" << options_.maxSize);
@@ -273,17 +268,17 @@ Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t siz
 
 Result AsymmetricMemSegment::CheckHostRegisterAllowed() const noexcept
 {
-    constexpr auto hostTransOps =
-        HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_SHM;
+    constexpr auto connOps = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP |
+                             HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
+                             HYBM_DOP_TYPE_DEVICE_UBOE;
     // dataOpType=0（未指定传输方式，如 RECEIVER 角色的 smem_trans 注册）：NeedHostDeviceMapping()
     // 为 false，不做设备映射，仅登记 GVA，保持兼容放行
     if (options_.dataOpType == 0U) {
         return BM_OK;
     }
-    // 含 host 类传输：数据面走 host 侧 transport，放行。
-    // 纯 SDMA/设备类 op 一律拒绝（评审结论）：SDMA 引擎不支持访问外部注册 DRAM，
+    // 通信语义放行,内存语义报错
     // 放行会导致数据面在无映射 GVA 上失败，必须在注册入口显式报错
-    if ((options_.dataOpType & hostTransOps) != 0U) {
+    if ((options_.dataOpType & connOps) != 0U) {
         return BM_OK;
     }
     // 错误返回路径必须记录根因日志（代码规范）：rankId/socType/dataOpType 为关键参数
@@ -310,17 +305,25 @@ Result AsymmetricMemSegment::RegisterHostMemory(const void *addr, uint64_t size,
     uint64_t dva = 0;
     bool hostMapped = false;
     if (NeedHostDeviceMapping()) {
-        void *output = nullptr;
-        auto halRet =
-            DlHalApi::HalHostRegister(const_cast<void *>(addr), size, HOST_MEM_MAP_DEV, logicDeviceId_, &output);
-        if (halRet != 0) {
-            BM_LOG_ERROR("HalHostRegister failed: rankId=" << options_.rankId << " deviceId=" << logicDeviceId_
-                                                           << " addr=" << VaToStr(hostVa) << " size=" << size
-                                                           << " ret=" << halRet);
-            return BM_DL_FUNCTION_FAILED;
+        // 复用已有映射：同一 HVA 已登记过 DVA 时（如同一段 DRAM 在另一实体注册过）直接复用，
+        // 避免对同一地址重复 HalHostRegister 失败（驱动对已注册地址返回错误）
+        dva = HybmVaManager::GetInstance().TransformVa(hostVa, HVM_HVA, HVM_DVA);
+        if (dva == 0) {
+            void *output = nullptr;
+            auto halRet =
+                DlHalApi::HalHostRegister(const_cast<void *>(addr), size, HOST_MEM_MAP_DEV, logicDeviceId_, &output);
+            if (halRet != 0) {
+                BM_LOG_ERROR("HalHostRegister failed: rankId=" << options_.rankId << " deviceId=" << logicDeviceId_
+                                                               << " addr=" << VaToStr(hostVa) << " size=" << size
+                                                               << " ret=" << halRet);
+                return BM_DL_FUNCTION_FAILED;
+            }
+            dva = reinterpret_cast<uint64_t>(output);
+            hostMapped = true;
+        } else {
+            BM_LOG_INFO("reuse existing dva mapping: rankId=" << options_.rankId << " hostVa=" << VaToStr(hostVa)
+                                                              << " dva=" << VaToStr(dva));
         }
-        dva = reinterpret_cast<uint64_t>(output);
-        hostMapped = true;
     }
 
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, gva, hostVa, size);
@@ -384,11 +387,14 @@ Result AsymmetricMemSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
 
     Result ret = BM_OK;
     if (pos->second.slice->memType_ == HYBM_MEM_TYPE_HOST) {
-        if (pos->second.hostMapped) {
+        // 先注销 VA 记录再决定是否释放设备映射：HVA/DVA 行被多实体别名记录共享
+        // （同一段 DRAM 在 send/recv 实体注册），仅当本次注销使所有涉及行计数归零
+        // （RemoveOneVaInfo 返回 true，映射已无存活引用者）时才 HalHostUnregisterEx，
+        // 提前释放会使仍持有引用的对端实体数据面失效（驱动返回 BUSY）
+        bool freed = HybmVaManager::GetInstance().RemoveOneVaInfo(pos->second.slice->gva_);
+        if (pos->second.hostMapped && freed) {
             ReleaseHostMapping(pos->second.slice->vAddress_);
         }
-        // DRAM 的 AddVaInfo 登记 GVA/DVA/HVA 三表，释放时即时移除，防止 HalHostUnregisterEx 后 DVA 悬挂
-        HybmVaManager::GetInstance().RemoveOneVaInfo(pos->second.slice->gva_);
     } else if (options_.shared) {
         ret = UserMemDestroyName(pos->second.name.c_str());
         if (ret != BM_OK) {
@@ -524,7 +530,8 @@ bool AsymmetricMemSegment::ResolveRemoteGva(uint64_t gva, uint64_t &lva)
     return false;
 }
 
-Result AsymmetricMemSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[]) noexcept
+Result AsymmetricMemSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[],
+                                    uint32_t overrideRank) noexcept
 {
     if (allExInfo.empty()) {
         return BM_OK;
@@ -537,9 +544,9 @@ Result AsymmetricMemSegment::Import(const std::vector<std::string> &allExInfo, v
         MemSlicePtr rms;
         auto magic = *reinterpret_cast<const uint64_t *>(info.data());
         if (magic == ENTITY_EXPORT_INFO_MAGIC) {
-            ret = ImportDeviceInfo(info);
+            ret = ImportDeviceInfo(info, overrideRank);
         } else if (magic == USER_MEM_SLICE_EXPORT_INFO_MAGIC) {
-            ret = ImportSliceInfo(info, rms);
+            ret = ImportSliceInfo(info, rms, overrideRank);
         } else {
             BM_LOG_ERROR("invalid import magic : " << magic);
             ret = BM_INVALID_PARAM;
@@ -646,7 +653,7 @@ Result AsymmetricMemSegment::Unmap() noexcept
     return BM_NOT_SUPPORTED;
 }
 
-Result AsymmetricMemSegment::ImportDeviceInfo(const std::string &info) noexcept
+Result AsymmetricMemSegment::ImportDeviceInfo(const std::string &info, uint32_t overrideRank) noexcept
 {
     HbmExportDeviceInfo deviceInfo;
     LiteralExInfoTranslater<HbmExportDeviceInfo> translator;
@@ -686,12 +693,15 @@ Result AsymmetricMemSegment::ImportDeviceInfo(const std::string &info) noexcept
         }
     }
 
-    importedDeviceInfo_.emplace(deviceInfo.rankId, deviceInfo);
+    // trans 场景 rank 覆盖：用导入方本地分配的 rank 替换导出端 rank，隔离各 uniqueId 连接的设备信息
+    const uint32_t rankId = (overrideRank != HYBM_IMPORT_RANK_INVALID) ? overrideRank : deviceInfo.rankId;
+    importedDeviceInfo_.emplace(rankId, deviceInfo);
     uniqueLock.unlock();
     return BM_OK;
 }
 
-Result AsymmetricMemSegment::ImportSliceInfo(const std::string &info, MemSlicePtr &remoteSlice) noexcept
+Result AsymmetricMemSegment::ImportSliceInfo(const std::string &info, MemSlicePtr &remoteSlice,
+                                             uint32_t overrideRank) noexcept
 {
     UserSliceExportInfo sliceInfo;
     LiteralExInfoTranslater<UserSliceExportInfo> translator;
@@ -705,6 +715,19 @@ Result AsymmetricMemSegment::ImportSliceInfo(const std::string &info, MemSlicePt
         BM_LOG_ERROR("Invalid sliceInfo device id: " << sliceInfo.devicePhyId
                                                      << ", max: " << static_cast<int>(MAX_DEVICE_COUNT));
         return BM_ERROR;
+    }
+
+    if (overrideRank != HYBM_IMPORT_RANK_INVALID) {
+        // trans 场景 rank 覆盖：导出端 gva 布局为 gvaOffset = origin + rankId * maxSize + delta，
+        // 将窗口从导出端 rank 平移到本地覆盖 rank 窗口，避免多对端 slice 落入同一窗口与本地内存冲突
+        const uint64_t exporterWindow = static_cast<uint64_t>(sliceInfo.rankId) * options_.maxSize;
+        if (sliceInfo.gvaOffset < exporterWindow) {
+            BM_LOG_ERROR("invalid gvaOffset=" << sliceInfo.gvaOffset << " rankId=" << sliceInfo.rankId
+                                              << " maxSize=" << options_.maxSize);
+            return BM_INVALID_PARAM;
+        }
+        sliceInfo.gvaOffset += static_cast<uint64_t>(overrideRank) * options_.maxSize - exporterWindow;
+        sliceInfo.rankId = overrideRank;
     }
 
     // 介质判型：segmentType 由导出端按 slice 实际内存类型写入
@@ -728,6 +751,9 @@ static bool HasShareName(const char *name, size_t len)
 
 MemSlicePtr AsymmetricMemSegment::FindReusableImport(const std::string &shareName) noexcept
 {
+    if (shareName.empty() || shareName[0] == '\0') {
+        return nullptr;
+    }
     std::unique_lock<std::mutex> uniqueLock{mutex_};
     if (importedSliceInfo_.find(shareName) == importedSliceInfo_.end()) {
         return nullptr;
@@ -848,14 +874,15 @@ void AsymmetricMemSegment::CloseMemory() noexcept
     }
     remoteSlices_.clear();
     for (auto &it : registerSlices_) {
-        if (it.second.hostMapped) {
-            // 段级销毁兜底：未逐个 ReleaseSliceMemory 的 hostMapped DRAM slice 需对称解除设备映射
+        // 段级销毁兜底：hostMapped DRAM slice 对称解除设备映射；与 ReleaseSliceMemory 相同的
+        // 引用计数门控——仅当本次注销使记录涉及的所有 VA 行归零回收（无别名存活）时才释放映射
+        bool freed = HybmVaManager::GetInstance().RemoveOneVaInfo(it.second.slice->gva_);
+        if (it.second.hostMapped && freed) {
             ReleaseHostMapping(it.second.slice->vAddress_);
         }
-        HybmVaManager::GetInstance().RemoveOneVaInfo(it.second.slice->gva_);
     }
-    if (lvaBase_ != nullptr) {
-        HybmVaManager::GetInstance().FreeReserveGva(reinterpret_cast<uint64_t>(lvaBase_));
+    if (globalVirtualAddress_ != nullptr) {
+        HybmVaManager::GetInstance().FreeReserveGva(reinterpret_cast<uint64_t>(globalVirtualAddress_));
     }
     globalVirtualAddress_ = lvaBase_ = nullptr;
     totalVirtualSize_ = 0;
