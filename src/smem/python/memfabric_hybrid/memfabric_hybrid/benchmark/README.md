@@ -71,6 +71,10 @@ pip install --force-reinstall output/memfabric_hybrid/wheel/mem*.whl
 显式指定协议和帮助命令不进行机型检测。
 自动选择不会检测或修复互联拓扑，也不会在失败后切换协议。
 
+benchmark 默认启用 56 位 GVA，自动选择和显式指定协议均适用，
+覆盖单机同操作及 write/read 配对流程。A5 的 DRAM 池可在预留大页不足时尝试普通页 `halMemAlloc`，
+无需仅为该路径预先手动配置大页；分配仍受可用内存和驱动能力限制。
+
 显式协议可选 sdma、device_rdma、device_urma、device_uboe、host_rdma、host_urma、host_tcp，
 需匹配硬件、编译依赖和网络配置；host 协议在配对测试中只支持 DRAM 池。
 SDMA 可用于具备 HCCS 互联且底层支持对应内存池访问的跨机拓扑；普通网络跨机需使用网络协议。

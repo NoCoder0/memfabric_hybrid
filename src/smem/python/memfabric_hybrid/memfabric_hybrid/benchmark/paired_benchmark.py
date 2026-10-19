@@ -47,6 +47,7 @@ def _create_pool(params):
         local_hbm_size=params["local_hbm_size"],
         max_hbm_size=params["local_hbm_size"],
         data_op_type=params["bm_data_op_type"],
+        enable_56bits_gva=params["enable_56bits_gva"],
     )
     return handle
 

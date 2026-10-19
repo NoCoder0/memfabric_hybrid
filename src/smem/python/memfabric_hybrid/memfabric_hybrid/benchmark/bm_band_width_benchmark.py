@@ -104,6 +104,7 @@ def _run_bm_rank(params, rank_id, device_id, result_queue, sync):
             local_hbm_size=local_hbm_size,
             max_hbm_size=local_hbm_size,
             data_op_type=params["bm_data_op_type"],
+            enable_56bits_gva=params["enable_56bits_gva"],
         )
         ret = handle.join()
         if ret != 0:
@@ -304,6 +305,7 @@ def _get_bm_params(args):
         "nic": args.nic,
         "protocol": protocol,
         "bm_data_op_type": bm_data_op_type,
+        "enable_56bits_gva": True,
         "local_mem_type": local_mem_type,
         "peer_mem_type": peer_mem_type,
         "bm_copy_type": bm_copy_type,
@@ -326,6 +328,12 @@ def _get_bm_params(args):
 
 def run_bm(args):
     params = _get_bm_params(args)
+    LOGGER.info(
+        "benchmark pool configuration: protocol=%s enable_56bits_gva=%s peer_mem_type=%s",
+        params["protocol"],
+        params["enable_56bits_gva"],
+        params["peer_mem_name"],
+    )
     local_rank_size = params["local_rank_size"]
 
     # A peer-HBM copy needs a non-empty peer HBM slot.

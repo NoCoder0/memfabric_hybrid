@@ -150,6 +150,7 @@ class PairedBenchmarkTest(unittest.TestCase):
         )
         self.paired = load("_benchmark_under_test.paired_benchmark", PACKAGE / "benchmark/paired_benchmark.py")
         self.parser = load("_benchmark_under_test.cli", PACKAGE / "cli.py")._parser()
+        self.create_pool = self.paired._create_pool
         for name, replacement in (("_create_pool", self._pool), ("_create_buffer", self._buffers)):
             boundary = patch.object(self.paired, name, replacement)
             boundary.start()
@@ -254,6 +255,7 @@ class PairedBenchmarkTest(unittest.TestCase):
                         self.assertEqual(self.entry.run(args), 0)
                         self.assertEqual(args.protocol, protocol)
                         self.assertEqual(self.runner._get_bm_params(args)["protocol"], protocol)
+                        self.assertIs(self.runner._get_bm_params(args)["enable_56bits_gva"], True)
                         self.assertTrue(args.paired)
             env.get_benchmark_soc.side_effect = AssertionError("explicit protocol must bypass detection")
             for protocol in ("sdma", "device_rdma", "device_urma", "host_tcp"):
@@ -269,6 +271,26 @@ class PairedBenchmarkTest(unittest.TestCase):
                 self.assertIn("acl.get_soc_name()", logs.output[0])
                 self.assertIn("specify --protocol explicitly", logs.output[0])
                 run_bm.assert_not_called()
+
+    def test_56bits_is_enabled_for_both_pool_creation_paths(self):
+        # Stop at join so the worker regression needs no NPU buffers.
+        handle = types.SimpleNamespace(join=Mock(return_value=1))
+        with (
+            patch.object(self.runner.bm, "create2", return_value=handle, create=True) as create,
+            patch.object(self.runner.torch.npu, "Stream", return_value=Mock(), create=True),
+        ):
+            for protocol in ("device_urma", "sdma"):
+                with self.subTest(protocol=protocol):
+                    args = self._args("write", ["--ip", LOOPBACK, "--protocol", protocol])
+                    params = self.runner._get_bm_params(args)
+                    self.assertIs(self.create_pool(params), handle)
+                    self.assertIs(create.call_args.kwargs["enable_56bits_gva"], True)
+                    create.reset_mock()
+                    output = queue.Queue()
+                    self.runner._run_bm_rank(params, WRITER_RANK, 0, output, Mock())
+                    create.assert_called_once()
+                    self.assertIs(create.call_args.kwargs["enable_56bits_gva"], True)
+                    self.assertIn("handle.join failed", output.get_nowait()["error"])
 
     def test_writer_reports_before_reader_and_keeps_paired_pools_alive(self):
         writers = self._start("write")
