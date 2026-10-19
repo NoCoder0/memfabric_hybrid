@@ -1,0 +1,24 @@
+/* Make navigation group labels easier to distinguish from their child pages. */
+.md-nav--primary .md-nav__item--nested > .md-nav__link {
+    margin-top: 0.65rem;
+    color: var(--md-default-fg-color);
+    font-weight: 700;
+}
+
+/* Emphasize top-level documentation sections and standalone pages. */
+.md-nav--primary > .md-nav__list > .md-nav__item > .md-nav__link {
+    margin: 0 0 0.8rem;
+    padding: 0.2rem 0.6rem;
+    border-left: 0.2rem solid var(--md-accent-fg-color);
+    color: var(--md-default-fg-color);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.4;
+}
+
+.md-nav--primary > .md-nav__list > .md-nav__item--active > .md-nav > .md-nav__title {
+    color: var(--md-default-fg-color);
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.4;
+}

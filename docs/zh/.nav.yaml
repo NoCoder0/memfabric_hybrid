@@ -1,0 +1,71 @@
+nav:
+  - 首页: index.md
+  - 快速开始:
+      - 产品与特性概览: feature.md
+      - 软件安装: installation.md
+      - 单机多卡 Memory Pool 示例: wiki/user_guide/memory_pool_quickstart.md
+      - LingQu Computing Network 安装与升级: CCLink.md
+      - 环境连通性检查: wiki/环境连通性检查.md
+      - ❓ FAQ:
+          - wiki/FAQ/index.md
+          - 常见问题及解决办法: wiki/FAQ/FAQ.md
+          - HOST_SHM 内存分配 FAQ: wiki/FAQ/HOST_SHM 内存分配 FAQ.md
+  - 用户指南:
+      - 🧩 API 参考:
+          - wiki/user_guide/api/index.md
+          - C 接口: API.md
+          - Python 接口: pythonAPI.md
+          - Acc Links 接口: acc_links/API.md
+      - 🛠️ 开发和运行环境:
+          - wiki/user_guide/development_environment/index.md
+          - 远端开发与全量运行: devcontainer_quickstart.md
+          - IDE 代码跳转配置: ide_code_navigation_guide.md
+          - KERNEL OPS 编译与安装: installation_kernel.md
+      - ⚙️ 基础配置与工具:
+          - wiki/user_guide/basic_configuration/index.md
+          - 硬件支持: wiki/硬件支持.md
+          - 环境变量: environment_variables.md
+          - mfcli 使用指南: mfcli.md
+      - 🧠 内存与传输:
+          - wiki/user_guide/memory_transport/index.md
+          - MemFabric 内存管理: wiki/features_instruction/MemFabric内存管理.md
+          - DEVICE_RDMA 内存申请: wiki/DEVICE_RDMA 内存申请.md
+          - A5 1G 大页配置教程: wiki/A5 1G大页配置教程.md
+          - NUMA 亲和配置: wiki/Numa亲和内存分配.md
+          - 共享内存 fd 与批量复制接口: wiki/通过共享内存fd提供host侧GVA内存和批量复制带部分失败接口说明.md
+      - 🛡️ ConfigStore 与高可用:
+          - wiki/user_guide/configstore_ha/index.md
+          - ConfigStore 集群高可用: config_store_cluster_ha.md
+          - ETCD 存储后端: etcd_store_backend.md
+          - ConfigStore 集群管理原理: wiki/features_instruction/ConfigStore集群管理原理解析及基于etcd的高可用方案.md
+          - etcd 后端使用与部署: wiki/features_instruction/MemFabric的etcd后端使用与部署指导.md
+          - client 故障解决方案: wiki/features_instruction/MemFabric的client故障解决方案.md
+      - 🔗 集成指南:
+          - wiki/user_guide/integration/index.md
+          - SGLang 集成指南: wiki/user_guide/SGLang 集成指南.md
+          - vLLM Ascend + Mooncake 集成指南: wiki/user_guide/vllm ascend + mooncake对接memfabric_hybrid部署指南.md
+          - 三方 GPU 设备通过 RDMA 直连鲲鹏服务器: wiki/三方GPU设备通过RDMA直连鲲鹏服务器的MemFabric内存池.md
+      - 💡 应用案例:
+          - wiki/examples/index.md
+          - MemFabric + ZBAL + SGL + DSV4 推理吞吐提升: wiki/examples/memfabric-ZBAL+SGL+DSV4推理吞吐提升案例.md
+      - 🔒 安全说明:
+          - wiki/user_guide/security/index.md
+          - MemFabric 安全提示: SECURITYNOTE.md
+          - Acc Links 安全提示: acc_links/SECURITYNOTE.md
+  - 开发者指南:
+      - 贡献指南: wiki/developer_guide/contributing.md
+      - 🔍 调试与性能分析:
+          - wiki/developer_guide/debugging/index.md
+          - 故障注入: fault_injection.md
+          - ptracer 性能打点工具: ptracer.md
+      - 📝 文档开发:
+          - wiki/developer_guide/documentation/index.md
+          - 本地构建 MkDocs 文档服务: wiki/developer_guide/build_docs.md
+      - 🚀 开发与发布流程:
+          - wiki/developer_guide/workflow/index.md
+          - 分支策略: wiki/分支策略.md
+          - 开发与发布节奏原则: wiki/开发与发布节奏原则.md
+          - GitCode 自动 Release: gitcode_release_workflow.md
+  - 社区:
+      - Roadmap: wiki/Roadmap.md
+      - 版本说明: release_notes.md
