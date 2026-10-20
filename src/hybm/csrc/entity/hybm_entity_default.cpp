@@ -271,8 +271,8 @@ int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, ui
         transport::TransportMemoryRegion mr;
         // Transport managers use HVA as the registration key. Device RDMA obtains DVA from VaManager when needed;
         // pure SDMA does not register an MR here.
-        mr.addr = addr;
-        mr.size = size;
+        mr.addr = realSlice->vAddress_;
+        mr.size = realSlice->size_;
         mr.flags = (isHbm ? transport::REG_MR_FLAG_HBM : transport::REG_MR_FLAG_DRAM);
         ret = transportManager_->RegisterMemoryRegion(mr);
         if (ret != 0) {

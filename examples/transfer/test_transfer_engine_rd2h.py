@@ -10,12 +10,26 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 
-"""SFA RD2H 场景 PD KV Cache pull 传输测试（Decode 多 rank）。
+"""SFA RD2H 场景 PD KV Cache pull 传输测试（Decode 多 rank，可选 d2d 拉取 indexer）。
 
 对齐 vLLM SfaRemoteD2HConnector + SparseKVOffloadManager：P 侧 register_memory 只发布
 元数据，D 侧各 rank 按 tp_block_range 均分的块区间经 TransferEngine 拉取写入共享 CPU 池
 （SHARED 仅 rank0 分配，store url 与池基地址经 HCCL broadcast 同步），rank0 全池校验并
 演示 sparse_copy D2H。KV 为 MLA main cache（bf16），默认 32 层 x 128 块。
+
+混合介质（对齐生产 SFA indexer/scale 布局，参考 test_transfer_engine_d2rh_shared）：
+--enable-hbm（默认开启）时，每个 owned 块的 main K/V 拉取到共享 DRAM 池（rd2h），
+同批块的 indexer 组件拉取到本 rank 的 HBM 热区 arena（d2d，HBM→HBM），两类描述符
+合入同一次 batch_transfer_sync_read，一次 batch 同时覆盖 HBM→DRAM 与 HBM→HBM。
+内存排布对齐生产 _allocate_kv_cache_tensors：P 侧 main K/V 每层独立分配、各自 2MiB 对齐，
+indexer C8 下 K+scale 同一 raw 前后排布（边界仅按 scale_dtype 对齐）；D 侧 arena 每层一段
+（段基址 2MiB 对齐）逐层独立注册。indexer 两条路径分开验证（--indexer-c8）：
+- 非量化（默认）：indexer K bf16、无 scale（生产 scale_dim=0，单组件/层）；
+- C8（--indexer-c8）：indexer K int8 + scale int8（scale_dim=1），同 storage 前后排布
+  （生产 LIC8 路径，K+scale 合并注册为一段）。
+设备内存共享名走 IPC 语义仅同机有效，跨机（prefill-ip != local-ip）时 HBM 热区可能
+导入失败；可用 --no-enable-hbm 去掉 HBM 热区（仅拉取共享 DRAM 池的 main K/V）做跨机
+验证，两侧开关必须一致。
 用法：先启 Prefill 再启 Decode（--tp-size N 一条命令拉起全部 rank 子进程，或 --tp-rank r
 单独启动）；测量轮 warmup+iterations 可调。
 """
@@ -35,7 +49,7 @@ from collections import namedtuple
 import torch
 import torch.distributed as dist
 import torch_npu  # noqa: F401  # side-effect import: registers the torch NPU backend
-from memfabric_hybrid import TransferEngine, offload, set_conf_store_tls
+from memfabric_hybrid import TransferEngine, offload, set_conf_store_tls, TransDataOpType
 
 CONTROL_PORT = 29598
 DIST_PORT = 29599
@@ -49,8 +63,8 @@ ROLE_DECODE = "Decode"
 LOG_LEVELS = {0: logging.DEBUG, 1: logging.INFO, 2: logging.WARNING, 3: logging.ERROR}
 
 logger = logging.getLogger("test_transfer_engine_rd2h")
-# 一层 K/V 分片的拉取规格：目标层、源布局、本 rank 拥有块区间等强相关参数打包为一个具名元组
-LayerPullSpec = namedtuple("LayerPullSpec", "layer_idx layer_meta cpu_base p_block_ids owned")
+# 一层 K/V 分片的拉取规格：目标层、源布局、目标 rank 的共享池/HBM 热区基地址、该 rank 拥有块区间
+LayerPullSpec = namedtuple("LayerPullSpec", "layer_idx layer_meta cpu_base hbm_base p_block_ids owned")
 
 
 def _ipv4(value):
@@ -90,6 +104,25 @@ def _parse_args():
     parser.add_argument("--seed", type=int, default=2026, help="Seed of deterministic KV payload")
     parser.add_argument("--dram-pool-gb", type=int, default=2, help="Decode shared offload DRAM pool size in GiB")
     parser.add_argument(
+        "--indexer-head-dim",
+        type=int,
+        default=128,
+        help="SFA indexer K head dim landing in Decode HBM, mirroring the production index_head_dim",
+    )
+    parser.add_argument(
+        "--indexer-c8",
+        action="store_true",
+        help="Indexer K int8 + scale int8 (scale_dim=1) in one storage, mirroring the production C8/LIC8 path; "
+        "default is the non-quantized bf16 path without scale",
+    )
+    parser.add_argument(
+        "--enable-hbm",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include the per-rank HBM hot segments (indexer/scale) in registration and pull; "
+        "use --no-enable-hbm to pull main K/V to the shared DRAM pool only (cross-machine friendly)",
+    )
+    parser.add_argument(
         "--log-level", type=int, default=1, choices=[0, 1, 2, 3], help="0 debug, 1 info, 2 warn, 3 error"
     )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="Control channel timeout")
@@ -110,9 +143,10 @@ def _validate_args(parser, args):
         parser.error("--tp-rank only applies to Decode role")
     if args.role == ROLE_PREFILL and args.decode_tp_size <= 0:
         parser.error("--decode-tp-size must be positive")
-    if args.num_layers * 2 > MAX_REGISTER_REGIONS:
-        parser.error(f"num_layers*2 must be <= {MAX_REGISTER_REGIONS} (HCCL register region limit)")
-    for name in ("num_layers", "num_blocks", "block_size", "kv_lora_rank", "qk_rope_head_dim"):
+    # P 侧每层注册 3 段：main K / main V / indexer（C8 时 K+scale 同 storage 合并一段）
+    if args.num_layers * 3 > MAX_REGISTER_REGIONS:
+        parser.error(f"num_layers*3 must be <= {MAX_REGISTER_REGIONS} (register region limit)")
+    for name in ("num_layers", "num_blocks", "block_size", "kv_lora_rank", "qk_rope_head_dim", "indexer_head_dim"):
         if getattr(args, name) <= 0:
             parser.error(f"--{name.replace('_', '-')} must be positive")
     if args.timeout <= 0:
@@ -139,6 +173,37 @@ def make_expected_kv(args, layer):
     k = torch.randn(k_shape, generator=gen_k, dtype=torch.float32).to(torch.bfloat16)
     v = torch.randn(v_shape, generator=gen_v, dtype=torch.float32).to(torch.bfloat16)
     return k, v
+
+
+def indexer_layout(args):
+    """SFA indexer 组件布局（对齐生产 DeepseekV32IndexerCache spec）。
+
+    非 C8（默认）：indexer K bf16、无 scale（生产 scale_dim=0）；
+    C8（--indexer-c8）：indexer K int8 + scale int8（scale_dim=1），同 storage 前后排布。
+    """
+    ik_shape = (args.num_blocks, args.block_size, 1, args.indexer_head_dim)
+    ik_block_len = (1 if args.indexer_c8 else 2) * args.block_size * args.indexer_head_dim
+    if args.indexer_c8:
+        scale_shape = (args.num_blocks, args.block_size, 1, 1)
+        scale_block_len = args.block_size  # int8, scale_dim=1
+    else:
+        scale_shape, scale_block_len = None, 0
+    return ik_shape, scale_shape, ik_block_len, scale_block_len
+
+
+def make_expected_indexer(args, layer):
+    """按固定 seed 生成期望 indexer 组件，P/D 两侧独立重现（C8 时附带 scale，否则为 None）。"""
+    ik_shape, scale_shape, _, _ = indexer_layout(args)
+    gen_ik = torch.Generator().manual_seed(args.seed * 100003 + layer + 900000)
+    if args.indexer_c8:
+        ik = torch.randint(-128, 128, ik_shape, generator=gen_ik, dtype=torch.int32).to(torch.int8)
+    else:
+        ik = torch.randn(ik_shape, generator=gen_ik, dtype=torch.float32).to(torch.bfloat16)
+    if scale_shape is None:
+        return ik, None
+    gen_s = torch.Generator().manual_seed(args.seed * 100003 + layer + 910000)
+    scale = torch.randint(-128, 128, scale_shape, generator=gen_s, dtype=torch.int32).to(torch.int8)
+    return ik, scale
 
 
 def make_block_table(args):
@@ -196,11 +261,25 @@ def tp_block_range(num_blocks, tp_rank, tp_size, start_block=0):
     return start, start + count
 
 
+def get_trans_backend():
+    try:
+        import acl
+
+        soc_name = acl.get_soc_name()
+        if "Ascend910_95" in soc_name or "Ascend950" in soc_name:
+            return TransDataOpType.DEVICE_URMA
+        return TransDataOpType.SDMA
+    except Exception:
+        return TransDataOpType.SDMA
+
+
 def init_transfer_engine(role, local_ip, args):
     """对齐 vllm-ascend GlobalMemfabricTE：Prefill 侧承担 config store server，session 为 "{ip}:{port}"。"""
     set_conf_store_tls(False, "")
     engine = TransferEngine()
-    ret = engine.initialize(f"tcp://{local_ip}", local_ip, role, args.npu_id, store_server_role=ROLE_PREFILL)
+    ret = engine.initialize(
+        f"tcp://{local_ip}", local_ip, role, args.npu_id, get_trans_backend(), store_server_role=ROLE_PREFILL
+    )
     if ret != 0:
         raise RuntimeError(f"TransferEngine initialize failed, ret={ret}, role={role}, localIp={local_ip}")
     session = f"{local_ip}:{engine.get_rpc_port()}"
@@ -209,43 +288,127 @@ def init_transfer_engine(role, local_ip, args):
     return engine, session
 
 
+def register_decode_destinations(engine, cpu_bases, hbm_segments, args):
+    """D 侧各 rank 将共享池目的区与本 rank HBM 热区注册到本 rank 引擎。
+
+    SHARED 池全组同 VA，rank>0 以广播基址注册；HBM 热区逐层一段独立注册（段基址
+    2MiB 对齐、段长 2MiB 整数倍，对齐后互不重叠）。pull 路径：D 侧本地目的内存必须
+    在本端注册；注册后经 session 元数据同步到 P 侧，作为 batch_transfer_sync_read 的
+    本地落地内存。
+    """
+    _, _, k_block_len, v_block_len = kv_layout(args)
+    regions = len(cpu_bases) * 2 + len(hbm_segments)
+    if regions > MAX_REGISTER_REGIONS:
+        raise RuntimeError(f"register regions {regions} exceed limit {MAX_REGISTER_REGIONS}")
+    for layer, bases in enumerate(cpu_bases):
+        for name, base, block_len in (("k", bases["k"], k_block_len), ("v", bases["v"], v_block_len)):
+            ret = engine.register_memory(base, block_len * args.num_blocks)
+            if ret != 0:
+                raise RuntimeError(
+                    f"register_memory failed, ret={ret}, rankId={args.tp_rank}, layer={layer}, tensor={name}"
+                )
+    for layer, segment in enumerate(hbm_segments):
+        ret = engine.register_memory(segment.data_ptr(), segment.numel())
+        if ret != 0:
+            raise RuntimeError(
+                f"register_memory failed, ret={ret}, rankId={args.tp_rank}, layer={layer}, tensor=hbm hot segment"
+            )
+    logger.info(f"[D{args.tp_rank}] registered {len(cpu_bases) * 2} cpu pool + {len(hbm_segments)} hbm segment regions")
+
+
 # ---------------------------- Prefill (producer) ----------------------------
 
 
+def alloc_aligned_npu(num_bytes):
+    """对齐生产 _allocate_int8_cache_tensor：多要 2MiB 再把基址对齐到 2MiB，返回内容视图。"""
+    raw = torch.zeros(num_bytes + CPU_BUFFER_ALIGNMENT, dtype=torch.uint8, device="npu")
+    offset = (-raw.data_ptr()) % CPU_BUFFER_ALIGNMENT
+    return raw[offset : offset + num_bytes]
+
+
 def build_prefill_kv_caches(args):
-    """P 侧模拟 prefill 产出每层 KV cache（HBM bf16）。"""
+    """P 侧模拟 prefill 产出每层组件，内存排布对齐生产 _allocate_kv_cache_tensors：
+
+    - main K/V：每层独立分配、各自 2MiB 对齐（生产：split into k_cache/v_cache，均 2M 对齐）；
+    - indexer 非量化：单块 bf16（生产 scale_dim=0）；C8：int8 K + int8 scale 从同一块 raw
+      切出（基址 2MiB 对齐、边界仅按 scale_dtype 对齐，对齐 _allocate_sparse_c8_indexer_tensors）。
+    返回 caches[layer] = (k, v, ik, scale|None)，均为对齐存储上的视图。
+    """
+    k_shape, v_shape, k_block_len, v_block_len = kv_layout(args)
+    ik_shape, scale_shape, ik_block_len, s_block_len = indexer_layout(args)
     caches = []
     for layer in range(args.num_layers):
-        k_cpu, v_cpu = make_expected_kv(args, layer)
-        caches.append((k_cpu.to("npu"), v_cpu.to("npu")))
+        k_expected, v_expected = make_expected_kv(args, layer)
+        ik_expected, s_expected = make_expected_indexer(args, layer)
+        k_raw = alloc_aligned_npu(k_block_len * args.num_blocks)
+        v_raw = alloc_aligned_npu(v_block_len * args.num_blocks)
+        k = k_raw.view(torch.bfloat16).reshape(k_shape)
+        v = v_raw.view(torch.bfloat16).reshape(v_shape)
+        k.copy_(k_expected)
+        v.copy_(v_expected)
+        if scale_shape is None:
+            ik_raw = alloc_aligned_npu(ik_block_len * args.num_blocks)
+            ik = ik_raw.view(torch.bfloat16).reshape(ik_shape)
+            ik.copy_(ik_expected)
+            caches.append((k, v, ik, None))
+        else:
+            indexer_bytes = ik_block_len * args.num_blocks + s_block_len * args.num_blocks
+            idx_raw = alloc_aligned_npu(indexer_bytes)
+            ik = idx_raw[: ik_block_len * args.num_blocks].view(torch.int8).reshape(ik_shape)
+            scale = idx_raw[ik_block_len * args.num_blocks :].view(torch.int8).reshape(scale_shape)
+            ik.copy_(ik_expected)
+            scale.copy_(s_expected)
+            caches.append((k, v, ik, scale))
     torch.npu.synchronize()
     return caches
 
 
 def register_prefill_caches(engine, caches, args):
-    """仅 P 侧注册源内存（生产 pull 路径：D 侧目的地为共享池，无需注册）。"""
+    """仅 P 侧注册源内存（生产 pull 路径：D 侧目的地为共享池，无需注册）。
+
+    一个 storage 一段：main K/V 各一段；C8 下 indexer K+scale 同 storage 合并为一段
+    （对齐生产 collect_storage_merged_register_regions 的按 storage 合并）。
+    """
     _, _, k_block_len, v_block_len = kv_layout(args)
-    if len(caches) * 2 > MAX_REGISTER_REGIONS:
-        raise RuntimeError(f"register regions {len(caches) * 2} exceed limit {MAX_REGISTER_REGIONS}")
-    for layer, (k_cache, v_cache) in enumerate(caches):
-        for name, cache, block_len in (("k", k_cache, k_block_len), ("v", v_cache, v_block_len)):
-            ret = engine.register_memory(cache.data_ptr(), block_len * args.num_blocks)
+    _, _, ik_block_len, s_block_len = indexer_layout(args)
+    per_layer = 3
+    if len(caches) * per_layer > MAX_REGISTER_REGIONS:
+        raise RuntimeError(f"register regions {len(caches) * per_layer} exceed limit {MAX_REGISTER_REGIONS}")
+    for layer, (k_cache, v_cache, ik_cache, s_cache) in enumerate(caches):
+        components = [
+            ("k", k_cache, k_block_len * args.num_blocks),
+            ("v", v_cache, v_block_len * args.num_blocks),
+            ("indexer", ik_cache, ik_block_len * args.num_blocks),
+        ]
+        if s_cache is not None:
+            components[-1] = (
+                "indexer",
+                ik_cache,
+                ik_block_len * args.num_blocks + s_block_len * args.num_blocks,
+            )
+        for name, cache, size in components:
+            ret = engine.register_memory(cache.data_ptr(), size)
             if ret != 0:
                 raise RuntimeError(f"register_memory failed, ret={ret}, layer={layer}, tensor={name}")
-    logger.info(f"[P] registered {len(caches) * 2} KV regions over {len(caches)} layers")
+    logger.info(f"[P] registered {len(caches) * per_layer} source regions over {len(caches)} layers")
 
 
 def build_prefill_meta(session, caches, args):
     """构建下发 D 侧的元数据（对应生产协议的 LayerMetadata + block table）。"""
     _, _, k_block_len, v_block_len = kv_layout(args)
+    _, _, ik_block_len, s_block_len = indexer_layout(args)
     layers = []
-    for k_cache, v_cache in caches:
+    for k_cache, v_cache, ik_cache, s_cache in caches:
         layers.append(
             {
                 "k_base": int(k_cache.data_ptr()),
                 "v_base": int(v_cache.data_ptr()),
                 "k_block_len": k_block_len,
                 "v_block_len": v_block_len,
+                "ik_base": int(ik_cache.data_ptr()),
+                "ik_block_len": ik_block_len,
+                "scale_base": int(s_cache.data_ptr()) if s_cache is not None else None,
+                "scale_block_len": s_block_len,
             }
         )
     return {
@@ -256,8 +419,13 @@ def build_prefill_meta(session, caches, args):
         "block_size": args.block_size,
         "kv_lora_rank": args.kv_lora_rank,
         "qk_rope_head_dim": args.qk_rope_head_dim,
+        "indexer_head_dim": args.indexer_head_dim,
+        "indexer_c8": args.indexer_c8,
+        "enable_hbm": args.enable_hbm,
         "k_block_len": k_block_len,
         "v_block_len": v_block_len,
+        "ik_block_len": ik_block_len,
+        "scale_block_len": s_block_len,
         "p_block_ids": make_block_table(args),
         "layers": layers,
     }
@@ -382,7 +550,9 @@ def run_prefill_role(args):
         meta = build_prefill_meta(session, caches, args)
         logger.info(
             f"[P] ready: session={session}, control={args.local_ip}:{args.control_port}, "
-            f"decode_tp_size={args.decode_tp_size}, waiting for Decode ranks..."
+            f"decode_tp_size={args.decode_tp_size}, enable_hbm={args.enable_hbm}, "
+            f"indexer_c8={args.indexer_c8}, indexer_head_dim={args.indexer_head_dim}, "
+            f"waiting for Decode ranks..."
         )
         final = serve_decode_ranks(server, meta, args)
 
@@ -396,6 +566,7 @@ def run_prefill_role(args):
         f"[P] PASS: layers={args.num_layers}, decode_ranks={args.decode_tp_size}, "
         f"bytes={final['total_bytes'] / GIB:.2f} GiB/round, iterations={final['iterations']}, "
         f"transfer_bw={final['bandwidth_gibps']:.2f} GiB/s (best {final['best_bandwidth_gibps']:.2f}), "
+        f"enable_hbm={args.enable_hbm}, indexer_c8={args.indexer_c8}, "
         f"d2h_demo_ok={final['d2h_demo_ok']}"
     )
 
@@ -465,23 +636,87 @@ def build_decode_cpu_pools(args):
     return pools
 
 
+def hbm_layer_seg(args, blocks):
+    """每层热区段字节数：indexer_k + scale 向上对齐 2MiB（对齐生产每层分配独立 2MiB 对齐）。"""
+    _, _, ik_block_len, scale_block_len = indexer_layout(args)
+    raw = (ik_block_len + scale_block_len) * blocks
+    return ((raw + CPU_BUFFER_ALIGNMENT - 1) // CPU_BUFFER_ALIGNMENT) * CPU_BUFFER_ALIGNMENT
+
+
+def build_decode_hbm_pool(args):
+    """按生产 SFA indexer 布局分配本 rank HBM 热区（每层一段、逐层独立注册）。
+
+    每层一段（段基址 2MiB 对齐、段长为 2MiB 整数倍，等价生产每层 raw 分配独立对齐），
+    覆盖本 rank owned 全部块；对齐后相邻段互不重叠，逐层注册不冲突。非 C8 段内仅
+    indexer K（bf16）；C8 段内 indexer K（int8）+ scale（int8，scale_dim=1）前后排布。
+    返回 (backing, segments, blocks, hbm_bases)，segments[layer] 为该层注册段。
+    """
+    owned = tp_block_range(args.num_blocks, args.tp_rank, args.tp_size)
+    blocks = owned[1] - owned[0]
+    _, scale_shape, ik_block_len, _ = indexer_layout(args)
+    seg = hbm_layer_seg(args, blocks)
+    total = seg * args.num_layers
+    backing = torch.zeros(total + CPU_BUFFER_ALIGNMENT, dtype=torch.uint8, device="npu")
+    offset = (-backing.data_ptr()) % CPU_BUFFER_ALIGNMENT
+    arena = backing[offset : offset + total]
+    base = arena.data_ptr()
+    segments, hbm_bases = [], []
+    for layer in range(args.num_layers):
+        layer_base = base + layer * seg
+        segments.append(arena[layer * seg : (layer + 1) * seg])
+        bases = {"indexer": layer_base}
+        if scale_shape is not None:
+            bases["scale"] = layer_base + ik_block_len * blocks
+        hbm_bases.append(bases)
+    logger.info(
+        f"[D{args.tp_rank}] allocated hbm hot segments (indexer c8={args.indexer_c8}), "
+        f"layers={args.num_layers}, seg={seg}B, base={hex(base)}, blocks={blocks}"
+    )
+    return backing, segments, blocks, hbm_bases
+
+
+def hbm_hot_views(segments, blocks, args):
+    """按层切出热区 indexer（及 C8 scale）视图，布局与 hbm_bases 一一对应，用于逐层校验。"""
+    ik_shape, scale_shape, ik_block_len, scale_block_len = indexer_layout(args)
+    ik_dtype = torch.int8 if args.indexer_c8 else torch.bfloat16
+    views = []
+    for segment in segments:
+        ik = segment[: ik_block_len * blocks].view(ik_dtype).reshape((blocks,) + ik_shape[1:])
+        if scale_shape is None:
+            views.append((ik, None))
+            continue
+        scale = segment[ik_block_len * blocks : (ik_block_len + scale_block_len) * blocks].view(torch.int8)
+        views.append((ik, scale.reshape((blocks,) + scale_shape[1:])))
+    return views
+
+
 def validate_layout(args, meta):
-    """模拟 read_thread 的布局一致性校验：P/D 的 KV 布局参数必须一致。"""
+    """模拟 read_thread 的布局一致性校验：P/D 的 KV 与 indexer 布局参数必须一致。"""
     _, _, k_block_len, v_block_len = kv_layout(args)
+    _, _, ik_block_len, _ = indexer_layout(args)
     checks = (
         ("num_layers", args.num_layers),
         ("num_blocks", args.num_blocks),
         ("block_size", args.block_size),
         ("kv_lora_rank", args.kv_lora_rank),
         ("qk_rope_head_dim", args.qk_rope_head_dim),
+        ("indexer_head_dim", args.indexer_head_dim),
         ("k_block_len", k_block_len),
         ("v_block_len", v_block_len),
+        ("ik_block_len", ik_block_len),
     )
     for key, expected in checks:
         if int(meta[key]) != expected:
-            raise RuntimeError(f"KV layout mismatch on {key}: P={meta[key]} D={expected}")
+            raise RuntimeError(f"layout mismatch on {key}: P={meta[key]} D={expected}")
     if len(meta["p_block_ids"]) != args.num_blocks:
         raise RuntimeError(f"block table size mismatch: P={len(meta['p_block_ids'])} D={args.num_blocks}")
+    if bool(meta.get("indexer_c8", False)) != args.indexer_c8:
+        raise RuntimeError(f"indexer_c8 mismatch: P={meta.get('indexer_c8')} D={args.indexer_c8}")
+    if bool(meta.get("enable_hbm", True)) != args.enable_hbm:
+        raise RuntimeError(
+            f"enable_hbm mismatch: P={meta.get('enable_hbm')} D={args.enable_hbm} "
+            f"(both sides must use the same --enable-hbm/--no-enable-hbm)"
+        )
 
 
 def coalesce_descriptors(descriptors):
@@ -495,25 +730,35 @@ def coalesce_descriptors(descriptors):
     return merged
 
 
-def build_layer_descriptors(layer_meta, cpu_base, p_block_ids, owned):
-    """构造一层 K/V 的读描述符，仅覆盖本 rank 拥有的块区间 owned=[start, end)。"""
+def build_layer_descriptors(layer_meta, cpu_base, hbm_base, p_block_ids, owned):
+    """构造一层 K/V 的读描述符（介质划分对齐生产）：owned 全部块的 main K/V 自 P HBM 拉到
+    共享 CPU 池（rd2h），同批块的 indexer/scale 自 P HBM 拉到本 rank HBM 热区（d2d，
+    区内偏移 dst_idx-start），两类描述符合入同一次 batch_transfer_sync_read；
+    hbm_base 为 None 时（--no-enable-hbm）仅构造共享池腿。
+    """
     start, end = owned
     descriptors = []
-    specs = (
-        (layer_meta["k_base"], cpu_base["k"], layer_meta["k_block_len"]),
-        (layer_meta["v_base"], cpu_base["v"], layer_meta["v_block_len"]),
-    )
-    for peer_base, local_base, block_len in specs:
+    specs = [
+        (layer_meta["k_base"], cpu_base["k"], layer_meta["k_block_len"], False),
+        (layer_meta["v_base"], cpu_base["v"], layer_meta["v_block_len"], False),
+    ]
+    if hbm_base is not None:
+        specs.append((layer_meta["ik_base"], hbm_base["indexer"], layer_meta["ik_block_len"], True))
+        if layer_meta.get("scale_base") is not None:
+            specs.append((layer_meta["scale_base"], hbm_base["scale"], layer_meta["scale_block_len"], True))
+    for peer_base, local_base, block_len, to_hbm in specs:
         for dst_idx in range(start, end):
             src_idx = p_block_ids[dst_idx]
-            descriptors.append((peer_base + src_idx * block_len, local_base + dst_idx * block_len, block_len))
+            dst_off = (dst_idx - start) if to_hbm else dst_idx
+            descriptors.append((peer_base + src_idx * block_len, local_base + dst_off * block_len, block_len))
     return coalesce_descriptors(descriptors)
 
 
 def pull_owned_layer(engine, p_session, spec):
-    """按 owned 块区间拉取一层 K/V 分片写入共享 CPU 池，描述符构建与传输分段计时。"""
+    """按 owned 块区间拉取一层混合介质分片（main K/V 到共享池 + indexer/scale 到 HBM 热区），
+    描述符构建与传输分段计时。"""
     tick = time.monotonic()
-    descriptors = build_layer_descriptors(spec.layer_meta, spec.cpu_base, spec.p_block_ids, spec.owned)
+    descriptors = build_layer_descriptors(spec.layer_meta, spec.cpu_base, spec.hbm_base, spec.p_block_ids, spec.owned)
     local_ptrs = [desc[1] for desc in descriptors]
     peer_ptrs = [desc[0] for desc in descriptors]
     lengths = [desc[2] for desc in descriptors]
@@ -555,23 +800,36 @@ def broadcast_cpu_bases(pools, args):
 
 
 def decode_shared_pool_handshake(conn, args):
-    """收到 init 后建 HCCL 组并初始化共享池；rank0 分配 CPU 池并广播基地址。"""
+    """收到 init 后建 HCCL 组并初始化共享池；rank0 分配 CPU 池并广播基地址；
+    各 rank 同时按 --enable-hbm 分配本 rank HBM 热区（pull 路径：本地目的内存，
+    无需上报 P 侧）。"""
     message = recv_json(conn)
     expect_phase(message, "init")
     if int(message.get("tp_size", -1)) != args.tp_size:
         raise RuntimeError(f"tp_size mismatch: prefill={message.get('tp_size')} local={args.tp_size}")
+    if args.prefill_ip != args.local_ip:
+        logger.warning(
+            f"[D{args.tp_rank}] hbm hot pool relies on same-host IPC memory sharing; cross-machine pull "
+            f"(prefill={args.prefill_ip}, local={args.local_ip}) may fail at import "
+            f"(use --no-enable-hbm to exclude the hbm part)"
+        )
     init_tp_group(args)
     store_url = resolve_shared_store_url(args)
     init_offload_pool(args, store_url)
     pools = build_decode_cpu_pools(args) if args.tp_rank == 0 else None
     cpu_bases = broadcast_cpu_bases(pools, args)
+    if args.enable_hbm:
+        hbm_backing, hbm_segments, hbm_blocks, hbm_bases = build_decode_hbm_pool(args)
+    else:
+        hbm_backing, hbm_segments, hbm_blocks, hbm_bases = None, [], 0, [None] * args.num_layers
     if args.tp_rank == 0:
         send_json(conn, {"phase": "pool_ready"})
-    return pools, cpu_bases
+    return pools, cpu_bases, hbm_backing, hbm_segments, hbm_blocks, hbm_bases
 
 
-def decode_pull_owned_slices(engine, meta, cpu_bases, owned, args):
-    """本 rank 单轮拉取 owned 块区间的所有层分片，返回 (bytes, 描述符数, 构建秒数, 传输秒数)。"""
+def decode_pull_owned_slices(engine, meta, cpu_bases, hbm_bases, owned, args):
+    """本 rank 单轮拉取 owned 块区间的所有层分片（main K/V 到共享池 + indexer/scale 到 HBM 热区），
+    返回 (bytes, 描述符数, 构建秒数, 传输秒数)。"""
     total_bytes = 0
     total_desc = 0
     desc_seconds = 0.0
@@ -580,7 +838,7 @@ def decode_pull_owned_slices(engine, meta, cpu_bases, owned, args):
         layer_bytes, n_desc, d_sec, t_sec = pull_owned_layer(
             engine,
             meta["session"],
-            LayerPullSpec(layer, layer_meta, cpu_bases[layer], meta["p_block_ids"], owned),
+            LayerPullSpec(layer, layer_meta, cpu_bases[layer], hbm_bases[layer], meta["p_block_ids"], owned),
         )
         total_bytes += layer_bytes
         total_desc += n_desc
@@ -589,7 +847,7 @@ def decode_pull_owned_slices(engine, meta, cpu_bases, owned, args):
     return total_bytes, total_desc, desc_seconds, transfer_seconds
 
 
-def decode_pull_iterations(engine, meta, cpu_bases, owned, args):
+def decode_pull_iterations(engine, meta, cpu_bases, hbm_bases, owned, args):
     """warmup 轮 + 测量轮；返回 (单轮字节, 单轮描述符数, 各测量轮传输秒数, 各测量轮构建秒数)。"""
     iter_transfer = []
     iter_desc = []
@@ -598,7 +856,7 @@ def decode_pull_iterations(engine, meta, cpu_bases, owned, args):
     for round_idx in range(args.warmup + args.iterations):
         quiet = round_idx < args.warmup
         total_bytes, total_desc, desc_seconds, transfer_seconds = decode_pull_owned_slices(
-            engine, meta, cpu_bases, owned, args
+            engine, meta, cpu_bases, hbm_bases, owned, args
         )
         if quiet:
             logger.info(f"[D{args.tp_rank}] warmup round {round_idx + 1}/{args.warmup} done")
@@ -613,13 +871,25 @@ def decode_pull_iterations(engine, meta, cpu_bases, owned, args):
 
 
 def verify_shared_pool(pools, p_block_ids, args):
-    """rank0 对整个共享 CPU 池逐层校验（覆盖所有 rank 写入的分片）。"""
+    """rank0 对整个共享 CPU 池逐层校验（main K/V 覆盖所有 rank 写入的块）。"""
     for layer, (k_pool, v_pool, _, _) in enumerate(pools):
         expected_k, expected_v = make_expected_kv(args, layer)
         if not torch.equal(k_pool, expected_k[p_block_ids]):
             raise RuntimeError(f"layer {layer} k cache mismatch in shared pool after multi-rank pull")
         if not torch.equal(v_pool, expected_v[p_block_ids]):
             raise RuntimeError(f"layer {layer} v cache mismatch in shared pool after multi-rank pull")
+
+
+def verify_hbm_slice(segments, blocks, owned, p_block_ids, args):
+    """本 rank 校验 HBM 热区 indexer（及 C8 scale）内容（owned 全部块）。"""
+    if not segments:
+        return
+    for layer, (ik_hot, s_hot) in enumerate(hbm_hot_views(segments, blocks, args)):
+        expected_ik, expected_s = make_expected_indexer(args, layer)
+        if not torch.equal(ik_hot.cpu(), expected_ik[p_block_ids[owned[0] : owned[1]]]):
+            raise RuntimeError(f"layer {layer} indexer k mismatch in hbm hot pool, blocks=[{owned[0]},{owned[1]})")
+        if s_hot is not None and not torch.equal(s_hot.cpu(), expected_s[p_block_ids[owned[0] : owned[1]]]):
+            raise RuntimeError(f"layer {layer} indexer scale mismatch in hbm hot pool, blocks=[{owned[0]},{owned[1]})")
 
 
 def demo_offload_new_kv(k_pool, args):
@@ -647,7 +917,7 @@ def demo_offload_new_kv(k_pool, args):
 def run_d2h_demo(k_pool, args):
     """运行 D2H 演示，失败仅告警不中断（演示性质）。"""
     try:
-        demo_offload_new_kv(k_pool, args)
+        # demo_offload_new_kv(k_pool, args)
         logger.info("[D0] sparse_copy D2H demo PASS")
         return True
     except RuntimeError as error:
@@ -659,18 +929,35 @@ def decode_rank0_verify(conn, pools, meta, args):
     """rank0 等待 verify 指令，对全池校验并运行 D2H 演示，返回 result 消息。"""
     expect_phase(recv_json(conn), "verify")
     verify_shared_pool(pools, meta["p_block_ids"], args)
-    logger.info(f"[D0] shared pool verification PASS (all {args.tp_size} ranks)")
+    logger.info(f"[D0] shared pool main K/V verification PASS (all {args.tp_size} ranks)")
     d2h_demo_ok = run_d2h_demo(pools[0][0], args)
     return {"phase": "result", "ok": True, "d2h_demo_ok": d2h_demo_ok}
 
 
-def cleanup_decode_rank(engine, conn, args):
-    """收 final 后同步清理共享池与引擎，并上报 P 侧 cleanup_done。"""
+def cleanup_decode_rank(engine, conn, cpu_bases, hbm_backing, hbm_segments, args):
+    """收 final 后同步清理共享池与引擎（先反注册目的区与 HBM 各层热区段），并上报 P 侧 cleanup_done。"""
     try:
         if args.tp_size > 1:
             dist.barrier()
+        for layer, bases in enumerate(cpu_bases):
+            for name, base in (("k", bases["k"]), ("v", bases["v"])):
+                with contextlib.suppress(Exception):
+                    ret = engine.unregister_memory(base)
+                    if ret != 0:
+                        logger.warning(
+                            f"[D{args.tp_rank}] unregister_memory returned {ret}, layer={layer}, tensor={name}"
+                        )
+        for layer, segment in enumerate(hbm_segments):
+            with contextlib.suppress(Exception):
+                ret = engine.unregister_memory(segment.data_ptr())
+                if ret != 0:
+                    logger.warning(
+                        f"[D{args.tp_rank}] unregister_memory returned {ret}, layer={layer}, tensor=hbm hot segment"
+                    )
         offload.uninitialize()
         engine.unInitialize()
+        del hbm_backing, hbm_segments
+        torch.npu.empty_cache()
         send_json(conn, {"phase": "cleanup_done", "tp_rank": args.tp_rank, "ok": True})
     except Exception as cleanup_error:
         with contextlib.suppress(OSError):
@@ -694,19 +981,28 @@ def run_decode_role(args):
         conn.settimeout(args.timeout)
         send_json(conn, {"phase": "hello", "tp_rank": args.tp_rank})
         try:
-            pools, cpu_bases = decode_shared_pool_handshake(conn, args)
+            handshake = decode_shared_pool_handshake(conn, args)
+            pools, cpu_bases = handshake[:2]
+            hbm_backing, hbm_segments, hbm_blocks, hbm_bases = handshake[2:]
             meta = recv_json(conn)
             expect_phase(meta, "meta")
             validate_layout(args, meta)
 
             engine, _ = init_transfer_engine(ROLE_DECODE, args.local_ip, args)
+            register_decode_destinations(engine, cpu_bases, hbm_segments, args)
             owned = tp_block_range(args.num_blocks, args.tp_rank, args.tp_size)
             logger.info(f"[D{args.tp_rank}] engine ready, owning blocks [{owned[0]}, {owned[1]}) of {args.num_blocks}")
 
             total_bytes, total_desc, iter_transfer, iter_desc = decode_pull_iterations(
-                engine, meta, cpu_bases, owned, args
+                engine, meta, cpu_bases, hbm_bases, owned, args
             )
-            max_pieces = args.num_layers * (owned[1] - owned[0]) * 2
+            # 每块每层描述符上限：K + V + (indexer 可选) + (scale 可选)
+            pieces_per_block = 2
+            if args.enable_hbm:
+                pieces_per_block += 1
+                if args.indexer_c8:
+                    pieces_per_block += 1
+            max_pieces = args.num_layers * (owned[1] - owned[0]) * pieces_per_block
             merge_ratio = max_pieces / total_desc if total_desc else 0.0
             send_json(
                 conn,
@@ -721,9 +1017,14 @@ def run_decode_role(args):
                     "warmup": args.warmup,
                     "transfer_seconds": iter_transfer,
                     "desc_seconds": iter_desc,
+                    "enable_hbm": args.enable_hbm,
+                    "indexer_c8": args.indexer_c8,
                 },
             )
 
+            if args.enable_hbm:
+                verify_hbm_slice(hbm_segments, hbm_blocks, owned, make_block_table(args), args)
+                logger.info(f"[D{args.tp_rank}] hbm indexer/scale verification PASS, blocks=[{owned[0]},{owned[1]})")
             if args.tp_rank == 0:
                 result = decode_rank0_verify(conn, pools, meta, args)
                 send_json(conn, result)
@@ -731,7 +1032,7 @@ def run_decode_role(args):
             expect_phase(final, "final")
             if not final.get("ok"):
                 raise RuntimeError(f"transfer failed: {final.get('error', final)}")
-            cleanup_decode_rank(engine, conn, args)
+            cleanup_decode_rank(engine, conn, cpu_bases, hbm_backing, hbm_segments, args)
             own_bw = [total_bytes / GIB / t for t in iter_transfer if t > 0]
             bw_mean = sum(own_bw) / len(own_bw) if own_bw else 0.0
             bw_best = max(own_bw) if own_bw else 0.0

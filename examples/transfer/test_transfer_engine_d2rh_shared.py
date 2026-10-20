@@ -264,6 +264,18 @@ def tp_block_range(num_blocks, tp_rank, tp_size, start_block=0):
     return start, start + count
 
 
+def get_trans_backend():
+    try:
+        import acl
+
+        soc_name = acl.get_soc_name()
+        if "Ascend910_95" in soc_name or "Ascend950" in soc_name:
+            return TransDataOpType.DEVICE_URMA
+        return TransDataOpType.SDMA
+    except Exception:
+        return TransDataOpType.SDMA
+
+
 def init_transfer_engine(role, local_ip, args):
     """对齐 sglang AscendTransferEngine 的 5 参数 initialize（不传 store_server_role，默认 Decode）。
 
@@ -275,7 +287,7 @@ def init_transfer_engine(role, local_ip, args):
     """
     set_conf_store_tls(False, "")
     engine = TransferEngine()
-    ret = engine.initialize(f"tcp://{local_ip}", local_ip, role, args.npu_id, TransDataOpType.SDMA)
+    ret = engine.initialize(f"tcp://{local_ip}", local_ip, role, args.npu_id, get_trans_backend())
     if ret != 0:
         raise RuntimeError(f"TransferEngine initialize failed, ret={ret}, role={role}, localIp={local_ip}")
     session = f"{local_ip}:{engine.get_rpc_port()}"
@@ -597,6 +609,7 @@ def serve_decode_ranks(server, args, engine):
     """
     caches = build_prefill_kv_caches(args)
     conns = []
+    register_prefill_caches(engine, caches, args)
     try:
         conns = accept_decode_ranks(server, args)
         infos = collect_pool_ready(conns, args)
