@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+log_cli = false
+log_cli_level = "INFO" # 终端实时打印日志，方便观察测试运行过程。
+log_cli_format = "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s"
+log_cli_date_format = "%H:%M:%S"
+
+log_level = "DEBUG"    # 后台记录日志，方便测试失败后查看。
+log_format = "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s"
+log_date_format = "%H:%M:%S"
