@@ -621,7 +621,9 @@ SmemTransConnectionPtr SmemTransEntry::CreateAndJoinConnection(const std::string
         std::lock_guard<std::mutex> lock(memMutex_);
         externalSlices = isSelf ? recvExportedSlices_ : sendExportedSlices_;
     }
-    ret = conn->Join(0, isSelf ? recvEntityInfo_ : sendEntityInfo_, externalSlices);
+    // self connection 声明为 PROVIDER，其余连接声明为 PROXY，供 group manager 剪枝 PROXY<->PROXY 链路
+    ret = conn->Join(0, isSelf ? recvEntityInfo_ : sendEntityInfo_, externalSlices,
+                     isSelf ? SMEM_GROUP_RANK_ROLE_PROVIDER : SMEM_GROUP_RANK_ROLE_PROXY);
     if (ret != SM_OK) {
         SM_LOG_ERROR("connection join failed, uniqueId: " << uniqueId << " rankId: " << rankId << " ret: " << ret);
         return nullptr;

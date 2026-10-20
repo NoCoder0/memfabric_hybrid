@@ -137,7 +137,8 @@ public:
 
     Result Initialize();
     void UnInitialize();
-    Result Join(uint32_t flags, const SmemTransExchangeInfo &entityInfo, const MultiBytes &externalSlices);
+    Result Join(uint32_t flags, const SmemTransExchangeInfo &entityInfo, const MultiBytes &externalSlices,
+                uint8_t rankRole);
 
     Result BroadcastSlices(const MultiBytes &slices, const void *sliceVa, uint64_t sliceSize, uint64_t gva);
     Result BatchSyncTransfer(void *localAddrs[], const std::string &remoteUniqueId, void *remoteAddrs[],

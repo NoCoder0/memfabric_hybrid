@@ -539,7 +539,7 @@ static std::string uniqueToString(const WorkerId &unique)
 }
 
 Result SmemTransConnection::Join(uint32_t flags, const SmemTransExchangeInfo &entityInfo,
-                                 const MultiBytes &externalSlices)
+                                 const MultiBytes &externalSlices, uint8_t rankRole)
 {
     (void)flags;
     auto coreStore = store_->GetCoreStore();
@@ -555,6 +555,8 @@ Result SmemTransConnection::Join(uint32_t flags, const SmemTransExchangeInfo &en
     // 全量 slice 序列化记录（join 时随成员信息登记到 server，供既有成员与晚加入者交换）
     RankFullInfo info{groupMgr->GetLocalRankId()};
     info.protocol = SMEM_RANK_PROTOCOL_TRANS;
+    // self connection 声明为 PROVIDER，其余连接声明为 PROXY，供 server 剪枝 PROXY<->PROXY 链路
+    info.role = rankRole;
     info.externalInfo = externalSlices;
     SerializeTransExchangeInfo(info.baseInfo, entityInfo);
 
