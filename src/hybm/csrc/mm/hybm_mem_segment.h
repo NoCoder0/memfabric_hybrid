@@ -44,6 +44,15 @@ class MemSegment {
 public:
     static MemSegmentPtr Create(const MemSegmentOptions &options, int entityId);
 
+    // Standalone A3 Host allocations reuse the existing VMM segment implementation.
+    // Match the existing VMM address-space bound; physical capacity is checked by the driver.
+    static constexpr uint64_t MAX_HOST_ALLOC_SIZE = HYBM_GVM_MAX_POOL_SIZE - HYBM_OFFLOAD_VA_SIZE;
+    static int32_t AllocateHostMemory(uint16_t deviceId, uint64_t size, void **address);
+    static int32_t FreeHostMemory(void *address);
+
+    // External ranges return no owner. TRANS retains native backing until entity teardown.
+    static int32_t RetainHostMemory(const void *address, uint64_t size, std::shared_ptr<void> &owner);
+
 public:
     explicit MemSegment(const MemSegmentOptions &options, int eid) : options_{options}, entityId_{eid} {}
     virtual ~MemSegment() = default;

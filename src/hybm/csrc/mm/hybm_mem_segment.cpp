@@ -20,6 +20,7 @@
 #include "hybm_conn_based_segment.h"
 #include "hybm_dev_legacy_segment.h"
 #include "hybm_gva.h"
+#include "hybm.h"
 #include "hybm_host_shm_segment.h"
 #include "hybm_types.h"
 #include "hybm_va_manager.h"
@@ -29,6 +30,83 @@ namespace ock {
 namespace mf {
 
 constexpr uint32_t ASC910B_CONN_RANKS = 8U;
+
+namespace {
+constexpr uint64_t GIB = 1ULL << 30;
+
+struct AllocationResources {
+    MemSegmentPtr segment;
+    void *context{nullptr};
+    bool initialized{false};
+};
+
+struct HostAllocation {
+    std::unique_ptr<AllocationResources> resources{std::make_unique<AllocationResources>()};
+    uint64_t size{0};
+    void *address{nullptr};
+
+    ~HostAllocation()
+    {
+        if (!resources->initialized) {
+            return;
+        }
+        if (resources->context == nullptr) {
+            hybm_uninit();
+            return;
+        }
+        void *previous = nullptr;
+        (void)DlAclApi::AclrtGetCurrentContext(&previous);
+        const auto ret = DlAclApi::AclrtSetCurrentContext(resources->context);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("aclrtSetCurrentContext failed during allocation cleanup, ret: "
+                         << ret << " size_bytes: " << size << "; retaining resources until process exit");
+            (void)resources.release();
+            return;
+        }
+        resources->segment.reset();
+        if (previous != nullptr && previous != resources->context) {
+            const auto restoreRet = DlAclApi::AclrtSetCurrentContext(previous);
+            if (restoreRet != BM_OK) {
+                BM_LOG_ERROR("aclrtSetCurrentContext restore failed, ret: " << restoreRet);
+            }
+        }
+        hybm_uninit();
+    }
+};
+
+std::mutex allocationMutex;
+std::map<uintptr_t, std::shared_ptr<HostAllocation>> allocations;
+
+int32_t AllocateHostSegment(uint16_t deviceId, uint64_t size, HostAllocation &allocation)
+{
+    MemSegmentOptions options{};
+    options.devId = deviceId;
+    options.segType = HYBM_MST_DRAM;
+    options.dataOpType = HYBM_DOP_TYPE_SDMA;
+    options.infoExType = HYBM_INFO_EXG_CROSS_NODE_SDMA;
+    options.rankCnt = 1;
+    options.rankId = 0;
+    options.maxSize = ((size + GIB - 1) / GIB) * GIB;
+    options.size = options.maxSize;
+    options.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
+    allocation.resources->segment = MemSegment::Create(options, -1);
+    auto &segment = allocation.resources->segment;
+    BM_VALIDATE_RETURN(segment != nullptr, "Failed to create Fabric Host segment, deviceId: " << deviceId, BM_ERROR);
+    void *gva = nullptr;
+    auto ret = segment->ReserveMemorySpace(&gva);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "ReserveMemorySpace failed, deviceId: " << deviceId);
+    MemSlicePtr slice;
+    ret = segment->AllocLocalMemory(options.maxSize, slice);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "AllocLocalMemory failed, size_bytes: " << options.maxSize);
+    // Export once while the allocation's physical handle is available. TRANS reuses the recorded handle.
+    std::string info;
+    ret = segment->Export(slice, info);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Export Fabric Host allocation failed, size_bytes: " << options.maxSize);
+    allocation.address = reinterpret_cast<void *>(slice->vAddress_);
+    allocation.size = size;
+    return BM_OK;
+}
+} // namespace
 
 bool MemSegment::deviceInfoReady_{false};
 int MemSegment::deviceId_{-1};
@@ -123,6 +201,79 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
             BM_LOG_ERROR("Invalid memory seg type " << int(options.segType));
     }
     return tmpSeg;
+}
+
+int32_t MemSegment::AllocateHostMemory(uint16_t deviceId, uint64_t size, void **address)
+{
+    BM_VALIDATE_RETURN(address != nullptr, "Output address is null", BM_INVALID_PARAM);
+    *address = nullptr;
+    BM_VALIDATE_RETURN(size > 0 && size <= MAX_HOST_ALLOC_SIZE,
+                       "Invalid Fabric Host size_bytes: " << size << " max_size_bytes: " << MAX_HOST_ALLOC_SIZE,
+                       BM_INVALID_PARAM);
+    auto allocation = std::make_shared<HostAllocation>();
+    auto ret = hybm_init(deviceId, 0);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "hybm_init failed, deviceId: " << deviceId);
+    allocation->resources->initialized = true;
+    int32_t currentDevice = -1;
+    ret = DlAclApi::AclrtGetDevice(&currentDevice);
+    BM_VALIDATE_RETURN(ret == BM_OK && currentDevice == deviceId,
+                       "ACL device mismatch, ret: " << ret << " requested: " << deviceId
+                                                    << " current: " << currentDevice,
+                       BM_INVALID_PARAM);
+    ret = DlAclApi::AclrtGetCurrentContext(&allocation->resources->context);
+    BM_VALIDATE_RETURN(ret == BM_OK && allocation->resources->context != nullptr,
+                       "aclrtGetCurrentContext failed, ret: " << ret << " deviceId: " << deviceId, BM_ERROR);
+    BM_VALIDATE_RETURN(DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_910C && HybmGetGvaVersion() == HYBM_GVA_V4,
+                       "Fabric Host allocator requires Ascend A3", BM_ERROR);
+    ret = AllocateHostSegment(deviceId, size, *allocation);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Fabric Host allocation failed, deviceId: " << deviceId);
+    {
+        std::lock_guard<std::mutex> lock(allocationMutex);
+        allocations.emplace(reinterpret_cast<uintptr_t>(allocation->address), allocation);
+    }
+    *address = allocation->address;
+    return BM_OK;
+}
+
+int32_t MemSegment::FreeHostMemory(void *address)
+{
+    if (address == nullptr) {
+        return BM_OK;
+    }
+    std::shared_ptr<HostAllocation> owner;
+    {
+        std::lock_guard<std::mutex> lock(allocationMutex);
+        const auto it = allocations.find(reinterpret_cast<uintptr_t>(address));
+        BM_VALIDATE_RETURN(it != allocations.end(), "Unknown Fabric Host allocation address: " << address,
+                           BM_INVALID_PARAM);
+        owner = std::move(it->second);
+        allocations.erase(it);
+    }
+    // Destruction runs outside allocationMutex. TRANS may still own this allocation.
+    return BM_OK;
+}
+
+int32_t MemSegment::RetainHostMemory(const void *address, uint64_t size, std::shared_ptr<void> &owner)
+{
+    owner.reset(); // Release a previous owner before taking the registry lock.
+    const auto value = reinterpret_cast<uintptr_t>(address);
+    std::lock_guard<std::mutex> lock(allocationMutex);
+    auto it = allocations.upper_bound(value);
+    if (it == allocations.begin()) {
+        return BM_OK;
+    }
+    --it;
+    const uint64_t physicalSize = ((it->second->size + GIB - 1) / GIB) * GIB;
+    const uint64_t offset = value - it->first;
+    if (offset >= physicalSize) {
+        return BM_OK;
+    }
+    BM_VALIDATE_RETURN(size <= physicalSize - offset,
+                       "Registration exceeds Fabric Host allocation, size_bytes: " << size << " remaining_bytes: "
+                                                                                   << physicalSize - offset,
+                       BM_INVALID_PARAM);
+    owner = it->second;
+    return BM_OK;
 }
 
 bool MemSegment::CheckSdmaReaches(uint32_t rankId) const noexcept

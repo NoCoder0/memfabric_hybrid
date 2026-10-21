@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 
+#include <exception>
 #include <fstream>
 #include <mutex>
 #include <string>
@@ -19,6 +20,7 @@
 #include "hybm_common_include.h"
 #include "mf_env_define.h"
 #include "hybm_gva.h"
+#include "hybm_mem_segment.h"
 #include "hybm_version.h"
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
@@ -155,6 +157,31 @@ HYBM_API void hybm_uninit()
     HybmStreamManager::DestroyAllThreadHybmStream();
     DlApi::CleanupLibrary();
     initialized = 0;
+}
+
+HYBM_API int32_t hybm_alloc_host_memory(uint16_t deviceId, uint64_t size, uint32_t flags, void **address)
+{
+    if (address != nullptr) {
+        *address = nullptr;
+    }
+    BM_VALIDATE_RETURN(flags == 0, "Invalid Fabric Host allocation flags: " << flags, BM_INVALID_PARAM);
+    try {
+        return MemSegment::AllocateHostMemory(deviceId, size, address);
+    } catch (const std::exception &error) {
+        BM_LOG_ERROR("Fabric Host allocation failed, deviceId: " << deviceId << " size_bytes: " << size
+                                                                 << " reason: " << error.what());
+        return BM_MALLOC_FAILED;
+    }
+}
+
+HYBM_API int32_t hybm_free_host_memory(void *address)
+{
+    try {
+        return MemSegment::FreeHostMemory(address);
+    } catch (const std::exception &error) {
+        BM_LOG_ERROR("Fabric Host release failed, address: " << address << " reason: " << error.what());
+        return BM_ERROR;
+    }
 }
 
 HYBM_API void hybm_set_extern_logger(void (*logger)(int level, const char *msg))

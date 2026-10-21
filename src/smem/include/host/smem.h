@@ -67,6 +67,30 @@ uint32_t smem_get_abi_version(void);
 int32_t smem_init(uint32_t flags);
 
 /**
+ * @brief Allocate CPU-accessible Fabric Host memory on A3
+ *
+ * Register the allocated memory with TRANS before remote access.
+ *
+ * @param deviceId         [in] device ID, the caller must have an ACL context on this device
+ * @param size             [in] usable memory size in bytes, must be greater than zero
+ * @param flags            [in] reserved, must be zero
+ * @param address          [out] allocated memory address, NULL on failure
+ * @return 0 if successful, error code otherwise
+ */
+int32_t smem_mem_alloc(uint16_t deviceId, uint64_t size, uint32_t flags, void **address);
+
+/**
+ * @brief Release Fabric Host memory allocated by smem_mem_alloc
+ *
+ * Stop remote access and wait for pending requests before calling this API.
+ * TRANS registrations retain the backing memory until the TRANS instance is destroyed.
+ *
+ * @param address          [in] allocation base address or NULL, must not be used after release
+ * @return 0 if successful, error code otherwise
+ */
+int32_t smem_mem_free(void *address);
+
+/**
  * @brief Create configure store server for SMEM used.
  *
  * @param storeUrl         [in] configure store url for control, e.g. tcp://ip:port,

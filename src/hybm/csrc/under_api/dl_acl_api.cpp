@@ -33,6 +33,7 @@ aclrtGetNotifyIdFunc DlAclApi::pAclrtGetNotifyId = nullptr;
 aclrtDestroyNotifyFunc DlAclApi::pAclrtDestroyNotify = nullptr;
 aclrtWaitAndResetNotifyFunc DlAclApi::pAclrtWaitAndResetNotify = nullptr;
 aclrtGetCurrentContextFunc DlAclApi::pAclrtGetCurrentContext = nullptr;
+aclrtSetCurrentContextFunc DlAclApi::pAclrtSetCurrentContext = nullptr;
 aclrtSetStreamAttributeFunc DlAclApi::pAclrtSetStreamAttribute = nullptr;
 aclrtDestroyStreamFunc DlAclApi::pAclrtDestroyStream = nullptr;
 aclrtSynchronizeStreamFunc DlAclApi::pAclrtSynchronizeStream = nullptr;
@@ -104,6 +105,7 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
     DL_LOAD_SYM(pAclrtDestroyNotify, aclrtDestroyNotifyFunc, rtHandle, "aclrtDestroyNotify");
     DL_LOAD_SYM(pAclrtWaitAndResetNotify, aclrtWaitAndResetNotifyFunc, rtHandle, "aclrtWaitAndResetNotify");
     DL_LOAD_SYM(pAclrtGetCurrentContext, aclrtGetCurrentContextFunc, rtHandle, "aclrtGetCurrentContext");
+    DL_LOAD_SYM(pAclrtSetCurrentContext, aclrtSetCurrentContextFunc, rtHandle, "aclrtSetCurrentContext");
     DL_LOAD_SYM(pAclrtSetStreamAttribute, aclrtSetStreamAttributeFunc, rtHandle, "aclrtSetStreamAttribute");
     DL_LOAD_SYM(pAclrtDestroyStream, aclrtDestroyStreamFunc, rtHandle, "aclrtDestroyStream");
     DL_LOAD_SYM(pAclrtSynchronizeStream, aclrtSynchronizeStreamFunc, rtHandle, "aclrtSynchronizeStream");
@@ -256,6 +258,7 @@ void DlAclApi::CleanupLibrary()
     pAclrtDestroyNotify = nullptr;
     pAclrtWaitAndResetNotify = nullptr;
     pAclrtGetCurrentContext = nullptr;
+    pAclrtSetCurrentContext = nullptr;
     pAclrtSetStreamAttribute = nullptr;
     pAclrtGetPhyDevIdByLogicDevId = nullptr;
     pAclrtGetVersion = nullptr;

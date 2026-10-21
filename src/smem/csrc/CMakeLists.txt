@@ -17,6 +17,7 @@ include_directories(
         ${PROJECT_SMEM_SRC_BASE}/csrc/smem_trans
         ${PROJECT_HYBM_SRC_BASE}/include
         ${PROJECT_HYBM_SRC_BASE}/csrc/common
+        ${PROJECT_HYBM_SRC_BASE}/csrc/mm
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/device/urma
         ${PROJECT_UTIL_SRC_BASE}/ptracer/include
         ${PROJECT_ACCLINKS_SRC_BASE}/include
@@ -34,6 +35,11 @@ file(GLOB_RECURSE PLATFORM_SRC
 ## build the static and shared library
 add_library(smem_objects OBJECT ${PLATFORM_SRC})
 target_link_libraries(smem_objects PUBLIC config_store_object)
+target_include_directories(smem_objects PRIVATE
+        ${PROJECT_HYBM_SRC_BASE}/csrc/driver/version
+        ${PROJECT_HYBM_SRC_BASE}/csrc/transport/common
+        ${PROJECT_HYBM_SRC_BASE}/csrc/under_api
+)
 
 target_compile_options(smem_objects PRIVATE -fPIC)
 

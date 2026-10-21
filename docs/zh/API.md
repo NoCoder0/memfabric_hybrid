@@ -6,6 +6,8 @@
   - [3. 日志设置](#3-日志设置)
   - [4. 安全证书设置](#4-安全证书设置)
   - [5. 错误信息获取/清理](#5-错误信息获取清理)
+  - [6. 错误码定义](#6-错误码定义)
+  - [7. Fabric Host内存分配/释放](#7-fabric-host内存分配释放)
 - [BM接口列表](#bm接口列表)
   - [1. BM初始化/退出](#1-bm初始化退出)
   - [2. 创建/销毁BM](#2-创建销毁bm)
@@ -223,6 +225,42 @@ Store Backend 错误码（从 `smem_def.h`）：
 | `SMEM_STORE_BACKEND_CODE_UNLOCKED` | -3007 | 后端未锁定 |
 
 > 注：以上错误码定义位于 `smem.h`（通用错误码）和 `smem_def.h`（Store Backend 错误码）头文件中。
+
+### 7. Fabric Host内存分配/释放
+
+#### smem_mem_alloc
+
+分配 A3 上可由 CPU 访问的 Fabric Host内存，接口定义在 `smem.h` 中。
+
+```c
+int32_t smem_mem_alloc(uint16_t deviceId, uint64_t size, uint32_t flags, void **address);
+```
+
+|参数/返回值|含义|
+|-|-|
+|deviceId|设备ID，调用线程须已建立该设备的 ACL context|
+|size|可用内存大小，单位为字节，须大于0；内部物理申请按 GiB 向上对齐|
+|flags|预留参数，须为0|
+|address|输出内存地址，分配失败时为 NULL|
+|返回值|成功返回0，其他为错误码|
+
+此接口不创建 BM 通信组；远端访问前须通过 `smem_trans_register_mem` 注册返回的内存范围。
+
+#### smem_mem_free
+
+释放 `smem_mem_alloc` 分配的 Fabric Host内存。
+
+```c
+int32_t smem_mem_free(void *address);
+```
+
+|参数/返回值|含义|
+|-|-|
+|address|分配基地址或 NULL；不支持内部地址、外部分配或重复释放的地址|
+|返回值|成功返回0，其他为错误码|
+
+释放前须停止新的远端访问并等待在途请求完成，释放成功后不得再使用或注册该地址。
+已注册的内存由 TRANS 保持引用，直至对应 TRANS 实例销毁后才释放底层内存。
 
 ## BM接口列表
 

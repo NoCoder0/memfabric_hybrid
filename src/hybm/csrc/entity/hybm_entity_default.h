@@ -103,6 +103,7 @@ private:
     Result InitTransManager();
     Result InitDataOperator();
     Result InitTagManager();
+    Result RetainHostMemory(const void *address, uint64_t size) noexcept;
 
     void ReleaseResources();
     int32_t SetThreadAclDevice();
@@ -118,6 +119,9 @@ private:
     hybm_options options_{};
     void *hbmGva_{nullptr};  // the hbm medium, started gva, no rankId offset
     void *dramGva_{nullptr}; // the dram medium, started gva, no rankId offset
+    std::mutex managedAllocationsMutex_;
+    // Keep native backing alive through registration failures and release it after segment teardown.
+    std::unordered_map<void *, std::shared_ptr<void>> managedAllocations_;
     // trans 场景：装载 AsymmetricMemSegment，单段同时管理 HBM/DRAM
     // 用户注册内存（段内按地址分流）；非 trans 场景：装载纯 HBM 段。
     // 两种场景共用此槽位，成员名保持不变（见 doc/asymmetric_mem_segment_改造方案.md 3.5）

@@ -193,6 +193,11 @@ int32_t aclrtGetCurrentContext(void **context)
     return 0;
 }
 
+int32_t aclrtSetCurrentContext(void *context)
+{
+    return 0;
+}
+
 typedef enum {
     ACL_STREAM_ATTR_FAILURE_MODE = 1,
     ACL_STREAM_ATTR_FLOAT_OVERFLOW_CHECK = 2,

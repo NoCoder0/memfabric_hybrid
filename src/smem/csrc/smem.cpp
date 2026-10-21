@@ -46,6 +46,20 @@ SMEM_API int32_t smem_init(uint32_t flags)
     return SM_OK;
 }
 
+SMEM_API int32_t smem_mem_alloc(uint16_t deviceId, uint64_t size, uint32_t flags, void **address)
+{
+    if (address != nullptr) {
+        *address = nullptr;
+    }
+    SM_VALIDATE_RETURN(flags == 0, "Invalid Fabric Host allocation flags: " << flags, SMEM_INVALID_PARAM);
+    return hybm_alloc_host_memory(deviceId, size, flags, address);
+}
+
+SMEM_API int32_t smem_mem_free(void *address)
+{
+    return hybm_free_host_memory(address);
+}
+
 SMEM_API int32_t smem_create_config_store(const char *storeUrl, uint64_t flags)
 {
     static std::atomic<uint32_t> callNum = {0};

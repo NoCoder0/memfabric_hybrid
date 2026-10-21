@@ -161,6 +161,7 @@ using aclrtGetNotifyIdFunc = int (*)(void *, uint32_t *);
 using aclrtDestroyNotifyFunc = int (*)(void *);
 using aclrtWaitAndResetNotifyFunc = int (*)(void *, void *, uint32_t);
 using aclrtGetCurrentContextFunc = int (*)(void **);
+using aclrtSetCurrentContextFunc = int (*)(void *);
 using aclrtSetStreamAttributeFunc = int (*)(void *, aclrtStreamAttr, aclrtStreamAttrValue *);
 using aclrtDestroyStreamFunc = int (*)(void *);
 using aclrtSynchronizeStreamFunc = int (*)(void *);
@@ -319,6 +320,14 @@ public:
             return BM_UNDER_API_UNLOAD;
         }
         return pAclrtGetCurrentContext(context);
+    }
+
+    static inline Result AclrtSetCurrentContext(void *context)
+    {
+        if (pAclrtSetCurrentContext == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pAclrtSetCurrentContext(context);
     }
 
     static inline Result AclrtSetStreamAttribute(void *stream, aclrtStreamAttr stmAttrType, aclrtStreamAttrValue *value)
@@ -629,6 +638,7 @@ private:
     static aclrtDestroyNotifyFunc pAclrtDestroyNotify;
     static aclrtWaitAndResetNotifyFunc pAclrtWaitAndResetNotify;
     static aclrtGetCurrentContextFunc pAclrtGetCurrentContext;
+    static aclrtSetCurrentContextFunc pAclrtSetCurrentContext;
     static aclrtSetStreamAttributeFunc pAclrtSetStreamAttribute;
     static aclrtDestroyStreamFunc pAclrtDestroyStream;
     static aclrtSynchronizeStreamFunc pAclrtSynchronizeStream;

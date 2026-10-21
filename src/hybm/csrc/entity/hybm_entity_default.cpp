@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
 #include <sstream>
 
 #include "dl_acl_api.h"
@@ -240,6 +241,24 @@ int32_t MemEntityDefault::AllocLocalMemory(uint64_t size, hybm_mem_type mType, u
     return UpdateHybmDeviceInfo(0);
 }
 
+Result MemEntityDefault::RetainHostMemory(const void *address, uint64_t size) noexcept
+{
+    try {
+        std::shared_ptr<void> owner;
+        const auto ret = MemSegment::RetainHostMemory(address, size, owner);
+        if (ret != BM_OK || !owner) {
+            return ret;
+        }
+        std::lock_guard<std::mutex> lock(managedAllocationsMutex_);
+        managedAllocations_.emplace(owner.get(), owner);
+        return BM_OK;
+    } catch (const std::exception &error) {
+        BM_LOG_ERROR("Retain Fabric Host allocation failed, entityId: " << id_ << " size_bytes: " << size
+                                                                        << " reason: " << error.what());
+        return BM_MALLOC_FAILED;
+    }
+}
+
 int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, uint32_t flags,
                                               hybm_mem_slice_t &slice) noexcept
 {
@@ -257,8 +276,12 @@ int32_t MemEntityDefault::RegisterLocalMemory(const void *ptr, uint64_t size, ui
     }
     BM_VALIDATE_RETURN(segment != nullptr, "address for segment is null.", BM_INVALID_PARAM);
 
+    auto ret = RetainHostMemory(ptr, size);
+    if (ret != BM_OK) {
+        return ret;
+    }
     MemSlicePtr realSlice;
-    auto ret = segment->RegisterMemory(ptr, size, realSlice);
+    ret = segment->RegisterMemory(ptr, size, realSlice);
     if (ret != 0) {
         BM_LOG_ERROR("segment register slice with size: " << size << " failed: " << ret);
         return ret;
@@ -1516,6 +1539,11 @@ void MemEntityDefault::ReleaseResources()
     tagManager_.reset();
     transportPrepared_ = false;
     initialized_ = false;
+    decltype(managedAllocations_) allocations;
+    {
+        std::lock_guard<std::mutex> lock(managedAllocationsMutex_);
+        allocations.swap(managedAllocations_);
+    }
 }
 } // namespace mf
 } // namespace ock

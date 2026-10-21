@@ -726,12 +726,14 @@ void SmemTransEntry::AlignMemory(const void *&address, uint64_t &size)
 std::vector<std::pair<const void *, size_t>>
 SmemTransEntry::CombineMemories(std::vector<std::pair<const void *, size_t>> &input)
 {
+    if (input.empty()) {
+        return {};
+    }
     std::sort(input.begin(), input.end());
     std::vector<std::pair<const void *, size_t>> result;
     auto current = input[0];
     for (auto i = 1U; i < input.size(); i++) {
-        // Merge only on real overlap (end > next.start); exact adjacency (end == next.start) is NOT
-        // merged, to avoid cross-heap merging whose size exceeds a single heap's capacity and gets
+        // Merge overlapping ranges only; adjacent ranges can belong to independent allocations.
         if ((const uint8_t *)current.first + current.second > (const uint8_t *)input[i].first) {
             ptrdiff_t diff = ((const uint8_t *)input[i].first - (const uint8_t *)current.first);
             if (static_cast<size_t>(diff) > std::numeric_limits<size_t>::max() - input[i].second) {
@@ -777,9 +779,9 @@ Result SmemTransEntry::RegisterLocalMemories(const std::vector<std::pair<const v
     for (auto &m : alignedMemories) {
         AlignMemory(m.first, m.second);
     }
-    auto mergedMemories = CombineMemories(alignedMemories);
-
     std::lock_guard<std::mutex> lock(memMutex_);
+    SM_VALIDATE_RETURN(!stopping_.load(), "TRANS is stopping, reject memory registration, url: " << name_, SM_ERROR);
+    auto mergedMemories = CombineMemories(alignedMemories);
     for (const auto &m : mergedMemories) {
         auto ret = RegisterOneMemory(m.first, m.second, flags);
         if (ret != SM_OK) {

@@ -2127,6 +2127,13 @@ TEST_F(SmemTransTest, AlignMemory_unaligned_rounded)
     EXPECT_EQ(size, NPU_PAGE_SIZE_UT * 2);
 }
 
+// Native allocations are registered individually, leaving no external ranges to combine.
+TEST_F(SmemTransTest, CombineMemories_empty_external_ranges)
+{
+    std::vector<std::pair<const void *, size_t>> input;
+    EXPECT_TRUE(SmemTransEntry::CombineMemories(input).empty());
+}
+
 // Exact adjacency (end == next.start): NOT merged -- core fix of the issue
 TEST_F(SmemTransTest, CombineMemories_adjacent_not_merged)
 {
