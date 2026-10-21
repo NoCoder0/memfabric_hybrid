@@ -263,13 +263,13 @@ Try HalMemCreate ret: -6
 
 运行[mem_scan.py](../../../../src/smem/python/memfabric_hybrid/memfabric_hybrid/mem_scan.py)脚本扫描可用的物理内存：
 
-`python3 mem_scan.py`
+`mfcli mem scan`
 
 ![image.png][faq-image-2]
 
 memfabric使用2MB和1GB的大页，脚本默认按照1GB规格扫描，如果要扫描2MB规格大页的可用内存，可以按如下指令运行：
 
-`python3 mem_scan.py -m 2`
+`mfcli mem scan -m 2`
 
 **一点内存都申请不出来**
 如果配置最小容量都无法申请到DRAM，有可能是如下原因：
