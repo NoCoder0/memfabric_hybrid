@@ -1,0 +1,73 @@
+name: Docs Build (Read the Docs)
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - '.readthedocs.yaml'
+      - 'requirements/mkdocs.txt'
+  workflow_dispatch:
+
+concurrency:
+  enable: true
+  max: 1
+  exceed-action: QUEUE
+  preemption:
+    enable: false
+
+permissions:
+  repository: read
+
+env:
+  RTD_HOST: https://app.readthedocs.org
+  RTD_VERSION: latest
+
+jobs:
+  trigger-rtd:
+    name: Trigger Read the Docs build
+    runs-on: [self-hosted, x86, cpu=2]
+    env:
+      RTD_PROJECT: ${{ vars.RTD_PROJECT_SLUG }}
+    steps:
+      - name: Trigger Read the Docs build
+        env:
+          RTD_TOKEN: ${{ secrets.RTD_API_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          RTD_PROJECT="${RTD_PROJECT:-memfabric-hybrid}"
+          if [ -z "${RTD_TOKEN:-}" ]; then
+            echo "ERROR: RTD_TOKEN is empty. Set repository secret RTD_API_TOKEN."
+            exit 1
+          fi
+
+          API="${RTD_HOST}/api/v3/projects/${RTD_PROJECT}"
+          TRIGGER_URL="${API}/versions/${RTD_VERSION}/builds/"
+
+          CODE="000"
+          for i in 1 2 3; do
+            CODE=$(curl -sS -o rtd_resp.json -w '%{http_code}' \
+              -X POST "${TRIGGER_URL}" \
+              -H "Authorization: Token ${RTD_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -H "Accept: application/json" \
+              -d '{}' || echo "000")
+            echo "trigger HTTP ${CODE} (attempt ${i}/3)"
+            case "${CODE}" in
+              2??) break ;;
+              000|429|500|502|503|504) if [ "${i}" -lt 3 ]; then sleep 10; fi ;;
+              *) break ;;
+            esac
+          done
+
+          case "${CODE}" in
+            2??) ;;
+            *)
+              echo "ERROR: Read the Docs trigger failed with HTTP ${CODE}."
+              cat rtd_resp.json || true
+              exit 1
+              ;;
+          esac
