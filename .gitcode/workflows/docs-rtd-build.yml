@@ -31,15 +31,24 @@ jobs:
     runs-on: [self-hosted, x86, cpu=2]
     env:
       RTD_PROJECT: ${{ vars.RTD_PROJECT_SLUG }}
+      # 诊断：密钥改到 job 级求值，验证 secrets 是否只有在这一层才会被解析
+      RTD_TOKEN: ${{ secrets.RTD_API_TOKEN }}
     steps:
       - name: Trigger Read the Docs build
-        env:
-          RTD_TOKEN: ${{ secrets.RTD_API_TOKEN }}
         run: |
           set -euo pipefail
 
+          # 只打长度、不打值，用于区分三种情况：
+          #   job_env_len=40 → job 级 env 能取到，原 step 级写法有问题
+          #   job_env_len=0 且 inline_len=40 → 仅 run 内联能取到，需改用内联
+          #   两者皆 0 → 该仓库不存在这个密钥（或名字/层级不对）
+          #   inline_len 远大于 40 → 该处表达式未被替换，拿到的是字面量
+          INLINE_TOKEN='${{ secrets.RTD_API_TOKEN }}'
+          RTD_TOKEN="${RTD_TOKEN:-}"
+          echo "DIAG job_env_len=${#RTD_TOKEN} inline_len=${#INLINE_TOKEN} project=[${RTD_PROJECT:-}] event=${ATOMGIT_EVENT_NAME:-?}"
+
           RTD_PROJECT="${RTD_PROJECT:-memfabric-hybrid}"
-          if [ -z "${RTD_TOKEN:-}" ]; then
+          if [ -z "${RTD_TOKEN}" ]; then
             echo "ERROR: RTD_TOKEN is empty. Set repository secret RTD_API_TOKEN."
             exit 1
           fi

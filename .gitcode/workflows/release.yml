@@ -22,6 +22,9 @@ jobs:
     runs-on: [self-hosted, x86, cpu=16]
     container:
       image: swr.cn-north-4.myhuaweicloud.com/memfabric-hybrid/memfabric-hybrid_x86:multi_python_v2
+    env:
+      # 与 docs-rtd-build.yml 同因：密钥在 job 级求值，排查 step 级取不到的问题
+      GITCODE_TOKEN: ${{ secrets.MF_RELEASE_TOKEN }}
     steps:
       - name: Checkout tag and history
         uses: checkout
@@ -30,8 +33,6 @@ jobs:
           fetch-depth: 0
 
       - name: Generate notes and publish
-        env:
-          GITCODE_TOKEN: ${{ secrets.MF_RELEASE_TOKEN }}
         run: |
           git fetch --tags --force
           python3 script/gitcode_release.py \
