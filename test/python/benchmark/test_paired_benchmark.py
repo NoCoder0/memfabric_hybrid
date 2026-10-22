@@ -108,10 +108,7 @@ class PairedBenchmarkTest(unittest.TestCase):
             check=lambda keys: all(key in self.values for key in keys),
         )
         enum = types.SimpleNamespace(
-            **{
-                name.upper(): name
-                for name in "sdma device_rdma device_urma device_uboe host_rdma host_urma host_tcp".split()
-            }
+            **{name.upper(): name for name in "sdma device_rdma device_urma host_rdma host_urma host_tcp".split()}
         )
         bm = types.SimpleNamespace(
             BmDataOpType=enum,

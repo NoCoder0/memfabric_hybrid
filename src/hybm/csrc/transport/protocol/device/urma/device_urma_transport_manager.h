@@ -98,7 +98,7 @@ inline std::ostream &operator<<(std::ostream &stream, UrmaProtocol protocol)
 }
 
 // 机型 × 协议支持表：第一维 mainboardId，第二维协议；顺序即优先级
-// 选择规则：用户请求的协议族（DEVICE_URMA 命中 UBC_CTP/UB_RTP，DEVICE_UBOE 命中 UBOE）
+// 选择规则：DEVICE_URMA 命中 UBC_CTP/UB_RTP；UBOE 仅由 MF_DEVICE_URMA_ENABLE_UBOE 环境变量开启并优先命中
 // 与行内协议取交集，按行序取第一个。
 constexpr uint32_t URMA_PROTOCOL_TABLE_MAX_PROTOCOLS = 2;
 

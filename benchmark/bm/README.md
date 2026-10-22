@@ -76,7 +76,7 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   ```
 
     - DATA_OP_TYPE: 数据操作类型,参考smem_bm_data_op_type定义,
-      可选项[sdma,device_rdma,device_urma,device_uboe,host_rdma,host_urma,host_tcp]
+      可选项[sdma,device_rdma,device_urma,host_rdma,host_urma,host_tcp]
     - DATA_COPY_TYPE: 数据拷贝方式,可选项[h2d,d2h,h2rd,h2rh,d2rh,d2rd,rh2d,rh2h,rd2h,rd2d,all],当选择all时，会依次测试其余所有拷贝路径
     - WORLD_SIZE: 整个集群使用的卡数
     - LOCAL_RANK_SIZE: 在本节点使用的卡数
@@ -115,9 +115,6 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
   nodeA: ./bm_perf_benchmark -bw -ot device_urma -t all -s 2097152 -ws 8 -lrs 4 -rs 0 -d 2 -ip tcp://x.x.x.x:8570
   nodeB: ./bm_perf_benchmark -bw -ot device_urma -t all -s 2097152 -ws 8 -lrs 4 -rs 4 -d 4 -ip tcp://x.x.x.x:8570
 
-  两节点运行8张卡,每节点4张,使用数据操作类型为device_uboe:
-  nodeA: ./bm_perf_benchmark -bw -ot device_uboe -t all -s 2097152 -ws 8 -lrs 4 -rs 0 -d 2 -ip tcp://x.x.x.x:8570
-  nodeB: ./bm_perf_benchmark -bw -ot device_uboe -t all -s 2097152 -ws 8 -lrs 4 -rs 4 -d 4 -ip tcp://x.x.x.x:8570
   ```
 
 ### 出「块大小 × 8 方向」带宽矩阵（A5(950) host RoCE / device_rdma）

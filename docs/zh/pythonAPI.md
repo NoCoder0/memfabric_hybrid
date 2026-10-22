@@ -328,7 +328,6 @@ class BmDataOpType(Enum):
     HOST_TCP
     DEVICE_RDMA
     DEVICE_URMA
-    DEVICE_UBOE
     HOST_SHM
 ```
 
@@ -596,7 +595,6 @@ class TransDataOpType(Enum):
     SDMA
     DEVICE_RDMA
     DEVICE_URMA
-    DEVICE_UBOE
 ```
 
 #### TransferOpcode枚举类

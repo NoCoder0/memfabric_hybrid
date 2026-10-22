@@ -347,7 +347,6 @@ class MmcTest(TestServer):
             'device_rdma': (bm.BmDataOpType.DEVICE_RDMA, 2),
             'device_sdma': (bm.BmDataOpType.SDMA, 2),
             'device_urma': (bm.BmDataOpType.DEVICE_URMA, 2),
-            'device_uboe': (bm.BmDataOpType.DEVICE_UBOE, 2),
             'host_shm': (bm.BmDataOpType.HOST_SHM, 0),
         }
         return mapping.get(protocol, (bm.BmDataOpType.DEVICE_RDMA, 2))

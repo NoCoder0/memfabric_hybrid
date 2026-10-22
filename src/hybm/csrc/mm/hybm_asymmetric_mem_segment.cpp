@@ -269,8 +269,7 @@ Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t siz
 Result AsymmetricMemSegment::CheckHostRegisterAllowed() const noexcept
 {
     constexpr auto connOps = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP |
-                             HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
-                             HYBM_DOP_TYPE_DEVICE_UBOE;
+                             HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
     // dataOpType=0（未指定传输方式，如 RECEIVER 角色的 smem_trans 注册）：NeedHostDeviceMapping()
     // 为 false，不做设备映射，仅登记 GVA，保持兼容放行
     if (options_.dataOpType == 0U) {
@@ -291,8 +290,7 @@ bool AsymmetricMemSegment::NeedHostDeviceMapping() const noexcept
 {
     // 仅设备侧连接类 op 需要把 host DRAM 映射进设备地址空间；
     // SDMA 引擎不支持访问外部注册 DRAM（评审结论），纯 SDMA 注册已在 CheckHostRegisterAllowed 拒绝
-    return (options_.dataOpType &
-            (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
+    return (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) != 0U;
 }
 
 Result AsymmetricMemSegment::RegisterHostMemory(const void *addr, uint64_t size, MemSlicePtr &slice) noexcept
@@ -819,8 +817,7 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
         if (ret != BM_OK) {
             return ret;
         }
-    } else if (options_.dataOpType &
-               (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    } else if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
         address = nullptr;
     }
 

@@ -188,7 +188,7 @@ def _register_benchmark_command(components) -> None:
     )
     benchmark.add_argument(
         "--protocol",
-        choices=("auto", "sdma", "device_rdma", "device_urma", "device_uboe", "host_rdma", "host_urma", "host_tcp"),
+        choices=("auto", "sdma", "device_rdma", "device_urma", "host_rdma", "host_urma", "host_tcp"),
         default="auto",
         help="communication protocol (default: auto; A2=device_rdma, A3=sdma, A5=device_urma)",
     )

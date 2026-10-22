@@ -16,20 +16,10 @@
 
 using ock::smem::SmemHybmHelper;
 
-TEST(SmemHybmHelperTest, TransHybmDataOpTypeMapsDeviceUboe)
-{
-    auto r = SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_UBOE);
-    EXPECT_TRUE((static_cast<uint32_t>(r) & HYBM_DOP_TYPE_DEVICE_UBOE) != 0U);
-    EXPECT_TRUE((static_cast<uint32_t>(r) & HYBM_DOP_TYPE_DEVICE_URMA) == 0U);
-    EXPECT_TRUE((static_cast<uint32_t>(r) & HYBM_DOP_TYPE_DEVICE_RDMA) == 0U);
-}
-
 TEST(SmemHybmHelperTest, TransHybmDataOpTypeMapsAllDeviceTypes)
 {
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_URMA)) &
                  HYBM_DOP_TYPE_DEVICE_URMA) != 0U);
-    EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_UBOE)) &
-                 HYBM_DOP_TYPE_DEVICE_UBOE) != 0U);
     EXPECT_TRUE((static_cast<uint32_t>(SmemHybmHelper::TransHybmDataOpType(SMEMB_DATA_OP_DEVICE_RDMA)) &
                  HYBM_DOP_TYPE_DEVICE_RDMA) != 0U);
 }

@@ -243,10 +243,8 @@ TEST_F(HybmMemSegmentTest, Create_Dram_V4_910C_MixedDeviceTransportUsesVmm)
     const TestCase testCases[] = {
         {HYBM_DOP_TYPE_DEVICE_RDMA, false},
         {HYBM_DOP_TYPE_DEVICE_URMA, false},
-        {HYBM_DOP_TYPE_DEVICE_UBOE, false},
         {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA), true},
         {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_URMA), true},
-        {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_UBOE), true},
         {static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_HOST_TCP), false},
     };
     for (const auto &testCase : testCases) {

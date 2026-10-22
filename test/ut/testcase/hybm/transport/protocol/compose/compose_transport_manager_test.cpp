@@ -696,14 +696,11 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportAlreadyOpened)
     EXPECT_EQ(ret, BM_ERROR);
 }
 
-// IsDeviceUrma: DEVICE_UBOE 与 DEVICE_URMA 均应返回 true，DEVICE_RDMA 返回 false。
-TEST(ComposeTransportManagerTest, IsDeviceUrmaCoversUboeAndUrma)
+// IsDeviceUrma: DEVICE_URMA 应返回 true，DEVICE_RDMA 返回 false。
+TEST(ComposeTransportManagerTest, IsDeviceUrmaCoversUrma)
 {
     auto tag = std::make_shared<FakeTagInfo>(0U);
     ComposeTransportManager mgr(tag);
-
-    mgr.options_.protocol = HYBM_DOP_TYPE_DEVICE_UBOE;
-    EXPECT_TRUE(mgr.IsDeviceUrma());
 
     mgr.options_.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
     EXPECT_TRUE(mgr.IsDeviceUrma());
@@ -1365,20 +1362,6 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportWithUrma)
     ComposeTransportManager mgr(tag);
     TransportOptions opts{};
     opts.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
-    opts.rankId = 0;
-    opts.rankCount = 1;
-    opts.nic = "dev_nic";
-    auto ret = mgr.OpenDeviceTransport(opts);
-    EXPECT_NE(ret, BM_OK);
-    EXPECT_NE(mgr.deviceTransportManager_, nullptr);
-}
-
-TEST(ComposeTransportManagerTest, OpenDeviceTransportWithUboe)
-{
-    auto tag = std::make_shared<FakeTagInfo>(HYBM_DOP_TYPE_DEVICE_UBOE);
-    ComposeTransportManager mgr(tag);
-    TransportOptions opts{};
-    opts.protocol = HYBM_DOP_TYPE_DEVICE_UBOE;
     opts.rankId = 0;
     opts.rankCount = 1;
     opts.nic = "dev_nic";

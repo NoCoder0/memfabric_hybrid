@@ -412,8 +412,7 @@ Result HybmVmmBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexcep
         }
         uint64_t realAddr = registerPos->second.second;
         bool isDevice = slice->GetMemoryType() == HYBM_MEM_TYPE_DEVICE;
-        constexpr auto deviceTransportMask =
-            HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+        constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
         if (!isDevice && (options_.dataOpType & deviceTransportMask) != 0U) {
             auto ret =
                 DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(realAddr), logicDeviceId_, HOST_MEM_MAP_DEV);

@@ -646,7 +646,6 @@ void DefineBmClass(py::module_ &m)
         .value("HOST_TCP", SMEMB_DATA_OP_HOST_TCP)
         .value("DEVICE_RDMA", SMEMB_DATA_OP_DEVICE_RDMA)
         .value("DEVICE_URMA", SMEMB_DATA_OP_DEVICE_URMA)
-        .value("DEVICE_UBOE", SMEMB_DATA_OP_DEVICE_UBOE)
         .value("HOST_SHM", SMEMB_DATA_OP_HOST_SHM);
 
     // module method

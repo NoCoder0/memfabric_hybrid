@@ -46,7 +46,7 @@ Result HostComposeDataOp::Initialize() noexcept
     }
 
     // Device data operator: DEVICE_RDMA 用 DataOpDeviceRDMA（老 native RDMA 与新 HCOMM 共用，
-    // 传输无关，经 TransportManager 基类虚接口）；URMA/UBOE 走 develop 原生 DataOpDeviceURMA。
+    // 传输无关，经 TransportManager 基类虚接口）；URMA 走 develop 原生 DataOpDeviceURMA。
     if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
         devRdmaDataOperator_ = DataOperatorFactory::CreateDevRdmaDataOperator(options_.rankId, transport_);
         auto ret = devRdmaDataOperator_->Initialize();
@@ -58,7 +58,7 @@ Result HostComposeDataOp::Initialize() noexcept
         }
     }
 
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
         devUrmaDataOperator_ = DataOperatorFactory::CreateDevUrmaDataOperator(options_.rankId, transport_);
         auto ret = devUrmaDataOperator_->Initialize();
         if (ret != BM_OK) {
@@ -320,9 +320,6 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
     if (devUrmaDataOperator_ != nullptr) {
         if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
             dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_URMA, devUrmaDataOperator_);
-        }
-        if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U) {
-            dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_UBOE, devUrmaDataOperator_);
         }
     }
 

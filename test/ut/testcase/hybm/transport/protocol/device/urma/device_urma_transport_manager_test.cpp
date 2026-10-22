@@ -1871,10 +1871,12 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsInvalidOptionsAndUnsupport
     EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
 }
 
-// OpenDevice: data_op_type=DEVICE_UBOE 时应派生为 UrmaProtocol::UBOE 并走 IP 地址读取路径。
-TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
+// OpenDevice: MF_DEVICE_URMA_ENABLE_UBOE 开启时 DEVICE_URMA 应选择 UrmaProtocol::UBOE 并走 IP 地址读取路径。
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceSelectsUboeFromEnv)
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    EnvVarGuard uboeEnvGuard("MF_DEVICE_URMA_ENABLE_UBOE");
+    (void)setenv("MF_DEVICE_URMA_ENABLE_UBOE", "1", 1);
     DlHcommApiFnGuard hcommGuard;
     DlAclApiFnGuard aclGuard;
     DlRtApiFnGuard rtGuard;
@@ -1889,7 +1891,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
     TransportOptions options{};
     options.rankId = 0;
     options.rankCount = 2;
-    options.protocol = HYBM_DOP_TYPE_DEVICE_UBOE;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
     EXPECT_EQ(manager.OpenDevice(options), BM_OK);
     ASSERT_NE(manager.localEndpoint_.empty(), true);
     ASSERT_NE(manager.localEndpoint_[0], nullptr);
@@ -1897,7 +1899,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceUboeDerivesProtocolFromOptions)
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
-// OpenDevice: protocol 不含 DEVICE_URMA/DEVICE_UBOE 位时应返回 BM_INVALID_PARAM。
+// OpenDevice: protocol 不含 DEVICE_URMA 位时应返回 BM_NOT_SUPPORTED。
 TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");

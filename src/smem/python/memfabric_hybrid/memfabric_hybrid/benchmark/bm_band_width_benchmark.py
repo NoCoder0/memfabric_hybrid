@@ -274,7 +274,6 @@ _PROTOCOL_TO_DATA_OP = {
     "sdma": bm.BmDataOpType.SDMA,
     "device_rdma": bm.BmDataOpType.DEVICE_RDMA,
     "device_urma": bm.BmDataOpType.DEVICE_URMA,
-    "device_uboe": bm.BmDataOpType.DEVICE_UBOE,
     "host_rdma": bm.BmDataOpType.HOST_RDMA,
     "host_urma": bm.BmDataOpType.HOST_URMA,
     "host_tcp": bm.BmDataOpType.HOST_TCP,

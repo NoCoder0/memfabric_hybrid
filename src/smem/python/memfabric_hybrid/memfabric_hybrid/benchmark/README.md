@@ -10,7 +10,7 @@
 安装完成后需要配置 CANN 环境变量
 （[参考安装 Toolkit 开发套件包的第三步配置环境变量](https://www.hiascend.com/document/detail/zh/CANNCommunityEdition/81RC1alpha002/softwareinst/instg/instg_0008.html?Mode=PmIns&OS=Ubuntu&Software=cannToolKit)）。
 两台机器需要安装匹配的 torch/torch_npu，并配置所选协议的设备网络。
-使用 device_urma/device_uboe 时，还需按环境执行 `mfcli kernel install` 安装所需算子。
+使用 device_urma 时，还需按环境执行 `mfcli kernel install` 安装所需算子。
 
 ## 编译
 
@@ -75,7 +75,7 @@ benchmark 默认启用 56 位 GVA，自动选择和显式指定协议均适用�
 覆盖单机同操作及 write/read 配对流程。A5 的 DRAM 池可在预留大页不足时尝试普通页 `halMemAlloc`，
 无需仅为该路径预先手动配置大页；分配仍受可用内存和驱动能力限制。
 
-显式协议可选 sdma、device_rdma、device_urma、device_uboe、host_rdma、host_urma、host_tcp，
+显式协议可选 sdma、device_rdma、device_urma、host_rdma、host_urma、host_tcp，
 需匹配硬件、编译依赖和网络配置；host 协议在配对测试中只支持 DRAM 池。
 SDMA 可用于具备 HCCS 互联且底层支持对应内存池访问的跨机拓扑；普通网络跨机需使用网络协议。
 配对两端的协议、池类型、local rank 数、HBM 容量、copy 大小、批量、次数和预热次数必须一致。

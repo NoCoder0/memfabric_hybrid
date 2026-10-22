@@ -36,7 +36,7 @@ MemFabric [**版本分支策略**](https://gitcode.com/Ascend/memfabric_hybrid/w
 
   - 异构设备的统一池化: 将多节点的异构设备内存(DRAM|HBM等)池化, 基于GVA(Global Virtual Address)提供高性能的全局内存"直接访问"能力
   - 简单的北向接口: 提供内存语义访问接口, 即xcopy with GVA, 贴近传统memcpy概念，通过xcopy完成数据交换, 支持D2RH\RH2D\RH2H\D2D等多向访问
-  - 南向高可扩展: 支持插件化对接多种DMA引擎(Device SDMA、Device RDMA、Device URMA、Device UBoE、Host RDMA、Host TCP、Host URMA、Host SHM等多种协议或引擎)
+  - 南向高可扩展: 支持插件化对接多种DMA引擎(Device SDMA、Device RDMA、Device URMA、Host RDMA、Host TCP、Host URMA、Host SHM等多种协议或引擎)
 
 ![architecture](./docs/zh/source/architecture.png)
 

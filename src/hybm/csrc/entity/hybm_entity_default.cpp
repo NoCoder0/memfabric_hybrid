@@ -68,10 +68,6 @@ Result MemEntityDefault::InitTagManager()
         compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_URMA) << ":"
                        << localTag << ",";
     }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_UBOE) << ":"
-                       << localTag << ",";
-    }
     if (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) {
         compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_SDMA) << ":" << localTag
                        << ",";
@@ -1059,8 +1055,7 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
         return BM_INVALID_PARAM;
     }
 
-    constexpr uint32_t deviceNetworkProtocolMask =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+    constexpr uint32_t deviceNetworkProtocolMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
     const uint32_t enabledDeviceNetworkProtocols = options->bmDataOpType & deviceNetworkProtocolMask;
     // 只允许启用一种协议
     if (enabledDeviceNetworkProtocols != 0U &&
@@ -1075,9 +1070,9 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
             BM_LOG_ERROR("HOST_SHM op type only supports DRAM shared memory without HBM");
             return BM_INVALID_PARAM;
         }
-        constexpr uint32_t hostShmConflictMask =
-            HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE |
-            HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_URMA;
+        constexpr uint32_t hostShmConflictMask = HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA |
+                                                 HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_HOST_RDMA |
+                                                 HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_URMA;
         if ((options->bmDataOpType & hostShmConflictMask) != 0) {
             BM_LOG_ERROR("HOST_SHM op type does not support mixing with other data op types");
             return BM_INVALID_PARAM;
@@ -1116,7 +1111,7 @@ int MemEntityDefault::LoadExtendLibrary() noexcept
         }
     }
 
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE)) {
+    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
         auto ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_URMA);
         if (ret != 0) {
             BM_LOG_ERROR("LoadExtendLibrary for DEVICE URMA failed: " << ret);
@@ -1311,8 +1306,7 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
     segmentOptions.scene = options_.scene;
-    constexpr auto transportMask =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE | HYBM_DOP_TYPE_HOST_RDMA;
+    constexpr auto transportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_HOST_RDMA;
     if ((options_.bmDataOpType & transportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
         segmentOptions.shared = false;
     }
@@ -1344,8 +1338,7 @@ Result MemEntityDefault::InitDramSegment()
     segmentOptions.shmFd = options_.dramShmFd;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
     segmentOptions.scene = options_.scene;
-    constexpr auto deviceTransportMask =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
     if ((options_.bmDataOpType & deviceTransportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
         segmentOptions.shared = false;
     }
@@ -1375,8 +1368,8 @@ Result MemEntityDefault::InitTransManager()
     }
 
     auto hostTransFlags = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
-    auto composeTransFlags = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA |
-                             HYBM_DOP_TYPE_DEVICE_UBOE | hostTransFlags;
+    auto composeTransFlags =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA | hostTransFlags;
     if ((options_.bmDataOpType & composeTransFlags) == 0) {
         BM_LOG_DEBUG("NO RDMA/URMA Data Operator transport skip init.");
         return BM_OK;
@@ -1462,10 +1455,6 @@ hybm_data_op_type MemEntityDefault::CanReachDataOperators(uint32_t remoteRank) c
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
         supportDataOp |= HYBM_DOP_TYPE_DEVICE_URMA;
-    }
-
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_UBOE) {
-        supportDataOp |= HYBM_DOP_TYPE_DEVICE_UBOE;
     }
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_RDMA) {

@@ -416,7 +416,6 @@ PYBIND11_MODULE(_pymf_transfer, m)
         .value("HOST_RDMA", TransferAdapterPy::TransDataOpType::HOST_RDMA)
         .value("DEVICE_RDMA", TransferAdapterPy::TransDataOpType::DEVICE_RDMA)
         .value("DEVICE_URMA", TransferAdapterPy::TransDataOpType::DEVICE_URMA)
-        .value("DEVICE_UBOE", TransferAdapterPy::TransDataOpType::DEVICE_UBOE)
         .export_values();
 
     DefineAdapterFunctions(m);

@@ -1033,8 +1033,6 @@ class MfTest(TestServer):
             data_op_type = TransferEngine.TransDataOpType.DEVICE_RDMA
         elif op_type == 3:
             data_op_type = TransferEngine.TransDataOpType.DEVICE_URMA
-        elif op_type == 4:
-            data_op_type = TransferEngine.TransDataOpType.DEVICE_UBOE
         else:
             logging.error("Invalid optype: %d", op_type)
             return

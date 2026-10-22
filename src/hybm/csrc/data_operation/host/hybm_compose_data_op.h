@@ -68,7 +68,7 @@ private:
     // DEVICE_RDMA 的 DataOp（DataOpDeviceRDMA）：老 native RDMA 与新 HCOMM（CANN 9.1+）共用，
     // 经 TransportManager 基类虚接口与具体传输解耦
     DataOperatorPtr devRdmaDataOperator_;
-    // DEVICE_URMA/UBOE 同样基于 HCOMM 实现（与 devRdmaDataOperator_ 同源，仅传输协议不同）
+    // DEVICE_URMA 同样基于 HCOMM 实现（与 devRdmaDataOperator_ 同源，仅传输协议不同）
     DataOperatorPtr devUrmaDataOperator_;
     DataOperatorPtr hostRdmaDataOperator_;
 };

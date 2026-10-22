@@ -26,6 +26,7 @@
 #include <utility>
 #include <vector>
 #include <cassert>
+#include <cctype>
 #include <limits>
 #include <string>
 
@@ -76,6 +77,16 @@ uint32_t GetHcommChannelQos()
         return HCOMM_CHANNEL_QOS_DEFAULT;
     }
     return qos;
+}
+
+static bool GetUboeEnabled()
+{
+    const char *rawValue = std::getenv(env::MF_DEVICE_URMA_ENABLE_UBOE_ENV);
+    if (rawValue == nullptr) {
+        return false;
+    }
+
+    return MfEnvUtil::GetOptionalUintOrDefault(rawValue, 0U) == 1U;
 }
 
 constexpr uint32_t HYBM_NOTIFY_POOL_INVALID_INDEX = UINT32_MAX;
@@ -349,9 +360,6 @@ bool ProtocolMatchesRequestedBits(UrmaProtocol protocol, uint32_t protocolBits)
     if (protocol == UrmaProtocol::UBC_CTP || protocol == UrmaProtocol::UB_RTP) {
         return (protocolBits & HYBM_DOP_TYPE_DEVICE_URMA) != 0;
     }
-    if (protocol == UrmaProtocol::UBOE) {
-        return (protocolBits & HYBM_DOP_TYPE_DEVICE_UBOE) != 0;
-    }
     return false;
 }
 
@@ -372,6 +380,18 @@ Result SelectUrmaProtocol(uint32_t mainboardId, uint32_t protocolBits, UrmaProto
         BM_LOG_ERROR("device_urma unsupported mainboardId, mainboardId=" << mainboardId
                                                                          << " protocolBits=" << protocolBits);
         return BM_NOT_SUPPORTED;
+    }
+    /* UBoE is a URMA sub-protocol enabled by MF_DEVICE_URMA_ENABLE_UBOE; it takes priority when enabled. */
+    const bool hasUboe = std::any_of(entry->protocols, entry->protocols + entry->protocolCount,
+                                     [](UrmaProtocol p) { return p == UrmaProtocol::UBOE; });
+    /* Hardware support first (mainboard table), then the MF_DEVICE_URMA_ENABLE_UBOE toggle. */
+    if (hasUboe && GetUboeEnabled()) {
+        protocol = UrmaProtocol::UBOE;
+        BM_LOG_INFO("device_urma UBoE sub-protocol enabled by environment variable, mainboardId=" << mainboardId);
+        return BM_OK;
+    } else if (GetUboeEnabled()) {
+        BM_LOG_WARN("device_urma UBoE enabled by environment variable but unsupported on this mainboard, mainboardId="
+                    << mainboardId);
     }
     for (uint32_t i = 0; i < entry->protocolCount; ++i) {
         if (ProtocolMatchesRequestedBits(entry->protocols[i], protocolBits)) {
@@ -1796,8 +1816,9 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             HcommThreadHandle threadHandle = 0;
             ret = DlHcommApi::HcommThreadAlloc(COMM_ENGINE_AICPU_TS, 1, &HCOMM_NORMAL_NOTIFY_NUM, &threadHandle);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("device_urma Prepare HcommThreadAlloc failed, peer: "
-                             << peerRank << " engine: " << COMM_ENGINE_AICPU_TS << " ret: " << ret);
+                BM_LOG_ERROR("device_urma Prepare HcommThreadAlloc failed, protocol="
+                             << protocol_ << " peer: " << peerRank << " engine: " << COMM_ENGINE_AICPU_TS
+                             << " ret: " << ret);
                 RollbackPendingPrepareResourcesLocked(pendingCreatedPeerRanks);
                 return ret;
             }
@@ -1819,10 +1840,10 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             ret = DlHcommApi::HcommChannelCreate(localEndpoint_[index], COMM_ENGINE_AICPU, &channelDesc, 1,
                                                  &channelHandle);
             if (ret != 0) {
-                BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, peer: "
-                             << peerRank << " peerDev=" << peerDesc.devPhyId << " peerServer=" << peerDesc.serverIdx
-                             << " peerSuperPod=" << peerDesc.superPodIdx << " localDev=" << phyDeviceId_
-                             << " ret: " << ret);
+                BM_LOG_ERROR("device_urma Prepare HcommChannelCreate failed, protocol="
+                             << protocol_ << " peer: " << peerRank << " peerDev=" << peerDesc.devPhyId
+                             << " peerServer=" << peerDesc.serverIdx << " peerSuperPod=" << peerDesc.superPodIdx
+                             << " localDev=" << phyDeviceId_ << " ret: " << ret);
                 auto rollbackThread = threadHandle;
                 // No stream sync needed: thread was just allocated, no RemoteIO launched during Prepare.
                 (void)DlHcommApi::HcommThreadFree(&rollbackThread, 1);
@@ -1864,7 +1885,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         // 8. Import remote memory keys (always, even if channel/thread were reused)
         auto ret = ImportRemoteMemKeysLocked(peerRank, state, options.options.at(peerRank).memKeys);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma Prepare ImportRemoteMemKeysLocked failed, peer: " << peerRank);
+            BM_LOG_ERROR("device_urma Prepare ImportRemoteMemKeysLocked failed, protocol="
+                         << protocol_ << " peer: " << peerRank << " ret: " << ret);
             RollbackPendingPrepareResourcesLocked(pendingCreatedPeerRanks);
             return ret;
         }

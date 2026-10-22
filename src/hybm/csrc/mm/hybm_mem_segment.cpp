@@ -176,8 +176,7 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
             }
             break;
         case HYBM_MST_DRAM: {
-            constexpr auto DEVICE_TRANSPORT_MASK =
-                HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_DEVICE_UBOE;
+            constexpr auto DEVICE_TRANSPORT_MASK = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
             const bool isSdmaMixedTransport =
                 (options.dataOpType & DEVICE_TRANSPORT_MASK) != 0U && (options.dataOpType & HYBM_DOP_TYPE_SDMA) != 0U;
             const bool vmmSupport = HybmGetGvaVersion() == HYBM_GVA_V4 &&
@@ -299,8 +298,7 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
     } else {
         void *output = nullptr;
 #if defined(ASCEND_NPU)
-        const bool needDeviceVa = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA |
-                                                          HYBM_DOP_TYPE_DEVICE_UBOE)) != 0U;
+        const bool needDeviceVa = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) != 0U;
         if (needDeviceVa) {
             ret = DlHalApi::HalHostRegister(const_cast<void *>(addr), size, HOST_MEM_MAP_DEV, logicDeviceId_, &output);
             if (ret != 0) {

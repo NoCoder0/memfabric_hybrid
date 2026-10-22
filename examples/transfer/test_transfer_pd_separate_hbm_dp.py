@@ -43,7 +43,6 @@
                       SDMA         设备侧 SDMA（单机自测 / 同超节点跨机），无需 --nic
                       DEVICE_RDMA  设备侧 RDMA（跨机），无需 --nic
                       DEVICE_URMA  设备侧 URMA（跨机，A5），无需 --nic
-                      DEVICE_UBOE  设备侧 UBoE（跨机），无需 --nic
                     注：trans 核心另支持 HOST_URMA / HOST_TCP，但 Python 适配器未暴露
                     对应枚举，如需覆盖须先扩展 pytransfer 绑定。
   --nic             HOST_RDMA 数据面地址 tcp://<本机RDMA网卡IP>:<端口>（仅 HOST_RDMA 生效，
@@ -78,8 +77,8 @@ P 用卡 0、D 用卡 1）:
 
 多 P 节点 × 多 D 节点（如 2 P 机 × 2 D 机）：launcher 只支持单节点，两侧都改用手动模式逐实例拉起
 （显式 --p-rank / --dp-rank），D 侧用 --prefill-ips 传全部 P 节点 IP。单机可用 127.0.0.1/127.0.0.2
-等回环 IP 模拟多节点；跨机时 SDMA 需同超节点、HOST_RDMA 需加 --nic，DEVICE_RDMA / DEVICE_URMA /
-DEVICE_UBOE 走设备侧传输无需 --nic（把 --data-op-type 换成对应值即可）。先启动全部 D 实例:
+等回环 IP 模拟多节点；跨机时 SDMA 需同超节点、HOST_RDMA 需加 --nic，DEVICE_RDMA / DEVICE_URMA
+走设备侧传输无需 --nic（把 --data-op-type 换成对应值即可）。先启动全部 D 实例:
 
   # P 节点0: python3 test_transfer_pd_separate_hbm_dp.py --role Prefill --p-rank 0 \\
       --local-ip <P0_IP> --npu-id 0 --dp-size 2 --data-op-type SDMA
@@ -140,7 +139,6 @@ DATA_OP_TYPES = {
     "HOST_RDMA": TransDataOpType.HOST_RDMA,
     "DEVICE_RDMA": TransDataOpType.DEVICE_RDMA,
     "DEVICE_URMA": TransDataOpType.DEVICE_URMA,
-    "DEVICE_UBOE": TransDataOpType.DEVICE_UBOE,
 }
 # 仅主机侧 RDMA 把 nic 作为 transUrl；device 类协议由设备侧传输，忽略 nic
 NIC_REQUIRED_TYPES = {"HOST_RDMA"}
