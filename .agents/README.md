@@ -10,6 +10,7 @@
 | `memfabric-log-audit` | 扫描代码仓日志代码，找出关键执行分支中缺失或过弱的日志，输出日志修改方案 | `使用 memfabric-log-audit 扫描 src/ 和 app/ 的日志问题`       |
 | `memfabric-release` | 生成 MemFabric Hybrid changelog / release note，并列出本次 release 新增 PR | `使用 memfabric-release 生成 1.2.1 release note` |
 | `technical-design-proposal` | 编写技术方案、设计文档或 RFC，区分事实、目标和待验证项 | `使用 technical-design-proposal 编写内存池扩容方案`    |
+| `memfabric-troubleshoot` | 定位 MemFabric 部署与运行时问题（安装/AICPU/config store/etcd/传输路径），基于日志与源码做鉴别诊断 | `使用 memfabric-troubleshoot 定位这次 join 超时问题` |
 
 ## 使用方式
 
