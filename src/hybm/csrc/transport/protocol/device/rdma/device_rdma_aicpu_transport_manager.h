@@ -69,7 +69,7 @@ private:
     int LaunchAicpuBatch(uint32_t rankId, void *stream, ock::mf::aicpu::RdmaAicpuParam &param, uint32_t count);
 
     aclrtBinHandle aicpuRdmaBin_{nullptr};
-    aclrtFuncHandle aicpuRdmaPostSend_{nullptr};
+    DeviceFuncHandles aicpuRdmaPostSend_{};
     static thread_local HybmAclNotifyPtr aicpuNotify_;
     static thread_local AicpuPendingBatch aicpuPending_;
     static thread_local AicpuStream aicpuStream_;

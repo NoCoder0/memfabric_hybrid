@@ -815,7 +815,9 @@ Result DeviceUrmaTransportManager::EnsureDeviceKernelLoadedLocked()
         return BM_OK;
     }
 
-    auto ret = LoadDeviceKernelAndGetHandles(HYBM_DEVICE_FUNC_TRANSFER, deviceKernelHandle_, deviceFuncHandles_);
+    DeviceKernelNames names{};
+    names.funcTransfer = HYBM_DEVICE_FUNC_TRANSFER;
+    auto ret = LoadDeviceKernelAndGetHandles(names, deviceKernelHandle_, deviceFuncHandles_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma load device kernel failed, rankId=" << rankId_ << " ret=" << ret);
         return ret;

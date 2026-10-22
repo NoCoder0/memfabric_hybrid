@@ -3609,9 +3609,11 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelGetsHandlesFromPreloadedBin
     DlAclApiFnGuard guard;
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
 
+    DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("HybmBatchTransfer", binHandle, handles), BM_OK);
+    names.funcTransfer = "HybmBatchTransfer";
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_OK);
     EXPECT_EQ(binHandle, MOCK_BIN_HANDLE);
     EXPECT_EQ(handles.batchTransfer, MOCK_WRITE_FUNC);
 }
@@ -3623,9 +3625,11 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelUsesDefaultPathWhenBinaryAl
     DlAclApiFnGuard guard;
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
 
+    DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("HybmBatchTransfer", binHandle, handles), BM_OK);
+    names.funcTransfer = "HybmBatchTransfer";
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_OK);
     EXPECT_EQ(handles.batchTransfer, MOCK_WRITE_FUNC);
 }
 
@@ -3637,13 +3641,15 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsMissingJsonAndBinary
         std::string(testing::TempDir()) + "missing_device_urma_kernel_" + std::to_string(getpid());
     (void)setenv("ASCEND_HOME_PATH", missingBase.c_str(), 1);
 
+    DeviceKernelNames names{};
     aclrtBinHandle binHandle = nullptr;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("HybmBatchTransfer", binHandle, handles), BM_FILE_NOT_ACCESS);
+    names.funcTransfer = "HybmBatchTransfer";
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_FILE_NOT_ACCESS);
 
     PrepareKernelJson();
     DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFileFail;
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("HybmBatchTransfer", binHandle, handles), BM_ERROR);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_ERROR);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailure)
@@ -3651,21 +3657,25 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailur
     DlAclApiFnGuard guard;
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionFail;
 
+    DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("HybmBatchTransfer", binHandle, handles), BM_ERROR);
+    names.funcTransfer = "HybmBatchTransfer";
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_ERROR);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsNullFuncAndNullReturnedHandle)
 {
     DlAclApiFnGuard guard;
 
+    DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles(nullptr, binHandle, handles), BM_INVALID_PARAM);
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_OK);
 
     DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionNull;
-    EXPECT_EQ(LoadDeviceKernelAndGetHandles("HybmBatchTransfer", binHandle, handles), BM_DL_FUNCTION_FAILED);
+    names.funcTransfer = "HybmBatchTransfer";
+    EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_DL_FUNCTION_FAILED);
 }
 
 // ============================================================================

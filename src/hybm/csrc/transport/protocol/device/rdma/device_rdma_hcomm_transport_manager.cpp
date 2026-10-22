@@ -269,8 +269,10 @@ Result DeviceRdmaHcommTransportManager::LoadDeviceKernel()
     if (deviceFuncHandles_.batchWrite != nullptr && deviceFuncHandles_.batchRead != nullptr) {
         return BM_OK;
     }
-    return LoadDeviceKernelAndValidate(HYBM_DEVICE_FUNC_READ, HYBM_DEVICE_FUNC_WRITE, deviceKernelHandle_,
-                                       deviceFuncHandles_);
+    DeviceKernelNames names{};
+    names.funcRead = HYBM_DEVICE_FUNC_READ;
+    names.funcWrite = HYBM_DEVICE_FUNC_WRITE;
+    return LoadDeviceKernelAndGetHandles(names, deviceKernelHandle_, deviceFuncHandles_);
 }
 
 // ============================================================================

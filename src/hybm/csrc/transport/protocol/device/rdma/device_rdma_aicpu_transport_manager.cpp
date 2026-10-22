@@ -178,7 +178,9 @@ Result RdmaAicpuTransportManager::OpenDevice(const TransportOptions &options)
     qpManager_ =
         std::make_shared<AicpuJoinableRanksQpManager>(userId, deviceId_, rankId_, rankCount_, deviceAddr, scene_);
 
-    auto loadRet = LoadDeviceKernelAndGetHandles(aicpuRdmaBin_, aicpuRdmaPostSend_, "HybmRdmaAicpuPostSend");
+    DeviceKernelNames names{};
+    names.funcPostSend = "HybmRdmaAicpuPostSend";
+    auto loadRet = LoadDeviceKernelAndGetHandles(names, aicpuRdmaBin_, aicpuRdmaPostSend_);
     if (loadRet != BM_OK) {
         BM_LOG_ERROR("load rdma aicpu kernel failed, rankId: " << rankId_ << " ret: " << loadRet);
         return loadRet;
@@ -390,7 +392,7 @@ int RdmaAicpuTransportManager::ResolveAicpuBatchAddresses(uint32_t rankId, const
 int RdmaAicpuTransportManager::RunAicpuIo(uint32_t rankId, void *stream, aicpu::RdmaAicpuParam &param,
                                           uint32_t expectedPosted)
 {
-    auto ret = LaunchAicpuKernel(aicpuRdmaPostSend_, stream, &param, sizeof(param));
+    auto ret = LaunchAicpuKernel(aicpuRdmaPostSend_.rdmaPostSend, stream, &param, sizeof(param));
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma: launch post task failed, rankId: " << rankId << " descCount: " << param.descCount
                                                                      << " ret: " << ret);

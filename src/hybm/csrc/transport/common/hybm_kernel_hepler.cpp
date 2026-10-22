@@ -90,7 +90,7 @@ Result GetFuncHandle(aclrtBinHandle binHandle, const char *funcName, aclrtFuncHa
 }
 } // namespace
 
-Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
+Result LoadDeviceKernelAndGetHandles(DeviceKernelNames &names, aclrtBinHandle &binHandle,
                                      DeviceFuncHandles &funcHandles)
 {
     funcHandles = DeviceFuncHandles{};
@@ -105,71 +105,31 @@ Result LoadDeviceKernelAndGetHandles(const char *funcRead, const char *funcWrite
             return ret;
         }
     }
-    ret = GetFuncHandle(binHandle, funcRead, funcHandles.batchRead);
-    if (ret != BM_OK) {
-        return ret;
-    }
-    return GetFuncHandle(binHandle, funcWrite, funcHandles.batchWrite);
-}
+    struct FuncSpec {
+        const char *name;
+        const char *label;
+        aclrtFuncHandle *handle;
+    };
+    const FuncSpec specs[] = {
+        {names.funcRead, "funcRead", &funcHandles.batchRead},
+        {names.funcWrite, "funcWrite", &funcHandles.batchWrite},
+        {names.funcTransfer, "funcTransfer", &funcHandles.batchTransfer},
+        {names.funcPostSend, "funcPostSend", &funcHandles.rdmaPostSend},
+    };
 
-Result LoadDeviceKernelAndGetHandles(const char *funcTransfer, aclrtBinHandle &binHandle,
-                                     DeviceFuncHandles &funcHandles)
-{
-    funcHandles = DeviceFuncHandles{};
-    std::string jsonPath;
-    auto ret = GetKernelFilePath(jsonPath);
-    if (ret != BM_OK) {
-        return ret;
-    }
-    if (binHandle == nullptr) {
-        ret = LoadBinaryFromJson(jsonPath.c_str(), binHandle);
+    for (const auto &spec : specs) {
+        if (spec.name == nullptr)
+            continue;
+        ret = GetFuncHandle(binHandle, spec.name, *spec.handle);
         if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to get func handle for " << spec.label << ": " << spec.name << " ret: " << ret);
             return ret;
         }
     }
-    return GetFuncHandle(binHandle, funcTransfer, funcHandles.batchTransfer);
-}
 
-Result LoadDeviceKernelAndValidate(const char *funcRead, const char *funcWrite, aclrtBinHandle &binHandle,
-                                   DeviceFuncHandles &funcHandles)
-{
-    auto ret = LoadDeviceKernelAndGetHandles(funcRead, funcWrite, binHandle, funcHandles);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("LoadDeviceKernelAndGetHandles failed, ret=" << ret);
-        return ret;
-    }
-    if (funcHandles.batchRead == nullptr || funcHandles.batchWrite == nullptr) {
-        BM_LOG_ERROR("invalid device kernel function handles after loading, read: "
-                     << funcHandles.batchRead << " write: " << funcHandles.batchWrite);
-        return BM_DL_FUNCTION_FAILED;
-    }
-    BM_LOG_INFO("AICPU kernel loaded, write=" << funcHandles.batchWrite << " read=" << funcHandles.batchRead);
-    return BM_OK;
-}
-
-Result LoadDeviceKernelAndGetHandles(aclrtBinHandle &binHandle, aclrtFuncHandle &funcHandle, const char *funcName)
-{
-    if (funcName == nullptr) {
-        BM_LOG_ERROR("AICPU kernel funcName is null");
-        return BM_INVALID_PARAM;
-    }
-    std::string jsonPath;
-    auto ret = GetKernelFilePath(jsonPath);
-    if (ret != BM_OK) {
-        return ret;
-    }
-    if (binHandle == nullptr) {
-        ret = LoadBinaryFromJson(jsonPath.c_str(), binHandle);
-        if (ret != BM_OK) {
-            return ret;
-        }
-    }
-    ret = GetFuncHandle(binHandle, funcName, funcHandle);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("load AICPU kernel failed, func: " << funcName << " ret: " << ret);
-        return ret;
-    }
-    BM_LOG_INFO("AICPU kernel loaded, func: " << funcName << " handle: " << funcHandle);
+    BM_LOG_INFO("AICPU kernel loaded over. Read: " << funcHandles.batchRead << ", Write: " << funcHandles.batchWrite
+                                                   << ", Transfer: " << funcHandles.batchTransfer
+                                                   << ", PostSend: " << funcHandles.rdmaPostSend);
     return BM_OK;
 }
 
