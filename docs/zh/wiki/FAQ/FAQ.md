@@ -261,7 +261,7 @@ Try HalMemCreate ret: -6
 
 **查看系统可用内存**
 
-运行[mem_scan.py](../../../../src/smem/python/memfabric_hybrid/memfabric_hybrid/mem_scan.py)脚本扫描可用的物理内存：
+运行`mfcli` 工具扫描可用的物理内存：
 
 `mfcli mem scan`
 
@@ -281,30 +281,7 @@ openEuler在6.6.0-114.0.0合入该修改，可以下载当前os的kernel-source�
 
 #### 2.1.3 A3 可用内存扫描结果与预期不符
 
-memfabric内部两种规格页来初始化内存池，优先使用1GB大页申请，如果申请失败则转为使用2MB页申请，可以通过如下指令来扫描机器上可用的2MB页、1GB页大小
-
-mem_scan.py文件随同.run包和.wheel包一起安装，run包：/usr/local/memfabric_hybrid/${version}/${arch}-${os}/script/mem_scan.py ;
-wheel包：/${python_package_install_dir}/memfabric_hybrid/script/mem_scan.py
-
-```bash
-# 不带参数默认扫描1GB页，也可以显式指定 python3 mem_scan.py -m 1024
-python3 mem_scan.py
-
-# 扫描2MB页
-python3 mem_scan.py -m 2
-```
-
-扫描完成之后通常会有如下打印：
-
-![image.png][faq-image-3]
-
-Numa node 0 ~ 7 表示每个numa上可用的内存空间
-
-PageSize: OS 的页大小，图示为4KB
-
-ZonePageSize: 图示为4MB，表示每个4MB最多可给一个大页使用，如果使用了2MB大页申请内存，就会浪费2MB，但如果使用的是1GB大页申请内存，则不会有浪费
-
-TotalFree: 当前机器可作为内存池使用的最大内存
+memfabric内部两种规格页来初始化内存池，优先使用1GB大页申请，如果申请失败则转为使用2MB页申请，可以通过`mfcli` 工具来扫描机器上可用的2MB页、1GB页大小
 
 **问题根因**
 
@@ -332,7 +309,7 @@ A3可用内存地址范围有限制，不同内存规格机器可用内存大小
 
 #### 2.1.4 A3 HalMemImport 失败（ret: 17）
 
-![image.png][faq-image-4]
+![image.png][faq-image-3]
 
 HalMemImport memory failed: 17 为内核请求错误，根本原因可能有多种，需要根据plog详细分析，最常见的原因有如下：
 
@@ -376,7 +353,7 @@ smmu地址翻译错误，也就是device侧的页表中没有这个va
 
 可能原因是远端地址未完成本地import就直接访问，或者该地址内存已释放
 
-![image.png][faq-image-5]
+![image.png][faq-image-4]
 00020000是传输的size
 
 178a0000 000012de 组成src地址 0x000012de178a0000
@@ -384,7 +361,7 @@ smmu地址翻译错误，也就是device侧的页表中没有这个va
 00000000 0000280a 组成dest地址 0x0000280a00000000
 
 还有一种可能，就是hdk版本低于商发的25.5.0版本，在INFO日志级别下会有如下打印
-![image.png][faq-image-6]
+![image.png][faq-image-5]
 
 <a id="sdma-comperr"></a>
 
@@ -418,7 +395,7 @@ display hccs decode and map table interface 200GHL 1/1/2
 display superpod information
 ```
 
-![image.png][faq-image-7]
+![image.png][faq-image-6]
 
 期望为Configuration mode为Typical，如果不是可以使用下面指令切换
 
@@ -590,7 +567,7 @@ module_errcode=2
 Failed to HalMemAlloc rdma swap memory, size xx, ret: -8
 ```
 
-![image.png][faq-image-8]
+![image.png][faq-image-7]
 
 原因是HalMemAlloc不到足够的内存，这块Swap区间不是必须的，可以通过下面的命令关掉
 export HYBM_RDMA_SWAP_SPACE_SIZE=0
@@ -700,12 +677,11 @@ export HYBM_RDMA_SWAP_SPACE_SIZE=0
 
 [faq-image-1]: https://raw.gitcode.com/user-images/assets/7672916/c824a751-61a2-4b77-abbf-49620a8e3adf/image.png
 [faq-image-2]: https://raw.gitcode.com/user-images/assets/7672916/348c0854-4efb-4803-8222-f6bf19589fa1/image.png
-[faq-image-3]: https://raw.gitcode.com/user-images/assets/7672916/70dfc2e4-1ef9-4690-b812-f79e9345d6b0/image.png
-[faq-image-4]: https://raw.gitcode.com/user-images/assets/7672916/87b5923b-f971-428e-a7ed-7ced49b745d7/image.png
-[faq-image-5]: https://raw.gitcode.com/user-images/assets/7672916/2c0db8ad-ab35-4caf-973e-6aeb44cea051/image.png
-[faq-image-6]: https://raw.gitcode.com/user-images/assets/7672916/2547a47f-bade-4078-9cf7-2bc5a03c9e0a/image.png
-[faq-image-7]: https://raw.gitcode.com/user-images/assets/7672916/19aaa7e5-26e9-4240-bd4f-2c2389c494a8/image.png
-[faq-image-8]: https://raw.gitcode.com/user-images/assets/7672916/989ad8a1-62b4-4362-b4d9-a59a7cb0b406/image.png
+[faq-image-3]: https://raw.gitcode.com/user-images/assets/7672916/87b5923b-f971-428e-a7ed-7ced49b745d7/image.png
+[faq-image-4]: https://raw.gitcode.com/user-images/assets/7672916/2c0db8ad-ab35-4caf-973e-6aeb44cea051/image.png
+[faq-image-5]: https://raw.gitcode.com/user-images/assets/7672916/2547a47f-bade-4078-9cf7-2bc5a03c9e0a/image.png
+[faq-image-6]: https://raw.gitcode.com/user-images/assets/7672916/19aaa7e5-26e9-4240-bd4f-2c2389c494a8/image.png
+[faq-image-7]: https://raw.gitcode.com/user-images/assets/7672916/989ad8a1-62b4-4362-b4d9-a59a7cb0b406/image.png
 
 [kernel-page-alloc]:
   https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=f6037a4a686523dee1967ef7620349822e019ff8
