@@ -26,6 +26,7 @@ BUILD_HCOM_WITH_UB=${10:-OFF}
 BUILD_ETCD_BACKEND=${11:-OFF}
 BUILD_TOOL=${12:-cmake}
 BUILD_ZBAL=${13:-OFF}
+BUILD_PYTHON_WHL_TYPE=${14:-release}
 # 导出环境变量用于后续构建whl包
 export MF_BUILD_HCOM=${8:-OFF}
 export MF_BUILD_HCOM_WITH_RDMA=${9:-ON}
@@ -310,7 +311,13 @@ if [ "${BUILD_HCOM}" == "ON" ]; then
 fi
 
 VERSION="$(tr -d '[:space:]' < "${PROJ_DIR}/VERSION")"
-export MEMFABRIC_VERSION="${VERSION}"
+
+if [ "${BUILD_PYTHON_WHL_TYPE}" == "daily" ]; then
+    BUILD_DATE=$(date +%Y%m%d)
+    export MEMFABRIC_VERSION="${VERSION}".dev"${BUILD_DATE}"
+else
+    export MEMFABRIC_VERSION="${VERSION}"
+fi
 echo "VERSION IS ${VERSION}"
 GIT_COMMIT=$(git -C "${PROJ_DIR}" rev-parse HEAD) || true
 {
