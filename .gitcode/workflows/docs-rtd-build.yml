@@ -54,7 +54,7 @@ jobs:
               -H "Authorization: Token ${RTD_TOKEN}" \
               -H "Content-Type: application/json" \
               -H "Accept: application/json" \
-              -d '{}' || echo "000")
+              -d '{}') || CODE="000"
             echo "trigger HTTP ${CODE} (attempt ${i}/3)"
             case "${CODE}" in
               2??) break ;;
