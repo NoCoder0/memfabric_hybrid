@@ -1,4 +1,4 @@
-# MemFabric Hybrid
+# ![MemFabric Hybrid](assets/memfabric-logo.png){ .memfabric-home-logo }
 
 MemFabric 是一款开源内存池化软件，面向昇腾超节点、昇腾服务器、鲲鹏超节点、鲲鹏服务器等硬件，
 其设计目的与核心思想是：

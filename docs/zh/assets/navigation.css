@@ -22,3 +22,41 @@
     font-weight: 700;
     line-height: 1.4;
 }
+
+/* Use the MemFabric wordmark for the home-page title and repository shortcut. */
+.md-typeset img.memfabric-home-logo {
+    display: block;
+    width: min(100%, 22rem);
+    height: 72px;
+    margin: 0 auto;
+    object-fit: cover;
+    object-position: center;
+}
+
+.md-typeset h1:has(.memfabric-home-logo) {
+    margin-bottom: 1rem;
+}
+
+.md-typeset h1 > .glightbox:has(.memfabric-home-logo) {
+    display: block;
+}
+
+.md-typeset h1:has(.memfabric-home-logo) > .headerlink {
+    display: none;
+}
+
+.md-header__source .md-source__icon {
+    display: none;
+}
+
+.md-header__source .md-source__repository {
+    width: 8.5rem;
+    height: 2rem;
+    background: url("memfabric-logo.png") center / contain no-repeat;
+    font-size: 0;
+}
+
+[data-md-color-scheme="slate"] .memfabric-home-logo,
+[data-md-color-scheme="slate"] .md-header__source .md-source__repository {
+    filter: brightness(1.3) saturate(1.1);
+}

@@ -2,6 +2,7 @@ mkdocs>=1.6.0
 mkdocs-material>=9.5.0
 mkdocs-awesome-nav>=1.0.0
 mkdocs-glightbox>=0.4.0
+selectolax==0.3.34  # mkdocs-glightbox 0.5.2 is incompatible with selectolax 1.x.
 mkdocs-git-revision-date-localized-plugin>=1.2.0
 mkdocs-minify-plugin>=0.8.0
 pymdown-extensions>=10.0
