@@ -1,4 +1,18 @@
 {
+    "HybmBatchReadWithNotify": {
+        "opInfo": {
+            "functionName": "HybmBatchReadWithNotify",
+            "kernelSo": "libcann_hybm_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
+    },
+    "HybmBatchWriteWithNotify": {
+        "opInfo": {
+            "functionName": "HybmBatchWriteWithNotify",
+            "kernelSo": "libcann_hybm_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
+    },
     "HybmBatchRead": {
         "opInfo": {
             "functionName": "HybmBatchRead",

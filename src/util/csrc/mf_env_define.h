@@ -57,6 +57,8 @@ inline const std::string MF_HYBM_URMA_SWAP_SPACE_SIZE =
 inline const std::string MF_HYBM_RDMA_FORCE_UNREGISTERED =
     GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED");
 // HCOMM 开关（默认关闭）：关闭时 DEVICE_RDMA 一律走 native；打开后按 CANN 版本判断
+inline const std::string MF_HYBM_HOST_RDMA_USE_HCOMM =
+    GetEnvStr("MF_HYBM_HOST_RDMA_USE_HCOMM", "HYBM_HOST_RDMA_USE_HCOMM");
 inline const std::string MF_HYBM_RDMA_USE_HCOMM = GetEnvStr("MF_HYBM_RDMA_USE_HCOMM", "HYBM_RDMA_USE_HCOMM");
 // AICPU 直发开关（默认关闭）：打开时 DEVICE_RDMA 使用 AI QP，队列信息下发 device 供 AICPU kernel 直接下发任务
 inline const std::string MF_HYBM_RDMA_USE_AICPU = GetEnvStr("MF_HYBM_RDMA_USE_AICPU", "HYBM_RDMA_USE_AICPU");

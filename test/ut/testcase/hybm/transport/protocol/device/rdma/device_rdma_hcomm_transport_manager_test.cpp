@@ -43,6 +43,7 @@ constexpr uint32_t MOCK_PORT = 5000U;
 // DlAclApi inline functions call through function pointers (pAclrtGetDevice etc).
 // We set them directly (private→public makes them accessible).
 struct DlAclApiFnGuard {
+    decltype(DlAclApi::pAclrtSynchronizeStream) oldSync{DlAclApi::pAclrtSynchronizeStream};
     aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
     aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
     rtGetDeviceInfoFunc oldGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
@@ -58,6 +59,7 @@ struct DlAclApiFnGuard {
 
     ~DlAclApiFnGuard()
     {
+        DlAclApi::pAclrtSynchronizeStream = oldSync;
         DlAclApi::pAclrtGetDevice = oldGetDevice;
         DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDev;
         DlAclApi::pRtGetDeviceInfo = oldGetDeviceInfo;
@@ -426,6 +428,8 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, CloseDevice)
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, CloseDevice_WithResources)
 {
+    DlAclApi::pAclrtSynchronizeStream = [](void *) -> int { return 0; };
+
     gEndpointDestroyed = false;
     DlHcommApi::gHcommEndpointCreate = [](const EndpointDesc *, EndpointHandle *handle) -> int32_t {
         *handle = MOCK_ENDPOINT;
@@ -793,16 +797,11 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, UpdateMemoryKey)
 {
     auto mgr = CreateHcommMgr();
     TransportMemoryKey key{};
-    void *newAddr = reinterpret_cast<void *>(0x12345678UL);
-    mgr->UpdateMemoryKey(key, newAddr);
-    // UpdateMemoryKey writes to HcommKeyMetaAt().addr which is at TRANS_KEY_DEV_SLOT2
-    auto &meta = HcommKeyMetaAt(key);
-    ASSERT_EQ(meta.addr, 0x12345678UL);
-    // gvaBase shares its origin with addr and must be rewritten together; otherwise the offset base of
-    // ConvertRemoteGvaToDva (rGva - peerGva)
-    // would stay on the owner GVA obtained by QueryMemoryKey's reverse HVA lookup, which does not share
-    // its origin with the data-plane address.
-    ASSERT_EQ(meta.gvaBase, 0x12345678UL);
+    EnsureHcommKeyMeta(key);
+    HcommKeyMetaAt(key).addr = MOCK_LOCAL_ADDR;
+    mgr->UpdateMemoryKey(key, reinterpret_cast<void *>(0x12345678UL));
+    EXPECT_EQ(HcommKeyMetaAt(key).addr, 0x12345678UL);
+    EXPECT_EQ(HcommKeyMetaAt(key).gvaBase, 0x12345678UL);
 }
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, UpdateMemoryKeyNullAddr)
@@ -859,4 +858,64 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, ConvertGvaToDva_KnownAddr)
     // Unknown address → returns input address unchanged
     uint64_t result = mgr->ConvertGvaToDva(0xABCD0000UL);
     ASSERT_EQ(result, 0xABCD0000UL);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, CompletionWaitPrecedesSyncAndBufferRelease)
+{
+    EXPECT_EQ(sizeof(HybmOneSideOpParam), 72U);
+    EXPECT_EQ(offsetof(HybmOneSideOpParam, flag_size), 64U);
+    EXPECT_EQ(offsetof(HybmOneSideOpCompletionParam, completionNotifyId), 72U);
+    DlAclApiFnGuard guard;
+    static std::vector<int> calls;
+    calls.clear();
+    DlAclApi::pAclrtWaitAndResetNotify = [](void *notify, void *stream, uint32_t) -> int32_t {
+        EXPECT_EQ(notify, reinterpret_cast<void *>(2UL));
+        EXPECT_EQ(stream, reinterpret_cast<void *>(1UL));
+        calls.push_back(1);
+        return 0;
+    };
+    DlAclApi::pAclrtSynchronizeStream = [](void *) -> int32_t { calls.push_back(2); return 0; };
+    DlAclApi::pAclrtFree = [](void *) -> int32_t { calls.push_back(3); return 0; };
+    DeviceRdmaHcommTransportManager::CompletionContext ctx{};
+    ctx.stream = reinterpret_cast<void *>(1UL);
+    ctx.notify = reinterpret_cast<void *>(2UL);
+    DeviceRdmaHcommTransportManager::PendingTransfer transfer{};
+    transfer.buffers.dstList = reinterpret_cast<void *>(3UL);
+    std::vector<DeviceRdmaHcommTransportManager::PendingTransfer> pending{transfer};
+    EXPECT_EQ(DeviceRdmaHcommTransportManager::SynchronizeContextLocked(ctx, pending), BM_OK);
+    EXPECT_EQ(calls, (std::vector<int>{1, 2, 3}));
+    EXPECT_TRUE(pending.empty());
+    EXPECT_FALSE(ctx.notifyWaitQueued);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, CompletionFailureRetainsBuffersAndWaitState)
+{
+    DlAclApiFnGuard guard;
+    static int waitCalls;
+    static int syncCalls;
+    static int freeCalls;
+    waitCalls = syncCalls = freeCalls = 0;
+    DlAclApi::pAclrtWaitAndResetNotify = [](void *, void *, uint32_t) -> int32_t {
+        return ++waitCalls == 1 ? -7 : 0;
+    };
+    DlAclApi::pAclrtSynchronizeStream = [](void *) -> int32_t { return ++syncCalls == 1 ? -8 : 0; };
+    DlAclApi::pAclrtFree = [](void *) -> int32_t { ++freeCalls; return 0; };
+    DeviceRdmaHcommTransportManager::CompletionContext ctx{};
+    DeviceRdmaHcommTransportManager::PendingTransfer transfer{};
+    transfer.buffers.dstList = reinterpret_cast<void *>(3UL);
+    std::vector<DeviceRdmaHcommTransportManager::PendingTransfer> pending{transfer};
+    EXPECT_EQ(DeviceRdmaHcommTransportManager::SynchronizeContextLocked(ctx, pending), -7);
+    EXPECT_FALSE(ctx.notifyWaitQueued);
+    EXPECT_EQ(syncCalls, 0);
+    EXPECT_EQ(freeCalls, 0);
+    ASSERT_EQ(pending.size(), 1U);
+    EXPECT_EQ(DeviceRdmaHcommTransportManager::SynchronizeContextLocked(ctx, pending), -8);
+    EXPECT_TRUE(ctx.notifyWaitQueued);
+    EXPECT_EQ(freeCalls, 0);
+    ASSERT_EQ(pending.size(), 1U);
+    EXPECT_EQ(DeviceRdmaHcommTransportManager::SynchronizeContextLocked(ctx, pending), BM_OK);
+    EXPECT_EQ(waitCalls, 2); // The queued wait must not consume the same Notify twice.
+    EXPECT_EQ(freeCalls, 1);
+    EXPECT_TRUE(pending.empty());
+    EXPECT_FALSE(ctx.notifyWaitQueued);
 }

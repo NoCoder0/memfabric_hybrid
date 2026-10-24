@@ -10,6 +10,8 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "hybm_entity_default.h"
+#include "mf_env_define.h"
+#include "mf_env_util.h"
 
 #include <algorithm>
 #include <cstring>
@@ -332,10 +334,11 @@ int32_t MemEntityDefault::FreeLocalMemory(hybm_mem_slice_t slice, uint32_t flags
         return BM_OK;
     }
 
-    if (transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
+    if (memSlice->size_ > 0 && transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
         auto ret = transportManager_->UnregisterMemoryRegion(memSlice->vAddress_);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("UnregisterMemoryRegion failed, please check input slice.");
+            BM_LOG_ERROR("UnregisterMemoryRegion failed, retain slice: " << slice << ", ret: " << ret);
+            return ret;
         }
     }
 
@@ -539,7 +542,11 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
 
     SliceExportTransportKey transportKey{exportMagic, options_.rankId, realSlice->gva_};
     if (transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
-        if (realSlice->size_ > 0) {
+        if (realSlice->size_ == 0) {
+            ret = transportManager_->QueryControlKey(transportKey.key);
+            BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Failed to export zero-capacity transport control key, rank: "
+                                                      << options_.rankId << ", ret: " << ret);
+        } else {
             ret = transportManager_->QueryMemoryKey(realSlice->vAddress_, transportKey.key);
             if (ret != 0) {
                 BM_LOG_WARN("query memory key failed, export zero key. addr: 0x" << std::hex << realSlice->vAddress_
@@ -1119,7 +1126,10 @@ int MemEntityDefault::LoadExtendLibrary() noexcept
         }
     }
 
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP)) {
+    const bool hostHcomm = (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_RDMA) != 0 &&
+                           MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HOST_RDMA_USE_HCOMM, 0u) != 0u;
+    if (!hostHcomm &&
+        (options_.bmDataOpType & (HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP))) {
         auto ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_HOST_RDMA);
         if (ret != 0) {
             BM_LOG_ERROR("LoadExtendLibrary for HOST RDMA failed: " << ret);

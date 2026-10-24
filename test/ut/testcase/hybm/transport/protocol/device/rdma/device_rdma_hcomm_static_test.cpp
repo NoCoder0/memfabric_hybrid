@@ -24,11 +24,10 @@ using DeviceTransferBuffers = ::ock::mf::transport::device::DeviceTransferBuffer
 
 class DeviceRdmaHcommStaticTest : public ::testing::Test {
 protected:
-    static PendingTransfer MakePending(uint32_t rankId, bool inFlight)
+    static PendingTransfer MakePending(uint32_t rankId)
     {
         PendingTransfer pt{};
         pt.rankId = rankId;
-        pt.inFlight = inFlight;
         return pt;
     }
 };
@@ -37,10 +36,10 @@ protected:
 TEST_F(DeviceRdmaHcommStaticTest, ExtractRankPending_MovesMatchingEntries)
 {
     std::vector<PendingTransfer> src = {
-        MakePending(0, true),
-        MakePending(1, true),
-        MakePending(0, false),
-        MakePending(2, true),
+        MakePending(0),
+        MakePending(1),
+        MakePending(0),
+        MakePending(2),
     };
     std::vector<PendingTransfer> dst;
 
@@ -58,7 +57,7 @@ TEST_F(DeviceRdmaHcommStaticTest, ExtractRankPending_MovesMatchingEntries)
 
 TEST_F(DeviceRdmaHcommStaticTest, ExtractRankPending_NoMatch_LeavesSrcUnchanged)
 {
-    std::vector<PendingTransfer> src = {MakePending(1, true), MakePending(2, false)};
+    std::vector<PendingTransfer> src = {MakePending(1), MakePending(2)};
     std::vector<PendingTransfer> dst;
 
     DeviceRdmaHcommTransportManager::ExtractRankPending(src, 0, dst);
@@ -81,8 +80,8 @@ TEST_F(DeviceRdmaHcommStaticTest, ExtractRankPending_EmptySrc)
 TEST_F(DeviceRdmaHcommStaticTest, ExtractRankPending_AllMatch)
 {
     std::vector<PendingTransfer> src = {
-        MakePending(1, true),
-        MakePending(1, false),
+        MakePending(1),
+        MakePending(1),
     };
     std::vector<PendingTransfer> dst;
 
@@ -95,8 +94,8 @@ TEST_F(DeviceRdmaHcommStaticTest, ExtractRankPending_AllMatch)
 // ───── RestoreRankPending ─────
 TEST_F(DeviceRdmaHcommStaticTest, RestoreRankPending_MovesAll)
 {
-    std::vector<PendingTransfer> src = {MakePending(0, true), MakePending(1, false)};
-    std::vector<PendingTransfer> dst = {MakePending(2, true)};
+    std::vector<PendingTransfer> src = {MakePending(0), MakePending(1)};
+    std::vector<PendingTransfer> dst = {MakePending(2)};
 
     DeviceRdmaHcommTransportManager::RestoreRankPending(src, dst);
 
@@ -107,7 +106,7 @@ TEST_F(DeviceRdmaHcommStaticTest, RestoreRankPending_MovesAll)
 TEST_F(DeviceRdmaHcommStaticTest, RestoreRankPending_EmptySrc)
 {
     std::vector<PendingTransfer> src;
-    std::vector<PendingTransfer> dst = {MakePending(0, true)};
+    std::vector<PendingTransfer> dst = {MakePending(0)};
 
     DeviceRdmaHcommTransportManager::RestoreRankPending(src, dst);
 

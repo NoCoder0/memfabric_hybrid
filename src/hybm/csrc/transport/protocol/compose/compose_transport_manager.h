@@ -47,6 +47,7 @@ public:
     bool QueryHasRegistered(uint64_t addr, uint64_t size) override;
 
     Result QueryMemoryKey(uint64_t addr, TransportMemoryKey &key) override;
+    Result QueryControlKey(TransportMemoryKey &key) override;
 
     void UpdateMemoryKey(TransportMemoryKey &key, void *addr) override;
 
@@ -88,8 +89,8 @@ private:
     Result OpenHostTransport(const TransportOptions &options);
 
     Result OpenDeviceTransport(const TransportOptions &options);
-    void GetHostPrepareOptions(const HybmTransPrepareOptions &param, HybmTransPrepareOptions &hostOptions);
-    void GetDevicePrepareOptions(const HybmTransPrepareOptions &param, HybmTransPrepareOptions &DeviceOptions);
+    Result GetHostPrepareOptions(const HybmTransPrepareOptions &param, HybmTransPrepareOptions &hostOptions);
+    Result GetDevicePrepareOptions(const HybmTransPrepareOptions &param, HybmTransPrepareOptions &DeviceOptions);
     bool IsDeviceUrma() const;
 
 private:

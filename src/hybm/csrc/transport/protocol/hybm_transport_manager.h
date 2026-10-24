@@ -35,6 +35,12 @@ public:
 
     virtual ~TransportManager() = default;
 
+    // Query the actual implementation; protocol selection remains the caller's responsibility.
+    virtual bool IsHcomm() const
+    {
+        return false;
+    }
+
     /*
      * 1、本地IP（NIC、Device）
      * @return 0 if successful
@@ -130,6 +136,13 @@ public:
     virtual Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                             const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
                                             RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks);
+
+    // Zero-capacity slices may still need transport control information, without advertising a data pool.
+    virtual Result QueryControlKey(TransportMemoryKey &key)
+    {
+        key = {};
+        return BM_OK;
+    }
 };
 
 using TransManagerPtr = std::shared_ptr<TransportManager>;

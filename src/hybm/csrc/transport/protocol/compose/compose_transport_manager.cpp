@@ -18,6 +18,7 @@
 #include "hybm_def.h"
 #include "hybm_logger.h"
 #include "host_hcom_transport_manager.h"
+#include "host_rdma_hcomm_transport_manager.h"
 #include "device_rdma_transport_manager.h"
 #include "device_rdma_aicpu_transport_manager.h"
 #include "hybm_gva_version.h"
@@ -46,9 +47,15 @@ Result ComposeTransportManager::OpenHostTransport(const TransportOptions &option
         return BM_ERROR;
     }
     // Per-entity host transport instance: the per-rank channel/key state of a singleton cannot serve
-    // several store groups of the same process at the same time (the multi-connection replay case), and
-    // independent instances get naturally disjoint bind ports via basePort + rankId.
-    hostTransportManager_ = std::make_shared<host::HcomTransportManager>();
+    // several store groups of the same process at the same time (the multi-connection replay case).
+    // Host HCOMM uses the explicitly configured server port; each server entity needs a distinct port.
+    const bool useHcomm = (options.protocol & HYBM_DOP_TYPE_HOST_RDMA) != 0 &&
+                          MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HOST_RDMA_USE_HCOMM, 0u) != 0u;
+    if (useHcomm) {
+        hostTransportManager_ = std::make_shared<host::HostRdmaHcommTransportManager>();
+    } else {
+        hostTransportManager_ = std::make_shared<host::HcomTransportManager>();
+    }
     return hostTransportManager_->OpenDevice(options);
 }
 
@@ -107,6 +114,13 @@ bool ComposeTransportManager::IsDeviceUrma() const
 
 Result ComposeTransportManager::OpenDevice(const TransportOptions &options)
 {
+    const bool hostHcomm = (options.protocol & HYBM_DOP_TYPE_HOST_RDMA) &&
+                           MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_HOST_RDMA_USE_HCOMM, 0u) != 0u;
+    const bool deviceHcomm = (options.protocol & HYBM_DOP_TYPE_DEVICE_RDMA) &&
+                             MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_HCOMM, 0u) != 0u;
+    BM_VALIDATE_RETURN(!(hostHcomm || deviceHcomm) || (options.protocol == HYBM_DOP_TYPE_HOST_RDMA ||
+                                                       options.protocol == HYBM_DOP_TYPE_DEVICE_RDMA),
+                       "HCOMM requires one network backend per entity", BM_INVALID_PARAM);
     options_ = options;
     Result ret = BM_ERROR;
     if (options_.protocol & HOST_PROTOCOL) {
@@ -263,6 +277,9 @@ Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey
         auto ret = hostTransportManager_->QueryMemoryKey(addr, hostKey);
         if (ret != BM_OK) {
             BM_LOG_WARN("Unable to query host transport memKey addr:" << std::hex << addr);
+            if (hostTransportManager_->IsHcomm()) {
+                return ret;
+            }
             // HCOM 无法处理HBM池，这里直接返回，兼容即开启HBM池又要走HCOM通信的场景
         }
         WriteHostMemoryKey(hostKey, key);
@@ -271,11 +288,48 @@ Result ComposeTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey
     return BM_OK;
 }
 
+Result ComposeTransportManager::QueryControlKey(TransportMemoryKey &key)
+{
+    key = {};
+    for (const auto &manager : {deviceTransportManager_, hostTransportManager_}) {
+        if (manager == nullptr || !manager->IsHcomm()) {
+            continue;
+        }
+        TransportMemoryKey control_key{};
+        auto ret = manager->QueryControlKey(control_key);
+        BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Failed to export HCOMM control key, rank: " << options_.rankId
+                                                                                           << ", ret: " << ret);
+        if (manager == deviceTransportManager_) {
+            WriteDeviceMemoryKey(control_key, key);
+        } else {
+            WriteHostMemoryKey(control_key, key);
+        }
+    }
+    return BM_OK;
+}
+
 void ComposeTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
     // Split first, then update each payload, then rebuild the envelope: writing one payload resets the envelope.
     TransportMemoryKey deviceKey{};
     TransportMemoryKey hostKey{};
+    if ((hostTransportManager_ && hostTransportManager_->IsHcomm()) ||
+        (deviceTransportManager_ && deviceTransportManager_->IsHcomm())) {
+        // Preserve the remote envelope slot. A single HCOMM backend can relocate either payload format.
+        ReadDeviceMemoryKey(key, deviceKey);
+        ReadHostMemoryKey(key, hostKey);
+        if (!deviceKey.Empty()) {
+            const auto &manager = deviceTransportManager_ ? deviceTransportManager_ : hostTransportManager_;
+            manager->UpdateMemoryKey(deviceKey, addr);
+        }
+        if (!hostKey.Empty()) {
+            const auto &manager = hostTransportManager_ ? hostTransportManager_ : deviceTransportManager_;
+            manager->UpdateMemoryKey(hostKey, addr);
+        }
+        WriteDeviceMemoryKey(deviceKey, key);
+        WriteHostMemoryKey(hostKey, key);
+        return;
+    }
     if (deviceTransportManager_) {
         ReadDeviceMemoryKey(key, deviceKey);
     }
@@ -292,9 +346,89 @@ void ComposeTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *add
     WriteHostMemoryKey(hostKey, key);
 }
 
-void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOptions &param,
-                                                    HybmTransPrepareOptions &hostOptions)
+namespace {
+Result RouteHcommPrepareOptions(const HybmTransPrepareOptions &input, bool localHost, HybmEntityTagInfo &tagManager,
+                                uint32_t localRank, HybmTransPrepareOptions &output)
 {
+    for (const auto &item : input.options) {
+        const auto opType = tagManager.GetRank2RankOpType(item.first, localRank);
+        if ((opType & (localHost ? HOST_PROTOCOL : DEVICE_PROTOCOL)) == 0) {
+            continue;
+        }
+        const auto &peer = item.second;
+        TransportRankPrepareInfo info{};
+        info.privateData = peer.privateData;
+        info.role = peer.role;
+        // Empty private data on an update is allowed by the backend only after it has cached the initial data.
+        // A cross-envelope update still needs the header to establish HCOMM compatibility at this layer.
+        device::RdmaHcommPeerPrivateInfo privateInfo{};
+        if (!peer.privateData.key.Empty()) {
+            auto ret = device::ReadHcommPrivateData(peer.privateData.key, privateInfo);
+            if (ret != BM_OK) {
+                return ret;
+            }
+        }
+        bool haveLocation = false;
+        bool remoteHost = localHost;
+        for (const auto &key : peer.memKeys) {
+            BM_VALIDATE_RETURN(key.WordCount() >= TRANS_KEY_ENVELOPE_WORDS,
+                               "Truncated HCOMM compose envelope, rank: " << item.first, BM_INVALID_PARAM);
+            const auto available = key.WordCount() - TRANS_KEY_ENVELOPE_WORDS;
+            BM_VALIDATE_RETURN(key.keys[0] <= available && key.keys[1] <= available - key.keys[0] &&
+                                   key.keys[0] + key.keys[1] == available,
+                               "Invalid HCOMM compose payload lengths, rank: " << item.first, BM_INVALID_PARAM);
+            TransportMemoryKey hostKey{}, deviceKey{};
+            ReadHostMemoryKey(key, hostKey);
+            ReadDeviceMemoryKey(key, deviceKey);
+            BM_VALIDATE_RETURN(hostKey.Empty() || deviceKey.Empty(),
+                               "Mixed HCOMM compose payloads are unsupported, rank: " << item.first, BM_INVALID_PARAM);
+            if (hostKey.Empty() && deviceKey.Empty()) {
+                continue;
+            }
+            BM_VALIDATE_RETURN(!peer.privateData.key.Empty(),
+                               "HCOMM MR routing requires private data, rank: " << item.first, BM_INVALID_PARAM);
+            const bool fromHost = !hostKey.Empty();
+            const auto &candidate = fromHost ? hostKey : deviceKey;
+            // Same-backend Device traffic keeps its original opaque MR descriptor format.
+            if (fromHost || localHost) {
+                device::HcommKeyView view{};
+                auto ret = device::ReadHcommKey(candidate, privateInfo, false, view);
+                if (ret != BM_OK) {
+                    return ret;
+                }
+                const auto expected = fromHost ? ENDPOINT_LOC_TYPE_HOST : ENDPOINT_LOC_TYPE_DEVICE;
+                BM_VALIDATE_RETURN(view.endpoint.loc.locType == expected,
+                                   "Invalid cross-type HCOMM payload, rank: " << item.first, BM_INVALID_PARAM);
+            }
+            BM_VALIDATE_RETURN(!haveLocation || remoteHost == fromHost,
+                               "HCOMM peer payload location changed, rank: " << item.first, BM_INVALID_PARAM);
+            haveLocation = true;
+            remoteHost = fromHost;
+            info.peerProtocol = fromHost ? HYBM_DOP_TYPE_HOST_RDMA : HYBM_DOP_TYPE_DEVICE_RDMA;
+            info.memKeys.push_back(candidate);
+        }
+        const auto nics = StrUtil::Split(peer.nic, NIC_DELIMITER);
+        for (const auto &nic : nics) {
+            const auto &prefix = remoteHost ? HOST_TRANSPORT_TYPE : DEVICE_TRANSPORT_TYPE;
+            if (StrUtil::StartWith(nic, prefix)) {
+                info.nic = nic.substr(prefix.length());
+            }
+        }
+        BM_VALIDATE_RETURN(!haveLocation || !info.nic.empty(),
+                           "HCOMM peer NIC prefix disagrees with its payload, rank: " << item.first, BM_INVALID_PARAM);
+        // With no MR, preserve private data and defer endpoint/channel creation to a later update.
+        output.options.emplace(item.first, std::move(info));
+    }
+    return BM_OK;
+}
+} // namespace
+
+Result ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOptions &param,
+                                                      HybmTransPrepareOptions &hostOptions)
+{
+    if (hostTransportManager_ && hostTransportManager_->IsHcomm()) {
+        return RouteHcommPrepareOptions(param, true, *tagManager_, options_.rankId, hostOptions);
+    }
     auto options = param.options;
     for (const auto &item : options) {
         auto rankId = item.first;
@@ -319,11 +453,15 @@ void ComposeTransportManager::GetHostPrepareOptions(const HybmTransPrepareOption
         }
         hostOptions.options.emplace(rankId, info);
     }
+    return BM_OK;
 }
 
-void ComposeTransportManager::GetDevicePrepareOptions(const HybmTransPrepareOptions &param,
-                                                      HybmTransPrepareOptions &deviceOptions)
+Result ComposeTransportManager::GetDevicePrepareOptions(const HybmTransPrepareOptions &param,
+                                                        HybmTransPrepareOptions &deviceOptions)
 {
+    if (deviceTransportManager_ && deviceTransportManager_->IsHcomm()) {
+        return RouteHcommPrepareOptions(param, false, *tagManager_, options_.rankId, deviceOptions);
+    }
     auto options = param.options;
     for (const auto &item : options) {
         auto rankId = item.first;
@@ -349,6 +487,7 @@ void ComposeTransportManager::GetDevicePrepareOptions(const HybmTransPrepareOpti
         info.privateData = item.second.privateData;
         deviceOptions.options.emplace(rankId, info);
     }
+    return BM_OK;
 }
 
 Result ComposeTransportManager::Prepare(const HybmTransPrepareOptions &options)
@@ -356,7 +495,10 @@ Result ComposeTransportManager::Prepare(const HybmTransPrepareOptions &options)
     Result ret = BM_OK;
     if (hostTransportManager_) {
         HybmTransPrepareOptions hostOptions{};
-        GetHostPrepareOptions(options, hostOptions);
+        ret = GetHostPrepareOptions(options, hostOptions);
+        if (ret != BM_OK) {
+            return ret;
+        }
         ret = hostTransportManager_->Prepare(hostOptions);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to prepare host ret: " << ret);
@@ -365,7 +507,10 @@ Result ComposeTransportManager::Prepare(const HybmTransPrepareOptions &options)
     }
     if (deviceTransportManager_) {
         HybmTransPrepareOptions deviceOptions{};
-        GetDevicePrepareOptions(options, deviceOptions);
+        ret = GetDevicePrepareOptions(options, deviceOptions);
+        if (ret != BM_OK) {
+            return ret;
+        }
         ret = deviceTransportManager_->Prepare(deviceOptions);
         if (ret != BM_OK) {
             BM_LOG_ERROR("Failed to prepare host ret: " << ret);
@@ -437,7 +582,7 @@ Result ComposeTransportManager::ReadRemote(uint32_t rankId, uint64_t lAddr, uint
         BM_LOG_ERROR("Failed to ReadRemote by device transport ret:" << ret);
     }
 
-    if (opType & HOST_PROTOCOL) {
+    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->ReadRemote(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -461,7 +606,7 @@ Result ComposeTransportManager::WriteRemote(uint32_t rankId, uint64_t lAddr, uin
         BM_LOG_ERROR("Failed to WriteRemote by device transport, ret: " << ret);
     }
 
-    if (opType & HOST_PROTOCOL) {
+    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->WriteRemote(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -484,7 +629,7 @@ Result ComposeTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr,
         BM_LOG_ERROR("Failed to ReadRemoteAsync by device transport ret:" << ret);
     }
 
-    if (opType & HOST_PROTOCOL) {
+    if ((opType & HOST_PROTOCOL) && hostTransportManager_ != nullptr) {
         auto ret = hostTransportManager_->ReadRemoteAsync(rankId, lAddr, rAddr, size);
         if (ret == BM_OK) {
             return BM_OK;
@@ -624,7 +769,10 @@ Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions 
     Result ret = BM_OK;
     if (hostTransportManager_) {
         HybmTransPrepareOptions hostOptions{};
-        GetHostPrepareOptions(options, hostOptions);
+        ret = GetHostPrepareOptions(options, hostOptions);
+        if (ret != BM_OK) {
+            return ret;
+        }
         BM_LOG_DEBUG("Try to update host transport rank options: " << hostOptions);
         ret = hostTransportManager_->UpdateRankOptions(hostOptions);
         if (ret != BM_OK) {
@@ -633,7 +781,10 @@ Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions 
     }
     if (deviceTransportManager_) {
         HybmTransPrepareOptions deviceOptions{};
-        GetDevicePrepareOptions(options, deviceOptions);
+        ret = GetDevicePrepareOptions(options, deviceOptions);
+        if (ret != BM_OK) {
+            return ret;
+        }
         BM_LOG_DEBUG("Try to update device transport rank options: " << deviceOptions);
         ret = deviceTransportManager_->UpdateRankOptions(deviceOptions);
         if (ret != BM_OK) {

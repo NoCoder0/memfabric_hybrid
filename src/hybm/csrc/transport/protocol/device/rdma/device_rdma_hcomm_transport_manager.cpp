@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <algorithm>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,11 +44,12 @@ namespace {
 
 constexpr int32_t CHANNEL_STATUS_POLL_INTERVAL_MS = 1;
 constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
+constexpr uint32_t COMPLETION_NOTIFY_TIMEOUT_SEC = 30;
 // 本端 flag 缓冲初值：device(AICPU kernel) 路径用它做完成确认；
 // host RoCE 路径已不再读对端 flag，完成确认只依赖 fence。
 constexpr uint64_t TRANSFER_FLAG_DONE = 1ULL;
-constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
-constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
+constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchReadWithNotify";
+constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWriteWithNotify";
 
 // A5(950) host RoCE 专用：把 channel desc 升到 HCOMM ABI v4 并归零 v4 新增字段
 // （srcPortList 若保持 memset 的 0xFF 即野指针）。v4 新字段都在 union raw 区内，
@@ -588,6 +590,13 @@ Result DeviceRdmaHcommTransportManager::CloseDevice()
     }
     Result finalRet = BM_OK;
 
+    for (auto &ctx : registry_) {
+        if (ctx != nullptr && !ctx->pendingTransfers.empty()) {
+            auto ret = SynchronizeContextLocked(*ctx, ctx->pendingTransfers);
+            BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Cannot close HCOMM with incomplete transfers, ret: " << ret);
+        }
+    }
+
     // Destroy all peer resources
     for (auto &item : remoteRanks_) {
         // Unimport peer descriptors from the HCOMM endpoint before tearing down,
@@ -822,6 +831,19 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
     return BM_OK;
 }
 
+Result DeviceRdmaHcommTransportManager::QueryControlKey(TransportMemoryKey &key)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    BM_VALIDATE_RETURN(opened_ && localFlagHandle_ != nullptr, "HCOMM control buffer is unavailable, rank: " << rankId_,
+                       BM_NOT_INITIALIZED);
+    void *desc = nullptr;
+    uint32_t length = 0;
+    auto ret = hcommApi_.RawMemExport(localEndpoint_, localFlagHandle_, desc, length);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret,
+                                     "HcommMemExport for control buffer failed, rank: " << rankId_ << ", ret: " << ret);
+    return BuildHcommControlKey(desc, length, reinterpret_cast<uint64_t>(localFlagPtr_), localFlagSize_, key);
+}
+
 void DeviceRdmaHcommTransportManager::UpdateMemoryKey(TransportMemoryKey &key, void *addr)
 {
     if (addr != nullptr) {
@@ -896,7 +918,7 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
                 return ret;
             }
             BM_LOG_DEBUG("Prepare has memKeys for rank=" << peerRank << ", creating channel now");
-            ret = CreatePeerResources(peerRank, peerData);
+            ret = CreatePeerResources(peerRank, peerData, item.second.peerProtocol == HYBM_DOP_TYPE_HOST_RDMA);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("CreatePeerResources failed for peer: " << peerRank);
                 return ret;
@@ -906,7 +928,8 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
     return BM_OK;
 }
 
-Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, const RdmaHcommPeerPrivateInfo &peerData)
+Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, const RdmaHcommPeerPrivateInfo &peerData,
+                                                           bool remoteHost)
 {
     auto &state = remoteRanks_[peerRank];
 
@@ -914,12 +937,23 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
         return BM_OK;
     }
 
-    // Build remote EndpointDesc from peer data
+    // Build remote EndpointDesc from peer data; only cross-backend peers require the MR trailer.
     EndpointDesc remoteDesc{};
     remoteDesc.protocol = COMM_PROTOCOL_ROCE;
     remoteDesc.commAddr.type = peerData.addrType;
     std::memcpy(remoteDesc.commAddr.raws, peerData.addrBytes, sizeof(remoteDesc.commAddr.raws));
-    if (hostRocePath_) {
+    const bool heterogeneous = !hostRocePath_ && remoteHost;
+    if (heterogeneous) {
+        BM_VALIDATE_RETURN(!state.importedDescs.empty(), "HCOMM peer MR is not ready, rank: " << peerRank,
+                           BM_NOT_CONNECTED);
+        const auto &memDesc = state.importedDescs.front();
+        auto ret = ReadHcommEndpoint(memDesc.data(), memDesc.size(), memDesc.size(), peerData, remoteDesc);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        BM_VALIDATE_RETURN(remoteDesc.loc.locType == ENDPOINT_LOC_TYPE_HOST,
+                           "HCOMM Host payload requires a HOST endpoint, peer: " << peerRank, BM_INVALID_PARAM);
+    } else if (hostRocePath_) {
         remoteDesc.loc.locType = ENDPOINT_LOC_TYPE_HOST;
         remoteDesc.loc.host.id = 0; // 同本端：HOST 形态不写 device.*（union 会覆盖 host.id）
     } else {
@@ -930,6 +964,11 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
         remoteDesc.loc.device.superPodIdx = superPodId_;
     }
     state.remoteEndpointDesc = remoteDesc;
+    state.hasEndpointDesc = true;
+    BM_VALIDATE_RETURN(!heterogeneous || (rankId_ > peerRank && peerData.listenPort != 0 && state.remoteFlagAddr != 0 &&
+                                          state.remoteFlagSize >= sizeof(uint64_t)),
+                       "HCOMM NPU client requires lower Host rank, listen port and flag MR, peer: " << peerRank,
+                       BM_INVALID_PARAM);
     if (hostRocePath_) {
         // 对端 flag 地址随 private data 交换，完成性判定时直接对它做一次 RDMA 读
         state.remoteFlagAddr = peerData.flagAddr;
@@ -1035,6 +1074,14 @@ Result DeviceRdmaHcommTransportManager::DestroyPeerResources(uint32_t peerRank)
     auto &state = it->second;
 
     // stream/notify/context are per-thread (CompletionContext), not per-peer.
+    for (auto &ctx : registry_) {
+        if (ctx != nullptr && std::any_of(ctx->pendingTransfers.begin(), ctx->pendingTransfers.end(),
+                                        [peerRank](const PendingTransfer &pt) { return pt.rankId == peerRank; })) {
+            auto ret = SynchronizeRankPendingLocked(*ctx, state, peerRank, true);
+            BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Cannot destroy HCOMM peer with incomplete transfers, rank: "
+                                                    << peerRank << " ret: " << ret);
+        }
+    }
     // They are destroyed in CloseDevice via registry_ cleanup.
     if (state.channel != 0) {
         (void)hcommApi_.DestroyChannel(state.channel);
@@ -1077,6 +1124,9 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
         const uint64_t descLen = meta.descLen;
         const uint64_t flagLen = meta.flagLen;
         const uint64_t gvaBase = meta.gvaBase;
+        BM_VALIDATE_RETURN(
+            meta.unused != kHcommControlKey || (peerSize == sizeof(uint64_t) && flagLen == 0 && gvaBase == peerAddr),
+            "Invalid HCOMM control key, rank: " << peerRank << ", buffer bytes: " << peerSize, BM_INVALID_PARAM);
         BM_LOG_DEBUG("ImportPeerMems rank=" << peerRank << " peerAddr=0x" << std::hex << peerAddr << " peerSize=0x"
                                             << peerSize << " descLen=" << std::dec << descLen);
 
@@ -1118,7 +1168,10 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
         BM_LOG_INFO("ImportPeerMems stored peer rank=" << peerRank << " peerDva=0x" << std::hex << state.peerDva
                                                        << " peerGva=0x" << state.peerGva << " peerSize=0x"
                                                        << state.peerDvaSize << std::dec);
-        if (hostRocePath_) {
+        if (meta.unused == kHcommControlKey) {
+            state.remoteFlagAddr = state.peerDva;
+            state.remoteFlagSize = state.peerDvaSize;
+        } else if (hostRocePath_) {
             // 对端 flag 地址不走 memory key，改由 private data 交换（见 CreatePeerResources）。
         } else {
             // Import flag descriptor from slot 3+ (if present)
@@ -1173,6 +1226,9 @@ Result DeviceRdmaHcommTransportManager::RemoveRanks(const std::vector<uint32_t> 
 {
     std::lock_guard<std::mutex> guard(mutex_);
     for (auto rankId : removedRanks) {
+        auto destroyRet = DestroyPeerResources(rankId);
+        BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(destroyRet, "DestroyPeerResources failed, rank: " << rankId
+                                                                                        << " ret: " << destroyRet);
         auto it = remoteRanks_.find(rankId);
         if (it != remoteRanks_.end()) {
             // Unimport peer memDesc/flagDesc from the HCOMM endpoint BEFORE dropping
@@ -1188,7 +1244,6 @@ Result DeviceRdmaHcommTransportManager::RemoveRanks(const std::vector<uint32_t> 
                 }
             }
         }
-        DestroyPeerResources(rankId);
         remoteRanks_.erase(rankId);
     }
     return BM_OK;
@@ -1425,13 +1480,18 @@ void DeviceRdmaHcommTransportManager::RestoreRankPending(std::vector<PendingTran
     src.clear();
 }
 
-Result DeviceRdmaHcommTransportManager::SynchronizeContextLocked(void * /* notify */, void *stream,
+Result DeviceRdmaHcommTransportManager::SynchronizeContextLocked(CompletionContext &ctx,
                                                                  std::vector<PendingTransfer> &pendingTransfers)
 {
-    auto syncRet = DlAclApi::AclrtSynchronizeStream(stream);
-    if (syncRet != BM_OK) {
-        BM_LOG_WARN("SynchronizeContextLocked AclrtSynchronizeStream failed, ret=" << syncRet);
+    if (!pendingTransfers.empty() && !ctx.notifyWaitQueued) {
+        auto ret = DlAclApi::AclrtWaitAndResetNotify(ctx.notify, ctx.stream, COMPLETION_NOTIFY_TIMEOUT_SEC);
+        BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "AclrtWaitAndResetNotify failed, ret: " << ret);
+        ctx.notifyWaitQueued = true;
     }
+    auto syncRet = DlAclApi::AclrtSynchronizeStream(ctx.stream);
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(syncRet,
+                                   "AclrtSynchronizeStream failed, retain transfer buffers, ret: " << syncRet);
+    ctx.notifyWaitQueued = false;
     for (auto &pt : pendingTransfers) {
         device::ReleaseDeviceTransferBuffers(pt.buffers);
     }
@@ -1446,9 +1506,7 @@ Result DeviceRdmaHcommTransportManager::SynchronizeRankPendingLocked(CompletionC
     std::lock_guard<std::mutex> rankLock(state.rankMutex);
     ExtractRankPending(ctx.pendingTransfers, rankId, rankPending);
 
-    // Data kernel already ensured data consistency via WRITE → RDMA READ flag (QP ordering).
-    // No marker kernel needed; just drain the stream and release buffers.
-    auto syncRet = SynchronizeContextLocked(ctx.notify, ctx.stream, rankPending);
+    auto syncRet = SynchronizeContextLocked(ctx, rankPending);
     if (syncRet != BM_OK) {
         RestoreRankPending(rankPending, ctx.pendingTransfers);
     }
@@ -1535,27 +1593,26 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
         return BM_OK;
     }
 
+    BM_VALIDATE_RETURN(ctx.pendingTransfers.empty(), "Previous HCOMM transfer has not completed", BM_ERROR);
     DeviceTransferBuffers buffers{};
     auto ret = device::LaunchDeviceKernel(
         KernelLaunchConfig{isRead ? deviceFuncHandles_.batchRead : deviceFuncHandles_.batchWrite, state.thread,
                            state.channel, ctx.stream, isRead, static_cast<uint32_t>(localVec.size()), localVec.data(),
                            remoteVec.data(), sizeVec.data(), state.remoteFlagAddr,
-                           reinterpret_cast<uint64_t>(localFlagPtr_), static_cast<uint32_t>(localFlagSize_)},
+                           reinterpret_cast<uint64_t>(localFlagPtr_), static_cast<uint32_t>(localFlagSize_),
+                           ctx.notifyId, true},
         buffers);
     if (ret != BM_OK) {
         return ret;
     }
 
-    // Synchronize immediately after launch to keep only one kernel running on the
-    // shared HCOMM thread/channel at a time. Concurrent kernels interleave on the
-    // AICPU engine thread and corrupt HCOMM's thread-local BatchMode state
-    // (g_threadLaunchCtx), which fails the kernel with aicpu error 0x2a. This
-    // matches the synchronous model of device_urma; the flag read-back inside the
-    // kernel still provides write ordering (QP ordering) on A2 where Fence is no-op.
-    const auto syncRet = DlAclApi::AclrtSynchronizeStream(ctx.stream);
-    device::ReleaseDeviceTransferBuffers(buffers);
+    // The kernel submits work on the separate HCOMM stream. Its final Notify
+    // connects WRITE -> Fence -> flag read -> BatchModeEnd to this ACL stream.
+    std::vector<PendingTransfer> pending{{rankId, buffers}};
+    const auto syncRet = SynchronizeContextLocked(ctx, pending);
     if (syncRet != BM_OK) {
-        BM_LOG_ERROR("StageAndLaunchTransfer AclrtSynchronizeStream failed, rank: " << rankId << " ret: " << syncRet);
+        RestoreRankPending(pending, ctx.pendingTransfers);
+        BM_LOG_ERROR("StageAndLaunchTransfer completion failed, rank: " << rankId << " ret: " << syncRet);
         return syncRet;
     }
     return BM_OK;

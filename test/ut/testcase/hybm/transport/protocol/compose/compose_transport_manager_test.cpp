@@ -54,6 +54,11 @@ private:
 
 class FakeTransportManager : public TransportManager {
 public:
+    bool IsHcomm() const override
+    {
+        return hcomm;
+    }
+
     Result OpenDevice(const TransportOptions &) override
     {
         ++openDeviceCalls;
@@ -203,6 +208,7 @@ public:
     }
 
 public:
+    bool hcomm{false};
     uint32_t openDeviceCalls{0};
     uint32_t closeDeviceCalls{0};
     uint32_t registerCalls{0};
@@ -1880,4 +1886,79 @@ TEST(ComposeTransportManagerTest, UpdateMemoryKey_DeviceUrma)
     TransportMemoryKey key{};
     mgr.UpdateMemoryKey(key, nullptr);
     EXPECT_EQ(dev->updateMemKeyCalls, 1u);
+}
+
+namespace {
+std::vector<Result> ExerciseComposeIo(ComposeTransportManager &manager)
+{
+    CopyDescriptor desc{};
+    return {manager.ReadRemote(1, 1, 2, 8),
+            manager.WriteRemote(1, 1, 2, 8),
+            manager.ReadRemoteAsync(1, 1, 2, 8),
+            manager.WriteRemoteAsync(1, 1, 2, 8),
+            manager.ReadRemoteBatchAsync(1, desc),
+            manager.WriteRemoteBatchAsync(1, desc),
+            manager.Synchronize(1)};
+}
+void ExpectIoCalls(const FakeTransportManager &manager, uint32_t expected)
+{
+    EXPECT_EQ(manager.readCalls, expected);
+    EXPECT_EQ(manager.writeCalls, expected);
+    EXPECT_EQ(manager.readAsyncCalls, expected);
+    EXPECT_EQ(manager.writeAsyncCalls, expected);
+    EXPECT_EQ(manager.readBatchAsyncCalls, expected);
+    EXPECT_EQ(manager.writeBatchAsyncCalls, expected);
+    EXPECT_EQ(manager.syncCalls, expected);
+}
+} // namespace
+
+TEST(ComposeTransportManagerTest, HcommIoAndSynchronizeRespectRankOpType)
+{
+    for (uint32_t opType : {uint32_t(HYBM_DOP_TYPE_HOST_RDMA), uint32_t(HYBM_DOP_TYPE_DEVICE_RDMA), 0U}) {
+        ComposeTransportManager manager(MakeRankOpTag(opType));
+        auto host = std::make_shared<FakeTransportManager>();
+        auto device = std::make_shared<FakeTransportManager>();
+        host->hcomm = device->hcomm = true;
+        manager.hostTransportManager_ = host;
+        manager.deviceTransportManager_ = device;
+        for (auto result : ExerciseComposeIo(manager)) {
+            EXPECT_EQ(result, opType == 0 ? BM_ERROR : BM_OK);
+        }
+        ExpectIoCalls(*host, opType == HYBM_DOP_TYPE_HOST_RDMA ? 1 : 0);
+        ExpectIoCalls(*device, opType == HYBM_DOP_TYPE_DEVICE_RDMA ? 1 : 0);
+    }
+}
+
+TEST(ComposeTransportManagerTest, HcommIoUsesOriginalFallbackAndFinalError)
+{
+    for (bool deviceSelected : {false, true}) {
+        const uint32_t opType = HYBM_DOP_TYPE_HOST_RDMA | (deviceSelected ? HYBM_DOP_TYPE_DEVICE_RDMA : 0U);
+        ComposeTransportManager manager(MakeRankOpTag(opType));
+        auto host = std::make_shared<FakeTransportManager>();
+        auto device = std::make_shared<FakeTransportManager>();
+        manager.hostTransportManager_ = host;
+        manager.deviceTransportManager_ = device;
+        auto selected = deviceSelected ? device : host;
+        selected->hcomm = true;
+        selected->readResult = selected->writeResult = selected->readAsyncResult = selected->writeAsyncResult =
+            BM_TIMEOUT;
+        selected->readBatchAsyncResult = selected->writeBatchAsyncResult = selected->syncResult = BM_TIMEOUT;
+        for (auto result : ExerciseComposeIo(manager)) {
+            EXPECT_EQ(result, deviceSelected ? BM_OK : BM_ERROR);
+        }
+        ExpectIoCalls(*selected, 1);
+        ExpectIoCalls(*(deviceSelected ? host : device), deviceSelected ? 1 : 0);
+    }
+}
+
+TEST(ComposeTransportManagerTest, HcommHostKeyExportFailureIsPropagated)
+{
+    ComposeTransportManager manager(MakeRankOpTag(HYBM_DOP_TYPE_HOST_RDMA));
+    auto host = std::make_shared<FakeTransportManager>();
+    host->hcomm = true;
+    host->queryKeyResult = BM_TIMEOUT;
+    manager.hostTransportManager_ = host;
+    TransportMemoryKey key;
+    EXPECT_EQ(manager.QueryMemoryKey(1, key), BM_TIMEOUT);
+    EXPECT_EQ(host->queryKeyCalls, 1U);
 }

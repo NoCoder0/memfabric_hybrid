@@ -1801,3 +1801,75 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareFail)
     EXPECT_NE(ret, BM_OK);
     EXPECT_EQ(fake->prepareCalled, 1);
 }
+
+TEST_F(HybmEntityDefaultTest, FreeLocalMemoryRetainsSliceWhenUnregisterFails)
+{
+    class RetainedSegment : public FakeMemSegment {
+    public:
+        int releases{0};
+        ock::mf::MemSlicePtr slice = std::make_shared<ock::mf::MemSlice>(
+            1, HYBM_MEM_TYPE_HOST, static_cast<ock::mf::MemPageTblType>(0), 0x90000, 0x10000, 4096);
+        ock::mf::MemSlicePtr GetMemSlice(hybm_mem_slice_t, bool) const noexcept override
+        {
+            return slice;
+        }
+        ock::mf::Result ReleaseSliceMemory(const ock::mf::MemSlicePtr &) noexcept override
+        {
+            ++releases;
+            return BM_OK;
+        }
+    };
+    class FailingTransport : public FakeTransportManager {
+    public:
+        ock::mf::Result UnregisterMemoryRegion(uint64_t) override
+        {
+            return BM_ERROR;
+        }
+    };
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_ALLOC);
+    auto retained = std::make_shared<RetainedSegment>();
+    entity.initialized_ = true;
+    entity.dramSegment_ = retained;
+    entity.transportManager_ = std::make_shared<FailingTransport>();
+    EXPECT_EQ(entity.FreeLocalMemory(retained->slice->ConvertToId(), 0), BM_ERROR);
+    EXPECT_EQ(retained->releases, 0);
+    entity.initialized_ = false;
+}
+
+TEST_F(HybmEntityDefaultTest, FreeZeroCapacitySliceDoesNotUnregisterTransportControl)
+{
+    class ZeroSegment : public FakeMemSegment {
+    public:
+        int releases{0};
+        ock::mf::MemSlicePtr slice = std::make_shared<ock::mf::MemSlice>(
+            1, HYBM_MEM_TYPE_HOST, static_cast<ock::mf::MemPageTblType>(0), 0, 0x10000, 0);
+        ock::mf::MemSlicePtr GetMemSlice(hybm_mem_slice_t, bool) const noexcept override
+        {
+            return slice;
+        }
+        ock::mf::Result ReleaseSliceMemory(const ock::mf::MemSlicePtr &) noexcept override
+        {
+            ++releases;
+            return BM_OK;
+        }
+    };
+    class ControlOwnerTransport : public FakeTransportManager {
+    public:
+        int unregister_calls{0};
+        ock::mf::Result UnregisterMemoryRegion(uint64_t) override
+        {
+            ++unregister_calls;
+            return BM_ERROR;
+        }
+    };
+    ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_ALLOC);
+    auto segment = std::make_shared<ZeroSegment>();
+    auto transport = std::make_shared<ControlOwnerTransport>();
+    entity.initialized_ = true;
+    entity.dramSegment_ = segment;
+    entity.transportManager_ = transport;
+    EXPECT_EQ(entity.FreeLocalMemory(segment->slice->ConvertToId(), 0), BM_OK);
+    EXPECT_EQ(segment->releases, 1);
+    EXPECT_EQ(transport->unregister_calls, 0);
+    entity.initialized_ = false;
+}

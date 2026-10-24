@@ -64,6 +64,8 @@ struct KernelLaunchConfig {
     uint64_t remoteFlagAddr{0};
     uint64_t localFlagAddr{0};
     uint32_t flagSize{0};
+    uint32_t completionNotifyId{0};
+    bool recordCompletion{false};
 };
 
 /**
@@ -123,7 +125,8 @@ inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransfe
     }
     const auto ptrBytes = config.batchSize * sizeof(void *);
 
-    HybmOneSideOpParam args{};
+    HybmOneSideOpCompletionParam launchArgs{};
+    auto &args = launchArgs.transfer;
     args.thread = config.thread;
     args.channel = config.channel;
     args.list_num = config.batchSize;
@@ -134,7 +137,9 @@ inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransfe
     args.local_flag_addr = config.localFlagAddr;
     args.flag_size = config.flagSize;
 
-    ret = LaunchAicpuKernel(config.funcHandle, config.stream, &args, sizeof(args));
+    launchArgs.completionNotifyId = config.completionNotifyId;
+    const size_t argsBytes = config.recordCompletion ? sizeof(launchArgs) : sizeof(args);
+    ret = LaunchAicpuKernel(config.funcHandle, config.stream, &launchArgs, argsBytes);
     if (ret != BM_OK) {
         BM_LOG_ERROR("LaunchDeviceKernel launch failed, kernel=" << (config.isRead ? "HybmBatchRead" : "HybmBatchWrite")
                                                                  << " ret=" << ret);

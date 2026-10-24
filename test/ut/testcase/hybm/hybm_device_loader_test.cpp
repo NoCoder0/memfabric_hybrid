@@ -42,13 +42,17 @@ void *TestDlsym(void *, const char *)
 #define dlsym          TestDlsym
 // Other UTs include the same source. Keep this TU's C entry points private to
 // the loader tests by giving them distinct names, including the batch entry.
-#define HybmBatchWrite    LoaderTestHybmBatchWrite
-#define HybmBatchRead     LoaderTestHybmBatchRead
-#define HybmBatchTransfer LoaderTestHybmBatchTransfer
+#define HybmBatchWrite           LoaderTestHybmBatchWrite
+#define HybmBatchRead            LoaderTestHybmBatchRead
+#define HybmBatchTransfer        LoaderTestHybmBatchTransfer
+#define HybmBatchWriteWithNotify LoaderTestHybmBatchWriteWithNotify
+#define HybmBatchReadWithNotify  LoaderTestHybmBatchReadWithNotify
 #include "../../../../src/hybm/ops/hybm_kernel/hybm_batch_transfer.cc"
 #undef HybmBatchWrite
 #undef HybmBatchRead
 #undef HybmBatchTransfer
+#undef HybmBatchWriteWithNotify
+#undef HybmBatchReadWithNotify
 #undef dlopen
 #undef dlclose
 #undef dlsym

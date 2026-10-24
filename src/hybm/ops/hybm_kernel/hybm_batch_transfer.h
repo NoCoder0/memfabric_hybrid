@@ -29,6 +29,12 @@ struct HybmOneSideOpParam {
     uint32_t flag_size;
 };
 
+// Separate entry points preserve the existing single-sided and URMA kernel ABI.
+struct HybmOneSideOpCompletionParam {
+    HybmOneSideOpParam transfer;
+    uint32_t completionNotifyId;
+};
+
 // Multi-rank batch ABI used by HybmBatchTransfer.
 struct HybmBatchTransferParam {
     // Rank 级参数
@@ -52,6 +58,8 @@ struct HybmBatchTransferParam {
 extern "C" {
 int32_t HybmBatchWrite(HybmOneSideOpParam *param);
 int32_t HybmBatchRead(HybmOneSideOpParam *param);
+int32_t HybmBatchWriteWithNotify(HybmOneSideOpCompletionParam *param);
+int32_t HybmBatchReadWithNotify(HybmOneSideOpCompletionParam *param);
 int32_t HybmBatchTransfer(HybmBatchTransferParam *param);
 }
 

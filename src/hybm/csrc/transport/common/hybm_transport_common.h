@@ -225,6 +225,8 @@ struct TransportRankPrepareInfo {
     TransportPrivateData privateData{};
     hybm_role_type role{HYBM_ROLE_PEER};
     std::vector<TransportMemoryKey> memKeys;
+    // Local routing metadata from the compose envelope; zero preserves legacy backend behavior.
+    uint32_t peerProtocol{0};
     TransportRankPrepareInfo() {}
     TransportRankPrepareInfo(std::string n, TransportMemoryKey k) : nic{std::move(n)}, memKeys{k} {}
     TransportRankPrepareInfo(std::string n, std::vector<TransportMemoryKey> ks)

@@ -44,6 +44,11 @@ uint32_t singleWriteCount = 0U;
 uint32_t batchModeStartCount = 0U;
 uint32_t batchModeEndCount = 0U;
 std::vector<char> operationOrder;
+std::vector<ock::mf::HcommBatchTransferDesc> deferredDescriptors;
+bool deferDataUntilDrain = false;
+int32_t drainResult = BM_OK;
+int32_t notifyResult = BM_OK;
+constexpr uint32_t kCompletionNotifyId = 41U;
 
 class HybmBatchTransferTest : public testing::Test {
 protected:
@@ -58,6 +63,9 @@ protected:
         batchModeStartCount = 0U;
         batchModeEndCount = 0U;
         operationOrder.clear();
+        deferredDescriptors.clear();
+        deferDataUntilDrain = false;
+        drainResult = notifyResult = BM_OK;
         descriptors.resize(kIoCount);
         for (uint32_t i = 0; i < kIoCount; ++i) {
             auto &desc = descriptors[i];
@@ -110,6 +118,28 @@ int32_t HcommChannelFenceOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle)
     return BM_OK;
 }
 
+int32_t HcommChannelDrainOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel)
+{
+    EXPECT_EQ(thread, kThread);
+    EXPECT_EQ(channel, kChannel);
+    operationOrder.push_back('R');
+    if (drainResult != BM_OK) {
+        return drainResult;
+    }
+    for (const auto &desc : deferredDescriptors) {
+        std::memcpy(desc.transferInfo.read.dst, desc.transferInfo.read.src, desc.transferInfo.read.len);
+    }
+    return BM_OK;
+}
+
+int32_t HcommAclrtNotifyRecordOnThread(ock::mf::ThreadHandle thread, uint64_t notifyId)
+{
+    EXPECT_EQ(thread, kThread);
+    EXPECT_EQ(notifyId, kCompletionNotifyId);
+    operationOrder.push_back('N');
+    return notifyResult;
+}
+
 int32_t HcommReadOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle, void *dst, const void *src, uint64_t len)
 {
     markerReadCount++;
@@ -131,6 +161,9 @@ int32_t HcommBatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::Channe
     EXPECT_EQ(thread, kThread);
     EXPECT_EQ(channel, kChannel);
     operationOrder.push_back('D');
+    if (deferDataUntilDrain) {
+        deferredDescriptors.insert(deferredDescriptors.end(), descs, descs + count);
+    }
     submittedDescriptors.push_back(descs);
     submittedCounts.push_back(count);
     if (submittedCounts.size() == batchFailAt) {
@@ -165,6 +198,12 @@ void *BatchTestDlsym(void *, const char *name)
     if (std::strcmp(name, "HcommChannelFenceOnThread") == 0) {
         return reinterpret_cast<void *>(&HcommChannelFenceOnThread);
     }
+    if (std::strcmp(name, "HcommChannelDrainOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommChannelDrainOnThread);
+    }
+    if (std::strcmp(name, "HcommAclrtNotifyRecordOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommAclrtNotifyRecordOnThread);
+    }
     if (std::strcmp(name, "HcommReadOnThread") == 0) {
         return reinterpret_cast<void *>(&HcommReadOnThread);
     }
@@ -192,6 +231,53 @@ TEST_F(HybmBatchTransferTest, UnifiedEntrySubmitsMixedDescriptorsUnchangedByRank
     EXPECT_EQ(markerReadCount, 0U);
     EXPECT_EQ(singleWriteCount, 0U);
     EXPECT_EQ(batchModeStartCount, 1U);
+    EXPECT_EQ(batchModeEndCount, 1U);
+}
+
+TEST_F(HybmBatchTransferTest, CompletionDrainsDeferredReadBeforeNotify)
+{
+    deferDataUntilDrain = true;
+    uint64_t flagSource = 1U, flagDestination = 0U, length = sizeof(source);
+    void *src = &source, *dst = &destination;
+    HybmOneSideOpCompletionParam args{};
+    args.transfer = {kThread, kChannel, 1U, &dst, &src, &length,
+                     reinterpret_cast<uint64_t>(&flagSource), reinterpret_cast<uint64_t>(&flagDestination),
+                     sizeof(flagSource)};
+    args.completionNotifyId = kCompletionNotifyId;
+    EXPECT_EQ(HybmBatchReadWithNotify(&args), BM_OK);
+    EXPECT_EQ(destination, source);
+    EXPECT_EQ(flagDestination, flagSource);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'D', 'F', 'M', 'R', 'N'}));
+    EXPECT_EQ(batchModeEndCount, 1U);
+}
+
+TEST_F(HybmBatchTransferTest, DrainFailureDoesNotPublishCompletion)
+{
+    drainResult = BM_ERROR;
+    HybmOneSideOpCompletionParam args{};
+    args.transfer.thread = kThread;
+    args.transfer.channel = kChannel;
+    args.transfer.remote_flag_addr = reinterpret_cast<uint64_t>(&source);
+    args.transfer.local_flag_addr = reinterpret_cast<uint64_t>(&destination);
+    args.transfer.flag_size = sizeof(source);
+    args.completionNotifyId = kCompletionNotifyId;
+    EXPECT_EQ(HybmBatchReadWithNotify(&args), BM_ERROR);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'F', 'M', 'R'}));
+    EXPECT_EQ(batchModeEndCount, 1U);
+}
+
+TEST_F(HybmBatchTransferTest, NotifyFailureStillEndsBatch)
+{
+    notifyResult = BM_ERROR;
+    HybmOneSideOpCompletionParam args{};
+    args.transfer.thread = kThread;
+    args.transfer.channel = kChannel;
+    args.transfer.remote_flag_addr = reinterpret_cast<uint64_t>(&source);
+    args.transfer.local_flag_addr = reinterpret_cast<uint64_t>(&destination);
+    args.transfer.flag_size = sizeof(source);
+    args.completionNotifyId = kCompletionNotifyId;
+    EXPECT_EQ(HybmBatchWriteWithNotify(&args), BM_ERROR);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'F', 'M', 'R', 'N'}));
     EXPECT_EQ(batchModeEndCount, 1U);
 }
 
@@ -322,4 +408,31 @@ TEST_F(HybmBatchTransferTest, OneSideWriteEntryPreservesCompletionMarker)
     EXPECT_EQ(HybmBatchWrite(&oneSide), BM_OK);
     EXPECT_EQ(destination, markerSource);
     EXPECT_EQ(markerReadCount, 1U);
+}
+
+TEST_F(HybmBatchTransferTest, OneSideEntriesPreferBatchAndOnlyFallbackWhenUnsupported)
+{
+    uint64_t length = sizeof(source);
+    void *src = &source;
+    void *dst = &destination;
+    HybmOneSideOpParam oneSide{};
+    oneSide.thread = kThread;
+    oneSide.channel = kChannel;
+    oneSide.list_num = 1U;
+    oneSide.dst_buf_addr_list = &dst;
+    oneSide.src_buf_addr_list = &src;
+    oneSide.len_list = &length;
+    for (bool isRead : {false, true}) {
+        for (int32_t result : {BM_OK, BM_NOT_SUPPORTED, BM_ERROR}) {
+            submittedCounts.clear();
+            submittedDescriptors.clear();
+            singleWriteCount = markerReadCount = 0;
+            batchResult = result;
+            const auto ret = isRead ? HybmBatchRead(&oneSide) : HybmBatchWrite(&oneSide);
+            EXPECT_EQ(ret, result == BM_ERROR ? BM_ERROR : BM_OK);
+            EXPECT_EQ(submittedCounts, std::vector<uint32_t>({1U}));
+            EXPECT_EQ(singleWriteCount, !isRead && result == BM_NOT_SUPPORTED ? 1U : 0U);
+            EXPECT_EQ(markerReadCount, isRead && result == BM_NOT_SUPPORTED ? 1U : 0U);
+        }
+    }
 }

@@ -22,7 +22,8 @@
 | `MF_HOST_SHM_USE_MEMFD` | 0                                                  | HOST_SHM段本端内存申请开关。设为`1`时优先尝试`memfd_create(MFD_HUGETLB)`申请匿名大页（容器内无需挂载`/dev/hugepages`，但跨进程import需经`/proc/<pid>/fd/<fd>`打开，要求各rank共享PID命名空间，如容器以`--pid=host`启动且运行uid一致）。 |
 | `MF_DEVICE_UB_QOS` | 0                                                  | device_urma 的 HCOMM channel QoS，取值范围0-7，数值越大优先级越高；非法值回退为0。                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `MF_DEVICE_URMA_ENABLE_UBOE` | 0                                                  | 控制是否在 `DEVICE_URMA` 初始化时使用 UBoE 协议（UBoE 不再是独立的 dataOp 配置项）。设为 `1` 时，若当前机型协议表包含 UBoE 则优先选择 UBoE，否则记录 WARN 并回退到机型默认协议；未设置或设为 `0` 时，按机型协议表的默认优先级选择协议。其他取值视为未开启。 |
-| `MF_HYBM_RDMA_USE_HCOMM` | 0                                                  | HCOMM传输开关（仅 `DEVICE_RDMA` 路径生效）。<br>**默认关闭（0）**：无论CANN版本，`DEVICE_RDMA`一律走native RDMA传输（`RdmaTransportManager`），动态注册内存天然支持，无需中转。<br>**置1**：恢复CANN版本判断——CANN ≥ 9.1（ACL ≥ 1.17）时走HCOMM传输（`DeviceRdmaHcommTransportManager`），否则仍走native RDMA。<br>**限制**：A2（Ascend 910B）走HCOMM时，channel MR表为创建时快照（`AicpuTsRoceChannel` 不支持运行时 `UpdateMemInfo`），join后动态注册的内存（如vLLM KV cache）暂不支持直传，此时**必须同时设置 `MF_HYBM_RDMA_FORCE_UNREGISTERED=1` 走swap中转**。A5（Ascend 950）URMA通道支持动态MR更新，不受此限制。 |
+| `MF_HYBM_RDMA_USE_HCOMM` | 0 | DEVICE_RDMA 后端开关。默认使用 native RDMA；置 1 且 CANN ≥ 9.1（ACL ≥ 1.17）时使用 HCOMM，否则沿用 native RDMA 路径。HCOMM 需保留 C d336953a 的 MR EndpointDesc 尾部 ABI；建链后注册本地 buffer 还需匹配的 AICPU TS 动态 MR 全量刷新补丁。A5 保留 CPU RoCE 分支与固定本地池约束。 |
+| `MF_HYBM_HOST_RDMA_USE_HCOMM` | 0 | HOST_RDMA 后端开关。置 1 使用每 entity 独立的 Host HCOMM；默认仍用 HCOM。只支持单网络后端、固定 DRAM 池及兼容的 HCOMM 对端。Host rank 必须小于 NPU rank；通道存续期间不支持新增或注销 Host 本地 MR。详见 [实施记录](kunpeng_dram_v3_implementation.md)。 |
 | `MF_LOG_LEVEL` | 无                                                  | MemFabric日志级别，取值范围0-4（0:DEBUG, 1:INFO, 2:WARN, 3:ERROR, 4:OFF）。**仅Python接口下生效，bm/shm场景不生效。**                                                                                                                                                                                                                                                                                                                                                                              |
 | `MF_CONFIG_STORE_URL` | 无（必填）                                              | MemFabric Store URL，用于Transfer Engine初始化时连接配置存储。格式如`tcp://ip:port`。                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `MF_CONFIG_STORE_PORT_START` | 9000                                               | Config Store可用端口范围起始值，与`MF_CONFIG_STORE_PORT_END`配合使用。TransferEngine在`session_id`未指定端口（如`ip`/`ip:0`）时自动选端口亦使用此范围。                                                                                                                                                                                                                                                                                                                                                         |
@@ -102,22 +103,16 @@ export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128))
 | `MF_HYBM_RDMA_USE_HCOMM` | CANN版本 | 实际传输实现 | 动态注册内存支持 |
 |--------------------------|---------|-------------|----------------|
 | 0（默认） | 任意 | native RDMA（`RdmaTransportManager`） | ✅ 天然支持（实时查MR表），无需中转 |
-| 1 | ≥ 9.1（ACL ≥ 1.17） | HCOMM（`DeviceRdmaHcommTransportManager`） | ❌ A2需中转（见下） |
-| 1 | < 9.1 | native RDMA | ✅ 同上 |
+| 1 | ≥ 9.1（ACL ≥ 1.17） | HCOMM（`DeviceRdmaHcommTransportManager`） | AICPU TS 需匹配动态 MR 全量刷新补丁；CPU RoCE 使用固定本地池 |
+| 1 | < 9.1 | native RDMA | 同默认 native 路径 |
 
-### HCOMM 路径的限制（A2 / Ascend 910B）
+### HCOMM 的 ABI 与 MR 限制
 
-- A2 的 HCOMM channel 类为 `AicpuTsRoceChannel`，MR表在channel创建时一次性快照冻结，且不支持运行时 `UpdateMemInfo`（基类空实现）；
-- join 后动态注册的内存（如 vLLM 动态 KV cache）不在快照中，暂不支持直传；
-- **必须同时设置**：
-
-  ```bash
-  export MF_HYBM_RDMA_USE_HCOMM=1
-  export MF_HYBM_RDMA_FORCE_UNREGISTERED=1   # 强制走swap中转兜底
-  export MF_HYBM_RDMA_SWAP_SPACE_SIZE=2048   # 中转所需的swap空间（MB）
-  ```
-
-- native RDMA 路径无此限制，无需设置中转相关变量。
+- 双端必须保留 C `d336953a` 的 MR 尾部 EndpointDesc ABI。加载成功或 CANN 版本满足要求不代表任意 HCOMM 构建兼容。
+- AICPU TS 通道的本地 buffer 注册、注销和远端 MR 导入、取消导入会在 stream 完成后调用全量快照刷新；需要匹配的 HCOMM 补丁，刷新失败即阻止继续传输。
+- Host HCOMM 和既有 A5 CPU RoCE 通道没有可用的动态快照刷新能力，通道存续期间拒绝新增/注销本地 MR。
+- 首轮每 peer 只支持一个固定远端池。NPU 本地 KV buffer 动态注册不等于支持多个远端 slice；访问须完整落在已注册和已导入范围内。
+- 不再将 `MF_HYBM_RDMA_FORCE_UNREGISTERED=1` 作为该接入的必选项或刷新失败的静默兜底。完整限制和硬件验收项见[实施记录](kunpeng_dram_v3_implementation.md)。
 
 ### native RDMA 的 AICPU 直发开关（`MF_HYBM_RDMA_USE_AICPU`）
 

@@ -32,6 +32,8 @@ using HcommChannelFenceOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, 
 using HcommBatchTransferOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
                                                    const ock::mf::HcommBatchTransferDesc *transferDescs,
                                                    uint32_t transferDescNum);
+using HcommAclrtNotifyRecordOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, uint64_t notifyId);
+using HcommChannelDrainOnThreadFunc = int32_t (*)(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel);
 
 void *g_hcommHandle = nullptr;
 HcommBatchModeStartFunc g_hcommBatchModeStart = nullptr;
@@ -462,7 +464,7 @@ int32_t ReadRemoteFlag(const HybmOneSideOpParam *param)
     return BM_OK;
 }
 
-int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
+int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param, const uint32_t *completionNotifyId = nullptr)
 {
     HYBM_LOGD("[hybm] HybmBatchTransfer start, isRead=%d", isRead);
     int32_t ret = CheckParam(param);
@@ -511,6 +513,28 @@ int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
         return BM_ERROR;
     }
 
+    if (completionNotifyId != nullptr) {
+        // A2/A3 Fence is a no-op; a later READ can finish before an earlier large READ.
+        // Drain submits a fenced READ and waits for its hardware completion Notify.
+        auto drain = reinterpret_cast<HcommChannelDrainOnThreadFunc>(LoadRequiredSymbol("HcommChannelDrainOnThread"));
+        ret = drain == nullptr ? BM_DL_FUNCTION_FAILED : drain(param->thread, param->channel);
+        if (ret != BM_OK) {
+            HYBM_LOGE(ret, "[hybm] HcommChannelDrainOnThread failed, thread=%lu channel=%lu ret=%d",
+                      param->thread, param->channel, ret);
+            (void)BatchModeEnd(kBatchTag);
+            return ret;
+        }
+        auto record = reinterpret_cast<HcommAclrtNotifyRecordOnThreadFunc>(
+            LoadRequiredSymbol("HcommAclrtNotifyRecordOnThread"));
+        ret = record == nullptr ? BM_DL_FUNCTION_FAILED : record(param->thread, *completionNotifyId);
+        if (ret != BM_OK) {
+            HYBM_LOGE(ret, "[hybm] HcommAclrtNotifyRecordOnThread failed, thread=%lu notifyId=%u ret=%d",
+                      param->thread, *completionNotifyId, ret);
+            (void)BatchModeEnd(kBatchTag);
+            return ret;
+        }
+    }
+
     ret = BatchModeEnd(kBatchTag);
     if (ret != BM_OK && !IsNotSupported(ret)) {
         HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeEnd failed, batchTag=%s ret=%d", kBatchTag, ret);
@@ -523,6 +547,24 @@ int32_t HybmBatchTransfer(bool isRead, HybmOneSideOpParam *param)
 } // namespace
 
 extern "C" {
+int32_t HybmBatchWriteWithNotify(HybmOneSideOpCompletionParam *param)
+{
+    if (param == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] HybmBatchWriteWithNotify param is null");
+        return BM_INVALID_PARAM;
+    }
+    return HybmBatchTransfer(false, &param->transfer, &param->completionNotifyId);
+}
+
+int32_t HybmBatchReadWithNotify(HybmOneSideOpCompletionParam *param)
+{
+    if (param == nullptr) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] HybmBatchReadWithNotify param is null");
+        return BM_INVALID_PARAM;
+    }
+    return HybmBatchTransfer(true, &param->transfer, &param->completionNotifyId);
+}
+
 int32_t HybmBatchWrite(HybmOneSideOpParam *param)
 {
     int32_t ret = HybmBatchTransfer(false, param);
