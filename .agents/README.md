@@ -6,6 +6,7 @@
 
 | Skill | 适用场景 | 示例用法                                        |
 |---|---|---------------------------------------------|
+| [`gitcode-pr-create`][gitcode-pr-create] | 准备/创建 PR，自动安装 CLI，核实分支与已有 PR | `使用 gitcode-pr-create 准备 PR` |
 | `memfabric-code-review` | 代码审查、错误返回日志、代码规范、UT/test 字面量、行宽和函数长度检查 | `使用 memfabric-code-review 检查这次变更`           |
 | `memfabric-log-audit` | 扫描代码仓日志代码，找出关键执行分支中缺失或过弱的日志，输出日志修改方案 | `使用 memfabric-log-audit 扫描 src/ 和 app/ 的日志问题`       |
 | `memfabric-release` | 生成 MemFabric Hybrid changelog / release note，并列出本次 release 新增 PR | `使用 memfabric-release 生成 1.2.1 release note` |
@@ -13,6 +14,8 @@
 | `memfabric-troubleshoot` | 定位 MemFabric 部署与运行时问题（安装/AICPU/config store/etcd/传输路径），基于日志与源码做鉴别诊断 | `使用 memfabric-troubleshoot 定位这次 join 超时问题` |
 
 ## 使用方式
+
+[gitcode-pr-create]: ../.agent/skills/gitcode-pr-create/SKILL.md
 
 - 需要某个能力时，在请求中显式写出 skill 名称，例如：`使用 memfabric-release ...`。
 - 不确定该用哪个 skill 时，描述任务目标即可；Agent 应根据 `SKILL.md` 的 `description` 自动选择最匹配的 skill。

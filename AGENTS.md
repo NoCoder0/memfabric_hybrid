@@ -30,6 +30,9 @@
 
 ## 预提交 / 代码风格
 
+- **准备或创建 GitCode PR**：使用 [gitcode-pr-create](.agent/skills/gitcode-pr-create/SKILL.md)，
+  按贡献指南和 PR 模板核对目标分支、验证证据及源分支远端提交。
+
 - **安装**：`pip install pre-commit && pre-commit install --install-hooks`
 - **CI PR 检查**：`bash script/ci-pre-commit-pr.sh`
 - **Python**：ruff 目标 `py310`，行长度 120。配置位于 `pre-commit/pyproject.toml`。
