@@ -818,7 +818,16 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
             return ret;
         }
     } else if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+        // RDMA/URMA 按对端 MR 远端访问，无需本地映射；UBOE 已并入 URMA 链路参数，不再单独置位
         address = nullptr;
+    } else {
+        // 需本地映射的数据面（如 device_sdma）未建映射，故障会推迟到首次 Copy 才暴露，故在此告警
+        BM_LOG_WARN("import hbm slice skipped local mapping, sdma unreachable: rankId="
+                    << options_.rankId << " remoteRank=" << sliceInfo.rankId
+                    << " remoteSuperPodId=" << sliceInfo.superPodId << " localSuperPodId=" << superPodId_
+                    << " remoteServerId=" << sliceInfo.serverId << " localServerId=" << serverId_
+                    << " remoteDevicePhyId=" << static_cast<uint32_t>(sliceInfo.devicePhyId)
+                    << " dataOpType=" << static_cast<uint32_t>(options_.dataOpType) << ", copy may fail later");
     }
 
     remoteSlice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM,
