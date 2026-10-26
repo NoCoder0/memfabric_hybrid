@@ -60,7 +60,7 @@ class NativeRank:
         cfg.set_nic(self.config["nic"])
         user_device_id = self.config["devices"][self.rank]
         self.step(
-            f"bm.initialize for device: {user_device_id}, "
+            f"bm.initialize for visible device index: {user_device_id}, "
             f"ASCEND_RT_VISIBLE_DEVICES: {os.environ.get('ASCEND_RT_VISIBLE_DEVICES')}"
         )
         _checked(
@@ -79,7 +79,7 @@ class NativeRank:
         self.step("handle.join")
         _checked("handle.join", self.handle.join())
         self.joined = True
-        self.step(f"set NPU device id: {user_device_id}")
+        self.step(f"set NPU visible device index: {user_device_id}")
         self.npu.set_device(user_device_id)
         self.barrier.wait(timeout=self.config["setup_timeout"])
 

@@ -174,12 +174,17 @@ def shared_pool(request):
                 raise pytest.UsageError("Unable to auto-detect chip; pass --bm-chip explicitly")
         devices = request.config.getoption("--bm-devices")
         if devices is None:
-            if sys.platform == "linux":
+            if sys.platform == "linux" and "ASCEND_RT_VISIBLE_DEVICES" not in os.environ:
                 physical = select_devices(2)
                 if physical is None:
                     raise pytest.UsageError("Unable to select idle devices; pass --bm-devices explicitly")
                 os.environ["ASCEND_RT_VISIBLE_DEVICES"] = ",".join(map(str, physical))
             devices = COMMON["devices"]
+        LOG.info(
+            "ASCEND_RT_VISIBLE_DEVICES=%s; process device indices=%s",
+            os.environ.get("ASCEND_RT_VISIBLE_DEVICES", "unset"),
+            devices,
+        )
         selected = _config(request.config, devices, chip)
         reason = skip_reason(selected, chip)
         if reason:

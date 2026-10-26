@@ -35,15 +35,30 @@ class ForkedPdb(pdb.Pdb):
     def interaction(self, *args, **kwargs):
         _stdin = sys.stdin
         try:
-            sys.stdin = open("/dev/stdin")
-            pdb.Pdb.interaction(self, *args, **kwargs)
+            with open("/dev/stdin") as stdin:
+                sys.stdin = stdin
+                pdb.Pdb.interaction(self, *args, **kwargs)
         finally:
             sys.stdin = _stdin
 
 
 def maybe_pdb(ctx):
-    if os.environ.get("BM_PDB_RANK") == str(ctx.rank):
-        ForkedPdb().set_trace()
+    rank = os.environ.get("BM_PDB_RANK")
+    if rank is None:
+        return
+    try:
+        if rank not in ("0", "1"):
+            raise ValueError("BM_PDB_RANK must be 0 or 1")
+        selected = rank == str(ctx.rank)
+        if selected and not os.isatty(0):
+            raise RuntimeError("BM_PDB_RANK requires an interactive terminal and pytest -s")
+        ctx.sync()
+        if selected:
+            ForkedPdb().set_trace()
+        ctx.sync()
+    except BaseException:
+        ctx.barrier.abort()
+        raise
 
 
 def expected(ctx, seed, block, block_bytes):
