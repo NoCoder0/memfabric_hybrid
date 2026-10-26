@@ -17,7 +17,8 @@
 
 结果呈现（终端直接给结论，完整日志落在 log 文件）：
 
-  - launcher 模式：启动器逐个打印 "P{r}/D{r}  PASS|FAIL"，并给出 "RESULT: PASS|FAIL"；
+  - launcher 模式：等待期间每 5s 刷新一行进度（pairs/instances/elapsed），结束后逐个打印
+    "P{r}/D{r}  PASS|FAIL"，并给出 "RESULT: PASS|FAIL"；
   - 手动模式：实例自身打印 "[P{r}] PASS" / "[D{r}] PASS"，main 同样给出 "RESULT" 行；
   - 任一 (P,D) 对校验失败 ⇒ 失败实例的日志尾部回显到终端，脚本以非 0 退出码结束。
 
@@ -38,9 +39,12 @@
                     D 块紧随其后；K = --instances-per-card（默认 1，即 2*N 张卡）
   --instances-per-card  单卡承载的实例数（P 块与 D 块仍分卡；>1 时同卡多进程，
                     用于在少量卡上把 store rank 顶到 16+ 还原撞键环境）
+  --remote-peer     跨机部署开关（仅 launcher 模式）：对端实例在其他机器，本机只承载本侧——
+                    设备预算按单侧计算，D 侧设备号与 nic 端口不再为 P 块预留偏移；
+                    不传时保持单机语义（P 块 + D 块都在本机）
   --data-op-type    数据面类型，覆盖 transfer 适配器已暴露的全部协议（默认 HOST_RDMA）：
                       HOST_RDMA    主机侧 RDMA（跨机），需 --nic
-                      SDMA         设备侧 SDMA（单机自测 / 同超节点跨机），无需 --nic
+                      SDMA         设备侧 SDMA（单机自测；A3 上支持同超节点跨机），无需 --nic
                       DEVICE_RDMA  设备侧 RDMA（跨机），无需 --nic
                       DEVICE_URMA  设备侧 URMA（跨机，A5），无需 --nic
                     注：trans 核心另支持 HOST_URMA / HOST_TCP，但 Python 适配器未暴露
@@ -52,6 +56,9 @@
   --fill-val        写相位填充基准值，默认 42
   --log-level       0 debug / 1 info / 2 warn / 3 error，默认 1
   --timeout         控制通道超时秒数，默认 120
+  --teardown-grace  P 侧引擎收尾看门狗秒数，默认 30：pair 全部完成后 D 实例先退出，P 引擎内
+                    各 D 连接内嵌的 store client 会向已退出的 D 持续重连并可能拖住清理，
+                    超时则强制退出（退出码仍反映校验结果）；<=0 关闭看门狗
 
 用法示例（单机 2 P × 2 D：P 用卡 0/1，D 用卡 2/3；先启动 Decode）:
 
@@ -75,10 +82,18 @@ P 用卡 0、D 用卡 1）:
   python3 test_transfer_pd_separate_hbm_dp.py --role Prefill --dp-size 1 \\
       --npu-id 0 --nic "tcp://<RDMA_IP>:7000"
 
-多 P 节点 × 多 D 节点（如 2 P 机 × 2 D 机）：launcher 只支持单节点，两侧都改用手动模式逐实例拉起
-（显式 --p-rank / --dp-rank），D 侧用 --prefill-ips 传全部 P 节点 IP。单机可用 127.0.0.1/127.0.0.2
-等回环 IP 模拟多节点；跨机时 SDMA 需同超节点、HOST_RDMA 需加 --nic，DEVICE_RDMA / DEVICE_URMA
-走设备侧传输无需 --nic（把 --data-op-type 换成对应值即可）。先启动全部 D 实例:
+单 P 机 × 单 D 机（跨机 launcher，两侧各一条命令，每个 launcher 只管本侧实例，先启动 D）:
+
+  # D 机: python3 test_transfer_pd_separate_hbm_dp.py --role Decode --dp-size 8 \
+      --local-ip <D_IP> --prefill-ip <P_IP> --npu-id 0 --data-op-type DEVICE_RDMA --remote-peer
+  # P 机: python3 test_transfer_pd_separate_hbm_dp.py --role Prefill --dp-size 8 \
+      --local-ip <P_IP> --npu-id 0 --data-op-type DEVICE_RDMA --remote-peer
+
+更多 P 节点 × 多 D 节点（如 2 P 机 × 2 D 机）：launcher 每台只拉本侧（--remote-peer），节点数超过
+一侧一台、或混合部署时改用手动模式逐实例拉起（显式 --p-rank / --dp-rank），D 侧用 --prefill-ips
+传全部 P 节点 IP。单机可用 127.0.0.1/127.0.0.2 等回环 IP 模拟多节点；跨机时 SDMA 需同超节点
+（仅 A3 支持）、HOST_RDMA 需加 --nic，DEVICE_RDMA / DEVICE_URMA 走设备侧传输无需 --nic
+（把 --data-op-type 换成对应值即可）。先启动全部 D 实例:
 
   # P 节点0: python3 test_transfer_pd_separate_hbm_dp.py --role Prefill --p-rank 0 \\
       --local-ip <P0_IP> --npu-id 0 --dp-size 2 --data-op-type SDMA
@@ -94,12 +109,34 @@ P 用卡 0、D 用卡 1）:
   失败（退出码非 0），失败实例的日志尾部会一并回显，完整日志见
   /tmp/pd_matrix_<control_port>/<p|d>_<rank>.log。
 
-注意（同机多实例的两个约束）:
+环境变量（可选，store 断连 / 实例退出相关）:
+
+  本脚本 D 实例内嵌 config store server，P 实例是纯 client。D 先退出（或中途被杀）后，
+  P 侧会持续重连 store，退出前的清理要等库内部的阻塞等待结束，以下为当前版本可通过
+  环境变量调整的部分：
+
+  MF_GROUP_JOIN_MAX_TIMEOUT           懒建连阶段 join store 的超时（秒），默认 900。
+  MF_CONFIG_STORE_HEARTBEAT_TIMEOUT_S store server 侧判定 client 心跳过期的秒数（默认 60，
+                                      上限 3600），影响 D 对已失联 P 的链接清理。
+
+  注意：client 对 store 阻塞请求（Get/Put/Leave 等）的响应等待上限（600s）是库内部
+  常量，当前版本无环境变量可调；若 D 先退出，P 的同步清理可能被上述重连等待拖住。
+  P 侧收尾由 --teardown-grace 看门狗兜底（默认 30s）：超时打印结论后强制退出，退出码
+  仍反映校验结果，P 不会无限等待。库侧修复（等待上限可配 / 断连短路清理）需改动
+  smem 库源码后重新打包。
+
+注意（同机多实例的约束与退出顺序）:
 
   1. Prefill 与 Decode 不要共用同一张卡（两侧各自 acl.rt.malloc 抢显存，且该约束与 PD 用例一致）；
      共需 2*dp_size 张卡。
   2. HOST_RDMA 下每个 entity 的 HCOM 端口 = nic 基础端口 + 实例内偏移，被占用时框架在
      +1..+8 范围内重试；同机多实例 / 单进程多连接时基础端口要留出余量，否则 bind 会失败。
+  3. 退出顺序与 P 侧看门狗：pair 全部完成后 D 实例先收尾退出，P 实例随后收尾时部分 D 已退出，
+     P 日志出现 "link broken" / "Reconnect to server failed" 持续重连属预期现象，不影响判定；
+     P 收尾由 --teardown-grace 看门狗兜底（默认 30s），超时打印结论后强制退出，保证 P 自动退出。
+  4. 控制端口预检：launcher 启动前会检测残留实例进程并预检 [control-port, control-port+dp-size)，
+     任一端口被占用则快速失败。控制端口本身是 D 侧发现 P 的机制，P 侧不能单方面换段，
+     换段须两侧同时传 --control-port；store session 端口由库内自动选空闲端口，无需预检。
 """
 
 import argparse
@@ -111,6 +148,7 @@ import os
 import socket
 import subprocess
 import sys
+import threading
 import time
 
 import acl
@@ -145,6 +183,9 @@ NIC_REQUIRED_TYPES = {"HOST_RDMA"}
 
 # 失败实例回显到终端的日志尾部行数（完整日志仍保留在实例 log 文件中）
 LOG_TAIL_LINES = 20
+# launcher 进度打印：刷新间隔与进度条宽度（子进程输出已重定向到实例日志，进度由 launcher 轮询日志得到）
+PROGRESS_INTERVAL_SEC = 5
+PROGRESS_BAR_WIDTH = 20
 
 # 值同时编码 src P rank 与 dst D rank（外加槽位），任意维度串扰必然不匹配
 P_VALUE_STRIDE = 1000
@@ -363,6 +404,47 @@ def teardown_engine(engine, arena):
     engine.unInitialize()
     if arena is not None:
         arena.free()
+
+
+def teardown_engine_with_watchdog(engine, arena, tag, exit_code, grace_seconds, fail_detail=None):
+    """限时执行引擎收尾，兜底保证 P 实例自动退出。
+
+    pair 全部完成后 D 实例先收尾退出，P 引擎内每个 D 连接各自内嵌的 store client 会向
+    已退出的 D 持续断链重连，可能长时间拖住 engine 的同步清理；超过 grace_seconds 未
+    完成则打印结论并以 exit_code 强制退出（退出码仍反映校验结果）。
+    grace_seconds <= 0 时退化为直接同步收尾（不设看门狗）。
+    """
+    if grace_seconds <= 0:
+        teardown_engine(engine, arena)
+        return
+    done = threading.Event()
+    error_box = []
+
+    def _teardown():
+        try:
+            teardown_engine(engine, arena)
+        except Exception as error:
+            error_box.append(error)
+        finally:
+            done.set()
+
+    worker = threading.Thread(target=_teardown, name="mf-engine-teardown", daemon=True)
+    worker.start()
+    if not done.wait(grace_seconds):
+        logger.error(
+            f"{tag} engine teardown exceeded {grace_seconds}s, blocked by reconnecting to exited Decode peers; "
+            f"force exit, exitCode={exit_code}"
+        )
+        if exit_code == 0:
+            print("RESULT: PASS")
+        else:
+            print(f"RESULT: FAIL — {fail_detail}")
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(exit_code)
+    worker.join()
+    if error_box:
+        raise error_box[0]
 
 
 # ---------------------------- pair protocol (per (P_i, D_j) connection) ----------------------------
@@ -624,7 +706,13 @@ def run_prefill_instance(args):
     served = set()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind((args.local_ip, args.control_port))
+        try:
+            server.bind((args.local_ip, args.control_port))
+        except OSError as error:
+            raise RuntimeError(
+                f"control port {args.control_port} on {args.local_ip} is occupied ({error}); "
+                f"清理残留实例进程，或换 --control-port 后重试"
+            ) from error
         server.listen(args.dp_size)
         server.settimeout(args.timeout)
 
@@ -655,9 +743,12 @@ def run_prefill_instance(args):
             finally:
                 conn.close()
 
-    teardown_engine(engine, local)
-    if len(served) != args.dp_size or failures:
-        raise RuntimeError(f"P instance {args.p_rank} verification failed: served={sorted(served)}, {failures}")
+    ok = len(served) == args.dp_size and not failures
+    fail_detail = None if ok else f"P instance {args.p_rank} verification failed: served={sorted(served)}, {failures}"
+    logger.info(f"[P{args.p_rank}] all pairs done ({len(served)}/{args.dp_size}), tearing down engine")
+    teardown_engine_with_watchdog(engine, local, f"[P{args.p_rank}]", 0 if ok else 1, args.teardown_grace, fail_detail)
+    if not ok:
+        raise RuntimeError(fail_detail)
     logger.info(f"[P{args.p_rank}] PASS: pairs={sorted(served)}")
 
 
@@ -703,7 +794,7 @@ def _instance_log_dir(args):
 
 
 def _validate_device_budget(args):
-    """launcher 模式提前校验设备预算：P 块 + D 块，共 2*ceil(dp_size/per_card) 张卡。
+    """launcher 模式提前校验设备预算：--remote-peer 只算本侧，否则 P 块 + D 块共 2*ceil(dp_size/per_card) 张。
 
     两个 launcher 的 --npu-id 语义都是"整块设备的起始号"，
     传 1 会导致 D 侧最高位实例越界（如 npuId=8, deviceCount=8）。
@@ -714,17 +805,19 @@ def _validate_device_budget(args):
     if ret != 0 or count <= 0:
         raise RuntimeError(f"acl.rt.get_device_count failed, ret={ret}, count={count}")
     per_card = max(1, args.instances_per_card)
-    cards = 2 * ((args.dp_size + per_card - 1) // per_card)
+    blocks = 1 if args.remote_peer else 2
+    cards = blocks * ((args.dp_size + per_card - 1) // per_card)
     if args.npu_id < 0 or args.npu_id + cards > count:
         raise RuntimeError(
             f"device budget insufficient: need {cards} cards "
             f"([{args.npu_id}, {args.npu_id + cards})) but deviceCount={count}；"
             f"两个 launcher 的 --npu-id 都应传整块起始号（8 卡跑 dp-size 4 时两侧都传 0），"
+            f"跨机部署（本机只跑一侧）请加 --remote-peer，"
             f"或减小 --dp-size / 增大 --instances-per-card"
         )
     logger.info(
         f"[launcher] device budget OK: {cards} cards [{args.npu_id}, {args.npu_id + cards}) of {count}, "
-        f"instances_per_card={per_card}"
+        f"instances_per_card={per_card}, remote_peer={args.remote_peer}"
     )
 
 
@@ -739,11 +832,49 @@ def _log_tail(log_path, max_lines=LOG_TAIL_LINES):
     return lines[-max_lines:]
 
 
-def _report_instances(side, tag, children):
-    """等待子进程退出，逐个打印 PASS/FAIL 并回显失败者日志尾部；返回是否全部通过。
+def _count_pair_done(log_path, marker):
+    """统计实例日志中已完成的 pair 数（日志尚未落盘按 0 计）。"""
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as log_file:
+            return sum(1 for line in log_file if marker in line)
+    except OSError:
+        return 0
+
+
+def _print_progress(done_pairs, total_pairs, done_instances, total_instances, elapsed_sec):
+    """单行进度条：pair 粒度推进 + 实例完成数 + 已耗时；终端下用 \\r 原地刷新。"""
+    filled = PROGRESS_BAR_WIDTH * done_pairs // total_pairs if total_pairs else PROGRESS_BAR_WIDTH
+    bar = "#" * filled + "-" * (PROGRESS_BAR_WIDTH - filled)
+    line = (
+        f"[launcher] [{bar}] pairs {done_pairs}/{total_pairs}, "
+        f"instances {done_instances}/{total_instances}, {elapsed_sec}s"
+    )
+    print(line, end="\r" if sys.stdout.isatty() else "\n", flush=True)
+
+
+def _report_instances(side, tag, children, pairs_per_instance):
+    """等待子进程退出：期间周期打印 pair/实例粒度进度（子进程输出已重定向到实例日志），
+    全部退出后逐个打印 PASS/FAIL 并回显失败者日志尾部；返回是否全部通过。
 
     打印用 print 而非 logger，保证 --log-level 调高（如 3=ERROR）时结论依然可见。
     """
+    pair_done_marker = "write=" if side == ROLE_PREFILL else "final:"
+    total_pairs = pairs_per_instance * len(children)
+    start = time.monotonic()
+    exit_codes = {}
+    while True:
+        for rank, child, _ in children:
+            if rank not in exit_codes:
+                code = child.poll()
+                if code is not None:
+                    exit_codes[rank] = code
+        done_pairs = sum(_count_pair_done(log_path, pair_done_marker) for _, _, log_path in children)
+        _print_progress(done_pairs, total_pairs, len(exit_codes), len(children), int(time.monotonic() - start))
+        if len(exit_codes) == len(children):
+            break
+        time.sleep(PROGRESS_INTERVAL_SEC)
+    if sys.stdout.isatty():
+        print(flush=True)
     outcomes = [(rank, child.wait(), log_path) for rank, child, log_path in children]
     passed_count = sum(1 for _, code, _ in outcomes if code == 0)
     print(f"[launcher] ===== {side} summary: {passed_count}/{len(outcomes)} PASS =====")
@@ -759,9 +890,50 @@ def _report_instances(side, tag, children):
     return all_passed, outcomes
 
 
+def _check_stale_instances():
+    """预检残留实例进程：上一轮未退净的实例会占住控制端口、填满对端 backlog，直接污染下一轮。"""
+    script_name = os.path.basename(__file__)
+    try:
+        result = subprocess.run(["pgrep", "-f", script_name], capture_output=True, text=True, check=False)
+    except OSError:
+        return
+    pids = [pid for pid in result.stdout.split() if pid.isdigit() and int(pid) != os.getpid()]
+    if pids:
+        raise RuntimeError(f"stale instance processes detected, pid={pids}; 先 pkill -f {script_name} 再启动")
+
+
+def _check_control_ports_free(args):
+    """launcher 预检控制端口段 [base, base+dp_size)：任一被占用则快速失败。
+
+    D 侧通过 prefill_ip:base+r 发现 P 实例，P 侧不能单方面换段；跨机换段须两侧同时改
+    --control-port。被占用通常是上一轮实例残留，先 pkill 再启动。
+    """
+    probes = []
+    try:
+        for offset in range(args.dp_size):
+            probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind((args.local_ip, args.control_port + offset))
+            probes.append(probe)
+    except OSError as error:
+        for held in probes:
+            held.close()
+        raise RuntimeError(
+            f"control port {args.control_port + offset} on {args.local_ip} is occupied ({error}); "
+            f"先清理残留实例进程，或两侧同时改用其它 --control-port"
+        ) from error
+    for probe in probes:
+        probe.close()
+    logger.info(
+        f"[launcher] control ports [{args.control_port}, {args.control_port + args.dp_size}) free on {args.local_ip}"
+    )
+
+
 def launch_prefill_instances(args):
     """Prefill 启动器：一条命令拉起全部 P 实例子进程，并在终端汇总 PASS/FAIL。"""
+    _check_stale_instances()
     _validate_device_budget(args)
+    _check_control_ports_free(args)
     base_argv = _strip_args(sys.argv[1:], ("--p-rank", "--npu-id", "--nic", "--control-port"))
     log_dir = _instance_log_dir(args)
     children = []
@@ -780,12 +952,13 @@ def launch_prefill_instances(args):
         command = _instance_argv(base_argv, extras)
         log_path = os.path.join(log_dir, f"p_{rank}.log")
         logger.info(
-            f"[launcher] starting P instance {rank}, npu={device}, controlPort={args.control_port + rank}, log={log_path}"
+            f"[launcher] starting P instance {rank}, npu={device}, "
+            f"controlPort={args.control_port + rank}, log={log_path}"
         )
         with open(log_path, "w") as log_file:
             children.append((rank, subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT), log_path))
 
-    all_passed, outcomes = _report_instances("Prefill", "P", children)
+    all_passed, outcomes = _report_instances("Prefill", "P", children, args.dp_size)
     if not all_passed:
         failed = ", ".join(f"P{rank}(exit={code})" for rank, code, _ in outcomes if code != 0)
         raise RuntimeError(f"Prefill instances failed: {failed}")
@@ -793,10 +966,11 @@ def launch_prefill_instances(args):
 
 def launch_decode_instances(args):
     """Decode 启动器：一条命令拉起全部 D 实例子进程，并在终端汇总 PASS/FAIL。"""
+    _check_stale_instances()
     _validate_device_budget(args)
     base_argv = _strip_args(sys.argv[1:], ("--dp-rank", "--npu-id", "--nic"))
     log_dir = _instance_log_dir(args)
-    p_cards = (args.dp_size + args.instances_per_card - 1) // args.instances_per_card
+    p_cards = 0 if args.remote_peer else (args.dp_size + args.instances_per_card - 1) // args.instances_per_card
     children = []
     for rank in range(args.dp_size):
         device = args.npu_id + p_cards + rank // args.instances_per_card
@@ -807,14 +981,14 @@ def launch_decode_instances(args):
             str(device),
         ]
         if args.nic:
-            extras += ["--nic", offset_nic_port(args.nic, args.dp_size + rank)]
+            extras += ["--nic", offset_nic_port(args.nic, rank if args.remote_peer else args.dp_size + rank)]
         command = _instance_argv(base_argv, extras)
         log_path = os.path.join(log_dir, f"d_{rank}.log")
         logger.info(f"[launcher] starting DP instance {rank}, npu={device}, log={log_path}")
         with open(log_path, "w") as log_file:
             children.append((rank, subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT), log_path))
 
-    all_passed, outcomes = _report_instances("Decode", "D", children)
+    all_passed, outcomes = _report_instances("Decode", "D", children, args.dp_size)
     if not all_passed:
         failed = ", ".join(f"D{rank}(exit={code})" for rank, code, _ in outcomes if code != 0)
         raise RuntimeError(f"Decode instances failed: {failed}")
@@ -844,6 +1018,8 @@ def _validate_args(parser, args):
                 parser.error(f"invalid IPv4 in --prefill-ips: {ip}")
     if args.batch_count < 1:
         parser.error("--batch-count must be >= 1")
+    if args.teardown_grace < 0:
+        parser.error("--teardown-grace must be >= 0")
     if args.data_op_type in NIC_REQUIRED_TYPES and not args.nic:
         parser.error(f"--nic is required for {args.data_op_type}, format tcp://<ip>:<port>")
     # -1（最后一张卡）只在手动模式有意义：launcher 模式需要起始卡号才能给各实例分卡
@@ -886,6 +1062,11 @@ def _parse_args():
         help="Instances sharing one NPU card (P block and D block stay on separate cards)",
     )
     parser.add_argument(
+        "--remote-peer",
+        action="store_true",
+        help="launcher mode: peer instances run on other machines, this host carries only its own side",
+    )
+    parser.add_argument(
         "--data-op-type",
         type=str,
         default="HOST_RDMA",
@@ -903,6 +1084,12 @@ def _parse_args():
     parser.add_argument("--fill-val", type=int, default=42, help="Base value of the write phase")
     parser.add_argument("--log-level", type=int, default=DEFAULT_LOG_LEVEL, choices=sorted(LOG_LEVELS))
     parser.add_argument("--timeout", type=int, default=120, help="Control channel timeout in seconds")
+    parser.add_argument(
+        "--teardown-grace",
+        type=int,
+        default=30,
+        help="Prefill teardown watchdog seconds; force-exit when cleanup stalls after Decode exits, <=0 disables",
+    )
     args = parser.parse_args()
     _validate_args(parser, args)
     return args
