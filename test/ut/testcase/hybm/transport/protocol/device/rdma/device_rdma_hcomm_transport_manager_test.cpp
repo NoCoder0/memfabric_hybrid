@@ -30,6 +30,10 @@ using namespace ock::mf;
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
 
+// CompletionContext 是 DeviceRdmaHcommTransportManager 的私有嵌套类型，上面的
+// #define private public 已放开访问；起个别名，用例里不用重复写全限定名。
+using CompletionContext = DeviceRdmaHcommTransportManager::CompletionContext;
+
 namespace {
 const EndpointHandle MOCK_ENDPOINT = reinterpret_cast<EndpointHandle>(0xA001UL);
 const HcommMemHandle MOCK_MEM_HANDLE = reinterpret_cast<HcommMemHandle>(0xA002UL);
@@ -53,6 +57,7 @@ struct DlAclApiFnGuard {
     aclrtCreateStreamFunc oldCreateStream{DlAclApi::pAclrtCreateStream};
     aclrtDestroyStreamFunc oldDestroyStream{DlAclApi::pAclrtDestroyStream};
     aclrtCreateNotifyFunc oldCreateNotify{DlAclApi::pAclrtCreateNotify};
+    aclrtGetNotifyIdFunc oldGetNotifyId{DlAclApi::pAclrtGetNotifyId};
     aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
     aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
 
@@ -68,6 +73,7 @@ struct DlAclApiFnGuard {
         DlAclApi::pAclrtCreateStream = oldCreateStream;
         DlAclApi::pAclrtDestroyStream = oldDestroyStream;
         DlAclApi::pAclrtCreateNotify = oldCreateNotify;
+        DlAclApi::pAclrtGetNotifyId = oldGetNotifyId;
         DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
         DlAclApi::pAclrtWaitAndResetNotify = oldWaitAndResetNotify;
     }
@@ -288,6 +294,10 @@ protected:
             *notify = reinterpret_cast<void *>(0xE002UL);
             return 0;
         };
+        DlAclApi::pAclrtGetNotifyId = [](void *, uint32_t *notifyId) -> int32_t {
+            *notifyId = 7U;
+            return 0;
+        };
         DlAclApi::pAclrtDestroyNotify = [](void *) -> int32_t { return 0; };
         DlAclApi::pAclrtWaitAndResetNotify = [](void *, void *, uint32_t) -> int32_t { return 0; };
     }
@@ -506,6 +516,144 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, ImportPeerMems_EmptyKeys)
     // Empty memKeys → OK
     auto ret = mgr->ImportPeerMems(1, {});
     ASSERT_EQ(ret, BM_OK);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, ImportPeerMems_MultipleRegionsKeepAllMappings)
+{
+    DlHcommApi::gHcommEndpointCreate = [](const EndpointDesc *, EndpointHandle *handle) -> int32_t {
+        *handle = MOCK_ENDPOINT;
+        return 0;
+    };
+    DlHcommApi::gHcommEndpointDestroy = [](EndpointHandle) -> int32_t { return 0; };
+    // Return a DVA derived from the descriptor marker so the two regions differ.
+    DlHcommApi::gHcommMemImport = [](EndpointHandle, const void *desc, uint32_t, HcommCommMem *outMem) -> int32_t {
+        const uint64_t marker = *static_cast<const uint64_t *>(desc);
+        outMem->type = COMM_MEM_TYPE_DEVICE;
+        outMem->addr = reinterpret_cast<void *>(0x2000UL + marker);
+        outMem->size = 0x1000UL;
+        return 0;
+    };
+
+    auto mgr = CreateHcommMgr();
+    ASSERT_EQ(mgr->OpenDevice(MakeOptions()), BM_OK);
+
+    auto MakeKey = [](uint64_t descMarker, uint64_t gvaBase) {
+        TransportMemoryKey key{};
+        key.ResizeWords(TRANS_KEY_DEV_SLOT2 + KEY_SIZE);
+        key.keys[0] = descMarker;
+        auto &meta = HcommKeyMetaAt(key);
+        meta.addr = 0x5000UL;
+        meta.size = 0x1000UL;
+        meta.descLen = sizeof(uint64_t);
+        meta.gvaBase = gvaBase;
+        return key;
+    };
+    const uint64_t dramGva = 0x1000a0000000000UL;
+    const uint64_t hbmGva = 0x100000000000000UL;
+    const TransportMemoryKey dramKey = MakeKey(0x10UL, dramGva);
+    const TransportMemoryKey hbmKey = MakeKey(0x20UL, hbmGva);
+
+    ASSERT_EQ(mgr->ImportPeerMems(1, {dramKey, hbmKey}), BM_OK);
+    auto &state = mgr->remoteRanks_[1];
+    ASSERT_EQ(state.peerMemRanges.size(), 2U);
+
+    // Both regions must stay addressable regardless of import order.
+    ASSERT_EQ(mgr->ConvertRemoteGvaToDva(state, dramGva + 0x100UL), 0x2010UL + 0x100UL);
+    ASSERT_EQ(mgr->ConvertRemoteGvaToDva(state, hbmGva + 0x200UL), 0x2020UL + 0x200UL);
+
+    // Re-import (e.g. UpdateRankOptions) must not duplicate the ranges.
+    ASSERT_EQ(mgr->ImportPeerMems(1, {dramKey, hbmKey}), BM_OK);
+    ASSERT_EQ(state.peerMemRanges.size(), 2U);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, ExpandRemoteIo_SplitsAtPeerRegionBoundary)
+{
+    DlHcommApi::gHcommEndpointCreate = [](const EndpointDesc *, EndpointHandle *handle) -> int32_t {
+        *handle = MOCK_ENDPOINT;
+        return 0;
+    };
+    DlHcommApi::gHcommEndpointDestroy = [](EndpointHandle) -> int32_t { return 0; };
+    DlHcommApi::gHcommMemImport = [](EndpointHandle, const void *desc, uint32_t, HcommCommMem *outMem) -> int32_t {
+        const uint64_t marker = *static_cast<const uint64_t *>(desc);
+        outMem->type = COMM_MEM_TYPE_DEVICE;
+        outMem->addr = reinterpret_cast<void *>(0x2000UL + marker);
+        outMem->size = 0x1000UL;
+        return 0;
+    };
+
+    auto mgr = CreateHcommMgr();
+    ASSERT_EQ(mgr->OpenDevice(MakeOptions()), BM_OK);
+
+    auto MakeKey = [](uint64_t descMarker, uint64_t gvaBase) {
+        TransportMemoryKey key{};
+        key.ResizeWords(TRANS_KEY_DEV_SLOT2 + KEY_SIZE);
+        key.keys[0] = descMarker;
+        auto &meta = HcommKeyMetaAt(key);
+        meta.addr = 0x5000UL;
+        meta.size = 0x1000UL;
+        meta.descLen = sizeof(uint64_t);
+        meta.gvaBase = gvaBase;
+        return key;
+    };
+    // Two slices contiguous in GVA but mapped to non-contiguous DVAs.
+    const uint64_t slice0Gva = 0x1000a0000000000UL;
+    const uint64_t slice1Gva = slice0Gva + 0x1000UL;
+    ASSERT_EQ(mgr->ImportPeerMems(1, {MakeKey(0x10UL, slice0Gva), MakeKey(0x20UL, slice1Gva)}), BM_OK);
+    auto &state = mgr->remoteRanks_[1];
+
+    // One request starts in slice0 and crosses into slice1.
+    std::vector<uint64_t> localVec;
+    std::vector<uint64_t> remoteVec;
+    std::vector<uint64_t> sizeVec;
+    const uint64_t lGva = 0x5000UL;
+    ASSERT_EQ(mgr->ExpandRemoteIoSegments(state, lGva, slice0Gva + 0x800UL, 0x1000UL, localVec, remoteVec, sizeVec),
+              BM_OK);
+    ASSERT_EQ(sizeVec.size(), 2U);
+    ASSERT_EQ(sizeVec[0], 0x800UL);
+    ASSERT_EQ(sizeVec[1], 0x800UL);
+    ASSERT_EQ(remoteVec[0], 0x2010UL + 0x800UL);
+    ASSERT_EQ(remoteVec[1], 0x2020UL);
+    ASSERT_EQ(localVec[0], lGva);
+    ASSERT_EQ(localVec[1], lGva + 0x800UL);
+
+    // A request fully inside one slice stays a single segment.
+    localVec.clear();
+    remoteVec.clear();
+    sizeVec.clear();
+    ASSERT_EQ(mgr->ExpandRemoteIoSegments(state, lGva, slice1Gva, 0x1000UL, localVec, remoteVec, sizeVec), BM_OK);
+    ASSERT_EQ(sizeVec.size(), 1U);
+    ASSERT_EQ(remoteVec[0], 0x2020UL);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, EnsureContextInit_CreatesNotifyWithId)
+{
+    auto mgr = CreateHcommMgr();
+    CompletionContext ctx{};
+
+    ASSERT_EQ(mgr->EnsureContextInitLocked(ctx), BM_OK);
+    ASSERT_TRUE(ctx.initialized);
+    ASSERT_NE(ctx.notify, nullptr);
+    // host 侧 AclrtWaitAndResetNotify 依赖该 id，必须真的从设备侧取到
+    ASSERT_EQ(ctx.notifyId, 7U);
+
+    // 重复调用不应重建 notify（否则会泄漏，且 host 侧等待会换到另一个 id 上）
+    const auto notifyBefore = ctx.notify;
+    ASSERT_EQ(mgr->EnsureContextInitLocked(ctx), BM_OK);
+    ASSERT_EQ(ctx.notify, notifyBefore);
+    ASSERT_EQ(ctx.notifyId, 7U);
+}
+
+TEST_F(DeviceRdmaHcommTransportManagerTest, EnsureContextInit_GetNotifyIdFails)
+{
+    DlAclApi::pAclrtGetNotifyId = [](void *, uint32_t *) -> int32_t { return -1; };
+
+    auto mgr = CreateHcommMgr();
+    CompletionContext ctx{};
+
+    ASSERT_NE(mgr->EnsureContextInitLocked(ctx), BM_OK);
+    ASSERT_FALSE(ctx.initialized);
+    ASSERT_EQ(ctx.notify, nullptr);
+    ASSERT_EQ(ctx.notifyId, 0U);
 }
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, ReadWriteAsync_NotOpened_Fails)

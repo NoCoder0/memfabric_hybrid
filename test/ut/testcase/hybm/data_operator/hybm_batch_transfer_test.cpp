@@ -41,6 +41,8 @@ int32_t batchResult = BM_OK;
 size_t batchFailAt = SIZE_MAX;
 uint32_t markerReadCount = 0U;
 uint32_t singleWriteCount = 0U;
+uint32_t drainCount = 0U;
+std::vector<uint64_t> notifyRecordIds;
 uint32_t batchModeStartCount = 0U;
 uint32_t batchModeEndCount = 0U;
 std::vector<char> operationOrder;
@@ -55,6 +57,8 @@ protected:
         batchFailAt = SIZE_MAX;
         markerReadCount = 0U;
         singleWriteCount = 0U;
+        drainCount = 0U;
+        notifyRecordIds.clear();
         batchModeStartCount = 0U;
         batchModeEndCount = 0U;
         operationOrder.clear();
@@ -125,6 +129,18 @@ int32_t HcommWriteOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle, void *
     return BM_OK;
 }
 
+int32_t HcommChannelDrainOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle)
+{
+    drainCount++;
+    return BM_OK;
+}
+
+int32_t HcommAclrtNotifyRecordOnThread(ock::mf::ThreadHandle, uint64_t notifyId)
+{
+    notifyRecordIds.push_back(notifyId);
+    return BM_OK;
+}
+
 int32_t HcommBatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
                                    const ock::mf::HcommBatchTransferDesc *descs, uint32_t count)
 {
@@ -173,6 +189,12 @@ void *BatchTestDlsym(void *, const char *name)
     }
     if (std::strcmp(name, "HcommBatchTransferOnThread") == 0) {
         return reinterpret_cast<void *>(&HcommBatchTransferOnThread);
+    }
+    if (std::strcmp(name, "HcommChannelDrainOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommChannelDrainOnThread);
+    }
+    if (std::strcmp(name, "HcommAclrtNotifyRecordOnThread") == 0) {
+        return reinterpret_cast<void *>(&HcommAclrtNotifyRecordOnThread);
     }
     ADD_FAILURE() << "Unexpected HCOMM symbol: " << name;
     return nullptr;
@@ -301,10 +323,9 @@ TEST_F(HybmBatchTransferTest, OneSideReadEntryKeepsOriginalTransferPath)
     EXPECT_EQ(markerReadCount, 1U);
 }
 
-TEST_F(HybmBatchTransferTest, OneSideWriteEntryPreservesCompletionMarker)
+TEST_F(HybmBatchTransferTest, OneSideWriteEntryDrainsAndRecordsNotify)
 {
     batchResult = BM_NOT_SUPPORTED;
-    uint64_t markerSource = 456U;
     uint64_t length = sizeof(source);
     void *src = &source;
     void *dst = &destination;
@@ -315,11 +336,13 @@ TEST_F(HybmBatchTransferTest, OneSideWriteEntryPreservesCompletionMarker)
     oneSide.dst_buf_addr_list = &dst;
     oneSide.src_buf_addr_list = &src;
     oneSide.len_list = &length;
-    oneSide.remote_flag_addr = reinterpret_cast<uint64_t>(&markerSource);
-    oneSide.local_flag_addr = reinterpret_cast<uint64_t>(&destination);
-    oneSide.flag_size = sizeof(markerSource);
+    oneSide.notify_id = 7U;
 
+    // 完成语义：先 Drain 等数据真正落地，再记录 notify 让 host 可观测；不再读对端 flag
     EXPECT_EQ(HybmBatchWrite(&oneSide), BM_OK);
-    EXPECT_EQ(destination, markerSource);
-    EXPECT_EQ(markerReadCount, 1U);
+    EXPECT_EQ(destination, source);
+    EXPECT_EQ(drainCount, 1U);
+    ASSERT_EQ(notifyRecordIds.size(), 1U);
+    EXPECT_EQ(notifyRecordIds[0], 7U);
+    EXPECT_EQ(markerReadCount, 0U);
 }

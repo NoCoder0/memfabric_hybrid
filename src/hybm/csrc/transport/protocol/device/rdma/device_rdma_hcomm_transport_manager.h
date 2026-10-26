@@ -32,11 +32,9 @@ constexpr uint32_t DEFAULT_NOTIFY_NUM = 0;
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1;
 constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 600;
 constexpr uint32_t HCOMM_KERNEL_BATCH_TIMEOUT_US = 600000000;
-// transfer flag 只是一次性完成性标记：host 侧 8 字节 + COMM_MEM_TYPE_HOST 注册
-constexpr uint64_t DEVICE_RDMA_HCOMM_FLAG_SIZE = sizeof(uint64_t);
 
 constexpr uint32_t RDMA_HCOMM_PRIVATE_DATA_MAGIC = 0xA5FAD001U;
-// DEVICE 形态保持 master 的 v1；A5(950) host RoCE 用 v2（额外交换 flagAddr），两者互不影响。
+// DEVICE 形态保持 master 的 v1；A5(950) host RoCE 用 v2（多一个 listenPort 语义），两者互不影响。
 constexpr uint16_t RDMA_HCOMM_PRIVATE_DATA_VERSION = 1U;
 constexpr uint16_t RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST = 2U;
 
@@ -49,8 +47,7 @@ struct HcommKeyMeta {
     uint64_t addr{0};    // +1 peer DVA
     uint64_t size{0};    // +2 peer size
     uint64_t descLen{0}; // +3 HCOMM desc length
-    uint64_t flagLen{0}; // +4 flag desc length
-    uint64_t gvaBase{0}; // +5 GVA base
+    uint64_t gvaBase{0}; // +4 GVA base
 };
 static_assert(sizeof(HcommKeyMeta) <= KEY_SIZE * sizeof(uint64_t), "HcommKeyMeta must fit in one slot");
 
@@ -69,9 +66,6 @@ inline void EnsureHcommKeyMeta(TransportMemoryKey &key)
         key.ResizeWords(TRANS_KEY_DEV_SLOT2 + KEY_SIZE);
     }
 }
-
-// Slot 3: flag descriptor data
-constexpr uint32_t HCOMM_KEY_FLAG_SLOT = TRANS_KEY_DEV_SLOT3;
 
 // Fallback positions in other slots (backward compat with older transport layouts)
 constexpr uint32_t HCOMM_KEY_LEGACY_ADDR_IDX = TRANS_KEY_DEV_SLOT1 + (KEY_SIZE - 3);
@@ -93,8 +87,7 @@ struct RdmaHcommPrivateData {
 static_assert(std::is_trivially_copyable<RdmaHcommPrivateData>::value,
               "RdmaHcommPrivateData must be trivially copyable for byte serialization");
 
-// A5(950) host RoCE 专用私有数据（v2）：在 v1 基础上增加本端 transfer flag 的注册地址。
-// 对端直接拿它当 RDMA 远端地址做一次读，不走 memory key 描述符 + MemImport。
+// A5(950) host RoCE 专用私有数据（v2）：v1 基础上 listenPort 语义不同（本端监听端口，对端据此建 channel）。
 struct RdmaHcommPrivateDataHost {
     uint32_t magic{RDMA_HCOMM_PRIVATE_DATA_MAGIC};
     uint16_t version{RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST};
@@ -105,19 +98,23 @@ struct RdmaHcommPrivateDataHost {
     uint32_t devPhyId{0};
     uint32_t sdid{0};
     uint32_t listenPort{0};
-    uint64_t flagAddr{0};
 };
 static_assert(std::is_trivially_copyable<RdmaHcommPrivateDataHost>::value,
               "RdmaHcommPrivateDataHost must be trivially copyable for byte serialization");
 
-// v1/v2 归一化后的对端私有信息，供 CreatePeerResources 使用（DEVICE 形态 flagAddr=0）。
+// v1/v2 归一化后的对端私有信息，供 CreatePeerResources 使用。
 struct RdmaHcommPeerPrivateInfo {
     CommAddrType addrType{COMM_ADDR_TYPE_RESERVED};
     uint8_t addrBytes[36]{};
     uint32_t devPhyId{0};
     uint32_t sdid{0};
     uint32_t listenPort{0};
-    uint64_t flagAddr{0};
+};
+
+struct RemotePeerMemRange {
+    uint64_t gvaBase{0};
+    uint64_t dva{0};
+    uint64_t size{0};
 };
 
 struct RemoteRankState {
@@ -125,16 +122,12 @@ struct RemoteRankState {
     ThreadHandle thread{0};
     EndpointDesc remoteEndpointDesc{};
     bool hasEndpointDesc{false};
-    uint64_t remoteFlagAddr{0};
-    uint64_t remoteFlagSize{0};
 
-    // Peer's registered DVA and its corresponding GVA base
-    uint64_t peerDva{0};
-    uint64_t peerDvaSize{0};
-    uint64_t peerGva{0};
-    // Imported HCOMM descriptors (memDesc + flagDesc copies) for Unimport on RemoveRanks,
-    // keeping the HCOMM endpoint table in sync so a later re-import (after join retry)
-    // does not hit "memDesc already imported" (HCCL_E_AGAIN).
+    // Imported peer memory ranges (one entry per exported region).
+    std::vector<RemotePeerMemRange> peerMemRanges{};
+    // Imported HCOMM descriptors for Unimport on RemoveRanks, keeping the HCOMM endpoint table
+    // in sync so a later re-import (after join retry) does not hit "memDesc already imported"
+    // (HCCL_E_AGAIN).
     std::vector<std::vector<uint8_t>> importedDescs{};
     std::mutex rankMutex{}; // serialize per-rank WQE submission (multi-thread safety)
 };
@@ -208,13 +201,13 @@ private:
     Result CreatePeerResources(uint32_t peerRank, const RdmaHcommPeerPrivateInfo &peerData);
     Result DestroyPeerResources(uint32_t peerRank);
     Result ImportPeerMems(uint32_t peerRank, const std::vector<TransportMemoryKey> &memKeys);
+    Result ExpandRemoteIoSegments(const RemoteRankState &state, uint64_t lGva, uint64_t rGva, uint64_t size,
+                                  std::vector<uint64_t> &localVec, std::vector<uint64_t> &remoteVec,
+                                  std::vector<uint64_t> &sizeVec) const;
     // 并发 join 时多进程对同一对端 HcommMemImport 会返回 HCCL_E_AGAIN(20)（HCOMM 内部
     // memDescMap/remoteRmaBufferMgr 无锁并发冲突），需重试；其他错误码直接失败。
     int32_t RawMemImportWithRetry(HcommEndpointHandle endpoint, const void *desc, uint32_t descLen, uint32_t peerRank,
                                   HcommCommMem &outMem) const;
-
-    Result InitTransferFlagLocked();
-    void DestroyTransferFlagLocked();
 
     // Data transfer
     Result RemoteIo(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size, bool isRead);
@@ -262,13 +255,6 @@ private:
     uint32_t localListenPort_{0};
     std::string localNic_{};
     std::string channelNameStore_;
-
-    void *localFlagPtr_{nullptr};
-    uint64_t localFlagSize_{DEVICE_RDMA_HCOMM_FLAG_SIZE};
-    HcommMemHandle localFlagHandle_{nullptr};
-    // 仅 DEVICE 形态用：flag 描述符随 memory key 交换给对端 MemImport
-    std::vector<uint8_t> localFlagExportDesc_;
-    uint32_t localFlagExportLen_{0};
 
     std::unordered_map<uint32_t, RemoteRankState> remoteRanks_;
     std::unordered_map<uint64_t, LocalMemEntry> localRegistrations_;

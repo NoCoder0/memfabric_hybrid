@@ -43,9 +43,8 @@ namespace {
 
 constexpr int32_t CHANNEL_STATUS_POLL_INTERVAL_MS = 1;
 constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
-// 本端 flag 缓冲初值：device(AICPU kernel) 路径用它做完成确认；
-// host RoCE 路径已不再读对端 flag，完成确认只依赖 fence。
-constexpr uint64_t TRANSFER_FLAG_DONE = 1ULL;
+// host 侧等待 kernel 末尾 NotifyRecord 的超时（秒）；与 device_urma 的 kernel 超时保持一致
+constexpr uint32_t kNotifyWaitTimeoutS = 60U;
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
 
@@ -438,15 +437,6 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
         }
     }
 
-    // Initialize transfer flag buffer (for kernel notify/confirm read-back)
-    ret = InitTransferFlagLocked();
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("InitTransferFlagLocked failed, ret: " << ret);
-        (void)hcommApi_.DestroyEndpoint(localEndpoint_);
-        localEndpoint_ = nullptr;
-        return ret;
-    }
-
     openGeneration_ = std::make_shared<OpenGeneration>();
     openGeneration_->id = 1;
     opened_ = true;
@@ -463,117 +453,6 @@ void DeviceRdmaHcommTransportManager::ReleaseDeviceTransferBuffers(DeviceTransfe
     buffers.dstList = nullptr;
     buffers.srcList = nullptr;
     buffers.lenList = nullptr;
-}
-
-// ============================================================================
-// Transfer flag buffer (kernel notify/confirm)
-// ============================================================================
-
-Result DeviceRdmaHcommTransportManager::InitTransferFlagLocked()
-{
-    if (localFlagPtr_ != nullptr) {
-        return BM_OK;
-    }
-    if (hostRocePath_) {
-        // flag 用 host 内存（页对齐）+ COMM_MEM_TYPE_HOST 注册，
-        // 这样本端可以 CPU 直接轮询它的值，对端也可以直接拿它的地址做 RDMA 读。
-        const long pageSize = sysconf(_SC_PAGESIZE);
-        if (pageSize <= 0) {
-            BM_LOG_ERROR("sysconf(_SC_PAGESIZE) failed");
-            return BM_ERROR;
-        }
-        void *hostFlag = nullptr;
-        if (posix_memalign(&hostFlag, static_cast<size_t>(pageSize), localFlagSize_) != 0 || hostFlag == nullptr) {
-            BM_LOG_ERROR("posix_memalign for local flag buffer failed, size: " << localFlagSize_);
-            return BM_MALLOC_FAILED;
-        }
-        *reinterpret_cast<uint64_t *>(hostFlag) = TRANSFER_FLAG_DONE;
-        localFlagPtr_ = hostFlag;
-
-        HcommCommMem flagMem{};
-        flagMem.type = COMM_MEM_TYPE_HOST;
-        flagMem.addr = localFlagPtr_;
-        flagMem.size = localFlagSize_;
-        auto ret = hcommApi_.RawMemReg(localEndpoint_, "__hybm_transfer_flag__", flagMem, localFlagHandle_);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("HcommMemReg for local flag buffer failed, ret: " << ret);
-            free(localFlagPtr_);
-            localFlagPtr_ = nullptr;
-            return ret;
-        }
-
-        BM_LOG_INFO("local flag buffer allocated and registered, addr: " << localFlagPtr_ << " size: " << localFlagSize_
-                                                                         << " handle: " << localFlagHandle_
-                                                                         << " type: HOST");
-        return BM_OK;
-    }
-
-    auto ret = DlAclApi::AclrtMalloc(
-        &localFlagPtr_, localFlagSize_,
-        static_cast<aclrtMemMallocPolicy>(ACL_MEM_TYPE_HIGH_BAND_WIDTH | ACL_MEM_MALLOC_HUGE_ONLY));
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("AclrtMalloc for local flag buffer failed, ret: " << ret);
-        return ret;
-    }
-    uint64_t flagInit = 1;
-    ret = DlAclApi::AclrtMemcpy(localFlagPtr_, localFlagSize_, &flagInit, localFlagSize_, ACL_MEMCPY_HOST_TO_DEVICE);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("AclrtMemcpy init local flag buffer failed, ret: " << ret);
-        (void)DlAclApi::AclrtFree(localFlagPtr_);
-        localFlagPtr_ = nullptr;
-        return ret;
-    }
-    HcommCommMem flagMem{};
-    flagMem.type = COMM_MEM_TYPE_DEVICE;
-    flagMem.addr = localFlagPtr_;
-    flagMem.size = localFlagSize_;
-    ret = hcommApi_.RawMemReg(localEndpoint_, "__hybm_transfer_flag__", flagMem, localFlagHandle_);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("HcommMemReg for local flag buffer failed, ret: " << ret);
-        (void)DlAclApi::AclrtFree(localFlagPtr_);
-        localFlagPtr_ = nullptr;
-        return ret;
-    }
-
-    // Cache the exported flag descriptor for embedding into memory keys
-    void *exportDesc = nullptr;
-    uint32_t exportLen = 0;
-    ret = hcommApi_.RawMemExport(localEndpoint_, localFlagHandle_, exportDesc, exportLen);
-    if (ret != BM_OK || exportDesc == nullptr || exportLen == 0) {
-        BM_LOG_ERROR("HcommMemExport for local flag failed, ret: " << ret);
-        (void)hcommApi_.RawMemUnreg(localEndpoint_, localFlagHandle_);
-        localFlagHandle_ = nullptr;
-        (void)DlAclApi::AclrtFree(localFlagPtr_);
-        localFlagPtr_ = nullptr;
-        return ret;
-    }
-    // Export descriptor is owned by Hcomm — copy locally
-    localFlagExportDesc_.resize(exportLen);
-    std::memcpy(localFlagExportDesc_.data(), exportDesc, exportLen);
-    localFlagExportLen_ = exportLen;
-
-    BM_LOG_INFO("local flag buffer allocated and registered, addr: " << localFlagPtr_ << " size: " << localFlagSize_
-                                                                     << " handle: " << localFlagHandle_
-                                                                     << " exportLen: " << exportLen);
-    return BM_OK;
-}
-
-void DeviceRdmaHcommTransportManager::DestroyTransferFlagLocked()
-{
-    if (localFlagHandle_ != nullptr) {
-        (void)hcommApi_.RawMemUnreg(localEndpoint_, localFlagHandle_);
-        localFlagHandle_ = nullptr;
-    }
-    if (localFlagPtr_ != nullptr) {
-        if (hostRocePath_) {
-            free(localFlagPtr_); // host 侧 posix_memalign 的内存不能交给 AclrtFree
-        } else {
-            (void)DlAclApi::AclrtFree(localFlagPtr_);
-        }
-        localFlagPtr_ = nullptr;
-    }
-    localFlagExportDesc_.clear();
-    localFlagExportLen_ = 0;
 }
 
 // ============================================================================
@@ -639,9 +518,6 @@ Result DeviceRdmaHcommTransportManager::CloseDevice()
     }
     registry_.clear();
     openGeneration_.reset();
-
-    // Destroy local flag buffer
-    DestroyTransferFlagLocked();
 
     // Destroy local endpoint
     if (localEndpoint_ != nullptr) {
@@ -779,8 +655,7 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
                                                                    << " max: " << maxDescBytes);
         return BM_ERROR;
     }
-    const size_t flagWords = (localFlagExportLen_ + sizeof(uint64_t) - 1U) / sizeof(uint64_t);
-    key.ResizeWords(TRANS_KEY_DEV_SLOT3 + flagWords);
+    key.ResizeWords(TRANS_KEY_DEV_SLOT3);
     std::memcpy(key.ByteData(), memDesc, descLen);
     // Store metadata in slot 2 via HcommKeyMeta struct (device_urma-compatible pattern)
     auto &meta = HcommKeyMetaAt(key);
@@ -792,31 +667,6 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
     // and TransformVa returns the original value.
     const uint64_t peerGva = HybmVaManager::GetInstance().TransformVa(addr, HVM_HVA, HVM_GVA);
     meta.gvaBase = (peerGva != 0) ? peerGva : addr;
-    if (hostRocePath_) {
-        // 主机侧 RoCE：flag 地址随 private data 交换（对端直接读它判完成），
-        // 不走 memory key 里的 flag 描述符，保持 0 避免对端走已废弃的 MemImport 路径。
-        meta.flagLen = 0;
-    } else {
-        BM_LOG_DEBUG("QueryMemoryKey localFlagHandle_=" << localFlagHandle_
-                                                        << " localFlagExportLen_=" << localFlagExportLen_
-                                                        << " descSize=" << localFlagExportDesc_.size());
-        if (localFlagHandle_ != nullptr) {
-            const uint32_t flagSlot = HCOMM_KEY_FLAG_SLOT;
-            meta.flagLen = static_cast<uint64_t>(localFlagExportLen_);
-            BM_LOG_DEBUG("QueryMemoryKey flagExportLen=" << localFlagExportLen_ << " descSize="
-                                                         << localFlagExportDesc_.size() << " flagWords=" << flagWords);
-            if (localFlagExportLen_ > 0 && !localFlagExportDesc_.empty()) {
-                std::memcpy(&key.keys[flagSlot], localFlagExportDesc_.data(), localFlagExportLen_);
-                BM_LOG_DEBUG("QueryMemoryKey flag data copied, len=" << localFlagExportLen_);
-            } else {
-                BM_LOG_DEBUG("QueryMemoryKey flag memcpy skipped: len=" << localFlagExportLen_
-                                                                        << " empty=" << localFlagExportDesc_.empty());
-            }
-        } else {
-            meta.flagLen = 0;
-            BM_LOG_DEBUG("QueryMemoryKey localFlagHandle_ is nullptr!");
-        }
-    }
 
     BM_LOG_DEBUG("QueryMemoryKey addr=0x" << std::hex << addr << " export descLen=" << descLen << std::dec);
     return BM_OK;
@@ -857,7 +707,7 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
             continue;
         }
 
-        // 私有数据按形态分流：DEVICE 用 v1（与 master 一致），A5 host RoCE 用 v2（额外带 flagAddr）。
+        // 私有数据按形态分流：DEVICE 用 v1（与 master 一致），A5 host RoCE 用 v2。
         const TransportMemoryKey &privKey = item.second.privateData.key;
         RdmaHcommPeerPrivateInfo peerData{};
         if (hostRocePath_) {
@@ -872,7 +722,6 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
             peerData.devPhyId = hostData.devPhyId;
             peerData.sdid = hostData.sdid;
             peerData.listenPort = hostData.listenPort;
-            peerData.flagAddr = hostData.flagAddr;
         } else {
             RdmaHcommPrivateData devData{};
             if (!ReadStructFromKey(privKey, devData) || devData.magic != RDMA_HCOMM_PRIVATE_DATA_MAGIC ||
@@ -930,13 +779,6 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
         remoteDesc.loc.device.superPodIdx = superPodId_;
     }
     state.remoteEndpointDesc = remoteDesc;
-    if (hostRocePath_) {
-        // 对端 flag 地址随 private data 交换，完成性判定时直接对它做一次 RDMA 读
-        state.remoteFlagAddr = peerData.flagAddr;
-        state.remoteFlagSize = DEVICE_RDMA_HCOMM_FLAG_SIZE;
-        BM_LOG_INFO("CreatePeerResources peer rank=" << peerRank << " remoteFlagAddr=0x" << std::hex
-                                                     << state.remoteFlagAddr << std::dec);
-    }
 
     // Allocate thread
     uint32_t notifyNum = DEFAULT_NOTIFY_NUM;
@@ -1050,12 +892,9 @@ Result DeviceRdmaHcommTransportManager::DestroyPeerResources(uint32_t peerRank)
 Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
                                                        const std::vector<TransportMemoryKey> &memKeys)
 {
-    // 幂等：peerDva 在 import 成功后设置。Prepare（644 行）可能对同一 peer
-    // 多次调用（如后续 UpdateRankOptions 带 memKeys 再入），重复 import 会让 HCOMM 返回
-    // "memDesc already imported"（HCCL_E_AGAIN），这里直接跳过已导入的 peer。
-    if (remoteRanks_[peerRank].peerDva != 0) {
-        return BM_OK;
-    }
+    // 幂等按「已导入区间」判断：一个 peer 可能导出多块内存（如 DRAM + HBM），
+    auto &state = remoteRanks_[peerRank];
+
     for (const auto &key : memKeys) {
         if (key.keys.size() < TRANS_KEY_DEV_SLOT2 + KEY_SIZE) {
             BM_LOG_DEBUG("ImportPeerMems skip rank=" << peerRank << " key too small: " << key.keys.size());
@@ -1075,7 +914,6 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
             }
         }
         const uint64_t descLen = meta.descLen;
-        const uint64_t flagLen = meta.flagLen;
         const uint64_t gvaBase = meta.gvaBase;
         BM_LOG_DEBUG("ImportPeerMems rank=" << peerRank << " peerAddr=0x" << std::hex << peerAddr << " peerSize=0x"
                                             << peerSize << " descLen=" << std::dec << descLen);
@@ -1091,10 +929,20 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
         }
 
         const void *memDesc = key.ByteData();
+        const auto *descBegin = static_cast<const uint8_t *>(memDesc);
+        // importedDescs 已保存每份已导入 desc 的字节，直接复用它做去重。
+        const bool descImported =
+            std::any_of(state.importedDescs.begin(), state.importedDescs.end(),
+                        [descBegin, descLen](const std::vector<uint8_t> &imported) {
+                            return imported.size() == descLen && std::memcmp(imported.data(), descBegin, descLen) == 0;
+                        });
+        if (descImported) {
+            continue;
+        }
+
         BM_LOG_DEBUG("ImportPeerMems descLen=" << descLen << " meta={addr=0x" << std::hex << meta.addr << " size=0x"
                                                << meta.size << " descLen=" << std::dec << meta.descLen << " gvaBase=0x"
-                                               << std::hex << meta.gvaBase << std::dec << " flagLen=" << meta.flagLen
-                                               << "}");
+                                               << std::hex << meta.gvaBase << std::dec << "}");
 
         HcommCommMem outMem{};
         auto ret = RawMemImportWithRetry(localEndpoint_, memDesc, static_cast<uint32_t>(descLen), peerRank, outMem);
@@ -1106,38 +954,15 @@ Result DeviceRdmaHcommTransportManager::ImportPeerMems(uint32_t peerRank,
                                                         << " size=0x" << outMem.size << std::dec
                                                         << " type=" << outMem.type);
 
-        // Store peer DVA/GVA for address translation
-        auto &state = remoteRanks_[peerRank];
-        state.peerDva = reinterpret_cast<uint64_t>(outMem.addr);
-        state.peerDvaSize = outMem.size;
-        state.peerGva = gvaBase;
+        state.peerMemRanges.push_back(
+            RemotePeerMemRange{gvaBase, reinterpret_cast<uint64_t>(outMem.addr), outMem.size});
         // Save the imported descriptor so RemoveRanks can Unimport it and keep the
         // HCOMM endpoint table in sync (avoid "memDesc already imported" on re-join).
         state.importedDescs.emplace_back(static_cast<const uint8_t *>(memDesc),
                                          static_cast<const uint8_t *>(memDesc) + descLen);
-        BM_LOG_INFO("ImportPeerMems stored peer rank=" << peerRank << " peerDva=0x" << std::hex << state.peerDva
-                                                       << " peerGva=0x" << state.peerGva << " peerSize=0x"
-                                                       << state.peerDvaSize << std::dec);
-        if (hostRocePath_) {
-            // 对端 flag 地址不走 memory key，改由 private data 交换（见 CreatePeerResources）。
-        } else {
-            // Import flag descriptor from slot 3+ (if present)
-            if (flagLen > 0 && flagLen <= (key.ByteSize() - HCOMM_KEY_FLAG_SLOT * sizeof(uint64_t))) {
-                const void *flagDesc = reinterpret_cast<const void *>(&key.keys[HCOMM_KEY_FLAG_SLOT]);
-                HcommCommMem flagOutMem{};
-                auto flagRet = RawMemImportWithRetry(localEndpoint_, flagDesc, static_cast<uint32_t>(flagLen), peerRank,
-                                                     flagOutMem);
-                if (flagRet == 0 && flagOutMem.type != COMM_MEM_TYPE_INVALID) {
-                    state.remoteFlagAddr = reinterpret_cast<uint64_t>(flagOutMem.addr);
-                    state.remoteFlagSize = flagOutMem.size;
-                    state.importedDescs.emplace_back(static_cast<const uint8_t *>(flagDesc),
-                                                     static_cast<const uint8_t *>(flagDesc) + flagLen);
-                    BM_LOG_INFO("ImportPeerMems imported flag for peer=" << peerRank << " addr=0x" << std::hex
-                                                                         << state.remoteFlagAddr << std::dec
-                                                                         << " size=" << state.remoteFlagSize);
-                }
-            }
-        }
+        BM_LOG_INFO("ImportPeerMems stored peer rank=" << peerRank << " peerDva=0x" << std::hex << outMem.addr
+                                                       << " peerGva=0x" << gvaBase << " peerSize=0x" << outMem.size
+                                                       << std::dec);
     }
     return BM_OK;
 }
@@ -1212,7 +1037,7 @@ const TransportPrivateData DeviceRdmaHcommTransportManager::GetPrivateData() con
     }
 
     if (hostRocePath_) {
-        // A5 host RoCE（v2）：对端建 channel 需要本端监听端口；flag 地址也一并带过去（对端直接读它判完成）
+        // A5 host RoCE（v2）：对端建 channel 需要本端监听端口
         RdmaHcommPrivateDataHost priv{};
         priv.protocol = COMM_PROTOCOL_ROCE;
         priv.addrType = localEndpointDesc_.commAddr.type;
@@ -1220,12 +1045,11 @@ const TransportPrivateData DeviceRdmaHcommTransportManager::GetPrivateData() con
         priv.devPhyId = phyDeviceId_;
         priv.sdid = sdid_;
         priv.listenPort = localListenPort_;
-        priv.flagAddr = reinterpret_cast<uint64_t>(localFlagPtr_);
         WriteStructToKey(priv, data.key);
         return data;
     }
 
-    // DEVICE 形态（v1，与 master 一致）：listenPort/flagAddr 保持 0（channel 建链靠对端 endpoint；flag 走 memory key）
+    // DEVICE 形态（v1，与 master 一致）：listenPort 保持 0（channel 建链靠对端 endpoint）
     RdmaHcommPrivateData priv{};
     priv.protocol = COMM_PROTOCOL_ROCE;
     priv.addrType = localEndpointDesc_.commAddr.type;
@@ -1272,30 +1096,31 @@ uint64_t DeviceRdmaHcommTransportManager::ConvertGvaToDva(uint64_t gva) const
     return gva;
 }
 
-// Convert remote GVA to DVA using the peer's registered base.
-// state.peerGva stores the peer's GVA base (from QueryMemoryKey gvaBase), and
-// callers pass GVA. So remote DVA = peerDva + (rGva - peerGva). For memory that
-// the VaManager maps GVA→DVA (local HBM), use that mapping first.
 uint64_t DeviceRdmaHcommTransportManager::ConvertRemoteGvaToDva(const RemoteRankState &state, uint64_t rGva) const
 {
-    uint64_t remoteDva = rGva;
-
-    // Local memory with an existing GVA→DVA mapping (e.g. HBM, or imported
+    // Local memory with an existing GVA->DVA mapping (e.g. HBM, or imported
     // memory the VaManager registered with a DVA).
     const uint64_t dvaViaMgr = HybmVaManager::GetInstance().TransformVa(rGva, HVM_GVA, HVM_DVA);
     if (dvaViaMgr != 0) {
         return dvaViaMgr;
     }
 
-    // Remote peer memory: peerGva is the peer's GVA base (0x1000...), peerDva is
-    // the imported DVA of that base. rGva is a GVA in the peer's space.
-    if (state.peerDva != 0 && state.peerGva != 0) {
-        const int64_t gvaOffset = static_cast<int64_t>(rGva) - static_cast<int64_t>(state.peerGva);
-        if (gvaOffset >= 0 && static_cast<uint64_t>(gvaOffset) < state.peerDvaSize) {
-            remoteDva = state.peerDva + static_cast<uint64_t>(gvaOffset);
+    // Remote peer memory: find the exported region that contains rGva.
+    for (const auto &range : state.peerMemRanges) {
+        if (rGva < range.gvaBase) {
+            continue;
+        }
+        const uint64_t offset = rGva - range.gvaBase;
+        if (offset < range.size) {
+            return range.dva + offset;
         }
     }
-    return remoteDva;
+
+    if (!hostRocePath_ && !state.peerMemRanges.empty()) {
+        BM_LOG_WARN("ConvertRemoteGvaToDva: no peer range matches rGva=0x"
+                    << std::hex << rGva << std::dec << ", imported ranges: " << state.peerMemRanges.size());
+    }
+    return rGva;
 }
 
 // ============================================================================
@@ -1446,8 +1271,6 @@ Result DeviceRdmaHcommTransportManager::SynchronizeRankPendingLocked(CompletionC
     std::lock_guard<std::mutex> rankLock(state.rankMutex);
     ExtractRankPending(ctx.pendingTransfers, rankId, rankPending);
 
-    // Data kernel already ensured data consistency via WRITE → RDMA READ flag (QP ordering).
-    // No marker kernel needed; just drain the stream and release buffers.
     auto syncRet = SynchronizeContextLocked(ctx.notify, ctx.stream, rankPending);
     if (syncRet != BM_OK) {
         RestoreRankPending(rankPending, ctx.pendingTransfers);
@@ -1539,24 +1362,28 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
     auto ret = device::LaunchDeviceKernel(
         KernelLaunchConfig{isRead ? deviceFuncHandles_.batchRead : deviceFuncHandles_.batchWrite, state.thread,
                            state.channel, ctx.stream, isRead, static_cast<uint32_t>(localVec.size()), localVec.data(),
-                           remoteVec.data(), sizeVec.data(), state.remoteFlagAddr,
-                           reinterpret_cast<uint64_t>(localFlagPtr_), static_cast<uint32_t>(localFlagSize_)},
+                           remoteVec.data(), sizeVec.data(), ctx.notifyId},
         buffers);
     if (ret != BM_OK) {
         return ret;
     }
 
-    // Synchronize immediately after launch to keep only one kernel running on the
-    // shared HCOMM thread/channel at a time. Concurrent kernels interleave on the
-    // AICPU engine thread and corrupt HCOMM's thread-local BatchMode state
-    // (g_threadLaunchCtx), which fails the kernel with aicpu error 0x2a. This
-    // matches the synchronous model of device_urma; the flag read-back inside the
-    // kernel still provides write ordering (QP ordering) on A2 where Fence is no-op.
+    Result waitRet = BM_OK;
+    if (ctx.notify != nullptr && ctx.notifyId != 0U) {
+        waitRet = DlAclApi::AclrtWaitAndResetNotify(ctx.notify, ctx.stream, kNotifyWaitTimeoutS);
+        if (waitRet != BM_OK) {
+            BM_LOG_ERROR("StageAndLaunchTransfer wait notify failed, rank: " << rankId << " notifyId: " << ctx.notifyId
+                                                                             << " ret: " << waitRet);
+        }
+    }
     const auto syncRet = DlAclApi::AclrtSynchronizeStream(ctx.stream);
     device::ReleaseDeviceTransferBuffers(buffers);
     if (syncRet != BM_OK) {
         BM_LOG_ERROR("StageAndLaunchTransfer AclrtSynchronizeStream failed, rank: " << rankId << " ret: " << syncRet);
         return syncRet;
+    }
+    if (waitRet != BM_OK) {
+        return waitRet;
     }
     return BM_OK;
 }
@@ -1564,6 +1391,53 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
 // ============================================================================
 // Data transfer
 // ============================================================================
+
+Result DeviceRdmaHcommTransportManager::ExpandRemoteIoSegments(const RemoteRankState &state, uint64_t lGva,
+                                                               uint64_t rGva, uint64_t size,
+                                                               std::vector<uint64_t> &localVec,
+                                                               std::vector<uint64_t> &remoteVec,
+                                                               std::vector<uint64_t> &sizeVec) const
+{
+    // host RoCE 形态不做区间切分，保持原来的单笔转换语义。
+    if (hostRocePath_ || state.peerMemRanges.empty()) {
+        localVec.push_back(ConvertGvaToDva(lGva));
+        remoteVec.push_back(ConvertRemoteGvaToDva(state, rGva));
+        sizeVec.push_back(size);
+        return BM_OK;
+    }
+
+    uint64_t curLocal = lGva;
+    uint64_t curRemote = rGva;
+    uint64_t remain = size;
+    while (remain > 0) {
+        const RemotePeerMemRange *hit = nullptr;
+        for (const auto &range : state.peerMemRanges) {
+            if (curRemote >= range.gvaBase && (curRemote - range.gvaBase) < range.size) {
+                hit = &range;
+                break;
+            }
+        }
+        if (hit == nullptr) {
+            BM_LOG_ERROR("RemoteIo remote GVA 0x"
+                         << std::hex << curRemote << std::dec
+                         << " not in any imported peer range, imported: " << state.peerMemRanges.size());
+            return BM_INVALID_PARAM;
+        }
+        const uint64_t offset = curRemote - hit->gvaBase;
+        const uint64_t seg = std::min(remain, hit->size - offset);
+        localVec.push_back(ConvertGvaToDva(curLocal));
+        remoteVec.push_back(hit->dva + offset);
+        sizeVec.push_back(seg);
+        if (seg < remain) {
+            BM_LOG_DEBUG("RemoteIo split at peer region boundary, remoteGva=0x"
+                         << std::hex << curRemote << " seg=0x" << seg << " remain=0x" << remain << std::dec);
+        }
+        curLocal += seg;
+        curRemote += seg;
+        remain -= seg;
+    }
+    return BM_OK;
+}
 
 Result DeviceRdmaHcommTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size,
                                                  bool isRead)
@@ -1582,13 +1456,8 @@ Result DeviceRdmaHcommTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr
         return BM_NOT_INITIALIZED;
     }
 
-    // Convert GVA to DVA for HCOMM: RDMA uses registered DVA addresses
-    const uint64_t localDva = ConvertGvaToDva(lAddr);
-    const uint64_t remoteDva = ConvertRemoteGvaToDva(state, rAddr);
-
     BM_LOG_DEBUG("RemoteIo rank=" << rankId << (isRead ? " READ" : " WRITE") << " lGVA=0x" << std::hex << lAddr
-                                  << " lDVA=0x" << localDva << " rGVA=0x" << rAddr << " rDVA=0x" << remoteDva
-                                  << " size=0x" << size << std::dec);
+                                  << " rGVA=0x" << rAddr << " size=0x" << size << std::dec);
 
     // TLS: look up or create per-thread CompletionContext
     CompletionContext *ctx = LookupOrCreateContextLocked();
@@ -1597,7 +1466,15 @@ Result DeviceRdmaHcommTransportManager::RemoteIo(uint32_t rankId, uint64_t lAddr
         return BM_MALLOC_FAILED;
     }
 
-    return StageAndLaunchTransfer(*ctx, state, isRead, {localDva}, {remoteDva}, {size}, rankId);
+    // 对端内存切片在 GVA 上连续、DVA 上不连续，跨切片的单笔请求要拆成多段。
+    std::vector<uint64_t> localVec;
+    std::vector<uint64_t> remoteVec;
+    std::vector<uint64_t> sizeVec;
+    auto ret = ExpandRemoteIoSegments(state, lAddr, rAddr, size, localVec, remoteVec, sizeVec);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    return StageAndLaunchTransfer(*ctx, state, isRead, localVec, remoteVec, sizeVec, rankId);
 }
 
 Result DeviceRdmaHcommTransportManager::RemoteIoBatch(uint32_t rankId, const CopyDescriptor &descriptor, bool isRead)
@@ -1622,23 +1499,33 @@ Result DeviceRdmaHcommTransportManager::RemoteIoBatch(uint32_t rankId, const Cop
         return BM_MALLOC_FAILED;
     }
 
-    // A5(950) host RoCE：一次提交的 WR 数受 QP send queue 深度限制（实测约 2048），超过会把 SQ
-    // 打满、ibv_post_send 失败，因此按 SQ 安全上限切片，每片一次提交 + 各自 fence。
-    // DEVICE 形态(含 A2/A3)仍逐笔下发一片，保持原有的 kernel 下发粒度与提交行为不变。
-    const size_t maxWrPerBatch = hostRocePath_ ? 1024U : 1U;
+    // 一批 WR 的提交上限：
+    //   host RoCE：受 QP send queue 深度限制（实测约 2048），超过会把 SQ 打满、ibv_post_send 失败，取一半；
+    //   DEVICE(含 A2/A3)：同样按此上限一批提交，一批内只做一次 fence/drain/notify，避免逐笔 kernel 往返。
+    constexpr size_t kWrPerBatch = 1024U;
     const size_t total = descriptor.counts.size();
-    for (size_t beg = 0; beg < total; beg += maxWrPerBatch) {
-        const size_t n = std::min(maxWrPerBatch, total - beg);
-        std::vector<uint64_t> localVec(n);
-        std::vector<uint64_t> remoteVec(n);
-        std::vector<uint64_t> counts(n);
-        for (size_t i = 0; i < n; ++i) {
-            // Convert GVA to DVA for HCOMM RDMA
-            localVec[i] = ConvertGvaToDva(reinterpret_cast<uint64_t>(descriptor.localAddrs[beg + i]));
-            remoteVec[i] = ConvertRemoteGvaToDva(state, reinterpret_cast<uint64_t>(descriptor.globalAddrs[beg + i]));
-            counts[i] = descriptor.counts[beg + i];
+
+    // 先把每笔请求按对端区间展开（跨切片的会拆成多段），再按上限分片提交。
+    std::vector<uint64_t> localVec;
+    std::vector<uint64_t> remoteVec;
+    std::vector<uint64_t> counts;
+    for (size_t i = 0; i < total; ++i) {
+        auto ret = ExpandRemoteIoSegments(state, reinterpret_cast<uint64_t>(descriptor.localAddrs[i]),
+                                          reinterpret_cast<uint64_t>(descriptor.globalAddrs[i]), descriptor.counts[i],
+                                          localVec, remoteVec, counts);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("RemoteIoBatch expand failed, rank: " << rankId << " idx: " << i << " ret: " << ret);
+            return ret;
         }
-        auto ret = StageAndLaunchTransfer(*ctx, state, isRead, localVec, remoteVec, counts, rankId);
+    }
+
+    const size_t expanded = counts.size();
+    for (size_t beg = 0; beg < expanded; beg += kWrPerBatch) {
+        const size_t n = std::min(kWrPerBatch, expanded - beg);
+        std::vector<uint64_t> chunkLocal(localVec.begin() + beg, localVec.begin() + beg + n);
+        std::vector<uint64_t> chunkRemote(remoteVec.begin() + beg, remoteVec.begin() + beg + n);
+        std::vector<uint64_t> chunkCounts(counts.begin() + beg, counts.begin() + beg + n);
+        auto ret = StageAndLaunchTransfer(*ctx, state, isRead, chunkLocal, chunkRemote, chunkCounts, rankId);
         if (ret != BM_OK) {
             BM_LOG_ERROR("RemoteIoBatch chunk failed, rank: " << rankId << " beg: " << beg << " n: " << n
                                                               << " ret: " << ret);

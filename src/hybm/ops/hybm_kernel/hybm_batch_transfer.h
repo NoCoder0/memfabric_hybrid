@@ -24,9 +24,7 @@ struct HybmOneSideOpParam {
     void **dst_buf_addr_list;
     void **src_buf_addr_list;
     uint64_t *len_list;
-    uint64_t remote_flag_addr;
-    uint64_t local_flag_addr;
-    uint32_t flag_size;
+    uint32_t notify_id; // 内核末尾 NotifyRecord 用的 notifyId（0=不做记录，只做 Drain）
 };
 
 // Multi-rank batch ABI used by HybmBatchTransfer.

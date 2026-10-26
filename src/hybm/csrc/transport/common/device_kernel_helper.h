@@ -61,9 +61,7 @@ struct KernelLaunchConfig {
     const uint64_t *localAddrs{nullptr};
     const uint64_t *remoteAddrs{nullptr};
     const uint64_t *sizes{nullptr};
-    uint64_t remoteFlagAddr{0};
-    uint64_t localFlagAddr{0};
-    uint32_t flagSize{0};
+    uint32_t notifyId{0}; // 非 0 时内核在数据 WR 之后记录一次 NotifyRecord，host 侧等待它
 };
 
 /**
@@ -130,9 +128,7 @@ inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransfe
     args.dst_buf_addr_list = reinterpret_cast<void **>(dstListDev);
     args.src_buf_addr_list = reinterpret_cast<void **>(static_cast<uint8_t *>(dstListDev) + ptrBytes);
     args.len_list = reinterpret_cast<uint64_t *>(static_cast<uint8_t *>(dstListDev) + ptrBytes * 2UL);
-    args.remote_flag_addr = config.remoteFlagAddr;
-    args.local_flag_addr = config.localFlagAddr;
-    args.flag_size = config.flagSize;
+    args.notify_id = config.notifyId;
 
     ret = LaunchAicpuKernel(config.funcHandle, config.stream, &args, sizeof(args));
     if (ret != BM_OK) {
