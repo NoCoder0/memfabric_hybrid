@@ -9,13 +9,17 @@
 # MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 # See the Mulan PSL v2 for more details.
 
-"""GH2L batch-copy case from rank1 HOST memory to rank0 NPU memory."""
-
 import helpers
 
 
 class TestCopyDataBatch001:
-    # 远端HOST到本地NPU批量拷贝。
+    """
+    GH2L: 单节点双进程，由 rank0 发起批量拷贝。
+    从 rank1 内存池 DRAM 的全局虚拟地址 GVA，批量拷贝到 rank0 本地 NPU HBM。
+    拷贝 4 个 block，每个 block 大小为 8 MiB，共 32 MiB。
+    目标预先填充为与源数据不同的值，拷贝后逐块校验目标数据正确且源数据保持不变。
+    """
+
     COUNT = 4
     BLOCK_BYTES = 8 << 20
     SEED = 9341
