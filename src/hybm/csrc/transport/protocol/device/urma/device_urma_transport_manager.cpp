@@ -58,6 +58,9 @@ constexpr uint32_t HCOMM_NORMAL_NOTIFY_NUM = 0;
 constexpr uint32_t HCOMM_CHANNEL_QOS_DEFAULT = 0U;
 constexpr uint32_t HCOMM_CHANNEL_QOS_MAX = 7U;
 constexpr const char *HCOMM_CHANNEL_QOS_ENV = "MF_DEVICE_UB_QOS";
+const auto HCOMM_CHANNEL_READY_TIMEOUT_BASE =
+    std::chrono::seconds(MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_QP_READY_CHECK_TIMEOUT_BASE, 100));
+constexpr auto HCOMM_CHANNEL_READY_TIMEOUT_PER_RANK = std::chrono::milliseconds(100);
 constexpr const char *HYBM_DEVICE_FUNC_TRANSFER = "HybmBatchTransfer";
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1U;
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
@@ -1918,7 +1921,10 @@ Result DeviceUrmaTransportManager::ConnectRank(uint32_t rankId)
         }
     }
     // Keep channel handles alive until the wrapper finishes polling.
-    return HcommApiWrapper::WaitForChannelsReady(channelPeers);
+    // Match native RDMA's wait budget; a timeout leaves channels/threads available for later checks.
+    const auto channelReadyTimeout =
+        HCOMM_CHANNEL_READY_TIMEOUT_BASE + HCOMM_CHANNEL_READY_TIMEOUT_PER_RANK * channelPeers.size();
+    return HcommApiWrapper::WaitForChannelsReady(channelPeers, channelReadyTimeout, rankId_);
 }
 
 void DeviceUrmaTransportManager::RollbackPendingPrepareResourcesLocked(const std::set<uint32_t> &peerRanks)

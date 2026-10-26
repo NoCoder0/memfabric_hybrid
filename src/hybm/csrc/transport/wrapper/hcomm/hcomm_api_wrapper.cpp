@@ -364,15 +364,15 @@ constexpr int32_t HCOMM_CHANNEL_FAILED = 2;
 constexpr int32_t HCOMM_CHANNEL_TIMEOUT = 3;
 constexpr auto HCOMM_CHANNEL_POLL_INTERVAL = std::chrono::milliseconds(100);
 
-std::string DescribePeerRanks(const std::vector<HcommChannelReadyPeer> &peerRanks)
+std::string DescribePeerChannels(const std::vector<HcommChannelReadyPeer> &peerRanks, size_t begin, size_t end)
 {
     std::ostringstream stream;
     stream << "[";
-    for (size_t index = 0; index < peerRanks.size(); ++index) {
-        if (index != 0U) {
+    for (size_t index = begin; index < end; ++index) {
+        if (index != begin) {
             stream << ", ";
         }
-        stream << peerRanks[index].peerRank;
+        stream << peerRanks[index].peerRank << "/" << peerRanks[index].channel;
     }
     stream << "]";
     return stream.str();
@@ -380,7 +380,7 @@ std::string DescribePeerRanks(const std::vector<HcommChannelReadyPeer> &peerRank
 } // namespace
 
 Result HcommApiWrapper::WaitForChannelsReady(const std::vector<HcommChannelReadyPeer> &peerRanks,
-                                             std::chrono::milliseconds timeout)
+                                             std::chrono::milliseconds timeout, uint32_t localRank)
 {
     if (peerRanks.empty()) {
         return BM_OK;
@@ -389,16 +389,19 @@ Result HcommApiWrapper::WaitForChannelsReady(const std::vector<HcommChannelReady
     const auto startTime = std::chrono::steady_clock::now();
     const auto deadline = startTime + timeout;
     auto pendingPeerRanks = peerRanks;
+    uint32_t pollRounds = 0;
 
     while (!pendingPeerRanks.empty() && std::chrono::steady_clock::now() < deadline) {
+        ++pollRounds;
         // Poll every pending channel once per round. Blocking on one channel can form a cycle when peers choose
         // different first channels, even though all channel handles have already been created.
         for (auto peerIt = pendingPeerRanks.begin(); peerIt != pendingPeerRanks.end();) {
             int32_t channelStatus = HCOMM_CHANNEL_IN_PROGRESS;
             auto ret = DlHcommApi::HcommChannelGetStatus(&peerIt->channel, 1, &channelStatus);
             if (ret != 0) {
-                BM_LOG_ERROR("HcommChannelGetStatus failed, channel: " << peerIt->channel << " peer: "
-                                                                       << peerIt->peerRank << " ret: " << ret);
+                BM_LOG_ERROR("HcommChannelGetStatus failed, localRank: " << localRank << " channel: " << peerIt->channel
+                                                                         << " peerRank: " << peerIt->peerRank
+                                                                         << " ret: " << ret);
                 return BM_DL_FUNCTION_FAILED;
             }
             if (channelStatus == HCOMM_CHANNEL_READY) {
@@ -406,34 +409,46 @@ Result HcommApiWrapper::WaitForChannelsReady(const std::vector<HcommChannelReady
                 continue;
             }
             if (channelStatus == HCOMM_CHANNEL_FAILED) {
-                BM_LOG_ERROR("channel FAILED, channel: " << peerIt->channel << " peer: " << peerIt->peerRank);
+                BM_LOG_ERROR("HcommChannelGetStatus reported FAILED, localRank: "
+                             << localRank << " channel: " << peerIt->channel << " peerRank: " << peerIt->peerRank
+                             << " status: " << channelStatus);
                 return BM_NOT_CONNECTED;
             }
             if (channelStatus == HCOMM_CHANNEL_TIMEOUT) {
-                BM_LOG_ERROR("channel TIMEOUT, channel: " << peerIt->channel << " peer: " << peerIt->peerRank);
+                BM_LOG_ERROR("HcommChannelGetStatus reported TIMEOUT, localRank: "
+                             << localRank << " channel: " << peerIt->channel << " peerRank: " << peerIt->peerRank
+                             << " status: " << channelStatus);
                 return BM_TIMEOUT;
             }
             if (channelStatus != HCOMM_CHANNEL_IN_PROGRESS) {
-                BM_LOG_ERROR("channel unknown status, channel: " << peerIt->channel << " peer: " << peerIt->peerRank
-                                                                 << " status: " << channelStatus);
+                BM_LOG_ERROR("HcommChannelGetStatus reported unknown status, localRank: "
+                             << localRank << " channel: " << peerIt->channel << " peerRank: " << peerIt->peerRank
+                             << " status: " << channelStatus);
                 return BM_DL_FUNCTION_FAILED;
             }
             ++peerIt;
         }
         if (!pendingPeerRanks.empty()) {
             const auto now = std::chrono::steady_clock::now();
-            BM_LOG_INFO_LIMIT("pendingPeerCount: " << pendingPeerRanks.size() << ","
-                                                   << " In Progress PeerRanks: "
-                                                   << DescribePeerRanks(pendingPeerRanks));
             const auto nextPoll = now + HCOMM_CHANNEL_POLL_INTERVAL;
             std::this_thread::sleep_until(nextPoll < deadline ? nextPoll : deadline);
         }
     }
 
-    for (const auto &peer : pendingPeerRanks) {
-        BM_LOG_ERROR("channel wait TIMEOUT, channel: " << peer.channel << " peerRank: " << peer.peerRank
-                                                       << " timeout_ms: " << timeout.count()
-                                                       << " status: " << HCOMM_CHANNEL_IN_PROGRESS);
+    if (!pendingPeerRanks.empty()) {
+        const auto elapsedMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - startTime).count();
+        // Bound each diagnostic line while reporting every pending channel, without shared log throttling.
+        constexpr size_t channelsPerLog = 16U;
+        for (size_t begin = 0; begin < pendingPeerRanks.size(); begin += channelsPerLog) {
+            const auto end =
+                pendingPeerRanks.size() - begin > channelsPerLog ? begin + channelsPerLog : pendingPeerRanks.size();
+            BM_LOG_ERROR("HcommChannelGetStatus wait TIMEOUT, localRank: "
+                         << localRank << " pendingPeerCount: " << pendingPeerRanks.size()
+                         << " pendingChannels(peerRank/channel): " << DescribePeerChannels(pendingPeerRanks, begin, end)
+                         << " status: " << (pollRounds == 0U ? -1 : HCOMM_CHANNEL_IN_PROGRESS) << " poll_rounds: "
+                         << pollRounds << " timeout_ms: " << timeout.count() << " elapsed_ms: " << elapsedMs);
+        }
     }
     return pendingPeerRanks.empty() ? BM_OK : BM_TIMEOUT;
 }

@@ -547,11 +547,16 @@ TEST(HcommApiWrapperTest, WaitForChannelsReadyTimesOutWhenChannelStaysInProgress
     const ChannelHandle channel = 0xA003UL;
     const std::vector<HcommChannelReadyPeer> peerRanks{{channel, 3U}};
     const auto start = std::chrono::steady_clock::now();
-    const auto ret = HcommApiWrapper::WaitForChannelsReady(peerRanks, std::chrono::milliseconds(5));
+    const auto ret = HcommApiWrapper::WaitForChannelsReady(peerRanks, std::chrono::milliseconds(5), 0U);
     const auto elapsed = std::chrono::steady_clock::now() - start;
 
     EXPECT_EQ(ret, BM_TIMEOUT);
     EXPECT_LT(elapsed, std::chrono::seconds(1));
+    DlHcommApi::gHcommChannelGetStatus = [](const ChannelHandle *, uint32_t, int32_t *status) -> int32_t {
+        *status = 0;
+        return 0;
+    };
+    EXPECT_EQ(HcommApiWrapper::WaitForChannelsReady(peerRanks, std::chrono::milliseconds(5), 0U), BM_OK);
 }
 
 TEST(HcommApiWrapperTest, WaitForChannelsReadyPollsEveryPendingChannel)
@@ -587,7 +592,7 @@ TEST(HcommApiWrapperTest, WaitForChannelsReadyPollsEveryPendingChannel)
     };
 
     const std::vector<HcommChannelReadyPeer> peerRanks{{firstChannel, 1U}, {secondChannel, 2U}};
-    EXPECT_EQ(HcommApiWrapper::WaitForChannelsReady(peerRanks, std::chrono::seconds(1)), BM_OK);
+    EXPECT_EQ(HcommApiWrapper::WaitForChannelsReady(peerRanks, std::chrono::seconds(1), 0U), BM_OK);
     EXPECT_EQ(firstChannelPollCount, 2U);
     EXPECT_EQ(secondChannelPollCount, 1U);
 }

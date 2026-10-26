@@ -27,6 +27,9 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "mf_env_define.h"
+#include "mf_env_util.h"
+
 #define private   public
 #define protected public
 #include "hybm_gva_version.h"
@@ -2171,6 +2174,52 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankPollsInProgressUntilReady)
     EXPECT_EQ(manager.remoteRanks_[1].channel, MOCK_CHANNEL);
     EXPECT_EQ(manager.remoteRanks_[1].thread, MOCK_THREAD);
     EXPECT_EQ(manager.RemoveRanks({1U}), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ConnectRankUsesRdmaTimeoutAndKeepsResourcesForRetry)
+{
+    DlHcommApiFnGuard guard;
+    MockcppScope mockcpp;
+    // Check the wait budget without spending the real connection timeout in this test.
+    MOCKER(&HcommApiWrapper::WaitForChannelsReady)
+        .stubs()
+        .will(invoke(+[](const std::vector<HcommChannelReadyPeer> &peers, std::chrono::milliseconds timeout,
+                         uint32_t localRank) -> ock::mf::Result {
+            EXPECT_EQ(peers.size(), 1U);
+            if (peers.size() == 1U) {
+                EXPECT_EQ(peers.front().peerRank, 1U);
+                EXPECT_EQ(peers.front().channel, MOCK_CHANNEL);
+            }
+            EXPECT_EQ(localRank, 0U);
+            const auto baseSeconds = MfEnvUtil::GetOptionalUintOrDefault(env::MF_QP_READY_CHECK_TIMEOUT_BASE, 100);
+            EXPECT_EQ(timeout, std::chrono::seconds(baseSeconds) + std::chrono::milliseconds(100));
+            return BM_TIMEOUT;
+        }));
+    DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroyCounted;
+    DlHcommApi::gHcommThreadFree = MockHcommThreadFreeCounted;
+
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0U;
+    manager.rankCount_ = 2U;
+    manager.remoteRanks_[1].channel = MOCK_CHANNEL;
+    manager.remoteRanks_[1].thread = MOCK_THREAD;
+    g_channelDestroyCallCount = 0;
+    g_threadFreeCallCount = 0;
+
+    EXPECT_EQ(manager.ConnectRank(1U), BM_TIMEOUT);
+    EXPECT_EQ(manager.remoteRanks_[1].channel, MOCK_CHANNEL);
+    EXPECT_EQ(manager.remoteRanks_[1].thread, MOCK_THREAD);
+    EXPECT_EQ(g_channelDestroyCallCount, 0);
+    EXPECT_EQ(g_threadFreeCallCount, 0);
+    GlobalMockObject::reset();
+    MOCKER(&HcommApiWrapper::WaitForChannelsReady).stubs().will(returnValue(BM_OK));
+    EXPECT_EQ(manager.ConnectRank(1U), BM_OK);
+    EXPECT_EQ(g_channelDestroyCallCount, 0);
+    EXPECT_EQ(g_threadFreeCallCount, 0);
+    EXPECT_EQ(manager.RemoveRanks({1U}), BM_OK);
+    EXPECT_EQ(g_channelDestroyCallCount, 1);
+    EXPECT_EQ(g_threadFreeCallCount, 1);
 }
 
 TEST(DeviceUrmaTransportManagerTest, ConnectRankValidatesStateAndAllowsNoPeers)

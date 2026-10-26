@@ -124,8 +124,9 @@ public:
                                 ChannelHandle &channel);
     static Result DestroyChannel(ChannelHandle &channel);
     static Result GetChannelStatus(ChannelHandle &channel, int32_t &status);
+    // All pending channels share one deadline; an in-flight status query cannot be interrupted.
     static Result WaitForChannelsReady(const std::vector<HcommChannelReadyPeer> &peerRanks,
-                                       std::chrono::milliseconds timeout = std::chrono::hours(2));
+                                       std::chrono::milliseconds timeout, uint32_t localRank);
 
     // ── Raw (bypass cache) — for flag buffers, one-shot registration ──
     static Result RawMemReg(HcommEndpointHandle endpoint, const char *tag, const HcommCommMem &mem,
