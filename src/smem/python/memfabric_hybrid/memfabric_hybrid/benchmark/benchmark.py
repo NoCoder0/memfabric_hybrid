@@ -11,186 +11,34 @@
 """Benchmark entry point for mfcli benchmark command."""
 
 import logging
-import math
-import os
-import re
-import shutil
-import subprocess
-from pathlib import Path
-from urllib.parse import urlsplit
+
+from .common.config import _parse_npu_devices, _resolve_protocol
+from .common.params import build_params
+from .common.runtime import BenchmarkRunner
 
 LOGGER = logging.getLogger(__name__)
 
 
-def _is_localhost(store_url):
-    host = store_url.split("://")[-1].split(":")[0]
-    return host in ("127.0.0.1", "localhost")
-
-
-def _count_from_npu_smi(output):
-    """Count NPUs from `npu-smi info -l` output."""
-    total = 0
-    ids = 0
-    for line in (output or "").splitlines():
-        text = line.strip()
-        if ":" not in text:
-            continue
-        key, value = text.split(":", 1)
-        key = key.strip().upper()
-        if key.startswith("TOTAL COUNT"):
-            found = re.search(r"\d+", value)
-            if found:
-                total = int(found.group(0))
-        elif key == "NPU ID":
-            ids += 1
-    return total or ids
-
-
-def _parse_npu_devices():
-    visible = os.environ.get("ASCEND_RT_VISIBLE_DEVICES", "")
-    if visible:
-        devices = [int(x.strip()) for x in visible.split(",") if x.strip()]
-        if devices:
-            return devices
-
-    npu_smi = shutil.which("npu-smi")
-    if npu_smi:
-        try:
-            proc = subprocess.run([npu_smi, "info", "-l"], capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            proc = None
-        if proc is not None:
-            count = _count_from_npu_smi(proc.stdout)
-            if count > 0:
-                return list(range(count))
-
-    # /dev/davinci0..N-1. The numeric suffix filter matters: a plain "davinci*"
-    # glob also matches /dev/davinci_manager and would report one NPU too many.
-    davinci_devs = [dev for dev in Path("/dev").glob("davinci*") if dev.name[len("davinci") :].isdigit()]
-    if davinci_devs:
-        return list(range(len(davinci_devs)))
-
-    return [0]
-
-
-def _configure_benchmark(args):
-    if args.world_size == -1:
-        args.world_size = args.local_rank_size if _is_localhost(args.ip) else 2 * args.local_rank_size
-    args.paired = args.local_rank_size > 0 and args.world_size == 2 * args.local_rank_size
-    if args.paired:
-        _configure_paired(args)
-
-
-def _resolve_protocol(args):
-    if args.protocol != "auto":
-        return
-    from memfabric_hybrid.env_utils import get_benchmark_soc
-
-    soc, generation = get_benchmark_soc()
-    protocol = {"A2": "device_rdma", "A3": "sdma", "A5": "device_urma"}.get(generation)
-    if protocol is None:
-        raise ValueError(
-            f"cannot select protocol automatically: soc={soc!r}; "
-            "acl.get_soc_name() did not identify A2/A3/A5; specify --protocol explicitly"
-        )
-    args.protocol = protocol
-    LOGGER.info("benchmark protocol: requested=auto soc=%r generation=%s protocol=%s", soc, generation, protocol)
-
-
-def _configure_paired(args):
-    if args.command not in ("write", "read"):
-        raise ValueError("paired mode requires write or read")
-    endpoint = urlsplit(args.ip)
-    if (
-        endpoint.scheme != "tcp"
-        or not endpoint.hostname
-        or endpoint.port is None
-        or endpoint.username is not None
-        or endpoint.path
-        or endpoint.query
-        or endpoint.fragment
-    ):
-        raise ValueError("paired --ip must be tcp://<write-host>:<port>")
-    if endpoint.hostname == "0.0.0.0" or not 0 < endpoint.port < 65536:
-        raise ValueError("paired --ip must have a reachable host and a valid port")
-    if args.command == "read" and args.rank_start == 0:
-        args.rank_start = args.local_rank_size
-    expected_start = 0 if args.command == "write" else args.local_rank_size
-    if args.rank_start != expected_start:
-        raise ValueError(f"paired {args.command} requires --rank-start {expected_start}")
-    if args.sync_port is None:
-        args.sync_port = endpoint.port + 1
-    if not 0 < args.sync_port < 65536 or args.sync_port == endpoint.port:
-        raise ValueError("--sync-port must be valid and different from the BM store port")
-    if not math.isfinite(args.sync_timeout) or args.sync_timeout <= 0 or args.warmup_count < 0:
-        raise ValueError("--sync-timeout must be positive and finite; --warmup-count must be nonnegative")
-    if args.copysize % 4096:
-        raise ValueError("paired --copysize must be a multiple of 4096 bytes")
-    if args.peer_mem_type == "device" and args.protocol.startswith("host_"):
-        raise ValueError("host protocols in paired mode require --peer-mem-type host")
-    capacity = args.local_hbm_size if args.peer_mem_type == "device" else 4 * 1024**3
-    if args.local_hbm_size < 0 or args.copysize * args.batchsize > capacity:
-        raise ValueError("copy payload exceeds the contributed pool size, or HBM size is negative")
-    args.sync_host = endpoint.hostname
-
-
-def _validate_layout(args, npu_count):
-    if args.local_rank_size <= 0 or args.device < 0 or args.device + args.local_rank_size > npu_count:
-        raise ValueError("requested local ranks/devices exceed the visible NPU count")
-    if args.copysize <= 0 or args.copysize % 4 or args.batchsize <= 0 or args.copy_count <= 0:
-        raise ValueError("copy size must be positive and divisible by 4; batch size and copy count must be positive")
-    if args.rank_start < 0 or args.rank_start + args.local_rank_size > args.world_size:
-        raise ValueError("local rank range must be within --world-size")
-
-
-def _log_invalid_configuration(args, error):
-    LOGGER.error(
-        "invalid benchmark configuration: %s; rank_start=%s local_ranks=%s world_size=%s "
-        "device=%s protocol=%s copy_size=%s batch_size=%s copy_count=%s",
-        error,
-        args.rank_start,
-        args.local_rank_size,
-        args.world_size,
-        args.device,
-        args.protocol,
-        args.copysize,
-        args.batchsize,
-        args.copy_count,
-    )
-
-
 def run(args):
+    logging.getLogger().setLevel(logging.DEBUG if args.log else logging.ERROR)
     devices = _parse_npu_devices()
-    npu_count = len(devices)
-
-    if args.device is None:
-        args.device = 0
-    if args.local_rank_size is None:
-        args.local_rank_size = npu_count
-
     try:
         _resolve_protocol(args)
-        _configure_benchmark(args)
-        _validate_layout(args, npu_count)
+        params = build_params(args, devices)
     except ValueError as error:
-        _log_invalid_configuration(args, error)
+        LOGGER.error(
+            "invalid benchmark configuration: %s; direction=%s block_size=%s batch_size=%s ip=%s group=%s "
+            "device=%s visible=%s",
+            error,
+            args.direction,
+            args.block_size,
+            args.batch_size,
+            args.ip,
+            args.group,
+            args.device,
+            devices,
+        )
         return 1
+    from .bm.pairwise import run_rank
 
-    LOGGER.info(
-        "benchmark: cmd=%s mode=%s protocol=%s framework=%s model=%s npu_devices=%s world_size=%d local_rank_size=%d",
-        args.command,
-        "paired" if args.paired else "same_operation",
-        args.protocol,
-        args.framework,
-        args.model,
-        devices,
-        args.world_size,
-        args.local_rank_size,
-    )
-
-    if args.command in ("write", "read"):
-        from .bm_band_width_benchmark import run_bm
-
-        return run_bm(args)
-    LOGGER.error("unknown benchmark command: %s", args.command)
-    return 1
+    return BenchmarkRunner(params, run_rank).run()

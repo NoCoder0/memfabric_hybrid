@@ -161,27 +161,20 @@ def _run_benchmark(args: argparse.Namespace) -> int:
 
 
 def _register_benchmark_command(components) -> None:
-    benchmark = components.add_parser("benchmark", help="run performance benchmark")
+    benchmark = components.add_parser("benchmark", help="run pairwise BM bandwidth benchmark")
     benchmark.set_defaults(handler=_run_benchmark)
 
     benchmark.add_argument(
-        "command",
-        nargs="?",
-        choices=("write", "read", "trans"),
-        default="read",
-        help="benchmark operation type (default: read)",
+        "--direction",
+        type=str,
+        default="all",
+        help="all, write, read, or a comma list such as D2rD,rD2D (case-insensitive; default: all 8 directions)",
     )
     benchmark.add_argument(
-        "--framework",
-        choices=("sglang", "vllm"),
-        default="vllm",
-        help="inference framework type (default: vllm)",
-    )
-    benchmark.add_argument(
-        "--model",
-        choices=("glm5.2", "dsv4"),
-        default="glm5.2",
-        help="model type (default: glm5.2)",
+        "--device",
+        type=str,
+        default=None,
+        help="NPU devices to use, e.g. 0,1 or 0-3 (logical ids under ASCEND_RT_VISIBLE_DEVICES; default: all visible)",
     )
     benchmark.add_argument(
         "--protocol",
@@ -193,50 +186,9 @@ def _register_benchmark_command(components) -> None:
         "--ip",
         type=str,
         default="tcp://127.0.0.1:12050",
-        help="config store node IP, format tcp://<ip>:<port> (default: tcp://127.0.0.1:12050)",
-    )
-    benchmark.add_argument(
-        "--copysize",
-        type=int,
-        default=2097152,
-        help="block size in bytes (default: 2097152)",
-    )
-    benchmark.add_argument(
-        "--batchsize",
-        type=int,
-        default=1,
-        help="batch count (default: 1)",
-    )
-    benchmark.add_argument(
-        "--copy-count",
-        type=int,
-        default=1000,
-        help="copy iteration count (default: 1000)",
-    )
-    benchmark.add_argument(
-        "--device",
-        type=int,
-        default=None,
-        help="starting (virtual) device ID, Ascend runtime maps via ASCEND_RT_VISIBLE_DEVICES (default: 0)",
-    )
-    benchmark.add_argument(
-        "--world-size",
-        type=int,
-        default=-1,
-        help="global rank count; twice local ranks selects paired write/read "
-        "(default: local ranks for loopback --ip, otherwise twice local ranks)",
-    )
-    benchmark.add_argument(
-        "--local-rank-size",
-        type=int,
-        default=None,
-        help="NPU process count started by this command (default: visible NPU count)",
-    )
-    benchmark.add_argument(
-        "--rank-start",
-        type=int,
-        default=0,
-        help="starting rankId (default: local rank count for paired read, otherwise 0)",
+        help="config store, tcp://<ip>:<port>; port + 1 is used for synchronization. A non-loopback address runs "
+        "cross-machine: give the same --ip on both machines, the one that owns it hosts the store "
+        "(default: tcp://127.0.0.1:12050, one machine)",
     )
     benchmark.add_argument(
         "--nic",
@@ -248,40 +200,31 @@ def _register_benchmark_command(components) -> None:
         "(--rdma is a compatibility alias; default: tcp://0.0.0.0:10005)",
     )
     benchmark.add_argument(
-        "--local-hbm-size",
-        type=int,
-        default=0,
-        help="per-rank HBM contributed to the big memory pool, in bytes (default: 0, DRAM only)",
+        "--block-size",
+        type=str,
+        default="16K:2M",
+        help="block size: 2M, a list 4K,64K,1M or a doubling range 16K:2M; multiples of 4K up to 1G (default: 16K:2M)",
     )
     benchmark.add_argument(
-        "--peer-mem-type",
-        choices=("host", "device"),
-        default="host",
-        help="memory type of the peer side that is read from / written to; "
-        "'device' needs --local-hbm-size > 0 (default: host)",
-    )
-    _register_paired_arguments(benchmark)
-
-
-def _register_paired_arguments(benchmark) -> None:
-    benchmark.add_argument(
-        "--sync-port",
+        "--batch-size",
         type=int,
         default=None,
-        help="paired synchronization TCP port on the write host (default: store port + 1)",
+        help="blocks per copy (default: 128M divided by the block size, at least 1)",
+    )
+    benchmark.add_argument("--copy-count", type=int, default=5, help="timed copies per block size (default: 5)")
+    benchmark.add_argument(
+        "--warmup-count", type=int, default=1, help="untimed copies before each measurement (default: 1)"
     )
     benchmark.add_argument(
-        "--sync-timeout",
-        type=float,
-        default=3600,
-        help="paired synchronization timeout in seconds (default: 3600, one hour)",
-    )
-    benchmark.add_argument(
-        "--warmup-count",
+        "--group",
         type=int,
-        default=10,
-        help="untimed copies before each write/read measurement in paired mode (default: 10)",
+        choices=(0, 1),
+        default=None,
+        help="optional override of the cross-machine side; by default a non-loopback --ip selects cross-machine mode "
+        "and the machine that owns the --ip address is group 0, the other group 1 (needed only for two commands "
+        "on one machine or when detection is wrong)",
     )
+    benchmark.add_argument("--log", action="store_true", help="show runtime logs and per-rank details")
 
 
 def _parser() -> argparse.ArgumentParser:

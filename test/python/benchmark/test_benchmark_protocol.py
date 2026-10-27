@@ -10,12 +10,23 @@
 
 """CPU regressions for ACL-only SoC detection and strict model mapping."""
 
+import importlib.util
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
-from test_paired_benchmark import PACKAGE, load
+PACKAGE = Path(__file__).resolve().parents[3] / "src/smem/python/memfabric_hybrid/memfabric_hybrid"
+
+
+def load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
 
 env = load("_benchmark_env_under_test", PACKAGE / "env_utils.py")
 
