@@ -14,6 +14,8 @@
 #include <arpa/inet.h>
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <unistd.h>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -96,6 +98,22 @@ constexpr uint32_t HYBM_NOTIFY_POOL_INVALID_INDEX = UINT32_MAX;
 constexpr uint32_t HYBM_NOTIFY_POOL_MAX_SIZE = 65536U;
 constexpr size_t HYBM_KERNEL_LAUNCH_BUFFER_MIN_SIZE = 4U * 1024U;
 
+// Both peers derive the same name, while separate engines and send/receive
+// entities on the same device pair must never share an anonymous HCOMM socket.
+std::string EndpointSessionName(const UrmaEndpointDesc &desc)
+{
+    return std::to_string(desc.superPodIdx) + ":" + std::to_string(desc.serverIdx) + ":" +
+           std::to_string(desc.superDevId) + ":" + std::to_string(desc.devPhyId) + ":" +
+           std::to_string(desc.processId) + ":" + std::to_string(desc.instanceId);
+}
+
+std::string ChannelSessionName(const UrmaEndpointDesc &local, const UrmaEndpointDesc &remote)
+{
+    const auto localName = EndpointSessionName(local);
+    const auto remoteName = EndpointSessionName(remote);
+    return "mf-" + std::min(localName, remoteName) + "-" + std::max(localName, remoteName);
+}
+
 uint64_t PackNotifyFreeHead(uint32_t index, uint32_t version)
 {
     return (static_cast<uint64_t>(version) << 32U) | index;
@@ -117,7 +135,7 @@ static_assert(std::is_trivially_copyable<UrmaEndpointDesc>::value,
 
 // Must NOT conflict with URMA_EXPORT_DESC_MAGIC (0xA5FAB001).
 constexpr uint32_t URMA_PRIVATE_DATA_MAGIC = 0xA5FAC003U;
-constexpr uint16_t URMA_PRIVATE_DATA_VERSION = 1U;
+constexpr uint16_t URMA_PRIVATE_DATA_VERSION = 2U;
 
 struct UrmaPrivateDataDesc {
     uint32_t magic{URMA_PRIVATE_DATA_MAGIC};
@@ -547,6 +565,13 @@ Result DeviceUrmaTransportManager::InitDeviceTransferFlagLocked()
     return BM_OK;
 }
 
+DeviceUrmaTransportManager::DeviceUrmaTransportManager()
+{
+    static std::atomic<uint64_t> nextInstanceId{
+        static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count())};
+    instanceId_ = nextInstanceId.fetch_add(1, std::memory_order_relaxed);
+}
+
 Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol protocol, UrmaEndpointDesc &localDesc)
 {
     localDesc = {};
@@ -559,6 +584,8 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointDescLocked(UrmaProtocol pro
     localDesc.superDevId = sdid_;
     localDesc.serverIdx = serverId_;
     localDesc.superPodIdx = superPodId_;
+    localDesc.processId = static_cast<uint32_t>(getpid());
+    localDesc.instanceId = instanceId_;
 
     if (protocol == UrmaProtocol::UBC_CTP || protocol == UrmaProtocol::UB_RTP) {
         std::array<uint8_t, COMM_ADDR_EID_LEN> eidData{};
@@ -617,6 +644,8 @@ Result DeviceUrmaTransportManager::BuildLocalEndpointsDescLocked(UrmaProtocol pr
             localDesc.superDevId = sdid_;
             localDesc.serverIdx = serverId_;
             localDesc.superPodIdx = superPodId_;
+            localDesc.processId = static_cast<uint32_t>(getpid());
+            localDesc.instanceId = instanceId_;
             localDesc.type = COMM_ADDR_TYPE_IP_V6;
             localIds_.push_back(index);
             std::memcpy(localDesc.raws, eid.data(), COMM_ADDR_EID_LEN);
@@ -1843,6 +1872,9 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             if (it != localIds_.end()) {
                 index = std::distance(localIds_.begin(), it);
             }
+            state.channelName = ChannelSessionName(localEndpointDesc_[index], peerDesc);
+            channelDesc.channelName = state.channelName.c_str();
+            BM_LOG_INFO("device_urma channel session: " << state.channelName);
             ret = DlHcommApi::HcommChannelCreate(localEndpoint_[index], COMM_ENGINE_AICPU, &channelDesc, 1,
                                                  &channelHandle);
             if (ret != 0) {

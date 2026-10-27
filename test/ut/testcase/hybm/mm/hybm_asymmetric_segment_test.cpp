@@ -496,15 +496,46 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HostAddr_WithDeviceRdma_MapsHost)
 TEST_F(HybmAsymmetricSegmentTest, Register_HostAddr_Sdma_Rejected)
 {
     auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_910C);
+    options.shared = true;
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
+    g_drvMemAttrRet = 0;
+    g_drvMemAttrType = DV_MEM_LOCK_HOST;
     MOCKER(&ock::mf::DlHalApi::HalHostRegister).expects(never());
+    MOCKER(&ock::mf::DlHalApi::HalMemRetainAllocationHandle).expects(never());
 
     MemSlicePtr slice;
     auto ret = segment.RegisterMemory(reinterpret_cast<void *>(TEST_HOST_ADDR), TEST_SIZE, slice);
     EXPECT_EQ(ret, BM_NOT_SUPPORTED);
     EXPECT_EQ(slice, nullptr);
     EXPECT_TRUE(segment.registerSlices_.empty());
+}
+
+// A3 Fabric Host memory reports LOCK_HOST but must keep its cached VMM export for SDMA.
+TEST_F(HybmAsymmetricSegmentTest, Register_Sdma_LockedHost_ReusesCachedVmmHandle)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_910C);
+    options.shared = true;
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+    g_drvMemAttrRet = 0;
+    g_drvMemAttrType = DV_MEM_LOCK_HOST;
+    auto &manager = HybmVaManager::GetInstance();
+    ASSERT_EQ(manager.AddVaInfo({TEST_HOST_ADDR, TEST_HOST_ADDR, TEST_HOST_ADDR, TEST_SIZE, HYBM_MEM_TYPE_HOST}),
+              BM_OK);
+    const ShareHandleStr shareInfo(MEM_SHARE_HANDLE_LEN, 'v');
+    ASSERT_EQ(manager.AddHandle(TestAddr(TEST_HOST_ADDR), shareInfo), BM_OK);
+    MOCKER(&ock::mf::DlHalApi::HalHostRegister).expects(never());
+    MOCKER(&ock::mf::DlHalApi::HalMemRetainAllocationHandle).expects(never());
+    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).expects(never());
+
+    MemSlicePtr slice;
+    ASSERT_EQ(segment.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, slice), BM_OK);
+    ASSERT_NE(slice, nullptr);
+    const auto &name = segment.registerSlices_.at(slice->index_).name;
+    ASSERT_EQ(name.size(), USER_HBM_NAME_MAX_LEN);
+    EXPECT_EQ(static_cast<uint8_t>(name[0]), USER_HBM_NAME_TYPE_VMM);
+    EXPECT_EQ(name.substr(1, shareInfo.size()), shareInfo);
 }
 
 /**
@@ -557,6 +588,22 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HalAttr_HostType_WinsOverAddress)
     ASSERT_NE(slice, nullptr);
     EXPECT_EQ(slice->memType_, HYBM_MEM_TYPE_HOST);
     EXPECT_EQ(g_halHostRegisterCount, 1);
+}
+
+// A5 aclrtMallocHost reports DV_MEM_LOCK_HOST, even within the SVM address window.
+TEST_F(HybmAsymmetricSegmentTest, Register_HalAttr_LockedHost_IsHost)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_DEFAULT, ASCEND_950);
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+    g_drvMemAttrRet = 0;
+    g_drvMemAttrType = DV_MEM_LOCK_HOST;
+    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).expects(never());
+
+    MemSlicePtr slice;
+    ASSERT_EQ(segment.RegisterMemory(TestAddr(TEST_HBM_ADDR), TEST_SIZE, slice), BM_OK);
+    ASSERT_NE(slice, nullptr);
+    EXPECT_EQ(slice->memType_, HYBM_MEM_TYPE_HOST);
 }
 
 /**

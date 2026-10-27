@@ -2239,7 +2239,11 @@ TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
 
     MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
         .stubs()
-        .will(returnValue(BM_OK));
+        .will(returnValue(BM_OK))
+        .then(returnValue(BM_P2P_NOT_READY))
+        .then(returnValue(BM_OK))
+        .then(returnValue(BM_DL_FUNCTION_FAILED))
+        .then(returnValue(BM_OK));
     MOCKER_CPP(&hybm_mmap, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(BM_OK));
     MOCKER_CPP(&hybm_transport_connect, int32_t(*)(hybm_entity_t, const uint32_t *, uint32_t, uint32_t))
         .stubs()
@@ -2267,6 +2271,13 @@ TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
 
     // ESTABLISH: alloc the peer override-rank window and connect transport
     EXPECT_EQ(conn->OnEstablishConnection(1, {peer}, 0), SMEM_OK);
+    // A transient import remains retryable; a hard failure keeps the normal error result.
+    EXPECT_EQ(conn->OnAddToWhitelist(1, {peer}, 0), SMEM_GROUP_P2P_NOT_READY);
+    EXPECT_TRUE(conn->remoteSlices_.empty());
+    EXPECT_TRUE(conn->rankToWorkerId_.empty());
+    EXPECT_EQ(conn->OnAddToWhitelist(1, {peer}, 0), SM_ERROR);
+    EXPECT_TRUE(conn->remoteSlices_.empty());
+    EXPECT_TRUE(conn->rankToWorkerId_.empty());
     // ADD whitelist: import entity + slices and record the local->global mapping
     EXPECT_EQ(conn->OnAddToWhitelist(1, {peer}, 0), SM_OK);
     {

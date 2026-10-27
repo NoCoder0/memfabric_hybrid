@@ -137,6 +137,8 @@ struct UrmaEndpointDesc {
     UrmaProtocol protocol{UrmaProtocol::RESERVED};
     CommAddrType type{COMM_ADDR_TYPE_RESERVED};
     uint8_t raws[URMA_ENDPOINT_RAW_LEN]{};
+    uint32_t processId{0};
+    uint64_t instanceId{0};
 };
 
 struct UrmaCommMem {
@@ -160,7 +162,7 @@ struct UrmaExportDesc {
 
 class DeviceUrmaTransportManager final : public transport::TransportManager {
 public:
-    DeviceUrmaTransportManager() = default;
+    DeviceUrmaTransportManager();
 
     ~DeviceUrmaTransportManager() override;
 
@@ -238,6 +240,7 @@ private:
         bool hasEndpointDesc{false};
         // 本 rank 侧用于与该 peer 通信的 channel 描述符
         HcommChannelDesc channelDesc{};
+        std::string channelName; // Keep channelDesc.channelName valid until channel destruction.
         // 本 rank 侧用于与该 peer 通信的 channel handle
         HcommChannelHandle channel{0};
         // 本 rank 侧用于与该 peer 通信的 thread
@@ -438,6 +441,7 @@ private:
     uint32_t mainboardId_{0};
     UrmaProtocol protocol_{UrmaProtocol::RESERVED};
     TransportOptions options_{};
+    uint64_t instanceId_{0};
     HcommApiWrapper hcommApi_;
     std::vector<uint32_t> localIds_;
     std::vector<HcommEndpointHandle> localEndpoint_;

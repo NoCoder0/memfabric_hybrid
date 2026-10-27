@@ -100,7 +100,7 @@ bool IsDeviceMemoryAddr(uint64_t va)
                                            << " rawMemType=" << static_cast<uint32_t>(attr.memType));
     if (ret == BM_OK) {
         return attr.memType == DV_MEM_SVM_DEVICE || attr.memType == DV_MEM_LOCK_DEV ||
-               attr.memType == DV_MEM_LOCK_DEV_DVPP || attr.memType == DV_MEM_LOCK_HOST;
+               attr.memType == DV_MEM_LOCK_DEV_DVPP;
     }
     BM_LOG_DEBUG("DrvMemGetAttribute unavailable, fallback to address check: va=" << VaToStr(va));
 #endif
@@ -206,10 +206,14 @@ Result AsymmetricMemSegment::RegisterMemory(const void *addr, uint64_t size, Mem
         return BM_ERROR;
     }
 
-    if (IsDeviceMemoryAddr(reinterpret_cast<uint64_t>(regBase))) {
-        return RegisterDeviceMemory(reinterpret_cast<const void *>(regBase), regSize, slice);
+    // Fabric Host allocations retain a VMM share handle even when HAL reports DV_MEM_LOCK_HOST.
+    const auto *regAddress = reinterpret_cast<const void *>(regBase);
+    ShareHandleStr shareInfo;
+    if (IsDeviceMemoryAddr(regBase) ||
+        (options_.shared && HybmVaManager::GetInstance().GetHandle(regAddress, shareInfo) == BM_OK)) {
+        return RegisterDeviceMemory(regAddress, regSize, slice);
     }
-    return RegisterHostMemory(reinterpret_cast<const void *>(regBase), regSize, slice);
+    return RegisterHostMemory(regAddress, regSize, slice);
 }
 
 Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t size, MemSlicePtr &slice) noexcept

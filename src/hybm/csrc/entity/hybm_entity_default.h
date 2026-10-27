@@ -113,7 +113,6 @@ private:
                                        uint32_t overrideRank);
 
 private:
-    static thread_local bool isSetDevice_;
     bool initialized_{false};
     const int32_t id_; /* id of the engine */
     hybm_options options_{};

@@ -325,6 +325,9 @@ int SmemTransConnection::OnAddToWhitelist(uint32_t rankId, const std::vector<Ran
 
     for (auto &peer : others) {
         int ret = ImportPeerInfo(peer);
+        if (ret == SMEM_GROUP_P2P_NOT_READY) {
+            return ret;
+        }
         SM_VALIDATE_RETURN(ret == SM_OK, "import peer info failed, ret:" << ret, ret);
     }
     SM_LOG_DEBUG("OnAddToWhitelist done, rank=" << rankId << " peers=" << others.size());
@@ -457,7 +460,7 @@ int SmemTransConnection::ImportPeerInfo(const RankFullInfo &peer) noexcept
     std::vector<void *> global;
     std::vector<LocalMapAddress> local;
     if (auto ret = ParsePeerSlices(peer, slices, local); ret != BM_OK) {
-        SM_LOG_ERROR("parse slice from ESTABLISH failed, rank=" << peer.rankId << " ret=" << ret);
+        SM_LOG_ERROR("parse peer slices failed, rank=" << peer.rankId << " ret=" << ret);
         return SM_INVALID_PARAM;
     }
 
@@ -474,11 +477,15 @@ int SmemTransConnection::ImportPeerInfo(const RankFullInfo &peer) noexcept
     if (auto ret = hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(),
                                HYBM_IMPORT_RANK_ENCODE(overrideRank));
         ret != BM_OK) {
-        SM_LOG_ERROR("import slice from ESTABLISH failed, rank=" << peer.rankId << " overrideRank=" << overrideRank
-                                                                 << " ret=" << ret);
         for (auto &s : slices) {
             hybm_export_info_free(&s.hybmInfo);
         }
+        // The segment already logged this transient state; keep the negative ACK and whitelist retry.
+        if (ret == BM_P2P_NOT_READY) {
+            return SMEM_GROUP_P2P_NOT_READY;
+        }
+        SM_LOG_ERROR("hybm_import peer slices failed, rank=" << peer.rankId << " overrideRank=" << overrideRank
+                                                             << " ret=" << ret);
         return SM_ERROR;
     }
     for (auto &s : slices) {

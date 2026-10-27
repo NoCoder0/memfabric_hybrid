@@ -34,8 +34,6 @@
 namespace ock {
 namespace mf {
 
-thread_local bool MemEntityDefault::isSetDevice_ = false;
-
 MemEntityDefault::MemEntityDefault(int id) noexcept : id_(id), initialized_(false) {}
 
 MemEntityDefault::~MemEntityDefault()
@@ -1489,16 +1487,11 @@ int32_t MemEntityDefault::SetThreadAclDevice()
 #if !defined(ASCEND_NPU)
     return BM_OK;
 #endif
-    if (isSetDevice_) {
-        return BM_OK;
-    }
-    auto ret = DlAclApi::AclrtSetDevice(HybmGetInitDeviceId());
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("Set device id to be " << HybmGetInitDeviceId() << " failed: " << ret);
-        return ret;
-    }
-    isSetDevice_ = true;
-    BM_LOG_DEBUG("Set device id to be " << HybmGetInitDeviceId() << " success.");
+    // Other runtimes can change this thread's ACL device between transfers.
+    // Recheck the current device before reusing any device-bound resources.
+    const auto deviceId = HybmGetInitDeviceId();
+    const auto ret = DlAclApi::AclrtSetDevice(deviceId);
+    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "aclrtSetDevice failed, deviceId: " << deviceId << " ret: " << ret, ret);
     return BM_OK;
 }
 

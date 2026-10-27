@@ -567,7 +567,7 @@ int32_t MockHcommChannelCreate(EndpointHandle endpoint, CommEngine engine, Hcomm
     EXPECT_EQ(channelDescs->header.version, HCOMM_CHANNEL_VERSION);
     EXPECT_EQ(channelDescs->header.magicWord, HCOMM_CHANNEL_MAGIC_WORD);
     EXPECT_EQ(channelDescs->header.size, sizeof(HcommChannelDesc));
-    EXPECT_EQ(channelDescs->channelName, nullptr);
+    EXPECT_NE(channelDescs->channelName, nullptr);
     EXPECT_TRUE(channelDescs->exchangeAllMems);
     EXPECT_TRUE(channelDescs->remoteEndpoint.protocol == COMM_PROTOCOL_UBC_TP ||
                 channelDescs->remoteEndpoint.protocol == COMM_PROTOCOL_UBC_CTP);
@@ -700,7 +700,7 @@ TransportPrivateData MakePrivateData(const UrmaEndpointDesc &desc)
         uint32_t magic;
         uint16_t version;
         uint16_t payloadLen;
-    } header{0xA5FAC003U, 1U, static_cast<uint16_t>(sizeof(UrmaEndpointDesc))};
+    } header{0xA5FAC003U, 2U, static_cast<uint16_t>(sizeof(UrmaEndpointDesc))};
     data.key.ResizeBytes(sizeof(header) + sizeof(desc));
     std::memcpy(data.key.ByteData(), &header, sizeof(header));
     std::memcpy(data.key.ByteData() + sizeof(header), &desc, sizeof(desc));
@@ -1532,7 +1532,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataEncodesLocalEndpointDesc)
     std::memcpy(&version, raw + sizeof(magic), sizeof(version));
     std::memcpy(&payloadLen, raw + sizeof(magic) + sizeof(version), sizeof(payloadLen));
     EXPECT_EQ(magic, 0xA5FAC003U);
-    EXPECT_EQ(version, 1U);
+    EXPECT_EQ(version, 2U);
     EXPECT_EQ(payloadLen, sizeof(UrmaEndpointDesc));
     manager.opened_ = false;
 }
@@ -3180,7 +3180,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataContainsValidEndpointDesc)
 
     const auto data = manager.GetPrivateData();
     const auto *raw = data.key.ByteData();
-    // Check header (magic=0xA5FAC003, version=1, payloadLen=sizeof(UrmaEndpointDesc))
+    // Check header (magic=0xA5FAC003, version=2, payloadLen=sizeof(UrmaEndpointDesc))
     uint32_t magic = 0;
     uint16_t version = 0;
     uint16_t payloadLen = 0;
@@ -3188,7 +3188,7 @@ TEST(DeviceUrmaTransportManagerTest, GetPrivateDataContainsValidEndpointDesc)
     std::memcpy(&version, raw + sizeof(magic), sizeof(version));
     std::memcpy(&payloadLen, raw + sizeof(magic) + sizeof(version), sizeof(payloadLen));
     EXPECT_EQ(magic, 0xA5FAC003U);
-    EXPECT_EQ(version, 1U);
+    EXPECT_EQ(version, 2U);
     EXPECT_EQ(payloadLen, sizeof(UrmaEndpointDesc));
 
     // Check payload matches expectedDesc
@@ -4967,4 +4967,49 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceClearsFaultedRankMarks)
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
     EXPECT_FALSE(manager.IsRankFaulted(4U));
     EXPECT_FALSE(manager.IsRankFaulted(5U));
+}
+
+TEST(DeviceUrmaTransportManagerTest, ChannelNamesMatchPeersAndSeparateEngineInstances)
+{
+    DlHcommApiFnGuard guard;
+    InstallSingleRankHcommMocks();
+    auto leftDesc = MakeEndpointDesc();
+    leftDesc.processId = 100U;
+    leftDesc.instanceId = 10U;
+    auto rightDesc = MakeEndpointDesc();
+    rightDesc.processId = 101U;
+    rightDesc.instanceId = 20U;
+    auto prepareName = [](const UrmaEndpointDesc &local, const UrmaEndpointDesc &peer) {
+        DeviceUrmaTransportManager manager;
+        PrepareSinglePeerManually(manager);
+        manager.localEndpointDesc_[0] = local;
+        HybmTransPrepareOptions options{};
+        options.options[1].privateData = MakePrivateData(peer);
+        EXPECT_EQ(manager.Prepare(options), BM_OK);
+        const auto name = manager.remoteRanks_[1].channelName;
+        EXPECT_STREQ(manager.remoteRanks_[1].channelDesc.channelName, name.c_str());
+        EXPECT_FALSE(name.empty());
+        EXPECT_LT(name.size(), 192U);
+        return name;
+    };
+    const auto name = prepareName(leftDesc, rightDesc);
+    EXPECT_EQ(name, prepareName(rightDesc, leftDesc));
+    ++rightDesc.instanceId;
+    EXPECT_NE(name, prepareName(leftDesc, rightDesc));
+    rightDesc.instanceId = 20U;
+    ++rightDesc.processId;
+    EXPECT_NE(name, prepareName(leftDesc, rightDesc));
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareRejectsLegacyAnonymousChannelVersion)
+{
+    DlHcommApiFnGuard guard;
+    InstallSingleRankHcommMocks();
+    DeviceUrmaTransportManager manager;
+    PrepareSinglePeerManually(manager);
+    auto options = MakeSingleRankPrepareOptions(1U);
+    const uint16_t legacyVersion = 1U;
+    std::memcpy(options.options[1].privateData.key.ByteData() + sizeof(uint32_t), &legacyVersion,
+                sizeof(legacyVersion));
+    EXPECT_EQ(manager.Prepare(options), BM_INVALID_PARAM);
 }
