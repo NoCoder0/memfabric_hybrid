@@ -98,6 +98,7 @@ uint32_t g_streamSyncFailAt = UINT32_MAX;
 std::vector<void *> g_waitedNotifies;
 uint32_t g_notifyDestroyCallCount = 0U;
 uint32_t g_notifyUnregCallCount = 0U;
+bool g_useFm16Topology = false;
 std::mutex g_kernelLaunchMutex;
 
 struct TestHybmBatchTransferParam {
@@ -131,6 +132,20 @@ struct MockcppScope {
     ~MockcppScope()
     {
         GlobalMockObject::reset();
+    }
+};
+
+struct Fm16TopologyGuard {
+    Fm16TopologyGuard()
+    {
+        ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
+        g_useFm16Topology = true;
+    }
+
+    ~Fm16TopologyGuard()
+    {
+        ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
+        g_useFm16Topology = false;
     }
 };
 
@@ -891,13 +906,23 @@ const std::string kFakeTopoJson = R"({
     ]
 })";
 
+constexpr const char *NORMAL_TOPO_PATH = "/usr/local/Ascend/driver/topo/950/atlas_950_1.json";
+constexpr const char *FM16_TOPO_PATH = "/usr/local/Ascend/driver/topo/950/atlas_850_2.json";
+
 ock::mf::Result MockReadFileToString(const std::string &path, std::string &buf)
 {
     if (path == "/etc/hccl_rootinfo.json") {
         buf = kFakeRootInfoJson;
+        if (g_useFm16Topology) {
+            const auto topoPathPos = buf.find(NORMAL_TOPO_PATH);
+            if (topoPathPos == std::string::npos) {
+                return BM_ERROR;
+            }
+            buf.replace(topoPathPos, std::strlen(NORMAL_TOPO_PATH), FM16_TOPO_PATH);
+        }
         return BM_OK;
     }
-    if (path == "/usr/local/Ascend/driver/topo/950/atlas_950_1.json") {
+    if (path == NORMAL_TOPO_PATH || path == FM16_TOPO_PATH) {
         buf = kFakeTopoJson;
         return BM_OK;
     }
@@ -1899,6 +1924,36 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceSelectsUboeFromEnv)
     ASSERT_NE(manager.localEndpoint_.empty(), true);
     ASSERT_NE(manager.localEndpoint_[0], nullptr);
     EXPECT_EQ(manager.localEndpointDesc_[0].protocol, UrmaProtocol::UBOE);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
+TEST(DeviceUrmaTransportManagerTest, OpenDeviceFm16UboeUsesSingleEndpoint)
+{
+    Fm16TopologyGuard topologyGuard;
+    EnvVarGuard envGuard("ASCEND_HOME_PATH");
+    EnvVarGuard uboeEnvGuard("MF_DEVICE_URMA_ENABLE_UBOE");
+    (void)setenv("MF_DEVICE_URMA_ENABLE_UBOE", "1", 1);
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    DlRtApiFnGuard rtGuard;
+    MockcppScope mockcpp;
+    PrepareKernelJson();
+    InstallOpenDeviceMocks();
+    DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDeviceUboe;
+    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER(&ock::mf::transport::device::GetDeviceUBoEIpAddr).stubs().will(invoke(MockGetDeviceUBoEIpAddr));
+
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0U;
+    options.rankCount = 2U;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
+
+    ASSERT_EQ(manager.OpenDevice(options), BM_OK);
+    ASSERT_EQ(manager.localEndpoint_.size(), 1U);
+    ASSERT_EQ(manager.localEndpointDesc_.size(), 1U);
+    EXPECT_EQ(manager.localEndpointDesc_[0].protocol, UrmaProtocol::UBOE);
+    EXPECT_EQ(manager.localEndpointDesc_[0].remoteId, -1);
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
