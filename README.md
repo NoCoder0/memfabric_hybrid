@@ -5,7 +5,7 @@
 DRAM&HBM hybrid pooling, memory semantic interface, high-performance cross-machine memory direct access
   </h2>
 
-[![Docs](https://img.shields.io/badge/docs-live-brightgreen)](https://gitcode.com/Ascend/memfabric_hybrid)
+[![Docs](https://img.shields.io/badge/docs-live-brightgreen)](https://memfabric-hybrid.readthedocs.io/zh-cn/latest/)
 [![PyPI](https://img.shields.io/pypi/v/memfabric-hybrid)](https://pypi.org/project/memfabric-hybrid/#history)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/memfabric-hybrid)](https://pypi.org/project/memfabric-hybrid/)
 [![PyPI - Downloads](https://img.shields.io/pypi/dm/memfabric-hybrid)](https://pypi.org/project/memfabric-hybrid/)
