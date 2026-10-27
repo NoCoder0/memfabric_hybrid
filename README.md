@@ -27,7 +27,7 @@ DRAM&HBM hybrid pooling, memory semantic interface, high-performance cross-machi
 
 ## 🔜 Roadmap
 
-MemFabric [**Roadmap**](https://gitcode.com/Ascend/memfabric_hybrid/wiki/Roadmap.md)
+MemFabric [**Roadmap**](https://gitcode.com/Ascend/memfabric_hybrid/wiki/community/Roadmap.md)
 MemFabric [**版本分支策略**](https://gitcode.com/Ascend/memfabric_hybrid/wiki/%E5%88%86%E6%94%AF%E7%AD%96%E7%95%A5.md)
 
 ## 🎉概述
@@ -137,23 +137,21 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 请访问以下文档获取简易教程。
 
-- [编译安装](./docs/zh/installation.md): 介绍组件编译和安装教程。
+- [编译安装](docs/zh/wiki/quick_start/installation.md): 介绍组件编译和安装教程。
 
-- [mfcli命令行工具](./docs/zh/mfcli.md): 介绍版本查询、算子管理、内存扫描和性能测试命令。
+- [mfcli命令行工具](docs/zh/wiki/user_guide/basic_configuration/mfcli.md): 介绍版本查询、算子管理、内存扫描和性能测试命令。
 
-- [DevContainer 快速入门](./docs/zh/devcontainer_quickstart.md): VS Code Remote + DevContainer 一键环境搭建 + 全量用例运行指南。
+- [DevContainer 快速入门](docs/zh/wiki/developer_guide/development_environment/devcontainer_quickstart.md): VS Code Remote + DevContainer 一键环境搭建 + 全量用例运行指南。
 
 - [样例执行](./examples/memory_pool/README.md): 介绍如何端到端执行样例代码，包括C++和Python样例。
 
 ## 📑学习教程
 
-- [API介绍](./docs/zh/feature.md)：MemFabric提供的多种API的简介
+- [API介绍](docs/zh/wiki/quick_start/feature.md)：MemFabric提供的多种API的简介
 
-- [C接口](./docs/zh/API.md)：C接口介绍以及C接口对应的API列表
+- [API接口列表](docs/zh/wiki/user_guide/api/index.md)：C接口以及python接口对应的API列表
 
-- [python接口](./docs/zh/pythonAPI.md)：python接口介绍以及python接口对应的API列表
-
-- [ptracer](./docs/zh/ptracer.md)：MemFabric内置性能打点工具简介
+- [ptracer](docs/zh/wiki/developer_guide/debugging/ptracer.md)：MemFabric内置性能打点工具简介
 
 ## 📌FAQ
 
@@ -165,7 +163,7 @@ MemFabric跨机访问数据流和控制流如下图所示(昇腾A3超节点):
 
 - [社区行为准则](./CODE_OF_CONDUCT.md)
 
-- [安全声明](./docs/zh/SECURITYNOTE.md)
+- [安全声明](docs/zh/wiki/user_guide/security/SECURITYNOTE.md)
 
 - [许可证](./LICENSE)
 

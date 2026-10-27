@@ -15,7 +15,7 @@
 
 ## 使用方式
 
-[gitcode-pr-create]: ../.agent/skills/gitcode-pr-create/SKILL.md
+[gitcode-pr-create]: skills/gitcode-pr-create/SKILL.md
 
 - 需要某个能力时，在请求中显式写出 skill 名称，例如：`使用 memfabric-release ...`。
 - 不确定该用哪个 skill 时，描述任务目标即可；Agent 应根据 `SKILL.md` 的 `description` 自动选择最匹配的 skill。

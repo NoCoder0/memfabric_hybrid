@@ -113,7 +113,7 @@ mfcli benchmark
 ```
 
 环境准备、编译安装、参数配置和使用示例请参考
-[benchmark 使用指南](../../src/smem/python/memfabric_hybrid/memfabric_hybrid/benchmark/README.md)。
+[benchmark 使用指南](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/src/smem/python/memfabric_hybrid/memfabric_hybrid/benchmark/README.md)。
 
 ## 收集故障诊断日志
 

@@ -14,35 +14,34 @@ memfabric_hybrid/
 ├── .readthedocs.yaml             # Read the Docs 在线构建（Python 版本、依赖安装、fail_on_warning）
 ├── requirements/
 │   └── mkdocs.txt                # 文档构建专用 pip 依赖
-├── docs/
-│   ├── mkdocs/                   # 文档工程资源（hooks、自定义样式与脚本），逻辑上的「canonical」目录
-│   │   ├── hooks/                # on_page_markdown 等钩子（见下文）
-│   │   ├── stylesheets/
-│   │   │   └── extra.css         # 全局额外样式（由 mkdocs.yml 的 extra_css 引用）
-│   │   └── javascripts/
-│   │       └── mathjax.js        # MathJax 配置脚本（由 mkdocs.yml 的 extra_javascript 引用）
+├── .mkdocs/                      # 文档工程资源（hooks)
+│   └── hooks/                    # on_page_markdown 等钩子（见下文）
+├── docs
 │   └── zh/                       # MkDocs 的文档根目录（mkdocs.yml 中的 docs_dir）
-│       ├── mkdocs/               # → 指向 ../mkdocs 的符号链接，便于 extra_css/js 路径落在 docs_dir 内并被正确拷贝
+│       ├── assets/               # 主题引用的静态资源
+│       │   ├── extra.css         # 全局额外样式（由 mkdocs.yml 的 extra_css 引用）
+│       │   └── mathjax.js        # MathJax 配置脚本（由 mkdocs.yml 的 extra_javascript 引用）
 │       ├── .nav.yaml             # 侧边栏导航树（awesome-nav）
-│       ├── home.md              # 站点首页
-│       ├── assets/               # 主题引用的静态资源（如 logo、favicon，见 mkdocs.yml）
-│       ├── user_guide/           # 用户指南等 Markdown 正文目录（按需分子目录）
-│       ├── developer_guide/      # 开发者指南
-│       ├── design/               # 设计文档
-│       └── ...
+│       ├── index.md              # 站点首页
+│       └──  wiki/                # 项目框架目录
+│            ├── quick_start      # 快速开始目录
+│            ├── user_guide       # 用户指南目录
+│            ├── developer_guide  # 开发者指南目录
+│            ├── FAQ              # FAQ目录
+│            └── community        # 社区目录
 └── site/                         # mkdocs build 默认输出目录（通常勿提交版本库）
 ```
 
 说明要点：
 
 - **正文 Markdown** 一律放在 **`docs/zh/`** 下（含子目录）；MkDocs 只会把该目录树当作文档源扫描（再配合 `.nav.yaml` 决定导航）。
-- **`docs/mkdocs/`** 存放与「文档站点工程」相关的脚本与静态资源；**`docs/zh/mkdocs`** 链到 **`docs/mkdocs`**，这样 `extra_css` / `extra_javascript` 可使用形如 **`mkdocs/stylesheets/extra.css`** 的路径（相对于 **`docs/zh`**），构建产物中的静态 URL 才能正确对应。**若在 Windows 克隆仓库且符号链接异常**，需在 **`docs/zh`** 下自行维护等价链接或拷贝，保证上述路径下文件存在。
-- **`docs/mkdocs/hooks/`** 中的 Python 文件在 **`mkdocs.yml` 的 `hooks:`** 中注册；不属于 Markdown 页面，也不会出现在导航里。
+- **`docs/zh/assets/`** 存放与「文档站点工程」相关的脚本与静态资源。
+- **`.mkdocs/hooks/`** 中的 Python 文件在 **`mkdocs.yml` 的 `hooks:`** 中注册；不属于 Markdown 页面，也不会出现在导航里。
 
 ## 新增一篇 Markdown 文档时要做什么
 
 1. **创建文件**
-   在 **`docs/zh/`** 下选定分类目录（例如 `user_guide/`、`developer_guide/`），新建 **`*.md`**。路径应尽量与文档类型一致，便于检索与评审。
+   在 **`docs/zh/`** 下选定分类目录（例如 `wiki/user_guide/`、`wiki/developer_guide/`），新建 **`*.md`**。路径应尽量与文档类型一致，便于检索与评审。
 
 2. **更新导航（必选）**
    编辑 **`docs/zh/.nav.yaml`**，在合适的层级增加一行 **`显示标题: 相对 docs/zh 的路径`**。
@@ -50,11 +49,11 @@ memfabric_hybrid/
    - 同级条目顺序即为侧边栏顺序；多级目录使用 YAML 嵌套（见下一节）。
 
 3. **自查链接与锚点**
-   - 站内页面链接建议使用 **相对于 `docs/zh` 的路径**，例如 **`/user_guide/quick_start.md`**（与 MkDocs/Material 的文档根解析一致），或与当前文件相对的 **`deployment/k8s/config_reference.md`**。门禁 **`link-validity-check`** 常以 **`docs/zh`** 为基准校验本地 Markdown 链接，避免出现仓库根路径、`../../../examples/...` 等无法在站点内解析的目标。
+   - 站内页面链接建议使用 **相对于 `docs/zh` 的路径**，例如 **`wiki/quick_start/环境连通性检查.md`**（与 MkDocs/Material 的文档根解析一致），门禁 **`link-validity-check`** 常以 **`docs/zh`** 为基准校验本地 Markdown 链接，避免出现仓库根路径、`../../../examples/...` 等无法在站点内解析的目标。
    - 可使用 **`mkdocs serve --strict`** 或 **`mkdocs build --strict`**，将链接失效、缺失锚点等告警暴露出来。
 
 4. **可选：配图与其它静态文件**
-   图片等若放在 **`docs/zh`** 下，请使用相对当前 Markdown 的路径引用；若使用 **`docs/mkdocs/hooks/img_width.py`** 支持的 HTML `<img width="...">` 写法，构建时会转为 Material 可用的属性语法。
+   图片等若放在 **`docs/zh`** 下，请使用相对当前 Markdown 的路径引用；若使用 **`.mkdocs/hooks/img_width.py`** 支持的 HTML `<img width="...">` 写法，构建时会转为 Material 可用的属性语法。
 
 ## 导航配置（`.nav.yaml`）
 
@@ -62,7 +61,7 @@ memfabric_hybrid/
 
 ```yaml
 nav:
-  - 首页: index.md
+  - 首页: home.md
   - 某分组标题:
       - 子页面标题: path/under/docs_zh.md
       - 更深分组:
@@ -83,7 +82,7 @@ nav:
 
 - **Python**：建议 **3.11**（与 **`.readthedocs.yaml`** 在线构建一致）。
 - **依赖清单**：**`requirements/mkdocs.txt`**，主要包括 **`mkdocs`**、**`mkdocs-material`**、**`mkdocs-awesome-nav`**、**`mkdocs-glightbox`**、**`mkdocs-git-revision-date-localized-plugin`**、**`mkdocs-minify-plugin`**、**`pymdown-extensions`**。
-- **钩子**：根目录 **`docs/mkdocs/hooks/`**（在 **`mkdocs.yml`** 的 **`hooks:`** 中启用）：
+- **钩子**：根目录 **`.mkdocs/hooks/`**（在 **`mkdocs.yml`** 的 **`hooks:`** 中启用）：
     - **`github_admonition.py`**：把 GitHub/Obsidian 风格的 **`>[!NOTE]`** / **`> [!NOTE]`** 引用块转成 pymdown 的 **`!!! note`**，便于 Material 渲染提示框；引用块内若嵌套 **` ``` `** 代码围栏，请避免 **`>` 与围栏之间多空格**，以免闭合围栏错位导致 **`#` 注释行被当成 Markdown 标题**。
     - **`img_width.py`**：把 **`<img src="..." width="...">`** 转为 **`![](){ width="..." }`** 以便控制宽度。
 
@@ -91,7 +90,7 @@ nav:
 
 - **围栏代码语言**： fenced 代码块语言标识请使用 Pygments 支持的名称（例如纯文本使用 **`text`**，不要使用 **`Plain Text`**）。
 - **Material 专有语法**：源码中的 **`!!! note`** 仅在 MkDocs 中渲染；若希望 GitHub 等通用预览也可读，可优先使用 **`>[!NOTE]`** 交给钩子转换（避免仅两个空格之类的「装饰缩进」贴在 **`>[!NOTE]`** 前，否则可能影响解析）。
-- **`extra_css` / `extra_javascript`**：在 **`mkdocs.yml`** 中配置为相对于 **`docs/zh`** 的路径（当前为 **`mkdocs/stylesheets/extra.css`**、**`mkdocs/javascripts/mathjax.js`**），依赖 **`docs/zh/mkdocs`** 指向 **`docs/mkdocs`**。
+- **`extra_css` / `extra_javascript`**：在 **`mkdocs.yml`** 中配置为相对于 **`docs/zh`** 的路径（当前为 **`assets/extra.css`**、**`assets/mathjax.js`**）。
 
 ## 安装依赖
 
@@ -161,10 +160,6 @@ pip install -r requirements/mkdocs.txt
 ### 导航没有按预期更新
 
 本仓库导航由 **`docs/zh/.nav.yaml`** 驱动。新增页面后请在该文件中补充条目并核对 YAML 缩进；保存后重新 **`mkdocs serve`** 即可刷新侧边栏。
-
-### `extra.css` / `mathjax.js` 预览 404
-
-若 **`mkdocs/stylesheets/extra.css`** 或 **`mkdocs/javascripts/mathjax.js`** 请求返回 **404**，请确认 **`docs/zh/mkdocs`** 是否为指向 **`docs/mkdocs`** 的有效符号链接，且 **`mkdocs.yml`** 中的路径相对于 **`docs/zh`** 无误。
 
 ### 站内链接门禁报错「本地路径无法访问」
 

@@ -1,6 +1,6 @@
 # GitCode 自动 Release 示例
 
-仓库中的 [release.yml](../../.gitcode/workflows/release.yml) 在推送 `v*` tag 时运行：
+仓库中的 [release.yml](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/.gitcode/workflows/release.yml) 在推送 `v*` tag 时运行：
 
 1. 拉取完整 Git 历史，从版本号较小的最近一个 `vX.Y.Z` tag 到当前 tag 读取主线新增提交。
 2. 从 `See merge request: Ascend/memfabric_hybrid!123` 提交信息提取 PR 的来源仓库和编号。

@@ -24,7 +24,7 @@ G2G: copy data from global memory space to global memory space
 
 ### 使用简介
 
-详情请参见 [bm_example](../../benchmark/bm/README.md)，简单概述如下。
+详情请参见 [bm_example](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/benchmark/bm/README.md)，简单概述如下。
 
 **C接口使用方式**
 
@@ -50,7 +50,7 @@ G2G: copy data from global memory space to global memory space
 
 ### 使用简介
 
-详情参考[trans_example](../../examples/transfer/README.md)，简单概述如下。
+详情参考[trans_example](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/examples/transfer/README.md)，简单概述如下。
 
 **C接口使用方式**
 
@@ -65,53 +65,29 @@ G2G: copy data from global memory space to global memory space
 2. 调用engine.initialize接口初始化（`session_id`同时是本实例内部config store的监听地址，`store_url`为兼容参数，当前版本不再参与对端发现）。
 3. 调用engine.register_memory接口将内存注册给memfabric，然后调用engine.transfer_sync_write接口进行传输。
 
-## 3. Share Memory（SHM）
-
-面向算子场景，提供全局共享内存，支持AICORE的细粒度的读写操作。
-
- * 支持创建统一内存空间。
- * 支持用户传入自定义数据在卡侧访问（参见smem_shm_set_extra_context和smem_shm_get_extra_context_addr接口）。
- * 支持host侧全局barrier和allgather（参见smem_shm_control_barrier和smem_shm_control_allgather接口）。
- * 支持超节点内，卡侧通过MTE直接访问统一内存。
- * 卡侧提供基础copy接口。
- * 接口支持的语言: C和Python。
-
-安装MemFabric后，SHM接口头文件位于`${MEMFABRIC_HYBRID_HOME_PATH}/${arch}-${os}/include/smem/host/smem_shm.h`
-和`${MEMFABRIC_HYBRID_HOME_PATH}/${arch}-${os}/include/smem/device/smem_shm_aicore_base_api.h`。
-
-### 使用简介
-
-详情参考[shm_example](../../examples/hbm_share_memory/ShiftPutGet/README.md)，简单概述如下。
-
-**C接口使用方式**
-
-1. 调用smem_shm_init接口初始化。
-2. 调用smem_shm_create接口创建实例并获得gva地址。
-3. 编写算子直接访问或通过smem_shm_aicore_base_api.h的接口访问gva地址。
-
-## 4. Acc Offload
+## 3. Acc Offload
 
 面向KV Cache卸载等场景，提供DRAM内存池及卡侧稀疏拷贝加速能力，支持单卡本地（LOCAL）与多卡共享（SHARED）两种场景。
 
- * 支持从预留的DRAM内存池中分配/释放host内存（参见offload_malloc和offload_free接口）。
- * 提供卡侧批量稀疏拷贝接口，加速多个不连续地址间的数据搬移（参见offload_sparse_copy接口）。
- * LOCAL场景：每rank独占一份本地DRAM池。
- * SHARED场景：多rank共享同一份DRAM池。
- * Python侧提供torch友好的empty和sparse_copy封装。
- * 接口支持的语言: C和Python。
+* 支持从预留的DRAM内存池中分配/释放host内存（参见offload_malloc和offload_free接口）。
+* 提供卡侧批量稀疏拷贝接口，加速多个不连续地址间的数据搬移（参见offload_sparse_copy接口）。
+* LOCAL场景：每rank独占一份本地DRAM池。
+* SHARED场景：多rank共享同一份DRAM池。
+* Python侧提供torch友好的empty和sparse_copy封装。
+* 接口支持的语言: C和Python。
 
 ### 使用简介
 
-LOCAL场景详情参考[local_dram_offload示例](../../examples/kv_offload/local_dram_offload/local_dram_offload.py)，SHARED场景详情参考[shared_dram_offload示例](../../examples/kv_offload/shared_dram_offload/shared_dram_offload.py)。
+LOCAL场景详情参考[local_dram_offload示例](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/examples/kv_offload/local_dram_offload/local_dram_offload.py)，SHARED场景详情参考[shared_dram_offload示例](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/examples/kv_offload/shared_dram_offload/shared_dram_offload.py)。
 简单概述如下。
 
 **Python接口使用方式**
 
 1. `from memfabric_hybrid import offload`。
 2. 构造OffloadConfig，调用offload.initialize接口初始化。
-   - LOCAL场景：设置device_id、reserve_size、alloc_size（两者需相等），scene保持默认LOCAL。
-   - SHARED场景：设置device_id、reserve_size、alloc_size（传实际值）、world_size、rank_id，scene设为offload.Scene.SHARED；如显式指定共享池的config store地址，需再设置store_url（同组各rank保持一致）。
+    - LOCAL场景：设置device_id、reserve_size、alloc_size（两者需相等），scene保持默认LOCAL。
+    - SHARED场景：设置device_id、reserve_size、alloc_size（传实际值）、world_size、rank_id，scene设为offload.Scene.SHARED；如显式指定共享池的config store地址，需再设置store_url（同组各rank保持一致）。
 3. 调用offload.empty分配内存并获得torch.Tensor，或调用offload.malloc获得地址。
 4. 调用offload.sparse_copy接口在device上执行批量稀疏拷贝。
 5. 调用offload.free释放内存，调用offload.uninitialize退出。
-    SHARED场景下initialize/uninitialize为集合操作，需所有rank同步进入与退出。
+   SHARED场景下initialize/uninitialize为集合操作，需所有rank同步进入与退出。

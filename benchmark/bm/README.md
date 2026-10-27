@@ -84,7 +84,7 @@ bash script/build_and_pack_run.sh --build_mode RELEASE --build_python ON --xpu_t
     - DEVICE_START: 本节点使用的卡号的起始值,本节点的卡号范围就是[DEVICE_START, DEVICE_START + LOCAL_RANK_SIZE)
     - SERVER_IP: ```tcp://<ip>:<port>``` configStore的server的监听ip和端口。
       关于 configStore 配置存储系统的说明，请参考
-      [config_store_cluster_ha](../../docs/zh/config_store_cluster_ha.md)。
+      [config_store_cluster_ha](../../docs/zh/wiki/user_guide/configstore_ha/config_store_cluster_ha.md)。
     - RDMA_URL: ```tcp://<ip>:<port>``` 使用数据操作类型为host_rdma时需要额外指定的rdma网卡的ip和端口,其余操作类型可省略（-rdma参数主要用于host RDMA/hcomUrl）
     - BLOCK_SIZE: 单个拷贝数据块的大小
     - BATCH_SIZE：每次下发拷贝的block个数

@@ -8,14 +8,14 @@
 
 ## 前置条件
 
-- 已按照[软件安装](../../installation.md)完成 MemFabric Hybrid Python 包和运行环境安装。
+- 已按照[软件安装](installation.md)完成 MemFabric Hybrid Python 包和运行环境安装。
 - 机器上至少有两张可用 NPU，逻辑设备编号为 0 和 1。
-- 当前机型支持示例使用的 `device_rdma` 协议，详见[硬件支持](../硬件支持.md)。
+- 当前机型支持示例使用的 `device_rdma` 协议，详见[硬件支持](../user_guide/basic_configuration/硬件支持.md)。
 - 已安装 PyTorch，并可以在当前 Python 环境中导入 `torch` 和 `memfabric_hybrid`。
 - 本机端口 8572 和 10005 未被其他进程占用。
 
 如果当前机型和传输方式需要部署 AICPU 算子，请先参考
-[KERNEL OPS 编译与安装](../../installation_kernel.md)完成安装。
+[KERNEL OPS 编译与安装](../user_guide/basic_configuration/installation_kernel.md)完成安装。
 
 ## 1. 进入代码仓
 
@@ -91,4 +91,4 @@ python3 02_single_node_multi_device_dram_batch_data_copy.py
 - 提示设备不可用：执行 `npu-smi info` 检查设备状态，并确认 `ASCEND_RT_VISIBLE_DEVICES` 包含两个设备。
 - 提示端口占用：释放 8572 或 10005 端口，或修改示例中的 `STORE_URL` 和 `cfg.set_nic(...)` 端口。
 - `bm.initialize` 或 `join` 失败：检查当前机型的协议支持、CANN/驱动环境及所需算子是否已正确安装。
-- DRAM 内存池初始化失败：根据机型要求检查大页内存配置，相关说明见[软件安装](../../installation.md)。
+- DRAM 内存池初始化失败：根据机型要求检查大页内存配置，相关说明见[软件安装](installation.md)。

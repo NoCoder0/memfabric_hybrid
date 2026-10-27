@@ -11,7 +11,7 @@
 display device esn
 ```
 
-![Alt text](./source/esn_image.png)
+![Alt text](../../source/esn_image.png)
 
 ## LingQu Computing Network 安装
 
@@ -42,4 +42,4 @@ start sys LCN5000_1.5.0.B003_202512111233.cc
 display startup
 ```
 
-![Alt text](./source/image.png)
+![Alt text](../../source/image.png)

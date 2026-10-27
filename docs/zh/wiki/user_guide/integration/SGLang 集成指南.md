@@ -611,8 +611,8 @@ export SGLANG_LOG=debug
 
 ## 相关文档
 
-- [MemFabric 安装指南](../../installation.md)
-- [MemFabric Python 接口文档](../../pythonAPI.md)
-- [MemFabric 环境变量说明](../../environment_variables.md)
+- [MemFabric 安装指南](../../quick_start/installation.md)
+- [MemFabric API 接口文档](../api/index.md)
+- [MemFabric 环境变量说明](../basic_configuration/environment_variables.md)
 - [SGLang PD Disaggregation 文档](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/pd_disaggregation.mdx)
 - [SGLang Ascend NPU 环境变量](https://github.com/sgl-project/sglang/blob/main/docs/docs/hardware-platforms/ascend-npus/reference/environment_variables.mdx)

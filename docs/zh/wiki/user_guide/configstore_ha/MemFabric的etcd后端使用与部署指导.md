@@ -61,6 +61,12 @@ etcdctl --endpoints=http://127.0.0.1:12335 put k v    # 应输出 OK
 etcdctl --endpoints=http://127.0.0.1:12335 get k      # 应输出 v
 ```
 
+重新部署前如需清空全部键值：
+
+```bash
+etcdctl --endpoints=http://127.0.0.1:12335 del "" --prefix
+```
+
 #### 多节点集群（生产环境）
 
 生产环境应部署**奇数个（建议 3 个及以上）etcd 节点**组成集群，任一节点故障不影响服务。在三台机器上分别执行（替换各机 IP 与名称 etcd-1/2/3）：
@@ -265,7 +271,7 @@ etcd 模式下 MemFabric 会自动基于 etcd 的分布式锁在多个管理节�
 
 ## 七、相关阅读
 
-- [MemFabric 内存管理](MemFabric内存管理.md)
-- [ConfigStore 集群管理与 etcd 高可用](ConfigStore集群管理原理解析及基于etcd的高可用方案.md)
-- [软件安装](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/docs/zh/installation.md)（run 包/whl 包安装与权限说明）
-- [ETCD 存储后端](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/docs/zh/etcd_store_backend.md)（etcd 编译安装细节）
+- [MemFabric 内存管理](../memory_transport/MemFabric内存管理.md)
+- [ConfigStore 工作原理与高可用机制](config_store_cluster_ha.md)
+- [ConfigStore 集群管理与 etcd 高可用方案设计](ConfigStore集群管理原理解析及基于etcd的高可用方案.md)
+- [软件安装](../../quick_start/installation.md)（run 包/whl 包安装与权限说明）

@@ -24,7 +24,7 @@
 
 ## 环境与硬件要求
 
-根据贡献内容选择环境，详细依赖和配套要求见[编译安装](./docs/zh/installation.md)及 [README](./README.md)。
+根据贡献内容选择环境，详细依赖和配套要求见[编译安装](docs/zh/wiki/quick_start/installation.md)及 [README](./README.md)。
 
 | 贡献或验证内容 | 环境要求 |
 | --- | --- |
@@ -43,9 +43,9 @@ UT 环境可使用以下多 Python 容器镜像：
 例如 Host RDMA、Host URMA 的真机验证仍依赖对应硬件；跨节点验证也需要准备相应节点和网络。
 UT 的模拟接口验证与实际设备、网卡及多节点验证应分别记录。
 
-可参考 [DevContainer 快速入门](./docs/zh/devcontainer_quickstart.md)准备远端昇腾开发环境。
+可参考 [DevContainer 快速入门](docs/zh/wiki/developer_guide/development_environment/devcontainer_quickstart.md)准备远端昇腾开发环境。
 该文档中的设备样例运行流程需要对应硬件，不作为普通 Linux 贡献的前置条件。
-运行样例前，按[环境变量说明](./docs/zh/environment_variables.md)配置所需环境。
+运行样例前，按[环境变量说明](docs/zh/wiki/user_guide/basic_configuration/environment_variables.md)配置所需环境。
 相关配置包括存储地址 `ASCEND_MF_STORE_URL`，以及 NPU 场景的 `ASCEND_HOME_PATH` 或 GPU 场景的 `CUDA_HOME`。
 
 ## 获取源码与构建
@@ -60,7 +60,7 @@ UT 的模拟接口验证与实际设备、网卡及多节点验证应分别记�
 git submodule update --recursive --init
 ```
 
-构建优先使用封装脚本，参数和安装步骤见[编译安装](./docs/zh/installation.md)：
+构建优先使用封装脚本，参数和安装步骤见[编译安装](docs/zh/wiki/quick_start/installation.md)：
 
 ```bash
 # 默认：RELEASE、Python ON、NPU
@@ -152,8 +152,8 @@ bash script/ci-pre-commit-pr.sh
 - 公共 API、参数或环境变量发生变化时，同步更新相应文档、样例和验证。
 - 中文文档放在 `docs/zh/`，优先链接现有说明，避免重复维护大段安装步骤。
 
-接口参考见 [API 简介](./docs/zh/feature.md)、[C API](./docs/zh/API.md)和 [Python API](./docs/zh/pythonAPI.md)。
-代码跳转配置见 [IDE 代码跳转指南](./docs/zh/ide_code_navigation_guide.md)。
+接口参考见 [API 简介](docs/zh/wiki/quick_start/feature.md)和[API 接口列表](docs/zh/wiki//user_guide/api/index.md)。
+代码跳转配置见 [IDE 代码跳转指南](docs/zh/wiki/developer_guide/development_environment/ide_code_navigation_guide.md)。
 
 ## 提交与 Pull Request
 

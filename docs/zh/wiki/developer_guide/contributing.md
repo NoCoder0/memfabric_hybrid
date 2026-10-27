@@ -1,7 +1,7 @@
 # 贡献指南
 
 欢迎参与 MemFabric Hybrid！无论是修复代码、补充测试，还是完善文档和分享使用反馈，都能帮助项目改进。
-参与项目讨论和贡献时，请遵守[社区行为准则](../../../../CODE_OF_CONDUCT.md)。
+参与项目讨论和贡献时，请遵守[社区行为准则](code_of_conduct.md)。
 
 ## 从哪里开始
 
@@ -24,8 +24,8 @@
 
 ## 环境与硬件要求
 
-根据贡献内容选择环境，详细依赖和配套要求见[编译安装](../../installation.md)及
-[README](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/README.md)。
+根据贡献内容选择环境，详细依赖和配套要求见[编译安装](../quick_start/installation.md)及
+[README](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/README.md)。
 
 | 贡献或验证内容 | 环境要求 |
 | --- | --- |
@@ -44,9 +44,9 @@ UT 环境可使用以下多 Python 容器镜像：
 例如 Host RDMA、Host URMA 的真机验证仍依赖对应硬件；跨节点验证也需要准备相应节点和网络。
 UT 的模拟接口验证与实际设备、网卡及多节点验证应分别记录。
 
-可参考 [DevContainer 快速入门](../../devcontainer_quickstart.md)准备远端昇腾开发环境。
+可参考 [DevContainer 快速入门](development_environment/devcontainer_quickstart.md)准备远端昇腾开发环境。
 该文档中的设备样例运行流程需要对应硬件，不作为普通 Linux 贡献的前置条件。
-运行样例前，按[环境变量说明](../../environment_variables.md)配置所需环境。
+运行样例前，按[环境变量说明](../user_guide/basic_configuration/environment_variables.md)配置所需环境。
 相关配置包括存储地址 `ASCEND_MF_STORE_URL`，以及 NPU 场景的 `ASCEND_HOME_PATH` 或 GPU 场景的 `CUDA_HOME`。
 
 ## 获取源码与构建
@@ -61,7 +61,7 @@ UT 的模拟接口验证与实际设备、网卡及多节点验证应分别记�
 git submodule update --recursive --init
 ```
 
-构建优先使用封装脚本，参数和安装步骤见[编译安装](../../installation.md)：
+构建优先使用封装脚本，参数和安装步骤见[编译安装](../quick_start/installation.md)：
 
 ```bash
 # 默认：RELEASE、Python ON、NPU
@@ -90,7 +90,7 @@ bash script/build_and_pack_run.sh --xpu_type NONE --build_hcom ON --build_hcom_r
 首次运行需准备构建及测试依赖。
 当前 UT 脚本启用 HCOM 和 RDMA 编译支持，需准备 `libibverbs-dev` 并能获取通信库源码。
 完整覆盖率流程还需 `lcov` / `genhtml`。命令详情见
-[UT 使用指南](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/script/run_ut.md)。
+[UT 使用指南](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/script/run_ut.md)。
 
 构建、UT 和 Fuzz 脚本已内置 `dos2unix` 兼容处理，未安装时会使用 `sed` 转换换行，
 无需另外安装或手动定义函数。
@@ -120,7 +120,7 @@ MF_UT_BUILD_TYPE=DEBUG bash script/run_ut.sh --fast
 ```
 
 使用 DEBUG 运行完整模式时仍检查覆盖率。其他已知环境问题见
-[UT 使用指南](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/script/run_ut.md)。
+[UT 使用指南](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/script/run_ut.md)。
 
 ### 格式与预提交检查
 
@@ -138,8 +138,8 @@ bash script/ci-pre-commit-pr.sh
 ```
 
 全量脚本会检查和格式化整个仓库；若自动修改文件，请查看 diff，确认改动并重新检查。
-配置见[预提交配置](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/.pre-commit-config.yaml)和
-[预提交指南](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/pre-commit/README.md)。
+配置见[预提交配置](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/.pre-commit-config.yaml)和
+[预提交指南](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/pre-commit/README.md)。
 
 文档修改检查内容准确性、示例命令、仓库内路径和链接，并运行适用的预提交检查。
 代码、API、样例或性能改动应补充相应验证；需要硬件但尚未完成的验证，请明确说明所缺环境和待验证内容。
@@ -148,11 +148,11 @@ bash script/ci-pre-commit-pr.sh
 ## 代码与文档规范
 
 遵循周围代码的风格和现有依赖，详细项目要求见
-[AGENTS.md](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/AGENTS.md)。
+[AGENTS.md](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/AGENTS.md)。
 
-- C/C++ 使用仓库的 [.clang-format](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/.clang-format)
+- C/C++ 使用仓库的 [.clang-format](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/.clang-format)
   和 clang-format 18.1.8，缩进为 4 个空格，行宽不超过 120 字符。
-- Python 使用 [Ruff 配置](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/pre-commit/pyproject.toml)，
+- Python 使用 [Ruff 配置](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/pre-commit/pyproject.toml)，
   目标版本为 `py310`，行宽不超过 120 字符。
 - 函数保持单一职责，新增和修改的函数尽量不超过 50 行非空、非注释代码；控制块嵌套深度不超过 4 层。
 - 新增错误返回路径应在根因发生处记录 ERROR 日志，包含失败原因和相关 rank、设备、资源、端点或错误码。
@@ -160,15 +160,15 @@ bash script/ci-pre-commit-pr.sh
 - 公共 API、参数或环境变量发生变化时，同步更新相应文档、样例和验证。
 - 中文文档放在 `docs/zh/`，优先链接现有说明，避免重复维护大段安装步骤。
 
-接口参考见 [API 简介](../../feature.md)、[C API](../../API.md)和 [Python API](../../pythonAPI.md)。
-代码跳转配置见 [IDE 代码跳转指南](../../ide_code_navigation_guide.md)。
+接口参考见 [API 简介](../quick_start/feature.md)和[API 接口列表](../user_guide/api/index.md)。
+代码跳转配置见 [IDE 代码跳转指南](development_environment/ide_code_navigation_guide.md)。
 
 ## 提交与 Pull Request
 
 一个 PR 聚焦一个逻辑改动，提交说明清楚表达改动目的；较大的工作可拆成独立、可评审的步骤。
 提交前检查 diff，避免带入与任务无关的修改、敏感信息，以及 `build/`、`output/`、`wheels/` 等生成产物。
 
-按照现有 [GitCode PR 模板](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/.gitcode/PULL_REQUEST_TEMPLATE.md)
+按照现有 [GitCode PR 模板](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/.gitcode/PULL_REQUEST_TEMPLATE.md)
 填写说明和开发自检项，至少包含：
 
 - 改了什么、为什么改，以及关联 Issue、里程碑或具体使用场景。
@@ -181,11 +181,10 @@ bash script/ci-pre-commit-pr.sh
 提交后持续跟进评审反馈，解释取舍或按反馈更新实现，并在新增改动影响验证结果时重新运行相关检查。
 讨论聚焦事实和技术问题，使用清晰、尊重的语言。
 
-代码贡献遵循项目的 [Mulan PSL v2 许可证](https://gitcode.com/whytao/memfabric_hybrid/blob/develop/LICENSE)。
+代码贡献遵循项目的 [Mulan PSL v2 许可证](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/LICENSE)。
 社区行为准则采用的许可见其
-[贡献归属](../../../..//CODE_OF_CONDUCT.md#贡献归属)。
+[贡献归属](code_of_conduct.md#贡献归属)。
 
 [branch-policy]: https://gitcode.com/Ascend/memfabric_hybrid/wiki/%E5%88%86%E6%94%AF%E7%AD%96%E7%95%A5.md
 
-返回[项目首页](https://gitcode.com/whytao/memfabric_hybrid) ·
-阅读[社区行为准则](../../../../CODE_OF_CONDUCT.md)
+返回[项目首页](https://gitcode.com/Ascend/memfabric_hybrid) · 阅读[社区行为准则](code_of_conduct.md)

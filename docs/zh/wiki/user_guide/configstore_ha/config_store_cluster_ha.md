@@ -1,4 +1,4 @@
-# config_store_cluster_ha
+# ConfigStore 工作原理与高可用机制
 
 > Config Store 实现分析（引入ETCD和降级机制）。
 
@@ -19,7 +19,7 @@
 configStore 是 MemFabric 的配置存储系统，用于管理集群配置（如节点数量、rank 分配等）。它支持两种模式：
 
 - **无 ETCD 模式**：使用简单的 TCP 服务器（适合单节点测试）。服务器会自动在 rank 0 的进程中启动，侦听指定的 IP 和端口，其他 rank 作为客户端连接。
-- **ETCD 模式**：使用 ETCD 作为分布式后端（适合多节点生产环境，支持高可用性和自动故障转移）。启用步骤请参考 [`etcd_store_backend.md`](etcd_store_backend.md)。
+- **ETCD 模式**：使用 ETCD 作为分布式后端（适合多节点生产环境，支持高可用性和自动故障转移）。部署步骤请参考 [etcd 后端使用与部署指导](MemFabric的etcd后端使用与部署指导.md)。
 
 TCP 服务器通过内部的 AccTcpServer 组件启动，它侦听客户端连接并处理 KV 存储操作（如 SET、GET 等）。在示例中，服务器启动是自动的，无需手动干预。在单节点和多节点场景下，都是 rank 0 自动启动服务器，其他节点连接到它。对于高可用，推荐使用 ETCD 模式。
 

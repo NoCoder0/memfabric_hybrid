@@ -52,8 +52,8 @@ theme:
     - toc.follow
 
 hooks:
-  - docs/mkdocs/hooks/github_admonition.py
-  - docs/mkdocs/hooks/img_width.py
+  - .mkdocs/hooks/github_admonition.py
+  - .mkdocs/hooks/img_width.py
 
 plugins:
   - search
@@ -100,9 +100,9 @@ markdown_extensions:
           case: lower
 
 extra_css:
-  - mkdocs/stylesheets/extra.css
+  - assets/extra.css
   - assets/navigation.css
 
 extra_javascript:
-  - mkdocs/javascripts/mathjax.js
+  - assets/mathjax.js
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js

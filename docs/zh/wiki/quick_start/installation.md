@@ -42,7 +42,7 @@ A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
 
 安装 MemFabric Hybrid whl包后，执行 `mfcli kernel install` 完成部署。
 
-详细说明见 [安装 HYBM AICPU OPS](installation_kernel.md)。
+详细说明见 [安装 HYBM AICPU OPS](../user_guide/basic_configuration/installation_kernel.md)。
 
 ### 4. acc_offload扩展库安装
 
@@ -151,7 +151,7 @@ A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
 
 安装 MemFabric Hybrid whl包后，执行 `mfcli kernel install` 完成部署。
 
-详细说明见 [安装 HYBM AICPU OPS](installation_kernel.md)。
+详细说明见 [安装 HYBM AICPU OPS](../user_guide/basic_configuration/installation_kernel.md)。
 
 > **A2 环境使用 DEVICE_RDMA：** A2（Ascend 910B3）上使用自定义 AICPU kernel 需先关闭驱动验签：
 >
