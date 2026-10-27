@@ -9,12 +9,12 @@
 
 | 协议 / 范围 | 初始化报错 | Copy 报错 |
 | --- | --- | --- |
-| 通用问题 | [驱动、大页、地址空间和超时](#common-init) | [Copy 报错](#common-copy) |
-| Device SDMA（HCCS） | [协议支持、内存分配、扫描和导入](#sdma-init) | [地址翻译、搬移错误和返回 -7](#sdma-copy) |
-| Device RDMA | [设备打开、网络配置、MR 注册和 Swap 分配](#rdma-init) | [Copy 报错](#rdma-copy) |
+| 通用问题 | [驱动和超时](#common-init) | [Copy 报错](#common-copy) |
+| Device SDMA（HCCS） | [协议支持、地址预留、内存分配、扫描和导入](#sdma-init) | [地址翻译、搬移错误和返回 -7](#sdma-copy) |
+| Device RDMA | [设备打开、网络配置、内存分配、注册和 Swap](#rdma-init) | [Copy 报错](#rdma-copy) |
 
-原 FAQ 未明确协议归属的内存初始化问题统一放在通用部分，可结合实际日志中的内存管理路径排查。
-A3 的 HCCS 可用内存问题与 SDMA 放在同一组，便于连续排查。
+内存初始化问题按实际传输协议归类：`ReserveMemorySpace` 失败属于 Device SDMA，
+`AllocLocalMemory` 和静态大页注册失败属于 Device RDMA。A3 的 HCCS 可用内存问题与 SDMA 放在同一组。
 
 新增问题或协议时，请参照文末的[内容维护指南](#maintenance)。
 
@@ -46,86 +46,9 @@ mf初始化是会校验HDK版本以保证后续流程正确，如果没有安装
 
 检查物理机是否安装HDK，并保证映射HDK安装目录到容器内
 
-<a id="alloc-local-memory"></a>
-
-#### 1.1.2 AllocLocalMemory 报 Cannot allocate memory（error: 12）
-
-**问题现象**
-
- 初始化时，日志中有如下打印：
-
-```text
-Cannot allocate memory
-```
-
-**问题根因**
-
-conn_based_segment需要配置静态大页
-
-**解决方法**
-
-可以通过以下命令查询当前配置数量
-
-```bash
-cat /proc/meminfo | grep HugePages_Total
-```
-
-然后通过以下命令，临时配置所需的静态大页
-
-```bash
-echo 65536 > /proc/sys/vm/nr_hugepages
-```
-
-如果是期望跑SDMA的场景走到了conn_base_segment，可能是HDK版本太老,建议更新HDK
-
-<a id="reserve-memory"></a>
-
-#### 1.1.3 ReserveMemorySpace 失败（ret: 3）
-
-**问题现象**
-
-```text
-[HYBM hybm_vmm_based_segment.cpp:66 ReserveMemorySpace]
-prepare virtual memory size(134217728) failed. ret: 3
-```
-
-**问题根因**
-
-A2/A3环境上vmm接口reserve的size需要1G对齐
-
-**解决方法**
-
-修改初始化maxDramSize配置
-
-<a id="hugepage-register"></a>
-
-#### 1.1.4 静态大页注册失败（register host va failed, ret: 4）
-
-plog
-
-```text
-[ERROR] DRV(10457,):2026-06-18-07:01:55.619.835
-    [drv_share_log.c:238][ascend][curpid:10457,10457][drv][devmm][share_log_read_in_single_module]Get_user_pages_fast
-    fail. (va=0x280040000000; expected_page_num=512; real_got_page_num=0) Get pages fail. (va=0x280040000000;
-    expected_num=2621440; ret=-14) Get pages fail. (va=0x280040000000; expected_num=2621440; ret=-14) Map shm fail.
-    (src_va=0x280040000000; size=10737418240; devid=0; map_type=3; ret=-14)
-[ERROR] DRV(10457,):2026-06-18-07:01:55.619.854
-    [devmm_svm.c:2769][ascend][curpid:10457,10457][drv][devmm][_devmm_mem_remote_map]<errno:14, 4> Mem_remote_map ioctl
-    error. (src_va=0x280040000000; size=10737418240; devid=0; ret=4)
-```
-
-**问题根因**
-
-os版本的问题，使用了静态大页，但是没有立即映射到页表上，需要pagefault触发
-
-**解决方法**
-
-- 大页数量配置为0
-- 启用56bits GVA（ock.mmc.local.max.dram.size = 1024GB，world_size=256）
-
 <a id="join-timeout"></a>
 
-#### 1.1.5 Join 超时
+#### 1.1.2 Join 超时
 
 **问题现象**
 
@@ -148,7 +71,7 @@ MF对于集群加入事件是串行操作，其他未加入的集群在超时时
 
 <a id="collective-timeout"></a>
 
-#### 1.1.6 内存池初始化导致上层集合通信算子超时
+#### 1.1.3 内存池初始化导致上层集合通信算子超时
 
 **问题现象**
 
@@ -193,8 +116,56 @@ MF初始化时存在一些较为耗时的操作，比如申请并映射大量内
 **解决方法**
 
 通过环境变量 export HCCL_EXEC_TIMEOUT=3600 增大集群加入超时时间
+参考文档：https://www.hiascend.com/document/detail/zh/canncommercial/900/API/hcclug/hcclenvref_07_0003.html
 
-参考文档：<https://www.hiascend.com/document/detail/zh/canncommercial/900/API/hcclug/hcclenvref_07_0003.html>
+<a id="config-store-port-range"></a>
+
+#### 1.1.4 配置存储 HA 端口范围过窄导致主备倒换失败（读写返回 -3004）
+
+**问题现象**
+
+etcd 模式双 meta 部署下，对其中一个 meta 做 stop 故障注入后，业务读失败并报 -3004（超时），且长时间不自动恢复，客户端日志：
+
+```text
+WARN  [MMC mmc_net_engine_acc.cpp:350 Call] Peer 0 doesn't response within 60 seconds
+ERROR [MMC mmc_net_engine.h:273 Call] NetEngine call error, op 12, peerId 0, error code -3004
+ERROR [MMC mmc_client_default.cpp:561 BatchGet] client mmc_client batch get failed, error code -3004
+```
+
+存活 meta 的日志中反复出现：
+
+```text
+ERROR [SMEM network_endpoint_util.cpp:292 FindAvailablePort] no available port found,
+      isIpv6=0, startPort=15950, endPort=15951, excludePort=15951
+```
+
+客户端与 local service 侧持续报配置存储中没有 leader：
+
+```text
+WARN [SMEM smem_ha_config_store.cpp:794 HealthCheckThreadFunc] Backend check failed 1, ret: -404, model: 0, isLeader: 0, leaderLinkAlive: 0
+INFO [SMEM smem_ha_config_store.cpp:586 ConnectToLeaderAsFollower] No leader registered yet, attempt 19/60
+```
+
+**问题根因**
+
+`MF_CONFIG_STORE_PORT_START` 和 `MF_CONFIG_STORE_PORT_END` 被配置成了只覆盖两个端口的区间（示例中为 15950~15951），而 leader 上任需要从该区间同时获取两个空闲端口：`TryBecomeLeader` 中先后两次调用 `FindAvailablePort`，第一次选配置存储服务端口，第二次排除已选端口后再选 bindable 地址端口。区间内可用的空闲端口不足两个时，`FindAvailablePort` 直接返回失败，`TryBecomeLeader` 中止，备节点会持续重试但始终无法当选，etcd 中一直没有 leader 记录。
+
+如果故障注入使用的是 stop（SIGSTOP 冻结）而非 kill，被冻结的旧 leader 进程仍然持有原端口（TCP 连接不断开、端口不释放），备节点就再也拿不到这两个端口；同时客户端已有链路不会断开（不触发断链重连），也没有新 leader 地址可切换（`leader/bindable_addr` 一直 -404），请求只能等到本地超时返回 -3004。
+
+**解决方法**
+
+1. 将配置存储 HA 端口区间放宽，保证同时存在 2 个以上空闲端口，例如：
+
+   ```shell
+   export MF_CONFIG_STORE_PORT_START=15950
+   export MF_CONFIG_STORE_PORT_END=15999
+   ```
+
+   也可以不设置这两个环境变量，使用默认区间（9000~65535）。
+
+2. 确认已解决：leader 上任日志中不再出现 `no available port found`，且随后有 `Registered in backend: <ip>:<port>`；备节点上任后，客户端日志中 `discover leader url empty`、`ret: -404` 消失，读写恢复正常。
+
+3. 使用 SIGSTOP 类 stop 注入时，被冻结的进程不会释放端口，属于最难恢复的场景，建议对 stop 与 kill 两种注入方式分别验证主备倒换。
 
 <a id="common-copy"></a>
 
@@ -210,7 +181,7 @@ MF初始化时存在一些较为耗时的操作，比如申请并映射大量内
 
 ### 2.1 初始化报错
 
-本节包括协议支持检查、内存配置、内存分配和导入问题。
+本节包括协议支持检查、地址预留、内存配置、内存分配和导入问题。
 
 <a id="sdma-unsupported"></a>
 
@@ -227,23 +198,50 @@ dram segment does not support sdma in current environment
 1. A3 环境HDK版本低于25.5.0
 2. A2 环境误用了device_sdma
 
-<a id="halmemcreate"></a>
+<a id="reserve-memory"></a>
 
-#### 2.1.2 HalMemCreate 失败（ret: -6）
+#### 2.1.2 ReserveMemorySpace 失败（ret: 3）
 
 **问题现象**
 
- vmm_segment中调用HalMemCreate，日志中有如下打印：
-
 ```text
-Try HalMemCreate ret: -6
+[HYBM hybm_vmm_based_segment.cpp:66 ReserveMemorySpace]
+prepare virtual memory size(134217728) failed. ret: 3
 ```
 
 **问题根因**
 
-此问题是因为内存不足，如果指定了numa就是当前numa上DRAM不足，如果未指定numa则是当前环境内存不足。
-因为hccs总线上的DRAM地址范围是固定的，部分环境上并不是所有DRAM都在hccs总线上，
-只有和hccs地址有交集的部分可以被申请
+A2/A3环境上vmm接口reserve的size需要1G对齐
+
+**解决方法**
+
+修改初始化maxDramSize配置
+
+<a id="halmemcreate"></a>
+
+#### 2.1.3 HalMemCreate 失败（ret: 6）
+
+**问题现象**
+
+vmm_segment中调用HalMemCreate，日志中有如下打印：
+
+```text
+Try HalMemCreate ret: 6
+```
+
+**问题根因**
+
+1. 内存不足（5.10内核情况下）
+
+   如果指定了numa就是当前numa上DRAM不足，如果未指定numa则是当前环境内存不足。
+   因为hccs总线上的DRAM地址范围是固定的，部分环境上并不是所有DRAM都在hccs总线上，
+   只有和hccs地址有交集的部分可以被申请
+
+2. 使用了6.6版本内核
+
+   6.6的新版本内核的alloc_contig_range函数不支持传入__KA_GFP_NORETRY和__KA_GFP_ACCOUNT，HDK暂未适配该内核版本
+   该修改见 [Linux 内核提交][kernel-page-alloc]。
+   openEuler在6.6.0-114.0.0合入该修改，可以下载当前os的kernel-source包，并查看mm/page_alloc.c文件是否有该pr的修改
 
 **解决方法**
 
@@ -261,7 +259,7 @@ Try HalMemCreate ret: -6
 
 **查看系统可用内存**
 
-运行`mfcli` 工具扫描可用的物理内存：
+运行`mfcli`工具扫描可用的物理内存：
 
 `mfcli mem scan`
 
@@ -271,17 +269,11 @@ memfabric使用2MB和1GB的大页，脚本默认按照1GB规格扫描，如果�
 
 `mfcli mem scan -m 2`
 
-**一点内存都申请不出来**
-如果配置最小容量都无法申请到DRAM，有可能是如下原因：
-6.6的新版本内核的alloc_contig_range函数不支持传入__KA_GFP_NORETRY和__KA_GFP_ACCOUNT，HDK暂未适配该内核版本
-该修改见 [Linux 内核提交][kernel-page-alloc]。
-openEuler在6.6.0-114.0.0合入该修改，可以下载当前os的kernel-source包，并查看mm/page_alloc.c文件是否有该pr的修改
-
 <a id="mem-scan"></a>
 
-#### 2.1.3 A3 可用内存扫描结果与预期不符
+#### 2.1.4 A3 可用内存扫描结果与预期不符
 
-memfabric内部两种规格页来初始化内存池，优先使用1GB大页申请，如果申请失败则转为使用2MB页申请，可以通过`mfcli` 工具来扫描机器上可用的2MB页、1GB页大小
+memfabric内部两种规格页来初始化内存池，优先使用1GB大页申请，如果申请失败则转为使用2MB页申请，可以通过`mfcli`工具来扫描机器上可用的2MB页、1GB页大小
 
 **问题根因**
 
@@ -293,9 +285,9 @@ A3可用内存地址范围有限制，不同内存规格机器可用内存大小
 
 但是很多时候实际却申请不到那么多（报错见 [HalMemCreate 失败](#halmemcreate)），常见原因：
 
- 1.机器运行时间久了，内存碎片化导致无法分配可用的连续1GB页
+1.机器运行时间久了，内存碎片化导致无法分配可用的连续1GB页
 
- 2.机器上的其他进程或者缓存占用了内存池可用的地址范围，导致可用内存不足
+2.机器上的其他进程或者缓存占用了内存池可用的地址范围，导致可用内存不足
 
 **解决方法**
 
@@ -307,7 +299,7 @@ A3可用内存地址范围有限制，不同内存规格机器可用内存大小
 
 <a id="halmemimport"></a>
 
-#### 2.1.4 A3 HalMemImport 失败（ret: 17）
+#### 2.1.5 A3 HalMemImport 失败（ret: 17）
 
 ![image.png][faq-image-3]
 
@@ -335,7 +327,7 @@ HalMemImport memory failed: 17 为内核请求错误，根本原因可能有多�
 
 **问题现象**
 
- 调用HalCqReportRecv时，日志中有如下打印：
+调用HalCqReportRecv时，日志中有如下打印：
 
 ```text
 transfer page error, smmu return terminate
@@ -511,9 +503,69 @@ for i in $(seq 0 7); do echo "==> $i"; hccn_tool -i $i -link -g; done
 
 联系机器运维人员配置device_rdma网卡，或使用其他传输协议，A3推荐使用device_sdma
 
+<a id="alloc-local-memory"></a>
+
+#### 3.1.3 AllocLocalMemory 报 Cannot allocate memory（error: 12）
+
+**问题现象**
+
+初始化时，日志中有如下打印：
+
+```
+Cannot allocate memory
+```
+
+**问题根因**
+
+conn_based_segment需要配置静态大页
+
+**解决方法**
+
+可以通过以下命令查询当前配置数量
+
+```
+cat /proc/meminfo | grep HugePages_Total
+```
+
+然后通过以下命令，临时配置所需的静态大页
+
+```
+echo 65536 > /proc/sys/vm/nr_hugepages
+```
+
+如果是期望跑SDMA的场景走到了conn_base_segment，可能是HDK版本太老,建议更新HDK
+
+<a id="hugepage-register"></a>
+
+#### 3.1.4 静态大页注册失败（register host va failed, ret: 4）
+
+plog
+
+```
+[ERROR] DRV(10457,):2026-06-18-07:01:55.619.835
+    [drv_share_log.c:238][ascend][curpid:10457,10457][drv][devmm][share_log_read_in_single_module]Get_user_pages_fast
+    fail. (va=0x280040000000; expected_page_num=512; real_got_page_num=0) Get pages fail. (va=0x280040000000;
+    expected_num=2621440; ret=-14) Get pages fail. (va=0x280040000000; expected_num=2621440; ret=-14) Map shm fail.
+    (src_va=0x280040000000; size=10737418240; devid=0; map_type=3; ret=-14)
+[ERROR] DRV(10457,):2026-06-18-07:01:55.619.854
+    [devmm_svm.c:2769][ascend][curpid:10457,10457][drv][devmm][_devmm_mem_remote_map]<errno:14, 4> Mem_remote_map ioctl
+    error. (src_va=0x280040000000; size=10737418240; devid=0; ret=4)
+```
+
+**问题根因**
+
+os版本的问题，使用了静态大页，但是没有立即映射到页表上，需要pagefault触发
+
+**解决方法**
+
+改用halMemAlloc方式申请内存：
+
+- 大页数量配置为0
+- 启用56bits GVA（ock.mmc.local.max.dram.size = 1024GB，world_size=256）
+
 <a id="rdma-4k-register"></a>
 
-#### 3.1.3 4K 页内存注册失败（错误码 0x1f466）
+#### 3.1.5 4K 页内存注册失败（错误码 0x1f466）
 
 **问题现象**
 
@@ -559,7 +611,7 @@ module_errcode=2
 
 <a id="rdma-swap"></a>
 
-#### 3.1.4 RDMA Swap 内存分配失败（ret: -8）
+#### 3.1.6 RDMA Swap 内存分配失败（ret: -8）
 
 **问题现象**
 
@@ -576,7 +628,39 @@ export HYBM_RDMA_SWAP_SPACE_SIZE=0
 
 ### 3.2 Copy 报错
 
-暂无条目。Device RDMA 的 Copy 发起、等待完成和结果异常问题可追加在本节。
+#### 3.2.1 RaSendWrV2 failed, ret: 328100
+
+**问题现象**
+
+MF报错：
+
+```text
+RaSendWrV2 failed, ret: 328100
+```
+
+**问题跟因**
+
+短时间内下发的 WR 数量超过已完成的数量 32767 个。
+`328100` 是 HCCP 内部`-ENOMEM` 经过`ConverReturnCode()` 转换后的错误码，含义是 RoCE/lite 发送队列已满（SQ backpressure，发送队列无法继续接收新的 WR）。
+HCCP 后台`hccp_hdc_lite` 线程 每 10ms 才轮询一次 CQE 回收，在轮询间隙内，如果 WR 下发速度高于 CQE 回收速度，就会触发背压。
+
+**解决方案**
+
+1. 调整队列深度到最大
+
+   ```shell
+   export MF_NPU_RDMA_SEND_CQ_DEPTH=32768
+   export MF_NPU_RDMA_RECV_CQ_DEPTH=32768
+   export MF_NPU_RDMA_MAX_SEND_WR=32767
+   export MF_NPU_RDMA_MAX_RECV_WR=32767
+   ```
+
+2. 1.3.0 及以上版本，可以使用基于AICPU的device_rdma方案
+
+   ```shell
+   mfcli kernel install
+   export MF_HYBM_RDMA_USE_AICPU=1
+   ```
 
 <a id="maintenance"></a>
 
@@ -684,6 +768,6 @@ export HYBM_RDMA_SWAP_SPACE_SIZE=0
 [faq-image-7]: https://raw.gitcode.com/user-images/assets/7672916/989ad8a1-62b4-4362-b4d9-a59a7cb0b406/image.png
 
 [kernel-page-alloc]:
-  https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=f6037a4a686523dee1967ef7620349822e019ff8
+https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=f6037a4a686523dee1967ef7620349822e019ff8
 [memcache-separated]: https://gitcode.com/Ascend/memcache/wiki/MemCache+vLLM+A3分离部署案例.md
 [memcache-bios]: https://gitcode.com/Ascend/memcache/wiki/MemCache扩大A3可用内存空间.md
