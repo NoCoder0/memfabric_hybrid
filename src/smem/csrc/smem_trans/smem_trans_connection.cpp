@@ -243,6 +243,9 @@ int SmemTransConnection::RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher 
     asyncMgr->SetConnectionCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) {
         return OnEstablishConnection(rankId, peers, reqId);
     });
+    asyncMgr->SetAddSlicesCallback([this](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
+        return OnAddSlices(extendingRankId, newSlices, reqId);
+    });
     asyncMgr->SetLinkStateQueryCallback([this]() { return OnQueryLinkState(); });
     return SMEM_OK;
 }
@@ -270,6 +273,11 @@ int SmemTransConnection::RegisterExecutorCallbacks(SmemGroupManagerClient *execu
     executor->onQueryLinkState_ = [asyncMgr]() {
         asyncMgr->EnqueueQueryLinkState(0);
         return std::vector<LinkStateEntry>{};
+    };
+    executor->onAddSlices_ = [asyncMgr](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
+        MultiBytes copy(newSlices);
+        asyncMgr->EnqueueAddSlices(extendingRankId, std::move(copy), reqId);
+        return 0;
     };
     executor->onPromoteToActive_ = [this](uint32_t rankId) {
         joined_.store(true);
@@ -455,6 +463,12 @@ int SmemTransConnection::ImportPeerInfo(const RankFullInfo &peer) noexcept
                                                            << " ret: " << ret);
         return SMEM_ERROR;
     }
+    // 提前登记 rank -> worker：ADD_SLICES 按 rank 路由，若等导入成功才记录，ADDWLST 失败时增量片会被丢弃
+    {
+        mf::WriteGuard locker(remoteSliceRwMutex_);
+        rankToWorkerId_[peer.rankId] = id;
+        ranksRole_[peer.rankId] = role;
+    }
 
     std::vector<SmemTransExchangeInfo> slices;
     std::vector<void *> global;
@@ -493,17 +507,118 @@ int SmemTransConnection::ImportPeerInfo(const RankFullInfo &peer) noexcept
     }
 
     bool recorded = (role == SMEM_TRANS_BOTH || config_.role == SMEM_TRANS_BOTH || role != config_.role);
-    {
+    if (recorded) { // same role, skip record
         mf::WriteGuard locker(remoteSliceRwMutex_);
-        rankToWorkerId_[peer.rankId] = id;
-        ranksRole_[peer.rankId] = role;
-        if (recorded) { // same role, skip record
-            for (auto i = 0U; i < local.size(); ++i) {
-                remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
-            }
+        for (auto i = 0U; i < local.size(); ++i) {
+            remoteSlices_[id].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
         }
     }
     return SM_OK;
+}
+
+int SmemTransConnection::ParseAddSlicesPayload(const MultiBytes &newSlices, uint32_t extendingRankId,
+                                               std::vector<hybm_exchange_info> &hybmInfos,
+                                               std::vector<LocalMapAddress> &local) noexcept
+{
+    hybmInfos.reserve(newSlices.size());
+    local.reserve(newSlices.size());
+    for (size_t i = 0; i < newSlices.size(); ++i) {
+        SmemTransExchangeInfo info{};
+        if (DeserializeTransExchangeInfo(newSlices[i].data(), newSlices[i].size(), info) == 0) {
+            SM_LOG_ERROR("OnAddSlices: invalid slice payload, rank=" << extendingRankId << " idx=" << i
+                                                                     << " total=" << newSlices.size()
+                                                                     << " sliceLen=" << newSlices[i].size());
+            for (auto &parsed : hybmInfos) {
+                hybm_export_info_free(&parsed);
+            }
+            hybmInfos.clear();
+            return SM_INVALID_PARAM;
+        }
+        hybmInfos.push_back(info.hybmInfo);
+        local.push_back(info.u.address);
+    }
+    return SMEM_OK;
+}
+
+int SmemTransConnection::ImportIncrementalSlices(uint32_t extendingRankId, uint32_t overrideRank,
+                                                 const WorkerId &peerId, smem_trans_role_t peerRole,
+                                                 std::vector<hybm_exchange_info> &hybmInfos,
+                                                 const std::vector<LocalMapAddress> &local) noexcept
+{
+    const size_t sliceCount = local.size();
+    std::vector<void *> global(sliceCount, nullptr);
+    const auto importRet =
+        hybm_import(entity_, hybmInfos.data(), hybmInfos.size(), global.data(), HYBM_IMPORT_RANK_ENCODE(overrideRank));
+    for (auto &parsed : hybmInfos) {
+        hybm_export_info_free(&parsed);
+    }
+    if (importRet != BM_OK) {
+        // 本路径不发 ack 也不推进 link：失败后没有本地重投通道（只能等对端再注册或重连），
+        // 因此必须如实上抛，否则残缺清单被固化
+        if (importRet == BM_P2P_NOT_READY) {
+            SM_LOG_WARN("OnAddSlices: import not ready, rank=" << extendingRankId << " overrideRank=" << overrideRank
+                                                               << " slices=" << sliceCount << " ret=" << importRet);
+        } else {
+            SM_LOG_ERROR("OnAddSlices: import failed, rank=" << extendingRankId << " overrideRank=" << overrideRank
+                                                             << " slices=" << sliceCount << " ret=" << importRet);
+        }
+        return SMEM_ERROR;
+    }
+    const bool recorded = (peerRole == SMEM_TRANS_BOTH || config_.role == SMEM_TRANS_BOTH || peerRole != config_.role);
+    if (recorded) {
+        mf::WriteGuard locker(remoteSliceRwMutex_);
+        // 写锁内二次确认：读锁到此处之间对端可能已离开，operator[] 会为其重建条目且无人清理
+        auto it = rankToWorkerId_.find(extendingRankId);
+        if (it == rankToWorkerId_.end() || !(it->second == peerId)) {
+            SM_LOG_WARN("OnAddSlices: peer left before record, rank=" << extendingRankId
+                                                                      << " overrideRank=" << overrideRank);
+            return SMEM_OK;
+        }
+        for (size_t i = 0; i < sliceCount; ++i) {
+            remoteSlices_[peerId].emplace(local[i].address, LocalMapAddress(global[i], local[i].size));
+        }
+    }
+    SM_LOG_INFO("OnAddSlices: rank=" << extendingRankId << " overrideRank=" << overrideRank
+                                     << " slices=" << sliceCount);
+    return SMEM_OK;
+}
+
+int SmemTransConnection::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept
+{
+    (void)reqId;
+    if (entity_ == nullptr || newSlices.empty()) {
+        return SMEM_OK;
+    }
+    // 未登记的 rank 属于别的连接（store 会向所有客户端广播），放行
+    WorkerId peerId{};
+    smem_trans_role_t peerRole = SMEM_TRANS_NONE;
+    {
+        mf::ReadGuard locker(remoteSliceRwMutex_);
+        auto it = rankToWorkerId_.find(extendingRankId);
+        if (it == rankToWorkerId_.end()) {
+            SM_LOG_DEBUG("OnAddSlices skip unregistered rank=" << extendingRankId
+                                                               << " sliceCount=" << newSlices.size());
+            return SMEM_OK;
+        }
+        peerId = it->second;
+        auto roleIt = ranksRole_.find(extendingRankId);
+        if (roleIt != ranksRole_.end()) {
+            peerRole = roleIt->second;
+        }
+    }
+    // 同一 uniqueId 幂等复用窗口：增量导入必须与 ADDWLST 首轮落在同一 GVA 窗口
+    const uint32_t overrideRank = GetOrCreatePeerRank(extendingRankId, WorkerIdToUniqueId(peerId));
+    if (overrideRank == HYBM_IMPORT_RANK_INVALID) {
+        SM_LOG_ERROR("OnAddSlices: alloc override rank failed, rank=" << extendingRankId);
+        return SMEM_ERROR;
+    }
+
+    std::vector<hybm_exchange_info> hybmInfos;
+    std::vector<LocalMapAddress> local;
+    if (auto ret = ParseAddSlicesPayload(newSlices, extendingRankId, hybmInfos, local); ret != SMEM_OK) {
+        return ret;
+    }
+    return ImportIncrementalSlices(extendingRankId, overrideRank, peerId, peerRole, hybmInfos, local);
 }
 
 std::vector<ock::smem::LinkStateEntry> SmemTransConnection::OnQueryLinkState() noexcept

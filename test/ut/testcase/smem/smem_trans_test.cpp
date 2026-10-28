@@ -2089,13 +2089,13 @@ void ExpectMerged(const std::vector<MemPair> &got, const std::vector<std::pair<u
 // 裸构造的 SmemTransConnection（仅成员初始化，不做 Initialize）：store_ 为空时任何时机触发
 // 析构都会在 ClearStoreCallbacks 解引用空 store，故以 new 出的进程级容器持有引用且不主动
 // 释放，UT 进程退出时故意泄漏以避免静态析构崩溃
-SmemTransConnectionPtr MakeBareTransConn(const smem_trans_config_t &config)
+SmemTransConnectionPtr MakeBareTransConn(const smem_trans_config_t &config, hybm_entity_t entity = nullptr)
 {
     static auto *keepAlive = new std::vector<SmemTransConnectionPtr>(); // NOLINT: 故意泄漏，见上
     StorePtr emptyStore;
     // 裸构造不建链，对端 name 用同一占位串（解析失败仅表示不缓存，不影响本用例关注的成员行为）
     auto conn = SmMakeRef<SmemTransConnection>(
-        config, "ut-conn", "ut-conn", 0, nullptr, emptyStore, WorkerUniqueId{},
+        config, "ut-conn", "ut-conn", 0, entity, emptyStore, WorkerUniqueId{},
         [](const std::string &, uint32_t &rank) {
             rank = K_PEER_RANK_ONE;
             return SM_OK;
@@ -2301,4 +2301,98 @@ TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
         ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
         EXPECT_EQ(conn->remoteSlices_.begin()->second.size(), 2U);
     }
+}
+
+/* ADD_SLICES: slices registered after the ADDWLST snapshot must still reach the importer */
+TEST_F(SmemTransTest, OnAddSlices_ImportsIncrementalSlices)
+{
+    smem_trans_config_t config = g_trans_options; // SMEM_TRANS_SENDER
+    auto conn = MakeBareTransConn(config, reinterpret_cast<hybm_entity_t>(0x1));
+
+    MOCKER_CPP(&hybm_import, int32_t(*)(hybm_entity_t, const hybm_exchange_info[], uint32_t, void *[], uint32_t))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&hybm_mmap, int32_t(*)(hybm_entity_t, uint32_t)).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&hybm_transport_connect, int32_t(*)(hybm_entity_t, const uint32_t *, uint32_t, uint32_t))
+        .stubs()
+        .will(returnValue(SMEM_OK));
+
+    SmemTransExchangeInfo base{};
+    base.u.session.reserved = static_cast<uint16_t>(SMEM_TRANS_RECEIVER);
+    std::vector<uint8_t> baseBytes;
+    SerializeTransExchangeInfo(baseBytes, base);
+
+    SmemTransExchangeInfo slice1{};
+    slice1.u.address = LocalMapAddress(reinterpret_cast<void *>(K_SLICE1_ADDR), K_SLICE1_SIZE);
+    std::vector<uint8_t> slice1Bytes;
+    SerializeTransExchangeInfo(slice1Bytes, slice1);
+
+    RankFullInfo peer;
+    peer.rankId = K_PEER_RANK_ONE;
+    peer.baseInfo = baseBytes;
+    peer.externalInfo.push_back(slice1Bytes);
+
+    // snapshot path: only slice1 is known when ADDWLST fires
+    EXPECT_EQ(conn->OnEstablishConnection(K_PEER_RANK_ONE, {peer}, 0), SMEM_OK);
+    EXPECT_EQ(conn->OnAddToWhitelist(K_PEER_RANK_ONE, {peer}, 0), SM_OK);
+    {
+        ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
+        ASSERT_EQ(conn->remoteSlices_.size(), 1U);
+        EXPECT_EQ(conn->remoteSlices_.begin()->second.size(), 1U);
+    }
+
+    // slice2 only ever arrives through ADD_SLICES: it must be imported into the same peer window
+    SmemTransExchangeInfo slice2{};
+    slice2.u.address = LocalMapAddress(reinterpret_cast<void *>(K_SLICE2_ADDR), K_SLICE2_SIZE);
+    std::vector<uint8_t> slice2Bytes;
+    SerializeTransExchangeInfo(slice2Bytes, slice2);
+    MultiBytes incremental;
+    incremental.push_back(slice2Bytes);
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_ONE, incremental, 0), SMEM_OK);
+    {
+        ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
+        ASSERT_EQ(conn->remoteSlices_.size(), 1U) << "incremental slice must reuse the peer entry";
+        EXPECT_EQ(conn->remoteSlices_.begin()->second.size(), 2U);
+    }
+
+    // re-delivery of the same batch stays idempotent
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_ONE, incremental, 0), SMEM_OK);
+    {
+        ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
+        EXPECT_EQ(conn->remoteSlices_.begin()->second.size(), 2U);
+    }
+
+    // a rank that this connection never registered belongs to another connection: skip it
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_TWO, incremental, 0), SMEM_OK);
+    {
+        ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
+        EXPECT_EQ(conn->remoteSlices_.size(), 1U);
+    }
+
+    // empty batch is a no-op
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_ONE, MultiBytes{}, 0), SMEM_OK);
+}
+
+/* ADD_SLICES 回调注册：漏注册时 SmemGroupManagerClient 只打 INFO 后 return 0，增量片静默丢弃。
+ * ADD_SLICES 无 ack 也不参与 link 推进，漏注册没有任何兜底通道，故必须有用例守住注册本身 */
+TEST_F(SmemTransTest, Callbacks_WireAddSlicesIntoDispatcher)
+{
+    smem_trans_config_t config = g_trans_options;
+    auto conn = MakeBareTransConn(config, reinterpret_cast<hybm_entity_t>(0x1));
+
+    SmemGroupCommandAsyncDispatcher asyncMgr(nullptr);
+    ASSERT_EQ(conn->RegisterAsyncCallbacks(&asyncMgr), SMEM_OK);
+    EXPECT_TRUE(static_cast<bool>(asyncMgr.onAddToWhitelist_));
+    EXPECT_TRUE(static_cast<bool>(asyncMgr.onEstablishConnection_));
+    EXPECT_TRUE(static_cast<bool>(asyncMgr.onAddSlices_));
+
+    auto executor = SmMakeRef<SmemGroupManagerClient>();
+    ASSERT_EQ(conn->RegisterExecutorCallbacks(executor.Get(), &asyncMgr), SMEM_OK);
+    ASSERT_TRUE(static_cast<bool>(executor->onAddSlices_));
+
+    // 端到端：store 下发的 ADD_SLICES 经 executor 回调进入 dispatcher 队列，而不是静默丢弃
+    MultiBytes slices;
+    slices.emplace_back(Bytes(4U, 0U));
+    EXPECT_EQ(executor->AddSlices(K_PEER_RANK_ONE, slices, 0), 0);
+    EXPECT_EQ(asyncMgr.addSlicesQueue_.size(), 1U);
 }

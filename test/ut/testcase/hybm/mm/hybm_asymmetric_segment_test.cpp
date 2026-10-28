@@ -45,7 +45,8 @@ constexpr uint64_t TEST_SIZE_ONE_BYTE = 1ULL;
 constexpr uint64_t TEST_TOTAL_SIZE = 1ULL << 30;
 constexpr uint64_t TEST_FAKE_DVA = 0x600012340000ULL;
 constexpr uint32_t TEST_LOGIC_DEVICE_ID = 5;
-constexpr int TEST_ENTITY_ID = 200; // G.CNS.02: 段构造的 entityId 参数具名化
+constexpr uint32_t TEST_EXPORT_RANK = 8; // 导出端 rankId（导入端据此确定 override 窗口）
+constexpr int TEST_ENTITY_ID = 200;      // G.CNS.02: 段构造的 entityId 参数具名化
 // G.EXP.15: 整型测试地址到指针的转换集中于此（memcpy 转换），避免散落的 reinterpret_cast
 inline void *TestAddr(uint64_t addr)
 {
@@ -746,6 +747,31 @@ TEST_F(HybmAsymmetricSegmentTest, Import_Rollback_SkipsDramGvaAddresses)
 }
 
 /**
+ * ImportHbmSlice_ReuseDoesNotAllocate
+ *  - 幂等复用命中不分配新 slice（index_ 不递增），也不重复登记映射，避免重复 ReserveLva/map
+ *    与 va_manager 重复计数。
+ */
+TEST_F(HybmAsymmetricSegmentTest, ImportHbmSlice_ReuseDoesNotAllocate)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+    MOCKER(&ock::mf::DlAclApi::RtIpcOpenMemory).stubs().will(invoke(RtIpcOpenMemoryStub));
+
+    MemSlicePtr slice1;
+    ASSERT_EQ(segment.ImportHbmSlice(MakeIpcSliceInfo(0x2000000ULL, TEST_EXPORT_RANK), slice1), BM_OK);
+    ASSERT_NE(slice1, nullptr);
+    ASSERT_EQ(segment.remoteSlices_.size(), 1U);
+    const uint32_t firstIndex = slice1->index_;
+
+    MemSlicePtr slice2;
+    ASSERT_EQ(segment.ImportHbmSlice(MakeIpcSliceInfo(0x2000000ULL, TEST_EXPORT_RANK), slice2), BM_OK);
+    EXPECT_EQ(slice1.get(), slice2.get());
+    EXPECT_EQ(slice2->index_, firstIndex);       // 复用不重新分配
+    EXPECT_EQ(segment.remoteSlices_.size(), 1U); // 也不再登记
+}
+
+/**
  * ImportHbmSlice_NonShared_NoDedupByAllZeroName
  *  - 非 shared HBM 导出 name 恒为全 0，不能作为幂等身份键：
  *    1) 同一对端的两个不同 slice 必须各自登记独立 GVA（回归：旧实现按全 0 name 复用，
@@ -1094,7 +1120,7 @@ TEST_F(HybmAsymmetricSegmentTest, CloseMemory_A5_MixedTypes)
     MOCKER(&ock::mf::DlAclApi::RtIpcCloseMemory).stubs().will(invoke(RtIpcCloseMemoryCountStub));
 
     auto vmmInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
-    auto ipcInfo = MakeIpcSliceInfo(0x2000000ULL, 8U);
+    auto ipcInfo = MakeIpcSliceInfo(0x2000000ULL, TEST_EXPORT_RANK);
     UserSliceExportInfo dramInfo{};
     dramInfo.segmentType = SEGMENT_TYPE_USER_DRAM;
     dramInfo.gvaOffset = 0x3000000ULL;

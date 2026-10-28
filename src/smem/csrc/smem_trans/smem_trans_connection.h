@@ -152,6 +152,8 @@ private:
     int OnAddToWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
     int OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) noexcept;
     int OnEstablishConnection(uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) noexcept;
+    // Incremental slice delivery: ADDWLST only carries that moment's snapshot, later slices arrive here
+    int OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) noexcept;
     std::vector<ock::smem::LinkStateEntry> OnQueryLinkState() noexcept;
     // Per-peer leave handling: override-window recycle + recv-side reference release + bookkeeping cleanup
     void RemoveOnePeer(uint32_t leavingRankId) noexcept;
@@ -183,6 +185,11 @@ private:
                         std::vector<LocalMapAddress> &local) noexcept;
     // Per-peer import/dedup/record for the establish path (extracted from OnEstablishConnection)
     int ImportPeerInfo(const RankFullInfo &peer) noexcept;
+    int ParseAddSlicesPayload(const MultiBytes &newSlices, uint32_t extendingRankId,
+                              std::vector<hybm_exchange_info> &hybmInfos, std::vector<LocalMapAddress> &local) noexcept;
+    int ImportIncrementalSlices(uint32_t extendingRankId, uint32_t overrideRank, const WorkerId &peerId,
+                                smem_trans_role_t peerRole, std::vector<hybm_exchange_info> &hybmInfos,
+                                const std::vector<LocalMapAddress> &local) noexcept;
 
     // 解析 name(ip:port) -> WorkerId；纯函数，不触碰任何共享状态，成功返回 true
     static bool TryParseNameToWorkerId(const std::string &name, WorkerId &uniqueId);
