@@ -115,6 +115,24 @@ mfcli benchmark
 环境准备、编译安装、参数配置和使用示例请参考
 [benchmark 使用指南](https://gitcode.com/Ascend/memfabric_hybrid/blob/master/src/smem/python/memfabric_hybrid/memfabric_hybrid/benchmark/README.md)。
 
+## 分析性能打点
+
+ptracer 性能打点数据默认每 10 秒写入 `/var/log/memfabric_hybrid/ptracer_<pid>.dat`（详见
+[ptracer 性能打点工具简介](../../developer_guide/debugging/ptracer.md)）。用 `mfcli trace` 分析指定的 dump 文件：
+
+```bash
+mfcli trace -f /var/log/memfabric_hybrid/ptracer_12345.dat
+```
+
+一次分析一个文件，多个进程的 dump 需要分别执行。输出的字段与指标口径见
+[ptracer 性能打点工具简介](../../developer_guide/debugging/ptracer.md) 的「分析打点数据」一节。
+
+查看全部参数：
+
+```bash
+mfcli trace --help
+```
+
 ## 收集故障诊断日志
 
 收集环境信息、MemFabric、MemCache、Ascend 日志和内核日志，并在当前目录生成压缩包。请在业务程序所在的容器内，

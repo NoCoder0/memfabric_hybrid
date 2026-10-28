@@ -160,6 +160,29 @@ def _run_benchmark(args: argparse.Namespace) -> int:
     return _benchmark_run(args)
 
 
+def _run_trace(args: argparse.Namespace) -> int:
+    from memfabric_hybrid.trace import ptracer_report
+
+    return ptracer_report.report(args)
+
+
+def _register_trace_command(components) -> None:
+    try:
+        from memfabric_hybrid.trace import ptracer_report
+    except ImportError as error:
+        # Registration runs before any handler, so a missing trace package must
+        # not make the other subcommands unusable.
+        LOGGER.warning("mfcli trace subcommand is unavailable: %s", error)
+        return
+
+    trace = components.add_parser(
+        "trace",
+        help="print the hourly batch_read / batch_write table of one ptracer dump file",
+    )
+    ptracer_report.add_arguments(trace)
+    trace.set_defaults(handler=_run_trace)
+
+
 def _register_benchmark_command(components) -> None:
     benchmark = components.add_parser("benchmark", help="run pairwise BM bandwidth benchmark")
     benchmark.set_defaults(handler=_run_benchmark)
@@ -235,6 +258,7 @@ def _parser() -> argparse.ArgumentParser:
     _register_mem_command(components)
     _register_logs_command(components)
     _register_benchmark_command(components)
+    _register_trace_command(components)
     return parser
 
 
