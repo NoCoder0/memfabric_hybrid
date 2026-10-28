@@ -662,6 +662,98 @@ HCCP 后台`hccp_hdc_lite` 线程 每 10ms 才轮询一次 CQE 回收，在轮�
    export MF_HYBM_RDMA_USE_AICPU=1
    ```
 
+<a id="rdma-copy-port-bridge"></a>
+
+#### 3.2.2 1825 网卡单机多 NPU 共用同一物理端口，RDMA 通信失败（ret: 19）
+
+**问题现象**
+
+   ```text
+   HcommChannelFenceOnThread failed, rank: N ret: 19
+   ```
+
+对应 plog：
+
+   ```text
+   ibv_poll_cq error. wc[0] status[12]        // IBV_WC_RETRY_EXC_ERR
+   WaitForSingleQpWqeCompletion: hcclRet -> 19
+   BuiltinFenceOnThread FAIL
+   ```
+
+**问题根因**
+
+1825 网卡在单机多 NPU 场景下，若多个 NPU 共用同一物理端口，两个 NPU 间的 RDMA 流量会从该端口发出、经交换机后从同一端口返回。交换机默认丢弃此类**同源同宿报文**，导致重传次数耗尽，最后通信失败。
+
+**解决方案**
+
+交换机对应接口开启**端口桥**（port bridge）功能。
+
+> 详细说明：[配置端口桥功能](https://support.huawei.com/hedex/hdx.do?docid=EDOC1100558302&id=ZH-CN_TASK_0000001176744393)
+
+1. 确认 NPU 所连交换机端口，首先需要了解物理连线，明确网卡各端口与 NPU 卡的对应关系（即哪些 NPU 共用同一网卡端口）。
+
+   **常用排布参考（8卡机型）：**
+
+   | NPU 卡 | 网卡设备 |
+   |--------|----------|
+   | 0、1   | hrn5_1   |
+   | 2、3   | hrn5_0   |
+   | 4、5   | hrn5_3   |
+   | 6、7   | hrn5_2   |
+
+   例如，若需要 NPU 6 和 NPU 7 之间通信，二者共用 `hrn5_2` 端口，需在交换机对应的 `hrn5_2` 端口上开启端口桥。
+
+   - 通过 `ibv_devinfo` 或 `hiroce5 gids` 查看网络设备（`net_dev` 列）：
+
+     ```bash
+     ibv_devinfo
+     # 或
+     hiroce5 gids
+     ```
+
+   ![ibv_devinfo 或 hiroce5 gids 输出示例](../../source/port_bridge_ibv_devinfo.png)
+
+   - 通过 `ifconfig <net_dev>` 或 `ip link show <net_dev>` 查看对应接口的 MAC 地址：
+
+     ```bash
+     ifconfig <net_dev>
+     # 或
+     ip link show <net_dev>
+     ```
+
+   ![ifconfig 输出示例](../../source/port_bridge_ifconfig.png)
+
+   - 根据该 MAC 地址，在交换机上查询对应端口号：
+
+     ```bash
+     display mac-address | include <mac-address>
+     ```
+
+   ![display mac-address 查询示例](../../source/port_bridge_mac_table.png)
+
+   > 注：上述命令中的 `<net_dev>` 需替换为上一步查询到的实际网络设备名（如 `enp3s0`），`<mac-address>` 需替换为上一步查询到的实际 MAC 地址（格式如 `aabb-ccdd-eeff`）。
+   >
+   > 注：若需查询 NPU 6、7（共用 `hrn5_2`，需端口桥）或 NPU 5、6（跨 `hrn5_3` 与 `hrn5_2`，无需端口桥）对应的交换机端口，需先在这两组 NPU 之间各进行一次 RDMA 通信（例如运行 `rdma_demo`），使交换机学到对应的 MAC 表项，否则 `display mac-address` 可能查不到对应记录。
+
+2. 登录交换机，进入系统视图：`system-view`
+3. 进入对应接口（以 100GE1/0/1 为例，按实际替换）：
+
+   ```bash
+   interface 100GE1/0/1
+   ```
+
+4. 开启端口桥：
+
+   ```bash
+   port bridge enable
+   ```
+
+5. 提交：`commit`
+6. 验证：`display current-configuration | include port bridge`，输出含 `port bridge enable` 即成功。
+7. 多个接口需同端口通信时，对每个接口重复 3-5。
+
+配置完成后，在使用相同网卡端口的 NPU 卡上运行 `rdma_demo` 即可验证通信是否正常。
+
 <a id="maintenance"></a>
 
 ## 内容维护指南
