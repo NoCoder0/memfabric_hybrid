@@ -2274,10 +2274,14 @@ TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
     // A transient import remains retryable; a hard failure keeps the normal error result.
     EXPECT_EQ(conn->OnAddToWhitelist(1, {peer}, 0), SMEM_GROUP_P2P_NOT_READY);
     EXPECT_TRUE(conn->remoteSlices_.empty());
-    EXPECT_TRUE(conn->rankToWorkerId_.empty());
+    // rank -> worker 的登记在 entity 导入成功时即完成：ADD_SLICES 按 rank 路由，ADDWLST 本轮失败时
+    // 增量补发仍需能落到本连接（见 ImportPeerInfo 内的提前登记）。片导入失败只影响片登记，
+    // 不得让失败批次留下 remoteSlices_ 记录；硬失败同样不回滚已完成的 rank 登记。
+    EXPECT_EQ(conn->rankToWorkerId_.size(), 1U);
+    EXPECT_EQ(conn->rankToWorkerId_.count(1U), 1U);
     EXPECT_EQ(conn->OnAddToWhitelist(1, {peer}, 0), SM_ERROR);
     EXPECT_TRUE(conn->remoteSlices_.empty());
-    EXPECT_TRUE(conn->rankToWorkerId_.empty());
+    EXPECT_EQ(conn->rankToWorkerId_.size(), 1U);
     // ADD whitelist: import entity + slices and record the local->global mapping
     EXPECT_EQ(conn->OnAddToWhitelist(1, {peer}, 0), SM_OK);
     {
