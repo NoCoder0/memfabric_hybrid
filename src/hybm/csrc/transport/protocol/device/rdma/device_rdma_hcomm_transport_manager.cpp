@@ -564,7 +564,7 @@ Result DeviceRdmaHcommTransportManager::RegisterMemoryRegion(const TransportMemo
     CommMemType memType = (mr.flags & REG_MR_FLAG_HBM) ? COMM_MEM_TYPE_DEVICE : COMM_MEM_TYPE_HOST;
     if (!hostRocePath_ && (mr.flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) != 0) {
         const uint64_t dva = HybmVaManager::GetInstance().TransformVa(mr.addr, HVM_HVA, HVM_DVA);
-        if (dva != 0) {
+        if (dva != 0 && dva != HVM_INVALID_VA) {
             regAddr = dva;
             memType = COMM_MEM_TYPE_DEVICE;
             BM_LOG_INFO("DRAM addr 0x" << std::hex << mr.addr << " mapped to DVA 0x" << dva << std::dec);
@@ -666,7 +666,7 @@ Result DeviceRdmaHcommTransportManager::QueryMemoryKey(uint64_t addr, TransportM
     // (realSlice->vAddress_), so translate HVA->GVA; in the HBM model GVA==HVA
     // and TransformVa returns the original value.
     const uint64_t peerGva = HybmVaManager::GetInstance().TransformVa(addr, HVM_HVA, HVM_GVA);
-    meta.gvaBase = (peerGva != 0) ? peerGva : addr;
+    meta.gvaBase = (peerGva != 0 && peerGva != HVM_INVALID_VA) ? peerGva : addr;
 
     BM_LOG_DEBUG("QueryMemoryKey addr=0x" << std::hex << addr << " export descLen=" << descLen << std::dec);
     return BM_OK;
@@ -1077,7 +1077,7 @@ uint64_t DeviceRdmaHcommTransportManager::ConvertGvaToDva(uint64_t gva) const
     // model GVA (0x1000...) differs from HVA (0x2800...), so translate GVA→HVA
     // first before looking up the registered range.
     const uint64_t hva = HybmVaManager::GetInstance().TransformVa(gva, HVM_GVA, HVM_HVA);
-    const uint64_t lookupKey = (hva != 0) ? hva : gva;
+    const uint64_t lookupKey = (hva != 0 && hva != HVM_INVALID_VA) ? hva : gva;
     BM_LOG_DEBUG("ConvertGvaToDva gva=0x" << std::hex << gva << " -> hva=0x" << hva << std::dec);
 
     // Look up in localRegistrations_ (keyed by HVA, value stores DVA)
@@ -1101,7 +1101,7 @@ uint64_t DeviceRdmaHcommTransportManager::ConvertRemoteGvaToDva(const RemoteRank
     // Local memory with an existing GVA->DVA mapping (e.g. HBM, or imported
     // memory the VaManager registered with a DVA).
     const uint64_t dvaViaMgr = HybmVaManager::GetInstance().TransformVa(rGva, HVM_GVA, HVM_DVA);
-    if (dvaViaMgr != 0) {
+    if (dvaViaMgr != 0 && dvaViaMgr != HVM_INVALID_VA) {
         return dvaViaMgr;
     }
 

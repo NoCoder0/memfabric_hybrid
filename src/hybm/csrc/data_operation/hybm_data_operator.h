@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include "hybm_common_include.h"
 #include "hybm_big_mem.h"
+#include "hybm_va_manager.h"
 
 namespace ock {
 namespace mf {
@@ -62,6 +63,23 @@ public:
     virtual Result Wait(int32_t waitId) noexcept = 0;
 
     virtual void TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept = 0;
+
+    Result TryTransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
+    {
+        BM_ASSERT_LOG_AND_RETURN(static_cast<uint32_t>(direction) < HYBM_DATA_COPY_DIRECTION_AUTO,
+                                 "Invalid copy direction=" << direction, BM_INVALID_PARAM);
+        void *convertedSrc = src;
+        void *convertedDst = dst;
+        TransformVa(convertedSrc, convertedDst, direction);
+        BM_ASSERT_LOG_AND_RETURN(reinterpret_cast<uint64_t>(convertedSrc) != HVM_INVALID_VA &&
+                                     reinterpret_cast<uint64_t>(convertedDst) != HVM_INVALID_VA,
+                                 "Missing GVA registration: src=" << VaToStr(src) << " dst=" << VaToStr(dst)
+                                                                  << " direction=" << direction,
+                                 BM_GVA_NOT_FOUND);
+        src = convertedSrc;
+        dst = convertedDst;
+        return BM_OK;
+    }
 
     virtual ~DataOperator() = default;
 

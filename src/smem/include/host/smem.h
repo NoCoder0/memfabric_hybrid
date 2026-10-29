@@ -47,6 +47,7 @@ extern "C" {
 #define SMEM_NOT_CONNECTED    (-2014)
 #define SMEM_NEED_RETRY       (-2015)
 #define SMEM_BUFFER_TOO_SMALL (-2016)
+#define SMEM_GVA_NOT_FOUND    (-2017) // Global address registration is missing; refresh the address before retrying.
 
 /**
  * @brief Get the MemFabric runtime ABI compatibility version.

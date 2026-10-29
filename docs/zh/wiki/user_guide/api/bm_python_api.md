@@ -213,6 +213,9 @@ def create2(
 |tag_op_info|tag 间的数据通路配置，默认空字符串；格式为 `tag1:OP_TYPE:tag2`，多条配置使用逗号分隔|
 |返回值|BigMemory对象|
 
+BM 对象的 `copy_data`、`copy_data_batch` 返回 `-2017` 时，对应 C 接口的 `SMEM_GVA_NOT_FOUND`：
+GVA 注册记录不存在或已卸载。调用方需刷新有效地址或数据副本后有限重试；批量请求可能已有部分传输完成。
+
 ### 3. 获取当前rank的id
 
 #### bm_rank_id

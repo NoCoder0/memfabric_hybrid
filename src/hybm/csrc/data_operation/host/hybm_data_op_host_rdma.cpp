@@ -101,14 +101,15 @@ HostDataOpRDMA::~HostDataOpRDMA()
 
 void HostDataOpRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
 {
-    uint64_t out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
-    if (out != 0) {
-        src = reinterpret_cast<void *>(out);
+    const auto mask = HybmVaManager::dirMask[direction];
+    constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+    if (mask & globalMask) {
+        auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
+        src = (out != 0) ? reinterpret_cast<void *>(out) : src;
     }
-
-    out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
-    if (out != 0) {
-        dst = reinterpret_cast<void *>(out);
+    if ((mask >> 4) & globalMask) {
+        auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
+        dst = (out != 0) ? reinterpret_cast<void *>(out) : dst;
     }
 }
 
@@ -156,7 +157,10 @@ Result HostDataOpRDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_directi
 {
     BM_ASSERT_LOG_AND_RETURN(inited_, "inited_ = " << inited_, BM_NOT_INITIALIZED);
     Result ret;
-    TransformVa(params.src, params.dest, direction);
+    auto transformRet = TryTransformVa(params.src, params.dest, direction);
+    if (transformRet != BM_OK) {
+        return transformRet;
+    }
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST:
             ret = CopyHost2Gva(params.src, params.dest, params.dataSize, options);
@@ -420,7 +424,10 @@ Result HostDataOpRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
 {
     BM_ASSERT_LOG_AND_RETURN(inited_, "inited_ = " << inited_, BM_NOT_INITIALIZED);
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVa(params.sources[i], params.destinations[i], direction);
+        auto transformRet = TryTransformVa(params.sources[i], params.destinations[i], direction);
+        if (transformRet != BM_OK) {
+            return transformRet;
+        }
     }
     Result ret = BM_OK;
     switch (direction) {

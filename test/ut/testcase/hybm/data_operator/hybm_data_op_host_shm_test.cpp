@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
  */
 
+#include "hybm_data_op_test_helper.h"
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 
@@ -69,6 +70,7 @@ protected:
     void SetUp() override
     {
         GlobalMockObject::reset();
+        ock::mf::test::StubIdentityVaMappings();
         ResetMemcpyState();
         MOCKER(&ock::mf::DlHybridApi::Memcpy).stubs().will(invoke(MemcpyInvokeStub));
         dataOp_ = std::make_shared<HostDataOpHostShm>(0U);

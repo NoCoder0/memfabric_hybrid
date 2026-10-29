@@ -413,7 +413,7 @@ Result HybmDevLegacySegment::Unmap() noexcept
 {
     for (auto gva : mappedGvaMem_) {
         auto deviceVa = HybmVaManager::GetInstance().TransformVa(gva, HVM_GVA, HVM_DVA);
-        if (deviceVa > 0) {
+        if (deviceVa != 0 && deviceVa != HVM_INVALID_VA) {
             (void)drv::HalGvaClose(deviceVa, 0);
         }
         HybmVaManager::GetInstance().RemoveOneVaInfo(gva);
@@ -438,7 +438,7 @@ Result HybmDevLegacySegment::RemoveImported(const std::vector<uint32_t> &ranks) 
         auto st = it;
         while (it != mappedGvaMem_.end() && (*it) < gvaLocal + options_.maxSize) {
             auto deviceVa = HybmVaManager::GetInstance().TransformVa((*it), HVM_GVA, HVM_DVA);
-            if (deviceVa > 0) {
+            if (deviceVa != 0 && deviceVa != HVM_INVALID_VA) {
                 (void)drv::HalGvaClose(deviceVa, 0);
             }
             // 按记录的 GVA 注销（传入 DVA 会在 GVA 表 miss 导致记录泄漏）

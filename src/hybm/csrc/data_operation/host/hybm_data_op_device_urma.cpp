@@ -89,22 +89,17 @@ void DataOpDeviceURMA::UnInitialize() noexcept
 
 void DataOpDeviceURMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
 {
-    if (UNLIKELY(src == nullptr && dst == nullptr)) {
-        return;
+    const auto mask = HybmVaManager::dirMask[direction];
+    constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+    uint32_t srcType = HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST ? HVM_HVA : HVM_DVA;
+    if (mask & globalMask) {
+        auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, srcType);
+        src = (out != 0) ? reinterpret_cast<void *>(out) : src;
     }
-    // 对于本地内存, DRAM需要输入host va, HBM需要输入device va, transport才能识别
-    // 对于远端内存, transport仅记录的gva, TransformVa输出应当为0
-    uint64_t out;
-    uint32_t oType = (HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST) ? HVM_HVA : HVM_DVA;
-    out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, oType);
-    if (out != 0) {
-        src = reinterpret_cast<void *>(out);
-    }
-
-    oType = (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST) ? HVM_HVA : HVM_DVA;
-    out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, oType);
-    if (out != 0) {
-        dst = reinterpret_cast<void *>(out);
+    uint32_t dstType = HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST ? HVM_HVA : HVM_DVA;
+    if ((mask >> 4) & globalMask) {
+        auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, dstType);
+        dst = (out != 0) ? reinterpret_cast<void *>(out) : dst;
     }
 }
 
@@ -168,7 +163,10 @@ Result DataOpDeviceURMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direc
 
     Result ret;
     // only convert local-side addresses; remote side stays in GVA.
-    TransformVa(params.src, params.dest, direction);
+    auto transformRet = TryTransformVa(params.src, params.dest, direction);
+    if (transformRet != BM_OK) {
+        return transformRet;
+    }
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST: {
             TP_TRACE_BEGIN(TP_HYBM_URMA_LH_TO_GH);
@@ -649,7 +647,10 @@ Result DataOpDeviceURMA::CopyMultiRankLocal(hybm_batch_copy_params &params, hybm
         }
         void *src = params.sources[index];
         void *dest = params.destinations[index];
-        TransformVa(src, dest, direction);
+        auto transformRet = TryTransformVa(src, dest, direction);
+        if (transformRet != BM_OK) {
+            return transformRet;
+        }
         sources.push_back(src);
         destinations.push_back(dest);
         sizes.push_back(params.dataSizes[index]);

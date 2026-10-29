@@ -267,8 +267,9 @@ bool HybmVaManager::RemoveRowRef(uint32_t type, uint64_t key)
 
 uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t outputType)
 {
-    BM_VALIDATE_RETURN(va > 0 && inputType < HVM_BUTT && outputType < HVM_BUTT,
-                       "input is invalid, va=" << VaToStr(va) << " Itype=" << inputType << " Otype=" << outputType, 0);
+    BM_VALIDATE_RETURN(va > 0 && va != HVM_INVALID_VA && inputType < HVM_BUTT && outputType < HVM_BUTT,
+                       "input is invalid, va=" << VaToStr(va) << " Itype=" << inputType << " Otype=" << outputType,
+                       HVM_INVALID_VA);
 
     if (inputType == outputType) {
         return va;
@@ -276,13 +277,16 @@ uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t ou
 
     std::shared_lock<std::shared_mutex> lock(mutex_);
     if (allocatedMap_[inputType].empty()) {
-        BM_LOG_WARN("No allocated spaces found for " << inputType << ". input_va=" << VaToStr(va));
-        return 0;
+        BM_LOG_DEBUG("No allocated spaces found for " << inputType << ". input_va=" << VaToStr(va));
+        return HVM_INVALID_VA;
     }
     auto it = allocatedMap_[inputType].upper_bound(va);
     if (it != allocatedMap_[inputType].begin()) {
         --it;
-        if (it->second.Contains(va, inputType) && it->second.base.va[outputType] != 0) {
+        if (it->second.Contains(va, inputType)) {
+            if (it->second.base.va[outputType] == 0) {
+                return 0;
+            }
             // Calculate the corresponding GVA
             uint64_t offset = va - it->second.base.va[inputType];
             uint64_t outputVa = it->second.base.va[outputType] + offset;
@@ -292,7 +296,7 @@ uint64_t HybmVaManager::TransformVa(uint64_t va, uint32_t inputType, uint32_t ou
         }
     }
     BM_LOG_DEBUG("TransformVa: no mapping found for va=" << VaToStr(va));
-    return 0;
+    return HVM_INVALID_VA;
 }
 
 hybm_mem_type HybmVaManager::GetGvaMemType(uint64_t va)

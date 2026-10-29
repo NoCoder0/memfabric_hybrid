@@ -362,7 +362,8 @@ TEST_F(HybmEntryTest, hybm_gva_to_va_invalid_address)
 
     uint64_t va = 0;
     auto ret_gva_to_va = hybm_gva_to_va(0x1000, HYBM_MEM_TYPE_DEVICE, &va);
-    EXPECT_EQ(ret_gva_to_va, BM_ERROR);
+    EXPECT_EQ(ret_gva_to_va, BM_GVA_NOT_FOUND);
+    EXPECT_EQ(va, 0ULL);
 
     hybm_uninit();
 }

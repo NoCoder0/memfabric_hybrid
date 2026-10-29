@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "hybm_data_op_test_helper.h"
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 
@@ -219,6 +220,7 @@ class HybmDataOpHostRdmaTest : public testing::Test {
 public:
     void SetUp() override
     {
+        ock::mf::test::StubIdentityVaMappings();
         // 模拟 DlHybridApi::Memcpy 方法
         MOCKER(&ock::mf::DlHybridApi::Memcpy).stubs().will(returnValue(0));
 

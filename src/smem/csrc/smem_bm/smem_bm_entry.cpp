@@ -517,6 +517,9 @@ Result SmemBmEntry::DataCopy(const void *src, void *dest, uint64_t size, smem_bm
 
     hybm_copy_params copyParams = {const_cast<void *>(src), dest, size};
     auto ret = hybm_data_copy(entity_, &copyParams, direct, stream, flags);
+    if (ret == BM_GVA_NOT_FOUND) {
+        return SMEM_GVA_NOT_FOUND;
+    }
     return ret == BM_NOT_CONNECTED ? SMEM_NOT_CONNECTED : ret;
 }
 
@@ -612,7 +615,7 @@ Result SmemBmEntry::DataCopyBatch(smem_batch_copy_params *params, smem_bm_copy_t
     TP_TRACE_BEGIN(TP_SMEM_BM_BATCH_TO_HYBM);
     auto ret = hybm_data_batch_copy(entity_, &copyParams, direct, params->stream, flags);
     TP_TRACE_END(TP_SMEM_BM_BATCH_TO_HYBM, ret);
-    return ret;
+    return ret == BM_GVA_NOT_FOUND ? SMEM_GVA_NOT_FOUND : ret;
 }
 
 bool SmemBmEntry::AddrInHostGva(const void *address, uint64_t size)

@@ -310,7 +310,7 @@ Result AsymmetricMemSegment::RegisterHostMemory(const void *addr, uint64_t size,
         // 复用已有映射：同一 HVA 已登记过 DVA 时（如同一段 DRAM 在另一实体注册过）直接复用，
         // 避免对同一地址重复 HalHostRegister 失败（驱动对已注册地址返回错误）
         dva = HybmVaManager::GetInstance().TransformVa(hostVa, HVM_HVA, HVM_DVA);
-        if (dva == 0) {
+        if (dva == 0 || dva == HVM_INVALID_VA) {
             void *output = nullptr;
             auto halRet =
                 DlHalApi::HalHostRegister(const_cast<void *>(addr), size, HOST_MEM_MAP_DEV, logicDeviceId_, &output);

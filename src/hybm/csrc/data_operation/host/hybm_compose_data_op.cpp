@@ -133,7 +133,7 @@ Result HostComposeDataOp::DataCopy(hybm_copy_params &params, hybm_data_copy_dire
                                                 << " with data op " << ops.first << " direction:" << direction);
         hybm_copy_params param2 = params;
         result = ops.second->DataCopy(param2, direction, options);
-        if (result == BM_OK) {
+        if (result == BM_OK || result == BM_GVA_NOT_FOUND) {
             break;
         }
 
@@ -247,7 +247,7 @@ Result HostComposeDataOp::DataCopyAsync(hybm_copy_params &params, hybm_data_copy
         BM_LOG_DEBUG("try data copy async from rank " << options.srcRankId << " to rank " << options.destRankId
                                                       << " with data op " << ops.first << " direction:" << direction);
         result = ops.second->DataCopyAsync(params, direction, options);
-        if (result == BM_OK) {
+        if (result == BM_OK || result == BM_GVA_NOT_FOUND) {
             break;
         }
 

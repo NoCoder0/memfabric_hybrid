@@ -1086,3 +1086,45 @@ TEST_F(HybmComposeDataOpTest, initialize_hcomm_device_then_uninit)
     dataOp.UnInitialize();
     ASSERT_EQ(1UL, devRdmaDataOpMock->uninitializeCount);
 }
+
+TEST_F(HybmComposeDataOpTest, MissingGlobalRecordStopsFallbackAndPreservesError)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType =
+        static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    union {
+        uint32_t (ock::mf::HybmEntityTagInfo::*getRank2RankOpType)(uint32_t rankId1, uint32_t rankId2);
+        uint32_t (*mocker)(ock::mf::HybmEntityTagInfo *, uint32_t, uint32_t);
+    } u;
+    u.getRank2RankOpType = &ock::mf::HybmEntityTagInfo::GetRank2RankOpType;
+    MOCKER(u.mocker).stubs().will(
+        returnValue(OpOr(HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA)));
+    MOCKER(ock::mf::DataOperatorFactory::CreateSdmaDataOperator).stubs().will(invoke(CreateSdmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator).stubs().will(invoke(CreateDevRdmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
+    sdmaDataOpMock->dataCopyResult = BM_GVA_NOT_FOUND;
+    sdmaDataOpMock->dataCopyAsyncResult = BM_GVA_NOT_FOUND;
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    auto ret = dataOp.Initialize();
+    ASSERT_EQ(BM_OK, ret);
+
+    hybm_copy_params copyParams{};
+    ock::mf::ExtOptions extOptions{};
+    ret = dataOp.DataCopy(copyParams, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions);
+    ASSERT_EQ(BM_GVA_NOT_FOUND, ret);
+    ASSERT_EQ(1UL, sdmaDataOpMock->dataCopyCount);
+    ASSERT_EQ(0UL, devRdmaDataOpMock->dataCopyCount);
+    ASSERT_EQ(0UL, hostRdmaDataOpMock->dataCopyCount);
+
+    EXPECT_EQ(dataOp.DataCopyAsync(copyParams, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, extOptions), BM_GVA_NOT_FOUND);
+    EXPECT_EQ(1UL, sdmaDataOpMock->dataCopyAsyncCount);
+    EXPECT_EQ(0UL, devRdmaDataOpMock->dataCopyAsyncCount);
+    EXPECT_EQ(0UL, hostRdmaDataOpMock->dataCopyAsyncCount);
+    dataOp.UnInitialize();
+    ASSERT_EQ(1UL, sdmaDataOpMock->uninitializeCount);
+}

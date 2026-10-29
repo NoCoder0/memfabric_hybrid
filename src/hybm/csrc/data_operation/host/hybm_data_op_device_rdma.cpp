@@ -115,19 +115,17 @@ void DataOpDeviceRDMA::UnInitialize() noexcept
 
 void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
 {
-    // 对于本地内存, DRAM需要输入host va, HBM需要输入device va, transport才能识别
-    // 对于远端内存, transport仅记录的gva, TransformVa输出应当为0
-    uint64_t out;
-    uint32_t oType = (HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST) ? HVM_HVA : HVM_DVA;
-    out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, oType);
-    if (out != 0) {
-        src = reinterpret_cast<void *>(out);
+    const auto mask = HybmVaManager::dirMask[direction];
+    constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+    uint32_t srcType = HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST ? HVM_HVA : HVM_DVA;
+    if (mask & globalMask) {
+        auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, srcType);
+        src = (out != 0) ? reinterpret_cast<void *>(out) : src;
     }
-
-    oType = (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST) ? HVM_HVA : HVM_DVA;
-    out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, oType);
-    if (out != 0) {
-        dst = reinterpret_cast<void *>(out);
+    uint32_t dstType = HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST ? HVM_HVA : HVM_DVA;
+    if ((mask >> 4) & globalMask) {
+        auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, dstType);
+        dst = (out != 0) ? reinterpret_cast<void *>(out) : dst;
     }
 }
 
@@ -221,7 +219,10 @@ Result DataOpDeviceRDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direc
                                   const ock::mf::ExtOptions &options) noexcept
 {
     Result ret;
-    TransformVa(params.src, params.dest, direction);
+    auto transformRet = TryTransformVa(params.src, params.dest, direction);
+    if (transformRet != BM_OK) {
+        return transformRet;
+    }
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST: {
             TP_TRACE_BEGIN(TP_HYBM_RDMA_LH_TO_GH);
@@ -1202,9 +1203,17 @@ Result DataOpDeviceRDMA::BatchCopyGD2GD(hybm_batch_copy_params &params, const Ex
 Result DataOpDeviceRDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                        const ExtOptions &options) noexcept
 {
+    if (options.srcRankId == rankId_ && options.destRankId == rankId_ &&
+        (direction == HYBM_GLOBAL_HOST_TO_GLOBAL_HOST || direction == HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE ||
+         direction == HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST || direction == HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE)) {
+        return BatchCopyG2G(params, options, direction);
+    }
     auto ret = 0;
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVa(params.sources[i], params.destinations[i], direction);
+        auto transformRet = TryTransformVa(params.sources[i], params.destinations[i], direction);
+        if (transformRet != BM_OK) {
+            return transformRet;
+        }
     }
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_HOST: { // 0

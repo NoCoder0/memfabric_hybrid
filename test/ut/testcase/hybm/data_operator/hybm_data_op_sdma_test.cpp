@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "hybm_data_op_test_helper.h"
 #include <gtest/gtest.h>
 #include <sys/mman.h>
 #include <mockcpp/mockcpp.hpp>
@@ -77,6 +78,7 @@ class HybmDataOpSdmaTest : public testing::Test {
 public:
     void SetUp() override
     {
+        ock::mf::test::StubIdentityVaMappings();
         dataOp_ = std::make_shared<ock::mf::HostDataOpSDMA>();
     }
 

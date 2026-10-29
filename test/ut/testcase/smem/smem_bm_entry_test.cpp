@@ -1073,3 +1073,22 @@ TEST_F(SmemBmEntryTest, DeriveRankRole_FromLocalMemory)
     EXPECT_EQ(SmemBmEntry::DeriveRankRole(1, 0), SMEM_GROUP_RANK_ROLE_PROVIDER);
     EXPECT_EQ(SmemBmEntry::DeriveRankRole(4096, 8192), SMEM_GROUP_RANK_ROLE_PROVIDER);
 }
+
+TEST_F(SmemBmEntryTest, MissingGlobalRegistrationReturnsPublicErrorForSingleAndBatchCopy)
+{
+    entry_->inited_ = true;
+    entry_->entity_ = TEST_ENTITY_PTR;
+    MOCKER_CPP(&SmemBmEntry::CheckJoined, ock::smem::Result(*)(const SmemBmEntry *)).stubs().will(returnValue(0));
+    MOCKER(hybm_data_copy).stubs().will(returnValue(BM_GVA_NOT_FOUND));
+    MOCKER(hybm_data_batch_copy).stubs().will(returnValue(BM_GVA_NOT_FOUND));
+    void *src = reinterpret_cast<void *>(HOST_GVA_BASE);
+    void *dst = reinterpret_cast<void *>(HOST_GVA_BASE + 0x1000ULL);
+    EXPECT_EQ(entry_->DataCopy(src, dst, TEST_DATA_SIZE, SMEMB_COPY_H2GH, nullptr, 0U), SMEM_GVA_NOT_FOUND);
+    uint64_t size = TEST_DATA_SIZE;
+    smem_batch_copy_params params{};
+    params.sources = &src;
+    params.destinations = &dst;
+    params.batchSize = 1U;
+    params.dataSizes = &size;
+    EXPECT_EQ(entry_->DataCopyBatch(&params, SMEMB_COPY_H2GH, 0U), SMEM_GVA_NOT_FOUND);
+}

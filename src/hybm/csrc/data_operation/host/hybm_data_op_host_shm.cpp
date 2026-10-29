@@ -76,7 +76,10 @@ Result HostDataOpHostShm::DataCopy(hybm_copy_params &params, hybm_data_copy_dire
         BM_LOG_ERROR("data copy invalid direction for host shm: " << direction);
         return BM_INVALID_PARAM;
     }
-    TransformVa(params.src, params.dest, direction);
+    auto transformRet = TryTransformVa(params.src, params.dest, direction);
+    if (transformRet != BM_OK) {
+        return transformRet;
+    }
 
     Result ret;
     switch (direction) {
@@ -194,7 +197,10 @@ Result HostDataOpHostShm::BatchDataCopy(hybm_batch_copy_params &params, hybm_dat
         return BM_INVALID_PARAM;
     }
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVa(params.sources[i], params.destinations[i], direction);
+        auto transformRet = TryTransformVa(params.sources[i], params.destinations[i], direction);
+        if (transformRet != BM_OK) {
+            return transformRet;
+        }
     }
     Result ret;
     switch (direction) {

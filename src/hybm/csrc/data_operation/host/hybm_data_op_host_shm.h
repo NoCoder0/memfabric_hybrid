@@ -34,14 +34,15 @@ public:
                          const ExtOptions &options) noexcept override;
     void TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept override
     {
-        uint64_t out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
-        if (out != 0) {
-            src = reinterpret_cast<void *>(out);
+        const auto mask = HybmVaManager::dirMask[direction];
+        constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+        if (mask & globalMask) {
+            auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA);
+            src = (out != 0) ? reinterpret_cast<void *>(out) : src;
         }
-
-        out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
-        if (out != 0) {
-            dst = reinterpret_cast<void *>(out);
+        if ((mask >> 4) & globalMask) {
+            auto out = HybmVaManager::GetInstance().TransformVa(reinterpret_cast<uint64_t>(dst), HVM_GVA, HVM_HVA);
+            dst = (out != 0) ? reinterpret_cast<void *>(out) : dst;
         }
     }
     Result Wait(int32_t waitId) noexcept override;

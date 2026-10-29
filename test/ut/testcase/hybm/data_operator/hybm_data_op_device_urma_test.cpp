@@ -12,6 +12,7 @@
 
 #include <gtest/gtest.h>
 
+#include "hybm_data_op_test_helper.h"
 #define private public
 #include "hybm_data_op_device_urma.h"
 #include "dl_acl_api.h"
@@ -25,6 +26,8 @@
 using namespace ock::mf;
 
 namespace {
+using ock::mf::Result;
+
 constexpr uint32_t LOCAL_RANK = 0;
 constexpr uint32_t REMOTE_RANK = 1;
 constexpr uint64_t TEST_SWAP_ALLOC_SIZE = 4096ULL;
@@ -388,6 +391,7 @@ class HybmDataOpDeviceUrmaTest : public testing::Test {
 public:
     void SetUp() override
     {
+        ock::mf::test::StubIdentityVaMappings();
         tm = std::make_shared<TransportManagerMock>();
         dataOp = std::make_shared<TestDataOpDeviceURMA>(LOCAL_RANK, tm);
         DlAclApi::pAclrtMemcpy = MockAclrtMemcpy;
@@ -395,6 +399,12 @@ public:
         DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
         DlAclApi::pAclrtMemcpyBatch = MockAclrtMemcpyBatch;
         DlAclApi::pAclrtFreeHost = MockAclrtFreeHost;
+    }
+
+    void TearDown() override
+    {
+        GlobalMockObject::verify();
+        GlobalMockObject::reset();
     }
 
 protected:

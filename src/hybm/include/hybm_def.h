@@ -80,6 +80,7 @@ typedef void *hybm_mem_slice_t;
 #define BM_NOT_INITIALIZED    (-9)
 #define BM_NOT_SUPPORT_FUNC   (-10)
 #define BM_P2P_NOT_READY      (-11)
+#define BM_GVA_NOT_FOUND      (-12) // Global address registration is missing or has been removed.
 #define BM_NOT_SUPPORTED      (-100)
 #define BM_NOT_CONNECTED      (-101)
 

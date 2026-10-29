@@ -165,6 +165,7 @@ const char *smem_get_and_clear_last_err_msg();
 | `SMEM_RES_IN_USE` | -2009 | 资源被占用 |
 | `SMEM_PARTIAL_FAILED` | -2012 | 部分失败（批量操作） |
 | `SMEM_NOT_CONNECTED` | -2014 | 连接断开 |
+| `SMEM_GVA_NOT_FOUND` | -2017 | GVA 注册记录不存在或已卸载；获取有效 GVA 后重试 |
 
 Store Backend 错误码（从 `smem_def.h`）：
 

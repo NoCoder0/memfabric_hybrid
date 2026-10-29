@@ -97,7 +97,10 @@ Result HostDataOpSDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_directi
         return DataCopyAsync(params, direction, options);
     }
     Result ret;
-    TransformVa(params.src, params.dest, direction);
+    auto transformRet = TryTransformVa(params.src, params.dest, direction);
+    if (transformRet != BM_OK) {
+        return transformRet;
+    }
     switch (direction) {
         case HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE: {
             TP_TRACE_BEGIN(TP_HYBM_SDMA_LD_TO_GD);
@@ -237,7 +240,10 @@ Result HostDataOpSDMA::DataCopyAsync(hybm_copy_params &params, hybm_data_copy_di
                                      const ExtOptions &options) noexcept
 {
     Result ret;
-    TransformVa(params.src, params.dest, direction);
+    auto transformRet = TryTransformVa(params.src, params.dest, direction);
+    if (transformRet != BM_OK) {
+        return transformRet;
+    }
     switch (direction) {
         case HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE: {
             TP_TRACE_BEGIN(TP_HYBM_SDMA_LD_TO_GD);
@@ -324,12 +330,13 @@ Result HostDataOpSDMA::DataCopyAsync(hybm_copy_params &params, hybm_data_copy_di
 
 void HostDataOpSDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
 {
-    if (src != nullptr) {
+    const auto mask = HybmVaManager::dirMask[direction];
+    constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+    if (mask & globalMask) {
         auto out = TransformImportedGva(reinterpret_cast<uint64_t>(src));
         src = (out != 0) ? reinterpret_cast<void *>(out) : src;
     }
-
-    if (dst != nullptr) {
+    if ((mask >> 4) & globalMask) {
         auto out = TransformImportedGva(reinterpret_cast<uint64_t>(dst));
         dst = (out != 0) ? reinterpret_cast<void *>(out) : dst;
     }
@@ -708,7 +715,10 @@ Result HostDataOpSDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
 {
     auto ret = 0;
     for (uint32_t i = 0; i < params.batchSize; i++) {
-        TransformVa(params.sources[i], params.destinations[i], direction);
+        auto transformRet = TryTransformVa(params.sources[i], params.destinations[i], direction);
+        if (transformRet != BM_OK) {
+            return transformRet;
+        }
     }
     switch (direction) {
         case HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE: {

@@ -242,6 +242,10 @@ HYBM_API int32_t hybm_gva_to_va(uint64_t gva, hybm_mem_type vaMemType, uint64_t 
     // Determine output VA type based on memory type
     uint32_t outputType = vaMemType == HYBM_MEM_TYPE_DEVICE ? HVM_DVA : HVM_HVA;
     uint64_t convertedVa = HybmVaManager::GetInstance().TransformVa(gva, HVM_GVA, outputType);
+    if (convertedVa == HVM_INVALID_VA) {
+        BM_LOG_ERROR("GVA registration not found: gva=" << VaToStr(gva) << " outputType=" << outputType);
+        return BM_GVA_NOT_FOUND;
+    }
     if (convertedVa == 0) {
         BM_LOG_ERROR("GVA to VA conversion failed for address: 0x" << std::hex << gva);
         return BM_ERROR;

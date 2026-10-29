@@ -29,6 +29,7 @@
 
 #include "mf_env_define.h"
 #include "mf_env_util.h"
+#include "../../../../data_operator/hybm_data_op_test_helper.h"
 
 #define private   public
 #define protected public
@@ -4129,6 +4130,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
 
 TEST(DeviceUrmaTransportManagerTest, RawMultiRankBatchReturnsFallbacksAndMergesDirections)
 {
+    ock::mf::test::StubIdentityVaMappings();
     constexpr uint32_t kBatchSize = 4U;
     constexpr uint64_t kOffset = 0x100U;
     DeviceTestFixture fix;
@@ -4181,6 +4183,7 @@ TEST(DeviceUrmaTransportManagerTest, RawMultiRankBatchReturnsFallbacksAndMergesD
 
 TEST(DeviceUrmaTransportManagerTest, RawTwoRankBatchWaitsAllNotifiesWithOneFinalStreamSync)
 {
+    ock::mf::test::StubIdentityVaMappings();
     DeviceTestFixture fix;
     fix.InstallAll();
     DeviceUrmaTransportManager manager;
@@ -4226,6 +4229,7 @@ TEST(DeviceUrmaTransportManagerTest, RawTwoRankBatchWaitsAllNotifiesWithOneFinal
 
 TEST(DeviceUrmaTransportManagerTest, RawTwoRankKernelFailureReleasesAllNotifiesWithoutPending)
 {
+    ock::mf::test::StubIdentityVaMappings();
     DeviceTestFixture fix;
     fix.InstallAll();
     DeviceUrmaTransportManager manager;
@@ -4269,6 +4273,12 @@ TEST(DeviceUrmaTransportManagerTest, RawTwoRankKernelFailureReleasesAllNotifiesW
 
 TEST(DeviceUrmaTransportManagerTest, RawMultiRankUnregisteredDoesNotRequireRemoteChannel)
 {
+    MockcppScope mockScope;
+    VaManagerGuard vaGuard;
+    HybmVaManager::GetInstance().ClearAll();
+    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo({MOCK_REMOTE_ADDR, 0ULL, 0ULL, MOCK_SIZE, HYBM_MEM_TYPE_HOST},
+                                                     false, AddressOwnership::Imported),
+              BM_OK);
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
     manager.rankId_ = 0U;
@@ -4286,6 +4296,29 @@ TEST(DeviceUrmaTransportManagerTest, RawMultiRankUnregisteredDoesNotRequireRemot
                                                unregisteredGroups, batchRanks),
               BM_OK);
     EXPECT_EQ(unregisteredGroups.at({0U, 1U}), (std::vector<uint32_t>{0U}));
+    EXPECT_TRUE(batchRanks.empty());
+    manager.opened_ = false;
+}
+
+TEST(DeviceUrmaTransportManagerTest, MultiRankRejectsMissingGlobalRecordBeforeFallbackOrSubmission)
+{
+    VaManagerGuard vaGuard;
+    HybmVaManager::GetInstance().ClearAll();
+    DeviceUrmaTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 0U;
+    void *sources[] = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR)};
+    void *destinations[] = {reinterpret_cast<void *>(MOCK_REMOTE_ADDR)};
+    uint64_t sizes[] = {MOCK_SIZE};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1U};
+    transport::RankGroupMap groupMap{{{0U, 1U}, {0U}}};
+    std::vector<uint32_t> localIndices;
+    transport::RankGroupMap unregisteredGroups;
+    std::set<uint32_t> batchRanks;
+    EXPECT_EQ(manager.TransferRemoteBatchAsync(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, groupMap, localIndices,
+                                               unregisteredGroups, batchRanks),
+              BM_GVA_NOT_FOUND);
+    EXPECT_TRUE(unregisteredGroups.empty());
     EXPECT_TRUE(batchRanks.empty());
     manager.opened_ = false;
 }
@@ -4356,6 +4389,7 @@ TEST(DeviceUrmaTransportManagerTest, ConcurrentRegisterAndQueryUseLocalRegistrat
 
 TEST(DeviceUrmaTransportManagerTest, CloseCleansNotifyPoolWithoutWaitingForInflight)
 {
+    ock::mf::test::StubIdentityVaMappings();
     constexpr uint32_t kRemoteRank = 1U;
     DeviceTestFixture fix;
     fix.InstallAll();
@@ -4440,6 +4474,11 @@ bool RunConcurrentMultiRankIo(DeviceUrmaTransportManager &manager)
 
 TEST(DeviceUrmaTransportManagerTest, ConcurrentMultiRankIoUsesPerThreadContexts)
 {
+    VaManagerGuard vaGuard;
+    HybmVaManager::GetInstance().ClearAll();
+    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo({MOCK_REMOTE_ADDR, 0ULL, 0ULL, MOCK_SIZE, HYBM_MEM_TYPE_HOST},
+                                                     false, AddressOwnership::Imported),
+              BM_OK);
     DeviceTestFixture fix;
     fix.InstallAll();
     DeviceUrmaTransportManager manager;

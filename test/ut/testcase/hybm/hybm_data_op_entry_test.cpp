@@ -622,6 +622,22 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_direction_mismatch)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
+TEST_F(HybmDataOpEntryTest, RemovedGlobalReturnsDedicatedErrorBeforeDirectionValidation)
+{
+    constexpr uint64_t removedGva = HYBM_GVM_START_ADDR + 0x1000ULL;
+    HybmVaManager::GetInstance().RemoveOneVaInfo(removedGva);
+    void *src = reinterpret_cast<void *>(HYBM_GVM_START_ADDR);
+    void *dest = reinterpret_cast<void *>(removedGva);
+    uint64_t size = 1024ULL;
+    hybm_copy_params single{src, dest, size};
+    EXPECT_EQ(hybm_data_copy(mockEntity.get(), &single, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0U), BM_GVA_NOT_FOUND);
+    EXPECT_FALSE(mockEntity->copyCalled);
+    hybm_batch_copy_params batch{&src, &dest, &size, 1U};
+    EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &batch, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0U),
+              BM_GVA_NOT_FOUND);
+    EXPECT_FALSE(mockEntity->batchCopyCalled);
+}
+
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_with_gva)
 {
     hybm_copy_params params{};

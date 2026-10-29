@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "hybm_data_op_test_helper.h"
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include <sys/mman.h>
@@ -295,6 +296,7 @@ class HybmDataOpDeviceRdmaTest : public testing::Test {
 public:
     void SetUp() override
     {
+        ock::mf::test::StubIdentityVaMappings();
         // 分配模拟内存
         mockMemory = malloc(1024ULL * 1024ULL * 128ULL); // 128MB
         transportManagerMock_ = std::make_shared<TransportManagerMock>();
@@ -758,8 +760,9 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
     ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE, options);
     ASSERT_EQ(BM_OK, ret);
 
+    // AUTO must be resolved by the public entry before backend dispatch.
     ret = dataOp_->BatchDataCopy(params, HYBM_DATA_COPY_DIRECTION_AUTO, options);
-    ASSERT_EQ(BM_ERROR, ret);
+    ASSERT_EQ(BM_INVALID_PARAM, ret);
 
     // 测试已注册远程地址走注册路径：整批一次提交（只 fence 一次）
     transportManagerMock_->queryHasRegisteredResult = true;

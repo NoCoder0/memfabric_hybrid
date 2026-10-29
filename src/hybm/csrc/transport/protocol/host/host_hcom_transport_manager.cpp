@@ -465,7 +465,7 @@ Result HcomTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
     // The reverse lookup may miss (that HVA never entered the DVA/HVA tables), in which case fall back to the
     // HVA: otherwise 0 would be taken downstream as the peer MR address and break the range matching.
     const uint64_t ownerGva = HybmVaManager::GetInstance().TransformVa(mrInfo.addr, HVM_HVA, HVM_GVA);
-    hostKey.gva = (ownerGva != 0) ? ownerGva : mrInfo.addr;
+    hostKey.gva = (ownerGva != 0 && ownerGva != HVM_INVALID_VA) ? ownerGva : mrInfo.addr;
     hostKey.hcomInfo.lAddress = mrInfo.addr;
     CopyHcomOneSideKey(mrInfo.lKey, hostKey.hcomInfo.lKey);
     hostKey.hcomInfo.size = mrInfo.size;

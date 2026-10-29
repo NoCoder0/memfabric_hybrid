@@ -20,6 +20,22 @@
 
 using namespace ock::mf;
 
+static Result CheckGlobalCopyRegistrations(const void *src, const void *dest, hybm_data_copy_direction direction)
+{
+    auto &manager = HybmVaManager::GetInstance();
+    const auto mask = HybmVaManager::dirMask[direction];
+    constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+    const bool srcMissing =
+        (mask & globalMask) && manager.TransformVa(reinterpret_cast<uint64_t>(src), HVM_GVA, HVM_HVA) == HVM_INVALID_VA;
+    const bool destMissing = ((mask >> 4) & globalMask) &&
+                             manager.TransformVa(reinterpret_cast<uint64_t>(dest), HVM_GVA, HVM_HVA) == HVM_INVALID_VA;
+    BM_ASSERT_LOG_AND_RETURN(!srcMissing && !destMissing,
+                             "Global registration not found: src=" << VaToStr(src) << " dest=" << VaToStr(dest)
+                                                                   << " direction=" << direction,
+                             BM_GVA_NOT_FOUND);
+    return BM_OK;
+}
+
 HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_data_copy_direction direction,
                                 void *stream, uint32_t flags)
 {
@@ -46,6 +62,10 @@ HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_
             return BM_INVALID_PARAM;
         }
     } else if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
+        auto ret = CheckGlobalCopyRegistrations(params->src, params->dest, direction);
+        if (ret != BM_OK) {
+            return ret;
+        }
         BM_LOG_ERROR("Direction mismatch: specified=" << static_cast<int>(direction)
                                                       << " except:" << static_cast<int>(except)
                                                       << " src=" << params->src << " dest=" << params->dest);
@@ -159,6 +179,11 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
         uint8_t except = srcMask | (dstMask << 4);
 
         if ((HybmVaManager::dirMask[direction] & except) != HybmVaManager::dirMask[direction]) {
+            auto ret = CheckGlobalCopyRegistrations(params->sources[i], params->destinations[i], direction);
+            if (ret != BM_OK) {
+                TP_TRACE_END(TP_HYBM_BATCH_VALIDATE_ADDRESSES, ret);
+                return ret;
+            }
             TP_TRACE_END(TP_HYBM_BATCH_VALIDATE_ADDRESSES, BM_INVALID_PARAM);
             BM_LOG_ERROR("Direction mismatch at index "
                          << i << ": dir=" << static_cast<int>(direction) << " except:" << static_cast<int>(except)

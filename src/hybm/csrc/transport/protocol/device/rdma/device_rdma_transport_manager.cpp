@@ -208,7 +208,7 @@ Result RdmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemoryKey &k
 
     RegMemResult deviceKey = pos->second;
     uint64_t gva = HybmVaManager::GetInstance().TransformVa(deviceKey.address, HVM_HVA, HVM_GVA);
-    deviceKey.address = (gva != 0) ? gva : deviceKey.address;
+    deviceKey.address = (gva != 0 && gva != HVM_INVALID_VA) ? gva : deviceKey.address;
     deviceKey.notifyAddr = notifyInfo_.srcAddr;
     deviceKey.notifyRkey = notifyInfo_.srcRkey;
 
@@ -877,7 +877,7 @@ int RdmaTransportManager::ConvertHccpMrInfo(const TransportMemoryRegion &mr, Hcc
         }
 
         addr = HybmVaManager::GetInstance().TransformVa(addr, HVM_HVA, HVM_DVA);
-        if (addr == 0) {
+        if (addr == 0 || addr == HVM_INVALID_VA) {
             BM_LOG_ERROR("get device va failed, address: " << std::hex << mr.addr);
             return BM_INVALID_PARAM;
         }
@@ -913,7 +913,7 @@ void RdmaTransportManager::OptionsToRankMRs(const HybmTransPrepareOptions &optio
             uint64_t dva = HybmVaManager::GetInstance().TransformVa(devKey.address, HVM_GVA, HVM_DVA);
             BM_LOG_DEBUG("query memory key rank:" << node << " gva:" << std::hex << devKey.address << " dva:" << dva
                                                   << " size:" << devKey.size);
-            if (dva != 0) {
+            if (dva != 0 && dva != HVM_INVALID_VA) {
                 devKey.address = dva;
             }
             auto addrIter = pos.find(devKey.address);

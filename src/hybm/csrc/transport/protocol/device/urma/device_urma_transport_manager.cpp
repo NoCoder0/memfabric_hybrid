@@ -1426,7 +1426,7 @@ Result DeviceUrmaTransportManager::RegisterMemoryRegion(const TransportMemoryReg
 
     if ((mr.flags & (REG_MR_FLAG_DRAM | REG_MR_FLAG_ACL_DRAM)) != 0) {
         const uint64_t dva = HybmVaManager::GetInstance().TransformVa(mr.addr, HVM_HVA, HVM_DVA);
-        if (dva != 0) {
+        if (dva != 0 && dva != HVM_INVALID_VA) {
             registration.deviceVa = dva;
             mem.addr = dva;
         } else {
@@ -1598,7 +1598,7 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
     // Add key headers
     key.keys[0] = URMA_EXPORT_DESC_MAGIC;
     uint64_t gva = HybmVaManager::GetInstance().TransformVa(registration.mr.addr, HVM_HVA, HVM_GVA);
-    key.keys[1] = (gva != 0) ? gva : registration.mr.addr;
+    key.keys[1] = (gva != 0 && gva != HVM_INVALID_VA) ? gva : registration.mr.addr;
 
     return BM_OK;
 }
@@ -2423,7 +2423,24 @@ Result DeviceUrmaTransportManager::ResolveMultiRankIoLocked(const hybm_batch_cop
         reinterpret_cast<uint64_t>(isWrite ? params.sources[index] : params.destinations[index]);
     const auto memType = isWrite ? HybmDirectionSrcMemType[direction] : HybmDirectionDestMemType[direction];
     const uint32_t outputType = memType == HYBM_MEM_TYPE_HOST ? HVM_HVA : HVM_DVA;
-    const uint64_t transformed = HybmVaManager::GetInstance().TransformVa(originalLocal, HVM_GVA, outputType);
+    const auto mask = HybmVaManager::dirMask[direction];
+    constexpr auto globalMask = HybmVaManager::BIT_GLOBAL_HOST | HybmVaManager::BIT_GLOBAL_DEVICE;
+    const auto localMask = isWrite ? mask : (mask >> 4);
+    const auto remoteMask = isWrite ? (mask >> 4) : mask;
+    const uint64_t remoteAddr =
+        reinterpret_cast<uint64_t>(isWrite ? params.destinations[index] : params.sources[index]);
+    const uint64_t transformed = (localMask & globalMask)
+                                     ? HybmVaManager::GetInstance().TransformVa(originalLocal, HVM_GVA, outputType)
+                                     : originalLocal;
+    BM_ASSERT_LOG_AND_RETURN(transformed != HVM_INVALID_VA,
+                             "Missing local GVA=" << VaToStr(originalLocal) << " index=" << index
+                                                  << " direction=" << direction,
+                             BM_GVA_NOT_FOUND);
+    BM_ASSERT_LOG_AND_RETURN(
+        !(remoteMask & globalMask) ||
+            HybmVaManager::GetInstance().TransformVa(remoteAddr, HVM_GVA, HVM_HVA) != HVM_INVALID_VA,
+        "Missing remote GVA=" << VaToStr(remoteAddr) << " remoteRank=" << remoteRank << " index=" << index,
+        BM_GVA_NOT_FOUND);
     const uint64_t localAddr = transformed == 0 ? originalLocal : transformed;
     uint64_t correctedLocal = localAddr;
     bool registered = false;
@@ -2436,8 +2453,6 @@ Result DeviceUrmaTransportManager::ResolveMultiRankIoLocked(const hybm_batch_cop
         unregisteredGroups[p2pInfo].push_back(index);
         return BM_OK;
     }
-    const uint64_t remoteAddr =
-        reinterpret_cast<uint64_t>(isWrite ? params.destinations[index] : params.sources[index]);
     //处理远端，地址范围+范围
     uint64_t correctedRemote = 0;
     ret = ResolveRemoteAddressLocked(remoteRank, remoteAddr, size, correctedRemote);

@@ -27,6 +27,9 @@
 
 namespace ock {
 namespace mf {
+// Internal lookup-failure marker, outside the supported virtual address ranges.
+constexpr uint64_t HVM_INVALID_VA = UINT64_MAX;
+
 enum HybmVaMgrType : uint32_t {
     HVM_GVA = 0,
     HVM_DVA = 1, // device va
@@ -331,7 +334,7 @@ public:
     // key 为 0 表示该表无行，跳过。返回值语义同上：所有涉及行均归零回收才返回 true
     bool RemoveOneVaInfo(uint64_t gva, uint64_t dva, uint64_t hva);
 
-    // Returns 0 if not found.
+    // Returns HVM_INVALID_VA on a lookup miss; 0 means the record has no output-type mapping.
     uint64_t TransformVa(uint64_t va, uint32_t inputType, uint32_t outputType);
     std::pair<AllocatedGvaInfo, bool> FindAllocByVa(uint64_t va, uint32_t type = HVM_GVA) const;
 

@@ -198,12 +198,12 @@ TEST_F(HybmVaManagerTest, AddressConversion_ValidAddresses_ReturnsCorrectValues)
     EXPECT_TRUE(manager.TransformVa(internalGva, HVM_GVA, HVM_HVA) == internalLva);
 }
 
-TEST_F(HybmVaManagerTest, AddressConversion_NonExistentAddress_ReturnsZero)
+TEST_F(HybmVaManagerTest, AddressConversion_NonExistentAddress_ReturnsInvalidVa)
 {
     uint64_t nonExistentLva = TEST_LVA_BASE + TEST_OFFSET_SIXTEEN_MB * TEST_COUNT_TEN;
     uint64_t nonExistentGva = TEST_GVA_BASE_HOST + TEST_OFFSET_SIXTEEN_MB * TEST_COUNT_TEN;
-    EXPECT_TRUE(manager.TransformVa(nonExistentLva, HVM_HVA, HVM_GVA) == TEST_SIZE_ZERO);
-    EXPECT_TRUE(manager.TransformVa(nonExistentGva, HVM_GVA, HVM_HVA) == TEST_SIZE_ZERO);
+    EXPECT_TRUE(manager.TransformVa(nonExistentLva, HVM_HVA, HVM_GVA) == HVM_INVALID_VA);
+    EXPECT_TRUE(manager.TransformVa(nonExistentGva, HVM_GVA, HVM_HVA) == HVM_INVALID_VA);
 }
 
 TEST_F(HybmVaManagerTest, GetMemType_ValidAddresses_ReturnsCorrectMemType)
@@ -1327,10 +1327,10 @@ TEST_F(HybmVaManagerTest, InferCopyDirection_UserToUser_ReturnsBUTT)
     EXPECT_EQ(dir, HYBM_DATA_COPY_DIRECTION_BUTT);
 }
 
-TEST_F(HybmVaManagerTest, TransformVa_Invalid_ReturnsZero)
+TEST_F(HybmVaManagerTest, TransformVa_MissingRecord_ReturnsInvalidVa)
 {
-    uint64_t result = manager.TransformVa(0xbadbad, HVM_GVA, HVM_HVA);
-    EXPECT_EQ(result, 0U);
+    uint64_t result = manager.TransformVa(0xbadbadULL, HVM_GVA, HVM_HVA);
+    EXPECT_EQ(result, HVM_INVALID_VA);
 }
 
 TEST_F(HybmVaManagerTest, ClassifyAddressMask_56bitGvaRange)
@@ -1443,7 +1443,7 @@ TEST_F(HybmVaManagerTest, RemoveOneVaInfo_RemoveAlias_KeepsOwner)
 
     EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_GVA), ALIAS_GVA_OWNER);
     EXPECT_EQ(manager.TransformVa(ALIAS_GVA_OWNER, HVM_GVA, HVM_DVA), ALIAS_DVA);
-    EXPECT_EQ(manager.TransformVa(ALIAS_GVA_A, HVM_GVA, HVM_DVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.TransformVa(ALIAS_GVA_A, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
     EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
 }
 
@@ -1460,12 +1460,12 @@ TEST_F(HybmVaManagerTest, RemoveOneVaInfo_RemoveOwner_KeepsSharedEntries)
     // complete the HVA->DVA translation
     EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_HVA), ALIAS_DVA);
     EXPECT_EQ(manager.TransformVa(ALIAS_GVA_A, HVM_GVA, HVM_DVA), ALIAS_DVA);
-    EXPECT_EQ(manager.TransformVa(ALIAS_GVA_OWNER, HVM_GVA, HVM_DVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.TransformVa(ALIAS_GVA_OWNER, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
     EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
 
     // After the last sharer deregisters the dva/hva rows are reclaimed
     manager.RemoveOneVaInfo(ALIAS_GVA_A, HVM_GVA);
-    EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_HVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_HVA), HVM_INVALID_VA);
 }
 
 TEST_F(HybmVaManagerTest, RemoveOneVaInfo_MultipleAliases_KeepUntilLastShared)
@@ -1484,7 +1484,7 @@ TEST_F(HybmVaManagerTest, RemoveOneVaInfo_MultipleAliases_KeepUntilLastShared)
 
     // reclaimed only at zero
     manager.RemoveOneVaInfo(ALIAS_GVA_B, HVM_GVA);
-    EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_HVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.TransformVa(ALIAS_DVA, HVM_DVA, HVM_HVA), HVM_INVALID_VA);
     EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
 }
 
@@ -1525,7 +1525,7 @@ TEST_F(HybmVaManagerTest, RemoveOneVaInfo_PreciseRemoval_KeepsCoexistingRecord)
     EXPECT_EQ(manager.GetAllocCount(), TEST_COUNT_ONE);
 
     manager.RemoveOneVaInfo(COEXIST_GVA, COEXIST_DVA_B, 0);
-    EXPECT_EQ(manager.TransformVa(COEXIST_GVA, HVM_GVA, HVM_DVA), TEST_SIZE_ZERO);
+    EXPECT_EQ(manager.TransformVa(COEXIST_GVA, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
     EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
 }
 
@@ -1559,4 +1559,25 @@ TEST_F(HybmVaManagerTest, AddVaInfo_ImportedIdenticalDescriptor_CountPerRegistra
 
     manager.RemoveOneVaInfo(COEXIST_GVA, 0, 0);
     EXPECT_EQ(manager.GetAllocCount(), TEST_SIZE_ZERO);
+}
+
+TEST_F(HybmVaManagerTest, TransformVa_DistinguishesMissingRecordFromAbsentLocalMapping)
+{
+    constexpr uint64_t gva = HYBM_TRANS_GVA_START_ADDR;
+    constexpr uint64_t size = 4096ULL;
+    constexpr uint64_t mappedVa = 0x200000000ULL;
+    EXPECT_EQ(manager.TransformVa(gva, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
+    ASSERT_EQ(manager.AddVaInfo({gva, 0ULL, 0ULL, size, HYBM_MEM_TYPE_DEVICE}, false, AddressOwnership::Imported),
+              BM_OK);
+    ASSERT_EQ(
+        manager.AddVaInfo({gva + size, mappedVa, 0ULL, size, HYBM_MEM_TYPE_DEVICE}, false, AddressOwnership::Imported),
+        BM_OK);
+    EXPECT_EQ(manager.TransformVa(gva + 1ULL, HVM_GVA, HVM_DVA), 0ULL);
+    EXPECT_EQ(manager.TransformVa(gva + 1ULL, HVM_GVA, HVM_HVA), 0ULL);
+    EXPECT_EQ(manager.TransformVa(gva + size + 1ULL, HVM_GVA, HVM_DVA), mappedVa + 1ULL);
+    EXPECT_EQ(manager.TransformVa(gva - 1ULL, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
+    EXPECT_EQ(manager.TransformVa(gva + size * 2ULL, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
+    manager.RemoveOneVaInfo(gva, 0ULL, 0ULL);
+    EXPECT_EQ(manager.TransformVa(gva, HVM_GVA, HVM_DVA), HVM_INVALID_VA);
+    EXPECT_EQ(manager.TransformVa(gva + size, HVM_GVA, HVM_DVA), mappedVa);
 }
