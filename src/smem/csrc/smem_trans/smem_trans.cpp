@@ -356,6 +356,7 @@ SMEM_API int32_t smem_trans_batch_status_query(smem_trans_t handle, uint64_t bat
 {
     SM_VALIDATE_RETURN(g_smemTransInited, "smem trans not initialized yet", SM_INVALID_PARAM);
     SM_VALIDATE_RETURN(handle != nullptr, "invalid handle, which is null", SM_INVALID_PARAM);
+    SM_VALIDATE_RETURN(result != nullptr, "invalid result, which is null", SM_INVALID_PARAM);
 
     /* get entry by ptr */
     SmemTransEntryPtr entry;

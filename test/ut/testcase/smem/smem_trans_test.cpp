@@ -2070,6 +2070,22 @@ TEST_F(SmemTransTest, smem_trans_register_mems_success_receiver_ipv6)
     smem_trans_uninit(0);
 }
 
+TEST_F(SmemTransTest, smem_trans_batch_status_query_failed_invalid_param)
+{
+    uint32_t deviceId = 0U;
+
+    int32_t ret = smem_trans_init(deviceId, 0);
+    ASSERT_EQ(ret, SM_OK);
+    auto handle = smem_trans_create(&MakeTransConfig(SMEM_TRANS_SENDER, UNIQUE_ID), 0);
+    ASSERT_NE(handle, nullptr);
+
+    uint32_t batchId = 0U;
+    ret = smem_trans_batch_status_query(handle, batchId, nullptr, 0);
+    EXPECT_EQ(ret, SM_INVALID_PARAM);
+
+    smem_trans_destroy(handle, 0);
+    smem_trans_uninit(0);
+}
 // ===== CombineMemories / AlignMemory unit tests =====
 
 namespace {
