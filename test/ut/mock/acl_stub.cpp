@@ -18,6 +18,23 @@ constexpr int32_t RETURN_ERROR = -1;
 constexpr uint64_t START_ADDR = 0x100000000000ULL;
 
 extern "C" {
+int32_t aclInit(const char *configPath)
+{
+    (void)configPath;
+    return RETURN_OK;
+}
+
+int32_t aclFinalize()
+{
+    return RETURN_OK;
+}
+
+int32_t aclrtResetDevice(int32_t deviceId)
+{
+    (void)deviceId;
+    return RETURN_OK;
+}
+
 int32_t aclrtSetDevice(int32_t deviceId)
 {
     return RETURN_OK;
@@ -248,6 +265,14 @@ int32_t rtEnableP2P(uint32_t devIdDes, uint32_t phyIdSrc, uint32_t flag)
 
 int32_t rtDisableP2P(uint32_t devIdDes, uint32_t phyIdSrc)
 {
+    return 0;
+}
+
+int32_t rtGetP2PStatus(uint32_t devId, uint32_t peerDevId, uint32_t *status)
+{
+    (void)devId;
+    (void)peerDevId;
+    *status = 1;
     return 0;
 }
 

@@ -27,12 +27,15 @@ namespace ock {
 namespace mf {
 struct EntityExportInfo {
     uint64_t magic{ENTITY_EXPORT_INFO_MAGIC};
-    uint64_t version{EXPORT_INFO_VERSION};
     uint32_t rankId{0};
     uint16_t role{0};
     uint16_t reserved{0};
     char nic[64]{};
-    char tag[32]{};
+    uint32_t layerCount{0};
+    hybm_data_op_type layers[EXPORT_INFO_MAX_LAYER_COUNT]{};
+    uint32_t superPodId{0xFFFFFFFFU};
+    uint32_t serverId{0x3FFU};
+    int32_t devicePhyId{-1};
     transport::TransportPrivateData transportPrivateData{};
 };
 struct SliceExportTransportKey {
@@ -107,10 +110,10 @@ private:
 
     void ReleaseResources();
     int32_t SetThreadAclDevice();
-    int32_t ImportForTagManager();
     int32_t ImportForTransportManager();
     int32_t ImportForTransportPrecheck(const ExchangeInfoReader *desc, uint32_t &count, void *addresses[],
                                        uint32_t overrideRank);
+    int32_t ImportForLayerProtocols();
 
 private:
     bool initialized_{false};

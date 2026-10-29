@@ -15,6 +15,7 @@
 #include <memory>
 #include <unordered_map>
 #include <shared_mutex>
+#include <vector>
 
 #include "hybm_common_include.h"
 
@@ -24,35 +25,23 @@ namespace mf {
 class HybmEntityTagInfo {
 public:
     Result TagInfoInit(const hybm_options &option);
-    /**
-     * AddTagOpInfo
-     * @param info eg: tag0:opType:tag1,tag0:opType:tag2
-     * opType should in (DEVICE_SDMA, DEVICE_RDMA, AIV_SDMA, HOST_RDMA, HOST_TCP, HOST_URMA, HOST_SHM)
-     * @return 0 if Success
-     */
-    Result AddTagOpInfo(const std::string &info);
-
-    /**
-     * AddRankTag
-     * @param rankId rankId
-     * @param tag eg: support a~zA~Z_
-     * @return 0 if Success
-     */
-    Result AddRankTag(uint32_t rankId, const std::string &tag);
-    Result RemoveRankTag(uint32_t rankId, const std::string &tag);
-    std::string GetTagByRank(uint32_t rankId);
-    uint32_t GetTag2TagOpType(const std::string &tag1, const std::string &tag2);
+    Result RemoveRankInfo(uint32_t rankId);
     uint32_t GetRank2RankOpType(uint32_t rankId1, uint32_t rankId2);
-    uint32_t GetAllOpType();
+    std::vector<hybm_data_op_type> GetRank2RankLayers(uint32_t rankId1, uint32_t rankId2) const;
+    Result AddRankLayers(uint32_t rankId, const std::vector<hybm_data_op_type> &layers);
+    bool HasLayerProtocols(uint32_t rankId) const;
+    std::vector<hybm_data_op_type> GetLayersForRank(uint32_t rankId) const;
     static std::string GetOpTypeStr(hybm_data_op_type opType);
 
 private:
-    Result AddOneTagOpInfo(const std::string &info);
+    Result ParseLayerProtocol(const std::string &protocol, std::vector<hybm_data_op_type> &layers);
+    static bool IsLayerLayoutCompatible(const std::vector<hybm_data_op_type> &left,
+                                        const std::vector<hybm_data_op_type> &right);
 
 private:
     std::shared_mutex mutex_;
-    std::unordered_map<uint32_t, std::string> rankTagInfo_;
-    std::unordered_map<std::string, uint32_t> tagOpInfo_;
+    uint32_t legacyOpType_{0};
+    std::unordered_map<uint32_t, std::vector<hybm_data_op_type>> rankLayers_;
 };
 
 using HybmEntityTagInfoPtr = std::shared_ptr<HybmEntityTagInfo>;

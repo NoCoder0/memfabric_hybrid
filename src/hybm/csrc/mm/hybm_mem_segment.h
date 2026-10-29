@@ -191,9 +191,12 @@ public:
         return true;
     }
 
-protected:
+public:
     static bool CanLocalHostReaches(uint32_t superPodId, uint32_t serverId, uint32_t deviceId) noexcept;
     static bool CanSdmaReaches(uint32_t superPodId, uint32_t serverId, uint32_t deviceId) noexcept;
+    static void GetLocalPhysicalInfo(uint32_t &superPodId, uint32_t &serverId, int32_t &devicePhyId) noexcept;
+
+protected:
     static void FillSysBootIdInfo() noexcept;
     static Result EnableRemotePeerAccess(int32_t remotePhyId) noexcept;
 

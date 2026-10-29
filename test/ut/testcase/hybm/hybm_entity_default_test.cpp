@@ -47,7 +47,6 @@ constexpr int32_t TEST_DEVICE_ID_SDMA = 1600;
 constexpr int32_t TEST_DEVICE_ID_DATA_OP = 1700;
 constexpr int32_t TEST_DEVICE_ID_SLICE_VA = 1800;
 constexpr int32_t TEST_DEVICE_ID_FUNC_MOD = 1900;
-constexpr int32_t TEST_DEVICE_ID_TAG_MGR = 2000;
 constexpr int32_t TEST_DEVICE_ID_TRANS_MGR_NO_TRANS = 2001;
 constexpr int32_t TEST_DEVICE_ID_TRANS_MGR_PREPARE = 2002;
 constexpr int32_t TEST_DEVICE_ID_TRANS_MGR_UPDATE = 2003;
@@ -1311,28 +1310,6 @@ TEST_F(HybmEntityDefaultTest, MemEntityDefault_FunctionModification_Intercept)
     EXPECT_EQ(nullRet1, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmEntityDefaultTest, ImportForTagManager_Success)
-{
-    int32_t deviceId = TEST_DEVICE_ID_TAG_MGR;
-    ock::mf::MemEntityDefault entity(deviceId);
-    entity.tagManager_ = std::make_shared<ock::mf::HybmEntityTagInfo>();
-
-    ock::mf::EntityExportInfo r0{};
-    r0.rankId = TEST_RANK_0;
-    std::strncpy(r0.tag, "tag_0", sizeof(r0.tag) - 1);
-    entity.importedRanks_[TEST_RANK_0] = r0;
-
-    ock::mf::EntityExportInfo r1{};
-    r1.rankId = TEST_RANK_1;
-    std::strncpy(r1.tag, "tag_1", sizeof(r1.tag) - 1);
-    entity.importedRanks_[TEST_RANK_1] = r1;
-
-    auto ret = entity.ImportForTagManager();
-    EXPECT_EQ(ret, BM_OK);
-    EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_0), "tag_0");
-    EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_1), "tag_1");
-}
-
 TEST_F(HybmEntityDefaultTest, ImportForTransportManager_NoTransport_ReturnOk)
 {
     int32_t deviceId = TEST_DEVICE_ID_TRANS_MGR_NO_TRANS;
@@ -1407,7 +1384,6 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     ock::mf::EntityExportInfo e0{};
     e0.rankId = TEST_RANK_0;
     e0.role = static_cast<uint16_t>(HYBM_ROLE_SENDER);
-    std::strncpy(e0.tag, "tag_0", sizeof(e0.tag) - 1);
     std::strncpy(e0.nic, "nic0", sizeof(e0.nic) - 1);
     w0.Append(e0);
 
@@ -1416,7 +1392,6 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
     ock::mf::EntityExportInfo e1{};
     e1.rankId = TEST_RANK_1;
     e1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
-    std::strncpy(e1.tag, "tag_1", sizeof(e1.tag) - 1);
     std::strncpy(e1.nic, "nic1", sizeof(e1.nic) - 1);
     w1.Append(e1);
 
@@ -1424,8 +1399,6 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
                                                               ock::mf::ExchangeInfoReader(&ex1)};
     auto ret = entity.ImportEntityExchangeInfo(readers, TEST_RANK_COUNT_2, 0);
     EXPECT_EQ(ret, BM_OK);
-    EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_0), "tag_0");
-    EXPECT_EQ(entity.tagManager_->GetTagByRank(TEST_RANK_1), "tag_1");
     EXPECT_TRUE(entity.transportPrepared_);
     hybm_export_info_free(&ex0);
     hybm_export_info_free(&ex1);
@@ -1445,7 +1418,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareWithOptions)
     r1.rankId = TEST_RANK_1;
     r1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
     std::strncpy(r1.nic, "nic1", sizeof(r1.nic) - 1);
-    std::strncpy(r1.tag, "tag_1", sizeof(r1.tag) - 1);
     entity.importedRanks_[TEST_RANK_1] = r1;
     ock::mf::transport::TransportMemoryKey k1{};
     k1.keys.assign(1, TEST_KEY_VALUE_2);
@@ -1794,7 +1766,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareFail)
     r1.rankId = TEST_RANK_1;
     r1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
     std::strncpy(r1.nic, "nic1", sizeof(r1.nic) - 1);
-    std::strncpy(r1.tag, "tag_1", sizeof(r1.tag) - 1);
     entity.importedRanks_[TEST_RANK_1] = r1;
 
     auto ret = entity.ImportForTransport();

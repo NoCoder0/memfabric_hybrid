@@ -183,8 +183,7 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
                                     (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
                                     options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
                                     (!(options.dataOpType & DEVICE_TRANSPORT_MASK) || isSdmaMixedTransport);
-            // When host shared memory op type is set, use dedicated host shm segment.
-            if ((options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
+            if ((options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U) {
                 tmpSeg = std::make_shared<HybmHostShmSegment>(options, entityId);
             } else if (vmmSupport) {
                 tmpSeg = std::make_shared<HybmVmmBasedSegment>(options, entityId);
@@ -442,6 +441,13 @@ bool MemSegment::CanSdmaReaches(uint32_t superPodId, uint32_t serverId, uint32_t
     }
 
     return superPodId == superPodId_;
+}
+
+void MemSegment::GetLocalPhysicalInfo(uint32_t &superPodId, uint32_t &serverId, int32_t &devicePhyId) noexcept
+{
+    superPodId = superPodId_;
+    serverId = serverId_;
+    devicePhyId = devicePhyId_;
 }
 
 void MemSegment::FillSysBootIdInfo() noexcept

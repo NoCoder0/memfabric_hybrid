@@ -16,6 +16,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "mf_out_logger.h"
@@ -90,6 +91,7 @@ constexpr uint64_t VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE04UL;
 // trans 用户注册 slice（HBM/DRAM 共用），介质类型由块内 segmentType 字段区分
 constexpr uint64_t USER_MEM_SLICE_EXPORT_INFO_MAGIC = 0xAABB1234FFFFEE05UL;
 constexpr uint64_t EXPORT_INFO_VERSION = 0x1UL;
+constexpr uint32_t EXPORT_INFO_MAX_LAYER_COUNT = 8U;
 
 constexpr uint16_t SEGMENT_TYPE_VMM = 0x1U;
 constexpr uint16_t SEGMENT_TYPE_USER_DEV = 0x2U;

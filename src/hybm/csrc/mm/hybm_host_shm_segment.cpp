@@ -27,6 +27,7 @@
 #include "hybm_ex_info_transfer.h"
 #include "hybm_logger.h"
 #include "hybm_va_manager.h"
+#include "dl_hal_api.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 
@@ -183,12 +184,10 @@ Result HybmHostShmSegment::AllocLocalMemory(uint64_t size, std::shared_ptr<MemSl
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, gva,
                                        reinterpret_cast<uint64_t>(sliceAddr), size);
     slices_.emplace(slice->index_, slice);
-    // onlyGva=true: this segment always records DVA as 0 and does no device-side DVA translation, so only
-    // the GVA table is needed. Previously options_.rankId was passed (uint32_t implicitly converted to bool):
-    // rankId == 0 degraded to writing all three tables, inserting a DVA row keyed 0 into allocatedMap_[HVM_DVA]
-    // and polluting the range lookup.
+
+    uint64_t dva = 0;
     auto ret = HybmVaManager::GetInstance().AddVaInfo(
-        {gva, 0, reinterpret_cast<uint64_t>(sliceAddr), size, HYBM_MEM_TYPE_HOST}, true);
+        {gva, dva, reinterpret_cast<uint64_t>(sliceAddr), size, HYBM_MEM_TYPE_HOST}, dva == 0);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AddVaInfo failed for slice(idx:" << slice->index_ << "), ret:" << ret);
         slices_.erase(slice->index_);
@@ -361,6 +360,17 @@ Result HybmHostShmSegment::RemoveImported(const std::vector<uint32_t> &ranks) no
 
 Result HybmHostShmSegment::RegisterMemory(const void *addr, uint64_t size, std::shared_ptr<MemSlice> &slice) noexcept
 {
+    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+    if ((options_.dataOpType & deviceTransportMask) != 0U) {
+        auto ret = MemSegment::RegisterMemCommon(addr, size, slice);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Register host shm memory for device transport failed, addr:" << VaToStr(addr) << " size:"
+                                                                                       << size << " ret:" << ret);
+            return ret;
+        }
+        slices_.emplace(slice->index_, slice);
+        return BM_OK;
+    }
     auto va = reinterpret_cast<uint64_t>(addr);
     slice = std::make_shared<MemSlice>(sliceCount_++, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, va, va, size);
     slices_.emplace(slice->index_, slice);

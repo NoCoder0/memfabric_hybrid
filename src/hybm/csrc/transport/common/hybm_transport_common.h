@@ -33,6 +33,7 @@ constexpr uint32_t REG_MR_FLAG_DRAM = 0x1U;
 constexpr uint32_t REG_MR_FLAG_HBM = 0x2U;
 constexpr uint32_t REG_MR_FLAG_SELF = 0x4U;
 constexpr uint32_t REG_MR_FLAG_ACL_DRAM = 0x8U;
+constexpr uint32_t REG_MR_FLAG_HOST_ONLY = 0x10U;
 
 constexpr int32_t REG_MR_ACCESS_FLAG_LOCAL_WRITE = 0x1;
 constexpr int32_t REG_MR_ACCESS_FLAG_REMOTE_WRITE = 0x2;
@@ -225,6 +226,9 @@ struct TransportRankPrepareInfo {
     TransportPrivateData privateData{};
     hybm_role_type role{HYBM_ROLE_PEER};
     std::vector<TransportMemoryKey> memKeys;
+    uint32_t superPodId{0xFFFFFFFFU};
+    uint32_t serverId{0x3FFU};
+    int32_t devicePhyId{-1};
     TransportRankPrepareInfo() {}
     TransportRankPrepareInfo(std::string n, TransportMemoryKey k) : nic{std::move(n)}, memKeys{k} {}
     TransportRankPrepareInfo(std::string n, std::vector<TransportMemoryKey> ks)

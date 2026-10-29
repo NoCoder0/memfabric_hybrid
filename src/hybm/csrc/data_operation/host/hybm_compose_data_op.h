@@ -14,7 +14,10 @@
 #define MEMFABRIC_HYBRID_HYBM_COMPOSE_DATA_OP_H
 
 #include <cstdint>
+#include <shared_mutex>
 #include <vector>
+
+#include "hybm_define.h"
 #include "hybm_entity_tag_info.h"
 #include "hybm_data_operator.h"
 #include "hybm_transport_manager.h"
@@ -38,6 +41,7 @@ public:
                          const ExtOptions &options) noexcept override;
     Result DataCopyAsync(hybm_copy_params &params, hybm_data_copy_direction direction,
                          const ExtOptions &options) noexcept override;
+    void CacheRankProtocols(uint32_t rankId, const std::vector<uint32_t> &protocols) override;
     Result Wait(int32_t waitId) noexcept override;
     void TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept override
     {
@@ -53,8 +57,12 @@ public:
     }
 
 private:
+    static_assert(HYBM_DOP_TYPE_DEFAULT == 0, "default op type is used as rank protocol sentinel");
+    static_assert(HYBM_DOP_TYPE_BUTT <= 512, "sparse operator lookup array is too large");
+
     using DataOperators = std::vector<std::pair<hybm_data_op_type, DataOperatorPtr>>;
     DataOperators GetPrioritedDataOperators(const ExtOptions &options) noexcept;
+    DataOperatorPtr FindOperatorByType(hybm_data_op_type opType) const noexcept;
     bool AllSupportSdma(const ExtOptions &options) noexcept;
     bool AllPreferDeviceUrma(const ExtOptions &options) noexcept;
     Result BatchDataCopyByGroup(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
@@ -71,6 +79,10 @@ private:
     // DEVICE_URMA 同样基于 HCOMM 实现（与 devRdmaDataOperator_ 同源，仅传输协议不同）
     DataOperatorPtr devUrmaDataOperator_;
     DataOperatorPtr hostRdmaDataOperator_;
+    DataOperatorPtr hostShmDataOperator_;
+    DataOperatorPtr dataOperators_[HYBM_DOP_TYPE_BUTT] = {};
+    mutable std::shared_mutex rankProtocolsMutex_;
+    hybm_data_op_type rankProtocols_[RANK_MAX][EXPORT_INFO_MAX_LAYER_COUNT] = {};
 };
 } // namespace mf
 } // namespace ock

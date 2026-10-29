@@ -557,7 +557,10 @@ Result HcomTransportManager::ConnectRank(uint32_t rankId)
     }
     // Active side: serviceConnect is complete, but wait for passive side to confirm too
     auto waitRet = WaitChannelReady(rankId, HCOM_CHANNEL_READY_TIMEOUT_MS);
-    if (waitRet != BM_OK) {}
+    if (waitRet != BM_OK) {
+        BM_LOG_ERROR("Failed to wait hcom channel ready, remoteRankId:" << rankId << ", ret:" << waitRet);
+        return waitRet;
+    }
     TP_TRACE_END(TP_SMEM_GROUP_CONNECT_RANK, 0);
     return BM_OK;
 }

@@ -16,8 +16,8 @@
 
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
-#include "hybm_compose_data_op.h"
 #define private public
+#include "hybm_compose_data_op.h"
 #include "dl_acl_api.h"
 #undef private
 
@@ -186,6 +186,8 @@ std::shared_ptr<ock::mf::DataOperator>
 HybmComposeDataOpTest::CreateDevRdmaDataOperator(uint32_t rankId,
                                                  const std::shared_ptr<ock::mf::transport::TransportManager> &tm)
 {
+    (void)rankId;
+    (void)tm;
     return devRdmaDataOpMock;
 }
 
@@ -193,6 +195,8 @@ std::shared_ptr<ock::mf::DataOperator>
 HybmComposeDataOpTest::CreateDevUrmaDataOperator(uint32_t rankId,
                                                  const std::shared_ptr<ock::mf::transport::TransportManager> &tm)
 {
+    (void)rankId;
+    (void)tm;
     return devUrmaDataOpMock;
 }
 
@@ -200,6 +204,8 @@ std::shared_ptr<ock::mf::DataOperator>
 HybmComposeDataOpTest::CreateHostRdmaDataOperator(uint32_t rankId,
                                                   const std::shared_ptr<ock::mf::transport::TransportManager> &tm)
 {
+    (void)rankId;
+    (void)tm;
     return hostRdmaDataOpMock;
 }
 
@@ -418,6 +424,7 @@ TEST_F(HybmComposeDataOpTest, data_copy_sdma_success)
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
     ASSERT_EQ(1UL, sdmaDataOpMock->initializeCount);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA});
 
     hybm_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -452,6 +459,7 @@ TEST_F(HybmComposeDataOpTest, data_copy_all_sdma_first_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA});
 
     hybm_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -489,6 +497,7 @@ TEST_F(HybmComposeDataOpTest, data_copy_all_sdma_failed_dev_rdma_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA});
 
     hybm_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -521,6 +530,7 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_sdma_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA});
     ASSERT_EQ(1UL, sdmaDataOpMock->initializeCount);
 
     hybm_batch_copy_params copyParams{};
@@ -566,6 +576,7 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_all_sdma_first_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA});
 
     hybm_batch_copy_params copyParams{};
     std::vector<void *> sourcesVec = {nullptr};
@@ -611,6 +622,7 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_all_sdma_failed_dev_rdma_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA});
 
     hybm_batch_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -655,6 +667,8 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_non_rank0_rdma_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(1U, {HYBM_DOP_TYPE_DEVICE_RDMA});
+    dataOp.CacheRankProtocols(3U, {HYBM_DOP_TYPE_DEVICE_RDMA});
 
     hybm_batch_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -684,14 +698,16 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_all_groups_urma_uses_single_submis
     options.bmType = HYBM_TYPE_HOST_INITIATE;
     options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_URMA;
     auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
-    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
-    ASSERT_EQ(tag->AddRankTag(1U, "urma1"), BM_OK);
-    ASSERT_EQ(tag->AddRankTag(2U, "urma2"), BM_OK);
-    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:urma1,local:DEVICE_URMA:urma2"), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(0U, {HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(1U, {HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(2U, {HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
 
     MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator).stubs().will(invoke(CreateDevUrmaDataOperator));
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     ASSERT_EQ(dataOp.Initialize(), BM_OK);
+
+    dataOp.CacheRankProtocols(1U, {HYBM_DOP_TYPE_DEVICE_URMA});
+    dataOp.CacheRankProtocols(2U, {HYBM_DOP_TYPE_DEVICE_URMA});
 
     char sourcesData[kBatchSize]{};
     char destinationsData[kBatchSize]{};
@@ -717,7 +733,6 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_all_groups_urma_uses_single_submis
     EXPECT_EQ(hostRdmaDataOpMock->batchDataCopyCount, 0U);
     dataOp.UnInitialize();
 }
-
 TEST_F(HybmComposeDataOpTest, batch_data_copy_mixed_urma_and_host_aggregates_urma_groups)
 {
     constexpr uint32_t kBatchSize = 3U;
@@ -725,16 +740,19 @@ TEST_F(HybmComposeDataOpTest, batch_data_copy_mixed_urma_and_host_aggregates_urm
     options.bmType = HYBM_TYPE_HOST_INITIATE;
     options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_DEVICE_URMA, HYBM_DOP_TYPE_HOST_TCP));
     auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
-    ASSERT_EQ(tag->AddRankTag(0U, "local"), BM_OK);
-    ASSERT_EQ(tag->AddRankTag(1U, "urma1"), BM_OK);
-    ASSERT_EQ(tag->AddRankTag(2U, "host"), BM_OK);
-    ASSERT_EQ(tag->AddRankTag(3U, "urma2"), BM_OK);
-    ASSERT_EQ(tag->AddTagOpInfo("local:DEVICE_URMA:urma1,local:HOST_TCP:host,local:DEVICE_URMA:urma2"), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(0U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(1U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(2U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_HOST_TCP}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(3U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
 
     MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator).stubs().will(invoke(CreateDevUrmaDataOperator));
     MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     ASSERT_EQ(dataOp.Initialize(), BM_OK);
+
+    dataOp.CacheRankProtocols(1U, {HYBM_DOP_TYPE_DEVICE_URMA});
+    dataOp.CacheRankProtocols(2U, {HYBM_DOP_TYPE_HOST_TCP});
+    dataOp.CacheRankProtocols(3U, {HYBM_DOP_TYPE_DEVICE_URMA});
 
     char sourceData[kBatchSize]{};
     char destinationData[kBatchSize]{};
@@ -808,6 +826,7 @@ TEST_F(HybmComposeDataOpTest, data_copy_async_sdma_success)
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
     ASSERT_EQ(1UL, sdmaDataOpMock->initializeCount);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA});
 
     hybm_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -842,6 +861,7 @@ TEST_F(HybmComposeDataOpTest, data_copy_async_all_sdma_first_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA});
 
     hybm_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -879,6 +899,7 @@ TEST_F(HybmComposeDataOpTest, data_copy_async_all_sdma_failed_dev_rdma_success)
     ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
     auto ret = dataOp.Initialize();
     ASSERT_EQ(BM_OK, ret);
+    dataOp.CacheRankProtocols(0U, {HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_RDMA});
 
     hybm_copy_params copyParams{};
     ock::mf::ExtOptions extOptions{};
@@ -1085,6 +1106,123 @@ TEST_F(HybmComposeDataOpTest, initialize_hcomm_device_then_uninit)
 
     dataOp.UnInitialize();
     ASSERT_EQ(1UL, devRdmaDataOpMock->uninitializeCount);
+}
+
+TEST_F(HybmComposeDataOpTest, cache_rank_protocols_stores_and_erases)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    tag->TagInfoInit(options);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator).stubs().will(invoke(CreateDevRdmaDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    dataOp.CacheRankProtocols(1, {HYBM_DOP_TYPE_DEVICE_RDMA});
+    ASSERT_EQ(HYBM_DOP_TYPE_DEVICE_RDMA, dataOp.rankProtocols_[1][0]);
+    ASSERT_EQ(HYBM_DOP_TYPE_DEFAULT, dataOp.rankProtocols_[1][1]);
+
+    dataOp.CacheRankProtocols(1, {});
+    ASSERT_EQ(HYBM_DOP_TYPE_DEFAULT, dataOp.rankProtocols_[1][0]);
+
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, cache_rank_protocols_builds_layer_operators_once)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankLayers(0U, {HYBM_DOP_TYPE_DEVICE_RDMA}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(1U, {HYBM_DOP_TYPE_DEVICE_RDMA}), BM_OK);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator).stubs().will(invoke(CreateDevRdmaDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    dataOp.CacheRankProtocols(1U, {HYBM_DOP_TYPE_DEVICE_RDMA});
+    EXPECT_EQ(HYBM_DOP_TYPE_DEVICE_RDMA, dataOp.rankProtocols_[1U][0]);
+    EXPECT_EQ(HYBM_DOP_TYPE_DEFAULT, dataOp.rankProtocols_[1U][1]);
+
+    ock::mf::ExtOptions extOptions{};
+    extOptions.srcRankId = 0U;
+    extOptions.destRankId = 1U;
+    const auto operators = dataOp.GetPrioritedDataOperators(extOptions);
+    ASSERT_EQ(1UL, operators.size());
+    EXPECT_EQ(HYBM_DOP_TYPE_DEVICE_RDMA, operators.front().first);
+    EXPECT_EQ(devRdmaDataOpMock, operators.front().second);
+
+    dataOp.CacheRankProtocols(1U, {});
+    EXPECT_EQ(HYBM_DOP_TYPE_DEFAULT, dataOp.rankProtocols_[1U][0]);
+
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, cache_rank_protocols_preserves_configured_layer_order)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankLayers(0U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(1U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA}), BM_OK);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator).stubs().will(invoke(CreateDevUrmaDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+    dataOp.CacheRankProtocols(1U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_DEVICE_URMA});
+
+    EXPECT_EQ(HYBM_DOP_TYPE_HOST_TCP, dataOp.rankProtocols_[1U][0]);
+    EXPECT_EQ(HYBM_DOP_TYPE_DEVICE_URMA, dataOp.rankProtocols_[1U][1]);
+    EXPECT_EQ(HYBM_DOP_TYPE_DEFAULT, dataOp.rankProtocols_[1U][2]);
+
+    ock::mf::ExtOptions extOptions{};
+    extOptions.srcRankId = 0U;
+    extOptions.destRankId = 1U;
+    const auto operators = dataOp.GetPrioritedDataOperators(extOptions);
+    ASSERT_EQ(2UL, operators.size());
+    EXPECT_EQ(HYBM_DOP_TYPE_HOST_TCP, operators[0].first);
+    EXPECT_EQ(hostRdmaDataOpMock, operators[0].second);
+    EXPECT_EQ(HYBM_DOP_TYPE_DEVICE_URMA, operators[1].first);
+    EXPECT_EQ(devUrmaDataOpMock, operators[1].second);
+
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, cache_rank_protocols_uses_src_rank_for_read_direction)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_HOST_SHM));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    ASSERT_EQ(tag->AddRankLayers(0U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_HOST_SHM}), BM_OK);
+    ASSERT_EQ(tag->AddRankLayers(1U, {HYBM_DOP_TYPE_HOST_TCP, HYBM_DOP_TYPE_HOST_SHM}), BM_OK);
+
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostRdmaDataOperator).stubs().will(invoke(CreateHostRdmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostShmDataOperator).stubs().will(invoke(CreateHostShmDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, nullptr, tag);
+    ASSERT_EQ(BM_OK, dataOp.Initialize());
+
+    dataOp.CacheRankProtocols(1U, {HYBM_DOP_TYPE_HOST_SHM});
+    ASSERT_EQ(HYBM_DOP_TYPE_HOST_SHM, dataOp.rankProtocols_[1U][0]);
+
+    ock::mf::ExtOptions extOptions{};
+    extOptions.srcRankId = 1U;
+    extOptions.destRankId = 0U;
+    const auto operators = dataOp.GetPrioritedDataOperators(extOptions);
+    ASSERT_EQ(1UL, operators.size());
+    EXPECT_EQ(HYBM_DOP_TYPE_HOST_SHM, operators.front().first);
+
+    dataOp.CacheRankProtocols(1U, {});
+    dataOp.UnInitialize();
 }
 
 TEST_F(HybmComposeDataOpTest, MissingGlobalRecordStopsFallbackAndPreservesError)

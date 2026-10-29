@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
-#include <sstream>
 
 #include "dl_acl_api.h"
 #include "dl_api.h"
@@ -43,61 +42,26 @@ MemEntityDefault::~MemEntityDefault()
 
 Result MemEntityDefault::InitTagManager()
 {
-    const static std::string defaultTag = "HYBM_DEFAULT_TAG_FOR_EMPTY";
     BM_ASSERT_LOG_AND_RETURN(tagManager_ == nullptr, "tagManager_ is not nullptr", BM_OK);
-    std::string localTag = options_.tag;
-    if (localTag.empty()) {
-        localTag = defaultTag;
-        std::copy_n(localTag.c_str(), localTag.size(), options_.tag);
-        if (sizeof(options_.tag) > defaultTag.size()) {
-            options_.tag[defaultTag.size()] = '\0';
-        }
-    }
     tagManager_ = std::make_shared<HybmEntityTagInfo>();
     BM_ASSERT_LOG_AND_RETURN(tagManager_->TagInfoInit(options_) == BM_OK, "Failed to init tagManager",
                              BM_INVALID_PARAM);
-    // same tag use options_.bmDataOpType
-    std::ostringstream compatibleInfo;
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_RDMA) << ":"
-                       << localTag << ",";
+    std::vector<hybm_data_op_type> layerProtocols;
+    if (tagManager_ != nullptr) {
+        layerProtocols = tagManager_->GetLayersForRank(options_.rankId);
     }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_DEVICE_URMA) << ":"
-                       << localTag << ",";
+    if (!layerProtocols.empty()) {
+        uint32_t layerOpMask = 0U;
+        for (auto layer : layerProtocols) {
+            layerOpMask |= static_cast<uint32_t>(layer);
+        }
+        options_.bmDataOpType = static_cast<hybm_data_op_type>(layerOpMask);
+        BM_LOG_DEBUG("Layer protocol overrides data op type, rankId:"
+                     << options_.rankId << " dataOpType:" << layerOpMask << " layerCount:" << layerProtocols.size());
+        return BM_OK;
     }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_SDMA) << ":" << localTag
-                       << ",";
-    }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_AIV_SDMA) << ":" << localTag
-                       << ",";
-    }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_MTE) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_MTE) << ":" << localTag
-                       << ",";
-    }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_RDMA) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_RDMA) << ":" << localTag
-                       << ",";
-    }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_TCP) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_TCP) << ":" << localTag
-                       << ",";
-    }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_URMA) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_URMA) << ":" << localTag
-                       << ",";
-    }
-    if (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) {
-        compatibleInfo << localTag << ":" << HybmEntityTagInfo::GetOpTypeStr(HYBM_DOP_TYPE_HOST_SHM) << ":" << localTag
-                       << ",";
-    }
-    BM_ASSERT_LOG_AND_RETURN(tagManager_->AddTagOpInfo(compatibleInfo.str()) == BM_OK,
-                             "Failed to add tagOpInfo:" << compatibleInfo.str(), BM_INVALID_PARAM);
-    options_.bmDataOpType = static_cast<hybm_data_op_type>(tagManager_->GetAllOpType());
-    BM_LOG_TRACE("Success to init tag manager data op type:" << options_.bmDataOpType);
+    BM_LOG_TRACE("Success to init tag manager legacy data op type:" << options_.bmDataOpType
+                                                                    << " rankId:" << options_.rankId);
     return BM_OK;
 }
 
@@ -220,7 +184,16 @@ int32_t MemEntityDefault::AllocLocalMemory(uint64_t size, hybm_mem_type mType, u
     info.size = realSlice->size_;
     info.flags =
         segment->GetMemoryType() == HYBM_MEM_TYPE_DEVICE ? transport::REG_MR_FLAG_HBM : transport::REG_MR_FLAG_DRAM;
-    if (transportManager_ != nullptr && size > 0 && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
+    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+    const bool skipHostShmDeviceRegistration = mType == HYBM_MEM_TYPE_HOST &&
+                                               (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
+                                               (options_.bmDataOpType & deviceTransportMask) != 0U;
+    if (skipHostShmDeviceRegistration) {
+        BM_LOG_DEBUG("Skip host shm DRAM registration for device transport, rankId:" << options_.rankId
+                                                                                     << " size:" << size);
+    }
+    if (transportManager_ != nullptr && size > 0 && !skipHostShmDeviceRegistration &&
+        !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
         ret = transportManager_->RegisterMemoryRegion(info);
         if (ret != 0) {
             BM_LOG_ERROR("register memory region allocate failed: " << ret << ", info: " << info);
@@ -398,12 +371,15 @@ constexpr size_t kMaxTransportKeyWords = transport::TRANS_KEY_MAX_WORDS;
 int AppendEntityExportInfo(ExchangeInfoWriter &desc, const EntityExportInfo &info)
 {
     int ret = desc.Append(info.magic);
-    ret = (ret != 0) ? ret : desc.Append(info.version);
     ret = (ret != 0) ? ret : desc.Append(info.rankId);
     ret = (ret != 0) ? ret : desc.Append(info.role);
     ret = (ret != 0) ? ret : desc.Append(info.reserved);
     ret = (ret != 0) ? ret : desc.Append(info.nic, sizeof(info.nic));
-    ret = (ret != 0) ? ret : desc.Append(info.tag, sizeof(info.tag));
+    ret = (ret != 0) ? ret : desc.Append(info.layerCount);
+    ret = (ret != 0) ? ret : desc.Append(info.layers, sizeof(info.layers));
+    ret = (ret != 0) ? ret : desc.Append(info.superPodId);
+    ret = (ret != 0) ? ret : desc.Append(info.serverId);
+    ret = (ret != 0) ? ret : desc.Append(info.devicePhyId);
     ret = (ret != 0) ? ret : desc.Append(info.transportPrivateData.ip, sizeof(info.transportPrivateData.ip));
     return (ret != 0) ? ret : desc.Append(info.transportPrivateData.key.keys);
 }
@@ -411,12 +387,15 @@ int AppendEntityExportInfo(ExchangeInfoWriter &desc, const EntityExportInfo &inf
 int ReadEntityExportInfo(const ExchangeInfoReader &reader, EntityExportInfo &info)
 {
     int ret = reader.Read(info.magic);
-    ret = (ret != 0) ? ret : reader.Read(info.version);
     ret = (ret != 0) ? ret : reader.Read(info.rankId);
     ret = (ret != 0) ? ret : reader.Read(info.role);
     ret = (ret != 0) ? ret : reader.Read(info.reserved);
     ret = (ret != 0) ? ret : reader.Read(info.nic, sizeof(info.nic));
-    ret = (ret != 0) ? ret : reader.Read(info.tag, sizeof(info.tag));
+    ret = (ret != 0) ? ret : reader.Read(info.layerCount);
+    ret = (ret != 0) ? ret : reader.Read(info.layers, sizeof(info.layers));
+    ret = (ret != 0) ? ret : reader.Read(info.superPodId);
+    ret = (ret != 0) ? ret : reader.Read(info.serverId);
+    ret = (ret != 0) ? ret : reader.Read(info.devicePhyId);
     ret = (ret != 0) ? ret : reader.Read(info.transportPrivateData.ip, sizeof(info.transportPrivateData.ip));
     return (ret != 0) ? ret : reader.Read(info.transportPrivateData.key.keys, kMaxTransportKeyWords);
 }
@@ -447,10 +426,20 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
     }
 
     EntityExportInfo exportInfo{};
-    exportInfo.version = EXPORT_INFO_VERSION;
     exportInfo.rankId = options_.rankId;
     exportInfo.role = static_cast<uint16_t>(options_.role);
-    std::copy_n(options_.tag, strlen(options_.tag), exportInfo.tag);
+    std::vector<hybm_data_op_type> layerProtocols;
+    if (tagManager_ != nullptr) {
+        layerProtocols = tagManager_->GetLayersForRank(options_.rankId);
+    }
+    if (layerProtocols.size() > EXPORT_INFO_MAX_LAYER_COUNT) {
+        BM_LOG_ERROR("protocol layer count:" << layerProtocols.size() << " exceeds limit:"
+                                             << EXPORT_INFO_MAX_LAYER_COUNT << " rank:" << options_.rankId);
+        return BM_INVALID_PARAM;
+    }
+    exportInfo.layerCount = static_cast<uint32_t>(layerProtocols.size());
+    std::copy(layerProtocols.begin(), layerProtocols.end(), exportInfo.layers);
+    MemSegment::GetLocalPhysicalInfo(exportInfo.superPodId, exportInfo.serverId, exportInfo.devicePhyId);
     if (transportManager_ != nullptr) {
         auto &nic = transportManager_->GetNic();
         if (nic.size() >= sizeof(exportInfo.nic)) {
@@ -680,14 +669,31 @@ int32_t MemEntityDefault::ImportSliceExchangeInfo(const ExchangeInfoReader desc[
     return BM_OK;
 }
 
-int32_t MemEntityDefault::ImportForTagManager()
+int32_t MemEntityDefault::ImportForLayerProtocols()
 {
+    const auto localLayers = tagManager_->GetLayersForRank(options_.rankId);
+    const uint32_t localCount = static_cast<uint32_t>(localLayers.size());
     for (const auto &item : importedRanks_) {
-        auto rankId = item.first;
-        auto &info = item.second;
-        auto ret = tagManager_->AddRankTag(rankId, info.tag);
+        const auto rankId = item.first;
+        const auto &info = item.second;
+        if (info.layerCount != localCount) {
+            BM_LOG_ERROR("tag info template mismatch, local rank:" << options_.rankId << " localLayerCount:"
+                                                                   << localCount << " peer rank:" << rankId
+                                                                   << " peerLayerCount:" << info.layerCount);
+            return BM_INVALID_PARAM;
+        }
+        if (info.layerCount == 0U) {
+            continue;
+        }
+        if (info.layerCount > EXPORT_INFO_MAX_LAYER_COUNT) {
+            BM_LOG_ERROR("peer layer count:" << info.layerCount << " exceeds limit:" << EXPORT_INFO_MAX_LAYER_COUNT
+                                             << " local rank:" << options_.rankId << " peer rank:" << rankId);
+            return BM_INVALID_PARAM;
+        }
+        const std::vector<hybm_data_op_type> layers(info.layers, info.layers + info.layerCount);
+        auto ret = tagManager_->AddRankLayers(rankId, layers);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to add rankTag rank:" << rankId << " tag:" << info.tag);
+            BM_LOG_ERROR("Failed to add rank layers, rankId:" << rankId << " layerCount:" << info.layerCount);
             return ret;
         }
     }
@@ -706,7 +712,12 @@ int32_t MemEntityDefault::ConnectTransport(const uint32_t *ranks, uint32_t count
     }
     for (uint32_t i = 0; i < count; ++i) {
         auto ret = transportManager_->ConnectRank(ranks[i]);
+        if (dataOperator_ != nullptr) {
+            const auto connectedProtocols = transportManager_->GetConnectedProtocols(ranks[i]);
+            dataOperator_->CacheRankProtocols(ranks[i], connectedProtocols);
+        }
         if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to connect transport, rankId:" << ranks[i] << ", ret:" << ret);
             return ret;
         }
     }
@@ -730,6 +741,9 @@ int32_t MemEntityDefault::ImportForTransportManager()
         prepareInfo.nic = info.nic;
         prepareInfo.privateData = info.transportPrivateData;
         prepareInfo.role = static_cast<hybm_role_type>(info.role);
+        prepareInfo.superPodId = info.superPodId;
+        prepareInfo.serverId = info.serverId;
+        prepareInfo.devicePhyId = info.devicePhyId;
         prepareOptions.options.emplace(info.rankId, std::move(prepareInfo));
     }
 
@@ -780,7 +794,7 @@ int32_t MemEntityDefault::ImportEntityExchangeInfo(const ExchangeInfoReader desc
             importedRanks_[deserializedInfo.rankId] = deserializedInfo;
         }
     }
-    BM_ASSERT_LOG_AND_RETURN(ImportForTagManager() == BM_OK, "Failed import for tag manager", BM_ERROR);
+    BM_ASSERT_LOG_AND_RETURN(ImportForLayerProtocols() == BM_OK, "Failed import for layer protocols", BM_ERROR);
     BM_ASSERT_LOG_AND_RETURN(ImportForTransportManager() == BM_OK, "Failed import for transport manager", BM_ERROR);
 
     if (hbmSegment_ == nullptr) {
@@ -900,6 +914,9 @@ int32_t MemEntityDefault::UnmapRank(uint32_t rankId) noexcept
             BM_LOG_WARN("dram unmap rank " << rankId << " failed: " << ret);
         }
     }
+    if (tagManager_ != nullptr) {
+        tagManager_->RemoveRankInfo(rankId);
+    }
     {
         std::unique_lock<std::mutex> lock{importMutex_};
         importedRanks_.erase(rankId);
@@ -938,6 +955,12 @@ int32_t MemEntityDefault::RemoveImported(const std::vector<uint32_t> &ranks) noe
 
     if (dataOperator_ != nullptr) {
         dataOperator_->CleanUp();
+    }
+
+    if (tagManager_ != nullptr) {
+        for (auto rank : ranks) {
+            tagManager_->RemoveRankInfo(rank);
+        }
     }
 
     {
@@ -1076,7 +1099,6 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
             return BM_INVALID_PARAM;
         }
     }
-
     if ((options->flags & HYBM_FLAG_CREATE_WITH_SHM) != 0 && options->dramShmFd < 0) {
         BM_LOG_ERROR("local rank id: " << options->rankId << ", create with share memory flag set but fd: "
                                        << options->dramShmFd << " invalid.");
@@ -1088,7 +1110,7 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
 
 int MemEntityDefault::LoadExtendLibrary() noexcept
 {
-    if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
+    if (options_.bmDataOpType == HYBM_DOP_TYPE_HOST_SHM) {
         BM_LOG_DEBUG("HOST_SHM data operator selected, skip loading transport extend libraries.");
         return BM_OK;
     }
@@ -1355,7 +1377,7 @@ Result MemEntityDefault::InitDramSegment()
 
 Result MemEntityDefault::InitTransManager()
 {
-    if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
+    if (options_.bmDataOpType == HYBM_DOP_TYPE_HOST_SHM) {
         BM_LOG_DEBUG("HOST_SHM data operator selected, skip transport manager initialization.");
         return BM_OK;
     }

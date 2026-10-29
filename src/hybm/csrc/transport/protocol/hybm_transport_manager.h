@@ -77,10 +77,22 @@ public:
         return BM_OK;
     }
 
+    virtual std::vector<uint32_t> GetConnectedProtocols(uint32_t rankId) const
+    {
+        (void)rankId;
+        return {};
+    }
+
     /*
      * 建链完成后，更新rank配置信息，可以新增rank或减少rank
      */
     virtual Result UpdateRankOptions(const HybmTransPrepareOptions &options) = 0;
+
+    virtual const TransportRankPrepareInfo *GetRankPrepareInfo(uint32_t rankId) const
+    {
+        (void)rankId;
+        return nullptr;
+    }
 
     /**
      * 查询

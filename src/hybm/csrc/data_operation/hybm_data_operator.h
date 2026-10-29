@@ -62,6 +62,12 @@ public:
 
     virtual Result Wait(int32_t waitId) noexcept = 0;
 
+    virtual void CacheRankProtocols(uint32_t rankId, const std::vector<uint32_t> &protocols)
+    {
+        (void)rankId;
+        (void)protocols;
+    }
+
     virtual void TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept = 0;
 
     Result TryTransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept

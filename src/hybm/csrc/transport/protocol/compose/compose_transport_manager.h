@@ -16,7 +16,12 @@
 #include "hybm_transport_manager.h"
 #include "hybm_entity_tag_info.h"
 
+#include <map>
 #include <mutex>
+#include <shared_mutex>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace ock {
 namespace mf {
@@ -25,10 +30,11 @@ namespace transport {
 struct ComposeMemoryRegion {
     uint64_t addr = 0;
     uint64_t size = 0;
+    uint32_t flags = 0;
     TransportType type = TT_BUTT;
 
-    ComposeMemoryRegion(const uint64_t addr, const uint64_t size, TransportType type)
-        : addr{addr}, size{size}, type{type}
+    ComposeMemoryRegion(const uint64_t addr, const uint64_t size, TransportType type, uint32_t flags = 0)
+        : addr{addr}, size{size}, flags{flags}, type{type}
     {}
 };
 
@@ -55,8 +61,11 @@ public:
     Result RemoveRanks(const std::vector<uint32_t> &removedRanks) override;
 
     Result ConnectRank(uint32_t rankId) override;
+    std::vector<uint32_t> GetConnectedProtocols(uint32_t rankId) const override;
+    std::shared_ptr<TransportManager> GetTransport(uint32_t opTypes) const;
 
     Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
+    const TransportRankPrepareInfo *GetRankPrepareInfo(uint32_t rankId) const override;
 
     const std::string &GetNic() const override;
 
@@ -88,13 +97,22 @@ private:
     Result OpenHostTransport(const TransportOptions &options);
 
     Result OpenDeviceTransport(const TransportOptions &options);
-    void GetHostPrepareOptions(const HybmTransPrepareOptions &param, HybmTransPrepareOptions &hostOptions);
-    void GetDevicePrepareOptions(const HybmTransPrepareOptions &param, HybmTransPrepareOptions &DeviceOptions);
+    Result OpenTransport(const TransportOptions &options, uint32_t opTypes);
+    std::shared_ptr<TransportManager> FindTransport(uint32_t opTypes) const;
+    uint32_t FindTransportProtocol(uint32_t opTypes) const;
+    std::vector<std::pair<uint32_t, std::shared_ptr<TransportManager>>> GetRankTransports(uint32_t rankId) const;
+    void GetTransportPrepareOptions(const HybmTransPrepareOptions &param, uint32_t protocolMask,
+                                    HybmTransPrepareOptions &transportOptions);
     bool IsDeviceUrma() const;
+    std::vector<uint32_t> BuildRankProtocols(uint32_t rankId) const;
+    uint32_t FilterUnreachableLayers(uint32_t rankId, uint32_t opTypes) const;
 
 private:
-    std::shared_ptr<TransportManager> deviceTransportManager_{nullptr};
-    std::shared_ptr<TransportManager> hostTransportManager_{nullptr};
+    std::map<uint32_t, std::shared_ptr<TransportManager>> transports_;
+    mutable std::shared_mutex rankPrepareInfosMutex_;
+    std::unordered_map<uint32_t, transport::TransportRankPrepareInfo> rankPrepareInfos_;
+    mutable std::mutex connectedProtocolsMutex_;
+    std::unordered_map<uint32_t, std::vector<uint32_t>> connectedProtocols_;
 
     std::string nicInfo_;
     std::mutex mrsMutex_;

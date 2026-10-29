@@ -11,162 +11,160 @@
 */
 #include "hybm_entity_tag_info.h"
 
-#include "mf_ipv4_validator.h"
+#include <algorithm>
 
 namespace ock {
 namespace mf {
 
+static const std::map<std::string, hybm_data_op_type> str2OpTypeMap = {
+    {"DEVICE_SDMA", HYBM_DOP_TYPE_SDMA},        {"DEVICE_RDMA", HYBM_DOP_TYPE_DEVICE_RDMA},
+    {"DEVICE_URMA", HYBM_DOP_TYPE_DEVICE_URMA}, {"HOST_RDMA", HYBM_DOP_TYPE_HOST_RDMA},
+    {"HOST_TCP", HYBM_DOP_TYPE_HOST_TCP},       {"HOST_URMA", HYBM_DOP_TYPE_HOST_URMA},
+    {"HOST_SHM", HYBM_DOP_TYPE_HOST_SHM},       {"DEVICE_MTE", HYBM_DOP_TYPE_MTE},
+    {"AIV_SDMA", HYBM_DOP_TYPE_AIV_SDMA},
+};
+
+static std::vector<std::string> SplitLayerProtocols(const std::string &protocol)
+{
+    std::vector<std::string> segments;
+    size_t start = 0;
+    while (true) {
+        const size_t end = protocol.find(':', start);
+        segments.emplace_back(protocol, start, end == std::string::npos ? std::string::npos : end - start);
+        if (end == std::string::npos) {
+            break;
+        }
+        start = end + 1;
+    }
+    return segments;
+}
+
 Result HybmEntityTagInfo::TagInfoInit(const hybm_options &option)
 {
-    rankTagInfo_.reserve(option.rankCount);
-    auto ret = AddRankTag(option.rankId, option.tag);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("Failed to add rankId:" << option.rankId << " tag:" << option.tag);
-        return ret;
-    }
-    ret = AddTagOpInfo(option.tagOpInfo);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("Failed to add tagOpInfo:" << option.tagOpInfo);
-        return ret;
-    }
-    return BM_OK;
-}
-
-Result HybmEntityTagInfo::AddRankTag(uint32_t rankId, const std::string &tag)
-{
-    if (tag.empty()) {
-        BM_LOG_WARN("Add an empty tag for rankId:" << rankId);
+    const std::string protocol = option.tagOpInfo;
+    if (protocol.empty()) {
+        legacyOpType_ = static_cast<uint32_t>(option.bmDataOpType);
+        BM_LOG_WARN("Protocol layer config is empty, fall back to legacy op selection, rankId:" << option.rankId);
         return BM_OK;
     }
-    if (!ock::mf::NetValidator::IsValidTag(tag)) {
-        BM_LOG_ERROR("Failed to check tag:" << tag << " is invalid, must be 1-30 chars of [a-zA-Z0-9_]");
+    std::vector<hybm_data_op_type> layers;
+    auto layerRet = ParseLayerProtocol(protocol, layers);
+    if (layerRet != BM_OK) {
+        return layerRet;
+    }
+    return AddRankLayers(option.rankId, layers);
+}
+
+Result HybmEntityTagInfo::ParseLayerProtocol(const std::string &protocol, std::vector<hybm_data_op_type> &parsed)
+{
+    const auto segments = SplitLayerProtocols(protocol);
+    parsed.reserve(segments.size());
+    for (size_t i = 0; i < segments.size(); ++i) {
+        if (segments[i].empty()) {
+            BM_LOG_DEBUG("Empty protocol layer, index:" << i << " protocol:" << protocol);
+            parsed.push_back(HYBM_DOP_TYPE_DEFAULT);
+            continue;
+        }
+        hybm_data_op_type opType;
+        auto it = str2OpTypeMap.find(segments[i]);
+        if (it == str2OpTypeMap.end()) {
+            BM_LOG_ERROR("Invalid protocol layer, index:" << i << " layer:" << segments[i] << " protocol:" << protocol);
+            return BM_INVALID_PARAM;
+        }
+        opType = it->second;
+        parsed.push_back(opType);
+    }
+    const bool hasEnabledLayer = std::any_of(parsed.begin(), parsed.end(),
+                                             [](hybm_data_op_type opType) { return opType != HYBM_DOP_TYPE_DEFAULT; });
+    if (!hasEnabledLayer) {
+        BM_LOG_ERROR("Protocol layer config has no enabled layer, protocol:" << protocol);
+        parsed.clear();
         return BM_INVALID_PARAM;
     }
-    std::unique_lock lock(mutex_);
-    rankTagInfo_[rankId] = tag;
-    BM_LOG_DEBUG("Success to add tag:" << tag << " rankId:" << rankId);
+    BM_LOG_DEBUG("Success to parse protocol layers:" << protocol << " layerCount:" << parsed.size());
     return BM_OK;
 }
 
-Result HybmEntityTagInfo::AddOneTagOpInfo(const std::string &tagOpInfo)
+Result HybmEntityTagInfo::RemoveRankInfo(uint32_t rankId)
 {
-    // tag:opType:tag
-    std::string tag1;
-    std::string opTypeStr;
-    std::string tag2;
-    if (!ock::mf::NetValidator::ParseTagOpInfo(tagOpInfo, tag1, opTypeStr, tag2)) {
-        BM_LOG_ERROR("Failed to check tagOpInfo:" << tagOpInfo << " is invalid must match tag:OP_TYPE:tag format");
-        return BM_INVALID_PARAM;
-    }
-    static const std::map<std::string, hybm_data_op_type> str2OpTypeMap = {
-        {"DEVICE_SDMA", HYBM_DOP_TYPE_SDMA},        {"DEVICE_RDMA", HYBM_DOP_TYPE_DEVICE_RDMA},
-        {"DEVICE_URMA", HYBM_DOP_TYPE_DEVICE_URMA}, {"HOST_RDMA", HYBM_DOP_TYPE_HOST_RDMA},
-        {"HOST_TCP", HYBM_DOP_TYPE_HOST_TCP},       {"HOST_URMA", HYBM_DOP_TYPE_HOST_URMA},
-        {"HOST_SHM", HYBM_DOP_TYPE_HOST_SHM},       {"DEVICE_MTE", HYBM_DOP_TYPE_MTE},
-        {"AIV_SDMA", HYBM_DOP_TYPE_AIV_SDMA},
-    };
-    auto it = str2OpTypeMap.find(opTypeStr);
-    if (it == str2OpTypeMap.end()) {
-        BM_LOG_ERROR("Failed to check opType:" << opTypeStr
-                                               << " should be in (DEVICE_SDMA, DEVICE_RDMA, DEVICE_URMA, HOST_RDMA, "
-                                               << "HOST_TCP, HOST_URMA, HOST_SHM, AIV_SDMA, DEVICE_MTE)");
-        return BM_INVALID_PARAM;
-    }
-    auto opType = GetTag2TagOpType(tag1, tag2);
-    auto key = tag1 + ":" + tag2;
     std::unique_lock lock(mutex_);
-    tagOpInfo_[key] = (opType | it->second);
-    BM_LOG_DEBUG("Success to update tag1:" << tag1 << " tag2:" << tag2 << " op:" << tagOpInfo_[key]);
+    rankLayers_.erase(rankId);
     return BM_OK;
 }
 
-Result HybmEntityTagInfo::AddTagOpInfo(const std::string &tagOpInfo)
+bool HybmEntityTagInfo::HasLayerProtocols(uint32_t rankId) const
 {
-    if (tagOpInfo.empty()) {
-        BM_LOG_INFO("Add an empty tagOpInfo.");
-        return BM_OK;
+    std::shared_lock lock(mutex_);
+    auto it = rankLayers_.find(rankId);
+    return it != rankLayers_.end() && !it->second.empty();
+}
+
+std::vector<hybm_data_op_type> HybmEntityTagInfo::GetLayersForRank(uint32_t rankId) const
+{
+    std::shared_lock lock(mutex_);
+    auto it = rankLayers_.find(rankId);
+    if (it == rankLayers_.end()) {
+        return {};
     }
-    // tag:opType:tag,tag:opType:tag,tag:opType:tag
-    auto tagOpInfoVec = StrUtil::Split(tagOpInfo, ',');
-    for (const auto &item : tagOpInfoVec) {
-        auto ret = AddOneTagOpInfo(item);
-        if (ret != BM_OK) {
-            return ret;
+    return it->second;
+}
+
+Result HybmEntityTagInfo::AddRankLayers(uint32_t rankId, const std::vector<hybm_data_op_type> &layers)
+{
+    std::unique_lock lock(mutex_);
+    for (const auto &item : rankLayers_) {
+        if (item.first != rankId && !IsLayerLayoutCompatible(item.second, layers)) {
+            BM_LOG_ERROR("Layer template mismatch, existing rank:" << item.first << " new rank:" << rankId
+                                                                   << " existingCount:" << item.second.size()
+                                                                   << " newCount:" << layers.size());
+            return BM_INVALID_PARAM;
         }
     }
+    rankLayers_[rankId] = layers;
+    BM_LOG_DEBUG("Success to add rank layers, rankId:" << rankId << " layerCount:" << layers.size());
     return BM_OK;
-}
-
-Result HybmEntityTagInfo::RemoveRankTag(uint32_t rankId, const std::string &tag)
-{
-    std::unique_lock lock(mutex_);
-    auto it = rankTagInfo_.find(rankId);
-    if (it != rankTagInfo_.end()) {
-        rankTagInfo_.erase(it);
-    }
-    return BM_OK;
-}
-
-std::string HybmEntityTagInfo::GetTagByRank(uint32_t rankId)
-{
-    std::shared_lock lock(mutex_);
-    auto it = rankTagInfo_.find(rankId);
-    if (it != rankTagInfo_.end()) {
-        return it->second;
-    }
-    BM_LOG_WARN("Not find tagInfo by rankId:" << rankId);
-    return "";
-}
-
-uint32_t HybmEntityTagInfo::GetTag2TagOpType(const std::string &tag1, const std::string &tag2)
-{
-    std::string key;
-    key.reserve(tag1.size() + tag2.size() + 1);
-    key.append(tag1);
-    key.append(":");
-    key.append(tag2);
-    std::string flipKey;
-    flipKey.reserve(tag1.size() + tag2.size() + 1);
-    flipKey.append(tag2);
-    flipKey.append(":");
-    flipKey.append(tag1);
-    std::shared_lock lock(mutex_);
-    auto it = tagOpInfo_.find(key);
-    if (it != tagOpInfo_.end()) {
-        return it->second;
-    }
-    it = tagOpInfo_.find(flipKey);
-    if (it != tagOpInfo_.end()) {
-        return it->second;
-    }
-    BM_LOG_WARN("Not find opType from tag1:" << tag1 << " to tag2:" << tag2);
-    return HYBM_DOP_TYPE_DEFAULT;
 }
 
 uint32_t HybmEntityTagInfo::GetRank2RankOpType(uint32_t rankId1, uint32_t rankId2)
 {
-    auto it = rankTagInfo_.find(rankId1);
-    if (it == rankTagInfo_.end()) {
-        BM_LOG_WARN("Not find tag rank1:" << rankId1);
-        return HYBM_DOP_TYPE_DEFAULT;
+    const auto matched = GetRank2RankLayers(rankId1, rankId2);
+    uint32_t ops = 0;
+    if (!matched.empty()) {
+        for (auto layer : matched) {
+            ops |= static_cast<uint32_t>(layer);
+        }
+        BM_LOG_DEBUG("Layer prefix ops:" << ops << " rank1:" << rankId1 << " rank2:" << rankId2);
+    } else {
+        ops = legacyOpType_;
     }
-    auto tag1 = it->second;
-    it = rankTagInfo_.find(rankId2);
-    if (it == rankTagInfo_.end()) {
-        BM_LOG_WARN("Not find tag rank2:" << rankId2);
-        return HYBM_DOP_TYPE_DEFAULT;
-    }
-    auto tag2 = it->second;
-    return GetTag2TagOpType(tag1, tag2);
+    return ops;
 }
 
-uint32_t HybmEntityTagInfo::GetAllOpType()
+std::vector<hybm_data_op_type> HybmEntityTagInfo::GetRank2RankLayers(uint32_t rankId1, uint32_t rankId2) const
 {
-    uint32_t opSet = 0;
-    for (const auto &item : tagOpInfo_) {
-        opSet |= item.second;
+    const auto layers1 = GetLayersForRank(rankId1);
+    const auto layers2 = GetLayersForRank(rankId2);
+    std::vector<hybm_data_op_type> matched;
+    if (layers1.empty() || layers2.empty() || layers1.size() != layers2.size()) {
+        return matched;
     }
-    return opSet;
+    matched.reserve(layers1.size());
+    for (size_t i = 0; i < layers1.size(); ++i) {
+        if (layers1[i] == HYBM_DOP_TYPE_DEFAULT || layers2[i] == HYBM_DOP_TYPE_DEFAULT || layers1[i] != layers2[i]) {
+            continue;
+        }
+        matched.push_back(layers1[i]);
+    }
+    return matched;
+}
+
+bool HybmEntityTagInfo::IsLayerLayoutCompatible(const std::vector<hybm_data_op_type> &left,
+                                                const std::vector<hybm_data_op_type> &right)
+{
+    if (left.size() != right.size()) {
+        return false;
+    }
+    return true;
 }
 
 std::string HybmEntityTagInfo::GetOpTypeStr(hybm_data_op_type opType)
