@@ -10,7 +10,7 @@
 
 - 已按照[软件安装](installation.md)完成 MemFabric Hybrid Python 包和运行环境安装。
 - 机器上至少有两张可用 NPU，逻辑设备编号为 0 和 1。
-- 当前机型支持示例使用的 `device_rdma` 协议，详见[硬件支持](../user_guide/basic_configuration/硬件支持.md)。
+- 当前机型支持示例使用的 `device_rdma` 协议，详见[硬件支持](../user_guide/basic_configuration/hardware_support.md)。
 - 已安装 PyTorch，并可以在当前 Python 环境中导入 `torch` 和 `memfabric_hybrid`。
 - 本机端口 8572 和 10005 未被其他进程占用。
 

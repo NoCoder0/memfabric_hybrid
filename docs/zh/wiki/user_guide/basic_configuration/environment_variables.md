@@ -119,6 +119,8 @@ export MF_HYBM_RDMA_SWAP_SPACE_SIZE=$((128))
 
 - native RDMA 路径无此限制，无需设置中转相关变量。
 
+<a id="mf-hybm-rdma-use-aicpu"></a>
+
 ### native RDMA 的 AICPU 直发开关（`MF_HYBM_RDMA_USE_AICPU`）
 
 在 native RDMA（`RdmaTransportManager`，即 `MF_HYBM_RDMA_USE_HCOMM=0`）路径下，可用 `MF_HYBM_RDMA_USE_AICPU` 选择 QP 管理方式：

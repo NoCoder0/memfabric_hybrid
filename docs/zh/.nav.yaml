@@ -20,7 +20,7 @@ nav:
               - c 接口: wiki/user_guide/api/acc_offload_c_api.md
       - ⚙️ 基础配置与工具:
           - wiki/user_guide/basic_configuration/index.md
-          - 硬件支持: wiki/user_guide/basic_configuration/硬件支持.md
+          - 硬件支持: wiki/user_guide/basic_configuration/hardware_support.md
           - 环境变量: wiki/user_guide/basic_configuration/environment_variables.md
           - mfcli 使用指南: wiki/user_guide/basic_configuration/mfcli.md
           - KERNEL OPS 编译与安装: wiki/user_guide/basic_configuration/installation_kernel.md
