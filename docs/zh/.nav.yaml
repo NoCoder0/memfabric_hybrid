@@ -45,6 +45,7 @@ nav:
           - 三方 GPU 设备通过 RDMA 直连鲲鹏服务器: wiki/user_guide/integration/三方GPU设备通过RDMA直连鲲鹏服务器的MemFabric内存池.md
       - 💡 应用案例:
           - wiki/user_guide/examples/index.md
+          - Engram权重卸载Host内存: wiki/user_guide/examples/engram-offload/engram-offload.md
           - MemFabric + ZBAL + SGL + DSV4 推理吞吐提升: wiki/user_guide/examples/memfabric-ZBAL+SGL+DSV4推理吞吐提升案例.md
       - 🔒 安全说明:
           - wiki/user_guide/security/index.md
