@@ -82,7 +82,11 @@ struct RdmaHcommPrivateData {
     uint8_t addrBytes[36]{};
     uint32_t devPhyId{0};
     uint32_t sdid{0};
-    uint32_t listenPort{0}; // HCOMM endpoint listen port for channel creation
+    // trans 场景专用：本 entity 的类型（0=recvEntity，1=sendEntity），用于两端拼出同一 channel tag
+    uint32_t entityKind{0};
+    // 本 entity 的唯一实例号（进程启动时生成）：sdid/devPhyId 在两端同号设备上取值相同，IP 也可能重复，
+    // 只有它能保证两端拼出的 channel tag 不会把不同实例混为一谈
+    uint64_t instanceId{0};
 };
 static_assert(std::is_trivially_copyable<RdmaHcommPrivateData>::value,
               "RdmaHcommPrivateData must be trivially copyable for byte serialization");
@@ -109,6 +113,8 @@ struct RdmaHcommPeerPrivateInfo {
     uint32_t devPhyId{0};
     uint32_t sdid{0};
     uint32_t listenPort{0};
+    uint32_t entityKind{0}; // trans 场景：对端 entity 类型（0=recv，1=send）
+    uint64_t instanceId{0}; // trans 场景：对端 entity 的唯一实例号
 };
 
 struct RemotePeerMemRange {
@@ -242,6 +248,12 @@ private:
     // A5(950) 走主机侧 RoCE（ROCE + HOST 端点 + 主机侧 Nbi 提交，不下发 AICPU 算子），
     // 其它 SoC 保持原有 DEVICE 形态实现（各分支点在 cpp 里以 hostRocePath_ 区分）。
     bool hostRocePath_{false};
+    // trans 场景（双 entity，本地 rank 为 0/1023）两端无法拼出一致的 channel 名，
+    // 需要结合 entity 类型（0=recv，1=send）拼 tag。
+    hybm_scene scene_{HYBM_SCENE_DEFAULT};
+    uint32_t entityKind_{0};
+    // 本 entity 的唯一实例号，OpenDevice 时生成一次，随私有数据交换
+    uint64_t instanceId_{0};
 
     uint32_t rankId_{0};
     uint32_t rankCount_{0};

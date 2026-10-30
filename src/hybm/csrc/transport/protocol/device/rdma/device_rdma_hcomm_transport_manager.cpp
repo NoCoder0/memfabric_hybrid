@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <random>
 #include <string>
 #include <thread>
 #include <vector>
@@ -47,6 +48,9 @@ constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
 constexpr uint32_t kNotifyWaitTimeoutS = 60U;
 constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
 constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
+// trans 双 entity 类型：recvEntity 的 rank 为 0，sendEntity 的 rank 为 rankCount-1
+constexpr uint32_t TRANS_ENTITY_RECV = 0U;
+constexpr uint32_t TRANS_ENTITY_SEND = 1U;
 
 // A5(950) host RoCE 专用：把 channel desc 升到 HCOMM ABI v4 并归零 v4 新增字段
 // （srcPortList 若保持 memset 的 0xFF 即野指针）。v4 新字段都在 union raw 区内，
@@ -379,6 +383,15 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
     localNic_ = options.nic;
+    scene_ = options.scene;
+    // trans 的 recvEntity 用 rank 0、sendEntity 用 rankCount-1，据此判定本 entity 类型
+    entityKind_ = (rankId_ == 0U) ? TRANS_ENTITY_RECV : TRANS_ENTITY_SEND;
+    // 本 entity 的唯一实例号：sdid/devPhyId 在两端同号设备上取值相同、IP 也可能重复，
+    // 只有实例号能唯一标识一次运行中的 entity，供 trans 场景拼 channel tag
+    std::random_device rd;
+    instanceId_ = (static_cast<uint64_t>(rd()) << 32) ^ static_cast<uint64_t>(rd());
+    instanceId_ ^= static_cast<uint64_t>(getpid()) << 16;
+    instanceId_ ^= static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
 
     // A5(950) 的 ROCE 没有 DEVICE 形态端点（AicpuTsRoceEndpoint 只支持 910B/910_93），走主机侧
     // RoCE：HOST 端点 + COMM_ENGINE_CPU + 主机侧 Nbi 提交（不下发 AICPU 算子）；其它 SoC 保持
@@ -733,7 +746,15 @@ Result DeviceRdmaHcommTransportManager::Prepare(const HybmTransPrepareOptions &o
             std::memcpy(peerData.addrBytes, devData.addrBytes, sizeof(peerData.addrBytes));
             peerData.devPhyId = devData.devPhyId;
             peerData.sdid = devData.sdid;
-            peerData.listenPort = devData.listenPort;
+            peerData.entityKind = devData.entityKind;
+            peerData.instanceId = devData.instanceId;
+        }
+
+        // trans 的 self connection（连接本地 store server 的控制面连接）：对端实例号即本端，
+        // 两端 tag 必然对不上，建 RDMA channel 只会等到超时，直接跳过。
+        if (scene_ == HYBM_SCENE_TRANS && peerData.instanceId == instanceId_) {
+            BM_LOG_INFO("Prepare: skip self peer rank=" << peerRank);
+            continue;
         }
 
         // 如果有远端内存 key，先 import，再创建通道
@@ -800,10 +821,22 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
     chDesc.notifyNum = 1;
     chDesc.exchangeAllMems = true;
 
-    // Build channelName: consistent on both ends (sorted rank pair)
-    const uint32_t lowerRank = (rankId_ < peerRank) ? rankId_ : peerRank;
-    const uint32_t higherRank = (rankId_ < peerRank) ? peerRank : rankId_;
-    channelNameStore_ = "hybm_" + std::to_string(lowerRank) + "_" + std::to_string(higherRank);
+    // channelName 是 HCOMM 的 socket 配对 tag：两端必须一致，且同一对端的多条 channel 不能重名。
+    // trans 的本地 rank 是 0/1023 不对称，改用两端交换的实例号排序 + 较小一侧的 entity 类型拼名。
+    if (!hostRocePath_ && scene_ == HYBM_SCENE_TRANS) {
+        const bool localIsLower = instanceId_ <= peerData.instanceId;
+        const uint64_t lowerId = localIsLower ? instanceId_ : peerData.instanceId;
+        const uint64_t higherId = localIsLower ? peerData.instanceId : instanceId_;
+        const uint32_t lowerKind = localIsLower ? entityKind_ : peerData.entityKind;
+        channelNameStore_ = "hybm_" + std::to_string(lowerId) + "_" + std::to_string(higherId) +
+                            (lowerKind == TRANS_ENTITY_RECV ? "_recv" : "_send");
+        BM_LOG_INFO("CreatePeerResources: trans channel tag=" << channelNameStore_ << " for peer rank=" << peerRank);
+    } else {
+        // Build channelName: consistent on both ends (sorted rank pair)
+        const uint32_t lowerRank = (rankId_ < peerRank) ? rankId_ : peerRank;
+        const uint32_t higherRank = (rankId_ < peerRank) ? peerRank : rankId_;
+        channelNameStore_ = "hybm_" + std::to_string(lowerRank) + "_" + std::to_string(higherRank);
+    }
     chDesc.channelName = channelNameStore_.c_str();
 
     chDesc.roceAttr.tc = DEVICE_RDMA_HCOMM_DEFAULT_TC;
@@ -836,7 +869,9 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
     const CommEngine channelEngine = hostRocePath_ ? COMM_ENGINE_CPU : COMM_ENGINE_AICPU;
     ret = hcommApi_.CreateChannel(localEndpoint_, channelEngine, chDesc, channelHandle);
     if (ret != 0) {
-        BM_LOG_ERROR("HcommChannelCreate failed for peer: " << peerRank << " ret: " << ret);
+        BM_LOG_ERROR("HcommChannelCreate failed for peer: "
+                     << peerRank << " ret: " << ret << " tag: " << channelNameStore_ << " role: "
+                     << (chDesc.role == HCOMM_SOCKET_ROLE_CLIENT ? "CLIENT" : "SERVER") << " port: " << chDesc.port);
         (void)HcommApiWrapper::FreeThread(threadHandle);
         state.thread = 0;
         return BM_DL_FUNCTION_FAILED;
@@ -1049,13 +1084,18 @@ const TransportPrivateData DeviceRdmaHcommTransportManager::GetPrivateData() con
         return data;
     }
 
-    // DEVICE 形态（v1，与 master 一致）：listenPort 保持 0（channel 建链靠对端 endpoint）
+    // DEVICE 形态（v1，与 master 一致）：bm 只需 channelName 即可配对；
+    // trans 还需交换本 entity 类型（recv/send），供两端拼出同一 channel tag。
     RdmaHcommPrivateData priv{};
     priv.protocol = COMM_PROTOCOL_ROCE;
     priv.addrType = localEndpointDesc_.commAddr.type;
     std::memcpy(priv.addrBytes, localEndpointDesc_.commAddr.raws, sizeof(priv.addrBytes));
     priv.devPhyId = phyDeviceId_;
     priv.sdid = sdid_;
+    if (scene_ == HYBM_SCENE_TRANS) {
+        priv.entityKind = entityKind_;
+        priv.instanceId = instanceId_;
+    }
 
     WriteStructToKey(priv, data.key);
     return data;
