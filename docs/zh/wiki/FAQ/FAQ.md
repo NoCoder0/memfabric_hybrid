@@ -6,12 +6,14 @@
 - 协议尚未确定，或涉及公共初始化流程：查看[通用问题](#common)。
 - 使用 `device_sdma`：查看[Device SDMA（HCCS）](#device-sdma)。
 - 使用 `device_rdma`：查看[Device RDMA](#device-rdma)。
+- 使用 `device_urma`：查看[Device URMA](#device-urma)。
 
 | 协议 / 范围 | 初始化报错 | Copy 报错 |
 | --- | --- | --- |
 | 通用问题 | [驱动和超时](#common-init) | [Copy 报错](#common-copy) |
 | Device SDMA（HCCS） | [协议支持、地址预留、内存分配、扫描和导入](#sdma-init) | [地址翻译、搬移错误和返回 -7](#sdma-copy) |
 | Device RDMA | [设备打开、网络配置、内存分配、注册和 Swap](#rdma-init) | [Copy 报错](#rdma-copy) |
+| Device URMA | [初始化报错](#urma-init) | [批量通知同步超时](#urma-copy) |
 
 内存初始化问题按实际传输协议归类：`ReserveMemorySpace` 失败属于 Device SDMA，
 `AllocLocalMemory` 和静态大页注册失败属于 Device RDMA。A3 的 HCCS 可用内存问题与 SDMA 放在同一组。
@@ -753,6 +755,47 @@ HCCP 后台`hccp_hdc_lite` 线程 每 10ms 才轮询一次 CQE 回收，在轮�
 7. 多个接口需同端口通信时，对每个接口重复 3-5。
 
 配置完成后，在使用相同网卡端口的 NPU 卡上运行 `rdma_demo` 即可验证通信是否正常。
+
+<a id="device-urma"></a>
+
+## 4. Device URMA
+
+<a id="urma-init"></a>
+
+### 4.1 初始化报错
+
+暂无条目。
+
+<a id="urma-copy"></a>
+
+### 4.2 Copy 报错
+
+<a id="urma-batch-notify-timeout"></a>
+
+#### 4.2.1 device_urma batch notify synchronize failed（syncRet: 107020）
+
+**问题现象**
+
+```text
+device_urma batch notify synchronize failed, rankNum: 1 waitRet: 0 syncRet: 107020
+```
+
+**问题说明**
+
+该报错表示 Device URMA 在等待批量传输完成通知时，stream 同步返回 `107020`（任务超时）。
+这条日志不能单独确定根因。
+
+**排查方法**
+
+1. 先在故障环境执行不同方向（如d2rh） benchmark：
+
+   ```bash
+   mfcli benchmark --device 0,1,2,3,4,5,6,7 --protocol device_urma \
+     --direction d2rh --block-size 2M
+   ```
+
+2. 若 benchmark 也出现异常，尝试2.3.RC1.SPC1版本之后的LingQu Computing Link 的 CC 包，并按实际组网检查 CFG，保留 benchmark 输出及故障时间附近的日志。
+3. 若 benchmark 通过，再结合原业务场景排查。
 
 <a id="maintenance"></a>
 
