@@ -57,6 +57,17 @@ void HybmStreamManager::DestroyAllThreadHybmStream()
     g_allThreadStreams.clear();
 }
 
+void HybmStreamManager::ExplicitDestroyAllThreadHybmStream()
+{
+    std::unique_lock<std::shared_mutex> lock_guard(g_allThreadStreamMutex);
+    for (auto &kv : g_allThreadStreams) {
+        if (kv.second) {
+            kv.second->Destroy();
+        }
+    }
+    g_allThreadStreams.clear();
+}
+
 namespace {
 // tid -> stream：供故障线程跨线程中止本线程的 stream。
 // 独立于 device_urma 的 mutex_，避免与被阻塞在 notify 等待中的数据线程争用。

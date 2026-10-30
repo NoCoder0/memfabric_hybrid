@@ -21,6 +21,7 @@ class HybmStreamManager {
 public:
     static HybmStreamPtr GetThreadHybmStream(uint32_t devId);
     static void DestroyAllThreadHybmStream();
+    static void ExplicitDestroyAllThreadHybmStream();
     static void *GetThreadAclStream();
     static int SetDevice(uint32_t devId);
     // peer 退出时由故障线程跨线程中止所有 memfabric 线程 ACL stream，实现快速失败
