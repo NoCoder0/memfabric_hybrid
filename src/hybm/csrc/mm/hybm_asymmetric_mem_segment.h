@@ -119,8 +119,8 @@ private:
     Result ImportSliceInfo(const std::string &info, MemSlicePtr &remoteSlice, uint32_t overrideRank) noexcept;
     Result ImportHbmSlice(const UserSliceExportInfo &sliceInfo, MemSlicePtr &remoteSlice) noexcept;
     Result ImportDramSlice(const UserSliceExportInfo &sliceInfo, MemSlicePtr &remoteSlice) noexcept;
-    // shareName 幂等查找：已导入过（白名单重试/命令重放）时返回既有 slice，避免重复映射与重复计数
-    MemSlicePtr FindReusableImport(const std::string &shareName) noexcept;
+    // 幂等查找：已导入过（白名单重试/命令重放）时返回既有 slice，避免重复映射与重复计数
+    MemSlicePtr FindReusableImport(uint64_t expectGva) noexcept;
     Result EnsurePeerAccess(uint32_t remotePhyId) noexcept;
     void ReleaseHostMapping(uint64_t hostVa) noexcept; // HalHostUnregisterEx 封装
     void RollbackImportedSlices(const std::vector<MemSlicePtr> &slices) noexcept;
@@ -147,7 +147,7 @@ private:
     std::map<uint32_t, std::vector<MemSlicePtr>> rankToRemoteSlices_;
     std::map<uint32_t, HbmExportDeviceInfo> importedDeviceInfo_;
     std::map<std::string, UserSliceExportInfo> importedSliceInfo_;
-    std::map<std::string, drv_mem_handle_t *> vmmNameToHandle_{}; // VMM 导入的远端映射 handle（key 为 129B 定长名）
+    std::map<uint64_t, drv_mem_handle_t *> vmmLvaToHandle_{};
     std::vector<std::string> memNames_{};
     std::atomic<bool> unReserveDone_{false};
 };

@@ -739,7 +739,7 @@ Result AsymmetricMemSegment::ImportSliceInfo(const std::string &info, MemSlicePt
     return ImportHbmSlice(sliceInfo, remoteSlice);
 }
 
-// 导出名是否携带有效的共享句柄。仅 shared/VMM 会写入非全 0 的唯一共享名，可安全作为幂等身份键；
+// 导出名是否携带有效的共享句柄。仅 shared/VMM 会写入非全 0 的共享名；
 // 非 shared（HBM 未走 VMM/IPC 共享名）name 恒为全 0（见 RegisterMemory 内的 RegisterSlice name 构造）。
 static bool HasShareName(const char *name, size_t len)
 {
@@ -751,22 +751,17 @@ static bool HasShareName(const char *name, size_t len)
     return false;
 }
 
-MemSlicePtr AsymmetricMemSegment::FindReusableImport(const std::string &shareName) noexcept
+MemSlicePtr AsymmetricMemSegment::FindReusableImport(uint64_t expectGva) noexcept
 {
-    if (shareName.empty() || shareName[0] == '\0') {
-        return nullptr;
-    }
     std::unique_lock<std::mutex> uniqueLock{mutex_};
-    if (importedSliceInfo_.find(shareName) == importedSliceInfo_.end()) {
-        return nullptr;
-    }
     for (auto &it : remoteSlices_) {
-        if (it.second.name == shareName) {
-            return it.second.slice;
+        const auto &slice = it.second.slice;
+        if (slice != nullptr && slice->gva_ == expectGva) {
+            return slice;
         }
     }
-    // 账本有名但无对应 slice（异常态）：告警后走完整导入
-    BM_LOG_WARN("importedSliceInfo_ has name but no slice, fallback to full import: " << UserMemNamePreview(shareName));
+    BM_LOG_INFO("no reusable import for gva, fallback to full import: rankId=" << options_.rankId
+                                                                               << " expectGva=" << VaToStr(expectGva));
     return nullptr;
 }
 
@@ -776,11 +771,12 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
     void *address = nullptr;
     // name 定长构造：VMM share_handle 为二进制，隐式 strlen 会在首个 \0 截断导致 find/erase 失配
     const std::string shareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN);
-    // 幂等短路仅对 shared/VMM 生效：其共享句柄全局唯一，可安全作身份键。非 shared（name 全 0）没有
+    // 幂等短路仅对 shared/VMM 生效。非 shared（name 全 0）没有
     // 可区分不同对端的字段（rankId 只在单 store rank 空间内 injective、多 D 场景各 D 常同为 0，
     // 描述符在多 server 同规格部署下也完全相同），据此去重会让不同对端互相命中并塌缩到同一 GVA，
     // 因此非 shared 一律不做幂等短路，逐 slice 独立导入并各自登记 GVA。
-    auto reused = HasShareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN) ? FindReusableImport(shareName) : nullptr;
+    const uint64_t expectGva = sliceInfo.gvaOffset + reinterpret_cast<uint64_t>(globalVirtualAddress_);
+    auto reused = HasShareName(sliceInfo.name, USER_HBM_NAME_MAX_LEN) ? FindReusableImport(expectGva) : nullptr;
     if (reused != nullptr) {
         // 幂等短路：重复导入复用既有 slice 与映射，避免重复 ReserveLva/map 与 va_manager 重复计数
         remoteSlice = reused;
@@ -1166,7 +1162,7 @@ Result AsymmetricMemSegment::ImportAndMapVmmName(void **ptr, const UserSliceExpo
         HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
         return BM_DL_FUNCTION_FAILED;
     }
-    vmmNameToHandle_[std::string(info.name, USER_HBM_NAME_MAX_LEN)] = handle;
+    vmmLvaToHandle_[lva] = handle;
     *ptr = reinterpret_cast<void *>(lva);
     BM_LOG_INFO("import vmm slice success: rankId=" << options_.rankId << " remoteRank=" << info.rankId
                                                     << " lva=" << VaToStr(lva) << " size=" << info.size);
@@ -1192,13 +1188,14 @@ void AsymmetricMemSegment::UnmapRemoteVmmMemory(const RegisterSlice &reg) noexce
         BM_LOG_WARN("HalMemUnmap failed: deviceId=" << devicePhyId_ << " lva=" << VaToStr(lva) << " ret=" << ret);
     }
     HybmVaManager::GetInstance().FreeReserveLva(lva, HVM_DVA);
-    auto it = vmmNameToHandle_.find(reg.name);
-    if (it == vmmNameToHandle_.end()) {
+    // 同 name 可在多个 rank 窗口各有一片：按 name 取会释放别人的 handle，自己的落到 "may leak"
+    auto it = vmmLvaToHandle_.find(lva);
+    if (it == vmmLvaToHandle_.end()) {
         BM_LOG_WARN("vmm handle not found on unimport, may leak: deviceId=" << devicePhyId_ << " lva=" << VaToStr(lva));
         return;
     }
     ReleaseVmmHandleQuietly(it->second);
-    vmmNameToHandle_.erase(it);
+    vmmLvaToHandle_.erase(it);
 }
 
 void AsymmetricMemSegment::UserMemUnImportName(uint32_t sliceId) noexcept
