@@ -150,7 +150,7 @@ def _register_mem_command(components) -> None:
 
 
 def _register_logs_command(components) -> None:
-    logs = components.add_parser("logs", help="collect troubleshooting logs", add_help=False)
+    logs = components.add_parser("logs", help="(experimental) collect troubleshooting logs", add_help=False)
     logs.set_defaults(handler=_collect_logs)
 
 
@@ -177,14 +177,14 @@ def _register_trace_command(components) -> None:
 
     trace = components.add_parser(
         "trace",
-        help="print the hourly batch_read / batch_write table of one ptracer dump file",
+        help="(experimental) print the hourly batch_read / batch_write table of one ptracer dump file",
     )
     ptracer_report.add_arguments(trace)
     trace.set_defaults(handler=_run_trace)
 
 
 def _register_benchmark_command(components) -> None:
-    benchmark = components.add_parser("benchmark", help="run pairwise BM bandwidth benchmark")
+    benchmark = components.add_parser("benchmark", help="(experimental) run pairwise BM bandwidth benchmark")
     benchmark.set_defaults(handler=_run_benchmark)
 
     benchmark.add_argument(
