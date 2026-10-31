@@ -28,7 +28,7 @@ def run(args):
     except ValueError as error:
         LOGGER.error(
             "invalid benchmark configuration: %s; direction=%s block_size=%s batch_size=%s ip=%s group=%s "
-            "device=%s visible=%s",
+            "device=%s visible=%s transfer_size=%s",
             error,
             args.direction,
             args.block_size,
@@ -37,8 +37,12 @@ def run(args):
             args.group,
             args.device,
             devices,
+            getattr(args, "transfer_size", None),
         )
         return 1
-    from .bm.pairwise import run_rank
+    if params.backend == "trans":
+        from .trans.pairwise import run_rank
+    else:
+        from .bm.pairwise import run_rank
 
     return BenchmarkRunner(params, run_rank).run()

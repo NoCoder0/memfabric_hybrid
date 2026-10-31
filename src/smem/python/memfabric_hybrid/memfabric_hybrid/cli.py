@@ -186,12 +186,23 @@ def _register_trace_command(components) -> None:
 def _register_benchmark_command(components) -> None:
     benchmark = components.add_parser("benchmark", help="(experimental) run pairwise BM bandwidth benchmark")
     benchmark.set_defaults(handler=_run_benchmark)
+    benchmark.add_argument(
+        "target",
+        nargs="?",
+        choices=("bm", "trans", "write", "read"),
+        help="API backend (default: bm), or write/read using the default backend",
+    )
+    benchmark.add_argument("operation", nargs="?", choices=("write", "read"), help="select write or read directions")
+    benchmark.add_argument("--backend", choices=("bm", "trans"), help="compatibility option for the API backend")
+    benchmark.add_argument(
+        "--local-ip", help="Trans local control IP (default: route to --ip); each engine uses its own port"
+    )
 
     benchmark.add_argument(
         "--direction",
         type=str,
-        default="all",
-        help="all, write, read, or a comma list such as D2rD,rD2D (case-insensitive; default: all 8 directions)",
+        default=None,
+        help="all, write, read, or a comma list (default: BM all; Trans D2rD,D2rH,rD2D,rH2D)",
     )
     benchmark.add_argument(
         "--device",
@@ -225,14 +236,18 @@ def _register_benchmark_command(components) -> None:
     benchmark.add_argument(
         "--block-size",
         type=str,
-        default="16K:2M",
-        help="block size: 2M, a list 4K,64K,1M or a doubling range 16K:2M; multiples of 4K up to 1G (default: 16K:2M)",
+        default=None,
+        help="block size, list or doubling range; multiples of 4K up to 1G (default: BM 16K:2M; Trans 16K:8M)",
     )
-    benchmark.add_argument(
+    transfer = benchmark.add_mutually_exclusive_group()
+    transfer.add_argument(
         "--batch-size",
         type=int,
         default=None,
         help="blocks per copy (default: 128M divided by the block size, at least 1)",
+    )
+    transfer.add_argument(
+        "--transfer-size", help="target bytes per batch, e.g. 128M or 1G (default: 128M); exclusive with --batch-size"
     )
     benchmark.add_argument("--copy-count", type=int, default=5, help="timed copies per block size (default: 5)")
     benchmark.add_argument(
@@ -269,7 +284,27 @@ def _parse_args(argv=None) -> argparse.Namespace:
         args.collector_args = remaining
     elif remaining:
         parser.error(f"unrecognized arguments: {' '.join(remaining)}")
+    if args.component == "benchmark":
+        _resolve_benchmark_selectors(args, parser)
     return args
+
+
+def _resolve_benchmark_selectors(args, parser):
+    target = args.target
+    operation = args.operation
+    if target in ("write", "read"):
+        if operation:
+            parser.error(f"benchmark accepts only one operation: {target} {operation}")
+        operation = target
+    elif target:
+        if args.backend and args.backend != target:
+            parser.error(f"benchmark {target} conflicts with --backend {args.backend}")
+        args.backend = target
+    args.backend = args.backend or "bm"
+    if operation:
+        if args.direction and args.direction.lower() != operation:
+            parser.error(f"benchmark {operation} conflicts with --direction {args.direction}")
+        args.direction = operation
 
 
 def main() -> int:

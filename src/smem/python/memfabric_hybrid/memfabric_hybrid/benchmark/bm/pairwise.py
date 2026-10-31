@@ -13,15 +13,16 @@
 import logging
 import os
 import sys
-import time
 
 import torch
 
 from memfabric_hybrid import bm
 
-from .data import generate_data, wrong_bytes
-from .rank import BmRank, require_ok
-from .sync import BenchmarkSync, PeerFailedError
+from ..common.data import generate_data, wrong_bytes
+from ..common.native import configure_worker_logging, require_ok
+from ..common.pairwise import PairwiseBenchmark, rows_to_report
+from .rank import BmRank
+from ..common.sync import BenchmarkSync, PeerFailedError
 
 LOGGER = logging.getLogger(__name__)
 _POISON = -(2**31)
@@ -31,54 +32,6 @@ _COPY_TYPE = {
     ("read", "device"): bm.BmCopyType.G2L,
     ("read", "host"): bm.BmCopyType.G2H,
 }
-
-
-class PairwiseBenchmark:
-    """All phases of one rank. Every rank walks the same barriers; only initiators submit copies."""
-
-    def __init__(self, rank, sync, params):
-        self.rank, self.sync, self.params = rank, sync, params
-        self.rank_id = rank.rank_id
-        self.peer = params.peer_of(self.rank_id)
-
-    def run(self):
-        results = []
-        for phase in self.params.phases:
-            for size in self.params.block_sizes:
-                try:
-                    row = self._run_case(phase, size)
-                except PeerFailedError:
-                    raise
-                except Exception as error:
-                    raise RuntimeError(f"direction={phase.name} block_size={size} peer={self.peer}: {error}") from error
-                if row is not None:
-                    results.append(row)
-        return results
-
-    def finish(self):
-        """Finish local work before any rank exits; native handles live until process termination."""
-        self.rank.unregister_buffers()
-        self.sync.barrier("finished")
-
-    def _run_case(self, phase, size):
-        initiator = self.params.group_of(self.rank_id) == phase.initiator_group
-        stage = f"{phase.name}/{size}"
-        case = _Case(phase, size, self.params.batch_for(size), self.rank, self.peer)
-        if initiator:
-            case.prepare_initiator()
-        elif phase.op == "read":
-            case.seed_own_slot()
-        self.sync.barrier(f"{stage}/prepared")
-        if initiator:
-            case.warmup(self.params.warmup_count)
-        self.sync.barrier(f"{stage}/start")
-        row = case.measure(self.params.copy_count) if initiator else None
-        self.sync.barrier(f"{stage}/copied")
-        if initiator:
-            case.verify()
-        # No rank may overwrite a slot for the next case before verification finished.
-        self.sync.barrier(f"{stage}/verified")
-        return row
 
 
 class _Case:
@@ -133,6 +86,13 @@ class _Case:
         ret = self.rank.handle.copy_data(staging.data_ptr(), own, self.length, bm.BmCopyType.L2G, 0)
         require_ok(ret, f"seed own slot rank={self.rank.rank_id} length={self.length}")
 
+    @property
+    def copy(self):
+        return self.rank.handle.copy_data_batch
+
+    def connect(self):
+        """BM has joined its pool before the case starts."""
+
     def warmup(self, count):
         for _ in range(count):
             require_ok(self.rank.handle.copy_data_batch(**self.copy_args), "warmup copy_data_batch")
@@ -145,33 +105,6 @@ class _Case:
             self._fill_local(self.expected)
         else:
             self._fill_local(_POISON)
-
-    def measure(self, count):
-        copy, args = self.rank.handle.copy_data_batch, self.copy_args
-        # flags=0 and no external stream use BM's synchronous native copy path.
-        # Native stream/transport completion is included in each call below.
-        start_ns = time.monotonic_ns()
-        for _ in range(count):
-            ret = copy(**args)
-            if ret != 0:
-                require_ok(ret, f"copy_data_batch block_size={self.size} batch={self.batch}")
-        end_ns = time.monotonic_ns()
-        elapsed_ns = max(1, end_ns - start_ns)
-        total_bytes = self.length * count
-        return {
-            "direction": self.phase.name,
-            "rank_id": self.rank.rank_id,
-            "device_id": self.rank.device_id,
-            "peer_rank_id": self.peer,
-            "copy_size": self.size,
-            "batch_size": self.batch,
-            "copy_count": count,
-            "total_bytes": total_bytes,
-            "total_time_us": elapsed_ns / 1000,
-            "bandwidth_gbps": total_bytes / elapsed_ns,
-            "start_ns": start_ns,
-            "end_ns": end_ns,
-        }
 
     def verify(self):
         if self.phase.op == "write":
@@ -192,14 +125,9 @@ class _Case:
         torch.npu.synchronize()
 
 
-def _configure_worker_logging(show_logs):
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.getLogger().setLevel(logging.DEBUG if show_logs else logging.ERROR)
-
-
 def run_rank(params, rank_id, local_index, queue):
     """Own native resources until the child exits, after flushing its report to the parent."""
-    _configure_worker_logging(params.log)
+    configure_worker_logging(params.log)
     sync = None
     exit_code = 1
     try:
@@ -207,11 +135,12 @@ def run_rank(params, rank_id, local_index, queue):
         sync.agree(params.signature())
         rank = BmRank(params, rank_id, local_index)
         rank.initialize()
-        bench = PairwiseBenchmark(rank, sync, params)
+        bench = PairwiseBenchmark(rank, sync, params, _Case)
         sync.publish(bench.run())
         sync.barrier("results published")
-        rows = _rows_to_report(params, rank_id, sync)
-        bench.finish()
+        rows = rows_to_report(params, rank_id, sync)
+        rank.unregister_buffers()
+        sync.barrier("finished")
         queue.put({"rank_id": rank_id, "results": rows})
         exit_code = 0
     except Exception as error:  # noqa: BLE001 - report every worker failure to the parent
@@ -238,12 +167,3 @@ def run_rank(params, rank_id, local_index, queue):
             LOGGER.error("failed to flush rank report: rank=%s error=%s", rank_id, error)
         finally:
             os._exit(exit_code)
-
-
-def _rows_to_report(params, rank_id, sync):
-    # Rank 0 reports both groups; in cross-machine mode the group 1 command reports only its own rows.
-    if rank_id == 0:
-        return sync.gather()
-    if params.group == 1:
-        return [row for row in sync.gather() if row["rank_id"] == rank_id]
-    return []

@@ -23,7 +23,7 @@ _GIB = 1024**3
 _ALIGNMENT = 4096
 _MAX_BLOCK_SIZE = _GIB
 _DEFAULT_TRANSFER_SIZE = 128 * 1024**2
-_DRAM_POOL_SIZE = 4 * _GIB
+_MAX_PAYLOAD_SIZE = 20 * _GIB
 _SYNC_TIMEOUT_SEC = 3600.0
 _UNITS = {"": 1, "B": 1, "K": _KIB, "M": _KIB**2, "G": _GIB}
 _MEM_CODE = {"D": "device", "H": "host"}
@@ -53,7 +53,7 @@ ALL_PHASES = tuple(Phase(op, local, peer) for op in ("write", "read") for local,
 
 
 @dataclass(frozen=True)
-class BmParams:
+class BenchmarkParams:
     protocol: str
     store_url: str
     nic: str
@@ -74,6 +74,9 @@ class BmParams:
     sync_timeout: float
     phases: tuple
     log: bool
+    backend: str = "bm"
+    local_ip: str = ""
+    transfer_size: int = _DEFAULT_TRANSFER_SIZE
 
     @property
     def group_size(self):
@@ -92,12 +95,12 @@ class BmParams:
     def batch_for(self, block_size):
         if self.batch_size is not None:
             return self.batch_size
-        return max(1, _DEFAULT_TRANSFER_SIZE // block_size)
+        return max(1, self.transfer_size // block_size)
 
     def signature(self):
         """Fields both commands must agree on before joining BM."""
         fields = dataclasses.asdict(self)
-        for key in ("rank_start", "group", "device_indices", "devices", "idle_devices", "log", "nic"):
+        for key in ("rank_start", "group", "device_indices", "devices", "idle_devices", "log", "nic", "local_ip"):
             fields.pop(key)
         fields["phases"] = [phase.name for phase in self.phases]
         return fields
@@ -230,11 +233,19 @@ def build_params(args, visible):
     if local < (1 if cross else 2):
         raise ValueError(f"not enough NPUs: selected={list(indices)}; one machine needs at least 2")
     devices = [visible[index] for index in indices]
-    phases = parse_directions(args.direction)
-    block_sizes = parse_block_sizes(args.block_size)
+    backend = getattr(args, "backend", "bm")
+    phases = parse_directions(args.direction or ("D2rD,D2rH,rD2D,rH2D" if backend == "trans" else "all"))
+    block_sizes = parse_block_sizes(args.block_size or ("16K:8M" if backend == "trans" else "16K:2M"))
+    transfer_text = getattr(args, "transfer_size", None)
+    if transfer_text is not None and args.batch_size is not None:
+        raise ValueError("--transfer-size and --batch-size are mutually exclusive")
+    transfer_size = parse_size(transfer_text) if transfer_text is not None else _DEFAULT_TRANSFER_SIZE
+    limit = _MAX_PAYLOAD_SIZE
+    if not 0 < transfer_size <= limit:
+        raise ValueError(f"--transfer-size must be positive and at most {limit} bytes for {backend}")
     if args.batch_size is not None and args.batch_size <= 0:
         raise ValueError("--batch-size must be positive")
-    params = BmParams(
+    params = BenchmarkParams(
         protocol=args.protocol,
         store_url=args.ip,
         nic=args.nic,
@@ -255,8 +266,18 @@ def build_params(args, visible):
         sync_timeout=_SYNC_TIMEOUT_SEC,
         phases=phases,
         log=args.log,
+        backend=backend,
+        local_ip=getattr(args, "local_ip", None) or "",
+        transfer_size=transfer_size,
     )
-    params = dataclasses.replace(params, local_hbm_size=_hbm_size(params))
+    if params.backend == "trans":
+        from ..trans.params import validate_params
+
+        params = validate_params(params)
+    else:
+        if params.local_ip:
+            raise ValueError("--local-ip is only supported with --backend trans")
+        params = dataclasses.replace(params, local_hbm_size=_hbm_size(params))
     _validate(params)
     return params
 
@@ -271,7 +292,10 @@ def _hbm_size(params):
 def _validate(params):
     if params.copy_count <= 0 or params.warmup_count < 0:
         raise ValueError("--copy-count must be positive and --warmup-count must be nonnegative")
-    if params.payload_size > _DRAM_POOL_SIZE:
-        raise ValueError(f"block size x batch size {params.payload_size} exceeds the {_DRAM_POOL_SIZE} byte pool slot")
+    limit = _MAX_PAYLOAD_SIZE
+    if params.payload_size > limit:
+        raise ValueError(
+            f"block size x batch size {params.payload_size} exceeds the {limit} byte limit for {params.backend}"
+        )
     if params.protocol.startswith("host_") and any(phase.peer_mem == "device" for phase in params.phases):
         raise ValueError(f"protocol {params.protocol} cannot target HBM pool slots; select only *2rH/rH2* directions")

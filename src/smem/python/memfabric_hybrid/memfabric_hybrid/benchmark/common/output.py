@@ -12,8 +12,6 @@
 
 import sys
 
-_DEFAULT_TRANSFER_LABEL = "128M"
-
 
 def format_size(size):
     for suffix, unit in (("G", 1024**3), ("M", 1024**2), ("K", 1024)):
@@ -44,7 +42,7 @@ def print_start(params):
     sizes = params.block_sizes
     block = format_size(sizes[0]) if len(sizes) == 1 else f"{', '.join(format_size(size) for size in sizes)}"
     if params.batch_size is None:
-        batch = f"auto ({_DEFAULT_TRANSFER_LABEL} per copy, at least 1 block)"
+        batch = f"auto ({format_size(params.transfer_size)} target per copy, at least 1 block)"
     else:
         batch = params.batch_size
     if params.group < 0:
@@ -71,11 +69,20 @@ def print_start(params):
     ]
     if params.local_hbm_size:
         fields.append(("HBM per rank", format_size(params.local_hbm_size)))
+    if params.backend == "trans":
+        fields = [(label, value) for label, value in fields if label != "Config store"]
+        fields.extend(
+            [
+                ("Sync store", f"tcp://{params.sync_host}:{params.sync_port}"),
+                ("Local control IP", params.local_ip),
+            ]
+        )
     print("\n" + "=" * 88, flush=True)
-    print("[benchmark] Starting BM benchmark", flush=True)
+    print(f"[benchmark] Starting {params.backend.upper()} benchmark", flush=True)
     for label, value in fields:
         print(f"  {label}: {value}", flush=True)
-    print("[benchmark] Initializing workers, memory pools and connections...", flush=True)
+    resource = "memory pools" if params.backend == "bm" else "registered buffers"
+    print(f"[benchmark] Initializing workers, {resource} and connections...", flush=True)
     print("=" * 88, flush=True)
 
 

@@ -98,20 +98,22 @@ class BenchmarkImportTest(BenchmarkModuleTest):
 
     def test_valid_configuration_dispatches_to_worker(self):
         entry = self.load_entry()
-        worker_module = types.ModuleType(f"{PREFIX}.bm.pairwise")
-        worker_module.run_rank = Mock()
-        sys.modules[worker_module.__name__] = worker_module
-        params = object()
         args = types.SimpleNamespace(log=False)
-        with (
-            patch.object(entry, "_parse_npu_devices", return_value=[0, 1]),
-            patch.object(entry, "_resolve_protocol"),
-            patch.object(entry, "build_params", return_value=params),
-            patch.object(entry, "BenchmarkRunner") as runner,
-        ):
-            runner.return_value.run.return_value = 0
-            self.assertEqual(entry.run(args), 0)
-        runner.assert_called_once_with(params, worker_module.run_rank)
+        for backend in ("bm", "trans"):
+            with self.subTest(backend=backend):
+                worker_module = types.ModuleType(f"{PREFIX}.{backend}.pairwise")
+                worker_module.run_rank = Mock()
+                sys.modules[worker_module.__name__] = worker_module
+                params = types.SimpleNamespace(backend=backend)
+                with (
+                    patch.object(entry, "_parse_npu_devices", return_value=[0, 1]),
+                    patch.object(entry, "_resolve_protocol"),
+                    patch.object(entry, "build_params", return_value=params),
+                    patch.object(entry, "BenchmarkRunner") as runner,
+                ):
+                    runner.return_value.run.return_value = 0
+                    self.assertEqual(entry.run(args), 0)
+                runner.assert_called_once_with(params, worker_module.run_rank)
 
 
 class BenchmarkCleanupTest(BenchmarkModuleTest):

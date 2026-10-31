@@ -1,15 +1,18 @@
 # mfcli benchmark
 
-测量 NPU 与 BM 共享内存池之间的传输带宽。可见的卡两两配对，每次复制都访问**对端 rank** 的池，
-所以测到的是真实的跨 rank 传输路径，而不是本地拷贝。需要在 NPU 环境下运行。
+测量配对 rank 之间的传输带宽，默认使用 BM 共享内存池；`mfcli benchmark trans` 使用 Trans 注册缓冲区。
+可见的卡两两配对，每次复制都访问**对端 rank** 的内存。需要在 NPU 环境下运行。
+
+命令格式：`mfcli benchmark [bm|trans] [参数]`，默认 BM。
 
 ## 方向命名
 
-一个方向写成“本地缓冲区 → 对端池”或“对端池 → 本地缓冲区”，`r` 表示对端 rank 的共享内存池：
+一个方向写成“本地缓冲区 → 对端内存”或“对端内存 → 本地缓冲区”，`r` 表示对端 rank。
 
-- `D` = 本地 HBM，`H` = 本地主机内存；`rD` = 对端池的 HBM，`rH` = 对端池的 DRAM。
+- `D` = 本地 HBM，`H` = 本地主机内存；`rD` = 对端 HBM，`rH` = 对端 DRAM。
 - 写方向 4 个：`D2rD`、`D2rH`、`H2rD`、`H2rH`；读方向 4 个：`rD2D`、`rH2D`、`rD2H`、`rH2H`。
-- 一次默认跑全部 8 个方向。写方向由前一半卡发起，读方向由后一半卡发起，同一对卡轮流当发起端。
+- BM 默认跑全部 8 个方向；Trans 默认只测 `D2rD`、`D2rH`、`rD2D`、`rH2D`，可用 `--direction all` 测全部方向。
+  写方向由前一半卡发起，读方向由后一半卡发起，同一对卡轮流当发起端。
 
 ## 准备
 
@@ -26,7 +29,8 @@ bash output/memfabric_hybrid-*_linux_*.run --install-path="$HOME/mf-benchmark"
 source "$HOME/mf-benchmark/memfabric_hybrid/set_env.sh"
 ```
 
-使用 `device_urma` 时还需执行一次 `mfcli kernel install`。跨机测试时两台机器用相同版本的源码和安装包。
+使用 `device_urma`，或使用 Trans SDMA 的 Host 方向时，还需执行一次 `mfcli kernel install`。
+跨机测试时两台机器用相同版本的源码和安装包。
 
 ## 单机
 
@@ -34,6 +38,9 @@ source "$HOME/mf-benchmark/memfabric_hybrid/set_env.sh"
 mfcli benchmark                                        # 全部可见卡，8 个方向，16K-2M
 mfcli benchmark --device 0,1                           # 只用 0、1 两张卡
 mfcli benchmark --direction D2rD,rD2D --block-size 2M  # 指定方向和块大小
+mfcli benchmark trans  # 默认4方向，16K-8M
+mfcli benchmark trans --transfer-size 256M
+mfcli benchmark trans --direction d2rd,rd2d --block-size 8M --batch-size 1500
 ```
 
 卡数为奇数时使用前 2⌊N/2⌋ 张，启动信息会列出未使用的卡。
@@ -51,18 +58,24 @@ mfcli benchmark --ip "tcp://<A_IP>:12060" --device 0,1
 
 将 `<A_IP>` 替换为 A 机的可达地址，确保配置存储端口 12060 和同步端口 12061 对另一台可达。
 A 机托管配置存储并发起写方向，另一台发起读方向。A 机最终打印完整结果，另一台只打印自己发起的方向。
-两边的选卡数量、协议、方向、块大小、批量和复制/预热次数必须一致；物理卡号、本机 NIC 和日志开关可不同。
+两边的后端、选卡数量、协议、方向、块大小、批量和复制/预热次数必须一致；物理卡号、本机 NIC 和日志开关可不同。
 配置不一致会在初始化 BM 和加入池之前报 `configuration mismatch` 并退出。
 先启动哪台都可以；另一台先启动且无法连接 A 的同步端口时，会提示 `Waiting for <IP>`。
+
+Trans 两端执行 `mfcli benchmark trans --ip "tcp://<A_IP>:12060"`。
+默认自动选择本机 IP，多网卡时可指定 `--local-ip <本机IP>`；两端还需放通引擎自动分配的控制端口。
 
 ## 参数
 
 | 参数 | 默认值 | 说明 |
 | --- | --- | --- |
-| `--direction` | `all` | `all`、`write`、`read`，或逗号列表如 `D2rD,rD2D`，不区分大小写 |
+| `--backend` | `bm` | 兼容写法，推荐 `benchmark bm/trans`；两端后端必须一致 |
+| `--local-ip` | 按路由选择 | 仅 Trans：本机可绑定、对端可达的控制 IP；与传输 NIC 分开 |
+| `--direction` | BM：`all`；Trans：上述4方向 | `all`、`write`、`read`，或逗号列表如 `D2rD,rD2D`，不区分大小写 |
 | `--device` | 全部可见卡 | 要使用的卡，如 `2,3` 或 `0-3,6`；卡号是 `ASCEND_RT_VISIBLE_DEVICES` 下的序号 |
-| `--block-size` | `16K:2M` | 单值 `2M`、列表 `4K,64K,1M`，或倍增区间 `16K:2M`；需为 4K 的倍数，上限 1G |
-| `--batch-size` | 自动 | 每次复制的块数；默认按 128M ÷ 块大小计算，最小 1 |
+| `--block-size` | BM：`16K:2M`；Trans：`16K:8M` | 单值 `2M`、列表 `4K,64K,1M`，或倍增区间 `16K:8M`；需为 4K 的倍数，上限 1G |
+| `--batch-size` | 自动 | 每次复制的块数；与显式 `--transfer-size` 互斥 |
+| `--transfer-size` | `128M` | 每批目标字节数，支持K/M/G；batch=目标字节数÷块大小向下取整，最小1；实际传输量为block×batch |
 | `--copy-count` | `5` | 计时的批量复制次数，必须为正数 |
 | `--warmup-count` | `1` | 不计时的预热次数，可以为 0 |
 | `--protocol` | `auto` | 按机型自动选择：A2 为 `device_rdma`，A3 为 `sdma`，A5 为 `device_urma`。也可显式指定 `sdma`、`device_rdma`、`device_urma`、`host_rdma`、`host_urma`、`host_tcp` |
@@ -91,4 +104,7 @@ A 机托管配置存储并发起写方向，另一台发起读方向。A 机最�
 - 不加 `--log` 时只打印 ERROR 及以上级别的底层日志。`--log` 配合默认的 8 方向 16K-2M 会产生很大的日志量，建议只配合单个方向和单个块大小使用。
 - 默认端口 12050 被占用时，用 `--ip` 换一个端口。
 - 自动协议选择仅依据机型，不会检查互联拓扑或在失败后切换协议；无法识别机型时需显式指定 `--protocol`。
-- 每个 rank 贡献 4 GiB DRAM，HBM 池容量按测试数据量自动推导；`块大小 × batch` 不得超过 4 GiB。
+- BM 每个 rank 的 DRAM 池至少为 4 GiB，随最大测试 payload 按整 GiB 扩容；HBM 池容量按测试数据量自动推导。
+- BM/Trans 的 `块大小 × batch` 和 `--transfer-size` 上限均为 20 GiB；实际运行需有足够内存，Trans SDMA Host 池按 GiB 分配。
+- K/M/G按1024进制解析（KiB/MiB/GiB），如`8MB`与`8M`相同；带宽GB/s仍按10^9字节计算。
+- Trans 支持 `sdma`、`device_rdma`、`device_urma`、`host_rdma`，使用同步一对一传输。

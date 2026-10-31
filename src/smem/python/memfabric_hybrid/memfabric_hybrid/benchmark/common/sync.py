@@ -71,6 +71,11 @@ class BenchmarkSync:
     def publish(self, results):
         self.store.set(f"results/{self.rank_id}", json.dumps(results))
 
+    def exchange(self, stage, metadata, peer_rank):
+        self.store.set(f"{stage}/metadata/{self.rank_id}", json.dumps(metadata))
+        self.barrier(stage)
+        return json.loads(self.store.get(f"{stage}/metadata/{peer_rank}"))
+
     def gather(self):
         return [row for rank in range(self.world_size) for row in json.loads(self.store.get(f"results/{rank}"))]
 

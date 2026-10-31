@@ -12,17 +12,17 @@
 
 import logging
 import mmap
-import sys
-import time
 
 import torch
 
 import memfabric_hybrid as mf
 from memfabric_hybrid import bm
 
+from ..common.native import configure_native_logging, require_ok
+
 LOGGER = logging.getLogger(__name__)
 _ALIGNMENT = 4096
-_DRAM_POOL_SIZE = 4 * 1024**3
+_GIB = 1024**3
 _PROTOCOL_TO_DATA_OP = {
     "sdma": bm.BmDataOpType.SDMA,
     "device_rdma": bm.BmDataOpType.DEVICE_RDMA,
@@ -32,30 +32,6 @@ _PROTOCOL_TO_DATA_OP = {
     "host_tcp": bm.BmDataOpType.HOST_TCP,
 }
 _POOL_MEM = {"device": bm.BmMemType.DEVICE, "host": bm.BmMemType.HOST}
-# Native MF levels: 0 DEBUG, 1 INFO, 2 WARN, 3 ERROR, 4 FATAL, 5 TRACE. TRACE is numerically the highest,
-# so set_log_level() alone cannot hide it; without --log the quiet logger shows only ERROR and FATAL.
-_NATIVE_SHOWN_LEVELS = {3: "ERROR", 4: "FATAL"}
-
-
-def _quiet_native_log(level, message):
-    name = _NATIVE_SHOWN_LEVELS.get(level)
-    if name is not None:
-        sys.stdout.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {name} {message}\n")
-        sys.stdout.flush()
-
-
-def configure_native_logging(show_logs):
-    """Call before mf.initialize() so that initialization output is filtered too."""
-    if show_logs:
-        require_ok(mf.set_log_level(0), "mf.set_log_level")
-        return
-    require_ok(mf.set_log_level(3), "mf.set_log_level")
-    mf.set_extern_logger(_quiet_native_log)
-
-
-def require_ok(ret, operation):
-    if ret != 0:
-        raise RuntimeError(f"{operation} failed, ret={ret}, detail={mf.get_last_err_msg()}")
 
 
 class BmRank:
@@ -118,10 +94,11 @@ class BmRank:
 
     def _create_pool(self):
         hbm = self.params.local_hbm_size
+        dram = max(4 * _GIB, -(-self.params.payload_size // _GIB) * _GIB)
         handle = bm.create2(
             id=0,
-            local_dram_size=_DRAM_POOL_SIZE,
-            max_dram_size=_DRAM_POOL_SIZE,
+            local_dram_size=dram,
+            max_dram_size=dram,
             local_hbm_size=hbm,
             max_hbm_size=hbm,
             data_op_type=_PROTOCOL_TO_DATA_OP[self.params.protocol],
