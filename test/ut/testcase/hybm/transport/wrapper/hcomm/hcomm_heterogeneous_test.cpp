@@ -867,3 +867,59 @@ TEST_F(HcommHeterogeneousTest, DeviceConnectsZeroHostUsingSingleImportedControlW
     EXPECT_EQ(createdEngine, COMM_ENGINE_AICPU);
     EXPECT_EQ(device.remoteRanks_[0].importedDescs.size(), 1U);
 }
+
+TEST_F(HcommHeterogeneousTest, TwoHostPeersWithSameAddressRetainTheirExportedIdentities)
+{
+    DeviceRdmaHcommTransportManager manager;
+    manager.opened_ = true;
+    manager.rankId_ = 2;
+    manager.rankCount_ = 4;
+    std::array<EndpointDesc, 2> endpoints;
+    HybmTransPrepareOptions options;
+    for (uint32_t rank = 0; rank < 2; ++rank) {
+        endpoints[rank] = MakeEndpoint(ENDPOINT_LOC_TYPE_HOST);
+        SetHcommEndpointRank(endpoints[rank], rank);
+        auto &peer = options.options[rank];
+        peer.privateData = MakePrivateKey(endpoints[rank]);
+        peer.peerProtocol = HYBM_DOP_TYPE_HOST_RDMA;
+        peer.memKeys = {MakeKey(endpoints[rank])};
+    }
+    ASSERT_EQ(manager.Prepare(options), BM_OK);
+    for (uint32_t rank = 0; rank < 2; ++rank) {
+        const auto &state = manager.remoteRanks_[rank];
+        EXPECT_EQ(state.peerDva, POOL);
+        EXPECT_EQ(std::memcmp(&state.remoteEndpointDesc, &endpoints[rank], sizeof(EndpointDesc)), 0);
+    }
+    EXPECT_NE(std::memcmp(&endpoints[0], &endpoints[1], sizeof(EndpointDesc)), 0);
+}
+
+TEST_F(HcommHeterogeneousTest, HostEndpointsUseRankWithoutChangingHardwareResourceId)
+{
+    const auto savedCreate = DlHcommApi::gHcommEndpointCreate;
+    const bool savedLoaded = DlHcommApi::gLoaded;
+    DlHcommApi::gLoaded = true;
+    DlHcommApi::gHcommEndpointCreate = [](const EndpointDesc *desc, EndpointHandle *endpoint) -> int32_t {
+        createdEndpoint = *desc;
+        *endpoint = reinterpret_cast<void *>(0x2345);
+        return BM_OK;
+    };
+    std::array<EndpointDesc, 2> descriptors;
+    for (uint32_t rank = 0; rank < 2; ++rank) {
+        host::HostRdmaHcommTransportManager manager;
+        TransportOptions options;
+        options.rankId = rank;
+        options.rankCount = 4;
+        options.nic = "tcp://127.0.0.1:5000";
+        EXPECT_EQ(manager.OpenDevice(options), BM_OK);
+        descriptors[rank] = createdEndpoint;
+        EndpointDesc expected{};
+        EndpointDescInit(&expected, 1);
+        std::memcpy(expected.raws, &rank, sizeof(rank));
+        EXPECT_EQ(std::memcmp(createdEndpoint.raws, expected.raws, sizeof(expected.raws)), 0);
+        EXPECT_EQ(createdEndpoint.loc.locType, ENDPOINT_LOC_TYPE_HOST);
+        EXPECT_EQ(createdEndpoint.loc.host.id, 0U);
+    }
+    DlHcommApi::gHcommEndpointCreate = savedCreate;
+    DlHcommApi::gLoaded = savedLoaded;
+    EXPECT_NE(std::memcmp(&descriptors[0], &descriptors[1], sizeof(EndpointDesc)), 0);
+}

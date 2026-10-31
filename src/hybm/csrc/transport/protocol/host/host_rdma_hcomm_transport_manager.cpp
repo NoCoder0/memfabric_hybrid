@@ -40,6 +40,7 @@ Result HostRdmaHcommTransportManager::OpenDevice(const TransportOptions &options
                        "Invalid Host HCOMM IPv4 address: " << ip, BM_INVALID_PARAM);
     localEndpointDesc_.loc.locType = ENDPOINT_LOC_TYPE_HOST;
     localEndpointDesc_.loc.host.id = 0;
+    SetHcommEndpointRank(localEndpointDesc_, options.rankId);
     auto ret = HcommApiWrapper::LoadHcomm();
     BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "LoadHcomm failed, ret: " << ret);
     ret = api_.CreateEndpoint(localEndpointDesc_, endpoint_);

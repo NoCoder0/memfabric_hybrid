@@ -284,6 +284,7 @@ Result DeviceRdmaHcommTransportManager::LoadDeviceKernel()
 Result DeviceRdmaHcommTransportManager::BuildLocalEndpointDesc(EndpointDesc &desc) const
 {
     desc.protocol = COMM_PROTOCOL_ROCE;
+    SetHcommEndpointRank(desc, rankId_);
     if (hostRocePath_) {
         // A5(950) 上 ROCE 只有 HOST 形态可用：ROCE + DEVICE 会落到 AicpuTsRoceEndpoint，
         // 该类只允许 910B/910_93；ROCE + HOST 落到 CpuRoceEndpoint，明确支持 950/960，

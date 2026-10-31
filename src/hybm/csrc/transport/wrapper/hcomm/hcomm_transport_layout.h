@@ -19,6 +19,13 @@ constexpr uint32_t RDMA_HCOMM_PRIVATE_DATA_MAGIC = 0xA5FAD001U;
 constexpr uint16_t RDMA_HCOMM_PRIVATE_DATA_VERSION = 1U;
 constexpr uint16_t RDMA_HCOMM_PRIVATE_DATA_VERSION_HOST = 2U;
 
+inline void SetHcommEndpointRank(EndpointDesc &endpoint, uint32_t rank)
+{
+    // Ranks distinguish endpoints that share a RoCE address within this topology.
+    static_assert(sizeof(rank) <= sizeof(endpoint.raws), "Rank must fit in endpoint attributes");
+    std::memcpy(endpoint.raws, &rank, sizeof(rank));
+}
+
 // TransportMemoryKey slot 2 metadata layout (like device_urma's UrmaExportDesc):
 // keys[TRANS_KEY_DEV_SLOT2 .. TRANS_KEY_DEV_SLOT3-1] accessed via HcommKeyMeta struct
 // Writing: auto &meta = HcommKeyMetaAt(key); meta.addr = ...;
