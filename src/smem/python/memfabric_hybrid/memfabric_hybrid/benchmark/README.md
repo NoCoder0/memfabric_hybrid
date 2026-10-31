@@ -37,6 +37,7 @@ mfcli benchmark --direction D2rD,rD2D --block-size 2M  # 指定方向和块大�
 ```
 
 卡数为奇数时使用前 2⌊N/2⌋ 张，启动信息会列出未使用的卡。
+未设置可见卡环境变量时，自动枚举优先累计 `npu-smi info -l` 的 `Chip Count`；A3 的 8 个双芯片板号对应 16 个设备。
 卡按选择顺序分成前后两组，再按组内顺序配对；例如四个 rank 配成 `0↔2`、`1↔3`。
 `--device` 使用逻辑卡号；例如 `ASCEND_RT_VISIBLE_DEVICES=2,5` 时，`--device 0,1` 对应物理卡 2、5。
 

@@ -21,9 +21,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _count_from_npu_smi(output):
-    """Count NPUs from `npu-smi info -l` output."""
+    """Count compute chips, rather than boards, from `npu-smi info -l`."""
     total = 0
     ids = 0
+    chips = 0
     for line in (output or "").splitlines():
         text = line.strip()
         if ":" not in text:
@@ -36,7 +37,11 @@ def _count_from_npu_smi(output):
                 total = int(found.group(0))
         elif key == "NPU ID":
             ids += 1
-    return total or ids
+        elif key == "CHIP COUNT":
+            found = re.search(r"\d+", value)
+            if found:
+                chips += int(found.group(0))
+    return chips or total or ids
 
 
 def _parse_npu_devices():
@@ -49,7 +54,7 @@ def _parse_npu_devices():
     npu_smi = shutil.which("npu-smi")
     if npu_smi:
         try:
-            proc = subprocess.run([npu_smi, "info", "-l"], capture_output=True, text=True, timeout=30)
+            proc = subprocess.run([npu_smi, "info", "-l"], check=False, capture_output=True, text=True, timeout=30)
         except (OSError, subprocess.TimeoutExpired):
             proc = None
         if proc is not None:
