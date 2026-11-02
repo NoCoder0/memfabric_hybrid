@@ -51,4 +51,15 @@ python3 shared_dram_offload.py
 - `alloc_size` 仅 rank 0 传实际值（贡献物理内存），其余 rank 传 0；`reserve_size` 各 rank 保持一致
 - `offload.initialize` / `offload.uninitialize` 是集合操作，用例通过两个 `mp.Barrier` 保证 4 个 rank 同步进入与退出，避免组网挂死
 
+## 多实例示例
+
+[shared_dram_offload_multi.py](shared_dram_offload_multi.py) 在原示例基础上，
+将模块级 offload 调用改为 `offload.Offload()` 对象调用，每个 rank 在同一张 NPU 上创建多个独立的 SHARED 池。
+主要验证应用层需要创建多个offload实例时，相互之前不影响。
+
+```bash
+cd examples/kv_offload/shared_dram_offload
+python3 shared_dram_offload_multi.py --world_size 4 --instances 2 --store_port 8500
+```
+
 ## Q&A

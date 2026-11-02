@@ -129,6 +129,29 @@ def get_and_clear_last_err_msg() -> str
 
 ## ACC OFFLOAD接口
 
+### 多实例调用
+
+`offload.Offload()` 创建独立的 offload 对象。对象的 `initialize`、`uninitialize`、`malloc`、`free`、
+`get_dva`、`empty`、`sparse_copy`、`group_pack_copy`、`kv_exchange_copy`、`register_entry_table` 和
+`entry_gather` 与下述模块级接口使用相同的参数和返回值，无需传递实例句柄。
+
+```python
+from memfabric_hybrid import offload
+
+pool_a = offload.Offload()
+pool_b = offload.Offload()
+config_a.store_url = "tcp://127.0.0.1:8500"
+config_b.store_url = "tcp://127.0.0.1:8501"
+assert pool_a.initialize(config_a) == 0
+assert pool_b.initialize(config_b) == 0
+tensor_a = pool_a.empty([512, 1])
+tensor_b = pool_b.empty([512, 1])
+```
+
+原有 `offload.initialize(config)` 等调用仍操作默认实例，默认实例与显式创建的实例相互独立。
+实例也提供 `OffloadConfig`、`Scene` 和 `OFFLOAD_FLAG_GIANT_PAGE`，可以将原有代码中的 `offload`
+变量替换为实例后继续使用。C 接口和 `OffloadConfig` 的字段不变。
+
 ### 1. 初始化/退出接口
 
 #### initialize

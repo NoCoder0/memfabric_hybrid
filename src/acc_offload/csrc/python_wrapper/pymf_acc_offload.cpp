@@ -19,8 +19,10 @@
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 #include "acc_offload.h"
+#include "acc_offload_entry_manager.h"
 
 namespace py = pybind11;
+using ock::offload::AccOffloadEntryManager;
 
 void DefineAccOffloadConfig(py::module_ &m)
 {
@@ -123,12 +125,77 @@ void DefineAccOffloadApi(py::module_ &m)
         "countPtr (graph-capture safe)");
 }
 
+void DefineAccOffloadInstanceCopyApi(py::class_<AccOffloadEntryManager> &cls)
+{
+    cls.def(
+        "sparse_copy",
+        [](AccOffloadEntryManager &self, uint64_t src, uint64_t dst, uint64_t len, uint64_t size, uint16_t device) {
+            return self.SparseCopy(reinterpret_cast<uint64_t *>(src), reinterpret_cast<uint64_t *>(dst),
+                                   reinterpret_cast<uint32_t *>(len), reinterpret_cast<uint32_t *>(size), device);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"), py::arg("dstPtrs"), py::arg("lenPtrs"),
+        py::arg("sizePtr"), py::arg("deviceId"));
+    cls.def(
+        "group_pack_copy",
+        [](AccOffloadEntryManager &self, uint64_t src, uint64_t dst, uint64_t len, uint64_t count, uint64_t groups,
+           uint64_t packedGroups, uint16_t device) {
+            return self.GroupPackCopy(reinterpret_cast<uint64_t *>(src), reinterpret_cast<uint64_t *>(dst),
+                                      reinterpret_cast<uint32_t *>(len), reinterpret_cast<uint32_t *>(count),
+                                      reinterpret_cast<int64_t *>(groups), reinterpret_cast<int64_t *>(packedGroups),
+                                      device);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"), py::arg("dstPtrs"), py::arg("lenPtrs"),
+        py::arg("numLocalExpertPtr"), py::arg("groupList"), py::arg("packedGroupList"), py::arg("deviceId"));
+    cls.def(
+        "kv_exchange_copy",
+        [](AccOffloadEntryManager &self, uint64_t meta, uint16_t device) {
+            return self.KvExchangeCopy(reinterpret_cast<uint64_t *>(meta), device);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("metaPtr"), py::arg("deviceId"));
+    cls.def("register_entry_table", &AccOffloadEntryManager::RegisterEntryTable,
+            py::call_guard<py::gil_scoped_release>(), py::arg("entryBytes"), py::arg("rowsPerSlot"));
+    cls.def("entry_gather", &AccOffloadEntryManager::EntryGather, py::call_guard<py::gil_scoped_release>(),
+            py::arg("dstPtr"), py::arg("idsPtr"), py::arg("countPtr"), py::arg("deviceId"));
+}
+
+void DefineAccOffloadInstanceApi(py::module_ &m)
+{
+    auto cls = py::class_<AccOffloadEntryManager>(m, "_Offload");
+    cls.def(py::init<>());
+    cls.def("initialize", &AccOffloadEntryManager::Initialize, py::call_guard<py::gil_scoped_release>(),
+            py::arg("config"));
+    cls.def("uninitialize", &AccOffloadEntryManager::UnInitialize, py::call_guard<py::gil_scoped_release>());
+    cls.def(
+        "malloc",
+        [](AccOffloadEntryManager &self, uint64_t size, uint64_t flags) -> uint64_t {
+            (void)flags;
+            return reinterpret_cast<uint64_t>(self.MallocHost(size));
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("size"), py::arg("flags") = 0);
+    cls.def(
+        "free",
+        [](AccOffloadEntryManager &self, uint64_t ptr, uint64_t flags) {
+            (void)flags;
+            self.FreeHost(reinterpret_cast<void *>(ptr));
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("ptr"), py::arg("flags") = 0);
+    cls.def(
+        "get_dva",
+        [](AccOffloadEntryManager &self, uint64_t ptr) -> uint64_t {
+            uint64_t dva = 0;
+            return self.GetDva(ptr, &dva) == 0 ? dva : 0;
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("ptr"));
+    DefineAccOffloadInstanceCopyApi(cls);
+}
+
 PYBIND11_MODULE(_pymf_acc_offload, m)
 {
     auto offload = m.def_submodule("offload", "Acc Offload Module.");
 
     DefineAccOffloadConfig(offload);
     DefineAccOffloadApi(offload);
+    DefineAccOffloadInstanceApi(offload);
 }
 
 #pragma GCC diagnostic pop

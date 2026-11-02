@@ -24,7 +24,7 @@ namespace offload {
 
 class AccOffloadLocalDramEntry : public AccOffloadEntry {
 public:
-    AccOffloadLocalDramEntry() = default;
+    explicit AccOffloadLocalDramEntry(uint16_t entityId) : entityId_(entityId) {}
     ~AccOffloadLocalDramEntry() override
     {
         UnInitialize();
@@ -54,7 +54,9 @@ public:
 
 private:
     std::mutex mutex_;
+    uint16_t entityId_;
     bool inited_ = false;
+    bool launchLoaded_ = false;
     hybm_entity_t entity_ = nullptr;
     hybm_mem_slice_t slice_ = nullptr;
     uint8_t *base_ = nullptr;

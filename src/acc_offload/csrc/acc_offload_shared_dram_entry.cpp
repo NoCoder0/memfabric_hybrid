@@ -28,6 +28,9 @@ using namespace ock::smem;
 
 constexpr uint64_t GB = 1024ULL * 1024ULL * 1024ULL;
 
+std::mutex AccOffloadSharedDramEntry::gStoreMutex;
+std::set<std::string> AccOffloadSharedDramEntry::gStores;
+
 static uint64_t AlignUp(uint64_t value, uint64_t align) noexcept
 {
     return (value + align - 1) & ~(align - 1);
@@ -187,8 +190,7 @@ int32_t AccOffloadSharedDramEntry::ValidateSharedConfig(const offload_config_t &
                                                                      << ", rankId: " << config.rankId);
         return OFFLOAD_ERROR;
     }
-    /* the rank's physical DRAM must fit its own virtual slot (stride = aligned
-     * reserveSize): a bigger allocSize would spill into the neighbor slot */
+
     if (AlignUp(config.allocSize, GB) > AlignUp(config.reserveSize, GB)) {
         OFFLOAD_LOG_ERROR("allocSize exceeds reserveSize, allocSize: " << config.allocSize
                                                                        << ", reserveSize: " << config.reserveSize
@@ -198,9 +200,6 @@ int32_t AccOffloadSharedDramEntry::ValidateSharedConfig(const offload_config_t &
     return OFFLOAD_OK;
 }
 
-/* Store rendezvous url resolution order: config.storeUrl > ASCEND_MF_STORE_URL
- * env > derived loopback port (single machine only; a multi-machine pool with
- * neither explicit url nor env would silently split into per-machine groups). */
 int32_t AccOffloadSharedDramEntry::ResolveStoreUrl(const offload_config_t &config)
 {
     if (config.storeUrl[0] != '\0') {
@@ -233,20 +232,11 @@ int32_t AccOffloadSharedDramEntry::CreateGroupStore(const offload_config_t &conf
         return OFFLOAD_ERROR;
     }
 
-    smem_tls_config tlsCfg{};
-    StoreFactory::SetTlsInfo(tlsCfg);
-    bool startServer = (config.rankId == 0);
-    uint16_t model = startServer ? CSM_BOTH : CSM_CLIENT;
-    auto baseStore = StoreFactory::CreateStoreByUrl(storeUrl_, model, config.worldSize, config.rankId);
+    auto baseStore = AcquireStore(config);
     if (baseStore == nullptr) {
-        OFFLOAD_LOG_ERROR("create store failed, storeUrl: " << storeUrl_ << ", rankId: " << config.rankId
-                                                            << ", worldSize: " << config.worldSize);
         return OFFLOAD_ERROR;
     }
 
-    /* One pool = one store: coexisting pools (e.g. PD-disaggregated P/D) deploy
-     * with independent store urls, so the fixed entity-id key prefix needs no
-     * extra namespace. */
     auto prefix = "(" + std::to_string(HYBM_ENTITY_ID_OFFLOAD_BASE) + ")_";
     auto offloadStore = StoreFactory::PrefixStore(baseStore, "OFFLOAD_");
     entryStore_ = StoreFactory::PrefixStore(offloadStore, prefix);
@@ -272,6 +262,39 @@ int32_t AccOffloadSharedDramEntry::CreateGroupStore(const offload_config_t &conf
     return OFFLOAD_OK;
 }
 
+StorePtr AccOffloadSharedDramEntry::AcquireStore(const offload_config_t &config)
+{
+    std::lock_guard<std::mutex> lock(gStoreMutex);
+    if (gStores.count(storeUrl_) != 0) {
+        OFFLOAD_LOG_ERROR("store URL is already used by another offload instance, storeUrl: "
+                          << storeUrl_ << ", worldSize: " << config.worldSize << ", rankId: " << config.rankId
+                          << ", entityId: " << entityId_);
+        storeUrl_.clear();
+        return nullptr;
+    }
+    smem_tls_config tlsCfg{};
+    StoreFactory::SetTlsInfo(tlsCfg);
+    uint16_t model = config.rankId == 0 ? CSM_BOTH : CSM_CLIENT;
+    auto store = StoreFactory::CreateStoreByUrl(storeUrl_, model, config.worldSize, config.rankId);
+    if (store == nullptr) {
+        OFFLOAD_LOG_ERROR("create store failed, storeUrl: " << storeUrl_ << ", rankId: " << config.rankId
+                                                            << ", worldSize: " << config.worldSize);
+        return nullptr;
+    }
+    gStores.insert(storeUrl_);
+    return store;
+}
+
+void AccOffloadSharedDramEntry::ReleaseStore()
+{
+    std::lock_guard<std::mutex> lock(gStoreMutex);
+    if (!storeUrl_.empty()) {
+        StoreFactory::DestroyStore(storeUrl_);
+        gStores.erase(storeUrl_);
+        storeUrl_.clear();
+    }
+}
+
 int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &config)
 {
     options_ = {};
@@ -295,7 +318,7 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
     }
     std::copy_n(storeUrl_.c_str(), storeUrl_.size(), options_.transUrl);
 
-    entity_ = hybm_create_entity(HYBM_ENTITY_ID_OFFLOAD_BASE, &options_, 0);
+    entity_ = hybm_create_entity(entityId_, &options_, 0);
     if (entity_ == nullptr) {
         OFFLOAD_LOG_ERROR("create entity failed, rankId: " << config.rankId << ", worldSize: " << config.worldSize);
         return OFFLOAD_ERROR;
@@ -355,14 +378,8 @@ int32_t AccOffloadSharedDramEntry::MapPool(const offload_config_t &config)
         OFFLOAD_LOG_ERROR("get host gva failed, rankId: " << config.rankId);
         return OFFLOAD_ERROR;
     }
-    /* rankId is the GLOBAL rank: this rank's own slot sits rankId slots deep in
-     * the whole-pool GVA, and hostGva_ must be the global rank0 slot start on
-     * every machine (asserted next by the pool fingerprint exchange). */
+
     base_ = reinterpret_cast<uint8_t *>(hostGva_) + options_.maxDRAMSize * options_.rankId;
-    /* the slot is maxDRAMSize (aligned reserveSize) of virtual address space, but
-     * only hostVASpace (aligned allocSize, per-rank and allowed to differ across
-     * ranks) is physically backed by this rank's slices — malloc/DVA must stay
-     * inside the backed span */
     size_ = options_.hostVASpace;
 
     memMng_ = std::make_shared<AccOffloadMemManager>(base_, size_);
@@ -373,9 +390,6 @@ int32_t AccOffloadSharedDramEntry::MapPool(const offload_config_t &config)
     return OFFLOAD_OK;
 }
 
-/* Whole-pool consistency protocol (see acc_offload_pool_fingerprint.h): one
- * AllGather of the pool fingerprint, local validation, then GroupGatherResult
- * so every rank reaches the same verdict and fails together. */
 int32_t AccOffloadSharedDramEntry::ExchangeAndValidatePoolFingerprint(const offload_config_t &config)
 {
     ock::mf::AscendSocType socType = ock::mf::DlAclApi::GetAscendSocType();
@@ -393,22 +407,7 @@ int32_t AccOffloadSharedDramEntry::ExchangeAndValidatePoolFingerprint(const offl
         return OFFLOAD_ERROR;
     }
 
-    int32_t localRet = ValidatePoolFingerprints(all.data(), static_cast<uint32_t>(all.size()));
-    std::vector<std::pair<int, int>> errList;
-    ret = group_->GroupGatherResult(localRet, errList);
-    if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("pool fingerprint gather result failed, result: " << ret << ", rankId: " << config.rankId
-                                                                            << ", storeUrl: " << storeUrl_);
-        return OFFLOAD_ERROR;
-    }
-    if (!errList.empty()) {
-        OFFLOAD_LOG_ERROR("pool fingerprint check failed on remote ranks, failedCount: "
-                          << errList.size() << ", firstFailedRank: " << errList.front().first << ", errCode: "
-                          << errList.front().second << ", rankId: " << config.rankId << ", poolGva: " << self.poolGva
-                          << ", worldSize: " << self.worldSize << ", storeUrl: " << storeUrl_);
-        return OFFLOAD_ERROR;
-    }
-    return OFFLOAD_OK;
+    return ValidatePoolFingerprints(all.data(), static_cast<uint32_t>(all.size()));
 }
 
 int32_t AccOffloadSharedDramEntry::InitSharedPool(const offload_config_t &config)
@@ -418,6 +417,7 @@ int32_t AccOffloadSharedDramEntry::InitSharedPool(const offload_config_t &config
         OFFLOAD_LOG_ERROR("offload launch load library failed, deviceId: " << config.deviceId);
         return OFFLOAD_ERROR;
     }
+    launchLoaded_ = true;
     ret = ResolveStoreUrl(config);
     if (ret != OFFLOAD_OK) {
         return ret;
@@ -454,11 +454,11 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
     ret = hybm_init(config.deviceId, 0);
     if (ret != OFFLOAD_OK) {
         OFFLOAD_LOG_ERROR("hybm_init failed, result: " << ret << ", deviceId: " << config.deviceId);
-    } else {
-        ret = InitSharedPool(config);
+        return ret;
     }
 
     inited_ = true;
+    ret = InitSharedPool(config);
     if (ret != OFFLOAD_OK) {
         UnInitialize();
         return ret;
@@ -502,11 +502,11 @@ void AccOffloadSharedDramEntry::UnInitialize()
         entity_ = nullptr;
     }
     entryStore_ = nullptr;
-    if (!storeUrl_.empty()) {
-        StoreFactory::DestroyStore(storeUrl_);
-        storeUrl_.clear();
+    ReleaseStore();
+    if (launchLoaded_) {
+        AccOffloadLaunchApi::CleanupLibrary();
+        launchLoaded_ = false;
     }
-    AccOffloadLaunchApi::CleanupLibrary();
     hybm_uninit();
 
     base_ = nullptr;
@@ -553,11 +553,6 @@ int32_t AccOffloadSharedDramEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
         return OFFLOAD_ERROR;
     }
 
-    /* vmm unified mapping: dva == hva == gva (see EntryGather, where
-     * hostGva_ is passed to the kernel as the pool GVA directly), so the
-     * conversion is the identity in this scene. The range check above keeps
-     * the identity honest; a conn-based shared pool would need to resolve
-     * through its registered dva instead. */
     *dvaPtr = hostPtr;
     return OFFLOAD_OK;
 }
@@ -608,17 +603,13 @@ int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint3
         OFFLOAD_LOG_ERROR("invalid rowsPerSlot 0, rankId: " << options_.rankId);
         return OFFLOAD_ERROR;
     }
-    /* the row grid must live inside this rank's physically backed span (size_,
-     * the aligned allocSize) — rows beyond it have no DRAM behind them even
-     * though the slot's virtual size (the stride below) is larger */
+
     if (static_cast<uint64_t>(rowsPerSlot) * entryBytes > size_) {
         OFFLOAD_LOG_ERROR("row grid " << rowsPerSlot << " rows x " << entryBytes << "B does not fit the locally "
                                       << "allocated " << size_ << "B span, rankId: " << options_.rankId);
         return OFFLOAD_ERROR;
     }
-    /* slotStride is the whole-pool slot layout (aligned reserveSize, fingerprint-
-     * checked identical on every rank), NOT this rank's allocSize: the kernel
-     * resolves a global row id against one uniform stride on every rank */
+
     entryTable_ = AccOffloadEntryGatherLayout{0, options_.maxDRAMSize, entryBytes, rowsPerSlot};
     entryTableRegistered_ = true;
     return OFFLOAD_OK;
@@ -632,12 +623,7 @@ int32_t AccOffloadSharedDramEntry::EntryGather(uint64_t dstPtr, uint64_t idsPtr,
                           << ", rankId: " << options_.rankId);
         return OFFLOAD_ERROR;
     }
-    /* dva == hva == gva in the shared pool's unified mapping. hostGva_ is the
-     * whole-pool GVA base (rank 0 slot start) the kernel maps row ids against;
-     * the layout comes from the single registry entry (slotStride is this
-     * pool's slot size, stored at registration). countPtr is a device address
-     * of the uint32 entry count; the kernel reads it, nothing is
-     * dereferenced here. */
+
     AccOffloadEntryGatherLayout layout = entryTable_;
     layout.poolGva = reinterpret_cast<uint64_t>(hostGva_);
     return AccOffloadLaunchApi::AccOffloadEntryGather(dstPtr, idsPtr, countPtr, layout, devIdx);

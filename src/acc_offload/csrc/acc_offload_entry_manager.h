@@ -12,6 +12,7 @@
 #ifndef MEMFABRIC_HYBRID_ACC_OFFLOAD_ENTRY_MANAGER_H
 #define MEMFABRIC_HYBRID_ACC_OFFLOAD_ENTRY_MANAGER_H
 
+#include <atomic>
 #include <mutex>
 #include <memory>
 #include "acc_offload.h"
@@ -62,7 +63,12 @@ public:
     }
 
 private:
+    int32_t CreateEntry(offload_scene_t scene);
+
+private:
+    static std::atomic<uint16_t> nextEntityId_;
     std::mutex mutex_;
+    uint16_t entityId_ = UINT16_MAX;
     bool inited_ = false;
     offload_scene_t scene_ = OFFLOAD_SCENE_LOCAL;
     std::unique_ptr<AccOffloadEntry> entry_;

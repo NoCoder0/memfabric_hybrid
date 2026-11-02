@@ -38,8 +38,7 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
     uint32_t flags = 0;
     int32_t ret = hybm_init(config.deviceId, flags);
     if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("init hybm failed, result: " << ret);
-        hybm_uninit();
+        OFFLOAD_LOG_ERROR("init hybm failed, result: " << ret << ", deviceId: " << config.deviceId);
         return OFFLOAD_ERROR;
     }
 
@@ -73,8 +72,9 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
             ret = OFFLOAD_ERROR;
             break;
         }
+        launchLoaded_ = true;
 
-        entity_ = hybm_create_entity(HYBM_ENTITY_ID_OFFLOAD_BASE, &options, flags);
+        entity_ = hybm_create_entity(entityId_, &options, flags);
         if (entity_ == nullptr) {
             OFFLOAD_LOG_ERROR("create entity failed");
             ret = OFFLOAD_ERROR;
@@ -132,7 +132,10 @@ void AccOffloadLocalDramEntry::UnInitialize()
         hybm_destroy_entity(entity_, flags);
     }
 
-    AccOffloadLaunchApi::CleanupLibrary();
+    if (launchLoaded_) {
+        AccOffloadLaunchApi::CleanupLibrary();
+        launchLoaded_ = false;
+    }
 
     hybm_uninit();
     entity_ = nullptr;

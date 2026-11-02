@@ -30,12 +30,13 @@ target_include_directories(acc_offload_launch_ut_helper PRIVATE
 ADD_UNIT_TEST(test_memfabric
         FILES ${memfabric_src} ${TEST_SRC_PATHS}/ut_main.cpp
                 ${PROJECT_SMEM_SRC_BASE}/csrc/python_wrapper/mk_transfer_adapter/csrc/transfer_util.cpp
-                ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/launch/acc_offload_launch.cpp
+                $<TARGET_OBJECTS:acc_offload_objects>
         INCLUDE_PATHS ${TEST_INCLUDE_PATHS} ${PROJECT_SMEM_SRC_BASE}/csrc/python_wrapper/mk_transfer_adapter/include
                         ${PROJECT_HYBM_SRC_BASE}/ops/hybm_kernel
                         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/include/host
                         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc
                         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/common
+                        ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/allocator
                         ${PROJECT_ACC_OFFLOAD_SRC_BASE}/csrc/launch
         LINK_LIBRARIES ${TEST_DEPEND_LIBS}
         BUILD_FLAGS -fpermissive --coverage

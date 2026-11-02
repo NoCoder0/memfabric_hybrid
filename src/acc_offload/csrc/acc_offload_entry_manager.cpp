@@ -17,6 +17,8 @@
 namespace ock {
 namespace offload {
 
+std::atomic<uint16_t> AccOffloadEntryManager::nextEntityId_{0};
+
 AccOffloadEntryManager &AccOffloadEntryManager::Instance()
 {
     static AccOffloadEntryManager instance;
@@ -36,22 +38,16 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         return OFFLOAD_OK;
     }
 
-    switch (config.scene) {
-        case OFFLOAD_SCENE_LOCAL:
-            entry_ = std::make_unique<AccOffloadLocalDramEntry>();
-            break;
-        case OFFLOAD_SCENE_SHARED:
-            entry_ = std::make_unique<AccOffloadSharedDramEntry>();
-            break;
-        default:
-            OFFLOAD_LOG_ERROR("invalid scene: " << static_cast<uint32_t>(config.scene));
-            return OFFLOAD_ERROR;
+    auto ret = CreateEntry(config.scene);
+    if (ret != OFFLOAD_OK) {
+        return ret;
     }
     scene_ = config.scene;
 
-    auto ret = entry_->Initialize(config);
+    ret = entry_->Initialize(config);
     if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("entry initialize failed, scene: " << static_cast<uint32_t>(scene_) << ", ret: " << ret);
+        OFFLOAD_LOG_ERROR("entry initialize failed, scene: " << static_cast<uint32_t>(scene_)
+                                                             << ", entityId: " << entityId_ << ", ret: " << ret);
         entry_->UnInitialize();
         entry_.reset();
         scene_ = OFFLOAD_SCENE_LOCAL;
@@ -60,14 +56,32 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
 
     inited_ = true;
     OFFLOAD_LOG_INFO("entry manager initialized, scene: "
-                     << static_cast<uint32_t>(scene_) << ", deviceId: " << config.deviceId
-                     << ", reserveSize: " << config.reserveSize << ", allocSize: " << config.allocSize
-                     << ", worldSize: " << config.worldSize << ", rankId: " << config.rankId);
+                     << static_cast<uint32_t>(scene_) << ", deviceId: " << config.deviceId << ", reserveSize: "
+                     << config.reserveSize << ", allocSize: " << config.allocSize << ", worldSize: " << config.worldSize
+                     << ", rankId: " << config.rankId << ", entityId: " << entityId_);
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
+{
+    auto id = nextEntityId_++;
+    if (id >= HYBM_ENTITY_ID_SEGMENT_SIZE) {
+        OFFLOAD_LOG_ERROR("offload entity IDs exhausted, scene: " << static_cast<uint32_t>(scene) << ", id: " << id
+                                                                  << ", limit: " << HYBM_ENTITY_ID_SEGMENT_SIZE);
+        return OFFLOAD_ERROR;
+    }
+    entityId_ = HYBM_ENTITY_ID_OFFLOAD_BASE + id;
+    if (scene == OFFLOAD_SCENE_LOCAL) {
+        entry_ = std::make_unique<AccOffloadLocalDramEntry>(entityId_);
+    } else {
+        entry_ = std::make_unique<AccOffloadSharedDramEntry>(entityId_);
+    }
     return OFFLOAD_OK;
 }
 
 void AccOffloadEntryManager::UnInitialize()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!inited_) {
         return;
     }
@@ -77,7 +91,8 @@ void AccOffloadEntryManager::UnInitialize()
     }
     entry_.reset();
     inited_ = false;
-    OFFLOAD_LOG_INFO("entry manager uninitialized, scene: " << static_cast<uint32_t>(scene_));
+    OFFLOAD_LOG_INFO("entry manager uninitialized, scene: " << static_cast<uint32_t>(scene_)
+                                                            << ", entityId: " << entityId_);
 }
 
 void *AccOffloadEntryManager::MallocHost(size_t size)

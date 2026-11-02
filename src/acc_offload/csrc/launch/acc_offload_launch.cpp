@@ -19,6 +19,7 @@ namespace ock {
 namespace offload {
 
 bool AccOffloadLaunchApi::gLoaded = false;
+std::atomic<uint32_t> AccOffloadLaunchApi::refs{0};
 std::mutex AccOffloadLaunchApi::gMutex;
 void *AccOffloadLaunchApi::libHandle = nullptr;
 const char *AccOffloadLaunchApi::gAccOffloadLibName = "libmf_hybm_accoffload.so";
@@ -62,6 +63,7 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
 {
     std::unique_lock<std::mutex> guard(gMutex);
     if (gLoaded) {
+        ++refs;
         return OFFLOAD_OK;
     }
 
@@ -92,6 +94,7 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
     DL_LOAD_SYM_OPTIONAL(pAccOffloadEntryGather, AccOffloadEntryGatherFunc, libHandle, "AccOffloadEntryGather");
 
     gLoaded = true;
+    refs = 1;
     return OFFLOAD_OK;
 }
 
@@ -99,6 +102,9 @@ void AccOffloadLaunchApi::CleanupLibrary()
 {
     std::lock_guard<std::mutex> guard(gMutex);
     if (!gLoaded) {
+        return;
+    }
+    if (--refs != 0) {
         return;
     }
 

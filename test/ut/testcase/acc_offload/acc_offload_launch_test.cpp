@@ -244,3 +244,19 @@ TEST_F(AccOffloadLaunchTest, GroupPackCopy_NotLoaded_ReturnsUnload)
     EXPECT_EQ(AccOffloadLaunchApi::AccOffloadGroupPackCopy(src, src, &len, &len, &groupList, &groupList, 0),
               OFFLOAD_UNLOAD);
 }
+
+TEST_F(AccOffloadLaunchTest, SharedLibraryRemainsAvailableUntilLastRelease)
+{
+    AccOffloadLaunchApi::gLoaded = true;
+    AccOffloadLaunchApi::refs = 1;
+    AccOffloadLaunchApi::libHandle = nullptr;
+    AccOffloadLaunchApi::pAccOffloadSparseCopy = +[](uint64_t *, uint64_t *, uint32_t *, uint32_t *, uint8_t) {};
+    EXPECT_EQ(AccOffloadLaunchApi::TryLoadLibrary(), OFFLOAD_OK);
+    EXPECT_EQ(AccOffloadLaunchApi::refs.load(), 2U);
+    AccOffloadLaunchApi::CleanupLibrary();
+    EXPECT_EQ(AccOffloadLaunchApi::AccOffloadSparseCopy(nullptr, nullptr, nullptr, nullptr, 0), OFFLOAD_OK);
+    AccOffloadLaunchApi::CleanupLibrary();
+    EXPECT_EQ(AccOffloadLaunchApi::AccOffloadSparseCopy(nullptr, nullptr, nullptr, nullptr, 0), OFFLOAD_UNLOAD);
+    EXPECT_FALSE(AccOffloadLaunchApi::gLoaded);
+    EXPECT_EQ(AccOffloadLaunchApi::refs.load(), 0U);
+}

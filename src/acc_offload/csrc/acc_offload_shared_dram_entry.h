@@ -14,6 +14,7 @@
 
 #include <mutex>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 #include "hybm_def.h"
@@ -28,7 +29,7 @@ namespace offload {
 
 class AccOffloadSharedDramEntry : public AccOffloadEntry {
 public:
-    AccOffloadSharedDramEntry() = default;
+    explicit AccOffloadSharedDramEntry(uint16_t entityId) : entityId_(entityId) {}
     ~AccOffloadSharedDramEntry() override
     {
         UnInitialize();
@@ -71,6 +72,10 @@ private:
 
     int32_t CreateGroupStore(const offload_config_t &config);
 
+    smem::StorePtr AcquireStore(const offload_config_t &config);
+
+    void ReleaseStore();
+
     int32_t CreateEntityAndPool(const offload_config_t &config);
 
     int32_t ExportAndImportEntityInfo();
@@ -79,8 +84,14 @@ private:
 
     int32_t ExchangeAndValidatePoolFingerprint(const offload_config_t &config);
 
+private:
+    static std::mutex gStoreMutex;
+    static std::set<std::string> gStores;
+
     std::mutex mutex_;
+    const uint16_t entityId_;
     bool inited_ = false;
+    bool launchLoaded_ = false;
     bool multiNode_ = false;
     std::string storeUrl_;
     smem::StorePtr entryStore_;

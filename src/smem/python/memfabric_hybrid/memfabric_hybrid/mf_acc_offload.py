@@ -20,6 +20,10 @@ entry_gather_impl = offload.entry_gather
 
 
 def empty(sizes, dtype=None, pin_memory=False):
+    return _empty(offload, sizes, dtype, pin_memory)
+
+
+def _empty(allocator, sizes, dtype, pin_memory):
     import torch
 
     if dtype is None:
@@ -29,10 +33,11 @@ def empty(sizes, dtype=None, pin_memory=False):
     for size in sizes:
         numel *= size
     element_size = numel * torch.tensor([], dtype=dtype).element_size()
-    ptr = offload.malloc(element_size)
+    ptr = allocator.malloc(element_size)
     if ptr == 0:
         raise Exception("malloc failed")
     buf = (ctypes.c_int8 * element_size).from_address(ptr)
+    buf._offload_owner = allocator
     return torch.frombuffer(buf, dtype=dtype).reshape(sizes)
 
 
@@ -61,3 +66,35 @@ def kv_exchange_copy(metaPtr, deviceId):
 def entry_gather(dst, ids, count, deviceId):
     dst_addr = dst.data_ptr() if hasattr(dst, "data_ptr") else int(dst)
     return entry_gather_impl(dst_addr, ids.data_ptr(), count.data_ptr(), deviceId.index)
+
+
+class Offload(offload._Offload):
+    OffloadConfig = offload.OffloadConfig
+    Scene = offload.Scene
+    OFFLOAD_FLAG_GIANT_PAGE = offload.OFFLOAD_FLAG_GIANT_PAGE
+
+    def empty(self, sizes, dtype=None, pin_memory=False):
+        return _empty(self, sizes, dtype, pin_memory)
+
+    def sparse_copy(self, srcPtrs, dstPtrs, lenPtrs, sizePtr, deviceId):
+        return super().sparse_copy(
+            srcPtrs.data_ptr(), dstPtrs.data_ptr(), lenPtrs.data_ptr(), sizePtr.data_ptr(), deviceId.index
+        )
+
+    def group_pack_copy(self, srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList, packedGroupList, deviceId):
+        return super().group_pack_copy(
+            srcPtrs.data_ptr(),
+            dstPtrs.data_ptr(),
+            lenPtrs.data_ptr(),
+            numLocalExpertPtr.data_ptr(),
+            groupList.data_ptr(),
+            packedGroupList.data_ptr(),
+            deviceId.index,
+        )
+
+    def kv_exchange_copy(self, metaPtr, deviceId):
+        return super().kv_exchange_copy(metaPtr.data_ptr(), deviceId.index)
+
+    def entry_gather(self, dst, ids, count, deviceId):
+        dst_addr = dst.data_ptr() if hasattr(dst, "data_ptr") else int(dst)
+        return super().entry_gather(dst_addr, ids.data_ptr(), count.data_ptr(), deviceId.index)

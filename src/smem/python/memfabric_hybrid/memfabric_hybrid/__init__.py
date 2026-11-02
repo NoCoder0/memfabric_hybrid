@@ -67,6 +67,7 @@ from _pymf_hybrid import (
 )
 from _pymf_acc_offload import offload
 from mf_acc_offload import (
+    Offload,
     empty,
     sparse_copy,
     group_pack_copy,
@@ -74,6 +75,7 @@ from mf_acc_offload import (
     entry_gather,
 )
 
+offload.Offload = Offload
 offload.empty = empty
 offload.sparse_copy = sparse_copy
 offload.group_pack_copy = group_pack_copy

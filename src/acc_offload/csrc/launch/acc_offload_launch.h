@@ -12,6 +12,7 @@
 #ifndef MEMFABRIC_HYBRID_ACC_OFFLOAD_LAUNCH_H
 #define MEMFABRIC_HYBRID_ACC_OFFLOAD_LAUNCH_H
 
+#include <atomic>
 #include <mutex>
 #include "acc_offload_define.h"
 
@@ -93,6 +94,7 @@ private:
     static std::string GetSelfLibDir();
     static std::mutex gMutex;
     static bool gLoaded;
+    static std::atomic<uint32_t> refs;
     static void *libHandle;
     static const char *gAccOffloadLibName;
 
