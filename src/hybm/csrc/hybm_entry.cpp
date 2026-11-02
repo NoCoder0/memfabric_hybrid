@@ -154,7 +154,7 @@ HYBM_API void hybm_uninit()
         }
     }
 
-    HybmStreamManager::DestroyAllThreadHybmStream();
+    HybmStreamManager::ExplicitDestroyAllThreadHybmStream();
     DlApi::CleanupLibrary();
     initialized = 0;
 }
