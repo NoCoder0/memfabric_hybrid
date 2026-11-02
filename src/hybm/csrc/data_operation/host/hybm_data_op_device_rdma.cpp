@@ -12,6 +12,8 @@
 #include "hybm_data_op_device_rdma.h"
 
 #include <sys/mman.h>
+#include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <vector>
 #include "dl_acl_api.h"
@@ -29,7 +31,7 @@
 
 namespace {
 constexpr uint64_t RDMA_SWAP_SPACE_SIZE = 0;
-}
+} // namespace
 
 namespace ock {
 namespace mf {
@@ -817,39 +819,54 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalAsync(hybm_batch_copy_params &params,
 Result DataOpDeviceRDMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params, int32_t direction,
                                                  const ExtOptions &options) noexcept
 {
-    // A5(950) host RoCE：走 stream 逐笔异步 + 末尾一次同步。实测 16K 小包下逐笔异步明显优于
-    // AclrtMemcpyBatch 同步批量（同包同参数 3 轮对照，D2RD 1.01 vs 0.61 GB/s），950 不再用批量接口。
-    // 其它 SoC 保持原有批量实现，行为不变。
+    // A5(950) host RoCE：走 stream 逐笔异步 + 末尾一次同步，不使用批量接口。
     if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
         return BatchDataCopyLocalAsync(params, direction, options);
     }
 
+    constexpr uint32_t kCapMin = 2048;
+    static std::atomic<uint32_t> batchCap{4096};
+    static std::atomic<bool> batchCapFixed{false};
+    if (batchCapFixed.load()) {
+        return BatchDataCopyLocalAsync(params, direction, options);
+    }
+
     uint32_t batchNum = params.batchSize;
-    std::vector<aclrtMemcpyBatchAttr> attrs(batchNum);
-    std::vector<size_t> attrsIds(batchNum);
-    std::vector<size_t> sizes(batchNum);
-    size_t idx = 0;
     auto deviceLoc = aclrtMemLocation{static_cast<uint32_t>(HybmGetInitDeviceId()),
                                       aclrtMemLocationType::ACL_MEM_LOCATION_TYPE_DEVICE};
     auto hostLoc = aclrtMemLocation{0, aclrtMemLocationType::ACL_MEM_LOCATION_TYPE_HOST};
-    for (size_t i = 0; i < batchNum; i++) {
-        if (direction == ACL_MEMCPY_HOST_TO_DEVICE) {
-            attrs[i] = aclrtMemcpyBatchAttr{deviceLoc, hostLoc, {}};
-        } else {
-            attrs[i] = aclrtMemcpyBatchAttr{hostLoc, deviceLoc, {}};
+    for (uint32_t beg = 0; beg < batchNum;) {
+        uint32_t cap = std::min(batchCap.load(), batchNum - beg);
+        std::vector<aclrtMemcpyBatchAttr> attrs(cap);
+        std::vector<size_t> attrsIds(cap);
+        std::vector<size_t> sizes(cap);
+        for (uint32_t i = 0; i < cap; i++) {
+            if (direction == ACL_MEMCPY_HOST_TO_DEVICE) {
+                attrs[i] = aclrtMemcpyBatchAttr{deviceLoc, hostLoc, {}};
+            } else {
+                attrs[i] = aclrtMemcpyBatchAttr{hostLoc, deviceLoc, {}};
+            }
+            attrsIds[i] = i;
+            sizes[i] = params.dataSizes[beg + i];
         }
-        attrsIds[i] = idx++;
-        sizes[i] = params.dataSizes[i];
-    }
-    size_t failIdx = 0;
-    auto ret = DlAclApi::AclrtMemcpyBatch(params.destinations, sizes.data(), params.sources, sizes.data(), sizes.size(),
-                                          attrs.data(), attrsIds.data(), attrs.size(), &failIdx);
-    if (ret != 0) {
+        size_t failIdx = 0;
+        auto ret = DlAclApi::AclrtMemcpyBatch(params.destinations + beg, sizes.data(), params.sources + beg,
+                                              sizes.data(), cap, attrs.data(), attrsIds.data(), cap, &failIdx);
+        if (ret == 0) {
+            beg += cap;
+            continue;
+        }
+        if (batchCap.load() > kCapMin) {
+            batchCap = kCapMin;
+            BM_LOG_WARN("AclrtMemcpyBatch failed at cap " << cap << ", ret: " << ret << ", retry with " << kCapMin);
+            continue;
+        }
+        batchCapFixed = true;
         BM_LOG_WARN("AclrtMemcpyBatch failed, ret: " << ret << " failIdx: " << failIdx << " direction: " << direction
                                                      << " batchSize: " << batchNum << ", fallback to async");
         return BatchDataCopyLocalAsync(params, direction, options);
     }
-    return ret;
+    return BM_OK;
 }
 
 void DataOpDeviceRDMA::ClassifyDataAddr(void **globalAddrs, void **localAddrs, const uint64_t *counts,
