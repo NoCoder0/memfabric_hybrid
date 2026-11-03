@@ -149,7 +149,7 @@ cat /usr/local/memfabric_hybrid/latest/version.info
 
 ### 5. AICPU算子安装
 
-A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。
+A2(device_rdma走hcomm、AICPU)和A5需要安装一个AICPU算子。
 
 安装 MemFabric Hybrid whl包后，执行 `mfcli kernel install` 完成部署。
 

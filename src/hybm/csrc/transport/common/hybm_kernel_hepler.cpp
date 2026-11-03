@@ -48,7 +48,8 @@ Result LoadBinaryFromJson(const char *jsonPath, aclrtBinHandle &binHandle)
 
     char resolvedPath[PATH_MAX] = {};
     if (realpath(jsonPath, resolvedPath) == nullptr) {
-        BM_LOG_ERROR("realpath failed for kernel json: " << jsonPath);
+        BM_LOG_ERROR("realpath failed for kernel json: " << jsonPath
+                                                         << ", please install aicpu kernel by `mfcli kernel install`");
         return BM_FILE_NOT_ACCESS;
     }
     if (access(resolvedPath, R_OK) != 0) {
