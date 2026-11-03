@@ -420,7 +420,7 @@ int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params,
 |handle| BM handle                                                              |
 |params| 拷贝数据的相关参数                                                              |
 |t| 数据拷贝类型，L2G/G2L/G2H/H2G，L=local HBM memory，G=global space，H=Host memory |
-|flags| ASYNC_COPY_FLAG:异步执行;COPY_EXTEND_FLAG:A3超节点内使用MTE执行拷贝            |
+|flags| `ASYNC_COPY_FLAG`：异步执行；`COPY_EXTEND_FLAG`：在 A3 超节点内由 AIV 使用 MTE 搬运数据；`COPY_AIV_DIRECT_SDMA_FLAG`：在 A3 超节点内由 AIV 提交 SDMA 队列、由 SDMA 引擎搬运数据。两种加速标记不能同时使用。 |
 |返回值| 成功返回0，失败返回错误码                                                          |
 
 #### smem_bm_copy_batch
@@ -436,7 +436,7 @@ int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params_t *params, s
 |handle|BM handle|
 |params|拷贝数据的相关参数|
 |t|数据拷贝类型，L2G/G2L/G2H/H2G，L=local HBM memory，G=global space，H=Host memory|
-|flags|ASYNC_COPY_FLAG:异步执行;COPY_EXTEND_FLAG:A3超节点内使用MTE执行拷贝|
+|flags|`ASYNC_COPY_FLAG`：异步执行；`COPY_EXTEND_FLAG`：在 A3 超节点内由 AIV 使用 MTE 搬运数据；`COPY_AIV_DIRECT_SDMA_FLAG`：在 A3 超节点内由 AIV 提交 SDMA 队列、由 SDMA 引擎搬运数据。两种加速标记不能同时使用。|
 |返回值|成功返回0，失败返回错误码|
 
 ### 5. 查询接口

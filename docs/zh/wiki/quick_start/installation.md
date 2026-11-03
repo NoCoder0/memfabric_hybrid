@@ -145,6 +145,8 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
+在 NPU 环境安装 run 包时，安装脚本会按现有流程编译 Copy Extend 扩展库。A3 环境还会独立尝试编译 AIV Direct SDMA 扩展库；该扩展未安装、编译失败或当前平台不支持时，不影响 MemFabric 主库和默认 Host SDMA 路径。安装成功的扩展库位于 `MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 指向的目录，只有显式传入对应加速标记时才会使用。
+
 ### 5. AICPU算子安装
 
 A2(device_rdma走hcomm)和A5需要安装一个AICPU算子。

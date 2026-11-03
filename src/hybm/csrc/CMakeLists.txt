@@ -45,6 +45,7 @@ file(GLOB_RECURSE HYBMM_SRC_FILES CONFIGURE_DEPENDS
         ${PROJECT_HYBM_SRC_BASE}/csrc/*.h
 )
 list(FILTER HYBMM_SRC_FILES EXCLUDE REGEX ${PROJECT_HYBM_SRC_BASE}/csrc/copy_extend/*)
+list(FILTER HYBMM_SRC_FILES EXCLUDE REGEX "${PROJECT_HYBM_SRC_BASE}/csrc/copy_aiv_direct_sdma/.*")
 list(FILTER HYBMM_SRC_FILES EXCLUDE REGEX "${PROJECT_HYBM_SRC_BASE}/csrc/driver/npu_direct_rdma/.*")
 list(APPEND HYBMM_SRC_FILES ${PROJECT_UTIL_SRC_BASE}/mf_fault_injection_point.cpp)
 list(APPEND HYBMM_SRC_FILES ${PROJECT_UTIL_SRC_BASE}/mf_fault_injection_point_registry.cpp)

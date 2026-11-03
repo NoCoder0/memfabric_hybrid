@@ -22,6 +22,8 @@ extern "C" {
 
 #define ASYNC_COPY_FLAG  (1UL << (0))
 #define COPY_EXTEND_FLAG (1UL << (1))
+/** A3: AIV submits SDMA SQEs; mutually exclusive with COPY_EXTEND_FLAG. */
+#define COPY_AIV_DIRECT_SDMA_FLAG (1UL << (3))
 /**
  * @brief copies <i>count</i> bytes from memory area <i>src</i> to memory area <i>dest</i>.
  * @param e                [in] entity created by hybm_create_entity

@@ -25,6 +25,7 @@ COMMON_COPTS = GLOBAL_COPTS + [] # DIGEST:1ffebe736dd1defb2b9c7fc3d6774077
 
 HYBM_HEADERS = glob([
     "common/*.h",
+    "copy_aiv_direct_sdma/*.h",
     "data_operation/*.h",
     "data_operation/host/*.h",
     "driver/*.h",

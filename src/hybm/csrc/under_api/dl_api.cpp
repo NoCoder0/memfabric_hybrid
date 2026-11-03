@@ -19,6 +19,7 @@
 #include "dl_op_api.h"
 #include "dl_hcomm_api.h"
 #include "dl_hybm_copy_extend.h"
+#include "dl_hybm_aiv_direct_sdma.h"
 
 namespace ock {
 namespace mf {
@@ -52,6 +53,7 @@ Result DlApi::LoadLibrary(const std::string &libDirPath, const uint32_t gvaVersi
     }
 
     (void)DlHybmExtendApi::TryLoadLibrary();
+    (void)DlHybmAivDirectSdmaApi::TryLoadLibrary();
 #endif
 
     DlHcomApi::LoadLibrary();
@@ -69,6 +71,7 @@ void DlApi::CleanupLibrary()
     DlHcomApi::CleanupLibrary();
     DlHcommApi::CleanupLibrary();
     DlHybmExtendApi::CleanupLibrary();
+    DlHybmAivDirectSdmaApi::CleanupLibrary();
 }
 
 Result DlApi::LoadExtendLibrary(DlApiExtendLibraryType libraryType)

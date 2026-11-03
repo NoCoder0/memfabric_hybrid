@@ -14,6 +14,7 @@
 
 #include <unordered_map>
 #include "mf_rwlock.h"
+#include "hybm_data_op_aiv_direct_sdma.h"
 #include "hybm_data_operator.h"
 #include "hybm_stream.h"
 #include "hybm_rbtree_range_pool.h"
@@ -71,6 +72,7 @@ private:
     Result InnerWait(const ExtOptions &options, int32_t waitId) noexcept;
 
 private:
+    HostAivDirectSdma aivDirectSdma_;
     bool inited_ = false;
 
     void *paramSpace_ = nullptr;

@@ -80,6 +80,7 @@ void HostDataOpSDMA::UnInitialize() noexcept
         return;
     }
 
+    aivDirectSdma_.Close();
     if (paramSpace_ != nullptr) {
         DlHalApi::HalHostUnregisterEx(paramSpace_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
         DlAclApi::AclrtFreeHost(paramSpace_);
@@ -355,6 +356,9 @@ uint64_t HostDataOpSDMA::TransformImportedGva(uint64_t gva) noexcept
 
 Result HostDataOpSDMA::Wait(int32_t waitId) noexcept
 {
+    auto directRet = aivDirectSdma_.Wait();
+    if (directRet != BM_OK)
+        return directRet;
     auto hStream = HybmStreamManager::GetThreadHybmStream(HybmGetInitedLogicDeviceId());
     BM_ASSERT_LOG_AND_RETURN(hStream != nullptr, "hStream is nullptr", BM_ERROR);
     return hStream->Synchronize();
@@ -362,6 +366,7 @@ Result HostDataOpSDMA::Wait(int32_t waitId) noexcept
 
 void HostDataOpSDMA::CleanUp() noexcept
 {
+    aivDirectSdma_.Close();
     HybmStreamManager::DestroyAllThreadHybmStream();
 }
 
@@ -537,6 +542,12 @@ void HostDataOpSDMA::InitG2GStreamTaskV2(StreamTask &task, void *destVA, const v
 
 Result HostDataOpSDMA::CopyG2G(void *destVA, const void *srcVA, size_t count, uint32_t flags, void *stream) noexcept
 {
+    if (flags & COPY_AIV_DIRECT_SDMA_FLAG) {
+        void *source = const_cast<void *>(srcVA);
+        const uint64_t bytes = count;
+        hybm_batch_copy_params params{&source, &destVA, &bytes, 1};
+        return aivDirectSdma_.Copy(params, stream, flags & ~ASYNC_COPY_FLAG);
+    }
     if (flags & COPY_EXTEND_FLAG) {
         void *st = (stream != nullptr) ? stream : HybmStreamManager::GetThreadAclStream();
         auto ret = DlHybmExtendApi::HybmCopyExtend(srcVA, destVA, count, HYBM_EXTEND_CONCURRENT, st);
@@ -563,6 +574,12 @@ Result HostDataOpSDMA::CopyG2GAsync(void *destVA, const void *srcVA, size_t coun
                                     void *stream) noexcept
 {
     BM_LOG_DEBUG("src:" << srcVA << " destVA:" << destVA << " length:" << count << " st:" << stream);
+    if (flags & COPY_AIV_DIRECT_SDMA_FLAG) {
+        void *source = const_cast<void *>(srcVA);
+        const uint64_t bytes = count;
+        hybm_batch_copy_params params{&source, &destVA, &bytes, 1};
+        return aivDirectSdma_.Copy(params, stream, flags | ASYNC_COPY_FLAG);
+    }
     if (stream != nullptr) { // submit task into acl stream
         if (flags & COPY_EXTEND_FLAG) {
             return DlHybmExtendApi::HybmCopyExtend(srcVA, destVA, count, HYBM_EXTEND_CONCURRENT, stream);
@@ -670,6 +687,9 @@ Result HostDataOpSDMA::BatchCopyExtend(hybm_batch_copy_params &params, void *str
 
 Result HostDataOpSDMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
 {
+    if (options.flags & COPY_AIV_DIRECT_SDMA_FLAG) {
+        return aivDirectSdma_.Copy(params, options.stream, options.flags);
+    }
     if ((options.flags & COPY_EXTEND_FLAG)) {
         return BatchCopyExtend(params, options.stream, options.flags);
     }

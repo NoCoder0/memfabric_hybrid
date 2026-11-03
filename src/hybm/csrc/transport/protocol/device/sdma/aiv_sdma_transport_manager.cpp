@@ -34,15 +34,14 @@ namespace mf {
 namespace transport {
 namespace device {
 
-SdmaOpResInfo SdmaTransportManager::opResInfo_ = {};
-void *SdmaTransportManager::opResInfoDevicePtr_ = nullptr;
-std::vector<HostStreamInfo> SdmaTransportManager::streams_;
-
 Result SdmaTransportManager::OpenDevice(const TransportOptions &options)
 {
     BM_LOG_DEBUG(rankId_ << " start to init sdma with " << options);
 
     std::unique_lock<std::mutex> unique_lock(mutex_);
+    if (inited_) {
+        return BM_OK;
+    }
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
 
@@ -106,6 +105,7 @@ Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
     constexpr int infoTypePhyDieId = 19;
     ret = DlAclApi::RtGetDeviceInfo(userId, 0, infoTypePhyDieId, &dieId);
 
+    BM_ASSERT_LOG_AND_RETURN(ret == 0 && dieId >= 0, "get physical die failed", BM_ERROR);
     deviceId_ = static_cast<uint32_t>(dieId);
 
     streams_.resize(channel_num);
@@ -122,14 +122,12 @@ Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
         ret = DlAclApi::AclrtStreamGetId(stream, &streamId);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get stream id " << i << " failed");
-            DlAclApi::AclrtDestroyStream(stream);
             return BM_ERROR;
         }
         uint32_t sqId = 0;
         ret = DlRtApi::RtStreamGetSqid(stream, &sqId);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get sqid " << i << " failed");
-            DlAclApi::AclrtDestroyStream(stream);
             return BM_ERROR;
         }
         uint32_t cqId = 0;
@@ -137,14 +135,12 @@ Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
         ret = DlRtApi::RtStreamGetCqid(stream, &cqId, &logicCqId);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get cqid " << i << " failed");
-            DlAclApi::AclrtDestroyStream(stream);
             return BM_ERROR;
         }
         void *ctx = nullptr;
         ret = DlAclApi::AclrtGetCurrentContext(&ctx);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get context " << i << " failed");
-            DlAclApi::AclrtDestroyStream(stream);
             return BM_ERROR;
         }
         streams_[i].ctx = reinterpret_cast<uint64_t>(ctx);
@@ -162,12 +158,12 @@ Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
 
 Result SdmaTransportManager::MallocSdmaWorkspace(size_t workspaceSize)
 {
-    void *sdmaWorkspace;
+    void *sdmaWorkspace = nullptr;
     auto ret = DlAclApi::AclrtMalloc(&sdmaWorkspace, workspaceSize, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc sdma workspace failed, ret=" << ret, ret);
+    sdmaWorkspaceAddr_ = reinterpret_cast<uint64_t>(sdmaWorkspace);
     ret = DlAclApi::AclrtMemset(sdmaWorkspace, workspaceSize, 0, workspaceSize);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memset sdma workspace failed, ret=" << ret, ret);
-    sdmaWorkspaceAddr_ = reinterpret_cast<uint64_t>(sdmaWorkspace);
     BM_LOG_INFO(rankId_ << " malloc sdmaWorkspace success.");
     return BM_OK;
 }
@@ -183,11 +179,11 @@ Result SdmaTransportManager::CopyHostOpResToDevice()
     size_t streamsSize = streams_.size() * sizeof(HostStreamInfo);
     auto ret = DlAclApi::AclrtMalloc(&streamsDevicePtr, streamsSize, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc streams device ptr failed, ret=" << ret, ret);
+    opResInfo_.streamsAddr = reinterpret_cast<uint64_t>(streamsDevicePtr);
     ret = DlAclApi::AclrtMemcpy(streamsDevicePtr, streamsSize, streams_.data(), streamsSize, ACL_MEMCPY_HOST_TO_DEVICE);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memcpy streams to device failed, ret=" << ret, ret);
 
     opResInfo_.size = streams_.size();
-    opResInfo_.streamsAddr = reinterpret_cast<uint64_t>(streamsDevicePtr);
     opResInfo_.workspaceAddr = sdmaWorkspaceAddr_;
 
     size_t opResSize = sizeof(opResInfo_);
@@ -297,11 +293,6 @@ Result SdmaTransportManager::LaunchSdmaAicpuKernel(uint64_t streams_addr, uint64
 
 Result SdmaTransportManager::CloseDevice()
 {
-    if (!inited_) {
-        BM_LOG_WARN(rankId_ << " sdma not initialized");
-        return BM_OK;
-    }
-
     if (opResInfo_.streamsAddr) {
         (void)DlAclApi::AclrtFree(reinterpret_cast<void *>(opResInfo_.streamsAddr));
         opResInfo_.streamsAddr = 0;
@@ -312,8 +303,9 @@ Result SdmaTransportManager::CloseDevice()
         opResInfoDevicePtr_ = nullptr;
     }
 
-    if (opResInfo_.workspaceAddr) {
-        (void)DlAclApi::AclrtFree(reinterpret_cast<void *>(opResInfo_.workspaceAddr));
+    if (sdmaWorkspaceAddr_) {
+        (void)DlAclApi::AclrtFree(reinterpret_cast<void *>(sdmaWorkspaceAddr_));
+        sdmaWorkspaceAddr_ = 0;
     }
 
     for (auto &stream : streams_) {
@@ -325,6 +317,7 @@ Result SdmaTransportManager::CloseDevice()
     for (size_t i = 0; i < MAX_AIV_PER_NPU; i++) {
         if (notifyArr_[i]) {
             (void)DlAclApi::AclrtDestroyNotify(notifyArr_[i]);
+            notifyArr_[i] = nullptr;
         }
     }
 

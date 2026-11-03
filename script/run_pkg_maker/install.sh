@@ -327,20 +327,8 @@ function install_wheel_package() {
     pip3 install "${wheel_package}" --force-reinstall
 }
 
-function try_install_extend()
+function try_install_copy_extend()
 {
-    bisheng_path=$(which bisheng 2>/dev/null)
-    if [ -z "${bisheng_path}" ]; then
-        print "WARNING" "bisheng Not Found, skip install extend lib."
-        return
-    fi
-
-    if [ "${ascend_version}" == "none" ]; then
-        print "ERROR" "cannot detect ascend chip version (got 'none'), abort install extend lib. \
-Ensure npu-smi is in PATH (source CANN set_env.sh) before running .run."
-        exit 1
-    fi
-
     cce_param="--cce-aicore-arch=dav-c220"
     if [ "${ascend_version}" == "A5" ]; then
         cce_param="--cce-aicore-arch=dav-c310"
@@ -359,6 +347,44 @@ Ensure npu-smi is in PATH (source CANN set_env.sh) before running .run."
     fi
 
     print "INFO" "if accoffload extend lib is needed, run 'mfcli kernel install'."
+}
+
+function try_install_aiv_direct_sdma()
+{
+    if [ "${ascend_version}" != "A3" ]; then
+        print "WARNING" "AIV Direct SDMA is supported only on A3; skip its optional library."
+        return
+    fi
+
+    cd ${script_dir}/../copy_aiv_direct_sdma
+    bisheng -x asc aiv_direct_sdma_kernel.cpp -shared -g -fPIC -O2 -o libmf_hybm_aiv_direct_sdma.so \
+        --cce-aicore-arch=dav-c220
+    exit_code=$?
+
+    if [ $exit_code -eq 0 ]; then
+        cp ./libmf_hybm_aiv_direct_sdma.so ${install_dir}/${pkg_arch}-${os1}/lib64
+        print "INFO" "install AIV Direct SDMA library success"
+    else
+        print "WARNING" "install AIV Direct SDMA library failed; Host SDMA and other transports remain available"
+    fi
+}
+
+function try_install_extend()
+{
+    bisheng_path=$(which bisheng 2>/dev/null)
+    if [ -z "${bisheng_path}" ]; then
+        print "WARNING" "bisheng Not Found, skip install extend lib."
+        return
+    fi
+
+    if [ "${ascend_version}" == "none" ]; then
+        print "ERROR" "cannot detect ascend chip version (got 'none'), abort install extend lib. \
+Ensure npu-smi is in PATH (source CANN set_env.sh) before running .run."
+        exit 1
+    fi
+
+    try_install_copy_extend
+    try_install_aiv_direct_sdma
 }
 
 function install_to_path()

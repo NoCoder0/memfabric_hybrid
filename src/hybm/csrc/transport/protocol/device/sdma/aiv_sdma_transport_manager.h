@@ -27,6 +27,7 @@
 #include "hybm_transport_manager.h"
 #include "device_chip_info.h"
 #include "dl_op_api.h"
+#include "dl_acl_api.h"
 
 namespace ock {
 namespace mf {
@@ -141,6 +142,11 @@ public:
     }
 
     uint64_t GetSdmaWorkSpaceAddr() const override;
+    Result WaitNotify(uint32_t workerIndex, void *stream)
+    {
+        return workerIndex < MAX_AIV_PER_NPU ? DlAclApi::AclrtWaitAndResetNotify(notifyArr_[workerIndex], stream, 30)
+                                             : BM_INVALID_PARAM;
+    }
 
     const std::string &GetNic() const override
     {
@@ -163,12 +169,12 @@ private:
     uint32_t rankId_{0};
     uint32_t rankCount_{1};
     uint32_t deviceId_{0};
-    uint64_t sdmaWorkspaceAddr_;
-    void *notifyArr_[MAX_AIV_PER_NPU];
+    uint64_t sdmaWorkspaceAddr_{0};
+    void *notifyArr_[MAX_AIV_PER_NPU]{};
 
-    static SdmaOpResInfo opResInfo_;
-    static void *opResInfoDevicePtr_;
-    static std::vector<HostStreamInfo> streams_;
+    SdmaOpResInfo opResInfo_{};
+    void *opResInfoDevicePtr_{nullptr};
+    std::vector<HostStreamInfo> streams_;
 };
 } // namespace device
 } // namespace transport

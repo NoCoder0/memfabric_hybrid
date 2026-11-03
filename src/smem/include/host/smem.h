@@ -24,8 +24,10 @@ extern "C" {
 #define ASYNC_COPY_FLAG                  (1UL << (0))
 #define COPY_EXTEND_FLAG                 (1UL << (1))
 #define SMEM_BM_FLAG_USE_EXTERNAL_STREAM (1UL << (2))
-#define SMEM_WORLD_SIZE_MAX              1024U
-#define SMEM_INVALID_DEV_ID              (-1)
+/** A3: AIV submits SDMA SQEs; mutually exclusive with COPY_EXTEND_FLAG. */
+#define COPY_AIV_DIRECT_SDMA_FLAG (1UL << (3))
+#define SMEM_WORLD_SIZE_MAX       1024U
+#define SMEM_INVALID_DEV_ID       (-1)
 
 /* define smem_create_config_store flag */
 #define SMEM_STORE_SKIP_RECOVER (1UL << (0))

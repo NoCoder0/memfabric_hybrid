@@ -305,10 +305,6 @@ class SdmaTransportManagerTest : public testing::Test {
 public:
     void SetUp() override
     {
-        // Reset static members
-        SdmaTransportManager::opResInfo_ = {};
-        SdmaTransportManager::opResInfoDevicePtr_ = nullptr;
-        SdmaTransportManager::streams_.clear();
         g_mockDeviceAddr = 0x100000000000ULL;
     }
 
@@ -316,10 +312,6 @@ public:
     {
         GlobalMockObject::verify();
         GlobalMockObject::reset();
-        // Cleanup static members
-        SdmaTransportManager::opResInfo_ = {};
-        SdmaTransportManager::opResInfoDevicePtr_ = nullptr;
-        SdmaTransportManager::streams_.clear();
     }
 
     void SetupMockOk()
@@ -366,7 +358,7 @@ TEST_F(SdmaTransportManagerTest, OpenDeviceSuccess)
     EXPECT_TRUE(mgr.inited_);
     EXPECT_EQ(mgr.rankId_, 0U);
     EXPECT_EQ(mgr.rankCount_, 1U);
-    EXPECT_FALSE(SdmaTransportManager::streams_.empty());
+    EXPECT_FALSE(mgr.streams_.empty());
 }
 
 TEST_F(SdmaTransportManagerTest, OpenDeviceCreateStreamFail)
@@ -465,8 +457,8 @@ TEST_F(SdmaTransportManagerTest, CloseDeviceInited)
     ret = mgr.CloseDevice();
     EXPECT_EQ(ret, BM_OK);
     EXPECT_FALSE(mgr.inited_);
-    EXPECT_TRUE(SdmaTransportManager::streams_.empty());
-    EXPECT_EQ(SdmaTransportManager::opResInfoDevicePtr_, nullptr);
+    EXPECT_TRUE(mgr.streams_.empty());
+    EXPECT_EQ(mgr.opResInfoDevicePtr_, nullptr);
 }
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsSuccess)
@@ -485,7 +477,7 @@ TEST_F(SdmaTransportManagerTest, CreateStarsStreamsSuccess)
     auto ret = mgr.CreateStarsStreams(2);
 
     EXPECT_EQ(ret, BM_OK);
-    EXPECT_EQ(SdmaTransportManager::streams_.size(), 2U);
+    EXPECT_EQ(mgr.streams_.size(), 2U);
 }
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetContextFail)
@@ -550,14 +542,14 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceSuccess)
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x1000ULL;
-    SdmaTransportManager::streams_.resize(TEST_STREAM_COUNT);
+    mgr.streams_.resize(TEST_STREAM_COUNT);
 
     auto ret = mgr.CopyHostOpResToDevice();
 
     EXPECT_EQ(ret, BM_OK);
-    EXPECT_NE(SdmaTransportManager::opResInfo_.streamsAddr, 0ULL);
-    EXPECT_EQ(SdmaTransportManager::opResInfo_.workspaceAddr, 0x1000ULL);
-    EXPECT_NE(SdmaTransportManager::opResInfoDevicePtr_, nullptr);
+    EXPECT_NE(mgr.opResInfo_.streamsAddr, 0ULL);
+    EXPECT_EQ(mgr.opResInfo_.workspaceAddr, 0x1000ULL);
+    EXPECT_NE(mgr.opResInfoDevicePtr_, nullptr);
 }
 
 TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMallocFail)
@@ -568,7 +560,7 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMallocFail)
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x1000ULL;
-    SdmaTransportManager::streams_.resize(TEST_STREAM_COUNT);
+    mgr.streams_.resize(TEST_STREAM_COUNT);
 
     auto ret = mgr.CopyHostOpResToDevice();
 
@@ -864,7 +856,7 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMemcpyFail)
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x1000ULL;
-    SdmaTransportManager::streams_.resize(TEST_STREAM_COUNT);
+    mgr.streams_.resize(TEST_STREAM_COUNT);
 
     auto ret = mgr.CopyHostOpResToDevice();
 
