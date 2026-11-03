@@ -35,6 +35,16 @@ typedef enum {
  */
 #define OFFLOAD_FLAG_GIANT_PAGE (1U << 0)
 
+/**
+ * @brief offload_config_t.flags bits.
+ *
+ * OFFLOAD_FLAG_HOST_MEM: host-memory entry (init/malloc/register split),
+ * reachable only through the multi-instance API (python offload.Offload) —
+ * offload went multi-instance on master and the pool is per-instance, so no
+ * singleton C entry points are kept for it.
+ */
+#define OFFLOAD_FLAG_HOST_MEM (1U << 1)
+
 /* Upper bound on the entry_gather entry size: one entry must fit one UB
  * ping-pong slot inside the AIV kernel (ENTRY_GATHER_UB_ONCE_SIZE / 2 —
  * 120KB on A5, 88KB on A3). The bound is platform-independent: 64KB sits

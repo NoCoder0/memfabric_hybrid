@@ -68,7 +68,7 @@ void DefineAccOffloadConfig(py::module_ &m)
                        "(< world_size) currently accepts A3 (Ascend910C) nodes only")
         .def_readwrite("flags", &offload_config_t::flags, "optional flags, see OFFLOAD_FLAG_xxx");
     m.attr("OFFLOAD_FLAG_GIANT_PAGE") = py::int_(OFFLOAD_FLAG_GIANT_PAGE);
-    ;
+    m.attr("OFFLOAD_FLAG_HOST_MEM") = py::int_(OFFLOAD_FLAG_HOST_MEM);
 }
 
 void DefineAccOffloadApi(py::module_ &m)
@@ -168,15 +168,20 @@ void DefineAccOffloadInstanceApi(py::module_ &m)
     cls.def(
         "malloc",
         [](AccOffloadEntryManager &self, uint64_t size, uint64_t flags) -> uint64_t {
-            (void)flags;
+            if (self.IsHostMem()) {
+                return self.HostMalloc(size, flags);
+            }
             return reinterpret_cast<uint64_t>(self.MallocHost(size));
         },
         py::call_guard<py::gil_scoped_release>(), py::arg("size"), py::arg("flags") = 0);
     cls.def(
         "free",
-        [](AccOffloadEntryManager &self, uint64_t ptr, uint64_t flags) {
-            (void)flags;
+        [](AccOffloadEntryManager &self, uint64_t ptr, uint64_t flags) -> int32_t {
+            if (self.IsHostMem()) {
+                return self.HostFree(ptr, flags);
+            }
             self.FreeHost(reinterpret_cast<void *>(ptr));
+            return 0;
         },
         py::call_guard<py::gil_scoped_release>(), py::arg("ptr"), py::arg("flags") = 0);
     cls.def(
@@ -186,6 +191,19 @@ void DefineAccOffloadInstanceApi(py::module_ &m)
             return self.GetDva(ptr, &dva) == 0 ? dva : 0;
         },
         py::call_guard<py::gil_scoped_release>(), py::arg("ptr"));
+    cls.def("host_register", &AccOffloadEntryManager::HostRegister, py::call_guard<py::gil_scoped_release>(),
+            py::arg("ptr"), "idempotent in-pool check — the whole pool was registered at initialize");
+    cls.def(
+        "host_get_device_pointer",
+        [](AccOffloadEntryManager &self, uint64_t hostPtr) -> uint64_t {
+            uint64_t dva = 0;
+            if (self.HostGetDevicePtr(hostPtr, &dva) != 0) {
+                return 0;
+            }
+            return dva;
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("ptr"),
+        "returns the device address of any address inside the pre-registered host pool");
     DefineAccOffloadInstanceCopyApi(cls);
 }
 

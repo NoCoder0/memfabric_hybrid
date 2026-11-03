@@ -12,6 +12,7 @@
 #include "acc_offload_entry_manager.h"
 #include "acc_offload_local_dram_entry.h"
 #include "acc_offload_shared_dram_entry.h"
+#include "acc_offload_host_mem_entry.h"
 #include "acc_offload_define.h"
 
 namespace ock {
@@ -38,8 +39,10 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         return OFFLOAD_OK;
     }
 
+    hostMem_ = (config.flags & OFFLOAD_FLAG_HOST_MEM) != 0U;
     auto ret = CreateEntry(config.scene);
     if (ret != OFFLOAD_OK) {
+        hostMem_ = false;
         return ret;
     }
     scene_ = config.scene;
@@ -51,6 +54,7 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         entry_->UnInitialize();
         entry_.reset();
         scene_ = OFFLOAD_SCENE_LOCAL;
+        hostMem_ = false;
         return ret;
     }
 
@@ -58,7 +62,7 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
     OFFLOAD_LOG_INFO("entry manager initialized, scene: "
                      << static_cast<uint32_t>(scene_) << ", deviceId: " << config.deviceId << ", reserveSize: "
                      << config.reserveSize << ", allocSize: " << config.allocSize << ", worldSize: " << config.worldSize
-                     << ", rankId: " << config.rankId << ", entityId: " << entityId_);
+                     << ", rankId: " << config.rankId << ", hostMem: " << hostMem_ << ", entityId: " << entityId_);
     return OFFLOAD_OK;
 }
 
@@ -71,10 +75,15 @@ int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
         return OFFLOAD_ERROR;
     }
     entityId_ = HYBM_ENTITY_ID_OFFLOAD_BASE + id;
-    if (scene == OFFLOAD_SCENE_LOCAL) {
+    if (hostMem_) {
+        entry_ = std::make_unique<AccOffloadHostMemEntry>(entityId_);
+    } else if (scene == OFFLOAD_SCENE_LOCAL) {
         entry_ = std::make_unique<AccOffloadLocalDramEntry>(entityId_);
-    } else {
+    } else if (scene == OFFLOAD_SCENE_SHARED) {
         entry_ = std::make_unique<AccOffloadSharedDramEntry>(entityId_);
+    } else {
+        OFFLOAD_LOG_ERROR("invalid scene: " << static_cast<uint32_t>(scene) << ", hostMem: " << hostMem_);
+        return OFFLOAD_ERROR;
     }
     return OFFLOAD_OK;
 }
@@ -91,6 +100,7 @@ void AccOffloadEntryManager::UnInitialize()
     }
     entry_.reset();
     inited_ = false;
+    hostMem_ = false;
     OFFLOAD_LOG_INFO("entry manager uninitialized, scene: " << static_cast<uint32_t>(scene_)
                                                             << ", entityId: " << entityId_);
 }
@@ -178,6 +188,42 @@ int32_t AccOffloadEntryManager::EntryGather(uint64_t dstPtr, uint64_t idsPtr, ui
         return OFFLOAD_ERROR;
     }
     return entry_->EntryGather(dstPtr, idsPtr, countPtr, devIdx);
+}
+
+uint64_t AccOffloadEntryManager::HostMalloc(uint64_t size, uint64_t flags)
+{
+    if (entry_ == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null, host malloc failed, size: " << size);
+        return 0;
+    }
+    return entry_->HostMalloc(size, flags);
+}
+
+int32_t AccOffloadEntryManager::HostRegister(uint64_t hostPtr)
+{
+    if (entry_ == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null, host register failed, hostPtr: " << hostPtr);
+        return OFFLOAD_ERROR;
+    }
+    return entry_->HostRegister(hostPtr);
+}
+
+int32_t AccOffloadEntryManager::HostGetDevicePtr(uint64_t hostPtr, uint64_t *dvaPtr)
+{
+    if (entry_ == nullptr || dvaPtr == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null or dvaPtr is null, host get device ptr failed, hostPtr: " << hostPtr);
+        return OFFLOAD_ERROR;
+    }
+    return entry_->HostGetDevicePtr(hostPtr, dvaPtr);
+}
+
+int32_t AccOffloadEntryManager::HostFree(uint64_t hostPtr, uint64_t flags)
+{
+    if (entry_ == nullptr) {
+        OFFLOAD_LOG_ERROR("entry is null, host free failed, hostPtr: " << hostPtr);
+        return OFFLOAD_ERROR;
+    }
+    return entry_->HostFree(hostPtr, flags);
 }
 
 } // namespace offload

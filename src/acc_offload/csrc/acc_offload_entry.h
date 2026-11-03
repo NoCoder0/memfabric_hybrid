@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <cstdint>
 #include "acc_offload.h"
+#include "acc_offload_logger.h"
 
 namespace ock {
 namespace offload {
@@ -36,18 +37,72 @@ public:
         return -1;
     }
 
+    virtual uint64_t HostMalloc(uint64_t size, uint64_t flags)
+    {
+        (void)size;
+        (void)flags;
+        return 0;
+    }
+
+    virtual int32_t HostRegister(uint64_t hostPtr)
+    {
+        (void)hostPtr;
+        return -1;
+    }
+
+    virtual int32_t HostGetDevicePtr(uint64_t hostPtr, uint64_t *dvaPtr)
+    {
+        (void)hostPtr;
+        (void)dvaPtr;
+        return -1;
+    }
+
+    virtual int32_t HostFree(uint64_t hostPtr, uint64_t flags)
+    {
+        (void)hostPtr;
+        (void)flags;
+        return -1;
+    }
+
+    /* optional per entry: entries that do not override reject with a logged error */
     virtual int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
-                               uint8_t devIdx) = 0;
+                               uint8_t devIdx)
+    {
+        (void)srcPtrs;
+        (void)dstPtrs;
+        (void)lenPtrs;
+        (void)sizePtr;
+        (void)devIdx;
+        OFFLOAD_LOG_ERROR("sparse copy is not supported by this pool entry");
+        return -1;
+    }
 
     virtual int32_t GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *numLocalExpertPtr,
-                                  int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx) = 0;
+                                  int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx)
+    {
+        (void)srcPtrs;
+        (void)dstPtrs;
+        (void)lenPtrs;
+        (void)numLocalExpertPtr;
+        (void)groupList;
+        (void)packedGroupList;
+        (void)devIdx;
+        OFFLOAD_LOG_ERROR("group pack copy is not supported by this pool entry");
+        return -1;
+    }
 
-    virtual int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx) = 0;
+    virtual int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx)
+    {
+        (void)metaPtr;
+        (void)devIdx;
+        OFFLOAD_LOG_ERROR("kv exchange copy is not supported by this pool entry");
+        return -1;
+    }
 
     virtual int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot)
     {
-        (void)entryBytes;
         (void)rowsPerSlot;
+        OFFLOAD_LOG_ERROR("entry table is not supported by this pool entry, entryBytes: " << entryBytes);
         return -1;
     }
 
@@ -56,7 +111,7 @@ public:
         (void)dstPtr;
         (void)idsPtr;
         (void)countPtr;
-        (void)devIdx;
+        OFFLOAD_LOG_ERROR("entry gather is not supported by this pool entry, deviceId: " << devIdx);
         return -1;
     }
 };

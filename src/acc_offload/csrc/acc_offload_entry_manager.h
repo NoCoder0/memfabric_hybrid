@@ -52,6 +52,14 @@ public:
 
     int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx);
 
+    uint64_t HostMalloc(uint64_t size, uint64_t flags);
+
+    int32_t HostRegister(uint64_t hostPtr);
+
+    int32_t HostGetDevicePtr(uint64_t hostPtr, uint64_t *dvaPtr);
+
+    int32_t HostFree(uint64_t hostPtr, uint64_t flags);
+
     inline bool IsInitialized() const
     {
         return inited_;
@@ -62,6 +70,11 @@ public:
         return scene_;
     }
 
+    inline bool IsHostMem() const
+    {
+        return inited_ && hostMem_;
+    }
+
 private:
     int32_t CreateEntry(offload_scene_t scene);
 
@@ -70,6 +83,7 @@ private:
     std::mutex mutex_;
     uint16_t entityId_ = UINT16_MAX;
     bool inited_ = false;
+    bool hostMem_ = false;
     offload_scene_t scene_ = OFFLOAD_SCENE_LOCAL;
     std::unique_ptr<AccOffloadEntry> entry_;
 };
