@@ -121,6 +121,8 @@ public:
         return asyncDispatcher_.get();
     }
 
+    bool DetachConsumerCallbacks(uint64_t timeoutMs) noexcept;
+
     const std::string &GetServerIp() const noexcept
     {
         return serverIp_;

@@ -51,6 +51,17 @@ SmemGroupCommandAsyncDispatcher::~SmemGroupCommandAsyncDispatcher() noexcept
     Stop();
 }
 
+bool SmemGroupCommandAsyncDispatcher::DetachCallbacks(uint64_t timeoutMs) noexcept
+{
+    bool drained = callbackGuard_.Close(timeoutMs);
+    onAddToWhitelist_ = nullptr;
+    onRemoveFromWhitelist_ = nullptr;
+    onEstablishConnection_ = nullptr;
+    onQueryLinkState_ = nullptr;
+    onAddSlices_ = nullptr;
+    return drained;
+}
+
 bool SmemGroupCommandAsyncDispatcher::Start() noexcept
 {
     if (started_) {
@@ -214,7 +225,11 @@ void SmemGroupCommandAsyncDispatcher::BackgroundAddWhiteList(const WhitelistRequ
         return;
     }
 
-    int overallRet = onAddToWhitelist_ ? onAddToWhitelist_(req.rankId, req.others, reqId) : -1;
+    int overallRet = -1;
+    if (callbackGuard_.TryEnter()) {
+        SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
+        overallRet = onAddToWhitelist_ ? onAddToWhitelist_(req.rankId, req.others, reqId) : -1;
+    }
     {
         const std::string peers = JoinRankIds(req.others);
         if (overallRet != 0) {
@@ -245,7 +260,11 @@ void SmemGroupCommandAsyncDispatcher::BackgroundRmvWhiteList(const WhitelistRequ
         return;
     }
 
-    int overallRet = onRemoveFromWhitelist_ ? onRemoveFromWhitelist_(req.rankId, req.others, reqId) : -1;
+    int overallRet = -1;
+    if (callbackGuard_.TryEnter()) {
+        SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
+        overallRet = onRemoveFromWhitelist_ ? onRemoveFromWhitelist_(req.rankId, req.others, reqId) : -1;
+    }
     if (overallRet != 0) {
         SM_LOG_ERROR("[GM][Client][Recv] RmvWhiteList FAIL r=" << req.rankId << " ret=" << overallRet);
     } else {
@@ -266,7 +285,11 @@ void SmemGroupCommandAsyncDispatcher::BackgroundRmvWhiteList(const WhitelistRequ
 void SmemGroupCommandAsyncDispatcher::BackgroundEstablishConnection(const ConnEstablishRequest &req,
                                                                     uint64_t reqId) noexcept
 {
-    int overallRet = onEstablishConnection_ ? onEstablishConnection_(req.rankId, req.peers, reqId) : -1;
+    int overallRet = -1;
+    if (callbackGuard_.TryEnter()) {
+        SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
+        overallRet = onEstablishConnection_ ? onEstablishConnection_(req.rankId, req.peers, reqId) : -1;
+    }
     {
         const std::string peers = JoinRankIds(req.peers);
         if (overallRet != 0) {
@@ -290,19 +313,25 @@ void SmemGroupCommandAsyncDispatcher::BackgroundEstablishConnection(const ConnEs
 void SmemGroupCommandAsyncDispatcher::BackgroundQueryLinkState(uint64_t reqId) noexcept
 {
     std::vector<LinkStateEntry> entries;
-    if (onQueryLinkState_) {
-        entries = onQueryLinkState_();
+    if (callbackGuard_.TryEnter()) {
+        SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
+        if (onQueryLinkState_) {
+            entries = onQueryLinkState_();
+        }
     }
     SM_LOG_INFO("[GM][Client][Send] QueryLinkState reqId=" << reqId << " entries=" << entries.size());
 }
 
 void SmemGroupCommandAsyncDispatcher::BackgroundAddSlices(const AddSlicesRequest &req, uint64_t reqId) noexcept
 {
-    if (onAddSlices_) {
-        int ret = onAddSlices_(req.extendingRankId, req.newSlices, reqId);
-        if (ret != 0) {
-            // 仅结果追踪：瞬态（P2P 未就绪）与真实错误（如 payload 损坏）的根因均已在回调内按级别记录
-            SM_LOG_WARN("[GM][Client][Recv] AddSlices FAIL ext=" << req.extendingRankId << " ret=" << ret);
+    if (callbackGuard_.TryEnter()) {
+        SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
+        if (onAddSlices_) {
+            int ret = onAddSlices_(req.extendingRankId, req.newSlices, reqId);
+            if (ret != 0) {
+                // 仅结果追踪：瞬态（P2P 未就绪）与真实错误（如 payload 损坏）的根因均已在回调内按级别记录
+                SM_LOG_WARN("[GM][Client][Recv] AddSlices FAIL ext=" << req.extendingRankId << " ret=" << ret);
+            }
         }
     }
     SM_LOG_INFO("[GM][Client][Recv] AddSlices ext=" << req.extendingRankId << " slices=" << req.newSlices.size());

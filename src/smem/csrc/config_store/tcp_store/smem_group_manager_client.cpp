@@ -55,10 +55,20 @@ int SmemGroupManagerClient::EstablishConnection(uint32_t rankId, const std::vect
     return 0;
 }
 
+bool SmemGroupManagerClient::DetachCallbacks(uint64_t timeoutMs) noexcept
+{
+    bool drained = callbackGuard_.Close(timeoutMs);
+    onPromoteToActive_ = nullptr;
+    return drained;
+}
+
 int SmemGroupManagerClient::PromoteToActive(uint32_t rankId)
 {
-    if (onPromoteToActive_) {
-        return onPromoteToActive_(rankId);
+    if (callbackGuard_.TryEnter()) {
+        SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
+        if (onPromoteToActive_) {
+            return onPromoteToActive_(rankId);
+        }
     }
     STORE_LOG_INFO("[GM][Client][Recv] PromoteToActive rankId=" << rankId);
     return 0;

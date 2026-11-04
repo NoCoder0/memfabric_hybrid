@@ -237,6 +237,16 @@ void SmemBmEntry::Uninitialize()
         joined_ = false;
     }
 
+    if (_configStore != nullptr) {
+        auto coreStore = _configStore->GetCoreStore();
+        auto *tcpStore = dynamic_cast<TcpConfigStore *>(coreStore.Get());
+        const uint64_t drainTimeoutMs = SmemGetCallbackDrainTimeoutMs();
+        if (tcpStore != nullptr && !tcpStore->DetachConsumerCallbacks(drainTimeoutMs)) {
+            SM_LOG_ERROR("wait in-flight async callbacks drain timeout(" << drainTimeoutMs
+                                                                         << "ms), rank: " << options_.rank);
+        }
+    }
+
     uint32_t flags = 0;
     for (auto slice : slices_) {
         hybm_free_local_memory(entity_, slice, 1, flags);

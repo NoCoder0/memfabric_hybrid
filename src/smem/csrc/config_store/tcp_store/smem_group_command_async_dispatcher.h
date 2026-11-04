@@ -20,6 +20,7 @@
 #include <functional>
 
 #include "smem_group_manager.h"
+#include "smem_async_callback_guard.h"
 
 namespace ock::smem {
 
@@ -56,28 +57,35 @@ public:
 
     void SetWhitelistCallback(WhitelistCallback cb) noexcept
     {
+        callbackGuard_.Open();
         onAddToWhitelist_ = std::move(cb);
     }
 
     void SetRemoveWhitelistCallback(WhitelistCallback cb) noexcept
     {
+        callbackGuard_.Open();
         onRemoveFromWhitelist_ = std::move(cb);
     }
 
     void SetConnectionCallback(ConnectionCallback cb) noexcept
     {
+        callbackGuard_.Open();
         onEstablishConnection_ = std::move(cb);
     }
 
     void SetLinkStateQueryCallback(LinkStateQueryCallback cb) noexcept
     {
+        callbackGuard_.Open();
         onQueryLinkState_ = std::move(cb);
     }
 
     void SetAddSlicesCallback(AddSlicesCallback cb) noexcept
     {
+        callbackGuard_.Open();
         onAddSlices_ = std::move(cb);
     }
+
+    bool DetachCallbacks(uint64_t timeoutMs) noexcept;
 
     void EnqueueAddToWhitelist(uint32_t rankId, std::vector<RankFullInfo> &&others, uint64_t reqId) noexcept;
     void EnqueueRemoveFromWhitelist(uint32_t rankId, std::vector<RankFullInfo> &&others, uint64_t reqId) noexcept;
@@ -141,6 +149,7 @@ private:
     uint64_t queryLinkStateReqId_{0};
     bool hasQueryLinkState_{false};
 
+    SmemAsyncCallbackGuard callbackGuard_;
     WhitelistCallback onAddToWhitelist_;
     WhitelistCallback onRemoveFromWhitelist_;
     ConnectionCallback onEstablishConnection_;

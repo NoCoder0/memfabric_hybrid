@@ -502,17 +502,31 @@ void SmemTransEntry::UnInitialize()
     // 在锁内摘除 self connection（读侧同一把锁取副本），实际析构放到锁外，
     // 避免在 connMutex_ 内执行 Leave/回收窗口等其它加锁操作
     SmemTransConnectionPtr selfConn;
+    std::vector<SmemTransConnectionPtr> conns;
     {
         std::lock_guard<std::mutex> lock(connMutex_);
         // 从 connections_ 移除各 uniqueId 记录时同步归还其 override rank 引用；
         // 条目析构释放连接引用，各连接 UnInitialize 回收其 override-rank 窗口
         for (const auto &kv : connections_) {
+            conns.push_back(kv.second);
             ReleaseOverrideRank(kv.first);
         }
         connections_.clear();
         selfConn = selfConnection_; // 先持一份引用再摘除成员，保证真正的析构发生在锁外
         selfConnection_ = nullptr;
         connCv_.notify_all();
+    }
+    // 显式 UnInitialize（而非只依赖析构）：连接可能仍被在飞传输任务以 SmRef 持有，
+    // 必须先关闸并摘除 store 侧回调，保证下面 hybm_destroy_entity 之后不会再有回调进来；
+    // 关闸要等待在飞回调退出，不能放在 connMutex_ 内，否则回调侧取同一把锁会互等
+    for (auto &conn : conns) {
+        if (conn != nullptr) {
+            conn->UnInitialize();
+        }
+    }
+    conns.clear();
+    if (selfConn != nullptr) {
+        selfConn->UnInitialize(); // self connection 先离开本地组并回收窗口
     }
     selfConn = nullptr; // self connection leaves the local group and recycles its windows
     {

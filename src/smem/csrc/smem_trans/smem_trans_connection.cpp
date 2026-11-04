@@ -68,6 +68,10 @@ int32_t SmemTransConnection::Initialize()
 
 void SmemTransConnection::UnInitialize()
 {
+    bool expected = false;
+    if (!uninitialized_.compare_exchange_strong(expected, true)) {
+        return; // entry 显式调用后析构函数会再进一次，排空只做一遍
+    }
     // Perform a graceful group leave so that peer ranks can synchronously
     // clean up their imported state via OnRemoveFromWhitelist.
     if (joined_.load()) {
@@ -189,13 +193,10 @@ void SmemTransConnection::ClearStoreCallbacks() noexcept
     if (tcpStore == nullptr) {
         return;
     }
-    auto *asyncMgr = tcpStore->GetAsyncDispatcher();
-    if (asyncMgr != nullptr) {
-        asyncMgr->SetWhitelistCallback(nullptr);
-        asyncMgr->SetRemoveWhitelistCallback(nullptr);
-        asyncMgr->SetConnectionCallback(nullptr);
-        asyncMgr->SetLinkStateQueryCallback(nullptr);
-        asyncMgr->SetAddSlicesCallback(nullptr);
+    const uint64_t drainTimeoutMs = SmemGetCallbackDrainTimeoutMs();
+    if (!tcpStore->DetachConsumerCallbacks(drainTimeoutMs)) {
+        SM_LOG_ERROR("wait in-flight async callbacks drain timeout(" << drainTimeoutMs << "ms), name: " << name_
+                                                                     << " rankId: " << rankId_);
     }
     auto *groupMgr = static_cast<SmemGroupManager *>(tcpStore);
     groupMgr->SetExecutor(SmemGroupManagerClientPtr());

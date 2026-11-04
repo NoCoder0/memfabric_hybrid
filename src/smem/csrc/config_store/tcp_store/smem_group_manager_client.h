@@ -18,6 +18,7 @@
 
 #include "smem_group_manager_def.h"
 #include "smem_ref.h"
+#include "smem_async_callback_guard.h"
 
 namespace ock {
 namespace smem {
@@ -56,6 +57,8 @@ public:
     int QueryLinkState(uint32_t rankId);
     int AddSlices(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId);
 
+    bool DetachCallbacks(uint64_t timeoutMs) noexcept;
+
     const std::vector<LinkStateEntry> &GetLastQueryLinkStateEntries() const
     {
         return lastQueryLinkStateEntries_;
@@ -69,6 +72,7 @@ public:
     AddSlicesCallback onAddSlices_;
 
 private:
+    SmemAsyncCallbackGuard callbackGuard_;
     std::vector<LinkStateEntry> lastQueryLinkStateEntries_; //< Cached entries from the most recent QueryLinkState call
 };
 

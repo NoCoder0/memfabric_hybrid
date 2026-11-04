@@ -44,6 +44,8 @@ constexpr uint64_t K_REQ_ID_QUERY_SECOND = 301;
 
 constexpr uint32_t K_DRAIN_TIMEOUT_SEC = 5;
 constexpr uint32_t K_POLL_INTERVAL_MS = 10;
+constexpr uint64_t K_SHORT_DRAIN_TIMEOUT_MS = 100;
+constexpr int64_t K_MEMOIZED_DETACH_MAX_MS = 1000;
 
 constexpr uint8_t K_SLICE_BYTE_ONE = 0x01;
 constexpr uint8_t K_SLICE_BYTE_TWO = 0x02;
@@ -317,6 +319,127 @@ TEST_F(AsyncDispatcherTest, EnqueueKeepsReqIdPerRequest)
     dispatcher_->EnqueueQueryLinkState(K_REQ_ID_QUERY_SECOND);
     EXPECT_TRUE(dispatcher_->hasQueryLinkState_);
     EXPECT_EQ(dispatcher_->queryLinkStateReqId_, K_REQ_ID_QUERY_FIRST);
+}
+
+TEST_F(AsyncDispatcherTest, DetachCallbacksDropsJobsEnqueuedAfterDetach)
+{
+    CallbackCounters counters;
+    RegisterCountingCallbacks(counters);
+    ASSERT_TRUE(dispatcher_->Start());
+    EnqueueAllOps();
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(K_DRAIN_TIMEOUT_SEC);
+    while (counters.connection.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+    }
+    ASSERT_EQ(counters.connection.load(), 1);
+
+    EXPECT_TRUE(dispatcher_->DetachCallbacks(static_cast<uint64_t>(K_DRAIN_TIMEOUT_SEC) * 1000U));
+
+    std::vector<RankFullInfo> peers{MakeRankInfo(K_RANK_TWO)};
+    dispatcher_->EnqueueEstablishConnection(1, std::move(peers), K_REQ_ID_ESTABLISH_CONNECTION);
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    EXPECT_EQ(counters.connection.load(), 1);
+    dispatcher_->Stop();
+}
+
+TEST_F(AsyncDispatcherTest, DetachCallbacksWaitsForInflightCallback)
+{
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    dispatcher_->SetConnectionCallback([&](uint32_t, const std::vector<RankFullInfo> &, uint64_t) {
+        entered = true;
+        while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+        }
+        return 0;
+    });
+    ASSERT_TRUE(dispatcher_->Start());
+    std::vector<RankFullInfo> peers{MakeRankInfo(K_RANK_TWO)};
+    dispatcher_->EnqueueEstablishConnection(1, std::move(peers), K_REQ_ID_ESTABLISH_CONNECTION);
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(K_DRAIN_TIMEOUT_SEC);
+    while (!entered.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+    }
+    ASSERT_TRUE(entered.load());
+
+    std::atomic<bool> detached{false};
+    std::thread detacher([this, &detached]() {
+        EXPECT_TRUE(dispatcher_->DetachCallbacks(static_cast<uint64_t>(K_DRAIN_TIMEOUT_SEC) * 1000U));
+        detached = true;
+    });
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    EXPECT_FALSE(detached.load());
+
+    release = true;
+    detacher.join();
+    EXPECT_TRUE(detached.load());
+    dispatcher_->Stop();
+}
+
+TEST_F(AsyncDispatcherTest, DetachCallbacksKeepsGateClosedUntilReregister)
+{
+    CallbackCounters counters;
+    RegisterCountingCallbacks(counters);
+    ASSERT_TRUE(dispatcher_->Start());
+    EnqueueAllOps();
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(K_DRAIN_TIMEOUT_SEC);
+    while (counters.connection.load() == 0 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+    }
+    ASSERT_EQ(counters.connection.load(), 1);
+    EXPECT_TRUE(dispatcher_->DetachCallbacks(static_cast<uint64_t>(K_DRAIN_TIMEOUT_SEC) * 1000U));
+
+    std::vector<RankFullInfo> peers{MakeRankInfo(K_RANK_TWO)};
+    dispatcher_->EnqueueEstablishConnection(1, std::move(peers), K_REQ_ID_ESTABLISH_CONNECTION);
+    std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS * 20));
+    EXPECT_EQ(counters.connection.load(), 1); // detach 之后闸保持关闭，迟到的任务不会进消费者
+
+    dispatcher_->SetConnectionCallback([&counters](uint32_t, const std::vector<RankFullInfo> &, uint64_t) {
+        counters.connection++;
+        return 0;
+    });
+    std::vector<RankFullInfo> peersAgain{MakeRankInfo(K_RANK_TWO)};
+    dispatcher_->EnqueueEstablishConnection(1, std::move(peersAgain), K_REQ_ID_ESTABLISH_CONNECTION);
+    deadline = std::chrono::steady_clock::now() + std::chrono::seconds(K_DRAIN_TIMEOUT_SEC);
+    while (counters.connection.load() == 1 && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+    }
+    EXPECT_EQ(counters.connection.load(), 2); // 重新注册后放行，同一 store 仍可复用
+}
+
+TEST_F(AsyncDispatcherTest, DetachCallbacksTimeoutResultIsMemoized)
+{
+    std::atomic<bool> entered{false};
+    std::atomic<bool> release{false};
+    dispatcher_->SetConnectionCallback([&](uint32_t, const std::vector<RankFullInfo> &, uint64_t) {
+        entered = true;
+        while (!release.load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+        }
+        return 0;
+    });
+    ASSERT_TRUE(dispatcher_->Start());
+    std::vector<RankFullInfo> peers{MakeRankInfo(K_RANK_TWO)};
+    dispatcher_->EnqueueEstablishConnection(1, std::move(peers), K_REQ_ID_ESTABLISH_CONNECTION);
+
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(K_DRAIN_TIMEOUT_SEC);
+    while (!entered.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(K_POLL_INTERVAL_MS));
+    }
+    ASSERT_TRUE(entered.load());
+    EXPECT_FALSE(dispatcher_->DetachCallbacks(K_SHORT_DRAIN_TIMEOUT_MS));
+
+    const auto begin = std::chrono::steady_clock::now();
+    EXPECT_FALSE(dispatcher_->DetachCallbacks(static_cast<uint64_t>(K_DRAIN_TIMEOUT_SEC) * 1000U));
+    const auto elapsedMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+    EXPECT_LT(elapsedMs, K_MEMOIZED_DETACH_MAX_MS); // 记忆化：重复 detach 不再等一个完整窗口
+
+    release = true;
+    dispatcher_->Stop();
 }
 
 } // namespace smem

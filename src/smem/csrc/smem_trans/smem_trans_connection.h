@@ -16,6 +16,7 @@
 #include <functional>
 #include <future>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -234,6 +235,7 @@ private:
 
     StorePtr store_;
     std::atomic<bool> joined_{false}; /* 组回调线程写、Join/UnInitialize 线程读，需原子访问 */
+    std::atomic<bool> uninitialized_{false}; /* 显式 UnInitialize 与析构重复进入时只做一次，避免重复排空 */
     std::shared_ptr<std::promise<void>> joinComplete_;
 };
 } // namespace smem

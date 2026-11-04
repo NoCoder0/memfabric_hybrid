@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+#include <chrono>
 #include <pthread.h>
 #include "smem_tcp_config_store.h"
 #include "smem_config_store_logger.h"
@@ -236,6 +237,24 @@ int TcpConfigStore::Leave() noexcept
     STORE_LOG_INFO("rank=" << localRankId_ << " Leave success");
 
     return 0;
+}
+
+bool TcpConfigStore::DetachConsumerCallbacks(uint64_t timeoutMs) noexcept
+{
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+    bool drained = true;
+    if (asyncDispatcher_ != nullptr) {
+        drained = asyncDispatcher_->DetachCallbacks(timeoutMs);
+    }
+    if (executor_ != nullptr) {
+        const auto now = std::chrono::steady_clock::now();
+        const uint64_t remainingMs =
+            now < deadline
+                ? static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count())
+                : 0;
+        drained = executor_->DetachCallbacks(remainingMs) && drained;
+    }
+    return drained;
 }
 
 void TcpConfigStore::InitAsyncDispatcher(uint32_t localRankId) noexcept
