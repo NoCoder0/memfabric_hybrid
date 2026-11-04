@@ -146,6 +146,7 @@ struct GvaReserveOptions {
     hybm_mem_type memType{HYBM_MEM_TYPE_DEVICE}; // memory type of the reserved range
     bool enable56BitsGva{false};                 // reserve in the 56-bit GVA area
     hybm_scene scene{HYBM_SCENE_DEFAULT};        // selects the GVA area, differs for HYBM_SCENE_TRANS
+    uint64_t requestAddr{0};
 };
 
 // Reserved virtual address ranges; GVA ranges of all types must not overlap.
@@ -351,6 +352,7 @@ public:
 
     // =============ReservedGvaInfo Management==============================
     ReservedGvaInfo AllocReserveGva(const GvaReserveOptions &options);
+    uint64_t QueryReserveGva(uint64_t size) const;
     ReservedGvaInfo AllocReserveLva(uint64_t size, uint32_t type, hybm_mem_type memType);
     void FreeReserveGva(uint64_t addr);
     void FreeReserveLva(uint64_t addr, uint32_t type);
@@ -425,7 +427,8 @@ private:
     // 行引用计数递减：归零回收行与计数并返回 true；行/计数不存在或归零后仍有存活引用时返回 false
     bool RemoveRowRef(uint32_t type, uint64_t key);
 
-    uint64_t AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene = HYBM_SCENE_DEFAULT);
+    uint64_t AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene = HYBM_SCENE_DEFAULT,
+                                  uint64_t requestAddr = 0);
 
     std::pair<uint64_t, bool> FindFreeSpace(uint64_t start, uint64_t end, uint64_t size, uint32_t type);
 

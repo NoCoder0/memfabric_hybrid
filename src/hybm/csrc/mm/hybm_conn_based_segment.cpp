@@ -75,7 +75,7 @@ Result HybmConnBasedSegment::ReserveMemorySpace(void **address) noexcept
     uint64_t totalSize = options_.rankCnt * options_.maxSize;
     uint64_t localSize = options_.enable56BitsGva ? options_.maxSize : totalSize;
     auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
-        {totalSize, localSize, HYBM_MEM_TYPE_HOST, options_.enable56BitsGva});
+        {totalSize, localSize, HYBM_MEM_TYPE_HOST, options_.enable56BitsGva, options_.scene, requestedAddress_});
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "Invalid param, start is 0.", BM_ERROR);
     void *startAddr = reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
     if (!options_.enable56BitsGva) {

@@ -86,7 +86,7 @@ Result HybmVmmBasedSegment::ReserveMemorySpace(void **address) noexcept
     auto totalLvaSize = options_.enable56BitsGva ? options_.maxSize : totalVirtualSize_;
     auto mem_type = options_.segType == HYBM_MST_HBM ? HYBM_MEM_TYPE_DEVICE : HYBM_MEM_TYPE_HOST;
     auto gvaInfo = HybmVaManager::GetInstance().AllocReserveGva(
-        {totalVirtualSize_, totalLvaSize, mem_type, options_.enable56BitsGva, options_.scene});
+        {totalVirtualSize_, totalLvaSize, mem_type, options_.enable56BitsGva, options_.scene, requestedAddress_});
     BM_ASSERT_LOG_AND_RETURN(gvaInfo.va[HVM_GVA] > 0, "gvaInfo.va[HVM_GVA] = " << gvaInfo.va[HVM_GVA], BM_ERROR);
     globalVirtualAddress_ = (uint8_t *)reinterpret_cast<void *>(gvaInfo.va[HVM_GVA]);
 

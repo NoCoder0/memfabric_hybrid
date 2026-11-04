@@ -56,6 +56,8 @@ public:
     void UnInitialize() noexcept override;
 
     int32_t ReserveMemorySpace() noexcept override;
+    int32_t QueryMemorySpace(uint64_t &address) noexcept;
+    int32_t ReserveMemorySpaceAt(uint64_t address) noexcept;
     int32_t UnReserveMemorySpace() noexcept override;
     void *GetReservedMemoryPtr(hybm_mem_type memType) noexcept override;
 

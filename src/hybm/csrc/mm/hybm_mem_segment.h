@@ -191,6 +191,11 @@ public:
         return true;
     }
 
+    void SetReserveAddress(uint64_t address)
+    {
+        requestedAddress_ = address;
+    }
+
 public:
     static bool CanLocalHostReaches(uint32_t superPodId, uint32_t serverId, uint32_t deviceId) noexcept;
     static bool CanSdmaReaches(uint32_t superPodId, uint32_t serverId, uint32_t deviceId) noexcept;
@@ -202,6 +207,7 @@ protected:
 
 protected:
     const MemSegmentOptions options_;
+    uint64_t requestedAddress_{};
     const int entityId_;
     // GVA base of the reserved region, set by each segment in ReserveMemorySpace(); FindRemoteRankByVa uses it
     uint8_t *globalVirtualAddress_{nullptr};

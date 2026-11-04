@@ -87,6 +87,8 @@ private:
 
     int32_t CreateEntityAndPool(const offload_config_t &config);
 
+    int32_t ReserveSharedPool();
+
     int32_t ExportAndImportEntityInfo();
 
     int32_t MapPool(const offload_config_t &config);

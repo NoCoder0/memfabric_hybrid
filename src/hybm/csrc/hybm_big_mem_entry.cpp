@@ -58,6 +58,22 @@ HYBM_API int32_t hybm_reserve_mem_space(hybm_entity_t e, uint32_t flags)
     return entity->ReserveMemorySpace();
 }
 
+HYBM_API int32_t hybm_query_mem_space(hybm_entity_t e, uint64_t *address, uint32_t flags)
+{
+    BM_ASSERT_LOG_AND_RETURN(address != nullptr, "query address output is null, entity: " << e, BM_INVALID_PARAM);
+    auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "unknown query entity: " << e, BM_INVALID_PARAM);
+    return entity->QueryMemorySpace(*address);
+}
+
+HYBM_API int32_t hybm_reserve_mem_space_at(hybm_entity_t e, uint64_t address, uint32_t flags)
+{
+    BM_ASSERT_LOG_AND_RETURN(address != 0, "reserve address is zero, entity: " << e, BM_INVALID_PARAM);
+    auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "unknown reserve entity: " << e, BM_INVALID_PARAM);
+    return entity->ReserveMemorySpaceAt(address);
+}
+
 HYBM_API int32_t hybm_unreserve_mem_space(hybm_entity_t e, uint32_t flags)
 {
     BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);

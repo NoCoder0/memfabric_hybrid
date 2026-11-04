@@ -48,6 +48,42 @@ void hybm_destroy_entity(hybm_entity_t e, uint32_t flags);
 int32_t hybm_reserve_mem_space(hybm_entity_t e, uint32_t flags);
 
 /**
+ * @brief Query a candidate virtual address for an offload DRAM pool at local side
+ *
+ * The caller must supply an initialized host-only MTE offload entity with
+ * 56-bit GVA disabled. The pool size is maxDRAMSize * rankCount.
+ * Returns a 1 GiB-aligned address after the last reserved range in the offload
+ * VA region. Does not reserve memory or reuse holes before that address.
+ * The caller must serialize instance creation and destruction between this
+ * query and the subsequent reservation; the returned address is not held.
+ *
+ * @param e                [in] entity created by hybm_create_entity
+ * @param address          [out] candidate address, valid only on success
+ * @param flags            [in] reserved flags, pass 0
+ * @return 0 on success, non-zero error code on failure
+ */
+int32_t hybm_query_mem_space(hybm_entity_t e, uint64_t *address, uint32_t flags);
+
+/**
+ * @brief Reserve an offload DRAM pool at the specified virtual address at local side
+ *
+ * The caller must supply an initialized host-only MTE offload entity with
+ * 56-bit GVA disabled and no existing pool reservation. The pool size is
+ * maxDRAMSize * rankCount. The address must be non-zero, 2 MiB-aligned, and
+ * leave enough free space in the offload VA region, including device padding.
+ * Performs local VA bookkeeping and the underlying VA reservation without
+ * allocating physical pool memory. Fails rather than selecting another address.
+ * For a SHARED pool, the caller must agree on one address across all ranks
+ * before calling this function. Release it with hybm_unreserve_mem_space.
+ *
+ * @param e                [in] entity created by hybm_create_entity
+ * @param address          [in] exact starting virtual address to reserve
+ * @param flags            [in] reserved flags, pass 0
+ * @return 0 on success, non-zero error code on failure
+ */
+int32_t hybm_reserve_mem_space_at(hybm_entity_t e, uint64_t address, uint32_t flags);
+
+/**
  * @brief Un-reserve virtual memory space at local side
  *
  * @param e                [in] entity created by hybm_create_entity

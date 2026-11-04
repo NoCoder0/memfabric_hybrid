@@ -506,6 +506,32 @@ bool HybmVaManager::IsValidAddr(uint64_t va)
     return r.inAllocGva;
 }
 
+uint64_t HybmVaManager::QueryReserveGva(uint64_t size) const
+{
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    const auto start = soc_ == ASCEND_950 ? HYBM_OFFLOAD_VA_START_ADDR_A5 : HYBM_OFFLOAD_VA_START_ADDR;
+    const auto end = soc_ == ASCEND_950 ? HYBM_OFFLOAD_VA_END_ADDR_A5 : HYBM_OFFLOAD_VA_END_ADDR;
+    const uint64_t padding = soc_ == ASCEND_950 ? GB : 0;
+    if (size == 0 || size > end - start - padding) {
+        BM_LOG_ERROR("invalid reserve query size: " << size << ", soc: " << soc_);
+        return 0;
+    }
+    auto candidate = start;
+    for (const auto &entry : reservedMap_[HVM_DVA]) {
+        const auto &info = entry.second;
+        if (info.va[HVM_DVA] < end && info.va[HVM_DVA] + info.size > start) {
+            candidate = std::max(candidate, info.va[HVM_DVA] + info.size);
+        }
+    }
+
+    candidate = (candidate + GB - 1) & ~(GB - 1);
+    if (candidate >= end || size + padding > end - candidate) {
+        BM_LOG_ERROR("no tail space, size: " << size << ", candidate: " << VaToStr(candidate));
+        return 0;
+    }
+    return candidate;
+}
+
 ReservedGvaInfo HybmVaManager::AllocReserveGva(const GvaReserveOptions &options)
 {
     ReservedGvaInfo result;
@@ -522,7 +548,7 @@ ReservedGvaInfo HybmVaManager::AllocReserveGva(const GvaReserveOptions &options)
         if (soc_ == ASCEND_950) {
             localSize += GB; // A5被底软额外占用了1G
         }
-        lva = AllocReserveLvaInner(localSize, t, options.scene);
+        lva = AllocReserveLvaInner(localSize, t, options.scene, options.requestAddr);
         if (lva == 0) {
             return result;
         }
@@ -582,7 +608,7 @@ ReservedGvaInfo HybmVaManager::AllocReserveLva(uint64_t size, uint32_t type, hyb
     return result;
 }
 
-uint64_t HybmVaManager::AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene)
+uint64_t HybmVaManager::AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_scene scene, uint64_t requestAddr)
 {
     if (size == 0) {
         BM_LOG_ERROR("AllocReserveLva failed: size=0");
@@ -605,6 +631,25 @@ uint64_t HybmVaManager::AllocReserveLvaInner(uint64_t size, uint32_t type, hybm_
     if (size > upperLimit) {
         BM_LOG_ERROR("Failed to reserve size:" << size << ", upper limit size:" << upperLimit << ", scene=" << scene);
         return 0;
+    }
+
+    // hybm_reserve_mem_space_at
+    if (requestAddr != 0) {
+        if (requestAddr < startAddr || requestAddr >= endAddr || requestAddr % HYBM_LARGE_PAGE_SIZE != 0 ||
+            size > endAddr - requestAddr) {
+            BM_LOG_ERROR("invalid reserve address: " << VaToStr(requestAddr) << ", size: " << size
+                                                     << ", scene: " << scene);
+            return 0;
+        }
+        for (const auto &entry : reservedMap_[type]) {
+            const auto &info = entry.second;
+            if (requestAddr < info.va[type] + info.size && info.va[type] < requestAddr + size) {
+                BM_LOG_ERROR("reserve overlap, address: " << VaToStr(requestAddr) << ", size: " << size
+                                                          << ", existing: " << info);
+                return 0;
+            }
+        }
+        return requestAddr;
     }
 
     BM_LOG_DEBUG("AllocReserveLva, searching in range " << VaToStr(startAddr) << "-" << VaToStr(endAddr)

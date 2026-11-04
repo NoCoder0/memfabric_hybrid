@@ -295,6 +295,35 @@ void AccOffloadSharedDramEntry::ReleaseStore()
     }
 }
 
+int32_t AccOffloadSharedDramEntry::ReserveSharedPool()
+{
+    uint64_t address = 0;
+    std::vector<uint64_t> candidates(options_.rankCount);
+
+    auto ret = hybm_query_mem_space(entity_, &address, 0);
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("query VA space failed, rankId: " << options_.rankId << ", result: " << ret);
+        return ret;
+    }
+
+    ret = group_->GroupAllGather(reinterpret_cast<const char *>(&address), sizeof(address),
+                                 reinterpret_cast<char *>(candidates.data()), sizeof(address) * candidates.size());
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("VA candidate allgather failed, rankId: " << options_.rankId << ", result: " << ret);
+        return ret;
+    }
+
+    for (auto candidate : candidates) {
+        address = std::max(candidate, address);
+    }
+    ret = hybm_reserve_mem_space_at(entity_, address, 0);
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("reserve shared VA failed, rankId: " << options_.rankId << ", address: " << address
+                                                               << ", result: " << ret);
+    }
+    return ret;
+}
+
 int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &config)
 {
     options_ = {};
@@ -323,7 +352,7 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
         OFFLOAD_LOG_ERROR("create entity failed, rankId: " << config.rankId << ", worldSize: " << config.worldSize);
         return OFFLOAD_ERROR;
     }
-    auto ret = hybm_reserve_mem_space(entity_, 0);
+    auto ret = ReserveSharedPool();
     if (ret != OFFLOAD_OK) {
         OFFLOAD_LOG_ERROR("reserve mem failed, result: " << ret << ", rankId: " << config.rankId);
         return OFFLOAD_ERROR;

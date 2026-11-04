@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+#include <algorithm>
 #include <thread>
 #include <vector>
 #include <atomic>
@@ -132,6 +133,48 @@ TEST_F(HybmVaManagerTest, Initialize_ValidSocType_ReturnsSuccess)
 {
     EXPECT_TRUE(manager.Initialize(TEST_SOC_910) == BM_OK);
     EXPECT_TRUE(manager.Initialize(TEST_SOC_910B) == BM_OK);
+}
+
+TEST_F(HybmVaManagerTest, OffloadSharedReserveAfterUnequalLocalHistory)
+{
+    constexpr uint32_t kWorldSize = 4U;
+    constexpr uint32_t kLocalRankCount = 2U;
+    constexpr uint64_t kLocalSize = 100ULL * GB;
+    constexpr uint64_t kSharedSize = 200ULL * GB * kWorldSize;
+    constexpr uint64_t kStart = HYBM_OFFLOAD_VA_START_ADDR;
+    const GvaReserveOptions localOptions{kLocalSize, kLocalSize, HYBM_MEM_TYPE_HOST, false, HYBM_SCENE_OFFLOAD};
+    std::vector<uint64_t> candidates(kWorldSize);
+    ASSERT_EQ(manager.Initialize(TEST_SOC_910), BM_OK);
+
+    for (uint32_t rank = 0U; rank < kWorldSize; ++rank) {
+        SCOPED_TRACE(rank);
+        manager.ClearAll();
+        if (rank < kLocalRankCount) {
+            ASSERT_EQ(manager.AllocReserveGva(localOptions).va[HVM_GVA], kStart);
+        }
+        const auto reservedCount = manager.GetReservedCount();
+        candidates[rank] = manager.QueryReserveGva(kSharedSize);
+        EXPECT_EQ(candidates[rank], rank < kLocalRankCount ? kStart + kLocalSize : kStart);
+        EXPECT_EQ(manager.GetReservedCount(), reservedCount);
+    }
+
+    const auto agreedAddress = *std::max_element(candidates.begin(), candidates.end());
+    ASSERT_EQ(agreedAddress, kStart + kLocalSize);
+    const GvaReserveOptions sharedOptions{kSharedSize, kSharedSize,        HYBM_MEM_TYPE_HOST,
+                                          false,       HYBM_SCENE_OFFLOAD, agreedAddress};
+    for (uint32_t rank = 0U; rank < kWorldSize; ++rank) {
+        SCOPED_TRACE(rank);
+        manager.ClearAll();
+        if (rank < kLocalRankCount) {
+            ASSERT_EQ(manager.AllocReserveGva(localOptions).va[HVM_GVA], kStart);
+        }
+        const auto shared = manager.AllocReserveGva(sharedOptions);
+        ASSERT_EQ(shared.va[HVM_GVA], agreedAddress);
+        EXPECT_EQ(shared.va[HVM_DVA], agreedAddress);
+        EXPECT_EQ(manager.QueryReserveGva(kLocalSize), agreedAddress + kSharedSize);
+        manager.FreeReserveGva(agreedAddress);
+        EXPECT_EQ(manager.QueryReserveGva(kSharedSize), candidates[rank]);
+    }
 }
 
 TEST_F(HybmVaManagerTest, AddRegisterVaInfo_ValidParameters_ReturnsSuccess)

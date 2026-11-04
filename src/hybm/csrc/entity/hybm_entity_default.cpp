@@ -99,6 +99,21 @@ void MemEntityDefault::UnInitialize() noexcept
     ReleaseResources();
 }
 
+int32_t MemEntityDefault::QueryMemorySpace(uint64_t &address) noexcept
+{
+    uint64_t size = options_.maxDRAMSize * options_.rankCount;
+    address = HybmVaManager::GetInstance().QueryReserveGva(size);
+    return address == 0 ? BM_ERROR : BM_OK;
+}
+
+int32_t MemEntityDefault::ReserveMemorySpaceAt(uint64_t address) noexcept
+{
+    dramSegment_->SetReserveAddress(address);
+    auto ret = ReserveMemorySpace();
+    dramSegment_->SetReserveAddress(0);
+    return ret;
+}
+
 int32_t MemEntityDefault::ReserveMemorySpace() noexcept
 {
     if (!initialized_) {
