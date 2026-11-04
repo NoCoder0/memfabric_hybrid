@@ -110,7 +110,7 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
     inited_ = true;
 
     if (ret != 0 || memMng_ == nullptr) {
-        UnInitialize();
+        Cleanup();
         return ret;
     }
 
@@ -119,11 +119,18 @@ int32_t AccOffloadLocalDramEntry::Initialize(const offload_config_t &config)
 
 void AccOffloadLocalDramEntry::UnInitialize()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Cleanup();
+}
+
+void AccOffloadLocalDramEntry::Cleanup()
+{
     if (!inited_) {
         return;
     }
 
     uint32_t flags = 0;
+    memMng_.reset();
     if (entity_ != nullptr) {
         if (slice_ != nullptr) {
             hybm_free_local_memory(entity_, slice_, 1, flags);
@@ -139,40 +146,81 @@ void AccOffloadLocalDramEntry::UnInitialize()
 
     hybm_uninit();
     entity_ = nullptr;
+    slice_ = nullptr;
+    base_ = nullptr;
+    size_ = 0;
     inited_ = false;
 }
 
 void *AccOffloadLocalDramEntry::MallocHost(size_t size)
 {
-    if (memMng_ == nullptr) {
-        OFFLOAD_LOG_ERROR("mem manager is nullptr, malloc failed");
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!inited_ || memMng_ == nullptr) {
+        OFFLOAD_LOG_ERROR("pool not initialized, malloc failed, size (bytes): " << size << ", entityId: " << entityId_);
         return nullptr;
     }
-
-    OFFLOAD_LOG_DEBUG("malloc host size: " << size);
     return memMng_->Allocate(size);
 }
 
 void AccOffloadLocalDramEntry::FreeHost(void *ptr)
 {
-    if (memMng_ == nullptr || ptr == nullptr) {
-        OFFLOAD_LOG_ERROR("mem manager is nullptr or ptr is nullptr, free failed");
-        return;
-    }
+    (void)HostFree(reinterpret_cast<uint64_t>(ptr), 0);
+}
 
-    OFFLOAD_LOG_DEBUG("free host ptr: " << reinterpret_cast<uint64_t>(ptr));
-    memMng_->Release(ptr);
+int32_t AccOffloadLocalDramEntry::HostFree(uint64_t hostPtr, uint64_t flags)
+{
+    (void)flags;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ValidateHostPointer(hostPtr) != OFFLOAD_OK) {
+        return OFFLOAD_ERROR;
+    }
+    auto ret = memMng_->Release(reinterpret_cast<void *>(hostPtr));
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("release host block failed, hostPtr: " << hostPtr << ", entityId: " << entityId_
+                                                                 << ", ret: " << ret);
+    }
+    return ret;
+}
+
+int32_t AccOffloadLocalDramEntry::ValidateHostPointer(uint64_t hostPtr) const
+{
+    if (!inited_ || memMng_ == nullptr) {
+        OFFLOAD_LOG_ERROR("pool not initialized, hostPtr: " << hostPtr << ", entityId: " << entityId_);
+        return OFFLOAD_ERROR;
+    }
+    const auto base = reinterpret_cast<uint64_t>(base_);
+    if (base_ == nullptr || hostPtr < base || hostPtr - base >= size_) {
+        OFFLOAD_LOG_ERROR("host pointer outside pool, hostPtr: " << hostPtr << ", poolBase: " << base
+                                                                 << ", poolSize (bytes): " << size_
+                                                                 << ", entityId: " << entityId_);
+        return OFFLOAD_ERROR;
+    }
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadLocalDramEntry::HostRegister(uint64_t hostPtr)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    // The whole pool is already mapped; no per-block registration is needed.
+    return ValidateHostPointer(hostPtr);
 }
 
 int32_t AccOffloadLocalDramEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (dvaPtr == nullptr) {
+        OFFLOAD_LOG_ERROR("device pointer output is null, hostPtr: " << hostPtr << ", entityId: " << entityId_);
+        return OFFLOAD_ERROR;
+    }
+    if (ValidateHostPointer(hostPtr) != OFFLOAD_OK) {
+        return OFFLOAD_ERROR;
+    }
     auto ret = hybm_gva_to_va(hostPtr, HYBM_MEM_TYPE_DEVICE, dvaPtr);
     if (ret != 0) {
         OFFLOAD_LOG_ERROR("hybm_gva_to_va failed, hostPtr: 0x" << std::hex << hostPtr << ", ret: " << ret);
         return OFFLOAD_ERROR;
     }
 
-    OFFLOAD_LOG_INFO("get dva: hva=0x" << std::hex << hostPtr << " -> dva=0x" << *dvaPtr);
     return OFFLOAD_OK;
 }
 

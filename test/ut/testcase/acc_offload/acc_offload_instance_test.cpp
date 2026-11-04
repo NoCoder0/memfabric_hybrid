@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
  */
 #include <array>
+#include <algorithm>
 #include <vector>
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
@@ -22,6 +23,7 @@
 
 #define private public
 #include "acc_offload_entry_manager.h"
+#include "acc_offload_local_dram_entry.h"
 #include "acc_offload_shared_dram_entry.h"
 #undef private
 
@@ -37,6 +39,7 @@ constexpr uint32_t OTHER_DEVICE = 1;
 constexpr uint32_t TEST_WORLD_SIZE = 1;
 constexpr char STORE_URL[] = "tcp://127.0.0.1:19871";
 constexpr char OTHER_STORE_URL[] = "tcp://127.0.0.1:19872";
+constexpr uint64_t DEVICE_ADDRESS_OFFSET = 2 * POOL_SIZE;
 
 std::array<std::array<uint8_t, BACKING_SIZE>, HYBM_ENTITY_ID_SEGMENT_SIZE> gPools;
 std::vector<uint16_t> gCreatedIds;
@@ -85,6 +88,12 @@ void *SliceVa(hybm_entity_t entity, hybm_mem_slice_t, uint32_t)
 {
     return entity;
 }
+
+int32_t TranslateHostAddress(uint64_t hostPtr, hybm_mem_type, uint64_t *dva)
+{
+    *dva = hostPtr + DEVICE_ADDRESS_OFFSET;
+    return OFFLOAD_OK;
+}
 } // namespace
 
 class AccOffloadInstanceTest : public testing::Test {
@@ -114,6 +123,7 @@ protected:
         MOCKER(hybm_alloc_local_memory).stubs().will(invoke(AllocSlice));
         MOCKER(hybm_get_slice_va).stubs().will(invoke(SliceVa));
         MOCKER(hybm_free_local_memory).stubs().will(returnValue(OFFLOAD_OK));
+        MOCKER(hybm_gva_to_va).stubs().will(invoke(TranslateHostAddress));
     }
 
     void TearDown() override
@@ -214,4 +224,46 @@ TEST_F(AccOffloadInstanceTest, ExhaustedIdsDoNotReuseReleasedIds)
     EXPECT_EQ(gCreatedIds.size(), 1U);
     EXPECT_NE(AccOffloadEntryManager::Instance().Initialize(config_), OFFLOAD_OK);
     EXPECT_EQ(gCreatedIds.size(), 1U);
+}
+
+TEST_F(AccOffloadInstanceTest, HostMethodsUseTheLocalPoolWithoutAnExtraFlag)
+{
+    AccOffloadEntryManager pool;
+    ASSERT_EQ(pool.Initialize(config_), OFFLOAD_OK);
+    ASSERT_NE(dynamic_cast<AccOffloadLocalDramEntry *>(pool.entry_.get()), nullptr);
+    auto ptr = pool.HostMalloc(BLOCK_SIZE, 0);
+    ASSERT_NE(ptr, 0U);
+    uint64_t dva = 0;
+    EXPECT_EQ(pool.HostGetDevicePtr(ptr, &dva), OFFLOAD_OK);
+    EXPECT_EQ(dva, ptr + DEVICE_ADDRESS_OFFSET);
+    EXPECT_EQ(pool.GetDva(ptr, &dva), OFFLOAD_OK);
+    EXPECT_EQ(dva, ptr + DEVICE_ADDRESS_OFFSET);
+    EXPECT_EQ(pool.HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_EQ(pool.HostRegister(ptr + BLOCK_SIZE), OFFLOAD_OK);
+    EXPECT_NE(pool.HostRegister(ptr + POOL_SIZE), OFFLOAD_OK);
+    EXPECT_NE(pool.HostFree(ptr + 1, 0), OFFLOAD_OK);
+    EXPECT_EQ(pool.HostFree(ptr, 0), OFFLOAD_OK);
+    EXPECT_NE(pool.HostFree(ptr, 0), OFFLOAD_OK);
+    EXPECT_EQ(reinterpret_cast<uint64_t>(pool.MallocHost(BLOCK_SIZE)), ptr);
+    pool.FreeHost(reinterpret_cast<void *>(ptr));
+    EXPECT_EQ(pool.HostMalloc(BLOCK_SIZE, 0), ptr);
+    pool.UnInitialize();
+    EXPECT_EQ(pool.HostMalloc(BLOCK_SIZE, 0), 0U);
+    EXPECT_NE(pool.HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_NE(pool.HostGetDevicePtr(ptr, &dva), OFFLOAD_OK);
+    EXPECT_NE(pool.HostFree(ptr, 0), OFFLOAD_OK);
+}
+
+TEST_F(AccOffloadInstanceTest, SharedSelectionPreservesStoreUrlExclusivity)
+{
+    AccOffloadEntryManager pool;
+    config_.scene = OFFLOAD_SCENE_SHARED;
+    std::copy_n(STORE_URL, sizeof(STORE_URL), config_.storeUrl);
+    ASSERT_TRUE(AccOffloadSharedDramEntry::gStores.insert(STORE_URL).second);
+    EXPECT_NE(pool.Initialize(config_), OFFLOAD_OK);
+    EXPECT_FALSE(pool.IsInitialized());
+    EXPECT_TRUE(gCreatedIds.empty());
+    EXPECT_EQ(gUninitCount, 1U);
+    EXPECT_EQ(gLaunchCleanupCount, 1U);
+    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.erase(STORE_URL), 1U);
 }

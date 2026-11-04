@@ -12,9 +12,11 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <new>
 #include <vector>
+#include <thread>
+#include <set>
+#include "smem_net_group_engine.h"
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include "hybm_big_mem.h"
@@ -22,7 +24,8 @@
 #include "dl_acl_api.h"
 
 #define private public
-#include "acc_offload_host_mem_entry.h"
+#include "acc_offload_local_dram_entry.h"
+#include "acc_offload_shared_dram_entry.h"
 #undef private
 
 using namespace ock::offload;
@@ -35,6 +38,13 @@ constexpr uint64_t POOL_SIZE = GB;
 constexpr size_t BACKING_BYTES = 64 * 1024;
 constexpr uint32_t TEST_DEVICE = 0;
 constexpr uint64_t GVA_DVA = 0x1234abcd00ULL;
+constexpr uint64_t BLOCK_BYTES = 16;
+constexpr size_t WORKER_COUNT = 4;
+constexpr size_t BLOCKS_PER_WORKER = 128;
+constexpr size_t EXPORT_DESC_BYTES = 8;
+constexpr char SHARED_STORE_URL[] = "tcp://127.0.0.1:19871";
+constexpr char MMAP_FAILURE_STORE_URL[] = "tcp://127.0.0.1:19872";
+constexpr char MALFORMED_STORE_URL[] = "not-a-url";
 
 alignas(64) std::array<std::array<uint8_t, BACKING_BYTES>, HYBM_ENTITY_ID_SEGMENT_SIZE> gPools;
 std::vector<uint16_t> gCreatedIds;
@@ -52,6 +62,10 @@ int32_t gGvaResult = OFFLOAD_OK;
 bool gEntityNull = false;
 bool gAllocNull = false;
 bool gSliceVaNull = false;
+uint32_t gExportCount = 0;
+uint32_t gEntityExportCount = 0;
+uint32_t gMmapCount = 0;
+int32_t gMmapResult = OFFLOAD_OK;
 
 int32_t InitHybm(uint16_t, uint64_t)
 {
@@ -135,29 +149,27 @@ int32_t GvaToVa(uint64_t, hybm_mem_type, uint64_t *va)
     return OFFLOAD_OK;
 }
 
-uint32_t gExportCount = 0;
-uint32_t gMmapCount = 0;
-int32_t gMmapResult = OFFLOAD_OK;
-std::array<uint8_t, 16> gFakeGvaTarget{};
-
 void *GetMemoryPtr(hybm_entity_t, hybm_mem_type)
 {
-    return gFakeGvaTarget.data();
+    return gPools.front().data();
 }
 
-int32_t ExportSlice(hybm_entity_t, hybm_mem_slice_t, uint32_t, hybm_exchange_info *info)
+int32_t ExportSlice(hybm_entity_t, hybm_mem_slice_t, uint32_t flags, hybm_exchange_info *info)
 {
-    ++gExportCount;
+    if ((flags & HYBM_FLAG_EXPORT_ENTITY) != 0U) {
+        ++gEntityExportCount;
+    } else {
+        ++gExportCount;
+    }
     if (info == nullptr) {
         return OFFLOAD_ERROR;
     }
-    info->descLen = 8;
-    /* hybm_export_info_free releases desc with delete[], so the stub allocates with new[] */
-    info->desc = new (std::nothrow) uint8_t[info->descLen];
+    // hybm_export_info_free owns and deletes the exported descriptor.
+    info->desc = new (std::nothrow) uint8_t[EXPORT_DESC_BYTES]{};
     if (info->desc == nullptr) {
         return OFFLOAD_ERROR;
     }
-    memset(info->desc, 0xAB, info->descLen);
+    info->descLen = EXPORT_DESC_BYTES;
     return OFFLOAD_OK;
 }
 
@@ -175,7 +187,7 @@ bool StoreEnvSet()
 }
 } // namespace
 
-class AccOffloadHostMemEntryTest : public testing::Test {
+class AccOffloadDramEntryTest : public testing::Test {
 protected:
     void SetUp() override
     {
@@ -195,14 +207,15 @@ protected:
         gAllocNull = false;
         gSliceVaNull = false;
         gExportCount = 0;
+        gEntityExportCount = 0;
         gMmapCount = 0;
         gMmapResult = OFFLOAD_OK;
         config_ = {};
         config_.deviceId = TEST_DEVICE;
         config_.reserveSize = POOL_SIZE;
+        config_.allocSize = POOL_SIZE;
         config_.worldSize = 1;
         config_.scene = OFFLOAD_SCENE_LOCAL;
-        config_.flags = OFFLOAD_FLAG_HOST_MEM;
         MOCKER(hybm_init).stubs().will(invoke(InitHybm));
         MOCKER(hybm_uninit).stubs().will(invoke(UninitHybm));
         MOCKER(AccOffloadLaunchApi::TryLoadLibrary).stubs().will(invoke(LoadLaunch));
@@ -227,64 +240,40 @@ protected:
         GlobalMockObject::reset();
     }
 
-    AccOffloadHostMemEntry MakeEntry()
+    AccOffloadLocalDramEntry MakeEntry()
     {
-        return AccOffloadHostMemEntry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+        return AccOffloadLocalDramEntry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     }
 
-    static uint64_t PoolBase(const AccOffloadHostMemEntry &entry)
+    static uint64_t PoolBase(const AccOffloadLocalDramEntry &entry)
     {
-        return reinterpret_cast<uint64_t>(entry.poolBase_);
+        return reinterpret_cast<uint64_t>(entry.base_);
     }
 
     offload_config_t config_{};
 };
 
-TEST_F(AccOffloadHostMemEntryTest, ValidateRejectsZeroReserveWithoutTouchingRuntime)
+TEST_F(AccOffloadDramEntryTest, ValidateRejectsBadSharedGeometry)
 {
-    auto entry = MakeEntry();
-    config_.reserveSize = 0;
-    EXPECT_NE(entry.ValidateConfig(config_), OFFLOAD_OK);
-    EXPECT_EQ(gInitCount, 0U);
-}
-
-TEST_F(AccOffloadHostMemEntryTest, ValidateRejectsGiantPageWithShared)
-{
-    auto entry = MakeEntry();
-    config_.scene = OFFLOAD_SCENE_SHARED;
-    config_.worldSize = 4;
-    config_.rankId = 0;
-    config_.flags |= OFFLOAD_FLAG_GIANT_PAGE;
-    EXPECT_NE(entry.ValidateConfig(config_), OFFLOAD_OK);
-}
-
-TEST_F(AccOffloadHostMemEntryTest, ValidateRejectsBadSharedGeometry)
-{
-    auto entry = MakeEntry();
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
     config_.worldSize = 0;
-    EXPECT_NE(entry.ValidateConfig(config_), OFFLOAD_OK);
+    EXPECT_NE(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
     config_.worldSize = 4;
     config_.rankId = 4;
-    EXPECT_NE(entry.ValidateConfig(config_), OFFLOAD_OK);
+    EXPECT_NE(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
     config_.rankId = 0;
     config_.localWorldSize = 8;
-    EXPECT_NE(entry.ValidateConfig(config_), OFFLOAD_OK);
+    EXPECT_NE(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
     config_.localWorldSize = 3;
-    EXPECT_NE(entry.ValidateConfig(config_), OFFLOAD_OK);
+    EXPECT_NE(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
     config_.localWorldSize = 2;
-    EXPECT_EQ(entry.ValidateConfig(config_), OFFLOAD_OK);
+    EXPECT_EQ(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, ValidateAcceptsLocalWithoutSharedGeometry)
+TEST_F(AccOffloadDramEntryTest, ResolveStoreUrlPrefersExplicitConfig)
 {
-    auto entry = MakeEntry();
-    EXPECT_EQ(entry.ValidateConfig(config_), OFFLOAD_OK);
-}
-
-TEST_F(AccOffloadHostMemEntryTest, ResolveStoreUrlPrefersExplicitConfig)
-{
-    auto entry = MakeEntry();
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.storeUrl[0] = '\0';
     const char url[] = "tcp://127.0.0.1:19999";
     snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", url);
@@ -292,12 +281,12 @@ TEST_F(AccOffloadHostMemEntryTest, ResolveStoreUrlPrefersExplicitConfig)
     EXPECT_EQ(entry.storeUrl_, url);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, ResolveStoreUrlDerivesLoopbackPortPerDeviceGroup)
+TEST_F(AccOffloadDramEntryTest, ResolveStoreUrlDerivesLoopbackPortPerDeviceGroup)
 {
     if (StoreEnvSet()) {
         GTEST_SKIP() << "store url env is set, derived-port branch is unreachable";
     }
-    auto entry = MakeEntry();
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.worldSize = 4;
     config_.deviceId = 5;
     EXPECT_EQ(entry.ResolveStoreUrl(config_), OFFLOAD_OK);
@@ -308,18 +297,18 @@ TEST_F(AccOffloadHostMemEntryTest, ResolveStoreUrlDerivesLoopbackPortPerDeviceGr
     EXPECT_EQ(entry.storeUrl_, "tcp://127.0.0.1:8500");
 }
 
-TEST_F(AccOffloadHostMemEntryTest, ResolveStoreUrlRejectsMultiMachineWithoutExplicitStore)
+TEST_F(AccOffloadDramEntryTest, ResolveStoreUrlRejectsMultiMachineWithoutExplicitStore)
 {
     if (StoreEnvSet()) {
         GTEST_SKIP() << "store url env is set, multi-machine rejection is unreachable";
     }
-    auto entry = MakeEntry();
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.worldSize = 8;
     config_.localWorldSize = 4;
     EXPECT_NE(entry.ResolveStoreUrl(config_), OFFLOAD_OK);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, InitializeLocalBacksWholePoolAndSkipsGiantFlagOn910C)
+TEST_F(AccOffloadDramEntryTest, InitializePreservesLocalGiantPagePolicy)
 {
     auto entry = MakeEntry();
     config_.flags |= OFFLOAD_FLAG_GIANT_PAGE;
@@ -328,24 +317,25 @@ TEST_F(AccOffloadHostMemEntryTest, InitializeLocalBacksWholePoolAndSkipsGiantFla
     ASSERT_EQ(gAllocSizes.size(), 1U);
     EXPECT_EQ(gAllocSizes.front(), POOL_SIZE);
     EXPECT_EQ(gLastOptions.maxDRAMSize, POOL_SIZE);
-    EXPECT_EQ(gLastOptions.hostVASpace, 0U);
+    EXPECT_EQ(gLastOptions.hostVASpace, POOL_SIZE);
     EXPECT_EQ(gLastOptions.rankCount, 1U);
     EXPECT_EQ(gLastOptions.memType, HYBM_MEM_TYPE_HOST);
     EXPECT_NE(gLastOptions.flags & HYBM_FLAG_DRAM_MAP_HOST_VA, 0U);
-    EXPECT_EQ(gLastOptions.flags & HYBM_FLAG_OFFLOAD_GIANT_PAGE, 0U);
-    EXPECT_NE(entry.poolBase_, nullptr);
-    EXPECT_NE(entry.memManager_, nullptr);
+    EXPECT_NE(gLastOptions.flags & HYBM_FLAG_OFFLOAD_GIANT_PAGE, 0U);
+    EXPECT_EQ(gLastOptions.flags & HYBM_FLAG_UNRESTRICTED_MEM, 0U);
+    EXPECT_NE(entry.base_, nullptr);
+    EXPECT_NE(entry.memMng_, nullptr);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, InitializeTwiceIsRejected)
+TEST_F(AccOffloadDramEntryTest, InitializeTwiceIsIdempotent)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
-    EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_EQ(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_EQ(gInitCount, 1U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, FailedHybmInitReleasesNothing)
+TEST_F(AccOffloadDramEntryTest, FailedHybmInitReleasesNothing)
 {
     auto entry = MakeEntry();
     gInitResult = OFFLOAD_ERROR;
@@ -355,41 +345,41 @@ TEST_F(AccOffloadHostMemEntryTest, FailedHybmInitReleasesNothing)
     EXPECT_TRUE(gDestroyed.empty());
 }
 
-TEST_F(AccOffloadHostMemEntryTest, FailedCreateEntityReleasesHybmOnly)
+TEST_F(AccOffloadDramEntryTest, FailedCreateEntityReleasesHybmAndLaunch)
 {
     auto entry = MakeEntry();
     gEntityNull = true;
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_EQ(gUninitCount, 1U);
-    EXPECT_EQ(gCleanupCount, 0U);
+    EXPECT_EQ(gCleanupCount, 1U);
     EXPECT_TRUE(gDestroyed.empty());
     EXPECT_TRUE(gFreedSlices.empty());
 }
 
-TEST_F(AccOffloadHostMemEntryTest, FailedReserveReleasesEntityAndHybm)
+TEST_F(AccOffloadDramEntryTest, FailedReserveReleasesEntityAndHybm)
 {
     auto entry = MakeEntry();
     gReserveResult = OFFLOAD_ERROR;
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gUninitCount, 1U);
-    EXPECT_EQ(gCleanupCount, 0U);
+    EXPECT_EQ(gCleanupCount, 1U);
     EXPECT_TRUE(gFreedSlices.empty());
 }
 
-TEST_F(AccOffloadHostMemEntryTest, FailedPoolAllocReleasesEntityAndHybm)
+TEST_F(AccOffloadDramEntryTest, FailedPoolAllocReleasesEntityAndHybm)
 {
     auto entry = MakeEntry();
     gAllocNull = true;
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gUninitCount, 1U);
-    EXPECT_EQ(gCleanupCount, 0U);
+    EXPECT_EQ(gCleanupCount, 1U);
     EXPECT_TRUE(gFreedSlices.empty());
     EXPECT_TRUE(gAllocSizes.size() >= 1U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, FailedSliceVaFreesPoolSliceAndRuntime)
+TEST_F(AccOffloadDramEntryTest, FailedSliceVaFreesPoolSliceAndRuntime)
 {
     auto entry = MakeEntry();
     gSliceVaNull = true;
@@ -397,20 +387,20 @@ TEST_F(AccOffloadHostMemEntryTest, FailedSliceVaFreesPoolSliceAndRuntime)
     EXPECT_EQ(gFreedSlices.size(), 1U);
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gUninitCount, 1U);
-    EXPECT_EQ(gCleanupCount, 0U);
+    EXPECT_EQ(gCleanupCount, 1U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, FailedLaunchKeepsOtherInstancesLibraryLoaded)
+TEST_F(AccOffloadDramEntryTest, FailedLaunchKeepsOtherInstancesLibraryLoaded)
 {
     auto entry = MakeEntry();
     gLaunchResult = OFFLOAD_ERROR;
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_EQ(gCleanupCount, 0U);
     EXPECT_EQ(gUninitCount, 1U);
-    EXPECT_EQ(gDestroyed.size(), 1U);
+    EXPECT_TRUE(gDestroyed.empty());
 }
 
-TEST_F(AccOffloadHostMemEntryTest, ReinitializeAfterUninitializeWorks)
+TEST_F(AccOffloadDramEntryTest, ReinitializeAfterUninitializeWorks)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -422,24 +412,24 @@ TEST_F(AccOffloadHostMemEntryTest, ReinitializeAfterUninitializeWorks)
     EXPECT_EQ(gCreatedIds.size(), 2U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, UninitializeReleasesWholePoolOnceAndIsThenNoop)
+TEST_F(AccOffloadDramEntryTest, UninitializeReleasesWholePoolOnceAndIsThenNoop)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
-    auto slice = entry.poolSlice_;
+    auto slice = entry.slice_;
     entry.UnInitialize();
     ASSERT_EQ(gFreedSlices.size(), 1U);
     EXPECT_EQ(gFreedSlices.front(), slice);
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gCleanupCount, 1U);
     EXPECT_EQ(gUninitCount, 1U);
-    EXPECT_EQ(entry.memManager_, nullptr);
+    EXPECT_EQ(entry.memMng_, nullptr);
     entry.UnInitialize();
     EXPECT_EQ(gFreedSlices.size(), 1U);
     EXPECT_EQ(gUninitCount, 1U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, UninitializeOnFreshEntryTouchesNoRuntime)
+TEST_F(AccOffloadDramEntryTest, UninitializeOnFreshEntryTouchesNoRuntime)
 {
     auto entry = MakeEntry();
     entry.UnInitialize();
@@ -450,7 +440,7 @@ TEST_F(AccOffloadHostMemEntryTest, UninitializeOnFreshEntryTouchesNoRuntime)
     EXPECT_TRUE(gFreedSlices.empty());
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostMallocRequiresInitAndRejectsZero)
+TEST_F(AccOffloadDramEntryTest, HostMallocRequiresInitAndRejectsZero)
 {
     auto entry = MakeEntry();
     EXPECT_EQ(entry.HostMalloc(16, 0), 0U);
@@ -458,7 +448,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostMallocRequiresInitAndRejectsZero)
     EXPECT_EQ(entry.HostMalloc(0, 0), 0U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostMallocReturnsAlignedTightBump)
+TEST_F(AccOffloadDramEntryTest, HostMallocReturnsAlignedTightBump)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -474,7 +464,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostMallocReturnsAlignedTightBump)
     EXPECT_LT(p1, base + POOL_SIZE);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostMallocExhaustsPoolExactlyAndRecoversAfterFree)
+TEST_F(AccOffloadDramEntryTest, HostMallocExhaustsPoolExactlyAndRecoversAfterFree)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -487,7 +477,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostMallocExhaustsPoolExactlyAndRecoversAfter
     EXPECT_EQ(entry.HostMalloc(32, 0), base);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostMallocFitsExactPoolOnce)
+TEST_F(AccOffloadDramEntryTest, HostMallocFitsExactPoolOnce)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -496,7 +486,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostMallocFitsExactPoolOnce)
     EXPECT_EQ(entry.HostMalloc(16, 0), 0U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostFreeRejectsForeignAndDoubleFree)
+TEST_F(AccOffloadDramEntryTest, HostFreeRejectsForeignAndDoubleFree)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -509,7 +499,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostFreeRejectsForeignAndDoubleFree)
     EXPECT_NE(entry.HostFree(ptr, 0), OFFLOAD_OK);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostFreeMergesAdjacentHolesWithoutStitching)
+TEST_F(AccOffloadDramEntryTest, HostFreeMergesAdjacentHolesWithoutStitching)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -527,7 +517,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostFreeMergesAdjacentHolesWithoutStitching)
     EXPECT_EQ(merged, a);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostRegisterRequiresInitAndStaysIdempotentInsidePool)
+TEST_F(AccOffloadDramEntryTest, HostRegisterRequiresInitAndStaysIdempotentInsidePool)
 {
     auto entry = MakeEntry();
     EXPECT_NE(entry.HostRegister(0x1000), OFFLOAD_OK);
@@ -539,7 +529,7 @@ TEST_F(AccOffloadHostMemEntryTest, HostRegisterRequiresInitAndStaysIdempotentIns
     EXPECT_EQ(entry.HostRegister(ptr), OFFLOAD_OK);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, HostGetDevicePtrTranslatesAnyInPoolAddress)
+TEST_F(AccOffloadDramEntryTest, HostGetDevicePtrTranslatesAnyInPoolAddress)
 {
     auto entry = MakeEntry();
     uint64_t dva = 0;
@@ -554,87 +544,255 @@ TEST_F(AccOffloadHostMemEntryTest, HostGetDevicePtrTranslatesAnyInPoolAddress)
     EXPECT_NE(entry.HostGetDevicePtr(ptr, &dva), OFFLOAD_OK);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, InPoolHonorsPoolBounds)
+TEST_F(AccOffloadDramEntryTest, InPoolHonorsPoolBounds)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
     auto base = PoolBase(entry);
-    EXPECT_TRUE(entry.InPool(base));
-    EXPECT_TRUE(entry.InPool(base + POOL_SIZE - 16));
-    EXPECT_FALSE(entry.InPool(base + POOL_SIZE));
-    EXPECT_FALSE(entry.InPool(0));
+    EXPECT_EQ(entry.HostRegister(base), OFFLOAD_OK);
+    EXPECT_EQ(entry.HostRegister(base + POOL_SIZE - 1), OFFLOAD_OK);
+    EXPECT_NE(entry.HostRegister(base + POOL_SIZE), OFFLOAD_OK);
+    EXPECT_NE(entry.HostRegister(0), OFFLOAD_OK);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, LegacyMallocHostFreeHostAreRejectedWithTraceableLog)
+TEST_F(AccOffloadDramEntryTest, InitializePreservesCapacityAndDefaultAllocationPolicy)
+{
+    auto entry = MakeEntry();
+    config_.allocSize = 0;
+    EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_TRUE(gCreatedIds.empty());
+    config_.allocSize = POOL_SIZE;
+    ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_EQ(gLastOptions.maxDRAMSize, POOL_SIZE);
+    EXPECT_EQ(gLastOptions.hostVASpace, POOL_SIZE);
+    EXPECT_NE(gLastOptions.flags & HYBM_FLAG_UNRESTRICTED_MEM, 0U);
+    EXPECT_EQ(gLastOptions.flags & HYBM_FLAG_OFFLOAD_GIANT_PAGE, 0U);
+}
+
+TEST_F(AccOffloadDramEntryTest, LegacyAndHostMethodsShareTheSamePool)
 {
     auto entry = MakeEntry();
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
-    EXPECT_EQ(entry.MallocHost(16), nullptr);
-    entry.FreeHost(reinterpret_cast<void *>(PoolBase(entry)));
-    EXPECT_TRUE(entry.inited_);
-}
-
-TEST_F(AccOffloadHostMemEntryTest, GetDvaFallsBackToBaseDefault)
-{
-    auto entry = MakeEntry();
-    ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
-    auto ptr = entry.HostMalloc(16, 0);
+    auto ptr = reinterpret_cast<uint64_t>(entry.MallocHost(BLOCK_BYTES));
+    ASSERT_NE(ptr, 0U);
     uint64_t dva = 0;
-    EXPECT_EQ(entry.GetDva(ptr, &dva), static_cast<int32_t>(-1));
-    EXPECT_EQ(dva, 0U);
+    EXPECT_EQ(entry.HostGetDevicePtr(ptr, &dva), OFFLOAD_OK);
+    EXPECT_EQ(dva, GVA_DVA);
+    EXPECT_EQ(entry.GetDva(ptr, &dva), OFFLOAD_OK);
+    EXPECT_EQ(entry.HostFree(ptr, 0), OFFLOAD_OK);
+    EXPECT_EQ(entry.HostMalloc(BLOCK_BYTES, 0), ptr);
+    entry.FreeHost(reinterpret_cast<void *>(ptr));
+    EXPECT_EQ(entry.HostMalloc(BLOCK_BYTES, 0), ptr);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, InitializeSharedSingleRankRegistersWholePoolOnce)
+TEST_F(AccOffloadDramEntryTest, PoolOperationsRejectAddressesAfterUninitialize)
 {
     auto entry = MakeEntry();
+    ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
+    auto ptr = entry.HostMalloc(BLOCK_BYTES, 0);
+    uint64_t dva = 0;
+    EXPECT_NE(entry.GetDva(ptr, nullptr), OFFLOAD_OK);
+    EXPECT_NE(entry.GetDva(PoolBase(entry) + POOL_SIZE, &dva), OFFLOAD_OK);
+    EXPECT_NE(entry.HostFree(ptr + 1, 0), OFFLOAD_OK);
+    entry.UnInitialize();
+    EXPECT_EQ(entry.HostMalloc(BLOCK_BYTES, 0), 0U);
+    EXPECT_NE(entry.HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_NE(entry.HostGetDevicePtr(ptr, &dva), OFFLOAD_OK);
+    EXPECT_NE(entry.HostFree(ptr, 0), OFFLOAD_OK);
+}
+
+TEST_F(AccOffloadDramEntryTest, SharedCapacityUsesAllocSizeAndRejectsSlotPadding)
+{
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
-    config_.worldSize = 1;
-    config_.rankId = 0;
-    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "tcp://127.0.0.1:19871");
+    config_.reserveSize = 2 * POOL_SIZE;
+    config_.allocSize = POOL_SIZE;
+    ASSERT_EQ(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
+    entry.options_.maxDRAMSize = config_.reserveSize;
+    entry.options_.hostVASpace = config_.allocSize;
+    ASSERT_EQ(entry.MapPool(config_), OFFLOAD_OK);
+    entry.inited_ = true;
+    EXPECT_EQ(entry.size_, POOL_SIZE);
+    auto base = reinterpret_cast<uint64_t>(entry.base_);
+    uint64_t dva = 0;
+    EXPECT_EQ(entry.HostMalloc(POOL_SIZE, 0), base);
+    EXPECT_EQ(entry.HostMalloc(BLOCK_BYTES, 0), 0U);
+    EXPECT_EQ(entry.HostGetDevicePtr(base + POOL_SIZE - 1, &dva), OFFLOAD_OK);
+    EXPECT_EQ(dva, base + POOL_SIZE - 1);
+    EXPECT_NE(entry.HostRegister(base + POOL_SIZE), OFFLOAD_OK);
+    EXPECT_NE(entry.HostGetDevicePtr(base + POOL_SIZE, &dva), OFFLOAD_OK);
+    config_.allocSize = config_.reserveSize + POOL_SIZE;
+    EXPECT_NE(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
+}
+
+TEST_F(AccOffloadDramEntryTest, SharedStillRejectsStoreUrlAlreadyUsedByAnotherInstance)
+{
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    const std::string storeUrl = "tcp://127.0.0.1:19999";
+    entry.storeUrl_ = storeUrl;
+    ASSERT_TRUE(AccOffloadSharedDramEntry::gStores.insert(storeUrl).second);
+    EXPECT_EQ(entry.AcquireStore(config_), nullptr);
+    EXPECT_TRUE(entry.storeUrl_.empty());
+    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.erase(storeUrl), 1U);
+}
+
+TEST_F(AccOffloadDramEntryTest, InitializeSharedSingleRankRegistersWholePoolOnce)
+{
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    config_.scene = OFFLOAD_SCENE_SHARED;
+    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", SHARED_STORE_URL);
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_TRUE(entry.inited_);
     EXPECT_EQ(gExportCount, 1U);
+    EXPECT_EQ(gEntityExportCount, 1U);
     EXPECT_EQ(gMmapCount, 1U);
-    EXPECT_EQ(entry.poolGva_, gFakeGvaTarget.data());
-    auto ptr = entry.HostMalloc(16, 0);
-    EXPECT_EQ(entry.HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_EQ(entry.hostGva_, gPools.front().data());
+    auto ptr = entry.HostMalloc(BLOCK_BYTES, 0);
+    ASSERT_NE(ptr, 0U);
     uint64_t dva = 0;
     EXPECT_EQ(entry.HostGetDevicePtr(ptr, &dva), OFFLOAD_OK);
+    EXPECT_EQ(dva, ptr);
+    EXPECT_EQ(entry.HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_EQ(entry.HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_EQ(gExportCount, 1U);
+    EXPECT_EQ(gEntityExportCount, 1U);
+    EXPECT_EQ(gMmapCount, 1U);
     entry.UnInitialize();
     EXPECT_EQ(gFreedSlices.size(), 1U);
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gUninitCount, 1U);
+    EXPECT_EQ(gCleanupCount, 1U);
+    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.count(SHARED_STORE_URL), 0U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, InitializeSharedRejectsMalformedStoreUrl)
+TEST_F(AccOffloadDramEntryTest, InitializeSharedRejectsMalformedStoreUrl)
 {
-    auto entry = MakeEntry();
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
-    config_.worldSize = 4;
-    config_.rankId = 0;
-    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "not-a-url");
+    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", MALFORMED_STORE_URL);
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
     EXPECT_FALSE(entry.inited_);
     EXPECT_EQ(gExportCount, 0U);
-    EXPECT_EQ(gFreedSlices.size(), 1U);
-    EXPECT_EQ(gDestroyed.size(), 1U);
+    EXPECT_EQ(gEntityExportCount, 0U);
+    EXPECT_EQ(gMmapCount, 0U);
+    // The original SHARED entry validates the store before allocating the pool.
+    EXPECT_TRUE(gCreatedIds.empty());
+    EXPECT_TRUE(gFreedSlices.empty());
+    EXPECT_TRUE(gDestroyed.empty());
     EXPECT_EQ(gCleanupCount, 1U);
     EXPECT_EQ(gUninitCount, 1U);
 }
 
-TEST_F(AccOffloadHostMemEntryTest, InitializeSharedFailsCleanlyWhenPoolMmapFails)
+TEST_F(AccOffloadDramEntryTest, InitializeSharedFailsCleanlyWhenPoolMmapFails)
 {
-    auto entry = MakeEntry();
+    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
-    config_.worldSize = 1;
-    config_.rankId = 0;
-    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "tcp://127.0.0.1:19872");
+    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", MMAP_FAILURE_STORE_URL);
     gMmapResult = OFFLOAD_ERROR;
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_FALSE(entry.inited_);
     EXPECT_EQ(gExportCount, 1U);
+    EXPECT_EQ(gEntityExportCount, 1U);
     EXPECT_EQ(gMmapCount, 1U);
     EXPECT_EQ(gFreedSlices.size(), 1U);
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gCleanupCount, 1U);
     EXPECT_EQ(gUninitCount, 1U);
+    EXPECT_EQ(entry.entity_, nullptr);
+    EXPECT_EQ(entry.memMng_, nullptr);
+    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.count(MMAP_FAILURE_STORE_URL), 0U);
 }
+
+// Exercise both entries' pool operations without a distributed group or device runtime.
+class AccOffloadDramPoolTest : public testing::TestWithParam<offload_scene_t> {
+protected:
+    void SetUp() override
+    {
+        MOCKER(hybm_uninit).stubs().will(invoke(UninitHybm));
+        if (GetParam() == OFFLOAD_SCENE_LOCAL) {
+            auto entry = std::make_unique<AccOffloadLocalDramEntry>(HYBM_ENTITY_ID_OFFLOAD_BASE);
+            PreparePool(*entry);
+            entry_ = std::move(entry);
+        } else {
+            auto entry = std::make_unique<AccOffloadSharedDramEntry>(HYBM_ENTITY_ID_OFFLOAD_BASE);
+            PreparePool(*entry);
+            entry_ = std::move(entry);
+        }
+    }
+
+    void TearDown() override
+    {
+        entry_.reset();
+        GlobalMockObject::verify();
+        GlobalMockObject::reset();
+    }
+
+    template<typename Entry>
+    void PreparePool(Entry &entry)
+    {
+        entry.inited_ = true;
+        entry.base_ = backing_.data();
+        entry.size_ = backing_.size();
+        entry.memMng_ = std::make_shared<AccOffloadMemManager>(entry.base_, entry.size_);
+    }
+
+    alignas(16) std::array<uint8_t, BACKING_BYTES> backing_{};
+    std::unique_ptr<AccOffloadEntry> entry_;
+};
+
+TEST_P(AccOffloadDramPoolTest, RegistrationChecksPoolRangeRatherThanBlockState)
+{
+    auto base = reinterpret_cast<uint64_t>(backing_.data());
+    EXPECT_EQ(entry_->HostRegister(base), OFFLOAD_OK);
+    EXPECT_EQ(entry_->HostRegister(base + backing_.size() - 1), OFFLOAD_OK);
+    EXPECT_NE(entry_->HostRegister(base - 1), OFFLOAD_OK);
+    EXPECT_NE(entry_->HostRegister(base + backing_.size()), OFFLOAD_OK);
+    auto ptr = entry_->HostMalloc(BLOCK_BYTES, 0);
+    EXPECT_EQ(entry_->HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_EQ(entry_->HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_EQ(entry_->HostFree(ptr, 0), OFFLOAD_OK);
+    EXPECT_EQ(entry_->HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_NE(entry_->HostFree(ptr, 0), OFFLOAD_OK);
+    entry_->UnInitialize();
+    EXPECT_NE(entry_->HostRegister(ptr), OFFLOAD_OK);
+    EXPECT_NE(entry_->HostFree(ptr, 0), OFFLOAD_OK);
+    EXPECT_EQ(entry_->MallocHost(BLOCK_BYTES), nullptr);
+}
+
+TEST_P(AccOffloadDramPoolTest, ConcurrentLegacyAndHostAllocationsRemainDistinctAndReusable)
+{
+    std::array<std::array<uint64_t, BLOCKS_PER_WORKER>, WORKER_COUNT> blocks{};
+    std::vector<std::thread> workers;
+    for (size_t worker = 0; worker < WORKER_COUNT; ++worker) {
+        workers.emplace_back([&, worker]() {
+            for (size_t idx = 0; idx < BLOCKS_PER_WORKER; ++idx) {
+                blocks[worker][idx] = idx % 2 == 0 ? entry_->HostMalloc(BLOCK_BYTES, 0)
+                                                   : reinterpret_cast<uint64_t>(entry_->MallocHost(BLOCK_BYTES));
+            }
+        });
+    }
+    for (auto &worker : workers) {
+        worker.join();
+    }
+    std::set<uint64_t> distinct;
+    for (const auto &batch : blocks) {
+        distinct.insert(batch.begin(), batch.end());
+    }
+    EXPECT_EQ(distinct.count(0), 0U);
+    EXPECT_EQ(distinct.size(), WORKER_COUNT * BLOCKS_PER_WORKER);
+    workers.clear();
+    for (size_t worker = 0; worker < WORKER_COUNT; ++worker) {
+        workers.emplace_back([&, worker]() {
+            for (auto ptr : blocks[worker]) {
+                entry_->FreeHost(reinterpret_cast<void *>(ptr));
+            }
+        });
+    }
+    for (auto &worker : workers) {
+        worker.join();
+    }
+    EXPECT_EQ(entry_->HostMalloc(backing_.size(), 0), reinterpret_cast<uint64_t>(backing_.data()));
+}
+
+INSTANTIATE_TEST_SUITE_P(LocalAndShared, AccOffloadDramPoolTest,
+                         testing::Values(OFFLOAD_SCENE_LOCAL, OFFLOAD_SCENE_SHARED));

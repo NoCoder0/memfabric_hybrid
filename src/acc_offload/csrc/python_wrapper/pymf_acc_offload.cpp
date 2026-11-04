@@ -68,7 +68,6 @@ void DefineAccOffloadConfig(py::module_ &m)
                        "(< world_size) currently accepts A3 (Ascend910C) nodes only")
         .def_readwrite("flags", &offload_config_t::flags, "optional flags, see OFFLOAD_FLAG_xxx");
     m.attr("OFFLOAD_FLAG_GIANT_PAGE") = py::int_(OFFLOAD_FLAG_GIANT_PAGE);
-    m.attr("OFFLOAD_FLAG_HOST_MEM") = py::int_(OFFLOAD_FLAG_HOST_MEM);
 }
 
 void DefineAccOffloadApi(py::module_ &m)
@@ -165,25 +164,10 @@ void DefineAccOffloadInstanceApi(py::module_ &m)
     cls.def("initialize", &AccOffloadEntryManager::Initialize, py::call_guard<py::gil_scoped_release>(),
             py::arg("config"));
     cls.def("uninitialize", &AccOffloadEntryManager::UnInitialize, py::call_guard<py::gil_scoped_release>());
-    cls.def(
-        "malloc",
-        [](AccOffloadEntryManager &self, uint64_t size, uint64_t flags) -> uint64_t {
-            if (self.IsHostMem()) {
-                return self.HostMalloc(size, flags);
-            }
-            return reinterpret_cast<uint64_t>(self.MallocHost(size));
-        },
-        py::call_guard<py::gil_scoped_release>(), py::arg("size"), py::arg("flags") = 0);
-    cls.def(
-        "free",
-        [](AccOffloadEntryManager &self, uint64_t ptr, uint64_t flags) -> int32_t {
-            if (self.IsHostMem()) {
-                return self.HostFree(ptr, flags);
-            }
-            self.FreeHost(reinterpret_cast<void *>(ptr));
-            return 0;
-        },
-        py::call_guard<py::gil_scoped_release>(), py::arg("ptr"), py::arg("flags") = 0);
+    cls.def("malloc", &AccOffloadEntryManager::HostMalloc, py::call_guard<py::gil_scoped_release>(), py::arg("size"),
+            py::arg("flags") = 0);
+    cls.def("free", &AccOffloadEntryManager::HostFree, py::call_guard<py::gil_scoped_release>(), py::arg("ptr"),
+            py::arg("flags") = 0);
     cls.def(
         "get_dva",
         [](AccOffloadEntryManager &self, uint64_t ptr) -> uint64_t {

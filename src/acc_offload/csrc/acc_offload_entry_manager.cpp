@@ -12,7 +12,6 @@
 #include "acc_offload_entry_manager.h"
 #include "acc_offload_local_dram_entry.h"
 #include "acc_offload_shared_dram_entry.h"
-#include "acc_offload_host_mem_entry.h"
 #include "acc_offload_define.h"
 
 namespace ock {
@@ -39,10 +38,8 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         return OFFLOAD_OK;
     }
 
-    hostMem_ = (config.flags & OFFLOAD_FLAG_HOST_MEM) != 0U;
     auto ret = CreateEntry(config.scene);
     if (ret != OFFLOAD_OK) {
-        hostMem_ = false;
         return ret;
     }
     scene_ = config.scene;
@@ -54,7 +51,6 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         entry_->UnInitialize();
         entry_.reset();
         scene_ = OFFLOAD_SCENE_LOCAL;
-        hostMem_ = false;
         return ret;
     }
 
@@ -62,7 +58,7 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
     OFFLOAD_LOG_INFO("entry manager initialized, scene: "
                      << static_cast<uint32_t>(scene_) << ", deviceId: " << config.deviceId << ", reserveSize: "
                      << config.reserveSize << ", allocSize: " << config.allocSize << ", worldSize: " << config.worldSize
-                     << ", rankId: " << config.rankId << ", hostMem: " << hostMem_ << ", entityId: " << entityId_);
+                     << ", rankId: " << config.rankId << ", entityId: " << entityId_);
     return OFFLOAD_OK;
 }
 
@@ -75,14 +71,12 @@ int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
         return OFFLOAD_ERROR;
     }
     entityId_ = HYBM_ENTITY_ID_OFFLOAD_BASE + id;
-    if (hostMem_) {
-        entry_ = std::make_unique<AccOffloadHostMemEntry>(entityId_);
-    } else if (scene == OFFLOAD_SCENE_LOCAL) {
+    if (scene == OFFLOAD_SCENE_LOCAL) {
         entry_ = std::make_unique<AccOffloadLocalDramEntry>(entityId_);
     } else if (scene == OFFLOAD_SCENE_SHARED) {
         entry_ = std::make_unique<AccOffloadSharedDramEntry>(entityId_);
     } else {
-        OFFLOAD_LOG_ERROR("invalid scene: " << static_cast<uint32_t>(scene) << ", hostMem: " << hostMem_);
+        OFFLOAD_LOG_ERROR("invalid scene: " << static_cast<uint32_t>(scene));
         return OFFLOAD_ERROR;
     }
     return OFFLOAD_OK;
@@ -100,13 +94,13 @@ void AccOffloadEntryManager::UnInitialize()
     }
     entry_.reset();
     inited_ = false;
-    hostMem_ = false;
     OFFLOAD_LOG_INFO("entry manager uninitialized, scene: " << static_cast<uint32_t>(scene_)
                                                             << ", entityId: " << entityId_);
 }
 
 void *AccOffloadEntryManager::MallocHost(size_t size)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, malloc failed, size: " << size);
         return nullptr;
@@ -116,6 +110,7 @@ void *AccOffloadEntryManager::MallocHost(size_t size)
 
 void AccOffloadEntryManager::FreeHost(void *ptr)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr || ptr == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null or ptr is null, free failed");
         return;
@@ -125,6 +120,7 @@ void AccOffloadEntryManager::FreeHost(void *ptr)
 
 int32_t AccOffloadEntryManager::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr || dvaPtr == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null or dvaPtr is null, get dva failed, hostPtr: " << hostPtr);
         return OFFLOAD_ERROR;
@@ -135,6 +131,7 @@ int32_t AccOffloadEntryManager::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
 int32_t AccOffloadEntryManager::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
                                            uint8_t devIdx)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, sparse copy failed");
         return OFFLOAD_ERROR;
@@ -146,6 +143,7 @@ int32_t AccOffloadEntryManager::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPt
                                               uint32_t *numLocalExpertPtr, int64_t *groupList, int64_t *packedGroupList,
                                               uint8_t devIdx)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, group pack copy failed");
         return OFFLOAD_ERROR;
@@ -155,6 +153,7 @@ int32_t AccOffloadEntryManager::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPt
 
 int32_t AccOffloadEntryManager::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, kv exchange copy failed");
         return OFFLOAD_ERROR;
@@ -164,6 +163,7 @@ int32_t AccOffloadEntryManager::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx
 
 int32_t AccOffloadEntryManager::RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, register entry table failed");
         return OFFLOAD_ERROR;
@@ -172,12 +172,12 @@ int32_t AccOffloadEntryManager::RegisterEntryTable(uint32_t entryBytes, uint32_t
         OFFLOAD_LOG_ERROR("entry table only supported in SHARED scene, scene: " << static_cast<uint32_t>(scene_));
         return OFFLOAD_ERROR;
     }
-    std::lock_guard<std::mutex> lock(mutex_);
     return entry_->RegisterEntryTable(entryBytes, rowsPerSlot);
 }
 
 int32_t AccOffloadEntryManager::EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, entry gather failed");
         return OFFLOAD_ERROR;
@@ -192,6 +192,7 @@ int32_t AccOffloadEntryManager::EntryGather(uint64_t dstPtr, uint64_t idsPtr, ui
 
 uint64_t AccOffloadEntryManager::HostMalloc(uint64_t size, uint64_t flags)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, host malloc failed, size: " << size);
         return 0;
@@ -201,6 +202,7 @@ uint64_t AccOffloadEntryManager::HostMalloc(uint64_t size, uint64_t flags)
 
 int32_t AccOffloadEntryManager::HostRegister(uint64_t hostPtr)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, host register failed, hostPtr: " << hostPtr);
         return OFFLOAD_ERROR;
@@ -210,6 +212,7 @@ int32_t AccOffloadEntryManager::HostRegister(uint64_t hostPtr)
 
 int32_t AccOffloadEntryManager::HostGetDevicePtr(uint64_t hostPtr, uint64_t *dvaPtr)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr || dvaPtr == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null or dvaPtr is null, host get device ptr failed, hostPtr: " << hostPtr);
         return OFFLOAD_ERROR;
@@ -219,6 +222,7 @@ int32_t AccOffloadEntryManager::HostGetDevicePtr(uint64_t hostPtr, uint64_t *dva
 
 int32_t AccOffloadEntryManager::HostFree(uint64_t hostPtr, uint64_t flags)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (entry_ == nullptr) {
         OFFLOAD_LOG_ERROR("entry is null, host free failed, hostPtr: " << hostPtr);
         return OFFLOAD_ERROR;

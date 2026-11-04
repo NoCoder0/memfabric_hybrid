@@ -78,8 +78,9 @@ def _build_config(scene, device_id, rank_id, world_size, store_port, giant_page,
     config = offload.OffloadConfig()
     config.device_id = device_id
     config.reserve_size = reserve_size
+    config.alloc_size = reserve_size
     config.scene = offload.Scene.SHARED if scene == "shared" else offload.Scene.LOCAL
-    config.flags = offload.OFFLOAD_FLAG_HOST_MEM
+    config.flags = 0
     if giant_page:
         config.flags |= offload.OFFLOAD_FLAG_GIANT_PAGE
     if scene == "shared":
@@ -230,12 +231,12 @@ def _rank_main(rank_id, device_id, scene, world_size, port, store_port, giant_pa
     mf.set_log_level(3)
     torch.npu.set_device(device_id)
 
-    # one config for every instance: the host-mem entry namespaces each pool by its
-    # dynamically allocated entity id (the "(<entityId>)_" store prefix), so all
-    # instances share this store url; instance i meets every peer rank's instance i
-    config = _build_config(scene, device_id, rank_id, world_size, store_port, giant_page, reserve_size)
     pools = []
     for instance_id in range(instance_count):
+        # SHARED instances require distinct store URLs; peers use the same port for instance i.
+        config = _build_config(
+            scene, device_id, rank_id, world_size, store_port + instance_id, giant_page, reserve_size
+        )
         pool = offload.Offload()
         assert pool.initialize(config) == 0, f"rank_id:{rank_id} instance:{instance_id} initialize failed"
         pools.append(pool)
@@ -282,21 +283,21 @@ def _detect_chip_type() -> str:
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="host_mem_offload: whole-pool host-mem entry lifecycle (up-front backed reserve, in-pool "
+        description="host_mem_offload: LOCAL/SHARED pool lifecycle (up-front allocated pool, in-pool "
         "malloc/free, pre-registered DVA); single or multiple offload instances per rank"
     )
     parser.add_argument(
         "--scene",
         choices=["local", "shared"],
         default="local",
-        help="offload scene of the host-mem entry (default: local)",
+        help="offload pool scene (default: local)",
     )
     parser.add_argument(
         "--instances",
         type=int,
         default=DEFAULT_INSTANCE_COUNT,
         help=f"host-mem offload instances per rank, in [1, {MAX_INSTANCE_COUNT}] "
-        f"(default: {DEFAULT_INSTANCE_COUNT}); instances share one store url (entity-id prefixed namespaces)",
+        f"(default: {DEFAULT_INSTANCE_COUNT}); shared instance i uses store_port + i",
     )
     parser.add_argument(
         "--world_size",
@@ -338,7 +339,7 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
 
     if args.giant_page and args.scene == "shared":
-        raise ValueError("--giant_page is local only: shared is always vmm on the host mem entry")
+        raise ValueError("--giant_page is local only: shared uses the vmm pool")
     if args.reserve_mib < MIN_RESERVE_MIB:
         raise ValueError(f"reserve_mib={args.reserve_mib} must be >= {MIN_RESERVE_MIB} for the capacity phase")
     chip_type = _detect_chip_type()
@@ -349,6 +350,8 @@ def _parse_args() -> argparse.Namespace:
         )
     if args.instances < 1 or args.instances > MAX_INSTANCE_COUNT:
         raise ValueError(f"instances={args.instances} must be in [1, {MAX_INSTANCE_COUNT}]")
+    if args.scene == "shared" and not 0 < args.store_port <= 65535 - args.instances + 1:
+        raise ValueError("store_port through store_port + instances - 1 must be valid TCP ports")
     if args.device_offset < 0 or args.device_offset + args.world_size > chip_max:
         raise ValueError(
             f"device_offset={args.device_offset} + world_size={args.world_size} must stay within "
@@ -360,11 +363,8 @@ def _parse_args() -> argparse.Namespace:
 
 def main():
     args = _parse_args()
-    # the giant-page flag only changes A5 (D2RH conn form); A3 always runs the vmm
-    # default (1G giant-page backing + NUMA). The whole pool is one GB-aligned slice
-    # backed at initialize, so the driver's sub-GB HalMemMap rejection never applies;
-    # afterwards malloc/free are 16B-aligned in-pool splits on every form.
-    giant_page = args.giant_page and args.chip_type == "A5"
+    # Preserve the LOCAL pool's allocation flags on both A3 and A5.
+    giant_page = args.giant_page
 
     mp.set_start_method("spawn", force=True)
     sync = mp.Barrier(args.world_size)

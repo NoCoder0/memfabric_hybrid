@@ -49,6 +49,10 @@ public:
 
     int32_t GetDva(uint64_t hostPtr, uint64_t *dvaPtr) override;
 
+    int32_t HostRegister(uint64_t hostPtr) override;
+
+    int32_t HostFree(uint64_t hostPtr, uint64_t flags) override;
+
     int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
                        uint8_t devIdx) override;
 
@@ -62,6 +66,11 @@ public:
     int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx) override;
 
 private:
+    // Caller holds mutex_, including initialization failure paths.
+    void Cleanup();
+
+    int32_t ValidateHostPointer(uint64_t hostPtr) const;
+
     int32_t AllocAndExportHostSlices();
 
     int32_t ValidateSharedConfig(const offload_config_t &config);

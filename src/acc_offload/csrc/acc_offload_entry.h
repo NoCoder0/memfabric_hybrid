@@ -32,37 +32,22 @@ public:
 
     virtual void FreeHost(void *ptr) = 0;
 
-    virtual int32_t GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
-    {
-        return -1;
-    }
+    virtual int32_t GetDva(uint64_t hostPtr, uint64_t *dvaPtr) = 0;
 
     virtual uint64_t HostMalloc(uint64_t size, uint64_t flags)
     {
-        (void)size;
         (void)flags;
-        return 0;
+        return reinterpret_cast<uint64_t>(MallocHost(size));
     }
 
-    virtual int32_t HostRegister(uint64_t hostPtr)
-    {
-        (void)hostPtr;
-        return -1;
-    }
+    virtual int32_t HostRegister(uint64_t hostPtr) = 0;
 
     virtual int32_t HostGetDevicePtr(uint64_t hostPtr, uint64_t *dvaPtr)
     {
-        (void)hostPtr;
-        (void)dvaPtr;
-        return -1;
+        return GetDva(hostPtr, dvaPtr);
     }
 
-    virtual int32_t HostFree(uint64_t hostPtr, uint64_t flags)
-    {
-        (void)hostPtr;
-        (void)flags;
-        return -1;
-    }
+    virtual int32_t HostFree(uint64_t hostPtr, uint64_t flags) = 0;
 
     /* optional per entry: entries that do not override reject with a logged error */
     virtual int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,

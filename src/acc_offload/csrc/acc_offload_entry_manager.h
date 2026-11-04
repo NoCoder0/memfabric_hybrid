@@ -70,20 +70,14 @@ public:
         return scene_;
     }
 
-    inline bool IsHostMem() const
-    {
-        return inited_ && hostMem_;
-    }
-
 private:
     int32_t CreateEntry(offload_scene_t scene);
 
 private:
     static std::atomic<uint16_t> nextEntityId_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     uint16_t entityId_ = UINT16_MAX;
     bool inited_ = false;
-    bool hostMem_ = false;
     offload_scene_t scene_ = OFFLOAD_SCENE_LOCAL;
     std::unique_ptr<AccOffloadEntry> entry_;
 };

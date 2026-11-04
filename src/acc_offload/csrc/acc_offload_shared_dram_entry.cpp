@@ -460,7 +460,7 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
     inited_ = true;
     ret = InitSharedPool(config);
     if (ret != OFFLOAD_OK) {
-        UnInitialize();
+        Cleanup();
         return ret;
     }
 
@@ -475,6 +475,12 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
 }
 
 void AccOffloadSharedDramEntry::UnInitialize()
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    Cleanup();
+}
+
+void AccOffloadSharedDramEntry::Cleanup()
 {
     entryTable_ = {};
     entryTableRegistered_ = false;
@@ -517,39 +523,66 @@ void AccOffloadSharedDramEntry::UnInitialize()
 
 void *AccOffloadSharedDramEntry::MallocHost(size_t size)
 {
-    if (memMng_ == nullptr) {
-        OFFLOAD_LOG_ERROR("mem manager is nullptr, malloc failed");
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!inited_ || memMng_ == nullptr) {
+        OFFLOAD_LOG_ERROR("pool not initialized, malloc failed, size (bytes): " << size << ", entityId: " << entityId_);
         return nullptr;
     }
-
-    OFFLOAD_LOG_DEBUG("shared malloc host size: " << size);
     return memMng_->Allocate(size);
 }
 
 void AccOffloadSharedDramEntry::FreeHost(void *ptr)
 {
-    if (memMng_ == nullptr || ptr == nullptr) {
-        OFFLOAD_LOG_ERROR("mem manager is nullptr or ptr is nullptr, free failed");
-        return;
-    }
+    (void)HostFree(reinterpret_cast<uint64_t>(ptr), 0);
+}
 
-    OFFLOAD_LOG_DEBUG("shared free host ptr: " << reinterpret_cast<uint64_t>(ptr));
-    memMng_->Release(ptr);
+int32_t AccOffloadSharedDramEntry::HostFree(uint64_t hostPtr, uint64_t flags)
+{
+    (void)flags;
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (ValidateHostPointer(hostPtr) != OFFLOAD_OK) {
+        return OFFLOAD_ERROR;
+    }
+    auto ret = memMng_->Release(reinterpret_cast<void *>(hostPtr));
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("release host block failed, hostPtr: " << hostPtr << ", entityId: " << entityId_
+                                                                 << ", rankId: " << options_.rankId
+                                                                 << ", ret: " << ret);
+    }
+    return ret;
+}
+
+int32_t AccOffloadSharedDramEntry::ValidateHostPointer(uint64_t hostPtr) const
+{
+    if (!inited_ || memMng_ == nullptr) {
+        OFFLOAD_LOG_ERROR("pool not initialized, hostPtr: " << hostPtr << ", entityId: " << entityId_);
+        return OFFLOAD_ERROR;
+    }
+    const auto base = reinterpret_cast<uint64_t>(base_);
+    if (base_ == nullptr || hostPtr < base || hostPtr - base >= size_) {
+        OFFLOAD_LOG_ERROR("host pointer outside pool, hostPtr: " << hostPtr << ", poolBase: " << base
+                                                                 << ", poolSize (bytes): " << size_ << ", entityId: "
+                                                                 << entityId_ << ", rankId: " << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadSharedDramEntry::HostRegister(uint64_t hostPtr)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    // Registration is local and idempotent; initialize already mapped all ranks.
+    return ValidateHostPointer(hostPtr);
 }
 
 int32_t AccOffloadSharedDramEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
 {
-    if (!inited_) {
-        OFFLOAD_LOG_ERROR("entry not initialized, get dva failed");
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (dvaPtr == nullptr) {
+        OFFLOAD_LOG_ERROR("device pointer output is null, hostPtr: " << hostPtr << ", entityId: " << entityId_);
         return OFFLOAD_ERROR;
     }
-    if (dvaPtr == nullptr || hostPtr == 0) {
-        OFFLOAD_LOG_ERROR("invalid input, hostPtr is null: " << (hostPtr == 0)
-                                                             << ", dvaPtr is null: " << (dvaPtr == nullptr));
-        return OFFLOAD_ERROR;
-    }
-    if (reinterpret_cast<uint64_t>(base_) > hostPtr || hostPtr >= reinterpret_cast<uint64_t>(base_) + size_) {
-        OFFLOAD_LOG_ERROR("hostPtr out of pool range, pool size: " << size_ << ", rankId: " << options_.rankId);
+    if (ValidateHostPointer(hostPtr) != OFFLOAD_OK) {
         return OFFLOAD_ERROR;
     }
 
@@ -617,6 +650,7 @@ int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint3
 
 int32_t AccOffloadSharedDramEntry::EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
 {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!inited_ || !entryTableRegistered_) {
         OFFLOAD_LOG_ERROR("entry not initialized or no table registered"
                           << ", inited: " << inited_ << ", tableRegistered: " << entryTableRegistered_
