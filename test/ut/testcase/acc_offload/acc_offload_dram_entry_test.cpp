@@ -38,6 +38,7 @@ constexpr uint64_t POOL_SIZE = GB;
 constexpr size_t BACKING_BYTES = 64 * 1024;
 constexpr uint32_t TEST_DEVICE = 0;
 constexpr uint64_t GVA_DVA = 0x1234abcd00ULL;
+constexpr uint64_t QUERY_VA = 0x500000000000ULL;
 constexpr uint64_t BLOCK_BYTES = 16;
 constexpr size_t WORKER_COUNT = 4;
 constexpr size_t BLOCKS_PER_WORKER = 128;
@@ -58,6 +59,8 @@ uint32_t gCleanupCount = 0;
 int32_t gInitResult = OFFLOAD_OK;
 int32_t gLaunchResult = OFFLOAD_OK;
 int32_t gReserveResult = OFFLOAD_OK;
+uint32_t gReserveAtCount = 0;
+uint64_t gReservedVa = 0;
 int32_t gGvaResult = OFFLOAD_OK;
 bool gEntityNull = false;
 bool gAllocNull = false;
@@ -112,6 +115,22 @@ void DestroyEntity(hybm_entity_t entity, uint32_t)
 
 int32_t ReserveMemSpace(hybm_entity_t, uint32_t)
 {
+    return gReserveResult;
+}
+
+int32_t QueryMemSpace(hybm_entity_t, uint64_t *address, uint32_t)
+{
+    if (address == nullptr) {
+        return OFFLOAD_ERROR;
+    }
+    *address = QUERY_VA;
+    return OFFLOAD_OK;
+}
+
+int32_t ReserveMemSpaceAt(hybm_entity_t, uint64_t address, uint32_t)
+{
+    ++gReserveAtCount;
+    gReservedVa = address;
     return gReserveResult;
 }
 
@@ -202,6 +221,8 @@ protected:
         gInitResult = OFFLOAD_OK;
         gLaunchResult = OFFLOAD_OK;
         gReserveResult = OFFLOAD_OK;
+        gReserveAtCount = 0;
+        gReservedVa = 0;
         gGvaResult = OFFLOAD_OK;
         gEntityNull = false;
         gAllocNull = false;
@@ -224,6 +245,8 @@ protected:
         MOCKER(hybm_create_entity).stubs().will(invoke(CreateEntity));
         MOCKER(hybm_destroy_entity).stubs().will(invoke(DestroyEntity));
         MOCKER(hybm_reserve_mem_space).stubs().will(invoke(ReserveMemSpace));
+        MOCKER(hybm_query_mem_space).stubs().will(invoke(QueryMemSpace));
+        MOCKER(hybm_reserve_mem_space_at).stubs().will(invoke(ReserveMemSpaceAt));
         MOCKER(hybm_unreserve_mem_space).stubs().will(invoke(UnreserveMemSpace));
         MOCKER(hybm_alloc_local_memory).stubs().will(invoke(AllocSlice));
         MOCKER(hybm_get_slice_va).stubs().will(invoke(SliceVa));
@@ -646,6 +669,8 @@ TEST_F(AccOffloadDramEntryTest, InitializeSharedSingleRankRegistersWholePoolOnce
     EXPECT_EQ(gExportCount, 1U);
     EXPECT_EQ(gEntityExportCount, 1U);
     EXPECT_EQ(gMmapCount, 1U);
+    EXPECT_EQ(gReserveAtCount, 1U);
+    EXPECT_EQ(gReservedVa, QUERY_VA);
     EXPECT_EQ(entry.hostGva_, gPools.front().data());
     auto ptr = entry.HostMalloc(BLOCK_BYTES, 0);
     ASSERT_NE(ptr, 0U);
