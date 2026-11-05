@@ -36,6 +36,73 @@ static Result CheckGlobalCopyRegistrations(const void *src, const void *dest, hy
     return BM_OK;
 }
 
+static const char *DirectionToStr(hybm_data_copy_direction d)
+{
+    switch (d) {
+        case HYBM_LOCAL_HOST_TO_GLOBAL_HOST:
+            return "LOCAL_HOST_TO_GLOBAL_HOST";
+        case HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE:
+            return "LOCAL_HOST_TO_GLOBAL_DEVICE";
+        case HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST:
+            return "LOCAL_DEVICE_TO_GLOBAL_HOST";
+        case HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE:
+            return "LOCAL_DEVICE_TO_GLOBAL_DEVICE";
+        case HYBM_GLOBAL_HOST_TO_GLOBAL_HOST:
+            return "GLOBAL_HOST_TO_GLOBAL_HOST";
+        case HYBM_GLOBAL_HOST_TO_GLOBAL_DEVICE:
+            return "GLOBAL_HOST_TO_GLOBAL_DEVICE";
+        case HYBM_GLOBAL_HOST_TO_LOCAL_HOST:
+            return "GLOBAL_HOST_TO_LOCAL_HOST";
+        case HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE:
+            return "GLOBAL_HOST_TO_LOCAL_DEVICE";
+        case HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST:
+            return "GLOBAL_DEVICE_TO_GLOBAL_HOST";
+        case HYBM_GLOBAL_DEVICE_TO_GLOBAL_DEVICE:
+            return "GLOBAL_DEVICE_TO_GLOBAL_DEVICE";
+        case HYBM_GLOBAL_DEVICE_TO_LOCAL_HOST:
+            return "GLOBAL_DEVICE_TO_LOCAL_HOST";
+        case HYBM_GLOBAL_DEVICE_TO_LOCAL_DEVICE:
+            return "GLOBAL_DEVICE_TO_LOCAL_DEVICE";
+        case HYBM_DATA_COPY_DIRECTION_AUTO:
+            return "AUTO";
+        default:
+            return "UNKNOWN_DIR";
+    }
+}
+
+static std::string MaskToCategoryStr(uint8_t mask)
+{
+    const uint8_t srcMask = mask & 0x0FU;        // 取低4位
+    const uint8_t dstMask = (mask >> 4) & 0x0FU; // 取高4位
+    std::string src;
+    std::string dst;
+
+    if (srcMask == 0U) {
+        src = "INVALID";
+    }
+    if (dstMask == 0U) {
+        dst = "INVALID";
+    }
+    static const struct {
+        uint8_t bit;
+        const char *name;
+    } kBits[] = {
+        {HybmVaManager::BIT_LOCAL_HOST, "LOCAL_HOST"},
+        {HybmVaManager::BIT_GLOBAL_HOST, "GLOBAL_HOST"},
+        {HybmVaManager::BIT_LOCAL_DEVICE, "LOCAL_DEVICE"},
+        {HybmVaManager::BIT_GLOBAL_DEVICE, "GLOBAL_DEVICE"},
+    };
+    for (const auto &b : kBits) {
+        if (srcMask & b.bit) {
+            src = b.name;
+        }
+        if (dstMask & b.bit) {
+            dst = b.name;
+        }
+    }
+    return src + "_TO_" + dst;
+}
+
 HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_data_copy_direction direction,
                                 void *stream, uint32_t flags)
 {
@@ -66,9 +133,10 @@ HYBM_API int32_t hybm_data_copy(hybm_entity_t e, hybm_copy_params *params, hybm_
         if (ret != BM_OK) {
             return ret;
         }
-        BM_LOG_ERROR("Direction mismatch: specified=" << static_cast<int>(direction)
-                                                      << " except:" << static_cast<int>(except)
-                                                      << " src=" << params->src << " dest=" << params->dest);
+        BM_LOG_ERROR("Direction mismatch: dir="
+                     << static_cast<int>(direction) << " (" << DirectionToStr(direction) << ")"
+                     << " except=" << static_cast<int>(except) << " (" << MaskToCategoryStr(except) << ")"
+                     << " src=" << params->src << " dest=" << params->dest);
         return BM_INVALID_PARAM;
     }
 
@@ -186,7 +254,8 @@ HYBM_API int32_t hybm_data_batch_copy(hybm_entity_t e, hybm_batch_copy_params *p
             }
             TP_TRACE_END(TP_HYBM_BATCH_VALIDATE_ADDRESSES, BM_INVALID_PARAM);
             BM_LOG_ERROR("Direction mismatch at index "
-                         << i << ": dir=" << static_cast<int>(direction) << " except:" << static_cast<int>(except)
+                         << i << ": dir=" << static_cast<int>(direction) << " (" << DirectionToStr(direction) << ")"
+                         << " except=" << static_cast<int>(except) << " (" << MaskToCategoryStr(except) << ")"
                          << " src=" << params->sources[i] << " dest=" << params->destinations[i]);
             return BM_INVALID_PARAM;
         }
