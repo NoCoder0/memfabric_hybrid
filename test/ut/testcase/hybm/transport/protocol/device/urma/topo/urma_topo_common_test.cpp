@@ -1413,6 +1413,21 @@ TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_Server16FM)
     EXPECT_NE(path.find("atlas_850_2"), std::string::npos);
 }
 
+TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_Server550EL100)
+{
+    MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
+    std::string path;
+    EXPECT_EQ(UrmaTopoProduct::GetTopoFilePath(MAIN_BOARD_ID_SERVER_550EL_100, 99, path), BM_OK);
+    EXPECT_NE(path.find("atlas_550EL_100"), std::string::npos);
+}
+
+TEST_F(UrmaTopoCommonMockTest, GetUrmaTopoProduct_ServerBoardFamilies)
+{
+    EXPECT_NE(UrmaTopoProduct::GetUrmaTopoProduct(0, 0, 3, MAIN_BOARD_ID_SERVER_550EL_100), nullptr);
+    EXPECT_NE(UrmaTopoProduct::GetUrmaTopoProduct(0, 0, 3, MAIN_BOARD_ID_SERVER_350L), nullptr);
+    EXPECT_EQ(UrmaTopoProduct::GetUrmaTopoProduct(0, 0, 3, 0xFFFF), nullptr);
+}
+
 TEST_F(UrmaTopoCommonMockTest, GetTopoFilePath_Pod)
 {
     MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));

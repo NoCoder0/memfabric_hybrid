@@ -31,6 +31,7 @@ UrmaTopoProductPtr UrmaTopoProduct::GetUrmaTopoProduct(int32_t deviceId, int32_t
         case MAIN_BOARD_ID_SERVER_8PMESH_NOSP:
         case MAIN_BOARD_ID_SERVER_8PMESH_NOSP_UBOE:
         case MAIN_BOARD_ID_SERVER_350L:
+        case MAIN_BOARD_ID_SERVER_550EL_100:
         case MAIN_BOARD_ID_POD_FLEX:
         case MAIN_BOARD_ID_POD_FLEX_RTP:
             return std::make_shared<UrmaTopoProductServer>(deviceId, logicId, phyId, mainboardId);
@@ -59,6 +60,9 @@ Result UrmaTopoProduct::GetTopoFilePath(uint32_t mainboardId, uint32_t spodType,
             break;
         case MAIN_BOARD_ID_SERVER_350L:
             fileName = "driver/topo/950/atlas_850_3.json";
+            break;
+        case MAIN_BOARD_ID_SERVER_550EL_100:
+            fileName = "driver/topo/950/atlas_550EL_100.json";
             break;
         case MAIN_BOARD_ID_POD:
         case MAIN_BOARD_ID_POD_2D:

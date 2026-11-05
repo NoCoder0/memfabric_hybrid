@@ -1743,6 +1743,40 @@ TEST(DeviceUrmaTransportManagerTest, OpenDevice350LSelectsCtpProtocol)
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
+// 银河 550EL_100 与 UBX 350L 同为 UBC_CTP 单协议机型：协议表命中 + 拓扑产品工厂非空都要覆盖，
+// 缺任一处 OpenDevice 会在 UrmaTopoManager::SetDeviceBaseInfo 提前失败。
+TEST(DeviceUrmaTransportManagerTest, OpenDevice550EL100SelectsCtpProtocol)
+{
+    struct TopologyGuard {
+        ~TopologyGuard()
+        {
+            ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
+        }
+    } topologyGuard;
+    ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
+    DeviceTestFixture fixture;
+    fixture.InstallAll();
+    DlAclApi::pRtGetDeviceInfo = [](uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *value) {
+        auto ret = MockRtGetDeviceInfo(deviceId, moduleType, infoType, value);
+        if (ret == BM_OK && infoType == INFO_TYPE_MAINBOARD_ID) {
+            *value = MAIN_BOARD_ID_SERVER_550EL_100;
+        }
+        return ret;
+    };
+    DeviceUrmaTransportManager manager;
+    TransportOptions options{};
+    options.rankId = 0U;
+    options.rankCount = 2U;
+    options.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
+
+    ASSERT_EQ(manager.OpenDevice(options), BM_OK);
+    EXPECT_EQ(manager.mainboardId_, MAIN_BOARD_ID_SERVER_550EL_100);
+    EXPECT_EQ(manager.protocol_, UrmaProtocol::UBC_CTP);
+    ASSERT_FALSE(manager.localEndpointDesc_.empty());
+    EXPECT_EQ(manager.localEndpointDesc_[0].protocol, UrmaProtocol::UBC_CTP);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
+}
+
 TEST(DeviceUrmaTransportManagerTest, CreatingContextsDoesNotLeaseNotify)
 {
     DeviceTestFixture fix;

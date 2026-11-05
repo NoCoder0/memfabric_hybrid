@@ -139,6 +139,20 @@ int32_t UnreserveMemSpace(hybm_entity_t, uint32_t)
     return OFFLOAD_OK;
 }
 
+int32_t QueryMemSpace(hybm_entity_t entity, uint64_t *address, uint32_t)
+{
+    if (address == nullptr) {
+        return OFFLOAD_ERROR;
+    }
+    *address = reinterpret_cast<uint64_t>(entity);
+    return OFFLOAD_OK;
+}
+
+int32_t ReserveMemSpaceAt(hybm_entity_t, uint64_t, uint32_t)
+{
+    return gReserveResult;
+}
+
 hybm_mem_slice_t AllocSlice(hybm_entity_t entity, hybm_mem_type, uint64_t size, uint32_t)
 {
     gAllocSizes.push_back(size);
