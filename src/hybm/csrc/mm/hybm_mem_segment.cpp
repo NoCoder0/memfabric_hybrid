@@ -182,6 +182,7 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
             const bool vmmSupport = HybmGetGvaVersion() == HYBM_GVA_V4 &&
                                     (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
                                     options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
+                                    !(options.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) &&
                                     (!(options.dataOpType & DEVICE_TRANSPORT_MASK) || isSdmaMixedTransport);
             if ((options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U) {
                 tmpSeg = std::make_shared<HybmHostShmSegment>(options, entityId);
