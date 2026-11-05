@@ -267,6 +267,7 @@ struct AddrQueryResult {
     bool inAllocGva{false};
     hybm_mem_type memType{HYBM_MEM_TYPE_BUTT};
     bool imported{false};
+    bool requiresTranslation{false};
 };
 
 /*
@@ -398,6 +399,8 @@ private:
             result.inAllocGva = true;
             result.memType = info.base.memType;
             result.imported = info.IsImported();
+            const auto localVa = info.base.va[info.base.memType == HYBM_MEM_TYPE_DEVICE ? HVM_DVA : HVM_HVA];
+            result.requiresTranslation = localVa != 0 && localVa != info.base.va[HVM_GVA];
         }
         return result;
     }

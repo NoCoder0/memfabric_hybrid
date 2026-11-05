@@ -395,8 +395,8 @@ bool HybmVaManager::TryGetLocalRegisteredMemTypeLocked(uint64_t va, hybm_mem_typ
 bool HybmVaManager::ClassifyAddressMaskLocked(uint64_t va, uint8_t &mask) const
 {
     auto r = QueryAddrLocked(va);
-    // 已 import → 单 GLOBAL
-    if (r.inAllocGva && r.imported) {
+    // Local ownership does not make a logical GVA directly accessible.
+    if (r.inAllocGva && (r.imported || r.requiresTranslation)) {
         mask = (r.memType == HYBM_MEM_TYPE_DEVICE) ? BIT_GLOBAL_DEVICE : BIT_GLOBAL_HOST;
         return true;
     }

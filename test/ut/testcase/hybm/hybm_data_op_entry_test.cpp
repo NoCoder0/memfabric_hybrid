@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "hybm_data_op.h"
+#include "hybm_data_op_sdma.h"
 #include "hybm_common_include.h"
 #include "hybm_entity_factory.h"
 #include "hybm_va_manager.h"
@@ -811,4 +812,39 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_user_addr_combined)
     params.dataSize = 1024;
     auto ret = hybm_data_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
+}
+
+TEST_F(HybmDataOpEntryTest, AutoBatchCopyLocalLogicalGvaRoundTrip)
+{
+    constexpr uint64_t kBufferSize = 2ULL * 1024ULL * 1024ULL;
+    constexpr uint64_t kCopySize = 4096ULL;
+    constexpr uint64_t kStoreVa = HYBM_GVM_START_ADDR + 4ULL * kBufferSize;
+    constexpr uint64_t kOffset = kCopySize;
+    auto &manager = HybmVaManager::GetInstance();
+    auto reserved = manager.AllocReserveGva({kBufferSize, 0ULL, HYBM_MEM_TYPE_DEVICE, true, HYBM_SCENE_TRANS});
+    auto gva = reserved.va[HVM_GVA];
+    ASSERT_NE(gva, 0ULL);
+    ASSERT_EQ(manager.AddVaInfo({{gva, kStoreVa, kStoreVa}, kBufferSize, HYBM_MEM_TYPE_DEVICE}, true), BM_OK);
+    void *store_address[] = {reinterpret_cast<void *>(gva + kOffset)};
+    void *buffer_address[] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR)};
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params read_params{store_address, buffer_address, sizes, 1U};
+
+    ASSERT_EQ(hybm_data_batch_copy(mockEntity.get(), &read_params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0U), BM_OK);
+    EXPECT_EQ(mockEntity->batchCopyDirection, HYBM_GLOBAL_DEVICE_TO_GLOBAL_HOST);
+    HostDataOpSDMA sdma;
+    void *src = store_address[0];
+    void *dst = buffer_address[0];
+    sdma.TransformVa(src, dst, mockEntity->batchCopyDirection);
+    EXPECT_EQ(src, reinterpret_cast<void *>(kStoreVa + kOffset));
+    EXPECT_EQ(dst, buffer_address[0]);
+
+    hybm_batch_copy_params write_params{buffer_address, store_address, sizes, 1U};
+    ASSERT_EQ(hybm_data_batch_copy(mockEntity.get(), &write_params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0U), BM_OK);
+    EXPECT_EQ(mockEntity->batchCopyDirection, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE);
+    src = buffer_address[0];
+    dst = store_address[0];
+    sdma.TransformVa(src, dst, mockEntity->batchCopyDirection);
+    EXPECT_EQ(src, buffer_address[0]);
+    EXPECT_EQ(dst, reinterpret_cast<void *>(kStoreVa + kOffset));
 }

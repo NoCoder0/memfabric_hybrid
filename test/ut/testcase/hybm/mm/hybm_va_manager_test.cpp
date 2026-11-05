@@ -1111,6 +1111,33 @@ TEST_F(HybmVaManagerTest, ClassifyAddressMask_RemoteImported_ReturnsGlobal)
     EXPECT_EQ(mask, HybmVaManager::BIT_GLOBAL_HOST);
 }
 
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_LocalLogicalGvaRequiresTranslation)
+{
+    constexpr uint64_t kOffset = 4096ULL;
+    for (auto mem_type : {HYBM_MEM_TYPE_HOST, HYBM_MEM_TYPE_DEVICE}) {
+        manager.ClearAll();
+        auto reserved = manager.AllocReserveGva({TEST_SIZE_ONE_MB, 0ULL, mem_type, true, HYBM_SCENE_TRANS});
+        auto gva = reserved.va[HVM_GVA];
+        ASSERT_NE(gva, 0ULL);
+        ASSERT_EQ(manager.AddVaInfo({{gva, TEST_LVA_BASE, TEST_LVA_BASE}, TEST_SIZE_ONE_MB, mem_type}, true), BM_OK);
+        auto expected_mask =
+            mem_type == HYBM_MEM_TYPE_DEVICE ? HybmVaManager::BIT_GLOBAL_DEVICE : HybmVaManager::BIT_GLOBAL_HOST;
+        EXPECT_EQ(manager.ClassifyAddressMask(gva + kOffset), expected_mask);
+        EXPECT_EQ(manager.TransformVa(gva + kOffset, HVM_GVA, HVM_DVA), TEST_LVA_BASE + kOffset);
+        EXPECT_EQ(manager.TransformVa(gva + kOffset, HVM_GVA, HVM_HVA), TEST_LVA_BASE + kOffset);
+        EXPECT_EQ(manager.ClassifyAddressMask(gva + TEST_SIZE_ONE_MB - 1ULL), expected_mask);
+    }
+}
+
+TEST_F(HybmVaManagerTest, ClassifyAddressMask_UnreservedLocalLogicalGvaRequiresTranslation)
+{
+    constexpr uint64_t kOffset = 4096ULL;
+    ASSERT_EQ(manager.AddVaInfo(
+                  {{TEST_GVA_BASE_DEVICE, TEST_LVA_BASE, TEST_LVA_BASE}, TEST_SIZE_ONE_MB, HYBM_MEM_TYPE_DEVICE}, true),
+              BM_OK);
+    EXPECT_EQ(manager.ClassifyAddressMask(TEST_GVA_BASE_DEVICE + kOffset), HybmVaManager::BIT_GLOBAL_DEVICE);
+}
+
 TEST_F(HybmVaManagerTest, ClassifyAddressMask_RegisteredHva_UsesStoredMemType)
 {
     manager.Initialize(TEST_SOC_A5);
