@@ -17,12 +17,18 @@
 10、RD2H
 ```
 
-> **内存方式**：本地 DRAM/HBM 统一取自 `smem_bm_create` 的**段内内存**（`smem_bm_ptr_by_mem_type` +
-> `smem_bm_gva_to_va`），**不做动态注册**（不再 `smem_bm_register_user_mem`）。
-> 原因：`device_rdma` over HCOMM(A2/A3) 与 A5(950) host RoCE 都不识别动态注册的地址，那类地址只能走
-> swap 中转，测不到直传带宽。
+> **内存方式**：
+>
+> - 本地 HBM 统一取自 `smem_bm_create` 的**段内内存**（`smem_bm_ptr_by_mem_type` + `smem_bm_gva_to_va`），
+>   **不做动态注册**（不再 `smem_bm_register_user_mem`）。原因：`device_rdma` over HCOMM(A2/A3) 与
+>   A5(950) host RoCE 都不识别动态注册的地址，那类地址只能走 swap 中转，测不到直传带宽。
+> - 本地 DRAM：`sdma` 下用 `aclrtMallocHost` 单独分配 pinned host 内存，校验读回落点也单独分配；
+>   其余协议仍取段内 DRAM。原因：A3(910C)/A5(950) 的 SDMA DRAM 段是 fabric host 内存，段内 HVA 是
+>   设备侧地址，CPU 不能直接读写（直接 memcpy 会 core）。段内 DRAM 只作为对端拷贝目标。
+>
 > 两个约束：① 单次拷贝量 `batchSize × copySize` 不能超过段大小（`GVA_SIZE`，4GiB）；
-> ② 段内 DRAM 需要大页，机器没配大页时先 `export MF_HYBM_ENABLE_4K_PAGE=1`，否则 `smem_bm_create` 会失败。
+> ② 段内 DRAM 需要大页，机器没配大页时先 `export MF_HYBM_ENABLE_4K_PAGE=1`，否则 `smem_bm_create` 会失败
+> （`sdma` 下本地不用段内 DRAM，但段仍然会创建）。
 > 另注意：`-t all` 会**跳过** `H2D`/`D2H`（纯本机拷贝，与网络无关）；需要单测时用 `-t h2d` / `-t d2h`。
 > 结果表里 `WrongBytes = -1` 表示**该方向校验读回失败、未做校验**（带宽数值仍有效）。
 

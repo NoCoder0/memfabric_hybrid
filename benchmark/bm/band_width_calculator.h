@@ -118,6 +118,7 @@ private:
     bool isMaster_ = false;
     void *localDram_ = nullptr;
     void *localHbm_ = nullptr;
+    void *readbackScratch_ = nullptr;
 };
 
 #endif

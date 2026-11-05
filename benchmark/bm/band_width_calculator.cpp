@@ -280,6 +280,14 @@ int32_t BandWidthCalculator::PreInit(uint32_t deviceId, BarrierUtil *&barrier, u
 
 void BandWidthCalculator::FinalizeAll(uint32_t deviceId, BarrierUtil *&barrier, aclrtStream *stream)
 {
+    if (readbackScratch_ != nullptr) {
+        (void)aclrtFreeHost(readbackScratch_);
+        readbackScratch_ = nullptr;
+    }
+    if (cmdParam_.opType == SMEMB_DATA_OP_SDMA && localDram_ != nullptr) {
+        (void)aclrtFreeHost(localDram_);
+        localDram_ = nullptr;
+    }
     if (barrier != nullptr) {
         delete barrier;
         barrier = nullptr;
@@ -294,9 +302,8 @@ void BandWidthCalculator::FinalizeAll(uint32_t deviceId, BarrierUtil *&barrier, 
 
 int32_t BandWidthCalculator::PrepareLocalMem(smem_bm_t handle, uint32_t rankId)
 {
-    // 统一改成「创建方式」：本地 DRAM / HBM 都取自 smem_bm_create 创建出来的段内内存，
-    // 不再 posix_memalign/aclrtMalloc + smem_bm_register_user_mem（动态注册）。
-    // 原因：device_rdma over HCOMM(A2/A3) 与 A5(950) host RoCE 都不识别动态注册的地址，
+    // 本地 HBM 统一取自 smem_bm_create 创建出来的段内内存，不做动态注册：
+    // device_rdma over HCOMM(A2/A3) 与 A5(950) host RoCE 都不识别动态注册的地址，
     // 那类地址只能走 swap 中转，测不到直传带宽。
     uint64_t len = cmdParam_.batchSize * cmdParam_.copySize;
     CHECK_RET_ERR((len == 0 || len > GVA_SIZE || len > UINT32_MAX),
@@ -308,11 +315,22 @@ int32_t BandWidthCalculator::PrepareLocalMem(smem_bm_t handle, uint32_t rankId)
     auto ret = smem_bm_gva_to_va(handle, localHbmGva, SMEM_MEM_TYPE_LOCAL_DEVICE, &localHbm_);
     CHECK_RET_ERR((ret != 0 || localHbm_ == nullptr), "gva2va local hbm failed, ret:" << ret);
 
-    // 本端 DRAM(host)：同上
-    void *localDramGva = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_HOST, rankId);
-    CHECK_RET_ERR((localDramGva == nullptr), "get local dram gva failed, rank:" << rankId);
-    ret = smem_bm_gva_to_va(handle, localDramGva, SMEM_MEM_TYPE_LOCAL_HOST, &localDram_);
-    CHECK_RET_ERR((ret != 0 || localDram_ == nullptr), "gva2va local dram failed, ret:" << ret);
+    if (cmdParam_.opType == SMEMB_DATA_OP_SDMA) {
+        // A3/A5 的 SDMA DRAM 段是 fabric host 内存，段内 HVA 是设备侧地址，CPU 不能直接读写；
+        // 本地 host 缓冲和校验读回落点改用 pinned 内存，段内 DRAM 只作为对端拷贝目标。
+        ret = aclrtMallocHost(&localDram_, len);
+        CHECK_RET_ERR((ret != 0 || localDram_ == nullptr),
+                      "malloc pinned local dram failed, ret:" << ret << " len:" << len);
+        ret = aclrtMallocHost(&readbackScratch_, len);
+        CHECK_RET_ERR((ret != 0 || readbackScratch_ == nullptr),
+                      "malloc pinned readback scratch failed, ret:" << ret << " len:" << len);
+    } else {
+        // 本端 DRAM(host)：段基址 + gva2va 拿可用 VA
+        void *localDramGva = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_HOST, rankId);
+        CHECK_RET_ERR((localDramGva == nullptr), "get local dram gva failed, rank:" << rankId);
+        ret = smem_bm_gva_to_va(handle, localDramGva, SMEM_MEM_TYPE_LOCAL_HOST, &localDram_);
+        CHECK_RET_ERR((ret != 0 || localDram_ == nullptr), "gva2va local dram failed, ret:" << ret);
+    }
 
     // 两端各自填充自己的数据，供拷贝完成后做一致性校验
     std::vector<uint8_t> data(len);
@@ -359,12 +377,19 @@ int64_t BandWidthCalculator::CheckCopyResult(smem_bm_mem_type localMemType, smem
     int ret = 0;
     uint64_t len = cmdParam_.copySize * cmdParam_.batchSize;
 
-    // 对端读回的落点必须落在「已注册」的段内 DRAM scratch 上：裸 malloc 的 host 地址会被拒
-    // （HYBM_RDMA_SWAP_SPACE_SIZE is 0, unable to copy unregistered addresses）。
-    const uint64_t scratchOff =
-        ((len + kReadbackScratchAlignBytes - 1) / kReadbackScratchAlignBytes) * kReadbackScratchAlignBytes;
-    CHECK_RET_ERR((localDram_ == nullptr || scratchOff + len > GVA_SIZE), "no scratch room for readback, len:" << len);
-    void *scratch = static_cast<uint8_t *>(localDram_) + scratchOff;
+    void *scratch = nullptr;
+    if (readbackScratch_ != nullptr) {
+        // SDMA 下段内 DRAM 不是 CPU 可写地址，读回落点用 PrepareLocalMem 分配的 pinned 内存。
+        scratch = readbackScratch_;
+    } else {
+        // 对端读回的落点必须落在「已注册」的段内 DRAM scratch 上：裸 malloc 的 host 地址会被拒
+        // （HYBM_RDMA_SWAP_SPACE_SIZE is 0, unable to copy unregistered addresses）。
+        const uint64_t scratchOff =
+            ((len + kReadbackScratchAlignBytes - 1) / kReadbackScratchAlignBytes) * kReadbackScratchAlignBytes;
+        CHECK_RET_ERR((localDram_ == nullptr || scratchOff + len > GVA_SIZE),
+                      "no scratch room for readback, len:" << len);
+        scratch = static_cast<uint8_t *>(localDram_) + scratchOff;
+    }
 
     // 本端数据读回：device 走 aclrtMemcpy D2H（保持原语义），host 直接 memcpy。
     // D2H 落点用 pinned（aclrtMallocHost）：pageable 的 std::vector 在 16M 就会被拒（ret 507899）。
