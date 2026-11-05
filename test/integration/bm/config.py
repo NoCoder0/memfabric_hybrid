@@ -22,7 +22,7 @@ PROTOCOL_DATA_OP_TYPE = {
 }
 SUPPORTED = [
     {"protocol": "device_rdma", "pool": "dram", "chips": ["A2"], "implemented": True},
-    {"protocol": "device_sdma", "pool": "dram", "chips": [], "implemented": False},
+    {"protocol": "device_sdma", "pool": "dram", "chips": ["A3"], "implemented": True},
     {"protocol": "device_urma", "pool": "dram", "chips": ["A5"], "implemented": True},
 ]
 COMMON = {

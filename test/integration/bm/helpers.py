@@ -185,12 +185,22 @@ def _device_count():
 
 def _proc_mem(card):
     try:
-        result = subprocess.run(
-            ["npu-smi", "info", "-t", "proc-mem", "-i", str(card)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
+        if detect_chip() == "A5":
+            result = subprocess.run(
+                ["npu-smi", "info", "-t", "proc-mem", "-i", str(card)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        else:
+            card_ = card // 2
+            chip_ = card % 2
+            result = subprocess.run(
+                ["npu-smi", "info", "-t", "proc-mem", "-i", str(card_), "-c", str(chip_)],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
     except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:

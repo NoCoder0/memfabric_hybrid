@@ -73,7 +73,9 @@ class NativeRank:
             key: self.config[key]
             for key in ("local_dram_size", "max_dram_size", "local_hbm_size", "max_hbm_size", "enable_56bits_gva")
         }
-        self.handle = bm.create2(id=0, data_op_type=data_op_type, flags=0, **sizes)
+        # SDMA DRAM buffers are accessed by the CPU when test data is prepared.
+        flags = (1 << 9) if protocol == "device_sdma" else 0  # SMEM_BM_FLAG_DRAM_MAP_HOST_VA
+        self.handle = bm.create2(id=0, data_op_type=data_op_type, flags=flags, **sizes)
         if self.handle is None:
             raise RuntimeError("bm.create2 returned None")
         self.step("handle.join")
