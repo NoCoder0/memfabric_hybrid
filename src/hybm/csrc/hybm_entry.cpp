@@ -27,6 +27,7 @@
 #include "dl_api.h"
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
+#include "device_urma_transport_manager.h"
 
 using namespace ock::mf;
 
@@ -154,6 +155,7 @@ HYBM_API void hybm_uninit()
         }
     }
 
+    transport::device::DeviceUrmaTransportManager::ReleaseThreadLocalBuffers();
     HybmStreamManager::ExplicitDestroyAllThreadHybmStream();
     DlApi::CleanupLibrary();
     initialized = 0;

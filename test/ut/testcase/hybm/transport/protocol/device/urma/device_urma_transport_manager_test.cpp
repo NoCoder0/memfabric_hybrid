@@ -93,6 +93,7 @@ uint32_t g_aclrtMallocCallCount = 0;
 uint32_t g_aclrtMemcpyCallCount = 0;
 uint32_t g_aclrtFreeCallCount = 0;
 uint32_t g_aclrtFreeFailAt = UINT32_MAX;
+size_t g_lastHostAllocationSize = 0U;
 uint32_t g_waitAndResetCallCount = 0;
 uint32_t g_streamSyncCallCount = 0;
 uint32_t g_streamSyncFailAt = UINT32_MAX;
@@ -229,7 +230,10 @@ struct DlAclApiFnGuard {
     aclrtLaunchKernelWithConfigFunc oldLaunchKernelWithConfig{DlAclApi::pAclrtLaunchKernelWithConfig};
     aclrtMallocFunc oldMalloc{DlAclApi::pAclrtMalloc};
     aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
+    aclrtMallocHostFunc oldMallocHost{DlAclApi::pAclrtMallocHost};
+    aclrtFreeHostFunc oldFreeHost{DlAclApi::pAclrtFreeHost};
     aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
+    aclrtMemcpyAsyncFunc oldMemcpyAsync{DlAclApi::pAclrtMemcpyAsync};
     rtGetDeviceInfoFunc oldRtGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
     aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDevIdByLogicDevId{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
 
@@ -252,7 +256,10 @@ struct DlAclApiFnGuard {
         DlAclApi::pAclrtLaunchKernelWithConfig = oldLaunchKernelWithConfig;
         DlAclApi::pAclrtMalloc = oldMalloc;
         DlAclApi::pAclrtFree = oldFree;
+        DlAclApi::pAclrtMallocHost = oldMallocHost;
+        DlAclApi::pAclrtFreeHost = oldFreeHost;
         DlAclApi::pAclrtMemcpy = oldMemcpy;
+        DlAclApi::pAclrtMemcpyAsync = oldMemcpyAsync;
         DlAclApi::pRtGetDeviceInfo = oldRtGetDeviceInfo;
         DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDevIdByLogicDevId;
     }
@@ -1032,6 +1039,17 @@ int32_t MockAclrtMallocCounting(void **ptr, size_t count, uint32_t policy)
     return MockAclrtMallocOk(ptr, count, policy);
 }
 
+int32_t MockAclrtMallocHostOk(void **ptr, size_t count)
+{
+    return MockAclrtMallocOk(ptr, count, 0U);
+}
+
+int32_t MockAclrtMallocHostRecordingSize(void **ptr, size_t count)
+{
+    g_lastHostAllocationSize = count;
+    return MockAclrtMallocHostOk(ptr, count);
+}
+
 int32_t MockAclrtFreeOk(void *ptr)
 {
     std::free(ptr);
@@ -1066,6 +1084,12 @@ int32_t MockAclrtMemcpyCounting(void *dst, size_t destMax, const void *src, size
 int32_t MockAclrtMemcpyFail(void *, size_t, const void *, size_t, uint32_t)
 {
     return BM_ERROR;
+}
+
+int32_t MockAclrtMemcpyAsyncOk(void *dst, size_t destMax, const void *src, size_t count, uint32_t kind, void *stream)
+{
+    EXPECT_EQ(stream, MOCK_STREAM);
+    return MockAclrtMemcpyOk(dst, destMax, src, count, kind);
 }
 
 int32_t MockAclrtBinaryLoadFromFile(const char *binPath, aclrtBinaryLoadOptions *options, aclrtBinHandle *binHandle)
@@ -1203,8 +1227,17 @@ int32_t MockAclrtSynchronizeStreamFirstOkThenFail(void *stream)
     return BM_ERROR;
 }
 
+void InstallLaunchBufferMocks()
+{
+    DlAclApi::pAclrtMallocHost = MockAclrtMallocHostOk;
+    DlAclApi::pAclrtFreeHost = MockAclrtFreeOk;
+    DlAclApi::pAclrtMemcpyAsync = MockAclrtMemcpyAsyncOk;
+    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+}
+
 void InstallOpenDeviceMocks()
 {
+    InstallLaunchBufferMocks();
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDevice;
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommMemReg = MockHcommMemRegOpenDevice;
@@ -1239,8 +1272,10 @@ void InstallKernelLaunchMocks()
 void ResetTlsContextForTest()
 {
     auto &ctx = DeviceUrmaTransportManager::GetTlsContext();
-    // Device buffers are malloc-backed in UT; production leaves TLS resources to process teardown.
+    // These mocks complete copies inline and use malloc for both buffers. Guards may already have restored ACL APIs.
     std::free(ctx.launchBuffers.base);
+    std::free(ctx.launchBuffers.hostBuffer.release());
+    ctx.launchBuffers.hostBuffer.get_deleter().pendingStream = nullptr;
     ctx = DeviceUrmaTransportManager::CompletionContext{};
 }
 
@@ -2615,6 +2650,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteBatchInterfacesAreUnsupported)
 TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersRejectsMallocFailure)
 {
     DlAclApiFnGuard guard;
+    InstallLaunchBufferMocks();
     DlAclApi::pAclrtMalloc = MockAclrtMallocFail;
     DeviceUrmaTransportManager manager;
     DeviceUrmaTransportManager::DeviceTransferBuffers buffers{};
@@ -2627,6 +2663,8 @@ TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersReusesAndGrowsCon
 {
     constexpr size_t kLargeBatchSize = 256U;
     DlAclApiFnGuard guard;
+    InstallLaunchBufferMocks();
+    DlAclApi::pAclrtMallocHost = MockAclrtMallocHostRecordingSize;
     DlAclApi::pAclrtMalloc = MockAclrtMallocCounting;
     DlAclApi::pAclrtMemcpy = MockAclrtMemcpyCounting;
     DlAclApi::pAclrtFree = MockAclrtFreeAtCall;
@@ -2643,7 +2681,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersReusesAndGrowsCon
     void *initialBase = buffers.base;
     EXPECT_NE(initialBase, nullptr);
     EXPECT_GE(buffers.capacity, 4U * 1024U);
-    EXPECT_EQ(buffers.hostBuffer.size(), buffers.capacity);
+    EXPECT_EQ(g_lastHostAllocationSize, buffers.capacity);
     EXPECT_EQ(g_aclrtMallocCallCount, 1U);
     EXPECT_EQ(g_aclrtMemcpyCallCount, 1U);
     EXPECT_EQ(*static_cast<uint32_t *>(buffers.rankIdList), 1U);
@@ -2666,7 +2704,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersReusesAndGrowsCon
               BM_OK);
     EXPECT_NE(buffers.base, initialBase);
     EXPECT_GT(buffers.capacity, 4U * 1024U);
-    EXPECT_EQ(buffers.hostBuffer.size(), buffers.capacity);
+    EXPECT_EQ(g_lastHostAllocationSize, buffers.capacity);
     EXPECT_EQ(g_aclrtMallocCallCount, 2U);
     EXPECT_EQ(g_aclrtMemcpyCallCount, 3U);
     EXPECT_EQ(g_aclrtFreeCallCount, 1U);
@@ -2684,6 +2722,7 @@ TEST(DeviceUrmaTransportManagerTest, MultiRankKernelFailureKeepsNotifiesWithoutP
     constexpr size_t kTransferCount = 2U;
     DlAclApiFnGuard aclGuard;
     MockcppScope mockcpp;
+    InstallLaunchBufferMocks();
     DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
     DlAclApi::pAclrtFree = MockAclrtFreeOk;
     DlAclApi::pAclrtMemcpy = MockAclrtMemcpyOk;

@@ -172,6 +172,9 @@ public:
 
     Result CloseDevice() override;
 
+    // Called after users stop submitting work, before runtime libraries are unloaded.
+    static void ReleaseThreadLocalBuffers();
+
     // Local/remote registration and key export/import
     Result RegisterMemoryRegion(const TransportMemoryRegion &mr) override;
 
@@ -263,10 +266,17 @@ private:
     using RankTransferDescriptors = std::unordered_map<uint32_t, std::vector<HcommBatchTransferDesc>>;
 
     // Device kernel launch helpers (moved from removed HcomUrmaTransportAdapter)
+    struct PinnedHostBufferDeleter {
+        PinnedHostBufferDeleter() : pendingStream(nullptr) {}
+        void *pendingStream;
+        Result Synchronize();
+        void operator()(uint8_t *buffer);
+    };
+
     struct DeviceTransferBuffers {
         void *base{nullptr};
         size_t capacity{0};
-        std::vector<uint8_t> hostBuffer{};
+        std::unique_ptr<uint8_t, PinnedHostBufferDeleter> hostBuffer{};
         void *rankIdList{nullptr};
         void *rankStartIdxList{nullptr};
         void *rankListNumList{nullptr};
@@ -305,6 +315,20 @@ private:
         // All in-flight transfers; emptied by Synchronize.
         std::vector<PendingTransfer> pendingTransfers{};
     };
+
+    struct ThreadContext {
+        ThreadContext();
+        ~ThreadContext();
+        CompletionContext context{};
+        ThreadContext *next{nullptr};
+    };
+
+    struct ContextRegistry {
+        std::mutex mutex;
+        ThreadContext *first{nullptr};
+    };
+
+    static ContextRegistry &GetContextRegistry();
 
     // Initialization/open/close helpers and lifecycle
     Result InitLocalDeviceInfoLocked(const TransportOptions &options);
@@ -419,16 +443,14 @@ private:
     Result SynchronizePreSubmittedNotifiesLocked(CompletionContext &ctx, const std::set<uint32_t> &rankIds);
 
     // Device kernel launch helpers
-    Result PrepareKernelLaunchBuffers(const std::vector<HcommBatchTransferDesc> &transferDescs, size_t transferOffset,
-                                      size_t transferCount, const std::vector<uint32_t> &rankIds,
-                                      const std::vector<uint32_t> &rankStartIdx,
-                                      const std::vector<uint32_t> &rankListNum,
-                                      const std::vector<HcommThreadHandle> &threads,
-                                      const std::vector<HcommChannelHandle> &channels,
-                                      DeviceTransferBuffers &outBuffers,
-                                      const std::vector<HcommBatchTransferDesc> *markerDescs = nullptr);
+    Result PrepareKernelLaunchBuffers(
+        const std::vector<HcommBatchTransferDesc> &transferDescs, size_t transferOffset, size_t transferCount,
+        const std::vector<uint32_t> &rankIds, const std::vector<uint32_t> &rankStartIdx,
+        const std::vector<uint32_t> &rankListNum, const std::vector<HcommThreadHandle> &threads,
+        const std::vector<HcommChannelHandle> &channels, DeviceTransferBuffers &outBuffers,
+        const std::vector<HcommBatchTransferDesc> *markerDescs = nullptr, void *copyStream = nullptr);
     // Device kernel launch (builds args, configures and launches)
-    Result LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, size_t batchSize, size_t rankNum);
+    Result LaunchDeviceKernelBatch(DeviceTransferBuffers &buffers, size_t batchSize, size_t rankNum);
     mutable std::shared_mutex mutex_{};
     bool opened_{false};
     uint32_t rankId_{0};

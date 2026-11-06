@@ -457,10 +457,58 @@ std::string FormatIpAddress(CommAddrType addrType, const uint8_t *addrData)
 
 } // namespace
 
+DeviceUrmaTransportManager::ContextRegistry &DeviceUrmaTransportManager::GetContextRegistry()
+{
+    static ContextRegistry registry;
+    return registry;
+}
+
 DeviceUrmaTransportManager::CompletionContext &DeviceUrmaTransportManager::GetTlsContext()
 {
-    thread_local CompletionContext ctx;
-    return ctx;
+    thread_local ThreadContext ctx;
+    return ctx.context;
+}
+
+DeviceUrmaTransportManager::ThreadContext::ThreadContext()
+{
+    auto &registry = GetContextRegistry();
+    std::lock_guard<std::mutex> guard(registry.mutex);
+    next = registry.first;
+    registry.first = this;
+}
+
+DeviceUrmaTransportManager::ThreadContext::~ThreadContext()
+{
+    auto &registry = GetContextRegistry();
+    std::lock_guard<std::mutex> guard(registry.mutex);
+    auto **entry = &registry.first;
+    while (*entry != nullptr && *entry != this) {
+        entry = &(*entry)->next;
+    }
+    if (*entry == this) {
+        *entry = next;
+    }
+    if (context.launchBuffers.hostBuffer.get_deleter().pendingStream != nullptr) {
+        // The stream's TLS destructor may already have run. Do not access that handle or free DMA inputs.
+        BM_LOG_ERROR("device_urma retaining launch buffers with unresolved DMA at thread exit");
+        (void)context.launchBuffers.hostBuffer.release();
+        return;
+    }
+    (void)ReleaseDeviceTransferBuffers(context.launchBuffers);
+}
+
+void DeviceUrmaTransportManager::ReleaseThreadLocalBuffers()
+{
+    auto &registry = GetContextRegistry();
+    std::lock_guard<std::mutex> guard(registry.mutex);
+    for (auto *entry = registry.first; entry != nullptr; entry = entry->next) {
+        auto &context = entry->context;
+        if (ReleaseDeviceTransferBuffers(context.launchBuffers) == BM_OK) {
+            context.pendingTransfers.clear();
+            context.initialized = false;
+            context.stream = nullptr;
+        }
+    }
 }
 
 DeviceUrmaTransportManager::~DeviceUrmaTransportManager()
@@ -2595,7 +2643,7 @@ Result DeviceUrmaTransportManager::StageAndLaunchMultiTransfer(
     //准备传输的descs，包括marker
     TP_TRACE_BEGIN(TP_HYBM_URMA_STAGE_PREPARE_BUFFERS);
     auto ret = PrepareKernelLaunchBuffers(transferDescs, transferOffset, transferCount, rankIds, rankStartIdx,
-                                          rankListNum, threads, channels, ctx.launchBuffers, markerDescs);
+                                          rankListNum, threads, channels, ctx.launchBuffers, markerDescs, ctx.stream);
     TP_TRACE_END(TP_HYBM_URMA_STAGE_PREPARE_BUFFERS, ret);
     if (ret != BM_OK) {
         return ret;
@@ -2614,6 +2662,7 @@ Result DeviceUrmaTransportManager::StageAndLaunchMultiTransfer(
     ret = LaunchDeviceKernelBatch(ctx.launchBuffers, transferCount, rankIds.size());
     TP_TRACE_END(TP_HYBM_URMA_STAGE_LAUNCH_BATCH, ret);
     if (ret != BM_OK) {
+        (void)ctx.launchBuffers.hostBuffer.get_deleter().Synchronize();
         BM_LOG_ERROR("device_urma StageAndLaunchMultiTransfer kernel failed, transferCount: "
                      << transferCount << " rankNum: " << rankIds.size() << " ret: " << ret);
         return ret;
@@ -2731,8 +2780,38 @@ aclrtFuncHandle DeviceUrmaTransportManager::GetDeviceKernelFunc() const
     return deviceFuncHandles_.batchTransfer;
 }
 
+Result DeviceUrmaTransportManager::PinnedHostBufferDeleter::Synchronize()
+{
+    if (pendingStream == nullptr) {
+        return BM_OK;
+    }
+    const auto ret = DlAclApi::AclrtSynchronizeStream(pendingStream);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma synchronize pending launch-buffer copy failed, ret: " << ret);
+        return ret;
+    }
+    pendingStream = nullptr;
+    return BM_OK;
+}
+
+void DeviceUrmaTransportManager::PinnedHostBufferDeleter::operator()(uint8_t *buffer)
+{
+    if (Synchronize() != BM_OK) {
+        // Retain memory if the runtime cannot establish completion of its DMA reader.
+        return;
+    }
+    const auto ret = DlAclApi::AclrtFreeHost(buffer);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma AclrtFreeHost launch buffer failed, ret: " << ret);
+    }
+}
+
 Result DeviceUrmaTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers)
 {
+    auto pendingRet = buffers.hostBuffer.get_deleter().Synchronize();
+    if (pendingRet != BM_OK) {
+        return pendingRet;
+    }
     if (buffers.base == nullptr) {
         buffers = DeviceTransferBuffers{};
         return BM_OK;
@@ -2753,21 +2832,26 @@ Result DeviceUrmaTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBu
 Result DeviceUrmaTransportManager::EnsureKernelLaunchBufferCapacity(DeviceTransferBuffers &buffers,
                                                                     size_t requiredBytes)
 {
+    auto pendingRet = buffers.hostBuffer.get_deleter().Synchronize();
+    if (pendingRet != BM_OK) {
+        return pendingRet;
+    }
     if (requiredBytes <= buffers.capacity) {
         return BM_OK;
     }
     const size_t maxCapacity = std::numeric_limits<size_t>::max();
     const size_t doubledCapacity = buffers.capacity <= maxCapacity / 2U ? buffers.capacity * 2U : requiredBytes;
     const size_t newCapacity = std::max({HYBM_KERNEL_LAUNCH_BUFFER_MIN_SIZE, requiredBytes, doubledCapacity});
-    try {
-        buffers.hostBuffer.resize(newCapacity);
-    } catch (const std::bad_alloc &) {
-        BM_LOG_ERROR("device_urma EnsureKernelLaunchBufferCapacity resize host buffer failed, requiredBytes: "
-                     << requiredBytes << " oldCapacity: " << buffers.capacity << " newCapacity: " << newCapacity);
-        return BM_MALLOC_FAILED;
+    void *newHostBase = nullptr;
+    auto ret = DlAclApi::AclrtMallocHost(&newHostBase, newCapacity);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("device_urma AclrtMallocHost launch buffer failed, bytes: " << newCapacity << " ret: " << ret);
+        return ret;
     }
+    // Keep the old pair intact if either allocation or device-buffer release fails.
+    std::unique_ptr<uint8_t, PinnedHostBufferDeleter> newHostBuffer(static_cast<uint8_t *>(newHostBase));
     void *newBase = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(&newBase, newCapacity, 0);
+    ret = DlAclApi::AclrtMalloc(&newBase, newCapacity, 0);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma EnsureKernelLaunchBufferCapacity AclrtMalloc failed, requiredBytes: "
                      << requiredBytes << " oldCapacity: " << buffers.capacity << " newCapacity: " << newCapacity
@@ -2788,6 +2872,7 @@ Result DeviceUrmaTransportManager::EnsureKernelLaunchBufferCapacity(DeviceTransf
         }
     }
     buffers.base = newBase;
+    buffers.hostBuffer = std::move(newHostBuffer);
     buffers.capacity = newCapacity;
     return BM_OK;
 }
@@ -2797,7 +2882,7 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
     const std::vector<uint32_t> &rankIds, const std::vector<uint32_t> &rankStartIdx,
     const std::vector<uint32_t> &rankListNum, const std::vector<HcommThreadHandle> &threads,
     const std::vector<HcommChannelHandle> &channels, DeviceTransferBuffers &outBuffers,
-    const std::vector<HcommBatchTransferDesc> *markerDescs)
+    const std::vector<HcommBatchTransferDesc> *markerDescs, void *copyStream)
 {
     const bool invalidTransferRange =
         transferOffset > transferDescs.size() || transferCount > transferDescs.size() - transferOffset;
@@ -2839,7 +2924,7 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
     }
 
     // Descriptors already contain final HCOMM addresses and transfer types.
-    auto *hostBase = outBuffers.hostBuffer.data();
+    auto *hostBase = outBuffers.hostBuffer.get();
     auto *deviceBase = static_cast<uint8_t *>(outBuffers.base);
     outBuffers.transferDescs = deviceBase;
     std::memcpy(hostBase, transferDescs.data() + transferOffset, descBytes);
@@ -2862,17 +2947,27 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
     append(outBuffers.rankListNumList, rankListNum.data(), rankBytes);
 
     TP_TRACE_BEGIN(TP_HYBM_URMA_COPY_LAUNCH_BUFFER_H2D);
-    ret = DlAclApi::AclrtMemcpy(outBuffers.base, outBuffers.capacity, hostBase, totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
+    if (copyStream == nullptr) {
+        ret = DlAclApi::AclrtMemcpy(outBuffers.base, outBuffers.capacity, hostBase, totalBytes,
+                                    ACL_MEMCPY_HOST_TO_DEVICE);
+    } else {
+        ret = DlAclApi::AclrtMemcpyAsync(outBuffers.base, outBuffers.capacity, hostBase, totalBytes,
+                                         ACL_MEMCPY_HOST_TO_DEVICE, copyStream);
+        if (ret == BM_OK) {
+            outBuffers.hostBuffer.get_deleter().pendingStream = copyStream;
+        }
+    }
     TP_TRACE_END(TP_HYBM_URMA_COPY_LAUNCH_BUFFER_H2D, ret);
     if (ret != BM_OK) {
-        BM_LOG_ERROR("device_urma PrepareKernelLaunchBuffers AclrtMemcpy failed, totalBytes: "
-                     << totalBytes << " capacity: " << outBuffers.capacity << " batchSize: " << batchSize
-                     << " rankNum: " << rankNum << " ret: " << ret);
+        BM_LOG_ERROR("device_urma PrepareKernelLaunchBuffers "
+                     << (copyStream == nullptr ? "AclrtMemcpy" : "AclrtMemcpyAsync")
+                     << " failed, totalBytes: " << totalBytes << " capacity: " << outBuffers.capacity
+                     << " batchSize: " << batchSize << " rankNum: " << rankNum << " ret: " << ret);
     }
     return ret;
 }
 
-Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferBuffers &buffers, size_t batchSize,
+Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(DeviceTransferBuffers &buffers, size_t batchSize,
                                                            size_t rankNum)
 {
     HybmBatchTransferParam args{};
@@ -2903,7 +2998,10 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferB
         BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsFinalize failed, ret: " << ret);
         return ret;
     }
-    void *stream = HybmStreamManager::GetThreadAclStream();
+    void *stream = buffers.hostBuffer.get_deleter().pendingStream;
+    if (stream == nullptr) {
+        stream = HybmStreamManager::GetThreadAclStream();
+    }
     if (stream == nullptr) {
         BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch GetThreadAclStream failed");
         return BM_DL_FUNCTION_FAILED;
@@ -2933,6 +3031,7 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(const DeviceTransferB
         BM_LOG_ERROR("device_urma launch kernel AclrtSynchronizeStream failed, ret: " << ret);
         return ret;
     }
+    buffers.hostBuffer.get_deleter().pendingStream = nullptr;
     return BM_OK;
 }
 
