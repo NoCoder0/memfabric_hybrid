@@ -11,6 +11,11 @@
 */
 #include "hybm_data_op_sdma.h"
 
+#include <algorithm>
+#include <atomic>
+#include <new>
+#include <vector>
+
 #include "hybm_logger.h"
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
@@ -30,6 +35,175 @@ constexpr uint64_t HYBM_PARAM_SPACE_SIZE = 64 * 1024 * 1024; // HYBM_SINGLE_PARA
 constexpr uint64_t HYBM_PARAM_SPACE_META_OFFSET = HYBM_SINGLE_PARAM_SIZE * HYBM_PARAM_SPACE_CAP; // last 256K
 constexpr uint64_t HYBM_PARAM_META_IDX_BASE = 8; // 8 * 8B = 64B, aicore cacheline is 64B
 constexpr uint32_t HYBM_EXTEND_CONCURRENT = 32;
+
+namespace {
+
+// 单个 staging 分块的上限；单段本身超过该值时仍按单段分配
+constexpr uint64_t HYBM_SDMA_HOST_STAGING_MAX = 32ULL * 1024 * 1024;
+// 单次 batch memcpy 的条目上限，与 device_rdma 的取值保持一致
+constexpr uint32_t HYBM_SDMA_MEMCPY_BATCH_CAP = 4096;
+// staging 内每段起始地址按 cacheline 对齐
+constexpr uint64_t HYBM_SDMA_STAGING_ALIGN = 64ULL;
+
+// 老版本 CANN 未导出 aclrtMemcpyBatch，探测到后不再重复尝试
+std::atomic<bool> g_sdmaBatchMemcpyUnsupported{false};
+
+uint64_t AlignStagingOffset(uint64_t offset) noexcept
+{
+    return (offset + HYBM_SDMA_STAGING_ALIGN - 1U) & ~(HYBM_SDMA_STAGING_ALIGN - 1U);
+}
+
+// 按 32MiB 上限切出从 begin 开始的一个 staging 分块，同时算出该块所需字节数
+SdmaStagingChunk LocateStagingChunk(const uint64_t counts[], uint32_t batchSize, uint32_t begin) noexcept
+{
+    SdmaStagingChunk chunk;
+    chunk.begin = begin;
+    chunk.end = begin;
+    while (chunk.end < batchSize) {
+        const uint64_t bytes = counts[chunk.end];
+        // 零长度段不占空间，也不产生对齐填充
+        const uint64_t offset = bytes == 0 ? chunk.bytes : AlignStagingOffset(chunk.bytes);
+        if (chunk.end > chunk.begin && offset + bytes > HYBM_SDMA_HOST_STAGING_MAX) {
+            break;
+        }
+        chunk.bytes = offset + bytes;
+        chunk.end++;
+    }
+    return chunk;
+}
+
+// 一个 staging 分块内各段的源、目的、staging 地址和长度
+struct StagingLayout {
+    std::vector<void *> gvaAddrs;
+    std::vector<void *> hostAddrs;
+    std::vector<void *> stagingAddrs;
+    std::vector<uint64_t> sizes;
+};
+
+bool BuildStagingLayout(StagingLayout &layout, void *gvaAddrs[], void *hostAddrs[], const uint64_t counts[],
+                        const SdmaStagingChunk &chunk, uint8_t *stagingBase) noexcept
+{
+    try {
+        const uint32_t segCount = chunk.end - chunk.begin;
+        layout.gvaAddrs.reserve(segCount);
+        layout.hostAddrs.reserve(segCount);
+        layout.stagingAddrs.reserve(segCount);
+        layout.sizes.reserve(segCount);
+        uint64_t offset = 0;
+        for (uint32_t i = chunk.begin; i < chunk.end; i++) {
+            if (counts[i] == 0) {
+                continue;
+            }
+            offset = AlignStagingOffset(offset);
+            layout.gvaAddrs.push_back(gvaAddrs[i]);
+            layout.hostAddrs.push_back(hostAddrs[i]);
+            layout.stagingAddrs.push_back(stagingBase + offset);
+            layout.sizes.push_back(counts[i]);
+            offset += counts[i];
+        }
+    } catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+Result MemcpyHostDeviceByBatch(void **destAddrs, void **srcAddrs, const uint64_t *sizes, uint32_t count,
+                               bool hostToDevice) noexcept
+{
+    const auto deviceLoc = aclrtMemLocation{static_cast<uint32_t>(HybmGetInitDeviceId()),
+                                            aclrtMemLocationType::ACL_MEM_LOCATION_TYPE_DEVICE};
+    const auto hostLoc = aclrtMemLocation{0, aclrtMemLocationType::ACL_MEM_LOCATION_TYPE_HOST};
+    const uint32_t cap = std::min(count, HYBM_SDMA_MEMCPY_BATCH_CAP);
+    try {
+        std::vector<aclrtMemcpyBatchAttr> attrs(cap);
+        std::vector<size_t> attrIds(cap);
+        std::vector<size_t> batchSizes(cap);
+        for (uint32_t i = 0; i < cap; i++) {
+            attrs[i] = hostToDevice ? aclrtMemcpyBatchAttr{deviceLoc, hostLoc, {}}
+                                    : aclrtMemcpyBatchAttr{hostLoc, deviceLoc, {}};
+            attrIds[i] = i;
+        }
+
+        for (uint32_t beg = 0; beg < count; beg += cap) {
+            const uint32_t now = std::min(cap, count - beg);
+            for (uint32_t i = 0; i < now; i++) {
+                batchSizes[i] = sizes[beg + i];
+            }
+            size_t failIdx = 0;
+            auto ret = DlAclApi::AclrtMemcpyBatch(destAddrs + beg, batchSizes.data(), srcAddrs + beg, batchSizes.data(),
+                                                  now, attrs.data(), attrIds.data(), now, &failIdx);
+            if (ret != BM_OK) {
+                BM_LOG_DEBUG("sdma staging batch memcpy failed, ret: " << ret << " hostToDevice: " << hostToDevice
+                                                                       << " failIndex: " << beg + failIdx);
+                return ret;
+            }
+        }
+    } catch (const std::bad_alloc &) {
+        BM_LOG_ERROR("sdma staging batch memcpy descriptor allocation failed, count: " << count);
+        return BM_MALLOC_FAILED;
+    }
+    return BM_OK;
+}
+
+Result MemcpyHostDeviceByAsync(void **destAddrs, void **srcAddrs, const uint64_t *sizes, uint32_t count,
+                               bool hostToDevice) noexcept
+{
+    const uint32_t kind = hostToDevice ? ACL_MEMCPY_HOST_TO_DEVICE : ACL_MEMCPY_DEVICE_TO_HOST;
+    auto stream = HybmStreamManager::GetThreadAclStream();
+    for (uint32_t i = 0; i < count; i++) {
+        Result ret = BM_UNDER_API_UNLOAD;
+        if (stream != nullptr) {
+            ret = DlAclApi::AclrtMemcpyAsync(destAddrs[i], sizes[i], srcAddrs[i], sizes[i], kind, stream);
+        }
+        if (ret != BM_OK) {
+            // 非 pinned host 内存不支持异步拷贝，退化为同步拷贝
+            ret = DlAclApi::AclrtMemcpy(destAddrs[i], sizes[i], srcAddrs[i], sizes[i], kind);
+        }
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("sdma staging memcpy failed, ret: " << ret << " hostToDevice: " << hostToDevice
+                                                             << " index: " << i << " size: " << sizes[i]);
+            if (stream != nullptr) {
+                (void)DlAclApi::AclrtSynchronizeStream(stream);
+            }
+            return ret;
+        }
+    }
+    if (stream != nullptr) {
+        auto ret = DlAclApi::AclrtSynchronizeStream(stream);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("sdma staging memcpy synchronize failed, ret: " << ret << " hostToDevice: " << hostToDevice);
+            return ret;
+        }
+    }
+    return BM_OK;
+}
+
+Result BatchMemcpyHostDevice(void **destAddrs, void **srcAddrs, const uint64_t *sizes, uint32_t count,
+                             bool hostToDevice) noexcept
+{
+    if (count == 0) {
+        return BM_OK;
+    }
+    // A5(950) 沿用 device_rdma 的策略，不使用批量 memcpy 接口
+    const bool useBatchApi = DlAclApi::GetAscendSocType() != AscendSocType::ASCEND_950 &&
+                             !g_sdmaBatchMemcpyUnsupported.load(std::memory_order_relaxed);
+    if (useBatchApi) {
+        auto ret = MemcpyHostDeviceByBatch(destAddrs, srcAddrs, sizes, count, hostToDevice);
+        if (ret == BM_OK) {
+            return BM_OK;
+        }
+        if (ret == BM_UNDER_API_UNLOAD) {
+            g_sdmaBatchMemcpyUnsupported.store(true, std::memory_order_relaxed);
+            BM_LOG_WARN("sdma staging batch memcpy is unavailable, fallback to per-segment");
+        } else {
+            BM_LOG_WARN("sdma staging batch memcpy failed, ret: " << ret << " hostToDevice: " << hostToDevice
+                                                                  << " count: " << count);
+        }
+    }
+    return MemcpyHostDeviceByAsync(destAddrs, srcAddrs, sizes, count, hostToDevice);
+}
+
+} // namespace
 
 HostDataOpSDMA::HostDataOpSDMA() noexcept {};
 
@@ -727,7 +901,9 @@ Result HostDataOpSDMA::BatchCopyG2G(hybm_batch_copy_params &params, const ExtOpt
         len = count;
     }
     asyncFunc();
-    return InnerWait(options, 0);
+    const auto waitRet = InnerWait(options, 0);
+    // 提交失败时不能只依赖等待结果，否则调用方会把未下发的拷贝当作成功
+    return ret != BM_OK ? ret : waitRet;
 }
 
 Result HostDataOpSDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
@@ -800,62 +976,109 @@ Result HostDataOpSDMA::BatchDataCopy(hybm_batch_copy_params &params, hybm_data_c
 Result HostDataOpSDMA::BatchCopyLH2GH(void **gvaAddrs, void **hostAddrs, const uint64_t *counts, uint32_t batchSize,
                                       void *stream) noexcept
 {
-    auto ret = 0;
-
-    for (auto i = 0U; i < batchSize; i++) {
-        ret = CopyLH2GH(gvaAddrs[i], hostAddrs[i], counts[i], stream);
-        if (ret != 0) {
-            BM_LOG_ERROR("CopyLH2GH failed, ret: " << ret << " i: " << i << std::hex << " src: " << hostAddrs[i]
-                                                   << " dst: " << gvaAddrs[i] << std::dec << " size: " << counts[i]);
-            return ret;
-        }
-    }
-    return BM_OK;
+    (void)stream;
+    return BatchStagedCopy(gvaAddrs, hostAddrs, counts, batchSize, true, "LH2GH");
 }
 
 Result HostDataOpSDMA::BatchCopyGH2LH(void **hostAddrs, void **gvaAddrs, const uint64_t *counts, uint32_t batchSize,
                                       void *stream) noexcept
 {
-    auto ret = 0;
-
-    for (auto i = 0U; i < batchSize; i++) {
-        ret = CopyGH2LH(hostAddrs[i], gvaAddrs[i], counts[i], stream);
-        if (ret != 0) {
-            BM_LOG_ERROR("copy memory on GVA to local host failed: " << ret);
-            return ret;
-        }
-    }
-    return BM_OK;
+    (void)stream;
+    return BatchStagedCopy(gvaAddrs, hostAddrs, counts, batchSize, false, "GH2LH");
 }
 
 Result HostDataOpSDMA::BatchCopyLH2GD(void **gvaAddrs, void **hostAddrs, const uint64_t *counts, uint32_t batchSize,
                                       void *stream) noexcept
 {
-    auto ret = 0;
-
-    for (auto i = 0U; i < batchSize; i++) {
-        ret = CopyLH2GD(gvaAddrs[i], hostAddrs[i], counts[i], stream);
-        if (ret != 0) {
-            BM_LOG_ERROR("copy memory on local host to GVA failed: " << ret);
-            return ret;
-        }
-    }
-    return BM_OK;
+    (void)stream;
+    return BatchStagedCopy(gvaAddrs, hostAddrs, counts, batchSize, true, "LH2GD");
 }
 
 Result HostDataOpSDMA::BatchCopyGD2LH(void **hostAddrs, void **gvaAddrs, const uint64_t *counts, uint32_t batchSize,
                                       void *stream) noexcept
 {
-    auto ret = 0;
+    (void)stream;
+    return BatchStagedCopy(gvaAddrs, hostAddrs, counts, batchSize, false, "GD2LH");
+}
 
-    for (auto i = 0U; i < batchSize; i++) {
-        ret = CopyGD2LH(hostAddrs[i], gvaAddrs[i], counts[i], stream);
-        if (ret != 0) {
-            BM_LOG_ERROR("copy memory on GVA to local host failed: " << ret);
+Result HostDataOpSDMA::BatchStagedCopy(void *gvaAddrs[], void *hostAddrs[], const uint64_t counts[], uint32_t batchSize,
+                                       bool hostToGlobal, const char *direction) noexcept
+{
+    if (batchSize == 0) {
+        return BM_OK;
+    }
+    BM_VALIDATE_RETURN(gvaAddrs != nullptr && hostAddrs != nullptr && counts != nullptr,
+                       "invalid batch " << direction << " input", BM_INVALID_PARAM);
+
+    for (uint32_t beg = 0; beg < batchSize;) {
+        const auto chunk = LocateStagingChunk(counts, batchSize, beg);
+        auto ret = StagedCopyChunk(gvaAddrs, hostAddrs, counts, chunk, hostToGlobal);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("batch " << direction << " copy failed, ret: " << ret << " begin: " << chunk.begin
+                                  << " end: " << chunk.end << " stagedBytes: " << chunk.bytes);
             return ret;
         }
+        beg = chunk.end;
     }
     return BM_OK;
+}
+
+Result HostDataOpSDMA::StagedCopyChunk(void *gvaAddrs[], void *hostAddrs[], const uint64_t counts[],
+                                       const SdmaStagingChunk &chunk, bool hostToGlobal) noexcept
+{
+    if (chunk.bytes == 0) {
+        return BM_OK;
+    }
+
+    void *staging = nullptr;
+    auto ret = DlAclApi::AclrtMalloc(&staging, chunk.bytes, 0);
+    if (ret != BM_OK || staging == nullptr) {
+        BM_LOG_ERROR("sdma staging alloc failed, ret: " << ret << " bytes: " << chunk.bytes);
+        return BM_MALLOC_FAILED;
+    }
+
+    StagingLayout layout;
+    if (!BuildStagingLayout(layout, gvaAddrs, hostAddrs, counts, chunk, static_cast<uint8_t *>(staging))) {
+        BM_LOG_ERROR("sdma staging descriptor allocation failed, begin: " << chunk.begin << " end: " << chunk.end);
+        (void)DlAclApi::AclrtFree(staging);
+        return BM_MALLOC_FAILED;
+    }
+
+    const auto segCount = static_cast<uint32_t>(layout.sizes.size());
+    if (hostToGlobal) {
+        // 本端 host -> staging(HBM)，批量下发后由 SDMA 一次性搬运到全局地址
+        ret = BatchMemcpyHostDevice(layout.stagingAddrs.data(), layout.hostAddrs.data(), layout.sizes.data(), segCount,
+                                    true);
+        if (ret == BM_OK) {
+            hybm_batch_copy_params g2gParams{layout.stagingAddrs.data(), layout.gvaAddrs.data(), layout.sizes.data(),
+                                             segCount};
+            ExtOptions g2gOptions{};
+            ret = BatchCopyG2G(g2gParams, g2gOptions);
+        }
+    } else {
+        // 全局地址 -> staging(HBM)，再由批量 D2H 落回本端 host
+        hybm_batch_copy_params g2gParams{layout.gvaAddrs.data(), layout.stagingAddrs.data(), layout.sizes.data(),
+                                         segCount};
+        ExtOptions g2gOptions{};
+        ret = BatchCopyG2G(g2gParams, g2gOptions);
+        if (ret == BM_OK) {
+            ret = BatchMemcpyHostDevice(layout.hostAddrs.data(), layout.stagingAddrs.data(), layout.sizes.data(),
+                                        segCount, false);
+        }
+    }
+    if (ret != BM_OK) {
+        // 等待接口可能提前返回错误，确保在飞的 SDMA 和 H2D/D2H 都结束后再释放 staging
+        auto hStream = HybmStreamManager::GetThreadHybmStream(HybmGetInitedLogicDeviceId());
+        if (hStream != nullptr) {
+            (void)hStream->Synchronize();
+        }
+        auto aclStream = HybmStreamManager::GetThreadAclStream();
+        if (aclStream != nullptr) {
+            (void)DlAclApi::AclrtSynchronizeStream(aclStream);
+        }
+    }
+    (void)DlAclApi::AclrtFree(staging);
+    return ret;
 }
 } // namespace mf
 } // namespace ock

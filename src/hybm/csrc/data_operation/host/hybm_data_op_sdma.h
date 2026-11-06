@@ -21,6 +21,14 @@
 
 namespace ock {
 namespace mf {
+
+// 一次 staging 分块的段范围和所需字节数
+struct SdmaStagingChunk {
+    uint32_t begin{0};
+    uint32_t end{0};
+    uint64_t bytes{0};
+};
+
 class HostDataOpSDMA : public DataOperator {
 public:
     explicit HostDataOpSDMA() noexcept;
@@ -66,6 +74,11 @@ private:
                           void *stream) noexcept;
     Result BatchCopyGH2LH(void *hostAddrs[], void *gvaAddrs[], const uint64_t counts[], uint32_t batchSize,
                           void *stream) noexcept;
+
+    Result BatchStagedCopy(void *gvaAddrs[], void *hostAddrs[], const uint64_t counts[], uint32_t batchSize,
+                           bool hostToGlobal, const char *direction) noexcept;
+    Result StagedCopyChunk(void *gvaAddrs[], void *hostAddrs[], const uint64_t counts[], const SdmaStagingChunk &chunk,
+                           bool hostToGlobal) noexcept;
 
     Result BatchCopyExtend(hybm_batch_copy_params &params, void *stream, uint32_t flags) noexcept;
     uint32_t TryGetOneParamSpace(void **ptr) noexcept;

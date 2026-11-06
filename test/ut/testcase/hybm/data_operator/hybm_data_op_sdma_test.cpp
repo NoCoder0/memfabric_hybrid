@@ -67,6 +67,18 @@ int MockAclrtFreeHost(void *ptr)
     return 0;
 }
 
+// 模拟 AclrtMalloc 函数的实现：批量 staging 要求返回非空地址
+int MockAclrtMalloc(void **ptr, size_t size, uint32_t type)
+{
+    (void)size;
+    (void)type;
+    if (ptr == nullptr) {
+        return -1;
+    }
+    *ptr = reinterpret_cast<void *>(0x10000000ULL);
+    return 0;
+}
+
 // 模拟 HalHostRegister 函数的实现
 int MockHalHostRegister(void *addr, uint64_t size, uint32_t flags, uint32_t devId, void **output)
 {
@@ -97,7 +109,7 @@ public:
         MOCKER(&ock::mf::DlAclApi::AclrtFreeHost).stubs().will(invoke(MockAclrtFreeHost));
 
         // 模拟 DlAclApi::AclrtMalloc 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(0));
+        MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(invoke(MockAclrtMalloc));
 
         // 模拟 DlAclApi::AclrtFree 方法
         MOCKER(&ock::mf::DlAclApi::AclrtFree).stubs().will(returnValue(0));
@@ -107,6 +119,9 @@ public:
 
         // 模拟 DlAclApi::AclrtMemcpyAsync 方法
         MOCKER(&ock::mf::DlAclApi::AclrtMemcpyAsync).stubs().will(returnValue(0));
+
+        // 模拟 DlAclApi::AclrtMemcpyBatch 方法，覆盖批量 staging 快路径
+        MOCKER(&ock::mf::DlAclApi::AclrtMemcpyBatch).stubs().will(returnValue(0));
 
         // 模拟 DlAclApi::AclrtSynchronizeStream 方法
         MOCKER(&ock::mf::DlAclApi::AclrtSynchronizeStream).stubs().will(returnValue(0));
