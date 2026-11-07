@@ -53,6 +53,10 @@ _zbal_staged = os.path.isdir(os.path.join(os.path.dirname(__file__), "zbal"))
 # acc_offload extend sources, staged into the wheel under _kernel/acc_offload (sibling of the
 # prebuilt AICPU payload _kernel/hybm) for install-time compilation. NPU wheels only.
 _ACC_OFFLOAD_SRC_ASSETS = [
+    (
+        "_kernel/acc_offload/launch/acc_offload_operators_launch.h",
+        "src/acc_offload/csrc/launch/acc_offload_operators_launch.h",
+    ),
     ("_kernel/acc_offload/operators", "src/acc_offload/csrc/operators"),
     (
         "_kernel/acc_offload/launch/acc_offload_operators_launch.cpp",

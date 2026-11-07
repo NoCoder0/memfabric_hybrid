@@ -16,6 +16,7 @@
 #include <vector>
 #include <type_traits>
 #include "hybm_big_mem.h"
+#include "hybm_device_copy.h"
 #include "hybm_common_include.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_mem_slice.h"
@@ -65,6 +66,9 @@ public:
     virtual int32_t Wait() noexcept = 0;
 
     virtual ~MemEntity() noexcept = default;
+
+    virtual int32_t PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) noexcept = 0;
+    virtual int32_t DeviceCopy(const hybm_device_copy_params &params) noexcept = 0;
 
 private:
     HybmEntityTagInfo tagInfo_;

@@ -29,6 +29,8 @@
 #include "dl_op_api.h"
 #include "dl_acl_api.h"
 
+struct HybmSdmaDeviceCopyContext;
+
 namespace ock {
 namespace mf {
 namespace transport {
@@ -56,13 +58,25 @@ struct SdmaOpResInfo {
     uint8_t reserved[40];
 };
 
+struct SparseCopyResources {
+    ~SparseCopyResources();
+    uint64_t poolBase{0};
+    uint64_t poolSize{0};
+    HybmSdmaDeviceCopyContext *deviceContext{nullptr};
+    aclrtBinHandle kernelHandle{nullptr};
+    aclrtFuncHandle function{nullptr};
+    bool submissionFailed{false};
+};
+
 class SdmaTransportManager : public TransportManager {
 public:
     SdmaTransportManager() = default;
-    ~SdmaTransportManager() override = default;
+    ~SdmaTransportManager() override;
 
     Result OpenDevice(const TransportOptions &options) override;
     Result CloseDevice() override;
+    Result PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) override;
+    Result DeviceCopy(const hybm_device_copy_params &params) override;
 
     bool QueryHasRegistered(uint64_t addr, uint64_t size) override
     {
@@ -155,6 +169,7 @@ public:
     }
 
 private:
+    void ReleaseResources();
     Result CreateNotifyIds();
     Result CreateStarsStreams(int32_t channel_num);
     Result MallocSdmaWorkspace(size_t workspace_size);
@@ -165,6 +180,7 @@ private:
 
 private:
     bool inited_{false};
+    std::unique_ptr<SparseCopyResources> sparseCopy_;
     std::mutex mutex_;
     uint32_t rankId_{0};
     uint32_t rankCount_{1};

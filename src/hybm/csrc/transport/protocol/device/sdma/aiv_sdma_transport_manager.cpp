@@ -26,6 +26,8 @@
 #include "hybm_ptracer.h"
 #include "hybm_gva.h"
 #include "hybm_va_manager.h"
+#include "hybm_sdma_device_copy.h"
+#include "hybm_kernel_hepler.h"
 #include "mf_scope_guard.h"
 
 namespace ock {
@@ -33,6 +35,13 @@ namespace mf {
 
 namespace transport {
 namespace device {
+
+SdmaTransportManager::~SdmaTransportManager()
+{
+    if (inited_) {
+        CloseDevice();
+    }
+}
 
 Result SdmaTransportManager::OpenDevice(const TransportOptions &options)
 {
@@ -42,6 +51,8 @@ Result SdmaTransportManager::OpenDevice(const TransportOptions &options)
     if (inited_) {
         return BM_OK;
     }
+
+    auto rollback = make_scope_guard(this, [](SdmaTransportManager *manager) { manager->ReleaseResources(); });
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
 
@@ -68,6 +79,7 @@ Result SdmaTransportManager::OpenDevice(const TransportOptions &options)
 
     BM_LOG_DEBUG(rankId_ << " init sdma success.");
     inited_ = true;
+    rollback.release();
     return BM_OK;
 }
 
@@ -293,6 +305,13 @@ Result SdmaTransportManager::LaunchSdmaAicpuKernel(uint64_t streams_addr, uint64
 
 Result SdmaTransportManager::CloseDevice()
 {
+    std::lock_guard<std::mutex> lock(mutex_);
+    ReleaseResources();
+    return BM_OK;
+}
+
+void SdmaTransportManager::ReleaseResources()
+{
     if (opResInfo_.streamsAddr) {
         (void)DlAclApi::AclrtFree(reinterpret_cast<void *>(opResInfo_.streamsAddr));
         opResInfo_.streamsAddr = 0;
@@ -321,11 +340,93 @@ Result SdmaTransportManager::CloseDevice()
         }
     }
 
+    sparseCopy_.reset();
     streams_.clear();
     opResInfo_ = {};
     inited_ = false;
     BM_LOG_INFO(rankId_ << " sdma transport finalize.");
+}
+
+SparseCopyResources::~SparseCopyResources()
+{
+    if (deviceContext != nullptr) {
+        auto ret = DlAclApi::AclrtFree(deviceContext);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("free SDMA sparse context failed, ret=" << ret);
+        }
+    }
+}
+
+Result SdmaTransportManager::PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    const auto allocation = HybmVaManager::GetInstance().FindAllocByVa(poolBase, HVM_HVA);
+    const auto &region = allocation.first.base;
+    if (!allocation.second || allocation.first.IsImported() || region.memType != HYBM_MEM_TYPE_HOST ||
+        poolSize > region.size - (poolBase - region.va[HVM_HVA]) || region.va[HVM_DVA] == 0) {
+        BM_LOG_ERROR("SDMA pool must have a contiguous local device mapping, base=" << poolBase
+                                                                                    << " size=" << poolSize);
+        return BM_INVALID_PARAM;
+    }
+    HybmSdmaDeviceCopyContext ctx{};
+    ctx.poolBase = poolBase;
+    ctx.poolSize = poolSize;
+    ctx.devicePoolBase = region.va[HVM_DVA] + (poolBase - region.va[HVM_HVA]);
+    auto ret = DlAclApi::AclrtMemcpy(&ctx.channel, sizeof(ctx.channel),
+                                     reinterpret_cast<void *>(sdmaWorkspaceAddr_ + HYBM_SDMA_CHANNEL_TABLE_OFFSET),
+                                     sizeof(ctx.channel), ACL_MEMCPY_DEVICE_TO_HOST);
+    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "read SDMA channel failed, ret=" << ret, ret);
+    ret = DlAclApi::AclrtGetNotifyId(notifyArr_[0], &ctx.notifyId);
+    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "get SDMA notify id failed, ret=" << ret, ret);
+    if (ctx.channel.sqBase == 0 || ctx.channel.sqDepth < 4 || ctx.channel.sqDepth > 65536 ||
+        ctx.channel.sqTail >= ctx.channel.sqDepth || ctx.channel.streamId > UINT16_MAX || ctx.notifyId > 8191) {
+        BM_LOG_ERROR("unsupported A3 SDMA query result, sq=" << ctx.channel.sqId << " depth=" << ctx.channel.sqDepth
+                                                             << " tail=" << ctx.channel.sqTail
+                                                             << " notify=" << ctx.notifyId);
+        return BM_NOT_SUPPORTED;
+    }
+
+    sparseCopy_ = std::make_unique<SparseCopyResources>();
+
+    DeviceKernelNames names{};
+    names.funcTransfer = "HybmSdmaDeviceCopy";
+    DeviceFuncHandles handles{};
+    ret = LoadDeviceKernelAndGetHandles(names, sparseCopy_->kernelHandle, handles);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    sparseCopy_->function = handles.batchTransfer;
+    void *storage = nullptr;
+    ret = DlAclApi::AclrtMalloc(&storage, sizeof(ctx), 0);
+    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "allocate SDMA sparse context failed, ret=" << ret, ret);
+    auto storageGuard = make_scope_guard(storage, [](void *ptr) { DlAclApi::AclrtFree(ptr); });
+    ret = DlAclApi::AclrtMemcpy(storage, sizeof(ctx), &ctx, sizeof(ctx), ACL_MEMCPY_HOST_TO_DEVICE);
+    BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "initialize SDMA sparse context failed, ret=" << ret, ret);
+    sparseCopy_->poolBase = poolBase;
+    sparseCopy_->poolSize = poolSize;
+    sparseCopy_->deviceContext = static_cast<HybmSdmaDeviceCopyContext *>(storageGuard.abandon());
     return BM_OK;
+}
+
+Result SdmaTransportManager::DeviceCopy(const hybm_device_copy_params &params)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (sparseCopy_ == nullptr || sparseCopy_->deviceContext == nullptr || sparseCopy_->submissionFailed) {
+        BM_LOG_ERROR("SDMA sparse resources unavailable or submission failed");
+        return BM_NOT_INITIALIZED;
+    }
+    HybmSdmaDeviceCopyArgs args{sparseCopy_->deviceContext, params.srcPtrs, params.dstPtrs, params.lenPtrs,
+                                params.sizePtr};
+    auto ret = LaunchAicpuKernel(sparseCopy_->function, params.stream, &args, sizeof(args));
+    if (ret == BM_OK) {
+        ret = DlAclApi::AclrtWaitAndResetNotify(notifyArr_[0], params.stream, 60);
+    }
+    if (ret != BM_OK) {
+        sparseCopy_->submissionFailed = true;
+        BM_LOG_ERROR("SDMA sparse launch/wait failed, stream=" << params.stream << " ret=" << ret);
+    }
+    return ret;
 }
 } // namespace device
 } // namespace transport

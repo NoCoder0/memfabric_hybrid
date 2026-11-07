@@ -15,7 +15,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#ifndef __cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -205,7 +205,7 @@ typedef struct {
     uint32_t batchSize;
 } hybm_batch_copy_params;
 
-#ifndef __cplusplus
+#ifdef __cplusplus
 }
 #endif
 

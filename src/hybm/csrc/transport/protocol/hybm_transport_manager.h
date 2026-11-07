@@ -17,6 +17,7 @@
 #include <set>
 #include "hybm_data_operator.h"
 #include "hybm_types.h"
+#include "hybm_device_copy.h"
 #include "hybm_transport_common.h"
 #include "hybm_entity_tag_info.h"
 
@@ -142,6 +143,15 @@ public:
     virtual Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                             const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
                                             RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks);
+    virtual int32_t PrepareDeviceCopy(uint64_t, uint64_t)
+    {
+        return BM_NOT_SUPPORTED;
+    }
+
+    virtual int32_t DeviceCopy(const hybm_device_copy_params &)
+    {
+        return BM_NOT_SUPPORTED;
+    }
 };
 
 using TransManagerPtr = std::shared_ptr<TransportManager>;

@@ -21,6 +21,7 @@ extern "C" {
 typedef enum {
     OFFLOAD_SCENE_LOCAL = 0,  /* single-card local DRAM memory pool */
     OFFLOAD_SCENE_SHARED = 1, /* multi-card shared DRAM memory pool */
+    OFFLOAD_SCENE_AICPU = 2,  /* single-card Ascend910C AICPU + SDMA sparse copy */
 } offload_scene_t;
 
 /**
@@ -50,7 +51,7 @@ typedef struct {
                                                  GVA layout is built from (enforced by the init-time
                                                  fingerprint exchange). */
     uint64_t allocSize;      /* Allocated local physical DRAM size in bytes, will be aligned
-                                                 up to GB. LOCAL: must equal reserveSize. SHARED: this
+                                                 up to GB. LOCAL/AICPU: must equal aligned reserveSize. SHARED: this
                                                  rank's own contribution, must be <= reserveSize. Ranks
                                                  of one SHARED pool MAY pass different values (scenarios
                                                  that need equal allocations must pass equal values
@@ -62,7 +63,7 @@ typedef struct {
                                                  and hosts the store server; slot = global rank, so
                                                  machineRank = rankId / localWorldSize,
                                                  localRank = rankId % localWorldSize. */
-    offload_scene_t scene;   /* LOCAL: single-card pool; SHARED: multi-card shared pool */
+    offload_scene_t scene;   /* LOCAL/AICPU: single-card; SHARED: multi-card */
     char storeUrl[64];       /* Explicit config store url for the shared pool rendezvous
                                                  (e.g. "tcp://127.0.0.1:8500", "etcd://...", "reg://...").
                                                  Resolution order: this field > ASCEND_MF_STORE_URL env
@@ -133,6 +134,7 @@ void offload_free(uint64_t ptr, uint64_t flags);
  * For URMA_POOL mode pools the DVA differs from the malloc address (an
  * independent HalHostRegister device mapping); for vmm unified pools the DVA
  * equals the malloc address. AIV operators (sparse_copy etc.) must use the DVA.
+ * AICPU sparse copy uses the original pool address; get_dva is unsupported in that scene.
  *
  * @param hostPtr  [in] Address returned by offload malloc (or an interior address of it).
  * @param dvaPtr   [out] Device virtual address corresponding to the input address.
@@ -146,10 +148,17 @@ int32_t offload_get_dva(uint64_t hostPtr, uint64_t *dvaPtr);
  * Submits a batch of h2d or d2h copy requests. Each request copies
  * data from srcPtrs[i] to dstPtrs[i] with length lenPtrs[i]. The copy is
  * executed asynchronously on the device stream.
+ * In the AICPU scene, each nonzero-length entry must have exactly one endpoint
+ * in the offload host pool and the other in local device memory. The kernel
+ * infers the direction on every execution, including graph replay. All four metadata pointers
+ * must refer to contiguous arrays/scalars on the selected NPU. The caller guarantees that
+ * count <= array capacity and count <= 65536. Serialize submissions on each pool and keep
+ * metadata, payloads and the pool alive until all referencing graphs are destroyed.
+ * An invalid entry stops the AICPU batch. Copies already submitted to SDMA may have completed.
  *
  * @param srcPtr            [in] Array of source addresses.
  * @param dstPtr            [in] Array of destination addresses.
- * @param lenPtr            [in] Array of byte counts to copy for each pair.
+ * @param lenPtr            [in] Array of uint32_t byte counts to copy for each pair.
  * @param sizePtr           [in] Pointer to the number of entries in the arrays above.
  * @param deviceId          [in] Device ID to perform the copy on.
  * @return 0 on success, non-zero error code on failure.

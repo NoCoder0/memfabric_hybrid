@@ -26,6 +26,8 @@ const char *AccOffloadLaunchApi::gAccOffloadLibName = "libmf_hybm_accoffload.so"
 
 AccOffloadSparseCopyFunc AccOffloadLaunchApi::pAccOffloadSparseCopy = nullptr;
 
+AccOffloadAicpuLaunchFunc AccOffloadLaunchApi::pAccOffloadAicpuLaunch = nullptr;
+
 AccOffloadGroupPackCopyFunc AccOffloadLaunchApi::pAccOffloadGroupPackCopy = nullptr;
 
 AccOffloadKvExchangeFunc AccOffloadLaunchApi::pAccOffloadKvExchange = nullptr;
@@ -87,6 +89,8 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
 
     DL_LOAD_SYM_OPTIONAL(pAccOffloadSparseCopy, AccOffloadSparseCopyFunc, libHandle, "AccOffloadSparseCopy");
 
+    DL_LOAD_SYM_OPTIONAL(pAccOffloadAicpuLaunch, AccOffloadAicpuLaunchFunc, libHandle, "AccOffloadAicpuLaunch");
+
     DL_LOAD_SYM_OPTIONAL(pAccOffloadGroupPackCopy, AccOffloadGroupPackCopyFunc, libHandle, "AccOffloadGroupPackCopy");
 
     DL_LOAD_SYM_OPTIONAL(pAccOffloadKvExchange, AccOffloadKvExchangeFunc, libHandle, "AccOffloadKvExchange");
@@ -109,6 +113,8 @@ void AccOffloadLaunchApi::CleanupLibrary()
     }
 
     pAccOffloadSparseCopy = nullptr;
+
+    pAccOffloadAicpuLaunch = nullptr;
 
     pAccOffloadGroupPackCopy = nullptr;
 

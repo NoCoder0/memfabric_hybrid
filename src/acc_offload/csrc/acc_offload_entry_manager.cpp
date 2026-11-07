@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "acc_offload_entry_manager.h"
+#include "acc_offload_aicpu_entry.h"
 #include "acc_offload_local_dram_entry.h"
 #include "acc_offload_shared_dram_entry.h"
 #include "acc_offload_define.h"
@@ -75,6 +76,8 @@ int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
         entry_ = std::make_unique<AccOffloadLocalDramEntry>(entityId_);
     } else if (scene == OFFLOAD_SCENE_SHARED) {
         entry_ = std::make_unique<AccOffloadSharedDramEntry>(entityId_);
+    } else if (scene == OFFLOAD_SCENE_AICPU) {
+        entry_ = std::make_unique<AccOffloadAicpuEntry>(entityId_);
     } else {
         OFFLOAD_LOG_ERROR("invalid scene: " << static_cast<uint32_t>(scene));
         return OFFLOAD_ERROR;

@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "hybm_def.h"
+#include "hybm_device_copy.h"
 
 #ifdef __cplusplus
 extern "C" {

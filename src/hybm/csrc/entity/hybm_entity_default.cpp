@@ -1070,6 +1070,26 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
     return ret;
 }
 
+int32_t MemEntityDefault::PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) noexcept
+{
+    if (transportManager_ == nullptr || !initialized_) {
+        BM_LOG_ERROR("device copy entity not initialized, rankId: " << options_.rankId);
+        return BM_NOT_INITIALIZED;
+    }
+
+    return transportManager_->PrepareDeviceCopy(poolBase, poolSize);
+}
+
+int32_t MemEntityDefault::DeviceCopy(const hybm_device_copy_params &params) noexcept
+{
+    if (transportManager_ == nullptr || !initialized_) {
+        BM_LOG_ERROR("device copy entity not initialized, rankId: " << options_.rankId);
+        return BM_NOT_INITIALIZED;
+    }
+
+    return transportManager_->DeviceCopy(params);
+}
+
 int32_t MemEntityDefault::Wait() noexcept
 {
     if (!initialized_) {
@@ -1397,7 +1417,9 @@ Result MemEntityDefault::InitTransManager()
         return BM_OK;
     }
 
-    if (options_.rankCount <= 1) {
+    const bool localAicpuSdma = options_.bmType == HYBM_TYPE_AICPU_INITIATE && options_.scene == HYBM_SCENE_OFFLOAD &&
+                                options_.bmDataOpType == HYBM_DOP_TYPE_AIV_SDMA;
+    if (options_.rankCount <= 1 && !localAicpuSdma) {
         BM_LOG_INFO("rank total count : " << options_.rankCount << ", no transport.");
         return BM_OK;
     }

@@ -14,8 +14,20 @@
 #include "torch_npu/csrc/core/npu/NPUGuard.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
 #include "acc_offload_operators.h"
+#include "acc_offload_operators_launch.h"
 
 extern "C" {
+
+void AccOffloadAicpuLaunch(AccOffloadAicpuCallback callback, const AccOffloadAicpuParam &param, uint8_t deviceId)
+{
+    c10_npu::OptionalNPUGuard npuGuard;
+    npuGuard.set_index(deviceId);
+    void *stream = c10_npu::getCurrentNPUStream(deviceId).stream(false);
+
+    at_npu::native::OpCommand::RunOpApiV2("acc_aicpu_sparse_copy",
+                                          [callback, param, stream]() -> int { return callback(param, stream); });
+}
+
 void AccOffloadSparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr, uint8_t devIdx)
 {
 #if defined(ACC_SOC_VERSION_A5)

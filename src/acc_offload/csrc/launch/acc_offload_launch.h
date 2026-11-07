@@ -15,6 +15,7 @@
 #include <atomic>
 #include <mutex>
 #include "acc_offload_define.h"
+#include "acc_offload_operators_launch.h"
 
 namespace ock {
 namespace offload {
@@ -25,6 +26,8 @@ using AccOffloadGroupPackCopyFunc = void (*)(uint64_t *, uint64_t *, uint32_t *,
                                              uint8_t);
 
 using AccOffloadKvExchangeFunc = void (*)(uint64_t *, uint8_t);
+
+using AccOffloadAicpuLaunchFunc = void (*)(AccOffloadAicpuCallback, const AccOffloadAicpuParam &, uint8_t deviceId);
 
 /* Uniform row-grid gather layout, resolved from the single table registration
  * at call time and baked into the launch (graph-capture stable). Lives here so
@@ -44,6 +47,17 @@ class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
     static void CleanupLibrary();
+
+    static inline int32_t AccOffloadAicpuLaunch(AccOffloadAicpuCallback callback, const AccOffloadAicpuParam &param,
+                                                uint8_t deviceId)
+    {
+        if (pAccOffloadAicpuLaunch == nullptr) {
+            return OFFLOAD_UNLOAD;
+        }
+
+        pAccOffloadAicpuLaunch(callback, param, deviceId);
+        return OFFLOAD_OK;
+    }
 
     static inline int32_t AccOffloadSparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
                                                uint32_t *sizePtr, uint8_t devIdx)
@@ -99,6 +113,7 @@ private:
     static const char *gAccOffloadLibName;
 
     static AccOffloadSparseCopyFunc pAccOffloadSparseCopy;
+    static AccOffloadAicpuLaunchFunc pAccOffloadAicpuLaunch;
     static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
     static AccOffloadKvExchangeFunc pAccOffloadKvExchange;
     static AccOffloadEntryGatherFunc pAccOffloadEntryGather;
