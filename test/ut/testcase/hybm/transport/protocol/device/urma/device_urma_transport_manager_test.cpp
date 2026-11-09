@@ -113,6 +113,8 @@ struct TestHybmBatchTransferParam {
     uint32_t totalListNum;
     HcommBatchTransferDesc *transferDescs;
     HcommBatchTransferDesc *markerDescs;
+    uint32_t notifyId;
+    uint32_t requireDrain;
 };
 
 TestHybmBatchTransferParam g_lastKernelArgs{};

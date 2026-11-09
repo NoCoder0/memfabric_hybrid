@@ -14,6 +14,8 @@
 #define MF_HYBM_DEVICE_KERNEL_HELPER_H
 
 #include <cstdint>
+#include <cstddef>
+#include <cstring>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -62,6 +64,15 @@ struct KernelLaunchConfig {
     const uint64_t *remoteAddrs{nullptr};
     const uint64_t *sizes{nullptr};
     uint32_t notifyId{0}; // 非 0 时内核在数据 WR 之后记录一次 NotifyRecord，host 侧等待它
+    uint32_t rankId{0};
+};
+
+struct DeviceBatchHeader {
+    ThreadHandle thread;
+    ChannelHandle channel;
+    uint32_t rankId;
+    uint32_t start;
+    uint32_t count;
 };
 
 /**
@@ -69,21 +80,26 @@ struct KernelLaunchConfig {
  */
 inline Result PrepareLaunchBuffer(const KernelLaunchConfig &config, void *&dstListDev)
 {
-    const auto ptrBytes = config.batchSize * sizeof(void *);
-    const auto totalBytes = ptrBytes * 2UL + config.batchSize * sizeof(uint64_t);
+    const auto totalBytes = sizeof(DeviceBatchHeader) + config.batchSize * sizeof(HcommBatchTransferDesc);
     std::vector<uint8_t> hostBuf(totalBytes);
     auto ret = DlAclApi::AclrtMalloc(&dstListDev, totalBytes, 0);
     if (ret != BM_OK || dstListDev == nullptr) {
         BM_LOG_ERROR("LaunchDeviceKernel AclrtMalloc failed, size=" << totalBytes << " ret=" << ret);
         return ret;
     }
-    auto *dstBase = reinterpret_cast<void **>(hostBuf.data());
-    auto *srcBase = reinterpret_cast<void **>(hostBuf.data() + ptrBytes);
-    auto *lenBase = reinterpret_cast<uint64_t *>(hostBuf.data() + ptrBytes * 2UL);
+    const DeviceBatchHeader header{config.thread, config.channel, config.rankId, 0U, config.batchSize};
+    std::memcpy(hostBuf.data(), &header, sizeof(header));
     for (uint32_t i = 0; i < config.batchSize; ++i) {
-        dstBase[i] = reinterpret_cast<void *>(config.isRead ? config.localAddrs[i] : config.remoteAddrs[i]);
-        srcBase[i] = reinterpret_cast<void *>(config.isRead ? config.remoteAddrs[i] : config.localAddrs[i]);
-        lenBase[i] = config.sizes[i];
+        HcommBatchTransferDesc desc{};
+        desc.transType = config.isRead ? HCOMM_TRANSFER_TYPE_READ : HCOMM_TRANSFER_TYPE_WRITE;
+        if (config.isRead) {
+            desc.transferInfo.read = {config.sizes[i], reinterpret_cast<void *>(config.localAddrs[i]),
+                                      reinterpret_cast<void *>(config.remoteAddrs[i])};
+        } else {
+            desc.transferInfo.write = {config.sizes[i], reinterpret_cast<void *>(config.remoteAddrs[i]),
+                                       reinterpret_cast<void *>(config.localAddrs[i])};
+        }
+        std::memcpy(hostBuf.data() + sizeof(header) + i * sizeof(desc), &desc, sizeof(desc));
     }
     ret = DlAclApi::AclrtMemcpy(dstListDev, totalBytes, hostBuf.data(), totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
@@ -94,7 +110,7 @@ inline Result PrepareLaunchBuffer(const KernelLaunchConfig &config, void *&dstLi
 }
 
 /**
- * @brief Set up kernel args (HybmOneSideOpParam) and launch AICPU kernel.
+ * @brief Set up kernel args and launch AICPU kernel.
  */
 inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransferBuffers &outBuffers)
 {
@@ -119,28 +135,28 @@ inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransfe
     if (ret != BM_OK) {
         return ret;
     }
-    const auto ptrBytes = config.batchSize * sizeof(void *);
-
-    HybmOneSideOpParam args{};
-    args.thread = config.thread;
-    args.channel = config.channel;
-    args.list_num = config.batchSize;
-    args.dst_buf_addr_list = reinterpret_cast<void **>(dstListDev);
-    args.src_buf_addr_list = reinterpret_cast<void **>(static_cast<uint8_t *>(dstListDev) + ptrBytes);
-    args.len_list = reinterpret_cast<uint64_t *>(static_cast<uint8_t *>(dstListDev) + ptrBytes * 2UL);
+    auto *base = static_cast<uint8_t *>(dstListDev);
+    HybmBatchTransferParam args{};
+    args.rank_num = 1U;
+    args.rank_id_list = reinterpret_cast<uint32_t *>(base + offsetof(DeviceBatchHeader, rankId));
+    args.rank_start_idx_list = reinterpret_cast<uint32_t *>(base + offsetof(DeviceBatchHeader, start));
+    args.rank_list_num_list = reinterpret_cast<uint32_t *>(base + offsetof(DeviceBatchHeader, count));
+    args.thread_list = reinterpret_cast<ThreadHandle *>(base + offsetof(DeviceBatchHeader, thread));
+    args.channel_list = reinterpret_cast<ChannelHandle *>(base + offsetof(DeviceBatchHeader, channel));
+    args.total_list_num = config.batchSize;
+    args.transfer_descs = reinterpret_cast<HcommBatchTransferDesc *>(base + sizeof(DeviceBatchHeader));
     args.notify_id = config.notifyId;
+    args.require_drain = 1U;
 
     ret = LaunchAicpuKernel(config.funcHandle, config.stream, &args, sizeof(args));
     if (ret != BM_OK) {
-        BM_LOG_ERROR("LaunchDeviceKernel launch failed, kernel=" << (config.isRead ? "HybmBatchRead" : "HybmBatchWrite")
-                                                                 << " ret=" << ret);
+        BM_LOG_ERROR("LaunchDeviceKernel launch failed, kernel=HybmBatchTransfer, rank=" << config.rankId
+                                                                                         << " ret=" << ret);
         (void)DlAclApi::AclrtFree(dstListDev);
         return ret;
     }
 
     outBuffers.dstList = dstListDev;
-    outBuffers.srcList = static_cast<uint8_t *>(dstListDev) + ptrBytes;
-    outBuffers.lenList = static_cast<uint8_t *>(dstListDev) + ptrBytes * 2UL;
     BM_LOG_INFO("LaunchDeviceKernel success, isRead=" << config.isRead << " batchSize=" << config.batchSize);
     return BM_OK;
 }

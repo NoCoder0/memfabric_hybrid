@@ -66,7 +66,7 @@ constexpr auto HCOMM_CHANNEL_READY_TIMEOUT_PER_RANK = std::chrono::milliseconds(
 constexpr const char *HYBM_DEVICE_FUNC_TRANSFER = "HybmBatchTransfer";
 constexpr uint32_t HYBM_DEVICE_KERNEL_BLOCK_DIM = 1U;
 constexpr uint16_t HYBM_DEVICE_KERNEL_TIMEOUT_S = 60U;
-constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 27U * 68U;
+constexpr uint32_t HYBM_NOTIFY_DEFAULT_WAIT_TIME_S = 1500U;
 uint32_t GetHcommChannelQos()
 {
     const char *rawValue = std::getenv(HCOMM_CHANNEL_QOS_ENV);

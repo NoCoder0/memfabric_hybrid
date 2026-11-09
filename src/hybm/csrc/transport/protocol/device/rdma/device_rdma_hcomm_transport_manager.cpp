@@ -46,8 +46,7 @@ constexpr int32_t CHANNEL_STATUS_POLL_INTERVAL_MS = 1;
 constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
 // host 侧等待 kernel 末尾 NotifyRecord 的超时（秒）；与 device_urma 的 kernel 超时保持一致
 constexpr uint32_t kNotifyWaitTimeoutS = 60U;
-constexpr const char *HYBM_DEVICE_FUNC_READ = "HybmBatchRead";
-constexpr const char *HYBM_DEVICE_FUNC_WRITE = "HybmBatchWrite";
+constexpr const char *HYBM_DEVICE_FUNC_TRANSFER = "HybmBatchTransfer";
 // trans 双 entity 类型：recvEntity 的 rank 为 0，sendEntity 的 rank 为 rankCount-1
 constexpr uint32_t TRANS_ENTITY_RECV = 0U;
 constexpr uint32_t TRANS_ENTITY_SEND = 1U;
@@ -269,12 +268,11 @@ DeviceRdmaHcommTransportManager::~DeviceRdmaHcommTransportManager()
 Result DeviceRdmaHcommTransportManager::LoadDeviceKernel()
 {
     std::lock_guard<std::mutex> guard(deviceKernelMutex_);
-    if (deviceFuncHandles_.batchWrite != nullptr && deviceFuncHandles_.batchRead != nullptr) {
+    if (deviceFuncHandles_.batchTransfer != nullptr) {
         return BM_OK;
     }
     DeviceKernelNames names{};
-    names.funcRead = HYBM_DEVICE_FUNC_READ;
-    names.funcWrite = HYBM_DEVICE_FUNC_WRITE;
+    names.funcTransfer = HYBM_DEVICE_FUNC_TRANSFER;
     return LoadDeviceKernelAndGetHandles(names, deviceKernelHandle_, deviceFuncHandles_);
 }
 
@@ -1399,11 +1397,11 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
     }
 
     DeviceTransferBuffers buffers{};
-    auto ret = device::LaunchDeviceKernel(
-        KernelLaunchConfig{isRead ? deviceFuncHandles_.batchRead : deviceFuncHandles_.batchWrite, state.thread,
-                           state.channel, ctx.stream, isRead, static_cast<uint32_t>(localVec.size()), localVec.data(),
-                           remoteVec.data(), sizeVec.data(), ctx.notifyId},
-        buffers);
+    auto ret = device::LaunchDeviceKernel(KernelLaunchConfig{deviceFuncHandles_.batchTransfer, state.thread,
+                                                             state.channel, ctx.stream, isRead,
+                                                             static_cast<uint32_t>(localVec.size()), localVec.data(),
+                                                             remoteVec.data(), sizeVec.data(), ctx.notifyId, rankId},
+                                          buffers);
     if (ret != BM_OK) {
         return ret;
     }

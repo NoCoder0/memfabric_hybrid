@@ -112,8 +112,6 @@ Result LoadDeviceKernelAndGetHandles(DeviceKernelNames &names, aclrtBinHandle &b
         aclrtFuncHandle *handle;
     };
     const FuncSpec specs[] = {
-        {names.funcRead, "funcRead", &funcHandles.batchRead},
-        {names.funcWrite, "funcWrite", &funcHandles.batchWrite},
         {names.funcTransfer, "funcTransfer", &funcHandles.batchTransfer},
         {names.funcPostSend, "funcPostSend", &funcHandles.rdmaPostSend},
     };
@@ -128,9 +126,8 @@ Result LoadDeviceKernelAndGetHandles(DeviceKernelNames &names, aclrtBinHandle &b
         }
     }
 
-    BM_LOG_INFO("AICPU kernel loaded over. Read: " << funcHandles.batchRead << ", Write: " << funcHandles.batchWrite
-                                                   << ", Transfer: " << funcHandles.batchTransfer
-                                                   << ", PostSend: " << funcHandles.rdmaPostSend);
+    BM_LOG_INFO("AICPU kernel loaded over. Transfer: " << funcHandles.batchTransfer
+                                                       << ", PostSend: " << funcHandles.rdmaPostSend);
     return BM_OK;
 }
 

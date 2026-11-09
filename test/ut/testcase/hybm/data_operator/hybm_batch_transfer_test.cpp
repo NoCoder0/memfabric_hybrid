@@ -132,12 +132,14 @@ int32_t HcommWriteOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle, void *
 int32_t HcommChannelDrainOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle)
 {
     drainCount++;
+    operationOrder.push_back('A');
     return BM_OK;
 }
 
 int32_t HcommAclrtNotifyRecordOnThread(ock::mf::ThreadHandle, uint64_t notifyId)
 {
     notifyRecordIds.push_back(notifyId);
+    operationOrder.push_back('N');
     return BM_OK;
 }
 
@@ -285,64 +287,23 @@ TEST_F(HybmBatchTransferTest, SecondRankErrorReturnsOverallFailure)
     EXPECT_EQ(batchModeEndCount, 1U);
 }
 
-TEST_F(HybmBatchTransferTest, OneSideWriteEntryKeepsOriginalTransferPath)
+TEST_F(HybmBatchTransferTest, SingleRankDrainsBeforeRecordingNotify)
 {
-    batchResult = BM_NOT_SUPPORTED;
-    uint64_t length = sizeof(source);
-    void *src = &source;
-    void *dst = &destination;
-    HybmOneSideOpParam oneSide{};
-    oneSide.thread = kThread;
-    oneSide.channel = kChannel;
-    oneSide.list_num = 1U;
-    oneSide.dst_buf_addr_list = &dst;
-    oneSide.src_buf_addr_list = &src;
-    oneSide.len_list = &length;
+    param.rank_num = 1U;
+    param.notify_id = 7U;
+    param.require_drain = 1U;
 
-    EXPECT_EQ(HybmBatchWrite(&oneSide), BM_OK);
-    EXPECT_EQ(destination, source);
-    EXPECT_EQ(singleWriteCount, 1U);
-}
-
-TEST_F(HybmBatchTransferTest, OneSideReadEntryKeepsOriginalTransferPath)
-{
-    batchResult = BM_NOT_SUPPORTED;
-    uint64_t length = sizeof(source);
-    void *src = &source;
-    void *dst = &destination;
-    HybmOneSideOpParam oneSide{};
-    oneSide.thread = kThread;
-    oneSide.channel = kChannel;
-    oneSide.list_num = 1U;
-    oneSide.dst_buf_addr_list = &dst;
-    oneSide.src_buf_addr_list = &src;
-    oneSide.len_list = &length;
-
-    EXPECT_EQ(HybmBatchRead(&oneSide), BM_OK);
-    EXPECT_EQ(destination, source);
-    EXPECT_EQ(markerReadCount, 1U);
-}
-
-TEST_F(HybmBatchTransferTest, OneSideWriteEntryDrainsAndRecordsNotify)
-{
-    batchResult = BM_NOT_SUPPORTED;
-    uint64_t length = sizeof(source);
-    void *src = &source;
-    void *dst = &destination;
-    HybmOneSideOpParam oneSide{};
-    oneSide.thread = kThread;
-    oneSide.channel = kChannel;
-    oneSide.list_num = 1U;
-    oneSide.dst_buf_addr_list = &dst;
-    oneSide.src_buf_addr_list = &src;
-    oneSide.len_list = &length;
-    oneSide.notify_id = 7U;
-
-    // 完成语义：先 Drain 等数据真正落地，再记录 notify 让 host 可观测；不再读对端 flag
-    EXPECT_EQ(HybmBatchWrite(&oneSide), BM_OK);
-    EXPECT_EQ(destination, source);
+    ASSERT_EQ(HybmBatchTransfer(&param), BM_OK);
     EXPECT_EQ(drainCount, 1U);
     ASSERT_EQ(notifyRecordIds.size(), 1U);
     EXPECT_EQ(notifyRecordIds[0], 7U);
-    EXPECT_EQ(markerReadCount, 0U);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'D', 'D', 'F', 'A', 'N'}));
+}
+
+TEST_F(HybmBatchTransferTest, RejectsNotifyForMultipleRanks)
+{
+    param.notify_id = 7U;
+    EXPECT_EQ(HybmBatchTransfer(&param), BM_INVALID_PARAM);
+    EXPECT_TRUE(submittedCounts.empty());
+    EXPECT_TRUE(notifyRecordIds.empty());
 }

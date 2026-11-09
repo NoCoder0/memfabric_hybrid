@@ -877,8 +877,7 @@ TEST(HcommApiWrapperTest, PrepareLaunchBuffer_Success)
     auto ret = PrepareLaunchBuffer(config, dstDev);
     ASSERT_EQ(ret, BM_OK);
     ASSERT_EQ(dstDev, gMockDevPtr);
-    // Should allocate: ptrBytes*2 + batchSize*8 = 16*2 + 16 = 48
-    ASSERT_EQ(gMallocSize, 48U);
+    ASSERT_EQ(gMallocSize, sizeof(DeviceBatchHeader) + 2U * sizeof(HcommBatchTransferDesc));
 }
 
 TEST(HcommApiWrapperTest, PrepareLaunchBuffer_MallocFails)

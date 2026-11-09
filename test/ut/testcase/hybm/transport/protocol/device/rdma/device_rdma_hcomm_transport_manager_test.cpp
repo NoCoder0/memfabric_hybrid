@@ -313,8 +313,7 @@ protected:
 inline std::shared_ptr<DeviceRdmaHcommTransportManager> CreateHcommMgr()
 {
     auto mgr = std::make_shared<DeviceRdmaHcommTransportManager>();
-    mgr->deviceFuncHandles_.batchWrite = reinterpret_cast<aclrtFuncHandle>(0x1001UL);
-    mgr->deviceFuncHandles_.batchRead = reinterpret_cast<aclrtFuncHandle>(0x1002UL);
+    mgr->deviceFuncHandles_.batchTransfer = reinterpret_cast<aclrtFuncHandle>(0x1001UL);
     return mgr;
 }
 

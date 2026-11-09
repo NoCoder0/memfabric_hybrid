@@ -42,12 +42,8 @@ void *TestDlsym(void *, const char *)
 #define dlsym          TestDlsym
 // Other UTs include the same source. Keep this TU's C entry points private to
 // the loader tests by giving them distinct names, including the batch entry.
-#define HybmBatchWrite    LoaderTestHybmBatchWrite
-#define HybmBatchRead     LoaderTestHybmBatchRead
 #define HybmBatchTransfer LoaderTestHybmBatchTransfer
 #include "../../../../src/hybm/ops/hybm_kernel/hybm_batch_transfer.cc"
-#undef HybmBatchWrite
-#undef HybmBatchRead
 #undef HybmBatchTransfer
 #undef dlopen
 #undef dlclose
@@ -79,7 +75,7 @@ TEST_F(HybmDeviceLoaderTest, OwnerClosesHandleAtEndOfLifetime)
         EXPECT_EQ(g_closeCount, 0);
     }
     EXPECT_EQ(g_closeCount, 1);
-    EXPECT_EQ(g_hcommWriteOnThread, nullptr);
+    EXPECT_EQ(g_hcommReadOnThread, nullptr);
     EXPECT_EQ(g_hcommHandle, nullptr);
     EXPECT_EQ(ResetHcommSymbols(), BM_OK);
     EXPECT_EQ(g_closeCount, 1);

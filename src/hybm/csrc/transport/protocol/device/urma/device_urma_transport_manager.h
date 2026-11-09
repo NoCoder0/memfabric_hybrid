@@ -32,8 +32,6 @@
 #include "hybm_kernel_hepler.h"
 #include "urma_topo_def.h"
 
-struct HybmOneSideOpParam;
-
 namespace ock {
 namespace mf {
 namespace transport {

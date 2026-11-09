@@ -22,21 +22,17 @@ namespace transport {
 namespace device {
 
 struct DeviceKernelNames {
-    const char *funcRead{nullptr};
-    const char *funcWrite{nullptr};
     const char *funcTransfer{nullptr};
     const char *funcPostSend{nullptr};
 };
 
 struct DeviceFuncHandles {
-    aclrtFuncHandle batchRead{nullptr};
-    aclrtFuncHandle batchWrite{nullptr};
     aclrtFuncHandle batchTransfer{nullptr};
     aclrtFuncHandle rdmaPostSend{nullptr};
 };
 
 // Load AICPU kernel JSON and resolve function handles.
-// @param names         kernel function name for read/write/transfer/rdmaPostSend
+// @param names         kernel function name for transfer/rdmaPostSend
 // @param binHandle     [in/out] cached bin handle; if nullptr, loads from JSON
 // @param funcHandles   [out] resolved function handles
 // JSON path: ${ASCEND_HOME_PATH}/opp/vendors/cust/op_impl/aicpu/hybm/config/libcann_hybm_kernel.json
