@@ -16,6 +16,7 @@
 #include "smem_net_common.h"
 #include "smem_store_factory.h"
 #include "mf_env_define.h"
+#include "mf_env_util.h"
 #include "dl_acl_api.h"
 #include "acc_offload_launch.h"
 #include "acc_offload_pool_fingerprint.h"
@@ -245,9 +246,15 @@ int32_t AccOffloadSharedDramEntry::CreateGroupStore(const offload_config_t &conf
         return OFFLOAD_ERROR;
     }
 
-    SmemGroupOption groupOpt = {
-        config.worldSize, config.rankId, SMEM_DEFAUT_WAIT_TIME * SECOND_TO_MILLSEC, false, nullptr, nullptr,
-        nullptr,          nullptr};
+    auto timeoutSeconds = mf::MfEnvUtil::GetUintOrDefault(mf::env::MF_GROUP_JOIN_MAX_TIMEOUT, SMEM_DEFAUT_WAIT_TIME);
+    SmemGroupOption groupOpt = {config.worldSize,
+                                config.rankId,
+                                static_cast<uint64_t>(timeoutSeconds) * SECOND_TO_MILLSEC,
+                                false,
+                                nullptr,
+                                nullptr,
+                                nullptr,
+                                nullptr};
     group_ = SmemNetGroupEngine::Create(entryStore_, groupOpt);
     if (group_ == nullptr) {
         OFFLOAD_LOG_ERROR("create net group failed, rankId: " << config.rankId << ", worldSize: " << config.worldSize
