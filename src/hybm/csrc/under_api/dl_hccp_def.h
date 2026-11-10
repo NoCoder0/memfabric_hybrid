@@ -9,6 +9,20 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/hcomm/blob/v8.5.0/src/platform/hccp/inc/network/hccp_common.h
+ * https://gitcode.com/cann/hcomm/blob/v8.5.0/src/platform/hccp/external_depends/rdma-core/include/infiniband/verbs.h
+ * Upstream copyright:
+ * Copyright (c) Huawei Technologies Co., Ltd. 2019-2025. All rights reserved.
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2004, 2005 Topspin Communications.  All rights reserved.
+ * Copyright (c) 2004, 2011-2012 Intel Corporation.  All rights reserved.
+ * Copyright (c) 2005, 2006, 2007 Cisco Systems, Inc.  All rights reserved.
+ * Copyright (c) 2005 PathScale, Inc.  All rights reserved.
+ * Compared with references: Selected HCCP and RDMA definitions for dynamic calls.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #ifndef MF_HYBRID_DL_HCCP_DEF_H
 #define MF_HYBRID_DL_HCCP_DEF_H
 

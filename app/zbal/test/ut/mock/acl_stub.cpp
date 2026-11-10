@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/runtime/blob/v8.5.0/include/external/acl/acl_rt.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Added local ACL test stubs for ZBAL.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #include <cstdint>
 #include <cstddef>
 #include <cstdlib>

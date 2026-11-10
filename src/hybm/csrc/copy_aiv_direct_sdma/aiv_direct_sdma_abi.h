@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/driver/blob/v8.5.0/src/sdk_driver/ts_agent/inc/tsch/task_struct.h
+ * Upstream copyright:
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
+ * Compared with references: Defined local AIV SDMA descriptors.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 // A3 STARS ABI, derived from the Mulan PSL v2 ZBAL implementation in this repository.
 #pragma once
 #include <cstdint>

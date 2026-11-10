@@ -9,6 +9,16 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/driver/blob/v9.0.0-rc.1/pkg_inc/ascend_hal_define.h
+ * https://gitcode.com/cann/driver/blob/v8.5.0/pkg_inc/hal_pkg/trs_pkg.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) Huawei Technologies Co., Ltd. 2012-2019. All rights reserved.
+ * Compared with references: Selected HAL definitions and local API support.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef MF_HYBRID_DL_HAL_API_DEF_H
 #define MF_HYBRID_DL_HAL_API_DEF_H

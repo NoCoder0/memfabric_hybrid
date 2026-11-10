@@ -9,6 +9,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+# Related HCOMM: https://gitcode.com/cann/hcomm/blob/v9.0.0/scripts/signtool/image_pack/ini_gen.py
+# Compared with HCOMM: Added image hash helpers and adjusted INI processing.
+# CANN license text: Open_Source_Software_Notice.md
 #
 #
 

@@ -9,6 +9,15 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/hcomm/blob/v9.1.0/include/hcomm_res_defs.h
+ * https://gitcode.com/cann/hcomm/blob/v9.0.0-beta.1/include/hccl/hccl_res.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Selected HCOMM definitions and added dynamic wrappers.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef MF_HYBM_CORE_DL_HCOMM_API_H
 #define MF_HYBM_CORE_DL_HCOMM_API_H

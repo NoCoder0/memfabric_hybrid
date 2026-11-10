@@ -9,6 +9,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+# Related HCOMM: https://gitcode.com/cann/hcomm/blob/v9.0.0/scripts/sign/add_header_sign.py
+# Compared with HCOMM: Added signing workflow helpers, parameter classes, and configurable paths.
+# CANN license text: Open_Source_Software_Notice.md
 """
 #
 #

@@ -102,11 +102,14 @@ def _copy_acc_offload_assets(build_lib):
 
 
 class _BuildPy(build_py):
-    """Custom build_py staging acc_offload extend sources into build_lib (NPU wheels only)."""
+    """Stage license files and NPU-specific assets into build_lib."""
 
     def run(self):
         super().run()
         _copy_acc_offload_assets(self.build_lib)
+        package_dir = os.path.join(self.build_lib, "memfabric_hybrid")
+        for filename in ("LICENSE", "Open_Source_Software_Notice.md"):
+            shutil.copyfile(os.path.join(_PROJECT_ROOT, filename), os.path.join(package_dir, filename))
 
 
 class BinaryDistribution(Distribution):
@@ -197,6 +200,8 @@ setup(
     zip_safe=False,
     package_data={
         "memfabric_hybrid": [
+            "LICENSE",
+            "Open_Source_Software_Notice.md",
             "_pymf_hybrid*.so",
             "_pymf_transfer*.so",
             "_pymf_acc_offload*.so",

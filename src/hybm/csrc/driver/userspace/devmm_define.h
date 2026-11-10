@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/driver/blob/v8.5.0/src/ascend_hal/svm/v2/devmm/devmm_virt_interface.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Renamed heap types and selected memory definitions.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef MEM_FABRIC_HYBRID_DEVMM_DEFINE_H
 #define MEM_FABRIC_HYBRID_DEVMM_DEFINE_H

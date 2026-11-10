@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/runtime/blob/v9.1.0/src/runtime/core/src/task/task_info/dma/rdma_task_v100.cc
+ * Upstream copyright:
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * Compared with references: Constructed write-value SQEs for RDMA doorbells.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #include "device_rdma_transport_manager.h"
 
 #include <unistd.h>

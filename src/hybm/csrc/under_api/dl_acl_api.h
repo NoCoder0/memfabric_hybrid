@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/runtime/blob/v8.5.0/include/external/acl/acl_rt.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Selected ACL types and added dynamic wrappers.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef MF_HYBM_CORE_DL_ACL_API_H
 #define MF_HYBM_CORE_DL_ACL_API_H

@@ -1,4 +1,5 @@
 #!/bin/bash
+# Related HCOMM signing tool: https://gitcode.com/cann/hcomm/blob/v9.0.0/scripts/sign/add_header_sign.py
 
 # build_and_pack_run.sh
 #         │

@@ -9,6 +9,16 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/driver/blob/v8.5.0/src/sdk_driver/ts_agent/inc/tsch/task_struct.h
+ * https://gitcode.com/cann/runtime/blob/v9.2.0/src/runtime/core/inc/sqe/v100/stars_sqe.hpp
+ * Upstream copyright:
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * Compared with references: Defined local RDMA SQE and parameter types.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef MF_HYBM_OPS_HYBM_KERNEL_HYBM_RDMA_AICPU_H
 #define MF_HYBM_OPS_HYBM_KERNEL_HYBM_RDMA_AICPU_H

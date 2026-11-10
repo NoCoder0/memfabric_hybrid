@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/runtime/blob/v9.0.0/src/dfx/adump/adump/exception/hccl_mc2_define.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Inlined local HCCL context definitions for the kernel.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 /* Adapted from umdk/.../fused_deep_moe_base.h
  * moe_distribute_base.h constants inlined to avoid external dependency */
 

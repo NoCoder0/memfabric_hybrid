@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/hcomm/blob/v9.1.0/src/legacy/ascend950/framework/topo/topo_addr_info/src/rank_info_types.h
+ * Upstream copyright:
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd.
+ * Compared with references: Defined local topology records and constants.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef URMA_TOPO_DEF_H
 #define URMA_TOPO_DEF_H

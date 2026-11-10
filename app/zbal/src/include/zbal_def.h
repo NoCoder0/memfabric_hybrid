@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/hcomm/blob/v9.0.0/include/hccl/hccl_types.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Defined ZBAL reduction operations and values.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #ifndef ZBAL_DEF_H_
 #define ZBAL_DEF_H_
 

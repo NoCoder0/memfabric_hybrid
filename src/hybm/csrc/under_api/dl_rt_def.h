@@ -9,6 +9,14 @@
 * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/runtime/blob/v8.5.0/pkg_inc/runtime/rt_external_device.h
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Selected runtime device resource definitions.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 
 #ifndef MF_HYBM_CORE_DL_RT_DEF_H
 #define MF_HYBM_CORE_DL_RT_DEF_H

@@ -9,6 +9,16 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/driver/blob/v8.5.0/src/sdk_driver/ts_agent/inc/tsch/task_struct.h
+ * https://gitcode.com/cann/runtime/blob/v9.1.0/src/runtime/core/inc/sqe/v200_base/memcpy_sqe_common.h
+ * Upstream copyright:
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Integrated stride definitions into local SQE types.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #ifndef MF_HYBRID_HYBM_TASK_H
 #define MF_HYBRID_HYBM_TASK_H
 

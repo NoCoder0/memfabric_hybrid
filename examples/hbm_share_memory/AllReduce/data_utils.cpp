@@ -9,6 +9,14 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/runtime/blob/v9.1.0/example/2_advanced_features/kernel/file_ops.cpp
+ * Upstream copyright:
+ * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Compared with references: Added local validation and logging to file utilities.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #include "data_utils.h"
 
 bool ReadFile(const std::string &filePath, size_t &fileSize, void *buffer, size_t bufferSize)

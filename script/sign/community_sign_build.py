@@ -9,6 +9,9 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
+# Related HCOMM: https://gitcode.com/cann/hcomm/blob/v9.0.0/scripts/sign/community_sign_build.py
+# Compared with HCOMM: Adjusted signing workflow and made SignaTrust and CRL paths configurable.
+# CANN license text: Open_Source_Software_Notice.md
 #
 #
 # 签名命令：./client --config ./client.toml add --file-type p7s --key-type x509 --key-name SignCert --detached infile

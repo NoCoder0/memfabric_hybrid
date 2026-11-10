@@ -10,6 +10,14 @@ EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
 MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details.
 */
+/*
+ * Related upstream references; the original source is not established.
+ * https://gitcode.com/cann/driver/blob/v8.5.0/src/sdk_driver/ts_agent/inc/tsch/task_struct.h
+ * Upstream copyright:
+ * Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
+ * Compared with references: Defined local ZBAL SDMA SQE types.
+ * Upstream copyright and license notices: Open_Source_Software_Notice.md
+ */
 #ifndef ZBAL_KERNEL_DATA_OP_H
 #define ZBAL_KERNEL_DATA_OP_H
 
