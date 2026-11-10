@@ -13,6 +13,8 @@
 #ifndef SMEM_SMEM_GROUP_MANAGER_H
 #define SMEM_SMEM_GROUP_MANAGER_H
 
+#include <mutex>
+
 #include "smem_group_manager_def.h"
 #include "smem_ref.h"
 #include "smem_group_manager_client.h"
@@ -53,7 +55,8 @@ protected:
     }
 
     uint32_t localRankId_{0};
-    RankFullInfo localRankInfo_;         //< Cached identity info supplied to Join()
+    RankFullInfo localRankInfo_; //< Cached identity info supplied to Join()
+    std::mutex executorMutex_;
     SmemGroupManagerClientPtr executor_; //< Client-side handler for server-driven state transitions
 };
 

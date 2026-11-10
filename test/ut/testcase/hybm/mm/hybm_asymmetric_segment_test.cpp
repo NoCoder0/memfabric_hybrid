@@ -355,6 +355,8 @@ public:
     {
         GlobalMockObject::reset();
         HybmVaManager::GetInstance().ClearAll();
+        savedHalHostRegister_ = DlHalApi::pHalHostRegister;
+        savedHalHostUnregisterEx_ = DlHalApi::pHalHostUnregisterEx;
         g_halHostRegisterCount = g_halHostUnregisterCount = g_ipcWhitelistCount = 0;
         g_retainCount = g_exportCount = g_transCount = g_attrCount = g_vmmReleaseCount = 0;
         g_importCount = g_reserveCount = g_mapCount = g_unmapCount = g_ipcOpenCount = g_ipcCloseCount = 0;
@@ -378,6 +380,8 @@ public:
 
     void TearDown() override
     {
+        DlHalApi::pHalHostRegister = savedHalHostRegister_;
+        DlHalApi::pHalHostUnregisterEx = savedHalHostUnregisterEx_;
         MemSegment::socType_ = g_savedSocType;
         MemSegment::logicDeviceId_ = g_savedLogicDeviceId;
         MemSegment::deviceId_ = g_savedDeviceId;
@@ -404,13 +408,25 @@ protected:
     }
 
     // 直接填充段基址字段，绕开依赖全局 VaManager 预留流程的 ReserveMemorySpace
-    static void InitSegmentBase(AsymmetricMemSegment &segment)
+    static void InitSegmentBase(AsymmetricMemSegment &segment, uint64_t gvaBase = TEST_GVA_BASE)
     {
-        segment.globalVirtualAddress_ = reinterpret_cast<uint8_t *>(TEST_GVA_BASE);
+        segment.globalVirtualAddress_ = reinterpret_cast<uint8_t *>(gvaBase);
         segment.lvaBase_ = segment.globalVirtualAddress_;
         segment.totalVirtualSize_ = TEST_TOTAL_SIZE;
         segment.allocatedSize_ = 0;
     }
+
+    static void InstallHostMappingStubs()
+    {
+        // HalHostRegister 是通过函数指针间接调用的 inline wrapper。部分优化构建无法由
+        // MockCPP 替换 wrapper 本身，因此直接注入 loader 保存的函数指针。
+        DlHalApi::pHalHostRegister = HalHostRegisterStub;
+        DlHalApi::pHalHostUnregisterEx = HalHostUnregisterCountStub;
+    }
+
+private:
+    halHostRegisterFunc savedHalHostRegister_{nullptr};
+    halHostUnregisterExFunc savedHalHostUnregisterEx_{nullptr};
 };
 
 /**
@@ -663,6 +679,160 @@ TEST_F(HybmAsymmetricSegmentTest, Release_HostSlice_UnmapsDevice)
     EXPECT_FALSE(HybmVaManager::GetInstance().FindAllocByVa(TEST_GVA_BASE, HVM_GVA).second);
 }
 
+/**
+ * Release_HostAliases_OwnerFirst_UnmapsOnLastRelease
+ *  - 两个实体注册同一 HOST 区间时，只允许第一次调用 HalHostRegister，第二个实体复用 DVA。
+ *  - 先释放映射创建者、再释放复用者：驱动映射只能在最后一个别名消失时注销。
+ *  - 注销完成后相同 HVA 可再次注册，证明没有遗留的 HAL host mapping。
+ */
+TEST_F(HybmAsymmetricSegmentTest, Release_HostAliases_OwnerFirst_UnmapsOnLastRelease)
+{
+    const auto opType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA);
+    auto options = MakeOptions(opType, ASCEND_910B);
+    AsymmetricMemSegment owner(options, TEST_ENTITY_ID);
+    AsymmetricMemSegment alias(options, TEST_ENTITY_ID + 1);
+    InitSegmentBase(owner);
+    InitSegmentBase(alias, TEST_GVA_BASE + HYBM_LARGE_PAGE_SIZE);
+    InstallHostMappingStubs();
+
+    MemSlicePtr ownerSlice;
+    MemSlicePtr aliasSlice;
+    ASSERT_EQ(owner.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, ownerSlice), BM_OK);
+    ASSERT_EQ(alias.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, aliasSlice), BM_OK);
+    EXPECT_EQ(g_halHostRegisterCount, 1);
+
+    EXPECT_EQ(owner.ReleaseSliceMemory(ownerSlice), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 0);
+    EXPECT_EQ(alias.ReleaseSliceMemory(aliasSlice), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 1);
+
+    MemSlicePtr reregistered;
+    EXPECT_EQ(alias.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, reregistered), BM_OK);
+    EXPECT_EQ(g_halHostRegisterCount, 2);
+    EXPECT_EQ(alias.ReleaseSliceMemory(reregistered), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 2);
+    EXPECT_EQ(alias.ReleaseSliceMemory(reregistered), BM_INVALID_PARAM);
+    EXPECT_EQ(g_halHostUnregisterCount, 2);
+}
+
+/**
+ * Release_HostAliases_ReuseFirst_UnmapsOnce
+ *  - 反向释放顺序同样只允许最后一个别名触发一次 HalHostUnregisterEx。
+ */
+TEST_F(HybmAsymmetricSegmentTest, Release_HostAliases_ReuseFirst_UnmapsOnce)
+{
+    const auto opType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA);
+    auto options = MakeOptions(opType, ASCEND_910B);
+    AsymmetricMemSegment owner(options, TEST_ENTITY_ID);
+    AsymmetricMemSegment alias(options, TEST_ENTITY_ID + 1);
+    InitSegmentBase(owner);
+    InitSegmentBase(alias, TEST_GVA_BASE + HYBM_LARGE_PAGE_SIZE);
+    InstallHostMappingStubs();
+
+    MemSlicePtr ownerSlice;
+    MemSlicePtr aliasSlice;
+    ASSERT_EQ(owner.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, ownerSlice), BM_OK);
+    ASSERT_EQ(alias.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, aliasSlice), BM_OK);
+
+    EXPECT_EQ(alias.ReleaseSliceMemory(aliasSlice), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 0);
+    EXPECT_EQ(owner.ReleaseSliceMemory(ownerSlice), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 1);
+}
+
+/**
+ * CloseMemory_HostAliases_OwnerFirst_UnmapsOnLastClose
+ *  - destroy/uninitialize 使用的段级 CloseMemory 与逐 slice 释放保持相同的末引用语义。
+ */
+TEST_F(HybmAsymmetricSegmentTest, CloseMemory_HostAliases_OwnerFirst_UnmapsOnLastClose)
+{
+    const auto opType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA);
+    auto options = MakeOptions(opType, ASCEND_910B);
+    AsymmetricMemSegment owner(options, TEST_ENTITY_ID);
+    AsymmetricMemSegment alias(options, TEST_ENTITY_ID + 1);
+    InitSegmentBase(owner);
+    InitSegmentBase(alias, TEST_GVA_BASE + HYBM_LARGE_PAGE_SIZE);
+    InstallHostMappingStubs();
+
+    MemSlicePtr ownerSlice;
+    MemSlicePtr aliasSlice;
+    ASSERT_EQ(owner.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, ownerSlice), BM_OK);
+    ASSERT_EQ(alias.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, aliasSlice), BM_OK);
+
+    owner.CloseMemory();
+    EXPECT_EQ(g_halHostUnregisterCount, 0);
+    alias.CloseMemory();
+    EXPECT_EQ(g_halHostUnregisterCount, 1);
+
+    owner.unReserveDone_.store(true);
+    alias.unReserveDone_.store(true);
+}
+
+/**
+ * CloseMemory_HbmSlice_DoesNotUnmapHost
+ *  - DEVICE_RDMA 的 HBM 注册记录只维护 GVA，段级关闭不得调用 HalHostUnregisterEx。
+ *  - 防止 CloseMemory 的 HOST 映射末引用修复误作用于同一 registerSlices_ 容器中的 HBM slice。
+ */
+TEST_F(HybmAsymmetricSegmentTest, CloseMemory_HbmSlice_DoesNotUnmapHost)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_DEVICE_RDMA, ASCEND_910B);
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+    InstallHostMappingStubs();
+
+    constexpr uint32_t kSliceIndex = 1U;
+    auto slice = std::make_shared<MemSlice>(kSliceIndex, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM, TEST_GVA_BASE,
+                                            TEST_HBM_ADDR, TEST_SIZE);
+    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo(
+                  {TEST_GVA_BASE, TEST_HBM_ADDR, TEST_HBM_ADDR, TEST_SIZE, HYBM_MEM_TYPE_DEVICE}, true),
+              BM_OK);
+    segment.registerSlices_.emplace(kSliceIndex, RegisterSlice{slice, ""});
+
+    segment.CloseMemory();
+    EXPECT_EQ(g_halHostUnregisterCount, 0);
+    segment.unReserveDone_.store(true);
+}
+
+/**
+ * Release_HostWithoutDeviceMapping_DoesNotUnmap
+ *  - 没有设备侧映射需求的 HOST_RDMA 注册即使是最后引用，也不能调用 HalHostUnregisterEx。
+ */
+TEST_F(HybmAsymmetricSegmentTest, Release_HostWithoutDeviceMapping_DoesNotUnmap)
+{
+    auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910B);
+    AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
+    InitSegmentBase(segment);
+    InstallHostMappingStubs();
+
+    MemSlicePtr slice;
+    ASSERT_EQ(segment.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, slice), BM_OK);
+    EXPECT_EQ(segment.ReleaseSliceMemory(slice), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 0);
+}
+
+/**
+ * Register_HostAliases_MixedMappingRejected
+ *  - 同一 HVA 不能混用无映射和 DEVICE_RDMA 映射记录；VaManager 必须拒绝描述符不一致的本地别名。
+ */
+TEST_F(HybmAsymmetricSegmentTest, Register_HostAliases_MixedMappingRejected)
+{
+    const auto mappedOp = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA);
+    auto mappedOptions = MakeOptions(mappedOp, ASCEND_910B);
+    auto unmappedOptions = MakeOptions(HYBM_DOP_TYPE_DEFAULT, ASCEND_910B);
+    AsymmetricMemSegment mapped(mappedOptions, TEST_ENTITY_ID);
+    AsymmetricMemSegment unmapped(unmappedOptions, TEST_ENTITY_ID + 1);
+    InitSegmentBase(mapped);
+    InitSegmentBase(unmapped, TEST_GVA_BASE + HYBM_LARGE_PAGE_SIZE);
+    InstallHostMappingStubs();
+
+    MemSlicePtr mappedSlice;
+    MemSlicePtr unmappedSlice;
+    ASSERT_EQ(mapped.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, mappedSlice), BM_OK);
+    EXPECT_EQ(unmapped.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, unmappedSlice), BM_ERROR);
+    EXPECT_EQ(unmappedSlice, nullptr);
+    EXPECT_EQ(mapped.ReleaseSliceMemory(mappedSlice), BM_OK);
+    EXPECT_EQ(g_halHostUnregisterCount, 1);
+}
 /**
  * Export_HostSlice_UsesUserMemMagic
  *  - 导出 DRAM slice：反序列化 magic == USER_MEM_SLICE_EXPORT_INFO_MAGIC、

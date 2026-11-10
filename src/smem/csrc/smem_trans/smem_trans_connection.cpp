@@ -480,7 +480,11 @@ int SmemTransConnection::ImportPeerInfo(const RankFullInfo &peer) noexcept
     }
 
     if (peer.externalInfo.empty()) {
-        SM_LOG_WARN("peer slice is empty! peer rankId: " << peer.rankId << " overrideRank: " << overrideRank);
+        mf::WriteGuard locker(remoteSliceRwMutex_);
+        rankToWorkerId_[peer.rankId] = id;
+        ranksRole_[peer.rankId] = role;
+        SM_LOG_INFO("peer slice is empty, waiting for ADD_SLICES, peer rankId: " << peer.rankId
+                                                                                 << " overrideRank: " << overrideRank);
         return SM_OK;
     }
     global.resize(peer.externalInfo.size(), nullptr);

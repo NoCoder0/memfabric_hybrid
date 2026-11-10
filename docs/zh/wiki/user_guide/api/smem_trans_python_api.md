@@ -160,7 +160,7 @@ class TransferEngine:
 |initialize参数session_id|该TRANS实例的唯一标识，同时也是本实例内部config store的监听地址。支持`ip:port`（指定侦听端口）或`ip`/`ip:0`（由initialize自动选择可用端口，需在initialize后调用get_rpc_port获取真实端口）|
 |initialize参数role|当前进程的角色|
 |initialize参数device_id|当前设备的唯一标识|
-|initialize参数data_op_type|数据传输操作类型，默认 TransDataOpType.SDMA|
+|initialize参数data_op_type|数据传输操作类型，默认 TransDataOpType.SDMA；纯 SDMA 不支持注册外部 HOST 内存。|
 |initialize参数store_server_role|兼容参数，当前版本不再生效（任意取值均不影响初始化）|
 |initialize参数nic|host_rdma场景使用的网卡地址，默认空串|
 |get_rpc_port方法|返回initialize中实际侦听的端口号（`int`）。**必须在initialize成功后调用**，否则返回`0`并打印WARN。端口范围由环境变量`MF_CONFIG_STORE_PORT_START`/`MF_CONFIG_STORE_PORT_END`控制（默认`9000`~`65535`）。|
@@ -170,8 +170,10 @@ class TransferEngine:
 |transfer_sync_write参数peer_buffer|目的地址的起始地址指针|
 |transfer_sync_write参数length|传输数据大小|
 |transfer_sync_write参数flags|标记位，默认0|
-|transfer_async_write_submit方法|异步写任务提交接口，相比于transfer_async_write增加了入参stream，成功返回0，其他为错误码|
+|transfer_async_write_submit方法|异步写任务提交接口，相比于transfer_sync_write增加了入参stream，成功返回0，其他为错误码。当前异步提交接口仅支持 TransDataOpType.SDMA；提交后调用方必须在销毁 stream 前同步该 stream。|
 |transfer_async_write_submit参数stream|需要提交到的acl.rt.stream|
+|transfer_async_read_submit方法|异步读任务提交接口，仅支持 TransDataOpType.SDMA；成功返回0，其他为错误码。提交后须同步 stream，再读取目标或释放资源。|
+|transfer_async_read_submit参数stream|需要提交到的acl.rt.stream|
 |batch_transfer_sync_write方法|批量同步写接口，成功返回0，其他为错误码|
 |batch_transfer_sync_write参数dest_session|目的TRANS实例对应的标识|
 |batch_transfer_sync_write参数buffer|源地址的起始地址指针列表|
@@ -181,7 +183,7 @@ class TransferEngine:
 |register_memory方法|注册内存，成功返回0，其他为错误码|
 |register_memory参数buffer_addr|注册地址的起始地址指针|
 |register_memory参数capacity|注册地址大小|
-|unregister_memory方法|注销内存，成功返回0，其他为错误码|
+|unregister_memory方法|注销内存，成功返回0，其他为错误码。当前实现为兼容性注销调用，成功返回不作为底层物理注册资源已经释放的证明；调用方仍须持有 buffer 至 destroy、unInitialize 完成。|
 |unregister_memory参数buffer_addr|注销地址的起始地址指针|
 |batch_register_memory方法|批量注册内存，成功返回0，其他为错误码|
 |batch_register_memory参数buffer_addrs|批量注册地址的起始地址指针列表|
@@ -200,14 +202,14 @@ class TransferEngine:
 |batch_transfer_sync_read参数peer_buffers|远端数据指针列表|
 |batch_transfer_sync_read参数lengths|传输数据大小列表|
 |batch_transfer_sync_read参数flags|标记位，默认0|
-|batch_transfer_async_write_submit方法|批量异步写提交接口|
+|batch_transfer_async_write_submit方法|批量异步写提交接口。当前异步提交接口仅支持 TransDataOpType.SDMA；提交后调用方必须在销毁 stream 前同步该 stream。|
 |batch_transfer_async_write_submit参数dest_session|目的TRANS实例对应的标识|
 |batch_transfer_async_write_submit参数buffers|源地址指针列表|
 |batch_transfer_async_write_submit参数peer_buffers|目的地址指针列表|
 |batch_transfer_async_write_submit参数lengths|传输数据大小列表|
 |batch_transfer_async_write_submit参数stream|需要提交到的acl.rt.stream|
 |batch_transfer_async_write_submit参数flags|标记位，默认0|
-|batch_transfer_async_read_submit方法|批量异步读提交接口|
+|batch_transfer_async_read_submit方法|批量异步读提交接口。当前异步提交接口仅支持 TransDataOpType.SDMA；提交后调用方必须在销毁 stream 前同步该 stream。|
 |batch_transfer_async_read_submit参数dest_session|目的TRANS实例对应的标识|
 |batch_transfer_async_read_submit参数buffers|本地接收数据指针列表|
 |batch_transfer_async_read_submit参数peer_buffers|远端数据指针列表|
@@ -220,6 +222,7 @@ class TransferEngine:
 ```python
 class TransDataOpType(Enum):
     SDMA
+    HOST_RDMA
     DEVICE_RDMA
     DEVICE_URMA
 ```

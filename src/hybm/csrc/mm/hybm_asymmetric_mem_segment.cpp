@@ -389,12 +389,12 @@ Result AsymmetricMemSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
 
     Result ret = BM_OK;
     if (pos->second.slice->memType_ == HYBM_MEM_TYPE_HOST) {
-        // 先注销 VA 记录再决定是否释放设备映射：HVA/DVA 行被多实体别名记录共享
-        // （同一段 DRAM 在 send/recv 实体注册），仅当本次注销使所有涉及行计数归零
-        // （RemoveOneVaInfo 返回 true，映射已无存活引用者）时才 HalHostUnregisterEx，
-        // 提前释放会使仍持有引用的对端实体数据面失效（驱动返回 BUSY）
+        // 先注销 VA 记录再决定是否释放设备映射：HVA/DVA 行被多实体别名记录共享。
+        // hostMapped 只表示本 slice 创建了映射，不能作为释放责任的归属；创建者可能先于
+        // 复用者销毁。仅当本次注销使所有涉及行计数归零（RemoveOneVaInfo 返回 true）且
+        // 当前传输类型需要设备映射时，最后一个别名负责 HalHostUnregisterEx
         bool freed = HybmVaManager::GetInstance().RemoveOneVaInfo(pos->second.slice->gva_);
-        if (pos->second.hostMapped && freed) {
+        if (freed && NeedHostDeviceMapping()) {
             ReleaseHostMapping(pos->second.slice->vAddress_);
         }
     } else if (options_.shared) {
@@ -880,10 +880,10 @@ void AsymmetricMemSegment::CloseMemory() noexcept
     }
     remoteSlices_.clear();
     for (auto &it : registerSlices_) {
-        // 段级销毁兜底：hostMapped DRAM slice 对称解除设备映射；与 ReleaseSliceMemory 相同的
-        // 引用计数门控——仅当本次注销使记录涉及的所有 VA 行归零回收（无别名存活）时才释放映射
+        // 段级销毁兜底与 ReleaseSliceMemory 使用相同的末引用语义。hostMapped 不能决定
+        // 释放责任，因为创建映射的别名可能先关闭；只在最后一个需设备映射的别名关闭时释放
         bool freed = HybmVaManager::GetInstance().RemoveOneVaInfo(it.second.slice->gva_);
-        if (it.second.hostMapped && freed) {
+        if (it.second.slice->memType_ == HYBM_MEM_TYPE_HOST && freed && NeedHostDeviceMapping()) {
             ReleaseHostMapping(it.second.slice->vAddress_);
         }
     }

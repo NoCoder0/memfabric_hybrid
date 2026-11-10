@@ -1115,10 +1115,13 @@ Result TcpConfigStore::HandleAddToWhitelist(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: AddToWhitelist unpack failed");
         return SM_ERROR;
     }
-    if (executor_ != nullptr) {
-        auto ret = executor_->AddToWhitelist(rankId, others, msg.requestId);
-        if (ret != 0) {
-            STORE_LOG_ERROR("HandleControlMessage: AddToWhitelist failed, rankId: " << rankId << " ret: " << ret);
+    {
+        std::lock_guard<std::mutex> guard(executorMutex_);
+        if (executor_ != nullptr) {
+            auto ret = executor_->AddToWhitelist(rankId, others, msg.requestId);
+            if (ret != 0) {
+                STORE_LOG_ERROR("HandleControlMessage: AddToWhitelist failed, rankId: " << rankId << " ret: " << ret);
+            }
         }
     }
     STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=ADDWLST src=" << rankId << " reqId="
@@ -1134,10 +1137,14 @@ Result TcpConfigStore::HandleRemoveFromWhitelist(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: RemoveFromWhitelist unpack failed");
         return SM_ERROR;
     }
-    if (executor_ != nullptr) {
-        auto ret = executor_->RemoveFromWhitelist(rankId, others, msg.requestId);
-        if (ret != 0) {
-            STORE_LOG_ERROR("HandleControlMessage: RemoveFromWhitelist failed, rankId: " << rankId << " ret: " << ret);
+    {
+        std::lock_guard<std::mutex> guard(executorMutex_);
+        if (executor_ != nullptr) {
+            auto ret = executor_->RemoveFromWhitelist(rankId, others, msg.requestId);
+            if (ret != 0) {
+                STORE_LOG_ERROR("HandleControlMessage: RemoveFromWhitelist failed, rankId: " << rankId
+                                                                                             << " ret: " << ret);
+            }
         }
     }
     STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=REMWLST src=" << rankId << " reqId="
@@ -1153,10 +1160,14 @@ Result TcpConfigStore::HandleEstablishConnection(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: EstablishConnection unpack failed");
         return SM_ERROR;
     }
-    if (executor_ != nullptr) {
-        auto ret = executor_->EstablishConnection(rankId, others, msg.requestId);
-        if (ret != 0) {
-            STORE_LOG_ERROR("HandleControlMessage: EstablishConnection failed, rankId: " << rankId << " ret: " << ret);
+    {
+        std::lock_guard<std::mutex> guard(executorMutex_);
+        if (executor_ != nullptr) {
+            auto ret = executor_->EstablishConnection(rankId, others, msg.requestId);
+            if (ret != 0) {
+                STORE_LOG_ERROR("HandleControlMessage: EstablishConnection failed, rankId: " << rankId
+                                                                                             << " ret: " << ret);
+            }
         }
     }
     STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=ESTCONN src=" << rankId << " reqId="
@@ -1171,13 +1182,16 @@ Result TcpConfigStore::HandleQueryLinkState(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: QueryLinkState unpack failed");
         return SM_ERROR;
     }
-    if (executor_ != nullptr) {
-        executor_->QueryLinkState(rankId);
-    }
     std::vector<LinkStateEntry> entries;
-    auto *executor = static_cast<SmemGroupManagerClient *>(executor_.Get());
-    if (executor != nullptr) {
-        entries = executor->GetLastQueryLinkStateEntries();
+    {
+        std::lock_guard<std::mutex> guard(executorMutex_);
+        if (executor_ != nullptr) {
+            executor_->QueryLinkState(rankId);
+        }
+        auto *executor = static_cast<SmemGroupManagerClient *>(executor_.Get());
+        if (executor != nullptr) {
+            entries = executor->GetLastQueryLinkStateEntries();
+        }
     }
     SmemMessage response = SmemMessage::PackLinkStateResponse(localRankInfo_, entries);
     auto packedResponse = SmemMessagePacker::Pack(response);
@@ -1199,10 +1213,13 @@ Result TcpConfigStore::HandlePromoteToActive(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: PromoteToActive unpack failed");
         return SM_ERROR;
     }
-    if (executor_ != nullptr) {
-        auto ret = executor_->PromoteToActive(rankId);
-        if (ret != 0) {
-            STORE_LOG_ERROR("HandleControlMessage: PromoteToActive failed, rankId: " << rankId << " ret: " << ret);
+    {
+        std::lock_guard<std::mutex> guard(executorMutex_);
+        if (executor_ != nullptr) {
+            auto ret = executor_->PromoteToActive(rankId);
+            if (ret != 0) {
+                STORE_LOG_ERROR("HandleControlMessage: PromoteToActive failed, rankId: " << rankId << " ret: " << ret);
+            }
         }
     }
     STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=PROMOTE_TO_ACTIVE"
@@ -1218,8 +1235,11 @@ Result TcpConfigStore::HandleAddSlices(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: AddSlices unpack failed");
         return SM_ERROR;
     }
-    if (executor_ != nullptr) {
-        executor_->AddSlices(extendingRankId, newSlices, msg.requestId);
+    {
+        std::lock_guard<std::mutex> guard(executorMutex_);
+        if (executor_ != nullptr) {
+            executor_->AddSlices(extendingRankId, newSlices, msg.requestId);
+        }
     }
     STORE_LOG_INFO("[GM][Client][Recv] rank=" << localRankId_ << " type=ADD_SLICES"
                                               << " extendingRank=" << extendingRankId

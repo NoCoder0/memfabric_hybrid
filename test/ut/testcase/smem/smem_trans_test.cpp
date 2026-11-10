@@ -30,6 +30,7 @@
 #include "dl_api.h"
 #include "hybm_big_mem.h"
 #include "hybm_entity_default.h"
+#include "hybm_entity_factory.h"
 #include "hybm_asymmetric_mem_segment.h"
 #include "hybm_mem_segment.h"
 #define private public // NOLINT(google-runtime-int) test hack: expose private members
@@ -72,6 +73,82 @@ constexpr int TRANS_PEER_WAIT_TIMEOUT_MS = 30000;
 constexpr int TRANS_RANK_EXIT_TIMEOUT_MS = 60000;
 constexpr int TRANS_RANK_WAIT_POLL_MS = 20;
 
+constexpr uint16_t K_FAKE_ENTITY_ID_ESTABLISH = 0xe101U;
+constexpr uint16_t K_FAKE_ENTITY_ID_ADD_SLICES = 0xe102U;
+constexpr uint16_t K_FAKE_ENTITY_ID_IMPORT_FAIL = 0xe103U;
+constexpr uint16_t K_FAKE_ENTITY_ID_EMPTY_INITIAL = 0xe104U;
+constexpr uint16_t K_FAKE_ENTITY_ID_UNKNOWN_RANK = 0xe105U;
+constexpr uint16_t K_FAKE_ENTITY_ID_NONZERO_RANK = 0xe106U;
+
+class RecordingMemEntity : public MemEntityDefault {
+public:
+    explicit RecordingMemEntity(int32_t id) noexcept : MemEntityDefault(id) {}
+
+    int32_t ImportSliceExchangeInfo(const ExchangeInfoReader[], uint32_t count, void *addresses[],
+                                    uint32_t flags) noexcept override
+    {
+        ++sliceImportCalls;
+        sliceImportCount = count;
+        sliceImportFlags = flags;
+        if (sliceImportResult == BM_OK && addresses != nullptr) {
+            for (uint32_t i = 0; i < count; ++i) {
+                addresses[i] = mappedAddress;
+            }
+        }
+        return sliceImportResult;
+    }
+
+    int32_t ImportEntityExchangeInfo(const ExchangeInfoReader[], uint32_t count, uint32_t flags) noexcept override
+    {
+        ++entityImportCalls;
+        entityImportCount = count;
+        entityImportFlags = flags;
+        return entityImportResult;
+    }
+
+    int32_t Mmap() noexcept override
+    {
+        ++mmapCalls;
+        return mmapResult;
+    }
+
+    int32_t ConnectTransport(const uint32_t[], uint32_t count, uint32_t flags) noexcept override
+    {
+        ++connectCalls;
+        connectCount = count;
+        connectFlags = flags;
+        return connectResult;
+    }
+
+    int32_t UnReserveMemorySpace() noexcept override
+    {
+        return BM_OK;
+    }
+
+    void UnInitialize() noexcept override {}
+
+    int32_t sliceImportResult{BM_OK};
+    int32_t entityImportResult{BM_OK};
+    int32_t mmapResult{BM_OK};
+    int32_t connectResult{SMEM_OK};
+    void *mappedAddress{reinterpret_cast<void *>(K_SLICE1_ADDR + K_SLICE2_SIZE)};
+    uint32_t sliceImportCalls{0};
+    uint32_t sliceImportCount{0};
+    uint32_t sliceImportFlags{0};
+    uint32_t entityImportCalls{0};
+    uint32_t entityImportCount{0};
+    uint32_t entityImportFlags{0};
+    uint32_t mmapCalls{0};
+    uint32_t connectCalls{0};
+    uint32_t connectCount{0};
+    uint32_t connectFlags{0};
+};
+
+static std::shared_ptr<RecordingMemEntity> MakeRecordingEntity(uint16_t id)
+{
+    auto entity = MemEntityFactory::Instance().GetOrCreateEngine<RecordingMemEntity>(id, 0);
+    return std::static_pointer_cast<RecordingMemEntity>(entity);
+}
 // Build a transfer config for the current API (config carries the instance url; the
 // per-instance config store server is created internally by smem_trans_create).
 static smem_trans_config_t MakeTransConfig(smem_trans_role_t role, const char *url, uint32_t deviceId = 0,
@@ -2321,6 +2398,72 @@ TEST_F(SmemTransTest, OnEstablishConnection_RegistersExternalSlices)
         ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
         EXPECT_EQ(conn->remoteSlices_.begin()->second.size(), 2U);
     }
+}
+
+/* ================================================================== */
+/*  Dynamic ADD_SLICES registration                                    */
+/* ================================================================== */
+TEST_F(SmemTransTest, OnAddSlices_ImportFailureDoesNotPublishMapping)
+{
+    auto conn = MakeBareTransConn(g_trans_options);
+    auto entity = MakeRecordingEntity(K_FAKE_ENTITY_ID_IMPORT_FAIL);
+    WorkerIdUnion peer{};
+    peer.session.port = 5321U;
+    conn->entity_ = entity.get();
+    conn->rankToWorkerId_[K_PEER_RANK_ONE] = peer.workerId;
+    conn->ranksRole_[K_PEER_RANK_ONE] = SMEM_TRANS_RECEIVER;
+    conn->peerOverrideRanks_[K_PEER_RANK_ONE] = {K_PEER_RANK_TWO, "peer"};
+
+    SmemTransExchangeInfo slice{};
+    slice.u.address = LocalMapAddress(reinterpret_cast<void *>(K_SLICE2_ADDR), K_SLICE2_SIZE);
+    MultiBytes slices;
+    SerializeTransExchangeInfo(slices.emplace_back(), slice);
+    entity->sliceImportResult = BM_ERROR;
+
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_ONE, slices, 1U), SM_ERROR);
+    EXPECT_EQ(entity->sliceImportCalls, 1U);
+    EXPECT_EQ(entity->mmapCalls, 0U);
+    ock::mf::ReadGuard locker(conn->remoteSliceRwMutex_);
+    EXPECT_EQ(conn->remoteSlices_.count(peer.workerId), 0U);
+}
+
+TEST_F(SmemTransTest, OnAddSlices_EmptyInputIsNoOp)
+{
+    auto conn = MakeBareTransConn(g_trans_options);
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_ONE, {}, 1U), SM_OK);
+}
+
+TEST_F(SmemTransTest, OnAddSlices_NonzeroPeerIsIgnoredByNonzeroConnection)
+{
+    auto conn = MakeBareTransConn(g_trans_options);
+    auto entity = MakeRecordingEntity(K_FAKE_ENTITY_ID_NONZERO_RANK);
+    conn->entity_ = entity.get();
+    conn->rankId_ = K_PEER_RANK_ONE;
+    SmemTransExchangeInfo slice{};
+    slice.u.address = LocalMapAddress(reinterpret_cast<void *>(K_SLICE2_ADDR), K_SLICE2_SIZE);
+    MultiBytes slices;
+    SerializeTransExchangeInfo(slices.emplace_back(), slice);
+    EXPECT_EQ(conn->OnAddSlices(K_PEER_RANK_TWO, slices, 1U), SM_OK);
+    EXPECT_EQ(entity->sliceImportCalls, 0U);
+    EXPECT_TRUE(conn->remoteSlices_.empty());
+}
+
+TEST_F(SmemTransTest, SetupCallbacks_QueuesAddSlicesForDynamicImport)
+{
+    auto conn = MakeBareTransConn(g_trans_options);
+    SmemGroupCommandAsyncDispatcher dispatcher(nullptr);
+    auto executor = SmMakeRef<SmemGroupManagerClient>();
+
+    EXPECT_EQ(conn->RegisterAsyncCallbacks(&dispatcher), SMEM_OK);
+    EXPECT_EQ(conn->RegisterExecutorCallbacks(executor.Get(), &dispatcher), SMEM_OK);
+    ASSERT_TRUE(dispatcher.onAddSlices_);
+    ASSERT_TRUE(executor->onAddSlices_);
+
+    MultiBytes slices;
+    slices.emplace_back();
+    EXPECT_EQ(executor->onAddSlices_(K_PEER_RANK_ONE, slices, 1U), SM_OK);
+    ASSERT_EQ(dispatcher.addSlicesQueue_.size(), 1U);
+    EXPECT_EQ(dispatcher.addSlicesQueue_.front().extendingRankId, K_PEER_RANK_ONE);
 }
 
 /* ADD_SLICES: slices registered after the ADDWLST snapshot must still reach the importer */
