@@ -13,7 +13,7 @@
 | 通用问题 | [驱动和超时](#common-init) | [Copy 报错](#common-copy) |
 | Device SDMA（HCCS） | [协议支持、地址预留、内存分配、扫描和导入](#sdma-init) | [地址翻译、搬移错误和返回 -7](#sdma-copy) |
 | Device RDMA | [设备打开、网络配置、内存分配、注册和 Swap](#rdma-init) | [Copy 报错](#rdma-copy) |
-| Device URMA | [初始化报错](#urma-init) | [批量通知同步超时](#urma-copy) |
+| Device URMA | [本地端点为空、内存注册失败](#urma-init) | [批量通知同步超时](#urma-copy) |
 
 内存初始化问题按实际传输协议归类：`ReserveMemorySpace` 失败属于 Device SDMA，
 `AllocLocalMemory` 和静态大页注册失败属于 Device RDMA。A3 的 HCCS 可用内存问题与 SDMA 放在同一组。
@@ -764,7 +764,56 @@ HCCP 后台`hccp_hdc_lite` 线程 每 10ms 才轮询一次 CQE 回收，在轮�
 
 ### 4.1 初始化报错
 
-暂无条目。
+<a id="urma-e650e-local-endpoint-null"></a>
+
+#### 4.1.1 localEndpoint_ is null, cannot register memory
+
+**问题现象**
+
+FM16场景下，使用`device_urma`初始化内存池时，日志报错：
+
+```text
+device_urma localEndpoint_ is null, cannot register memory
+```
+
+向前检查`local device info`日志中的`server_id`，若值为`65535`，
+再在各服务器的宿主机上查询超节点参数。以下命令以NPU 0为例：
+
+```bash
+npu-smi info -t spod-info -i 0
+```
+
+未正确配置的参考环境输出如下：
+
+```text
+Super Pod Size  : 65535
+Super Pod ID    : 16383
+Server Index    : 65535
+Super Pod Type  : 3
+```
+
+其中，`Super Pod Size`、`Super Pod ID`和`Server Index`是本场景需要修正的配置。
+
+**问题根因**
+
+在上述FM16场景中，超节点参数未正确配置，导致无效的`Server Index`参与本地拓扑编号计算。
+
+**解决方法**
+
+1. 登录服务器的iBMC，进入“iBMC管理”→“配置更新”，在“配置导出”区域单击“导出”。
+
+2. 选择“仅配置文件”，导出当前服务器的`config.json`，保留原始文件作为备份。
+
+3. 打开`config.json`，修改对应配置项的`Value`字段，保留其余配置及结构。
+    以FM16双机共16张NPU为例，两台服务器的`SuperPodSize.Value`均设为`16`、`SuperPodId.Value`均设为`0`，
+    `ServerIndex.Value`分别设为`0`和`1`。其他场景同理，按实际NPU总数、服务器索引和超节点ID配置。
+
+4. 返回“iBMC管理”→“配置更新”，在“配置导入”区域选择修改后的`config.json`并单击“导入”。
+
+5. 各服务器均需使用各自导出的配置文件完成上述操作。按iBMC提示使配置生效后，
+    在各宿主机上重新执行查询命令，确认参数与配置一致。
+
+6. 重新启动业务进程，确认不再出现上述报错，内存注册正常。
 
 <a id="urma-copy"></a>
 
