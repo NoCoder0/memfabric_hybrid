@@ -124,10 +124,10 @@ private:
     // ---- per-instance callback routing ----
     // HCOM's static callbacks carry no instance context, so every instance gets a slot and a per-slot
     // trampoline table routes to the matching instance.
-    static constexpr size_t kMaxInstances = 64U;
-    static constexpr size_t kInvalidSlot = static_cast<size_t>(-1);
+    static constexpr size_t MAX_INSTANCES = 64U;
+    static constexpr size_t INVALID_SLOT = static_cast<size_t>(-1);
 
-    inline static std::array<std::atomic<HcomTransportManager *>, kMaxInstances> g_slotInstances{};
+    inline static std::array<std::atomic<HcomTransportManager *>, MAX_INSTANCES> g_slotInstances{};
 
     template<size_t I>
     static Result NewEndPointTramp(Hcom_Channel ch, uint64_t, const char *payLoad)
@@ -157,19 +157,19 @@ private:
 
     // Built on first call (magic static): member function bodies are not yet visible when in-class initializers
     // are evaluated.
-    static const std::array<Service_ChannelHandler, kMaxInstances> &NewEndPointTramps()
+    static const std::array<Service_ChannelHandler, MAX_INSTANCES> &NewEndPointTramps()
     {
-        static const std::array<Service_ChannelHandler, kMaxInstances> tramps =
-            MakeNewEndPointTramps(std::make_index_sequence<kMaxInstances>{});
+        static const std::array<Service_ChannelHandler, MAX_INSTANCES> tramps =
+            MakeNewEndPointTramps(std::make_index_sequence<MAX_INSTANCES>{});
         return tramps;
     }
 
     // The two tables must be generated separately: the trampoline table pins function pointers per slot, and
     // mixing them would deliver link-break events to the wrong callback.
-    static const std::array<Service_ChannelHandler, kMaxInstances> &EndPointBrokenTramps()
+    static const std::array<Service_ChannelHandler, MAX_INSTANCES> &EndPointBrokenTramps()
     {
-        static const std::array<Service_ChannelHandler, kMaxInstances> tramps =
-            MakeEndPointBrokenTramps(std::make_index_sequence<kMaxInstances>{});
+        static const std::array<Service_ChannelHandler, MAX_INSTANCES> tramps =
+            MakeEndPointBrokenTramps(std::make_index_sequence<MAX_INSTANCES>{});
         return tramps;
     }
 
@@ -243,7 +243,7 @@ private:
     std::vector<Hcom_Channel> channels_;
     HcomReconnector reconnect_;
     // per-instance: callback routing slot and independent service name
-    size_t slot_{kInvalidSlot};
+    size_t slot_{INVALID_SLOT};
     std::string serviceName_{};
     std::string nicProtocol_{};
     uint32_t hcomAutoPort_{0};

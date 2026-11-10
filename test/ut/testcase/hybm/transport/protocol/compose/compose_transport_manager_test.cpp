@@ -237,41 +237,41 @@ public:
     std::string nic_{"fake_nic"};
 };
 
-constexpr uint32_t kComposeHostProtocols = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA;
-constexpr uint32_t kComposeDeviceRdma = HYBM_DOP_TYPE_DEVICE_RDMA;
-constexpr uint32_t kComposeDeviceUrma = HYBM_DOP_TYPE_DEVICE_URMA;
+constexpr uint32_t COMPOSE_HOST_PROTOCOLS = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA;
+constexpr uint32_t COMPOSE_DEVICE_RDMA = HYBM_DOP_TYPE_DEVICE_RDMA;
+constexpr uint32_t COMPOSE_DEVICE_URMA = HYBM_DOP_TYPE_DEVICE_URMA;
 
 void AddHostTransport(ComposeTransportManager &mgr, const std::shared_ptr<FakeTransportManager> &manager)
 {
     for (auto it = mgr.transports_.begin(); it != mgr.transports_.end();) {
-        if ((it->first & kComposeHostProtocols) != 0U) {
+        if ((it->first & COMPOSE_HOST_PROTOCOLS) != 0U) {
             it = mgr.transports_.erase(it);
         } else {
             ++it;
         }
     }
-    mgr.transports_[kComposeHostProtocols] = manager;
+    mgr.transports_[COMPOSE_HOST_PROTOCOLS] = manager;
 }
 
 void AddDeviceTransport(ComposeTransportManager &mgr, const std::shared_ptr<FakeTransportManager> &manager,
-                        uint32_t opTypes = kComposeDeviceRdma)
+                        uint32_t opTypes = COMPOSE_DEVICE_RDMA)
 {
     for (auto it = mgr.transports_.begin(); it != mgr.transports_.end();) {
-        if ((it->first & kComposeDeviceRdma) != 0U || (it->first & kComposeDeviceUrma) != 0U) {
+        if ((it->first & COMPOSE_DEVICE_RDMA) != 0U || (it->first & COMPOSE_DEVICE_URMA) != 0U) {
             it = mgr.transports_.erase(it);
         } else {
             ++it;
         }
     }
-    mgr.transports_.erase(kComposeDeviceRdma);
-    mgr.transports_.erase(kComposeDeviceUrma);
+    mgr.transports_.erase(COMPOSE_DEVICE_RDMA);
+    mgr.transports_.erase(COMPOSE_DEVICE_URMA);
     mgr.transports_[opTypes] = manager;
 }
 
 bool HasDeviceTransport(const ComposeTransportManager &mgr)
 {
     for (const auto &[protocol, manager] : mgr.transports_) {
-        if ((protocol & kComposeDeviceRdma) != 0U || (protocol & kComposeDeviceUrma) != 0U) {
+        if ((protocol & COMPOSE_DEVICE_RDMA) != 0U || (protocol & COMPOSE_DEVICE_URMA) != 0U) {
             return manager != nullptr;
         }
     }
@@ -281,7 +281,7 @@ bool HasDeviceTransport(const ComposeTransportManager &mgr)
 bool HasHostTransport(const ComposeTransportManager &mgr)
 {
     for (const auto &[protocol, manager] : mgr.transports_) {
-        if ((protocol & kComposeHostProtocols) != 0U) {
+        if ((protocol & COMPOSE_HOST_PROTOCOLS) != 0U) {
             return manager != nullptr;
         }
     }
@@ -593,7 +593,7 @@ TEST(ComposeTransportManagerTest, GetHostPrepareOptionsSkipNonHostOpType)
     inOpts.options.emplace(1U, info);
 
     HybmTransPrepareOptions hostOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeHostProtocols, hostOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_HOST_PROTOCOLS, hostOpts);
     EXPECT_TRUE(hostOpts.options.empty());
 }
 
@@ -618,7 +618,7 @@ TEST(ComposeTransportManagerTest, GetHostPrepareOptionsExtractsHostInfo)
     inOpts.options.emplace(0U, info); // 远端 rankId
 
     HybmTransPrepareOptions hostOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeHostProtocols, hostOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_HOST_PROTOCOLS, hostOpts);
 
     ASSERT_EQ(hostOpts.options.size(), 1u);
     auto it = hostOpts.options.begin();
@@ -641,7 +641,7 @@ TEST(ComposeTransportManagerTest, GetDevicePrepareOptionsSkipNonDeviceOpType)
     inOpts.options.emplace(3U, info);
 
     HybmTransPrepareOptions devOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeDeviceRdma, devOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_DEVICE_RDMA, devOpts);
     EXPECT_TRUE(devOpts.options.empty());
 }
 
@@ -666,7 +666,7 @@ TEST(ComposeTransportManagerTest, GetDevicePrepareOptionsExtractsDeviceInfo)
     inOpts.options.emplace(0U, info);
 
     HybmTransPrepareOptions devOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeDeviceRdma, devOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_DEVICE_RDMA, devOpts);
 
     ASSERT_EQ(devOpts.options.size(), 1u);
     auto it = devOpts.options.begin();
@@ -964,7 +964,7 @@ TEST(ComposeTransportManagerTest, TransferRemoteBatchAsyncForwardsAllUrmaRanks)
     mgr.options_.rankId = 0U;
     auto device = std::make_shared<FakeTransportManager>();
     device->transferBatchRanks = {1U, 2U};
-    AddDeviceTransport(mgr, device, kComposeDeviceUrma);
+    AddDeviceTransport(mgr, device, COMPOSE_DEVICE_URMA);
 
     hybm_batch_copy_params params{};
     RankGroupMap groupMap{{{0U, 1U}, {0U}}, {{2U, 0U}, {1U}}};
@@ -988,7 +988,7 @@ TEST(ComposeTransportManagerTest, TransferRemoteBatchAsyncReturnsUrmaManagerErro
     mgr.options_.rankId = 0U;
     auto device = std::make_shared<FakeTransportManager>();
     device->transferBatchAsyncResult = BM_DL_FUNCTION_FAILED;
-    AddDeviceTransport(mgr, device, kComposeDeviceUrma);
+    AddDeviceTransport(mgr, device, COMPOSE_DEVICE_URMA);
 
     hybm_batch_copy_params params{};
     RankGroupMap groupMap{{{0U, 1U}, {0U}}};
@@ -1004,7 +1004,7 @@ TEST(ComposeTransportManagerTest, TransferRemoteBatchAsyncReturnsUrmaManagerErro
 
 TEST(ComposeTransportManagerTest, SynchronizeRanksForwardsOneDeviceBatch)
 {
-    auto tag = std::make_shared<FakeTagInfo>(kComposeDeviceRdma);
+    auto tag = std::make_shared<FakeTagInfo>(COMPOSE_DEVICE_RDMA);
     ComposeTransportManager mgr(tag);
     auto device = std::make_shared<FakeTransportManager>();
     AddDeviceTransport(mgr, device);
@@ -1168,7 +1168,7 @@ TEST(ComposeTransportManagerTest, GetHostPrepareOptionsNoHostNicPrefix)
     inOpts.options.emplace(1U, info);
 
     HybmTransPrepareOptions hostOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeHostProtocols, hostOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_HOST_PROTOCOLS, hostOpts);
 
     // 生产实现中，如果 opType 不包含 HOST_PROTOCOL 或没有 host# 前缀，
     // 可以选择直接跳过该 rank 的 host 准备，这里只校验不会崩溃，
@@ -1194,7 +1194,7 @@ TEST(ComposeTransportManagerTest, GetDevicePrepareOptionsNoDeviceNicPrefix)
     inOpts.options.emplace(2U, info);
 
     HybmTransPrepareOptions devOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeDeviceRdma, devOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_DEVICE_RDMA, devOpts);
 
     // 同 GetHostPrepareOptionsNoHostNicPrefix，生产实现可能选择直接跳过该 rank，
     // 因此这里只保证不会崩溃，并允许 devOpts 为空。
@@ -1221,7 +1221,7 @@ TEST(ComposeTransportManagerTest, GetHostPrepareOptionsEmptyMemKeys)
     inOpts.options.emplace(3U, info);
 
     HybmTransPrepareOptions hostOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeHostProtocols, hostOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_HOST_PROTOCOLS, hostOpts);
 
     // 实际实现会根据 opType 决定是否下沉到 host，
     // 这里只要求不会崩溃，并且如存在条目则 nic 为解析出的 host 部分且 memKeys 为空。
@@ -1248,7 +1248,7 @@ TEST(ComposeTransportManagerTest, GetDevicePrepareOptionsEmptyMemKeys)
     inOpts.options.emplace(4U, info);
 
     HybmTransPrepareOptions devOpts{};
-    mgr.GetTransportPrepareOptions(inOpts, kComposeDeviceRdma, devOpts);
+    mgr.GetTransportPrepareOptions(inOpts, COMPOSE_DEVICE_RDMA, devOpts);
 
     EXPECT_LE(devOpts.options.size(), 1u);
     if (!devOpts.options.empty()) {
@@ -1917,8 +1917,8 @@ TEST(ComposeTransportManagerTest, ConnectRank_Layered_PreservesConfiguredOrder)
     EXPECT_EQ(mgr.ConnectRank(peerRank), BM_OK);
     const auto protocols = mgr.GetConnectedProtocols(peerRank);
     ASSERT_EQ(protocols.size(), 2U);
-    EXPECT_EQ(protocols[0], kComposeHostProtocols);
-    EXPECT_EQ(protocols[1], kComposeDeviceRdma);
+    EXPECT_EQ(protocols[0], COMPOSE_HOST_PROTOCOLS);
+    EXPECT_EQ(protocols[1], COMPOSE_DEVICE_RDMA);
 }
 
 TEST(ComposeTransportManagerTest, ConnectRank_Layered_HostFailsCachesOnlyDevice)
@@ -1939,7 +1939,7 @@ TEST(ComposeTransportManagerTest, ConnectRank_Layered_HostFailsCachesOnlyDevice)
     EXPECT_EQ(mgr.ConnectRank(peerRank), BM_OK);
     const auto protocols = mgr.GetConnectedProtocols(peerRank);
     ASSERT_EQ(protocols.size(), 1U);
-    EXPECT_EQ(protocols[0], kComposeDeviceRdma);
+    EXPECT_EQ(protocols[0], COMPOSE_DEVICE_RDMA);
 }
 
 TEST(ComposeTransportManagerTest, ConnectRank_Layered_AllFailReturnsError)

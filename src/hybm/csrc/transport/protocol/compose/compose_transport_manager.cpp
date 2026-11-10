@@ -522,11 +522,11 @@ std::vector<uint32_t> ComposeTransportManager::BuildRankProtocols(uint32_t rankI
         return protocols;
     }
 
-    static constexpr std::array<hybm_data_op_type, 7> kPrioritedOpTypes = {
+    static constexpr std::array<hybm_data_op_type, 7> PRIORITED_OP_TYPES = {
         HYBM_DOP_TYPE_SDMA,      HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA, HYBM_DOP_TYPE_HOST_RDMA,
         HYBM_DOP_TYPE_HOST_URMA, HYBM_DOP_TYPE_HOST_TCP,    HYBM_DOP_TYPE_HOST_SHM};
     const auto opTypes = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    for (auto opType : kPrioritedOpTypes) {
+    for (auto opType : PRIORITED_OP_TYPES) {
         if ((opTypes & static_cast<uint32_t>(opType)) == 0U) {
             continue;
         }

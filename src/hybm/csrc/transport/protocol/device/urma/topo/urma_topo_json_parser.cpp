@@ -28,7 +28,7 @@ namespace device {
 
 namespace {
 
-constexpr size_t kStringMaxLen = 256;
+constexpr size_t STRING_MAX_LEN = 256;
 
 bool IsSpace(char c)
 {
@@ -630,7 +630,7 @@ ParseResult SkipObject(const char *begin, const char *end, size_t offset, int de
         }
         i = sr.offset;
         expectComma = false;
-        auto kr = SkipString(begin, end, i, kStringMaxLen);
+        auto kr = SkipString(begin, end, i, STRING_MAX_LEN);
         if (kr.result != BM_OK) {
             return kr;
         }

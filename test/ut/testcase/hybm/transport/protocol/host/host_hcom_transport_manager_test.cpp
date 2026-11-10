@@ -778,8 +778,8 @@ TEST(HcomTransportManagerTest, MultiInstanceOpenClose_IndependentServiceAndSlot)
 
     a->CloseDevice();
     b->CloseDevice();
-    EXPECT_EQ(a->slot_, HcomTransportManager::kInvalidSlot);
-    EXPECT_EQ(b->slot_, HcomTransportManager::kInvalidSlot);
+    EXPECT_EQ(a->slot_, HcomTransportManager::INVALID_SLOT);
+    EXPECT_EQ(b->slot_, HcomTransportManager::INVALID_SLOT);
 
     // the slot has been released: a new instance can run the full Open/Close again
     auto c = std::make_shared<HcomTransportManager>();

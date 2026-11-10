@@ -43,13 +43,13 @@ using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
 
 namespace {
-constexpr uint64_t kTestLocalAddr = 0x1000ULL;
-constexpr uint32_t kTestLocalLkey = 7U;
-constexpr uint64_t kTestRemoteAddr = 0x2000ULL;
-constexpr uint32_t kTestRemoteRkey = 9U;
-constexpr uint64_t kTestBatchBytes = 4096ULL;
-constexpr uint64_t kTestDeviceQpAddr = 0xE00000A01000ULL;
-constexpr uint32_t kTestInvalidRankId = 9U;
+constexpr uint64_t TEST_LOCAL_ADDR = 0x1000ULL;
+constexpr uint32_t TEST_LOCAL_LKEY = 7U;
+constexpr uint64_t TEST_REMOTE_ADDR = 0x2000ULL;
+constexpr uint32_t TEST_REMOTE_RKEY = 9U;
+constexpr uint64_t TEST_BATCH_BYTES = 4096ULL;
+constexpr uint64_t TEST_DEVICE_QP_ADDR = 0xE00000A01000ULL;
+constexpr uint32_t TEST_INVALID_RANK_ID = 9U;
 
 struct DlAclApiFnGuard {
     aclrtMallocFunc oldAclrtMalloc{DlAclApi::pAclrtMalloc};
@@ -331,11 +331,11 @@ std::vector<RdmaAicpuTransportManager::AicpuSegment> MakeOneSegmentBatch()
 {
     std::vector<RdmaAicpuTransportManager::AicpuSegment> segments;
     RdmaAicpuTransportManager::AicpuSegment seg{};
-    seg.localAddr = kTestLocalAddr;
-    seg.localLkey = kTestLocalLkey;
-    seg.remoteAddr = kTestRemoteAddr;
-    seg.remoteRkey = kTestRemoteRkey;
-    seg.len = kTestBatchBytes;
+    seg.localAddr = TEST_LOCAL_ADDR;
+    seg.localLkey = TEST_LOCAL_LKEY;
+    seg.remoteAddr = TEST_REMOTE_ADDR;
+    seg.remoteRkey = TEST_REMOTE_RKEY;
+    seg.len = TEST_BATCH_BYTES;
     segments.push_back(seg);
     return segments;
 }
@@ -380,7 +380,7 @@ std::shared_ptr<AicpuJoinableRanksQpManager> MakeAiQpManager(uint32_t rankCount,
 void AddAiQpInfo(const std::shared_ptr<AicpuJoinableRanksQpManager> &mgr, uint32_t rankId, uint32_t dbIndex)
 {
     HccpAiQpInfo info{};
-    info.aiQpAddr = kTestDeviceQpAddr;
+    info.aiQpAddr = TEST_DEVICE_QP_ADDR;
     info.sqIndex = 3U;
     info.dbIndex = dbIndex;
     info.data_plane_info.sq.wqn = 7U;
@@ -404,12 +404,12 @@ TEST(RdmaAicpuTransportManagerTest, RemoteIORejectsMissingQpManagerAndOutOfRange
     RdmaAicpuTransportManager mgr;
 
     // qpManager_ 为空：单段入口同样先判连接管理器
-    EXPECT_EQ(mgr.RemoteIO(0, kTestLocalAddr, kTestRemoteAddr, kTestBatchBytes, false, false), BM_ERROR);
+    EXPECT_EQ(mgr.RemoteIO(0, TEST_LOCAL_ADDR, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, false, false), BM_ERROR);
 
     // rankId 越界：在地址解析/下发前拦截
     mgr.qpManager_ = std::make_shared<FakeQpManager>();
     mgr.rankMutex_ = std::vector<std::mutex>(1);
-    EXPECT_EQ(mgr.RemoteIO(kTestInvalidRankId, kTestLocalAddr, kTestRemoteAddr, kTestBatchBytes, false, false),
+    EXPECT_EQ(mgr.RemoteIO(TEST_INVALID_RANK_ID, TEST_LOCAL_ADDR, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, false, false),
               BM_ERROR);
 }
 
@@ -431,8 +431,8 @@ TEST(RdmaAicpuTransportManagerTest, BatchAsyncRejectsMissingQpManagerAndEmptyBat
 
     // rankId 越界：在地址解析前拦截（两条路径都会按下标访问 rankMutex_）
     mgr.rankMutex_ = std::vector<std::mutex>(1);
-    EXPECT_EQ(mgr.ReadRemoteBatchAsync(kTestInvalidRankId, descriptor), BM_INVALID_PARAM);
-    EXPECT_EQ(mgr.WriteRemoteBatchAsync(kTestInvalidRankId, descriptor), BM_INVALID_PARAM);
+    EXPECT_EQ(mgr.ReadRemoteBatchAsync(TEST_INVALID_RANK_ID, descriptor), BM_INVALID_PARAM);
+    EXPECT_EQ(mgr.WriteRemoteBatchAsync(TEST_INVALID_RANK_ID, descriptor), BM_INVALID_PARAM);
 }
 
 TEST(RdmaAicpuTransportManagerTest, RemoteIoBatchAicpuStagingAndResourceGuards)
@@ -454,7 +454,7 @@ TEST(RdmaAicpuTransportManagerTest, RemoteIoBatchAicpuStagingAndResourceGuards)
     EXPECT_EQ(mgr.RemoteIoBatchAicpu(0, batch, false), BM_ERROR);
 
     // 3) device 地址非 0，但段描述 staging 申请失败：BM_MALLOC_FAILED
-    qp->deviceQpAddr = kTestDeviceQpAddr;
+    qp->deviceQpAddr = TEST_DEVICE_QP_ADDR;
     DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
     EXPECT_EQ(mgr.RemoteIoBatchAicpu(0, batch, false), BM_MALLOC_FAILED);
 
@@ -598,29 +598,29 @@ TEST_F(RdmaAicpuMockTest, ResolveAicpuBatchAddressesBranches)
     mgr.ranksMRs_.resize(2U);
 
     CopyDescriptor descriptor{};
-    descriptor.localAddrs.push_back(reinterpret_cast<void *>(kTestLocalAddr));
-    descriptor.globalAddrs.push_back(reinterpret_cast<void *>(kTestRemoteAddr));
-    descriptor.counts.push_back(kTestBatchBytes);
+    descriptor.localAddrs.push_back(reinterpret_cast<void *>(TEST_LOCAL_ADDR));
+    descriptor.globalAddrs.push_back(reinterpret_cast<void *>(TEST_REMOTE_ADDR));
+    descriptor.counts.push_back(TEST_BATCH_BYTES);
 
     std::vector<RdmaAicpuTransportManager::AicpuSegment> segments;
 
     EXPECT_EQ(mgr.ResolveAicpuBatchAddresses(0U, descriptor, segments), BM_INVALID_PARAM); // local not registered
 
-    mgr.registerMRS_[kTestLocalAddr] =
-        RegMemResult(kTestLocalAddr, kTestLocalAddr, kTestBatchBytes, nullptr, kTestLocalLkey, kTestRemoteRkey);
+    mgr.registerMRS_[TEST_LOCAL_ADDR] =
+        RegMemResult(TEST_LOCAL_ADDR, TEST_LOCAL_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, TEST_REMOTE_RKEY);
     EXPECT_EQ(mgr.ResolveAicpuBatchAddresses(0U, descriptor, segments), BM_INVALID_PARAM); // remote rank not prepared
 
-    mgr.ranksMRs_[0][kTestRemoteAddr] =
-        RegMemResult(kTestRemoteAddr, kTestRemoteAddr, kTestBatchBytes, nullptr, kTestLocalLkey, kTestRemoteRkey);
+    mgr.ranksMRs_[0][TEST_REMOTE_ADDR] =
+        RegMemResult(TEST_REMOTE_ADDR, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, TEST_REMOTE_RKEY);
     EXPECT_EQ(mgr.ResolveAicpuBatchAddresses(0U, descriptor, segments), BM_OK);
     ASSERT_EQ(segments.size(), 1U);
-    EXPECT_EQ(segments[0].len, kTestBatchBytes);
-    EXPECT_EQ(segments[0].localLkey, kTestLocalLkey);
-    EXPECT_EQ(segments[0].remoteRkey, kTestRemoteRkey);
+    EXPECT_EQ(segments[0].len, TEST_BATCH_BYTES);
+    EXPECT_EQ(segments[0].localLkey, TEST_LOCAL_LKEY);
+    EXPECT_EQ(segments[0].remoteRkey, TEST_REMOTE_RKEY);
 
     CopyDescriptor zeroDesc{};
-    zeroDesc.localAddrs.push_back(reinterpret_cast<void *>(kTestLocalAddr));
-    zeroDesc.globalAddrs.push_back(reinterpret_cast<void *>(kTestRemoteAddr));
+    zeroDesc.localAddrs.push_back(reinterpret_cast<void *>(TEST_LOCAL_ADDR));
+    zeroDesc.globalAddrs.push_back(reinterpret_cast<void *>(TEST_REMOTE_ADDR));
     zeroDesc.counts.push_back(0U);
     std::vector<RdmaAicpuTransportManager::AicpuSegment> zeroSegments;
     EXPECT_EQ(mgr.ResolveAicpuBatchAddresses(0U, zeroDesc, zeroSegments), BM_OK);
@@ -750,10 +750,10 @@ TEST_F(RdmaAicpuMockTest, RemoteIoBatchAicpuAndBatchAsyncSuccessPath)
     mgr.notifyInfo_.notifyLkey = 0x22U;
     mgr.notifyRemoteInfo_ = {{0x5000ULL, 0x33U}};
 
-    mgr.registerMRS_[kTestLocalAddr] =
-        RegMemResult(kTestLocalAddr, kTestLocalAddr, kTestBatchBytes, nullptr, kTestLocalLkey, kTestRemoteRkey);
-    mgr.ranksMRs_[0][kTestRemoteAddr] =
-        RegMemResult(kTestRemoteAddr, kTestRemoteAddr, kTestBatchBytes, nullptr, kTestLocalLkey, kTestRemoteRkey);
+    mgr.registerMRS_[TEST_LOCAL_ADDR] =
+        RegMemResult(TEST_LOCAL_ADDR, TEST_LOCAL_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, TEST_REMOTE_RKEY);
+    mgr.ranksMRs_[0][TEST_REMOTE_ADDR] =
+        RegMemResult(TEST_REMOTE_ADDR, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, TEST_REMOTE_RKEY);
 
     SetAicpuNotifyReady();
     RdmaAicpuTransportManager::aicpuStream_ = AicpuStream{reinterpret_cast<void *>(0x6000UL), 3U, 5U};
@@ -775,12 +775,12 @@ TEST_F(RdmaAicpuMockTest, RemoteIoBatchAicpuAndBatchAsyncSuccessPath)
     EXPECT_FALSE(RdmaAicpuTransportManager::aicpuPending_.pending);
 
     CopyDescriptor descriptor{};
-    descriptor.localAddrs.push_back(reinterpret_cast<void *>(kTestLocalAddr));
-    descriptor.globalAddrs.push_back(reinterpret_cast<void *>(kTestRemoteAddr));
-    descriptor.counts.push_back(kTestBatchBytes);
+    descriptor.localAddrs.push_back(reinterpret_cast<void *>(TEST_LOCAL_ADDR));
+    descriptor.globalAddrs.push_back(reinterpret_cast<void *>(TEST_REMOTE_ADDR));
+    descriptor.counts.push_back(TEST_BATCH_BYTES);
     EXPECT_EQ(mgr.ReadRemoteBatchAsync(0U, descriptor), BM_OK);
     EXPECT_EQ(mgr.WriteRemoteBatchAsync(0U, descriptor), BM_OK);
-    EXPECT_EQ(mgr.RemoteIO(0U, kTestLocalAddr, kTestRemoteAddr, kTestBatchBytes, true, true), BM_OK);
+    EXPECT_EQ(mgr.RemoteIO(0U, TEST_LOCAL_ADDR, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, true, true), BM_OK);
 
     ResetAicpuThreadState();
 }

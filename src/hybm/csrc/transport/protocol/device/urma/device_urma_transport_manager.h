@@ -156,7 +156,7 @@ struct UrmaExportDesc {
     uint64_t addr{0};
     uint64_t size{0};
     uint32_t hcommDescLen{0};
-    uint32_t devTransFlagDescLen{0};
+    uint32_t deviceMarkerDescLen{0};
 };
 
 class DeviceUrmaTransportManager final : public transport::TransportManager {
@@ -473,9 +473,9 @@ private:
     aclrtBinHandle deviceKernelHandle_{nullptr};
     DeviceFuncHandles deviceFuncHandles_{};
     // Local flag buffer allocated via AclrtMalloc in OpenDevice, initialised to 1.
-    void *devTransFlagPtr_{nullptr};
-    uint64_t devTransFlagSize_{0};
-    std::vector<HcommMemHandle> devTransFlagHcommHandle_;
+    void *deviceMarkerPtr_{nullptr};
+    uint64_t deviceMarkerSize_{0};
+    std::vector<HcommMemHandle> deviceMarkerHcommHandle_;
     std::unique_ptr<NotifyResource *[]> notifyPoolSlots_{}; // manager 级池，下标到稳定资源地址的只增映射
     std::atomic<uint32_t> notifyPoolSize_{0};               // 已初始化的 Notify 池槽位数量
     std::mutex notifyPoolGrowMutex_{};                      // 池耗尽时串行扩容，不进入正常申请路径

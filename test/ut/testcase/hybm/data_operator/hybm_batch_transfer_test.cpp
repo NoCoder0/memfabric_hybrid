@@ -29,12 +29,12 @@ int BatchTestDlclose(void *);
 #undef dlclose
 
 namespace {
-constexpr uint32_t kFirstRank = 1U;
-constexpr uint32_t kSecondRank = 2U;
-constexpr uint32_t kChunkSize = 1000U;
-constexpr uint32_t kIoCount = kChunkSize + 2U;
-constexpr ock::mf::ThreadHandle kThread = 10U;
-constexpr ock::mf::ChannelHandle kChannel = 20U;
+constexpr uint32_t FIRST_RANK = 1U;
+constexpr uint32_t SECOND_RANK = 2U;
+constexpr uint32_t CHUNK_SIZE = 1000U;
+constexpr uint32_t IO_COUNT = CHUNK_SIZE + 2U;
+constexpr ock::mf::ThreadHandle THREAD = 10U;
+constexpr ock::mf::ChannelHandle CHANNEL = 20U;
 std::vector<const ock::mf::HcommBatchTransferDesc *> submittedDescriptors;
 std::vector<uint32_t> submittedCounts;
 int32_t batchResult = BM_OK;
@@ -62,8 +62,8 @@ protected:
         batchModeStartCount = 0U;
         batchModeEndCount = 0U;
         operationOrder.clear();
-        descriptors.resize(kIoCount);
-        for (uint32_t i = 0; i < kIoCount; ++i) {
+        descriptors.resize(IO_COUNT);
+        for (uint32_t i = 0; i < IO_COUNT; ++i) {
             auto &desc = descriptors[i];
             if (i % 2U == 0U) {
                 desc.transType = ock::mf::HCOMM_TRANSFER_TYPE_WRITE;
@@ -79,17 +79,17 @@ protected:
         param.rank_list_num_list = counts;
         param.thread_list = threads;
         param.channel_list = channels;
-        param.total_list_num = kIoCount;
+        param.total_list_num = IO_COUNT;
         param.transfer_descs = descriptors.data();
     }
 
     uint64_t source = 123U;
     uint64_t destination = 0U;
-    uint32_t ranks[2] = {kFirstRank, kSecondRank};
-    uint32_t starts[2] = {0U, kChunkSize + 1U};
-    uint32_t counts[2] = {kChunkSize + 1U, 1U};
-    ock::mf::ThreadHandle threads[2] = {kThread, kThread};
-    ock::mf::ChannelHandle channels[2] = {kChannel, kChannel};
+    uint32_t ranks[2] = {FIRST_RANK, SECOND_RANK};
+    uint32_t starts[2] = {0U, CHUNK_SIZE + 1U};
+    uint32_t counts[2] = {CHUNK_SIZE + 1U, 1U};
+    ock::mf::ThreadHandle threads[2] = {THREAD, THREAD};
+    ock::mf::ChannelHandle channels[2] = {CHANNEL, CHANNEL};
     std::vector<ock::mf::HcommBatchTransferDesc> descriptors;
     HybmBatchTransferParam param{};
 };
@@ -146,8 +146,8 @@ int32_t HcommAclrtNotifyRecordOnThread(ock::mf::ThreadHandle, uint64_t notifyId)
 int32_t HcommBatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::ChannelHandle channel,
                                    const ock::mf::HcommBatchTransferDesc *descs, uint32_t count)
 {
-    EXPECT_EQ(thread, kThread);
-    EXPECT_EQ(channel, kChannel);
+    EXPECT_EQ(thread, THREAD);
+    EXPECT_EQ(channel, CHANNEL);
     operationOrder.push_back('D');
     submittedDescriptors.push_back(descs);
     submittedCounts.push_back(count);
@@ -207,11 +207,11 @@ TEST_F(HybmBatchTransferTest, UnifiedEntrySubmitsMixedDescriptorsUnchangedByRank
 {
     const auto original = descriptors;
     ASSERT_EQ(HybmBatchTransfer(&param), BM_OK);
-    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{kChunkSize, 1U, 1U}));
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE, 1U, 1U}));
     ASSERT_EQ(submittedDescriptors.size(), 3U);
     EXPECT_EQ(submittedDescriptors[0], descriptors.data());
-    EXPECT_EQ(submittedDescriptors[1], descriptors.data() + kChunkSize);
-    EXPECT_EQ(submittedDescriptors[2], descriptors.data() + kChunkSize + 1U);
+    EXPECT_EQ(submittedDescriptors[1], descriptors.data() + CHUNK_SIZE);
+    EXPECT_EQ(submittedDescriptors[2], descriptors.data() + CHUNK_SIZE + 1U);
     EXPECT_EQ(std::memcmp(original.data(), descriptors.data(), descriptors.size() * sizeof(descriptors[0])), 0);
     EXPECT_EQ(markerReadCount, 0U);
     EXPECT_EQ(singleWriteCount, 0U);
@@ -234,7 +234,7 @@ TEST_F(HybmBatchTransferTest, RejectsMissingDescriptorsAndOutOfRangeRank)
     param.transfer_descs = nullptr;
     EXPECT_NE(HybmBatchTransfer(&param), BM_OK);
     param.transfer_descs = descriptors.data();
-    starts[1] = kIoCount;
+    starts[1] = IO_COUNT;
     EXPECT_NE(HybmBatchTransfer(&param), BM_OK);
     EXPECT_TRUE(submittedCounts.empty());
 }
@@ -267,7 +267,7 @@ TEST_F(HybmBatchTransferTest, BatchErrorDoesNotUseSingleFallback)
 
 TEST_F(HybmBatchTransferTest, SecondRankErrorReturnsOverallFailure)
 {
-    constexpr size_t kSecondRankDataCall = 3U;
+    constexpr size_t SECOND_RANK_DATA_CALL = 3U;
     uint64_t markerSources[2] = {11U, 22U};
     uint64_t markerDestinations[2] = {0U, 0U};
     ock::mf::HcommBatchTransferDesc markers[2]{};
@@ -276,10 +276,10 @@ TEST_F(HybmBatchTransferTest, SecondRankErrorReturnsOverallFailure)
         markers[i].transferInfo.read = {sizeof(uint64_t), &markerDestinations[i], &markerSources[i]};
     }
     param.marker_descs = markers;
-    batchFailAt = kSecondRankDataCall;
+    batchFailAt = SECOND_RANK_DATA_CALL;
 
     EXPECT_EQ(HybmBatchTransfer(&param), BM_ERROR);
-    EXPECT_EQ(submittedCounts.size(), kSecondRankDataCall);
+    EXPECT_EQ(submittedCounts.size(), SECOND_RANK_DATA_CALL);
     EXPECT_EQ(markerReadCount, 1U);
     EXPECT_EQ(markerDestinations[0], markerSources[0]);
     EXPECT_EQ(markerDestinations[1], 0U);

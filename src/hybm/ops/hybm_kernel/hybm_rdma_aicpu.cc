@@ -96,12 +96,12 @@ using HalSqCqConfig = int (*)(uint32_t devId, HybmHalSqCqConfigInfo *info);
 using HalSqCqQuery = int (*)(uint32_t devId, HybmHalSqCqQueryInfo *info);
 using LocalDevIdQuery = int (*)(uint32_t hostDevId, uint32_t *localDevId);
 
-constexpr const char *kHns17LibName = "libhns-rdmav17.so";
-constexpr const char *kHns25LibName = "libhns-rdmav25.so";
-constexpr const char *kHrn017LibName = "libhrn0-rdmav17.so";
-constexpr const char *kHnsLibCandidates[] = {kHns17LibName, kHns25LibName, kHrn017LibName};
-constexpr uint32_t kHnsLibCandidateCount = sizeof(kHnsLibCandidates) / sizeof(kHnsLibCandidates[0U]);
-constexpr const char *kHalLibName = "libascend_hal.so";
+constexpr const char *HNS17_LIB_NAME = "libhns-rdmav17.so";
+constexpr const char *HNS25_LIB_NAME = "libhns-rdmav25.so";
+constexpr const char *HRN017_LIB_NAME = "libhrn0-rdmav17.so";
+constexpr const char *HNS_LIB_CANDIDATES[] = {HNS17_LIB_NAME, HNS25_LIB_NAME, HRN017_LIB_NAME};
+constexpr uint32_t HNS_LIB_CANDIDATE_COUNT = sizeof(HNS_LIB_CANDIDATES) / sizeof(HNS_LIB_CANDIDATES[0U]);
+constexpr const char *HAL_LIB_NAME = "libascend_hal.so";
 
 void *g_hnsHandle = nullptr;
 const char *g_hnsLibName = nullptr;
@@ -118,7 +118,7 @@ int32_t ResetApiSymbols()
         return BM_DL_FUNCTION_FAILED;
     }
     if (g_halHandle != nullptr && dlclose(g_halHandle) != 0) {
-        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlclose failed, lib=%s error=%s", kHalLibName, dlerror());
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlclose failed, lib=%s error=%s", HAL_LIB_NAME, dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
     g_hnsHandle = nullptr;
@@ -143,13 +143,14 @@ int32_t LoadRequiredSymbols()
 {
     g_ibvExpPostSend =
         reinterpret_cast<IbvExpPostSend>(LoadRequiredSymbol(g_hnsHandle, g_hnsLibName, "ibv_exp_post_send"));
-    g_halSqCqConfig = reinterpret_cast<HalSqCqConfig>(LoadRequiredSymbol(g_halHandle, kHalLibName, "halSqCqConfig"));
-    g_halSqCqQuery = reinterpret_cast<HalSqCqQuery>(LoadRequiredSymbol(g_halHandle, kHalLibName, "halSqCqQuery"));
+    g_halSqCqConfig = reinterpret_cast<HalSqCqConfig>(LoadRequiredSymbol(g_halHandle, HAL_LIB_NAME, "halSqCqConfig"));
+    g_halSqCqQuery = reinterpret_cast<HalSqCqQuery>(LoadRequiredSymbol(g_halHandle, HAL_LIB_NAME, "halSqCqQuery"));
     g_localDevIdQuery =
-        reinterpret_cast<LocalDevIdQuery>(LoadRequiredSymbol(g_halHandle, kHalLibName, "drvGetLocalDevIDByHostDevID"));
+        reinterpret_cast<LocalDevIdQuery>(LoadRequiredSymbol(g_halHandle, HAL_LIB_NAME, "drvGetLocalDevIDByHostDevID"));
     if (g_ibvExpPostSend == nullptr || g_halSqCqConfig == nullptr || g_halSqCqQuery == nullptr ||
         g_localDevIdQuery == nullptr) {
-        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] required rdma symbols missing, libs=%s,%s", g_hnsLibName, kHalLibName);
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] required rdma symbols missing, libs=%s,%s", g_hnsLibName,
+                  HAL_LIB_NAME);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -157,21 +158,21 @@ int32_t LoadRequiredSymbols()
 
 void *OpenHnsLibrary(const char *&libName)
 {
-    for (uint32_t i = 0U; i < kHnsLibCandidateCount; ++i) {
-        void *handle = dlopen(kHnsLibCandidates[i], RTLD_NOW | RTLD_NODELETE);
+    for (uint32_t i = 0U; i < HNS_LIB_CANDIDATE_COUNT; ++i) {
+        void *handle = dlopen(HNS_LIB_CANDIDATES[i], RTLD_NOW | RTLD_NODELETE);
         if (handle != nullptr) {
-            libName = kHnsLibCandidates[i];
+            libName = HNS_LIB_CANDIDATES[i];
             if (i != 0U) {
                 HYBM_LOGI("[hybm] device rdma library fallback, lib=%s index=%u", libName, i);
             }
             return handle;
         }
-        HYBM_LOGW("[hybm] device rdma library not loadable, lib=%s index=%u error=%s", kHnsLibCandidates[i], i,
+        HYBM_LOGW("[hybm] device rdma library not loadable, lib=%s index=%u error=%s", HNS_LIB_CANDIDATES[i], i,
                   dlerror());
     }
     HYBM_LOGE(BM_DL_FUNCTION_FAILED,
-              "[hybm] device dlopen failed, tried libs=%s,%s,%s; check device RDMA library deployment", kHns17LibName,
-              kHns25LibName, kHrn017LibName);
+              "[hybm] device dlopen failed, tried libs=%s,%s,%s; check device RDMA library deployment", HNS17_LIB_NAME,
+              HNS25_LIB_NAME, HRN017_LIB_NAME);
     return nullptr;
 }
 
@@ -182,10 +183,10 @@ int32_t LoadRdmaLibrary()
         return BM_DL_FUNCTION_FAILED;
     }
 
-    g_halHandle = dlopen(kHalLibName, RTLD_NOW | RTLD_NODELETE);
+    g_halHandle = dlopen(HAL_LIB_NAME, RTLD_NOW | RTLD_NODELETE);
     if (g_halHandle == nullptr) {
         HYBM_LOGE(BM_DL_FUNCTION_FAILED,
-                  "[hybm] device dlopen failed, lib=%s error=%s; check device HAL library deployment", kHalLibName,
+                  "[hybm] device dlopen failed, lib=%s error=%s; check device HAL library deployment", HAL_LIB_NAME,
                   dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
@@ -197,7 +198,7 @@ int32_t LoadRdmaLibrary()
     }
 
     HYBM_LOGI("[hybm] rdma aicpu library loaded, hns=%s hal=%s postSend=%d sqCqConfig=%d sqCqQuery=%d localDevId=%d",
-              g_hnsLibName, kHalLibName, static_cast<int32_t>(g_ibvExpPostSend != nullptr),
+              g_hnsLibName, HAL_LIB_NAME, static_cast<int32_t>(g_ibvExpPostSend != nullptr),
               static_cast<int32_t>(g_halSqCqConfig != nullptr), static_cast<int32_t>(g_halSqCqQuery != nullptr),
               static_cast<int32_t>(g_localDevIdQuery != nullptr));
     return BM_OK;

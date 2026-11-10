@@ -552,10 +552,10 @@ namespace {
 constexpr int32_t MOCK_USER_DEVICE_ID = 0;
 constexpr int32_t MOCK_LOGIC_DEVICE_ID = 1;
 constexpr int32_t MOCK_PHY_DEVICE_ID = 1;
-constexpr int32_t kLocalDeviceId = 0;
-constexpr int32_t kMeshLayer = 0;
-constexpr int32_t kCtpLayer = 1;
-constexpr int32_t kRtpLayer = 2;
+constexpr int32_t LOCAL_DEVICE_ID = 0;
+constexpr int32_t MESH_LAYER = 0;
+constexpr int32_t CTP_LAYER = 1;
+constexpr int32_t RTP_LAYER = 2;
 
 int32_t MockGetLogicIdForVisibleDevice(int32_t userDeviceId, int32_t *logicDeviceId)
 {
@@ -580,11 +580,11 @@ int32_t MockGetDeviceInfoForVisibleDevice(uint32_t deviceId, int32_t, int32_t in
 
 Rank &AddLocalRank(UrmaTopoManager &mgr)
 {
-    mgr.phyDeviceId_ = kLocalDeviceId;
-    mgr.localId_ = kLocalDeviceId;
+    mgr.phyDeviceId_ = LOCAL_DEVICE_ID;
+    mgr.localId_ = LOCAL_DEVICE_ID;
     Rank rank{};
-    rank.deviceId = kLocalDeviceId;
-    rank.localId = kLocalDeviceId;
+    rank.deviceId = LOCAL_DEVICE_ID;
+    rank.localId = LOCAL_DEVICE_ID;
     mgr.rootInfo_.rankList.push_back(std::move(rank));
     return mgr.rootInfo_.rankList.back();
 }
@@ -607,7 +607,7 @@ void AddPeer2NetEdge(UrmaTopoManager &mgr, int32_t netLayer, const std::string &
     Edge edge{};
     edge.netLayer = netLayer;
     edge.linkType = "PEER2NET";
-    edge.localA = kLocalDeviceId;
+    edge.localA = LOCAL_DEVICE_ID;
     edge.protocols = {protocol};
     edge.position = "DEVICE";
     edge.localAPorts = ports;
@@ -696,9 +696,9 @@ TEST_F(UrmaTopoManagerTest, ParseTopoInfo_SupportsPeer2PeerAndPeer2NetConsumers)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kMeshLayer, "22222222222222222222222222222222", {"1/7"});
+    AddEidAddr(rank, MESH_LAYER, "22222222222222222222222222222222", {"1/7"});
     rank.levelList.back().netType = NET_TYPE_TOPO_FILE_DESC;
-    AddEidAddr(rank, kCtpLayer, "33333333333333333333333333333333", {"1/8"});
+    AddEidAddr(rank, CTP_LAYER, "33333333333333333333333333333333", {"1/8"});
     rank.levelList.back().netType = NET_TYPE_CLOS;
     std::string json = R"({"edge_count":2,"peer_list":[],"edge_list":[)"
                        R"({"net_layer":0,"link_type":"PEER2PEER","local_a":7,"local_b":0,)"
@@ -748,15 +748,15 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_SelectsLargestAddressWithOverlappingP
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kMeshLayer, "11111111111111111111111111111111", {"1/1", "1/2", "1/3", "1/4", "1/5", "1/6"});
-    AddEidAddr(rank, kCtpLayer, "22222222222222222222222222222222", {"1/1", "1/2"});
-    AddEidAddr(rank, kCtpLayer, "33333333333333333333333333333333", {"1/2", "1/8", "1/9"});
-    AddEidAddr(rank, kCtpLayer, "44444444444444444444444444444444", {"1/3", "1/4", "1/5", "1/6", "1/7"});
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/1", "1/2"});
+    AddEidAddr(rank, MESH_LAYER, "11111111111111111111111111111111", {"1/1", "1/2", "1/3", "1/4", "1/5", "1/6"});
+    AddEidAddr(rank, CTP_LAYER, "22222222222222222222222222222222", {"1/1", "1/2"});
+    AddEidAddr(rank, CTP_LAYER, "33333333333333333333333333333333", {"1/2", "1/8", "1/9"});
+    AddEidAddr(rank, CTP_LAYER, "44444444444444444444444444444444", {"1/3", "1/4", "1/5", "1/6", "1/7"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {"1/1", "1/2"});
     Edge ignored{};
-    ignored.netLayer = kCtpLayer;
+    ignored.netLayer = CTP_LAYER;
     ignored.linkType = "PEER2PEER";
-    ignored.localA = kLocalDeviceId;
+    ignored.localA = LOCAL_DEVICE_ID;
     ignored.protocols = {"UB_CTP"};
     ignored.position = "DEVICE";
     ignored.localAPorts = {"1/3"};
@@ -771,7 +771,7 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_SelectsLargestAddressWithOverlappingP
     mgr.topoInfo_.edgeList.push_back(std::move(wrongProtocol));
     Edge wrongLocal = mgr.topoInfo_.edgeList.back();
     wrongLocal.protocols = {"UB_CTP"};
-    wrongLocal.localA = kLocalDeviceId + 1;
+    wrongLocal.localA = LOCAL_DEVICE_ID + 1;
     mgr.topoInfo_.edgeList.push_back(std::move(wrongLocal));
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
     EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
@@ -784,9 +784,9 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_MeshWithoutClosAddressFails)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kMeshLayer, "11111111111111111111111111111111", {"0/0"});
-    AddPeer2NetEdge(mgr, kMeshLayer, "UB_CTP", {"0/1"});
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/1"});
+    AddEidAddr(rank, MESH_LAYER, "11111111111111111111111111111111", {"0/0"});
+    AddPeer2NetEdge(mgr, MESH_LAYER, "UB_CTP", {"0/1"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {"1/1"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
     EXPECT_NE(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
 }
@@ -795,10 +795,10 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_SeparatesCtpAndRtpLayers)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kCtpLayer, "11111111111111111111111111111111", {"1/0"});
-    AddEidAddr(rank, kRtpLayer, "0000000000080a80001000000a0f6106", {"2/0"});
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
-    AddPeer2NetEdge(mgr, kRtpLayer, "UB_RTP", {"2/0"});
+    AddEidAddr(rank, CTP_LAYER, "11111111111111111111111111111111", {"1/0"});
+    AddEidAddr(rank, RTP_LAYER, "0000000000080a80001000000a0f6106", {"2/0"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {"1/0"});
+    AddPeer2NetEdge(mgr, RTP_LAYER, "UB_RTP", {"2/0"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> ctp{};
     std::array<uint8_t, COMM_ADDR_EID_LEN> rtp{};
     EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, ctp), BM_OK);
@@ -1125,12 +1125,12 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_UnsupportedProtocol)
 TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NoLocalRankFails)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
-    mgr.phyDeviceId_ = kLocalDeviceId;
-    mgr.localId_ = kLocalDeviceId;
+    mgr.phyDeviceId_ = LOCAL_DEVICE_ID;
+    mgr.localId_ = LOCAL_DEVICE_ID;
     Rank rank{};
-    rank.deviceId = kLocalDeviceId + 1;
+    rank.deviceId = LOCAL_DEVICE_ID + 1;
     mgr.rootInfo_.rankList.push_back(std::move(rank));
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {"1/0"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
     EXPECT_NE(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
 }
@@ -1139,8 +1139,8 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_EmptyPeer2NetPortsFail)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kCtpLayer, "11111111111111111111111111111111", {"1/0"});
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {});
+    AddEidAddr(rank, CTP_LAYER, "11111111111111111111111111111111", {"1/0"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
     EXPECT_NE(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_OK);
 }
@@ -1149,8 +1149,8 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_InvalidLengthFails)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kCtpLayer, "1111111111111111111111111111111", {"1/0"});
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
+    AddEidAddr(rank, CTP_LAYER, "1111111111111111111111111111111", {"1/0"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {"1/0"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
     EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_INVALID_PARAM);
 }
@@ -1159,8 +1159,8 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_NonHexValueFails)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kCtpLayer, "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", {"1/0"});
-    AddPeer2NetEdge(mgr, kCtpLayer, "UB_CTP", {"1/0"});
+    AddEidAddr(rank, CTP_LAYER, "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz", {"1/0"});
+    AddPeer2NetEdge(mgr, CTP_LAYER, "UB_CTP", {"1/0"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
     EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UBC_CTP, out), BM_INVALID_PARAM);
 }
@@ -1169,11 +1169,11 @@ TEST_F(UrmaTopoManagerTest, GetPeer2NetEid_RtpRejectsCtpEid)
 {
     auto &mgr = UrmaTopoManager::GetInstance();
     auto &rank = AddLocalRank(mgr);
-    AddEidAddr(rank, kRtpLayer, "11111111111111111111111111111111", {"2/0"});
-    AddPeer2NetEdge(mgr, kRtpLayer, "UB_RTP", {"2/0"});
+    AddEidAddr(rank, RTP_LAYER, "11111111111111111111111111111111", {"2/0"});
+    AddPeer2NetEdge(mgr, RTP_LAYER, "UB_RTP", {"2/0"});
     std::array<uint8_t, COMM_ADDR_EID_LEN> out{};
-    constexpr uint8_t kSentinel = 0xA5U;
-    out.fill(kSentinel);
+    constexpr uint8_t SENTINEL = 0xA5U;
+    out.fill(SENTINEL);
     const auto original = out;
     EXPECT_EQ(mgr.GetPeer2NetEid(COMM_PROTOCOL_UB_RTP, out), BM_INVALID_PARAM);
     EXPECT_EQ(out, original);
@@ -1341,10 +1341,10 @@ void MockHalGvaGetDriverInstallPath(std::string &driverInstallPath)
 
 int32_t MockTopologyRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
 {
-    constexpr int64_t kServerIndex = 10;
+    constexpr int64_t SERVER_INDEX = 10;
     const auto ret = MockRtGetDeviceInfo(devId, moduleType, infoType, value);
     if (ret == BM_OK && infoType == INFO_TYPE_SERVER_ID) {
-        *value = kServerIndex;
+        *value = SERVER_INDEX;
     } else if (ret == BM_OK && infoType == INFO_TYPE_SPOD_TYPE) {
         *value = TOPO_TYPE_SERVER_16FM;
     }
@@ -1353,22 +1353,22 @@ int32_t MockTopologyRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t 
 
 int MockTopologyEidList(int npuId, int urmaDevIndex, dcmi_urma_eid_info *eidList, int *eidCnt)
 {
-    constexpr size_t kDiePortByte = 5U;
-    constexpr size_t kFeByte = 6U;
-    constexpr uint8_t kDieOneBits = 0x40U;
-    constexpr uint8_t kPortGroupId = 0x3FU;
-    constexpr uint8_t kDieZeroFe = 3U;
-    constexpr uint8_t kDieOneFe = 2U;
+    constexpr size_t DIE_PORT_BYTE = 5U;
+    constexpr size_t FE_BYTE = 6U;
+    constexpr uint8_t DIE_ONE_BITS = 0x40U;
+    constexpr uint8_t PORT_GROUP_ID = 0x3FU;
+    constexpr uint8_t DIE_ZERO_FE = 3U;
+    constexpr uint8_t DIE_ONE_FE = 2U;
     (void)npuId;
-    const std::vector<uint8_t> ports = urmaDevIndex == 0 ? std::vector<uint8_t>{0U, 1U, kPortGroupId}
-                                                         : std::vector<uint8_t>{0U, 1U, 2U, 3U, 5U, 6U, kPortGroupId};
+    const std::vector<uint8_t> ports = urmaDevIndex == 0 ? std::vector<uint8_t>{0U, 1U, PORT_GROUP_ID}
+                                                         : std::vector<uint8_t>{0U, 1U, 2U, 3U, 5U, 6U, PORT_GROUP_ID};
     if (eidList == nullptr || eidCnt == nullptr || *eidCnt < static_cast<int>(ports.size())) {
         return BM_INVALID_PARAM;
     }
     for (size_t i = 0; i < ports.size(); ++i) {
         eidList[i] = {};
-        eidList[i].eid.raw[kDiePortByte] = ports[i] | (urmaDevIndex == 0 ? 0U : kDieOneBits);
-        eidList[i].eid.raw[kFeByte] = urmaDevIndex == 0 ? kDieZeroFe : kDieOneFe;
+        eidList[i].eid.raw[DIE_PORT_BYTE] = ports[i] | (urmaDevIndex == 0 ? 0U : DIE_ONE_BITS);
+        eidList[i].eid.raw[FE_BYTE] = urmaDevIndex == 0 ? DIE_ZERO_FE : DIE_ONE_FE;
         eidList[i].eid_index = static_cast<uint32_t>(i);
     }
     *eidCnt = static_cast<int>(ports.size());
@@ -1490,38 +1490,38 @@ TEST_F(UrmaTopoCommonMockTest, GetUrmaEntityList_EidListFail)
 
 TEST_F(UrmaTopoCommonMockTest, Server16FmRootInfoPreservesRankAndClosPortGroups)
 {
-    constexpr int32_t kDeviceId = 0;
-    constexpr int32_t kPhysicalId = 3;
-    constexpr int32_t kExpectedLocalId = 83;
-    constexpr size_t kRankCount = 1U;
-    constexpr size_t kLayerCount = 2U;
-    constexpr size_t kMeshPortCount = 6U;
+    constexpr int32_t DEVICE_ID = 0;
+    constexpr int32_t PHYSICAL_ID = 3;
+    constexpr int32_t EXPECTED_LOCAL_ID = 83;
+    constexpr size_t CONST_RANK_COUNT = 1U;
+    constexpr size_t LAYER_COUNT = 2U;
+    constexpr size_t MESH_PORT_COUNT = 6U;
     MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockTopologyRtGetDeviceInfo));
     MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
     MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockTopologyEidList));
     MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
-    auto product = UrmaTopoProduct::GetUrmaTopoProduct(kDeviceId, kDeviceId, kPhysicalId, MAIN_BOARD_ID_SERVER_TYPE1);
+    auto product = UrmaTopoProduct::GetUrmaTopoProduct(DEVICE_ID, DEVICE_ID, PHYSICAL_ID, MAIN_BOARD_ID_SERVER_TYPE1);
     ASSERT_NE(product, nullptr);
     int32_t localId = -1;
     ASSERT_EQ(product->GetLocalId(localId), BM_OK);
-    EXPECT_EQ(localId, kExpectedLocalId);
+    EXPECT_EQ(localId, EXPECTED_LOCAL_ID);
     RootInfo root;
     ASSERT_EQ(product->GetRootInfo(root), BM_OK);
     EXPECT_EQ(root.version, "2.0");
     EXPECT_EQ(root.topoFilePath, "/usr/local/Ascend/driver/topo/950/atlas_850_2.json");
-    EXPECT_EQ(root.rankCount, static_cast<int>(kRankCount));
-    ASSERT_EQ(root.rankList.size(), kRankCount);
+    EXPECT_EQ(root.rankCount, static_cast<int>(CONST_RANK_COUNT));
+    ASSERT_EQ(root.rankList.size(), CONST_RANK_COUNT);
     const auto &rank = root.rankList.front();
-    EXPECT_EQ(rank.deviceId, kPhysicalId);
+    EXPECT_EQ(rank.deviceId, PHYSICAL_ID);
     EXPECT_EQ(rank.localId, localId);
-    ASSERT_EQ(rank.levelList.size(), kLayerCount);
+    ASSERT_EQ(rank.levelList.size(), LAYER_COUNT);
     EXPECT_EQ(rank.levelList[0U].netType, NET_TYPE_TOPO_FILE_DESC);
-    ASSERT_EQ(rank.levelList[0U].rankAddrList.size(), kMeshPortCount);
+    ASSERT_EQ(rank.levelList[0U].rankAddrList.size(), MESH_PORT_COUNT);
     EXPECT_EQ(rank.levelList[0U].rankAddrList.front().ports, (std::vector<std::string>{"1/0"}));
     const auto &clos = rank.levelList[1U];
     EXPECT_EQ(clos.netType, NET_TYPE_CLOS);
     EXPECT_EQ(clos.netInstanceId, "sp_1");
-    ASSERT_EQ(clos.rankAddrList.size(), kLayerCount);
+    ASSERT_EQ(clos.rankAddrList.size(), LAYER_COUNT);
     EXPECT_EQ(clos.rankAddrList[0U].ports, (std::vector<std::string>{"0/0", "0/1"}));
     EXPECT_EQ(clos.rankAddrList[0U].planeId, "plane_clos_0");
     EXPECT_EQ(clos.rankAddrList[1U].ports, (std::vector<std::string>{"1/0", "1/1", "1/2", "1/3", "1/5", "1/6"}));
@@ -1530,41 +1530,41 @@ TEST_F(UrmaTopoCommonMockTest, Server16FmRootInfoPreservesRankAndClosPortGroups)
 
 TEST_F(UrmaTopoCommonMockTest, PodRootInfoWrapsServerIndexAndPrioritizesClosPortGroup)
 {
-    constexpr int32_t kDeviceId = 0;
-    constexpr int32_t kPhysicalId = 3;
-    constexpr int32_t kExpectedLocalId = 19;
-    constexpr size_t kRankCount = 1U;
-    constexpr size_t kLayerCount = 2U;
-    constexpr size_t kMeshPortCount = 2U;
+    constexpr int32_t DEVICE_ID = 0;
+    constexpr int32_t PHYSICAL_ID = 3;
+    constexpr int32_t EXPECTED_LOCAL_ID = 19;
+    constexpr size_t CONST_RANK_COUNT = 1U;
+    constexpr size_t LAYER_COUNT = 2U;
+    constexpr size_t MESH_PORT_COUNT = 2U;
     MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockTopologyRtGetDeviceInfo));
     MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
     MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockTopologyEidList));
     MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
-    auto product = UrmaTopoProduct::GetUrmaTopoProduct(kDeviceId, kDeviceId, kPhysicalId, MAIN_BOARD_ID_POD);
+    auto product = UrmaTopoProduct::GetUrmaTopoProduct(DEVICE_ID, DEVICE_ID, PHYSICAL_ID, MAIN_BOARD_ID_POD);
     ASSERT_NE(product, nullptr);
     int32_t localId = -1;
     ASSERT_EQ(product->GetLocalId(localId), BM_OK);
-    EXPECT_EQ(localId, kExpectedLocalId);
+    EXPECT_EQ(localId, EXPECTED_LOCAL_ID);
     RootInfo root;
     ASSERT_EQ(product->GetRootInfo(root), BM_OK);
     EXPECT_EQ(root.version, "2.0");
     EXPECT_EQ(root.topoFilePath, "/usr/local/Ascend/driver/topo/950/atlas_950_1.json");
-    EXPECT_EQ(root.rankCount, static_cast<int>(kRankCount));
-    ASSERT_EQ(root.rankList.size(), kRankCount);
+    EXPECT_EQ(root.rankCount, static_cast<int>(CONST_RANK_COUNT));
+    ASSERT_EQ(root.rankList.size(), CONST_RANK_COUNT);
     const auto &rank = root.rankList.front();
-    EXPECT_EQ(rank.deviceId, kPhysicalId);
+    EXPECT_EQ(rank.deviceId, PHYSICAL_ID);
     EXPECT_EQ(rank.localId, localId);
-    ASSERT_EQ(rank.levelList.size(), kLayerCount);
+    ASSERT_EQ(rank.levelList.size(), LAYER_COUNT);
     const auto &mesh = rank.levelList[0U];
     EXPECT_EQ(mesh.netType, NET_TYPE_MESH);
     EXPECT_EQ(mesh.netInstanceId, "sp1_srv10");
-    ASSERT_EQ(mesh.rankAddrList.size(), kMeshPortCount);
+    ASSERT_EQ(mesh.rankAddrList.size(), MESH_PORT_COUNT);
     EXPECT_EQ(mesh.rankAddrList[0U].ports, (std::vector<std::string>{"0/0"}));
     EXPECT_EQ(mesh.rankAddrList[1U].ports, (std::vector<std::string>{"0/1"}));
     const auto &clos = rank.levelList[1U];
     EXPECT_EQ(clos.netType, NET_TYPE_CLOS);
     EXPECT_EQ(clos.netInstanceId, "superpod_1");
-    ASSERT_EQ(clos.rankAddrList.size(), kRankCount);
+    ASSERT_EQ(clos.rankAddrList.size(), CONST_RANK_COUNT);
     EXPECT_EQ(clos.rankAddrList.front().ports, (std::vector<std::string>{"1/0", "1/1", "1/2", "1/3", "1/5", "1/6"}));
     EXPECT_EQ(clos.rankAddrList.front().planeId, "plane_0");
 }

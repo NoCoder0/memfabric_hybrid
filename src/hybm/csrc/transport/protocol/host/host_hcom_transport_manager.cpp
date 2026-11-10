@@ -142,7 +142,7 @@ Result HcomTransportManager::OpenDevice(const TransportOptions &options)
         return BM_OK;
     }
     if (!BindSlot()) {
-        BM_LOG_ERROR("Failed to allocate hcom transport slot, max instances: " << kMaxInstances);
+        BM_LOG_ERROR("Failed to allocate hcom transport slot, max instances: " << MAX_INSTANCES);
         return BM_ERROR;
     }
     serviceName_ = std::string(HCOM_RPC_SERVICE_NAME) + "_" + std::to_string(slot_);
@@ -971,8 +971,8 @@ Result HcomTransportManager::CheckTransportOptions(const TransportOptions &optio
         return ret;
     }
     // The auto port is basePort + rank index, so the base port must leave room for every rank below rankCount.
-    constexpr uint32_t kMaxPort = std::numeric_limits<uint16_t>::max();
-    if (options.rankCount == 0 || options.rankCount - 1 > kMaxPort - basePort) {
+    constexpr uint32_t CONST_MAX_PORT = std::numeric_limits<uint16_t>::max();
+    if (options.rankCount == 0 || options.rankCount - 1 > CONST_MAX_PORT - basePort) {
         BM_LOG_ERROR("base port " << basePort << " leaves no room for " << options.rankCount << " rank ports");
         return BM_INVALID_PARAM;
     }
@@ -987,8 +987,8 @@ Result HcomTransportManager::BindServiceWithPortRetry()
 {
     // The port may be occupied by another instance or process on the same host; on bind failure retry with a
     // small port increment.
-    constexpr uint32_t kMaxBindAttempts = 8;
-    for (uint32_t attempt = 0; attempt < kMaxBindAttempts; ++attempt) {
+    constexpr uint32_t MAX_BIND_ATTEMPTS = 8;
+    for (uint32_t attempt = 0; attempt < MAX_BIND_ATTEMPTS; ++attempt) {
         localNic_ = nicProtocol_ + localIp_ + ":" + std::to_string(hcomAutoPort_ + attempt);
         auto ret = DlHcomApi::ServiceBind(rpcService_, localNic_.c_str(), NewEndPointTramps()[slot_]);
         if (ret == 0) {
@@ -1159,7 +1159,7 @@ void HcomTransportManager::DisConnectHcomChannel(uint32_t rankId, Hcom_Channel c
 
 bool HcomTransportManager::BindSlot()
 {
-    for (size_t i = 0; i < kMaxInstances; i++) {
+    for (size_t i = 0; i < MAX_INSTANCES; i++) {
         HcomTransportManager *expected = nullptr;
         if (g_slotInstances[i].compare_exchange_strong(expected, this)) {
             slot_ = i;
@@ -1171,10 +1171,10 @@ bool HcomTransportManager::BindSlot()
 
 void HcomTransportManager::ReleaseSlot()
 {
-    if (slot_ < kMaxInstances) {
+    if (slot_ < MAX_INSTANCES) {
         g_slotInstances[slot_].store(nullptr, std::memory_order_release);
     }
-    slot_ = kInvalidSlot;
+    slot_ = INVALID_SLOT;
     serviceName_.clear();
 }
 

@@ -381,7 +381,7 @@ uint64_t MemEntityDefault::GetSliceSize(hybm_mem_slice_t slice)
 }
 
 namespace {
-constexpr size_t kMaxTransportKeyWords = transport::TRANS_KEY_MAX_WORDS;
+constexpr size_t MAX_TRANSPORT_KEY_WORDS = transport::TRANS_KEY_MAX_WORDS;
 
 int AppendEntityExportInfo(ExchangeInfoWriter &desc, const EntityExportInfo &info)
 {
@@ -412,7 +412,7 @@ int ReadEntityExportInfo(const ExchangeInfoReader &reader, EntityExportInfo &inf
     ret = (ret != 0) ? ret : reader.Read(info.serverId);
     ret = (ret != 0) ? ret : reader.Read(info.devicePhyId);
     ret = (ret != 0) ? ret : reader.Read(info.transportPrivateData.ip, sizeof(info.transportPrivateData.ip));
-    return (ret != 0) ? ret : reader.Read(info.transportPrivateData.key.keys, kMaxTransportKeyWords);
+    return (ret != 0) ? ret : reader.Read(info.transportPrivateData.key.keys, MAX_TRANSPORT_KEY_WORDS);
 }
 
 int AppendSliceTransportKey(ExchangeInfoWriter &desc, const SliceExportTransportKey &key)
@@ -428,7 +428,7 @@ int ReadSliceTransportKey(const ExchangeInfoReader &reader, SliceExportTransport
     int ret = reader.Read(key.rankId);
     ret = (ret != 0) ? ret : reader.Read(key.reserved, sizeof(key.reserved));
     ret = (ret != 0) ? ret : reader.Read(key.address);
-    return (ret != 0) ? ret : reader.Read(key.key.keys, kMaxTransportKeyWords);
+    return (ret != 0) ? ret : reader.Read(key.key.keys, MAX_TRANSPORT_KEY_WORDS);
 }
 } // namespace
 
@@ -1424,10 +1424,10 @@ Result MemEntityDefault::InitTransManager()
         return BM_OK;
     }
 
-    auto hostTransFlags = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
-    auto composeTransFlags =
-        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA | hostTransFlags;
-    if ((options_.bmDataOpType & composeTransFlags) == 0) {
+    auto hostDataOpMask = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
+    auto composeDataOpMask =
+        HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_AIV_SDMA | HYBM_DOP_TYPE_DEVICE_URMA | hostDataOpMask;
+    if ((options_.bmDataOpType & composeDataOpMask) == 0) {
         BM_LOG_DEBUG("NO RDMA/URMA Data Operator transport skip init.");
         return BM_OK;
     }

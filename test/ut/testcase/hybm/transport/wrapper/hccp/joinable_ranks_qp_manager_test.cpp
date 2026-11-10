@@ -67,10 +67,10 @@ class JoinableRanksQpManagerTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
-        static constexpr uint16_t kPort8002 = 8002;
+        static constexpr uint16_t PORT8002 = 8002;
         sockaddr_in devNet{};
         devNet.sin_family = AF_INET;
-        devNet.sin_port = htons(kPort8002);
+        devNet.sin_port = htons(PORT8002);
         inet_pton(AF_INET, "127.0.0.1", &devNet.sin_addr);
         // uint32_t userDeviceId, uint32_t deviceId, uint32_t rankId, uint32_t rankCount, sockaddr_in devNet
         manager = std::make_unique<TestableJoinableRanksQpManager>(0, 0, K_RANK_ID_0, K_RANK_COUNT, devNet,
@@ -208,18 +208,18 @@ TEST_F(JoinableRanksQpManagerTest, TransTags_DistinguishPeersSharingAnIpWithDiff
     // 同一 IP 上的两个 server 实例（端口不同）：同一进程内 rank 1 的 client 分别与二者建链，
     // 二者 rank 对相同，修复前 tag 均算作同一条字符串而互相串链；
     // 改用 server 侧 ip:port 后二者可区分，且各自与对端 server 算出的 tag 一致
-    constexpr uint16_t kServerPortA = 9100;
-    constexpr uint16_t kServerPortB = 9101;
+    constexpr uint16_t SERVER_PORT_A = 9100;
+    constexpr uint16_t SERVER_PORT_B = 9101;
     sockaddr_in clientNet{};
     clientNet.sin_family = AF_INET;
     clientNet.sin_port = K_PORT_8001;
     inet_pton(AF_INET, "127.0.0.1", &clientNet.sin_addr);
     sockaddr_in serverANet{};
     serverANet.sin_family = AF_INET;
-    serverANet.sin_port = kServerPortA;
+    serverANet.sin_port = SERVER_PORT_A;
     inet_pton(AF_INET, "127.0.0.1", &serverANet.sin_addr);
     sockaddr_in serverBNet = serverANet;
-    serverBNet.sin_port = kServerPortB;
+    serverBNet.sin_port = SERVER_PORT_B;
 
     JoinableRanksQpManager clientA(0, 0, 1, 2, clientNet, HYBM_SCENE_TRANS);
     JoinableRanksQpManager clientB(0, 0, 1, 2, clientNet, HYBM_SCENE_TRANS);

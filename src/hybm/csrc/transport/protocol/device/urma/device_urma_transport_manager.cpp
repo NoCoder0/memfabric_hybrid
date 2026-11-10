@@ -276,7 +276,7 @@ static bool CheckAndGetUrmaExportDescInfo(const uint8_t *raw, uint64_t rawLen, i
         }
         UrmaExportDesc desc{};
         std::memcpy(&desc, raw + offset, exportHeaderSize);
-        uint32_t entrySize = exportHeaderSize + desc.hcommDescLen + desc.devTransFlagDescLen;
+        uint32_t entrySize = exportHeaderSize + desc.hcommDescLen + desc.deviceMarkerDescLen;
         if (offset + entrySize > rawLen) {
             return false;
         }
@@ -579,36 +579,37 @@ Result DeviceUrmaTransportManager::InitDeviceTransferFlagLocked()
     // It is exported as an Hcomm flag descriptor in the TransportMemoryKey payload,
     // so remote peers can import it and use the resulting address as remote_flag_addr.
     // NOT inserted into localRegistrations_ — not exported/imported as a regular MR.
-    int i = 0;
-    void *flagPtr = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(&flagPtr, sizeof(int64_t), static_cast<uint32_t>(ACL_MEM_MALLOC_NORMAL_ONLY));
+    const int64_t initialValue = 1;
+    void *markerBuffer = nullptr;
+    auto ret =
+        DlAclApi::AclrtMalloc(&markerBuffer, sizeof(initialValue), static_cast<uint32_t>(ACL_MEM_MALLOC_NORMAL_ONLY));
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtMalloc for local flag buffer failed, ret: " << ret);
         return ret;
     }
-    int64_t flagInit = 1;
-    ret = DlAclApi::AclrtMemcpy(flagPtr, sizeof(int64_t), &flagInit, sizeof(int64_t), ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = DlAclApi::AclrtMemcpy(markerBuffer, sizeof(initialValue), &initialValue, sizeof(initialValue),
+                                ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtMemcpy init local flag buffer failed, ret: " << ret);
-        (void)DlAclApi::AclrtFree(flagPtr);
+        (void)DlAclApi::AclrtFree(markerBuffer);
         return ret;
     }
-    const UrmaCommMem flagMem{reinterpret_cast<uint64_t>(flagPtr), sizeof(int64_t), UrmaMemoryType::DEVICE_HBM};
-    HcommMemHandle flagHandle = nullptr;
-    auto hcommFlagMem = ToHcommMem(flagMem);
-    uint64_t memTag = reinterpret_cast<uint64_t>(flagPtr);
-    devTransFlagPtr_ = flagPtr;
-    devTransFlagSize_ = sizeof(int64_t);
-    for (auto &localEndpoint : localEndpoint_) {
-        ret = hcommApi_.RegisterMemory(localEndpoint, memTag, hcommFlagMem, flagHandle);
+    deviceMarkerPtr_ = markerBuffer;
+    deviceMarkerSize_ = sizeof(initialValue);
+    const UrmaCommMem markerMem{reinterpret_cast<uint64_t>(markerBuffer), deviceMarkerSize_,
+                                UrmaMemoryType::DEVICE_HBM};
+    auto hcommMarkerMem = ToHcommMem(markerMem);
+    for (size_t i = 0; i < localEndpoint_.size(); ++i) {
+        HcommMemHandle markerHandle = nullptr;
+        ret = hcommApi_.RegisterMemory(localEndpoint_[i], markerMem.addr, hcommMarkerMem, markerHandle);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma HcommMemReg for local flag buffer failed, ret: " << ret);
             return ret;
         }
-        devTransFlagHcommHandle_.push_back(flagHandle);
+        deviceMarkerHcommHandle_.push_back(markerHandle);
         BM_LOG_INFO("device_urma local flag buffer allocated and registered, addr: "
-                    << VaToStr(flagPtr) << " size: " << devTransFlagSize_ << " handle: " << flagHandle
-                    << " endpoint:" << localEndpoint << " localId:" << localIds_[i++]);
+                    << VaToStr(markerBuffer) << " size: " << deviceMarkerSize_ << " handle: " << markerHandle
+                    << " endpoint:" << localEndpoint_[i] << " localId:" << localIds_[i]);
     }
     return BM_OK;
 }
@@ -774,19 +775,19 @@ Result DeviceUrmaTransportManager::CreateEndpointsAndInitResourcesLocked(const s
 
 void DeviceUrmaTransportManager::RollbackOpenDeviceLocked()
 {
-    if (!devTransFlagHcommHandle_.empty()) {
-        for (size_t i = 0; i < devTransFlagHcommHandle_.size(); i++) {
-            auto ret = hcommApi_.UnregisterMemory(localEndpoint_[i], devTransFlagHcommHandle_[i]);
+    if (!deviceMarkerHcommHandle_.empty()) {
+        for (size_t i = 0; i < deviceMarkerHcommHandle_.size(); i++) {
+            auto ret = hcommApi_.UnregisterMemory(localEndpoint_[i], deviceMarkerHcommHandle_[i]);
             if (ret != BM_OK) {
-                BM_LOG_ERROR("device_urma RollbackOpenDevice HcommMemUnreg devTransFlag failed, ret: " << ret);
+                BM_LOG_ERROR("device_urma RollbackOpenDevice HcommMemUnreg deviceMarker failed, ret: " << ret);
             }
-            devTransFlagHcommHandle_[i] = nullptr;
+            deviceMarkerHcommHandle_[i] = nullptr;
         }
     }
-    devTransFlagHcommHandle_.clear();
-    if (devTransFlagPtr_ != nullptr) {
-        (void)DlAclApi::AclrtFree(devTransFlagPtr_);
-        devTransFlagPtr_ = nullptr;
+    deviceMarkerHcommHandle_.clear();
+    if (deviceMarkerPtr_ != nullptr) {
+        (void)DlAclApi::AclrtFree(deviceMarkerPtr_);
+        deviceMarkerPtr_ = nullptr;
     }
     if (!localEndpoint_.empty()) {
         for (auto &localEndpoint : localEndpoint_) {
@@ -959,15 +960,8 @@ Result DeviceUrmaTransportManager::InitNotifyResource(NotifyResource &resource)
 
     uint64_t devAddr = 0;
     uint32_t devLen = 0;
-    rtDevResInfo resInfo{};
-    resInfo.dieId = 0U;
-    resInfo.procType = RT_PROCESS_HCCP;
-    resInfo.resType = RT_RES_TYPE_STARS_NOTIFY_RECORD;
-    resInfo.resId = notifyId;
-    resInfo.flag = 0U;
-    rtDevResAddrInfo addrInfo{};
-    addrInfo.resAddress = &devAddr;
-    addrInfo.len = &devLen;
+    rtDevResInfo resInfo{0U, RT_PROCESS_HCCP, RT_RES_TYPE_STARS_NOTIFY_RECORD, notifyId, 0U};
+    rtDevResAddrInfo addrInfo{&devAddr, &devLen};
     ret = DlRtApi::RtGetDevResAddress(&resInfo, &addrInfo);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma InitNotifyResource RtGetDevResAddress failed, notifyId: " << notifyId
@@ -1158,13 +1152,13 @@ void DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
 
     (void)CleanupLocalRegistrationsLocked();
 
-    if (!devTransFlagHcommHandle_.empty()) {
-        for (size_t i = 0; i < devTransFlagHcommHandle_.size(); i++) {
-            (void)hcommApi_.UnregisterMemory(localEndpoint_[i], devTransFlagHcommHandle_[i]);
-            devTransFlagHcommHandle_[i] = nullptr;
+    if (!deviceMarkerHcommHandle_.empty()) {
+        for (size_t i = 0; i < deviceMarkerHcommHandle_.size(); i++) {
+            (void)hcommApi_.UnregisterMemory(localEndpoint_[i], deviceMarkerHcommHandle_[i]);
+            deviceMarkerHcommHandle_[i] = nullptr;
         }
     }
-    devTransFlagHcommHandle_.clear();
+    deviceMarkerHcommHandle_.clear();
 
     remoteRanks_.clear();
     {
@@ -1191,12 +1185,12 @@ void DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
 
     localIds_.clear();
 
-    if (devTransFlagPtr_ != nullptr) {
-        auto ret = DlAclApi::AclrtFree(devTransFlagPtr_);
+    if (deviceMarkerPtr_ != nullptr) {
+        auto ret = DlAclApi::AclrtFree(deviceMarkerPtr_);
         if (ret != BM_OK) {
-            BM_LOG_ERROR("device_urma CloseDeviceCleanupResources AclrtFree devTransFlag failed, ret: " << ret);
+            BM_LOG_ERROR("device_urma CloseDeviceCleanupResources AclrtFree deviceMarker failed, ret: " << ret);
         }
-        devTransFlagPtr_ = nullptr;
+        deviceMarkerPtr_ = nullptr;
     }
     deviceKernelLoaded_ = false;
 }
@@ -1567,9 +1561,9 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
         return BM_ERROR;
     }
 
-    // Guard: devTransFlagHcommHandle_ must be valid for flag export
-    if (devTransFlagHcommHandle_.empty()) {
-        BM_LOG_ERROR("device_urma QueryMemoryKey devTransFlagHcommHandle_ is null, cannot export flag");
+    // Guard: deviceMarkerHcommHandle_ must be valid for flag export
+    if (deviceMarkerHcommHandle_.empty()) {
+        BM_LOG_ERROR("device_urma QueryMemoryKey deviceMarkerHcommHandle_ is null, cannot export flag");
         return BM_ERROR;
     }
 
@@ -1597,8 +1591,8 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
         // Export flag descriptor
         void *flagDescRaw = nullptr;
         uint32_t flagDescLenRaw = 0;
-        if (i < devTransFlagHcommHandle_.size()) {
-            ret = DlHcommApi::HcommMemExport(localEndpoint_[i], devTransFlagHcommHandle_[i], &flagDescRaw,
+        if (i < deviceMarkerHcommHandle_.size()) {
+            ret = DlHcommApi::HcommMemExport(localEndpoint_[i], deviceMarkerHcommHandle_[i], &flagDescRaw,
                                              &flagDescLenRaw);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("device_urma QueryMemoryKey flag HcommMemExport failed for endpoint["
@@ -1631,7 +1625,7 @@ Result DeviceUrmaTransportManager::QueryMemoryKey(uint64_t addr, TransportMemory
         exportDesc.addr = registration.deviceVa != 0 ? registration.deviceVa : registration.mr.addr;
         exportDesc.size = registration.mr.size;
         exportDesc.hcommDescLen = memDescLen;
-        exportDesc.devTransFlagDescLen = flagDescLen;
+        exportDesc.deviceMarkerDescLen = flagDescLen;
 
         uint8_t *entryPayload = payload + totalPayloadLen;
         std::memcpy(entryPayload, &exportDesc, exportHeaderSize);
@@ -1753,10 +1747,10 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
 
         // Validate total payload fits within the key data area
         const size_t payloadCapacity = key.ByteSize() - DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS * sizeof(uint64_t);
-        if (memDescLen + exportDesc.devTransFlagDescLen > payloadCapacity) {
+        if (memDescLen + exportDesc.deviceMarkerDescLen > payloadCapacity) {
             BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked total payload exceeds key capacity, "
                          << "peer: " << peerRank << " memDescLen: " << memDescLen
-                         << " flagDescLen: " << exportDesc.devTransFlagDescLen << " capacity: " << payloadCapacity);
+                         << " flagDescLen: " << exportDesc.deviceMarkerDescLen << " capacity: " << payloadCapacity);
             rollbackNewImports();
             return BM_INVALID_PARAM;
         }
@@ -1802,11 +1796,11 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
         newImports.emplace_back(std::move(remote));
 
         // --- 7. Import flag desc from UrmaExportDesc (if present and not yet imported for this peer) ---
-        if (exportDesc.devTransFlagDescLen > 0 && !flagImportedInThisCall && state.remoteFlagAddr == 0) {
+        if (exportDesc.deviceMarkerDescLen > 0 && !flagImportedInThisCall && state.remoteFlagAddr == 0) {
             const uint8_t *flagRaw = raw + exportDescIndex + exportDesc.hcommDescLen;
             HcommCommMem flagOutMem{};
             const auto flagRet =
-                DlHcommApi::HcommMemImport(localEndpoint_[index], flagRaw, exportDesc.devTransFlagDescLen, &flagOutMem);
+                DlHcommApi::HcommMemImport(localEndpoint_[index], flagRaw, exportDesc.deviceMarkerDescLen, &flagOutMem);
             if (flagRet != 0) {
                 BM_LOG_ERROR("device_urma ImportRemoteMemKeysLocked HcommMemImport for flag failed, peer: "
                              << peerRank << " ret: " << flagRet);
@@ -1821,11 +1815,11 @@ Result DeviceUrmaTransportManager::ImportRemoteMemKeysLocked(uint32_t peerRank, 
             }
             state.remoteFlagAddr = reinterpret_cast<uint64_t>(flagOutMem.addr);
             state.remoteFlagSize = flagOutMem.size;
-            state.remoteFlagDescBytes.assign(flagRaw, flagRaw + exportDesc.devTransFlagDescLen);
+            state.remoteFlagDescBytes.assign(flagRaw, flagRaw + exportDesc.deviceMarkerDescLen);
             flagImportedInThisCall = true;
             BM_LOG_INFO("device_urma ImportRemoteMemKeysLocked imported flag, peer: "
                         << peerRank << " flagAddr: " << VaToStr(state.remoteFlagAddr)
-                        << " flagSize: " << state.remoteFlagSize << " descLen: " << exportDesc.devTransFlagDescLen);
+                        << " flagSize: " << state.remoteFlagSize << " descLen: " << exportDesc.deviceMarkerDescLen);
         }
 
         BM_LOG_INFO("device_urma ImportRemoteMemKeysLocked imported mem, peer: "

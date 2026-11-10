@@ -14,11 +14,11 @@
 #include "hybm_kernel_log.h"
 
 namespace {
-constexpr uint32_t kMaxBatchSize = 1000;
-constexpr const char *kBatchTag = "HybmKernel";
+constexpr uint32_t MAX_BATCH_SIZE = 1000;
+constexpr const char *BATCH_TAG = "HybmKernel";
 
 // Match HCCL's device loader: HCOMM device primitives are provided by libccl_kernel.so.
-constexpr const char *kHcommLibName = "libccl_kernel.so";
+constexpr const char *HCOMM_LIB_NAME = "libccl_kernel.so";
 
 // 接口签名须与 CANN 设备接口保持一致；签名写错不会编译报错，运行时直接踩内存
 using HcommBatchModeStartFunc = int32_t (*)(const char *batchTag);
@@ -44,7 +44,7 @@ HcommAclrtNotifyRecordOnThreadFunc g_hcommAclrtNotifyRecordOnThread = nullptr;
 int32_t ResetHcommSymbols()
 {
     if (g_hcommHandle != nullptr && dlclose(g_hcommHandle) != 0) {
-        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlclose failed, lib=%s error=%s", kHcommLibName, dlerror());
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlclose failed, lib=%s error=%s", HCOMM_LIB_NAME, dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
     g_hcommHandle = nullptr;
@@ -62,7 +62,7 @@ void *LoadRequiredSymbol(const char *symbol)
 {
     void *addr = dlsym(g_hcommHandle, symbol);
     if (addr == nullptr) {
-        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlsym failed, lib=%s symbol=%s error=%s", kHcommLibName, symbol,
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] dlsym failed, lib=%s symbol=%s error=%s", HCOMM_LIB_NAME, symbol,
                   dlerror());
     }
     return addr;
@@ -72,7 +72,7 @@ void *LoadOptionalSymbol(const char *symbol)
 {
     void *addr = dlsym(g_hcommHandle, symbol);
     if (addr == nullptr) {
-        HYBM_LOGW("[hybm] optional symbol unavailable, lib=%s symbol=%s reason=%s", kHcommLibName, symbol, dlerror());
+        HYBM_LOGW("[hybm] optional symbol unavailable, lib=%s symbol=%s reason=%s", HCOMM_LIB_NAME, symbol, dlerror());
     }
     return addr;
 }
@@ -83,7 +83,7 @@ int32_t LoadRequiredSymbols()
     g_hcommChannelFenceOnThread =
         reinterpret_cast<HcommChannelFenceOnThreadFunc>(LoadRequiredSymbol("HcommChannelFenceOnThread"));
     if (g_hcommReadOnThread == nullptr || g_hcommChannelFenceOnThread == nullptr) {
-        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] required hcomm symbols missing, lib=%s", kHcommLibName);
+        HYBM_LOGE(BM_DL_FUNCTION_FAILED, "[hybm] required hcomm symbols missing, lib=%s", HCOMM_LIB_NAME);
         return BM_DL_FUNCTION_FAILED;
     }
     return BM_OK;
@@ -103,10 +103,10 @@ void LoadOptionalSymbols()
 
 int32_t LoadHcommLibrary()
 {
-    g_hcommHandle = dlopen(kHcommLibName, RTLD_NOW | RTLD_NODELETE);
+    g_hcommHandle = dlopen(HCOMM_LIB_NAME, RTLD_NOW | RTLD_NODELETE);
     if (g_hcommHandle == nullptr) {
         HYBM_LOGE(BM_DL_FUNCTION_FAILED,
-                  "[hybm] device dlopen failed, lib=%s error=%s; check device HCOMM library deployment", kHcommLibName,
+                  "[hybm] device dlopen failed, lib=%s error=%s; check device HCOMM library deployment", HCOMM_LIB_NAME,
                   dlerror());
         return BM_DL_FUNCTION_FAILED;
     }
@@ -118,7 +118,7 @@ int32_t LoadHcommLibrary()
     }
     LoadOptionalSymbols();
 
-    HYBM_LOGI("[hybm] hcomm library loaded, lib=%s batchTransfer=%d batchMode=%d", kHcommLibName,
+    HYBM_LOGI("[hybm] hcomm library loaded, lib=%s batchTransfer=%d batchMode=%d", HCOMM_LIB_NAME,
               static_cast<int32_t>(g_hcommBatchTransferOnThread != nullptr),
               static_cast<int32_t>(g_hcommBatchModeStart != nullptr));
     return BM_OK;
@@ -272,7 +272,7 @@ int32_t MultiRankTransferWithBatch(HybmBatchTransferParam *param, uint32_t rankI
     const auto thread = param->thread_list[rankIdx];
     const auto channel = param->channel_list[rankIdx];
     for (uint32_t offset = 0, batchSize = 0; offset < count; offset += batchSize) {
-        batchSize = std::min(kMaxBatchSize, count - offset);
+        batchSize = std::min(MAX_BATCH_SIZE, count - offset);
         int32_t ret = BatchTransferOnThread(thread, channel, param->transfer_descs + start + offset, batchSize);
         if (ret != BM_OK) {
             if (IsNotSupported(ret)) {
@@ -358,9 +358,9 @@ int32_t HybmBatchTransfer(HybmBatchTransferParam *param)
         HYBM_LOGE(ret, "[hybm] hcomm library unavailable, rankNum=%u", param->rank_num);
         return ret;
     }
-    ret = BatchModeStart(kBatchTag);
+    ret = BatchModeStart(BATCH_TAG);
     if (ret != BM_OK && !IsNotSupported(ret)) {
-        HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeStart failed, batchTag=%s ret=%d", kBatchTag, ret);
+        HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeStart failed, batchTag=%s ret=%d", BATCH_TAG, ret);
         return BM_ERROR;
     }
 
@@ -369,25 +369,25 @@ int32_t HybmBatchTransfer(HybmBatchTransferParam *param)
         if (ret != BM_OK) {
             const bool notSupported = ret == BM_NOT_SUPPORTED;
             if (notSupported) {
-                HYBM_LOGW("[hybm] rank batch transfer unsupported, batchTag=%s rankIdx=%u rankId=%u ret=%d", kBatchTag,
+                HYBM_LOGW("[hybm] rank batch transfer unsupported, batchTag=%s rankIdx=%u rankId=%u ret=%d", BATCH_TAG,
                           rankIdx, param->rank_id_list[rankIdx], ret);
             } else {
-                HYBM_LOGE(BM_ERROR, "[hybm] rank transfer failed, batchTag=%s rankIdx=%u rankId=%u ret=%d", kBatchTag,
+                HYBM_LOGE(BM_ERROR, "[hybm] rank transfer failed, batchTag=%s rankIdx=%u rankId=%u ret=%d", BATCH_TAG,
                           rankIdx, param->rank_id_list[rankIdx], ret);
             }
-            const int32_t endRet = BatchModeEnd(kBatchTag);
+            const int32_t endRet = BatchModeEnd(BATCH_TAG);
             if (endRet != BM_OK && !IsNotSupported(endRet)) {
                 HYBM_LOGE(BM_ERROR,
                           "[hybm] HcommBatchModeEnd after transfer failure failed, batchTag=%s rankId=%u ret=%d",
-                          kBatchTag, param->rank_id_list[rankIdx], endRet);
+                          BATCH_TAG, param->rank_id_list[rankIdx], endRet);
             }
             return notSupported ? BM_NOT_SUPPORTED : BM_ERROR;
         }
     }
 
-    ret = BatchModeEnd(kBatchTag);
+    ret = BatchModeEnd(BATCH_TAG);
     if (ret != BM_OK && !IsNotSupported(ret)) {
-        HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeEnd failed, batchTag=%s ret=%d", kBatchTag, ret);
+        HYBM_LOGE(BM_ERROR, "[hybm] HcommBatchModeEnd failed, batchTag=%s ret=%d", BATCH_TAG, ret);
         return BM_ERROR;
     }
     HYBM_LOGI("[hybm] HybmBatchTransfer success, rankNum=%u totalListNum=%u", param->rank_num, param->total_list_num);

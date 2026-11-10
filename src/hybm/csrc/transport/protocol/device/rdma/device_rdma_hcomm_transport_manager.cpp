@@ -45,7 +45,7 @@ namespace {
 constexpr int32_t CHANNEL_STATUS_POLL_INTERVAL_MS = 1;
 constexpr int32_t CHANNEL_CONNECT_TIMEOUT_MS = 30000;
 // host 侧等待 kernel 末尾 NotifyRecord 的超时（秒）；与 device_urma 的 kernel 超时保持一致
-constexpr uint32_t kNotifyWaitTimeoutS = 60U;
+constexpr uint32_t NOTIFY_WAIT_TIMEOUT_S = 60U;
 constexpr const char *HYBM_DEVICE_FUNC_TRANSFER = "HybmBatchTransfer";
 // trans 双 entity 类型：recvEntity 的 rank 为 0，sendEntity 的 rank 为 rankCount-1
 constexpr uint32_t TRANS_ENTITY_RECV = 0U;
@@ -1004,23 +1004,23 @@ int32_t DeviceRdmaHcommTransportManager::RawMemImportWithRetry(HcommEndpointHand
                                                                uint32_t descLen, uint32_t peerRank,
                                                                HcommCommMem &outMem) const
 {
-    constexpr int kImportMaxRetry = 10;
-    constexpr int kImportRetrySleepUs = 1000;
-    constexpr int32_t kHcclEAgain = 20; // HCCL_E_AGAIN：资源暂不可用（并发 import 冲突）
-    for (int attempt = 0; attempt < kImportMaxRetry; ++attempt) {
+    constexpr int IMPORT_MAX_RETRY = 10;
+    constexpr int IMPORT_RETRY_SLEEP_US = 1000;
+    constexpr int32_t CONST_HCCL_E_AGAIN = 20; // HCCL_E_AGAIN：资源暂不可用（并发 import 冲突）
+    for (int attempt = 0; attempt < IMPORT_MAX_RETRY; ++attempt) {
         auto ret = hcommApi_.RawMemImport(endpoint, desc, descLen, outMem);
         if (ret == 0) {
             return ret;
         }
-        if (ret != kHcclEAgain) {
+        if (ret != CONST_HCCL_E_AGAIN) {
             return ret;
         }
         // HCCL_E_AGAIN：并发 join 时多进程对同一对端 import 的瞬时冲突，重试可成功
-        BM_LOG_WARN("HcommMemImport AGAIN, retry attempt=" << (attempt + 1) << "/" << kImportMaxRetry
+        BM_LOG_WARN("HcommMemImport AGAIN, retry attempt=" << (attempt + 1) << "/" << IMPORT_MAX_RETRY
                                                            << " peer: " << peerRank << " ret: " << ret);
-        usleep(kImportRetrySleepUs);
+        usleep(IMPORT_RETRY_SLEEP_US);
     }
-    return kHcclEAgain;
+    return CONST_HCCL_E_AGAIN;
 }
 
 // ============================================================================
@@ -1335,10 +1335,10 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
         // 一批 N 个 IO 连续提交，SQ(send queue) 可能被这一批 WR 打满：ibv_post_send 返回 ENOMEM 时
         // HCOMM 归一成 HCCL_E_AGAIN(20)。先把已提交的排空
         // （fence 会等 CQE 到齐并把 wqeNums_ 归零、腾出 SQ），再重试这一笔，避免整批直接失败。
-        constexpr int32_t kHcclEAgain = 20;
-        constexpr int64_t kSubmitRetryTimeoutMs = 60 * 1000;
+        constexpr int32_t CONST_HCCL_E_AGAIN = 20;
+        constexpr int64_t SUBMIT_RETRY_TIMEOUT_MS = 60 * 1000;
         const auto submitRetryDeadline =
-            std::chrono::steady_clock::now() + std::chrono::milliseconds(kSubmitRetryTimeoutMs);
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(SUBMIT_RETRY_TIMEOUT_MS);
 
         int32_t submitRet = 0;
         for (size_t i = 0; i < localVec.size(); ++i) {
@@ -1352,7 +1352,7 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
                         DlHcommApi::HcommWriteNbiOnThread(0, state.channel, reinterpret_cast<void *>(remoteVec[i]),
                                                           reinterpret_cast<const void *>(localVec[i]), sizeVec[i]);
                 }
-                if (submitRet != kHcclEAgain) {
+                if (submitRet != CONST_HCCL_E_AGAIN) {
                     break; // 成功，或非「暂不可用」类错误：这一层不重试
                 }
                 if (std::chrono::steady_clock::now() >= submitRetryDeadline) {
@@ -1408,7 +1408,7 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
 
     Result waitRet = BM_OK;
     if (ctx.notify != nullptr && ctx.notifyId != 0U) {
-        waitRet = DlAclApi::AclrtWaitAndResetNotify(ctx.notify, ctx.stream, kNotifyWaitTimeoutS);
+        waitRet = DlAclApi::AclrtWaitAndResetNotify(ctx.notify, ctx.stream, NOTIFY_WAIT_TIMEOUT_S);
         if (waitRet != BM_OK) {
             BM_LOG_ERROR("StageAndLaunchTransfer wait notify failed, rank: " << rankId << " notifyId: " << ctx.notifyId
                                                                              << " ret: " << waitRet);
@@ -1540,7 +1540,7 @@ Result DeviceRdmaHcommTransportManager::RemoteIoBatch(uint32_t rankId, const Cop
     // 一批 WR 的提交上限：
     //   host RoCE：受 QP send queue 深度限制（实测约 2048），超过会把 SQ 打满、ibv_post_send 失败，取一半；
     //   DEVICE(含 A2/A3)：同样按此上限一批提交，一批内只做一次 fence/drain/notify，避免逐笔 kernel 往返。
-    constexpr size_t kWrPerBatch = 1024U;
+    constexpr size_t WR_PER_BATCH = 1024U;
     const size_t total = descriptor.counts.size();
 
     // 先把每笔请求按对端区间展开（跨切片的会拆成多段），再按上限分片提交。
@@ -1558,8 +1558,8 @@ Result DeviceRdmaHcommTransportManager::RemoteIoBatch(uint32_t rankId, const Cop
     }
 
     const size_t expanded = counts.size();
-    for (size_t beg = 0; beg < expanded; beg += kWrPerBatch) {
-        const size_t n = std::min(kWrPerBatch, expanded - beg);
+    for (size_t beg = 0; beg < expanded; beg += WR_PER_BATCH) {
+        const size_t n = std::min(WR_PER_BATCH, expanded - beg);
         std::vector<uint64_t> chunkLocal(localVec.begin() + beg, localVec.begin() + beg + n);
         std::vector<uint64_t> chunkRemote(remoteVec.begin() + beg, remoteVec.begin() + beg + n);
         std::vector<uint64_t> chunkCounts(counts.begin() + beg, counts.begin() + beg + n);
