@@ -35,6 +35,7 @@ env:
   py_version: "cp311-cp311"
   IS_MANYLINUX: TRUE
   pr_id: ${{ atomgit.event.pull_request.number }}
+  IS_PR_EVENT: ${{ contains('pull_request_target,pull_request_comment,MR,Note', atomgit.event_name) }}
 
 stages :
   stage_1:
@@ -181,3 +182,13 @@ stages :
               bash script/run_ut.sh
               cd output
               cp ./bin/gcover_report/test_detail.xml ./coverage/result/
+
+          - name: upload ut coverage report
+            if: ${{ always() && env.IS_PR_EVENT == 'true' }}
+            uses: upload-artifact
+            with:
+              name: coverage-report
+              path: ./output/coverage/result/*
+              overwrite: true
+              if-no-files-found: warn
+              retention-days: 1
