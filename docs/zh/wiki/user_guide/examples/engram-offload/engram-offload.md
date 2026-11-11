@@ -8,7 +8,7 @@
 
 ## memfabric_hybrid的实现方案
 
-![](./mf-engram-deploy.PNG)
+![](./mf-engram-deploy.png)
 
 - **方案简介**：根据engram权重占比大、访问量小的特点，将权重卸载到host内存，并映射到全局虚拟地址（GVA），支持算子在device侧读取，访问host内存同时不影响入图。
 - **性能优化**：卸载的host内存使用1G大页申请，并绑定numa，AIV算子double-buffer拷贝，提升离散随机访问带宽。
@@ -23,7 +23,7 @@
 
 ## 应用场景2：多实例共享
 
-![](./multi-instance-unbalance-share-engram.PNG)
+![](./multi-instance-unbalance-share-engram.png)
 
 - **跨实例组建GVA**：在P/D分离部署场景，P和D实例可以共享一份host侧的engram权重，即多个实例的进程共同映射到同一个GVA地址空间即可。
 - **方案1：平均贡献**：全局实例的所有进程平均共享一份engram权重的slice，和**单实例共享**的方式映射没有本质区别，唯一区别在于参与贡献的进程更多了，每个进程平均贡献的slice更小，但汇总后还是一份完整的权重。此时由于跨了实例，初始化时指定**world_size**需要改成全局总rank数。

@@ -104,9 +104,6 @@ description: "当用户要求扫描/巡检代码仓日志代码、排查关键�
 | `src/acc_offload/` | `OFFLOAD_LOG_ERROR` | `OFFLOAD_LOG_WARN` | `OFFLOAD_LOG_INFO` | `OFFLOAD_LOG_DEBUG` | — |
 | `src/smem/.../mk_transfer_adapter/` | `ADAPTER_LOG_ERROR` | `ADAPTER_LOG_WARN` | `ADAPTER_LOG_INFO` | `ADAPTER_LOG_DEBUG` | — |
 
-规范依据：`docs/zh/contributions/coding_standards/docs_specification.md`、
-`docs/zh/contributions/coding_standards/cpp-secure.md`。
-
 ## 五、输出：日志修改方案
 
 按严重度（S1 → S7）和分支重要性排序，逐条给出。每条建议必须可直接落地：

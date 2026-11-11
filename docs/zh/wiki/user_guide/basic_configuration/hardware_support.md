@@ -6,7 +6,7 @@ MemCache Prefix Cache 池化特性的配套硬件与 MemFabric Hybrid 一致。
 
 ⭐ 表示推荐协议。
 
-本文列出的机型均支持 `host_rdma`、`host_shm` 和 `host_tcp`；其中 `host_rdma` 需要 CX 网卡，`host_shm` 只支持单机访问。
+本文列出的机型均支持 ![host_rdma](https://img.shields.io/badge/host_rdma-d97706)、`host_shm` 和 `host_tcp`；其中 ![host_rdma](https://img.shields.io/badge/host_rdma-d97706) 需要 CX 网卡，`host_shm` 只支持单机访问。
 
 以下主要介绍昇腾 Device 侧网络的支持情况。
 
@@ -14,10 +14,10 @@ MemCache Prefix Cache 池化特性的配套硬件与 MemFabric Hybrid 一致。
 
 ### 传输协议支持
 
-| 机型 | 支持协议 | 访问范围与限制 |
-| --- | --- | --- |
-| Atlas 800T A2 /<br>Atlas 800I A2 | `device_rdma` ⭐ | — |
-| Atlas 200T A2 Box16 | `device_rdma` ⭐ | — |
+| 机型 | 支持协议                                                          | 访问范围与限制 |
+| --- |---------------------------------------------------------------| --- |
+| Atlas 800T A2 /<br>Atlas 800I A2 | ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) ⭐ <br> | — |
+| Atlas 200T A2 Box16 | ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) ⭐ <br> | — |
 
 ### 配套底软
 
@@ -37,10 +37,10 @@ MemCache Prefix Cache 池化特性的配套硬件与 MemFabric Hybrid 一致。
 
 ### 传输协议支持
 
-| 机型 | 支持协议 | 访问范围与限制 |
-| --- | --- | --- |
-| Atlas 900 A3 SuperPoD /<br>Atlas 800T A3 SuperPoD /<br>Atlas 800I A3 SuperPoD | `device_sdma` ⭐<br>`device_rdma` | `device_rdma`：需要全卡 RoCE 互联 |
-| Atlas 800I A3 Server（背靠背） | `device_sdma` ⭐<br>`device_rdma` | `device_sdma`：只支持双机内访问<br>`device_rdma`：需要全卡 RoCE 互联 |
+| 机型 | 支持协议                                                                                                                    | 访问范围与限制                                                                                        |
+| --- |-------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------|
+| Atlas 900 A3 SuperPoD /<br>Atlas 800T A3 SuperPoD /<br>Atlas 800I A3 SuperPoD | ![device_sdma](https://img.shields.io/badge/device_sdma-22c55e) ⭐ <br> ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) <br> | ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6)：需要全卡 RoCE 互联                            |
+| Atlas 800I A3 Server（背靠背） | ![device_sdma](https://img.shields.io/badge/device_sdma-22c55e) ⭐ <br> ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) <br> | ![device_sdma](https://img.shields.io/badge/device_sdma-22c55e)：只支持双机内访问<br> ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6)：需要全卡 RoCE 互联 |
 
 ### 配套底软
 
@@ -72,14 +72,14 @@ MemCache Prefix Cache 池化特性的配套硬件与 MemFabric Hybrid 一致。
 
 ### 传输协议支持
 
-| 机型 | 支持协议 | 访问范围与限制 |
-| --- | --- | --- |
-| Atlas 350（标卡） | `host_rdma` ⭐ | `host_rdma`：自 v1.3.0 起支持，参见 [Host RDMA 网卡驱动与 NDR 安装指南](installation_cx7_ndr.md) |
-| Atlas 850 /<br>Atlas 850E（Server） | `device_urma` ⭐<br>`device_rdma` | UBoE：自 v1.3.0 起支持。v1.3 版本选择 `device_uboe`；v1.5 及以上版本选择 `device_urma` 并设置 [`MF_DEVICE_URMA_ENABLE_UBOE`](environment_variables.md)`=1`<br>`device_rdma`：自 v1.3.0 起支持，需要 1825 RoCE 组网 |
-| Atlas 650 /<br>Atlas 650E（FM16） | `device_urma` ⭐<br>`device_rdma` | `device_urma`：自 v1.3.0 起支持，未启用 UBoE 时只支持双机内访问；启用 UBoE 后不再限制双机内访问<br>UBoE：v1.3 版本选择 `device_uboe`；v1.5 及以上版本选择 `device_urma` 并设置 [`MF_DEVICE_URMA_ENABLE_UBOE`](environment_variables.md)`=1`<br>`device_rdma`：自 v1.3.0 起支持，需要 1825 RoCE 组网 |
-| Atlas 950 SuperPoD | `device_urma` ⭐ | `device_urma`：自 v1.3.0 起支持 |
-| A5 UBX | `device_rdma` ⭐ | `device_rdma`：自 v1.3.0 起支持，需要 1825 RoCE 组网，参见 [1825 网卡端口桥配置](../../FAQ/FAQ.md#rdma-copy-port-bridge) |
-| A5 PC16 | `device_urma` ⭐ | `device_urma`：自 v1.3.0 起支持，通过 UBG 网络传输，已根据 PC16 机型自动适配。 |
+| 机型 | 支持协议                                                                                                                                   | 访问范围与限制                                                                                                                                                                                                                                                                                                                                                                                       |
+| --- |----------------------------------------------------------------------------------------------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Atlas 350（标卡） | ![host_rdma](https://img.shields.io/badge/host_rdma-d97706) ⭐                                                                          | ![host_rdma](https://img.shields.io/badge/host_rdma-d97706)：自 v1.3.0 起支持，参见 [Host RDMA 网卡驱动与 NDR 安装指南](installation_cx7_ndr.md) |
+| Atlas 850 /<br>Atlas 850E（Server） | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6) ⭐ <br> ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) | UBoE：自 v1.3.0 起支持。v1.3 版本选择 ![device_uboe](https://img.shields.io/badge/device_uboe-0d9488)；v1.5 及以上版本选择 ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6) 并设置 [`MF_DEVICE_URMA_ENABLE_UBOE`](environment_variables.md)`=1`<br>![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6)：自 v1.3.0 起支持，需要 1825 RoCE 组网                                                     |
+| Atlas 650 /<br>Atlas 650E（FM16） | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6) ⭐ <br> ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6)：自 v1.3.0 起支持，未启用 UBoE 时只支持双机内访问；启用 UBoE 后不再限制双机内访问<br>UBoE：v1.3 版本选择 `device_uboe`；v1.5 及以上版本选择 ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6) 并设置 [`MF_DEVICE_URMA_ENABLE_UBOE`](environment_variables.md)`=1`<br>![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6)：自 v1.3.0 起支持，需要 1825 RoCE 组网 |
+| Atlas 950 SuperPoD | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6) ⭐                                                                      | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6)：自 v1.3.0 起支持                                                                                                                                                                                                                                                                                                                  |
+| A5 UBX | ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6) ⭐                                                                      | ![device_rdma](https://img.shields.io/badge/device_rdma-3b82f6)：自 v1.3.0 起支持，需要 1825 RoCE 组网，参见 [1825 网卡端口桥配置](../../FAQ/FAQ.md#rdma-copy-port-bridge)                                                                                                                                                                                                                                        |
+| A5 PC16 | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6) ⭐                                                                      | ![device_urma](https://img.shields.io/badge/device_urma-8b5cf6)：自 v1.3.0 起支持，通过 UBG 网络传输，已根据 PC16 机型自动适配。                                                                                                                                                                                                                                                                                     |
 
 ### 配套底软
 

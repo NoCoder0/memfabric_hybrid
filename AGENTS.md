@@ -30,7 +30,7 @@ PR 正文按 [.gitcode/PULL_REQUEST_TEMPLATE.md](.gitcode/PULL_REQUEST_TEMPLATE.
 
 ## 代码规范（强制要求）
 
-编写代码务必遵守[编码规范和安全规范](docs/zh/contributions/coding_standards)及以下规范，违反将导致代码被拒绝：
+编写代码务必遵守以下规范，违反将导致代码被拒绝：
 
 ### 一般原则
 

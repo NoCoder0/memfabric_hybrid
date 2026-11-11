@@ -171,6 +171,22 @@ INFO [SMEM smem_ha_config_store.cpp:586 ConnectToLeaderAsFollower] No leader reg
 
 <a id="common-copy"></a>
 
+#### 1.1.5 HDK版本过低导致初始化失败
+
+**问题现象**
+
+```text
+driver version is too old, not support vmm, gvaVersion: xxx
+```
+
+**问题根因**
+
+mf初始化是会校验HDK版本以保证后续流程正确，如果安装HDK版本过低会导致不兼容初始化失败。
+
+**解决方法**
+
+检查物理机安装的HDK，使用`npu-smi info`确认HDK确认[硬件支持](../user_guide/basic_configuration/hardware_support.md)，若版本过低请升级HDK版本。
+
 ### 1.2 Copy 报错
 
 暂无条目。跨协议共用或尚未明确协议归属的 Copy 问题可追加在本节。
