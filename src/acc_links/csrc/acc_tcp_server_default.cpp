@@ -703,7 +703,7 @@ Result AccTcpServerDefault::Handshake(int &tmpFD, const AccConnReq &connReq, con
         return ACC_NEW_OBJECT_FAIL;
     }
 
-    // tmpLink作为智能指针 异常分支返回时会自动析构释放资源
+    tmpFD = -1; // The link owns the fd, including handshake failure paths.
     if (LinkReceive(tmpLink, ipAndPort) != ACC_OK) {
         LOG_ERROR("Failed to receive link");
         return ACC_ERROR;

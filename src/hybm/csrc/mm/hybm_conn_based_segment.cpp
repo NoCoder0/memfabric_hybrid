@@ -233,14 +233,23 @@ Result HybmConnBasedSegment::Mmap() noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);
     for (const auto &import : imports_) {
-        if (import.rankId == options_.rankId) {
+        if (import.rankId == options_.rankId || import.size == 0) {
             continue;
         }
-        mappedGvaMem_.insert(import.gva);
+        auto [it, inserted] = mappedGvaMem_.insert(import.gva);
 
         auto ret = HybmVaManager::GetInstance().AddVaInfo({import.gva, 0, 0, import.size, HYBM_MEM_TYPE_HOST}, false,
                                                           AddressOwnership::Imported);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
+        if (ret != BM_OK) {
+            if (inserted) {
+                mappedGvaMem_.erase(it);
+            }
+            BM_LOG_ERROR("AddVaInfo failed, rankId=" << import.rankId << " gva=" << import.gva << " ret=" << ret);
+            return ret;
+        }
+        if (!inserted && import.gva != 0) {
+            HybmVaManager::GetInstance().RemoveOneVaInfo(import.gva, 0, 0);
+        }
     }
     imports_.clear();
     return 0;

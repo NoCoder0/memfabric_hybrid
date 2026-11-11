@@ -988,6 +988,33 @@ int32_t MemEntityDefault::RemoveImported(const std::vector<uint32_t> &ranks) noe
     return BM_OK;
 }
 
+int32_t MemEntityDefault::RemoveAllImported() noexcept
+{
+    BM_ASSERT_LOG_AND_RETURN(initialized_, "the object is not initialized", BM_NOT_INITIALIZED);
+    std::set<uint32_t> ranks;
+    {
+        std::lock_guard<std::mutex> lock(importMutex_);
+        for (const auto &peer : importedRanks_) {
+            ranks.insert(peer.first);
+        }
+        for (const auto &peer : importedMemories_) {
+            ranks.insert(peer.first);
+        }
+    }
+    ranks.erase(options_.rankId);
+    int32_t firstError = BM_OK;
+    for (auto rank : ranks) {
+        auto ret = RemoveImported({rank});
+        if (ret != BM_OK) {
+            BM_LOG_WARN("remove imported rank failed, rank=" << rank << " ret=" << ret);
+            if (firstError == BM_OK) {
+                firstError = ret;
+            }
+        }
+    }
+    return firstError;
+}
+
 int32_t MemEntityDefault::CopyData(hybm_copy_params &params, hybm_data_copy_direction direction, void *stream,
                                    uint32_t flags) noexcept
 {

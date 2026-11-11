@@ -217,6 +217,9 @@ int32_t SmemBmEntry::Initialize(const hybm_options &options)
 
 void SmemBmEntry::Uninitialize()
 {
+    if (reconnectManager_ != nullptr) {
+        reconnectManager_->ReleaseDisconnectObserver();
+    }
     if (!inited_) {
         return;
     }
@@ -357,6 +360,7 @@ Result SmemBmEntry::Leave(uint32_t flags)
         if (auto leaveRet = groupMgr->Leave(); leaveRet != SM_OK) {
             SM_LOG_ERROR("rankId:" << groupMgr->GetLocalRankId() << " SmemBmEntry::Leave failed, result: " << leaveRet);
             TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 1);
+            return leaveRet;
         } else {
             SM_LOG_INFO("rankId:" << groupMgr->GetLocalRankId() << " SmemBmEntry::Leave success.");
             // 出组成功后清 joined_，否则 Uninitialize 会基于 joined_ 再次 Leave，
@@ -369,6 +373,9 @@ Result SmemBmEntry::Leave(uint32_t flags)
         TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 0);
     }
     joined_ = false;
+    if (auto ret = hybm_remove_all_imported(entity_, 0U); ret != SM_OK) {
+        SM_LOG_WARN("SmemBmEntry::Leave remove imported peers failed, rank=" << options_.rank << " ret=" << ret);
+    }
     return SM_OK;
 }
 
@@ -730,6 +737,9 @@ int SmemBmEntry::SetupGroupManagerCallbacks() noexcept
         return SM_ERROR;
     }
 
+    reconnectManager_ =
+        std::make_shared<SmemReconnectManager>([this] { return hybm_remove_all_imported(entity_, 0U); });
+
     if (auto ret = RegisterAsyncCallbacks(asyncMgr); ret != SMEM_OK) {
         return ret;
     }
@@ -741,6 +751,7 @@ int SmemBmEntry::SetupGroupManagerCallbacks() noexcept
 
     auto *groupMgr = static_cast<SmemGroupManager *>(tcpStore);
     groupMgr->SetExecutor(executor.Get());
+    reconnectManager_->RegisterDisconnectObserver(*tcpStore);
     SM_LOG_INFO("SmemBmEntry callbacks setup, rank " << groupMgr->GetLocalRankId());
     return SMEM_OK;
 }
@@ -748,7 +759,8 @@ int SmemBmEntry::SetupGroupManagerCallbacks() noexcept
 int SmemBmEntry::RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept
 {
     asyncMgr->SetWhitelistCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {
-        return OnAddToWhitelist(rankId, others, reqId);
+        return reconnectManager_->ImportAfterReconnectCleanup(others,
+                                                              [&] { return OnAddToWhitelist(rankId, others, reqId); });
     });
     asyncMgr->SetRemoveWhitelistCallback(
         [this](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {

@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <functional>
+#include <unordered_set>
 
 #include "smem_config_store.h"
 #include "smem_group_manager.h"
@@ -106,6 +107,8 @@ public:
     bool ProbeLeaderAlive(int timeoutMs = 2000) noexcept;
     void SetConnectStatus(bool status) noexcept override;
     void RegisterClientBrokenHandler(const ConfigStoreClientBrokenHandler &handler) noexcept override;
+    // 仅通知状态失效，不接管重连，保持原有心跳重连与 HA 接管判定。
+    void RegisterClientBrokenObserver(const std::shared_ptr<ConfigStoreClientBrokenHandler> &observer) noexcept;
 
     void RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept override;
 
@@ -158,6 +161,7 @@ private:
                                                                        int waitTimeoutSec = 600) noexcept;
     Result SendMessageNonBlock(const std::vector<uint8_t> &reqBody) noexcept;
     Result LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept;
+    void NotifyClientBrokenObservers(const ock::acc::AccTcpLinkComplexPtr &link, bool fromBrokenHandler) noexcept;
     Result ReceiveResponseHandler(const ock::acc::AccTcpRequestContext &context) noexcept;
     Result HandleControlMessage(SmemMessage &msg) noexcept;
     Result HandleAddToWhitelist(SmemMessage &msg) noexcept;
@@ -225,6 +229,10 @@ private:
     ConfigStoreReconnectHandler reconnectHandler{nullptr};
     std::mutex brokenHandlerMutex_;
     std::vector<ConfigStoreClientBrokenHandler> brokenHandler_;
+    std::vector<std::weak_ptr<ConfigStoreClientBrokenHandler>> brokenObservers_;
+    std::mutex brokenObserverNotifyMutex_;
+    uint64_t notifiedBrokenLinkId_{UINT64_MAX};
+    std::unordered_set<uint32_t> pendingBrokenObserverLinks_;
     std::atomic<bool> isRunning_{false};
     std::atomic<bool> reconnecting_{false};
     std::thread heartBeatThread_;

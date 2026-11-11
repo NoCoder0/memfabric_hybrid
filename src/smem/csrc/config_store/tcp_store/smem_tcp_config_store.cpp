@@ -898,6 +898,15 @@ void TcpConfigStore::SetRankId(const int32_t &rankId) noexcept
 
 Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
 {
+    bool expected = false;
+    if (!reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        STORE_LOG_ERROR_LIMIT("Reconnect already in progress, rankId: " << rankId_);
+        return SM_NOT_CONNECTED;
+    }
+    const auto brokenLink = accClientLink_;
+    if (brokenLink != nullptr && !brokenLink->Established()) {
+        NotifyClientBrokenObservers(brokenLink, false);
+    }
     auto retryMaxTimes = reconnectRetryTimes < 0 ? CONNECT_RETRY_MAX_TIMES : reconnectRetryTimes;
     ock::acc::AccConnReq connReq;
     connReq.reconnect = 1; // reconnection
@@ -908,6 +917,7 @@ Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
     if (result != 0) {
         STORE_LOG_ERROR_LIMIT("Reconnect to server failed, ip: " << serverIp_ << " port: " << serverPort_
                                                                  << " result: " << result);
+        reconnecting_.store(false, std::memory_order_release);
         return result;
     }
     STORE_LOG_INFO("Reconnect to server successful, rankId: " << rankId_);
@@ -915,6 +925,7 @@ Result TcpConfigStore::ReConnectAfterBroken(int reconnectRetryTimes) noexcept
         (void)reconnectHandler();
     }
     SetConnectStatus(true);
+    reconnecting_.store(false, std::memory_order_release);
     return SM_OK;
 }
 
@@ -955,6 +966,22 @@ void TcpConfigStore::RegisterClientBrokenHandler(const ConfigStoreClientBrokenHa
     brokenHandler_.push_back(handler);
 }
 
+void TcpConfigStore::RegisterClientBrokenObserver(
+    const std::shared_ptr<ConfigStoreClientBrokenHandler> &observer) noexcept
+{
+    std::lock_guard<std::mutex> guard(brokenHandlerMutex_);
+    for (auto it = brokenObservers_.begin(); it != brokenObservers_.end();) {
+        if (it->expired()) {
+            it = brokenObservers_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (observer != nullptr) {
+        brokenObservers_.emplace_back(observer);
+    }
+}
+
 void TcpConfigStore::RegisterServerBrokenHandler(const ConfigStoreServerBrokenHandler &handler) noexcept
 {
     if (accServer_ == nullptr) {
@@ -964,15 +991,49 @@ void TcpConfigStore::RegisterServerBrokenHandler(const ConfigStoreServerBrokenHa
     accServer_->RegisterBrokenLinkCHandler(handler);
 }
 
+void TcpConfigStore::NotifyClientBrokenObservers(const ock::acc::AccTcpLinkComplexPtr &link,
+                                                 bool fromBrokenHandler) noexcept
+{
+    std::lock_guard<std::mutex> notifyGuard(brokenObserverNotifyMutex_);
+    auto linkId = link->Id();
+    if (fromBrokenHandler && pendingBrokenObserverLinks_.erase(linkId) != 0U) {
+        return;
+    }
+    if (notifiedBrokenLinkId_ == linkId) {
+        return;
+    }
+    std::vector<std::shared_ptr<ConfigStoreClientBrokenHandler>> observers;
+    {
+        std::lock_guard<std::mutex> guard(brokenHandlerMutex_);
+        for (auto it = brokenObservers_.begin(); it != brokenObservers_.end();) {
+            if (auto observer = it->lock()) {
+                observers.push_back(std::move(observer));
+                ++it;
+            } else {
+                it = brokenObservers_.erase(it);
+            }
+        }
+    }
+    for (const auto &observer : observers) {
+        (void)(*observer)();
+    }
+    notifiedBrokenLinkId_ = linkId;
+    if (!fromBrokenHandler) {
+        pendingBrokenObserverLinks_.insert(linkId);
+    }
+}
+
 Result TcpConfigStore::LinkBrokenHandler(const ock::acc::AccTcpLinkComplexPtr &link) noexcept
 {
     STORE_LOG_WARN("link broken, linkId: " << link->Id());
-    SetConnectStatus(false);
     std::vector<ConfigStoreClientBrokenHandler> handlers;
     {
         std::lock_guard<std::mutex> guard(brokenHandlerMutex_);
         handlers = brokenHandler_;
     }
+    NotifyClientBrokenObservers(link, true);
+    // 先推进恢复代次，再允许心跳线程发起重连。
+    SetConnectStatus(false);
     for (auto &handler : handlers) {
         STORE_LOG_INFO("link broken, linkId: " << link->Id() << ", call extern handler.");
         (void)handler();
@@ -1090,15 +1151,7 @@ void TcpConfigStore::TryReconnectByHeartbeat() noexcept
 
 void TcpConfigStore::ReconnectWithDedup() noexcept
 {
-    // 单飞去重：send 触发与心跳看门狗共用此入口，保证并发时只有一个
-    // ReConnectAfterBroken 在跑，避免两个 ConnectToPeerServer 同时操作 accClient_。
-    bool expected = false;
-    if (!reconnecting_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-        return;
-    }
-    // 每次只做一次有界重连尝试（acc 层 1 次 connect），失败则等下一个触发源再试。
     (void)ReConnectAfterBroken(1);
-    reconnecting_.store(false, std::memory_order_release);
 }
 
 bool TcpConfigStore::HasExternalBrokenHandler() noexcept
@@ -1194,6 +1247,7 @@ Result TcpConfigStore::HandleQueryLinkState(SmemMessage &msg) noexcept
         }
     }
     SmemMessage response = SmemMessage::PackLinkStateResponse(localRankInfo_, entries);
+    response.requestId = msg.requestId;
     auto packedResponse = SmemMessagePacker::Pack(response);
     STORE_LOG_INFO("[GM][Client][Send] rank=" << localRankId_ << " type=LNKSRSP reqId=" << msg.requestId << " entries="
                                               << entries.size() << ", role=" << RankRoleName(localRankInfo_.role));

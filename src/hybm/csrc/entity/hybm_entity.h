@@ -49,6 +49,7 @@ public:
 
     virtual int32_t ConnectTransport(const uint32_t *ranks, uint32_t count, uint32_t flags) noexcept = 0;
     virtual int32_t RemoveImported(const std::vector<uint32_t> &ranks) noexcept = 0;
+    virtual int32_t RemoveAllImported() noexcept = 0;
 
     virtual int32_t SetExtraContext(const void *context, uint32_t size) noexcept = 0;
 

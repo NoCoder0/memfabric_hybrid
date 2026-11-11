@@ -241,6 +241,14 @@ int32_t hybm_entity_reach_types(hybm_entity_t e, uint32_t rank, hybm_data_op_typ
 int32_t hybm_remove_imported(hybm_entity_t e, uint32_t rank, uint32_t flags);
 
 /**
+ * @brief Remove all remote ranks in the entity import records, continuing after removal errors.
+ * @param e                [in] entity created by hybm_create_entity
+ * @param flags            [in] optional flags, default value 0
+ * @return 0 if successful, otherwise the first removal error
+ */
+int32_t hybm_remove_all_imported(hybm_entity_t e, uint32_t flags);
+
+/**
  * @brief Write user extra context into the fixed addr of the hbm
  *
  * @param e                [in] entity created by hybm_create_entity

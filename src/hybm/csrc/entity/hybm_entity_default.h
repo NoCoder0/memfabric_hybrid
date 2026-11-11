@@ -72,6 +72,7 @@ public:
                                     uint32_t flags) noexcept override;
     int32_t ImportEntityExchangeInfo(const ExchangeInfoReader desc[], uint32_t count, uint32_t flags) noexcept override;
     int32_t RemoveImported(const std::vector<uint32_t> &ranks) noexcept override;
+    int32_t RemoveAllImported() noexcept override;
 
     int32_t SetExtraContext(const void *context, uint32_t size) noexcept override;
 

@@ -253,6 +253,14 @@ HYBM_API int32_t hybm_remove_imported(hybm_entity_t e, uint32_t rank, uint32_t f
     return entity->RemoveImported(ranks);
 }
 
+HYBM_API int32_t hybm_remove_all_imported(hybm_entity_t e, uint32_t flags)
+{
+    BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);
+    auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "entity is nullptr", BM_INVALID_PARAM);
+    return entity->RemoveAllImported();
+}
+
 HYBM_API int32_t hybm_set_extra_context(hybm_entity_t e, const void *context, uint32_t size)
 {
     BM_ASSERT_LOG_AND_RETURN(e != nullptr, "e is nullptr", BM_INVALID_PARAM);

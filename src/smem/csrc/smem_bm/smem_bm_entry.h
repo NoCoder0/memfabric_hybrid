@@ -23,6 +23,7 @@
 #include "smem_config_store.h"
 #include "smem_tcp_config_store.h"
 #include "smem_bm.h"
+#include "smem_reconnect_manager.h"
 
 namespace ock {
 namespace smem {
@@ -160,6 +161,7 @@ private:
     uint8_t rankRole_{SMEM_GROUP_RANK_ROLE_UNKNOWN};
 
     std::shared_ptr<std::promise<void>> joinComplete_;
+    std::shared_ptr<SmemReconnectManager> reconnectManager_;
 };
 using SmemBmEntryPtr = SmRef<SmemBmEntry>;
 
