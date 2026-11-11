@@ -24,7 +24,7 @@ namespace ock {
 namespace mf {
 constexpr uint8_t MAX_DEVICE_COUNT = 16;
 AsymmetricMemSegment::AsymmetricMemSegment(const MemSegmentOptions &options, int eid) noexcept
-    : HybmDevLegacySegment{options, eid}
+    : MemSegment{options, eid}
 {}
 
 AsymmetricMemSegment::~AsymmetricMemSegment()
@@ -419,8 +419,10 @@ Result AsymmetricMemSegment::Export(std::string &exInfo) noexcept
     HbmExportDeviceInfo info;
     info.devicePhyId = devicePhyId_;
     info.rankId = options_.rankId;
-    info.pid = HybmDevLegacySegment::pid_;
-    HybmDevLegacySegment::GetDeviceInfo(info.sdid, info.serverId, info.superPodId);
+    info.pid = pid_;
+    info.sdid = sdid_;
+    info.serverId = serverId_;
+    info.superPodId = superPodId_;
     auto ret = LiteralExInfoTranslater<HbmExportDeviceInfo>{}.Serialize(info, exInfo);
     if (ret != BM_OK) {
         BM_LOG_ERROR("export info failed: " << ret);
@@ -444,7 +446,6 @@ Result AsymmetricMemSegment::Export(const MemSlicePtr &slice, std::string &exInf
 
 Result AsymmetricMemSegment::ExportSlice(const RegisterSlice &regSlice, std::string &exInfo) noexcept
 {
-    uint32_t sdId;
     UserSliceExportInfo info;
     info.segmentType =
         (regSlice.slice->memType_ == HYBM_MEM_TYPE_DEVICE) ? SEGMENT_TYPE_USER_DEV : SEGMENT_TYPE_USER_DRAM;
@@ -454,7 +455,8 @@ Result AsymmetricMemSegment::ExportSlice(const RegisterSlice &regSlice, std::str
     info.size = regSlice.slice->size_;
     info.devicePhyId = static_cast<uint32_t>(devicePhyId_);
     info.rankId = options_.rankId;
-    HybmDevLegacySegment::GetDeviceInfo(sdId, info.serverId, info.superPodId);
+    info.serverId = serverId_;
+    info.superPodId = superPodId_;
     // HBM shared 携带带类型标记的定长共享名（129B，VMM share_handle 可含 \0，必须整段拷贝防截断）；
     // DRAM/非 shared 为空名，info.name 保持全零
     if (!regSlice.name.empty()) {
@@ -915,20 +917,15 @@ bool AsymmetricMemSegment::CheckSdmaReaches(uint32_t rankId) const noexcept
         return false;
     }
 
-    uint32_t sdId;
-    uint32_t serverId;
-    uint32_t superPodId;
-    HybmDevLegacySegment::GetDeviceInfo(sdId, serverId, superPodId);
-
-    if (pos->second.serverId == serverId) {
+    if (pos->second.serverId == serverId_) {
         return true;
     }
 
-    if (pos->second.superPodId == invalidSuperPodId || superPodId == invalidSuperPodId) {
+    if (pos->second.superPodId == invalidSuperPodId || superPodId_ == invalidSuperPodId) {
         return false;
     }
 
-    return pos->second.superPodId == superPodId;
+    return pos->second.superPodId == superPodId_;
 }
 
 // ====================== IPC/VMM 双路径共享 helper 实现 ======================

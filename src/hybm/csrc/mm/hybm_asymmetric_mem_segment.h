@@ -17,7 +17,6 @@
 #include <bitset>
 
 #include "dl_hal_api.h"
-#include "hybm_dev_legacy_segment.h"
 #include "hybm_mem_segment.h"
 
 namespace ock {
@@ -80,7 +79,7 @@ struct UserSliceExportInfo {
 static_assert(sizeof(UserSliceExportInfo) == UNIFIED_EXCHANGE_SEG_INFO_SIZE, "UserSliceExportInfo must be 192 bytes");
 static_assert(offsetof(UserSliceExportInfo, segmentType) == SEGMENT_TYPE_OFFSET, "segmentType offset mismatch!");
 
-class AsymmetricMemSegment : public HybmDevLegacySegment {
+class AsymmetricMemSegment : public MemSegment {
 public:
     AsymmetricMemSegment(const MemSegmentOptions &options, int eid) noexcept;
     ~AsymmetricMemSegment() override;
@@ -140,6 +139,10 @@ private:
     Result UserMemDestroyName(const char *name) noexcept;
 
 private:
+    uint64_t totalVirtualSize_{0UL};
+    uint8_t *lvaBase_{nullptr}; // device lva base
+    uint64_t allocatedSize_{0UL};
+
     std::mutex mutex_;
     std::bitset<MAX_PEER_DEVICES> enablePeerDevices_;
     std::map<uint32_t, RegisterSlice> registerSlices_;

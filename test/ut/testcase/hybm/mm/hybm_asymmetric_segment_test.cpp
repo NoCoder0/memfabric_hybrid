@@ -26,7 +26,6 @@
 #include "hybm_asymmetric_mem_segment.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
-#include "hybm_dev_legacy_segment.h"
 #include "hybm_mem_segment.h"
 #undef private
 #undef protected

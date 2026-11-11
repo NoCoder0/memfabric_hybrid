@@ -20,7 +20,9 @@ namespace mf {
 constexpr auto DEVICE_SHM_NAME_SIZE = 64U;
 class MemSlice;
 class MemSegment;
-class HybmDevLegacySegment;
+
+constexpr uint32_t invalidSuperPodId = 0xFFFFFFFFU;
+constexpr uint32_t invalidServerId = 0x3FFU;
 
 using MemSlicePtr = std::shared_ptr<MemSlice>;
 using MemSegmentPtr = std::shared_ptr<MemSegment>;

@@ -14,7 +14,7 @@
 
 #include <unordered_set>
 
-#include "hybm_dev_legacy_segment.h"
+#include "hybm_mem_segment.h"
 #include "hybm_mem_common.h"
 #include "dl_hal_api.h"
 

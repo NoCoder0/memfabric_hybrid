@@ -22,7 +22,6 @@
 #include "hybm_compose_data_op.h"
 #include "hybm_data_op_host_rdma.h"
 #include "hybm_data_op_host_shm.h"
-#include "hybm_dev_legacy_segment.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"

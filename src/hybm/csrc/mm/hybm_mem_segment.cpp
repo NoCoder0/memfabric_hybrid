@@ -18,7 +18,6 @@
 #include "hybm_asymmetric_mem_segment.h"
 #include "hybm_common_include.h"
 #include "hybm_conn_based_segment.h"
-#include "hybm_dev_legacy_segment.h"
 #include "hybm_gva.h"
 #include "hybm.h"
 #include "hybm_host_shm_segment.h"
@@ -172,7 +171,8 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
             if (HybmGetGvaVersion() == HYBM_GVA_V4 || socType_ == AscendSocType::ASCEND_950) {
                 tmpSeg = std::make_shared<HybmVmmBasedSegment>(options, entityId);
             } else {
-                tmpSeg = std::make_shared<HybmDevLegacySegment>(options, entityId);
+                BM_LOG_ERROR("HBM segment requires GVA V4, gvaVersion: " << HybmGetGvaVersion()
+                                                                         << " socType: " << int(socType_));
             }
             break;
         case HYBM_MST_DRAM: {

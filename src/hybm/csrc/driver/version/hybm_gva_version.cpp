@@ -25,9 +25,6 @@ namespace mf {
 const std::string DRIVER_VER_V5_ST = "V100R001C10B001"; // hdk26.0.0
 const std::string DRIVER_VER_V5_ED = "V100R001C14B999";
 const std::string DRIVER_VER_V4 = "V100R001C23SPC005B219"; // hdk25.5.0
-const std::string DRIVER_VER_V3 = "V100R001C21B035";
-const std::string DRIVER_VER_V2 = "V100R001C19SPC109B220";
-const std::string DRIVER_VER_V1 = "V100R001C18B100";
 const std::string DRIVER_INSTALL_INFO = "/etc/ascend_install.info";
 const std::string DRIVER_DEFAULT_PATH = "/usr/local/Ascend";
 
@@ -180,27 +177,12 @@ int32_t HalGvaPrecheck()
         checkVer = HYBM_GVA_V4;
         return BM_OK;
     }
-    if (DriverVersionCheck(DRIVER_VER_V3)) {
-        BM_LOG_INFO("Driver version V3 found");
-        checkVer = HYBM_GVA_V3;
-        return BM_OK;
-    }
-    if (DriverVersionCheck(DRIVER_VER_V2)) {
-        BM_LOG_INFO("Driver version V2 found");
-        checkVer = HYBM_GVA_V2;
-        return BM_OK;
-    }
-    if (DriverVersionCheck(DRIVER_VER_V1)) {
-        BM_LOG_INFO("Driver version V1 found");
-        checkVer = HYBM_GVA_V1;
-        return BM_OK;
-    }
     if (!DriverVersionCheck(DRIVER_VER_V5_ED) && DriverVersionCheck(DRIVER_VER_V5_ST)) {
         BM_LOG_INFO("Driver version V5 found");
         checkVer = HYBM_GVA_V4;
         return BM_OK;
     }
-    BM_LOG_ERROR("Failed to determine driver version");
+    BM_LOG_ERROR("Driver version is lower than the minimum supported version " << DRIVER_VER_V4);
     return BM_ERROR;
 }
 

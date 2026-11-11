@@ -218,7 +218,7 @@ typedef struct {
         return BM_DL_FUNCTION_FAILED;                                                                 \
     } while (0)
 
-enum HybmGvaVersion : uint32_t { HYBM_GVA_V1 = 0, HYBM_GVA_V2 = 1, HYBM_GVA_V3 = 2, HYBM_GVA_V4 = 3, HYBM_GVA_UNKNOWN };
+enum HybmGvaVersion : uint32_t { HYBM_GVA_V4 = 3, HYBM_GVA_UNKNOWN };
 
 } // namespace mf
 } // namespace ock

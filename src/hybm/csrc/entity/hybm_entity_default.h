@@ -17,7 +17,6 @@
 
 #include "hybm_common_include.h"
 #include "hybm_data_operator.h"
-#include "hybm_dev_legacy_segment.h"
 #include "hybm_entity.h"
 #include "hybm_mem_segment.h"
 #include "hybm_transport_common.h"

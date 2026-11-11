@@ -14,7 +14,6 @@
 #include <fstream>
 #include <mutex>
 #include <string>
-#include "devmm_svm_gva.h"
 #include "hybm.h"
 #include "hybm_ptracer.h"
 #include "hybm_common_include.h"
@@ -133,26 +132,16 @@ HYBM_API void hybm_uninit()
     }
 
     ptracer_uninit();
-    auto socType = DlAclApi::GetAscendSocType();
-    if ((socType == AscendSocType::ASCEND_950) || (HybmGetGvaVersion() == HYBM_GVA_V4)) {
-        if (g_baseAddr != 0) {
-            auto ret = DlHalApi::HalMemUnmap(reinterpret_cast<void *>(g_baseAddr));
-            BM_LOG_TRACE("unmap meta info res: " << ret);
-            if (g_allocHandle != nullptr) {
-                ret = DlHalApi::HalMemRelease((drv_mem_handle_t *)g_allocHandle);
-                g_allocHandle = nullptr;
-                BM_LOG_TRACE("release meta memory handle res: " << ret);
-            }
-            ret = DlHalApi::HalMemAddressFree(reinterpret_cast<void *>(g_baseAddr));
-            BM_LOG_TRACE("free meta memory res: " << ret);
+    if (g_baseAddr != 0) {
+        auto ret = DlHalApi::HalMemUnmap(reinterpret_cast<void *>(g_baseAddr));
+        BM_LOG_TRACE("unmap meta info res: " << ret);
+        if (g_allocHandle != nullptr) {
+            ret = DlHalApi::HalMemRelease((drv_mem_handle_t *)g_allocHandle);
+            g_allocHandle = nullptr;
+            BM_LOG_TRACE("release meta memory handle res: " << ret);
         }
-    } else {
-        if (g_baseAddr != 0) {
-            drv::HalGvaFree(HYBM_DEVICE_META_ADDR, HYBM_DEVICE_INFO_SIZE);
-            auto ret = drv::HalGvaUnreserveMemory(g_baseAddr);
-            BM_LOG_TRACE("uninitialize GVA memory return: " << ret);
-            g_baseAddr = 0ULL;
-        }
+        ret = DlHalApi::HalMemAddressFree(reinterpret_cast<void *>(g_baseAddr));
+        BM_LOG_TRACE("free meta memory res: " << ret);
     }
 
     transport::device::DeviceUrmaTransportManager::ReleaseThreadLocalBuffers();
