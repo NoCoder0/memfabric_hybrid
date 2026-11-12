@@ -226,14 +226,6 @@ export MF_CONFIG_STORE_URL=etcd://10.1.2.3:2379
    etcdctl --endpoints=http://10.1.2.3:2379 get "" --prefix
    ```
 
-3. **跑自带测试工具**（`--build_test ON` 构建时产出 `etcd_backend_test`）：
-
-   ```bash
-   ./etcd_backend_test etcd://127.0.0.1:2379 4   # 参数：etcd地址 线程数
-   ```
-
-   预期输出每个线程 `SUCCESS! Found X items.`。
-
 ## 五、进阶用法
 
 ### 5.1 多集群隔离（#实例ID）

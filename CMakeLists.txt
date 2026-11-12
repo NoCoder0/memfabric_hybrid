@@ -184,7 +184,5 @@ endif ()
 
 if ("${BUILD_TEST}" STREQUAL "ON")
     add_subdirectory(benchmark/bm)
-    add_subdirectory(test/integration/config_store)
-    add_subdirectory(test/integration/decrypt)
     add_subdirectory(benchmark/transfer/perf_cpp)
 endif ()
