@@ -933,6 +933,11 @@ int SmemBmEntry::OnEstablishConnection(uint32_t rankId, const std::vector<RankFu
     }
     auto mmapRet = hybm_mmap(entity_, 0);
     if (mmapRet != BM_OK) {
+        // P2P 未就绪属启动竞态期瞬态，根因已在 segment 层记 WARN，由 Server 状态机重试补齐
+        if (mmapRet == BM_P2P_NOT_READY) {
+            SM_LOG_WARN("hybm_mmap not ready in OnEstablishConnection, rankId=" << rankId << ", will retry later");
+            return SMEM_GROUP_P2P_NOT_READY;
+        }
         SM_LOG_ERROR("hybm_mmap failed in OnEstablishConnection, rankId=" << rankId << " ret=" << mmapRet);
         return SMEM_ERROR;
     }
@@ -1013,6 +1018,12 @@ int SmemBmEntry::OnAddSlices(uint32_t extendingRankId, const MultiBytes &newSlic
     }
     auto mmapRet = hybm_mmap(entity_, 0);
     if (mmapRet != BM_OK) {
+        // P2P 未就绪可由白名单重试补发，根因已在 segment 层记 WARN
+        if (mmapRet == BM_P2P_NOT_READY) {
+            SM_LOG_WARN("OnAddSlices: hybm_mmap not ready, will re-deliver via whitelist retry, extendingRank="
+                        << extendingRankId);
+            return SMEM_GROUP_P2P_NOT_READY;
+        }
         SM_LOG_ERROR("OnAddSlices: hybm_mmap failed, extendingRank=" << extendingRankId << " ret=" << mmapRet);
         return SM_ERROR;
     }

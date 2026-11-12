@@ -32,6 +32,8 @@ _PROTOCOL_TO_DATA_OP = {
     "host_tcp": bm.BmDataOpType.HOST_TCP,
 }
 _POOL_MEM = {"device": bm.BmMemType.DEVICE, "host": bm.BmMemType.HOST}
+# smem_bm_def.h：bit 7 打开 NUMA 性能模式，bit 0~6 为策略值，127 表示 AUTO 亲和
+_NUMA_AUTO_FLAGS = (1 << 7) | 127
 
 
 class BmRank:
@@ -103,6 +105,7 @@ class BmRank:
             max_hbm_size=hbm,
             data_op_type=_PROTOCOL_TO_DATA_OP[self.params.protocol],
             enable_56bits_gva=True,
+            flags=_NUMA_AUTO_FLAGS,
         )
         if handle is None:
             raise RuntimeError(f"bm.create2 failed: hbm={hbm} detail={mf.get_last_err_msg()}")

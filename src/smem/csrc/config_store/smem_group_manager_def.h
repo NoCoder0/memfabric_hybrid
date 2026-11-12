@@ -54,8 +54,9 @@ inline const char *RankRoleName(uint8_t role) noexcept
     }
 }
 
-// 可重试的瞬时状态标记：P2P 尚未使能（对应 hybm 的 BM_P2P_NOT_READY）。经 OnAddToWhitelist
-// 上抛给 GM 客户端 dispatcher，用于仅跳过该情形的失败 ERROR 打印（根因已在 segment 层记 WARN）。
+// 可重试的瞬时状态标记：P2P 尚未使能（对应 hybm 的 BM_P2P_NOT_READY）。经 OnAddToWhitelist、
+// OnAddSlices、OnEstablishConnection 上抛给 GM 客户端 dispatcher，用于仅跳过该情形的失败 ERROR 打印
+// （根因已在 segment 层记 WARN）。
 constexpr int32_t SMEM_GROUP_P2P_NOT_READY = -406;
 
 // Collection of Bytes, used for multi-address / multi-URL scenarios.

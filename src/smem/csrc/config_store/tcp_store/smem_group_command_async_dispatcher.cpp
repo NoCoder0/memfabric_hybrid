@@ -293,7 +293,9 @@ void SmemGroupCommandAsyncDispatcher::BackgroundEstablishConnection(const ConnEs
     {
         const std::string peers = JoinRankIds(req.peers);
         if (overallRet != 0) {
-            SM_LOG_ERROR("[GM][Client][Recv] EstConn FAIL r=" << req.rankId << " ret=" << overallRet);
+            if (overallRet != SMEM_GROUP_P2P_NOT_READY) {
+                SM_LOG_ERROR("[GM][Client][Recv] EstConn FAIL r=" << req.rankId << " ret=" << overallRet);
+            }
         } else {
             SM_LOG_INFO("[GM][Client][Recv] EstConn r=" << req.rankId << " peers=[" << peers << "]");
         }

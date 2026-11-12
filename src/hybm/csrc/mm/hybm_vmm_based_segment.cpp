@@ -658,13 +658,21 @@ Result HybmVmmBasedSegment::Mmap() noexcept
             uint32_t p2pStatus = 0;
             auto p2pRet = DlAclApi::RtGetP2PStatus(static_cast<uint32_t>(deviceId_),
                                                    static_cast<uint32_t>(im.devicePhyId), p2pStatus);
-            if (p2pRet != BM_OK || p2pStatus != 1) {
-                BM_LOG_WARN("P2P not ready, rank=" << im.rankId << " remote_dev=" << im.devicePhyId << " local_dev="
-                                                   << devicePhyId_ << " ret=" << p2pRet << " status=" << p2pStatus);
+            if (p2pRet != BM_OK) {
+                BM_LOG_ERROR("query P2P status failed, rank=" << im.rankId << " remote_dev=" << im.devicePhyId
+                                                              << " local_dev=" << devicePhyId_ << " ret=" << p2pRet);
                 if (options_.enable56BitsGva) {
                     ReleaseMmapLva(lva);
                 }
                 return BM_ERROR;
+            }
+            if (p2pStatus != 1) {
+                BM_LOG_WARN("P2P not ready, rank=" << im.rankId << " remote_dev=" << im.devicePhyId << " local_dev="
+                                                   << devicePhyId_ << " status=" << p2pStatus << ", will retry later");
+                if (options_.enable56BitsGva) {
+                    ReleaseMmapLva(lva);
+                }
+                return BM_P2P_NOT_READY;
             }
         }
 

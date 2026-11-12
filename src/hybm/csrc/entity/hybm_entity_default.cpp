@@ -887,7 +887,11 @@ int32_t MemEntityDefault::Mmap() noexcept
     if (hbmSegment_ != nullptr && options_.scene != HYBM_SCENE_TRANS) {
         auto ret = hbmSegment_->Mmap();
         if (ret != BM_OK) {
-            BM_LOG_ERROR("hbmSegment_->Mmap() failed, ret: " << ret << " entityId: " << id_);
+            if (ret == BM_P2P_NOT_READY) {
+                BM_LOG_WARN("hbmSegment_->Mmap() not ready, entityId: " << id_ << ", will retry later");
+            } else {
+                BM_LOG_ERROR("hbmSegment_->Mmap() failed, ret: " << ret << " entityId: " << id_);
+            }
             return ret;
         }
     }
