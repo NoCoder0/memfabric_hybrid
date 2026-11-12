@@ -2,6 +2,8 @@
 
 本指南汇总 Mooncake 在昇腾 NPU 环境下使用基于MemFabric的Tent 传输编译、安装部署、运行验证与环境变量配置。
 
+Mooncake TENT 的 MemFabric Transport 已通过 [Mooncake PR #4682](https://github.com/kvcache-ai/Mooncake/pull/4682) 合入；后端设计和配置说明参见 [Mooncake 官方文档](https://kvcache-ai.github.io/Mooncake/design/transfer-engine/transport/memfabric_transport.html)。
+
 > 参考环境为昇腾 NPU、aarch64、CANN 9.x 和 Python 3.11/3.12，命令中的路径请按实际环境调整。构建选项和打包逻辑如有变化，以当前源码中的 `CMakeLists.txt` 和 `scripts/build_wheel.sh` 为准。
 
 ## 目录
