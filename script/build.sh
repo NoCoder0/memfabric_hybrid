@@ -315,8 +315,10 @@ VERSION="$(tr -d '[:space:]' < "${PROJ_DIR}/VERSION")"
 if [ "${BUILD_PYTHON_WHL_TYPE}" == "daily" ]; then
     BUILD_DATE=$(date +%Y%m%d)
     export MEMFABRIC_VERSION="${VERSION}".dev"${BUILD_DATE}"
-else
+elif [ "${BUILD_PYTHON_WHL_TYPE}" == "release" ]; then
     export MEMFABRIC_VERSION="${VERSION}"
+else
+    export MEMFABRIC_VERSION="${VERSION}+${BUILD_PYTHON_WHL_TYPE}"
 fi
 echo "VERSION IS ${VERSION}"
 GIT_COMMIT=$(git -C "${PROJ_DIR}" rev-parse HEAD) || true

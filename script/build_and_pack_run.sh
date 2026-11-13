@@ -40,7 +40,8 @@ show_help() {
     echo "  --build_etcd_backend <ON/OFF> Enable/disable build and package etcd backend so, default: OFF"
     echo "  --build_tool <cmake/bazel>  Set build tool (cmake/bazel), default: cmake"
     echo "  --build_zbal <ON/OFF>       Bundle zbal (A3/A5) into the memfabric_hybrid wheel, default: OFF"
-    echo "  --build_python_whl_type <release/daily> Python release/daily whl build, default: release"
+    echo "  --build_python_whl_type <release/daily/custom> Python whl build type, default: release"
+    echo "                              custom: format like b010 (b + exactly 3 digits)"
     echo "                              (NPU + python builds only; needs torch/torch_npu preinstalled)"
     echo "  --help                      Show this help message"
     echo ""
@@ -96,6 +97,10 @@ while [[ "$#" -gt 0 ]]; do
             shift 2
             ;;
         --build_python_whl_type)
+            if [[ $# -lt 2 || -z "$2" ]]; then
+                echo "--build_python_whl_type requires a value"
+                exit 1
+            fi
             BUILD_PYTHON_WHL_TYPE="$2"
             shift 2
             ;;
@@ -112,6 +117,14 @@ while [[ "$#" -gt 0 ]]; do
     esac
 done
 
+LOWER_PYTHON_WHL_TYPE="${BUILD_PYTHON_WHL_TYPE,,}"
+if [[ "${LOWER_PYTHON_WHL_TYPE}" != "release" && "${LOWER_PYTHON_WHL_TYPE}" != "daily" ]] &&
+    [[ ! "${LOWER_PYTHON_WHL_TYPE}" =~ ^b[0-9]{3}$ ]]; then
+    echo "Error: invalid --build_python_whl_type '${BUILD_PYTHON_WHL_TYPE}'," \
+         "expected release/daily or format like b010 (b + exactly 3 digits)"
+    exit 1
+fi
+
 echo "BUILD_MODE: $BUILD_MODE"
 echo "BUILD_OPEN_ABI: $BUILD_OPEN_ABI"
 echo "BUILD_PYTHON: $BUILD_PYTHON"
@@ -127,7 +140,7 @@ echo "BUILD_PYTHON_WHL_TYPE: $BUILD_PYTHON_WHL_TYPE"
 
 cd ${ROOT_PATH}
 
-bash build.sh "${BUILD_MODE}" OFF "${BUILD_OPEN_ABI}" "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}" "${BUILD_ZBAL}" "${BUILD_PYTHON_WHL_TYPE}"
+bash build.sh "${BUILD_MODE}" OFF "${BUILD_OPEN_ABI}" "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}" "${BUILD_ZBAL}" "${LOWER_PYTHON_WHL_TYPE}"
 
 bash run_pkg_maker/make_run.sh "${BUILD_TEST}" "${XPU_TYPE}" "${BUILD_PYTHON}" "${BUILD_HCOM}" "${BUILD_ETCD_BACKEND}"
 
