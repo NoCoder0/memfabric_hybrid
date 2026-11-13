@@ -142,6 +142,8 @@ private:
     bool inited_ = false;
     bool joined_ = false;
     std::mutex mutex_;
+    // Leave runs outside the dispatcher; serialize its cleanup with peer callbacks.
+    std::mutex peerMutex_;
     hybm_entity_t entity_ = nullptr;
     void *hostGva_ = nullptr;
     void *deviceGva_ = nullptr;

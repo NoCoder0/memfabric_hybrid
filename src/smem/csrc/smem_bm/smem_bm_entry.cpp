@@ -373,6 +373,7 @@ Result SmemBmEntry::Leave(uint32_t flags)
         TP_TRACE_END(TP_SMEM_GROUP_LEAVE_RANK, 0);
     }
     joined_ = false;
+    std::lock_guard<std::mutex> lock(peerMutex_);
     if (auto ret = hybm_remove_all_imported(entity_, 0U); ret != SM_OK) {
         SM_LOG_WARN("SmemBmEntry::Leave remove imported peers failed, rank=" << options_.rank << " ret=" << ret);
     }
@@ -759,18 +760,25 @@ int SmemBmEntry::SetupGroupManagerCallbacks() noexcept
 int SmemBmEntry::RegisterAsyncCallbacks(SmemGroupCommandAsyncDispatcher *asyncMgr) noexcept
 {
     asyncMgr->SetWhitelistCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {
+        std::lock_guard<std::mutex> lock(peerMutex_);
         return reconnectManager_->ImportAfterReconnectCleanup(others,
                                                               [&] { return OnAddToWhitelist(rankId, others, reqId); });
     });
     asyncMgr->SetRemoveWhitelistCallback(
         [this](uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId) {
+            std::lock_guard<std::mutex> lock(peerMutex_);
             return OnRemoveFromWhitelist(rankId, others, reqId);
         });
     asyncMgr->SetConnectionCallback([this](uint32_t rankId, const std::vector<RankFullInfo> &peers, uint64_t reqId) {
+        std::lock_guard<std::mutex> lock(peerMutex_);
         return OnEstablishConnection(rankId, peers, reqId);
     });
-    asyncMgr->SetLinkStateQueryCallback([this]() { return OnQueryLinkState(); });
+    asyncMgr->SetLinkStateQueryCallback([this]() {
+        std::lock_guard<std::mutex> lock(peerMutex_);
+        return OnQueryLinkState();
+    });
     asyncMgr->SetAddSlicesCallback([this](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
+        std::lock_guard<std::mutex> lock(peerMutex_);
         return OnAddSlices(extendingRankId, newSlices, reqId);
     });
     return SMEM_OK;
