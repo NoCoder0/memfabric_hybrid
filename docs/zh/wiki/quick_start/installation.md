@@ -56,6 +56,21 @@ NPU 类型的 wheel 包内置 acc_offload 算子源码，安装编译为扩展�
 >
 > **纯 run 包（不含 whl）的场景不再支持 acc_offload 扩展库**，请安装 wheel 包后使用 `mfcli kernel install`。
 
+### 5. Copy Extend / AIV Direct SDMA 扩展库安装
+
+Copy Extend 和 AIV Direct SDMA 是两个可选的加速扩展库，通过 `COPY_EXTEND_FLAG` 和 `COPY_AIV_DIRECT_SDMA_FLAG` 搬运标记启用：
+
+- **Copy Extend**（`libmf_hybm_copy_extend.so`）：基于 MTE 引擎的数据拷贝加速，全芯片通用。
+- **AIV Direct SDMA**（`libmf_hybm_aiv_direct_sdma.so`）：将 SDMA 任务提交卸载到 AIV 协处理器，仅 A3 芯片支持。
+
+安装 MemFabric Hybrid whl 包后，执行 `mfcli kernel install` 自动完成编译安装；环境不支持时（如 AIV Direct SDMA 在非 A3 芯片上）自动跳过。
+
+通过 `mfcli kernel info` 查看扩展库的安装状态和安装路径。
+
+> [!NOTE] 说明
+>
+> **纯 run 包（不含 whl）的场景不再支持扩展库编译安装**，请安装 wheel 包后使用 `mfcli kernel install`。
+
 ---
 
 ## 二、 使用 C API
@@ -145,7 +160,7 @@ source /usr/local/memfabric_hybrid/set_env.sh
 cat /usr/local/memfabric_hybrid/latest/version.info
 ```
 
-在 NPU 环境安装 run 包时，安装脚本会按现有流程编译 Copy Extend 扩展库。A3 环境还会独立尝试编译 AIV Direct SDMA 扩展库；该扩展未安装、编译失败或当前平台不支持时，不影响 MemFabric 主库和默认 Host SDMA 路径。安装成功的扩展库位于 `MEMFABRIC_HYBRID_EXTEND_LIB_PATH` 指向的目录，只有显式传入对应加速标记时才会使用。
+Copy Extend 和 AIV Direct SDMA 加速扩展库通过 `mfcli kernel install` 编译安装，详见「一、使用 Python API → 5. Copy Extend / AIV Direct SDMA 扩展库安装」。
 
 ### 5. AICPU算子安装
 

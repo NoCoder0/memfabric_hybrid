@@ -22,6 +22,10 @@ from ._acc_offload_build import ExtendBuildError as _ExtendBuildError
 from ._acc_offload_build import acc_offload_info as _acc_offload_info
 from ._acc_offload_build import ensure_acc_offload_ext as _ensure_acc_offload_ext
 from ._acc_offload_build import uninstall_acc_offload_ext as _uninstall_acc_offload_ext
+from ._hybm_extend_build import ExtendBuildError as _HybmExtendBuildError
+from ._hybm_extend_build import ensure_hybm_extend as _ensure_hybm_extend
+from ._hybm_extend_build import info_hybm_extend as _info_hybm_extend
+from ._hybm_extend_build import uninstall_hybm_extend as _uninstall_hybm_extend
 from .env_utils import get_soc_key as _get_soc_key
 
 LOGGER = logging.getLogger(__name__)
@@ -55,6 +59,19 @@ def _install_acc_offload(soc_key=None) -> int:
     return 0
 
 
+def _install_hybm_extend(soc_key=None) -> int:
+    """Build and install hybm extend libraries (copy_extend / aiv_direct_sdma) after kernel ops install."""
+    try:
+        _ensure_hybm_extend(soc_key)
+    except _HybmExtendBuildError as exc:
+        LOGGER.error("failed to install hybm extend libraries: %s", exc)
+        return 1
+    except OSError as exc:
+        LOGGER.error("failed to install hybm extend libraries, unexpected OS error: %s", exc)
+        return 1
+    return 0
+
+
 def _manage_kernel(args: argparse.Namespace) -> int:
     if args.command == "version":
         return _show_version(args)
@@ -82,11 +99,16 @@ def _manage_kernel(args: argparse.Namespace) -> int:
     if exit_code != 0:
         return exit_code
     if args.command == "install":
-        return _install_acc_offload(soc_key)
+        ret = _install_acc_offload(soc_key)
+        if ret != 0:
+            return ret
+        return _install_hybm_extend(soc_key)
     if args.command == "uninstall":
         _uninstall_acc_offload_ext()
+        _uninstall_hybm_extend()
     if args.command == "info":
         _acc_offload_info()
+        _info_hybm_extend()
     return 0
 
 

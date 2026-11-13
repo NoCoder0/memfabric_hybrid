@@ -75,8 +75,6 @@ cp "${OUTPUT_DIR}"/smem/lib64/* ${PKG_DIR}/"${ARCH_OS}"/lib64
 # hybm
 cp -r "${OUTPUT_DIR}"/hybm/include/* ${PKG_DIR}/include/hybm/
 cp "${OUTPUT_DIR}"/hybm/lib64/libmf_hybm_core.so ${PKG_DIR}/"${ARCH_OS}"/lib64/
-cp -r "${PROJECT_DIR}"/src/hybm/csrc/copy_extend ${PKG_DIR}
-cp -r "${PROJECT_DIR}"/src/hybm/csrc/copy_aiv_direct_sdma ${PKG_DIR}
 
 # memfabric_hybrid wheel package
 if [ "${BUILD_PYTHON}" = "ON" ]; then

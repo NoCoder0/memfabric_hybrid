@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include <cstring>
 #include <dlfcn.h>
 #include "dl_hybm_aiv_direct_sdma.h"
 #include "../copy_aiv_direct_sdma/aiv_direct_sdma_abi.h"
@@ -18,8 +19,32 @@ namespace mf {
 bool DlHybmAivDirectSdmaApi::gLoaded = false;
 std::mutex DlHybmAivDirectSdmaApi::gMutex;
 void *DlHybmAivDirectSdmaApi::libHandle = nullptr;
-const char *DlHybmAivDirectSdmaApi::gHybmAivDirectSdmaLibName = "libmf_hybm_aiv_direct_sdma.so";
+static const char *AivDirectSdmaLibName = "libmf_hybm_aiv_direct_sdma.so";
+
 hybmAivDirectSdmaLaunchFunc DlHybmAivDirectSdmaApi::pHybmAivDirectSdmaLaunch = nullptr;
+
+std::string DlHybmAivDirectSdmaApi::GetSelfLibDir()
+{
+    Dl_info info;
+    if (dladdr(static_cast<const void *>(&AivDirectSdmaLibName), &info) == 0) {
+        BM_LOG_ERROR("dladdr failed to locate self library, libName: " << AivDirectSdmaLibName);
+        return "";
+    }
+    const char *fname = info.dli_fname;
+    if (fname == nullptr || fname[0] == '\0') {
+        BM_LOG_ERROR("dladdr returned empty file name, libName: " << AivDirectSdmaLibName);
+        return "";
+    }
+    const char *lastSlash = strrchr(fname, '/');
+    if (lastSlash == nullptr) {
+        BM_LOG_ERROR("self library path contains no directory separator, fname: " << fname);
+        return "";
+    }
+    if (lastSlash == fname) {
+        return "/";
+    }
+    return std::string(fname, lastSlash - fname);
+}
 
 Result DlHybmAivDirectSdmaApi::TryLoadLibrary()
 {
@@ -28,19 +53,14 @@ Result DlHybmAivDirectSdmaApi::TryLoadLibrary()
         return BM_OK;
     }
 
-    char *path = std::getenv("MEMFABRIC_HYBRID_EXTEND_LIB_PATH");
-    if (path == nullptr) {
-        BM_LOG_WARN("Environment MEMFABRIC_HYBRID_EXTEND_LIB_PATH is not set for AIV Direct SDMA.");
-        return BM_ERROR;
-    }
-    std::string libPath(path);
-    if (!FileUtil::Realpath(libPath) || !FileUtil::IsDir(libPath)) {
-        BM_LOG_WARN("Environment MEMFABRIC_HYBRID_EXTEND_LIB_PATH check failed for AIV Direct SDMA.");
+    std::string libPath = GetSelfLibDir();
+    if (libPath.empty()) {
+        BM_LOG_WARN("failed to locate self library directory for AIV Direct SDMA.");
         return BM_ERROR;
     }
 
     std::string realPath;
-    if (!FileUtil::LibraryRealPath(libPath, std::string(gHybmAivDirectSdmaLibName), realPath)) {
+    if (!FileUtil::LibraryRealPath(libPath, AivDirectSdmaLibName, realPath)) {
         BM_LOG_WARN(libPath << " get AIV Direct SDMA library path failed");
         return BM_ERROR;
     }

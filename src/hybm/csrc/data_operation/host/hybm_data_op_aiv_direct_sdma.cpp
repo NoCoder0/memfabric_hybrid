@@ -61,7 +61,7 @@ public:
             return ret;
         ret = DlHybmAivDirectSdmaApi::TryLoadLibrary();
         if (ret != BM_OK) {
-            BM_LOG_ERROR("AIV Direct SDMA extension is unavailable; check MEMFABRIC_HYBRID_EXTEND_LIB_PATH");
+            BM_LOG_ERROR("AIV Direct SDMA extension is unavailable; run 'mfcli kernel install' to install it.");
             return BM_UNDER_API_UNLOAD;
         }
         ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_SDMA);

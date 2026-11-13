@@ -84,6 +84,23 @@ mfcli kernel install --soc-version A3
 
 `mfcli kernel uninstall` 会将扩展库还原到未安装状态。
 
+## hybm_extend 扩展库（Copy Extend / AIV Direct SDMA）
+
+NPU 类型的 wheel 包内置 copy_extend 和 aiv_direct_sdma 算子源码，安装编译为扩展库后，通过 `COPY_EXTEND_FLAG` 和 `COPY_AIV_DIRECT_SDMA_FLAG` 搬运标记启用：
+
+- **Copy Extend**（`libmf_hybm_copy_extend.so`）：基于 MTE 引擎的数据拷贝加速，全芯片（A2/A3/A5）通用。
+- **AIV Direct SDMA**（`libmf_hybm_aiv_direct_sdma.so`）：将 SDMA 任务提交卸载到 AIV 协处理器，仅 A3 芯片支持，非 A3 环境自动跳过。
+
+`mfcli kernel install` 会在安装 AICPU 算子的同时编译安装这些扩展库：
+
+```bash
+mfcli kernel install
+```
+
+通过 `mfcli kernel info` 查看扩展库的安装状态和安装路径。
+
+`mfcli kernel uninstall` 会同时卸载这些扩展库。
+
 ## 扫描 NUMA 空闲内存
 
 扫描所有 NUMA 节点：

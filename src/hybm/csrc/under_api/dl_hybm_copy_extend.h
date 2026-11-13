@@ -49,11 +49,11 @@ public:
     }
 
 private:
+    static std::string GetSelfLibDir();
+
     static std::mutex gMutex;
     static bool gLoaded;
     static void *libHandle;
-    static const char *gHybmExtendLibName;
-
     static hybmCopyExtendFunc pHybmCopyExtend;
     static hybmBatchCopyExtendFunc pHybmBatchCopyExtend;
 };

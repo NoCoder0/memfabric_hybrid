@@ -64,6 +64,13 @@ _ACC_OFFLOAD_SRC_ASSETS = [
     ),
 ]
 
+# hybm extend kernel sources (copy_extend + aiv_direct_sdma), staged into the
+# wheel under _kernel/ for install-time compilation via bisheng. NPU wheels only.
+_HYBM_EXTEND_DIRS = (
+    ("_kernel/copy_extend", "src/hybm/csrc/copy_extend"),
+    ("_kernel/copy_aiv_direct_sdma", "src/hybm/csrc/copy_aiv_direct_sdma"),
+)
+
 # Placeholder file shipped in the wheel lib dir; the install-time build overwrites
 # it with the real .so (empty placeholder = not built yet).
 _EXTEND_PLACEHOLDER_FILES = [
@@ -101,12 +108,26 @@ def _copy_acc_offload_assets(build_lib):
         f.write("")
 
 
+def _copy_hybm_extend_assets(build_lib):
+    """Stage hybm extend kernel sources (copy_extend + aiv_direct_sdma) into build_lib."""
+    if xpu_type != "NPU":
+        return
+    pkg_build = os.path.join(build_lib, "memfabric_hybrid")
+    for rel_dst, rel_src in _HYBM_EXTEND_DIRS:
+        dst_full = os.path.join(pkg_build, rel_dst)
+        if os.path.isdir(dst_full):
+            shutil.rmtree(dst_full)
+        full_src = os.path.join(_PROJECT_ROOT, rel_src)
+        shutil.copytree(full_src, dst_full)
+
+
 class _BuildPy(build_py):
     """Stage license files and NPU-specific assets into build_lib."""
 
     def run(self):
         super().run()
         _copy_acc_offload_assets(self.build_lib)
+        _copy_hybm_extend_assets(self.build_lib)
         package_dir = os.path.join(self.build_lib, "memfabric_hybrid")
         for filename in ("LICENSE", "Open_Source_Software_Notice.md"):
             shutil.copyfile(os.path.join(_PROJECT_ROOT, filename), os.path.join(package_dir, filename))
@@ -214,6 +235,8 @@ setup(
             "_kernel/hybm/*",
             "_kernel/acc_offload/operators/*",
             "_kernel/acc_offload/launch/*",
+            "_kernel/copy_extend/*",
+            "_kernel/copy_aiv_direct_sdma/*",
         ],
         "zbal": ["zbal*.so", "VERSION"],
     },
