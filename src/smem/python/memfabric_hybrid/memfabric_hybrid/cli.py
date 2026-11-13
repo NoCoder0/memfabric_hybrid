@@ -259,7 +259,7 @@ def _register_benchmark_command(components) -> None:
         "--block-size",
         type=str,
         default=None,
-        help="block size, list or doubling range; multiples of 4K up to 1G (default: BM 16K:2M; Trans 16K:8M)",
+        help="block size, list or doubling range; any positive size up to 1G (default: BM 16K:2M; Trans 16K:8M)",
     )
     transfer = benchmark.add_mutually_exclusive_group()
     transfer.add_argument(

@@ -22,7 +22,7 @@ from .params import peer_buffer
 from .rank import TransRank
 
 LOGGER = logging.getLogger(__name__)
-_POISON = -(2**31)
+_POISON = 0xA5
 _VERIFY_CHUNK_BYTES = 16 * 1024**2
 
 
@@ -32,12 +32,12 @@ class TransCase:
         self.length = size * batch
         source_rank = rank.rank_id if rank.params.group_of(rank.rank_id) == 0 else peer
         # Bound host scratch space even when a registered buffer is tens of GiB.
-        self.expected = torch.zeros(min(self.length, _VERIFY_CHUNK_BYTES) // 4, dtype=torch.int32)
+        self.expected = torch.zeros(min(self.length, _VERIFY_CHUNK_BYTES), dtype=torch.uint8)
         generate_data(self.expected, source_rank)
 
     @property
     def local(self):
-        return self.rank.buffer(self.phase.local_mem)[: self.length // 4]
+        return self.rank.buffer(self.phase.local_mem)[: self.length]
 
     @property
     def copy(self):
@@ -57,7 +57,7 @@ class TransCase:
 
     def seed_own_slot(self):
         # This is an application buffer, not a BM pool: the owner can fill it directly.
-        self._fill_expected(self.rank.buffer(self.phase.peer_mem)[: self.length // 4])
+        self._fill_expected(self.rank.buffer(self.phase.peer_mem)[: self.length])
         torch.npu.synchronize()
 
     def connect(self):

@@ -18,20 +18,22 @@ _NEGATIVE_RATIO_DIVISOR = 3
 
 
 def generate_data(tensor, rank_id):
-    arr = tensor.flatten()
+    """Fill `tensor`'s raw bytes with a deterministic per-rank pattern."""
+    arr = tensor.view(torch.uint8).reshape(-1)
+    word_count = -(-arr.numel() // 4)
     mod = 2**15 - 1
     base = initial = rank_id % mod
     values = []
     # The recurrence is periodic. Build one complete signed period, then let
     # Torch repeat it instead of assigning millions of tensor scalars in Python.
-    for i in range(min(len(arr), mod * _NEGATIVE_RATIO_DIVISOR)):
+    for i in range(min(word_count, mod * _NEGATIVE_RATIO_DIVISOR)):
         base = (base * _RANDOM_MULTIPLIER + _RANDOM_INCREMENT) % mod
         values.append(-base if (i + rank_id) % _NEGATIVE_RATIO_DIVISOR == 0 else base)
         if base == initial and (i + 1) % _NEGATIVE_RATIO_DIVISOR == 0:
             break
     if values:
-        pattern = torch.tensor(values, dtype=torch.int32)
-        arr.copy_(pattern.repeat((len(arr) + len(values) - 1) // len(values))[: len(arr)])
+        pattern = torch.tensor(values, dtype=torch.int32).view(torch.uint8).reshape(-1)
+        arr.copy_(pattern.repeat((arr.numel() + pattern.numel() - 1) // pattern.numel())[: arr.numel()])
 
 
 def wrong_bytes(expected, actual):

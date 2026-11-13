@@ -25,7 +25,7 @@ from .rank import BmRank
 from ..common.sync import BenchmarkSync, PeerFailedError
 
 LOGGER = logging.getLogger(__name__)
-_POISON = -(2**31)
+_POISON = 0xA5
 _COPY_TYPE = {
     ("write", "device"): bm.BmCopyType.L2G,
     ("write", "host"): bm.BmCopyType.H2G,
@@ -50,13 +50,13 @@ class _Case:
         if self._expected is None:
             rank_id = self.rank.rank_id
             source_rank = rank_id if self.rank.params.group_of(rank_id) == 0 else self.peer
-            self._expected = torch.zeros(self.length // 4, dtype=torch.int32)
+            self._expected = torch.zeros(self.length, dtype=torch.uint8)
             generate_data(self._expected, source_rank)
         return self._expected
 
     @property
     def local(self):
-        return self.rank.buffer(self.phase.local_mem)[: self.length // 4]
+        return self.rank.buffer(self.phase.local_mem)[: self.length]
 
     def prepare_initiator(self):
         self.remote = self.rank.slot(self.peer, self.phase.peer_mem)
@@ -79,7 +79,7 @@ class _Case:
 
     def seed_own_slot(self):
         """Read-phase target: place the known pattern in its own slot with an untimed local copy."""
-        staging = self.rank.buffer("device")[: self.length // 4]
+        staging = self.rank.buffer("device")[: self.length]
         staging.copy_(self.expected)
         torch.npu.synchronize()
         own = self.rank.slot(self.rank.rank_id, self.phase.peer_mem)

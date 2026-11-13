@@ -63,19 +63,27 @@ class BmRank:
         return gva
 
     def buffer(self, mem):
-        """Aligned, registered local working buffer of payload size, allocated on first use."""
+        """Aligned, registered local working buffer of payload size, allocated on first use.
+        MR registration size is rounded up to 4K to satisfy HCom/HAL driver requirements even when
+        the application payload is not page-aligned (e.g. arbitrary-byte block sizes); the backing
+        allocation reserves mr_size + 4K so the aligned registered region always fits.
+        """
         if mem not in self.buffers:
             size = self.params.payload_size
+            mr_size = -(-size // _ALIGNMENT) * _ALIGNMENT
             if mem == "device":
-                raw = torch.zeros((size + _ALIGNMENT) // 4, dtype=torch.int32, device="npu")
+                raw = torch.zeros(mr_size + _ALIGNMENT, dtype=torch.uint8, device="npu")
             else:
                 # Dedicated pages for Host registration, independent of the CPU allocator.
-                raw = torch.frombuffer(mmap.mmap(-1, size + _ALIGNMENT), dtype=torch.int32)
-            offset = (-raw.data_ptr() % _ALIGNMENT) // 4
-            view = raw[offset : offset + size // 4]
+                raw = torch.frombuffer(mmap.mmap(-1, mr_size + _ALIGNMENT), dtype=torch.uint8)
+            offset = -raw.data_ptr() % _ALIGNMENT
+            view = raw[offset : offset + size]
             self.buffers[mem] = (raw, view)
             if self.params.protocol != "sdma":
-                require_ok(self.handle.register(view.data_ptr(), size), f"handle.register {mem} size={size}")
+                require_ok(
+                    self.handle.register(view.data_ptr(), mr_size),
+                    f"handle.register {mem} size={size} mr_size={mr_size}",
+                )
                 self.registered.append(view.data_ptr())
         return self.buffers[mem][1]
 

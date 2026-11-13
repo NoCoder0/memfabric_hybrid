@@ -20,7 +20,6 @@ from urllib.parse import urlsplit
 
 _KIB = 1024
 _GIB = 1024**3
-_ALIGNMENT = 4096
 _MAX_BLOCK_SIZE = _GIB
 _DEFAULT_TRANSFER_SIZE = 128 * 1024**2
 _MAX_PAYLOAD_SIZE = 20 * _GIB
@@ -128,8 +127,8 @@ def parse_block_sizes(text):
     if not sizes:
         raise ValueError("--block-size is empty")
     for size in sizes:
-        if size <= 0 or size % _ALIGNMENT or size > _MAX_BLOCK_SIZE:
-            raise ValueError(f"block size {size} must be a positive multiple of 4096 bytes and at most 1G")
+        if size <= 0 or size > _MAX_BLOCK_SIZE:
+            raise ValueError(f"block size {size} must be positive and at most 1G")
     return tuple(sorted(set(sizes)))
 
 

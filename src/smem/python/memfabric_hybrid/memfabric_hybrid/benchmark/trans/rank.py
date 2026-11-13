@@ -77,13 +77,13 @@ class TransRank:
             self.offload_initialized = True
         for mem in sorted(memories):
             if mem == "device":
-                raw = torch.zeros((size + _ALIGNMENT) // 4, dtype=torch.int32, device="npu")
+                raw = torch.zeros(size + _ALIGNMENT, dtype=torch.uint8, device="npu")
             elif self.offload_initialized:
-                raw = offload.empty([(size + _ALIGNMENT) // 4], dtype=torch.int32)
+                raw = offload.empty([size + _ALIGNMENT], dtype=torch.uint8)
             else:
-                raw = torch.frombuffer(mmap.mmap(-1, size + _ALIGNMENT), dtype=torch.int32)
-            offset = (-raw.data_ptr() % _ALIGNMENT) // 4
-            view = raw[offset : offset + size // 4]
+                raw = torch.frombuffer(mmap.mmap(-1, size + _ALIGNMENT), dtype=torch.uint8)
+            offset = -raw.data_ptr() % _ALIGNMENT
+            view = raw[offset : offset + size]
             self.buffers[mem] = (raw, view)
             require_ok(self.engine.register_memory(view.data_ptr(), size), f"register_memory mem={mem} size={size}")
 

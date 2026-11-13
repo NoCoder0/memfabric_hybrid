@@ -51,7 +51,7 @@ class TransContractTest(BenchmarkModuleTest):
         tensor = MagicMock()
         tensor.data_ptr.return_value = 2 * 1024**2
         tensor.__getitem__.return_value = tensor
-        torch = Mock(int32="int32")
+        torch = Mock(uint8="uint8")
         torch.zeros.return_value = torch.frombuffer.return_value = tensor
         mf.offload.empty.return_value = tensor
         mf.offload.initialize.return_value = 0
@@ -116,17 +116,17 @@ class TransContractTest(BenchmarkModuleTest):
         with patch.dict(sys.modules, {native.__name__: native, "memfabric_hybrid": mf}):
             module = importlib.import_module(f"{PREFIX}.trans.pairwise")
         phase = importlib.import_module(f"{PREFIX}.common.params").Phase("read", "host", "host")
-        target = torch.zeros(21, dtype=torch.int32)
+        target = torch.zeros(21, dtype=torch.uint8)
         rank = types.SimpleNamespace(
             rank_id=1, params=types.SimpleNamespace(group_of=lambda rank: 1), buffer=lambda _: target
         )
         with patch.object(module, "_VERIFY_CHUNK_BYTES", 32):
             case = module.TransCase(phase, 28, 3, rank, 0)
-        self.assertEqual(len(case.expected), 8)
+        self.assertEqual(len(case.expected), 32)
         with patch.object(torch, "npu", types.SimpleNamespace(synchronize=Mock()), create=True):
             case.seed_own_slot()
             case.verify()
-            target[-1] = -(2**31)
+            target[-1] = 0xA5
             with self.assertRaisesRegex(RuntimeError, "wrong_bytes"):
                 case.verify()
 

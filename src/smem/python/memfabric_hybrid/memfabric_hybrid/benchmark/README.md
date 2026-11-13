@@ -73,7 +73,7 @@ Trans 两端执行 `mfcli benchmark trans --ip "tcp://<A_IP>:12060"`。
 | `--local-ip` | 按路由选择 | 仅 Trans：本机可绑定、对端可达的控制 IP；与传输 NIC 分开 |
 | `--direction` | BM：`all`；Trans：上述4方向 | `all`、`write`、`read`，或逗号列表如 `D2rD,rD2D`，不区分大小写 |
 | `--device` | 全部可见卡 | 要使用的卡，如 `2,3` 或 `0-3,6`；卡号是 `ASCEND_RT_VISIBLE_DEVICES` 下的序号 |
-| `--block-size` | BM：`16K:2M`；Trans：`16K:8M` | 单值 `2M`、列表 `4K,64K,1M`，或倍增区间 `16K:8M`；需为 4K 的倍数，上限 1G |
+| `--block-size` | BM：`16K:2M`；Trans：`16K:8M` | 单值 `2M`、列表 `4K,64K,1M`，或倍增区间 `16K:8M`；任意正值，上限 1G |
 | `--batch-size` | 自动 | 每次复制的块数；与显式 `--transfer-size` 互斥 |
 | `--transfer-size` | `128M` | 每批目标字节数，支持K/M/G；batch=目标字节数÷块大小向下取整，最小1；实际传输量为block×batch |
 | `--copy-count` | `5` | 计时的批量复制次数，必须为正数 |
