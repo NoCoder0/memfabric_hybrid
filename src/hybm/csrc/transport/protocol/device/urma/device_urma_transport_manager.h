@@ -13,6 +13,7 @@
 #ifndef MF_HYBRID_DEVICE_URMA_TRANSPORT_MANAGER_H
 #define MF_HYBRID_DEVICE_URMA_TRANSPORT_MANAGER_H
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <map>
@@ -29,7 +30,9 @@
 #include "dl_rt_api.h"
 #include "hcomm_api_wrapper.h"
 #include "hybm_transport_manager.h"
+#include "hybm_urma_common.h"
 #include "hybm_kernel_hepler.h"
+#include "hybm_urma_device_copy.h"
 #include "urma_topo_def.h"
 
 namespace ock {
@@ -37,63 +40,10 @@ namespace mf {
 namespace transport {
 namespace device {
 
-// ─────────────────────────────────────────────────────────────────
-// URMA-specific type definitions (migrated from hcomm_transport_manager.h)
-// ─────────────────────────────────────────────────────────────────
-constexpr uint32_t URMA_EXPORT_DESC_MAGIC = 0xA5FAB001U;
-constexpr uint16_t URMA_EXPORT_DESC_VERSION = 1U;
-constexpr uint32_t DEVICE_URMA_MAX_EXPORT_KEY_LENGTH = KEY_SIZE * 6;
-constexpr uint32_t DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS = 2;
-constexpr uint32_t DEVICE_URMA_EXPORT_KEY_INFO = 1256;
-constexpr uint32_t DEVICE_URMA_EXPORT_KEY_DATA_BYTES =
-    (DEVICE_URMA_MAX_EXPORT_KEY_LENGTH - DEVICE_URMA_EXPORT_KEY_HEADER_SLOTS + DEVICE_URMA_EXPORT_KEY_INFO) *
-    sizeof(uint64_t);
-constexpr void *INVALID_MEM_HANDLE = nullptr;
+using namespace ock::mf::transport::urma;
 
-using UrmaMemTag = uint64_t;
 using HcommChannelHandle = ock::mf::ChannelHandle;
 using HcommThreadHandle = ock::mf::ThreadHandle;
-
-enum UrmaProtocol {
-    RESERVED = -1,
-    HCCS = 0,
-    ROCE = 1,
-    PCIE = 2,
-    SIO = 3,
-    UBC_CTP = 4,
-    UBC_TP = 5,
-    UB_MEM = 6,
-    UBOE = 7,
-    UB_RTP = 9,
-};
-
-inline std::ostream &operator<<(std::ostream &stream, UrmaProtocol protocol)
-{
-    switch (protocol) {
-        case UrmaProtocol::RESERVED:
-            return stream << "RESERVED";
-        case UrmaProtocol::HCCS:
-            return stream << "HCCS";
-        case UrmaProtocol::ROCE:
-            return stream << "ROCE";
-        case UrmaProtocol::PCIE:
-            return stream << "PCIE";
-        case UrmaProtocol::SIO:
-            return stream << "SIO";
-        case UrmaProtocol::UBC_CTP:
-            return stream << "UBC_CTP";
-        case UrmaProtocol::UBC_TP:
-            return stream << "UBC_TP";
-        case UrmaProtocol::UB_MEM:
-            return stream << "UB_MEM";
-        case UrmaProtocol::UBOE:
-            return stream << "UBOE";
-        case UrmaProtocol::UB_RTP:
-            return stream << "UB_RTP";
-        default:
-            return stream << "UNKNOWN";
-    }
-}
 
 // 机型 × 协议支持表：第一维 mainboardId，第二维协议；顺序即优先级
 // 选择规则：DEVICE_URMA 命中 UBC_CTP/UB_RTP；UBOE 仅由 MF_DEVICE_URMA_ENABLE_UBOE 环境变量开启并优先命中
@@ -118,45 +68,6 @@ constexpr UrmaProtocolTableEntry URMA_PROTOCOL_TABLE[] = {
     {MAIN_BOARD_ID_SERVER_8PMESH_NOSP_UBOE, {UBC_CTP, UBOE}, 2},
     {MAIN_BOARD_ID_POD_FLEX, {UB_RTP}, 1},     // 950 SuperPod PC16
     {MAIN_BOARD_ID_POD_FLEX_RTP, {UB_RTP}, 1}, // 950 SuperPod PC16
-};
-
-enum UrmaMemoryType : uint16_t {
-    HOST_DRAM = 0,
-    DEVICE_HBM = 1,
-    INVALID_BUTT = 2,
-};
-
-struct UrmaEndpointDesc {
-    uint32_t devPhyId{0};
-    int32_t localId{0};
-    int32_t remoteId{-1};
-    uint32_t superDevId{0};
-    uint32_t serverIdx{0};
-    uint32_t superPodIdx{0};
-    UrmaProtocol protocol{UrmaProtocol::RESERVED};
-    CommAddrType type{COMM_ADDR_TYPE_RESERVED};
-    uint8_t raws[URMA_ENDPOINT_RAW_LEN]{};
-    uint32_t processId{0};
-    uint64_t instanceId{0};
-};
-
-struct UrmaCommMem {
-    uint64_t addr{0};
-    uint64_t size{0};
-    UrmaMemoryType type{UrmaMemoryType::INVALID_BUTT};
-};
-
-struct UrmaExportDesc {
-    uint32_t magic{URMA_EXPORT_DESC_MAGIC};
-    uint16_t version{URMA_EXPORT_DESC_VERSION};
-    uint16_t headerSize{0};
-    int32_t remoteId{-1};
-    UrmaMemoryType memoryType{UrmaMemoryType::INVALID_BUTT};
-    UrmaMemTag memTag{0};
-    uint64_t addr{0};
-    uint64_t size{0};
-    uint32_t hcommDescLen{0};
-    uint32_t deviceMarkerDescLen{0};
 };
 
 class DeviceUrmaTransportManager final : public transport::TransportManager {
@@ -208,6 +119,9 @@ public:
 
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
+    Result PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize) override;
+    Result DeviceCopy(const hybm_device_copy_params &params) override;
+
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
     Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
@@ -239,6 +153,7 @@ private:
     struct RemoteRankState {
         std::mutex rankMutex{};
         UrmaEndpointDesc remoteEndpointDesc{};
+        uint32_t remoteHostId{UINT32_MAX};
         bool hasEndpointDesc{false};
         // 本 rank 侧用于与该 peer 通信的 channel 描述符
         HcommChannelDesc channelDesc{};
@@ -327,6 +242,19 @@ private:
     };
 
     static ContextRegistry &GetContextRegistry();
+
+    struct UrmaDeviceCopyResources {
+        HybmUrmaDeviceCopyContext hostContext{};
+        void *deviceAllocation{nullptr};
+        HybmUrmaDeviceCopyContext *deviceContext{nullptr};
+        NotifyResource *notify{nullptr};
+        bool submissionFailed{false};
+    };
+
+    void ReleaseDeviceCopyResources(UrmaDeviceCopyResources &resources);
+    void CleanupDeviceCopyResourcesLocked();
+    std::unique_ptr<UrmaDeviceCopyResources> deviceCopy_;
+    aclrtFuncHandle deviceCopyFunc_{nullptr};
 
     // Initialization/open/close helpers and lifecycle
     Result InitLocalDeviceInfoLocked(const TransportOptions &options);

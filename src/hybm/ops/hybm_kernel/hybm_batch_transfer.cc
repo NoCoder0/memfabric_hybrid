@@ -345,6 +345,31 @@ int32_t TransferRank(HybmBatchTransferParam *param, uint32_t rankIdx)
 
 } // namespace
 
+int32_t HybmSubmitBatchTransfer(HybmBatchTransferParam *param, const char *batchTag)
+{
+    auto ret = EnsureHcommLoaded();
+    if (ret != BM_OK) {
+        return ret;
+    }
+    ret = BatchModeStart(batchTag);
+    if (ret != BM_OK && !IsNotSupported(ret)) {
+        HYBM_LOGE(ret, "[hybm] BatchModeStart failed, tag=%s ret=%d", batchTag, ret);
+        return ret;
+    }
+    for (uint32_t rankIdx = 0; rankIdx < param->rank_num; ++rankIdx) {
+        ret = TransferRank(param, rankIdx);
+        if (ret != BM_OK) {
+            break;
+        }
+    }
+    const auto endRet = BatchModeEnd(batchTag);
+    if (endRet != BM_OK && !IsNotSupported(endRet)) {
+        HYBM_LOGE(endRet, "[hybm] BatchModeEnd failed, tag=%s ret=%d", batchTag, endRet);
+        return ret == BM_OK ? endRet : ret;
+    }
+    return ret;
+}
+
 extern "C" {
 int32_t HybmBatchTransfer(HybmBatchTransferParam *param)
 {

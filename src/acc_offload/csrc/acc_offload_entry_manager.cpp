@@ -63,15 +63,23 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
     return OFFLOAD_OK;
 }
 
-int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
+int32_t AccOffloadEntryManager::AllocateEntityId(uint16_t &entityId)
 {
     auto id = nextEntityId_++;
     if (id >= HYBM_ENTITY_ID_SEGMENT_SIZE) {
-        OFFLOAD_LOG_ERROR("offload entity IDs exhausted, scene: " << static_cast<uint32_t>(scene) << ", id: " << id
-                                                                  << ", limit: " << HYBM_ENTITY_ID_SEGMENT_SIZE);
+        OFFLOAD_LOG_ERROR("offload entity IDs exhausted, id: " << id << ", limit: " << HYBM_ENTITY_ID_SEGMENT_SIZE);
         return OFFLOAD_ERROR;
     }
-    entityId_ = HYBM_ENTITY_ID_OFFLOAD_BASE + id;
+    entityId = HYBM_ENTITY_ID_OFFLOAD_BASE + id;
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
+{
+    auto ret = AllocateEntityId(entityId_);
+    if (ret != OFFLOAD_OK) {
+        return ret;
+    }
     if (scene == OFFLOAD_SCENE_LOCAL) {
         entry_ = std::make_unique<AccOffloadLocalDramEntry>(entityId_);
     } else if (scene == OFFLOAD_SCENE_SHARED) {

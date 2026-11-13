@@ -143,7 +143,7 @@ public:
     virtual Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                             const RankGroupMap &groupMap, std::vector<uint32_t> &localIndices,
                                             RankGroupMap &unregisteredGroups, std::set<uint32_t> &batchRanks);
-    virtual int32_t PrepareDeviceCopy(uint64_t, uint64_t)
+    virtual int32_t PrepareDeviceCopy(uint32_t, uint64_t, uint64_t)
     {
         return BM_NOT_SUPPORTED;
     }

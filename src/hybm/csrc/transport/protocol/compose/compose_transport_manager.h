@@ -87,6 +87,9 @@ public:
 
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
+    int32_t PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize) override;
+    int32_t DeviceCopy(const hybm_device_copy_params &params) override;
+
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
 
     Result TransferRemoteBatchAsync(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,

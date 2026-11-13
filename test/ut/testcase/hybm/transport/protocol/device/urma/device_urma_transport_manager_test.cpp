@@ -38,6 +38,7 @@
 #include "urma_topo_manager.h"
 #include "urma_topo_json_parser.h"
 #include "device_urma_transport_manager.h"
+#include "host_urma_transport_manager.h"
 #include "dl_hccl_api.h"
 #include "dl_hcomm_api.h"
 #include "hybm_stream_manager.h"
@@ -102,6 +103,7 @@ uint32_t g_notifyDestroyCallCount = 0U;
 uint32_t g_notifyUnregCallCount = 0U;
 bool g_useFm16Topology = false;
 std::mutex g_kernelLaunchMutex;
+std::vector<HybmUrmaDeviceCopyArgs> g_deviceCopyArgs;
 
 struct TestHybmBatchTransferParam {
     uint32_t rankNum;
@@ -1342,6 +1344,26 @@ struct DeviceTestFixture {
             prep.options.emplace(rankId, std::move(info));
         }
         ASSERT_EQ(manager.Prepare(prep), BM_OK);
+    }
+
+    void InstallDeviceCopyMocks()
+    {
+        InstallAll();
+        g_deviceCopyArgs.clear();
+        DlAclApi::pAclrtBinaryGetFunction = [](aclrtBinHandle handle, const char *name, aclrtFuncHandle *function) {
+            EXPECT_EQ(handle, MOCK_BIN_HANDLE);
+            EXPECT_TRUE(std::strcmp(name, "HybmBatchTransfer") == 0 || std::strcmp(name, "HybmUrmaDeviceCopy") == 0);
+            *function = MOCK_WRITE_FUNC;
+            return BM_OK;
+        };
+        DlAclApi::pAclrtKernelArgsAppend = [](aclrtArgsHandle handle, void *param, size_t size,
+                                              aclrtParamHandle *paramHandle) {
+            EXPECT_EQ(handle, MOCK_ARGS_HANDLE);
+            EXPECT_EQ(size, sizeof(HybmUrmaDeviceCopyArgs));
+            g_deviceCopyArgs.push_back(*static_cast<const HybmUrmaDeviceCopyArgs *>(param));
+            *paramHandle = MOCK_PARAM_HANDLE;
+            return BM_OK;
+        };
     }
 
     void OpenAndPreparePeer(DeviceUrmaTransportManager &manager) const
@@ -5130,4 +5152,130 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRejectsLegacyAnonymousChannelVersion
     std::memcpy(options.options[1].privateData.key.ByteData() + sizeof(uint32_t), &legacyVersion,
                 sizeof(legacyVersion));
     EXPECT_EQ(manager.Prepare(options), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, OffloadPrepareConsumesHostEndpointMetadata)
+{
+    DlHcommApiFnGuard hcommGuard;
+    DlAclApiFnGuard aclGuard;
+    InstallSingleRankHcommMocks();
+    ock::mf::transport::host::HostUrmaTransportManager host;
+    host.opened_ = true;
+    host.rankId_ = 0U;
+    host.localEndpointDesc_ = MakeEndpointDesc();
+    host.localEndpointDesc_.processId = 123U;
+    host.localEndpointDesc_.instanceId = 456U;
+    DeviceUrmaTransportManager device;
+    PrepareSinglePeerManually(device);
+    device.rankId_ = 1U;
+    device.options_.scene = HYBM_SCENE_OFFLOAD;
+    auto options = MakeSingleRankPrepareOptions(0U);
+    options.options.at(0U).privateData = host.GetPrivateData();
+
+    ASSERT_EQ(device.Prepare(options), BM_OK);
+    ASSERT_EQ(device.ConnectRank(0U), BM_OK);
+
+    const auto &peer = device.remoteRanks_.at(0U);
+    EXPECT_EQ(peer.remoteHostId, 0U);
+    EXPECT_EQ(peer.channelDesc.remoteEndpoint.loc.locType, ENDPOINT_LOC_TYPE_HOST);
+    EXPECT_EQ(peer.channelDesc.remoteEndpoint.loc.host.id, 0U);
+    EXPECT_EQ(peer.channelDesc.role, HCOMM_SOCKET_ROLE_CLIENT);
+    EXPECT_EQ(peer.remoteEndpointDesc.processId, 123U);
+    EXPECT_EQ(peer.remoteEndpointDesc.instanceId, 456U);
+    EXPECT_EQ(peer.channelName, UrmaChannelSessionName(host.localEndpointDesc_, device.localEndpointDesc_[0]));
+    EXPECT_EQ(peer.thread, MOCK_THREAD);
+    EXPECT_EQ(peer.channel, MOCK_CHANNEL);
+}
+
+TEST(DeviceUrmaTransportManagerTest, PrepareDeviceCopyBindsImportedPoolAndReusesResources)
+{
+    DeviceTestFixture fixture;
+    fixture.InstallDeviceCopyMocks();
+    constexpr uint64_t importedBase = 0x600000U;
+    DlHcommApi::gHcommMemImport = [](EndpointHandle endpoint, const void *desc, uint32_t size, HcommCommMem *mem) {
+        auto ret = MockHcommMemImport(endpoint, desc, size, mem);
+        if (*static_cast<const uint8_t *>(desc) != 0xF1U) {
+            mem->addr = reinterpret_cast<void *>(importedBase);
+        }
+        return ret;
+    };
+    DeviceUrmaTransportManager manager;
+    fixture.OpenAndPreparePeer(manager);
+    constexpr uint64_t offset = 0x100U;
+    constexpr uint64_t poolSize = 0x800U;
+    g_aclrtMallocCallCount = 0U;
+    DlAclApi::pAclrtMalloc = MockAclrtMallocCounting;
+
+    ASSERT_EQ(manager.PrepareDeviceCopy(1U, MOCK_REMOTE_ADDR + offset, poolSize), BM_OK);
+    ASSERT_NE(manager.deviceCopy_, nullptr);
+    const auto *deviceContext = manager.deviceCopy_->deviceContext;
+    const auto &context = *deviceContext;
+    EXPECT_EQ(context.rankId, 1U);
+    EXPECT_EQ(context.thread, MOCK_THREAD);
+    EXPECT_EQ(context.channel, MOCK_CHANNEL);
+    EXPECT_EQ(context.poolBase, MOCK_REMOTE_ADDR + offset);
+    EXPECT_EQ(context.poolSize, poolSize);
+    EXPECT_EQ(context.importedBase, importedBase + offset);
+    EXPECT_EQ(context.capacity, HCOMM_BATCH_TRANSFER_MAX_DESC_NUM);
+    EXPECT_EQ(context.maxRecords, HYBM_DEVICE_COPY_MAX_RECORDS);
+    EXPECT_NE(context.descriptors, nullptr);
+    EXPECT_NE(context.recordCount, nullptr);
+    EXPECT_EQ(reinterpret_cast<uintptr_t>(context.descriptors) - reinterpret_cast<uintptr_t>(context.recordCount), 64U);
+    EXPECT_EQ(context.marker.transType, HCOMM_TRANSFER_TYPE_READ);
+    EXPECT_EQ(context.marker.transferInfo.read.src, reinterpret_cast<void *>(MOCK_REMOTE_ADDR));
+    EXPECT_EQ(context.marker.transferInfo.read.dst, reinterpret_cast<void *>(MOCK_NOTIFY_ADDR));
+    EXPECT_EQ(context.marker.transferInfo.read.len, MOCK_NOTIFY_LEN);
+    const auto allocations = g_aclrtMallocCallCount;
+    EXPECT_GT(allocations, 0U);
+
+    ASSERT_EQ(manager.PrepareDeviceCopy(1U, MOCK_REMOTE_ADDR + offset, poolSize), BM_OK);
+    EXPECT_EQ(manager.deviceCopy_->deviceContext, deviceContext);
+    EXPECT_EQ(g_aclrtMallocCallCount, allocations);
+    fixture.CleanupAndClose(manager);
+    EXPECT_EQ(manager.deviceCopy_, nullptr);
+    EXPECT_EQ(manager.deviceCopyFunc_, nullptr);
+}
+
+TEST(DeviceUrmaTransportManagerTest, DeviceCopySubmitsStableTilesAndWaitsOnTheCallerStream)
+{
+    DeviceTestFixture fixture;
+    fixture.InstallDeviceCopyMocks();
+    DeviceUrmaTransportManager manager;
+    fixture.OpenAndPreparePeer(manager);
+    ASSERT_EQ(manager.PrepareDeviceCopy(1U, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
+    uint64_t sources[] = {MOCK_LOCAL_ADDR};
+    uint64_t destinations[] = {MOCK_REMOTE_ADDR};
+    uint32_t lengths[] = {64U};
+    uint32_t count = 1U;
+    hybm_device_copy_params params{sources, destinations, lengths, &count, 1U, MOCK_STREAM, {}};
+    const auto *context = manager.deviceCopy_->deviceContext;
+    const auto capacity = context->capacity;
+    const auto tileCount = (HYBM_DEVICE_COPY_MAX_RECORDS + capacity - 1U) / capacity;
+    g_kernelLaunchCallCount = 0U;
+    g_waitAndResetCallCount = 0U;
+    g_aclrtMallocCallCount = 0U;
+    DlAclApi::pAclrtMalloc = MockAclrtMallocCounting;
+    DlAclApi::pAclrtWaitAndResetNotify = [](void *notify, void *stream, uint32_t timeout) {
+        EXPECT_EQ(g_kernelLaunchCallCount, g_waitAndResetCallCount + 1U);
+        return MockAclrtWaitAndResetNotifyCounting(notify, stream, timeout);
+    };
+
+    for (uint32_t replay = 0; replay < 2U; ++replay) {
+        ASSERT_EQ(manager.DeviceCopy(params), BM_OK);
+        ASSERT_EQ(g_deviceCopyArgs.size(), (replay + 1U) * tileCount);
+        for (uint32_t tile = 0; tile < tileCount; ++tile) {
+            const auto &args = g_deviceCopyArgs[replay * tileCount + tile];
+            EXPECT_EQ(args.context, context);
+            EXPECT_EQ(args.srcPtrs, sources);
+            EXPECT_EQ(args.dstPtrs, destinations);
+            EXPECT_EQ(args.lengths, lengths);
+            EXPECT_EQ(args.count, &count);
+            EXPECT_EQ(args.startIndex, tile * capacity);
+        }
+        EXPECT_EQ(g_kernelLaunchCallCount, (replay + 1U) * tileCount);
+        EXPECT_EQ(g_waitAndResetCallCount, g_kernelLaunchCallCount);
+        EXPECT_EQ(g_aclrtMallocCallCount, 0U);
+    }
+    EXPECT_FALSE(manager.deviceCopy_->submissionFailed);
+    fixture.CleanupAndClose(manager);
 }

@@ -68,7 +68,7 @@ public:
 
     virtual ~MemEntity() noexcept = default;
 
-    virtual int32_t PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) noexcept = 0;
+    virtual int32_t PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize) noexcept = 0;
     virtual int32_t DeviceCopy(const hybm_device_copy_params &params) noexcept = 0;
 
 private:

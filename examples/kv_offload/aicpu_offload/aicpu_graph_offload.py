@@ -34,7 +34,7 @@ V_DIM = 64
 WARMUP_ITERS = 5
 
 
-def run_graph(cpu_tensors, npu_tensors, warmup_iters=WARMUP_ITERS):
+def run_graph(pool, cpu_tensors, npu_tensors, warmup_iters=WARMUP_ITERS):
     device = npu_tensors[0].device
     sources, destinations = cpu_tensors, npu_tensors
 
@@ -48,7 +48,7 @@ def run_graph(cpu_tensors, npu_tensors, warmup_iters=WARMUP_ITERS):
     length_tables = (len_ptrs.clone(), len_ptrs.flip(0))
 
     def copy_once():
-        ret = offload.sparse_copy(src_ptrs, dst_ptrs, len_ptrs, size_ptr, device)
+        ret = pool.sparse_copy(src_ptrs, dst_ptrs, len_ptrs, size_ptr, device)
         if ret != 0:
             raise RuntimeError(f"sparse_copy failed: {ret}")
 
@@ -116,9 +116,9 @@ def run_graph(cpu_tensors, npu_tensors, warmup_iters=WARMUP_ITERS):
         graph.reset()  # 销毁图后，才能释放它引用的 Tensor 和 offload 资源。
 
 
-def run_large_graph(device, records, elements_per_record=1, warmup_iters=WARMUP_ITERS):
+def run_large_graph(pool, device, records, elements_per_record=1, warmup_iters=WARMUP_ITERS):
     elements = records * elements_per_record
-    cpu_data = offload.empty([elements], dtype=torch.int32).fill_(7)
+    cpu_data = pool.empty([elements], dtype=torch.int32).fill_(7)
     npu_data = torch.zeros(elements, dtype=torch.int32, device=device)
     observed = torch.empty_like(npu_data)
     record_bytes = elements_per_record * cpu_data.element_size()
@@ -135,7 +135,7 @@ def run_large_graph(device, records, elements_per_record=1, warmup_iters=WARMUP_
         src_ptrs.copy_(src_input)
         dst_ptrs.copy_(dst_input)
         count_ptr.copy_(count_input)
-        ret = offload.sparse_copy(src_ptrs, dst_ptrs, lengths, count_ptr, device)
+        ret = pool.sparse_copy(src_ptrs, dst_ptrs, lengths, count_ptr, device)
         if ret != 0:
             raise RuntimeError(f"large sparse_copy failed: {ret}")
 
@@ -151,7 +151,19 @@ def run_large_graph(device, records, elements_per_record=1, warmup_iters=WARMUP_
                 copy_once()
                 torch.add(npu_data, 1, out=observed)
             stream.synchronize()
-            counts = sorted({0, min(255, records), min(256, records), min(257, records), records})
+            counts = sorted(
+                {
+                    0,
+                    min(255, records),
+                    min(256, records),
+                    min(257, records),
+                    min(1000, records),
+                    min(1001, records),
+                    min(8190, records),
+                    min(8191, records),
+                    records,
+                }
+            )
             for h2d in (True, False):
                 for iteration, count in enumerate(counts, start=1):
                     source, destination = (cpu_data, npu_data) if h2d else (npu_data, cpu_data)
@@ -203,25 +215,26 @@ def main():
     config.reserve_size = ONE_GIB
     config.alloc_size = ONE_GIB
     config.scene = offload.Scene.AICPU
-    ret = offload.initialize(config)
+    pool = offload.Offload()
+    ret = pool.initialize(config)
     if ret != 0:
-        raise RuntimeError(f"offload.initialize failed: {ret}")
+        raise RuntimeError(f"pool.initialize failed: {ret}")
 
     try:
-        cpu_key = offload.empty([K_DIM], dtype=torch.bfloat16).zero_()
-        cpu_value = offload.empty([V_DIM], dtype=torch.bfloat16).zero_()
+        cpu_key = pool.empty([K_DIM], dtype=torch.bfloat16).zero_()
+        cpu_value = pool.empty([V_DIM], dtype=torch.bfloat16).zero_()
         npu_key = torch.ones(K_DIM, dtype=torch.bfloat16, device=f"npu:{args.device}")
         npu_value = torch.ones(V_DIM, dtype=torch.bfloat16, device=f"npu:{args.device}")
         cpu_tensors = [cpu_key, cpu_value]
         npu_tensors = [npu_key, npu_value]
 
-        run_graph(cpu_tensors, npu_tensors, warmup_iters=args.warmup_iters)
-        run_large_graph(npu_key.device, args.records, warmup_iters=args.warmup_iters)
-        run_large_graph(npu_key.device, 1, (32 << 20) // 4 + 1, warmup_iters=args.warmup_iters)
+        run_graph(pool, cpu_tensors, npu_tensors, warmup_iters=args.warmup_iters)
+        run_large_graph(pool, npu_key.device, args.records, warmup_iters=args.warmup_iters)
+        run_large_graph(pool, npu_key.device, 1, (32 << 20) // 4 + 1, warmup_iters=args.warmup_iters)
         print("AICPU graph: H2D and D2H passed", flush=True)
     finally:
         torch.npu.synchronize()
-        offload.uninitialize()
+        pool.uninitialize()
 
 
 if __name__ == "__main__":

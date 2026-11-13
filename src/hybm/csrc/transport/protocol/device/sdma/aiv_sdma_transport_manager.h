@@ -75,7 +75,7 @@ public:
 
     Result OpenDevice(const TransportOptions &options) override;
     Result CloseDevice() override;
-    Result PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) override;
+    Result PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize) override;
     Result DeviceCopy(const hybm_device_copy_params &params) override;
 
     bool QueryHasRegistered(uint64_t addr, uint64_t size) override

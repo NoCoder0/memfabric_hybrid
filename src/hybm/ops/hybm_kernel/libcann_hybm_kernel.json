@@ -19,5 +19,12 @@
             "kernelSo": "libcann_hybm_kernel.so",
             "opKernelLib": "AICPUKernel"
         }
+    },
+    "HybmUrmaDeviceCopy": {
+        "opInfo": {
+            "functionName": "HybmUrmaDeviceCopy",
+            "kernelSo": "libcann_hybm_kernel.so",
+            "opKernelLib": "AICPUKernel"
+        }
     }
 }

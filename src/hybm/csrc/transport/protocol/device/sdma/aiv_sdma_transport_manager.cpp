@@ -357,7 +357,7 @@ SparseCopyResources::~SparseCopyResources()
     }
 }
 
-Result SdmaTransportManager::PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize)
+Result SdmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize)
 {
     std::lock_guard<std::mutex> lock(mutex_);
 

@@ -7,7 +7,7 @@
 #include <cstddef>
 #include <type_traits>
 
-constexpr uint32_t HYBM_SDMA_MAX_RECORDS = 65536;
+#include "hybm_device_copy_common.h"
 constexpr uint32_t HYBM_SDMA_BATCH_SIZE = 256;
 constexpr uint32_t HYBM_SDMA_MAX_COPY_BYTES = 32 * 1024 * 1024;
 

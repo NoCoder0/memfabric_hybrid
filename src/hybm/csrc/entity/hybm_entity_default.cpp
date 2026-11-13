@@ -1100,14 +1100,14 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
     return ret;
 }
 
-int32_t MemEntityDefault::PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) noexcept
+int32_t MemEntityDefault::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize) noexcept
 {
     if (transportManager_ == nullptr || !initialized_) {
         BM_LOG_ERROR("device copy entity not initialized, rankId: " << options_.rankId);
         return BM_NOT_INITIALIZED;
     }
 
-    return transportManager_->PrepareDeviceCopy(poolBase, poolSize);
+    return transportManager_->PrepareDeviceCopy(rankId, poolBase, poolSize);
 }
 
 int32_t MemEntityDefault::DeviceCopy(const hybm_device_copy_params &params) noexcept
@@ -1204,7 +1204,13 @@ int MemEntityDefault::LoadExtendLibrary() noexcept
         }
     }
 
-    if (options_.bmDataOpType & (HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP)) {
+    if (options_.scene == HYBM_SCENE_OFFLOAD && options_.bmDataOpType == HYBM_DOP_TYPE_HOST_URMA) {
+        auto ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_URMA);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("LoadExtendLibrary for Host URMA offload failed: " << ret);
+            return ret;
+        }
+    } else if (options_.bmDataOpType & (HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP)) {
         auto ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_HOST_RDMA);
         if (ret != 0) {
             BM_LOG_ERROR("LoadExtendLibrary for HOST RDMA failed: " << ret);

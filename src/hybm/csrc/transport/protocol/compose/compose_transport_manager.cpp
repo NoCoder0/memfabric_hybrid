@@ -20,6 +20,7 @@
 #include "hybm_def.h"
 #include "hybm_logger.h"
 #include "host_hcom_transport_manager.h"
+#include "host_urma_transport_manager.h"
 #include "device_rdma_transport_manager.h"
 #include "device_rdma_aicpu_transport_manager.h"
 #include "hybm_gva_version.h"
@@ -42,6 +43,11 @@ const uint32_t HOST_PROTOCOL = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA 
 const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
 const uint32_t DEVICE_RDMA_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA;
 const uint32_t DEVICE_URMA_PROTOCOL = HYBM_DOP_TYPE_DEVICE_URMA;
+bool IsLocalUrma(const TransportOptions &options)
+{
+    return options.scene == HYBM_SCENE_OFFLOAD &&
+           (options.protocol == HYBM_DOP_TYPE_HOST_URMA || options.protocol == HYBM_DOP_TYPE_DEVICE_URMA);
+}
 } // namespace
 
 std::shared_ptr<TransportManager> ComposeTransportManager::FindTransport(uint32_t opTypes) const
@@ -92,7 +98,12 @@ Result ComposeTransportManager::OpenHostTransport(const TransportOptions &option
     // Per-entity host transport instance: the per-rank channel/key state of a singleton cannot serve
     // several store groups of the same process at the same time (the multi-connection replay case), and
     // independent instances get naturally disjoint bind ports via basePort + rankId.
-    auto transportManager = std::make_shared<host::HcomTransportManager>();
+    std::shared_ptr<TransportManager> transportManager;
+    if (IsLocalUrma(options)) {
+        transportManager = std::make_shared<host::HostUrmaTransportManager>();
+    } else {
+        transportManager = std::make_shared<host::HcomTransportManager>();
+    }
     transports_[HOST_PROTOCOL] = transportManager;
     const Result ret = transportManager->OpenDevice(options);
     if (ret != BM_OK) {
@@ -372,12 +383,14 @@ void ComposeTransportManager::GetTransportPrepareOptions(const HybmTransPrepareO
                                                          HybmTransPrepareOptions &transportOptions)
 {
     auto options = param.options;
+    const bool localUrma = IsLocalUrma(options_);
     const bool isHostProtocol = (protocolMask & HOST_PROTOCOL) != 0U;
-    const char *nicPrefix = isHostProtocol ? HOST_TRANSPORT_TYPE.c_str() : DEVICE_TRANSPORT_TYPE.c_str();
+    const bool peerIsHost = localUrma ? !isHostProtocol : isHostProtocol;
+    const char *nicPrefix = peerIsHost ? HOST_TRANSPORT_TYPE.c_str() : DEVICE_TRANSPORT_TYPE.c_str();
     for (const auto &item : options) {
         auto rankId = item.first;
         uint32_t opType = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-        if ((opType & protocolMask) == 0U) {
+        if (!localUrma && (opType & protocolMask) == 0U) {
             BM_LOG_DEBUG("remote rank:" << rankId << " to local rank:" << options_.rankId << " use protocol:" << opType
                                         << " skip protocol:" << protocolMask);
             continue;
@@ -392,7 +405,7 @@ void ComposeTransportManager::GetTransportPrepareOptions(const HybmTransPrepareO
 
         for (auto &key : item.second.memKeys) {
             TransportMemoryKey tmp{};
-            if (isHostProtocol) {
+            if (peerIsHost) {
                 ReadHostMemoryKey(key, tmp);
             } else {
                 ReadDeviceMemoryKey(key, tmp);
@@ -507,6 +520,9 @@ std::shared_ptr<TransportManager> ComposeTransportManager::GetTransport(uint32_t
 
 std::vector<uint32_t> ComposeTransportManager::BuildRankProtocols(uint32_t rankId) const
 {
+    if (IsLocalUrma(options_)) {
+        return {FindTransportProtocol(options_.protocol)};
+    }
     std::vector<uint32_t> protocols;
     const auto layers = tagManager_->GetRank2RankLayers(rankId, options_.rankId);
     if (!layers.empty()) {
@@ -620,6 +636,26 @@ Result ComposeTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr,
 
     BM_LOG_ERROR("Failed to ReadRemote.");
     return BM_ERROR;
+}
+
+int32_t ComposeTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize)
+{
+    const auto manager = FindTransport(HYBM_DOP_TYPE_DEVICE_URMA);
+    if (manager == nullptr) {
+        BM_LOG_ERROR("device URMA transport unavailable for sparse copy, rankId: " << rankId);
+        return BM_NOT_INITIALIZED;
+    }
+    return manager->PrepareDeviceCopy(rankId, poolBase, poolSize);
+}
+
+int32_t ComposeTransportManager::DeviceCopy(const hybm_device_copy_params &params)
+{
+    const auto manager = FindTransport(HYBM_DOP_TYPE_DEVICE_URMA);
+    if (manager == nullptr) {
+        BM_LOG_ERROR("device URMA transport unavailable for sparse copy, rankId: " << params.rankId);
+        return BM_NOT_INITIALIZED;
+    }
+    return manager->DeviceCopy(params);
 }
 
 Result ComposeTransportManager::ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor)

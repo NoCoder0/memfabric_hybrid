@@ -176,14 +176,16 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
             }
             break;
         case HYBM_MST_DRAM: {
+            constexpr auto HOST_TRANSPORT_MASK = HYBM_DOP_TYPE_HOST_URMA;
             constexpr auto DEVICE_TRANSPORT_MASK = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
             const bool isSdmaMixedTransport =
                 (options.dataOpType & DEVICE_TRANSPORT_MASK) != 0U && (options.dataOpType & HYBM_DOP_TYPE_SDMA) != 0U;
-            const bool vmmSupport = HybmGetGvaVersion() == HYBM_GVA_V4 &&
-                                    (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
-                                    options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
-                                    !(options.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) &&
-                                    (!(options.dataOpType & DEVICE_TRANSPORT_MASK) || isSdmaMixedTransport);
+            const bool vmmSupport =
+                HybmGetGvaVersion() == HYBM_GVA_V4 &&
+                (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
+                options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
+                !(options.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) &&
+                (!(options.dataOpType & (DEVICE_TRANSPORT_MASK | HOST_TRANSPORT_MASK)) || isSdmaMixedTransport);
             if ((options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U) {
                 tmpSeg = std::make_shared<HybmHostShmSegment>(options, entityId);
             } else if (vmmSupport) {

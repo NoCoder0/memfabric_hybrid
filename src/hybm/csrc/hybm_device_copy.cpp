@@ -17,11 +17,11 @@ using namespace ock::mf;
 
 HYBM_API int32_t hybm_prepare_device_copy(hybm_entity_t e, uint32_t rankId, uint64_t poolBase, uint64_t poolSize)
 {
-    if (e == nullptr || rankId != 0 || poolBase == 0 || poolSize == 0) {
+    if (e == nullptr || poolBase == 0 || poolSize == 0) {
         BM_LOG_ERROR("invalid device copy pool, rankId: " << rankId << " base: " << poolBase << " size: " << poolSize);
         return BM_INVALID_PARAM;
     }
-    return static_cast<MemEntity *>(e)->PrepareDeviceCopy(poolBase, poolSize);
+    return static_cast<MemEntity *>(e)->PrepareDeviceCopy(rankId, poolBase, poolSize);
 }
 
 HYBM_API int32_t hybm_data_device_copy(hybm_entity_t e, const hybm_device_copy_params *params)

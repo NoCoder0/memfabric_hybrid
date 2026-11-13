@@ -35,32 +35,10 @@ SdmaHal &Hal()
 using Clock = std::chrono::steady_clock;
 using Deadline = Clock::time_point;
 
-void CacheRange(const void *pointer, size_t bytes, bool invalidate)
-{
-#if defined(__aarch64__)
-    uint64_t ctr = 0;
-    __asm__ __volatile__("mrs %0, ctr_el0" : "=r"(ctr));
-    const uintptr_t lineBytes = 4ULL << ((ctr >> 16U) & 0xfU);
-    const auto begin = reinterpret_cast<uintptr_t>(pointer);
-    for (uintptr_t line = begin & ~(lineBytes - 1U); line < begin + bytes; line += lineBytes) {
-        if (invalidate) {
-            __asm__ __volatile__("dc civac, %0" ::"r"(line) : "memory");
-        } else {
-            __asm__ __volatile__("dc cvac, %0" ::"r"(line) : "memory");
-        }
-    }
-    __asm__ __volatile__("dsb sy" ::: "memory");
-#else
-    (void)pointer;
-    (void)bytes;
-    (void)invalidate;
-#endif
-}
-
 int32_t WaitCompletion(HybmSdmaDeviceCopyContext &ctx, Deadline deadline)
 {
     for (;;) {
-        CacheRange(&ctx.completed, sizeof(ctx.completed), true);
+        HybmDeviceCopyCacheRange(&ctx.completed, sizeof(ctx.completed), true);
         if (*reinterpret_cast<volatile uint64_t *>(&ctx.completed) == ctx.sequence) {
             return BM_OK;
         }
@@ -75,7 +53,7 @@ int32_t Submit(HybmSdmaDeviceCopyContext &ctx, uint32_t count, bool last, Deadli
 {
     auto &ch = ctx.channel;
     ctx.sentinel = ++ctx.sequence;
-    CacheRange(&ctx.sentinel, sizeof(ctx.sentinel), false);
+    HybmDeviceCopyCacheRange(&ctx.sentinel, sizeof(ctx.sentinel), false);
     ctx.staging[count++] = HybmSdmaMemcpySqe(ch.streamId, reinterpret_cast<uint64_t>(&ctx.sentinel),
                                              reinterpret_cast<uint64_t>(&ctx.completed), sizeof(ctx.completed));
     if (last) {
@@ -106,9 +84,9 @@ int32_t Submit(HybmSdmaDeviceCopyContext &ctx, uint32_t count, bool last, Deadli
         sq[slot] = ctx.staging[i];
     }
     const auto first = std::min(count, ch.sqDepth - ch.sqTail);
-    CacheRange(sq + ch.sqTail, first * sizeof(*sq), false);
+    HybmDeviceCopyCacheRange(sq + ch.sqTail, first * sizeof(*sq), false);
     if (first < count) {
-        CacheRange(sq, (count - first) * sizeof(*sq), false);
+        HybmDeviceCopyCacheRange(sq, (count - first) * sizeof(*sq), false);
     }
     info = {};
     info.sqId = ch.sqId;
@@ -126,19 +104,19 @@ int32_t Submit(HybmSdmaDeviceCopyContext &ctx, uint32_t count, bool last, Deadli
 int32_t Transfer(const HybmSdmaDeviceCopyArgs &args, Deadline deadline)
 {
     auto &ctx = *args.context;
-    CacheRange(args.count, sizeof(*args.count), true);
+    HybmDeviceCopyCacheRange(args.count, sizeof(*args.count), true);
     const auto count = *args.count;
-    if (count > HYBM_SDMA_MAX_RECORDS) {
-        HYBM_LOGE(BM_INVALID_PARAM, "SDMA count=%u exceeds limit=%u", count, HYBM_SDMA_MAX_RECORDS);
+    if (count > HYBM_DEVICE_COPY_MAX_RECORDS) {
+        HYBM_LOGE(BM_INVALID_PARAM, "SDMA count=%u exceeds limit=%u", count, HYBM_DEVICE_COPY_MAX_RECORDS);
         return BM_INVALID_PARAM;
     }
     if (count == 0) {
         // An empty valid call still releases the user-stream wait.
         return Submit(ctx, 0, true, deadline);
     }
-    CacheRange(args.srcPtrs, count * sizeof(*args.srcPtrs), true);
-    CacheRange(args.dstPtrs, count * sizeof(*args.dstPtrs), true);
-    CacheRange(args.lengths, count * sizeof(*args.lengths), true);
+    HybmDeviceCopyCacheRange(args.srcPtrs, count * sizeof(*args.srcPtrs), true);
+    HybmDeviceCopyCacheRange(args.dstPtrs, count * sizeof(*args.dstPtrs), true);
+    HybmDeviceCopyCacheRange(args.lengths, count * sizeof(*args.lengths), true);
 
     uint32_t pending = 0;
     const auto capacity = std::min(HYBM_SDMA_BATCH_SIZE, ctx.channel.sqDepth - 3);
@@ -191,7 +169,7 @@ extern "C" int32_t HybmSdmaDeviceCopy(HybmSdmaDeviceCopyArgs *args)
         return BM_INVALID_PARAM;
     }
     auto &ctx = *args->context;
-    CacheRange(&ctx, offsetof(HybmSdmaDeviceCopyContext, completed), true);
+    HybmDeviceCopyCacheRange(&ctx, offsetof(HybmSdmaDeviceCopyContext, completed), true);
     if (ctx.faulted != 0) {
         HYBM_LOGE(BM_ERROR, "SDMA context faulted, sq=%u", ctx.channel.sqId);
         return BM_ERROR;
@@ -205,6 +183,6 @@ extern "C" int32_t HybmSdmaDeviceCopy(HybmSdmaDeviceCopyArgs *args)
     if (ret != BM_OK && ret != BM_INVALID_PARAM) {
         ctx.faulted = 1;
     }
-    CacheRange(&ctx, offsetof(HybmSdmaDeviceCopyContext, completed), false);
+    HybmDeviceCopyCacheRange(&ctx, offsetof(HybmSdmaDeviceCopyContext, completed), false);
     return ret;
 }

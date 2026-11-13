@@ -3,7 +3,9 @@
  * MemFabric_Hybrid is licensed under Mulan PSL v2.
  */
 
+#include <array>
 #include <cstring>
+#include <string>
 #include <vector>
 #include <gtest/gtest.h>
 #include <dlfcn.h>
@@ -27,6 +29,7 @@ int BatchTestDlclose(void *);
 #undef dlopen
 #undef dlsym
 #undef dlclose
+#include "../../../../../src/hybm/ops/hybm_kernel/hybm_urma_device_copy.cc"
 
 namespace {
 constexpr uint32_t FIRST_RANK = 1U;
@@ -46,6 +49,8 @@ std::vector<uint64_t> notifyRecordIds;
 uint32_t batchModeStartCount = 0U;
 uint32_t batchModeEndCount = 0U;
 std::vector<char> operationOrder;
+std::vector<std::string> batchStartTags;
+std::vector<std::string> batchEndTags;
 
 class HybmBatchTransferTest : public testing::Test {
 protected:
@@ -62,6 +67,8 @@ protected:
         batchModeStartCount = 0U;
         batchModeEndCount = 0U;
         operationOrder.clear();
+        batchStartTags.clear();
+        batchEndTags.clear();
         descriptors.resize(IO_COUNT);
         for (uint32_t i = 0; i < IO_COUNT; ++i) {
             auto &desc = descriptors[i];
@@ -96,14 +103,16 @@ protected:
 } // namespace
 
 extern "C" {
-int32_t HcommBatchModeStart(const char *)
+int32_t HcommBatchModeStart(const char *tag)
 {
+    batchStartTags.emplace_back(tag);
     batchModeStartCount++;
     return BM_OK;
 }
 
-int32_t HcommBatchModeEnd(const char *)
+int32_t HcommBatchModeEnd(const char *tag)
 {
+    batchEndTags.emplace_back(tag);
     batchModeEndCount++;
     return BM_OK;
 }
@@ -306,4 +315,115 @@ TEST_F(HybmBatchTransferTest, RejectsNotifyForMultipleRanks)
     EXPECT_EQ(HybmBatchTransfer(&param), BM_INVALID_PARAM);
     EXPECT_TRUE(submittedCounts.empty());
     EXPECT_TRUE(notifyRecordIds.empty());
+}
+
+class HybmUrmaDeviceCopyTest : public HybmBatchTransferTest {
+protected:
+    void SetUp() override
+    {
+        HybmBatchTransferTest::SetUp();
+        context.capacity = tile.size();
+        context.rankId = FIRST_RANK;
+        context.thread = THREAD;
+        context.channel = CHANNEL;
+        context.poolBase = 0x100000U;
+        context.poolSize = 0x10000U;
+        context.importedBase = 0x400000U;
+        context.descriptors = tile.data();
+        context.marker.transType = ock::mf::HCOMM_TRANSFER_TYPE_READ;
+        context.marker.transferInfo.read = {sizeof(source), &destination, &source};
+        context.maxRecords = HYBM_DEVICE_COPY_MAX_RECORDS;
+        context.recordCount = &recordCount;
+        args = {&context, sources.data(), destinations.data(), lengths.data(), &count, 0U};
+        for (size_t i = 0; i < sources.size(); ++i) {
+            sources[i] = context.poolBase + 0x100U * (i + 1U);
+            destinations[i] = 0x800000U + 0x200U * (i + 1U);
+            lengths[i] = 16U * (i + 1U);
+        }
+    }
+
+    HybmUrmaDeviceCopyContext context{};
+    HybmUrmaDeviceCopyArgs args{};
+    std::array<ock::mf::HcommBatchTransferDesc, 2> tile{};
+    std::array<uint64_t, 5> sources{};
+    std::array<uint64_t, 5> destinations{};
+    std::array<uint32_t, 5> lengths{};
+    uint32_t count{2U};
+    uint32_t recordCount{0U};
+};
+
+TEST_F(HybmUrmaDeviceCopyTest, MixedOffloadAndRestoreTranslateOnlyHostAddresses)
+{
+    std::swap(sources[1], destinations[1]);
+
+    ASSERT_EQ(HybmUrmaDeviceCopy(&args), BM_OK);
+
+    EXPECT_EQ(recordCount, count);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{2U}));
+    EXPECT_EQ(tile[0].transType, ock::mf::HCOMM_TRANSFER_TYPE_READ);
+    EXPECT_EQ(tile[0].transferInfo.read.src, reinterpret_cast<void *>(context.importedBase + 0x100U));
+    EXPECT_EQ(tile[0].transferInfo.read.dst, reinterpret_cast<void *>(destinations[0]));
+    EXPECT_EQ(tile[0].transferInfo.read.len, lengths[0]);
+    EXPECT_EQ(tile[1].transType, ock::mf::HCOMM_TRANSFER_TYPE_WRITE);
+    EXPECT_EQ(tile[1].transferInfo.write.src, reinterpret_cast<void *>(sources[1]));
+    EXPECT_EQ(tile[1].transferInfo.write.dst, reinterpret_cast<void *>(context.importedBase + 0x200U));
+    EXPECT_EQ(tile[1].transferInfo.write.len, lengths[1]);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'D', 'F', 'M'}));
+    EXPECT_EQ(destination, source);
+    EXPECT_EQ(batchStartTags, (std::vector<std::string>{""}));
+    EXPECT_EQ(batchEndTags, batchStartTags);
+}
+
+TEST_F(HybmUrmaDeviceCopyTest, MultipleTilesSubmitEveryRecordOnceAndSignalEachTile)
+{
+    count = sources.size();
+
+    for (uint32_t start = 0; start < count; start += context.capacity) {
+        args.startIndex = start;
+        destination = 0U;
+        ASSERT_EQ(HybmUrmaDeviceCopy(&args), BM_OK);
+        ASSERT_EQ(recordCount, count);
+        const auto used = std::min(context.capacity, count - start);
+        ASSERT_EQ(submittedCounts.back(), used);
+        for (uint32_t i = 0; i < used; ++i) {
+            const auto input = start + i;
+            EXPECT_EQ(tile[i].transType, ock::mf::HCOMM_TRANSFER_TYPE_READ);
+            EXPECT_EQ(tile[i].transferInfo.read.src,
+                      reinterpret_cast<void *>(context.importedBase + sources[input] - context.poolBase));
+            EXPECT_EQ(tile[i].transferInfo.read.dst, reinterpret_cast<void *>(destinations[input]));
+            EXPECT_EQ(tile[i].transferInfo.read.len, lengths[input]);
+        }
+        EXPECT_EQ(destination, source);
+    }
+
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{2U, 2U, 1U}));
+    EXPECT_EQ(markerReadCount, 3U);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'D', 'F', 'M', 'D', 'F', 'M', 'D', 'F', 'M'}));
+    EXPECT_EQ(batchStartTags, (std::vector<std::string>{"", "", ""}));
+    EXPECT_EQ(batchEndTags, batchStartTags);
+}
+
+TEST_F(HybmUrmaDeviceCopyTest, ReplayReadsUpdatedMetadataAtTheSameAddresses)
+{
+    ASSERT_EQ(HybmUrmaDeviceCopy(&args), BM_OK);
+    ASSERT_EQ(recordCount, 2U);
+
+    count = 1U;
+    sources[0] = 0x900000U;
+    destinations[0] = context.poolBase + 0x500U;
+    lengths[0] = 128U;
+    destination = 0U;
+
+    ASSERT_EQ(HybmUrmaDeviceCopy(&args), BM_OK);
+
+    EXPECT_EQ(recordCount, 1U);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{2U, 1U}));
+    EXPECT_EQ(tile[0].transType, ock::mf::HCOMM_TRANSFER_TYPE_WRITE);
+    EXPECT_EQ(tile[0].transferInfo.write.src, reinterpret_cast<void *>(sources[0]));
+    EXPECT_EQ(tile[0].transferInfo.write.dst, reinterpret_cast<void *>(context.importedBase + 0x500U));
+    EXPECT_EQ(tile[0].transferInfo.write.len, 128U);
+    EXPECT_EQ(markerReadCount, 2U);
+    EXPECT_EQ(destination, source);
+    EXPECT_EQ(batchStartTags, (std::vector<std::string>{"", ""}));
+    EXPECT_EQ(batchEndTags, batchStartTags);
 }

@@ -154,6 +154,7 @@ if ! $FAST_MODE; then
             "*/hybm/csrc/common/*"
             "*/hybm/csrc/ts_engine/*"
             "*/hybm/csrc/under_api/*"
+            "*/src/hybm/csrc/transport/hybm_urma_eid_query.cpp"
             "*/src/hybm/csrc/transport/common/urma_topo_helper.cpp"
             "*/util/csrc/ptracer/tracers/*"
     )

@@ -24,6 +24,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         "${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel/hybm_batch_transfer.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel/hybm_rdma_aicpu.cc"
         "${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel/hybm_sdma_device_copy.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/hybm_kernel/hybm_urma_device_copy.cc"
         CACHE STRING "Source files for AICPU kernel cross-compilation")
 
     # Include dlog/slog config if present (added by prior changes)

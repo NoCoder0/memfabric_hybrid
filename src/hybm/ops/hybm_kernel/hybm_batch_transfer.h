@@ -38,6 +38,8 @@ struct HybmBatchTransferParam {
     // rank_start_idx_list[r] + j，其中 0 <= j < rank_list_num_list[r]
 };
 
+int32_t HybmSubmitBatchTransfer(HybmBatchTransferParam *param, const char *batchTag);
+
 extern "C" {
 int32_t HybmBatchTransfer(HybmBatchTransferParam *param);
 }

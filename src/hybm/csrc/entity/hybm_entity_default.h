@@ -83,7 +83,7 @@ public:
                      uint32_t flags) noexcept override;
     int32_t BatchCopyData(hybm_batch_copy_params &params, hybm_data_copy_direction direction, void *stream,
                           uint32_t flags) noexcept override;
-    int32_t PrepareDeviceCopy(uint64_t poolBase, uint64_t poolSize) noexcept override;
+    int32_t PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize) noexcept override;
     int32_t DeviceCopy(const hybm_device_copy_params &params) noexcept override;
     int32_t Wait() noexcept override;
 

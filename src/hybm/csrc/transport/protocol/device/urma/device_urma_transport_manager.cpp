@@ -45,6 +45,7 @@
 #include "hybm_va_manager.h"
 #include "device_kernel_helper.h"
 #include "device_urma_transport_manager.h"
+#include "mf_scope_guard.h"
 
 #include "urma_topo_manager.h"
 
@@ -98,22 +99,6 @@ constexpr uint32_t HYBM_NOTIFY_POOL_INVALID_INDEX = UINT32_MAX;
 constexpr uint32_t HYBM_NOTIFY_POOL_MAX_SIZE = 65536U;
 constexpr size_t HYBM_KERNEL_LAUNCH_BUFFER_MIN_SIZE = 4U * 1024U;
 
-// Both peers derive the same name, while separate engines and send/receive
-// entities on the same device pair must never share an anonymous HCOMM socket.
-std::string EndpointSessionName(const UrmaEndpointDesc &desc)
-{
-    return std::to_string(desc.superPodIdx) + ":" + std::to_string(desc.serverIdx) + ":" +
-           std::to_string(desc.superDevId) + ":" + std::to_string(desc.devPhyId) + ":" +
-           std::to_string(desc.processId) + ":" + std::to_string(desc.instanceId);
-}
-
-std::string ChannelSessionName(const UrmaEndpointDesc &local, const UrmaEndpointDesc &remote)
-{
-    const auto localName = EndpointSessionName(local);
-    const auto remoteName = EndpointSessionName(remote);
-    return "mf-" + std::min(localName, remoteName) + "-" + std::max(localName, remoteName);
-}
-
 uint64_t PackNotifyFreeHead(uint32_t index, uint32_t version)
 {
     return (static_cast<uint64_t>(version) << 32U) | index;
@@ -128,23 +113,6 @@ uint32_t NotifyFreeHeadVersion(uint64_t head)
 {
     return static_cast<uint32_t>(head >> 32U);
 }
-
-static_assert(std::is_trivially_copyable<UrmaExportDesc>::value, "UrmaExportDesc must be binary serializable");
-static_assert(std::is_trivially_copyable<UrmaEndpointDesc>::value,
-              "UrmaEndpointDesc must be trivially copyable for memcpy serialization");
-
-// Must NOT conflict with URMA_EXPORT_DESC_MAGIC (0xA5FAB001).
-constexpr uint32_t URMA_PRIVATE_DATA_MAGIC = 0xA5FAC003U;
-constexpr uint16_t URMA_PRIVATE_DATA_VERSION = 2U;
-
-struct UrmaPrivateDataDesc {
-    uint32_t magic{URMA_PRIVATE_DATA_MAGIC};
-    uint16_t version{URMA_PRIVATE_DATA_VERSION};
-    uint16_t payloadLen{0};
-};
-
-static_assert(std::is_trivially_copyable<UrmaEndpointDesc>::value,
-              "UrmaEndpointDesc must be trivially copyable for byte serialization");
 
 UrmaMemoryType ToUrmaMemoryType(uint32_t flags)
 {
@@ -161,38 +129,6 @@ UrmaCommMem ToUrmaMem(const TransportMemoryRegion &mr)
 
 // ── Free functions migrated from deleted hcomm_transport_manager.cpp ──
 
-CommProtocol ToHcommProtocol(UrmaProtocol protocol)
-{
-    if (protocol == UrmaProtocol::ROCE) {
-        return COMM_PROTOCOL_ROCE;
-    }
-    if (protocol == UrmaProtocol::UBC_TP) {
-        return COMM_PROTOCOL_UBC_TP;
-    }
-    if (protocol == UrmaProtocol::UBC_CTP) {
-        return COMM_PROTOCOL_UBC_CTP;
-    }
-    if (protocol == UrmaProtocol::UBOE) {
-        return COMM_PROTOCOL_UBOE;
-    }
-    if (protocol == UrmaProtocol::UB_RTP) {
-        return COMM_PROTOCOL_UB_RTP;
-    }
-    return COMM_PROTOCOL_RESERVED;
-}
-
-bool GetRangeEnd(const UrmaCommMem &mem, uint64_t &end)
-{
-    if (mem.addr == 0 || mem.size == 0) {
-        return false;
-    }
-    if (std::numeric_limits<uint64_t>::max() - mem.addr < mem.size) {
-        return false;
-    }
-    end = mem.addr + mem.size;
-    return true;
-}
-
 bool IsValidMem(const UrmaCommMem &mem)
 {
     uint64_t end = 0;
@@ -202,32 +138,6 @@ bool IsValidMem(const UrmaCommMem &mem)
 bool IsEmptyMemoryKey(const TransportMemoryKey &key)
 {
     return std::all_of(std::begin(key.keys), std::end(key.keys), [](uint64_t value) { return value == 0; });
-}
-
-EndpointDesc ToHcommEndpointDesc(const UrmaEndpointDesc &desc)
-{
-    EndpointDesc endpoint{};
-    endpoint.protocol = ToHcommProtocol(desc.protocol);
-    endpoint.commAddr.type = desc.type;
-    std::memcpy(endpoint.commAddr.raws, desc.raws, sizeof(endpoint.commAddr.raws));
-    endpoint.loc.locType = ENDPOINT_LOC_TYPE_DEVICE;
-    endpoint.loc.device.devPhyId = desc.devPhyId;
-    endpoint.loc.device.superDevId = desc.superDevId;
-    endpoint.loc.device.serverIdx = desc.serverIdx;
-    endpoint.loc.device.superPodIdx = desc.superPodIdx;
-    return endpoint;
-}
-
-HcommCommMem ToHcommMem(const UrmaCommMem &mem)
-{
-    HcommCommMem hcommMem{};
-    hcommMem.type = COMM_MEM_TYPE_HOST;
-    if (mem.type == UrmaMemoryType::DEVICE_HBM) {
-        hcommMem.type = COMM_MEM_TYPE_DEVICE;
-    }
-    hcommMem.addr = reinterpret_cast<void *>(mem.addr);
-    hcommMem.size = mem.size;
-    return hcommMem;
 }
 
 bool SameMem(const UrmaCommMem &left, const UrmaCommMem &right)
@@ -336,7 +246,7 @@ inline bool ContainsAddressRange(const uint64_t &outerAddr, const uint64_t &oute
 
 // Returns BM_INVALID_PARAM on magic/version/payloadLen/capacity mismatch.
 Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, const int32_t localId,
-                                      UrmaEndpointDesc &outDesc)
+                                      UrmaEndpointDesc &outDesc, uint32_t *hostId = nullptr)
 {
     constexpr size_t headerSize = sizeof(UrmaPrivateDataDesc);
     const uint8_t *raw = privateData.key.ByteData();
@@ -347,6 +257,22 @@ Result ParsePrivateDataToEndpointDesc(const TransportPrivateData &privateData, c
         BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc invalid magic: 0x"
                      << std::hex << header.magic << " expected: 0x" << URMA_PRIVATE_DATA_MAGIC);
         return BM_INVALID_PARAM;
+    }
+    if (header.version == URMA_HOST_PRIVATE_DATA_VERSION && hostId != nullptr) {
+        if (header.payloadLen != sizeof(UrmaHostEndpointDesc) ||
+            privateData.key.ByteSize() < headerSize + sizeof(UrmaHostEndpointDesc)) {
+            BM_LOG_ERROR("device_urma invalid host endpoint payload, bytes: " << header.payloadLen);
+            return BM_INVALID_PARAM;
+        }
+        UrmaHostEndpointDesc host{};
+        std::memcpy(&host, raw + headerSize, sizeof(host));
+        if (host.hostId == UINT32_MAX) {
+            BM_LOG_ERROR("device_urma invalid host endpoint id: " << host.hostId);
+            return BM_INVALID_PARAM;
+        }
+        outDesc = host.endpoint;
+        *hostId = host.hostId;
+        return BM_OK;
     }
     if (header.version != URMA_PRIVATE_DATA_VERSION) {
         BM_LOG_ERROR("device_urma ParsePrivateDataToEndpointDesc unsupported version: "
@@ -817,7 +743,8 @@ Result DeviceUrmaTransportManager::OpenEndpointResourcesLocked(const TransportOp
     BM_LOG_INFO("device_urma OpenDevice protocol=" << protocol_ << ", rankId=" << rankId_ << ", phyDeviceId="
                                                    << phyDeviceId_ << ", mainboardId=" << mainboardId_);
     static const bool fullMesh = MfEnvUtil::GetOptionalUintOrDefault(env::TEST_MF_TRANSPORT_FULL_MESH, 0u) != 0u;
-    const bool useMultiEndpoints = (fullMesh || IsFM16Product()) && protocol_ == UrmaProtocol::UBC_CTP;
+    const bool useMultiEndpoints =
+        options.scene != HYBM_SCENE_OFFLOAD && (fullMesh || IsFM16Product()) && protocol_ == UrmaProtocol::UBC_CTP;
     if (useMultiEndpoints) {
         std::vector<UrmaEndpointDesc> localDescs;
         auto ret = BuildLocalEndpointsDescLocked(protocol_, localDescs);
@@ -1142,6 +1069,7 @@ void DeviceUrmaTransportManager::ReleaseNotifyResource(NotifyResource &resource)
 
 void DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
 {
+    CleanupDeviceCopyResourcesLocked();
     for (auto &rankItem : remoteRanks_) {
         const uint32_t peerRank = rankItem.first;
         auto &state = rankItem.second;
@@ -1858,7 +1786,9 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         UrmaEndpointDesc peerDesc{};
         int32_t localId = -1;
         UrmaTopoManager::GetInstance().GetLocalId(localId);
-        auto ret = ParsePrivateDataToEndpointDesc(item.second.privateData, localId, peerDesc);
+        uint32_t hostId = UINT32_MAX;
+        auto ret = ParsePrivateDataToEndpointDesc(item.second.privateData, localId, peerDesc,
+                                                  options_.scene == HYBM_SCENE_OFFLOAD ? &hostId : nullptr);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma Prepare failed to parse peer endpoint desc, peer: " << peerRank);
             RollbackPendingPrepareResourcesLocked(pendingCreatedPeerRanks);
@@ -1868,7 +1798,8 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         // 2. Idempotency: if thread and channel already exist, compare with stored remoteEndpointDesc.
         //    If unchanged → skip resource creation; if changed → reject (no hot-replace).
         if (state.channel != 0 && state.thread != 0) {
-            if (std::memcmp(&state.remoteEndpointDesc, &peerDesc, sizeof(UrmaEndpointDesc)) != 0) {
+            if (state.remoteHostId != hostId ||
+                std::memcmp(&state.remoteEndpointDesc, &peerDesc, sizeof(UrmaEndpointDesc)) != 0) {
                 BM_LOG_ERROR(
                     "device_urma Prepare peer endpoint desc changed but hot-replace not supported, peer: " << peerRank);
                 RollbackPendingPrepareResourcesLocked(pendingCreatedPeerRanks);
@@ -1878,6 +1809,11 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
         } else {
             // 3. Convert peer UrmaEndpointDesc → HCOMM EndpointDesc for HcommChannelDesc.remoteEndpoint
             EndpointDesc hcommRemoteEndpoint = ToHcommEndpointDesc(peerDesc);
+            if (hostId != UINT32_MAX) {
+                hcommRemoteEndpoint.loc = {};
+                hcommRemoteEndpoint.loc.locType = ENDPOINT_LOC_TYPE_HOST;
+                hcommRemoteEndpoint.loc.host.id = hostId;
+            }
 
             // 4. Build a single HcommChannelDesc for this peer
             HcommChannelDesc channelDesc{};
@@ -1914,7 +1850,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
             if (it != localIds_.end()) {
                 index = std::distance(localIds_.begin(), it);
             }
-            state.channelName = ChannelSessionName(localEndpointDesc_[index], peerDesc);
+            state.channelName = UrmaChannelSessionName(localEndpointDesc_[index], peerDesc);
             channelDesc.channelName = state.channelName.c_str();
             BM_LOG_INFO("device_urma channel session: " << state.channelName);
             ret = DlHcommApi::HcommChannelCreate(localEndpoint_[index], COMM_ENGINE_AICPU, &channelDesc, 1,
@@ -1941,6 +1877,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
             // 7. Persist new resources to state
             state.remoteEndpointDesc = peerDesc;
+            state.remoteHostId = hostId;
             state.hasEndpointDesc = true;
             state.thread = threadHandle;
             state.channelDesc = channelDesc;
@@ -3154,6 +3091,148 @@ Result DeviceUrmaTransportManager::SynchronizeRanks(const std::set<uint32_t> &ra
     auto ret = SynchronizePreSubmittedNotifiesLocked(ctx, rankIds);
     TP_TRACE_END(TP_HYBM_URMA_SYNC_RANK_PENDING, ret);
     return ret;
+}
+
+Result DeviceUrmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize)
+{
+    std::unique_lock<std::shared_mutex> guard(mutex_);
+    if (!opened_) {
+        BM_LOG_ERROR("URMA device copy transport is not opened, rankId: " << rankId);
+        return BM_NOT_INITIALIZED;
+    }
+    if (deviceCopy_ != nullptr) {
+        const auto &ctx = deviceCopy_->hostContext;
+        if (ctx.rankId == rankId && ctx.poolBase == poolBase && ctx.poolSize == poolSize) {
+            return BM_OK;
+        }
+        BM_LOG_ERROR("URMA device copy is already bound to a different pool, rankId: " << rankId);
+        return BM_INVALID_PARAM;
+    }
+    const auto rank = remoteRanks_.find(rankId);
+    if (rank == remoteRanks_.end() || rank->second.thread == 0 || rank->second.channel == 0 ||
+        rank->second.remoteFlagAddr == 0) {
+        BM_LOG_ERROR("URMA device copy peer is not ready, rankId: " << rankId);
+        return BM_NOT_CONNECTED;
+    }
+    const RemoteRegistration *region = nullptr;
+    auto ret = FindRemoteRegistrationLocked(rankId, poolBase, poolSize, &region);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("URMA device copy pool is outside imported memory, rankId: " << rankId << " base: " << poolBase
+                                                                                  << " size: " << poolSize);
+        return ret;
+    }
+    if (region->view.addr == 0) {
+        BM_LOG_ERROR("URMA device copy imported address is null, rankId: " << rankId);
+        return BM_INVALID_PARAM;
+    }
+    ret = EnsureDeviceKernelLoadedLocked();
+    if (ret != BM_OK) {
+        return ret;
+    }
+    ret = DlAclApi::AclrtBinaryGetFunction(deviceKernelHandle_, "HybmUrmaDeviceCopy", &deviceCopyFunc_);
+    if (ret != BM_OK || deviceCopyFunc_ == nullptr) {
+        BM_LOG_ERROR("HybmUrmaDeviceCopy unavailable, reinstall the AICPU package, ret: " << ret);
+        return ret != BM_OK ? ret : BM_DL_FUNCTION_FAILED;
+    }
+
+    auto resources = std::make_unique<UrmaDeviceCopyResources>();
+    auto rollback =
+        make_scope_guard(resources.get(), [this](UrmaDeviceCopyResources *res) { ReleaseDeviceCopyResources(*res); });
+    auto &ctx = resources->hostContext;
+    ctx.capacity = HCOMM_BATCH_TRANSFER_MAX_DESC_NUM;
+    ctx.maxRecords = HYBM_DEVICE_COPY_MAX_RECORDS;
+    ctx.rankId = rankId;
+    ctx.thread = rank->second.thread;
+    ctx.channel = rank->second.channel;
+    ctx.poolBase = poolBase;
+    ctx.poolSize = poolSize;
+    ctx.importedBase = region->view.addr + (poolBase - region->addr);
+
+    constexpr size_t alignment = 64;
+    constexpr size_t contextBytes = (sizeof(ctx) + alignment - 1) & ~(alignment - 1);
+    constexpr size_t countBytes = alignment;
+    const size_t bytes = contextBytes + countBytes + ctx.capacity * sizeof(HcommBatchTransferDesc);
+    ret = DlAclApi::AclrtMalloc(&resources->deviceAllocation, bytes, 0);
+    if (ret != BM_OK || resources->deviceAllocation == nullptr) {
+        BM_LOG_ERROR("allocate URMA device copy storage failed, bytes: " << bytes << " ret: " << ret);
+        return ret != BM_OK ? ret : BM_MALLOC_FAILED;
+    }
+    auto *storage = static_cast<uint8_t *>(resources->deviceAllocation);
+    resources->deviceContext = reinterpret_cast<HybmUrmaDeviceCopyContext *>(storage);
+    ctx.recordCount = reinterpret_cast<uint32_t *>(storage + contextBytes);
+    ctx.descriptors = reinterpret_cast<HcommBatchTransferDesc *>(storage + contextBytes + countBytes);
+    ret = AcquireNotifyResource(resources->notify);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("allocate URMA device copy notify failed, rankId: " << rankId << " ret: " << ret);
+        return ret;
+    }
+    if (rank->second.remoteFlagSize < resources->notify->notifyLen) {
+        BM_LOG_ERROR("URMA device copy peer flag is smaller than notify, rankId: " << rankId);
+        return BM_INVALID_PARAM;
+    }
+    ctx.marker = BuildTransferDesc(resources->notify->notifyAddr, rank->second.remoteFlagAddr,
+                                   resources->notify->notifyLen, true);
+    ret = DlAclApi::AclrtMemcpy(resources->deviceContext, sizeof(ctx), &ctx, sizeof(ctx), ACL_MEMCPY_HOST_TO_DEVICE);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("initialize URMA device copy context failed, rankId: " << rankId << " ret: " << ret);
+        return ret;
+    }
+    rollback.release();
+    deviceCopy_ = std::move(resources);
+    return BM_OK;
+}
+
+Result DeviceUrmaTransportManager::DeviceCopy(const hybm_device_copy_params &params)
+{
+    std::unique_lock<std::shared_mutex> guard(mutex_);
+    if (!opened_ || deviceCopy_ == nullptr || deviceCopy_->submissionFailed ||
+        deviceCopy_->hostContext.rankId != params.rankId) {
+        BM_LOG_ERROR("URMA device copy resources unavailable, rankId: " << params.rankId
+                                                                        << " stream: " << params.stream);
+        return BM_NOT_INITIALIZED;
+    }
+    auto &resources = *deviceCopy_;
+    const auto &ctx = resources.hostContext;
+    HybmUrmaDeviceCopyArgs args{resources.deviceContext, params.srcPtrs, params.dstPtrs,
+                                params.lenPtrs,          params.sizePtr, 0};
+    for (uint32_t start = 0; start < ctx.maxRecords; start += ctx.capacity) {
+        args.startIndex = start;
+        auto ret = LaunchAicpuKernel(deviceCopyFunc_, params.stream, &args, sizeof(args));
+        if (ret == BM_OK) {
+            ret = DlAclApi::AclrtWaitAndResetNotify(resources.notify->notify, params.stream,
+                                                    HYBM_DEVICE_KERNEL_TIMEOUT_S);
+        }
+        if (ret != BM_OK) {
+            resources.submissionFailed = true;
+            BM_LOG_ERROR("URMA device copy launch/wait failed, rankId: " << params.rankId << " startIndex: " << start
+                                                                         << " ret: " << ret);
+            return ret;
+        }
+    }
+    return BM_OK;
+}
+
+void DeviceUrmaTransportManager::ReleaseDeviceCopyResources(UrmaDeviceCopyResources &resources)
+{
+    if (resources.deviceAllocation != nullptr) {
+        const auto ret = DlAclApi::AclrtFree(resources.deviceAllocation);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("free URMA device copy storage failed, ret: " << ret);
+        }
+    }
+    if (resources.notify != nullptr) {
+        ReleaseNotifyResource(*resources.notify);
+    }
+    resources = {};
+}
+
+void DeviceUrmaTransportManager::CleanupDeviceCopyResourcesLocked()
+{
+    if (deviceCopy_ != nullptr) {
+        ReleaseDeviceCopyResources(*deviceCopy_);
+        deviceCopy_.reset();
+    }
+    deviceCopyFunc_ = nullptr;
 }
 
 } // namespace device

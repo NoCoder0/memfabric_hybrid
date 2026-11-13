@@ -39,12 +39,16 @@ public:
 
 private:
     int32_t CreatePool(uint64_t size);
+    int32_t CreateHostPool(const hybm_options &options);
+    int32_t CreateUrmaPool(const hybm_options &options);
+    int32_t ConnectUrmaEntities();
 
     const uint16_t entityId_;
     uint8_t deviceId_{0};
     bool hybmInitialized_{false};
     bool launchLoaded_{false};
     hybm_entity_t entity_{nullptr};
+    hybm_entity_t deviceEntity_{nullptr};
     hybm_mem_slice_t slice_{nullptr};
     uint64_t poolBase_{0};
     uint64_t poolSize_{0};

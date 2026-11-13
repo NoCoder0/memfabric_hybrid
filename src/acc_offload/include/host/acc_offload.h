@@ -21,7 +21,7 @@ extern "C" {
 typedef enum {
     OFFLOAD_SCENE_LOCAL = 0,  /* single-card local DRAM memory pool */
     OFFLOAD_SCENE_SHARED = 1, /* multi-card shared DRAM memory pool */
-    OFFLOAD_SCENE_AICPU = 2,  /* single-card Ascend910C AICPU + SDMA sparse copy */
+    OFFLOAD_SCENE_AICPU = 2,  /* single-card A3 AICPU + SDMA or A5 AICPU + URMA */
 } offload_scene_t;
 
 /**
@@ -154,7 +154,7 @@ int32_t offload_get_dva(uint64_t hostPtr, uint64_t *dvaPtr);
  * must refer to contiguous arrays/scalars on the selected NPU. The caller guarantees that
  * count <= array capacity and count <= 65536. Serialize submissions on each pool and keep
  * metadata, payloads and the pool alive until all referencing graphs are destroyed.
- * An invalid entry stops the AICPU batch. Copies already submitted to SDMA may have completed.
+ * An invalid entry stops the AICPU batch. Copies already submitted to the transport may have completed.
  *
  * @param srcPtr            [in] Array of source addresses.
  * @param dstPtr            [in] Array of destination addresses.

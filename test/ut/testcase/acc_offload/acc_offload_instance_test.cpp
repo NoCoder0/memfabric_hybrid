@@ -11,17 +11,20 @@
  */
 #include <array>
 #include <algorithm>
+#include <mutex>
 #include <vector>
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include "hybm_big_mem.h"
-#include "acc_offload_launch.h"
+#include "hybm_device_copy.h"
+#include "dl_acl_api.h"
 #include "acc_offload_mem_manager.h"
 #include "smem_net_group_engine.h"
 #include "smem_store_factory.h"
 #include "smem_tcp_config_store.h"
 
 #define private public
+#include "acc_offload_launch.h"
 #include "acc_offload_entry_manager.h"
 #include "acc_offload_local_dram_entry.h"
 #include "acc_offload_shared_dram_entry.h"
@@ -43,6 +46,7 @@ constexpr uint64_t DEVICE_ADDRESS_OFFSET = 2 * POOL_SIZE;
 
 std::array<std::array<uint8_t, BACKING_SIZE>, HYBM_ENTITY_ID_SEGMENT_SIZE> gPools;
 std::vector<uint16_t> gCreatedIds;
+std::vector<hybm_options> gCreatedOptions;
 std::vector<hybm_entity_t> gDestroyed;
 uint32_t gUninitCount = 0;
 uint32_t gLaunchCleanupCount = 0;
@@ -68,9 +72,10 @@ void CleanupLaunch()
     ++gLaunchCleanupCount;
 }
 
-hybm_entity_t CreateEntity(uint16_t id, const hybm_options *, uint32_t)
+hybm_entity_t CreateEntity(uint16_t id, const hybm_options *options, uint32_t)
 {
     gCreatedIds.push_back(id);
+    gCreatedOptions.push_back(*options);
     return gPools.at(id - HYBM_ENTITY_ID_OFFLOAD_BASE).data();
 }
 
@@ -102,6 +107,7 @@ protected:
     {
         AccOffloadEntryManager::nextEntityId_ = 0;
         gCreatedIds.clear();
+        gCreatedOptions.clear();
         gDestroyed.clear();
         gUninitCount = 0;
         gLaunchCleanupCount = 0;
@@ -266,4 +272,131 @@ TEST_F(AccOffloadInstanceTest, SharedSelectionPreservesStoreUrlExclusivity)
     EXPECT_EQ(gUninitCount, 1U);
     EXPECT_EQ(gLaunchCleanupCount, 1U);
     EXPECT_EQ(AccOffloadSharedDramEntry::gStores.erase(STORE_URL), 1U);
+}
+
+namespace {
+struct AicpuImport {
+    hybm_entity_t entity;
+    const uint8_t *descriptor;
+    uint32_t flags;
+};
+
+std::mutex gAicpuExchangeMutex;
+std::vector<AicpuImport> gAicpuImports;
+std::vector<std::pair<hybm_entity_t, uint32_t>> gAicpuConnections;
+std::array<uint8_t, 3> gAicpuDescriptors{1U, 2U, 3U};
+hybm_entity_t gCopyEntity = nullptr;
+hybm_device_copy_params gCopyParams{};
+} // namespace
+
+class AccOffloadAicpuInstanceTest : public AccOffloadInstanceTest {
+protected:
+    void SetUp() override
+    {
+        AccOffloadInstanceTest::SetUp();
+        config_.scene = OFFLOAD_SCENE_AICPU;
+        gAicpuImports.clear();
+        gAicpuConnections.clear();
+        gCopyEntity = nullptr;
+        gCopyParams = {};
+        MOCKER(hybm_export)
+            .stubs()
+            .will(invoke(+[](hybm_entity_t entity, hybm_mem_slice_t slice, uint32_t flags, hybm_exchange_info *info) {
+                if (slice != nullptr) {
+                    EXPECT_EQ(entity, gPools[0].data());
+                    EXPECT_EQ(slice, entity);
+                    EXPECT_EQ(flags, 0U);
+                    info->desc = &gAicpuDescriptors[2];
+                } else {
+                    EXPECT_EQ(flags, HYBM_FLAG_EXPORT_ENTITY);
+                    EXPECT_TRUE(entity == gPools[0].data() || entity == gPools[1].data());
+                    info->desc = &gAicpuDescriptors[entity == gPools[0].data() ? 0 : 1];
+                }
+                info->descLen = 1U;
+                return OFFLOAD_OK;
+            }));
+        MOCKER(hybm_import)
+            .stubs()
+            .will(invoke(+[](hybm_entity_t entity, const hybm_exchange_info *info, uint32_t count, void **addresses,
+                             uint32_t flags) {
+                std::lock_guard<std::mutex> lock(gAicpuExchangeMutex);
+                EXPECT_EQ(count, 1U);
+                EXPECT_EQ(addresses, nullptr);
+                EXPECT_EQ(info->descLen, 1U);
+                if (flags == 0U) {
+                    EXPECT_EQ(gAicpuConnections.size(), 2U);
+                }
+                gAicpuImports.push_back({entity, info->desc, flags});
+                return OFFLOAD_OK;
+            }));
+        MOCKER(hybm_transport_connect)
+            .stubs()
+            .will(invoke(+[](hybm_entity_t entity, const uint32_t *ranks, uint32_t count, uint32_t flags) {
+                std::lock_guard<std::mutex> lock(gAicpuExchangeMutex);
+                EXPECT_EQ(count, 1U);
+                EXPECT_EQ(flags, 0U);
+                const auto imported = std::find_if(gAicpuImports.begin(), gAicpuImports.end(),
+                                                   [entity](const AicpuImport &item) { return item.entity == entity; });
+                EXPECT_NE(imported, gAicpuImports.end());
+                gAicpuConnections.emplace_back(entity, ranks[0]);
+                return OFFLOAD_OK;
+            }));
+        savedLaunch_ = AccOffloadLaunchApi::pAccOffloadAicpuLaunch;
+        AccOffloadLaunchApi::pAccOffloadAicpuLaunch = [](AccOffloadAicpuCallback callback,
+                                                         const AccOffloadAicpuParam &param, uint8_t device) {
+            EXPECT_EQ(device, TEST_DEVICE);
+            EXPECT_EQ(callback(param, reinterpret_cast<void *>(0x1234U)), OFFLOAD_OK);
+        };
+        MOCKER(hybm_data_device_copy)
+            .stubs()
+            .will(invoke(+[](hybm_entity_t entity, const hybm_device_copy_params *params) {
+                gCopyEntity = entity;
+                gCopyParams = *params;
+                return OFFLOAD_OK;
+            }));
+    }
+
+    void TearDown() override
+    {
+        AccOffloadLaunchApi::pAccOffloadAicpuLaunch = savedLaunch_;
+        AccOffloadInstanceTest::TearDown();
+    }
+
+    AccOffloadAicpuLaunchFunc savedLaunch_{nullptr};
+};
+
+TEST_F(AccOffloadAicpuInstanceTest, Ascend910CKeepsTheSingleEntitySdmaFlow)
+{
+    MOCKER(ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
+    auto host = static_cast<hybm_entity_t>(gPools[0].data());
+    MOCKER(hybm_prepare_device_copy)
+        .expects(once())
+        .with(eq(host), eq(0U), eq(reinterpret_cast<uint64_t>(host)), eq(POOL_SIZE))
+        .will(returnValue(OFFLOAD_OK));
+    AccOffloadEntryManager pool;
+
+    ASSERT_EQ(pool.Initialize(config_), OFFLOAD_OK);
+
+    ASSERT_EQ(gCreatedOptions.size(), 1U);
+    const auto &options = gCreatedOptions.front();
+    EXPECT_EQ(options.bmType, HYBM_TYPE_AICPU_INITIATE);
+    EXPECT_EQ(options.bmDataOpType, HYBM_DOP_TYPE_AIV_SDMA);
+    EXPECT_EQ(options.rankCount, 1U);
+    EXPECT_EQ(options.flags, HYBM_FLAG_DRAM_MAP_HOST_VA);
+    EXPECT_TRUE(gAicpuImports.empty());
+    EXPECT_TRUE(gAicpuConnections.empty());
+    EXPECT_EQ(pool.MallocHost(BLOCK_SIZE), host);
+    uint64_t sources[] = {reinterpret_cast<uint64_t>(host)};
+    uint64_t destinations[] = {0x800000U};
+    uint32_t lengths[] = {BLOCK_SIZE};
+    uint32_t count = 1U;
+    ASSERT_EQ(pool.SparseCopy(sources, destinations, lengths, &count, TEST_DEVICE), OFFLOAD_OK);
+    EXPECT_EQ(gCopyEntity, host);
+    EXPECT_EQ(gCopyParams.rankId, 0U);
+
+    pool.UnInitialize();
+
+    EXPECT_EQ(gDestroyed, (std::vector<hybm_entity_t>{host}));
+    EXPECT_EQ(gUninitCount, 1U);
+    EXPECT_EQ(gLaunchCleanupCount, 1U);
 }

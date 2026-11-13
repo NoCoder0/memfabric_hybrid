@@ -24,6 +24,7 @@ namespace offload {
 class AccOffloadEntryManager {
 public:
     static AccOffloadEntryManager &Instance();
+    static int32_t AllocateEntityId(uint16_t &entityId);
 
     AccOffloadEntryManager() = default;
     ~AccOffloadEntryManager();

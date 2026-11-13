@@ -28,7 +28,7 @@ typedef struct {
     uint64_t reserved[4];
 } hybm_device_copy_params;
 
-/* A3 local host pool (rankId = 0). Prepare outside capture; stop/drain execution and
+/* rankId identifies the host-pool owner. Prepare outside capture; stop/drain execution and
  * destroy referencing graphs before entity teardown. */
 int32_t hybm_prepare_device_copy(hybm_entity_t e, uint32_t rankId, uint64_t poolBase, uint64_t poolSize);
 int32_t hybm_data_device_copy(hybm_entity_t e, const hybm_device_copy_params *params);
