@@ -176,7 +176,7 @@ INFO [SMEM smem_ha_config_store.cpp:586 ConnectToLeaderAsFollower] No leader reg
 **问题现象**
 
 ```text
-driver version is too old, not support vmm, gvaVersion: xxx
+Driver version is lower than the minimum supported version V100R001C23SPC005B219
 ```
 
 **问题根因**
@@ -185,7 +185,11 @@ mf初始化是会校验HDK版本以保证后续流程正确，如果安装HDK版
 
 **解决方法**
 
-检查物理机安装的HDK，使用`npu-smi info`确认HDK确认[硬件支持](../user_guide/basic_configuration/hardware_support.md)，若版本过低请升级HDK版本。
+检查物理机安装的HDK，若版本过低请升级HDK版本：
+
+1.使用`cat /usr/local/Ascend/driver/version.info`查看`compatible_version`的兼容性列表是否包含`V100R001C23`字段。
+
+2.使用`npu-smi info`确认HDK版本[硬件支持](../user_guide/basic_configuration/hardware_support.md)。
 
 ### 1.2 Copy 报错
 
