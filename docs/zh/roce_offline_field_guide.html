@@ -1,0 +1,1537 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>昇腾 A3 与鲲鹏 CX7 RoCE 部署及离线排障指南</title><style>
+:root{color-scheme:light}body{font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;color:#192832;background:#f5f7fa;margin:0;line-height:1.75}main{max-width:1160px;margin:24px auto;padding:36px 44px;background:white;border-radius:10px}h1{font-size:28px;line-height:1.4;color:#103c56}h2{font-size:23px;border-bottom:2px solid #dae4eb;padding:28px 0 8px;scroll-margin-top:15px}h3{font-size:18px;padding-top:14px;scroll-margin-top:15px}p{margin:14px 0}a{color:#006b9c;overflow-wrap:anywhere}code{font-family:Consolas,"DejaVu Sans Mono",monospace;font-size:.91em;background:#edf2f7;padding:2px 4px;border-radius:3px}pre{background:#122a3b;color:#edf6fc;border-radius:6px;padding:18px;overflow-x:auto;line-height:1.55}pre code{background:none;padding:0;color:inherit;font-size:13px}table{border-collapse:collapse;width:100%;font-size:13px;display:block;overflow-x:auto;margin:18px 0}td,th{padding:9px 11px;border:1px solid #cad8e3;text-align:left;vertical-align:top}th{background:#e7eff5;color:#17394f}tr:nth-child(even){background:#f8fafc}nav{background:#edf4f8;padding:14px 24px;border-radius:6px}nav ul{columns:2;column-gap:30px;padding-left:22px}nav li{break-inside:avoid}.offline{color:#526878;font-size:13px}@media(max-width:700px){main{margin:0;padding:20px 15px}nav ul{columns:1}}@media print{body{background:white}main{margin:0;padding:0;max-width:none}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5f7;color:#111;border:1px solid #ccd}table{display:table;font-size:9px;table-layout:auto}td,th{padding:4px;overflow-wrap:anywhere}h2,h3{break-after:avoid}tr,pre{break-inside:avoid}nav{display:none}a{color:#111}h1{font-size:23px}}
+</style></head><body><main><p class="offline">离线手册 · 2026 年 11 月 14 日基线 · 浏览器可直接打开或打印 · 无外部资源依赖</p><nav aria-label="目录"><strong>目录</strong><ul><li><a href="#section">1 离线出发前准备</a></li><li><a href="#section-1">2 当前地址与组网基线</a></li><li><a href="#section-3">3 地址与源地址路由</a></li><li><a href="#section-5">4 如何验证 256 组双向全互联</a></li><li><a href="#read-write">5 点对点 READ 和 WRITE 带宽</a></li><li><a href="#cx7-qos">6 鲲鹏 CX7 的 QoS 检查</a></li><li><a href="#device_rdma">7 昇腾 device_rdma 侧检查</a></li><li><a href="#section-15">8 交换机侧检查与设置</a></li><li><a href="#section-17">9 持久化与变更后复查</a></li><li><a href="#section-18">10 计数器与故障定位速查</a></li><li><a href="#section-21">11 客户交付验收记录</a></li><li><a href="#section-22">12 本地证据与离线文件</a></li></ul></nav><h1 id="a3-cx7-roce">昇腾 A3 与鲲鹏 CX7 RoCE 部署及离线排障指南</h1>
+<p>适用场景：昇腾 A3 卡侧 device_rdma 经以太网交换机访问鲲鹏服务器 CX7 网卡。以本实验室 <strong>16 个 NPU device 端口 × 16 个 CPU 网口</strong> 为例，覆盖地址和路由、双向连通性、RDMA READ/WRITE 带宽、两端及交换机 QoS 检查。</p>
+<p>基线日期：2026 年 11 月 14 日，北京时间。本文依据会话中的配置回读、命令和实测日志整理。它是一份部署操作手册，不是本次重新登录环境的健康报告。客户现场替换 IP、接口、设备号和交换机端口后使用。</p>
+<p><strong>现场顺序：核对端口身份 → 物理链路 → 地址与源路由 → 双向 ping 和邻居 MAC → MTU → QoS → 单对 READ/WRITE → 拥塞和业务验证。</strong> 每一步通过再进入下一步。命令分为“查询”“主动测试”“配置变更”；配置变更段应在业务可中断时执行，并保留原值。</p>
+<h2 id="section">1 离线出发前准备</h2>
+<p>把整个文档目录复制到现场电脑。<code>GUIDE_CN.html</code> 可直接用浏览器离线打开或打印，<code>GUIDE_CN.md</code> 可用文本编辑器搜索和复制命令；无需外部字体、JavaScript 或 CDN。文中的外网链接仅用于追溯，执行步骤不依赖联网。</p>
+<p>附带 <code>npu_ping_all.sh</code> 和 <code>host_ping_all.sh</code>，内容对应第 4.2、4.3 节。它们仅主动发包和保存查询日志，不修改 IP、路由或 QoS，也不清除邻居。先按客户现场修改端点清单，再在相应宿主机用 <code>bash 脚本名</code> 执行；这些脚本不会自动汇总为通过结论，仍需按第 4 节核对统计、路由和 MAC。本包不包含驱动或工具安装包，所需软件另按下表准备。</p>
+<p>提前带齐与现场 <strong>aarch64 架构、发行版、内核、驱动</strong> 匹配的软件包及依赖。在同版本隔离机器上验证安装；不要到现场再执行联网 yum/apt/pip，也不要只复制一个依赖大量动态库的二进制。</p>
+<table>
+<thead>
+<tr>
+<th>位置</th>
+<th>必需工具</th>
+<th>用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A3 宿主机</td>
+<td>昇腾驱动与 <code>/usr/local/Ascend/driver/tools/hccn_tool</code>、bash、timeout</td>
+<td>NPU 卡侧查询、ping、内置 RoCE perftest</td>
+</tr>
+<tr>
+<td>每台鲲鹏宿主机</td>
+<td>iproute2 的 ip/rdma/ss/dcb，iputils ping，ethtool</td>
+<td>地址、路由、RDMA、流控与计数</td>
+</tr>
+<tr>
+<td>每台鲲鹏宿主机</td>
+<td>rdma-core 的 ibv_devinfo，perftest 的 ib_read_bw/ib_write_bw</td>
+<td>RDMA 能力与带宽</td>
+</tr>
+<tr>
+<td>每台鲲鹏宿主机</td>
+<td>驱动配套 mlnx_qos、MFT 的 mlxreg；tcpdump、arping</td>
+<td>QoS、寄存器与 ARP 定位</td>
+</tr>
+<tr>
+<td>运维电脑</td>
+<td>SSH 客户端、现场交换机支持的管理客户端</td>
+<td>管理通道；与数据面测试分开</td>
+</tr>
+<tr>
+<td>交换机</td>
+<td>对应型号/版本的离线命令参考、原配置备份</td>
+<td>VLAN、PFC、队列、光模块与保存配置</td>
+</tr>
+</tbody>
+</table>
+<p>现场已验证：NPU 内置 perftest <strong>6.16</strong> 与 Host perftest <strong>6.30</strong> 可完成版本交换和读写测试。CX7 驱动 <strong>2607.0.100</strong>、固件 <strong>28.47.1026</strong>；交换机 <strong>Huawei XH9210-32DQ，V300R025C00SPC500</strong>。不同版本先检查本机帮助，再跑单对；不要默认所有 hccn_tool 都有 <code>-roce_test</code>。</p>
+<pre><code class="language-bash"># 鲲鹏：查询与依赖检查
+uname -m
+uname -r
+cat /etc/os-release
+command -v ip rdma ss dcb ping ethtool ibv_devinfo ib_read_bw ib_write_bw mlnx_qos mlxreg
+ib_read_bw --version
+ib_write_bw --version
+ib_read_bw --help
+mlnx_qos --help
+mlxreg --help
+ldd &quot;$(command -v ib_read_bw)&quot;
+
+# A3：保留对应版本的帮助，检查 roce_test、tclass 等选项
+/usr/local/Ascend/driver/tools/hccn_tool -h
+</code></pre>
+<p>网卡设置优先在宿主机检查。业务在容器内运行时，还要确认容器能看到正确的 RDMA 设备、驱动库和网络命名空间；容器普通 <code>ping</code> 不能替代 NPU 卡侧 <code>hccn_tool -ping</code>。本文带宽测试不依赖 hcomm/CANN 开发容器。</p>
+<h2 id="section-1">2 当前地址与组网基线</h2>
+<h3 id="section-2">2.1 管理面和数据面</h3>
+<table>
+<thead>
+<tr>
+<th>节点</th>
+<th>管理地址</th>
+<th>数据面</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A3 D</td>
+<td>10.1.101.201</td>
+<td>device 0～15，16 个卡侧 IP</td>
+</tr>
+<tr>
+<td>Host1</td>
+<td>10.1.101.177</td>
+<td>H1-0～H1-3；旧管理地址 10.1.101.128 已停用</td>
+</tr>
+<tr>
+<td>Host2</td>
+<td>10.1.101.178</td>
+<td>H2-0～H2-3</td>
+</tr>
+<tr>
+<td>Host3</td>
+<td>10.1.101.27</td>
+<td>H3-0～H3-3</td>
+</tr>
+<tr>
+<td>Host4</td>
+<td>10.1.101.32</td>
+<td>H4-0～H4-3</td>
+</tr>
+<tr>
+<td>交换机</td>
+<td>10.1.101.237</td>
+<td>32 个 200G 数据子口</td>
+</tr>
+</tbody>
+</table>
+<p>最终网络为 <strong>一个 <code>20.168.0.0/22</code> 子网，掩码 <code>255.255.252.0</code></strong>，覆盖原来的 <code>20.168.0.x</code>～<code>20.168.3.x</code>。所有数据口在同一 VLAN 1，通过二层直接通信，无需数据网关。H1-0 等名称末位只是历史分组标签，不能再把它当成四个独立子网。</p>
+<pre><code class="language-text">A3 D：16 个 NPU 数据端口 ── 32 口 200G 二层交换网络 ── 4 台鲲鹏 × 4 个 CX7 端口
+        /22 + 源路由              同一 VLAN                /22 + 源路由
+                     每个 NPU 可以访问每个 CPU 数据端口
+</code></pre>
+<p>16 个 NPU device 对应本环境的 8 张物理卡；4 台鲲鹏共 8 张双口 CX7。物理卡、逻辑 device、Linux netdev、RDMA device 和交换机子口是不同层次的编号。</p>
+<p><code>20.168.*</code> 是本实验室沿用的地址，不是私有地址段。客户新建隔离数据网时，按客户地址规划选择不冲突的私有网段；本文地址仅作例子。如果客户必须保留多个 VLAN/子网，应另行设计三层路由和逐跳 QoS，不能只把端点掩码改大来跨 VLAN。</p>
+<h3 id="npu">2.2 NPU 端点清单</h3>
+<p>NPU 策略路由表使用 <code>201 + deviceId</code>，卡侧接口为 <code>eth&lt;deviceId&gt;</code>。交换机对应关系以实测 MAC 学习为准，换线后重新核对。</p>
+<table>
+<thead>
+<tr>
+<th>device</th>
+<th>IP/前缀</th>
+<th>接口 / 表</th>
+<th>MAC</th>
+<th>交换机口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>20.168.0.1/22</td>
+<td>eth0 / 201</td>
+<td>c0:3e:50:1d:6a:4d</td>
+<td>400GE1/0/8:1</td>
+</tr>
+<tr>
+<td>1</td>
+<td>20.168.1.2/22</td>
+<td>eth1 / 202</td>
+<td>c0:3e:50:1d:6a:4e</td>
+<td>400GE1/0/7:1</td>
+</tr>
+<tr>
+<td>2</td>
+<td>20.168.0.3/22</td>
+<td>eth2 / 203</td>
+<td>c0:3e:50:1d:6b:4b</td>
+<td>400GE1/0/6:1</td>
+</tr>
+<tr>
+<td>3</td>
+<td>20.168.1.4/22</td>
+<td>eth3 / 204</td>
+<td>c0:3e:50:1d:6b:4c</td>
+<td>400GE1/0/5:1</td>
+</tr>
+<tr>
+<td>4</td>
+<td>20.168.0.5/22</td>
+<td>eth4 / 205</td>
+<td>4c:d0:dd:a5:9b:1e</td>
+<td>400GE1/0/4:1</td>
+</tr>
+<tr>
+<td>5</td>
+<td>20.168.1.6/22</td>
+<td>eth5 / 206</td>
+<td>4c:d0:dd:a5:9b:1f</td>
+<td>400GE1/0/3:1</td>
+</tr>
+<tr>
+<td>6</td>
+<td>20.168.0.7/22</td>
+<td>eth6 / 207</td>
+<td>4c:d0:dd:a5:9c:42</td>
+<td>400GE1/0/2:1</td>
+</tr>
+<tr>
+<td>7</td>
+<td>20.168.1.8/22</td>
+<td>eth7 / 208</td>
+<td>4c:d0:dd:a5:9c:43</td>
+<td>400GE1/0/1:1</td>
+</tr>
+<tr>
+<td>8</td>
+<td>20.168.2.9/22</td>
+<td>eth8 / 209</td>
+<td>c0:3e:50:1d:6a:99</td>
+<td>400GE1/0/8:2</td>
+</tr>
+<tr>
+<td>9</td>
+<td>20.168.3.10/22</td>
+<td>eth9 / 210</td>
+<td>c0:3e:50:1d:6a:9a</td>
+<td>400GE1/0/7:2</td>
+</tr>
+<tr>
+<td>10</td>
+<td>20.168.2.11/22</td>
+<td>eth10 / 211</td>
+<td>c0:3e:50:1d:6a:a9</td>
+<td>400GE1/0/6:2</td>
+</tr>
+<tr>
+<td>11</td>
+<td>20.168.3.12/22</td>
+<td>eth11 / 212</td>
+<td>c0:3e:50:1d:6a:aa</td>
+<td>400GE1/0/5:2</td>
+</tr>
+<tr>
+<td>12</td>
+<td>20.168.2.13/22</td>
+<td>eth12 / 213</td>
+<td>4c:d0:dd:a5:9b:fe</td>
+<td>400GE1/0/4:2</td>
+</tr>
+<tr>
+<td>13</td>
+<td>20.168.3.14/22</td>
+<td>eth13 / 214</td>
+<td>4c:d0:dd:a5:9b:ff</td>
+<td>400GE1/0/3:2</td>
+</tr>
+<tr>
+<td>14</td>
+<td>20.168.2.15/22</td>
+<td>eth14 / 215</td>
+<td>4c:d0:dd:6a:f4:ec</td>
+<td>400GE1/0/2:2</td>
+</tr>
+<tr>
+<td>15</td>
+<td>20.168.3.16/22</td>
+<td>eth15 / 216</td>
+<td>4c:d0:dd:6a:f4:ed</td>
+<td>400GE1/0/1:2</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cpu">2.3 CPU 端点清单</h3>
+<p>每台 Host 的 <code>-0/-1/-2/-3</code> 口分别用表 201/202/203/204，规则优先级 10201/10202/10203/10204。所有 RDMA 设备的端口号均为 1；<code>mlx5_2/1</code> 的 <code>/1</code> 不是 GID index。</p>
+<table>
+<thead>
+<tr>
+<th>标签</th>
+<th>IP/前缀</th>
+<th>Linux接口</th>
+<th>RDMA/port</th>
+<th>MAC</th>
+<th>交换机口</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>H1-0</td>
+<td>20.168.0.23/22</td>
+<td>enp165s0f1np1</td>
+<td>mlx5_3/1</td>
+<td>a0:88:c2:70:84:6f</td>
+<td>400GE1/0/10:2</td>
+</tr>
+<tr>
+<td>H1-1</td>
+<td>20.168.1.24/22</td>
+<td>enp38s0f0np0</td>
+<td>mlx5_0/1</td>
+<td>a0:88:c2:70:9e:ae</td>
+<td>400GE1/0/9:1</td>
+</tr>
+<tr>
+<td>H1-2</td>
+<td>20.168.2.31/22</td>
+<td>enp165s0f0np0</td>
+<td>mlx5_2/1</td>
+<td>a0:88:c2:70:84:6e</td>
+<td>400GE1/0/10:1</td>
+</tr>
+<tr>
+<td>H1-3</td>
+<td>20.168.3.32/22</td>
+<td>enp38s0f1np1</td>
+<td>mlx5_1/1</td>
+<td>a0:88:c2:70:9e:af</td>
+<td>400GE1/0/9:2</td>
+</tr>
+<tr>
+<td>H2-0</td>
+<td>20.168.0.21/22</td>
+<td>enp165s0f0np0</td>
+<td>mlx5_2/1</td>
+<td>a0:88:c2:70:9d:fe</td>
+<td>400GE1/0/12:1</td>
+</tr>
+<tr>
+<td>H2-1</td>
+<td>20.168.1.22/22</td>
+<td>enp38s0f0np0</td>
+<td>mlx5_0/1</td>
+<td>a0:88:c2:70:82:de</td>
+<td>400GE1/0/11:1</td>
+</tr>
+<tr>
+<td>H2-2</td>
+<td>20.168.2.29/22</td>
+<td>enp165s0f1np1</td>
+<td>mlx5_3/1</td>
+<td>a0:88:c2:70:9d:ff</td>
+<td>400GE1/0/12:2</td>
+</tr>
+<tr>
+<td>H2-3</td>
+<td>20.168.3.30/22</td>
+<td>enp38s0f1np1</td>
+<td>mlx5_1/1</td>
+<td>a0:88:c2:70:82:df</td>
+<td>400GE1/0/11:2</td>
+</tr>
+<tr>
+<td>H3-0</td>
+<td>20.168.0.19/22</td>
+<td>enp165s0f0np0</td>
+<td>mlx5_2/1</td>
+<td>a0:88:c2:70:84:4e</td>
+<td>400GE1/0/14:1</td>
+</tr>
+<tr>
+<td>H3-1</td>
+<td>20.168.1.20/22</td>
+<td>enp38s0f0np0</td>
+<td>mlx5_0/1</td>
+<td>a0:88:c2:70:95:8e</td>
+<td>400GE1/0/13:1</td>
+</tr>
+<tr>
+<td>H3-2</td>
+<td>20.168.2.27/22</td>
+<td>enp165s0f1np1</td>
+<td>mlx5_3/1</td>
+<td>a0:88:c2:70:84:4f</td>
+<td>400GE1/0/14:2</td>
+</tr>
+<tr>
+<td>H3-3</td>
+<td>20.168.3.28/22</td>
+<td>enp38s0f1np1</td>
+<td>mlx5_1/1</td>
+<td>a0:88:c2:70:95:8f</td>
+<td>400GE1/0/13:2</td>
+</tr>
+<tr>
+<td>H4-0</td>
+<td>20.168.0.17/22</td>
+<td>enp165s0f1np1</td>
+<td>mlx5_3/1</td>
+<td>a0:88:c2:70:9d:1f</td>
+<td>400GE1/0/16:2</td>
+</tr>
+<tr>
+<td>H4-1</td>
+<td>20.168.1.18/22</td>
+<td>enp38s0f0np0</td>
+<td>mlx5_0/1</td>
+<td>a0:88:c2:70:aa:14</td>
+<td>400GE1/0/15:1</td>
+</tr>
+<tr>
+<td>H4-2</td>
+<td>20.168.2.25/22</td>
+<td>enp165s0f0np0</td>
+<td>mlx5_2/1</td>
+<td>a0:88:c2:70:9d:1e</td>
+<td>400GE1/0/16:1</td>
+</tr>
+<tr>
+<td>H4-3</td>
+<td>20.168.3.26/22</td>
+<td>enp38s0f1np1</td>
+<td>mlx5_1/1</td>
+<td>a0:88:c2:70:aa:15</td>
+<td>400GE1/0/15:2</td>
+</tr>
+</tbody>
+</table>
+<p><strong>不得把上表接口名、BDF 或 GID index 直接套用到新机器。</strong> 先用下面的查询建立 IP→netdev→RDMA device→PCI→MAC→交换机口对应关系。</p>
+<pre><code class="language-bash">ip -br -4 addr
+rdma link show
+ibv_devinfo
+ethtool -i enp165s0f0np0
+cat /sys/class/net/enp165s0f0np0/address
+readlink -f /sys/class/net/enp165s0f0np0/device
+readlink -f /sys/class/infiniband/mlx5_2/device
+</code></pre>
+<p>预期：后两个路径指向相同 PCI 设备；<code>rdma link</code> 的 <code>netdev</code> 与所选 IP 所在接口一致。</p>
+<h2 id="section-3">3 地址与源地址路由</h2>
+<h3 id="section-4">3.1 为什么必须有源路由</h3>
+<p>一台 Host 的四个物理网口都在 <code>/22</code>，系统普通路由可能选择其中一个口发送。A3 同一卡的芯片也可能共享路由视图。因此，<strong>只改掩码、只指定目标 IP、或者看到 ping 回复，都不足以证明选定端口可用</strong>。</p>
+<p>Host 按源 IP 和数据网段选择独立路由表；NPU 用 hccn_tool 添加源规则与指定 <code>ethN</code> 的直连路由。管理默认路由与 NPU 内部 <code>192.*</code> 路由保留。</p>
+<h3 id="host3-h3-0">3.2 Host3 H3-0 的只读检查</h3>
+<pre><code class="language-bash">IF=enp165s0f0np0
+SRC=20.168.0.19
+DST=20.168.0.3
+
+ip -4 addr show dev &quot;$IF&quot;
+ip -4 rule show
+ip -4 route show table 201
+ip -4 route get &quot;$DST&quot; from &quot;$SRC&quot;
+sysctl net.ipv4.conf.all.arp_ignore net.ipv4.conf.all.arp_announce net.ipv4.conf.all.rp_filter
+sysctl &quot;net.ipv4.conf.$IF.arp_ignore&quot; &quot;net.ipv4.conf.$IF.arp_announce&quot; &quot;net.ipv4.conf.$IF.rp_filter&quot;
+</code></pre>
+<p>预期关键字段（行格式可能不同）：</p>
+<pre><code class="language-text">inet 20.168.0.19/22
+10201: from 20.168.0.19 to 20.168.0.0/22 lookup 201
+20.168.0.0/22 dev enp165s0f0np0 ... src 20.168.0.19
+20.168.0.3 from 20.168.0.19 dev enp165s0f0np0 table 201 ...
+arp_ignore = 1
+arp_announce = 2
+rp_filter = 2
+</code></pre>
+<p><code>arp_ignore=1</code> 限制在拥有目标地址的接口应答；<code>arp_announce=2</code> 控制 ARP 源地址选择；<code>rp_filter=2</code> 为宽松反向路径检查。检查 <code>all</code> 与接口配置的合成效果，不能只读接口值。这里选择 2 是本多口同子网方案的基线，不是所有网络都必须关闭反向路径检查。<a href="https://docs.kernel.org/networking/ip-sysctl.html">Linux IP sysctl 定义</a></p>
+<h3 id="host">3.3 Host 运行态配置示例</h3>
+<p><strong>配置变更，仅示范 H3-0。</strong> 先检查表号和优先级未被其他用途占用；已存在正确规则时不重复添加。其他端口分别使用自身 IP、接口、表和优先级。</p>
+<pre><code class="language-bash"># 设置已有数据地址的前缀，不要留下同一个 IP 的旧 /24 配置
+ip addr replace 20.168.0.19/22 dev enp165s0f0np0
+ip route replace table 201 20.168.0.0/22 dev enp165s0f0np0 src 20.168.0.19
+# 仅在该规则不存在时执行
+ip rule add pref 10201 from 20.168.0.19/32 to 20.168.0.0/22 lookup 201
+sysctl -w net.ipv4.conf.enp165s0f0np0.arp_ignore=1
+sysctl -w net.ipv4.conf.enp165s0f0np0.arp_announce=2
+sysctl -w net.ipv4.conf.enp165s0f0np0.rp_filter=2
+</code></pre>
+<p>执行后重新查看全部 <code>ip addr</code>、主路由表、私有路由表和规则，清理确认属于旧配置的 <code>/24</code> 残留。以上运行态命令不等于重启后持久化；保存方式见第 9 节。</p>
+<h3 id="npu-device-2">3.4 NPU device 2 的查询与配置</h3>
+<p><strong>查询，在 A3 D 宿主机执行：</strong></p>
+<pre><code class="language-bash">HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+$HCCN -i 2 -ip -g
+$HCCN -i 2 -ip_rule -g
+$HCCN -i 2 -ip_route -g table 203
+$HCCN -i 2 -gateway -g
+</code></pre>
+<p>预期：<code>ipaddr:20.168.0.3</code>、<code>netmask:255.255.252.0</code>；规则 <code>from 20.168.0.3 lookup 203</code>；表 203 为 <code>20.168.0.0/22 dev eth2</code> 的直连路径，不经管理网关。</p>
+<p><strong>配置变更，适用于该规则/路由尚未存在时：</strong></p>
+<pre><code class="language-bash">$HCCN -i 2 -ip -s address 20.168.0.3 netmask 255.255.252.0
+$HCCN -i 2 -ip_route -a ip 20.168.0.0 ip_mask 22 via 0.0.0.0 dev eth2 table 203
+$HCCN -i 2 -ip_rule -a dir from ip 20.168.0.3 table 203
+</code></pre>
+<p>这是现场实际执行并回读验证过的直连路由语法。新版本按本机帮助核对。重复执行 <code>-a</code> 可能报已存在；先查询，不应把错误一概忽略。不要删除整张卡的路由表或直接覆盖整个 <code>/etc/hccn.conf</code>。</p>
+<h2 id="section-5">4 如何验证 256 组双向全互联</h2>
+<p>本文“256 组”特指 16 NPU × 16 CPU，不包含 NPU↔NPU、CPU↔CPU。每组两个方向分别发起，共 <strong>512 次方向性测试</strong>。</p>
+<h3 id="section-6">4.1 先测一组并核对身份</h3>
+<p><strong>A3 D：device 2 → Host3 H3-0。</strong></p>
+<pre><code class="language-bash">timeout 16s /usr/local/Ascend/driver/tools/hccn_tool \
+  -i 2 -ping -g address 20.168.0.19 pkt 64
+/usr/local/Ascend/driver/tools/hccn_tool -i 2 -arp -g
+</code></pre>
+<p><strong>Host3：H3-0 → device 2。</strong></p>
+<pre><code class="language-bash">ping -n -c 3 -W 1 -w 5 \
+  -I enp165s0f0np0 -I 20.168.0.19 20.168.0.3
+ip -4 route get 20.168.0.3 from 20.168.0.19
+ip neigh show to 20.168.0.3 dev enp165s0f0np0
+</code></pre>
+<p>两个 <code>-I</code> 是本环境 iputils 支持的接口绑定及源地址绑定写法。客户版本若不支持，先确认源策略路由正确，使用 <code>-I 20.168.0.19</code>，并通过路由、邻居和接口计数证明实际出口。</p>
+<p>预期两端均显示 <code>3 packets transmitted, 3 received</code> 和零丢包。NPU <code>pkt 64</code> 是报文大小参数，<strong>不是发 64 个包</strong>；此版本默认发 3 个。Host 邻居 MAC 应为 device 2 的 <code>c0:3e:50:1d:6b:4b</code>；NPU 的 <code>eth2</code> 上 CPU 邻居应为 <code>a0:88:c2:70:84:4e</code>。</p>
+<p>必须解析收发统计。hccn_tool 某些失败输出仍返回进程退出码 0；超时或缺少统计一律记为失败/未知。<code>STALE</code> 邻居可以是正常动态缓存状态；<code>INCOMPLETE</code>、<code>FAILED</code> 或错误 MAC 不能通过验收。</p>
+<h3 id="npu-cpu">4.2 从所有 NPU 测到所有 CPU</h3>
+<p><strong>主动测试，在 A3 D 的 bash 执行。</strong> 以下顺序执行 256 次，输出包含完整原始统计；保存到本次独立日志目录。</p>
+<pre><code class="language-bash">HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+CPU_IPS=(
+  20.168.0.23 20.168.1.24 20.168.2.31 20.168.3.32
+  20.168.0.21 20.168.1.22 20.168.2.29 20.168.3.30
+  20.168.0.19 20.168.1.20 20.168.2.27 20.168.3.28
+  20.168.0.17 20.168.1.18 20.168.2.25 20.168.3.26
+)
+LOGDIR=&quot;npu_ping_$(date +%Y%m%d_%H%M%S)&quot;
+mkdir -p &quot;$LOGDIR&quot;
+for d in $(seq 0 15); do
+  $HCCN -i &quot;$d&quot; -ip -g &gt; &quot;$LOGDIR/dev${d}_ip.txt&quot; 2&gt;&amp;1
+  $HCCN -i &quot;$d&quot; -ip_rule -g &gt; &quot;$LOGDIR/dev${d}_rules.txt&quot; 2&gt;&amp;1
+  $HCCN -i &quot;$d&quot; -ip_route -g table &quot;$((201+d))&quot; &gt; &quot;$LOGDIR/dev${d}_route.txt&quot; 2&gt;&amp;1
+  for dst in &quot;${CPU_IPS[@]}&quot;; do
+    timeout 16s &quot;$HCCN&quot; -i &quot;$d&quot; -ping -g address &quot;$dst&quot; pkt 64 \
+      &gt; &quot;$LOGDIR/dev${d}_${dst}.txt&quot; 2&gt;&amp;1
+    rc=$?
+    printf 'device=%s dst=%s exit=%s\n' &quot;$d&quot; &quot;$dst&quot; &quot;$rc&quot;
+    cat &quot;$LOGDIR/dev${d}_${dst}.txt&quot;
+    $HCCN -i &quot;$d&quot; -arp -g &gt; &quot;$LOGDIR/dev${d}_${dst}_arp.txt&quot; 2&gt;&amp;1
+  done
+done
+</code></pre>
+<h3 id="host-npu">4.3 从每台 Host 的四个口测到所有 NPU</h3>
+<p><strong>主动测试，在四台 Host 分别执行。</strong> 开头 <code>HOST=host3</code> 按实际机器改为 host1/host2/host3/host4。下面的接口表仅适用于第 2 节的当前场景。</p>
+<pre><code class="language-bash">HOST=host3
+case &quot;$HOST&quot; in
+  host1) IPS=(20.168.0.23 20.168.1.24 20.168.2.31 20.168.3.32)
+         IFS_LIST=(enp165s0f1np1 enp38s0f0np0 enp165s0f0np0 enp38s0f1np1);;
+  host2) IPS=(20.168.0.21 20.168.1.22 20.168.2.29 20.168.3.30)
+         IFS_LIST=(enp165s0f0np0 enp38s0f0np0 enp165s0f1np1 enp38s0f1np1);;
+  host3) IPS=(20.168.0.19 20.168.1.20 20.168.2.27 20.168.3.28)
+         IFS_LIST=(enp165s0f0np0 enp38s0f0np0 enp165s0f1np1 enp38s0f1np1);;
+  host4) IPS=(20.168.0.17 20.168.1.18 20.168.2.25 20.168.3.26)
+         IFS_LIST=(enp165s0f1np1 enp38s0f0np0 enp165s0f0np0 enp38s0f1np1);;
+  *) printf 'Unknown host\n'; exit 1;;
+esac
+NPU_IPS=(
+  20.168.0.1 20.168.1.2 20.168.0.3 20.168.1.4
+  20.168.0.5 20.168.1.6 20.168.0.7 20.168.1.8
+  20.168.2.9 20.168.3.10 20.168.2.11 20.168.3.12
+  20.168.2.13 20.168.3.14 20.168.2.15 20.168.3.16
+)
+LOGDIR=&quot;${HOST}_ping_$(date +%Y%m%d_%H%M%S)&quot;
+mkdir -p &quot;$LOGDIR&quot;
+for k in 0 1 2 3; do
+  src=${IPS[$k]}
+  nic=${IFS_LIST[$k]}
+  for d in $(seq 0 15); do
+    dst=${NPU_IPS[$d]}
+    prefix=&quot;$LOGDIR/port${k}_dev${d}&quot;
+    ip -4 route get &quot;$dst&quot; from &quot;$src&quot; &gt; &quot;${prefix}_route.txt&quot; 2&gt;&amp;1
+    ping -n -c 3 -W 1 -w 5 -I &quot;$nic&quot; -I &quot;$src&quot; &quot;$dst&quot; &gt; &quot;${prefix}_ping.txt&quot; 2&gt;&amp;1
+    rc=$?
+    printf 'source=%s interface=%s device=%s exit=%s\n' &quot;$src&quot; &quot;$nic&quot; &quot;$d&quot; &quot;$rc&quot;
+    cat &quot;${prefix}_ping.txt&quot;
+    ip neigh show to &quot;$dst&quot; dev &quot;$nic&quot; &gt; &quot;${prefix}_arp.txt&quot; 2&gt;&amp;1
+  done
+done
+</code></pre>
+<p>每台应有 64 条 ping 统计，四台合计 256 条；与 A3 的 256 条组成双向记录。某次有丢包可以另存复测结果，但不能覆盖第一次失败证据。现场要保留时间、源/目的 IP、接口、收发包数、路由、两侧 MAC。</p>
+<h3 id="arp">4.4 冷 ARP 验证</h3>
+<p>热邻居缓存可能掩盖广播 ARP 故障。此前 H1-1、H2-2 “只有一张 NPU 能通”就是典型案例：<code>netdetect</code> 或其他流量保留了个别 MAC 缓存。</p>
+<p><strong>以下操作删除指定目标的动态邻居，会触发重新学习；在维护测试期间执行，不要全局 flush，也不要删除业务要求的静态邻居。</strong></p>
+<pre><code class="language-bash"># Host3：先查看，确认不是 PERMANENT，再删指定邻居
+ip neigh show to 20.168.0.3 dev enp165s0f0np0
+ip neigh del 20.168.0.3 dev enp165s0f0np0
+ip neigh show to 20.168.0.3 dev enp165s0f0np0
+# 随后执行 H3-0 -&gt; device2 的绑定源 ping，再查 MAC
+
+# A3：删 device2 的指定对端，再确认 eth2 上条目已消失
+HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+$HCCN -i 2 -arp -d dev eth2 ip 20.168.0.19
+$HCCN -i 2 -arp -g
+# 随后执行 device2 -&gt; H3-0 的 ping，再查 MAC
+</code></pre>
+<p><strong>两个方向分开做“删除→确认无条目→本方向发起→恢复正确 MAC”。</strong> 不要让反向 ping 先预热缓存；有 <code>netdetect</code> 背景流量时，必须确认发起前确实没有有效条目，无法保持冷态就注明，不能宣称冷 ARP 已通过。现场 hccn_tool 的“不存在配置”曾返回 32，必须看后续查询，不靠返回值认定删除成功。</p>
+<h3 id="section-7">4.5 大包检查与验收边界</h3>
+<pre><code class="language-bash"># Host3，IPv4 无选项；8164 字节 ICMP 载荷 + 28 字节头 = IP MTU8192
+ping -n -c 3 -W 2 -M do -s 8164 \
+  -I enp165s0f0np0 -I 20.168.0.19 20.168.0.3
+</code></pre>
+<p>这是补充的 MTU 诊断命令；先确认客户版本对大 ICMP 的支持，失败时区分包大小限制与真实路径 MTU。RoCE4096 的最终验证仍看 RDMA 测试输出。<strong>256 组 ping 全通仅证明这些 IP 路径；还不能证明 QP 建链、RDMA 带宽、HBM 数据正确性或拥塞能力。</strong></p>
+<h2 id="read-write">5 点对点 READ 和 WRITE 带宽</h2>
+<h3 id="roce-v2-gid">5.1 选择正确的 RoCE v2 GID</h3>
+<p>以下例子使用 device2 <code>20.168.0.3</code> ↔ Host3 H3-0 <code>20.168.0.19</code>，Host RDMA 设备 <code>mlx5_2/1</code>。GID 是 RDMA 地址标识；同一个接口可以有多个 GID 条目。必须选择 <strong>RoCE v2、对应数据 IP、对应 netdev</strong> 的条目。</p>
+<pre><code class="language-bash"># Host3，查询；使用 bash
+R=mlx5_2
+BASE=/sys/class/infiniband/$R/ports/1
+for f in &quot;$BASE&quot;/gids/*; do
+  idx=${f##*/}
+  printf 'index=%s gid=%s type=%s netdev=%s\n' \
+    &quot;$idx&quot; &quot;$(cat &quot;$f&quot;)&quot; \
+    &quot;$(cat &quot;$BASE/gid_attrs/types/$idx&quot;)&quot; \
+    &quot;$(cat &quot;$BASE/gid_attrs/ndevs/$idx&quot; 2&gt;/dev/null)&quot;
+done
+ibv_devinfo -d mlx5_2
+</code></pre>
+<p>本环境对应条目为 index <strong>3</strong>、<code>RoCE v2</code>、<code>enp165s0f0np0</code>，GID 为 IPv4-mapped <code>::ffff:20.168.0.19</code>，完整十六进制尾部为 <code>ffff:14a8:0013</code>。新增 IP/VLAN、重启或接口变化后 index 可能改变，不能把 3 当通用值。</p>
+<h3 id="section-8">5.2 测试参数和数据方向</h3>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th style="text-align: right;">本基线取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>消息大小 <code>-s</code></td>
+<td style="text-align: right;">1048576</td>
+<td>1 MiB，用于持续吞吐；不是小包时延</td>
+</tr>
+<tr>
+<td>QP 类型/数量</td>
+<td style="text-align: right;">RC / <code>-q 1</code></td>
+<td>单连接，避免并发资源竞争</td>
+</tr>
+<tr>
+<td>队列深度 <code>-t</code></td>
+<td style="text-align: right;">128</td>
+<td>提供足够在途请求</td>
+</tr>
+<tr>
+<td>RoCE MTU <code>-m</code></td>
+<td style="text-align: right;">4096</td>
+<td>两端匹配；Host Ethernet MTU8192</td>
+</tr>
+<tr>
+<td>持续时间 <code>-D</code></td>
+<td style="text-align: right;">5 秒</td>
+<td>单项读或写</td>
+</tr>
+<tr>
+<td>统计边缘 <code>-f</code></td>
+<td style="text-align: right;">1 秒</td>
+<td>本版本排除首尾各 1 秒，统计窗口约 3 秒</td>
+</tr>
+<tr>
+<td>IP traffic class</td>
+<td style="text-align: right;">132，即 <code>0x84</code></td>
+<td>DSCP33 左移 2 位，ECN 位为 0</td>
+</tr>
+<tr>
+<td>SL</td>
+<td style="text-align: right;">4</td>
+<td>与现场 PFC4 策略相配；不能代替 DSCP 设置</td>
+</tr>
+<tr>
+<td>输出单位</td>
+<td style="text-align: right;">Gbit/s</td>
+<td>除以 8 得 GB/s</td>
+</tr>
+</tbody>
+</table>
+<p>两项均由 <strong>NPU 发起</strong>。READ 主数据 Host→NPU；WRITE 主数据 NPU→Host。先启动 Host 服务端，再启动 NPU 客户端。TCP 只用于交换测试建链信息，实际大数据走 RoCE；测试 TCP 端口与 RoCEv2 UDP4791 是不同用途。</p>
+<h3 id="rdma-read">5.3 RDMA READ 完整命令</h3>
+<p><strong>Host3 终端先执行：</strong></p>
+<pre><code class="language-bash"># 确认端口空闲；有输出则换一个两端一致的测试端口
+ss -H -lnt 'sport = :18540'
+
+ib_read_bw -d mlx5_2 -i 1 -x 3 \
+  --bind_source_ip 20.168.0.19 --report_gbits \
+  -s 1048576 -m 4096 -D 5 -f 1 -q 1 -t 128 -p 18540 \
+  --tclass 132 -S 4
+</code></pre>
+<p><strong>A3 D 另一终端执行：</strong></p>
+<pre><code class="language-bash">timeout --kill-after=2s 24s /usr/local/Ascend/driver/tools/hccn_tool \
+  -i 2 -roce_test ib_read_bw \
+  -s 1048576 -m 4096 -D 5 -f 1 -q 1 -t 128 -p 18540 \
+  -report_gbits -bind_source_ip 20.168.0.3 address 20.168.0.19 -tcp \
+  -tclass 132 -S 4
+</code></pre>
+<h3 id="rdma-write">5.4 RDMA WRITE 完整命令</h3>
+<p><strong>Host3 先执行：</strong></p>
+<pre><code class="language-bash">ss -H -lnt 'sport = :18541'
+ib_write_bw -d mlx5_2 -i 1 -x 3 \
+  --bind_source_ip 20.168.0.19 --report_gbits \
+  -s 1048576 -m 4096 -D 5 -f 1 -q 1 -t 128 -p 18541 \
+  --tclass 132 -S 4
+</code></pre>
+<p><strong>A3 D 随后执行：</strong></p>
+<pre><code class="language-bash">timeout --kill-after=2s 24s /usr/local/Ascend/driver/tools/hccn_tool \
+  -i 2 -roce_test ib_write_bw \
+  -s 1048576 -m 4096 -D 5 -f 1 -q 1 -t 128 -p 18541 \
+  -report_gbits -bind_source_ip 20.168.0.3 address 20.168.0.19 -tcp \
+  -tclass 132 -S 4
+</code></pre>
+<p>Host 原生 perftest 使用 <code>--report_gbits</code>、<code>--bind_source_ip</code>、<code>--tclass</code>；hccn_tool 包装命令使用 <code>-report_gbits</code>、<code>-bind_source_ip</code>、<code>-tclass</code>，并带 <code>address</code> 和 <code>-tcp</code>。这是现场跑通的语法，不能把两端参数拼写混用。</p>
+<p>先查看选定 device 的 <code>-qp_info -g</code> 和 Host <code>rdma resource show qp</code>，避免与业务或同卡其他测试争用。若超时，外层 timeout 结束不一定代表卡侧测试已退出；在确认该 device 只有自己启动的测试后，可执行 <code>hccn_tool -i 2 -roce_test reset</code> 并复查。不要用全局 kill 或设备复位来清理别人的任务。</p>
+<h3 id="section-9">5.5 什么结果算通过</h3>
+<p>两端进程正常结束，报表的本地/远端 GID 分别对应选定 IP，显示 <code>Mtu : 4096[B]</code>、1 MiB 消息、有效迭代次数大于零。对比两端同一项平均带宽和迭代数，本环境应一致。</p>
+<p>本场景空闲 200G 链路，单对 1 MiB 持续 READ/WRITE 基线约 <strong>196 Gbit/s，约 24.5 GB/s</strong>。这是同硬件和同参数的参考值，不是所有客户硬件的硬性验收门槛。持续时间模式可能打印 <code>BW peak=0</code>，应读取 <code>BW average</code>，不能判定为零吞吐。perftest 的客户端/服务端与参数语义参见<a href="https://github.com/linux-rdma/perftest">上游说明</a>。</p>
+<p>同时比较测试前后的错误/重传/丢弃计数，以及 priority4 字节增量。没有拥塞时 PFC 帧计数可以不增加；单对跑满并不能证明拥塞时 PFC 有效。</p>
+<p><code>hccn_tool -bandwidth -g time 1000</code> 只观察已有流量，不会主动产生带宽测试。<code>-roce_test</code> 测的是工具缓冲区的 RDMA 能力；其缓冲区是否 HBM 尚未确认，不能据此声明 hcomm Host DRAM→NPU HBM 业务已通过，也不能替代 1600×656 B 的时延测试。</p>
+<h3 id="section-10">5.6 缩短验收时间</h3>
+<p>优先做 256 组双向小包连通性；带宽先做覆盖所有 NPU 和所有 Host 端口的配对，再抽跨历史网段及修复口。仅覆盖每端点一次至少需要 16 对；随机 10 对不可能覆盖全部 16 个 NPU。</p>
+<p>现场 10 对、读写各 5 秒，含建链与采集约 4 分钟；早期 256 对串行读写全量耗时约 89 分钟。纯运行时间 <code>256×2×5=2560 秒</code>，约 42 分 40 秒，实际还要加建链/采集/切换，不能按 21 分钟估计读写两项。</p>
+<p>需要测整体吞吐时可做多对并发，但必须控制共享双口 NIC、PCIe、NUMA 与 Host 内存带宽。并发总带宽不能证明所有组合都通，也不能用 <code>16×196</code> 当保证值。验证 PFC 时，应设计受控多对一拥塞场景，观察发送端实际降速、队列/PFC变化、停止负载后恢复及丢弃/重传，而不只是数总带宽。下面给出本场景已完成的两轮8路并发和四对一实测。</p>
+<h3 id="section-11">5.7 两轮8路并发与四对一拥塞实测</h3>
+<p>测试时间为 <strong>2026年11月14日16:43～16:45，北京时间</strong>。沿用统一QoS配置：Ethernet MTU8192、RoCE MTU4096、DSCP33、SL4、PFC4、全局PAUSE收发关闭。每路1 MiB消息、1个RC QP、队列深度128；每轮READ和WRITE分开，各运行10秒，<code>-f 1</code>，不把两个方向相加成单向带宽。</p>
+<p><strong>结论：本次两轮8路并发吞吐正常；H1-1四对一时交换机向上游NPU发出PFC4，拥塞解除后恢复正常。</strong> 这是本拓扑、本负载和该次采样的实测结论，不是所有拥塞场景或所有网口反压能力的穷举证明。</p>
+<p><strong>两轮8路并发的配对与结果。</strong> 每轮选8张物理NPU卡各一个device、8张CX7各一个口；第二轮换另一半端口。两轮合计覆盖16个NPU device和16个Host口，但任一时刻只有8路测试，不能写成16路同时达到3.14 Tbit/s。</p>
+<table>
+<thead>
+<tr>
+<th>轮次</th>
+<th>NPU device / IP</th>
+<th>Host口 / IP</th>
+<th style="text-align: right;">READ Gbit/s</th>
+<th style="text-align: right;">WRITE Gbit/s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>0 / 20.168.0.1</td>
+<td>H1-0 / 20.168.0.23</td>
+<td style="text-align: right;">196.10</td>
+<td style="text-align: right;">196.10</td>
+</tr>
+<tr>
+<td>1</td>
+<td>2 / 20.168.0.3</td>
+<td>H3-1 / 20.168.1.20</td>
+<td style="text-align: right;">196.11</td>
+<td style="text-align: right;">196.10</td>
+</tr>
+<tr>
+<td>1</td>
+<td>4 / 20.168.0.5</td>
+<td>H1-1 / 20.168.1.24</td>
+<td style="text-align: right;">196.11</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>1</td>
+<td>6 / 20.168.0.7</td>
+<td>H2-0 / 20.168.0.21</td>
+<td style="text-align: right;">196.10</td>
+<td style="text-align: right;">196.12</td>
+</tr>
+<tr>
+<td>1</td>
+<td>8 / 20.168.2.9</td>
+<td>H4-0 / 20.168.0.17</td>
+<td style="text-align: right;">196.11</td>
+<td style="text-align: right;">196.11</td>
+</tr>
+<tr>
+<td>1</td>
+<td>10 / 20.168.2.11</td>
+<td>H2-1 / 20.168.1.22</td>
+<td style="text-align: right;">196.11</td>
+<td style="text-align: right;">196.12</td>
+</tr>
+<tr>
+<td>1</td>
+<td>12 / 20.168.2.13</td>
+<td>H4-1 / 20.168.1.18</td>
+<td style="text-align: right;">196.12</td>
+<td style="text-align: right;">196.11</td>
+</tr>
+<tr>
+<td>1</td>
+<td>14 / 20.168.2.15</td>
+<td>H3-0 / 20.168.0.19</td>
+<td style="text-align: right;">196.14</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>1 / 20.168.1.2</td>
+<td>H2-2 / 20.168.2.29</td>
+<td style="text-align: right;">196.13</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>3 / 20.168.1.4</td>
+<td>H1-2 / 20.168.2.31</td>
+<td style="text-align: right;">196.49</td>
+<td style="text-align: right;">196.12</td>
+</tr>
+<tr>
+<td>2</td>
+<td>5 / 20.168.1.6</td>
+<td>H3-3 / 20.168.3.28</td>
+<td style="text-align: right;">196.14</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>7 / 20.168.1.8</td>
+<td>H3-2 / 20.168.2.27</td>
+<td style="text-align: right;">196.14</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>9 / 20.168.3.10</td>
+<td>H1-3 / 20.168.3.32</td>
+<td style="text-align: right;">196.14</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>11 / 20.168.3.12</td>
+<td>H4-2 / 20.168.2.25</td>
+<td style="text-align: right;">196.13</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>13 / 20.168.3.14</td>
+<td>H2-3 / 20.168.3.30</td>
+<td style="text-align: right;">196.13</td>
+<td style="text-align: right;">196.13</td>
+</tr>
+<tr>
+<td>2</td>
+<td>15 / 20.168.3.16</td>
+<td>H4-3 / 20.168.3.26</td>
+<td style="text-align: right;">196.12</td>
+<td style="text-align: right;">196.12</td>
+</tr>
+</tbody>
+</table>
+<table>
+<thead>
+<tr>
+<th>阶段</th>
+<th style="text-align: right;">perftest有效载荷合计 Gbit/s</th>
+<th style="text-align: right;">共同窗口Host RDMA字节速率 Gbit/s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>第1轮READ</td>
+<td style="text-align: right;">1568.90</td>
+<td style="text-align: right;">1590.62</td>
+</tr>
+<tr>
+<td>第1轮WRITE</td>
+<td style="text-align: right;">1568.92</td>
+<td style="text-align: right;">1590.66</td>
+</tr>
+<tr>
+<td>第2轮READ</td>
+<td style="text-align: right;">1569.42</td>
+<td style="text-align: right;">1590.65</td>
+</tr>
+<tr>
+<td>第2轮WRITE</td>
+<td style="text-align: right;">1569.02</td>
+<td style="text-align: right;">1590.68</td>
+</tr>
+</tbody>
+</table>
+<p>每轮有效载荷约1.569 Tbit/s，约为8×200G标称总带宽的98%。第三列取8路同时运行的共同3.2秒窗口，READ累计Host的 <code>tx_vport_rdma_unicast_bytes</code>，WRITE累计 <code>rx_vport_rdma_unicast_bytes</code>，计算 <code>Σ字节增量×8/窗口秒数/10^9</code>。同一Host计数器只累计一次，避免双计。其计数口径和采样窗口与perftest有效载荷不同，不能混用成同一指标。四次并发测试采集到的PFC4、交换机出队丢弃、Host丢弃和两端RoCE重传均无增量；业务数据经过交换机队列4。</p>
+<p><strong>8路复现方法。</strong> 按上表及第2节接口映射，为每路启动独立Host服务端；全部监听就绪后，并发启动8个NPU客户端。第5.3/5.4节的 <code>-D 5</code> 改为 <code>-D 10</code>，其他参数保持一致，每路使用独立TCP端口。现场第1轮READ使用33440～33447、WRITE使用33456～33463；第2轮READ使用33472～33479、WRITE使用33488～33495，顺序与上表一致。复测前确认端口空闲，可以换为另一组空闲端口。</p>
+<pre><code class="language-bash"># 第1轮第1路示例：Host1先启动；同轮其他7路按表替换参数并启动
+ib_read_bw -d mlx5_3 -i 1 -x 3 \
+  --bind_source_ip 20.168.0.23 --report_gbits \
+  -s 1048576 -m 4096 -D 10 -f 1 -q 1 -t 128 -p 33440 \
+  --tclass 132 -S 4
+
+# A3对应客户端；8路需要并发启动，不能串行执行后相加
+/usr/local/Ascend/driver/tools/hccn_tool -i 0 -roce_test ib_read_bw \
+  -s 1048576 -m 4096 -D 10 -f 1 -q 1 -t 128 -p 33440 \
+  -report_gbits -bind_source_ip 20.168.0.1 address 20.168.0.23 -tcp \
+  -tclass 132 -S 4
+</code></pre>
+<p>各路分别保存输出并核对结束状态。跨主机取共同窗口时先核对时钟，记录实际采样时间；不要用8段不同时间的峰值代替同时运行的总吞吐。完全重叠的稳定窗口不足时，应重测或明确标记结果不可比较。</p>
+<p><strong>H1-1四对一写入。</strong> 从四张物理NPU卡分别选device0、4、9、13，同时向Host1的H1-1 <code>20.168.1.24</code> 写10秒，目标为 <code>mlx5_0/1</code>、GID index3。四个独立服务端使用不同TCP端口和各自的perftest测试内存，不是四个进程写入同一业务MR。</p>
+<table>
+<thead>
+<tr>
+<th>NPU来源</th>
+<th>对应交换机NPU侧口</th>
+<th style="text-align: right;">TCP端口</th>
+<th style="text-align: right;">WRITE Gbit/s</th>
+<th style="text-align: right;">交换机TX与NPU RX PFC4帧数</th>
+<th style="text-align: right;">NPU累计暂停 s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0 / 20.168.0.1</td>
+<td>400GE1/0/8:1</td>
+<td style="text-align: right;">33504</td>
+<td style="text-align: right;">49.03</td>
+<td style="text-align: right;">178281</td>
+<td style="text-align: right;">7.450</td>
+</tr>
+<tr>
+<td>4 / 20.168.0.5</td>
+<td>400GE1/0/4:1</td>
+<td style="text-align: right;">33505</td>
+<td style="text-align: right;">49.02</td>
+<td style="text-align: right;">170254</td>
+<td style="text-align: right;">7.450</td>
+</tr>
+<tr>
+<td>9 / 20.168.3.10</td>
+<td>400GE1/0/7:2</td>
+<td style="text-align: right;">33506</td>
+<td style="text-align: right;">49.05</td>
+<td style="text-align: right;">180313</td>
+<td style="text-align: right;">7.450</td>
+</tr>
+<tr>
+<td>13 / 20.168.3.14</td>
+<td>400GE1/0/3:2</td>
+<td style="text-align: right;">33507</td>
+<td style="text-align: right;">49.03</td>
+<td style="text-align: right;">180964</td>
+<td style="text-align: right;">7.451</td>
+</tr>
+</tbody>
+</table>
+<p>四路有效载荷合计 <strong>196.13 Gbit/s</strong>，接近目标200G口的单路基线；Host接收方向共同窗口RDMA字节速率为 <strong>198.80 Gbit/s</strong>。交换机四个上游口的PFC4发送帧数与对应NPU接收数逐项一致，合计709812帧。</p>
+<p><strong>PFC发生位置是交换机→四个上游NPU，H1-1网卡的PFC4收发增量均为0。</strong> 因此本轮证明了该拥塞路径上交换机反压与NPU响应，不能单凭这轮宣布CX7主动发出PFC反压也已经验证。交换机H1-1出口 <code>400GE1/0/9:1</code> 的队列4转发60001536帧，与CX7的priority4接收包数增量一致；交换机队列丢弃、CX7接收缓冲丢弃、NPU/CX7重传、交换机PFC死锁增量均为0。</p>
+<p>下面是四对一的简化启动命令，测试前按第10节采集计数并确认四个TCP端口空闲。Host与A3分开终端运行，在同一端内部并发启动各进程；结果按独立日志保留。</p>
+<pre><code class="language-bash"># Host1：先启动四个服务端，确认四个端口均监听后再启动A3客户端
+LOGDIR=&quot;incast_host_$(date +%Y%m%d_%H%M%S)&quot;
+mkdir -p &quot;$LOGDIR&quot;
+pids=()
+for p in 33504 33505 33506 33507; do
+  timeout --kill-after=2s 60s ib_write_bw -d mlx5_0 -i 1 -x 3 \
+    --bind_source_ip 20.168.1.24 --report_gbits \
+    -s 1048576 -m 4096 -D 10 -f 1 -q 1 -t 128 -p &quot;$p&quot; \
+    --tclass 132 -S 4 &gt; &quot;$LOGDIR/server_${p}.txt&quot; 2&gt;&amp;1 &amp;
+  pids+=(&quot;$!&quot;)
+done
+# 使用另一终端运行ss确认监听；此处等待并记录每个服务端结束状态
+for pid in &quot;${pids[@]}&quot;; do
+  wait &quot;$pid&quot;
+  printf 'server_pid=%s exit=%s\n' &quot;$pid&quot; &quot;$?&quot;
+done
+</code></pre>
+<pre><code class="language-bash"># A3：在四个Host服务端均已就绪后执行
+HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+DEVS=(0 4 9 13)
+IPS=(20.168.0.1 20.168.0.5 20.168.3.10 20.168.3.14)
+LOGDIR=&quot;incast_npu_$(date +%Y%m%d_%H%M%S)&quot;
+mkdir -p &quot;$LOGDIR&quot;
+pids=()
+for k in 0 1 2 3; do
+  p=$((33504+k))
+  timeout --kill-after=2s 30s &quot;$HCCN&quot; -i &quot;${DEVS[$k]}&quot; -roce_test ib_write_bw \
+    -s 1048576 -m 4096 -D 10 -f 1 -q 1 -t 128 -p &quot;$p&quot; \
+    -report_gbits -bind_source_ip &quot;${IPS[$k]}&quot; address 20.168.1.24 -tcp \
+    -tclass 132 -S 4 &gt; &quot;$LOGDIR/device_${DEVS[$k]}.txt&quot; 2&gt;&amp;1 &amp;
+  pids+=(&quot;$!&quot;)
+done
+for pid in &quot;${pids[@]}&quot;; do
+  wait &quot;$pid&quot;
+  printf 'client_pid=%s exit=%s\n' &quot;$pid&quot; &quot;$?&quot;
+done
+</code></pre>
+<p>不要仅凭shell退出码判成功；逐路核对perftest报告、GID、MTU及迭代次数。上面的循环是现场已验证单路命令的并发启动示例，不包含原自动化的时钟核对和共同窗口采集；需要量化总带宽时，应另外按共同窗口采集字节增量。</p>
+<p><strong>PFC、丢弃和重传采集命令。</strong> 在测试前、测试中、结束后分别采样，数据方向与反压方向分开理解。</p>
+<pre><code class="language-bash"># A3：四个发送端的PFC4暂停时间、帧计数、RoCE重传
+HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+for d in 0 4 9 13; do
+  &quot;$HCCN&quot; -i &quot;$d&quot; -pfc_stat -g
+  &quot;$HCCN&quot; -i &quot;$d&quot; -stat -g
+done
+
+# Host1：H1-1的PFC4/接收缓冲/priority4与硬件RDMA错误计数
+ethtool -S enp38s0f0np0
+for f in /sys/class/infiniband/mlx5_0/ports/1/hw_counters/*; do
+  printf '%s=%s\n' &quot;${f##*/}&quot; &quot;$(cat &quot;$f&quot;)&quot;
+done
+</code></pre>
+<pre><code class="language-text">display dcb pfc interface 400GE 1/0/8:1
+display dcb pfc interface 400GE 1/0/4:1
+display dcb pfc interface 400GE 1/0/7:2
+display dcb pfc interface 400GE 1/0/3:2
+display dcb pfc interface 400GE 1/0/9:1
+display qos queue statistics interface 400GE 1/0/9:1
+</code></pre>
+<p><strong>停流恢复。</strong> 四路全部退出后立即采集一次，相隔约5秒再采集一次。现场两次采样间PFC4、H1-1队列4计数均停止增长，测试QP已释放。随后device0→H1-1单路WRITE运行5秒，实测 <strong>196.15 Gbit/s</strong>，与拥塞前历史单路基线 <strong>196.21 Gbit/s</strong> 相当，且PFC4、丢弃和重传无新增。背景普通队列仍可能有流量，不要求整个接口所有计数静止。</p>
+<p>恢复回测沿用第5.4节命令，Host替换为 <code>mlx5_0</code>、源IP <code>20.168.1.24</code>，NPU替换为device0、源IP <code>20.168.0.1</code>、目的IP <code>20.168.1.24</code>，两端端口改为33520，<code>-D 5 -f 1</code>。恢复前查询NPU的 <code>-qp_info -g</code> 和Host <code>rdma resource show qp</code>，确认本轮测试QP已释放，不要求系统GSI或其他业务QP消失。</p>
+<p>现场日志目录为 <code>rdma_fullmesh_20261114/qos_rollout_20261114064411_aggregate_20261114082912/</code>，四份 <code>8x_1_read.json</code>、<code>8x_1_write.json</code>、<code>8x_2_read.json</code>、<code>8x_2_write.json</code> 记录并发结果；<code>4x_H1-1_write.json</code> 和 <code>H1-1_recovery_write.json</code> 记录拥塞与恢复。上述结果未替代第11节的逐对独占带宽记录；客户复测时分别保存两种测试，避免把并发结果填成独占带宽。</p>
+<h2 id="cx7-qos">6 鲲鹏 CX7 的 QoS 检查</h2>
+<h3 id="section-12">6.1 常规查询和预期</h3>
+<pre><code class="language-bash">IF=enp165s0f0np0
+R=mlx5_2
+ip -d link show dev &quot;$IF&quot;
+ethtool &quot;$IF&quot;
+ethtool -i &quot;$IF&quot;
+ibv_devinfo -d &quot;$R&quot;
+ethtool -a &quot;$IF&quot;
+mlnx_qos -i &quot;$IF&quot;
+dcb app show dev &quot;$IF&quot;
+dcb ets show dev &quot;$IF&quot;
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>检查项</th>
+<th>本场景最终正确结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Linux Link / RDMA</td>
+<td><code>UP</code>、<code>LOWER_UP</code>；<code>PORT_ACTIVE</code>、物理 LINK_UP</td>
+</tr>
+<tr>
+<td>实际速率</td>
+<td>200000 Mb/s</td>
+</tr>
+<tr>
+<td>Ethernet MTU / RoCE active_mtu</td>
+<td>8192 / 4096；两者单位和含义不同</td>
+</tr>
+<tr>
+<td><code>ethtool -a</code></td>
+<td>Autonegotiate off，RX off，TX off</td>
+</tr>
+<tr>
+<td>DCBX 控制</td>
+<td>OS controlled；不被另一个 DCB 管理程序反复覆盖</td>
+</tr>
+<tr>
+<td>trust</td>
+<td>dscp</td>
+</tr>
+<tr>
+<td>DSCP 映射</td>
+<td><code>prio:4 dscp:...33...</code>；其它 DSCP 无须都删除</td>
+</tr>
+<tr>
+<td>PFC enabled</td>
+<td><code>0 0 0 0 1 0 0 0</code>，索引从 0 开始</td>
+</tr>
+<tr>
+<td>priority→接收 buffer</td>
+<td><code>1 1 1 1 4 1 1 1</code></td>
+</tr>
+<tr>
+<td>buffer 大小 bytes</td>
+<td><code>0,566208,0,0,524160,0,0,0</code></td>
+</tr>
+<tr>
+<td>RoCE priority4</td>
+<td>独立 buffer4，PFC4 开启，无限速配置妨碍吞吐</td>
+</tr>
+</tbody>
+</table>
+<p><code>ethtool -a</code> 看全局 PAUSE，<code>mlnx_qos</code> 看 PFC，二者不是同一个开关。DSCP 信任及映射语义也可查<a href="https://networking-docs.nvidia.com/mlnxofedswum/23040533/quality-of-service-qos">NVIDIA QoS 文档</a>。本现场中修改全局 PAUSE 曾同时影响 PFC，必须两项都回读。</p>
+<h3 id="section-13">6.2 寄存器精确复核</h3>
+<p><strong>查询，不写寄存器。</strong> 先动态获取所选接口 BDF，不能凭接口序号猜。</p>
+<pre><code class="language-bash">IF=enp165s0f0np0
+BDF=$(basename &quot;$(readlink -f /sys/class/net/$IF/device)&quot;)
+mlxreg -d &quot;$BDF&quot; --reg_name PFCC --indexes local_port=1 --get
+mlxreg -d &quot;$BDF&quot; --reg_name PBMC --indexes local_port=1 --get
+mlxreg -d &quot;$BDF&quot; --reg_name SBCM --indexes local_port=1,dir=0,pg_buff=1 --get
+mlxreg -d &quot;$BDF&quot; --reg_name SBCM --indexes local_port=1,dir=0,pg_buff=4 --get
+mlxreg -d &quot;$BDF&quot; --reg_name SBPR --indexes dir=0,pool=0 --get
+mlxreg -d &quot;$BDF&quot; --reg_name SBPR --indexes dir=0,pool=1 --get
+mlxreg -d &quot;$BDF&quot; --reg_name SBPR --indexes dir=1,pool=0 --get
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>寄存器</th>
+<th>本场景判断方法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PFCC</td>
+<td><code>pprx=0,pptx=0</code>；<code>pfcrx=0x10,pfctx=0x10</code>，bit4=1</td>
+</tr>
+<tr>
+<td>PBMC buffer4</td>
+<td><code>lossy_4=0</code>；<code>size_4 &gt; xoff_threshold_4 &gt; xon_threshold_4 &gt; 0</code></td>
+</tr>
+<tr>
+<td>SBCM dir0 buffer4</td>
+<td><code>pool=1</code>，连接非零接收共享池</td>
+</tr>
+<tr>
+<td>SBCM dir0 buffer1</td>
+<td>本环境要求 <code>pool=1</code>，保留广播故障规避</td>
+</tr>
+<tr>
+<td>SBPR dir0/pool1</td>
+<td>RX 共享池容量，单位 cells，不是 bytes</td>
+</tr>
+<tr>
+<td>SBPR dir1/pool0</td>
+<td>TX 共享池容量，单位 cells；不是 RX pool0</td>
+</tr>
+</tbody>
+</table>
+<p>现场 buffer4 回读为 <code>size_4=1820</code> cells、<code>xon=1488</code>、<code>xoff=1523</code>；当前该设备 cell 为 288 B，因此 <code>1820×288=524160 B</code>。这些是本硬件实测值，不能用 288 B 去换算所有厂商或所有型号的 cell。</p>
+<p>QoS 统一后本环境 RX pool1 / TX pool0 有两组正常值：<strong>1570/4710</strong> 或 <strong>1597/4794 cells</strong>。这是共享资源和缓冲配置计算结果，不能为“统一”而强写为同一数字。同一张双口卡的共享池不能按两个口重复累加；旧状态发送 pool0 为 0 也不能直接等同于硬件没有发送缓冲。</p>
+<h3 id="roce">6.3 正常 RoCE 配置的操作顺序</h3>
+<p><strong>配置变更，例子针对当前 CX7、驱动、固件及容量。客户不同型号先确认可分配容量、线长/速率、驱动计算的阈值。</strong></p>
+<pre><code class="language-bash">IF=enp165s0f0np0
+# 先保存 ip/ethtool/mlnx_qos/PFCC/PBMC/SBCM/SBPR 原始回读
+ip link set dev &quot;$IF&quot; mtu 8192
+ethtool -A &quot;$IF&quot; autoneg off rx off tx off
+mlnx_qos -i &quot;$IF&quot; --trust=dscp
+mlnx_qos -i &quot;$IF&quot; --dscp2prio=set,33,4
+mlnx_qos -i &quot;$IF&quot; --buffer_size=0,566208,0,0,524160,0,0,0
+mlnx_qos -i &quot;$IF&quot; --prio2buffer=1,1,1,1,4,1,1,1
+mlnx_qos -i &quot;$IF&quot; --pfc=0,0,0,0,1,0,0,0
+# 随后按 6.1/6.2 回读，并进行冷 ARP；需要时应用 6.4 的已验证规避
+</code></pre>
+<p>这些命令不自动完成完整部署：MTU/PFC 操作可能使驱动重新计算池映射；改完要同时检查普通 ARP 和 RoCE。不要同时用多个 DCB 管理工具持续写相同配置。当前配置中保留了原 ETS/TC 调度，不要求把所有本地 TC 号改成一致。</p>
+<h3 id="arp-pool">6.4 广播 ARP 异常与 pool 规避</h3>
+<p><strong>buffer 号与 pool 号不是同一个概念。</strong> priority→buffer 决定接收哪个缓冲；SBCM 决定该 buffer 关联的共享 pool。mlx5 接收方向通常把 pool0 用于 lossy、pool1 用于 lossless。正常的 lossy pool 在低流量下也应接收 ARP；“有损”不能解释本次所有广播都丢失。</p>
+<p>本环境两个异常口曾出现：物理口广播计数增加40、vPort广播增加0；单播 ARP 10/10，广播 ARP 0/10。只把 buffer1 的 <code>SBCM.pool</code> 从0改1，广播恢复10/10；改回0再次失败。单独开启全局 PAUSE 未解决。由此确认了有效规避，但没有定位固件内部最终丢弃原因，不能写成已证实的通用固件缺陷。</p>
+<p><strong>本实验室实际修复命令，客户侧先核对 MAC、BDF、版本与同样的故障证据：</strong></p>
+<pre><code class="language-bash"># Host1 H1-1，20.168.1.24
+mlxreg -d 0000:26:00.0 --reg_name SBCM \
+  --indexes local_port=1,dir=0,pg_buff=1 --set pool=1 --yes
+# Host2 H2-2，20.168.2.29
+mlxreg -d 0000:a5:00.1 --reg_name SBCM \
+  --indexes local_port=1,dir=0,pg_buff=1 --set pool=1 --yes
+</code></pre>
+<p>回读将 <code>--set pool=1 --yes</code> 换为 <code>--get</code>，预期 <code>pool | 0x00000001</code>。两口当时仅变这个字段，PBMC/PAUSE/PFC保持原值。后续全量 QoS 调整时也保留了所有口 buffer1→pool1 的映射。</p>
+<p><strong>另六个口需要额外恢复 buffer1 阈值：H1-0、H2-1、H3-0、H3-1、H4-0、H4-1。</strong> 最终回读为 <code>lossy_1=0,xon_threshold_1=963,xoff_threshold_1=1033</code>，其余十个口 <code>lossy_1=1</code> 也通过冷 ARP。不要因为存在这项差异就一律修改。</p>
+<pre><code class="language-bash"># 仅适用于已复现该问题且验证过的端口与版本；BDF 从目标接口查询
+mlxreg -d &quot;$BDF&quot; --reg_name PBMC --indexes local_port=1 \
+  --set lossy_1=0,xon_threshold_1=963,xoff_threshold_1=1033 --yes
+</code></pre>
+<p>buffer1 的上述设置不代表开启 PFC0：PFCC 仍只允许 priority4，且全局 PAUSE 收发关闭。每项改动后都单独回读、冷 ARP、读写带宽、丢弃计数验证。复原 <code>pool=0</code> 在本故障口会重现中断，应仅在明确的回滚或对照实验中执行。网卡/驱动升级后应重新验证规避，不应无条件写低层寄存器。</p>
+<h2 id="device_rdma">7 昇腾 device_rdma 侧检查</h2>
+<h3 id="device">7.1 单 device 查询与预期</h3>
+<pre><code class="language-bash">HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+D=2
+$HCCN -i &quot;$D&quot; -ip -g
+$HCCN -i &quot;$D&quot; -link -g
+$HCCN -i &quot;$D&quot; -status -g
+$HCCN -i &quot;$D&quot; -mtu -g
+$HCCN -i &quot;$D&quot; -pfc -g
+$HCCN -i &quot;$D&quot; -dscp_to_tc -g dscp 33
+$HCCN -i &quot;$D&quot; -prio_tc -g
+$HCCN -i &quot;$D&quot; -ip_rule -g
+$HCCN -i &quot;$D&quot; -ip_route -g table &quot;$((201+D))&quot;
+$HCCN -i &quot;$D&quot; -netdetect -g
+$HCCN -i &quot;$D&quot; -net_health -g
+$HCCN -i &quot;$D&quot; -qp_info -g
+$HCCN -i &quot;$D&quot; -stat -g
+$HCCN -i &quot;$D&quot; -link_stat -g
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>项目</th>
+<th>正确结果与解释</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>IP/掩码</td>
+<td>本 device 数据 IP，255.255.252.0</td>
+</tr>
+<tr>
+<td>Link/status</td>
+<td>UP、200000 Mb/s；本场景与对端 FEC/模式兼容</td>
+</tr>
+<tr>
+<td>MTU</td>
+<td><code>mtu:8192</code></td>
+</tr>
+<tr>
+<td>PFC</td>
+<td>priority <code>0 1 2 3 4 5 6 7</code>；enabled <code>0 0 0 0 1 0 0 0</code></td>
+</tr>
+<tr>
+<td>DSCP33</td>
+<td><code>33 → TC2</code></td>
+</tr>
+<tr>
+<td>priority→TC</td>
+<td>本环境 <code>3 3 3 2 2 1 0 3</code>，关键是 priority4→TC2</td>
+</tr>
+<tr>
+<td>源路由</td>
+<td>本 device IP→独立 table→本 ethN</td>
+</tr>
+<tr>
+<td>netdetect/net_health</td>
+<td>检测配置及某个目标的健康状态；不能覆盖16个目标</td>
+</tr>
+<tr>
+<td>QP</td>
+<td>空闲时 <code>total_qp_count:0</code> 正常；业务时与建链日志对应</td>
+</tr>
+<tr>
+<td>stat/link_stat</td>
+<td>已知测试前后错误、重传、丢弃、掉链增量应检查</td>
+</tr>
+</tbody>
+</table>
+<p><strong>不要把三种 TC 混淆：</strong> 测试 <code>tclass=132</code> 是 IP traffic-class 字节；Host 本地 priority4 通常进入本地 TC4；A3 DSCP33 和 priority4 映射到本地 <strong>TC2</strong>。本地队列号无需处处相同，关键是 DSCP 分类、PFC priority 和各自缓冲映射协同正确。不能把 A3 改为 TC4 仅为了数字看起来一致。</p>
+<p>可一次采集所有设备：</p>
+<pre><code class="language-bash">HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+for d in $(seq 0 15); do
+  printf '\nDEVICE %s\n' &quot;$d&quot;
+  for item in ip link mtu pfc prio_tc; do
+    &quot;$HCCN&quot; -i &quot;$d&quot; &quot;-$item&quot; -g
+  done
+  &quot;$HCCN&quot; -i &quot;$d&quot; -dscp_to_tc -g dscp 33
+done
+</code></pre>
+<h3 id="section-14">7.2 必要时的设置与缓冲诊断</h3>
+<p>本环境 A3 已符合目标，前次 QoS 统一未改变其配置。下面为厂商提供的 DSCP/PFC 设置语法；客户若不一致，先核对本机帮助及 priority→TC 映射，再修改选定 device。</p>
+<pre><code class="language-bash"># 配置变更，D 仅为所选设备
+HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+D=2
+$HCCN -i &quot;$D&quot; -dscp_to_tc -s dscp 33 tc 2
+$HCCN -i &quot;$D&quot; -pfc -s bitmap 0,0,0,0,1,0,0,0
+# 修改后重新查询 dscp_to_tc / pfc / prio_tc / mtu
+</code></pre>
+<p>这些设置及“DSCP 左移2位得到 TC132”的关系见<a href="https://www.hiascend.com/doc_center/source/en/canncommercial/800/hcclug/hcclug/hcclug_000048.html">昇腾官方排障说明</a>。业务若使用 HCCL，可按所装版本核对 <code>HCCL_RDMA_TC=132</code>、<code>HCCL_RDMA_SL=4</code>；本手册 hccn_tool 带宽命令已显式传参，不依赖业务环境变量。hcomm 业务是否采用同一值，应检查自身 QP 参数和运行日志。</p>
+<p>支持对应查询的版本可进一步查看：</p>
+<pre><code class="language-bash">$HCCN -i &quot;$D&quot; -tc_cfg -g
+# 注意：cur_tc_buf 是读后清除最高水位记录，会影响下一次读数
+$HCCN -i &quot;$D&quot; -cur_tc_buf -g tc 2
+</code></pre>
+<p>缓存水位与阈值需结合实际负载判断，不应把“当前水位为0”当成从未拥塞。本文没有确认 A3 存在与 CX7 <code>ethtool -a</code> 等价的全局 PAUSE 查询接口，不用 PFC 输出推断它的全局 PAUSE 状态；通过对应型号驱动帮助、卡侧计数和交换机对端信息进一步确认。</p>
+<h3 id="down">7.3 物理 DOWN 的排查</h3>
+<pre><code class="language-bash">$HCCN -i 12 -status -g
+$HCCN -i 12 -optical -g v2
+$HCCN -i 12 -optical -g dfx_cfg
+$HCCN -i 12 -link_stat -g
+</code></pre>
+<p>device12 曾在地址/路由/MTU/FEC 通告均与正常设备一致时 DOWN。交换机 <code>400GE1/0/4:2</code> 出现 LOS/RX LOL，某 Lane RX 为 −11.59 dBm，低于本模块阈值 −10.40 dBm；恢复后约 −0.42 dBm，链路恢复 UP。阈值取实际模块读取结果，不把此数值套用于所有光模块。</p>
+<p>此类故障优先检查两端接收光功率、MPO 通道、模块、FEC 与接线。共享 400G 模块的一个 200G 子口 UP，不代表另一个子口正常。整只模块拔插会影响同模块正常端口；不能靠改路由或 PFC 修复光路 LOS。</p>
+<h2 id="section-15">8 交换机侧检查与设置</h2>
+<p>以下为现场 Huawei XH9210-32DQ / VRP V300R025 命令。其他交换机保持相同检查目标，命令按离线型号手册调整。当前所有 32 个数据子口均应检查，包括 NPU 侧与 CPU 侧，不能只配置一侧。</p>
+<h3 id="vlan">8.1 链路和 VLAN</h3>
+<p>以 Host3 H3-0 所接 <code>400GE1/0/14:1</code> 为例：</p>
+<pre><code class="language-text">display version
+display interface 400GE 1/0/14:1
+display current-configuration interface 400GE 1/0/14:1 include-default
+display interface 400GE 1/0/14:1 transceiver verbose
+display vlan 1
+display mac-address
+</code></pre>
+<p>预期 <code>current state UP</code>、Line protocol UP、Speed200000、FULL、PVID1、最大帧长9216、RS544-FEC（本模块/拆分模式），Input/Output Flow-control 均 DISABLE。MAC 表应把 <code>a088-c270-844e</code> 学习到 <code>400GE1/0/14:1</code>。客户换线后应按真实 MAC 学习重建映射。</p>
+<p>比较 CRC、FEC Uncorrected、Discard 的<strong>测试前后增量</strong>。历史累计非零不能直接判本次失败；持续增加的不可纠正错误必须处理。FEC Corrected 不要求永远为零，其变化需结合速率、模块和厂商阈值判断。</p>
+<h3 id="qos">8.2 QoS 配置与预期</h3>
+<pre><code class="language-text">display dcb
+display dcb pfc-profile
+display dcb pfc buffer
+display diffserv domain
+display qos configuration interface 400GE1/0/14:1
+display current-configuration | include headroom-pool
+display current-configuration | include dcb pfc dscp-mapping
+display current-configuration interface 400GE 1/0/14:1
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>查询</th>
+<th>正确结果</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>display dcb</td>
+<td>32个数据口全部 <code>rdma-p4</code>、<code>ENABLE(M)</code></td>
+</tr>
+<tr>
+<td>pfc-profile</td>
+<td><code>rdma-p4</code> 只含 priority4；默认 profile 仍可能含3，但不能绑定错</td>
+</tr>
+<tr>
+<td>qos configuration</td>
+<td>trust flag=dscp，应用正确 diffserv domain</td>
+</tr>
+<tr>
+<td>diffserv</td>
+<td><code>ip-dscp-inbound 33 phb af4 green</code>；本设备 AF4→queue4</td>
+</tr>
+<tr>
+<td>DSCP 改写</td>
+<td>本场景 <code>phb marking dscp : disable</code>，保留33；默认域 outbound AF4→34 不代表实际发生改写</td>
+</tr>
+<tr>
+<td>PFC DSCP 映射</td>
+<td><code>dcb pfc dscp-mapping enable slot 1</code></td>
+</tr>
+<tr>
+<td>shared headroom</td>
+<td><code>qos buffer headroom-pool size 4 mbytes slot 1</code></td>
+</tr>
+<tr>
+<td>pfc buffer</td>
+<td>每个启用口为 queue4；本现场 Hdrm512K</td>
+</tr>
+</tbody>
+</table>
+<p>本现场 <code>display dcb pfc buffer</code> 的队列4回读：Guaranteed1600 B、Xon-Lowest640 B、Xon-Offset6 K、Xoff3(D)、Hdrm512 K。<code>3(D)</code> 是动态 alpha 参数，<strong>不是3字节</strong>。共享 headroom 4 MiB 与每口512K阈值不能简单相加当成物理容量。它们是本型号基线；线长、速率、芯片、并发拥塞规模改变时需重新按厂商方案核算。</p>
+<h3 id="pfc">8.3 查看实际入队和 PFC</h3>
+<pre><code class="language-text">display qos queue statistics interface 400GE 1/0/14:1
+display dcb pfc interface 400GE 1/0/14:1
+</code></pre>
+<p>测试前后分别采集，检查实际数据进入 queue4，以及丢弃/PFC计数增量。命令字段随版本变化；如果只返回提示符或没有有效统计，不能当作全部为0。交换机显示的是约300秒平均速率时，5秒测试可能被平滑，不能拿该平均值反驳 perftest 的短时间吞吐。</p>
+<p>无拥塞时 PFC计数为0正常；有可控拥塞时，应看到相应方向/priority4的反馈和上游降速，并在负载解除后恢复。PAUSE/PFC帧数量不要求两端严格相等，需考虑刷新、累计区间和计数口径。</p>
+<h3 id="section-16">8.4 本现场已执行的配置骨架</h3>
+<p><strong>配置变更，只列实际使用的 PFC/分类命令。当前 VLAN1、PAUSE关闭和9216帧长原本已满足，因此未用未验证命令去改这些默认值。</strong> 新客户现场若不同，应按本机命令帮助补齐后再回读。</p>
+<pre><code class="language-text">system-view
+dcb pfc rdma-p4
+ priority 4
+ undo priority 3
+ quit
+qos buffer headroom-pool size 4 mbytes slot 1
+dcb pfc dscp-mapping enable slot 1
+interface 400GE 1/0/14:1
+ trust dscp
+ dcb pfc enable rdma-p4 mode manual
+ quit
+</code></pre>
+<p>对每个实际数据子口应用接口段；本实验室为 <code>400GE1/0/1:1</code>、<code>1:2</code> 至 <code>16:1</code>、<code>16:2</code>。不要改管理口。DSCP33→AF4 在本机默认域已经存在；新设备不存在时，应按对应 VRP 命令配置域并应用，不能仅设置 trust 就认为映射已存在。</p>
+<p>本设备使用候选配置和 commit：</p>
+<pre><code class="language-text">display configuration candidate
+commit trial 180
+display configuration trial status
+display dcb
+display dcb pfc-profile
+display dcb pfc buffer
+</code></pre>
+<p><code>commit trial 180</code> 为临时试运行，必须在倒计时到期前完成检查并正式提交；全量256组测试可能超时，不应放在180秒内完成。若符合预期，在 system-view 执行正式 <code>commit</code>；否则按本机机制回退。</p>
+<pre><code class="language-text">commit
+return
+save
+display startup
+display configuration changes
+</code></pre>
+<p><code>save</code> 如提示确认，核对保存文件后确认。本现场下一次启动文件为 <code>flash:/vrpcfg.zip</code>；“已写入启动配置”与“已经过重启恢复验证”不同。</p>
+<h2 id="section-17">9 持久化与变更后复查</h2>
+<h3 id="host-1">9.1 Host</h3>
+<p><code>ip</code>、<code>ethtool</code>、<code>mlnx_qos</code>、<code>mlxreg</code> 的一次运行不能自动保证重启/驱动重载后恢复。先确认现场网络管理器；本场景使用 NetworkManager。</p>
+<pre><code class="language-bash">IF=enp165s0f0np0
+nmcli -g GENERAL.CONNECTION device show &quot;$IF&quot;
+# 将得到的连接名代入；查询完整地址、路由、规则、MTU
+nmcli connection show 'enp165s0f0np0'
+cat /etc/sysctl.d/99-rdma-fullmesh-20261113.conf
+</code></pre>
+<p>本场景 <code>/22</code>、指定接口路由和源规则已保存在原 NM 连接中，接口 sysctl 保存在上述文件。客户应将第3节的运行态配置同步到所用管理器；避免直接重启整个 NetworkManager 或覆盖管理网连接。修改 MTU 持久化的例子：</p>
+<pre><code class="language-bash"># 配置变更，只保存所选连接的 MTU；不自动把地址/路由一并持久化
+nmcli connection modify 'enp165s0f0np0' 802-3-ethernet.mtu 8192
+</code></pre>
+<p>对于<strong>只有本数据 IP、没有现存静态路由/规则冲突</strong>的连接，下列 NM 语法与本次部署脚本一致。连接名必须来自前面的查询；含多个 IP 或已有策略时需合并，不能用单地址覆盖。已存在正确路由/规则时，不重复使用 <code>+</code> 添加。</p>
+<pre><code class="language-bash"># 配置变更，Host3 H3-0 的持久化示例
+CON=enp165s0f0np0
+nmcli connection modify &quot;$CON&quot; \
+  ipv4.addresses 20.168.0.19/22 \
+  +ipv4.routes '20.168.0.0/22 table=201 src=20.168.0.19' \
+  +ipv4.routing-rules 'priority 10201 from 20.168.0.19/32 to 20.168.0.0/22 table 201' \
+  802-3-ethernet.mtu 8192
+nmcli device reapply enp165s0f0np0
+# 之后重新检查 ip addr、ip rule、table201、MTU 和管理路由
+</code></pre>
+<p>将每个数据接口的三个 sysctl 值写入本机专用配置文件，再只加载该文件。例如 H3-0 的文件内容为：</p>
+<pre><code class="language-text">net.ipv4.conf.enp165s0f0np0.arp_ignore = 1
+net.ipv4.conf.enp165s0f0np0.arp_announce = 2
+net.ipv4.conf.enp165s0f0np0.rp_filter = 2
+</code></pre>
+<p>其它三个接口按各自名称追加。保存为客户自己的 <code>/etc/sysctl.d/99-rdma-fullmesh.conf</code> 后，执行 <code>sysctl -p /etc/sysctl.d/99-rdma-fullmesh.conf</code> 并回读；不要覆盖已有的同名运维文件。</p>
+<p>当前实验室还安装了定制 QoS 服务及接口上线钩子。<strong>这些不是驱动自带命令；新客户机器未安装时不存在。</strong></p>
+<pre><code class="language-bash">systemctl is-enabled rdma-data-qos.service
+systemctl is-active rdma-data-qos.service
+systemctl cat rdma-data-qos.service
+cat /etc/rdma-data-qos.json
+/usr/local/sbin/rdma-data-qos --mode audit
+
+# Host1/Host2 另有原广播 pool 修复服务
+systemctl is-enabled rdma-broadcast-pool.service
+systemctl is-active rdma-broadcast-pool.service
+</code></pre>
+<p><code>rdma-data-qos</code> <strong>默认是 apply</strong>，查询必须带 <code>--mode audit</code>。本场景钩子为 <code>/etc/NetworkManager/dispatcher.d/91-rdma-data-qos</code>，原 pool 钩子为 <code>90-rdma-broadcast-pool</code>。服务enabled/active仍不等于配置正确，须读实际寄存器。以后再次执行 mlnx_qos 或升级驱动，应重新检查 buffer1/pool1和冷ARP。</p>
+<h3 id="npu-1">9.2 NPU 与交换机</h3>
+<p>NPU 地址/掩码/路由配置在现场已写入 <code>/etc/hccn.conf</code>；保存前后分别核对工具查询与该文件，避免覆盖其他device/业务配置。交换机正式commit后save并查询startup。</p>
+<p>当前记录未做主机重启、网卡驱动重载或NPU重置后的恢复验证。客户交付若要求持久化验收，应在维护窗口完成一次受控重启/接口恢复，再按“路由→冷ARP→QoS→单对带宽”重新检查；把恢复结果另存，不以文件存在替代验证。</p>
+<h2 id="section-18">10 计数器与故障定位速查</h2>
+<h3 id="section-19">10.1 带宽测试前后采集</h3>
+<pre><code class="language-bash"># Host：先 before，测试后 after；使用独立目录保留全量输出
+IF=enp165s0f0np0
+ethtool -S &quot;$IF&quot; &gt; host_before.txt
+# 在这里进行单项 READ 或 WRITE
+ethtool -S &quot;$IF&quot; &gt; host_after.txt
+
+# A3，同一 device、相同时间窗口
+HCCN=/usr/local/Ascend/driver/tools/hccn_tool
+$HCCN -i 2 -stat -g &gt; npu_before.txt
+# 在这里进行同一项测试
+$HCCN -i 2 -stat -g &gt; npu_after.txt
+</code></pre>
+<p>查看各项 <code>after-before</code>，不要为了方便清空设备全部统计。计数回绕、驱动重载或重启导致 after&lt;before 时，本窗口不可直接求差，应重新取基线。</p>
+<table>
+<thead>
+<tr>
+<th>计数或观察</th>
+<th>判断用途</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Host <code>rx_prio4_bytes</code> / <code>tx_prio4_bytes</code></td>
+<td>READ时主数据TX增加，WRITE时主数据RX增加；对比其它priority，确认选对队列</td>
+</tr>
+<tr>
+<td>Host <code>rx_crc_errors_phy</code>、<code>rx_discards_phy</code>、<code>rx_out_of_buffer</code>、priority buf_discard/discards</td>
+<td>空闲单对正常基线期望无相关错误增量；按版本实际存在字段读取</td>
+</tr>
+<tr>
+<td>Host <code>rx_pause_ctrl_phy</code>、<code>tx_pause_ctrl_phy</code> 与 prio4 pause相关字段</td>
+<td>区分全局PAUSE与PFC，结合配置和实际拥塞解释</td>
+</tr>
+<tr>
+<td>Host PHY广播与vPort广播</td>
+<td>PHY收到而vPort没有，定位到网卡接收路径，不能直接归咎交换机</td>
+</tr>
+<tr>
+<td>NPU <code>roce_new_pkt_rty_num</code> 及其他错误/重传项</td>
+<td>增量说明传输重试，应继续定位丢包/拥塞/配置</td>
+</tr>
+<tr>
+<td>交换机queue4、Discard、CRC、PFC</td>
+<td>确认分类和逐跳传输；异常应沿数据方向逐口追踪</td>
+</tr>
+</tbody>
+</table>
+<p>PHY、vPort、netdev等计数层次不同，不能把物理接收到包等同于Linux收到包；参见<a href="https://docs.kernel.org/networking/device_drivers/ethernet/mellanox/mlx5/counters.html">mlx5计数器定义</a>。取不到字段应写“该版本未提供”，不能填0。</p>
+<h3 id="arp-1">10.2 抓 ARP 时避免改变观察条件</h3>
+<pre><code class="language-bash"># 目标Host口，-p表示不打开混杂模式
+timeout 15s tcpdump -p -eni enp38s0f0np0 arp
+
+# 另一个同VLAN正常Host上，用该工具支持的 -b 持续发送广播ARP
+arping -b -c 10 -I enp38s0f0np0 -s 20.168.1.20 20.168.1.24
+</code></pre>
+<p>这是Host3 H3-1向Host1 H1-1的辅助诊断，不能替代NPU发起的测试。使用 <code>-b</code> 前核对所装arping帮助；部分版本默认收到回复后转为单播，可能掩盖广播问题。抓包为空时结合PHY/vPort计数及交换机出口证据；硬件卸载的RoCE数据不保证能被普通tcpdump看见。</p>
+<h3 id="section-20">10.3 按症状选择下一步</h3>
+<table>
+<thead>
+<tr>
+<th>症状</th>
+<th>首先检查</th>
+<th>避免误判</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>管理IP全部超时</td>
+<td>运维VPN/跳板/管理网</td>
+<td>不能据此断定数据面断开</td>
+</tr>
+<tr>
+<td>Link DOWN</td>
+<td>两端光功率、LOS/LOL、FEC、模式、拆分子口、线缆</td>
+<td>改IP/PFC不能解决光路问题</td>
+</tr>
+<tr>
+<td>只同历史第三段IP能通</td>
+<td>掩码仍/24？是否实际跨VLAN？</td>
+<td>“交换机全互联”不自动改变主机路由</td>
+</tr>
+<tr>
+<td>ping通但MAC属于别口</td>
+<td>源规则、出口、ARP参数、实际GID</td>
+<td>可能走了兄弟网口</td>
+</tr>
+<tr>
+<td>只有个别NPU能通/热缓存通</td>
+<td>定向清动态邻居，抓广播，查PHY/vPort与SBCM</td>
+<td>不用静态ARP掩盖未定位的接收故障</td>
+</tr>
+<tr>
+<td>小ping通、大包/RDMA不通</td>
+<td>Ethernet MTU、交换机最大帧、RoCE active_mtu与QP MTU</td>
+<td>8192、9216、4096不能机械改成相同值</td>
+</tr>
+<tr>
+<td>TCP握手卡住</td>
+<td>Host服务端是否监听、源路由、防火墙策略、测试端口冲突</td>
+<td>不要关闭整个防火墙；按需放行测试路径</td>
+</tr>
+<tr>
+<td>TCP握手成功，RDMA卡住</td>
+<td>RoCEv2 GID/IP、两端MTU、QP参数、UDP4791路径、版本</td>
+<td>TCP通不等于RoCE数据通</td>
+</tr>
+<tr>
+<td>单对满速、多对吞吐低</td>
+<td>双口共享PCIe、NUMA/内存、竞争、QoS/丢弃/重传</td>
+<td>不能直接认定交换机坏或简单相加单口带宽</td>
+</tr>
+<tr>
+<td>吞吐骤降，重传增加</td>
+<td>沿路错误增量、DSCP分类、PFC与缓冲</td>
+<td>仅缩短timeout可能掩盖丢包而未修复原因</td>
+</tr>
+<tr>
+<td>改QoS后ARP不通</td>
+<td>buffer1/pool是否被驱动重算、是否匹配已知规避条件</td>
+<td>只看PFC4配置正确仍可能漏掉普通流量路径</td>
+</tr>
+<tr>
+<td>重启后复发</td>
+<td>NM、sysctl、hccn.conf、systemd/dispatcher、交换机保存</td>
+<td>运行态成功不等于持久化成功</td>
+</tr>
+</tbody>
+</table>
+<h2 id="section-21">11 客户交付验收记录</h2>
+<p>每次记录硬件型号、驱动/固件/工具版本、配置快照、时间、IP/端口映射。带宽表一格写 <code>READ/WRITE Gbit/s</code>；未测写“未测”，失败写“失败+原因”，不能填0或沿用旧配置的数据。</p>
+<table>
+<thead>
+<tr>
+<th>层次</th>
+<th>验收条件</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>物理</td>
+<td>16 NPU与16 CPU端口均UP，速率/FEC符合方案，测试期无新增不可纠正错误</td>
+</tr>
+<tr>
+<td>IP和身份</td>
+<td>256组双向分别3/3；源出口正确，两端邻居MAC对应指定口</td>
+</tr>
+<tr>
+<td>冷ARP</td>
+<td>定向删除并确认后能重新学习；无法保持冷态的组合明确注明</td>
+</tr>
+<tr>
+<td>QoS</td>
+<td>两端与全部交换路径DSCP/PFC一致；MTU、缓冲、PAUSE回读符合基线</td>
+</tr>
+<tr>
+<td>单对RDMA</td>
+<td>两端建链及报表正常，GID正确，READ/WRITE与同硬件基线接近，无相关丢弃/重传增量</td>
+</tr>
+<tr>
+<td>拥塞</td>
+<td>另行受控压测后能观察到预期流控与恢复，不能由单对结果代替</td>
+</tr>
+<tr>
+<td>业务</td>
+<td>标准hcomm实际DRAM→HBM读写完成、数据校验正确；小包时延另测</td>
+</tr>
+<tr>
+<td>持久化</td>
+<td>配置保存并按交付要求验证重启/恢复，留存恢复后的回读</td>
+</tr>
+</tbody>
+</table>
+<p>本实验室新QoS下的逐对验收记录：<strong>256/256组双向冷ARP/ICMP通过；独占带宽表已记录63/256组READ/WRITE，193组尚未填入独占带宽结果</strong>。53/203是补录与第四轮抽测前的数量。后续第5.7节增加两轮8路并发、H1-1四对一及恢复测试，独立记录，不将并发流量的测量混入独占带宽表。早期旧QoS下虽然做过256组带宽，也不能当成新QoS下已经全量测完。</p>
+<h2 id="section-22">12 本地证据与离线文件</h2>
+<p>本文关键操作依据本地已执行脚本与日志：<code>rdma_fullmesh_20261113/README_CN.md</code>、<code>npu_fullmesh.py</code>、<code>endpoints.json</code>；<code>rdma_fullmesh_20261114/PAUSE_POOL_FIX_CN.md</code>、<code>rdma_data_qos.py</code>、<code>hccn_bw_fullmesh.py</code>，以及QoS最终回读、两端perftest原始命令和逐对ICMP记录。未将早期“仅四子网/部分口DOWN”状态作为最终基线。</p>
+<p>本离线目录附 <code>REFERENCE_SNAPSHOT.json</code>，包含端点身份、最终QoS摘要和证据来源名，供离线对照；它是历史快照，不会自动读取客户机器。本文命令块已按实际日志核对，后增加的通用查询和批量循环用于复现流程，未在本侧会话重新执行远端测试。配置修改只应针对客户确认的目标接口。</p>
+</main></body></html>
