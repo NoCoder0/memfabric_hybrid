@@ -18,7 +18,7 @@ readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../../.." 2>/dev/null && pwd || true)"
 readonly LEGACY_STATE_BASENAME=".hybm_aicpu_kernel_state"
 readonly LEGACY_BACKUP_BASENAME=".hybm_aicpu_kernel_backup"
-readonly MIN_CANN_VERSION="9.1.0"
+readonly MIN_CANN_VERSION="9.0.0"
 
 ACTION=""
 INSTALL_FOR_ALL=0
@@ -114,9 +114,7 @@ is_cann_version_supported() {
     local version="$1"
     [[ "${version}" =~ ^[^0-9]*([0-9]+)\.([0-9]+)(\.([0-9]+))? ]] || return 1
     local major=$((10#${BASH_REMATCH[1]}))
-    local minor=$((10#${BASH_REMATCH[2]}))
-    local patch=$((10#${BASH_REMATCH[4]:-0}))
-    (( major > 9 || (major == 9 && minor > 1) || (major == 9 && minor == 1 && patch >= 0) ))
+    (( major >= 9 ))
 }
 
 validate_regular_source() {

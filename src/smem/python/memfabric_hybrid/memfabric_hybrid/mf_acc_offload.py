@@ -63,9 +63,26 @@ def kv_exchange_copy(metaPtr, deviceId):
     return kv_exchange_copy_impl(metaPtr.data_ptr(), deviceId.index)
 
 
-def entry_gather(dst, ids, count, deviceId):
+def _entry_gather_args(dst, ids, count, device):
+    import torch
+
+    if any(t.device != device or not t.is_contiguous() for t in (ids, count)):
+        raise ValueError("entry_gather metadata must be contiguous tensors on the selected NPU")
+    if ids.dtype != torch.int64 or count.dtype != torch.int32 or ids.numel() == 0 or count.numel() != 1:
+        raise ValueError("entry_gather requires nonempty int64 ids and one int32 count element")
+    if hasattr(dst, "data_ptr") and (dst.device != device or not dst.is_contiguous()):
+        raise ValueError("entry_gather output must be contiguous on the selected NPU")
     dst_addr = dst.data_ptr() if hasattr(dst, "data_ptr") else int(dst)
-    return entry_gather_impl(dst_addr, ids.data_ptr(), count.data_ptr(), deviceId.index)
+    return (
+        dst_addr,
+        ids.data_ptr(),
+        count.data_ptr(),
+        device.index,
+    )
+
+
+def entry_gather(dst, ids, count, deviceId):
+    return entry_gather_impl(*_entry_gather_args(dst, ids, count, deviceId))
 
 
 class Offload(offload._Offload):
@@ -96,5 +113,4 @@ class Offload(offload._Offload):
         return super().kv_exchange_copy(metaPtr.data_ptr(), deviceId.index)
 
     def entry_gather(self, dst, ids, count, deviceId):
-        dst_addr = dst.data_ptr() if hasattr(dst, "data_ptr") else int(dst)
-        return super().entry_gather(dst_addr, ids.data_ptr(), count.data_ptr(), deviceId.index)
+        return super().entry_gather(*_entry_gather_args(dst, ids, count, deviceId))

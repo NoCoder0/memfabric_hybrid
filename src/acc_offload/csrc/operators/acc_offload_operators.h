@@ -30,6 +30,10 @@ void OffloadOpsKvExchange(uint64_t *metaPtr, uint32_t blockDim, void *stream);
 void OffloadOpsEntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint64_t poolGva, uint64_t slotStride,
                            uint32_t entryBytes, uint32_t rowsPerSlot, uint32_t blockDim, void *stream);
 
+void OffloadOpsEntryGatherDescriptors(uint64_t dst, uint64_t ids, uint64_t count, uint64_t *sources,
+                                      uint64_t *destinations, uint32_t *lengths, uint32_t capacity, uint64_t poolGva,
+                                      uint64_t slotStride, uint32_t entryBytes, uint32_t rowsPerSlot, void *stream);
+
 #ifdef __cplusplus
 }
 #endif

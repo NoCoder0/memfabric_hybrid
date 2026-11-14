@@ -45,14 +45,15 @@ TEST(PoolFingerprintTest, UniformGroupPasses)
     ASSERT_EQ(ValidatePoolFingerprints(single.data(), single.size()), OFFLOAD_OK);
 }
 
-TEST(PoolFingerprintTest, MultiNodeA3PoolPasses)
+TEST(PoolFingerprintTest, MultiNodeSupportedSocPasses)
 {
-    // 2 machines x 2 ranks on A3 nodes
-    auto fps = MakeUniformGroup(4, 2, ASCEND_910C);
-    ASSERT_EQ(ValidatePoolFingerprints(fps.data(), fps.size()), OFFLOAD_OK);
+    for (auto socType : {ASCEND_910B, ASCEND_910C}) {
+        auto fps = MakeUniformGroup(4U, 2U, socType);
+        ASSERT_EQ(ValidatePoolFingerprints(fps.data(), fps.size()), OFFLOAD_OK);
+    }
 }
 
-TEST(PoolFingerprintTest, MultiNodeNonA3PoolFails)
+TEST(PoolFingerprintTest, MultiNodeUnsupportedSocFails)
 {
     struct SocCase {
         uint32_t socType;
@@ -60,7 +61,6 @@ TEST(PoolFingerprintTest, MultiNodeNonA3PoolFails)
     };
     std::vector<SocCase> cases = {
         {ASCEND_950, "A5"},
-        {ASCEND_910B, "A2"},
         {ASCEND_UNKNOWN, "unknown"},
     };
     for (const auto &tc : cases) {

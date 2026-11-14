@@ -63,6 +63,8 @@ public:
 
     int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot) override;
 
+    int32_t RegisterMemory(const void *address, uint64_t size) override;
+
     int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx) override;
 
 private:
@@ -89,6 +91,12 @@ private:
 
     int32_t ReserveSharedPool();
 
+    int32_t RegisterPeerPool();
+
+    int32_t MapPeerPool(int fd, uint32_t rank, uint64_t size);
+
+    int32_t PrepareSharedCopy();
+
     int32_t ExportAndImportEntityInfo();
 
     int32_t MapPool(const offload_config_t &config);
@@ -114,6 +122,8 @@ private:
     hybm_options options_{};
     uint8_t *base_ = nullptr;
     uint64_t size_ = 0;
+    uint32_t localWorldSize_ = 0;
+    uint64_t peerPoolSize_ = 0;
     AccOffloadEntryGatherLayout entryTable_{};
     bool entryTableRegistered_ = false;
     std::shared_ptr<AccOffloadMemManager> memMng_;

@@ -51,6 +51,8 @@ public:
 
     int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot);
 
+    int32_t RegisterMemory(const void *address, uint64_t size);
+
     int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx);
 
     uint64_t HostMalloc(uint64_t size, uint64_t flags);
@@ -78,6 +80,7 @@ private:
     static std::atomic<uint16_t> nextEntityId_;
     mutable std::mutex mutex_;
     uint16_t entityId_ = UINT16_MAX;
+    uint16_t deviceId_ = UINT16_MAX;
     bool inited_ = false;
     offload_scene_t scene_ = OFFLOAD_SCENE_LOCAL;
     std::unique_ptr<AccOffloadEntry> entry_;

@@ -66,7 +66,7 @@ void DefineAccOffloadConfig(py::module_ &m)
         .def_readwrite("local_world_size", &offload_config_t::localWorldSize,
                        "ranks of this machine within the pool; 0 = world_size (single machine, backward compatible). "
                        "Must divide world_size; machine_rank = rank_id // local_world_size. A multi-machine pool "
-                       "(< world_size) currently accepts A3 (Ascend910C) nodes only")
+                       "(< world_size) accepts A2 RDMA or A3 MTE nodes")
         .def_readwrite("flags", &offload_config_t::flags, "optional flags, see OFFLOAD_FLAG_xxx");
     m.attr("OFFLOAD_FLAG_GIANT_PAGE") = py::int_(OFFLOAD_FLAG_GIANT_PAGE);
 }
@@ -83,6 +83,13 @@ void DefineAccOffloadApi(py::module_ &m)
 
     m.def("sparse_copy", &offload_sparse_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("sizePtr"), py::arg("deviceId"));
+
+    m.def(
+        "register_memory",
+        [](uint64_t address, uint64_t size) {
+            return AccOffloadEntryManager::Instance().RegisterMemory(reinterpret_cast<void *>(address), size);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("address"), py::arg("size"));
 
     m.def("group_pack_copy", &offload_group_pack_copy, py::call_guard<py::gil_scoped_release>(), py::arg("srcPtrs"),
           py::arg("dstPtrs"), py::arg("lenPtrs"), py::arg("numLocalExpertPtr"), py::arg("groupList"),
@@ -114,12 +121,8 @@ void DefineAccOffloadApi(py::module_ &m)
         "on failure");
 
     m.def(
-        "entry_gather",
-        [](uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint16_t deviceId) {
-            return offload_entry_gather(dstPtr, idsPtr, countPtr, deviceId);
-        },
-        py::call_guard<py::gil_scoped_release>(), py::arg("dstPtr"), py::arg("idsPtr"), py::arg("countPtr"),
-        py::arg("deviceId"),
+        "entry_gather", &offload_entry_gather, py::call_guard<py::gil_scoped_release>(), py::arg("dstPtr"),
+        py::arg("idsPtr"), py::arg("countPtr"), py::arg("deviceId"),
         "fused random-row gather over the registered uniform grid: GLOBAL row ids -> pool GVA conversion in-kernel "
         "(tail gaps strided over), results packed at dst + i*entryBytes; the entry count is read from device memory at "
         "countPtr (graph-capture safe)");
@@ -189,6 +192,12 @@ void DefineAccOffloadInstanceApi(py::module_ &m)
         },
         py::call_guard<py::gil_scoped_release>(), py::arg("ptr"),
         "returns the device address of any address inside the pre-registered host pool");
+    cls.def(
+        "register_memory",
+        [](AccOffloadEntryManager &self, uint64_t address, uint64_t size) {
+            return self.RegisterMemory(reinterpret_cast<void *>(address), size);
+        },
+        py::call_guard<py::gil_scoped_release>(), py::arg("address"), py::arg("size"));
     DefineAccOffloadInstanceCopyApi(cls);
 }
 

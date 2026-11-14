@@ -13,6 +13,8 @@
 #ifndef MF_HYBRID_DEVICE_RDMA_AICPU_TRANSPORT_MANAGER_H
 #define MF_HYBRID_DEVICE_RDMA_AICPU_TRANSPORT_MANAGER_H
 
+#include <map>
+
 #include "device_rdma_transport_manager.h"
 #include "dl_acl_api.h"
 #include "hybm_acl_notify.h"
@@ -40,6 +42,8 @@ public:
     int RemoteIO(uint32_t rankId, uint64_t lAddr, uint64_t rAddr, uint64_t size, bool write, bool sync) override;
     Result ReadRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
     Result WriteRemoteBatchAsync(uint32_t rankId, const CopyDescriptor &descriptor) override;
+    Result DeviceCopy(const hybm_device_copy_params &params) override;
+    Result PrepareDeviceCopy(uint32_t rank, uint64_t address, uint64_t size) override;
 
 private:
     using AicpuSegment = ock::mf::aicpu::RdmaSegment;
@@ -64,9 +68,16 @@ private:
                         void *deviceSegments, bool write, ock::mf::aicpu::RdmaAicpuParam &param);
     int StageBatchSegments(const std::vector<AicpuSegment> &segments, void *&deviceSegments);
     int ComputeDoorbellAddr(uint32_t rankId, uint64_t &dbAddr);
-    int FillDoorbellParam(uint32_t rankId, ock::mf::aicpu::RdmaAicpuParam &param);
-    int EnsureAicpuNotify();
+    int FillDoorbellParam(uint32_t rankId, ock::mf::aicpu::RdmaAicpuParam &param, AicpuStream &doorbell = aicpuStream_);
+    int EnsureAicpuNotify(HybmAclNotifyPtr &notify = aicpuNotify_, void *stream = nullptr);
     int LaunchAicpuBatch(uint32_t rankId, void *stream, ock::mf::aicpu::RdmaAicpuParam &param, uint32_t count);
+
+    Result BuildSparseCopyParam(uint32_t rank, void *stream, aicpu::RdmaSparseCopyArgs &args);
+    Result SnapshotMemoryRegions(aicpu::RdmaSparseCopyArgs &args);
+    std::map<uint64_t, uint32_t> copyPeers_;
+    HybmAclNotifyPtr graphNotify_;
+    AicpuStream graphDoorbell_;
+    void *graphStream_ = nullptr;
 
     aclrtBinHandle aicpuRdmaBin_{nullptr};
     DeviceFuncHandles aicpuRdmaPostSend_{};

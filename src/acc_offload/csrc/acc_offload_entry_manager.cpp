@@ -55,6 +55,7 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         return ret;
     }
 
+    deviceId_ = config.deviceId;
     inited_ = true;
     OFFLOAD_LOG_INFO("entry manager initialized, scene: "
                      << static_cast<uint32_t>(scene_) << ", deviceId: " << config.deviceId << ", reserveSize: "
@@ -150,6 +151,20 @@ int32_t AccOffloadEntryManager::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs,
     return entry_->SparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr, devIdx);
 }
 
+int32_t AccOffloadEntryManager::RegisterMemory(const void *address, uint64_t size)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (entry_ == nullptr || !inited_) {
+        OFFLOAD_LOG_ERROR("offload is not initialized, memory registration failed");
+        return OFFLOAD_ERROR;
+    }
+    if (address == nullptr || size == 0 || size > UINT64_MAX - reinterpret_cast<uint64_t>(address)) {
+        OFFLOAD_LOG_ERROR("invalid memory registration range, address=" << address << " size=" << size);
+        return OFFLOAD_ERROR;
+    }
+    return entry_->RegisterMemory(address, size);
+}
+
 int32_t AccOffloadEntryManager::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
                                               uint32_t *numLocalExpertPtr, int64_t *groupList, int64_t *packedGroupList,
                                               uint8_t devIdx)
@@ -189,8 +204,15 @@ int32_t AccOffloadEntryManager::RegisterEntryTable(uint32_t entryBytes, uint32_t
 int32_t AccOffloadEntryManager::EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (entry_ == nullptr) {
-        OFFLOAD_LOG_ERROR("entry is null, entry gather failed");
+    if (entry_ == nullptr || !inited_) {
+        OFFLOAD_LOG_ERROR("offload is not initialized, entry gather failed");
+        return OFFLOAD_ERROR;
+    }
+    if (dstPtr == 0 || idsPtr == 0 || countPtr == 0 || idsPtr % alignof(uint64_t) != 0 ||
+        countPtr % alignof(uint32_t) != 0 || devIdx != deviceId_) {
+        OFFLOAD_LOG_ERROR("invalid entry gather parameters, dst=" << dstPtr << " ids=" << idsPtr
+                                                                  << " count=" << countPtr
+                                                                  << " device=" << static_cast<uint32_t>(devIdx));
         return OFFLOAD_ERROR;
     }
     if (scene_ != OFFLOAD_SCENE_SHARED) {

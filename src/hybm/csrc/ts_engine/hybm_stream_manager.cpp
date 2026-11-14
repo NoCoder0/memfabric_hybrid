@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 
+#include <algorithm>
 #include <thread>
 #include <shared_mutex>
 #include <unordered_map>
@@ -22,6 +23,8 @@ namespace ock {
 namespace mf {
 static std::shared_mutex g_allThreadStreamMutex;
 static std::unordered_map<int64_t, HybmStreamPtr> g_allThreadStreams;
+// Retired streams can remain owned by thread-local RDMA notifies until thread exit.
+static std::vector<std::weak_ptr<HybmStream>> g_retiredThreadStreams;
 HybmStreamPtr HybmStreamManager::GetThreadHybmStream(uint32_t devId)
 {
     const auto thisId = Func::GetCurTid();
@@ -54,6 +57,12 @@ HybmStreamPtr HybmStreamManager::GetThreadHybmStream(uint32_t devId)
 void HybmStreamManager::DestroyAllThreadHybmStream()
 {
     std::unique_lock<std::shared_mutex> lock_guard(g_allThreadStreamMutex);
+    g_retiredThreadStreams.erase(std::remove_if(g_retiredThreadStreams.begin(), g_retiredThreadStreams.end(),
+                                                [](const auto &stream) { return stream.expired(); }),
+                                 g_retiredThreadStreams.end());
+    for (const auto &kv : g_allThreadStreams) {
+        g_retiredThreadStreams.emplace_back(kv.second);
+    }
     g_allThreadStreams.clear();
 }
 
@@ -66,6 +75,12 @@ void HybmStreamManager::ExplicitDestroyAllThreadHybmStream()
         }
     }
     g_allThreadStreams.clear();
+    for (auto &weakStream : g_retiredThreadStreams) {
+        if (auto stream = weakStream.lock()) {
+            stream->Destroy();
+        }
+    }
+    g_retiredThreadStreams.clear();
 }
 
 namespace {

@@ -11,7 +11,8 @@
 """acc_offload extend library (libmf_hybm_accoffload.so) build entry.
 
 Compiles the AscendC kernel + torch_npu launch adapter shipped inside the NPU
-wheel into a loadable extend library. Invoked via ``mfcli kernel install``;
+wheel into a loadable extend library. A2 builds the descriptor kernel and transport launch adapter.
+Invoked via ``mfcli kernel install``;
 the environment must provide CANN (ASCEND_HOME_PATH), torch and torch_npu.
 """
 
@@ -45,6 +46,7 @@ _STDERR_TRUNC = 4096
 _LOCK_TIMEOUT_SEC = _BUILD_TIMEOUT_SEC + 60
 
 _SOC_CONFIG = {
+    "A2": {"soc_version": "Ascend910B3", "abi_macro": "ACC_SOC_VERSION_A2"},
     "A5": {"soc_version": "ascend950pr_9599", "abi_macro": "ACC_SOC_VERSION_A5"},
     "A3": {"soc_version": "ascend910_9382", "abi_macro": "ACC_SOC_VERSION_A3"},
 }
@@ -188,11 +190,13 @@ def _install_one(src_path, install_dir):
 
 def _build_kernel(tmp_dir, src_dir, soc_version, ascend_home, deadline):
     build_dir = os.path.join(tmp_dir, "kernel_build")
+    # CANN 9.0's object glob skips hidden source paths such as .venv.
+    kernel_src = shutil.copytree(os.path.join(src_dir, _KERNEL_SRC_DIR), os.path.join(tmp_dir, "operators"))
     _run_cmd(
         [
             "cmake",
             "-S",
-            os.path.join(src_dir, _KERNEL_SRC_DIR),
+            kernel_src,
             "-B",
             build_dir,
             "-DSOC_VERSION=" + soc_version,
@@ -366,8 +370,8 @@ def ensure_acc_offload_ext(soc_key, install_dir=None, force=False):
         _log("WARN", "ASCEND_HOME_PATH=%s is not a valid directory, skip extend build." % ascend_home)
         return None
 
-    if soc_key not in ("A3", "A5"):
-        _log("INFO", "acc_offload kernel only supports A3/A5 (detected %s), skipped." % soc_key)
+    if soc_key not in _SOC_CONFIG:
+        _log("INFO", "acc_offload launch supports A2/A3/A5 (detected %s), skipped." % soc_key)
         return None
 
     torch_env = _torch_env()

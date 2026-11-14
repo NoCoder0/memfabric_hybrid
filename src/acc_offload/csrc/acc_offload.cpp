@@ -70,7 +70,11 @@ OFFLOAD_API int32_t offload_register_entry_table(uint32_t entryBytes, uint32_t r
 
 OFFLOAD_API int32_t offload_entry_gather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint16_t deviceId)
 {
-    return AccOffloadEntryManager::Instance().EntryGather(dstPtr, idsPtr, countPtr, deviceId);
+    if (deviceId > UINT8_MAX) {
+        OFFLOAD_LOG_ERROR("invalid entry gather deviceId: " << deviceId << ", maximum: " << UINT8_MAX);
+        return OFFLOAD_ERROR;
+    }
+    return AccOffloadEntryManager::Instance().EntryGather(dstPtr, idsPtr, countPtr, static_cast<uint8_t>(deviceId));
 }
 
 OFFLOAD_API int32_t offload_group_pack_copy(uint64_t srcPtr, uint64_t dstPtr, uint64_t lenPtr,

@@ -33,7 +33,7 @@ struct PoolFingerprint {
     uint32_t worldSize;      /* global rank total; must be identical */
     uint32_t localWorldSize; /* ranks per machine; must be identical */
     uint32_t globalRank;     /* self report; gathered set must be {0..worldSize-1} */
-    uint32_t socType;        /* AscendSocType value; identical, multi-node accepts A3 only */
+    uint32_t socType;        /* AscendSocType value; identical, multi-node accepts A2/A3 */
 };
 
 /* localWorldSize == 0 means "single machine": normalize to worldSize so the
@@ -79,7 +79,7 @@ inline void LogPoolFingerprintMismatch(uint32_t rank, const PoolFingerprint &sel
  * one of them — each rank allocates its own physical DRAM and ranks may differ,
  * only an INFO line is emitted so mixed-size pools are visible in the logs),
  * globalRank set exactly {0..worldSize-1}, and a multi-node pool
- * (localWorldSize < worldSize) A3-only. Pure function on the gathered array;
+ * (localWorldSize < worldSize) requires A2/A3. Pure function on the gathered array;
  * failures log the root cause here, callers only propagate. */
 inline int32_t ValidatePoolFingerprints(const PoolFingerprint *fingerprints, uint32_t rankCount) noexcept
 {
@@ -123,8 +123,9 @@ inline int32_t ValidatePoolFingerprints(const PoolFingerprint *fingerprints, uin
                          << ref.allocSize << ", ranksDifferingFromRank0: " << mixedAllocRanks
                          << ", worldSize: " << ref.worldSize << ", poolGva: " << ref.poolGva);
     }
-    if (ref.localWorldSize != ref.worldSize && ref.socType != ock::mf::ASCEND_910C) {
-        OFFLOAD_LOG_ERROR("multi-node pool only supports A3 (Ascend910C) nodes, socType: "
+    if (ref.localWorldSize != ref.worldSize && ref.socType != ock::mf::ASCEND_910C &&
+        ref.socType != ock::mf::ASCEND_910B) {
+        OFFLOAD_LOG_ERROR("multi-node pool supports A2 RDMA or A3 MTE nodes, socType: "
                           << ref.socType << ", worldSize: " << ref.worldSize
                           << ", localWorldSize: " << ref.localWorldSize << ", poolGva: " << ref.poolGva);
         return OFFLOAD_ERROR;

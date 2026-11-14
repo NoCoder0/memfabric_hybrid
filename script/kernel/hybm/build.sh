@@ -18,7 +18,7 @@ readonly OPS_STAGE_ROOT="${PROJECT_ROOT}/build/hybm_ops_stage"
 readonly OPS_STAGE_DIR="${OPS_STAGE_ROOT}/hybm/aicpu_kernel"
 readonly OPS_OUTPUT_DIR="${PROJECT_ROOT}/output/hybm/aicpu_kernel"
 readonly OPS_PUBLISH_DIR="${OPS_OUTPUT_DIR}.new.$$"
-readonly MIN_CANN_VERSION="9.1.0"
+readonly MIN_CANN_VERSION="9.0.0"
 readonly BUILD_MODE="${BUILD_MODE:-RELEASE}"
 readonly MF_BUILD_JOBS="${MF_BUILD_JOBS:-32}"
 readonly CONSUMER_FILES=(
@@ -82,9 +82,7 @@ is_cann_version_supported()
         return 1
     fi
     local major=$((10#${BASH_REMATCH[1]}))
-    local minor=$((10#${BASH_REMATCH[2]}))
-    local patch=$((10#${BASH_REMATCH[4]:-0}))
-    (( major > 9 || (major == 9 && minor > 1) || (major == 9 && minor == 1 && patch >= 0) ))
+    (( major >= 9 ))
 }
 
 prepare_clean_state()

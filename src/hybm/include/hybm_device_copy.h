@@ -31,6 +31,10 @@ typedef struct {
 /* rankId identifies the host-pool owner. Prepare outside capture; stop/drain execution and
  * destroy referencing graphs before entity teardown. */
 int32_t hybm_prepare_device_copy(hybm_entity_t e, uint32_t rankId, uint64_t poolBase, uint64_t poolSize);
+/* Device arrays stay valid through execution and contain at least *sizePtr elements.
+ * RDMA supports up to 65536 records per call and resolves
+ * peers from registered addresses; rankId continues to identify the URMA pool owner.
+ * Success queues both copying and its completion dependency on stream. */
 int32_t hybm_data_device_copy(hybm_entity_t e, const hybm_device_copy_params *params);
 
 #ifdef __cplusplus

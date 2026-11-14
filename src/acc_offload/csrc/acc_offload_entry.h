@@ -62,6 +62,13 @@ public:
         return -1;
     }
 
+    virtual int32_t RegisterMemory(const void *address, uint64_t size)
+    {
+        OFFLOAD_LOG_ERROR("external memory registration is unavailable for this offload pool, address="
+                          << address << " size=" << size);
+        return -1;
+    }
+
     virtual int32_t GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *numLocalExpertPtr,
                                   int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx)
     {

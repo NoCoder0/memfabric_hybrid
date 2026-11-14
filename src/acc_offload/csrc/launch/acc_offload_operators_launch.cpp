@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 
+#include <ATen/ATen.h>
 #include "torch_npu/csrc/core/npu/NPUStream.h"
 #include "torch_npu/csrc/core/npu/NPUGuard.h"
 #include "torch_npu/csrc/framework/OpCommand.h"
@@ -28,6 +29,31 @@ void AccOffloadAicpuLaunch(AccOffloadAicpuCallback callback, const AccOffloadAic
                                           [callback, param, stream]() -> int { return callback(param, stream); });
 }
 
+void AccOffloadTransportEntryGather(int32_t (*submit)(void *, uint64_t *, uint64_t *, uint32_t *, uint32_t *, void *),
+                                    void *entity, uint64_t dst, uint64_t ids, uint64_t count, uint32_t capacity,
+                                    uint64_t poolGva, uint64_t slotStride, uint32_t entryBytes, uint32_t rowsPerSlot,
+                                    uint8_t device)
+{
+    auto launchStream = c10_npu::getCurrentNPUStream(device);
+    c10_npu::NPUStreamGuard streamGuard(launchStream);
+    auto stream = launchStream.stream(false);
+    auto options = at::TensorOptions().device(c10::Device(c10::DeviceType::PrivateUse1, device));
+    auto descriptors = at::empty({capacity, 5}, options.dtype(at::kInt));
+    // The framework allocator retains captured scratch storage in the graph's memory pool.
+    auto callback = [=]() -> int {
+        auto srcPtrs = reinterpret_cast<uint64_t *>(descriptors.data_ptr());
+        auto dstPtrs = srcPtrs + capacity;
+        auto sizes = reinterpret_cast<uint32_t *>(dstPtrs + capacity);
+        OffloadOpsEntryGatherDescriptors(dst, ids, count, srcPtrs, dstPtrs, sizes, capacity, poolGva, slotStride,
+                                         entryBytes, rowsPerSlot, stream);
+        auto ret = submit(entity, srcPtrs, dstPtrs, sizes, reinterpret_cast<uint32_t *>(count), stream);
+        TORCH_CHECK(ret == 0, "MemFabric entry gather transport submission failed, ret=", ret);
+        return ret;
+    };
+    at_npu::native::OpCommand::RunOpApiV2("acc_transport_entry_gather", callback);
+}
+
+#if !defined(ACC_SOC_VERSION_A2)
 void AccOffloadSparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr, uint8_t devIdx)
 {
 #if defined(ACC_SOC_VERSION_A5)
@@ -115,4 +141,5 @@ void AccOffloadEntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, 
 
     at_npu::native::OpCommand::RunOpApiV2("acc_entry_gather", callback);
 }
+#endif
 }

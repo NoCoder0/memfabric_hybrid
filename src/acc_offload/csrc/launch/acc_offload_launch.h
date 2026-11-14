@@ -43,6 +43,10 @@ struct AccOffloadEntryGatherLayout {
 using AccOffloadEntryGatherFunc = void (*)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint32_t, uint32_t,
                                            uint8_t);
 
+using AccOffloadSparseCopySubmit = int32_t (*)(void *, uint64_t *, uint64_t *, uint32_t *, uint32_t *, void *);
+using AccOffloadTransportEntryGatherFunc = void (*)(AccOffloadSparseCopySubmit, void *, uint64_t, uint64_t, uint64_t,
+                                                    uint32_t, uint64_t, uint64_t, uint32_t, uint32_t, uint8_t);
+
 class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
@@ -104,6 +108,20 @@ public:
         return OFFLOAD_OK;
     }
 
+    static inline int32_t AccOffloadTransportEntryGather(AccOffloadSparseCopySubmit submit, void *entity, uint64_t dst,
+                                                         uint64_t ids, uint64_t count, uint32_t capacity,
+                                                         const AccOffloadEntryGatherLayout &layout, uint8_t device)
+    {
+        if (pAccOffloadTransportEntryGather == nullptr) {
+            OFFLOAD_LOG_ERROR(
+                "transport entry gather launch symbol is unavailable; rebuild the offload kernel package");
+            return OFFLOAD_UNLOAD;
+        }
+        pAccOffloadTransportEntryGather(submit, entity, dst, ids, count, capacity, layout.poolGva, layout.slotStride,
+                                        layout.entryBytes, layout.rowsPerSlot, device);
+        return OFFLOAD_OK;
+    }
+
 private:
     static std::string GetSelfLibDir();
     static std::mutex gMutex;
@@ -117,6 +135,7 @@ private:
     static AccOffloadGroupPackCopyFunc pAccOffloadGroupPackCopy;
     static AccOffloadKvExchangeFunc pAccOffloadKvExchange;
     static AccOffloadEntryGatherFunc pAccOffloadEntryGather;
+    static AccOffloadTransportEntryGatherFunc pAccOffloadTransportEntryGather;
 };
 
 } // namespace offload

@@ -15,12 +15,16 @@ message(STATUS "acc_offload: SOC_VERSION = ${SOC_VERSION}")
 
 include(${CMAKE_CURRENT_SOURCE_DIR}/config_ascendc.cmake)
 
-ascendc_library(mf_accoffload_kernel STATIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_sparse_copy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_group_pack_copy.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_kv_exchange.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_entry_gather.cpp
-)
+set(KERNEL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_entry_gather_descriptors.cpp)
+if (NOT SOC_VERSION MATCHES "^(Ascend910B|ascend910b)")
+    list(APPEND KERNEL_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_sparse_copy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_group_pack_copy.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_kv_exchange.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_entry_gather.cpp
+    )
+endif ()
+ascendc_library(mf_accoffload_kernel STATIC ${KERNEL_SOURCES})
 
 ascendc_include_directories(mf_accoffload_kernel PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -28,7 +32,9 @@ ascendc_include_directories(mf_accoffload_kernel PRIVATE
 
 # Map SOC_VERSION to the ACC_SOC_VERSION_Ax macros the kernels branch on
 # (same naming as the install-time g++ build of acc_offload_operators_launch.cpp).
-if (SOC_VERSION MATCHES "^ascend950")
+if (SOC_VERSION MATCHES "^(Ascend910B|ascend910b)")
+    ascendc_compile_definitions(mf_accoffload_kernel PRIVATE ACC_SOC_VERSION_A2=1)
+elseif (SOC_VERSION MATCHES "^ascend950")
     ascendc_compile_definitions(mf_accoffload_kernel PRIVATE ACC_SOC_VERSION_A5=1)
 elseif (SOC_VERSION MATCHES "^ascend910")
     ascendc_compile_definitions(mf_accoffload_kernel PRIVATE ACC_SOC_VERSION_A3=1)

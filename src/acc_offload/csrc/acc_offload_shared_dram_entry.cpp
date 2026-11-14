@@ -12,7 +12,12 @@
 #include <algorithm>
 #include <cstring>
 #include <new>
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include "hybm_big_mem.h"
+#include "hybm_device_copy.h"
 #include "smem_net_common.h"
 #include "smem_store_factory.h"
 #include "mf_env_define.h"
@@ -336,7 +341,8 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
     options_ = {};
     options_.bmType = HYBM_TYPE_HOST_INITIATE;
     options_.memType = HYBM_MEM_TYPE_HOST;
-    options_.bmDataOpType = HYBM_DOP_TYPE_MTE;
+    options_.bmDataOpType =
+        mf::DlAclApi::GetAscendSocType() == mf::ASCEND_910B ? HYBM_DOP_TYPE_DEVICE_RDMA : HYBM_DOP_TYPE_MTE;
     options_.rankCount = config.worldSize;
     options_.rankId = config.rankId;
     options_.devId = config.deviceId;
@@ -346,6 +352,22 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
     options_.scene = HYBM_SCENE_OFFLOAD; // offload 独立 VA 区段(常规 GVM 区最前2T)，与 BM 物理隔离
     options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
     options_.dramShmFd = -1;
+    localWorldSize_ = NormalizeLocalWorldSize(config.worldSize, config.localWorldSize);
+    if (options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && localWorldSize_ < 2U) {
+        OFFLOAD_LOG_ERROR("A2 shared DRAM requires reader ranks on at least two local NPUs, rank="
+                          << config.rankId << " worldSize=" << config.worldSize
+                          << " localWorldSize=" << localWorldSize_);
+        return OFFLOAD_ERROR;
+    }
+    if (options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && options_.hostVASpace != 0) {
+        const auto enable4K = mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_HYBM_ENABLE_4K_PAGE, 0U) != 0U;
+        options_.dramShmFd = memfd_create("mf-offload", MFD_CLOEXEC | (enable4K ? 0U : MFD_HUGETLB));
+        if (options_.dramShmFd < 0) {
+            OFFLOAD_LOG_ERROR("create shared DRAM backing failed, rank=" << config.rankId << " errno=" << errno);
+            return OFFLOAD_ERROR;
+        }
+        options_.flags |= HYBM_FLAG_CREATE_WITH_SHM;
+    }
     options_.enable56BitsGva = false;
     bzero(options_.transUrl, sizeof(options_.transUrl));
     if (storeUrl_.size() >= sizeof(options_.transUrl)) {
@@ -370,13 +392,132 @@ int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &c
                                                                                << ", rankId: " << config.rankId);
         return OFFLOAD_ERROR;
     }
+    ret = RegisterPeerPool();
+    if (ret != OFFLOAD_OK) {
+        return ret;
+    }
+    ret = ExportAndImportEntityInfo();
+    if (ret != OFFLOAD_OK) {
+        return ret;
+    }
     ret = AllGatherAndImportPeers(group_, sliceInfos_, entity_, 0, options_.rankCount, options_.rankId);
     if (ret != OFFLOAD_OK) {
         OFFLOAD_LOG_ERROR("allgather/import slice info failed, result: " << ret << ", rankId: " << config.rankId
                                                                          << ", worldSize: " << config.worldSize);
         return OFFLOAD_ERROR;
     }
-    return ExportAndImportEntityInfo();
+    if (options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA) {
+        for (uint32_t rank = 0; rank < options_.rankCount; ++rank) {
+            if (rank == options_.rankId) {
+                continue;
+            }
+            ret = hybm_transport_connect(entity_, &rank, 1, 0);
+            if (ret != OFFLOAD_OK) {
+                OFFLOAD_LOG_ERROR("offload transport connect failed, rank=" << rank << " ret=" << ret);
+                return ret;
+            }
+        }
+    }
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadSharedDramEntry::RegisterPeerPool()
+{
+    if (options_.bmDataOpType != HYBM_DOP_TYPE_DEVICE_RDMA) {
+        return OFFLOAD_OK;
+    }
+    struct PoolBacking {
+        uint64_t size;
+        uint64_t device;
+        uint64_t inode;
+        int32_t pid;
+        int32_t fd;
+    };
+    struct stat status {};
+    if (options_.dramShmFd >= 0 && fstat(options_.dramShmFd, &status) != 0) {
+        OFFLOAD_LOG_ERROR("stat shared DRAM failed, rank=" << options_.rankId << " errno=" << errno);
+        return OFFLOAD_ERROR;
+    }
+    PoolBacking self{options_.hostVASpace, status.st_dev, status.st_ino, getpid(), options_.dramShmFd};
+    std::vector<PoolBacking> pools(options_.rankCount);
+    auto ret = group_->GroupAllGather(reinterpret_cast<const char *>(&self), sizeof(self),
+                                      reinterpret_cast<char *>(pools.data()), pools.size() * sizeof(self));
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("shared DRAM backing exchange failed, rank=" << options_.rankId << " ret=" << ret);
+        return ret;
+    }
+    const auto rank =
+        options_.rankId / localWorldSize_ * localWorldSize_ + (options_.rankId + localWorldSize_ - 1) % localWorldSize_;
+    const auto &peer = pools[rank];
+    if (peer.size == 0) {
+        return OFFLOAD_OK;
+    }
+    auto path = "/proc/" + std::to_string(peer.pid) + "/fd/" + std::to_string(peer.fd);
+    auto fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
+    if (fd < 0 || fstat(fd, &status) != 0 || status.st_dev != peer.device || status.st_ino != peer.inode ||
+        peer.size > options_.maxDRAMSize || status.st_size < 0 || static_cast<uint64_t>(status.st_size) != peer.size) {
+        OFFLOAD_LOG_ERROR("open local peer DRAM failed, rank=" << options_.rankId << " peer=" << rank << " path="
+                                                               << path << " size=" << peer.size << " errno=" << errno);
+        if (fd >= 0) {
+            close(fd);
+        }
+        return OFFLOAD_ERROR;
+    }
+    ret = MapPeerPool(fd, rank, peer.size);
+    close(fd);
+    return ret;
+}
+
+int32_t AccOffloadSharedDramEntry::MapPeerPool(int fd, uint32_t rank, uint64_t size)
+{
+    auto base = static_cast<uint8_t *>(hybm_get_memory_ptr(entity_, HYBM_MEM_TYPE_HOST));
+    if (base == nullptr) {
+        OFFLOAD_LOG_ERROR("get shared pool address failed, rank=" << options_.rankId);
+        return OFFLOAD_ERROR;
+    }
+    auto address = base + options_.maxDRAMSize * rank;
+    auto mapped = mmap(address, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED | MAP_POPULATE, fd, 0);
+    if (mapped == MAP_FAILED) {
+        OFFLOAD_LOG_ERROR("map local peer DRAM failed, rank=" << rank << " size=" << size << " errno=" << errno);
+        return OFFLOAD_ERROR;
+    }
+    auto slice = hybm_register_local_memory(entity_, mapped, size, 0);
+    if (slice == nullptr) {
+        OFFLOAD_LOG_ERROR("register local peer DRAM failed, rank=" << rank << " size=" << size);
+        return OFFLOAD_ERROR;
+    }
+    slices_.push_back(slice);
+    hybm_exchange_info info{};
+    auto ret = hybm_export(entity_, slice, 0, &info);
+    if (ret != OFFLOAD_OK) {
+        hybm_export_info_free(&info);
+        return ret;
+    }
+    sliceInfos_.push_back(info);
+    peerPoolSize_ = size;
+    return OFFLOAD_OK;
+}
+
+int32_t AccOffloadSharedDramEntry::PrepareSharedCopy()
+{
+    if (options_.bmDataOpType != HYBM_DOP_TYPE_DEVICE_RDMA) {
+        return OFFLOAD_OK;
+    }
+    const auto first = options_.rankId / localWorldSize_ * localWorldSize_;
+    const auto next = first + (options_.rankId + 1) % localWorldSize_;
+    const auto previous = first + (options_.rankId + localWorldSize_ - 1) % localWorldSize_;
+    auto ret = OFFLOAD_OK;
+    if (size_ != 0) {
+        ret = hybm_prepare_device_copy(entity_, next, reinterpret_cast<uint64_t>(base_), size_);
+        if (ret != OFFLOAD_OK) {
+            return ret == BM_NOT_SUPPORTED ? OFFLOAD_OK : ret;
+        }
+    }
+    if (peerPoolSize_ != 0) {
+        auto address = reinterpret_cast<uint64_t>(hostGva_) + options_.maxDRAMSize * previous;
+        ret = hybm_prepare_device_copy(entity_, previous, address, peerPoolSize_);
+    }
+    return ret == BM_NOT_SUPPORTED ? OFFLOAD_OK : ret;
 }
 
 int32_t AccOffloadSharedDramEntry::ExportAndImportEntityInfo()
@@ -470,7 +611,11 @@ int32_t AccOffloadSharedDramEntry::InitSharedPool(const offload_config_t &config
     if (ret != OFFLOAD_OK) {
         return ret;
     }
-    return ExchangeAndValidatePoolFingerprint(config);
+    ret = ExchangeAndValidatePoolFingerprint(config);
+    if (ret != OFFLOAD_OK) {
+        return ret;
+    }
+    return PrepareSharedCopy();
 }
 
 int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
@@ -543,6 +688,11 @@ void AccOffloadSharedDramEntry::Cleanup()
         hybm_destroy_entity(entity_, flags);
         entity_ = nullptr;
     }
+    if ((options_.flags & HYBM_FLAG_CREATE_WITH_SHM) != 0 && options_.dramShmFd >= 0) {
+        close(options_.dramShmFd);
+        options_.dramShmFd = -1;
+    }
+    peerPoolSize_ = 0;
     entryStore_ = nullptr;
     ReleaseStore();
     if (launchLoaded_) {
@@ -636,6 +786,25 @@ int32_t AccOffloadSharedDramEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPt
     return AccOffloadLaunchApi::AccOffloadSparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr, devIdx);
 }
 
+int32_t AccOffloadSharedDramEntry::RegisterMemory(const void *address, uint64_t size)
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!inited_) {
+        OFFLOAD_LOG_ERROR("pool not initialized, memory registration failed, address=" << address << " size=" << size);
+        return OFFLOAD_ERROR;
+    }
+    if (options_.bmDataOpType == HYBM_DOP_TYPE_MTE) {
+        return OFFLOAD_OK;
+    }
+    auto slice = hybm_register_local_memory(entity_, address, size, 0);
+    if (slice == nullptr) {
+        OFFLOAD_LOG_ERROR("offload memory registration failed, address=" << address << " size=" << size);
+        return OFFLOAD_ERROR;
+    }
+    slices_.push_back(slice);
+    return OFFLOAD_OK;
+}
+
 int32_t AccOffloadSharedDramEntry::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
                                                  uint32_t *numLocalExpertPtr, int64_t *groupList,
                                                  int64_t *packedGroupList, uint8_t devIdx)
@@ -673,9 +842,10 @@ int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint3
         return OFFLOAD_ERROR;
     }
 
-    if (static_cast<uint64_t>(rowsPerSlot) * entryBytes > size_) {
+    const auto span = size_ == 0 ? options_.maxDRAMSize : size_;
+    if (static_cast<uint64_t>(rowsPerSlot) * entryBytes > span) {
         OFFLOAD_LOG_ERROR("row grid " << rowsPerSlot << " rows x " << entryBytes << "B does not fit the locally "
-                                      << "allocated " << size_ << "B span, rankId: " << options_.rankId);
+                                      << "available " << span << "B span, rankId: " << options_.rankId);
         return OFFLOAD_ERROR;
     }
 
@@ -696,6 +866,30 @@ int32_t AccOffloadSharedDramEntry::EntryGather(uint64_t dstPtr, uint64_t idsPtr,
 
     AccOffloadEntryGatherLayout layout = entryTable_;
     layout.poolGva = reinterpret_cast<uint64_t>(hostGva_);
+    if (options_.bmDataOpType != HYBM_DOP_TYPE_MTE) {
+        uint32_t capacity = 0;
+        for (const auto slice : slices_) {
+            const auto base = reinterpret_cast<uint64_t>(hybm_get_slice_va(entity_, slice, 0));
+            const auto bytes = hybm_get_slice_size(entity_, slice);
+            if (dstPtr >= base && dstPtr - base < bytes) {
+                capacity =
+                    static_cast<uint32_t>(std::min<uint64_t>((bytes - (dstPtr - base)) / layout.entryBytes, 65536U));
+                break;
+            }
+        }
+        if (capacity == 0) {
+            OFFLOAD_LOG_ERROR("entry gather destination has no registered space for one entry, destination="
+                              << dstPtr << " entryBytes=" << layout.entryBytes << " rank=" << options_.rankId);
+            return OFFLOAD_ERROR;
+        }
+        auto submit = [](void *entity, uint64_t *sources, uint64_t *destinations, uint32_t *lengths, uint32_t *count,
+                         void *stream) {
+            const hybm_device_copy_params params{sources, destinations, lengths, count, 0U, stream, {}};
+            return hybm_data_device_copy(entity, &params);
+        };
+        return AccOffloadLaunchApi::AccOffloadTransportEntryGather(submit, entity_, dstPtr, idsPtr, countPtr, capacity,
+                                                                   layout, devIdx);
+    }
     return AccOffloadLaunchApi::AccOffloadEntryGather(dstPtr, idsPtr, countPtr, layout, devIdx);
 }
 

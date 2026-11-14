@@ -119,6 +119,19 @@ int32_t HybmAclNotify::Wait()
     return BM_OK;
 }
 
+int32_t HybmAclNotify::WaitAsync(void *stream)
+{
+    if (!inited_ || notify_ == nullptr || stream == nullptr) {
+        BM_LOG_ERROR("invalid asynchronous notify wait, notifyId=" << notifyId_ << " stream=" << stream);
+        return BM_INVALID_PARAM;
+    }
+    const auto ret = DlAclApi::AclrtWaitAndResetNotify(notify_, stream, timeoutSec_);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("asynchronous notify wait failed, notifyId=" << notifyId_ << " ret=" << ret);
+    }
+    return ret;
+}
+
 // 地址解析：给了 RA notify 块基址就走 HAL 偏移（A2），否则问 runtime 要 device 地址（A5/STARS）
 int32_t HybmAclNotify::ResolveRegAddr(uint64_t regBlockBase)
 {

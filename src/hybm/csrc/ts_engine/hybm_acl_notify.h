@@ -34,6 +34,7 @@ public:
     int32_t Init(uint64_t regBlockBase = 0U);
 
     int32_t Wait();
+    int32_t WaitAsync(void *stream);
 
     bool Inited() const;
     void *GetStream() const;

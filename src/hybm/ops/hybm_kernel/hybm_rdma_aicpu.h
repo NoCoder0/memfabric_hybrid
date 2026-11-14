@@ -31,7 +31,10 @@ namespace aicpu {
 
 constexpr uint32_t HYBM_RDMA_OP_WRITE = 0U;
 constexpr uint32_t HYBM_RDMA_OP_READ = 4U;
-constexpr uint32_t HYBM_RDMA_AICPU_ABI_VERSION = 11U;
+constexpr uint32_t HYBM_RDMA_AICPU_ABI_VERSION = 14U;
+
+constexpr uint32_t HYBM_RDMA_SPARSE_FLAG = 1U;
+constexpr uint32_t HYBM_RDMA_SPARSE_CAPACITY = 1024U;
 
 constexpr uint8_t HYBM_RT_STARS_SQE_TYPE_WRITE_VALUE = 8U;
 constexpr uint8_t HYBM_RT_STARS_SQE_INT_DIR_NO = 0U;
@@ -40,6 +43,7 @@ constexpr uint8_t HYBM_RT_STARS_WRITE_VALUE_SIZE_TYPE_64BIT = 3U;
 constexpr uint32_t HYBM_RT_STARS_WRITE_VALUE_SUB_TYPE_RDMA_DB_SEND = 2U;
 constexpr uint32_t HYBM_RT_STARS_SQE_SIZE = 64U;
 constexpr uint32_t HYBM_DRV_NORMAL_TYPE = 0U;
+constexpr uint32_t HYBM_DRV_SQCQ_PROP_SQ_HEAD = 1U;
 constexpr uint32_t HYBM_DRV_SQCQ_PROP_SQ_TAIL = 2U;
 constexpr uint32_t HYBM_DRV_SQCQ_PROP_SQ_BASE = 6U;
 constexpr uint32_t HYBM_DRV_SQCQ_PROP_SQ_DEPTH = 7U;
@@ -172,10 +176,35 @@ struct RdmaAicpuParam {
     uint32_t tsId;         // 固定 0
     uint32_t devId;        // host 侧 deviceId_，内核用 drvGetLocalDevIDByHostDevID 换算 local
     uint32_t sqStreamId;   // 写入 SQE header.rt_stream_id（host 由 aclrtStreamGetId 取得）
-    uint32_t reserved;
+    uint32_t flags;
 };
 
 static_assert(sizeof(RdmaAicpuParam) == HYBM_RDMA_AICPU_PARAM_SIZE, "RdmaAicpuParam size mismatch");
+
+struct RdmaMemoryRegion {
+    uint64_t address;
+    uint64_t deviceAddress;
+    uint64_t size;
+    uint32_t rank;
+    uint32_t key;
+};
+
+struct RdmaSparseCopyArgs {
+    RdmaAicpuParam param;
+    const uint64_t *sources;
+    const uint64_t *destinations;
+    const uint32_t *sizes;
+    const uint32_t *count;
+    uint32_t maxCount;
+    uint32_t capacity;
+    uint32_t startIndex;
+    uint32_t mrCount;
+    uint32_t selfRank;
+    uint32_t peerRank;
+    RdmaMemoryRegion regions[64];
+};
+
+static_assert(sizeof(RdmaSparseCopyArgs) == 2216, "RdmaSparseCopyArgs ABI mismatch");
 
 } // namespace aicpu
 } // namespace mf

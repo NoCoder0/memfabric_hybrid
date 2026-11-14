@@ -640,9 +640,12 @@ Result ComposeTransportManager::ReadRemoteAsync(uint32_t rankId, uint64_t lAddr,
 
 int32_t ComposeTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBase, uint64_t poolSize)
 {
-    const auto manager = FindTransport(HYBM_DOP_TYPE_DEVICE_URMA);
+    auto manager = FindTransport(HYBM_DOP_TYPE_DEVICE_URMA);
     if (manager == nullptr) {
-        BM_LOG_ERROR("device URMA transport unavailable for sparse copy, rankId: " << rankId);
+        manager = FindTransport(HYBM_DOP_TYPE_DEVICE_RDMA);
+    }
+    if (manager == nullptr) {
+        BM_LOG_ERROR("device transport unavailable for sparse copy preparation, rankId: " << rankId);
         return BM_NOT_INITIALIZED;
     }
     return manager->PrepareDeviceCopy(rankId, poolBase, poolSize);
@@ -650,10 +653,21 @@ int32_t ComposeTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poo
 
 int32_t ComposeTransportManager::DeviceCopy(const hybm_device_copy_params &params)
 {
-    const auto manager = FindTransport(HYBM_DOP_TYPE_DEVICE_URMA);
+    std::shared_ptr<TransportManager> manager;
+    for (auto protocol : {HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA}) {
+        auto candidate = FindTransport(protocol);
+        if (candidate == nullptr) {
+            continue;
+        }
+        if (manager != nullptr) {
+            BM_LOG_ERROR("device sparse copy requires a single device transport protocol");
+            return BM_NOT_SUPPORTED;
+        }
+        manager = std::move(candidate);
+    }
     if (manager == nullptr) {
-        BM_LOG_ERROR("device URMA transport unavailable for sparse copy, rankId: " << params.rankId);
-        return BM_NOT_INITIALIZED;
+        BM_LOG_ERROR("device sparse copy transport unavailable");
+        return BM_NOT_SUPPORTED;
     }
     return manager->DeviceCopy(params);
 }

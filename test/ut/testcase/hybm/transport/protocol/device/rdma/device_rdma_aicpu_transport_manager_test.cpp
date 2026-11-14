@@ -798,3 +798,171 @@ TEST_F(RdmaAicpuMockTest, CloseDeviceDestroysAicpuStream)
 
     ResetAicpuThreadState();
 }
+
+TEST_F(RdmaAicpuMockTest, PrepareDeviceCopyRejectsInvalidPeerAndRegistration)
+{
+    constexpr uint32_t peerRank = 1U;
+    RdmaAicpuTransportManager mgr;
+    mgr.rankId_ = 0U;
+    mgr.rankCount_ = 2U;
+    mgr.ranksMRs_.resize(mgr.rankCount_);
+    EXPECT_EQ(mgr.PrepareDeviceCopy(mgr.rankId_, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_INVALID_PARAM);
+    EXPECT_EQ(mgr.PrepareDeviceCopy(mgr.rankCount_, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_INVALID_PARAM);
+    EXPECT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_INVALID_PARAM);
+    mgr.registerMRS_[TEST_LOCAL_ADDR] = {TEST_LOCAL_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, 0U};
+    EXPECT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_INVALID_PARAM);
+    mgr.ranksMRs_[peerRank][TEST_LOCAL_ADDR] = {TEST_LOCAL_ADDR, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, nullptr, 0U,
+                                                TEST_REMOTE_RKEY};
+    EXPECT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, 0ULL), BM_INVALID_PARAM);
+    EXPECT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, TEST_BATCH_BYTES - 1ULL), BM_INVALID_PARAM);
+    mgr.ranksMRs_[peerRank][TEST_LOCAL_ADDR].size -= 1ULL;
+    EXPECT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_INVALID_PARAM);
+    mgr.ranksMRs_[peerRank][TEST_LOCAL_ADDR].size = TEST_BATCH_BYTES;
+    mgr.graphStream_ = &mgr;
+    EXPECT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_INVALID_PARAM);
+    EXPECT_TRUE(mgr.copyPeers_.empty());
+}
+
+TEST_F(RdmaAicpuMockTest, SnapshotMemoryRegionsRoutesSharedPoolThroughPeer)
+{
+    constexpr uint32_t peerRank = 1U;
+    constexpr uint64_t localDeviceAddress = 0x3000ULL;
+    for (auto importedAddress : {TEST_LOCAL_ADDR, localDeviceAddress}) {
+        RdmaAicpuTransportManager mgr;
+        mgr.rankId_ = 0U;
+        mgr.rankCount_ = 2U;
+        mgr.ranksMRs_.resize(mgr.rankCount_);
+        mgr.registerMRS_[TEST_LOCAL_ADDR] = {TEST_LOCAL_ADDR, localDeviceAddress, TEST_BATCH_BYTES,
+                                             nullptr,         TEST_LOCAL_LKEY,    0U};
+        mgr.ranksMRs_[peerRank][importedAddress] = {importedAddress, TEST_REMOTE_ADDR, TEST_BATCH_BYTES, nullptr, 0U,
+                                                    TEST_REMOTE_RKEY};
+        ASSERT_EQ(mgr.PrepareDeviceCopy(peerRank, TEST_LOCAL_ADDR, TEST_BATCH_BYTES), BM_OK);
+        aicpu::RdmaSparseCopyArgs args{};
+        ASSERT_EQ(mgr.SnapshotMemoryRegions(args), BM_OK);
+        ASSERT_EQ(args.mrCount, 2U);
+        EXPECT_EQ(args.selfRank, mgr.rankId_);
+        EXPECT_EQ(args.regions[0].address, TEST_LOCAL_ADDR);
+        EXPECT_EQ(args.regions[0].deviceAddress, TEST_REMOTE_ADDR);
+        EXPECT_EQ(args.regions[0].size, TEST_BATCH_BYTES);
+        EXPECT_EQ(args.regions[0].rank, peerRank);
+        EXPECT_EQ(args.regions[0].key, TEST_REMOTE_RKEY);
+        EXPECT_EQ(args.regions[1].address, importedAddress);
+        EXPECT_EQ(args.regions[1].key, TEST_REMOTE_RKEY);
+        mgr.ranksMRs_[peerRank][importedAddress].size -= 1ULL;
+        args = {};
+        EXPECT_EQ(mgr.SnapshotMemoryRegions(args), BM_NOT_CONNECTED);
+        mgr.ranksMRs_[peerRank].clear();
+        args = {};
+        EXPECT_EQ(mgr.SnapshotMemoryRegions(args), BM_NOT_CONNECTED);
+    }
+}
+
+TEST_F(RdmaAicpuMockTest, SnapshotMemoryRegionsEnforcesRegionLimit)
+{
+    constexpr uint32_t peerRank = 1U;
+    RdmaAicpuTransportManager mgr;
+    mgr.rankId_ = 0U;
+    mgr.rankCount_ = 2U;
+    mgr.ranksMRs_.resize(mgr.rankCount_);
+    aicpu::RdmaSparseCopyArgs args{};
+    EXPECT_EQ(mgr.SnapshotMemoryRegions(args), BM_INVALID_PARAM);
+    mgr.registerMRS_[TEST_LOCAL_ADDR] = {TEST_LOCAL_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, 0U};
+    const auto regionLimit = sizeof(args.regions) / sizeof(args.regions[0]);
+    for (size_t i = 1U; i < regionLimit; ++i) {
+        auto address = TEST_REMOTE_ADDR + i * TEST_BATCH_BYTES;
+        mgr.ranksMRs_[peerRank][address] = {address, TEST_BATCH_BYTES, nullptr, 0U, TEST_REMOTE_RKEY};
+    }
+    ASSERT_EQ(mgr.SnapshotMemoryRegions(args), BM_OK);
+    EXPECT_EQ(args.mrCount, regionLimit);
+    EXPECT_EQ(args.regions[0].rank, mgr.rankId_);
+    EXPECT_EQ(args.regions[0].key, TEST_LOCAL_LKEY);
+    EXPECT_EQ(args.regions[0].deviceAddress, TEST_LOCAL_ADDR);
+    mgr.ranksMRs_[peerRank][TEST_REMOTE_ADDR] = {TEST_REMOTE_ADDR, TEST_BATCH_BYTES, nullptr, 0U, TEST_REMOTE_RKEY};
+    args = {};
+    EXPECT_EQ(mgr.SnapshotMemoryRegions(args), BM_INVALID_PARAM);
+}
+
+TEST_F(RdmaAicpuMockTest, DeviceCopyRejectsMissingRegionsAndStreamChange)
+{
+    RdmaAicpuTransportManager mgr;
+    mgr.rankId_ = 0U;
+    mgr.rankCount_ = 1U;
+    mgr.ranksMRs_.resize(mgr.rankCount_);
+    hybm_device_copy_params params{};
+    params.stream = &params;
+    EXPECT_EQ(mgr.DeviceCopy(params), BM_INVALID_PARAM);
+    mgr.registerMRS_[TEST_LOCAL_ADDR] = {TEST_LOCAL_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, 0U};
+    EXPECT_EQ(mgr.DeviceCopy(params), BM_NOT_CONNECTED);
+    mgr.graphStream_ = &mgr;
+    EXPECT_EQ(mgr.DeviceCopy(params), BM_INVALID_PARAM);
+    EXPECT_EQ(mgr.graphStream_, &mgr);
+}
+
+TEST_F(RdmaAicpuMockTest, BuildSparseCopyParamPreservesNotifyAndQueueCapacity)
+{
+    DlAclApiFnGuard aclGuard;
+    constexpr uint32_t peerRank = 1U;
+    constexpr uint32_t smallQueueCapacity = 128U;
+    RdmaAicpuTransportManager mgr;
+    mgr.rankCount_ = 2U;
+    mgr.notifyRemoteInfo_.resize(mgr.rankCount_);
+    aicpu::RdmaSparseCopyArgs args{};
+    EXPECT_EQ(mgr.BuildSparseCopyParam(peerRank, &mgr, args), BM_NOT_CONNECTED);
+    auto qp = std::make_shared<FakeQpManager>();
+    qp->deviceQpAddr = TEST_DEVICE_QP_ADDR;
+    mgr.qpManager_ = qp;
+    EXPECT_EQ(mgr.BuildSparseCopyParam(peerRank, &mgr, args), BM_NOT_CONNECTED);
+    mgr.notifyRemoteInfo_[peerRank] = {TEST_REMOTE_ADDR, TEST_REMOTE_RKEY};
+    mgr.notifyInfo_.len = sizeof(uint64_t);
+    mgr.notifyInfo_.notifyLkey = TEST_LOCAL_LKEY;
+    SetAicpuNotifyReady();
+    mgr.graphNotify_ = RdmaAicpuTransportManager::aicpuNotify_;
+    MOCKER_CPP(&RdmaAicpuTransportManager::FillDoorbellParam,
+               int (*)(RdmaAicpuTransportManager *, uint32_t, aicpu::RdmaAicpuParam &, AicpuStream &))
+        .stubs()
+        .will(returnValue(BM_OK));
+    mgr.aicpuMaxSendNum_ = smallQueueCapacity;
+    ASSERT_EQ(mgr.BuildSparseCopyParam(peerRank, &mgr, args), BM_OK);
+    EXPECT_EQ(args.capacity, smallQueueCapacity);
+    EXPECT_EQ(args.peerRank, peerRank);
+    EXPECT_EQ(args.param.abiVersion, aicpu::HYBM_RDMA_AICPU_ABI_VERSION);
+    EXPECT_EQ(args.param.flags, aicpu::HYBM_RDMA_SPARSE_FLAG);
+    EXPECT_EQ(args.param.qpHandle, TEST_DEVICE_QP_ADDR);
+    EXPECT_EQ(args.param.notifyLocalAddr, mgr.graphNotify_->GetRegAddr());
+    EXPECT_EQ(args.param.notifyLocalLkey, TEST_LOCAL_LKEY);
+    EXPECT_EQ(args.param.notifyRemoteAddr, TEST_REMOTE_ADDR);
+    EXPECT_EQ(args.param.notifyRemoteRkey, TEST_REMOTE_RKEY);
+    EXPECT_EQ(args.param.notifyLen, sizeof(uint64_t));
+    mgr.aicpuMaxSendNum_ = aicpu::HYBM_RDMA_SPARSE_CAPACITY + 1U;
+    ASSERT_EQ(mgr.BuildSparseCopyParam(peerRank, &mgr, args), BM_OK);
+    EXPECT_EQ(args.capacity, aicpu::HYBM_RDMA_SPARSE_CAPACITY);
+}
+
+TEST_F(RdmaAicpuMockTest, DeviceCopyLaunchesOneTaskPerPeerAndDirection)
+{
+    DlAclApiFnGuard aclGuard;
+    constexpr uint32_t peerRank = 1U;
+    RdmaAicpuTransportManager mgr;
+    mgr.rankId_ = 0U;
+    mgr.rankCount_ = 2U;
+    mgr.rankMutex_ = std::vector<std::mutex>(mgr.rankCount_);
+    mgr.ranksMRs_.resize(mgr.rankCount_);
+    mgr.registerMRS_[TEST_LOCAL_ADDR] = {TEST_LOCAL_ADDR, TEST_BATCH_BYTES, nullptr, TEST_LOCAL_LKEY, 0U};
+    for (auto address : {TEST_REMOTE_ADDR, TEST_REMOTE_ADDR + TEST_BATCH_BYTES}) {
+        mgr.ranksMRs_[peerRank][address] = {address, TEST_BATCH_BYTES, nullptr, 0U, TEST_REMOTE_RKEY};
+    }
+    SetAicpuNotifyReady();
+    mgr.graphNotify_ = RdmaAicpuTransportManager::aicpuNotify_;
+    hybm_device_copy_params params{};
+    params.stream = &params;
+    MOCKER_CPP(&RdmaAicpuTransportManager::BuildSparseCopyParam,
+               int (*)(RdmaAicpuTransportManager *, uint32_t, void *, aicpu::RdmaSparseCopyArgs &))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER(&LaunchAicpuKernel).expects(exactly(2)).will(returnValue(BM_OK));
+    MOCKER_CPP(&HybmAclNotify::WaitAsync, int32_t(*)(HybmAclNotify *, void *))
+        .expects(exactly(2))
+        .will(returnValue(BM_OK));
+    EXPECT_EQ(mgr.DeviceCopy(params), BM_OK);
+    EXPECT_EQ(mgr.graphStream_, params.stream);
+}

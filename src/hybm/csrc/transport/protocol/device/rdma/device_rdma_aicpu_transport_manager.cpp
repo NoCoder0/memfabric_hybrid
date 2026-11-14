@@ -20,6 +20,7 @@
 #include "dl_rt_api.h"
 #include "aicpu_joinable_ranks_qp_manager.h"
 #include "hybm_kernel_hepler.h"
+#include "hybm_device_copy_common.h"
 #include "hybm_stream_manager.h"
 #include "hybm_gva.h"
 #include "hybm_ptracer.h"
@@ -206,8 +207,159 @@ Result RdmaAicpuTransportManager::OpenDevice(const TransportOptions &options)
     return BM_OK;
 }
 
+Result RdmaAicpuTransportManager::PrepareDeviceCopy(uint32_t rank, uint64_t address, uint64_t size)
+{
+    WriteGuard guard(lock_);
+    if (rank >= rankCount_ || rank == rankId_ || graphStream_ != nullptr) {
+        BM_LOG_ERROR("invalid sparse copy peer, rank=" << rank << " self=" << rankId_ << " stream=" << graphStream_);
+        return BM_INVALID_PARAM;
+    }
+    auto local = registerMRS_.find(address);
+    auto peer = ranksMRs_[rank].find(address);
+    if (peer == ranksMRs_[rank].end() && local != registerMRS_.end()) {
+        // Imported keys may use the local device mapping of a shared GVA.
+        peer = ranksMRs_[rank].find(local->second.regAddress);
+    }
+    if (size == 0 || local == registerMRS_.end() || peer == ranksMRs_[rank].end() || local->second.size != size ||
+        peer->second.size != size) {
+        BM_LOG_ERROR("sparse copy pool registration mismatch, rank=" << rank << " address=" << address
+                                                                     << " size=" << size);
+        return BM_INVALID_PARAM;
+    }
+    copyPeers_[address] = rank;
+    BM_LOG_INFO("sparse copy pool uses peer endpoint, self=" << rankId_ << " peer=" << rank << " address=" << address
+                                                             << " size=" << size);
+    return BM_OK;
+}
+
+Result RdmaAicpuTransportManager::SnapshotMemoryRegions(aicpu::RdmaSparseCopyArgs &args)
+{
+    ReadGuard guard(lock_);
+    size_t count = registerMRS_.size();
+    for (uint32_t rank = 0; rank < rankCount_; ++rank) {
+        if (rank != rankId_) {
+            count += ranksMRs_[rank].size();
+        }
+    }
+    if (count > sizeof(args.regions) / sizeof(args.regions[0]) || registerMRS_.empty()) {
+        BM_LOG_ERROR("sparse copy requires local registration and at most 64 MRs, local=" << registerMRS_.size()
+                                                                                          << " total=" << count);
+        return BM_INVALID_PARAM;
+    }
+    args.selfRank = rankId_;
+    for (const auto &[address, mr] : registerMRS_) {
+        auto peer = copyPeers_.find(address);
+        if (peer == copyPeers_.end()) {
+            args.regions[args.mrCount++] = {address, mr.regAddress, mr.size, rankId_, mr.lkey};
+        } else {
+            auto remote = ranksMRs_[peer->second].find(address);
+            if (remote == ranksMRs_[peer->second].end()) {
+                remote = ranksMRs_[peer->second].find(mr.regAddress);
+            }
+            if (remote == ranksMRs_[peer->second].end() || remote->second.size != mr.size) {
+                BM_LOG_ERROR("sparse copy peer pool unavailable, rank=" << peer->second << " address=" << address);
+                return BM_NOT_CONNECTED;
+            }
+            args.regions[args.mrCount++] = {address, remote->second.regAddress, mr.size, peer->second,
+                                            remote->second.rkey};
+        }
+    }
+    for (uint32_t rank = 0; rank < rankCount_; ++rank) {
+        if (rank == rankId_) {
+            continue;
+        }
+        for (const auto &[address, mr] : ranksMRs_[rank]) {
+            args.regions[args.mrCount++] = {address, mr.regAddress, mr.size, rank, mr.rkey};
+        }
+    }
+    return BM_OK;
+}
+
+Result RdmaAicpuTransportManager::BuildSparseCopyParam(uint32_t rank, void *stream, aicpu::RdmaSparseCopyArgs &args)
+{
+    auto &param = args.param;
+    param.qpHandle = qpManager_ == nullptr ? 0 : qpManager_->GetDeviceQpAddr(rank);
+    if (param.qpHandle == 0 || notifyRemoteInfo_[rank].second == 0) {
+        BM_LOG_ERROR("sparse copy peer QP or notify MR unavailable, rank=" << rank);
+        return BM_NOT_CONNECTED;
+    }
+    auto ret = EnsureAicpuNotify(graphNotify_, stream);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    param.abiVersion = aicpu::HYBM_RDMA_AICPU_ABI_VERSION;
+    param.flags = aicpu::HYBM_RDMA_SPARSE_FLAG;
+    param.notifyLen = notifyInfo_.len;
+    param.notifyLocalLkey = notifyInfo_.notifyLkey;
+    param.notifyRemoteRkey = notifyRemoteInfo_[rank].second;
+    param.notifyLocalAddr = graphNotify_->GetRegAddr();
+    param.notifyRemoteAddr = notifyRemoteInfo_[rank].first;
+    args.peerRank = rank;
+    args.capacity = std::min(aicpuMaxSendNum_, aicpu::HYBM_RDMA_SPARSE_CAPACITY);
+    return FillDoorbellParam(rank, param, graphDoorbell_);
+}
+
+Result RdmaAicpuTransportManager::DeviceCopy(const hybm_device_copy_params &params)
+{
+    auto stream = params.stream;
+    if (graphStream_ != nullptr && graphStream_ != stream) {
+        BM_LOG_ERROR("sparse copy requires one execution stream, stream=" << stream << " bound=" << graphStream_);
+        return BM_INVALID_PARAM;
+    }
+    aicpu::RdmaSparseCopyArgs args{};
+    auto ret = SnapshotMemoryRegions(args);
+    if (ret != BM_OK) {
+        return ret;
+    }
+    args.sources = params.srcPtrs;
+    args.destinations = params.dstPtrs;
+    args.sizes = params.lenPtrs;
+    args.count = params.sizePtr;
+    args.maxCount = HYBM_DEVICE_COPY_MAX_RECORDS;
+    std::set<uint32_t> peers;
+    for (uint32_t i = 0; i < args.mrCount; ++i) {
+        if (args.regions[i].rank != rankId_) {
+            peers.insert(args.regions[i].rank);
+        }
+    }
+    if (peers.empty()) {
+        BM_LOG_ERROR("sparse copy has no registered remote memory, rank=" << rankId_);
+        return BM_NOT_CONNECTED;
+    }
+    for (auto rank : peers) {
+        std::lock_guard<std::mutex> guard(rankMutex_[rank]);
+        ret = BuildSparseCopyParam(rank, stream, args);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        graphStream_ = stream;
+        for (auto opcode : {aicpu::HYBM_RDMA_OP_READ, aicpu::HYBM_RDMA_OP_WRITE}) {
+            args.param.opcode = opcode;
+            ret = LaunchAicpuKernel(aicpuRdmaPostSend_.rdmaPostSend, stream, &args, sizeof(args));
+            if (ret == BM_OK) {
+                ret = graphNotify_->WaitAsync(stream);
+            }
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("sparse copy launch/wait failed, rank=" << rank << " opcode=" << opcode << " ret=" << ret);
+                return ret;
+            }
+        }
+    }
+    return BM_OK;
+}
+
 Result RdmaAicpuTransportManager::CloseDevice()
 {
+    copyPeers_.clear();
+    graphNotify_.reset();
+    if (graphDoorbell_.stream != nullptr) {
+        const auto ret = DlAclApi::AclrtDestroyStream(graphDoorbell_.stream);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("destroy graph doorbell stream failed, ret=" << ret);
+        }
+        graphDoorbell_ = {};
+    }
+    graphStream_ = nullptr;
     aicpuNotify_ = nullptr;
     aicpuPending_ = AicpuPendingBatch{};
     if (aicpuStream_.stream != nullptr) {
@@ -440,10 +592,10 @@ int RdmaAicpuTransportManager::ComputeDoorbellAddr(uint32_t rankId, uint64_t &db
     return BM_OK;
 }
 
-int RdmaAicpuTransportManager::FillDoorbellParam(uint32_t rankId, aicpu::RdmaAicpuParam &param)
+int RdmaAicpuTransportManager::FillDoorbellParam(uint32_t rankId, aicpu::RdmaAicpuParam &param, AicpuStream &doorbell)
 {
-    if (aicpuStream_.stream == nullptr) {
-        auto createRet = CreateAicpuStream(aicpuStream_);
+    if (doorbell.stream == nullptr) {
+        auto createRet = CreateAicpuStream(doorbell);
         if (createRet != BM_OK) {
             BM_LOG_ERROR("aicpu rdma: doorbell stream unavailable, rankId: " << rankId << " ret: " << createRet);
             return createRet;
@@ -457,33 +609,33 @@ int RdmaAicpuTransportManager::FillDoorbellParam(uint32_t rankId, aicpu::RdmaAic
     }
 
     param.doorbellAddr = doorbellAddr;
-    param.sqId = aicpuStream_.sqId;
+    param.sqId = doorbell.sqId;
     param.tsId = 0U;
     param.devId = static_cast<uint32_t>(HybmGetInitedLogicDeviceId());
-    param.sqStreamId = aicpuStream_.streamId;
-    BM_LOG_DEBUG("aicpu rdma doorbell param, rankId: " << rankId << " sqId: " << aicpuStream_.sqId << " streamId: "
-                                                       << aicpuStream_.streamId << " devId: " << param.devId
+    param.sqStreamId = doorbell.streamId;
+    BM_LOG_DEBUG("aicpu rdma doorbell param, rankId: " << rankId << " sqId: " << doorbell.sqId << " streamId: "
+                                                       << doorbell.streamId << " devId: " << param.devId
                                                        << " dbAddr: 0x" << std::hex << doorbellAddr << std::dec);
     return BM_OK;
 }
 
-int RdmaAicpuTransportManager::EnsureAicpuNotify()
+int RdmaAicpuTransportManager::EnsureAicpuNotify(HybmAclNotifyPtr &notify, void *stream)
 {
-    if (aicpuNotify_ != nullptr && aicpuNotify_->Inited()) {
+    if (notify != nullptr && notify->Inited()) {
         return BM_OK;
     }
-    auto stream = HybmStreamManager::GetThreadAclStream();
-    BM_ASSERT_LOG_AND_RETURN(stream != nullptr, "aicpu rdma: get thread acl stream failed", BM_ERROR);
-
-    auto notify = std::make_shared<HybmAclNotify>(stream);
-    BM_ASSERT_LOG_AND_RETURN(notify != nullptr, "aicpu rdma: create notify failed", BM_ERROR);
-    auto ret = notify->Init(notifyInfo_.notifyAddr);
+    if (stream == nullptr) {
+        stream = HybmStreamManager::GetThreadAclStream();
+    }
+    BM_ASSERT_LOG_AND_RETURN(stream != nullptr, "aicpu rdma: get acl stream failed", BM_ERROR);
+    auto candidate = std::make_shared<HybmAclNotify>(stream);
+    auto ret = candidate->Init(notifyInfo_.notifyAddr);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma: notify init failed, blockBase: 0x" << std::hex << notifyInfo_.notifyAddr << std::dec
                                                                      << " ret: " << ret);
         return ret;
     }
-    aicpuNotify_ = notify;
+    notify = std::move(candidate);
     return BM_OK;
 }
 
@@ -521,6 +673,10 @@ int RdmaAicpuTransportManager::RemoteIoBatchAicpu(uint32_t rankId, const std::ve
     BM_ASSERT_LOG_AND_RETURN(rankId < rankMutex_.size(), "aicpu rdma batch: rankId out of range, rankId: " << rankId,
                              BM_INVALID_PARAM);
     std::unique_lock<std::mutex> rankLock(rankMutex_[rankId]);
+    if (graphStream_ != nullptr) {
+        BM_LOG_ERROR("eager RDMA IO conflicts with graph execution, rank=" << rankId);
+        return BM_NOT_SUPPORTED;
+    }
     uint32_t remain = static_cast<uint32_t>(segments.size());
     uint32_t offset = 0U;
     while (remain > 0U) {

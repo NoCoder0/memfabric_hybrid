@@ -20,10 +20,12 @@
 
 #include "hybm_def.h"
 #include "hybm_kernel_log.h"
+#include "hybm_device_copy_common.h"
 
 using ock::mf::aicpu::HYBM_DRV_NORMAL_TYPE;
 using ock::mf::aicpu::HYBM_DRV_SQCQ_PROP_SQ_BASE;
 using ock::mf::aicpu::HYBM_DRV_SQCQ_PROP_SQ_DEPTH;
+using ock::mf::aicpu::HYBM_DRV_SQCQ_PROP_SQ_HEAD;
 using ock::mf::aicpu::HYBM_DRV_SQCQ_PROP_SQ_TAIL;
 using ock::mf::aicpu::HYBM_RDMA_AICPU_ABI_VERSION;
 using ock::mf::aicpu::HYBM_RDMA_OP_READ;
@@ -39,6 +41,9 @@ using ock::mf::aicpu::HybmStarsWriteValueSqe;
 using ock::mf::aicpu::RdmaAicpuOut;
 using ock::mf::aicpu::RdmaAicpuParam;
 using ock::mf::aicpu::RdmaSegment;
+using ock::mf::aicpu::RdmaSparseCopyArgs;
+using ock::mf::aicpu::HYBM_RDMA_SPARSE_FLAG;
+using ock::mf::aicpu::HYBM_RDMA_SPARSE_CAPACITY;
 
 // ============================================================================
 // AICPU-side native RoCE data path (A2/A3, 910B / 910_93).
@@ -482,8 +487,29 @@ int32_t PushDoorbell(const RdmaAicpuParam &param, uint64_t dbInfo, DoorbellInfo 
     if (ret != BM_OK) {
         return ret;
     }
-    const HybmStarsWriteValueSqe sqe = BuildDoorbellSqe(param, dbInfo, di.sqTail);
-    return WriteAndRingDoorbell(param, di, sqe);
+    uint32_t head = 0U;
+    uint32_t high = 0U;
+    const auto nextTail = (di.sqTail + 1U) % di.sqDepth;
+    for (uint32_t retry = 0U; retry < SQ_FULL_MAX_RETRY; ++retry) {
+        ret = QuerySqProp(di.localDevId, param, HYBM_DRV_SQCQ_PROP_SQ_HEAD, head, high);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        head &= UINT16_MAX;
+        if (head >= di.sqDepth) {
+            HYBM_LOGE(BM_ERROR, "[hybm] invalid doorbell SQ head, sqId=%u head=%u depth=%u", param.sqId, head,
+                      di.sqDepth);
+            return BM_ERROR;
+        }
+        if (nextTail != head) {
+            const auto sqe = BuildDoorbellSqe(param, dbInfo, di.sqTail);
+            return WriteAndRingDoorbell(param, di, sqe);
+        }
+        BackoffForSq();
+    }
+    HYBM_LOGE(BM_ERROR, "[hybm] doorbell SQ remains full, sqId=%u head=%u tail=%u depth=%u", param.sqId, head,
+              di.sqTail, di.sqDepth);
+    return BM_ERROR;
 }
 
 int32_t WriteOut(const RdmaAicpuParam &param, uint64_t dbInfo, uint32_t posted, int32_t doorbellRet,
@@ -559,7 +585,7 @@ int32_t PostWqeWithRetry(const WqeCtx &ctx, const WqeSeg &seg, uint64_t wrId, ui
     return RingDoorbellMidway(ring, wrId);
 }
 
-int32_t PostDataWqes(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t total, RingCtx &ring)
+int32_t PostDataWqes(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t total, RingCtx &ring, bool finalBatch)
 {
     WqeBuf buf{};
     for (uint32_t i = 0U; i < total; ++i) {
@@ -575,7 +601,13 @@ int32_t PostDataWqes(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t to
         GetWqeSeg(param, i, seg);
 
         WrExpRsp rsp{};
-        int32_t ret = PostWqeWithRetry(ctx, seg, param.wrId + i, IBV_SEND_SIGNALED, buf, rsp, ring);
+        uint32_t sendFlags = IBV_SEND_SIGNALED;
+        if ((param.flags & HYBM_RDMA_SPARSE_FLAG) != 0U) {
+            const bool completeBatch =
+                (ring.posted + 1U) % MID_RING_WQE_COUNT == 0U || (!finalBatch && i + 1U == total);
+            sendFlags = completeBatch ? IBV_SEND_SIGNALED | IBV_SEND_FENCE : 0U;
+        }
+        int32_t ret = PostWqeWithRetry(ctx, seg, param.wrId + i, sendFlags, buf, rsp, ring);
         if (ret != 0) {
             HYBM_LOGE(BM_ERROR, "[hybm] post wqe failed at index=%u, descCount=%u wrId=%lu ret=%d", i, param.descCount,
                       param.wrId, ret);
@@ -610,17 +642,9 @@ int32_t PostNotifyWqe(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t t
     return BM_OK;
 }
 
-int32_t PostBatchTask(const RdmaAicpuParam &param)
+int32_t FinishBatchTask(const RdmaAicpuParam &param, const WqeCtx &ctx, RingCtx &ring)
 {
-    const uint32_t total = param.descCount;
-    const WqeCtx ctx{param.qpHandle, param.opcode};
-    RingCtx ring{};
-    ring.param = &param;
-    int32_t ret = PostDataWqes(param, ctx, total, ring);
-    if (ret != BM_OK) {
-        return WriteFailureOut(param, ring, ret);
-    }
-    ret = PostNotifyWqe(param, ctx, total, ring);
+    auto ret = PostNotifyWqe(param, ctx, param.descCount, ring);
     if (ret != BM_OK) {
         return WriteFailureOut(param, ring, ret);
     }
@@ -639,6 +663,101 @@ int32_t PostBatchTask(const RdmaAicpuParam &param)
         return BM_OK;
     }
     return dbRet;
+}
+
+int32_t PostBatchTask(const RdmaAicpuParam &param)
+{
+    const WqeCtx ctx{param.qpHandle, param.opcode};
+    RingCtx ring{};
+    ring.param = &param;
+    auto ret = PostDataWqes(param, ctx, param.descCount, ring, true);
+    if (ret != BM_OK) {
+        return WriteFailureOut(param, ring, ret);
+    }
+    return FinishBatchTask(param, ctx, ring);
+}
+
+const ock::mf::aicpu::RdmaMemoryRegion *FindMemoryRegion(const RdmaSparseCopyArgs &args, uint64_t address,
+                                                         uint32_t size)
+{
+    for (uint32_t i = 0; i < args.mrCount; ++i) {
+        const auto &mr = args.regions[i];
+        if (address >= mr.address && address - mr.address < mr.size && size <= mr.size - (address - mr.address)) {
+            return &mr;
+        }
+    }
+    return nullptr;
+}
+
+int32_t BuildSparseCopyBatch(const RdmaSparseCopyArgs &args, uint32_t start, uint32_t end, RdmaSegment *segments,
+                             uint32_t &segmentCount)
+{
+    segmentCount = 0U;
+    for (uint32_t i = start; i < end; ++i) {
+        const auto size = static_cast<const volatile uint32_t *>(args.sizes)[i];
+        if (size == 0) {
+            continue;
+        }
+        const auto src = static_cast<const volatile uint64_t *>(args.sources)[i];
+        const auto dst = static_cast<const volatile uint64_t *>(args.destinations)[i];
+        const auto *source = FindMemoryRegion(args, src, size);
+        const auto *dest = FindMemoryRegion(args, dst, size);
+        if (source == nullptr || dest == nullptr || (source->rank == args.selfRank) == (dest->rank == args.selfRank)) {
+            HYBM_LOGE(BM_INVALID_PARAM,
+                      "[hybm] sparse copy needs one local and one remote registered range, "
+                      "index=%u src=%lx dst=%lx size=%u",
+                      i, src, dst, size);
+            return BM_INVALID_PARAM;
+        }
+        const bool write = source->rank == args.selfRank;
+        const auto *local = write ? source : dest;
+        const auto *remote = write ? dest : source;
+        if (remote->rank != args.peerRank || write != (args.param.opcode == ock::mf::aicpu::HYBM_RDMA_OP_WRITE)) {
+            continue;
+        }
+        const auto localAddress = local->deviceAddress + (write ? src : dst) - local->address;
+        const auto remoteAddress = remote->deviceAddress + (write ? dst : src) - remote->address;
+        segments[segmentCount++] = {localAddress, remoteAddress, size, local->key, remote->key};
+    }
+    return BM_OK;
+}
+
+int32_t PostSparseCopyTask(const RdmaSparseCopyArgs &args)
+{
+    HybmDeviceCopyCacheRange(args.count, sizeof(*args.count), true);
+    const auto count = *static_cast<const volatile uint32_t *>(args.count);
+    if (count > args.maxCount || args.capacity == 0 || args.capacity > HYBM_RDMA_SPARSE_CAPACITY ||
+        args.startIndex >= args.maxCount || args.mrCount > 64) {
+        HYBM_LOGE(BM_INVALID_PARAM, "[hybm] invalid sparse count=%u max=%u start=%u capacity=%u MRs=%u", count,
+                  args.maxCount, args.startIndex, args.capacity, args.mrCount);
+        return BM_INVALID_PARAM;
+    }
+    RdmaSegment segments[HYBM_RDMA_SPARSE_CAPACITY];
+    RdmaAicpuOut out{};
+    auto param = args.param;
+    param.outAddr = reinterpret_cast<uint64_t>(&out);
+    param.descAddr = reinterpret_cast<uint64_t>(segments);
+    param.descCount = 0U;
+    static uint64_t nextWrId = 0;
+    param.wrId = __atomic_fetch_add(&nextWrId, static_cast<uint64_t>(count) + 1U, __ATOMIC_RELAXED);
+    const WqeCtx ctx{param.qpHandle, param.opcode};
+    RingCtx ring{};
+    ring.param = &param;
+    for (uint32_t start = args.startIndex; start < count; start += args.capacity) {
+        const auto end = count - start < args.capacity ? count : start + args.capacity;
+        auto ret = BuildSparseCopyBatch(args, start, end, segments, param.descCount);
+        if (ret != BM_OK) {
+            return WriteFailureOut(param, ring, ret);
+        }
+        ret = PostDataWqes(param, ctx, param.descCount, ring, end == count);
+        if (ret != BM_OK) {
+            return WriteFailureOut(param, ring, ret);
+        }
+        param.wrId += param.descCount;
+    }
+    param.descCount = 0U;
+    // Only the final fenced notify releases the captured wait, including count == 0.
+    return FinishBatchTask(param, ctx, ring);
 }
 
 int32_t ValidateAicpuParam(const RdmaAicpuParam *param)
@@ -670,7 +789,9 @@ int32_t HybmRdmaAicpuPostSend(RdmaAicpuParam *param)
     if (ret != BM_OK) {
         return ret;
     }
-    return PostBatchTask(*param);
+    return (param->flags & HYBM_RDMA_SPARSE_FLAG)
+               ? PostSparseCopyTask(*reinterpret_cast<const RdmaSparseCopyArgs *>(param))
+               : PostBatchTask(*param);
 }
 
 } // extern "C"
