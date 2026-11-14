@@ -225,5 +225,90 @@ TEST_F(HybmEntityTagInfoTest, GetRank2RankLayers_ThreeLayers_PreservesConfigured
     EXPECT_EQ(matched[1], HYBM_DOP_TYPE_DEVICE_RDMA);
 }
 
+TEST_F(HybmEntityTagInfoTest, ResolvePeerProtocols_SelfRankKeepsLegacyDeviceTransport)
+{
+    for (auto protocol : {HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA}) {
+        HybmEntityTagInfo info;
+        hybm_options options{};
+        options.bmDataOpType = protocol;
+        ASSERT_EQ(info.TagInfoInit(options), BM_OK);
+        info.SetRankTopology(0, 0, 1, 4);
+
+        EXPECT_EQ(info.ResolvePeerProtocols({0, 0}), std::vector<hybm_data_op_type>{protocol});
+    }
+}
+
+TEST_F(HybmEntityTagInfoTest, ResolvePeerProtocols_SelfRankKeepsConfiguredDeviceTransport)
+{
+    for (auto protocol : {HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA}) {
+        HybmEntityTagInfo info;
+        ASSERT_EQ(info.AddRankLayers(0, {protocol}), BM_OK);
+        info.SetRankTopology(0, 0, 1, 4);
+
+        EXPECT_EQ(info.ResolvePeerProtocols({0, 0}), std::vector<hybm_data_op_type>{protocol});
+    }
+}
+
+TEST_F(HybmEntityTagInfoTest, ResolvePeerProtocols_UnlayeredCrossNodeKeepsSdma)
+{
+    /* A3 独立部署不配置 tagOpInfo：两侧都没有分层信息，与历史语义一致，不能按同机/远端白名单裁剪，
+     * 否则 SDMA-only 的跨节点对端选不出任何算子。 */
+    HybmEntityTagInfo info;
+    hybm_options options{};
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA);
+    ASSERT_EQ(info.TagInfoInit(options), BM_OK);
+    info.SetRankTopology(0, 1, 2, 0);
+    info.SetRankTopology(1, 1, 3, 0);
+
+    EXPECT_EQ(info.ResolvePeerProtocols({0, 1}), std::vector<hybm_data_op_type>{HYBM_DOP_TYPE_SDMA});
+}
+
+TEST_F(HybmEntityTagInfoTest, ResolvePeerProtocols_UnlayeredSameNodeKeepsLegacyOps)
+{
+    HybmEntityTagInfo info;
+    hybm_options options{};
+    options.bmDataOpType =
+        static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_TCP);
+    ASSERT_EQ(info.TagInfoInit(options), BM_OK);
+    info.SetRankTopology(0, 1, 2, 0);
+    info.SetRankTopology(1, 1, 2, 1);
+
+    EXPECT_EQ(info.ResolvePeerProtocols({0, 1}),
+              (std::vector<hybm_data_op_type>{HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_TCP}));
+}
+
+TEST_F(HybmEntityTagInfoTest, ResolvePeerProtocols_UnlayeredKeepsLegacyOpsAcrossSuperPod)
+{
+    HybmEntityTagInfo info;
+    hybm_options options{};
+    options.bmDataOpType =
+        static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_TCP);
+    ASSERT_EQ(info.TagInfoInit(options), BM_OK);
+    info.SetRankTopology(0, 1, 2, 0);
+    info.SetRankTopology(1, 9, 3, 0);
+
+    EXPECT_EQ(info.ResolvePeerProtocols({0, 1}),
+              (std::vector<hybm_data_op_type>{HYBM_DOP_TYPE_SDMA, HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_HOST_TCP}));
+}
+
+TEST_F(HybmEntityTagInfoTest, ResolvePeerProtocols_LayeredSdmaKeepsSameSuperPodCrossServer)
+{
+    /* 配置了分层协议且两侧都是 SDMA：跨 server 但同 superPod 必须保留（SDMA 引擎可达），
+     * 跨 superPod 才剔除。 */
+    HybmEntityTagInfo info;
+    hybm_options options{};
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA);
+    ASSERT_EQ(info.TagInfoInit(options), BM_OK);
+    ASSERT_EQ(info.AddRankLayers(0, {HYBM_DOP_TYPE_SDMA}), BM_OK);
+    ASSERT_EQ(info.AddRankLayers(1, {HYBM_DOP_TYPE_SDMA}), BM_OK);
+    info.SetRankTopology(0, 7, 2, 0);
+    info.SetRankTopology(1, 7, 3, 1);
+
+    EXPECT_EQ(info.ResolvePeerProtocols({0, 1}), std::vector<hybm_data_op_type>{HYBM_DOP_TYPE_SDMA});
+
+    info.SetRankTopology(1, 9, 3, 1);
+    EXPECT_TRUE(info.ResolvePeerProtocols({0, 1}).empty());
+}
+
 } // namespace mf
 } // namespace ock

@@ -176,7 +176,10 @@ TcpConfigStore::~TcpConfigStore() noexcept
 int TcpConfigStore::Join(const RankFullInfo &info) noexcept
 {
     STORE_LOG_INFO("TcpConfigStore.Join: info=" << info);
-    localRankInfo_ = info;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        localRankInfo_ = info;
+    }
     SmemMessage request = SmemMessage::PackJoin(info);
     request.requestId = (static_cast<uint64_t>(info.rankId + 1) << REQUEST_ID_RANK_SHIFT) | g_clientMsgSeq.fetch_add(1);
     auto packedRequest = SmemMessagePacker::Pack(request);
@@ -270,6 +273,9 @@ void TcpConfigStore::InitAsyncDispatcher(uint32_t localRankId) noexcept
         [this](ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
                const std::vector<int32_t> &results,
                uint64_t requestId) { SendControlAckBatch(ackOp, senderRankId, targetRankIds, results, requestId); });
+    asyncDispatcher_->SetSendLinkStateFunc([this](const std::vector<LinkStateEntry> &entries, uint64_t requestId) {
+        (void)SendLinkStateResponse(entries, requestId);
+    });
     if (!asyncDispatcher_->Start()) {
         STORE_LOG_ERROR("InitAsyncDispatcher: failed to start async manager");
         asyncDispatcher_.reset();
@@ -1235,6 +1241,11 @@ Result TcpConfigStore::HandleQueryLinkState(SmemMessage &msg) noexcept
         STORE_LOG_ERROR("HandleControlMessage: QueryLinkState unpack failed");
         return SM_ERROR;
     }
+    if (asyncDispatcher_ != nullptr && asyncDispatcher_->HasLinkStateQueryCallback()) {
+        asyncDispatcher_->EnqueueQueryLinkState(msg.requestId);
+        return SM_OK;
+    }
+    STORE_LOG_WARN("[GM][Client] link state dispatcher unavailable, querying synchronously, rankId=" << rankId);
     std::vector<LinkStateEntry> entries;
     {
         std::lock_guard<std::mutex> guard(executorMutex_);
@@ -1246,11 +1257,21 @@ Result TcpConfigStore::HandleQueryLinkState(SmemMessage &msg) noexcept
             entries = executor->GetLastQueryLinkStateEntries();
         }
     }
-    SmemMessage response = SmemMessage::PackLinkStateResponse(localRankInfo_, entries);
-    response.requestId = msg.requestId;
+    return SendLinkStateResponse(entries, msg.requestId);
+}
+
+Result TcpConfigStore::SendLinkStateResponse(const std::vector<LinkStateEntry> &entries, uint64_t requestId) noexcept
+{
+    RankFullInfo info;
+    {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        info = localRankInfo_;
+    }
+    SmemMessage response = SmemMessage::PackLinkStateResponse(info, entries);
+    response.requestId = requestId;
     auto packedResponse = SmemMessagePacker::Pack(response);
-    STORE_LOG_INFO("[GM][Client][Send] rank=" << localRankId_ << " type=LNKSRSP reqId=" << msg.requestId << " entries="
-                                              << entries.size() << ", role=" << RankRoleName(localRankInfo_.role));
+    STORE_LOG_INFO("[GM][Client][Send] rank=" << info.rankId << " type=LNKSRSP reqId=" << requestId
+                                              << " entries=" << entries.size() << ", role=" << RankRoleName(info.role));
     auto sendRet = SendMessageNonBlock(packedResponse);
     STORE_LOG_INFO("[GM][Client][Send] rank=" << localRankId_ << " type=LNKSRSP return=" << sendRet);
     if (sendRet != SM_OK) {

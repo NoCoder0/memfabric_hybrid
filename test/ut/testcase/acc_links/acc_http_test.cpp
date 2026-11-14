@@ -643,4 +643,49 @@ TEST_F(AccHttpTest, test_http_bad_request_headers_too_large)
     ASSERT_EQ(ret, ACC_LINK_MSG_INVALID);
     ASSERT_TRUE(httpLink->needClose_);
 }
+
+TEST_F(AccHttpTest, test_http_response_cleanup_after_complete_send)
+{
+    for (const auto &testCase :
+         {std::make_pair(true, "hello"), std::make_pair(true, ""), std::make_pair(false, "hello")}) {
+        int sockets[2];
+        ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+        auto httpLink = AccMakeRef<AccHttpLinkDefault>(sockets[0], "local");
+        auto peer = AccMakeRef<AccHttpLinkDefault>(sockets[1], "peer");
+        auto worker = AccMakeRef<AccTcpWorker>(AccTcpWorkerOptions{});
+        ASSERT_EQ(httpLink->Initialize(LINK_SEND_QUEUE_SIZE, 0, worker.Get()), ACC_OK);
+        httpLink->recvBuf_ = std::string("GET /health HTTP/1.1\r\nConnection: ") +
+                             (testCase.first ? "close" : "keep-alive") + "\r\n\r\n";
+        ASSERT_EQ(httpLink->ParseHttpMessage(), ACC_LINK_MSG_READY);
+        EXPECT_FALSE(httpLink->HasPendingCleanup());
+        auto body = AccDataBuffer::Create(testCase.second, static_cast<uint32_t>(std::strlen(testCase.second)));
+        auto header = httpLink->BuildResponseHeader(200, "OK", "text/plain", body, {}, false, false);
+        auto headerBuf = AccDataBuffer::Create(header.data(), static_cast<uint32_t>(header.size()));
+        ASSERT_EQ(httpLink->EnqueueResponseNodes(headerBuf, body, false, false, 200), ACC_OK);
+        AccMsgHeader sentHeader{};
+        AccDataBufferPtr cbCtx;
+        ASSERT_EQ(httpLink->HandlePollOut(sentHeader, cbCtx), ACC_LINK_MSG_SENT);
+        if (body->DataLen() > 0) {
+            EXPECT_FALSE(httpLink->HasPendingCleanup());
+            ASSERT_EQ(httpLink->HandlePollOut(sentHeader, cbCtx), ACC_LINK_MSG_SENT);
+        }
+        EXPECT_EQ(httpLink->HasPendingCleanup(), testCase.first);
+        std::string received(header.size() + body->DataLen(), '\0');
+        ASSERT_EQ(::recv(sockets[1], &received[0], received.size(), MSG_WAITALL),
+                  static_cast<ssize_t>(received.size()));
+        EXPECT_EQ(received, header + testCase.second);
+    }
+}
+
+TEST_F(AccHttpTest, test_http_idle_timeout_still_requests_cleanup)
+{
+    auto httpLink = AccMakeRef<AccHttpLinkDefault>(-1, "local");
+    httpLink->ResetHttpState();
+    EXPECT_FALSE(httpLink->HasPendingCleanup());
+    httpLink->lastActivity_ = std::time(nullptr) - HTTP_KEEPALIVE_TIMEOUT_S - 1;
+    EXPECT_TRUE(httpLink->IsIdleExpired());
+    EXPECT_TRUE(httpLink->HasPendingCleanup());
+    httpLink->ResetHttpState();
+    EXPECT_FALSE(httpLink->HasPendingCleanup());
+}
 } // namespace

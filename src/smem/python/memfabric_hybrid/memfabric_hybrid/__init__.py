@@ -26,7 +26,8 @@ for lib in ["libmf_hybm_core.so", "libmf_smem.so", "libmf_acc_offload.so"]:
 # Preload optional dlopen-ed libraries (may not be packaged depending on build options)
 # Resolve by soname first (same search order as libmf_hybm_core's internal dlopen) to
 # share a single instance, then fall back to the packaged lib; keep handles until exit.
-optional_libs = ["libboundscheck.so", "libhcom.so", "libetcd_client_v3.so"]
+# Let EtcdApi load the Go backend on demand to avoid occupying Ascend's 8 TiB SVM range at import.
+optional_libs = ["libboundscheck.so", "libhcom.so"]
 for lib in optional_libs:
     handle = None
     try:

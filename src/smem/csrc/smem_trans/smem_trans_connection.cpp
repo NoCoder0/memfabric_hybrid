@@ -271,10 +271,7 @@ int SmemTransConnection::RegisterExecutorCallbacks(SmemGroupManagerClient *execu
         asyncMgr->EnqueueEstablishConnection(rankId, std::move(copy), reqId);
         return 0;
     };
-    executor->onQueryLinkState_ = [asyncMgr]() {
-        asyncMgr->EnqueueQueryLinkState(0);
-        return std::vector<LinkStateEntry>{};
-    };
+    executor->onQueryLinkState_ = [this]() { return OnQueryLinkState(); };
     executor->onAddSlices_ = [asyncMgr](uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId) {
         MultiBytes copy(newSlices);
         asyncMgr->EnqueueAddSlices(extendingRankId, std::move(copy), reqId);

@@ -18,7 +18,6 @@
 
 #include <map>
 #include <mutex>
-#include <shared_mutex>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -65,7 +64,6 @@ public:
     std::shared_ptr<TransportManager> GetTransport(uint32_t opTypes) const;
 
     Result UpdateRankOptions(const HybmTransPrepareOptions &options) override;
-    const TransportRankPrepareInfo *GetRankPrepareInfo(uint32_t rankId) const override;
 
     const std::string &GetNic() const override;
 
@@ -112,8 +110,6 @@ private:
 
 private:
     std::map<uint32_t, std::shared_ptr<TransportManager>> transports_;
-    mutable std::shared_mutex rankPrepareInfosMutex_;
-    std::unordered_map<uint32_t, transport::TransportRankPrepareInfo> rankPrepareInfos_;
     mutable std::mutex connectedProtocolsMutex_;
     std::unordered_map<uint32_t, std::vector<uint32_t>> connectedProtocols_;
 

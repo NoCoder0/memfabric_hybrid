@@ -49,6 +49,7 @@ hcommChannelFenceFunc DlHcommApi::gHcommChannelFence = nullptr;
 hcommMemGetAllMemHandlesFunc DlHcommApi::gHcommMemGetAllMemHandles = nullptr;
 hcommChannelUpdateMemInfoFunc DlHcommApi::gHcommChannelUpdateMemInfo = nullptr;
 hcommChannelGetStatusFunc DlHcommApi::gHcommChannelGetStatus = nullptr;
+hrtGetDeviceRefreshFunc DlHcommApi::gHrtGetDeviceRefresh = nullptr;
 
 Result DlHcommApi::LoadLibrary()
 {
@@ -82,6 +83,7 @@ Result DlHcommApi::LoadLibrary()
     DL_LOAD_SYM(gHcommChannelCreate, hcommChannelCreateFunc, hcommHandle, "HcommChannelCreate");
     DL_LOAD_SYM(gHcommChannelDestroy, hcommChannelDestroyFunc, hcommHandle, "HcommChannelDestroy");
     DL_LOAD_SYM(gHcommChannelGetStatus, hcommChannelGetStatusFunc, hcommHandle, "HcommChannelGetStatus");
+    DL_LOAD_SYM_OPTIONAL(gHrtGetDeviceRefresh, hrtGetDeviceRefreshFunc, hcommHandle, "hrtGetDeviceRefresh");
     DL_LOAD_SYM(gHcommThreadAlloc, hcommThreadAllocFunc, hcommHandle, "HcommThreadAlloc");
     DL_LOAD_SYM(gHcommThreadFree, hcommThreadFreeFunc, hcommHandle, "HcommThreadFree");
     DL_LOAD_SYM(gHcommReadOnThread, hcommReadOnThreadFunc, hcommHandle, "HcommReadOnThread");
@@ -124,6 +126,7 @@ void DlHcommApi::CleanupLibrary()
     gHcommChannelCreate = nullptr;
     gHcommChannelDestroy = nullptr;
     gHcommChannelGetStatus = nullptr;
+    gHrtGetDeviceRefresh = nullptr;
     gHcommThreadAlloc = nullptr;
     gHcommThreadFree = nullptr;
     gHcommReadOnThread = nullptr;

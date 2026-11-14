@@ -260,6 +260,31 @@ struct HccpSocketWhiteListInfo {
     char tag[HCCP_SOCK_CONN_TAG_SIZE]; /**< tag used for whitelist must ended by '\0' */
 };
 
+constexpr int HCCP_GID_RAW_LEN = 16;
+
+struct QpAttr {
+    unsigned int qpn;
+    unsigned int udpSport;
+    unsigned int psn;
+    unsigned int gidIdx;
+    unsigned char gid[HCCP_GID_RAW_LEN];
+};
+
+struct TypicalQp {
+    uint32_t qpn;
+    uint32_t psn;
+    uint32_t gidIdx;
+    uint8_t resv1[4U];
+    uint8_t gid[HCCP_GID_RAW_LEN];
+    uint32_t tc;
+    uint32_t sl;
+    uint32_t retryCnt;
+    uint32_t retryTime;
+    int version;
+    uint32_t reserved[32U];
+    uint8_t resv2[4U];
+};
+
 struct HccpMrInfo {
     void *addr;              /**< starting address of mr */
     unsigned long long size; /**< size of mr */

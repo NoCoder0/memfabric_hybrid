@@ -48,6 +48,7 @@ int DeviceChipInfo::Init() noexcept
         chipOffset_ = 0x20000000000UL;     // RT_ASCEND910B1_HCCS_CHIP_ADDR_OFFSET;
     }
 
+    initialized_ = true;
     return 0;
 }
 } // namespace device

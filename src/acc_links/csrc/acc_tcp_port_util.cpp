@@ -13,20 +13,17 @@
 
 #include <arpa/inet.h>
 #include <cerrno>
-#include <chrono>
 #include <cstring>
-#include <random>
 #include <sys/socket.h>
 #include <unistd.h>
 
 #include "acc_includes.h"
 #include "acc_tcp_common.h"
+#include "mf_net.h"
 
 namespace ock {
 namespace acc {
 namespace {
-
-constexpr int MAX_ATTEMPTS = 1000;
 
 int BindTcpPortV4(int &sockfd, uint16_t port)
 {
@@ -76,20 +73,6 @@ bool SupportsIpv6() noexcept
     return true;
 }
 
-uint64_t BuildProbeSeed() noexcept
-{
-    constexpr int offsetBit = 32;
-    uint64_t seed = 1;
-    seed |= static_cast<uint64_t>(getpid()) << offsetBit;
-    seed |= static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count()) & 0xFFFFFFFFULL;
-    return seed;
-}
-
-std::mt19937_64 &RandomEngine()
-{
-    static std::mt19937_64 gen(BuildProbeSeed());
-    return gen;
-}
 } // namespace
 
 uint16_t AccFindAvailableTcpPort(int &sockfd, uint16_t minPort, uint16_t maxPort)
@@ -102,21 +85,14 @@ uint16_t AccFindAvailableTcpPort(int &sockfd, uint16_t minPort, uint16_t maxPort
         return 0;
     }
 
-    std::uniform_int_distribution<uint32_t> dis(minPort, maxPort);
     const bool supportsIpv6 = SupportsIpv6();
-    auto &gen = RandomEngine();
-
-    for (int attempt = 0; attempt < MAX_ATTEMPTS; ++attempt) {
-        uint16_t port = static_cast<uint16_t>(dis(gen));
-        if (BindTcpPortV4(sockfd, port) == 0) {
-            return port;
-        }
-        if (supportsIpv6 && BindTcpPortV6(sockfd, port) == 0) {
-            return port;
-        }
+    const auto port = mf::SelectRandomTcpPort(minPort, maxPort, [&](uint16_t candidate) {
+        return BindTcpPortV4(sockfd, candidate) == 0 || (supportsIpv6 && BindTcpPortV6(sockfd, candidate) == 0);
+    });
+    if (port == 0) {
+        LOG_ERROR("no available tcp port found in range [" << minPort << "," << maxPort << "]");
     }
-    LOG_ERROR("no available tcp port found in range [" << minPort << "," << maxPort << "]");
-    return 0;
+    return port;
 }
 } // namespace acc
 } // namespace ock

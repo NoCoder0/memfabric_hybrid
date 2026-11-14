@@ -8,12 +8,32 @@ Copyright (c) Huawei Technologies Co., Ltd. 2025-2025. All rights reserved.
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <unistd.h>
+#include <chrono>
 #include <cstring>
 #include <functional>
 #include <cstdint>
+#include <random>
 
 namespace ock {
 namespace mf {
+template<typename TryPort>
+uint16_t SelectRandomTcpPort(uint16_t minPort, uint16_t maxPort, TryPort tryPort)
+{
+    constexpr int maxAttempts = 1000;
+    thread_local std::mt19937_64 generator(
+        (static_cast<uint64_t>(getpid()) << 32U) |
+        (std::chrono::system_clock::now().time_since_epoch().count() & 0xFFFFFFFFULL));
+    std::uniform_int_distribution<uint32_t> distribution(minPort, maxPort);
+    for (int attempt = 0; attempt < maxAttempts; ++attempt) {
+        const auto port = static_cast<uint16_t>(distribution(generator));
+        if (tryPort(port)) {
+            return port;
+        }
+    }
+    return 0;
+}
+
 enum IpType {
     IpV4,
     IpV6,

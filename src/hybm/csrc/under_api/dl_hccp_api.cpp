@@ -21,6 +21,7 @@ namespace mf {
 namespace {
 constexpr uint32_t CANN_LAYOUT_V2_MAJOR = 9;
 constexpr uint32_t CANN_LAYOUT_V2_MINOR = 2;
+
 } // namespace
 
 bool DlHccpApi::gLoaded = false;
@@ -33,6 +34,8 @@ const char *DlHccpApi::gTsdLibName = "libtsdclient.so";
 
 raRdevGetHandleFunc DlHccpApi::gRaRdevGetHandle;
 raInitFunc DlHccpApi::gRaInit;
+raDeinitFunc DlHccpApi::gRaDeinit;
+raRdevDeinitFunc DlHccpApi::gRaRdevDeinit;
 raSocketInitFunc DlHccpApi::gRaSocketInit;
 raSocketDeinitFunc DlHccpApi::gRaSocketDeinit;
 raRdevInitV2Func DlHccpApi::gRaRdevInitV2;
@@ -50,6 +53,9 @@ raQpCreateWithAttrsFunc DlHccpApi::gRaQpCreateWithAttrs;
 raQpAiCreateFunc DlHccpApi::gRaQpAiCreate;
 raQpDestroyFunc DlHccpApi::gRaQpDestroy;
 raGetQpStatusFunc DlHccpApi::gRaGetQpStatus;
+raGetQpAttrFunc DlHccpApi::gRaGetQpAttr;
+raTypicalQpModifyFunc DlHccpApi::gRaTypicalQpModify;
+raTypicalSendWrFunc DlHccpApi::gRaTypicalSendWr;
 raQpConnectAsyncFunc DlHccpApi::gRaQpConnectAsync;
 raRegisterMrFunc DlHccpApi::gRaRegisterMR;
 raDeregisterMrFunc DlHccpApi::gRaDeregisterMR;
@@ -93,6 +99,8 @@ Result DlHccpApi::LoadLibrary()
     /* load sym */
     DL_LOAD_SYM_ALT(gRaSocketInit, raSocketInitFunc, raHandle, "ra_socket_init", "RaSocketInit");
     DL_LOAD_SYM_ALT(gRaInit, raInitFunc, raHandle, "ra_init", "RaInit");
+    DL_LOAD_SYM_ALT_OPTIONAL(gRaDeinit, raDeinitFunc, raHandle, "ra_deinit", "RaDeinit");
+    DL_LOAD_SYM_ALT_OPTIONAL(gRaRdevDeinit, raRdevDeinitFunc, raHandle, "ra_rdev_deinit", "RaRdevDeinit");
     DL_LOAD_SYM_ALT(gRaSocketDeinit, raSocketDeinitFunc, raHandle, "ra_socket_deinit", "RaSocketDeinit");
     DL_LOAD_SYM_ALT(gRaRdevInitV2, raRdevInitV2Func, raHandle, "ra_rdev_init_v2", "RaRdevInitV2");
     DL_LOAD_SYM_ALT(gRaRdevGetHandle, raRdevGetHandleFunc, raHandle, "ra_rdev_get_handle", "RaRdevGetHandle");
@@ -117,6 +125,11 @@ Result DlHccpApi::LoadLibrary()
     DL_LOAD_SYM_ALT(gRaQpAiCreate, raQpAiCreateFunc, raHandle, "ra_ai_qp_create", "RaAiQpCreate");
     DL_LOAD_SYM_ALT(gRaQpDestroy, raQpDestroyFunc, raHandle, "ra_qp_destroy", "RaQpDestroy");
     DL_LOAD_SYM_ALT(gRaGetQpStatus, raGetQpStatusFunc, raHandle, "ra_get_qp_status", "RaGetQpStatus");
+    // These capabilities are checked by provider operations, not by legacy transport initialization.
+    DL_LOAD_SYM_ALT_OPTIONAL(gRaGetQpAttr, raGetQpAttrFunc, raHandle, "ra_get_qp_attr", "RaGetQpAttr");
+    DL_LOAD_SYM_ALT_OPTIONAL(gRaTypicalQpModify, raTypicalQpModifyFunc, raHandle, "ra_typical_qp_modify",
+                             "RaTypicalQpModify");
+    DL_LOAD_SYM_ALT_OPTIONAL(gRaTypicalSendWr, raTypicalSendWrFunc, raHandle, "ra_typical_send_wr", "RaTypicalSendWr");
     DL_LOAD_SYM_ALT(gRaQpConnectAsync, raQpConnectAsyncFunc, raHandle, "ra_qp_connect_async", "RaQpConnectAsync");
     DL_LOAD_SYM_ALT(gRaRegisterMR, raRegisterMrFunc, raHandle, "ra_register_mr", "RaRegisterMr");
     DL_LOAD_SYM_ALT(gRaDeregisterMR, raDeregisterMrFunc, raHandle, "ra_deregister_mr", "RaDeregisterMr");
@@ -142,6 +155,8 @@ void DlHccpApi::CleanupLibrary()
 
     gRaRdevGetHandle = nullptr;
     gRaInit = nullptr;
+    gRaDeinit = nullptr;
+    gRaRdevDeinit = nullptr;
     gRaSocketInit = nullptr;
     gRaSocketDeinit = nullptr;
     gRaRdevInitV2 = nullptr;
@@ -158,6 +173,9 @@ void DlHccpApi::CleanupLibrary()
     gRaQpAiCreate = nullptr;
     gRaQpDestroy = nullptr;
     gRaGetQpStatus = nullptr;
+    gRaGetQpAttr = nullptr;
+    gRaTypicalQpModify = nullptr;
+    gRaTypicalSendWr = nullptr;
     gRaQpConnectAsync = nullptr;
     gRaRegisterMR = nullptr;
     gRaDeregisterMR = nullptr;

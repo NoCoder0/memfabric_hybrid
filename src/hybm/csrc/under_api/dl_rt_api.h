@@ -22,6 +22,12 @@ namespace mf {
 using rtStreamGetSqidFunc = int32_t (*)(const void *, uint32_t *);
 using rtStreamGetCqidFunc = int32_t (*)(const void *, uint32_t *, uint32_t *);
 using rtGetDevResAddressFunc = int32_t (*)(rtDevResInfo *, rtDevResAddrInfo *);
+using rtOpenNetServiceFunc = int32_t (*)(const RtNetServiceOpenArgs *);
+using rtCloseNetServiceFunc = int32_t (*)();
+using rtRDMADBSendFunc = int32_t (*)(uint32_t, uint64_t, void *);
+using rtStreamCreateFunc = int32_t (*)(void **, int);
+using rtStreamDestroyFunc = int32_t (*)(void *);
+using rtStreamSynchronizeFunc = int32_t (*)(void *);
 
 class DlRtApi {
 public:
@@ -52,6 +58,36 @@ public:
         return pRtGetDevResAddress(resInfo, addrInfo);
     }
 
+    static inline int32_t RtOpenNetService(const RtNetServiceOpenArgs *args)
+    {
+        return pRtOpenNetService == nullptr ? -1 : pRtOpenNetService(args);
+    }
+
+    static inline int32_t RtCloseNetService()
+    {
+        return pRtCloseNetService == nullptr ? -1 : pRtCloseNetService();
+    }
+
+    static inline int32_t RtRDMADBSend(uint32_t dbIndex, uint64_t dbInfo, void *stream)
+    {
+        return pRtRDMADBSend == nullptr ? -1 : pRtRDMADBSend(dbIndex, dbInfo, stream);
+    }
+
+    static inline int32_t RtStreamCreate(void **stream, int flags = 0)
+    {
+        return pRtStreamCreate == nullptr ? -1 : pRtStreamCreate(stream, flags);
+    }
+
+    static inline int32_t RtStreamDestroy(void *stream)
+    {
+        return pRtStreamDestroy == nullptr ? -1 : pRtStreamDestroy(stream);
+    }
+
+    static inline int32_t RtStreamSynchronize(void *stream)
+    {
+        return pRtStreamSynchronize == nullptr ? -1 : pRtStreamSynchronize(stream);
+    }
+
 private:
     static std::mutex gMutex;
     static bool gLoaded;
@@ -61,6 +97,12 @@ private:
     static rtStreamGetSqidFunc pRtStreamGetSqid;
     static rtStreamGetCqidFunc pRtStreamGetCqid;
     static rtGetDevResAddressFunc pRtGetDevResAddress;
+    static rtOpenNetServiceFunc pRtOpenNetService;
+    static rtCloseNetServiceFunc pRtCloseNetService;
+    static rtRDMADBSendFunc pRtRDMADBSend;
+    static rtStreamCreateFunc pRtStreamCreate;
+    static rtStreamDestroyFunc pRtStreamDestroy;
+    static rtStreamSynchronizeFunc pRtStreamSynchronize;
 };
 } // namespace mf
 } // namespace ock

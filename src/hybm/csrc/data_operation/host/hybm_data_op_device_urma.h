@@ -52,6 +52,8 @@ private:
     Result CopyLD2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
     Result CopyLH2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
     Result CopyLD2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
+    Result CopyWithSwap(AllocatedElement &block, const void *src, void *dest, uint64_t size,
+                        const ExtOptions &options) noexcept;
     Result CopyURMA(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept;
 
     Result BatchDataCopyDefault(hybm_batch_copy_params &params, hybm_data_copy_direction direction,

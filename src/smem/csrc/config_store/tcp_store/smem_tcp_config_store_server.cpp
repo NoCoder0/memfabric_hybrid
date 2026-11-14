@@ -372,7 +372,11 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
         STORE_LOG_ERROR("reconnect rank:" << rankId << " already active, reject, fallback to auto_rank");
         return SM_ERROR;
     }
-    aliveRankSet_.insert(rankId);
+    // A failed handshake is not added to the ACC worker, so do not publish its link before persistence succeeds.
+    auto aliveRanks = aliveRankSet_;
+    aliveRanks.insert(rankId);
+    STORE_ASSERT_RETURN(PersistAliveRankIds(aliveRanks) == SUCCESS, SM_ERROR);
+    aliveRankSet_.swap(aliveRanks);
     rankLinks_[rankId] = link;
     reconnectedRankSet_.insert(rankId);
     {
@@ -382,7 +386,6 @@ Result AccStoreServer::LinkConnectedHandler(const ock::acc::AccConnReq &req,
     if (groupManager_ != nullptr && req.reconnect == 1) {
         groupManager_->MarkRankReconnected(rankId);
     }
-    STORE_ASSERT_RETURN(PersistAliveRankIds(aliveRankSet_) == SUCCESS, SM_ERROR);
     // 注册完成后评估恢复退出：本次接入的 rank 立即参与 allReconnected 判定，
     // "aliveRankFromBackend_ 中最后一个旧 rank 重连" 即时置位 SS_RECOVERED，
     // 无需等待下一条连接事件或 60s 超时。
@@ -1794,15 +1797,20 @@ Result AccStoreServer::LaunchCleanupThread()
         }
         STORE_LOG_INFO("LaunchCleanupThread recovery after wait for state: " << static_cast<int>(state_.load()));
 
-        uint32_t currState = SS_RECOVERING;
-        if (!state_.compare_exchange_strong(currState, SS_RECOVERED)) {
-            if (currState < SS_RECOVERED) {
-                state_.store(SS_RECOVERED);
+        {
+            std::lock_guard<std::mutex> lock(storeMutex_);
+            if (state_.load() == SS_EXITED) {
+                return;
             }
+            state_.store(SS_RECOVERED);
         }
         STORE_LOG_INFO("LaunchCleanupThread recovery state to SS_RECOVERED");
         CleanupStaleRanks();
 
+        std::lock_guard<std::mutex> lock(storeMutex_);
+        if (state_.load() == SS_EXITED) {
+            return;
+        }
         if (UpdateStatus(true) != SM_OK) {
             STORE_LOG_ERROR("LaunchCleanupThread recovery: set leader status active failed");
         }
@@ -1817,6 +1825,9 @@ void AccStoreServer::CleanupStaleRanks() noexcept
     std::unordered_set<uint32_t> ranksToRemove;
     {
         std::lock_guard<std::mutex> lock{storeMutex_};
+        if (state_.load() == SS_EXITED) {
+            return;
+        }
         for (const uint32_t rank : reconnectedRankSet_) {
             aliveRankFromBackend_.erase(rank);
         }
@@ -1838,6 +1849,9 @@ void AccStoreServer::CleanupStaleRanks() noexcept
     // Process removals: push orphan ranks for leave notification + hybm_remove cleanup
     {
         std::lock_guard<std::mutex> lock{storeMutex_};
+        if (state_.load() == SS_EXITED) {
+            return;
+        }
         for (uint32_t rankId : ranksToRemove) {
             rankStateTaskQueue_.push(rankId);
         }
@@ -1867,12 +1881,6 @@ void AccStoreServer::CleanupStaleRanks() noexcept
             return;
         }
     }
-
-    // Final status update: mark leader as active now that recovery + cleanup is done
-    if (UpdateStatus(true) != SM_OK) {
-        STORE_LOG_ERROR("backend final update status failed in cleanup thread.");
-    }
-    STORE_LOG_TRACE("backend final update status successful in cleanup thread.");
 }
 
 void AccStoreServer::RestoreFromEtcdIfNeeded() noexcept

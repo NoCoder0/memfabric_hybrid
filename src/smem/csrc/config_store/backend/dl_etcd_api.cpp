@@ -52,8 +52,20 @@ Result EtcdApi::LoadLibrary()
         return SM_OK;
     }
     libraryHandle_ = dlopen(kLibraryName, RTLD_NOW | RTLD_NODELETE);
+    std::string libraryPath = kLibraryName;
     if (libraryHandle_ == nullptr) {
-        SM_LOG_ERROR("Failed to open library [" << kLibraryName << "], error: " << dlerror());
+        Dl_info info{};
+        if (dladdr(static_cast<const void *>(&libraryHandle_), &info) != 0 && info.dli_fname != nullptr) {
+            std::string selfPath = info.dli_fname;
+            auto lastSlash = selfPath.find_last_of('/');
+            if (lastSlash != std::string::npos) {
+                libraryPath = selfPath.substr(0, lastSlash + 1) + kLibraryName;
+                libraryHandle_ = dlopen(libraryPath.c_str(), RTLD_NOW | RTLD_NODELETE);
+            }
+        }
+    }
+    if (libraryHandle_ == nullptr) {
+        SM_LOG_ERROR("Failed to open library [" << libraryPath << "], error: " << dlerror());
         return SM_ERROR;
     }
     bool success = true;

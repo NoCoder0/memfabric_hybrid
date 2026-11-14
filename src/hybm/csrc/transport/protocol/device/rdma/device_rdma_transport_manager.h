@@ -14,6 +14,9 @@
 #define MF_HYBRID_DEVICE_RDMA_TRANSPORT_MANAGER_H
 
 #include <netinet/in.h>
+#include <thread>
+#include <string>
+#include <cstdint>
 
 #include <map>
 #include <mutex>
@@ -21,21 +24,31 @@
 #include <atomic>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
+#include <random>
 #include "hybm_define.h"
 #include "hybm_stream_manager.h"
 #include "hybm_stream_notify.h"
 #include "hybm_transport_manager.h"
+#include "dl_hccp_def.h"
 #include "device_chip_info.h"
 #include "mf_rwlock.h"
 #include "device_qp_manager.h"
 
 namespace ock {
 namespace mf {
+class MemEntityDefault;
 namespace transport {
 namespace device {
 
+struct RdmaProviderDeviceContext;
+
 class RdmaTransportManager : public TransportManager {
+    friend struct RdmaProviderDeviceContext;
+
 public:
+    static void ReleaseThreadLocalNotify();
+
     ~RdmaTransportManager() override;
     Result OpenDevice(const TransportOptions &options) override;
     Result CloseDevice() override;

@@ -44,8 +44,14 @@ Result HostComposeDataOp::Initialize() noexcept
     }
 
     const auto composeTransportManager = std::dynamic_pointer_cast<transport::ComposeTransportManager>(transport_);
-    const auto getTransport = [&composeTransportManager](uint32_t opTypes) {
-        return composeTransportManager != nullptr ? composeTransportManager->GetTransport(opTypes) : nullptr;
+    const auto getTransport = [this, &composeTransportManager](uint32_t opTypes) -> transport::TransManagerPtr {
+        if (composeTransportManager != nullptr) {
+            return composeTransportManager->GetTransport(opTypes);
+        }
+        if ((options_.bmDataOpType & opTypes) == opTypes) {
+            return transport_;
+        }
+        return nullptr;
     };
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) {
@@ -136,11 +142,21 @@ Result HostComposeDataOp::Initialize() noexcept
     dataOperators_[HYBM_DOP_TYPE_HOST_URMA] = hostRdmaDataOperator_;
     dataOperators_[HYBM_DOP_TYPE_HOST_SHM] = hostShmDataOperator_;
 
+    // self-pair 不经过建联，缓存槽没有写入触发点；init 时主动填上，
+    // 避免 self-copy 每次走 fallback 重算。
+    CacheRankProtocols(options_.rankId, {});
+
     return BM_OK;
 }
 
 void HostComposeDataOp::UnInitialize() noexcept
 {
+    for (auto &rankProtocols : rankProtocols_) {
+        for (auto &layer : rankProtocols) {
+            layer = HYBM_DOP_TYPE_DEFAULT;
+        }
+    }
+
     if (hostRdmaDataOperator_ != nullptr) {
         hostRdmaDataOperator_->UnInitialize();
         hostRdmaDataOperator_ = nullptr;
@@ -215,9 +231,12 @@ Result HostComposeDataOp::BatchDataCopy(hybm_batch_copy_params &params, hybm_dat
 
     ExtOptions urmaOptions{options.srcRankId, options.destRankId, options.stream, options.flags, {}};
     ExtOptions otherOptions{options.srcRankId, options.destRankId, options.stream, options.flags, {}};
+    urmaOptions.hostShmPolicy = options.hostShmPolicy;
+    otherOptions.hostShmPolicy = options.hostShmPolicy;
     try {
         for (const auto &[p2pInfo, indices] : options.groupMap) {
             ExtOptions copyOptions{p2pInfo.first, p2pInfo.second, options.stream, options.flags, {}};
+            copyOptions.hostShmPolicy = options.hostShmPolicy;
             auto availableOps = GetPrioritedDataOperators(copyOptions);
             if (availableOps.empty()) {
                 BM_LOG_ERROR("batch data copy from rank " << p2pInfo.first << " to rank " << p2pInfo.second
@@ -254,6 +273,7 @@ Result HostComposeDataOp::BatchDataCopyByGroup(hybm_batch_copy_params &params, h
         copyOptions.destRankId = p2pInfo.second;
         copyOptions.stream = options.stream;
         copyOptions.flags = options.flags;
+        copyOptions.hostShmPolicy = options.hostShmPolicy;
         auto availableOps = GetPrioritedDataOperators(copyOptions);
         if (availableOps.empty()) {
             BM_LOG_ERROR("batch data copy from rank " << p2pInfo.first << " to rank " << p2pInfo.second
@@ -355,6 +375,7 @@ bool HostComposeDataOp::AllPreferDeviceUrma(const ExtOptions &options) noexcept
     for (const auto &[p2pInfo, indices] : options.groupMap) {
         (void)indices;
         ExtOptions copyOptions{p2pInfo.first, p2pInfo.second, options.stream, options.flags, {}};
+        copyOptions.hostShmPolicy = options.hostShmPolicy;
         auto availableOps = GetPrioritedDataOperators(copyOptions);
         if (availableOps.empty() || availableOps.front().second != devUrmaDataOperator_) {
             return false;
@@ -366,7 +387,6 @@ bool HostComposeDataOp::AllPreferDeviceUrma(const ExtOptions &options) noexcept
 HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(const ExtOptions &options) noexcept
 {
     HostComposeDataOp::DataOperators dataOperators;
-
     if (options.destRankId == options_.rankId || options.srcRankId == options_.rankId) {
         const uint32_t remoteRankId = options.destRankId == options_.rankId ? options.srcRankId : options.destRankId;
         hybm_data_op_type protocols[EXPORT_INFO_MAX_LAYER_COUNT] = {};
@@ -389,38 +409,54 @@ HostComposeDataOp::DataOperators HostComposeDataOp::GetPrioritedDataOperators(co
                     dataOperators.emplace_back(opType, std::move(dataOperator));
                 }
             }
-            return dataOperators;
         }
     }
 
-    auto opTypes = entityTagInfo_->GetRank2RankOpType(options.srcRankId, options.destRankId);
-    if (sdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_SDMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_SDMA, sdmaDataOperator_);
-    }
+    if (dataOperators.empty()) {
+        PeerProtocolInfo peerInfo{options.srcRankId, options.destRankId};
+        const auto layers = entityTagInfo_->ResolvePeerProtocols(peerInfo);
+        uint32_t opTypes = 0U;
+        for (const auto layer : layers) {
+            opTypes |= static_cast<uint32_t>(layer);
+        }
+        if (sdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_SDMA)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_SDMA, sdmaDataOperator_);
+        }
 
-    if (devRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_RDMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_RDMA, devRdmaDataOperator_);
-    }
-    if (devUrmaDataOperator_ != nullptr) {
-        if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
-            dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_URMA, devUrmaDataOperator_);
+        if (devRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_RDMA)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_RDMA, devRdmaDataOperator_);
+        }
+        if (devUrmaDataOperator_ != nullptr) {
+            if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
+                dataOperators.emplace_back(HYBM_DOP_TYPE_DEVICE_URMA, devUrmaDataOperator_);
+            }
+        }
+
+        if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_RDMA)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_RDMA, hostRdmaDataOperator_);
+        }
+
+        if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_URMA)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_URMA, hostRdmaDataOperator_);
+        }
+
+        if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_TCP)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_TCP, hostRdmaDataOperator_);
+        }
+
+        if (hostShmDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_SHM)) != 0U) {
+            dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_SHM, hostShmDataOperator_);
         }
     }
 
-    if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_RDMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_RDMA, hostRdmaDataOperator_);
-    }
-
-    if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_URMA)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_URMA, hostRdmaDataOperator_);
-    }
-
-    if (hostRdmaDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_TCP)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_TCP, hostRdmaDataOperator_);
-    }
-
-    if (hostShmDataOperator_ != nullptr && (opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_SHM)) != 0U) {
-        dataOperators.emplace_back(HYBM_DOP_TYPE_HOST_SHM, hostShmDataOperator_);
+    const auto hostShmIt = std::find_if(dataOperators.begin(), dataOperators.end(),
+                                        [](const auto &entry) { return entry.first == HYBM_DOP_TYPE_HOST_SHM; });
+    if (hostShmIt != dataOperators.end()) {
+        if (options.hostShmPolicy == HostShmPolicy::PREFER) {
+            std::rotate(dataOperators.begin(), hostShmIt, std::next(hostShmIt));
+        } else if (options.hostShmPolicy == HostShmPolicy::EXCLUDE) {
+            dataOperators.erase(hostShmIt);
+        }
     }
     return dataOperators;
 }
@@ -455,23 +491,11 @@ void HostComposeDataOp::CacheRankProtocols(uint32_t rankId, const std::vector<ui
         BM_LOG_ERROR("Too many rank protocols, rankId:" << rankId << ", maxLayerCount:" << EXPORT_INFO_MAX_LAYER_COUNT);
     };
 
-    const auto layers = entityTagInfo_->GetRank2RankLayers(options_.rankId, rankId);
-    if (!layers.empty()) {
-        for (const auto layer : layers) {
-            appendProtocol(layer);
-        }
-    } else {
-        static constexpr std::array<hybm_data_op_type, 7> kPrioritedOpTypes = {
-            HYBM_DOP_TYPE_SDMA,      HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA, HYBM_DOP_TYPE_HOST_RDMA,
-            HYBM_DOP_TYPE_HOST_URMA, HYBM_DOP_TYPE_HOST_TCP,    HYBM_DOP_TYPE_HOST_SHM};
-        const uint32_t opTypes = entityTagInfo_->GetRank2RankOpType(options_.rankId, rankId);
-        for (auto opType : kPrioritedOpTypes) {
-            if ((opTypes & static_cast<uint32_t>(opType)) != 0U) {
-                appendProtocol(opType);
-            }
-        }
+    PeerProtocolInfo peerInfo{options_.rankId, rankId};
+    const auto layers = entityTagInfo_->ResolvePeerProtocols(peerInfo);
+    for (const auto layer : layers) {
+        appendProtocol(layer);
     }
-
     if (rankId >= RANK_MAX) {
         BM_LOG_ERROR("Invalid rank protocol cache rankId:" << rankId << ", maxRankId:" << RANK_MAX);
         return;

@@ -199,6 +199,15 @@ typedef struct {
         }                                                                                               \
     } while (0)
 
+// Provider capabilities accept both SDK naming conventions without failing legacy initialization.
+#define DL_LOAD_SYM_ALT_OPTIONAL(TARGET, TYPE, HANDLE, NAME, ALIAS) \
+    do {                                                            \
+        TARGET = reinterpret_cast<TYPE>(dlsym(HANDLE, NAME));       \
+        if (TARGET == nullptr) {                                    \
+            DL_LOAD_SYM_OPTIONAL(TARGET, TYPE, HANDLE, ALIAS);      \
+        }                                                           \
+    } while (0)
+
 #define DL_LOAD_SYM_ALT(TARGET_FUNC_VAR, TARGET_FUNC_TYPE, FILE_HANDLE, SYMBOL_NAME, SYMBOL_NAME_ALT) \
     do {                                                                                              \
         TARGET_FUNC_VAR = (TARGET_FUNC_TYPE)dlsym(FILE_HANDLE, SYMBOL_NAME);                          \
@@ -219,6 +228,8 @@ typedef struct {
     } while (0)
 
 enum HybmGvaVersion : uint32_t { HYBM_GVA_V4 = 3, HYBM_GVA_UNKNOWN };
+
+HYBM_API bool HybmIsHostProviderSlice(const void *data, size_t size);
 
 } // namespace mf
 } // namespace ock

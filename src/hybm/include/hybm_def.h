@@ -57,7 +57,11 @@ typedef void *hybm_mem_slice_t;
 // HYBM_FLAG_UNRESTRICTED_MEM mem_type == MEM_DDR_TYPE, pg_type == MEM_HUGE_PAGE_TYPE
 #define HYBM_FLAG_UNRESTRICTED_MEM   (1U << 11)
 #define HYBM_FLAG_OFFLOAD_GIANT_PAGE (1U << 12)
-#define HYBM_FLAG_INIT_SHMEM_META    (1ULL << 63)
+// HYBM_FLAG_PROXY create entity for proxy
+#define HYBM_FLAG_PROXY (1U << 10)
+// HYBM_FLAG_PROVIDER provider binds all (or env-selected) NPUs of the local host
+#define HYBM_FLAG_PROVIDER        (1U << 14)
+#define HYBM_FLAG_INIT_SHMEM_META (1ULL << 63)
 
 #define HYBM_PRE_REG_SIZE_THRES (8192U * 1024) // local buffer larger than 8MB maybe preregister to mr
 
@@ -108,6 +112,8 @@ typedef enum {
     HYBM_DOP_TYPE_HOST_SHM = 1U << 6, /* same-node host shared memory (no network transport) */
     HYBM_DOP_TYPE_AIV_SDMA = 1U << 7,
     HYBM_DOP_TYPE_DEVICE_URMA = 1U << 8,
+    /* device-side transports (RDMA/URMA); keep in sync when adding a new device protocol */
+    HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA,
     HYBM_DOP_TYPE_BUTT
 } hybm_data_op_type;
 

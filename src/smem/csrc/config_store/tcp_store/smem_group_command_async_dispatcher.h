@@ -31,6 +31,7 @@ public:
     using ConnectionCallback =
         std::function<int(uint32_t rankId, const std::vector<RankFullInfo> &others, uint64_t reqId)>;
     using LinkStateQueryCallback = std::function<std::vector<LinkStateEntry>()>;
+    using SendLinkStateFunc = std::function<void(const std::vector<LinkStateEntry> &, uint64_t)>;
     using AddSlicesCallback = std::function<int(uint32_t extendingRankId, const MultiBytes &newSlices, uint64_t reqId)>;
     using SendAckBatchFunc =
         std::function<void(ControlOp ackOp, uint32_t senderRankId, const std::vector<uint32_t> &targetRankIds,
@@ -76,7 +77,19 @@ public:
     void SetLinkStateQueryCallback(LinkStateQueryCallback cb) noexcept
     {
         callbackGuard_.Open();
+        std::lock_guard<std::mutex> lock(mutex_);
         onQueryLinkState_ = std::move(cb);
+    }
+
+    bool HasLinkStateQueryCallback() noexcept
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return static_cast<bool>(onQueryLinkState_);
+    }
+
+    void SetSendLinkStateFunc(SendLinkStateFunc func) noexcept
+    {
+        sendLinkState_ = std::move(func);
     }
 
     void SetAddSlicesCallback(AddSlicesCallback cb) noexcept
@@ -156,6 +169,7 @@ private:
     LinkStateQueryCallback onQueryLinkState_;
     AddSlicesCallback onAddSlices_;
     SendAckBatchFunc sendAckBatch_;
+    SendLinkStateFunc sendLinkState_;
 };
 
 } // namespace ock::smem

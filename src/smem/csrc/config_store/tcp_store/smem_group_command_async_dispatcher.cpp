@@ -58,6 +58,7 @@ bool SmemGroupCommandAsyncDispatcher::DetachCallbacks(uint64_t timeoutMs) noexce
     onRemoveFromWhitelist_ = nullptr;
     onEstablishConnection_ = nullptr;
     onQueryLinkState_ = nullptr;
+    sendLinkState_ = nullptr;
     onAddSlices_ = nullptr;
     return drained;
 }
@@ -317,11 +318,19 @@ void SmemGroupCommandAsyncDispatcher::BackgroundQueryLinkState(uint64_t reqId) n
     std::vector<LinkStateEntry> entries;
     if (callbackGuard_.TryEnter()) {
         SmemAsyncCallbackGuard::Scope scope{callbackGuard_};
-        if (onQueryLinkState_) {
-            entries = onQueryLinkState_();
+        LinkStateQueryCallback callback;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            callback = onQueryLinkState_;
+        }
+        if (callback) {
+            entries = callback();
+        }
+        SM_LOG_INFO("[GM][Client][Send] QueryLinkState reqId=" << reqId << " entries=" << entries.size());
+        if (sendLinkState_) {
+            sendLinkState_(entries, reqId);
         }
     }
-    SM_LOG_INFO("[GM][Client][Send] QueryLinkState reqId=" << reqId << " entries=" << entries.size());
 }
 
 void SmemGroupCommandAsyncDispatcher::BackgroundAddSlices(const AddSlicesRequest &req, uint64_t reqId) noexcept

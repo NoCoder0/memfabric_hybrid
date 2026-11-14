@@ -409,5 +409,85 @@ TEST_F(EtcdStateStoreTest, RecoverFreshStartWhenNoEpoch)
     EXPECT_EQ(store_->Recover(server.Get()), SUCCESS);
 }
 
+TEST_F(EtcdStateStoreTest, RecoverPreservesRolePrefixWhenRolesSnapshotHasLargerCapacity)
+{
+    ASSERT_EQ(store_->PersistStates({RANK_ACTIVE, RANK_CHECKED_IN}, K_RANK_TWO), SUCCESS);
+    ASSERT_EQ(store_->PersistAliveRanks({0U, 1U}), SUCCESS);
+    std::vector<uint8_t> roles(K_MAX_RANKS, SMEM_GROUP_RANK_ROLE_UNKNOWN);
+    roles[0] = SMEM_GROUP_RANK_ROLE_PROVIDER;
+    roles[1] = SMEM_GROUP_RANK_ROLE_PROXY;
+    ASSERT_EQ(store_->PersistRankRoles(roles, K_MAX_RANKS), SUCCESS);
+    SmemGroupCommandSender sender = [](uint32_t, const std::vector<uint8_t> &) -> int { return 0; };
+    auto server = SmMakeRef<SmemGroupManagerServer>(sender, K_MAX_RANKS);
+
+    ASSERT_EQ(store_->Recover(server.Get()), SUCCESS);
+
+    EXPECT_EQ(server->GetRankRole(0), SMEM_GROUP_RANK_ROLE_PROVIDER);
+    EXPECT_EQ(server->GetRankRole(1), SMEM_GROUP_RANK_ROLE_PROXY);
+    EXPECT_EQ(server->GetStates()[0], RANK_ACTIVE);
+    EXPECT_EQ(server->GetStates()[1], RANK_CHECKED_IN);
+}
+
+TEST_F(EtcdStateStoreTest, RecoverRestoresRolesAndLinksAtMatchingCapacity)
+{
+    ASSERT_EQ(store_->PersistStates({RANK_ACTIVE, RANK_CHECKED_IN}, K_RANK_TWO), SUCCESS);
+    ASSERT_EQ(store_->PersistAliveRanks({0U, 1U}), SUCCESS);
+    ASSERT_EQ(store_->PersistRankRoles({SMEM_GROUP_RANK_ROLE_PROVIDER, SMEM_GROUP_RANK_ROLE_PROXY}, K_RANK_TWO),
+              SUCCESS);
+    std::vector<LinkState> links(K_RANK_TWO * K_RANK_TWO, LINK_IDLE);
+    links[K_RANK_TWO] = LINK_CONNECTED;
+    store_->FlushLinks(links, K_RANK_TWO);
+    store_->StartFlushThread();
+    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
+    store_->StopFlushThread();
+    SmemGroupCommandSender sender = [](uint32_t, const std::vector<uint8_t> &) -> int { return 0; };
+    auto server = SmMakeRef<SmemGroupManagerServer>(sender, K_RANK_TWO);
+
+    ASSERT_EQ(store_->Recover(server.Get()), SUCCESS);
+
+    EXPECT_EQ(server->GetRankRole(0), SMEM_GROUP_RANK_ROLE_PROVIDER);
+    EXPECT_EQ(server->GetRankRole(1), SMEM_GROUP_RANK_ROLE_PROXY);
+    EXPECT_EQ(server->GetLinks(), links);
+}
+
+TEST_F(EtcdStateStoreTest, RecoverIgnoresRolesSnapshotShorterThanStates)
+{
+    ASSERT_EQ(store_->PersistStates({RANK_ACTIVE, RANK_CHECKED_IN}, K_RANK_TWO), SUCCESS);
+    ASSERT_EQ(store_->PersistAliveRanks({0U, 1U}), SUCCESS);
+    ASSERT_EQ(store_->PersistRankRoles({SMEM_GROUP_RANK_ROLE_PROVIDER}, 1U), SUCCESS);
+    SmemGroupCommandSender sender = [](uint32_t, const std::vector<uint8_t> &) -> int { return 0; };
+    auto server = SmMakeRef<SmemGroupManagerServer>(sender, K_MAX_RANKS);
+
+    ASSERT_EQ(store_->Recover(server.Get()), SUCCESS);
+
+    EXPECT_EQ(server->GetRankRole(0), SMEM_GROUP_RANK_ROLE_UNKNOWN);
+    EXPECT_EQ(server->GetRankRole(1), SMEM_GROUP_RANK_ROLE_UNKNOWN);
+    EXPECT_EQ(server->GetStates()[0], RANK_ACTIVE);
+    EXPECT_EQ(server->GetStates()[1], RANK_CHECKED_IN);
+}
+
+TEST_F(EtcdStateStoreTest, RecoverDiscardsLinksWhenServerMatrixStrideDiffers)
+{
+    ASSERT_EQ(store_->PersistStates({RANK_ACTIVE, RANK_CHECKED_IN}, K_RANK_TWO), SUCCESS);
+    ASSERT_EQ(store_->PersistAliveRanks({0U, 1U}), SUCCESS);
+    ASSERT_EQ(store_->PersistRankRoles({SMEM_GROUP_RANK_ROLE_PROVIDER, SMEM_GROUP_RANK_ROLE_PROXY}, K_RANK_TWO),
+              SUCCESS);
+    std::vector<LinkState> links(K_RANK_TWO * K_RANK_TWO, LINK_IDLE);
+    links[K_RANK_TWO] = LINK_CONNECTED;
+    store_->FlushLinks(links, K_RANK_TWO);
+    store_->StartFlushThread();
+    std::this_thread::sleep_for(std::chrono::milliseconds(K_WAIT_MS));
+    store_->StopFlushThread();
+    SmemGroupCommandSender sender = [](uint32_t, const std::vector<uint8_t> &) -> int { return 0; };
+    auto server = SmMakeRef<SmemGroupManagerServer>(sender, K_MAX_RANKS);
+
+    ASSERT_EQ(store_->Recover(server.Get()), SUCCESS);
+
+    EXPECT_EQ(server->GetStates()[0], RANK_ACTIVE);
+    EXPECT_EQ(server->GetStates()[1], RANK_CHECKED_IN);
+    EXPECT_EQ(server->GetLinks()[K_RANK_TWO], LINK_IDLE);
+    EXPECT_EQ(server->GetLinks(), std::vector<LinkState>(K_MAX_RANKS * K_MAX_RANKS, LINK_IDLE));
+}
+
 } // namespace smem
 } // namespace ock

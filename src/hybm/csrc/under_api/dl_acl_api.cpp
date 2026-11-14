@@ -20,6 +20,7 @@ void *DlAclApi::rtHandle;
 const char *DlAclApi::gAscendAclLibName = "libascendcl.so";
 
 aclrtGetDeviceFunc DlAclApi::pAclrtGetDevice = nullptr;
+aclrtGetDeviceCountFunc DlAclApi::pAclrtGetDeviceCount = nullptr;
 aclrtSetDeviceFunc DlAclApi::pAclrtSetDevice = nullptr;
 aclrtDeviceEnablePeerAccessFunc DlAclApi::pAclrtDeviceEnablePeerAccess = nullptr;
 aclrtCreateStreamFunc DlAclApi::pAclrtCreateStream = nullptr;
@@ -93,6 +94,8 @@ Result DlAclApi::LoadLibrary(const std::string &libDirPath)
 
     /* load sym */
     DL_LOAD_SYM(pAclrtGetDevice, aclrtGetDeviceFunc, rtHandle, "aclrtGetDevice");
+    // Only provider device discovery uses this API and already has a configured-device fallback.
+    DL_LOAD_SYM_OPTIONAL(pAclrtGetDeviceCount, aclrtGetDeviceCountFunc, rtHandle, "aclrtGetDeviceCount");
     DL_LOAD_SYM(pAclrtSetDevice, aclrtSetDeviceFunc, rtHandle, "aclrtSetDevice");
     DL_LOAD_SYM(pAclrtDeviceEnablePeerAccess, aclrtDeviceEnablePeerAccessFunc, rtHandle, "aclrtDeviceEnablePeerAccess");
     DL_LOAD_SYM(pAclrtCreateStream, aclrtCreateStreamFunc, rtHandle, "aclrtCreateStream");
@@ -220,6 +223,7 @@ void DlAclApi::CleanupLibrary()
     }
 
     pAclrtGetDevice = nullptr;
+    pAclrtGetDeviceCount = nullptr;
     pAclrtSetDevice = nullptr;
     pAclrtDeviceEnablePeerAccess = nullptr;
     pAclrtCreateStream = nullptr;

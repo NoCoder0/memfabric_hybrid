@@ -373,6 +373,11 @@ TEST_F(SmemHaConfigStoreTest, StartServerRecoversWorldSizeAndReplaysCachedHandle
             outValue.assign(value.begin(), value.end());
             return StoreErrorCode::SUCCESS;
         }
+        if (key == KEY_ALIVE_RANK_LIST) {
+            const std::string ranks = "0,1";
+            outValue.assign(ranks.begin(), ranks.end());
+            return StoreErrorCode::SUCCESS;
+        }
         return StoreErrorCode::NOT_EXIST;
     };
 
@@ -380,13 +385,15 @@ TEST_F(SmemHaConfigStoreTest, StartServerRecoversWorldSizeAndReplaysCachedHandle
     store.RegisterServerBrokenHandler(brokenHandler);
 
     MOCKER_CPP(&AccStoreServer::UpdateStatus, int32_t(*)(bool)).stubs().will(returnValue(int32_t(0)));
-    MOCKER_CPP(&AccStoreServer::RestoreFromBackend, int32_t(*)()).stubs().will(returnValue(int32_t(0)));
     MOCKER_CPP(&AccStoreServer::Startup, int32_t(*)(const smem_tls_config &)).stubs().will(returnValue(int32_t(0)));
 
     store.StartServer();
 
     ASSERT_NE(nullptr, store.serverDelegate_.Get());
     EXPECT_TRUE(store.isLeader_.load(std::memory_order_acquire));
+    store.serverDelegate_->state_.store(SS_INITED); // Startup is stubbed above.
+    EXPECT_FALSE(store.serverDelegate_->CanReceiveNewLink());
+    EXPECT_EQ(SS_RECOVERING, store.serverDelegate_->state_.load());
     EXPECT_EQ(K_RECOVERED_WORLD_SIZE, store.serverDelegate_->worldSize_);
     EXPECT_TRUE(static_cast<bool>(store.serverDelegate_->externalBrokenHandler_));
 
@@ -662,6 +669,65 @@ TEST_F(SmemHaConfigStoreTest, AccStoreServerLaunchCleanupThreadSkipsWhenFirstUpd
     EXPECT_EQ(SM_OK, ret);
     // cleanupThread_ should not be joinable (was never started).
     EXPECT_FALSE(server.cleanupThread_.joinable());
+}
+
+TEST_F(SmemHaConfigStoreTest, ShutdownDuringStaleCheckoutSkipsMembershipWriteback)
+{
+    auto backend = MakeBackend();
+    auto fb = Convert<ConfigStoreBackend, FakeStoreBackend>(backend);
+    AccStoreServer server(K_LOOPBACK_IP, K_STORE_PORT, K_DEFAULT_WORLD_SIZE, backend, false);
+    server.state_.store(SS_RECOVERED);
+    server.aliveRankFromBackend_ = {0U, 1U};
+    server.aliveRankSet_ = {0U, 1U};
+    server.reconnectedRankSet_ = {0U};
+
+    // Hold Checkout between its two store locks while shutdown marks the server exited.
+    std::unique_lock<std::mutex> checkoutLock(server.groupManager_->mutex_);
+    std::thread cleanup([&] { server.CleanupStaleRanks(); });
+    bool reachedCheckout = false;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        {
+            std::lock_guard<std::mutex> lock(server.storeMutex_);
+            if (server.aliveRankSet_.count(1U) == 0) {
+                reachedCheckout = true;
+                break;
+            }
+        }
+        std::this_thread::yield();
+    }
+    {
+        std::lock_guard<std::mutex> lock(server.storeMutex_);
+        server.state_.store(SS_EXITED);
+        server.shouldStop_.store(true);
+    }
+    checkoutLock.unlock();
+    cleanup.join();
+    EXPECT_TRUE(reachedCheckout);
+    EXPECT_TRUE(server.rankStateTaskQueue_.empty());
+    EXPECT_EQ(fb->putValues.count(KEY_ALIVE_RANK_LIST), 0U);
+}
+
+TEST_F(SmemHaConfigStoreTest, ShutdownDuringRecoveryPreservesMembershipAndLeaderStatus)
+{
+    auto backend = MakeBackend();
+    auto fb = Convert<ConfigStoreBackend, FakeStoreBackend>(backend);
+    AccStoreServer server(K_LOOPBACK_IP, K_STORE_PORT, K_DEFAULT_WORLD_SIZE, backend, false);
+    server.aliveRankFromBackend_ = {0U, 1U};
+    server.aliveRankSet_ = {0U, 1U};
+    server.state_.store(SS_RECOVERING);
+    {
+        std::lock_guard<std::mutex> lock(server.recoveryMutex_);
+        ASSERT_EQ(SM_OK, server.LaunchCleanupThread());
+        server.state_.store(SS_EXITED);
+        server.shouldStop_.store(true);
+        server.recoveryCond_.notify_all();
+    }
+    server.cleanupThread_.join();
+    EXPECT_EQ(server.state_.load(), SS_EXITED);
+    EXPECT_EQ(server.aliveRankSet_, (std::unordered_set<uint32_t>{0U, 1U}));
+    EXPECT_TRUE(server.rankStateTaskQueue_.empty());
+    EXPECT_EQ(fb->putValues.count(KEY_LEADER_STATUS), 0U);
 }
 
 TEST_F(SmemHaConfigStoreTest, AccStoreServerCanReceiveNewLinkTransitionsInitedToNormalWithSkipRecover)

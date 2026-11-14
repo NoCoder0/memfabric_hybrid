@@ -168,6 +168,7 @@ private:
     Result HandleRemoveFromWhitelist(SmemMessage &msg) noexcept;
     Result HandleEstablishConnection(SmemMessage &msg) noexcept;
     Result HandleQueryLinkState(SmemMessage &msg) noexcept;
+    Result SendLinkStateResponse(const std::vector<LinkStateEntry> &entries, uint64_t requestId) noexcept;
     Result HandlePromoteToActive(SmemMessage &msg) noexcept;
     Result HandleAddSlices(SmemMessage &msg) noexcept;
     Result SendWatchRequest(const std::vector<uint8_t> &reqBody,

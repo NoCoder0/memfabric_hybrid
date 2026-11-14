@@ -24,6 +24,13 @@
 
 namespace ock {
 namespace mf {
+enum class ImportEntryKind : uint8_t {
+    PeerSlice = 0, // 表示普通需要连接的对端
+    ProviderPool,  // 表示导入的是一个 provider
+    IgnoredProxy,  // 表示导入的是需要忽略的 proxy
+    Max
+};
+
 struct TransportExtraInfo {
     uint32_t rankId;
     transport::TransportMemoryKey memKey;
@@ -42,7 +49,16 @@ struct MemSliceStatus {
 
 class MemSegment {
 public:
+    // DRAM segment implementation selected from the deployment form and device capabilities
+    enum class DramSegmentKind : uint8_t { ConnBased, HostShm, Vmm };
+
     static MemSegmentPtr Create(const MemSegmentOptions &options, int entityId);
+
+    // Pure decision helpers (no member state), unit-testable:
+    //  - SelectDramSegmentKind: host-shm takes precedence, then proxy, then VMM capability
+    //  - IsVmmSupported: GVA v4 + 910C/950 + no shmFd + no host TCP/RDMA + (no device transport or SDMA mixed)
+    static DramSegmentKind SelectDramSegmentKind(const MemSegmentOptions &options, AscendSocType socType) noexcept;
+    static bool IsVmmSupported(const MemSegmentOptions &options, AscendSocType socType) noexcept;
 
     // Standalone A3 Host allocations reuse the existing VMM segment implementation.
     // Match the existing VMM address-space bound; physical capacity is checked by the driver.
@@ -102,9 +118,12 @@ public:
      *        rank, and remap the imported gva into the overrideRank's window (trans scene: one entity per
      *        process, each uniqueId connection gets a unique local rank). Only relevant to segments carrying
      *        rankId/gva layout.
+     * @param entryKinds out-param, one ImportEntryKind for each element of allExInfo. The caller must
+     *        pre-fill it with PeerSlice; implementations only overwrite the entries that are not ordinary
+     *        peer slices (e.g. ProviderPool / IgnoredProxy) and must not resize it.
      */
-    virtual Result Import(const std::vector<std::string> &allExInfo, void *addresses[],
-                          uint32_t overrideRank = HYBM_IMPORT_RANK_INVALID) noexcept = 0;
+    virtual Result Import(const std::vector<std::string> &allExInfo, void *addresses[], uint32_t overrideRank,
+                          std::vector<ImportEntryKind> &entryKinds) noexcept = 0;
 
     /*
      * delete imported memory area according to rankid
@@ -223,6 +242,7 @@ protected:
     static uint32_t bootIdHead_;
     static std::string sysBoolId_;
     static AscendSocType socType_;
+    static MachineId machineId_;
     uint32_t sliceCount_{0};
 
 private:

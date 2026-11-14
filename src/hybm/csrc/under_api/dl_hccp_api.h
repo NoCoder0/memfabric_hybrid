@@ -25,6 +25,8 @@ using raRdevGetHandleFunc = int (*)(uint32_t, void **);
 
 using raGetInterfaceVersionFunc = int (*)(uint32_t, uint32_t, uint32_t *);
 using raInitFunc = int (*)(const HccpRaInitConfig *);
+using raDeinitFunc = int (*)(HccpRaInitConfig *);
+using raRdevDeinitFunc = int (*)(void *, unsigned int);
 using raSocketInitFunc = int (*)(HccpNetworkMode, HccpRdev, void **);
 using raSocketDeinitFunc = int (*)(void *);
 using raRdevInitV2Func = int (*)(HccpRdevInitInfo, HccpRdev, void **);
@@ -45,6 +47,9 @@ using raQpCreateWithAttrsFunc = int (*)(void *, struct HccpQpExtAttrs *, void **
 using raQpAiCreateFunc = int (*)(void *, const HccpQpExtAttrs *, HccpAiQpInfo *, void **);
 using raQpDestroyFunc = int (*)(void *);
 using raGetQpStatusFunc = int (*)(void *, int *);
+using raGetQpAttrFunc = int (*)(void *, QpAttr *);
+using raTypicalQpModifyFunc = int (*)(void *, TypicalQp *, TypicalQp *);
+using raTypicalSendWrFunc = int (*)(void *, send_wr *, send_wr_rsp *);
 using raQpConnectAsyncFunc = int (*)(void *, const void *);
 using raRegisterMrFunc = int (*)(const void *, HccpMrInfo *, void **);
 using raDeregisterMrFunc = int (*)(const void *, void *);
@@ -77,6 +82,16 @@ public:
             return BM_UNDER_API_UNLOAD;
         }
         return gRaInit(&config);
+    }
+
+    static inline int RaDeinit(HccpRaInitConfig &config)
+    {
+        return gRaDeinit == nullptr ? BM_UNDER_API_UNLOAD : gRaDeinit(&config);
+    }
+
+    static inline int RaRdevDeinit(void *handle, unsigned int notifyType)
+    {
+        return gRaRdevDeinit == nullptr ? BM_UNDER_API_UNLOAD : gRaRdevDeinit(handle, notifyType);
     }
 
     static inline int RaSocketDeinit(void *socketHandle)
@@ -218,6 +233,30 @@ public:
         return gRaGetQpStatus(qpHandle, &status);
     }
 
+    static inline int RaGetQpAttr(void *qpHandle, QpAttr &attr)
+    {
+        if (gRaGetQpAttr == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gRaGetQpAttr(qpHandle, &attr);
+    }
+
+    static inline int RaTypicalQpModify(void *qpHandle, TypicalQp &local, TypicalQp &remote)
+    {
+        if (gRaTypicalQpModify == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gRaTypicalQpModify(qpHandle, &local, &remote);
+    }
+
+    static inline int RaTypicalSendWr(void *qpHandle, send_wr &wr, send_wr_rsp &rsp)
+    {
+        if (gRaTypicalSendWr == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return gRaTypicalSendWr(qpHandle, &wr, &rsp);
+    }
+
     static inline int RaQpConnectAsync(void *qp, const void *socketFd)
     {
         if (gRaQpConnectAsync == nullptr) {
@@ -316,6 +355,8 @@ private:
 
     static raRdevGetHandleFunc gRaRdevGetHandle;
     static raInitFunc gRaInit;
+    static raDeinitFunc gRaDeinit;
+    static raRdevDeinitFunc gRaRdevDeinit;
     static raSocketInitFunc gRaSocketInit;
     static raSocketDeinitFunc gRaSocketDeinit;
     static raRdevInitV2Func gRaRdevInitV2;
@@ -333,6 +374,9 @@ private:
     static raQpAiCreateFunc gRaQpAiCreate;
     static raQpDestroyFunc gRaQpDestroy;
     static raGetQpStatusFunc gRaGetQpStatus;
+    static raGetQpAttrFunc gRaGetQpAttr;
+    static raTypicalQpModifyFunc gRaTypicalQpModify;
+    static raTypicalSendWrFunc gRaTypicalSendWr;
     static raQpConnectAsyncFunc gRaQpConnectAsync;
     static raRegisterMrFunc gRaRegisterMR;
     static raDeregisterMrFunc gRaDeregisterMR;

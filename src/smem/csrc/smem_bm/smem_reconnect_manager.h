@@ -32,6 +32,7 @@ public:
     explicit SmemReconnectManager(RemoveAllImportedHandler removeAllImported);
     void RegisterDisconnectObserver(TcpConfigStore &store);
     void ReleaseDisconnectObserver() noexcept;
+    int CleanupAfterReconnect(bool &reset);
     int ImportAfterReconnectCleanup(const std::vector<RankFullInfo> &peers, const ImportPeersHandler &importPeers);
 
 private:

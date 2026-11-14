@@ -14,7 +14,12 @@
 #include <algorithm>
 #include <cstring>
 #include <exception>
+#include <limits>
+#include <sstream>
+#include <cstdlib>
+#include <string_view>
 
+#include "compose_transport_manager.h"
 #include "dl_acl_api.h"
 #include "dl_api.h"
 #include "dl_hal_api.h"
@@ -22,7 +27,14 @@
 #include "hybm_compose_data_op.h"
 #include "hybm_data_op_host_rdma.h"
 #include "hybm_data_op_host_shm.h"
+#include "hybm_conn_based_segment.h"
 #include "hybm_ex_info_transfer.h"
+#include "device_rdma_transport_manager.h"
+#include "rdma_provider_control_server.h"
+#include "rdma_proxy_transport_manager.h"
+#include "provider_service.h"
+#include "urma_provider_control_server.h"
+#include "device_urma_transport_manager.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"
 #include "hybm_ptracer.h"
@@ -31,6 +43,26 @@
 
 namespace ock {
 namespace mf {
+
+namespace {
+struct UnreleasedTransport {
+    std::shared_ptr<transport::device::ProviderService> server;
+    MemSegmentPtr dram;
+    transport::TransManagerPtr transport;
+    DataOperatorPtr dataOperator;
+    MemSegmentPtr hbm;
+    std::unordered_map<void *, std::shared_ptr<void>> allocations;
+};
+
+// Final destruction has no retry caller. Keep the backing alive while the device may still access it.
+void RetainUnreleasedTransport(UnreleasedTransport resources)
+{
+    static std::mutex mutex;
+    static auto *retained = new std::vector<UnreleasedTransport>();
+    std::lock_guard<std::mutex> lock(mutex);
+    retained->push_back(std::move(resources));
+}
+} // namespace
 
 MemEntityDefault::MemEntityDefault(int id) noexcept : id_(id), initialized_(false) {}
 
@@ -45,6 +77,11 @@ Result MemEntityDefault::InitTagManager()
     tagManager_ = std::make_shared<HybmEntityTagInfo>();
     BM_ASSERT_LOG_AND_RETURN(tagManager_->TagInfoInit(options_) == BM_OK, "Failed to init tagManager",
                              BM_INVALID_PARAM);
+    uint32_t localSuperPodId = 0U;
+    uint32_t localServerId = 0U;
+    int32_t localDevicePhyId = -1;
+    MemSegment::GetLocalPhysicalInfo(localSuperPodId, localServerId, localDevicePhyId);
+    tagManager_->SetRankTopology(options_.rankId, localSuperPodId, localServerId, localDevicePhyId);
     std::vector<hybm_data_op_type> layerProtocols;
     if (tagManager_ != nullptr) {
         layerProtocols = tagManager_->GetLayersForRank(options_.rankId);
@@ -139,6 +176,27 @@ int32_t MemEntityDefault::ReserveMemorySpace() noexcept
             BM_LOG_ERROR("Failed to reserver DRAM memory space ret: " << ret);
             return ret;
         }
+        if (providerServer_) {
+            auto conn = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+            if (conn == nullptr || !conn->IsHostProvider()) {
+                UnReserveMemorySpace();
+                BM_LOG_ERROR("provider segment has no host shm.");
+                return BM_ERROR;
+            }
+            if (!providerServer_->RegisterMemory(conn->GetHostShmBase(), conn->GetHostShmSize(),
+                                                 conn->GetProviderGvaBase(options_.rankId), options_.rankId)) {
+                providerServer_->Stop();
+                if (providerServer_->CleanupComplete()) {
+                    UnReserveMemorySpace();
+                }
+                BM_LOG_ERROR("provider register memory failed.");
+                return BM_ERROR;
+            }
+            if (!providerServer_->Start()) {
+                BM_LOG_ERROR("provider control server failed to start");
+                return BM_ERROR;
+            }
+        }
         if (dataOperator_) {
             dataOperator_->UpdateGvaSpace(HYBM_MEM_TYPE_HOST, (uint64_t)dramGva_, options_.maxDRAMSize,
                                           options_.rankCount);
@@ -152,6 +210,14 @@ int32_t MemEntityDefault::UnReserveMemorySpace() noexcept
 {
     if (!initialized_) {
         return BM_OK;
+    }
+
+    if (providerServer_ != nullptr) {
+        providerServer_->Stop();
+        if (!providerServer_->CleanupComplete()) {
+            BM_LOG_ERROR("provider cleanup incomplete before releasing memory, entityId:" << id_);
+            return BM_ERROR;
+        }
     }
 
     if (hbmSegment_ != nullptr) {
@@ -198,7 +264,7 @@ int32_t MemEntityDefault::AllocLocalMemory(uint64_t size, hybm_mem_type mType, u
     info.size = realSlice->size_;
     info.flags =
         segment->GetMemoryType() == HYBM_MEM_TYPE_DEVICE ? transport::REG_MR_FLAG_HBM : transport::REG_MR_FLAG_DRAM;
-    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     const bool skipHostShmDeviceRegistration = mType == HYBM_MEM_TYPE_HOST &&
                                                (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
                                                (options_.bmDataOpType & deviceTransportMask) != 0U;
@@ -321,6 +387,10 @@ int32_t MemEntityDefault::FreeLocalMemory(hybm_mem_slice_t slice, uint32_t flags
         auto ret = transportManager_->UnregisterMemoryRegion(memSlice->vAddress_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("UnregisterMemoryRegion failed, please check input slice.");
+            if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
+                (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0U) {
+                return ret;
+            }
         }
     }
 
@@ -379,6 +449,121 @@ uint64_t MemEntityDefault::GetSliceSize(hybm_mem_slice_t slice)
     return 0;
 }
 
+uint16_t MemEntityDefault::LocalPhyDevId() const noexcept
+{
+    // The ACL logic device id is node-unique (e.g. 0-7 on an 8-card node) and identical for the same physical
+    // NPU on both nodes, so it can be used to pair proxies across nodes. Fall back to devId when unavailable.
+    int32_t logicId = HybmGetInitedLogicDeviceId();
+    if (logicId < 0 || logicId > static_cast<int32_t>(std::numeric_limits<uint16_t>::max())) {
+        return static_cast<uint16_t>(options_.devId);
+    }
+    return static_cast<uint16_t>(logicId);
+}
+
+namespace {
+// Upper bound for the expansion of MEMFABRIC_PROVIDER_DEVICES, so a typo like "0-4294967295" stays bounded.
+constexpr uint32_t kMaxProviderDeviceIds = 1024U;
+
+// std::strtoul accepts " 3", "+3", "3abc" and returns 0 for garbage, which would silently pick the wrong NPU.
+bool ParseProviderDeviceId(std::string_view text, uint32_t &id)
+{
+    if (text.empty() || text.size() > 10U) {
+        return false;
+    }
+    uint32_t value = 0;
+    for (char ch : text) {
+        if (ch < '0' || ch > '9') {
+            return false;
+        }
+        const auto digit = static_cast<uint32_t>(ch - '0');
+        if (value > (UINT32_MAX - digit) / 10U) {
+            return false;
+        }
+        value = value * 10U + digit;
+    }
+    id = value;
+    return true;
+}
+
+bool ParseProviderDeviceToken(std::string_view token, std::vector<uint32_t> &ids)
+{
+    // Keeps the caller's list bounded no matter how many comma-separated ids the environment holds.
+    if (ids.size() >= kMaxProviderDeviceIds) {
+        return false;
+    }
+    const auto dash = token.find('-');
+    uint32_t begin = 0;
+    uint32_t end = 0;
+    if (dash == std::string_view::npos) {
+        if (!ParseProviderDeviceId(token, begin)) {
+            return false;
+        }
+        ids.push_back(begin);
+        return true;
+    }
+    if (!ParseProviderDeviceId(token.substr(0, dash), begin) || !ParseProviderDeviceId(token.substr(dash + 1), end) ||
+        begin > end) {
+        return false;
+    }
+    if (end - begin >= kMaxProviderDeviceIds || end - begin + 1U > kMaxProviderDeviceIds - ids.size()) {
+        return false;
+    }
+    // 用不会回绕的计数器迭代：begin == end == UINT32_MAX 时 ++id 会回绕成 0，id <= end 恒成立。
+    for (uint64_t id = begin; id <= static_cast<uint64_t>(end); ++id) {
+        ids.push_back(static_cast<uint32_t>(id));
+    }
+    return true;
+}
+
+std::vector<uint32_t> ProviderDeviceIds()
+{
+    std::vector<uint32_t> ids;
+    const char *env = std::getenv("MEMFABRIC_PROVIDER_DEVICES");
+    if (env != nullptr && *env != '\0') {
+        const std::string spec(env);
+        std::stringstream ss(spec);
+        std::string token;
+        while (std::getline(ss, token, ',')) {
+            std::vector<uint32_t> parsed;
+            if (!ParseProviderDeviceToken(token, parsed)) {
+                // Fail closed: falling back to every NPU would take over cards owned by another provider instance.
+                BM_LOG_ERROR("invalid MEMFABRIC_PROVIDER_DEVICES token '["
+                             << token << "]', expect \"0,1\" or \"0-7\" with ids <= " << kMaxProviderDeviceIds
+                             << ", device list ignored.");
+                return {};
+            }
+            // 单个 token 的解析结果各自受 kMaxProviderDeviceIds 限制，合并后的总数必须单独把关，
+            // 否则 "0,1,...,n" 这类多 token 配置可以突破文档承诺的上限。
+            if (ids.size() + parsed.size() > kMaxProviderDeviceIds) {
+                BM_LOG_ERROR("MEMFABRIC_PROVIDER_DEVICES lists more than " << kMaxProviderDeviceIds
+                                                                           << " device ids, device list ignored.");
+                return {};
+            }
+            for (auto id : parsed) {
+                if (std::find(ids.begin(), ids.end(), id) == ids.end()) {
+                    ids.push_back(id);
+                }
+            }
+        }
+        if (!ids.empty()) {
+            return ids;
+        }
+        BM_LOG_ERROR("MEMFABRIC_PROVIDER_DEVICES is set but lists no device id, refusing to bind every NPU.");
+        return {};
+    }
+    uint32_t count = 0;
+    if (DlAclApi::AclrtGetDeviceCount(&count) == BM_OK && count > 0) {
+        ids.resize(count);
+        for (uint32_t i = 0; i < count; ++i) {
+            ids[i] = i;
+        }
+    } else {
+        ids.push_back(0);
+    }
+    return ids;
+}
+} // namespace
+
 namespace {
 constexpr size_t MAX_TRANSPORT_KEY_WORDS = transport::TRANS_KEY_MAX_WORDS;
 
@@ -387,7 +572,7 @@ int AppendEntityExportInfo(ExchangeInfoWriter &desc, const EntityExportInfo &inf
     int ret = desc.Append(info.magic);
     ret = (ret != 0) ? ret : desc.Append(info.rankId);
     ret = (ret != 0) ? ret : desc.Append(info.role);
-    ret = (ret != 0) ? ret : desc.Append(info.reserved);
+    ret = (ret != 0) ? ret : desc.Append(info.phyDevId);
     ret = (ret != 0) ? ret : desc.Append(info.nic, sizeof(info.nic));
     ret = (ret != 0) ? ret : desc.Append(info.layerCount);
     ret = (ret != 0) ? ret : desc.Append(info.layers, sizeof(info.layers));
@@ -403,7 +588,7 @@ int ReadEntityExportInfo(const ExchangeInfoReader &reader, EntityExportInfo &inf
     int ret = reader.Read(info.magic);
     ret = (ret != 0) ? ret : reader.Read(info.rankId);
     ret = (ret != 0) ? ret : reader.Read(info.role);
-    ret = (ret != 0) ? ret : reader.Read(info.reserved);
+    ret = (ret != 0) ? ret : reader.Read(info.phyDevId);
     ret = (ret != 0) ? ret : reader.Read(info.nic, sizeof(info.nic));
     ret = (ret != 0) ? ret : reader.Read(info.layerCount);
     ret = (ret != 0) ? ret : reader.Read(info.layers, sizeof(info.layers));
@@ -454,7 +639,17 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
     exportInfo.layerCount = static_cast<uint32_t>(layerProtocols.size());
     std::copy(layerProtocols.begin(), layerProtocols.end(), exportInfo.layers);
     MemSegment::GetLocalPhysicalInfo(exportInfo.superPodId, exportInfo.serverId, exportInfo.devicePhyId);
-    if (transportManager_ != nullptr) {
+    // phyDevId is the node-unique device id, used by a proxy to connect only to same-device peers.
+    exportInfo.phyDevId = LocalPhyDevId();
+    if (providerServer_ != nullptr) {
+        const auto &url = providerServer_->GetControlUrl();
+        if (url.size() >= sizeof(exportInfo.nic)) {
+            BM_LOG_ERROR("provider control url(" << url << ") too long.");
+            return BM_ERROR;
+        }
+        std::copy_n(url.c_str(), url.size(), exportInfo.nic);
+        BM_LOG_DEBUG("provider control url:" << url);
+    } else if (transportManager_ != nullptr) {
         auto &nic = transportManager_->GetNic();
         if (nic.size() >= sizeof(exportInfo.nic)) {
             BM_LOG_ERROR("transport get nic(" << nic << ") too long.");
@@ -574,8 +769,10 @@ int32_t MemEntityDefault::ExportSliceExchangeInfo(hybm_mem_slice_t slice, Exchan
 }
 
 int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint32_t count, void *addresses[],
-                                           uint32_t overrideRank) noexcept
+                                           uint32_t overrideRank, std::vector<ImportEntryKind> &entryKinds) noexcept
 {
+    entryKinds.assign(count, ImportEntryKind::IgnoredProxy);
+
     if (desc[0].LeftBytes() == 0) {
         BM_LOG_DEBUG("no segment need import.");
         return BM_OK;
@@ -608,13 +805,20 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
     if (!dramInfos.empty()) {
         std::vector<void *> dramAddrs(dramInfos.size(), nullptr);
         BM_ASSERT_LOG_AND_RETURN(dramSegment_ != nullptr, "dramSegment is nullptr", BM_ERROR);
-        auto ret = dramSegment_->Import(dramInfos, dramAddrs.data(), overrideRank);
+        std::vector<ImportEntryKind> dramResults(dramInfos.size(), ImportEntryKind::PeerSlice);
+        auto ret = dramSegment_->Import(dramInfos, dramAddrs.data(), overrideRank, dramResults);
         if (ret != BM_OK) {
             BM_LOG_ERROR("dram segment import infos failed: " << ret);
             return ret;
         }
-        if (addresses != nullptr) {
-            for (uint32_t i = 0; i < dramInfos.size(); i++) {
+        if (dramResults.size() != dramInfos.size()) {
+            BM_LOG_ERROR("dram import results size mismatch, results: " << dramResults.size()
+                                                                        << ", infos: " << dramInfos.size());
+            return BM_ERROR;
+        }
+        for (uint32_t i = 0; i < dramInfos.size(); i++) {
+            entryKinds[dramIndex[i]] = dramResults[i];
+            if (addresses != nullptr) {
                 addresses[dramIndex[i]] = dramAddrs[i];
             }
         }
@@ -623,7 +827,8 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
     if (!userSegInfos.empty()) {
         std::vector<void *> userSegAddrs(userSegInfos.size(), nullptr);
         BM_ASSERT_LOG_AND_RETURN(hbmSegment_ != nullptr, "hbmSegment is nullptr", BM_ERROR);
-        auto ret = hbmSegment_->Import(userSegInfos, userSegAddrs.data(), overrideRank);
+        std::vector<ImportEntryKind> userSegResults(userSegInfos.size(), ImportEntryKind::PeerSlice);
+        auto ret = hbmSegment_->Import(userSegInfos, userSegAddrs.data(), overrideRank, userSegResults);
         if (ret != BM_OK) {
             // P2P 未就绪是可重试的瞬时状态，根因已在 segment 层记 WARN，这里不重复打印
             if (ret != BM_P2P_NOT_READY) {
@@ -631,8 +836,14 @@ int32_t MemEntityDefault::ImportForSegment(const ExchangeInfoReader desc[], uint
             }
             return ret;
         }
-        if (addresses != nullptr) {
-            for (uint32_t i = 0; i < userSegInfos.size(); i++) {
+        if (userSegResults.size() != userSegInfos.size()) {
+            BM_LOG_ERROR("hbm import results size mismatch, results: " << userSegResults.size()
+                                                                       << ", infos: " << userSegInfos.size());
+            return BM_ERROR;
+        }
+        for (uint32_t i = 0; i < userSegInfos.size(); i++) {
+            entryKinds[userSegIndex[i]] = userSegResults[i];
+            if (addresses != nullptr) {
                 addresses[userSegIndex[i]] = userSegAddrs[i];
             }
         }
@@ -661,15 +872,43 @@ int32_t MemEntityDefault::ImportSliceExchangeInfo(const ExchangeInfoReader desc[
     // trans 场景 rank 覆盖：flags 中解码本地分配的覆盖 rank，0 表示不覆盖
     const uint32_t overrideRank =
         HYBM_IMPORT_RANK_ENABLED(flags) ? HYBM_IMPORT_RANK_DECODE(flags) : HYBM_IMPORT_RANK_INVALID;
+    std::vector<ImportEntryKind> entryKinds;
 
-    ret = ImportForSegment(desc, count, addresses, overrideRank);
+    ret = ImportForSegment(desc, count, addresses, overrideRank, entryKinds);
     if (ret != BM_OK) {
         return ret;
     }
 
+    auto connSegment = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+    if (connSegment != nullptr && connSegment->IsHostProxy() && transportManager_ != nullptr) {
+        transport::HybmTransPrepareOptions prepareOptions;
+        for (const auto &item : connSegment->GetImportedProviders()) {
+            if (item.first == connSegment->GetLocalProviderRank()) {
+                continue;
+            }
+            auto rankIt = importedRanks_.find(item.first);
+            if (rankIt == importedRanks_.end() || rankIt->second.nic[0] == '\0') {
+                BM_LOG_ERROR("provider entity or control URL missing, providerRank:" << item.first);
+                return BM_NOT_INITIALIZED;
+            }
+            transport::TransportRankPrepareInfo info;
+            info.isProvider = true;
+            info.providerControlUrl = std::string(rankIt->second.nic);
+            info.providerGvaBase = connSegment->GetProviderGvaBase(item.first);
+            prepareOptions.options[item.first] = std::move(info);
+        }
+        if (!prepareOptions.options.empty()) {
+            ret = transportManager_->Prepare(prepareOptions);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("prepare proxy links failed: " << ret);
+                return ret;
+            }
+        }
+    }
+
     // transport要在segment之后import
     if (transportManager_ != nullptr && !(options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
-        ret = ImportForTransportPrecheck(desc, count, addresses, overrideRank);
+        ret = ImportForTransportPrecheck(desc, count, entryKinds, addresses, overrideRank);
         if (ret != BM_OK) {
             return ret;
         }
@@ -704,6 +943,7 @@ int32_t MemEntityDefault::ImportForLayerProtocols()
                                              << " local rank:" << options_.rankId << " peer rank:" << rankId);
             return BM_INVALID_PARAM;
         }
+        tagManager_->SetRankTopology(rankId, info.superPodId, info.serverId, info.devicePhyId);
         const std::vector<hybm_data_op_type> layers(info.layers, info.layers + info.layerCount);
         auto ret = tagManager_->AddRankLayers(rankId, layers);
         if (ret != BM_OK) {
@@ -724,7 +964,14 @@ int32_t MemEntityDefault::ConnectTransport(const uint32_t *ranks, uint32_t count
     if (transportManager_ == nullptr || (options_.bmDataOpType & HYBM_DOP_TYPE_AIV_SDMA)) {
         return BM_OK;
     }
+    auto conn = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+    const auto providers =
+        conn != nullptr ? conn->GetImportedProviders() : std::unordered_map<uint32_t, HostExportInfo>{};
     for (uint32_t i = 0; i < count; ++i) {
+        if (conn != nullptr && conn->IsHostProxy() &&
+            (ranks[i] == conn->GetLocalProviderRank() || providers.find(ranks[i]) == providers.end())) {
+            continue;
+        }
         auto ret = transportManager_->ConnectRank(ranks[i]);
         if (dataOperator_ != nullptr) {
             const auto connectedProtocols = transportManager_->GetConnectedProtocols(ranks[i]);
@@ -751,13 +998,19 @@ int32_t MemEntityDefault::ImportForTransportManager()
         if (options_.role != HYBM_ROLE_PEER && static_cast<hybm_role_type>(info.role) == options_.role) {
             continue;
         }
+        // Peers without a transport (e.g. a bare provider that only owns shared memory) export an empty nic;
+        // they cannot be connected over the network and must be skipped.
+        if (info.nic[0] == '\0') {
+            continue;
+        }
+        // A proxy only connects (device RDMA) to peers on the same node-unique phyDevId.
+        if ((options_.flags & HYBM_FLAG_PROXY) != 0 && info.phyDevId != LocalPhyDevId()) {
+            continue;
+        }
         transport::TransportRankPrepareInfo prepareInfo;
         prepareInfo.nic = info.nic;
         prepareInfo.privateData = info.transportPrivateData;
         prepareInfo.role = static_cast<hybm_role_type>(info.role);
-        prepareInfo.superPodId = info.superPodId;
-        prepareInfo.serverId = info.serverId;
-        prepareInfo.devicePhyId = info.devicePhyId;
         prepareOptions.options.emplace(info.rankId, std::move(prepareInfo));
     }
 
@@ -826,7 +1079,8 @@ int32_t MemEntityDefault::ImportEntityExchangeInfo(const ExchangeInfoReader desc
         }
     }
     if (infos.size() > 0) {
-        auto ret = hbmSegment_->Import(infos, nullptr, overrideRank);
+        std::vector<ImportEntryKind> importResults(infos.size(), ImportEntryKind::PeerSlice);
+        auto ret = hbmSegment_->Import(infos, nullptr, overrideRank, importResults);
         if (ret != BM_OK) {
             BM_LOG_ERROR("failed to import segment info, ret: " << ret);
             return BM_ERROR;
@@ -950,9 +1204,20 @@ int32_t MemEntityDefault::RemoveImported(const std::vector<uint32_t> &ranks) noe
         return BM_NOT_INITIALIZED;
     }
 
+    if (providerServer_ != nullptr) {
+        const auto ret = providerServer_->RemoveRanks(ranks);
+        if (ret != BM_OK) {
+            return ret;
+        }
+    }
     if (transportManager_ != nullptr) {
         auto ret = transportManager_->RemoveRanks(ranks);
         if (ret != BM_OK) {
+            auto conn = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+            if (conn != nullptr && conn->IsHostProxy()) {
+                BM_LOG_ERROR("unable to remove provider transport ranks : " << ret);
+                return ret;
+            }
             BM_LOG_WARN("unable to transport remove ranks : " << ret);
         }
     }
@@ -990,6 +1255,29 @@ int32_t MemEntityDefault::RemoveImported(const std::vector<uint32_t> &ranks) noe
     }
 
     return BM_OK;
+}
+
+// host combo 组合下的本地地址判据：只有已知本地类别（本机普通内存或本机 provider 共享内存映射区）
+// 才允许走本地共享内存拷贝；未知归属（含窗口内池外空洞）一律按远端处理，避免跨机读写误落本机内存。
+static bool IsLocalAddressScope(HybmConnBasedSegment::AddressScope scope)
+{
+    return scope == HybmConnBasedSegment::AddressScope::LOCAL_HOST ||
+           scope == HybmConnBasedSegment::AddressScope::LOCAL_PROVIDER_SHM;
+}
+
+// The TRANS HBM segment may cover both HBM and DRAM rank windows.
+// Exclude HBM-only windows before classifying DRAM through its mapped range.
+// Unknown holes and remote windows must stay on the device path.
+bool MemEntityDefault::IsLocalCopyAddress(void *addr, const HybmConnBasedSegment &segment) noexcept
+{
+    const uint64_t va = reinterpret_cast<uint64_t>(addr);
+    uint32_t hbmRank = 0;
+    uint32_t dramRank = 0;
+    if (hbmSegment_ != nullptr && hbmSegment_->FindRemoteRankByVa(va, hbmRank) &&
+        !segment.FindRemoteRankByVa(va, dramRank)) {
+        return false;
+    }
+    return IsLocalAddressScope(segment.GetAddressScope(va));
 }
 
 int32_t MemEntityDefault::RemoveAllImported() noexcept
@@ -1042,7 +1330,18 @@ int32_t MemEntityDefault::CopyData(hybm_copy_params &params, hybm_data_copy_dire
     options.stream = stream;
     options.srcRankId = p2pInfo.first;
     options.destRankId = p2pInfo.second;
+    auto connSegment = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+    if (connSegment != nullptr && connSegment->IsHostCombo()) {
+        const bool local =
+            IsLocalCopyAddress(params.src, *connSegment) && IsLocalCopyAddress(params.dest, *connSegment);
+        options.hostShmPolicy = local ? HostShmPolicy::PREFER : HostShmPolicy::EXCLUDE;
+    }
 
+    if (dataOperator_ == nullptr) {
+        BM_LOG_ERROR("Data copy failed, dataOperator_ is null, src:"
+                     << VaToStr(params.src) << ", dest:" << VaToStr(params.dest) << ", size:" << params.dataSize);
+        return BM_ERROR;
+    }
     ret = dataOperator_->DataCopy(params, direction, options);
     if (ret != BM_OK) {
         BM_LOG_ERROR("failed to copy data ret:" << ret << ", src:" << VaToStr(params.src)
@@ -1067,10 +1366,17 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
         return ret;
     }
 
-    ExtOptions sOptions{};
-    sOptions.stream = stream;
-    sOptions.flags = flags;
-    // 将所有地址按srcRank - dstRank分组，并且转换地址
+    ExtOptions localOptions{};
+    localOptions.stream = stream;
+    localOptions.flags = flags;
+    localOptions.hostShmPolicy = HostShmPolicy::PREFER;
+    ExtOptions remoteOptions{};
+    remoteOptions.hostShmPolicy = HostShmPolicy::EXCLUDE;
+    remoteOptions.stream = stream;
+    remoteOptions.flags = flags;
+    auto connSegment = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+    const bool hostCombo = connSegment != nullptr && connSegment->IsHostCombo();
+    // 将所有地址按 srcRank - dstRank 分组，并按本地/远端 provider 拆成两组。
     TP_TRACE_BEGIN(TP_HYBM_BATCH_BUILD_GROUP_MAP);
     for (uint32_t i = 0; i < params.batchSize; ++i) {
         std::pair<uint32_t, uint32_t> p2pInfo;
@@ -1082,21 +1388,42 @@ int32_t MemEntityDefault::BatchCopyData(hybm_batch_copy_params &params, hybm_dat
                          << ", dest:" << VaToStr(params.destinations[i]) << ", size:" << params.dataSizes[i]);
             return ret;
         }
-        BM_LOG_DEBUG("source:" << VaToStr(params.sources[i]) << " destination:" << VaToStr(params.destinations[i])
-                               << " dataSize:" << params.dataSizes[i]);
-        sOptions.groupMap[p2pInfo].push_back(i);
+        bool local = true;
+        if (hostCombo) {
+            // 与 CopyData 同判据：device VA 与未知归属（含窗口内池外空洞）一律按远端处理。
+            local = IsLocalCopyAddress(params.sources[i], *connSegment) &&
+                    IsLocalCopyAddress(params.destinations[i], *connSegment);
+        }
+        if (local) {
+            localOptions.groupMap[p2pInfo].push_back(i);
+        } else {
+            remoteOptions.groupMap[p2pInfo].push_back(i);
+        }
     }
     TP_TRACE_END(TP_HYBM_BATCH_BUILD_GROUP_MAP, BM_OK);
 
     BM_LOG_DEBUG("BatchDataCopy: localRank=" << options_.rankId << ", batchSize=" << params.batchSize << ", direction="
-                                             << direction << ", groupNum=" << sOptions.groupMap.size());
+                                             << direction << ", localGroups=" << localOptions.groupMap.size()
+                                             << ", remoteGroups=" << remoteOptions.groupMap.size());
     TP_TRACE_BEGIN(TP_HYBM_BATCH_DISPATCH_DATA_OP);
-    ret = dataOperator_->BatchDataCopy(params, direction, sOptions);
-    TP_TRACE_END(TP_HYBM_BATCH_DISPATCH_DATA_OP, ret);
-    if (ret != BM_OK) {
-        BM_LOG_ERROR("Data copy failed, ret: " << ret);
-        return ret;
+    if (!localOptions.groupMap.empty()) {
+        ret = dataOperator_->BatchDataCopy(params, direction, localOptions);
+        if (ret != BM_OK) {
+            TP_TRACE_END(TP_HYBM_BATCH_DISPATCH_DATA_OP, ret);
+            BM_LOG_ERROR("local batch data copy failed, ret: " << ret);
+            return ret;
+        }
     }
+    if (!remoteOptions.groupMap.empty()) {
+        ret = dataOperator_->BatchDataCopy(params, direction, remoteOptions);
+        if (ret != BM_OK) {
+            TP_TRACE_END(TP_HYBM_BATCH_DISPATCH_DATA_OP, ret);
+            BM_LOG_ERROR("remote batch data copy failed, ret: " << ret);
+            return ret;
+        }
+    }
+    ret = BM_OK;
+    TP_TRACE_END(TP_HYBM_BATCH_DISPATCH_DATA_OP, ret);
     return ret;
 }
 
@@ -1126,6 +1453,10 @@ int32_t MemEntityDefault::Wait() noexcept
         BM_LOG_ERROR("the object is not initialized, please check whether Initialize is called.");
         return BM_NOT_INITIALIZED;
     }
+    if (dataOperator_ == nullptr) {
+        // provider 进程不创建数据面算子，也就没有待完成任务可等。
+        return BM_OK;
+    }
     return dataOperator_->Wait(0);
 }
 
@@ -1141,7 +1472,7 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
         return BM_INVALID_PARAM;
     }
 
-    constexpr uint32_t deviceNetworkProtocolMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+    constexpr uint32_t deviceNetworkProtocolMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     const uint32_t enabledDeviceNetworkProtocols = options->bmDataOpType & deviceNetworkProtocolMask;
     // 只允许启用一种协议
     if (enabledDeviceNetworkProtocols != 0U &&
@@ -1151,17 +1482,40 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
         return BM_INVALID_PARAM;
     }
 
-    if ((options->bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
-        if ((options->memType & HYBM_MEM_TYPE_DEVICE) != 0 || options->deviceVASpace != 0) {
+    const bool hasHostShm = (options->bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0;
+    const uint32_t deviceInter = options->bmDataOpType & deviceNetworkProtocolMask;
+    const bool isHostCombo = hasHostShm && deviceInter != 0U;
+    if (hasHostShm) {
+        if ((options->memType & HYBM_MEM_TYPE_DEVICE) != 0 || options->deviceVASpace != 0 ||
+            options->maxHBMSize != 0U) {
             BM_LOG_ERROR("HOST_SHM op type only supports DRAM shared memory without HBM");
             return BM_INVALID_PARAM;
         }
-        constexpr uint32_t hostShmConflictMask = HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA |
-                                                 HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_HOST_RDMA |
-                                                 HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_URMA;
-        if ((options->bmDataOpType & hostShmConflictMask) != 0) {
-            BM_LOG_ERROR("HOST_SHM op type does not support mixing with other data op types");
-            return BM_INVALID_PARAM;
+        if (isHostCombo) {
+            if ((deviceInter & (deviceInter - 1U)) != 0U) {
+                BM_LOG_ERROR(
+                    "HOST_SHM can only pair with one device transport, bmDataOpType=" << options->bmDataOpType);
+                return BM_INVALID_PARAM;
+            }
+            constexpr uint32_t forbidden =
+                HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
+            if ((options->bmDataOpType & forbidden) != 0U) {
+                BM_LOG_ERROR("HOST_SHM+device cannot mix with SDMA or host RDMA/URMA/TCP, bmDataOpType="
+                             << options->bmDataOpType);
+                return BM_INVALID_PARAM;
+            }
+        } else {
+            if (options->hostVASpace == 0U) {
+                BM_LOG_ERROR("HOST_SHM op type requires non-zero host VASpace");
+                return BM_INVALID_PARAM;
+            }
+            constexpr uint32_t forbidden = HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK |
+                                           HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
+            if ((options->bmDataOpType & forbidden) != 0U) {
+                BM_LOG_ERROR(
+                    "HOST_SHM op type cannot mix with other transports, bmDataOpType=" << options->bmDataOpType);
+                return BM_INVALID_PARAM;
+            }
         }
     }
     if ((options->flags & HYBM_FLAG_CREATE_WITH_SHM) != 0 && options->dramShmFd < 0) {
@@ -1175,8 +1529,9 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
 
 int MemEntityDefault::LoadExtendLibrary() noexcept
 {
-    if (options_.bmDataOpType == HYBM_DOP_TYPE_HOST_SHM) {
-        BM_LOG_DEBUG("HOST_SHM data operator selected, skip loading transport extend libraries.");
+    constexpr uint32_t deviceInterMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
+    if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0 && (options_.bmDataOpType & deviceInterMask) == 0U) {
+        BM_LOG_DEBUG("HOST_SHM-only data operator selected, skip loading transport extend libraries.");
         return BM_OK;
     }
 
@@ -1258,11 +1613,19 @@ void MemEntityDefault::SetHybmDeviceInfo(HybmDeviceMeta &info)
 }
 
 int32_t MemEntityDefault::ImportForTransportPrecheck(const ExchangeInfoReader desc[], uint32_t &count,
-                                                     void *addresses[], uint32_t overrideRank)
+                                                     const std::vector<ImportEntryKind> &types, void *addresses[],
+                                                     uint32_t overrideRank)
 {
     int ret = BM_OK;
     SliceExportTransportKey transportKey;
     for (auto i = 0U; i < count; i++) {
+        if (types[i] != ImportEntryKind::PeerSlice) {
+            if (addresses != nullptr) {
+                addresses[i] = nullptr;
+            }
+            continue;
+        }
+
         ret = ReadSliceTransportKey(desc[i], transportKey);
         if (ret != BM_OK) {
             BM_LOG_ERROR("read info for transport failed: " << ret);
@@ -1272,8 +1635,9 @@ int32_t MemEntityDefault::ImportForTransportPrecheck(const ExchangeInfoReader de
             continue;
         }
 
-        // trans需要更新transportKey中的address
-        if (options_.scene == HYBM_SCENE_TRANS && addresses != nullptr) {
+        // trans scene overwrites the transport key address with the address the caller will use for copies.
+        const bool overwriteKeyAddr = options_.scene == HYBM_SCENE_TRANS;
+        if (addresses != nullptr && overwriteKeyAddr) {
             transportManager_->UpdateMemoryKey(transportKey.key, addresses[i]);
         }
 
@@ -1297,6 +1661,14 @@ int32_t MemEntityDefault::ImportForTransport() noexcept
     std::unique_lock<std::mutex> uniqueLock{importMutex_};
     for (auto &rank : importedRanks_) {
         if (options_.role != HYBM_ROLE_PEER && static_cast<hybm_role_type>(rank.second.role) == options_.role) {
+            continue;
+        }
+        // Peers without a transport (e.g. a bare provider) export an empty nic and cannot be connected.
+        if (rank.second.nic[0] == '\0') {
+            continue;
+        }
+        // A proxy only connects (device RDMA) to peers on the same node-unique phyDevId.
+        if ((options_.flags & HYBM_FLAG_PROXY) != 0 && rank.second.phyDevId != LocalPhyDevId()) {
             continue;
         }
 
@@ -1340,6 +1712,11 @@ Result MemEntityDefault::LocateAddrAndRank(void *&src, void *&dest, std::pair<ui
         uint32_t rank = 0;
         if ((hbmSegment_ != nullptr && hbmSegment_->FindRemoteRankByVa(va, rank)) ||
             (dramSegment_ != nullptr && dramSegment_->FindRemoteRankByVa(va, rank))) {
+            auto conn = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+            if (conn != nullptr && conn->IsHostProxy() &&
+                conn->GetAddressScope(va) == HybmConnBasedSegment::AddressScope::LOCAL_PROVIDER_SHM) {
+                return options_.rankId;
+            }
             return rank;
         }
         return options_.rankId;
@@ -1393,14 +1770,14 @@ Result MemEntityDefault::InitHbmSegment()
         segmentOptions.segType = HYBM_MST_ASYMMETRIC;
         BM_LOG_TRACE("create entity user defined memory space.");
     }
-    segmentOptions.devId = HybmGetInitDeviceId();
+    segmentOptions.devId = static_cast<uint16_t>(options_.devId);
     segmentOptions.rankId = options_.rankId;
     segmentOptions.rankCnt = options_.rankCount;
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
     segmentOptions.scene = options_.scene;
-    constexpr auto transportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA | HYBM_DOP_TYPE_HOST_RDMA;
+    constexpr auto transportMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK | HYBM_DOP_TYPE_HOST_RDMA;
     if ((options_.bmDataOpType & transportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
         segmentOptions.shared = false;
     }
@@ -1423,7 +1800,7 @@ Result MemEntityDefault::InitDramSegment()
     MemSegmentOptions segmentOptions;
     segmentOptions.size = options_.hostVASpace;
     segmentOptions.maxSize = options_.maxDRAMSize;
-    segmentOptions.devId = HybmGetInitDeviceId();
+    segmentOptions.devId = static_cast<uint16_t>(options_.devId);
     segmentOptions.segType = HYBM_MST_DRAM;
     segmentOptions.rankId = options_.rankId;
     segmentOptions.rankCnt = options_.rankCount;
@@ -1432,7 +1809,7 @@ Result MemEntityDefault::InitDramSegment()
     segmentOptions.shmFd = options_.dramShmFd;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
     segmentOptions.scene = options_.scene;
-    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     if ((options_.bmDataOpType & deviceTransportMask) != 0U && (options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) == 0U) {
         segmentOptions.shared = false;
     }
@@ -1451,8 +1828,52 @@ Result MemEntityDefault::InitDramSegment()
 
 Result MemEntityDefault::InitTransManager()
 {
-    if (options_.bmDataOpType == HYBM_DOP_TYPE_HOST_SHM) {
-        BM_LOG_DEBUG("HOST_SHM data operator selected, skip transport manager initialization.");
+    constexpr uint32_t hostComboDeviceMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
+    if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0) {
+        if ((options_.bmDataOpType & hostComboDeviceMask) == 0U) {
+            BM_LOG_DEBUG("HOST_SHM-only data operator selected, skip transport manager initialization.");
+            return BM_OK;
+        }
+        transport::TransportOptions proxyOptions{};
+        proxyOptions.rankId = options_.rankId;
+        proxyOptions.rankCount = options_.rankCount;
+        proxyOptions.deviceId = options_.devId;
+        proxyOptions.protocol = options_.bmDataOpType;
+        proxyOptions.role = options_.role;
+        proxyOptions.scene = options_.scene;
+        proxyOptions.initialType = options_.bmType;
+        proxyOptions.nic = options_.transUrl;
+        proxyOptions.tlsOption = options_.tlsOption;
+
+        const bool explicitProvider = (options_.flags & HYBM_FLAG_PROVIDER) != 0U;
+        const bool explicitProxy = (options_.flags & HYBM_FLAG_PROXY) != 0U;
+        const bool isProviderRole = explicitProvider || (!explicitProxy && options_.hostVASpace > 0U);
+        if (isProviderRole) {
+            if ((options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0U) {
+                providerServer_ = std::make_shared<transport::device::UrmaProviderControlServer>();
+            } else {
+                providerServer_ = std::make_shared<transport::device::RdmaProviderControlServer>();
+            }
+            const auto providerDevices = ProviderDeviceIds();
+            if (providerDevices.empty()) {
+                BM_LOG_ERROR("provider has no device to bind, check MEMFABRIC_PROVIDER_DEVICES and the visible NPUs.");
+                return BM_ERROR;
+            }
+            if (!providerServer_->Init({providerDevices, proxyOptions})) {
+                BM_LOG_ERROR("provider control server init failed.");
+                return BM_ERROR;
+            }
+            return BM_OK;
+        }
+
+        transportManager_ = transport::TransportManager::Create(transport::TT_COMPOSE, tagManager_);
+        BM_ASSERT_LOG_AND_RETURN(transportManager_ != nullptr, "Failed to create compose transport manager.", BM_ERROR);
+        proxyOptions.isProxy = true;
+        auto ret = transportManager_->OpenDevice(proxyOptions);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("proxy transport open device failed: " << ret);
+            return ret;
+        }
         return BM_OK;
     }
 
@@ -1503,8 +1924,22 @@ Result MemEntityDefault::InitDataOperator()
         return BM_OK;
     }
 
-    // use composeDataOperator
-    dataOperator_ = std::make_shared<HostComposeDataOp>(options_, transportManager_, tagManager_);
+    constexpr uint32_t deviceInterMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
+    if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0 && (options_.bmDataOpType & deviceInterMask) != 0U &&
+        options_.hostVASpace > 0U) {
+        BM_LOG_INFO("provider does not create a data operator.");
+        return BM_OK;
+    }
+
+    auto dataOptions = options_;
+    const bool sdmaConfigured = (dataOptions.bmDataOpType & HYBM_DOP_TYPE_SDMA) != 0U;
+    const bool checkDramSdma = sdmaConfigured && hbmSegment_ == nullptr && dramSegment_ != nullptr;
+    if (checkDramSdma && !dramSegment_->CheckSdmaReaches(options_.rankId)) {
+        BM_LOG_WARN(
+            "Disabling configured SDMA because the DRAM segment is not reachable via SDMA, rankId=" << options_.rankId);
+        dataOptions.bmDataOpType = static_cast<hybm_data_op_type>(dataOptions.bmDataOpType & ~HYBM_DOP_TYPE_SDMA);
+    }
+    dataOperator_ = std::make_shared<HostComposeDataOp>(dataOptions, transportManager_, tagManager_);
     auto ret = dataOperator_->Initialize();
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to init data operator ret:" << ret);
@@ -1538,8 +1973,64 @@ bool MemEntityDefault::SdmaReaches(uint32_t remoteRank) const noexcept
     return false;
 }
 
+bool MemEntityDefault::QueryDataLinkStates(std::vector<std::pair<uint32_t, bool>> &states) const
+{
+    if (providerServer_ != nullptr) {
+        const auto peers = providerServer_->GetPeerRanks();
+        for (auto rank : peers) {
+            states.emplace_back(rank, !providerServer_->GetConnectedProtocols(rank).empty());
+        }
+        return true;
+    }
+    const auto conn = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+    if (conn == nullptr || !conn->IsHostProxy()) {
+        return false;
+    }
+    const auto compose = std::dynamic_pointer_cast<transport::ComposeTransportManager>(transportManager_);
+    const auto localProvider = conn->GetLocalProviderRank();
+    for (const auto &[rank, info] : conn->GetImportedProviders()) {
+        if (rank == localProvider || compose == nullptr) {
+            states.emplace_back(rank, CanReachDataOperators(rank) != 0);
+            continue;
+        }
+        // The peer may have removed its QP while our control link was down.
+        const auto protocols = compose->GetConnectedProtocols(rank);
+        const bool connected = std::any_of(protocols.begin(), protocols.end(), [&](uint32_t protocol) {
+            const auto device = compose->GetTransport(protocol);
+            return device != nullptr && !device->GetConnectedProtocols(rank).empty();
+        });
+        states.emplace_back(rank, connected);
+    }
+    return true;
+}
+
 hybm_data_op_type MemEntityDefault::CanReachDataOperators(uint32_t remoteRank) const noexcept
 {
+    if (providerServer_ != nullptr) {
+        const auto protocols = providerServer_->GetConnectedProtocols(remoteRank);
+        uint32_t reachable = 0U;
+        for (auto protocol : protocols) {
+            reachable |= protocol;
+        }
+        return static_cast<hybm_data_op_type>(reachable);
+    }
+    auto conn = std::dynamic_pointer_cast<HybmConnBasedSegment>(dramSegment_);
+    if (conn != nullptr && conn->IsHostProxy()) {
+        if (remoteRank == conn->GetLocalProviderRank()) {
+            const auto scope = conn->GetAddressScope(conn->GetProviderGvaBase(remoteRank));
+            return scope == HybmConnBasedSegment::AddressScope::LOCAL_PROVIDER_SHM ? HYBM_DOP_TYPE_HOST_SHM
+                                                                                   : static_cast<hybm_data_op_type>(0U);
+        }
+        if (!conn->HasImportedProvider(remoteRank) || transportManager_ == nullptr) {
+            return static_cast<hybm_data_op_type>(0U);
+        }
+        const auto protocols = transportManager_->GetConnectedProtocols(remoteRank);
+        uint32_t reachable = 0U;
+        for (const auto protocol : protocols) {
+            reachable |= protocol;
+        }
+        return static_cast<hybm_data_op_type>(reachable);
+    }
     uint32_t supportDataOp = 0U;
     if ((options_.bmDataOpType & HYBM_DOP_TYPE_SDMA) && SdmaReaches(remoteRank)) {
         supportDataOp |= (HYBM_DOP_TYPE_MTE | HYBM_DOP_TYPE_SDMA);
@@ -1585,6 +2076,9 @@ int32_t MemEntityDefault::SetThreadAclDevice()
 #if !defined(ASCEND_NPU)
     return BM_OK;
 #endif
+    if ((options_.flags & HYBM_FLAG_PROVIDER) != 0) {
+        return BM_OK;
+    }
     // Other runtimes can change this thread's ACL device between transfers.
     // Recheck the current device before reusing any device-bound resources.
     const auto deviceId = HybmGetInitDeviceId();
@@ -1595,17 +2089,42 @@ int32_t MemEntityDefault::SetThreadAclDevice()
 
 void MemEntityDefault::ReleaseResources()
 {
-    if (!initialized_) {
+    const bool standaloneUrma = (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
+                                (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0U;
+    if (!initialized_ && !standaloneUrma) {
         return;
     }
+    const bool proxyMode = (options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U && transportManager_ != nullptr;
+    if (proxyMode) {
+        const auto ret = transportManager_->CloseDevice();
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("provider proxy close failed, retaining registered backing, ret=" << ret);
+            RetainUnreleasedTransport({nullptr, std::move(dramSegment_), std::move(transportManager_),
+                                       std::move(dataOperator_), std::move(hbmSegment_),
+                                       std::move(managedAllocations_)});
+            initialized_ = false;
+            return;
+        }
+    }
     dataOperator_.reset();
-    if (transportManager_ != nullptr) {
+    if (providerServer_ != nullptr) {
+        providerServer_->Stop();
+        if (!providerServer_->CleanupComplete()) {
+            BM_LOG_ERROR("provider cleanup incomplete, retaining registered backing");
+            RetainUnreleasedTransport(
+                {std::move(providerServer_), std::move(dramSegment_), nullptr, nullptr, nullptr, {}});
+        }
+        providerServer_.reset();
+    }
+    if (!proxyMode && transportManager_ != nullptr) {
         transportManager_->CloseDevice();
     }
     // Imported mappings are tracked separately from local slices and can survive
     // UnReserveMemorySpace(). Clear them before dropping segment objects so the
     // same process can initialize again without stale VA records.
-    Unmap();
+    if (initialized_) {
+        Unmap();
+    }
     UnReserveMemorySpace();
     importedRanks_.clear();
     importedMemories_.clear();

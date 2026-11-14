@@ -329,6 +329,8 @@ public:
     // （即无其他记录存活引用）时返回 true；记录不存在、参数无效或任一行仍有存活引用时返回 false。
     // 持有共享资源（如 host 设备映射）的调用方应仅在返回 true 时释放资源
     bool RemoveOneVaInfo(uint64_t va, uint32_t type = HVM_GVA);
+    // Find the AllocatedGvaInfo covering [va, va+size) of the given type; returns false when none overlaps.
+    bool FindAllocatedVaInfo(uint64_t va, uint64_t size, uint32_t type, AllocatedGvaInfo &out);
 
     // 精确注销：按调用方记录在 AddVaInfo 时登记的 key 逐表递减引用计数，归零回收行。
     // 同 gva 的 imported 记录共存（多 store 组窗口号撞车）时，各行 content 是最后写者，

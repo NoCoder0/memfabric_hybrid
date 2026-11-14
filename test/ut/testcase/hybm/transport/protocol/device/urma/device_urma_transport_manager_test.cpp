@@ -25,6 +25,7 @@
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include "mf_env_define.h"
@@ -38,6 +39,8 @@
 #include "urma_topo_manager.h"
 #include "urma_topo_json_parser.h"
 #include "device_urma_transport_manager.h"
+#include "hybm_data_op_device_urma.h"
+#include "urma_proxy_transport_manager.h"
 #include "host_urma_transport_manager.h"
 #include "dl_hccl_api.h"
 #include "dl_hcomm_api.h"
@@ -57,6 +60,7 @@ using ock::mf::transport::TransportMemoryRegion;
 using ock::mf::transport::TransportOptions;
 using ock::mf::transport::TransportPrivateData;
 using ock::mf::transport::TransportRankPrepareInfo;
+using ock::mf::transport::UrmaTopoManager;
 
 namespace {
 const EndpointHandle MOCK_ENDPOINT = reinterpret_cast<EndpointHandle>(0xA501UL);
@@ -842,13 +846,20 @@ std::string PrepareKernelJson()
     return base;
 }
 
-ock::mf::Result MockGetPeer2NetEid(CommProtocol protocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
+ock::mf::Result MockGetPeer2NetEid(UrmaTopoManager *, CommProtocol protocol,
+                                   std::array<uint8_t, COMM_ADDR_EID_LEN> &eidData)
 {
     (void)protocol;
     for (uint32_t i = 0; i < COMM_ADDR_EID_LEN; ++i) {
         eidData[i] = static_cast<uint8_t>(0xE0U + i);
     }
     return BM_OK;
+}
+
+void InstallPeer2NetEidMock()
+{
+    using Query = ock::mf::Result (*)(UrmaTopoManager *, CommProtocol, std::array<uint8_t, COMM_ADDR_EID_LEN> &);
+    MOCKER(reinterpret_cast<Query>(&UrmaTopoManager::GetPeer2NetEid)).stubs().will(invoke(MockGetPeer2NetEid));
 }
 
 ock::mf::Result MockGetDeviceUBoEIpAddr(uint32_t phyDeviceId, uint32_t rankId, CommAddrType &addrType,
@@ -1321,7 +1332,7 @@ struct DeviceTestFixture {
         DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
         DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
         MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-        MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+        InstallPeer2NetEidMock();
         MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     }
 
@@ -1742,7 +1753,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseClean
     PrepareKernelJson();
     InstallOpenDeviceMocks();
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -1968,7 +1979,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRollsBackWhenFlagMemcpyFails)
     InstallOpenDeviceMocks();
     DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFail;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -2066,7 +2077,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
     PrepareKernelJson();
     InstallOpenDeviceMocks();
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
 
     DeviceUrmaTransportManager manager;
     TransportOptions options{};
@@ -2097,7 +2108,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoAndSynchronizeUseDeviceKernel)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     g_kernelLaunchCallCount = 0;
@@ -2833,7 +2844,7 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -2894,7 +2905,7 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -2968,7 +2979,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     // Make kernel launch fail
     DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
@@ -3027,7 +3038,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     // Make kernel launch fail. The context buffer must not be freed on this path.
     DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
@@ -3094,7 +3105,7 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     g_syncCallCount = 0;
     DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamFirstOkThenFail;
@@ -4203,7 +4214,7 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
     MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
-    MOCKER(&ock::mf::transport::device::GetPeer2NetEid).stubs().will(invoke(MockGetPeer2NetEid));
+    InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -5152,6 +5163,140 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRejectsLegacyAnonymousChannelVersion
     std::memcpy(options.options[1].privateData.key.ByteData() + sizeof(uint32_t), &legacyVersion,
                 sizeof(legacyVersion));
     EXPECT_EQ(manager.Prepare(options), BM_INVALID_PARAM);
+}
+
+TEST(DeviceUrmaTransportManagerTest, StandaloneChannelRoleAndPortIgnoreRankOrder)
+{
+    DlHcommApiFnGuard guard;
+    InstallSingleRankHcommMocks();
+    constexpr uint16_t channelPort = 30483U;
+    for (bool provider : {false, true}) {
+        for (uint32_t localRank : {0U, 1U}) {
+            DeviceUrmaTransportManager manager;
+            PrepareSinglePeerManually(manager);
+            manager.rankId_ = localRank;
+            manager.EnableStandaloneLifecycle(provider);
+            const auto peerRank = 1U - localRank;
+            ASSERT_EQ(manager.Prepare(MakeSingleRankPrepareOptions(peerRank), channelPort), BM_OK);
+            const auto &desc = manager.remoteRanks_.at(peerRank).channelDesc;
+            EXPECT_EQ(desc.role, provider ? HCOMM_SOCKET_ROLE_SERVER : HCOMM_SOCKET_ROLE_CLIENT);
+            EXPECT_EQ(desc.port, channelPort);
+        }
+    }
+}
+
+TEST(DeviceUrmaTransportManagerTest, FusedChannelKeepsRankBasedRoleAndDefaultPort)
+{
+    DlHcommApiFnGuard guard;
+    InstallSingleRankHcommMocks();
+    for (uint32_t localRank : {0U, 1U}) {
+        DeviceUrmaTransportManager manager;
+        PrepareSinglePeerManually(manager);
+        manager.rankId_ = localRank;
+        const auto peerRank = 1U - localRank;
+        ASSERT_EQ(manager.Prepare(MakeSingleRankPrepareOptions(peerRank)), BM_OK);
+        const auto &desc = manager.remoteRanks_.at(peerRank).channelDesc;
+        EXPECT_EQ(desc.role, localRank > peerRank ? HCOMM_SOCKET_ROLE_CLIENT : HCOMM_SOCKET_ROLE_SERVER);
+        EXPECT_EQ(desc.port, 0U);
+    }
+}
+
+TEST(DeviceUrmaTransportManagerTest, StandaloneOfferExchangesDefaultOrExplicitChannelPort)
+{
+    for (uint16_t channelPort : {0U, 30483U, 65535U}) {
+        int sockets[2]{};
+        ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+        UrmaProviderMessage offer;
+        offer.type = UrmaProviderMessageType::OFFER;
+        offer.channelPort = channelPort;
+        offer.rank = 3U;
+        offer.gvaBase = MOCK_REMOTE_ADDR;
+        offer.poolSize = MOCK_SIZE;
+        offer.privateData = MakePrivateData(MakeEndpointDesc());
+        offer.memoryKey = MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        const auto sent = SendUrmaProviderMessage(sockets[0], offer, deadline);
+        UrmaProviderMessage received;
+        const auto ret = ReceiveUrmaProviderMessage(sockets[1], received, deadline);
+        close(sockets[0]);
+        close(sockets[1]);
+        ASSERT_EQ(sent, BM_OK);
+        EXPECT_EQ(ret, BM_OK);
+        EXPECT_EQ(received.channelPort, channelPort);
+        EXPECT_EQ(received.rank, offer.rank);
+        EXPECT_EQ(received.gvaBase, offer.gvaBase);
+        EXPECT_EQ(received.poolSize, offer.poolSize);
+        EXPECT_EQ(received.privateData.key, offer.privateData.key);
+        EXPECT_EQ(received.memoryKey, offer.memoryKey);
+    }
+}
+
+TEST(DeviceUrmaTransportManagerTest, StandaloneSwapReuseDependsOnThisSubmission)
+{
+    DeviceTestFixture fixture;
+    fixture.InstallAll();
+    auto core = std::make_shared<DeviceUrmaTransportManager>();
+    fixture.OpenAndPreparePeer(*core);
+    core->EnableStandaloneLifecycle();
+    fixture.AddLocalReg(*core, MOCK_LOCAL_ADDR, 2 * MOCK_SIZE, REG_MR_FLAG_DRAM, 0);
+
+    auto proxy = std::make_shared<UrmaProxyTransportManager>();
+    proxy->device_->manager_ = core;
+    DataOpDeviceURMA op(0, proxy);
+    op.urmaSwapSpaceSize_ = MOCK_SIZE;
+    op.urmaSwapMemoryAllocator_ =
+        std::make_shared<RbtreeRangePool>(reinterpret_cast<uint8_t *>(MOCK_LOCAL_ADDR), op.urmaSwapSpaceSize_);
+    constexpr uint32_t peer = 1;
+    ExtOptions options{};
+    options.srcRankId = peer;
+    options.destRankId = 0;
+    const auto remote = reinterpret_cast<const void *>(MOCK_REMOTE_ADDR);
+    uint8_t local = 0;
+    ASSERT_EQ(core->ReadRemoteAsync(peer, MOCK_LOCAL_ADDR + MOCK_SIZE, MOCK_REMOTE_ADDR, sizeof(local)), BM_OK);
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        EXPECT_EQ(op.SafeGet(remote, &local, sizeof(local), options, true), BM_NOT_CONNECTED);
+        EXPECT_TRUE(op.urmaSwapMemoryAllocator_->CanAllocate(op.urmaSwapSpaceSize_));
+    }
+
+    int sockets[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    auto link = std::make_shared<UrmaProxyTransportManager::Link>();
+    link->fd = sockets[0];
+    link->ready = true;
+    proxy->links_[peer] = link;
+    DlAclApi::pAclrtSynchronizeStream = [](void *) { return BM_ERROR; };
+    EXPECT_EQ(op.SafeGet(remote, &local, sizeof(local), options, true), BM_ERROR);
+    EXPECT_FALSE(op.urmaSwapMemoryAllocator_->CanAllocate(op.urmaSwapSpaceSize_));
+    EXPECT_EQ(core->CurrentThreadPendingCount(), 2U);
+
+    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    EXPECT_EQ(core->Synchronize(peer), BM_OK);
+    EXPECT_EQ(proxy->RemoveRanks({peer}), BM_OK);
+    close(sockets[1]);
+    fixture.CleanupAndClose(*core);
+}
+
+TEST(DeviceUrmaTransportManagerTest, ProxyReopensAfterCloseWithoutOldProviderOptions)
+{
+    DeviceTestFixture fixture;
+    fixture.InstallAll();
+    MOCKER(DlAclApi::AclrtGetCurrentContext).stubs().will(returnValue(BM_OK));
+    MOCKER(DlAclApi::AclrtSetCurrentContext).stubs().will(returnValue(BM_OK));
+    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER(DlHcommApi::RefreshCurrentDevice).stubs().will(returnValue(BM_OK));
+    UrmaProxyTransportManager manager;
+    TransportOptions options{};
+    options.rankCount = 2;
+    options.protocol = HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_URMA;
+    ASSERT_EQ(manager.OpenDevice(options), BM_OK);
+    HybmTransPrepareOptions peers;
+    peers.options[1].isProvider = true;
+    peers.options[1].providerControlUrl = "127.0.0.1:28000";
+    ASSERT_EQ(manager.Prepare(peers), BM_OK);
+    ASSERT_EQ(manager.CloseDevice(), BM_OK);
+    ASSERT_EQ(manager.OpenDevice(options), BM_OK);
+    EXPECT_EQ(manager.ConnectRank(1), BM_NOT_INITIALIZED);
+    EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
 TEST(DeviceUrmaTransportManagerTest, OffloadPrepareConsumesHostEndpointMetadata)

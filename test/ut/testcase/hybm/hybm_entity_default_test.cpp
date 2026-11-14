@@ -20,6 +20,10 @@
 #include "hybm_conn_based_segment.h"
 #include "hybm_mem_segment.h"
 #include "hybm_data_operator.h"
+#include "hybm_compose_data_op.h"
+#include "hybm_data_op_sdma.h"
+#include "hybm_data_op_device_rdma.h"
+#include "hybm_data_op_device_urma.h"
 #include "hybm_va_manager.h"
 #include "hybm_vmm_based_segment.h"
 #include "dl_acl_api.h"
@@ -158,7 +162,8 @@ public:
     {
         return BM_OK;
     }
-    ock::mf::Result Import(const std::vector<std::string> &, void *[], uint32_t) noexcept override
+    ock::mf::Result Import(const std::vector<std::string> &, void *[], uint32_t,
+                           std::vector<ock::mf::ImportEntryKind> &) noexcept override
     {
         return BM_OK;
     }
@@ -281,8 +286,10 @@ public:
     {
         return BM_OK;
     }
+    int closeCalls{0};
     ock::mf::Result CloseDevice() override
     {
+        ++closeCalls;
         return BM_OK;
     }
     ock::mf::Result RegisterMemoryRegion(const ock::mf::transport::TransportMemoryRegion & /* mr */) override
@@ -1617,6 +1624,41 @@ TEST_F(HybmEntityDefaultTest, InitDramSegment_MixedSdmaAllowsDeviceTransportFall
     EXPECT_EQ(entity.InitDramSegment(), BM_ERROR);
 }
 
+TEST_F(HybmEntityDefaultTest, InitDataOperator_SelectsSupportedDramOperator)
+{
+    MOCKER_CPP(&ock::mf::HostDataOpSDMA::Initialize, ock::mf::Result(*)(ock::mf::HostDataOpSDMA *))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::DataOpDeviceRDMA::Initialize, ock::mf::Result(*)(ock::mf::DataOpDeviceRDMA *))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::DataOpDeviceURMA::Initialize, ock::mf::Result(*)(ock::mf::DataOpDeviceURMA *))
+        .stubs()
+        .will(returnValue(BM_OK));
+
+    for (auto protocol : {HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA}) {
+        for (bool supportsSdma : {false, true}) {
+            ock::mf::MemEntityDefault entity(TEST_DEVICE_ID_DATA_OP);
+            entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
+            entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | protocol);
+            ock::mf::MemSegmentOptions segmentOptions{};
+            if (supportsSdma) {
+                entity.dramSegment_ = std::make_shared<ock::mf::HybmVmmBasedSegment>(segmentOptions, 0);
+            } else {
+                entity.dramSegment_ = std::make_shared<ock::mf::HybmConnBasedSegment>(segmentOptions, 0);
+            }
+            ASSERT_EQ(entity.InitTagManager(), BM_OK);
+            ASSERT_EQ(entity.InitDataOperator(), BM_OK);
+
+            auto dataOp = std::dynamic_pointer_cast<ock::mf::HostComposeDataOp>(entity.dataOperator_);
+            ASSERT_NE(dataOp, nullptr);
+            const auto operators = dataOp->GetPrioritedDataOperators({});
+            ASSERT_FALSE(operators.empty());
+            EXPECT_EQ(operators.front().first, supportsSdma ? HYBM_DOP_TYPE_SDMA : protocol);
+        }
+    }
+}
+
 // ==================== CanReachDataOperators tests ====================
 
 TEST_F(HybmEntityDefaultTest, CanReachDataOperators_WithSdmaNoSegment)
@@ -1771,4 +1813,17 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareFail)
     auto ret = entity.ImportForTransport();
     EXPECT_NE(ret, BM_OK);
     EXPECT_EQ(fake->prepareCalled, 1);
+}
+
+TEST_F(HybmEntityDefaultTest, StandaloneUrmaProxyClosesTransportOnce)
+{
+    auto transport = std::make_shared<FakeTransportManager>();
+    {
+        ock::mf::MemEntityDefault entity(0);
+        entity.options_.bmDataOpType =
+            static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_URMA);
+        entity.transportManager_ = transport;
+        entity.UnInitialize();
+    }
+    EXPECT_EQ(transport->closeCalls, 1);
 }

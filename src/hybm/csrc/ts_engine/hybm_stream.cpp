@@ -36,10 +36,16 @@ int HybmStream::Initialize() noexcept
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
 
     ret = AllocSqcq(ssid);
-    BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
+    if (ret != BM_OK) {
+        Destroy();
+        return ret;
+    }
 
     ret = AllocLogicCq();
-    BM_ASSERT_LOG_AND_RETURN(ret == 0, "ret = " << ret, ret);
+    if (ret != BM_OK) {
+        Destroy();
+        return ret;
+    }
 
     BM_LOG_INFO("init stream ok, stream:" << streamId_ << " sq:" << sqId_ << " cq:" << cqId_ << " logic:" << logicCq_
                                           << " ssid:" << ssid);
@@ -140,6 +146,7 @@ int32_t HybmStream::AllocSqcq(uint32_t ssid)
 
     sqId_ = output.sqId;
     cqId_ = output.cqId;
+    sqcqAllocated_ = true;
     return BM_OK;
 }
 
@@ -200,32 +207,35 @@ int32_t HybmStream::AllocLogicCq()
 
 void HybmStream::Destroy()
 {
-    if (!inited_.load()) {
-        return;
+    inited_ = false;
+    if (sqcqAllocated_) {
+        halSqCqFreeInfo info{};
+        info.type = DRV_NORMAL_TYPE;
+        info.tsId = tsId_;
+        info.sqId = sqId_;
+        info.cqId = cqId_;
+        info.flag = 0;
+        auto ret = DlHalApi::HalSqCqFree(deviceId_, &info);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("free sq_cq failed, deviceId: " << deviceId_ << " streamId: " << streamId_ << " ret: " << ret);
+            return;
+        }
+        sqcqAllocated_ = false;
+        sqId_ = 0;
+        cqId_ = 0;
     }
-
-    halSqCqFreeInfo info{};
-    info.type = DRV_NORMAL_TYPE;
-    info.tsId = tsId_;
-    info.sqId = sqId_;
-    info.cqId = cqId_;
-    info.flag = 0;
-
-    auto ret = DlHalApi::HalSqCqFree(deviceId_, &info);
-    if (ret != 0) {
-        BM_LOG_ERROR("free sq_cq failed: " << ret);
-        return;
-    }
-
-    struct halResourceIdInputInfo resFreeInput {};
-    resFreeInput.type = DRV_STREAM_ID;
-    resFreeInput.tsId = tsId_;
-    resFreeInput.resourceId = streamId_;
-    resFreeInput.res[1U] = 0U;
-    ret = DlHalApi::HalResourceIdFree(deviceId_, &resFreeInput);
-    if (ret != 0) {
-        BM_LOG_ERROR("free stream id failed: " << ret);
-        return;
+    if (streamId_ != UINT32_MAX) {
+        halResourceIdInputInfo input{};
+        input.type = DRV_STREAM_ID;
+        input.tsId = tsId_;
+        input.resourceId = streamId_;
+        auto ret = DlHalApi::HalResourceIdFree(deviceId_, &input);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("free stream id failed, deviceId: " << deviceId_ << " streamId: " << streamId_
+                                                             << " ret: " << ret);
+            return;
+        }
+        streamId_ = UINT32_MAX;
     }
 
     if (stackPtr_ != nullptr) {
@@ -286,7 +296,7 @@ int32_t HybmStream::SubmitTasks(const StreamTask &tasks) noexcept
     return BM_OK;
 }
 
-bool HybmStream::GetCqeStatus()
+int32_t HybmStream::GetCqeStatus(bool &hasCqe)
 {
     struct halSqCqQueryInfo queryInfoIn = {};
     queryInfoIn.type = DRV_NORMAL_TYPE;
@@ -298,8 +308,10 @@ bool HybmStream::GetCqeStatus()
     TP_TRACE_BEGIN(TP_HYBM_SDMA_G2G_HAL_QUERY_SQ_STATUS);
     auto ret = DlHalApi::HalSqCqQuery(deviceId_, &queryInfoIn);
     TP_TRACE_END(TP_HYBM_SDMA_G2G_HAL_QUERY_SQ_STATUS, ret);
-    BM_ASSERT_LOG_AND_RETURN(ret == 0, "HalSqCqQuery failed! ret:" << ret, false);
-    return (queryInfoIn.value[0] != 0U);
+    BM_ASSERT_LOG_AND_RETURN(
+        ret == 0, "HalSqCqQuery failed, deviceId:" << deviceId_ << " streamId:" << streamId_ << " ret:" << ret, ret);
+    hasCqe = queryInfoIn.value[0] != 0U;
+    return BM_OK;
 }
 
 int32_t HybmStream::GetSqHead(uint32_t &head)
@@ -412,7 +424,12 @@ int HybmStream::Synchronize(uint32_t task) noexcept
         BM_ASSERT_LOG_AND_RETURN(ret == 0, "GetSqHead failed! ret:" << ret, ret);
         BM_ASSERT_LOG_AND_RETURN(head < HYBM_SQCQ_DEPTH, "GetSqHead invalid! head:" << head, BM_ERROR);
 
-        if (!GetCqeStatus()) { // no cqe
+        bool hasCqe = false;
+        ret = GetCqeStatus(hasCqe);
+        if (ret != BM_OK) {
+            return ret;
+        }
+        if (!hasCqe) { // no cqe
             while (sqHead_ != head) {
                 BM_LOG_DEBUG("finished task, task_Id:" << sqHead_ << " sqTail:" << sqTail_ << " task_type:"
                                                        << static_cast<int32_t>(taskList_[sqHead_].type));
@@ -427,7 +444,9 @@ int HybmStream::Synchronize(uint32_t task) noexcept
             BM_ASSERT_LOG_AND_RETURN(ret == 0, "ReceiveCqe failed! ret:" << ret, ret);
         }
         retry++;
-        usleep(1U);
+        if (sqHead_ != sqTail_ && TaskInRange(task)) {
+            usleep(1U);
+        }
     }
 
     if (retry >= MAX_RETRY) {

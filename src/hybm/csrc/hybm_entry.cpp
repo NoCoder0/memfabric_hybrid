@@ -27,6 +27,7 @@
 #include "dl_acl_api.h"
 #include "dl_hal_api.h"
 #include "device_urma_transport_manager.h"
+#include "device_rdma_transport_manager.h"
 
 using namespace ock::mf;
 
@@ -144,6 +145,7 @@ HYBM_API void hybm_uninit()
         BM_LOG_TRACE("free meta memory res: " << ret);
     }
 
+    transport::device::RdmaTransportManager::ReleaseThreadLocalNotify();
     transport::device::DeviceUrmaTransportManager::ReleaseThreadLocalBuffers();
     HybmStreamManager::ExplicitDestroyAllThreadHybmStream();
     DlApi::CleanupLibrary();

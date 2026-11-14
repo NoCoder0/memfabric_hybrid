@@ -36,12 +36,15 @@ struct PairEqual {
     }
 };
 
+enum class HostShmPolicy { DEFAULT, PREFER, EXCLUDE };
+
 struct ExtOptions {
     uint32_t srcRankId;
     uint32_t destRankId;
     void *stream = nullptr;
     uint32_t flags;
     std::unordered_map<std::pair<uint32_t, uint32_t>, std::vector<uint32_t>, PairHash, PairEqual> groupMap;
+    HostShmPolicy hostShmPolicy{HostShmPolicy::DEFAULT};
 };
 
 class DataOperator {

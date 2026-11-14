@@ -44,6 +44,7 @@ void AccHttpLinkDefault::ResetHttpState()
     headers_.clear();
     contentLength_ = 0;
     needClose_ = false;
+    pendingCleanup_.store(false);
     lastActivity_ = std::time(nullptr);
 }
 
@@ -53,9 +54,10 @@ bool AccHttpLinkDefault::IsIdleExpired()
         if (std::time(nullptr) - lastActivity_ > static_cast<time_t>(HTTP_KEEPALIVE_TIMEOUT_S)) {
             LOG_INFO("Keep-alive idle timeout, closing " << ShortName());
             needClose_ = true;
+            pendingCleanup_.store(true);
         }
     }
-    return needClose_;
+    return pendingCleanup_.load();
 }
 
 Result AccHttpLinkDefault::Initialize(uint16_t sendQueueCap, int32_t workIndex, AccTcpWorker *worker)
@@ -425,6 +427,7 @@ void AccHttpLinkDefault::ResetForNextRequest()
     headers_.clear();
     contentLength_ = 0;
     needClose_ = false;
+    pendingCleanup_.store(false);
 }
 
 /* parse HTTP message through request-line/headers/body states */
@@ -511,6 +514,9 @@ Result AccHttpLinkDefault::WritePayload(AccLinkedMessageNode *oneMsg)
     if (oneMsg->DataSent()) {
         delete oneMsg;
         oneMsg = nullptr;
+        if (needClose_ && sendingQueue_->GetSize() == 0) {
+            pendingCleanup_.store(true);
+        }
         return ACC_LINK_MSG_SENT;
     }
 
@@ -522,6 +528,9 @@ Result AccHttpLinkDefault::WritePayload(AccLinkedMessageNode *oneMsg)
         }
         delete oneMsg;
         oneMsg = nullptr;
+        if (needClose_ && sendingQueue_->GetSize() == 0) {
+            pendingCleanup_.store(true);
+        }
         return ACC_LINK_MSG_SENT;
     }
     delete oneMsg;
@@ -552,6 +561,7 @@ void AccHttpLinkDefault::SendErrorResponse(int16_t statusCode, const std::string
     /* try to send error response directly; close regardless */
     PollOutWrite(resp.data(), static_cast<uint32_t>(resp.size()));
     needClose_ = true;
+    pendingCleanup_.store(true);
 }
 
 static std::string FormatHttpDate()

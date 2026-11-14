@@ -67,6 +67,19 @@ public:
 
         return static_cast<hybm_data_op_type>(resultOpType);
     }
+
+    static inline uint64_t TransHybmFlags(uint32_t smemBmFlags)
+    {
+        uint64_t resultFlags = smemBmFlags;
+        resultFlags &= ~static_cast<uint64_t>(SMEM_BM_FLAG_PROXY | SMEM_BM_FLAG_PROVIDER);
+        if ((smemBmFlags & SMEM_BM_FLAG_PROXY) != 0) {
+            resultFlags |= HYBM_FLAG_PROXY;
+        }
+        if ((smemBmFlags & SMEM_BM_FLAG_PROVIDER) != 0) {
+            resultFlags |= HYBM_FLAG_PROVIDER;
+        }
+        return resultFlags;
+    }
 };
 } // namespace smem
 } // namespace ock

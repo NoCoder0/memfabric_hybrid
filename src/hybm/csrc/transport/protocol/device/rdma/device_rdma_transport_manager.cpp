@@ -19,6 +19,10 @@
  */
 #include "device_rdma_transport_manager.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <poll.h>
 #include <unistd.h>
 #include <chrono>
 #include <cstdint>
@@ -30,6 +34,8 @@
 #include "dl_hal_api.h"
 #include "dl_hccp_api.h"
 #include "dl_hccl_api.h"
+#include "dl_rt_api.h"
+#include "hybm_networks_common.h"
 #include "hybm_ptracer.h"
 #include "device_nic_helper.h"
 #include "fixed_ranks_qp_manager.h"
@@ -38,6 +44,7 @@
 #include "hybm_va_manager.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
+#include "mf_scope_guard.h"
 
 namespace {
 const auto QP_READY_CHECK_TIMEOUT_BASE_SECONDS =
@@ -45,6 +52,8 @@ const auto QP_READY_CHECK_TIMEOUT_BASE_SECONDS =
 const auto QP_READY_CHECK_TIMEOUT_BASE = std::chrono::seconds(QP_READY_CHECK_TIMEOUT_BASE_SECONDS);
 constexpr auto QP_READY_CHECK_TIMEOUT_PER_RANK = std::chrono::milliseconds(100);
 constexpr auto QP_READY_CHECK_INTERVAL = std::chrono::milliseconds(5);
+// Upper bound for waiting until removed ranks release their QP/socket resources before a re-join.
+constexpr uint32_t REMOVE_RANKS_WAIT_TIMEOUT_MS = 5000U;
 } // namespace
 
 namespace ock {
@@ -56,10 +65,13 @@ namespace device {
 constexpr int RT_STARS_WRITE_VALUE_SIZE_TYPE_64BIT = 3;
 constexpr int RT_STARS_WRITE_VALUE_SUB_TYPE_RDMA_DB_SEND = 2;
 constexpr int RT_STARS_SQE_TYPE_INVALID = 63;
-constexpr unsigned long RT_ASCEND910B1_ROCEE_BASE_ADDR = 0x2000000000UL;
-constexpr unsigned long RT_ASCEND910B1_ROCEE_VF_DB_CFG0_REG = 0x230UL;
 
 thread_local HybmStreamNotifyPtr RdmaTransportManager::notify_ = nullptr;
+
+void RdmaTransportManager::ReleaseThreadLocalNotify()
+{
+    notify_.reset();
+}
 
 RdmaTransportManager::~RdmaTransportManager()
 {
@@ -68,6 +80,12 @@ RdmaTransportManager::~RdmaTransportManager()
 
 Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
 {
+    if ((options.protocol & HYBM_DOP_TYPE_HOST_SHM) != 0U) {
+        // provider/proxy 组合由 entity 直接构造 RdmaProxyTransportManager，本类不再接管。
+        BM_LOG_ERROR("host shm device rdma requires RdmaProxyTransportManager, rankId: " << options.rankId);
+        return BM_INVALID_PARAM;
+    }
+
     int32_t userId = -1;
     int32_t logicId = -1;
     int32_t phyId = -1;
@@ -285,21 +303,23 @@ Result RdmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
 
     HybmStreamManager::DestroyAllThreadHybmStream(); // clean all stream, maybe has some task on stream
 
-    WriteGuard lockGuard(lock_);
-    for (auto rank : removedRanks) {
-        if (rank >= rankCount_) {
-            BM_LOG_ERROR("input rank is large than world size! rk:" << rank << " world_size:" << rankCount_);
-            continue;
+    {
+        WriteGuard lockGuard(lock_);
+        for (auto rank : removedRanks) {
+            if (rank >= rankCount_) {
+                BM_LOG_ERROR("input rank is large than world size! rk:" << rank << " world_size:" << rankCount_);
+                continue;
+            }
+            // Zero-capacity clients have QPs even when they contribute no remote memory regions.
+            ranksSet.emplace(rank);
+            qpReadyCache_[rank].store(false, std::memory_order_release);
+            auto &pos = ranksMRs_[rank];
+            if (!pos.empty()) {
+                removedRankRegions.emplace(rank, pos);
+                pos.clear();
+            }
+            notifyRemoteInfo_[rank] = std::make_pair(0U, 0U);
         }
-        // Zero-capacity clients have QPs even when they contribute no remote memory regions.
-        ranksSet.emplace(rank);
-        qpReadyCache_[rank].store(false, std::memory_order_release);
-        auto &pos = ranksMRs_[rank];
-        if (!pos.empty()) {
-            removedRankRegions.emplace(rank, pos);
-            pos.clear();
-        }
-        notifyRemoteInfo_[rank] = std::make_pair(0U, 0U);
     }
 
     if (ranksSet.empty()) {
@@ -310,6 +330,12 @@ Result RdmaTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRan
     if (ret != BM_OK) {
         BM_LOG_ERROR("qp manager remove ranks failed: " << ret);
         return ret;
+    }
+
+    // Wait for the run loops to actually destroy the QPs/sockets so a subsequent join of the same rank id starts
+    // from a clean state (important after a process restart).
+    if (!qpManager_->WaitRanksRemoved(REMOVE_RANKS_WAIT_TIMEOUT_MS)) {
+        BM_LOG_WARN("wait for removed ranks to release resources timeout: " << REMOVE_RANKS_WAIT_TIMEOUT_MS << "ms");
     }
 
     return BM_OK;
@@ -978,15 +1004,7 @@ uint64_t RdmaTransportManager::GetRoceDbAddrForRdmaDbSendTask()
 {
     BM_ASSERT_LOG_AND_RETURN(deviceChipInfo_ != nullptr, "deviceChipInfo_ is nullptr", BM_MALLOC_FAILED);
 
-    auto chipId = deviceChipInfo_->GetChipId();
-    auto dieId = deviceChipInfo_->GetDieId();
-    auto chipAddr = deviceChipInfo_->GetChipAddr();
-    auto chipOffset = deviceChipInfo_->GetChipOffset();
-    auto dieOffset = deviceChipInfo_->GetDieOffset();
-
-    const uint64_t dbAddr = RT_ASCEND910B1_ROCEE_BASE_ADDR + RT_ASCEND910B1_ROCEE_VF_DB_CFG0_REG +
-                            chipOffset * static_cast<uint64_t>(chipId) + dieOffset * dieId + chipAddr;
-    return dbAddr;
+    return deviceChipInfo_->GetRoceDoorbellAddress();
 }
 
 int32_t RdmaTransportManager::InitStreamNotifyBuf()

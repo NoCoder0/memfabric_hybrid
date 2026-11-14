@@ -45,7 +45,7 @@ private:
     int32_t AllocStreamId();
     int32_t AllocSqcq(uint32_t ssid);
     int32_t AllocLogicCq();
-    bool GetCqeStatus();
+    int32_t GetCqeStatus(bool &hasCqe);
     int32_t GetSqHead(uint32_t &head);
     int32_t ReceiveCqe(uint32_t &lastTask);
     bool TaskInRange(uint32_t task) const;
@@ -67,6 +67,7 @@ private:
     std::vector<StreamTask> taskList_;
     bool wqeFlag_ = false;
     std::atomic_bool inited_ = false;
+    bool sqcqAllocated_{false};
 };
 
 inline uint32_t HybmStream::GetId() const

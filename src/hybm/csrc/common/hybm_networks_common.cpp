@@ -18,8 +18,10 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <cerrno>
 #include <cstring>
+#include <mutex>
 #include "hybm_functions.h"
 #include "hybm_logger.h"
 #include "hybm_networks_common.h"
@@ -58,6 +60,55 @@ std::string GetDefaultRouteNetwork()
         }
     }
     return "";
+}
+
+bool ParseMachineId(const std::string &content, MachineId &machineId)
+{
+    constexpr size_t machineIdHexLen = 32U;
+    constexpr size_t machineIdHalfHexLen = 16U;
+
+    std::string hexStr;
+    hexStr.reserve(machineIdHexLen);
+    for (char ch : content) {
+        if (std::isxdigit(static_cast<unsigned char>(ch)) != 0) {
+            hexStr.push_back(ch);
+            if (hexStr.size() == machineIdHexLen) {
+                break;
+            }
+        } else if (ch != '-') {
+            break;
+        }
+    }
+
+    if (hexStr.size() < machineIdHexLen) {
+        return false;
+    }
+
+    try {
+        auto major = std::stoull(hexStr.substr(0U, machineIdHalfHexLen), nullptr, 16);
+        auto minor = std::stoull(hexStr.substr(machineIdHalfHexLen, machineIdHalfHexLen), nullptr, 16);
+        machineId = MachineId(major, minor);
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+
+bool ReadMachineIdFromFile(const char *path, MachineId &machineId)
+{
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        BM_LOG_DEBUG("open machine id file failed: " << path << " : " << SafeStrError(errno));
+        return false;
+    }
+
+    std::string content;
+    std::getline(file, content);
+    if (!ParseMachineId(content, machineId)) {
+        BM_LOG_DEBUG("invalid machine id from " << path);
+        return false;
+    }
+    return true;
 }
 } // namespace
 std::vector<uint32_t> NetworkGetIpAddresses() noexcept
@@ -108,6 +159,30 @@ std::vector<uint32_t> NetworkGetIpAddresses() noexcept
         addresses.insert(addresses.begin(), routeIp);
     }
     return addresses;
+}
+
+bool ReadMachineId(MachineId &machineId) noexcept
+{
+    static std::mutex machineIdMutex;
+    static bool machineIdCached = false;
+    static MachineId machineIdCache{};
+
+    std::lock_guard<std::mutex> lock(machineIdMutex);
+    if (!machineIdCached) {
+        constexpr const char *machineIdPath = "/etc/machine-id";
+        constexpr const char *bootIdPath = "/proc/sys/kernel/random/boot_id";
+
+        if (!ReadMachineIdFromFile(machineIdPath, machineIdCache)) {
+            BM_LOG_WARN("read machine id from " << machineIdPath << " failed, fallback to boot id: " << bootIdPath);
+            if (!ReadMachineIdFromFile(bootIdPath, machineIdCache)) {
+                BM_LOG_ERROR("failed to read machine identity from " << machineIdPath << " and " << bootIdPath);
+            }
+        }
+        machineIdCached = true;
+    }
+
+    machineId = machineIdCache;
+    return machineIdCache.major != 0UL || machineIdCache.minor != 0UL;
 }
 } // namespace mf
 } // namespace ock

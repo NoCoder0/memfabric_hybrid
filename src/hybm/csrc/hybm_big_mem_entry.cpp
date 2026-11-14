@@ -14,6 +14,7 @@
 #include "hybm_big_mem.h"
 #include "dl_hal_api.h"
 #include "hybm_ex_info_transfer.h"
+#include "hybm_conn_based_segment.h"
 
 using namespace ock::mf;
 
@@ -240,6 +241,27 @@ HYBM_API int32_t hybm_entity_reach_types(hybm_entity_t e, uint32_t rank, hybm_da
     BM_ASSERT_LOG_AND_RETURN(entity != nullptr, "entity is nullptr", BM_INVALID_PARAM);
 
     reachTypes = entity->CanReachDataOperators(rank);
+    return BM_OK;
+}
+
+bool ock::mf::HybmIsHostProviderSlice(const void *data, size_t size)
+{
+    if (data == nullptr || size < sizeof(HostExportInfo)) {
+        return false;
+    }
+    HostExportInfo info;
+    std::memcpy(&info, data, sizeof(info));
+    return info.magic == DRAM_SLICE_EXPORT_INFO_MAGIC && info.version == EXPORT_INFO_VERSION &&
+           info.memSegType == HYBM_DRAM_PROVIDER;
+}
+
+int32_t ock::mf::HybmQueryDataLinkStates(hybm_entity_t e, bool &handled, std::vector<std::pair<uint32_t, bool>> &states)
+{
+    states.clear();
+    handled = false;
+    const auto entity = MemEntityFactory::Instance().FindEngineByPtr(e);
+    BM_VALIDATE_RETURN(entity != nullptr, "query data links requires a valid entity", BM_INVALID_PARAM);
+    handled = entity->QueryDataLinkStates(states);
     return BM_OK;
 }
 

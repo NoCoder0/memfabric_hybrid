@@ -22,6 +22,12 @@
 #include "hybm_va_manager.h"
 #include "hybm_gva_version.h"
 
+#define private   public
+#define protected public
+#include "device_rdma_transport_manager.h"
+#undef protected
+#undef private
+
 using namespace ock::mf;
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
@@ -145,6 +151,23 @@ TEST_F(HybmEntryTest, hybm_uninit_success)
 
     hybm_uninit();
     EXPECT_FALSE(HybmHasInited());
+}
+
+TEST_F(HybmEntryTest, hybm_uninit_releases_rdma_thread_notify)
+{
+    MockHybmInitSuccess();
+    MockHybmUninitSuccess();
+    ASSERT_EQ(hybm_init(0, 0), BM_OK);
+
+    auto stream = std::make_shared<HybmStream>(0, 0, 0);
+    std::weak_ptr<HybmStream> streamRef = stream;
+    transport::device::RdmaTransportManager::notify_ = std::make_shared<HybmStreamNotify>(stream);
+    stream.reset();
+
+    hybm_uninit();
+
+    EXPECT_TRUE(streamRef.expired());
+    transport::device::RdmaTransportManager::notify_.reset();
 }
 
 TEST_F(HybmEntryTest, hybm_uninit_duplicate_call)

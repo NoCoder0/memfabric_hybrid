@@ -15,6 +15,7 @@
 
 #include "hybm_def.h"
 #include "hybm_big_mem.h"
+#include "hybm_common_include.h"
 #include "hybm_data_op.h"
 #include "mf_env_define.h"
 #include "hybm_ptracer.h"
@@ -104,6 +105,11 @@ Result SmemBmEntry::AllocDramMemBestEffort(hybm_entity_t entity, uint64_t totalS
 Result SmemBmEntry::AllocDramMem(hybm_entity_t entity, const hybm_options &options, uint32_t flags)
 {
     if (options.maxDRAMSize == 0) {
+        return SM_OK;
+    }
+    if (options.hostVASpace == 0) {
+        // Proxy contributes no local memory; it only exposes provider memory.
+        realDRAMSize_ = 0;
         return SM_OK;
     }
     if ((options.flags & SMEM_BM_FLAG_DRAM_BEST_EFFORT) && options.bmDataOpType == HYBM_DOP_TYPE_SDMA) {
@@ -804,10 +810,7 @@ int SmemBmEntry::RegisterExecutorCallbacks(SmemGroupManagerClient *executor,
         asyncMgr->EnqueueEstablishConnection(rankId, std::move(copy), reqId);
         return 0;
     };
-    executor->onQueryLinkState_ = [asyncMgr]() {
-        asyncMgr->EnqueueQueryLinkState(0);
-        return std::vector<LinkStateEntry>{};
-    };
+    executor->onQueryLinkState_ = [this]() { return OnQueryLinkState(); };
     executor->onPromoteToActive_ = [this](uint32_t rankId) {
         joined_ = true;
         SM_LOG_INFO("SmemBmEntry::onPromoteToActive rankId=" << rankId);
@@ -905,7 +908,10 @@ int SmemBmEntry::ImportPeerSlices(const std::vector<RankFullInfo> &others) noexc
             i++;
         }
     }
-    auto ret = hybm_import(entity_, slices.data(), slices.size(), nullptr, 0);
+    // Pass a real address array: the entity uses it to align imported transport keys with the address the caller
+    // will copy to (for a host_provider proxy this is the peer provider's gva, not the proxy slice gva).
+    std::vector<void *> sliceAddresses(slices.size(), nullptr);
+    auto ret = hybm_import(entity_, slices.data(), slices.size(), sliceAddresses.data(), 0);
     for (auto &s : slices) {
         hybm_export_info_free(&s);
     }
@@ -924,6 +930,11 @@ int SmemBmEntry::OnRemoveFromWhitelist(uint32_t rankId, const std::vector<RankFu
     for (const auto &other : others) {
         auto ret = hybm_remove_imported(entity_, other.rankId, 0);
         if (ret != SMEM_OK) {
+            if ((coreOptions_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
+                (coreOptions_.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) != 0U) {
+                SM_LOG_ERROR("SmemBmEntry::OnRemoveFromWhitelist remove rank " << other.rankId << " failed: " << ret);
+                return ret;
+            }
             SM_LOG_WARN("SmemBmEntry::OnRemoveFromWhitelist remove rank " << other.rankId << " failed: " << ret);
         }
     }
@@ -971,6 +982,27 @@ std::vector<ock::smem::LinkStateEntry> SmemBmEntry::OnQueryLinkState() noexcept
     if (entity_ == nullptr) {
         return entries;
     }
+    bool handled = false;
+    std::vector<std::pair<uint32_t, bool>> states;
+    const auto ret = mf::HybmQueryDataLinkStates(entity_, handled, states);
+    if (ret != BM_OK) {
+        SM_LOG_ERROR("query data links failed, rank=" << options_.rank << " ret=" << ret);
+        return entries;
+    }
+    bool reset = false;
+    if (reconnectManager_ != nullptr && reconnectManager_->CleanupAfterReconnect(reset) != SM_OK) {
+        SM_LOG_ERROR("control link changed while querying data links, rank=" << options_.rank);
+        return entries;
+    }
+    if (handled) {
+        for (const auto &state : states) {
+            LinkStateEntry entry;
+            entry.dstRankId = state.first;
+            entry.state = !reset && state.second ? BM_LINK_CONNECTED : BM_LINK_IDLE;
+            entries.push_back(entry);
+        }
+        return entries;
+    }
     for (uint32_t peerRank = 0; peerRank < options_.rankSize; ++peerRank) {
         if (peerRank == options_.rank) {
             continue;
@@ -979,7 +1011,7 @@ std::vector<ock::smem::LinkStateEntry> SmemBmEntry::OnQueryLinkState() noexcept
         auto ret = hybm_entity_reach_types(entity_, peerRank, reachTypes, 0);
         LinkStateEntry entry;
         entry.dstRankId = peerRank;
-        entry.state = (ret == 0 && reachTypes != 0) ? BM_LINK_CONNECTED : BM_LINK_IDLE;
+        entry.state = (!reset && ret == 0 && reachTypes != 0) ? BM_LINK_CONNECTED : BM_LINK_IDLE;
         entries.push_back(entry);
     }
     SM_LOG_DEBUG("OnQueryLinkState: " << entries.size() << " peers");

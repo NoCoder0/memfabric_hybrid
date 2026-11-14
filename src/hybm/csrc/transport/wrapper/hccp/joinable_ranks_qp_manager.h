@@ -27,6 +27,8 @@ namespace ock {
 namespace mf {
 namespace transport {
 namespace device {
+QosAttr GetDeviceRdmaQos();
+
 class QpCreator {
 public:
     QpCreator() noexcept;
@@ -46,6 +48,7 @@ public:
 
     int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo> &ranks) noexcept override;
     int RemoveRanks(const std::unordered_set<uint32_t> &ranks) noexcept override;
+    bool WaitRanksRemoved(uint32_t timeoutMs) noexcept override;
     int Startup(void *rdma) noexcept override;
     void Shutdown() noexcept override;
     UserQpInfo *GetQpHandleWithRankId(uint32_t rankId) noexcept override;
@@ -98,6 +101,8 @@ private:
     std::set<uint32_t> newServers_;
     std::set<uint32_t> removedClientRanks_;
     std::set<uint32_t> removedServerRanks_;
+    std::atomic<uint32_t> pendingRemovals_{0}; // removals queued but not yet processed by the run loops
+    std::condition_variable removalCv_;
     std::unordered_map<uint32_t, sockaddr_in> replacementNetworks_; // Guarded by mutex_.
     struct QosAttr qosAttr_ {};
     uint32_t userDeviceId_{0};

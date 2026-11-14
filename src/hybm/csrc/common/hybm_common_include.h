@@ -14,6 +14,8 @@
 
 #include <map>
 #include <mutex>
+#include <utility>
+#include <vector>
 
 #include "hybm_big_mem.h"
 #include "hybm_define.h"
@@ -27,5 +29,10 @@
 int32_t HybmGetInitDeviceId(void);
 
 bool HybmHasInited(void);
+
+namespace ock::mf {
+HYBM_API int32_t HybmQueryDataLinkStates(hybm_entity_t entity, bool &handled,
+                                         std::vector<std::pair<uint32_t, bool>> &states);
+}
 
 #endif // MEM_FABRIC_HYBRID_HYBM_COMMON_INCLUDE_H

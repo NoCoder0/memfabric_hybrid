@@ -130,3 +130,22 @@ TEST(SmemReconnectManagerTest, DisconnectDuringCleanupOrImportDefersNextEpoch)
     EXPECT_EQ(cleanups, 3);
     EXPECT_EQ(imports, 2);
 }
+
+TEST(SmemReconnectManagerTest, QueryCleanupPrecedesReportedLinksAndDoesNotClearLaterPartialImport)
+{
+    int cleanups = 0;
+    SmemReconnectManager manager([&] {
+        ++cleanups;
+        return SM_OK;
+    });
+    manager.disconnectEpoch_.fetch_add(1UL);
+    bool reset = false;
+    EXPECT_EQ(manager.CleanupAfterReconnect(reset), SM_OK);
+    EXPECT_TRUE(reset);
+    EXPECT_EQ(cleanups, 1);
+    std::vector<RankFullInfo> peers(1);
+    EXPECT_EQ(manager.ImportAfterReconnectCleanup(peers, [] { return SM_OK; }), SM_OK);
+    EXPECT_EQ(cleanups, 1);
+    EXPECT_EQ(manager.CleanupAfterReconnect(reset), SM_OK);
+    EXPECT_FALSE(reset);
+}

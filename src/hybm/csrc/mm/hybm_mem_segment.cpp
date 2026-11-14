@@ -24,6 +24,7 @@
 #include "hybm_types.h"
 #include "hybm_va_manager.h"
 #include "hybm_vmm_based_segment.h"
+#include "hybm_networks_common.h"
 
 namespace ock {
 namespace mf {
@@ -118,6 +119,7 @@ uint32_t MemSegment::superPodId_{0};
 std::string MemSegment::sysBoolId_{};
 uint32_t MemSegment::bootIdHead_{0};
 AscendSocType MemSegment::socType_{AscendSocType::ASCEND_UNKNOWN};
+MachineId MemSegment::machineId_{};
 bool MemSegment::atforkRegistered_{false};
 
 void MemSegment::ResetDeviceInfoInChild() noexcept
@@ -133,6 +135,42 @@ void MemSegment::ResetDeviceInfoInChild() noexcept
     MemSegment::sysBoolId_.clear();
     MemSegment::bootIdHead_ = 0;
     MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_UNKNOWN;
+}
+
+bool MemSegment::IsVmmSupported(const MemSegmentOptions &options, AscendSocType socType) noexcept
+{
+    if (HybmGetGvaVersion() != HYBM_GVA_V4) {
+        return false;
+    }
+    if (socType != AscendSocType::ASCEND_910C && socType != AscendSocType::ASCEND_950) {
+        return false;
+    }
+    const bool hasDeviceTransport = (options.dataOpType & HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK) != 0U;
+    const bool isSdmaMixedTransport = hasDeviceTransport && (options.dataOpType & HYBM_DOP_TYPE_SDMA) != 0U;
+    return options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
+           !(options.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) &&
+           (!(options.dataOpType & (HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK | HYBM_DOP_TYPE_HOST_URMA)) ||
+            isSdmaMixedTransport);
+}
+
+MemSegment::DramSegmentKind MemSegment::SelectDramSegmentKind(const MemSegmentOptions &options,
+                                                              AscendSocType socType) noexcept
+{
+    const bool hasHostShm = (options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U;
+    const bool hasDeviceTransport = (options.dataOpType & HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK) != 0U;
+    const bool isProxy = (options.flags & HYBM_FLAG_PROXY) != 0U;
+
+    // Host-shm decides first: with a device transport it is the separated deployment (provider/proxy shared
+    // conn-based segment), otherwise it is a pure same-node shared-memory deployment. The proxy flag does not
+    // override this, so "HOST_SHM only + PROXY" keeps using the host-shm segment.
+    if (hasHostShm) {
+        return hasDeviceTransport ? DramSegmentKind::ConnBased : DramSegmentKind::HostShm;
+    }
+    // Without HOST_SHM a proxy still needs conn-based segment (defensive: proxy without the combo config).
+    if (isProxy) {
+        return DramSegmentKind::ConnBased;
+    }
+    return IsVmmSupported(options, socType) ? DramSegmentKind::Vmm : DramSegmentKind::ConnBased;
 }
 
 MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
@@ -175,26 +213,21 @@ MemSegmentPtr MemSegment::Create(const MemSegmentOptions &options, int entityId)
                                                                          << " socType: " << int(socType_));
             }
             break;
-        case HYBM_MST_DRAM: {
-            constexpr auto HOST_TRANSPORT_MASK = HYBM_DOP_TYPE_HOST_URMA;
-            constexpr auto DEVICE_TRANSPORT_MASK = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
-            const bool isSdmaMixedTransport =
-                (options.dataOpType & DEVICE_TRANSPORT_MASK) != 0U && (options.dataOpType & HYBM_DOP_TYPE_SDMA) != 0U;
-            const bool vmmSupport =
-                HybmGetGvaVersion() == HYBM_GVA_V4 &&
-                (socType_ == AscendSocType::ASCEND_910C || socType_ == AscendSocType::ASCEND_950) &&
-                options.shmFd < 0 && !(options.dataOpType & HYBM_DOP_TYPE_HOST_TCP) &&
-                !(options.dataOpType & HYBM_DOP_TYPE_HOST_RDMA) &&
-                (!(options.dataOpType & (DEVICE_TRANSPORT_MASK | HOST_TRANSPORT_MASK)) || isSdmaMixedTransport);
-            if ((options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U) {
-                tmpSeg = std::make_shared<HybmHostShmSegment>(options, entityId);
-            } else if (vmmSupport) {
-                tmpSeg = std::make_shared<HybmVmmBasedSegment>(options, entityId);
-            } else {
-                tmpSeg = std::make_shared<HybmConnBasedSegment>(options, entityId);
+        case HYBM_MST_DRAM:
+            switch (SelectDramSegmentKind(options, socType_)) {
+                case DramSegmentKind::HostShm:
+                    tmpSeg = std::make_shared<HybmHostShmSegment>(options, entityId);
+                    break;
+                case DramSegmentKind::Vmm:
+                    tmpSeg = std::make_shared<HybmVmmBasedSegment>(options, entityId);
+                    break;
+                case DramSegmentKind::ConnBased:
+                default:
+                    // Provider/proxy share HybmConnBasedSegment; role is derived from the local DRAM size.
+                    tmpSeg = std::make_shared<HybmConnBasedSegment>(options, entityId);
+                    break;
             }
             break;
-        }
         case HYBM_MST_ASYMMETRIC:
             tmpSeg = std::make_shared<AsymmetricMemSegment>(options, entityId);
             break;
@@ -300,7 +333,7 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
     } else {
         void *output = nullptr;
 #if defined(ASCEND_NPU)
-        const bool needDeviceVa = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) != 0U;
+        const bool needDeviceVa = (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK)) != 0U;
         if (needDeviceVa) {
             ret = DlHalApi::HalHostRegister(const_cast<void *>(addr), size, HOST_MEM_MAP_DEV, logicDeviceId_, &output);
             if (ret != 0) {
@@ -329,6 +362,10 @@ Result MemSegment::RegisterMemCommon(const void *addr, uint64_t size, MemSlicePt
 
 Result MemSegment::InitDeviceInfo(int devId)
 {
+    if (!ReadMachineId(machineId_)) {
+        BM_LOG_ERROR("failed to read machine id from /etc/machine-id.");
+    }
+
 #if !defined(ASCEND_NPU)
     return BM_OK;
 #endif
@@ -484,5 +521,6 @@ Result MemSegment::EnableRemotePeerAccess(int32_t remotePhyId) noexcept
                                                             << " remote_phy:" << remotePhyId);
     return BM_OK;
 }
+
 } // namespace mf
 } // namespace ock

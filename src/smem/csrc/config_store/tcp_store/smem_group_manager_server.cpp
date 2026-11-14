@@ -12,20 +12,99 @@
 
 #include "smem_group_manager_server.h"
 
+#include <algorithm>
 #include <pthread.h>
 #include <unordered_map>
 
 #include "hybm_ptracer.h"
+#include "hybm_define.h"
 #include "smem_config_store_logger.h"
 #include "smem_message_packer.h"
+#include <cstring>
 
 namespace ock::smem {
 
+using ock::mf::ENTITY_EXPORT_INFO_MAGIC;
+
+// EntityExportInfo 携带的节点 ID 缺省值；超集 Pod/server 缺省时视为拓扑不可用。
+constexpr uint32_t kInvalidRankSuperPodId = 0xFFFFFFFFU;
+constexpr uint32_t kInvalidRankServerId = 0x3FFU;
+constexpr uint32_t kMaxRankLinkLayers = 8U;
+constexpr uint32_t kRankLayerSdma = 1U << 1;
+constexpr uint32_t kRankLayerDeviceRdma = 1U << 2;
+constexpr uint32_t kRankLayerHostRdma = 1U << 3;
+constexpr uint32_t kRankLayerHostTcp = 1U << 4;
+constexpr uint32_t kRankLayerHostUrma = 1U << 5;
+constexpr uint32_t kRankLayerHostShm = 1U << 6;
+constexpr uint32_t kRankLayerDeviceUrma = 1U << 8;
+
+// 本机地址域可用的层；跨机地址域可用的层。configstore 据此判断两端是否至少配置了一层可用协议。
+constexpr uint32_t kSameNodeRankLayers = kRankLayerSdma | kRankLayerHostShm;
+constexpr uint32_t kRemoteNodeRankLayers =
+    kRankLayerDeviceRdma | kRankLayerDeviceUrma | kRankLayerHostRdma | kRankLayerHostUrma | kRankLayerHostTcp;
+
+// GM 只关心 baseInfo 头部的节点拓扑和协议层，不解析 NIC/private data。
+struct RankLinkMetadata {
+    uint32_t layerMask{0};
+    uint32_t superPodId{kInvalidRankSuperPodId};
+    uint32_t serverId{kInvalidRankServerId};
+    bool valid{false};
+};
+
+template<typename T>
+bool ReadRankLinkField(const uint8_t *data, size_t length, size_t &offset, T &value) noexcept
+{
+    if (offset + sizeof(T) > length) {
+        return false;
+    }
+    std::memcpy(&value, data + offset, sizeof(T));
+    offset += sizeof(T);
+    return true;
+}
+
+RankLinkMetadata ParseRankLinkMetadata(const Bytes &baseInfo) noexcept
+{
+    RankLinkMetadata metadata{};
+    const auto *data = baseInfo.data();
+    const size_t length = baseInfo.size();
+    uint64_t magic = 0;
+    uint32_t rankId = 0;
+    uint16_t role = 0;
+    uint16_t phyDevId = 0;
+    char nic[64] = {};
+    uint32_t layerCount = 0;
+    uint32_t layers[kMaxRankLinkLayers] = {};
+    uint32_t superPodId = kInvalidRankSuperPodId;
+    uint32_t serverId = kInvalidRankServerId;
+    size_t offset = 0;
+
+    if (!ReadRankLinkField(data, length, offset, magic) || magic != ENTITY_EXPORT_INFO_MAGIC) {
+        return metadata;
+    }
+    if (!ReadRankLinkField(data, length, offset, rankId) || !ReadRankLinkField(data, length, offset, role) ||
+        !ReadRankLinkField(data, length, offset, phyDevId) || !ReadRankLinkField(data, length, offset, nic) ||
+        !ReadRankLinkField(data, length, offset, layerCount) || !ReadRankLinkField(data, length, offset, layers) ||
+        !ReadRankLinkField(data, length, offset, superPodId) || !ReadRankLinkField(data, length, offset, serverId)) {
+        return metadata;
+    }
+    if (layerCount > kMaxRankLinkLayers) {
+        return metadata;
+    }
+
+    for (uint32_t i = 0; i < layerCount; ++i) {
+        metadata.layerMask |= static_cast<uint32_t>(layers[i]);
+    }
+    metadata.superPodId = superPodId;
+    metadata.serverId = serverId;
+    metadata.valid = true;
+    return metadata;
+}
 // Each alive rank needs two ADD tasks (src->newRank and newRank->src) to build bidirectional links.
 constexpr size_t K_ADD_DIRECTIONS = 2;
 
 // 重发超时以秒配置，而链路状态持续时长（LinkScanContext::elapsedMs）以毫秒统计，比较时统一换算。
 constexpr int64_t K_MS_PER_SECOND = 1000;
+constexpr auto K_LINK_QUERY_INTERVAL = std::chrono::seconds(30);
 
 // SendTaskKey packs srcRank into the high bits, op into bits 32..39 and linkIdx
 // into the low 32 bits, so distinct ops on the same link (e.g. REMOVE then CLOSE
@@ -70,6 +149,10 @@ SmemGroupManagerServer::SmemGroupManagerServer(SmemGroupCommandSender sender, co
     rankBase_.resize(maxRanks_);
     rankExternal_.resize(maxRanks_);
     rankRole_.assign(maxRanks_, SMEM_GROUP_RANK_ROLE_UNKNOWN);
+    rankLayerMask_.assign(maxRanks_, 0U);
+    rankSuperPodId_.assign(maxRanks_, kInvalidRankSuperPodId);
+    rankServerId_.assign(maxRanks_, kInvalidRankServerId);
+    rankLinkInfoValid_.assign(maxRanks_, false);
     isActiveLink_.assign(maxRanks_ * maxRanks_, false);
 }
 
@@ -144,16 +227,18 @@ int SmemGroupManagerServer::CheckIn(const RankFullInfo &info, uint64_t reqId) no
 
         rankBase_[info.rankId] = info.baseInfo;
         rankExternal_[info.rankId] = info.externalInfo;
-        // 角色必须先于建链循环写入：IsLinkPruned 会同时读本 rank 与对端 rank 的角色。
+        UpdateProviderRankLocked(info.rankId);
+        // 角色必须先于建链循环写入：ShouldLink 会同时读本 rank 与对端 rank 的角色和拓扑。
         rankRole_[info.rankId] = info.role;
+        pendingLinkQueries_.erase(info.rankId);
 
         states_[info.rankId] = RANK_CHECKED_IN;
         aliveRanks_.insert(info.rankId);
 
         for (uint32_t i = 0; i < maxRanks_; ++i) {
             if ((states_[i] == RANK_ACTIVE || states_[i] == RANK_CHECKED_IN) && i != info.rankId) {
-                // 分离部署剪枝：两个 PROXY 之间不建链，双向保持 LINK_IDLE。
-                if (IsLinkPruned(info.rankId, i)) {
+                // 统一建链判定：剪枝对不建链，且分层协议必须覆盖当前地址域。
+                if (!ShouldLink(info.rankId, i)) {
                     continue;
                 }
                 uint32_t fwdIdx = LinkIndex(info.rankId, i);
@@ -201,6 +286,7 @@ int SmemGroupManagerServer::ProcessExtendMemory(uint32_t rankId, const MultiByte
         return -1;
     }
     rankExternal_[rankId].insert(rankExternal_[rankId].end(), additionalSlices.begin(), additionalSlices.end());
+    UpdateProviderRankLocked(rankId);
     STORE_LOG_INFO("[GM][Server][Recv] RCV rank=" << rankId << " type=EXTMEM slices=" << additionalSlices.size());
 
     // Broadcast ADD_SLICES to all active peers via sender callback
@@ -249,10 +335,16 @@ void SmemGroupManagerServer::MarkRankReconnected(uint32_t rankId) noexcept
  */
 void SmemGroupManagerServer::ResetRankState(uint32_t rankId, std::vector<uint32_t> &connectedPeers) noexcept
 {
+    pendingLinkQueries_.erase(rankId);
     states_[rankId] = RANK_IDLE;
     rankBase_[rankId].clear();
     rankExternal_[rankId].clear();
+    providerRanks_.erase(rankId);
     rankRole_[rankId] = SMEM_GROUP_RANK_ROLE_UNKNOWN;
+    rankLayerMask_[rankId] = 0U;
+    rankSuperPodId_[rankId] = kInvalidRankSuperPodId;
+    rankServerId_[rankId] = kInvalidRankServerId;
+    rankLinkInfoValid_[rankId] = false;
 
     for (uint32_t i = 0; i < maxRanks_; ++i) {
         if (i == rankId) {
@@ -311,12 +403,55 @@ uint32_t SmemGroupManagerServer::LinkIndex(uint32_t src, uint32_t dst) const noe
     return src * maxRanks_ + dst;
 }
 
-bool SmemGroupManagerServer::IsLinkPruned(uint32_t a, uint32_t b) const noexcept
+void SmemGroupManagerServer::UpdateRankLinkInfoLocked(uint32_t rankId, const RankFullInfo &info) noexcept
 {
-    if (a >= maxRanks_ || b >= maxRanks_) {
+    if (rankId >= maxRanks_) {
+        return;
+    }
+    const auto metadata = ParseRankLinkMetadata(info.baseInfo);
+    rankLayerMask_[rankId] = metadata.layerMask;
+    rankSuperPodId_[rankId] = metadata.superPodId;
+    rankServerId_[rankId] = metadata.serverId;
+    rankLinkInfoValid_[rankId] = metadata.valid;
+}
+
+bool SmemGroupManagerServer::ShouldLink(uint32_t src, uint32_t dst) const noexcept
+{
+    if (src >= maxRanks_ || dst >= maxRanks_ || src == dst) {
         return false;
     }
-    return rankRole_[a] == SMEM_GROUP_RANK_ROLE_PROXY && rankRole_[b] == SMEM_GROUP_RANK_ROLE_PROXY;
+    if (rankRole_[src] == SMEM_GROUP_RANK_ROLE_PROXY && rankRole_[dst] == SMEM_GROUP_RANK_ROLE_PROXY) {
+        return false;
+    }
+
+    if (!rankLinkInfoValid_[src] || !rankLinkInfoValid_[dst]) {
+        return true;
+    }
+
+    // 未配置分层协议（A3 独立部署 / 老版本对端）时 layerMask 为 0，不能当作"无共同层"剪枝；
+    // 回退到历史行为：是否建链交给建链事件与运行期可达性（CanSdmaReaches / import）判定。
+    if (rankLayerMask_[src] == 0U || rankLayerMask_[dst] == 0U) {
+        return true;
+    }
+
+    const bool topologyValid =
+        rankSuperPodId_[src] != kInvalidRankSuperPodId && rankServerId_[src] != kInvalidRankServerId &&
+        rankSuperPodId_[dst] != kInvalidRankSuperPodId && rankServerId_[dst] != kInvalidRankServerId;
+    if (!topologyValid) {
+        return true;
+    }
+
+    const bool sameNode = rankSuperPodId_[src] == rankSuperPodId_[dst] && rankServerId_[src] == rankServerId_[dst];
+    // SDMA 的可达域是「同 server 或同 superPod」（见 MemSegment::CanSdmaReaches），跨 server 但同 superPod
+    // 时依然可用，不能按“同机层”剪掉；跨 superPod 才不可达。
+    const uint32_t remoteLayers = (rankSuperPodId_[src] == rankSuperPodId_[dst])
+                                      ? (kRemoteNodeRankLayers | kRankLayerSdma)
+                                      : kRemoteNodeRankLayers;
+    const uint32_t srcLayers =
+        sameNode ? rankLayerMask_[src] & kSameNodeRankLayers : rankLayerMask_[src] & remoteLayers;
+    const uint32_t dstLayers =
+        sameNode ? rankLayerMask_[dst] & kSameNodeRankLayers : rankLayerMask_[dst] & remoteLayers;
+    return (srcLayers & dstLayers) != 0U;
 }
 
 void SmemGroupManagerServer::QueryLinkStates() noexcept
@@ -333,12 +468,8 @@ void SmemGroupManagerServer::QueryLinkStates() noexcept
 
     if (sender_) {
         for (auto rankId : alive) {
-            auto msg = SmemMessage::PackQueryLinkState(rankId);
-            auto packed = SmemMessagePacker::Pack(msg);
-            int qRet = -1;
-            if (!packed.empty()) {
-                qRet = sender_(rankId, packed);
-            }
+            const auto requestId = (static_cast<uint64_t>(maxRanks_ + 1) << reqIdShift) | g_ctrlReqSeq.fetch_add(1);
+            const auto qRet = SendBatchQueryLinkState(rankId, requestId);
             if (qRet != 0) {
                 STORE_LOG_WARN("[GM][Server][Send] QueryLinkStates: failed for rank " << rankId << ": " << qRet);
             }
@@ -350,20 +481,56 @@ void SmemGroupManagerServer::OnLinkStateResponse(const RankFullInfo &rankInfo,
                                                  const std::vector<LinkStateEntry> &entries, uint64_t reqId) noexcept
 {
     const uint32_t rankId = rankInfo.rankId;
-    STORE_LOG_INFO("[GM][Server][Recv] RCV rank=" << rankId << " type=LNKSRSP reqId=" << reqId
-                                                  << ", role=" << RankRoleName(rankInfo.role));
+    STORE_LOG_INFO("[GM][Server][Recv] RCV rank=" << rankId << " type=LNKSRSP reqId=" << reqId << ", role="
+                                                  << RankRoleName(rankInfo.role) << " entries=" << entries.size());
     if (rankId >= maxRanks_) {
         return;
     }
 
     std::unique_lock<std::mutex> lock(mutex_);
+    const auto query = pendingLinkQueries_.find(rankId);
+    const bool matched = query != pendingLinkQueries_.end() && query->second.requestId == reqId;
+    const bool standalone = !providerRanks_.empty() && (rankRole_[rankId] == SMEM_GROUP_RANK_ROLE_PROVIDER ||
+                                                        rankRole_[rankId] == SMEM_GROUP_RANK_ROLE_PROXY);
+    const bool standaloneResponse =
+        rankInfo.role == SMEM_GROUP_RANK_ROLE_PROVIDER || rankInfo.role == SMEM_GROUP_RANK_ROLE_PROXY;
+    if ((standaloneResponse && states_[rankId] != RANK_ACTIVE && states_[rankId] != RANK_CHECKED_IN) ||
+        (standalone && !matched)) {
+        STORE_LOG_DEBUG("ignore stale link query response, rank=" << rankId << " reqId=" << reqId);
+        return;
+    }
+    const bool periodic = matched && query->second.periodic;
+    UpdateRankLinkInfoLocked(rankId, rankInfo);
+    if (matched) {
+        pendingLinkQueries_.erase(query);
+    }
+    if (periodic) {
+        if (providerRanks_.empty()) {
+            return;
+        }
+        for (const auto &entry : entries) {
+            if (entry.dstRankId >= maxRanks_ || aliveRanks_.count(entry.dstRankId) == 0 ||
+                !ShouldLink(rankId, entry.dstRankId)) {
+                continue;
+            }
+            const auto idx = LinkIndex(rankId, entry.dstRankId);
+            if (links_[idx] == LINK_CONNECTED && entry.state == LINK_IDLE) {
+                links_[idx] = LINK_IDLE;
+                transitions_[idx] = {};
+                STORE_LOG_WARN("[GM][Server][Event] data link lost, src=" << rankId << " tgt=" << entry.dstRankId);
+            }
+        }
+        return;
+    }
     rankBase_[rankId] = rankInfo.baseInfo;
     rankExternal_[rankId] = rankInfo.externalInfo;
+    UpdateProviderRankLocked(rankId);
     // 重连路径（rec:1）不发 JOINREQ，非 etcd 模式又没有角色持久化载体：这里与
     // base/external 并列，靠对端上报把 rankRole_ 回填，让剪枝判定随重连自愈；
     // etcd 模式下则作为持久化结果的校验/兜底。必须早于下面的剪枝判定。
     const uint8_t previousRole = rankRole_[rankId];
     rankRole_[rankId] = rankInfo.role;
+    UpdateRankLinkInfoLocked(rankId, rankInfo);
     // 角色被覆盖是排查剪枝失效的关键节点：PROXY 被改写成非 PROXY 会让该 rank 的剪枝静默
     // 失效，必须 WARN 留痕；其余角色的覆盖只记 INFO。
     if (previousRole != rankInfo.role) {
@@ -381,8 +548,8 @@ void SmemGroupManagerServer::OnLinkStateResponse(const RankFullInfo &rankInfo,
         if (entry.dstRankId >= maxRanks_ || aliveRanks_.find(entry.dstRankId) == aliveRanks_.end()) {
             continue;
         }
-        // 剪枝对：忽略对端上报的链路状态，强制保持 IDLE，避免它进入重试/降级扫描。
-        if (IsLinkPruned(rankId, entry.dstRankId)) {
+        // 不建链对：忽略对端上报的链路状态，强制保持 IDLE，避免它进入重试/降级扫描。
+        if (!ShouldLink(rankId, entry.dstRankId)) {
             links_[LinkIndex(rankId, entry.dstRankId)] = LINK_IDLE;
             continue;
         }
@@ -492,7 +659,7 @@ void SmemGroupManagerServer::PromoteCheckedInRanks(std::vector<uint32_t> &promot
                 continue;
             }
             // 剪枝对（PROXY<->PROXY）不参与稳定性判定：它永远不会被建链。
-            if (IsLinkPruned(r, j)) {
+            if (!ShouldLink(r, j)) {
                 continue;
             }
             LinkState ls = links_[LinkIndex(r, j)];
@@ -522,7 +689,7 @@ bool SmemGroupManagerServer::HasEnoughConnectedLinks(uint32_t r) noexcept
             continue;
         }
         // 剪枝对不计入期望链路数，否则 PROXY rank 会因为没有 PROXY<->PROXY 链路而永远无法 promote。
-        if (IsLinkPruned(r, j)) {
+        if (!ShouldLink(r, j)) {
             continue;
         }
         peers++;
@@ -557,8 +724,8 @@ void SmemGroupManagerServer::RetryIdleLinks() noexcept
             if (states_[j] != RANK_ACTIVE && states_[j] != RANK_CHECKED_IN) {
                 continue;
             }
-            // 剪枝对（PROXY<->PROXY）必须保持 IDLE：否则 30s 一次的断链重试会把剪掉的链路重新拉起。
-            if (IsLinkPruned(r, j)) {
+            // 不建链对必须保持 IDLE：否则 30s 一次的断链重试会把剪掉的链路重新拉起。
+            if (!ShouldLink(r, j)) {
                 continue;
             }
             uint32_t idx = LinkIndex(r, j);
@@ -643,6 +810,7 @@ void SmemGroupManagerServer::DrivePendingTransitions() noexcept
 {
     TP_TRACE_BEGIN(TP_SMEM_GROUP_SERVER_DRIVE_TRANSITIONS);
     LinkScanJobs jobs;
+    std::vector<SendTask> queryJobs;
     auto now = std::chrono::steady_clock::now();
 
     std::vector<uint32_t> promotedToActive;
@@ -667,6 +835,19 @@ void SmemGroupManagerServer::DrivePendingTransitions() noexcept
         }
         PromoteCheckedInRanks(promotedToActive);
         RetryIdleLinks();
+        if (!providerRanks_.empty() && now - lastLinkQueryTime_ >= K_LINK_QUERY_INTERVAL) {
+            lastLinkQueryTime_ = now;
+            for (const auto rank : aliveRanks_) {
+                if (rankRole_[rank] != SMEM_GROUP_RANK_ROLE_PROVIDER && rankRole_[rank] != SMEM_GROUP_RANK_ROLE_PROXY) {
+                    continue;
+                }
+                SendTask task;
+                task.op = SendOp::QUERY_LINK_STATE;
+                task.srcRank = rank;
+                task.periodicQuery = true;
+                queryJobs.push_back(std::move(task));
+            }
+        }
     }
 
     // Notify newly promoted ranks (outside lock — sender_ may block)
@@ -683,6 +864,7 @@ void SmemGroupManagerServer::DrivePendingTransitions() noexcept
         onStateChange_();
     }
 
+    EnqueueBatchSend(std::move(queryJobs));
     EnqueueLinkJobs(jobs);
     TP_TRACE_END(TP_SMEM_GROUP_SERVER_DRIVE_TRANSITIONS, 0);
 }
@@ -724,6 +906,12 @@ void SmemGroupManagerServer::OnControlAck(ControlOp ackOp, uint32_t senderRankId
             continue;
         }
         if (ApplyAckToLink(ackOp, senderRankId, targetRankId, now)) {
+            for (const auto rank : {senderRankId, targetRankId}) {
+                const auto query = pendingLinkQueries_.find(rank);
+                if (query != pendingLinkQueries_.end() && query->second.periodic) {
+                    pendingLinkQueries_.erase(query);
+                }
+            }
             linksChanged = true;
         }
     }
@@ -887,13 +1075,38 @@ int SmemGroupManagerServer::SendBatchEstablish(uint32_t srcRank, const std::vect
     return sender_(srcRank, packed);
 }
 
-int SmemGroupManagerServer::SendBatchQueryLinkState(uint32_t srcRank) noexcept
+int SmemGroupManagerServer::SendBatchQueryLinkState(uint32_t srcRank, uint64_t requestId, bool periodic) noexcept
 {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (srcRank >= maxRanks_ || (states_[srcRank] != RANK_ACTIVE && states_[srcRank] != RANK_CHECKED_IN)) {
+            return 0;
+        }
+        if (periodic && providerRanks_.empty()) {
+            return 0;
+        }
+        if (!providerRanks_.empty() &&
+            (rankRole_[srcRank] == SMEM_GROUP_RANK_ROLE_PROVIDER || rankRole_[srcRank] == SMEM_GROUP_RANK_ROLE_PROXY)) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto pending = pendingLinkQueries_.find(srcRank);
+            // Throttle only the periodic probe: returning 0 for an explicit query reported success while nothing
+            // was sent, and the late answer was then dropped as stale in OnLinkStateResponse.
+            if (periodic && pending != pendingLinkQueries_.end() &&
+                now - pending->second.timestamp < K_LINK_QUERY_INTERVAL) {
+                return 0;
+            }
+            pendingLinkQueries_[srcRank] = {requestId, periodic, now};
+        }
+    }
     auto msg = SmemMessage::PackQueryLinkState(srcRank);
+    msg.requestId = requestId;
     auto packed = SmemMessagePacker::Pack(msg);
     if (packed.empty()) {
+        STORE_LOG_ERROR("pack link query failed, rank=" << srcRank << " reqId=" << requestId);
         return -1;
     }
+    STORE_LOG_INFO("[GM][Server][Send] rank=" << srcRank << " type=QUERYREQ reqId=" << requestId
+                                              << " periodic=" << periodic);
     return sender_(srcRank, packed);
 }
 
@@ -918,7 +1131,7 @@ int SmemGroupManagerServer::SendBatchGroup(uint32_t srcRank, SendOp op,
         case SendOp::ESTABLISH:
             return SendBatchEstablish(srcRank, group, reqId);
         case SendOp::QUERY_LINK_STATE:
-            return SendBatchQueryLinkState(srcRank);
+            return SendBatchQueryLinkState(srcRank, reqId, group.front()->periodicQuery);
     }
     return -1;
 }
@@ -1159,6 +1372,18 @@ void SmemGroupManagerServer::SetRankExternal(uint32_t rankId, const std::vector<
     }
     std::unique_lock<std::mutex> lock(mutex_);
     rankExternal_[rankId] = data;
+    UpdateProviderRankLocked(rankId);
+}
+
+void SmemGroupManagerServer::UpdateProviderRankLocked(uint32_t rankId)
+{
+    const auto &slices = rankExternal_[rankId];
+    if (std::any_of(slices.begin(), slices.end(),
+                    [](const Bytes &slice) { return mf::HybmIsHostProviderSlice(slice.data(), slice.size()); })) {
+        providerRanks_.insert(rankId);
+    } else {
+        providerRanks_.erase(rankId);
+    }
 }
 
 void SmemGroupManagerServer::SetRankRole(uint32_t rankId, uint8_t role) noexcept
@@ -1202,7 +1427,7 @@ void SmemGroupManagerServer::RebuildActiveLinks() noexcept
     activeLinks_.clear();
     for (uint32_t i = 0; i < maxRanks_ * maxRanks_; ++i) {
         // 剪枝对保持 IDLE（稳定态），不进活跃扫描表。
-        if (IsLinkPruned(i / maxRanks_, i % maxRanks_)) {
+        if (!ShouldLink(i / maxRanks_, i % maxRanks_)) {
             links_[i] = LINK_IDLE;
             transitions_[i] = {};
             continue;

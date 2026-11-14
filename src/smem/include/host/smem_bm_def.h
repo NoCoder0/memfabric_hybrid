@@ -31,6 +31,10 @@ typedef void *smem_bm_t;
 // Automatic NUMA affinity selection when SMEM_BM_BIND_NUMA_FLAG == SMEM_BM_BIND_NUMA_AUTO_AFFINITY_FLAG
 #define SMEM_BM_BIND_NUMA_AUTO_AFFINITY_FLAG ((1U << SMEM_BM_BIND_NUMA_FLAG_LEN) - 1)
 #define SMEM_BM_FLAG_CREATE_WITH_SHM         (1U << 8)
+// SMEM_BM_FLAG_PROXY create bm for proxy when local dram and hbm are both zero
+#define SMEM_BM_FLAG_PROXY (1U << 11)
+// SMEM_BM_FLAG_PROVIDER provider binds all (or env-selected) NPUs of the local host
+#define SMEM_BM_FLAG_PROVIDER (1U << 12)
 // SMEM_BM_FLAG_DRAM_MAP_HOST_VA map host virtual address space
 #define SMEM_BM_FLAG_DRAM_MAP_HOST_VA (1U << 9)
 // SMEM_BM_FLAG_DRAM_BEST_EFFORT alloc DRAM with best-effort strategy

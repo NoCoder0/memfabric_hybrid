@@ -10,6 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 #include "hybm_data_op_device_urma.h"
+#include "urma_proxy_transport_manager.h"
 
 #include <sys/mman.h>
 #include <cstdint>
@@ -32,6 +33,12 @@
 
 namespace {
 constexpr uint64_t URMA_SWAP_SPACE_SIZE = 0;
+
+bool UsesProxy(const ock::mf::transport::TransManagerPtr &transport)
+{
+    auto manager = std::dynamic_pointer_cast<ock::mf::transport::device::UrmaProxyTransportManager>(transport);
+    return manager != nullptr;
+}
 
 bool IsSupportedUrmaDirection(hybm_data_copy_direction direction)
 {
@@ -135,6 +142,9 @@ void DataOpDeviceURMA::FreeSwapMemory()
             const auto ret = transportManager_->UnregisterMemoryRegion((uint64_t)urmaSwapBaseAddr_);
             if (ret != 0) {
                 BM_LOG_ERROR("Failed to UnregisterMemoryRegion, ret: " << ret);
+                if (UsesProxy(transportManager_)) {
+                    return;
+                }
             }
         }
         const auto ret = DlAclApi::AclrtFree(urmaSwapBaseAddr_);
@@ -785,6 +795,22 @@ Result DataOpDeviceURMA::BatchDataCopyMultiRank(hybm_batch_copy_params &params, 
     return BM_OK;
 }
 
+Result DataOpDeviceURMA::CopyWithSwap(AllocatedElement &block, const void *src, void *dest, uint64_t size,
+                                      const ExtOptions &options) noexcept
+{
+    auto manager = std::dynamic_pointer_cast<transport::device::UrmaProxyTransportManager>(transportManager_);
+    if (!manager) {
+        return CopyURMA(src, dest, size, options);
+    }
+    // A rejected launch rolls back its pending entry. Earlier IO on this thread does not own this block.
+    const auto pending = manager->CurrentThreadPendingCount();
+    auto ret = CopyURMA(src, dest, size, options);
+    if (ret != BM_OK && manager->CurrentThreadPendingCount() > pending) {
+        block.Reset();
+    }
+    return ret;
+}
+
 Result DataOpDeviceURMA::SafePut(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options,
                                  bool srcIsHost)
 {
@@ -814,7 +840,7 @@ Result DataOpDeviceURMA::SafePut(const void *srcVA, void *destVA, uint64_t lengt
             ret = CopyLD2LD(currentSrc, tmpSwap, currentChunkSize, options);
         }
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy src to swap", ret);
-        ret = CopyURMA(tmpSwap, currentDest, currentChunkSize, options);
+        ret = CopyWithSwap(tmpRdmaMemory, tmpSwap, currentDest, currentChunkSize, options);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy swap to dest", ret);
         offset += currentChunkSize;
         remainingLength -= currentChunkSize;
@@ -842,17 +868,17 @@ Result DataOpDeviceURMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
         uint64_t currentChunkSize = std::min(remainingLength, urmaSwapSpaceSize_);
         auto tmpRdmaMemory = urmaSwapMemoryAllocator_->Allocate(currentChunkSize);
         auto tmpSwap = tmpRdmaMemory.Address();
-        BM_ASSERT_LOG_AND_RETURN(tmpSwap != nullptr, "[CopyGD2LH] Failed to malloc temp buffer", BM_MALLOC_FAILED);
+        BM_ASSERT_LOG_AND_RETURN(tmpSwap != nullptr, "[SafeGet] Failed to malloc temp buffer", BM_MALLOC_FAILED);
         const void *currentSrc = reinterpret_cast<const void *>(srcBase + offset);
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
-        ret = CopyURMA(currentSrc, tmpSwap, currentChunkSize, options);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy src to swap", ret);
+        ret = CopyWithSwap(tmpRdmaMemory, currentSrc, tmpSwap, currentChunkSize, options);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[SafeGet] Failed to copy src to swap", ret);
         if (destIsHost) {
             ret = CopyLD2LH(tmpSwap, currentDest, currentChunkSize, options);
         } else {
             ret = CopyLD2LD(tmpSwap, currentDest, currentChunkSize, options);
         }
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy swap to dest", ret);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[SafeGet] Failed to copy swap to dest", ret);
         offset += currentChunkSize;
         remainingLength -= currentChunkSize;
     }

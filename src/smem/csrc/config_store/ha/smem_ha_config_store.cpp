@@ -284,7 +284,6 @@ bool HaConfigStore::HandleLeaderExists(const std::string &leaderAddr) noexcept
         }
         return true;
     }
-    isFirstLeader_ = false;
     SM_LOG_INFO("Found alive leader: " << leaderAddr << ", becoming follower");
     if (BecomeFollower(leaderAddr) != SM_OK) {
         SM_LOG_ERROR("Becoming follower failed, leader: " << leaderAddr);
@@ -424,9 +423,8 @@ void HaConfigStore::StartServer() noexcept
         SM_LOG_DEBUG("No valid worldSize in backend, using default: " << worldSize_);
     }
 
-    // Create and configure server, skip recover if is the first leader
-    serverDelegate_ =
-        SmMakeRef<AccStoreServer>(leaderBindIp_, leaderBindPort_, recoveredWorldSize, backend_, isFirstLeader_);
+    // RestoreFromBackend supplies the previous membership; an empty set completes recovery immediately.
+    serverDelegate_ = SmMakeRef<AccStoreServer>(leaderBindIp_, leaderBindPort_, recoveredWorldSize, backend_, false);
     SM_ASSERT_RET_VOID(serverDelegate_ != nullptr);
     SM_LOG_INFO("AccStoreServer created, ip: " << leaderBindIp_ << ", port: " << leaderBindPort_
                                                << ", worldSize: " << recoveredWorldSize);

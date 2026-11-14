@@ -131,6 +131,12 @@ int DeviceQpManager::RemoveRanks(const std::unordered_set<uint32_t> &ranks) noex
     return BM_OK;
 }
 
+bool DeviceQpManager::WaitRanksRemoved(uint32_t timeoutMs) noexcept
+{
+    (void)timeoutMs;
+    return true;
+}
+
 bool DeviceQpManager::CheckQpReady(const std::vector<uint32_t> &rankIds) const noexcept
 {
     return true;

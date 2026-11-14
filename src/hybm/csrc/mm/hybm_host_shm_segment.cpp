@@ -16,16 +16,14 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
-#include <sys/vfs.h>
 #include <unistd.h>
 
 #include <chrono>
-#include <fstream>
-#include <sstream>
 #include <thread>
 
 #include "hybm_ex_info_transfer.h"
 #include "hybm_logger.h"
+#include "hybm_shm_util.h"
 #include "hybm_va_manager.h"
 #include "dl_hal_api.h"
 #include "mf_env_define.h"
@@ -39,7 +37,6 @@ uint64_t HybmHostShmSegment::sUsedOffset_ = 0U;
 namespace {
 constexpr const char *HOST_SHM_HUGEPAGE_DIR = "/dev/hugepages";
 constexpr const char *HOST_SHM_FALLBACK_DIR = "/dev/shm";
-constexpr unsigned long HOST_SHM_HUGETLBFS_MAGIC = 0x958458f6UL;
 constexpr uint32_t HOST_SHM_IMPORT_OPEN_RETRY_TIMES = 50U;
 constexpr uint32_t HOST_SHM_IMPORT_OPEN_RETRY_INTERVAL_US = 10000U;
 
@@ -56,55 +53,6 @@ int MemfdCreate(const char *name, unsigned int flags) noexcept
     errno = ENOSYS;
     return -1;
 #endif
-}
-
-bool IsHugetlbfsMounted() noexcept
-{
-    struct statfs fsInfo {};
-    if (statfs(HOST_SHM_HUGEPAGE_DIR, &fsInfo) != 0) {
-        BM_LOG_WARN("Unable to access hugepage dir " << HOST_SHM_HUGEPAGE_DIR << " reason:" << errno << ", "
-                                                     << SafeStrError(errno) << ", will fallback to /dev/shm");
-        return false;
-    }
-    if (static_cast<unsigned long>(fsInfo.f_type) != HOST_SHM_HUGETLBFS_MAGIC) {
-        BM_LOG_WARN("Hugepage dir " << HOST_SHM_HUGEPAGE_DIR << " is not hugetlbfs, fs type:" << std::hex
-                                    << static_cast<unsigned long>(fsInfo.f_type) << ", will fallback to /dev/shm");
-        return false;
-    }
-    return true;
-}
-
-bool HasAvailableHugePages() noexcept
-{
-    std::ifstream memInfoFile("/proc/meminfo");
-    if (!memInfoFile.is_open()) {
-        BM_LOG_WARN("Unable to open /proc/meminfo, will fallback to /dev/shm");
-        return false;
-    }
-
-    std::string line;
-    while (std::getline(memInfoFile, line)) {
-        std::istringstream lineStream(line);
-        std::string key;
-        uint64_t value = 0;
-
-        if (!(lineStream >> key >> value)) {
-            continue;
-        }
-
-        if (key != "HugePages_Free:") {
-            continue;
-        }
-
-        if (value == 0) {
-            BM_LOG_WARN("HugePages_Free is 0, will fallback to /dev/shm");
-            return false;
-        }
-        return true;
-    }
-
-    BM_LOG_WARN("Unable to parse HugePages_Free from /proc/meminfo, will fallback to /dev/shm");
-    return false;
 }
 } // namespace
 
@@ -240,10 +188,13 @@ Result HybmHostShmSegment::Export(const std::shared_ptr<MemSlice> &slice, std::s
     return BM_OK;
 }
 
-Result HybmHostShmSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[],
-                                  uint32_t overrideRank) noexcept
+Result HybmHostShmSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[], uint32_t overrideRank,
+                                  std::vector<ImportEntryKind> &entryKinds) noexcept
 {
     (void)overrideRank; // rank 覆盖仅 trans 场景（AsymmetricMemSegment）需要
+    (void)addresses;
+    BM_ASSERT_LOG_AND_RETURN(entryKinds.size() == allExInfo.size(), "entryKinds must be sized by caller",
+                             BM_INVALID_PARAM);
     LiteralExInfoTranslater<ShmExportInfo> translator;
     std::vector<ShmExportInfo> deserializedInfos{allExInfo.size()};
     for (auto i = 0U; i < allExInfo.size(); i++) {
@@ -360,7 +311,7 @@ Result HybmHostShmSegment::RemoveImported(const std::vector<uint32_t> &ranks) no
 
 Result HybmHostShmSegment::RegisterMemory(const void *addr, uint64_t size, std::shared_ptr<MemSlice> &slice) noexcept
 {
-    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+    constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     if ((options_.dataOpType & deviceTransportMask) != 0U) {
         auto ret = MemSegment::RegisterMemCommon(addr, size, slice);
         if (ret != BM_OK) {
@@ -395,11 +346,6 @@ Result HybmHostShmSegment::GetExportSliceSize(size_t &size) noexcept
 {
     size = sizeof(ShmExportInfo);
     return BM_OK;
-}
-
-bool HybmHostShmSegment::TryHugetlbfsAvailable() noexcept
-{
-    return IsHugetlbfsMounted() && HasAvailableHugePages();
 }
 
 std::string HybmHostShmSegment::GetShmFilePath(uint32_t rankId) const noexcept

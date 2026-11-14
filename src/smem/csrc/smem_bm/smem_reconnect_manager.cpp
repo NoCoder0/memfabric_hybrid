@@ -37,15 +37,13 @@ void SmemReconnectManager::ReleaseDisconnectObserver() noexcept
     disconnectObserver_.reset();
 }
 
-int SmemReconnectManager::ImportAfterReconnectCleanup(const std::vector<RankFullInfo> &peers,
-                                                      const ImportPeersHandler &importPeers)
+int SmemReconnectManager::CleanupAfterReconnect(bool &reset)
 {
-    if (peers.empty()) {
-        return importPeers();
-    }
+    reset = false;
     const auto epoch = disconnectEpoch_.load(std::memory_order_acquire);
     if (cleanupAttemptedEpoch_ != epoch) {
         cleanupAttemptedEpoch_ = epoch;
+        reset = true;
         auto ret = removeAllImported_();
         if (ret != SM_OK) {
             SM_LOG_WARN("remove all imported peers failed, epoch=" << epoch << " ret=" << ret);
@@ -55,6 +53,18 @@ int SmemReconnectManager::ImportAfterReconnectCleanup(const std::vector<RankFull
         SM_LOG_ERROR("control link changed before import, epoch=" << epoch);
         return SM_NOT_CONNECTED;
     }
+    return SM_OK;
+}
+
+int SmemReconnectManager::ImportAfterReconnectCleanup(const std::vector<RankFullInfo> &peers,
+                                                      const ImportPeersHandler &importPeers)
+{
+    if (peers.empty()) {
+        return importPeers();
+    }
+    const auto epoch = disconnectEpoch_.load(std::memory_order_acquire);
+    bool reset = false;
+    SM_RETURN_IT_IF_NOT_OK(CleanupAfterReconnect(reset));
     SM_RETURN_IT_IF_NOT_OK(importPeers());
     if (disconnectEpoch_.load(std::memory_order_acquire) != epoch) {
         SM_LOG_ERROR("control link changed during import, epoch=" << epoch);

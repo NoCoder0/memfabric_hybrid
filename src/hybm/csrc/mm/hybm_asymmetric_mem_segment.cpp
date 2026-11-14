@@ -273,7 +273,7 @@ Result AsymmetricMemSegment::RegisterDeviceMemory(const void *addr, uint64_t siz
 Result AsymmetricMemSegment::CheckHostRegisterAllowed() const noexcept
 {
     constexpr auto connOps = HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP |
-                             HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+                             HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     // dataOpType=0（未指定传输方式，如 RECEIVER 角色的 smem_trans 注册）：NeedHostDeviceMapping()
     // 为 false，不做设备映射，仅登记 GVA，保持兼容放行
     if (options_.dataOpType == 0U) {
@@ -294,7 +294,7 @@ bool AsymmetricMemSegment::NeedHostDeviceMapping() const noexcept
 {
     // 仅设备侧连接类 op 需要把 host DRAM 映射进设备地址空间；
     // SDMA 引擎不支持访问外部注册 DRAM（评审结论），纯 SDMA 注册已在 CheckHostRegisterAllowed 拒绝
-    return (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) != 0U;
+    return (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK)) != 0U;
 }
 
 Result AsymmetricMemSegment::RegisterHostMemory(const void *addr, uint64_t size, MemSlicePtr &slice) noexcept
@@ -534,9 +534,11 @@ bool AsymmetricMemSegment::ResolveRemoteGva(uint64_t gva, uint64_t &lva)
     return false;
 }
 
-Result AsymmetricMemSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[],
-                                    uint32_t overrideRank) noexcept
+Result AsymmetricMemSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[], uint32_t overrideRank,
+                                    std::vector<ImportEntryKind> &entryKinds) noexcept
 {
+    BM_ASSERT_LOG_AND_RETURN(entryKinds.size() == allExInfo.size(), "entryKinds must be sized by caller",
+                             BM_INVALID_PARAM);
     if (allExInfo.empty()) {
         return BM_OK;
     }
@@ -819,7 +821,7 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
         if (ret != BM_OK) {
             return ret;
         }
-    } else if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)) {
+    } else if (options_.dataOpType & (HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK)) {
         // RDMA/URMA 按对端 MR 远端访问，无需本地映射；UBOE 已并入 URMA 链路参数，不再单独置位
         address = nullptr;
     } else {

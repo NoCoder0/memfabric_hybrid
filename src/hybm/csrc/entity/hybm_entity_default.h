@@ -24,11 +24,19 @@
 
 namespace ock {
 namespace mf {
+
+class HybmConnBasedSegment;
+
+namespace transport {
+namespace device {
+class ProviderService;
+} // namespace device
+} // namespace transport
 struct EntityExportInfo {
     uint64_t magic{ENTITY_EXPORT_INFO_MAGIC};
     uint32_t rankId{0};
     uint16_t role{0};
-    uint16_t reserved{0};
+    uint16_t phyDevId{0}; // node-unique phyDevId, used by a proxy to connect only to same-device peers
     char nic[64]{};
     uint32_t layerCount{0};
     hybm_data_op_type layers[EXPORT_INFO_MAX_LAYER_COUNT]{};
@@ -89,6 +97,7 @@ public:
 
     bool SdmaReaches(uint32_t remoteRank) const noexcept override;
     hybm_data_op_type CanReachDataOperators(uint32_t remoteRank) const noexcept override;
+    bool QueryDataLinkStates(std::vector<std::pair<uint32_t, bool>> &states) const;
     void *GetSliceVa(hybm_mem_slice_t slice, uint32_t flags);
     uint64_t GetSliceSize(hybm_mem_slice_t slice);
     int32_t ConnectTransport(const uint32_t *ranks, uint32_t count, uint32_t flags) noexcept override;
@@ -100,9 +109,11 @@ private:
     int32_t UpdateHybmDeviceInfo(uint32_t extCtxSize) noexcept;
     void SetHybmDeviceInfo(HybmDeviceMeta &info);
     int32_t ImportForTransport() noexcept;
-    int32_t ImportForSegment(const ExchangeInfoReader desc[], uint32_t count, void *addresses[],
-                             uint32_t overrideRank = HYBM_IMPORT_RANK_INVALID) noexcept;
+    uint16_t LocalPhyDevId() const noexcept;
+    int32_t ImportForSegment(const ExchangeInfoReader desc[], uint32_t count, void *addresses[], uint32_t overrideRank,
+                             std::vector<ImportEntryKind> &entryKinds) noexcept;
     Result LocateAddrAndRank(void *&src, void *&dest, std::pair<uint32_t, uint32_t> &p2pInfo) noexcept;
+    bool IsLocalCopyAddress(void *addr, const HybmConnBasedSegment &segment) noexcept;
 
     Result InitSegment();
     Result InitHbmSegment();
@@ -115,7 +126,8 @@ private:
     void ReleaseResources();
     int32_t SetThreadAclDevice();
     int32_t ImportForTransportManager();
-    int32_t ImportForTransportPrecheck(const ExchangeInfoReader *desc, uint32_t &count, void *addresses[],
+    int32_t ImportForTransportPrecheck(const ExchangeInfoReader *desc, uint32_t &count,
+                                       const std::vector<ImportEntryKind> &types, void *addresses[],
                                        uint32_t overrideRank);
     int32_t ImportForLayerProtocols();
 
@@ -138,6 +150,7 @@ private:
     std::mutex transportMutex_;
     std::mutex importMutex_;
     transport::TransManagerPtr transportManager_;
+    std::shared_ptr<transport::device::ProviderService> providerServer_;
     std::unordered_map<uint32_t, EntityExportInfo> importedRanks_;
     std::unordered_map<uint32_t, std::set<transport::TransportMemoryKey>> importedMemories_;
     HybmEntityTagInfoPtr tagManager_;

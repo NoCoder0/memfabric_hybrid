@@ -422,6 +422,7 @@ using hcommChannelCreateFunc = HcommResult (*)(EndpointHandle, CommEngine, Hcomm
                                                ChannelHandle *);
 using hcommChannelDestroyFunc = HcommResult (*)(const ChannelHandle *, uint32_t);
 using hcommChannelGetStatusFunc = HcommResult (*)(const ChannelHandle *, uint32_t, int32_t *);
+using hrtGetDeviceRefreshFunc = int32_t (*)(int32_t *);
 using hcommThreadAllocFunc = HcommResult (*)(CommEngine, uint32_t, const uint32_t *, ThreadHandle *);
 using hcommThreadFreeFunc = HcommResult (*)(const ThreadHandle *, uint32_t);
 using hcommReadOnThreadFunc = int32_t (*)(ThreadHandle, ChannelHandle, void *, const void *, uint64_t);
@@ -565,6 +566,15 @@ class DlHcommApi {
 public:
     static Result LoadLibrary();
     static void CleanupLibrary();
+
+    static inline Result RefreshCurrentDevice()
+    {
+        if (gHrtGetDeviceRefresh == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        int32_t deviceId = -1;
+        return gHrtGetDeviceRefresh(&deviceId);
+    }
 
     static inline int32_t HcommEndpointCreate(const EndpointDesc *endpoint, EndpointHandle *endpointHandle)
     {
@@ -811,6 +821,7 @@ private:
     static hcommChannelCreateFunc gHcommChannelCreate;
     static hcommChannelDestroyFunc gHcommChannelDestroy;
     static hcommChannelGetStatusFunc gHcommChannelGetStatus;
+    static hrtGetDeviceRefreshFunc gHrtGetDeviceRefresh;
     static hcommThreadAllocFunc gHcommThreadAlloc;
     static hcommThreadFreeFunc gHcommThreadFree;
     static hcommReadOnThreadFunc gHcommReadOnThread;

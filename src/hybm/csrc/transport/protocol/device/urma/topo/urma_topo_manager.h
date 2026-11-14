@@ -29,6 +29,8 @@ namespace transport {
 
 class UrmaTopoManager {
 public:
+    UrmaTopoManager() = default;
+    ~UrmaTopoManager() = default;
     UrmaTopoManager(const UrmaTopoManager &) = delete;
     UrmaTopoManager &operator=(const UrmaTopoManager &) = delete;
 
@@ -63,9 +65,6 @@ public:
     Result GetLocalId(int32_t &localId);
 
 private:
-    UrmaTopoManager() = default;
-    ~UrmaTopoManager() = default;
-
     Result SetDeviceBaseInfo();
     Result SetDeviceIdentity();
     Result BuildRootInfo();

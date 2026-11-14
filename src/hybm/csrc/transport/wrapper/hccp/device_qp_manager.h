@@ -63,6 +63,12 @@ public:
 
     virtual int SetRemoteRankInfo(const std::unordered_map<uint32_t, ConnectRankInfo> &ranks) noexcept = 0;
     virtual int RemoveRanks(const std::unordered_set<uint32_t> &ranks) noexcept;
+    /*
+     * Wait until the resources (QP/socket) of previously removed ranks have actually been released. This lets
+     * the caller guarantee cleanup completes before a rank with the same id joins again.
+     * @return true if all pending removals finished before the timeout.
+     */
+    virtual bool WaitRanksRemoved(uint32_t timeoutMs) noexcept;
     virtual int Startup(void *rdma) noexcept = 0;
     virtual void Shutdown() noexcept = 0;
     virtual int WaitingConnectionReady() noexcept;

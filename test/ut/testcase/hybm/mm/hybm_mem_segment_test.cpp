@@ -526,7 +526,8 @@ TEST_F(HybmMemSegmentTest, ConnBasedSegment_Import_AddsRemoteVaInfo)
     std::vector<std::string> allExInfo{encoded};
 
     void *addresses[1]{};
-    auto ret = seg.Import(allExInfo, addresses, HYBM_IMPORT_RANK_INVALID);
+    std::vector<ock::mf::ImportEntryKind> results(allExInfo.size(), ock::mf::ImportEntryKind::PeerSlice);
+    auto ret = seg.Import(allExInfo, addresses, HYBM_IMPORT_RANK_INVALID, results);
     EXPECT_EQ(ret, BM_OK);
     // imports_ 应该包含一条记录；必须先确认非空，否则失败时下标访问会 SEGV 掉整个测试进程
     ASSERT_EQ(seg.imports_.size(), 1U) << "Import ret=" << ret;
@@ -706,7 +707,8 @@ TEST_F(HybmMemSegmentTest, VmmBasedSegment_Import_WhenShareDisabled)
     ock::mf::HybmVmmBasedSegment seg(opt, 0);
     std::vector<std::string> allExInfo = {"dummy-info"};
     void *addresses[1]{};
-    auto ret = seg.Import(allExInfo, addresses, HYBM_IMPORT_RANK_INVALID);
+    std::vector<ock::mf::ImportEntryKind> results(allExInfo.size(), ock::mf::ImportEntryKind::PeerSlice);
+    auto ret = seg.Import(allExInfo, addresses, HYBM_IMPORT_RANK_INVALID, results);
     EXPECT_EQ(ret, BM_INVALID_PARAM);
     ret = seg.Mmap();
     EXPECT_EQ(ret, BM_OK);
@@ -923,6 +925,99 @@ TEST_F(HybmMemSegmentTest, Create_Dram_HostShmFlag_UsesHostShmSegment)
     ASSERT_NE(seg, nullptr);
     auto hostSeg = std::dynamic_pointer_cast<ock::mf::HybmHostShmSegment>(seg);
     EXPECT_NE(hostSeg, nullptr);
+}
+
+/**
+* SelectDramSegmentKind_HostShmAndProxyPriority
+*  - host shm 优先于 proxy 标志：HOST_SHM only + PROXY → HostShm；
+*  - HOST_SHM + 设备传输（分离部署）→ ConnBased；
+*  - 无 HOST_SHM 时 proxy 兜底 → ConnBased。
+*/
+TEST_F(HybmMemSegmentTest, SelectDramSegmentKind_HostShmAndProxyPriority)
+{
+    using Kind = ock::mf::MemSegment::DramSegmentKind;
+    ock::mf::MemSegmentOptions opt{};
+    constexpr auto soc = ock::mf::AscendSocType::ASCEND_910B;
+
+    opt.dataOpType = HYBM_DOP_TYPE_HOST_SHM;
+    opt.flags = HYBM_FLAG_PROXY;
+    EXPECT_EQ(ock::mf::MemSegment::SelectDramSegmentKind(opt, soc), Kind::HostShm);
+
+    opt.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_RDMA);
+    EXPECT_EQ(ock::mf::MemSegment::SelectDramSegmentKind(opt, soc), Kind::ConnBased);
+
+    opt.dataOpType = HYBM_DOP_TYPE_DEVICE_URMA;
+    EXPECT_EQ(ock::mf::MemSegment::SelectDramSegmentKind(opt, soc), Kind::ConnBased);
+}
+
+/**
+* SelectDramSegmentKind_VmmCapability
+*  - GVA v4 + 910C + SDMA 与设备传输混合 → Vmm；其余能力不足 → ConnBased。
+*/
+TEST_F(HybmMemSegmentTest, SelectDramSegmentKind_VmmCapability)
+{
+    using Kind = ock::mf::MemSegment::DramSegmentKind;
+    ock::mf::MemSegmentOptions opt{};
+    opt.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_RDMA);
+    opt.shmFd = -1;
+
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_V4));
+    EXPECT_TRUE(ock::mf::MemSegment::IsVmmSupported(opt, ock::mf::AscendSocType::ASCEND_910C));
+    EXPECT_EQ(ock::mf::MemSegment::SelectDramSegmentKind(opt, ock::mf::AscendSocType::ASCEND_910C), Kind::Vmm);
+
+    // 910B 不支持 VMM
+    EXPECT_FALSE(ock::mf::MemSegment::IsVmmSupported(opt, ock::mf::AscendSocType::ASCEND_910B));
+    EXPECT_EQ(ock::mf::MemSegment::SelectDramSegmentKind(opt, ock::mf::AscendSocType::ASCEND_910B), Kind::ConnBased);
+
+    // HOST_RDMA 与 VMM 互斥
+    opt.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_HOST_RDMA);
+    EXPECT_FALSE(ock::mf::MemSegment::IsVmmSupported(opt, ock::mf::AscendSocType::ASCEND_910C));
+}
+
+/**
+* Create_Dram_Proxy_UsesConnBasedSegment
+*  - 分离部署 proxy（HOST_SHM + 设备传输 + PROXY 标志）→ HybmConnBasedSegment。
+*/
+TEST_F(HybmMemSegmentTest, Create_Dram_Proxy_UsesConnBasedSegment)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.rankCnt = 2;
+    opt.rankId = 0;
+    opt.segType = ock::mf::HYBM_MST_DRAM;
+    opt.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_URMA);
+    opt.flags = HYBM_FLAG_PROXY;
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_UNKNOWN));
+    MOCKER(ock::mf::MemSegment::InitDeviceInfo).stubs().will(returnValue(0));
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910B;
+
+    auto seg = ock::mf::MemSegment::Create(opt, 0);
+    ASSERT_NE(seg, nullptr);
+    EXPECT_NE(std::dynamic_pointer_cast<ock::mf::HybmConnBasedSegment>(seg), nullptr);
+}
+
+/**
+* Create_Dram_HostShmOnlyWithProxyFlag_UsesHostShmSegment
+*  - 优先级回归：仅 HOST_SHM 但误带 PROXY 标志时仍走 HybmHostShmSegment。
+*/
+TEST_F(HybmMemSegmentTest, Create_Dram_HostShmOnlyWithProxyFlag_UsesHostShmSegment)
+{
+    ock::mf::MemSegmentOptions opt{};
+    opt.rankCnt = 2;
+    opt.rankId = 0;
+    opt.segType = ock::mf::HYBM_MST_DRAM;
+    opt.dataOpType = HYBM_DOP_TYPE_HOST_SHM;
+    opt.flags = HYBM_FLAG_PROXY;
+    opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
+
+    MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_UNKNOWN));
+    MOCKER(ock::mf::MemSegment::InitDeviceInfo).stubs().will(returnValue(0));
+    ock::mf::MemSegment::socType_ = ock::mf::AscendSocType::ASCEND_910B;
+
+    auto seg = ock::mf::MemSegment::Create(opt, 0);
+    ASSERT_NE(seg, nullptr);
+    EXPECT_NE(std::dynamic_pointer_cast<ock::mf::HybmHostShmSegment>(seg), nullptr);
 }
 
 /**

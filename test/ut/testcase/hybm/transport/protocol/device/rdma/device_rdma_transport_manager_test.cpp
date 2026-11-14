@@ -11,12 +11,28 @@
 */
 
 #include <gtest/gtest.h>
+#include "joinable_ranks_qp_manager.h"
+#include <mockcpp/mockcpp.hpp>
+#include <sys/socket.h>
+#include <unistd.h>
+#include "dl_rt_api.h"
+#include "dl_hccl_api.h"
+#include "rdma_provider_completion.h"
+#include "hybm_va_manager.h"
+#include "dl_hal_api.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 #include "hybm_types.h"
+#include "provider_control_io.h"
 
 #define private   public
 #define protected public
 #include "device_rdma_transport_manager.h"
+#include "rdma_provider_control_server.h"
+#include "rdma_provider_device.h"
+#include "rdma_provider_link.h"
+#include "rdma_proxy_transport_manager.h"
 #include "dl_hccp_api.h"
 #include "dl_acl_api.h"
 #include "hybm_stream.h"
@@ -26,6 +42,55 @@
 using namespace ock::mf;
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
+
+TEST(RdmaProxyTransportManagerTest, RegisteredHostMappingRemainsOwnedByCaller)
+{
+    GlobalMockObject::reset();
+    auto &vaManager = HybmVaManager::GetInstance();
+    vaManager.ClearAll();
+    ASSERT_EQ(vaManager.Initialize(AscendSocType::ASCEND_910C), BM_OK);
+    constexpr uint64_t hostAddress = 0x7F1234000000ULL;
+    constexpr uint64_t deviceAddress = 0x61000000000ULL;
+    constexpr uint64_t size = 65536;
+    ASSERT_EQ(vaManager.AddVaInfo({0, deviceAddress, hostAddress, size, HYBM_MEM_TYPE_HOST}), BM_OK);
+    MOCKER(DlHalApi::HalHostRegister).expects(never());
+    MOCKER(DlHalApi::HalHostUnregisterEx).expects(never());
+    MOCKER(DlAclApi::AclrtSetDevice).expects(exactly(2)).will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaDeregisterMR).expects(exactly(2)).will(returnValue(BM_OK));
+    MOCKER_CPP(&RdmaProviderDevice::RegisterMr,
+               bool (*)(RdmaProviderDevice *, void *, uint64_t, bool, HccpMrInfo &, void *&))
+        .expects(exactly(2))
+        .will(invoke(
+            +[](RdmaProviderDevice *, void *addr, uint64_t length, bool mapped, HccpMrInfo &info, void *&handle) {
+                if (reinterpret_cast<uint64_t>(addr) != deviceAddress || length != size || !mapped) {
+                    return false;
+                }
+                info.addr = addr;
+                info.size = length;
+                info.lkey = 17;
+                info.rkey = 19;
+                handle = reinterpret_cast<void *>(0x111UL);
+                return true;
+            }));
+    {
+        RdmaProxyTransportManager manager;
+        for (const auto flags : {REG_MR_FLAG_DRAM, REG_MR_FLAG_ACL_DRAM}) {
+            TransportMemoryRegion region{};
+            region.addr = hostAddress;
+            region.size = size;
+            region.flags = flags;
+            EXPECT_EQ(manager.RegisterMemoryRegion(region), BM_OK);
+            TransportMemoryKey key{};
+            EXPECT_EQ(manager.QueryMemoryKey(hostAddress, key), BM_OK);
+            EXPECT_EQ(key.keys, (std::vector<uint64_t>{17, 19}));
+            EXPECT_EQ(manager.UnregisterMemoryRegion(hostAddress), BM_OK);
+            EXPECT_EQ(vaManager.TransformVa(hostAddress, HVM_HVA, HVM_DVA), deviceAddress);
+        }
+    }
+    GlobalMockObject::verify();
+    GlobalMockObject::reset();
+    vaManager.ClearAll();
+}
 
 namespace {
 struct DlAclApiFnGuard {
@@ -743,6 +808,9 @@ TEST(RdmaTransportManagerTest, GetRoceDbAddrReturnsExpectedWhenChipInfoReady)
     mgr.deviceChipInfo_->chipOffset_ = 0x100000;
     mgr.deviceChipInfo_->chipDieOffset_ = 0x10000;
 
+    EXPECT_EQ(mgr.GetRoceDbAddrForRdmaDbSendTask(), 0ULL);
+    mgr.deviceChipInfo_->initialized_ = true;
+
     // Constants are defined in the .cpp:
     // RT_ASCEND910B1_ROCEE_BASE_ADDR=0x2000000000, RT_ASCEND910B1_ROCEE_VF_DB_CFG0_REG=0x230
     const uint64_t expected = 0x2000000000ULL + 0x230ULL +
@@ -762,6 +830,7 @@ TEST(RdmaTransportManagerTest, ConstructSqeNoSinkModeFillsFieldsWhenDbAddrNonZer
     mgr.deviceChipInfo_->chipBaseAddr_ = 0;
     mgr.deviceChipInfo_->chipOffset_ = 0;
     mgr.deviceChipInfo_->chipDieOffset_ = 0;
+    mgr.deviceChipInfo_->initialized_ = true;
 
     // Create a minimal stream object without Initialize; only GetId/GetWqeFlag are used.
     auto st = std::make_shared<HybmStream>(0, 0, 0);
@@ -1012,4 +1081,419 @@ TEST(RdmaTransportManagerTest, RemoteIOReturnsErrorWhenNoQpAndWhenNoStreamAndSho
     qp->putQpCalled = false;
     EXPECT_EQ(mgr.RemoteIO(0, 0x1000, 0x2000, 16, false, false), BM_ERROR);
     EXPECT_FALSE(qp->putQpCalled);
+}
+
+TEST(ProviderControlPortTest, RequiresACompleteDecimalPortInRange)
+{
+    uint16_t port = 0;
+    EXPECT_TRUE(provider_control::ParsePort("65535", port));
+    EXPECT_EQ(port, 65535);
+    for (const char *invalid : {"65537", "28000abc", "0", "-1", ""}) {
+        EXPECT_FALSE(provider_control::ParsePort(invalid, port)) << invalid;
+    }
+}
+
+TEST(ProviderControlUrlTest, RandomPortIsReachableAndExplicitPortDoesNotFallBack)
+{
+    uint16_t port = 0;
+    const int listener = provider_control::CreateListenSocket(port);
+    ASSERT_GE(listener, 0);
+    EXPECT_GE(port, 9000U);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+    const int client = provider_control::ConnectToHost("127.0.0.1", port, deadline);
+    EXPECT_GE(client, 0);
+    if (client >= 0) {
+        close(client);
+    }
+    const int duplicate = provider_control::CreateListenSocket(port);
+    EXPECT_LT(duplicate, 0);
+    if (duplicate >= 0) {
+        close(duplicate);
+    }
+    close(listener);
+}
+
+TEST(ProviderControlUrlTest, RequiresExplicitPortAndIpv4Host)
+{
+    std::string ip;
+    uint16_t port = 0;
+    EXPECT_TRUE(provider_control::ParseUrl("10.1.2.3:28000", ip, port));
+    EXPECT_EQ(ip, "10.1.2.3");
+    EXPECT_EQ(port, 28000);
+    EXPECT_TRUE(provider_control::ParseUrl("tcp://10.1.2.3:1234", ip, port));
+    EXPECT_EQ(ip, "10.1.2.3");
+    EXPECT_EQ(port, 1234);
+    // Only "ip:port" is accepted: no hostnames, no missing port, no port 0.
+    for (const char *invalid : {"10.1.2.3", "10.1.2.3:", ":28000", "provider.example:28000", "10.1.2.3:0"}) {
+        EXPECT_FALSE(provider_control::ParseUrl(invalid, ip, port)) << invalid;
+    }
+}
+
+TEST(ProviderControlSocketTest, DistinguishesIdleFromPendingDataAndClosedPeer)
+{
+    int sockets[2] = {-1, -1};
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+
+    // Peer open, nothing pending.
+    EXPECT_TRUE(provider_control::SocketAlive(sockets[0]));
+    EXPECT_TRUE(provider_control::SocketIdle(sockets[0]));
+
+    // An unprompted frame keeps the socket usable but must not look idle: control links only expect replies at
+    // known points, so pending data there means a protocol violation.
+    const char frame = 'x';
+    ASSERT_EQ(send(sockets[1], &frame, 1, 0), 1);
+    EXPECT_TRUE(provider_control::SocketAlive(sockets[0]));
+    EXPECT_FALSE(provider_control::SocketIdle(sockets[0]));
+
+    // Drain the buffered byte so the closed socket is observable as EOF instead of pending data.
+    char drained = 0;
+    ASSERT_EQ(recv(sockets[0], &drained, 1, 0), 1);
+    close(sockets[1]);
+    EXPECT_FALSE(provider_control::SocketAlive(sockets[0]));
+    EXPECT_FALSE(provider_control::SocketIdle(sockets[0]));
+    close(sockets[0]);
+}
+
+class ProviderDeviceCleanupTest : public testing::Test {
+protected:
+    void TearDown() override
+    {
+        GlobalMockObject::verify();
+    }
+};
+
+TEST_F(ProviderDeviceCleanupTest, OldProviderWireVersionIsRejectedBeforeCreatingQp)
+{
+    int sockets[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    RdmaProviderLinkHello hello{};
+    hello.magic = RDMA_PROVIDER_LINK_MAGIC;
+    hello.version = RDMA_PROVIDER_LINK_VERSION - 1;
+    const auto sent = send(sockets[0], &hello, sizeof(hello), 0);
+    MOCKER(DlHccpApi::RaQpCreate).expects(never());
+    if (sent == static_cast<ssize_t>(sizeof(hello))) {
+        RdmaProviderControlServer server;
+        server.HandleClient(sockets[1], 0);
+        char byte;
+        EXPECT_EQ(recv(sockets[0], &byte, sizeof(byte), MSG_DONTWAIT), 0);
+    } else {
+        close(sockets[1]);
+    }
+    close(sockets[0]);
+    EXPECT_EQ(sent, static_cast<ssize_t>(sizeof(hello)));
+}
+
+TEST_F(ProviderDeviceCleanupTest, PendingCleanupPreventsCreatingAnotherQp)
+{
+    RdmaProviderDevice device;
+    device.rdmaHandle = reinterpret_cast<void *>(0x1234UL);
+    device.cleanupBlocked_ = true;
+    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaQpCreate).expects(never());
+    void *qp = nullptr;
+    TypicalQp attr{};
+    EXPECT_FALSE(device.CreateQp(qp, attr));
+    EXPECT_EQ(qp, nullptr);
+}
+
+TEST_F(ProviderDeviceCleanupTest, FailedQpCleanupIsNotRetriedByCloseOrOtherInstances)
+{
+    DlHccpApiFnGuard guard;
+    DlHccpApi::gRaRdevGetHandle = &FakeRaRdevGetHandleOkNonNull;
+    MOCKER(DlRtApi::LoadLibrary).stubs().will(returnValue(BM_OK));
+    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER(DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(+[](int32_t id, int32_t *logicId) {
+        *logicId = id;
+        return BM_OK;
+    }));
+    MOCKER(DlRtApi::RtStreamCreate).stubs().will(returnValue(BM_OK));
+    static int destroyCalls;
+    destroyCalls = 0;
+    MOCKER(DlHccpApi::RaQpDestroy).stubs().will(invoke(+[](void *) { return ++destroyCalls == 1 ? -1 : 0; }));
+
+    RdmaProviderDevice first;
+    RdmaProviderDevice second;
+    ASSERT_TRUE(first.Open(0, 2));
+    first.DestroyQp(reinterpret_cast<void *>(1));
+    ASSERT_TRUE(second.Open(0, 2));
+    second.Close();
+    EXPECT_EQ(destroyCalls, 1);
+    first.Close();
+    first.Close();
+    EXPECT_EQ(destroyCalls, 1);
+}
+
+namespace {
+bool gHcclBootstrapInitialized = false;
+bool gHcclBootstrapProvidesRdev = false;
+constexpr uintptr_t HCCL_BORROWED_RDEV = 0xACDCUL;
+} // namespace
+
+class ProviderDeviceHcclBootstrapTest : public ProviderDeviceCleanupTest {
+protected:
+    void SetUp() override
+    {
+        gHcclBootstrapInitialized = false;
+        gHcclBootstrapProvidesRdev = true;
+        gRaInitCallCount = 0;
+        DlHccpApi::gRaRdevGetHandle = +[](uint32_t device, void **handle) {
+            EXPECT_EQ(device, 3U);
+            *handle = gHcclBootstrapInitialized && gHcclBootstrapProvidesRdev
+                          ? reinterpret_cast<void *>(HCCL_BORROWED_RDEV)
+                          : nullptr;
+            return 0;
+        };
+        DlHccpApi::gRaInit = &FakeRaInitFail;
+        DlHccpApi::gTsdOpen = &FakeTsdOpenOk;
+        DlHccpApi::gRaGetIfNum = &FakeRaGetIfNumTwo;
+        DlHccpApi::gRaGetIfAddrs = &FakeRaGetIfAddrsOkEth0;
+        MOCKER(DlRtApi::LoadLibrary).stubs().will(returnValue(BM_OK));
+        MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+        MOCKER(DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(+[](int32_t id, int32_t *logicId) {
+            *logicId = id;
+            return BM_OK;
+        }));
+        MOCKER(DlAclApi::AclrtGetPhyDevIdByLogicDevId).stubs().will(invoke(+[](int32_t id, int32_t *phyId) {
+            *phyId = id;
+            return BM_OK;
+        }));
+        MOCKER(DlRtApi::RtOpenNetService).expects(never());
+        MOCKER(DlRtApi::RtCloseNetService).expects(never());
+        MOCKER(DlHccpApi::RaRdevInitV2).expects(never());
+        MOCKER(DlHccpApi::RaRdevDeinit).expects(never());
+        MOCKER(DlHccpApi::RaDeinit).expects(never());
+        MOCKER(DlHcclApi::HcclCommInitClusterInfoMemConfig)
+            .expects(once())
+            .will(invoke(+[](const char *table, uint32_t rank, HcclCommConfig *config, HcclComm *comm) {
+                EXPECT_NE(std::string(table).find("192.168.50.10"), std::string::npos);
+                EXPECT_EQ(rank, 0U);
+                EXPECT_EQ(config->hcclBufferSize, 2U);
+                *comm = reinterpret_cast<void *>(0xCCUL);
+                gHcclBootstrapInitialized = true;
+                return BM_OK;
+            }));
+    }
+
+    DlHccpApiFnGuard guard;
+};
+
+TEST_F(ProviderDeviceHcclBootstrapTest, HcclFirstBootstrapsAndBorrowsRdevWithoutDeinitializingIt)
+{
+    MOCKER(DlRtApi::RtStreamCreate).expects(once()).will(invoke(+[](void **stream, int32_t) {
+        *stream = reinterpret_cast<void *>(0x55UL);
+        return BM_OK;
+    }));
+    MOCKER(DlRtApi::RtStreamDestroy).expects(once()).will(returnValue(BM_OK));
+    RdmaProviderDevice device;
+    EXPECT_TRUE(device.Open(3, 2));
+    EXPECT_TRUE(gHcclBootstrapInitialized);
+    EXPECT_EQ(gRaInitCallCount, 0);
+    EXPECT_EQ(device.rdmaHandle, reinterpret_cast<void *>(HCCL_BORROWED_RDEV));
+    device.Close();
+    EXPECT_EQ(device.rdmaHandle, nullptr);
+    EXPECT_EQ(device.context, nullptr);
+}
+
+TEST_F(ProviderDeviceHcclBootstrapTest, SuccessfulHcclBootstrapWithoutRdevStillFailsOpen)
+{
+    gHcclBootstrapProvidesRdev = false;
+    MOCKER(DlRtApi::RtStreamCreate).expects(never());
+    MOCKER(DlRtApi::RtStreamDestroy).expects(never());
+    RdmaProviderDevice device;
+    EXPECT_FALSE(device.Open(3, 2));
+    EXPECT_TRUE(gHcclBootstrapInitialized);
+    EXPECT_EQ(gRaInitCallCount, 0);
+    EXPECT_EQ(device.rdmaHandle, nullptr);
+    device.Close();
+    EXPECT_EQ(device.context, nullptr);
+}
+
+TEST_F(ProviderDeviceHcclBootstrapTest, BorrowedRdevWaitsForNotifyInsteadOfConsumingHcclCq)
+{
+    MOCKER(DlRtApi::RtStreamCreate).stubs().will(invoke(+[](void **stream, int32_t) {
+        *stream = reinterpret_cast<void *>(0x55UL);
+        return BM_OK;
+    }));
+    MOCKER(DlRtApi::RtStreamDestroy).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&RdmaProviderCompletion::Init, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::SubmitFenceRead, bool (*)(RdmaProviderCompletion *, void *, uint64_t, uint32_t))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::WaitFenceNotify, bool (*)(RdmaProviderCompletion *))
+        .expects(once())
+        .will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::Close, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
+    MOCKER(DlHccpApi::RaTypicalSendWr).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlRtApi::RtRDMADBSend).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlRtApi::RtStreamSynchronize).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaQpDestroy).expects(once()).will(returnValue(BM_OK));
+    RdmaProviderDevice device;
+    ASSERT_TRUE(device.Open(3, 2));
+    EXPECT_TRUE(device.UsesNotifyCompletion());
+    auto qp = reinterpret_cast<void *>(0x1234UL);
+    EXPECT_TRUE(device.SubmitTransfer(qp, 0x10000UL, 1, 0x20000UL, 2, 64, true) &&
+                device.WaitTransfer(qp, 0x30000UL, 3));
+    device.DestroyQp(qp);
+    device.Close();
+    EXPECT_EQ(device.context, nullptr);
+}
+
+TEST_F(ProviderDeviceHcclBootstrapTest, FailedCompletionCleanupBlocksOtherUsersOfTheSameContext)
+{
+    MOCKER(DlRtApi::RtStreamCreate).stubs().will(invoke(+[](void **stream, int32_t) {
+        *stream = reinterpret_cast<void *>(0x55UL);
+        return BM_OK;
+    }));
+    MOCKER(DlRtApi::RtStreamDestroy).expects(never());
+    MOCKER_CPP(&RdmaProviderCompletion::Init, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::SubmitFenceRead, bool (*)(RdmaProviderCompletion *, void *, uint64_t, uint32_t))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::WaitFenceNotify, bool (*)(RdmaProviderCompletion *))
+        .expects(once())
+        .will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::Close, bool (*)(RdmaProviderCompletion *))
+        .expects(once())
+        .will(returnValue(false));
+    MOCKER(DlHccpApi::RaTypicalSendWr).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlRtApi::RtRDMADBSend).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlRtApi::RtStreamSynchronize).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaQpDestroy).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaQpCreate).expects(never());
+    RdmaProviderDevice first;
+    RdmaProviderDevice second;
+    RdmaProviderDevice third;
+    ASSERT_TRUE(first.Open(3, 2));
+    ASSERT_TRUE(second.Open(3, 2));
+    auto qp = reinterpret_cast<void *>(0x1234UL);
+    ASSERT_TRUE(first.SubmitTransfer(qp, 0x10000UL, 1, 0x20000UL, 2, 64, true) && first.WaitTransfer(qp, 0x30000UL, 3));
+    first.DestroyQp(qp);
+    TypicalQp attr{};
+    EXPECT_FALSE(second.CreateQp(qp, attr));
+    EXPECT_EQ(qp, nullptr);
+    EXPECT_FALSE(third.Open(3, 2));
+}
+
+TEST_F(ProviderDeviceCleanupTest, OwnedRdevUsesNotifyAndPropagatesCompletionFailures)
+{
+    DlHccpApiFnGuard guard;
+    static int ifNumCalls;
+    ifNumCalls = 0;
+    DlHccpApi::gRaRdevGetHandle = &FakeRaRdevGetHandleOkNull;
+    DlHccpApi::gRaGetIfNum = +[](const HccpRaGetIfAttr *attr, uint32_t *count) {
+        EXPECT_EQ(attr->phyId, 5U);
+        ++ifNumCalls;
+        *count = ifNumCalls == 1 ? 0U : 2U;
+        return ifNumCalls == 1 ? -1 : 0;
+    };
+    DlHccpApi::gRaGetIfAddrs = &FakeRaGetIfAddrsOkEth0;
+    MOCKER(DlRtApi::LoadLibrary).stubs().will(returnValue(BM_OK));
+    MOCKER(DlAclApi::GetAscendSocType).stubs().will(returnValue(AscendSocType::ASCEND_910B));
+    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER(DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(+[](int32_t id, int32_t *logicId) {
+        *logicId = id;
+        return BM_OK;
+    }));
+    MOCKER(DlAclApi::AclrtGetPhyDevIdByLogicDevId).stubs().will(invoke(+[](int32_t id, int32_t *phyId) {
+        *phyId = id;
+        return BM_OK;
+    }));
+    MOCKER(DlRtApi::RtOpenNetService).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlRtApi::RtCloseNetService).expects(once()).will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaInit).expects(once()).will(invoke(+[](const HccpRaInitConfig &config) {
+        EXPECT_EQ(ifNumCalls, 1);
+        EXPECT_EQ(config.phyId, 5U);
+        EXPECT_EQ(config.hdcType, 18);
+        return BM_OK;
+    }));
+    MOCKER(DlHccpApi::RaRdevInitV2)
+        .expects(once())
+        .will(invoke(+[](const HccpRdevInitInfo &info, const HccpRdev &rdev, void *&handle) {
+            EXPECT_FALSE(info.disabledLiteThread);
+            EXPECT_EQ(rdev.phyId, 5U);
+            EXPECT_EQ(rdev.localIp.addr.s_addr, inet_addr("192.168.50.10"));
+            handle = reinterpret_cast<void *>(0xEEUL);
+            return BM_OK;
+        }));
+    MOCKER(DlHccpApi::RaRdevDeinit).expects(once()).will(invoke(+[](void *handle, unsigned int notifyType) {
+        EXPECT_EQ(handle, reinterpret_cast<void *>(0xEEUL));
+        EXPECT_EQ(notifyType, 1U);
+        return BM_OK;
+    }));
+    MOCKER(DlHccpApi::RaDeinit).expects(once()).will(invoke(+[](HccpRaInitConfig &config) {
+        EXPECT_EQ(config.phyId, 5U);
+        EXPECT_EQ(config.hdcType, 18);
+        return BM_OK;
+    }));
+    MOCKER(DlHcclApi::HcclCommInitClusterInfoMemConfig).expects(never());
+    MOCKER(DlRtApi::RtStreamCreate).expects(once()).will(invoke(+[](void **stream, int32_t) {
+        *stream = reinterpret_cast<void *>(0x55UL);
+        return BM_OK;
+    }));
+    MOCKER(DlRtApi::RtStreamDestroy).expects(once()).will(returnValue(BM_OK));
+
+    RdmaProviderDevice device;
+    EXPECT_TRUE(device.Open(5, 2));
+    EXPECT_EQ(ifNumCalls, 2);
+    EXPECT_EQ(device.rdmaHandle, reinterpret_cast<void *>(0xEEUL));
+    EXPECT_TRUE(device.UsesNotifyCompletion());
+    MOCKER(DlHccpApi::RaTypicalSendWr).expects(exactly(3)).will(returnValue(BM_OK));
+    MOCKER(DlRtApi::RtRDMADBSend).expects(never());
+    MOCKER_CPP(&RdmaProviderCompletion::SubmitNativeDoorbell, bool (*)(RdmaProviderCompletion *, const send_wr_rsp &))
+        .expects(exactly(3))
+        .will(returnValue(true));
+    MOCKER(DlRtApi::RtStreamSynchronize).expects(never());
+    MOCKER_CPP(&RdmaProviderCompletion::Init, bool (*)(RdmaProviderCompletion *))
+        .expects(once())
+        .will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::SubmitFenceRead, bool (*)(RdmaProviderCompletion *, void *, uint64_t, uint32_t))
+        .stubs()
+        .will(returnValue(true));
+    MOCKER_CPP(&RdmaProviderCompletion::WaitFenceNotify, bool (*)(RdmaProviderCompletion *))
+        .expects(exactly(3))
+        .will(returnValue(true))
+        .then(returnValue(false))
+        .then(returnValue(false));
+    MOCKER_CPP(&RdmaProviderCompletion::Close, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
+    MOCKER(DlHccpApi::RaQpDestroy).expects(once()).will(returnValue(BM_OK));
+    auto qp = reinterpret_cast<void *>(0x1234UL);
+    EXPECT_TRUE(device.SubmitTransfer(qp, 0x10000UL, 1, 0x20000UL, 2, 64, false) &&
+                device.WaitTransfer(qp, 0x30000UL, 3));
+    EXPECT_FALSE(device.SubmitTransfer(qp, 0x10000UL, 1, 0x20000UL, 2, 64, true) &&
+                 device.WaitTransfer(qp, 0x30000UL, 3));
+    EXPECT_FALSE(device.SubmitTransfer(qp, 0x10000UL, 1, 0x20000UL, 2, 64, false) &&
+                 device.WaitTransfer(qp, 0x30000UL, 3));
+    device.DestroyQp(qp);
+    device.Close();
+    device.Close();
+    EXPECT_EQ(device.rdmaHandle, nullptr);
+    EXPECT_EQ(device.context, nullptr);
+}
+
+TEST_F(ProviderDeviceCleanupTest, ProviderQpUsesSameQosAsFused)
+{
+    const auto expectedQos = GetDeviceRdmaQos();
+    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER(DlHccpApi::RaQpCreate).stubs().will(invoke(+[](void *, int, int, void *&handle) {
+        handle = reinterpret_cast<void *>(0x77UL);
+        return BM_OK;
+    }));
+    MOCKER(DlHccpApi::RaGetQpAttr).stubs().will(invoke(+[](void *, QpAttr &attr) {
+        attr = QpAttr{};
+        attr.qpn = 123;
+        attr.psn = 456;
+        return BM_OK;
+    }));
+    MOCKER(DlHccpApi::RaQpDestroy).expects(once()).will(returnValue(BM_OK));
+    RdmaProviderDevice device;
+    device.userId = 5;
+    device.rdmaHandle = reinterpret_cast<void *>(0x1234UL);
+    void *qp = nullptr;
+    TypicalQp attr{};
+    ASSERT_TRUE(device.CreateQp(qp, attr));
+    EXPECT_EQ(attr.qpn, 123U);
+    EXPECT_EQ(attr.psn, 456U);
+    EXPECT_EQ(attr.tc, expectedQos.tc);
+    EXPECT_EQ(attr.sl, expectedQos.sl);
+    EXPECT_TRUE(device.TryDestroyQp(qp));
 }

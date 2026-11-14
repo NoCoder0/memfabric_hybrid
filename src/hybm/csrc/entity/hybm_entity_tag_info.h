@@ -12,6 +12,7 @@
 #ifndef MEM_FABRIC_HYBRID_HYBM_ENTITY_TAG_INFO_H
 #define MEM_FABRIC_HYBRID_HYBM_ENTITY_TAG_INFO_H
 
+#include <array>
 #include <memory>
 #include <unordered_map>
 #include <shared_mutex>
@@ -22,6 +23,18 @@
 namespace ock {
 namespace mf {
 
+struct PeerProtocolInfo {
+    uint32_t localRank{0};
+    uint32_t remoteRank{0};
+};
+
+struct RankTopology {
+    uint32_t superPodId{0xFFFFFFFFU};
+    uint32_t serverId{0x3FFU};
+    int32_t devicePhyId{-1};
+    bool valid{false};
+};
+
 class HybmEntityTagInfo {
 public:
     Result TagInfoInit(const hybm_options &option);
@@ -31,6 +44,12 @@ public:
     Result AddRankLayers(uint32_t rankId, const std::vector<hybm_data_op_type> &layers);
     bool HasLayerProtocols(uint32_t rankId) const;
     std::vector<hybm_data_op_type> GetLayersForRank(uint32_t rankId) const;
+    void SetRankTopology(uint32_t rankId, uint32_t superPodId, uint32_t serverId, int32_t devicePhyId);
+    bool GetRankTopology(uint32_t rankId, RankTopology &topology) const;
+    bool IsSameNode(uint32_t rankId1, uint32_t rankId2) const;
+    void GetTopologyPair(uint32_t localRank, uint32_t remoteRank, bool &topologyKnown, bool &sameNode) const;
+    bool IsSameSuperPod(uint32_t localRank, uint32_t remoteRank) const;
+    std::vector<hybm_data_op_type> ResolvePeerProtocols(const PeerProtocolInfo &peerInfo) const;
     static std::string GetOpTypeStr(hybm_data_op_type opType);
 
 private:
@@ -42,6 +61,7 @@ private:
     std::shared_mutex mutex_;
     uint32_t legacyOpType_{0};
     std::unordered_map<uint32_t, std::vector<hybm_data_op_type>> rankLayers_;
+    std::unordered_map<uint32_t, RankTopology> rankTopologies_;
 };
 
 using HybmEntityTagInfoPtr = std::shared_ptr<HybmEntityTagInfo>;

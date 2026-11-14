@@ -663,6 +663,77 @@ TEST_F(HybmDataOpDeviceRdmaTest, safe_get_device_dest)
     dataOp_->UnInitialize();
 }
 
+TEST_F(HybmDataOpDeviceRdmaTest, copy_gh2gh_unregistered_push_uses_safe_put)
+{
+    /* GH2GH 的 push 分支：本端是 src、缓冲区未注册 → 走 SafePut（swap 中转 + WriteRemote），不应发起读 */
+    InitMockEnv();
+    auto ret = dataOp_->Initialize();
+    ASSERT_EQ(BM_OK, ret);
+    transportManagerMock_->queryHasRegisteredResult = false;
+
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void *>(20480ULL);
+    params.dest = reinterpret_cast<void *>(40960ULL);
+    params.dataSize = 1024ULL;
+    ock::mf::ExtOptions options{};
+    options.srcRankId = rankId_;
+    options.destRankId = rankId_ + 1;
+
+    ret = dataOp_->DataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_GT(transportManagerMock_->writeRemoteCount, 0U);
+    EXPECT_EQ(transportManagerMock_->readRemoteCount, 0U);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, copy_gh2gh_unregistered_pull_uses_safe_get)
+{
+    /* GH2GH 的 pull 分支：本端是 dest、缓冲区未注册 → 走 SafeGet（ReadRemote + swap 中转），不应发起写 */
+    InitMockEnv();
+    auto ret = dataOp_->Initialize();
+    ASSERT_EQ(BM_OK, ret);
+    transportManagerMock_->queryHasRegisteredResult = false;
+
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void *>(20480ULL);
+    params.dest = reinterpret_cast<void *>(40960ULL);
+    params.dataSize = 1024ULL;
+    ock::mf::ExtOptions options{};
+    options.srcRankId = rankId_ + 1;
+    options.destRankId = rankId_;
+
+    ret = dataOp_->DataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options);
+    EXPECT_EQ(ret, BM_OK);
+    EXPECT_GT(transportManagerMock_->readRemoteCount, 0U);
+    EXPECT_EQ(transportManagerMock_->writeRemoteCount, 0U);
+
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, copy_gh2gh_without_local_endpoint_returns_invalid)
+{
+    /* 两个端点都在远端：本端没有可达端点，必须直接报参数错误而不是发起 one-sided RDMA */
+    InitMockEnv();
+    auto ret = dataOp_->Initialize();
+    ASSERT_EQ(BM_OK, ret);
+
+    hybm_copy_params params{};
+    params.src = reinterpret_cast<void *>(20480ULL);
+    params.dest = reinterpret_cast<void *>(40960ULL);
+    params.dataSize = 1024ULL;
+    ock::mf::ExtOptions options{};
+    options.srcRankId = rankId_ + 1;
+    options.destRankId = rankId_ + 2;
+
+    ret = dataOp_->DataCopy(params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, options);
+    EXPECT_EQ(ret, BM_INVALID_PARAM);
+    EXPECT_EQ(transportManagerMock_->writeRemoteCount, 0U);
+    EXPECT_EQ(transportManagerMock_->readRemoteCount, 0U);
+
+    dataOp_->UnInitialize();
+}
+
 TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_all_directions)
 {
     InitMockEnv();
@@ -854,6 +925,15 @@ TEST_F(HybmDataOpDeviceRdmaTest, batch_data_copy_force_unregistered)
     ret = dataOp_->BatchDataCopy(params, HYBM_GLOBAL_HOST_TO_LOCAL_HOST, remoteOptions);
     ASSERT_EQ(BM_OK, ret);
     ASSERT_EQ(0UL, transportManagerMock_->queryHasRegisteredCount);
+
+    hybm_copy_params single{srcGH[0], dstLH[0], dataSizes[0]};
+    EXPECT_EQ(dataOp_->DataCopy(single, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, remoteOptions), BM_OK);
+    std::swap(remoteOptions.srcRankId, remoteOptions.destRankId);
+    std::swap(single.src, single.dest);
+    EXPECT_EQ(dataOp_->DataCopy(single, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, remoteOptions), BM_OK);
+    EXPECT_EQ(transportManagerMock_->queryHasRegisteredCount, 0U);
+    EXPECT_EQ(transportManagerMock_->readRemoteCount, 1U);
+    EXPECT_EQ(transportManagerMock_->writeRemoteCount, 1U);
 
     dataOp_->UnInitialize();
     ASSERT_EQ(0, unsetenv("MF_HYBM_RDMA_FORCE_UNREGISTERED"));

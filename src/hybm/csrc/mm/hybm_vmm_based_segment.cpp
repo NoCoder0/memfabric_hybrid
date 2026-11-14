@@ -412,7 +412,7 @@ Result HybmVmmBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexcep
         }
         uint64_t realAddr = registerPos->second.second;
         bool isDevice = slice->GetMemoryType() == HYBM_MEM_TYPE_DEVICE;
-        constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+        constexpr auto deviceTransportMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
         if (!isDevice && (options_.dataOpType & deviceTransportMask) != 0U) {
             auto ret =
                 DlHalApi::HalHostUnregisterEx(reinterpret_cast<void *>(realAddr), logicDeviceId_, HOST_MEM_MAP_DEV);
@@ -511,10 +511,12 @@ Result HybmVmmBasedSegment::GetExportSliceSize(size_t &size) noexcept
     return BM_OK;
 }
 
-Result HybmVmmBasedSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[],
-                                   uint32_t overrideRank) noexcept
+Result HybmVmmBasedSegment::Import(const std::vector<std::string> &allExInfo, void *addresses[], uint32_t overrideRank,
+                                   std::vector<ImportEntryKind> &entryKinds) noexcept
 {
     (void)overrideRank; // rank 覆盖仅 trans 场景（AsymmetricMemSegment）需要
+    BM_ASSERT_LOG_AND_RETURN(entryKinds.size() == allExInfo.size(), "entryKinds must be sized by caller",
+                             BM_INVALID_PARAM);
     LiteralExInfoTranslater<HostSdmaExportInfo> translator;
     uint64_t exportMagic = (options_.segType == HYBM_MST_DRAM) ? VMM_BASE_DRAM_SLICE_EXPORT_INFO_MAGIC
                                                                : VMM_BASE_HBM_SLICE_EXPORT_INFO_MAGIC;

@@ -458,7 +458,8 @@ StoreErrorCode EtcdStateStore::Recover(SmemGroupManagerServer *server) noexcept
 
     std::vector<LinkState> links;
     uint32_t linksMaxRanks = 0;
-    if (LoadLinks(links, linksMaxRanks) == StoreErrorCode::SUCCESS && linksMaxRanks == maxRanks) {
+    if (LoadLinks(links, linksMaxRanks) == StoreErrorCode::SUCCESS && linksMaxRanks == maxRanks &&
+        linksMaxRanks == server->GetMaxRanks()) {
         server->RestoreState(states, links, aliveSet);
     } else {
         STORE_LOG_WARN("EtcdStateStore: links stale or missing, recovering states only");
@@ -481,7 +482,8 @@ StoreErrorCode EtcdStateStore::Recover(SmemGroupManagerServer *server) noexcept
     //    必须在 RebuildActiveLinks/QueryLinkStates 之前完成，否则 PROXY<->PROXY 剪枝对会被重新拉起。
     std::vector<uint8_t> roles;
     uint32_t rolesMaxRanks = 0;
-    if (LoadRankRoles(roles, rolesMaxRanks) == StoreErrorCode::SUCCESS && rolesMaxRanks == maxRanks) {
+    // Rank indices survive capacity changes; SetRankRoles clips the unused tail.
+    if (LoadRankRoles(roles, rolesMaxRanks) == StoreErrorCode::SUCCESS && rolesMaxRanks >= maxRanks) {
         server->SetRankRoles(roles);
         LogRestoredRankRoles(roles, aliveSet.size());
     } else {

@@ -23,6 +23,12 @@ const char *DlRtApi::gRtLibName = "libruntime.so";
 rtStreamGetSqidFunc DlRtApi::pRtStreamGetSqid = nullptr;
 rtStreamGetCqidFunc DlRtApi::pRtStreamGetCqid = nullptr;
 rtGetDevResAddressFunc DlRtApi::pRtGetDevResAddress = nullptr;
+rtOpenNetServiceFunc DlRtApi::pRtOpenNetService = nullptr;
+rtCloseNetServiceFunc DlRtApi::pRtCloseNetService = nullptr;
+rtRDMADBSendFunc DlRtApi::pRtRDMADBSend = nullptr;
+rtStreamCreateFunc DlRtApi::pRtStreamCreate = nullptr;
+rtStreamDestroyFunc DlRtApi::pRtStreamDestroy = nullptr;
+rtStreamSynchronizeFunc DlRtApi::pRtStreamSynchronize = nullptr;
 
 Result DlRtApi::LoadLibrary()
 {
@@ -42,6 +48,12 @@ Result DlRtApi::LoadLibrary()
     DL_LOAD_SYM(pRtStreamGetSqid, rtStreamGetSqidFunc, rtHandle, "rtStreamGetSqid");
     DL_LOAD_SYM(pRtStreamGetCqid, rtStreamGetCqidFunc, rtHandle, "rtStreamGetCqid");
     DL_LOAD_SYM_OPTIONAL(pRtGetDevResAddress, rtGetDevResAddressFunc, rtHandle, "rtGetDevResAddress");
+    DL_LOAD_SYM_OPTIONAL(pRtOpenNetService, rtOpenNetServiceFunc, rtHandle, "rtOpenNetService");
+    DL_LOAD_SYM_OPTIONAL(pRtCloseNetService, rtCloseNetServiceFunc, rtHandle, "rtCloseNetService");
+    DL_LOAD_SYM_OPTIONAL(pRtRDMADBSend, rtRDMADBSendFunc, rtHandle, "rtRDMADBSend");
+    DL_LOAD_SYM_OPTIONAL(pRtStreamCreate, rtStreamCreateFunc, rtHandle, "rtStreamCreate");
+    DL_LOAD_SYM_OPTIONAL(pRtStreamDestroy, rtStreamDestroyFunc, rtHandle, "rtStreamDestroy");
+    DL_LOAD_SYM_OPTIONAL(pRtStreamSynchronize, rtStreamSynchronizeFunc, rtHandle, "rtStreamSynchronize");
 
     gLoaded = true;
     return BM_OK;
@@ -57,6 +69,12 @@ void DlRtApi::CleanupLibrary()
     pRtStreamGetSqid = nullptr;
     pRtStreamGetCqid = nullptr;
     pRtGetDevResAddress = nullptr;
+    pRtOpenNetService = nullptr;
+    pRtCloseNetService = nullptr;
+    pRtRDMADBSend = nullptr;
+    pRtStreamCreate = nullptr;
+    pRtStreamDestroy = nullptr;
+    pRtStreamSynchronize = nullptr;
 
     if (rtHandle != nullptr) {
         dlclose(rtHandle);

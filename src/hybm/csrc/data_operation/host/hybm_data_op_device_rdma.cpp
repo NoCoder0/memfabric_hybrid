@@ -438,9 +438,20 @@ Result DataOpDeviceRDMA::CopyGH2GH(const void *srcVA, void *destVA, uint64_t len
     if (options.srcRankId == rankId_ && options.destRankId == rankId_) {
         ret = CopyLH2LH(srcVA, destVA, length, options);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy src to dest", ret);
+    } else if (options.srcRankId == rankId_) {
+        ret = SafePut(srcVA, destVA, length, options, true);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to copy global host source", ret);
+    } else if (options.destRankId == rankId_) {
+        ret = SafeGet(srcVA, destVA, length, options, true);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK,
+                                 "Failed to copy global host destination, srcRank: "
+                                     << options.srcRankId << " dstRank: " << options.destRankId
+                                     << " length: " << length,
+                                 ret);
     } else {
-        ret = CopyRDMA(srcVA, destVA, length, options);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "Failed to rdma src to dest", ret);
+        BM_LOG_ERROR("global host copy has no local endpoint, srcRank:" << options.srcRankId
+                                                                        << " dstRank:" << options.destRankId);
+        return BM_INVALID_PARAM;
     }
     return ret;
 }
@@ -1175,17 +1186,17 @@ Result DataOpDeviceRDMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
         uint64_t currentChunkSize = std::min(remainingLength, rdmaSwapSpaceSize_);
         auto tmpRdmaMemory = rdmaSwapMemoryAllocator_->Allocate(currentChunkSize);
         auto tmpHost = tmpRdmaMemory.Address();
-        BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "[CopyGD2LH] Failed to malloc temp buffer", BM_MALLOC_FAILED);
+        BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "[SafeGet] Failed to malloc temp buffer", BM_MALLOC_FAILED);
         const void *currentSrc = reinterpret_cast<const void *>(srcBase + offset);
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
         ret = CopyRDMA(currentSrc, tmpHost, currentChunkSize, options);
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy src to tmp", ret);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[SafeGet] Failed to copy src to tmp", ret);
         if (destIsHost) {
             ret = CopyLH2LH(tmpHost, currentDest, currentChunkSize, options);
         } else {
             ret = CopyLH2LD(tmpHost, currentDest, currentChunkSize, options);
         }
-        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[CopyGD2LH] Failed to copy tmp to dest", ret);
+        BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[SafeGet] Failed to copy tmp to dest", ret);
         offset += currentChunkSize;
         remainingLength -= currentChunkSize;
     }

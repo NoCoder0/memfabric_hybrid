@@ -50,11 +50,23 @@ public:
         return chipDieOffset_;
     }
 
+    inline uint64_t GetRoceDoorbellAddress() const noexcept
+    {
+        // 0 means Init() never ran: callers must fail instead of writing a doorbell to roceBase + doorbellOffset.
+        if (!initialized_) {
+            return 0ULL;
+        }
+        constexpr uint64_t roceBase = 0x2000000000ULL;
+        constexpr uint64_t doorbellOffset = 0x230ULL;
+        return roceBase + doorbellOffset + chipOffset_ * chipId_ + chipDieOffset_ * dieId_ + chipBaseAddr_;
+    }
+
 private:
     const uint32_t deviceId_;
     uint32_t chipId_{0};
     uint32_t dieId_{0};
     bool addrFlatDevice_{false};
+    bool initialized_{false};
     uint64_t chipBaseAddr_{0};
     uint64_t chipOffset_{0};
     uint64_t chipDieOffset_{0};

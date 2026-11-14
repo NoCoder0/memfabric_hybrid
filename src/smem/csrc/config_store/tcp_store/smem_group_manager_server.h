@@ -18,6 +18,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -295,8 +296,9 @@ private:
     };
 
     static bool IsStableLinkState(LinkState st) noexcept;
-    // PROXY<->PROXY 之间不建链（分离部署剪枝）；其余角色组合保持全互联。
-    [[nodiscard]] bool IsLinkPruned(uint32_t a, uint32_t b) const noexcept;
+    // 统一建链判定：PROXY<->PROXY 不建；其余按节点拓扑过滤协议层并要求两端层对齐。
+    [[nodiscard]] bool ShouldLink(uint32_t src, uint32_t dst) const noexcept;
+    void UpdateRankLinkInfoLocked(uint32_t rankId, const RankFullInfo &info) noexcept;
     void AddActiveLink(size_t idx) noexcept;
     void RemoveActiveLinksForRank(uint32_t rankId) noexcept;
     void DrivePendingTransitions() noexcept;
@@ -339,6 +341,7 @@ private:
         uint32_t retryCount{0};
         uint64_t requestId{0};
         Bytes removedBaseInfo{}; // Snapshot of the departed instance, retained across rejoin and send delay.
+        bool periodicQuery{false};
     };
 
     void ProcessBatch(const std::vector<SendTask> &tasks) noexcept;
@@ -346,7 +349,7 @@ private:
     int SendBatchAddRemove(uint32_t srcRank, SendOp op, const std::vector<const SendTask *> &group,
                            uint64_t reqId) noexcept;
     int SendBatchEstablish(uint32_t srcRank, const std::vector<const SendTask *> &group, uint64_t reqId) noexcept;
-    int SendBatchQueryLinkState(uint32_t srcRank) noexcept;
+    int SendBatchQueryLinkState(uint32_t srcRank, uint64_t requestId, bool periodic = false) noexcept;
     void UpdateLinksAfterBatch(const std::vector<const SendTask *> &group, int overallRet) noexcept;
     void EnqueueSend(const SendTask &task) noexcept;
     void EnqueueBatchSend(std::vector<SendTask> &&tasks) noexcept;
@@ -365,12 +368,25 @@ private:
     std::vector<Bytes> rankBase_;                  // base info per rank (e.g. endpoint)
     std::vector<std::vector<Bytes>> rankExternal_; // external addresses per rank
     std::vector<uint8_t> rankRole_;                // SMEM_GROUP_RANK_ROLE_* per rank (link-mesh pruning)
-    std::vector<bool> isActiveLink_;               // parallel to links_, marks presence in activeLinks_
-    std::vector<size_t> activeLinks_;              // current non-stable link indices for O(1) scan
+    std::vector<uint32_t> rankLayerMask_;          // 0 = legacy rank without layer metadata
+    std::vector<uint32_t> rankSuperPodId_;
+    std::vector<uint32_t> rankServerId_;
+    std::vector<bool> rankLinkInfoValid_;
+    std::vector<bool> isActiveLink_;  // parallel to links_, marks presence in activeLinks_
+    std::vector<size_t> activeLinks_; // current non-stable link indices for O(1) scan
     std::unordered_set<uint32_t> aliveRanks_;
     uint32_t maxRanks_;
     uint32_t linkRetryTimeoutS_{kDefaultLinkRetryTimeoutS};
     std::chrono::steady_clock::time_point lastIdleRetryTime_{};
+    struct PendingLinkQuery {
+        uint64_t requestId;
+        bool periodic;
+        std::chrono::steady_clock::time_point timestamp;
+    };
+    std::unordered_map<uint32_t, PendingLinkQuery> pendingLinkQueries_;
+    void UpdateProviderRankLocked(uint32_t rankId);
+    std::unordered_set<uint32_t> providerRanks_;
+    std::chrono::steady_clock::time_point lastLinkQueryTime_{std::chrono::steady_clock::now()};
     std::thread driverThread_;
     std::condition_variable driverCond_;
     std::thread sendThread_;

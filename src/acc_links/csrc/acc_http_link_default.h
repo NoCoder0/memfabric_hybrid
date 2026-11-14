@@ -13,6 +13,7 @@
 #ifndef ACC_LINKS_ACC_HTTP_LINK_DEFAULT_H
 #define ACC_LINKS_ACC_HTTP_LINK_DEFAULT_H
 
+#include <atomic>
 #include <ctime>
 #include <map>
 #include <string>
@@ -128,7 +129,7 @@ protected:
     bool HasBufferedRequest() const override;
     bool HasPendingCleanup() const override
     {
-        return needClose_;
+        return pendingCleanup_.load();
     }
     Result HandlePollIn() noexcept override;
     Result HandlePollOut(AccMsgHeader &header, AccDataBufferPtr &cbCtx) noexcept override;
@@ -192,7 +193,8 @@ private:
     std::string prevHeaderVal_;
     std::multimap<std::string, std::string> headers_; /* keys normalized to lowercase */
     size_t contentLength_ = 0;
-    bool needClose_ = false;                          /* send Connection: close after response */
+    bool needClose_ = false; /* send Connection: close after response */
+    std::atomic<bool> pendingCleanup_{false};
     time_t lastActivity_{0};                          /* last IO activity timestamp */
     size_t maxBodySize_ = HTTP_DEFAULT_MAX_BODY_SIZE; /* per-link body size limit */
 

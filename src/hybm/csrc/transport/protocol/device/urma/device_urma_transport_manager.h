@@ -34,6 +34,7 @@
 #include "hybm_kernel_hepler.h"
 #include "hybm_urma_device_copy.h"
 #include "urma_topo_def.h"
+#include "urma_topo_manager.h"
 
 namespace ock {
 namespace mf {
@@ -80,6 +81,20 @@ public:
     Result OpenDevice(const TransportOptions &options) override;
 
     Result CloseDevice() override;
+    Result OpenDeviceOnUserDevice(const TransportOptions &options, uint32_t userDeviceId);
+    Result RegisterMappedHostMemory(const TransportMemoryRegion &mr, uint64_t deviceVa);
+    Result WaitRankReady(uint32_t rankId, std::chrono::milliseconds timeout);
+    std::vector<uint32_t> GetConnectedProtocols(uint32_t rankId) const override;
+    bool CleanupComplete() const;
+    size_t CurrentThreadPendingCount();
+    bool CanConnectPeer(const TransportPrivateData &privateData) const;
+    uint32_t GetPhysicalDeviceId() const
+    {
+        return phyDeviceId_;
+    }
+    void EnableStandaloneLifecycle(bool passive = false);
+    void BeginRankDrain(uint32_t rankId);
+    bool IsRankDrained(uint32_t rankId) const;
 
     // Called after users stop submitting work, before runtime libraries are unloaded.
     static void ReleaseThreadLocalBuffers();
@@ -97,6 +112,7 @@ public:
 
     // Prepare/rank/connection/private data
     Result Prepare(const HybmTransPrepareOptions &options) override;
+    Result Prepare(const HybmTransPrepareOptions &options, uint16_t channelPort);
 
     Result ConnectRank(uint32_t rankId) override;
 
@@ -140,6 +156,7 @@ private:
         UrmaMemTag memTag{0};
         uint32_t refCount{0};
         uint64_t deviceVa{0};
+        bool unregistering{false};
     };
 
     struct RemoteRegistration {
@@ -225,6 +242,7 @@ private:
         // Data-kernel launch parameters are reused after each launch stream synchronization.
         DeviceTransferBuffers launchBuffers{};
         bool initialized{false};
+        bool launchUncertain{false};
         // All in-flight transfers; emptied by Synchronize.
         std::vector<PendingTransfer> pendingTransfers{};
     };
@@ -257,6 +275,7 @@ private:
     aclrtFuncHandle deviceCopyFunc_{nullptr};
 
     // Initialization/open/close helpers and lifecycle
+    Result RegisterMemoryRegionLocked(const TransportMemoryRegion &mr, uint64_t deviceVa);
     Result InitLocalDeviceInfoLocked(const TransportOptions &options);
     Result OpenEndpointResourcesLocked(const TransportOptions &options);
     Result BuildLocalEndpointDescLocked(UrmaProtocol protocol, UrmaEndpointDesc &localDesc);
@@ -266,7 +285,7 @@ private:
     Result InitDeviceTransferFlagLocked();
     void RollbackOpenDeviceLocked();
     Result EnsureDeviceKernelLoadedLocked();
-    static Result DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank);
+    Result DestroyRankChannelsAndThread(RemoteRankState &state, uint32_t peerRank);
     Result UnimportPeerImportsAndFlag(RemoteRankState &state, uint32_t peerRank);
     Result CleanupPeerRankState(RemoteRankState &state, uint32_t peerRank);
     Result CleanupLocalRegistrationsLocked();
@@ -336,6 +355,8 @@ private:
 
     // Each thread uses only one manager.
     static CompletionContext &GetTlsContext();
+    static thread_local std::unordered_map<uint64_t, std::weak_ptr<CompletionContext>> threadContexts_;
+    CompletionContext &GetCompletionContext();
 
     // Per-thread context lifecycle.
     CompletionContext *LookupOrCreateContextLocked();
@@ -350,13 +371,13 @@ private:
     Result InitNotifyPoolLocked();
     Result GrowNotifyPool();
     Result InitNotifyResource(NotifyResource &resource);
-    void CleanupNotifyResource(NotifyResource &resource);
-    void CleanupNotifyPoolLocked();
+    Result CleanupNotifyResource(NotifyResource &resource);
+    Result CleanupNotifyPoolLocked();
     Result AcquireNotifyResource(NotifyResource *&resource);
     void ReleaseNotifyResource(NotifyResource &resource);
 
     // CloseDevice helpers
-    void CloseDeviceCleanupResourcesLocked();
+    Result CloseDeviceCleanupResourcesLocked();
 
     // Device kernel buffer management
     aclrtFuncHandle GetDeviceKernelFunc() const;
@@ -376,9 +397,17 @@ private:
         const std::vector<HcommChannelHandle> &channels, DeviceTransferBuffers &outBuffers,
         const std::vector<HcommBatchTransferDesc> *markerDescs = nullptr, void *copyStream = nullptr);
     // Device kernel launch (builds args, configures and launches)
-    Result LaunchDeviceKernelBatch(DeviceTransferBuffers &buffers, size_t batchSize, size_t rankNum);
+    Result LaunchDeviceKernelBatch(DeviceTransferBuffers &buffers, size_t batchSize, size_t rankNum,
+                                   bool &mayHaveSubmitted);
     mutable std::shared_mutex mutex_{};
     bool opened_{false};
+    bool standalone_{false};
+    bool passive_{false};
+    UrmaTopoManager topoManager_;
+    mutable std::mutex pendingMutex_;
+    std::set<uint32_t> drainingRanks_;
+    std::map<uint32_t, uint64_t> pendingCounts_;
+    std::vector<std::shared_ptr<CompletionContext>> completionContexts_;
     uint32_t rankId_{0};
     uint32_t rankCount_{0};
     uint32_t userDeviceId_{0};
@@ -391,6 +420,7 @@ private:
     UrmaProtocol protocol_{UrmaProtocol::RESERVED};
     TransportOptions options_{};
     uint64_t instanceId_{0};
+    bool cleanupFailed_{false};
     HcommApiWrapper hcommApi_;
     std::vector<uint32_t> localIds_;
     std::vector<HcommEndpointHandle> localEndpoint_;

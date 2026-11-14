@@ -140,24 +140,45 @@ int JoinableRanksQpManager::SetRemoteRankInfo(const std::unordered_map<uint32_t,
 // 上层保证 SetRemoteRankInfo和RemoveRanks操作不并发
 int JoinableRanksQpManager::RemoveRanks(const std::unordered_set<uint32_t> &ranks) noexcept
 {
-    std::unique_lock<std::mutex> uniqueLock{mutex_};
-    for (auto rank : ranks) {
-        replacementNetworks_.erase(rank);
-        if (rank < rankId_) {
-            removedServerRanks_.emplace(rank);
-            newServers_.erase(rank);
-        } else {
-            removedClientRanks_.emplace(rank);
-            newClients_.erase(rank);
+    uint32_t added = 0;
+    {
+        std::unique_lock<std::mutex> uniqueLock{mutex_};
+        for (auto rank : ranks) {
+            replacementNetworks_.erase(rank);
+            if (rank >= rankCount_ || rank == rankId_) {
+                continue;
+            }
+            if (rank < rankId_) {
+                if (removedServerRanks_.emplace(rank).second) {
+                    added++;
+                }
+                newServers_.erase(rank);
+            } else {
+                if (removedClientRanks_.emplace(rank).second) {
+                    added++;
+                }
+                newClients_.erase(rank);
+            }
         }
+        pendingRemovals_.fetch_add(added);
     }
-    uniqueLock.unlock();
 
     if (started_.load()) {
         cond_.notify_all();
     }
 
     return BM_OK;
+}
+
+bool JoinableRanksQpManager::WaitRanksRemoved(uint32_t timeoutMs) noexcept
+{
+    if (pendingRemovals_.load() == 0) {
+        return true;
+    }
+
+    std::unique_lock<std::mutex> lock{mutex_};
+    return removalCv_.wait_for(lock, std::chrono::milliseconds(timeoutMs),
+                               [this]() { return pendingRemovals_.load() == 0; });
 }
 
 int JoinableRanksQpManager::Startup(void *rdma) noexcept
@@ -544,7 +565,7 @@ bool JoinableRanksQpManager::IsConnectRankCurrent(uint32_t rank) noexcept
     return running_.load() && rank < rankCount_ && (rank == rankId_ || IsRankPending(rank));
 }
 
-void JoinableRanksQpManager::TrySetQos()
+QosAttr GetDeviceRdmaQos()
 {
     uint32_t tc = MfEnvUtil::GetOptionalUintOrDefault(env::MF_DEVICE_RDMA_TC, HCCL_RDMA_TC_DEFAULT);
     uint32_t sl = MfEnvUtil::GetOptionalUintOrDefault(env::MF_DEVICE_RDMA_SL, HCCL_RDMA_SL_DEFAULT);
@@ -557,8 +578,15 @@ void JoinableRanksQpManager::TrySetQos()
         sl = HCCL_RDMA_SL_DEFAULT;
     }
 
-    qosAttr_.tc = tc;
-    qosAttr_.sl = sl;
+    QosAttr qos{};
+    qos.tc = tc;
+    qos.sl = sl;
+    return qos;
+}
+
+void JoinableRanksQpManager::TrySetQos()
+{
+    qosAttr_ = GetDeviceRdmaQos();
 }
 
 int JoinableRanksQpManager::CreateQpHandle(uint32_t rankId, void *&qpHandle) noexcept
@@ -844,6 +872,20 @@ void JoinableRanksQpManager::FinishRemovingRanks(const std::set<uint32_t> &ranks
         }
         removedServerRanks_.erase(rank);
         removedClientRanks_.erase(rank);
+    }
+
+    if (!ranks.empty()) {
+        // Clamp at zero: Shutdown() also calls this path without queueing through RemoveRanks().
+        uint32_t processed = static_cast<uint32_t>(ranks.size());
+        uint32_t current = pendingRemovals_.load();
+        while (current > 0) {
+            uint32_t next = current >= processed ? current - processed : 0;
+            if (pendingRemovals_.compare_exchange_weak(current, next)) {
+                break;
+            }
+        }
+        lock.unlock();
+        removalCv_.notify_all();
     }
 }
 

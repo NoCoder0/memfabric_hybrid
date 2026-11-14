@@ -39,6 +39,7 @@ enum MemSegType : int32_t {
     HYBM_MST_HBM = 0,
     HYBM_MST_DRAM,
     HYBM_MST_ASYMMETRIC,
+    HYBM_DRAM_PROVIDER,
 
     HYBM_MST_BUTT
 };

@@ -705,6 +705,74 @@ TEST_F(AccStoreServerTest, RestoreFromBackend_DistributedBackendWithRanks)
     server->Shutdown();
 }
 
+TEST_F(AccStoreServerTest, ReconnectPersistFailureLeavesRankAvailableForRetry)
+{
+    auto backend = MakeDistributedBackend();
+    auto *mock = static_cast<MockBackend *>(backend.Get());
+    auto server = SmMakeRef<AccStoreServer>("127.0.0.1", 0, K_WORLD_SIZE, backend, false);
+    server->state_.store(SS_RECOVERING);
+    server->aliveRankFromBackend_ = {K_RANK_TWO};
+    server->aliveRankSet_ = {K_RANK_TWO};
+    server->persistedAliveRanks_ = {K_RANK_TWO};
+    ock::acc::AccConnReq request{};
+    request.rankId = (static_cast<uint64_t>(K_WORLD_SIZE) << 32U) | K_RANK_TWO;
+    request.reconnect = 1;
+    ock::acc::AccTcpLinkComplexPtr failed = new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", 0U);
+    mock->putResult = ERROR;
+
+    EXPECT_EQ(server->LinkConnectedHandler(request, failed), SM_ERROR);
+
+    EXPECT_EQ(server->aliveRankSet_, (std::unordered_set<uint32_t>{K_RANK_TWO}));
+    EXPECT_EQ(server->persistedAliveRanks_, (std::unordered_set<uint32_t>{K_RANK_TWO}));
+    EXPECT_TRUE(server->rankLinks_.empty());
+    EXPECT_TRUE(server->reconnectedRankSet_.empty());
+    EXPECT_TRUE(server->linkRankMap_.empty());
+    EXPECT_EQ(server->groupManager_->GetStates()[K_RANK_TWO], RANK_IDLE);
+    mock->putResult = SUCCESS;
+    ock::acc::AccTcpLinkComplexPtr accepted = new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", 1U);
+
+    ASSERT_EQ(server->LinkConnectedHandler(request, accepted), SM_OK);
+    EXPECT_EQ(server->rankLinks_.at(K_RANK_TWO).Get(), accepted.Get());
+    EXPECT_EQ(server->reconnectedRankSet_.count(K_RANK_TWO), 1U);
+    EXPECT_EQ(server->GetRankIdByLinkId(accepted->Id()), K_RANK_TWO);
+    EXPECT_EQ(server->GetRankIdByLinkId(failed->Id()), UINT32_MAX);
+    EXPECT_EQ(server->groupManager_->GetStates()[K_RANK_TWO], RANK_ACTIVE);
+    ock::acc::AccTcpLinkComplexPtr duplicate = new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", K_RANK_TWO);
+    EXPECT_EQ(server->LinkConnectedHandler(request, duplicate), SM_ERROR);
+    EXPECT_EQ(server->rankLinks_.at(K_RANK_TWO).Get(), accepted.Get());
+    EXPECT_EQ(server->GetRankIdByLinkId(duplicate->Id()), UINT32_MAX);
+}
+
+TEST_F(AccStoreServerTest, NewRankPersistFailureRollsBackOnlyItsInsertedAliveRank)
+{
+    auto backend = MakeDistributedBackend();
+    auto *mock = static_cast<MockBackend *>(backend.Get());
+    auto server = SmMakeRef<AccStoreServer>("127.0.0.1", 0, K_WORLD_SIZE, backend, true);
+    server->state_.store(SS_NORMAL);
+    server->aliveRankSet_ = {1U};
+    server->persistedAliveRanks_ = {1U};
+    server->reconnectedRankSet_ = {1U};
+    ock::acc::AccTcpLinkComplexPtr existing = new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", 0U);
+    server->rankLinks_[1U] = existing;
+    server->linkRankMap_[existing->Id()] = 1U;
+    ock::acc::AccConnReq request{};
+    request.rankId = (static_cast<uint64_t>(K_WORLD_SIZE) << 32U) | K_RANK_TWO;
+    request.reconnect = 0;
+    ock::acc::AccTcpLinkComplexPtr failed = new ock::acc::AccTcpLinkComplexDefault(-1, "127.0.0.1:0", 1U);
+    mock->putResult = ERROR;
+
+    EXPECT_EQ(server->LinkConnectedHandler(request, failed), SM_ERROR);
+
+    EXPECT_EQ(server->aliveRankSet_, (std::unordered_set<uint32_t>{1U}));
+    EXPECT_EQ(server->persistedAliveRanks_, (std::unordered_set<uint32_t>{1U}));
+    EXPECT_EQ(server->reconnectedRankSet_, (std::unordered_set<uint32_t>{1U}));
+    ASSERT_EQ(server->rankLinks_.size(), 1U);
+    EXPECT_EQ(server->rankLinks_.at(1U).Get(), existing.Get());
+    EXPECT_EQ(server->GetRankIdByLinkId(existing->Id()), 1U);
+    EXPECT_EQ(server->GetRankIdByLinkId(failed->Id()), UINT32_MAX);
+    EXPECT_EQ(server->groupManager_->GetStates()[K_RANK_TWO], RANK_IDLE);
+}
+
 TEST_F(AccStoreServerTest, RestoreFromBackend_DistributedBackendNoRanks)
 {
     auto distBackend = MakeDistributedBackend();

@@ -52,7 +52,9 @@ enum TransportType {
 struct TransportOptions {
     uint32_t rankId;
     uint32_t rankCount;
+    uint32_t deviceId{0};
     uint32_t protocol;
+    bool isProxy{false}; // 显式声明本端为 proxy，直连 provider，优先于协议位推导
     hybm_type initialType;
     hybm_role_type role;
     hybm_scene scene{HYBM_SCENE_DEFAULT}; // 场景，传输层据此区分 BM / TRANS 等建链语义
@@ -65,6 +67,12 @@ static inline std::ostream &operator<<(std::ostream &output, const TransportOpti
     output << "TransportOptions(rankId=" << options.rankId << ", count=" << options.rankCount
            << ", scene=" << options.scene << ", nic=" << options.nic << ")";
     return output;
+}
+
+inline bool ContainsAddressRange(uint64_t outerAddr, uint64_t outerSize, uint64_t innerAddr, uint64_t innerSize)
+{
+    return innerAddr >= outerAddr && innerAddr - outerAddr <= outerSize &&
+           innerSize <= outerSize - (innerAddr - outerAddr);
 }
 
 struct TransportMemoryRegion {
@@ -226,9 +234,10 @@ struct TransportRankPrepareInfo {
     TransportPrivateData privateData{};
     hybm_role_type role{HYBM_ROLE_PEER};
     std::vector<TransportMemoryKey> memKeys;
-    uint32_t superPodId{0xFFFFFFFFU};
-    uint32_t serverId{0x3FFU};
-    int32_t devicePhyId{-1};
+    // Provider/proxy direct-connect fields. Legacy transports ignore them.
+    bool isProvider{false};
+    std::string providerControlUrl;
+    uint64_t providerGvaBase{0};
     TransportRankPrepareInfo() {}
     TransportRankPrepareInfo(std::string n, TransportMemoryKey k) : nic{std::move(n)}, memKeys{k} {}
     TransportRankPrepareInfo(std::string n, std::vector<TransportMemoryKey> ks)

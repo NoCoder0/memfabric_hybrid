@@ -12,10 +12,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <cstring>
 #include <thread>
 
+#include "hybm_conn_based_segment.h"
+#define private public
 #include "smem_group_manager_server.h"
+#undef private
 #include "smem_ref.h"
 
 namespace ock {
@@ -893,6 +897,111 @@ TEST_F(GmGroupManagerTest, IdleRetry_KeepsPrunedPairIdleButArmsOtherLinks)
     EXPECT_EQ(GetLink(0, K_RANK_TWO), LINK_EXCHANGING);
 }
 
+TEST_F(GmGroupManagerTest, ShouldLink_ProxyPairPruned)
+{
+    gm_->SetRankRole(0, SMEM_GROUP_RANK_ROLE_PROXY);
+    gm_->SetRankRole(1, SMEM_GROUP_RANK_ROLE_PROXY);
+    EXPECT_FALSE(gm_->ShouldLink(0, 1));
+    EXPECT_FALSE(gm_->ShouldLink(1, 0));
+}
+
+TEST_F(GmGroupManagerTest, ShouldLink_SameNodeRequiresSameNodeLayer)
+{
+    constexpr uint32_t kHostShm = static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_SHM);
+    constexpr uint32_t kDeviceUrma = static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA);
+    constexpr uint32_t kSamePod = 16383U;
+    constexpr uint32_t kSameServer = 4U;
+
+    for (auto rank : {0U, 1U}) {
+        gm_->rankLinkInfoValid_[rank] = true;
+        gm_->rankLayerMask_[rank] = kHostShm | kDeviceUrma;
+        gm_->rankSuperPodId_[rank] = kSamePod;
+        gm_->rankServerId_[rank] = kSameServer;
+    }
+    EXPECT_TRUE(gm_->ShouldLink(0, 1));
+
+    gm_->rankLayerMask_[1] = kDeviceUrma;
+    EXPECT_FALSE(gm_->ShouldLink(0, 1));
+}
+
+TEST_F(GmGroupManagerTest, ShouldLink_RemoteNodeRequiresRemoteLayer)
+{
+    constexpr uint32_t kHostShm = static_cast<uint32_t>(HYBM_DOP_TYPE_HOST_SHM);
+    constexpr uint32_t kDeviceUrma = static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA);
+    for (auto rank : {0U, 1U}) {
+        gm_->rankLinkInfoValid_[rank] = true;
+        gm_->rankLayerMask_[rank] = kHostShm;
+        gm_->rankSuperPodId_[rank] = 1U;
+        gm_->rankServerId_[rank] = 2U;
+    }
+    gm_->rankSuperPodId_[1] = 3U;
+    gm_->rankServerId_[1] = 4U;
+    EXPECT_FALSE(gm_->ShouldLink(0, 1));
+
+    gm_->rankLayerMask_[0] = kDeviceUrma;
+    gm_->rankLayerMask_[1] = kDeviceUrma;
+    EXPECT_TRUE(gm_->ShouldLink(0, 1));
+}
+TEST_F(GmGroupManagerTest, ShouldLink_UnlayeredRanksAreNotPruned)
+{
+    /* A3 独立部署不配置 tagOpInfo，两侧 layerMask 均为 0。历史上这种情况不参与分层剪枝，
+     * 否则所有链路都建不起来；可达性由运行期 CanSdmaReaches / 段映射判定。 */
+    for (auto rank : {0U, 1U}) {
+        gm_->rankLinkInfoValid_[rank] = true;
+        gm_->rankLayerMask_[rank] = 0U;
+        gm_->rankSuperPodId_[rank] = 7U;
+        gm_->rankServerId_[rank] = 2U;
+    }
+    EXPECT_TRUE(gm_->ShouldLink(0, 1));
+    EXPECT_TRUE(gm_->ShouldLink(1, 0));
+
+    /* 跨超节点也不剪枝：没有分层信息时 GM 无法判断可达性 */
+    gm_->rankSuperPodId_[1] = 9U;
+    EXPECT_TRUE(gm_->ShouldLink(0, 1));
+}
+
+TEST_F(GmGroupManagerTest, ShouldLink_OneSideUnlayeredIsNotPruned)
+{
+    constexpr uint32_t kDeviceUrma = static_cast<uint32_t>(HYBM_DOP_TYPE_DEVICE_URMA);
+    for (auto rank : {0U, 1U}) {
+        gm_->rankLinkInfoValid_[rank] = true;
+        gm_->rankSuperPodId_[rank] = 1U;
+        gm_->rankServerId_[rank] = 2U;
+    }
+    gm_->rankLayerMask_[0] = kDeviceUrma;
+    gm_->rankLayerMask_[1] = 0U;
+    EXPECT_TRUE(gm_->ShouldLink(0, 1));
+}
+
+TEST_F(GmGroupManagerTest, ShouldLink_UnlayeredFallbackKeepsProxyPairPruned)
+{
+    /* 未配置分层的回退只放宽"层"这一维度，角色剪枝必须仍然优先生效。 */
+    gm_->SetRankRole(0, SMEM_GROUP_RANK_ROLE_PROXY);
+    gm_->SetRankRole(1, SMEM_GROUP_RANK_ROLE_PROXY);
+    gm_->rankLinkInfoValid_[0] = gm_->rankLinkInfoValid_[1] = true;
+    gm_->rankLayerMask_[0] = gm_->rankLayerMask_[1] = 0U;
+    EXPECT_FALSE(gm_->ShouldLink(0, 1));
+}
+
+TEST_F(GmGroupManagerTest, ShouldLink_SdmaLayerReachesSameSuperPodOnly)
+{
+    /* SDMA 的可达域是「同 server 或同 superPod」（见 MemSegment::CanSdmaReaches）：跨 server 但同 superPod
+     * 时不能按“同机层”剪掉，跨 superPod 才不可达。 */
+    constexpr uint32_t kSdmaLayer = 1U << 1; // kRankLayerSdma
+    constexpr uint32_t kSamePod = 5U;
+    for (auto rank : {0U, 1U}) {
+        gm_->rankLinkInfoValid_[rank] = true;
+        gm_->rankLayerMask_[rank] = kSdmaLayer;
+        gm_->rankSuperPodId_[rank] = kSamePod;
+    }
+    gm_->rankServerId_[0] = 2U;
+    gm_->rankServerId_[1] = 3U;
+    EXPECT_TRUE(gm_->ShouldLink(0, 1));
+
+    gm_->rankSuperPodId_[1] = kSamePod + 1U;
+    EXPECT_FALSE(gm_->ShouldLink(0, 1));
+}
+
 TEST_F(GmGroupManagerTest, ResetRankState_ClearsRole)
 {
     ASSERT_EQ(gm_->CheckIn(MakeInfoWithRole(0, SMEM_GROUP_RANK_ROLE_PROXY)), 0);
@@ -901,6 +1010,35 @@ TEST_F(GmGroupManagerTest, ResetRankState_ClearsRole)
     /* 退出后角色清为未知（不再声称其贡献内存），避免下一次以其它角色加入时沿用旧角色导致误剪枝 */
     ASSERT_EQ(gm_->Checkout(0), 0);
     EXPECT_EQ(gm_->GetRankRole(0), SMEM_GROUP_RANK_ROLE_UNKNOWN);
+}
+
+TEST_F(GmGroupManagerTest, PeriodicProbesFollowRecoveredProviderMetadata)
+{
+    gm_->SetSendFunc({});
+    gm_->MarkRankReconnected(0);
+    gm_->MarkRankReconnected(1);
+    gm_->SetSendFunc(MakeSender());
+    gm_->SetRankRole(1, SMEM_GROUP_RANK_ROLE_PROXY);
+    auto info = MakeInfoWithRole(0, SMEM_GROUP_RANK_ROLE_PROVIDER);
+    mf::HostExportInfo exported{};
+    exported.memSegType = mf::HYBM_DRAM_PROVIDER;
+    info.externalInfo = {Bytes(sizeof(exported))};
+    std::memcpy(info.externalInfo[0].data(), &exported, sizeof(exported));
+    gm_->OnLinkStateResponse(info, {}, 0);
+
+    gm_->lastLinkQueryTime_ = {};
+    gm_->DrivePendingTransitions();
+    EXPECT_NE(gm_->lastLinkQueryTime_, std::chrono::steady_clock::time_point{});
+    EXPECT_TRUE(std::any_of(gm_->sendQueue_.begin(), gm_->sendQueue_.end(),
+                            [](const auto &task) { return task.periodicQuery && task.srcRank == 1; }));
+
+    EXPECT_EQ(gm_->Checkout(0), 0);
+    gm_->lastLinkQueryTime_ = {};
+    gm_->DrivePendingTransitions();
+    EXPECT_EQ(gm_->lastLinkQueryTime_, std::chrono::steady_clock::time_point{});
+    const auto sent = sendCallCount_;
+    EXPECT_EQ(gm_->SendBatchQueryLinkState(1, K_QUERY_REQUEST_ID, true), 0);
+    EXPECT_EQ(sendCallCount_, sent);
 }
 
 TEST_F(GmGroupManagerTest, OnLinkStateResponse_BackfillsRoleFromPeer)

@@ -26,6 +26,8 @@
 #include "hybm_gva_version.h"
 #include "device_urma_transport_manager.h"
 #include "device_rdma_hcomm_transport_manager.h"
+#include "rdma_proxy_transport_manager.h"
+#include "urma_proxy_transport_manager.h"
 #include "dl_acl_api.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
@@ -40,7 +42,7 @@ const char NIC_DELIMITER = ';';
 const std::string HOST_TRANSPORT_TYPE = "host#";
 const std::string DEVICE_TRANSPORT_TYPE = "device#";
 const uint32_t HOST_PROTOCOL = HYBM_DOP_TYPE_HOST_TCP | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA;
-const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA;
+const uint32_t DEVICE_PROTOCOL = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
 const uint32_t DEVICE_RDMA_PROTOCOL = HYBM_DOP_TYPE_DEVICE_RDMA;
 const uint32_t DEVICE_URMA_PROTOCOL = HYBM_DOP_TYPE_DEVICE_URMA;
 bool IsLocalUrma(const TransportOptions &options)
@@ -147,31 +149,40 @@ Result ComposeTransportManager::OpenTransport(const TransportOptions &options, u
 
     std::shared_ptr<TransportManager> transportManager;
     if (opTypes == DEVICE_URMA_PROTOCOL) {
-        transportManager = std::make_shared<device::DeviceUrmaTransportManager>();
-    } else if (opTypes == DEVICE_RDMA_PROTOCOL) {
-        // HCOMM 开关（默认关闭）：关闭时无论 CANN 版本一律走 native RDMA；
-        // 打开后恢复 CANN 版本判断（>= 9.1 走 HCOMM，否则 native）。
-        // HCOMM 代码保留，待 HCOMM 支持动态 MR 更新后置 1 即可启用。
-        // 注：A5(950) 的 HCOMM device RDMA 是主机侧 RoCE 形态（HOST 端点 + 主机侧 Nbi 提交），
-        // 与 910B/910_93 的 DEVICE 形态实现不同，由 DeviceRdmaHcommTransportManager 内部按 SoC 分派。
-        static const bool hcommEnabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_HCOMM, 0u) != 0u;
-        const bool useHcomm = hcommEnabled && DlAclApi::IsCannGE(HCOMM_REQUIRED_MAJOR, HCOMM_REQUIRED_MINOR);
-        BM_LOG_INFO("useHcomm=" << (useHcomm ? "true" : "false") << " (hcommEnabled=" << hcommEnabled
-                                << ", ACL >= " << HCOMM_REQUIRED_MAJOR << "." << HCOMM_REQUIRED_MINOR
-                                << " i.e. CANN >= 9.1 required)");
-        if (useHcomm) {
-            transportManager = std::make_shared<device::DeviceRdmaHcommTransportManager>();
+        if (options.isProxy) {
+            transportManager = std::make_shared<device::UrmaProxyTransportManager>();
         } else {
-            // AICPU 直发开关（默认打开）：打开后用 AI QP + AICPU kernel 提交 WQE，host 仅敲 doorbell。
-            // 仅适用于非 HYBM_TYPE_AI_CORE_INITIATE 场景（AI_CORE_INITIATE 用 FixedRanksQpManager，走基类）。
-            static const bool aicpuEnabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_AICPU, 1U) != 0U;
-            const bool useAicpu = aicpuEnabled && (options.initialType != HYBM_TYPE_AI_CORE_INITIATE);
-            if (useAicpu) {
-                BM_LOG_INFO("using AICPU device RDMA transport, rankId: " << options.rankId);
-                transportManager = std::make_shared<device::RdmaAicpuTransportManager>();
+            transportManager = std::make_shared<device::DeviceUrmaTransportManager>();
+        }
+    } else if (opTypes == DEVICE_RDMA_PROTOCOL) {
+        if (options.isProxy) {
+            transportManager = std::make_shared<device::RdmaProxyTransportManager>();
+        } else {
+            // HCOMM 开关（默认关闭）：关闭时无论 CANN 版本一律走 native RDMA；
+            // 打开后恢复 CANN 版本判断（>= 9.1 走 HCOMM，否则 native）。
+            // HCOMM 代码保留，待 HCOMM 支持动态 MR 更新后置 1 即可启用。
+            // 注：A5(950) 的 HCOMM device RDMA 是主机侧 RoCE 形态（HOST 端点 + 主机侧 Nbi 提交），
+            // 与 910B/910_93 的 DEVICE 形态实现不同，由 DeviceRdmaHcommTransportManager 内部按 SoC 分派。
+            static const bool hcommEnabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_HCOMM, 0u) != 0u;
+            const bool useHcomm = hcommEnabled && DlAclApi::IsCannGE(HCOMM_REQUIRED_MAJOR, HCOMM_REQUIRED_MINOR);
+            BM_LOG_INFO("useHcomm=" << (useHcomm ? "true" : "false") << " (hcommEnabled=" << hcommEnabled
+                                    << ", ACL >= " << HCOMM_REQUIRED_MAJOR << "." << HCOMM_REQUIRED_MINOR
+                                    << " i.e. CANN >= 9.1 required)");
+            if (useHcomm) {
+                transportManager = std::make_shared<device::DeviceRdmaHcommTransportManager>();
             } else {
-                BM_LOG_INFO("using native device RDMA transport");
-                transportManager = std::make_shared<device::RdmaTransportManager>();
+                // AICPU 直发开关（默认打开）：打开后用 AI QP + AICPU kernel 提交 WQE，host 仅敲 doorbell。
+                // 仅适用于非 HYBM_TYPE_AI_CORE_INITIATE 场景（AI_CORE_INITIATE 用 FixedRanksQpManager，走基类）。
+                static const bool aicpuEnabled =
+                    MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_AICPU, 1U) != 0U;
+                const bool useAicpu = aicpuEnabled && (options.initialType != HYBM_TYPE_AI_CORE_INITIATE);
+                if (useAicpu) {
+                    BM_LOG_INFO("using AICPU device RDMA transport, rankId: " << options.rankId);
+                    transportManager = std::make_shared<device::RdmaAicpuTransportManager>();
+                } else {
+                    BM_LOG_INFO("using native device RDMA transport");
+                    transportManager = std::make_shared<device::RdmaTransportManager>();
+                }
             }
         }
     } else {
@@ -413,6 +424,12 @@ void ComposeTransportManager::GetTransportPrepareOptions(const HybmTransPrepareO
             info.memKeys.emplace_back(tmp);
         }
         info.privateData = item.second.privateData;
+        if (item.second.isProvider) {
+            info.isProvider = true;
+            info.providerControlUrl =
+                item.second.providerControlUrl.empty() ? item.second.nic : item.second.providerControlUrl;
+            info.providerGvaBase = item.second.providerGvaBase;
+        }
         transportOptions.options.emplace(rankId, info);
     }
 }
@@ -420,12 +437,6 @@ void ComposeTransportManager::GetTransportPrepareOptions(const HybmTransPrepareO
 Result ComposeTransportManager::Prepare(const HybmTransPrepareOptions &options)
 {
     Result ret = BM_OK;
-    {
-        std::lock_guard<std::shared_mutex> lock(rankPrepareInfosMutex_);
-        for (const auto &item : options.options) {
-            rankPrepareInfos_[item.first] = item.second;
-        }
-    }
     for (const auto &item : options.options) {
         std::lock_guard<std::mutex> lock(connectedProtocolsMutex_);
         connectedProtocols_.erase(item.first);
@@ -446,12 +457,6 @@ Result ComposeTransportManager::RemoveRanks(const std::vector<uint32_t> &removed
 {
     BM_LOG_INFO("compose RemoveRanks called, ranks: " << removedRanks.size()
                                                       << " transportCount: " << transports_.size());
-    {
-        std::lock_guard<std::shared_mutex> lock(rankPrepareInfosMutex_);
-        for (auto rankId : removedRanks) {
-            rankPrepareInfos_.erase(rankId);
-        }
-    }
     for (auto rankId : removedRanks) {
         std::lock_guard<std::mutex> lock(connectedProtocolsMutex_);
         connectedProtocols_.erase(rankId);
@@ -524,46 +529,32 @@ std::vector<uint32_t> ComposeTransportManager::BuildRankProtocols(uint32_t rankI
         return {FindTransportProtocol(options_.protocol)};
     }
     std::vector<uint32_t> protocols;
-    const auto layers = tagManager_->GetRank2RankLayers(rankId, options_.rankId);
-    if (!layers.empty()) {
-        auto opTypes = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-        opTypes = FilterUnreachableLayers(rankId, opTypes);
-        for (const auto layer : layers) {
-            const auto protocol = FindTransportProtocol(static_cast<uint32_t>(layer));
-            if (protocol != 0U && (opTypes & static_cast<uint32_t>(layer)) != 0U &&
-                std::find(protocols.begin(), protocols.end(), protocol) == protocols.end()) {
-                protocols.emplace_back(protocol);
-            }
-        }
-        return protocols;
+    PeerProtocolInfo peerInfo{rankId, options_.rankId};
+    const auto layers = tagManager_->ResolvePeerProtocols(peerInfo);
+    uint32_t opTypes = 0U;
+    for (const auto layer : layers) {
+        opTypes |= static_cast<uint32_t>(layer);
     }
-
-    static constexpr std::array<hybm_data_op_type, 7> PRIORITED_OP_TYPES = {
-        HYBM_DOP_TYPE_SDMA,      HYBM_DOP_TYPE_DEVICE_RDMA, HYBM_DOP_TYPE_DEVICE_URMA, HYBM_DOP_TYPE_HOST_RDMA,
-        HYBM_DOP_TYPE_HOST_URMA, HYBM_DOP_TYPE_HOST_TCP,    HYBM_DOP_TYPE_HOST_SHM};
-    const auto opTypes = tagManager_->GetRank2RankOpType(rankId, options_.rankId);
-    for (auto opType : PRIORITED_OP_TYPES) {
-        if ((opTypes & static_cast<uint32_t>(opType)) == 0U) {
-            continue;
-        }
-        const auto protocol = FindTransportProtocol(static_cast<uint32_t>(opType));
-        if (protocol != 0U && std::find(protocols.begin(), protocols.end(), protocol) == protocols.end()) {
+    opTypes = FilterUnreachableLayers(rankId, opTypes);
+    for (const auto layer : layers) {
+        const auto protocol = FindTransportProtocol(static_cast<uint32_t>(layer));
+        if (protocol != 0U && (opTypes & static_cast<uint32_t>(layer)) != 0U &&
+            std::find(protocols.begin(), protocols.end(), protocol) == protocols.end()) {
             protocols.emplace_back(protocol);
         }
     }
     return protocols;
 }
-
 uint32_t ComposeTransportManager::FilterUnreachableLayers(uint32_t rankId, uint32_t opTypes) const
 {
-    transport::TransportRankPrepareInfo physical;
-    {
-        std::shared_lock<std::shared_mutex> lock(rankPrepareInfosMutex_);
-        auto it = rankPrepareInfos_.find(rankId);
-        if (it == rankPrepareInfos_.end()) {
-            return opTypes;
-        }
-        physical = it->second;
+    RankTopology physical;
+    if (tagManager_ == nullptr || !tagManager_->GetRankTopology(rankId, physical)) {
+        return opTypes;
+    }
+    if (!physical.valid) {
+        // 拓扑未知时不做层过滤（与历史语义一致）：SDMA/MTE/HOST_SHM 的可达性由运行期
+        // CanSdmaReaches / CanLocalHostReaches 判定，不能因为拓扑缺失就提前裁掉。
+        return opTypes;
     }
     if ((opTypes & static_cast<uint32_t>(HYBM_DOP_TYPE_SDMA)) != 0U &&
         !MemSegment::CanSdmaReaches(physical.superPodId, physical.serverId,
@@ -823,12 +814,6 @@ Result ComposeTransportManager::SynchronizeRanks(const std::set<uint32_t> &rankI
 Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &options)
 {
     Result lastResult = BM_OK;
-    {
-        std::lock_guard<std::shared_mutex> lock(rankPrepareInfosMutex_);
-        for (const auto &item : options.options) {
-            rankPrepareInfos_[item.first] = item.second;
-        }
-    }
     for (const auto &[protocol, manager] : transports_) {
         HybmTransPrepareOptions transportOptions{};
         GetTransportPrepareOptions(options, protocol, transportOptions);
@@ -840,15 +825,6 @@ Result ComposeTransportManager::UpdateRankOptions(const HybmTransPrepareOptions 
         }
     }
     return lastResult;
-}
-
-// 返回的指针仅在下次 Prepare/UpdateRankOptions/RemoveRanks 调用前有效，
-// 调用方不得跨这些调用持有该指针（底层 map 可能 rehash/erase 导致悬垂）。
-const TransportRankPrepareInfo *ComposeTransportManager::GetRankPrepareInfo(uint32_t rankId) const
-{
-    std::shared_lock<std::shared_mutex> lock(rankPrepareInfosMutex_);
-    auto it = rankPrepareInfos_.find(rankId);
-    return it != rankPrepareInfos_.end() ? &it->second : nullptr;
 }
 
 const TransportPrivateData ComposeTransportManager::GetPrivateData() const

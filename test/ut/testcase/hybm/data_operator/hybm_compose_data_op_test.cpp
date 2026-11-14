@@ -16,7 +16,10 @@
 
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
+#include "device_rdma_transport_manager.h"
+#include "device_urma_transport_manager.h"
 #define private public
+#include "compose_transport_manager.h"
 #include "hybm_compose_data_op.h"
 #include "dl_acl_api.h"
 #undef private
@@ -266,6 +269,92 @@ TEST_F(HybmComposeDataOpTest, initialize_with_dev_rdma_only)
 
     dataOp.UnInitialize();
     ASSERT_EQ(1UL, devRdmaDataOpMock->uninitializeCount);
+}
+
+TEST_F(HybmComposeDataOpTest, initialize_host_shm_device_rdma_preserves_direct_transport)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.rankId = 3;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_HOST_SHM, HYBM_DOP_TYPE_DEVICE_RDMA));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    std::shared_ptr<ock::mf::transport::TransportManager> direct =
+        std::make_shared<ock::mf::transport::device::RdmaTransportManager>();
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator)
+        .expects(once())
+        .with(eq(options.rankId), eq(direct))
+        .will(invoke(CreateDevRdmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostShmDataOperator)
+        .expects(once())
+        .will(invoke(CreateHostShmDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, direct, tag);
+    ASSERT_EQ(dataOp.Initialize(), BM_OK);
+    EXPECT_EQ(devRdmaDataOpMock->initializeCount, 1U);
+    EXPECT_EQ(hostShmDataOpMock->initializeCount, 1U);
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, initialize_host_shm_device_urma_preserves_direct_transport)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.rankId = 3;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_HOST_SHM, HYBM_DOP_TYPE_DEVICE_URMA));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    std::shared_ptr<ock::mf::transport::TransportManager> direct =
+        std::make_shared<ock::mf::transport::device::DeviceUrmaTransportManager>();
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevUrmaDataOperator)
+        .expects(once())
+        .with(eq(options.rankId), eq(direct))
+        .will(invoke(CreateDevUrmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostShmDataOperator)
+        .expects(once())
+        .will(invoke(CreateHostShmDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, direct, tag);
+    ASSERT_EQ(dataOp.Initialize(), BM_OK);
+    EXPECT_EQ(devUrmaDataOpMock->initializeCount, 1U);
+    EXPECT_EQ(hostShmDataOpMock->initializeCount, 1U);
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, initialize_host_shm_device_rdma_uses_compose_child_transport)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.rankId = 3;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_HOST_SHM, HYBM_DOP_TYPE_DEVICE_RDMA));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    auto compose = std::make_shared<ock::mf::transport::ComposeTransportManager>(tag);
+    std::shared_ptr<ock::mf::transport::TransportManager> child =
+        std::make_shared<ock::mf::transport::device::RdmaTransportManager>();
+    compose->transports_[HYBM_DOP_TYPE_DEVICE_RDMA] = child;
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator)
+        .expects(once())
+        .with(eq(options.rankId), eq(child))
+        .will(invoke(CreateDevRdmaDataOperator));
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostShmDataOperator)
+        .expects(once())
+        .will(invoke(CreateHostShmDataOperator));
+
+    ock::mf::HostComposeDataOp dataOp(options, compose, tag);
+    ASSERT_EQ(dataOp.Initialize(), BM_OK);
+    dataOp.UnInitialize();
+}
+
+TEST_F(HybmComposeDataOpTest, initialize_host_shm_device_rdma_rejects_missing_compose_transport)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(OpOr(HYBM_DOP_TYPE_HOST_SHM, HYBM_DOP_TYPE_DEVICE_RDMA));
+    auto tag = std::make_shared<ock::mf::HybmEntityTagInfo>();
+    auto compose = std::make_shared<ock::mf::transport::ComposeTransportManager>(tag);
+    MOCKER(ock::mf::DataOperatorFactory::CreateDevRdmaDataOperator).expects(never());
+    MOCKER(ock::mf::DataOperatorFactory::CreateHostShmDataOperator).expects(never());
+
+    ock::mf::HostComposeDataOp dataOp(options, compose, tag);
+    EXPECT_EQ(dataOp.Initialize(), BM_ERROR);
 }
 
 TEST_F(HybmComposeDataOpTest, initialize_with_host_rdma_only)

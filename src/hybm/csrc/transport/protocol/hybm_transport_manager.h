@@ -89,12 +89,6 @@ public:
      */
     virtual Result UpdateRankOptions(const HybmTransPrepareOptions &options) = 0;
 
-    virtual const TransportRankPrepareInfo *GetRankPrepareInfo(uint32_t rankId) const
-    {
-        (void)rankId;
-        return nullptr;
-    }
-
     /**
      * 查询
      */

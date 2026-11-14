@@ -24,6 +24,16 @@
 #include <mutex>
 #include "hybm_common_include.h"
 
+struct RtProcExtParam {
+    const char *paramInfo;
+    uint64_t paramLen;
+};
+
+struct RtNetServiceOpenArgs {
+    RtProcExtParam *extParamList;
+    uint64_t extParamCnt;
+};
+
 namespace ock {
 namespace mf {
 typedef enum {

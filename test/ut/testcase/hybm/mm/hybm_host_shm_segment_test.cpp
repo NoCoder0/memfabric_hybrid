@@ -29,6 +29,7 @@
 #undef protected
 
 #include "hybm_ex_info_transfer.h"
+#include "hybm_shm_util.h"
 #include "hybm_va_manager.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
@@ -175,8 +176,9 @@ TEST_F(HybmHostShmSegmentTest, Import_ReturnsInvalidParamWhenDeserializeFails)
 {
     HybmHostShmSegment segment(MakeOptions(), 0);
     std::vector<std::string> allExInfo{"bad_format"};
+    std::vector<ImportEntryKind> entryKinds(1U);
 
-    EXPECT_EQ(segment.Import(allExInfo, nullptr, HYBM_IMPORT_RANK_INVALID), BM_INVALID_PARAM);
+    EXPECT_EQ(segment.Import(allExInfo, nullptr, HYBM_IMPORT_RANK_INVALID, entryKinds), BM_INVALID_PARAM);
 }
 
 TEST_F(HybmHostShmSegmentTest, Import_ReturnsInvalidParamWhenMagicIsInvalid)
@@ -188,8 +190,9 @@ TEST_F(HybmHostShmSegmentTest, Import_ReturnsInvalidParamWhenMagicIsInvalid)
     info.rankId = 0U;
     std::string exInfo;
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(info, exInfo), BM_OK);
+    std::vector<ImportEntryKind> entryKinds(1U);
 
-    EXPECT_EQ(segment.Import({exInfo}, nullptr, HYBM_IMPORT_RANK_INVALID), BM_INVALID_PARAM);
+    EXPECT_EQ(segment.Import({exInfo}, nullptr, HYBM_IMPORT_RANK_INVALID, entryKinds), BM_INVALID_PARAM);
 }
 
 TEST_F(HybmHostShmSegmentTest, Import_KeepsAllSlicesDedupDeferredToMmap)
@@ -224,8 +227,9 @@ TEST_F(HybmHostShmSegmentTest, Import_KeepsAllSlicesDedupDeferredToMmap)
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(secondSlice, ex2), BM_OK);
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(trueDuplicate, ex3), BM_OK);
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(third, ex4), BM_OK);
+    std::vector<ImportEntryKind> entryKinds(4U);
 
-    ASSERT_EQ(segment.Import({ex1, ex2, ex3, ex4}, nullptr, HYBM_IMPORT_RANK_INVALID), BM_OK);
+    ASSERT_EQ(segment.Import({ex1, ex2, ex3, ex4}, nullptr, HYBM_IMPORT_RANK_INVALID, entryKinds), BM_OK);
     ASSERT_EQ(segment.imports_.size(), 4U);
     EXPECT_EQ(segment.imports_[0].rankId, 0U);
     EXPECT_EQ(segment.imports_[0].sliceIndex, 1U);
@@ -328,6 +332,7 @@ void CreateShmFile(const std::string &path, uint64_t size)
 TEST_F(HybmHostShmSegmentTest, ReserveMemorySpace_FullRealShmFlow)
 {
     HybmHostShmVaGuard vaGuard;
+    MOCKER_CPP(&TryHugetlbfsAvailable, bool (*)()).stubs().will(returnValue(false));
 
     auto options = MakeOptions();
     const std::string shmPath = "/dev/shm/memfabric_hybrid_" + std::to_string(options.rankId);
@@ -396,7 +401,8 @@ TEST_F(HybmHostShmSegmentTest, MapImportedShm_WithRealPeerFiles)
     std::string ex2;
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(info0, ex0), BM_OK);
     ASSERT_EQ(LiteralExInfoTranslater<ShmExportInfo>{}.Serialize(info2, ex2), BM_OK);
-    ASSERT_EQ(segment.Import({ex0, ex2}, nullptr, HYBM_IMPORT_RANK_INVALID), BM_OK);
+    std::vector<ImportEntryKind> entryKinds(2U);
+    ASSERT_EQ(segment.Import({ex0, ex2}, nullptr, HYBM_IMPORT_RANK_INVALID, entryKinds), BM_OK);
     ASSERT_EQ(segment.imports_.size(), 2U);
 
     // Mmap 真实映射两个 peer shm
@@ -437,6 +443,7 @@ TEST_F(HybmHostShmSegmentTest, MapImportedShm_WithRealPeerFiles)
 TEST_F(HybmHostShmSegmentTest, MapLocalShm_StaleFileCleanup)
 {
     HybmHostShmVaGuard vaGuard;
+    MOCKER_CPP(&TryHugetlbfsAvailable, bool (*)()).stubs().will(returnValue(false));
 
     auto options = MakeOptions();
     const std::string shmPath = "/dev/shm/memfabric_hybrid_" + std::to_string(options.rankId);
@@ -494,12 +501,16 @@ TEST_F(HybmHostShmSegmentTest, GetShmFilePath_Overloads)
     EXPECT_EQ(segment.GetShmFilePath(7U, true), "/dev/hugepages/memfabric_hybrid_7");
 }
 
-TEST_F(HybmHostShmSegmentTest, TryHugetlbfsAvailable_NoCrash)
+TEST_F(HybmHostShmSegmentTest, TryHugetlbfsAvailable_ChecksMountAndFreePages)
 {
     HybmHostShmSegment segment(MakeOptions(), 0);
-    // 环境相关（本机 HugePages=0 → false），仅验证不崩溃且路径自洽
-    auto available = segment.TryHugetlbfsAvailable();
-    EXPECT_EQ(segment.GetShmFilePath(1U, available), segment.GetShmFilePath(1U, segment.useHugetlbfs_));
+    MOCKER_CPP(&IsHugetlbfsMounted, bool (*)()).expects(exactly(3)).will(returnValue(false)).then(returnValue(true));
+    MOCKER_CPP(&HasAvailableHugePages, bool (*)()).expects(exactly(2)).will(returnValue(false)).then(returnValue(true));
+
+    EXPECT_FALSE(TryHugetlbfsAvailable());
+    EXPECT_FALSE(TryHugetlbfsAvailable());
+    EXPECT_TRUE(TryHugetlbfsAvailable());
+    EXPECT_FALSE(segment.useHugetlbfs_);
 }
 
 TEST_F(HybmHostShmSegmentTest, Mmap_ImportedShmErrorPaths)
@@ -562,6 +573,7 @@ TEST_F(HybmHostShmSegmentTest, Mmap_ImportedShmErrorPaths)
 TEST_F(HybmHostShmSegmentTest, MapLocalShm_StaleLockHeld_ReturnsError)
 {
     HybmHostShmVaGuard vaGuard;
+    MOCKER_CPP(&TryHugetlbfsAvailable, bool (*)()).stubs().will(returnValue(false));
 
     auto options = MakeOptions();
     const std::string shmPath = "/dev/shm/memfabric_hybrid_" + std::to_string(options.rankId);

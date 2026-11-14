@@ -158,6 +158,7 @@ constexpr uint64_t ACL_NOTIFY_FLAG_DEVICE_ONLY = 0x00000001U;
 
 using aclrtSetDeviceFunc = int32_t (*)(int32_t);
 using aclrtGetDeviceFunc = int32_t (*)(int32_t *);
+using aclrtGetDeviceCountFunc = int32_t (*)(uint32_t *);
 using aclrtDeviceEnablePeerAccessFunc = int32_t (*)(int32_t, uint32_t);
 using aclrtCreateStreamFunc = int (*)(void **);
 using aclrtCreateStreamWithConfigFunc = int (*)(void **, int32_t, uint32_t);
@@ -240,6 +241,14 @@ public:
             return BM_UNDER_API_UNLOAD;
         }
         return pAclrtGetDevice(deviceId);
+    }
+
+    static inline Result AclrtGetDeviceCount(uint32_t *count)
+    {
+        if (pAclrtGetDeviceCount == nullptr) {
+            return BM_UNDER_API_UNLOAD;
+        }
+        return pAclrtGetDeviceCount(count);
     }
 
     static inline Result AclrtDeviceEnablePeerAccess(int32_t peerDeviceId, uint32_t flags)
@@ -635,6 +644,7 @@ private:
 
     static aclrtSetDeviceFunc pAclrtSetDevice;
     static aclrtGetDeviceFunc pAclrtGetDevice;
+    static aclrtGetDeviceCountFunc pAclrtGetDeviceCount;
     static aclrtDeviceEnablePeerAccessFunc pAclrtDeviceEnablePeerAccess;
     static aclrtCreateStreamFunc pAclrtCreateStream;
     static aclrtCreateStreamWithConfigFunc pAclrtCreateStreamWithConfig;

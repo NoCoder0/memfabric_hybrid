@@ -754,6 +754,20 @@ void HybmVaManager::DumpAllocatedGvaInfo() const
     }
 }
 
+bool HybmVaManager::FindAllocatedVaInfo(uint64_t va, uint64_t size, uint32_t type, AllocatedGvaInfo &out)
+{
+    if (type >= HVM_BUTT) {
+        return false;
+    }
+    std::shared_lock<std::shared_mutex> lock(mutex_);
+    auto overlap = CheckOverlap(va, size, type);
+    if (!overlap.first) {
+        return false;
+    }
+    out = overlap.second;
+    return true;
+}
+
 std::pair<bool, AllocatedGvaInfo> HybmVaManager::CheckOverlap(const uint64_t va, const uint64_t size, uint32_t type)
 {
     const uint64_t end = va + size;
