@@ -25,6 +25,10 @@ permissions:
 env:
   RTD_HOST: https://app.readthedocs.org
   RTD_VERSION: latest
+  RTD_BUILD_DEADLINE: "600"
+  RTD_POLL_INTERVAL: "10"
+  RTD_BACKOFF_BASE: "15"
+  RTD_BACKOFF_MAX: "240"
 
 jobs:
   trigger-rtd:
@@ -33,9 +37,10 @@ jobs:
     env:
       RTD_PROJECT: ${{ vars.RTD_PROJECT_SLUG }}
     steps:
-      - name: Trigger Read the Docs build
+      - name: Trigger, wait and retry Read the Docs build
         run: |
-          set -euo pipefail
+          # no -e: a failed build is retried below instead of aborting the step
+          set -uo pipefail
 
           RTD_TOKEN='${{ secrets.RTD_API_TOKEN }}'
 
@@ -47,28 +52,105 @@ jobs:
 
           API="${RTD_HOST}/api/v3/projects/${RTD_PROJECT}"
           TRIGGER_URL="${API}/versions/${RTD_VERSION}/builds/"
+          RESP=rtd_resp.json
+          DEADLINE=$(( $(date +%s) + RTD_BUILD_DEADLINE ))
+          BACKOFF="${RTD_BACKOFF_BASE}"
 
-          CODE="000"
-          for i in 1 2 3; do
-            CODE=$(curl -sS -o rtd_resp.json -w '%{http_code}' \
-              -X POST "${TRIGGER_URL}" \
-              -H "Authorization: Token ${RTD_TOKEN}" \
-              -H "Content-Type: application/json" \
-              -H "Accept: application/json" \
-              -d '{}') || CODE="000"
-            echo "trigger HTTP ${CODE} (attempt ${i}/3)"
-            case "${CODE}" in
-              2??) break ;;
-              000|429|500|502|503|504) if [ "${i}" -lt 3 ]; then sleep 10; fi ;;
-              *) break ;;
+          log() {
+            printf '[%s] %s\n' "$(date -u '+%H:%M:%S')" "$*"
+          }
+
+          # first scalar value of "<key>": ..., "null" becomes empty
+          json_get() {
+            grep -oE "\"$2\"[[:space:]]*:[[:space:]]*(\"[^\"]*\"|[^,}[:space:]]+)" "$1" 2>/dev/null \
+              | head -n 1 \
+              | sed -E 's/^"[^"]*"[[:space:]]*:[[:space:]]*//; s/^"//; s/"$//; s/^null$//'
+          }
+
+          trigger_build() {
+            local i=1 id
+            while [ "${i}" -le 3 ]; do
+              CODE=$(curl -sS --connect-timeout 10 --max-time 30 -o "${RESP}" -w '%{http_code}' \
+                -X POST "${TRIGGER_URL}" \
+                -H "Authorization: Token ${RTD_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -H "Accept: application/json" \
+                -d '{}') || CODE="000"
+              log "trigger HTTP ${CODE} (attempt ${i}/3)"
+              case "${CODE}" in
+                2??)
+                  id=$(json_get "${RESP}" id)
+                  [ -n "${id}" ] || id=$(json_get "${RESP}" build \
+                    | sed -nE 's#.*/builds/([0-9]+)/?$#\1#p')
+                  [ -n "${id}" ] && { BUILD_ID="${id}"; return 0; }
+                  log "ERROR: trigger returned no build id."
+                  return 1
+                  ;;
+                000|429|5??)
+                  [ "${i}" -lt 3 ] && sleep 10
+                  ;;
+                *)
+                  break
+                  ;;
+              esac
+              i=$((i + 1))
+            done
+            log "ERROR: Read the Docs trigger failed with HTTP ${CODE}."
+            cat "${RESP}" 2>/dev/null
+            return 1
+          }
+
+          poll_build() {
+            local state success
+            while [ $(( DEADLINE - $(date +%s) )) -gt 0 ]; do
+              CODE=$(curl -sS --connect-timeout 10 --max-time 30 -o "${RESP}" -w '%{http_code}' \
+                "${API}/builds/${BUILD_ID}/" \
+                -H "Authorization: Token ${RTD_TOKEN}" \
+                -H "Accept: application/json") || CODE="000"
+              if [ "${CODE}" != "200" ]; then
+                log "WARN: poll build ${BUILD_ID} HTTP ${CODE}"
+                sleep "${RTD_POLL_INTERVAL}"
+                continue
+              fi
+              state=$(json_get "${RESP}" code)
+              success=$(json_get "${RESP}" success)
+              log "build ${BUILD_ID}: state=${state:-unknown} success=${success:-pending}"
+              [ "${success}" = "true" ] && return 0
+              case "${state}" in
+                finished|cancelled|skipped) return 1 ;;
+              esac
+              sleep "${RTD_POLL_INTERVAL}"
+            done
+            return 2
+          }
+
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            log "=== attempt ${attempt}: trigger build ${RTD_PROJECT}/${RTD_VERSION} ==="
+            trigger_build || exit 1
+            poll_build
+            rc=$?
+            BUILD_URL=$(json_get "${RESP}" build)
+            case "${rc}" in
+              0)
+                log "SUCCESS: build ${BUILD_ID} succeeded"
+                exit 0
+                ;;
+              2)
+                log "ERROR: build ${BUILD_ID} did not finish within ${RTD_BUILD_DEADLINE}s."
+                [ -n "${BUILD_URL}" ] && log "build url: ${BUILD_URL}"
+                exit 1
+                ;;
             esac
-          done
-
-          case "${CODE}" in
-            2??) ;;
-            *)
-              echo "ERROR: Read the Docs trigger failed with HTTP ${CODE}."
-              cat rtd_resp.json || true
+            log "build ${BUILD_ID} failed: $(json_get "${RESP}" error)"
+            [ -n "${BUILD_URL}" ] && log "build url: ${BUILD_URL}"
+            if [ $(( DEADLINE - $(date +%s) )) -le "${BACKOFF}" ]; then
+              log "ERROR: build keeps failing and the ${RTD_BUILD_DEADLINE}s budget is exhausted."
               exit 1
-              ;;
-          esac
+            fi
+            log "retry $((attempt + 1)) in ${BACKOFF}s"
+            sleep "${BACKOFF}"
+            BACKOFF=$((BACKOFF * 2))
+            [ "${BACKOFF}" -gt "${RTD_BACKOFF_MAX}" ] && BACKOFF="${RTD_BACKOFF_MAX}"
+          done
