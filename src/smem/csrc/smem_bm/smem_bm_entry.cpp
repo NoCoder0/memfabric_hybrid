@@ -314,8 +314,11 @@ Result SmemBmEntry::Join(uint32_t flags)
     }
 
     // Wait for server to promote rank to ACTIVE (all links established)
+    const uint32_t groupJoinTimeoutSec =
+        mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_GROUP_JOIN_MAX_TIMEOUT, MF_GROUP_JOIN_DEFAULT_TIMEOUT);
+
     auto future = joinComplete_->get_future();
-    if (future.wait_for(std::chrono::seconds(MF_GROUP_JOIN_DEFAULT_TIMEOUT)) != std::future_status::ready) {
+    if (future.wait_for(std::chrono::seconds(groupJoinTimeoutSec)) != std::future_status::ready) {
         SM_LOG_ERROR("SmemBmEntry::Join timeout waiting for PROMOTE_TO_ACTIVE, rank=" << options_.rank);
         // Clean up server-side state so the rank can retry Join cleanly
         SM_LOG_DEBUG("SmemBmEntry::Join timeout, sending group leave for cleanup, rank: " << options_.rank);
