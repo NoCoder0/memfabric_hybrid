@@ -963,6 +963,7 @@ Result DeviceRdmaHcommTransportManager::CreatePeerResources(uint32_t peerRank, c
         remoteDesc.loc.device.superDevId = peerData.sdid;
         remoteDesc.loc.device.serverIdx = serverId_;
         remoteDesc.loc.device.superPodIdx = superPodId_;
+        SetHcommEndpointRank(remoteDesc, peerRank);
     }
     state.remoteEndpointDesc = remoteDesc;
     state.hasEndpointDesc = true;

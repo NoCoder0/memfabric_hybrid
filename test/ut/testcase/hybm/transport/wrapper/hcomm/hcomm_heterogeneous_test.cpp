@@ -383,19 +383,21 @@ TEST_F(HcommHeterogeneousTest, DeviceWaitsForMrThenUsesImportedHostEndpointAndOr
     EXPECT_EQ(manager.remoteRanks_[0].remoteFlagAddr, POOL + POOL_SIZE);
 }
 
-TEST_F(HcommHeterogeneousTest, ComposeDevicePeersKeepOpaqueMrAndOriginalEndpointConstruction)
+TEST_F(HcommHeterogeneousTest, ComposeDevicePeersKeepOpaqueMrAndConstructMatchingEndpoint)
 {
+    constexpr uint32_t localRank = 0;
+    constexpr uint32_t peerRank = 1;
     for (bool hostRoce : {false, true}) {
         auto tags = std::make_shared<HybmEntityTagInfo>();
-        ASSERT_EQ(tags->AddRankTag(1, "local"), BM_OK);
-        ASSERT_EQ(tags->AddRankTag(0, "peer"), BM_OK);
+        ASSERT_EQ(tags->AddRankTag(localRank, "local"), BM_OK);
+        ASSERT_EQ(tags->AddRankTag(peerRank, "peer"), BM_OK);
         ASSERT_EQ(tags->AddTagOpInfo("local:DEVICE_RDMA:peer"), BM_OK);
         ComposeTransportManager compose(tags);
-        compose.options_.rankId = 1;
+        compose.options_.rankId = localRank;
         auto device = std::make_shared<DeviceRdmaHcommTransportManager>();
         compose.deviceTransportManager_ = device;
         device->opened_ = true;
-        device->rankId_ = 1;
+        device->rankId_ = localRank;
         device->rankCount_ = 2;
         device->hostRocePath_ = hostRoce;
         device->serverId_ = 19;
@@ -404,7 +406,7 @@ TEST_F(HcommHeterogeneousTest, ComposeDevicePeersKeepOpaqueMrAndOriginalEndpoint
         endpoint.loc.device.devPhyId = 7;
         endpoint.loc.device.superDevId = 11;
         HybmTransPrepareOptions input, routed;
-        auto &info = input.options[0];
+        auto &info = input.options[peerRank];
         info.privateData = MakePrivateKey(endpoint);
         if (hostRoce) {
             RdmaHcommPrivateDataHost priv{};
@@ -424,7 +426,7 @@ TEST_F(HcommHeterogeneousTest, ComposeDevicePeersKeepOpaqueMrAndOriginalEndpoint
         WriteDeviceMemoryKey(key, envelope);
         info.memKeys = {envelope};
         ASSERT_EQ(compose.GetDevicePrepareOptions(input, routed), BM_OK);
-        EXPECT_EQ(routed.options.at(0).peerProtocol, HYBM_DOP_TYPE_DEVICE_RDMA);
+        EXPECT_EQ(routed.options.at(peerRank).peerProtocol, HYBM_DOP_TYPE_DEVICE_RDMA);
         ASSERT_EQ(device->Prepare(routed), BM_OK);
         EXPECT_EQ(createdEngine, hostRoce ? COMM_ENGINE_CPU : COMM_ENGINE_AICPU);
         EndpointDesc expected{};
@@ -436,6 +438,7 @@ TEST_F(HcommHeterogeneousTest, ComposeDevicePeersKeepOpaqueMrAndOriginalEndpoint
             expected.loc.device.superDevId = 11;
             expected.loc.device.serverIdx = 19;
             expected.loc.device.superPodIdx = 23;
+            SetHcommEndpointRank(expected, peerRank);
         }
         EXPECT_EQ(std::memcmp(&createdEndpoint, &expected, sizeof(expected)), 0);
         EXPECT_EQ(createdChannel.notifyNum, 1U);
