@@ -124,6 +124,7 @@ protected:
         MOCKER(hybm_uninit).stubs().will(invoke(UninitHybm));
         MOCKER(AccOffloadLaunchApi::TryLoadLibrary).stubs().will(invoke(LoadLaunch));
         MOCKER(AccOffloadLaunchApi::CleanupLibrary).stubs().will(invoke(CleanupLaunch));
+        MOCKER(AccOffloadLaunchApi::InitializeAicpu).stubs().will(returnValue(OFFLOAD_OK));
         MOCKER(hybm_create_entity).stubs().will(invoke(CreateEntity));
         MOCKER(hybm_destroy_entity).stubs().will(invoke(DestroyEntity));
         MOCKER(hybm_reserve_mem_space).stubs().will(returnValue(OFFLOAD_OK));

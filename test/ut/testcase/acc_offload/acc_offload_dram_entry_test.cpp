@@ -27,6 +27,7 @@
 #define protected public
 #include "aicore/acc_offload_local_dram_mte_entry.h"
 #include "aicore/acc_offload_shared_dram_mte_entry.h"
+#include "aicpu/acc_offload_shared_dram_aicpu_entry.h"
 #undef private
 #undef protected
 
@@ -60,6 +61,9 @@ uint32_t gUninitCount = 0;
 uint32_t gCleanupCount = 0;
 int32_t gInitResult = OFFLOAD_OK;
 int32_t gLaunchResult = OFFLOAD_OK;
+int32_t gAicpuInitResult = OFFLOAD_OK;
+uint32_t gAicpuInitCount = 0;
+AscendSocType gSocType = ASCEND_910C;
 int32_t gReserveResult = OFFLOAD_OK;
 uint32_t gReserveAtCount = 0;
 uint64_t gReservedVa = 0;
@@ -95,7 +99,15 @@ void CleanupLaunch()
 
 AscendSocType GetSocType()
 {
-    return ASCEND_910C;
+    return gSocType;
+}
+
+int32_t InitializeAicpu(uint16_t deviceId)
+{
+    EXPECT_EQ(deviceId, TEST_DEVICE);
+    EXPECT_GT(gInitCount, 0U);
+    ++gAicpuInitCount;
+    return gAicpuInitResult;
 }
 
 hybm_entity_t CreateEntity(uint16_t id, const hybm_options *options, uint32_t)
@@ -222,6 +234,9 @@ protected:
         gCleanupCount = 0;
         gInitResult = OFFLOAD_OK;
         gLaunchResult = OFFLOAD_OK;
+        gAicpuInitResult = OFFLOAD_OK;
+        gAicpuInitCount = 0;
+        gSocType = ASCEND_910C;
         gReserveResult = OFFLOAD_OK;
         gReserveAtCount = 0;
         gReservedVa = 0;
@@ -243,6 +258,7 @@ protected:
         MOCKER(hybm_uninit).stubs().will(invoke(UninitHybm));
         MOCKER(AccOffloadLaunchApi::TryLoadLibrary).stubs().will(invoke(LoadLaunch));
         MOCKER(AccOffloadLaunchApi::CleanupLibrary).stubs().will(invoke(CleanupLaunch));
+        MOCKER(AccOffloadLaunchApi::InitializeAicpu).stubs().will(invoke(InitializeAicpu));
         MOCKER(DlAclApi::GetAscendSocType).stubs().will(invoke(GetSocType));
         MOCKER(hybm_create_entity).stubs().will(invoke(CreateEntity));
         MOCKER(hybm_destroy_entity).stubs().will(invoke(DestroyEntity));
@@ -277,6 +293,57 @@ protected:
 
     offload_config_t config_{};
 };
+
+TEST_F(AccOffloadDramEntryTest, SharedAicpuInitFailureDoesNotBlockPoolInitialization)
+{
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    config_.scene = OFFLOAD_SCENE_SHARED;
+    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", SHARED_STORE_URL);
+    gAicpuInitResult = OFFLOAD_FUNCTION_FAILED;
+    ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_EQ(gInitCount, 1U);
+    EXPECT_EQ(gAicpuInitCount, 1U);
+    EXPECT_FALSE(gCreatedIds.empty());
+    EXPECT_EQ(gMmapCount, 1U);
+    EXPECT_TRUE(entry.inited_);
+    entry.UnInitialize();
+    EXPECT_EQ(gUninitCount, 1U);
+    EXPECT_EQ(gCleanupCount, 1U);
+}
+
+TEST_F(AccOffloadDramEntryTest, SharedOtherSocSkipsCustomAicpuInitialization)
+{
+    config_.scene = OFFLOAD_SCENE_SHARED;
+    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", MALFORMED_STORE_URL);
+    for (auto soc : {ASCEND_910B, ASCEND_950}) {
+        gSocType = soc;
+        AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+        EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
+        EXPECT_EQ(gAicpuInitCount, 0U);
+    }
+}
+
+TEST_F(AccOffloadDramEntryTest, SharedA5MteInitializesWithoutCustomAicpuWarmup)
+{
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    config_.scene = OFFLOAD_SCENE_SHARED;
+    snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", SHARED_STORE_URL);
+    gSocType = ASCEND_950;
+    ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_EQ(gAicpuInitCount, 0U);
+    EXPECT_EQ(gMmapCount, 1U);
+    entry.UnInitialize();
+}
+
+TEST_F(AccOffloadDramEntryTest, SharedAicpuBackendRejectsA3WithoutMteWarmup)
+{
+    AccOffloadSharedDramAicpuEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    config_.scene = OFFLOAD_SCENE_SHARED;
+    config_.executor = OFFLOAD_EXECUTOR_AICPU;
+    EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_EQ(gAicpuInitCount, 0U);
+    EXPECT_TRUE(gCreatedIds.empty());
+}
 
 TEST_F(AccOffloadDramEntryTest, ValidateRejectsBadSharedGeometry)
 {
@@ -338,6 +405,7 @@ TEST_F(AccOffloadDramEntryTest, InitializePreservesLocalGiantPagePolicy)
     auto entry = MakeEntry();
     config_.flags |= OFFLOAD_FLAG_GIANT_PAGE;
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
+    EXPECT_EQ(gAicpuInitCount, 0U);
     EXPECT_TRUE(entry.inited_);
     ASSERT_EQ(gAllocSizes.size(), 1U);
     EXPECT_EQ(gAllocSizes.front(), POOL_SIZE);

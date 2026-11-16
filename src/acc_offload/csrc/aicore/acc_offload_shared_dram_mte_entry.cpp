@@ -39,6 +39,13 @@ int32_t AccOffloadSharedDramMteEntry::InitializePool(const offload_config_t &con
     if (ret != OFFLOAD_OK) {
         return ret;
     }
+    // Bind custom AICPU before importing A3 REMOTE_MAP mappings into the device address space.
+    if (ock::mf::DlAclApi::GetAscendSocType() == ock::mf::ASCEND_910C) {
+        ret = AccOffloadLaunchApi::InitializeAicpu(config.deviceId);
+        if (ret != OFFLOAD_OK) {
+            OFFLOAD_LOG_WARN("initialize A3 custom AICPU failed, deviceId: " << config.deviceId << ", ret: " << ret);
+        }
+    }
     ret = ResolveStoreUrl(config);
     if (ret != OFFLOAD_OK) {
         return ret;

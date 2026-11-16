@@ -51,6 +51,7 @@ class AccOffloadLaunchApi {
 public:
     static int32_t TryLoadLibrary();
     static void CleanupLibrary();
+    static int32_t InitializeAicpu(uint16_t deviceId);
 
     static inline int32_t AccOffloadAicpuLaunch(AccOffloadAicpuCallback callback, const AccOffloadAicpuParam &param,
                                                 uint8_t deviceId)

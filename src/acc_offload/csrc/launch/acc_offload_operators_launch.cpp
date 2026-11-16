@@ -17,7 +17,25 @@
 #include "acc_offload_operators.h"
 #include "acc_offload_operators_launch.h"
 
+#if defined(ACC_SOC_VERSION_A3)
+#include <c10/util/ScopeExit.h>
+#endif
+
 extern "C" {
+
+#if defined(ACC_SOC_VERSION_A3)
+int32_t AccOffloadInitializeAicpu()
+{
+    aclrtStream stream = nullptr;
+    auto ret = aclrtCreateStream(&stream);
+    if (ret != ACL_SUCCESS) {
+        return ret;
+    }
+    auto streamGuard = c10::make_scope_exit([&]() { aclrtDestroyStream(stream); });
+    OffloadOpsInitializeAicpu(stream);
+    return aclrtSynchronizeStream(stream);
+}
+#endif
 
 void AccOffloadAicpuLaunch(AccOffloadAicpuCallback callback, const AccOffloadAicpuParam &param, uint8_t deviceId)
 {

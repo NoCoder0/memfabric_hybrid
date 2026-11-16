@@ -105,6 +105,23 @@ int32_t AccOffloadLaunchApi::TryLoadLibrary()
     return OFFLOAD_OK;
 }
 
+int32_t AccOffloadLaunchApi::InitializeAicpu(uint16_t deviceId)
+{
+    std::lock_guard<std::mutex> guard(gMutex);
+    using InitializeFunc = int32_t (*)();
+    auto initialize = reinterpret_cast<InitializeFunc>(dlsym(libHandle, "AccOffloadInitializeAicpu"));
+    if (initialize == nullptr) {
+        OFFLOAD_LOG_ERROR("A3 AICPU initialization symbol is unavailable, deviceId="
+                          << deviceId << "; rebuild the offload kernel package with mfcli kernel install");
+        return OFFLOAD_UNLOAD;
+    }
+    auto ret = initialize();
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("initialize A3 custom AICPU failed, deviceId=" << deviceId << " ret=" << ret);
+    }
+    return ret;
+}
+
 void AccOffloadLaunchApi::CleanupLibrary()
 {
     std::lock_guard<std::mutex> guard(gMutex);

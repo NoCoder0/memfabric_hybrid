@@ -38,6 +38,26 @@ elseif (SOC_VERSION MATCHES "^ascend950")
     ascendc_compile_definitions(mf_accoffload_kernel PRIVATE ACC_SOC_VERSION_A5=1)
 elseif (SOC_VERSION MATCHES "^ascend910")
     ascendc_compile_definitions(mf_accoffload_kernel PRIVATE ACC_SOC_VERSION_A3=1)
+    find_program(ACC_OFFLOAD_AICPU_COMPILER bisheng PATHS "${ASCEND_HOME_PATH}/bin")
+    if (NOT ACC_OFFLOAD_AICPU_COMPILER)
+        message(FATAL_ERROR "acc_offload: bisheng not found in PATH or CANN toolkit")
+    endif ()
+    set(AICPU_INIT_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/acc_offload_aicpu_initialize.o")
+    set(AICPU_INIT_LAUNCH_OBJECT "${CMAKE_CURRENT_BINARY_DIR}/acc_offload_aicpu_initialize_launch.o")
+    add_custom_command(
+        OUTPUT "${AICPU_INIT_OBJECT}" "${AICPU_INIT_LAUNCH_OBJECT}"
+        COMMAND "${ACC_OFFLOAD_AICPU_COMPILER}" -c -O2 -fPIC -x aicpu --cce-aicpu-no-firmware
+            "${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_aicpu_initialize.cc" -o "${AICPU_INIT_OBJECT}"
+        COMMAND "${ACC_OFFLOAD_AICPU_COMPILER}" -c -O2 -fPIC -x asc --npu-arch=dav-2201
+            "${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_aicpu_initialize.cpp" -o "${AICPU_INIT_LAUNCH_OBJECT}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_aicpu_initialize.cc"
+            "${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_aicpu_initialize.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/acc_offload_operators.h"
+        VERBATIM
+    )
+    set_source_files_properties("${AICPU_INIT_OBJECT}" "${AICPU_INIT_LAUNCH_OBJECT}"
+        PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
+    target_sources(mf_accoffload_kernel PRIVATE "${AICPU_INIT_OBJECT}" "${AICPU_INIT_LAUNCH_OBJECT}")
 else ()
     message(FATAL_ERROR "acc_offload: unsupported SOC_VERSION '${SOC_VERSION}' for SoC-dependent kernel code")
 endif ()

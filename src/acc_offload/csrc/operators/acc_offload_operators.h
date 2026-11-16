@@ -19,6 +19,8 @@
 extern "C" {
 #endif
 
+void OffloadOpsInitializeAicpu(void *stream);
+
 void OffloadOpsSparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr, uint32_t blockDim,
                           void *stream);
 
