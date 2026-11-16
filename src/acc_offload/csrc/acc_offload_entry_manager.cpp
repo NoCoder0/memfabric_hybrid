@@ -10,9 +10,10 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "acc_offload_entry_manager.h"
-#include "acc_offload_aicpu_entry.h"
-#include "acc_offload_local_dram_entry.h"
-#include "acc_offload_shared_dram_entry.h"
+#include "aicore/acc_offload_local_dram_mte_entry.h"
+#include "aicore/acc_offload_shared_dram_mte_entry.h"
+#include "aicpu/acc_offload_local_dram_aicpu_entry.h"
+#include "aicpu/acc_offload_shared_dram_aicpu_entry.h"
 #include "acc_offload_define.h"
 
 namespace ock {
@@ -39,11 +40,12 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         return OFFLOAD_OK;
     }
 
-    auto ret = CreateEntry(config.scene);
+    auto ret = CreateEntry(config.scene, config.executor);
     if (ret != OFFLOAD_OK) {
         return ret;
     }
     scene_ = config.scene;
+    executor_ = config.executor;
 
     ret = entry_->Initialize(config);
     if (ret != OFFLOAD_OK) {
@@ -52,14 +54,16 @@ int32_t AccOffloadEntryManager::Initialize(const offload_config_t &config)
         entry_->UnInitialize();
         entry_.reset();
         scene_ = OFFLOAD_SCENE_LOCAL;
+        executor_ = OFFLOAD_EXECUTOR_MTE;
         return ret;
     }
 
     deviceId_ = config.deviceId;
     inited_ = true;
     OFFLOAD_LOG_INFO("entry manager initialized, scene: "
-                     << static_cast<uint32_t>(scene_) << ", deviceId: " << config.deviceId << ", reserveSize: "
-                     << config.reserveSize << ", allocSize: " << config.allocSize << ", worldSize: " << config.worldSize
+                     << static_cast<uint32_t>(scene_) << ", executor: " << static_cast<uint32_t>(executor_)
+                     << ", deviceId: " << config.deviceId << ", reserveSize: " << config.reserveSize
+                     << ", allocSize: " << config.allocSize << ", worldSize: " << config.worldSize
                      << ", rankId: " << config.rankId << ", entityId: " << entityId_);
     return OFFLOAD_OK;
 }
@@ -75,21 +79,20 @@ int32_t AccOffloadEntryManager::AllocateEntityId(uint16_t &entityId)
     return OFFLOAD_OK;
 }
 
-int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene)
+int32_t AccOffloadEntryManager::CreateEntry(offload_scene_t scene, offload_executor_t executor)
 {
     auto ret = AllocateEntityId(entityId_);
     if (ret != OFFLOAD_OK) {
         return ret;
     }
-    if (scene == OFFLOAD_SCENE_LOCAL) {
-        entry_ = std::make_unique<AccOffloadLocalDramEntry>(entityId_);
-    } else if (scene == OFFLOAD_SCENE_SHARED) {
-        entry_ = std::make_unique<AccOffloadSharedDramEntry>(entityId_);
-    } else if (scene == OFFLOAD_SCENE_AICPU) {
-        entry_ = std::make_unique<AccOffloadAicpuEntry>(entityId_);
+    if (scene == OFFLOAD_SCENE_SHARED && executor == OFFLOAD_EXECUTOR_AICPU) {
+        entry_ = std::make_unique<AccOffloadSharedDramAicpuEntry>(entityId_);
+    } else if (executor == OFFLOAD_EXECUTOR_AICPU) {
+        entry_ = std::make_unique<AccOffloadLocalDramAicpuEntry>(entityId_);
+    } else if (scene == OFFLOAD_SCENE_LOCAL) {
+        entry_ = std::make_unique<AccOffloadLocalDramMteEntry>(entityId_);
     } else {
-        OFFLOAD_LOG_ERROR("invalid scene: " << static_cast<uint32_t>(scene));
-        return OFFLOAD_ERROR;
+        entry_ = std::make_unique<AccOffloadSharedDramMteEntry>(entityId_);
     }
     return OFFLOAD_OK;
 }

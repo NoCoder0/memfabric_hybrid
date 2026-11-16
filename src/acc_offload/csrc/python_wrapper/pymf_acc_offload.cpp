@@ -29,8 +29,11 @@ void DefineAccOffloadConfig(py::module_ &m)
     py::enum_<offload_scene_t>(m, "Scene")
         .value("LOCAL", OFFLOAD_SCENE_LOCAL)
         .value("SHARED", OFFLOAD_SCENE_SHARED)
-        .value("AICPU", OFFLOAD_SCENE_AICPU)
         .export_values();
+
+    py::enum_<offload_executor_t>(m, "Executor")
+        .value("MTE", OFFLOAD_EXECUTOR_MTE)
+        .value("AICPU", OFFLOAD_EXECUTOR_AICPU);
 
     py::class_<offload_config_t>(m, "OffloadConfig")
         .def(py::init<>())
@@ -49,7 +52,9 @@ void DefineAccOffloadConfig(py::module_ &m)
         .def_readwrite("rank_id", &offload_config_t::rankId,
                        "GLOBAL rank id in the group, 0 is the server (multi-card shared mode); slot = global rank")
         .def_readwrite("scene", &offload_config_t::scene,
-                       "memory pool scene: LOCAL=single-card, SHARED=multi-card shared, AICPU=A3 SDMA/A5 URMA")
+                       "memory pool scene: LOCAL=single-card, SHARED=multi-card shared")
+        .def_readwrite("executor", &offload_config_t::executor,
+                       "copy executor: MTE (default) or AICPU (LOCAL A3 SDMA/A5 URMA, SHARED A2 RDMA)")
         .def_property(
             "store_url", [](const offload_config_t &config) { return std::string(config.storeUrl); },
             [](offload_config_t &config, const std::string &url) {

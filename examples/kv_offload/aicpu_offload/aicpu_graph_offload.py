@@ -214,7 +214,8 @@ def main():
     config.device_id = args.device
     config.reserve_size = ONE_GIB
     config.alloc_size = ONE_GIB
-    config.scene = offload.Scene.AICPU
+    config.scene = offload.Scene.LOCAL
+    config.executor = offload.Executor.AICPU
     pool = offload.Offload()
     ret = pool.initialize(config)
     if ret != 0:

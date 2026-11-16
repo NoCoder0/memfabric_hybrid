@@ -24,8 +24,8 @@ tensor_b = pool_b.empty([512, 1])
 ```
 
 原有 `offload.initialize(config)` 等调用仍操作默认实例，默认实例与显式创建的实例相互独立。
-实例也提供 `OffloadConfig`、`Scene` 和 `OFFLOAD_FLAG_GIANT_PAGE`，可以将原有代码中的 `offload`
-变量替换为实例后继续使用。C 接口和 `OffloadConfig` 的字段不变。
+实例也提供 `OffloadConfig`、`Scene`、`Executor` 和 `OFFLOAD_FLAG_GIANT_PAGE`，可以将原有代码中的 `offload`
+变量替换为实例后继续使用。`OffloadConfig.executor` 默认使用 MTE。
 
 LOCAL要求GB对齐后的 `alloc_size` 与 `reserve_size` 相等；SHARED以 `reserve_size` 作为各rank一致的槽位步长，
 按本rank的 `alloc_size` 分配物理内存。SHARED的不同实例必须使用不同的 `store_url`，同一实例各rank使用相同URL。
@@ -166,6 +166,30 @@ class Scene(Enum):
 |LOCAL|单卡本地DRAM内存池，每rank独占一份池|
 |SHARED|多卡共享DRAM内存池|
 
+#### Executor枚举类
+
+`scene` 选择内存池的组织方式，`executor` 选择拷贝执行方式。
+
+```python
+class Executor(Enum):
+    MTE = 0
+    AICPU = 1
+```
+
+MTE 支持 LOCAL 和 SHARED。LOCAL + AICPU 在 A3 上使用 SDMA，在 A5 上使用 URMA；SHARED + AICPU 在 A2 上使用 RDMA。
+使用 AICPU 的配置方式如下：
+
+```python
+config = offload.OffloadConfig()
+config.scene = offload.Scene.LOCAL
+config.executor = offload.Executor.AICPU
+config.device_id = 0
+config.reserve_size = 1 << 30
+config.alloc_size = 1 << 30
+```
+
+详见 [AICPU 示例](../../../../../examples/kv_offload/aicpu_offload/README.md)。
+
 #### OffloadConfig类
 
 ```python
@@ -182,4 +206,7 @@ class OffloadConfig:
 |world_size属性|参与组网的rank数量（SHARED场景使用）|
 |rank_id属性|本地rank id（SHARED场景使用）|
 |scene属性|内存池场景，取值参考Scene枚举，默认LOCAL|
+|executor属性|拷贝执行方式，默认Executor.MTE；Executor.AICPU支持LOCAL A3/A5及SHARED A2|
+|flags属性|默认0；OFFLOAD_FLAG_GIANT_PAGE仅适用于LOCAL + MTE|
+|local_world_size属性|本机rank数；0表示world_size，必须整除world_size|
 |store_url属性|SHARED共享池的store地址。同组rank一致，不同实例独立；为空时先读取ASCEND_MF_STORE_URL，再按设备组推导端口|

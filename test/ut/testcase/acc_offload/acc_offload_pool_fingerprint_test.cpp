@@ -11,10 +11,17 @@
  */
 
 #include <gtest/gtest.h>
+#include <mockcpp/mockcpp.hpp>
 
 #include <vector>
 
 #include "acc_offload_pool_fingerprint.h"
+#include "acc_offload_shared_dram_entry.h"
+#include "dl_acl_api.h"
+
+#define private public
+#include "aicore/acc_offload_shared_dram_mte_entry.h"
+#undef private
 
 namespace ock {
 namespace offload {
@@ -63,9 +70,16 @@ TEST(PoolFingerprintTest, MultiNodeUnsupportedSocFails)
         {ASCEND_950, "A5"},
         {ASCEND_UNKNOWN, "unknown"},
     };
+    offload_config_t config{};
+    config.scene = OFFLOAD_SCENE_SHARED;
+    config.worldSize = 4;
+    config.localWorldSize = 2;
     for (const auto &tc : cases) {
-        auto fps = MakeUniformGroup(4, 2, tc.socType);
-        EXPECT_EQ(ValidatePoolFingerprints(fps.data(), fps.size()), OFFLOAD_ERROR) << "soc: " << tc.name;
+        MOCKER(mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(static_cast<mf::AscendSocType>(tc.socType)));
+        AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+        EXPECT_EQ(entry.ValidateBackendConfig(config), OFFLOAD_ERROR) << "soc: " << tc.name;
+        GlobalMockObject::verify();
+        GlobalMockObject::reset();
     }
 }
 

@@ -12,12 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <new>
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include "hybm_big_mem.h"
-#include "hybm_device_copy.h"
 #include "smem_net_common.h"
 #include "smem_store_factory.h"
 #include "mf_env_define.h"
@@ -336,188 +331,14 @@ int32_t AccOffloadSharedDramEntry::ReserveSharedPool()
     return ret;
 }
 
-int32_t AccOffloadSharedDramEntry::CreateEntityAndPool(const offload_config_t &config)
+int32_t AccOffloadSharedDramEntry::CreateEntity()
 {
-    options_ = {};
-    options_.bmType = HYBM_TYPE_HOST_INITIATE;
-    options_.memType = HYBM_MEM_TYPE_HOST;
-    options_.bmDataOpType =
-        mf::DlAclApi::GetAscendSocType() == mf::ASCEND_910B ? HYBM_DOP_TYPE_DEVICE_RDMA : HYBM_DOP_TYPE_MTE;
-    options_.rankCount = config.worldSize;
-    options_.rankId = config.rankId;
-    options_.devId = config.deviceId;
-    options_.maxDRAMSize = AlignUp(config.reserveSize, GB);
-    options_.hostVASpace = AlignUp(config.allocSize, GB);
-    options_.role = HYBM_ROLE_PEER;
-    options_.scene = HYBM_SCENE_OFFLOAD; // offload 独立 VA 区段(常规 GVM 区最前2T)，与 BM 物理隔离
-    options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
-    options_.dramShmFd = -1;
-    localWorldSize_ = NormalizeLocalWorldSize(config.worldSize, config.localWorldSize);
-    if (options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && localWorldSize_ < 2U) {
-        OFFLOAD_LOG_ERROR("A2 shared DRAM requires reader ranks on at least two local NPUs, rank="
-                          << config.rankId << " worldSize=" << config.worldSize
-                          << " localWorldSize=" << localWorldSize_);
-        return OFFLOAD_ERROR;
-    }
-    if (options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && options_.hostVASpace != 0) {
-        const auto enable4K = mf::MfEnvUtil::GetOptionalUintOrDefault(mf::env::MF_HYBM_ENABLE_4K_PAGE, 0U) != 0U;
-        options_.dramShmFd = memfd_create("mf-offload", MFD_CLOEXEC | (enable4K ? 0U : MFD_HUGETLB));
-        if (options_.dramShmFd < 0) {
-            OFFLOAD_LOG_ERROR("create shared DRAM backing failed, rank=" << config.rankId << " errno=" << errno);
-            return OFFLOAD_ERROR;
-        }
-        options_.flags |= HYBM_FLAG_CREATE_WITH_SHM;
-    }
-    options_.enable56BitsGva = false;
-    bzero(options_.transUrl, sizeof(options_.transUrl));
-    if (storeUrl_.size() >= sizeof(options_.transUrl)) {
-        OFFLOAD_LOG_ERROR("store url too long, storeUrl: " << storeUrl_ << ", rankId: " << config.rankId);
-        return OFFLOAD_ERROR;
-    }
-    std::copy_n(storeUrl_.c_str(), storeUrl_.size(), options_.transUrl);
-
     entity_ = hybm_create_entity(entityId_, &options_, 0);
     if (entity_ == nullptr) {
-        OFFLOAD_LOG_ERROR("create entity failed, rankId: " << config.rankId << ", worldSize: " << config.worldSize);
+        OFFLOAD_LOG_ERROR("create entity failed, rankId: " << options_.rankId << ", worldSize: " << options_.rankCount);
         return OFFLOAD_ERROR;
-    }
-    auto ret = ReserveSharedPool();
-    if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("reserve mem failed, result: " << ret << ", rankId: " << config.rankId);
-        return OFFLOAD_ERROR;
-    }
-    ret = AllocAndExportHostSlices();
-    if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("alloc and export host slices failed, hostVASpace: " << options_.hostVASpace
-                                                                               << ", rankId: " << config.rankId);
-        return OFFLOAD_ERROR;
-    }
-    ret = RegisterPeerPool();
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    ret = ExportAndImportEntityInfo();
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    ret = AllGatherAndImportPeers(group_, sliceInfos_, entity_, 0, options_.rankCount, options_.rankId);
-    if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("allgather/import slice info failed, result: " << ret << ", rankId: " << config.rankId
-                                                                         << ", worldSize: " << config.worldSize);
-        return OFFLOAD_ERROR;
-    }
-    if (options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA) {
-        for (uint32_t rank = 0; rank < options_.rankCount; ++rank) {
-            if (rank == options_.rankId) {
-                continue;
-            }
-            ret = hybm_transport_connect(entity_, &rank, 1, 0);
-            if (ret != OFFLOAD_OK) {
-                OFFLOAD_LOG_ERROR("offload transport connect failed, rank=" << rank << " ret=" << ret);
-                return ret;
-            }
-        }
     }
     return OFFLOAD_OK;
-}
-
-int32_t AccOffloadSharedDramEntry::RegisterPeerPool()
-{
-    if (options_.bmDataOpType != HYBM_DOP_TYPE_DEVICE_RDMA) {
-        return OFFLOAD_OK;
-    }
-    struct PoolBacking {
-        uint64_t size;
-        uint64_t device;
-        uint64_t inode;
-        int32_t pid;
-        int32_t fd;
-    };
-    struct stat status {};
-    if (options_.dramShmFd >= 0 && fstat(options_.dramShmFd, &status) != 0) {
-        OFFLOAD_LOG_ERROR("stat shared DRAM failed, rank=" << options_.rankId << " errno=" << errno);
-        return OFFLOAD_ERROR;
-    }
-    PoolBacking self{options_.hostVASpace, status.st_dev, status.st_ino, getpid(), options_.dramShmFd};
-    std::vector<PoolBacking> pools(options_.rankCount);
-    auto ret = group_->GroupAllGather(reinterpret_cast<const char *>(&self), sizeof(self),
-                                      reinterpret_cast<char *>(pools.data()), pools.size() * sizeof(self));
-    if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("shared DRAM backing exchange failed, rank=" << options_.rankId << " ret=" << ret);
-        return ret;
-    }
-    const auto rank =
-        options_.rankId / localWorldSize_ * localWorldSize_ + (options_.rankId + localWorldSize_ - 1) % localWorldSize_;
-    const auto &peer = pools[rank];
-    if (peer.size == 0) {
-        return OFFLOAD_OK;
-    }
-    auto path = "/proc/" + std::to_string(peer.pid) + "/fd/" + std::to_string(peer.fd);
-    auto fd = open(path.c_str(), O_RDWR | O_CLOEXEC);
-    if (fd < 0 || fstat(fd, &status) != 0 || status.st_dev != peer.device || status.st_ino != peer.inode ||
-        peer.size > options_.maxDRAMSize || status.st_size < 0 || static_cast<uint64_t>(status.st_size) != peer.size) {
-        OFFLOAD_LOG_ERROR("open local peer DRAM failed, rank=" << options_.rankId << " peer=" << rank << " path="
-                                                               << path << " size=" << peer.size << " errno=" << errno);
-        if (fd >= 0) {
-            close(fd);
-        }
-        return OFFLOAD_ERROR;
-    }
-    ret = MapPeerPool(fd, rank, peer.size);
-    close(fd);
-    return ret;
-}
-
-int32_t AccOffloadSharedDramEntry::MapPeerPool(int fd, uint32_t rank, uint64_t size)
-{
-    auto base = static_cast<uint8_t *>(hybm_get_memory_ptr(entity_, HYBM_MEM_TYPE_HOST));
-    if (base == nullptr) {
-        OFFLOAD_LOG_ERROR("get shared pool address failed, rank=" << options_.rankId);
-        return OFFLOAD_ERROR;
-    }
-    auto address = base + options_.maxDRAMSize * rank;
-    auto mapped = mmap(address, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED | MAP_POPULATE, fd, 0);
-    if (mapped == MAP_FAILED) {
-        OFFLOAD_LOG_ERROR("map local peer DRAM failed, rank=" << rank << " size=" << size << " errno=" << errno);
-        return OFFLOAD_ERROR;
-    }
-    auto slice = hybm_register_local_memory(entity_, mapped, size, 0);
-    if (slice == nullptr) {
-        OFFLOAD_LOG_ERROR("register local peer DRAM failed, rank=" << rank << " size=" << size);
-        return OFFLOAD_ERROR;
-    }
-    slices_.push_back(slice);
-    hybm_exchange_info info{};
-    auto ret = hybm_export(entity_, slice, 0, &info);
-    if (ret != OFFLOAD_OK) {
-        hybm_export_info_free(&info);
-        return ret;
-    }
-    sliceInfos_.push_back(info);
-    peerPoolSize_ = size;
-    return OFFLOAD_OK;
-}
-
-int32_t AccOffloadSharedDramEntry::PrepareSharedCopy()
-{
-    if (options_.bmDataOpType != HYBM_DOP_TYPE_DEVICE_RDMA) {
-        return OFFLOAD_OK;
-    }
-    const auto first = options_.rankId / localWorldSize_ * localWorldSize_;
-    const auto next = first + (options_.rankId + 1) % localWorldSize_;
-    const auto previous = first + (options_.rankId + localWorldSize_ - 1) % localWorldSize_;
-    auto ret = OFFLOAD_OK;
-    if (size_ != 0) {
-        ret = hybm_prepare_device_copy(entity_, next, reinterpret_cast<uint64_t>(base_), size_);
-        if (ret != OFFLOAD_OK) {
-            return ret == BM_NOT_SUPPORTED ? OFFLOAD_OK : ret;
-        }
-    }
-    if (peerPoolSize_ != 0) {
-        auto address = reinterpret_cast<uint64_t>(hostGva_) + options_.maxDRAMSize * previous;
-        ret = hybm_prepare_device_copy(entity_, previous, address, peerPoolSize_);
-    }
-    return ret == BM_NOT_SUPPORTED ? OFFLOAD_OK : ret;
 }
 
 int32_t AccOffloadSharedDramEntry::ExportAndImportEntityInfo()
@@ -587,35 +408,9 @@ int32_t AccOffloadSharedDramEntry::ExchangeAndValidatePoolFingerprint(const offl
     return ValidatePoolFingerprints(all.data(), static_cast<uint32_t>(all.size()));
 }
 
-int32_t AccOffloadSharedDramEntry::InitSharedPool(const offload_config_t &config)
+int32_t AccOffloadSharedDramEntry::ExchangeSliceInfos()
 {
-    auto ret = AccOffloadLaunchApi::TryLoadLibrary();
-    if (ret != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("offload launch load library failed, deviceId: " << config.deviceId);
-        return OFFLOAD_ERROR;
-    }
-    launchLoaded_ = true;
-    ret = ResolveStoreUrl(config);
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    ret = CreateGroupStore(config);
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    ret = CreateEntityAndPool(config);
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    ret = MapPool(config);
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    ret = ExchangeAndValidatePoolFingerprint(config);
-    if (ret != OFFLOAD_OK) {
-        return ret;
-    }
-    return PrepareSharedCopy();
+    return AllGatherAndImportPeers(group_, sliceInfos_, entity_, 0, options_.rankCount, options_.rankId);
 }
 
 int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
@@ -630,7 +425,6 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
         return ret;
     }
     uint32_t localWorld = NormalizeLocalWorldSize(config.worldSize, config.localWorldSize);
-    multiNode_ = localWorld != config.worldSize;
 
     ret = hybm_init(config.deviceId, 0);
     if (ret != OFFLOAD_OK) {
@@ -638,13 +432,21 @@ int32_t AccOffloadSharedDramEntry::Initialize(const offload_config_t &config)
         return ret;
     }
 
-    inited_ = true;
-    ret = InitSharedPool(config);
+    hybmInitialized_ = true;
+    ret = AccOffloadLaunchApi::TryLoadLibrary();
+    if (ret != OFFLOAD_OK) {
+        OFFLOAD_LOG_ERROR("offload launch load library failed, deviceId: " << config.deviceId << ", ret: " << ret);
+        Cleanup();
+        return ret;
+    }
+    launchLoaded_ = true;
+    ret = InitializePool(config);
     if (ret != OFFLOAD_OK) {
         Cleanup();
         return ret;
     }
 
+    inited_ = true;
     OFFLOAD_LOG_INFO("shared dram entry initialized, rankId(global): "
                      << config.rankId << ", machineRank: " << config.rankId / localWorld
                      << ", localRank: " << config.rankId % localWorld << ", worldSize: " << config.worldSize
@@ -665,10 +467,9 @@ void AccOffloadSharedDramEntry::Cleanup()
 {
     entryTable_ = {};
     entryTableRegistered_ = false;
-    if (!inited_) {
+    if (!hybmInitialized_ && !inited_) {
         return;
     }
-
     uint32_t flags = 0;
     memMng_.reset();
     if (group_ != nullptr) {
@@ -688,18 +489,17 @@ void AccOffloadSharedDramEntry::Cleanup()
         hybm_destroy_entity(entity_, flags);
         entity_ = nullptr;
     }
-    if ((options_.flags & HYBM_FLAG_CREATE_WITH_SHM) != 0 && options_.dramShmFd >= 0) {
-        close(options_.dramShmFd);
-        options_.dramShmFd = -1;
-    }
-    peerPoolSize_ = 0;
+    ReleaseBackendResources();
     entryStore_ = nullptr;
     ReleaseStore();
     if (launchLoaded_) {
         AccOffloadLaunchApi::CleanupLibrary();
         launchLoaded_ = false;
     }
-    hybm_uninit();
+    if (hybmInitialized_) {
+        hybm_uninit();
+        hybmInitialized_ = false;
+    }
 
     base_ = nullptr;
     hostGva_ = nullptr;
@@ -761,63 +561,6 @@ int32_t AccOffloadSharedDramEntry::HostRegister(uint64_t hostPtr)
     return ValidateHostPointer(hostPtr);
 }
 
-int32_t AccOffloadSharedDramEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (dvaPtr == nullptr) {
-        OFFLOAD_LOG_ERROR("device pointer output is null, hostPtr: " << hostPtr << ", entityId: " << entityId_);
-        return OFFLOAD_ERROR;
-    }
-    if (ValidateHostPointer(hostPtr) != OFFLOAD_OK) {
-        return OFFLOAD_ERROR;
-    }
-
-    *dvaPtr = hostPtr;
-    return OFFLOAD_OK;
-}
-
-int32_t AccOffloadSharedDramEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
-                                              uint32_t *sizePtr, uint8_t devIdx)
-{
-    OFFLOAD_LOG_DEBUG("shared sparse copy, src: " << reinterpret_cast<uint64_t>(srcPtrs)
-                                                  << ", dst: " << reinterpret_cast<uint64_t>(dstPtrs) << ", len: "
-                                                  << reinterpret_cast<uint64_t>(lenPtrs) << ", devIdx: " << devIdx);
-
-    return AccOffloadLaunchApi::AccOffloadSparseCopy(srcPtrs, dstPtrs, lenPtrs, sizePtr, devIdx);
-}
-
-int32_t AccOffloadSharedDramEntry::RegisterMemory(const void *address, uint64_t size)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!inited_) {
-        OFFLOAD_LOG_ERROR("pool not initialized, memory registration failed, address=" << address << " size=" << size);
-        return OFFLOAD_ERROR;
-    }
-    if (options_.bmDataOpType == HYBM_DOP_TYPE_MTE) {
-        return OFFLOAD_OK;
-    }
-    auto slice = hybm_register_local_memory(entity_, address, size, 0);
-    if (slice == nullptr) {
-        OFFLOAD_LOG_ERROR("offload memory registration failed, address=" << address << " size=" << size);
-        return OFFLOAD_ERROR;
-    }
-    slices_.push_back(slice);
-    return OFFLOAD_OK;
-}
-
-int32_t AccOffloadSharedDramEntry::GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
-                                                 uint32_t *numLocalExpertPtr, int64_t *groupList,
-                                                 int64_t *packedGroupList, uint8_t devIdx)
-{
-    return AccOffloadLaunchApi::AccOffloadGroupPackCopy(srcPtrs, dstPtrs, lenPtrs, numLocalExpertPtr, groupList,
-                                                        packedGroupList, devIdx);
-}
-
-int32_t AccOffloadSharedDramEntry::KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx)
-{
-    return AccOffloadLaunchApi::AccOffloadKvExchange(metaPtr, devIdx);
-}
-
 int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot)
 {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -842,7 +585,7 @@ int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint3
         return OFFLOAD_ERROR;
     }
 
-    const auto span = size_ == 0 ? options_.maxDRAMSize : size_;
+    const auto span = options_.maxDRAMSize;
     if (static_cast<uint64_t>(rowsPerSlot) * entryBytes > span) {
         OFFLOAD_LOG_ERROR("row grid " << rowsPerSlot << " rows x " << entryBytes << "B does not fit the locally "
                                       << "available " << span << "B span, rankId: " << options_.rankId);
@@ -852,45 +595,6 @@ int32_t AccOffloadSharedDramEntry::RegisterEntryTable(uint32_t entryBytes, uint3
     entryTable_ = AccOffloadEntryGatherLayout{0, options_.maxDRAMSize, entryBytes, rowsPerSlot};
     entryTableRegistered_ = true;
     return OFFLOAD_OK;
-}
-
-int32_t AccOffloadSharedDramEntry::EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx)
-{
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (!inited_ || !entryTableRegistered_) {
-        OFFLOAD_LOG_ERROR("entry not initialized or no table registered"
-                          << ", inited: " << inited_ << ", tableRegistered: " << entryTableRegistered_
-                          << ", rankId: " << options_.rankId);
-        return OFFLOAD_ERROR;
-    }
-
-    AccOffloadEntryGatherLayout layout = entryTable_;
-    layout.poolGva = reinterpret_cast<uint64_t>(hostGva_);
-    if (options_.bmDataOpType != HYBM_DOP_TYPE_MTE) {
-        uint32_t capacity = 0;
-        for (const auto slice : slices_) {
-            const auto base = reinterpret_cast<uint64_t>(hybm_get_slice_va(entity_, slice, 0));
-            const auto bytes = hybm_get_slice_size(entity_, slice);
-            if (dstPtr >= base && dstPtr - base < bytes) {
-                capacity =
-                    static_cast<uint32_t>(std::min<uint64_t>((bytes - (dstPtr - base)) / layout.entryBytes, 65536U));
-                break;
-            }
-        }
-        if (capacity == 0) {
-            OFFLOAD_LOG_ERROR("entry gather destination has no registered space for one entry, destination="
-                              << dstPtr << " entryBytes=" << layout.entryBytes << " rank=" << options_.rankId);
-            return OFFLOAD_ERROR;
-        }
-        auto submit = [](void *entity, uint64_t *sources, uint64_t *destinations, uint32_t *lengths, uint32_t *count,
-                         void *stream) {
-            const hybm_device_copy_params params{sources, destinations, lengths, count, 0U, stream, {}};
-            return hybm_data_device_copy(entity, &params);
-        };
-        return AccOffloadLaunchApi::AccOffloadTransportEntryGather(submit, entity_, dstPtr, idsPtr, countPtr, capacity,
-                                                                   layout, devIdx);
-    }
-    return AccOffloadLaunchApi::AccOffloadEntryGather(dstPtr, idsPtr, countPtr, layout, devIdx);
 }
 
 } // namespace offload

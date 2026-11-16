@@ -1,6 +1,6 @@
 # A3/A5 图模式下的 AICPU 拷贝
 
-在 Ascend910C（A3）上使用 SDMA，在 Ascend950（A5）上使用 URMA。`offload.Scene.AICPU` 使用本实例的 Host 池与本卡 NPU 内存进行 H2D/D2H 拷贝，支持 eager 和原生 `torch.npu.graph`。初始化在图外完成，A5 在进程内连接 Host rank 0 与 Device rank 1。
+在 Ascend910C（A3）上使用 SDMA，在 Ascend950（A5）上使用 URMA。`scene=offload.Scene.LOCAL`、`executor=offload.Executor.AICPU` 使用本实例的 Host 池与本卡 NPU 内存进行 H2D/D2H 拷贝，支持 eager 和原生 `torch.npu.graph`。初始化在图外完成，A5 在进程内连接 Host rank 0 与 Device rank 1。
 
 ## 安装与运行
 
@@ -17,9 +17,15 @@ python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --device 0 --rec
 
 ## 调用约定
 
-设置 `OffloadConfig.scene = offload.Scene.AICPU` 和 `device_id`。配置的 `flags` 为 0；`reserve_size`、`alloc_size` 均非零且向上按 GiB 对齐后相等。模块级 API 和显式 `offload.Offload()` 实例使用相同的五参数接口：
+设置 `scene=offload.Scene.LOCAL`、`executor=offload.Executor.AICPU` 和 `device_id`。配置的 `flags` 为 0；`reserve_size`、`alloc_size` 均非零且向上按 GiB 对齐后相等。模块级 API 和显式 `offload.Offload()` 实例使用相同的五参数接口：
 
 ```python
+config = offload.OffloadConfig()
+config.scene = offload.Scene.LOCAL
+config.executor = offload.Executor.AICPU
+config.device_id = device.index
+config.reserve_size = 1 << 30
+config.alloc_size = 1 << 30
 pool = offload.Offload()
 assert pool.initialize(config) == 0
 ret = pool.sparse_copy(src_ptrs, dst_ptrs, lengths, count, device)

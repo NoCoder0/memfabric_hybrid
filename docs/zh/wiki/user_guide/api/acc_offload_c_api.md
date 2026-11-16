@@ -238,6 +238,21 @@ typedef enum {
 |OFFLOAD_SCENE_LOCAL|单卡本地DRAM内存池，每rank独占一份池|
 |OFFLOAD_SCENE_SHARED|多卡共享DRAM内存池，reserveSize需保证相同，allocSize各rank可按需传入（允许不同）|
 
+#### offload_executor_t
+
+拷贝执行方式与内存池场景独立配置。
+
+```c
+typedef enum {
+    OFFLOAD_EXECUTOR_MTE = 0,
+    OFFLOAD_EXECUTOR_AICPU = 1,
+} offload_executor_t;
+```
+
+|executor|支持情况|
+|MTE|默认方式，保留原有 MTE 访问行为|
+|AICPU|A2 使用 RDMA，A3 使用 SDMA，A5 使用 URMA
+
 #### offload_config_t
 
 offload初始化配置结构体。
@@ -251,6 +266,9 @@ typedef struct {
     uint32_t rankId;
     offload_scene_t scene;
     char storeUrl[64];
+    uint32_t flags;
+    uint32_t localWorldSize;
+    offload_executor_t executor = OFFLOAD_EXECUTOR_MTE;
 } offload_config_t;
 ```
 
@@ -262,7 +280,12 @@ typedef struct {
 |worldSize|参与组网的rank数量（SHARED场景使用）|
 |rankId|本地rank id（SHARED场景使用）|
 |scene|内存池场景，取值参考offload_scene_t，默认OFFLOAD_SCENE_LOCAL|
-|storeUrl|SHARED场景下共享池建立时的显式config store地址（如`tcp://127.0.0.1:8500`），同组各rank需保持一致；为空时回退为推导端口`8500 + deviceId / worldSize`|
+|storeUrl|SHARED场景下共享池建立时的显式config store地址（如`tcp://127.0.0.1:8500`），同组各rank需保持一致；为空时先读取ASCEND_MF_STORE_URL，再在单机配置下推导端口|
+|flags|可选标志，默认0；OFFLOAD_FLAG_GIANT_PAGE仅适用于LOCAL + MTE|
+|localWorldSize|本机rank数；0表示worldSize，必须整除worldSize|
+|executor|拷贝执行方式，默认OFFLOAD_EXECUTOR_MTE；LOCAL AICPU支持A3/A5，SHARED AICPU支持A2|
+
+LOCAL/SHARED 不设置 executor 时默认使用 MTE。
 
 ### 2. 初始化/退出
 

@@ -23,6 +23,8 @@ cc_library(
     name = "acc_offload_src_headers",
     hdrs = glob([
         "*.h",
+        "aicore/*.h",
+        "aicpu/*.h",
         "common/*.h",
         "allocator/*.h",
         "launch/*.h",
@@ -36,7 +38,7 @@ cc_library(
 # compiled at install time via try_install_extend, see script/run_pkg_maker/install.sh)
 # and python_wrapper/ (built as separate pybind_extension target)
 ACC_OFFLOAD_SRCS = glob(
-    ["*.cpp", "common/*.cpp", "allocator/*.cpp", "launch/*.cpp"],
+    ["*.cpp", "aicore/*.cpp", "aicpu/*.cpp", "common/*.cpp", "allocator/*.cpp", "launch/*.cpp"],
     exclude = [
         "launch/acc_offload_operators_launch.cpp",
     ],

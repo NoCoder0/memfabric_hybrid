@@ -25,46 +25,41 @@ namespace offload {
 class AccOffloadLocalDramEntry : public AccOffloadEntry {
 public:
     explicit AccOffloadLocalDramEntry(uint16_t entityId) : entityId_(entityId) {}
-    ~AccOffloadLocalDramEntry() override
-    {
-        UnInitialize();
-    };
+    ~AccOffloadLocalDramEntry() override = default;
 
     AccOffloadLocalDramEntry(const AccOffloadLocalDramEntry &) = delete;
     AccOffloadLocalDramEntry &operator=(const AccOffloadLocalDramEntry &) = delete;
 
-    int32_t Initialize(const offload_config_t &config) override;
+    int32_t Initialize(const offload_config_t &config) final;
 
-    void UnInitialize() override;
+    void UnInitialize() final;
 
 public:
     void *MallocHost(size_t size) override;
 
     void FreeHost(void *ptr) override;
 
-    int32_t GetDva(uint64_t hostPtr, uint64_t *dvaPtr) override;
-
     int32_t HostRegister(uint64_t hostPtr) override;
 
     int32_t HostFree(uint64_t hostPtr, uint64_t flags) override;
 
-    int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
-                       uint8_t devIdx) override;
+protected:
+    virtual int32_t InitializePool(const offload_config_t &config) = 0;
+    virtual void ReleaseBackendResources() {}
 
-    int32_t GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *numLocalExpertPtr,
-                          int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx) override;
-
-    int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx) override;
-
-private:
     // Caller holds mutex_, including initialization failure paths.
     void Cleanup();
+
+    int32_t CreateHostPool(const hybm_options &options);
 
     int32_t ValidateHostPointer(uint64_t hostPtr) const;
 
     std::mutex mutex_;
-    uint16_t entityId_;
+    const uint16_t entityId_;
+    uint32_t deviceId_{0};
+    bool poolReserved_{false};
     bool inited_ = false;
+    bool hybmInitialized_ = false;
     bool launchLoaded_ = false;
     hybm_entity_t entity_ = nullptr;
     hybm_mem_slice_t slice_ = nullptr;

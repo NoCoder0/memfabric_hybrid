@@ -23,12 +23,14 @@
 #include "smem_store_factory.h"
 #include "smem_tcp_config_store.h"
 
-#define private public
+#define private   public
+#define protected public
 #include "acc_offload_launch.h"
 #include "acc_offload_entry_manager.h"
-#include "acc_offload_local_dram_entry.h"
-#include "acc_offload_shared_dram_entry.h"
+#include "aicore/acc_offload_local_dram_mte_entry.h"
+#include "aicore/acc_offload_shared_dram_mte_entry.h"
 #undef private
+#undef protected
 
 using namespace ock::offload;
 using namespace ock::smem;
@@ -236,7 +238,7 @@ TEST_F(AccOffloadInstanceTest, HostMethodsUseTheLocalPoolWithoutAnExtraFlag)
 {
     AccOffloadEntryManager pool;
     ASSERT_EQ(pool.Initialize(config_), OFFLOAD_OK);
-    ASSERT_NE(dynamic_cast<AccOffloadLocalDramEntry *>(pool.entry_.get()), nullptr);
+    ASSERT_NE(dynamic_cast<AccOffloadLocalDramMteEntry *>(pool.entry_.get()), nullptr);
     auto ptr = pool.HostMalloc(BLOCK_SIZE, 0);
     ASSERT_NE(ptr, 0U);
     uint64_t dva = 0;
@@ -262,16 +264,17 @@ TEST_F(AccOffloadInstanceTest, HostMethodsUseTheLocalPoolWithoutAnExtraFlag)
 
 TEST_F(AccOffloadInstanceTest, SharedSelectionPreservesStoreUrlExclusivity)
 {
+    MOCKER(ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
     AccOffloadEntryManager pool;
     config_.scene = OFFLOAD_SCENE_SHARED;
     std::copy_n(STORE_URL, sizeof(STORE_URL), config_.storeUrl);
-    ASSERT_TRUE(AccOffloadSharedDramEntry::gStores.insert(STORE_URL).second);
+    ASSERT_TRUE(AccOffloadSharedDramMteEntry::gStores.insert(STORE_URL).second);
     EXPECT_NE(pool.Initialize(config_), OFFLOAD_OK);
     EXPECT_FALSE(pool.IsInitialized());
     EXPECT_TRUE(gCreatedIds.empty());
     EXPECT_EQ(gUninitCount, 1U);
     EXPECT_EQ(gLaunchCleanupCount, 1U);
-    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.erase(STORE_URL), 1U);
+    EXPECT_EQ(AccOffloadSharedDramMteEntry::gStores.erase(STORE_URL), 1U);
 }
 
 namespace {
@@ -294,7 +297,8 @@ protected:
     void SetUp() override
     {
         AccOffloadInstanceTest::SetUp();
-        config_.scene = OFFLOAD_SCENE_AICPU;
+        config_.scene = OFFLOAD_SCENE_LOCAL;
+        config_.executor = OFFLOAD_EXECUTOR_AICPU;
         gAicpuImports.clear();
         gAicpuConnections.clear();
         gCopyEntity = nullptr;

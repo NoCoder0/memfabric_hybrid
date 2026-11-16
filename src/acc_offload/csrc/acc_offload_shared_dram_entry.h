@@ -30,44 +30,30 @@ namespace offload {
 class AccOffloadSharedDramEntry : public AccOffloadEntry {
 public:
     explicit AccOffloadSharedDramEntry(uint16_t entityId) : entityId_(entityId) {}
-    ~AccOffloadSharedDramEntry() override
-    {
-        UnInitialize();
-    };
+    ~AccOffloadSharedDramEntry() override = default;
 
     AccOffloadSharedDramEntry(const AccOffloadSharedDramEntry &) = delete;
     AccOffloadSharedDramEntry &operator=(const AccOffloadSharedDramEntry &) = delete;
 
-    int32_t Initialize(const offload_config_t &config) override;
+    int32_t Initialize(const offload_config_t &config) final;
 
-    void UnInitialize() override;
+    void UnInitialize() final;
 
 public:
     void *MallocHost(size_t size) override;
 
     void FreeHost(void *ptr) override;
 
-    int32_t GetDva(uint64_t hostPtr, uint64_t *dvaPtr) override;
-
     int32_t HostRegister(uint64_t hostPtr) override;
 
     int32_t HostFree(uint64_t hostPtr, uint64_t flags) override;
 
-    int32_t SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *sizePtr,
-                       uint8_t devIdx) override;
-
-    int32_t GroupPackCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs, uint32_t *numLocalExpertPtr,
-                          int64_t *groupList, int64_t *packedGroupList, uint8_t devIdx) override;
-
-    int32_t KvExchangeCopy(uint64_t *metaPtr, uint8_t devIdx) override;
-
     int32_t RegisterEntryTable(uint32_t entryBytes, uint32_t rowsPerSlot) override;
 
-    int32_t RegisterMemory(const void *address, uint64_t size) override;
+protected:
+    virtual int32_t InitializePool(const offload_config_t &config) = 0;
+    virtual void ReleaseBackendResources() {}
 
-    int32_t EntryGather(uint64_t dstPtr, uint64_t idsPtr, uint64_t countPtr, uint8_t devIdx) override;
-
-private:
     // Caller holds mutex_, including initialization failure paths.
     void Cleanup();
 
@@ -77,8 +63,6 @@ private:
 
     int32_t ValidateSharedConfig(const offload_config_t &config);
 
-    int32_t InitSharedPool(const offload_config_t &config);
-
     int32_t ResolveStoreUrl(const offload_config_t &config);
 
     int32_t CreateGroupStore(const offload_config_t &config);
@@ -87,15 +71,10 @@ private:
 
     void ReleaseStore();
 
-    int32_t CreateEntityAndPool(const offload_config_t &config);
+    int32_t CreateEntity();
+    int32_t ExchangeSliceInfos();
 
     int32_t ReserveSharedPool();
-
-    int32_t RegisterPeerPool();
-
-    int32_t MapPeerPool(int fd, uint32_t rank, uint64_t size);
-
-    int32_t PrepareSharedCopy();
 
     int32_t ExportAndImportEntityInfo();
 
@@ -103,15 +82,15 @@ private:
 
     int32_t ExchangeAndValidatePoolFingerprint(const offload_config_t &config);
 
-private:
+protected:
     static std::mutex gStoreMutex;
     static std::set<std::string> gStores;
 
     std::mutex mutex_;
     const uint16_t entityId_;
     bool inited_ = false;
+    bool hybmInitialized_ = false;
     bool launchLoaded_ = false;
-    bool multiNode_ = false;
     std::string storeUrl_;
     smem::StorePtr entryStore_;
     smem::SmemGroupEnginePtr group_;
@@ -122,8 +101,6 @@ private:
     hybm_options options_{};
     uint8_t *base_ = nullptr;
     uint64_t size_ = 0;
-    uint32_t localWorldSize_ = 0;
-    uint64_t peerPoolSize_ = 0;
     AccOffloadEntryGatherLayout entryTable_{};
     bool entryTableRegistered_ = false;
     std::shared_ptr<AccOffloadMemManager> memMng_;

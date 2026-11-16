@@ -88,6 +88,7 @@ def entry_gather(dst, ids, count, deviceId):
 class Offload(offload._Offload):
     OffloadConfig = offload.OffloadConfig
     Scene = offload.Scene
+    Executor = offload.Executor
     OFFLOAD_FLAG_GIANT_PAGE = offload.OFFLOAD_FLAG_GIANT_PAGE
 
     def empty(self, sizes, dtype=None, pin_memory=False):

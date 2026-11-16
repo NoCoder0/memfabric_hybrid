@@ -74,7 +74,7 @@ public:
     }
 
 private:
-    int32_t CreateEntry(offload_scene_t scene);
+    int32_t CreateEntry(offload_scene_t scene, offload_executor_t executor);
 
 private:
     static std::atomic<uint16_t> nextEntityId_;
@@ -83,6 +83,7 @@ private:
     uint16_t deviceId_ = UINT16_MAX;
     bool inited_ = false;
     offload_scene_t scene_ = OFFLOAD_SCENE_LOCAL;
+    offload_executor_t executor_ = OFFLOAD_EXECUTOR_MTE;
     std::unique_ptr<AccOffloadEntry> entry_;
 };
 

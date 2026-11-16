@@ -23,10 +23,12 @@
 #include "acc_offload_launch.h"
 #include "dl_acl_api.h"
 
-#define private public
-#include "acc_offload_local_dram_entry.h"
-#include "acc_offload_shared_dram_entry.h"
+#define private   public
+#define protected public
+#include "aicore/acc_offload_local_dram_mte_entry.h"
+#include "aicore/acc_offload_shared_dram_mte_entry.h"
 #undef private
+#undef protected
 
 using namespace ock::offload;
 using namespace ock::mf;
@@ -263,12 +265,12 @@ protected:
         GlobalMockObject::reset();
     }
 
-    AccOffloadLocalDramEntry MakeEntry()
+    AccOffloadLocalDramMteEntry MakeEntry()
     {
-        return AccOffloadLocalDramEntry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+        return AccOffloadLocalDramMteEntry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     }
 
-    static uint64_t PoolBase(const AccOffloadLocalDramEntry &entry)
+    static uint64_t PoolBase(const AccOffloadLocalDramMteEntry &entry)
     {
         return reinterpret_cast<uint64_t>(entry.base_);
     }
@@ -278,7 +280,7 @@ protected:
 
 TEST_F(AccOffloadDramEntryTest, ValidateRejectsBadSharedGeometry)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
     config_.worldSize = 0;
     EXPECT_NE(entry.ValidateSharedConfig(config_), OFFLOAD_OK);
@@ -296,7 +298,7 @@ TEST_F(AccOffloadDramEntryTest, ValidateRejectsBadSharedGeometry)
 
 TEST_F(AccOffloadDramEntryTest, ResolveStoreUrlPrefersExplicitConfig)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.storeUrl[0] = '\0';
     const char url[] = "tcp://127.0.0.1:19999";
     snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", url);
@@ -309,7 +311,7 @@ TEST_F(AccOffloadDramEntryTest, ResolveStoreUrlDerivesLoopbackPortPerDeviceGroup
     if (StoreEnvSet()) {
         GTEST_SKIP() << "store url env is set, derived-port branch is unreachable";
     }
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.worldSize = 4;
     config_.deviceId = 5;
     EXPECT_EQ(entry.ResolveStoreUrl(config_), OFFLOAD_OK);
@@ -325,7 +327,7 @@ TEST_F(AccOffloadDramEntryTest, ResolveStoreUrlRejectsMultiMachineWithoutExplici
     if (StoreEnvSet()) {
         GTEST_SKIP() << "store url env is set, multi-machine rejection is unreachable";
     }
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.worldSize = 8;
     config_.localWorldSize = 4;
     EXPECT_NE(entry.ResolveStoreUrl(config_), OFFLOAD_OK);
@@ -626,7 +628,7 @@ TEST_F(AccOffloadDramEntryTest, PoolOperationsRejectAddressesAfterUninitialize)
 
 TEST_F(AccOffloadDramEntryTest, SharedCapacityUsesAllocSizeAndRejectsSlotPadding)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
     config_.reserveSize = 2 * POOL_SIZE;
     config_.allocSize = POOL_SIZE;
@@ -650,18 +652,18 @@ TEST_F(AccOffloadDramEntryTest, SharedCapacityUsesAllocSizeAndRejectsSlotPadding
 
 TEST_F(AccOffloadDramEntryTest, SharedStillRejectsStoreUrlAlreadyUsedByAnotherInstance)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     const std::string storeUrl = "tcp://127.0.0.1:19999";
     entry.storeUrl_ = storeUrl;
-    ASSERT_TRUE(AccOffloadSharedDramEntry::gStores.insert(storeUrl).second);
+    ASSERT_TRUE(AccOffloadSharedDramMteEntry::gStores.insert(storeUrl).second);
     EXPECT_EQ(entry.AcquireStore(config_), nullptr);
     EXPECT_TRUE(entry.storeUrl_.empty());
-    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.erase(storeUrl), 1U);
+    EXPECT_EQ(AccOffloadSharedDramMteEntry::gStores.erase(storeUrl), 1U);
 }
 
 TEST_F(AccOffloadDramEntryTest, InitializeSharedSingleRankRegistersWholePoolOnce)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
     snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", SHARED_STORE_URL);
     ASSERT_EQ(entry.Initialize(config_), OFFLOAD_OK);
@@ -687,12 +689,25 @@ TEST_F(AccOffloadDramEntryTest, InitializeSharedSingleRankRegistersWholePoolOnce
     EXPECT_EQ(gDestroyed.size(), 1U);
     EXPECT_EQ(gUninitCount, 1U);
     EXPECT_EQ(gCleanupCount, 1U);
-    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.count(SHARED_STORE_URL), 0U);
+    EXPECT_EQ(AccOffloadSharedDramMteEntry::gStores.count(SHARED_STORE_URL), 0U);
+}
+
+TEST_F(AccOffloadDramEntryTest, SharedMteEntryTableUsesReservedSpanForZeroCapacityRank)
+{
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    entry.inited_ = true;
+    entry.options_.maxDRAMSize = POOL_SIZE;
+    entry.size_ = 0;
+    EXPECT_NE(entry.RegisterEntryTable(64U, POOL_SIZE / 64U + 1U), OFFLOAD_OK);
+    ASSERT_EQ(entry.RegisterEntryTable(64U, 1024U), OFFLOAD_OK);
+
+    entry.entryTableRegistered_ = false;
+    entry.inited_ = false;
 }
 
 TEST_F(AccOffloadDramEntryTest, InitializeSharedRejectsMalformedStoreUrl)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
     snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", MALFORMED_STORE_URL);
     EXPECT_NE(entry.Initialize(config_), OFFLOAD_OK);
@@ -710,7 +725,7 @@ TEST_F(AccOffloadDramEntryTest, InitializeSharedRejectsMalformedStoreUrl)
 
 TEST_F(AccOffloadDramEntryTest, InitializeSharedFailsCleanlyWhenPoolMmapFails)
 {
-    AccOffloadSharedDramEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
+    AccOffloadSharedDramMteEntry entry(HYBM_ENTITY_ID_OFFLOAD_BASE);
     config_.scene = OFFLOAD_SCENE_SHARED;
     snprintf(config_.storeUrl, sizeof(config_.storeUrl), "%s", MMAP_FAILURE_STORE_URL);
     gMmapResult = OFFLOAD_ERROR;
@@ -725,7 +740,7 @@ TEST_F(AccOffloadDramEntryTest, InitializeSharedFailsCleanlyWhenPoolMmapFails)
     EXPECT_EQ(gUninitCount, 1U);
     EXPECT_EQ(entry.entity_, nullptr);
     EXPECT_EQ(entry.memMng_, nullptr);
-    EXPECT_EQ(AccOffloadSharedDramEntry::gStores.count(MMAP_FAILURE_STORE_URL), 0U);
+    EXPECT_EQ(AccOffloadSharedDramMteEntry::gStores.count(MMAP_FAILURE_STORE_URL), 0U);
 }
 
 // Exercise both entries' pool operations without a distributed group or device runtime.
@@ -735,11 +750,11 @@ protected:
     {
         MOCKER(hybm_uninit).stubs().will(invoke(UninitHybm));
         if (GetParam() == OFFLOAD_SCENE_LOCAL) {
-            auto entry = std::make_unique<AccOffloadLocalDramEntry>(HYBM_ENTITY_ID_OFFLOAD_BASE);
+            auto entry = std::make_unique<AccOffloadLocalDramMteEntry>(HYBM_ENTITY_ID_OFFLOAD_BASE);
             PreparePool(*entry);
             entry_ = std::move(entry);
         } else {
-            auto entry = std::make_unique<AccOffloadSharedDramEntry>(HYBM_ENTITY_ID_OFFLOAD_BASE);
+            auto entry = std::make_unique<AccOffloadSharedDramMteEntry>(HYBM_ENTITY_ID_OFFLOAD_BASE);
             PreparePool(*entry);
             entry_ = std::move(entry);
         }
