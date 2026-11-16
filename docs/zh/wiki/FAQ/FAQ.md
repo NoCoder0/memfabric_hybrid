@@ -646,6 +646,72 @@ Failed to HalMemAlloc rdma swap memory, size xx, ret: -8
 原因是HalMemAlloc不到足够的内存，这块Swap区间不是必须的，可以通过下面的命令关掉
 export HYBM_RDMA_SWAP_SPACE_SIZE=0
 
+<a id="rdma-qp-tls-switch"></a>
+
+#### 3.1.7 CheckQpReady 超时导致 Join 失败（ret: -7，tls 开关状态不一致）
+
+**问题现象**
+
+初始化阶段 Join 失败，进程退出。MF 报错日志：
+
+```text
+[HYBM device_rdma_transport_manager.cpp:361 WaitQpReady] CheckQpReady timeout: 60300ms after 11929 tries,
+    error connections status: [rank=0: socketHandle=0xfffd95580000 socketFd=0 qpConnectCalled=0
+    qpStatus=-1] [rank=1: socketHandle=0xfffd95580040 socketFd=0 qpConnectCalled=0 qpStatus=-1]
+    [rank=3: socketHandle=0xfffd95580080 socketFd=0 qpConnectCalled=0 qpStatus=-1]
+[HYBM compose_transport_manager.cpp:374 Connect] Failed to connect host ret: -7
+[HYBM hybm_transport_manager.cpp:86 ConnectHostTransport] Transport Manager ConnectHostWithOptions failed: -7
+[HYBM hybm_entity_default.cpp:1110 ImportForSlice] import slice failed, result: -7 local_rank: 62
+[SMEM smem_bm_entry.cpp:265 GroupOpBarrier] barrier after mmap ret -7, get remote result 1:-7, 0:-7, 3:-7, 62:-7
+[SMEM smem_net_group_engine.cpp:1433 GroupJoin] do join failed! signal_ret: 0 op_ret: -1
+[SMEM smem_bm_entry.cpp:474 Join] join failed
+[MMC mmc_bm_proxy.cpp:71 InitBm] Failed to join smem bm
+```
+
+**问题根因**
+
+-7 为 BM_TIMEOUT。超时时刻对端 rank 的状态为 `socketFd=0`、`qpConnectCalled=0`、`qpStatus=-1`（正常应为 1），
+说明 HCCP RA socket 连接从未建立、QP 建链未发起。60300ms 为基础超时 60s 加上每个对端 rank 100ms，
+基础超时可由环境变量 `MF_QP_READY_CHECK_TIMEOUT_BASE` 调整（当前代码默认 100s，本例环境为 60s）。
+
+`tls switch` 是 NPU RoCE 网口 socket 通信的 TLS 开关，socket-over-RoCE 建链要求两侧状态一致。
+当集群内 TLS 开关状态不一致时，本机一侧尝试使用 TLS 加密通信，而未开启 TLS 的对端无法响应 TLS 握手，
+握手失败导致双方的 socket 连接始终无法建立。TLS 状态需全集群一致，统一开启或统一关闭均可，
+在所有节点的宿主机上执行以下命令确认：
+
+```bash
+for i in {0..7}; do hccn_tool -i $i -tls -g; done | grep switch
+```
+
+实际故障环境（每节点 8 卡）通过 ansible 批量查询的输出节选：
+
+```text
+192.168.63.186 | CHANGED rc=0 >> 8 tls switch[1]
+192.168.63.162 | CHANGED rc=0 >> 8 tls switch[1]
+192.168.63.226 | CHANGED rc=0 >> 8 tls switch[0]
+192.168.63.144 | CHANGED rc=0 >> 8 tls switch[0]
+192.168.63.141 | CHANGED rc=0 >> 8 tls switch[0]
+```
+
+前两台节点全部开启，后三台全部关闭，集群内开关状态不一致是本次故障的直接证据。
+查询需覆盖全部节点的全部芯片；任一芯片与建链对端状态不一致时，位于该芯片的 rank 即无法完成
+socket-over-RoCE 建链。
+
+**解决方法**
+
+1. 在所有节点的宿主机上统一全部 NPU 的 tls 状态（8 卡为例）。沿用[环境连通性检查 1.3](../quick_start/环境连通性检查.md#13-检查tls配置一致性)的既有做法，统一保持 TLS 关闭：
+
+   ```bash
+   for i in {0..7}; do hccn_tool -i $i -tls -s enable 0; done
+   ```
+
+   统一开启（`-s enable 1`）亦可，两种方向均可，关键是全集群一致。
+
+2. 重新执行问题根因中的查询命令，确认所有节点所有芯片输出一致（全为 `tls switch[0]` 或全为 `tls switch[1]`），
+   然后重启业务，确认 Join 正常。
+3. tls 状态由驱动管理，主机重启或驱动重载后需复查。
+4. 若各节点 tls 状态已一致仍超时，检查是否为 rank 启动失步。
+
 <a id="rdma-copy"></a>
 
 ### 3.2 Copy 报错
