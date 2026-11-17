@@ -1,5 +1,5 @@
 site_name: Memfabric Hybrid
-site_url: !ENV [READTHEDOCS_CANONICAL_URL, "http://127.0.0.1:8000"]
+site_url: !ENV READTHEDOCS_CANONICAL_URL
 site_author: Memfabric Hybrid Team
 site_description: Memfabric Hybrid 项目文档
 docs_dir: docs/zh
@@ -64,6 +64,8 @@ plugins:
       enable_creation_date: true
   - minify:
       minify_html: true
+  - blog:
+      post_url_format: "{slug}"
 
 markdown_extensions:
   - attr_list
