@@ -308,6 +308,11 @@ int32_t BandWidthCalculator::PrepareLocalMem(smem_bm_t handle, uint32_t rankId)
     uint64_t len = cmdParam_.batchSize * cmdParam_.copySize;
     CHECK_RET_ERR((len == 0 || len > GVA_SIZE || len > UINT32_MAX),
                   "invalid copy len:" << len << ", seg size:" << GVA_SIZE);
+    // 段内布局：[0,len) 发送源/读回落点；[len,2len) 对端写入区间（RemoteDstShift）；
+    // 非 SDMA 时读回 scratch 再占 [2len,3len)。SDMA 的 scratch 是段外 pinned 内存。
+    const uint64_t usedSegBytes = (cmdParam_.opType == SMEMB_DATA_OP_SDMA) ? (2 * len) : (3 * len);
+    CHECK_RET_ERR((usedSegBytes > GVA_SIZE), "segment too small for dst shift, len:" << len << " need:" << usedSegBytes
+                                                                                     << ", seg size:" << GVA_SIZE);
 
     // 本端 HBM：段基址（rankId 传自己）+ gva2va 拿可用 VA
     void *localHbmGva = smem_bm_ptr_by_mem_type(handle, SMEM_MEM_TYPE_DEVICE, rankId);
@@ -339,7 +344,29 @@ int32_t BandWidthCalculator::PrepareLocalMem(smem_bm_t handle, uint32_t rankId)
     ret = CopyDevMemInChunks(localHbm_, data.data(), len, ACL_MEMCPY_HOST_TO_DEVICE);
     CHECK_RET_ERR((ret != 0), "memcpy data to hbm failed, ret:" << ret);
     std::memcpy(localDram_, data.data(), len);
+    // Put 方向校验的真值：发送前的 payload（本地缓冲区之后会被对端覆盖）
+    expected_.assign(data.begin(), data.end());
     return 0;
+}
+
+// Put 方向开始前把本地源区间恢复成 expected_ 里的 payload。
+// -t all 时前面的 Get 方向会把本端 [0,len) 覆盖成对端数据，不恢复的话
+// 实际发出去的内容与 expected_ 不一致，Put 校验会误报。
+int32_t BandWidthCalculator::RestoreLocalPayload(smem_bm_mem_type localMemType, uint64_t len)
+{
+    if (len == 0 || expected_.size() < len) {
+        return 0;
+    }
+    if (localMemType == SMEM_MEM_TYPE_LOCAL_DEVICE) {
+        int ret = CopyDevMemInChunks(localHbm_, expected_.data(), len, ACL_MEMCPY_HOST_TO_DEVICE);
+        CHECK_RET_ERR((ret != 0), "restore local hbm payload failed, ret:" << ret);
+        return 0;
+    }
+    if (localMemType == SMEM_MEM_TYPE_LOCAL_HOST) {
+        std::memcpy(localDram_, expected_.data(), len);
+        return 0;
+    }
+    return -1;
 }
 
 int32_t BandWidthCalculator::PrepareCopyParam(smem_bm_mem_type localMemType, smem_bm_mem_type rmtMemType,
@@ -357,7 +384,9 @@ int32_t BandWidthCalculator::PrepareCopyParam(smem_bm_mem_type localMemType, sme
     }
     CHECK_RET_ERR((localPtr == nullptr), "localPtr is nullptr, localMemType:" << localMemType);
     uint64_t gva = (uint64_t)smem_bm_ptr_by_mem_type(handle, rmtMemType, gvaRankId);
-    uint64_t offset = 0;
+    // 双向写用例里两端互写对方缓冲区：若目的偏移与发送源偏移相同，对端写入会把本端正在发送的源数据覆盖掉。
+    // 因此目的端整体后移一个 batch，源区间与「被对端写入」的区间不重叠。
+    uint64_t offset = RemoteDstShift();
     for (uint32_t i = 0; i < param.batchSize; i++) {
         param.localAddrs[i] = reinterpret_cast<void *>((uintptr_t)localPtr + i * cmdParam_.copySize);
         param.globalAddrs[i] = reinterpret_cast<void *>(gva + offset);
@@ -368,7 +397,7 @@ int32_t BandWidthCalculator::PrepareCopyParam(smem_bm_mem_type localMemType, sme
 }
 
 int64_t BandWidthCalculator::CheckCopyResult(smem_bm_mem_type localMemType, smem_bm_mem_type rmtMemType,
-                                             uint32_t gvaRankId, smem_bm_t handle)
+                                             uint32_t gvaRankId, smem_bm_t handle, bool isPut)
 {
     if (rmtMemType != SMEM_MEM_TYPE_DEVICE && rmtMemType != SMEM_MEM_TYPE_HOST) {
         LOG_ERROR("rmtMemType type error, localMemType:" << localMemType << " rmtMemType:" << rmtMemType);
@@ -384,8 +413,9 @@ int64_t BandWidthCalculator::CheckCopyResult(smem_bm_mem_type localMemType, smem
     } else {
         // 对端读回的落点必须落在「已注册」的段内 DRAM scratch 上：裸 malloc 的 host 地址会被拒
         // （HYBM_RDMA_SWAP_SPACE_SIZE is 0, unable to copy unregistered addresses）。
+        // scratch 必须避开目的端偏移区间 [len, 2*len)，否则读回落点会被对端写入覆盖
         const uint64_t scratchOff =
-            ((len + kReadbackScratchAlignBytes - 1) / kReadbackScratchAlignBytes) * kReadbackScratchAlignBytes;
+            ((2 * len + kReadbackScratchAlignBytes - 1) / kReadbackScratchAlignBytes) * kReadbackScratchAlignBytes;
         CHECK_RET_ERR((localDram_ == nullptr || scratchOff + len > GVA_SIZE),
                       "no scratch room for readback, len:" << len);
         scratch = static_cast<uint8_t *>(localDram_) + scratchOff;
@@ -423,6 +453,7 @@ int64_t BandWidthCalculator::CheckCopyResult(smem_bm_mem_type localMemType, smem
 
     std::vector<uint8_t> rmtBuf(len);
     void *gva = smem_bm_ptr_by_mem_type(handle, rmtMemType, gvaRankId);
+    gva = static_cast<uint8_t *>(gva) + RemoteDstShift();
     smem_copy_params params{};
     params.src = gva;
     params.dest = scratch;
@@ -431,7 +462,12 @@ int64_t BandWidthCalculator::CheckCopyResult(smem_bm_mem_type localMemType, smem
     CHECK_RET_ERR((ret != 0), "g2h copy failed, ret:" << ret);
     std::memcpy(rmtBuf.data(), scratch, len);
 
-    auto wrongNum = CheckData(localBuf.data(), rmtBuf.data(), len);
+    // Put 方向：本地缓冲区已被对端覆盖，真值用发送前保存的 payload；Get 方向本地缓冲区就是刚读回的数据。
+    void *expectBase = localBuf.data();
+    if (isPut && expected_.size() >= len) {
+        expectBase = const_cast<void *>(static_cast<const void *>(expected_.data()));
+    }
+    auto wrongNum = CheckData(expectBase, rmtBuf.data(), len);
     if (wrongNum != 0) {
         LOG_ERROR("check data failed, localMemType:" << localMemType << " rmtMemType:" << rmtMemType);
     }
@@ -585,7 +621,9 @@ void BandWidthCalculator::BatchCopyPut(smem_bm_mem_type localMemType, smem_bm_me
     void *globalAddrs[cmdParam_.batchSize];
     uint64_t sizeList[cmdParam_.batchSize];
     BatchCopyParam tmpParam = {(void **)localAddrs, globalAddrs, sizeList, static_cast<uint32_t>(cmdParam_.batchSize)};
-    int ret = PrepareCopyParam(localMemType, rmtMemType, gvaRankId, handle, tmpParam);
+    int ret = RestoreLocalPayload(localMemType, static_cast<uint64_t>(cmdParam_.copySize) * cmdParam_.batchSize);
+    CHECK_RET_VOID(ret, "restore local payload failed, ret:" << ret << " rank:" << gvaRankId);
+    ret = PrepareCopyParam(localMemType, rmtMemType, gvaRankId, handle, tmpParam);
     CHECK_RET_VOID(ret, "prepare local failed, ret:" << ret << " rank:" << gvaRankId);
 
     smem_batch_copy_params param = {};
@@ -621,7 +659,7 @@ void BandWidthCalculator::BatchCopyPut(smem_bm_mem_type localMemType, smem_bm_me
         totalTimeUs += oneRoundUs;
     }
     auto direction = CopyType2Str(type);
-    result.wrongNum = CheckCopyResult(localMemType, rmtMemType, gvaRankId, handle);
+    result.wrongNum = CheckCopyResult(localMemType, rmtMemType, gvaRankId, handle, true);
     if (result.wrongNum < 0) {
         // 校验读回失败不应丢掉本方向的带宽数据：WrongBytes 记 -1 表示「未校验」，带宽照常输出。
         LOG_WARN(direction << " check unavailable (readback failed), rank:" << gvaRankId);

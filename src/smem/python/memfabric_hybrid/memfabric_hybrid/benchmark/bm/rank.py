@@ -53,6 +53,12 @@ class BmRank:
         require_ok(mf.initialize(), "mf.initialize")
         self._initialize_bm()
         self.handle = self._create_pool()
+        if self.params.protocol == "device_rdma":
+            memories = {phase.local_mem for phase in self.params.phases}
+            if any(phase.op == "read" for phase in self.params.phases):
+                memories.add("device")
+            for mem in sorted(memories):
+                self.buffer(mem)
         require_ok(self.handle.join(), "handle.join")
 
     def slot(self, rank_id, mem):

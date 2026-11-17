@@ -74,6 +74,6 @@ inline std::string NowTime()
         }                      \
     } while (0)
 
-const int32_t RANK_SIZE_MAX = 32;
+const int32_t RANK_SIZE_MAX = 128;
 
 #endif

@@ -87,7 +87,13 @@ private:
     int32_t PrepareCopyParam(smem_bm_mem_type localMemType, smem_bm_mem_type rmtMemType, uint32_t gvaRankId,
                              smem_bm_t handle, BatchCopyParam &param);
     int64_t CheckCopyResult(smem_bm_mem_type localMemType, smem_bm_mem_type rmtMemType, uint32_t gvaRankId,
-                            smem_bm_t handle);
+                            smem_bm_t handle, bool isPut = false);
+    int32_t RestoreLocalPayload(smem_bm_mem_type localMemType, uint64_t len);
+    // 目的端相对段基址的固定偏移：保证「发送源区间」与「被对端写入的区间」不重叠。
+    uint64_t RemoteDstShift() const
+    {
+        return static_cast<uint64_t>(cmdParam_.copySize) * cmdParam_.batchSize;
+    }
 
     void PrintResult(std::vector<BwTestResult> &results);
     void SendResult(BwTestResult *results, int32_t pipeFdWrite);
@@ -117,6 +123,7 @@ private:
     BwTestParam cmdParam_;
     bool isMaster_ = false;
     void *localDram_ = nullptr;
+    std::vector<uint8_t> expected_;
     void *localHbm_ = nullptr;
     void *readbackScratch_ = nullptr;
 };

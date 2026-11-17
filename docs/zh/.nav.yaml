@@ -75,6 +75,7 @@ nav:
       - wiki/FAQ/index.md
       - 常见问题及解决办法: wiki/FAQ/FAQ.md
       - HOST_SHM 内存分配 FAQ: wiki/FAQ/HOST_SHM 内存分配 FAQ.md
+      - UBX 1825 RDMA IPv4 / IPv6 快速开始: wiki/FAQ/1825-rdma-ipv4-ipv6-quickstart.md
   - 社区:
       - Roadmap: wiki/community/Roadmap.md
       - 版本说明: wiki/community/release_notes.md
