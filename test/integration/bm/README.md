@@ -1,4 +1,4 @@
-# BM 批量拷贝集成测试
+# BM 拷贝集成测试
 
 ## 目录职责
 
@@ -7,6 +7,7 @@
 - `bm_runtime.py` 管理一个延迟启动的双 worker BM 池。它在首个用例启动，在运行结束或首次失败时关闭。
 - `helpers.py` 提供 buffer 分配、注册清理、数据生成、校验和设备发现。
 - `copy_data_batch/` 每个文件一个 pytest class。class 实现 `setup(ctx)`、`run(ctx)` 和 `teardown(ctx)`。
+- `copy_data/` 每个文件一个 pytest class。class 实现 `setup(ctx)`、`run(ctx)` 和 `teardown(ctx)`。
 
 ## 运行
 
@@ -19,6 +20,7 @@ pytest test/integration/bm -v -s
 单独运行 GH2L 用例：
 
 ```bash
+pytest test/integration/bm/copy_data/test_copy_data_001.py -v -s
 pytest test/integration/bm/copy_data_batch/test_copy_data_batch_001.py -v -s
 ```
 
@@ -34,7 +36,7 @@ pytest test/integration/bm -v -s --bm-protocol device_rdma \
 
 ## 添加用例
 
-在 `copy_data_batch/` 中新增测试文件，并在普通 pytest `Test...` class 中实现 `setup(ctx)`、`run(ctx)` 和
+在 `copy_data/`和`copy_data_batch/` 中新增测试文件，并在普通 pytest `Test...` class 中实现 `setup(ctx)`、`run(ctx)` 和
 `teardown(ctx)`。测试方法调用 `shared_pool.run(type(self))`。每个 class 的 setup、run 和 teardown 会在各自
 worker 中执行。场景目录保留 `__init__.py`，以区分不同场景下的同名测试模块。单个用例不能更改池配置；
 不同配置需要单独启动 pytest 调用。
