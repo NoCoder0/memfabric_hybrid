@@ -1,0 +1,151 @@
+name: daily_pipeline_memfabric
+
+on:
+  schedule:
+    - cron: "10 23 * * *"
+
+env:
+  AK_ASCEND: ${{ secrets.AK_ASCEND }}
+  SK_ASCEND: ${{ secrets.SK_ASCEND }}
+  AK_MIRRORS: ${{ secrets.AK_MIRRORS }}
+  SK_MIRRORS: ${{ secrets.SK_MIRRORS }}
+
+stages:
+  stage_1:
+    name: Build
+    jobs:
+      Build_memfabric_arm:
+        name: Build_memfabric_arm
+        runs-on: [self-hosted, default, arm, cpu=32]
+        container:
+          image: swr.cn-north-4.myhuaweicloud.com/memfabric-hybrid/memfabric-hybrid_arm:memfabric_version_v5
+        steps:
+          - name: 源码准备
+            uses: checkout
+            with:
+              ref: ${{ atomgit.ref }}
+              submodules: recursive
+
+          - name: 编译打包
+            run: |
+              set -ex
+
+              # 创建构建输出目录
+              mkdir -p ${WORKSPACE}/BeiMing_output
+
+              # 支持 Python 3.10 ~ 3.13 多版本 wheel 构建
+              python_multi_versions=("cp310-cp310" "cp311-cp311" "cp312-cp312" "cp313-cp313")
+
+              for item_version in "${python_multi_versions[@]}"; do
+                (
+                  # 设置当前构建的 Python 环境
+                  export PYTHON_HOME=/opt/python/${item_version}
+                  export PATH=/opt/python/${item_version}/bin:/usr/bin:$PATH
+
+                  # 升级构建工具链
+                  pip3 install --upgrade pip
+                  pip3 install --upgrade setuptools wheel
+                  pip3 install pybind11==3.0.1   # 固定版本确保 ABI 兼容
+                  pip3 install auditwheel --force-reinstall
+
+                  # 验证 Python 环境
+                  python3 --version
+                  which pip3
+
+                  # 执行构建脚本
+                  cd ${WORKSPACE}/
+                  bash script/build_and_pack_run.sh --build_hcom ON --build_python_whl_type daily
+
+                  # 收集所有 wheel 包到输出目录
+                  find output/ -name "*.whl" | xargs -i cp -rf {} ${WORKSPACE}/BeiMing_output/
+                )
+              done
+
+          - name: 软件包归档
+            run: |
+              set -ex
+
+              # 安装并配置 obsutil 工具
+              mkdir /usr/local/obsutil
+              wget --no-verbose https://obs-community.obs.cn-north-1.myhuaweicloud.com/obsutil/current/obsutil_linux_arm64.tar.gz
+              tar -zxvf obsutil_linux_arm64.tar.gz -C /usr/local/obsutil/
+              ln -sf "$(ls -d /usr/local/obsutil/obsutil_linux_arm64_* | sort -V | tail -n1)/obsutil" /usr/local/bin/obsutil
+
+              # 配置 OBS 凭据
+              obsutil config -i=${AK_ASCEND} -k=${SK_ASCEND} -e=obs.cn-southwest-2.myhuaweicloud.com
+
+              # 上传构建产物到 OBS
+              obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
+                obs://ascend-ci-artifacts-staging/pypi/packages/ascend/repos/pypi/nightly/memfabric-hybrid/ -flat
+
+              obsutil config -i=${AK_MIRRORS} -k=${SK_MIRRORS} -e=obs.cn-north-4.myhuaweicloud.com
+              obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
+                obs://ascend-artifcat-packages/pypi/packages/ascend/repos/pypi/nightly/memfabric-hybrid/ -flat
+
+      Build_memfabric_x86:
+        name: Build_memfabric_x86
+        runs-on: [self-hosted, default, x86, cpu=32]
+        container:
+          image: swr.cn-north-4.myhuaweicloud.com/memfabric-hybrid/memfabric-hybrid_x86:memfabric_version_v5
+        steps:
+          - name: 源码准备
+            uses: checkout
+            with:
+              ref: ${{ atomgit.ref }}
+              submodules: recursive
+
+          - name: 编译打包
+            run: |
+              set -ex
+
+              # 创建构建输出目录
+              mkdir -p ${WORKSPACE}/BeiMing_output
+
+              # 支持 Python 3.10 ~ 3.13 多版本 wheel 构建
+              python_multi_versions=("cp310-cp310" "cp311-cp311" "cp312-cp312" "cp313-cp313")
+
+              for item_version in "${python_multi_versions[@]}"; do
+                (
+                  # 设置当前构建的 Python 环境
+                  export PYTHON_HOME=/opt/python/${item_version}
+                  export PATH=/opt/python/${item_version}/bin:/usr/bin:$PATH
+
+                  # 升级构建工具链
+                  pip3 install --upgrade pip
+                  pip3 install --upgrade setuptools wheel
+                  pip3 install pybind11==3.0.1   # 固定版本确保 ABI 兼容
+                  pip3 install auditwheel --force-reinstall
+
+                  # 验证 Python 环境
+                  python3 --version
+                  which pip3
+
+                  # 执行构建脚本
+                  cd ${WORKSPACE}/
+                  bash script/build_and_pack_run.sh --build_hcom ON --build_python_whl_type daily
+
+                  # 收集所有 wheel 包到输出目录
+                  find output/ -name "*.whl" | xargs -i cp -rf {} ${WORKSPACE}/BeiMing_output/
+                )
+              done
+
+          - name: 软件包归档
+            run: |
+              set -ex
+
+              # 安装并配置 obsutil 工具
+              mkdir /usr/local/obsutil
+              wget --no-verbose https://obs-community.obs.cn-north-1.myhuaweicloud.com/obsutil/current/obsutil_linux_amd64.tar.gz
+              tar -zxvf obsutil_linux_amd64.tar.gz -C /usr/local/obsutil/
+              ln -sf "$(ls -d /usr/local/obsutil/obsutil_linux_amd64_* | sort -V | tail -n1)/obsutil" /usr/local/bin/obsutil
+
+              # 配置 OBS 凭据
+              obsutil config -i=${AK_ASCEND} -k=${SK_ASCEND} -e=obs.cn-southwest-2.myhuaweicloud.com
+
+              # 上传构建产物到 OBS
+              obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
+                obs://ascend-ci-artifacts-staging/pypi/packages/ascend/repos/pypi/nightly/memfabric-hybrid/ -flat
+
+              obsutil config -i=${AK_MIRRORS} -k=${SK_MIRRORS} -e=obs.cn-north-4.myhuaweicloud.com
+              obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
+                obs://ascend-artifcat-packages/pypi/packages/ascend/repos/pypi/nightly/memfabric-hybrid/ -flat
