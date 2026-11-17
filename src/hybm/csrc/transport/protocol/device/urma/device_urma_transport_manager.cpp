@@ -3055,9 +3055,7 @@ Result DeviceUrmaTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBu
         return BM_OK;
     }
 
-    TP_TRACE_BEGIN(TP_HYBM_URMA_RELEASE_FREE_BUFFER);
     auto ret = DlAclApi::AclrtFree(buffers.base);
-    TP_TRACE_END(TP_HYBM_URMA_RELEASE_FREE_BUFFER, ret);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma ReleaseDeviceTransferBuffers AclrtFree failed, base: "
                      << VaToStr(buffers.base) << " capacity: " << buffers.capacity << " ret: " << ret);
