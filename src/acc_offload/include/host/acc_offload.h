@@ -139,7 +139,8 @@ void offload_free(uint64_t ptr, uint64_t flags);
  * For URMA_POOL mode pools the DVA differs from the malloc address (an
  * independent HalHostRegister device mapping); for vmm unified pools the DVA
  * equals the malloc address. AIV operators (sparse_copy etc.) must use the DVA.
- * LOCAL AICPU uses the original pool address and does not support get_dva.
+ * LOCAL AICPU returns the host address on A3 and an independent device mapping on A5 for application MTE access.
+ * Its sparse_copy still uses the original host pool address.
  * SHARED AICPU returns the pool GVA used by the transport, not an MTE device mapping.
  *
  * @param hostPtr  [in] Address returned by offload malloc (or an interior address of it).

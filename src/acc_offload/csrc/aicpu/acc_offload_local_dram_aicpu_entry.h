@@ -36,7 +36,12 @@ protected:
 private:
     int32_t CreateUrmaPool(const hybm_options &options);
     int32_t ConnectUrmaEntities();
+
+private:
     hybm_entity_t deviceEntity_{nullptr};
+    int32_t logicDevId_{-1};
+    int32_t socType_{0};
+    uint64_t dvaBase_{0};
 };
 
 } // namespace ock::offload

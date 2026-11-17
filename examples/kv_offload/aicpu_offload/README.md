@@ -36,6 +36,7 @@ ret = pool.sparse_copy(src_ptrs, dst_ptrs, lengths, count, device)
 - 捕获固定的是四个元数据 Tensor 的地址。重放前可以原地修改内容；图中也可以先生成元数据，再执行拷贝。不要替换底层存储。元数据、payload、池和实例均须覆盖图的使用期。
 - 每个实例独立持有池、设备上下文、工作区和通知资源。A3 占用一个 entity ID，A5 按需申请两个。同设备可创建多个实例。同实例的调用和 replay 须串行；跨 stream 须建立前次完成到下次开始的显式依赖。销毁前停止提交、同步在途工作并销毁图，再释放池。
 - Host 返回 0 表示已提交。内核逐条校验，遇到非法记录时立即停止。此前已提交给 SDMA/URMA 的拷贝可能已生效，暂存的记录会被丢弃。输入错误或设备通信错误都可能使后续 notify 等待失败。通过 stream 同步检查结果，通信失败后重建资源。
-- 仅支持本池内存的分配、释放、池内地址注册校验和 sparse copy；不支持外部 Host 内存注册、`get_dva`、group pack、KV exchange 或 entry gather。
+- 支持本池内存的分配、释放、池内地址注册校验、`get_dva` 和 sparse copy；不支持外部 Host 内存注册、group pack、KV exchange 或 entry gather。
+- `pool.get_dva(host_ptr)` 返回本池地址对应的设备地址，供应用层自定义 MTE 算子访问。
 
 A5 在图外建立 Host/Device 连接、注册并导入 Host 池，准备持久 context、8190 条描述符工作区和 notify。每次调用固定提交 9 组 HybmUrmaDeviceCopy 与 Notify Wait/Reset，覆盖最多 65536 条记录。首块读取设备 count，后续块复用该值；各块单趟校验并生成描述符，按最多 1000 条提交 HCOMM，再发送 fence 和完成 marker。空块也发送 marker，下一块在用户流的 Wait/Reset 后复用工作区。

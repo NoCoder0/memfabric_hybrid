@@ -283,13 +283,7 @@ int32_t AccOffloadSharedDramAicpuEntry::EntryGather(uint64_t dstPtr, uint64_t id
 
 int32_t AccOffloadSharedDramAicpuEntry::GetDva(uint64_t hostPtr, uint64_t *dvaPtr)
 {
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (dvaPtr == nullptr || ValidateHostPointer(hostPtr) != OFFLOAD_OK) {
-        OFFLOAD_LOG_ERROR("invalid shared pool address query, address=" << hostPtr << " output=" << dvaPtr);
-        return OFFLOAD_ERROR;
-    }
-    *dvaPtr = hostPtr;
-    return OFFLOAD_OK;
+    return OFFLOAD_FUNCTION_FAILED;
 }
 
 int32_t AccOffloadSharedDramAicpuEntry::SparseCopy(uint64_t *srcPtrs, uint64_t *dstPtrs, uint32_t *lenPtrs,
