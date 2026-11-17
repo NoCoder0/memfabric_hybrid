@@ -55,6 +55,7 @@ constexpr int32_t UT_NEGATIVE_RATIO_DIVISOR = 3;
 constexpr uint32_t UT_REG_RANK_SIZE = 2U;
 constexpr uint32_t UT_REG_RANK_ID = 1U;
 constexpr uint16_t UT_REG_LOCAL_RANK_ID = 0U;
+constexpr uint16_t UT_SHM_DEVICE_ID = 7U;
 constexpr uint32_t UT_SUBGROUP_RANK_SIZE = 1024U;
 constexpr uint32_t UT_ATOMIC_ALLOC_LIMIT = 1024U;
 constexpr uint32_t UT_EXTRA_CONTEXT_SAMPLE_SIZE = 100U;
@@ -284,6 +285,39 @@ TEST_F(SmemShmTest, smem_shm_create_failed)
     smem_shm_destroy(handle, 0);
     smem_shm_uninit(0);
 }
+
+TEST_F(SmemShmTest, smem_shm_create_uses_initialized_device_id)
+{
+    void *gva = nullptr;
+    ASSERT_EQ(smem_init(0), 0);
+
+    smem_shm_config_t config;
+    ASSERT_EQ(smem_shm_config_init(&config), 0);
+
+    auto fakeStore = MakeFakeShmStore();
+    ASSERT_NE(nullptr, fakeStore.Get());
+    MOCKER_CPP(hybm_init, int32_t(*)(uint16_t, uint64_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(&ock::smem::StoreFactory::CreateStoreByUrl,
+               ock::smem::StorePtr(*)(const std::string &, uint16_t, uint32_t, int32_t, int32_t))
+        .stubs()
+        .will(returnValue(fakeStore));
+    ASSERT_EQ(smem_shm_init(UT_IP_PORT, 1, 0, UT_SHM_DEVICE_ID, &config), 0);
+    ASSERT_EQ(SmemShmEntryManager::Instance().GetDeviceId(), UT_SHM_DEVICE_ID);
+
+    MOCKER_CPP(&SmemShmEntry::CreateGlobalTeam, int32_t(*)(uint32_t, uint32_t)).stubs().will(returnValue(0));
+    MOCKER_CPP(hybm_create_entity, hybm_entity_t(*)(uint16_t, const hybm_options *, uint32_t))
+        .expects(once())
+        .will(invoke(+[](uint16_t, const hybm_options *options, uint32_t) -> hybm_entity_t {
+            EXPECT_NE(options, nullptr);
+            EXPECT_EQ(options->devId, UT_SHM_DEVICE_ID);
+            return nullptr;
+        }));
+
+    auto handle = smem_shm_create(UT_SMEM_ID, 1, 0, UT_CREATE_MEM_SIZE, SMEMS_DATA_OP_MTE, 0, &gva);
+    EXPECT_EQ(handle, nullptr);
+    smem_shm_uninit(0);
+}
+
 TEST_F(SmemShmTest, smem_shm_create_success)
 {
     void *gva;
