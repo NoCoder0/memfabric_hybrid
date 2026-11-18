@@ -941,7 +941,7 @@ TEST_F(RdmaAicpuMockTest, BuildSparseCopyParamPreservesNotifyAndQueueCapacity)
     EXPECT_EQ(args.capacity, aicpu::HYBM_RDMA_SPARSE_CAPACITY);
 }
 
-TEST_F(RdmaAicpuMockTest, DeviceCopyLaunchesOneTaskPerPeerAndDirection)
+TEST_F(RdmaAicpuMockTest, DeviceCopyLaunchesOneTaskPerPeer)
 {
     AclFnGuard aclGuard;
     constexpr uint32_t peerRank = 1U;
@@ -962,10 +962,8 @@ TEST_F(RdmaAicpuMockTest, DeviceCopyLaunchesOneTaskPerPeerAndDirection)
                int (*)(RdmaAicpuTransportManager *, uint32_t, void *, aicpu::RdmaSparseCopyArgs &))
         .expects(once())
         .will(returnValue(BM_OK));
-    MOCKER(&LaunchAicpuKernel).expects(exactly(2)).will(returnValue(BM_OK));
-    MOCKER_CPP(&HybmAclNotify::WaitAsync, int32_t(*)(HybmAclNotify *, void *))
-        .expects(exactly(2))
-        .will(returnValue(BM_OK));
+    MOCKER(&LaunchAicpuKernel).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&HybmAclNotify::WaitAsync, int32_t(*)(HybmAclNotify *, void *)).expects(once()).will(returnValue(BM_OK));
     EXPECT_EQ(mgr.DeviceCopy(params), BM_OK);
     EXPECT_EQ(mgr.graphStream_, params.stream);
 }

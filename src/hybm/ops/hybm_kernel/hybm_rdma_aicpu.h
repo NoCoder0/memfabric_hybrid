@@ -31,7 +31,7 @@ namespace aicpu {
 
 constexpr uint32_t HYBM_RDMA_OP_WRITE = 0U;
 constexpr uint32_t HYBM_RDMA_OP_READ = 4U;
-constexpr uint32_t HYBM_RDMA_AICPU_ABI_VERSION = 14U;
+constexpr uint32_t HYBM_RDMA_AICPU_ABI_VERSION = 15U;
 
 constexpr uint32_t HYBM_RDMA_SPARSE_FLAG = 1U;
 constexpr uint32_t HYBM_RDMA_SPARSE_CAPACITY = 1024U;

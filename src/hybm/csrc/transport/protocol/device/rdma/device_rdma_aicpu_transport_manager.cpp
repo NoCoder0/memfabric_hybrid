@@ -331,16 +331,13 @@ Result RdmaAicpuTransportManager::DeviceCopy(const hybm_device_copy_params &para
             return ret;
         }
         graphStream_ = stream;
-        for (auto opcode : {aicpu::HYBM_RDMA_OP_READ, aicpu::HYBM_RDMA_OP_WRITE}) {
-            args.param.opcode = opcode;
-            ret = LaunchAicpuKernel(aicpuRdmaPostSend_.rdmaPostSend, stream, &args, sizeof(args));
-            if (ret == BM_OK) {
-                ret = graphNotify_->WaitAsync(stream);
-            }
-            if (ret != BM_OK) {
-                BM_LOG_ERROR("sparse copy launch/wait failed, rank=" << rank << " opcode=" << opcode << " ret=" << ret);
-                return ret;
-            }
+        ret = LaunchAicpuKernel(aicpuRdmaPostSend_.rdmaPostSend, stream, &args, sizeof(args));
+        if (ret == BM_OK) {
+            ret = graphNotify_->WaitAsync(stream);
+        }
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("sparse copy launch/wait failed, rank=" << rank << " ret=" << ret);
+            return ret;
         }
     }
     return BM_OK;

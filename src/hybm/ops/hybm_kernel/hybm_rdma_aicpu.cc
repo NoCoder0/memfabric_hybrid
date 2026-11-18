@@ -16,6 +16,7 @@
 #include "hybm_rdma_aicpu.h"
 
 #include <cstdint>
+#include <initializer_list>
 #include <dlfcn.h>
 
 #include "hybm_def.h"
@@ -585,7 +586,8 @@ int32_t PostWqeWithRetry(const WqeCtx &ctx, const WqeSeg &seg, uint64_t wrId, ui
     return RingDoorbellMidway(ring, wrId);
 }
 
-int32_t PostDataWqes(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t total, RingCtx &ring, bool finalBatch)
+int32_t PostDataWqes(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t total, RingCtx &ring, bool finalBatch,
+                     bool fenceFirst = false)
 {
     WqeBuf buf{};
     for (uint32_t i = 0U; i < total; ++i) {
@@ -606,6 +608,9 @@ int32_t PostDataWqes(const RdmaAicpuParam &param, const WqeCtx &ctx, uint32_t to
             const bool completeBatch =
                 (ring.posted + 1U) % MID_RING_WQE_COUNT == 0U || (!finalBatch && i + 1U == total);
             sendFlags = completeBatch ? IBV_SEND_SIGNALED | IBV_SEND_FENCE : 0U;
+        }
+        if (fenceFirst && i == 0U) {
+            sendFlags |= IBV_SEND_FENCE;
         }
         int32_t ret = PostWqeWithRetry(ctx, seg, param.wrId + i, sendFlags, buf, rsp, ring);
         if (ret != 0) {
@@ -689,8 +694,8 @@ const ock::mf::aicpu::RdmaMemoryRegion *FindMemoryRegion(const RdmaSparseCopyArg
     return nullptr;
 }
 
-int32_t BuildSparseCopyBatch(const RdmaSparseCopyArgs &args, uint32_t start, uint32_t end, RdmaSegment *segments,
-                             uint32_t &segmentCount)
+int32_t BuildSparseCopyBatch(const RdmaSparseCopyArgs &args, uint32_t opcode, uint32_t start, uint32_t end,
+                             RdmaSegment *segments, uint32_t &segmentCount, bool &hasWrites)
 {
     segmentCount = 0U;
     for (uint32_t i = start; i < end; ++i) {
@@ -712,7 +717,11 @@ int32_t BuildSparseCopyBatch(const RdmaSparseCopyArgs &args, uint32_t start, uin
         const bool write = source->rank == args.selfRank;
         const auto *local = write ? source : dest;
         const auto *remote = write ? dest : source;
-        if (remote->rank != args.peerRank || write != (args.param.opcode == ock::mf::aicpu::HYBM_RDMA_OP_WRITE)) {
+        if (remote->rank != args.peerRank) {
+            continue;
+        }
+        hasWrites = hasWrites || write;
+        if (write != (opcode == ock::mf::aicpu::HYBM_RDMA_OP_WRITE)) {
             continue;
         }
         const auto localAddress = local->deviceAddress + (write ? src : dst) - local->address;
@@ -740,24 +749,35 @@ int32_t PostSparseCopyTask(const RdmaSparseCopyArgs &args)
     param.descCount = 0U;
     static uint64_t nextWrId = 0;
     param.wrId = __atomic_fetch_add(&nextWrId, static_cast<uint64_t>(count) + 1U, __ATOMIC_RELAXED);
-    const WqeCtx ctx{param.qpHandle, param.opcode};
     RingCtx ring{};
     ring.param = &param;
-    for (uint32_t start = args.startIndex; start < count; start += args.capacity) {
-        const auto end = count - start < args.capacity ? count : start + args.capacity;
-        auto ret = BuildSparseCopyBatch(args, start, end, segments, param.descCount);
-        if (ret != BM_OK) {
-            return WriteFailureOut(param, ring, ret);
+    bool hasWrites = false;
+    for (auto opcode : {HYBM_RDMA_OP_READ, ock::mf::aicpu::HYBM_RDMA_OP_WRITE}) {
+        if (opcode == ock::mf::aicpu::HYBM_RDMA_OP_WRITE && !hasWrites) {
+            break;
         }
-        ret = PostDataWqes(param, ctx, param.descCount, ring, end == count);
-        if (ret != BM_OK) {
-            return WriteFailureOut(param, ring, ret);
+        param.opcode = opcode;
+        const WqeCtx ctx{param.qpHandle, opcode};
+        bool fenceFirst = opcode == ock::mf::aicpu::HYBM_RDMA_OP_WRITE && ring.posted != 0U;
+        for (uint32_t start = args.startIndex; start < count; start += args.capacity) {
+            const auto end = count - start < args.capacity ? count : start + args.capacity;
+            auto ret = BuildSparseCopyBatch(args, opcode, start, end, segments, param.descCount, hasWrites);
+            if (ret != BM_OK) {
+                return WriteFailureOut(param, ring, ret);
+            }
+            ret = PostDataWqes(param, ctx, param.descCount, ring, end == count, fenceFirst);
+            if (ret != BM_OK) {
+                return WriteFailureOut(param, ring, ret);
+            }
+            if (param.descCount != 0U) {
+                fenceFirst = false;
+            }
+            param.wrId += param.descCount;
         }
-        param.wrId += param.descCount;
     }
     param.descCount = 0U;
     // Only the final fenced notify releases the captured wait, including count == 0.
-    return FinishBatchTask(param, ctx, ring);
+    return FinishBatchTask(param, WqeCtx{param.qpHandle, HYBM_RDMA_OP_READ}, ring);
 }
 
 int32_t ValidateAicpuParam(const RdmaAicpuParam *param)
