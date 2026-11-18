@@ -17,7 +17,7 @@
 #include <ostream>
 #include <string>
 #include <type_traits>
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_transport_common.h"
 
 namespace ock {

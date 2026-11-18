@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "hybm_logger.h"
+#include "vendor/vendor_api.h"
 
 namespace ock {
 namespace mf {
@@ -48,7 +49,7 @@ Result LoadKernelBinary(const std::string &jsonPath, aclrtBinHandle &binHandle)
     loadOptions.options = &loadOption;
     loadOptions.numOpt = 1;
 
-    const auto ret = DlAclApi::AclrtBinaryLoadFromFile(resolvedPath, &loadOptions, &binHandle);
+    const auto ret = VendorApi::Api()->BinaryLoadFromFile(resolvedPath, &loadOptions, &binHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aclrtBinaryLoadFromFile failed, path: " << resolvedPath << " ret: " << ret);
         return ret;
@@ -92,7 +93,7 @@ Result LoadDeviceKernelAndGetHandles(DeviceKernelNames &names, aclrtBinHandle &b
             BM_LOG_ERROR("device_urma kernel binary handle is null, func: " << spec.name);
             ret = BM_INVALID_PARAM;
         } else {
-            ret = DlAclApi::AclrtBinaryGetFunction(binHandle, spec.name, spec.handle);
+            ret = VendorApi::Api()->BinaryGetFunction(binHandle, spec.name, spec.handle);
             if (ret != BM_OK) {
                 BM_LOG_ERROR("aclrtBinaryGetFunction failed, func: " << spec.name << " ret: " << ret);
             } else if (*spec.handle == nullptr) {
@@ -117,16 +118,16 @@ Result LaunchAicpuKernel(aclrtFuncHandle funcHandle, void *stream, const void *a
         return BM_INVALID_PARAM;
     }
     aclrtArgsHandle argsHandle = nullptr;
-    auto ret = DlAclApi::AclrtKernelArgsInit(funcHandle, &argsHandle);
+    auto ret = VendorApi::Api()->KernelArgsInit(funcHandle, &argsHandle);
     if (ret != BM_OK) {
         return ret;
     }
     aclrtParamHandle paramHandle = nullptr;
-    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, const_cast<void *>(args), argsBytes, &paramHandle);
+    ret = VendorApi::Api()->KernelArgsAppend(argsHandle, const_cast<void *>(args), argsBytes, &paramHandle);
     if (ret != BM_OK) {
         return ret;
     }
-    ret = DlAclApi::AclrtKernelArgsFinalize(argsHandle);
+    ret = VendorApi::Api()->KernelArgsFinalize(argsHandle);
     if (ret != BM_OK) {
         return ret;
     }
@@ -137,7 +138,7 @@ Result LaunchAicpuKernel(aclrtFuncHandle funcHandle, void *stream, const void *a
     aclrtLaunchKernelCfg cfg{};
     cfg.attrs = &attr;
     cfg.numAttrs = 1;
-    return DlAclApi::AclrtLaunchKernelWithConfig(funcHandle, 1U, stream, &cfg, argsHandle, nullptr);
+    return VendorApi::Api()->LaunchKernelWithConfig(funcHandle, 1U, stream, &cfg, argsHandle, nullptr);
 }
 
 } // namespace device

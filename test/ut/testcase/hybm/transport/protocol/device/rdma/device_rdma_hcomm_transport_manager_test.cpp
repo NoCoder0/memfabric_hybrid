@@ -22,11 +22,21 @@
 #define private   public
 #define protected public
 #include "device_rdma_hcomm_transport_manager.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 #undef protected
 
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
+
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
+
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
 
@@ -43,39 +53,37 @@ constexpr ChannelHandle MOCK_CHANNEL = 0xA003UL;
 constexpr ThreadHandle MOCK_THREAD = 0xA004UL;
 constexpr uint32_t MOCK_PORT = 5000U;
 
-// ── DlAclApi function pointer guard ──
-// DlAclApi inline functions call through function pointers (pAclrtGetDevice etc).
+// ── AscendApiImpl function pointer guard ──
+// AscendApiImpl methods call through function pointers (pAclrtGetDevice_ etc).
 // We set them directly (private→public makes them accessible).
-struct DlAclApiFnGuard {
-    aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
-    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
-    rtGetDeviceInfoFunc oldGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
-    aclrtGetVersionFunc oldGetVersion{DlAclApi::pAclrtGetVersion};
-    aclrtMallocFunc oldMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtCreateStreamFunc oldCreateStream{DlAclApi::pAclrtCreateStream};
-    aclrtDestroyStreamFunc oldDestroyStream{DlAclApi::pAclrtDestroyStream};
-    aclrtCreateNotifyFunc oldCreateNotify{DlAclApi::pAclrtCreateNotify};
-    aclrtGetNotifyIdFunc oldGetNotifyId{DlAclApi::pAclrtGetNotifyId};
-    aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
-    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
+struct AclFnGuard {
+    aclrtGetDeviceFunc oldGetDevice{AscendRtApi().pAclrtGetDevice_};
+    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_};
+    rtGetDeviceInfoFunc oldGetDeviceInfo{AscendRtApi().pRtGetDeviceInfo_};
+    aclrtGetVersionFunc oldGetVersion{AscendRtApi().pAclrtGetVersion_};
+    aclrtMallocFunc oldMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtDestroyStreamFunc oldDestroyStream{AscendRtApi().pAclrtDestroyStream_};
+    aclrtCreateNotifyFunc oldCreateNotify{AscendRtApi().pAclrtCreateNotify_};
+    aclrtGetNotifyIdFunc oldGetNotifyId{AscendRtApi().pAclrtGetNotifyId_};
+    aclrtDestroyNotifyFunc oldDestroyNotify{AscendRtApi().pAclrtDestroyNotify_};
+    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{AscendRtApi().pAclrtWaitAndResetNotify_};
 
-    ~DlAclApiFnGuard()
+    ~AclFnGuard()
     {
-        DlAclApi::pAclrtGetDevice = oldGetDevice;
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDev;
-        DlAclApi::pRtGetDeviceInfo = oldGetDeviceInfo;
-        DlAclApi::pAclrtGetVersion = oldGetVersion;
-        DlAclApi::pAclrtMalloc = oldMalloc;
-        DlAclApi::pAclrtFree = oldFree;
-        DlAclApi::pAclrtMemcpy = oldMemcpy;
-        DlAclApi::pAclrtCreateStream = oldCreateStream;
-        DlAclApi::pAclrtDestroyStream = oldDestroyStream;
-        DlAclApi::pAclrtCreateNotify = oldCreateNotify;
-        DlAclApi::pAclrtGetNotifyId = oldGetNotifyId;
-        DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
-        DlAclApi::pAclrtWaitAndResetNotify = oldWaitAndResetNotify;
+        AscendRtApi().pAclrtGetDevice_ = oldGetDevice;
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = oldGetPhyDev;
+        AscendRtApi().pRtGetDeviceInfo_ = oldGetDeviceInfo;
+        AscendRtApi().pAclrtGetVersion_ = oldGetVersion;
+        AscendRtApi().pAclrtMalloc_ = oldMalloc;
+        AscendRtApi().pAclrtFree_ = oldFree;
+        AscendRtApi().pAclrtMemcpy_ = oldMemcpy;
+        AscendRtApi().pAclrtDestroyStream_ = oldDestroyStream;
+        AscendRtApi().pAclrtCreateNotify_ = oldCreateNotify;
+        AscendRtApi().pAclrtGetNotifyId_ = oldGetNotifyId;
+        AscendRtApi().pAclrtDestroyNotify_ = oldDestroyNotify;
+        AscendRtApi().pAclrtWaitAndResetNotify_ = oldWaitAndResetNotify;
     }
 };
 
@@ -257,52 +265,48 @@ protected:
 
     void SetupDlAclMocks()
     {
-        aclGuard_ = std::make_unique<DlAclApiFnGuard>();
+        aclGuard_ = std::make_unique<AclFnGuard>();
 
-        DlAclApi::pAclrtGetDevice = [](int32_t *deviceId) -> int32_t {
+        AscendRtApi().pAclrtGetDevice_ = [](int32_t *deviceId) -> int32_t {
             *deviceId = 0;
             return 0;
         };
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t, int32_t *phyId) -> int32_t {
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t, int32_t *phyId) -> int32_t {
             *phyId = 0;
             return 0;
         };
-        DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t infoType, int64_t *value) -> int32_t {
+        AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t infoType, int64_t *value) -> int32_t {
             if (infoType == INFO_TYPE_SDID || infoType == INFO_TYPE_SERVER_ID || infoType == INFO_TYPE_SUPER_POD_ID) {
                 *value = 0;
             }
             return 0;
         };
-        DlAclApi::pAclrtGetVersion = [](int32_t *major, int32_t *minor, int32_t *patch) -> int32_t {
+        AscendRtApi().pAclrtGetVersion_ = [](int32_t *major, int32_t *minor, int32_t *patch) -> int32_t {
             *major = 9; // 9
             *minor = 1; // 1
             *patch = 0; // 0
             return 0;
         };
-        DlAclApi::pAclrtMalloc = [](void **ptr, size_t, uint32_t) -> int32_t {
+        AscendRtApi().pAclrtMalloc_ = [](void **ptr, size_t, uint32_t) -> int32_t {
             *ptr = reinterpret_cast<void *>(0xD001UL);
             return 0;
         };
-        DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
-        DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
-        DlAclApi::pAclrtCreateStream = [](void **stream) -> int32_t {
-            *stream = reinterpret_cast<void *>(0xE001UL);
-            return 0;
-        };
-        DlAclApi::pAclrtDestroyStream = [](void *) -> int32_t { return 0; };
-        DlAclApi::pAclrtCreateNotify = [](void **notify, uint64_t) -> int32_t {
+        AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+        AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
+        AscendRtApi().pAclrtDestroyStream_ = [](void *) -> int32_t { return 0; };
+        AscendRtApi().pAclrtCreateNotify_ = [](void **notify, uint64_t) -> int32_t {
             *notify = reinterpret_cast<void *>(0xE002UL);
             return 0;
         };
-        DlAclApi::pAclrtGetNotifyId = [](void *, uint32_t *notifyId) -> int32_t {
+        AscendRtApi().pAclrtGetNotifyId_ = [](void *, uint32_t *notifyId) -> int32_t {
             *notifyId = 7U;
             return 0;
         };
-        DlAclApi::pAclrtDestroyNotify = [](void *) -> int32_t { return 0; };
-        DlAclApi::pAclrtWaitAndResetNotify = [](void *, void *, uint32_t) -> int32_t { return 0; };
+        AscendRtApi().pAclrtDestroyNotify_ = [](void *) -> int32_t { return 0; };
+        AscendRtApi().pAclrtWaitAndResetNotify_ = [](void *, void *, uint32_t) -> int32_t { return 0; };
     }
 
-    std::unique_ptr<DlAclApiFnGuard> aclGuard_;
+    std::unique_ptr<AclFnGuard> aclGuard_;
     std::unique_ptr<DlHcommApiFnGuard> guard_;
     int eidPipeRd_{-1};
     std::string eidFdPath_{};
@@ -345,7 +349,9 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, OpenDevice_A5HostRocePathUsesGetifad
 {
     // A5(950)：hostRocePath_ = true，BuildLocalEndpointDesc 先按 ens<phyId/2>f<phyId%2>
     // 命名规则用 getifaddrs 取 device 网口 IP（取不到再走 EID 兜底）。
-    MOCKER(&DlAclApi::GetAscendSocType).stubs().will(returnValue(AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     DlHcommApi::gHcommEndpointCreate = [](const EndpointDesc *, EndpointHandle *handle) -> int32_t {
         *handle = MOCK_ENDPOINT;
         return 0;
@@ -644,7 +650,7 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, EnsureContextInit_CreatesNotifyWithI
 
 TEST_F(DeviceRdmaHcommTransportManagerTest, EnsureContextInit_GetNotifyIdFails)
 {
-    DlAclApi::pAclrtGetNotifyId = [](void *, uint32_t *) -> int32_t { return -1; };
+    AscendRtApi().pAclrtGetNotifyId_ = [](void *, uint32_t *) -> int32_t { return -1; };
 
     auto mgr = CreateHcommMgr();
     CompletionContext ctx{};
@@ -868,7 +874,7 @@ TEST_F(DeviceRdmaHcommTransportManagerTest, OpenDeviceAclrtGetVersionFails)
     };
     DlHcommApi::gHcommEndpointDestroy = [](EndpointHandle) -> int32_t { return 0; };
     // AclrtGetVersion returns error → OpenDevice should still succeed (native fallback)
-    DlAclApi::pAclrtGetVersion = [](int32_t *, int32_t *, int32_t *) -> int32_t { return -1; };
+    AscendRtApi().pAclrtGetVersion_ = [](int32_t *, int32_t *, int32_t *) -> int32_t { return -1; };
 
     auto mgr = CreateHcommMgr();
     auto opts = MakeOptions();

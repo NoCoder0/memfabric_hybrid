@@ -15,7 +15,7 @@
 #include <shared_mutex>
 #include <unordered_map>
 #include <vector>
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_logger.h"
 #include "hybm_stream_manager.h"
 
@@ -100,7 +100,7 @@ public:
             return;
         }
         HybmStreamManager::UnregisterThreadAclStream(Func::GetCurTid(), stream_);
-        (void)DlAclApi::AclrtDestroyStream(stream_);
+        (void)VendorApi::Api()->DestroyStream(stream_);
     }
 
 private:
@@ -109,7 +109,7 @@ private:
 
 int HybmStreamManager::SetDevice(uint32_t devId)
 {
-    auto ret = DlAclApi::AclrtSetDevice(devId);
+    auto ret = VendorApi::Api()->SetDevice(devId);
     if (ret != 0) {
         BM_LOG_ERROR("aclrtSetDevice failed: " << ret);
         return BM_ERROR;
@@ -126,7 +126,7 @@ void *HybmStreamManager::GetThreadAclStream()
 #if defined(ASCEND_NPU)
     static uint32_t ACL_STREAM_FAST_LAUNCH = 1U;
     static uint32_t ACL_STREAM_FAST_SYNC = 2U;
-    auto ret = DlAclApi::AclrtCreateStreamWithConfig(&stream_, 0, ACL_STREAM_FAST_LAUNCH | ACL_STREAM_FAST_SYNC);
+    auto ret = VendorApi::Api()->CreateStreamWithConfig(&stream_, 0, ACL_STREAM_FAST_LAUNCH | ACL_STREAM_FAST_SYNC);
     if (ret != 0) {
         BM_LOG_ERROR("create stream failed: " << ret);
         return nullptr;
@@ -155,7 +155,7 @@ void HybmStreamManager::AbortAllThreadAclStreams()
         if (stream == nullptr) {
             continue;
         }
-        auto ret = DlAclApi::AclrtStreamAbort(stream);
+        auto ret = VendorApi::Api()->StreamAbort(stream);
         if (ret == BM_UNDER_API_UNLOAD) {
             BM_LOG_WARN("AclrtStreamAbort unavailable on this platform, skip abort, stream: " << stream);
             continue;

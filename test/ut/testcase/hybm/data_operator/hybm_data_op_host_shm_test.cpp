@@ -17,7 +17,9 @@
 #include <vector>
 
 #include "hybm_data_op_host_shm.h"
-#include "dl_hybrid_api.h"
+#include "vendor/vendor_api.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::mf;
 
@@ -38,7 +40,8 @@ struct MemcpyStubState {
 
 MemcpyStubState g_memCpyState;
 
-ock::mf::Result MemcpyInvokeStub(void *dst, size_t destMax, const void *src, size_t count, uint32_t kind)
+ock::mf::Result MemcpyInvokeStub(ock::mf::AscendApiImpl *, void *dst, size_t destMax, const void *src, size_t count,
+                                 uint32_t kind)
 {
     ++g_memCpyState.callCount;
     g_memCpyState.kinds.push_back(kind);
@@ -72,7 +75,10 @@ protected:
         GlobalMockObject::reset();
         ock::mf::test::StubIdentityVaMappings();
         ResetMemcpyState();
-        MOCKER(&ock::mf::DlHybridApi::Memcpy).stubs().will(invoke(MemcpyInvokeStub));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+            .stubs()
+            .will(invoke(MemcpyInvokeStub));
         dataOp_ = std::make_shared<HostDataOpHostShm>(0U);
     }
 

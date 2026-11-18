@@ -20,7 +20,7 @@
 #include <string>
 #include <vector>
 #include "hybm_logger.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_kernel_hepler.h"
 #include "hybm_transport_common.h"
 #include "hybm_batch_transfer.h"
@@ -43,7 +43,7 @@ struct DeviceTransferBuffers {
 inline void ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers)
 {
     if (buffers.dstList != nullptr) {
-        (void)DlAclApi::AclrtFree(buffers.dstList);
+        (void)VendorApi::Api()->Free(buffers.dstList);
     }
     buffers.dstList = nullptr;
     buffers.srcList = nullptr;
@@ -82,7 +82,7 @@ inline Result PrepareLaunchBuffer(const KernelLaunchConfig &config, void *&dstLi
 {
     const auto totalBytes = sizeof(DeviceBatchHeader) + config.batchSize * sizeof(HcommBatchTransferDesc);
     std::vector<uint8_t> hostBuf(totalBytes);
-    auto ret = DlAclApi::AclrtMalloc(&dstListDev, totalBytes, 0);
+    auto ret = VendorApi::Api()->Malloc(&dstListDev, totalBytes, 0);
     if (ret != BM_OK || dstListDev == nullptr) {
         BM_LOG_ERROR("LaunchDeviceKernel AclrtMalloc failed, size=" << totalBytes << " ret=" << ret);
         return ret;
@@ -101,10 +101,10 @@ inline Result PrepareLaunchBuffer(const KernelLaunchConfig &config, void *&dstLi
         }
         std::memcpy(hostBuf.data() + sizeof(header) + i * sizeof(desc), &desc, sizeof(desc));
     }
-    ret = DlAclApi::AclrtMemcpy(dstListDev, totalBytes, hostBuf.data(), totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(dstListDev, totalBytes, hostBuf.data(), totalBytes, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("LaunchDeviceKernel AclrtMemcpy H2D failed, ret=" << ret);
-        (void)DlAclApi::AclrtFree(dstListDev);
+        (void)VendorApi::Api()->Free(dstListDev);
     }
     return ret;
 }
@@ -152,7 +152,7 @@ inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransfe
     if (ret != BM_OK) {
         BM_LOG_ERROR("LaunchDeviceKernel launch failed, kernel=HybmBatchTransfer, rank=" << config.rankId
                                                                                          << " ret=" << ret);
-        (void)DlAclApi::AclrtFree(dstListDev);
+        (void)VendorApi::Api()->Free(dstListDev);
         return ret;
     }
 
@@ -167,7 +167,7 @@ inline Result LaunchDeviceKernel(const KernelLaunchConfig &config, DeviceTransfe
 inline Result QueryDeviceInfo(int32_t userId, int32_t infoType, uint32_t &output, const char *typeName)
 {
     int64_t infoValue = 0;
-    auto ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(userId), 0, infoType, &infoValue);
+    auto ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(userId), 0, infoType, &infoValue);
     if (ret != 0) {
         BM_LOG_ERROR("RtGetDeviceInfo(" << typeName << ") return=" << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -182,13 +182,13 @@ inline Result QueryDeviceInfo(int32_t userId, int32_t infoType, uint32_t &output
 inline Result InitLocalDeviceInfo(uint32_t &phyDeviceId, uint32_t &sdid, uint32_t &serverId, uint32_t &superPodId)
 {
     int32_t userId = -1;
-    auto ret = DlAclApi::AclrtGetDevice(&userId);
+    auto ret = VendorApi::Api()->GetDevice(&userId);
     if (ret != 0 || userId < 0) {
         BM_LOG_ERROR("AclrtGetDevice() return=" << ret << ", output deviceId=" << userId);
         return BM_DL_FUNCTION_FAILED;
     }
     int32_t phyId = 0;
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(userId, &phyId);
     if (ret != 0) {
         BM_LOG_ERROR("AclrtGetPhyDevIdByLogicDevId() return=" << ret << ", userDeviceId=" << userId);
         return BM_DL_FUNCTION_FAILED;

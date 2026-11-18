@@ -6,7 +6,7 @@
 #include <gtest/gtest.h>
 
 #define private public
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #undef private
 
 using namespace ock::mf;

@@ -27,7 +27,7 @@ enum class DlApiExtendLibraryType {
 
 class DlApi {
 public:
-    static Result LoadLibrary(const std::string &libDirPath, uint32_t gvaVersion);
+    static Result LoadLibrary(uint32_t gvaVersion);
     static void CleanupLibrary();
     static Result LoadExtendLibrary(DlApiExtendLibraryType libraryType);
 };

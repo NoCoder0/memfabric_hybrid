@@ -22,8 +22,8 @@
 #define URMA_TOPO_DEF_H
 
 #include "hybm_define.h"
-#include "dl_hal_api_def.h"
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hal_api_def.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 
 #include <array>
 #include <string>

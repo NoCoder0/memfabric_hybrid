@@ -21,7 +21,6 @@
 #define private public
 #include "compose_transport_manager.h"
 #include "hybm_compose_data_op.h"
-#include "dl_acl_api.h"
 #undef private
 
 class DataOperatorMock : public ock::mf::DataOperator {

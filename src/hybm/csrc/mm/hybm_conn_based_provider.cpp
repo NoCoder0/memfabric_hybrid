@@ -32,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_def.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_gva.h"

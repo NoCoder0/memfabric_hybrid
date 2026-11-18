@@ -16,7 +16,7 @@
 
 #include "hybm_logger.h"
 #include "hybm_data_op_factory.h"
-#include "dl_acl_api.h"
+#include "vendor/ascend/acl_rt_def.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "hybm_compose_data_op.h"

@@ -9,7 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_logger.h"
 #include "device_chip_info.h"
 
@@ -20,14 +20,14 @@ namespace device {
 int DeviceChipInfo::Init() noexcept
 {
     int64_t infoValue = 0U;
-    auto ret = DlAclApi::RtGetDeviceInfo(deviceId_, 0, INFO_TYPE_PHY_CHIP_ID, &infoValue);
+    auto ret = VendorApi::Api()->GetDeviceInfo(deviceId_, 0, INFO_TYPE_PHY_CHIP_ID, &infoValue);
     if (ret != 0) {
         BM_LOG_ERROR("RtGetDeviceInfo(INFO_TYPE_PHY_CHIP_ID) failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
     chipId_ = static_cast<uint32_t>(infoValue);
 
-    ret = DlAclApi::RtGetDeviceInfo(deviceId_, 0, INFO_TYPE_PHY_DIE_ID, &infoValue);
+    ret = VendorApi::Api()->GetDeviceInfo(deviceId_, 0, INFO_TYPE_PHY_DIE_ID, &infoValue);
     if (ret != 0) {
         BM_LOG_ERROR("RtGetDeviceInfo(INFO_TYPE_PHY_DIE_ID) failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -37,7 +37,7 @@ int DeviceChipInfo::Init() noexcept
     chipDieOffset_ = 0x10000000000UL; // RT_ASCEND910B1_DIE_ADDR_OFFSET;
     chipOffset_ = 0x80000000000UL;    // RT_ASCEND910B1_CHIP_ADDR_OFFSET;
     chipBaseAddr_ = 0UL;
-    ret = DlAclApi::RtGetDeviceInfo(deviceId_, 0, INFO_TYPE_ADDR_MODE, &infoValue);
+    ret = VendorApi::Api()->GetDeviceInfo(deviceId_, 0, INFO_TYPE_ADDR_MODE, &infoValue);
     if (ret != 0) {
         BM_LOG_ERROR("RtGetDeviceInfo(INFO_TYPE_ADDR_MODE) failed: " << ret);
         return BM_DL_FUNCTION_FAILED;

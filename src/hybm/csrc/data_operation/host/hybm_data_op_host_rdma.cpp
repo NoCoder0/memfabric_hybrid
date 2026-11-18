@@ -14,7 +14,7 @@
 #include <memory>
 #include "hybm_space_allocator.h"
 #include "hybm_ptracer.h"
-#include "dl_hybrid_api.h"
+#include "vendor/vendor_api.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "hybm_stream_manager.h"
@@ -201,7 +201,7 @@ Result HostDataOpRDMA::Wait(int32_t waitId) noexcept
 Result HostDataOpRDMA::CopyHost2Gva(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options)
 {
     if (options.destRankId == rankId_) {
-        return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
+        return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
     }
 
     if (transportManager_ != nullptr) {
@@ -215,7 +215,7 @@ Result HostDataOpRDMA::CopyHost2Gva(const void *srcVA, void *destVA, uint64_t le
 Result HostDataOpRDMA::CopyGva2Host(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options)
 {
     if (options.srcRankId == rankId_) {
-        return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
+        return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
     }
 
     if (transportManager_ != nullptr) {
@@ -229,7 +229,7 @@ Result HostDataOpRDMA::CopyGva2Host(const void *srcVA, void *destVA, uint64_t le
 Result HostDataOpRDMA::CopyDevice2Gva(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options)
 {
     if (options.destRankId == rankId_) {
-        return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
+        return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
     }
 
     if (transportManager_ != nullptr) {
@@ -243,7 +243,7 @@ Result HostDataOpRDMA::CopyDevice2Gva(const void *srcVA, void *destVA, uint64_t 
 Result HostDataOpRDMA::CopyGva2Device(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options)
 {
     if (options.srcRankId == rankId_) {
-        return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
+        return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
     }
 
     if (transportManager_ != nullptr) {
@@ -306,13 +306,14 @@ Result ock::mf::HostDataOpRDMA::SafePut(const void *srcVA, void *destVA, uint64_
         const void *currentSrc = reinterpret_cast<const void *>(srcBase + offset);
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
         if (isLocalHost) {
-            ret = DlHybridApi::Memcpy(tmpHost, currentChunkSize, currentSrc, currentChunkSize, ACL_MEMCPY_HOST_TO_HOST);
+            ret = VendorApi::Api()->Memcpy(tmpHost, currentChunkSize, currentSrc, currentChunkSize,
+                                           ACL_MEMCPY_HOST_TO_HOST);
         } else {
-            ret =
-                DlHybridApi::Memcpy(tmpHost, currentChunkSize, currentSrc, currentChunkSize, ACL_MEMCPY_DEVICE_TO_HOST);
+            ret = VendorApi::Api()->Memcpy(tmpHost, currentChunkSize, currentSrc, currentChunkSize,
+                                           ACL_MEMCPY_DEVICE_TO_HOST);
         }
         if (ret != BM_OK) {
-            BM_LOG_ERROR("DlHybridApi::Memcpy(D2H) failed, ret: "
+            BM_LOG_ERROR("VendorApi::Api()->Memcpy(D2H) failed, ret: "
                          << ret << " localRankId: " << rankId_ << " destRankId: " << options.destRankId << std::hex
                          << " src: " << currentSrc << " dst: " << tmpHost << std::dec << " size: " << currentChunkSize);
             return ret;
@@ -376,17 +377,17 @@ Result ock::mf::HostDataOpRDMA::SafeGet(const void *srcVA, void *destVA, uint64_
             return ret;
         }
         if (isLocalHost) {
-            ret =
-                DlHybridApi::Memcpy(currentDest, currentChunkSize, tmpHost, currentChunkSize, ACL_MEMCPY_HOST_TO_HOST);
+            ret = VendorApi::Api()->Memcpy(currentDest, currentChunkSize, tmpHost, currentChunkSize,
+                                           ACL_MEMCPY_HOST_TO_HOST);
         } else {
-            ret = DlHybridApi::Memcpy(currentDest, currentChunkSize, tmpHost, currentChunkSize,
-                                      ACL_MEMCPY_HOST_TO_DEVICE);
+            ret = VendorApi::Api()->Memcpy(currentDest, currentChunkSize, tmpHost, currentChunkSize,
+                                           ACL_MEMCPY_HOST_TO_DEVICE);
         }
         if (ret != BM_OK) {
-            BM_LOG_ERROR("DlHybridApi::Memcpy(H2D) failed, ret: " << ret << " localRankId: " << rankId_
-                                                                  << " srcRankId: " << options.srcRankId << std::hex
-                                                                  << " src: " << tmpHost << " dst: " << currentDest
-                                                                  << std::dec << " size: " << currentChunkSize);
+            BM_LOG_ERROR("VendorApi::Api()->Memcpy(H2D) failed, ret: "
+                         << ret << " localRankId: " << rankId_ << " srcRankId: " << options.srcRankId << std::hex
+                         << " src: " << tmpHost << " dst: " << currentDest << std::dec
+                         << " size: " << currentChunkSize);
             return ret;
         }
         offset += currentChunkSize;
@@ -498,7 +499,7 @@ Result HostDataOpRDMA::BatchCopyLD2LH(void **hostAddrs, void **deviceAddrs, cons
         auto destAddr = hostAddrs[i];
         auto srcAddr = deviceAddrs[i];
         auto count = counts[i];
-        ret = DlHybridApi::MemcpyAsync(destAddr, count, srcAddr, count, ACL_MEMCPY_DEVICE_TO_HOST, st);
+        ret = VendorApi::Api()->MemcpyAsync(destAddr, count, srcAddr, count, ACL_MEMCPY_DEVICE_TO_HOST, st);
         if (ret != 0) {
             BM_LOG_ERROR("MemcpyAsync(D2H) failed, ret: "
                          << ret << " i: " << i << " stream: " << reinterpret_cast<uintptr_t>(st) << std::hex
@@ -507,7 +508,7 @@ Result HostDataOpRDMA::BatchCopyLD2LH(void **hostAddrs, void **deviceAddrs, cons
         }
     }
 
-    ret = DlHybridApi::StreamSynchronize(st);
+    ret = VendorApi::Api()->SynchronizeStream(st);
     if (ret != 0) {
         BM_LOG_ERROR("aclrtSynchronizeStream failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st));
     }
@@ -529,7 +530,7 @@ Result HostDataOpRDMA::BatchCopyLH2LD(void **deviceAddrs, void **hostAddrs, cons
         auto destAddr = deviceAddrs[i];
         auto srcAddr = hostAddrs[i];
         auto count = counts[i];
-        ret = DlHybridApi::MemcpyAsync(destAddr, count, srcAddr, count, ACL_MEMCPY_HOST_TO_DEVICE, st);
+        ret = VendorApi::Api()->MemcpyAsync(destAddr, count, srcAddr, count, ACL_MEMCPY_HOST_TO_DEVICE, st);
         if (ret != 0) {
             BM_LOG_ERROR("copy memory on local host to local device failed: " << ret << " stream:"
                                                                               << reinterpret_cast<uintptr_t>(st));
@@ -537,7 +538,7 @@ Result HostDataOpRDMA::BatchCopyLH2LD(void **deviceAddrs, void **hostAddrs, cons
         }
     }
 
-    ret = DlHybridApi::StreamSynchronize(st);
+    ret = VendorApi::Api()->SynchronizeStream(st);
     if (ret != 0) {
         BM_LOG_ERROR("aclrtSynchronizeStream failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st));
     }
@@ -867,8 +868,8 @@ Result HostDataOpRDMA::BatchCopyLD2LD(void **destAddrs, void **srcAddrs, const u
     }
     Result ret = BM_OK;
     for (size_t i = 0; i < batchSize; ++i) {
-        ret =
-            DlHybridApi::MemcpyAsync(destAddrs[i], counts[i], srcAddrs[i], counts[i], ACL_MEMCPY_DEVICE_TO_DEVICE, st);
+        ret = VendorApi::Api()->MemcpyAsync(destAddrs[i], counts[i], srcAddrs[i], counts[i],
+                                            ACL_MEMCPY_DEVICE_TO_DEVICE, st);
         if (ret != 0) {
             BM_LOG_ERROR("MemcpyAsync(D2D) failed, ret: "
                          << ret << " i: " << i << " stream: " << reinterpret_cast<uintptr_t>(st) << std::hex
@@ -876,7 +877,7 @@ Result HostDataOpRDMA::BatchCopyLD2LD(void **destAddrs, void **srcAddrs, const u
             return BM_DL_FUNCTION_FAILED;
         }
     }
-    ret = DlHybridApi::StreamSynchronize(st);
+    ret = VendorApi::Api()->SynchronizeStream(st);
     if (ret != 0) {
         BM_LOG_ERROR("aclrtSynchronizeStream failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st));
     }
@@ -947,7 +948,7 @@ Result HostDataOpRDMA::BatchCopyLH2LH(void **destAddrs, void **srcAddrs, const u
 {
     Result ret = BM_OK;
     for (uint32_t i = 0; i < batchSize; ++i) {
-        ret = DlHybridApi::Memcpy(destAddrs[i], counts[i], srcAddrs[i], counts[i], ACL_MEMCPY_HOST_TO_HOST);
+        ret = VendorApi::Api()->Memcpy(destAddrs[i], counts[i], srcAddrs[i], counts[i], ACL_MEMCPY_HOST_TO_HOST);
         if (ret != 0) {
             BM_LOG_ERROR("Memcpy(H2H) failed, ret: " << ret << " i: " << i << std::hex << " src: " << srcAddrs[i]
                                                      << " dst: " << destAddrs[i] << std::dec << " size: " << counts[i]);
@@ -1140,7 +1141,8 @@ Result HostDataOpRDMA::BatchCopyLH2GH(void **gvaAddrs, void **hostAddrs, const u
     Result ret = BM_OK;
     if (options.destRankId == rankId_) {
         for (auto i = 0U; i < batchSize; i++) {
-            auto ret = DlHybridApi::Memcpy(gvaAddrs[i], counts[i], hostAddrs[i], counts[i], ACL_MEMCPY_HOST_TO_HOST);
+            auto ret =
+                VendorApi::Api()->Memcpy(gvaAddrs[i], counts[i], hostAddrs[i], counts[i], ACL_MEMCPY_HOST_TO_HOST);
             if (ret != 0) {
                 BM_LOG_ERROR("copy local host to GVA failed: " << ret);
                 return ret;

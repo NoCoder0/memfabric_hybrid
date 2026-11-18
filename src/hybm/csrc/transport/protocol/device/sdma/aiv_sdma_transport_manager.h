@@ -27,7 +27,7 @@
 #include "hybm_transport_manager.h"
 #include "device_chip_info.h"
 #include "dl_op_api.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 
 struct HybmSdmaDeviceCopyContext;
 
@@ -158,7 +158,7 @@ public:
     uint64_t GetSdmaWorkSpaceAddr() const override;
     Result WaitNotify(uint32_t workerIndex, void *stream)
     {
-        return workerIndex < MAX_AIV_PER_NPU ? DlAclApi::AclrtWaitAndResetNotify(notifyArr_[workerIndex], stream, 30)
+        return workerIndex < MAX_AIV_PER_NPU ? VendorApi::Api()->WaitAndResetNotify(notifyArr_[workerIndex], stream, 30)
                                              : BM_INVALID_PARAM;
     }
 

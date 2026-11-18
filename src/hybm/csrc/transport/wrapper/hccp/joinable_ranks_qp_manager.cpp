@@ -14,8 +14,8 @@
 #include <sstream>
 #include "hybm_logger.h"
 #include "hybm_ptracer.h"
-#include "dl_hccp_api.h"
-#include "dl_acl_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/vendor_api.h"
 #include "joinable_ranks_qp_manager.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
@@ -373,7 +373,7 @@ void JoinableRanksQpManager::ServerSideHandleNewClients(const std::set<uint32_t>
 
 void JoinableRanksQpManager::ServerSideRunLoop() noexcept
 {
-    DlAclApi::AclrtSetDevice(userDeviceId_);
+    VendorApi::Api()->SetDevice(userDeviceId_);
 
     while (running_) {
         std::unique_lock<std::mutex> uniqueLock{mutex_};
@@ -399,7 +399,7 @@ void JoinableRanksQpManager::ServerSideRunLoop() noexcept
 
 void JoinableRanksQpManager::ClientSideRunLoop() noexcept
 {
-    DlAclApi::AclrtSetDevice(userDeviceId_);
+    VendorApi::Api()->SetDevice(userDeviceId_);
     while (running_) {
         std::unique_lock<std::mutex> uniqueLock{mutex_};
         cond_.wait_for(uniqueLock, std::chrono::milliseconds(WAIT_TIME_MS));

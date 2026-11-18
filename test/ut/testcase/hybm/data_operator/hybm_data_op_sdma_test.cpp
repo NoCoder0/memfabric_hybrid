@@ -16,8 +16,8 @@
 
 #include "hybm_data_op_sdma.h"
 #include "hybm_stream_manager.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "dl_hybm_copy_extend.h"
 #include "hybm_functions.h"
 #include "hybm_data_op.h"
@@ -49,7 +49,7 @@ static void CleanupMockAddresses()
 }
 
 // 模拟 AclrtMallocHost 函数的实现
-int MockAclrtMallocHost(void **ptr, size_t size)
+int MockAclrtMallocHost(ock::mf::AscendApiImpl *, void **ptr, size_t size)
 {
     if (ptr == nullptr || size == 0) {
         return -1;
@@ -62,13 +62,13 @@ int MockAclrtMallocHost(void **ptr, size_t size)
 }
 
 // 模拟 AclrtFreeHost 函数的实现
-int MockAclrtFreeHost(void *ptr)
+int MockAclrtFreeHost(ock::mf::AscendApiImpl *, void *ptr)
 {
     return 0;
 }
 
 // 模拟 AclrtMalloc 函数的实现：批量 staging 要求返回非空地址
-int MockAclrtMalloc(void **ptr, size_t size, uint32_t type)
+int MockAclrtMalloc(ock::mf::AscendApiImpl *, void **ptr, size_t size, uint32_t type)
 {
     (void)size;
     (void)type;
@@ -96,41 +96,68 @@ public:
 
     void TearDown() override
     {
+        dataOp_->UnInitialize();
         GlobalMockObject::verify();
         GlobalMockObject::reset();
     }
 
     void InitMockEnv()
     {
-        // 模拟 DlAclApi::AclrtMallocHost 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMallocHost).stubs().will(invoke(MockAclrtMallocHost));
+        // 模拟 AscendApiImpl::MallocHost 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::MallocHost, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t))
+            .stubs()
+            .will(invoke(MockAclrtMallocHost));
 
-        // 模拟 DlAclApi::AclrtFreeHost 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtFreeHost).stubs().will(invoke(MockAclrtFreeHost));
+        // 模拟 AscendApiImpl::FreeHost 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::FreeHost, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(invoke(MockAclrtFreeHost));
 
-        // 模拟 DlAclApi::AclrtMalloc 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(invoke(MockAclrtMalloc));
+        // 模拟 AscendApiImpl::Malloc 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+            .stubs()
+            .will(invoke(MockAclrtMalloc));
 
-        // 模拟 DlAclApi::AclrtFree 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtFree).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::Free 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::AclrtMemcpy 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::Memcpy 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::AclrtMemcpyAsync 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMemcpyAsync).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::MemcpyAsync 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::AclrtMemcpyBatch 方法，覆盖批量 staging 快路径
-        MOCKER(&ock::mf::DlAclApi::AclrtMemcpyBatch).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::MemcpyBatch 方法，覆盖批量 staging 快路径
+        MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyBatch,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t *, void **, size_t *, size_t, void *,
+                                      size_t *, size_t, size_t *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::AclrtSynchronizeStream 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtSynchronizeStream).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::SynchronizeStream 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::RtMemcpyAsync 方法
-        MOCKER(&ock::mf::DlAclApi::RtMemcpyAsync).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::MemcpyAsyncWithoutCheckKind 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsyncWithoutCheckKind,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::GetAscendSocType 方法
-        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910B));
+        // 模拟 AscendApiImpl::GetSocName 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+            .stubs()
+            .will(returnValue(ock::mf::AscendSocType::ASCEND_910B));
 
         // 模拟 DlHalApi::HalHostRegister 方法
         MOCKER(&ock::mf::DlHalApi::HalHostRegister).stubs().will(returnValue(0));
@@ -167,10 +194,20 @@ public:
 
         // Make MemSegment::InitDeviceInfo succeed with deterministic ids, so reachability
         // checks behave consistently in UT.
-        MOCKER(&ock::mf::DlAclApi::AclrtSetDevice).stubs().will(returnValue(0));
-        MOCKER(&ock::mf::DlAclApi::RtDeviceGetBareTgid).stubs().will(returnValue(0));
-        MOCKER(&ock::mf::DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(returnValue(0));
-        MOCKER(&ock::mf::DlAclApi::RtGetDeviceInfo).stubs().will(returnValue(0));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+            .stubs()
+            .will(returnValue(0));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::DeviceGetBareTgid, ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t *))
+            .stubs()
+            .will(returnValue(0));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetLogicDevIdByUserDevId,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+            .stubs()
+            .will(returnValue(0));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetDeviceInfo,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, int32_t, int32_t, int64_t *))
+            .stubs()
+            .will(returnValue(0));
         (void)ock::mf::MemSegment::InitDeviceInfo(0);
     }
 
@@ -266,8 +303,15 @@ TEST_F(HybmDataOpSdmaTest, data_copy_local_host_to_global_device)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_local_host_to_global_device_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1)).then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
     std::shared_ptr<ock::mf::HybmStream> mockStream = nullptr;
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs().will(returnValue(mockStream));
     InitMockEnv();
@@ -300,8 +344,14 @@ TEST_F(HybmDataOpSdmaTest, data_copy_global_device_to_local_host)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_global_device_to_local_host_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
@@ -409,8 +459,15 @@ TEST_F(HybmDataOpSdmaTest, data_copy_local_host_to_global_host)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_local_host_to_global_host_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1)).then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
     std::shared_ptr<ock::mf::HybmStream> mockStream = nullptr;
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs().will(returnValue(mockStream));
     InitMockEnv();
@@ -443,8 +500,14 @@ TEST_F(HybmDataOpSdmaTest, data_copy_global_host_to_local_host)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_global_host_to_local_host_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
@@ -554,8 +617,15 @@ TEST_F(HybmDataOpSdmaTest, data_copy_async_local_host_to_global_device)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_async_local_host_to_global_device_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1)).then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
     std::shared_ptr<ock::mf::HybmStream> mockStream = nullptr;
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs().will(returnValue(mockStream));
     InitMockEnv();
@@ -588,8 +658,14 @@ TEST_F(HybmDataOpSdmaTest, data_copy_async_global_device_to_local_host)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_async_global_device_to_local_host_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)
@@ -697,8 +773,15 @@ TEST_F(HybmDataOpSdmaTest, data_copy_async_local_host_to_global_host)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_async_local_host_to_global_host_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1)).then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
     std::shared_ptr<ock::mf::HybmStream> mockStream = nullptr;
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream).stubs().will(returnValue(mockStream));
     InitMockEnv();
@@ -731,8 +814,14 @@ TEST_F(HybmDataOpSdmaTest, data_copy_async_global_host_to_local_host)
 
 TEST_F(HybmDataOpSdmaTest, data_copy_async_global_host_to_local_host_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMalloc).stubs().will(returnValue(-1)).then(returnValue(0));
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1))
+        .then(returnValue(0));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1));
     std::shared_ptr<ock::mf::HybmStream> mockStream1 = nullptr;
     std::shared_ptr<ock::mf::HybmStream> mockStream2 = std::make_shared<ock::mf::HybmStream>(0, 0, 0);
     MOCKER(&ock::mf::HybmStreamManager::GetThreadHybmStream)

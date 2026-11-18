@@ -26,8 +26,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "dl_hcomm_api.h"
-#include "dl_rt_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hcomm_api_wrapper.h"
 #include "hybm_transport_manager.h"
 #include "hybm_urma_common.h"

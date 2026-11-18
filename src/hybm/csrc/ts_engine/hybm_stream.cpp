@@ -11,8 +11,8 @@
 */
 #include "hybm_stream.h"
 #include "hybm_common_include.h"
-#include "dl_hal_api.h"
-#include "dl_acl_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"
 #include "ptracer.h"
@@ -127,7 +127,7 @@ int32_t HybmStream::AllocSqcq(uint32_t ssid)
     sinfo->shareSqId = UINT32_MAX;
     sinfo->tsSqType = 0U;
 
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
+    if (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950) {
         auto ret = InitAscend950Stack(input, infoEx, stackPtr_, deviceId_);
         if (ret != BM_OK) {
             return ret;

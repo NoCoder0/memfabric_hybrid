@@ -16,11 +16,19 @@
 
 #define private public
 #include "hcomm_api_wrapper.h"
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "device_kernel_helper.h"
 #undef private
 
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
+
 using namespace ock::mf::transport::device;
 
 static constexpr uint64_t MOCK_ADDR_1 = 0x1000UL;
@@ -597,7 +605,7 @@ TEST(HcommApiWrapperTest, WaitForChannelsReadyPollsEveryPendingChannel)
     EXPECT_EQ(secondChannelPollCount, 1U);
 }
 
-// ── DlAclApi wrapper tests ──
+// ── AscendApiImpl wrapper tests ──
 
 TEST(HcommApiWrapperTest, RegisterMemory_InvalidMem_ZeroAddr)
 {
@@ -715,24 +723,24 @@ TEST(HcommApiWrapperTest, SameMem_NullAddr)
 using namespace ock::mf::transport::device;
 
 struct DlAclDeviceCommonGuard {
-    aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
-    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
-    rtGetDeviceInfoFunc oldGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
-    aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
+    aclrtGetDeviceFunc oldGetDevice{AscendRtApi().pAclrtGetDevice_};
+    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_};
+    rtGetDeviceInfoFunc oldGetDeviceInfo{AscendRtApi().pRtGetDeviceInfo_};
+    aclrtFreeFunc oldFree{AscendRtApi().pAclrtFree_};
 
     ~DlAclDeviceCommonGuard()
     {
-        DlAclApi::pAclrtGetDevice = oldGetDevice;
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDev;
-        DlAclApi::pRtGetDeviceInfo = oldGetDeviceInfo;
-        DlAclApi::pAclrtFree = oldFree;
+        AscendRtApi().pAclrtGetDevice_ = oldGetDevice;
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = oldGetPhyDev;
+        AscendRtApi().pRtGetDeviceInfo_ = oldGetDeviceInfo;
+        AscendRtApi().pAclrtFree_ = oldFree;
     }
 };
 
 TEST(HcommApiWrapperTest, ReleaseDeviceTransferBuffers_NonNullDstList)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
 
     DeviceTransferBuffers buffers{};
     void *dummyPtr = reinterpret_cast<void *>(0xD001UL);
@@ -747,7 +755,7 @@ TEST(HcommApiWrapperTest, ReleaseDeviceTransferBuffers_NonNullDstList)
 TEST(HcommApiWrapperTest, InitLocalDeviceInfo_AclrtGetDeviceFails)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtGetDevice = [](int32_t *deviceId) -> int32_t {
+    AscendRtApi().pAclrtGetDevice_ = [](int32_t *deviceId) -> int32_t {
         *deviceId = -1;
         return -8;
     };
@@ -767,11 +775,11 @@ TEST(HcommApiWrapperTest, ReleaseDeviceTransferBuffers_NullDstListOnly)
 TEST(HcommApiWrapperTest, InitLocalDeviceInfo_GetPhyDevFails)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtGetDevice = [](int32_t *id) -> int32_t {
+    AscendRtApi().pAclrtGetDevice_ = [](int32_t *id) -> int32_t {
         *id = 0;
         return 0;
     };
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t, int32_t *) -> int32_t { return -1; };
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t, int32_t *) -> int32_t { return -1; };
 
     uint32_t phyId = 0, sdid = 0, serverId = 0, superPodId = 0;
     auto ret = InitLocalDeviceInfo(phyId, sdid, serverId, superPodId);
@@ -781,15 +789,15 @@ TEST(HcommApiWrapperTest, InitLocalDeviceInfo_GetPhyDevFails)
 TEST(HcommApiWrapperTest, InitLocalDeviceInfo_QuerySdidFails)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtGetDevice = [](int32_t *id) -> int32_t {
+    AscendRtApi().pAclrtGetDevice_ = [](int32_t *id) -> int32_t {
         *id = 0;
         return 0;
     };
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t, int32_t *phyId) -> int32_t {
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t, int32_t *phyId) -> int32_t {
         *phyId = 0;
         return 0;
     };
-    DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t infoType, int64_t *val) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t infoType, int64_t *val) -> int32_t {
         if (infoType == INFO_TYPE_SDID)
             return -1;
         *val = 0;
@@ -804,15 +812,15 @@ TEST(HcommApiWrapperTest, InitLocalDeviceInfo_QuerySdidFails)
 TEST(HcommApiWrapperTest, InitLocalDeviceInfo_AllSuccess)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtGetDevice = [](int32_t *id) -> int32_t {
+    AscendRtApi().pAclrtGetDevice_ = [](int32_t *id) -> int32_t {
         *id = 0;
         return 0;
     };
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t, int32_t *phyId) -> int32_t {
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t, int32_t *phyId) -> int32_t {
         *phyId = 2;
         return 0;
     };
-    DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *val) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t, int64_t *val) -> int32_t {
         *val = 3;
         return 0;
     };
@@ -828,23 +836,23 @@ TEST(HcommApiWrapperTest, InitLocalDeviceInfo_AllSuccess)
 // These cover ~110 critical lines in device_kernel_helper.h
 
 struct DlAclKernelGuard {
-    aclrtMallocFunc oldMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtKernelArgsInitFunc oldArgsInit{DlAclApi::pAclrtKernelArgsInit};
-    aclrtKernelArgsAppendFunc oldArgsAppend{DlAclApi::pAclrtKernelArgsAppend};
-    aclrtKernelArgsFinalizeFunc oldArgsFinalize{DlAclApi::pAclrtKernelArgsFinalize};
-    aclrtLaunchKernelWithConfigFunc oldLaunch{DlAclApi::pAclrtLaunchKernelWithConfig};
+    aclrtMallocFunc oldMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtKernelArgsInitFunc oldArgsInit{AscendRtApi().pAclrtKernelArgsInit_};
+    aclrtKernelArgsAppendFunc oldArgsAppend{AscendRtApi().pAclrtKernelArgsAppend_};
+    aclrtKernelArgsFinalizeFunc oldArgsFinalize{AscendRtApi().pAclrtKernelArgsFinalize_};
+    aclrtLaunchKernelWithConfigFunc oldLaunch{AscendRtApi().pAclrtLaunchKernelWithConfig_};
 
     ~DlAclKernelGuard()
     {
-        DlAclApi::pAclrtMalloc = oldMalloc;
-        DlAclApi::pAclrtFree = oldFree;
-        DlAclApi::pAclrtMemcpy = oldMemcpy;
-        DlAclApi::pAclrtKernelArgsInit = oldArgsInit;
-        DlAclApi::pAclrtKernelArgsAppend = oldArgsAppend;
-        DlAclApi::pAclrtKernelArgsFinalize = oldArgsFinalize;
-        DlAclApi::pAclrtLaunchKernelWithConfig = oldLaunch;
+        AscendRtApi().pAclrtMalloc_ = oldMalloc;
+        AscendRtApi().pAclrtFree_ = oldFree;
+        AscendRtApi().pAclrtMemcpy_ = oldMemcpy;
+        AscendRtApi().pAclrtKernelArgsInit_ = oldArgsInit;
+        AscendRtApi().pAclrtKernelArgsAppend_ = oldArgsAppend;
+        AscendRtApi().pAclrtKernelArgsFinalize_ = oldArgsFinalize;
+        AscendRtApi().pAclrtLaunchKernelWithConfig_ = oldLaunch;
     }
 };
 
@@ -860,8 +868,8 @@ static int32_t MockAclrtMalloc(void **ptr, size_t size, uint32_t)
 TEST(HcommApiWrapperTest, PrepareLaunchBuffer_Success)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
 
     KernelLaunchConfig config{};
     config.batchSize = 2;
@@ -883,7 +891,7 @@ TEST(HcommApiWrapperTest, PrepareLaunchBuffer_Success)
 TEST(HcommApiWrapperTest, PrepareLaunchBuffer_MallocFails)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = [](void **, size_t, uint32_t) -> int32_t { return -1; };
+    AscendRtApi().pAclrtMalloc_ = [](void **, size_t, uint32_t) -> int32_t { return -1; };
 
     KernelLaunchConfig config{};
     config.batchSize = 1;
@@ -902,9 +910,9 @@ TEST(HcommApiWrapperTest, PrepareLaunchBuffer_MallocFails)
 TEST(HcommApiWrapperTest, PrepareLaunchBuffer_MemcpyFails)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return -1; };
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return -1; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
 
     KernelLaunchConfig config{};
     config.batchSize = 1;
@@ -975,10 +983,10 @@ TEST(HcommApiWrapperTest, LaunchDeviceKernel_NullStream)
 TEST(HcommApiWrapperTest, LaunchDeviceKernel_ArgsInitFails)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsInit = [](aclrtFuncHandle, aclrtArgsHandle *) -> int32_t { return -1; };
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtKernelArgsInit_ = [](aclrtFuncHandle, aclrtArgsHandle *) -> int32_t { return -1; };
 
     uint64_t addrs[1] = {0x1000};
     KernelLaunchConfig config{};
@@ -999,17 +1007,19 @@ TEST(HcommApiWrapperTest, LaunchDeviceKernel_ArgsInitFails)
 TEST(HcommApiWrapperTest, LaunchDeviceKernel_Success)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsInit = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtKernelArgsInit_ = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
         *h = nullptr;
         return 0;
     };
-    DlAclApi::pAclrtKernelArgsAppend = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsFinalize = [](aclrtArgsHandle) -> int32_t { return 0; };
-    DlAclApi::pAclrtLaunchKernelWithConfig = [](aclrtFuncHandle, uint32_t, void *, aclrtLaunchKernelCfg *,
-                                                aclrtArgsHandle, void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtKernelArgsAppend_ = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t {
+        return 0;
+    };
+    AscendRtApi().pAclrtKernelArgsFinalize_ = [](aclrtArgsHandle) -> int32_t { return 0; };
+    AscendRtApi().pAclrtLaunchKernelWithConfig_ = [](aclrtFuncHandle, uint32_t, void *, aclrtLaunchKernelCfg *,
+                                                     aclrtArgsHandle, void *) -> int32_t { return 0; };
 
     uint64_t addrs[2] = {0x1000, 0x2000};
     KernelLaunchConfig config{};
@@ -1032,17 +1042,19 @@ TEST(HcommApiWrapperTest, LaunchDeviceKernel_Success)
 TEST(HcommApiWrapperTest, LaunchDeviceKernel_LaunchFails)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsInit = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtKernelArgsInit_ = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
         *h = nullptr;
         return 0;
     };
-    DlAclApi::pAclrtKernelArgsAppend = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsFinalize = [](aclrtArgsHandle) -> int32_t { return 0; };
-    DlAclApi::pAclrtLaunchKernelWithConfig = [](aclrtFuncHandle, uint32_t, void *, aclrtLaunchKernelCfg *,
-                                                aclrtArgsHandle, void *) -> int32_t { return -1; };
+    AscendRtApi().pAclrtKernelArgsAppend_ = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t {
+        return 0;
+    };
+    AscendRtApi().pAclrtKernelArgsFinalize_ = [](aclrtArgsHandle) -> int32_t { return 0; };
+    AscendRtApi().pAclrtLaunchKernelWithConfig_ = [](aclrtFuncHandle, uint32_t, void *, aclrtLaunchKernelCfg *,
+                                                     aclrtArgsHandle, void *) -> int32_t { return -1; };
 
     uint64_t addrs[1] = {0x1000};
     KernelLaunchConfig config{};
@@ -1246,14 +1258,14 @@ TEST(HcommApiWrapperTest, ExportMemory_CacheHit)
 TEST(HcommApiWrapperTest, LaunchDeviceKernel_ArgsAppendFails)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsInit = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtKernelArgsInit_ = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
         *h = nullptr;
         return 0;
     };
-    DlAclApi::pAclrtKernelArgsAppend = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t {
+    AscendRtApi().pAclrtKernelArgsAppend_ = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t {
         return -1;
     };
 
@@ -1272,15 +1284,17 @@ TEST(HcommApiWrapperTest, LaunchDeviceKernel_ArgsAppendFails)
 TEST(HcommApiWrapperTest, LaunchDeviceKernel_ArgsFinalizeFails)
 {
     DlAclKernelGuard guard;
-    DlAclApi::pAclrtMalloc = MockAclrtMalloc;
-    DlAclApi::pAclrtMemcpy = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
-    DlAclApi::pAclrtFree = [](void *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsInit = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMalloc;
+    AscendRtApi().pAclrtMemcpy_ = [](void *, size_t, const void *, size_t, uint32_t) -> int32_t { return 0; };
+    AscendRtApi().pAclrtFree_ = [](void *) -> int32_t { return 0; };
+    AscendRtApi().pAclrtKernelArgsInit_ = [](aclrtFuncHandle, aclrtArgsHandle *h) -> int32_t {
         *h = nullptr;
         return 0;
     };
-    DlAclApi::pAclrtKernelArgsAppend = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t { return 0; };
-    DlAclApi::pAclrtKernelArgsFinalize = [](aclrtArgsHandle) -> int32_t { return -1; };
+    AscendRtApi().pAclrtKernelArgsAppend_ = [](aclrtArgsHandle, void *, size_t, aclrtParamHandle *) -> int32_t {
+        return 0;
+    };
+    AscendRtApi().pAclrtKernelArgsFinalize_ = [](aclrtArgsHandle) -> int32_t { return -1; };
 
     uint64_t addrs[1] = {0x1000};
     KernelLaunchConfig config{};
@@ -1297,15 +1311,15 @@ TEST(HcommApiWrapperTest, LaunchDeviceKernel_ArgsFinalizeFails)
 TEST(HcommApiWrapperTest, InitLocalDeviceInfo_ServerIdFails)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtGetDevice = [](int32_t *id) -> int32_t {
+    AscendRtApi().pAclrtGetDevice_ = [](int32_t *id) -> int32_t {
         *id = 0;
         return 0;
     };
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t, int32_t *phyId) -> int32_t {
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t, int32_t *phyId) -> int32_t {
         *phyId = 0;
         return 0;
     };
-    DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t infoType, int64_t *val) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t infoType, int64_t *val) -> int32_t {
         if (infoType == INFO_TYPE_SERVER_ID)
             return -1;
         *val = 0;
@@ -1318,15 +1332,15 @@ TEST(HcommApiWrapperTest, InitLocalDeviceInfo_ServerIdFails)
 TEST(HcommApiWrapperTest, InitLocalDeviceInfo_SuperPodFails)
 {
     DlAclDeviceCommonGuard guard;
-    DlAclApi::pAclrtGetDevice = [](int32_t *id) -> int32_t {
+    AscendRtApi().pAclrtGetDevice_ = [](int32_t *id) -> int32_t {
         *id = 0;
         return 0;
     };
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t, int32_t *phyId) -> int32_t {
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t, int32_t *phyId) -> int32_t {
         *phyId = 0;
         return 0;
     };
-    DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t infoType, int64_t *val) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t infoType, int64_t *val) -> int32_t {
         if (infoType == INFO_TYPE_SUPER_POD_ID)
             return -1;
         *val = 0;

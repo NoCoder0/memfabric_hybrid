@@ -23,19 +23,26 @@
 #include <thread>
 #include <vector>
 
-#include "dl_hal_api.h"
+#define private   public
+#define protected public
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_networks_common.h"
 #include "mf_scope_guard.h"
 #include "provider_device_context.h"
-
-#define private public
+#include "vendor/vendor_api.h"
 #include "urma_provider_control_server.h"
 #include "urma_proxy_transport_manager.h"
 #undef private
+#undef protected
 
 using namespace ock::mf;
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
+
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
 
 namespace {
 std::atomic<bool> compatible{true};
@@ -74,6 +81,8 @@ protected:
 
     // Worker threads call these stubs directly; mockcpp invocation recording is not thread safe.
     std::vector<std::unique_ptr<MOCKCPP_NS::ApiHook>> hooks_;
+    aclrtGetCurrentContextFunc oldGetCurrentContext_{AscendRtApi().pAclrtGetCurrentContext_};
+    aclrtSetCurrentContextFunc oldSetCurrentContext_{AscendRtApi().pAclrtSetCurrentContext_};
 
     void SetUp() override
     {
@@ -85,12 +94,11 @@ protected:
         Hook(
             reinterpret_cast<std::vector<uint32_t> (*)()>(&NetworkGetIpAddresses),
             +[]() { return std::vector<uint32_t>{}; });
-        Hook(
-            DlAclApi::AclrtGetCurrentContext, +[](void **context) {
-                *context = nullptr;
-                return BM_OK;
-            });
-        Hook(DlAclApi::AclrtSetCurrentContext, +[](void *) { return BM_OK; });
+        AscendRtApi().pAclrtGetCurrentContext_ = +[](void **context) {
+            *context = nullptr;
+            return BM_OK;
+        };
+        AscendRtApi().pAclrtSetCurrentContext_ = +[](void *) { return BM_OK; };
         Hook(DlHcommApi::RefreshCurrentDevice, +[]() { return BM_OK; });
         Hook(
             DlHalApi::HalHostRegister, +[](void *addr, uint64_t, uint32_t, uint32_t, void **mapped) {
@@ -200,6 +208,8 @@ protected:
 
     void TearDown() override
     {
+        AscendRtApi().pAclrtGetCurrentContext_ = oldGetCurrentContext_;
+        AscendRtApi().pAclrtSetCurrentContext_ = oldSetCurrentContext_;
         hooks_.clear();
         GlobalMockObject::verify();
         GlobalMockObject::reset();

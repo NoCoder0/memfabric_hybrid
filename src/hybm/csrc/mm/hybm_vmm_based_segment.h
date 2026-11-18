@@ -16,7 +16,7 @@
 
 #include "hybm_mem_segment.h"
 #include "hybm_mem_common.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 
 namespace ock {
 namespace mf {

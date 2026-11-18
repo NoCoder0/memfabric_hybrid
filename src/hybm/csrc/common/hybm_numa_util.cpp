@@ -24,8 +24,8 @@
 #include <string>
 #include <vector>
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_define.h"
 #include "hybm_logger.h"
 #include "mf_num_util.h"
@@ -306,7 +306,7 @@ NumaBindPolicyInfo HybmNumaUtil::GetNumaBindPolicyInfo(uint32_t flags, int32_t d
     info.policy = bindNuma == HYBM_BIND_NUMA_AUTO_AFFINITY_FLAG ? NumaBindPolicy::AUTO : NumaBindPolicy::MANUAL;
 
     // 非 A5 仅保留 NUMA 内存分配策略，不解析 CPU/socket 亲和信息。
-    if (DlAclApi::GetAscendSocType() != AscendSocType::ASCEND_950) {
+    if (VendorApi::Api()->GetSocName() != AscendSocType::ASCEND_950) {
         BM_LOG_DEBUG("Skip NUMA CPU affinity resolution on non-A5 SOC");
         return info;
     }

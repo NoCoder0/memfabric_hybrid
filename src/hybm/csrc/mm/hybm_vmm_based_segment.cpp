@@ -14,7 +14,7 @@
 #include <bitset>
 #include <cstdint>
 
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_types.h"
 #include "hybm_va_manager.h"
@@ -146,7 +146,7 @@ Result HybmVmmBasedSegment::UnReserveMemorySpace() noexcept
 Result HybmVmmBasedSegment::HalMemCreateAdapterFromHost(size_t size, drv_mem_handle_t **handle, drv_mem_prop prop)
 {
     Result ret = BM_ERROR;
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950 || (options_.flags & HYBM_FLAG_UNRESTRICTED_MEM)) {
+    if (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950 || (options_.flags & HYBM_FLAG_UNRESTRICTED_MEM)) {
         prop = {MEM_HOST_SIDE, 0, 0, MEM_HUGE_PAGE_TYPE, MEM_DDR_TYPE, 0};
         auto start = std::chrono::high_resolution_clock::now();
         ret = DlHalApi::HalMemCreate(handle, size, &prop, 0);
@@ -185,7 +185,7 @@ Result HybmVmmBasedSegment::MallocFromHost(size_t size, uint32_t devId, drv_mem_
     drv_mem_prop prop{};
     prop = {MEM_HOST_NUMA_SIDE, devId, 0, MEM_GIANT_PAGE_TYPE, MEM_P2P_DDR_TYPE, 0};
     size_t granularity = 0;
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950 || // A5当前仅支持huge page
+    if (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950 || // A5当前仅支持huge page
         DlHalApi::HalMemGetAllocationGranularity(&prop, MEM_ALLOC_GRANULARITY_RECOMMENDED, &granularity) != 0) {
         prop.pg_type = MEM_HUGE_PAGE_TYPE;
         BM_LOG_INFO("Not support giant page size change use huge page, memType:" << prop.mem_type);
@@ -658,8 +658,8 @@ Result HybmVmmBasedSegment::Mmap() noexcept
         if (options_.shared && options_.segType == HYBM_MST_HBM && devicePhyId_ != static_cast<int>(im.devicePhyId) &&
             CanLocalHostReaches(im.superPodId, im.serverId, im.devicePhyId)) {
             uint32_t p2pStatus = 0;
-            auto p2pRet = DlAclApi::RtGetP2PStatus(static_cast<uint32_t>(deviceId_),
-                                                   static_cast<uint32_t>(im.devicePhyId), p2pStatus);
+            auto p2pRet = VendorApi::Api()->GetP2PStatus(static_cast<uint32_t>(deviceId_),
+                                                         static_cast<uint32_t>(im.devicePhyId), p2pStatus);
             if (p2pRet != BM_OK) {
                 BM_LOG_ERROR("query P2P status failed, rank=" << im.rankId << " remote_dev=" << im.devicePhyId
                                                               << " local_dev=" << devicePhyId_ << " ret=" << p2pRet);

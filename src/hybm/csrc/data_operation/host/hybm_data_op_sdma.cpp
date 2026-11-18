@@ -25,8 +25,8 @@
 #include <vector>
 
 #include "hybm_logger.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "dl_hybm_copy_extend.h"
 #include "hybm_ptracer.h"
 #include "hybm_data_op.h"
@@ -138,8 +138,9 @@ Result MemcpyHostDeviceByBatch(void **destAddrs, void **srcAddrs, const uint64_t
                 batchSizes[i] = sizes[beg + i];
             }
             size_t failIdx = 0;
-            auto ret = DlAclApi::AclrtMemcpyBatch(destAddrs + beg, batchSizes.data(), srcAddrs + beg, batchSizes.data(),
-                                                  now, attrs.data(), attrIds.data(), now, &failIdx);
+            auto ret =
+                VendorApi::Api()->MemcpyBatch(destAddrs + beg, batchSizes.data(), srcAddrs + beg, batchSizes.data(),
+                                              now, attrs.data(), attrIds.data(), now, &failIdx);
             if (ret != BM_OK) {
                 BM_LOG_DEBUG("sdma staging batch memcpy failed, ret: " << ret << " hostToDevice: " << hostToDevice
                                                                        << " failIndex: " << beg + failIdx);
@@ -161,23 +162,23 @@ Result MemcpyHostDeviceByAsync(void **destAddrs, void **srcAddrs, const uint64_t
     for (uint32_t i = 0; i < count; i++) {
         Result ret = BM_UNDER_API_UNLOAD;
         if (stream != nullptr) {
-            ret = DlAclApi::AclrtMemcpyAsync(destAddrs[i], sizes[i], srcAddrs[i], sizes[i], kind, stream);
+            ret = VendorApi::Api()->MemcpyAsync(destAddrs[i], sizes[i], srcAddrs[i], sizes[i], kind, stream);
         }
         if (ret != BM_OK) {
             // 非 pinned host 内存不支持异步拷贝，退化为同步拷贝
-            ret = DlAclApi::AclrtMemcpy(destAddrs[i], sizes[i], srcAddrs[i], sizes[i], kind);
+            ret = VendorApi::Api()->Memcpy(destAddrs[i], sizes[i], srcAddrs[i], sizes[i], kind);
         }
         if (ret != BM_OK) {
             BM_LOG_ERROR("sdma staging memcpy failed, ret: " << ret << " hostToDevice: " << hostToDevice
                                                              << " index: " << i << " size: " << sizes[i]);
             if (stream != nullptr) {
-                (void)DlAclApi::AclrtSynchronizeStream(stream);
+                (void)VendorApi::Api()->SynchronizeStream(stream);
             }
             return ret;
         }
     }
     if (stream != nullptr) {
-        auto ret = DlAclApi::AclrtSynchronizeStream(stream);
+        auto ret = VendorApi::Api()->SynchronizeStream(stream);
         if (ret != BM_OK) {
             BM_LOG_ERROR("sdma staging memcpy synchronize failed, ret: " << ret << " hostToDevice: " << hostToDevice);
             return ret;
@@ -193,7 +194,7 @@ Result BatchMemcpyHostDevice(void **destAddrs, void **srcAddrs, const uint64_t *
         return BM_OK;
     }
     // A5(950) 沿用 device_rdma 的策略，不使用批量 memcpy 接口
-    const bool useBatchApi = DlAclApi::GetAscendSocType() != AscendSocType::ASCEND_950 &&
+    const bool useBatchApi = VendorApi::Api()->GetSocName() != AscendSocType::ASCEND_950 &&
                              !g_sdmaBatchMemcpyUnsupported.load(std::memory_order_relaxed);
     if (useBatchApi) {
         auto ret = MemcpyHostDeviceByBatch(destAddrs, srcAddrs, sizes, count, hostToDevice);
@@ -226,10 +227,10 @@ Result HostDataOpSDMA::Initialize() noexcept
         return BM_OK;
     }
 
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950 || !IsArmArch()) {
+    if (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950 || !IsArmArch()) {
         BM_LOG_WARN("A5 or x86 not support batch extend copy now!");
     } else {
-        auto ret = DlAclApi::AclrtMallocHost(&paramSpace_, HYBM_PARAM_SPACE_SIZE);
+        auto ret = VendorApi::Api()->MallocHost(&paramSpace_, HYBM_PARAM_SPACE_SIZE);
         BM_ASSERT_LOG_AND_RETURN(ret == 0 && paramSpace_ != nullptr,
                                  "ret = " << ret << ", " << "paramSpace_ is nullptr", BM_MALLOC_FAILED);
 
@@ -238,7 +239,7 @@ Result HostDataOpSDMA::Initialize() noexcept
                                         HybmGetInitedLogicDeviceId(), &output);
         if (ret != BM_OK) {
             BM_LOG_ERROR("register param space failed, ret:" << ret);
-            DlAclApi::AclrtFreeHost(paramSpace_);
+            VendorApi::Api()->FreeHost(paramSpace_);
             paramSpace_ = nullptr;
             return BM_ERROR;
         }
@@ -265,7 +266,7 @@ void HostDataOpSDMA::UnInitialize() noexcept
     aivDirectSdma_.Close();
     if (paramSpace_ != nullptr) {
         DlHalApi::HalHostUnregisterEx(paramSpace_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
-        DlAclApi::AclrtFreeHost(paramSpace_);
+        VendorApi::Api()->FreeHost(paramSpace_);
         paramSpace_ = nullptr;
     }
     inited_ = false;
@@ -367,36 +368,36 @@ Result HostDataOpSDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_directi
 Result HostDataOpSDMA::CopyLH2GD(void *gvaAddr, const void *hostAddr, size_t count, void *stream) noexcept
 {
     void *copyDevice;
-    auto ret = DlAclApi::AclrtMalloc(&copyDevice, count, 0);
+    auto ret = VendorApi::Api()->Malloc(&copyDevice, count, 0);
     if (ret != 0) {
         BM_LOG_ERROR("AclrtMalloc temp copy memory failed, ret: " << ret << " size: " << count << std::hex
                                                                   << " hostAddr: " << hostAddr);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    ret = DlAclApi::AclrtMemcpy(copyDevice, count, hostAddr, count, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(copyDevice, count, hostAddr, count, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
         BM_LOG_ERROR("AclrtMemcpy(H2D) to temp copy memory failed, ret: " << ret << std::hex << " src: " << hostAddr
                                                                           << " dst: " << copyDevice << std::dec
                                                                           << " size: " << count);
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return BM_DL_FUNCTION_FAILED;
     }
 
     auto result = CopyG2G(gvaAddr, copyDevice, count, 0, nullptr);
     if (result != BM_OK) {
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return result;
     }
 
-    DlAclApi::AclrtFree(copyDevice);
+    VendorApi::Api()->Free(copyDevice);
     return BM_OK;
 }
 
 Result HostDataOpSDMA::CopyGD2LH(void *hostAddr, const void *gvaAddr, size_t count, void *stream) noexcept
 {
     void *copyDevice;
-    auto ret = DlAclApi::AclrtMalloc(&copyDevice, count, 0);
+    auto ret = VendorApi::Api()->Malloc(&copyDevice, count, 0);
     if (ret != 0) {
         BM_LOG_ERROR("allocate temp copy memory on local device failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -404,18 +405,18 @@ Result HostDataOpSDMA::CopyGD2LH(void *hostAddr, const void *gvaAddr, size_t cou
 
     auto result = CopyG2G(copyDevice, gvaAddr, count, 0, nullptr);
     if (result != BM_OK) {
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return result;
     }
 
-    ret = DlAclApi::AclrtMemcpy(hostAddr, count, copyDevice, count, ACL_MEMCPY_DEVICE_TO_HOST);
+    ret = VendorApi::Api()->Memcpy(hostAddr, count, copyDevice, count, ACL_MEMCPY_DEVICE_TO_HOST);
     if (ret != 0) {
         BM_LOG_ERROR("copy data on temp DEVICE to GVA failed: " << ret);
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    DlAclApi::AclrtFree(copyDevice);
+    VendorApi::Api()->Free(copyDevice);
     return BM_OK;
 }
 
@@ -556,26 +557,26 @@ Result HostDataOpSDMA::CopyLH2GH(void *destVA, const void *srcVA, uint64_t lengt
 {
     // local host到dram池的拷贝
     void *copyDevice;
-    auto ret = DlAclApi::AclrtMalloc(&copyDevice, length, 0);
+    auto ret = VendorApi::Api()->Malloc(&copyDevice, length, 0);
     if (ret != 0) {
         BM_LOG_ERROR("allocate temp copy memory on local device failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    ret = DlAclApi::AclrtMemcpy(copyDevice, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(copyDevice, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
         BM_LOG_ERROR("copy host data to temp copy memory on local device failed: " << ret);
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return BM_DL_FUNCTION_FAILED;
     }
 
     auto result = CopyG2G(destVA, copyDevice, length, 0, nullptr);
     if (result != BM_OK) {
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return result;
     }
 
-    DlAclApi::AclrtFree(copyDevice);
+    VendorApi::Api()->Free(copyDevice);
     return ret;
 }
 
@@ -583,7 +584,7 @@ Result HostDataOpSDMA::CopyGH2LH(void *destVA, const void *srcVA, uint64_t lengt
 {
     // dram池的拷贝到local host
     void *copyDevice;
-    auto ret = DlAclApi::AclrtMalloc(&copyDevice, length, 0);
+    auto ret = VendorApi::Api()->Malloc(&copyDevice, length, 0);
     if (ret != 0) {
         BM_LOG_ERROR("allocate temp copy memory on local device failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -591,24 +592,24 @@ Result HostDataOpSDMA::CopyGH2LH(void *destVA, const void *srcVA, uint64_t lengt
 
     auto result = CopyG2G(copyDevice, srcVA, length, 0, nullptr);
     if (result != BM_OK) {
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return result;
     }
 
-    ret = DlAclApi::AclrtMemcpy(destVA, length, copyDevice, length, ACL_MEMCPY_DEVICE_TO_HOST);
+    ret = VendorApi::Api()->Memcpy(destVA, length, copyDevice, length, ACL_MEMCPY_DEVICE_TO_HOST);
     if (ret != 0) {
         BM_LOG_ERROR("copy host data to temp copy memory on local device failed: " << ret);
-        DlAclApi::AclrtFree(copyDevice);
+        VendorApi::Api()->Free(copyDevice);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    DlAclApi::AclrtFree(copyDevice);
+    VendorApi::Api()->Free(copyDevice);
     return ret;
 }
 
 void HostDataOpSDMA::InitG2GStreamTask(StreamTask &task, void *destVA, const void *srcVA, size_t count) noexcept
 {
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
+    if (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950) {
         return InitG2GStreamTaskV2(task, destVA, srcVA, count);
     }
     if (count > UINT32_MAX) {
@@ -734,7 +735,7 @@ Result HostDataOpSDMA::CopyG2G(void *destVA, const void *srcVA, size_t count, ui
         void *st = (stream != nullptr) ? stream : HybmStreamManager::GetThreadAclStream();
         auto ret = DlHybmExtendApi::HybmCopyExtend(srcVA, destVA, count, HYBM_EXTEND_CONCURRENT, st);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "ret = " << ret, ret);
-        ret = DlAclApi::AclrtSynchronizeStream(st);
+        ret = VendorApi::Api()->SynchronizeStream(st);
         BM_VALIDATE_RETURN(ret == BM_OK, "AclrtSynchronizeStream failed:" << ret, BM_ERROR);
         return BM_OK;
     }
@@ -766,7 +767,8 @@ Result HostDataOpSDMA::CopyG2GAsync(void *destVA, const void *srcVA, size_t coun
         if (flags & COPY_EXTEND_FLAG) {
             return DlHybmExtendApi::HybmCopyExtend(srcVA, destVA, count, HYBM_EXTEND_CONCURRENT, stream);
         }
-        return DlAclApi::RtMemcpyAsync(destVA, count, srcVA, count, RT_MEMCPY_DEVICE_TO_DEVICE, stream);
+        return VendorApi::Api()->MemcpyAsyncWithoutCheckKind(destVA, count, srcVA, count, RT_MEMCPY_DEVICE_TO_DEVICE,
+                                                             stream);
     }
     StreamTask task{};
     InitG2GStreamTask(task, destVA, srcVA, count);
@@ -789,7 +791,7 @@ Result HostDataOpSDMA::InnerWait(const ExtOptions &options, int32_t waitId) noex
 
     if (options.stream != nullptr) {
         TP_TRACE_BEGIN(TP_HYBM_ACL_SYNC_STREAM);
-        asyncRet = DlAclApi::AclrtSynchronizeStream(options.stream);
+        asyncRet = VendorApi::Api()->SynchronizeStream(options.stream);
         TP_TRACE_END(TP_HYBM_ACL_SYNC_STREAM, asyncRet);
         BM_LOG_DEBUG("AclrtSynchronizeStream stream:" << options.stream << " ret:" << asyncRet);
     } else {
@@ -835,7 +837,7 @@ Result HostDataOpSDMA::BatchCopyExtend(hybm_batch_copy_params &params, void *str
         void *maskPtr = nullptr;
         uint32_t spaceId = TryGetOneParamSpace(&maskPtr);
         if (spaceId >= HYBM_PARAM_SPACE_CAP) {
-            auto ret = DlAclApi::AclrtSynchronizeStream(st);
+            auto ret = VendorApi::Api()->SynchronizeStream(st);
             BM_VALIDATE_RETURN(ret == BM_OK, "AclrtSynchronizeStream failed:" << ret, BM_ERROR);
             spaceId = TryGetOneParamSpace(&maskPtr);
         }
@@ -861,7 +863,7 @@ Result HostDataOpSDMA::BatchCopyExtend(hybm_batch_copy_params &params, void *str
     }
 
     if (!(flags & ASYNC_COPY_FLAG)) {
-        auto ret = DlAclApi::AclrtSynchronizeStream(st);
+        auto ret = VendorApi::Api()->SynchronizeStream(st);
         BM_VALIDATE_RETURN(ret == BM_OK, "AclrtSynchronizeStream failed:" << ret, BM_ERROR);
     }
     return BM_OK;
@@ -1039,7 +1041,7 @@ Result HostDataOpSDMA::StagedCopyChunk(void *gvaAddrs[], void *hostAddrs[], cons
     }
 
     void *staging = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(&staging, chunk.bytes, 0);
+    auto ret = VendorApi::Api()->Malloc(&staging, chunk.bytes, 0);
     if (ret != BM_OK || staging == nullptr) {
         BM_LOG_ERROR("sdma staging alloc failed, ret: " << ret << " bytes: " << chunk.bytes);
         return BM_MALLOC_FAILED;
@@ -1048,7 +1050,7 @@ Result HostDataOpSDMA::StagedCopyChunk(void *gvaAddrs[], void *hostAddrs[], cons
     StagingLayout layout;
     if (!BuildStagingLayout(layout, gvaAddrs, hostAddrs, counts, chunk, static_cast<uint8_t *>(staging))) {
         BM_LOG_ERROR("sdma staging descriptor allocation failed, begin: " << chunk.begin << " end: " << chunk.end);
-        (void)DlAclApi::AclrtFree(staging);
+        (void)VendorApi::Api()->Free(staging);
         return BM_MALLOC_FAILED;
     }
 
@@ -1082,10 +1084,10 @@ Result HostDataOpSDMA::StagedCopyChunk(void *gvaAddrs[], void *hostAddrs[], cons
         }
         auto aclStream = HybmStreamManager::GetThreadAclStream();
         if (aclStream != nullptr) {
-            (void)DlAclApi::AclrtSynchronizeStream(aclStream);
+            (void)VendorApi::Api()->SynchronizeStream(aclStream);
         }
     }
-    (void)DlAclApi::AclrtFree(staging);
+    (void)VendorApi::Api()->Free(staging);
     return ret;
 }
 } // namespace mf

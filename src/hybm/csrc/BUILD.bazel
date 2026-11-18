@@ -99,6 +99,7 @@ HYBM_SRCS = glob([
     "transport/wrapper/ubs_comm/*.cpp",
     "ts_engine/*.cpp",
     "under_api/*.cpp",
+    "under_api/vendor/*/*.cpp",
 ]) + [
     "//src:util/csrc/mf_fault_injection_point.cpp",
     "//src:util/csrc/mf_fault_injection_point_registry.cpp",
@@ -122,8 +123,8 @@ cc_library (
 )
 
 # GVA version constants header included by common/hybm_common_include.h;
-# exposed headers-only so modules outside hybm that include dl_acl_api.h (which
-# pulls in hybm_common_include.h) can resolve "hybm_gva_version.h".
+# exposed headers-only so modules outside hybm that include under_api headers (which
+# pull in hybm_common_include.h) can resolve "hybm_gva_version.h".
 cc_library (
     name = "hybm_driver_version_headers",
     hdrs = glob(["driver/version/*.h"]),
@@ -134,11 +135,15 @@ cc_library (
     ],
 )
 
-# Under-API dlopen shims (dl_acl_api.h etc.) for modules outside hybm that need
+# Under-API dlopen shims (vendor headers etc.) for modules outside hybm that need
 # direct ACL runtime queries (e.g. acc_offload's SoC-type check).
 cc_library (
     name = "hybm_under_api_headers",
-    hdrs = glob(["under_api/*.h"]),
+    hdrs = glob([
+        "under_api/*.h",
+        "under_api/vendor/*.h",
+        "under_api/vendor/*/*.h",
+    ]),
     strip_include_prefix = "under_api",
     visibility = ["//visibility:public"],
     deps = [

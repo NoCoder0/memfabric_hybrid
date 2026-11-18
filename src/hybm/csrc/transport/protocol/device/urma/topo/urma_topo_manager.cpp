@@ -24,7 +24,7 @@
 #include "urma_topo_def.h"
 #include "urma_topo_manager.h"
 
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "urma_topo_common.h"
 #include "urma_topo_json_parser.h"
 
@@ -381,7 +381,7 @@ Result UrmaTopoManager::Initialize(int32_t deviceId, uint32_t rankId)
 Result UrmaTopoManager::SetDeviceBaseInfo()
 {
     int64_t value = 0;
-    auto ret = DlAclApi::RtGetDeviceInfo(userDeviceId_, 0, INFO_TYPE_MAINBOARD_ID, &value);
+    auto ret = VendorApi::Api()->GetDeviceInfo(userDeviceId_, 0, INFO_TYPE_MAINBOARD_ID, &value);
     if (ret != BM_OK) {
         BM_LOG_ERROR("Failed to get mainboardId: " << ret << " userId:" << userDeviceId_
                                                    << " logicId:" << logicDeviceId_);
@@ -405,13 +405,13 @@ Result UrmaTopoManager::SetDeviceBaseInfo()
 
 Result UrmaTopoManager::SetDeviceIdentity()
 {
-    auto ret = DlAclApi::RtGetLogicDevIdByUserDevId(userDeviceId_, &logicDeviceId_);
+    auto ret = VendorApi::Api()->GetLogicDevIdByUserDevId(userDeviceId_, &logicDeviceId_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get logic deviceId failed: " << ret << " userId:" << userDeviceId_);
         return BM_DL_FUNCTION_FAILED;
     }
     // 实测需要使用userDeviceId
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userDeviceId_, &phyDeviceId_);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(userDeviceId_, &phyDeviceId_);
     if (ret != 0) {
         BM_LOG_WARN("Failed to get phy deviceId by logicDevId, fallback to logicId: user="
                     << userDeviceId_ << ", logic=" << logicDeviceId_ << ", ret=" << ret);

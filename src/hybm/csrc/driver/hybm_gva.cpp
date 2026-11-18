@@ -12,8 +12,8 @@
 
 #include "hybm_common_include.h"
 #include "dl_api.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_gva.h"
 
 namespace ock {
@@ -73,7 +73,7 @@ int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddre
         return BM_OK;
     }
     initedLogicDeviceId = -1;
-    DlAclApi::RtGetLogicDevIdByUserDevId(deviceId, &initedLogicDeviceId);
+    VendorApi::Api()->GetLogicDevIdByUserDevId(deviceId, &initedLogicDeviceId);
     if (initedLogicDeviceId < 0) {
         BM_LOG_ERROR("RtGetLogicDevIdByUserDevId failed, deviceId: " << deviceId
                                                                      << " logicDeviceId: " << initedLogicDeviceId);
@@ -81,7 +81,7 @@ int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddre
     }
     BM_LOG_INFO("Success get deviceId: " << deviceId << ", logicDeviceId: " << initedLogicDeviceId
                                          << " sco:" << (int)socType << " ver:" << HybmGetGvaVersion());
-    auto ret = DlAclApi::AclrtSetDevice(deviceId);
+    auto ret = VendorApi::Api()->SetDevice(deviceId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("set device id to be " << deviceId << " failed: " << ret);
         return BM_ERROR;

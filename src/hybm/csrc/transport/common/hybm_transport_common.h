@@ -24,7 +24,7 @@
 #include <unordered_map>
 #include "hybm_def.h"
 #include "hybm_define.h"
-#include "dl_hccp_def.h"
+#include "vendor/ascend/dl_hccp_def.h"
 
 namespace ock {
 namespace mf {

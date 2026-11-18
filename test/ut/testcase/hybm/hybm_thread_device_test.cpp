@@ -14,11 +14,18 @@
 
 #define private public
 #include "hybm_entity_default.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 
 namespace {
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
 
 constexpr int32_t INIT_DEVICE_ID = 0;
 constexpr int32_t OTHER_DEVICE_ID = 1;
@@ -27,19 +34,19 @@ thread_local int32_t setDeviceCalls = 0;
 thread_local int32_t setDeviceResult = BM_OK;
 
 struct AclDeviceFunctionsGuard {
-    aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
-    aclrtSetDeviceFunc oldSetDevice{DlAclApi::pAclrtSetDevice};
+    aclrtGetDeviceFunc oldGetDevice{AscendRtApi().pAclrtGetDevice_};
+    aclrtSetDeviceFunc oldSetDevice{AscendRtApi().pAclrtSetDevice_};
 
     AclDeviceFunctionsGuard()
     {
         currentDevice = OTHER_DEVICE_ID;
         setDeviceCalls = 0;
         setDeviceResult = BM_OK;
-        DlAclApi::pAclrtGetDevice = [](int32_t *device) {
+        AscendRtApi().pAclrtGetDevice_ = [](int32_t *device) {
             *device = currentDevice;
             return BM_OK;
         };
-        DlAclApi::pAclrtSetDevice = [](int32_t device) {
+        AscendRtApi().pAclrtSetDevice_ = [](int32_t device) {
             ++setDeviceCalls;
             if (setDeviceResult == BM_OK) {
                 currentDevice = device;
@@ -50,8 +57,8 @@ struct AclDeviceFunctionsGuard {
 
     ~AclDeviceFunctionsGuard()
     {
-        DlAclApi::pAclrtGetDevice = oldGetDevice;
-        DlAclApi::pAclrtSetDevice = oldSetDevice;
+        AscendRtApi().pAclrtGetDevice_ = oldGetDevice;
+        AscendRtApi().pAclrtSetDevice_ = oldSetDevice;
     }
 };
 

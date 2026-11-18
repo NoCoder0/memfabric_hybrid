@@ -19,9 +19,10 @@
 #include "aiv_sdma_transport_manager.h"
 #include "../../copy_aiv_direct_sdma/aiv_direct_sdma_abi.h"
 #include "dl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "dl_hybm_aiv_direct_sdma.h"
 #include "hybm_data_op.h"
+#include "vendor/vendor_api.h"
 #include "hybm_gva.h"
 #include "hybm_stream_manager.h"
 #include "aiv_direct_sdma_plan.h"
@@ -43,16 +44,16 @@ public:
     {
         // The API owner must keep an external stream alive until bm entity teardown.
         if (submitted_)
-            (void)DlAclApi::AclrtSynchronizeStream(stream_);
+            (void)VendorApi::Api()->SynchronizeStream(stream_);
         manager_.CloseDevice();
         if (mapped_)
             DlHalApi::HalHostUnregisterEx(host_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
         if (host_)
-            DlAclApi::AclrtFreeHost(host_);
+            VendorApi::Api()->FreeHost(host_);
     }
     Result Init()
     {
-        if (DlAclApi::GetAscendSocType() != AscendSocType::ASCEND_910C) {
+        if (VendorApi::Api()->GetSocName() != AscendSocType::ASCEND_910C) {
             BM_LOG_ERROR("AIV Direct SDMA requires Ascend910_93 (A3)");
             return BM_NOT_SUPPORTED;
         }
@@ -100,9 +101,9 @@ public:
     Result ValidateQueues()
     {
         StarsQueueInfo info[aiv_direct_sdma::MAX_AIV_COUNT]{};
-        auto ret = DlAclApi::AclrtMemcpy(info, sizeof(info),
-                                         reinterpret_cast<uint8_t *>(workspace_) + AIV_DIRECT_SDMA_QUEUE_INFO_OFFSET,
-                                         sizeof(info), ACL_MEMCPY_DEVICE_TO_HOST);
+        auto ret = VendorApi::Api()->Memcpy(info, sizeof(info),
+                                            reinterpret_cast<uint8_t *>(workspace_) + AIV_DIRECT_SDMA_QUEUE_INFO_OFFSET,
+                                            sizeof(info), ACL_MEMCPY_DEVICE_TO_HOST);
         if (ret)
             return ret;
         uint32_t depth = UINT32_MAX;
@@ -126,9 +127,9 @@ public:
     Result ValidateNotifyIds()
     {
         uint32_t notifyIds[aiv_direct_sdma::MAX_AIV_COUNT]{};
-        auto ret = DlAclApi::AclrtMemcpy(notifyIds, sizeof(notifyIds),
-                                         static_cast<uint8_t *>(workspace_) + AIV_DIRECT_SDMA_NOTIFY_ID_OFFSET,
-                                         sizeof(notifyIds), ACL_MEMCPY_DEVICE_TO_HOST);
+        auto ret = VendorApi::Api()->Memcpy(notifyIds, sizeof(notifyIds),
+                                            static_cast<uint8_t *>(workspace_) + AIV_DIRECT_SDMA_NOTIFY_ID_OFFSET,
+                                            sizeof(notifyIds), ACL_MEMCPY_DEVICE_TO_HOST);
         if (ret) {
             BM_LOG_ERROR("read AIV Direct SDMA notify IDs failed, ret=" << ret);
             return ret;
@@ -143,7 +144,7 @@ public:
     }
     Result AllocateRing()
     {
-        auto ret = DlAclApi::AclrtMallocHost(&host_, RING_BYTES);
+        auto ret = VendorApi::Api()->MallocHost(&host_, RING_BYTES);
         if (ret)
             return ret;
         ret = DlHalApi::HalHostRegister(host_, RING_BYTES, HOST_MEM_MAP_DEV, HybmGetInitedLogicDeviceId(), &device_);
@@ -247,7 +248,7 @@ public:
     {
         if (!submitted_)
             return BM_OK;
-        auto ret = DlAclApi::AclrtSynchronizeStream(stream_);
+        auto ret = VendorApi::Api()->SynchronizeStream(stream_);
         if (ret) {
             unusable_ = true;
             BM_LOG_ERROR("AIV Direct SDMA stream synchronization failed, ret=" << ret);

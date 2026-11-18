@@ -16,9 +16,9 @@
 #include <cstdint>
 #include <new>
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_copy_direction.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
@@ -113,7 +113,7 @@ void DataOpDeviceURMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
 Result DataOpDeviceURMA::AllocSwapMemory()
 {
     void *ptr = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(
+    auto ret = VendorApi::Api()->Malloc(
         &ptr, urmaSwapSpaceSize_,
         static_cast<aclrtMemMallocPolicy>(ACL_MEM_TYPE_HIGH_BAND_WIDTH | ACL_MEM_MALLOC_HUGE_ONLY));
     if (ret != 0) {
@@ -124,7 +124,7 @@ Result DataOpDeviceURMA::AllocSwapMemory()
         {0, reinterpret_cast<uint64_t>(ptr), 0, urmaSwapSpaceSize_, HYBM_MEM_TYPE_DEVICE});
     if (ret != 0) {
         BM_LOG_ERROR("add va info failed, va:" << ptr << " ret:" << ret);
-        const auto freeRet = DlAclApi::AclrtFree(ptr);
+        const auto freeRet = VendorApi::Api()->Free(ptr);
         if (freeRet != 0) {
             BM_LOG_ERROR("Failed to AclrtFree urma swap memory, ret: " << freeRet);
         }
@@ -147,7 +147,7 @@ void DataOpDeviceURMA::FreeSwapMemory()
                 }
             }
         }
-        const auto ret = DlAclApi::AclrtFree(urmaSwapBaseAddr_);
+        const auto ret = VendorApi::Api()->Free(urmaSwapBaseAddr_);
         if (ret != 0) {
             BM_LOG_ERROR("Failed to AclrtFreeHost swap memory, ret: " << ret);
         }
@@ -260,7 +260,7 @@ Result DataOpDeviceURMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direc
 Result DataOpDeviceURMA::CopyLH2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -271,7 +271,7 @@ Result DataOpDeviceURMA::CopyLH2LH(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceURMA::CopyLD2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -283,7 +283,7 @@ Result DataOpDeviceURMA::CopyLD2LD(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceURMA::CopyLH2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -295,7 +295,7 @@ Result DataOpDeviceURMA::CopyLH2LD(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceURMA::CopyLD2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -561,7 +561,7 @@ Result DataOpDeviceURMA::BatchDataCopyLocalSync(hybm_batch_copy_params &params, 
         auto destAddr = params.destinations[i];
         auto srcAddr = params.sources[i];
         auto count = params.dataSizes[i];
-        auto ret = DlAclApi::AclrtMemcpy(destAddr, count, srcAddr, count, direction);
+        auto ret = VendorApi::Api()->Memcpy(destAddr, count, srcAddr, count, direction);
         if (ret != 0) {
             BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " direct: " << direction << std::hex
                                                      << " src: " << srcAddr << " dst: " << destAddr << std::dec
@@ -586,16 +586,16 @@ Result DataOpDeviceURMA::BatchDataCopyLocalAsync(hybm_batch_copy_params &params,
         auto destAddr = params.destinations[i];
         auto srcAddr = params.sources[i];
         auto count = params.dataSizes[i];
-        ret = DlAclApi::AclrtMemcpyAsync(destAddr, count, srcAddr, count, direction, st);
+        ret = VendorApi::Api()->MemcpyAsync(destAddr, count, srcAddr, count, direction, st);
         if (ret != 0) {
-            (void)DlAclApi::AclrtSynchronizeStream(st);
+            (void)VendorApi::Api()->SynchronizeStream(st);
             BM_LOG_ERROR("copy memory on local failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st)
                                                          << " direct:" << direction << std::hex << " src:" << srcAddr
                                                          << " dst:" << destAddr);
             return BM_DL_FUNCTION_FAILED;
         }
     }
-    ret = DlAclApi::AclrtSynchronizeStream(st);
+    ret = VendorApi::Api()->SynchronizeStream(st);
     if (ret != 0) {
         BM_LOG_ERROR("aclrtSynchronizeStream failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st));
     }
@@ -629,8 +629,8 @@ Result DataOpDeviceURMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params,
 
     if (ret != 0) {
         TP_TRACE_BEGIN(TP_HYBM_URMA_ACLRT_MEMCPY_BATCH);
-        ret = DlAclApi::AclrtMemcpyBatch(params.destinations, sizes.data(), params.sources, sizes.data(), sizes.size(),
-                                         attrs.data(), attrsIds.data(), attrs.size(), &fail_idx);
+        ret = VendorApi::Api()->MemcpyBatch(params.destinations, sizes.data(), params.sources, sizes.data(),
+                                            sizes.size(), attrs.data(), attrsIds.data(), attrs.size(), &fail_idx);
         TP_TRACE_END(TP_HYBM_URMA_ACLRT_MEMCPY_BATCH, ret);
     }
     return ret;

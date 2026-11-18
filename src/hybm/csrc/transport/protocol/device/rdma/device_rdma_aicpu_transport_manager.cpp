@@ -16,8 +16,7 @@
 #include <vector>
 
 #include "hybm_common_include.h"
-#include "dl_acl_api.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
 #include "aicpu_joinable_ranks_qp_manager.h"
 #include "hybm_kernel_hepler.h"
 #include "hybm_device_copy_common.h"
@@ -47,7 +46,7 @@ public:
     ~DeviceBuffer()
     {
         if (dev_ != nullptr) {
-            DlAclApi::AclrtFree(dev_);
+            VendorApi::Api()->Free(dev_);
         }
     }
 
@@ -57,7 +56,7 @@ public:
             return true;
         }
         Release();
-        if (DlAclApi::AclrtMalloc(&dev_, bytes, 0U) != BM_OK) {
+        if (VendorApi::Api()->Malloc(&dev_, bytes, 0U) != BM_OK) {
             dev_ = nullptr;
             return false;
         }
@@ -74,7 +73,7 @@ private:
     void Release()
     {
         if (dev_ != nullptr) {
-            DlAclApi::AclrtFree(dev_);
+            VendorApi::Api()->Free(dev_);
             dev_ = nullptr;
         }
         cap_ = 0U;
@@ -87,23 +86,23 @@ private:
 int CreateAicpuStream(AicpuStream &as)
 {
     void *stream = nullptr;
-    auto ret = DlAclApi::AclrtCreateStreamWithConfig(&stream, 0, ACL_STREAM_DEVICE_USE_ONLY);
+    auto ret = VendorApi::Api()->CreateStreamWithConfig(&stream, 0, ACL_STREAM_DEVICE_USE_ONLY);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma: create doorbell acl stream failed, ret: " << ret);
         return ret;
     }
     uint32_t sqId = 0U;
-    ret = DlRtApi::RtStreamGetSqid(stream, &sqId);
+    ret = VendorApi::Api()->RtStreamGetSqid(stream, &sqId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma: get doorbell sqid failed, ret: " << ret);
-        DlAclApi::AclrtDestroyStream(stream);
+        VendorApi::Api()->DestroyStream(stream);
         return ret;
     }
     int32_t streamId = 0;
-    ret = DlAclApi::AclrtStreamGetId(stream, &streamId);
+    ret = VendorApi::Api()->StreamGetId(stream, &streamId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma: get doorbell stream id failed, sqId: " << sqId << " ret: " << ret);
-        DlAclApi::AclrtDestroyStream(stream);
+        VendorApi::Api()->DestroyStream(stream);
         return ret;
     }
     as.stream = stream;
@@ -124,17 +123,17 @@ Result RdmaAicpuTransportManager::InitDeviceContext(const TransportOptions &opti
 {
     int32_t logicId = -1;
     int32_t phyId = -1;
-    auto ret = DlAclApi::AclrtGetDevice(&userId);
+    auto ret = VendorApi::Api()->GetDevice(&userId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && userId >= 0,
                              "AclrtGetDevice() return=" << ret << ", output deviceId=" << userId,
                              BM_DL_FUNCTION_FAILED);
 
-    ret = DlAclApi::RtGetLogicDevIdByUserDevId(userId, &logicId);
+    ret = VendorApi::Api()->GetLogicDevIdByUserDevId(userId, &logicId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && logicId >= 0,
                              "RtGetLogicDevIdByUserDevId() return=" << ret << ", output deviceId=" << logicId,
                              BM_DL_FUNCTION_FAILED);
 
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(userId, &phyId);
     if (ret != 0) {
         BM_LOG_WARN("aclrtGetPhyDevIdByLogicDevId ret=" << ret << " use logicId=" << logicId);
         phyId = logicId;
@@ -188,7 +187,7 @@ Result RdmaAicpuTransportManager::OpenDevice(const TransportOptions &options)
     }
     BM_LOG_INFO("aicpu rdma enabled, rankId: " << rankId_);
 
-    auto rtRet = DlRtApi::LoadLibrary();
+    auto rtRet = VendorApi::LoadLibrary();
     if (rtRet != BM_OK) {
         BM_LOG_ERROR("load rt api failed, rankId: " << rankId_ << " ret: " << rtRet);
         return rtRet;
@@ -353,7 +352,7 @@ Result RdmaAicpuTransportManager::CloseDevice()
     copyPeers_.clear();
     graphNotify_.reset();
     if (graphDoorbell_.stream != nullptr) {
-        const auto ret = DlAclApi::AclrtDestroyStream(graphDoorbell_.stream);
+        const auto ret = VendorApi::Api()->DestroyStream(graphDoorbell_.stream);
         if (ret != BM_OK) {
             BM_LOG_ERROR("destroy graph doorbell stream failed, ret=" << ret);
         }
@@ -363,7 +362,7 @@ Result RdmaAicpuTransportManager::CloseDevice()
     aicpuNotify_ = nullptr;
     aicpuPending_ = AicpuPendingBatch{};
     if (aicpuStream_.stream != nullptr) {
-        DlAclApi::AclrtDestroyStream(aicpuStream_.stream);
+        VendorApi::Api()->DestroyStream(aicpuStream_.stream);
         aicpuStream_.stream = nullptr;
         aicpuStream_.sqId = 0U;
         aicpuStream_.streamId = 0U;
@@ -394,8 +393,8 @@ Result RdmaAicpuTransportManager::Synchronize(uint32_t rankId)
 int RdmaAicpuTransportManager::ReadAndCheckAicpuOut(uint32_t rankId)
 {
     aicpu::RdmaAicpuOut out{};
-    auto ret = DlAclApi::AclrtMemcpy(&out, sizeof(out), reinterpret_cast<void *>(aicpuPending_.outAddr), sizeof(out),
-                                     ACL_MEMCPY_DEVICE_TO_HOST);
+    auto ret = VendorApi::Api()->Memcpy(&out, sizeof(out), reinterpret_cast<void *>(aicpuPending_.outAddr), sizeof(out),
+                                        ACL_MEMCPY_DEVICE_TO_HOST);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma: read back out buffer failed, devOut: " << aicpuPending_.outAddr << " ret: " << ret);
         return ret;
@@ -774,7 +773,7 @@ int RdmaAicpuTransportManager::StageBatchSegments(const std::vector<AicpuSegment
         return BM_MALLOC_FAILED;
     }
 
-    auto ret = DlAclApi::AclrtMemcpy(buffer.Device(), bytes, segments.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy(buffer.Device(), bytes, segments.data(), bytes, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("aicpu rdma batch: copy segments to device failed, count: " << segments.size() << " bytes: "
                                                                                  << bytes << " ret: " << ret);

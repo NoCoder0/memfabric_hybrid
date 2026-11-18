@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "dl_hal_api_def.h"
+#include "vendor/ascend/dl_hal_api_def.h"
 
 constexpr int32_t RETURN_OK = 0;
 constexpr const char *STUB_CPU_LIST = "0-3";

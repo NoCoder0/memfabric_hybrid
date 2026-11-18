@@ -14,10 +14,10 @@
 
 #define private   public
 #define protected public
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_hal_api_def.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api_def.h"
+#include "vendor/vendor_api.h"
 #include "hybm_acl_notify.h"
 #undef private
 #undef protected
@@ -25,6 +25,11 @@
 using namespace ock::mf;
 
 namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+
 constexpr uint64_t kTestNotifyHandle = 0x9000ULL;
 constexpr uint64_t kTestAclStream = 0x6000ULL;
 constexpr uint64_t kTestRegBlockBase = 0x12C180000000ULL;
@@ -143,35 +148,35 @@ int32_t FakeRtGetDevResAddressZero(rtDevResInfo *, rtDevResAddrInfo *info)
 }
 
 struct DlApiFnGuard {
-    aclrtCreateNotifyFunc oldCreateNotify{DlAclApi::pAclrtCreateNotify};
-    aclrtGetNotifyIdFunc oldGetNotifyId{DlAclApi::pAclrtGetNotifyId};
-    aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
-    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
-    aclrtSynchronizeStreamFunc oldSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
-    rtGetDevResAddressFunc oldGetDevResAddress{DlRtApi::pRtGetDevResAddress};
+    aclrtCreateNotifyFunc oldCreateNotify{AscendRtApi().pAclrtCreateNotify_};
+    aclrtGetNotifyIdFunc oldGetNotifyId{AscendRtApi().pAclrtGetNotifyId_};
+    aclrtDestroyNotifyFunc oldDestroyNotify{AscendRtApi().pAclrtDestroyNotify_};
+    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{AscendRtApi().pAclrtWaitAndResetNotify_};
+    aclrtSynchronizeStreamFunc oldSynchronizeStream{AscendRtApi().pAclrtSynchronizeStream_};
+    rtGetDevResAddressFunc oldGetDevResAddress{AscendRtApi().pRtGetDevResAddress_};
     halResourceDetailQueryFunc oldHalDetailQuery{DlHalApi::pHalResourceDetailQuery};
     drvNotifyIdAddrOffsetFunc oldDrvNotifyIdAddrOffset{DlHalApi::pDrvNotifyIdAddrOffset};
 
     DlApiFnGuard()
     {
-        DlAclApi::pAclrtCreateNotify = &FakeCreateNotifyOk;
-        DlAclApi::pAclrtGetNotifyId = &FakeGetNotifyIdOk;
-        DlAclApi::pAclrtDestroyNotify = &FakeDestroyNotifyOk;
-        DlAclApi::pAclrtWaitAndResetNotify = &FakeWaitAndResetNotifyOk;
-        DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamOk;
-        DlRtApi::pRtGetDevResAddress = &FakeRtGetDevResAddressOk;
+        AscendRtApi().pAclrtCreateNotify_ = &FakeCreateNotifyOk;
+        AscendRtApi().pAclrtGetNotifyId_ = &FakeGetNotifyIdOk;
+        AscendRtApi().pAclrtDestroyNotify_ = &FakeDestroyNotifyOk;
+        AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeWaitAndResetNotifyOk;
+        AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamOk;
+        AscendRtApi().pRtGetDevResAddress_ = &FakeRtGetDevResAddressOk;
         DlHalApi::pHalResourceDetailQuery = &FakeHalDetailQueryOk;
         DlHalApi::pDrvNotifyIdAddrOffset = &FakeDrvNotifyIdAddrOffsetOk;
     }
 
     ~DlApiFnGuard()
     {
-        DlAclApi::pAclrtCreateNotify = oldCreateNotify;
-        DlAclApi::pAclrtGetNotifyId = oldGetNotifyId;
-        DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
-        DlAclApi::pAclrtWaitAndResetNotify = oldWaitAndResetNotify;
-        DlAclApi::pAclrtSynchronizeStream = oldSynchronizeStream;
-        DlRtApi::pRtGetDevResAddress = oldGetDevResAddress;
+        AscendRtApi().pAclrtCreateNotify_ = oldCreateNotify;
+        AscendRtApi().pAclrtGetNotifyId_ = oldGetNotifyId;
+        AscendRtApi().pAclrtDestroyNotify_ = oldDestroyNotify;
+        AscendRtApi().pAclrtWaitAndResetNotify_ = oldWaitAndResetNotify;
+        AscendRtApi().pAclrtSynchronizeStream_ = oldSynchronizeStream;
+        AscendRtApi().pRtGetDevResAddress_ = oldGetDevResAddress;
         DlHalApi::pHalResourceDetailQuery = oldHalDetailQuery;
         DlHalApi::pDrvNotifyIdAddrOffset = oldDrvNotifyIdAddrOffset;
     }
@@ -222,7 +227,7 @@ TEST(HybmAclNotifyTest, InitFailurePathsReleaseNotify)
     ResetCounters();
 
     // 1) create 失败
-    DlAclApi::pAclrtCreateNotify = &FakeCreateNotifyFail;
+    AscendRtApi().pAclrtCreateNotify_ = &FakeCreateNotifyFail;
     {
         HybmAclNotify notify(reinterpret_cast<void *>(kTestAclStream));
         EXPECT_NE(notify.Init(kTestRegBlockBase), BM_OK);
@@ -231,8 +236,8 @@ TEST(HybmAclNotifyTest, InitFailurePathsReleaseNotify)
     EXPECT_EQ(g_destroyCount, 0U);
 
     // 2) get notify id 失败：创建出来的 notify 必须释放
-    DlAclApi::pAclrtCreateNotify = &FakeCreateNotifyOk;
-    DlAclApi::pAclrtGetNotifyId = &FakeGetNotifyIdFail;
+    AscendRtApi().pAclrtCreateNotify_ = &FakeCreateNotifyOk;
+    AscendRtApi().pAclrtGetNotifyId_ = &FakeGetNotifyIdFail;
     {
         HybmAclNotify notify(reinterpret_cast<void *>(kTestAclStream));
         EXPECT_NE(notify.Init(kTestRegBlockBase), BM_OK);
@@ -241,7 +246,7 @@ TEST(HybmAclNotifyTest, InitFailurePathsReleaseNotify)
     EXPECT_EQ(g_destroyCount, 1U);
 
     // 3) 地址解析失败（HAL 查询与 drv 回落都失败）：notify 也要释放
-    DlAclApi::pAclrtGetNotifyId = &FakeGetNotifyIdOk;
+    AscendRtApi().pAclrtGetNotifyId_ = &FakeGetNotifyIdOk;
     DlHalApi::pHalResourceDetailQuery = &FakeHalDetailQueryFail;
     DlHalApi::pDrvNotifyIdAddrOffset = &FakeDrvNotifyIdAddrOffsetFail;
     {
@@ -260,7 +265,7 @@ TEST(HybmAclNotifyTest, InitFailurePathsReleaseNotify)
     }
 
     // 5) rt 路径拿到 0 地址：判为失败
-    DlRtApi::pRtGetDevResAddress = &FakeRtGetDevResAddressZero;
+    AscendRtApi().pRtGetDevResAddress_ = &FakeRtGetDevResAddressZero;
     {
         HybmAclNotify notify(reinterpret_cast<void *>(kTestAclStream));
         EXPECT_NE(notify.Init(0U), BM_OK);
@@ -290,16 +295,16 @@ TEST(HybmAclNotifyTest, WaitBranches)
     EXPECT_EQ(notify.Init(kTestRegBlockBase), BM_OK);
 
     // wait&reset 失败
-    DlAclApi::pAclrtWaitAndResetNotify = &FakeWaitAndResetNotifyFail;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeWaitAndResetNotifyFail;
     EXPECT_NE(notify.Wait(), BM_OK);
 
     // wait 成功但本流同步失败
-    DlAclApi::pAclrtWaitAndResetNotify = &FakeWaitAndResetNotifyOk;
-    DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamFail;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeWaitAndResetNotifyOk;
+    AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamFail;
     EXPECT_NE(notify.Wait(), BM_OK);
 
     // 全部成功
-    DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamOk;
+    AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamOk;
     EXPECT_EQ(notify.Wait(), BM_OK);
     EXPECT_EQ(g_waitCount, 2U);
 }

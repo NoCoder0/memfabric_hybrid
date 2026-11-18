@@ -22,8 +22,8 @@
 #include <limits>
 #include <sstream>
 
-#include "dl_acl_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_def.h"
 #include "hybm_logger.h"
 #include "hybm_urma_eid_query.h"
@@ -200,14 +200,14 @@ Result HostUrmaTransportManager::OpenDevice(const TransportOptions &options)
 Result HostUrmaTransportManager::ResolvePhysicalDeviceIdLocked()
 {
     int32_t userId = -1;
-    auto ret = DlAclApi::AclrtGetDevice(&userId);
+    auto ret = VendorApi::Api()->GetDevice(&userId);
     if (ret != BM_OK || userId < 0) {
         BM_LOG_ERROR("host_urma AclrtGetDevice failed, ret=" << ret << ", deviceId=" << userId
                                                              << ", rankId=" << rankId_);
         return BM_DL_FUNCTION_FAILED;
     }
     int32_t phyId = 0;
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(userId, &phyId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("host_urma aclrtGetPhyDevIdByLogicDevId failed, ret=" << ret << ", userId=" << userId
                                                                            << ", rankId=" << rankId_);

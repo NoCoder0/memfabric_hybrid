@@ -19,10 +19,10 @@
 #include <numeric>
 
 #include "hybm_common_include.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "dl_op_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_ptracer.h"
 #include "hybm_gva.h"
 #include "hybm_va_manager.h"
@@ -93,13 +93,13 @@ Result SdmaTransportManager::CreateNotifyIds()
     int ret = 0;
     for (size_t i = 0; i < MAX_AIV_PER_NPU; i++) {
         notifyArr_[i] = nullptr;
-        ret = DlAclApi::AclrtCreateNotify(&notifyArr_[i], 0);
+        ret = VendorApi::Api()->CreateNotify(&notifyArr_[i], 0);
         BM_ASSERT_LOG_AND_RETURN(ret == 0, "create notify failed, ret=" << ret, ret);
-        ret = DlAclApi::AclrtGetNotifyId(notifyArr_[i], &notifyIds[i]);
+        ret = VendorApi::Api()->GetNotifyId(notifyArr_[i], &notifyIds[i]);
         BM_ASSERT_LOG_AND_RETURN(ret == 0, "get notify id failed, ret=" << ret, ret);
     }
-    ret = DlAclApi::AclrtMemcpy(notifyIdBase, MAX_AIV_PER_NPU * sizeof(uint32_t), notifyIds,
-                                MAX_AIV_PER_NPU * sizeof(uint32_t), ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(notifyIdBase, MAX_AIV_PER_NPU * sizeof(uint32_t), notifyIds,
+                                   MAX_AIV_PER_NPU * sizeof(uint32_t), ACL_MEMCPY_HOST_TO_DEVICE);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memcpy notify id failed, ret=" << ret, ret);
 
     return BM_OK;
@@ -108,14 +108,14 @@ Result SdmaTransportManager::CreateNotifyIds()
 Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
 {
     int32_t userId = -1;
-    auto ret = DlAclApi::AclrtGetDevice(&userId);
+    auto ret = VendorApi::Api()->GetDevice(&userId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && userId >= 0,
                              "AclrtGetDevice() return=" << ret << ", output deviceId=" << userId,
                              BM_DL_FUNCTION_FAILED);
 
     int64_t dieId = -1;
     constexpr int infoTypePhyDieId = 19;
-    ret = DlAclApi::RtGetDeviceInfo(userId, 0, infoTypePhyDieId, &dieId);
+    ret = VendorApi::Api()->GetDeviceInfo(userId, 0, infoTypePhyDieId, &dieId);
 
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && dieId >= 0, "get physical die failed", BM_ERROR);
     deviceId_ = static_cast<uint32_t>(dieId);
@@ -126,31 +126,31 @@ Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
 
         void *stream = nullptr;
         constexpr uint32_t configValue = 0x00000020U;
-        ret = DlAclApi::AclrtCreateStreamWithConfig(&stream, 0, configValue);
+        ret = VendorApi::Api()->CreateStreamWithConfig(&stream, 0, configValue);
         BM_ASSERT_LOG_AND_RETURN(ret == 0, "create stream " << i << " failed, ret=" << ret, ret);
         streams_[i].stream = reinterpret_cast<uint64_t>(stream);
 
         int32_t streamId = 0;
-        ret = DlAclApi::AclrtStreamGetId(stream, &streamId);
+        ret = VendorApi::Api()->StreamGetId(stream, &streamId);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get stream id " << i << " failed");
             return BM_ERROR;
         }
         uint32_t sqId = 0;
-        ret = DlRtApi::RtStreamGetSqid(stream, &sqId);
+        ret = VendorApi::Api()->RtStreamGetSqid(stream, &sqId);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get sqid " << i << " failed");
             return BM_ERROR;
         }
         uint32_t cqId = 0;
         uint32_t logicCqId = 0;
-        ret = DlRtApi::RtStreamGetCqid(stream, &cqId, &logicCqId);
+        ret = VendorApi::Api()->RtStreamGetCqid(stream, &cqId, &logicCqId);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get cqid " << i << " failed");
             return BM_ERROR;
         }
         void *ctx = nullptr;
-        ret = DlAclApi::AclrtGetCurrentContext(&ctx);
+        ret = VendorApi::Api()->GetCurrentContext(&ctx);
         if (ret != 0) {
             BM_LOG_ERROR(rankId_ << " get context " << i << " failed");
             return BM_ERROR;
@@ -171,10 +171,10 @@ Result SdmaTransportManager::CreateStarsStreams(int32_t channel_num)
 Result SdmaTransportManager::MallocSdmaWorkspace(size_t workspaceSize)
 {
     void *sdmaWorkspace = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(&sdmaWorkspace, workspaceSize, 0);
+    auto ret = VendorApi::Api()->Malloc(&sdmaWorkspace, workspaceSize, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc sdma workspace failed, ret=" << ret, ret);
     sdmaWorkspaceAddr_ = reinterpret_cast<uint64_t>(sdmaWorkspace);
-    ret = DlAclApi::AclrtMemset(sdmaWorkspace, workspaceSize, 0, workspaceSize);
+    ret = VendorApi::Api()->Memset(sdmaWorkspace, workspaceSize, 0, workspaceSize);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memset sdma workspace failed, ret=" << ret, ret);
     BM_LOG_INFO(rankId_ << " malloc sdmaWorkspace success.");
     return BM_OK;
@@ -189,21 +189,22 @@ Result SdmaTransportManager::CopyHostOpResToDevice()
 {
     void *streamsDevicePtr = nullptr;
     size_t streamsSize = streams_.size() * sizeof(HostStreamInfo);
-    auto ret = DlAclApi::AclrtMalloc(&streamsDevicePtr, streamsSize, 0);
+    auto ret = VendorApi::Api()->Malloc(&streamsDevicePtr, streamsSize, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc streams device ptr failed, ret=" << ret, ret);
     opResInfo_.streamsAddr = reinterpret_cast<uint64_t>(streamsDevicePtr);
-    ret = DlAclApi::AclrtMemcpy(streamsDevicePtr, streamsSize, streams_.data(), streamsSize, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(streamsDevicePtr, streamsSize, streams_.data(), streamsSize,
+                                   ACL_MEMCPY_HOST_TO_DEVICE);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memcpy streams to device failed, ret=" << ret, ret);
 
     opResInfo_.size = streams_.size();
     opResInfo_.workspaceAddr = sdmaWorkspaceAddr_;
 
     size_t opResSize = sizeof(opResInfo_);
-    ret = DlAclApi::AclrtMalloc(&opResInfoDevicePtr_, opResSize, 0);
+    ret = VendorApi::Api()->Malloc(&opResInfoDevicePtr_, opResSize, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc op res device ptr failed, ret=" << ret, ret);
-    ret = DlAclApi::AclrtMemset(opResInfoDevicePtr_, opResSize, 0, opResSize);
+    ret = VendorApi::Api()->Memset(opResInfoDevicePtr_, opResSize, 0, opResSize);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memset op res device ptr failed, ret=" << ret, ret);
-    ret = DlAclApi::AclrtMemcpy(opResInfoDevicePtr_, opResSize, &opResInfo_, opResSize, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(opResInfoDevicePtr_, opResSize, &opResInfo_, opResSize, ACL_MEMCPY_HOST_TO_DEVICE);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "memcpy op res to device failed, ret=" << ret, ret);
 
     BM_LOG_INFO(rankId_ << " copy op res to device success.");
@@ -218,10 +219,11 @@ Result SdmaTransportManager::CreateAclTensor(const std::vector<uint64_t> &host_d
     auto size = std::accumulate(shape.begin(), shape.end(), static_cast<int64_t>(1),
                                 [](int64_t a, int64_t b) { return a * b; }) *
                 sizeof(uint64_t);
-    auto ret = DlAclApi::AclrtMalloc(device_addr, size, 0);
+    auto ret = VendorApi::Api()->Malloc(device_addr, size, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc device memory failed, ret=" << ret, ret);
-    auto dev_guard = make_scope_guard(*device_addr, [](void *addr) { DlAclApi::AclrtFree(addr); }); // 托管device_addr
-    ret = DlAclApi::AclrtMemcpy(*device_addr, size, host_data.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
+    auto dev_guard =
+        make_scope_guard(*device_addr, [](void *addr) { VendorApi::Api()->Free(addr); }); // 托管device_addr
+    ret = VendorApi::Api()->Memcpy(*device_addr, size, host_data.data(), size, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
         BM_LOG_ERROR(rankId_ << " memcpy host data to device failed, ret=" << ret);
         *device_addr = nullptr;
@@ -253,12 +255,12 @@ Result SdmaTransportManager::LaunchSdmaAicpuKernel(uint64_t streams_addr, uint64
     void *aicpuStream = nullptr;
     static uint32_t ACL_STREAM_FAST_LAUNCH = 1U;
     static uint32_t ACL_STREAM_FAST_SYNC = 2U;
-    auto ret = DlAclApi::AclrtCreateStreamWithConfig(&aicpuStream, 0, ACL_STREAM_FAST_LAUNCH | ACL_STREAM_FAST_SYNC);
+    auto ret = VendorApi::Api()->CreateStreamWithConfig(&aicpuStream, 0, ACL_STREAM_FAST_LAUNCH | ACL_STREAM_FAST_SYNC);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "create aicpu stream failed, ret=" << ret, ret);
-    auto stream_guard = make_scope_guard(aicpuStream, [](void *stm) { DlAclApi::AclrtDestroyStream(stm); });
+    auto stream_guard = make_scope_guard(aicpuStream, [](void *stm) { VendorApi::Api()->DestroyStream(stm); });
     aclrtStreamAttrValue value;
     value.failureMode = 1; // 遇错即停
-    ret = DlAclApi::AclrtSetStreamAttribute(aicpuStream, ACL_STREAM_ATTR_FAILURE_MODE, &value);
+    ret = VendorApi::Api()->SetStreamAttribute(aicpuStream, ACL_STREAM_ATTR_FAILURE_MODE, &value);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "set aicpu stream attribute failed, ret=" << ret, ret);
 
     // 构造输入输出
@@ -272,7 +274,7 @@ Result SdmaTransportManager::LaunchSdmaAicpuKernel(uint64_t streams_addr, uint64
     aclTensor *input = nullptr;
     ret = CreateAclTensor(in_host_data, in_shape, &inDeviceAddr, aclDataType::ACL_UINT64, &input);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "create input acl tensor failed, ret=" << ret, ret);
-    auto input_dev_guard = make_scope_guard(inDeviceAddr, [](void *addr) { DlAclApi::AclrtFree(addr); });
+    auto input_dev_guard = make_scope_guard(inDeviceAddr, [](void *addr) { VendorApi::Api()->Free(addr); });
     auto input_tensor_guard = make_scope_guard(input, [](aclTensor *t) { DlOpApi::AclDestroyTensor(t); });
 
     // 创建输出aclTensor
@@ -280,7 +282,7 @@ Result SdmaTransportManager::LaunchSdmaAicpuKernel(uint64_t streams_addr, uint64
     aclTensor *output = nullptr;
     ret = CreateAclTensor(out_host_data, out_shape, &outDeviceAddr, aclDataType::ACL_UINT64, &output);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "create output acl tensor failed, ret=" << ret, ret);
-    auto output_dev_guard = make_scope_guard(outDeviceAddr, [](void *addr) { DlAclApi::AclrtFree(addr); });
+    auto output_dev_guard = make_scope_guard(outDeviceAddr, [](void *addr) { VendorApi::Api()->Free(addr); });
     auto output_tensor_guard = make_scope_guard(output, [](aclTensor *t) { DlOpApi::AclDestroyTensor(t); });
 
     // 调用aclnn二段式接口
@@ -292,13 +294,13 @@ Result SdmaTransportManager::LaunchSdmaAicpuKernel(uint64_t streams_addr, uint64
     void *workspace = nullptr;
     auto workspace_guard = make_scope_guard(static_cast<void *>(nullptr), [](void *) {});
     if (workspaceSize > 0) {
-        ret = DlAclApi::AclrtMalloc(&workspace, workspaceSize, 0);
+        ret = VendorApi::Api()->Malloc(&workspace, workspaceSize, 0);
         BM_ASSERT_LOG_AND_RETURN(ret == 0, "malloc workspace failed, ret=" << ret, ret);
-        workspace_guard = make_scope_guard(workspace, [](void *addr) { DlAclApi::AclrtFree(addr); });
+        workspace_guard = make_scope_guard(workspace, [](void *addr) { VendorApi::Api()->Free(addr); });
     }
     ret = DlOpApi::AclnnShmemSdmaStarsQuery(workspace, workspaceSize, executor, aicpuStream);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "query failed, ret=" << ret, ret);
-    ret = DlAclApi::AclrtSynchronizeStream(aicpuStream);
+    ret = VendorApi::Api()->SynchronizeStream(aicpuStream);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "synchronize stream failed, ret=" << ret, ret);
     return BM_OK;
 }
@@ -313,29 +315,29 @@ Result SdmaTransportManager::CloseDevice()
 void SdmaTransportManager::ReleaseResources()
 {
     if (opResInfo_.streamsAddr) {
-        (void)DlAclApi::AclrtFree(reinterpret_cast<void *>(opResInfo_.streamsAddr));
+        (void)VendorApi::Api()->Free(reinterpret_cast<void *>(opResInfo_.streamsAddr));
         opResInfo_.streamsAddr = 0;
     }
 
     if (opResInfoDevicePtr_) {
-        (void)DlAclApi::AclrtFree(opResInfoDevicePtr_);
+        (void)VendorApi::Api()->Free(opResInfoDevicePtr_);
         opResInfoDevicePtr_ = nullptr;
     }
 
     if (sdmaWorkspaceAddr_) {
-        (void)DlAclApi::AclrtFree(reinterpret_cast<void *>(sdmaWorkspaceAddr_));
+        (void)VendorApi::Api()->Free(reinterpret_cast<void *>(sdmaWorkspaceAddr_));
         sdmaWorkspaceAddr_ = 0;
     }
 
     for (auto &stream : streams_) {
         if (stream.stream) {
-            (void)DlAclApi::AclrtDestroyStream(reinterpret_cast<void *>(stream.stream));
+            (void)VendorApi::Api()->DestroyStream(reinterpret_cast<void *>(stream.stream));
         }
     }
 
     for (size_t i = 0; i < MAX_AIV_PER_NPU; i++) {
         if (notifyArr_[i]) {
-            (void)DlAclApi::AclrtDestroyNotify(notifyArr_[i]);
+            (void)VendorApi::Api()->DestroyNotify(notifyArr_[i]);
             notifyArr_[i] = nullptr;
         }
     }
@@ -350,7 +352,7 @@ void SdmaTransportManager::ReleaseResources()
 SparseCopyResources::~SparseCopyResources()
 {
     if (deviceContext != nullptr) {
-        auto ret = DlAclApi::AclrtFree(deviceContext);
+        auto ret = VendorApi::Api()->Free(deviceContext);
         if (ret != BM_OK) {
             BM_LOG_ERROR("free SDMA sparse context failed, ret=" << ret);
         }
@@ -373,11 +375,11 @@ Result SdmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBas
     ctx.poolBase = poolBase;
     ctx.poolSize = poolSize;
     ctx.devicePoolBase = region.va[HVM_DVA] + (poolBase - region.va[HVM_HVA]);
-    auto ret = DlAclApi::AclrtMemcpy(&ctx.channel, sizeof(ctx.channel),
-                                     reinterpret_cast<void *>(sdmaWorkspaceAddr_ + HYBM_SDMA_CHANNEL_TABLE_OFFSET),
-                                     sizeof(ctx.channel), ACL_MEMCPY_DEVICE_TO_HOST);
+    auto ret = VendorApi::Api()->Memcpy(&ctx.channel, sizeof(ctx.channel),
+                                        reinterpret_cast<void *>(sdmaWorkspaceAddr_ + HYBM_SDMA_CHANNEL_TABLE_OFFSET),
+                                        sizeof(ctx.channel), ACL_MEMCPY_DEVICE_TO_HOST);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "read SDMA channel failed, ret=" << ret, ret);
-    ret = DlAclApi::AclrtGetNotifyId(notifyArr_[0], &ctx.notifyId);
+    ret = VendorApi::Api()->GetNotifyId(notifyArr_[0], &ctx.notifyId);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "get SDMA notify id failed, ret=" << ret, ret);
     if (ctx.channel.sqBase == 0 || ctx.channel.sqDepth < 4 || ctx.channel.sqDepth > 65536 ||
         ctx.channel.sqTail >= ctx.channel.sqDepth || ctx.channel.streamId > UINT16_MAX || ctx.notifyId > 8191) {
@@ -398,10 +400,10 @@ Result SdmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t poolBas
     }
     sparseCopy_->function = handles.batchTransfer;
     void *storage = nullptr;
-    ret = DlAclApi::AclrtMalloc(&storage, sizeof(ctx), 0);
+    ret = VendorApi::Api()->Malloc(&storage, sizeof(ctx), 0);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "allocate SDMA sparse context failed, ret=" << ret, ret);
-    auto storageGuard = make_scope_guard(storage, [](void *ptr) { DlAclApi::AclrtFree(ptr); });
-    ret = DlAclApi::AclrtMemcpy(storage, sizeof(ctx), &ctx, sizeof(ctx), ACL_MEMCPY_HOST_TO_DEVICE);
+    auto storageGuard = make_scope_guard(storage, [](void *ptr) { VendorApi::Api()->Free(ptr); });
+    ret = VendorApi::Api()->Memcpy(storage, sizeof(ctx), &ctx, sizeof(ctx), ACL_MEMCPY_HOST_TO_DEVICE);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "initialize SDMA sparse context failed, ret=" << ret, ret);
     sparseCopy_->poolBase = poolBase;
     sparseCopy_->poolSize = poolSize;
@@ -420,7 +422,7 @@ Result SdmaTransportManager::DeviceCopy(const hybm_device_copy_params &params)
                                 params.sizePtr};
     auto ret = LaunchAicpuKernel(sparseCopy_->function, params.stream, &args, sizeof(args));
     if (ret == BM_OK) {
-        ret = DlAclApi::AclrtWaitAndResetNotify(notifyArr_[0], params.stream, 60);
+        ret = VendorApi::Api()->WaitAndResetNotify(notifyArr_[0], params.stream, 60);
     }
     if (ret != BM_OK) {
         sparseCopy_->submissionFailed = true;

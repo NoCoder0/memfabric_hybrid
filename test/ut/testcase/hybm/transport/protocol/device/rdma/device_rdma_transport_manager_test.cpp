@@ -15,11 +15,10 @@
 #include <mockcpp/mockcpp.hpp>
 #include <sys/socket.h>
 #include <unistd.h>
-#include "dl_rt_api.h"
-#include "dl_hccl_api.h"
+#include "vendor/ascend/dl_hccl_api.h"
 #include "rdma_provider_completion.h"
 #include "hybm_va_manager.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
@@ -33,13 +32,21 @@
 #include "rdma_provider_device.h"
 #include "rdma_provider_link.h"
 #include "rdma_proxy_transport_manager.h"
-#include "dl_hccp_api.h"
-#include "dl_acl_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_stream.h"
 #undef private
 #undef protected
 
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
+
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
 
@@ -55,7 +62,9 @@ TEST(RdmaProxyTransportManagerTest, RegisteredHostMappingRemainsOwnedByCaller)
     ASSERT_EQ(vaManager.AddVaInfo({0, deviceAddress, hostAddress, size, HYBM_MEM_TYPE_HOST}), BM_OK);
     MOCKER(DlHalApi::HalHostRegister).expects(never());
     MOCKER(DlHalApi::HalHostUnregisterEx).expects(never());
-    MOCKER(DlAclApi::AclrtSetDevice).expects(exactly(2)).will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+        .expects(exactly(2))
+        .will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaDeregisterMR).expects(exactly(2)).will(returnValue(BM_OK));
     MOCKER_CPP(&RdmaProviderDevice::RegisterMr,
                bool (*)(RdmaProviderDevice *, void *, uint64_t, bool, HccpMrInfo &, void *&))
@@ -93,16 +102,16 @@ TEST(RdmaProxyTransportManagerTest, RegisteredHostMappingRemainsOwnedByCaller)
 }
 
 namespace {
-struct DlAclApiFnGuard {
-    aclrtMallocFunc oldAclrtMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldAclrtFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldAclrtMemcpy{DlAclApi::pAclrtMemcpy};
+struct AclFnGuard {
+    aclrtMallocFunc oldAclrtMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldAclrtFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldAclrtMemcpy{AscendRtApi().pAclrtMemcpy_};
 
-    ~DlAclApiFnGuard()
+    ~AclFnGuard()
     {
-        DlAclApi::pAclrtMalloc = oldAclrtMalloc;
-        DlAclApi::pAclrtFree = oldAclrtFree;
-        DlAclApi::pAclrtMemcpy = oldAclrtMemcpy;
+        AscendRtApi().pAclrtMalloc_ = oldAclrtMalloc;
+        AscendRtApi().pAclrtFree_ = oldAclrtFree;
+        AscendRtApi().pAclrtMemcpy_ = oldAclrtMemcpy;
     }
 };
 
@@ -857,7 +866,7 @@ TEST(RdmaTransportManagerTest, ConstructSqeNoSinkModeFillsFieldsWhenDbAddrNonZer
 TEST(RdmaTransportManagerTest, InitStreamNotifyBufSuccessAndRegisterFailPaths)
 {
     DlHccpApiFnGuard hccpGuard;
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
     RdmaTransportManager mgr;
     mgr.rankCount_ = 2;
@@ -865,9 +874,9 @@ TEST(RdmaTransportManagerTest, InitStreamNotifyBufSuccessAndRegisterFailPaths)
 
     DlHccpApi::gRaGetNotifyBaseAddr = &FakeRaGetNotifyBaseAddrOk;
     DlHccpApi::gRaGetNotifyMrInfo = &FakeRaGetNotifyMrInfoOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     // 1) Register MR fail -> must free ptr and return BM_DL_FUNCTION_FAILED
     DlHccpApi::gRaRegisterMR = &FakeRaRegisterMRFail;
@@ -1188,7 +1197,9 @@ TEST_F(ProviderDeviceCleanupTest, PendingCleanupPreventsCreatingAnotherQp)
     RdmaProviderDevice device;
     device.rdmaHandle = reinterpret_cast<void *>(0x1234UL);
     device.cleanupBlocked_ = true;
-    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+        .stubs()
+        .will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaQpCreate).expects(never());
     void *qp = nullptr;
     TypicalQp attr{};
@@ -1200,13 +1211,20 @@ TEST_F(ProviderDeviceCleanupTest, FailedQpCleanupIsNotRetriedByCloseOrOtherInsta
 {
     DlHccpApiFnGuard guard;
     DlHccpApi::gRaRdevGetHandle = &FakeRaRdevGetHandleOkNonNull;
-    MOCKER(DlRtApi::LoadLibrary).stubs().will(returnValue(BM_OK));
-    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
-    MOCKER(DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(+[](int32_t id, int32_t *logicId) {
-        *logicId = id;
-        return BM_OK;
-    }));
-    MOCKER(DlRtApi::RtStreamCreate).stubs().will(returnValue(BM_OK));
+    MOCKER(&ock::mf::VendorApi::LoadLibrary).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetLogicDevIdByUserDevId,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+        .stubs()
+        .will(invoke(+[](ock::mf::AscendApiImpl *, int32_t id, int32_t *logicId) {
+            *logicId = id;
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .stubs()
+        .will(returnValue(BM_OK));
     static int destroyCalls;
     destroyCalls = 0;
     MOCKER(DlHccpApi::RaQpDestroy).stubs().will(invoke(+[](void *) { return ++destroyCalls == 1 ? -1 : 0; }));
@@ -1247,18 +1265,28 @@ protected:
         DlHccpApi::gTsdOpen = &FakeTsdOpenOk;
         DlHccpApi::gRaGetIfNum = &FakeRaGetIfNumTwo;
         DlHccpApi::gRaGetIfAddrs = &FakeRaGetIfAddrsOkEth0;
-        MOCKER(DlRtApi::LoadLibrary).stubs().will(returnValue(BM_OK));
-        MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
-        MOCKER(DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(+[](int32_t id, int32_t *logicId) {
-            *logicId = id;
-            return BM_OK;
-        }));
-        MOCKER(DlAclApi::AclrtGetPhyDevIdByLogicDevId).stubs().will(invoke(+[](int32_t id, int32_t *phyId) {
-            *phyId = id;
-            return BM_OK;
-        }));
-        MOCKER(DlRtApi::RtOpenNetService).expects(never());
-        MOCKER(DlRtApi::RtCloseNetService).expects(never());
+        MOCKER(&ock::mf::VendorApi::LoadLibrary).stubs().will(returnValue(BM_OK));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+            .stubs()
+            .will(returnValue(BM_OK));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetLogicDevIdByUserDevId,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, int32_t id, int32_t *logicId) {
+                *logicId = id;
+                return BM_OK;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetPhyDevIdByLogicDevId,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, int32_t id, int32_t *phyId) {
+                *phyId = id;
+                return BM_OK;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::OpenNetService, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .expects(never());
+        MOCKER_CPP(&ock::mf::AscendApiImpl::CloseNetService, ock::mf::Result(*)(ock::mf::AscendApiImpl *))
+            .expects(never());
         MOCKER(DlHccpApi::RaRdevInitV2).expects(never());
         MOCKER(DlHccpApi::RaRdevDeinit).expects(never());
         MOCKER(DlHccpApi::RaDeinit).expects(never());
@@ -1279,11 +1307,15 @@ protected:
 
 TEST_F(ProviderDeviceHcclBootstrapTest, HcclFirstBootstrapsAndBorrowsRdevWithoutDeinitializingIt)
 {
-    MOCKER(DlRtApi::RtStreamCreate).expects(once()).will(invoke(+[](void **stream, int32_t) {
-        *stream = reinterpret_cast<void *>(0x55UL);
-        return BM_OK;
-    }));
-    MOCKER(DlRtApi::RtStreamDestroy).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .expects(once())
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void **stream) {
+            *stream = reinterpret_cast<void *>(0x55UL);
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
     RdmaProviderDevice device;
     EXPECT_TRUE(device.Open(3, 2));
     EXPECT_TRUE(gHcclBootstrapInitialized);
@@ -1297,8 +1329,10 @@ TEST_F(ProviderDeviceHcclBootstrapTest, HcclFirstBootstrapsAndBorrowsRdevWithout
 TEST_F(ProviderDeviceHcclBootstrapTest, SuccessfulHcclBootstrapWithoutRdevStillFailsOpen)
 {
     gHcclBootstrapProvidesRdev = false;
-    MOCKER(DlRtApi::RtStreamCreate).expects(never());
-    MOCKER(DlRtApi::RtStreamDestroy).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(never());
     RdmaProviderDevice device;
     EXPECT_FALSE(device.Open(3, 2));
     EXPECT_TRUE(gHcclBootstrapInitialized);
@@ -1310,11 +1344,15 @@ TEST_F(ProviderDeviceHcclBootstrapTest, SuccessfulHcclBootstrapWithoutRdevStillF
 
 TEST_F(ProviderDeviceHcclBootstrapTest, BorrowedRdevWaitsForNotifyInsteadOfConsumingHcclCq)
 {
-    MOCKER(DlRtApi::RtStreamCreate).stubs().will(invoke(+[](void **stream, int32_t) {
-        *stream = reinterpret_cast<void *>(0x55UL);
-        return BM_OK;
-    }));
-    MOCKER(DlRtApi::RtStreamDestroy).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .stubs()
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void **stream) {
+            *stream = reinterpret_cast<void *>(0x55UL);
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
     MOCKER_CPP(&RdmaProviderCompletion::Init, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
     MOCKER_CPP(&RdmaProviderCompletion::SubmitFenceRead, bool (*)(RdmaProviderCompletion *, void *, uint64_t, uint32_t))
         .stubs()
@@ -1324,8 +1362,13 @@ TEST_F(ProviderDeviceHcclBootstrapTest, BorrowedRdevWaitsForNotifyInsteadOfConsu
         .will(returnValue(true));
     MOCKER_CPP(&RdmaProviderCompletion::Close, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
     MOCKER(DlHccpApi::RaTypicalSendWr).expects(once()).will(returnValue(BM_OK));
-    MOCKER(DlRtApi::RtRDMADBSend).expects(once()).will(returnValue(BM_OK));
-    MOCKER(DlRtApi::RtStreamSynchronize).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::RDMADBSend,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, uint64_t, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaQpDestroy).expects(once()).will(returnValue(BM_OK));
     RdmaProviderDevice device;
     ASSERT_TRUE(device.Open(3, 2));
@@ -1340,11 +1383,14 @@ TEST_F(ProviderDeviceHcclBootstrapTest, BorrowedRdevWaitsForNotifyInsteadOfConsu
 
 TEST_F(ProviderDeviceHcclBootstrapTest, FailedCompletionCleanupBlocksOtherUsersOfTheSameContext)
 {
-    MOCKER(DlRtApi::RtStreamCreate).stubs().will(invoke(+[](void **stream, int32_t) {
-        *stream = reinterpret_cast<void *>(0x55UL);
-        return BM_OK;
-    }));
-    MOCKER(DlRtApi::RtStreamDestroy).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .stubs()
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void **stream) {
+            *stream = reinterpret_cast<void *>(0x55UL);
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(never());
     MOCKER_CPP(&RdmaProviderCompletion::Init, bool (*)(RdmaProviderCompletion *)).stubs().will(returnValue(true));
     MOCKER_CPP(&RdmaProviderCompletion::SubmitFenceRead, bool (*)(RdmaProviderCompletion *, void *, uint64_t, uint32_t))
         .stubs()
@@ -1356,8 +1402,13 @@ TEST_F(ProviderDeviceHcclBootstrapTest, FailedCompletionCleanupBlocksOtherUsersO
         .expects(once())
         .will(returnValue(false));
     MOCKER(DlHccpApi::RaTypicalSendWr).expects(once()).will(returnValue(BM_OK));
-    MOCKER(DlRtApi::RtRDMADBSend).expects(once()).will(returnValue(BM_OK));
-    MOCKER(DlRtApi::RtStreamSynchronize).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::RDMADBSend,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, uint64_t, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaQpDestroy).expects(once()).will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaQpCreate).expects(never());
     RdmaProviderDevice first;
@@ -1387,19 +1438,33 @@ TEST_F(ProviderDeviceCleanupTest, OwnedRdevUsesNotifyAndPropagatesCompletionFail
         return ifNumCalls == 1 ? -1 : 0;
     };
     DlHccpApi::gRaGetIfAddrs = &FakeRaGetIfAddrsOkEth0;
-    MOCKER(DlRtApi::LoadLibrary).stubs().will(returnValue(BM_OK));
-    MOCKER(DlAclApi::GetAscendSocType).stubs().will(returnValue(AscendSocType::ASCEND_910B));
-    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
-    MOCKER(DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(+[](int32_t id, int32_t *logicId) {
-        *logicId = id;
-        return BM_OK;
-    }));
-    MOCKER(DlAclApi::AclrtGetPhyDevIdByLogicDevId).stubs().will(invoke(+[](int32_t id, int32_t *phyId) {
-        *phyId = id;
-        return BM_OK;
-    }));
-    MOCKER(DlRtApi::RtOpenNetService).expects(once()).will(returnValue(BM_OK));
-    MOCKER(DlRtApi::RtCloseNetService).expects(once()).will(returnValue(BM_OK));
+    MOCKER(&ock::mf::VendorApi::LoadLibrary).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_910B));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetLogicDevIdByUserDevId,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+        .stubs()
+        .will(invoke(+[](ock::mf::AscendApiImpl *, int32_t id, int32_t *logicId) {
+            *logicId = id;
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetPhyDevIdByLogicDevId,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+        .stubs()
+        .will(invoke(+[](ock::mf::AscendApiImpl *, int32_t id, int32_t *phyId) {
+            *phyId = id;
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::OpenNetService, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CloseNetService, ock::mf::Result(*)(ock::mf::AscendApiImpl *))
+        .expects(once())
+        .will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaInit).expects(once()).will(invoke(+[](const HccpRaInitConfig &config) {
         EXPECT_EQ(ifNumCalls, 1);
         EXPECT_EQ(config.phyId, 5U);
@@ -1426,11 +1491,15 @@ TEST_F(ProviderDeviceCleanupTest, OwnedRdevUsesNotifyAndPropagatesCompletionFail
         return BM_OK;
     }));
     MOCKER(DlHcclApi::HcclCommInitClusterInfoMemConfig).expects(never());
-    MOCKER(DlRtApi::RtStreamCreate).expects(once()).will(invoke(+[](void **stream, int32_t) {
-        *stream = reinterpret_cast<void *>(0x55UL);
-        return BM_OK;
-    }));
-    MOCKER(DlRtApi::RtStreamDestroy).expects(once()).will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .expects(once())
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void **stream) {
+            *stream = reinterpret_cast<void *>(0x55UL);
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
 
     RdmaProviderDevice device;
     EXPECT_TRUE(device.Open(5, 2));
@@ -1438,11 +1507,14 @@ TEST_F(ProviderDeviceCleanupTest, OwnedRdevUsesNotifyAndPropagatesCompletionFail
     EXPECT_EQ(device.rdmaHandle, reinterpret_cast<void *>(0xEEUL));
     EXPECT_TRUE(device.UsesNotifyCompletion());
     MOCKER(DlHccpApi::RaTypicalSendWr).expects(exactly(3)).will(returnValue(BM_OK));
-    MOCKER(DlRtApi::RtRDMADBSend).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::RDMADBSend,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, uint64_t, void *))
+        .expects(never());
     MOCKER_CPP(&RdmaProviderCompletion::SubmitNativeDoorbell, bool (*)(RdmaProviderCompletion *, const send_wr_rsp &))
         .expects(exactly(3))
         .will(returnValue(true));
-    MOCKER(DlRtApi::RtStreamSynchronize).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(never());
     MOCKER_CPP(&RdmaProviderCompletion::Init, bool (*)(RdmaProviderCompletion *))
         .expects(once())
         .will(returnValue(true));
@@ -1473,7 +1545,9 @@ TEST_F(ProviderDeviceCleanupTest, OwnedRdevUsesNotifyAndPropagatesCompletionFail
 TEST_F(ProviderDeviceCleanupTest, ProviderQpUsesSameQosAsFused)
 {
     const auto expectedQos = GetDeviceRdmaQos();
-    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+        .stubs()
+        .will(returnValue(BM_OK));
     MOCKER(DlHccpApi::RaQpCreate).stubs().will(invoke(+[](void *, int, int, void *&handle) {
         handle = reinterpret_cast<void *>(0x77UL);
         return BM_OK;

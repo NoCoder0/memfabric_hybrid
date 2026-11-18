@@ -20,7 +20,7 @@
 #include "hybm_conn_based_segment.h"
 #include "hybm_mem_segment.h"
 #include "hybm_vmm_based_segment.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 #undef protected
 
@@ -32,21 +32,28 @@
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 namespace {
+static ock::mf::AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<ock::mf::AscendApiImpl *>(ock::mf::VendorApi::Api());
+}
+} // namespace
+
+namespace {
 constexpr int TEST_ENTITY_ID = 100; // G.CNS.02: 段构造的 entityId 参数具名化
 struct MemSegmentAclFnGuard {
-    ock::mf::aclrtSetDeviceFunc oldSetDevice{ock::mf::DlAclApi::pAclrtSetDevice};
-    ock::mf::rtGetLogicDevIdByUserDevIdFunc oldGetLogicDevId{ock::mf::DlAclApi::pRtGetLogicDevIdByUserDevId};
-    ock::mf::aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{ock::mf::DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
-    ock::mf::rtDeviceGetBareTgidFunc oldGetBareTgid{ock::mf::DlAclApi::pRtDeviceGetBareTgid};
-    ock::mf::rtGetDeviceInfoFunc oldGetDeviceInfo{ock::mf::DlAclApi::pRtGetDeviceInfo};
+    ock::mf::aclrtSetDeviceFunc oldSetDevice{AscendRtApi().pAclrtSetDevice_};
+    ock::mf::rtGetLogicDevIdByUserDevIdFunc oldGetLogicDevId{AscendRtApi().pRtGetLogicDevIdByUserDevId_};
+    ock::mf::aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDev{AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_};
+    ock::mf::rtDeviceGetBareTgidFunc oldGetBareTgid{AscendRtApi().pRtDeviceGetBareTgid_};
+    ock::mf::rtGetDeviceInfoFunc oldGetDeviceInfo{AscendRtApi().pRtGetDeviceInfo_};
 
     ~MemSegmentAclFnGuard()
     {
-        ock::mf::DlAclApi::pAclrtSetDevice = oldSetDevice;
-        ock::mf::DlAclApi::pRtGetLogicDevIdByUserDevId = oldGetLogicDevId;
-        ock::mf::DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDev;
-        ock::mf::DlAclApi::pRtDeviceGetBareTgid = oldGetBareTgid;
-        ock::mf::DlAclApi::pRtGetDeviceInfo = oldGetDeviceInfo;
+        AscendRtApi().pAclrtSetDevice_ = oldSetDevice;
+        AscendRtApi().pRtGetLogicDevIdByUserDevId_ = oldGetLogicDevId;
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = oldGetPhyDev;
+        AscendRtApi().pRtDeviceGetBareTgid_ = oldGetBareTgid;
+        AscendRtApi().pRtGetDeviceInfo_ = oldGetDeviceInfo;
     }
 };
 
@@ -1071,7 +1078,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_AclrtSetDeviceFails)
 {
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
-    ock::mf::DlAclApi::pAclrtSetDevice = [](int32_t) -> int32_t { return -1; };
+    AscendRtApi().pAclrtSetDevice_ = [](int32_t) -> int32_t { return -1; };
 
     EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
 }
@@ -1083,7 +1090,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetLogicDevIdFails)
 {
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
-    ock::mf::DlAclApi::pRtGetLogicDevIdByUserDevId = [](const int32_t, int32_t *const) -> int32_t { return -1; };
+    AscendRtApi().pRtGetLogicDevIdByUserDevId_ = [](const int32_t, int32_t *const) -> int32_t { return -1; };
 
     EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
 }
@@ -1095,7 +1102,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtDeviceGetBareTgidFails)
 {
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
-    ock::mf::DlAclApi::pRtDeviceGetBareTgid = [](uint32_t *) -> int32_t { return -1; };
+    AscendRtApi().pRtDeviceGetBareTgid_ = [](uint32_t *) -> int32_t { return -1; };
 
     EXPECT_EQ(ock::mf::MemSegment::InitDeviceInfo(0), BM_DL_FUNCTION_FAILED);
 }
@@ -1109,7 +1116,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetDeviceInfoFails_Sdid)
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
     g_rtGetDeviceInfoCallCount = 0;
-    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
         g_rtGetDeviceInfoCallCount++;
         if (g_rtGetDeviceInfoCallCount == 1) {
             return -1;
@@ -1126,7 +1133,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetDeviceInfoFails_ServerId)
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
     g_rtGetDeviceInfoCallCount = 0;
-    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
         g_rtGetDeviceInfoCallCount++;
         if (g_rtGetDeviceInfoCallCount == 2) { // 2
             return -1;
@@ -1143,7 +1150,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_RtGetDeviceInfoFails_SuperPodId)
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
     g_rtGetDeviceInfoCallCount = 0;
-    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t, int64_t *value) -> int32_t {
         g_rtGetDeviceInfoCallCount++;
         if (g_rtGetDeviceInfoCallCount == 3) { // 3
             return -1;
@@ -1163,7 +1170,7 @@ TEST_F(HybmMemSegmentTest, InitDeviceInfo_SuccessWithInvalidPodServer_FallsBackT
 {
     ock::mf::MemSegment::deviceInfoReady_ = false;
     MemSegmentAclFnGuard guard;
-    ock::mf::DlAclApi::pRtGetDeviceInfo = [](uint32_t, int32_t, int32_t infoType, int64_t *value) -> int32_t {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t, int32_t, int32_t infoType, int64_t *value) -> int32_t {
         if (infoType == ock::mf::INFO_TYPE_SDID) {
             *value = 0x1234;
             return 0;

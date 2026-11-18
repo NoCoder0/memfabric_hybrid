@@ -30,11 +30,10 @@
 #include <thread>
 
 #include "hybm_common_include.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_hccp_api.h"
-#include "dl_hccl_api.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/ascend/dl_hccl_api.h"
 #include "hybm_networks_common.h"
 #include "hybm_ptracer.h"
 #include "device_nic_helper.h"
@@ -91,18 +90,18 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
     int32_t phyId = -1;
     std::unique_lock<std::mutex> unique_lock(mutex_);
     BM_LOG_DEBUG("begin to open device with " << options);
-    auto ret = DlAclApi::AclrtGetDevice(&userId);
+    auto ret = VendorApi::Api()->GetDevice(&userId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && userId >= 0,
                              "AclrtGetDevice() return=" << ret << ", output deviceId=" << userId,
                              BM_DL_FUNCTION_FAILED);
 
-    ret = DlAclApi::RtGetLogicDevIdByUserDevId(userId, &logicId);
+    ret = VendorApi::Api()->GetLogicDevIdByUserDevId(userId, &logicId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && logicId >= 0,
                              "RtGetLogicDevIdByUserDevId() return=" << ret << ", output deviceId=" << logicId,
                              BM_DL_FUNCTION_FAILED);
 
     // 实测需要使用userDeviceId
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(userId, &phyId);
     if (ret != 0) {
         BM_LOG_WARN("aclrtGetPhyDevIdByLogicDevId ret=" << ret << " use logicId=" << logicId);
         phyId = logicId;
@@ -1021,13 +1020,13 @@ int32_t RdmaTransportManager::InitStreamNotifyBuf()
     ret = DlHccpApi::RaGetNotifyMrInfo(rdmaHandle_, &info);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "get notify mr failed.", ret);
 
-    ret = DlAclApi::AclrtMalloc(&ptr, HYBM_LARGE_PAGE_SIZE, 0);
+    ret = VendorApi::Api()->Malloc(&ptr, HYBM_LARGE_PAGE_SIZE, 0);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "alloc notify buf failed.", ret);
 
-    ret = DlAclApi::AclrtMemcpy(ptr, notifySize, &notifyVal, notifySize, ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(ptr, notifySize, &notifyVal, notifySize, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
         BM_LOG_ERROR("set notify val failed: " << ret);
-        DlAclApi::AclrtFree(ptr);
+        VendorApi::Api()->Free(ptr);
         return ret;
     }
 
@@ -1036,7 +1035,7 @@ int32_t RdmaTransportManager::InitStreamNotifyBuf()
     ret = DlHccpApi::RaRegisterMR(rdmaHandle_, &info2, mrHandle);
     if (ret != 0) {
         BM_LOG_ERROR("register notify mr failed: " << ret);
-        DlAclApi::AclrtFree(ptr);
+        VendorApi::Api()->Free(ptr);
         return BM_DL_FUNCTION_FAILED;
     }
 

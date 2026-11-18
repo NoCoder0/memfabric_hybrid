@@ -10,37 +10,36 @@
  * See the Mulan PSL v2 for more details.
 */
 #include "dl_api.h"
-#include "dl_hybrid_api.h"
-#include "dl_hal_api.h"
-#include "dl_hccp_api.h"
-#include "dl_hccl_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/ascend/dl_hccl_api.h"
 #include "dl_hcom_api.h"
-#include "dl_rt_api.h"
 #include "dl_op_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
 #include "dl_hybm_copy_extend.h"
 #include "dl_hybm_aiv_direct_sdma.h"
 
 namespace ock {
 namespace mf {
 
-Result DlApi::LoadLibrary(const std::string &libDirPath, const uint32_t gvaVersion)
+Result DlApi::LoadLibrary(const uint32_t gvaVersion)
 {
-    auto result = DlHybridApi::LoadLibrary(libDirPath);
+    auto result = VendorApi::LoadLibrary();
     if (result != BM_OK) {
         return result;
     }
 #if defined(ASCEND_NPU)
     result = DlHalApi::LoadLibrary(gvaVersion);
     if (result != BM_OK) {
-        DlAclApi::CleanupLibrary();
+        VendorApi::CleanupLibrary();
         return result;
     }
 
     result = DlHccpApi::LoadLibrary();
     if (result != BM_OK) {
         DlHalApi::CleanupLibrary();
-        DlAclApi::CleanupLibrary();
+        VendorApi::CleanupLibrary();
         return result;
     }
 
@@ -48,7 +47,7 @@ Result DlApi::LoadLibrary(const std::string &libDirPath, const uint32_t gvaVersi
     if (result != BM_OK) {
         DlHccpApi::CleanupLibrary();
         DlHalApi::CleanupLibrary();
-        DlAclApi::CleanupLibrary();
+        VendorApi::CleanupLibrary();
         return result;
     }
 
@@ -63,10 +62,9 @@ Result DlApi::LoadLibrary(const std::string &libDirPath, const uint32_t gvaVersi
 void DlApi::CleanupLibrary()
 {
     DlOpApi::CleanupLibrary();
-    DlRtApi::CleanupLibrary();
+    VendorApi::CleanupLibrary();
     DlHcclApi::CleanupLibrary();
     DlHccpApi::CleanupLibrary();
-    DlAclApi::CleanupLibrary();
     DlHalApi::CleanupLibrary();
     DlHcomApi::CleanupLibrary();
     DlHcommApi::CleanupLibrary();
@@ -81,13 +79,12 @@ Result DlApi::LoadExtendLibrary(DlApiExtendLibraryType libraryType)
     }
 
     if (libraryType == DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_SDMA) {
-        auto result = DlRtApi::LoadLibrary();
+        auto result = VendorApi::LoadLibrary();
         if (result != BM_OK) {
             return result;
         }
         result = DlOpApi::LoadLibrary();
         if (result != BM_OK) {
-            DlRtApi::CleanupLibrary();
             return result;
         }
     }
@@ -97,13 +94,12 @@ Result DlApi::LoadExtendLibrary(DlApiExtendLibraryType libraryType)
     }
 
     if (libraryType == DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_URMA) {
-        auto result = DlRtApi::LoadLibrary();
+        auto result = VendorApi::LoadLibrary();
         if (result != BM_OK) {
             return result;
         }
         result = DlHcommApi::LoadLibrary();
         if (result != BM_OK) {
-            DlRtApi::CleanupLibrary();
             return result;
         }
     }

@@ -26,7 +26,7 @@
 #include "hybm_data_op_device_urma.h"
 #include "hybm_va_manager.h"
 #include "hybm_vmm_based_segment.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 #undef protected
 
@@ -736,7 +736,8 @@ TEST_F(HybmEntityDefaultTest, SetExtraContext_MemcpyFail_ReturnError)
     entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
 
     int ctx = TEST_CONTEXT_VALUE;
-    MOCKER_CPP(&ock::mf::DlAclApi::AclrtMemcpy, int32_t(*)(void *, size_t, const void *, size_t, int32_t))
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_ERROR)));
 
@@ -752,7 +753,8 @@ TEST_F(HybmEntityDefaultTest, SetExtraContext_Success_ReturnOk)
     entity.options_.bmType = HYBM_TYPE_HOST_INITIATE; // UpdateHybmDeviceInfo will return OK directly
 
     int ctx = TEST_CONTEXT_VALUE;
-    MOCKER_CPP(&ock::mf::DlAclApi::AclrtMemcpy, int32_t(*)(void *, size_t, const void *, size_t, int32_t))
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
 
@@ -922,7 +924,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_UseLocalRankForAddrOutOfGvm
     MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
@@ -953,7 +955,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_UseRankFromVaManagerInSocRa
     MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
@@ -1001,7 +1003,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_A5Soc_UseRankFromVaManagerI
     MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
 
@@ -1045,7 +1047,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_Enable56BitsGvaOutOfA5Range
     MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 
@@ -1076,7 +1078,7 @@ TEST_F(HybmEntityDefaultTest, CopyData_NonTransScene_Enable56BitsGvaAddrWithoutR
     MOCKER_CPP(&ock::mf::MemEntityDefault::SetThreadAclDevice, int32_t(*)(ock::mf::MemEntityDefault *))
         .stubs()
         .will(returnValue(static_cast<int32_t>(BM_OK)));
-    MOCKER_CPP(&ock::mf::DlAclApi::GetAscendSocType, ock::mf::AscendSocType(*)())
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
         .stubs()
         .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
 

@@ -12,7 +12,7 @@
 
 #include "urma_proxy_transport_manager.h"
 #include "hybm_common_include.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "provider_device_context.h"
 #include <sys/socket.h>
 #include <unistd.h>
@@ -341,7 +341,7 @@ Result UrmaProxyTransportManager::RemoveRanks(const std::vector<uint32_t> &ranks
 }
 void UrmaProxyTransportManager::ControlLoop()
 {
-    if (DlAclApi::AclrtSetCurrentContext(device_->GetContext()) != BM_OK) {
+    if (VendorApi::Api()->SetCurrentContext(device_->GetContext()) != BM_OK) {
         BM_LOG_ERROR("URMA proxy control thread cannot restore ACL context");
         return;
     }

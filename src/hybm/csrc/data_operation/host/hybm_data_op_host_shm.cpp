@@ -12,7 +12,7 @@
 
 #include "hybm_data_op_host_shm.h"
 
-#include "dl_hybrid_api.h"
+#include "vendor/vendor_api.h"
 
 namespace ock {
 namespace mf {
@@ -54,17 +54,17 @@ bool HostDataOpHostShm::IsSupportedDirection(hybm_data_copy_direction direction)
 
 Result HostDataOpHostShm::CopyHostToHost(void *destVA, const void *srcVA, uint64_t length) noexcept
 {
-    return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
+    return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
 }
 
 Result HostDataOpHostShm::CopyDeviceToHost(void *destVA, const void *srcVA, uint64_t length) noexcept
 {
-    return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
+    return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
 }
 
 Result HostDataOpHostShm::CopyHostToDevice(void *destVA, const void *srcVA, uint64_t length) noexcept
 {
-    return DlHybridApi::Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
+    return VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
 }
 
 Result HostDataOpHostShm::DataCopy(hybm_copy_params &params, hybm_data_copy_direction direction,
@@ -147,8 +147,8 @@ Result HostDataOpHostShm::BatchDataCopyLocalBatch(void **destAddrs, void **srcAd
         sizes[i] = counts[i];
     }
     size_t fail_idx = 0;
-    return DlAclApi::AclrtMemcpyBatch(destAddrs, sizes.data(), srcAddrs, sizes.data(), sizes.size(), attrs.data(),
-                                      attrsIds.data(), attrs.size(), &fail_idx);
+    return VendorApi::Api()->MemcpyBatch(destAddrs, sizes.data(), srcAddrs, sizes.data(), sizes.size(), attrs.data(),
+                                         attrsIds.data(), attrs.size(), &fail_idx);
 }
 
 Result HostDataOpHostShm::BatchCopyDeviceToHost(void **destAddrs, void **srcAddrs, const uint64_t *counts,

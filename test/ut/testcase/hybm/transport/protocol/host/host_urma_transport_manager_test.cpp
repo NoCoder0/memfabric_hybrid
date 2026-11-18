@@ -24,8 +24,8 @@
 #include "hybm_common_include.h"
 
 #define private public
-#include "dl_acl_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #undef private
 
 #include "host_urma_transport_manager.h"
@@ -35,6 +35,11 @@
 using namespace ock::mf;
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::urma;
+
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
 using ock::mf::transport::host::HostUrmaTransportManager;
 
 namespace {
@@ -79,8 +84,8 @@ struct HostUrmaCalls {
 HostUrmaCalls gCalls;
 
 struct HostUrmaApiGuard {
-    aclrtGetDeviceFunc getDevice{DlAclApi::pAclrtGetDevice};
-    aclrtGetPhyDevIdByLogicDevIdFunc getPhysicalDevice{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
+    aclrtGetDeviceFunc getDevice{AscendRtApi().pAclrtGetDevice_};
+    aclrtGetPhyDevIdByLogicDevIdFunc getPhysicalDevice{AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_};
     hcommEndpointCreateFunc createEndpoint{DlHcommApi::gHcommEndpointCreate};
     hcommEndpointDestroyFunc destroyEndpoint{DlHcommApi::gHcommEndpointDestroy};
     hcommMemRegFunc registerMemory{DlHcommApi::gHcommMemReg};
@@ -93,8 +98,8 @@ struct HostUrmaApiGuard {
 
     ~HostUrmaApiGuard()
     {
-        DlAclApi::pAclrtGetDevice = getDevice;
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = getPhysicalDevice;
+        AscendRtApi().pAclrtGetDevice_ = getDevice;
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = getPhysicalDevice;
         DlHcommApi::gHcommEndpointCreate = createEndpoint;
         DlHcommApi::gHcommEndpointDestroy = destroyEndpoint;
         DlHcommApi::gHcommMemReg = registerMemory;
@@ -153,11 +158,11 @@ protected:
     void SetUp() override
     {
         gCalls = {};
-        DlAclApi::pAclrtGetDevice = [](int32_t *device) {
+        AscendRtApi().pAclrtGetDevice_ = [](int32_t *device) {
             *device = LOGICAL_DEVICE;
             return BM_OK;
         };
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = [](int32_t logical, int32_t *physical) {
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = [](int32_t logical, int32_t *physical) {
             EXPECT_EQ(logical, LOGICAL_DEVICE);
             *physical = PHYSICAL_DEVICE;
             return BM_OK;

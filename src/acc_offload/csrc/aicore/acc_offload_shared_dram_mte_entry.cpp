@@ -10,14 +10,14 @@
  * See the Mulan PSL v2 for more details.
 */
 #include <algorithm>
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "acc_offload_shared_dram_mte_entry.h"
 
 namespace ock::offload {
 
 int32_t AccOffloadSharedDramMteEntry::ValidateBackendConfig(const offload_config_t &config) const
 {
-    const auto soc = mf::DlAclApi::GetAscendSocType();
+    const auto soc = mf::VendorApi::Api()->GetSocName();
     const bool multiNode = config.localWorldSize != 0 && config.localWorldSize != config.worldSize;
     if ((soc != mf::ASCEND_910C && soc != mf::ASCEND_950) || (multiNode && soc != mf::ASCEND_910C)) {
         OFFLOAD_LOG_ERROR("unsupported shared MTE configuration, soc=" << static_cast<uint32_t>(soc)
@@ -40,7 +40,7 @@ int32_t AccOffloadSharedDramMteEntry::InitializePool(const offload_config_t &con
         return ret;
     }
     // Bind custom AICPU before importing A3 REMOTE_MAP mappings into the device address space.
-    if (ock::mf::DlAclApi::GetAscendSocType() == ock::mf::ASCEND_910C) {
+    if (mf::VendorApi::Api()->GetSocName() == mf::ASCEND_910C) {
         ret = AccOffloadLaunchApi::InitializeAicpu(config.deviceId);
         if (ret != OFFLOAD_OK) {
             OFFLOAD_LOG_WARN("initialize A3 custom AICPU failed, deviceId: " << config.deviceId << ", ret: " << ret);

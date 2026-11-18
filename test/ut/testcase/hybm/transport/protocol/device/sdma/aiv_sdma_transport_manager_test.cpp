@@ -16,9 +16,9 @@
 #define private   public
 #define protected public
 #include "aiv_sdma_transport_manager.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "dl_op_api.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 #undef protected
 
@@ -31,44 +31,49 @@ constexpr int32_t TEST_MALLOC_FAIL_AT_CALL = 2;
 constexpr uint64_t TEST_WORKSPACE_SIZE = 1024; // 1KB workspace size for testing
 
 namespace {
-struct DlAclApiFnGuard {
-    aclrtMallocFunc oldAclrtMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldAclrtFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldAclrtMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtMemsetFunc oldAclrtMemset{DlAclApi::pAclrtMemset};
-    aclrtCreateStreamWithConfigFunc oldAclrtCreateStreamWithConfig{DlAclApi::pAclrtCreateStreamWithConfig};
-    aclrtDestroyStreamFunc oldAclrtDestroyStream{DlAclApi::pAclrtDestroyStream};
-    aclrtStreamGetIdFunc oldAclrtStreamGetId{DlAclApi::pAclrtStreamGetId};
-    aclrtCreateNotifyFunc oldAclrtCreateNotify{DlAclApi::pAclrtCreateNotify};
-    aclrtGetNotifyIdFunc oldAclrtGetNotifyId{DlAclApi::pAclrtGetNotifyId};
-    aclrtDestroyNotifyFunc oldAclrtDestroyNotify{DlAclApi::pAclrtDestroyNotify};
-    aclrtGetCurrentContextFunc oldAclrtGetCurrentContext{DlAclApi::pAclrtGetCurrentContext};
-    aclrtSynchronizeStreamFunc oldAclrtSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
-    aclrtGetDeviceFunc oldAclrtGetDevice{DlAclApi::pAclrtGetDevice};
-    rtGetDeviceInfoFunc oldRtGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
-    rtStreamGetSqidFunc oldRtStreamGetSqid{DlRtApi::pRtStreamGetSqid};
-    rtStreamGetCqidFunc oldRtStreamGetCqid{DlRtApi::pRtStreamGetCqid};
-    aclrtSetStreamAttributeFunc oldAclrtSetStreamAttribute{DlAclApi::pAclrtSetStreamAttribute};
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
 
-    ~DlAclApiFnGuard()
+struct AclFnGuard {
+    aclrtMallocFunc oldAclrtMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldAclrtFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldAclrtMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtMemsetFunc oldAclrtMemset{AscendRtApi().pAclrtMemset_};
+    aclrtCreateStreamWithConfigFunc oldAclrtCreateStreamWithConfig{AscendRtApi().pAclrtCreateStreamWithConfig_};
+    aclrtDestroyStreamFunc oldAclrtDestroyStream{AscendRtApi().pAclrtDestroyStream_};
+    aclrtStreamGetIdFunc oldAclrtStreamGetId{AscendRtApi().pAclrtStreamGetId_};
+    aclrtCreateNotifyFunc oldAclrtCreateNotify{AscendRtApi().pAclrtCreateNotify_};
+    aclrtGetNotifyIdFunc oldAclrtGetNotifyId{AscendRtApi().pAclrtGetNotifyId_};
+    aclrtDestroyNotifyFunc oldAclrtDestroyNotify{AscendRtApi().pAclrtDestroyNotify_};
+    aclrtGetCurrentContextFunc oldAclrtGetCurrentContext{AscendRtApi().pAclrtGetCurrentContext_};
+    aclrtSynchronizeStreamFunc oldAclrtSynchronizeStream{AscendRtApi().pAclrtSynchronizeStream_};
+    aclrtGetDeviceFunc oldAclrtGetDevice{AscendRtApi().pAclrtGetDevice_};
+    rtGetDeviceInfoFunc oldRtGetDeviceInfo{AscendRtApi().pRtGetDeviceInfo_};
+    rtStreamGetSqidFunc oldRtStreamGetSqid{AscendRtApi().pRtStreamGetSqid_};
+    rtStreamGetCqidFunc oldRtStreamGetCqid{AscendRtApi().pRtStreamGetCqid_};
+    aclrtSetStreamAttributeFunc oldAclrtSetStreamAttribute{AscendRtApi().pAclrtSetStreamAttribute_};
+
+    ~AclFnGuard()
     {
-        DlAclApi::pAclrtMalloc = oldAclrtMalloc;
-        DlAclApi::pAclrtFree = oldAclrtFree;
-        DlAclApi::pAclrtMemcpy = oldAclrtMemcpy;
-        DlAclApi::pAclrtMemset = oldAclrtMemset;
-        DlAclApi::pAclrtCreateStreamWithConfig = oldAclrtCreateStreamWithConfig;
-        DlAclApi::pAclrtDestroyStream = oldAclrtDestroyStream;
-        DlAclApi::pAclrtStreamGetId = oldAclrtStreamGetId;
-        DlAclApi::pAclrtCreateNotify = oldAclrtCreateNotify;
-        DlAclApi::pAclrtGetNotifyId = oldAclrtGetNotifyId;
-        DlAclApi::pAclrtDestroyNotify = oldAclrtDestroyNotify;
-        DlAclApi::pAclrtGetCurrentContext = oldAclrtGetCurrentContext;
-        DlAclApi::pAclrtSynchronizeStream = oldAclrtSynchronizeStream;
-        DlAclApi::pAclrtGetDevice = oldAclrtGetDevice;
-        DlAclApi::pRtGetDeviceInfo = oldRtGetDeviceInfo;
-        DlRtApi::pRtStreamGetSqid = oldRtStreamGetSqid;
-        DlRtApi::pRtStreamGetCqid = oldRtStreamGetCqid;
-        DlAclApi::pAclrtSetStreamAttribute = oldAclrtSetStreamAttribute;
+        AscendRtApi().pAclrtMalloc_ = oldAclrtMalloc;
+        AscendRtApi().pAclrtFree_ = oldAclrtFree;
+        AscendRtApi().pAclrtMemcpy_ = oldAclrtMemcpy;
+        AscendRtApi().pAclrtMemset_ = oldAclrtMemset;
+        AscendRtApi().pAclrtCreateStreamWithConfig_ = oldAclrtCreateStreamWithConfig;
+        AscendRtApi().pAclrtDestroyStream_ = oldAclrtDestroyStream;
+        AscendRtApi().pAclrtStreamGetId_ = oldAclrtStreamGetId;
+        AscendRtApi().pAclrtCreateNotify_ = oldAclrtCreateNotify;
+        AscendRtApi().pAclrtGetNotifyId_ = oldAclrtGetNotifyId;
+        AscendRtApi().pAclrtDestroyNotify_ = oldAclrtDestroyNotify;
+        AscendRtApi().pAclrtGetCurrentContext_ = oldAclrtGetCurrentContext;
+        AscendRtApi().pAclrtSynchronizeStream_ = oldAclrtSynchronizeStream;
+        AscendRtApi().pAclrtGetDevice_ = oldAclrtGetDevice;
+        AscendRtApi().pRtGetDeviceInfo_ = oldRtGetDeviceInfo;
+        AscendRtApi().pRtStreamGetSqid_ = oldRtStreamGetSqid;
+        AscendRtApi().pRtStreamGetCqid_ = oldRtStreamGetCqid;
+        AscendRtApi().pAclrtSetStreamAttribute_ = oldAclrtSetStreamAttribute;
     }
 };
 
@@ -316,23 +321,23 @@ public:
 
     void SetupMockOk()
     {
-        DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-        DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
-        DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
-        DlAclApi::pAclrtMemset = &FakeAclrtMemsetOk;
-        DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-        DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
-        DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-        DlAclApi::pAclrtCreateNotify = &FakeAclrtCreateNotifyOk;
-        DlAclApi::pAclrtGetNotifyId = &FakeAclrtGetNotifyIdOk;
-        DlAclApi::pAclrtDestroyNotify = &FakeAclrtDestroyNotifyOk;
-        DlAclApi::pAclrtGetCurrentContext = &FakeAclrtGetCurrentContextOk;
-        DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamOk;
-        DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-        DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-        DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-        DlRtApi::pRtStreamGetCqid = &FakeRtStreamGetCqidOk;
-        DlAclApi::pAclrtSetStreamAttribute = &FakeAclrtSetStreamAttributeOk;
+        AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+        AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
+        AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
+        AscendRtApi().pAclrtMemset_ = &FakeAclrtMemsetOk;
+        AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+        AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
+        AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+        AscendRtApi().pAclrtCreateNotify_ = &FakeAclrtCreateNotifyOk;
+        AscendRtApi().pAclrtGetNotifyId_ = &FakeAclrtGetNotifyIdOk;
+        AscendRtApi().pAclrtDestroyNotify_ = &FakeAclrtDestroyNotifyOk;
+        AscendRtApi().pAclrtGetCurrentContext_ = &FakeAclrtGetCurrentContextOk;
+        AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamOk;
+        AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+        AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+        AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+        AscendRtApi().pRtStreamGetCqid_ = &FakeRtStreamGetCqidOk;
+        AscendRtApi().pAclrtSetStreamAttribute_ = &FakeAclrtSetStreamAttributeOk;
 
         DlOpApi::pAclCreateTensor = &FakeAclCreateTensorOk;
         DlOpApi::pAclDestroyTensor = &FakeAclDestroyTensorOk;
@@ -344,7 +349,7 @@ public:
 
 TEST_F(SdmaTransportManagerTest, OpenDeviceSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
     SetupMockOk();
 
@@ -363,12 +368,12 @@ TEST_F(SdmaTransportManagerTest, OpenDeviceSuccess)
 
 TEST_F(SdmaTransportManagerTest, OpenDeviceCreateStreamFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigFail;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigFail;
 
     SdmaTransportManager mgr;
     TransportOptions options{};
@@ -382,18 +387,18 @@ TEST_F(SdmaTransportManagerTest, OpenDeviceCreateStreamFail)
 
 TEST_F(SdmaTransportManagerTest, OpenDeviceMallocWorkspaceFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
     DlOpApiFnGuard apiGuard;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-    DlRtApi::pRtStreamGetCqid = &FakeRtStreamGetCqidOk;
-    DlAclApi::pAclrtGetCurrentContext = &FakeAclrtGetCurrentContextOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+    AscendRtApi().pRtStreamGetCqid_ = &FakeRtStreamGetCqidOk;
+    AscendRtApi().pAclrtGetCurrentContext_ = &FakeAclrtGetCurrentContextOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFail;
 
     SdmaTransportManager mgr;
     TransportOptions options{};
@@ -407,19 +412,19 @@ TEST_F(SdmaTransportManagerTest, OpenDeviceMallocWorkspaceFail)
 
 TEST_F(SdmaTransportManagerTest, OpenDeviceCreateNotifyFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-    DlRtApi::pRtStreamGetCqid = &FakeRtStreamGetCqidOk;
-    DlAclApi::pAclrtGetCurrentContext = &FakeAclrtGetCurrentContextOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemset = &FakeAclrtMemsetOk;
-    DlAclApi::pAclrtCreateNotify = &FakeAclrtCreateNotifyFail;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+    AscendRtApi().pRtStreamGetCqid_ = &FakeRtStreamGetCqidOk;
+    AscendRtApi().pAclrtGetCurrentContext_ = &FakeAclrtGetCurrentContextOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemset_ = &FakeAclrtMemsetOk;
+    AscendRtApi().pAclrtCreateNotify_ = &FakeAclrtCreateNotifyFail;
 
     SdmaTransportManager mgr;
     TransportOptions options{};
@@ -433,7 +438,7 @@ TEST_F(SdmaTransportManagerTest, OpenDeviceCreateNotifyFail)
 
 TEST_F(SdmaTransportManagerTest, CloseDeviceNotInited)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     SdmaTransportManager mgr;
 
     auto ret = mgr.CloseDevice();
@@ -442,7 +447,7 @@ TEST_F(SdmaTransportManagerTest, CloseDeviceNotInited)
 
 TEST_F(SdmaTransportManagerTest, CloseDeviceInited)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
     SetupMockOk();
 
@@ -463,15 +468,15 @@ TEST_F(SdmaTransportManagerTest, CloseDeviceInited)
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-    DlRtApi::pRtStreamGetCqid = &FakeRtStreamGetCqidOk;
-    DlAclApi::pAclrtGetCurrentContext = &FakeAclrtGetCurrentContextOk;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+    AscendRtApi().pRtStreamGetCqid_ = &FakeRtStreamGetCqidOk;
+    AscendRtApi().pAclrtGetCurrentContext_ = &FakeAclrtGetCurrentContextOk;
 
     SdmaTransportManager mgr;
     auto ret = mgr.CreateStarsStreams(2);
@@ -482,15 +487,15 @@ TEST_F(SdmaTransportManagerTest, CreateStarsStreamsSuccess)
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetContextFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-    DlRtApi::pRtStreamGetCqid = &FakeRtStreamGetCqidOk;
-    DlAclApi::pAclrtGetCurrentContext = &FakeAclrtGetCurrentContextFail;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+    AscendRtApi().pRtStreamGetCqid_ = &FakeRtStreamGetCqidOk;
+    AscendRtApi().pAclrtGetCurrentContext_ = &FakeAclrtGetCurrentContextFail;
 
     SdmaTransportManager mgr;
     auto ret = mgr.CreateStarsStreams(TEST_STREAM_COUNT);
@@ -500,10 +505,10 @@ TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetContextFail)
 
 TEST_F(SdmaTransportManagerTest, MallocSdmaWorkspaceSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemset = &FakeAclrtMemsetOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemset_ = &FakeAclrtMemsetOk;
 
     SdmaTransportManager mgr;
     auto ret = mgr.MallocSdmaWorkspace(16 * 1024);
@@ -514,9 +519,9 @@ TEST_F(SdmaTransportManagerTest, MallocSdmaWorkspaceSuccess)
 
 TEST_F(SdmaTransportManagerTest, MallocSdmaWorkspaceFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFail;
 
     SdmaTransportManager mgr;
     auto ret = mgr.MallocSdmaWorkspace(16 * 1024);
@@ -534,11 +539,11 @@ TEST_F(SdmaTransportManagerTest, GetSdmaWorkSpaceAddr)
 
 TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
-    DlAclApi::pAclrtMemset = &FakeAclrtMemsetOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtMemset_ = &FakeAclrtMemsetOk;
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x1000ULL;
@@ -554,9 +559,9 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceSuccess)
 
 TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMallocFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFail;
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x1000ULL;
@@ -569,11 +574,11 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMallocFail)
 
 TEST_F(SdmaTransportManagerTest, CreateAclTensorSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
     DlOpApi::pAclCreateTensor = &FakeAclCreateTensorOk;
 
     SdmaTransportManager mgr;
@@ -589,17 +594,17 @@ TEST_F(SdmaTransportManagerTest, CreateAclTensorSuccess)
     EXPECT_NE(tensor, nullptr);
 
     // Cleanup
-    DlAclApi::AclrtFree(deviceAddr);
+    VendorApi::Api()->Free(deviceAddr);
     DlOpApi::AclDestroyTensor(tensor);
 }
 
 TEST_F(SdmaTransportManagerTest, CreateAclTensorFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
     DlOpApi::pAclCreateTensor = &FakeAclCreateTensorFail;
 
     SdmaTransportManager mgr;
@@ -617,15 +622,15 @@ TEST_F(SdmaTransportManagerTest, CreateAclTensorFail)
 
 TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
-    DlAclApi::pAclrtSetStreamAttribute = &FakeAclrtSetStreamAttributeOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
-    DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtSetStreamAttribute_ = &FakeAclrtSetStreamAttributeOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamOk;
     DlOpApi::pAclCreateTensor = &FakeAclCreateTensorOk;
     DlOpApi::pAclDestroyTensor = &FakeAclDestroyTensorOk;
     DlOpApi::pAclnnShmemSdmaStarsQueryGetWorkspaceSize = &FakeAclnnShmemSdmaStarsQueryGetWorkspaceSizeOk;
@@ -651,11 +656,11 @@ TEST_F(SdmaTransportManagerTest, GetNicReturnsEmpty)
 
 TEST_F(SdmaTransportManagerTest, CreateNotifyIdsSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtCreateNotify = &FakeAclrtCreateNotifyOk;
-    DlAclApi::pAclrtGetNotifyId = &FakeAclrtGetNotifyIdOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtCreateNotify_ = &FakeAclrtCreateNotifyOk;
+    AscendRtApi().pAclrtGetNotifyId_ = &FakeAclrtGetNotifyIdOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x100000000000ULL;
@@ -667,9 +672,9 @@ TEST_F(SdmaTransportManagerTest, CreateNotifyIdsSuccess)
 
 TEST_F(SdmaTransportManagerTest, CreateNotifyIdsCreateNotifyFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtCreateNotify = &FakeAclrtCreateNotifyFail;
+    AscendRtApi().pAclrtCreateNotify_ = &FakeAclrtCreateNotifyFail;
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x100000000000ULL;
@@ -765,15 +770,15 @@ int32_t FakeAclrtMallocFailAfterSecondCall(void **ptr, size_t size, uint32_t fla
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetStreamIdFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
     g_streamIdFailCount = 0;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdFailAtSecondCall;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdFailAtSecondCall;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
 
     SdmaTransportManager mgr;
     auto ret = mgr.CreateStarsStreams(3);
@@ -783,16 +788,16 @@ TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetStreamIdFail)
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetSqidFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
     g_sqidFailCount = 0;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidFailAtSecondCall;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidFailAtSecondCall;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
 
     SdmaTransportManager mgr;
     auto ret = mgr.CreateStarsStreams(3);
@@ -802,17 +807,17 @@ TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetSqidFail)
 
 TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetCqidFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
     g_cqidFailCount = 0;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetDeviceInfo = &FakeRtGetDeviceInfoOk;
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-    DlRtApi::pRtStreamGetCqid = &FakeRtStreamGetCqidFailAtSecondCall;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetDeviceInfo_ = &FakeRtGetDeviceInfoOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+    AscendRtApi().pRtStreamGetCqid_ = &FakeRtStreamGetCqidFailAtSecondCall;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
 
     SdmaTransportManager mgr;
     auto ret = mgr.CreateStarsStreams(3);
@@ -822,10 +827,10 @@ TEST_F(SdmaTransportManagerTest, CreateStarsStreamsGetCqidFail)
 
 TEST_F(SdmaTransportManagerTest, MallocSdmaWorkspaceMemsetFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemset = [](void *dst, size_t destMax, int32_t value, size_t count) -> int32_t {
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemset_ = [](void *dst, size_t destMax, int32_t value, size_t count) -> int32_t {
         (void)dst;
         (void)destMax;
         (void)value;
@@ -841,10 +846,11 @@ TEST_F(SdmaTransportManagerTest, MallocSdmaWorkspaceMemsetFail)
 
 TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMemcpyFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = [](void *dst, size_t dstSize, const void *src, size_t srcSize, uint32_t kind) -> int32_t {
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = [](void *dst, size_t dstSize, const void *src, size_t srcSize,
+                                     uint32_t kind) -> int32_t {
         (void)dst;
         (void)dstSize;
         (void)src;
@@ -852,7 +858,7 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMemcpyFail)
         (void)kind;
         return -1;
     };
-    DlAclApi::pAclrtMemset = &FakeAclrtMemsetOk;
+    AscendRtApi().pAclrtMemset_ = &FakeAclrtMemsetOk;
 
     SdmaTransportManager mgr;
     mgr.sdmaWorkspaceAddr_ = 0x1000ULL;
@@ -865,11 +871,11 @@ TEST_F(SdmaTransportManagerTest, CopyHostOpResToDeviceMemcpyFail)
 
 TEST_F(SdmaTransportManagerTest, CreateAclTensorMemcpyFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyFail;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyFail;
 
     SdmaTransportManager mgr;
     std::vector<uint64_t> hostData = {1, 2, 3};
@@ -886,9 +892,9 @@ TEST_F(SdmaTransportManagerTest, CreateAclTensorMemcpyFail)
 
 TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelCreateStreamFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigFail;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigFail;
 
     SdmaTransportManager mgr;
     auto ret = mgr.LaunchSdmaAicpuKernel(0x1000ULL, 0x2000ULL);
@@ -898,12 +904,12 @@ TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelCreateStreamFail)
 
 TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelSetStreamAttributeFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
-    DlAclApi::pAclrtSetStreamAttribute = &FakeAclrtSetStreamAttributeFail;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtSetStreamAttribute_ = &FakeAclrtSetStreamAttributeFail;
 
     SdmaTransportManager mgr;
     auto ret = mgr.LaunchSdmaAicpuKernel(0x1000ULL, 0x2000ULL);
@@ -913,14 +919,14 @@ TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelSetStreamAttributeFail)
 
 TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelCreateInputTensorFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
-    DlAclApi::pAclrtSetStreamAttribute = &FakeAclrtSetStreamAttributeOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtSetStreamAttribute_ = &FakeAclrtSetStreamAttributeOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
     DlOpApi::pAclCreateTensor = &FakeAclCreateTensorFail;
 
     SdmaTransportManager mgr;
@@ -931,14 +937,14 @@ TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelCreateInputTensorFail)
 
 TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelQueryWorkspaceFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
-    DlAclApi::pAclrtSetStreamAttribute = &FakeAclrtSetStreamAttributeOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtSetStreamAttribute_ = &FakeAclrtSetStreamAttributeOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
     DlOpApi::pAclCreateTensor = &FakeAclCreateTensorOk;
     DlOpApi::pAclDestroyTensor = &FakeAclDestroyTensorOk;
     DlOpApi::pAclnnShmemSdmaStarsQueryGetWorkspaceSize =
@@ -958,16 +964,16 @@ TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelQueryWorkspaceFail)
 
 TEST_F(SdmaTransportManagerTest, LaunchSdmaAicpuKernelMallocWorkspaceFail)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlOpApiFnGuard opGuard;
 
     g_mallocCallCount = 0;
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamWithConfigOk;
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
-    DlAclApi::pAclrtSetStreamAttribute = &FakeAclrtSetStreamAttributeOk;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFailAfterSecondCall;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamWithConfigOk;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtSetStreamAttribute_ = &FakeAclrtSetStreamAttributeOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFailAfterSecondCall;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
     DlOpApi::pAclCreateTensor = &FakeAclCreateTensorOk;
     DlOpApi::pAclDestroyTensor = &FakeAclDestroyTensorOk;
     DlOpApi::pAclnnShmemSdmaStarsQueryGetWorkspaceSize = &FakeAclnnShmemSdmaStarsQueryGetWorkspaceSizeOk;

@@ -32,8 +32,9 @@
 #include <limits>
 #include <string>
 
-#include "dl_acl_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_batch_transfer.h"
 #include "hybm_copy_direction.h"
 #include "hybm_logger.h"
@@ -463,7 +464,7 @@ DeviceUrmaTransportManager::~DeviceUrmaTransportManager()
 Result DeviceUrmaTransportManager::InitLocalDeviceInfoLocked(const TransportOptions &options)
 {
     int32_t userId = -1;
-    auto ret = DlAclApi::AclrtGetDevice(&userId);
+    auto ret = VendorApi::Api()->GetDevice(&userId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0 && userId >= 0,
                              "AclrtGetDevice() return=" << ret << ", output deviceId=" << userId,
                              BM_DL_FUNCTION_FAILED);
@@ -474,7 +475,7 @@ Result DeviceUrmaTransportManager::InitLocalDeviceInfoLocked(const TransportOpti
     userDeviceId_ = static_cast<uint32_t>(userId);
     int32_t phyId = 0;
     // 实测需要使用userDeviceId
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(userId, &phyId);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(userId, &phyId);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "aclrtGetPhyDevIdByLogicDevId() return=" << ret << ", userDeviceId=" << userId,
                              BM_DL_FUNCTION_FAILED);
     BM_LOG_INFO("aclrtGetPhyDevIdByLogicDevId: userId=" << userId << ", phyId=" << phyId);
@@ -482,17 +483,17 @@ Result DeviceUrmaTransportManager::InitLocalDeviceInfoLocked(const TransportOpti
 
     // Get device location info
     int64_t infoValue = 0;
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SDID, &infoValue);
+    ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SDID, &infoValue);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "RtGetDeviceInfo(INFO_TYPE_SDID) return=" << ret, BM_DL_FUNCTION_FAILED);
     sdid_ = static_cast<uint32_t>(infoValue);
 
     infoValue = 0;
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SERVER_ID, &infoValue);
+    ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SERVER_ID, &infoValue);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "RtGetDeviceInfo(INFO_TYPE_SERVER_ID) return=" << ret, BM_DL_FUNCTION_FAILED);
     serverId_ = static_cast<uint32_t>(infoValue);
 
     infoValue = 0;
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SUPER_POD_ID, &infoValue);
+    ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(userId), 0, INFO_TYPE_SUPER_POD_ID, &infoValue);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "RtGetDeviceInfo(INFO_TYPE_SUPER_POD_ID) return=" << ret, BM_DL_FUNCTION_FAILED);
     superPodId_ = static_cast<uint32_t>(infoValue);
     BM_LOG_INFO("local device info: userId=" << userId << ", phyId=" << phyId << " sdid=" << sdid_
@@ -525,17 +526,17 @@ Result DeviceUrmaTransportManager::InitDeviceTransferFlagLocked()
     // NOT inserted into localRegistrations_ — not exported/imported as a regular MR.
     const int64_t initialValue = 1;
     void *markerBuffer = nullptr;
-    auto ret =
-        DlAclApi::AclrtMalloc(&markerBuffer, sizeof(initialValue), static_cast<uint32_t>(ACL_MEM_MALLOC_NORMAL_ONLY));
+    auto ret = VendorApi::Api()->Malloc(&markerBuffer, sizeof(initialValue),
+                                        static_cast<uint32_t>(ACL_MEM_MALLOC_NORMAL_ONLY));
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtMalloc for local flag buffer failed, ret: " << ret);
         return ret;
     }
-    ret = DlAclApi::AclrtMemcpy(markerBuffer, sizeof(initialValue), &initialValue, sizeof(initialValue),
-                                ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(markerBuffer, sizeof(initialValue), &initialValue, sizeof(initialValue),
+                                   ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtMemcpy init local flag buffer failed, ret: " << ret);
-        (void)DlAclApi::AclrtFree(markerBuffer);
+        (void)VendorApi::Api()->Free(markerBuffer);
         return ret;
     }
     deviceMarkerPtr_ = markerBuffer;
@@ -791,7 +792,7 @@ bool DeviceUrmaTransportManager::IsRankDrained(uint32_t rankId) const
 
 Result DeviceUrmaTransportManager::OpenDeviceOnUserDevice(const TransportOptions &options, uint32_t userDeviceId)
 {
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userDeviceId));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userDeviceId));
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma selecting user device failed, device=" << userDeviceId << " ret=" << ret);
         return ret;
@@ -904,7 +905,7 @@ Result DeviceUrmaTransportManager::OpenDevice(const TransportOptions &options)
         BM_LOG_ERROR("device_urma OpenDevice: invalid rankCount or rankId");
         return BM_INVALID_PARAM;
     }
-    if (DlAclApi::GetAscendSocType() != AscendSocType::ASCEND_950) {
+    if (VendorApi::Api()->GetSocName() != AscendSocType::ASCEND_950) {
         BM_LOG_ERROR("device_urma is only supported on Ascend950 soc, rank: " << options.rankId);
         return BM_NOT_SUPPORTED;
     }
@@ -983,7 +984,7 @@ Result DeviceUrmaTransportManager::InitThreadContextLocked(CompletionContext &ct
 Result DeviceUrmaTransportManager::InitNotifyResource(NotifyResource &resource)
 {
     void *notify = nullptr;
-    auto ret = DlAclApi::AclrtCreateNotify(&notify, ACL_NOTIFY_FLAG_DEVICE_ONLY);
+    auto ret = VendorApi::Api()->CreateNotify(&notify, ACL_NOTIFY_FLAG_DEVICE_ONLY);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma InitNotifyResource AclrtCreateNotify failed, ret: " << ret);
         return ret;
@@ -991,7 +992,7 @@ Result DeviceUrmaTransportManager::InitNotifyResource(NotifyResource &resource)
     resource.notify = notify;
 
     uint32_t notifyId = 0;
-    ret = DlAclApi::AclrtGetNotifyId(notify, &notifyId);
+    ret = VendorApi::Api()->GetNotifyId(notify, &notifyId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma InitNotifyResource AclrtGetNotifyId failed, ret: " << ret);
         CleanupNotifyResource(resource);
@@ -1003,7 +1004,7 @@ Result DeviceUrmaTransportManager::InitNotifyResource(NotifyResource &resource)
     uint32_t devLen = 0;
     rtDevResInfo resInfo{0U, RT_PROCESS_HCCP, RT_RES_TYPE_STARS_NOTIFY_RECORD, notifyId, 0U};
     rtDevResAddrInfo addrInfo{&devAddr, &devLen};
-    ret = DlRtApi::RtGetDevResAddress(&resInfo, &addrInfo);
+    ret = VendorApi::Api()->RtGetDevResAddress(&resInfo, &addrInfo);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma InitNotifyResource RtGetDevResAddress failed, notifyId: " << notifyId
                                                                                             << " ret: " << ret);
@@ -1050,7 +1051,7 @@ Result DeviceUrmaTransportManager::CleanupNotifyResource(NotifyResource &resourc
     }
     resource.notifyHcommHandle.clear();
     if (resource.notify != nullptr) {
-        auto ret = DlAclApi::AclrtDestroyNotify(resource.notify);
+        auto ret = VendorApi::Api()->DestroyNotify(resource.notify);
         if (ret != BM_OK) {
             BM_LOG_WARN("device_urma CleanupNotifyResource AclrtDestroyNotify failed, notifyId: " << resource.notifyId
                                                                                                   << " ret: " << ret);
@@ -1249,7 +1250,7 @@ Result DeviceUrmaTransportManager::CloseDeviceCleanupResourcesLocked()
     localEndpointDesc_.clear();
     localIds_.clear();
     if (deviceMarkerPtr_ != nullptr) {
-        ret = DlAclApi::AclrtFree(deviceMarkerPtr_);
+        ret = VendorApi::Api()->Free(deviceMarkerPtr_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma flag free failed, ret=" << ret);
             if (standalone_) {
@@ -3023,7 +3024,7 @@ Result DeviceUrmaTransportManager::PinnedHostBufferDeleter::Synchronize()
     if (pendingStream == nullptr) {
         return BM_OK;
     }
-    const auto ret = DlAclApi::AclrtSynchronizeStream(pendingStream);
+    const auto ret = VendorApi::Api()->SynchronizeStream(pendingStream);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma synchronize pending launch-buffer copy failed, ret: " << ret);
         return ret;
@@ -3038,7 +3039,7 @@ void DeviceUrmaTransportManager::PinnedHostBufferDeleter::operator()(uint8_t *bu
         // Retain memory if the runtime cannot establish completion of its DMA reader.
         return;
     }
-    const auto ret = DlAclApi::AclrtFreeHost(buffer);
+    const auto ret = VendorApi::Api()->FreeHost(buffer);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtFreeHost launch buffer failed, ret: " << ret);
     }
@@ -3055,7 +3056,7 @@ Result DeviceUrmaTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBu
         return BM_OK;
     }
 
-    auto ret = DlAclApi::AclrtFree(buffers.base);
+    auto ret = VendorApi::Api()->Free(buffers.base);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma ReleaseDeviceTransferBuffers AclrtFree failed, base: "
                      << VaToStr(buffers.base) << " capacity: " << buffers.capacity << " ret: " << ret);
@@ -3079,7 +3080,7 @@ Result DeviceUrmaTransportManager::EnsureKernelLaunchBufferCapacity(DeviceTransf
     const size_t doubledCapacity = buffers.capacity <= maxCapacity / 2U ? buffers.capacity * 2U : requiredBytes;
     const size_t newCapacity = std::max({HYBM_KERNEL_LAUNCH_BUFFER_MIN_SIZE, requiredBytes, doubledCapacity});
     void *newHostBase = nullptr;
-    auto ret = DlAclApi::AclrtMallocHost(&newHostBase, newCapacity);
+    auto ret = VendorApi::Api()->MallocHost(&newHostBase, newCapacity);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma AclrtMallocHost launch buffer failed, bytes: " << newCapacity << " ret: " << ret);
         return ret;
@@ -3087,7 +3088,7 @@ Result DeviceUrmaTransportManager::EnsureKernelLaunchBufferCapacity(DeviceTransf
     // Keep the old pair intact if either allocation or device-buffer release fails.
     std::unique_ptr<uint8_t, PinnedHostBufferDeleter> newHostBuffer(static_cast<uint8_t *>(newHostBase));
     void *newBase = nullptr;
-    ret = DlAclApi::AclrtMalloc(&newBase, newCapacity, 0);
+    ret = VendorApi::Api()->Malloc(&newBase, newCapacity, 0);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma EnsureKernelLaunchBufferCapacity AclrtMalloc failed, requiredBytes: "
                      << requiredBytes << " oldCapacity: " << buffers.capacity << " newCapacity: " << newCapacity
@@ -3095,11 +3096,11 @@ Result DeviceUrmaTransportManager::EnsureKernelLaunchBufferCapacity(DeviceTransf
         return ret;
     }
     if (buffers.base != nullptr) {
-        ret = DlAclApi::AclrtFree(buffers.base);
+        ret = VendorApi::Api()->Free(buffers.base);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma EnsureKernelLaunchBufferCapacity AclrtFree old buffer failed, base: "
                          << VaToStr(buffers.base) << " oldCapacity: " << buffers.capacity << " ret: " << ret);
-            auto cleanupRet = DlAclApi::AclrtFree(newBase);
+            auto cleanupRet = VendorApi::Api()->Free(newBase);
             if (cleanupRet != BM_OK) {
                 BM_LOG_ERROR("device_urma EnsureKernelLaunchBufferCapacity cleanup new buffer failed, base: "
                              << VaToStr(newBase) << " newCapacity: " << newCapacity << " ret: " << cleanupRet);
@@ -3184,11 +3185,11 @@ Result DeviceUrmaTransportManager::PrepareKernelLaunchBuffers(
 
     TP_TRACE_BEGIN(TP_HYBM_URMA_COPY_LAUNCH_BUFFER_H2D);
     if (copyStream == nullptr) {
-        ret = DlAclApi::AclrtMemcpy(outBuffers.base, outBuffers.capacity, hostBase, totalBytes,
-                                    ACL_MEMCPY_HOST_TO_DEVICE);
+        ret = VendorApi::Api()->Memcpy(outBuffers.base, outBuffers.capacity, hostBase, totalBytes,
+                                       ACL_MEMCPY_HOST_TO_DEVICE);
     } else {
-        ret = DlAclApi::AclrtMemcpyAsync(outBuffers.base, outBuffers.capacity, hostBase, totalBytes,
-                                         ACL_MEMCPY_HOST_TO_DEVICE, copyStream);
+        ret = VendorApi::Api()->MemcpyAsync(outBuffers.base, outBuffers.capacity, hostBase, totalBytes,
+                                            ACL_MEMCPY_HOST_TO_DEVICE, copyStream);
         if (ret == BM_OK) {
             outBuffers.hostBuffer.get_deleter().pendingStream = copyStream;
         }
@@ -3219,18 +3220,18 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(DeviceTransferBuffers
     args.marker_descs = static_cast<HcommBatchTransferDesc *>(buffers.markerDescs);
     aclrtArgsHandle argsHandle = nullptr;
     auto funcHandle = GetDeviceKernelFunc();
-    auto ret = DlAclApi::AclrtKernelArgsInit(funcHandle, &argsHandle);
+    auto ret = VendorApi::Api()->KernelArgsInit(funcHandle, &argsHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsInit failed, ret: " << ret);
         return ret;
     }
     aclrtParamHandle paramHandle = nullptr;
-    ret = DlAclApi::AclrtKernelArgsAppend(argsHandle, &args, sizeof(args), &paramHandle);
+    ret = VendorApi::Api()->KernelArgsAppend(argsHandle, &args, sizeof(args), &paramHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsAppend failed, ret: " << ret);
         return ret;
     }
-    ret = DlAclApi::AclrtKernelArgsFinalize(argsHandle);
+    ret = VendorApi::Api()->KernelArgsFinalize(argsHandle);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtKernelArgsFinalize failed, ret: " << ret);
         return ret;
@@ -3253,8 +3254,8 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(DeviceTransferBuffers
 
     TP_TRACE_BEGIN(TP_HYBM_URMA_KERNEL_LAUNCH);
     mayHaveSubmitted = true;
-    ret = DlAclApi::AclrtLaunchKernelWithConfig(funcHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
-                                                nullptr);
+    ret = VendorApi::Api()->LaunchKernelWithConfig(funcHandle, HYBM_DEVICE_KERNEL_BLOCK_DIM, stream, &cfg, argsHandle,
+                                                   nullptr);
     TP_TRACE_END(TP_HYBM_URMA_KERNEL_LAUNCH, ret);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma LaunchDeviceKernelBatch AclrtLaunchKernelWithConfig failed, kernel: "
@@ -3263,7 +3264,7 @@ Result DeviceUrmaTransportManager::LaunchDeviceKernelBatch(DeviceTransferBuffers
     }
 
     TP_TRACE_BEGIN(TP_HYBM_URMA_KERNEL_LAUNCH_SYNC_STREAM);
-    ret = DlAclApi::AclrtSynchronizeStream(stream);
+    ret = VendorApi::Api()->SynchronizeStream(stream);
     TP_TRACE_END(TP_HYBM_URMA_KERNEL_LAUNCH_SYNC_STREAM, ret);
     if (ret != BM_OK) {
         BM_LOG_ERROR("device_urma launch kernel AclrtSynchronizeStream failed, ret: " << ret);
@@ -3305,7 +3306,7 @@ Result DeviceUrmaTransportManager::SynchronizePreSubmittedNotifiesLocked(Complet
         // 取回notify
         auto *resource = notifyPoolSlots_[index];
         TP_TRACE_BEGIN(TP_HYBM_URMA_WAIT_RESET_NOTIFY);
-        auto ret = DlAclApi::AclrtWaitAndResetNotify(resource->notify, ctx.stream, HYBM_DEVICE_KERNEL_TIMEOUT_S);
+        auto ret = VendorApi::Api()->WaitAndResetNotify(resource->notify, ctx.stream, HYBM_DEVICE_KERNEL_TIMEOUT_S);
         TP_TRACE_END(TP_HYBM_URMA_WAIT_RESET_NOTIFY, ret);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma batch notify wait enqueue failed, rankId: "
@@ -3319,7 +3320,7 @@ Result DeviceUrmaTransportManager::SynchronizePreSubmittedNotifiesLocked(Complet
     Result syncRet = BM_OK;
     if (waitQueued) {
         TP_TRACE_BEGIN(TP_HYBM_URMA_SYNC_STREAM);
-        syncRet = DlAclApi::AclrtSynchronizeStream(ctx.stream);
+        syncRet = VendorApi::Api()->SynchronizeStream(ctx.stream);
         TP_TRACE_END(TP_HYBM_URMA_SYNC_STREAM, syncRet);
     }
     // stream 因 peer 故障被中止：归一化为可降级错误，避免上层把 107023 当致命错误处理
@@ -3445,7 +3446,7 @@ Result DeviceUrmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t p
     if (ret != BM_OK) {
         return ret;
     }
-    ret = DlAclApi::AclrtBinaryGetFunction(deviceKernelHandle_, "HybmUrmaDeviceCopy", &deviceCopyFunc_);
+    ret = VendorApi::Api()->BinaryGetFunction(deviceKernelHandle_, "HybmUrmaDeviceCopy", &deviceCopyFunc_);
     if (ret != BM_OK || deviceCopyFunc_ == nullptr) {
         BM_LOG_ERROR("HybmUrmaDeviceCopy unavailable, reinstall the AICPU package, ret: " << ret);
         return ret != BM_OK ? ret : BM_DL_FUNCTION_FAILED;
@@ -3468,7 +3469,7 @@ Result DeviceUrmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t p
     constexpr size_t contextBytes = (sizeof(ctx) + alignment - 1) & ~(alignment - 1);
     constexpr size_t countBytes = alignment;
     const size_t bytes = contextBytes + countBytes + ctx.capacity * sizeof(HcommBatchTransferDesc);
-    ret = DlAclApi::AclrtMalloc(&resources->deviceAllocation, bytes, 0);
+    ret = VendorApi::Api()->Malloc(&resources->deviceAllocation, bytes, 0);
     if (ret != BM_OK || resources->deviceAllocation == nullptr) {
         BM_LOG_ERROR("allocate URMA device copy storage failed, bytes: " << bytes << " ret: " << ret);
         return ret != BM_OK ? ret : BM_MALLOC_FAILED;
@@ -3488,7 +3489,7 @@ Result DeviceUrmaTransportManager::PrepareDeviceCopy(uint32_t rankId, uint64_t p
     }
     ctx.marker = BuildTransferDesc(resources->notify->notifyAddr, rank->second.remoteFlagAddr,
                                    resources->notify->notifyLen, true);
-    ret = DlAclApi::AclrtMemcpy(resources->deviceContext, sizeof(ctx), &ctx, sizeof(ctx), ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(resources->deviceContext, sizeof(ctx), &ctx, sizeof(ctx), ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("initialize URMA device copy context failed, rankId: " << rankId << " ret: " << ret);
         return ret;
@@ -3515,8 +3516,8 @@ Result DeviceUrmaTransportManager::DeviceCopy(const hybm_device_copy_params &par
         args.startIndex = start;
         auto ret = LaunchAicpuKernel(deviceCopyFunc_, params.stream, &args, sizeof(args));
         if (ret == BM_OK) {
-            ret = DlAclApi::AclrtWaitAndResetNotify(resources.notify->notify, params.stream,
-                                                    HYBM_DEVICE_KERNEL_TIMEOUT_S);
+            ret = VendorApi::Api()->WaitAndResetNotify(resources.notify->notify, params.stream,
+                                                       HYBM_DEVICE_KERNEL_TIMEOUT_S);
         }
         if (ret != BM_OK) {
             resources.submissionFailed = true;
@@ -3531,7 +3532,7 @@ Result DeviceUrmaTransportManager::DeviceCopy(const hybm_device_copy_params &par
 void DeviceUrmaTransportManager::ReleaseDeviceCopyResources(UrmaDeviceCopyResources &resources)
 {
     if (resources.deviceAllocation != nullptr) {
-        const auto ret = DlAclApi::AclrtFree(resources.deviceAllocation);
+        const auto ret = VendorApi::Api()->Free(resources.deviceAllocation);
         if (ret != BM_OK) {
             BM_LOG_ERROR("free URMA device copy storage failed, ret: " << ret);
         }

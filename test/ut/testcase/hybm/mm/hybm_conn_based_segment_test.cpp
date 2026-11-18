@@ -35,7 +35,7 @@
 
 #include "hybm_ex_info_transfer.h"
 #include "hybm_va_manager.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "mf_scope_guard.h"
 
 using namespace ock::mf;

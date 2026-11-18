@@ -10,8 +10,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "dl_acl_api.h"
-#include "dl_rt_api.h"
+#include "vendor/ascend/acl_rt_def.h"
 #include "device_kernel_helper.h"
 #include "hybm_transport_manager.h"
 #include "hybm_types.h"

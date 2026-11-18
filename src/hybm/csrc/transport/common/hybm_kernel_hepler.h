@@ -13,7 +13,7 @@
 #ifndef MF_HYBM_KERNEL_HEPLER_H
 #define MF_HYBM_KERNEL_HEPLER_H
 
-#include "dl_acl_api.h"
+#include "vendor/ascend/acl_rt_def.h"
 #include "hybm_types.h"
 
 namespace ock {

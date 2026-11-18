@@ -30,7 +30,7 @@
 #include "hybm_stream_manager.h"
 #include "hybm_stream_notify.h"
 #include "hybm_transport_manager.h"
-#include "dl_hccp_def.h"
+#include "vendor/ascend/dl_hccp_def.h"
 #include "device_chip_info.h"
 #include "mf_rwlock.h"
 #include "device_qp_manager.h"

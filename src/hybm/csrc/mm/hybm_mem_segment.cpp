@@ -14,7 +14,7 @@
 #include <fstream>
 #include <sstream>
 
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_asymmetric_mem_segment.h"
 #include "hybm_common_include.h"
 #include "hybm_conn_based_segment.h"
@@ -55,8 +55,8 @@ struct HostAllocation {
             return;
         }
         void *previous = nullptr;
-        (void)DlAclApi::AclrtGetCurrentContext(&previous);
-        const auto ret = DlAclApi::AclrtSetCurrentContext(resources->context);
+        (void)VendorApi::Api()->GetCurrentContext(&previous);
+        const auto ret = VendorApi::Api()->SetCurrentContext(resources->context);
         if (ret != BM_OK) {
             BM_LOG_ERROR("aclrtSetCurrentContext failed during allocation cleanup, ret: "
                          << ret << " size_bytes: " << size << "; retaining resources until process exit");
@@ -65,7 +65,7 @@ struct HostAllocation {
         }
         resources->segment.reset();
         if (previous != nullptr && previous != resources->context) {
-            const auto restoreRet = DlAclApi::AclrtSetCurrentContext(previous);
+            const auto restoreRet = VendorApi::Api()->SetCurrentContext(previous);
             if (restoreRet != BM_OK) {
                 BM_LOG_ERROR("aclrtSetCurrentContext restore failed, ret: " << restoreRet);
             }
@@ -249,15 +249,16 @@ int32_t MemSegment::AllocateHostMemory(uint16_t deviceId, uint64_t size, void **
     BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "hybm_init failed, deviceId: " << deviceId);
     allocation->resources->initialized = true;
     int32_t currentDevice = -1;
-    ret = DlAclApi::AclrtGetDevice(&currentDevice);
+    ret = VendorApi::Api()->GetDevice(&currentDevice);
     BM_VALIDATE_RETURN(ret == BM_OK && currentDevice == deviceId,
                        "ACL device mismatch, ret: " << ret << " requested: " << deviceId
                                                     << " current: " << currentDevice,
                        BM_INVALID_PARAM);
-    ret = DlAclApi::AclrtGetCurrentContext(&allocation->resources->context);
+    ret = VendorApi::Api()->GetCurrentContext(&allocation->resources->context);
     BM_VALIDATE_RETURN(ret == BM_OK && allocation->resources->context != nullptr,
                        "aclrtGetCurrentContext failed, ret: " << ret << " deviceId: " << deviceId, BM_ERROR);
-    BM_VALIDATE_RETURN(DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_910C && HybmGetGvaVersion() == HYBM_GVA_V4,
+    BM_VALIDATE_RETURN(VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_910C &&
+                           HybmGetGvaVersion() == HYBM_GVA_V4,
                        "Fabric Host allocator requires Ascend A3", BM_ERROR);
     ret = AllocateHostSegment(deviceId, size, *allocation);
     BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "Fabric Host allocation failed, deviceId: " << deviceId);
@@ -381,7 +382,7 @@ Result MemSegment::InitDeviceInfo(int devId)
     }
 
     if (deviceInfoReady_) {
-        auto ret = DlAclApi::AclrtSetDevice(devId, true);
+        auto ret = VendorApi::Api()->SetDevice(devId, true);
         if (ret != 0) {
             BM_LOG_ERROR("set device to:" << devId << "failed: " << ret);
             return BM_DL_FUNCTION_FAILED;
@@ -392,40 +393,40 @@ Result MemSegment::InitDeviceInfo(int devId)
     FillSysBootIdInfo();
 
     deviceId_ = devId;
-    auto ret = DlAclApi::AclrtSetDevice(devId, true);
+    auto ret = VendorApi::Api()->SetDevice(devId, true);
     if (ret != 0) {
         BM_LOG_ERROR("set device to:" << devId << "failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    ret = DlAclApi::RtGetLogicDevIdByUserDevId(devId, &logicDeviceId_);
+    ret = VendorApi::Api()->GetLogicDevIdByUserDevId(devId, &logicDeviceId_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get logic deviceId failed: " << ret << " userId:" << devId);
         return BM_DL_FUNCTION_FAILED;
     }
 
-    ret = DlAclApi::AclrtGetPhyDevIdByLogicDevId(devId, &devicePhyId_);
+    ret = VendorApi::Api()->GetPhyDevIdByLogicDevId(devId, &devicePhyId_);
     if (ret != 0) {
         BM_LOG_WARN("Failed to get phy deviceId by logicDevId, fallback to logicId: user="
                     << deviceId_ << ", logic=" << logicDeviceId_ << ", ret=" << ret);
         devicePhyId_ = logicDeviceId_;
     }
 
-    ret = DlAclApi::RtDeviceGetBareTgid(&pid_);
+    ret = VendorApi::Api()->DeviceGetBareTgid(&pid_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get bare tgid failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
     int64_t value = 0;
-    ret = DlAclApi::RtGetDeviceInfo(deviceId_, 0, INFO_TYPE_SDID, &value);
+    ret = VendorApi::Api()->GetDeviceInfo(deviceId_, 0, INFO_TYPE_SDID, &value);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get sdid failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
     }
 
     sdid_ = static_cast<uint32_t>(value);
-    ret = DlAclApi::RtGetDeviceInfo(deviceId_, 0, INFO_TYPE_SERVER_ID, &value);
+    ret = VendorApi::Api()->GetDeviceInfo(deviceId_, 0, INFO_TYPE_SERVER_ID, &value);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get server id failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -433,7 +434,7 @@ Result MemSegment::InitDeviceInfo(int devId)
     serverId_ = static_cast<uint32_t>(value);
     BM_LOG_DEBUG("local server=0x" << std::hex << serverId_);
 
-    ret = DlAclApi::RtGetDeviceInfo(deviceId_, 0, INFO_TYPE_SUPER_POD_ID, &value);
+    ret = VendorApi::Api()->GetDeviceInfo(deviceId_, 0, INFO_TYPE_SUPER_POD_ID, &value);
     if (ret != BM_OK) {
         BM_LOG_ERROR("get super pod id failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -453,7 +454,7 @@ Result MemSegment::InitDeviceInfo(int devId)
         }
     }
 
-    socType_ = DlAclApi::GetAscendSocType();
+    socType_ = VendorApi::Api()->GetSocName();
     BM_LOG_DEBUG("local sdid=0x" << std::hex << sdid_ << ", local server=0x" << std::hex << serverId_
                                  << ", spid=" << superPodId_);
     deviceInfoReady_ = true;
@@ -511,7 +512,7 @@ Result MemSegment::EnableRemotePeerAccess(int32_t remotePhyId) noexcept
         return BM_OK;
     }
 
-    Result ret = DlAclApi::RtEnableP2P(static_cast<uint32_t>(deviceId_), static_cast<uint32_t>(remotePhyId), 0);
+    Result ret = VendorApi::Api()->EnableP2P(static_cast<uint32_t>(deviceId_), static_cast<uint32_t>(remotePhyId), 0);
     if (ret != 0) {
         BM_LOG_ERROR("enable device access failed:" << ret << " local_user:" << deviceId_
                                                     << " local_phy:" << devicePhyId_ << " remote_phy:" << remotePhyId);

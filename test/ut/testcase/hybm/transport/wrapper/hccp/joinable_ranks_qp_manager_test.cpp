@@ -21,9 +21,9 @@
 #define protected public
 #include "joinable_ranks_qp_manager.h"
 #include "aicpu_joinable_ranks_qp_manager.h"
-#include "dl_hccp_def.h"
-#include "dl_hccp_api.h"
-#include "dl_acl_api.h"
+#include "vendor/ascend/dl_hccp_def.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 #undef protected
 
@@ -44,6 +44,14 @@ static void *ToVoidPtr(uintptr_t i)
 }
 
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
+
 using namespace ock::mf::transport::device;
 
 // Testable subclass to mock external dependencies like CreateServerSocket().
@@ -801,16 +809,16 @@ std::unique_ptr<AicpuJoinableRanksQpManager> MakeAiManager(uint32_t rankCount = 
 }
 
 struct AicpuQpApiGuard {
-    aclrtMallocFunc oldMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
+    aclrtMallocFunc oldMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldMemcpy{AscendRtApi().pAclrtMemcpy_};
     raQpAiCreateFunc oldQpCreate{DlHccpApi::gRaQpAiCreate};
 
     ~AicpuQpApiGuard()
     {
-        DlAclApi::pAclrtMalloc = oldMalloc;
-        DlAclApi::pAclrtFree = oldFree;
-        DlAclApi::pAclrtMemcpy = oldMemcpy;
+        AscendRtApi().pAclrtMalloc_ = oldMalloc;
+        AscendRtApi().pAclrtFree_ = oldFree;
+        AscendRtApi().pAclrtMemcpy_ = oldMemcpy;
         DlHccpApi::gRaQpAiCreate = oldQpCreate;
     }
 };
@@ -935,9 +943,9 @@ TEST(AicpuJoinableRanksQpManagerTest, CreateQpHandleStoresAiQpInfo)
 TEST(AicpuJoinableRanksQpManagerTest, ReserveFillAndReleaseQpInfo)
 {
     AicpuQpApiGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAiMallocOk;
-    DlAclApi::pAclrtFree = &FakeAiFreeOk;
-    DlAclApi::pAclrtMemcpy = &FakeAiMemcpyOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAiMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAiFreeOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAiMemcpyOk;
     DlHccpApi::gRaQpAiCreate = &FakeAiQpCreateOk;
     auto manager = MakeAiManager();
     manager->rdmaHandle_ = reinterpret_cast<void *>(0x1234UL);
@@ -958,8 +966,8 @@ TEST(AicpuJoinableRanksQpManagerTest, ReserveFillAndReleaseQpInfo)
 TEST(AicpuJoinableRanksQpManagerTest, ReserveQpInfoSpaceMallocFailThenStartupFails)
 {
     AicpuQpApiGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAiMallocFail;
-    DlAclApi::pAclrtFree = &FakeAiFreeOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAiMallocFail;
+    AscendRtApi().pAclrtFree_ = &FakeAiFreeOk;
     auto manager = MakeAiManager();
     EXPECT_FALSE(manager->ReserveQpInfoSpace());
     EXPECT_EQ(manager->Startup(reinterpret_cast<void *>(0x1234UL)), BM_MALLOC_FAILED);
@@ -968,9 +976,9 @@ TEST(AicpuJoinableRanksQpManagerTest, ReserveQpInfoSpaceMallocFailThenStartupFai
 TEST(AicpuJoinableRanksQpManagerTest, FillQpInfoDeviceCopyFails)
 {
     AicpuQpApiGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAiMallocOk;
-    DlAclApi::pAclrtFree = &FakeAiFreeOk;
-    DlAclApi::pAclrtMemcpy = &FakeAiMemcpyFail;
+    AscendRtApi().pAclrtMalloc_ = &FakeAiMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAiFreeOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAiMemcpyFail;
     auto manager = MakeAiManager();
     EXPECT_TRUE(manager->ReserveQpInfoSpace());
     manager->FillQpInfo();

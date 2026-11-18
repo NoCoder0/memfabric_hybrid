@@ -25,9 +25,8 @@
 #define protected public
 #include "device_rdma_aicpu_transport_manager.h"
 #include "aicpu_joinable_ranks_qp_manager.h"
-#include "dl_hccp_api.h"
-#include "dl_acl_api.h"
-#include "dl_rt_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/vendor_api.h"
 #include "device_chip_info.h"
 #include "hybm_acl_notify.h"
 #include "hybm_stream.h"
@@ -42,6 +41,11 @@ using namespace ock::mf;
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
 
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+
 namespace {
 constexpr uint64_t TEST_LOCAL_ADDR = 0x1000ULL;
 constexpr uint32_t TEST_LOCAL_LKEY = 7U;
@@ -51,47 +55,47 @@ constexpr uint64_t TEST_BATCH_BYTES = 4096ULL;
 constexpr uint64_t TEST_DEVICE_QP_ADDR = 0xE00000A01000ULL;
 constexpr uint32_t TEST_INVALID_RANK_ID = 9U;
 
-struct DlAclApiFnGuard {
-    aclrtMallocFunc oldAclrtMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldAclrtFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldAclrtMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtMallocHostFunc oldAclrtMallocHost{DlAclApi::pAclrtMallocHost};
-    aclrtFreeHostFunc oldAclrtFreeHost{DlAclApi::pAclrtFreeHost};
-    aclrtGetDeviceFunc oldAclrtGetDevice{DlAclApi::pAclrtGetDevice};
-    rtGetLogicDevIdByUserDevIdFunc oldRtGetLogicDevIdByUserDevId{DlAclApi::pRtGetLogicDevIdByUserDevId};
-    aclrtGetPhyDevIdByLogicDevIdFunc oldAclrtGetPhyDevIdByLogicDevId{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
-    aclrtCreateStreamWithConfigFunc oldAclrtCreateStreamWithConfig{DlAclApi::pAclrtCreateStreamWithConfig};
-    aclrtStreamGetIdFunc oldAclrtStreamGetId{DlAclApi::pAclrtStreamGetId};
-    aclrtDestroyStreamFunc oldAclrtDestroyStream{DlAclApi::pAclrtDestroyStream};
-    aclrtSynchronizeStreamFunc oldAclrtSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
-    aclrtWaitAndResetNotifyFunc oldAclrtWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
-    aclrtDestroyNotifyFunc oldAclrtDestroyNotify{DlAclApi::pAclrtDestroyNotify};
+struct AclFnGuard {
+    aclrtMallocFunc oldAclrtMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldAclrtFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldAclrtMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtMallocHostFunc oldAclrtMallocHost{AscendRtApi().pAclrtMallocHost_};
+    aclrtFreeHostFunc oldAclrtFreeHost{AscendRtApi().pAclrtFreeHost_};
+    aclrtGetDeviceFunc oldAclrtGetDevice{AscendRtApi().pAclrtGetDevice_};
+    rtGetLogicDevIdByUserDevIdFunc oldRtGetLogicDevIdByUserDevId{AscendRtApi().pRtGetLogicDevIdByUserDevId_};
+    aclrtGetPhyDevIdByLogicDevIdFunc oldAclrtGetPhyDevIdByLogicDevId{AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_};
+    aclrtCreateStreamWithConfigFunc oldAclrtCreateStreamWithConfig{AscendRtApi().pAclrtCreateStreamWithConfig_};
+    aclrtStreamGetIdFunc oldAclrtStreamGetId{AscendRtApi().pAclrtStreamGetId_};
+    aclrtDestroyStreamFunc oldAclrtDestroyStream{AscendRtApi().pAclrtDestroyStream_};
+    aclrtSynchronizeStreamFunc oldAclrtSynchronizeStream{AscendRtApi().pAclrtSynchronizeStream_};
+    aclrtWaitAndResetNotifyFunc oldAclrtWaitAndResetNotify{AscendRtApi().pAclrtWaitAndResetNotify_};
+    aclrtDestroyNotifyFunc oldAclrtDestroyNotify{AscendRtApi().pAclrtDestroyNotify_};
 
-    ~DlAclApiFnGuard()
+    ~AclFnGuard()
     {
-        DlAclApi::pAclrtMalloc = oldAclrtMalloc;
-        DlAclApi::pAclrtFree = oldAclrtFree;
-        DlAclApi::pAclrtMemcpy = oldAclrtMemcpy;
-        DlAclApi::pAclrtMallocHost = oldAclrtMallocHost;
-        DlAclApi::pAclrtFreeHost = oldAclrtFreeHost;
-        DlAclApi::pAclrtGetDevice = oldAclrtGetDevice;
-        DlAclApi::pRtGetLogicDevIdByUserDevId = oldRtGetLogicDevIdByUserDevId;
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldAclrtGetPhyDevIdByLogicDevId;
-        DlAclApi::pAclrtCreateStreamWithConfig = oldAclrtCreateStreamWithConfig;
-        DlAclApi::pAclrtStreamGetId = oldAclrtStreamGetId;
-        DlAclApi::pAclrtDestroyStream = oldAclrtDestroyStream;
-        DlAclApi::pAclrtSynchronizeStream = oldAclrtSynchronizeStream;
-        DlAclApi::pAclrtWaitAndResetNotify = oldAclrtWaitAndResetNotify;
-        DlAclApi::pAclrtDestroyNotify = oldAclrtDestroyNotify;
+        AscendRtApi().pAclrtMalloc_ = oldAclrtMalloc;
+        AscendRtApi().pAclrtFree_ = oldAclrtFree;
+        AscendRtApi().pAclrtMemcpy_ = oldAclrtMemcpy;
+        AscendRtApi().pAclrtMallocHost_ = oldAclrtMallocHost;
+        AscendRtApi().pAclrtFreeHost_ = oldAclrtFreeHost;
+        AscendRtApi().pAclrtGetDevice_ = oldAclrtGetDevice;
+        AscendRtApi().pRtGetLogicDevIdByUserDevId_ = oldRtGetLogicDevIdByUserDevId;
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = oldAclrtGetPhyDevIdByLogicDevId;
+        AscendRtApi().pAclrtCreateStreamWithConfig_ = oldAclrtCreateStreamWithConfig;
+        AscendRtApi().pAclrtStreamGetId_ = oldAclrtStreamGetId;
+        AscendRtApi().pAclrtDestroyStream_ = oldAclrtDestroyStream;
+        AscendRtApi().pAclrtSynchronizeStream_ = oldAclrtSynchronizeStream;
+        AscendRtApi().pAclrtWaitAndResetNotify_ = oldAclrtWaitAndResetNotify;
+        AscendRtApi().pAclrtDestroyNotify_ = oldAclrtDestroyNotify;
     }
 };
 
-struct DlRtApiFnGuard {
-    rtStreamGetSqidFunc oldRtStreamGetSqid{DlRtApi::pRtStreamGetSqid};
+struct RtDevResFnGuard {
+    rtStreamGetSqidFunc oldRtStreamGetSqid{AscendRtApi().pRtStreamGetSqid_};
 
-    ~DlRtApiFnGuard()
+    ~RtDevResFnGuard()
     {
-        DlRtApi::pRtStreamGetSqid = oldRtStreamGetSqid;
+        AscendRtApi().pRtStreamGetSqid_ = oldRtStreamGetSqid;
     }
 };
 
@@ -350,7 +354,7 @@ void ResetAicpuThreadState()
 // notify 就绪：后续 Synchronize 会在该 ACL 流上 wait&reset notify 并同步、回读 out
 void SetAicpuNotifyReady()
 {
-    DlAclApi::pAclrtDestroyNotify = &FakeAclrtDestroyNotifyOk;
+    AscendRtApi().pAclrtDestroyNotify_ = &FakeAclrtDestroyNotifyOk;
     auto notify = std::make_shared<ock::mf::HybmAclNotify>(reinterpret_cast<void *>(0x6000UL));
     notify->notify_ = reinterpret_cast<void *>(0x9000UL);
     notify->notifyId_ = 7U;
@@ -437,7 +441,7 @@ TEST(RdmaAicpuTransportManagerTest, BatchAsyncRejectsMissingQpManagerAndEmptyBat
 
 TEST(RdmaAicpuTransportManagerTest, RemoteIoBatchAicpuStagingAndResourceGuards)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
 
     RdmaAicpuTransportManager mgr;
     auto qp = std::make_shared<FakeQpManager>();
@@ -455,21 +459,21 @@ TEST(RdmaAicpuTransportManagerTest, RemoteIoBatchAicpuStagingAndResourceGuards)
 
     // 3) device 地址非 0，但段描述 staging 申请失败：BM_MALLOC_FAILED
     qp->deviceQpAddr = TEST_DEVICE_QP_ADDR;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFail;
     EXPECT_EQ(mgr.RemoteIoBatchAicpu(0, batch, false), BM_MALLOC_FAILED);
 
     // 4) staging 成功后再遇到不可下发条件（UT 环境无 ACL stream / 无 kernel 句柄）：必须失败并向上传播
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMallocHost = &FakeAclrtMallocHostOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
-    DlAclApi::pAclrtFreeHost = &FakeAclrtFreeHostOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMallocHost_ = &FakeAclrtMallocHostOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
+    AscendRtApi().pAclrtFreeHost_ = &FakeAclrtFreeHostOk;
     EXPECT_NE(mgr.RemoteIoBatchAicpu(0, batch, false), BM_OK);
 }
 
 TEST_F(RdmaAicpuMockTest, InitDeviceContextBranches)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     TransportOptions options{};
     options.rankId = 1U;
     options.rankCount = 2U;
@@ -479,39 +483,39 @@ TEST_F(RdmaAicpuMockTest, InitDeviceContextBranches)
     RdmaAicpuTransportManager mgr;
     int32_t userId = -1;
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceFail;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceFail;
     EXPECT_NE(mgr.InitDeviceContext(options, userId), BM_OK);
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetLogicDevIdByUserDevId = &FakeRtGetLogicFail;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetLogicDevIdByUserDevId_ = &FakeRtGetLogicFail;
     EXPECT_NE(mgr.InitDeviceContext(options, userId), BM_OK);
 
-    DlAclApi::pRtGetLogicDevIdByUserDevId = &FakeRtGetLogicOk;
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = &FakeAclrtGetPhyFail; // warn fallback to logicId
+    AscendRtApi().pRtGetLogicDevIdByUserDevId_ = &FakeRtGetLogicOk;
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = &FakeAclrtGetPhyFail; // warn fallback to logicId
     EXPECT_EQ(mgr.InitDeviceContext(options, userId), BM_OK);
     EXPECT_EQ(mgr.rankId_, 1U);
     EXPECT_EQ(mgr.rankCount_, 2U);
 
     options.nic = "not-a-nic";
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = &FakeAclrtGetPhyOk;
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = &FakeAclrtGetPhyOk;
     EXPECT_EQ(mgr.InitDeviceContext(options, userId), BM_INVALID_PARAM);
 }
 
 TEST_F(RdmaAicpuMockTest, OpenDeviceFailurePaths)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     TransportOptions options{};
     options.rankId = 0U;
     options.rankCount = 2U;
     options.nic = "tcp://127.0.0.1:8000";
 
     RdmaAicpuTransportManager mgr;
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceFail;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceFail;
     EXPECT_NE(mgr.OpenDevice(options), BM_OK);
 
-    DlAclApi::pAclrtGetDevice = &FakeAclrtGetDeviceOk;
-    DlAclApi::pRtGetLogicDevIdByUserDevId = &FakeRtGetLogicOk;
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = &FakeAclrtGetPhyOk;
+    AscendRtApi().pAclrtGetDevice_ = &FakeAclrtGetDeviceOk;
+    AscendRtApi().pRtGetLogicDevIdByUserDevId_ = &FakeRtGetLogicOk;
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = &FakeAclrtGetPhyOk;
     MOCKER(&ock::mf::transport::device::RdmaTransportManager::PrepareOpenDevice).stubs().will(returnValue(false));
     EXPECT_EQ(mgr.OpenDevice(options), BM_ERROR);
 }
@@ -539,8 +543,8 @@ TEST_F(RdmaAicpuMockTest, ComputeDoorbellAddrBranches)
 
 TEST_F(RdmaAicpuMockTest, FillDoorbellParamBranches)
 {
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     ResetAicpuThreadState();
 
     RdmaAicpuTransportManager mgr;
@@ -548,16 +552,16 @@ TEST_F(RdmaAicpuMockTest, FillDoorbellParamBranches)
     mgr.deviceChipInfo_ = std::make_shared<DeviceChipInfo>(0U);
     ock::mf::aicpu::RdmaAicpuParam param{};
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamFail;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamFail;
     EXPECT_NE(mgr.FillDoorbellParam(0U, param), BM_OK);
 
-    DlAclApi::pAclrtCreateStreamWithConfig = &FakeAclrtCreateStreamOk;
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidFail;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = &FakeAclrtCreateStreamOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidFail;
     EXPECT_NE(mgr.FillDoorbellParam(0U, param), BM_OK); // sqid failure
 
     ResetAicpuThreadState();
-    DlRtApi::pRtStreamGetSqid = &FakeRtStreamGetSqidOk;
-    DlAclApi::pAclrtStreamGetId = &FakeAclrtStreamGetIdOk;
+    AscendRtApi().pRtStreamGetSqid_ = &FakeRtStreamGetSqidOk;
+    AscendRtApi().pAclrtStreamGetId_ = &FakeAclrtStreamGetIdOk;
     mgr.qpManager_ = std::make_shared<FakeQpManager>();
     EXPECT_EQ(mgr.FillDoorbellParam(0U, param), BM_ERROR); // compute doorbell forbids non-AI manager
 
@@ -574,18 +578,18 @@ TEST_F(RdmaAicpuMockTest, FillDoorbellParamBranches)
 
 TEST_F(RdmaAicpuMockTest, StageBatchSegmentsBranches)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     RdmaAicpuTransportManager mgr;
     const auto batch = MakeOneSegmentBatch();
     void *dev = nullptr;
 
     // 注：StageBatchSegments 内部 thread_local DeviceBuffer 会跨用例缓存容量，
     // malloc 失败分支由 RemoteIoBatchAicpuStagingAndResourceGuards 覆盖，这里验证 memcpy 分支。
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyFail;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyFail;
     EXPECT_NE(mgr.StageBatchSegments(batch, dev), BM_OK);
 
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
     EXPECT_EQ(mgr.StageBatchSegments(batch, dev), BM_OK);
     EXPECT_NE(dev, nullptr);
 }
@@ -629,7 +633,7 @@ TEST_F(RdmaAicpuMockTest, ResolveAicpuBatchAddressesBranches)
 
 TEST_F(RdmaAicpuMockTest, SynchronizeFailureAndSuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     ResetAicpuThreadState();
     RdmaAicpuTransportManager mgr;
 
@@ -643,7 +647,7 @@ TEST_F(RdmaAicpuMockTest, SynchronizeFailureAndSuccess)
 
 TEST_F(RdmaAicpuMockTest, SynchronizeWaitsNotifySuccess)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     ResetAicpuThreadState();
     RdmaAicpuTransportManager mgr;
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream)
@@ -652,9 +656,9 @@ TEST_F(RdmaAicpuMockTest, SynchronizeWaitsNotifySuccess)
 
     SetAicpuNotifyReady();
     SetAicpuPendingBatch(0x7000ULL, 2U);
-    DlAclApi::pAclrtWaitAndResetNotify = &FakeAclrtWaitAndResetNotifyOk;
-    DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyAicpuOut;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeAclrtWaitAndResetNotifyOk;
+    AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyAicpuOut;
     g_expectedPosted = 2;
 
     EXPECT_EQ(mgr.Synchronize(0U), BM_OK);
@@ -665,7 +669,7 @@ TEST_F(RdmaAicpuMockTest, SynchronizeWaitsNotifySuccess)
 
 TEST_F(RdmaAicpuMockTest, SynchronizeNotifyWaitAndReadBackFailures)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     ResetAicpuThreadState();
     RdmaAicpuTransportManager mgr;
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream)
@@ -676,13 +680,13 @@ TEST_F(RdmaAicpuMockTest, SynchronizeNotifyWaitAndReadBackFailures)
     SetAicpuPendingBatch(0x7000ULL, 2U);
 
     // 1) 入队/等待 notify 失败
-    DlAclApi::pAclrtWaitAndResetNotify = &FakeAclrtWaitAndResetNotifyFail;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeAclrtWaitAndResetNotifyFail;
     EXPECT_EQ(mgr.Synchronize(0U), BM_ERROR);
     EXPECT_TRUE(RdmaAicpuTransportManager::aicpuPending_.pending);
 
     // 2) notify 入队成功但 ACL 流同步失败
-    DlAclApi::pAclrtWaitAndResetNotify = &FakeAclrtWaitAndResetNotifyOk;
-    DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamFail;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeAclrtWaitAndResetNotifyOk;
+    AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamFail;
     EXPECT_EQ(mgr.Synchronize(0U), BM_ERROR);
     EXPECT_TRUE(RdmaAicpuTransportManager::aicpuPending_.pending);
 
@@ -704,7 +708,7 @@ TEST_F(RdmaAicpuMockTest, RunAicpuIoLaunchFailed)
 
 TEST_F(RdmaAicpuMockTest, RunAicpuIoPostLaunchBranches)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     ResetAicpuThreadState();
     RdmaAicpuTransportManager mgr;
     ock::mf::aicpu::RdmaAicpuParam param{};
@@ -729,8 +733,8 @@ TEST_F(RdmaAicpuMockTest, RunAicpuIoPostLaunchBranches)
 
 TEST_F(RdmaAicpuMockTest, RemoteIoBatchAicpuAndBatchAsyncSuccessPath)
 {
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     ResetAicpuThreadState();
 
     RdmaAicpuTransportManager mgr;
@@ -758,11 +762,11 @@ TEST_F(RdmaAicpuMockTest, RemoteIoBatchAicpuAndBatchAsyncSuccessPath)
     SetAicpuNotifyReady();
     RdmaAicpuTransportManager::aicpuStream_ = AicpuStream{reinterpret_cast<void *>(0x6000UL), 3U, 5U};
 
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyAicpuOut;
-    DlAclApi::pAclrtSynchronizeStream = &FakeAclrtSynchronizeStreamOk;
-    DlAclApi::pAclrtWaitAndResetNotify = &FakeAclrtWaitAndResetNotifyOk;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyAicpuOut;
+    AscendRtApi().pAclrtSynchronizeStream_ = &FakeAclrtSynchronizeStreamOk;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = &FakeAclrtWaitAndResetNotifyOk;
     g_expectedPosted = 2; // 1 data segment + 1 notify
 
     MOCKER(&ock::mf::transport::device::LaunchAicpuKernel).stubs().will(returnValue(BM_OK));
@@ -787,9 +791,9 @@ TEST_F(RdmaAicpuMockTest, RemoteIoBatchAicpuAndBatchAsyncSuccessPath)
 
 TEST_F(RdmaAicpuMockTest, CloseDeviceDestroysAicpuStream)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     ResetAicpuThreadState();
-    DlAclApi::pAclrtDestroyStream = &FakeAclrtDestroyStreamOk;
+    AscendRtApi().pAclrtDestroyStream_ = &FakeAclrtDestroyStreamOk;
 
     RdmaAicpuTransportManager mgr;
     RdmaAicpuTransportManager::aicpuStream_ = AicpuStream{reinterpret_cast<void *>(0x6000UL), 3U, 5U};
@@ -900,7 +904,7 @@ TEST_F(RdmaAicpuMockTest, DeviceCopyRejectsMissingRegionsAndStreamChange)
 
 TEST_F(RdmaAicpuMockTest, BuildSparseCopyParamPreservesNotifyAndQueueCapacity)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     constexpr uint32_t peerRank = 1U;
     constexpr uint32_t smallQueueCapacity = 128U;
     RdmaAicpuTransportManager mgr;
@@ -940,7 +944,7 @@ TEST_F(RdmaAicpuMockTest, BuildSparseCopyParamPreservesNotifyAndQueueCapacity)
 
 TEST_F(RdmaAicpuMockTest, DeviceCopyLaunchesOneTaskPerPeerAndDirection)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     constexpr uint32_t peerRank = 1U;
     RdmaAicpuTransportManager mgr;
     mgr.rankId_ = 0U;

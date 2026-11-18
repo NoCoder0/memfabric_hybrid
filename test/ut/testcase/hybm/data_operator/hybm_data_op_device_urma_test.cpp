@@ -15,15 +15,22 @@
 #include "hybm_data_op_test_helper.h"
 #define private public
 #include "hybm_data_op_device_urma.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_define.h"
 #include "hybm_rbtree_range_pool.h"
 #include "hybm_transport_manager.h"
 #undef private
 
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
 
 namespace {
 using ock::mf::Result;
@@ -292,20 +299,20 @@ private:
     void *allocatedSwapBase_{nullptr};
 };
 
-struct DlAclApiCopyFnGuard {
-    aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtMemcpyAsyncFunc oldMemcpyAsync{DlAclApi::pAclrtMemcpyAsync};
-    aclrtSynchronizeStreamFunc oldSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
-    aclrtMemcpyBatchFunc oldMemcpyBatch{DlAclApi::pAclrtMemcpyBatch};
-    aclrtFreeHostFunc oldFreeHost{DlAclApi::pAclrtFreeHost};
+struct AclCopyFnGuard {
+    aclrtMemcpyFunc oldMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtMemcpyAsyncFunc oldMemcpyAsync{AscendRtApi().pAclrtMemcpyAsync_};
+    aclrtSynchronizeStreamFunc oldSynchronizeStream{AscendRtApi().pAclrtSynchronizeStream_};
+    aclrtMemcpyBatchFunc oldMemcpyBatch{AscendRtApi().pAclrtMemcpyBatch_};
+    aclrtFreeHostFunc oldFreeHost{AscendRtApi().pAclrtFreeHost_};
 
-    ~DlAclApiCopyFnGuard()
+    ~AclCopyFnGuard()
     {
-        DlAclApi::pAclrtMemcpy = oldMemcpy;
-        DlAclApi::pAclrtMemcpyAsync = oldMemcpyAsync;
-        DlAclApi::pAclrtSynchronizeStream = oldSynchronizeStream;
-        DlAclApi::pAclrtMemcpyBatch = oldMemcpyBatch;
-        DlAclApi::pAclrtFreeHost = oldFreeHost;
+        AscendRtApi().pAclrtMemcpy_ = oldMemcpy;
+        AscendRtApi().pAclrtMemcpyAsync_ = oldMemcpyAsync;
+        AscendRtApi().pAclrtSynchronizeStream_ = oldSynchronizeStream;
+        AscendRtApi().pAclrtMemcpyBatch_ = oldMemcpyBatch;
+        AscendRtApi().pAclrtFreeHost_ = oldFreeHost;
     }
 };
 
@@ -394,11 +401,11 @@ public:
         ock::mf::test::StubIdentityVaMappings();
         tm = std::make_shared<TransportManagerMock>();
         dataOp = std::make_shared<TestDataOpDeviceURMA>(LOCAL_RANK, tm);
-        DlAclApi::pAclrtMemcpy = MockAclrtMemcpy;
-        DlAclApi::pAclrtMemcpyAsync = MockAclrtMemcpyAsync;
-        DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
-        DlAclApi::pAclrtMemcpyBatch = MockAclrtMemcpyBatch;
-        DlAclApi::pAclrtFreeHost = MockAclrtFreeHost;
+        AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpy;
+        AscendRtApi().pAclrtMemcpyAsync_ = MockAclrtMemcpyAsync;
+        AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
+        AscendRtApi().pAclrtMemcpyBatch_ = MockAclrtMemcpyBatch;
+        AscendRtApi().pAclrtFreeHost_ = MockAclrtFreeHost;
     }
 
     void TearDown() override
@@ -408,7 +415,7 @@ public:
     }
 
 protected:
-    DlAclApiCopyFnGuard guard;
+    AclCopyFnGuard guard;
     std::shared_ptr<TransportManagerMock> tm;
     std::shared_ptr<TestDataOpDeviceURMA> dataOp;
 };
@@ -553,7 +560,7 @@ TEST_F(HybmDataOpDeviceUrmaTest, DataCopyAsyncUnsupportedAndWaitSucceeds)
 TEST_F(HybmDataOpDeviceUrmaTest, DataCopyPropagatesAclMemcpyFailure)
 {
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFailed;
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyFailed;
     char src[4] = {1, 2, 3, 4};
     char dst[4] = {};
     hybm_copy_params params{src, dst, sizeof(src)};
@@ -585,7 +592,7 @@ TEST_F(HybmDataOpDeviceUrmaTest, MultiRankCopiesLocalBetweenRemoteSubmissionAndS
 TEST_F(HybmDataOpDeviceUrmaTest, MultiRankLocalFailureDrainsRemoteAndPreservesCopyError)
 {
     MixedRankBatch batch;
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFailed;
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyFailed;
     tm->synchronizeResult = BM_ERROR;
 
     EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options),
@@ -679,7 +686,7 @@ TEST_F(HybmDataOpDeviceUrmaTest, MultiRankRemoteOnlySkipsLocalCopy)
 {
     MixedRankBatch batch;
     batch.options.groupMap.erase({LOCAL_RANK, LOCAL_RANK});
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFailed;
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyFailed;
 
     EXPECT_EQ(dataOp->BatchDataCopy(batch.params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, batch.options), BM_OK);
     EXPECT_EQ(tm->multiRankSubmitCount, 1U);
@@ -764,7 +771,7 @@ TEST_F(HybmDataOpDeviceUrmaTest, MultiRankMixesRegisteredBatchAndUnregisteredFal
 TEST_F(HybmDataOpDeviceUrmaTest, BatchDataCopyLocalAsyncFailureReturnsDlFailure)
 {
     EXPECT_EQ(dataOp->Initialize(), BM_OK);
-    DlAclApi::pAclrtMemcpyAsync = MockAclrtMemcpyAsyncFailed;
+    AscendRtApi().pAclrtMemcpyAsync_ = MockAclrtMemcpyAsyncFailed;
     char src[8] = "async";
     char dst[8] = {};
     void *sources[1] = {src};

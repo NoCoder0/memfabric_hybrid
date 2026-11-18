@@ -17,7 +17,7 @@
 #include <unistd.h>
 #include "hybm_big_mem.h"
 #include "hybm_device_copy.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "acc_offload_pool_fingerprint.h"
@@ -27,7 +27,7 @@ namespace ock::offload {
 
 int32_t AccOffloadSharedDramAicpuEntry::ValidateBackendConfig(const offload_config_t &config) const
 {
-    const auto soc = mf::DlAclApi::GetAscendSocType();
+    const auto soc = mf::VendorApi::Api()->GetSocName();
     const auto localWorld = NormalizeLocalWorldSize(config.worldSize, config.localWorldSize);
     if (soc != mf::ASCEND_910B || localWorld < 2U) {
         OFFLOAD_LOG_ERROR("shared AICPU requires Ascend910B and at least two local NPUs, soc="

@@ -14,7 +14,7 @@
 #define MEMFABRIC_HYBRID_ROOTINFO_MANAGER_H
 
 #include "hybm_types.h"
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "urma_topo_def.h"
 #include "urma_topo_product.h"
 

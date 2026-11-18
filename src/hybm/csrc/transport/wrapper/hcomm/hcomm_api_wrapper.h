@@ -16,7 +16,7 @@
 #include <unordered_map>
 #include <vector>
 
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_transport_common.h"
 
 namespace ock {

@@ -17,7 +17,7 @@
 #include "smem_store_factory.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "acc_offload_launch.h"
 #include "acc_offload_pool_fingerprint.h"
 #include "acc_offload_shared_dram_entry.h"
@@ -390,7 +390,7 @@ int32_t AccOffloadSharedDramEntry::MapPool(const offload_config_t &config)
 
 int32_t AccOffloadSharedDramEntry::ExchangeAndValidatePoolFingerprint(const offload_config_t &config)
 {
-    ock::mf::AscendSocType socType = ock::mf::DlAclApi::GetAscendSocType();
+    ock::mf::AscendSocType socType = ock::mf::VendorApi::Api()->GetSocName();
     PoolFingerprint self =
         MakePoolFingerprint(reinterpret_cast<uint64_t>(hostGva_), options_.maxDRAMSize, options_.hostVASpace,
                             config.worldSize, NormalizeLocalWorldSize(config.worldSize, config.localWorldSize),

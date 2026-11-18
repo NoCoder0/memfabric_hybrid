@@ -21,14 +21,16 @@
 
 #define private public
 #include "hybm_define.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_gva_version.h"
 #include "urma_topo_common.h"
 #include "urma_topo_helper.h"
 #include "urma_topo_json_parser.h"
 #include "urma_topo_manager.h"
 #include "urma_topo_product.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 #undef private
 
 using namespace ock::mf;
@@ -557,21 +559,22 @@ constexpr int32_t MESH_LAYER = 0;
 constexpr int32_t CTP_LAYER = 1;
 constexpr int32_t RTP_LAYER = 2;
 
-int32_t MockGetLogicIdForVisibleDevice(int32_t userDeviceId, int32_t *logicDeviceId)
+int32_t MockGetLogicIdForVisibleDevice(ock::mf::AscendApiImpl *, int32_t userDeviceId, int32_t *logicDeviceId)
 {
     EXPECT_EQ(userDeviceId, MOCK_USER_DEVICE_ID);
     *logicDeviceId = MOCK_LOGIC_DEVICE_ID;
     return BM_OK;
 }
 
-int32_t MockGetPhyIdForVisibleDevice(int32_t deviceId, int32_t *phyDeviceId)
+int32_t MockGetPhyIdForVisibleDevice(ock::mf::AscendApiImpl *, int32_t deviceId, int32_t *phyDeviceId)
 {
     EXPECT_EQ(deviceId, MOCK_USER_DEVICE_ID);
     *phyDeviceId = MOCK_PHY_DEVICE_ID;
     return BM_OK;
 }
 
-int32_t MockGetDeviceInfoForVisibleDevice(uint32_t deviceId, int32_t, int32_t infoType, int64_t *value)
+int32_t MockGetDeviceInfoForVisibleDevice(ock::mf::AscendApiImpl *, uint32_t deviceId, int32_t, int32_t infoType,
+                                          int64_t *value)
 {
     EXPECT_EQ(deviceId, static_cast<uint32_t>(MOCK_USER_DEVICE_ID));
     *value = (infoType == INFO_TYPE_MAINBOARD_ID) ? MAIN_BOARD_ID_POD : 0;
@@ -617,9 +620,18 @@ void AddPeer2NetEdge(UrmaTopoManager &mgr, int32_t netLayer, const std::string &
 
 TEST_F(UrmaTopoManagerTest, SetDeviceBaseInfoUsesUserDeviceId)
 {
-    MOCKER(&DlAclApi::RtGetLogicDevIdByUserDevId).stubs().will(invoke(MockGetLogicIdForVisibleDevice));
-    MOCKER(&DlAclApi::AclrtGetPhyDevIdByLogicDevId).stubs().will(invoke(MockGetPhyIdForVisibleDevice));
-    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockGetDeviceInfoForVisibleDevice));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetLogicDevIdByUserDevId,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+        .stubs()
+        .will(invoke(MockGetLogicIdForVisibleDevice));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetPhyDevIdByLogicDevId,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, int32_t *))
+        .stubs()
+        .will(invoke(MockGetPhyIdForVisibleDevice));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetDeviceInfo,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, int32_t, int32_t, int64_t *))
+        .stubs()
+        .will(invoke(MockGetDeviceInfoForVisibleDevice));
 
     auto &mgr = UrmaTopoManager::GetInstance();
     mgr.userDeviceId_ = MOCK_USER_DEVICE_ID;
@@ -1245,7 +1257,8 @@ TEST_F(UrmaTopoManagerTest, ParseLevelList_Basic)
 
 // ============================ HAL mock tests ============================
 
-int32_t MockRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
+int32_t MockRtGetDeviceInfo(ock::mf::AscendApiImpl *, uint32_t devId, int32_t moduleType, int32_t infoType,
+                            int64_t *value)
 {
     (void)devId;
     (void)moduleType;
@@ -1272,7 +1285,8 @@ int32_t MockRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t infoType
     return 0;
 }
 
-int32_t MockRtGetDeviceInfoFail(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
+int32_t MockRtGetDeviceInfoFail(ock::mf::AscendApiImpl *, uint32_t devId, int32_t moduleType, int32_t infoType,
+                                int64_t *value)
 {
     (void)devId;
     (void)moduleType;
@@ -1339,10 +1353,11 @@ void MockHalGvaGetDriverInstallPath(std::string &driverInstallPath)
     driverInstallPath = "/usr/local/Ascend";
 }
 
-int32_t MockTopologyRtGetDeviceInfo(uint32_t devId, int32_t moduleType, int32_t infoType, int64_t *value)
+int32_t MockTopologyRtGetDeviceInfo(ock::mf::AscendApiImpl *, uint32_t devId, int32_t moduleType, int32_t infoType,
+                                    int64_t *value)
 {
     constexpr int64_t SERVER_INDEX = 10;
-    const auto ret = MockRtGetDeviceInfo(devId, moduleType, infoType, value);
+    const auto ret = MockRtGetDeviceInfo(nullptr, devId, moduleType, infoType, value);
     if (ret == BM_OK && infoType == INFO_TYPE_SERVER_ID) {
         *value = SERVER_INDEX;
     } else if (ret == BM_OK && infoType == INFO_TYPE_SPOD_TYPE) {
@@ -1389,7 +1404,10 @@ protected:
 
 TEST_F(UrmaTopoCommonMockTest, GetSpodInfo_Success)
 {
-    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockRtGetDeviceInfo));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetDeviceInfo,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, int32_t, int32_t, int64_t *))
+        .stubs()
+        .will(invoke(MockRtGetDeviceInfo));
     dcmi_spod_info spod{};
     EXPECT_EQ(GetSpodInfo(0, spod), BM_OK);
     EXPECT_EQ(spod.super_pod_id, 1U);
@@ -1400,7 +1418,10 @@ TEST_F(UrmaTopoCommonMockTest, GetSpodInfo_Success)
 
 TEST_F(UrmaTopoCommonMockTest, GetSpodInfo_FailSpodId)
 {
-    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockRtGetDeviceInfoFail));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetDeviceInfo,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, int32_t, int32_t, int64_t *))
+        .stubs()
+        .will(invoke(MockRtGetDeviceInfoFail));
     dcmi_spod_info spod{};
     EXPECT_NE(GetSpodInfo(0, spod), BM_OK);
 }
@@ -1496,7 +1517,10 @@ TEST_F(UrmaTopoCommonMockTest, Server16FmRootInfoPreservesRankAndClosPortGroups)
     constexpr size_t CONST_RANK_COUNT = 1U;
     constexpr size_t LAYER_COUNT = 2U;
     constexpr size_t MESH_PORT_COUNT = 6U;
-    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockTopologyRtGetDeviceInfo));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetDeviceInfo,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, int32_t, int32_t, int64_t *))
+        .stubs()
+        .will(invoke(MockTopologyRtGetDeviceInfo));
     MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
     MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockTopologyEidList));
     MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));
@@ -1536,7 +1560,10 @@ TEST_F(UrmaTopoCommonMockTest, PodRootInfoWrapsServerIndexAndPrioritizesClosPort
     constexpr size_t CONST_RANK_COUNT = 1U;
     constexpr size_t LAYER_COUNT = 2U;
     constexpr size_t MESH_PORT_COUNT = 2U;
-    MOCKER(&DlAclApi::RtGetDeviceInfo).stubs().will(invoke(MockTopologyRtGetDeviceInfo));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetDeviceInfo,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, int32_t, int32_t, int64_t *))
+        .stubs()
+        .will(invoke(MockTopologyRtGetDeviceInfo));
     MOCKER(&DlHalApi::DcmiGetUrmaDeviceCnt).stubs().will(invoke(MockDcmiGetUrmaDeviceCnt));
     MOCKER(&DlHalApi::DcmiGetEidListByUrmaDevIndex).stubs().will(invoke(MockTopologyEidList));
     MOCKER(&HalGvaGetDriverInstallPath).stubs().will(invoke(MockHalGvaGetDriverInstallPath));

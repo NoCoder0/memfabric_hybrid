@@ -24,8 +24,8 @@
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
 #include "dl_api.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "device_urma_transport_manager.h"
 #include "device_rdma_transport_manager.h"
 
@@ -53,27 +53,14 @@ bool HybmHasInited()
 
 static inline Result hybm_load_library()
 {
-    std::string libPath;
 #if defined(ASCEND_NPU)
-    const std::string &path = env::ASCEND_HOME_PATH;
-    BM_VALIDATE_RETURN(!path.empty(), "Environment ASCEND_HOME_PATH is not set.", BM_ERROR);
-    libPath = path + "/lib64";
-    if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
-        BM_LOG_ERROR("ASCEND_HOME_PATH check failed, path: " << path << " libPath: " << libPath);
-        return BM_ERROR;
-    }
+    BM_VALIDATE_RETURN(!env::ASCEND_HOME_PATH.empty(), "Environment ASCEND_HOME_PATH is not set.", BM_ERROR);
 #elif defined(NVIDIA_GPU)
-    const std::string &path = env::CUDA_HOME;
-    BM_VALIDATE_RETURN(!path.empty(), "Environment CUDA_HOME is not set.", BM_ERROR);
-    libPath = path + "/lib64";
-    if (!ock::mf::FileUtil::Realpath(libPath) || !ock::mf::FileUtil::IsDir(libPath)) {
-        BM_LOG_ERROR("CUDA_HOME check failed, path: " << path << " libPath: " << libPath);
-        return BM_ERROR;
-    }
+    BM_VALIDATE_RETURN(!env::CUDA_HOME.empty(), "Environment CUDA_HOME is not set.", BM_ERROR);
 #endif
 
-    auto ret = DlApi::LoadLibrary(libPath, HybmGetGvaVersion());
-    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "load library from path failed: " << ret << ", path:" << libPath);
+    auto ret = DlApi::LoadLibrary(HybmGetGvaVersion());
+    BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "load library failed: " << ret);
     return BM_OK;
 }
 
@@ -88,7 +75,7 @@ HYBM_API int32_t hybm_init(uint16_t deviceId, uint64_t flags)
         }
         BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(hybm_load_library(), "load library failed");
         if (g_baseAddr == 0) {
-            auto ret = hybm_init_hbm_gva(deviceId, flags, g_baseAddr, DlAclApi::GetAscendSocType(), &g_allocHandle);
+            auto ret = hybm_init_hbm_gva(deviceId, flags, g_baseAddr, VendorApi::Api()->GetSocName(), &g_allocHandle);
             BM_LOG_ERROR_RETURN_IT_IF_NOT_OK(ret, "init shm meta failed");
         }
 
@@ -105,7 +92,7 @@ HYBM_API int32_t hybm_init(uint16_t deviceId, uint64_t flags)
         BM_LOG_WARN("init ptracer module not successful, result: " << ret << ", msg: " << ptracer_get_last_err_msg());
     }
 
-    ret = hybm_init_hbm_gva(deviceId, flags, g_baseAddr, DlAclApi::GetAscendSocType(), &g_allocHandle);
+    ret = hybm_init_hbm_gva(deviceId, flags, g_baseAddr, VendorApi::Api()->GetSocName(), &g_allocHandle);
     if (ret != BM_OK) {
         ptracer_uninit();
         DlApi::CleanupLibrary();

@@ -17,9 +17,9 @@
 #include <mutex>
 #include <unordered_map>
 
-#include "dl_acl_api.h"
-#include "dl_hccp_def.h"
-#include "dl_hcomm_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hccp_def.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_common_include.h"
 namespace ock::mf::transport::device {
 // Defined in rdma_provider_completion.h and only held through unique_ptr here, so this header stays protocol-light.
@@ -32,7 +32,7 @@ class UrmaProviderContext {
 public:
     explicit UrmaProviderContext(void *context = nullptr)
     {
-        DlAclApi::AclrtGetCurrentContext(&previous_);
+        VendorApi::Api()->GetCurrentContext(&previous_);
         valid_ = context == nullptr || SetCurrentContext(context) == BM_OK;
     }
     ~UrmaProviderContext()
@@ -42,7 +42,7 @@ public:
     }
     static Result SetCurrentContext(void *context)
     {
-        auto ret = DlAclApi::AclrtSetCurrentContext(context);
+        auto ret = VendorApi::Api()->SetCurrentContext(context);
         if (ret != BM_OK) {
             BM_LOG_ERROR("URMA provider cannot activate ACL context, ret=" << ret);
             return ret;

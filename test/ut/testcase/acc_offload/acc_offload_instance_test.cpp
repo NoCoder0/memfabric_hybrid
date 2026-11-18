@@ -17,7 +17,7 @@
 #include <mockcpp/mockcpp.hpp>
 #include "hybm_big_mem.h"
 #include "hybm_device_copy.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "acc_offload_mem_manager.h"
 #include "smem_net_group_engine.h"
 #include "smem_store_factory.h"
@@ -31,6 +31,8 @@
 #include "aicore/acc_offload_shared_dram_mte_entry.h"
 #undef private
 #undef protected
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::offload;
 using namespace ock::smem;
@@ -265,7 +267,9 @@ TEST_F(AccOffloadInstanceTest, HostMethodsUseTheLocalPoolWithoutAnExtraFlag)
 
 TEST_F(AccOffloadInstanceTest, SharedSelectionPreservesStoreUrlExclusivity)
 {
-    MOCKER(ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
     AccOffloadEntryManager pool;
     config_.scene = OFFLOAD_SCENE_SHARED;
     std::copy_n(STORE_URL, sizeof(STORE_URL), config_.storeUrl);
@@ -372,7 +376,9 @@ protected:
 
 TEST_F(AccOffloadAicpuInstanceTest, Ascend910CKeepsTheSingleEntitySdmaFlow)
 {
-    MOCKER(ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
     auto host = static_cast<hybm_entity_t>(gPools[0].data());
     MOCKER(hybm_prepare_device_copy)
         .expects(once())

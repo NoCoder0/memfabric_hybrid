@@ -14,8 +14,8 @@
 #include <algorithm>
 #include <cstring>
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_networks_common.h"
 #include "hybm_va_manager.h"
@@ -806,8 +806,8 @@ Result AsymmetricMemSegment::ImportHbmSlice(const UserSliceExportInfo &sliceInfo
             // 不阻塞等待：未就绪返回专用码 BM_P2P_NOT_READY，由上层状态机重试；该码在上层只保留本处 WARN，
             // 不再逐层打 ERROR。查询接口本身失败（含符号缺失 BM_UNDER_API_UNLOAD）不做拦截，交实际导入决定。
             uint32_t p2pStatus = 0;
-            auto p2pRet = DlAclApi::RtGetP2PStatus(static_cast<uint32_t>(deviceId_),
-                                                   static_cast<uint32_t>(sliceInfo.devicePhyId), p2pStatus);
+            auto p2pRet = VendorApi::Api()->GetP2PStatus(static_cast<uint32_t>(deviceId_),
+                                                         static_cast<uint32_t>(sliceInfo.devicePhyId), p2pStatus);
             if (p2pRet == BM_OK && p2pStatus != 1) {
                 BM_LOG_WARN("trans P2P not ready, rankId=" << options_.rankId << " remoteRank=" << sliceInfo.rankId
                                                            << " peerDev=" << sliceInfo.devicePhyId << " ret=" << p2pRet
@@ -942,7 +942,7 @@ Result AsymmetricMemSegment::UserMemExportName(const void *ptr, uint64_t len, ch
     const bool useVmm = !IsHbmAddr(reinterpret_cast<uint64_t>(ptr));
     name[0] = static_cast<char>(useVmm ? USER_HBM_NAME_TYPE_VMM : USER_HBM_NAME_TYPE_IPC);
     if (!useVmm) {
-        auto ret = DlAclApi::RtIpcSetMemoryName(ptr, len, name + 1, DEVICE_SHM_NAME_SIZE + 1);
+        auto ret = VendorApi::Api()->IpcSetMemoryName(ptr, len, name + 1, DEVICE_SHM_NAME_SIZE + 1);
         if (ret != BM_OK) {
             BM_LOG_ERROR("set memory name failed: rankId=" << options_.rankId
                                                            << " addr=" << VaToStr(reinterpret_cast<uint64_t>(ptr))
@@ -1015,7 +1015,7 @@ Result AsymmetricMemSegment::UserMemSetSuperPodPid(const char *name, uint32_t sd
         return BM_OK;
     }
     int32_t pidArg = static_cast<int32_t>(pid);
-    auto ret = DlAclApi::RtSetIpcMemorySuperPodPid(name + 1, sdid, &pidArg, 1);
+    auto ret = VendorApi::Api()->IpcSetMemorySuperPodPid(name + 1, sdid, &pidArg, 1);
     if (ret != BM_OK) {
         BM_LOG_ERROR("set shm(" << name + 1 << ") for sdid=" << sdid << " pid=" << pid << " failed: " << ret);
         return BM_DL_FUNCTION_FAILED;
@@ -1087,7 +1087,7 @@ uint64_t AsymmetricMemSegment::ReserveLva(const UserSliceExportInfo &info) noexc
     return 0;
 }
 
-// 507899（ACL_RT_INTERNAL_ERROR，定义见 dl_acl_api.h）在 IPC open 上覆盖两类对端未就绪的
+// 507899（ACL_RT_INTERNAL_ERROR，定义见 acl_rt_def.h）在 IPC open 上覆盖两类对端未就绪的
 // 瞬时拒绝：白名单未设置与节点不可见，初始化竞争期常见，对端白名单落地后重试即成功。此处
 // 按可重试码上抛，复用上层既有的 WARN + 服务端重试管线；其余失败码仍按硬错误处理
 
@@ -1095,7 +1095,7 @@ Result AsymmetricMemSegment::UserMemImportAndMapName(void **ptr, const UserSlice
 {
     const uint16_t type = UserMemNameType(info.name);
     if (type == USER_HBM_NAME_TYPE_IPC) {
-        auto ret = DlAclApi::RtIpcOpenMemory(ptr, info.name + 1);
+        auto ret = VendorApi::Api()->IpcOpenMemory(ptr, info.name + 1);
         if (ret != BM_OK) {
             // 对端 IPC 白名单/节点尚未就绪属瞬时竞争，按可重试码上抛，交上层状态机重试
             if (ret == ACL_RT_INTERNAL_ERROR) {
@@ -1172,7 +1172,7 @@ void AsymmetricMemSegment::CloseRemoteIpcMemory(const RegisterSlice &reg) noexce
 {
     // RtIpcOpenMemory 返回的地址高 16 位带标记位，close 时需掩码还原（历史行为，保持不变）
     void *address = reinterpret_cast<void *>(static_cast<ptrdiff_t>(reg.slice->vAddress_ << 16 >> 16));
-    auto ret = DlAclApi::RtIpcCloseMemory(address);
+    auto ret = VendorApi::Api()->IpcCloseMemory(address);
     if (ret != 0) {
         BM_LOG_WARN("RtIpcCloseMemory failed: deviceId=" << devicePhyId_ << " addr=" << VaToStr(reg.slice->vAddress_)
                                                          << " ret=" << ret << ", This may affect future registration.");
@@ -1215,7 +1215,7 @@ void AsymmetricMemSegment::UserMemUnImportName(uint32_t sliceId) noexcept
     }
 }
 
-// 107002（ACL_RT_IPC_NAME_NOT_FOUND，定义见 dl_acl_api.h）：共享名不存在（对端先行退出/
+// 107002（ACL_RT_IPC_NAME_NOT_FOUND，定义见 acl_rt_def.h）：共享名不存在（对端先行退出/
 // 名字已销毁）时 teardown 期属预期场景，降级 WARN；其余失败仍按 ERROR 记录（可能泄漏，
 // 需人工跟进）
 
@@ -1225,7 +1225,7 @@ Result AsymmetricMemSegment::UserMemDestroyName(const char *name) noexcept
     if (UserMemNameType(name) != USER_HBM_NAME_TYPE_IPC) {
         return BM_OK;
     }
-    auto ret = DlAclApi::RtIpcDestroyMemoryName(name + 1);
+    auto ret = VendorApi::Api()->IpcDestroyMemoryName(name + 1);
     if (ret != BM_OK) {
         if (ret == ACL_RT_IPC_NAME_NOT_FOUND) {
             BM_LOG_WARN("destroy memory name skipped (already gone): rankId=" << options_.rankId << " name=" << name + 1

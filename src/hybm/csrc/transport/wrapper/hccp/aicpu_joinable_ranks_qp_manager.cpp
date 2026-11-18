@@ -15,8 +15,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "dl_acl_api.h"
-#include "dl_hccp_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "hybm_logger.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
@@ -186,7 +186,7 @@ bool AicpuJoinableRanksQpManager::ReserveQpInfoSpace() noexcept
     qpInfoSize_ = static_cast<uint32_t>(sizeof(AiQpRMAQueueInfo) + oneRankSize * rankCount_);
 
     void *ptr = nullptr;
-    auto ret = DlAclApi::AclrtMalloc(&ptr, qpInfoSize_, 0);
+    auto ret = VendorApi::Api()->Malloc(&ptr, qpInfoSize_, 0);
     if (ret != 0 || ptr == nullptr) {
         BM_LOG_ERROR("AclrtMalloc qp info failed, rank: " << rankId_ << " size: " << qpInfoSize_ << " ret: " << ret);
         return false;
@@ -200,7 +200,7 @@ bool AicpuJoinableRanksQpManager::ReserveQpInfoSpace() noexcept
 void AicpuJoinableRanksQpManager::ReleaseQpInfoSpace() noexcept
 {
     if (qpInfo_ != nullptr) {
-        DlAclApi::AclrtFree(qpInfo_);
+        VendorApi::Api()->Free(qpInfo_);
         qpInfo_ = nullptr;
     }
     qpInfoSize_ = 0;
@@ -237,7 +237,8 @@ void AicpuJoinableRanksQpManager::FillQpInfo() const noexcept
                                            << " sq.depth: " << plane.sq.depth);
     }
 
-    auto ret = DlAclApi::AclrtMemcpy(qpInfo_, qpInfoSize_, hostBuffer.data(), qpInfoSize_, ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret =
+        VendorApi::Api()->Memcpy(qpInfo_, qpInfoSize_, hostBuffer.data(), qpInfoSize_, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
         BM_LOG_ERROR("copy qp info to device failed, rank: " << rankId_ << " size: " << qpInfoSize_ << " ret: " << ret);
         return;

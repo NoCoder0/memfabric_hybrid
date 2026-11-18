@@ -12,7 +12,7 @@
 
 #include "urma_provider_device.h"
 #include "provider_device_context.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 
 namespace ock::mf::transport::device {
 UrmaProviderDevice::UrmaProviderDevice() : manager_(std::make_shared<DeviceUrmaTransportManager>()) {}
@@ -40,13 +40,13 @@ Result UrmaProviderDevice::Open(uint32_t userDeviceId, const TransportOptions &o
     deviceOptions.protocol = HYBM_DOP_TYPE_DEVICE_URMA;
     manager_->EnableStandaloneLifecycle(passive);
     auto ret = manager_->OpenDeviceOnUserDevice(deviceOptions, userDeviceId);
-    auto contextRet = DlAclApi::AclrtGetCurrentContext(&context_);
+    auto contextRet = VendorApi::Api()->GetCurrentContext(&context_);
     if (ret != BM_OK) {
         return ret;
     }
     int32_t logic = -1;
     if (contextRet != BM_OK ||
-        DlAclApi::RtGetLogicDevIdByUserDevId(static_cast<int32_t>(userDeviceId), &logic) != BM_OK || logic < 0) {
+        VendorApi::Api()->GetLogicDevIdByUserDevId(static_cast<int32_t>(userDeviceId), &logic) != BM_OK || logic < 0) {
         BM_LOG_ERROR("URMA provider device cannot capture context or logical device, userId=" << userDeviceId);
         return BM_ERROR;
     }

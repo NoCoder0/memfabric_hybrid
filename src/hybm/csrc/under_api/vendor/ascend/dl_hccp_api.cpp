@@ -13,8 +13,8 @@
 #include <cstdio>
 #include <dlfcn.h>
 
-#include "dl_acl_api.h"
 #include "dl_hccp_api.h"
+#include "../vendor_api.h"
 
 namespace ock {
 namespace mf {
@@ -202,11 +202,13 @@ void DlHccpApi::CleanupLibrary()
 // CANN >= 9.2.0 为 V2；其余（含版本获取失败，视为旧 CANN）为 V1
 RaSockConnLayout DlHccpApi::GetSockConnLayout()
 {
-    std::string versionStr;
-    if (!DlAclApi::AclsysGetVersionStr("runtime", versionStr)) {
+    char pkgName[] = "runtime";
+    char versionBuf[128] = {0};
+    if (VendorApi::Api()->GetSysVersionStr(pkgName, versionBuf) != BM_OK) {
         BM_LOG_DEBUG("get CANN version failed, default to V1 layout");
         return RaSockConnLayout::V1;
     }
+    std::string versionStr{versionBuf};
     BM_LOG_INFO("CANN version string: " << versionStr);
     uint32_t major = 0;
     uint32_t minor = 0;

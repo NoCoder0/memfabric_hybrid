@@ -28,10 +28,9 @@
 #include <vector>
 
 #include "device_chip_info.h"
-#include "dl_acl_api.h"
-#include "dl_hccp_api.h"
-#include "dl_hccl_api.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
+#include "vendor/ascend/dl_hccl_api.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"
 #include "hybm_networks_common.h"
@@ -44,7 +43,7 @@
 #include "rdma_provider_device.h"
 #include "rdma_provider_link.h"
 #include "device_rdma_transport_manager.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "joinable_ranks_qp_manager.h"
 
 namespace ock {
@@ -66,7 +65,7 @@ bool OpenNetService18()
     std::string ext = "--hdcType=18";
     RtProcExtParam param{ext.c_str(), ext.size()};
     RtNetServiceOpenArgs args{&param, 1};
-    auto ret = DlRtApi::RtOpenNetService(&args);
+    auto ret = VendorApi::Api()->OpenNetService(&args);
     if (ret != 0) {
         BM_LOG_WARN("rtOpenNetService failed, hdcType=18 ret=" << ret);
         return false;
@@ -76,7 +75,7 @@ bool OpenNetService18()
 
 bool CloseNetService18()
 {
-    auto ret = DlRtApi::RtCloseNetService();
+    auto ret = VendorApi::Api()->CloseNetService();
     if (ret != 0) {
         BM_LOG_ERROR("rtCloseNetService failed, ret=" << ret);
     }
@@ -104,7 +103,7 @@ bool RdmaProviderLinkReady(const RdmaProviderDevice &device, void *qp, int fd)
     if (!provider_control::SocketIdle(fd)) {
         return false;
     }
-    if (DlAclApi::AclrtSetDevice(static_cast<int32_t>(device.userId)) != BM_OK) {
+    if (VendorApi::Api()->SetDevice(static_cast<int32_t>(device.userId)) != BM_OK) {
         return false;
     }
     int status = -1;
@@ -117,14 +116,14 @@ RdmaProviderDeviceContext::~RdmaProviderDeviceContext()
     if (!CloseCompletionResources()) {
         return;
     }
-    auto bindRet = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId));
+    auto bindRet = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId));
     const bool deviceBound = bindRet == BM_OK;
     if (!deviceBound) {
         BM_LOG_ERROR("provider AclrtSetDevice failed during cleanup, deviceId=" << userId << " ret=" << bindRet);
     }
     // Do not run current-device runtime APIs against another live card if the switch failed.
     if (stream != nullptr && deviceBound) {
-        auto ret = DlRtApi::RtStreamDestroy(stream);
+        auto ret = VendorApi::Api()->DestroyStream(stream);
         if (ret != 0) {
             BM_LOG_ERROR("provider rtStreamDestroy failed, deviceId=" << userId << " ret=" << ret);
         }
@@ -148,7 +147,7 @@ RdmaProviderDeviceContext::~RdmaProviderDeviceContext()
 
 bool RdmaProviderDeviceContext::OpenStream()
 {
-    auto ret = DlRtApi::RtStreamCreate(&stream, 0);
+    auto ret = VendorApi::Api()->CreateStream(&stream);
     if (ret != 0) {
         BM_LOG_ERROR("provider rtStreamCreate failed, deviceId=" << userId << " ret=" << ret);
     }
@@ -235,23 +234,23 @@ bool RdmaProviderDevice::Open(uint32_t userDeviceId, uint32_t rankCount)
 
 bool RdmaProviderDeviceContext::Open(uint32_t userDeviceId, uint32_t rankCount)
 {
-    if (DlRtApi::LoadLibrary() != BM_OK) {
+    if (VendorApi::LoadLibrary() != BM_OK) {
         BM_LOG_ERROR("provider runtime library could not be loaded, deviceId=" << userDeviceId);
         return false;
     }
     userId = userDeviceId;
-    if (DlAclApi::AclrtSetDevice(static_cast<int32_t>(userDeviceId)) != BM_OK) {
+    if (VendorApi::Api()->SetDevice(static_cast<int32_t>(userDeviceId)) != BM_OK) {
         BM_LOG_ERROR("provider aclrtSetDevice failed, deviceId=" << userDeviceId);
         return false;
     }
     int32_t logic = -1;
-    if (DlAclApi::RtGetLogicDevIdByUserDevId(static_cast<int32_t>(userDeviceId), &logic) != BM_OK || logic < 0) {
+    if (VendorApi::Api()->GetLogicDevIdByUserDevId(static_cast<int32_t>(userDeviceId), &logic) != BM_OK || logic < 0) {
         BM_LOG_ERROR("provider get logic id failed, deviceId=" << userDeviceId);
         return false;
     }
     logicId = static_cast<uint32_t>(logic);
     int32_t phy = logic;
-    (void)DlAclApi::AclrtGetPhyDevIdByLogicDevId(static_cast<int32_t>(userDeviceId), &phy);
+    (void)VendorApi::Api()->GetPhyDevIdByLogicDevId(static_cast<int32_t>(userDeviceId), &phy);
     phyId = static_cast<uint32_t>(phy);
 
     if (DlHccpApi::RaRdevGetHandle(phyId, rdmaHandle) == BM_OK && rdmaHandle != nullptr) {
@@ -364,7 +363,7 @@ bool RdmaProviderDevice::RegisterMr(void *addr, uint64_t size, bool isHbm, HccpM
         BM_LOG_ERROR("provider MR registration requires an open device, deviceId=" << userId);
         return false;
     }
-    if (DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId)) != BM_OK) {
+    if (VendorApi::Api()->SetDevice(static_cast<int32_t>(userId)) != BM_OK) {
         BM_LOG_ERROR("provider set device for MR failed, deviceId=" << userId);
         return false;
     }
@@ -400,7 +399,7 @@ bool RdmaProviderDevice::RegisterMr(void *addr, uint64_t size, bool isHbm, HccpM
 
 bool ReleaseRegisteredMr(RdmaProviderDevice &device, void *&handle, void *hostAddress, bool isHbm)
 {
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(device.userId));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(device.userId));
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider set device for MR release failed, deviceId=" << device.userId << " ret=" << ret);
         return false;
@@ -464,7 +463,7 @@ bool RdmaProviderDevice::CreateQp(void *&qpHandle, TypicalQp &localQp)
             return false;
         }
     }
-    const auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId));
+    const auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId));
     if (rdmaHandle == nullptr || ret != BM_OK) {
         BM_LOG_ERROR("provider QP creation requires a bound device, deviceId=" << userId << " ret=" << ret);
         return false;
@@ -534,15 +533,15 @@ bool RdmaProviderDevice::SubmitTransfer(void *qpHandle, uint64_t localDva, uint3
         return false;
     }
     std::lock_guard<std::mutex> lock(context->transferMutex);
-    if (DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId)) != BM_OK) {
+    if (VendorApi::Api()->SetDevice(static_cast<int32_t>(userId)) != BM_OK) {
         BM_LOG_ERROR("provider set device for transfer failed, deviceId=" << userId);
         return false;
     }
     RdmaProviderCompletion *completion = nullptr;
     auto found = context->completions.find(qpHandle);
     if (found == context->completions.end()) {
-        const bool nativeStream = context->ownsRdev && (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_910B ||
-                                                        DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_910C);
+        const bool nativeStream = context->ownsRdev && (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_910B ||
+                                                        VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_910C);
         auto entry = std::make_unique<RdmaProviderCompletion>(userId, logicId, rdmaHandle, nativeStream);
         completion = entry.get();
         context->completions.emplace(qpHandle, std::move(entry));
@@ -572,7 +571,7 @@ bool RdmaProviderDevice::SubmitTransfer(void *qpHandle, uint64_t localDva, uint3
     if (completion->UsesNativeStream()) {
         return completion->SubmitNativeDoorbell(rsp);
     }
-    auto ret = DlRtApi::RtRDMADBSend(rsp.db.db_index, rsp.db.db_info, context->stream);
+    auto ret = VendorApi::Api()->RDMADBSend(rsp.db.db_index, rsp.db.db_info, context->stream);
     if (ret != 0) {
         BM_LOG_ERROR("provider rtRDMADBSend failed, ret=" << ret);
         return false;
@@ -593,7 +592,7 @@ bool RdmaProviderDevice::WaitTransfer(void *qpHandle, uint64_t notifySourceAddr,
     RdmaProviderCompletion *completion = nullptr;
     {
         std::lock_guard<std::mutex> lock(context->transferMutex);
-        if (DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId)) != BM_OK) {
+        if (VendorApi::Api()->SetDevice(static_cast<int32_t>(userId)) != BM_OK) {
             BM_LOG_ERROR("provider set device for completion failed, deviceId=" << userId);
             return false;
         }
@@ -605,7 +604,7 @@ bool RdmaProviderDevice::WaitTransfer(void *qpHandle, uint64_t notifySourceAddr,
         completion = found->second.get();
         if (!completion->UsesNativeStream()) {
             // 数据 WR 的 doorbell 走运行时 stream，先把它落盘再发 fence 读。
-            auto ret = DlRtApi::RtStreamSynchronize(context->stream);
+            auto ret = VendorApi::Api()->SynchronizeStream(context->stream);
             if (ret != 0) {
                 BM_LOG_ERROR("provider rtStreamSynchronize failed, phyId=" << phyId << " ret=" << ret);
                 return false;

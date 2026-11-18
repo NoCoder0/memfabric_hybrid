@@ -16,7 +16,7 @@
 #include <atomic>
 #include <bitset>
 
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_mem_segment.h"
 
 namespace ock {

@@ -14,7 +14,7 @@
 #define MF_HYBM_OPS_HYBM_KERNEL_HYBM_BATCH_TRANSFER_H
 
 #include <cstdint>
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 
 // Multi-rank batch ABI used by HybmBatchTransfer.
 struct HybmBatchTransferParam {

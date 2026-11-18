@@ -27,8 +27,8 @@
 #include <ifaddrs.h>
 #include <net/if.h>
 
-#include "dl_acl_api.h"
-#include "dl_hccp_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "hybm_logger.h"
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
@@ -394,7 +394,7 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
     // A5(950) 的 ROCE 没有 DEVICE 形态端点（AicpuTsRoceEndpoint 只支持 910B/910_93），走主机侧
     // RoCE：HOST 端点 + COMM_ENGINE_CPU + 主机侧 Nbi 提交（不下发 AICPU 算子）；其它 SoC 保持
     // 原有 DEVICE 形态实现，行为不变。
-    hostRocePath_ = (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950);
+    hostRocePath_ = (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950);
 
     // Get local device info
     auto ret = InitLocalDeviceInfo(phyDeviceId_, sdid_, serverId_, superPodId_);
@@ -459,7 +459,7 @@ Result DeviceRdmaHcommTransportManager::OpenDevice(const TransportOptions &optio
 void DeviceRdmaHcommTransportManager::ReleaseDeviceTransferBuffers(DeviceTransferBuffers &buffers)
 {
     if (buffers.dstList != nullptr) {
-        (void)DlAclApi::AclrtFree(buffers.dstList);
+        (void)VendorApi::Api()->Free(buffers.dstList);
     }
     buffers.dstList = nullptr;
     buffers.srcList = nullptr;
@@ -520,7 +520,7 @@ Result DeviceRdmaHcommTransportManager::CloseDevice()
         }
         ctx->pendingTransfers.clear();
         if (ctx->notify != nullptr) {
-            (void)DlAclApi::AclrtDestroyNotify(ctx->notify);
+            (void)VendorApi::Api()->DestroyNotify(ctx->notify);
             ctx->notify = nullptr;
         }
         // ctx->stream is a thread-local shared FAST stream owned by HybmStreamManager;
@@ -1236,7 +1236,7 @@ Result DeviceRdmaHcommTransportManager::EnsureContextInitLocked(CompletionContex
     }
 
     void *notify = nullptr;
-    auto ret = DlAclApi::AclrtCreateNotify(&notify, ACL_NOTIFY_FLAG_DEVICE_ONLY);
+    auto ret = VendorApi::Api()->CreateNotify(&notify, ACL_NOTIFY_FLAG_DEVICE_ONLY);
     if (ret != BM_OK) {
         BM_LOG_ERROR("EnsureContextInitLocked AclrtCreateNotify failed, ret=" << ret);
         return ret;
@@ -1244,10 +1244,10 @@ Result DeviceRdmaHcommTransportManager::EnsureContextInitLocked(CompletionContex
     ctx.notify = notify;
 
     uint32_t notifyId = 0;
-    ret = DlAclApi::AclrtGetNotifyId(notify, &notifyId);
+    ret = VendorApi::Api()->GetNotifyId(notify, &notifyId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("EnsureContextInitLocked AclrtGetNotifyId failed, ret=" << ret);
-        (void)DlAclApi::AclrtDestroyNotify(notify);
+        (void)VendorApi::Api()->DestroyNotify(notify);
         ctx.notify = nullptr;
         return ret;
     }
@@ -1291,7 +1291,7 @@ void DeviceRdmaHcommTransportManager::RestoreRankPending(std::vector<PendingTran
 Result DeviceRdmaHcommTransportManager::SynchronizeContextLocked(void * /* notify */, void *stream,
                                                                  std::vector<PendingTransfer> &pendingTransfers)
 {
-    auto syncRet = DlAclApi::AclrtSynchronizeStream(stream);
+    auto syncRet = VendorApi::Api()->SynchronizeStream(stream);
     if (syncRet != BM_OK) {
         BM_LOG_WARN("SynchronizeContextLocked AclrtSynchronizeStream failed, ret=" << syncRet);
     }
@@ -1408,13 +1408,13 @@ Result DeviceRdmaHcommTransportManager::StageAndLaunchTransfer(CompletionContext
 
     Result waitRet = BM_OK;
     if (ctx.notify != nullptr && ctx.notifyId != 0U) {
-        waitRet = DlAclApi::AclrtWaitAndResetNotify(ctx.notify, ctx.stream, NOTIFY_WAIT_TIMEOUT_S);
+        waitRet = VendorApi::Api()->WaitAndResetNotify(ctx.notify, ctx.stream, NOTIFY_WAIT_TIMEOUT_S);
         if (waitRet != BM_OK) {
             BM_LOG_ERROR("StageAndLaunchTransfer wait notify failed, rank: " << rankId << " notifyId: " << ctx.notifyId
                                                                              << " ret: " << waitRet);
         }
     }
-    const auto syncRet = DlAclApi::AclrtSynchronizeStream(ctx.stream);
+    const auto syncRet = VendorApi::Api()->SynchronizeStream(ctx.stream);
     device::ReleaseDeviceTransferBuffers(buffers);
     if (syncRet != BM_OK) {
         BM_LOG_ERROR("StageAndLaunchTransfer AclrtSynchronizeStream failed, rank: " << rankId << " ret: " << syncRet);

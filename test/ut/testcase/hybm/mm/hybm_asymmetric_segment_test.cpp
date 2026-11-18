@@ -21,8 +21,8 @@
 // G.NAM.03 要求宏名全大写，但改名将破坏关键字替换语义，属工具误报，保持原样。
 #define private   public
 #define protected public
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_asymmetric_mem_segment.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
@@ -32,6 +32,8 @@
 
 #include "hybm_ex_info_transfer.h"
 #include "hybm_va_manager.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::mf;
 
@@ -69,7 +71,7 @@ int g_halHostUnregisterCount = 0;
 int g_ipcWhitelistCount = 0;
 
 // 以下 stub 的签名（含 void*/char* 参数与 strncpy 的写入语义）必须与被 mock 的
-// 函数指针 typedef 完全一致（dl_acl_api.h/dl_hal_api.h），无法改用 std::string 等类型。
+// 函数指针 typedef 完全一致（ascend_api_impl.h/dl_hal_api.h），无法改用 std::string 等类型。
 int HalHostRegisterStub(void *addr, uint64_t size, uint32_t flags, uint32_t devId, void **output)
 {
     (void)addr;
@@ -91,7 +93,7 @@ int HalHostUnregisterCountStub(void *addr, uint32_t devId, uint32_t flag)
 }
 
 // 必须写入 IPC name，否则 HBM 注册的 RegisterSlice name 为空，会被当成 DRAM 条目跳过
-int RtIpcSetMemoryNameStub(const void *ptr, uint64_t byteCount, char *name, uint32_t len)
+int RtIpcSetMemoryNameStub(ock::mf::AscendApiImpl *, const void *ptr, uint64_t byteCount, char *name, uint32_t len)
 {
     (void)ptr;
     (void)byteCount;
@@ -101,7 +103,8 @@ int RtIpcSetMemoryNameStub(const void *ptr, uint64_t byteCount, char *name, uint
     return 0;
 }
 
-int RtSetIpcMemorySuperPodPidCountStub(const char *name, uint32_t sdid, int32_t pid[], int32_t num)
+int RtSetIpcMemorySuperPodPidCountStub(ock::mf::AscendApiImpl *, const char *name, uint32_t sdid, int32_t pid[],
+                                       int32_t num)
 {
     (void)name;
     (void)sdid;
@@ -284,7 +287,7 @@ int HalMemSetAccessStub(void *ptr, size_t size, struct drv_mem_access_desc *desc
     return 0;
 }
 
-int RtIpcOpenMemoryStub(void **ptr, const char *name)
+int RtIpcOpenMemoryStub(ock::mf::AscendApiImpl *, void **ptr, const char *name)
 {
     (void)name;
     g_ipcOpenCount++;
@@ -292,7 +295,7 @@ int RtIpcOpenMemoryStub(void **ptr, const char *name)
     return 0;
 }
 
-int RtIpcCloseMemoryCountStub(const void *ptr)
+int RtIpcCloseMemoryCountStub(ock::mf::AscendApiImpl *, const void *ptr)
 {
     (void)ptr;
     g_ipcCloseCount++;
@@ -448,7 +451,9 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HostAddr_CreatesHostSlice)
     auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemoryName,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *, uint64_t, char *, uint32_t))
+        .expects(never());
 
     MemSlicePtr slice;
     auto ret = segment.RegisterMemory(reinterpret_cast<void *>(TEST_HOST_ADDR), TEST_SIZE, slice);
@@ -568,7 +573,9 @@ TEST_F(HybmAsymmetricSegmentTest, Register_Sdma_LockedHost_ReusesCachedVmmHandle
     ASSERT_EQ(manager.AddHandle(TestAddr(TEST_HOST_ADDR), shareInfo), BM_OK);
     MOCKER(&ock::mf::DlHalApi::HalHostRegister).expects(never());
     MOCKER(&ock::mf::DlHalApi::HalMemRetainAllocationHandle).expects(never());
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemoryName,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *, uint64_t, char *, uint32_t))
+        .expects(never());
 
     MemSlicePtr slice;
     ASSERT_EQ(segment.RegisterMemory(TestAddr(TEST_HOST_ADDR), TEST_SIZE, slice), BM_OK);
@@ -617,7 +624,9 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HalAttr_HostType_WinsOverAddress)
         MakeOptions(static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_HOST_RDMA), ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemoryName,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *, uint64_t, char *, uint32_t))
+        .expects(never());
     MOCKER(&ock::mf::DlHalApi::HalHostRegister).stubs().will(invoke(HalHostRegisterStub));
 
     g_drvMemAttrRet = 0;  // 查询成功
@@ -639,7 +648,9 @@ TEST_F(HybmAsymmetricSegmentTest, Register_HalAttr_LockedHost_IsHost)
     InitSegmentBase(segment);
     g_drvMemAttrRet = 0;
     g_drvMemAttrType = DV_MEM_LOCK_HOST;
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemoryName,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *, uint64_t, char *, uint32_t))
+        .expects(never());
 
     MemSlicePtr slice;
     ASSERT_EQ(segment.RegisterMemory(TestAddr(TEST_HBM_ADDR), TEST_SIZE, slice), BM_OK);
@@ -917,7 +928,8 @@ TEST_F(HybmAsymmetricSegmentTest, Import_Rollback_SkipsDramGvaAddresses)
     auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcCloseMemory).expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcCloseMemory, ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *))
+        .expects(never());
 
     UserSliceExportInfo sliceInfo{};
     sliceInfo.segmentType = SEGMENT_TYPE_USER_DRAM;
@@ -950,7 +962,10 @@ TEST_F(HybmAsymmetricSegmentTest, ImportHbmSlice_ReuseDoesNotAllocate)
     auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcOpenMemory).stubs().will(invoke(RtIpcOpenMemoryStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcOpenMemory,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, const char *))
+        .stubs()
+        .will(invoke(RtIpcOpenMemoryStub));
 
     MemSlicePtr slice1;
     ASSERT_EQ(segment.ImportHbmSlice(MakeIpcSliceInfo(0x2000000ULL, TEST_EXPORT_RANK), slice1), BM_OK);
@@ -974,7 +989,10 @@ TEST_F(HybmAsymmetricSegmentTest, ImportHbmSlice_ReuseScopedByGva)
     auto options = MakeOptions(HYBM_DOP_TYPE_SDMA, ASCEND_950);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcOpenMemory).stubs().will(invoke(RtIpcOpenMemoryStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcOpenMemory,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, const char *))
+        .stubs()
+        .will(invoke(RtIpcOpenMemoryStub));
 
     const auto sliceInfo = MakeIpcSliceInfo(0x2000000ULL, TEST_EXPORT_RANK);
     MemSlicePtr slice1;
@@ -1051,8 +1069,14 @@ TEST_F(HybmAsymmetricSegmentTest, ImportDeviceInfo_SkipsEmptyNameWhitelist)
     auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).stubs().will(invoke(RtIpcSetMemoryNameStub));
-    MOCKER(&ock::mf::DlAclApi::RtSetIpcMemorySuperPodPid).stubs().will(invoke(RtSetIpcMemorySuperPodPidCountStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemoryName,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *, uint64_t, char *, uint32_t))
+        .stubs()
+        .will(invoke(RtIpcSetMemoryNameStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemorySuperPodPid,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const char *, uint32_t, int32_t *, int32_t))
+        .stubs()
+        .will(invoke(RtSetIpcMemorySuperPodPidCountStub));
 
     MemSlicePtr hbmSlice;
     ASSERT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, hbmSlice), BM_OK);
@@ -1082,7 +1106,10 @@ TEST_F(HybmAsymmetricSegmentTest, Register_DupAddr_FakeRegister_ReuseSlice)
     auto options = MakeOptions(HYBM_DOP_TYPE_HOST_RDMA, ASCEND_910C);
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
-    MOCKER(&ock::mf::DlAclApi::RtIpcSetMemoryName).stubs().will(invoke(RtIpcSetMemoryNameStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcSetMemoryName,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *, uint64_t, char *, uint32_t))
+        .stubs()
+        .will(invoke(RtIpcSetMemoryNameStub));
 
     MemSlicePtr hbmSlice;
     ASSERT_EQ(segment.RegisterMemory(reinterpret_cast<void *>(TEST_HBM_ADDR), TEST_SIZE, hbmSlice), BM_OK);
@@ -1392,8 +1419,13 @@ TEST_F(HybmAsymmetricSegmentTest, CloseMemory_A5_MixedTypes)
     AsymmetricMemSegment segment(options, TEST_ENTITY_ID);
     InitSegmentBase(segment);
     MockVmmImportPath();
-    MOCKER(&ock::mf::DlAclApi::RtIpcOpenMemory).stubs().will(invoke(RtIpcOpenMemoryStub));
-    MOCKER(&ock::mf::DlAclApi::RtIpcCloseMemory).stubs().will(invoke(RtIpcCloseMemoryCountStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcOpenMemory,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, const char *))
+        .stubs()
+        .will(invoke(RtIpcOpenMemoryStub));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::IpcCloseMemory, ock::mf::Result(*)(ock::mf::AscendApiImpl *, const void *))
+        .stubs()
+        .will(invoke(RtIpcCloseMemoryCountStub));
 
     auto vmmInfo = MakeVmmSliceInfo(0x1000000ULL, 7U);
     auto ipcInfo = MakeIpcSliceInfo(0x2000000ULL, TEST_EXPORT_RANK);

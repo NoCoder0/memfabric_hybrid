@@ -16,10 +16,18 @@
 
 #define private public
 #include "compose_transport_manager.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #undef private
 
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
+
 using namespace ock::mf::transport;
 
 namespace {
@@ -1299,8 +1307,8 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportDeviceRdmaWithAcl117_Select
     const char *oldEnv = getenv("MF_HYBM_RDMA_USE_HCOMM");
     (void)setenv("MF_HYBM_RDMA_USE_HCOMM", "1", 1);
     // mock AclrtGetVersion to return 1.17 (HCOMM threshold)
-    auto oldVer = DlAclApi::pAclrtGetVersion;
-    DlAclApi::pAclrtGetVersion = [](int32_t *major, int32_t *minor, int32_t *patch) -> int32_t {
+    auto oldVer = AscendRtApi().pAclrtGetVersion_;
+    AscendRtApi().pAclrtGetVersion_ = [](int32_t *major, int32_t *minor, int32_t *patch) -> int32_t {
         *major = 1;
         *minor = 17;
         *patch = 0;
@@ -1324,7 +1332,7 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportDeviceRdmaWithAcl117_Select
     // But deviceTransportManager_ should have been created (HCOMM path)
     EXPECT_TRUE(HasDeviceTransport(mgr));
 
-    DlAclApi::pAclrtGetVersion = oldVer;
+    AscendRtApi().pAclrtGetVersion_ = oldVer;
     if (oldEnv != nullptr) {
         (void)setenv("MF_HYBM_RDMA_USE_HCOMM", oldEnv, 1);
     } else {
@@ -1335,8 +1343,8 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportDeviceRdmaWithAcl117_Select
 // OpenDeviceTransport with DEVICE_RDMA and ACL version 1.16 → native RDMA (not HCOMM)
 TEST(ComposeTransportManagerTest, OpenDeviceTransportDeviceRdmaWithAcl116_SelectsNative)
 {
-    auto oldVer = DlAclApi::pAclrtGetVersion;
-    DlAclApi::pAclrtGetVersion = [](int32_t *major, int32_t *minor, int32_t *patch) -> int32_t {
+    auto oldVer = AscendRtApi().pAclrtGetVersion_;
+    AscendRtApi().pAclrtGetVersion_ = [](int32_t *major, int32_t *minor, int32_t *patch) -> int32_t {
         *major = 1;
         *minor = 16;
         *patch = 0;
@@ -1357,7 +1365,7 @@ TEST(ComposeTransportManagerTest, OpenDeviceTransportDeviceRdmaWithAcl116_Select
     // Native RDMA path also creates a transport manager, different type from HCOMM
     EXPECT_TRUE(HasDeviceTransport(mgr));
 
-    DlAclApi::pAclrtGetVersion = oldVer;
+    AscendRtApi().pAclrtGetVersion_ = oldVer;
 }
 
 TEST(ComposeTransportManagerTest, OpenDeviceTransportWithUrma)

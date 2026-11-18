@@ -12,8 +12,8 @@
 #include <thread>
 #include "hybm_big_mem.h"
 #include "hybm_device_copy.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "acc_offload_launch.h"
 #include "acc_offload_entry_manager.h"
 #include "acc_offload_local_dram_aicpu_entry.h"
@@ -36,7 +36,7 @@ int32_t AccOffloadLocalDramAicpuEntry::InitializePool(const offload_config_t &co
     options.hostVASpace = size_;
     options.dramShmFd = -1;
 
-    socType_ = DlAclApi::GetAscendSocType();
+    socType_ = VendorApi::Api()->GetSocName();
     int32_t ret = OFFLOAD_OK;
     switch (socType_) {
         case AscendSocType::ASCEND_910C:
@@ -94,7 +94,7 @@ int32_t AccOffloadLocalDramAicpuEntry::CreateUrmaPool(const hybm_options &option
         return ret;
     }
 
-    ret = DlAclApi::RtGetLogicDevIdByUserDevId(deviceId_, &logicDevId_);
+    ret = VendorApi::Api()->GetLogicDevIdByUserDevId(deviceId_, &logicDevId_);
     if (ret != OFFLOAD_OK) {
         OFFLOAD_LOG_ERROR("get logical device failed, device=" << deviceId_ << " ret=" << ret);
         return ret;

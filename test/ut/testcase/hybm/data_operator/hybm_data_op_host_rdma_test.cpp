@@ -15,8 +15,10 @@
 
 #include "hybm_data_op_host_rdma.h"
 #include "hybm_transport_manager.h"
-#include "dl_hybrid_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_functions.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 class TransportManagerMock : public ock::mf::transport::TransportManager {
 public:
@@ -221,14 +223,22 @@ public:
     void SetUp() override
     {
         ock::mf::test::StubIdentityVaMappings();
-        // 模拟 DlHybridApi::Memcpy 方法
-        MOCKER(&ock::mf::DlHybridApi::Memcpy).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::Memcpy 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlHybridApi::MemcpyAsync 方法
-        MOCKER(&ock::mf::DlHybridApi::MemcpyAsync).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::MemcpyAsync 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlHybridApi::StreamSynchronize 方法
-        MOCKER(&ock::mf::DlHybridApi::StreamSynchronize).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::SynchronizeStream 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(returnValue(0));
 
         // 模拟全局函数
         MOCKER(HybmGetInitDeviceId).stubs().will(returnValue(0));

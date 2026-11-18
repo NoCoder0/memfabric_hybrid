@@ -10,7 +10,7 @@
  * See the Mulan PSL v2 for more details.
 */
 #include "hybm_logger.h"
-#include "dl_hccp_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "device_qp_manager.h"
 
 namespace ock {

@@ -14,10 +14,9 @@
 
 #include <vector>
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_hccp_api.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "hybm_define.h"
 #include "rdma_provider_completion.h"
 #include "hybm_stream.h"
@@ -74,26 +73,33 @@ protected:
     void SetUp() override
     {
         gApi = {};
-        MOCKER(DlAclApi::AclrtSetDevice).stubs().will(invoke(+[](int32_t device, bool) {
-            EXPECT_EQ(device, 2);
-            return BM_OK;
-        }));
-        MOCKER(DlAclApi::AclrtMalloc).stubs().will(invoke(+[](void **address, size_t size, uint32_t) {
-            ++gApi.allocations;
-            EXPECT_EQ(size, HYBM_LARGE_PAGE_SIZE);
-            *address = gApi.allocationFails ? nullptr : SIGNAL_ADDRESS;
-            return gApi.allocationFails ? -1 : 0;
-        }));
-        MOCKER(DlAclApi::AclrtMemcpy)
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
             .stubs()
-            .will(invoke(+[](void *dst, size_t capacity, const void *src, size_t size, uint32_t kind) {
-                EXPECT_EQ(dst, SIGNAL_ADDRESS);
-                EXPECT_EQ(capacity, sizeof(uint32_t));
-                EXPECT_EQ(size, sizeof(uint32_t));
-                EXPECT_EQ(*static_cast<const uint32_t *>(src), 1U);
-                EXPECT_EQ(kind, ACL_MEMCPY_HOST_TO_DEVICE);
+            .will(invoke(+[](ock::mf::AscendApiImpl *, int32_t device, bool) {
+                EXPECT_EQ(device, 2);
                 return BM_OK;
             }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void **address, size_t size, uint32_t) {
+                ++gApi.allocations;
+                EXPECT_EQ(size, HYBM_LARGE_PAGE_SIZE);
+                *address = gApi.allocationFails ? nullptr : SIGNAL_ADDRESS;
+                return gApi.allocationFails ? -1 : 0;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+            .stubs()
+            .will(invoke(
+                +[](ock::mf::AscendApiImpl *, void *dst, size_t capacity, const void *src, size_t size, uint32_t kind) {
+                    EXPECT_EQ(dst, SIGNAL_ADDRESS);
+                    EXPECT_EQ(capacity, sizeof(uint32_t));
+                    EXPECT_EQ(size, sizeof(uint32_t));
+                    EXPECT_EQ(*static_cast<const uint32_t *>(src), 1U);
+                    EXPECT_EQ(kind, ACL_MEMCPY_HOST_TO_DEVICE);
+                    return BM_OK;
+                }));
         MOCKER(DlHccpApi::RaRegisterMR).stubs().will(invoke(+[](const void *rdev, HccpMrInfo *info, void *&mr) {
             ++gApi.registrations;
             EXPECT_EQ(rdev, RDEV);
@@ -113,37 +119,51 @@ protected:
             }
             return gApi.deregistrationFails ? -1 : 0;
         }));
-        MOCKER(DlAclApi::AclrtFree).stubs().will(invoke(+[](void *address) {
-            ++gApi.frees;
-            EXPECT_EQ(address, SIGNAL_ADDRESS);
-            EXPECT_FALSE(gApi.mrRegistered);
-            return BM_OK;
-        }));
-        MOCKER(DlRtApi::RtStreamCreate).stubs().will(invoke(+[](void **stream, int) {
-            *stream = reinterpret_cast<void *>(0x1000UL + ++gApi.streamCreates);
-            return BM_OK;
-        }));
-        MOCKER(DlRtApi::RtStreamDestroy).stubs().will(invoke(+[](void *) {
-            ++gApi.streamDestroys;
-            return gApi.streamDestroyFails ? -1 : 0;
-        }));
-        MOCKER(DlAclApi::AclrtCreateNotify).stubs().will(invoke(+[](void **notify, uint64_t flag) {
-            ++gApi.notifyCreates;
-            EXPECT_EQ(flag, 0U);
-            *notify = gApi.notifyCreationFails ? nullptr : reinterpret_cast<void *>(0x2000UL + gApi.notifyCreates);
-            return gApi.notifyCreationFails ? -1 : 0;
-        }));
-        MOCKER(DlAclApi::AclrtGetNotifyId).stubs().will(invoke(+[](void *notify, uint32_t *id) {
-            *id = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(notify) - 0x2000UL);
-            return BM_OK;
-        }));
-        MOCKER(DlAclApi::AclrtDestroyNotify).stubs().will(invoke(+[](void *) {
-            ++gApi.notifyDestroys;
-            EXPECT_GT(gApi.streamDestroys + gApi.nativeStreamDestroys, 0U);
-            EXPECT_FALSE(gApi.nativeStreamDestroyFails);
-            EXPECT_FALSE(gApi.streamDestroyFails);
-            return gApi.notifyDestroyFails ? -1 : 0;
-        }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void *address) {
+                ++gApi.frees;
+                EXPECT_EQ(address, SIGNAL_ADDRESS);
+                EXPECT_FALSE(gApi.mrRegistered);
+                return BM_OK;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::CreateStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void **stream) {
+                *stream = reinterpret_cast<void *>(0x1000UL + ++gApi.streamCreates);
+                return BM_OK;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void *) {
+                ++gApi.streamDestroys;
+                return gApi.streamDestroyFails ? -1 : 0;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::CreateNotify,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, uint64_t))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void **notify, uint64_t flag) {
+                ++gApi.notifyCreates;
+                EXPECT_EQ(flag, 0U);
+                *notify = gApi.notifyCreationFails ? nullptr : reinterpret_cast<void *>(0x2000UL + gApi.notifyCreates);
+                return gApi.notifyCreationFails ? -1 : 0;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetNotifyId,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, uint32_t *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void *notify, uint32_t *id) {
+                *id = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(notify) - 0x2000UL);
+                return BM_OK;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::DestroyNotify, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void *) {
+                ++gApi.notifyDestroys;
+                EXPECT_GT(gApi.streamDestroys + gApi.nativeStreamDestroys, 0U);
+                EXPECT_FALSE(gApi.nativeStreamDestroyFails);
+                EXPECT_FALSE(gApi.streamDestroyFails);
+                return gApi.notifyDestroyFails ? -1 : 0;
+            }));
         MOCKER(DlHalApi::HalResourceDetailQuery)
             .stubs()
             .will(invoke(+[](uint32_t logic, halResourceIdInputInfo *input, halResourceDetailInfo *detail) {
@@ -183,25 +203,33 @@ protected:
             rsp->db.db_info = 9;
             return BM_OK;
         }));
-        MOCKER(DlRtApi::RtRDMADBSend).stubs().will(invoke(+[](uint32_t index, uint64_t info, void *stream) {
-            EXPECT_EQ(index, 8U);
-            EXPECT_EQ(info, 9U);
-            EXPECT_NE(stream, DATA_STREAM);
-            gApi.doorbellStreams.push_back(stream);
-            return BM_OK;
-        }));
-        MOCKER(DlAclApi::AclrtWaitAndResetNotify).stubs().will(invoke(+[](void *, void *stream, uint32_t timeout) {
-            ++gApi.waits;
-            EXPECT_EQ(timeout, 5U);
-            EXPECT_EQ(stream, gApi.doorbellStreams.back());
-            gApi.waitStreams.push_back(stream);
-            return gApi.waitFails ? -1 : 0;
-        }));
-        MOCKER(DlRtApi::RtStreamSynchronize).stubs().will(invoke(+[](void *stream) {
-            ++gApi.synchronizations;
-            EXPECT_EQ(stream, gApi.waitStreams.back());
-            return BM_OK;
-        }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::RDMADBSend,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, uint32_t, uint64_t, void *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, uint32_t index, uint64_t info, void *stream) {
+                EXPECT_EQ(index, 8U);
+                EXPECT_EQ(info, 9U);
+                EXPECT_NE(stream, DATA_STREAM);
+                gApi.doorbellStreams.push_back(stream);
+                return BM_OK;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::WaitAndResetNotify,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, void *, uint32_t))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void *, void *stream, uint32_t timeout) {
+                ++gApi.waits;
+                EXPECT_EQ(timeout, 5U);
+                EXPECT_EQ(stream, gApi.doorbellStreams.back());
+                gApi.waitStreams.push_back(stream);
+                return gApi.waitFails ? -1 : 0;
+            }));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void *stream) {
+                ++gApi.synchronizations;
+                EXPECT_EQ(stream, gApi.waitStreams.back());
+                return BM_OK;
+            }));
     }
 
     void PrepareNativeStream()

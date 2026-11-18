@@ -10,13 +10,15 @@
 #include <gtest/gtest.h>
 #include <limits>
 #include <mockcpp/mockcpp.hpp>
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "hybm_mem_segment.h"
 #include "hybm_vmm_based_segment.h"
 #include "smem.h"
 
 #define private public
 #include "hybm_entity_default.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 #undef private
 
 using namespace ock::mf;
@@ -77,13 +79,13 @@ MemSegmentPtr MakeSegment(const MemSegmentOptions &options, int)
     return std::make_shared<TestSegment>(options);
 }
 
-int GetContext(void **context)
+int GetContext(ock::mf::AscendApiImpl *, void **context)
 {
     *context = reinterpret_cast<void *>(1);
     return BM_OK;
 }
 
-int GetDevice(int32_t *device)
+int GetDevice(ock::mf::AscendApiImpl *, int32_t *device)
 {
     *device = 0;
     return BM_OK;
@@ -107,10 +109,18 @@ protected:
         registerResult = BM_OK;
         MOCKER(hybm_init).stubs().will(returnValue(BM_OK));
         MOCKER(hybm_uninit).stubs().will(invoke(Uninitialize));
-        MOCKER(DlAclApi::AclrtGetDevice).stubs().will(invoke(GetDevice));
-        MOCKER(DlAclApi::AclrtGetCurrentContext).stubs().will(invoke(GetContext));
-        MOCKER(DlAclApi::AclrtSetCurrentContext).stubs().will(returnValue(BM_OK));
-        MOCKER(DlAclApi::GetAscendSocType).stubs().will(returnValue(AscendSocType::ASCEND_910C));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t *))
+            .stubs()
+            .will(invoke(GetDevice));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetCurrentContext, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+            .stubs()
+            .will(invoke(GetContext));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SetCurrentContext, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(returnValue(BM_OK));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+            .stubs()
+            .will(returnValue(ock::mf::AscendSocType::ASCEND_910C));
         MOCKER(HybmGetGvaVersion).stubs().will(returnValue(HYBM_GVA_V4));
         MOCKER(MemSegment::Create).stubs().will(invoke(MakeSegment));
     }

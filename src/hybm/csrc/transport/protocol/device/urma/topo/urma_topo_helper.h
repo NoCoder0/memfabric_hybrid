@@ -17,7 +17,7 @@
 #include <array>
 #include <string>
 
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_types.h"
 
 namespace ock {

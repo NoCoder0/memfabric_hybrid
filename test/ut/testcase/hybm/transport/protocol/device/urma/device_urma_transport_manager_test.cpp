@@ -42,15 +42,23 @@
 #include "hybm_data_op_device_urma.h"
 #include "urma_proxy_transport_manager.h"
 #include "host_urma_transport_manager.h"
-#include "dl_hccl_api.h"
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hccl_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_stream_manager.h"
 #include "hybm_va_manager.h"
+#include "vendor/vendor_api.h"
 #undef private
 #undef protected
 
 using namespace ock::mf;
 using namespace ock::mf::transport::device;
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
+
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
 using ock::mf::transport::HybmTransPrepareOptions;
 using ock::mf::transport::REG_MR_FLAG_DRAM;
 using ock::mf::transport::REG_MR_FLAG_ACL_DRAM;
@@ -220,65 +228,65 @@ struct DlHcommApiFnGuard {
     }
 };
 
-struct DlAclApiFnGuard {
-    aclrtGetDeviceFunc oldGetDevice{DlAclApi::pAclrtGetDevice};
-    rtGetLogicDevIdByUserDevIdFunc oldRtGetLogicDevId{DlAclApi::pRtGetLogicDevIdByUserDevId};
-    aclrtCreateNotifyFunc oldCreateNotify{DlAclApi::pAclrtCreateNotify};
-    aclrtGetNotifyIdFunc oldGetNotifyId{DlAclApi::pAclrtGetNotifyId};
-    aclrtDestroyNotifyFunc oldDestroyNotify{DlAclApi::pAclrtDestroyNotify};
-    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{DlAclApi::pAclrtWaitAndResetNotify};
-    aclrtSynchronizeStreamFunc oldSynchronizeStream{DlAclApi::pAclrtSynchronizeStream};
-    aclrtCreateStreamWithConfigFunc oldCreateStreamWithConfig{DlAclApi::pAclrtCreateStreamWithConfig};
-    aclrtStreamAbortFunc oldStreamAbort{DlAclApi::pAclrtStreamAbort};
-    aclrtBinaryLoadFromFileFunc oldBinaryLoadFromFile{DlAclApi::pAclrtBinaryLoadFromFile};
-    aclrtBinaryGetFunctionFunc oldBinaryGetFunction{DlAclApi::pAclrtBinaryGetFunction};
-    aclrtKernelArgsInitFunc oldKernelArgsInit{DlAclApi::pAclrtKernelArgsInit};
-    aclrtKernelArgsAppendFunc oldKernelArgsAppend{DlAclApi::pAclrtKernelArgsAppend};
-    aclrtKernelArgsFinalizeFunc oldKernelArgsFinalize{DlAclApi::pAclrtKernelArgsFinalize};
-    aclrtLaunchKernelWithConfigFunc oldLaunchKernelWithConfig{DlAclApi::pAclrtLaunchKernelWithConfig};
-    aclrtMallocFunc oldMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldFree{DlAclApi::pAclrtFree};
-    aclrtMallocHostFunc oldMallocHost{DlAclApi::pAclrtMallocHost};
-    aclrtFreeHostFunc oldFreeHost{DlAclApi::pAclrtFreeHost};
-    aclrtMemcpyFunc oldMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtMemcpyAsyncFunc oldMemcpyAsync{DlAclApi::pAclrtMemcpyAsync};
-    rtGetDeviceInfoFunc oldRtGetDeviceInfo{DlAclApi::pRtGetDeviceInfo};
-    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDevIdByLogicDevId{DlAclApi::pAclrtGetPhyDevIdByLogicDevId};
+struct AclFnGuard {
+    aclrtGetDeviceFunc oldGetDevice{AscendRtApi().pAclrtGetDevice_};
+    rtGetLogicDevIdByUserDevIdFunc oldRtGetLogicDevId{AscendRtApi().pRtGetLogicDevIdByUserDevId_};
+    aclrtCreateNotifyFunc oldCreateNotify{AscendRtApi().pAclrtCreateNotify_};
+    aclrtGetNotifyIdFunc oldGetNotifyId{AscendRtApi().pAclrtGetNotifyId_};
+    aclrtDestroyNotifyFunc oldDestroyNotify{AscendRtApi().pAclrtDestroyNotify_};
+    aclrtWaitAndResetNotifyFunc oldWaitAndResetNotify{AscendRtApi().pAclrtWaitAndResetNotify_};
+    aclrtSynchronizeStreamFunc oldSynchronizeStream{AscendRtApi().pAclrtSynchronizeStream_};
+    aclrtCreateStreamWithConfigFunc oldCreateStreamWithConfig{AscendRtApi().pAclrtCreateStreamWithConfig_};
+    aclrtStreamAbortFunc oldStreamAbort{AscendRtApi().pAclrtStreamAbort_};
+    aclrtBinaryLoadFromFileFunc oldBinaryLoadFromFile{AscendRtApi().pAclrtBinaryLoadFromFile_};
+    aclrtBinaryGetFunctionFunc oldBinaryGetFunction{AscendRtApi().pAclrtBinaryGetFunction_};
+    aclrtKernelArgsInitFunc oldKernelArgsInit{AscendRtApi().pAclrtKernelArgsInit_};
+    aclrtKernelArgsAppendFunc oldKernelArgsAppend{AscendRtApi().pAclrtKernelArgsAppend_};
+    aclrtKernelArgsFinalizeFunc oldKernelArgsFinalize{AscendRtApi().pAclrtKernelArgsFinalize_};
+    aclrtLaunchKernelWithConfigFunc oldLaunchKernelWithConfig{AscendRtApi().pAclrtLaunchKernelWithConfig_};
+    aclrtMallocFunc oldMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldFree{AscendRtApi().pAclrtFree_};
+    aclrtMallocHostFunc oldMallocHost{AscendRtApi().pAclrtMallocHost_};
+    aclrtFreeHostFunc oldFreeHost{AscendRtApi().pAclrtFreeHost_};
+    aclrtMemcpyFunc oldMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtMemcpyAsyncFunc oldMemcpyAsync{AscendRtApi().pAclrtMemcpyAsync_};
+    rtGetDeviceInfoFunc oldRtGetDeviceInfo{AscendRtApi().pRtGetDeviceInfo_};
+    aclrtGetPhyDevIdByLogicDevIdFunc oldGetPhyDevIdByLogicDevId{AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_};
 
-    ~DlAclApiFnGuard()
+    ~AclFnGuard()
     {
-        DlAclApi::pAclrtGetDevice = oldGetDevice;
-        DlAclApi::pRtGetLogicDevIdByUserDevId = oldRtGetLogicDevId;
-        DlAclApi::pAclrtCreateNotify = oldCreateNotify;
-        DlAclApi::pAclrtGetNotifyId = oldGetNotifyId;
-        DlAclApi::pAclrtDestroyNotify = oldDestroyNotify;
-        DlAclApi::pAclrtWaitAndResetNotify = oldWaitAndResetNotify;
-        DlAclApi::pAclrtSynchronizeStream = oldSynchronizeStream;
-        DlAclApi::pAclrtCreateStreamWithConfig = oldCreateStreamWithConfig;
-        DlAclApi::pAclrtStreamAbort = oldStreamAbort;
-        DlAclApi::pAclrtBinaryLoadFromFile = oldBinaryLoadFromFile;
-        DlAclApi::pAclrtBinaryGetFunction = oldBinaryGetFunction;
-        DlAclApi::pAclrtKernelArgsInit = oldKernelArgsInit;
-        DlAclApi::pAclrtKernelArgsAppend = oldKernelArgsAppend;
-        DlAclApi::pAclrtKernelArgsFinalize = oldKernelArgsFinalize;
-        DlAclApi::pAclrtLaunchKernelWithConfig = oldLaunchKernelWithConfig;
-        DlAclApi::pAclrtMalloc = oldMalloc;
-        DlAclApi::pAclrtFree = oldFree;
-        DlAclApi::pAclrtMallocHost = oldMallocHost;
-        DlAclApi::pAclrtFreeHost = oldFreeHost;
-        DlAclApi::pAclrtMemcpy = oldMemcpy;
-        DlAclApi::pAclrtMemcpyAsync = oldMemcpyAsync;
-        DlAclApi::pRtGetDeviceInfo = oldRtGetDeviceInfo;
-        DlAclApi::pAclrtGetPhyDevIdByLogicDevId = oldGetPhyDevIdByLogicDevId;
+        AscendRtApi().pAclrtGetDevice_ = oldGetDevice;
+        AscendRtApi().pRtGetLogicDevIdByUserDevId_ = oldRtGetLogicDevId;
+        AscendRtApi().pAclrtCreateNotify_ = oldCreateNotify;
+        AscendRtApi().pAclrtGetNotifyId_ = oldGetNotifyId;
+        AscendRtApi().pAclrtDestroyNotify_ = oldDestroyNotify;
+        AscendRtApi().pAclrtWaitAndResetNotify_ = oldWaitAndResetNotify;
+        AscendRtApi().pAclrtSynchronizeStream_ = oldSynchronizeStream;
+        AscendRtApi().pAclrtCreateStreamWithConfig_ = oldCreateStreamWithConfig;
+        AscendRtApi().pAclrtStreamAbort_ = oldStreamAbort;
+        AscendRtApi().pAclrtBinaryLoadFromFile_ = oldBinaryLoadFromFile;
+        AscendRtApi().pAclrtBinaryGetFunction_ = oldBinaryGetFunction;
+        AscendRtApi().pAclrtKernelArgsInit_ = oldKernelArgsInit;
+        AscendRtApi().pAclrtKernelArgsAppend_ = oldKernelArgsAppend;
+        AscendRtApi().pAclrtKernelArgsFinalize_ = oldKernelArgsFinalize;
+        AscendRtApi().pAclrtLaunchKernelWithConfig_ = oldLaunchKernelWithConfig;
+        AscendRtApi().pAclrtMalloc_ = oldMalloc;
+        AscendRtApi().pAclrtFree_ = oldFree;
+        AscendRtApi().pAclrtMallocHost_ = oldMallocHost;
+        AscendRtApi().pAclrtFreeHost_ = oldFreeHost;
+        AscendRtApi().pAclrtMemcpy_ = oldMemcpy;
+        AscendRtApi().pAclrtMemcpyAsync_ = oldMemcpyAsync;
+        AscendRtApi().pRtGetDeviceInfo_ = oldRtGetDeviceInfo;
+        AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = oldGetPhyDevIdByLogicDevId;
     }
 };
 
-struct DlRtApiFnGuard {
-    rtGetDevResAddressFunc oldGetDevResAddress{DlRtApi::pRtGetDevResAddress};
+struct RtDevResFnGuard {
+    rtGetDevResAddressFunc oldGetDevResAddress{AscendRtApi().pRtGetDevResAddress_};
 
-    ~DlRtApiFnGuard()
+    ~RtDevResFnGuard()
     {
-        DlRtApi::pRtGetDevResAddress = oldGetDevResAddress;
+        AscendRtApi().pRtGetDevResAddress_ = oldGetDevResAddress;
     }
 };
 
@@ -1247,10 +1255,10 @@ int32_t MockAclrtSynchronizeStreamFirstOkThenFail(void *stream)
 
 void InstallLaunchBufferMocks()
 {
-    DlAclApi::pAclrtMallocHost = MockAclrtMallocHostOk;
-    DlAclApi::pAclrtFreeHost = MockAclrtFreeOk;
-    DlAclApi::pAclrtMemcpyAsync = MockAclrtMemcpyAsyncOk;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    AscendRtApi().pAclrtMallocHost_ = MockAclrtMallocHostOk;
+    AscendRtApi().pAclrtFreeHost_ = MockAclrtFreeOk;
+    AscendRtApi().pAclrtMemcpyAsync_ = MockAclrtMemcpyAsyncOk;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
 }
 
 void InstallOpenDeviceMocks()
@@ -1261,30 +1269,30 @@ void InstallOpenDeviceMocks()
     DlHcommApi::gHcommMemReg = MockHcommMemRegOpenDevice;
     DlHcommApi::gHcommMemUnreg = MockHcommMemUnregOpenDevice;
     DlHcommApi::gHcommChannelGetStatus = MockHcommChannelGetStatusReady;
-    DlAclApi::pAclrtGetDevice = MockAclrtGetDevice;
-    DlAclApi::pRtGetLogicDevIdByUserDevId = MockRtGetLogicDevIdByUserDevId;
-    DlAclApi::pAclrtGetPhyDevIdByLogicDevId = MockAclrtGetPhyDevIdByLogicDevId;
-    DlAclApi::pRtGetDeviceInfo = MockRtGetDeviceInfo;
-    DlAclApi::pAclrtCreateNotify = MockAclrtCreateNotify;
-    DlAclApi::pAclrtGetNotifyId = MockAclrtGetNotifyId;
-    DlAclApi::pAclrtDestroyNotify = MockAclrtDestroyNotify;
-    DlRtApi::pRtGetDevResAddress = MockRtGetDevResAddress;
-    DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
-    DlAclApi::pAclrtFree = MockAclrtFreeOk;
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyOk;
-    DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFile;
-    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+    AscendRtApi().pAclrtGetDevice_ = MockAclrtGetDevice;
+    AscendRtApi().pRtGetLogicDevIdByUserDevId_ = MockRtGetLogicDevIdByUserDevId;
+    AscendRtApi().pAclrtGetPhyDevIdByLogicDevId_ = MockAclrtGetPhyDevIdByLogicDevId;
+    AscendRtApi().pRtGetDeviceInfo_ = MockRtGetDeviceInfo;
+    AscendRtApi().pAclrtCreateNotify_ = MockAclrtCreateNotify;
+    AscendRtApi().pAclrtGetNotifyId_ = MockAclrtGetNotifyId;
+    AscendRtApi().pAclrtDestroyNotify_ = MockAclrtDestroyNotify;
+    AscendRtApi().pRtGetDevResAddress_ = MockRtGetDevResAddress;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeOk;
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyOk;
+    AscendRtApi().pAclrtBinaryLoadFromFile_ = MockAclrtBinaryLoadFromFile;
+    AscendRtApi().pAclrtBinaryGetFunction_ = MockAclrtBinaryGetFunction;
     MOCKER(&ock::mf::transport::device::ReadFileToString).stubs().will(invoke(MockReadFileToString));
 }
 
 void InstallKernelLaunchMocks()
 {
-    DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
-    DlAclApi::pAclrtKernelArgsAppend = MockAclrtKernelArgsAppend;
-    DlAclApi::pAclrtKernelArgsFinalize = MockAclrtKernelArgsFinalize;
-    DlAclApi::pAclrtLaunchKernelWithConfig = MockAclrtLaunchKernelWithConfig;
-    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotify;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    AscendRtApi().pAclrtKernelArgsInit_ = MockAclrtKernelArgsInit;
+    AscendRtApi().pAclrtKernelArgsAppend_ = MockAclrtKernelArgsAppend;
+    AscendRtApi().pAclrtKernelArgsFinalize_ = MockAclrtKernelArgsFinalize;
+    AscendRtApi().pAclrtLaunchKernelWithConfig_ = MockAclrtLaunchKernelWithConfig;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = MockAclrtWaitAndResetNotify;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
 }
 
 void ResetTlsContextForTest()
@@ -1314,8 +1322,8 @@ struct DeviceTestFixture {
     TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard;
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
 
     DeviceTestFixture() : envGuard("ASCEND_HOME_PATH") {}
@@ -1331,7 +1339,9 @@ struct DeviceTestFixture {
         DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
         DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
         DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+            .stubs()
+            .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
         InstallPeer2NetEidMock();
         MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     }
@@ -1361,14 +1371,15 @@ struct DeviceTestFixture {
     {
         InstallAll();
         g_deviceCopyArgs.clear();
-        DlAclApi::pAclrtBinaryGetFunction = [](aclrtBinHandle handle, const char *name, aclrtFuncHandle *function) {
+        AscendRtApi().pAclrtBinaryGetFunction_ = [](aclrtBinHandle handle, const char *name,
+                                                    aclrtFuncHandle *function) {
             EXPECT_EQ(handle, MOCK_BIN_HANDLE);
             EXPECT_TRUE(std::strcmp(name, "HybmBatchTransfer") == 0 || std::strcmp(name, "HybmUrmaDeviceCopy") == 0);
             *function = MOCK_WRITE_FUNC;
             return BM_OK;
         };
-        DlAclApi::pAclrtKernelArgsAppend = [](aclrtArgsHandle handle, void *param, size_t size,
-                                              aclrtParamHandle *paramHandle) {
+        AscendRtApi().pAclrtKernelArgsAppend_ = [](aclrtArgsHandle handle, void *param, size_t size,
+                                                   aclrtParamHandle *paramHandle) {
             EXPECT_EQ(handle, MOCK_ARGS_HANDLE);
             EXPECT_EQ(size, sizeof(HybmUrmaDeviceCopyArgs));
             g_deviceCopyArgs.push_back(*static_cast<const HybmUrmaDeviceCopyArgs *>(param));
@@ -1430,23 +1441,23 @@ void ExpectNotifyReusable(DeviceUrmaTransportManager &manager, DeviceUrmaTranspo
 
 void InstallSecondNotifyResourceMocks()
 {
-    DlAclApi::pAclrtCreateNotify = [](void **notify, uint64_t flag) {
+    AscendRtApi().pAclrtCreateNotify_ = [](void **notify, uint64_t flag) {
         EXPECT_NE(notify, nullptr);
         EXPECT_EQ(flag, 1U);
         *notify = MOCK_SECOND_NOTIFY;
         return BM_OK;
     };
-    DlAclApi::pAclrtGetNotifyId = [](void *notify, uint32_t *notifyId) {
+    AscendRtApi().pAclrtGetNotifyId_ = [](void *notify, uint32_t *notifyId) {
         EXPECT_EQ(notify, MOCK_SECOND_NOTIFY);
         EXPECT_NE(notifyId, nullptr);
         *notifyId = MOCK_SECOND_NOTIFY_ID;
         return BM_OK;
     };
-    DlAclApi::pAclrtDestroyNotify = [](void *notify) {
+    AscendRtApi().pAclrtDestroyNotify_ = [](void *notify) {
         EXPECT_TRUE(notify == MOCK_NOTIFY || notify == MOCK_SECOND_NOTIFY);
         return BM_OK;
     };
-    DlRtApi::pRtGetDevResAddress = [](rtDevResInfo *resInfo, rtDevResAddrInfo *addrInfo) {
+    AscendRtApi().pRtGetDevResAddress_ = [](rtDevResInfo *resInfo, rtDevResAddrInfo *addrInfo) {
         EXPECT_NE(resInfo, nullptr);
         EXPECT_EQ(resInfo->resId, MOCK_SECOND_NOTIFY_ID);
         EXPECT_NE(addrInfo, nullptr);
@@ -1459,7 +1470,7 @@ void InstallSecondNotifyResourceMocks()
 void InstallDistinctSecondNotifyMocks()
 {
     InstallSecondNotifyResourceMocks();
-    DlAclApi::pAclrtWaitAndResetNotify = [](void *notify, void *stream, uint32_t timeout) {
+    AscendRtApi().pAclrtWaitAndResetNotify_ = [](void *notify, void *stream, uint32_t timeout) {
         EXPECT_TRUE(notify == MOCK_NOTIFY || notify == MOCK_SECOND_NOTIFY);
         EXPECT_EQ(stream, MOCK_STREAM);
         EXPECT_EQ(timeout, 60U);
@@ -1469,7 +1480,7 @@ void InstallDistinctSecondNotifyMocks()
     g_waitedNotifies.clear();
     g_streamSyncCallCount = 0U;
     g_streamSyncFailAt = UINT32_MAX;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamAtCall;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStreamAtCall;
 }
 
 bool RunConcurrentRegisterAndQuery(DeviceUrmaTransportManager &manager, const TransportMemoryRegion &mr)
@@ -1537,8 +1548,8 @@ int FakeStreamAbort(void *stream)
 
 void InstallFakeStreamApis()
 {
-    DlAclApi::pAclrtCreateStreamWithConfig = FakeCreateStreamWithConfig;
-    DlAclApi::pAclrtStreamAbort = FakeStreamAbort;
+    AscendRtApi().pAclrtCreateStreamWithConfig_ = FakeCreateStreamWithConfig;
+    AscendRtApi().pAclrtStreamAbort_ = FakeStreamAbort;
     g_streamAbortCallCount = 0U;
     g_abortedStreams.clear();
 }
@@ -1747,12 +1758,14 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceInitializesResourcesAndCloseClean
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
 
     DeviceUrmaTransportManager manager;
@@ -1796,7 +1809,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDevice350LSelectsCtpProtocol)
     ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
     DeviceTestFixture fixture;
     fixture.InstallAll();
-    DlAclApi::pRtGetDeviceInfo = [](uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *value) {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *value) {
         auto ret = MockRtGetDeviceInfo(deviceId, moduleType, infoType, value);
         if (ret == BM_OK && infoType == INFO_TYPE_MAINBOARD_ID) {
             *value = MAIN_BOARD_ID_SERVER_350L;
@@ -1830,7 +1843,7 @@ TEST(DeviceUrmaTransportManagerTest, OpenDevice550EL100SelectsCtpProtocol)
     ock::mf::transport::UrmaTopoManager::GetInstance().Uninitialize();
     DeviceTestFixture fixture;
     fixture.InstallAll();
-    DlAclApi::pRtGetDeviceInfo = [](uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *value) {
+    AscendRtApi().pRtGetDeviceInfo_ = [](uint32_t deviceId, int32_t moduleType, int32_t infoType, int64_t *value) {
         auto ret = MockRtGetDeviceInfo(deviceId, moduleType, infoType, value);
         if (ret == BM_OK && infoType == INFO_TYPE_MAINBOARD_ID) {
             *value = MAIN_BOARD_ID_SERVER_550EL_100;
@@ -1935,12 +1948,12 @@ TEST(DeviceUrmaTransportManagerTest, NotifyAcquisitionFailureRejectsRemoteIoWith
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
     DeviceUrmaTransportManager::NotifyResource *held = nullptr;
     ASSERT_EQ(manager.AcquireNotifyResource(held), BM_OK);
-    DlAclApi::pAclrtCreateNotify = [](void **, uint64_t) { return BM_ERROR; };
+    AscendRtApi().pAclrtCreateNotify_ = [](void **, uint64_t) { return BM_ERROR; };
     EXPECT_EQ(manager.ReadRemoteAsync(CONST_REMOTE_RANK, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_ERROR);
     ASSERT_TRUE(DeviceUrmaTransportManager::GetTlsContext().initialized);
     EXPECT_TRUE(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.empty());
     manager.ReleaseNotifyResource(*held);
-    DlAclApi::pAclrtCreateNotify = MockAclrtCreateNotify;
+    AscendRtApi().pAclrtCreateNotify_ = MockAclrtCreateNotify;
     EXPECT_EQ(manager.ReadRemoteAsync(CONST_REMOTE_RANK, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_OK);
     ExpectNotifyReusable(manager, held);
@@ -1957,11 +1970,11 @@ TEST(DeviceUrmaTransportManagerTest, WaitAndResetFailureIsTerminalAndKeepsNotify
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
     ASSERT_EQ(manager.ReadRemoteAsync(CONST_REMOTE_RANK, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     auto *failedNotify = manager.notifyPoolSlots_[0];
-    DlAclApi::pAclrtWaitAndResetNotify = [](void *, void *, uint32_t) { return BM_ERROR; };
+    AscendRtApi().pAclrtWaitAndResetNotify_ = [](void *, void *, uint32_t) { return BM_ERROR; };
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_ERROR);
     ASSERT_EQ(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers.size(), 1U);
     EXPECT_EQ(DeviceUrmaTransportManager::GetTlsContext().pendingTransfers[0U].notifyPoolIndex, UINT32_MAX);
-    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotify;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = MockAclrtWaitAndResetNotify;
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_ERROR);
     ASSERT_EQ(manager.notifyPoolSize_.load(), 1U);
     EXPECT_EQ(manager.notifyPoolSlots_[0U], failedNotify);
@@ -1972,13 +1985,15 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRollsBackWhenFlagMemcpyFails)
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyFail;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyFail;
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
 
     DeviceUrmaTransportManager manager;
@@ -2004,7 +2019,9 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsInvalidOptionsAndUnsupport
     MockcppScope mockcpp;
     options.rankId = 0;
     options.rankCount = 2;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_UNKNOWN));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_UNKNOWN));
     EXPECT_EQ(manager.OpenDevice(options), BM_NOT_SUPPORTED);
 }
 
@@ -2015,13 +2032,15 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceSelectsUboeFromEnv)
     EnvVarGuard uboeEnvGuard("MF_DEVICE_URMA_ENABLE_UBOE");
     (void)setenv("MF_DEVICE_URMA_ENABLE_UBOE", "1", 1);
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDeviceUboe;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     MOCKER(&ock::mf::transport::device::GetDeviceUBoEIpAddr).stubs().will(invoke(MockGetDeviceUBoEIpAddr));
 
     DeviceUrmaTransportManager manager;
@@ -2043,13 +2062,15 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceFm16UboeUsesSingleEndpoint)
     EnvVarGuard uboeEnvGuard("MF_DEVICE_URMA_ENABLE_UBOE");
     (void)setenv("MF_DEVICE_URMA_ENABLE_UBOE", "1", 1);
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreateOpenDeviceUboe;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     MOCKER(&ock::mf::transport::device::GetDeviceUBoEIpAddr).stubs().will(invoke(MockGetDeviceUBoEIpAddr));
 
     DeviceUrmaTransportManager manager;
@@ -2071,12 +2092,14 @@ TEST(DeviceUrmaTransportManagerTest, OpenDeviceRejectsUnsupportedProtocolBits)
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
 
     DeviceUrmaTransportManager manager;
@@ -2094,8 +2117,8 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoAndSynchronizeUseDeviceKernel)
     TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -2107,7 +2130,9 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoAndSynchronizeUseDeviceKernel)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
@@ -2590,7 +2615,7 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsFallsBackForNewRankAndChec
 TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceResources)
 {
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
@@ -2598,8 +2623,8 @@ TEST(DeviceUrmaTransportManagerTest, CloseDeviceReleasesRemoteLocalAndDeviceReso
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    DlAclApi::pAclrtDestroyNotify = MockAclrtDestroyNotify;
-    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+    AscendRtApi().pAclrtDestroyNotify_ = MockAclrtDestroyNotify;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeOk;
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
@@ -2688,9 +2713,9 @@ TEST(DeviceUrmaTransportManagerTest, RemoteBatchInterfacesAreUnsupported)
 
 TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersRejectsMallocFailure)
 {
-    DlAclApiFnGuard guard;
+    AclFnGuard guard;
     InstallLaunchBufferMocks();
-    DlAclApi::pAclrtMalloc = MockAclrtMallocFail;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocFail;
     DeviceUrmaTransportManager manager;
     DeviceUrmaTransportManager::DeviceTransferBuffers buffers{};
     EXPECT_EQ(manager.PrepareKernelLaunchBuffers({MakeTransferDescriptor(false)}, 0U, 1U, {1U}, {0U}, {1U},
@@ -2701,12 +2726,12 @@ TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersRejectsMallocFail
 TEST(DeviceUrmaTransportManagerTest, PrepareKernelLaunchBuffersReusesAndGrowsContextBuffer)
 {
     constexpr size_t LARGE_BATCH_SIZE = 256U;
-    DlAclApiFnGuard guard;
+    AclFnGuard guard;
     InstallLaunchBufferMocks();
-    DlAclApi::pAclrtMallocHost = MockAclrtMallocHostRecordingSize;
-    DlAclApi::pAclrtMalloc = MockAclrtMallocCounting;
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyCounting;
-    DlAclApi::pAclrtFree = MockAclrtFreeAtCall;
+    AscendRtApi().pAclrtMallocHost_ = MockAclrtMallocHostRecordingSize;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocCounting;
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyCounting;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeAtCall;
     g_aclrtMallocCallCount = 0U;
     g_aclrtMemcpyCallCount = 0U;
     g_aclrtFreeCallCount = 0U;
@@ -2759,17 +2784,17 @@ TEST(DeviceUrmaTransportManagerTest, MultiRankKernelFailureKeepsNotifiesWithoutP
     constexpr uint32_t SECOND_RANK_START = 1U;
     constexpr uint32_t RANK_IO_NUM = 1U;
     constexpr size_t TRANSFER_COUNT = 2U;
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     MockcppScope mockcpp;
     InstallLaunchBufferMocks();
-    DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
-    DlAclApi::pAclrtFree = MockAclrtFreeOk;
-    DlAclApi::pAclrtMemcpy = MockAclrtMemcpyOk;
-    DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
-    DlAclApi::pAclrtKernelArgsAppend = MockAclrtKernelArgsAppend;
-    DlAclApi::pAclrtKernelArgsFinalize = MockAclrtKernelArgsFinalize;
-    DlAclApi::pAclrtLaunchKernelWithConfig = MockAclrtLaunchKernelWithConfig;
-    DlAclApi::pAclrtSynchronizeStream = [](void *) { return BM_ERROR; };
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeOk;
+    AscendRtApi().pAclrtMemcpy_ = MockAclrtMemcpyOk;
+    AscendRtApi().pAclrtKernelArgsInit_ = MockAclrtKernelArgsInit;
+    AscendRtApi().pAclrtKernelArgsAppend_ = MockAclrtKernelArgsAppend;
+    AscendRtApi().pAclrtKernelArgsFinalize_ = MockAclrtKernelArgsFinalize;
+    AscendRtApi().pAclrtLaunchKernelWithConfig_ = MockAclrtLaunchKernelWithConfig;
+    AscendRtApi().pAclrtSynchronizeStream_ = [](void *) { return BM_ERROR; };
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
     DeviceUrmaTransportManager manager;
@@ -2831,8 +2856,8 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -2843,7 +2868,9 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
@@ -2892,8 +2919,8 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -2904,7 +2931,9 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
@@ -2967,8 +2996,8 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
     TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -2978,13 +3007,15 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     // Make kernel launch fail
-    DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
-    DlAclApi::pAclrtKernelArgsAppend = MockAclrtKernelArgsAppend;
-    DlAclApi::pAclrtKernelArgsFinalize = [](aclrtArgsHandle) { return BM_ERROR; };
+    AscendRtApi().pAclrtKernelArgsInit_ = MockAclrtKernelArgsInit;
+    AscendRtApi().pAclrtKernelArgsAppend_ = MockAclrtKernelArgsAppend;
+    AscendRtApi().pAclrtKernelArgsFinalize_ = [](aclrtArgsHandle) { return BM_ERROR; };
 
     DeviceUrmaTransportManager manager;
     TransportOptions openOptions{};
@@ -3026,8 +3057,8 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
     TlsContextGuard tlsContextGuard;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -3037,16 +3068,18 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     // Make kernel launch fail. The context buffer must not be freed on this path.
-    DlAclApi::pAclrtKernelArgsInit = MockAclrtKernelArgsInit;
-    DlAclApi::pAclrtKernelArgsAppend = MockAclrtKernelArgsAppend;
-    DlAclApi::pAclrtKernelArgsFinalize = [](aclrtArgsHandle) { return BM_ERROR; };
+    AscendRtApi().pAclrtKernelArgsInit_ = MockAclrtKernelArgsInit;
+    AscendRtApi().pAclrtKernelArgsAppend_ = MockAclrtKernelArgsAppend;
+    AscendRtApi().pAclrtKernelArgsFinalize_ = [](aclrtArgsHandle) { return BM_ERROR; };
     g_aclrtFreeCallCount = 0U;
     g_aclrtFreeFailAt = 1U;
-    DlAclApi::pAclrtFree = MockAclrtFreeAtCall;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeAtCall;
 
     DeviceUrmaTransportManager manager;
     TransportOptions openOptions{};
@@ -3080,7 +3113,7 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
     EXPECT_NE(ctx->launchBuffers.base, nullptr);
     EXPECT_EQ(g_aclrtFreeCallCount, 0U);
 
-    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeOk;
     EXPECT_EQ(manager.Synchronize(1), BM_OK);
     manager.localRegistrations_.clear();
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
@@ -3092,8 +3125,8 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
     g_kernelLaunchCallCount = 0U;
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -3104,11 +3137,13 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
     g_syncCallCount = 0;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamFirstOkThenFail;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStreamFirstOkThenFail;
 
     DeviceUrmaTransportManager manager;
     TransportOptions openOptions{};
@@ -3151,7 +3186,7 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
     const uint32_t launchCountAfterFailure = g_kernelLaunchCallCount;
 
     // The failed marker's notify stays quarantined and no fallback kernel is launched.
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
     EXPECT_EQ(manager.Synchronize(1), BM_ERROR);
     EXPECT_EQ(ctx->pendingTransfers.size(), 1U);
     EXPECT_EQ(g_kernelLaunchCallCount, launchCountAfterFailure);
@@ -3178,12 +3213,12 @@ TEST(DeviceUrmaTransportManagerTest, PreSubmittedMarkerSyncDoesNotLaunchKernel)
     auto *leasedNotify = manager.notifyPoolSlots_[0];
     ASSERT_NE(leasedNotify, nullptr);
     ASSERT_EQ(g_kernelLaunchCallCount, 1U);
-    DlAclApi::pAclrtMalloc = MockAclrtMallocFail;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocFail;
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_OK);
     EXPECT_EQ(g_kernelLaunchCallCount, 1U);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
     ExpectNotifyReusable(manager, leasedNotify);
-    DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocOk;
     fix.CleanupAndClose(manager);
 }
 
@@ -3197,8 +3232,8 @@ TEST(DeviceUrmaTransportManagerTest, WaitStreamFailureQuarantinesNotifyUntilClos
     g_waitAndResetCallCount = 0U;
     g_streamSyncCallCount = 0U;
     g_streamSyncFailAt = WAIT_STREAM_SYNC_CALL;
-    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotifyCounting;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamAtCall;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = MockAclrtWaitAndResetNotifyCounting;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStreamAtCall;
     DeviceUrmaTransportManager manager;
     fix.OpenAndPreparePeer(manager);
     fix.AddLocalReg(manager, MOCK_LOCAL_ADDR, MOCK_SIZE, REG_MR_FLAG_DRAM, 0U);
@@ -3215,7 +3250,7 @@ TEST(DeviceUrmaTransportManagerTest, WaitStreamFailureQuarantinesNotifyUntilClos
     ASSERT_EQ(ctx->pendingTransfers.size(), 1U);
     EXPECT_EQ(ctx->pendingTransfers[0U].notifyPoolIndex, UINT32_MAX);
 
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_ERROR);
     EXPECT_EQ(g_waitAndResetCallCount, 1U);
     EXPECT_EQ(g_kernelLaunchCallCount, launchCountAfterFailure);
@@ -3243,18 +3278,18 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizeKeepsContextBufferForReuse)
     ASSERT_NE(launchBufferBase, nullptr);
     g_aclrtFreeCallCount = 0U;
     g_aclrtFreeFailAt = 1U;
-    DlAclApi::pAclrtFree = MockAclrtFreeAtCall;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeAtCall;
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_OK);
     EXPECT_TRUE(ctx->pendingTransfers.empty());
     EXPECT_EQ(ctx->launchBuffers.base, launchBufferBase);
     EXPECT_EQ(g_aclrtFreeCallCount, 0U);
     ExpectNotifyReusable(manager, leasedNotify);
-    DlAclApi::pAclrtMalloc = MockAclrtMallocFail;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocFail;
     EXPECT_EQ(manager.ReadRemoteAsync(CONST_REMOTE_RANK, MOCK_LOCAL_ADDR, MOCK_REMOTE_ADDR, MOCK_SIZE), BM_OK);
     EXPECT_EQ(ctx->launchBuffers.base, launchBufferBase);
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_OK);
-    DlAclApi::pAclrtMalloc = MockAclrtMallocOk;
-    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeOk;
     fix.CleanupAndClose(manager);
 }
 
@@ -3408,14 +3443,14 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionInvalidFlagsFails)
 
 TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionTracksRefCountAndQueryMemoryKeyExportsFlag)
 {
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     DlHcommApiFnGuard guard;
     DlHcommApi::gHcommEndpointCreate = MockHcommEndpointCreate;
     DlHcommApi::gHcommEndpointDestroy = MockHcommEndpointDestroy;
     DlHcommApi::gHcommMemReg = MockHcommMemRegAny;
     DlHcommApi::gHcommMemUnreg = MockHcommMemUnregAny;
     DlHcommApi::gHcommMemExport = MockHcommMemExportAny;
-    DlAclApi::pAclrtFree = MockAclrtFreeOk;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeOk;
 
     DeviceUrmaTransportManager manager;
     manager.opened_ = true;
@@ -3457,7 +3492,7 @@ TEST(DeviceUrmaTransportManagerTest, RegisterMemoryRegionTracksRefCountAndQueryM
     EXPECT_TRUE(manager.localRegistrations_.empty());
     // Free manually allocated deviceMarkerPtr_, then nullify handles set directly
     // (not via HcommMemReg) to avoid double-cleanup in destructor.
-    (void)DlAclApi::AclrtFree(manager.deviceMarkerPtr_);
+    (void)VendorApi::Api()->Free(manager.deviceMarkerPtr_);
     manager.deviceMarkerHcommHandle_[0] = nullptr;
     manager.deviceMarkerHcommHandle_.clear();
     manager.deviceMarkerPtr_ = nullptr;
@@ -3823,8 +3858,8 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizeNotConnectedFails)
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelGetsHandlesFromPreloadedBinary)
 {
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtBinaryGetFunction_ = MockAclrtBinaryGetFunction;
 
     DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
@@ -3839,8 +3874,8 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelUsesDefaultPathWhenBinaryAl
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
     (void)unsetenv("ASCEND_HOME_PATH");
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunction;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtBinaryGetFunction_ = MockAclrtBinaryGetFunction;
 
     DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
@@ -3853,7 +3888,7 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelUsesDefaultPathWhenBinaryAl
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsMissingJsonAndBinaryLoadFailure)
 {
     EnvVarGuard envGuard("ASCEND_HOME_PATH");
-    DlAclApiFnGuard guard;
+    AclFnGuard guard;
     const std::string missingBase =
         std::string(testing::TempDir()) + "missing_device_urma_kernel_" + std::to_string(getpid());
     (void)setenv("ASCEND_HOME_PATH", missingBase.c_str(), 1);
@@ -3865,14 +3900,14 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsMissingJsonAndBinary
     EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_FILE_NOT_ACCESS);
 
     PrepareKernelJson();
-    DlAclApi::pAclrtBinaryLoadFromFile = MockAclrtBinaryLoadFromFileFail;
+    AscendRtApi().pAclrtBinaryLoadFromFile_ = MockAclrtBinaryLoadFromFileFail;
     EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_ERROR);
 }
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailure)
 {
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionFail;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtBinaryGetFunction_ = MockAclrtBinaryGetFunctionFail;
 
     DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
@@ -3883,14 +3918,14 @@ TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelPropagatesGetFunctionFailur
 
 TEST(DeviceUrmaTransportManagerTest, LoadDeviceKernelRejectsNullFuncAndNullReturnedHandle)
 {
-    DlAclApiFnGuard guard;
+    AclFnGuard guard;
 
     DeviceKernelNames names{};
     aclrtBinHandle binHandle = MOCK_BIN_HANDLE;
     DeviceFuncHandles handles{};
     EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_OK);
 
-    DlAclApi::pAclrtBinaryGetFunction = MockAclrtBinaryGetFunctionNull;
+    AscendRtApi().pAclrtBinaryGetFunction_ = MockAclrtBinaryGetFunctionNull;
     names.funcTransfer = "HybmBatchTransfer";
     EXPECT_EQ(LoadDeviceKernelAndGetHandles(names, binHandle, handles), BM_DL_FUNCTION_FAILED);
 }
@@ -4202,8 +4237,8 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoDramNoDvaKeepsHva)
 TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
 {
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
-    DlRtApiFnGuard rtGuard;
+    AclFnGuard aclGuard;
+    RtDevResFnGuard rtGuard;
     MockcppScope mockcpp;
     PrepareKernelJson();
     InstallOpenDeviceMocks();
@@ -4213,7 +4248,9 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
     DlHcommApi::gHcommMemUnimport = MockHcommMemUnimport;
     DlHcommApi::gHcommChannelDestroy = MockHcommChannelDestroy;
     DlHcommApi::gHcommThreadFree = MockHcommThreadFree;
-    MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(returnValue(ock::mf::AscendSocType::ASCEND_950));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+        .stubs()
+        .will(returnValue(ock::mf::AscendSocType::ASCEND_950));
     InstallPeer2NetEidMock();
     MOCKER(&ock::mf::HybmStreamManager::GetThreadAclStream).stubs().will(returnValue(MOCK_STREAM));
 
@@ -4253,8 +4290,8 @@ TEST(DeviceUrmaTransportManagerTest, RawMultiRankBatchReturnsFallbacksAndMergesD
     g_waitAndResetCallCount = 0U;
     g_streamSyncCallCount = 0U;
     g_streamSyncFailAt = UINT32_MAX;
-    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotifyCounting;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamAtCall;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = MockAclrtWaitAndResetNotifyCounting;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStreamAtCall;
     void *sources[CONST_BATCH_SIZE] = {reinterpret_cast<void *>(MOCK_LOCAL_ADDR),
                                        reinterpret_cast<void *>(MOCK_REMOTE_ADDR + OFFSET),
                                        reinterpret_cast<void *>(MOCK_LOCAL_ADDR + 2U * OFFSET),
@@ -4523,10 +4560,10 @@ TEST(DeviceUrmaTransportManagerTest, CloseCleansNotifyPoolWithoutWaitingForInfli
     g_aclrtFreeCallCount = 0U;
     g_aclrtFreeFailAt = UINT32_MAX;
     DlHcommApi::gHcommMemUnreg = MockHcommMemUnregTrackNotify;
-    DlAclApi::pAclrtDestroyNotify = MockAclrtDestroyNotifyCounted;
-    DlAclApi::pAclrtWaitAndResetNotify = MockAclrtWaitAndResetNotifyCounting;
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStreamAtCall;
-    DlAclApi::pAclrtFree = MockAclrtFreeAtCall;
+    AscendRtApi().pAclrtDestroyNotify_ = MockAclrtDestroyNotifyCounted;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = MockAclrtWaitAndResetNotifyCounting;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStreamAtCall;
+    AscendRtApi().pAclrtFree_ = MockAclrtFreeAtCall;
 
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
     EXPECT_FALSE(manager.opened_);
@@ -5023,7 +5060,7 @@ TEST(DeviceUrmaEidReaderTest, LegacyEnvVarDoesNotAffectResult)
 TEST(DeviceUrmaTransportManagerTest, RemoveRanksMarksPeerFaultedAndAbortsRegisteredStreams)
 {
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     InstallSingleRankHcommMocks();
     InstallFakeStreamApis();
 
@@ -5082,17 +5119,17 @@ TEST(DeviceUrmaTransportManagerTest, SynchronizeMapsStreamAbortToRecoverableTime
 
     // 模拟对端故障导致 stream 被 aclrtStreamAbort 中止：同步接口返回 ACL_ERROR_RT_STREAM_ABORT。
     // 该错误必须是可降级的普通错误（BM_TIMEOUT），不能把 107023 原样透传给上层。
-    DlAclApi::pAclrtSynchronizeStream = [](void *) { return ACL_ERROR_RT_STREAM_ABORT; };
+    AscendRtApi().pAclrtSynchronizeStream_ = [](void *) { return ACL_ERROR_RT_STREAM_ABORT; };
     EXPECT_EQ(manager.Synchronize(CONST_REMOTE_RANK), BM_TIMEOUT);
 
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
     fix.CleanupAndClose(manager);
 }
 
 TEST(DeviceUrmaTransportManagerTest, PrepareClearsFaultedRankMark)
 {
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     InstallSingleRankHcommMocks();
 
     DeviceUrmaTransportManager manager;
@@ -5264,12 +5301,12 @@ TEST(DeviceUrmaTransportManagerTest, StandaloneSwapReuseDependsOnThisSubmission)
     link->fd = sockets[0];
     link->ready = true;
     proxy->links_[peer] = link;
-    DlAclApi::pAclrtSynchronizeStream = [](void *) { return BM_ERROR; };
+    AscendRtApi().pAclrtSynchronizeStream_ = [](void *) { return BM_ERROR; };
     EXPECT_EQ(op.SafeGet(remote, &local, sizeof(local), options, true), BM_ERROR);
     EXPECT_FALSE(op.urmaSwapMemoryAllocator_->CanAllocate(op.urmaSwapSpaceSize_));
     EXPECT_EQ(core->CurrentThreadPendingCount(), 2U);
 
-    DlAclApi::pAclrtSynchronizeStream = MockAclrtSynchronizeStream;
+    AscendRtApi().pAclrtSynchronizeStream_ = MockAclrtSynchronizeStream;
     EXPECT_EQ(core->Synchronize(peer), BM_OK);
     EXPECT_EQ(proxy->RemoveRanks({peer}), BM_OK);
     close(sockets[1]);
@@ -5280,9 +5317,15 @@ TEST(DeviceUrmaTransportManagerTest, ProxyReopensAfterCloseWithoutOldProviderOpt
 {
     DeviceTestFixture fixture;
     fixture.InstallAll();
-    MOCKER(DlAclApi::AclrtGetCurrentContext).stubs().will(returnValue(BM_OK));
-    MOCKER(DlAclApi::AclrtSetCurrentContext).stubs().will(returnValue(BM_OK));
-    MOCKER(DlAclApi::AclrtSetDevice).stubs().will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::GetCurrentContext, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetCurrentContext, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .stubs()
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SetDevice, ock::mf::Result(*)(ock::mf::AscendApiImpl *, int32_t, bool))
+        .stubs()
+        .will(returnValue(BM_OK));
     MOCKER(DlHcommApi::RefreshCurrentDevice).stubs().will(returnValue(BM_OK));
     UrmaProxyTransportManager manager;
     TransportOptions options{};
@@ -5302,7 +5345,7 @@ TEST(DeviceUrmaTransportManagerTest, ProxyReopensAfterCloseWithoutOldProviderOpt
 TEST(DeviceUrmaTransportManagerTest, OffloadPrepareConsumesHostEndpointMetadata)
 {
     DlHcommApiFnGuard hcommGuard;
-    DlAclApiFnGuard aclGuard;
+    AclFnGuard aclGuard;
     InstallSingleRankHcommMocks();
     ock::mf::transport::host::HostUrmaTransportManager host;
     host.opened_ = true;
@@ -5349,7 +5392,7 @@ TEST(DeviceUrmaTransportManagerTest, PrepareDeviceCopyBindsImportedPoolAndReuses
     constexpr uint64_t offset = 0x100U;
     constexpr uint64_t poolSize = 0x800U;
     g_aclrtMallocCallCount = 0U;
-    DlAclApi::pAclrtMalloc = MockAclrtMallocCounting;
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocCounting;
 
     ASSERT_EQ(manager.PrepareDeviceCopy(1U, MOCK_REMOTE_ADDR + offset, poolSize), BM_OK);
     ASSERT_NE(manager.deviceCopy_, nullptr);
@@ -5399,8 +5442,8 @@ TEST(DeviceUrmaTransportManagerTest, DeviceCopySubmitsStableTilesAndWaitsOnTheCa
     g_kernelLaunchCallCount = 0U;
     g_waitAndResetCallCount = 0U;
     g_aclrtMallocCallCount = 0U;
-    DlAclApi::pAclrtMalloc = MockAclrtMallocCounting;
-    DlAclApi::pAclrtWaitAndResetNotify = [](void *notify, void *stream, uint32_t timeout) {
+    AscendRtApi().pAclrtMalloc_ = MockAclrtMallocCounting;
+    AscendRtApi().pAclrtWaitAndResetNotify_ = [](void *notify, void *stream, uint32_t timeout) {
         EXPECT_EQ(g_kernelLaunchCallCount, g_waitAndResetCallCount + 1U);
         return MockAclrtWaitAndResetNotifyCounting(notify, stream, timeout);
     };

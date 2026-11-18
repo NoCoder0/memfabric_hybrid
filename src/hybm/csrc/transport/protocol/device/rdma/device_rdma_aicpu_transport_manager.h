@@ -16,7 +16,7 @@
 #include <map>
 
 #include "device_rdma_transport_manager.h"
-#include "dl_acl_api.h"
+#include "vendor/ascend/acl_rt_def.h"
 #include "hybm_acl_notify.h"
 #include "hybm_rdma_aicpu.h"
 #include "hybm_kernel_hepler.h"

@@ -22,8 +22,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_def.h"
 #include "hybm_logger.h"
 #include "urma_topo_helper.h"
@@ -201,22 +201,22 @@ Result GetSpodInfo(int32_t deviceId, dcmi_spod_info &spodInfo)
     int64_t serverId = 0;
     int64_t chassisId = 0;
     int64_t spodType = 0;
-    auto ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SUPER_POD_ID, &spodId);
+    auto ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SUPER_POD_ID, &spodId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("GetSpodInfo: get spod_id failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SERVER_ID, &serverId);
+    ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SERVER_ID, &serverId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("GetSpodInfo: get server_id failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_CHASSI_ID, &chassisId);
+    ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_CHASSI_ID, &chassisId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("GetSpodInfo: get chassis_id failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;
     }
-    ret = DlAclApi::RtGetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SPOD_TYPE, &spodType);
+    ret = VendorApi::Api()->GetDeviceInfo(static_cast<uint32_t>(deviceId), 0, INFO_TYPE_SPOD_TYPE, &spodType);
     if (ret != BM_OK) {
         BM_LOG_ERROR("GetSpodInfo: get spod_type failed, deviceId=" << deviceId << " ret=" << ret);
         return BM_ERROR;

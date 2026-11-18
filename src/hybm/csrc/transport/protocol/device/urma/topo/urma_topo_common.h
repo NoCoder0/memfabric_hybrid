@@ -18,12 +18,12 @@
 #include <string>
 #include <vector>
 
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "hybm_define.h"
 #include "hybm_types.h"
 #include "urma_topo_def.h"
 
-#include "dl_hal_api_def.h"
+#include "vendor/ascend/dl_hal_api_def.h"
 
 namespace ock {
 namespace mf {

@@ -11,10 +11,10 @@
 */
 #include "hybm_acl_notify.h"
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_hal_api_def.h"
-#include "dl_rt_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api_def.h"
+#include "vendor/vendor_api.h"
 #include "hybm_gva.h"
 #include "hybm_logger.h"
 
@@ -56,7 +56,7 @@ HybmAclNotify &HybmAclNotify::operator=(HybmAclNotify &&other) noexcept
 void HybmAclNotify::Reset() noexcept
 {
     if (notify_ != nullptr) {
-        (void)DlAclApi::AclrtDestroyNotify(notify_);
+        (void)VendorApi::Api()->DestroyNotify(notify_);
         notify_ = nullptr;
     }
     notifyId_ = UINT32_MAX;
@@ -72,16 +72,16 @@ int32_t HybmAclNotify::Init(uint64_t regBlockBase)
         return BM_OK;
     }
     void *notify = nullptr;
-    auto ret = DlAclApi::AclrtCreateNotify(&notify, ACL_NOTIFY_FLAG_DEVICE_ONLY);
+    auto ret = VendorApi::Api()->CreateNotify(&notify, ACL_NOTIFY_FLAG_DEVICE_ONLY);
     if (ret != BM_OK) {
         BM_LOG_ERROR("acl notify: create notify failed, ret: " << ret);
         return ret;
     }
     uint32_t notifyId = UINT32_MAX;
-    ret = DlAclApi::AclrtGetNotifyId(notify, &notifyId);
+    ret = VendorApi::Api()->GetNotifyId(notify, &notifyId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("acl notify: get notify id failed, ret: " << ret);
-        (void)DlAclApi::AclrtDestroyNotify(notify);
+        (void)VendorApi::Api()->DestroyNotify(notify);
         return ret;
     }
     notify_ = notify;
@@ -105,13 +105,13 @@ int32_t HybmAclNotify::Wait()
         BM_LOG_ERROR("acl notify: acl stream is null, notifyId: " << notifyId_);
         return BM_ERROR;
     }
-    auto ret = DlAclApi::AclrtWaitAndResetNotify(notify_, aclStream_, timeoutSec_);
+    auto ret = VendorApi::Api()->WaitAndResetNotify(notify_, aclStream_, timeoutSec_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("acl notify: waitAndReset notify failed, notifyId: " << notifyId_ << " timeoutSec: " << timeoutSec_
                                                                           << " ret: " << ret);
         return ret;
     }
-    ret = DlAclApi::AclrtSynchronizeStream(aclStream_);
+    ret = VendorApi::Api()->SynchronizeStream(aclStream_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("acl notify: sync stream failed, notifyId: " << notifyId_ << " ret: " << ret);
         return ret;
@@ -125,7 +125,7 @@ int32_t HybmAclNotify::WaitAsync(void *stream)
         BM_LOG_ERROR("invalid asynchronous notify wait, notifyId=" << notifyId_ << " stream=" << stream);
         return BM_INVALID_PARAM;
     }
-    const auto ret = DlAclApi::AclrtWaitAndResetNotify(notify_, stream, timeoutSec_);
+    const auto ret = VendorApi::Api()->WaitAndResetNotify(notify_, stream, timeoutSec_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("asynchronous notify wait failed, notifyId=" << notifyId_ << " ret=" << ret);
     }
@@ -165,7 +165,7 @@ int32_t HybmAclNotify::ResolveRegAddrByRt(uint32_t notifyId)
     rtDevResAddrInfo addrInfo{};
     addrInfo.resAddress = &addr;
     addrInfo.len = &len;
-    auto ret = DlRtApi::RtGetDevResAddress(&resInfo, &addrInfo);
+    auto ret = VendorApi::Api()->RtGetDevResAddress(&resInfo, &addrInfo);
     if (ret != BM_OK) {
         BM_LOG_ERROR("acl notify: rtGetDevResAddress failed, notifyId: " << notifyId << " ret: " << ret);
         return ret;

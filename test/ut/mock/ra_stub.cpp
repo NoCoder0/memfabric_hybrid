@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include "dl_hccp_def.h"
+#include "vendor/ascend/dl_hccp_def.h"
 
 using namespace ock::mf;
 

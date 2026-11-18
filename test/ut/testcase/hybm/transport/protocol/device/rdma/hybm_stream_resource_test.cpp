@@ -12,9 +12,11 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 #include <mockcpp/mockcpp.hpp>
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_stream.h"
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::mf;
 
@@ -35,7 +37,9 @@ protected:
         failStreamIdFree = false;
         normalQueueFrees = 0;
         streamIdFrees = 0;
-        MOCKER(DlAclApi::GetAscendSocType).stubs().will(returnValue(AscendSocType::ASCEND_910B));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+            .stubs()
+            .will(returnValue(ock::mf::AscendSocType::ASCEND_910B));
         MOCKER(DlHalApi::HalResourceIdAlloc)
             .stubs()
             .will(invoke(+[](uint32_t, halResourceIdInputInfo *, halResourceIdOutputInfo *out) {

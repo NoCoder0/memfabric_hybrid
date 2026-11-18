@@ -20,9 +20,9 @@
 #include <string_view>
 
 #include "compose_transport_manager.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "dl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 
 #include "hybm_compose_data_op.h"
 #include "hybm_data_op_host_rdma.h"
@@ -552,7 +552,7 @@ std::vector<uint32_t> ProviderDeviceIds()
         return {};
     }
     uint32_t count = 0;
-    if (DlAclApi::AclrtGetDeviceCount(&count) == BM_OK && count > 0) {
+    if (VendorApi::Api()->GetDeviceCount(&count) == BM_OK && count > 0) {
         ids.resize(count);
         for (uint32_t i = 0; i < count; ++i) {
             ids[i] = i;
@@ -1104,8 +1104,8 @@ int32_t MemEntityDefault::SetExtraContext(const void *context, uint32_t size) no
     }
 
     uint64_t addr = HYBM_DEVICE_USER_CONTEXT_ADDR + id_ * HYBM_DEVICE_USER_CONTEXT_PRE_SIZE;
-    auto ret = DlAclApi::AclrtMemcpy((void *)addr, HYBM_DEVICE_USER_CONTEXT_PRE_SIZE, context, size,
-                                     ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy((void *)addr, HYBM_DEVICE_USER_CONTEXT_PRE_SIZE, context, size,
+                                        ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("memcpy user context failed, ret: " << ret);
         return BM_ERROR;
@@ -1587,8 +1587,8 @@ int MemEntityDefault::UpdateHybmDeviceInfo(uint32_t extCtxSize) noexcept
 
     SetHybmDeviceInfo(info);
     info.extraContextSize = extCtxSize;
-    auto ret = DlAclApi::AclrtMemcpy((void *)addr, HYBM_LARGE_PAGE_SIZE, &info, sizeof(HybmDeviceMeta),
-                                     ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy((void *)addr, HYBM_LARGE_PAGE_SIZE, &info, sizeof(HybmDeviceMeta),
+                                        ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("update hybm info memory failed, ret: " << ret);
         return BM_ERROR;
@@ -2082,7 +2082,7 @@ int32_t MemEntityDefault::SetThreadAclDevice()
     // Other runtimes can change this thread's ACL device between transfers.
     // Recheck the current device before reusing any device-bound resources.
     const auto deviceId = HybmGetInitDeviceId();
-    const auto ret = DlAclApi::AclrtSetDevice(deviceId);
+    const auto ret = VendorApi::Api()->SetDevice(deviceId);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "aclrtSetDevice failed, deviceId: " << deviceId << " ret: " << ret, ret);
     return BM_OK;
 }

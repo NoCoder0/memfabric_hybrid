@@ -17,8 +17,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 
 namespace ock {
 namespace mf {
@@ -30,11 +30,20 @@ Result gDcmiResultForNumaUtilTest = BM_DL_FUNCTION_FAILED;
 std::string gDcmiCpuListForNumaUtilTest;
 std::unordered_map<std::string, std::string> gSysfsValuesForNumaUtilTest;
 
-class DlAclApiForNumaUtilTest {
+class VendorApiImplForNumaUtilTest : public VendorApiImpl {
 public:
-    static AscendSocType GetAscendSocType()
+    AscendSocType GetSocName() override
     {
         return gSocTypeForNumaUtilTest;
+    }
+};
+
+class VendorApiForNumaUtilTest {
+public:
+    static VendorApiImpl *Api()
+    {
+        static VendorApiImplForNumaUtilTest impl;
+        return &impl;
     }
 };
 
@@ -53,11 +62,11 @@ public:
 
 #define HybmNumaUtil     HybmNumaUtilForTest
 #define CpuAffinityGuard CpuAffinityGuardForTest
-#define DlAclApi         DlAclApiForNumaUtilTest
+#define VendorApi        VendorApiForNumaUtilTest
 #define DlHalApi         DlHalApiForNumaUtilTest
 #include "hybm_numa_util.cpp"
 #undef DlHalApi
-#undef DlAclApi
+#undef VendorApi
 #undef HybmNumaUtil
 #undef CpuAffinityGuard
 

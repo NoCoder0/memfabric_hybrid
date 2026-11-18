@@ -21,7 +21,7 @@
 #include <mockcpp/mockcpp.hpp>
 #include "hybm_big_mem.h"
 #include "acc_offload_launch.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 
 #define private   public
 #define protected public
@@ -30,6 +30,8 @@
 #include "aicpu/acc_offload_shared_dram_aicpu_entry.h"
 #undef private
 #undef protected
+
+#define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
 using namespace ock::offload;
 using namespace ock::mf;
@@ -97,7 +99,7 @@ void CleanupLaunch()
     ++gCleanupCount;
 }
 
-AscendSocType GetSocType()
+ock::mf::AscendSocType GetSocType()
 {
     return gSocType;
 }
@@ -259,7 +261,9 @@ protected:
         MOCKER(AccOffloadLaunchApi::TryLoadLibrary).stubs().will(invoke(LoadLaunch));
         MOCKER(AccOffloadLaunchApi::CleanupLibrary).stubs().will(invoke(CleanupLaunch));
         MOCKER(AccOffloadLaunchApi::InitializeAicpu).stubs().will(invoke(InitializeAicpu));
-        MOCKER(DlAclApi::GetAscendSocType).stubs().will(invoke(GetSocType));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+            .stubs()
+            .will(invoke(GetSocType));
         MOCKER(hybm_create_entity).stubs().will(invoke(CreateEntity));
         MOCKER(hybm_destroy_entity).stubs().will(invoke(DestroyEntity));
         MOCKER(hybm_reserve_mem_space).stubs().will(invoke(ReserveMemSpace));

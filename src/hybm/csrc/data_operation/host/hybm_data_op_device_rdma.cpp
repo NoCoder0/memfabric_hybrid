@@ -16,8 +16,8 @@
 #include <atomic>
 #include <cstdint>
 #include <vector>
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
 #include "hybm_logger.h"
@@ -136,7 +136,7 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
     // A5(950) 主机侧 RoCE 形态：swap 用普通 host 内存(mmap)。HcommMemReg 不接受 HalMemAlloc(MEM_HOST)
     // 的地址区间，而池内 DRAM 与普通 host 内存同为 mmap，可正常注册；与 host_rdma 路径保持一致。
     // 其它 SoC 的 native device RDMA 仍需 HalMemAlloc + HalHostRegister 拿 DVA 供设备侧 DMA。
-    const bool useMmap = DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950;
+    const bool useMmap = VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950;
     if (useMmap) {
         void *base =
             mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_HUGETLB, -1, 0);
@@ -308,7 +308,7 @@ Result DataOpDeviceRDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direc
 Result DataOpDeviceRDMA::CopyLH2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_HOST);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -319,7 +319,7 @@ Result DataOpDeviceRDMA::CopyLH2LH(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceRDMA::CopyLD2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -331,7 +331,7 @@ Result DataOpDeviceRDMA::CopyLD2LD(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceRDMA::CopyLH2LD(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -343,7 +343,7 @@ Result DataOpDeviceRDMA::CopyLH2LD(const void *srcVA, void *destVA, uint64_t len
 Result DataOpDeviceRDMA::CopyLD2LH(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options) noexcept
 {
     BM_LOG_DEBUG("SrcVA=" << VaToInfo(srcVA) << ", destVA=" << VaToInfo(destVA) << ", length=" << length);
-    auto ret = DlAclApi::AclrtMemcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
+    auto ret = VendorApi::Api()->Memcpy(destVA, length, srcVA, length, ACL_MEMCPY_DEVICE_TO_HOST);
     if (ret != BM_OK) {
         BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " Src=" << VaToInfo(srcVA) << " dest=" << VaToInfo(destVA)
                                                  << " length=" << length);
@@ -786,7 +786,7 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalSync(hybm_batch_copy_params &params, 
         auto destAddr = params.destinations[i];
         auto srcAddr = params.sources[i];
         auto count = params.dataSizes[i];
-        auto ret = DlAclApi::AclrtMemcpy(destAddr, count, srcAddr, count, direction);
+        auto ret = VendorApi::Api()->Memcpy(destAddr, count, srcAddr, count, direction);
         if (ret != 0) {
             BM_LOG_ERROR("AclrtMemcpy failed, ret: " << ret << " direct: " << direction << std::hex
                                                      << " src: " << srcAddr << " dst: " << destAddr << std::dec
@@ -811,16 +811,16 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalAsync(hybm_batch_copy_params &params,
         auto destAddr = params.destinations[i];
         auto srcAddr = params.sources[i];
         auto count = params.dataSizes[i];
-        ret = DlAclApi::AclrtMemcpyAsync(destAddr, count, srcAddr, count, direction, st);
+        ret = VendorApi::Api()->MemcpyAsync(destAddr, count, srcAddr, count, direction, st);
         if (ret != 0) {
-            (void)DlAclApi::AclrtSynchronizeStream(st);
+            (void)VendorApi::Api()->SynchronizeStream(st);
             BM_LOG_ERROR("copy memory on local failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st)
                                                          << " direct:" << direction << std::hex << " src:" << srcAddr
                                                          << " dst:" << destAddr);
             return BM_DL_FUNCTION_FAILED;
         }
     }
-    ret = DlAclApi::AclrtSynchronizeStream(st);
+    ret = VendorApi::Api()->SynchronizeStream(st);
     if (ret != 0) {
         BM_LOG_ERROR("aclrtSynchronizeStream failed: " << ret << " stream:" << reinterpret_cast<uintptr_t>(st));
     }
@@ -831,7 +831,7 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params,
                                                  const ExtOptions &options) noexcept
 {
     // A5(950) host RoCE：走 stream 逐笔异步 + 末尾一次同步，不使用批量接口。
-    if (DlAclApi::GetAscendSocType() == AscendSocType::ASCEND_950) {
+    if (VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950) {
         return BatchDataCopyLocalAsync(params, direction, options);
     }
 
@@ -861,8 +861,8 @@ Result DataOpDeviceRDMA::BatchDataCopyLocalBatch(hybm_batch_copy_params &params,
             sizes[i] = params.dataSizes[beg + i];
         }
         size_t failIdx = 0;
-        auto ret = DlAclApi::AclrtMemcpyBatch(params.destinations + beg, sizes.data(), params.sources + beg,
-                                              sizes.data(), cap, attrs.data(), attrsIds.data(), cap, &failIdx);
+        auto ret = VendorApi::Api()->MemcpyBatch(params.destinations + beg, sizes.data(), params.sources + beg,
+                                                 sizes.data(), cap, attrs.data(), attrsIds.data(), cap, &failIdx);
         if (ret == 0) {
             beg += cap;
             continue;

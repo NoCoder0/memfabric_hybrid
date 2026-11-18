@@ -26,7 +26,6 @@
 #include "smem_types.h"
 #include "smem_store_factory.h"
 #include "smem_trans.h"
-#include "dl_acl_api.h"
 #include "dl_api.h"
 #include "hybm_big_mem.h"
 #include "hybm_entity_default.h"

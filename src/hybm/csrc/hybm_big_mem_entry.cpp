@@ -12,7 +12,7 @@
 #include "hybm_logger.h"
 #include "hybm_entity_factory.h"
 #include "hybm_big_mem.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_ex_info_transfer.h"
 #include "hybm_conn_based_segment.h"
 

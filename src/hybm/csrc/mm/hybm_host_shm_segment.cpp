@@ -25,7 +25,7 @@
 #include "hybm_logger.h"
 #include "hybm_shm_util.h"
 #include "hybm_va_manager.h"
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 

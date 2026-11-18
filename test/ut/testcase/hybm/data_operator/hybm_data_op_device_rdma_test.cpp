@@ -17,8 +17,8 @@
 
 #include "hybm_data_op_device_rdma.h"
 #include "hybm_transport_manager.h"
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_functions.h"
 #include "hybm_gva.h"
 
@@ -79,7 +79,7 @@ static int HalMemFreeCountingStub(void *ptr)
 // 默认 910B 以保持既有用例行为不变。
 static ock::mf::AscendSocType g_mockSocType = ock::mf::AscendSocType::ASCEND_910B;
 
-static ock::mf::AscendSocType GetAscendSocTypeStub()
+static ock::mf::AscendSocType GetSocNameStub(ock::mf::AscendApiImpl *)
 {
     return g_mockSocType;
 }
@@ -302,11 +302,10 @@ public:
         transportManagerMock_ = std::make_shared<TransportManagerMock>();
         dataOp_ = std::make_shared<ock::mf::DataOpDeviceRDMA>(rankId_, transportManagerMock_);
 
-        // 模拟 DlAclApi::GetAscendSocType 方法（AllocSwapMemory 的 A5 判断需要）。
-        // 必须在 SetUp 中对所有测试生效（含不调用 InitMockEnv 的测试），否则首个
-        // 未 mock 的测试会在 ACL stub 加载前调用真实 GetAscendSocType，把进程级
-        // 静态缓存污染为 ASCEND_UNKNOWN，导致后续实体类用例全部失败。
-        MOCKER(&ock::mf::DlAclApi::GetAscendSocType).stubs().will(invoke(GetAscendSocTypeStub));
+        // 模拟 AscendApiImpl::GetSocName（AllocSwapMemory 的 A5 判断需要），对所有测试生效。
+        MOCKER_CPP(&ock::mf::AscendApiImpl::GetSocName, ock::mf::AscendSocType(*)(ock::mf::AscendApiImpl *))
+            .stubs()
+            .will(invoke(GetSocNameStub));
     }
 
     void TearDown() override
@@ -331,14 +330,22 @@ public:
         // 模拟 DlHalApi::HalMemFree 方法
         MOCKER(&ock::mf::DlHalApi::HalMemFree).stubs().will(invoke(HalMemFreeCountingStub));
 
-        // 模拟 DlAclApi::AclrtMemcpy 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::Memcpy 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::AclrtMemcpyAsync 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtMemcpyAsync).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::MemcpyAsync 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+            .stubs()
+            .will(returnValue(0));
 
-        // 模拟 DlAclApi::AclrtSynchronizeStream 方法
-        MOCKER(&ock::mf::DlAclApi::AclrtSynchronizeStream).stubs().will(returnValue(0));
+        // 模拟 AscendApiImpl::SynchronizeStream 方法
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .stubs()
+            .will(returnValue(0));
 
         // 模拟 DlHalApi::HalHostRegister 方法
         MOCKER(&ock::mf::DlHalApi::HalHostRegister).stubs().will(invoke(HalHostRegisterStub));
@@ -499,7 +506,10 @@ TEST_F(HybmDataOpDeviceRdmaTest, data_copy_all_directions)
 
 TEST_F(HybmDataOpDeviceRdmaTest, data_copy_failed)
 {
-    MOCKER(&ock::mf::DlAclApi::AclrtMemcpy).stubs().will(returnValue(-1));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+        .stubs()
+        .will(returnValue(-1));
     InitMockEnv();
     auto ret = dataOp_->Initialize();
     ASSERT_EQ(BM_OK, ret);

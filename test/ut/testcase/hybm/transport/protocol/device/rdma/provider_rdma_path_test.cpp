@@ -22,21 +22,28 @@
 #include <thread>
 #include <vector>
 
+#define private   public
+#define protected public
 #include "rdma_provider_completion.h"
-#include "dl_hal_api.h"
-#include "dl_hccp_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "hybm_networks_common.h"
 #include "mf_scope_guard.h"
 #include "rdma_provider_link.h"
-
-#define private public
+#include "vendor/vendor_api.h"
 #include "rdma_provider_control_server.h"
 #include "rdma_proxy_transport_manager.h"
 #undef private
+#undef protected
 
 using namespace ock::mf;
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
+
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
 
 namespace {
 constexpr uint64_t POOL_SIZE = 65536;
@@ -66,6 +73,7 @@ protected:
 
     // Worker threads call these stubs directly; mockcpp invocation recording is not thread safe.
     std::vector<std::unique_ptr<MOCKCPP_NS::ApiHook>> hooks_;
+    aclrtSetDeviceFunc oldSetDevice_{AscendRtApi().pAclrtSetDevice_};
 
     void SetUp() override
     {
@@ -77,7 +85,7 @@ protected:
         Hook(
             reinterpret_cast<std::vector<uint32_t> (*)()>(&NetworkGetIpAddresses),
             +[]() { return std::vector<uint32_t>{}; });
-        Hook(DlAclApi::AclrtSetDevice, +[](int32_t) { return BM_OK; });
+        AscendRtApi().pAclrtSetDevice_ = +[](int32_t) { return BM_OK; };
         Hook(
             DlHccpApi::RaGetQpStatus, +[](void *, int &status) {
                 status = 1;
@@ -153,6 +161,7 @@ protected:
 
     void TearDown() override
     {
+        AscendRtApi().pAclrtSetDevice_ = oldSetDevice_;
         hooks_.clear();
         GlobalMockObject::verify();
         GlobalMockObject::reset();

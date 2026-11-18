@@ -35,7 +35,7 @@ namespace offload {
 #define OFFLOAD_API __attribute__((visibility("default")))
 
 /* hybm's hybm_define.h carries an identically named dlsym helper; guard so a TU
- * that pulls both (dl_acl_api.h -> hybm headers, then the launch loader) does
+ * that pulls both (hybm under_api headers -> hybm headers, then the launch loader) does
  * not redefine it under -Werror. */
 #ifndef DL_LOAD_SYM_OPTIONAL
 #define DL_LOAD_SYM_OPTIONAL(TARGET_FUNC_VAR, TARGET_FUNC_TYPE, FILE_HANDLE, SYMBOL_NAME)                   \

@@ -433,8 +433,8 @@ struct dcmi_spod_info {
 };
 
 struct dcmi_pcie_info_all {
-    unsigned int venderid;     // 厂商ID
-    unsigned int subvenderid;  // 厂商子ID
+    unsigned int vendorid;     // 厂商ID
+    unsigned int subvendorid;  // 厂商子ID
     unsigned int deviceid;     // 设备ID
     unsigned int subdeviceid;  // 设备子ID
     int domain;                // pcie domain

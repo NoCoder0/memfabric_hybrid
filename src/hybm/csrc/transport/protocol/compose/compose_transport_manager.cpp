@@ -28,7 +28,7 @@
 #include "device_rdma_hcomm_transport_manager.h"
 #include "rdma_proxy_transport_manager.h"
 #include "urma_proxy_transport_manager.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 #include "mf_str_util.h"
@@ -164,7 +164,13 @@ Result ComposeTransportManager::OpenTransport(const TransportOptions &options, u
             // 注：A5(950) 的 HCOMM device RDMA 是主机侧 RoCE 形态（HOST 端点 + 主机侧 Nbi 提交），
             // 与 910B/910_93 的 DEVICE 形态实现不同，由 DeviceRdmaHcommTransportManager 内部按 SoC 分派。
             static const bool hcommEnabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_HCOMM, 0u) != 0u;
-            const bool useHcomm = hcommEnabled && DlAclApi::IsCannGE(HCOMM_REQUIRED_MAJOR, HCOMM_REQUIRED_MINOR);
+            int32_t aclMajor = 0;
+            int32_t aclMinor = 0;
+            int32_t aclPatch = 0;
+            const bool aclVersionOk = VendorApi::Api()->GetVersion(&aclMajor, &aclMinor, &aclPatch) == BM_OK &&
+                                      (aclMajor > HCOMM_REQUIRED_MAJOR ||
+                                       (aclMajor == HCOMM_REQUIRED_MAJOR && aclMinor >= HCOMM_REQUIRED_MINOR));
+            const bool useHcomm = hcommEnabled && aclVersionOk;
             BM_LOG_INFO("useHcomm=" << (useHcomm ? "true" : "false") << " (hcommEnabled=" << hcommEnabled
                                     << ", ACL >= " << HCOMM_REQUIRED_MAJOR << "." << HCOMM_REQUIRED_MINOR
                                     << " i.e. CANN >= 9.1 required)");

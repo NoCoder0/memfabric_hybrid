@@ -23,7 +23,7 @@
 #include <cstring>
 #include "hybm_common_include.h"
 #include "hybm_mem_common.h"
-#include "dl_hal_api_def.h"
+#include "vendor/ascend/dl_hal_api_def.h"
 
 namespace ock {
 namespace mf {

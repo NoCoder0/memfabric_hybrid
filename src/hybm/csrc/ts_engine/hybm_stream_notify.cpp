@@ -11,8 +11,8 @@
 */
 #include "hybm_stream_notify.h"
 #include "hybm_task.h"
-#include "dl_hal_api.h"
-#include "dl_hal_api_def.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api_def.h"
 #include "hybm_logger.h"
 
 namespace ock {

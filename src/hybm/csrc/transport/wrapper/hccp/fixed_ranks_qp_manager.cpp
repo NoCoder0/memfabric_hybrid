@@ -11,8 +11,8 @@
 */
 #include <chrono>
 #include "hybm_logger.h"
-#include "dl_acl_api.h"
-#include "dl_hccp_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "fixed_ranks_qp_manager.h"
 
 namespace ock {
@@ -148,7 +148,7 @@ bool FixedRanksQpManager::ReserveQpInfoSpace() noexcept
     void *ptr = nullptr;
     auto oneQpSize = 2U * (sizeof(AiQpRMAWQ) + sizeof(AiQpRMACQ)) + sizeof(RdmaMemRegionInfo);
     qpInfoSize_ = sizeof(AiQpRMAQueueInfo) + oneQpSize * rankCount_;
-    auto ret = DlAclApi::AclrtMalloc(&ptr, qpInfoSize_, 0);
+    auto ret = VendorApi::Api()->Malloc(&ptr, qpInfoSize_, 0);
     if (ret != 0) {
         BM_LOG_ERROR("allocate device size: " << qpInfoSize_ << ", failed: " << ret);
         return false;
@@ -161,7 +161,7 @@ bool FixedRanksQpManager::ReserveQpInfoSpace() noexcept
 void FixedRanksQpManager::ReleaseQpInfoSpace() noexcept
 {
     if (qpInfo_ != nullptr) {
-        DlAclApi::AclrtFree(qpInfo_);
+        VendorApi::Api()->Free(qpInfo_);
         qpInfo_ = nullptr;
     }
 }
@@ -186,7 +186,7 @@ int FixedRanksQpManager::StartServerSide() noexcept
     }
 
     serverConnectThread_ = std::make_shared<std::thread>([this]() {
-        DlAclApi::AclrtSetDevice(deviceId_);
+        VendorApi::Api()->SetDevice(deviceId_);
         auto ret = WaitConnectionsReady(serverConnections_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("wait connection ready failed: " << ret);
@@ -245,7 +245,7 @@ int FixedRanksQpManager::StartClientSide() noexcept
     }
 
     clientConnectThread_ = std::make_shared<std::thread>([this]() {
-        DlAclApi::AclrtSetDevice(deviceId_);
+        VendorApi::Api()->SetDevice(deviceId_);
         auto ret = WaitConnectionsReady(clientConnections_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("client wait connections failed: " << ret);
@@ -494,7 +494,7 @@ int FixedRanksQpManager::FillQpInfo() noexcept
     pointer += sizeof(AiQpRMACQ) * rankCount_;
     copyInfo->mr = (RdmaMemRegionInfo *)(void *)pointer;
 
-    auto ret = DlAclApi::AclrtMemcpy(qpInfo_, qpInfoSize_, copyInfo, qpInfoSize_, ACL_MEMCPY_HOST_TO_DEVICE);
+    auto ret = VendorApi::Api()->Memcpy(qpInfo_, qpInfoSize_, copyInfo, qpInfoSize_, ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != 0) {
         BM_LOG_ERROR("copy qp info to device failed: " << ret);
         return BM_DL_FUNCTION_FAILED;

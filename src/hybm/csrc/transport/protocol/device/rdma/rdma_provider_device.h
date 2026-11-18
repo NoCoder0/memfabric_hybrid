@@ -15,7 +15,7 @@
 #include <memory>
 #include <mutex>
 
-#include "dl_hccp_def.h"
+#include "vendor/ascend/dl_hccp_def.h"
 #include "provider_device_context.h"
 
 namespace ock {

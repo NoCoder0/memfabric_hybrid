@@ -21,7 +21,7 @@
 #include <unistd.h>
 
 #include "hybm_logger.h"
-#include "dl_hcomm_api.h"
+#include "vendor/ascend/dl_hcomm_api.h"
 #include "urma_topo_helper.h"
 
 #include "urma_topo_manager.h"

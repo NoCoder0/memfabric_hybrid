@@ -11,7 +11,7 @@
  */
 
 #include "urma_provider_control_server.h"
-#include "dl_acl_api.h"
+#include "vendor/vendor_api.h"
 #include "provider_device_context.h"
 #include "hybm_networks_common.h"
 #include "hybm_common_include.h"

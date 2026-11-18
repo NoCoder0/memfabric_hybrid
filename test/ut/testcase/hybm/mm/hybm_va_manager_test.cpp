@@ -15,7 +15,7 @@
 #include <atomic>
 #include <gtest/gtest.h>
 #include <mockcpp/mockcpp.hpp>
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #include "hybm_def.h"
 #include "hybm_define.h"
 #include "hybm_va_manager.h"

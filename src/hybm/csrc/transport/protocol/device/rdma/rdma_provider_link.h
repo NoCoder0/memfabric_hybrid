@@ -16,7 +16,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "dl_hccp_def.h"
+#include "vendor/ascend/dl_hccp_def.h"
 #include "provider_control_io.h"
 
 namespace ock {

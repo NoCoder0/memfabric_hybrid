@@ -86,14 +86,14 @@ int32_t DlcloseForDcmiTest(void *)
 
 #define DlHalApi DlHalApiForDcmiTest
 #define private  public
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 #undef private
 
 #define dlopen  DlopenForDcmiTest
 #define dlsym   DlsymForDcmiTest
 #define dlerror DlerrorForDcmiTest
 #define dlclose DlcloseForDcmiTest
-#include "dl_hal_api.cpp"
+#include "vendor/ascend/dl_hal_api.cpp"
 #undef dlclose
 #undef dlerror
 #undef dlsym

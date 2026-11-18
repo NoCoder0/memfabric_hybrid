@@ -11,7 +11,7 @@
 */
 #include <cstdint>
 #include <cstddef>
-#include "dl_hal_api.h"
+#include "vendor/ascend/dl_hal_api.h"
 
 constexpr uint32_t HYBM_SQCQ_DEPTH = 2048U;
 

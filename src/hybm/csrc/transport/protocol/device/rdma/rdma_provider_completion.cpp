@@ -13,10 +13,9 @@
 #include "hybm_stream.h"
 #include "device_chip_info.h"
 
-#include "dl_acl_api.h"
-#include "dl_hal_api.h"
-#include "dl_rt_api.h"
-#include "dl_hccp_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hal_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #include "hybm_define.h"
 #include "hybm_logger.h"
 
@@ -45,18 +44,18 @@ bool RdmaProviderSignal::Init()
         BM_LOG_ERROR("provider signal initialization requires a valid RDEV and no pending resources");
         return false;
     }
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId_));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId_));
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider signal set device failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
     }
-    ret = DlAclApi::AclrtMalloc(&buffer_, HYBM_LARGE_PAGE_SIZE, 0);
+    ret = VendorApi::Api()->Malloc(&buffer_, HYBM_LARGE_PAGE_SIZE, 0);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider signal allocation failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
     }
-    ret = DlAclApi::AclrtMemcpy(buffer_, sizeof(PROVIDER_NOTIFY_VALUE), &PROVIDER_NOTIFY_VALUE,
-                                sizeof(PROVIDER_NOTIFY_VALUE), ACL_MEMCPY_HOST_TO_DEVICE);
+    ret = VendorApi::Api()->Memcpy(buffer_, sizeof(PROVIDER_NOTIFY_VALUE), &PROVIDER_NOTIFY_VALUE,
+                                   sizeof(PROVIDER_NOTIFY_VALUE), ACL_MEMCPY_HOST_TO_DEVICE);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider signal initialization copy failed, deviceId=" << userId_ << " ret=" << ret);
         (void)Close();
@@ -81,7 +80,7 @@ bool RdmaProviderSignal::Close()
     if (buffer_ == nullptr && mr_ == nullptr) {
         return true;
     }
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId_));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId_));
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider signal cleanup set device failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
@@ -95,7 +94,7 @@ bool RdmaProviderSignal::Close()
         mr_ = nullptr;
     }
     if (buffer_ != nullptr) {
-        ret = DlAclApi::AclrtFree(buffer_);
+        ret = VendorApi::Api()->Free(buffer_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("provider signal free failed, deviceId=" << userId_ << " ret=" << ret);
             return false;
@@ -120,7 +119,7 @@ bool RdmaProviderCompletion::Init()
         BM_LOG_ERROR("provider completion initialization requires a valid RDEV and no pending resources");
         return false;
     }
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId_));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId_));
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion set device failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
@@ -141,20 +140,20 @@ bool RdmaProviderCompletion::Init()
             return false;
         }
     } else {
-        ret = DlRtApi::RtStreamCreate(&stream_, 0);
+        ret = VendorApi::Api()->CreateStream(&stream_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("provider completion stream creation failed, deviceId=" << userId_ << " ret=" << ret);
             return false;
         }
     }
-    ret = DlAclApi::AclrtCreateNotify(&notify_, 0);
+    ret = VendorApi::Api()->CreateNotify(&notify_, 0);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion notify creation failed, deviceId=" << userId_ << " ret=" << ret);
         (void)Close();
         return false;
     }
     uint32_t notifyId = UINT32_MAX;
-    ret = DlAclApi::AclrtGetNotifyId(notify_, &notifyId);
+    ret = VendorApi::Api()->GetNotifyId(notify_, &notifyId);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion notify ID query failed, deviceId=" << userId_ << " ret=" << ret);
         (void)Close();
@@ -215,7 +214,7 @@ bool RdmaProviderCompletion::SubmitFenceRead(void *qp, uint64_t remoteSignalAddr
         return false;
     }
     failed_ = true;
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId_));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId_));
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion wait set device failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
@@ -246,7 +245,7 @@ bool RdmaProviderCompletion::SubmitDoorbell(const send_wr_rsp &response)
     if (useNativeStream_) {
         return SubmitNativeDoorbell(response);
     }
-    auto ret = DlRtApi::RtRDMADBSend(response.db.db_index, response.db.db_info, stream_);
+    auto ret = VendorApi::Api()->RDMADBSend(response.db.db_index, response.db.db_info, stream_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion doorbell failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
@@ -273,12 +272,12 @@ bool RdmaProviderCompletion::WaitFenceNotify()
 bool RdmaProviderCompletion::WaitRuntimeNotify()
 {
     // Runtime v9.1.0 forwards this value unchanged to the seconds-based notify-wait SQE.
-    auto ret = DlAclApi::AclrtWaitAndResetNotify(notify_, stream_, PROVIDER_NOTIFY_WAIT_TIMEOUT_SECONDS);
+    auto ret = VendorApi::Api()->WaitAndResetNotify(notify_, stream_, PROVIDER_NOTIFY_WAIT_TIMEOUT_SECONDS);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion notify wait failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
     }
-    ret = DlRtApi::RtStreamSynchronize(stream_);
+    ret = VendorApi::Api()->SynchronizeStream(stream_);
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion stream wait failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
@@ -342,13 +341,13 @@ bool RdmaProviderCompletion::Close()
     if (stream_ == nullptr && notify_ == nullptr && nativeStream_ == nullptr) {
         return true;
     }
-    auto ret = DlAclApi::AclrtSetDevice(static_cast<int32_t>(userId_));
+    auto ret = VendorApi::Api()->SetDevice(static_cast<int32_t>(userId_));
     if (ret != BM_OK) {
         BM_LOG_ERROR("provider completion cleanup set device failed, deviceId=" << userId_ << " ret=" << ret);
         return false;
     }
     if (stream_ != nullptr) {
-        ret = DlRtApi::RtStreamDestroy(stream_);
+        ret = VendorApi::Api()->DestroyStream(stream_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("provider completion stream destruction failed, deviceId=" << userId_ << " ret=" << ret);
             return false;
@@ -364,7 +363,7 @@ bool RdmaProviderCompletion::Close()
         nativeStream_.reset();
     }
     if (notify_ != nullptr) {
-        ret = DlAclApi::AclrtDestroyNotify(notify_);
+        ret = VendorApi::Api()->DestroyNotify(notify_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("provider completion notify destruction failed, deviceId=" << userId_ << " ret=" << ret);
             return false;

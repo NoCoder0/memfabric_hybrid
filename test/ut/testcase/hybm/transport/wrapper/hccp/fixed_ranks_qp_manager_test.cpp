@@ -17,28 +17,36 @@
 #define private   public
 #define protected public
 #include "fixed_ranks_qp_manager.h"
-#include "dl_acl_api.h"
-#include "dl_hccp_api.h"
+#include "vendor/vendor_api.h"
+#include "vendor/ascend/dl_hccp_api.h"
 #undef private
 #undef protected
 
 using namespace ock::mf;
+
+namespace {
+static AscendApiImpl &AscendRtApi()
+{
+    return *static_cast<AscendApiImpl *>(VendorApi::Api());
+}
+} // namespace
+
 using namespace ock::mf::transport;
 using namespace ock::mf::transport::device;
 
 namespace {
-struct DlAclApiFnGuard {
-    aclrtMallocFunc oldAclrtMalloc{DlAclApi::pAclrtMalloc};
-    aclrtFreeFunc oldAclrtFree{DlAclApi::pAclrtFree};
-    aclrtMemcpyFunc oldAclrtMemcpy{DlAclApi::pAclrtMemcpy};
-    aclrtSetDeviceFunc oldAclrtSetDevice{DlAclApi::pAclrtSetDevice};
+struct AclFnGuard {
+    aclrtMallocFunc oldAclrtMalloc{AscendRtApi().pAclrtMalloc_};
+    aclrtFreeFunc oldAclrtFree{AscendRtApi().pAclrtFree_};
+    aclrtMemcpyFunc oldAclrtMemcpy{AscendRtApi().pAclrtMemcpy_};
+    aclrtSetDeviceFunc oldAclrtSetDevice{AscendRtApi().pAclrtSetDevice_};
 
-    ~DlAclApiFnGuard()
+    ~AclFnGuard()
     {
-        DlAclApi::pAclrtMalloc = oldAclrtMalloc;
-        DlAclApi::pAclrtFree = oldAclrtFree;
-        DlAclApi::pAclrtMemcpy = oldAclrtMemcpy;
-        DlAclApi::pAclrtSetDevice = oldAclrtSetDevice;
+        AscendRtApi().pAclrtMalloc_ = oldAclrtMalloc;
+        AscendRtApi().pAclrtFree_ = oldAclrtFree;
+        AscendRtApi().pAclrtMemcpy_ = oldAclrtMemcpy;
+        AscendRtApi().pAclrtSetDevice_ = oldAclrtSetDevice;
     }
 };
 
@@ -412,8 +420,8 @@ TEST(FixedRanksQpManagerTestTest, ReserveQpInfoSpaceSuccess)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
 
     // Test success case
     EXPECT_TRUE(manager.ReserveQpInfoSpace());
@@ -430,8 +438,8 @@ TEST(FixedRanksQpManagerTestTest, ReserveQpInfoSpaceFail)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFail;
 
     // Test failure case
     EXPECT_FALSE(manager.ReserveQpInfoSpace());
@@ -449,9 +457,9 @@ TEST(FixedRanksQpManagerTestTest, ReleaseQpInfoSpace)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     // Allocate first
     manager.ReserveQpInfoSpace();
@@ -471,8 +479,8 @@ TEST(FixedRanksQpManagerTestTest, GetQpInfoAddress)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
 
     // Test with null qpInfo_
     EXPECT_EQ(manager.GetQpInfoAddress(), nullptr);
@@ -520,9 +528,9 @@ TEST(FixedRanksQpManagerTestTest, Shutdown)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard aclGuard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard aclGuard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     // Allocate resources
     manager.ReserveQpInfoSpace();
@@ -569,9 +577,9 @@ TEST(FixedRanksQpManagerTestTest, StartupReserveQpInfoFailReturnsError)
 
     FixedRanksQpManagerTest manager(0, 0, 1, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocFail;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocFail;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     std::unordered_map<uint32_t, ConnectRankInfo> ranks;
     in_addr ip;
@@ -597,9 +605,9 @@ TEST(FixedRanksQpManagerTestTest, StartupRankInfoSizeMismatchReturnsInvalidParam
     // rankCount_ = 2, but currentRanksInfo_ left empty
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     int dummy = 0;
     EXPECT_EQ(manager.Startup(&dummy), BM_INVALID_PARAM);
@@ -614,9 +622,9 @@ TEST(FixedRanksQpManagerTestTest, StartupRankInfoContainsInvalidRankIdReturnsInv
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     std::unordered_map<uint32_t, ConnectRankInfo> ranks;
     in_addr ip;
@@ -644,9 +652,9 @@ TEST(FixedRanksQpManagerTestTest, StartupStartServerSideFailPropagates)
     // rankId=0, rankCount=2 -> StartServerSide will try CreateServerSocket()
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard aclGuard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard aclGuard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     DlHccpApiFnGuard hccpGuard;
     DlHccpApi::gRaSocketInit = &FakeRaSocketInitOk;
@@ -683,9 +691,9 @@ TEST(FixedRanksQpManagerTestTest, StartupStartClientSideFailPropagates)
     // rankId=1, rankCount=2 -> StartServerSide early returns OK, StartClientSide will try CreateLocalSocket()
     FixedRanksQpManagerTest manager(0, 1, 2, devNet);
 
-    DlAclApiFnGuard aclGuard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard aclGuard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     DlHccpApiFnGuard hccpGuard;
     DlHccpApi::gRaSocketInit = &FakeRaSocketInitFail;
@@ -719,9 +727,9 @@ TEST(FixedRanksQpManagerTestTest, StartupSuccessSetsStartedAndHandle)
     // rankCount=1 ensures StartServerSide/StartClientSide both early return.
     FixedRanksQpManagerTest manager(0, 0, 1, devNet);
 
-    DlAclApiFnGuard guard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtFree = &FakeAclrtFreeOk;
+    AclFnGuard guard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtFree_ = &FakeAclrtFreeOk;
 
     std::unordered_map<uint32_t, ConnectRankInfo> ranks;
     in_addr ip;
@@ -1183,9 +1191,9 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoOnlySelfMrSuccess)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard aclGuard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AclFnGuard aclGuard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
 
     EXPECT_TRUE(manager.ReserveQpInfoSpace());
 
@@ -1221,9 +1229,9 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoMissingConnectionForRemoteMr)
 
     FixedRanksQpManagerTest manager(0, 0, 2, devNet);
 
-    DlAclApiFnGuard aclGuard;
-    DlAclApi::pAclrtMalloc = &FakeAclrtMallocOk;
-    DlAclApi::pAclrtMemcpy = &FakeAclrtMemcpyOk;
+    AclFnGuard aclGuard;
+    AscendRtApi().pAclrtMalloc_ = &FakeAclrtMallocOk;
+    AscendRtApi().pAclrtMemcpy_ = &FakeAclrtMemcpyOk;
 
     EXPECT_TRUE(manager.ReserveQpInfoSpace());
 
