@@ -2659,7 +2659,8 @@ Result DeviceUrmaTransportManager::PrepareMultiRankMarkersLocked(const std::vect
 Result DeviceUrmaTransportManager::ResolveMultiRankIoLocked(const hybm_batch_copy_params &params,
                                                             hybm_data_copy_direction direction,
                                                             const std::pair<uint32_t, uint32_t> &p2pInfo,
-                                                            uint32_t index, RankTransferDescriptors &descriptors,
+                                                            uint32_t index,
+                                                            std::vector<HcommBatchTransferDesc> &descriptors,
                                                             RankGroupMap &unregisteredGroups) const
 {
     const bool isWrite = p2pInfo.first == rankId_;
@@ -2709,7 +2710,7 @@ Result DeviceUrmaTransportManager::ResolveMultiRankIoLocked(const hybm_batch_cop
         return ret;
     }
     //根据read/write构造descs
-    descriptors[remoteRank].push_back(BuildTransferDesc(correctedLocal, correctedRemote, size, !isWrite));
+    descriptors.push_back(BuildTransferDesc(correctedLocal, correctedRemote, size, !isWrite));
     return BM_OK;
 }
 
@@ -2724,8 +2725,11 @@ Result DeviceUrmaTransportManager::ResolveMultiRankGroupLocked(
         TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_GROUP, BM_OK);
         return BM_OK;
     }
+    const auto remoteRank = p2pInfo.first == rankId_ ? p2pInfo.second : p2pInfo.first;
+    auto &rankDescs = descriptors[remoteRank];
+    rankDescs.reserve(rankDescs.size() + indices.size());
     for (uint32_t index : indices) {
-        auto ret = ResolveMultiRankIoLocked(params, direction, p2pInfo, index, descriptors, unregisteredGroups);
+        auto ret = ResolveMultiRankIoLocked(params, direction, p2pInfo, index, rankDescs, unregisteredGroups);
         if (ret != BM_OK) {
             BM_LOG_ERROR("device_urma failed to resolve multi-rank IO, ret: " << ret << " index: " << index
                                                                               << " srcRank: " << p2pInfo.first
@@ -2734,12 +2738,15 @@ Result DeviceUrmaTransportManager::ResolveMultiRankGroupLocked(
             return ret;
         }
     }
+    if (rankDescs.empty()) {
+        descriptors.erase(remoteRank);
+    }
     TP_TRACE_END(TP_HYBM_URMA_RESOLVE_MULTI_RANK_GROUP, BM_OK);
     return BM_OK;
 }
 
 Result DeviceUrmaTransportManager::FlattenMultiRankDescriptorsLocked(
-    const RankTransferDescriptors &descriptors, std::vector<HcommBatchTransferDesc> &transferDescs,
+    RankTransferDescriptors &descriptors, std::vector<HcommBatchTransferDesc> &transferDescs,
     std::vector<uint32_t> &rankIds, std::vector<uint32_t> &rankStartIdx, std::vector<uint32_t> &rankListNum,
     std::vector<HcommThreadHandle> &threads, std::vector<HcommChannelHandle> &channels) const
 {
@@ -2758,7 +2765,9 @@ Result DeviceUrmaTransportManager::FlattenMultiRankDescriptorsLocked(
         BM_LOG_ERROR("device_urma raw multi-rank batch exceeds index limit, totalCount: " << totalCount);
         return BM_INVALID_PARAM;
     }
-    transferDescs.reserve(totalCount);
+    if (descriptors.size() > 1U) {
+        transferDescs.reserve(totalCount);
+    }
     std::sort(sortedRanks.begin(), sortedRanks.end());
     for (uint32_t rankId : sortedRanks) {
         const auto stateIt = remoteRanks_.find(rankId);
@@ -2766,13 +2775,17 @@ Result DeviceUrmaTransportManager::FlattenMultiRankDescriptorsLocked(
             BM_LOG_ERROR("device_urma raw multi-rank channel not ready, rankId: " << rankId);
             return BM_NOT_CONNECTED;
         }
-        const auto &rankDescs = descriptors.at(rankId);
+        auto &rankDescs = descriptors.at(rankId);
         rankIds.push_back(rankId);
         rankStartIdx.push_back(static_cast<uint32_t>(transferDescs.size()));
         rankListNum.push_back(static_cast<uint32_t>(rankDescs.size()));
         threads.push_back(stateIt->second.thread);
         channels.push_back(stateIt->second.channel);
-        transferDescs.insert(transferDescs.end(), rankDescs.begin(), rankDescs.end());
+        if (descriptors.size() == 1U) {
+            transferDescs = std::move(rankDescs);
+        } else {
+            transferDescs.insert(transferDescs.end(), rankDescs.begin(), rankDescs.end());
+        }
     }
     return BM_OK;
 }

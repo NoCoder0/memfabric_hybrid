@@ -4256,6 +4256,107 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
     EXPECT_EQ(manager.CloseDevice(), BM_OK);
 }
 
+class DeviceUrmaDescriptorTest : public testing::Test {
+protected:
+    void TearDown() override
+    {
+        manager.remoteRanks_.clear();
+    }
+
+    ock::mf::Result Flatten()
+    {
+        return manager.FlattenMultiRankDescriptorsLocked(descriptors, transferDescs, rankIds, starts, counts, threads,
+                                                         channels);
+    }
+
+    DeviceUrmaTransportManager manager;
+    DeviceUrmaTransportManager::RankTransferDescriptors descriptors;
+    std::vector<HcommBatchTransferDesc> transferDescs;
+    std::vector<uint32_t> rankIds;
+    std::vector<uint32_t> starts;
+    std::vector<uint32_t> counts;
+    std::vector<HcommThreadHandle> threads;
+    std::vector<HcommChannelHandle> channels;
+};
+
+TEST_F(DeviceUrmaDescriptorTest, SingleRankTransfersStorageAndPreservesMixedDescriptors)
+{
+    constexpr uint32_t REMOTE_RANK = 1U;
+    auto &state = manager.remoteRanks_[REMOTE_RANK];
+    state.thread = MOCK_THREAD;
+    state.channel = MOCK_CHANNEL;
+    descriptors[REMOTE_RANK] = {MakeTransferDescriptor(false), MakeTransferDescriptor(true)};
+    const auto original = descriptors.at(REMOTE_RANK);
+    const auto *originalData = descriptors.at(REMOTE_RANK).data();
+
+    ASSERT_EQ(Flatten(), BM_OK);
+    ASSERT_EQ(transferDescs.size(), original.size());
+    EXPECT_EQ(transferDescs.data(), originalData);
+    EXPECT_EQ(std::memcmp(transferDescs.data(), original.data(), original.size() * sizeof(original[0])), 0);
+    EXPECT_EQ(rankIds, (std::vector<uint32_t>{REMOTE_RANK}));
+    EXPECT_EQ(starts, (std::vector<uint32_t>{0U}));
+    EXPECT_EQ(counts, (std::vector<uint32_t>{2U}));
+    EXPECT_EQ(threads, (std::vector<HcommThreadHandle>{MOCK_THREAD}));
+    EXPECT_EQ(channels, (std::vector<HcommChannelHandle>{MOCK_CHANNEL}));
+}
+
+TEST_F(DeviceUrmaDescriptorTest, MultipleRanksKeepStorageAndFlattenInRankOrder)
+{
+    constexpr uint32_t FIRST_RANK = 1U;
+    constexpr uint32_t SECOND_RANK = 2U;
+    for (uint32_t rank : {SECOND_RANK, FIRST_RANK}) {
+        auto &state = manager.remoteRanks_[rank];
+        state.thread = MOCK_THREAD;
+        state.channel = MOCK_CHANNEL;
+    }
+    descriptors[SECOND_RANK] = {MakeTransferDescriptor(true, MOCK_LOCAL_ADDR + MOCK_SIZE)};
+    descriptors[FIRST_RANK] = {MakeTransferDescriptor(false), MakeTransferDescriptor(true)};
+    const auto first = descriptors.at(FIRST_RANK);
+    const auto second = descriptors.at(SECOND_RANK);
+
+    ASSERT_EQ(Flatten(), BM_OK);
+    EXPECT_EQ(rankIds, (std::vector<uint32_t>{FIRST_RANK, SECOND_RANK}));
+    EXPECT_EQ(starts, (std::vector<uint32_t>{0U, 2U}));
+    EXPECT_EQ(counts, (std::vector<uint32_t>{2U, 1U}));
+    ASSERT_EQ(transferDescs.size(), first.size() + second.size());
+    EXPECT_EQ(std::memcmp(transferDescs.data(), first.data(), first.size() * sizeof(first[0])), 0);
+    EXPECT_EQ(std::memcmp(transferDescs.data() + first.size(), second.data(), sizeof(second[0])), 0);
+    EXPECT_EQ(descriptors.at(FIRST_RANK).size(), first.size());
+    EXPECT_EQ(descriptors.at(SECOND_RANK).size(), second.size());
+    EXPECT_EQ(threads, (std::vector<HcommThreadHandle>{MOCK_THREAD, MOCK_THREAD}));
+    EXPECT_EQ(channels, (std::vector<HcommChannelHandle>{MOCK_CHANNEL, MOCK_CHANNEL}));
+}
+
+TEST_F(DeviceUrmaDescriptorTest, MissingChannelFailsBeforeMovingSingleRankStorage)
+{
+    constexpr uint32_t REMOTE_RANK = 1U;
+    descriptors[REMOTE_RANK] = {MakeTransferDescriptor(false)};
+    const auto *originalData = descriptors.at(REMOTE_RANK).data();
+
+    EXPECT_EQ(Flatten(), BM_NOT_CONNECTED);
+    EXPECT_TRUE(transferDescs.empty());
+    EXPECT_EQ(descriptors.at(REMOTE_RANK).size(), 1U);
+    EXPECT_EQ(descriptors.at(REMOTE_RANK).data(), originalData);
+}
+
+TEST_F(DeviceUrmaDescriptorTest, ZeroLengthGroupLeavesNoEmptyRank)
+{
+    constexpr uint32_t LOCAL_RANK = 0U;
+    constexpr uint32_t REMOTE_RANK = 1U;
+    manager.rankId_ = LOCAL_RANK;
+    uint64_t size = 0U;
+    hybm_batch_copy_params params{nullptr, nullptr, &size, 1U};
+    std::vector<uint32_t> localIndices;
+    transport::RankGroupMap unregisteredGroups;
+
+    ASSERT_EQ(manager.ResolveMultiRankGroupLocked(params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, {LOCAL_RANK, REMOTE_RANK},
+                                                  {0U}, descriptors, localIndices, unregisteredGroups),
+              BM_OK);
+    EXPECT_TRUE(descriptors.empty());
+    EXPECT_TRUE(localIndices.empty());
+    EXPECT_TRUE(unregisteredGroups.empty());
+}
+
 TEST(DeviceUrmaTransportManagerTest, RawMultiRankBatchReturnsFallbacksAndMergesDirections)
 {
     ock::mf::test::StubIdentityVaMappings();

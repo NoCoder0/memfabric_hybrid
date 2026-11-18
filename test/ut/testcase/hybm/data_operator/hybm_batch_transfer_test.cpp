@@ -34,7 +34,7 @@ int BatchTestDlclose(void *);
 namespace {
 constexpr uint32_t FIRST_RANK = 1U;
 constexpr uint32_t SECOND_RANK = 2U;
-constexpr uint32_t CHUNK_SIZE = 1000U;
+constexpr uint32_t CHUNK_SIZE = 128U;
 constexpr uint32_t IO_COUNT = CHUNK_SIZE + 2U;
 constexpr ock::mf::ThreadHandle THREAD = 10U;
 constexpr ock::mf::ChannelHandle CHANNEL = 20U;
@@ -48,6 +48,11 @@ uint32_t drainCount = 0U;
 std::vector<uint64_t> notifyRecordIds;
 uint32_t batchModeStartCount = 0U;
 uint32_t batchModeEndCount = 0U;
+uint32_t batchModeStartFailAt = UINT32_MAX;
+uint32_t batchModeEndFailAt = UINT32_MAX;
+int32_t batchModeStartResult = BM_OK;
+int32_t batchModeEndResult = BM_OK;
+std::vector<char> batchModeOrder;
 std::vector<char> operationOrder;
 std::vector<std::string> batchStartTags;
 std::vector<std::string> batchEndTags;
@@ -66,6 +71,11 @@ protected:
         notifyRecordIds.clear();
         batchModeStartCount = 0U;
         batchModeEndCount = 0U;
+        batchModeStartFailAt = UINT32_MAX;
+        batchModeEndFailAt = UINT32_MAX;
+        batchModeStartResult = BM_OK;
+        batchModeEndResult = BM_OK;
+        batchModeOrder.clear();
         operationOrder.clear();
         batchStartTags.clear();
         batchEndTags.clear();
@@ -107,14 +117,16 @@ int32_t HcommBatchModeStart(const char *tag)
 {
     batchStartTags.emplace_back(tag);
     batchModeStartCount++;
-    return BM_OK;
+    batchModeOrder.push_back('S');
+    return batchModeStartCount == batchModeStartFailAt ? BM_ERROR : batchModeStartResult;
 }
 
 int32_t HcommBatchModeEnd(const char *tag)
 {
     batchEndTags.emplace_back(tag);
     batchModeEndCount++;
-    return BM_OK;
+    batchModeOrder.push_back('E');
+    return batchModeEndCount == batchModeEndFailAt ? BM_ERROR : batchModeEndResult;
 }
 
 int32_t HcommChannelFenceOnThread(ock::mf::ThreadHandle, ock::mf::ChannelHandle)
@@ -158,6 +170,7 @@ int32_t HcommBatchTransferOnThread(ock::mf::ThreadHandle thread, ock::mf::Channe
     EXPECT_EQ(thread, THREAD);
     EXPECT_EQ(channel, CHANNEL);
     operationOrder.push_back('D');
+    batchModeOrder.push_back('D');
     submittedDescriptors.push_back(descs);
     submittedCounts.push_back(count);
     if (submittedCounts.size() == batchFailAt) {
@@ -224,8 +237,8 @@ TEST_F(HybmBatchTransferTest, UnifiedEntrySubmitsMixedDescriptorsUnchangedByRank
     EXPECT_EQ(std::memcmp(original.data(), descriptors.data(), descriptors.size() * sizeof(descriptors[0])), 0);
     EXPECT_EQ(markerReadCount, 0U);
     EXPECT_EQ(singleWriteCount, 0U);
-    EXPECT_EQ(batchModeStartCount, 1U);
-    EXPECT_EQ(batchModeEndCount, 1U);
+    EXPECT_EQ(batchModeStartCount, 2U);
+    EXPECT_EQ(batchModeEndCount, 2U);
 }
 
 TEST_F(HybmBatchTransferTest, UnsupportedBatchReturnsNotSupported)
@@ -292,8 +305,90 @@ TEST_F(HybmBatchTransferTest, SecondRankErrorReturnsOverallFailure)
     EXPECT_EQ(markerReadCount, 1U);
     EXPECT_EQ(markerDestinations[0], markerSources[0]);
     EXPECT_EQ(markerDestinations[1], 0U);
+    EXPECT_EQ(batchModeStartCount, 2U);
+    EXPECT_EQ(batchModeEndCount, 2U);
+}
+
+TEST_F(HybmBatchTransferTest, FlushesBeforeNextChunkAndPreservesCustomTag)
+{
+    constexpr auto CUSTOM_TAG = "BatchFlushTest";
+    ASSERT_EQ(HybmSubmitBatchTransfer(&param, CUSTOM_TAG), BM_OK);
+    EXPECT_EQ(batchModeOrder, (std::vector<char>{'S', 'D', 'E', 'S', 'D', 'D', 'E'}));
+    EXPECT_EQ(batchStartTags, (std::vector<std::string>{CUSTOM_TAG, CUSTOM_TAG}));
+    EXPECT_EQ(batchEndTags, batchStartTags);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE, 1U, 1U}));
+}
+
+TEST_F(HybmBatchTransferTest, FlushFailureStopsBeforeNextChunkAndAttemptsCleanup)
+{
+    batchModeEndFailAt = 1U;
+    EXPECT_EQ(HybmBatchTransfer(&param), BM_ERROR);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE}));
     EXPECT_EQ(batchModeStartCount, 1U);
-    EXPECT_EQ(batchModeEndCount, 1U);
+    EXPECT_EQ(batchModeEndCount, 2U);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'D'}));
+}
+
+TEST_F(HybmBatchTransferTest, RestartFailureStopsBeforeNextChunkAndAttemptsCleanup)
+{
+    batchModeStartFailAt = 2U;
+    EXPECT_EQ(HybmBatchTransfer(&param), BM_ERROR);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE}));
+    EXPECT_EQ(batchModeStartCount, 2U);
+    EXPECT_EQ(batchModeEndCount, 2U);
+    EXPECT_EQ(operationOrder, (std::vector<char>{'D'}));
+}
+
+TEST_F(HybmBatchTransferTest, SingleRankAtChunkLimitDoesNotFlushAnExtraBatch)
+{
+    param.rank_num = 1U;
+    counts[0] = CHUNK_SIZE;
+    param.total_list_num = CHUNK_SIZE;
+
+    ASSERT_EQ(HybmBatchTransfer(&param), BM_OK);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE}));
+    EXPECT_EQ(batchModeOrder, (std::vector<char>{'S', 'D', 'E'}));
+}
+
+TEST_F(HybmBatchTransferTest, TwoFullChunksFlushOnlyBetweenChunks)
+{
+    const auto descriptor = descriptors.front();
+    descriptors.resize(2U * CHUNK_SIZE, descriptor);
+    param.rank_num = 1U;
+    counts[0] = descriptors.size();
+    param.total_list_num = counts[0];
+    param.transfer_descs = descriptors.data();
+
+    ASSERT_EQ(HybmBatchTransfer(&param), BM_OK);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE, CHUNK_SIZE}));
+    EXPECT_EQ(batchModeOrder, (std::vector<char>{'S', 'D', 'E', 'S', 'D', 'E'}));
+    ASSERT_EQ(submittedDescriptors.size(), 2U);
+    EXPECT_EQ(submittedDescriptors[1], descriptors.data() + CHUNK_SIZE);
+}
+
+TEST_F(HybmBatchTransferTest, UnsupportedBatchModeStillSubmitsEveryChunk)
+{
+    batchModeStartResult = BM_NOT_SUPPORTED;
+    batchModeEndResult = BM_NOT_SUPPORTED;
+
+    ASSERT_EQ(HybmBatchTransfer(&param), BM_OK);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{CHUNK_SIZE, 1U, 1U}));
+    EXPECT_EQ(batchModeOrder, (std::vector<char>{'S', 'D', 'E', 'S', 'D', 'D', 'E'}));
+}
+
+TEST_F(HybmBatchTransferTest, Splits129DescriptorsAt128Boundary)
+{
+    constexpr uint32_t BATCH_LIMIT = 128U;
+    constexpr uint32_t DESCRIPTOR_COUNT = BATCH_LIMIT + 1U;
+    param.rank_num = 1U;
+    counts[0] = DESCRIPTOR_COUNT;
+    param.total_list_num = DESCRIPTOR_COUNT;
+
+    ASSERT_EQ(HybmBatchTransfer(&param), BM_OK);
+    EXPECT_EQ(submittedCounts, (std::vector<uint32_t>{BATCH_LIMIT, 1U}));
+    EXPECT_EQ(batchModeOrder, (std::vector<char>{'S', 'D', 'E', 'S', 'D', 'E'}));
+    ASSERT_EQ(submittedDescriptors.size(), 2U);
+    EXPECT_EQ(submittedDescriptors[1], descriptors.data() + BATCH_LIMIT);
 }
 
 TEST_F(HybmBatchTransferTest, SingleRankDrainsBeforeRecordingNotify)

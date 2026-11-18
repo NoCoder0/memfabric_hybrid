@@ -315,7 +315,8 @@ private:
                                        std::vector<uint32_t> &localIndices, RankGroupMap &unregisteredGroups) const;
     Result ResolveMultiRankIoLocked(const hybm_batch_copy_params &params, hybm_data_copy_direction direction,
                                     const std::pair<uint32_t, uint32_t> &p2pInfo, uint32_t index,
-                                    RankTransferDescriptors &descriptors, RankGroupMap &unregisteredGroups) const;
+                                    std::vector<HcommBatchTransferDesc> &descriptors,
+                                    RankGroupMap &unregisteredGroups) const;
     Result ResolveLocalAddressLocked(uint64_t addr, uint64_t size, uint64_t &correctedAddr, bool &registered) const;
     Result ResolveRemoteAddressLocked(uint32_t remoteRank, uint64_t remoteAddr, uint64_t size,
                                       uint64_t &correctedAddr) const;
@@ -324,7 +325,7 @@ private:
     Result PrepareMultiRankMarkersLocked(const std::vector<uint32_t> &rankIds,
                                          std::vector<HcommBatchTransferDesc> &markerDescs,
                                          std::vector<NotifyResource *> &notifyResources);
-    Result FlattenMultiRankDescriptorsLocked(const RankTransferDescriptors &descriptors,
+    Result FlattenMultiRankDescriptorsLocked(RankTransferDescriptors &descriptors,
                                              std::vector<HcommBatchTransferDesc> &transferDescs,
                                              std::vector<uint32_t> &rankIds, std::vector<uint32_t> &rankStartIdx,
                                              std::vector<uint32_t> &rankListNum,

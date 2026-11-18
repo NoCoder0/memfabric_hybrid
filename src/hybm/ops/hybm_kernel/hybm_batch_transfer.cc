@@ -14,7 +14,7 @@
 #include "hybm_kernel_log.h"
 
 namespace {
-constexpr uint32_t MAX_BATCH_SIZE = 1000;
+constexpr uint32_t MAX_BATCH_SIZE = 128;
 constexpr const char *BATCH_TAG = "HybmKernel";
 
 // Match HCCL's device loader: HCOMM device primitives are provided by libccl_kernel.so.
@@ -265,7 +265,7 @@ int32_t CheckBatchParam(const HybmBatchTransferParam *param)
     return BM_OK;
 }
 
-int32_t MultiRankTransferWithBatch(HybmBatchTransferParam *param, uint32_t rankIdx)
+int32_t MultiRankTransferWithBatch(HybmBatchTransferParam *param, uint32_t rankIdx, const char *batchTag)
 {
     const uint32_t start = param->rank_start_idx_list[rankIdx];
     const uint32_t count = param->rank_list_num_list[rankIdx];
@@ -288,16 +288,30 @@ int32_t MultiRankTransferWithBatch(HybmBatchTransferParam *param, uint32_t rankI
                       param->rank_id_list[rankIdx], thread, channel, count, offset, batchSize, ret);
             return ret;
         }
+        if (offset + batchSize < count) {
+            ret = BatchModeEnd(batchTag);
+            if (ret != BM_OK && !IsNotSupported(ret)) {
+                HYBM_LOGE(ret, "[hybm] batch flush failed, tag=%s rankId=%u offset=%u batch=%u ret=%d", batchTag,
+                          param->rank_id_list[rankIdx], offset, batchSize, ret);
+                return ret;
+            }
+            ret = BatchModeStart(batchTag);
+            if (ret != BM_OK && !IsNotSupported(ret)) {
+                HYBM_LOGE(ret, "[hybm] batch restart failed, tag=%s rankId=%u offset=%u batch=%u ret=%d", batchTag,
+                          param->rank_id_list[rankIdx], offset, batchSize, ret);
+                return ret;
+            }
+        }
     }
     return BM_OK;
 }
 
-int32_t TransferRank(HybmBatchTransferParam *param, uint32_t rankIdx)
+int32_t TransferRank(HybmBatchTransferParam *param, uint32_t rankIdx, const char *batchTag)
 {
     const auto thread = param->thread_list[rankIdx];
     const auto channel = param->channel_list[rankIdx];
     if (param->total_list_num > 0) {
-        const int32_t ret = MultiRankTransferWithBatch(param, rankIdx);
+        const int32_t ret = MultiRankTransferWithBatch(param, rankIdx, batchTag);
         if (ret != BM_OK) {
             return ret;
         }
@@ -357,7 +371,7 @@ int32_t HybmSubmitBatchTransfer(HybmBatchTransferParam *param, const char *batch
         return ret;
     }
     for (uint32_t rankIdx = 0; rankIdx < param->rank_num; ++rankIdx) {
-        ret = TransferRank(param, rankIdx);
+        ret = TransferRank(param, rankIdx, batchTag);
         if (ret != BM_OK) {
             break;
         }
@@ -390,7 +404,7 @@ int32_t HybmBatchTransfer(HybmBatchTransferParam *param)
     }
 
     for (uint32_t rankIdx = 0; rankIdx < param->rank_num; ++rankIdx) {
-        ret = TransferRank(param, rankIdx);
+        ret = TransferRank(param, rankIdx, BATCH_TAG);
         if (ret != BM_OK) {
             const bool notSupported = ret == BM_NOT_SUPPORTED;
             if (notSupported) {
