@@ -56,7 +56,6 @@ struct TransportOptions {
     uint32_t protocol;
     bool isProxy{false}; // 显式声明本端为 proxy，直连 provider，优先于协议位推导
     hybm_type initialType;
-    hybm_role_type role;
     hybm_scene scene{HYBM_SCENE_DEFAULT}; // 场景，传输层据此区分 BM / TRANS 等建链语义
     std::string nic;
     hybm_tls_config tlsOption;
@@ -232,22 +231,16 @@ static inline std::ostream &operator<<(std::ostream &output, const TransportMemo
 struct TransportRankPrepareInfo {
     std::string nic;
     TransportPrivateData privateData{};
-    hybm_role_type role{HYBM_ROLE_PEER};
     std::vector<TransportMemoryKey> memKeys;
     // Provider/proxy direct-connect fields. Legacy transports ignore them.
     bool isProvider{false};
     std::string providerControlUrl;
     uint64_t providerGvaBase{0};
-    TransportRankPrepareInfo() {}
-    TransportRankPrepareInfo(std::string n, TransportMemoryKey k) : nic{std::move(n)}, memKeys{k} {}
-    TransportRankPrepareInfo(std::string n, std::vector<TransportMemoryKey> ks)
-        : nic{std::move(n)}, memKeys{std::move(ks)}
-    {}
 };
 
 static inline std::ostream &operator<<(std::ostream &output, const TransportRankPrepareInfo &info)
 {
-    output << "PrepareInfo(nic=" << info.nic << ", role=" << info.role << ", privateData=(ip=" << info.privateData.ip
+    output << "PrepareInfo(nic=" << info.nic << ", privateData=(ip=" << info.privateData.ip
            << ", key=" << info.privateData.key << "), memKeys=[";
     for (auto &key : info.memKeys) {
         output << key << " ";

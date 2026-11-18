@@ -54,7 +54,7 @@ enum MemSegInfoExchangeType : int32_t {
 
 struct MemSegmentOptions {
     int32_t devId = 0;
-    hybm_role_type role = HYBM_ROLE_PEER;
+    hybm_cluster_role_type clusterRole = HYBM_CLUSTER_ROLE_DEFAULT;
     hybm_data_op_type dataOpType = HYBM_DOP_TYPE_SDMA;
     MemSegType segType = HYBM_MST_HBM;
     MemSegInfoExchangeType infoExType = HYBM_INFO_EXG_IN_NODE;
@@ -68,6 +68,14 @@ struct MemSegmentOptions {
     bool enable56BitsGva = false;
     hybm_scene scene = HYBM_SCENE_DEFAULT; // 场景，兼作 VA 区段选择
 };
+
+inline hybm_cluster_role_type ResolveHostComboRole(hybm_cluster_role_type role, uint64_t localSize)
+{
+    if (role != HYBM_CLUSTER_ROLE_DEFAULT) {
+        return role;
+    }
+    return localSize > 0U ? HYBM_CLUSTER_ROLE_PROVIDER : HYBM_CLUSTER_ROLE_PROXY;
+}
 } // namespace mf
 } // namespace ock
 

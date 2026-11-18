@@ -211,7 +211,6 @@ TransportOptions MakeOptions()
     opts.rankCount = 2; // 2
     opts.protocol = HYBM_DOP_TYPE_DEVICE_RDMA;
     opts.initialType = HYBM_TYPE_AICPU_INITIATE;
-    opts.role = HYBM_ROLE_PEER;
     opts.nic = "192.168.1.1:5000";
     return opts;
 }

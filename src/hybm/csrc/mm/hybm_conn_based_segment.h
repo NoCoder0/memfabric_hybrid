@@ -125,20 +125,17 @@ private:
 
 public:
     enum class AddressScope : uint32_t { LOCAL_HOST = 0, LOCAL_PROVIDER_SHM, REMOTE_PROVIDER, UNKNOWN };
-    // 主机内存由谁提供：SELF 自己分配/映射/使用（trans 与普通段），PROVIDER 建共享池，PROXY 映射同机池。
-    enum class HostRole : uint8_t { SELF, PROVIDER, PROXY };
-
     bool IsHostCombo() const noexcept
     {
-        return role_ == HostRole::PROVIDER || role_ == HostRole::PROXY;
+        return clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER || clusterRole_ == HYBM_CLUSTER_ROLE_PROXY;
     }
     bool IsHostProvider() const noexcept
     {
-        return role_ == HostRole::PROVIDER;
+        return clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER;
     }
     bool IsHostProxy() const noexcept
     {
-        return role_ == HostRole::PROXY;
+        return clusterRole_ == HYBM_CLUSTER_ROLE_PROXY;
     }
     void *GetHostShmBase() const noexcept
     {
@@ -174,7 +171,7 @@ private:
     // 语义的解除路径，把 provider 自己的池换成 PROT_NONE（或直接 munmap）。
     bool LocalProviderMapped() const noexcept
     {
-        return role_ == HostRole::PROXY && localShmBase_ != nullptr;
+        return clusterRole_ == HYBM_CLUSTER_ROLE_PROXY && localShmBase_ != nullptr;
     }
 
     mutable std::shared_mutex mutex_;
@@ -186,8 +183,7 @@ private:
     std::vector<HostExportInfo> imports_;
     std::set<uint64_t> mappedGvaMem_; // gva sets
 
-    // 三值由 ValidateOptions 从 dataOpType 与 size 派生：SELF 是存量非 combo 形态的常态而非空值。
-    HostRole role_{HostRole::SELF};
+    hybm_cluster_role_type clusterRole_{HYBM_CLUSTER_ROLE_DEFAULT};
     int localShmFd_{-1};
     uint8_t *localShmBase_{nullptr}; // 映射基址：provider 是自己的池，proxy 是映射进来的同机池
     uint64_t localShmSize_{0UL}; // 映射长度：实际 mmap 的长度（共享内存文件长度），与切片长度无关

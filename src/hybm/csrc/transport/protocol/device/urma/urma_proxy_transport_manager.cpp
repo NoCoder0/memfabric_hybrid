@@ -232,7 +232,9 @@ Result UrmaProxyTransportManager::ConnectRank(uint32_t rank)
                                        offer.gvaBase <= UINT64_MAX - offer.poolSize &&
                                        localBase <= UINT64_MAX - offer.poolSize;
             if (!hasUsablePool || !ValidPoolOffer(offer)) {
-                BM_LOG_ERROR("URMA proxy invalid provider offer, rank=" << rank);
+                BM_LOG_ERROR("URMA proxy OFFER validation failed, providerRank=" << rank << " type="
+                                                                                 << static_cast<uint16_t>(offer.type)
+                                                                                 << " peerStatus=" << offer.status);
                 ret = BM_INVALID_PARAM;
             }
         }
@@ -256,15 +258,24 @@ Result UrmaProxyTransportManager::ConnectRank(uint32_t rank)
         UrmaProviderMessage ack;
         if (ret == BM_OK)
             ret = ReceiveUrmaProviderMessage(link->fd, ack, deadline);
-        if (ret == BM_OK && (ack.type != UrmaProviderMessageType::ACK || ack.status != BM_OK))
+        if (ret == BM_OK && (ack.type != UrmaProviderMessageType::ACK || ack.status != BM_OK)) {
+            BM_LOG_ERROR("URMA proxy ACK failed, providerRank=" << rank << " type=" << static_cast<uint16_t>(ack.type)
+                                                                << " peerStatus=" << ack.status);
             ret = BM_ERROR;
+        }
+        if (ret == BM_OK) {
+            BM_LOG_INFO("URMA proxy link established, providerRank=" << rank << " proxyRank=" << hello.rank
+                                                                     << " selectedPhy=" << offer.phyId);
+        }
     }
     if (ret == BM_OK) {
         std::lock_guard<std::mutex> lock(mutex_);
         link->ready = true;
         return BM_OK;
     }
-    BM_LOG_ERROR("URMA proxy connection failed, rank=" << rank << " ret=" << ret);
+    BM_LOG_ERROR("URMA proxy connection failed, stage=" << (link->fd < 0 ? "TCP connect" : "handshake")
+                                                        << " providerRank=" << rank
+                                                        << " url=" << info.providerControlUrl << " ret=" << ret);
     if (prepared) {
         device_->Transport().BeginRankDrain(rank);
         if (device_->Transport().IsRankDrained(rank) && link->fd >= 0) {

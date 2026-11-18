@@ -380,8 +380,8 @@ TEST(FixedRanksQpManagerTestTest, SetRemoteRankInfoSuccess)
     net2.sin_addr = ip2;
     net2.sin_port = htons(12346);
     net2.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net2, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net1, {}));
+    ranks.emplace(1, ConnectRankInfo(net2, {}));
 
     // Test success case
     EXPECT_EQ(manager.SetRemoteRankInfo(ranks), BM_OK);
@@ -405,7 +405,7 @@ TEST(FixedRanksQpManagerTestTest, SetRemoteRankInfoFailWhenStarted)
     net.sin_addr = ip;
     net.sin_port = htons(12345);
     net.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net, {}));
 
     // Test failure case when already started
     EXPECT_EQ(manager.SetRemoteRankInfo(ranks), BM_ERROR);
@@ -588,7 +588,7 @@ TEST(FixedRanksQpManagerTestTest, StartupReserveQpInfoFailReturnsError)
     net.sin_addr = ip;
     net.sin_port = htons(12345);
     net.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net, {}));
     ASSERT_EQ(manager.SetRemoteRankInfo(ranks), BM_OK);
 
     int dummy = 0;
@@ -634,8 +634,8 @@ TEST(FixedRanksQpManagerTestTest, StartupRankInfoContainsInvalidRankIdReturnsInv
     net.sin_port = htons(12345);
     net.sin_family = AF_INET;
     // size == rankCount_ (2), but one key is out of range (2)
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(2, ConnectRankInfo(HYBM_ROLE_PEER, net, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net, {}));
+    ranks.emplace(2, ConnectRankInfo(net, {}));
     ASSERT_EQ(manager.SetRemoteRankInfo(ranks), BM_OK);
 
     int dummy = 0;
@@ -673,8 +673,8 @@ TEST(FixedRanksQpManagerTestTest, StartupStartServerSideFailPropagates)
     net2.sin_addr = ip2;
     net2.sin_port = htons(12346);
     net2.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net2, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net1, {}));
+    ranks.emplace(1, ConnectRankInfo(net2, {}));
     ASSERT_EQ(manager.SetRemoteRankInfo(ranks), BM_OK);
 
     int dummy = 0;
@@ -709,8 +709,8 @@ TEST(FixedRanksQpManagerTestTest, StartupStartClientSideFailPropagates)
     net2.sin_addr = ip2;
     net2.sin_port = htons(12346);
     net2.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net2, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net1, {}));
+    ranks.emplace(1, ConnectRankInfo(net2, {}));
     ASSERT_EQ(manager.SetRemoteRankInfo(ranks), BM_OK);
 
     int dummy = 0;
@@ -738,7 +738,7 @@ TEST(FixedRanksQpManagerTestTest, StartupSuccessSetsStartedAndHandle)
     net.sin_addr = ip;
     net.sin_port = htons(12345);
     net.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net, {}));
     ASSERT_EQ(manager.SetRemoteRankInfo(ranks), BM_OK);
 
     int dummy = 0;
@@ -852,9 +852,9 @@ TEST(FixedRanksQpManagerTestTest, GenerateWhiteListSuccess)
     net2.sin_addr = ip2;
     net2.sin_port = htons(12347);
     net2.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(2, ConnectRankInfo(HYBM_ROLE_PEER, net2, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net0, {}));
+    ranks.emplace(1, ConnectRankInfo(net1, {}));
+    ranks.emplace(2, ConnectRankInfo(net2, {}));
     manager.currentRanksInfo_ = ranks;
 
     // Mock server socket handle
@@ -893,9 +893,9 @@ TEST(FixedRanksQpManagerTestTest, GenerateWhiteListEmpty)
     net2.sin_addr = ip2;
     net2.sin_port = htons(12347);
     net2.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(2, ConnectRankInfo(HYBM_ROLE_PEER, net2, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net0, {}));
+    ranks.emplace(1, ConnectRankInfo(net1, {}));
+    ranks.emplace(2, ConnectRankInfo(net2, {}));
     manager.currentRanksInfo_ = ranks;
 
     // Test empty whitelist case
@@ -928,9 +928,9 @@ TEST(FixedRanksQpManagerTestTest, GenerateWhiteListFail)
     net2.sin_addr = ip2;
     net2.sin_port = htons(12347);
     net2.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
-    ranks.emplace(2, ConnectRankInfo(HYBM_ROLE_PEER, net2, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net0, {}));
+    ranks.emplace(1, ConnectRankInfo(net1, {}));
+    ranks.emplace(2, ConnectRankInfo(net2, {}));
     manager.currentRanksInfo_ = ranks;
 
     // Mock server socket handle
@@ -1207,13 +1207,13 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoOnlySelfMrSuccess)
     RegMemResult devKey0(0x1000, 0x100, nullptr, 11, 22);
     TransportMemoryKey commonKey0{};
     WriteStructToKey(devKey0, commonKey0);
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, commonKey0));
+    ranks.emplace(0, ConnectRankInfo(net0, {commonKey0}));
 
     sockaddr_in net1{};
     inet_aton("192.168.1.2", &net1.sin_addr);
     net1.sin_port = htons(12346);
     net1.sin_family = AF_INET;
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(1, ConnectRankInfo(net1, {}));
 
     manager.currentRanksInfo_ = ranks;
 
@@ -1241,7 +1241,7 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoMissingConnectionForRemoteMr)
     inet_aton("192.168.1.1", &net0.sin_addr);
     net0.sin_port = htons(12345);
     net0.sin_family = AF_INET;
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net0, std::vector<TransportMemoryKey>{}));
+    ranks.emplace(0, ConnectRankInfo(net0, {}));
 
     sockaddr_in net1{};
     inet_aton("192.168.1.2", &net1.sin_addr);
@@ -1250,7 +1250,7 @@ TEST(FixedRanksQpManagerTestTest, FillQpInfoMissingConnectionForRemoteMr)
     RegMemResult devKey1(0x2000, 0x100, nullptr, 33, 44);
     TransportMemoryKey commonKey1{};
     WriteStructToKey(devKey1, commonKey1);
-    ranks.emplace(1, ConnectRankInfo(HYBM_ROLE_PEER, net1, commonKey1));
+    ranks.emplace(1, ConnectRankInfo(net1, {commonKey1}));
 
     manager.currentRanksInfo_ = ranks;
 

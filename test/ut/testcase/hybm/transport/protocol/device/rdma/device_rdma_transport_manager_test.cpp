@@ -477,7 +477,6 @@ TEST(RdmaTransportManagerTest, QueryMemoryKeyNotRegisteredReturnsInvalidParam)
 TEST(RdmaTransportManagerTest, PrepareRejectsInvalidOptionsEarly)
 {
     RdmaTransportManager mgr;
-    mgr.role_ = HYBM_ROLE_PEER;
     mgr.rankId_ = 0;
     mgr.rankCount_ = 2;
 
@@ -500,7 +499,6 @@ TEST(RdmaTransportManagerTest, PrepareRejectsInvalidOptionsEarly)
 TEST(RdmaTransportManagerTest, PrepareRequiresQpManager)
 {
     RdmaTransportManager mgr;
-    mgr.role_ = HYBM_ROLE_PEER;
     mgr.rankId_ = 0;
     mgr.rankCount_ = 1;
 
@@ -516,7 +514,6 @@ TEST(RdmaTransportManagerTest, PrepareRequiresQpManager)
 TEST(RdmaTransportManagerTest, PrepareParseNicAndQpManagerFailuresArePropagated)
 {
     RdmaTransportManager mgr;
-    mgr.role_ = HYBM_ROLE_PEER;
     mgr.rankId_ = 0;
     mgr.rankCount_ = 1;
     mgr.rdmaHandle_ = reinterpret_cast<void *>(0x1UL);

@@ -1338,13 +1338,11 @@ TEST_F(HybmEntityDefaultTest, ImportForTransportManager_PrepareConnect_FirstTime
 
     ock::mf::EntityExportInfo r0{};
     r0.rankId = TEST_RANK_0;
-    r0.role = static_cast<uint16_t>(HYBM_ROLE_SENDER);
     std::strncpy(r0.nic, "nic0", sizeof(r0.nic) - 1);
     entity.importedRanks_[TEST_RANK_0] = r0;
 
     ock::mf::EntityExportInfo r1{};
     r1.rankId = TEST_RANK_1;
-    r1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
     std::strncpy(r1.nic, "nic1", sizeof(r1.nic) - 1);
     entity.importedRanks_[TEST_RANK_1] = r1;
 
@@ -1367,7 +1365,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransportManager_Update_WhenPrepared)
 
     ock::mf::EntityExportInfo r0{};
     r0.rankId = TEST_RANK_0;
-    r0.role = static_cast<uint16_t>(HYBM_ROLE_PEER);
     std::strncpy(r0.nic, "nic0", sizeof(r0.nic) - 1);
     entity.importedRanks_[TEST_RANK_0] = r0;
 
@@ -1390,19 +1387,13 @@ TEST_F(HybmEntityDefaultTest, ImportEntityExchangeInfo_Basic)
 
     hybm_exchange_info ex0{};
     ock::mf::ExchangeInfoWriter w0(&ex0);
-    ock::mf::EntityExportInfo e0{};
-    e0.rankId = TEST_RANK_0;
-    e0.role = static_cast<uint16_t>(HYBM_ROLE_SENDER);
-    std::strncpy(e0.nic, "nic0", sizeof(e0.nic) - 1);
-    w0.Append(e0);
+    entity.options_.rankId = TEST_RANK_0;
+    ASSERT_EQ(entity.ExportEntityExchangeInfo(w0, 0), BM_OK);
 
     hybm_exchange_info ex1{};
     ock::mf::ExchangeInfoWriter w1(&ex1);
-    ock::mf::EntityExportInfo e1{};
-    e1.rankId = TEST_RANK_1;
-    e1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
-    std::strncpy(e1.nic, "nic1", sizeof(e1.nic) - 1);
-    w1.Append(e1);
+    entity.options_.rankId = TEST_RANK_1;
+    ASSERT_EQ(entity.ExportEntityExchangeInfo(w1, 0), BM_OK);
 
     ock::mf::ExchangeInfoReader readers[TEST_RANK_COUNT_2] = {ock::mf::ExchangeInfoReader(&ex0),
                                                               ock::mf::ExchangeInfoReader(&ex1)};
@@ -1425,7 +1416,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareWithOptions)
 
     ock::mf::EntityExportInfo r1{};
     r1.rankId = TEST_RANK_1;
-    r1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
     std::strncpy(r1.nic, "nic1", sizeof(r1.nic) - 1);
     entity.importedRanks_[TEST_RANK_1] = r1;
     ock::mf::transport::TransportMemoryKey k1{};
@@ -1800,7 +1790,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareFail)
     entity.initialized_ = true;
     entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
     entity.options_.rankId = TEST_RANK_0;
-    entity.options_.role = HYBM_ROLE_SENDER;
     entity.tagManager_ = std::make_shared<ock::mf::HybmEntityTagInfo>();
 
     auto fake = std::make_shared<FakeTransportManagerPrepareFail>();
@@ -1808,7 +1797,6 @@ TEST_F(HybmEntityDefaultTest, ImportForTransport_PrepareFail)
 
     ock::mf::EntityExportInfo r1{};
     r1.rankId = TEST_RANK_1;
-    r1.role = static_cast<uint16_t>(HYBM_ROLE_RECEIVER);
     std::strncpy(r1.nic, "nic1", sizeof(r1.nic) - 1);
     entity.importedRanks_[TEST_RANK_1] = r1;
 

@@ -477,7 +477,6 @@ TEST_F(RdmaAicpuMockTest, InitDeviceContextBranches)
     TransportOptions options{};
     options.rankId = 1U;
     options.rankCount = 2U;
-    options.role = HYBM_ROLE_PEER;
     options.nic = "tcp://127.0.0.1:8000";
 
     RdmaAicpuTransportManager mgr;

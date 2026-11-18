@@ -16,6 +16,7 @@
 #include "hybm_networks_common.h"
 #include "hybm_common_include.h"
 #include <arpa/inet.h>
+#include <cerrno>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <poll.h>
@@ -60,7 +61,8 @@ bool UrmaProviderControlServer::Init(const ProviderServiceOptions &options)
     }
     listenFd_ = provider_control::CreateListenSocket(port);
     if (listenFd_ < 0) {
-        BM_LOG_ERROR("URMA provider listen failed, port=" << port);
+        const int listenError = errno;
+        BM_LOG_ERROR("URMA provider listen failed, port=" << port << " errno=" << listenError);
         Stop();
         return false;
     }
@@ -68,6 +70,7 @@ bool UrmaProviderControlServer::Init(const ProviderServiceOptions &options)
     in_addr address{};
     address.s_addr = ips.empty() ? htonl(INADDR_LOOPBACK) : htonl(ips.front());
     controlUrl_ = std::string(inet_ntoa(address)) + ":" + std::to_string(port);
+    BM_LOG_INFO("URMA provider control server listening at " << controlUrl_);
     return true;
 }
 bool UrmaProviderControlServer::RegisterMemory(void *hostAddr, uint64_t size, uint64_t gvaBase, uint32_t providerRank)
@@ -204,8 +207,12 @@ void UrmaProviderControlServer::HandleClient(std::shared_ptr<Session> session, u
         UrmaProviderMessage ready;
         if (ret == BM_OK)
             ret = ReceiveUrmaProviderMessage(session->fd, ready, deadline);
-        if (ret == BM_OK && (ready.type != UrmaProviderMessageType::READY || ready.status != BM_OK))
+        if (ret == BM_OK && (ready.type != UrmaProviderMessageType::READY || ready.status != BM_OK)) {
+            BM_LOG_ERROR("URMA provider READY failed, proxyRank=" << hello.rank
+                                                                  << " type=" << static_cast<uint16_t>(ready.type)
+                                                                  << " peerStatus=" << ready.status);
             ret = BM_ERROR;
+        }
         {
             std::lock_guard<std::mutex> lock(mutex_);
             if (session->closing || !running_)
@@ -222,14 +229,21 @@ void UrmaProviderControlServer::HandleClient(std::shared_ptr<Session> session, u
             session->ready = ret == BM_OK && ackRet == BM_OK && !session->closing;
         }
         if (ret == BM_OK && ackRet == BM_OK) {
+            if (session->ready) {
+                BM_LOG_INFO("URMA provider link established, providerRank=" << offer.rank << " proxyRank=" << hello.rank
+                                                                            << " selectedPhy=" << offer.phyId);
+            }
             while (running_) {
                 pollfd item{session->fd, POLLIN, 0};
                 if (poll(&item, 1, 100) <= 0)
                     continue;
                 UrmaProviderMessage message;
                 auto receiveRet = ReceiveUrmaProviderMessage(session->fd, message, UrmaProviderDeadline());
-                if (receiveRet != BM_OK)
+                if (receiveRet != BM_OK) {
+                    BM_LOG_INFO("URMA provider peer control session ended, proxyRank=" << session->rank
+                                                                                       << " ret=" << receiveRet);
                     break;
+                }
                 if (message.type != UrmaProviderMessageType::QUIESCED || message.status != BM_OK) {
                     BM_LOG_ERROR("URMA provider unexpected active control frame, rank=" << session->rank);
                     break;

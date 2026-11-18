@@ -965,8 +965,7 @@ void JoinableRanksQpManager::FillHccpTag(char *output, uint32_t peerRank, const 
     static constexpr const char *bmTag = "BM_TAG";
     static constexpr const char *undefineTag = "UNDEFINE_TAG";
 
-    // 判据由 rankRole 改为 scene：BM 场景（HYBM_SCENE_DEFAULT，原 HYBM_ROLE_PEER）各 rank 共用固定 tag；
-    // TRANS 场景（原 HYBM_ROLE_SENDER / HYBM_ROLE_RECEIVER）下同一 IP 可承载多个实例（端口不同），
+    // BM 场景各 rank 共用固定 tag；TRANS 场景下同一 IP 可承载多个实例（端口不同），
     // 仅用 rank 对无法区分，故追加 server 侧（rank 较小端，即 RA server / 白名单侧）的 ip 与端口；
     // 该地址两端均可知（本端 deviceAddress_、对端 peerNet），保证两端算出的 tag 完全一致；
     // 其余场景无从判定。RA 侧按 (clientIp, tag) 匹配白名单，两端 tag 必须相同

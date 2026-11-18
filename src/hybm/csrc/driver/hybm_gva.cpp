@@ -66,9 +66,9 @@ int32_t hybm_init_hbm_gva(uint16_t deviceId, uint64_t flags, uint64_t &baseAddre
 #if !defined(ASCEND_NPU)
     return BM_OK;
 #else
-    if ((flags & HYBM_FLAG_PROVIDER) != 0) {
+    if ((flags & HYBM_FLAG_SKIP_DEVICE_INIT) != 0) {
         // Provider opens its NPUs in the provider transport layer; no single-device HBM GVA init here.
-        BM_LOG_INFO("multi-NPU provider, skip single-device gva init, deviceId: " << deviceId);
+        BM_LOG_INFO("skip single-device gva init, deviceId: " << deviceId);
         baseAddress = 0;
         return BM_OK;
     }

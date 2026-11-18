@@ -143,7 +143,6 @@ Result RdmaAicpuTransportManager::InitDeviceContext(const TransportOptions &opti
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
     qpReadyCache_.reset(new std::atomic<bool>[rankCount_]());
-    role_ = options.role;
     scene_ = options.scene;
     ret = ParseDeviceNic(options.nic, devicePort_);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "parse input nic(" << options.nic << ") failed!", BM_INVALID_PARAM);

@@ -61,7 +61,6 @@ int32_t AccOffloadSharedDramAicpuEntry::InitializePool(const offload_config_t &c
     options_.devId = config.deviceId;
     options_.maxDRAMSize = (config.reserveSize + gibMask) & ~gibMask;
     options_.hostVASpace = (config.allocSize + gibMask) & ~gibMask;
-    options_.role = HYBM_ROLE_PEER;
     options_.scene = HYBM_SCENE_OFFLOAD; // offload 独立 VA 区段(常规 GVM 区最前2T)，与 BM 物理隔离
     options_.flags = HYBM_FLAG_DRAM_MAP_HOST_VA;
     options_.dramShmFd = -1;

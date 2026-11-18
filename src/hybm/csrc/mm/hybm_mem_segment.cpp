@@ -158,10 +158,10 @@ MemSegment::DramSegmentKind MemSegment::SelectDramSegmentKind(const MemSegmentOp
 {
     const bool hasHostShm = (options.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U;
     const bool hasDeviceTransport = (options.dataOpType & HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK) != 0U;
-    const bool isProxy = (options.flags & HYBM_FLAG_PROXY) != 0U;
+    const bool isProxy = options.clusterRole == HYBM_CLUSTER_ROLE_PROXY;
 
     // Host-shm decides first: with a device transport it is the separated deployment (provider/proxy shared
-    // conn-based segment), otherwise it is a pure same-node shared-memory deployment. The proxy flag does not
+    // conn-based segment), otherwise it is a pure same-node shared-memory deployment. The proxy role does not
     // override this, so "HOST_SHM only + PROXY" keeps using the host-shm segment.
     if (hasHostShm) {
         return hasDeviceTransport ? DramSegmentKind::ConnBased : DramSegmentKind::HostShm;

@@ -191,59 +191,11 @@ TEST_F(HybmTransportCommonTest, TransportMemoryKey_Ostream)
     EXPECT_NE(s.find("-99"), std::string::npos);
 }
 
-TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_Ostream)
-{
-    TransportMemoryKey memKey{};
-    memKey.keys.assign(1, 777);
-    TransportRankPrepareInfo info("myNic", memKey);
-    info.role = HYBM_ROLE_SENDER;
-    std::stringstream ss;
-    ss << info;
-    EXPECT_NE(ss.str().find("myNic"), std::string::npos);
-}
-
 TEST_F(HybmTransportCommonTest, HybmTransPrepareOptions_Ostream)
 {
     HybmTransPrepareOptions opts{};
-    TransportMemoryKey memKey{};
-    TransportRankPrepareInfo rankInfo("eth1", memKey);
-    opts.options[0] = rankInfo;
-    opts.options[1] = rankInfo;
+    opts.options[1].nic = "eth1";
     std::stringstream ss;
     ss << opts;
-    EXPECT_NE(ss.str().find("PrepareOptions"), std::string::npos);
-}
-
-// ============================================================
-// TransportRankPrepareInfo constructors
-// ============================================================
-TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_DefaultConstructor)
-{
-    TransportRankPrepareInfo info;
-    EXPECT_EQ(info.role, HYBM_ROLE_PEER);
-    EXPECT_TRUE(info.memKeys.empty());
-}
-
-TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_SingleKeyConstructor)
-{
-    TransportMemoryKey key{};
-    key.keys.assign(1, 123);
-    TransportRankPrepareInfo info("eth2", key);
-    EXPECT_EQ(info.nic, "eth2");
-    ASSERT_EQ(info.memKeys.size(), 1U);
-    EXPECT_EQ(info.memKeys[0].keys[0], 123U);
-}
-
-TEST_F(HybmTransportCommonTest, TransportRankPrepareInfo_MultiKeyConstructor)
-{
-    TransportMemoryKey k1{};
-    TransportMemoryKey k2{};
-    k1.keys.assign(1, 10);
-    k2.keys.assign(1, 20);
-    std::vector<TransportMemoryKey> keys = {k1, k2};
-    TransportRankPrepareInfo info("eth3", keys);
-    EXPECT_EQ(info.nic, "eth3");
-    ASSERT_EQ(info.memKeys.size(), 2U);
-    EXPECT_EQ(info.memKeys[0].keys[0], 10U);
-    EXPECT_EQ(info.memKeys[1].keys[0], 20U);
+    EXPECT_NE(ss.str().find("1 => PrepareInfo(nic=eth1"), std::string::npos);
 }

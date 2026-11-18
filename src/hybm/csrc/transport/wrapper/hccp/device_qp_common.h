@@ -58,31 +58,17 @@ struct RegMemResult {
 using MemoryRegionMap = std::map<uint64_t, RegMemResult, std::greater<uint64_t>>;
 
 struct ConnectRankInfo {
-    hybm_role_type role;
     sockaddr_in network;
     MemoryRegionMap memoryMap;
 
-    ConnectRankInfo(hybm_role_type r, sockaddr_in nw, const TransportMemoryKey &mk) : role{r}, network{std::move(nw)}
+    ConnectRankInfo(sockaddr_in nw, const std::vector<TransportMemoryKey> &keys) : network{nw}
     {
-        AddMemoryKey(mk);
-    }
-
-    ConnectRankInfo(hybm_role_type r, sockaddr_in nw, const std::vector<TransportMemoryKey> &mks)
-        : role{r}, network{std::move(nw)}
-    {
-        for (auto &mk : mks) {
-            AddMemoryKey(mk);
+        for (const auto &key : keys) {
+            RegMemResult deviceKey{};
+            if (ReadStructFromKey(key, deviceKey)) {
+                memoryMap.emplace(deviceKey.address, deviceKey);
+            }
         }
-    }
-
-private:
-    void AddMemoryKey(const TransportMemoryKey &mk)
-    {
-        RegMemResult deviceKey{};
-        if (!ReadStructFromKey(mk, deviceKey)) {
-            return;
-        }
-        memoryMap.emplace(deviceKey.address, deviceKey);
     }
 };
 

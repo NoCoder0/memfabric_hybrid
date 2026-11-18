@@ -345,17 +345,6 @@ Result SmemTransEntry::CreateOneHybmEntity(uint32_t entityId, SmemTransExchangeI
     return SM_OK;
 }
 
-static hybm_role_type MapTransRoleToHybmRole(smem_trans_role_t role)
-{
-    if (role == SMEM_TRANS_SENDER) {
-        return HYBM_ROLE_SENDER;
-    }
-    if (role == SMEM_TRANS_RECEIVER) {
-        return HYBM_ROLE_RECEIVER;
-    }
-    return HYBM_ROLE_PEER;
-}
-
 hybm_options SmemTransEntry::GenerateHybmOptions(uint32_t entityId, uint32_t rankId)
 {
     hybm_options options{};
@@ -366,7 +355,6 @@ hybm_options SmemTransEntry::GenerateHybmOptions(uint32_t entityId, uint32_t ran
     options.rankId = rankId;
     options.devId = config_.deviceId;
     options.scene = HYBM_SCENE_TRANS;
-    options.role = MapTransRoleToHybmRole(config_.role);
     options.dramShmFd = -1;
     options.enable56BitsGva = true; // trans enabled
     bzero(options.tag, sizeof(options.tag));

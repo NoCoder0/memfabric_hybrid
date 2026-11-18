@@ -1360,7 +1360,6 @@ struct DeviceTestFixture {
             pd.protocol = UrmaProtocol::UBC_CTP;
             pd.type = COMM_ADDR_TYPE_IP_V6;
             info.privateData = MakePrivateData(pd);
-            info.role = HYBM_ROLE_PEER;
             info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
             prep.options.emplace(rankId, std::move(info));
         }
@@ -1587,7 +1586,6 @@ HybmTransPrepareOptions MakeSingleRankPrepareOptions(uint32_t rankId)
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     options.options.emplace(rankId, std::move(info));
     return options;
@@ -1651,7 +1649,6 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesThreadChannelAndImportsMemKey
     TransportRankPrepareInfo info{};
     info.nic = "tcp://127.0.0.1:8000";
     info.privateData = privateData;
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {key};
     options.options.emplace(1, std::move(info));
 
@@ -1686,7 +1683,6 @@ TEST(DeviceUrmaTransportManagerTest, PrepareCreatesAllChannelsAndConnectRankWait
     for (uint32_t peerRank = 1U; peerRank <= PEER_COUNT; ++peerRank) {
         TransportRankPrepareInfo info{};
         info.privateData = MakePrivateData(MakeEndpointDesc());
-        info.role = HYBM_ROLE_PEER;
         options.options.emplace(peerRank, std::move(info));
     }
 
@@ -1725,7 +1721,6 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankWaitFailureKeepsPreparedChannels
     for (uint32_t peerRank = 1U; peerRank <= PEER_COUNT; ++peerRank) {
         TransportRankPrepareInfo info{};
         info.privateData = MakePrivateData(MakeEndpointDesc());
-        info.role = HYBM_ROLE_PEER;
         options.options.emplace(peerRank, std::move(info));
     }
 
@@ -2150,7 +2145,6 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoAndSynchronizeUseDeviceKernel)
     peerDesc.protocol = UrmaProtocol::UBC_CTP;
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1U, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
@@ -2197,7 +2191,6 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsAndRemoveRanksReusePrepare
     HybmTransPrepareOptions prepareOptions{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
@@ -2205,7 +2198,6 @@ TEST(DeviceUrmaTransportManagerTest, UpdateRankOptionsAndRemoveRanksReusePrepare
     HybmTransPrepareOptions updateOptions{};
     TransportRankPrepareInfo updateInfo{};
     updateInfo.privateData = MakePrivateData(MakeEndpointDesc());
-    updateInfo.role = HYBM_ROLE_PEER;
     updateInfo.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR + MOCK_SIZE, MOCK_SIZE, MOCK_MEM_TAG + 1U)};
     updateOptions.options.emplace(1, std::move(updateInfo));
     EXPECT_EQ(manager.UpdateRankOptions(updateOptions), BM_OK);
@@ -2238,7 +2230,6 @@ TEST(DeviceUrmaTransportManagerTest, PrepareRollsBackNewResourcesWhenImportFails
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKey(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     options.options.emplace(1, std::move(info));
 
@@ -2352,7 +2343,6 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankPollsInProgressUntilReady)
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     options.options.emplace(1, std::move(info));
 
     // 无 memKeys，验证 Prepare 不轮询，ConnectRank 两次 IN_PROGRESS 后才完成。
@@ -2446,7 +2436,6 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankGetStatusApiFailureKeepsChannelA
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     options.options.emplace(1, std::move(info));
 
     ASSERT_EQ(manager.Prepare(options), BM_OK);
@@ -2482,7 +2471,6 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankGetStatusFailedKeepsChannelAndTh
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     options.options.emplace(1, std::move(info));
 
     ASSERT_EQ(manager.Prepare(options), BM_OK);
@@ -2518,7 +2506,6 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankGetStatusTimeoutKeepsChannelAndT
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     options.options.emplace(1, std::move(info));
 
     ASSERT_EQ(manager.Prepare(options), BM_OK);
@@ -2554,7 +2541,6 @@ TEST(DeviceUrmaTransportManagerTest, ConnectRankGetStatusUnknownKeepsChannelAndT
     HybmTransPrepareOptions options{};
     TransportRankPrepareInfo info{};
     info.privateData = MakePrivateData(MakeEndpointDesc());
-    info.role = HYBM_ROLE_PEER;
     options.options.emplace(1, std::move(info));
 
     ASSERT_EQ(manager.Prepare(options), BM_OK);
@@ -2886,7 +2872,6 @@ TEST(DeviceUrmaTransportManagerTest, MultipleAsyncThenSynchronizeClearsAll)
     peerDesc.protocol = UrmaProtocol::UBC_CTP;
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
@@ -2950,7 +2935,6 @@ TEST(DeviceUrmaTransportManagerTest, CrossRankAsyncSynchronizeOneClearsAll)
         pd.protocol = UrmaProtocol::UBC_CTP;
         pd.type = COMM_ADDR_TYPE_IP_V6;
         pi.privateData = MakePrivateData(pd);
-        pi.role = HYBM_ROLE_PEER;
         pi.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
         prep.options.emplace(peer, std::move(pi));
         ASSERT_EQ(manager.Prepare(prep), BM_OK);
@@ -3029,7 +3013,6 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureKeepsReusableBufferUntilClose)
     peerDesc.protocol = UrmaProtocol::UBC_CTP;
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
@@ -3093,7 +3076,6 @@ TEST(DeviceUrmaTransportManagerTest, LaunchFailureDefersReusableBufferRelease)
     peerDesc.protocol = UrmaProtocol::UBC_CTP;
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
@@ -3157,7 +3139,6 @@ TEST(DeviceUrmaTransportManagerTest, AclrtSynchronizeStreamFailureIsTerminal)
     peerDesc.protocol = UrmaProtocol::UBC_CTP;
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);
@@ -3415,7 +3396,6 @@ TEST(DeviceUrmaTransportManagerTest, PrepareFailsOnBadPrivateDataMagic)
     TransportRankPrepareInfo info{};
     info.nic = "tcp://127.0.0.1:8000";
     info.privateData = badData;
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {key};
     options.options.emplace(1, std::move(info));
 
@@ -4267,7 +4247,6 @@ TEST(DeviceUrmaTransportManagerTest, RemoteIoFailsForUnregisteredLocalAddr)
     peerDesc.protocol = UrmaProtocol::UBC_CTP;
     peerDesc.type = COMM_ADDR_TYPE_IP_V6;
     info.privateData = MakePrivateData(peerDesc);
-    info.role = HYBM_ROLE_PEER;
     info.memKeys = {MakeImportKeyWithFlag(MOCK_REMOTE_ADDR, MOCK_SIZE, MOCK_MEM_TAG)};
     prepareOptions.options.emplace(1UL, std::move(info));
     ASSERT_EQ(manager.Prepare(prepareOptions), BM_OK);

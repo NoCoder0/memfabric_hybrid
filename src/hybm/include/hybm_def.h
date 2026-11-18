@@ -57,11 +57,8 @@ typedef void *hybm_mem_slice_t;
 // HYBM_FLAG_UNRESTRICTED_MEM mem_type == MEM_DDR_TYPE, pg_type == MEM_HUGE_PAGE_TYPE
 #define HYBM_FLAG_UNRESTRICTED_MEM   (1U << 11)
 #define HYBM_FLAG_OFFLOAD_GIANT_PAGE (1U << 12)
-// HYBM_FLAG_PROXY create entity for proxy
-#define HYBM_FLAG_PROXY (1U << 10)
-// HYBM_FLAG_PROVIDER provider binds all (or env-selected) NPUs of the local host
-#define HYBM_FLAG_PROVIDER        (1U << 14)
-#define HYBM_FLAG_INIT_SHMEM_META (1ULL << 63)
+#define HYBM_FLAG_SKIP_DEVICE_INIT   (1U << 14)
+#define HYBM_FLAG_INIT_SHMEM_META    (1ULL << 63)
 
 #define HYBM_PRE_REG_SIZE_THRES (8192U * 1024) // local buffer larger than 8MB maybe preregister to mr
 
@@ -133,11 +130,11 @@ typedef enum {
 } hybm_scene;
 
 typedef enum {
-    HYBM_ROLE_PEER = 0, // peer to peer connect
-    HYBM_ROLE_SENDER,
-    HYBM_ROLE_RECEIVER,
-    HYBM_ROLE_BUTT
-} hybm_role_type;
+    HYBM_CLUSTER_ROLE_DEFAULT = 0, // infer role from local DRAM size in HOST_SHM + device transport mode
+    HYBM_CLUSTER_ROLE_PROVIDER,
+    HYBM_CLUSTER_ROLE_PROXY,
+    HYBM_CLUSTER_ROLE_BUTT
+} hybm_cluster_role_type;
 
 typedef struct {
     uint8_t *desc;
@@ -168,7 +165,7 @@ typedef struct {
     uint64_t hostVASpace;
     hybm_scene scene;
     bool enable56BitsGva;
-    hybm_role_type role;
+    hybm_cluster_role_type clusterRole;
     uint32_t flags;
     char transUrl[64];
     char tag[32];

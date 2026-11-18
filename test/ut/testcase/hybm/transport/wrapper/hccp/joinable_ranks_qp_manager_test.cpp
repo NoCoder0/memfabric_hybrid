@@ -110,8 +110,7 @@ TEST_F(JoinableRanksQpManagerTest, SetRemoteRankInfo)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_1, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_1, ock::mf::transport::device::ConnectRankInfo(net, {}));
     int ret = manager->SetRemoteRankInfo(ranks);
     EXPECT_EQ(ret, BM_OK);
     // 空 ranks
@@ -120,7 +119,7 @@ TEST_F(JoinableRanksQpManagerTest, SetRemoteRankInfo)
     EXPECT_EQ(ret, BM_OK);
     // 越界 rankId
     ranks.clear();
-    ranks.emplace(K_OUT_OF_RANGE_RANK, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_OUT_OF_RANGE_RANK, ock::mf::transport::device::ConnectRankInfo(net, {}));
     ret = manager->SetRemoteRankInfo(ranks);
     EXPECT_EQ(ret, BM_OK);
 }
@@ -159,9 +158,8 @@ TEST_F(JoinableRanksQpManagerTest, RemoveRanksClearsNewClients)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_2, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_3, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_2, ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_3, ConnectRankInfo(net, {}));
     clientManager->SetRemoteRankInfo(ranks);
     EXPECT_TRUE(clientManager->newClients_.count(K_RANK_ID_2));
     EXPECT_TRUE(clientManager->newClients_.count(K_RANK_ID_3));
@@ -258,9 +256,7 @@ TEST_F(JoinableRanksQpManagerTest, RemovedRank_CancelsStaleSocketWaitBatch)
     remote.sin_family = AF_INET;
     remote.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "10.20.0.2", &remote.sin_addr);
-    ock::mf::transport::TransportMemoryKey key{};
-    transManager.SetRemoteRankInfo({{64, ConnectRankInfo(HYBM_ROLE_RECEIVER, remote, key)},
-                                    {65, ConnectRankInfo(HYBM_ROLE_RECEIVER, remote, key)}});
+    transManager.SetRemoteRankInfo({{64, ConnectRankInfo(remote, {})}, {65, ConnectRankInfo(remote, {})}});
     ASSERT_TRUE(transManager.IsConnectBatchCurrent({64, 65}));
 
     transManager.RemoveRanks({64});
@@ -277,12 +273,11 @@ TEST_F(JoinableRanksQpManagerTest, SameRankReplacementPreservesNewAddressAndCanc
     sockaddr_in newNet = oldNet;
     newNet.sin_port = htons(K_PORT_8001);
     JoinableRanksQpManager manager(0, 0, 0, 66, oldNet, HYBM_SCENE_TRANS);
-    ock::mf::transport::TransportMemoryKey key{};
-    manager.SetRemoteRankInfo({{64, ConnectRankInfo(HYBM_ROLE_RECEIVER, oldNet, key)}});
+    manager.SetRemoteRankInfo({{64, ConnectRankInfo(oldNet, {})}});
     manager.connections_[64].qpStatus = 1;
     EXPECT_TRUE(manager.CheckQpReady({64}));
     manager.RemoveRanks({64});
-    manager.SetRemoteRankInfo({{64, ConnectRankInfo(HYBM_ROLE_RECEIVER, newNet, key)}});
+    manager.SetRemoteRankInfo({{64, ConnectRankInfo(newNet, {})}});
     EXPECT_FALSE(manager.CheckQpReady({64}));
     EXPECT_FALSE(manager.IsConnectBatchCurrent({64}));
     EXPECT_EQ(manager.connections_[64].remoteNet.sin_port, oldNet.sin_port);
@@ -306,10 +301,9 @@ TEST_F(JoinableRanksQpManagerTest, ScenarioRegression_NoIpAddressAfterLeave)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
 
     // Phase 1: 新 rank 2 加入 → newClients_ = {2}, connections_[2] 有有效 IP
-    mgr->SetRemoteRankInfo({{K_RANK_ID_2, ConnectRankInfo(HYBM_ROLE_PEER, net, mk)}});
+    mgr->SetRemoteRankInfo({{K_RANK_ID_2, ConnectRankInfo(net, {})}});
     ASSERT_TRUE(mgr->newClients_.count(K_RANK_ID_2));
     ASSERT_NE(mgr->connections_[K_RANK_ID_2].remoteNet.sin_addr.s_addr, 0U);
 
@@ -367,9 +361,8 @@ TEST_F(JoinableRanksQpManagerTest, RemoveRanksAfterPipelineFailure)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_2, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_3, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_2, ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_3, ConnectRankInfo(net, {}));
     serverManager->SetRemoteRankInfo(ranks);
 
     // Step 1: ServerSideHandleNewClients 执行管线
@@ -405,9 +398,8 @@ TEST_F(JoinableRanksQpManagerTest, RemoveRanksClearsNewServers)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(0, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_1, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(0, ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_1, ConnectRankInfo(net, {}));
     clientManager->SetRemoteRankInfo(ranks);
     EXPECT_TRUE(clientManager->newServers_.count(0));
     EXPECT_TRUE(clientManager->newServers_.count(K_RANK_ID_1));
@@ -545,9 +537,8 @@ TEST_F(JoinableRanksQpManagerTest, ServerSideHandleNewClients)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_3, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_3, ock::mf::transport::device::ConnectRankInfo(net, {}));
     clientManager->connections_.resize(K_RANK_COUNT); // 模拟已有连接状态
     clientManager->SetRemoteRankInfo(ranks);
 
@@ -621,9 +612,8 @@ TEST_F(JoinableRanksQpManagerTest, WaitSocketConnections)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(1, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(1, ock::mf::transport::device::ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(net, {}));
     clientManager->SetRemoteRankInfo(ranks);
 
     clientManager->connections_.resize(K_RANK_COUNT); // 模拟已有连接状态
@@ -654,9 +644,8 @@ TEST_F(JoinableRanksQpManagerTest, MakeQpConnections)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(1, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(1, ock::mf::transport::device::ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(net, {}));
     clientManager->SetRemoteRankInfo(ranks);
 
     clientManager->connections_.resize(K_RANK_COUNT); // 模拟已有连接状态
@@ -714,9 +703,8 @@ TEST_F(JoinableRanksQpManagerTest, GenerateWhiteList)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_3, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_3, ock::mf::transport::device::ConnectRankInfo(net, {}));
     clientManager->SetRemoteRankInfo(ranks);
 
     std::set<uint32_t> newClients = {K_RANK_ID_2, K_RANK_ID_3};
@@ -742,9 +730,8 @@ TEST_F(JoinableRanksQpManagerTest, GenerateWhiteListEmpty)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_RANK_ID_3, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_2, ock::mf::transport::device::ConnectRankInfo(net, {}));
+    ranks.emplace(K_RANK_ID_3, ock::mf::transport::device::ConnectRankInfo(net, {}));
     clientManager->connections_.resize(K_RANK_COUNT); // 模拟已有连接状态
     clientManager->SetRemoteRankInfo(ranks);
 
@@ -773,8 +760,7 @@ TEST_F(JoinableRanksQpManagerTest, CreateConnectionToServers)
     net.sin_family = AF_INET;
     net.sin_port = htons(K_PORT_8001);
     inet_pton(AF_INET, "192.168.1.1", &net.sin_addr);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(0, ock::mf::transport::device::ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(0, ock::mf::transport::device::ConnectRankInfo(net, {}));
     clientManager->SetRemoteRankInfo(ranks);
 
     // client客户端【2卡】连接 server【0卡】
@@ -913,9 +899,8 @@ TEST(AicpuJoinableRanksQpManagerTest, SetRemoteRankInfoSkipsOutOfRange)
     auto manager = MakeAiManager();
     std::unordered_map<uint32_t, ConnectRankInfo> ranks;
     sockaddr_in net = MakeAiDevNet(K_AI_PORT + 1);
-    ock::mf::transport::TransportMemoryKey mk{};
-    ranks.emplace(K_RANK_ID_1, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
-    ranks.emplace(K_OUT_OF_RANGE_RANK, ConnectRankInfo(HYBM_ROLE_PEER, net, mk));
+    ranks.emplace(K_RANK_ID_1, ConnectRankInfo(net, {}));
+    ranks.emplace(K_OUT_OF_RANGE_RANK, ConnectRankInfo(net, {}));
     EXPECT_EQ(manager->SetRemoteRankInfo(ranks), BM_OK);
     EXPECT_EQ(manager->currentRanksInfo_.count(K_RANK_ID_1), 1U);
     EXPECT_EQ(manager->currentRanksInfo_.count(K_OUT_OF_RANGE_RANK), 0U);

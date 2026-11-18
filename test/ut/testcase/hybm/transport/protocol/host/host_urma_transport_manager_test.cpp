@@ -129,7 +129,6 @@ HybmTransPrepareOptions MakePeerOptions(uint32_t peerRank = PEER_RANK)
     header.payloadLen = sizeof(endpoint);
     HybmTransPrepareOptions options{};
     auto &peer = options.options[peerRank];
-    peer.role = HYBM_ROLE_PEER;
     peer.privateData.key.ResizeBytes(sizeof(header) + sizeof(endpoint));
     std::memcpy(peer.privateData.key.ByteData(), &header, sizeof(header));
     std::memcpy(peer.privateData.key.ByteData() + sizeof(header), &endpoint, sizeof(endpoint));

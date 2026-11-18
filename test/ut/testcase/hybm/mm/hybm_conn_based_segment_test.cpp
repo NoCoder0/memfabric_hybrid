@@ -551,9 +551,9 @@ TEST_F(HybmConnBasedSegmentTest, ReleaseRegisteredHostMemory_UnregistersDeviceFo
         .will(returnValue(0));
     auto options = MakeOptions();
     options.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_URMA);
-    for (auto role : {HybmConnBasedSegment::HostRole::PROVIDER, HybmConnBasedSegment::HostRole::PROXY}) {
+    for (auto role : {HYBM_CLUSTER_ROLE_PROVIDER, HYBM_CLUSTER_ROLE_PROXY}) {
         HybmConnBasedSegment segment(options, 0);
-        segment.role_ = role;
+        segment.clusterRole_ = role;
         segment.logicDeviceId_ = deviceId;
         for (uint32_t attempt = 0; attempt < 2; ++attempt) {
             MemSlicePtr slice;
@@ -571,12 +571,12 @@ TEST_F(HybmConnBasedSegmentTest, ReleaseProviderPoolAndProxyDeviceSlice_DoesNotU
     auto options = MakeOptions();
     options.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_URMA);
     HybmConnBasedSegment provider(options, 0);
-    provider.role_ = HybmConnBasedSegment::HostRole::PROVIDER;
+    provider.clusterRole_ = HYBM_CLUSTER_ROLE_PROVIDER;
     auto pool = MakeHostSlice(0, HYBM_LARGE_PAGE_SIZE, HYBM_LARGE_PAGE_SIZE);
     provider.slices_.emplace(pool->index_, pool);
     EXPECT_EQ(provider.ReleaseSliceMemory(pool), BM_OK);
     HybmConnBasedSegment proxy(options, 0);
-    proxy.role_ = HybmConnBasedSegment::HostRole::PROXY;
+    proxy.clusterRole_ = HYBM_CLUSTER_ROLE_PROXY;
     auto deviceSlice = std::make_shared<MemSlice>(0, HYBM_MEM_TYPE_DEVICE, MEM_PT_TYPE_SVM, 0, HYBM_HBM_START_ADDR,
                                                   HYBM_LARGE_PAGE_SIZE);
     proxy.slices_.emplace(deviceSlice->index_, deviceSlice);
@@ -719,7 +719,7 @@ protected:
         options.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | transport);
         options.flags = flags;
         HybmConnBasedSegment segment(options, 0);
-        segment.role_ = HybmConnBasedSegment::HostRole::PROVIDER;
+        segment.clusterRole_ = HYBM_CLUSTER_ROLE_PROVIDER;
         segment.localVirtualBase_ = reinterpret_cast<uint8_t *>(0x400000000000ULL);
         return segment.MapProviderShm();
     }

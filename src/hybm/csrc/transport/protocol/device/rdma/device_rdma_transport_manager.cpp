@@ -111,7 +111,6 @@ Result RdmaTransportManager::OpenDevice(const TransportOptions &options)
     rankId_ = options.rankId;
     rankCount_ = options.rankCount;
     qpReadyCache_.reset(new std::atomic<bool>[rankCount_]());
-    role_ = options.role;
     scene_ = options.scene;
     ret = ParseDeviceNic(options.nic, devicePort_);
     BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "parse input nic(" << options.nic << ") failed!", BM_INVALID_PARAM);
@@ -275,7 +274,7 @@ Result RdmaTransportManager::Prepare(const HybmTransPrepareOptions &options)
             return BM_INVALID_PARAM;
         }
 
-        rankInfo.emplace(it->first, ConnectRankInfo{it->second.role, deviceNetwork, it->second.memKeys});
+        rankInfo.emplace(it->first, ConnectRankInfo{deviceNetwork, it->second.memKeys});
     }
 
     ret = qpManager_->SetRemoteRankInfo(rankInfo);
@@ -425,7 +424,7 @@ Result RdmaTransportManager::UpdateRankOptions(const HybmTransPrepareOptions &op
             BM_LOG_ERROR("update rank network(" << it->second.nic << ") invalid.");
             return BM_INVALID_PARAM;
         }
-        ranksInfo.emplace(it->first, ConnectRankInfo{it->second.role, deviceNetwork, it->second.memKeys});
+        ranksInfo.emplace(it->first, ConnectRankInfo{deviceNetwork, it->second.memKeys});
     }
 
     auto ret = qpManager_->SetRemoteRankInfo(ranksInfo);
@@ -762,11 +761,6 @@ void RdmaTransportManager::ClearAllRegisterMRs()
 
 int RdmaTransportManager::CheckPrepareOptions(const ock::mf::transport::HybmTransPrepareOptions &options)
 {
-    if (role_ != HYBM_ROLE_PEER) {
-        BM_LOG_INFO("transport role: " << role_ << " check options passed.");
-        return BM_OK;
-    }
-
     if (options.options.size() > rankCount_) {
         BM_LOG_ERROR("options size():" << options.options.size() << " larger than rank count: " << rankCount_);
         return BM_INVALID_PARAM;

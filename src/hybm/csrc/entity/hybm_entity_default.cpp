@@ -82,10 +82,7 @@ Result MemEntityDefault::InitTagManager()
     int32_t localDevicePhyId = -1;
     MemSegment::GetLocalPhysicalInfo(localSuperPodId, localServerId, localDevicePhyId);
     tagManager_->SetRankTopology(options_.rankId, localSuperPodId, localServerId, localDevicePhyId);
-    std::vector<hybm_data_op_type> layerProtocols;
-    if (tagManager_ != nullptr) {
-        layerProtocols = tagManager_->GetLayersForRank(options_.rankId);
-    }
+    auto layerProtocols = tagManager_->GetLayersForRank(options_.rankId);
     if (!layerProtocols.empty()) {
         uint32_t layerOpMask = 0U;
         for (auto layer : layerProtocols) {
@@ -571,7 +568,6 @@ int AppendEntityExportInfo(ExchangeInfoWriter &desc, const EntityExportInfo &inf
 {
     int ret = desc.Append(info.magic);
     ret = (ret != 0) ? ret : desc.Append(info.rankId);
-    ret = (ret != 0) ? ret : desc.Append(info.role);
     ret = (ret != 0) ? ret : desc.Append(info.phyDevId);
     ret = (ret != 0) ? ret : desc.Append(info.nic, sizeof(info.nic));
     ret = (ret != 0) ? ret : desc.Append(info.layerCount);
@@ -587,7 +583,6 @@ int ReadEntityExportInfo(const ExchangeInfoReader &reader, EntityExportInfo &inf
 {
     int ret = reader.Read(info.magic);
     ret = (ret != 0) ? ret : reader.Read(info.rankId);
-    ret = (ret != 0) ? ret : reader.Read(info.role);
     ret = (ret != 0) ? ret : reader.Read(info.phyDevId);
     ret = (ret != 0) ? ret : reader.Read(info.nic, sizeof(info.nic));
     ret = (ret != 0) ? ret : reader.Read(info.layerCount);
@@ -626,7 +621,6 @@ int32_t MemEntityDefault::ExportEntityExchangeInfo(ExchangeInfoWriter &desc, uin
 
     EntityExportInfo exportInfo{};
     exportInfo.rankId = options_.rankId;
-    exportInfo.role = static_cast<uint16_t>(options_.role);
     std::vector<hybm_data_op_type> layerProtocols;
     if (tagManager_ != nullptr) {
         layerProtocols = tagManager_->GetLayersForRank(options_.rankId);
@@ -995,22 +989,18 @@ int32_t MemEntityDefault::ImportForTransportManager()
     transport::HybmTransPrepareOptions prepareOptions;
     for (const auto &item : importedRanks_) {
         auto &info = item.second;
-        if (options_.role != HYBM_ROLE_PEER && static_cast<hybm_role_type>(info.role) == options_.role) {
-            continue;
-        }
         // Peers without a transport (e.g. a bare provider that only owns shared memory) export an empty nic;
         // they cannot be connected over the network and must be skipped.
         if (info.nic[0] == '\0') {
             continue;
         }
         // A proxy only connects (device RDMA) to peers on the same node-unique phyDevId.
-        if ((options_.flags & HYBM_FLAG_PROXY) != 0 && info.phyDevId != LocalPhyDevId()) {
+        if (options_.clusterRole == HYBM_CLUSTER_ROLE_PROXY && info.phyDevId != LocalPhyDevId()) {
             continue;
         }
         transport::TransportRankPrepareInfo prepareInfo;
         prepareInfo.nic = info.nic;
         prepareInfo.privateData = info.transportPrivateData;
-        prepareInfo.role = static_cast<hybm_role_type>(info.role);
         prepareOptions.options.emplace(info.rankId, std::move(prepareInfo));
     }
 
@@ -1472,6 +1462,11 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
         return BM_INVALID_PARAM;
     }
 
+    if (options->clusterRole < HYBM_CLUSTER_ROLE_DEFAULT || options->clusterRole >= HYBM_CLUSTER_ROLE_BUTT) {
+        BM_LOG_ERROR("invalid cluster role: " << options->clusterRole);
+        return BM_INVALID_PARAM;
+    }
+
     constexpr uint32_t deviceNetworkProtocolMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     const uint32_t enabledDeviceNetworkProtocols = options->bmDataOpType & deviceNetworkProtocolMask;
     // 只允许启用一种协议
@@ -1483,39 +1478,22 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
     }
 
     const bool hasHostShm = (options->bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0;
-    const uint32_t deviceInter = options->bmDataOpType & deviceNetworkProtocolMask;
-    const bool isHostCombo = hasHostShm && deviceInter != 0U;
     if (hasHostShm) {
         if ((options->memType & HYBM_MEM_TYPE_DEVICE) != 0 || options->deviceVASpace != 0 ||
             options->maxHBMSize != 0U) {
             BM_LOG_ERROR("HOST_SHM op type only supports DRAM shared memory without HBM");
             return BM_INVALID_PARAM;
         }
-        if (isHostCombo) {
-            if ((deviceInter & (deviceInter - 1U)) != 0U) {
-                BM_LOG_ERROR(
-                    "HOST_SHM can only pair with one device transport, bmDataOpType=" << options->bmDataOpType);
-                return BM_INVALID_PARAM;
-            }
-            constexpr uint32_t forbidden =
-                HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
-            if ((options->bmDataOpType & forbidden) != 0U) {
-                BM_LOG_ERROR("HOST_SHM+device cannot mix with SDMA or host RDMA/URMA/TCP, bmDataOpType="
-                             << options->bmDataOpType);
-                return BM_INVALID_PARAM;
-            }
-        } else {
-            if (options->hostVASpace == 0U) {
-                BM_LOG_ERROR("HOST_SHM op type requires non-zero host VASpace");
-                return BM_INVALID_PARAM;
-            }
-            constexpr uint32_t forbidden = HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK |
-                                           HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
-            if ((options->bmDataOpType & forbidden) != 0U) {
-                BM_LOG_ERROR(
-                    "HOST_SHM op type cannot mix with other transports, bmDataOpType=" << options->bmDataOpType);
-                return BM_INVALID_PARAM;
-            }
+        // 纯 HOST_SHM 模式要求非零本地地址空间，组合模式允许 proxy 不提供本地内存。
+        if (enabledDeviceNetworkProtocols == 0U && options->hostVASpace == 0U) {
+            BM_LOG_ERROR("HOST_SHM op type requires non-zero host VASpace");
+            return BM_INVALID_PARAM;
+        }
+        constexpr uint32_t forbidden =
+            HYBM_DOP_TYPE_SDMA | HYBM_DOP_TYPE_HOST_RDMA | HYBM_DOP_TYPE_HOST_URMA | HYBM_DOP_TYPE_HOST_TCP;
+        if ((options->bmDataOpType & forbidden) != 0U) {
+            BM_LOG_ERROR("HOST_SHM cannot mix with SDMA or host RDMA/URMA/TCP, bmDataOpType=" << options->bmDataOpType);
+            return BM_INVALID_PARAM;
         }
     }
     if ((options->flags & HYBM_FLAG_CREATE_WITH_SHM) != 0 && options->dramShmFd < 0) {
@@ -1660,19 +1638,15 @@ int32_t MemEntityDefault::ImportForTransport() noexcept
     transport::HybmTransPrepareOptions transOptions;
     std::unique_lock<std::mutex> uniqueLock{importMutex_};
     for (auto &rank : importedRanks_) {
-        if (options_.role != HYBM_ROLE_PEER && static_cast<hybm_role_type>(rank.second.role) == options_.role) {
-            continue;
-        }
         // Peers without a transport (e.g. a bare provider) export an empty nic and cannot be connected.
         if (rank.second.nic[0] == '\0') {
             continue;
         }
         // A proxy only connects (device RDMA) to peers on the same node-unique phyDevId.
-        if ((options_.flags & HYBM_FLAG_PROXY) != 0 && rank.second.phyDevId != LocalPhyDevId()) {
+        if (options_.clusterRole == HYBM_CLUSTER_ROLE_PROXY && rank.second.phyDevId != LocalPhyDevId()) {
             continue;
         }
 
-        transOptions.options[rank.first].role = static_cast<hybm_role_type>(rank.second.role);
         transOptions.options[rank.first].nic = rank.second.nic;
         transOptions.options[rank.first].privateData = rank.second.transportPrivateData;
         BM_LOG_DEBUG("ImportForTransport rankid:" << rank.first);
@@ -1775,6 +1749,7 @@ Result MemEntityDefault::InitHbmSegment()
     segmentOptions.rankCnt = options_.rankCount;
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
+    segmentOptions.clusterRole = options_.clusterRole;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
     segmentOptions.scene = options_.scene;
     constexpr auto transportMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK | HYBM_DOP_TYPE_HOST_RDMA;
@@ -1806,6 +1781,7 @@ Result MemEntityDefault::InitDramSegment()
     segmentOptions.rankCnt = options_.rankCount;
     segmentOptions.dataOpType = options_.bmDataOpType;
     segmentOptions.flags = options_.flags;
+    segmentOptions.clusterRole = options_.clusterRole;
     segmentOptions.shmFd = options_.dramShmFd;
     segmentOptions.enable56BitsGva = options_.enable56BitsGva;
     segmentOptions.scene = options_.scene;
@@ -1839,16 +1815,12 @@ Result MemEntityDefault::InitTransManager()
         proxyOptions.rankCount = options_.rankCount;
         proxyOptions.deviceId = options_.devId;
         proxyOptions.protocol = options_.bmDataOpType;
-        proxyOptions.role = options_.role;
         proxyOptions.scene = options_.scene;
         proxyOptions.initialType = options_.bmType;
         proxyOptions.nic = options_.transUrl;
         proxyOptions.tlsOption = options_.tlsOption;
 
-        const bool explicitProvider = (options_.flags & HYBM_FLAG_PROVIDER) != 0U;
-        const bool explicitProxy = (options_.flags & HYBM_FLAG_PROXY) != 0U;
-        const bool isProviderRole = explicitProvider || (!explicitProxy && options_.hostVASpace > 0U);
-        if (isProviderRole) {
+        if (ResolveHostComboRole(options_.clusterRole, options_.hostVASpace) == HYBM_CLUSTER_ROLE_PROVIDER) {
             if ((options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0U) {
                 providerServer_ = std::make_shared<transport::device::UrmaProviderControlServer>();
             } else {
@@ -1902,7 +1874,6 @@ Result MemEntityDefault::InitTransManager()
     options.rankId = options_.rankId;
     options.rankCount = options_.rankCount;
     options.protocol = options_.bmDataOpType;
-    options.role = options_.role;
     options.scene = options_.scene;
     options.initialType = options_.bmType;
     options.nic = options_.transUrl;
@@ -2076,7 +2047,7 @@ int32_t MemEntityDefault::SetThreadAclDevice()
 #if !defined(ASCEND_NPU)
     return BM_OK;
 #endif
-    if ((options_.flags & HYBM_FLAG_PROVIDER) != 0) {
+    if (options_.clusterRole == HYBM_CLUSTER_ROLE_PROVIDER) {
         return BM_OK;
     }
     // Other runtimes can change this thread's ACL device between transfers.

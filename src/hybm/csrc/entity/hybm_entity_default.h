@@ -35,7 +35,6 @@ class ProviderService;
 struct EntityExportInfo {
     uint64_t magic{ENTITY_EXPORT_INFO_MAGIC};
     uint32_t rankId{0};
-    uint16_t role{0};
     uint16_t phyDevId{0}; // node-unique phyDevId, used by a proxy to connect only to same-device peers
     char nic[64]{};
     uint32_t layerCount{0};

@@ -936,7 +936,7 @@ TEST_F(HybmMemSegmentTest, Create_Dram_HostShmFlag_UsesHostShmSegment)
 
 /**
 * SelectDramSegmentKind_HostShmAndProxyPriority
-*  - host shm 优先于 proxy 标志：HOST_SHM only + PROXY → HostShm；
+*  - host shm 优先于 proxy 角色：HOST_SHM only + PROXY → HostShm；
 *  - HOST_SHM + 设备传输（分离部署）→ ConnBased；
 *  - 无 HOST_SHM 时 proxy 兜底 → ConnBased。
 */
@@ -947,7 +947,7 @@ TEST_F(HybmMemSegmentTest, SelectDramSegmentKind_HostShmAndProxyPriority)
     constexpr auto soc = ock::mf::AscendSocType::ASCEND_910B;
 
     opt.dataOpType = HYBM_DOP_TYPE_HOST_SHM;
-    opt.flags = HYBM_FLAG_PROXY;
+    opt.clusterRole = HYBM_CLUSTER_ROLE_PROXY;
     EXPECT_EQ(ock::mf::MemSegment::SelectDramSegmentKind(opt, soc), Kind::HostShm);
 
     opt.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_RDMA);
@@ -983,7 +983,7 @@ TEST_F(HybmMemSegmentTest, SelectDramSegmentKind_VmmCapability)
 
 /**
 * Create_Dram_Proxy_UsesConnBasedSegment
-*  - 分离部署 proxy（HOST_SHM + 设备传输 + PROXY 标志）→ HybmConnBasedSegment。
+*  - 分离部署 proxy（HOST_SHM + 设备传输 + PROXY 角色）→ HybmConnBasedSegment。
 */
 TEST_F(HybmMemSegmentTest, Create_Dram_Proxy_UsesConnBasedSegment)
 {
@@ -992,7 +992,7 @@ TEST_F(HybmMemSegmentTest, Create_Dram_Proxy_UsesConnBasedSegment)
     opt.rankId = 0;
     opt.segType = ock::mf::HYBM_MST_DRAM;
     opt.dataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_SHM | HYBM_DOP_TYPE_DEVICE_URMA);
-    opt.flags = HYBM_FLAG_PROXY;
+    opt.clusterRole = HYBM_CLUSTER_ROLE_PROXY;
     opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
 
     MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_UNKNOWN));
@@ -1005,17 +1005,17 @@ TEST_F(HybmMemSegmentTest, Create_Dram_Proxy_UsesConnBasedSegment)
 }
 
 /**
-* Create_Dram_HostShmOnlyWithProxyFlag_UsesHostShmSegment
-*  - 优先级回归：仅 HOST_SHM 但误带 PROXY 标志时仍走 HybmHostShmSegment。
+* Create_Dram_HostShmOnlyWithProxyRole_UsesHostShmSegment
+*  - 优先级回归：仅 HOST_SHM 但指定 PROXY 角色时仍走 HybmHostShmSegment。
 */
-TEST_F(HybmMemSegmentTest, Create_Dram_HostShmOnlyWithProxyFlag_UsesHostShmSegment)
+TEST_F(HybmMemSegmentTest, Create_Dram_HostShmOnlyWithProxyRole_UsesHostShmSegment)
 {
     ock::mf::MemSegmentOptions opt{};
     opt.rankCnt = 2;
     opt.rankId = 0;
     opt.segType = ock::mf::HYBM_MST_DRAM;
     opt.dataOpType = HYBM_DOP_TYPE_HOST_SHM;
-    opt.flags = HYBM_FLAG_PROXY;
+    opt.clusterRole = HYBM_CLUSTER_ROLE_PROXY;
     opt.maxSize = ock::mf::HYBM_LARGE_PAGE_SIZE;
 
     MOCKER(ock::mf::HybmGetGvaVersion).stubs().will(returnValue(ock::mf::HYBM_GVA_UNKNOWN));

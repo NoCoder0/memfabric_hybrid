@@ -407,7 +407,7 @@ Result HybmConnBasedSegment::MapLocalProviderShmInternal(const HostExportInfo &i
 HybmConnBasedSegment::AddressScope HybmConnBasedSegment::GetAddressScope(uint64_t gva) const noexcept
 {
     std::shared_lock<std::shared_mutex> lock(mutex_);
-    if (role_ == HostRole::SELF) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_DEFAULT) {
         return AddressScope::LOCAL_HOST;
     }
     const uint64_t globalBase = reinterpret_cast<uint64_t>(globalVirtualAddress_);
@@ -421,7 +421,7 @@ HybmConnBasedSegment::AddressScope HybmConnBasedSegment::GetAddressScope(uint64_
             return AddressScope::LOCAL_PROVIDER_SHM;
         }
     }
-    if (role_ == HostRole::PROVIDER && rank == options_.rankId) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER && rank == options_.rankId) {
         // provider 自己的窗口：池映射在窗口起点，按映射长度判本机。
         if (gva < windowBase + localShmSize_) {
             return AddressScope::LOCAL_PROVIDER_SHM;

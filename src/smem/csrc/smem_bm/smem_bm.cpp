@@ -104,7 +104,12 @@ SMEM_API int32_t smem_bm_init(const char *storeURL, uint32_t worldSize, uint16_t
         return SM_ERROR;
     }
 
-    ret = hybm_init(deviceId, SmemHybmHelper::TransHybmFlags(config->flags));
+    uint64_t initFlags = SmemHybmHelper::TransHybmFlags(config->flags);
+    if ((config->flags & SMEM_BM_FLAG_PROVIDER) != 0U) {
+        // Provider 由传输层管理多设备初始化，此处跳过单设备初始化。
+        initFlags |= HYBM_FLAG_SKIP_DEVICE_INIT;
+    }
+    ret = hybm_init(deviceId, initFlags);
     if (ret != 0) {
         (void)::ock::mf::FaultInjectionPointRegistry::Unregister();
         SM_LOG_AND_SET_LAST_ERROR("init hybm failed, result: " << ret << ", flags: 0x" << std::hex << config->flags);
@@ -290,6 +295,27 @@ static void SmemBmFillDramFdInOptions(const smem_bm_create_option_t &smemOpts, h
     }
 }
 
+static int32_t SmemBmResolveClusterRole(const smem_bm_create_option_t &option, bool isHostCombo,
+                                        hybm_cluster_role_type &role)
+{
+    role = HYBM_CLUSTER_ROLE_DEFAULT;
+    if (isHostCombo) {
+        role = option.localDRAMSize > 0U ? HYBM_CLUSTER_ROLE_PROVIDER : HYBM_CLUSTER_ROLE_PROXY;
+    }
+
+    const uint32_t roleFlags = option.flags & (SMEM_BM_FLAG_PROXY | SMEM_BM_FLAG_PROVIDER);
+    if (roleFlags == 0U || (roleFlags == SMEM_BM_FLAG_PROVIDER && role == HYBM_CLUSTER_ROLE_PROVIDER) ||
+        (roleFlags == SMEM_BM_FLAG_PROXY && role == HYBM_CLUSTER_ROLE_PROXY)) {
+        return SM_OK;
+    }
+
+    SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM, "role flags conflict with protocol or local DRAM size, flags: 0x"
+                                                         << std::hex << roleFlags
+                                                         << ", dataOpType: " << option.dataOpType
+                                                         << ", localDRAMSize: " << std::dec << option.localDRAMSize);
+    return SM_INVALID_PARAM;
+}
+
 static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t *option, smem_bm_t *out)
 {
     *out = nullptr;
@@ -312,34 +338,26 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     const bool isHostShm = (option->dataOpType & SMEMB_DATA_OP_HOST_SHM) != 0;
     const uint32_t deviceInter = option->dataOpType & deviceInterMask;
     const bool isHostCombo = isHostShm && deviceInter != 0U;
-    if (isHostCombo) {
-        // HOST_SHM pairs with exactly one inter-node device protocol.
+    if (isHostShm) {
+        // HOST_SHM 最多搭配一种跨节点 device 协议。
         if ((deviceInter & (deviceInter - 1U)) != 0U) {
             SM_LOG_AND_SET_LAST_ERROR_CODE(
                 SM_INVALID_PARAM,
                 "HOST_SHM can only pair with one device transport, dataOpType=" << option->dataOpType);
             return SM_INVALID_PARAM;
         }
-        if ((option->localHBMSize != 0U) || (option->maxHbmSize != 0U)) {
+        // HOST_SHM 不允许本地贡献 HBM；与 device 协议组合时，maxHbmSize 也必须为零。
+        if (option->localHBMSize != 0U || (isHostCombo && option->maxHbmSize != 0U)) {
             SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-                                           "HOST_SHM+device transport only supports DRAM shared memory without HBM");
+                                           "HOST_SHM op type only supports DRAM shared memory without HBM");
             return SM_INVALID_PARAM;
         }
-        constexpr uint32_t forbiddenWithHostCombo =
+        constexpr uint32_t forbidden =
             SMEMB_DATA_OP_SDMA | SMEMB_DATA_OP_HOST_RDMA | SMEMB_DATA_OP_HOST_URMA | SMEMB_DATA_OP_HOST_TCP;
-        if ((option->dataOpType & forbiddenWithHostCombo) != 0U) {
+        if ((option->dataOpType & forbidden) != 0U) {
             SM_LOG_AND_SET_LAST_ERROR_CODE(
-                SM_INVALID_PARAM, "HOST_SHM+device transport cannot mix with SDMA or host RDMA/URMA/TCP, dataOpType="
-                                      << option->dataOpType);
-            return SM_INVALID_PARAM;
-        }
-    } else if (isHostShm) {
-        constexpr uint32_t hostShmConflictMask = SMEMB_DATA_OP_SDMA | SMEMB_DATA_OP_HOST_RDMA |
-                                                 SMEMB_DATA_OP_HOST_URMA | SMEMB_DATA_OP_HOST_TCP |
-                                                 SMEMB_DATA_OP_DEVICE_RDMA | SMEMB_DATA_OP_DEVICE_URMA;
-        if ((option->localHBMSize != 0U) || (option->dataOpType & hostShmConflictMask) != 0U) {
-            SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-                                           "HOST_SHM op type only supports DRAM and cannot mix with other transports");
+                SM_INVALID_PARAM,
+                "HOST_SHM cannot mix with SDMA or host RDMA/URMA/TCP, dataOpType=" << option->dataOpType);
             return SM_INVALID_PARAM;
         }
     }
@@ -370,27 +388,12 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     options.maxDRAMSize = option->maxDramSize;
     options.deviceVASpace = option->localHBMSize;
     options.hostVASpace = option->localDRAMSize;
-    options.role = HYBM_ROLE_PEER;
-    constexpr uint32_t roleFlagMask = SMEM_BM_FLAG_PROXY | SMEM_BM_FLAG_PROVIDER;
-    const uint32_t explicitRoleFlags = option->flags & roleFlagMask;
-    uint32_t derivedRoleFlags = 0;
-    if (isHostCombo) {
-        derivedRoleFlags = option->localDRAMSize > 0U ? SMEM_BM_FLAG_PROVIDER : SMEM_BM_FLAG_PROXY;
-    } else if (explicitRoleFlags != 0U) {
-        SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM,
-                                       "role flags are only valid with HOST_SHM+device transport, flags: 0x"
-                                           << std::hex << explicitRoleFlags);
+    ret = SmemBmResolveClusterRole(*option, isHostCombo, options.clusterRole);
+    if (ret != SM_OK) {
         (void)manager.RemoveEntryByPtr(reinterpret_cast<uintptr_t>(entry.Get()));
-        return SM_INVALID_PARAM;
+        return ret;
     }
-    if (explicitRoleFlags != 0U && explicitRoleFlags != derivedRoleFlags) {
-        SM_LOG_AND_SET_LAST_ERROR_CODE(SM_INVALID_PARAM, "role flags conflict with memory config, explicit: 0x"
-                                                             << std::hex << explicitRoleFlags << ", derived: 0x"
-                                                             << derivedRoleFlags);
-        (void)manager.RemoveEntryByPtr(reinterpret_cast<uintptr_t>(entry.Get()));
-        return SM_INVALID_PARAM;
-    }
-    options.flags = SmemHybmHelper::TransHybmFlags(option->flags | derivedRoleFlags);
+    options.flags = SmemHybmHelper::TransHybmFlags(option->flags);
 
     constexpr uint64_t SMEM_56BITS_GVA_REQUIRED_THRESHOLD = 32ULL << 40; // 32TB
     const uint64_t totalAddrSpace =

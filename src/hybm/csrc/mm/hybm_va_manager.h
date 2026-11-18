@@ -85,16 +85,16 @@ inline std::ostream &operator<<(std::ostream &os, hybm_scene obj)
     }
 }
 
-inline std::ostream &operator<<(std::ostream &os, hybm_role_type obj)
+inline std::ostream &operator<<(std::ostream &os, hybm_cluster_role_type obj)
 {
     switch (obj) {
-        case HYBM_ROLE_PEER:
-            return os << "PEER";
-        case HYBM_ROLE_SENDER:
-            return os << "SENDER";
-        case HYBM_ROLE_RECEIVER:
-            return os << "RECEIVER";
-        case HYBM_ROLE_BUTT:
+        case HYBM_CLUSTER_ROLE_DEFAULT:
+            return os << "DEFAULT";
+        case HYBM_CLUSTER_ROLE_PROVIDER:
+            return os << "PROVIDER";
+        case HYBM_CLUSTER_ROLE_PROXY:
+            return os << "PROXY";
+        case HYBM_CLUSTER_ROLE_BUTT:
             return os << "BUTT";
         default:
             return os << "UNKNOWN(" << static_cast<unsigned>(obj) << ")";
@@ -118,9 +118,9 @@ inline std::ostream &operator<<(std::ostream &os, const hybm_options &obj)
        << ", maxHBMSize: " << obj.maxHBMSize << ", maxDRAMSize: " << obj.maxDRAMSize
        << ", deviceVASpace: " << obj.deviceVASpace << ", hostVASpace: " << obj.hostVASpace << ", bmType: " << obj.bmType
        << ", memType: " << obj.memType << ", bmDataOpType: " << obj.bmDataOpType << ", scene: " << obj.scene
-       << ", enable56BitsGva: " << obj.enable56BitsGva << ", role: " << obj.role << ", flags: " << obj.flags
-       << ", dramShmFd: " << obj.dramShmFd << ", transUrl: " << obj.transUrl << ", tag: " << obj.tag
-       << ", tagOpInfo: " << obj.tagOpInfo << ", tlsOption: " << obj.tlsOption;
+       << ", enable56BitsGva: " << obj.enable56BitsGva << ", clusterRole: " << obj.clusterRole
+       << ", flags: " << obj.flags << ", dramShmFd: " << obj.dramShmFd << ", transUrl: " << obj.transUrl
+       << ", tag: " << obj.tag << ", tagOpInfo: " << obj.tagOpInfo << ", tlsOption: " << obj.tlsOption;
     return os;
 }
 

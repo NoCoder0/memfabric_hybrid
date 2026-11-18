@@ -218,7 +218,8 @@ Result RdmaProxyTransportManager::Prepare(const HybmTransPrepareOptions &options
         std::string ip;
         uint16_t port = 0;
         if (!provider_control::ParseUrl(info.providerControlUrl, ip, port)) {
-            BM_LOG_ERROR("provider control url invalid: " << info.providerControlUrl << ", rank=" << item.first);
+            BM_LOG_ERROR("RDMA proxy invalid provider URL, providerRank=" << item.first
+                                                                          << " url=" << info.providerControlUrl);
             return BM_INVALID_PARAM;
         }
         auto link = links_.find(item.first);
@@ -239,7 +240,7 @@ Result RdmaProxyTransportManager::ConnectRank(uint32_t rankId)
         std::lock_guard<std::mutex> lock(mutex_);
         const auto peer = preparedProviders_.find(rankId);
         if (peer == preparedProviders_.end()) {
-            BM_LOG_ERROR("provider connect requires prepared peer information, rank=" << rankId);
+            BM_LOG_ERROR("RDMA proxy rank is not prepared, providerRank=" << rankId);
             return BM_NOT_INITIALIZED;
         }
         info = peer->second;
@@ -249,7 +250,7 @@ Result RdmaProxyTransportManager::ConnectRank(uint32_t rankId)
         return ret;
     }
     if (GetConnectedProtocols(rankId).empty()) {
-        BM_LOG_ERROR("provider link is not ready, rank=" << rankId);
+        BM_LOG_ERROR("RDMA proxy link is not ready, providerRank=" << rankId);
         return BM_NOT_INITIALIZED;
     }
     return BM_OK;
@@ -279,12 +280,13 @@ Result RdmaProxyTransportManager::ConnectProvider(uint32_t rankId, const Transpo
     std::string ip;
     uint16_t port = 0;
     if (!provider_control::ParseUrl(url, ip, port)) {
-        BM_LOG_ERROR("provider control url invalid: " << url << ", rank=" << rankId);
+        BM_LOG_ERROR("RDMA proxy invalid provider URL, providerRank=" << rankId << " url=" << url);
         return BM_INVALID_PARAM;
     }
     int fd = provider_control::ConnectToHost(ip, port, deadline);
     if (fd < 0) {
-        BM_LOG_ERROR("connect provider failed, url=" << url << ", rank=" << rankId);
+        BM_LOG_ERROR("RDMA proxy connection failed, stage=TCP connect providerRank=" << rankId << " url=" << url
+                                                                                     << " ret=" << BM_ERROR);
         return BM_ERROR;
     }
     auto socketGuard = make_scope_guard(fd, [](int value) { close(value); });
@@ -296,13 +298,14 @@ Result RdmaProxyTransportManager::ConnectProvider(uint32_t rankId, const Transpo
     hello.proxyDeviceId = deviceId_;
     hello.reserved = device_.UsesNotifyCompletion() ? RDMA_PROVIDER_LINK_NOTIFY_COMPLETION : 0;
     if (!SendStruct(fd, hello, deadline)) {
-        BM_LOG_ERROR("provider hello send failed, rank=" << rankId << " errno=" << errno);
+        BM_LOG_ERROR("RDMA proxy HELLO send failed, providerRank=" << rankId << " errno=" << errno);
         return BM_ERROR;
     }
     RdmaProviderLinkHelloAck ack{};
     if (!RecvStruct(fd, ack, deadline) || ack.magic != RDMA_PROVIDER_LINK_MAGIC ||
         ack.version != RDMA_PROVIDER_LINK_VERSION || ack.status != 0 || ack.providerRank != rankId) {
-        BM_LOG_ERROR("provider handshake failed, url=" << url);
+        BM_LOG_ERROR("RDMA proxy connection failed, stage=handshake providerRank=" << rankId << " url=" << url
+                                                                                   << " ret=" << BM_ERROR);
         return BM_ERROR;
     }
     void *qpHandle = nullptr;
@@ -313,12 +316,12 @@ Result RdmaProxyTransportManager::ConnectProvider(uint32_t rankId, const Transpo
     auto qpGuard = make_scope_guard(qpHandle, [this](void *value) { device_.DestroyQp(value); });
     auto localInfo = ToLinkQp(localQp, RDMA_PROVIDER_LINK_MAGIC);
     if (!SendStruct(fd, localInfo, deadline)) {
-        BM_LOG_ERROR("provider QP send failed, rank=" << rankId << " errno=" << errno);
+        BM_LOG_ERROR("RDMA proxy QP send failed, providerRank=" << rankId << " errno=" << errno);
         return BM_ERROR;
     }
     RdmaProviderLinkQpInfo remoteInfo{};
     if (!RecvStruct(fd, remoteInfo, deadline) || remoteInfo.magic != RDMA_PROVIDER_LINK_MAGIC) {
-        BM_LOG_ERROR("provider QP reply invalid or incomplete, rank=" << rankId << " errno=" << errno);
+        BM_LOG_ERROR("RDMA proxy QP reply invalid or incomplete, providerRank=" << rankId << " errno=" << errno);
         return BM_ERROR;
     }
     TypicalQp remoteQp{};
@@ -328,12 +331,12 @@ Result RdmaProxyTransportManager::ConnectProvider(uint32_t rankId, const Transpo
     }
     RdmaProviderLinkMrInfo mr{};
     if (!RecvStruct(fd, mr, deadline) || mr.magic != RDMA_PROVIDER_LINK_MAGIC || mr.status != 0) {
-        BM_LOG_ERROR("provider MR reply invalid or incomplete, rank=" << rankId << " status=" << mr.status
-                                                                      << " errno=" << errno);
+        BM_LOG_ERROR("RDMA proxy MR reply invalid or incomplete, providerRank=" << rankId << " peerStatus=" << mr.status
+                                                                                << " errno=" << errno);
         return BM_ERROR;
     }
     if (device_.UsesNotifyCompletion() && (mr.notifySourceAddr == 0 || mr.notifySourceRkey == 0)) {
-        BM_LOG_ERROR("provider MR reply has no completion notification source, rank=" << rankId);
+        BM_LOG_ERROR("RDMA proxy MR reply has no completion notification source, providerRank=" << rankId);
         return BM_INVALID_PARAM;
     }
     const uint64_t localGvaBase = info.providerGvaBase != 0 ? info.providerGvaBase : mr.providerGvaBase;
@@ -343,14 +346,14 @@ Result RdmaProxyTransportManager::ConnectProvider(uint32_t rankId, const Transpo
     const bool validAddressRanges =
         matchesAck && mr.npuAddrBase <= lastBase && mr.providerGvaBase <= lastBase && localGvaBase <= lastBase;
     if (!validAddressRanges) {
-        BM_LOG_ERROR("provider MR range invalid or inconsistent with hello, rank=" << rankId);
+        BM_LOG_ERROR("RDMA proxy MR range invalid or inconsistent with HELLO, providerRank=" << rankId);
         return BM_INVALID_PARAM;
     }
     RdmaProviderLinkDone done{};
     done.magic = RDMA_PROVIDER_LINK_MAGIC;
     done.status = 0;
     if (!SendStruct(fd, done, deadline)) {
-        BM_LOG_ERROR("provider completion acknowledgement failed, rank=" << rankId << " errno=" << errno);
+        BM_LOG_ERROR("RDMA proxy completion acknowledgement failed, providerRank=" << rankId << " errno=" << errno);
         return BM_ERROR;
     }
 
@@ -372,9 +375,9 @@ Result RdmaProxyTransportManager::ConnectProvider(uint32_t rankId, const Transpo
     }
     qpGuard.release();
     socketGuard.release();
-    BM_LOG_INFO("direct provider link established, providerRank=" << rankId << " selectedPhy=" << mr.selectedPhyId
-                                                                  << " npuAddr=" << mr.npuAddrBase
-                                                                  << " rkey=" << mr.rkey);
+    BM_LOG_INFO("RDMA proxy link established, providerRank=" << rankId << " proxyRank=" << hello.proxyRank
+                                                             << " selectedPhy=" << mr.selectedPhyId
+                                                             << " npuAddr=" << mr.npuAddrBase << " rkey=" << mr.rkey);
     return BM_OK;
 }
 

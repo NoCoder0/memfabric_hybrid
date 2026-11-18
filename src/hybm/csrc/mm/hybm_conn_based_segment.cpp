@@ -53,23 +53,14 @@ Result HybmConnBasedSegment::ValidateOptions() noexcept
     constexpr uint32_t deviceInterMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     const uint32_t deviceInter = options_.dataOpType & deviceInterMask;
     const bool hostCombo = (options_.dataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U && deviceInter != 0U;
-    // 显式角色标志优先，未指定时按 size 兜底；两标志互斥、标志与 size 冲突均显式拒绝（见 smem_bm 侧）。
-    constexpr uint32_t roleFlagMask = HYBM_FLAG_PROXY | HYBM_FLAG_PROVIDER;
-    const uint32_t explicitRoleFlags = options_.flags & roleFlagMask;
-    if (explicitRoleFlags == roleFlagMask) {
-        BM_LOG_ERROR("provider and proxy role flags are mutually exclusive, flags:" << options_.flags);
+    if (hostCombo && ((options_.clusterRole == HYBM_CLUSTER_ROLE_PROVIDER && options_.size == 0U) ||
+                      (options_.clusterRole == HYBM_CLUSTER_ROLE_PROXY && options_.size > 0U))) {
+        BM_LOG_ERROR("cluster role conflicts with provider memory size, clusterRole:" << options_.clusterRole
+                                                                                      << ", size:" << options_.size);
         return BM_INVALID_PARAM;
     }
-    const bool providerFlag = (explicitRoleFlags & HYBM_FLAG_PROVIDER) != 0U;
-    const bool proxyFlag = (explicitRoleFlags & HYBM_FLAG_PROXY) != 0U;
-    if (hostCombo && ((providerFlag && options_.size == 0U) || (proxyFlag && options_.size > 0U))) {
-        BM_LOG_ERROR("role flags conflict with provider memory size, flags:" << options_.flags
-                                                                             << ", size:" << options_.size);
-        return BM_INVALID_PARAM;
-    }
-    const bool provider = providerFlag || (explicitRoleFlags == 0U && options_.size > 0U);
-    role_ = !hostCombo ? HostRole::SELF : (provider ? HostRole::PROVIDER : HostRole::PROXY);
-    if (role_ != HostRole::SELF) {
+    clusterRole_ = !hostCombo ? HYBM_CLUSTER_ROLE_DEFAULT : ResolveHostComboRole(options_.clusterRole, options_.size);
+    if (clusterRole_ != HYBM_CLUSTER_ROLE_DEFAULT) {
         if ((deviceInter & (deviceInter - 1U)) != 0U) {
             BM_LOG_ERROR("HOST_SHM can only pair with one device transport, dataOpType=" << options_.dataOpType);
             return BM_INVALID_PARAM;
@@ -147,7 +138,7 @@ Result HybmConnBasedSegment::ReserveMemorySpace(void **address) noexcept
                                                        << " base:" << startAddr << " windowSize:" << options_.maxSize
                                                        << " totalSize:" << totalSize);
 
-    if (role_ == HostRole::PROVIDER) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER) {
         auto ret = MapProviderShm();
         if (ret != BM_OK) {
             BM_LOG_ERROR("provider map local shm failed: " << ret);
@@ -190,12 +181,12 @@ void HybmConnBasedSegment::LvaShmReservePhysicalMemory(void *mappedAddress, uint
 
 Result HybmConnBasedSegment::AllocLocalMemory(uint64_t size, MemSlicePtr &slice) noexcept
 {
-    if (role_ == HostRole::PROXY) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROXY) {
         BM_LOG_ERROR("proxy does not allocate local memory, size: " << size);
         return BM_NOT_SUPPORTED;
     }
 
-    if (role_ == HostRole::PROVIDER) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER) {
         // Proxy address records currently allow one pool per provider rank.
         // Multiple slices would overwrite the rank address registration.
         if (!slices_.empty()) {
@@ -263,7 +254,7 @@ Result HybmConnBasedSegment::Export(const MemSlicePtr &slice, std::string &exInf
         BM_LOG_ERROR("input slice(idx:" << slice->index_ << ") not exist or not match.");
         return BM_INVALID_PARAM;
     }
-    if (role_ == HostRole::PROXY) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROXY) {
         BM_LOG_ERROR("proxy does not export local slices.");
         return BM_NOT_SUPPORTED;
     }
@@ -280,11 +271,11 @@ Result HybmConnBasedSegment::Export(const MemSlicePtr &slice, std::string &exInf
     info.rankId = options_.rankId;
     info.size = slice->size_;
     info.pageTblType = MEM_PT_TYPE_SVM;
-    info.memSegType = role_ == HostRole::PROVIDER ? HYBM_DRAM_PROVIDER : HYBM_MST_DRAM;
+    info.memSegType = clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER ? HYBM_DRAM_PROVIDER : HYBM_MST_DRAM;
     info.exchangeType = HYBM_INFO_EXG_IN_NODE;
     info.deviceId = static_cast<uint16_t>(options_.devId);
     const int32_t localPhy = devicePhyId_ >= 0 ? devicePhyId_ : static_cast<int32_t>(options_.devId);
-    info.phyDevId = role_ == HostRole::PROVIDER ? 0U : static_cast<uint16_t>(localPhy);
+    info.phyDevId = clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER ? 0U : static_cast<uint16_t>(localPhy);
     info.machineId = machineId_;
     auto ret = LiteralExInfoTranslater<HostExportInfo>{}.Serialize(info, exInfo);
     if (ret != BM_OK) {
@@ -353,12 +344,12 @@ Result HybmConnBasedSegment::Import(const std::vector<std::string> &allExInfo, v
 
     BM_ASSERT_LOG_AND_RETURN(entryKinds.size() == allExInfo.size(), "entryKinds must be sized by caller",
                              BM_INVALID_PARAM);
-    if (role_ == HostRole::PROVIDER) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER) {
         // provider 侧看到的 proxy 导出信息没有可连接端点，统一忽略
         std::fill(entryKinds.begin(), entryKinds.end(), ImportEntryKind::IgnoredProxy);
         return BM_OK;
     }
-    if (role_ == HostRole::PROXY) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROXY) {
         // proxy 侧只把 provider 池条目标记为 ProviderPool，其余（其它 proxy 的导出）忽略
         std::fill(entryKinds.begin(), entryKinds.end(), ImportEntryKind::IgnoredProxy);
         // Open outside mutex_ so readiness retries do not block address classification.
@@ -393,11 +384,11 @@ Result HybmConnBasedSegment::Import(const std::vector<std::string> &allExInfo, v
 Result HybmConnBasedSegment::Mmap() noexcept
 {
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    if (role_ == HostRole::PROVIDER) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER) {
         imports_.clear();
         return BM_OK;
     }
-    if (role_ == HostRole::PROXY) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROXY) {
         auto &vaMgr = HybmVaManager::GetInstance();
         for (const auto &item : importedProviders_) {
             if (item.first == localProviderRank_) {
@@ -492,7 +483,7 @@ void HybmConnBasedSegment::FreeMemory() noexcept
 {
     while (!slices_.empty()) {
         auto slice = slices_.begin()->second.slice;
-        const bool ownsBackingMemory = role_ == HostRole::SELF && (slice->gva_ != 0U);
+        const bool ownsBackingMemory = clusterRole_ == HYBM_CLUSTER_ROLE_DEFAULT && (slice->gva_ != 0U);
         ReleaseSliceMemory(slice);
         if (ownsBackingMemory) {
             FreeAllocatedMemory(reinterpret_cast<void *>(slice->vAddress_), slice->size_, slice->allocMethod_);
@@ -501,7 +492,7 @@ void HybmConnBasedSegment::FreeMemory() noexcept
     Unmap();
 
     // provider 自身映射的解除：
-    if (role_ == HostRole::PROVIDER && localShmBase_ != nullptr) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER && localShmBase_ != nullptr) {
         const uint64_t base = reinterpret_cast<uint64_t>(localShmBase_);
         const uint64_t reservedBase = reinterpret_cast<uint64_t>(globalVirtualAddress_);
         const bool insideReserved =
@@ -514,7 +505,7 @@ void HybmConnBasedSegment::FreeMemory() noexcept
         localShmSize_ = 0UL;
     }
     if (localShmFd_ >= 0) {
-        if (role_ == HostRole::PROVIDER) {
+        if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER) {
             auto shmPath = GetProviderShmFilePath(useHugetlbfs_);
             if (unlink(shmPath.c_str()) != 0 && errno != ENOENT) {
                 BM_LOG_WARN("Failed to unlink provider shm " << shmPath << " error:" << errno);
@@ -676,10 +667,10 @@ void *HybmConnBasedSegment::AllocMemory(void *sliceAddr, uint64_t lvOffset, uint
 Result HybmConnBasedSegment::RemoveImported(const std::vector<uint32_t> &ranks) noexcept
 {
     std::unique_lock<std::shared_mutex> lock(mutex_);
-    if (role_ == HostRole::PROVIDER) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROVIDER) {
         return BM_OK;
     }
-    if (role_ == HostRole::PROXY) {
+    if (clusterRole_ == HYBM_CLUSTER_ROLE_PROXY) {
         if (LocalProviderMapped() && std::find(ranks.begin(), ranks.end(), localProviderRank_) != ranks.end()) {
             const auto ret = TeardownLocalProviderShm();
             if (ret != BM_OK) {
@@ -753,7 +744,7 @@ Result HybmConnBasedSegment::ReleaseSliceMemory(const MemSlicePtr &slice) noexce
 #if defined(ASCEND_NPU)
     uint32_t needUnregister = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK | HYBM_DOP_TYPE_MTE;
     const bool needsDeviceUnregister =
-        role_ == HostRole::SELF || (slice->gva_ == 0 && slice->memType_ == HYBM_MEM_TYPE_HOST);
+        clusterRole_ == HYBM_CLUSTER_ROLE_DEFAULT || (slice->gva_ == 0 && slice->memType_ == HYBM_MEM_TYPE_HOST);
     if (needsDeviceUnregister && slice->memType_ == HYBM_MEM_TYPE_HOST && slice->size_ > 0 &&
         (options_.dataOpType & needUnregister) != 0) {
         auto unregRet =

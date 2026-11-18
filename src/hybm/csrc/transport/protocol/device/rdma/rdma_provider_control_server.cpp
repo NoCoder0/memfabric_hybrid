@@ -81,7 +81,7 @@ bool RdmaProviderControlServer::Init(const ProviderServiceOptions &options)
     }
     listenFd_ = provider_control::CreateListenSocket(listenPort);
     if (listenFd_ < 0) {
-        BM_LOG_ERROR("provider listen failed, port=" << listenPort << " errno=" << errno);
+        BM_LOG_ERROR("RDMA provider listen failed, port=" << listenPort << " errno=" << errno);
         return false;
     }
     auto ips = NetworkGetIpAddresses();
@@ -92,7 +92,7 @@ bool RdmaProviderControlServer::Init(const ProviderServiceOptions &options)
         ip = inet_ntoa(addr);
     }
     controlUrl_ = ip + ":" + std::to_string(listenPort);
-    BM_LOG_INFO("provider control server listening at " << controlUrl_);
+    BM_LOG_INFO("RDMA provider control server listening at " << controlUrl_);
     rollback.release();
     return true;
 }
@@ -244,7 +244,7 @@ void RdmaProviderControlServer::RemoveDisconnectedClients()
     std::lock_guard<std::mutex> lock(mutex_);
     for (auto it = qps_.begin(); it != qps_.end();) {
         if (!provider_control::SocketIdle(it->second.fd)) {
-            BM_LOG_INFO("provider peer disconnected, proxyRank=" << it->first);
+            BM_LOG_INFO("RDMA provider peer control session ended, proxyRank=" << it->first);
             if (!it->second.device->TryDestroyQp(it->second.qp)) {
                 ++it;
                 continue;
@@ -315,7 +315,7 @@ void RdmaProviderControlServer::HandleClient(int fd, uint64_t removalGeneration)
     RdmaProviderLinkHello hello{};
     if (!RecvStruct(fd, hello, deadline) || hello.magic != RDMA_PROVIDER_LINK_MAGIC ||
         hello.version != RDMA_PROVIDER_LINK_VERSION || hello.reserved > RDMA_PROVIDER_LINK_NOTIFY_COMPLETION) {
-        BM_LOG_ERROR("provider invalid or incomplete hello, fd=" << fd << " errno=" << errno);
+        BM_LOG_ERROR("RDMA provider invalid or incomplete HELLO, fd=" << fd << " errno=" << errno);
         return;
     }
     RdmaProviderLinkHelloAck ack{};
@@ -327,15 +327,15 @@ void RdmaProviderControlServer::HandleClient(int fd, uint64_t removalGeneration)
         }
         // 成员准入：只拒绝被移除过的 rank 是不够的，越界/自身 rank 必须在交换 QP/MR 之前挡掉。
         if (rankCount_ == 0 || hello.proxyRank >= rankCount_ || hello.proxyRank == providerRank_) {
-            BM_LOG_ERROR("provider reject invalid proxyRank=" << hello.proxyRank << ", providerRank=" << providerRank_
-                                                              << ", rankCount=" << rankCount_);
+            BM_LOG_ERROR("RDMA provider invalid HELLO, providerRank="
+                         << providerRank_ << " proxyRank=" << hello.proxyRank << " rankCount=" << rankCount_);
             return;
         }
         auto removed = rankRemovalGenerations_.find(hello.proxyRank);
         if (removed != rankRemovalGenerations_.end() && removalGeneration < removed->second) {
-            BM_LOG_ERROR("provider stale handshake, proxyRank=" << hello.proxyRank
-                                                                << " handshakeGeneration=" << removalGeneration
-                                                                << " removedGeneration=" << removed->second);
+            BM_LOG_ERROR("RDMA provider stale handshake, proxyRank=" << hello.proxyRank
+                                                                     << " handshakeGeneration=" << removalGeneration
+                                                                     << " removedGeneration=" << removed->second);
             return;
         }
         handshakeRank_ = hello.proxyRank;
@@ -350,7 +350,8 @@ void RdmaProviderControlServer::HandleClient(int fd, uint64_t removalGeneration)
                size_};
     }
     if (!SendStruct(fd, ack, deadline) || ack.status != 0) {
-        BM_LOG_ERROR("provider hello rejected, proxyRank=" << hello.proxyRank << " status=" << ack.status);
+        BM_LOG_ERROR("RDMA provider HELLO acknowledgement failed, proxyRank=" << hello.proxyRank
+                                                                              << " status=" << ack.status);
         return;
     }
     void *qpHandle = nullptr;
@@ -363,7 +364,7 @@ void RdmaProviderControlServer::HandleClient(int fd, uint64_t removalGeneration)
     RdmaProviderLinkQpInfo remoteInfo{};
     if (!SendStruct(fd, localInfo, deadline) || !RecvStruct(fd, remoteInfo, deadline) ||
         remoteInfo.magic != RDMA_PROVIDER_LINK_MAGIC) {
-        BM_LOG_ERROR("provider QP exchange failed, proxyRank=" << hello.proxyRank << " errno=" << errno);
+        BM_LOG_ERROR("RDMA provider QP exchange failed, proxyRank=" << hello.proxyRank << " errno=" << errno);
         return;
     }
     TypicalQp remoteQp{};
@@ -388,7 +389,7 @@ void RdmaProviderControlServer::HandleClient(int fd, uint64_t removalGeneration)
     RdmaProviderLinkDone done{};
     if (!SendStruct(fd, mr, deadline) || !RecvStruct(fd, done, deadline) || done.magic != RDMA_PROVIDER_LINK_MAGIC ||
         done.status != 0) {
-        BM_LOG_ERROR("provider MR acknowledgement failed, proxyRank=" << hello.proxyRank << " errno=" << errno);
+        BM_LOG_ERROR("RDMA provider MR acknowledgement failed, proxyRank=" << hello.proxyRank << " errno=" << errno);
         return;
     }
     {
@@ -408,9 +409,9 @@ void RdmaProviderControlServer::HandleClient(int fd, uint64_t removalGeneration)
     }
     qpGuard.release();
     socketGuard.release();
-    BM_LOG_INFO("provider link established, proxyRank=" << hello.proxyRank << " selectedPhy=" << dev->phyId
-                                                        << " remotePhy=" << hello.proxyPhyId << " tc=" << localQp.tc
-                                                        << " sl=" << localQp.sl);
+    BM_LOG_INFO("RDMA provider link established, providerRank="
+                << ack.providerRank << " proxyRank=" << hello.proxyRank << " selectedPhy=" << dev->phyId
+                << " remotePhy=" << hello.proxyPhyId << " tc=" << localQp.tc << " sl=" << localQp.sl);
 }
 
 } // namespace device
