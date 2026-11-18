@@ -427,6 +427,8 @@ int32_t smem_bm_copy(smem_bm_t handle, smem_copy_params_t *params,
 
 批量拷贝数据对象。
 
+HYBM 显式方向批量拷贝入口保留所有条目的空地址和零长度检查；地址类型及方向校验仅在后端复制失败后逐条执行，用于补充错误诊断，不重试复制或覆盖后端原始错误码。调用方须保证条目符合指定方向，批量失败不保证已完成条目的回滚。后端 GVA 转换及调用失败检查保留，`AUTO` 方向仍逐条分类分组。
+
 ```c
 int32_t smem_bm_copy_batch(smem_bm_t handle, smem_batch_copy_params_t *params, smem_bm_copy_type_t t, uint32_t flags);
 ```

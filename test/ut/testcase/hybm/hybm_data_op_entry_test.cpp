@@ -120,9 +120,10 @@ public:
                           uint32_t flags) noexcept override
     {
         batchCopyCalled = true;
+        ++batchCopyCalls;
         batchCopyDirection = direction;
         batchCopySize = params.batchSize;
-        return BM_OK;
+        return batchCopyResult;
     }
 
     int32_t Wait() noexcept override
@@ -148,6 +149,8 @@ public:
     hybm_data_copy_direction batchCopyDirection = HYBM_DATA_COPY_DIRECTION_BUTT;
     uint64_t copySize = 0;
     uint32_t batchCopySize = 0;
+    uint32_t batchCopyCalls = 0U;
+    int32_t batchCopyResult = BM_OK;
 };
 
 class HybmDataOpEntryTest : public testing::Test {
@@ -445,19 +448,23 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_auto_infer_success)
 
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_null_item)
 {
-    void *sources[2] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR), nullptr};
-    void *destinations[2] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x1000),
-                             reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x3000)};
-    uint64_t dataSizes[2] = {1024, 2048};
+    constexpr uint32_t kBatchSize = 2U;
+    constexpr uint64_t kCopySize = 1024ULL;
+    auto address = reinterpret_cast<void *>(HYBM_GVM_START_ADDR);
+    void *sources[kBatchSize] = {address, address};
+    void *destinations[kBatchSize] = {address, address};
+    const uint64_t dataSizes[kBatchSize] = {kCopySize, kCopySize};
+    hybm_batch_copy_params params{sources, destinations, dataSizes, kBatchSize};
 
-    hybm_batch_copy_params params{};
-    params.sources = sources;
-    params.destinations = destinations;
-    params.dataSizes = dataSizes;
-    params.batchSize = 2; // 2
-
-    auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
+    for (auto direction : {HYBM_LOCAL_HOST_TO_GLOBAL_HOST, HYBM_DATA_COPY_DIRECTION_AUTO}) {
+        sources[1] = nullptr;
+        EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &params, direction, nullptr, 0U), BM_INVALID_PARAM);
+        sources[1] = address;
+        destinations[1] = nullptr;
+        EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &params, direction, nullptr, 0U), BM_INVALID_PARAM);
+        destinations[1] = address;
+    }
+    EXPECT_EQ(mockEntity->batchCopyCalls, 0U);
 }
 
 TEST_F(HybmDataOpEntryTest, hybm_wait_success)
@@ -623,7 +630,7 @@ TEST_F(HybmDataOpEntryTest, hybm_data_copy_direction_mismatch)
     EXPECT_EQ(ret, BM_INVALID_PARAM);
 }
 
-TEST_F(HybmDataOpEntryTest, RemovedGlobalReturnsDedicatedErrorBeforeDirectionValidation)
+TEST_F(HybmDataOpEntryTest, RemovedGlobalPreservesCopyError)
 {
     constexpr uint64_t removedGva = HYBM_GVM_START_ADDR + 0x1000ULL;
     HybmVaManager::GetInstance().RemoveOneVaInfo(removedGva);
@@ -633,10 +640,11 @@ TEST_F(HybmDataOpEntryTest, RemovedGlobalReturnsDedicatedErrorBeforeDirectionVal
     hybm_copy_params single{src, dest, size};
     EXPECT_EQ(hybm_data_copy(mockEntity.get(), &single, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0U), BM_GVA_NOT_FOUND);
     EXPECT_FALSE(mockEntity->copyCalled);
+    mockEntity->batchCopyResult = BM_GVA_NOT_FOUND;
     hybm_batch_copy_params batch{&src, &dest, &size, 1U};
     EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &batch, HYBM_LOCAL_HOST_TO_GLOBAL_HOST, nullptr, 0U),
               BM_GVA_NOT_FOUND);
-    EXPECT_FALSE(mockEntity->batchCopyCalled);
+    EXPECT_EQ(mockEntity->batchCopyCalls, 1U);
 }
 
 TEST_F(HybmDataOpEntryTest, hybm_data_copy_auto_with_gva)
@@ -698,19 +706,77 @@ TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_auto_gva_pairs)
 // 批量拷贝方向不匹配
 TEST_F(HybmDataOpEntryTest, hybm_data_batch_copy_direction_mismatch)
 {
-    void *srcs[2] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR),
-                     reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x2000)};
-    void *dsts[2] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x1000),
-                     reinterpret_cast<void *>(HYBM_GVM_START_ADDR + 0x3000)};
-    uint64_t sizes[2] = {1024, 2048};
-    hybm_batch_copy_params p{};
-    p.sources = srcs;
-    p.destinations = dsts;
-    p.dataSizes = sizes;
-    p.batchSize = 2; // 2
-    // H2GD 需要 dest=GD，但 dest 是 (LH|GH) → 不匹配
-    auto ret = hybm_data_batch_copy(mockEntity.get(), &p, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, nullptr, 0);
-    EXPECT_EQ(ret, BM_INVALID_PARAM);
+    constexpr uint32_t kBatchSize = 2U;
+    constexpr uint64_t kCopySize = 1024ULL;
+    constexpr uint64_t kAddressStride = 0x1000ULL;
+    void *srcs[kBatchSize] = {reinterpret_cast<void *>(HYBM_GVM_START_ADDR),
+                              reinterpret_cast<void *>(HYBM_GVM_START_ADDR + kAddressStride)};
+    void *dsts[kBatchSize] = {srcs[1], srcs[0]};
+    uint64_t sizes[kBatchSize] = {kCopySize, kCopySize};
+    hybm_batch_copy_params params{srcs, dsts, sizes, kBatchSize};
+    union {
+        void (HybmVaManager::*member)(uint64_t, uint64_t, uint8_t &, uint8_t &);
+        void (*function)(HybmVaManager *, uint64_t, uint64_t, uint8_t &, uint8_t &);
+    } classify;
+    classify.member = &HybmVaManager::ClassifyAddressMask;
+    MOCKER(classify.function)
+        .expects(exactly(kBatchSize))
+        .will(invoke(+[](HybmVaManager *, uint64_t, uint64_t, uint8_t &srcMask, uint8_t &dstMask) {
+            srcMask = HybmVaManager::BIT_LOCAL_HOST;
+            dstMask = HybmVaManager::BIT_GLOBAL_HOST;
+        }));
+    mockEntity->batchCopyResult = BM_ERROR;
+
+    auto ret = hybm_data_batch_copy(mockEntity.get(), &params, HYBM_LOCAL_HOST_TO_GLOBAL_DEVICE, nullptr, 0U);
+    EXPECT_EQ(ret, BM_ERROR);
+    EXPECT_EQ(mockEntity->batchCopyCalls, 1U);
+}
+
+TEST_F(HybmDataOpEntryTest, BatchCopySuccessSkipsAddressClassification)
+{
+    constexpr uint64_t kCopySize = 1024ULL;
+    void *src = reinterpret_cast<void *>(HYBM_GVM_START_ADDR);
+    void *dst = src;
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params params{&src, &dst, sizes, 1U};
+    union {
+        void (HybmVaManager::*member)(uint64_t, uint64_t, uint8_t &, uint8_t &);
+        void (*function)(HybmVaManager *, uint64_t, uint64_t, uint8_t &, uint8_t &);
+    } classify;
+    classify.member = &HybmVaManager::ClassifyAddressMask;
+    MOCKER(classify.function).expects(never());
+
+    EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, nullptr, 0U), BM_OK);
+    EXPECT_EQ(mockEntity->batchCopyCalls, 1U);
+}
+
+TEST_F(HybmDataOpEntryTest, BatchCopyFailureWithMatchingAddressesPreservesError)
+{
+    constexpr uint64_t kCopySize = 1024ULL;
+    void *src = reinterpret_cast<void *>(HYBM_GVM_START_ADDR);
+    void *dst = src;
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params params{&src, &dst, sizes, 1U};
+    mockEntity->batchCopyResult = BM_NOT_INITIALIZED;
+
+    EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &params, HYBM_GLOBAL_HOST_TO_GLOBAL_HOST, nullptr, 0U),
+              BM_NOT_INITIALIZED);
+    EXPECT_EQ(mockEntity->batchCopyCalls, 1U);
+}
+
+TEST_F(HybmDataOpEntryTest, AutoBatchCopyStillRejectsUninferableDirection)
+{
+    constexpr uint64_t kCopySize = 1024ULL;
+    char src{};
+    char dst{};
+    void *sources[] = {&src};
+    void *destinations[] = {&dst};
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params params{sources, destinations, sizes, 1U};
+
+    EXPECT_EQ(hybm_data_batch_copy(mockEntity.get(), &params, HYBM_DATA_COPY_DIRECTION_AUTO, nullptr, 0U),
+              BM_INVALID_PARAM);
+    EXPECT_EQ(mockEntity->batchCopyCalls, 0U);
 }
 
 // D2GH 方向通过（LOCAL_DEVICE → GLOBAL_HOST）

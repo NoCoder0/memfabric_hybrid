@@ -373,6 +373,7 @@ class BigMemory:
 | copy_data参数type(BmCopyType)  | copy type, L2G, G2L, G2H, H2G                   |
 | copy_data参数flags(int)        | optional flags                                  |
 | copy_data参数stream(int)        | 提交到的流对象，默认0                            |
+| copy_data_batch方法            | 批量拷贝数据对象。HYBM 显式方向入口保留空地址和零长度检查，地址类型及方向校验仅在后端失败后逐条执行，用于诊断；不重试或覆盖后端原始错误码。调用方须保证条目符合指定方向，失败时不保证回滚。后端 GVA 转换及调用失败检查保留，`AUTO` 方向仍逐条分类分组。 |
 | set_group_event_handler方法     | 注册组事件回调函数                               |
 | set_group_event_handler参数cb   | 回调函数，签名 cb(rank_id: int, event: BmGroupEvent) |
 | get_rank_id_by_gva方法          | 根据GVA获取rank ID                                |
