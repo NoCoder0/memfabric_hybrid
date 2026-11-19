@@ -201,6 +201,8 @@ private:
 
     Result UpdateRankMrInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &opt);
 
+    void StorePeerMemoryRegion(uint32_t rankId, const HcomMemoryRegion &mrInfo);
+
     Result UpdateRankConnectInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &options);
 
     static int GetCACallBack(const char *name, char **caPath, char **crlPath, Hcom_PeerCertVerifyType *verifyType,

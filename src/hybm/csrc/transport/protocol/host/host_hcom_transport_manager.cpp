@@ -516,8 +516,37 @@ Result HcomTransportManager::Prepare(const HybmTransPrepareOptions &param)
 
 Result HcomTransportManager::RemoveRanks(const std::vector<uint32_t> &removedRanks)
 {
-    BM_LOG_DEBUG("HCOM transport manager remove ranks not implements!");
+    BM_LOG_INFO("Remove host hcom ranks, localRank: " << rankId_ << ", rankCount: " << rankCount_
+                                                      << ", ranks: " << removedRanks.size());
     reconnect_.RemoveRanks(removedRanks);
+    for (auto rank : removedRanks) {
+        // Self is not a peer here: its MR table holds the locally registered regions and must stay untouched.
+        if (rank == rankId_) {
+            continue;
+        }
+        if (rank >= rankCount_ || rank >= channelMutex_.size() || rank >= mrMutex_.size()) {
+            BM_LOG_WARN("Unable to remove host hcom rank resources, rank: " << rank << ", rankCount: " << rankCount_
+                                                                            << ", slots: " << channelMutex_.size());
+            continue;
+        }
+        Hcom_Channel channel = 0;
+        {
+            std::unique_lock<std::mutex> lock(channelMutex_[rank]);
+            channel = channels_[rank];
+            channels_[rank] = 0;
+        }
+        // The handle is only detached: the data path reads channels_ without the lock and has no per-peer
+        // in-flight barrier, so destroying a live peer channel here would race it. Channels are still
+        // released in CloseDevice.
+        size_t cachedMrs = 0;
+        {
+            std::unique_lock<std::mutex> lock(mrMutex_[rank]);
+            cachedMrs = mrs_[rank].size();
+            mrs_[rank].clear();
+        }
+        BM_LOG_INFO("Removed host hcom rank state, rank: " << rank << ", channel: " << (void *)channel
+                                                           << ", cachedMrs: " << cachedMrs);
+    }
     return BM_OK;
 }
 
@@ -591,15 +620,23 @@ Result HcomTransportManager::UpdateRankMrInfos(const std::unordered_map<uint32_t
                 BM_LOG_DEBUG("hcom returned, tokens: " << hostKey.hcomInfo.lKey.tokens[0]);
             }
             CopyHcomOneSideKey(hostKey.hcomInfo.lKey, mrInfo.lKey);
-            {
-                std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
-                mrs_[rankId].insert(mrInfo);
-            }
-            BM_LOG_INFO("Success to register to mr info rankId: " << rankId << " size: " << mrInfo.size
-                                                                  << " lKey: " << mrInfo.lKey.keys[0]);
+            StorePeerMemoryRegion(rankId, mrInfo);
         }
     }
     return BM_OK;
+}
+
+void HcomTransportManager::StorePeerMemoryRegion(uint32_t rankId, const HcomMemoryRegion &mrInfo)
+{
+    // Replace: the same start GVA can belong to a new generation after a peer restart.
+    {
+        std::unique_lock<std::mutex> lock(mrMutex_[rankId]);
+        mrs_[rankId].erase(mrInfo);
+        mrs_[rankId].insert(mrInfo);
+    }
+    BM_LOG_DEBUG("Store peer mr info rankId: " << rankId << " addr: " << VaToStr(mrInfo.addr)
+                                               << " size: " << mrInfo.size << " lva: " << VaToStr(mrInfo.lva)
+                                               << " lKey: " << mrInfo.lKey.keys[0]);
 }
 
 Result HcomTransportManager::UpdateRankConnectInfos(const std::unordered_map<uint32_t, TransportRankPrepareInfo> &opt)
@@ -869,9 +906,10 @@ Result HcomTransportManager::WriteRemoteAsync(uint32_t rankId, uint64_t lAddr, u
         if (ret != BM_OK) {
             stream_->FailedOne(false);
             Synchronize(rankId_);
-            BM_LOG_ERROR("Failed to submit put task lRank:" << rankId_ << " rRank:" << rankId
-                                                            << " lAddr:" << VaToStr(lAddr + offset) << "rAddr:"
-                                                            << VaToStr(rAddr + offset) << " size:" << sliceSize);
+            BM_LOG_ERROR("Failed to submit put task lRank:"
+                         << rankId_ << " rRank:" << rankId << " lAddr:" << VaToStr(lAddr + offset) << "rAddr:"
+                         << VaToStr(rAddr + offset) << " size:" << sliceSize << " rMrAddr:" << VaToStr(mr.addr)
+                         << " rMrLva:" << VaToStr(mr.lva) << " rMrSize:" << mr.size << " rKey:" << req.rKey.keys[0]);
             return ret;
         }
         offset += sliceSize;

@@ -135,6 +135,13 @@ int FakeServiceDestroyMemoryRegion(Hcom_Service, Service_MemoryRegion)
     return 0;
 }
 
+int g_serviceDisConnectCalls = 0;
+int FakeServiceDisConnect(Hcom_Service, Hcom_Channel)
+{
+    ++g_serviceDisConnectCalls;
+    return 0;
+}
+
 int FakeServiceConnectOk(Hcom_Service, const char *, Hcom_Channel *channel, Service_ConnectOptions)
 {
     *channel = static_cast<Hcom_Channel>(0x99UL);
@@ -219,6 +226,41 @@ void SetupManager(const std::shared_ptr<HcomTransportManager> &mgr, uint32_t ran
     mgr->channelMutex_ = std::vector<std::mutex>(rankCount);
     mgr->channels_ = std::vector<Hcom_Channel>(rankCount, 0);
     mgr->nics_ = std::vector<std::string>(rankCount, "");
+}
+
+constexpr uint32_t kLocalRank = 0U;
+constexpr uint32_t kPeerRank = 1U;
+constexpr uint32_t kRankCount = 2U;
+constexpr uint64_t kPeerGva = 0x40000000UL;
+constexpr uint64_t kPeerLva = 0x100000UL;
+constexpr uint64_t kPeerRegionSize = 0x1000UL;
+constexpr uint64_t kFirstGenKey = 0xAAUL;
+constexpr uint64_t kSecondGenKey = 0xBBUL;
+constexpr uint64_t kLocalRegionAddr = 0x500000UL;
+constexpr uint64_t kLocalRegionSize = 0x2000UL;
+
+TransportMemoryKey MakePeerMemKey(uint64_t gva, uint64_t lva, uint64_t size, uint64_t keyWord)
+{
+    RegMemoryKey key{};
+    key.type = TT_HCOM;
+    key.gva = gva;
+    key.hcomInfo.lAddress = static_cast<uintptr_t>(lva);
+    key.hcomInfo.size = size;
+    key.hcomInfo.lKey.keys[0] = keyWord;
+    TransportMemoryKey memKey{};
+    WriteStructToKey(key, memKey);
+    return memKey;
+}
+
+std::unordered_map<uint32_t, TransportRankPrepareInfo> MakeRankOptions(uint32_t rankId,
+                                                                       const TransportMemoryKey &memKey)
+{
+    TransportRankPrepareInfo info{};
+    info.nic = "tcp://127.0.0.1:2048";
+    info.memKeys.push_back(memKey);
+    std::unordered_map<uint32_t, TransportRankPrepareInfo> options;
+    options.emplace(rankId, info);
+    return options;
 }
 } // namespace
 
@@ -549,6 +591,73 @@ TEST(HcomTransportManagerTest, UpdateRankMrInfosSkipsSelfAndZeroSizeAndStoresMr)
     EXPECT_EQ(mgr->mrs_[1].begin()->addr, 0x3000U);
     EXPECT_EQ(mgr->mrs_[1].begin()->size, 0x100U);
     EXPECT_EQ(mgr->mrs_[1].begin()->lva, reinterpret_cast<uint64_t>(k1.hcomInfo.lAddress));
+}
+
+TEST(HcomTransportManagerTest, UpdateRankMrInfosSameGvaNewKeyReplacesStaleMr)
+{
+    auto mgr = HcomTransportManager::GetInstance();
+    mgr->CloseDevice();
+    SetupManager(mgr, kRankCount, kLocalRank);
+    mgr->bmOptype_ = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_RDMA);
+
+    const auto firstGen = MakePeerMemKey(kPeerGva, kPeerLva, kPeerRegionSize, kFirstGenKey);
+    ASSERT_EQ(mgr->UpdateRankMrInfos(MakeRankOptions(kPeerRank, firstGen)), BM_OK);
+    HcomMemoryRegion mr{};
+    ASSERT_EQ(mgr->GetMemoryRegionByAddr(kPeerRank, kPeerGva, mr), BM_OK);
+    ASSERT_FALSE(mr.lKey.keys.empty());
+    EXPECT_EQ(mr.lKey.keys[0], kFirstGenKey);
+    ASSERT_EQ(mgr->mrs_[kPeerRank].size(), 1U);
+
+    const auto secondGen = MakePeerMemKey(kPeerGva, kPeerLva, kPeerRegionSize, kSecondGenKey);
+    ASSERT_EQ(mgr->UpdateRankMrInfos(MakeRankOptions(kPeerRank, secondGen)), BM_OK);
+    ASSERT_EQ(mgr->GetMemoryRegionByAddr(kPeerRank, kPeerGva, mr), BM_OK);
+    ASSERT_FALSE(mr.lKey.keys.empty());
+    EXPECT_EQ(mr.lKey.keys[0], kSecondGenKey);
+    EXPECT_EQ(mgr->mrs_[kPeerRank].size(), 1U);
+}
+
+TEST(HcomTransportManagerTest, RemoveRanksDropsCachedMrAndChannel)
+{
+    DlHcomApiFnGuard guard;
+    DlHcomApi::gServiceDisConnectFunc = &FakeServiceDisConnect;
+    g_serviceDisConnectCalls = 0;
+
+    auto mgr = HcomTransportManager::GetInstance();
+    mgr->CloseDevice();
+    SetupManager(mgr, kRankCount, kLocalRank);
+    mgr->bmOptype_ = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_RDMA);
+
+    const auto memKey = MakePeerMemKey(kPeerGva, kPeerLva, kPeerRegionSize, kFirstGenKey);
+    ASSERT_EQ(mgr->UpdateRankMrInfos(MakeRankOptions(kPeerRank, memKey)), BM_OK);
+    ASSERT_EQ(mgr->mrs_[kPeerRank].size(), 1U);
+    mgr->channels_[kPeerRank] = static_cast<Hcom_Channel>(0x99UL);
+
+    EXPECT_EQ(mgr->RemoveRanks({kPeerRank}), BM_OK);
+    EXPECT_EQ(g_serviceDisConnectCalls, 0);
+    EXPECT_EQ(mgr->channels_[kPeerRank], static_cast<Hcom_Channel>(0));
+    EXPECT_TRUE(mgr->mrs_[kPeerRank].empty());
+}
+
+TEST(HcomTransportManagerTest, RemoveRanksKeepsLocalMrCache)
+{
+    DlHcomApiFnGuard guard;
+    DlHcomApi::gServiceRegisterAssignMemoryRegion = &FakeRegisterAssignMr;
+    DlHcomApi::gServiceGetMemoryRegionInfo = &FakeGetMrInfo;
+
+    auto mgr = HcomTransportManager::GetInstance();
+    mgr->CloseDevice();
+    SetupManager(mgr, kRankCount, kLocalRank);
+    mgr->bmOptype_ = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_HOST_RDMA);
+
+    TransportMemoryRegion region{};
+    region.addr = kLocalRegionAddr;
+    region.size = kLocalRegionSize;
+    region.flags = REG_MR_FLAG_DRAM;
+    ASSERT_EQ(mgr->RegisterMemoryRegion(region), BM_OK);
+    ASSERT_EQ(mgr->mrs_[kLocalRank].size(), 1U);
+
+    EXPECT_EQ(mgr->RemoveRanks({kLocalRank}), BM_OK);
+    EXPECT_EQ(mgr->mrs_[kLocalRank].size(), 1U);
 }
 
 TEST(HcomTransportManagerTest, UpdateRankConnectInfosConnectsWhenChannelEmptyAndOptionProvided)
