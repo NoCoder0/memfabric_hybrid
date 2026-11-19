@@ -85,6 +85,7 @@ private:
                                    const ExtOptions &options) noexcept;
 
     virtual Result AllocSwapMemory();
+    Result PrepareSwapMemory();
     void FreeSwapMemory();
 
     void ClassifyDataAddr(void **globalAddrs, void **localAddrs, const uint64_t *counts, uint32_t batchSize,
@@ -95,6 +96,10 @@ private:
                           hybm_data_copy_direction direction) noexcept;
     Result BatchCopyRead(hybm_batch_copy_params &params, const ExtOptions &options,
                          hybm_data_copy_direction direction) noexcept;
+    Result BatchCopyViaSwap(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                            const ExtOptions &options) noexcept;
+    Result BatchCopyViaSwapPipeline(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                    const ExtOptions &options, uint64_t slotSize) noexcept;
     Result BatchCopyG2G(hybm_batch_copy_params &params, const ExtOptions &options,
                         hybm_data_copy_direction direction) noexcept;
     Result SafePut(const void *srcVA, void *destVA, uint64_t length, const ExtOptions &options, bool srcIsHost);
@@ -107,7 +112,7 @@ private:
     bool forceUnregistered_{false};
     std::shared_ptr<transport::TransportManager> transportManager_;
     void *rdmaSwapBaseAddr_{nullptr};
-    bool rdmaSwapUseMmap_{false}; // swap 是否走普通 host 内存(mmap)分配
+    bool rdmaSwapUseHbm_{false};
     std::shared_ptr<RbtreeRangePool> rdmaSwapMemoryAllocator_;
 };
 } // namespace mf

@@ -11,10 +11,10 @@
 */
 #include "hybm_data_op_device_rdma.h"
 
-#include <sys/mman.h>
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <utility>
 #include <vector>
 #include "vendor/vendor_api.h"
 #include "vendor/ascend/dl_hal_api.h"
@@ -77,32 +77,26 @@ Result DataOpDeviceRDMA::Initialize() noexcept
     if (inited_) {
         return BM_OK;
     }
+    const bool isA5 = VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950;
     rdmaSwapSpaceSize_ =
         MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_SWAP_SPACE_SIZE, RDMA_SWAP_SPACE_SIZE) * MB;
     forceUnregistered_ =
         MfEnvUtil::GetOptionalUintOrDefault(
-            env::GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED"), 0u) != 0u;
+            env::GetEnvStr("MF_HYBM_RDMA_FORCE_UNREGISTERED", "HYBM_RDMA_FORCE_UNREGISTERED"), 0U) != 0U;
+    rdmaSwapUseHbm_ = isA5;
+    if (forceUnregistered_ && rdmaSwapSpaceSize_ == 0) {
+        BM_LOG_ERROR("MF_HYBM_RDMA_FORCE_UNREGISTERED needs a non-zero MF_HYBM_RDMA_SWAP_SPACE_SIZE, swap size: "
+                     << rdmaSwapSpaceSize_ << " rankId: " << rankId_);
+        return BM_INVALID_PARAM;
+    }
     if (rdmaSwapSpaceSize_ == 0) {
         BM_LOG_INFO("HYBM_RDMA_SWAP_SPACE_SIZE is 0, skip swap memory allocation");
         inited_ = true;
         return BM_OK;
     }
-    auto ret = AllocSwapMemory();
+    auto ret = PrepareSwapMemory();
     if (ret != BM_OK) {
         return ret;
-    }
-    transport::TransportMemoryRegion input;
-    input.addr = reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_);
-    input.size = rdmaSwapSpaceSize_;
-    // mmap 的普通 host 内存按 DRAM(=池内 host 内存)注册；HalMemAlloc 分配的仍按 ACL_DRAM。
-    input.flags = rdmaSwapUseMmap_ ? transport::REG_MR_FLAG_DRAM : transport::REG_MR_FLAG_ACL_DRAM;
-    if (transportManager_ != nullptr) {
-        ret = transportManager_->RegisterMemoryRegion(input);
-        if (ret != BM_OK) {
-            BM_LOG_ERROR("Failed to register rdma swap memory, size: " << rdmaSwapSpaceSize_);
-            FreeSwapMemory();
-            return BM_MALLOC_FAILED;
-        }
     }
     rdmaSwapMemoryAllocator_ = std::make_shared<RbtreeRangePool>((uint8_t *)rdmaSwapBaseAddr_, rdmaSwapSpaceSize_);
     inited_ = true;
@@ -111,8 +105,17 @@ Result DataOpDeviceRDMA::Initialize() noexcept
 
 void DataOpDeviceRDMA::UnInitialize() noexcept
 {
-    FreeSwapMemory();
+    if (inited_ && rdmaSwapBaseAddr_ != nullptr && transportManager_ != nullptr) {
+        const auto ret = transportManager_->UnregisterMemoryRegion(reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_));
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("Failed to unregister swap memory, rankId: " << rankId_ << " addr: " << rdmaSwapBaseAddr_
+                                                                      << " size: " << rdmaSwapSpaceSize_ << " useHbm: "
+                                                                      << rdmaSwapUseHbm_ << " ret: " << ret);
+            return;
+        }
+    }
     inited_ = false;
+    FreeSwapMemory();
 }
 
 void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direction direction) noexcept
@@ -131,27 +134,49 @@ void DataOpDeviceRDMA::TransformVa(void *&src, void *&dst, hybm_data_copy_direct
     }
 }
 
-Result DataOpDeviceRDMA::AllocSwapMemory()
+Result DataOpDeviceRDMA::PrepareSwapMemory()
 {
-    // A5(950) 主机侧 RoCE 形态：swap 用普通 host 内存(mmap)。HcommMemReg 不接受 HalMemAlloc(MEM_HOST)
-    // 的地址区间，而池内 DRAM 与普通 host 内存同为 mmap，可正常注册；与 host_rdma 路径保持一致。
-    // 其它 SoC 的 native device RDMA 仍需 HalMemAlloc + HalHostRegister 拿 DVA 供设备侧 DMA。
-    const bool useMmap = VendorApi::Api()->GetSocName() == AscendSocType::ASCEND_950;
-    if (useMmap) {
-        void *base =
-            mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE | MAP_HUGETLB, -1, 0);
-        if (base == MAP_FAILED) {
-            base = mmap(nullptr, rdmaSwapSpaceSize_, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        }
-        if (base == MAP_FAILED) {
-            BM_LOG_ERROR("mmap swap memory failed, size: " << rdmaSwapSpaceSize_ << " errno: " << errno);
-            return BM_MALLOC_FAILED;
-        }
-        rdmaSwapBaseAddr_ = base;
-        rdmaSwapUseMmap_ = true;
+    auto ret = AllocSwapMemory();
+    if (ret != BM_OK) {
+        FreeSwapMemory();
+        return ret;
+    }
+    if (transportManager_ == nullptr) {
         return BM_OK;
     }
+    transport::TransportMemoryRegion region;
+    region.addr = reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_);
+    region.size = rdmaSwapSpaceSize_;
+    region.flags = rdmaSwapUseHbm_ ? transport::REG_MR_FLAG_HBM : transport::REG_MR_FLAG_ACL_DRAM;
+    ret = transportManager_->RegisterMemoryRegion(region);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("swap registration failed, rankId: " << rankId_ << " addr: " << rdmaSwapBaseAddr_
+                                                          << " size: " << rdmaSwapSpaceSize_
+                                                          << " flags: " << region.flags << " ret: " << ret);
+        FreeSwapMemory();
+        return BM_MALLOC_FAILED;
+    }
+    BM_LOG_INFO("RDMA swap ready, rankId: " << rankId_ << " addr: " << rdmaSwapBaseAddr_
+                                            << " size: " << rdmaSwapSpaceSize_ << " useHbm: " << rdmaSwapUseHbm_
+                                            << " flags: " << region.flags);
+    return BM_OK;
+}
 
+Result DataOpDeviceRDMA::AllocSwapMemory()
+{
+    if (rdmaSwapUseHbm_) {
+        constexpr uint32_t policy = ACL_MEM_MALLOC_HUGE_FIRST | ACL_MEM_TYPE_HIGH_BAND_WIDTH;
+        auto ret = VendorApi::Api()->Malloc(&rdmaSwapBaseAddr_, rdmaSwapSpaceSize_, policy);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("HBM swap allocation failed, rankId: "
+                         << rankId_ << " deviceId: " << HybmGetInitedLogicDeviceId() << " size: " << rdmaSwapSpaceSize_
+                         << " policy: " << policy << " ret: " << ret);
+            return BM_MALLOC_FAILED;
+        }
+        BM_LOG_INFO("HBM swap allocated, rankId: " << rankId_ << " addr: " << rdmaSwapBaseAddr_
+                                                   << " size: " << rdmaSwapSpaceSize_ << " policy: " << policy);
+        return BM_OK;
+    }
     void *ptr = nullptr;
     uint64_t allocFlag = MEM_HOST | MEM_TYPE_DDR | MEM_PAGE_HUGE;
     int ret = DlHalApi::HalMemAlloc(&ptr, rdmaSwapSpaceSize_, allocFlag);
@@ -190,14 +215,13 @@ Result DataOpDeviceRDMA::AllocSwapMemory()
 void DataOpDeviceRDMA::FreeSwapMemory()
 {
     if (rdmaSwapBaseAddr_ != nullptr) {
-        if (transportManager_ != nullptr) {
-            const auto ret = transportManager_->UnregisterMemoryRegion((uint64_t)rdmaSwapBaseAddr_);
-            if (ret != 0) {
-                BM_LOG_ERROR("Failed to UnregisterMemoryRegion, ret: " << ret);
+        if (rdmaSwapUseHbm_) {
+            const auto ret = VendorApi::Api()->Free(rdmaSwapBaseAddr_);
+            if (ret != BM_OK) {
+                BM_LOG_ERROR("HBM swap free failed, rankId: " << rankId_ << " addr: " << rdmaSwapBaseAddr_
+                                                              << " size: " << rdmaSwapSpaceSize_ << " ret: " << ret);
+                return;
             }
-        }
-        if (rdmaSwapUseMmap_) {
-            (void)munmap(rdmaSwapBaseAddr_, rdmaSwapSpaceSize_);
         } else {
             DlHalApi::HalHostUnregisterEx(rdmaSwapBaseAddr_, HybmGetInitedLogicDeviceId(), HOST_MEM_MAP_DEV);
             const auto ret = DlHalApi::HalMemFree(rdmaSwapBaseAddr_);
@@ -207,14 +231,14 @@ void DataOpDeviceRDMA::FreeSwapMemory()
             HybmVaManager::GetInstance().RemoveOneVaInfo(reinterpret_cast<uint64_t>(rdmaSwapBaseAddr_), HVM_HVA);
         }
         rdmaSwapBaseAddr_ = nullptr;
-        rdmaSwapUseMmap_ = false;
+        rdmaSwapMemoryAllocator_.reset();
+        rdmaSwapUseHbm_ = false;
     }
 }
 
 DataOpDeviceRDMA::~DataOpDeviceRDMA()
 {
-    FreeSwapMemory();
-    inited_ = false;
+    UnInitialize();
 }
 
 Result DataOpDeviceRDMA::DataCopy(hybm_copy_params &params, hybm_data_copy_direction direction,
@@ -574,7 +598,11 @@ Result DataOpDeviceRDMA::BatchMergedWrite(hybm_batch_copy_params &swapParams, hy
 {
     int32_t ret;
     // Batch copy local data to swap memory
-    if (HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST) {
+    if (rdmaSwapUseHbm_) {
+        const auto kind = HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST ? ACL_MEMCPY_HOST_TO_DEVICE
+                                                                                   : ACL_MEMCPY_DEVICE_TO_DEVICE;
+        ret = BatchDataCopyLocalBatch(swapParams, kind, options);
+    } else if (HybmDirectionSrcMemType[direction] == HYBM_MEM_TYPE_HOST) {
         ret = BatchDataCopyLocalSync(swapParams, ACL_MEMCPY_HOST_TO_HOST, options);
     } else {
         ret = BatchDataCopyLocalBatch(swapParams, ACL_MEMCPY_DEVICE_TO_HOST, options);
@@ -656,7 +684,11 @@ Result DataOpDeviceRDMA::BatchMergedRead(hybm_batch_copy_params &swapParams, hyb
         return errorCode;
     }
 
-    if (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST) {
+    if (rdmaSwapUseHbm_) {
+        const auto kind = HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST ? ACL_MEMCPY_DEVICE_TO_HOST
+                                                                                    : ACL_MEMCPY_DEVICE_TO_DEVICE;
+        ret = BatchDataCopyLocalBatch(swapParams, kind, options);
+    } else if (HybmDirectionDestMemType[direction] == HYBM_MEM_TYPE_HOST) {
         ret = BatchDataCopyLocalSync(swapParams, ACL_MEMCPY_HOST_TO_HOST, options);
     } else {
         ret = BatchDataCopyLocalBatch(swapParams, ACL_MEMCPY_HOST_TO_DEVICE, options);
@@ -1041,6 +1073,211 @@ Result DataOpDeviceRDMA::BatchCopyRead(hybm_batch_copy_params &params, const Ext
     return BM_OK;
 }
 
+Result DataOpDeviceRDMA::BatchCopyViaSwap(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                          const ExtOptions &options) noexcept
+{
+    if (params.batchSize == 0) {
+        return BM_OK;
+    }
+    if (transportManager_ == nullptr) {
+        BM_LOG_ERROR("transport manager is not initialized, batchSize: " << params.batchSize << " rankId: " << rankId_);
+        return BM_ERROR;
+    }
+    if (rdmaSwapMemoryAllocator_ == nullptr) {
+        BM_LOG_ERROR("swap memory allocator is not initialized, swap size: "
+                     << rdmaSwapSpaceSize_ << " batchSize: " << params.batchSize << " rankId: " << rankId_);
+        return BM_ERROR;
+    }
+
+    constexpr uint64_t DEFAULT_SLOT_SIZE = 8ULL * MB;
+    constexpr uint64_t SWAP_ALIGNMENT = 4096ULL;
+    const auto slotCapacity = (rdmaSwapSpaceSize_ / 2) & ~(SWAP_ALIGNMENT - 1);
+    auto slotSize = std::min(DEFAULT_SLOT_SIZE, slotCapacity);
+    if (slotSize == 0) {
+        BM_LOG_ERROR("swap pipeline slot capacity is zero, rankId: " << rankId_ << " swapSize: " << rdmaSwapSpaceSize_
+                                                                     << " batchSize: " << params.batchSize
+                                                                     << " direction: " << direction);
+        return BM_INVALID_PARAM;
+    }
+    for (uint32_t index = 0; index < params.batchSize; ++index) {
+        if (params.dataSizes[index] > slotCapacity) {
+            BM_LOG_ERROR("batch item exceeds swap slot capacity, rankId: "
+                         << rankId_ << " index: " << index << " size: " << params.dataSizes[index] << " slotCapacity: "
+                         << slotCapacity << " batchSize: " << params.batchSize << " direction: " << direction);
+            return BM_INVALID_PARAM;
+        }
+        slotSize = std::max(slotSize, (params.dataSizes[index] + SWAP_ALIGNMENT - 1) & ~(SWAP_ALIGNMENT - 1));
+    }
+    return BatchCopyViaSwapPipeline(params, direction, options, slotSize);
+}
+
+namespace {
+struct SwapBatch {
+    uint8_t *base{nullptr};
+    uint32_t begin{0U};
+    uint32_t end{0U};
+    CopyDescriptor remote;
+};
+
+void PrepareSwapBatch(const hybm_batch_copy_params &params, bool isWrite, uint64_t slotSize, uint32_t &cursor,
+                      SwapBatch &batch)
+{
+    batch.begin = cursor;
+    batch.remote.localAddrs.clear();
+    batch.remote.globalAddrs.clear();
+    batch.remote.counts.clear();
+    uint64_t offset = 0;
+    while (cursor < params.batchSize && params.dataSizes[cursor] <= slotSize - offset) {
+        const auto size = params.dataSizes[cursor];
+        auto *remote = isWrite ? params.destinations[cursor] : params.sources[cursor];
+        if (!batch.remote.counts.empty() &&
+            reinterpret_cast<uintptr_t>(batch.remote.globalAddrs.back()) + batch.remote.counts.back() ==
+                reinterpret_cast<uintptr_t>(remote)) {
+            batch.remote.counts.back() += size;
+        } else {
+            batch.remote.localAddrs.push_back(batch.base + offset);
+            batch.remote.globalAddrs.push_back(remote);
+            batch.remote.counts.push_back(size);
+        }
+        offset += size;
+        ++cursor;
+    }
+    batch.end = cursor;
+}
+
+Result SubmitSwapStage(const hybm_batch_copy_params &params, const SwapBatch &batch, bool isWrite, uint32_t kind,
+                       void *stream, uint32_t rankId, uint32_t remoteRank)
+{
+    TP_TRACE_BEGIN(TP_HYBM_SWAP_STAGE_SUBMIT);
+    uint64_t offset = 0;
+    for (auto index = batch.begin; index < batch.end; ++index) {
+        auto *device = isWrite ? params.sources[index] : params.destinations[index];
+        auto *source = isWrite ? device : batch.base + offset;
+        auto *destination = isWrite ? batch.base + offset : device;
+        const auto size = params.dataSizes[index];
+        const auto ret = VendorApi::Api()->MemcpyAsync(destination, size, source, size, kind, stream);
+        if (ret != BM_OK) {
+            BM_LOG_ERROR("swap staging submit failed, rankId: "
+                         << rankId << " remoteRankId: " << remoteRank << " index: " << index << " size: " << size
+                         << " direction: " << kind << " src: " << source << " dst: " << destination << " ret: " << ret);
+            TP_TRACE_END(TP_HYBM_SWAP_STAGE_SUBMIT, BM_DL_FUNCTION_FAILED);
+            return BM_DL_FUNCTION_FAILED;
+        }
+        offset += size;
+    }
+    TP_TRACE_END(TP_HYBM_SWAP_STAGE_SUBMIT, BM_OK);
+    return BM_OK;
+}
+
+Result WaitSwapStage(void *stream, uint32_t rankId, uint32_t remoteRank)
+{
+    TP_TRACE_BEGIN(TP_HYBM_SWAP_STAGE_WAIT);
+    const auto ret = VendorApi::Api()->SynchronizeStream(stream);
+    TP_TRACE_END(TP_HYBM_SWAP_STAGE_WAIT, ret);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("swap staging synchronize failed, rankId: " << rankId << " remoteRankId: " << remoteRank
+                                                                 << " stream: " << stream << " ret: " << ret);
+    }
+    return ret;
+}
+
+Result TransferSwapBatch(transport::TransportManager &transport, const SwapBatch &batch, bool isWrite, uint32_t rankId,
+                         uint32_t remoteRank, Result &syncResult)
+{
+    TP_TRACE_BEGIN(TP_HYBM_SWAP_REMOTE_TRANSFER);
+    auto ret = isWrite ? transport.WriteRemoteBatchAsync(remoteRank, batch.remote)
+                       : transport.ReadRemoteBatchAsync(remoteRank, batch.remote);
+    if (ret != BM_OK) {
+        BM_LOG_ERROR("swap remote submit failed, rankId: "
+                     << rankId << " remoteRankId: " << remoteRank << " isWrite: " << isWrite
+                     << " begin: " << batch.begin << " end: " << batch.end << " count: " << batch.remote.counts.size()
+                     << " ret: " << ret);
+    }
+    syncResult = transport.Synchronize(remoteRank);
+    if (syncResult != BM_OK) {
+        BM_LOG_ERROR("swap remote synchronize failed, rankId: " << rankId << " remoteRankId: " << remoteRank
+                                                                << " isWrite: " << isWrite << " ret: " << syncResult);
+    }
+    ret = ret != BM_OK ? ret : syncResult;
+    TP_TRACE_END(TP_HYBM_SWAP_REMOTE_TRANSFER, ret);
+    return ret;
+}
+
+} // namespace
+
+Result DataOpDeviceRDMA::BatchCopyViaSwapPipeline(hybm_batch_copy_params &params, hybm_data_copy_direction direction,
+                                                  const ExtOptions &options, uint64_t slotSize) noexcept
+{
+    const bool isWrite = direction == HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST;
+    const auto remoteRank = isWrite ? options.destRankId : options.srcRankId;
+    auto memory = rdmaSwapMemoryAllocator_->Allocate(slotSize * 2);
+    if (memory.Address() == nullptr) {
+        BM_LOG_ERROR("swap pipeline allocation failed, rankId: " << rankId_ << " remoteRankId: " << remoteRank
+                                                                 << " slotSize: " << slotSize
+                                                                 << " swapSize: " << rdmaSwapSpaceSize_);
+        return BM_MALLOC_FAILED;
+    }
+    auto *stream = options.stream != nullptr ? options.stream : HybmStreamManager::GetThreadAclStream();
+    if (stream == nullptr) {
+        BM_LOG_ERROR("swap pipeline stream unavailable, rankId: " << rankId_ << " remoteRankId: " << remoteRank
+                                                                  << " direction: " << direction
+                                                                  << " batchSize: " << params.batchSize);
+        return BM_DL_FUNCTION_FAILED;
+    }
+    SwapBatch batches[2];
+    batches[0].base = memory.Address();
+    batches[1].base = memory.Address() + slotSize;
+    const auto hostKind = isWrite ? ACL_MEMCPY_DEVICE_TO_HOST : ACL_MEMCPY_HOST_TO_DEVICE;
+    const auto kind = rdmaSwapUseHbm_ ? ACL_MEMCPY_DEVICE_TO_DEVICE : hostKind;
+    Result remoteSyncResult = BM_OK;
+
+    TP_TRACE_BEGIN(TP_HYBM_SWAP_PIPELINE);
+    Result ret = BM_OK;
+    uint32_t cursor = 0U;
+    uint32_t current = 0U;
+    while (cursor < params.batchSize) {
+        auto &batch = batches[current];
+        PrepareSwapBatch(params, isWrite, slotSize, cursor, batch);
+        if (isWrite) {
+            ret = SubmitSwapStage(params, batch, isWrite, kind, stream, rankId_, remoteRank);
+            if (ret == BM_OK && batch.begin != 0U) {
+                ret = TransferSwapBatch(*transportManager_, batches[current ^ 1U], isWrite, rankId_, remoteRank,
+                                        remoteSyncResult);
+            }
+        } else {
+            ret = TransferSwapBatch(*transportManager_, batch, isWrite, rankId_, remoteRank, remoteSyncResult);
+        }
+        if (ret != BM_OK) {
+            break;
+        }
+        ret = WaitSwapStage(stream, rankId_, remoteRank);
+        if (ret != BM_OK) {
+            break;
+        }
+        if (!isWrite) {
+            ret = SubmitSwapStage(params, batch, isWrite, kind, stream, rankId_, remoteRank);
+            if (ret != BM_OK) {
+                break;
+            }
+        }
+        current ^= 1U;
+    }
+    if (ret == BM_OK && isWrite) {
+        ret = TransferSwapBatch(*transportManager_, batches[current ^ 1U], isWrite, rankId_, remoteRank,
+                                remoteSyncResult);
+    }
+    const auto stageRet = WaitSwapStage(stream, rankId_, remoteRank);
+    if (stageRet != BM_OK || remoteSyncResult != BM_OK) {
+        BM_LOG_ERROR("swap pipeline retains slots after synchronize failure, rankId: "
+                     << rankId_ << " remoteRankId: " << remoteRank << " slotSize: " << slotSize
+                     << " stageRet: " << stageRet << " remoteRet: " << remoteSyncResult);
+        memory.Reset();
+    }
+    ret = ret != BM_OK ? ret : stageRet;
+    TP_TRACE_END(TP_HYBM_SWAP_PIPELINE, ret);
+    return ret;
+}
+
 Result DataOpDeviceRDMA::BatchCopyLD2GD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
 {
     return BatchCopyWrite(params, options, HYBM_LOCAL_DEVICE_TO_GLOBAL_DEVICE);
@@ -1048,11 +1285,17 @@ Result DataOpDeviceRDMA::BatchCopyLD2GD(hybm_batch_copy_params &params, const Ex
 
 Result DataOpDeviceRDMA::BatchCopyLD2GH(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
 {
+    if (forceUnregistered_ && options.destRankId != rankId_) {
+        return BatchCopyViaSwap(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options);
+    }
     return BatchCopyWrite(params, options, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST);
 }
 
 Result DataOpDeviceRDMA::BatchCopyGH2LD(hybm_batch_copy_params &params, const ExtOptions &options) noexcept
 {
+    if (forceUnregistered_ && options.srcRankId != rankId_) {
+        return BatchCopyViaSwap(params, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, options);
+    }
     return BatchCopyRead(params, options, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE);
 }
 
@@ -1150,7 +1393,10 @@ Result DataOpDeviceRDMA::SafePut(const void *srcVA, void *destVA, uint64_t lengt
         BM_ASSERT_LOG_AND_RETURN(tmpHost != nullptr, "Failed to malloc temp buffer", BM_MALLOC_FAILED);
         const void *currentSrc = reinterpret_cast<const void *>(srcBase + offset);
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
-        if (srcIsHost) {
+        if (rdmaSwapUseHbm_) {
+            ret = srcIsHost ? CopyLH2LD(currentSrc, tmpHost, currentChunkSize, options)
+                            : CopyLD2LD(currentSrc, tmpHost, currentChunkSize, options);
+        } else if (srcIsHost) {
             ret = CopyLH2LH(currentSrc, tmpHost, currentChunkSize, options);
         } else {
             ret = CopyLD2LH(currentSrc, tmpHost, currentChunkSize, options);
@@ -1191,7 +1437,10 @@ Result DataOpDeviceRDMA::SafeGet(const void *srcVA, void *destVA, uint64_t lengt
         void *currentDest = reinterpret_cast<void *>(destBase + offset);
         ret = CopyRDMA(currentSrc, tmpHost, currentChunkSize, options);
         BM_ASSERT_LOG_AND_RETURN(ret == BM_OK, "[SafeGet] Failed to copy src to tmp", ret);
-        if (destIsHost) {
+        if (rdmaSwapUseHbm_) {
+            ret = destIsHost ? CopyLD2LH(tmpHost, currentDest, currentChunkSize, options)
+                             : CopyLD2LD(tmpHost, currentDest, currentChunkSize, options);
+        } else if (destIsHost) {
             ret = CopyLH2LH(tmpHost, currentDest, currentChunkSize, options);
         } else {
             ret = CopyLH2LD(tmpHost, currentDest, currentChunkSize, options);

@@ -14,6 +14,7 @@
 #include <mockcpp/mockcpp.hpp>
 #include <sys/mman.h>
 #include <cstdlib>
+#include <cstring>
 
 #include "hybm_data_op_device_rdma.h"
 #include "hybm_transport_manager.h"
@@ -21,6 +22,7 @@
 #include "vendor/ascend/dl_hal_api.h"
 #include "hybm_functions.h"
 #include "hybm_gva.h"
+#include "mf_env_util.h"
 
 #define MOCKER_CPP(api, TT) MOCKCPP_NS::mockAPI(#api, reinterpret_cast<TT>(api))
 
@@ -75,8 +77,6 @@ static int HalMemFreeCountingStub(void *ptr)
     return 0;
 }
 
-// AllocSwapMemory 按 SoC 分派（A5/950 走 mmap，其它走 HalMemAlloc）；用变量控制 mock 返回值，
-// 默认 910B 以保持既有用例行为不变。
 static ock::mf::AscendSocType g_mockSocType = ock::mf::AscendSocType::ASCEND_910B;
 
 static ock::mf::AscendSocType GetSocNameStub(ock::mf::AscendApiImpl *)
@@ -107,6 +107,10 @@ public:
     ock::mf::Result RegisterMemoryRegion(const ock::mf::transport::TransportMemoryRegion &memory) noexcept override
     {
         registerMemoryRegionCount++;
+        lastRegisteredMemory = memory;
+        if (rejectHbmRegistration && (memory.flags & ock::mf::transport::REG_MR_FLAG_HBM) != 0U) {
+            return BM_ERROR;
+        }
         return registerMemoryRegionResult;
     }
 
@@ -192,6 +196,11 @@ public:
     {
         writeRemoteBatchAsyncCount++;
         lastWriteBatchSize = descriptor.counts.size();
+        if (copyBatchMemory) {
+            for (size_t i = 0; i < descriptor.counts.size(); ++i) {
+                std::memcpy(descriptor.globalAddrs[i], descriptor.localAddrs[i], descriptor.counts[i]);
+            }
+        }
         return writeRemoteBatchAsyncResult;
     }
 
@@ -199,6 +208,11 @@ public:
     {
         readRemoteBatchAsyncCount++;
         lastReadBatchSize = descriptor.counts.size();
+        if (copyBatchMemory) {
+            for (size_t i = 0; i < descriptor.counts.size(); ++i) {
+                std::memcpy(descriptor.localAddrs[i], descriptor.globalAddrs[i], descriptor.counts[i]);
+            }
+        }
         return readRemoteBatchAsyncResult;
     }
 
@@ -246,6 +260,9 @@ public:
     ock::mf::Result writeRemoteBatchAsyncResult{BM_OK};
     ock::mf::Result readRemoteBatchAsyncResult{BM_OK};
     bool queryHasRegisteredResult{false};
+    bool rejectHbmRegistration{false};
+    bool copyBatchMemory{false};
+    ock::mf::transport::TransportMemoryRegion lastRegisteredMemory{};
     std::string nicName{"eth0"};
 
     // 重置方法
@@ -357,6 +374,39 @@ public:
         MOCKER(HybmGetInitDeviceId).stubs().will(returnValue(0));
     }
 
+    void InitHbmSwapEnv(uint64_t swapSizeMb = 32ULL, uint32_t forceUnregistered = 1U)
+    {
+        g_mockSocType = ock::mf::AscendSocType::ASCEND_950;
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Memcpy,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t))
+            .stubs()
+            .will(returnValue(BM_OK));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+            .defaults()
+            .will(returnValue(BM_OK));
+        MOCKER(HybmGetInitDeviceId).stubs().will(returnValue(0));
+        MOCKER(&ock::mf::MfEnvUtil::GetOptionalUintOrDefault<uint64_t>).stubs().will(returnValue(swapSizeMb));
+        MOCKER(&ock::mf::MfEnvUtil::GetOptionalUintOrDefault<uint32_t>).stubs().will(returnValue(forceUnregistered));
+        MOCKER_CPP(&ock::mf::AscendApiImpl::Malloc,
+                   ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t, uint32_t))
+            .stubs()
+            .will(invoke(+[](ock::mf::AscendApiImpl *, void **ptr, size_t size, uint32_t policy) {
+                constexpr uint32_t kExpectedPolicy =
+                    ock::mf::ACL_MEM_MALLOC_HUGE_FIRST | ock::mf::ACL_MEM_TYPE_HIGH_BAND_WIDTH;
+                EXPECT_EQ(policy, kExpectedPolicy);
+                EXPECT_GT(size, 0UL);
+                if (g_mockParamSpace == nullptr) {
+                    InitMockAddresses();
+                }
+                *ptr = g_mockParamSpace;
+                return BM_OK;
+            }));
+        MOCKER(&ock::mf::DlHalApi::HalHostRegister).expects(never());
+        MOCKER(&ock::mf::DlHalApi::HalHostUnregisterEx).expects(never());
+        MOCKER(&ock::mf::DlHalApi::HalMemAlloc).expects(never());
+        MOCKER(&ock::mf::DlHalApi::HalMemFree).expects(never());
+    }
+
 protected:
     uint32_t rankId_{0};
     std::shared_ptr<TransportManagerMock> transportManagerMock_;
@@ -365,6 +415,331 @@ protected:
 };
 
 void *HybmDataOpDeviceRdmaTest::mockMemory = nullptr;
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapRegistersDeviceMemoryAndFreesWithAcl)
+{
+    InitHbmSwapEnv();
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    EXPECT_EQ(transportManagerMock_->registerMemoryRegionCount, 1ULL);
+    EXPECT_EQ(transportManagerMock_->lastRegisteredMemory.flags, ock::mf::transport::REG_MR_FLAG_HBM);
+    EXPECT_EQ(transportManagerMock_->lastRegisteredMemory.size, 32ULL * 1024ULL * 1024ULL);
+    constexpr uint64_t kCopySize = 2048ULL;
+    void *local[] = {mockMemory};
+    void *remote[] = {g_mockParamSpace};
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params params{local, remote, sizes, 1U};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+    EXPECT_EQ(dataOp_->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_OK);
+    EXPECT_EQ(transportManagerMock_->queryHasRegisteredCount, 0ULL);
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 1ULL);
+    dataOp_->UnInitialize();
+    EXPECT_EQ(transportManagerMock_->unregisterMemoryRegionCount, 1ULL);
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapRegistrationFailureStopsAndFreesAllocation)
+{
+    InitHbmSwapEnv();
+    transportManagerMock_->rejectHbmRegistration = true;
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+
+    EXPECT_EQ(dataOp_->Initialize(), BM_MALLOC_FAILED);
+    EXPECT_EQ(transportManagerMock_->registerMemoryRegionCount, 1ULL);
+    EXPECT_EQ(transportManagerMock_->lastRegisteredMemory.flags, ock::mf::transport::REG_MR_FLAG_HBM);
+    EXPECT_EQ(transportManagerMock_->unregisterMemoryRegionCount, 0ULL);
+    dataOp_->UnInitialize();
+    EXPECT_EQ(transportManagerMock_->unregisterMemoryRegionCount, 0ULL);
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapPipelineUsesAsyncDeviceCopiesForReadAndWrite)
+{
+    constexpr uint32_t kBatchSize = 2U;
+    constexpr uint64_t kCopySize = 2048ULL;
+    constexpr uintptr_t kAddressStride = 4096ULL;
+    InitHbmSwapEnv();
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyBatch,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t *, void **, size_t *, size_t, void *,
+                                  size_t *, size_t, size_t *))
+        .expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(exactly(kBatchSize * 2U))
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void *, size_t capacity, const void *, size_t count, uint32_t kind,
+                         void *stream) {
+            EXPECT_EQ(count, 2048UL);
+            EXPECT_EQ(capacity, count);
+            EXPECT_EQ(kind, ock::mf::ACL_MEMCPY_DEVICE_TO_DEVICE);
+            EXPECT_NE(stream, nullptr);
+            return BM_OK;
+        }));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    auto base = reinterpret_cast<uintptr_t>(mockMemory);
+    void *local[kBatchSize] = {reinterpret_cast<void *>(base), reinterpret_cast<void *>(base + kAddressStride)};
+    void *remote[kBatchSize] = {reinterpret_cast<void *>(base + kAddressStride * 2U),
+                                reinterpret_cast<void *>(base + kAddressStride * 2U + kCopySize)};
+    const uint64_t sizes[kBatchSize] = {kCopySize, kCopySize};
+    hybm_batch_copy_params write{local, remote, sizes, kBatchSize};
+    hybm_batch_copy_params read{remote, local, sizes, kBatchSize};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+    EXPECT_EQ(dataOp_->BatchDataCopy(write, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_OK);
+    options.srcRankId = rankId_ + 1U;
+    options.destRankId = rankId_;
+    EXPECT_EQ(dataOp_->BatchDataCopy(read, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, options), BM_OK);
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 1ULL);
+    EXPECT_EQ(transportManagerMock_->readRemoteBatchAsyncCount, 1ULL);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmAsyncStagingFailureStopsWithoutRetry)
+{
+    constexpr uint64_t kCopySize = 2048ULL;
+    constexpr int32_t kAclCopyError = 107000;
+    InitHbmSwapEnv();
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyBatch,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t *, void **, size_t *, size_t, void *,
+                                  size_t *, size_t, size_t *))
+        .expects(never());
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(once())
+        .will(returnValue(kAclCopyError));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    void *local[] = {mockMemory, static_cast<uint8_t *>(mockMemory) + kCopySize};
+    void *remote[] = {g_mockParamSpace, static_cast<uint8_t *>(g_mockParamSpace) + kCopySize};
+    const uint64_t sizes[] = {kCopySize, kCopySize};
+    hybm_batch_copy_params params{local, remote, sizes, 2U};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+
+    EXPECT_EQ(dataOp_->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_DL_FUNCTION_FAILED);
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 0ULL);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapSubmitFailureReleasesSlotsAfterSuccessfulDrain)
+{
+    constexpr uint64_t kCopySize = 2048ULL;
+    constexpr uint32_t kAttempts = 3U;
+    InitHbmSwapEnv(16ULL);
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .stubs()
+        .will(returnValue(BM_OK));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    void *local[] = {mockMemory};
+    void *remote[] = {g_mockParamSpace};
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params write{local, remote, sizes, 1U};
+    hybm_batch_copy_params read{remote, local, sizes, 1U};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+    transportManagerMock_->writeRemoteBatchAsyncResult = BM_ERROR;
+    for (uint32_t attempt = 0U; attempt < kAttempts; ++attempt) {
+        EXPECT_EQ(dataOp_->BatchDataCopy(write, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_ERROR);
+    }
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, kAttempts);
+    options.srcRankId = rankId_ + 1U;
+    options.destRankId = rankId_;
+    transportManagerMock_->readRemoteBatchAsyncResult = BM_ERROR;
+    for (uint32_t attempt = 0U; attempt < kAttempts; ++attempt) {
+        EXPECT_EQ(dataOp_->BatchDataCopy(read, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, options), BM_ERROR);
+    }
+    EXPECT_EQ(transportManagerMock_->readRemoteBatchAsyncCount, kAttempts);
+    transportManagerMock_->readRemoteBatchAsyncResult = BM_OK;
+    EXPECT_EQ(dataOp_->BatchDataCopy(read, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, options), BM_OK);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapDrainFailureRetainsSlotsAndReturnsSubmitError)
+{
+    constexpr uint64_t kCopySize = 2048ULL;
+    InitHbmSwapEnv(16ULL);
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    void *local[] = {mockMemory};
+    void *remote[] = {g_mockParamSpace};
+    const uint64_t sizes[] = {kCopySize};
+    hybm_batch_copy_params params{local, remote, sizes, 1U};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+    transportManagerMock_->writeRemoteBatchAsyncResult = BM_ERROR;
+    transportManagerMock_->synchronizeResult = BM_DL_FUNCTION_FAILED;
+    EXPECT_EQ(dataOp_->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_ERROR);
+    transportManagerMock_->writeRemoteBatchAsyncResult = BM_OK;
+    transportManagerMock_->synchronizeResult = BM_OK;
+    EXPECT_EQ(dataOp_->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_MALLOC_FAILED);
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 1ULL);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapSlotGrowsForUnalignedLargeItems)
+{
+    constexpr uint32_t kBatchSize = 2U;
+    constexpr uint64_t kSwapSizeMb = 64ULL;
+    constexpr uint64_t kCopySize = 9ULL * 1024ULL * 1024ULL + 1ULL;
+    constexpr uint64_t kAddressStride = 24ULL * 1024ULL * 1024ULL;
+    InitHbmSwapEnv(kSwapSizeMb);
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(exactly(kBatchSize * 2U))
+        .will(returnValue(BM_OK));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    EXPECT_EQ(transportManagerMock_->lastRegisteredMemory.size, kSwapSizeMb * 1024ULL * 1024ULL);
+    auto *base = static_cast<uint8_t *>(mockMemory);
+    void *local[] = {base, base + kAddressStride};
+    void *remote[] = {base + kAddressStride * 2U, base + kAddressStride * 3U};
+    const uint64_t sizes[] = {kCopySize, kCopySize};
+    hybm_batch_copy_params write{local, remote, sizes, kBatchSize};
+    hybm_batch_copy_params read{remote, local, sizes, kBatchSize};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+
+    EXPECT_EQ(dataOp_->BatchDataCopy(write, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_OK);
+    options.srcRankId = rankId_ + 1U;
+    options.destRankId = rankId_;
+    EXPECT_EQ(dataOp_->BatchDataCopy(read, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, options), BM_OK);
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 2ULL);
+    EXPECT_EQ(transportManagerMock_->readRemoteBatchAsyncCount, 2ULL);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapSlotCannotGrowBeyondHalfThePool)
+{
+    constexpr uint64_t kSlotCapacity = 16ULL * 1024ULL * 1024ULL;
+    InitHbmSwapEnv();
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    void *local[] = {mockMemory};
+    void *remote[] = {g_mockParamSpace};
+    uint64_t sizes[] = {kSlotCapacity};
+    hybm_batch_copy_params params{local, remote, sizes, 1U};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+
+    EXPECT_EQ(dataOp_->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_OK);
+    sizes[0] = kSlotCapacity + 1ULL;
+    EXPECT_EQ(dataOp_->BatchDataCopy(params, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_INVALID_PARAM);
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 1ULL);
+    dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, HbmSwapAsyncCopiesPreserveScatteredData)
+{
+    constexpr uint64_t kMiB = 1024ULL * 1024ULL;
+    constexpr uint64_t kStride = 12ULL * kMiB;
+    constexpr uint32_t kBatchSize = 5U;
+    constexpr uint64_t kTotalSize = 25ULL * kMiB;
+    const uint64_t sizes[] = {3ULL * kMiB, 4ULL * kMiB, 9ULL * kMiB, 5ULL * kMiB, 4ULL * kMiB};
+    InitHbmSwapEnv();
+    transportManagerMock_->copyBatchMemory = true;
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyBatch,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void **, size_t *, void **, size_t *, size_t, void *,
+                                  size_t *, size_t, size_t *))
+        .expects(never());
+    struct PendingCopy {
+        void *destination;
+        const void *source;
+        size_t size;
+    };
+    static std::vector<PendingCopy> pendingCopies;
+    pendingCopies.clear();
+    static std::vector<int32_t> copyKinds;
+    copyKinds.clear();
+    MOCKER_CPP(&ock::mf::AscendApiImpl::MemcpyAsync,
+               ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *, size_t, const void *, size_t, uint32_t, void *))
+        .expects(exactly(kBatchSize * 2U))
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void *dst, size_t capacity, const void *src, size_t size,
+                         uint32_t kind, void *) {
+            EXPECT_EQ(capacity, size);
+            copyKinds.push_back(kind);
+            pendingCopies.push_back({dst, src, size});
+            return BM_OK;
+        }));
+    MOCKER_CPP(&ock::mf::AscendApiImpl::SynchronizeStream, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(atLeast(1U))
+        .will(invoke(+[](ock::mf::AscendApiImpl *, void *) {
+            for (const auto &copy : pendingCopies) {
+                std::memcpy(copy.destination, copy.source, copy.size);
+            }
+            pendingCopies.clear();
+            return BM_OK;
+        }));
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    std::vector<uint8_t> local(kStride * kBatchSize, 0U);
+    std::vector<uint8_t> remote(kTotalSize, 0U);
+    void *localAddrs[kBatchSize];
+    void *remoteAddrs[kBatchSize];
+    uint64_t offset = 0;
+    for (uint32_t index = 0U; index < kBatchSize; ++index) {
+        localAddrs[index] = local.data() + kStride * index;
+        remoteAddrs[index] = remote.data() + offset;
+        std::memset(localAddrs[index], static_cast<int>(index + 1U), sizes[index]);
+        offset += sizes[index];
+    }
+    const auto expected = local;
+    hybm_batch_copy_params write{localAddrs, remoteAddrs, sizes, kBatchSize};
+    hybm_batch_copy_params read{remoteAddrs, localAddrs, sizes, kBatchSize};
+    ock::mf::ExtOptions options{};
+    options.stream = mockMemory;
+    options.destRankId = rankId_ + 1U;
+    ASSERT_EQ(dataOp_->BatchDataCopy(write, HYBM_LOCAL_DEVICE_TO_GLOBAL_HOST, options), BM_OK);
+    std::fill(local.begin(), local.end(), 0U);
+    options.srcRankId = rankId_ + 1U;
+    options.destRankId = rankId_;
+    EXPECT_EQ(dataOp_->BatchDataCopy(read, HYBM_GLOBAL_HOST_TO_LOCAL_DEVICE, options), BM_OK);
+    EXPECT_EQ(local, expected);
+    EXPECT_TRUE(pendingCopies.empty());
+    EXPECT_EQ(transportManagerMock_->writeRemoteBatchAsyncCount, 3ULL);
+    EXPECT_EQ(transportManagerMock_->readRemoteBatchAsyncCount, 3ULL);
+    const std::vector<int32_t> expectedKinds(kBatchSize * 2U, ock::mf::ACL_MEMCPY_DEVICE_TO_DEVICE);
+    EXPECT_EQ(copyKinds, expectedKinds);
+    dataOp_->UnInitialize();
+}
 
 TEST_F(HybmDataOpDeviceRdmaTest, initialize_success)
 {
@@ -376,16 +751,35 @@ TEST_F(HybmDataOpDeviceRdmaTest, initialize_success)
     dataOp_->UnInitialize();
 }
 
-TEST_F(HybmDataOpDeviceRdmaTest, initialize_a5_swap_allocated_by_mmap)
+TEST_F(HybmDataOpDeviceRdmaTest, A5UsesHbmWithForcedStagingDisabled)
 {
-    // A5(950)：swap 走普通 host 内存(mmap)，注册 flags 用 REG_MR_FLAG_DRAM，
-    // UnInitialize 走 munmap 分支（不再调用 HalHostUnregisterEx/HalMemFree）。
-    g_mockSocType = ock::mf::AscendSocType::ASCEND_950;
-    InitMockEnv();
-    auto ret = dataOp_->Initialize();
-    ASSERT_EQ(BM_OK, ret);
-    ASSERT_EQ(1UL, transportManagerMock_->registerMemoryRegionCount);
+    InitHbmSwapEnv(32ULL, 0U);
+    MOCKER_CPP(&ock::mf::AscendApiImpl::Free, ock::mf::Result(*)(ock::mf::AscendApiImpl *, void *))
+        .expects(once())
+        .will(returnValue(BM_OK));
+
+    ASSERT_EQ(dataOp_->Initialize(), BM_OK);
+    EXPECT_EQ(transportManagerMock_->registerMemoryRegionCount, 1ULL);
+    EXPECT_EQ(transportManagerMock_->lastRegisteredMemory.flags, ock::mf::transport::REG_MR_FLAG_HBM);
     dataOp_->UnInitialize();
+}
+
+TEST_F(HybmDataOpDeviceRdmaTest, DefaultsSkipSwapOnA5AndOtherPlatforms)
+{
+    InitMockEnv();
+    MOCKER(&ock::mf::MfEnvUtil::GetOptionalUintOrDefault<uint64_t>)
+        .stubs()
+        .will(invoke(+[](const std::string &, uint64_t value) { return value; }));
+    MOCKER(&ock::mf::MfEnvUtil::GetOptionalUintOrDefault<uint32_t>)
+        .stubs()
+        .will(invoke(+[](const std::string &, uint32_t value) { return value; }));
+
+    for (auto soc : {ock::mf::AscendSocType::ASCEND_910B, ock::mf::AscendSocType::ASCEND_950}) {
+        g_mockSocType = soc;
+        EXPECT_EQ(dataOp_->Initialize(), BM_OK);
+        EXPECT_EQ(transportManagerMock_->registerMemoryRegionCount, 0ULL);
+        dataOp_->UnInitialize();
+    }
 }
 
 TEST_F(HybmDataOpDeviceRdmaTest, initialize_already_inited)
