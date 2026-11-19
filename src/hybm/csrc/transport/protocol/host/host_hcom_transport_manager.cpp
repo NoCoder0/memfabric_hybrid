@@ -1167,6 +1167,11 @@ void HcomTransportManager::HcomChannelDisconnected(uint32_t rankId, Hcom_Channel
     }
 
     std::unique_lock<std::mutex> locker{channelMutex_[rankId]};
+    if (channels_[rankId] != ch) {
+        BM_LOG_DEBUG("Ignore broken channel of a previous generation, rank: "
+                     << rankId << ", broken: " << (void *)ch << ", current: " << (void *)channels_[rankId]);
+        return;
+    }
     channels_[rankId] = 0;
     locker.unlock();
     if (rankId >= rankId_) {

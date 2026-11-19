@@ -487,6 +487,34 @@ TEST(HcomTransportManagerTest, EndPointBrokenValidPayloadDisconnectsChannel)
     EXPECT_EQ(mgr->channels_[1], static_cast<Hcom_Channel>(0));
 }
 
+TEST(HcomTransportManagerTest, ChannelDisconnectedStaleHandleKeepsCurrentChannel)
+{
+    constexpr uint32_t kBrokenRankCount = 2U;
+    constexpr uint32_t kBrokenLocalRank = 0U;
+    constexpr uint32_t kBrokenPeerRank = 1U;
+    auto mgr = std::make_shared<HcomTransportManager>();
+    SetupManager(mgr, kBrokenRankCount, kBrokenLocalRank);
+    mgr->channels_[kBrokenPeerRank] = static_cast<Hcom_Channel>(0xAAUL);
+
+    mgr->HcomChannelDisconnected(kBrokenPeerRank, static_cast<Hcom_Channel>(0xBBUL));
+
+    EXPECT_EQ(mgr->channels_[kBrokenPeerRank], static_cast<Hcom_Channel>(0xAAUL));
+}
+
+TEST(HcomTransportManagerTest, ChannelDisconnectedCurrentHandleClearsChannel)
+{
+    constexpr uint32_t kBrokenRankCount = 2U;
+    constexpr uint32_t kBrokenLocalRank = 0U;
+    constexpr uint32_t kBrokenPeerRank = 1U;
+    auto mgr = std::make_shared<HcomTransportManager>();
+    SetupManager(mgr, kBrokenRankCount, kBrokenLocalRank);
+    mgr->channels_[kBrokenPeerRank] = static_cast<Hcom_Channel>(0xAAUL);
+
+    mgr->HcomChannelDisconnected(kBrokenPeerRank, static_cast<Hcom_Channel>(0xAAUL));
+
+    EXPECT_EQ(mgr->channels_[kBrokenPeerRank], static_cast<Hcom_Channel>(0));
+}
+
 TEST(HcomTransportManagerTest, InnerReadWriteRemoteNotConnectedOrMissingKeysReturnError)
 {
     auto mgr = HcomTransportManager::GetInstance();
