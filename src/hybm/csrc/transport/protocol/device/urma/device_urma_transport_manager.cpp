@@ -2159,7 +2159,7 @@ Result DeviceUrmaTransportManager::Prepare(const HybmTransPrepareOptions &option
 
 Result DeviceUrmaTransportManager::ConnectRank(uint32_t rankId)
 {
-    std::shared_lock<std::shared_mutex> guard(mutex_);
+    std::lock_guard<std::shared_mutex> guard(mutex_);
     BM_VALIDATE_RETURN(opened_, "device_urma transport manager is not opened", BM_ERROR);
     BM_VALIDATE_RETURN(rankId < rankCount_,
                        "device_urma ConnectRank rank: " << rankId << " out of range, rankCount: " << rankCount_,
