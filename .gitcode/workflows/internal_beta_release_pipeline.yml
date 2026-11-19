@@ -34,6 +34,19 @@ stages:
             run: |
               set -ex
 
+              # 签名配置
+              source /usr/local/Ascend/cann/set_env.sh
+              mkdir -p /opt/signaturst
+              mkdir -p /opt/data
+              cd /opt/signaturst/
+              wget --no-verbose https://obs-memfabric-hybrid.obs.cn-north-4.myhuaweicloud.com/mf/signatrust/client.key
+              wget --no-verbose https://obs-memfabric-hybrid.obs.cn-north-4.myhuaweicloud.com/mf/signatrust/client.pem
+              wget --no-verbose https://obs-memfabric-hybrid.obs.cn-north-4.myhuaweicloud.com/mf/signatrust/client.toml
+              wget --no-verbose https://gitcode.com/openeuler/signatrust/releases/download/v1.0.1.rc0/client-musl-aarch64.tar.gz
+              tar -zxvf client-musl-aarch64.tar.gz
+              chmod +x signatrust_client
+              wget --no-verbose https://ascend-ci.obs.cn-north-4.myhuaweicloud.com/cff6dec5-acc3-415b-9957-5d4effd59669.crl
+
               # 创建构建输出目录
               mkdir -p ${WORKSPACE}/BeiMing_output
 
@@ -101,6 +114,20 @@ stages:
           - name: 编译打包
             run: |
               set -ex
+
+              # 签名配置
+              source /usr/local/Ascend/cann/set_env.sh
+              mkdir -p /opt/signaturst
+              mkdir -p /opt/data
+              cd /opt/signaturst/
+              wget --no-verbose https://obs-memfabric-hybrid.obs.cn-north-4.myhuaweicloud.com/mf/signatrust/client.key
+              wget --no-verbose https://obs-memfabric-hybrid.obs.cn-north-4.myhuaweicloud.com/mf/signatrust/client.pem
+              wget --no-verbose https://obs-memfabric-hybrid.obs.cn-north-4.myhuaweicloud.com/mf/signatrust/client.toml
+              wget --no-verbose https://gitcode.com/openeuler/signatrust/releases/download/v1.0.1.rc0/client-musl-x86-64.tar.gz
+              tar -zxvf client-musl-x86-64.tar.gz
+              chmod +x signatrust_client
+              wget --no-verbose https://ascend-ci.obs.cn-north-4.myhuaweicloud.com/cff6dec5-acc3-415b-9957-5d4effd59669.crl
+              mv cff6dec5-acc3-415b-9957-5d4effd59669.crl MF-CRL.crl
 
               # 创建构建输出目录
               mkdir -p ${WORKSPACE}/BeiMing_output
