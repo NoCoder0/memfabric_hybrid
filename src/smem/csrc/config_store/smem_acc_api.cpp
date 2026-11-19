@@ -11,6 +11,7 @@
 */
 #include "smem_acc_api.h"
 
+#include <cstring>
 #include <new>
 #include <string>
 
@@ -358,6 +359,29 @@ uint32_t LinkId(smem_acc_link_t link)
     return native == nullptr || *native == nullptr ? UINT32_MAX : (*native)->Id();
 }
 
+int32_t LinkGetRemoteIpPort(smem_acc_link_t link, char *endpoint, uint32_t capacity)
+{
+    auto *native = AsLink(link);
+    if (native == nullptr || *native == nullptr || endpoint == nullptr) {
+        SM_LOG_ERROR("Invalid ACC peer endpoint arguments, link: " << link
+                                                                   << ", endpoint is null: " << (endpoint == nullptr));
+        return acc::ACC_INVALID_PARAM;
+    }
+
+    const auto &remote = (*native)->GetLinkRemoteIpPort();
+    if (remote.empty()) {
+        SM_LOG_ERROR("ACC peer endpoint is empty, link id: " << (*native)->Id());
+        return acc::ACC_NOT_INITIALIZED;
+    }
+    if (remote.size() >= capacity) {
+        SM_LOG_ERROR("ACC peer endpoint buffer too small, capacity: " << capacity
+                                                                      << ", required: " << remote.size() + 1);
+        return acc::ACC_INVALID_PARAM;
+    }
+    std::memcpy(endpoint, remote.c_str(), remote.size() + 1);
+    return acc::ACC_OK;
+}
+
 void LinkSetContext(smem_acc_link_t link, uint64_t context)
 {
     auto *native = AsLink(link);
@@ -593,6 +617,11 @@ SMEM_API void smem_acc_link_release(smem_acc_link_t link)
 SMEM_API uint32_t smem_acc_link_id(smem_acc_link_t link)
 {
     return LinkId(link);
+}
+
+SMEM_API int32_t smem_acc_link_get_remote_ip_port(smem_acc_link_t link, char *endpoint, uint32_t capacity)
+{
+    return LinkGetRemoteIpPort(link, endpoint, capacity);
 }
 
 SMEM_API void smem_acc_link_set_context(smem_acc_link_t link, uint64_t context)

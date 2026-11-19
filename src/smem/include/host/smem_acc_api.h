@@ -247,6 +247,16 @@ void smem_acc_link_release(smem_acc_link_t link);
 uint32_t smem_acc_link_id(smem_acc_link_t link);
 
 /**
+ * @brief Copy the peer endpoint of an ACC TCP link as a NUL-terminated string.
+ *
+ * @param link      [in]  Live link handle
+ * @param endpoint  [out] Caller-owned buffer for the peer endpoint
+ * @param capacity  [in]  Buffer capacity in bytes, including the NUL terminator
+ * @return 0 on success, or a nonzero ACC error code. The buffer is unchanged on failure.
+ */
+int32_t smem_acc_link_get_remote_ip_port(smem_acc_link_t link, char *endpoint, uint32_t capacity);
+
+/**
  * @brief Set the application context value associated with a TCP link.
  *
  * @param link             [in] link handle, NULL or an empty handle is ignored

@@ -43,6 +43,10 @@ TEST(SmemRuntimeApiTest, RejectInvalidAccArguments)
     EXPECT_EQ(smem_acc_link_retain(nullptr), nullptr);
     smem_acc_link_release(nullptr);
     EXPECT_EQ(smem_acc_link_id(nullptr), UINT32_MAX);
+    char endpoint[] = "unchanged";
+    EXPECT_NE(smem_acc_link_get_remote_ip_port(nullptr, endpoint, sizeof(endpoint)), 0);
+    EXPECT_STREQ(endpoint, "unchanged");
+    EXPECT_NE(smem_acc_link_get_remote_ip_port(nullptr, nullptr, 0), 0);
     smem_acc_link_set_context(nullptr, 0U);
     EXPECT_EQ(smem_acc_link_get_context(nullptr), 0U);
     EXPECT_NE(smem_acc_link_send(nullptr, 0, 0, 0U, nullptr, 0U), 0);
