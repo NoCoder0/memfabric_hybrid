@@ -14,7 +14,7 @@ def memfabric_deps():
         git_repository,
         name = "hcom",
         remote = "https://atomgit.com/openeuler/ubs-comm.git",
-        branch = "br_BeiMing_MF_Poc",
+        tag = "tag_release_20260930_1",
     )
 
     version_repo(
