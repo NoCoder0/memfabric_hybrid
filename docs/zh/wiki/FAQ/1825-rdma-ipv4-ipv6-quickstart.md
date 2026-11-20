@@ -1,6 +1,8 @@
-# UBX 1825 RDMA IPv4 / IPv6 快速开始
+# 1825 RDMA IPv4 / IPv6 快速开始
 
 按顺序执行本页：先在宿主机设置公共变量并下载脚本，再采集现场、导入交换机规划表、配置交换机和主机，最后在 `work-docker` 容器运行 MF。各步骤专用的参数在使用时设置。任一步报错或核对结果不符时，先排查并重试，不要继续后续配置。`work-docker` 是容器标识示例，按现场修改。
+
+第 1–5 节来自 UBX 1825 现场（一口一 VLAN、一口一网关）；第 6 节是 A5 server 现场的共享 VLAN / Eth-Trunk 拓扑（相邻卡与大批量写）。两套拓扑的前提不同，不要混用；具体哪些能共用，见第 6 节开头。
 
 ## 1. 提前准备
 
@@ -856,7 +858,7 @@ cat "$MF_OUT_DIR/1825-switch-clean.txt"
 
 再次核对端口和 VLAN 后，将文件内容复制到交换机会话逐行执行。命令将目标口的 PVID 改为 1、关闭端口桥，再删除对应 Vlanif 和 VLAN；QoS 和光模块配置不在清理范围。若 VLAN 或 Vlanif 原本存在且需要保留，或 VLAN 有其他成员或引用，不要执行交换机清理。
 
-## 5. 大包卡住或 PFC 不生效时，怎么对齐 DSCP 和 PFC
+## 5. UBX 大包卡住快速定位
 
 完成第 1–3 节且 16K 小包能跑、默认负载卡住或带宽异常时，按本节检查。第 4 节是测试结束后的可选清理，执行本节前不要清理。常见原因是分类和 PFC 落在不同队列：MF 流量进了队列 0，而 PFC 只配在优先级 4。链路是：
 
@@ -1116,3 +1118,721 @@ EOF
 - 需共同核对 MF 的 TC、交换机映射、目标队列 PFC 和网卡 `dscp2cos`；任一侧不匹配时，流量可能落到没有 PFC 的队列。
 - 本节不改变 VLAN、地址和路由；第 4 节回滚不恢复交换机 QoS 和网卡 PFC。
 - 网卡 PFC 修改的重启持久性未验证，重启后重新查询。
+
+## 6. A5 server 相邻卡不通或 2 MiB 以上大包写超时快速定位（共享 VLAN / Eth-Trunk）
+
+第 1–3 节按“一口一 VLAN、一口一网段、一口一网关”编写。A5 常见另一种拓扑：8 个数据口同网段、共用一个 Vlanif 网关、以 Eth-Trunk 接入。此时第 3.3 节的交换机命令不适用，但第 3.3 节的 `local` 规则、第 5 节的 DSCP/PFC 仍然适用；对端 `/32` 是否需要按 6.3 判断。
+
+本节以 A5 server 现场（两台 CE9866 leaf、VLAN 100、网关 `10.1.0.1`、地址 `10.1.0.91–98`）为例；文中 IP、VLAN、表号和机器标识均为示例值，实际以现场为准。
+
+本节包含两个互相独立的结论，先判断自己属于哪一种：
+
+- **同口基础连通故障**：相邻两个口在同一个 Eth-Trunk 时，底层单向不通或单块写超时。该问题有单变量对照：只增加“对端 `/32` 经网关”前后，`ib_write_bw` 从超时变为双向通过（见 6.3）。
+- **满批量长尾**：已建链、能完成，但 64 KiB × 2048 等大批量出现秒级等待或极低带宽。该问题在卡 3、5 上以最终配置组合完成验收，参数不具通用性（见 6.5、6.6）。
+
+与 UBX 共用的部分（做法相同，命令和参数按现场替换）。取值链条是：NPU 网口 → MAC → 交换机 Eth-Trunk/成员口/VLAN → 端口桥/trust/PFC；再回主机核对 `local`、源策略表和 56 条规则，最后核对网卡 trust/PFC 并做连通性验证。
+
+下面每一步只写该步在哪执行、要执行的命令、期望回显，以及下一步要带上哪个值。全程用同一个口举例：`ens1f1` / `400GE1/0/34` / `Eth-Trunk34` / `10.1.0.94`，按 6.1 查到的实际值整体替换。
+
+**步骤 1（宿主机）：确定 NPU 对应的数据网口**
+
+下面第一行只是把网口名存进变量 `NIC`，第二行才是查询命令：
+
+```bash
+NIC=ens1f1                      # 替换为 6.1 查到的网口
+ip -4 -br addr show dev "$NIC"
+```
+
+回显（示例）：
+
+```text
+ens1f1           UP             10.1.0.94/24
+```
+
+得到两个值：网口名（后续取 MAC、查网卡 PFC、抓包都用它）和该口的 IP（后续 ping 的对端、`ping -I` 的源地址用它）。下一步用 `$NIC` 取 MAC。
+
+**步骤 2（宿主机）：取 MAC 并转成交换机格式**
+
+```bash
+mac=$(ip -o link show "$NIC" | grep -o 'link/ether [0-9a-f:]*' | awk '{print $2}')
+echo "$mac"
+echo "$mac" | tr -d ':' | sed 's/\(....\)\(....\)\(....\)/\1-\2-\3/'
+```
+
+回显（示例，两行分别是原格式和交换机格式）：
+
+```text
+cc:b7:c4:60:6f:59
+ccb7-c460-6f59
+```
+
+第一行是网卡原有格式，第二行是交换机 `display mac-address` 接受的 `xxxx-xxxx-xxxx` 格式。下一步把 `ccb7-c460-6f59` 带到交换机。
+
+**步骤 3（交换机，用户视图）：按 MAC 查学习到的端口**
+
+```text
+display mac-address ccb7-c460-6f59
+```
+
+回显（示例）：
+
+```text
+Flags: * - Backup
+       # - forwarding logical interface, operations cannot be performed based
+           on the interface.
+BD   : bridge-domain   Age : dynamic MAC learned time in seconds
+-------------------------------------------------------------------------------
+MAC Address    VLAN/VSI/BD   Learned-From        Type                Age
+-------------------------------------------------------------------------------
+ccb7-c460-6f59 100/-/-       Eth-Trunk34         dynamic          250994
+-------------------------------------------------------------------------------
+Total items: 1
+```
+
+共享 VLAN / Eth-Trunk 接入时，`Learned-From` 是 `Eth-Trunk34` 而不是某个物理口，VLAN 是 100。下一步用 `Eth-Trunk34` 查它的成员物理口。
+
+**步骤 4（交换机）：查 Eth-Trunk 成员和 VLAN**
+
+```text
+display eth-trunk 34
+```
+
+回显（示例）：
+
+```text
+Eth-Trunk34's state information is:
+(h): high priority
+(r): reference port
+Local:
+LAG ID: 34                      Working Mode: Static
+Preempt Delay: Disabled         Hash Arithmetic: profile default
+System Priority: 32768          System ID: 00e0-cf00-0000
+Least Active-linknumber: 1      Max Active-linknumber: 256
+Operating Status: up            Number Of Up Ports In Trunk: 1
+Timeout Period: Fast
+PortKeyMode: Auto
+------------------------------------------------------------------------------------
+ActorPortName              Status   PortType PortPri PortNo PortKey PortState Weight
+400GE1/0/34(hr)            Selected 400GE    32768   34     8881    11111100  1
+
+Partner:
+------------------------------------------------------------------------------------
+ActorPortName              SysPri   SystemID        PortPri PortNo PortKey PortState
+400GE1/0/34                65535    ccb7-c460-6f5a  255     2      33      11111100
+```
+
+这里只需要两处：`ActorPortName` 给出成员物理口 `400GE1/0/34`；`Operating Status: up` 和 `Number Of Up Ports In Trunk: 1` 确认 trunk 有成员在线。`(hr)` 表示高优先级/参考口，Partner 段是对端信息，排查链路时可忽略。`Working Mode: Static` 表示静态绑定，不做 LACP 协商（现场就是静态单成员）。
+
+`Eth-Trunk34` 末尾的 34 就是 trunk 编号，`display eth-trunk 34` 里的 34 取自这里；也可以直接 `display interface Eth-Trunk34`。
+
+再查该端口的 VLAN：
+
+```text
+display port vlan | include Eth-Trunk34
+```
+
+回显（示例）：
+
+```text
+Eth-Trunk34             access        100  --
+```
+
+得到成员口 `400GE1/0/34` 和 trunk 的 PVID 100。下一步用 `Eth-Trunk34` 查端口桥，用 `400GE1/0/34` 查 trust 和 PFC。
+
+**步骤 5（交换机）：核对端口桥、trust、PFC 配置与统计**
+
+先查端口桥和 trust：
+
+```text
+display current-configuration interface Eth-Trunk34 | include bridge
+display qos configuration interface 400GE1/0/34 | include "trust flag|diffserv"
+```
+
+回显（示例）：
+
+```text
+ port bridge enable
+ trust flag        : dscp
+ diffserv domain   : default
+```
+
+期望 `port bridge enable` 和 `trust flag : dscp`。缺端口桥时同 trunk 内回注不通；trust 不是 `dscp` 时先按第 5 节改交换机侧。
+
+再查 PFC 使能和 headroom：
+
+```text
+display current-configuration interface 400GE1/0/34 | include pfc
+```
+
+回显（示例）：
+
+```text
+ dcb pfc buffer 4 guaranteed 5 kbytes
+ dcb pfc buffer 4 xoff dynamic 5 xon offset 6 kbytes
+ dcb pfc buffer 4 hdrm 2048 kbytes
+ dcb pfc buffer 5 guaranteed 5 kbytes
+ dcb pfc buffer 5 xoff dynamic 5 xon offset 6 kbytes
+ dcb pfc buffer 5 hdrm 1024 kbytes
+ dcb pfc enable mode manual
+ rpfc queue 4 enable
+```
+
+期望 `dcb pfc enable mode manual`，队列 4 的 `guaranteed/xoff/hdrm` 在；`rpfc queue 4 enable` 是另一套按队列的 PFC 配置，不作为本端 PFC 4 生效的判据。
+
+最后查队列 4 的 PFC 收发统计：
+
+```text
+display dcb pfc interface 400GE1/0/34
+```
+
+回显（示例）：
+
+```text
+-----------------------------------------------------------------------------------------
+Interface         Queue         Received(Frames)        ReceivedRate(pps)     DeadlockNum
+                             Transmitted(Frames)     TransmittedRate(pps)     RecoveryNum
+-----------------------------------------------------------------------------------------
+400GE1/0/34           4                   428290                        0               0
+                                           28429                        0               0
+-----------------------------------------------------------------------------------------
+```
+
+判据：`DeadlockNum`/`RecoveryNum` 为 0。反压是否发生看测试前后 Received/Transmitted 的增量；无拥塞时增量为 0 属正常，不判失败。下一步回宿主机核对规则。
+
+**步骤 6（宿主机）：核对 local、源策略表、精确规则**
+
+目的：确认 8 个数据口各自绑定了源策略表，同机口间流量按表选路，56 条精确规则齐全。本步骤只核对；发现规则或表缺失时，跳到 6.2 创建，再回来执行。先设变量：
+
+```bash
+SRC=10.1.0.94                  # 步骤 1 的 ens1f1 地址
+DST=10.1.0.92                  # 对端地址，按要测的口替换
+TABLE=$(ip -4 rule show | grep "from $SRC lookup" | awk '{print $NF}' | head -1)
+```
+
+**6-1 源策略表和 local 规则是否都在**
+
+```bash
+ip -4 rule show | grep -E 'lookup local|lookup 10[1-8]'
+```
+
+回显（示例）：
+
+```text
+101:  from 10.1.0.91 lookup 101
+102:  from 10.1.0.92 lookup 102
+103:  from 10.1.0.93 lookup 103
+104:  from 10.1.0.94 lookup 104
+105:  from 10.1.0.95 lookup 105
+106:  from 10.1.0.96 lookup 106
+107:  from 10.1.0.97 lookup 107
+108:  from 10.1.0.98 lookup 108
+1:    from all lookup local
+```
+
+通过标准：8 个源地址各有一条 `lookup`；`local` 排在所有 `iif lo` 规则之后。不满足按 6.2 创建或补齐。
+
+**6-2 该源地址的策略表内容是否正确**
+
+```bash
+echo "$TABLE"
+ip -4 route show table "$TABLE"
+```
+
+回显（示例）：
+
+```text
+104
+default via 10.1.0.1 dev ens1f1
+10.1.0.0/24 dev ens1f1 scope link src 10.1.0.94
+```
+
+通过标准：`TABLE` 非空；表里有 `default via <网关>` 和本口网段 `scope link src <SRC>`。`TABLE` 为空说明源地址没绑策略表。
+
+**6-3 实际选路是否命中该表**
+
+```bash
+ip -4 route get "$DST" from "$SRC"
+```
+
+回显（示例）：
+
+```text
+10.1.0.92 from 10.1.0.94 dev ens1f1 table 104 uid 0
+```
+
+通过标准：出现 `table <6-2 的表号>` 和本口 `dev`。对端加过 `/32 via 网关`（6.3）才会显示 `via`；没加时按 `/24` 直连，没有 `via` 属正常。
+
+**6-4 精确规则条数与唯一性**
+
+```bash
+# 数量粗查：8 个口两两一对，应为 56（8×7）
+ip -4 rule show | grep -c 'iif lo'
+
+# 源规则逐条唯一（有重复或多套优先级会打印 ERROR）
+for i in 0 1 2 3 4 5 6 7; do
+  n=$(ip -4 rule show | grep -cE "^$((101+i)):[[:space:]]+from 10.1.0.$((91+i)) lookup $((101+i))$")
+  [ "$n" = 1 ] || echo "[ERROR] 源规则 10.1.0.$((91+i)) 表$((101+i)) 匹配 $n 条"
+done
+
+# 56 条精确规则逐对唯一（缺失或重复会打印 ERROR）
+for i in 0 1 2 3 4 5 6 7; do
+  for j in 0 1 2 3 4 5 6 7; do
+    [ "$i" = "$j" ] && continue
+    n=$(ip -4 rule show | grep -cE "^0:[[:space:]]+from 10.1.0.$((91+i)) to 10.1.0.$((91+j)) iif lo lookup $((101+i))$")
+    [ "$n" = 1 ] || echo "[ERROR] 10.1.0.$((91+i)) -> 10.1.0.$((91+j)) 表$((101+i)) 匹配 $n 条"
+  done
+done
+```
+
+回显（示例）：
+
+```text
+56
+```
+
+通过标准：第一行是 56，后面没有任何 `[ERROR]` 行。有 `[ERROR]` 时按提示补缺失或删重复，不要整套重跑 6.2。
+
+`ip route get` 报 `RTNETLINK answers: Invalid argument` 多半是命令里加了 `iif lo`：带 `iif` 会走输入路径，查本机发往远端的路由不适用，去掉即可，策略表照样会命中。报 `Invalid cross-device link` 则是 `$SRC` 不是本机真实地址，用 `ip -4 -br addr show` 核对。下一步核对网卡。
+
+**步骤 7（宿主机）：核对网卡 trust、dscp2cos、PFC**
+
+```bash
+hinicadm5 qos -i "$NIC" --dev_trust q
+hinicadm5 qos -i "$NIC" --port_trust q
+hinicadm5 qos -i "$NIC" --dev_dscp2cos q
+hinicadm5 qos -i "$NIC" -t pfc
+```
+
+回显（示例，与上面四条命令一一对应）：
+
+```text
+dev trust: dscp
+port trust: dscp
+dscp 33 -> cos 4
+pfcup: 0 0 0 0 1 0 0 0
+```
+
+`dev_trust` 在 A5 现场必查，UBX 现场未涉及但建议同样核对。PFC 位图只预览，改动用 `python3 "$MF_SCRIPTS/1825-pfc.py" "$NIC"`。下一步做口间连通性验证。
+
+**步骤 8（宿主机）：抓包 + ping 同一对端口**
+
+两个终端，先起抓包，再执行 ping：
+
+```bash
+# 终端 A：先执行，10 秒后自动结束
+timeout 10 tcpdump -ni "$NIC" icmp and host 10.1.0.92
+```
+
+```bash
+# 终端 B：在终端 A 运行期间执行
+ping -c 3 -I 10.1.0.94 10.1.0.92
+```
+
+终端 A 的回显（示例）：
+
+```text
+IP 10.1.0.94 > 10.1.0.92: ICMP echo request, id 1234, seq 1
+IP 10.1.0.92 > 10.1.0.94: ICMP echo reply, id 1234, seq 1
+```
+
+request 和 reply 都要出现。只有 request 没有 reply，回步骤 5 查端口桥和 trunk；本口连 request 都看不到，回步骤 6 查源地址和路由。下一步核对 hccn 写入。
+
+**步骤 9（宿主机）：核对 hccn.conf 与网口、RDMA 设备**
+
+```bash
+# 地址条数应与本机 NPU 数据口数一致（107 为 8）
+grep -c '^address_' /etc/hccn.conf
+# 宿主和容器各执行一次，哈希一致再继续
+md5sum /etc/hccn.conf
+# 逐项核对 address_i → IP → 网口 → RDMA 设备
+for i in $(seq 0 $(( $(grep -c '^address_' /etc/hccn.conf) - 1 ))); do
+  ip=$(sed -n "s/^address_${i}=//p" /etc/hccn.conf | tr -d '\r')
+  nic=$(ip -o -4 addr show | awk -v a="$ip" 'split($4,v,"/") && v[1]==a {print $2}')
+  rdev=$(rdma link show | awk -v n="netdev $nic" 'index($0,n){print $2}' | cut -d/ -f1)
+  printf 'address_%s %-12s %-8s %s\n' "$i" "${ip:-缺失}" "${nic:-未找到}" "${rdev:-无RDMA}"
+done
+```
+
+回显（示例，107 为 8 条）：
+
+```text
+8
+address_0 10.1.0.91  ens0f0   hrn5_0
+address_1 10.1.0.92  ens0f1   hrn5_1
+address_2 10.1.0.93  ens1f0   hrn5_3
+address_3 10.1.0.94  ens1f1   hrn5_4
+address_4 10.1.0.95  ens2f0   hrn5_2
+address_5 10.1.0.96  ens2f1   hrn5_5
+address_6 10.1.0.97  ens3f0   hrn5_6
+address_7 10.1.0.98  ens3f1   hrn5_7
+```
+
+判据：条数等于 NPU 数据口数（107 为 8）；每行的 IP、网口、RDMA 设备都不为空，网口与 6.1 查到的映射一致；宿主和容器 `md5sum` 相同。出现空值或错位（例如 `address_3` 指到别的口）时回 6.1 重新确认，不要继续 MF 复测。
+
+**步骤 10（容器）：MF 复测**
+
+用 6.5 的命令：先小批（4 MiB）确认能完成，再跑原批；八方向完整复测仍按第 3.3 节第 9 步的 `mfcli benchmark` 参数执行。
+
+A5 server 需单独处理的部分：
+
+- VLAN / Vlanif 规划、第 3.3 节第 4/5 步、第 2 节自动化配置（都要求一口一 VLAN、一口一网关）；
+- 同网段对端的 `/32 via 网关`（UBX 对端跨网段，不需要）；
+- ECN 模板、PFC headroom、ACK、快速重传等参数（按 6.6 现场核对，不能照抄）；
+- 交换机清理：共享 VLAN 不能按“VLAN 只含单口”删除，只删本次改动的对象。
+
+### 6.1 判定是否属于共享 VLAN 拓扑
+
+不要按固定 VLAN 号判断。先从主机侧确认 RDMA 设备对应的数据网口，再顺着网口找到交换机和 VLAN。
+
+宿主机：RDMA 设备 → 网口
+
+**① 用 `hiroce5 gids` 看设备和地址**
+
+```bash
+hiroce5 gids
+```
+
+回显里找含本机数据地址（如 `10.1.0.94`）的那一行，对应的设备就是 `hrn5_4`。
+
+**② 用 `rdma link show` 找设备对应的网口**
+
+```bash
+rdma link show | grep hrn5_4
+```
+
+回显（示例）：
+
+```text
+link hrn5_4/1 state ACTIVE physical_state LINK_UP netdev ens1f1
+```
+
+得到网口 `ens1f1`，步骤 1 直接用它。`state ACTIVE`、`physical_state LINK_UP` 表示该网口的 RDMA 链路已就绪。
+
+**③ 有 LLDP 时取交换机端口**
+
+```bash
+lldpcli show neighbors || lldpcli -f json show neighbors || lldpctl
+```
+
+有输出时看邻居的端口名（如 `400GE1/0/34`）；未安装时会直接报 `command not found`，按步骤 2、3 用 MAC 反查交换机端口。
+
+交换机：端口 → Eth-Trunk → VLAN 的查法与步骤 3、4 相同（`display mac-address` → `display eth-trunk 34` → `display port vlan`）。拿到 VLAN 号后，再确认它是否被多个口共享：
+
+```text
+display vlan <VLAN>
+display current-configuration interface Vlanif <VLAN>
+```
+
+回显（示例，VLAN 100）：
+
+```text
+VID          Ports
+--------------------------------------------------------------------------------
+ 100         UT:Eth-Trunk1(D)   Eth-Trunk2(D)   Eth-Trunk3(D)   Eth-Trunk4(D)
+                Eth-Trunk5(D)   Eth-Trunk6(D)   Eth-Trunk7(D)   Eth-Trunk8(D)
+                Eth-Trunk9(D)   Eth-Trunk10(D)  Eth-Trunk11(D)  Eth-Trunk12(D)
+                Eth-Trunk13(D)  Eth-Trunk14(D)  Eth-Trunk15(D)  Eth-Trunk16(D)
+                Eth-Trunk17(U)  Eth-Trunk18(U)  Eth-Trunk19(U)  Eth-Trunk20(U)
+                Eth-Trunk21(U)  Eth-Trunk22(U)  Eth-Trunk23(U)  Eth-Trunk24(U)
+                Eth-Trunk25(D)  Eth-Trunk26(D)  Eth-Trunk27(D)  Eth-Trunk28(D)
+                Eth-Trunk29(U)  Eth-Trunk30(U)  Eth-Trunk31(U)  Eth-Trunk32(U)
+                Eth-Trunk33(U)  Eth-Trunk34(U)  Eth-Trunk35(U)  Eth-Trunk36(U)
+                Eth-Trunk37(D)  Eth-Trunk38(D)  Eth-Trunk39(D)  Eth-Trunk40(D)
+                Eth-Trunk41(U)  Eth-Trunk42(U)  Eth-Trunk43(U)  Eth-Trunk44(U)
+                Eth-Trunk45(U)  Eth-Trunk46(U)  Eth-Trunk47(U)  Eth-Trunk48(U)
+
+VID  Type     Status  Property  MAC-LRN STAT    BC  MC  UC  Description
+ 100 common   enable  default   enable  disable FWD FWD FWD VLAN 0100
+```
+
+```text
+interface Vlanif100
+ mtu 9000
+ description To_A5
+ ip address 10.1.0.1 255.255.255.0
+ arp timeout 60
+ arp proxy anyway enable
+```
+
+判据：
+
+- `display vlan` 的成员是多个 Eth-Trunk/端口（示例 48 个），不是只有一个口；
+- Vlanif 只有一个 `ip address`（示例 `10.1.0.1/24`）、`mtu 9000`；
+- 接入口或所属 Eth-Trunk 有 `port bridge enable`（查法见步骤 5）；
+- `display eth-trunk 34` 的成员数确认实际链路数（步骤 4）。
+
+满足以上条件即属于共享 VLAN 拓扑。VLAN 号、网关、表号都是现场值，文中的 100、`10.1.0.1`、101–108 仅为示例。
+
+### 6.2 从零创建 local、源策略表和精确规则
+
+以下命令在宿主机执行。已经配过的先用步骤 6 核对，缺哪项补哪项，不要整套重跑；从未配置过时用本节从零创建。字段按 6.1 核对的映射填写，数组长度必须等于数据口数。
+
+```bash
+NIC=(ens0f0 ens0f1 ens1f0 ens1f1 ens2f0 ens2f1 ens3f0 ens3f1)
+SRC=(10.1.0.91 10.1.0.92 10.1.0.93 10.1.0.94 10.1.0.95 10.1.0.96 10.1.0.97 10.1.0.98)
+NET=(10.1.0.0 10.1.0.0 10.1.0.0 10.1.0.0 10.1.0.0 10.1.0.0 10.1.0.0 10.1.0.0)
+LEN=(24 24 24 24 24 24 24 24)
+GW=(10.1.0.1 10.1.0.1 10.1.0.1 10.1.0.1 10.1.0.1 10.1.0.1 10.1.0.1 10.1.0.1)
+TABLE=(101 102 103 104 105 106 107 108)
+
+for i in "${!NIC[@]}"; do
+  ip -4 route replace "${NET[$i]}/${LEN[$i]}" dev "${NIC[$i]}" src "${SRC[$i]}" table "${TABLE[$i]}"
+  ip -4 route replace default via "${GW[$i]}" dev "${NIC[$i]}" table "${TABLE[$i]}"
+  ip -4 rule show | grep -qE "^${TABLE[$i]}:[[:space:]]+from ${SRC[$i]} lookup ${TABLE[$i]}$" || \
+    ip -4 rule add priority "${TABLE[$i]}" from "${SRC[$i]}" lookup "${TABLE[$i]}"
+done
+for i in "${!NIC[@]}"; do
+  for j in "${!NIC[@]}"; do
+    [ "$i" = "$j" ] && continue
+    ip -4 rule show | grep -qE "^0:[[:space:]]+from ${SRC[$i]} to ${SRC[$j]} iif lo lookup ${TABLE[$i]}$" || \
+      ip -4 rule add priority 0 from "${SRC[$i]}" to "${SRC[$j]}" iif lo lookup "${TABLE[$i]}"
+  done
+done
+
+# local 迁移：确认 priority 1 存在且唯一，才删 priority 0
+if ip -4 rule show | grep -qE '^1:[[:space:]]+from all lookup local'; then
+  n=$(ip -4 rule show | grep -cE '^1:[[:space:]]+from all lookup local')
+else
+  ip -4 rule add priority 1 lookup local
+  n=$(ip -4 rule show | grep -cE '^1:[[:space:]]+from all lookup local')
+fi
+if [ "$n" = 1 ] && ip -4 rule show | grep -qE '^0:[[:space:]]+from all lookup local'; then
+  ip -4 rule del priority 0 lookup local
+fi
+ip -4 rule show | grep -cE 'from all lookup local'   # 应恰好 1
+```
+
+创建后按步骤 6 核对。
+
+### 6.3 同网段相邻卡：对端 `/32 via 网关`
+
+解决的问题：同网段、同 Eth-Trunk 的两个口之间，一个方向不通或单块写超时（如 `ib_write_bw` 超时）。内核按 `/24` 直连，ARP 解析对端 MAC，报文从同一 trunk 的成员口 L2 回注；这条路径在 A5 server 现场对特定同口卡对不可用。给对端加 `/32 via 网关` 后，目的 MAC 变成网关，报文走 Vlanif 三层转发，绕开该回注路径。
+
+以下命令在宿主机执行。只在“同网段 + 同 trunk/同物理口”且复现故障的方向上添加；跨网段对端不需要，也不是所有共享 VLAN 都要加。
+
+下面的方向清单默认只含 `0↔1`，验证通过后再追加。`ens$((i/2))f$((i%2))`、`101+i` 只是 A5 server 现场这类连续编号的示例；其他现场先按 6.1 核对 NPU ↔ 网口 ↔ Eth-Trunk ↔ 源策略表，再改写清单。
+
+先快照（记录改动前的运行态和 NetworkManager 配置，用于回退），再写入：
+
+```bash
+pairs=("0 1" "1 0")            # 只放已复现的方向；验证后再追加
+BACKUP=/var/tmp/mf-route-backup-$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BACKUP"
+for p in "${pairs[@]}"; do
+  set -- $p; i=$1
+  nic=ens$((i / 2))f$((i % 2)); table=$((101 + i))
+  ip -4 route show table "$table" > "$BACKUP/table-$i.before"
+  con=$(nmcli -g GENERAL.CONNECTION dev show "$nic")
+  nmcli -g ipv4.routes connection show "$con" > "$BACKUP/nm-$i.before"
+done
+```
+
+怎么看备份文件：`table-<i>.before` 和 `nm-<i>.before` 是两个文件，分开看。`i` 是发送口（0→`ens0f0`/表 101，1→`ens0f1`/表 102……）。
+
+`table-<i>.before` 是运行态的策略表，应有三类行，每个需要绕行的对端一条 `/32`：
+
+```text
+default via 10.1.0.1 dev ens0f0                  # 表默认路由
+10.1.0.0/24 dev ens0f0 scope link src 10.1.0.91  # 本口网段
+10.1.0.92 via 10.1.0.1 dev ens0f0                # 对端 1 的 /32，目标项
+```
+
+`nm-<i>.before` 是 NetworkManager 的持久化项，只有 `/32`，每个对端一条：
+
+```text
+10.1.0.92/32 10.1.0.1 onlink=true table=101
+```
+
+0 号口同时配了 0→1 和 0→2 时，两个文件各自多一条：
+
+```text
+# table-0.before
+10.1.0.92 via 10.1.0.1 dev ens0f0
+10.1.0.93 via 10.1.0.1 dev ens0f0
+
+# nm-0.before
+10.1.0.92/32 10.1.0.1 onlink=true table=101
+10.1.0.93/32 10.1.0.1 onlink=true table=101
+```
+
+只有 `/24`、没有对应 `via` 行，说明该对端还没加 `/32`。
+
+写入运行态和 NetworkManager（同一份清单）：
+
+```bash
+for p in "${pairs[@]}"; do
+  set -- $p; i=$1; j=$2
+  src="10.1.0.$((91 + i))"; dst="10.1.0.$((91 + j))"
+  nic=ens$((i / 2))f$((i % 2)); table=$((101 + i))
+  con=$(nmcli -g GENERAL.CONNECTION dev show "$nic")
+  route="$dst/32 10.1.0.1 onlink=true table=$table"
+  ip -4 route replace "$dst/32" via 10.1.0.1 dev "$nic" table "$table"
+  nmcli connection modify "$con" -ipv4.routes "$route"
+  nmcli connection modify "$con" +ipv4.routes "$route"
+  ip -4 route get "$dst" from "$src"
+done
+```
+
+`ip route get` 应显示 `via 10.1.0.1 ... table <表号>`。用 `replace` 而不是 `add`，避免重复执行报 `File exists`。
+
+回退：内核和 NetworkManager 分开判断。改前有的恢复旧值，改前没有的才删除本次新增。
+
+```bash
+for p in "${pairs[@]}"; do
+  set -- $p; i=$1; j=$2
+  dst="10.1.0.$((91 + j))"; nic=ens$((i / 2))f$((i % 2)); table=$((101 + i))
+  con=$(nmcli -g GENERAL.CONNECTION dev show "$nic")
+
+  # 内核
+  old=$(grep "^$dst via " "$BACKUP/table-$i.before" || true)
+  if [ -n "$old" ]; then
+    ip -4 route replace $old table "$table"
+  else
+    ip -4 route del "$dst/32" via 10.1.0.1 dev "$nic" table "$table" 2>/dev/null || true
+  fi
+
+  # NetworkManager
+  oldnm=$(grep "^$dst/32 " "$BACKUP/nm-$i.before" || true)
+  nmcli connection modify "$con" -ipv4.routes "$dst/32 10.1.0.1 onlink=true table=$table"
+  [ -n "$oldnm" ] && nmcli connection modify "$con" +ipv4.routes "$oldnm"
+done
+```
+
+判据：改前同口对端底层不通（如 `ib_write_bw` 超时），改后双向通过；MF 侧相邻卡对（如 `0,1`）的 D2rD/D2rH 恢复。
+
+### 6.4 网卡设备侧 `dev_trust` 改为 DSCP
+
+以下命令在宿主机执行。交换机 `trust dscp` 和网卡 `port_trust` 只管端口侧；NPU 发出的流量由网卡的设备侧信任方式决定，默认是 PCP。`1825-pfc.py` 只改 PFC 位图，不改这一项。
+
+先记录原值并按查询结果分支：只有 `pcp` 才写入并记入本次清单，已是 `dscp` 的只复核，查询异常直接退出。
+
+```bash
+set -eu
+changed=()
+for n in ens0f0 ens0f1 ens1f0 ens1f1 ens2f0 ens2f1 ens3f0 ens3f1; do
+  cur=$(hinicadm5 qos -i "$n" --dev_trust q)
+  case "$cur" in
+    "dev trust: pcp") hinicadm5 qos -i "$n" --dev_trust dscp; changed+=("$n") ;;
+    "dev trust: dscp") ;;
+    *) echo "[ERROR] 无法确认 $n 的原值: $cur" >&2; exit 1 ;;
+  esac
+  echo "=== $n ==="
+  hinicadm5 qos -i "$n" --dev_trust q | grep -Fx 'dev trust: dscp'
+  hinicadm5 qos -i "$n" --port_trust q
+  hinicadm5 qos -i "$n" --dev_dscp2cos q
+  hinicadm5 qos -i "$n" -t pfc
+done
+printf '[OK] 本次修改: %s\n' "${changed[*]:-无}"
+```
+
+回退只遍历本次修改清单：
+
+```bash
+for n in "${changed[@]}"; do hinicadm5 qos -i "$n" --dev_trust pcp; done
+```
+
+判据：`dev trust: dscp`、`port trust: dscp`、DSCP 33 映射到 CoS 4、`pfcup` 中优先级 4 为 1。回退只对本次改过的口执行 `--dev_trust pcp`。
+
+现场结论是“设备侧改为 DSCP 后，最终配置组合通过验证”。修改前该 QP 是否进了错误队列，没有逐队列证据，不能据此下因果结论。
+
+### 6.5 单笔大 WR 卡死与秒级长尾要分开
+
+两种现象都在“大批量写”里出现，但判据不同：
+
+| 现象 | 日志特征 | 处理 |
+|---|---|---|
+| 单笔大 WR 卡死 | 只有一次提交（如 `write count: 1`），之后没有 `fence done`；单笔 128 MiB 覆盖写可卡 60 秒以上 | 用例侧拆分提交（如每次最多 4 MiB）；产品侧需确认单 WR 大小上限 |
+| 秒级长尾 | 批量写能完成，但出现约 8.59 秒的 fence；伴随入口丢包、网卡超时重传增加 | 按在途量做流控并处理拥塞，不能只靠改 PFC 或 ECN |
+
+说明：`ack_to=20` 对应基础 ACK 超时 4.096 µs × 2^20 ≈ 4.295 秒；现场实测 fence 约 8.59 秒，与经历两个计时周期一致，但没有逐包 ACK/PSN 轨迹，不能据此断定每次都是两次重传，也不能仅凭时长判断“真正卡死”。`HCCL_RDMA_TIMEOUT` 在现场未改变实际 QP 参数。
+
+复现对照（同一卡对、同一块长，两边计时总量都取 256 MiB）。在已加载 CANN 和 MF 环境的容器中执行，先设置提供程序和 HCOMM 开关：
+
+```bash
+source /usr/local/Ascend/cann/set_env.sh
+source /usr/local/memfabric_hybrid/set_env.sh
+export IBV_DRIVERS=hrn5 MF_HYBM_RDMA_USE_HCOMM=1
+
+# 小批：4 MiB × 64 次 = 256 MiB
+mfcli benchmark --device 3,5 --protocol device_rdma --direction d2rh \
+  --block-size 64K --transfer-size 4M --warmup-count 1 --copy-count 64 --log
+# 原批：128 MiB × 2 次 = 256 MiB
+mfcli benchmark --device 3,5 --protocol device_rdma --direction d2rh \
+  --block-size 64K --batch-size 2048 --warmup-count 1 --copy-count 2 --log
+```
+
+小批通过、原批出现 8.59 秒等待，说明与在途量有关；原批在预热后的覆盖写阶段无完成，则按“单笔大 WR”处理。
+
+### 6.6 队列 4 的 ECN 模板：按被测路径核对
+
+以下命令在交换机（用户视图）执行。A5 server 现场出现过 33/36 口用 `fourhundred`、34/35 口用 `roce_ecn`，低门限相差约 17 倍（207 KB vs 3500 KB），会显著改变 ECN/CNP 与带宽表现。后续在卡 3、5 上把队列 4 换成 `fourhundred` 复测：两种卡序的满批量读写都通过，没有新增入口丢包或超时重传，且 2 MiB 块写入更快。因此没有“必须用 `roce_ecn`”的结论；要求是记录并核对**被测路径**上的实际模板和门限，用丢包/重传和带宽判断，不把“八口一致”或某个模板名当作验收条件。
+
+```text
+display drop-profile name roce_ecn
+display drop-profile name fourhundred
+display current-configuration interface 400GE1/0/34 | include "wred|ecn"
+display current-configuration interface 400GE1/0/35 | include "wred|ecn"
+display qos ecn threshold interface 400GE1/0/34
+display qos ecn threshold interface 400GE1/0/35
+display qos queue statistics interface 400GE1/0/34
+display qos queue statistics interface 400GE1/0/35
+```
+
+`fourhundred` 的定义（示例）：
+
+```text
+drop-profile fourhundred
+ ecn buffer-size low-limit 3584000 high-limit 5120000 discard-percentage 5
+```
+
+回显（示例，同一端口不同队列可以绑不同模板）：
+
+```text
+ qos queue 4 wred roce_ecn
+ qos queue 5 wred fourhundred
+ qos queue 4 ecn
+ qos queue 5 ecn
+```
+
+数据面走队列 4（DSCP 33 → CoS 4 → 队列 4），所以只核对队列 4 的模板；队列 5 是另一条路径，不影响本用例。
+
+两台 leaf 都查 34、35 口，测试前后各取一次，按队列 4 转发增量确定实际路径。
+
+A/B 结果（只切两台 leaf 的 34、35 口队列 4，每批 128 MiB，按 `roce_ecn → fourhundred → fourhundred → roce_ecn` 交叉；同一卡序四个阶段走的主要 leaf 一致）：
+
+| 模板 | 通过/计时总量 | 64 KiB 写 (GB/s) | 2 MiB 写 (GB/s) | 每轮四口 ECN 标记增量 | 入口丢包/超时重传 |
+|---|---|---|---|---|---|
+| `roce_ecn` | 4/4，64 GiB | 16.65–17.77 | 18.62–20.68 | 12208–20390 | 0 / 0 |
+| `fourhundred` | 4/4，64 GiB | 17.60–18.44 | 23.22–23.73 | 738–1093 | 0 / 0 |
+
+切回 `roce_ecn` 后，两个卡序的 2 MiB 写入回落到 18.62、20.59 GB/s，说明这一轮的性能差异来自模板。现场有共享业务，数值只适用于本次测试窗口。
+
+结论：本轮窗口里两种模板都通过，均无新增入口丢包/超时重传；`fourhundred` 的 2 MiB 写入更快。该试验没有验证关闭 ECN，也没有覆盖八个数据口全量；是否切到 `fourhundred`，按本表复测后再决定。
+
+要核对全部数据口时，把 `400GE1/0/34` 换成步骤 4 查到的成员口，逐个执行 `display current-configuration interface <端口> | include "wred|ecn"` 和 `display qos ecn threshold interface <端口>`。
+
+判据：`display current-configuration interface 400GE1/0/34 | include "wred|ecn"` 里出现 `qos queue 4 wred roce_ecn`（或 `fourhundred`），就是该口实际绑定的模板；`display qos ecn threshold interface 400GE1/0/34` 的队列 4 门限应与模板定义一致（`roce_ecn` 约 207/1465 KB，`fourhundred` 约 3500/5000 KB）。端口计数按实际转发 leaf 读取。A/B 试验只用于对比，不等同最终配置；**两台 leaf 的 34、35 口都要改**，只改一端不是完整对照组：
+
+```text
+system-view
+interface 400GE1/0/34
+ qos queue 4 wred fourhundred
+interface 400GE1/0/35
+ qos queue 4 wred fourhundred
+commit
+
+# 回读
+display current-configuration interface 400GE1/0/34 | include "wred|ecn"
+display current-configuration interface 400GE1/0/35 | include "wred|ecn"
+
+# 试验结束恢复
+interface 400GE1/0/34
+ qos queue 4 wred roce_ecn
+interface 400GE1/0/35
+ qos queue 4 wred roce_ecn
+commit
+```
+
+每轮同时记录：带宽、最长已完成 fence、入口优先级 4 丢包、ECN 标记、两端 CNP、网卡超时重传增量。端口计数含共享流量，需按实际转发 leaf 判断。
+
+交换机改动先 `commit`；重启前对比 `display saved-configuration` 与 `display current-configuration`，未 `save` 时重启会回退。
