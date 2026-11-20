@@ -2,13 +2,15 @@
 # coding=utf-8
 # Copyright (c) Huawei Technologies Co., Ltd. 2026-2026. All rights reserved.
 # MemFabric_Hybrid is licensed under Mulan PSL v2.
-"""单卡 AICPU：预热、捕获一次，动态修改设备元数据并校验 H2D/D2H。"""
+"""多卡 AICPU 图模式：按字节数和记录数测试 H2D/D2H 性能与正确性。"""
 
 import argparse
 import importlib.util
+import logging
 import os.path
 
 import torch
+import torch.multiprocessing as mp
 import torch_npu  # noqa: F401
 
 import memfabric_hybrid as mf
@@ -26,216 +28,178 @@ def _load_timing_utils():
 _timing = _load_timing_utils()
 report_timing = _timing.report_timing
 time_with_npu_event = _timing.time_with_npu_event
-
+logger = logging.getLogger(__name__)
 
 ONE_GIB = 1 << 30
-K_DIM = 512
-V_DIM = 64
-WARMUP_ITERS = 5
+WARMUP_ITERS = 1
 
 
-def run_graph(pool, cpu_tensors, npu_tensors, warmup_iters=WARMUP_ITERS):
-    device = npu_tensors[0].device
-    sources, destinations = cpu_tensors, npu_tensors
-
-    # 1. 四个元数据 Tensor 都放在 NPU 上，捕获后保持地址不变。
-    src_ptrs = torch.tensor([t.data_ptr() for t in sources], dtype=torch.int64, device=device)
-    dst_ptrs = torch.tensor([t.data_ptr() for t in destinations], dtype=torch.int64, device=device)
-    len_ptrs = torch.tensor([t.numel() * t.element_size() for t in sources], dtype=torch.int32, device=device)
-    size_ptr = torch.tensor([len(sources)], dtype=torch.int32, device=device)
-    host_tables = (src_ptrs.clone(), src_ptrs.flip(0))
-    device_tables = (dst_ptrs.clone(), dst_ptrs.flip(0))
-    length_tables = (len_ptrs.clone(), len_ptrs.flip(0))
-
-    def copy_once():
-        ret = pool.sparse_copy(src_ptrs, dst_ptrs, len_ptrs, size_ptr, device)
-        if ret != 0:
-            raise RuntimeError(f"sparse_copy failed: {ret}")
-
-    stream = torch.npu.Stream(device=device)
-    stream.wait_stream(torch.npu.current_stream())
-    graph = torch.npu.NPUGraph()
-    try:
-        with torch.npu.stream(stream):
-            # 2. 图外预热，等待初始化和拷贝完成。
-            for _ in range(warmup_iters):
-                copy_once()
-            stream.synchronize()
-
-            # 3. 进入 with 开始捕获，退出 with 结束捕获。
-            with torch.npu.graph(graph, stream=stream, capture_error_mode="global"):
-                copy_once()
-            stream.synchronize()
-
-            # 同一图和固定表地址跨 replay 切换 H2D/D2H，方向仅由表内容决定。
-            for value, (h2d, reverse, count, partial) in enumerate(
-                (
-                    (True, 0, 0, False),
-                    (True, 1, 1, False),
-                    (False, 0, 2, True),
-                    (True, 0, 2, False),
-                    (False, 1, 2, False),
-                ),
-                start=1,
-            ):
-                sources, destinations = (cpu_tensors, npu_tensors) if h2d else (npu_tensors, cpu_tensors)
-                src_table, dst_table = (host_tables, device_tables) if h2d else (device_tables, host_tables)
-                label = "H2D" if h2d else "D2H"
-                for index, (source, destination) in enumerate(zip(sources, destinations)):
-                    source.fill_(value + index)
-                    destination.zero_()
-                src_ptrs.copy_(src_table[reverse])
-                dst_ptrs.copy_(dst_table[reverse])
-                len_ptrs.copy_(length_tables[reverse])
-                size_ptr.fill_(count)
-                if partial:
-                    len_ptrs.fill_(sources[0].element_size())
-                order = list(reversed(range(len(sources)))) if reverse else list(range(len(sources)))
-                total_bytes = sum(
-                    (1 if partial else sources[index].numel()) * sources[index].element_size()
-                    for index in order[:count]
-                )
-                elapsed = time_with_npu_event(graph.replay)
-
-                for index, (source, destination) in enumerate(zip(sources, destinations)):
-                    expected = torch.zeros_like(source.cpu())
-                    if index in order[:count]:
-                        elements = 1 if partial else source.numel()
-                        expected[:elements].copy_(source.cpu()[:elements])
-                    if not torch.equal(destination.cpu(), expected):
-                        raise AssertionError(f"{label} replay {value}: data mismatch")
-                print(f"PASS {label} replay {value}", flush=True)
-                report_timing(
-                    0,
-                    f"graph_copy device={device.index} {label} count={count} partial={partial}",
-                    elapsed,
-                    total_bytes,
-                )
-    finally:
-        stream.synchronize()
-        graph.reset()  # 销毁图后，才能释放它引用的 Tensor 和 offload 资源。
+def _verify_graph(graph, stream, source, destination, expected, generator, record_bytes, label):
+    expected.random_(0, 256, generator=generator)
+    source.copy_(expected)
+    destination.copy_(expected.bitwise_not())
+    graph.replay()
+    stream.synchronize()
+    actual = destination.cpu()
+    if not torch.equal(actual, expected):
+        offset = (actual != expected).to(torch.uint8).argmax().item()
+        raise AssertionError(
+            f"{label} mismatch: record={offset // record_bytes} byte={offset % record_bytes} "
+            f"expected={expected[offset].item()} actual={actual[offset].item()}"
+        )
 
 
-def run_large_graph(pool, device, records, elements_per_record=1, warmup_iters=WARMUP_ITERS):
-    elements = records * elements_per_record
-    cpu_data = pool.empty([elements], dtype=torch.int32).fill_(7)
-    npu_data = torch.zeros(elements, dtype=torch.int32, device=device)
-    observed = torch.empty_like(npu_data)
-    record_bytes = elements_per_record * cpu_data.element_size()
-    offsets = torch.arange(records, dtype=torch.int64, device=device) * record_bytes
+def run_graph(pool, device, record_bytes, args, sync):
+    total_bytes = record_bytes * args.records
+    cpu_data = pool.empty([total_bytes], dtype=torch.uint8).zero_()
+    npu_data = torch.empty(total_bytes, dtype=torch.uint8, device=device)
+    expected = torch.empty(total_bytes, dtype=torch.uint8)
+    generator = torch.Generator().manual_seed(device.index)
+    offsets = torch.arange(args.records, dtype=torch.int64, device=device) * record_bytes
     host_addresses = offsets + cpu_data.data_ptr()
     device_addresses = offsets + npu_data.data_ptr()
     src_ptrs = host_addresses.clone()
     dst_ptrs = device_addresses.clone()
-    lengths = torch.full((records,), record_bytes, dtype=torch.int32, device=device)
-    count_ptr = torch.tensor([records], dtype=torch.int32, device=device)
-    src_input, dst_input, count_input = src_ptrs.clone(), dst_ptrs.clone(), count_ptr.clone()
+    lengths = torch.full((args.records,), record_bytes, dtype=torch.int32, device=device)
+    count_ptr = torch.tensor([args.records], dtype=torch.int32, device=device)
 
     def copy_once():
-        src_ptrs.copy_(src_input)
-        dst_ptrs.copy_(dst_input)
-        count_ptr.copy_(count_input)
         ret = pool.sparse_copy(src_ptrs, dst_ptrs, lengths, count_ptr, device)
         if ret != 0:
-            raise RuntimeError(f"large sparse_copy failed: {ret}")
+            raise RuntimeError(f"sparse_copy failed: ret={ret}")
+
+    def replay_many():
+        for _ in range(args.iters):
+            graph.replay()
 
     stream = torch.npu.Stream(device=device)
     stream.wait_stream(torch.npu.current_stream())
     graph = torch.npu.NPUGraph()
     try:
         with torch.npu.stream(stream):
-            for _ in range(warmup_iters):
+            for _ in range(args.warmup_iters):
                 copy_once()
             stream.synchronize()
             with torch.npu.graph(graph, stream=stream, capture_error_mode="global"):
                 copy_once()
-                torch.add(npu_data, 1, out=observed)
             stream.synchronize()
-            counts = sorted(
-                {
-                    0,
-                    min(255, records),
-                    min(256, records),
-                    min(257, records),
-                    min(1000, records),
-                    min(1001, records),
-                    min(8190, records),
-                    min(8191, records),
-                    records,
-                }
-            )
-            for h2d in (True, False):
-                for iteration, count in enumerate(counts, start=1):
-                    source, destination = (cpu_data, npu_data) if h2d else (npu_data, cpu_data)
-                    source.fill_(iteration)
-                    destination.zero_()
-                    src_input.copy_(host_addresses if h2d else device_addresses)
-                    dst_input.copy_(device_addresses if h2d else host_addresses)
-                    count_input.fill_(count)
-                    elapsed = time_with_npu_event(graph.replay)
-                    expected = torch.zeros(elements, dtype=torch.int32)
-                    expected[: count * elements_per_record].fill_(iteration)
-                    if not torch.equal(destination.cpu(), expected):
-                        raise AssertionError(f"large copy mismatch, h2d={h2d}, count={count}")
-                    if not torch.equal(observed.cpu(), npu_data.cpu() + 1):
-                        raise AssertionError(f"same-stream consumer ran before copy completion, count={count}")
-                    print(f"PASS large graph h2d={h2d} count={count} capacity={records}", flush=True)
-                    label = "H2D" if h2d else "D2H"
-                    report_timing(
-                        0,
-                        f"graph_e2e device={device.index} {label} count={count} record_bytes={record_bytes}",
-                        elapsed,
-                        count * record_bytes,
-                    )
+
+            for label in ("H2D", "D2H"):
+                source, destination = (cpu_data, npu_data) if label == "H2D" else (npu_data, cpu_data)
+                src_ptrs.copy_(host_addresses if label == "H2D" else device_addresses)
+                dst_ptrs.copy_(device_addresses if label == "H2D" else host_addresses)
+                for _ in range(args.warmup_iters):
+                    graph.replay()
+                stream.synchronize()
+                _verify_graph(graph, stream, source, destination, expected, generator, record_bytes, label)
+                sync.wait()
+                elapsed = time_with_npu_event(replay_many)
+                sync.wait()
+                _verify_graph(graph, stream, source, destination, expected, generator, record_bytes, label)
+                report_timing(
+                    device.index - args.device,
+                    f"graph_copy device={device.index} {label} bytes={record_bytes} "
+                    f"records={args.records} iters={args.iters} PASS",
+                    elapsed / args.iters,
+                    total_bytes,
+                )
     finally:
         stream.synchronize()
         graph.reset()
+        ret = pool.free(cpu_data.data_ptr())
+        if ret != 0:
+            raise RuntimeError(f"pool.free failed: ptr={cpu_data.data_ptr()} bytes={total_bytes} ret={ret}")
+
+
+def _run_device(rank_id, args, sync):
+    device_id = args.device + rank_id
+    record_bytes = None
+    try:
+        torch.npu.set_device(device_id)
+        mf.set_log_level(3)
+        max_total_bytes = max(args.record_bytes) * args.records
+        pool_bytes = ((max_total_bytes + ONE_GIB - 1) // ONE_GIB) * ONE_GIB
+        logger.info("device=%s pool=%.2f GiB", device_id, pool_bytes / ONE_GIB)
+        config = offload.OffloadConfig()
+        config.device_id = device_id
+        config.reserve_size = pool_bytes
+        config.alloc_size = pool_bytes
+        config.scene = offload.Scene.LOCAL
+        config.executor = offload.Executor.AICPU
+        pool = offload.Offload()
+        ret = pool.initialize(config)
+        if ret != 0:
+            raise RuntimeError(f"pool.initialize failed: bytes={pool_bytes} ret={ret}")
+        try:
+            for record_bytes in args.record_bytes:
+                logger.info(
+                    "device=%s bytes=%s records=%s data=%.2f MiB",
+                    device_id,
+                    record_bytes,
+                    args.records,
+                    record_bytes * args.records / (1 << 20),
+                )
+                run_graph(pool, torch.device(f"npu:{device_id}"), record_bytes, args, sync)
+                sync.wait()
+        finally:
+            torch.npu.synchronize()
+            pool.uninitialize()
+    except Exception:
+        logger.exception(
+            "AICPU graph failed: device=%s bytes=%s records=%s warmup_iters=%s iters=%s",
+            device_id,
+            record_bytes,
+            args.records,
+            args.warmup_iters,
+            args.iters,
+        )
+        raise
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--device", type=int, default=0, help="NPU device ID (default: 0)")
-    parser.add_argument("--records", type=int, default=20000, help="large-copy table capacity (default: 20000)")
+    parser.add_argument("--device", type=int, default=0, help="first logical NPU device ID (default: 0)")
+    parser.add_argument("--num-devices", type=int, default=4, help="number of consecutive NPU devices (default: 4)")
+    parser.add_argument(
+        "--bytes",
+        dest="record_bytes",
+        type=int,
+        nargs="+",
+        default=[256, 2048, 4096, 16384, 524288, 20971520],
+        help="bytes per record, tested in order (default: 256 2048 4096 16384 524288 20971520)",
+    )
+    parser.add_argument("--records", type=int, default=1000, help="records per graph replay per device (default: 1000)")
+    parser.add_argument("--iters", type=int, default=1, help="timed graph replays per direction (default: 1)")
     parser.add_argument(
         "--warmup-iters",
         type=int,
         default=WARMUP_ITERS,
-        help="eager warmup count; use 0 to capture without sparse-copy warmup",
+        help=f"eager and graph warmup count; 0 captures without sparse-copy warmup (default: {WARMUP_ITERS})",
     )
     args = parser.parse_args()
-    if not 1 <= args.records <= 65536:
-        parser.error("--records must be in [1, 65536]")
-    if args.warmup_iters < 0:
-        parser.error("--warmup-iters must be non-negative")
-    torch.npu.set_device(args.device)
-    mf.set_log_level(1)
+    error = None
+    if any(not 1 <= size <= (1 << 31) - 1 for size in args.record_bytes):
+        error = f"each --bytes value must be in [1, 2147483647], got {args.record_bytes}"
+    elif not 1 <= args.records <= 65536:
+        error = f"--records must be in [1, 65536], got {args.records}"
+    elif args.device < 0 or args.num_devices < 1:
+        error = f"--device must be non-negative and --num-devices positive, got {args.device}, {args.num_devices}"
+    elif args.warmup_iters < 0 or args.iters < 1:
+        error = f"--warmup-iters must be non-negative and --iters positive, got {args.warmup_iters}, {args.iters}"
+    else:
+        device_count = torch.npu.device_count()
+        if args.device + args.num_devices > device_count:
+            error = (
+                f"requested devices [{args.device}, {args.device + args.num_devices}) "
+                f"exceed available device count {device_count}"
+            )
+    if error is not None:
+        logger.error(error)
+        parser.error(error)
 
-    config = offload.OffloadConfig()
-    config.device_id = args.device
-    config.reserve_size = ONE_GIB
-    config.alloc_size = ONE_GIB
-    config.scene = offload.Scene.LOCAL
-    config.executor = offload.Executor.AICPU
-    pool = offload.Offload()
-    ret = pool.initialize(config)
-    if ret != 0:
-        raise RuntimeError(f"pool.initialize failed: {ret}")
-
-    try:
-        cpu_key = pool.empty([K_DIM], dtype=torch.bfloat16).zero_()
-        cpu_value = pool.empty([V_DIM], dtype=torch.bfloat16).zero_()
-        npu_key = torch.ones(K_DIM, dtype=torch.bfloat16, device=f"npu:{args.device}")
-        npu_value = torch.ones(V_DIM, dtype=torch.bfloat16, device=f"npu:{args.device}")
-        cpu_tensors = [cpu_key, cpu_value]
-        npu_tensors = [npu_key, npu_value]
-
-        run_graph(pool, cpu_tensors, npu_tensors, warmup_iters=args.warmup_iters)
-        run_large_graph(pool, npu_key.device, args.records, warmup_iters=args.warmup_iters)
-        run_large_graph(pool, npu_key.device, 1, (32 << 20) // 4 + 1, warmup_iters=args.warmup_iters)
-        print("AICPU graph: H2D and D2H passed", flush=True)
-    finally:
-        torch.npu.synchronize()
-        pool.uninitialize()
+    sync = mp.get_context("spawn").Barrier(args.num_devices)
+    mp.spawn(_run_device, args=(args, sync), nprocs=args.num_devices, join=True)
+    print(f"AICPU graph: all {args.num_devices} devices passed H2D and D2H", flush=True)
 
 
 if __name__ == "__main__":

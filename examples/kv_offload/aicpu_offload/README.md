@@ -9,11 +9,34 @@ A3 需要支持 GVA V4/VMM 的驱动、提供 `aclnnShmemSdmaStarsQuery` 及其 
 ```bash
 mfcli kernel install --soc-version A3  # A5 设备使用 A5
 mfcli kernel info
-python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --device 0 --records 65536
-python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --device 0 --records 20000 --warmup-iters 0
+python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --records 1000
 ```
 
-示例使用显式 offload.Offload() 实例。第二条 Python 命令在新进程中验证无 eager 预热的首次捕获。示例在同一张图上改变方向、条数、地址顺序和长度；大批次示例还检查图内元数据生产、拷贝后消费、空批次、256/1000/8190 条附近的批次边界，以及超过 32 MiB 的单条记录。
+默认使用逻辑设备 0、1、2、3，依次测试每条记录为 256、2048、4096、16384、524288、20971520 字节的六种规模，每卡每次图重放拷贝 1000 条记录。以上命令也可省略 `--records 1000`。每种规模下，4 张卡并发执行，先测试 H2D，再测试 D2H，每个方向默认计时 1 次图重放。可见设备不足 4 张时需显式减小 `--num-devices`。
+
+| 参数 | 含义 | 默认值 / 范围 |
+| --- | --- | --- |
+| `--bytes` | 一个或多个每条记录的字节数，按输入顺序测试，所有卡使用相同大小 | `256 2048 4096 16384 524288 20971520`；每项 1～2147483647 |
+| `--records` | 每卡每次图重放的记录条数，对所有字节数生效 | 1000；1～65536 |
+| `--device` | 起始逻辑设备 ID，使用连续的设备 | 0；非负且设备范围有效 |
+| `--num-devices` | 并发卡数，每卡一个独立进程 | 4；正整数 |
+| `--iters` | 每个方向正式计时的图重放次数 | 100；正整数 |
+| `--warmup-iters` | 捕获前的 eager 预热次数，以及每个方向的图重放预热次数 | 1；非负整数 |
+
+自定义多个大小、单卡、无预热和大记录测试示例：
+
+```bash
+python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --bytes 256 2048 4096 --records 1000
+python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --bytes 4096 --records 8192 --num-devices 1
+python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --bytes 4 --records 65536 --warmup-iters 0
+python examples/kv_offload/aicpu_offload/aicpu_graph_offload.py --bytes 33554433 --records 1
+```
+
+每种规模下，每卡创建独立的 `offload.Offload()` 实例、Host 池、NPU buffer、stream 和 graph，完成测试并释放该规模的资源后，所有卡集合，再进入下一种规模。数据使用 `uint8`，每条记录对应连续 buffer 中的一个切片，单次拷贝量为当前 `bytes × records`。Host 池按该数据量向上取整到 GiB，最少每卡 1 GiB；此外还需预留校验副本和框架工作区所需的内存。默认最大规模为每卡约 19.53 GiB 数据，对应每卡 20 GiB Host 池，4 卡的 Host 池合计 80 GiB。
+
+每种规模各捕获一次图，图中只包含 `sparse_copy`，通过图外原地更新地址表，在同一张图上切换 H2D/D2H。各卡在每个方向计时前集合，全部完成计时后再开始校验。NPU Event 在同一 stream 上测量连续 `iters` 次图重放，输出的 `time` 是平均每次重放耗时，`data` 是每卡每次重放的数据量，`bandwidth` 是该数据量除以平均耗时，单位 GiB/s。初始化、预热、地址表更新和校验均不计入耗时；结果表示多卡并发负载下各卡的带宽，每个结果均带有当前的 `bytes` 和 `records`。
+
+每个方向在计时前后分别生成新的、可复现的随机字节数据，目的端预置为期望数据的按位取反值，重放并同步后全量比较。成功时输出每卡每个方向的 `PASS` 和性能结果；失败时记录设备、方向、数据规模及首个错误字节的位置，终止其他 worker，并以非零状态退出。默认流程只测试传入的规模；批次边界可通过调整 `--records` 单独运行，不再自动执行动态 count、地址翻转、图内元数据生产与消费等回归场景。
 
 ## 调用约定
 
