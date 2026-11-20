@@ -15,7 +15,7 @@ test/integration/
 | **名称** | **介绍** | **路径** |
 |---------|---------|----------|
 | bm | BM 批量拷贝集成测试 | [bm](./bm/README.md) |
-| trans | TransferEngine 双 rank A2 传输集成测试 | [trans](./trans/README.md) |
+| trans | TransferEngine 双 rank 传输集成测试 | [trans](./trans/README.md) |
 
 ## TRANS
 

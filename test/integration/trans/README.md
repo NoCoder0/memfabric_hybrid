@@ -1,8 +1,8 @@
 # TRANS 双 rank 集成测试
 
-本目录覆盖 `TransferEngine` 的 15 个公开方法，在 Linux Ascend A2 上使用两张健康且空闲的物理卡。
+本目录覆盖 `TransferEngine` 的 15 个公开方法，在 Linux Ascend A2、A3 和 A5 上使用两张健康且空闲的物理卡。
 `device_rdma` 验证 HBM/HOST 同步传输，`sdma` 验证 HBM 同步和异步传输。
-HOST_RDMA、DEVICE_URMA、跨节点、非零预留 flags 不在本套验证范围内。
+HOST_RDMA、跨节点、非零预留 flags 不在本套验证范围内。
 
 ## 目录职责
 
@@ -95,6 +95,5 @@ NPU 准备完成后显式同步；异步使用真实 ACL stream，确认完成�
 日志位于 `--trans-log-dir/run-*/rank0.log` 和 `rank1.log`，包含 Python 与原生 stdout/stderr。
 成功校验记录 `DATA_VERIFIED`；pytest 各阶段记录 `TRANS_RESULT`。
 非零退出码、缺少 cleanup_done、强制终止及原生释放错误均使运行失败。
-`free sq_cq failed:-8` 表示 HAL API 已卸载，按当前环境约定单独记录为已知退出告警，保留原始日志，
-不影响已完成的数据校验；其他 SQ/CQ 返回码仍判为清理失败。此处不修复原生流生命周期。
+SQ/CQ 报错判为清理失败。此处不修复原生流生命周期。
 数据通过、API 失败和清理失败应分别保留，不用独立运行成功覆盖共享引擎运行失败

@@ -19,7 +19,7 @@ class TestTransfer010:
     """
 
     APIS = ("destroy", "unInitialize", "initialize", "get_rpc_port", "transfer_sync_write")
-    PROTOCOLS = ("device_rdma", "sdma")
+    PROTOCOLS = ("device_rdma", "sdma", "device_urma")
     SOURCE_RANK = 0
     SEED = 401
     BLOCK_BYTES = 64 << 10

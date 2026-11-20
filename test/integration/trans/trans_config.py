@@ -11,9 +11,11 @@
 
 import math
 
-PROTOCOLS = ("device_rdma", "sdma")
+PROTOCOLS = ("device_rdma", "sdma", "device_urma")
+CHIP_PROTOCOL = {"A2": "device_rdma", "A3": "sdma", "A5": "device_urma"}
+
 DEFAULTS = {
-    "protocol": "device_rdma",
+    "protocol": None,
     "devices": None,
     "setup_timeout": 180.0,
     "case_timeout": 120.0,
@@ -25,7 +27,7 @@ def validate_config(config):
     devices = config["devices"]
     if devices is not None and (len(devices) != 2 or len(set(devices)) != 2 or min(devices) < 0):
         raise ValueError("TRANS requires two distinct non-negative physical device IDs")
-    if config["protocol"] not in PROTOCOLS:
+    if config["protocol"] is not None and config["protocol"] not in PROTOCOLS:
         raise ValueError(f"Unsupported TRANS protocol: {config['protocol']}")
     for name in ("setup_timeout", "case_timeout", "cleanup_timeout"):
         value = config[name]

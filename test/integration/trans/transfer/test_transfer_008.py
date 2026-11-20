@@ -17,7 +17,7 @@ class TestTransfer008:
     """
 
     APIS = ("initialize", "get_rpc_port")
-    PROTOCOLS = ("device_rdma", "sdma")
+    PROTOCOLS = ("device_rdma", "sdma", "device_urma")
 
     def test_initialize_and_rpc_port(self, trans_pool):
         trans_pool.run(type(self))

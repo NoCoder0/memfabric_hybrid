@@ -29,7 +29,7 @@ class TestBatchTransfer003:
     """
 
     APIS = ("batch_transfer_sync_write",)
-    PROTOCOLS = ("device_rdma",)
+    PROTOCOLS = ("device_rdma", "device_urma")
     SOURCE_RANK = 0
     SEED = 107
 

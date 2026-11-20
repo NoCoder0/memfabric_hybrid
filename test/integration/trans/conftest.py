@@ -12,15 +12,15 @@ import logging
 import os
 import time
 from pathlib import Path
-
+import sys
 import pytest
 
 try:
-    from .trans_config import DEFAULTS, PROTOCOLS, validate_config
-    from .trans_runtime import TransPool
+    from .trans_config import DEFAULTS, PROTOCOLS, validate_config, CHIP_PROTOCOL
+    from .trans_runtime import TransPool, _ascend_info, _chip_from_soc
 except ImportError:
-    from trans_config import DEFAULTS, PROTOCOLS, validate_config
-    from trans_runtime import TransPool
+    from trans_config import DEFAULTS, PROTOCOLS, validate_config, CHIP_PROTOCOL
+    from trans_runtime import TransPool, _ascend_info, _chip_from_soc
 
 LOG = logging.getLogger(__name__)
 _STATE = pytest.StashKey[dict]()
@@ -93,9 +93,16 @@ def trans_pool(request):
     base = request.config.getoption("--trans-log-dir")
     log_dir = base / f"run-{os.getpid()}-{time.time_ns()}"
     config = dict(DEFAULTS)
+    chip = None
+
+    if sys.platform == "linux":
+        _, soc = _ascend_info()
+        chip = _chip_from_soc(soc)
+        if chip is None:
+            raise pytest.UsageError("Unable to auto-detect chip")
     config.update(
         {
-            "protocol": request.config.getoption("--trans-protocol"),
+            "protocol": request.config.getoption("--trans-protocol") or CHIP_PROTOCOL.get(chip, ""),
             "devices": request.config.getoption("--trans-devices"),
             "case_timeout": request.config.getoption("--trans-timeout"),
         }

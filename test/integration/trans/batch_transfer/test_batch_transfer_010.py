@@ -23,7 +23,7 @@ class TestBatchTransfer010:
     """
 
     APIS = ("batch_register_memory",)
-    PROTOCOLS = ("device_rdma", "sdma")
+    PROTOCOLS = ("device_rdma", "sdma", "device_urma")
 
     def test_batch_register_memory_mismatch(self, trans_pool):
         trans_pool.run(type(self))

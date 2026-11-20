@@ -32,8 +32,8 @@ _CLEANUP_PATTERNS = (
     re.compile(r"stream id.*(?:fail|error)", re.IGNORECASE),
     re.compile(r"HalHostUnregisterEx.*(?:not successful|ret\s*[:=]?[1-9])", re.IGNORECASE),
 )
-_KNOWN_CLEANUP_WARNING = re.compile(r"free sq_cq failed:\s*-8\s*$", re.IGNORECASE)
 _HCCN_TOOL = Path("/usr/local/Ascend/driver/tools/hccn_tool")
+_CHIP_RULES = (("A2", ("Ascend910B",)), ("A3", ("Ascend910_93",)), ("A5", ("Ascend910_95", "Ascend950")))
 
 
 def _checked(method, result, allow_none=False):
@@ -439,9 +439,6 @@ class TransPool:
     def _scan_cleanup_logs(self, errors):
         for path in self.log_dir.glob("rank*.log"):
             for line in path.read_text(errors="replace").splitlines():
-                if _KNOWN_CLEANUP_WARNING.search(line):
-                    LOG.warning("Known HAL unload diagnostic in %s: %s", path.name, line)
-                    continue
                 errors.extend(
                     f"{path.name}: {pattern.pattern}" for pattern in _CLEANUP_PATTERNS if pattern.search(line)
                 )
@@ -485,11 +482,20 @@ def _hccp_idle(card):
         return True
     result = _command_ok([str(_HCCN_TOOL), "-i", str(card), "-process", "-g"])
     if result is None or result.returncode != 0:
+        result = _command_ok([str(_HCCN_TOOL), "-g", "-process", "-i", str(card)])
+    if result is None or result.returncode != 0:
         return False
     idle = re.search(r"device\s+hccp\s+process\s*:\s*not\s+exist", result.stdout, re.IGNORECASE) is not None
     if not idle:
         LOG.warning("HCCP not idle, card=%d response=%s", card, result.stdout.strip()[:400])
     return idle
+
+
+def _chip_from_soc(soc):
+    for chip, markers in _CHIP_RULES:
+        if any(marker in soc for marker in markers):
+            return chip
+    return None
 
 
 def select_idle_devices():
@@ -499,9 +505,7 @@ def select_idle_devices():
 
 
 def validate_devices(devices):
-    count, soc = _ascend_info()
-    if "Ascend910B" not in soc:
-        raise RuntimeError(f"A2 (Ascend910B) is required, detected {soc!r}")
+    count, _ = _ascend_info()
     if any(card >= count or not _idle(card) for card in devices):
         raise RuntimeError(f"TRANS devices unavailable, unhealthy, or busy: {devices}")
 
