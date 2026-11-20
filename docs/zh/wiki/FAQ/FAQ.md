@@ -13,7 +13,7 @@
 | 通用问题 | [驱动和超时](#common-init) | [Copy 报错](#common-copy) |
 | Device SDMA（HCCS） | [协议支持、地址预留、内存分配、扫描和导入](#sdma-init) | [地址翻译、搬移错误和返回 -7](#sdma-copy) |
 | Device RDMA | [设备打开、网络配置、内存分配、注册和 Swap](#rdma-init) | [Copy 报错](#rdma-copy) |
-| Device URMA | [本地端点为空、内存注册失败](#urma-init) | [批量通知同步超时](#urma-copy) |
+| Device URMA | [本地端点为空、内存注册失败](#urma-init) | [批量通知同步超时、传输长尾](#urma-copy) |
 
 内存初始化问题按实际传输协议归类：`ReserveMemorySpace` 失败属于 Device SDMA，
 `AllocLocalMemory` 和静态大页注册失败属于 Device RDMA。A3 的 HCCS 可用内存问题与 SDMA 放在同一组。
@@ -931,6 +931,26 @@ device_urma batch notify synchronize failed, rankNum: 1 waitRet: 0 syncRet: 1070
 
 2. 若 benchmark 也出现异常，尝试2.3.RC1.SPC1版本之后的LingQu Computing Link 的 CC 包，并按实际组网检查 CFG，保留 benchmark 输出及故障时间附近的日志。
 3. 若 benchmark 通过，再结合原业务场景排查。
+
+<a id="urma-copy-qos-latency"></a>
+
+#### 4.2.2 MMC 租约过期 / 批量拷贝出现秒级耗时
+
+**问题现象**
+
+650E UBOE 环境中，memcache 出现租约过期。查看 ptracer 发现，URMA batch copy 耗时偶发达到秒级，
+主要时间消耗在等待传输完成。
+
+**问题说明**
+
+URMA 通道默认使用 QoS 0，传输优先级较低。网络繁忙、存在高优先级流量竞争时，传输可能因排队等待而出现长尾。
+批量拷贝需要等待整批传输完成，少量传输延迟就会拉长整批耗时；当拷贝耗时超过 MMC 租约有效期时，就会触发租约过期。
+
+**解决方法**
+
+```bash
+export MF_DEVICE_UB_QOS=4
+```
 
 <a id="maintenance"></a>
 
