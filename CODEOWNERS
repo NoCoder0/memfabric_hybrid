@@ -1,0 +1,28 @@
+# tooling, docs
+*.md  @shilinlee_com
+*.yml  @shilinlee_com
+
+# zbal
+/app/zbal @victor7wang
+
+# tensorRTL
+/app/tensorRTL @victor7wang
+
+# offload
+/src/acc_offload/  @james88liu @wlwen
+/test/ut/testcase/acc_offload/ @james88liu @wlwen
+
+# hybm
+/src/hybm/  @mrh1024 @nbbb24 @gcw_M5Xrk6cX @james88liu
+/test/ut/testcase/hybm/  @mrh1024 @nbbb24 @gcw_M5Xrk6cX @james88liu
+
+# smem
+/src/smem/  @han-sanyue @gcw_M5Xrk6cX @james88liu
+/test/ut/testcase/smem/  @han-sanyue @gcw_M5Xrk6cX
+
+# cluster
+/src/acc_links/  @gcw_M5Xrk6cX @han-sanyue
+/test/ut/testcase/acc_links/  @gcw_M5Xrk6cX  @han-sanyue
+
+# integration tests
+/test/integration/  @shilinlee_com
