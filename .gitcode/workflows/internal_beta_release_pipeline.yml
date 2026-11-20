@@ -12,6 +12,9 @@ env:
   PIP_EXECUTOR: ${{ vars.INTERNAL_BETA_RELEASE_ALLOWED_ACTORS }}
   AK_ASCEND: ${{ secrets.AK_ASCEND }}
   SK_ASCEND: ${{ secrets.SK_ASCEND }}
+  ASCEND_DEVCLOUD_PYPI_MANAGEMENT_URL: ${{ vars.ASCEND_DEVCLOUD_PYPI_MANAGEMENT_URL }}
+  ASCEND_DEVCLOUD_PYPI_USERNAME: ${{ secrets.ASCEND_DEVCLOUD_PYPI_USERNAME }}
+  ASCEND_DEVCLOUD_PYPI_PASSWORD: ${{ secrets.ASCEND_DEVCLOUD_PYPI_PASSWORD }}
 
 stages:
   stage_1:
@@ -98,6 +101,13 @@ stages:
               obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
                 obs://ascend-ci-artifacts-staging/pypi/packages/ascend/repos/pypi/memfabric-hybrid/${version}/ -flat
 
+          - name: 同步 wheel 到 Ascend PyPI
+            run: |
+              /opt/python/cp310-cp310/bin/python3 "${WORKSPACE}/.gitcode/workflows/scripts/sync_pypi.py" \
+                --component memfabric-hybrid \
+                --version "$(tr -d '[:space:]' < "${WORKSPACE}/VERSION")" \
+                --build "${build_type}" --apply
+
       Build_memfabric_x86:
         name: Build_memfabric_x86
         runs-on: [self-hosted, default, x86, cpu=32]
@@ -179,3 +189,10 @@ stages:
               # 上传构建产物到 OBS
               obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
                 obs://ascend-ci-artifacts-staging/pypi/packages/ascend/repos/pypi/memfabric-hybrid/${version}/ -flat
+
+          - name: 同步 wheel 到 Ascend PyPI
+            run: |
+              /opt/python/cp310-cp310/bin/python3 "${WORKSPACE}/.gitcode/workflows/scripts/sync_pypi.py" \
+                --component memfabric-hybrid \
+                --version "$(tr -d '[:space:]' < "${WORKSPACE}/VERSION")" \
+                --build "${build_type}" --apply

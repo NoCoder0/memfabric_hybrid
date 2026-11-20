@@ -9,6 +9,9 @@ env:
   SK_ASCEND: ${{ secrets.SK_ASCEND }}
   AK_MIRRORS: ${{ secrets.AK_MIRRORS }}
   SK_MIRRORS: ${{ secrets.SK_MIRRORS }}
+  ASCEND_DEVCLOUD_PYPI_MANAGEMENT_URL: ${{ vars.ASCEND_DEVCLOUD_PYPI_MANAGEMENT_URL }}
+  ASCEND_DEVCLOUD_PYPI_USERNAME: ${{ secrets.ASCEND_DEVCLOUD_PYPI_USERNAME }}
+  ASCEND_DEVCLOUD_PYPI_PASSWORD: ${{ secrets.ASCEND_DEVCLOUD_PYPI_PASSWORD }}
 
 stages:
   stage_1:
@@ -95,6 +98,13 @@ stages:
               obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
                 obs://ascend-artifcat-packages/pypi/packages/ascend/repos/pypi/nightly/memfabric-hybrid/ -flat
 
+          - name: 同步 wheel 到 Ascend PyPI
+            run: |
+              /opt/python/cp310-cp310/bin/python3 "${WORKSPACE}/.gitcode/workflows/scripts/sync_pypi.py" \
+                --component memfabric-hybrid \
+                --version "$(tr -d '[:space:]' < "${WORKSPACE}/VERSION")" \
+                --nightly --apply
+
       Build_memfabric_x86:
         name: Build_memfabric_x86
         runs-on: [self-hosted, default, x86, cpu=32]
@@ -176,3 +186,10 @@ stages:
               obsutil config -i=${AK_MIRRORS} -k=${SK_MIRRORS} -e=obs.cn-north-4.myhuaweicloud.com
               obsutil cp -r -f ${WORKSPACE}/BeiMing_output \
                 obs://ascend-artifcat-packages/pypi/packages/ascend/repos/pypi/nightly/memfabric-hybrid/ -flat
+
+          - name: 同步 wheel 到 Ascend PyPI
+            run: |
+              /opt/python/cp310-cp310/bin/python3 "${WORKSPACE}/.gitcode/workflows/scripts/sync_pypi.py" \
+                --component memfabric-hybrid \
+                --version "$(tr -d '[:space:]' < "${WORKSPACE}/VERSION")" \
+                --nightly --apply
