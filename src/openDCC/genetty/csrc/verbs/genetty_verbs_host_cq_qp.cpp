@@ -242,6 +242,10 @@ Result VerbsHostQp::Initialize(const GenettyOptions &options) noexcept
         return result;
     }
 
+    if (hostCq->gid_.version == RoCE_V2) {
+        qp_->SetGid(hostCq->gid_);
+    }
+
     /* step4: assign id */
     options_ = options;
     id_ = GENETTY_ID_GENERATOR.fetch_add(1, std::memory_order_relaxed);

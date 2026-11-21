@@ -1107,6 +1107,9 @@ void InstallQueueMocks()
         attr->qpn = TEST_QPN;
         attr->psn = TEST_PSN;
         attr->pathMtu = TEST_MTU;
+        uint64_t vendor = 0x1122334455667788ULL;
+        std::memcpy(reinterpret_cast<char *>(attr) + 40, &vendor, sizeof(vendor));
+        std::memset(reinterpret_cast<char *>(attr) + 48, 0x5a, 64);
         return queueState.queryResult;
     };
     HccpApi::RaTypicalQpModify_ptr = [](void *, HccpTypicalQp *local, HccpTypicalQp *remote) {
@@ -1201,6 +1204,18 @@ protected:
                                   reinterpret_cast<void *>(MR_ADDRESS + MR_SIZE), MR_SIZE, MR_RKEY};
     genetty_batch_op_options_t options_{TEST_DB, 0, OP_WRITE, 1, 1, 0};
 };
+
+TEST_F(DeviceQueueTest, FullCannQpAttrWritePreservesFollowingMemory)
+{
+    struct {
+        HccpQpAttr attr{};
+        uint64_t guard = 0xfedcba9876543210ULL;
+    } record;
+    ASSERT_EQ(HccpApi::RaGetQpAttr(reinterpret_cast<void *>(1), &record.attr), 0);
+    EXPECT_EQ(record.attr.vendorPrivInfo, 0x1122334455667788ULL);
+    EXPECT_EQ(record.attr.feature.rawData[63], 0x5a);
+    EXPECT_EQ(record.guard, 0xfedcba9876543210ULL);
+}
 
 TEST_F(DeviceQueueTest, CreatesAndExportsExtendedQpThroughPublicApi)
 {
@@ -1595,6 +1610,46 @@ protected:
     VerbsQPPtr queue_;
     Ref<VerbsHostQp> qp_;
 };
+
+TEST_F(HostQueueInteropTest, IpSelectionBindsDistinctRoceV2Gids)
+{
+    auto device = context_->Device();
+    VerbsGidInfo v1{}, first{}, vlan{};
+    v1.index = 2;
+    v1.version = RoCE_V1;
+    v1.ip = "10.0.0.1";
+    first.index = 3;
+    first.version = RoCE_V2;
+    first.ip = v1.ip;
+    vlan.index = 7;
+    vlan.version = RoCE_V2;
+    vlan.ip = "10.0.1.1";
+    ASSERT_EQ(VerbsDevice::IpToGid(first.ip, first.ibvGid), GEN_OK);
+    ASSERT_EQ(VerbsDevice::IpToGid(vlan.ip, vlan.ibvGid), GEN_OK);
+    device->AddGid(v1);
+    device->AddGid(first);
+    device->AddGid(vlan);
+    HostVerbsContextPool pool;
+    pool.inited_ = true;
+    pool.contexts_.push_back(mf::MakeRef<HostVerbsContext>(HOST_RDMA_GENETTY, context_));
+    HostVerbsContextPtr a, b, again;
+    ASSERT_EQ(pool.SelectContext(first.ip, a), GEN_OK);
+    ASSERT_EQ(pool.SelectContext(vlan.ip, b), GEN_OK);
+    ASSERT_EQ(pool.SelectContext(first.ip, again), GEN_OK);
+    EXPECT_EQ(a.Get(), again.Get());
+    EXPECT_NE(a.Get(), b.Get());
+    EXPECT_EQ(a->gid_.index, 3);
+    EXPECT_EQ(b->gid_.index, 7);
+    queue_->SetGid(b->gid_);
+    VerbsQpInfo local{};
+    ASSERT_EQ(queue_->GetLocalInfo(local), GEN_OK);
+    EXPECT_EQ(std::memcmp(local.gid, vlan.ibvGid.raw, sizeof(local.gid)), 0);
+    ASSERT_EQ(Connect(TEST_MTU), GEN_OK);
+    ASSERT_EQ(hostAttributes.size(), 3U);
+    EXPECT_EQ(hostAttributes[1].ah_attr.grh.sgid_index, 7);
+    EXPECT_EQ(a->gid_.index, 3);
+    pool.contexts_.clear();
+}
 
 TEST_F(HostQueueInteropTest, UsesDevicePsnMtuAndRoceClassInRtr)
 {

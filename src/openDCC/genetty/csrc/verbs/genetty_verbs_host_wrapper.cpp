@@ -746,7 +746,7 @@ Result VerbsQP::ModifyToRtr(const VerbsQpInfo &remote) noexcept
 
     if (hasGid) {
         memcpy(attr.ah_attr.grh.dgid.raw, remote.gid, sizeof(attr.ah_attr.grh.dgid.raw));
-        attr.ah_attr.grh.sgid_index = static_cast<uint8_t>(context_->Device()->GidIndex());
+        attr.ah_attr.grh.sgid_index = static_cast<uint8_t>(gid_.index);
         attr.ah_attr.grh.flow_label = 0;
         attr.ah_attr.grh.hop_limit = 64;
         attr.ah_attr.grh.traffic_class = trafficClass_;

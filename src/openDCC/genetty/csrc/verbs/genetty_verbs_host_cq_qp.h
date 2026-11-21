@@ -19,7 +19,13 @@ namespace openDCC {
 namespace verbs {
 class VerbsHostCQ final : public GenettyCQ {
 public:
-    explicit VerbsHostCQ(genetty_type_t t, const VerbsContextPtr &ctx) noexcept : GenettyCQ(t), ctx_(ctx) {}
+    explicit VerbsHostCQ(genetty_type_t t, const VerbsContextPtr &ctx, const VerbsGidInfo *gid = nullptr) noexcept
+        : GenettyCQ(t), ctx_(ctx)
+    {
+        if (gid != nullptr) {
+            gid_ = *gid;
+        }
+    }
     ~VerbsHostCQ() noexcept override
     {
         /* since this is a final class, we can call virtual function in deconstructor */
@@ -46,6 +52,7 @@ private:
 
 private:
     const VerbsContextPtr ctx_;
+    VerbsGidInfo gid_;
     VerbsCQPtr cq_;
     GenettyCQOptions options_;
     std::mutex mutex_;

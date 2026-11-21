@@ -245,7 +245,7 @@ ALWAYS_INLINE Result VerbsDevice::GidForIp(const std::string &ip, VerbsGidInfo &
 {
     std::string target = StripIpMask(ip);
     for (const auto &gid : gidList_) {
-        if (!gid.ip.empty() && gid.ip == target) {
+        if (!gid.ip.empty() && gid.ip == target && gid.version == RoCE_V2) {
             out = gid;
             return GEN_OK;
         }
@@ -782,6 +782,10 @@ public:
     Result GetLocalInfo(VerbsQpInfo &info) const noexcept;
     /* move qp from reset to init, 'portNum' is the local port index which starts from 1 */
     Result Init(uint8_t portNum) noexcept;
+    void SetGid(const VerbsGidInfo &gid) noexcept
+    {
+        gid_ = gid;
+    }
     /* move qp from init to rts with the peer information */
     Result Import(const VerbsQpInfo &remote, uint8_t trafficClass = 0, uint8_t serviceLevel = 0) noexcept;
 
@@ -800,6 +804,7 @@ private:
     const VerbsCQPtr recvCq_;        /* hold the reference */
     uint32_t sendQueueDepth_ = VERBS_DEFAULT_SEND_QUEUE_DEPTH;
     uint32_t recvQueueDepth_ = VERBS_DEFAULT_RECV_QUEUE_DEPTH;
+    VerbsGidInfo gid_;
     uint8_t trafficClass_ = 0;                  /* RoCE traffic class */
     uint8_t serviceLevel_ = 0;                  /* RoCE service level */
     uint32_t psn_ = 0;                          /* local start psn */
@@ -853,6 +858,8 @@ ALWAYS_INLINE VerbsQP::VerbsQP(struct ibv_qp *qp, const VerbsContextPtr &context
     psn_ = qp == nullptr ? 0 : qp->qp_num;
 
     if (context_ != nullptr && context_->Device() != nullptr) {
+        gid_.index = context_->Device()->GidIndex();
+        gid_.ibvGid = context_->Device()->IbvGid();
         auto maxRdAtomic = context_->Device()->DeviceAttributes().max_qp_rd_atom;
         if (maxRdAtomic > 0 && maxRdAtomic < static_cast<int>(VERBS_MAX_RD_ATOMIC)) {
             maxRdAtomic_ = static_cast<uint8_t>(maxRdAtomic);
@@ -899,7 +906,7 @@ ALWAYS_INLINE Result VerbsQP::GetLocalInfo(VerbsQpInfo &info) const noexcept
     info.qpNumber = rawQp_->qp_num;
     info.lid = portAttr.lid;
     info.portNum = portNum_;
-    memcpy(info.gid, device->IbvGid().raw, sizeof(info.gid));
+    memcpy(info.gid, gid_.ibvGid.raw, sizeof(info.gid));
 
     GEN_LOG_DEBUG("local info(" << info << ")");
     return GEN_OK;

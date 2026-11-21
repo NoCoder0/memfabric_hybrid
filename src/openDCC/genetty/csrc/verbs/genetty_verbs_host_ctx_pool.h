@@ -28,7 +28,18 @@ class HostVerbsContext : public GenettyContext {
 public:
     explicit HostVerbsContext(genetty_type_t type, const VerbsContextPtr &context)
         : GenettyContext(type), wrapCtx_(context)
-    {}
+    {
+        if (context != nullptr && context->Device() != nullptr) {
+            gid_.index = context->Device()->GidIndex();
+            gid_.ibvGid = context->Device()->IbvGid();
+            for (const auto &gid : context->Device()->GidList()) {
+                if (gid.index == gid_.index) {
+                    gid_ = gid;
+                    break;
+                }
+            }
+        }
+    }
     ~HostVerbsContext() noexcept override = default;
 
     Result RegisterMemory(genetty_memory_segment_t *segment, uint32_t flags) noexcept override;
@@ -46,6 +57,7 @@ public:
 
 public:
     const VerbsContextPtr wrapCtx_;
+    VerbsGidInfo gid_;
     std::map<MemoryInfo, HostVerbsMR> mrs_; /* registered memory regions, key is the memory info */
     std::mutex mutex_;                      /* mutex of the registered memory regions */
 };

@@ -349,7 +349,7 @@ GenettyCQPtr VerbsBackend::DoCreateCQ(genetty_cq_options_t *options) noexcept
         return nullptr;
     }
 
-    GenettyCQPtr cq = mf::MakeRef<VerbsHostCQ>(HOST_RDMA_GENETTY, ctx->wrapCtx_).Get();
+    GenettyCQPtr cq = mf::MakeRef<VerbsHostCQ>(HOST_RDMA_GENETTY, ctx->wrapCtx_, &ctx->gid_).Get();
     if (UNLIKELY(cq == nullptr)) {
         GEN_LOG_ERROR("Create cq failed, probably out of memory, queue depth(" << cqOptions.queueDepth << ")");
         return nullptr;

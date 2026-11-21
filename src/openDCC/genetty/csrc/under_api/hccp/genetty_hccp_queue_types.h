@@ -11,11 +11,16 @@
  */
 #ifndef MF_GENETTY_HCCP_QUEUE_TYPES_H
 #define MF_GENETTY_HCCP_QUEUE_TYPES_H
+#include <cstddef>
 #include <cstdint>
 namespace ock {
 namespace openDCC {
 constexpr uint32_t HCCP_GID_LENGTH = 16;
 /* ABI layouts used by the HCCP extended QP and lite completion APIs. */
+struct HccpHyperFeature {
+    char rawData[64];
+};
+
 struct HccpQpAttr {
     unsigned int qpn;
     unsigned int udpSport;
@@ -23,7 +28,15 @@ struct HccpQpAttr {
     unsigned int gidIdx;
     unsigned char gid[HCCP_GID_LENGTH];
     int pathMtu;
+    uint64_t vendorPrivInfo;
+    HccpHyperFeature feature;
 };
+
+static_assert(sizeof(HccpQpAttr) == 112, "CANN QpAttr ABI size mismatch");
+static_assert(offsetof(HccpQpAttr, gid) == 16 && offsetof(HccpQpAttr, pathMtu) == 32,
+              "CANN QpAttr address layout mismatch");
+static_assert(offsetof(HccpQpAttr, vendorPrivInfo) == 40 && offsetof(HccpQpAttr, feature) == 48,
+              "CANN QpAttr extension layout mismatch");
 
 struct HccpTypicalQp {
     uint32_t qpn;
@@ -36,9 +49,15 @@ struct HccpTypicalQp {
     uint32_t retryCnt;
     uint32_t retryTime;
     int version;
-    uint32_t reserved[32];
+    HccpHyperFeature feature;
+    uint32_t udpSport;
+    uint32_t reserved[15];
     uint8_t resv2[4];
 };
+
+static_assert(sizeof(HccpTypicalQp) == 184 && offsetof(HccpTypicalQp, feature) == 52 &&
+                  offsetof(HccpTypicalQp, udpSport) == 116,
+              "CANN TypicalQp ABI layout mismatch");
 
 struct HccpCqExtAttr {
     int sendCqDepth;

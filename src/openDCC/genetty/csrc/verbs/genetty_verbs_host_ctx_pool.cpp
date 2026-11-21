@@ -253,6 +253,8 @@ Result HostVerbsContextPool::SelectContext(const std::string &ipWithMask, HostVe
         return GEN_ERROR;
     }
 
+    VerbsContextPtr matched;
+    VerbsGidInfo selected;
     for (const auto &item : contexts_) {
         if (item == nullptr || item->wrapCtx_ == nullptr || item->wrapCtx_->Device() == nullptr) {
             continue;
@@ -269,9 +271,27 @@ Result HostVerbsContextPool::SelectContext(const std::string &ipWithMask, HostVe
             continue;
         }
 
+        if (!ipWithMask.empty()) {
+            VerbsGidInfo candidate;
+            if (verbsCtx->Device()->GidForIp(ipWithMask, candidate) != GEN_OK || candidate.index > UINT8_MAX) {
+                continue;
+            }
+            if (item->gid_.index != candidate.index) {
+                matched = verbsCtx;
+                selected = candidate;
+                continue;
+            }
+        }
         ctx = item;
         GEN_LOG_DEBUG("Select context(" << verbsCtx->Id() << ") of device(" << verbsCtx->Device()->DeviceName()
                                         << ") for ip(" << ipWithMask << ")");
+        return GEN_OK;
+    }
+
+    if (matched != nullptr) {
+        ctx = mf::MakeRef<HostVerbsContext>(HOST_RDMA_GENETTY, matched);
+        ctx->gid_ = selected;
+        contexts_.push_back(ctx);
         return GEN_OK;
     }
 
