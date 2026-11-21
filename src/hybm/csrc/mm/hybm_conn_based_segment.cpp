@@ -597,7 +597,8 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
     }
 
     uint32_t needReg = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK | HYBM_DOP_TYPE_MTE;
-    const bool openDccHost = OpenDccHostEnabled() && options_.dataOpType == HYBM_DOP_TYPE_DEVICE_RDMA;
+    const bool openDccHost = OpenDccHostEnabled() && options_.dataOpType == HYBM_DOP_TYPE_DEVICE_RDMA &&
+                             options_.scene == HYBM_SCENE_DEFAULT && options_.clusterRole == HYBM_CLUSTER_ROLE_DEFAULT;
     if ((options_.dataOpType & needReg) && !openDccHost) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
         if (ret != BM_OK) {

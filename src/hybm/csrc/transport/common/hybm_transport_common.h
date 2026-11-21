@@ -53,6 +53,7 @@ struct TransportOptions {
     uint32_t rankId;
     uint32_t rankCount;
     uint32_t deviceId{0};
+    bool useOpenDcc{false};
     uint32_t protocol;
     bool isProxy{false}; // 显式声明本端为 proxy，直连 provider，优先于协议位推导
     hybm_type initialType;

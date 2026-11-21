@@ -15,7 +15,10 @@
 #include "hybm_data_op_host_shm.h"
 #include "hybm_data_op_host_rdma.h"
 #include "hybm_data_op_factory.h"
-#include "mf_opendcc_config.h"
+#include "compose_transport_manager.h"
+#if defined(BUILD_OPENDCC) && defined(NO_XPU)
+#include "host_rdma_opendcc_transport_manager.h"
+#endif
 
 namespace ock {
 namespace mf {
@@ -26,9 +29,13 @@ DataOperatorPtr DataOperatorFactory::CreateSdmaDataOperator()
 
 DataOperatorPtr DataOperatorFactory::CreateDevRdmaDataOperator(uint32_t rankId, const transport::TransManagerPtr &tm)
 {
-    if (OpenDccHostEnabled()) {
+#if defined(BUILD_OPENDCC) && defined(NO_XPU)
+    auto compose = std::dynamic_pointer_cast<transport::ComposeTransportManager>(tm);
+    auto child = compose == nullptr ? tm : compose->GetTransport(HYBM_DOP_TYPE_DEVICE_RDMA);
+    if (std::dynamic_pointer_cast<transport::host::HostRdmaOpenDccTransportManager>(child) != nullptr) {
         return std::make_shared<HostDataOpRDMA>(rankId, tm);
     }
+#endif
     return std::make_shared<DataOpDeviceRDMA>(rankId, tm);
 }
 

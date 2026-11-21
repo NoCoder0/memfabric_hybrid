@@ -11,6 +11,7 @@
 */
 #ifndef MEMFABRIC_OPENDCC_CONFIG_H
 #define MEMFABRIC_OPENDCC_CONFIG_H
+#include "hybm_def.h"
 #include "mf_env_define.h"
 #include "mf_env_util.h"
 
@@ -20,6 +21,12 @@ inline bool OpenDccEnabled()
 {
     static const bool enabled = MfEnvUtil::GetOptionalUintOrDefault(env::MF_HYBM_RDMA_USE_OPENDCC, 0U) != 0;
     return enabled;
+}
+inline bool OpenDccSelected(const hybm_options &options)
+{
+    return OpenDccEnabled() && options.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA &&
+           options.bmType == HYBM_TYPE_HOST_INITIATE && options.scene == HYBM_SCENE_DEFAULT &&
+           options.clusterRole == HYBM_CLUSTER_ROLE_DEFAULT;
 }
 inline bool OpenDccHostEnabled()
 {

@@ -13,6 +13,8 @@
 #include "opendcc_transport_manager.h"
 #include <charconv>
 #include <chrono>
+#include <unistd.h>
+#include "acc_tcp_port_util.h"
 #include "hybm_logger.h"
 #include "mf_ipv4_validator.h"
 #include "mf_tls_util.h"
@@ -82,7 +84,15 @@ Result OpenDccTransportManager::StartControl()
             peer = entry;
         }
         std::lock_guard<std::mutex> lock(peer->mutex);
+        if (peer->tunnel != nullptr) {
+            auto ret = DlOpenDccApi::hcc_tunnel_destroy(&peer->tunnel, 0);
+            if (ret != HCC_OK) {
+                return ConvertError(ret);
+            }
+        }
         peer->link = link;
+        peer->ready = false;
+        peer->result = BM_OK;
         return BM_OK;
     });
     for (auto type : {CONTROL_EXPORT, CONTROL_IMPORT, CONTROL_REPLY, CONTROL_READY}) {
@@ -93,6 +103,9 @@ Result OpenDccTransportManager::StartControl()
         auto peer = FindPeer(link->UpCtx());
         if (peer != nullptr) {
             std::lock_guard<std::mutex> lock(peer->mutex);
+            if (peer->link.Get() != link.Get()) {
+                return BM_OK;
+            }
             peer->ready = false;
             peer->result = BM_NOT_CONNECTED;
             peer->changed.notify_all();
@@ -120,6 +133,12 @@ Result OpenDccTransportManager::StartControl()
         BM_ASSERT_LOG_AND_RETURN(decrypt != nullptr, "Load TLS decrypter failed", BM_DL_FUNCTION_FAILED);
         server_->RegisterDecryptHandler(decrypt);
     }
+    static std::mutex listenMutex;
+    std::lock_guard<std::mutex> listenLock(listenMutex);
+    int reservation = -1;
+    options.listenPort = acc::AccFindAvailableTcpPort(reservation, options.listenPort, UINT16_MAX);
+    BM_ASSERT_LOG_AND_RETURN(options.listenPort != 0, "No openDCC control port available", BM_ERROR);
+    close(reservation);
     ret = server_->Start(options, tls);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "Start openDCC control server failed, ret=" << ret, BM_ERROR);
     options_.nic = "tcp://" + options.listenIp + ":" + std::to_string(options.listenPort);
@@ -143,6 +162,9 @@ int OpenDccTransportManager::HandleControl(const acc::AccTcpRequestContext &requ
     BM_ASSERT_LOG_AND_RETURN(peer != nullptr && request.DataLen() <= CONTROL_MAX_BYTES,
                              "Invalid openDCC control request", BM_INVALID_PARAM);
     std::lock_guard<std::mutex> lock(peer->mutex);
+    if (peer->link.Get() != request.Link().Get()) {
+        return BM_OK;
+    }
     if (request.MsgType() == CONTROL_REPLY) {
         if (request.SeqNo() == peer->sequence) {
             peer->response.clear();
@@ -207,11 +229,13 @@ Result OpenDccTransportManager::ConnectRank(uint32_t rank)
     auto peer = FindPeer(rank);
     BM_ASSERT_LOG_AND_RETURN(peer != nullptr, "openDCC rank not prepared: " << rank, BM_INVALID_PARAM);
     std::lock_guard<std::mutex> operation(peer->operation);
+    acc::AccTcpLinkComplexPtr previous;
     {
         std::unique_lock<std::mutex> lock(peer->mutex);
         if (peer->ready) {
             return BM_OK;
         }
+        peer->result = BM_OK;
         if (options_.rankId > rank) {
             bool done = peer->changed.wait_for(lock, std::chrono::milliseconds(CONTROL_TIMEOUT_MS),
                                                [&]() { return peer->ready || peer->removed || peer->result != BM_OK; });
@@ -219,10 +243,21 @@ Result OpenDccTransportManager::ConnectRank(uint32_t rank)
                                      BM_NOT_CONNECTED);
             return BM_OK;
         }
+        previous = peer->link;
+        peer->link = nullptr;
+        if (peer->tunnel != nullptr) {
+            auto ret = DlOpenDccApi::hcc_tunnel_destroy(&peer->tunnel, 0);
+            if (ret != HCC_OK) {
+                return ConvertError(ret);
+            }
+        }
         auto ret = CreateTunnel(*peer);
         if (ret != BM_OK) {
             return ret;
         }
+    }
+    if (previous != nullptr && previous->Established()) {
+        (void)server_->ReleaseLink(previous);
     }
     std::string ip;
     uint16_t port = 0;
@@ -234,10 +269,15 @@ Result OpenDccTransportManager::ConnectRank(uint32_t rank)
     req.magic = CONTROL_MAGIC;
     req.version = CONTROL_VERSION;
     req.rankId = options_.rankId;
-    ret = server_->ConnectToPeerServer(ip, port, req, peer->link);
+    acc::AccTcpLinkComplexPtr link;
+    ret = server_->ConnectToPeerServer(ip, port, req, link);
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "Connect openDCC peer failed, rank=" << rank, BM_NOT_CONNECTED);
-    peer->link->UpCtx(rank);
-    ret = peer->link->EnableNonBlocking();
+    link->UpCtx(rank);
+    {
+        std::lock_guard<std::mutex> lock(peer->mutex);
+        peer->link = link;
+    }
+    ret = link->EnableNonBlocking();
     BM_ASSERT_LOG_AND_RETURN(ret == 0, "Set openDCC control link nonblocking failed", BM_ERROR);
     std::vector<char> reply;
     ret = Exchange(*peer, CONTROL_EXPORT, {}, reply);

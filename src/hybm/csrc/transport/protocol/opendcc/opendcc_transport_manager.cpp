@@ -269,7 +269,9 @@ Result OpenDccTransportManager::Prepare(const HybmTransPrepareOptions &options)
             }
             memories.push_back(memory);
         }
-        peer->memories.swap(memories);
+        if (!info.memKeys.empty()) {
+            peer->memories.swap(memories);
+        }
     }
     return BM_OK;
 }
@@ -346,7 +348,7 @@ Result OpenDccTransportManager::Transfer(uint32_t rank, const CopyDescriptor &de
     auto peer = FindPeer(rank);
     BM_ASSERT_LOG_AND_RETURN(peer != nullptr, "Unknown openDCC rank " << rank, BM_NOT_CONNECTED);
     std::lock_guard<std::mutex> operationLock(peer->operation);
-    std::lock_guard<std::mutex> peerLock(peer->mutex);
+    std::unique_lock<std::mutex> peerLock(peer->mutex);
     BM_ASSERT_LOG_AND_RETURN(peer->ready && !peer->removed, "openDCC peer not ready, rank=" << rank, BM_NOT_CONNECTED);
     std::vector<Memory> locals;
     {
@@ -394,6 +396,16 @@ Result OpenDccTransportManager::Transfer(uint32_t rank, const CopyDescriptor &de
             BM_LOG_DEBUG("openDCC completed op=" << operation << " rank=" << rank << " local=0x" << std::hex
                                                  << desc.local_address << " remote=0x" << desc.remote_address
                                                  << std::dec << " size=" << desc.size);
+        }
+    }
+    if (ret != HCC_OK) {
+        peer->ready = false;
+        peer->result = BM_NOT_CONNECTED;
+        peer->changed.notify_all();
+        auto link = peer->link;
+        peerLock.unlock();
+        if (link != nullptr && link->Established()) {
+            (void)server_->ReleaseLink(link);
         }
     }
     return ConvertError(ret);

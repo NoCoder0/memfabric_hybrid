@@ -388,8 +388,8 @@ int32_t MemEntityDefault::FreeLocalMemory(hybm_mem_slice_t slice, uint32_t flags
         auto ret = transportManager_->UnregisterMemoryRegion(memSlice->vAddress_);
         if (ret != BM_OK) {
             BM_LOG_ERROR("UnregisterMemoryRegion failed, please check input slice.");
-            if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
-                (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0U) {
+            if (OpenDccSelected(options_) || ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0U &&
+                                              (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_URMA) != 0U)) {
                 return ret;
             }
         }
@@ -1511,12 +1511,6 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
 
 int MemEntityDefault::LoadExtendLibrary() noexcept
 {
-    if (OpenDccEnabled() && (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0) {
-        BM_ASSERT_LOG_AND_RETURN(
-            options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && options_.bmType == HYBM_TYPE_HOST_INITIATE &&
-                options_.scene == HYBM_SCENE_DEFAULT && options_.clusterRole == HYBM_CLUSTER_ROLE_DEFAULT,
-            "openDCC requires ordinary BM with pure device_rdma", BM_NOT_SUPPORTED);
-    }
     constexpr uint32_t deviceInterMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0 && (options_.bmDataOpType & deviceInterMask) == 0U) {
         BM_LOG_DEBUG("HOST_SHM-only data operator selected, skip loading transport extend libraries.");
@@ -1525,7 +1519,7 @@ int MemEntityDefault::LoadExtendLibrary() noexcept
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
         auto ret = BM_OK;
-        if (OpenDccEnabled()) {
+        if (OpenDccSelected(options_)) {
 #ifdef BUILD_OPENDCC
             ret = DlOpenDccApi::Load();
 #else
@@ -1893,7 +1887,8 @@ Result MemEntityDefault::InitTransManager()
     transport::TransportOptions options{};
     options.rankId = options_.rankId;
     options.rankCount = options_.rankCount;
-    if (OpenDccEnabled() && options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA) {
+    options.useOpenDcc = OpenDccSelected(options_);
+    if (options.useOpenDcc) {
         options.deviceId = HybmGetInitedLogicDeviceId();
     }
     options.protocol = options_.bmDataOpType;
@@ -1969,6 +1964,16 @@ bool MemEntityDefault::SdmaReaches(uint32_t remoteRank) const noexcept
 
 bool MemEntityDefault::QueryDataLinkStates(std::vector<std::pair<uint32_t, bool>> &states) const
 {
+    if (OpenDccSelected(options_)) {
+        const auto compose = std::dynamic_pointer_cast<transport::ComposeTransportManager>(transportManager_);
+        const auto device = compose == nullptr ? nullptr : compose->GetTransport(HYBM_DOP_TYPE_DEVICE_RDMA);
+        for (uint32_t rank = 0; rank < options_.rankCount; ++rank) {
+            if (rank != options_.rankId) {
+                states.emplace_back(rank, device != nullptr && !device->GetConnectedProtocols(rank).empty());
+            }
+        }
+        return true;
+    }
     if (providerServer_ != nullptr) {
         const auto peers = providerServer_->GetPeerRanks();
         for (auto rank : peers) {

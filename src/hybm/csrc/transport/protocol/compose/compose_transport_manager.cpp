@@ -10,7 +10,6 @@
  * See the Mulan PSL v2 for more details.
 */
 #include "compose_transport_manager.h"
-#include "mf_opendcc_config.h"
 #ifdef BUILD_OPENDCC
 #include "device_rdma_opendcc_transport_manager.h"
 #include "host_rdma_opendcc_transport_manager.h"
@@ -160,7 +159,7 @@ Result ComposeTransportManager::OpenTransport(const TransportOptions &options, u
             transportManager = std::make_shared<device::DeviceUrmaTransportManager>();
         }
     } else if (opTypes == DEVICE_RDMA_PROTOCOL) {
-        if (OpenDccEnabled()) {
+        if (options.useOpenDcc) {
 #if defined(BUILD_OPENDCC) && defined(ASCEND_NPU)
             transportManager = std::make_shared<device::DeviceRdmaOpenDccTransportManager>();
 #elif defined(BUILD_OPENDCC) && defined(NO_XPU)

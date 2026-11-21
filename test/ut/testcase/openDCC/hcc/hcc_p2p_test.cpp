@@ -25,16 +25,32 @@
 #include "mf_opendcc_config.h"
 #include "compose_transport_manager.h"
 #include "device_rdma_opendcc_transport_manager.h"
+#include "dl_opendcc_api.h"
+#include "dl_api.h"
+#define private   public
+#define protected public
+#include "hybm_entity_factory.h"
+#include "hybm_conn_based_segment.h"
+#include "hybm_va_manager.h"
+#include "smem_bm_entry_manager.h"
+#undef private
+#undef protected
+
+extern bool g_smemBmInited;
+
+using namespace ock::mf;
 
 namespace {
 struct MockQueue {
     std::deque<genetty_cq_wc_t> completions;
+    bool imported = false;
 };
 int posted = 0;
 int failAfter = -1;
 int stopped = 0;
 bool stall = false;
 bool stopFailure = false;
+int deregisterFailures = 0;
 int Init(PROTOCOL, const char *, uint32_t)
 {
     return GEN_OK;
@@ -58,8 +74,13 @@ genetty_t CreateQp(genetty_options_t *options)
     return options->cq_handle;
 }
 void DestroyQp(genetty_t, uint32_t) {}
-int Import(genetty_t, genetty_link_info_t *, uint32_t)
+int Import(genetty_t qp, genetty_link_info_t *, uint32_t)
 {
+    auto queue = static_cast<MockQueue *>(qp);
+    if (queue->imported) {
+        return GEN_ERROR;
+    }
+    queue->imported = true;
     return GEN_OK;
 }
 int Export(genetty_t, uint32_t, genetty_link_info_t *info)
@@ -77,6 +98,10 @@ int Register(genetty_context_t, genetty_memory_segment_t *segment, uint32_t)
 }
 int Unregister(genetty_context_t, genetty_memory_segment_t *, uint32_t)
 {
+    if (deregisterFailures > 0) {
+        --deregisterFailures;
+        return GEN_DEVICE_ERROR;
+    }
     return GEN_OK;
 }
 int Stop(genetty_t)
@@ -115,6 +140,7 @@ protected:
     {
         posted = stopped = 0;
         failAfter = -1;
+        deregisterFailures = 0;
         stall = stopFailure = false;
         MOCKER(genetty_init).stubs().will(invoke(Init));
         MOCKER(genetty_uninit).stubs().will(invoke(Uninit));
@@ -131,6 +157,26 @@ protected:
         MOCKER(genetty_batch_post).stubs().will(invoke(Post));
         MOCKER(genetty_cq_poll).stubs().will(invoke(Poll));
         MOCKER(genetty_quiesce).stubs().will(invoke(Stop));
+        MOCKER(DlOpenDccApi::Load).stubs().will(returnValue(BM_OK));
+        DlOpenDccApi::hcc_init = &::hcc_init;
+        DlOpenDccApi::hcc_uninit = &::hcc_uninit;
+        DlOpenDccApi::hcc_options_init = &::hcc_options_init;
+        DlOpenDccApi::hcc_create = &::hcc_create;
+        DlOpenDccApi::hcc_destroy = &::hcc_destroy;
+        DlOpenDccApi::hcc_memory_register = &::hcc_memory_register;
+        DlOpenDccApi::hcc_memory_unregister = &::hcc_memory_unregister;
+        DlOpenDccApi::hcc_memory_info_encode = &::hcc_memory_info_encode;
+        DlOpenDccApi::hcc_memory_info_decode = &::hcc_memory_info_decode;
+        DlOpenDccApi::hcc_memory_free_info = &::hcc_memory_free_info;
+        DlOpenDccApi::hcc_tunnel_create = &::hcc_tunnel_create;
+        DlOpenDccApi::hcc_tunnel_destroy = &::hcc_tunnel_destroy;
+        DlOpenDccApi::hcc_tunnel_export = &::hcc_tunnel_export;
+        DlOpenDccApi::hcc_tunnel_import = &::hcc_tunnel_import;
+        DlOpenDccApi::hcc_tunnel_free_link_info = &::hcc_tunnel_free_link_info;
+        DlOpenDccApi::hcc_tunnel_submit = &::hcc_tunnel_submit;
+        DlOpenDccApi::hcc_request_wait = &::hcc_request_wait;
+        DlOpenDccApi::hcc_request_release = &::hcc_request_release;
+        DlOpenDccApi::hcc_tunnel_quiesce = &::hcc_tunnel_quiesce;
         ASSERT_EQ(hcc_init(GEN_PROT_HOST_RDMA, "kunpeng", 0), HCC_OK);
         hcc_options_t options{};
         hcc_options_init(&options);
@@ -290,6 +336,7 @@ TEST(OpenDccSelectionTest, ExplicitEnvironmentSelectsBackend)
     ComposeTransportManager manager(nullptr);
     TransportOptions options{};
     options.protocol = HYBM_DOP_TYPE_DEVICE_RDMA;
+    options.useOpenDcc = true;
     EXPECT_EQ(manager.OpenDevice(options), BM_OK);
     auto selected = manager.GetTransport(HYBM_DOP_TYPE_DEVICE_RDMA);
 #ifdef ASCEND_NPU
@@ -329,27 +376,6 @@ uint16_t FreePort()
 
 TEST_F(HccP2pTest, MemFabricManagersHandshakeKeysBatchAndReadback)
 {
-    MOCKER(DlOpenDccApi::Load).stubs().will(returnValue(BM_OK));
-    DlOpenDccApi::hcc_init = &::hcc_init;
-    DlOpenDccApi::hcc_uninit = &::hcc_uninit;
-    DlOpenDccApi::hcc_options_init = &::hcc_options_init;
-    DlOpenDccApi::hcc_create = &::hcc_create;
-    DlOpenDccApi::hcc_destroy = &::hcc_destroy;
-    DlOpenDccApi::hcc_memory_register = &::hcc_memory_register;
-    DlOpenDccApi::hcc_memory_unregister = &::hcc_memory_unregister;
-    DlOpenDccApi::hcc_memory_info_encode = &::hcc_memory_info_encode;
-    DlOpenDccApi::hcc_memory_info_decode = &::hcc_memory_info_decode;
-    DlOpenDccApi::hcc_memory_free_info = &::hcc_memory_free_info;
-    DlOpenDccApi::hcc_tunnel_create = &::hcc_tunnel_create;
-    DlOpenDccApi::hcc_tunnel_destroy = &::hcc_tunnel_destroy;
-    DlOpenDccApi::hcc_tunnel_export = &::hcc_tunnel_export;
-    DlOpenDccApi::hcc_tunnel_import = &::hcc_tunnel_import;
-    DlOpenDccApi::hcc_tunnel_free_link_info = &::hcc_tunnel_free_link_info;
-    DlOpenDccApi::hcc_tunnel_submit = &::hcc_tunnel_submit;
-    DlOpenDccApi::hcc_request_wait = &::hcc_request_wait;
-    DlOpenDccApi::hcc_request_release = &::hcc_request_release;
-    DlOpenDccApi::hcc_tunnel_quiesce = &::hcc_tunnel_quiesce;
-
     setenv("MF_OPENDCC_RDMA_IP", "127.0.0.1", 1);
     std::array<host::HostRdmaOpenDccTransportManager, 3> managers;
     std::array<std::array<uint8_t, 128>, 3> buffers{};
@@ -363,7 +389,7 @@ TEST_F(HccP2pTest, MemFabricManagersHandshakeKeysBatchAndReadback)
         auto port = FreePort();
         options.nic = "tcp://127.0.0.1:" + std::to_string(port - rank);
         ASSERT_EQ(managers[rank].OpenDevice(options), BM_OK);
-        EXPECT_EQ(managers[rank].GetNic(), "tcp://127.0.0.1:" + std::to_string(port));
+        EXPECT_NE(managers[rank].GetNic().find("tcp://127.0.0.1:"), std::string::npos);
         buffers[rank].fill(0x70 + rank);
         TransportMemoryRegion mr{};
         mr.addr = reinterpret_cast<uint64_t>(buffers[rank].data());
@@ -383,10 +409,27 @@ TEST_F(HccP2pTest, MemFabricManagersHandshakeKeysBatchAndReadback)
         info.memKeys.push_back(keys[rank]);
         peers.options[rank] = info;
     }
+    auto initial = peers;
+    initial.options.erase(2);
     for (auto &manager : managers) {
-        ASSERT_EQ(manager.Prepare(peers), BM_OK);
+        ASSERT_EQ(manager.Prepare(initial), BM_OK);
     }
     for (uint32_t rank = 1; rank < managers.size(); ++rank) {
+        if (rank == 2) {
+            auto entityUpdate = peers;
+            for (auto &entry : entityUpdate.options) {
+                entry.second.memKeys.clear();
+            }
+            for (auto &manager : managers) {
+                ASSERT_EQ(manager.UpdateRankOptions(entityUpdate), BM_OK);
+            }
+            auto address = reinterpret_cast<uint64_t>(buffers[0].data());
+            ASSERT_EQ(managers[0].WriteRemote(1, address + 8, 0x2000010, 16), BM_OK);
+            ASSERT_EQ(managers[0].ReadRemote(1, address + 64, 0x2000010, 16), BM_OK);
+            for (auto &manager : managers) {
+                ASSERT_EQ(manager.UpdateRankOptions(peers), BM_OK);
+            }
+        }
         int accepted = BM_ERROR;
         std::thread accept([&]() { accepted = managers[rank].ConnectRank(0); });
         auto ret = managers[0].ConnectRank(rank);
@@ -415,9 +458,227 @@ TEST_F(HccP2pTest, MemFabricManagersHandshakeKeysBatchAndReadback)
     auto previousStops = stopped;
     EXPECT_NE(managers[0].WriteRemoteBatchAsync(1, batch), BM_OK);
     EXPECT_GT(stopped, previousStops);
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!managers[1].GetConnectedProtocols(0).empty() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::yield();
+    }
+    EXPECT_TRUE(managers[0].GetConnectedProtocols(1).empty());
+    EXPECT_TRUE(managers[1].GetConnectedProtocols(0).empty());
+    auto previousPosts = posted;
+    failAfter = -1;
+    int accepted = BM_ERROR;
+    std::thread reconnect([&]() { accepted = managers[1].ConnectRank(0); });
+    auto connected = managers[0].ConnectRank(1);
+    reconnect.join();
+    ASSERT_EQ(connected, BM_OK);
+    ASSERT_EQ(accepted, BM_OK);
+    EXPECT_EQ(posted, previousPosts);
+    ASSERT_EQ(managers[0].WriteRemote(1, local + 8, 0x2000010, 16), BM_OK);
+    EXPECT_EQ(posted, previousPosts + 1);
     EXPECT_EQ(managers[0].UnregisterMemoryRegion(local), BM_OK);
     for (auto &manager : managers) {
         EXPECT_EQ(manager.CloseDevice(), BM_OK);
+    }
+}
+
+TEST(OpenDccSelectionTest, OtherEntityKindsKeepTheirOriginalBackend)
+{
+    hybm_options options{};
+    options.bmType = HYBM_TYPE_HOST_INITIATE;
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    options.scene = HYBM_SCENE_DEFAULT;
+    EXPECT_EQ(OpenDccSelected(options), OpenDccEnabled());
+    options.scene = HYBM_SCENE_TRANS;
+    EXPECT_FALSE(OpenDccSelected(options));
+    options.scene = HYBM_SCENE_DEFAULT;
+    options.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_SDMA);
+    EXPECT_FALSE(OpenDccSelected(options));
+    options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    options.clusterRole = HYBM_CLUSTER_ROLE_PROXY;
+    EXPECT_FALSE(OpenDccSelected(options));
+}
+
+TEST(OpenDccSelectionTest, OtherEntityKindsLoadOriginalLibraries)
+{
+    MOCKER(DlOpenDccApi::Load).expects(never());
+    MOCKER(DlApi::LoadExtendLibrary).expects(exactly(2)).will(returnValue(BM_OK));
+    MemEntityDefault entity(102);
+    entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    entity.options_.scene = HYBM_SCENE_TRANS;
+    EXPECT_EQ(entity.LoadExtendLibrary(), BM_OK);
+    entity.options_.scene = HYBM_SCENE_DEFAULT;
+    entity.options_.bmDataOpType = static_cast<hybm_data_op_type>(HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_SDMA);
+    EXPECT_EQ(entity.LoadExtendLibrary(), BM_OK);
+    GlobalMockObject::verify();
+}
+
+TEST(OpenDccSelectionTest, SelectedBackendFailureDoesNotLoadOriginalLibraries)
+{
+    if (!OpenDccEnabled()) {
+        GTEST_SKIP() << "Run with MF_HYBM_RDMA_USE_OPENDCC=1";
+    }
+    MOCKER(DlOpenDccApi::Load).expects(once()).will(returnValue(BM_ERROR));
+    MOCKER(DlApi::LoadExtendLibrary).expects(never());
+    MemEntityDefault entity(102);
+    entity.options_.bmType = HYBM_TYPE_HOST_INITIATE;
+    entity.options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    entity.options_.scene = HYBM_SCENE_DEFAULT;
+    EXPECT_EQ(entity.LoadExtendLibrary(), BM_ERROR);
+    GlobalMockObject::verify();
+}
+
+TEST_F(HccP2pTest, PublicUnregisterRetainsFailedMrSliceAndVaForRetry)
+{
+    if (!OpenDccHostEnabled()) {
+        GTEST_SKIP() << "Run with MF_HYBM_RDMA_USE_OPENDCC=1";
+    }
+    using namespace ock::smem;
+    setenv("MF_OPENDCC_RDMA_IP", "127.0.0.1", 1);
+    auto entity = std::static_pointer_cast<MemEntityDefault>(MemEntityFactory::Instance().GetOrCreateEngine(103, 0));
+    entity->options_.rankCount = 2;
+    entity->options_.bmType = HYBM_TYPE_HOST_INITIATE;
+    entity->options_.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    entity->options_.scene = HYBM_SCENE_DEFAULT;
+    std::strcpy(entity->options_.transUrl, "tcp://127.0.0.1:21000");
+    entity->tagManager_ = std::make_shared<HybmEntityTagInfo>();
+    ASSERT_EQ(entity->InitTransManager(), BM_OK);
+    entity->initialized_ = true;
+    MemSegmentOptions options{};
+    options.segType = HYBM_MST_DRAM;
+    options.dataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+    auto segment = std::make_shared<HybmConnBasedSegment>(options, 103);
+    entity->dramSegment_ = segment;
+    auto address = reinterpret_cast<uint64_t>(local.data());
+    auto slice = std::make_shared<MemSlice>(0, HYBM_MEM_TYPE_HOST, MEM_PT_TYPE_SVM, 0, address, local.size());
+    segment->slices_.emplace(0, MemSliceStatus(slice));
+    BaseAllocatedGvaInfo va{};
+    va.va[HVM_HVA] = address;
+    va.size = local.size();
+    va.memType = HYBM_MEM_TYPE_HOST;
+    ASSERT_EQ(HybmVaManager::GetInstance().AddVaInfo(va), BM_OK);
+    TransportMemoryRegion mr{};
+    mr.addr = address;
+    mr.size = local.size();
+    mr.flags = REG_MR_FLAG_DRAM;
+    ASSERT_EQ(entity->transportManager_->RegisterMemoryRegion(mr), BM_OK);
+    SmemBmEntryOptions entryOptions{103, 0, 2, 1000};
+    SmemBmEntryPtr entry = new SmemBmEntry(entryOptions, StorePtr{});
+    entry->entity_ = entity.get();
+    entry->inited_ = true;
+    entry->registedSlice_[address] = {local.size(), slice->ConvertToId()};
+    auto handle = reinterpret_cast<smem_bm_t>(entry.Get());
+    auto &entries = SmemBmEntryManager::Instance();
+    auto wasInitialized = entries.inited_;
+    auto wasBmInitialized = g_smemBmInited;
+    g_smemBmInited = true;
+    entries.inited_ = true;
+    entries.ptr2EntryMap_[reinterpret_cast<uintptr_t>(handle)] = entry;
+    deregisterFailures = 1;
+    EXPECT_NE(smem_bm_unregister_user_mem(handle, address), SM_OK);
+    EXPECT_EQ(entry->registedSlice_.size(), 1U);
+    EXPECT_EQ(segment->slices_.size(), 1U);
+    EXPECT_TRUE(entity->transportManager_->QueryHasRegistered(address, local.size()));
+    EXPECT_TRUE(HybmVaManager::GetInstance().FindAllocByVa(address, HVM_HVA).second);
+    EXPECT_EQ(smem_bm_unregister_user_mem(handle, address), SM_OK);
+    EXPECT_TRUE(entry->registedSlice_.empty());
+    EXPECT_TRUE(segment->slices_.empty());
+    EXPECT_FALSE(entity->transportManager_->QueryHasRegistered(address, local.size()));
+    EXPECT_FALSE(HybmVaManager::GetInstance().FindAllocByVa(address, HVM_HVA).second);
+    entries.ptr2EntryMap_.erase(reinterpret_cast<uintptr_t>(handle));
+    entries.inited_ = wasInitialized;
+    g_smemBmInited = wasBmInitialized;
+    entry->inited_ = false;
+    entry->entity_ = nullptr;
+    EXPECT_EQ(entity->transportManager_->CloseDevice(), BM_OK);
+    entity->initialized_ = false;
+    MemEntityFactory::Instance().RemoveEngine(entity.get());
+}
+
+TEST_F(HccP2pTest, TwoEntityIdsShareBasePortAndKeepIndependentConnections)
+{
+    if (!OpenDccHostEnabled()) {
+        GTEST_SKIP() << "Run with MF_HYBM_RDMA_USE_OPENDCC=1";
+    }
+    setenv("MF_OPENDCC_RDMA_IP", "127.0.0.1", 1);
+    std::array<std::shared_ptr<MemEntityDefault>, 4> entities;
+    std::array<TransManagerPtr, 4> managers;
+    std::array<std::array<uint8_t, 32>, 4> buffers{};
+    for (uint32_t i = 0; i < entities.size(); ++i) {
+        entities[i] = std::make_shared<MemEntityDefault>(110 + i / 2);
+        auto &options = entities[i]->options_;
+        options.rankId = i % 2;
+        options.rankCount = 2;
+        options.bmType = HYBM_TYPE_HOST_INITIATE;
+        options.bmDataOpType = HYBM_DOP_TYPE_DEVICE_RDMA;
+        options.scene = HYBM_SCENE_DEFAULT;
+        std::strcpy(options.transUrl, "tcp://127.0.0.1:21000");
+        entities[i]->tagManager_ = std::make_shared<HybmEntityTagInfo>();
+        ASSERT_EQ(entities[i]->InitTransManager(), BM_OK);
+        auto compose = std::dynamic_pointer_cast<ComposeTransportManager>(entities[i]->transportManager_);
+        managers[i] = compose->GetTransport(HYBM_DOP_TYPE_DEVICE_RDMA);
+        TransportMemoryRegion mr{};
+        mr.addr = reinterpret_cast<uint64_t>(buffers[i].data());
+        mr.size = buffers[i].size();
+        mr.flags = REG_MR_FLAG_DRAM;
+        ASSERT_EQ(managers[i]->RegisterMemoryRegion(mr), BM_OK);
+    }
+    EXPECT_NE(managers[0]->GetNic(), managers[2]->GetNic());
+    EXPECT_NE(managers[1]->GetNic(), managers[3]->GetNic());
+    for (uint32_t group = 0; group < 2; ++group) {
+        auto index = group * 2;
+        HybmTransPrepareOptions prepare;
+        for (uint32_t rank = 0; rank < 2; ++rank) {
+            auto &info = prepare.options[rank];
+            auto &manager = managers[index + rank];
+            info.nic = manager->GetNic();
+            info.privateData = manager->GetPrivateData();
+            TransportMemoryKey key;
+            ASSERT_EQ(manager->QueryMemoryKey(reinterpret_cast<uint64_t>(buffers[index + rank].data()), key), BM_OK);
+            info.memKeys.push_back(key);
+        }
+        ASSERT_EQ(managers[index]->Prepare(prepare), BM_OK);
+        ASSERT_EQ(managers[index + 1]->Prepare(prepare), BM_OK);
+        int accepted = BM_ERROR;
+        std::thread accept([&]() { accepted = managers[index + 1]->ConnectRank(0); });
+        auto result = managers[index]->ConnectRank(1);
+        accept.join();
+        ASSERT_EQ(result, BM_OK);
+        ASSERT_EQ(accepted, BM_OK);
+        buffers[index][0] = 0x40 + group;
+        ASSERT_EQ(managers[index]->WriteRemote(1, reinterpret_cast<uint64_t>(buffers[index].data()),
+                                               reinterpret_cast<uint64_t>(buffers[index + 1].data()), 32),
+                  BM_OK);
+        EXPECT_EQ(buffers[index + 1][0], 0x40 + group);
+    }
+    EXPECT_EQ(managers[0]->CloseDevice(), BM_OK);
+    EXPECT_EQ(managers[1]->CloseDevice(), BM_OK);
+    buffers[2][0] = 0x62;
+    ASSERT_EQ(managers[2]->WriteRemote(1, reinterpret_cast<uint64_t>(buffers[2].data()),
+                                       reinterpret_cast<uint64_t>(buffers[3].data()), 32),
+              BM_OK);
+    EXPECT_EQ(buffers[3][0], 0x62);
+    auto &factory = MemEntityFactory::Instance();
+    factory.engines_[111] = entities[2];
+    factory.enginesFromAddress_[entities[2].get()] = 111;
+    ock::smem::SmemBmEntryOptions entryOptions{111, 0, 2, 1000};
+    ock::smem::SmemBmEntry entry(entryOptions, ock::smem::StorePtr{});
+    entry.entity_ = entities[2].get();
+    auto states = entry.OnQueryLinkState();
+    ASSERT_EQ(states.size(), 1U);
+    EXPECT_EQ(states[0].state, 4);
+    failAfter = posted;
+    EXPECT_NE(managers[2]->WriteRemote(1, reinterpret_cast<uint64_t>(buffers[2].data()),
+                                       reinterpret_cast<uint64_t>(buffers[3].data()), 32),
+              BM_OK);
+    states = entry.OnQueryLinkState();
+    ASSERT_EQ(states.size(), 1U);
+    EXPECT_EQ(states[0].state, 0);
+    entry.entity_ = nullptr;
+    factory.enginesFromAddress_.erase(entities[2].get());
+    factory.engines_.erase(111);
+    for (auto &manager : managers) {
+        EXPECT_EQ(manager->CloseDevice(), BM_OK);
     }
 }
 } // namespace
