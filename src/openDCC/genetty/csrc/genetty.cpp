@@ -51,6 +51,7 @@ int32_t GENETTY_API genetty_init(PROTOCOL prot, const char *vendor, uint32_t fla
     /* step2: create genetty options */
     GenettyBackendOptions options;
     options.protocol = prot;
+    options.flags = flags;
     options.vendor = vendorType;
 
     std::lock_guard<std::mutex> lock(GENETTY_MUTEX);
@@ -549,6 +550,13 @@ void GENETTY_API genetty_link_info_free(genetty_link_info_t *info)
     }
 
     free(info->data);
+}
+
+int32_t GENETTY_API genetty_quiesce(genetty_t handle)
+{
+    GEN_ASSERT_MSG_RETURN(handle != nullptr, "Quiesce failed, as handle is null", GEN_INVALID_PARAM);
+    GEN_API_CHECK_INIT_RETURN(GEN_NOT_INITIALIZED);
+    return reinterpret_cast<Genetty *>(handle)->Quiesce();
 }
 
 int32_t GENETTY_API genetty_import(genetty_t handle, genetty_link_info_t *info, uint32_t flags)

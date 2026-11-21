@@ -28,7 +28,7 @@
 #include "genetty_info_types.h"
 #include "under_api/genetty_dl_api.h"
 
-#define private public
+#define private   public
 #define protected public
 #include "pingpong_genetty/odcc_pp_genetty.h"
 #include "verbs/genetty_verbs_backend.h"
@@ -835,6 +835,24 @@ TEST_F(DeviceRdmaContextTest, PoolDiscoversDevicesAndPreservesCallerDevice)
     EXPECT_FALSE(pool.inited_);
     EXPECT_TRUE(pool.contexts_.empty());
     EXPECT_EQ(pool.AddAllDevices(), GEN_OK);
+}
+
+TEST_F(DeviceRdmaContextTest, LazyPoolOpensOnlyRequestedLogicalDevice)
+{
+    InstallEnumerationMocks();
+    ASSERT_EQ(genetty_init(GEN_PROT_DEVICE_RDMA, "ascend", GEN_INIT_LAZY_DEVICE), GEN_OK);
+    EXPECT_EQ(state.liveHandles, 0);
+    auto context = genetty_context_get_by_id(DEVICE_RDMA_GENETTY, LOGIC_DEVICE_ID + 1, 0);
+    ASSERT_NE(context, nullptr);
+    EXPECT_EQ(state.liveHandles, 1);
+    EXPECT_EQ(state.currentDeviceId, USER_DEVICE_ID);
+    auto repeated = genetty_context_get_by_id(DEVICE_RDMA_GENETTY, LOGIC_DEVICE_ID + 1, 0);
+    EXPECT_EQ(repeated, context);
+    EXPECT_EQ(state.liveHandles, 1);
+    genetty_context_return(repeated, 0);
+    genetty_context_return(context, 0);
+    genetty_uninit(0);
+    EXPECT_EQ(state.liveHandles, 0);
 }
 
 TEST_F(DeviceRdmaContextTest, PoolSkipsUnavailableDevice)

@@ -57,7 +57,7 @@ hcc_t hcc_create(hcc_options_t *options);
  * @param handle           [in] communicator handle created by hcc_create
  * @param flags            [in] optional flags, should be 0 currently
  */
-void hcc_destroy(hcc_t *handle, uint32_t flags);
+int32_t hcc_destroy(hcc_t *handle, uint32_t flags);
 
 /**
  * @brief Register a memory segment to the HCC(Host Centric Communicator) in P2P mode
@@ -76,7 +76,7 @@ int32_t hcc_memory_register(hcc_t *handle, hcc_mem_segment_t *segment, uint32_t 
  * @param segment          [in] memory segment to be unregistered
  * @param flags            [in] optional flags, should be 0 currently
  */
-void hcc_memory_unregister(hcc_t *handle, hcc_mem_segment_t *segment, uint32_t flags);
+int32_t hcc_memory_unregister(hcc_t *handle, hcc_mem_segment_t *segment, uint32_t flags);
 
 /**
  * @brief Create a tunnel for point-to-point data transfer
@@ -93,7 +93,7 @@ hcc_tunnel_t hcc_tunnel_create(hcc_t tunnel_handle, hcc_tunnel_options_t *option
  * @param tunnel_handle    [in] tunnel handle created by hcc_tunnel_create
  * @param flags            [in] optional flags, should be 0 currently
  */
-void hcc_tunnel_destroy(hcc_tunnel_t *tunnel_handle, uint32_t flags);
+int32_t hcc_tunnel_destroy(hcc_tunnel_t *tunnel_handle, uint32_t flags);
 
 /**
  * @brief Export the link info of the tunnel, which is exchanged with the peer
@@ -112,7 +112,7 @@ int32_t hcc_tunnel_export(hcc_tunnel_t *tunnel_handle, uint32_t flags, hcc_link_
  * @param flags            [in] optional flags, should be 0 currently
  * @param link_info        [in] link info exported by the peer
  */
-void hcc_tunnel_import(hcc_tunnel_t *tunnel_handle, uint32_t flags, hcc_link_info_t *link_info);
+int32_t hcc_tunnel_import(hcc_tunnel_t *tunnel_handle, uint32_t flags, hcc_link_info_t *link_info);
 
 /**
  * @brief Free the link info allocated by hcc_tunnel_export
@@ -120,6 +120,14 @@ void hcc_tunnel_import(hcc_tunnel_t *tunnel_handle, uint32_t flags, hcc_link_inf
  * @param link_info        [in] link info to be freed, can be null
  */
 void hcc_tunnel_free_link_info(hcc_link_info_t *link_info);
+
+/* Submit retains registered memory. Wait drives CQ progress; release requires completion or successful quiescence. */
+int32_t hcc_tunnel_submit(hcc_tunnel_t tunnel, genetty_op_type_t operation, const hcc_copy_desc_t *descs,
+                          uint32_t count, hcc_request_t *request);
+int32_t hcc_request_wait(hcc_request_t request, uint32_t timeout_ms);
+int32_t hcc_request_release(hcc_request_t *request);
+int32_t hcc_tunnel_quiesce(hcc_tunnel_t tunnel);
+void hcc_memory_free_info(hcc_memory_info_t *info);
 
 #ifdef __cplusplus
 }

@@ -36,6 +36,7 @@ Result DeviceVerbsContext::RegisterMemory(genetty_memory_segment_t *segment, uin
 
     /* step4: if found set lkey/rkey to segment then return */
     if (iter != mrs_.end() && iter->second.handle != nullptr) {
+        ++iter->second.references;
         segment->lkey = iter->second.lkey;
         segment->rkey = iter->second.rkey;
         GEN_LOG_DEBUG("Register memory skipped, as already registered, mem type("
@@ -98,6 +99,11 @@ Result DeviceVerbsContext::UnRegisterMemory(genetty_memory_segment_t *segment, u
         return GEN_NOT_FOUND;
     }
 
+    if (iter->second.references > 1) {
+        --iter->second.references;
+        return GEN_OK;
+    }
+
     /* step4: store it to tmpMr and check the handles */
     auto tmpMr = iter->second;
 
@@ -153,6 +159,51 @@ void DeviceVerbsContext::Destroy() noexcept
 
     /* transfer the MRs to the device context for ordered cleanup and retry */
     wrapCtx_->Destroy(mrs_);
+}
+
+Result DeviceVerbsContextPool::AddDevice(uint16_t logicDeviceId) noexcept
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto &ctx : contexts_) {
+        if (ctx->wrapCtx_->LogicDeviceId() == logicDeviceId) {
+            return GEN_OK;
+        }
+    }
+    auto result = AclApi::Init();
+    if (result != GEN_OK) {
+        return result;
+    }
+    uint32_t count = 0;
+    result = AclApi::AclrtGetDeviceCount(&count);
+    if (result != 0) {
+        GEN_LOG_ERROR("Query ACL device count failed, result(" << result << ")");
+        return GEN_DEVICE_ERROR;
+    }
+    for (uint32_t userId = 0; userId < count; ++userId) {
+        int32_t logicId = -1;
+        result = AclApi::AclrtGetLogicDevIdByUserDevId(userId, &logicId);
+        if (result != 0 || logicId != logicDeviceId) {
+            continue;
+        }
+        int32_t previous = -1;
+        (void)AclApi::AclrtGetDevice(&previous);
+        DeviceRdmaContextPtr ctx;
+        result = DeviceRdmaContext::CreateContext(userId, "", ctx);
+        if (previous >= 0 && AclApi::AclrtSetDevice(previous) != 0) {
+            GEN_LOG_ERROR("Restore device failed, userDeviceId(" << previous << ")");
+            return GEN_DEVICE_ERROR;
+        }
+        if (result != GEN_OK) {
+            return result;
+        }
+        auto context = mf::MakeRef<DeviceVerbsContext>(DEVICE_RDMA_GENETTY, ctx);
+        GEN_ASSERT_MSG_RETURN(context != nullptr, "Allocate Device context failed", GEN_MALLOC_FAILED);
+        contexts_.push_back(context);
+        inited_ = true;
+        return GEN_OK;
+    }
+    GEN_LOG_ERROR("No user device matches logicDeviceId(" << logicDeviceId << ")");
+    return GEN_NOT_FOUND;
 }
 
 Result DeviceVerbsContextPool::AddAllDevices() noexcept

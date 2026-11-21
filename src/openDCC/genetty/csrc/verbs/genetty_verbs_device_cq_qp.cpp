@@ -100,6 +100,12 @@ void VerbsDeviceQp::Destroy() noexcept
     ctx_ = nullptr;
 }
 
+Result VerbsDeviceQp::Quiesce() noexcept
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queue_ == nullptr ? GEN_OK : queue_->Destroy();
+}
+
 Result VerbsDeviceQp::Export(uint32_t flags, genetty_link_info_t *info)
 {
     std::lock_guard<std::mutex> lock(mutex_);

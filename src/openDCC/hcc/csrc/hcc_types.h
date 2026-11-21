@@ -61,12 +61,14 @@ public:
 
 private:
     std::mutex mutex_;
+    uint32_t references_ = 0;
+    HccInitOptions options_{};
+    std::map<hcc_t, HccCommunicatorPtr> communicators_;
     bool inited_ = false;
 };
 
 class HccCommunicator : public Referable {
 public:
-
     virtual Result CreateTunnel(hcc_tunnel_options_t *options, HccTunnelPtr &tunnel) = 0;
     virtual Result LookupTunnel(hcc_tunnel_t tunnel, HccTunnelPtr &out) noexcept = 0;
     virtual void DestroyTunnel(hcc_tunnel_t tunnel, uint32_t flags) noexcept = 0;

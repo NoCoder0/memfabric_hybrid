@@ -40,6 +40,9 @@ typedef enum {
 typedef struct {
     hcc_mode_t mode; /* mode one2one or many2many */
     uint32_t flags;  /* options flags, reserved for now */
+    genetty_type_t provider;
+    uint16_t logic_device_id;
+    char ip[64];
 } hcc_options_t;
 
 typedef struct {
@@ -53,16 +56,30 @@ typedef struct {
 } hcc_server_options_t;
 
 typedef struct {
+    uint32_t queue_depth;
+    uint32_t traffic_class;
 } hcc_tunnel_options_t;
 
-#define HCC_DEVICE_ERROR GEN_DEVICE_ERROR
+typedef void *hcc_request_t;
+typedef struct {
+    uint64_t local_address;
+    uint64_t remote_address;
+    uint64_t size;
+    uint32_t lkey;
+    uint32_t rkey;
+} hcc_copy_desc_t;
+
+#define HCC_DEVICE_ERROR  (-1107)
+#define HCC_TIMEOUT       (-1108)
+#define HCC_BUSY          (-1109)
+#define HCC_NOT_SUPPORTED (-1110)
 
 #define HCC_OK              (0)
 #define HCC_ERROR           (-1)
 #define HCC_INVALID_PARAM   (-1100)
 #define HCC_NOT_INITIALIZED (-1101)
 #define HCC_MALLOC_FAILED   (-1102)
-#define HCC_NOT_FOUND       (-1003)
+#define HCC_NOT_FOUND       (-1103)
 #define HCC_POST_FAILED     (-1104)
 #define HCC_START_FAILED    (-1105)
 #define HCC_CONNECT_FAILED  (-1106)

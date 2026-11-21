@@ -29,6 +29,7 @@ struct DeviceVerbsMR {
     uint64_t size = 0;      /* size of the memory region */
     uint32_t lkey = 0;      /* local access key */
     uint32_t rkey = 0;      /* remote access key */
+    uint32_t references = 1;
 };
 
 class DeviceRdmaContext;

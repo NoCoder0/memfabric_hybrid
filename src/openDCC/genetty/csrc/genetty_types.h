@@ -43,11 +43,11 @@ std::ostream &operator<<(std::ostream &os, GennettyCtxGetPolicy policy) noexcept
 
 struct GenettyCtxGetOptions {
     genetty_type_t genettyType = HOST_RDMA_GENETTY; /* genetty type of the context */
-    GennettyCtxGetPolicy type = GCCP_INVALID; /*  */
-    uint16_t deviceId = UINT16_MAX;           /* device id logically */
-    std::string ipMask;                       /* ip with mask */
-    uint32_t flags = 0;                       /* optional flags*/
-    uint32_t whichAutoPolicy = 0;             /* auto select policy, see GEN_CTX_POLICY_* macros in genetty_def.h */
+    GennettyCtxGetPolicy type = GCCP_INVALID;       /*  */
+    uint16_t deviceId = UINT16_MAX;                 /* device id logically */
+    std::string ipMask;                             /* ip with mask */
+    uint32_t flags = 0;                             /* optional flags*/
+    uint32_t whichAutoPolicy = 0; /* auto select policy, see GEN_CTX_POLICY_* macros in genetty_def.h */
 };
 
 std::ostream &operator<<(std::ostream &os, const GenettyCtxGetOptions &options) noexcept;
@@ -78,19 +78,20 @@ struct GenettyCQOptions {
 std::ostream &operator<<(std::ostream &os, const GenettyCQOptions &options) noexcept;
 
 struct GenettyOptions {
-    GenettyCQPtr cq = nullptr;                          /* sq ptr */
-    uint32_t sqDepth = 1024;                            /* send queue depth */
-    uint32_t rqDepth = 1024;                            /* receive queue depth */
-    uint32_t flags = 0;                                 /* flags */
-    VendorType vendor = VendorType::VT_INVALID;         /* vendor type */
-    bool lockFree = false;                              /* lock free or not */
-    uint32_t serviceLevel = 0;                          /* service level, for URMA */
-    uint32_t trafficClass = 0;                          /* traffic class, for RDMA */
+    GenettyCQPtr cq = nullptr;                  /* sq ptr */
+    uint32_t sqDepth = 1024;                    /* send queue depth */
+    uint32_t rqDepth = 1024;                    /* receive queue depth */
+    uint32_t flags = 0;                         /* flags */
+    VendorType vendor = VendorType::VT_INVALID; /* vendor type */
+    bool lockFree = false;                      /* lock free or not */
+    uint32_t serviceLevel = 0;                  /* service level, for URMA */
+    uint32_t trafficClass = 0;                  /* traffic class, for RDMA */
 };
 
 std::ostream &operator<<(std::ostream &os, const GenettyOptions &options) noexcept;
 
 struct GenettyBackendOptions {
+    uint32_t flags = 0;
     PROTOCOL protocol = 0;
     VendorType vendor = VendorType::VT_INVALID;
 };
@@ -378,6 +379,11 @@ protected:
 
 class Genetty : public Referable {
 public:
+    virtual Result Quiesce() noexcept
+    {
+        GEN_LOG_ERROR("Quiesce is not supported by this provider");
+        return GEN_ERROR;
+    }
     /**
      * @brief Construct a genetty with the genetty type
      *

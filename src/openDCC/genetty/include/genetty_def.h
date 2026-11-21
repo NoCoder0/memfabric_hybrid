@@ -26,6 +26,8 @@ typedef void *genetty_target_t;  /* stands for imported Jetty for URMA@UB, and o
 
 typedef uint32_t PROTOCOL;
 
+#define GEN_INIT_LAZY_DEVICE (1U << 0)
+
 #define GEN_PROT_HOST_RDMA             1 << 0
 #define GEN_PROT_HOST_URMA             1 << 1
 #define GEN_PROT_DEVICE_RDMA           1 << 2

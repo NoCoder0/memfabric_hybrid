@@ -252,6 +252,12 @@ Result VerbsHostQp::Initialize(const GenettyOptions &options) noexcept
     return GEN_OK;
 }
 
+Result VerbsHostQp::Quiesce() noexcept
+{
+    std::lock_guard<std::mutex> lock(mutex_);
+    return qp_ == nullptr ? GEN_OK : qp_->Quiesce();
+}
+
 void VerbsHostQp::Destroy() noexcept
 {
     std::lock_guard<std::mutex> lock(mutex_);

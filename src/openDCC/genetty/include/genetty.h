@@ -37,7 +37,7 @@ int32_t genetty_init(PROTOCOL prot, const char *vendor, uint32_t flags);
  * @param logger           [in] logger callback, level is the log level and file carries the log message,
  *                         can be null to use the default logger
  */
-void genetty_set_log_func(void(*logger)(int32_t level, const char *msg));
+void genetty_set_log_func(void (*logger)(int32_t level, const char *msg));
 
 /**
  * @brief Set the log level of genetty, logs below this level are not output
@@ -222,6 +222,9 @@ genetty_t genetty_create(genetty_options_t *options);
  * @param flags            [in] optional flags, should be 0 currently
  */
 void genetty_destroy(genetty_t handle, uint32_t flags);
+
+/* Success guarantees that the QP no longer accesses registered memory. */
+int32_t genetty_quiesce(genetty_t handle);
 
 /**
  * @brief Export the local link info, which should be sent to the peer to establish the connection

@@ -51,12 +51,14 @@ void HCC_API hcc_set_log_level(int32_t level)
 
 int32_t HCC_API hcc_memory_info_encode(hcc_memory_segment_t *segment, uint32_t flags, hcc_memory_info_t *info)
 {
-    return ::genetty_memory_info_encode(segment, flags, info);
+    auto ret = ::genetty_memory_info_encode(segment, flags, info);
+    return ret == GEN_OK ? HCC_OK : HCC_INVALID_PARAM;
 }
 
 int32_t HCC_API hcc_memory_info_decode(hcc_memory_info_t *info, hcc_memory_segment_t *segment, uint32_t flags)
 {
-    return ::genetty_memory_info_decode(info, segment, flags);
+    auto ret = ::genetty_memory_info_decode(info, segment, flags);
+    return ret == GEN_OK ? HCC_OK : HCC_INVALID_PARAM;
 }
 
 #ifdef __cplusplus

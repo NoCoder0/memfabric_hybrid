@@ -33,9 +33,10 @@ Result HostVerbsContext::RegisterMemory(genetty_memory_segment_t *segment, uint3
     auto iter = mrs_.find(memoryInfo);
 
     /* step4: if found set lkey/rkey to segment then return */
-    if (iter != mrs_.end() && iter->second != nullptr) {
-        segment->lkey = iter->second->lkey;
-        segment->rkey = iter->second->rkey;
+    if (iter != mrs_.end() && iter->second.handle != nullptr) {
+        ++iter->second.references;
+        segment->lkey = iter->second.handle->lkey;
+        segment->rkey = iter->second.handle->rkey;
         GEN_LOG_DEBUG("Register memory skipped, as already registered, mem type("
                       << segment->type << "), address(" << segment->address << "), size(" << segment->size << ")");
         return GEN_OK;
@@ -59,7 +60,7 @@ Result HostVerbsContext::RegisterMemory(genetty_memory_segment_t *segment, uint3
     }
 
     /* step6: add to mrs */
-    mrs_[memoryInfo] = mr;
+    mrs_[memoryInfo] = {mr, 1};
 
     /* step7: set lkey and rkey to segment */
     segment->lkey = mr->lkey;
@@ -93,9 +94,11 @@ Result HostVerbsContext::UnRegisterMemory(genetty_memory_segment_t *segment, uin
         return GEN_NOT_FOUND;
     }
 
-    /* step4: store it to tmpMr then remove from mrs_ */
-    auto tmpMr = iter->second;
-    mrs_.erase(iter);
+    if (iter->second.references > 1) {
+        --iter->second.references;
+        return GEN_OK;
+    }
+    auto tmpMr = iter->second.handle;
 
     /* step5: do unregister with tmpMr */
     if (UNLIKELY(tmpMr == nullptr)) {
@@ -113,6 +116,7 @@ Result HostVerbsContext::UnRegisterMemory(genetty_memory_segment_t *segment, uin
         return GEN_ERROR;
     }
 
+    mrs_.erase(iter);
     GEN_LOG_DEBUG("Unregister memory finished, mem type(" << segment->type << "), address(" << segment->address
                                                           << "), size(" << segment->size << ")");
     return GEN_OK;

@@ -43,6 +43,7 @@ private:
 };
 class VerbsDeviceQp final : public Genetty {
 public:
+    Result Quiesce() noexcept override;
     explicit VerbsDeviceQp(genetty_type_t type) : Genetty(type) {}
     ~VerbsDeviceQp() override
     {

@@ -40,7 +40,7 @@ public:
 public:
     const DeviceRdmaContextPtr wrapCtx_;
     std::map<MemoryInfo, DeviceVerbsMR> mrs_; /* HCCP MR records, key is the memory info */
-    std::mutex mutex_;                 /* mutex of the registered memory regions */
+    std::mutex mutex_;                        /* mutex of the registered memory regions */
 };
 using DeviceVerbsContextPtr = Ref<DeviceVerbsContext>;
 
@@ -50,6 +50,7 @@ public:
     ~DeviceVerbsContextPool() override;
 
     Result AddAllDevices() noexcept override;
+    Result AddDevice(uint16_t logicDeviceId) noexcept;
 
     void CloseAllDevices() noexcept override;
 

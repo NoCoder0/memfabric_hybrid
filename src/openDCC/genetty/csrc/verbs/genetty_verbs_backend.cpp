@@ -75,7 +75,7 @@ Result VerbsBackend::InitInner(const GenettyBackendOptions &options) noexcept
         }
 
         /* loop all devices */
-        result = deviceCtxPool->AddAllDevices();
+        result = (options.flags & GEN_INIT_LAZY_DEVICE) != 0 ? GEN_OK : deviceCtxPool->AddAllDevices();
         if (result != GEN_OK) {
             GEN_LOG_ERROR("Create device ctxPool failed, result(" << result << ")");
             return result;
@@ -216,6 +216,12 @@ Result VerbsBackend::GetDeviceContext(const GenettyCtxGetOptions &ctxOptions, ge
     DeviceVerbsContextPtr ctx;
     Result result = GEN_INVALID_PARAM;
     if (ctxOptions.type == GCCP_BY_DEVICE_ID) {
+        if ((options_.flags & GEN_INIT_LAZY_DEVICE) != 0) {
+            result = deviceCtxPool_->AddDevice(ctxOptions.deviceId);
+            if (result != GEN_OK) {
+                return result;
+            }
+        }
         result = deviceCtxPool_->SelectContext(ctxOptions.deviceId, ctx);
     } else if (ctxOptions.type == GCCP_BY_IP) {
         result = deviceCtxPool_->SelectContext(ctxOptions.ipMask, ctx);
@@ -267,8 +273,8 @@ void VerbsBackend::ReturnContext(genetty_context_t *context, uint32_t flags) noe
     HostVerbsContextPtr ctx;
     auto result = hostCtxPool_->Lookup(*context, ctx);
     if (UNLIKELY(result != GEN_OK)) {
-        GEN_LOG_ERROR("Return context failed, as look up context failed, result(" << result << "), context("
-                                                                                  << *context << ")");
+        GEN_LOG_ERROR("Return context failed, as look up context failed, result(" << result << "), context(" << *context
+                                                                                  << ")");
         return;
     }
 

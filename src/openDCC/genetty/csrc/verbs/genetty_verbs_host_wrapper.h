@@ -67,7 +67,7 @@ enum RoCEVersion : uint8_t {
 /* one gid entry of a device port */
 struct VerbsGidInfo {
     uint16_t index = 0;                         /* index in the gid table */
-    union ibv_gid ibvGid{};                     /* raw gid */
+    union ibv_gid ibvGid {};                    /* raw gid */
     RoCEVersion version = RoCE_UNKNOWN_VERSION; /* roce version of this gid */
     std::string ip;                             /* ip carried by this gid, empty if not an ip based gid */
 };
@@ -152,9 +152,9 @@ private:
     uint8_t bandWidth_ = 0;                      /* bandwidth of this device in Gb */
     RoCEVersion version_ = RoCE_UNKNOWN_VERSION; /* roce version of the default gid */
     uint16_t gidIndex_ = 0;                      /* default gid index */
-    union ibv_gid ibvGid_{};                     /* default structured gid */
-    struct ibv_port_attr portAttributes_{};      /* port attr */
-    struct ibv_device_attr devAttributes_{};     /* device attr */
+    union ibv_gid ibvGid_ {};                    /* default structured gid */
+    struct ibv_port_attr portAttributes_ {};     /* port attr */
+    struct ibv_device_attr devAttributes_ {};    /* device attr */
     struct ibv_device *rawDevice_ = nullptr;     /* raw device, valid until Uninit */
     std::vector<VerbsGidInfo> gidList_;          /* all gids of this port */
 };
@@ -752,6 +752,18 @@ ALWAYS_INLINE Result VerbsCQ::SetNonBlocking() noexcept
 
 class VerbsQP : public Referable {
 public:
+    Result Quiesce() noexcept
+    {
+        if (rawQp_ == nullptr) {
+            return GEN_OK;
+        }
+        auto result = VerbsApi::ibv_destroy_qp(rawQp_);
+        GEN_ASSERT_MSG_RETURN(result == 0, "Destroy QP failed, result(" << result << ")", GEN_DEVICE_ERROR);
+        rawQp_ = nullptr;
+        state_ = IBV_QPS_RESET;
+        return GEN_OK;
+    }
+
     VerbsQP(struct ibv_qp *qp, const VerbsContextPtr &context, const VerbsCQPtr &sendCq, const VerbsCQPtr &recvCq,
             uint32_t sendDepth, uint32_t recvDepth) noexcept;
     ~VerbsQP() override;

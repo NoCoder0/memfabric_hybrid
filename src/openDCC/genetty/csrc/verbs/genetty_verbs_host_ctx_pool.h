@@ -19,6 +19,11 @@
 namespace ock {
 namespace openDCC {
 namespace verbs {
+struct HostVerbsMR {
+    struct ibv_mr *handle = nullptr;
+    uint32_t references = 1;
+};
+
 class HostVerbsContext : public GenettyContext {
 public:
     explicit HostVerbsContext(genetty_type_t type, const VerbsContextPtr &context)
@@ -41,8 +46,8 @@ public:
 
 public:
     const VerbsContextPtr wrapCtx_;
-    std::map<MemoryInfo, struct ibv_mr *> mrs_; /* registered memory regions, key is the memory info */
-    std::mutex mutex_;                          /* mutex of the registered memory regions */
+    std::map<MemoryInfo, HostVerbsMR> mrs_; /* registered memory regions, key is the memory info */
+    std::mutex mutex_;                      /* mutex of the registered memory regions */
 };
 using HostVerbsContextPtr = Ref<HostVerbsContext>;
 

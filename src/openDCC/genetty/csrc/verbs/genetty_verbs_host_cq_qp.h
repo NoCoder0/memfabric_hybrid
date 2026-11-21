@@ -58,8 +58,8 @@ ALWAYS_INLINE int32_t VerbsHostCQ::Rearm(int32_t solicited_only, uint32_t flags)
 {
     auto result = cq_->Rearm(solicited_only != 0);
     if (UNLIKELY(result != GEN_OK)) {
-        GEN_LOG_ERROR("Rearm cq failed, cq(" << id_ << "), result(" << result << "), solicited only("
-                                             << solicited_only << "), flags(" << flags << ")");
+        GEN_LOG_ERROR("Rearm cq failed, cq(" << id_ << "), result(" << result << "), solicited only(" << solicited_only
+                                             << "), flags(" << flags << ")");
         return result;
     }
 
@@ -75,6 +75,7 @@ ALWAYS_INLINE int32_t VerbsHostCQ::Ack(int32_t eventCount, uint32_t flags) noexc
 
 class VerbsHostQp final : public Genetty {
 public:
+    Result Quiesce() noexcept override;
     explicit VerbsHostQp(genetty_type_t t) noexcept : Genetty(t) {}
     ~VerbsHostQp() noexcept override
     {
