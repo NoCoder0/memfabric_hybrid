@@ -1151,4 +1151,14 @@ TEST(AccDataBufferTest, AllocIfNeedExpandPreservesOldBufferOnSuccess)
     EXPECT_NE(buffer->DataPtr(), nullptr);
     EXPECT_EQ(buffer->DataPtr()[0], 'A');
 }
+TEST(AccLinkEofTest, HeaderEofIsBrokenEvenWithStaleEagain)
+{
+    int sockets[2];
+    ASSERT_EQ(socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    AccTcpLinkComplexDefault link(sockets[0], "local", 1);
+    close(sockets[1]);
+    errno = EAGAIN;
+    EXPECT_EQ(link.HandlePollIn(), ACC_LINK_ERROR);
+}
+
 } // namespace
