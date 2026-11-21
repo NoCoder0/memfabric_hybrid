@@ -1,0 +1,28 @@
+--- a/vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/memcache_backend.py
++++ b/vllm_ascend/distributed/kv_transfer/kv_pool/ascend_store/backend/memcache_backend.py
+@@ -302,6 +302,24 @@
+             return
+         assert self.store is not None
+         ptrs, sizes = self._pending_buffers
++        strict_registration = os.getenv("MF_HYBM_RDMA_USE_OPENDCC", "0") == "1"
++        registered = []
+         for ptr, size in zip(ptrs, sizes):
+-            self.store.register_buffer(ptr, size)
++            result = self.store.register_buffer(ptr, size)
++            if strict_registration and result != 0:
++                for address, length in registered:
++                    cleanup_result = self.store.unregister_buffer(address, length)
++                    if cleanup_result != 0:
++                        logger.error("KV unregister failed: address=%d result=%s", address, cleanup_result)
++                raise RuntimeError(
++                    f"openDCC KV registration failed: device={self.device_id} address={ptr} size={size} result={result}"
++                )
++            if strict_registration:
++                registered.append((ptr, size))
++        if strict_registration:
++            for ptr, size in registered:
++                logger.info(
++                    "openDCC KV registered pid=%d device=%d address=0x%x size=%d",
++                    os.getpid(), self.device_id, ptr, size,
++                )
+         self._pending_buffers = None

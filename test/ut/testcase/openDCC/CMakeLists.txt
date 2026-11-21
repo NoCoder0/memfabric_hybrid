@@ -16,10 +16,13 @@ file(GLOB_RECURSE genetty_src
         ${PROJECT_OPENDCC_SRC_BASE}/genetty/csrc/*.cpp
 )
 
+file(GLOB_RECURSE hcc_src ${PROJECT_OPENDCC_SRC_BASE}/hcc/csrc/*.cpp)
+
 ADD_UNIT_TEST(test_openDCC
         FILES ${PROJECT_OPENDCC_SRC_BASE}/tools/odcc/pingpong_genetty/odcc_pp_genetty.cpp
-              ${opendcc_src} ${TEST_SRC_PATHS}/ut_main.cpp ${genetty_src}
+              ${opendcc_src} ${TEST_SRC_PATHS}/ut_main.cpp ${genetty_src} ${hcc_src}
         INCLUDE_PATHS ${TEST_INCLUDE_PATHS}
+                        ${PROJECT_OPENDCC_SRC_BASE}/hcc/csrc
                         ${PROJECT_OPENDCC_SRC_BASE}/tools/odcc
                         ${PROJECT_OPENDCC_SRC_BASE}/genetty/csrc
                         ${PROJECT_OPENDCC_SRC_BASE}/genetty/csrc/under_api

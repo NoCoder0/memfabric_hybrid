@@ -45,3 +45,7 @@ target_compile_definitions(test_memfabric PRIVATE
         ACC_OFFLOAD_UT_HELPER_SO="$<TARGET_FILE:acc_offload_launch_ut_helper>"
 )
 add_dependencies(test_memfabric acc_offload_launch_ut_helper)
+
+if (BUILD_OPENDCC)
+    add_subdirectory(openDCC)
+endif ()
