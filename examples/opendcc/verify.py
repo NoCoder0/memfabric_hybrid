@@ -29,7 +29,7 @@ def digest(path):
     return sha.hexdigest()
 
 
-def verify_process(spec):
+def verify_process(spec, hosts=()):
     pid = spec["pid"]
     proc = Path(f"/proc/{pid}")
     maps = proc.joinpath("maps").read_text().splitlines()
@@ -81,21 +81,56 @@ def verify_process(spec):
         all(any(a >= m and a + n <= m + size for m, size in mrs) for a, n in kv),
         f"pid={pid}: business KV is not covered by HBM MRs",
     )
-    completed = {0: 0, 1: 0}
-    peers = set()
-    for op, peer, address, size in re.findall(
-        r"openDCC completed op=([01]) rank=(\d+) local=(0x[0-9a-f]+) remote=0x[0-9a-f]+ size=(\d+)", own
+    targets = set(spec["peers"])
+    require(targets, f"pid={pid}: no target Host ranks")
+    host_mrs = {}
+    for host in hosts:
+        if host["rank"] not in targets:
+            continue
+        host_text = Path(host["log"]).read_text(errors="replace")
+        host_own = "\n".join(line for line in host_text.splitlines() if f"[{host['pid']}-" in line)
+        require(
+            f"openDCC transport rank={host['rank']} provider=1 ret=0" in host_own,
+            f"rank={host['rank']}: missing Host provider evidence",
+        )
+        host_mrs[host["rank"]] = [
+            (int(a, 16), int(n))
+            for a, n in re.findall(
+                rf"openDCC MR rank={host['rank']} type=1 address=(0x[0-9a-f]+) size=(\d+)",
+                host_own,
+            )
+        ]
+    require(targets <= host_mrs.keys(), f"pid={pid}: missing target Host DRAM MR logs")
+    completed = {peer: {0: 0, 1: 0} for peer in targets}
+    for op, peer, address, remote, size in re.findall(
+        r"openDCC completed op=([01]) rank=(\d+) local=(0x[0-9a-f]+) remote=(0x[0-9a-f]+) size=(\d+)",
+        own,
     ):
         address, size = int(address, 16), int(size)
         require(
             any(address >= base and address + size <= base + length for base, length in kv),
             f"pid={pid}: completed DMA outside business KV HBM, address={address:#x} size={size}",
         )
-        completed[int(op)] += size
-        peers.add(int(peer))
-    require(all(completed.values()), f"pid={pid}: require completed business KV READ and WRITE")
-    require(set(spec["peers"]) <= peers, f"pid={pid}: missing expected business peers")
-    result.update(read_bytes=completed[0], write_bytes=completed[1], peers=sorted(peers), kv=kv)
+        peer, remote = int(peer), int(remote, 16)
+        if peer not in targets:
+            continue
+        require(
+            any(remote >= base and remote + size <= base + length for base, length in host_mrs[peer]),
+            f"pid={pid}: remote DMA outside Host DRAM MR, rank={peer} address={remote:#x}",
+        )
+        completed[peer][int(op)] += size
+    for peer, counts in completed.items():
+        require(
+            all(counts.values()),
+            f"pid={pid}: require business KV READ and WRITE with Host rank={peer}",
+        )
+    result.update(
+        read_bytes=sum(counts[0] for counts in completed.values()),
+        write_bytes=sum(counts[1] for counts in completed.values()),
+        peers=sorted(targets),
+        peer_bytes=completed,
+        kv=kv,
+    )
     return result
 
 
@@ -106,7 +141,7 @@ def main():
     args = parser.parse_args()
     manifest = json.loads(args.manifest.read_text())
     require(manifest["processes"], "No processes in manifest")
-    report = {"processes": [verify_process(spec) for spec in manifest["processes"]]}
+    report = {"processes": [verify_process(spec, manifest.get("hosts", ())) for spec in manifest["processes"]]}
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print("Runtime and recorded KV DMA checks passed; model correctness and performance require benchmark results.")
 

@@ -32,7 +32,7 @@ MF 不直接依赖 Genetty 的 context/QP/MR 实现，只调用 HCC 导出的接
 | `OpenDevice` / `CloseDevice` | `hcc_init/create` 与 `hcc_destroy/uninit`；按 MF 逻辑设备 ID 获取选定的 Device Context，不逐卡打开所有 NPU |
 | `RegisterMemoryRegion` / `UnregisterMemoryRegion` | `hcc_memory_register/unregister`；支持建链后注册、同区间引用计数，存在请求引用时不能注销最后一个 MR |
 | `QueryMemoryKey` / `UpdateMemoryKey` | HCC MR 编解码；MF 外层保存匹配用 GVA，内层保存实际网卡可访问地址和 key；更新 GVA 不改网络地址 |
-| `Prepare` / `UpdateRankOptions` | 更新对应 rank 的地址、provider 和 MR 集合，保留其他 peer |
+| `Prepare` / `UpdateRankOptions` | 更新对应 rank 的地址、provider 和 MR 集合；实体信息更新不携带 key 时保留已有 MR |
 | `ConnectRank` | `hcc_tunnel_create/export/import`；复用 acc_links TCP/TLS 控制面交换不透明链接信息 |
 | `WriteRemote[BatchAsync]` / `ReadRemote[BatchAsync]` | 构造带真实地址、offset、size、lkey/rkey 的描述符，`hcc_tunnel_submit` → `hcc_request_wait` → `hcc_request_release` |
 | `Synchronize` | 首版适配在每次调用内完成提交和等待；此处检查连接状态 |
@@ -42,8 +42,9 @@ MF 不直接依赖 Genetty 的 context/QP/MR 实现，只调用 HCC 导出的接
 Host 端导入对端最终属性后才进入 READY。双方完成后才允许业务访问。
 控制消息使用非阻塞连接；无链接数据的消息带一个版本字节，满足 acc_links 的非空消息体约束。
 RDMA TC 默认 132，可通过原有 `MF_DEVICE_RDMA_TC` 配置；保持与现有 A3 RoCE 配置一致。
-控制端点复用 MF 原有 `transUrl`，即 MC 的 `hcom_url`：与原 HCOM 一样按基础端口 + rank 监听，
-`GetNic()` 发布实际端口。同 IP 多 entity/store 组需要分配不重叠的基础端口区间，不能占用旧测试进程的端口。
+控制端点复用 MF 原有 `transUrl`，即 MC 的 `hcom_url`：从基础端口 + rank 至 65535 的范围内，
+复用 `AccFindAvailableTcpPort` 选择可用端口，`GetNic()` 通过原有实体元数据发布实际端口。
+同一进程不同 BM ID 可复用基础 URL，各自监听、握手和销毁，部署时需开放实际控制端口范围。
 
 HCC 请求保存描述符和 MR 引用，每个 tunnel 接受一个活动 batch；同一 batch 逐 WR 推进，检查真正 RDMA CQE 的
 状态、操作与 `usr_ctx` 后才推进下一条。超过 32 位长度的区间拆成多个 WR。
@@ -53,6 +54,8 @@ HCC 请求保存描述符和 MR 引用，每个 tunnel 接受一个活动 batch�
 MF 中名称带 `Async` 的新适配接口仍等本 rank 的请求完成后才返回，保持旧数据算子的失败出口安全。
 投递失败、CQ 错误或超时必须先停止 QP 的 DMA 访问，再允许业务复用缓冲区；不能确认停止时终止该测试实例。
 错误码在适配层转换，不把 HCC 错误码直接当成 MF 错误码；失败后不自动换回旧后端或重放 WRITE。
+控制连接断开或数据请求失败后，SMEM 链接查询返回 IDLE；显式重新连接会销毁旧 QP、重新握手。
+注销 MR 失败会保留 SMEM 注册记录、HYBM slice 与 VA 映射，调用方重试成功后才释放这些记录。
 
 HCC 原先未实现的 P2P `destroy/unregister/tunnel_destroy/tunnel_import` 改为返回状态，options 增加 provider 等字段。
 旧二进制消费者需重新编译；MF/SMEM/MemCache 公共 ABI 不变。此次实现只覆盖 P2P，不宣称原有 HCC server/client 占位接口可用。
@@ -64,8 +67,9 @@ HCC 原先未实现的 P2P `destroy/unregister/tunnel_destroy/tunnel_import` 改
 Host 数据算子选择，以及 Host DRAM 映射跳过 NPU HAL 注册。
 
 `BUILD_OPENDCC` 默认 OFF；运行时 `MF_HYBM_RDMA_USE_OPENDCC` 默认 0，开关未启用时原后端选择保持原行为。
-启用后仅支持普通 BM、纯 DEVICE_RDMA、Host 发起；不接入 provider/代理、mixed protocol 或 AI Core 发起路径。
-设置开关但构建缺少后端时明确报错。环境选择按进程启动配置生效，不支持热切换。
+启用后仅普通 BM、纯 DEVICE_RDMA、Host 发起、DEFAULT 角色的实体选择 openDCC。
+同一进程内 TRANS、provider/代理、mixed protocol 和 AI Core 发起实体仍使用原有后端。
+已选择 openDCC 的实体遇到缺少构建或加载失败时明确报错，不回退旧后端。环境选择按进程启动配置生效，不支持热切换。
 
 ## 3. 构建与测试
 
@@ -86,7 +90,8 @@ Bazel 暂不支持该可选后端，wrapper 对 ON+Bazel 报错，默认 Bazel �
 ```bash
 git submodule update --init --recursive
 bash script/run_opendcc_ut.sh
-MF_HYBM_RDMA_USE_OPENDCC=1 bash script/run_opendcc_ut.sh 'OpenDccSelectionTest.*'
+MF_HYBM_RDMA_USE_OPENDCC=1 bash script/run_opendcc_ut.sh 'OpenDccSelectionTest.*:HccP2pTest.*'
+python3 examples/opendcc/test_verify.py
 ```
 
 测试覆盖 Genetty 原有用例、HCC 建链后注册/偏移读写/保护区/多 peer/部分失败/超时/MR 引用，
@@ -143,6 +148,10 @@ manifest 必须列出全部 P worker 和 Host 服务，PID 使用执行 verifier
 
 ```json
 {
+  "hosts": [
+    {"pid": 2345, "rank": 16, "log": "/logs/host-16.log"},
+    {"pid": 2346, "rank": 17, "log": "/logs/host-17.log"}
+  ],
   "processes": [
     {
       "pid": 1234, "rank": 0, "role": "device", "peers": [16, 17], "log": "/logs/p-worker.log",
@@ -166,8 +175,12 @@ manifest 必须列出全部 P worker 和 Host 服务，PID 使用执行 verifier
 python3 examples/opendcc/verify.py runtime.json --output runtime-evidence.json
 ```
 
-跨节点分别在对应节点运行，manifest 包含该节点全部相关进程，汇总所有节点报告。
-脚本读取 `/proc/PID/maps` 的实际库并校验哈希，检查 provider/env，关联 connector KV 区间、HBM MR 和已完成的 READ/WRITE 本地 SGE。
+跨节点分别在对应节点运行，`processes` 包含该节点全部相关进程，汇总所有节点报告。
+在 Device 节点汇集目标 Host 日志，`hosts` 记录日志中的原始 Host PID、rank 和本地归档路径；
+Host 节点自己的 `processes` 报告仍负责验证其实际加载库和运行环境。
+脚本读取 `/proc/PID/maps` 的实际库并校验哈希，检查 provider/env，关联 connector KV 区间和 HBM MR。
+每个 `peers` 目标 Host 都必须有完成的 READ 和 WRITE，远端 DMA 地址须落在该 Host 的 DRAM MR 内；
+访问另一个 NPU 的 READ 不能作为 Host 回温证据。
 它验证记录到的 DMA 地址路径，不替代业务输出正确性、双侧网口计数或完整进程清单核对。
 取证结束后正式性能测试关闭逐描述符 DEBUG 日志，避免日志 I/O 影响结果；保存取证和正式测试各自的完整配置。
 
@@ -238,3 +251,33 @@ NPU 配置仅验证该条件编译分支，不代表已在 AArch64、CANN 或 A3
 尚未执行目标 A3/CX7 双机样例、GLM 0.30 镜像部署、128K/256K 业务及性能对照。
 run 包和 wheel 的复制路径已接入，完整打包安装尚未在目标环境验证。
 connector 补丁必须先对实际部署镜像内源码校验再应用。
+
+## 7. 审阅修复与 CANN 共存限制
+
+HCCP 结构按本地 hcomm `dd21371a3` 的 `hccp_common.h` 对齐：`QpAttr` 为 112 字节，
+`vendorPrivInfo` 偏移 40，64 字节 `feature` 偏移 48；`TypicalQp` 为 184 字节。
+代码增加大小/偏移静态断言，mock 按实际 CANN 写入完整尾部并检查相邻内存。
+Host 显式 IP 选择匹配的 RoCE v2 GID，QP 导出和 RTR 使用同一个 GID/index；
+同一网口不同 IP/VLAN 的 context 不修改彼此已选定的 GID。
+
+**HCCL 先初始化同卡资源的共存路径尚未完成，不能据此宣称 GLM Worker 已可用。**
+当前 Device Context 仍自行初始化 RA/TSD/Rdev。检查目标 CANN 源码发现：
+
+- `RaRdevGetHandle` 可查询已存在 Rdev，但没有公开资源引用计数语义。
+- `RaQpCreateWithAttrs` 会清零 `dataPlaneFlag`，仅设置 `cq_cstm` 不能让当前 OP_EXT QP 脱离后台 CQ 轮询。
+- HCCL 的 lite 后台线程与 `RaPollCq` 会消费同一个 CQ；直接借用已有 Rdev 不能保证本库收到每个 CQE。
+- 在借用 RA 后另建 Rdev 会改写设备级 notify 地址/cache，也不能作为不影响 HCCL 的替代实现。
+
+完成该项需要目标 CANN 提供受支持的、按 QP 排除后台轮询的接口，以及清晰的资源借用生命周期。
+是否允许提供 CANN/HCCP 补丁正在等待确认；本分支未使用私有结构强转或关闭 HCCL 全局线程来绕过。
+独立 openDCC 模拟测试不证明 HCCL 共存，也不证明 128K/256K 业务与性能通过。
+
+本轮修复验证（同一 WSL/NONE 环境）：
+
+- openDCC 开关开启：156 项全部通过；关闭：153 项通过、3 项按条件跳过。
+- 原 MF 与 acc_links 回归：490 项中 485 项通过，失败仍为第 6 节列出的同 5 项。
+- 开关开启的 Compose/数据算子/TRANS 元数据及回调单测：154 项全部通过。
+- 验收脚本：5 项通过，包含 NPU READ 不能替代目标 Host READ、逐 Host 双向操作和远端 MR 范围检查。
+- NONE RELEASE、NPU DEBUG、NONE 关闭 BUILD_OPENDCC 构建通过；关闭构建的 hybm 动态库无 OpenDccTransportManager 符号。
+- 完整 TRANS 测试中的真实 HOST_TCP 收发因本地未构建/安装 `libhcom.so` 无法完成；
+  开关关闭后单独运行同样复现缺库，不记为通过，也不修改原测试绕过依赖。
