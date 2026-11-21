@@ -22,6 +22,7 @@ include_directories(
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/common
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol
+        ${PROJECT_ACCLINKS_SRC_BASE}/include
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/compose
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/rdma
         ${PROJECT_HYBM_SRC_BASE}/csrc/transport/protocol/device/sdma
@@ -80,3 +81,8 @@ install(
         DESTINATION ${TARGET_INSTALL_DIR}/hybm/lib64
         PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
+
+if (BUILD_OPENDCC)
+    target_link_libraries(hybmm_shared PRIVATE acc_tcp_net_static)
+    target_link_libraries(hybmm_static PUBLIC acc_tcp_net_static)
+endif ()

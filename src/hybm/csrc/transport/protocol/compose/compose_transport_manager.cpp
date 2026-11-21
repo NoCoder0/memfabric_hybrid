@@ -10,6 +10,11 @@
  * See the Mulan PSL v2 for more details.
 */
 #include "compose_transport_manager.h"
+#include "mf_opendcc_config.h"
+#ifdef BUILD_OPENDCC
+#include "device_rdma_opendcc_transport_manager.h"
+#include "host_rdma_opendcc_transport_manager.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -155,7 +160,16 @@ Result ComposeTransportManager::OpenTransport(const TransportOptions &options, u
             transportManager = std::make_shared<device::DeviceUrmaTransportManager>();
         }
     } else if (opTypes == DEVICE_RDMA_PROTOCOL) {
-        if (options.isProxy) {
+        if (OpenDccEnabled()) {
+#if defined(BUILD_OPENDCC) && defined(ASCEND_NPU)
+            transportManager = std::make_shared<device::DeviceRdmaOpenDccTransportManager>();
+#elif defined(BUILD_OPENDCC) && defined(NO_XPU)
+            transportManager = std::make_shared<host::HostRdmaOpenDccTransportManager>();
+#else
+            BM_LOG_ERROR("openDCC is not available in this build");
+            return BM_NOT_SUPPORTED;
+#endif
+        } else if (options.isProxy) {
             transportManager = std::make_shared<device::RdmaProxyTransportManager>();
         } else {
             // HCOMM 开关（默认关闭）：关闭时无论 CANN 版本一律走 native RDMA；

@@ -13,6 +13,7 @@ set -e
 readonly ROOT_PATH=$(dirname $(readlink -f "$0"))
 CURRENT_DIR=$(pwd)
 
+BUILD_OPENDCC="OFF"
 BUILD_MODE="RELEASE"
 BUILD_OPEN_ABI="OFF"
 BUILD_PYTHON="ON"
@@ -34,6 +35,7 @@ show_help() {
     echo "  --build_python <ON/OFF>     Enable/disable Python build, default: ON"
     echo "  --xpu_type <GPU/NPU/NONE>   Set xpu dependency(GPU:CUDA, NPU:CANN), set none without xpu, default: NPU"
     echo "  --build_test <ON/OFF>       Enable/disable build and package test utilities and examples, default: OFF"
+    echo "  --build_opendcc <ON/OFF>  Build openDCC transport, default: OFF"
     echo "  --build_hcom <ON/OFF>       Enable/disable build and package hcom, default: OFF"
     echo "  --build_hcom_rdma <ON/OFF>  Enable/disable build and package hcom with rdma, default: ON"
     echo "  --build_hcom_ub <ON/OFF>    Enable/disable build and package hcom with ub, default: OFF"
@@ -70,6 +72,10 @@ while [[ "$#" -gt 0 ]]; do
             ;;
         --build_test)
             BUILD_TEST="$2"
+            shift 2
+            ;;
+        --build_opendcc)
+            BUILD_OPENDCC="$2"
             shift 2
             ;;
         --build_hcom)
@@ -138,6 +144,7 @@ echo "BUILD_TOOL: $BUILD_TOOL"
 echo "BUILD_ZBAL: $BUILD_ZBAL"
 echo "BUILD_PYTHON_WHL_TYPE: $BUILD_PYTHON_WHL_TYPE"
 
+export MF_BUILD_OPENDCC="${BUILD_OPENDCC}"
 cd ${ROOT_PATH}
 
 bash build.sh "${BUILD_MODE}" OFF "${BUILD_OPEN_ABI}" "${BUILD_PYTHON}" ON "${XPU_TYPE}" "${BUILD_TEST}" "${BUILD_HCOM}" "${BUILD_HCOM_WITH_RDMA}" "${BUILD_HCOM_WITH_UB}" "${BUILD_ETCD_BACKEND}" "${BUILD_TOOL}" "${BUILD_ZBAL}" "${LOWER_PYTHON_WHL_TYPE}"

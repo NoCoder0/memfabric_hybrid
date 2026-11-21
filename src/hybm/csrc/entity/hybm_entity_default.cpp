@@ -10,6 +10,10 @@
  * See the Mulan PSL v2 for more details.
  */
 #include "hybm_entity_default.h"
+#include "mf_opendcc_config.h"
+#ifdef BUILD_OPENDCC
+#include "dl_opendcc_api.h"
+#endif
 
 #include <algorithm>
 #include <cstring>
@@ -1507,6 +1511,12 @@ int MemEntityDefault::CheckOptions(const hybm_options *options) noexcept
 
 int MemEntityDefault::LoadExtendLibrary() noexcept
 {
+    if (OpenDccEnabled() && (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) != 0) {
+        BM_ASSERT_LOG_AND_RETURN(
+            options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && options_.bmType == HYBM_TYPE_HOST_INITIATE &&
+                options_.scene == HYBM_SCENE_DEFAULT && options_.clusterRole == HYBM_CLUSTER_ROLE_DEFAULT,
+            "openDCC requires ordinary BM with pure device_rdma", BM_NOT_SUPPORTED);
+    }
     constexpr uint32_t deviceInterMask = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK;
     if ((options_.bmDataOpType & HYBM_DOP_TYPE_HOST_SHM) != 0 && (options_.bmDataOpType & deviceInterMask) == 0U) {
         BM_LOG_DEBUG("HOST_SHM-only data operator selected, skip loading transport extend libraries.");
@@ -1514,7 +1524,17 @@ int MemEntityDefault::LoadExtendLibrary() noexcept
     }
 
     if (options_.bmDataOpType & HYBM_DOP_TYPE_DEVICE_RDMA) {
-        auto ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_RDMA);
+        auto ret = BM_OK;
+        if (OpenDccEnabled()) {
+#ifdef BUILD_OPENDCC
+            ret = DlOpenDccApi::Load();
+#else
+            BM_LOG_ERROR("openDCC is not built");
+            return BM_NOT_SUPPORTED;
+#endif
+        } else {
+            ret = DlApi::LoadExtendLibrary(DlApiExtendLibraryType::DL_EXT_LIB_DEVICE_RDMA);
+        }
         if (ret != 0) {
             BM_LOG_ERROR("LoadExtendLibrary for DEVICE RDMA failed: " << ret);
             return ret;
@@ -1873,6 +1893,9 @@ Result MemEntityDefault::InitTransManager()
     transport::TransportOptions options{};
     options.rankId = options_.rankId;
     options.rankCount = options_.rankCount;
+    if (OpenDccEnabled() && options_.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA) {
+        options.deviceId = HybmGetInitedLogicDeviceId();
+    }
     options.protocol = options_.bmDataOpType;
     options.scene = options_.scene;
     options.initialType = options_.bmType;

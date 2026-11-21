@@ -20,6 +20,7 @@ BUILD_PYTHON=${4:-ON}
 ENABLE_PTRACER=${5:-ON}
 export XPU_TYPE=${6:-NPU} # 导出环境变量用于后续构建whl包
 BUILD_TEST=${7:-OFF}
+BUILD_OPENDCC=${MF_BUILD_OPENDCC:-OFF}
 BUILD_HCOM=${8:-OFF}
 BUILD_HCOM_WITH_RDMA=${9:-ON}
 BUILD_HCOM_WITH_UB=${10:-OFF}
@@ -223,6 +224,7 @@ if [ "${BUILD_TOOL}" == "cmake" ]; then
         -DENABLE_PTRACER="${ENABLE_PTRACER}" \
         -DXPU_TYPE="${XPU_TYPE}" \
         -DBUILD_TEST="${BUILD_TEST}" \
+        -DBUILD_OPENDCC="${BUILD_OPENDCC}" \
         -DBUILD_HCOM="${BUILD_HCOM}" \
         -DBUILD_WITH_RDMA="${BUILD_HCOM_WITH_RDMA}" \
         -DBUILD_WITH_UB="${BUILD_HCOM_WITH_UB}" \
@@ -231,6 +233,10 @@ if [ "${BUILD_TOOL}" == "cmake" ]; then
         -B build/
     ${MAKE_CMD} install -j"${MF_BUILD_JOBS}" -C build/
 else
+    if [ "${BUILD_OPENDCC}" == "ON" ]; then
+        echo "openDCC currently requires the CMake build"
+        exit 1
+    fi
     BAZEL_ARGS=()
 
     if [ "${BUILD_MODE}" == "DEBUG" ]; then
@@ -347,6 +353,9 @@ mkdir -p ${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib
 # --- 动态库：lib/ ---
 \cp -v "${PROJ_DIR}/output/smem/lib64/libmf_smem.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
 \cp -v "${PROJ_DIR}/output/hybm/lib64/libmf_hybm_core.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
+if [ "${MF_BUILD_OPENDCC:-OFF}" = "ON" ]; then
+    cp -v "${PROJ_DIR}/output/openDCC/lib64/libmf_opendcc.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
+fi
 \cp -v "${PROJ_DIR}/output/acc_offload/lib64/libmf_acc_offload.so" "${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/lib/"
 # --- 头文件：smem/include/host/ ---
 mkdir -p ${PROJ_DIR}/src/smem/python/memfabric_hybrid/memfabric_hybrid/include/smem/host

@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
  */
+#include "mf_opendcc_config.h"
 #include "hybm_conn_based_segment.h"
 
 #include <sys/mman.h>
@@ -596,7 +597,8 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
     }
 
     uint32_t needReg = HYBM_DOP_TYPE_DEVICE_TRANSPORT_MASK | HYBM_DOP_TYPE_MTE;
-    if (options_.dataOpType & needReg) {
+    const bool openDccHost = OpenDccHostEnabled() && options_.dataOpType == HYBM_DOP_TYPE_DEVICE_RDMA;
+    if ((options_.dataOpType & needReg) && !openDccHost) {
         auto ret = DlHalApi::HalHostRegister(mapped, size, HOST_MEM_MAP_DEV, logicDeviceId_, &dva);
         if (ret != BM_OK) {
             BM_LOG_ERROR("register host va failed, ret:" << ret);
@@ -607,7 +609,7 @@ Result HybmConnBasedSegment::MapSlice(void *&mapped, void *sliceAddr, uint64_t l
     int ret = HybmVaManager::GetInstance().AddVaInfo({gva, (uint64_t)dva, (uint64_t)mapped, size, HYBM_MEM_TYPE_HOST});
     if (ret != 0) {
         BM_LOG_ERROR("AddVaInfo failed, size: " << size << " ret: " << ret);
-        if (options_.dataOpType & needReg) {
+        if ((options_.dataOpType & needReg) && !openDccHost) {
             DlHalApi::HalHostUnregisterEx(mapped, logicDeviceId_, HOST_MEM_MAP_DEV);
         }
         FreeAllocatedMemory(mapped, size, allocMethod);

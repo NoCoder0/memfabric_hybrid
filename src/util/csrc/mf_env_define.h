@@ -50,6 +50,7 @@ inline const std::string MF_HCOM_SQ_SIZE = GetEnvStr("MF_HCOM_SQ_SIZE");
 inline const std::string MF_HCOM_RQ_SIZE = GetEnvStr("MF_HCOM_RQ_SIZE");
 inline const std::string MF_HCOM_PREPOST_SIZE = GetEnvStr("MF_HCOM_PREPOST_SIZE");
 inline const std::string MF_HCOM_MAX_SEND_RECV_DATA_CNT = GetEnvStr("MF_HCOM_MAX_SEND_RECV_DATA_CNT");
+inline const std::string MF_HYBM_RDMA_USE_OPENDCC = GetEnvStr("MF_HYBM_RDMA_USE_OPENDCC");
 inline const std::string MF_HYBM_RDMA_SWAP_SPACE_SIZE =
     GetEnvStr("MF_HYBM_RDMA_SWAP_SPACE_SIZE", "HYBM_RDMA_SWAP_SPACE_SIZE");
 inline const std::string MF_HYBM_URMA_SWAP_SPACE_SIZE =

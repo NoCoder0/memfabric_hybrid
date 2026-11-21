@@ -21,6 +21,7 @@ option(BUILD_GIT_COMMIT "build library version with commit" ON)
 option(BUILD_PYTHON "build python file" ON)
 option(ENABLE_PTRACER "build ptracer" OFF)
 option(BUILD_TEST "Enable/disable build and package test utilities and examples" OFF)
+option(BUILD_OPENDCC "Build openDCC RDMA transport" OFF)
 option(BUILD_HCOM "Enable/disable build and package hcom" OFF)
 option(BUILD_ETCD_BACKEND "Enable/disable build etcd backend so" OFF)
 
@@ -118,6 +119,12 @@ set(PROJECT_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/output)
 
 # set src base dir of util
 set(PROJECT_UTIL_SRC_BASE ${PROJECT_SOURCE_DIR}/src/util/csrc)
+set(PROJECT_OPENDCC_SRC_BASE ${PROJECT_SOURCE_DIR}/src/openDCC)
+set(PROJECT_OPENDCC_OUTPUT ${PROJECT_SOURCE_DIR}/output/openDCC)
+if (BUILD_OPENDCC)
+    add_compile_definitions(BUILD_OPENDCC)
+    include_directories(${PROJECT_OPENDCC_SRC_BASE}/hcc/include ${PROJECT_OPENDCC_SRC_BASE}/genetty/include)
+endif ()
 
 # set src base dir and output dir of smem
 set(PROJECT_SMEM_SRC_BASE ${PROJECT_SOURCE_DIR}/src/smem)

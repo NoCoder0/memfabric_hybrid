@@ -15,6 +15,7 @@
 #include "hybm_data_op_host_shm.h"
 #include "hybm_data_op_host_rdma.h"
 #include "hybm_data_op_factory.h"
+#include "mf_opendcc_config.h"
 
 namespace ock {
 namespace mf {
@@ -25,6 +26,9 @@ DataOperatorPtr DataOperatorFactory::CreateSdmaDataOperator()
 
 DataOperatorPtr DataOperatorFactory::CreateDevRdmaDataOperator(uint32_t rankId, const transport::TransManagerPtr &tm)
 {
+    if (OpenDccHostEnabled()) {
+        return std::make_shared<HostDataOpRDMA>(rankId, tm);
+    }
     return std::make_shared<DataOpDeviceRDMA>(rankId, tm);
 }
 

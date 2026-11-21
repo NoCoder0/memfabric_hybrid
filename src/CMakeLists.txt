@@ -19,3 +19,7 @@ add_subdirectory(smem/csrc/config_store)
 add_subdirectory(smem/csrc)
 add_subdirectory(hybm/csrc)
 add_subdirectory(acc_offload/csrc)
+
+if (BUILD_OPENDCC)
+    add_subdirectory(openDCC)
+endif ()

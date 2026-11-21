@@ -9,6 +9,7 @@
  * MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
  * See the Mulan PSL v2 for more details.
 */
+#include "mf_opendcc_config.h"
 #include <algorithm>
 #include <mutex>
 #include <new>
@@ -372,8 +373,11 @@ static int32_t smem_bm_create2_inner(uint32_t id, const smem_bm_create_option_t 
     options.memType = SmemHybmHelper::TransHybmMemType(option->maxDramSize, option->maxHbmSize);
     options.bmDataOpType = SmemHybmHelper::TransHybmDataOpType(option->dataOpType);
 #if !defined(ASCEND_NPU)
-    if ((options.bmDataOpType & HYBM_DOP_TYPE_SDMA) ||
-        (options.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA))) {
+    const bool openDccHost = ock::mf::OpenDccHostEnabled() && !isHostCombo &&
+                             options.bmDataOpType == HYBM_DOP_TYPE_DEVICE_RDMA && option->maxHbmSize == 0 &&
+                             option->localHBMSize == 0;
+    if (!openDccHost && ((options.bmDataOpType & HYBM_DOP_TYPE_SDMA) ||
+                         (options.bmDataOpType & (HYBM_DOP_TYPE_DEVICE_RDMA | HYBM_DOP_TYPE_DEVICE_URMA)))) {
         SM_LOG_AND_SET_LAST_ERROR_CODE(SM_ERROR, "create BM entity(" << id << ") failed, invalid opType "
                                                                      << options.bmDataOpType
                                                                      << " for non-cann based backend");

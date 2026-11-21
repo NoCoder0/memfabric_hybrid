@@ -76,6 +76,10 @@ cp "${OUTPUT_DIR}"/smem/lib64/* ${PKG_DIR}/"${ARCH_OS}"/lib64
 cp -r "${OUTPUT_DIR}"/hybm/include/* ${PKG_DIR}/include/hybm/
 cp "${OUTPUT_DIR}"/hybm/lib64/libmf_hybm_core.so ${PKG_DIR}/"${ARCH_OS}"/lib64/
 
+if [ "${MF_BUILD_OPENDCC:-OFF}" == "ON" ]; then
+    cp "${OUTPUT_DIR}/openDCC/lib64/libmf_opendcc.so" "${PKG_DIR}/${ARCH_OS}/lib64/"
+fi
+
 # memfabric_hybrid wheel package
 if [ "${BUILD_PYTHON}" = "ON" ]; then
     cp -r "${OUTPUT_DIR}"/memfabric_hybrid/wheel/*.whl ${PKG_DIR}/"${ARCH_OS}"/wheel/
